@@ -1,0 +1,31 @@
+[package]
+authors = [
+    "nathanielsimard <nathaniel.simard.42@gmail.com>",
+    "louisfd <louisfd94@gmail.com>",
+    "maxtremblay <t.maxime@pm.me>",
+]
+categories = ["science", "mathematics", "algorithms"]
+description = "CubeCL Reduce Algorithms."
+edition.workspace = true
+keywords = []
+license.workspace = true
+name = "cubek-reduce"
+readme.workspace = true
+repository = "https://github.com/tracel-ai/cubek/tree/main/crates/cubek-reduce"
+version.workspace = true
+
+[features]
+default = ["std", "cubecl/default"]
+std = ["cubecl/std", "thiserror/std"]
+
+[dependencies]
+cubecl = { workspace = true }
+num-traits = "0.2.19"
+pretty_assertions = { workspace = true, optional = true }
+serde = { workspace = true }
+half = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+cubecl = { workspace = true, features = ["test-runtime"] }
+rand = { workspace = true }
