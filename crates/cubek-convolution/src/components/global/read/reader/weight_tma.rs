@@ -1,14 +1,13 @@
-use cubecl_core::prelude::*;
-use cubecl_core::{self as cubecl, prelude::barrier::Barrier};
-use cubecl_matmul::components::{
+use cubecl::prelude::barrier::Barrier;
+use cubecl::prelude::*;
+use cubecl::std::tensor::{View, layout::Coords2d};
+use cubek_matmul::components::stage::RowMajorTilingOrder;
+use cubek_matmul::components::stage::{ContiguousTilingLayout, StridedStageMemory};
+use cubek_matmul::components::{
     MatrixPrecision,
     global::memory::{GlobalIterator, ViewDirection},
     stage::StageMemoryConfig,
 };
-use cubecl_std::tensor::{View, layout::Coords2d};
-
-use cubecl_matmul::components::stage::RowMajorTilingOrder;
-use cubecl_matmul::components::stage::{ContiguousTilingLayout, StridedStageMemory};
 
 pub type TmaWeightTiling = ContiguousTilingLayout<RowMajorTilingOrder>;
 pub type TmaWeightStage<IP> = StridedStageMemory<<IP as MatrixPrecision>::Stage, TmaWeightTiling>;

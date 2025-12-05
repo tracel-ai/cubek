@@ -1,5 +1,5 @@
-use cubecl_core::{Runtime, client::ComputeClient};
-use cubecl_matmul::components::{MatmulElems, TilingScheme};
+use cubecl::{Runtime, client::ComputeClient};
+use cubek_matmul::components::{MatmulElems, TilingScheme};
 
 use crate::components::ConvolutionProblem;
 

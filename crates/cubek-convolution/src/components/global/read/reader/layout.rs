@@ -1,11 +1,9 @@
+use crate::components::global::layout::NhwcCoords;
 use cubecl::prelude::*;
-use cubecl_core as cubecl;
-use cubecl_std::{
+use cubecl::std::{
     FastDivmod,
     tensor::layout::{Coords3d, Layout, LayoutExpand},
 };
-
-use crate::components::global::layout::NhwcCoords;
 
 #[derive(CubeType, CubeLaunch)]
 pub struct TmaWeightLayout {

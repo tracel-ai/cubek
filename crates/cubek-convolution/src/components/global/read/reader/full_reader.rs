@@ -1,8 +1,11 @@
 use std::marker::PhantomData;
 
-use cubecl_core as cubecl;
-use cubecl_core::prelude::*;
-use cubecl_matmul::components::{
+use cubecl::prelude::*;
+use cubecl::std::{
+    CubeOption, CubeOptionExpand,
+    tensor::{View, layout::Coords2d},
+};
+use cubek_matmul::components::{
     global::{
         GlobalReaderConfig,
         memory::GlobalIterator,
@@ -10,10 +13,6 @@ use cubecl_matmul::components::{
         read::{LoadingJob, LoadingValidation, StageBuffer, SyncStrategy, TaskCounter},
     },
     stage::{StridedStageFamily, StridedStageMemory, TilingLayout},
-};
-use cubecl_std::{
-    CubeOption, CubeOptionExpand,
-    tensor::{View, layout::Coords2d},
 };
 
 use crate::components::global::args::RuntimeArgs;

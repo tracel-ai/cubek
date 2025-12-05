@@ -1,6 +1,5 @@
 use cubecl::prelude::*;
-use cubecl_core as cubecl;
-use cubecl_std::tensor::layout::*;
+use cubecl::std::tensor::layout::*;
 
 #[derive(CubeType, CubeLaunch)]
 pub struct BiasLayout {

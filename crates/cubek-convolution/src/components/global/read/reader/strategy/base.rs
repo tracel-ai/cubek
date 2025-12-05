@@ -1,6 +1,5 @@
 use cubecl::prelude::*;
-use cubecl_core as cubecl;
-use cubecl_matmul::components::{
+use cubek_matmul::components::{
     global::{
         GlobalReaderConfig,
         read::{
@@ -16,7 +15,7 @@ use crate::components::global::{
     args::{RuntimeArgs, RuntimeArgsExpand},
     read::full_reader::FullLoadingStrategy,
 };
-use cubecl_matmul::components::global::read::FullLoadingStrategy as MatmulFullLoadingStrategy;
+use cubek_matmul::components::global::read::FullLoadingStrategy as MatmulFullLoadingStrategy;
 
 macro_rules! impl_full_load_strategy {
     ($( $($ty: ident)::* $(<$($l: lifetime,)* $($T: ident $(: $($(+)? $B: ident)*)?),+>)?,)*) => {

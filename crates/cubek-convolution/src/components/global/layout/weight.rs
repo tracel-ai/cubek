@@ -1,12 +1,11 @@
 use cubecl::prelude::*;
-use cubecl_core::{self as cubecl};
-use cubecl_matmul::components::{
-    MatmulElems,
-    global::{GlobalConfig, memory::GlobalMemoryConfig},
-};
-use cubecl_std::{
+use cubecl::std::{
     FastDivmod, FastDivmodArgs,
     tensor::layout::{Coords3d, Layout, LayoutExpand},
+};
+use cubek_matmul::components::{
+    MatmulElems,
+    global::{GlobalConfig, memory::GlobalMemoryConfig},
 };
 
 use crate::components::{

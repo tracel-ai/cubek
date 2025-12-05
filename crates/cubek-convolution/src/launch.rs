@@ -7,9 +7,9 @@ use crate::{
     },
     kernels::layered::algorithm::Algorithm,
 };
-use cubecl_core::{Runtime, client::ComputeClient, prelude::*};
-use cubecl_matmul::components::{self, AvailableLineSizes, MatmulElems, MatrixLayout};
-use cubecl_matmul::{
+use cubecl::{Runtime, client::ComputeClient, prelude::*};
+use cubek_matmul::components::{self, AvailableLineSizes, MatmulElems, MatrixLayout};
+use cubek_matmul::{
     MatmulInputHandleRef,
     components::{InputArg, OutputArg},
 };

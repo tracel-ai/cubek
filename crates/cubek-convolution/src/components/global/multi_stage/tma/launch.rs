@@ -1,12 +1,12 @@
-use cubecl_core::{
+use cubecl::std::FastDivmodArgs;
+use cubecl::{
     CubeCount, CubeDim, Runtime, client::ComputeClient, prelude::ScalarArg, server::LaunchError,
 };
-use cubecl_matmul::components::{
+use cubek_matmul::components::{
     InputRuntimeArg, MatmulElems, OutputRuntimeArg,
     global::{PartitionedStageFamily, args::MatmulArgs},
     stage::{StageConfig as _, StageMatmulFamily, StridedStageFamily},
 };
-use cubecl_std::FastDivmodArgs;
 
 use crate::components::{
     ConvolutionProblem,

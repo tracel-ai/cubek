@@ -1,16 +1,13 @@
-use cubecl_core::prelude::*;
-use cubecl_core::{self as cubecl, prelude::barrier::Barrier};
-
-use cubecl_matmul::components::{MatrixPrecision, stage::StageMemoryConfig};
-use cubecl_std::FastDivmod;
-
 use crate::components::{
     ConvolutionParams, Dimensionality,
     global::{args::RuntimeArgs, memory::Im2colTmaReader},
 };
-use cubecl_matmul::components::stage::{
+use cubecl::prelude::barrier::Barrier;
+use cubecl::std::FastDivmod;
+use cubek_matmul::components::stage::{
     ColMajorTilingOrder, ContiguousTilingLayout, StridedStageMemory,
 };
+use cubek_matmul::components::{MatrixPrecision, stage::StageMemoryConfig};
 
 pub type TmaIm2colTiling = ContiguousTilingLayout<ColMajorTilingOrder>;
 pub type TmaIm2colStage<IP> = StridedStageMemory<<IP as MatrixPrecision>::Stage, TmaIm2colTiling>;

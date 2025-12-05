@@ -1,11 +1,9 @@
-use cubecl_core as cubecl;
-use cubecl_core::prelude::*;
-use cubecl_std::{
+use cubecl::prelude::*;
+use cubecl::std::{
     CubeOption, CubeOptionExpand,
     tensor::{View, layout::Coords2d},
 };
-
-use cubecl_matmul::components::{
+use cubek_matmul::components::{
     MatrixPrecision,
     global::GlobalConfig,
     stage::{StageConfig as _, StageMemoryConfig, StridedStageMemory},

@@ -1,8 +1,9 @@
-use std::marker::PhantomData;
-
 use cubecl::prelude::*;
-use cubecl_core as cubecl;
-use cubecl_matmul::components::{
+use cubecl::std::{
+    CubeOption,
+    tensor::{View, layout::Coords2d},
+};
+use cubek_matmul::components::{
     AccG, AccS, LhsG, LhsS, MatmulPrecision, RhsG, RhsS,
     global::{
         GlobalConfig, GlobalWriter, PartitionedStage, PlaneWriter, SharedGlobalMatmulConfig,
@@ -10,10 +11,7 @@ use cubecl_matmul::components::{
     },
     stage::{StageConfig, StageMatmul, StridedStageMemory},
 };
-use cubecl_std::{
-    CubeOption,
-    tensor::{View, layout::Coords2d},
-};
+use std::marker::PhantomData;
 
 use crate::components::{
     ConvolutionConfig,

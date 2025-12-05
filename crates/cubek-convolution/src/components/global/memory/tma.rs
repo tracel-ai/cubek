@@ -1,5 +1,4 @@
-use cubecl_core as cubecl;
-use cubecl_core::prelude::*;
+use cubecl::prelude::*;
 
 #[derive(CubeType)]
 /// A view of a feature map tensor that starts reading data from a specified offset.

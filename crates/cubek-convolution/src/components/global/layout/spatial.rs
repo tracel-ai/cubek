@@ -1,6 +1,5 @@
 use cubecl::prelude::*;
-use cubecl_core::{self as cubecl};
-use cubecl_std::tensor::{
+use cubecl::std::tensor::{
     layout::{
         Coordinates, Coords1d, Layout, LayoutExpand,
         as_dyn::{IntoDyn, IntoDynExpand},

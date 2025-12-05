@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
-use cubecl_core::{Runtime, client::ComputeClient};
-use cubecl_matmul::components::{
+use cubecl::{Runtime, client::ComputeClient};
+use cubek_matmul::components::{
     AvailableLineSizes, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulSelection,
     MatmulSetupError, MatrixLayout, StageIdent,
     global::{

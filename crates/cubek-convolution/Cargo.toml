@@ -5,15 +5,14 @@ description = "CubeCL Convolution Kernels Engine"
 edition.workspace = true
 keywords = []
 license.workspace = true
-name = "cubecl-convolution"
+name = "cubek-convolution"
 readme.workspace = true
-repository = "https://github.com/tracel-ai/cubecl/tree/main/crates/cubecl-convolution"
+repository = "https://github.com/tracel-ai/cubek/tree/main/crates/cubek-convolution"
 version.workspace = true
 
 [features]
-default = ["std", "cubecl-runtime/default", "cubecl-core/default"]
-export_tests = ["pretty_assertions"]
-std = ["cubecl-runtime/std", "cubecl-core/std"]
+default = ["std", "cubecl/default"]
+std = ["cubecl/std"]
 
 conv_tests_all = [
     "conv_tests_plane",
@@ -49,17 +48,15 @@ conv_tests_tma = []
 
 
 [dependencies]
+cubecl = { workspace = true }
+cubecl-common = { workspace = true }
+cubek-matmul = { path = "../cubek-matmul", default-features = false, version = "0.0.1" }
+
 bytemuck = { workspace = true }
-cubecl-common = { path = "../cubecl-common", version = "=0.9.0-pre.4", default-features = false }
-cubecl-core = { path = "../cubecl-core", version = "=0.9.0-pre.4", default-features = false }
-cubecl-matmul = { path = "../cubecl-matmul", version = "=0.9.0-pre.4", default-features = false }
-cubecl-random = { path = "../cubecl-random", version = "=0.9.0-pre.4", default-features = false }
-cubecl-reduce = { path = "../cubecl-reduce", version = "=0.9.0-pre.4", default-features = false }
-cubecl-runtime = { path = "../cubecl-runtime", version = "=0.9.0-pre.4", default-features = false }
-cubecl-std = { path = "../cubecl-std", version = "=0.9.0-pre.4", default-features = false }
 half = { workspace = true, features = ["bytemuck"] }
-pretty_assertions = { workspace = true, optional = true }
 serde = { workspace = true }
 
 [dev-dependencies]
 trybuild = "1"
+pretty_assertions = { workspace = true }
+cubecl = { workspace = true, features = ["test-runtime"] }

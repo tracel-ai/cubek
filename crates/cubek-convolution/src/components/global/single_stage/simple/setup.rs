@@ -1,7 +1,5 @@
-use std::marker::PhantomData;
-
-use cubecl_core::{Runtime, client::ComputeClient};
-use cubecl_matmul::components::{
+use cubecl::{Runtime, client::ComputeClient};
+use cubek_matmul::components::{
     AvailableLineSizes, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem,
     MatmulSelection, MatmulSetupError, MatrixLayout, StageIdent,
     global::{
@@ -16,6 +14,7 @@ use cubecl_matmul::components::{
         StageMatmulFamily, StridedStageFamily,
     },
 };
+use std::marker::PhantomData;
 
 use crate::components::{
     ConvolutionConfig, ConvolutionProblem,
