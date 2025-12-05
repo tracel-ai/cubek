@@ -8,10 +8,10 @@ use crate::components::args::TensorValue;
 use crate::components::batch::BatchAttentionFamily;
 use crate::components::batch::CubeCountInput;
 use crate::components::batch::base::BatchAttention;
-use cubecl_core as cubecl;
-use cubecl_core::prelude::*;
-use cubecl_std::tensor::r#virtual::VirtualTensor;
-use cubecl_std::{CubeOption, CubeOptionExpand};
+use cubecl as cubecl;
+use cubecl::prelude::*;
+use cubecl::std::tensor::r#virtual::VirtualTensor;
+use cubecl::std::{CubeOption, CubeOptionExpand};
 
 type Input<Args, QG, KG, VG, MSK> = <Args as AttentionArgs>::Input<QG, KG, VG, MSK>;
 type Output<Args, OG> = <Args as AttentionArgs>::Output<OG>;

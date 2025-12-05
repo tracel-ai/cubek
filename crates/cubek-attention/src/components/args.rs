@@ -1,6 +1,6 @@
 use cubecl::prelude::*;
-use cubecl_core::{self as cubecl};
-use cubecl_std::{
+use cubecl::{self as cubecl};
+use cubecl::std::{
     CubeOption, CubeOptionArgs, CubeOptionExpand,
     tensor::r#virtual::{VirtualTensorOperations, VirtualTensorOperationsExpand},
 };

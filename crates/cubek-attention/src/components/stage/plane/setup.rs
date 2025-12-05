@@ -9,8 +9,8 @@ use crate::components::{
     },
     tile::TileAttentionFamily,
 };
-use cubecl_core::prelude::ReadWrite;
-use cubecl_matmul::components::{
+use cubecl::prelude::ReadWrite;
+use cubek_matmul::components::{
     MatrixLayout,
     stage::{StageFamily, StageMemoryConfig, SwizzleMode},
     tile::io::Strided,

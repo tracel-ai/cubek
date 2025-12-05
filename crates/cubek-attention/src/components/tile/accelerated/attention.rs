@@ -1,6 +1,6 @@
-use cubecl_core as cubecl;
-use cubecl_core::prelude::*;
-use cubecl_matmul::components::tile::StridedTile;
+use cubecl as cubecl;
+use cubecl::prelude::*;
+use cubek_matmul::components::tile::StridedTile;
 
 use crate::components::AttentionPrecision;
 use crate::components::attention_types::*;

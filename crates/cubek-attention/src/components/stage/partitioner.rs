@@ -1,6 +1,6 @@
-use cubecl_core as cubecl;
-use cubecl_core::prelude::*;
-use cubecl_std::tensor::layout::Coords1d;
+use cubecl as cubecl;
+use cubecl::prelude::*;
+use cubecl::std::tensor::layout::Coords1d;
 
 use crate::components::global::simple::AttentionWriter;
 use crate::components::stage::Reducer;

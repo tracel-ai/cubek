@@ -1,7 +1,7 @@
-use cubecl_core as cubecl;
-use cubecl_core::prelude::*;
-use cubecl_matmul::components::tile::StridedTile;
-use cubecl_std::tensor::layout::Coords2d;
+use cubecl as cubecl;
+use cubecl::prelude::*;
+use cubek_matmul::components::tile::StridedTile;
+use cubecl::std::tensor::layout::Coords2d;
 
 use crate::components::tile::{
     FragmentAccumulator, FragmentAccumulatorExpand, FragmentMask, FragmentMaskExpand, LOGIT_MASKED,

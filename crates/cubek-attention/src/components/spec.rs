@@ -1,4 +1,4 @@
-use cubecl_core::prelude::*;
+use cubecl::prelude::*;
 use half::{bf16, f16};
 
 use crate::components::{

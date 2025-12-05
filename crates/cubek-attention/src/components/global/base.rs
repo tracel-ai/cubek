@@ -1,8 +1,8 @@
-use cubecl_core as cubecl;
-use cubecl_core::prelude::*;
+use cubecl as cubecl;
+use cubecl::prelude::*;
 
 use crate::components::global::simple::AttentionWriter;
-use cubecl_std::{CubeOption, tensor::r#virtual::VirtualTensor};
+use cubecl::std::{CubeOption, tensor::r#virtual::VirtualTensor};
 
 use crate::components::{
     AttentionBlueprint, AttentionPrecision, AttentionSetupError, attention_types::*,

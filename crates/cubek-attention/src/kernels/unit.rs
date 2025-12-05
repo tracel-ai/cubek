@@ -1,6 +1,6 @@
-use cubecl_core::client::ComputeClient;
-use cubecl_matmul::components::ComputeResources;
-use cubecl_matmul::components::{global::PartitionedStageFamily, stage::StridedStageFamily};
+use cubecl::client::ComputeClient;
+use cubek_matmul::components::ComputeResources;
+use cubek_matmul::components::{global::PartitionedStageFamily, stage::StridedStageFamily};
 
 use crate::components::batch::HypercubeBlueprint;
 use crate::components::stage::unit::UnitPartitionStageAttentionFamily;
@@ -33,7 +33,7 @@ impl Algorithm for UnitAlgorithm {
 
     type Settings = SharedAttentionSettings;
 
-    fn blueprint<R: cubecl_core::Runtime>(
+    fn blueprint<R: cubecl::Runtime>(
         client: &ComputeClient<R>,
         problem: &AttentionProblem,
         settings: &Self::Settings,
@@ -101,7 +101,7 @@ impl Algorithm for UnitAlgorithm {
         })
     }
 
-    fn dtypes<R: cubecl_core::Runtime>(
+    fn dtypes<R: cubecl::Runtime>(
         _client: &ComputeClient<R>,
         problem: &AttentionProblem,
         _blueprint: &AttentionBlueprint,

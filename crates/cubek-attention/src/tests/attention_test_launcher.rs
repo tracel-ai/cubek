@@ -1,7 +1,7 @@
-use cubecl_core::prelude::*;
-use cubecl_core::server::Allocation;
-use cubecl_core::{CubeElement, server};
-use cubecl_std::CubeOptionArgs;
+use cubecl::prelude::*;
+use cubecl::server::Allocation;
+use cubecl::{CubeElement, server};
+use cubecl::std::CubeOptionArgs;
 
 use crate::components::AttentionIdent;
 use crate::components::args::{TensorArgs, TensorInputsLaunch};
@@ -11,7 +11,7 @@ use crate::kernels::Algorithm;
 use crate::tests::test_utils::Sampleable;
 use crate::tests::test_utils::TestPrecision;
 
-use cubecl_core::{Runtime, client::ComputeClient};
+use cubecl::{Runtime, client::ComputeClient};
 use std::fmt::Debug;
 
 // Returns if should return

@@ -1,5 +1,5 @@
-use cubecl_core as cubecl;
-use cubecl_core::prelude::*;
+use cubecl as cubecl;
+use cubecl::prelude::*;
 
 use crate::components::tile::RowWise;
 

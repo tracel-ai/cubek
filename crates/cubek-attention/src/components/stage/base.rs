@@ -1,6 +1,6 @@
-use cubecl_core as cubecl;
-use cubecl_core::prelude::*;
-use cubecl_matmul::components::{
+use cubecl as cubecl;
+use cubecl::prelude::*;
+use cubek_matmul::components::{
     global::{WriteEventListener, WriteTiling, read::sync_full_cyclic::SyncFullCyclicLoading},
     stage::{ContiguousTilingLayout, RowMajorTilingOrder, StageFamily, StageMemoryConfig},
 };
@@ -16,8 +16,8 @@ use crate::components::{
     global::simple::QueryReader,
     stage::{plane::PlanePartitionStageConfig, unit::UnitPartitionStageConfig},
 };
-use cubecl_std::CubeOption;
-use cubecl_std::tensor::layout::Coords2d;
+use cubecl::std::CubeOption;
+use cubecl::std::tensor::layout::Coords2d;
 
 pub type AttentionTilingLayout = ContiguousTilingLayout<RowMajorTilingOrder>;
 pub type AttentionLoadingStrategy = SyncFullCyclicLoading<RowMajorTilingOrder>;

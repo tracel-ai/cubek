@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use cubecl_matmul::components::{
+use cubek_matmul::components::{
     LoadingPrecomputeStrategy, MatrixLayout, StageIdent,
     global::{
         GlobalReaderConfig, GlobalWriterConfig, PartitionedStageFamily, PlaneRoleConfig,

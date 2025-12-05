@@ -1,7 +1,7 @@
-use cubecl_core as cubecl;
-use cubecl_core::prelude::*;
+use cubecl as cubecl;
+use cubecl::prelude::*;
 
-use cubecl_std::tensor::layout::Coords2d;
+use cubecl::std::tensor::layout::Coords2d;
 
 use crate::components::tile::RowWise;
 

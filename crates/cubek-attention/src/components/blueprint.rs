@@ -1,4 +1,4 @@
-use cubecl_core::CubeDim;
+use cubecl::CubeDim;
 
 use crate::components::{
     AttentionCheckBounds, AttentionLineSizes, AttentionProblem, AttentionTilingScheme,

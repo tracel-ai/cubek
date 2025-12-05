@@ -1,6 +1,6 @@
-use cubecl_core as cubecl;
-use cubecl_core::prelude::*;
-use cubecl_std::{CubeOption, tensor::r#virtual::VirtualTensor};
+use cubecl as cubecl;
+use cubecl::prelude::*;
+use cubecl::std::{CubeOption, tensor::r#virtual::VirtualTensor};
 use std::marker::PhantomData;
 
 use crate::components::{

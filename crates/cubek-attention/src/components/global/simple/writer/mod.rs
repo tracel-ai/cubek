@@ -1,12 +1,12 @@
 use cubecl::prelude::*;
-use cubecl_core::{self as cubecl};
+use cubecl::{self as cubecl};
 
-use cubecl_matmul::components::global::{GlobalWriterConfig, PartitionedStage, WriteEventListener};
+use cubek_matmul::components::global::{GlobalWriterConfig, PartitionedStage, WriteEventListener};
 
 mod plane;
 mod unit;
 
-use cubecl_std::tensor::{View, layout::Coords2d};
+use cubecl::std::tensor::{View, layout::Coords2d};
 pub use plane::*;
 pub use unit::*;
 

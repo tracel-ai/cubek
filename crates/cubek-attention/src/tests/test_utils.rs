@@ -3,7 +3,7 @@
 use core::f32;
 use std::fmt::Display;
 
-use cubecl_core::{
+use cubecl::{
     CubeElement, Runtime,
     client::ComputeClient,
     flex32,
@@ -12,7 +12,7 @@ use cubecl_core::{
     tf32,
 };
 
-use cubecl_std::tensor::TensorHandle;
+use cubecl::std::tensor::TensorHandle;
 
 use crate::{
     components::{AttentionIdent, AttentionPrecision, AttentionProblem, AttentionStorageTypes},

@@ -1,4 +1,4 @@
-use cubecl_core::{Runtime, client::ComputeClient};
+use cubecl::{Runtime, client::ComputeClient};
 
 use crate::components::tile::TileAttentionFamily;
 use crate::components::{

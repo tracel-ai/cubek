@@ -1,4 +1,4 @@
-use cubecl_core::ir::{ElemType, FloatKind, StorageType};
+use cubecl::ir::{ElemType, FloatKind, StorageType};
 
 use crate::components::{AttentionIdent, AttentionLineSizes};
 

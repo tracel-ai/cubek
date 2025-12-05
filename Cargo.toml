@@ -10,6 +10,7 @@ members = [
     "crates/cubek-reduce",
     "crates/cubek-matmul",
     "crates/cubek-convolution",
+    "crates/cubek-attention",
 ]
 
 [workspace.package]

@@ -1,11 +1,11 @@
 use cubecl::prelude::*;
-use cubecl_core as cubecl;
+use cubecl as cubecl;
 
 use crate::components::stage::{MaskTile, PartitionAttentionConfig};
 use crate::components::tile::TileAttention;
 use crate::components::{AttentionPrecision, stage::StageAttentionConfig};
-use cubecl_std::CubeOption;
-use cubecl_std::tensor::layout::Coords2d;
+use cubecl::std::CubeOption;
+use cubecl::std::tensor::layout::Coords2d;
 
 #[derive(CubeType)]
 /// We can keep only one mask tile at a time because it is directly applied to softmax tile

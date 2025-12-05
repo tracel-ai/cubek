@@ -1,5 +1,5 @@
-use cubecl_core::CubeDim;
-use cubecl_matmul::components::global::{
+use cubecl::CubeDim;
+use cubek_matmul::components::global::{
     GlobalReaderConfig, GlobalWriterConfig, memory::GlobalMemoryConfig,
 };
 

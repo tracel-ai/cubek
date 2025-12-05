@@ -1,4 +1,4 @@
-use cubecl_matmul::components::ComputeResources;
+use cubek_matmul::components::ComputeResources;
 
 use crate::components::AttentionTileSize;
 use crate::components::tile::SharedTileAttentionConfig;

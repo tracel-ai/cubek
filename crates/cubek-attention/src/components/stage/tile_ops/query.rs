@@ -1,10 +1,10 @@
-use cubecl_core as cubecl;
-use cubecl_core::prelude::*;
+use cubecl as cubecl;
+use cubecl::prelude::*;
 
 use crate::components::AttentionPrecision;
 use crate::components::attention_types::*;
 use crate::components::tile::TileAttention;
-use cubecl_matmul::components::tile::StridedTile;
+use cubek_matmul::components::tile::StridedTile;
 
 #[derive(CubeType)]
 /// Query input to the Tile Attention

@@ -1,7 +1,7 @@
 use cubecl::prelude::*;
-use cubecl_core::{self as cubecl};
-use cubecl_matmul::components::global::memory::GlobalMemoryConfig;
-use cubecl_std::tensor::{
+use cubecl::{self as cubecl};
+use cubek_matmul::components::global::memory::GlobalMemoryConfig;
+use cubecl::std::tensor::{
     layout::{Coords1d, Coords2d, Layout, LayoutExpand},
     r#virtual::VirtualTensor,
 };

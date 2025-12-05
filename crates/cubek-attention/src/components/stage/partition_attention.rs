@@ -1,6 +1,6 @@
-use cubecl_core as cubecl;
-use cubecl_core::prelude::*;
-use cubecl_matmul::components::{
+use cubecl as cubecl;
+use cubecl::prelude::*;
+use cubek_matmul::components::{
     global::{WriteEvent, WriteEventListener},
     stage::Stage,
     tile::io::Strided,
@@ -28,8 +28,8 @@ use crate::components::{
     stage::{KeyValuePartition, QueryPartition, SoftmaxPartition},
     tile::TileAttention,
 };
-use cubecl_std::CubeOption;
-use cubecl_std::tensor::layout::Coords2d;
+use cubecl::std::CubeOption;
+use cubecl::std::tensor::layout::Coords2d;
 
 #[derive(CubeType)]
 pub struct PartitionAttention<

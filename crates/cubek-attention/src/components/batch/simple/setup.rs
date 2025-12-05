@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use cubecl_core::server::LaunchError;
+use cubecl::server::LaunchError;
 
 use crate::components::{
     AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError, InputRuntimeArg,
@@ -22,10 +22,10 @@ impl<GA: GlobalAttentionFamily> BatchAttentionFamily for SimpleBatchAttentionFam
     type Attention<AP: AttentionPrecision> = SimpleBatchAttention<AP, GA::Attention<AP>>;
     type Config = SimpleBatchConfig<GA::Config>;
 
-    unsafe fn launch_unchecked<'a, AA: AttentionArgs, R: cubecl_core::Runtime>(
-        client: &cubecl_core::prelude::ComputeClient<R>,
-        cube_dim: cubecl_core::CubeDim,
-        cube_count: cubecl_core::CubeCount,
+    unsafe fn launch_unchecked<'a, AA: AttentionArgs, R: cubecl::Runtime>(
+        client: &cubecl::prelude::ComputeClient<R>,
+        cube_dim: cubecl::CubeDim,
+        cube_count: cubecl::CubeCount,
         input: InputRuntimeArg<'a, AA, R>,
         output: OutputRuntimeArg<'a, AA, R>,
         cube_count_input: crate::components::batch::CubeCountInputArgs<'a, R>,

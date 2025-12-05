@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use cubecl_core::{LineSizeError, Runtime, client::ComputeClient, tensor_line_size_parallel};
+use cubecl::{LineSizeError, Runtime, client::ComputeClient, tensor_line_size_parallel};
 
 use crate::components::{AttentionIdent, AttentionSetupError, AttentionStorageTypes};
 

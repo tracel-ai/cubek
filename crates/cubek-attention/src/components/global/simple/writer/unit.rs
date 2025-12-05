@@ -1,6 +1,6 @@
 use cubecl::prelude::*;
-use cubecl_core::{self as cubecl};
-use cubecl_matmul::components::{
+use cubecl::{self as cubecl};
+use cubek_matmul::components::{
     StageIdent,
     global::{
         GlobalWriterConfig, PartitionedStage, WriteEvent, WriteEventExpand, WriteEventListener,
@@ -8,7 +8,7 @@ use cubecl_matmul::components::{
         unit_write,
     },
 };
-use cubecl_std::tensor::{View, layout::Coords2d};
+use cubecl::std::tensor::{View, layout::Coords2d};
 
 use crate::components::{
     global::simple::{AttentionWriter, AttentionWriterExpand},

@@ -1,4 +1,4 @@
-use cubecl_matmul::components::TileSize;
+use cubek_matmul::components::TileSize;
 
 use crate::components::AttentionProblem;
 

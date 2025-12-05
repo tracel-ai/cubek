@@ -1,5 +1,5 @@
 use cubecl::prelude::*;
-use cubecl_core as cubecl;
+use cubecl as cubecl;
 
 use crate::components::stage::{KeyValueTile, PartitionAttentionConfig};
 use crate::components::tile::TileAttention;

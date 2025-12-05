@@ -1,5 +1,5 @@
-use cubecl_core::{CubeCount, CubeDim, LineSizeError, server::LaunchError};
-use cubecl_matmul::components::MatmulSetupError;
+use cubecl::{CubeCount, CubeDim, LineSizeError, server::LaunchError};
+use cubek_matmul::components::MatmulSetupError;
 use std::fmt::{Debug, Display};
 
 /// Errors that can occur during the setup phase of an attention operation.

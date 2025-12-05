@@ -1,5 +1,5 @@
-use cubecl_core::client::ComputeClient;
-use cubecl_matmul::components::{global::PartitionedStageFamily, stage::StridedStageFamily};
+use cubecl::client::ComputeClient;
+use cubek_matmul::components::{global::PartitionedStageFamily, stage::StridedStageFamily};
 
 use crate::components::batch::HypercubeBlueprint;
 use crate::components::stage::plane::PlanePartitionStageAttentionFamily;
@@ -32,7 +32,7 @@ impl Algorithm for BlackboxAcceleratedAlgorithm {
 
     type Settings = SharedAttentionSettings;
 
-    fn blueprint<R: cubecl_core::Runtime>(
+    fn blueprint<R: cubecl::Runtime>(
         client: &ComputeClient<R>,
         problem: &AttentionProblem,
         settings: &Self::Settings,
@@ -97,7 +97,7 @@ impl Algorithm for BlackboxAcceleratedAlgorithm {
         })
     }
 
-    fn dtypes<R: cubecl_core::Runtime>(
+    fn dtypes<R: cubecl::Runtime>(
         _client: &ComputeClient<R>,
         problem: &AttentionProblem,
         _blueprint: &AttentionBlueprint,
