@@ -81,7 +81,7 @@ cubek-random = { path = "../cubek-random", version = "=0.0.1", default-features 
 cubek-reduce = { path = "../cubek-reduce", version = "=0.0.1", default-features = false }
 
 bytemuck = { workspace = true }
-cubecl = { workspace = true }
+cubecl = { workspace = true, features = ["stdlib"] }
 cubecl-common = { workspace = true }
 half = { workspace = true, features = ["bytemuck"] }
 serde = { workspace = true }

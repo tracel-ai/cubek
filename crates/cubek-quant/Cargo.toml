@@ -16,7 +16,7 @@ kernels = ["std"]
 std = ["cubecl/std"]
 
 [dependencies]
-cubecl = { workspace = true }
+cubecl = { workspace = true, features = ["stdlib"] }
 cubecl-common = { workspace = true, features = ["fp8"] }
 
 half.workspace = true

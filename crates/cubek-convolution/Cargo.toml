@@ -48,7 +48,7 @@ conv_tests_tma = []
 
 
 [dependencies]
-cubecl = { workspace = true }
+cubecl = { workspace = true, features = ["stdlib"] }
 cubecl-common = { workspace = true }
 cubek-matmul = { path = "../cubek-matmul", default-features = false, version = "0.0.1" }
 

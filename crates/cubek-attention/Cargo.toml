@@ -27,8 +27,8 @@ attention_tests_all = [
 
 [dependencies]
 cubek-matmul = { path = "../cubek-matmul", version = "0.0.1", default-features = false }
+cubecl = { workspace = true, features = ["stdlib"] }
 cubecl-common = { workspace = true }
-cubecl = { workspace = true }
 
 bytemuck = { workspace = true }
 half = { workspace = true, features = ["bytemuck"] }
