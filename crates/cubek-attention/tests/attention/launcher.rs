@@ -1,4 +1,4 @@
-use crate::suite::assert_result;
+use crate::attention::assert_result;
 use cubecl::TestRuntime;
 use cubecl::std::CubeOptionArgs;
 use cubecl::std::tensor::TensorHandle;

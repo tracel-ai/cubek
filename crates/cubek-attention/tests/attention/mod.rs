@@ -1,12 +1,12 @@
-pub mod launcher;
+pub(crate) mod launcher;
 
 mod reference;
 mod utils;
 
-pub use reference::assert_result;
-pub use utils::tiling_scheme_ops;
+pub(crate) use reference::assert_result;
+pub(crate) use utils::tiling_scheme_ops;
 
-mod attention_unit {
+mod unit {
     type Algorithm = cubek_attention::kernels::unit::UnitAlgorithm;
     const TILE_SIZE: cubek_attention::components::AttentionTileSize =
         cubek_attention::components::AttentionTileSize {
@@ -41,7 +41,7 @@ mod attention_unit {
     }
 }
 
-mod attention_blackbox_accelerated {
+mod blackbox_accelerated {
     type Algorithm = cubek_attention::kernels::blackbox_accelerated::BlackboxAcceleratedAlgorithm;
     #[cfg(target_os = "macos")]
     const TILE_SIZE: cubek_attention::components::AttentionTileSize =
