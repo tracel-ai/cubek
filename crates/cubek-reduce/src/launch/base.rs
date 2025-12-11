@@ -43,7 +43,7 @@ pub(crate) fn launch_reduce<Run: Runtime>(
         _ => LineMode::Perpendicular,
     };
     let (line_size_input, line_size_output) = generate_line_size::<Run>(
-        &client,
+        client,
         &input,
         &output,
         axis as usize,
@@ -85,7 +85,7 @@ pub(crate) fn launch_reduce<Run: Runtime>(
             dtypes.output,
             dtypes.accumulation,
         )
-        .map_err(|err| ReduceError::Launch(err))
+        .map_err(ReduceError::Launch)
     }
 }
 

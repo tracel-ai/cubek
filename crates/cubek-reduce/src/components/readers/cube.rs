@@ -13,6 +13,7 @@ pub struct CubeReader<P: ReducePrecision> {
 }
 
 #[cube]
+#[allow(clippy::len_without_is_empty)]
 impl<P: ReducePrecision> CubeReader<P> {
     pub fn new(reader: Reader<P>) -> CubeReader<P> {
         CubeReader::<P> { reader }
@@ -25,10 +26,10 @@ impl<P: ReducePrecision> CubeReader<P> {
         }
     }
 
-    pub fn len(&self) -> u32 {
+    pub fn length(&self) -> u32 {
         match &self.reader {
-            Reader::Parallel(reader) => reader.len_cube(),
-            Reader::Perpendicular(reader) => reader.len_cube(),
+            Reader::Parallel(reader) => reader.length_cube(),
+            Reader::Perpendicular(reader) => reader.length_cube(),
         }
     }
 }

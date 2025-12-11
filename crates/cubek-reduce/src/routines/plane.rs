@@ -41,7 +41,7 @@ impl<R: Runtime> Routine<R> for PlaneRoutine {
 
         let cube_dim = CubeDim::new_2d(plane_size, plane_count);
         let plane_idle = working_planes % plane_count != 0;
-        let bound_checks = match problem.vector_size % plane_size != 0 {
+        let bound_checks = match !problem.vector_size.is_multiple_of(plane_size) {
             true => BoundChecks::Mask,
             false => BoundChecks::None,
         };

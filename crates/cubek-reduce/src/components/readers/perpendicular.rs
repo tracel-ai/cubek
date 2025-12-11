@@ -64,15 +64,15 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
         }
     }
 
-    pub fn len_unit(&self) -> u32 {
+    pub fn length_unit(&self) -> u32 {
         self.shape
     }
 
-    pub fn len_plane(&self) -> u32 {
+    pub fn lenth_plane(&self) -> u32 {
         self.shape.div_ceil(CUBE_DIM_X)
     }
 
-    pub fn len_cube(&self) -> u32 {
+    pub fn length_cube(&self) -> u32 {
         self.shape.div_ceil(CUBE_DIM)
     }
 

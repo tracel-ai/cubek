@@ -52,7 +52,7 @@ impl GlobalFullPlaneReduce {
 
         let mut accumulator = I::null_accumulator(inst, input_line_size);
 
-        for i in 0..reader.len() {
+        for i in 0..reader.length() {
             let (item, coordinate) = reader.read(i);
             reduce_inplace::<P, I>(
                 inst,

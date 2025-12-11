@@ -37,7 +37,7 @@ impl GlobalFullCubeReduce {
         let reader = CubeReader::<P>::new(reader);
         let mut accumulator = I::null_accumulator(inst, input_line_size);
 
-        for i in 0..reader.len() {
+        for i in 0..reader.length() {
             let (item, coordinate) = reader.read(i);
             reduce_inplace::<P, I>(inst, &mut accumulator, item, coordinate, false);
         }
@@ -125,7 +125,7 @@ fn reduce_scan<P: ReducePrecision, I: ReduceInstruction<P>>(
     #[comptime] size: u32,
 ) {
     for i in 0..size {
-        let item = I::SharedAccumulator::read(&accumulator, i);
+        let item = I::SharedAccumulator::read(accumulator, i);
         let (item, coordinate) = I::read_accumulator(inst, &item);
         reduce_inplace::<P, I>(inst, result, item, coordinate, false);
     }

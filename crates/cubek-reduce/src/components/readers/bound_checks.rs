@@ -30,13 +30,10 @@ impl<P: ReducePrecision> ReaderBoundChecks<P> {
         match comptime!(bound_checks) {
             BoundChecks::None => ReaderBoundChecks::new_NotRequired(),
             BoundChecks::Mask | BoundChecks::Branch => {
-                let pos_max = pos_max;
-                let null_input = I::null_input(inst, line_size);
-
                 ReaderBoundChecks::new_Required(RequiredReaderBoundChecks::<P> {
                     bound_checks,
                     pos_max,
-                    null_input,
+                    null_input: I::null_input(inst, line_size),
                 })
             }
         }

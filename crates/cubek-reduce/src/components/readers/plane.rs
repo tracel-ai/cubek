@@ -25,10 +25,10 @@ impl<P: ReducePrecision> PlaneReader<P> {
         }
     }
 
-    pub fn len(&self) -> u32 {
+    pub fn length(&self) -> u32 {
         match &self.reader {
-            Reader::Parallel(reader) => reader.len_plane(),
-            Reader::Perpendicular(reader) => reader.len_plane(),
+            Reader::Parallel(reader) => reader.length_plane(),
+            Reader::Perpendicular(reader) => reader.lenth_plane(),
         }
     }
 }
