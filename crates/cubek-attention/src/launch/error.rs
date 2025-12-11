@@ -1,5 +1,4 @@
 use cubecl::{CubeCount, CubeDim, LineSizeError, server::LaunchError};
-use cubek_matmul::components::MatmulSetupError;
 use std::fmt::{Debug, Display};
 
 /// Errors that can occur during the setup phase of an attention operation.
@@ -12,9 +11,6 @@ pub enum AttentionSetupError {
 
     /// No compatible line size could be found for the given constraints.
     LineSize(LineSizeError),
-
-    /// Error in underlying matmul
-    MatmulSetup(MatmulSetupError),
 
     /// An error that happened during execution.
     Execution(LaunchError),
@@ -75,9 +71,6 @@ impl Debug for AttentionSetupError {
                     "Unable to launch attention because could not find supported line size: {err:?}"
                 )
             }
-            AttentionSetupError::MatmulSetup(matmul_setup_error) => {
-                writeln!(f, "{matmul_setup_error:?}")
-            }
             AttentionSetupError::Execution(error) => {
                 writeln!(f, "{error:?}")
             }
@@ -119,11 +112,5 @@ impl Display for FormattedConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let string = (self.func)();
         write!(f, "{string}")
-    }
-}
-
-impl From<MatmulSetupError> for AttentionSetupError {
-    fn from(value: MatmulSetupError) -> Self {
-        Self::MatmulSetup(value)
     }
 }
