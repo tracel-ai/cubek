@@ -1,5 +1,5 @@
-use crate::suite::attention_test_launcher::attention_test_launch;
-use crate::suite::macros::tiling_scheme_ops::*;
+use crate::suite::launcher::attention_test_launch;
+use crate::suite::tiling_scheme_ops::*;
 use cubecl::client::ComputeClient;
 use cubecl::{Runtime, TestRuntime};
 use cubek_attention::components::AttentionStorageTypes;

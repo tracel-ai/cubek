@@ -18,7 +18,7 @@ pub fn assert_result(
     elems: AttentionElems,
 ) {
     let epsilon = attention_epsilon(&elems, 170.);
-    let expected = flash_attention_v2_cpu(query, key, value, mask, problem);
+    let expected = flash_attention_v2_reference(query, key, value, mask, problem);
 
     if let Err(e) = assert_equals_approx(client, &out, &expected, epsilon) {
         panic!("{}", e);
@@ -42,7 +42,7 @@ fn attention_epsilon(elems: &AttentionElems, safety_factor: f32) -> f32 {
     total_eps as f32 * safety_factor
 }
 
-pub(crate) fn flash_attention_v2_cpu(
+pub(crate) fn flash_attention_v2_reference(
     query: &[f32],
     key: &[f32],
     value: &[f32],
