@@ -4,14 +4,13 @@ use cubecl::client::ComputeClient;
 use cubecl::{CubeDim, Runtime, tensor_line_size_parallel};
 use cubek_std::test_utils::contiguous_strides;
 
-use crate::components::batch::CubeCountPlan;
 use crate::components::tile::TileAttentionFamily;
 use crate::components::{
     batch::BatchAttentionFamily, global::GlobalAttentionFamily, stage::StageAttentionFamily,
 };
 use crate::launch::{
     AttentionBlueprint, AttentionDefinition, AttentionElems, AttentionIdent, AttentionLineSizes,
-    AttentionSetupError, RoutineStrategy,
+    AttentionSetupError, CubeCountPlan, RoutineStrategy,
 };
 
 pub trait Routine: Debug + Clone {

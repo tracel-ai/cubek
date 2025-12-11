@@ -2,14 +2,13 @@ use cubecl::CubeDim;
 use cubek_matmul::components::ComputeResources;
 use cubek_matmul::components::{global::PartitionedStageFamily, stage::StridedStageFamily};
 
-use crate::components::batch::HypercubeBlueprint;
 use crate::components::stage::unit::UnitPartitionStageAttentionFamily;
 use crate::components::tile::TileAttentionFamily;
 use crate::components::tile::unit_register::UnitRegisterTileAttention;
 use crate::launch::{
     AttentionBlueprint, AttentionDefinition, AttentionElems, AttentionPartitionSize,
     AttentionSetupError, AttentionStageSize, AttentionTileSize, AttentionTilingScheme,
-    RoutineStrategy,
+    HypercubeBlueprint, RoutineStrategy,
 };
 use crate::routines::{DeviceSettings, LaunchInfo};
 use crate::{
@@ -62,7 +61,6 @@ impl Routine for UnitRoutine {
         let cube_dim = CubeDim::new_2d(blueprint.plane_dim, num_planes);
         let cube_count_plan = blueprint
             .hypercube_blueprint
-            .to_hypercube_config()
             .cube_count_plan(&definition.dims, &blueprint);
 
         Ok(LaunchInfo {

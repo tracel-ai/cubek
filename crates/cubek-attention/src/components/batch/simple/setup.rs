@@ -7,13 +7,16 @@ use crate::{
         batch::{
             BatchAttentionFamily,
             entry_point::attention,
-            simple::{SimpleBatchAttention, config::SimpleBatchConfig},
+            simple::{
+                SimpleBatchAttention,
+                config::{HypercubeConfig, SimpleBatchConfig},
+            },
         },
         global::GlobalAttentionFamily,
     },
     launch::{
         AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError,
-        InputRuntimeArg, OutputRuntimeArg, args::AttentionArgs,
+        CubeCountInputArgs, InputRuntimeArg, OutputRuntimeArg, args::AttentionArgs,
     },
 };
 
@@ -31,7 +34,7 @@ impl<GA: GlobalAttentionFamily> BatchAttentionFamily for SimpleBatchAttentionFam
         cube_count: cubecl::CubeCount,
         input: InputRuntimeArg<'a, AA, R>,
         output: OutputRuntimeArg<'a, AA, R>,
-        cube_count_input: crate::components::batch::CubeCountInputArgs<'a, R>,
+        cube_count_input: CubeCountInputArgs<'a, R>,
         dtypes: &AttentionElems,
         blueprint: AttentionBlueprint,
     ) -> Result<(), LaunchError> {
@@ -56,7 +59,7 @@ impl<GA: GlobalAttentionFamily> BatchAttentionFamily for SimpleBatchAttentionFam
 
         Ok(SimpleBatchConfig::new(
             global_config,
-            blueprint.hypercube_blueprint.to_hypercube_config(),
+            HypercubeConfig::from_blueprint(blueprint.hypercube_blueprint),
         ))
     }
 }

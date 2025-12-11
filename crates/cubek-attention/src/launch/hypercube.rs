@@ -7,15 +7,6 @@ use crate::launch::{AttentionBlueprint, AttentionDims};
 pub struct HypercubeBlueprint {}
 
 impl HypercubeBlueprint {
-    pub fn to_hypercube_config(&self) -> HypercubeConfig {
-        HypercubeConfig {}
-    }
-}
-
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct HypercubeConfig {}
-
-impl HypercubeConfig {
     pub fn cube_count_plan(
         &self,
         dims: &AttentionDims,

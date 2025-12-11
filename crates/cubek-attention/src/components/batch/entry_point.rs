@@ -1,7 +1,7 @@
 use crate::components::batch::BatchAttentionFamily;
-use crate::components::batch::CubeCountInput;
 use crate::components::batch::base::BatchAttention;
 use crate::launch::AttentionBlueprint;
+use crate::launch::CubeCountInput;
 use crate::launch::args::AttentionArgs;
 use crate::launch::args::TensorKey;
 use crate::launch::args::TensorMask;

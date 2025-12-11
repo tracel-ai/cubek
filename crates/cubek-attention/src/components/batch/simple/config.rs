@@ -1,8 +1,8 @@
 use cubecl::CubeDim;
 
-use crate::components::{
-    batch::{BatchAttentionConfig, HypercubeConfig},
-    global::GlobalAttentionConfig,
+use crate::{
+    components::{batch::BatchAttentionConfig, global::GlobalAttentionConfig},
+    launch::HypercubeBlueprint,
 };
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -33,5 +33,13 @@ impl<G: GlobalAttentionConfig> SimpleBatchConfig<G> {
             global_config,
             hypercube_config,
         }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+pub struct HypercubeConfig {}
+impl HypercubeConfig {
+    pub(crate) fn from_blueprint(_hypercube_blueprint: HypercubeBlueprint) -> HypercubeConfig {
+        Self {}
     }
 }

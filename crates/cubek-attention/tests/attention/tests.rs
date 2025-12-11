@@ -1,10 +1,9 @@
 use crate::attention::launcher::test_launch;
 use crate::attention::tiling_scheme_ops::*;
 use cubecl::{Runtime, TestRuntime};
-use cubek_attention::components::batch::HypercubeBlueprint;
 use cubek_attention::launch::{
     AccumulatorPrecision, AttentionDefinition, AttentionDims, AttentionOptions,
-    AttentionPartitionSize, AttentionStageSize, AttentionTilingScheme,
+    AttentionPartitionSize, AttentionStageSize, AttentionTilingScheme, HypercubeBlueprint,
 };
 use cubek_attention::routines::DeviceSettings;
 

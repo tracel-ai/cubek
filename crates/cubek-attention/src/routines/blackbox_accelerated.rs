@@ -1,13 +1,14 @@
 use cubecl::CubeDim;
 use cubek_matmul::components::{global::PartitionedStageFamily, stage::StridedStageFamily};
 
-use crate::components::batch::HypercubeBlueprint;
 use crate::components::stage::plane::PlanePartitionStageAttentionFamily;
 use crate::components::tile::accelerated::BlackboxAcceleratedTileAttention;
 #[cfg(target_os = "macos")]
 use crate::launch::AttentionTileSize;
 use crate::launch::{
-    AttentionBlueprint, AttentionDefinition, AttentionElems, AttentionPartitionSize, AttentionSetupError, AttentionStageSize, AttentionTilingScheme, RoutineStrategy
+    AttentionBlueprint, AttentionDefinition, AttentionElems, AttentionPartitionSize,
+    AttentionSetupError, AttentionStageSize, AttentionTilingScheme, HypercubeBlueprint,
+    RoutineStrategy,
 };
 use crate::routines::{DeviceSettings, LaunchInfo};
 use crate::{
@@ -50,7 +51,6 @@ impl Routine for BlackboxAcceleratedRoutine {
 
         let cube_count_plan = blueprint
             .hypercube_blueprint
-            .to_hypercube_config()
             .cube_count_plan(&definition.dims, &blueprint);
 
         Ok(LaunchInfo {
