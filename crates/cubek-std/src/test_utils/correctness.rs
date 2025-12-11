@@ -16,6 +16,10 @@ pub fn assert_equals_approx(
     let data_f32 =
         f32::from_bytes(&client.read_one_tensor(data_handle.as_copy_descriptor())).to_owned();
 
+    if matches!(current_test_mode(), TestMode::Print) {
+        println!("Epsilon: {:?}", epsilon);
+    }
+
     for (i, (a, e)) in data_f32.iter().zip(expected.iter()).enumerate() {
         let allowed_error = (epsilon * e).max(epsilon);
 

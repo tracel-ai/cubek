@@ -60,152 +60,157 @@ fn attention_one_tile_simple() {
     test_launch(client, definition, strategy)
 }
 
-// #[test]
-// fn attention_one_partition_several_planes() {
-//     let client = <TestRuntime as Runtime>::client(&Default::default());
+#[test]
+fn attention_one_partition_several_planes() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
 
-//     let partition_size = AttentionPartitionSize {
-//         seq_q: 1,
-//         seq_kv: 1,
-//         head_dim: 1,
-//         val_dim: 1,
-//     };
-//     let stage_size = AttentionStageSize {
-//         seq_q: STAGE_Q_BASE * 2,
-//     };
-//     let tiling_scheme = AttentionTilingScheme {
-//         tile_size: TILE_SIZE,
-//         partition_size,
-//         stage_size,
-//     };
+    let tiling_scheme = AttentionTilingScheme {
+        tile_size: tile_size(),
+        partition_size: AttentionPartitionSize {
+            seq_q: 1,
+            seq_kv: 1,
+            head_dim: 1,
+            val_dim: 1,
+        },
+        stage_size: AttentionStageSize {
+            seq_q: minimal_seq_q_stage() * 2,
+        },
+    };
 
-//     let seq_q = elements_in_partition_seq_q(&tiling_scheme);
-//     let seq_kv = elements_in_partition_seq_kv(&tiling_scheme);
-//     let head_dim = elements_in_partition_head_dim(&tiling_scheme);
-//     let val_dim = elements_in_partition_val_dim(&tiling_scheme);
+    let definition = AttentionDefinition {
+        dims: AttentionDims {
+            batch: 1,
+            num_heads: 1,
+            seq_q: elements_in_stage_seq_q(&tiling_scheme),
+            seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
+            head_dim: elements_in_partition_head_dim(&tiling_scheme),
+            val_dim: elements_in_partition_val_dim(&tiling_scheme),
+        },
+        masked: false,
+        global_dtypes: global_dtypes(),
+        options: AttentionOptions {
+            causal: false,
+            accumulator_precision: AccumulatorPrecision::default(),
+        },
+    };
 
-//     let global_dtypes = global_dtypes();
-//     let line_sizes = default_line_sizes(&client, global_dtypes.clone(), head_dim, val_dim);
+    let launch_settings = DeviceSettings::new(&client, &definition);
 
-//     let problem = AttentionProblem {
-//         batch: 1,
-//         num_heads: 1,
-//         seq_q,
-//         seq_kv,
-//         head_dim,
-//         val_dim,
-//         masked: false,
-//         causal: false,
-//         global_dtypes,
-//         accumulator_precision: AccumulatorPrecision::default(),
-//         line_sizes,
-//     };
+    let blueprint = AttentionBlueprint {
+        hypercube_blueprint: HypercubeBlueprint {},
+        tiling_scheme,
+        plane_dim: launch_settings.plane_dim,
+        reuse_key_value: false,
+        two_rows_in_array_tile: false,
+        line_sizes: launch_settings.line_sizes,
+        masked: definition.masked,
+        causal: definition.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+    };
 
-//     let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
-//         tiling_scheme: Some(tiling_scheme),
-//         ..Default::default()
-//     }));
+    let strategy = strategy(blueprint);
 
-//     test_launch(client, problem, strategy)
-// }
+    test_launch(client, definition, strategy)
+}
 
-// #[test]
-// fn attention_problem_smaller_than_one_tile_seq_q_seq_kv_val_dim() {
-//     let client = <TestRuntime as Runtime>::client(&Default::default());
+#[test]
+fn attention_problem_smaller_than_one_tile_seq_q_seq_kv_val_dim() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let tiling_scheme = AttentionTilingScheme {
+        tile_size: tile_size(),
+        partition_size: AttentionPartitionSize {
+            seq_q: 1,
+            seq_kv: 1,
+            head_dim: 1,
+            val_dim: 1,
+        },
+        stage_size: AttentionStageSize {
+            seq_q: minimal_seq_q_stage(),
+        },
+    };
+    let seq_q = tiling_scheme.tile_size.seq_q as usize - 1;
+    let seq_kv = tiling_scheme.tile_size.seq_kv as usize - 1;
+    let head_dim = tiling_scheme.tile_size.head_dim as usize;
+    let val_dim = tiling_scheme.tile_size.val_dim as usize - 1;
+    let definition = AttentionDefinition {
+        dims: AttentionDims {
+            batch: 1,
+            num_heads: 1,
+            seq_q,
+            seq_kv,
+            head_dim,
+            val_dim,
+        },
+        masked: false,
+        global_dtypes: global_dtypes(),
+        options: AttentionOptions {
+            causal: false,
+            accumulator_precision: AccumulatorPrecision::default(),
+        },
+    };
+    let launch_settings = DeviceSettings::new(&client, &definition);
+    let blueprint = AttentionBlueprint {
+        hypercube_blueprint: HypercubeBlueprint {},
+        tiling_scheme,
+        plane_dim: launch_settings.plane_dim,
+        reuse_key_value: false,
+        two_rows_in_array_tile: false,
+        line_sizes: launch_settings.line_sizes,
+        masked: definition.masked,
+        causal: definition.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+    };
+    let strategy = strategy(blueprint);
+    test_launch(client, definition, strategy)
+}
 
-//     let partition_size = AttentionPartitionSize {
-//         seq_q: 1,
-//         seq_kv: 1,
-//         head_dim: 1,
-//         val_dim: 1,
-//     };
-//     let stage_size = AttentionStageSize {
-//         seq_q: STAGE_Q_BASE,
-//     };
-//     let tiling_scheme = AttentionTilingScheme {
-//         tile_size: TILE_SIZE,
-//         partition_size,
-//         stage_size,
-//     };
-
-//     let seq_q = tiling_scheme.tile_size.seq_q as usize - 1;
-//     let seq_kv = tiling_scheme.tile_size.seq_kv as usize - 1;
-//     let head_dim = tiling_scheme.tile_size.head_dim as usize;
-//     let val_dim = tiling_scheme.tile_size.val_dim as usize - 1;
-
-//     let global_dtypes = global_dtypes();
-//     let line_sizes = default_line_sizes(&client, global_dtypes.clone(), head_dim, val_dim);
-
-//     let problem = AttentionProblem {
-//         batch: 1,
-//         num_heads: 1,
-//         seq_q,
-//         seq_kv,
-//         head_dim,
-//         val_dim,
-//         masked: false,
-//         causal: false,
-//         global_dtypes,
-//         accumulator_precision: AccumulatorPrecision::default(),
-//         line_sizes,
-//     };
-
-//     let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
-//         tiling_scheme: Some(tiling_scheme),
-//         ..Default::default()
-//     }));
-
-//     test_launch(client, problem, strategy)
-// }
-
-// #[test]
-// fn attention_head_dim_oob() {
-//     let client = <TestRuntime as Runtime>::client(&Default::default());
-
-//     let partition_size = AttentionPartitionSize {
-//         seq_q: 1,
-//         seq_kv: 1,
-//         head_dim: 1,
-//         val_dim: 1,
-//     };
-//     let stage_size = AttentionStageSize {
-//         seq_q: STAGE_Q_BASE,
-//     };
-//     let tiling_scheme = AttentionTilingScheme {
-//         tile_size: TILE_SIZE,
-//         partition_size,
-//         stage_size,
-//     };
-
-//     let seq_q = elements_in_stage_seq_q(&tiling_scheme);
-//     let seq_kv = elements_in_partition_seq_kv(&tiling_scheme);
-//     let head_dim = tiling_scheme.tile_size.head_dim as usize - 1;
-//     let val_dim = elements_in_partition_val_dim(&tiling_scheme);
-
-//     let global_dtypes = global_dtypes();
-//     let line_sizes = default_line_sizes(&client, global_dtypes.clone(), head_dim, val_dim);
-
-//     let problem = AttentionProblem {
-//         batch: 1,
-//         num_heads: 1,
-//         seq_q,
-//         seq_kv,
-//         head_dim,
-//         val_dim,
-//         masked: false,
-//         causal: false,
-//         global_dtypes: global_dtypes,
-//         accumulator_precision: AccumulatorPrecision::default(),
-//         line_sizes,
-//     };
-
-//     let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
-//         tiling_scheme: Some(tiling_scheme),
-//         ..Default::default()
-//     }));
-
-//     test_launch(client, problem, strategy)
-// }
+#[test]
+fn attention_head_dim_oob() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let tiling_scheme = AttentionTilingScheme {
+        tile_size: tile_size(),
+        partition_size: AttentionPartitionSize {
+            seq_q: 1,
+            seq_kv: 1,
+            head_dim: 1,
+            val_dim: 1,
+        },
+        stage_size: AttentionStageSize {
+            seq_q: minimal_seq_q_stage(),
+        },
+    };
+    let head_dim = tiling_scheme.tile_size.head_dim as usize - 1;
+    let definition = AttentionDefinition {
+        dims: AttentionDims {
+            batch: 1,
+            num_heads: 1,
+            seq_q: elements_in_stage_seq_q(&tiling_scheme),
+            seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
+            head_dim,
+            val_dim: elements_in_partition_val_dim(&tiling_scheme),
+        },
+        masked: false,
+        global_dtypes: global_dtypes(),
+        options: AttentionOptions {
+            causal: false,
+            accumulator_precision: AccumulatorPrecision::default(),
+        },
+    };
+    let launch_settings = DeviceSettings::new(&client, &definition);
+    let blueprint = AttentionBlueprint {
+        hypercube_blueprint: HypercubeBlueprint {},
+        tiling_scheme,
+        plane_dim: launch_settings.plane_dim,
+        reuse_key_value: false,
+        two_rows_in_array_tile: false,
+        line_sizes: launch_settings.line_sizes,
+        masked: definition.masked,
+        causal: definition.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+    };
+    let strategy = strategy(blueprint);
+    test_launch(client, definition, strategy)
+}
 
 // #[test]
 // fn attention_two_rows_in_array_tile() {

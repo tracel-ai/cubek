@@ -25,18 +25,22 @@ pub fn assert_result(
 }
 
 fn attention_epsilon(elems: &AttentionElems, safety_factor: f32) -> f32 {
-    let total_eps = elems.query_global.epsilon()
-        + elems.query_tile.epsilon()
-        + elems.key_global.epsilon()
-        + elems.key_stage.epsilon()
-        + elems.value_global.epsilon()
-        + elems.value_stage.epsilon()
-        + elems.key_value_tile.epsilon()
-        + elems.softmax.epsilon()
-        + elems.accumulator.epsilon()
-        + elems.mask.epsilon()
-        + elems.out_global.epsilon()
-        + elems.out_stage.epsilon();
+    let total_eps = [
+        elems.query_global.epsilon(),
+        elems.query_tile.epsilon(),
+        elems.key_global.epsilon(),
+        elems.key_stage.epsilon(),
+        elems.value_global.epsilon(),
+        elems.value_stage.epsilon(),
+        elems.key_value_tile.epsilon(),
+        elems.softmax.epsilon(),
+        elems.accumulator.epsilon(),
+        elems.mask.epsilon(),
+        elems.out_global.epsilon(),
+        elems.out_stage.epsilon(),
+    ]
+    .into_iter()
+    .fold(0.0, f64::max);
 
     total_eps as f32 * safety_factor
 }
