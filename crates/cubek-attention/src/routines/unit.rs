@@ -78,7 +78,7 @@ fn blueprint(
     strategy: RoutineStrategy<UnitRoutine>,
 ) -> Result<AttentionBlueprint, AttentionSetupError> {
     match strategy {
-        RoutineStrategy::Forced(attention_blueprint) => Ok(attention_blueprint),
+        RoutineStrategy::Forced(attention_blueprint) => validate(definition, attention_blueprint),
         RoutineStrategy::Inferred(_) => {
             let tile_size = AttentionTileSize {
                 seq_q: 4,
@@ -86,12 +86,6 @@ fn blueprint(
                 seq_kv: 4,
                 val_dim: 4,
             };
-
-            if definition.dims.head_dim as u32 % tile_size.head_dim != 0 {
-                return Err(AttentionSetupError::InvalidConfig(Box::new(
-                    "Tile size head dim must divide problem head dim".to_string(),
-                )));
-            }
 
             let partition_head_dim = definition.dims.head_dim as u32 / tile_size.head_dim;
             let partition_val_dim = partition_head_dim;
@@ -109,14 +103,7 @@ fn blueprint(
                 stage_size: AttentionStageSize { seq_q: plane_dim },
             };
 
-            // Not sure where to put this, it depends on blueprint and problem
-            if partition_head_dim * tile_size.head_dim != definition.dims.head_dim as u32 {
-                return Err(AttentionSetupError::InvalidConfig(Box::new(
-                    "Tiling scheme's total head dim must equal problem's head dim".to_string(),
-                )));
-            }
-
-            Ok(AttentionBlueprint {
+            let blueprint = AttentionBlueprint {
                 hypercube_blueprint: HypercubeBlueprint {},
                 tiling_scheme,
                 plane_dim,
@@ -126,7 +113,30 @@ fn blueprint(
                 masked: definition.masked,
                 causal: definition.options.causal,
                 check_bounds: tiling_scheme.check_bounds(&definition.dims),
-            })
+            };
+
+            validate(definition, blueprint)
         }
     }
+}
+
+fn validate(
+    definition: &AttentionDefinition,
+    blueprint: AttentionBlueprint,
+) -> Result<AttentionBlueprint, AttentionSetupError> {
+    if definition.dims.head_dim as u32 % blueprint.tiling_scheme.tile_size.head_dim != 0 {
+        return Err(AttentionSetupError::InvalidConfig(Box::new(
+            "Tile size head dim must divide problem head dim".to_string(),
+        )));
+    }
+
+    if blueprint.tiling_scheme.partition_size.head_dim * blueprint.tiling_scheme.tile_size.head_dim
+        != definition.dims.head_dim as u32
+    {
+        return Err(AttentionSetupError::InvalidConfig(Box::new(
+            "Tiling scheme's total head dim must equal problem's head dim".to_string(),
+        )));
+    }
+
+    Ok(blueprint)
 }
