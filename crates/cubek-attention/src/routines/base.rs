@@ -1,15 +1,14 @@
 use std::fmt::Debug;
 
 use cubecl::client::ComputeClient;
-use cubecl::{CubeDim, Runtime, tensor_line_size_parallel};
-use cubek_std::test_utils::contiguous_strides;
+use cubecl::{CubeDim, Runtime};
 
 use crate::components::tile::TileAttentionFamily;
 use crate::components::{
     batch::BatchAttentionFamily, global::GlobalAttentionFamily, stage::StageAttentionFamily,
 };
 use crate::launch::{
-    AttentionBlueprint, AttentionDefinition, AttentionElems, AttentionIdent, AttentionLineSizes,
+    AttentionBlueprint, AttentionDefinition, AttentionElems, AttentionLineSizes,
     AttentionSetupError, CubeCountPlan, RoutineStrategy,
 };
 
@@ -42,41 +41,9 @@ pub struct DeviceSettings {
 
 impl DeviceSettings {
     pub fn new<R: Runtime>(client: &ComputeClient<R>, definition: &AttentionDefinition) -> Self {
-        let find_line_size = |shape: &[usize; 4], dtype_size: usize| -> u8 {
-            let supported_line_sizes = client.io_optimized_line_sizes_unchecked(dtype_size);
-
-            tensor_line_size_parallel(
-                supported_line_sizes,
-                shape,
-                &contiguous_strides(shape, false),
-                shape.len() - 1,
-            )
-        };
-
-        let line_sizes = AttentionLineSizes {
-            query: find_line_size(
-                &definition.dims.shape(AttentionIdent::Query),
-                definition.global_dtypes.query.size(),
-            ),
-            key: find_line_size(
-                &definition.dims.shape(AttentionIdent::Key),
-                definition.global_dtypes.key.size(),
-            ),
-            value: find_line_size(
-                &definition.dims.shape(AttentionIdent::Value),
-                definition.global_dtypes.value.size(),
-            ),
-            // lined mask not always supported at the moment
-            mask: 1,
-            out: find_line_size(
-                &definition.dims.shape(AttentionIdent::Query),
-                definition.global_dtypes.out.size(),
-            ),
-        };
-
         DeviceSettings {
             plane_dim: client.properties().hardware.plane_size_max,
-            line_sizes,
+            line_sizes: AttentionLineSizes::new_max(client, definition),
         }
     }
 }
