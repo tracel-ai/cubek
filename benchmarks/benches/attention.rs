@@ -9,13 +9,9 @@ use cubecl::{
     std::tensor::TensorHandle,
 };
 use cubek::{
-    attention::{
-        self as attention, Strategy,
-        components::{
-            AttentionElems, AttentionIdent, AttentionPrecision, AttentionDefinition,
-            AttentionGlobalTypes,
-            attention_types::{KG, MSK, OG, QG, VG},
-        },
+    attention::launch::{
+        AttentionDefinition, AttentionElems, AttentionIdent, AttentionPrecision, Strategy,
+        attention_types::*,
     },
     random::random_uniform,
 };
