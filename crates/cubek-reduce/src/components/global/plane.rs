@@ -1,6 +1,7 @@
 use crate::{
     LineMode, ReduceInstruction, ReducePrecision,
     components::{
+        global::reduce_count,
         instructions::reduce_inplace,
         readers::{Reader, plane::PlaneReader},
         writer,
@@ -24,15 +25,14 @@ impl GlobalFullPlaneReduce {
     ) {
         let reduce_index = CUBE_POS * CUBE_DIM_Y + UNIT_POS_Y;
 
-        #[allow(clippy::collapsible_if)]
         if comptime![blueprint.plane_idle] {
-            if reduce_index
-                >= get_reduce_count(
-                    output.len() * output.line_size(),
-                    line_mode,
-                    input.line_size(),
-                )
-            {
+            let reduce_count = reduce_count(
+                output.len() * output.line_size(),
+                line_mode,
+                input.line_size(),
+            );
+
+            if reduce_index >= reduce_count {
                 terminate!();
             }
         }
@@ -83,17 +83,5 @@ impl GlobalFullPlaneReduce {
                 inst,
             )
         }
-    }
-}
-
-#[cube]
-fn get_reduce_count(
-    output_size: u32,
-    #[comptime] line_mode: LineMode,
-    #[comptime] input_line_size: u32,
-) -> u32 {
-    match comptime!(line_mode) {
-        LineMode::Parallel => output_size,
-        LineMode::Perpendicular => output_size / input_line_size,
     }
 }

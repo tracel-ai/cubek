@@ -1,6 +1,7 @@
 use crate::{
     BoundChecksInner, LineMode, ReduceInstruction, ReducePrecision,
     components::{
+        global::reduce_count,
         instructions::reduce_inplace,
         readers::{Reader, unit::UnitReader},
         writer,
@@ -25,7 +26,7 @@ impl GlobalFullUnitReduce {
         let reduce_index = ABSOLUTE_POS;
 
         if comptime![blueprint.unit_idle] {
-            let reduce_count = get_reduce_count(
+            let reduce_count = reduce_count(
                 output.len() * output.line_size(),
                 line_mode,
                 input.line_size(),
@@ -65,17 +66,5 @@ impl GlobalFullUnitReduce {
             input.line_size(),
             inst,
         )
-    }
-}
-
-#[cube]
-fn get_reduce_count(
-    output_size: u32,
-    #[comptime] line_mode: LineMode,
-    #[comptime] input_line_size: u32,
-) -> u32 {
-    match comptime!(line_mode) {
-        LineMode::Parallel => output_size,
-        LineMode::Perpendicular => output_size / input_line_size,
     }
 }
