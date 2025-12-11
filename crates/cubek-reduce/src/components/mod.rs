@@ -2,8 +2,6 @@ pub mod args;
 pub mod config;
 pub mod global;
 pub mod instructions;
-pub mod level;
-pub mod partition;
 pub mod precision;
 pub mod readers;
 pub mod writer;

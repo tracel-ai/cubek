@@ -52,7 +52,7 @@ macro_rules! testgen_reduce {
         strides: $strides:expr,
         axis: $axis:expr,
     ) => {
-        use cubek_reduce::{ReduceStrategy, PlaneReduceLevel};
+        use cubek_reduce::ReduceStrategy;
 
         mod full_cube {
             use super::*;

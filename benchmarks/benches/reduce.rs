@@ -6,9 +6,7 @@ use cubecl::{
 };
 use cubek::{
     random::random_uniform,
-    reduce::{
-        PlaneReduceLevel, components::instructions::ReduceOperationConfig, launch::ReduceStrategy,
-    },
+    reduce::{components::instructions::ReduceOperationConfig, launch::ReduceStrategy},
 };
 use std::marker::PhantomData;
 
