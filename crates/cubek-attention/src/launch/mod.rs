@@ -5,7 +5,6 @@ mod blueprint;
 mod definition;
 mod error;
 mod hypercube;
-mod ident;
 mod line_size;
 mod spec;
 
@@ -14,6 +13,5 @@ pub use blueprint::*;
 pub use definition::*;
 pub use error::*;
 pub use hypercube::*;
-pub use ident::*;
 pub use line_size::*;
 pub use spec::*;

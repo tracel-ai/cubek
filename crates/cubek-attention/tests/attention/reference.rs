@@ -11,13 +11,13 @@ pub fn assert_result(
     key: &[f32],
     value: &[f32],
     mask: Option<&[bool]>,
-    problem: &AttentionDefinition,
+    definition: &AttentionDefinition,
     client: &ComputeClient<TestRuntime>,
     out: TensorHandle<TestRuntime>,
     elems: AttentionElems,
 ) {
     let epsilon = attention_epsilon(&elems, 170.);
-    let expected = flash_attention_v2_reference(query, key, value, mask, problem);
+    let expected = flash_attention_v2_reference(query, key, value, mask, definition);
 
     if let Err(e) = assert_equals_approx(client, &out, &expected, epsilon) {
         panic!("{}", e);

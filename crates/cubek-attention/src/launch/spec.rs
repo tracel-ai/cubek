@@ -4,7 +4,6 @@ use half::{bf16, f16};
 use crate::launch::{
     AccumulatorPrecision, AttentionGlobalTypes,
     args::{AttentionArgs, TensorArgs},
-    attention_types::*,
 };
 
 /// Attention spec defining each element types used in the computation as well as
@@ -268,23 +267,6 @@ pub struct AttentionElems {
 }
 
 impl AttentionElems {
-    pub fn new<AP: AttentionPrecision>() -> Self {
-        Self {
-            query_global: QG::<AP>::as_type_native_unchecked(),
-            query_tile: QT::<AP>::as_type_native_unchecked(),
-            key_global: KG::<AP>::as_type_native_unchecked(),
-            key_stage: KS::<AP>::as_type_native_unchecked(),
-            value_global: VG::<AP>::as_type_native_unchecked(),
-            value_stage: VS::<AP>::as_type_native_unchecked(),
-            key_value_tile: KVT::<AP>::as_type_native_unchecked(),
-            softmax: SM::<AP>::as_type_native_unchecked(),
-            accumulator: ACC::<AP>::as_type_native_unchecked(),
-            mask: MSK::<AP>::as_type_native_unchecked(),
-            out_global: OG::<AP>::as_type_native_unchecked(),
-            out_stage: OS::<AP>::as_type_native_unchecked(),
-        }
-    }
-
     pub fn from_global_types(
         global_dtypes: &AttentionGlobalTypes,
         accumulator_precision: &AccumulatorPrecision,

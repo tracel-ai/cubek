@@ -1,7 +1,5 @@
 use cubecl::ir::{ElemType, FloatKind, StorageType};
 
-use crate::launch::AttentionIdent;
-
 #[derive(Clone, Debug)]
 /// Description of an attention problem to solve, regardless of actual data
 pub struct AttentionDefinition {
@@ -13,6 +11,16 @@ pub struct AttentionDefinition {
     pub global_dtypes: AttentionGlobalTypes,
 
     pub options: AttentionOptions,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum AttentionIdent {
+    Query,
+    Key,
+    Softmax,
+    Value,
+    Mask,
+    Out,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -74,7 +82,7 @@ impl AttentionGlobalTypes {
             query: dtype,
             key: dtype,
             value: dtype,
-            mask: dtype,
+            mask: StorageType::Scalar(ElemType::UInt(cubecl::ir::UIntKind::U8)),
             out: dtype,
         }
     }

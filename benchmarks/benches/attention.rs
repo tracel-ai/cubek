@@ -71,15 +71,15 @@ impl<R: Runtime, AP: AttentionPrecision> Benchmark for AttentionBench<R, AP> {
     }
 
     fn execute(&self, input: Self::Input) -> Result<(), String> {
-        let client = R::client(&self.device);
-        let dtypes = AttentionElems::new::<AP>();
-
-        let out: TensorHandle<R> = TensorHandle::empty(
-            &client,
-            self.problem.shape(AttentionIdent::Out).to_vec(),
-            dtypes.out_global,
-        );
         todo!();
+        // let client = R::client(&self.device);
+        // let dtypes = AttentionElems::new::<AP>();
+
+        // let out: TensorHandle<R> = TensorHandle::empty(
+        //     &client,
+        //     self.problem.shape(AttentionIdent::Out).to_vec(),
+        //     dtypes.out_global,
+        // )
 
         // attention::launch_ref(
         //     &Strategy::BlackboxAccelerated,
