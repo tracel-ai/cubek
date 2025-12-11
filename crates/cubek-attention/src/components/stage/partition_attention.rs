@@ -8,25 +8,23 @@ use cubek_matmul::components::{
 use std::marker::PhantomData;
 
 use crate::components::{
-    AttentionPrecision,
-    global::GlobalAttentionConfig,
-    stage::{PartitionAttentionConfig, tile_softmax},
-    tile::TileAttentionConfig as _,
-};
-use crate::components::{attention_types::*, stage::StageAttention};
-use crate::components::{global::simple::MaskReader, stage::partitioner::AttentionPartitioner};
-use crate::components::{
-    global::simple::QueryReader,
-    stage::{AccumulatorPartition, MaskPartition},
+    global::simple::{MaskReader, QueryReader},
+    stage::{AccumulatorPartition, MaskPartition, partitioner::AttentionPartitioner},
 };
 use crate::components::{
-    stage::RunningState,
-    tile::{FragmentSoftmax, FragmentSoftmaxExpand},
+    stage::{
+        KeyValuePartition, QueryPartition, RunningState, SoftmaxPartition, StageAttentionConfig,
+    },
+    tile::{FragmentSoftmax, FragmentSoftmaxExpand, RowWise, TileAttention},
 };
-use crate::components::{stage::StageAttentionConfig, tile::RowWise};
-use crate::components::{
-    stage::{KeyValuePartition, QueryPartition, SoftmaxPartition},
-    tile::TileAttention,
+use crate::{components::stage::StageAttention, launch::AttentionPrecision};
+use crate::{
+    components::{
+        global::GlobalAttentionConfig,
+        stage::{PartitionAttentionConfig, tile_softmax},
+        tile::TileAttentionConfig as _,
+    },
+    launch::attention_types::*,
 };
 use cubecl::std::CubeOption;
 use cubecl::std::tensor::layout::Coords2d;

@@ -3,12 +3,14 @@ use cubecl::prelude::*;
 use cubecl::std::{CubeOption, tensor::r#virtual::VirtualTensor};
 
 use crate::components::{
-    AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError, InputRuntimeArg,
-    OutputRuntimeArg,
-    args::AttentionArgs,
-    attention_types::*,
     batch::{CubeCountInput, CubeCountInputArgs, HypercubeConfig},
     global::GlobalAttentionConfig,
+};
+use crate::launch::args::AttentionArgs;
+use crate::launch::attention_types::*;
+use crate::launch::{
+    AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError, InputRuntimeArg,
+    OutputRuntimeArg,
 };
 use std::{fmt::Debug, hash::Hash};
 

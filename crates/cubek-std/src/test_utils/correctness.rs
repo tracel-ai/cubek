@@ -1,3 +1,4 @@
+use crate::test_utils::test_mode::{TestMode, current_test_mode};
 use crate::test_utils::test_tensor::new_casted;
 use cubecl::CubeElement;
 use cubecl::frontend::CubePrimitive;
@@ -10,13 +11,6 @@ pub fn assert_equals_approx(
     expected: &[f32],
     epsilon: f32,
 ) -> Result<(), String> {
-    let env = std::env::var("CUBEK_TEST_MODE");
-
-    let print_instead_of_compare = match env {
-        Ok(val) => matches!(val.as_str(), "print"),
-        Err(_) => false,
-    };
-
     // Obtain the data in f32 for not being generic over type
     let data_handle = new_casted(client, &out, f32::as_type_native_unchecked());
     let data_f32 =
@@ -25,7 +19,7 @@ pub fn assert_equals_approx(
     for (i, (a, e)) in data_f32.iter().zip(expected.iter()).enumerate() {
         let allowed_error = (epsilon * e).max(epsilon);
 
-        if print_instead_of_compare {
+        if matches!(current_test_mode(), TestMode::Print) {
             println!("{:?}: {:?}, {:?}", i, a, e);
         } else {
             let actual_nan = f32::is_nan(*a);
@@ -50,7 +44,7 @@ pub fn assert_equals_approx(
         }
     }
 
-    if print_instead_of_compare {
+    if matches!(current_test_mode(), TestMode::Print) {
         Err("".to_string())
     } else {
         Ok(())

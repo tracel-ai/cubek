@@ -6,15 +6,24 @@ use cubek_matmul::components::{
 };
 use std::{fmt::Debug, hash::Hash};
 
-use crate::components::{
-    AttentionBlueprint, AttentionPartitionSize, AttentionPrecision, AttentionSetupError,
-    AttentionStageSize, global::GlobalAttentionConfig, stage::RunningState,
+use crate::{
+    components::tile::TileAttentionConfig,
+    launch::{AttentionPartitionSize, AttentionPrecision, AttentionStageSize},
 };
-use crate::components::{attention_types::*, tile::TileAttentionConfig};
-use crate::components::{global::simple::MaskReader, stage::AttentionPartitioner};
-use crate::components::{
-    global::simple::QueryReader,
-    stage::{plane::PlanePartitionStageConfig, unit::UnitPartitionStageConfig},
+use crate::{
+    components::{global::GlobalAttentionConfig, stage::RunningState},
+    launch::attention_types::*,
+};
+use crate::{
+    components::{global::simple::MaskReader, stage::AttentionPartitioner},
+    launch::AttentionSetupError,
+};
+use crate::{
+    components::{
+        global::simple::QueryReader,
+        stage::{plane::PlanePartitionStageConfig, unit::UnitPartitionStageConfig},
+    },
+    launch::AttentionBlueprint,
 };
 use cubecl::std::CubeOption;
 use cubecl::std::tensor::layout::Coords2d;

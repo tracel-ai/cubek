@@ -1,4 +1,3 @@
-use crate::components::{AttentionTileSize, attention_types::*};
 use cubecl;
 use cubecl::prelude::*;
 use cubecl::std::Swizzle;
@@ -6,8 +5,9 @@ use cubecl::std::tensor::{View, layout::Coords2d};
 use cubek_matmul::components::global::memory::GlobalMemoryConfig;
 use cubek_matmul::components::tile::StridedTile;
 
-use crate::components::AttentionPrecision;
 use crate::components::stage::AttentionPartitioner;
+use crate::launch::attention_types::QG;
+use crate::launch::{AttentionPrecision, AttentionTileSize};
 
 #[derive(CubeType)]
 pub struct QueryReader<AP: AttentionPrecision> {

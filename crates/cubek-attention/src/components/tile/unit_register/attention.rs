@@ -5,8 +5,6 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
 use cubek_matmul::components::tile::StridedTile;
 
-use crate::components::AttentionPrecision;
-use crate::components::attention_types::*;
 use crate::components::tile::LOGIT_MASKED;
 use crate::components::tile::RowVal;
 use crate::components::tile::RowWise;
@@ -18,6 +16,8 @@ use crate::components::tile::{RowwiseFormat, RowwiseFormatExpand};
 
 use crate::components::tile::TileAttention;
 use crate::components::tile::{FragmentLayout, FragmentLayoutExpand};
+use crate::launch::AttentionPrecision;
+use crate::launch::attention_types::*;
 
 pub struct UnitRegisterTileAttention;
 

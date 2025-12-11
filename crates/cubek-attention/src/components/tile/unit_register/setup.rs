@@ -1,11 +1,11 @@
 use cubek_matmul::components::ComputeResources;
 
-use crate::components::AttentionTileSize;
+use crate::components::tile::TileAttentionFamily;
 use crate::components::tile::unit_register::UnitRegisterTileAttention;
 use crate::components::tile::{SharedTileAttentionConfig, TileAttentionConfig};
-use crate::components::{
-    AttentionBlueprint, AttentionPrecision, AttentionSetupError, InvalidConfigError,
-    tile::TileAttentionFamily,
+use crate::launch::{
+    AttentionBlueprint, AttentionPrecision, AttentionSetupError, AttentionTileSize,
+    InvalidConfigError,
 };
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]

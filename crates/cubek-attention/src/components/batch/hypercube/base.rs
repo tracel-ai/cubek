@@ -1,7 +1,7 @@
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::components::{AttentionBlueprint, AttentionProblem};
+use crate::launch::{AttentionBlueprint, AttentionDims};
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct HypercubeBlueprint {}
@@ -18,16 +18,16 @@ pub struct HypercubeConfig {}
 impl HypercubeConfig {
     pub fn cube_count_plan(
         &self,
-        problem: &AttentionProblem,
+        dims: &AttentionDims,
         blueprint: &AttentionBlueprint,
     ) -> CubeCountPlan {
         CubeCountPlan {
-            inner: (problem.seq_q as u32).div_ceil(
+            inner: (dims.seq_q as u32).div_ceil(
                 blueprint.tiling_scheme.tile_size.seq_q
                     * blueprint.tiling_scheme.partition_size.seq_q
                     * blueprint.tiling_scheme.stage_size.seq_q,
             ),
-            outer: (problem.batch * problem.num_heads) as u32,
+            outer: (dims.batch * dims.num_heads) as u32,
         }
     }
 }

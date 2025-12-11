@@ -20,7 +20,7 @@ use cubek_matmul::{
     MatmulInputHandleRef,
     components::{AvailableLineSizes, MatmulIdent},
 };
-use cubek_std::test_utils::compute_strides;
+use cubek_std::test_utils::contiguous_strides;
 use cubek_std::test_utils::random_tensor;
 
 use crate::suite::assert_result;
@@ -48,7 +48,7 @@ pub fn test_matmul_algorithm<A: Algorithm>(
         &client,
         *dtypes.lhs_global,
         1234,
-        &compute_strides(
+        &contiguous_strides(
             &lhs_shape,
             matches!(problem.lhs_layout, MatrixLayout::ColMajor),
         ),
@@ -58,7 +58,7 @@ pub fn test_matmul_algorithm<A: Algorithm>(
         &client,
         *dtypes.rhs_global,
         5678,
-        &compute_strides(
+        &contiguous_strides(
             &rhs_shape,
             matches!(problem.rhs_layout, MatrixLayout::ColMajor),
         ),

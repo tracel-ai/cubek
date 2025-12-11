@@ -3,8 +3,9 @@ use cubecl::prelude::*;
 
 use crate::components::tile::TileAttention;
 
+use crate::components::stage::StageAttentionConfig;
 use crate::components::stage::{AccumulatorTile, PartitionAttentionConfig};
-use crate::components::{AttentionPrecision, stage::StageAttentionConfig};
+use crate::launch::AttentionPrecision;
 
 #[derive(CubeType)]
 /// Contains all seq_q·val_dim materialized tiles at once because they're accumulators

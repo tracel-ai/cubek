@@ -1,13 +1,15 @@
 use std::marker::PhantomData;
 
-use crate::components::{
-    attention_types::*,
-    stage::{
-        AttentionTilingLayout, PartitionAttentionConfig, SharedPartitionAttentionConfig,
-        plane::{PlanePartitionAttention, PlanePartitionStageConfig},
-        validate,
+use crate::{
+    components::{
+        stage::{
+            AttentionTilingLayout, PartitionAttentionConfig, SharedPartitionAttentionConfig,
+            plane::{PlanePartitionAttention, PlanePartitionStageConfig},
+            validate,
+        },
+        tile::TileAttentionFamily,
     },
-    tile::TileAttentionFamily,
+    launch::{AttentionBlueprint, AttentionPrecision, AttentionSetupError, attention_types::*},
 };
 use cubecl::prelude::ReadWrite;
 use cubek_matmul::components::{
@@ -16,9 +18,7 @@ use cubek_matmul::components::{
     tile::io::Strided,
 };
 
-use crate::components::{
-    AttentionBlueprint, AttentionPrecision, AttentionSetupError, stage::StageAttentionFamily,
-};
+use crate::components::stage::StageAttentionFamily;
 
 pub struct PlanePartitionStageAttentionFamily<
     TA: TileAttentionFamily,

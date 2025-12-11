@@ -3,6 +3,6 @@ pub mod blackbox_accelerated;
 /// Unit attention
 pub mod unit;
 
-mod algorithm;
+mod base;
 
-pub use algorithm::*;
+pub use base::*;

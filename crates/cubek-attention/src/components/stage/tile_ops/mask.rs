@@ -3,12 +3,12 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
 use cubecl::std::{CubeOption, CubeOptionExpand};
 
-use crate::components::AttentionPrecision;
-use crate::components::attention_types::MSK;
 use crate::components::tile::{
     FragmentLayout, FragmentLayoutExpand, FragmentMask, FragmentMaskExpand,
 };
 use crate::components::tile::{TileAttention, TileAttentionConfig};
+use crate::launch::AttentionPrecision;
+use crate::launch::attention_types::MSK;
 use cubek_matmul::components::tile::StridedTile;
 
 use cubecl::std::tensor::layout::Coordinates;

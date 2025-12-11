@@ -1,8 +1,8 @@
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::components::AttentionPrecision;
 use crate::components::tile::TileAttention;
+use crate::launch::AttentionPrecision;
 
 #[derive(CubeType)]
 /// Key and Value inputs to the Tile Attention

@@ -1,6 +1,27 @@
 use cubek_matmul::components::TileSize;
 
-use crate::components::AttentionProblem;
+use crate::{
+    components::batch::HypercubeBlueprint,
+    launch::{AttentionDims, AttentionLineSizes},
+};
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub struct AttentionBlueprint {
+    pub hypercube_blueprint: HypercubeBlueprint,
+
+    pub tiling_scheme: AttentionTilingScheme,
+    pub plane_dim: u32,
+
+    pub reuse_key_value: bool,
+    pub two_rows_in_array_tile: bool,
+
+    pub line_sizes: AttentionLineSizes,
+
+    pub masked: bool,
+    pub causal: bool,
+
+    pub check_bounds: AttentionCheckBounds,
+}
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct AttentionTilingScheme {
@@ -38,7 +59,7 @@ impl AttentionTilingScheme {
         self.stage_size.seq_q * self.elements_in_partition_seq_q()
     }
 
-    pub fn check_bounds(&self, problem: &AttentionProblem) -> AttentionCheckBounds {
+    pub fn check_bounds(&self, problem: &AttentionDims) -> AttentionCheckBounds {
         AttentionCheckBounds {
             seq_q: self.elements_in_stage_seq_q() % problem.seq_q as u32 != 0,
             seq_kv: self.elements_in_partition_seq_kv() % problem.seq_kv as u32 != 0,

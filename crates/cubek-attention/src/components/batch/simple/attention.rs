@@ -4,14 +4,14 @@ use cubecl::std::{CubeOption, tensor::r#virtual::VirtualTensor};
 use std::marker::PhantomData;
 
 use crate::components::{
-    AttentionPrecision,
-    attention_types::*,
     batch::{
         BatchAttention, BatchAttentionConfig, CubeCountInput, simple::config::SimpleBatchConfig,
     },
     global::{GlobalAttention, GlobalAttentionConfig as _},
     stage::StageAttentionConfig as _,
 };
+use crate::launch::AttentionPrecision;
+use crate::launch::attention_types::*;
 
 pub struct SimpleBatchAttention<AP: AttentionPrecision, GA: GlobalAttention<AP>> {
     _phantom: PhantomData<(AP, GA)>,

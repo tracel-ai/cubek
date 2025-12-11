@@ -1,5 +1,5 @@
 /// TODO move MatrixLayout to std, then use enum
-pub fn compute_strides(shape: &[usize], col_major: bool) -> Vec<usize> {
+pub fn contiguous_strides(shape: &[usize], col_major: bool) -> Vec<usize> {
     let n = shape.len();
     assert!(n >= 2, "Matrix must have at least 2 dimensions");
 

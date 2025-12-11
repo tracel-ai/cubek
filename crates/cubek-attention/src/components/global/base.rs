@@ -1,13 +1,13 @@
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::components::global::simple::AttentionWriter;
+use crate::{
+    components::global::simple::AttentionWriter,
+    launch::{AttentionBlueprint, AttentionPrecision, AttentionSetupError, attention_types::*},
+};
 use cubecl::std::{CubeOption, tensor::r#virtual::VirtualTensor};
 
-use crate::components::{
-    AttentionBlueprint, AttentionPrecision, AttentionSetupError, attention_types::*,
-    global::simple::QueryReader, stage::StageAttentionConfig,
-};
+use crate::components::{global::simple::QueryReader, stage::StageAttentionConfig};
 use std::{fmt::Debug, hash::Hash};
 
 /// A family of [GlobalAttention] implementations that operate with any [precision](AttentionPrecision).

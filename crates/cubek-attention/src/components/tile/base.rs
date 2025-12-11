@@ -3,14 +3,15 @@ use cubecl::prelude::*;
 use cubek_matmul::components::ComputeResources;
 use cubek_matmul::components::tile::StridedTile;
 
-use crate::components::attention_types::*;
 use crate::components::tile::{
     FragmentAccumulator, FragmentLayout, FragmentMask, FragmentSoftmax, RowwiseFormat,
 };
-use crate::components::{
+use crate::launch::attention_types::{ACC, SM};
+use crate::launch::{
     AttentionBlueprint, AttentionPrecision, AttentionSetupError, AttentionTileSize,
     InvalidConfigError,
 };
+
 use std::fmt::Debug;
 use std::hash::Hash;
 

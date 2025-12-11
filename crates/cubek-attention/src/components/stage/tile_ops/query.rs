@@ -1,9 +1,9 @@
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::components::AttentionPrecision;
-use crate::components::attention_types::*;
 use crate::components::tile::TileAttention;
+use crate::launch::AttentionPrecision;
+use crate::launch::attention_types::QG;
 use cubek_matmul::components::tile::StridedTile;
 
 #[derive(CubeType)]

@@ -2,16 +2,19 @@ use std::marker::PhantomData;
 
 use cubecl::server::LaunchError;
 
-use crate::components::{
-    AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError, InputRuntimeArg,
-    OutputRuntimeArg,
-    args::AttentionArgs,
-    batch::{
-        BatchAttentionFamily,
-        entry_point::attention,
-        simple::{SimpleBatchAttention, config::SimpleBatchConfig},
+use crate::{
+    components::{
+        batch::{
+            BatchAttentionFamily,
+            entry_point::attention,
+            simple::{SimpleBatchAttention, config::SimpleBatchConfig},
+        },
+        global::GlobalAttentionFamily,
     },
-    global::GlobalAttentionFamily,
+    launch::{
+        AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError,
+        InputRuntimeArg, OutputRuntimeArg, args::AttentionArgs,
+    },
 };
 
 pub struct SimpleBatchAttentionFamily<GA: GlobalAttentionFamily> {

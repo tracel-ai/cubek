@@ -7,18 +7,16 @@ use cubek_matmul::components::global::read::FullStageGlobalReader;
 use cubek_matmul::components::stage::StridedStageMemory;
 use std::marker::PhantomData;
 
-use crate::components::attention_types::*;
 use crate::components::global::AttentionGlobalLayout;
 use crate::components::global::simple::QueryReader;
 use crate::components::global::simple::{AttentionWriter, AttentionWriterExpand, MaskReader};
+use crate::components::global::{GlobalAttention, simple::config::SimpleGlobalAttentionConfig};
 use crate::components::stage::{
     AttentionLoadingStrategy, AttentionPartitioner, AttentionTilingLayout, StageAttention,
     StageAttentionConfig as _,
 };
-use crate::components::{
-    AttentionPrecision,
-    global::{GlobalAttention, simple::config::SimpleGlobalAttentionConfig},
-};
+use crate::launch::AttentionPrecision;
+use crate::launch::attention_types::*;
 
 pub struct SimpleGlobalAttention<AP: AttentionPrecision, SA: StageAttention<AP>> {
     _phantom: PhantomData<(AP, SA)>,

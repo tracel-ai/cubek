@@ -12,8 +12,8 @@ use cubek::{
     attention::{
         self as attention, Strategy,
         components::{
-            AttentionElems, AttentionIdent, AttentionPrecision, AttentionProblem,
-            AttentionStorageTypes,
+            AttentionElems, AttentionIdent, AttentionPrecision, AttentionDefinition,
+            AttentionGlobalTypes,
             attention_types::{KG, MSK, OG, QG, VG},
         },
     },
@@ -126,7 +126,7 @@ impl<R: Runtime, AP: AttentionPrecision> Benchmark for AttentionBench<R, AP> {
 
 #[allow(dead_code)]
 pub struct AttentionBench<R: Runtime, AP> {
-    problem: AttentionProblem,
+    problem: AttentionDefinition,
     strategy: Strategy,
     device: R::Device,
     client: ComputeClient<R>,

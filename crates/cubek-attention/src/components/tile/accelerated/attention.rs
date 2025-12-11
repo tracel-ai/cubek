@@ -2,14 +2,13 @@ use cubecl;
 use cubecl::prelude::*;
 use cubek_matmul::components::tile::StridedTile;
 
-use crate::components::AttentionPrecision;
-use crate::components::attention_types::*;
-
 use crate::components::tile::accelerated::hybrid_fragment::HybridFragment;
 use crate::components::tile::accelerated::local_tile::LocalTile;
 use crate::components::tile::accelerated::local_tile::LocalTileLayout;
 use crate::components::tile::accelerated::setup::BlackboxAcceleratedAttentionMatmulConfig;
 use crate::components::tile::{TileAttention, TileAttentionConfig as _};
+use crate::launch::AttentionPrecision;
+use crate::launch::attention_types::*;
 
 /// Uses accelerated instruction, but relies on shared memory for row-dependent computations
 /// because the fragment layout is blackbox

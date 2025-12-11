@@ -4,7 +4,7 @@ use cubecl::frontend::CubePrimitive;
 use cubecl::prelude::TensorHandleRef;
 use cubecl::std::tensor::TensorHandle;
 use cubek_matmul::MatmulInputHandleRef;
-use cubek_std::test_utils::{compute_strides, random_tensor};
+use cubek_std::test_utils::{contiguous_strides, random_tensor};
 
 use cubek_matmul::components::{MatmulElems, MatmulIdent, MatmulProblem, MatrixLayout};
 use cubek_matmul::kernels::naive;
@@ -119,7 +119,7 @@ fn test_naive(case: MatmulTestCase) {
         &client,
         *dtype,
         1234,
-        &compute_strides(
+        &contiguous_strides(
             &lhs_shape,
             matches!(problem.lhs_layout, MatrixLayout::ColMajor),
         ),
@@ -129,7 +129,7 @@ fn test_naive(case: MatmulTestCase) {
         &client,
         *dtype,
         5678,
-        &compute_strides(
+        &contiguous_strides(
             &rhs_shape,
             matches!(problem.rhs_layout, MatrixLayout::ColMajor),
         ),

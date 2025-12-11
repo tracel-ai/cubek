@@ -12,13 +12,15 @@ use cubek_matmul::components::{
     stage::StridedStageFamily,
 };
 
-use crate::components::{
-    AttentionBlueprint, AttentionPrecision, AttentionSetupError,
-    global::{
-        GlobalAttentionFamily,
-        simple::{SimpleGlobalAttention, config::SimpleGlobalAttentionConfig},
+use crate::{
+    components::{
+        global::{
+            GlobalAttentionFamily,
+            simple::{SimpleGlobalAttention, config::SimpleGlobalAttentionConfig},
+        },
+        stage::{StageAttentionConfig as _, StageAttentionFamily},
     },
-    stage::{StageAttentionConfig as _, StageAttentionFamily},
+    launch::{AttentionBlueprint, AttentionPrecision, AttentionSetupError},
 };
 
 pub struct SimpleGlobalAttentionFamily<SA: StageAttentionFamily> {
