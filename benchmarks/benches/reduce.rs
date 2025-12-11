@@ -77,13 +77,14 @@ fn run<R: Runtime, E: frontend::Float>(device: R::Device) {
     let client = R::client(&device);
     for strategy in [
         ReduceStrategy::FullUnit,
-        // ReduceStrategy::FullPlane { independant: true },
-        // ReduceStrategy::FullPlane { independant: false },
-        // ReduceStrategy::FullCube { use_planes: true },
-        // ReduceStrategy::FullCube { use_planes: false },
+        ReduceStrategy::FullPlane { independant: false },
+        ReduceStrategy::FullPlane { independant: true },
+        ReduceStrategy::FullCube { use_planes: true },
+        ReduceStrategy::FullCube { use_planes: false },
     ] {
-        for axis in [2] {
+        for axis in [0, 1, 2] {
             let bench = ReduceBench::<R, E> {
+                // shape: vec![2, 2, 4096 * 32],
                 shape: vec![32, 512, 4096],
                 axis,
                 client: client.clone(),
@@ -91,7 +92,7 @@ fn run<R: Runtime, E: frontend::Float>(device: R::Device) {
                 strategy,
                 _e: PhantomData,
             };
-            println!("{}", bench.name());
+            println!("Running: ==== {} ====", bench.name());
             match bench.run(TimingMethod::System) {
                 Ok(val) => {
                     println!("{val}");

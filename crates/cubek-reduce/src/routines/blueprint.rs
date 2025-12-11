@@ -1,4 +1,4 @@
-use crate::{BoundChecksInner, LineMode};
+use crate::{BoundChecks, LineMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ReduceBlueprint {
@@ -10,34 +10,33 @@ pub struct ReduceBlueprint {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GlobalReduceBlueprint {
-    /// A single unit reduces a full vector.
     FullUnit(UnitReduceBlueprint),
-    /// A single plane reduces a full vector.
     FullPlane(PlaneReduceBlueprint),
-    /// A single cube reduces a full vector.
     Cube(CubeReduceBlueprint),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// A single cube reduces a full vector.
 pub struct CubeReduceBlueprint {
     // There are too many units in a cube causing out-of-bound.
     //
     // # Notes
     //
     // There are never too many cubes spawned.
-    pub bound_checks_inner: BoundChecksInner,
+    pub bound_checks_inner: BoundChecks,
     /// The number of accumulators in shared memory.
     pub num_shared_accumulators: u32,
-    // Wheter we use plane instructions to merge accumulators.
+    // Whether we use plane instructions to merge accumulators.
     pub use_planes: bool,
 }
 
+/// A single plane reduces a full vector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneReduceBlueprint {
     // Too much planes are spawned, we should put some to idle.
     pub plane_idle: bool,
     // There are too many units in a plane causing out-of-bound.
-    pub bound_checks_inner: BoundChecksInner,
+    pub bound_checks: BoundChecks,
     // Wheter all units in a plane work independantly during the reduction.
     //
     // # Notes
@@ -47,6 +46,7 @@ pub struct PlaneReduceBlueprint {
     pub independant: bool,
 }
 
+/// A single unit reduces a full vector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UnitReduceBlueprint {
     // Too much units are spawned, we should put some to idle.

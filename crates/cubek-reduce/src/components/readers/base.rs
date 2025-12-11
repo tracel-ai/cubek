@@ -1,5 +1,5 @@
 use crate::{
-    BoundChecksInner, LineMode, ReduceInstruction, ReducePrecision,
+    BoundChecks, LineMode, ReduceInstruction, ReducePrecision,
     components::{
         instructions::{ReduceCoordinate, ReduceRequirements},
         readers::{parallel::ParallelReader, perpendicular::PerpendicularReader},
@@ -21,7 +21,7 @@ impl<P: ReducePrecision> Reader<P> {
         inst: &I,
         reduce_axis: u32,
         reduce_index: u32,
-        #[comptime] bound_checks: BoundChecksInner,
+        #[comptime] bound_checks: BoundChecks,
         #[comptime] line_mode: LineMode,
     ) -> Reader<P> {
         match line_mode {

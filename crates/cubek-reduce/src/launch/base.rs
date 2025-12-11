@@ -36,25 +36,25 @@ pub(crate) fn launch_reduce<Run: Runtime>(
         ReduceStrategy::FullUnit => {
             GlobalReduceBlueprint::FullUnit(crate::routines::UnitReduceBlueprint {
                 // TODO: Maybe faster to shotdown planes and do branchless check bound.
-                unit_idle: info.bound_checks,
+                unit_idle: info.idle,
             })
         }
         ReduceStrategy::FullPlane { independant } => {
             GlobalReduceBlueprint::FullPlane(PlaneReduceBlueprint {
-                bound_checks_inner: info.bound_checks_inner,
+                bound_checks: info.bound_checks,
                 independant,
-                plane_idle: info.bound_checks,
+                plane_idle: info.idle,
             })
         }
         ReduceStrategy::FullCube { use_planes } => match use_planes {
             true => GlobalReduceBlueprint::Cube(CubeReduceBlueprint {
                 num_shared_accumulators: info.cube_dim.y,
-                bound_checks_inner: info.bound_checks_inner,
+                bound_checks_inner: info.bound_checks,
                 use_planes,
             }),
             false => GlobalReduceBlueprint::Cube(CubeReduceBlueprint {
                 num_shared_accumulators: info.cube_dim.num_elems(),
-                bound_checks_inner: info.bound_checks_inner,
+                bound_checks_inner: info.bound_checks,
                 use_planes,
             }),
         },

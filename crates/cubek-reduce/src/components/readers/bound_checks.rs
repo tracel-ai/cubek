@@ -1,4 +1,4 @@
-use crate::{BoundChecksInner, ReduceInstruction, ReducePrecision};
+use crate::{BoundChecks, ReduceInstruction, ReducePrecision};
 use cubecl::{
     prelude::*,
     std::tensor::{View, layout::Coords1d},
@@ -14,7 +14,7 @@ pub enum ReaderBoundChecks<P: ReducePrecision> {
 #[derive(CubeType)]
 pub struct RequiredReaderBoundChecks<P: ReducePrecision> {
     #[cube(comptime)]
-    bound_checks: BoundChecksInner,
+    bound_checks: BoundChecks,
     pos_max: u32,
     null_input: Line<P::EI>,
 }
@@ -25,11 +25,11 @@ impl<P: ReducePrecision> ReaderBoundChecks<P> {
         inst: &I,
         pos_max: u32,
         #[comptime] line_size: u32,
-        #[comptime] bound_checks: BoundChecksInner,
+        #[comptime] bound_checks: BoundChecks,
     ) -> ReaderBoundChecks<P> {
         match comptime!(bound_checks) {
-            BoundChecksInner::None => ReaderBoundChecks::new_NotRequired(),
-            BoundChecksInner::Mask | BoundChecksInner::Branch => {
+            BoundChecks::None => ReaderBoundChecks::new_NotRequired(),
+            BoundChecks::Mask | BoundChecks::Branch => {
                 let pos_max = pos_max;
                 let null_input = I::null_input(inst, line_size);
 
@@ -45,13 +45,13 @@ impl<P: ReducePrecision> ReaderBoundChecks<P> {
         match self {
             ReaderBoundChecks::NotRequired => view[offset],
             ReaderBoundChecks::Required(checks) => match comptime!(checks.bound_checks) {
-                BoundChecksInner::None => view[offset],
-                BoundChecksInner::Mask => {
+                BoundChecks::None => view[offset],
+                BoundChecks::Mask => {
                     let mask = pos < checks.pos_max;
                     let index = offset * u32::cast_from(mask);
                     select(mask, view[index], checks.null_input)
                 }
-                BoundChecksInner::Branch => {
+                BoundChecks::Branch => {
                     if pos < checks.pos_max {
                         view[offset]
                     } else {

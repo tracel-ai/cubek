@@ -1,5 +1,5 @@
 use crate::{
-    BoundChecksInner, LineMode, ReduceInstruction, ReducePrecision,
+    BoundChecks, LineMode, ReduceInstruction, ReducePrecision,
     components::{
         instructions::{ReduceCoordinate, ReduceRequirements},
         readers::bound_checks::ReaderBoundChecks,
@@ -34,7 +34,7 @@ impl<P: ReducePrecision> ParallelReader<P> {
         inst: &I,
         reduce_axis: u32,
         reduce_index: u32,
-        #[comptime] bound_checks: BoundChecksInner,
+        #[comptime] bound_checks: BoundChecks,
     ) -> ParallelReader<P> {
         let line_size = input.line_size();
 

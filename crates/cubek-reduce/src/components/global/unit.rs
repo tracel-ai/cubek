@@ -1,5 +1,5 @@
 use crate::{
-    BoundChecksInner, LineMode, ReduceInstruction, ReducePrecision,
+    BoundChecks, LineMode, ReduceInstruction, ReducePrecision,
     components::{
         global::reduce_count,
         instructions::reduce_inplace,
@@ -45,7 +45,7 @@ impl GlobalFullUnitReduce {
             inst,
             reduce_axis,
             reduce_index,
-            comptime!(BoundChecksInner::None),
+            comptime!(BoundChecks::None),
             line_mode,
         );
         let reader = UnitReader::<P>::new(reader);

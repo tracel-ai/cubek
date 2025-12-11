@@ -36,6 +36,7 @@ impl GlobalFullPlaneReduce {
                 terminate!();
             }
         }
+
         let input_line_size = input.line_size();
 
         let reader = Reader::<P>::new::<I, Out>(
@@ -44,7 +45,7 @@ impl GlobalFullPlaneReduce {
             inst,
             reduce_axis,
             reduce_index,
-            blueprint.bound_checks_inner,
+            blueprint.bound_checks,
             line_mode,
         );
         let reader = PlaneReader::<P>::new(reader);

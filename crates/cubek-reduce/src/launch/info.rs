@@ -1,4 +1,4 @@
-use crate::{BoundChecksInner, LineMode, launch::ReduceStrategy};
+use crate::{BoundChecks, LineMode, launch::ReduceStrategy};
 use cubecl::{
     prelude::*, std::tensor::is_contiguous, tensor_line_size_parallel,
     tensor_line_size_perpendicular,
@@ -11,8 +11,8 @@ pub struct ReduceLaunchInfo {
     pub line_mode: LineMode,
     pub line_size_input: u32,
     pub line_size_output: u32,
-    pub bound_checks: bool,
-    pub bound_checks_inner: BoundChecksInner,
+    pub idle: bool,
+    pub bound_checks: BoundChecks,
 }
 
 impl ReduceLaunchInfo {
@@ -42,8 +42,8 @@ impl ReduceLaunchInfo {
             line_mode: LineMode::Parallel,
             line_size_input: 1,
             line_size_output: 1,
-            bound_checks: true,
-            bound_checks_inner: BoundChecksInner::Mask,
+            idle: true,
+            bound_checks: BoundChecks::Mask,
         }
     }
 
@@ -211,7 +211,7 @@ impl ReduceLaunchInfo {
     }
 
     fn do_bound_checks_if(&mut self, condition: bool) {
-        self.bound_checks = self.bound_checks || condition;
+        self.idle = self.idle || condition;
     }
 }
 

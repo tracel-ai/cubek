@@ -6,7 +6,7 @@ pub enum LineMode {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 /// How bound checks is handled for inner reductions.
-pub enum BoundChecksInner {
+pub enum BoundChecks {
     /// No bound check is necessary.
     None,
     /// Using a mask is enough for bound checks.
