@@ -15,7 +15,7 @@ use crate::suite::test_utils::Sampleable;
 
 // Returns if should return
 fn should_abort<T, E: Debug>(result: &Result<T, E>) -> bool {
-    let env = std::env::var("ATTENTION_TEST_MODE");
+    let env = std::env::var("CUBEK_TEST_MODE");
     let panic_on_error = env.as_deref() == Ok("panic");
 
     if let Err(err) = result {

@@ -278,6 +278,20 @@ impl MatmulElems {
         }
     }
 
+    pub fn from_single_dtype(dtype: MatmulElemType) -> Self {
+        Self {
+            lhs_global: dtype,
+            rhs_global: dtype,
+            acc_global: dtype,
+            lhs_stage: dtype,
+            rhs_stage: dtype,
+            acc_stage: dtype,
+            lhs_register: dtype,
+            rhs_register: dtype,
+            acc_register: dtype,
+        }
+    }
+
     pub fn global(&self, ident: MatmulIdent) -> MatmulElemType {
         match ident {
             MatmulIdent::Lhs => self.lhs_global,

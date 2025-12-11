@@ -1,0 +1,25 @@
+[package]
+name = "cubek-std"
+edition.workspace = true
+license.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[features]
+default = ["cubecl/default"]
+std = ["cubecl/std"]
+
+[dependencies]
+cubek-random = { path = "../cubek-random", version = "=0.0.1", default-features = false }
+
+bytemuck = { workspace = true }
+cubecl = { workspace = true, features = ["stdlib"] }
+cubecl-common = { workspace = true }
+half = { workspace = true, features = ["bytemuck"] }
+serde = { workspace = true }
+
+[dev-dependencies]
+trybuild = "1"
+pretty_assertions = { workspace = true }
+cubecl = { workspace = true, features = ["test-runtime"] }

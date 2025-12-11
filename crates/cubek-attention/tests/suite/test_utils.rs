@@ -99,7 +99,7 @@ pub(crate) fn assert_equals_approx<R: Runtime, F: Float + CubeElement + Display>
     expected: &[F],
     epsilon: f32,
 ) -> Result<(), String> {
-    let env = std::env::var("ATTENTION_TEST_MODE");
+    let env = std::env::var("CUBEK_TEST_MODE");
 
     let print_instead_of_compare = match env {
         Ok(val) => matches!(val.as_str(), "print"),

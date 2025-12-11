@@ -22,6 +22,7 @@ default = [
     "cubek-matmul?/default",
     "cubek-convolution?/default",
     "cubek-attention?/default",
+    "cubek-std?/default",
 ]
 
 std = [
@@ -31,6 +32,7 @@ std = [
     "cubek-matmul?/std",
     "cubek-convolution?/std",
     "cubek-attention?/std",
+    "cubek-std?/std",
 ]
 
 attention = ["cubek-attention"]
@@ -48,3 +50,4 @@ cubek-matmul = { path = "../cubek-matmul", version = "0.0.1", default-features =
 cubek-quant = { path = "../cubek-quant", version = "0.0.1", default-features = false, optional = true }
 cubek-random = { path = "../cubek-random", version = "0.0.1", default-features = false, optional = true }
 cubek-reduce = { path = "../cubek-reduce", version = "0.0.1", default-features = false, optional = true }
+cubek-std = { path = "../cubek-std", version = "0.0.1", default-features = false, optional = true }
