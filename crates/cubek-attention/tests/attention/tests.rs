@@ -8,7 +8,7 @@ use cubek_attention::launch::{
 use cubek_attention::routines::DeviceSettings;
 
 #[test]
-fn attention_one_tile_simple() {
+fn one_tile_simple() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
     let tiling_scheme = AttentionTilingScheme {
@@ -61,7 +61,7 @@ fn attention_one_tile_simple() {
 }
 
 #[test]
-fn attention_one_partition_several_planes() {
+fn one_partition_several_planes() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
     let tiling_scheme = AttentionTilingScheme {
@@ -114,7 +114,7 @@ fn attention_one_partition_several_planes() {
 }
 
 #[test]
-fn attention_problem_smaller_than_one_tile_seq_q_seq_kv_val_dim() {
+fn problem_smaller_than_one_tile_seq_q_seq_kv_val_dim() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -165,7 +165,7 @@ fn attention_problem_smaller_than_one_tile_seq_q_seq_kv_val_dim() {
 }
 
 #[test]
-fn attention_head_dim_oob() {
+fn head_dim_oob() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -213,7 +213,7 @@ fn attention_head_dim_oob() {
 }
 
 #[test]
-fn attention_two_rows_in_array_tile() {
+fn two_rows_in_array_tile() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -260,7 +260,7 @@ fn attention_two_rows_in_array_tile() {
 }
 
 #[test]
-fn attention_one_tile_seqq16() {
+fn one_tile_seqq16() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -308,7 +308,7 @@ fn attention_one_tile_seqq16() {
 }
 
 #[test]
-fn attention_one_tile_seqq4() {
+fn one_tile_seqq4() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -356,7 +356,7 @@ fn attention_one_tile_seqq4() {
 }
 
 #[test]
-fn attention_seqq2() {
+fn seqq2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -403,7 +403,7 @@ fn attention_seqq2() {
 }
 
 #[test]
-fn attention_hd2() {
+fn hd2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -450,7 +450,7 @@ fn attention_hd2() {
 }
 
 #[test]
-fn attention_kv2() {
+fn kv2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -497,7 +497,7 @@ fn attention_kv2() {
 }
 
 #[test]
-fn attention_vd2() {
+fn vd2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -544,7 +544,7 @@ fn attention_vd2() {
 }
 
 #[test]
-fn attention_hd2_vd2() {
+fn hd2_vd2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -591,7 +591,7 @@ fn attention_hd2_vd2() {
 }
 
 #[test]
-fn attention_all2() {
+fn all2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -638,7 +638,7 @@ fn attention_all2() {
 }
 
 #[test]
-fn attention_global_iterations_2() {
+fn global_iterations_2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -686,7 +686,7 @@ fn attention_global_iterations_2() {
 }
 
 #[test]
-fn attention_global_iterations_2_kv2() {
+fn global_iterations_2_kv2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -734,7 +734,7 @@ fn attention_global_iterations_2_kv2() {
 }
 
 #[test]
-fn attention_partition_kv1_global1_with_oob() {
+fn partition_kv1_global1_with_oob() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -782,7 +782,7 @@ fn attention_partition_kv1_global1_with_oob() {
 }
 
 #[test]
-fn attention_partition_seqq2_global2_kv2_global2() {
+fn partition_seqq2_global2_kv2_global2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -830,7 +830,7 @@ fn attention_partition_seqq2_global2_kv2_global2() {
 }
 
 #[test]
-fn attention_partition_many_planes() {
+fn partition_many_planes() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -877,7 +877,7 @@ fn attention_partition_many_planes() {
 }
 
 #[test]
-fn attention_partition_kv1_global3_with_oob() {
+fn partition_kv1_global3_with_oob() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -925,7 +925,7 @@ fn attention_partition_kv1_global3_with_oob() {
 }
 
 #[test]
-fn attention_partition_oob_in_q() {
+fn partition_oob_in_q() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -973,7 +973,7 @@ fn attention_partition_oob_in_q() {
 }
 
 #[test]
-fn attention_partition_kv2_with_oob() {
+fn partition_kv2_with_oob() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -1020,7 +1020,7 @@ fn attention_partition_kv2_with_oob() {
 }
 
 #[test]
-fn attention_partition_kv2_causal() {
+fn partition_kv2_causal() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -1067,7 +1067,7 @@ fn attention_partition_kv2_causal() {
 }
 
 #[test]
-fn attention_partition_kv2_masked() {
+fn partition_kv2_masked() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -1114,7 +1114,7 @@ fn attention_partition_kv2_masked() {
 }
 
 #[test]
-fn attention_stage2() {
+fn stage2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -1161,7 +1161,7 @@ fn attention_stage2() {
 }
 
 #[test]
-fn attention_stage4() {
+fn stage4() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -1208,7 +1208,7 @@ fn attention_stage4() {
 }
 
 #[test]
-fn attention_stage2_problem4() {
+fn stage2_problem4() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -1257,7 +1257,7 @@ fn attention_stage2_problem4() {
 }
 
 #[test]
-fn attention_reuse_key_value() {
+fn reuse_key_value() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -1304,7 +1304,7 @@ fn attention_reuse_key_value() {
 }
 
 #[test]
-fn attention_double_row_wise() {
+fn double_row_wise() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -1351,7 +1351,7 @@ fn attention_double_row_wise() {
 }
 
 #[test]
-fn attention_one_tile_masked() {
+fn one_tile_masked() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -1398,7 +1398,7 @@ fn attention_one_tile_masked() {
 }
 
 #[test]
-fn attention_one_tile_causal() {
+fn one_tile_causal() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -1445,7 +1445,7 @@ fn attention_one_tile_causal() {
 }
 
 #[test]
-fn attention_one_tile_masked_causal() {
+fn one_tile_masked_causal() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -1492,7 +1492,7 @@ fn attention_one_tile_masked_causal() {
 }
 
 #[test]
-fn attention_masked_oob() {
+fn masked_oob() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -1540,7 +1540,7 @@ fn attention_masked_oob() {
 }
 
 #[test]
-fn attention_masked_larger() {
+fn masked_larger() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -1588,7 +1588,7 @@ fn attention_masked_larger() {
 }
 
 #[test]
-fn attention_num_heads_2() {
+fn num_heads_2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -1635,7 +1635,7 @@ fn attention_num_heads_2() {
 }
 
 #[test]
-fn attention_batch_2() {
+fn batch_2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -1682,7 +1682,7 @@ fn attention_batch_2() {
 }
 
 #[test]
-fn attention_batch_2_seqq2() {
+fn batch_2_seqq2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -1729,7 +1729,7 @@ fn attention_batch_2_seqq2() {
 }
 
 #[test]
-fn attention_num_heads_2_batch_2() {
+fn num_heads_2_batch_2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -1776,7 +1776,7 @@ fn attention_num_heads_2_batch_2() {
 }
 
 #[test]
-fn attention_num_heads_2_masked() {
+fn num_heads_2_masked() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(),
@@ -1823,7 +1823,7 @@ fn attention_num_heads_2_masked() {
 }
 
 #[test]
-fn attention_huge_problem() {
+fn huge_problem() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let seq_q = 128;
     let seq_kv = 128;
