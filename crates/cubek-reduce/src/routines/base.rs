@@ -18,13 +18,10 @@ pub fn reduce_kernel_virtual<In: Numeric, Out: Numeric, Acc: Numeric>(
     #[comptime] blueprint: ReduceBlueprint,
     #[comptime] config: ReduceOperationConfig,
 ) {
-    let reduce_index = get_reduce_index(blueprint.global);
-
     reduce_kernel_inner::<(In, Acc), Out, ReduceOperation>(
         input,
         output,
         axis_reduce,
-        reduce_index,
         blueprint,
         config,
     )
@@ -35,51 +32,41 @@ fn reduce_kernel_inner<P: ReducePrecision, Out: Numeric, R: ReduceFamily>(
     input: &VirtualTensor<P::EI>,
     output: &mut VirtualTensor<Out, ReadWrite>,
     axis_reduce: u32,
-    reduce_index: u32,
     #[comptime] blueprint: ReduceBlueprint,
     #[comptime] config: R::Config,
 ) {
     let inst = &R::Instruction::<P>::from_config(config);
 
     match comptime!(blueprint.global) {
-        GlobalReduceBlueprint::Cube(..) => {
+        GlobalReduceBlueprint::Cube(cube) => {
             GlobalFullCubeReduce::execute::<P, Out, R::Instruction<P>>(
                 input,
                 output,
                 axis_reduce,
-                reduce_index,
                 inst,
-                blueprint,
+                blueprint.line_mode,
+                cube,
             )
         }
-        GlobalReduceBlueprint::FullPlane(..) => {
+        GlobalReduceBlueprint::FullPlane(plane) => {
             GlobalFullPlaneReduce::execute::<P, Out, R::Instruction<P>>(
                 input,
                 output,
                 axis_reduce,
-                reduce_index,
                 inst,
-                blueprint,
+                blueprint.line_mode,
+                plane,
             )
         }
-        GlobalReduceBlueprint::FullUnit => {
+        GlobalReduceBlueprint::FullUnit(unit) => {
             GlobalFullUnitReduce::execute::<P, Out, R::Instruction<P>>(
                 input,
                 output,
                 axis_reduce,
-                reduce_index,
                 inst,
-                blueprint,
+                blueprint.line_mode,
+                unit,
             )
         }
     };
-}
-
-#[cube]
-fn get_reduce_index(#[comptime] params: GlobalReduceBlueprint) -> u32 {
-    match params {
-        GlobalReduceBlueprint::FullUnit => ABSOLUTE_POS,
-        GlobalReduceBlueprint::FullPlane { .. } => CUBE_POS * CUBE_DIM_Y + UNIT_POS_Y,
-        GlobalReduceBlueprint::Cube { .. } => CUBE_POS,
-    }
 }

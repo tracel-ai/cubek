@@ -1,11 +1,11 @@
 use crate::{
-    ReduceInstruction, ReducePrecision,
+    LineMode, ReduceInstruction, ReducePrecision,
     components::{
         instructions::{SharedAccumulator, fuse_accumulator_inplace, reduce_inplace},
         readers::{Reader, cube::CubeReader},
         writer,
     },
-    routines::ReduceBlueprint,
+    routines::CubeReduceBlueprint,
 };
 use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
 
@@ -18,15 +18,12 @@ impl GlobalFullCubeReduce {
         input: &VirtualTensor<P::EI>,
         output: &mut VirtualTensor<Out, ReadWrite>,
         reduce_axis: u32,
-        reduce_index: u32,
         inst: &I,
-        #[comptime] blueprint: ReduceBlueprint,
+        #[comptime] line_mode: LineMode,
+        #[comptime] blueprint: CubeReduceBlueprint,
     ) {
+        let reduce_index = CUBE_POS;
         let input_line_size = input.line_size();
-        let cube_blueprint = comptime!(match blueprint.global {
-            crate::routines::GlobalReduceBlueprint::Cube(b) => b.clone(),
-            _ => panic!(),
-        });
 
         let reader = Reader::<P>::new::<I, Out>(
             input,
@@ -34,8 +31,8 @@ impl GlobalFullCubeReduce {
             inst,
             reduce_axis,
             reduce_index,
-            cube_blueprint.bound_checks_inner,
-            blueprint.line_mode,
+            blueprint.bound_checks_inner,
+            line_mode,
         );
         let reader = CubeReader::<P>::new(reader);
         let mut accumulator = I::null_accumulator(inst, input_line_size);
@@ -45,12 +42,12 @@ impl GlobalFullCubeReduce {
             reduce_inplace::<P, I>(inst, &mut accumulator, item, coordinate, false);
         }
 
-        let worker_pos = match comptime!(cube_blueprint.use_planes) {
+        let worker_pos = match comptime!(blueprint.use_planes) {
             true => UNIT_POS_Y,
             false => UNIT_POS,
         };
 
-        let accumulator_plane = match comptime!(cube_blueprint.use_planes) {
+        let accumulator_plane = match comptime!(blueprint.use_planes) {
             true => {
                 // Sync at the plane level.
                 let (item, coordinate) = I::read_accumulator(inst, &accumulator);
@@ -62,7 +59,7 @@ impl GlobalFullCubeReduce {
         };
 
         // Sync at the cube level.
-        let accumulator_size = cube_blueprint.accumulator_size;
+        let accumulator_size = blueprint.num_shared_accumulators;
         let requirements = I::requirements(inst);
         let mut accumulator_shared = I::SharedAccumulator::allocate(
             accumulator_size,
@@ -76,7 +73,7 @@ impl GlobalFullCubeReduce {
 
         let mut accumulator_final = I::null_accumulator(inst, input_line_size);
 
-        match comptime!(cube_blueprint.use_planes) {
+        match comptime!(blueprint.use_planes) {
             true => {
                 if worker_pos == 0 {
                     reduce_scan::<P, I>(
@@ -84,27 +81,39 @@ impl GlobalFullCubeReduce {
                         &mut accumulator_shared,
                         &mut accumulator_final,
                         accumulator_size,
+                    );
+                    writer::write_accumulator::<P, Out, I>(
+                        output,
+                        accumulator_final,
+                        reduce_index,
+                        input.shape(reduce_axis),
+                        line_mode,
+                        input.line_size(),
+                        inst,
                     )
                 }
             }
-            false => reduce_tree::<P, I>(
-                inst,
-                &mut accumulator_shared,
-                &mut accumulator_final,
-                worker_pos,
-                accumulator_size,
-            ),
+            false => {
+                reduce_tree::<P, I>(
+                    inst,
+                    &mut accumulator_shared,
+                    &mut accumulator_final,
+                    worker_pos,
+                    accumulator_size,
+                );
+                if worker_pos == 0 {
+                    writer::write_accumulator::<P, Out, I>(
+                        output,
+                        accumulator_final,
+                        reduce_index,
+                        input.shape(reduce_axis),
+                        line_mode,
+                        input.line_size(),
+                        inst,
+                    )
+                }
+            }
         };
-
-        writer::write::<P, Out, I>(
-            output,
-            accumulator_final,
-            reduce_index,
-            input.shape(reduce_axis),
-            blueprint,
-            input.line_size(),
-            inst,
-        )
     }
 }
 

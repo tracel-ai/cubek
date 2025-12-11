@@ -5,7 +5,7 @@ use crate::{
         readers::{Reader, unit::UnitReader},
         writer,
     },
-    routines::ReduceBlueprint,
+    routines::UnitReduceBlueprint,
 };
 use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
 
@@ -18,22 +18,24 @@ impl GlobalFullUnitReduce {
         input: &VirtualTensor<P::EI>,
         output: &mut VirtualTensor<Out, ReadWrite>,
         reduce_axis: u32,
-        reduce_index: u32,
         inst: &I,
-        #[comptime] blueprint: ReduceBlueprint,
+        #[comptime] line_mode: LineMode,
+        #[comptime] blueprint: UnitReduceBlueprint,
     ) {
-        #[allow(clippy::collapsible_if)]
-        if comptime![blueprint.bound_checks] {
-            if reduce_index
-                >= get_reduce_count(
-                    output.len() * output.line_size(),
-                    blueprint.line_mode,
-                    input.line_size(),
-                )
-            {
+        let reduce_index = ABSOLUTE_POS;
+
+        if comptime![blueprint.unit_idle] {
+            let reduce_count = get_reduce_count(
+                output.len() * output.line_size(),
+                line_mode,
+                input.line_size(),
+            );
+
+            if reduce_index >= reduce_count {
                 terminate!();
             }
         }
+
         let input_line_size = input.line_size();
 
         let reader = Reader::<P>::new::<I, Out>(
@@ -43,9 +45,10 @@ impl GlobalFullUnitReduce {
             reduce_axis,
             reduce_index,
             comptime!(BoundChecksInner::None),
-            blueprint.line_mode,
+            line_mode,
         );
         let reader = UnitReader::<P>::new(reader);
+
         let mut accumulator = I::null_accumulator(inst, input_line_size);
 
         for i in 0..reader.len() {
@@ -53,12 +56,12 @@ impl GlobalFullUnitReduce {
             reduce_inplace::<P, I>(inst, &mut accumulator, item, coordinate, false);
         }
 
-        writer::write::<P, Out, I>(
+        writer::write_accumulator::<P, Out, I>(
             output,
             accumulator,
             reduce_index,
             input.shape(reduce_axis),
-            blueprint,
+            line_mode,
             input.line_size(),
             inst,
         )
