@@ -70,6 +70,28 @@ impl<P: ReducePrecision> ParallelReader<P> {
         self.num_chunks.div_ceil(CUBE_DIM_X)
     }
 
+    pub fn len_cube(&self) -> u32 {
+        self.num_chunks.div_ceil(CUBE_DIM)
+    }
+
+    pub fn read_cube(&self, line_index: u32) -> (Line<P::EI>, ReduceCoordinate) {
+        let plane_pos = line_index * CUBE_DIM;
+        let unit_pos = UNIT_POS;
+        let pos = plane_pos + unit_pos;
+        let offset = pos + self.batch_offset;
+
+        let item = self.bound_checks.read(pos, offset, &self.view);
+
+        let coordinate = ReduceCoordinate::new(
+            (line_index * self.line_size * CUBE_DIM) + UNIT_POS * self.line_size,
+            self.requirements,
+            self.line_size,
+            LineMode::Parallel,
+        );
+
+        (item, coordinate)
+    }
+
     pub fn read_plane(&self, line_index: u32) -> (Line<P::EI>, ReduceCoordinate) {
         let plane_pos = line_index * CUBE_DIM_X;
         let unit_pos = UNIT_POS_X;

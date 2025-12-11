@@ -218,33 +218,40 @@ impl ReduceLaunchInfo {
 fn calculate_plane_count(
     strategy: &ReduceStrategy,
     plane_dim: u32,
-    reduce_count: u32,
-    shape: u32,
+    vector_count: u32,
+    vector_length: u32,
     num_cpu_cores: Option<u32>,
     line_mode: LineMode,
     line_size: u32,
 ) -> u32 {
     // The number of units that won't be idle when working on the reduction.
     let num_available_parallel_unit = match strategy {
-        ReduceStrategy::FullUnit => reduce_count,
+        ReduceStrategy::FullUnit => vector_count,
         // A single shape is reduced by `plane_dim` units.
-        ReduceStrategy::FullPlane { .. } => reduce_count * (shape / plane_dim),
+        ReduceStrategy::FullPlane { .. } => vector_count * plane_dim,
         // A single shape is reduced by `plane_dim*plane_count` units.
-        ReduceStrategy::FullCube { .. } => reduce_count * shape,
+        //
+        // Max is one unit working on a single element in the vector to reduce.
+        ReduceStrategy::FullCube { .. } => vector_count * vector_length,
     };
 
     let num_available_parallel_unit = match line_mode {
         LineMode::Parallel => num_available_parallel_unit,
-        // When perpendicular, each unit is working on multiple vector at a time.
+        // When perpendicular, each unit is working on multiple vectors at the same time.
         LineMode::Perpendicular => num_available_parallel_unit / line_size,
     };
 
     match num_cpu_cores {
         Some(num_cores) => core::cmp::min(num_cores, num_available_parallel_unit),
         None => {
-            let base = core::cmp::max(1, num_available_parallel_unit / plane_dim);
-            let exp2 = core::cmp::min(3u32, u32::ilog2(base));
-            2u32.pow(exp2)
+            let plane_count_max = core::cmp::max(1, num_available_parallel_unit / plane_dim);
+
+            // Ensures `plane_count` is a power of 2.
+            const NUM_PLANE_MAX: u32 = 8u32;
+            const NUM_PLANE_MAX_LOG2: u32 = NUM_PLANE_MAX.ilog2();
+            let plane_count_max_log2 =
+                core::cmp::min(NUM_PLANE_MAX_LOG2, u32::ilog2(plane_count_max));
+            2u32.pow(plane_count_max_log2)
         }
     }
 }

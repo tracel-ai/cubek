@@ -1,6 +1,8 @@
 use crate::{
     components::{
-        global::{plane::GlobalFullPlaneReduce, unit::GlobalFullUnitReduce},
+        global::{
+            cube::GlobalFullCubeReduce, plane::GlobalFullPlaneReduce, unit::GlobalFullUnitReduce,
+        },
         instructions::*,
         level::{self, cube::ReduceCubeConfig},
         partition::ReducePartition,
@@ -45,32 +47,40 @@ fn reduce_kernel_inner<P: ReducePrecision, Out: Numeric, R: ReduceFamily>(
 
     match comptime!(blueprint.global) {
         GlobalReduceBlueprint::Cube(cube) => {
-            let partition = ReducePartition::from_blueprint::<P, Out>(
-                reduce_index,
+            GlobalFullCubeReduce::execute::<P, Out, R::Instruction<P>>(
                 input,
                 output,
                 axis_reduce,
-                blueprint,
-            );
-
-            let config = comptime!(ReduceCubeConfig::new(
-                input_line_size,
-                blueprint.line_mode,
-                cube
-            ));
-            let accumulator = level::cube::reduce::<P, VirtualTensor<P::EI>, R::Instruction<P>>(
-                input, inst, partition, config,
-            );
-
-            writer::write::<P, Out, R::Instruction<P>>(
-                output,
-                accumulator,
                 reduce_index,
-                input.shape(axis_reduce),
-                blueprint,
-                input.line_size(),
                 inst,
+                blueprint,
             )
+            // let partition = ReducePartition::from_blueprint::<P, Out>(
+            //     reduce_index,
+            //     input,
+            //     output,
+            //     axis_reduce,
+            //     blueprint,
+            // );
+
+            // let config = comptime!(ReduceCubeConfig::new(
+            //     input_line_size,
+            //     blueprint.line_mode,
+            //     cube
+            // ));
+            // let accumulator = level::cube::reduce::<P, VirtualTensor<P::EI>, R::Instruction<P>>(
+            //     input, inst, partition, config,
+            // );
+
+            // writer::write::<P, Out, R::Instruction<P>>(
+            //     output,
+            //     accumulator,
+            //     reduce_index,
+            //     input.shape(axis_reduce),
+            //     blueprint,
+            //     input.line_size(),
+            //     inst,
+            // )
         }
         GlobalReduceBlueprint::FullPlane(..) => {
             GlobalFullPlaneReduce::execute::<P, Out, R::Instruction<P>>(
