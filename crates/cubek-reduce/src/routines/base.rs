@@ -25,6 +25,7 @@ pub struct ReduceLaunchSettings {
     pub line: ReduceLineSettings,
 }
 
+#[derive(Debug)]
 pub struct ReduceProblem {
     pub vector_size: u32,
     pub vector_count: u32,
