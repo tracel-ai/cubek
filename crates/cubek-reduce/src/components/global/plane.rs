@@ -1,6 +1,10 @@
 use crate::{
     LineMode, ReduceInstruction, ReducePrecision,
-    components::{instructions::reduce_inplace, readers::plane::PlaneReader, writer},
+    components::{
+        instructions::reduce_inplace,
+        readers::{Reader, plane::PlaneReader},
+        writer,
+    },
     routines::ReduceBlueprint,
 };
 use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
@@ -36,7 +40,7 @@ impl GlobalFullPlaneReduce {
         });
         let input_line_size = input.line_size();
 
-        let reader = PlaneReader::<P>::new::<I, Out>(
+        let reader = Reader::<P>::new::<I, Out>(
             input,
             output,
             inst,
@@ -45,6 +49,7 @@ impl GlobalFullPlaneReduce {
             plane_blueprint.bound_checks_inner,
             blueprint.line_mode,
         );
+        let reader = PlaneReader::<P>::new(reader);
 
         let mut accumulator = I::null_accumulator(inst, input_line_size);
 

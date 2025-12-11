@@ -1,6 +1,10 @@
 use crate::{
-    LineMode, ReduceInstruction, ReducePrecision,
-    components::{instructions::reduce_inplace, readers::unit::UnitReader, writer},
+    BoundChecksInner, LineMode, ReduceInstruction, ReducePrecision,
+    components::{
+        instructions::reduce_inplace,
+        readers::{Reader, unit::UnitReader},
+        writer,
+    },
     routines::ReduceBlueprint,
 };
 use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
@@ -32,23 +36,19 @@ impl GlobalFullUnitReduce {
         }
         let input_line_size = input.line_size();
 
-        let reader = UnitReader::<P>::new::<I, Out>(
+        let reader = Reader::<P>::new::<I, Out>(
             input,
             output,
             inst,
             reduce_axis,
             reduce_index,
+            comptime!(BoundChecksInner::None),
             blueprint.line_mode,
         );
-
-        let num_iter = match blueprint.line_mode {
-            LineMode::Parallel => input.shape(reduce_axis) / input_line_size,
-            LineMode::Perpendicular => input.shape(reduce_axis),
-        };
-
+        let reader = UnitReader::<P>::new(reader);
         let mut accumulator = I::null_accumulator(inst, input_line_size);
 
-        for i in 0..num_iter {
+        for i in 0..reader.len() {
             let (item, coordinate) = reader.read(i);
             reduce_inplace::<P, I>(inst, &mut accumulator, item, coordinate, false);
         }
