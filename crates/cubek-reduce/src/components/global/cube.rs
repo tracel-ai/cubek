@@ -31,7 +31,7 @@ impl GlobalFullCubeReduce {
             inst,
             reduce_axis,
             reduce_index,
-            blueprint.bound_checks_inner,
+            blueprint.bound_checks,
             line_mode,
         );
         let reader = CubeReader::<P>::new(reader);

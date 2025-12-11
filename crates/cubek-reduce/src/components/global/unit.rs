@@ -23,7 +23,7 @@ impl GlobalFullUnitReduce {
         #[comptime] line_mode: LineMode,
         #[comptime] blueprint: UnitReduceBlueprint,
     ) {
-        let reduce_index = ABSOLUTE_POS;
+        let reduce_index = CUBE_POS * CUBE_DIM + UNIT_POS;
 
         if comptime![blueprint.unit_idle] {
             let reduce_count = reduce_count(

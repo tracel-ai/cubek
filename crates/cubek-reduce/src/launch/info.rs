@@ -1,250 +1,18 @@
-use crate::{BoundChecks, LineMode, launch::ReduceStrategy};
+use crate::LineMode;
 use cubecl::{
     prelude::*, std::tensor::is_contiguous, tensor_line_size_parallel,
     tensor_line_size_perpendicular,
 };
 
-#[derive(Debug, Clone)]
-pub struct ReduceLaunchInfo {
-    pub cube_count: CubeCount,
-    pub cube_dim: CubeDim,
-    pub line_mode: LineMode,
-    pub line_size_input: u32,
-    pub line_size_output: u32,
-    pub idle: bool,
-    pub bound_checks: BoundChecks,
-}
-
-impl ReduceLaunchInfo {
-    pub(crate) fn generate<R: Runtime>(
-        client: &ComputeClient<R>,
-        input: &TensorHandleRef<R>,
-        output: &TensorHandleRef<R>,
-        axis: usize,
-        strategy: &ReduceStrategy,
-        dtype: StorageType,
-    ) -> ReduceLaunchInfo {
-        let reduce_count = output.size() as u32;
-        let shape = input.shape[axis] as u32;
-
-        ReduceLaunchInfo::new()
-            .generate_line_mode(input, axis)
-            .generate_line_size(client, input, output, axis, dtype)
-            .generate_cube_dim(client, reduce_count, shape, strategy)
-            .generate_cube_count::<R>(reduce_count, strategy)
-    }
-
-    fn new() -> Self {
-        // This is only a dummy configuration to use as a starting point.
-        Self {
-            cube_count: CubeCount::new_single(),
-            cube_dim: CubeDim::new_single(),
-            line_mode: LineMode::Parallel,
-            line_size_input: 1,
-            line_size_output: 1,
-            idle: true,
-            bound_checks: BoundChecks::Mask,
-        }
-    }
-
-    fn generate_line_mode<R: Runtime>(mut self, input: &TensorHandleRef<R>, axis: usize) -> Self {
-        let stride = input.strides[axis];
-        self.line_mode = if stride == 1 {
-            LineMode::Parallel
-        } else {
-            LineMode::Perpendicular
-        };
-        self
-    }
-
-    fn generate_line_size<R: Runtime>(
-        mut self,
-        client: &ComputeClient<R>,
-        input: &TensorHandleRef<R>,
-        output: &TensorHandleRef<R>,
-        axis: usize,
-        dtype: StorageType,
-    ) -> Self {
-        let supported_line_sizes = client.io_optimized_line_sizes_unchecked(dtype.size());
-        self.line_size_input = match self.line_mode {
-            LineMode::Parallel => {
-                tensor_line_size_parallel(supported_line_sizes, input.shape, input.strides, axis)
-                    as u32
-            }
-            LineMode::Perpendicular => {
-                // To compute the maximum line size we can used,
-                // we first sort both the input and output axes by increasing strides.
-                // As example, consider
-                //    input shape = [2, 4, 6, 8]
-                //    input stride = [1, 16, 64, 2]
-                //    output shape = [2, 1, 6, 8]
-                //    output stride = [1, 1, 2, 12]
-                //    axis = 1
-                //
-                // then we have
-                //    input sorted axis = [0, 3, 1, 2]
-                //    output sorted axis = [0, 1, 2, 3]
-                //
-                // From that point, we look at all the axes before the target axis in the sorted input.
-                // That is [0, 3] in the example.
-                // In the output, we remove the target axis leading to [0, 2, 3] in the example.
-                //
-                // In order to use perpendicular line, we are limited by the number of entries that are both
-                // contiguous in the input and output. This is obtained by taking the head of each list until they are different.
-                // In the above example, only the 0 axis is contiguous in both tensor, but it output sorted axis were [0, 1, 3, 2] instead,
-                // both the 0 and 3 axes would be contiguous in the two tensors.
-                // The corresponding number of entries is the product of the shape for the contiguous axes.
-                // In the example, it is simply 2.
-                //
-                // This gives us an upper bound on the line size we can used.
-                // Then, we use the regular method to find the best line size that match the device capacities.
-
-                let mut input_axis_and_strides =
-                    input.strides.iter().enumerate().collect::<Vec<_>>();
-                input_axis_and_strides.sort_by_key(|(_, stride)| *stride);
-                let input_sorted_axis = input_axis_and_strides
-                    .into_iter()
-                    .map(|(a, _)| a)
-                    .take_while(|a| *a != axis);
-
-                let mut output_axis_and_strides =
-                    output.strides.iter().enumerate().collect::<Vec<_>>();
-                output_axis_and_strides.sort_by_key(|(_, stride)| *stride);
-                let output_sorted_axis = output_axis_and_strides
-                    .into_iter()
-                    .filter_map(|(a, _)| (a != axis).then_some(a));
-
-                let max_line_size = input_sorted_axis
-                    .zip(output_sorted_axis)
-                    .filter_map(|(i, o)| (i == o).then_some(output.shape[i]))
-                    .product();
-
-                tensor_line_size_perpendicular(
-                    supported_line_sizes.filter(|size| {
-                        *size as usize <= max_line_size && max_line_size % *size as usize == 0
-                    }),
-                    input.shape,
-                    input.strides,
-                    axis,
-                ) as u32
-            }
-        };
-
-        if self.line_size_input > 1 && self.line_mode == LineMode::Perpendicular {
-            // TODO that this can be improved
-            let rank = output.strides.len();
-            let is_contiguous =
-                is_contiguous(&output.shape[axis..rank], &output.strides[axis..rank])
-                    && output.strides[rank - 1] == 1;
-            let shape = output.shape.get(axis + 1).cloned().unwrap_or(1) as u32;
-
-            if is_contiguous && shape.is_multiple_of(self.line_size_input) {
-                self.line_size_output = self.line_size_input;
-            }
-        }
-        self
-    }
-
-    pub fn generate_cube_dim<R: Runtime>(
-        mut self,
-        client: &ComputeClient<R>,
-        reduce_count: u32,
-        shape: u32,
-        strategy: &ReduceStrategy,
-    ) -> Self {
-        let hw_properties = &client.properties().hardware;
-
-        // We can use plane operations, but we have to use plane size max as the plane_dim.
-        let plane_dim = hw_properties.plane_size_max;
-        let plane_count = calculate_plane_count(
-            strategy,
-            plane_dim,
-            reduce_count,
-            shape,
-            hw_properties.num_cpu_cores,
-            self.line_mode,
-            self.line_size_input,
-        );
-
-        self.cube_dim = CubeDim::new_2d(plane_dim, plane_count);
-        self
-    }
-
-    pub fn generate_cube_count<R: Runtime>(
-        mut self,
-        reduce_count: u32,
-        strategy: &ReduceStrategy,
-    ) -> Self {
-        let agent_count_per_cube =  // An agent is either a unit, a plane or a whole cube depending on the strategy.
-            match strategy {
-                ReduceStrategy::FullUnit {..} => self.cube_dim.num_elems(),
-                ReduceStrategy::FullPlane {..} => self.cube_dim.y,
-                ReduceStrategy::FullCube { .. } => 1,
-            };
-
-        let reduce_count_per_cube = match self.line_mode {
-            LineMode::Parallel => agent_count_per_cube,
-            LineMode::Perpendicular => agent_count_per_cube * self.line_size_input,
-        };
-
-        let cube_count = reduce_count.div_ceil(reduce_count_per_cube);
-
-        self.do_bound_checks_if(reduce_count_per_cube * cube_count > reduce_count);
-
-        // If needed, we decompose the cube count to be within runtime limitation.
-        let (max_x, max_y, _) = R::max_cube_count();
-        let mut cube_count_x = cube_count;
-        let mut cube_count_y = 1;
-        let mut cube_count_z = 1;
-        while cube_count_x > max_x {
-            cube_count_x /= 2;
-            cube_count_y *= 2;
-        }
-        while cube_count_y > max_y {
-            cube_count_y /= 2;
-            cube_count_z *= 2;
-        }
-        self.cube_count = CubeCount::new_3d(cube_count_x, cube_count_y, cube_count_z);
-        self.do_bound_checks_if(cube_count_x * cube_count_y != cube_count);
-
-        self
-    }
-
-    fn do_bound_checks_if(&mut self, condition: bool) {
-        self.idle = self.idle || condition;
-    }
-}
-
-fn calculate_plane_count(
-    strategy: &ReduceStrategy,
+pub fn calculate_plane_count(
+    working_units: u32,
     plane_dim: u32,
-    vector_count: u32,
-    vector_length: u32,
     num_cpu_cores: Option<u32>,
-    line_mode: LineMode,
-    line_size: u32,
 ) -> u32 {
-    // The number of units that won't be idle when working on the reduction.
-    let num_available_parallel_unit = match strategy {
-        ReduceStrategy::FullUnit => vector_count,
-        // A single shape is reduced by `plane_dim` units.
-        ReduceStrategy::FullPlane { .. } => vector_count * plane_dim,
-        // A single shape is reduced by `plane_dim*plane_count` units.
-        //
-        // Max is one unit working on a single element in the vector to reduce.
-        ReduceStrategy::FullCube { .. } => vector_count * vector_length,
-    };
-
-    let num_available_parallel_unit = match line_mode {
-        LineMode::Parallel => num_available_parallel_unit,
-        // When perpendicular, each unit is working on multiple vectors at the same time.
-        LineMode::Perpendicular => num_available_parallel_unit / line_size,
-    };
-
     match num_cpu_cores {
-        Some(num_cores) => core::cmp::min(num_cores, num_available_parallel_unit),
+        Some(num_cores) => core::cmp::min(num_cores, working_units),
         None => {
-            let plane_count_max = core::cmp::max(1, num_available_parallel_unit / plane_dim);
+            let plane_count_max = core::cmp::max(1, working_units / plane_dim);
 
             // Ensures `plane_count` is a power of 2.
             const NUM_PLANE_MAX: u32 = 8u32;
@@ -256,101 +24,88 @@ fn calculate_plane_count(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub fn generate_line_size<R: Runtime>(
+    client: &ComputeClient<R>,
+    input: &TensorHandleRef<R>,
+    output: &TensorHandleRef<R>,
+    axis: usize,
+    dtype: StorageType,
+    line_mode: LineMode,
+) -> (u8, u8) {
+    let supported_line_sizes = client.io_optimized_line_sizes_unchecked(dtype.size());
+    let line_size_input = match line_mode {
+        LineMode::Parallel => {
+            tensor_line_size_parallel(supported_line_sizes, input.shape, input.strides, axis) as u32
+        }
+        LineMode::Perpendicular => {
+            // To compute the maximum line size we can used,
+            // we first sort both the input and output axes by increasing strides.
+            // As example, consider
+            //    input shape = [2, 4, 6, 8]
+            //    input stride = [1, 16, 64, 2]
+            //    output shape = [2, 1, 6, 8]
+            //    output stride = [1, 1, 2, 12]
+            //    axis = 1
+            //
+            // then we have
+            //    input sorted axis = [0, 3, 1, 2]
+            //    output sorted axis = [0, 1, 2, 3]
+            //
+            // From that point, we look at all the axes before the target axis in the sorted input.
+            // That is [0, 3] in the example.
+            // In the output, we remove the target axis leading to [0, 2, 3] in the example.
+            //
+            // In order to use perpendicular line, we are limited by the number of entries that are both
+            // contiguous in the input and output. This is obtained by taking the head of each list until they are different.
+            // In the above example, only the 0 axis is contiguous in both tensor, but it output sorted axis were [0, 1, 3, 2] instead,
+            // both the 0 and 3 axes would be contiguous in the two tensors.
+            // The corresponding number of entries is the product of the shape for the contiguous axes.
+            // In the example, it is simply 2.
+            //
+            // This gives us an upper bound on the line size we can used.
+            // Then, we use the regular method to find the best line size that match the device capacities.
 
-    #[test]
-    fn test_calculate_plane_count_gpu() {
-        let strategy = ReduceStrategy::FullUnit;
-        let shape = 512;
-        let plane_dim = 32;
-        let line_mode = LineMode::Parallel;
-        let line_size = 8;
+            let mut input_axis_and_strides = input.strides.iter().enumerate().collect::<Vec<_>>();
+            input_axis_and_strides.sort_by_key(|(_, stride)| *stride);
+            let input_sorted_axis = input_axis_and_strides
+                .into_iter()
+                .map(|(a, _)| a)
+                .take_while(|a| *a != axis);
 
-        let plane_count =
-            calculate_plane_count(&strategy, plane_dim, 1, shape, None, line_mode, line_size);
-        assert_eq!(plane_count, 1);
+            let mut output_axis_and_strides = output.strides.iter().enumerate().collect::<Vec<_>>();
+            output_axis_and_strides.sort_by_key(|(_, stride)| *stride);
+            let output_sorted_axis = output_axis_and_strides
+                .into_iter()
+                .filter_map(|(a, _)| (a != axis).then_some(a));
 
-        let plane_count = calculate_plane_count(
-            &strategy,
-            plane_dim,
-            plane_dim - 1,
-            shape,
-            None,
-            line_mode,
-            line_size,
-        );
-        assert_eq!(plane_count, 1);
+            let max_line_size = input_sorted_axis
+                .zip(output_sorted_axis)
+                .filter_map(|(i, o)| (i == o).then_some(output.shape[i]))
+                .product();
 
-        let plane_count = calculate_plane_count(
-            &strategy, plane_dim, plane_dim, shape, None, line_mode, line_size,
-        );
-        assert_eq!(plane_count, 1);
+            tensor_line_size_perpendicular(
+                supported_line_sizes.filter(|size| {
+                    *size as usize <= max_line_size && max_line_size % *size as usize == 0
+                }),
+                input.shape,
+                input.strides,
+                axis,
+            ) as u32
+        }
+    };
 
-        let plane_count = calculate_plane_count(
-            &strategy,
-            plane_dim,
-            plane_dim + 1,
-            shape,
-            None,
-            line_mode,
-            line_size,
-        );
-        assert_eq!(plane_count, 1);
+    let mut line_size_output = 1;
+    if line_size_input > 1 && line_mode == LineMode::Perpendicular {
+        // TODO that this can be improved
+        let rank = output.strides.len();
+        let is_contiguous = is_contiguous(&output.shape[axis..rank], &output.strides[axis..rank])
+            && output.strides[rank - 1] == 1;
+        let shape = output.shape.get(axis + 1).cloned().unwrap_or(1) as u32;
 
-        let plane_count = calculate_plane_count(
-            &strategy,
-            plane_dim,
-            plane_dim * 2,
-            shape,
-            None,
-            line_mode,
-            line_size,
-        );
-        assert_eq!(plane_count, 2);
-
-        let plane_count = calculate_plane_count(
-            &strategy,
-            plane_dim,
-            plane_dim * 6,
-            shape,
-            None,
-            line_mode,
-            line_size,
-        );
-        assert_eq!(plane_count, 4);
+        if is_contiguous && shape.is_multiple_of(line_size_input) {
+            line_size_output = line_size_input;
+        }
     }
 
-    #[test]
-    fn test_calculate_plane_count_cpu() {
-        let strategy = ReduceStrategy::FullUnit;
-        let shape = 512;
-        let plane_dim = 1;
-        let num_cores = 16;
-        let line_mode = LineMode::Parallel;
-        let line_size = 8;
-
-        let plane_count = calculate_plane_count(
-            &strategy,
-            plane_dim,
-            plane_dim * 1,
-            shape,
-            Some(num_cores),
-            line_mode,
-            line_size,
-        );
-        assert_eq!(plane_count, 1);
-
-        let plane_count = calculate_plane_count(
-            &strategy,
-            plane_dim,
-            plane_dim * 500,
-            shape,
-            Some(num_cores),
-            line_mode,
-            line_size,
-        );
-        assert_eq!(plane_count, num_cores);
-    }
+    (line_size_input as u8, line_size_output as u8)
 }

@@ -220,7 +220,7 @@ impl TestCase {
             input,
             output,
             self.axis.unwrap(),
-            self.strategy,
+            self.strategy.clone(),
             config,
             ReduceDtypes {
                 input: <TestDType as ReducePrecision>::EI::as_type_native_unchecked(),

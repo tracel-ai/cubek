@@ -1,12 +1,13 @@
 use crate::{
+    LineMode, ReduceError,
     components::{
         args::{ReduceArgs, TensorArgs, init_tensors},
         instructions::*,
     },
-    launch::{ReduceLaunchInfo, ReduceStrategy},
+    launch::{ReduceStrategy, generate_line_size},
     routines::{
-        CubeReduceBlueprint, GlobalReduceBlueprint, PlaneReduceBlueprint, ReduceBlueprint,
-        reduce_kernel_virtual,
+        ReduceBlueprint, ReduceLineSettings, ReduceProblem, Routine, cube::CubeRoutine,
+        plane::PlaneRoutine, reduce_kernel_virtual, unit::UnitRoutine,
     },
 };
 use cubecl::prelude::*;
@@ -27,51 +28,56 @@ pub(crate) fn launch_reduce<Run: Runtime>(
     input: TensorHandleRef<Run>,
     output: TensorHandleRef<Run>,
     axis: u32,
-    info: ReduceLaunchInfo,
     strategy: ReduceStrategy,
     dtypes: ReduceDtypes,
     inst: ReduceOperationConfig,
-) -> Result<(), LaunchError> {
-    let routine = match strategy {
-        ReduceStrategy::FullUnit => {
-            GlobalReduceBlueprint::FullUnit(crate::routines::UnitReduceBlueprint {
-                // TODO: Maybe faster to shotdown planes and do branchless check bound.
-                unit_idle: info.idle,
-            })
-        }
-        ReduceStrategy::FullPlane { independant } => {
-            GlobalReduceBlueprint::FullPlane(PlaneReduceBlueprint {
-                bound_checks: info.bound_checks,
-                independant,
-                plane_idle: info.idle,
-            })
-        }
-        ReduceStrategy::FullCube { use_planes } => match use_planes {
-            true => GlobalReduceBlueprint::Cube(CubeReduceBlueprint {
-                num_shared_accumulators: info.cube_dim.y,
-                bound_checks_inner: info.bound_checks,
-                use_planes,
-            }),
-            false => GlobalReduceBlueprint::Cube(CubeReduceBlueprint {
-                num_shared_accumulators: info.cube_dim.num_elems(),
-                bound_checks_inner: info.bound_checks,
-                use_planes,
-            }),
-        },
+) -> Result<(), ReduceError> {
+    let problem = ReduceProblem {
+        vector_size: input.shape[axis as usize] as u32,
+        vector_count: output.shape.iter().map(|i| *i as u32).product(),
+        axis,
+        dtypes,
+    };
+    let line_mode = match input.strides[axis as usize] {
+        1 => LineMode::Parallel,
+        _ => LineMode::Perpendicular,
+    };
+    let (line_size_input, line_size_output) = generate_line_size::<Run>(
+        &client,
+        &input,
+        &output,
+        axis as usize,
+        problem.dtypes.input,
+        line_mode,
+    );
+    let settings = ReduceLineSettings {
+        line_mode,
+        line_size_input,
+        line_size_output,
     };
 
-    let blueprint = ReduceBlueprint {
-        line_mode: info.line_mode,
-        global: routine,
+    let (blueprint, settings) = match strategy {
+        ReduceStrategy::FullUnit(strategy) => {
+            let routine = UnitRoutine;
+            routine.prepare(client, problem, settings, strategy)?
+        }
+        ReduceStrategy::FullPlane(strategy) => {
+            let routine = PlaneRoutine;
+            routine.prepare(client, problem, settings, strategy)?
+        }
+        ReduceStrategy::FullCube(strategy) => {
+            let routine = CubeRoutine;
+            routine.prepare(client, problem, settings, strategy)?
+        }
     };
 
     unsafe {
         reduce_kernel::launch_unchecked::<TensorArgs, Run>(
             client,
-            info.cube_count,
-            info.cube_dim,
-            input.as_tensor_arg(info.line_size_input as u8),
-            output.as_tensor_arg(info.line_size_output as u8),
+            settings.cube_count,
+            settings.cube_dim,
+            input.as_tensor_arg(settings.line.line_size_input),
+            output.as_tensor_arg(settings.line.line_size_output),
             ScalarArg::new(axis),
             blueprint,
             inst,
@@ -79,6 +85,7 @@ pub(crate) fn launch_reduce<Run: Runtime>(
             dtypes.output,
             dtypes.accumulation,
         )
+        .map_err(|err| ReduceError::Launch(err))
     }
 }
 

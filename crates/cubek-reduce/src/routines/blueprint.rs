@@ -23,7 +23,7 @@ pub struct CubeReduceBlueprint {
     // # Notes
     //
     // There are never too many cubes spawned.
-    pub bound_checks_inner: BoundChecks,
+    pub bound_checks: BoundChecks,
     /// The number of accumulators in shared memory.
     pub num_shared_accumulators: u32,
     // Whether we use plane instructions to merge accumulators.

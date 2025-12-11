@@ -1,4 +1,5 @@
 use crate::{
+    LineMode, ReduceDtypes, ReduceError,
     components::{
         global::{
             cube::GlobalFullCubeReduce, plane::GlobalFullPlaneReduce, unit::GlobalFullUnitReduce,
@@ -9,6 +10,39 @@ use crate::{
     routines::{GlobalReduceBlueprint, ReduceBlueprint},
 };
 use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
+
+#[derive(Debug)]
+pub struct ReduceLineSettings {
+    pub line_mode: LineMode,
+    pub line_size_input: u8,
+    pub line_size_output: u8,
+}
+
+#[derive(Debug)]
+pub struct ReduceLaunchSettings {
+    pub cube_dim: CubeDim,
+    pub cube_count: CubeCount,
+    pub line: ReduceLineSettings,
+}
+
+pub struct ReduceProblem {
+    pub vector_size: u32,
+    pub vector_count: u32,
+    pub axis: u32,
+    pub dtypes: ReduceDtypes,
+}
+
+pub trait Routine<R: Runtime> {
+    type Strategy: Send + 'static;
+
+    fn prepare(
+        &self,
+        client: &ComputeClient<R>,
+        problem: ReduceProblem,
+        settings: ReduceLineSettings,
+        strategy: Self::Strategy,
+    ) -> Result<(ReduceBlueprint, ReduceLaunchSettings), ReduceError>;
+}
 
 #[cube]
 pub fn reduce_kernel_virtual<In: Numeric, Out: Numeric, Acc: Numeric>(

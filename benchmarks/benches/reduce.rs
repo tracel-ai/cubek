@@ -6,7 +6,10 @@ use cubecl::{
 };
 use cubek::{
     random::random_uniform,
-    reduce::{components::instructions::ReduceOperationConfig, launch::ReduceStrategy},
+    reduce::{
+        components::instructions::ReduceOperationConfig, launch::ReduceStrategy,
+        routines::unit::UnitStrategy,
+    },
 };
 use std::marker::PhantomData;
 
@@ -43,7 +46,7 @@ impl<R: Runtime, E: Float> Benchmark for ReduceBench<R, E> {
             input.as_ref(),
             out.as_ref(),
             self.axis,
-            self.strategy,
+            self.strategy.clone(),
             ReduceOperationConfig::Sum,
             cubek::reduce::ReduceDtypes {
                 input: E::as_type_native_unchecked(),
@@ -75,14 +78,14 @@ impl<R: Runtime, E: Float> Benchmark for ReduceBench<R, E> {
 #[allow(dead_code)]
 fn run<R: Runtime, E: frontend::Float>(device: R::Device) {
     let client = R::client(&device);
-    for strategy in [
-        ReduceStrategy::FullUnit,
-        ReduceStrategy::FullPlane { independant: false },
-        ReduceStrategy::FullPlane { independant: true },
-        ReduceStrategy::FullCube { use_planes: true },
-        ReduceStrategy::FullCube { use_planes: false },
-    ] {
-        for axis in [0, 1, 2] {
+    for axis in [0, 1, 2] {
+        for strategy in [
+            ReduceStrategy::FullUnit(UnitStrategy),
+            // ReduceStrategy::FullPlane { independant: false },
+            // ReduceStrategy::FullPlane { independant: true },
+            // ReduceStrategy::FullCube { use_planes: true },
+            // ReduceStrategy::FullCube { use_planes: false },
+        ] {
             let bench = ReduceBench::<R, E> {
                 // shape: vec![2, 2, 4096 * 32],
                 shape: vec![32, 512, 4096],

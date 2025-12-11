@@ -56,61 +56,66 @@ macro_rules! testgen_reduce {
 
         mod full_cube {
             use super::*;
+            use cubek_reduce::routines::cube::CubeStrategy;
 
             testgen_reduce!(
                 dtype: $dtype,
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy::FullCube { use_planes: false },
+                strategy: ReduceStrategy::FullCube(CubeStrategy { use_planes: false }),
             );
         }
 
         mod full_cube_plane {
             use super::*;
+            use cubek_reduce::routines::cube::CubeStrategy;
 
             testgen_reduce!(
                 dtype: $dtype,
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy::FullCube { use_planes: true },
+                strategy: ReduceStrategy::FullCube(CubeStrategy { use_planes: true }),
             );
         }
 
         mod full_plane {
             use super::*;
+            use cubek_reduce::routines::plane::PlaneStrategy;
 
             testgen_reduce!(
                 dtype: $dtype,
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy::FullPlane { independant: false },
+                strategy: ReduceStrategy::FullPlane (PlaneStrategy{ independant: false }),
             );
         }
 
         mod full_plane_unit {
             use super::*;
+            use cubek_reduce::routines::plane::PlaneStrategy;
 
             testgen_reduce!(
                 dtype: $dtype,
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy::FullPlane { independant: true },
+                strategy: ReduceStrategy::FullPlane(PlaneStrategy{independant: true }),
             );
         }
 
         mod full_unit {
             use super::*;
+            use cubek_reduce::routines::unit::UnitStrategy;
 
             testgen_reduce!(
                 dtype: $dtype,
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy::FullUnit,
+                strategy: ReduceStrategy::FullUnit(UnitStrategy),
             );
         }
     };
