@@ -2,24 +2,30 @@ use cubecl::{Runtime, client::ComputeClient, prelude::TensorHandleRef};
 
 use cubecl::std::tensor::TensorHandle;
 
+use crate::components::AttentionBlueprint;
 use crate::{
     components::{
         AttentionIdent, AttentionProblem, AttentionSetupError, AttentionStorageTypes,
         AvailableLineSizes,
         args::{TensorArgs, TensorInputsLaunch},
     },
-    kernels::{
-        Algorithm, SharedAttentionSettings, blackbox_accelerated::BlackboxAcceleratedAlgorithm,
-        unit::UnitAlgorithm,
-    },
+    kernels::{Algorithm, blackbox_accelerated::BlackboxAcceleratedAlgorithm, unit::UnitAlgorithm},
 };
 
 use crate::components::batch::BatchAttentionFamily;
 
 #[derive(Debug, Clone)]
+pub enum Selection<S> {
+    /// Use a predefined blueprint
+    Forced(AttentionBlueprint),
+    /// Allows to give limited settings information, and the rest is inferred from it
+    Inferred(S),
+}
+
+#[derive(Debug, Clone)]
 pub enum Strategy {
-    BlackboxAccelerated(SharedAttentionSettings),
-    Unit(SharedAttentionSettings),
+    BlackboxAccelerated(Selection<<BlackboxAcceleratedAlgorithm as Algorithm>::Settings>),
+    Unit(Selection<<UnitAlgorithm as Algorithm>::Settings>),
 }
 
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
@@ -31,7 +37,7 @@ pub fn launch<R: Runtime>(
     value: TensorHandle<R>,
     mask: Option<TensorHandle<R>>,
     out: TensorHandle<R>,
-    attention_storage_types: AttentionStorageTypes,
+    attention_storage_types: &AttentionStorageTypes,
 ) -> Result<(), AttentionSetupError> {
     launch_ref(
         strategy,
@@ -54,7 +60,7 @@ pub fn launch_ref<R: Runtime>(
     value: &TensorHandleRef<R>,
     mask: &Option<TensorHandleRef<R>>,
     out: &TensorHandleRef<R>,
-    attention_storage_types: AttentionStorageTypes,
+    attention_storage_types: &AttentionStorageTypes,
 ) -> Result<(), AttentionSetupError> {
     match strategy {
         Strategy::BlackboxAccelerated(settings) => {
@@ -90,8 +96,8 @@ pub fn launch_attention<R: Runtime, A: Algorithm>(
     value: &TensorHandleRef<R>,
     mask: &Option<TensorHandleRef<R>>,
     out: &TensorHandleRef<R>,
-    global_dtypes: AttentionStorageTypes,
-    settings: &A::Settings,
+    global_dtypes: &AttentionStorageTypes,
+    settings: &Selection<A::Settings>,
 ) -> Result<(), AttentionSetupError> {
     let line_sizes = {
         let ls = AvailableLineSizes::from_global_types(client, global_dtypes.clone());
@@ -120,11 +126,14 @@ pub fn launch_attention<R: Runtime, A: Algorithm>(
         masked: mask.is_some(),
         causal: false,
         line_sizes: line_sizes.clone(),
-        global_dtypes,
+        global_dtypes: global_dtypes.clone(),
         accumulator_precision: Default::default(),
     };
 
-    let blueprint = A::blueprint(client, &problem, settings)?;
+    let blueprint = match settings {
+        Selection::Forced(attention_blueprint) => attention_blueprint.clone(),
+        Selection::Inferred(settings) => A::blueprint(client, &problem, settings)?,
+    };
 
     let dtypes = A::dtypes(client, &problem, &blueprint)?;
 

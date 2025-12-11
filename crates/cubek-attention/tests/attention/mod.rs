@@ -7,7 +7,11 @@ pub(crate) use reference::assert_result;
 pub(crate) use utils::tiling_scheme_ops;
 
 mod unit {
-    type Algorithm = cubek_attention::kernels::unit::UnitAlgorithm;
+    use cubek_attention::{Selection, Strategy, kernels::SharedAttentionSettings};
+    fn strategy(selection: Selection<SharedAttentionSettings>) -> Strategy {
+        Strategy::Unit(selection)
+    }
+
     const TILE_SIZE: cubek_attention::components::AttentionTileSize =
         cubek_attention::components::AttentionTileSize {
             seq_q: 4,
@@ -42,7 +46,11 @@ mod unit {
 }
 
 mod blackbox_accelerated {
-    type Algorithm = cubek_attention::kernels::blackbox_accelerated::BlackboxAcceleratedAlgorithm;
+    use cubek_attention::{Selection, Strategy, kernels::SharedAttentionSettings};
+    fn strategy(selection: Selection<SharedAttentionSettings>) -> Strategy {
+        Strategy::BlackboxAccelerated(selection)
+    }
+
     #[cfg(target_os = "macos")]
     const TILE_SIZE: cubek_attention::components::AttentionTileSize =
         cubek_attention::components::AttentionTileSize {

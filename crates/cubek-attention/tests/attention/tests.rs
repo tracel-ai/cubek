@@ -1,15 +1,13 @@
-use crate::attention::launcher::attention_test_launch;
+use crate::attention::launcher::test_launch;
 use crate::attention::tiling_scheme_ops::*;
 use cubecl::client::ComputeClient;
 use cubecl::{Runtime, TestRuntime};
 use cubek_attention::components::AttentionStorageTypes;
-use cubek_attention::{
-    components::{
-        AccumulatorPrecision, AttentionIdent, AttentionLineSizes, AttentionPartitionSize,
-        AttentionProblem, AttentionStageSize, AttentionTilingScheme, AvailableLineSizes,
-    },
-    kernels::SharedAttentionSettings,
+use cubek_attention::components::{
+    AccumulatorPrecision, AttentionIdent, AttentionLineSizes, AttentionPartitionSize,
+    AttentionProblem, AttentionStageSize, AttentionTilingScheme, AvailableLineSizes,
 };
+use cubek_attention::kernels::SharedAttentionSettings;
 
 #[test]
 fn attention_one_tile_simple() {
@@ -52,14 +50,12 @@ fn attention_one_tile_simple() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -103,14 +99,12 @@ fn attention_one_partition_several_planes() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -154,14 +148,12 @@ fn attention_problem_smaller_than_one_tile_seq_q_seq_kv_val_dim() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -205,14 +197,12 @@ fn attention_head_dim_oob() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -256,15 +246,13 @@ fn attention_two_rows_in_array_tile() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            two_rows_in_array_tile: true,
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        two_rows_in_array_tile: true,
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -308,14 +296,12 @@ fn attention_one_tile_seqq16() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -359,14 +345,12 @@ fn attention_one_tile_seqq4() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -410,14 +394,12 @@ fn attention_seqq2() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -461,14 +443,12 @@ fn attention_hd2() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -512,14 +492,12 @@ fn attention_kv2() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -563,14 +541,12 @@ fn attention_vd2() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -614,14 +590,12 @@ fn attention_hd2_vd2() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -665,14 +639,12 @@ fn attention_all2() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -716,14 +688,12 @@ fn attention_global_iterations_2() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -767,14 +737,12 @@ fn attention_global_iterations_2_kv2() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -818,14 +786,12 @@ fn attention_partition_kv1_global1_with_oob() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -869,14 +835,12 @@ fn attention_partition_seqq2_global2_kv2_global2() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -920,14 +884,12 @@ fn attention_partition_many_planes() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -971,14 +933,12 @@ fn attention_partition_kv1_global3_with_oob() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1022,14 +982,12 @@ fn attention_partition_oob_in_q() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1073,14 +1031,12 @@ fn attention_partition_kv2_with_oob() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1124,14 +1080,12 @@ fn attention_partition_kv2_causal() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1175,14 +1129,12 @@ fn attention_partition_kv2_masked() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1226,14 +1178,12 @@ fn attention_stage2() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1277,14 +1227,12 @@ fn attention_stage4() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1328,14 +1276,12 @@ fn attention_stage2_problem4() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1379,15 +1325,13 @@ fn attention_reuse_key_value() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            reuse_key_value: true,
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        reuse_key_value: true,
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1431,15 +1375,13 @@ fn attention_double_row_wise() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            two_rows_in_array_tile: true,
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        two_rows_in_array_tile: true,
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1483,14 +1425,12 @@ fn attention_one_tile_masked() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1534,14 +1474,12 @@ fn attention_one_tile_causal() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1585,14 +1523,12 @@ fn attention_one_tile_masked_causal() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1636,14 +1572,12 @@ fn attention_masked_oob() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1687,14 +1621,12 @@ fn attention_masked_larger() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1738,14 +1670,12 @@ fn attention_num_heads_2() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1789,14 +1719,12 @@ fn attention_batch_2() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1840,14 +1768,12 @@ fn attention_batch_2_seqq2() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1891,14 +1817,12 @@ fn attention_num_heads_2_batch_2() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1942,14 +1866,12 @@ fn attention_num_heads_2_masked() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1995,14 +1917,12 @@ fn attention_huge_problem() {
         line_sizes,
     };
 
-    attention_test_launch::<Algorithm>(
-        client,
-        problem,
-        &SharedAttentionSettings {
-            tiling_scheme: Some(tiling_scheme),
-            ..Default::default()
-        },
-    )
+    let strategy = strategy(Selection::Inferred(SharedAttentionSettings {
+        tiling_scheme: Some(tiling_scheme),
+        ..Default::default()
+    }));
+
+    test_launch(client, problem, strategy)
 }
 
 fn default_line_sizes(
