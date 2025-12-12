@@ -1,7 +1,7 @@
 //! # Test Mode
 //!
 //! Control how tests handle numerical and compilation errors via the environment variable
-//! `CUBEK_TEST_MODE`.
+//! `CUBE_TEST_MODE`.
 //!
 //! ## Modes
 //! - `Correct` (default): Numerical errors fail the test, compilation errors are ignored.
@@ -24,24 +24,24 @@
 //!
 //! ```bash
 //! # Default mode: only numerical errors fail
-//! export CUBEK_TEST_MODE=Correct
+//! export CUBE_TEST_MODE=Correct
 //!
 //! # Strict mode: all errors fail
-//! export CUBEK_TEST_MODE=Strict
+//! export CUBE_TEST_MODE=Strict
 //!
 //! # Print all elements (no filter specified)
-//! export CUBEK_TEST_MODE=PrintAll
+//! export CUBE_TEST_MODE=PrintAll
 //!
 //! # Print all elements in a subset of dimensions
-//! export CUBEK_TEST_MODE=PrintAll:.,10-20
+//! export CUBE_TEST_MODE=PrintAll:.,10-20
 //!
 //! # Print only failing numerical elements
-//! export CUBEK_TEST_MODE=PrintFail:.,10-20
+//! export CUBE_TEST_MODE=PrintFail:.,10-20
 //! ```
 
 use crate::test_utils::correctness::{TensorFilter, parse_tensor_filter};
 
-const CUBEK_TEST_MODE_ENV: &str = "CUBEK_TEST_MODE";
+const CUBE_TEST_MODE_ENV: &str = "CUBE_TEST_MODE";
 
 #[derive(Default, Debug, Clone)]
 pub enum TestMode {
@@ -73,7 +73,7 @@ impl TestMode {
 }
 
 pub fn current_test_mode() -> TestMode {
-    let val = match std::env::var(CUBEK_TEST_MODE_ENV) {
+    let val = match std::env::var(CUBE_TEST_MODE_ENV) {
         Ok(v) => v.to_lowercase(),
         Err(_) => return TestMode::Correct,
     };
