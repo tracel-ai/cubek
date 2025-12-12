@@ -202,7 +202,12 @@ where
 
         let bytes = client.read_one(output_handle);
         let output_values = O::from_bytes(&bytes);
-        assert_approx_equal(output_values, &expected_values);
+        assert_approx_equal(
+            output_values,
+            &expected_values,
+            // For prod we only test with relative difference.
+            matches!(config, ReduceOperationConfig::Prod),
+        );
     }
 
     fn num_output_values(&self) -> usize {
@@ -295,7 +300,7 @@ where
     }
 }
 
-pub fn assert_approx_equal<N: Numeric>(actual: &[N], expected: &[N]) {
+pub fn assert_approx_equal<N: Numeric>(actual: &[N], expected: &[N], only_relative: bool) {
     for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
         let a = a.to_f32().unwrap();
         let e = e.to_f32().unwrap();
@@ -305,7 +310,7 @@ pub fn assert_approx_equal<N: Numeric>(actual: &[N], expected: &[N]) {
                 diff < 1e-10,
                 "Values are not approx equal: index={i} actual={a}, expected={e}, difference={diff}",
             );
-        } else {
+        } else if !only_relative {
             let rel_diff = diff / e.abs();
             assert!(
                 rel_diff < 0.0625,
