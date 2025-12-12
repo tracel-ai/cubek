@@ -106,8 +106,7 @@ pub fn test_launch(
         ),
         Err(err) => match current_test_mode() {
             TestMode::Skip => {}
-            TestMode::Panic => panic!("Test did not run: {}", err),
-            TestMode::Print { .. } => unreachable!(),
+            TestMode::Panic | TestMode::Print(..) => panic!("Test did not run: {}", err),
         },
     }
 }

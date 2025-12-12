@@ -2,7 +2,7 @@ use crate::test_utils::correctness::{TensorFilter, parse_tensor_filter};
 
 const CUBEK_TEST_MODE_ENV: &str = "CUBEK_TEST_MODE";
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub enum TestMode {
     #[default]
     /// Tests resulting in compilation error are marked as `ok`
