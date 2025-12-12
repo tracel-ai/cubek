@@ -7,12 +7,9 @@ use cubecl::{
 use cubek::{
     random::random_uniform,
     reduce::{
-        BoundChecks,
         components::instructions::ReduceOperationConfig,
         launch::ReduceStrategy,
-        routines::{
-            CubeReduceBlueprint, PlaneReduceBlueprint, RoutineStrategy, unit::UnitStrategy,
-        },
+        routines::{RoutineStrategy, cube::CubeStrategy, plane::PlaneStrategy, unit::UnitStrategy},
     },
 };
 use std::marker::PhantomData;
@@ -82,44 +79,43 @@ impl<R: Runtime, E: Float> Benchmark for ReduceBench<R, E> {
 #[allow(dead_code)]
 fn run<R: Runtime, E: frontend::Float>(device: R::Device) {
     let client = R::client(&device);
-    for axis in [0, 1, 2] {
-        for strategy in [
-            ReduceStrategy::FullUnit(RoutineStrategy::Strategy(UnitStrategy)),
-            // ReduceStrategy::FullPlane { independant: false },
-            // ReduceStrategy::FullPlane { independant: true },
-            ReduceStrategy::FullCube(RoutineStrategy::Forced(
-                CubeReduceBlueprint {
-                    bound_checks: BoundChecks::Mask,
-                    num_shared_accumulators: 32,
+    for shape in [
+        vec![2, 2, 4099 * 32],
+        vec![32, 512, 4096],
+        vec![4096, 512, 32],
+        vec![512, 512],
+    ] {
+        for axis in 0..shape.len() {
+            for strategy in [
+                ReduceStrategy::FullUnit(RoutineStrategy::Strategy(UnitStrategy)),
+                ReduceStrategy::FullCube(RoutineStrategy::Strategy(CubeStrategy {
+                    use_planes: true,
+                })),
+                ReduceStrategy::FullCube(RoutineStrategy::Strategy(CubeStrategy {
                     use_planes: false,
-                },
-                CubeDim::new_2d(32, 1),
-            )),
-            ReduceStrategy::FullPlane(RoutineStrategy::Forced(
-                PlaneReduceBlueprint {
-                    plane_idle: true,
-                    bound_checks: BoundChecks::Mask,
+                })),
+                ReduceStrategy::FullPlane(RoutineStrategy::Strategy(PlaneStrategy {
                     independant: true,
-                },
-                CubeDim::new_2d(32, 1),
-            )),
-            // ReduceStrategy::FullCube { use_planes: false },
-        ] {
-            let bench = ReduceBench::<R, E> {
-                // shape: vec![2, 2, 4096 * 32],
-                shape: vec![32, 512, 4096],
-                axis,
-                client: client.clone(),
-                device: device.clone(),
-                strategy,
-                _e: PhantomData,
-            };
-            println!("Running: ==== {} ====", bench.name());
-            match bench.run(TimingMethod::System) {
-                Ok(val) => {
-                    println!("{val}");
+                })),
+                ReduceStrategy::FullPlane(RoutineStrategy::Strategy(PlaneStrategy {
+                    independant: false,
+                })),
+            ] {
+                let bench = ReduceBench::<R, E> {
+                    shape: shape.clone(),
+                    axis,
+                    client: client.clone(),
+                    device: device.clone(),
+                    strategy,
+                    _e: PhantomData,
+                };
+                println!("Running: ==== {} ====", bench.name());
+                match bench.run(TimingMethod::System) {
+                    Ok(val) => {
+                        println!("{val}");
+                    }
+                    Err(err) => println!("Can't run the benchmark: {err}"),
                 }
-                Err(err) => println!("Can't run the benchmark: {err}"),
             }
         }
     }
