@@ -1,5 +1,8 @@
-/// TODO move MatrixLayout to std, then use enum
-pub fn contiguous_strides(shape: &[usize], col_major: bool) -> Vec<usize> {
+/// Compute strides for a batched matrix tensor.
+///
+/// Last two dims are treated as a matrix; preceding dims are batches.
+/// By default row-major. Set `col_major` to true to swap the last two strides.
+pub fn batched_matrix_strides(shape: &[usize], col_major: bool) -> Vec<usize> {
     let n = shape.len();
     assert!(n >= 2, "Matrix must have at least 2 dimensions");
 
@@ -20,15 +23,6 @@ pub fn contiguous_strides(shape: &[usize], col_major: bool) -> Vec<usize> {
 }
 
 /// Reorders a flat array according to given strides.
-///
-/// # Example
-/// ```
-/// let flat = vec![1, 2, 3, 4];
-/// let shape = vec![2, 2];
-/// let strides = vec![1, 2];
-/// let reordered = reorder_by_strides(&flat, &shape, &strides);
-/// assert_eq!(reordered, vec![1, 3, 2, 4]);
-/// ```
 pub fn reorder_by_strides<T: Copy + Default>(
     flat: &[T],
     shape: &[usize],

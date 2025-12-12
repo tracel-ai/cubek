@@ -6,66 +6,7 @@ use crate::test_utils::test_tensor::strides_utils::reorder_by_strides;
 use crate::test_utils::test_tensor::test_input::base::{
     Distribution, HostData, HostDataType, RandomInputSpec, TestInputError, TestInputResult,
 };
-use crate::test_utils::{contiguous_strides, new_casted};
-
-// fn random_f32_tensor(
-//     client: &ComputeClient<TestRuntime>,
-//     dtype: StorageType,
-//     seed: u64,
-//     strides: &[usize],
-//     tensor_shape: &[usize],
-// ) -> (TensorHandle<TestRuntime>, Vec<f32>) {
-//     random_tensor(
-//         client,
-//         dtype,
-//         seed,
-//         strides,
-//         tensor_shape,
-//         |tensor_handle_ref| {
-//             cubek_random::random_uniform(client, -1., 1., tensor_handle_ref, dtype).unwrap()
-//         },
-//     )
-// }
-
-// fn random_bool_tensor(
-//     client: &ComputeClient<TestRuntime>,
-//     dtype: StorageType,
-//     seed: u64,
-//     strides: &[usize],
-//     tensor_shape: &[usize],
-// ) -> (TensorHandle<TestRuntime>, Vec<bool>) {
-//     let (tensor_handle, data) = random_tensor::<u8, _>(
-//         client,
-//         dtype,
-//         seed,
-//         strides,
-//         tensor_shape,
-//         |tensor_handle_ref| {
-//             cubek_random::random_bernoulli(client, 0.1, tensor_handle_ref, dtype).unwrap()
-//         },
-//     );
-
-//     (tensor_handle, data.iter().map(|&x| x > 0).collect())
-// }
-
-// fn random_tensor<T, F>(
-//     client: &ComputeClient<TestRuntime>,
-//     dtype: StorageType,
-//     seed: u64,
-//     strides: &[usize],
-//     tensor_shape: &[usize],
-//     random_function: F,
-// ) -> (TensorHandle<TestRuntime>, Vec<T>)
-// where
-//     T: CubePrimitive + CubeElement + Default,
-//     F: FnOnce(TensorHandleRef<TestRuntime>) -> (),
-// {
-//     let tensor_handle =
-//         random_tensor_handle(client, dtype, seed, strides, tensor_shape, random_function);
-//     let data = random_tensor_data::<T>(client, &tensor_handle, strides, tensor_shape);
-
-//     (tensor_handle, data)
-// }
+use crate::test_utils::{batched_matrix_strides, copy_casted};
 
 fn random_tensor_handle(
     client: &ComputeClient<TestRuntime>,
@@ -106,9 +47,8 @@ fn random_tensor_data<T: CubePrimitive + CubeElement + Default>(
     tensor_shape: &[usize],
 ) -> Vec<T> {
     // Read data in row-major flat form
-    let data_handle = new_casted(client, tensor_handle, T::as_type_native_unchecked());
-    let flat_data =
-        T::from_bytes(&client.read_one_tensor(data_handle.as_copy_descriptor())).to_owned();
+    let handle = copy_casted(client, tensor_handle, T::as_type_native_unchecked());
+    let flat_data = T::from_bytes(&client.read_one_tensor(handle.as_copy_descriptor())).to_owned();
 
     // Now reorder to match the logical indexing implied by strides
     reorder_by_strides(&flat_data, tensor_shape, strides)
@@ -121,7 +61,7 @@ pub(crate) fn build_random(
     let strides = &spec
         .inner
         .strides
-        .unwrap_or(contiguous_strides(&spec.inner.shape, false));
+        .unwrap_or(batched_matrix_strides(&spec.inner.shape, false));
 
     let handle = random_tensor_handle(
         &spec.inner.client,
@@ -148,8 +88,5 @@ pub(crate) fn build_random(
         None => None,
     };
 
-    Ok(TestInputResult {
-        handle,
-        host_data,
-    })
+    Ok(TestInputResult { handle, host_data })
 }

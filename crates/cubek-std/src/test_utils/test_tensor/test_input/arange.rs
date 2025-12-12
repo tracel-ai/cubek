@@ -4,8 +4,12 @@ use cubecl::{
     std::tensor::{TensorHandle, ViewOperationsMut, ViewOperationsMutExpand},
 };
 
-use crate::test_utils::test_tensor::test_input::base::{
-    HostDataType, SimpleInputSpec, HostData, TestInputError, TestInputResult,
+use crate::test_utils::test_tensor::strides_utils::reorder_by_strides;
+use crate::test_utils::{
+    batched_matrix_strides,
+    test_tensor::test_input::base::{
+        HostData, HostDataType, SimpleInputSpec, TestInputError, TestInputResult,
+    },
 };
 
 #[cube(launch)]
@@ -16,6 +20,7 @@ fn arange_launch<T: Numeric>(tensor: &mut Tensor<T>, #[define(T)] _types: Storag
 fn new_arange(
     client: &ComputeClient<TestRuntime>,
     shape: Vec<usize>,
+    strides: Vec<usize>,
     dtype: StorageType,
 ) -> TensorHandle<TestRuntime> {
     let num_elems = shape.iter().product::<usize>();
@@ -27,7 +32,12 @@ fn new_arange(
     let cube_dim = CubeDim::default();
     let cube_count = num_units_needed.div_ceil(cube_dim.num_elems());
 
-    let out = TensorHandle::new_contiguous(shape, client.empty(dtype.size() * num_elems), dtype);
+    let out = TensorHandle::new(
+        client.empty(dtype.size() * num_elems),
+        shape,
+        strides,
+        dtype,
+    );
 
     arange_launch::launch::<TestRuntime>(
         client,
@@ -55,20 +65,25 @@ pub(crate) fn build_arange(
 ) -> Result<TestInputResult, TestInputError> {
     let num_elems = spec.shape.iter().product();
 
-    if spec.strides.is_some() {
-        return Err(TestInputError::UnsupportedStrides);
-    }
+    let strides = spec
+        .strides
+        .unwrap_or(batched_matrix_strides(&spec.shape, false));
 
     let host_data = match host_data_type {
-        Some(HostDataType::F32) => Some(HostData::F32(
-            (0..num_elems).map(|x| x as f32).collect(),
-        )),
+        Some(HostDataType::F32) => {
+            let flat_arange: Vec<f32> = (0..num_elems).map(|x| x as f32).collect();
+            Some(HostData::F32(reorder_by_strides(
+                &flat_arange,
+                &spec.shape,
+                &strides,
+            )))
+        }
         Some(HostDataType::Bool) => return Err(TestInputError::InvalidReturnData),
         None => None,
     };
 
     Ok(TestInputResult {
-        handle: new_arange(&spec.client, spec.shape, spec.dtype),
+        handle: new_arange(&spec.client, spec.shape, strides, spec.dtype),
         host_data,
     })
 }

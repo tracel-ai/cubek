@@ -124,7 +124,7 @@ fn test_naive(case: MatmulTestCase) {
         Distribution::Uniform(-1., 1.),
         None,
     )
-    .build_with_f32_host_data()
+    .generate_with_f32_host_data()
     .unwrap();
 
     let (rhs, rhs_data) = TestInput::random(
@@ -135,7 +135,7 @@ fn test_naive(case: MatmulTestCase) {
         Distribution::Uniform(-1., 1.),
         None,
     )
-    .build_with_f32_host_data()
+    .generate_with_f32_host_data()
     .unwrap();
 
     let out = TestInput::Zeros(SimpleInputSpec::new(
@@ -143,7 +143,7 @@ fn test_naive(case: MatmulTestCase) {
         problem.shape(MatmulIdent::Out),
         *dtype,
     ))
-    .build_without_host_data()
+    .generate_without_host_data()
     .unwrap();
 
     let lhs_handle = MatmulInputHandleRef::Normal(lhs.as_ref(), dtype.dtype);

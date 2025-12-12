@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use cubecl::{Runtime, client::ComputeClient, tensor_line_size_parallel};
-use cubek_std::test_utils::contiguous_strides;
+use cubek_std::test_utils::batched_matrix_strides;
 
 use crate::launch::{AttentionDefinition, AttentionIdent};
 
@@ -27,7 +27,7 @@ impl AttentionLineSizes {
             tensor_line_size_parallel(
                 supported_line_sizes,
                 shape,
-                &contiguous_strides(shape, false),
+                &batched_matrix_strides(shape, false),
                 shape.len() - 1,
             )
         };

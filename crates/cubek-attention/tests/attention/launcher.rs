@@ -26,7 +26,7 @@ pub fn test_launch(
         Distribution::Uniform(-1., 1.),
         None,
     )
-    .build_with_f32_host_data()
+    .generate_with_f32_host_data()
     .unwrap();
 
     let (key_handle, key_data) = TestInput::random(
@@ -37,7 +37,7 @@ pub fn test_launch(
         Distribution::Uniform(-1., 1.),
         None,
     )
-    .build_with_f32_host_data()
+    .generate_with_f32_host_data()
     .unwrap();
 
     let (value_handle, value_data) = TestInput::random(
@@ -48,7 +48,7 @@ pub fn test_launch(
         Distribution::Uniform(-1., 1.),
         None,
     )
-    .build_with_f32_host_data()
+    .generate_with_f32_host_data()
     .unwrap();
 
     let (mask_handle, mask_data) = if definition.masked {
@@ -60,7 +60,7 @@ pub fn test_launch(
             Distribution::Bernoulli(0.1),
             None,
         )
-        .build_with_bool_host_data()
+        .generate_with_bool_host_data()
         .unwrap();
 
         (Some(mask_handle), Some(mask_data.into_bool()))
@@ -73,7 +73,7 @@ pub fn test_launch(
         out_shape.to_vec(),
         definition.global_dtypes.out,
     )
-    .build_without_host_data()
+    .generate_without_host_data()
     .unwrap();
 
     match launch(
@@ -107,7 +107,7 @@ pub fn test_launch(
         Err(err) => match current_test_mode() {
             TestMode::Skip => {}
             TestMode::Panic => panic!("Test did not run: {}", err),
-            TestMode::Print => unreachable!(),
+            TestMode::Print { .. } => unreachable!(),
         },
     }
 }

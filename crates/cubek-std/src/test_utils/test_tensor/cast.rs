@@ -25,15 +25,11 @@ fn cast_inner<From: Numeric, To: Numeric>(from: &Tensor<Line<From>>, to: &mut Te
     )
 }
 
-pub fn new_casted(
+pub fn copy_casted(
     client: &ComputeClient<TestRuntime>,
     original: &TensorHandle<TestRuntime>,
     target_type: StorageType,
 ) -> TensorHandle<TestRuntime> {
-    if original.dtype == target_type {
-        return original.clone();
-    }
-
     let num_elems: usize = original.shape.iter().product();
 
     let line_size = tensor_line_size_parallel(

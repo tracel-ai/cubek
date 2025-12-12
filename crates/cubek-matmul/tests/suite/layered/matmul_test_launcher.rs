@@ -24,7 +24,7 @@ use cubek_std::test_utils::Distribution;
 use cubek_std::test_utils::RandomInputSpec;
 use cubek_std::test_utils::SimpleInputSpec;
 use cubek_std::test_utils::TestInput;
-use cubek_std::test_utils::contiguous_strides;
+use cubek_std::test_utils::batched_matrix_strides;
 
 use crate::suite::assert_result;
 
@@ -53,12 +53,12 @@ pub fn test_matmul_algorithm<A: Algorithm>(
         *dtypes.lhs_global,
         1234,
         Distribution::Uniform(-1., 1.),
-        Some(contiguous_strides(
+        Some(batched_matrix_strides(
             &lhs_shape,
             matches!(problem.lhs_layout, MatrixLayout::ColMajor),
         )),
     )
-    .build_with_f32_host_data()
+    .generate_with_f32_host_data()
     .unwrap();
 
     let (rhs, rhs_data) = TestInput::random(
@@ -67,12 +67,12 @@ pub fn test_matmul_algorithm<A: Algorithm>(
         *dtypes.rhs_global,
         5678,
         Distribution::Uniform(-1., 1.),
-        Some(contiguous_strides(
+        Some(batched_matrix_strides(
             &rhs_shape,
             matches!(problem.rhs_layout, MatrixLayout::ColMajor),
         )),
     )
-    .build_with_f32_host_data()
+    .generate_with_f32_host_data()
     .unwrap();
 
     let out = TestInput::Zeros(SimpleInputSpec::new(
@@ -80,7 +80,7 @@ pub fn test_matmul_algorithm<A: Algorithm>(
         problem.shape(MatmulIdent::Out),
         *dtypes.acc_global,
     ))
-    .build_without_host_data()
+    .generate_without_host_data()
     .unwrap();
 
     problem.lhs_strides = lhs.strides.clone();
