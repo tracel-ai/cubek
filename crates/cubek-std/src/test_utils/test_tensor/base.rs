@@ -21,7 +21,7 @@ pub fn random_tensor(
     let flat_len: usize = tensor_shape.iter().product();
     let tensor_handle = TensorHandle::empty(client, vec![flat_len], dtype);
 
-    cubek_random::random_uniform(&client, -1., 1., tensor_handle.as_ref(), dtype).unwrap();
+    cubek_random::random_uniform(client, -1., 1., tensor_handle.as_ref(), dtype).unwrap();
 
     // Read data in row-major flat form
     let data_handle = new_casted(client, &tensor_handle, f32::as_type_native_unchecked());
@@ -29,7 +29,7 @@ pub fn random_tensor(
         f32::from_bytes(&client.read_one_tensor(data_handle.as_copy_descriptor())).to_owned();
 
     // Now reorder to match the logical indexing implied by strides
-    let logical_data = reorder_by_strides(&flat_data, &tensor_shape, &strides);
+    let logical_data = reorder_by_strides(&flat_data, tensor_shape, strides);
 
     (
         TensorHandle::new(
@@ -56,7 +56,7 @@ pub fn random_bool_tensor(
     let flat_len: usize = tensor_shape.iter().product();
     let tensor_handle = TensorHandle::empty(client, vec![flat_len], dtype);
 
-    cubek_random::random_bernoulli(&client, 0.1, tensor_handle.as_ref(), dtype).unwrap();
+    cubek_random::random_bernoulli(client, 0.1, tensor_handle.as_ref(), dtype).unwrap();
 
     // Read data in row-major flat form
     let data_handle = new_casted(client, &tensor_handle, u8::as_type_native_unchecked());
@@ -64,7 +64,7 @@ pub fn random_bool_tensor(
         u8::from_bytes(&client.read_one_tensor(data_handle.as_copy_descriptor())).to_owned();
 
     // Now reorder to match the logical indexing implied by strides
-    let logical_data = reorder_by_strides(&flat_data, &tensor_shape, &strides);
+    let logical_data = reorder_by_strides(&flat_data, tensor_shape, strides);
 
     (
         TensorHandle::new(
@@ -84,6 +84,7 @@ fn reorder_by_strides<T: Copy + Default>(flat: &[T], shape: &[usize], strides: &
     let rank = shape.len();
     let mut index = vec![0usize; rank];
 
+    #[allow(clippy::needless_range_loop)]
     for logical_flat_idx in 0..total {
         // Compute multi-dim index in row-major order
         let mut remaining = logical_flat_idx;
