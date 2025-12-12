@@ -1,8 +1,7 @@
-mod batched_matrix;
 mod cast;
-mod eye;
-mod random;
+mod strides_utils;
+mod test_input;
 
-pub use batched_matrix::contiguous_strides;
 pub use cast::*;
-pub use random::*;
+pub use strides_utils::contiguous_strides;
+pub use test_input::*;

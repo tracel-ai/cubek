@@ -1,13 +1,13 @@
 use crate::attention::assert_result;
 use cubecl::TestRuntime;
-use cubecl::std::tensor::TensorHandle;
 use cubek_attention::launch::{
     AttentionDefinition, AttentionElems, AttentionIdent, AttentionOptions, Strategy, launch,
 };
 
 use cubecl::client::ComputeClient;
 use cubek_std::test_utils::{
-    TestMode, contiguous_strides, current_test_mode, random_bool_tensor, random_f32_tensor,
+    Distribution, RandomInputSpec, HostDataType, SimpleInputSpec, TestInput, TestMode,
+    current_test_mode,
 };
 
 pub fn test_launch(
@@ -21,44 +21,59 @@ pub fn test_launch(
     let mask_shape = definition.shape(AttentionIdent::Mask);
     let out_shape = definition.shape(AttentionIdent::Out);
 
-    let (query_handle, query_data) = random_f32_tensor(
-        &client,
+    let (query_handle, query_data) = TestInput::Random(RandomInputSpec::new(
+        client.clone(),
+        query_shape.to_vec(),
         definition.global_dtypes.query,
         12,
-        &contiguous_strides(&query_shape, false),
-        &query_shape,
-    );
+        Distribution::Uniform(-1., 1.),
+    ))
+    .build_with_host_data(HostDataType::F32)
+    .unwrap();
 
-    let (key_handle, key_data) = random_f32_tensor(
-        &client,
+    let (key_handle, key_data) = TestInput::Random(RandomInputSpec::new(
+        client.clone(),
+        key_shape.to_vec(),
         definition.global_dtypes.key,
         34,
-        &contiguous_strides(&key_shape, false),
-        &key_shape,
-    );
+        Distribution::Uniform(-1., 1.),
+    ))
+    .build_with_host_data(HostDataType::F32)
+    .unwrap();
 
-    let (value_handle, value_data) = random_f32_tensor(
-        &client,
+    let (value_handle, value_data) = TestInput::Random(RandomInputSpec::new(
+        client.clone(),
+        value_shape.to_vec(),
         definition.global_dtypes.value,
         56,
-        &contiguous_strides(&value_shape, false),
-        &value_shape,
-    );
+        Distribution::Uniform(-1., 1.),
+    ))
+    .build_with_host_data(HostDataType::F32)
+    .unwrap();
 
     let (mask_handle, mask_data) = if definition.masked {
-        let (mask_handle, mask_data) = random_bool_tensor(
-            &client,
+        let (mask_handle, mask_data) = TestInput::Random(RandomInputSpec::new(
+            client.clone(),
+            mask_shape.to_vec(),
             definition.global_dtypes.mask,
             78,
-            &contiguous_strides(&mask_shape, false),
-            &mask_shape,
-        );
-        (Some(mask_handle), Some(mask_data))
+            Distribution::Bernoulli(0.1),
+        ))
+        .build_with_host_data(HostDataType::Bool)
+        .unwrap();
+
+        (Some(mask_handle), Some(mask_data.into_bool()))
     } else {
         (None, None)
     };
 
-    let out_handle = TensorHandle::zeros(&client, out_shape.to_vec(), definition.global_dtypes.out);
+    let out_handle = TestInput::Zeros(SimpleInputSpec::new(
+        client.clone(),
+        out_shape.to_vec(),
+        definition.global_dtypes.out,
+    ))
+    .build_without_host_data()
+    .unwrap();
 
     match launch(
         strategy,
@@ -75,9 +90,9 @@ pub fn test_launch(
         },
     ) {
         Ok(_) => assert_result(
-            &query_data,
-            &key_data,
-            &value_data,
+            &query_data.into_f32(),
+            &key_data.into_f32(),
+            &value_data.into_f32(),
             mask_data.as_ref().map(|v| v.as_slice()),
             &definition,
             &client,

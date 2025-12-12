@@ -1,13 +1,14 @@
 use crate::suite::assert_result;
-use cubecl::Runtime;
 use cubecl::frontend::CubePrimitive;
 use cubecl::prelude::TensorHandleRef;
 use cubecl::std::tensor::TensorHandle;
+use cubecl::{Runtime, client};
 use cubek_matmul::MatmulInputHandleRef;
-use cubek_std::test_utils::{contiguous_strides, random_f32_tensor};
 
 use cubek_matmul::components::{MatmulElems, MatmulIdent, MatmulProblem, MatrixLayout};
 use cubek_matmul::kernels::naive;
+use cubek_std::test_utils::SimpleInputSpec;
+use cubek_std::test_utils::{Distribution, HostDataType, RandomInputSpec, TestInput};
 
 type TestRuntime = cubecl::TestRuntime;
 
@@ -115,28 +116,33 @@ fn test_naive(case: MatmulTestCase) {
     let lhs_shape = problem.shape(MatmulIdent::Lhs);
     let rhs_shape = problem.shape(MatmulIdent::Rhs);
 
-    let (lhs, lhs_data) = random_f32_tensor(
-        &client,
+    let (lhs, lhs_data) = TestInput::Random(RandomInputSpec::new(
+        client.clone(),
+        lhs_shape,
         *dtype,
         1234,
-        &contiguous_strides(
-            &lhs_shape,
-            matches!(problem.lhs_layout, MatrixLayout::ColMajor),
-        ),
-        &lhs_shape,
-    );
-    let (rhs, rhs_data) = random_f32_tensor(
-        &client,
+        Distribution::Uniform(-1., 1.),
+    ))
+    .build_with_host_data(HostDataType::F32)
+    .unwrap();
+
+    let (rhs, rhs_data) = TestInput::Random(RandomInputSpec::new(
+        client.clone(),
+        rhs_shape,
         *dtype,
         5678,
-        &contiguous_strides(
-            &rhs_shape,
-            matches!(problem.rhs_layout, MatrixLayout::ColMajor),
-        ),
-        &rhs_shape,
-    );
+        Distribution::Uniform(-1., 1.),
+    ))
+    .build_with_host_data(HostDataType::F32)
+    .unwrap();
 
-    let out = TensorHandle::zeros(&client, problem.shape(MatmulIdent::Out), *dtype);
+    let out = TestInput::Zeros(SimpleInputSpec::new(
+        client.clone(),
+        problem.shape(MatmulIdent::Out),
+        *dtype,
+    ))
+    .build_without_host_data()
+    .unwrap();
 
     let lhs_handle = MatmulInputHandleRef::Normal(lhs.as_ref(), dtype.dtype);
     let rhs_handle = MatmulInputHandleRef::Normal(rhs.as_ref(), dtype.dtype);
@@ -152,8 +158,8 @@ fn test_naive(case: MatmulTestCase) {
     .unwrap();
 
     assert_result(
-        &lhs_data,
-        &rhs_data,
+        &lhs_data.into_f32(),
+        &rhs_data.into_f32(),
         &problem,
         &client,
         &out,

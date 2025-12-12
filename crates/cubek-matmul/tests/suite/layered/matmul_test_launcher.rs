@@ -20,8 +20,12 @@ use cubek_matmul::{
     MatmulInputHandleRef,
     components::{AvailableLineSizes, MatmulIdent},
 };
+use cubek_std::test_utils::Distribution;
+use cubek_std::test_utils::HostDataType;
+use cubek_std::test_utils::RandomInputSpec;
+use cubek_std::test_utils::SimpleInputSpec;
+use cubek_std::test_utils::TestInput;
 use cubek_std::test_utils::contiguous_strides;
-use cubek_std::test_utils::random_f32_tensor;
 
 use crate::suite::assert_result;
 
@@ -44,27 +48,45 @@ pub fn test_matmul_algorithm<A: Algorithm>(
     let lhs_shape = problem.shape(MatmulIdent::Lhs);
     let rhs_shape = problem.shape(MatmulIdent::Rhs);
 
-    let (lhs, lhs_data) = random_f32_tensor(
-        &client,
-        *dtypes.lhs_global,
-        1234,
-        &contiguous_strides(
+    let (lhs, lhs_data) = TestInput::Random(
+        RandomInputSpec::new(
+            client.clone(),
+            lhs_shape.clone(),
+            *dtypes.lhs_global,
+            1234,
+            Distribution::Uniform(-1., 1.),
+        )
+        .with_strides(contiguous_strides(
             &lhs_shape,
             matches!(problem.lhs_layout, MatrixLayout::ColMajor),
-        ),
-        &lhs_shape,
-    );
-    let (rhs, rhs_data) = random_f32_tensor(
-        &client,
-        *dtypes.rhs_global,
-        5678,
-        &contiguous_strides(
+        )),
+    )
+    .build_with_host_data(HostDataType::F32)
+    .unwrap();
+
+    let (rhs, rhs_data) = TestInput::Random(
+        RandomInputSpec::new(
+            client.clone(),
+            rhs_shape.clone(),
+            *dtypes.rhs_global,
+            5678,
+            Distribution::Uniform(-1., 1.),
+        )
+        .with_strides(contiguous_strides(
             &rhs_shape,
             matches!(problem.rhs_layout, MatrixLayout::ColMajor),
-        ),
-        &rhs_shape,
-    );
-    let out = TensorHandle::zeros(&client, problem.shape(MatmulIdent::Out), *dtypes.acc_global);
+        )),
+    )
+    .build_with_host_data(HostDataType::F32)
+    .unwrap();
+
+    let out = TestInput::Zeros(SimpleInputSpec::new(
+        client.clone(),
+        problem.shape(MatmulIdent::Out),
+        *dtypes.acc_global,
+    ))
+    .build_without_host_data()
+    .unwrap();
 
     problem.lhs_strides = lhs.strides.clone();
     problem.rhs_strides = rhs.strides.clone();
@@ -83,7 +105,14 @@ pub fn test_matmul_algorithm<A: Algorithm>(
         rhs_handle,
         out_handle,
     ) {
-        assert_result(&lhs_data, &rhs_data, &problem, &client, &out, dtypes);
+        assert_result(
+            &lhs_data.into_f32(),
+            &rhs_data.into_f32(),
+            &problem,
+            &client,
+            &out,
+            dtypes,
+        );
     }
 }
 
