@@ -21,7 +21,6 @@ use cubek_matmul::{
     components::{AvailableLineSizes, MatmulIdent},
 };
 use cubek_std::test_utils::Distribution;
-use cubek_std::test_utils::HostDataType;
 use cubek_std::test_utils::RandomInputSpec;
 use cubek_std::test_utils::SimpleInputSpec;
 use cubek_std::test_utils::TestInput;
@@ -48,36 +47,32 @@ pub fn test_matmul_algorithm<A: Algorithm>(
     let lhs_shape = problem.shape(MatmulIdent::Lhs);
     let rhs_shape = problem.shape(MatmulIdent::Rhs);
 
-    let (lhs, lhs_data) = TestInput::Random(
-        RandomInputSpec::new(
-            client.clone(),
-            lhs_shape.clone(),
-            *dtypes.lhs_global,
-            1234,
-            Distribution::Uniform(-1., 1.),
-        )
-        .with_strides(contiguous_strides(
+    let (lhs, lhs_data) = TestInput::random(
+        client.clone(),
+        lhs_shape.clone(),
+        *dtypes.lhs_global,
+        1234,
+        Distribution::Uniform(-1., 1.),
+        Some(contiguous_strides(
             &lhs_shape,
             matches!(problem.lhs_layout, MatrixLayout::ColMajor),
         )),
     )
-    .build_with_host_data(HostDataType::F32)
+    .build_with_f32_host_data()
     .unwrap();
 
-    let (rhs, rhs_data) = TestInput::Random(
-        RandomInputSpec::new(
-            client.clone(),
-            rhs_shape.clone(),
-            *dtypes.rhs_global,
-            5678,
-            Distribution::Uniform(-1., 1.),
-        )
-        .with_strides(contiguous_strides(
+    let (rhs, rhs_data) = TestInput::random(
+        client.clone(),
+        rhs_shape.clone(),
+        *dtypes.rhs_global,
+        5678,
+        Distribution::Uniform(-1., 1.),
+        Some(contiguous_strides(
             &rhs_shape,
             matches!(problem.rhs_layout, MatrixLayout::ColMajor),
         )),
     )
-    .build_with_host_data(HostDataType::F32)
+    .build_with_f32_host_data()
     .unwrap();
 
     let out = TestInput::Zeros(SimpleInputSpec::new(

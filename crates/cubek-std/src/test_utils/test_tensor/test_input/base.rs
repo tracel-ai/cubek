@@ -68,7 +68,7 @@ impl RandomInputSpec {
     }
 }
 
-pub enum HostDataType {
+pub(crate) enum HostDataType {
     F32,
     Bool,
 }
@@ -109,6 +109,59 @@ pub enum TestInputError {
 }
 
 impl TestInput {
+    pub fn random(
+        client: ComputeClient<TestRuntime>,
+        shape: Vec<usize>,
+        dtype: StorageType,
+        seed: u64,
+        distribution: Distribution,
+        strides: Option<Vec<usize>>,
+    ) -> Self {
+        let spec = RandomInputSpec::new(client, shape, dtype, seed, distribution);
+        let spec = if let Some(s) = strides {
+            spec.with_strides(s)
+        } else {
+            spec
+        };
+        Self::Random(spec)
+    }
+
+    pub fn zeros(
+        client: ComputeClient<TestRuntime>,
+        shape: Vec<usize>,
+        dtype: StorageType,
+    ) -> Self {
+        Self::Zeros(SimpleInputSpec::new(client, shape, dtype))
+    }
+
+    pub fn eye(client: ComputeClient<TestRuntime>, shape: Vec<usize>, dtype: StorageType) -> Self {
+        Self::Eye(SimpleInputSpec::new(client, shape, dtype))
+    }
+
+    pub fn arange(
+        client: ComputeClient<TestRuntime>,
+        shape: Vec<usize>,
+        dtype: StorageType,
+    ) -> Self {
+        Self::Arange(SimpleInputSpec::new(client, shape, dtype))
+    }
+
+    pub fn build_with_f32_host_data(
+        self,
+    ) -> Result<(TensorHandle<TestRuntime>, HostData), TestInputError> {
+        self.build_with_host_data(HostDataType::F32)
+    }
+
+    pub fn build_with_bool_host_data(
+        self,
+    ) -> Result<(TensorHandle<TestRuntime>, HostData), TestInputError> {
+        self.build_with_host_data(HostDataType::Bool)
+    }
+
+    pub fn build_without_host_data(self) -> Result<TensorHandle<TestRuntime>, TestInputError> {
+        Ok(self.build(None)?.handle)
+    }
+
     fn build(self, return_data: Option<HostDataType>) -> Result<TestInputResult, TestInputError> {
         match self {
             TestInput::Arange(spec) => build_arange(spec, return_data),
@@ -118,7 +171,7 @@ impl TestInput {
         }
     }
 
-    pub fn build_with_host_data(
+    fn build_with_host_data(
         self,
         host_data_type: HostDataType,
     ) -> Result<(TensorHandle<TestRuntime>, HostData), TestInputError> {
@@ -127,9 +180,5 @@ impl TestInput {
             Some(data) => Ok((result.handle, data)),
             None => Err(TestInputError::InvalidReturnData),
         }
-    }
-
-    pub fn build_without_host_data(self) -> Result<TensorHandle<TestRuntime>, TestInputError> {
-        Ok(self.build(None)?.handle)
     }
 }

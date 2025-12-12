@@ -5,10 +5,7 @@ use cubek_attention::launch::{
 };
 
 use cubecl::client::ComputeClient;
-use cubek_std::test_utils::{
-    Distribution, RandomInputSpec, HostDataType, SimpleInputSpec, TestInput, TestMode,
-    current_test_mode,
-};
+use cubek_std::test_utils::{Distribution, TestInput, TestMode, current_test_mode};
 
 pub fn test_launch(
     client: ComputeClient<TestRuntime>,
@@ -21,45 +18,49 @@ pub fn test_launch(
     let mask_shape = definition.shape(AttentionIdent::Mask);
     let out_shape = definition.shape(AttentionIdent::Out);
 
-    let (query_handle, query_data) = TestInput::Random(RandomInputSpec::new(
+    let (query_handle, query_data) = TestInput::random(
         client.clone(),
         query_shape.to_vec(),
         definition.global_dtypes.query,
         12,
         Distribution::Uniform(-1., 1.),
-    ))
-    .build_with_host_data(HostDataType::F32)
+        None,
+    )
+    .build_with_f32_host_data()
     .unwrap();
 
-    let (key_handle, key_data) = TestInput::Random(RandomInputSpec::new(
+    let (key_handle, key_data) = TestInput::random(
         client.clone(),
         key_shape.to_vec(),
         definition.global_dtypes.key,
         34,
         Distribution::Uniform(-1., 1.),
-    ))
-    .build_with_host_data(HostDataType::F32)
+        None,
+    )
+    .build_with_f32_host_data()
     .unwrap();
 
-    let (value_handle, value_data) = TestInput::Random(RandomInputSpec::new(
+    let (value_handle, value_data) = TestInput::random(
         client.clone(),
         value_shape.to_vec(),
         definition.global_dtypes.value,
         56,
         Distribution::Uniform(-1., 1.),
-    ))
-    .build_with_host_data(HostDataType::F32)
+        None,
+    )
+    .build_with_f32_host_data()
     .unwrap();
 
     let (mask_handle, mask_data) = if definition.masked {
-        let (mask_handle, mask_data) = TestInput::Random(RandomInputSpec::new(
+        let (mask_handle, mask_data) = TestInput::random(
             client.clone(),
             mask_shape.to_vec(),
             definition.global_dtypes.mask,
             78,
             Distribution::Bernoulli(0.1),
-        ))
-        .build_with_host_data(HostDataType::Bool)
+            None,
+        )
+        .build_with_bool_host_data()
         .unwrap();
 
         (Some(mask_handle), Some(mask_data.into_bool()))
@@ -67,11 +68,11 @@ pub fn test_launch(
         (None, None)
     };
 
-    let out_handle = TestInput::Zeros(SimpleInputSpec::new(
+    let out_handle = TestInput::zeros(
         client.clone(),
         out_shape.to_vec(),
         definition.global_dtypes.out,
-    ))
+    )
     .build_without_host_data()
     .unwrap();
 

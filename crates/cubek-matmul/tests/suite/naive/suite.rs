@@ -8,7 +8,7 @@ use cubek_matmul::MatmulInputHandleRef;
 use cubek_matmul::components::{MatmulElems, MatmulIdent, MatmulProblem, MatrixLayout};
 use cubek_matmul::kernels::naive;
 use cubek_std::test_utils::SimpleInputSpec;
-use cubek_std::test_utils::{Distribution, HostDataType, RandomInputSpec, TestInput};
+use cubek_std::test_utils::{Distribution, TestInput};
 
 type TestRuntime = cubecl::TestRuntime;
 
@@ -116,24 +116,26 @@ fn test_naive(case: MatmulTestCase) {
     let lhs_shape = problem.shape(MatmulIdent::Lhs);
     let rhs_shape = problem.shape(MatmulIdent::Rhs);
 
-    let (lhs, lhs_data) = TestInput::Random(RandomInputSpec::new(
+    let (lhs, lhs_data) = TestInput::random(
         client.clone(),
         lhs_shape,
         *dtype,
         1234,
         Distribution::Uniform(-1., 1.),
-    ))
-    .build_with_host_data(HostDataType::F32)
+        None,
+    )
+    .build_with_f32_host_data()
     .unwrap();
 
-    let (rhs, rhs_data) = TestInput::Random(RandomInputSpec::new(
+    let (rhs, rhs_data) = TestInput::random(
         client.clone(),
         rhs_shape,
         *dtype,
         5678,
         Distribution::Uniform(-1., 1.),
-    ))
-    .build_with_host_data(HostDataType::F32)
+        None,
+    )
+    .build_with_f32_host_data()
     .unwrap();
 
     let out = TestInput::Zeros(SimpleInputSpec::new(
