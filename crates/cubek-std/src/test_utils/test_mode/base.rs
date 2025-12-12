@@ -62,6 +62,16 @@ pub enum TestMode {
     },
 }
 
+impl TestMode {
+    pub fn should_fail_on_test_compilation_fail(self) -> bool {
+        match self {
+            TestMode::Correct => false,
+            TestMode::Strict => true,
+            TestMode::Print { only_failing, .. } => !only_failing,
+        }
+    }
+}
+
 pub fn current_test_mode() -> TestMode {
     let val = match std::env::var(CUBEK_TEST_MODE_ENV) {
         Ok(v) => v.to_lowercase(),

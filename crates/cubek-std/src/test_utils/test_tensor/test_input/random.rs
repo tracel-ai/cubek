@@ -2,7 +2,6 @@ use cubecl::client::ComputeClient;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{TestRuntime, prelude::*};
 
-use crate::test_utils::test_tensor::strides_utils::reorder_by_strides;
 use crate::test_utils::test_tensor::test_input::base::{
     Distribution, HostData, HostDataType, RandomInputSpec, TestInputError, TestInputResult,
 };
@@ -43,15 +42,10 @@ fn random_tensor_handle(
 fn random_tensor_data<T: CubePrimitive + CubeElement + Default>(
     client: &ComputeClient<TestRuntime>,
     tensor_handle: &TensorHandle<TestRuntime>,
-    strides: &[usize],
-    tensor_shape: &[usize],
 ) -> Vec<T> {
     // Read data in row-major flat form
     let handle = copy_casted(client, tensor_handle, T::as_type_native_unchecked());
-    let flat_data = T::from_bytes(&client.read_one_tensor(handle.as_copy_descriptor())).to_owned();
-
-    // Now reorder to match the logical indexing implied by strides
-    reorder_by_strides(&flat_data, tensor_shape, strides)
+    T::from_bytes(&client.read_one_tensor(handle.as_copy_descriptor())).to_owned()
 }
 
 pub(crate) fn build_random(
@@ -76,11 +70,9 @@ pub(crate) fn build_random(
         Some(HostDataType::F32) => Some(HostData::F32(random_tensor_data(
             &spec.inner.client,
             &handle,
-            strides,
-            &spec.inner.shape,
         ))),
         Some(HostDataType::Bool) => Some(HostData::Bool(
-            random_tensor_data::<u8>(&spec.inner.client, &handle, strides, &spec.inner.shape)
+            random_tensor_data::<u8>(&spec.inner.client, &handle)
                 .iter()
                 .map(|&x| x > 0)
                 .collect(),

@@ -4,7 +4,6 @@ use cubecl::{
     std::tensor::{TensorHandle, ViewOperationsMut, ViewOperationsMutExpand},
 };
 
-use crate::test_utils::test_tensor::strides_utils::reorder_by_strides;
 use crate::test_utils::{
     batched_matrix_strides,
     test_tensor::test_input::base::{
@@ -70,14 +69,7 @@ pub(crate) fn build_arange(
         .unwrap_or(batched_matrix_strides(&spec.shape, false));
 
     let host_data = match host_data_type {
-        Some(HostDataType::F32) => {
-            let flat_arange: Vec<f32> = (0..num_elems).map(|x| x as f32).collect();
-            Some(HostData::F32(reorder_by_strides(
-                &flat_arange,
-                &spec.shape,
-                &strides,
-            )))
-        }
+        Some(HostDataType::F32) => Some(HostData::F32((0..num_elems).map(|x| x as f32).collect())),
         Some(HostDataType::Bool) => return Err(TestInputError::InvalidReturnData),
         None => None,
     };

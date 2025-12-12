@@ -5,7 +5,7 @@ use cubek_attention::launch::{
 };
 
 use cubecl::client::ComputeClient;
-use cubek_std::test_utils::{Distribution, TestInput, TestMode, current_test_mode};
+use cubek_std::test_utils::{Distribution, TestInput, current_test_mode};
 
 pub fn test_launch(
     client: ComputeClient<TestRuntime>,
@@ -104,9 +104,10 @@ pub fn test_launch(
                 &definition.options.accumulator_precision,
             ),
         ),
-        Err(err) => match current_test_mode() {
-            TestMode::Correct => {}
-            TestMode::Strict | TestMode::Print(..) => panic!("Test did not run: {}", err),
-        },
+        Err(err) => {
+            if current_test_mode().should_fail_on_test_compilation_fail() {
+                panic!("Test did not run: {}", err)
+            }
+        }
     }
 }

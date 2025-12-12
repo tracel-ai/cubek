@@ -40,8 +40,6 @@ fn random_uniform_handle_col_major_equal_to_host_data() {
     .generate_with_f32_host_data()
     .unwrap();
 
-    // handle.strides = batched_matrix_strides(&shape, false);
-    // println!("{:?}", handle);
     assert_equals_approx(&client, &handle, &host_data.into_f32(), 0.001).unwrap();
 }
 
@@ -107,7 +105,7 @@ fn arange_handle_equal_to_host_data() {
 fn arange_handle_col_major_equal_to_host_data() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
-    let shape = vec![4, 4];
+    let shape = vec![2, 3];
     let strides = batched_matrix_strides(&shape, true);
 
     let (handle, host_data) = TestInput::arange(
@@ -119,5 +117,8 @@ fn arange_handle_col_major_equal_to_host_data() {
     .generate_with_f32_host_data()
     .unwrap();
 
-    assert_equals_approx(&client, &handle, &host_data.into_f32(), 0.001).unwrap();
+    let x = host_data.into_f32();
+    println!("{:?}", &x);
+
+    assert_equals_approx(&client, &handle, &x, 0.001).unwrap();
 }

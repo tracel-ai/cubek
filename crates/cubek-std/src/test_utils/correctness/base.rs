@@ -130,22 +130,16 @@ fn compare_tensors(
     index: &mut Vec<usize>,
 ) -> bool {
     let mut failed = false;
-
     if shape.len() == 1 {
         for i in 0..shape[0] {
             index.push(i);
-
             let got = actual_values[i];
             let expected = expected_values[i];
-
             let status = compare_elem(got, expected, epsilon);
-
             if matches!(status, ElemStatus::Wrong(_)) {
                 failed = true;
             }
-
             visitor.visit(index, status);
-
             index.pop();
         }
     } else {
@@ -165,6 +159,5 @@ fn compare_tensors(
             index.pop();
         }
     }
-
     failed
 }
