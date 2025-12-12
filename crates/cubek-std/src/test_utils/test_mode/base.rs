@@ -1,3 +1,44 @@
+//! # Test Mode
+//!
+//! Control how tests handle numerical and compilation errors via the environment variable
+//! `CUBEK_TEST_MODE`.
+//!
+//! ## Modes
+//! - `Correct` (default): Numerical errors fail the test, compilation errors are ignored.
+//! - `Strict`: Both numerical and compilation errors fail the test.
+//! - `Print { filter, only_failing }`:
+//!     - `printall:<filter>` — all tests fail and matching elements are printed.
+//!     - `printfail:<filter>` — only numerical errors fail and matching elements are printed.
+//!
+//! ## Filter Expressions
+//! - The filter is **optional**. If omitted, all elements of the tensor are included.
+//! - When specified, it is a comma-separated list of dimensions, supporting:
+//!     - `.` to indicate a wildcard (all indices along that dimension),  
+//!     - `N` for a single index,  
+//!     - `M-K` for a range of indices.
+//! - Example for a 4D tensor: `.,.,10-20,30` selects all elements where the 3rd dimension
+//!   is 10–20 and the 4th dimension is 30, any values for the first two dimensions.
+//! - **Important:** The number of entries in the filter must match the rank of the tensor.
+//!
+//! ## Examples
+//!
+//! ```bash
+//! # Default mode: only numerical errors fail
+//! export CUBEK_TEST_MODE=Correct
+//!
+//! # Strict mode: all errors fail
+//! export CUBEK_TEST_MODE=Strict
+//!
+//! # Print all elements (no filter specified)
+//! export CUBEK_TEST_MODE=PrintAll
+//!
+//! # Print all elements in a subset of dimensions
+//! export CUBEK_TEST_MODE=PrintAll:.,10-20
+//!
+//! # Print only failing numerical elements
+//! export CUBEK_TEST_MODE=PrintFail:.,10-20
+//! ```
+
 use crate::test_utils::correctness::{TensorFilter, parse_tensor_filter};
 
 const CUBEK_TEST_MODE_ENV: &str = "CUBEK_TEST_MODE";
