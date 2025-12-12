@@ -54,7 +54,6 @@ impl Routine for CubeRoutine {
                 }
 
                 let working_cubes = working_cubes(&settings, &problem);
-                // panic!("{working_cubes:?}");
                 let blueprint = ReduceBlueprint {
                     line_mode: settings.line_mode,
                     global: GlobalReduceBlueprint::Cube(blueprint),
