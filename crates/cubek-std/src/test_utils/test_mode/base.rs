@@ -43,7 +43,7 @@ use crate::test_utils::correctness::{TensorFilter, parse_tensor_filter};
 
 const CUBEK_TEST_MODE_ENV: &str = "CUBEK_TEST_MODE";
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub enum TestMode {
     #[default]
     /// Numerical errors cause the test to fail.

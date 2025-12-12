@@ -16,7 +16,9 @@ pub fn assert_equals_approx(
         f32::from_bytes(&client.read_one_tensor(data_handle.as_copy_descriptor())).to_owned();
     let shape = handle.shape.clone();
 
-    let mut visitor: Box<dyn CompareVisitor> = match current_test_mode() {
+    let test_mode = current_test_mode();
+
+    let mut visitor: Box<dyn CompareVisitor> = match test_mode.clone() {
         TestMode::Print {
             filter,
             only_failing: _,
@@ -42,7 +44,7 @@ pub fn assert_equals_approx(
         &mut Vec::new(),
     );
 
-    match current_test_mode() {
+    match test_mode {
         TestMode::Print { only_failing, .. } => {
             if !only_failing || test_failed {
                 Err("Print mode activated".to_string())
