@@ -17,8 +17,11 @@ pub fn assert_equals_approx(
     let shape = handle.shape.clone();
 
     let mut visitor: Box<dyn CompareVisitor> = match current_test_mode() {
-        TestMode::Print(filter) => {
-            if filter.len() != shape.len() {
+        TestMode::Print {
+            filter,
+            only_failing: _,
+        } => {
+            if filter.len() > 0 && filter.len() != shape.len() {
                 return Err(format!(
                     "Print mode activated with invalid filter rank. Got {:?}, expected {:?}",
                     filter.len(),
@@ -30,7 +33,7 @@ pub fn assert_equals_approx(
         _ => Box::new(FailFast),
     };
 
-    compare_tensors(
+    let test_failed = compare_tensors(
         &actual,
         &expected,
         &shape,
@@ -39,10 +42,15 @@ pub fn assert_equals_approx(
         &mut Vec::new(),
     );
 
-    if matches!(current_test_mode(), TestMode::Print { .. }) {
-        Err("Print mode activated".to_string())
-    } else {
-        Ok(())
+    match current_test_mode() {
+        TestMode::Print { only_failing, .. } => {
+            if !only_failing || test_failed {
+                Err("Print mode activated".to_string())
+            } else {
+                Ok(())
+            }
+        }
+        _ => Ok(()),
     }
 }
 
@@ -118,7 +126,9 @@ fn compare_tensors(
     epsilon: f32,
     visitor: &mut dyn CompareVisitor,
     index: &mut Vec<usize>,
-) {
+) -> bool {
+    let mut failed = false;
+
     if shape.len() == 1 {
         for i in 0..shape[0] {
             index.push(i);
@@ -128,24 +138,31 @@ fn compare_tensors(
 
             let status = compare_elem(got, expected, epsilon);
 
+            if matches!(status, ElemStatus::Wrong(_)) {
+                failed = true;
+            }
+
             visitor.visit(index, status);
 
             index.pop();
         }
-        return;
+    } else {
+        let stride: usize = shape[1..].iter().product();
+        for i in 0..shape[0] {
+            index.push(i);
+            if compare_tensors(
+                &actual_values[i * stride..(i + 1) * stride],
+                &expected_values[i * stride..(i + 1) * stride],
+                &shape[1..],
+                epsilon,
+                visitor,
+                index,
+            ) {
+                failed = true;
+            }
+            index.pop();
+        }
     }
 
-    let stride: usize = shape[1..].iter().product();
-    for i in 0..shape[0] {
-        index.push(i);
-        compare_tensors(
-            &actual_values[i * stride..(i + 1) * stride],
-            &expected_values[i * stride..(i + 1) * stride],
-            &shape[1..],
-            epsilon,
-            visitor,
-            index,
-        );
-        index.pop();
-    }
+    failed
 }
