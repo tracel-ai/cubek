@@ -21,7 +21,7 @@ use cubek_matmul::{
     components::{AvailableLineSizes, MatmulIdent},
 };
 use cubek_std::test_utils::contiguous_strides;
-use cubek_std::test_utils::random_tensor;
+use cubek_std::test_utils::random_f32_tensor;
 
 use crate::suite::assert_result;
 
@@ -44,7 +44,7 @@ pub fn test_matmul_algorithm<A: Algorithm>(
     let lhs_shape = problem.shape(MatmulIdent::Lhs);
     let rhs_shape = problem.shape(MatmulIdent::Rhs);
 
-    let (lhs, lhs_data) = random_tensor(
+    let (lhs, lhs_data) = random_f32_tensor(
         &client,
         *dtypes.lhs_global,
         1234,
@@ -54,7 +54,7 @@ pub fn test_matmul_algorithm<A: Algorithm>(
         ),
         &lhs_shape,
     );
-    let (rhs, rhs_data) = random_tensor(
+    let (rhs, rhs_data) = random_f32_tensor(
         &client,
         *dtypes.rhs_global,
         5678,

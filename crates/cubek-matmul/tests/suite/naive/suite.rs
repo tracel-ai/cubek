@@ -4,7 +4,7 @@ use cubecl::frontend::CubePrimitive;
 use cubecl::prelude::TensorHandleRef;
 use cubecl::std::tensor::TensorHandle;
 use cubek_matmul::MatmulInputHandleRef;
-use cubek_std::test_utils::{contiguous_strides, random_tensor};
+use cubek_std::test_utils::{contiguous_strides, random_f32_tensor};
 
 use cubek_matmul::components::{MatmulElems, MatmulIdent, MatmulProblem, MatrixLayout};
 use cubek_matmul::kernels::naive;
@@ -115,7 +115,7 @@ fn test_naive(case: MatmulTestCase) {
     let lhs_shape = problem.shape(MatmulIdent::Lhs);
     let rhs_shape = problem.shape(MatmulIdent::Rhs);
 
-    let (lhs, lhs_data) = random_tensor(
+    let (lhs, lhs_data) = random_f32_tensor(
         &client,
         *dtype,
         1234,
@@ -125,7 +125,7 @@ fn test_naive(case: MatmulTestCase) {
         ),
         &lhs_shape,
     );
-    let (rhs, rhs_data) = random_tensor(
+    let (rhs, rhs_data) = random_f32_tensor(
         &client,
         *dtype,
         5678,

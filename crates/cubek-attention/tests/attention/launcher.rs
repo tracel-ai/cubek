@@ -7,7 +7,7 @@ use cubek_attention::launch::{
 
 use cubecl::client::ComputeClient;
 use cubek_std::test_utils::{
-    TestMode, contiguous_strides, current_test_mode, random_bool_tensor, random_tensor,
+    TestMode, contiguous_strides, current_test_mode, random_bool_tensor, random_f32_tensor,
 };
 
 pub fn test_launch(
@@ -21,7 +21,7 @@ pub fn test_launch(
     let mask_shape = definition.shape(AttentionIdent::Mask);
     let out_shape = definition.shape(AttentionIdent::Out);
 
-    let (query_handle, query_data) = random_tensor(
+    let (query_handle, query_data) = random_f32_tensor(
         &client,
         definition.global_dtypes.query,
         12,
@@ -29,7 +29,7 @@ pub fn test_launch(
         &query_shape,
     );
 
-    let (key_handle, key_data) = random_tensor(
+    let (key_handle, key_data) = random_f32_tensor(
         &client,
         definition.global_dtypes.key,
         34,
@@ -37,7 +37,7 @@ pub fn test_launch(
         &key_shape,
     );
 
-    let (value_handle, value_data) = random_tensor(
+    let (value_handle, value_data) = random_f32_tensor(
         &client,
         definition.global_dtypes.value,
         56,
