@@ -89,7 +89,7 @@ fn generate_blueprint<R: Runtime>(
 
     let properties = &client.properties().hardware;
     let plane_size = properties.plane_size_max;
-    let working_cubes = working_cubes(&settings, &problem);
+    let working_cubes = working_cubes(settings, &problem);
     let plane_count = calculate_plane_count(
         working_cubes * problem.vector_size,
         plane_size,
@@ -98,7 +98,7 @@ fn generate_blueprint<R: Runtime>(
     let cube_dim = CubeDim::new_2d(plane_size, plane_count);
     let cube_size = cube_dim.num_elems();
 
-    let bound_checks = match problem.vector_size % cube_size != 0 {
+    let bound_checks = match !problem.vector_size.is_multiple_of(cube_size) {
         true => BoundChecks::Mask,
         false => BoundChecks::Mask, // TODO
     };

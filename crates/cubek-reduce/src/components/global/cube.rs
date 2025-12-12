@@ -125,7 +125,7 @@ fn reduce_scan<P: ReducePrecision, I: ReduceInstruction<P>>(
     #[comptime] size: u32,
 ) {
     for i in 0..size {
-        let item = I::SharedAccumulator::read(&accumulator, i);
+        let item = I::SharedAccumulator::read(accumulator, i);
         let (item, coordinate) = I::read_accumulator(inst, &item);
         reduce_inplace::<P, I>(inst, result, item, coordinate, false);
     }
