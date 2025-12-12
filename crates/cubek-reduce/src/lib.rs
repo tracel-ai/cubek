@@ -16,10 +16,8 @@ pub mod routines;
 
 mod error;
 
-use crate::{
-    components::instructions::ReduceOperationConfig,
-    launch::{ReduceLaunchInfo, ReduceStrategy, launch_reduce},
-};
+pub use crate::launch::ReduceStrategy;
+use crate::{components::instructions::ReduceOperationConfig, launch::launch_reduce};
 pub use components::{
     args::init_tensors,
     config::*,
@@ -89,39 +87,22 @@ pub fn reduce<R: Runtime>(
     input: TensorHandleRef<R>,
     output: TensorHandleRef<R>,
     axis: usize,
-    strategy: Option<ReduceStrategy>,
+    strategy: ReduceStrategy,
     operation: ReduceOperationConfig,
     dtypes: ReduceDtypes,
 ) -> Result<(), ReduceError> {
     validate_axis(input.shape.len(), axis)?;
     valid_output_shape(input.shape, output.shape, axis)?;
-    let strategy = strategy
-        .map(|s| s.validate(client))
-        .unwrap_or(Ok(ReduceStrategy::new(client, true)))?;
-    let config = ReduceLaunchInfo::generate(client, &input, &output, axis, &strategy, dtypes.input);
 
-    if let CubeCount::Static(x, y, z) = config.cube_count {
-        let (max_x, max_y, max_z) = R::max_cube_count();
-        if x > max_x || y > max_y || z > max_z {
-            return Err(ReduceError::CubeCountTooLarge);
-        }
-    }
-
-    let result = launch_reduce::<R>(
+    launch_reduce::<R>(
         client,
         input,
         output,
         axis as u32,
-        config,
         strategy,
         dtypes,
         operation,
-    );
-
-    match result {
-        Ok(_) => Ok(()),
-        Err(err) => Err(ReduceError::Launch(err)),
-    }
+    )
 }
 
 // Check that the given axis is less than the rank of the input.

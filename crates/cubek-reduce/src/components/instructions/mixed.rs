@@ -292,6 +292,40 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
         }
     }
 
+    fn read_accumulator(
+        this: &Self,
+        accumulator: &Self::AccumulatorItem,
+    ) -> (Line<P::EI>, ReduceCoordinate) {
+        match this {
+            ReduceOperation::Sum(sum) => {
+                <Sum as ReduceInstruction<P>>::read_accumulator(sum, &accumulator.elements)
+            }
+            ReduceOperation::Prod(prod) => {
+                <Prod as ReduceInstruction<P>>::read_accumulator(prod, &accumulator.elements)
+            }
+            ReduceOperation::Mean(mean) => {
+                <Mean as ReduceInstruction<P>>::read_accumulator(mean, &accumulator.elements)
+            }
+            ReduceOperation::MaxAbs(maxabs) => {
+                <MaxAbs as ReduceInstruction<P>>::read_accumulator(maxabs, &accumulator.elements)
+            }
+            ReduceOperation::ArgMax(argmax) => <ArgMax as ReduceInstruction<P>>::read_accumulator(
+                argmax,
+                &(accumulator.elements, accumulator.args.unwrap()),
+            ),
+            ReduceOperation::ArgMin(argmin) => <ArgMin as ReduceInstruction<P>>::read_accumulator(
+                argmin,
+                &(accumulator.elements, accumulator.args.unwrap()),
+            ),
+            ReduceOperation::Max(max) => {
+                <Max as ReduceInstruction<P>>::read_accumulator(max, &accumulator.elements)
+            }
+            ReduceOperation::Min(min) => {
+                <Min as ReduceInstruction<P>>::read_accumulator(min, &accumulator.elements)
+            }
+        }
+    }
+
     fn assign_accumulator(
         _this: &Self,
         destination: &mut Self::AccumulatorItem,

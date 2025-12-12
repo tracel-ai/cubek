@@ -56,6 +56,11 @@ pub trait ReduceInstruction<P: ReducePrecision>:
         source: &Self::AccumulatorItem,
     );
 
+    fn read_accumulator(
+        this: &Self,
+        accumulator: &Self::AccumulatorItem,
+    ) -> (Line<P::EI>, ReduceCoordinate);
+
     /// If `use_planes` is `true`, reduce all the `item` and `coordinate` within the `accumulator`.
     /// Else, reduce the given `item` and `coordinate` into the accumulator.
     fn reduce(

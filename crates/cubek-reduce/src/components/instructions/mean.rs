@@ -49,6 +49,16 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Mean {
         <Sum as ReduceInstruction<P>>::assign_accumulator(&this.sum, destination, source);
     }
 
+    fn read_accumulator(
+        _this: &Self,
+        accumulator: &Line<P::EA>,
+    ) -> (Line<P::EI>, ReduceCoordinate) {
+        (
+            Line::cast_from(*accumulator),
+            ReduceCoordinate::new_NotRequired(),
+        )
+    }
+
     fn reduce(
         this: &Self,
         accumulator: &Self::AccumulatorItem,

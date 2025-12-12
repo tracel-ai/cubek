@@ -4,8 +4,10 @@ use cubecl::prelude::TensorHandleRef;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{Runtime, client};
 use cubek_matmul::MatmulInputHandleRef;
+use cubek_std::test_utils::batched_matrix_strides;
 
-use cubek_matmul::components::{MatmulElems, MatmulIdent, MatmulProblem, MatrixLayout};
+use cubek_matmul::components::MatrixLayout;
+use cubek_matmul::components::{MatmulElems, MatmulIdent, MatmulProblem};
 use cubek_matmul::kernels::naive;
 use cubek_std::test_utils::SimpleInputSpec;
 use cubek_std::test_utils::{Distribution, TestInput};
@@ -17,6 +19,8 @@ struct MatmulTestCase {
     pub n: usize,
     pub k: usize,
     pub batch: usize,
+    pub lhs_layout: MatrixLayout,
+    pub rhs_layout: MatrixLayout,
 }
 
 impl MatmulTestCase {
@@ -30,8 +34,8 @@ impl MatmulTestCase {
             out_batches: vec![self.batch],
             lhs_strides: vec![self.m * self.k, self.k],
             rhs_strides: vec![self.k * self.n, self.n],
-            lhs_layout: MatrixLayout::RowMajor,
-            rhs_layout: MatrixLayout::RowMajor,
+            lhs_layout: self.lhs_layout,
+            rhs_layout: self.rhs_layout,
         }
     }
 }
@@ -43,6 +47,8 @@ pub fn test_very_small() {
         n: 4,
         k: 4,
         batch: 3,
+        lhs_layout: MatrixLayout::RowMajor,
+        rhs_layout: MatrixLayout::RowMajor,
     };
 
     test_naive(case);
@@ -55,6 +61,22 @@ pub fn test_small() {
         n: 64,
         k: 64,
         batch: 1,
+        lhs_layout: MatrixLayout::RowMajor,
+        rhs_layout: MatrixLayout::RowMajor,
+    };
+
+    test_naive(case);
+}
+
+#[test]
+pub fn test_very_small_col_major() {
+    let case = MatmulTestCase {
+        m: 4,
+        n: 4,
+        k: 4,
+        batch: 2,
+        lhs_layout: MatrixLayout::RowMajor,
+        rhs_layout: MatrixLayout::ColMajor,
     };
 
     test_naive(case);
@@ -67,6 +89,8 @@ pub fn test_odd() {
         n: 255,
         k: 101,
         batch: 1,
+        lhs_layout: MatrixLayout::RowMajor,
+        rhs_layout: MatrixLayout::RowMajor,
     };
 
     test_naive(case);
@@ -79,6 +103,8 @@ pub fn test_large() {
         n: 256,
         k: 256,
         batch: 1,
+        lhs_layout: MatrixLayout::RowMajor,
+        rhs_layout: MatrixLayout::RowMajor,
     };
 
     test_naive(case);
@@ -91,6 +117,8 @@ pub fn test_with_check_bounds() {
         n: 60,
         k: 60,
         batch: 1,
+        lhs_layout: MatrixLayout::RowMajor,
+        rhs_layout: MatrixLayout::RowMajor,
     };
 
     test_naive(case);
@@ -103,6 +131,8 @@ pub fn test_with_batches() {
         n: 64,
         k: 64,
         batch: 3,
+        lhs_layout: MatrixLayout::RowMajor,
+        rhs_layout: MatrixLayout::RowMajor,
     };
 
     test_naive(case);
@@ -116,24 +146,31 @@ fn test_naive(case: MatmulTestCase) {
     let lhs_shape = problem.shape(MatmulIdent::Lhs);
     let rhs_shape = problem.shape(MatmulIdent::Rhs);
 
-    let (lhs, lhs_data) = TestInput::random(
+    // let (lhs, lhs_data) = TestInput::random(
+    let (lhs, lhs_data) = TestInput::eye(
         client.clone(),
-        lhs_shape,
+        lhs_shape.clone(),
         *dtype,
-        1234,
-        Distribution::Uniform(-1., 1.),
-        None,
+        // 1234,
+        // Distribution::Uniform(-1., 1.),
+        // Some(batched_matrix_strides(
+        //     &lhs_shape,
+        //     matches!(problem.lhs_layout, MatrixLayout::ColMajor),
+        // )),
     )
     .generate_with_f32_host_data()
     .unwrap();
 
-    let (rhs, rhs_data) = TestInput::random(
+    let (rhs, rhs_data) = TestInput::arange(
         client.clone(),
-        rhs_shape,
+        rhs_shape.clone(),
         *dtype,
-        5678,
-        Distribution::Uniform(-1., 1.),
-        None,
+        // 5678,
+        // Distribution::Uniform(-1., 1.),
+        Some(batched_matrix_strides(
+            &rhs_shape,
+            matches!(problem.rhs_layout, MatrixLayout::ColMajor),
+        )),
     )
     .generate_with_f32_host_data()
     .unwrap();

@@ -62,6 +62,16 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
         }
     }
 
+    fn read_accumulator(
+        _this: &Self,
+        accumulator: &Line<P::EA>,
+    ) -> (Line<P::EI>, ReduceCoordinate) {
+        (
+            Line::cast_from(*accumulator),
+            ReduceCoordinate::new_NotRequired(),
+        )
+    }
+
     fn fuse_accumulators(
         _this: &Self,
         lhs: Self::AccumulatorItem,

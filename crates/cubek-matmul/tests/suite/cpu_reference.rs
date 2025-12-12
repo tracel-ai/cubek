@@ -13,7 +13,7 @@ pub fn assert_result(
     out: &TensorHandle<TestRuntime>,
     dtypes: MatmulElems,
 ) {
-    let epsilon = matmul_epsilon(&dtypes, 170.);
+    let epsilon = matmul_epsilon(&dtypes, 100.);
 
     let expected = matmul_cpu_reference(lhs, rhs, problem)
         .into_iter()
@@ -25,67 +25,95 @@ pub fn assert_result(
 }
 
 fn matmul_epsilon(elems: &MatmulElems, safety_factor: f32) -> f32 {
-    let total_eps = elems.lhs_global.dtype.epsilon()
-        + elems.rhs_global.dtype.epsilon()
-        + elems.acc_global.dtype.epsilon()
-        + elems.lhs_stage.dtype.epsilon()
-        + elems.rhs_stage.dtype.epsilon()
-        + elems.acc_stage.dtype.epsilon()
-        + elems.lhs_register.dtype.epsilon()
-        + elems.rhs_register.dtype.epsilon()
-        + elems.acc_register.dtype.epsilon();
+    let total_eps = elems
+        .lhs_global
+        .dtype
+        .epsilon()
+        .max(elems.rhs_global.dtype.epsilon())
+        .max(elems.acc_global.dtype.epsilon())
+        .max(elems.lhs_stage.dtype.epsilon())
+        .max(elems.rhs_stage.dtype.epsilon())
+        .max(elems.acc_stage.dtype.epsilon())
+        .max(elems.lhs_register.dtype.epsilon())
+        .max(elems.rhs_register.dtype.epsilon())
+        .max(elems.acc_register.dtype.epsilon());
 
     total_eps as f32 * safety_factor
 }
+
+// fn matmul_cpu_reference(lhs: &[f32], rhs: &[f32], problem: &MatmulProblem) -> Vec<f32> where {
+//     let m = problem.m;
+//     let n = problem.n;
+//     let k = problem.k;
+//     let num_batches = problem.num_batches();
+//     let b_lhs = problem.lhs_batches.clone();
+//     let b_rhs = problem.rhs_batches.clone();
+//     assert!(
+//         b_lhs.len() == b_rhs.len(),
+//         "Cpu reference only works with batches of equal length. Please pad the shortest one with ones at the beginning."
+//     );
+//     let lhs_strides = strides(problem, MatmulIdent::Lhs);
+//     let rhs_strides = strides(problem, MatmulIdent::Rhs);
+//     let out_strides = strides(problem, MatmulIdent::Out);
+//     let mut acc = vec![0.; m * n * num_batches];
+//     for nth_batch in 0..num_batches {
+//         let batch_out = nth_batch * m * n;
+//         let mut batch_lhs = 0;
+//         let mut batch_rhs = 0;
+//         for b in 0..b_lhs.len() {
+//             let tmp = batch_out / out_strides[b];
+//             batch_lhs += tmp % b_lhs[b] * lhs_strides[b];
+//             batch_rhs += tmp % b_rhs[b] * rhs_strides[b];
+//         }
+//         for i in 0..m {
+//             for j in 0..n {
+//                 for k_ in 0..k {
+//                     let lhs_index = i * k + k_;
+//                     let rhs_index = k_ * n + j;
+//                     let out_index = i * n + j;
+//                     let l = lhs[batch_lhs + lhs_index];
+//                     let r = rhs[batch_rhs + rhs_index];
+//                     let prod = l * r;
+//                     acc[batch_out + out_index] += prod;
+//                 }
+//             }
+//         }
+//     }
+//     acc
+// }
 
 /// Solves a matmul problem with EG inputs, multiplied as ES and accumulated as EA.
 ///
 /// This is a naive CPU implementation, very slow on large payloads,
 /// not designed to be used for other purposes than testing.
-fn matmul_cpu_reference(lhs: &[f32], rhs: &[f32], problem: &MatmulProblem) -> Vec<f32>
-where
-{
+fn matmul_cpu_reference(lhs: &[f32], rhs: &[f32], problem: &MatmulProblem) -> Vec<f32> {
     let m = problem.m;
     let n = problem.n;
     let k = problem.k;
     let num_batches = problem.num_batches();
 
-    let b_lhs = problem.lhs_batches.clone();
-    let b_rhs = problem.rhs_batches.clone();
-    assert!(
-        b_lhs.len() == b_rhs.len(),
-        "Cpu reference only works with batches of equal length. Please pad the shortest one with ones at the beginning."
-    );
+    let batch_size_lhs = m * k;
+    let batch_size_rhs = k * n;
+    let batch_size_out = m * n;
 
-    let lhs_strides = strides(problem, MatmulIdent::Lhs);
-    let rhs_strides = strides(problem, MatmulIdent::Rhs);
-    let out_strides = strides(problem, MatmulIdent::Out);
+    let mut acc = vec![0.; batch_size_out * num_batches];
 
-    let mut acc = vec![0.; m * n * num_batches];
-
-    for nth_batch in 0..num_batches {
-        let batch_out = nth_batch * m * n;
-        let mut batch_lhs = 0;
-        let mut batch_rhs = 0;
-        for b in 0..b_lhs.len() {
-            let tmp = batch_out / out_strides[b];
-            batch_lhs += tmp % b_lhs[b] * lhs_strides[b];
-            batch_rhs += tmp % b_rhs[b] * rhs_strides[b];
-        }
+    for batch in 0..num_batches {
+        // Offsets for this batch
+        let lhs_offset = batch * batch_size_lhs;
+        let rhs_offset = batch * batch_size_rhs;
+        let out_offset = batch * batch_size_out;
 
         for i in 0..m {
             for j in 0..n {
+                let mut sum = 0.;
                 for k_ in 0..k {
-                    let lhs_index = i * k + k_;
-                    let rhs_index = k_ * n + j;
-                    let out_index = i * n + j;
-
-                    let l = lhs[batch_lhs + lhs_index];
-                    let r = rhs[batch_rhs + rhs_index];
-                    let prod = l * r;
-
-                    acc[batch_out + out_index] += prod;
+                    // Row-major access
+                    let l = lhs[lhs_offset + i * k + k_];
+                    let r = rhs[rhs_offset + k_ * n + j];
+                    sum += l * r;
                 }
+                acc[out_offset + i * n + j] = sum;
             }
         }
     }

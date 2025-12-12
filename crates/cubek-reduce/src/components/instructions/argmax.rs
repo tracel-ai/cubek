@@ -70,6 +70,16 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMax {
         destination.1 = source.1;
     }
 
+    fn read_accumulator(
+        _this: &Self,
+        accumulator: &Self::AccumulatorItem,
+    ) -> (Line<<P as ReducePrecision>::EI>, ReduceCoordinate) {
+        (
+            Line::cast_from(accumulator.0),
+            ReduceCoordinate::new_Required(accumulator.1),
+        )
+    }
+
     fn reduce(
         _this: &Self,
         accumulator: &Self::AccumulatorItem,

@@ -1,11 +1,12 @@
+pub mod test_case;
+
 macro_rules! testgen_reduce {
     (
         dtype: $dtype:ty,
         shape: $shape:expr,
         strides: $strides:expr,
         axis: $axis:expr,
-        use_plane: $use_plane:expr,
-        shared: $shared:expr,
+        strategy: $strategy:expr,
     ) => {
         type TestDType = $dtype;
         fn test_shape() -> Vec<usize> {
@@ -18,12 +19,10 @@ macro_rules! testgen_reduce {
             $axis
         }
 
-        fn test_use_plane() -> bool {
-            $use_plane
+        fn test_strategy() -> ReduceStrategy {
+            $strategy
         }
-        fn test_shared() -> bool {
-            $shared
-        }
+
         mod reduce_dim {
             use super::*;
             include!("reduce_dim.rs");
@@ -55,44 +54,158 @@ macro_rules! testgen_reduce {
         strides: $strides:expr,
         axis: $axis:expr,
     ) => {
-        mod shared {
+        use cubek_reduce::{ReduceStrategy, routines::RoutineStrategy};
+
+        mod full_cube {
+            use super::*;
+            use cubek_reduce::routines::cube::CubeStrategy;
+
             testgen_reduce!(
                 dtype: $dtype,
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                use_plane: false,
-                shared: true,
+                strategy: ReduceStrategy::FullCube(
+                    RoutineStrategy::Strategy(CubeStrategy { use_planes: false })
+                ),
             );
         }
-        mod shared_plane {
+
+        mod full_cube_plane {
+            use super::*;
+            use cubek_reduce::routines::cube::CubeStrategy;
+
             testgen_reduce!(
                 dtype: $dtype,
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                use_plane: true,
-                shared: true,
+                strategy: ReduceStrategy::FullCube(
+                    RoutineStrategy::Strategy(CubeStrategy { use_planes: true })
+                ),
             );
         }
-        mod plane {
+
+        /// The goal of that test is to limit the size of a cube to `8` to validate multiple cubes
+        /// arithmetic.
+        ///
+        /// With this test, we can't have `use_planes` to true since the `cube_dim.x !=
+        /// plane_size`.
+        mod full_cube_single_plane {
+            use super::*;
+            use cubek_reduce::routines::CubeReduceBlueprint;
+            use cubek_reduce::BoundChecks;
+            use cubecl::prelude::CubeDim;
+
             testgen_reduce!(
                 dtype: $dtype,
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                use_plane: true,
-                shared: false,
+                strategy: ReduceStrategy::FullCube(
+                    RoutineStrategy::Forced(
+                        CubeReduceBlueprint {
+                            bound_checks: BoundChecks::Mask,
+                            num_shared_accumulators: 8,
+                            use_planes: false,
+                        },
+                        CubeDim::new_2d(8, 1),
+                    )
+                ),
             );
         }
-        mod normal {
+
+        /// The goal of that test is to limit the size of a cube to `plane_size` to validate multiple planes
+        /// arithmetic.
+        mod full_plane_single_plane {
+            use super::*;
+            use cubek_reduce::routines::PlaneReduceBlueprint;
+            use cubek_reduce::BoundChecks;
+            use cubecl::prelude::CubeDim;
+
+            mod plane_size_32 {
+                use super::*;
+
+                testgen_reduce!(
+                    dtype: $dtype,
+                    shape: $shape,
+                    strides: $strides,
+                    axis: $axis,
+                    strategy: ReduceStrategy::FullPlane(
+                        RoutineStrategy::Forced(
+                            PlaneReduceBlueprint {
+                                plane_idle: true,
+                                bound_checks: BoundChecks::Mask,
+                                independant: true,
+                            },
+                            CubeDim::new_2d(32, 2),
+                        )
+                    ),
+                );
+            }
+
+            mod plane_size_64 {
+                use super::*;
+
+                testgen_reduce!(
+                    dtype: $dtype,
+                    shape: $shape,
+                    strides: $strides,
+                    axis: $axis,
+                    strategy: ReduceStrategy::FullPlane(
+                        RoutineStrategy::Forced(
+                            PlaneReduceBlueprint {
+                                plane_idle: true,
+                                bound_checks: BoundChecks::Mask,
+                                independant: true,
+                            },
+                            CubeDim::new_2d(64, 2),
+                        )
+                    ),
+                );
+            }
+        }
+
+        mod full_plane {
+            use super::*;
+            use cubek_reduce::routines::plane::PlaneStrategy;
+
             testgen_reduce!(
                 dtype: $dtype,
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                use_plane: false,
-                shared: false,
+                strategy: ReduceStrategy::FullPlane(
+                    RoutineStrategy::Strategy(PlaneStrategy { independant: false })
+                ),
+            );
+        }
+
+        mod full_plane_unit {
+            use super::*;
+            use cubek_reduce::routines::plane::PlaneStrategy;
+
+            testgen_reduce!(
+                dtype: $dtype,
+                shape: $shape,
+                strides: $strides,
+                axis: $axis,
+                strategy: ReduceStrategy::FullPlane(
+                    RoutineStrategy::Strategy(PlaneStrategy { independant: true })
+                ),
+            );
+        }
+
+        mod full_unit {
+            use super::*;
+            use cubek_reduce::routines::unit::UnitStrategy;
+
+            testgen_reduce!(
+                dtype: $dtype,
+                shape: $shape,
+                strides: $strides,
+                axis: $axis,
+                strategy: ReduceStrategy::FullUnit(RoutineStrategy::Strategy(UnitStrategy)),
             );
         }
     };
@@ -177,6 +290,22 @@ mod reduce_dim {
         testgen_reduce!(
             shape: vec![8, 256],
             strides: vec![256, 1],
+            axis: Some(0),
+        );
+    }
+
+    mod parallel_matrix_xlarge {
+        testgen_reduce!(
+            shape: vec![64, 1024],
+            strides: vec![1024, 1],
+            axis: Some(1),
+        );
+    }
+
+    mod perpendicular_matrix_xlarge {
+        testgen_reduce!(
+            shape: vec![64, 1024],
+            strides: vec![1024, 1],
             axis: Some(0),
         );
     }

@@ -6,7 +6,11 @@ use cubecl::{
 };
 use cubek::{
     random::random_uniform,
-    reduce::{components::instructions::ReduceOperationConfig, launch::ReduceStrategy},
+    reduce::{
+        components::instructions::ReduceOperationConfig,
+        launch::ReduceStrategy,
+        routines::{RoutineStrategy, cube::CubeStrategy, plane::PlaneStrategy, unit::UnitStrategy},
+    },
 };
 use std::marker::PhantomData;
 
@@ -16,6 +20,7 @@ struct ReduceBench<R: Runtime, E> {
     device: R::Device,
     axis: usize,
     client: ComputeClient<R>,
+    strategy: ReduceStrategy,
     _e: PhantomData<E>,
 }
 
@@ -42,10 +47,7 @@ impl<R: Runtime, E: Float> Benchmark for ReduceBench<R, E> {
             input.as_ref(),
             out.as_ref(),
             self.axis,
-            Some(ReduceStrategy {
-                use_planes: false,
-                shared: false,
-            }),
+            self.strategy.clone(),
             ReduceOperationConfig::Sum,
             cubek::reduce::ReduceDtypes {
                 input: E::as_type_native_unchecked(),
@@ -60,10 +62,11 @@ impl<R: Runtime, E: Float> Benchmark for ReduceBench<R, E> {
 
     fn name(&self) -> String {
         format!(
-            "reduce-axis({})-{}-{:?}",
+            "reduce-axis({})-{}-{:?}-{:?}",
             self.axis,
             E::as_type_native_unchecked(),
-            self.shape
+            self.shape,
+            self.strategy
         )
         .to_lowercase()
     }
@@ -76,16 +79,45 @@ impl<R: Runtime, E: Float> Benchmark for ReduceBench<R, E> {
 #[allow(dead_code)]
 fn run<R: Runtime, E: frontend::Float>(device: R::Device) {
     let client = R::client(&device);
-    for axis in [2] {
-        let bench = ReduceBench::<R, E> {
-            shape: vec![32, 512, 2048],
-            axis,
-            client: client.clone(),
-            device: device.clone(),
-            _e: PhantomData,
-        };
-        println!("{}", bench.name());
-        println!("{}", bench.run(TimingMethod::System).unwrap());
+    for shape in [
+        vec![2, 2, 4099 * 32],
+        vec![32, 512, 4096],
+        vec![4096, 512, 32],
+        vec![512, 512],
+    ] {
+        for axis in 0..shape.len() {
+            for strategy in [
+                ReduceStrategy::FullUnit(RoutineStrategy::Strategy(UnitStrategy)),
+                ReduceStrategy::FullCube(RoutineStrategy::Strategy(CubeStrategy {
+                    use_planes: true,
+                })),
+                ReduceStrategy::FullCube(RoutineStrategy::Strategy(CubeStrategy {
+                    use_planes: false,
+                })),
+                ReduceStrategy::FullPlane(RoutineStrategy::Strategy(PlaneStrategy {
+                    independant: true,
+                })),
+                ReduceStrategy::FullPlane(RoutineStrategy::Strategy(PlaneStrategy {
+                    independant: false,
+                })),
+            ] {
+                let bench = ReduceBench::<R, E> {
+                    shape: shape.clone(),
+                    axis,
+                    client: client.clone(),
+                    device: device.clone(),
+                    strategy,
+                    _e: PhantomData,
+                };
+                println!("Running: ==== {} ====", bench.name());
+                match bench.run(TimingMethod::System) {
+                    Ok(val) => {
+                        println!("{val}");
+                    }
+                    Err(err) => println!("Can't run the benchmark: {err}"),
+                }
+            }
+        }
     }
 }
 

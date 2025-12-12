@@ -1,15 +1,19 @@
 use crate::{
+    LineMode, ReduceError, ReducePrecision,
     components::{
         args::{ReduceArgs, TensorArgs, init_tensors},
+        global::{
+            cube::GlobalFullCubeReduce, plane::GlobalFullPlaneReduce, unit::GlobalFullUnitReduce,
+        },
         instructions::*,
     },
-    launch::{ReduceLaunchInfo, ReduceStrategy},
+    launch::{ReduceStrategy, generate_line_size},
     routines::{
-        CubeReduceBlueprint, PlaneReduceBlueprint, ReduceBlueprint, ReduceBlueprintKind,
-        reduce_kernel_virtual,
+        GlobalReduceBlueprint, ReduceBlueprint, ReduceLineSettings, ReduceProblem, Routine,
+        cube::CubeRoutine, plane::PlaneRoutine, unit::UnitRoutine,
     },
 };
-use cubecl::prelude::*;
+use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
 
 #[derive(Clone, Copy, Debug)]
 pub struct ReduceDtypes {
@@ -27,41 +31,56 @@ pub(crate) fn launch_reduce<Run: Runtime>(
     input: TensorHandleRef<Run>,
     output: TensorHandleRef<Run>,
     axis: u32,
-    info: ReduceLaunchInfo,
     strategy: ReduceStrategy,
     dtypes: ReduceDtypes,
     inst: ReduceOperationConfig,
-) -> Result<(), LaunchError> {
-    let kind = match (strategy.shared, strategy.use_planes) {
-        (true, true) => ReduceBlueprintKind::Cube(CubeReduceBlueprint {
-            accumulator_size: info.cube_dim.y,
-            bound_checks_inner: info.bound_checks_inner,
-            use_planes: true,
-        }),
-        (true, false) => ReduceBlueprintKind::Cube(CubeReduceBlueprint {
-            accumulator_size: info.cube_dim.num_elems(),
-            bound_checks_inner: info.bound_checks_inner,
-            use_planes: false,
-        }),
-        (false, true) => ReduceBlueprintKind::Plane(PlaneReduceBlueprint {
-            bound_checks_inner: info.bound_checks_inner,
-        }),
-        (false, false) => ReduceBlueprintKind::Unit,
+) -> Result<(), ReduceError> {
+    let problem = ReduceProblem {
+        vector_size: input.shape[axis as usize] as u32,
+        vector_count: output.shape.iter().map(|i| *i as u32).product(),
+        axis,
+        dtypes,
+    };
+    let line_mode = match input.strides[axis as usize] {
+        1 => LineMode::Parallel,
+        _ => LineMode::Perpendicular,
+    };
+    let (line_size_input, line_size_output) = generate_line_size::<Run>(
+        client,
+        &input,
+        &output,
+        axis as usize,
+        problem.dtypes.input,
+        line_mode,
+    );
+    let settings = ReduceLineSettings {
+        line_mode,
+        line_size_input,
+        line_size_output,
     };
 
-    let blueprint = ReduceBlueprint {
-        line_mode: info.line_mode,
-        bound_checks: info.bound_checks,
-        kind,
+    let (blueprint, settings) = match strategy {
+        ReduceStrategy::FullUnit(strategy) => {
+            let routine = UnitRoutine;
+            routine.prepare(client, problem, settings, strategy)?
+        }
+        ReduceStrategy::FullPlane(strategy) => {
+            let routine = PlaneRoutine;
+            routine.prepare(client, problem, settings, strategy)?
+        }
+        ReduceStrategy::FullCube(strategy) => {
+            let routine = CubeRoutine;
+            routine.prepare(client, problem, settings, strategy)?
+        }
     };
 
     unsafe {
         reduce_kernel::launch_unchecked::<TensorArgs, Run>(
             client,
-            info.cube_count,
-            info.cube_dim,
-            input.as_tensor_arg(info.line_size_input as u8),
-            output.as_tensor_arg(info.line_size_output as u8),
+            settings.cube_count,
+            settings.cube_dim,
+            input.as_tensor_arg(settings.line.line_size_input),
+            output.as_tensor_arg(settings.line.line_size_output),
             ScalarArg::new(axis),
             blueprint,
             inst,
@@ -69,6 +88,7 @@ pub(crate) fn launch_reduce<Run: Runtime>(
             dtypes.output,
             dtypes.accumulation,
         )
+        .map_err(ReduceError::Launch)
     }
 }
 
@@ -85,4 +105,65 @@ pub fn reduce_kernel<In: Numeric, Out: Numeric, Acc: Numeric, RA: ReduceArgs>(
 ) {
     let (input, mut output) = init_tensors::<RA, In, Out>(input, output);
     reduce_kernel_virtual::<In, Out, Acc>(&input, &mut output, axis_reduce, blueprint, config);
+}
+
+#[cube]
+pub fn reduce_kernel_virtual<In: Numeric, Out: Numeric, Acc: Numeric>(
+    input: &VirtualTensor<In>,
+    output: &mut VirtualTensor<Out, ReadWrite>,
+    axis_reduce: u32,
+    #[comptime] blueprint: ReduceBlueprint,
+    #[comptime] config: ReduceOperationConfig,
+) {
+    reduce_kernel_inner::<(In, Acc), Out, ReduceOperation>(
+        input,
+        output,
+        axis_reduce,
+        blueprint,
+        config,
+    )
+}
+
+#[cube]
+fn reduce_kernel_inner<P: ReducePrecision, Out: Numeric, R: ReduceFamily>(
+    input: &VirtualTensor<P::EI>,
+    output: &mut VirtualTensor<Out, ReadWrite>,
+    axis_reduce: u32,
+    #[comptime] blueprint: ReduceBlueprint,
+    #[comptime] config: R::Config,
+) {
+    let inst = &R::Instruction::<P>::from_config(config);
+
+    match comptime!(blueprint.global) {
+        GlobalReduceBlueprint::Cube(cube) => {
+            GlobalFullCubeReduce::execute::<P, Out, R::Instruction<P>>(
+                input,
+                output,
+                axis_reduce,
+                inst,
+                blueprint.line_mode,
+                cube,
+            )
+        }
+        GlobalReduceBlueprint::FullPlane(plane) => {
+            GlobalFullPlaneReduce::execute::<P, Out, R::Instruction<P>>(
+                input,
+                output,
+                axis_reduce,
+                inst,
+                blueprint.line_mode,
+                plane,
+            )
+        }
+        GlobalReduceBlueprint::FullUnit(unit) => {
+            GlobalFullUnitReduce::execute::<P, Out, R::Instruction<P>>(
+                input,
+                output,
+                axis_reduce,
+                inst,
+                blueprint.line_mode,
+                unit,
+            )
+        }
+    };
 }

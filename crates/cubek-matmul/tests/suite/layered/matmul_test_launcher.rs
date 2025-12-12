@@ -20,11 +20,9 @@ use cubek_matmul::{
     MatmulInputHandleRef,
     components::{AvailableLineSizes, MatmulIdent},
 };
-use cubek_std::test_utils::Distribution;
-use cubek_std::test_utils::RandomInputSpec;
-use cubek_std::test_utils::SimpleInputSpec;
-use cubek_std::test_utils::TestInput;
-use cubek_std::test_utils::batched_matrix_strides;
+use cubek_std::test_utils::{
+    Distribution, RandomInputSpec, SimpleInputSpec, TestInput, batched_matrix_strides,
+};
 
 use crate::suite::assert_result;
 
@@ -33,7 +31,6 @@ pub enum InputRepresentation {
     Tma,
 }
 
-// TODO should be always used, remove some feature flags
 #[allow(unused)]
 /// Test the correctness of the specified Matmul on the given device,
 /// against a naive CPU implementation over the given problem

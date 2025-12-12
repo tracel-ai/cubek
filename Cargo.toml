@@ -19,8 +19,8 @@ version = "0.0.1"
 # cubecl-common = { path = "../cubecl/crates/cubecl-common", default-features = false }
 
 ### For the main cubek branch. ###
-cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "60786599c84a44316b38bed5006eb97fcf25ad51", default-features = false }
-cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "60786599c84a44316b38bed5006eb97fcf25ad51", default-features = false }
+cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "ca797f311517929ec8d117aed7399fb723b469c3", default-features = false }
+cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "ca797f311517929ec8d117aed7399fb723b469c3", default-features = false }
 
 ### For releases ###
 # cubecl = { version = "=0.9.0-pre.5", default-features = false }

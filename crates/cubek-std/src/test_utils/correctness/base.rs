@@ -1,6 +1,6 @@
+use crate::test_utils::copy_casted;
 use crate::test_utils::correctness::color_printer::ColorPrinter;
 use crate::test_utils::test_mode::{TestMode, current_test_mode};
-use crate::test_utils::test_tensor::copy_casted;
 use cubecl::CubeElement;
 use cubecl::frontend::CubePrimitive;
 use cubecl::{TestRuntime, client::ComputeClient, std::tensor::TensorHandle};
@@ -94,7 +94,7 @@ impl CompareVisitor for FailFast {
 
 #[inline]
 fn compare_elem(got: f32, expected: f32, epsilon: f32) -> ElemStatus {
-    let eps = (epsilon * expected).abs().max(epsilon);
+    let eps = (epsilon * expected).abs().max(epsilon).min(0.99);
 
     let actual_nan = got.is_nan();
     let expected_nan = expected.is_nan();
