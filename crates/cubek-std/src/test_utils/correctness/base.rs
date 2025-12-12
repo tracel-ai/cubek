@@ -1,3 +1,4 @@
+use crate::test_utils::correctness::color_printer::ColorPrinter;
 use crate::test_utils::test_mode::{TestMode, current_test_mode};
 use crate::test_utils::test_tensor::copy_casted;
 use cubecl::CubeElement;
@@ -16,7 +17,16 @@ pub fn assert_equals_approx(
     let shape = handle.shape.clone();
 
     let mut visitor: Box<dyn CompareVisitor> = match current_test_mode() {
-        TestMode::Print { .. } => Box::new(ColorPrinter::new()),
+        TestMode::Print(filter) => {
+            if filter.len() != shape.len() {
+                return Err(format!(
+                    "Print mode activated with invalid filter rank. Got {:?}, expected {:?}",
+                    filter.len(),
+                    shape.len()
+                ));
+            }
+            Box::new(ColorPrinter::new(filter))
+        }
         _ => Box::new(FailFast),
     };
 
@@ -30,20 +40,20 @@ pub fn assert_equals_approx(
     );
 
     if matches!(current_test_mode(), TestMode::Print { .. }) {
-        Err(String::new())
+        Err("Print mode activated".to_string())
     } else {
         Ok(())
     }
 }
 
 #[derive(Debug)]
-pub enum ElemStatus {
+pub(crate) enum ElemStatus {
     Correct { got: f32 },
     Wrong(WrongStatus),
 }
 
 #[derive(Debug)]
-pub enum WrongStatus {
+pub(crate) enum WrongStatus {
     GotWrongValue {
         got: f32,
         expected: f32,
@@ -58,11 +68,12 @@ pub enum WrongStatus {
     },
 }
 
-pub trait CompareVisitor {
+pub(crate) trait CompareVisitor {
     fn visit(&mut self, index: &[usize], status: ElemStatus);
 }
 
-pub struct FailFast;
+pub(crate) struct FailFast;
+
 impl CompareVisitor for FailFast {
     fn visit(&mut self, index: &[usize], status: ElemStatus) {
         if let ElemStatus::Wrong(w) = status {
@@ -136,85 +147,5 @@ fn compare_tensors(
             index,
         );
         index.pop();
-    }
-}
-
-const RED: &str = "\x1b[31m";
-const GREEN: &str = "\x1b[32m";
-const RESET: &str = "\x1b[0m";
-
-pub struct ColorPrinter {
-    indent: usize,
-}
-
-impl ColorPrinter {
-    pub fn new() -> Self {
-        Self { indent: 0 }
-    }
-}
-
-impl CompareVisitor for ColorPrinter {
-    fn visit(&mut self, index: &[usize], status: ElemStatus) {
-        let idx = format!(
-            "({})",
-            index
-                .iter()
-                .map(|x| x.to_string())
-                .collect::<Vec<_>>()
-                .join(",")
-        );
-
-        match status {
-            ElemStatus::Correct { got } => {
-                println!(
-                    "{}{}: {}{}{}",
-                    " ".repeat(self.indent),
-                    idx,
-                    GREEN,
-                    got,
-                    RESET
-                );
-            }
-            ElemStatus::Wrong(wrong) => match wrong {
-                WrongStatus::GotWrongValue {
-                    got,
-                    expected,
-                    diff,
-                    epsilon,
-                } => {
-                    println!(
-                        "{}{}: {}Got {}, expected {}, diff={}>{}{}",
-                        " ".repeat(self.indent),
-                        idx,
-                        RED,
-                        got,
-                        expected,
-                        diff,
-                        epsilon,
-                        RESET
-                    );
-                }
-                WrongStatus::ExpectedNan { got } => {
-                    println!(
-                        "{}{}: {}Got {}, expected NaN{}",
-                        " ".repeat(self.indent),
-                        idx,
-                        RED,
-                        got,
-                        RESET
-                    );
-                }
-                WrongStatus::GotNan { expected } => {
-                    println!(
-                        "{}{}: {}Got NaN, expected {}{}",
-                        " ".repeat(self.indent),
-                        idx,
-                        RED,
-                        expected,
-                        RESET
-                    );
-                }
-            },
-        }
     }
 }

@@ -1,3 +1,5 @@
+use crate::test_utils::correctness::{TensorFilter, parse_tensor_filter};
+
 const CUBEK_TEST_MODE_ENV: &str = "CUBEK_TEST_MODE";
 
 #[derive(Default)]
@@ -8,7 +10,7 @@ pub enum TestMode {
     /// Tests resulting in compilation error are marked as `failed`
     Panic,
     /// Tests are marked as `failed` and all data is shown up to max data
-    Print { max: usize },
+    Print(TensorFilter),
 }
 
 pub fn current_test_mode() -> TestMode {
@@ -16,20 +18,23 @@ pub fn current_test_mode() -> TestMode {
         Ok(val) => {
             let val = val.to_lowercase();
             if val.starts_with("print") {
-                // Try to parse `print:42`
-                if let Some((_, n)) = val.split_once(':') {
-                    if let Ok(max) = n.parse() {
-                        return TestMode::Print { max };
+                if let Some((_, f)) = val.split_once(':') {
+                    match parse_tensor_filter(f) {
+                        Ok(filter) => TestMode::Print(filter),
+                        Err(e) => {
+                            eprintln!("Invalid print filter '{}': {}", f, e);
+                            TestMode::Print(vec![]) // fallback wildcard
+                        }
                     }
+                } else {
+                    TestMode::Print(vec![]) // wildcard
                 }
-                // Fallback if no number given
-                TestMode::Print { max: 10 }
             } else if val == "panic" {
                 TestMode::Panic
             } else {
                 TestMode::Skip
             }
         }
-        Err(_) => TestMode::default(),
+        Err(_) => TestMode::Skip,
     }
 }
