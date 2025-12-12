@@ -1,3 +1,5 @@
+pub mod test_case;
+
 macro_rules! testgen_reduce {
     (
         dtype: $dtype:ty,
@@ -52,7 +54,7 @@ macro_rules! testgen_reduce {
         strides: $strides:expr,
         axis: $axis:expr,
     ) => {
-        use cubek_reduce::ReduceStrategy;
+        use cubek_reduce::{ReduceStrategy, routines::RoutineStrategy};
 
         mod full_cube {
             use super::*;
@@ -63,7 +65,9 @@ macro_rules! testgen_reduce {
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy::FullCube(CubeStrategy { use_planes: false }),
+                strategy: ReduceStrategy::FullCube(
+                    RoutineStrategy::Strategy(CubeStrategy { use_planes: false })
+                ),
             );
         }
 
@@ -76,8 +80,90 @@ macro_rules! testgen_reduce {
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy::FullCube(CubeStrategy { use_planes: true }),
+                strategy: ReduceStrategy::FullCube(
+                    RoutineStrategy::Strategy(CubeStrategy { use_planes: true })
+                ),
             );
+        }
+
+        /// The goal of that test is to limit the size of a cube to `8` to validate multiple cubes
+        /// arithmetic.
+        ///
+        /// With this test, we can't have `use_planes` to true since the `cube_dim.x !=
+        /// plane_size`.
+        mod full_cube_single_plane {
+            use super::*;
+            use cubek_reduce::routines::CubeReduceBlueprint;
+            use cubek_reduce::BoundChecks;
+            use cubecl::prelude::CubeDim;
+
+            testgen_reduce!(
+                dtype: $dtype,
+                shape: $shape,
+                strides: $strides,
+                axis: $axis,
+                strategy: ReduceStrategy::FullCube(
+                    RoutineStrategy::Forced(
+                        CubeReduceBlueprint {
+                            bound_checks: BoundChecks::Mask,
+                            num_shared_accumulators: 8,
+                            use_planes: false,
+                        },
+                        CubeDim::new_2d(8, 1),
+                    )
+                ),
+            );
+        }
+
+        /// The goal of that test is to limit the size of a cube to `plane_size` to validate multiple planes
+        /// arithmetic.
+        mod full_plane_single_plane {
+            use super::*;
+            use cubek_reduce::routines::PlaneReduceBlueprint;
+            use cubek_reduce::BoundChecks;
+            use cubecl::prelude::CubeDim;
+
+            mod plane_size_32 {
+                use super::*;
+
+                testgen_reduce!(
+                    dtype: $dtype,
+                    shape: $shape,
+                    strides: $strides,
+                    axis: $axis,
+                    strategy: ReduceStrategy::FullPlane(
+                        RoutineStrategy::Forced(
+                            PlaneReduceBlueprint {
+                                plane_idle: true,
+                                bound_checks: BoundChecks::Mask,
+                                independant: true,
+                            },
+                            CubeDim::new_2d(32, 2),
+                        )
+                    ),
+                );
+            }
+
+            mod plane_size_64 {
+                use super::*;
+
+                testgen_reduce!(
+                    dtype: $dtype,
+                    shape: $shape,
+                    strides: $strides,
+                    axis: $axis,
+                    strategy: ReduceStrategy::FullPlane(
+                        RoutineStrategy::Forced(
+                            PlaneReduceBlueprint {
+                                plane_idle: true,
+                                bound_checks: BoundChecks::Mask,
+                                independant: true,
+                            },
+                            CubeDim::new_2d(64, 2),
+                        )
+                    ),
+                );
+            }
         }
 
         mod full_plane {
@@ -89,7 +175,9 @@ macro_rules! testgen_reduce {
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy::FullPlane (PlaneStrategy{ independant: false }),
+                strategy: ReduceStrategy::FullPlane(
+                    RoutineStrategy::Strategy(PlaneStrategy { independant: false })
+                ),
             );
         }
 
@@ -102,7 +190,9 @@ macro_rules! testgen_reduce {
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy::FullPlane(PlaneStrategy{independant: true }),
+                strategy: ReduceStrategy::FullPlane(
+                    RoutineStrategy::Strategy(PlaneStrategy { independant: true })
+                ),
             );
         }
 
@@ -115,7 +205,7 @@ macro_rules! testgen_reduce {
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy::FullUnit(UnitStrategy),
+                strategy: ReduceStrategy::FullUnit(RoutineStrategy::Strategy(UnitStrategy)),
             );
         }
     };

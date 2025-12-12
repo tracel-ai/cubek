@@ -1,14 +1,14 @@
-use crate::routines::{cube::CubeStrategy, plane::PlaneStrategy, unit::UnitStrategy};
+use crate::routines::{RoutineStrategy, cube::CubeRoutine, plane::PlaneRoutine, unit::UnitRoutine};
 use cubecl::{features::Plane, prelude::*};
 
 #[derive(Debug, Clone)]
 pub enum ReduceStrategy {
     /// A unit is responsable to reduce a full vector.
-    FullUnit(UnitStrategy),
+    FullUnit(RoutineStrategy<UnitRoutine>),
     /// A plane is responsable to reduce a full vector.
-    FullPlane(PlaneStrategy),
+    FullPlane(RoutineStrategy<PlaneRoutine>),
     /// A cube is responsable to reduce a full vector.
-    FullCube(CubeStrategy),
+    FullCube(RoutineStrategy<CubeRoutine>),
 }
 
 pub(crate) fn support_plane<R: Runtime>(client: &ComputeClient<R>) -> bool {

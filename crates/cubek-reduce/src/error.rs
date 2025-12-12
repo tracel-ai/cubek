@@ -12,6 +12,11 @@ pub enum ReduceError {
     /// When the cube count is bigger than the max supported.
     #[error("The cube count is larger than the max supported.")]
     CubeCountTooLarge,
+
+    /// A generic validation error
+    #[error("A generic validation error: {details}")]
+    Validation { details: &'static str },
+
     /// Indicate that min_plane_dim != max_plane_dim, thus the exact plane_dim is not fixed.
     #[error(
         "Trying to launch a kernel using plane instructions, but the min and max plane dimensions are different."

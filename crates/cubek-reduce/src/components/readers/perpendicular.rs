@@ -87,7 +87,7 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
         let item = self.bound_checks.read(pos, offset, &self.view);
 
         let coordinate = ReduceCoordinate::new(
-            line_index + UNIT_POS,
+            line_index * CUBE_DIM + UNIT_POS,
             self.requirements,
             self.line_size,
             LineMode::Perpendicular,
@@ -107,7 +107,7 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
         let item = self.bound_checks.read(pos, offset, &self.view);
 
         let coordinate = ReduceCoordinate::new(
-            line_index + UNIT_POS_X,
+            line_index * CUBE_DIM_X + UNIT_POS_X,
             self.requirements,
             self.line_size,
             LineMode::Perpendicular,

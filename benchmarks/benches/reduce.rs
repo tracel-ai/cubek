@@ -7,8 +7,12 @@ use cubecl::{
 use cubek::{
     random::random_uniform,
     reduce::{
-        components::instructions::ReduceOperationConfig, launch::ReduceStrategy,
-        routines::unit::UnitStrategy,
+        BoundChecks,
+        components::instructions::ReduceOperationConfig,
+        launch::ReduceStrategy,
+        routines::{
+            CubeReduceBlueprint, PlaneReduceBlueprint, RoutineStrategy, unit::UnitStrategy,
+        },
     },
 };
 use std::marker::PhantomData;
@@ -80,10 +84,25 @@ fn run<R: Runtime, E: frontend::Float>(device: R::Device) {
     let client = R::client(&device);
     for axis in [0, 1, 2] {
         for strategy in [
-            ReduceStrategy::FullUnit(UnitStrategy),
+            ReduceStrategy::FullUnit(RoutineStrategy::Strategy(UnitStrategy)),
             // ReduceStrategy::FullPlane { independant: false },
             // ReduceStrategy::FullPlane { independant: true },
-            // ReduceStrategy::FullCube { use_planes: true },
+            ReduceStrategy::FullCube(RoutineStrategy::Forced(
+                CubeReduceBlueprint {
+                    bound_checks: BoundChecks::Mask,
+                    num_shared_accumulators: 32,
+                    use_planes: false,
+                },
+                CubeDim::new_2d(32, 1),
+            )),
+            ReduceStrategy::FullPlane(RoutineStrategy::Forced(
+                PlaneReduceBlueprint {
+                    plane_idle: true,
+                    bound_checks: BoundChecks::Mask,
+                    independant: true,
+                },
+                CubeDim::new_2d(32, 1),
+            )),
             // ReduceStrategy::FullCube { use_planes: false },
         ] {
             let bench = ReduceBench::<R, E> {

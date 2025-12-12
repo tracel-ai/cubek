@@ -33,15 +33,22 @@ pub struct ReduceProblem {
     pub dtypes: ReduceDtypes,
 }
 
-pub trait Routine<R: Runtime> {
-    type Strategy: Send + 'static;
+#[derive(Debug, Clone)]
+pub enum RoutineStrategy<R: Routine> {
+    Forced(R::Blueprint, CubeDim),
+    Strategy(R::Strategy),
+}
 
-    fn prepare(
+pub trait Routine: core::fmt::Debug + Clone + Sized {
+    type Strategy: core::fmt::Debug + Clone + Send + 'static;
+    type Blueprint: core::fmt::Debug + Clone + Send + 'static;
+
+    fn prepare<R: Runtime>(
         &self,
         client: &ComputeClient<R>,
         problem: ReduceProblem,
         settings: ReduceLineSettings,
-        strategy: Self::Strategy,
+        strategy: RoutineStrategy<Self>,
     ) -> Result<(ReduceBlueprint, ReduceLaunchSettings), ReduceError>;
 }
 

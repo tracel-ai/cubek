@@ -2,24 +2,26 @@ use super::{GlobalReduceBlueprint, ReduceBlueprint, ReduceLaunchSettings};
 use crate::{
     LineMode, ReduceError,
     launch::calculate_plane_count,
-    routines::{Routine, UnitReduceBlueprint},
+    routines::{Routine, RoutineStrategy, UnitReduceBlueprint},
 };
 use cubecl::{CubeCount, CubeDim, Runtime};
 
+#[derive(Debug, Clone)]
 pub struct UnitRoutine;
 
 #[derive(Debug, Clone)]
 pub struct UnitStrategy;
 
-impl<R: Runtime> Routine<R> for UnitRoutine {
+impl Routine for UnitRoutine {
     type Strategy = UnitStrategy;
+    type Blueprint = UnitReduceBlueprint;
 
-    fn prepare(
+    fn prepare<R: Runtime>(
         &self,
         client: &cubecl::prelude::ComputeClient<R>,
         problem: super::ReduceProblem,
         settings: super::ReduceLineSettings,
-        _strategy: Self::Strategy,
+        _strategy: RoutineStrategy<Self>,
     ) -> Result<(ReduceBlueprint, ReduceLaunchSettings), ReduceError> {
         let properties = &client.properties().hardware;
         let plane_size = properties.plane_size_max;
