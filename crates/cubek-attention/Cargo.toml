@@ -13,7 +13,7 @@ version.workspace = true
 [features]
 default = ["std", "cubecl/default"]
 std = ["cubecl/std"]
-
+tests = []
 
 [dependencies]
 cubek-matmul = { path = "../cubek-matmul", version = "0.0.1", default-features = false }
