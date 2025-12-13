@@ -20,6 +20,7 @@ use cubek_matmul::{
     MatmulInputHandleRef,
     components::{AvailableLineSizes, MatmulIdent},
 };
+use cubek_std::test_utils::HostData;
 use cubek_std::test_utils::{
     Distribution, RandomInputSpec, SimpleInputSpec, TestInput, batched_matrix_strides,
 };
@@ -174,12 +175,13 @@ pub fn launch_matmul_algorithm<A: Algorithm>(
         config,
         &dtypes,
     );
+
     let cube_count_plan = config.hypercube_config().cube_count_plan(
         &problem,
         client.properties().hardware.max_cube_count.clone(),
     );
 
-    match input_representation {
+    let x = match input_representation {
         InputRepresentation::Normal => {
             let inputs = TensorInputs::create(
                 &client,
@@ -231,5 +233,16 @@ pub fn launch_matmul_algorithm<A: Algorithm>(
             }
         }
     }
-    .is_ok()
+    .is_ok();
+
+    println!(
+        "{:?}",
+        HostData::from_tensor_handle(
+            client,
+            &TensorHandle::from_ref(&out, *dtypes.acc_global),
+            cubek_std::test_utils::HostDataType::F32
+        )
+    );
+
+    x
 }

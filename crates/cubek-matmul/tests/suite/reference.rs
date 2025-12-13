@@ -17,11 +17,15 @@ pub fn assert_result(
 
     let expected = matmul_cpu_reference(lhs, rhs, problem);
 
-    if let Err(e) = assert_equals_approx(
-        &HostData::from_tensor_handle(client, out, HostDataType::F32),
-        &expected,
-        epsilon,
-    ) {
+    println!("\n");
+    println!("lhs {:?}", lhs);
+    println!("rhs {:?}", rhs);
+    let actual = HostData::from_tensor_handle(client, out, HostDataType::F32);
+    println!("actual {:?}", actual);
+    println!("expected {:?}", expected);
+    println!("\n");
+
+    if let Err(e) = assert_equals_approx(&actual, &expected, epsilon) {
         panic!("{}", e);
     }
 }

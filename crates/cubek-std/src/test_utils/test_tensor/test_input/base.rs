@@ -29,13 +29,7 @@ impl TestInput {
         distribution: Distribution,
         strides: Option<Vec<usize>>,
     ) -> Self {
-        let spec = RandomInputSpec::new(client.clone(), shape, dtype, seed, distribution);
-        let spec = if let Some(s) = strides {
-            spec.with_strides(s)
-        } else {
-            spec
-        };
-
+        let spec = RandomInputSpec::new(client.clone(), shape, dtype, seed, distribution, strides);
         TestInput {
             client,
             spec: TestInputSpec::Random(spec),
@@ -49,14 +43,14 @@ impl TestInput {
     ) -> Self {
         TestInput {
             client: client.clone(),
-            spec: TestInputSpec::Zeros(SimpleInputSpec::new(client, shape, dtype)),
+            spec: TestInputSpec::Zeros(SimpleInputSpec::new(client, shape, dtype, None)),
         }
     }
 
     pub fn eye(client: ComputeClient<TestRuntime>, shape: Vec<usize>, dtype: StorageType) -> Self {
         TestInput {
             client: client.clone(),
-            spec: TestInputSpec::Eye(SimpleInputSpec::new(client, shape, dtype)),
+            spec: TestInputSpec::Eye(SimpleInputSpec::new(client, shape, dtype, None)),
         }
     }
 
@@ -66,12 +60,8 @@ impl TestInput {
         dtype: StorageType,
         strides: Option<Vec<usize>>,
     ) -> Self {
-        let spec = SimpleInputSpec::new(client.clone(), shape, dtype);
-        let spec = if let Some(s) = strides {
-            spec.with_strides(s)
-        } else {
-            spec
-        };
+        let spec = SimpleInputSpec::new(client.clone(), shape, dtype, strides);
+
         TestInput {
             client,
             spec: TestInputSpec::Arange(spec),
@@ -131,18 +121,18 @@ pub struct RandomInputSpec {
 }
 
 impl SimpleInputSpec {
-    pub fn new(client: ComputeClient<TestRuntime>, shape: Vec<usize>, dtype: StorageType) -> Self {
+    pub fn new(
+        client: ComputeClient<TestRuntime>,
+        shape: Vec<usize>,
+        dtype: StorageType,
+        strides: Option<Vec<usize>>,
+    ) -> Self {
         Self {
             client,
             shape,
             dtype,
-            strides: None,
+            strides,
         }
-    }
-
-    pub fn with_strides(mut self, strides: Vec<usize>) -> Self {
-        self.strides = Some(strides);
-        self
     }
 }
 
@@ -153,18 +143,14 @@ impl RandomInputSpec {
         dtype: StorageType,
         seed: u64,
         distribution: Distribution,
+        strides: Option<Vec<usize>>,
     ) -> Self {
-        let inner = SimpleInputSpec::new(client, shape, dtype);
+        let inner = SimpleInputSpec::new(client, shape, dtype, strides);
         Self {
             inner,
             seed,
             distribution,
         }
-    }
-
-    pub fn with_strides(mut self, strides: Vec<usize>) -> Self {
-        self.inner = self.inner.with_strides(strides);
-        self
     }
 }
 

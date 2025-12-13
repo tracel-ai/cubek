@@ -7,11 +7,6 @@ pub fn assert_equals_approx(
     expected: &HostData,
     epsilon: f32,
 ) -> Result<(), String> {
-    // let data_handle = copy_casted(client, handle, f32::as_type_native_unchecked());
-    // let actual =
-    //     f32::from_bytes(&client.read_one_tensor(data_handle.as_copy_descriptor())).to_owned();
-    // let shape = handle.shape.clone();
-
     if actual.shape != expected.shape {
         return Err(format!(
             "Shape mismatch: got {:?}, expected {:?}",
@@ -105,19 +100,36 @@ impl CompareVisitor for FailFast {
 fn compare_elem(got: f32, expected: f32, epsilon: f32) -> ElemStatus {
     let eps = (epsilon * expected).abs().max(epsilon).min(0.99);
 
-    let actual_nan = got.is_nan();
-    let expected_nan = expected.is_nan();
+    // NaN check: pass if both are NaN
+    if got.is_nan() && expected.is_nan() {
+        return ElemStatus::Correct { got };
+    }
 
-    if actual_nan != expected_nan {
-        if expected_nan {
-            return ElemStatus::Wrong(WrongStatus::ExpectedNan { got });
+    // NaN mismatch
+    if got.is_nan() || expected.is_nan() {
+        return if expected.is_nan() {
+            ElemStatus::Wrong(WrongStatus::ExpectedNan { got })
         } else {
-            return ElemStatus::Wrong(WrongStatus::GotNan { expected });
+            ElemStatus::Wrong(WrongStatus::GotNan { expected })
+        };
+    }
+
+    // Infinite check: pass if both inf with same sign
+    if got.is_infinite() && expected.is_infinite() {
+        if got.signum() == expected.signum() {
+            return ElemStatus::Correct { got };
+        } else {
+            return ElemStatus::Wrong(WrongStatus::GotWrongValue {
+                got,
+                expected,
+                diff: f32::INFINITY,
+                epsilon: eps,
+            });
         }
     }
 
+    // Regular numeric comparison
     let diff = (got - expected).abs();
-
     if diff < eps {
         ElemStatus::Correct { got }
     } else {

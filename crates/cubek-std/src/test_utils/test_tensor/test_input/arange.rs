@@ -62,6 +62,7 @@ pub(crate) fn build_arange(
     let strides = spec
         .strides
         .unwrap_or(batched_matrix_strides(&spec.shape, false));
+    println!("{:?}", strides);
 
     Ok(new_arange(&spec.client, spec.shape, strides, spec.dtype))
 }

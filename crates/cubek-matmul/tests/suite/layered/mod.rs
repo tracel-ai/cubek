@@ -90,6 +90,7 @@ fn small_test_matmul() {
 
     problem.lhs_strides = lhs.strides.clone();
     problem.rhs_strides = rhs.strides.clone();
+    println!("{:?}", problem);
 
     let lhs_handle = MatmulInputHandleRef::Normal(lhs.as_ref(), *dtypes.lhs_global);
     let rhs_handle = MatmulInputHandleRef::Normal(rhs.as_ref(), *dtypes.rhs_global);
