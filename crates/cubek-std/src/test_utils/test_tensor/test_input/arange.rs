@@ -6,9 +6,7 @@ use cubecl::{
 
 use crate::test_utils::{
     batched_matrix_strides,
-    test_tensor::test_input::base::{
-        HostData, HostDataType, SimpleInputSpec, TestInputError, TestInputResult,
-    },
+    test_tensor::test_input::base::{SimpleInputSpec, TestInputError},
 };
 
 #[cube(launch)]
@@ -60,22 +58,10 @@ fn new_arange(
 
 pub(crate) fn build_arange(
     spec: SimpleInputSpec,
-    host_data_type: Option<HostDataType>,
-) -> Result<TestInputResult, TestInputError> {
-    let num_elems = spec.shape.iter().product();
-
+) -> Result<TensorHandle<TestRuntime>, TestInputError> {
     let strides = spec
         .strides
         .unwrap_or(batched_matrix_strides(&spec.shape, false));
 
-    let host_data = match host_data_type {
-        Some(HostDataType::F32) => Some(HostData::F32((0..num_elems).map(|x| x as f32).collect())),
-        Some(HostDataType::Bool) => return Err(TestInputError::InvalidReturnData),
-        None => None,
-    };
-
-    Ok(TestInputResult {
-        handle: new_arange(&spec.client, spec.shape, strides, spec.dtype),
-        host_data,
-    })
+    Ok(new_arange(&spec.client, spec.shape, strides, spec.dtype))
 }

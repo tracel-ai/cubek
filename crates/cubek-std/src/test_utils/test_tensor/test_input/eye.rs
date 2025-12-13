@@ -4,9 +4,7 @@ use cubecl::{
     std::tensor::{TensorHandle, ViewOperationsMut, ViewOperationsMutExpand},
 };
 
-use crate::test_utils::test_tensor::test_input::base::{
-    HostData, HostDataType, SimpleInputSpec, TestInputError, TestInputResult,
-};
+use crate::test_utils::test_tensor::test_input::base::{SimpleInputSpec, TestInputError};
 
 #[cube(launch)]
 fn eye_launch<T: Numeric>(tensor: &mut Tensor<Line<T>>, #[define(T)] _types: StorageType) {
@@ -74,23 +72,9 @@ fn new_eyed(
     out
 }
 
-fn eye_host_side(batch: usize, rows: usize, cols: usize) -> Vec<f32> {
-    let mut v = vec![0.0f32; batch * rows * cols];
-
-    for b in 0..batch {
-        let batch_offset = b * rows * cols;
-        for i in 0..rows.min(cols) {
-            v[batch_offset + i * cols + i] = 1.0;
-        }
-    }
-
-    v
-}
-
 pub(crate) fn build_eye(
     spec: SimpleInputSpec,
-    host_data_type: Option<HostDataType>,
-) -> Result<TestInputResult, TestInputError> {
+) -> Result<TensorHandle<TestRuntime>, TestInputError> {
     if spec.strides.is_some() {
         return Err(TestInputError::UnsupportedStrides);
     }
@@ -100,26 +84,23 @@ pub(crate) fn build_eye(
     let cols = matrix[1];
     let total_batches = batches.iter().product::<usize>();
 
-    let host_data = match host_data_type {
-        Some(HostDataType::F32) => Some(HostData::F32(eye_host_side(total_batches, rows, cols))),
-        Some(HostDataType::Bool) => Some(HostData::Bool(
-            eye_host_side(total_batches, rows, cols)
-                .into_iter()
-                .map(|x| x != 0.0)
-                .collect(),
-        )),
-        None => None,
-    };
+    // let host_data = match host_data_type {
+    //     Some(HostDataType::F32) => Some(HostData::F32(eye_host_side(total_batches, rows, cols))),
+    //     Some(HostDataType::Bool) => Some(HostData::Bool(
+    //         eye_host_side(total_batches, rows, cols)
+    //             .into_iter()
+    //             .map(|x| x != 0.0)
+    //             .collect(),
+    //     )),
+    //     None => None,
+    // };
 
-    Ok(TestInputResult {
-        handle: new_eyed(
-            &spec.client,
-            spec.shape,
-            rows,
-            cols,
-            total_batches,
-            spec.dtype,
-        ),
-        host_data,
-    })
+    Ok(new_eyed(
+        &spec.client,
+        spec.shape,
+        rows,
+        cols,
+        total_batches,
+        spec.dtype,
+    ))
 }

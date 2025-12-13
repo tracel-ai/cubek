@@ -1,10 +1,19 @@
 use cubecl::{TestRuntime, client::ComputeClient, ir::StorageType, std::tensor::TensorHandle};
 
 use crate::test_utils::test_tensor::test_input::{
-    arange::build_arange, eye::build_eye, random::build_random, zeros::build_zeros,
+    arange::build_arange,
+    eye::build_eye,
+    host_data::{HostData, HostDataType},
+    random::build_random,
+    zeros::build_zeros,
 };
 
-pub enum TestInput {
+pub struct TestInput {
+    client: ComputeClient<TestRuntime>,
+    spec: TestInputSpec,
+}
+
+pub enum TestInputSpec {
     Arange(SimpleInputSpec),
     Eye(SimpleInputSpec),
     Random(RandomInputSpec),
@@ -20,13 +29,17 @@ impl TestInput {
         distribution: Distribution,
         strides: Option<Vec<usize>>,
     ) -> Self {
-        let spec = RandomInputSpec::new(client, shape, dtype, seed, distribution);
+        let spec = RandomInputSpec::new(client.clone(), shape, dtype, seed, distribution);
         let spec = if let Some(s) = strides {
             spec.with_strides(s)
         } else {
             spec
         };
-        Self::Random(spec)
+
+        TestInput {
+            client,
+            spec: TestInputSpec::Random(spec),
+        }
     }
 
     pub fn zeros(
@@ -34,11 +47,17 @@ impl TestInput {
         shape: Vec<usize>,
         dtype: StorageType,
     ) -> Self {
-        Self::Zeros(SimpleInputSpec::new(client, shape, dtype))
+        TestInput {
+            client: client.clone(),
+            spec: TestInputSpec::Zeros(SimpleInputSpec::new(client, shape, dtype)),
+        }
     }
 
     pub fn eye(client: ComputeClient<TestRuntime>, shape: Vec<usize>, dtype: StorageType) -> Self {
-        Self::Eye(SimpleInputSpec::new(client, shape, dtype))
+        TestInput {
+            client: client.clone(),
+            spec: TestInputSpec::Eye(SimpleInputSpec::new(client, shape, dtype)),
+        }
     }
 
     pub fn arange(
@@ -47,13 +66,16 @@ impl TestInput {
         dtype: StorageType,
         strides: Option<Vec<usize>>,
     ) -> Self {
-        let spec = SimpleInputSpec::new(client, shape, dtype);
+        let spec = SimpleInputSpec::new(client.clone(), shape, dtype);
         let spec = if let Some(s) = strides {
             spec.with_strides(s)
         } else {
             spec
         };
-        Self::Arange(spec)
+        TestInput {
+            client,
+            spec: TestInputSpec::Arange(spec),
+        }
     }
 
     pub fn generate_with_f32_host_data(
@@ -69,18 +91,15 @@ impl TestInput {
     }
 
     pub fn generate_without_host_data(self) -> Result<TensorHandle<TestRuntime>, TestInputError> {
-        Ok(self.generate(None)?.handle)
+        self.generate()
     }
 
-    fn generate(
-        self,
-        return_data: Option<HostDataType>,
-    ) -> Result<TestInputResult, TestInputError> {
-        match self {
-            TestInput::Arange(spec) => build_arange(spec, return_data),
-            TestInput::Eye(spec) => build_eye(spec, return_data),
-            TestInput::Random(spec) => build_random(spec, return_data),
-            TestInput::Zeros(spec) => build_zeros(spec, return_data),
+    fn generate(self) -> Result<TensorHandle<TestRuntime>, TestInputError> {
+        match self.spec {
+            TestInputSpec::Arange(spec) => build_arange(spec),
+            TestInputSpec::Eye(spec) => build_eye(spec),
+            TestInputSpec::Random(spec) => build_random(spec),
+            TestInputSpec::Zeros(spec) => build_zeros(spec),
         }
     }
 
@@ -88,11 +107,12 @@ impl TestInput {
         self,
         host_data_type: HostDataType,
     ) -> Result<(TensorHandle<TestRuntime>, HostData), TestInputError> {
-        let mut result = self.generate(Some(host_data_type))?;
-        match result.host_data.take() {
-            Some(data) => Ok((result.handle, data)),
-            None => Err(TestInputError::InvalidReturnData),
-        }
+        let client = self.client.clone();
+        let tensor_handle = self.generate()?;
+
+        let host_data = HostData::from_tensor_handle(&client, &tensor_handle, host_data_type);
+
+        Ok((tensor_handle, host_data))
     }
 }
 
@@ -108,11 +128,6 @@ pub struct RandomInputSpec {
     pub(crate) inner: SimpleInputSpec,
     pub(crate) seed: u64,
     pub(crate) distribution: Distribution,
-}
-
-pub(crate) struct TestInputResult {
-    pub handle: TensorHandle<TestRuntime>,
-    pub host_data: Option<HostData>,
 }
 
 impl SimpleInputSpec {
@@ -150,32 +165,6 @@ impl RandomInputSpec {
     pub fn with_strides(mut self, strides: Vec<usize>) -> Self {
         self.inner = self.inner.with_strides(strides);
         self
-    }
-}
-
-pub(crate) enum HostDataType {
-    F32,
-    Bool,
-}
-
-pub enum HostData {
-    F32(Vec<f32>),
-    Bool(Vec<bool>),
-}
-
-impl HostData {
-    pub fn into_f32(self) -> Vec<f32> {
-        match self {
-            HostData::F32(v) => v,
-            _ => panic!("Expected F32 data"),
-        }
-    }
-
-    pub fn into_bool(self) -> Vec<bool> {
-        match self {
-            HostData::Bool(v) => v,
-            _ => panic!("Expected Bool data"),
-        }
     }
 }
 

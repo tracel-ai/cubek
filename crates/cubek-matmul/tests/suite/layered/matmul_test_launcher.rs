@@ -72,11 +72,11 @@ pub fn test_matmul_algorithm<A: Algorithm>(
     .generate_with_f32_host_data()
     .unwrap();
 
-    let out = TestInput::Zeros(SimpleInputSpec::new(
+    let out = TestInput::zeros(
         client.clone(),
         problem.shape(MatmulIdent::Out),
         *dtypes.acc_global,
-    ))
+    )
     .generate_without_host_data()
     .unwrap();
 
@@ -97,14 +97,7 @@ pub fn test_matmul_algorithm<A: Algorithm>(
         rhs_handle,
         out_handle,
     ) {
-        assert_result(
-            &lhs_data.into_f32(),
-            &rhs_data.into_f32(),
-            &problem,
-            &client,
-            &out,
-            dtypes,
-        );
+        assert_result(&lhs_data, &rhs_data, &problem, &client, &out, dtypes);
     }
 }
 

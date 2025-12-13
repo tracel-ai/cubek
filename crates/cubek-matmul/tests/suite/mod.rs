@@ -3,6 +3,6 @@
 pub mod layered;
 pub mod naive;
 
-mod cpu_reference;
+mod reference;
 
-pub use cpu_reference::assert_result;
+pub use reference::assert_result;

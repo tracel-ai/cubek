@@ -3,11 +3,11 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::{CubeElement, client::ComputeClient};
 use cubek_matmul::components::MatmulElems;
 use cubek_matmul::components::{MatmulIdent, MatmulProblem, MatrixLayout};
-use cubek_std::test_utils::assert_equals_approx;
+use cubek_std::test_utils::{HostData, HostDataType, HostDataVec, assert_equals_approx};
 
 pub fn assert_result(
-    lhs: &[f32],
-    rhs: &[f32],
+    lhs: &HostData,
+    rhs: &HostData,
     problem: &MatmulProblem,
     client: &ComputeClient<TestRuntime>,
     out: &TensorHandle<TestRuntime>,
@@ -15,11 +15,13 @@ pub fn assert_result(
 ) {
     let epsilon = matmul_epsilon(&dtypes, 100.);
 
-    let expected = matmul_cpu_reference(lhs, rhs, problem)
-        .into_iter()
-        .collect::<Vec<f32>>();
+    let expected = matmul_cpu_reference(lhs, rhs, problem);
 
-    if let Err(e) = assert_equals_approx(client, out, &expected, epsilon) {
+    if let Err(e) = assert_equals_approx(
+        &HostData::from_tensor_handle(client, out, HostDataType::F32),
+        &expected,
+        epsilon,
+    ) {
         panic!("{}", e);
     }
 }
@@ -82,43 +84,82 @@ fn matmul_epsilon(elems: &MatmulElems, safety_factor: f32) -> f32 {
 //     acc
 // }
 
-/// Solves a matmul problem with EG inputs, multiplied as ES and accumulated as EA.
+/// Solves a matmul problem
 ///
 /// This is a naive CPU implementation, very slow on large payloads,
 /// not designed to be used for other purposes than testing.
-fn matmul_cpu_reference(lhs: &[f32], rhs: &[f32], problem: &MatmulProblem) -> Vec<f32> {
+fn matmul_cpu_reference(lhs: &HostData, rhs: &HostData, problem: &MatmulProblem) -> HostData {
     let m = problem.m;
     let n = problem.n;
     let k = problem.k;
-    let num_batches = problem.num_batches();
 
-    let batch_size_lhs = m * k;
-    let batch_size_rhs = k * n;
-    let batch_size_out = m * n;
+    let batch_shape = problem.output_batch_dims();
+    let num_batches: usize = batch_shape.iter().product();
+    let mut output_shape = batch_shape.clone();
+    output_shape.push(m);
+    output_shape.push(n);
 
-    let mut acc = vec![0.; batch_size_out * num_batches];
+    let mut out = vec![0.0; num_batches * m * n];
 
-    for batch in 0..num_batches {
-        // Offsets for this batch
-        let lhs_offset = batch * batch_size_lhs;
-        let rhs_offset = batch * batch_size_rhs;
-        let out_offset = batch * batch_size_out;
+    let mut batch_index = vec![0usize; batch_shape.len()];
+    let mut lhs_index = vec![0usize; batch_shape.len() + 2];
+    let mut rhs_index = vec![0usize; batch_shape.len() + 2];
+    let mut out_index = vec![0usize; batch_shape.len() + 2];
+
+    // Iterate over all batches (cartesian product)
+    for batch_flat in 0..num_batches {
+        // decode flat batch index → multidim batch index
+        let mut t = batch_flat;
+        for d in (0..batch_shape.len()).rev() {
+            batch_index[d] = t % batch_shape[d];
+            t /= batch_shape[d];
+        }
+
+        // copy batch dims into indices
+        for d in 0..batch_shape.len() {
+            lhs_index[d] = batch_index[d];
+            rhs_index[d] = batch_index[d];
+            out_index[d] = batch_index[d];
+        }
 
         for i in 0..m {
+            out_index[batch_shape.len()] = i;
+            lhs_index[batch_shape.len()] = i;
+
             for j in 0..n {
-                let mut sum = 0.;
-                for k_ in 0..k {
-                    // Row-major access
-                    let l = lhs[lhs_offset + i * k + k_];
-                    let r = rhs[rhs_offset + k_ * n + j];
-                    sum += l * r;
+                out_index[batch_shape.len() + 1] = j;
+
+                let mut sum = 0.0;
+                for kk in 0..k {
+                    lhs_index[batch_shape.len() + 1] = kk;
+                    rhs_index[batch_shape.len()] = kk;
+                    rhs_index[batch_shape.len() + 1] = j;
+
+                    sum += lhs.get(&lhs_index) * rhs.get(&rhs_index);
                 }
-                acc[out_offset + i * n + j] = sum;
+
+                let out_linear = batch_flat * (m * n) + i * n + j;
+                out[out_linear] = sum;
             }
         }
     }
 
-    acc
+    let strides = row_major_strides(&output_shape);
+    HostData {
+        data: HostDataVec::F32(out),
+        shape: output_shape,
+        strides,
+    }
+}
+
+fn row_major_strides(shape: &[usize]) -> Vec<usize> {
+    let mut strides = vec![0; shape.len()];
+    let mut acc = 1;
+    for i in (0..shape.len()).rev() {
+        strides[i] = acc;
+        acc *= shape[i];
+    }
+    strides
 }
 
 /// Returns the stride of the identified tensor, inferred by the problem definition

@@ -2,10 +2,10 @@ use cubecl::client::ComputeClient;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{TestRuntime, prelude::*};
 
+use crate::test_utils::batched_matrix_strides;
 use crate::test_utils::test_tensor::test_input::base::{
-    Distribution, HostData, HostDataType, RandomInputSpec, TestInputError, TestInputResult,
+    Distribution, RandomInputSpec, TestInputError,
 };
-use crate::test_utils::{batched_matrix_strides, copy_casted};
 
 fn random_tensor_handle(
     client: &ComputeClient<TestRuntime>,
@@ -39,19 +39,9 @@ fn random_tensor_handle(
     )
 }
 
-fn random_tensor_data<T: CubePrimitive + CubeElement + Default>(
-    client: &ComputeClient<TestRuntime>,
-    tensor_handle: &TensorHandle<TestRuntime>,
-) -> Vec<T> {
-    // Read data in row-major flat form
-    let handle = copy_casted(client, tensor_handle, T::as_type_native_unchecked());
-    T::from_bytes(&client.read_one_tensor(handle.as_copy_descriptor())).to_owned()
-}
-
 pub(crate) fn build_random(
     spec: RandomInputSpec,
-    host_data_type: Option<HostDataType>,
-) -> Result<TestInputResult, TestInputError> {
+) -> Result<TensorHandle<TestRuntime>, TestInputError> {
     let strides = &spec
         .inner
         .strides
@@ -66,19 +56,5 @@ pub(crate) fn build_random(
         spec.distribution,
     );
 
-    let host_data = match host_data_type {
-        Some(HostDataType::F32) => Some(HostData::F32(random_tensor_data(
-            &spec.inner.client,
-            &handle,
-        ))),
-        Some(HostDataType::Bool) => Some(HostData::Bool(
-            random_tensor_data::<u8>(&spec.inner.client, &handle)
-                .iter()
-                .map(|&x| x > 0)
-                .collect(),
-        )),
-        None => None,
-    };
-
-    Ok(TestInputResult { handle, host_data })
+    Ok(handle)
 }

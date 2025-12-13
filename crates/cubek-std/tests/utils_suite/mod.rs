@@ -1,14 +1,14 @@
 use cubecl::frontend::CubePrimitive;
 use cubecl::{Runtime, TestRuntime};
 use cubek_std::test_utils::{
-    Distribution, TestInput, assert_equals_approx, batched_matrix_strides,
+    Distribution, HostData, HostDataType, TestInput, assert_equals_approx, batched_matrix_strides,
 };
 
 #[test]
 fn random_uniform_handle_equal_to_host_data() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
-    let (handle, host_data) = TestInput::random(
+    let (handle, expected) = TestInput::random(
         client.clone(),
         vec![4, 4],
         f32::as_type_native_unchecked(),
@@ -19,7 +19,9 @@ fn random_uniform_handle_equal_to_host_data() {
     .generate_with_f32_host_data()
     .unwrap();
 
-    assert_equals_approx(&client, &handle, &host_data.into_f32(), 0.001).unwrap();
+    let actual = HostData::from_tensor_handle(&client, &handle, HostDataType::F32);
+
+    assert_equals_approx(&actual, &expected, 0.001).unwrap();
 }
 
 #[test]
@@ -29,7 +31,7 @@ fn random_uniform_handle_col_major_equal_to_host_data() {
     let shape = vec![4, 4];
     let strides = batched_matrix_strides(&shape, true);
 
-    let (handle, host_data) = TestInput::random(
+    let (handle, expected) = TestInput::random(
         client.clone(),
         shape.clone(),
         f32::as_type_native_unchecked(),
@@ -40,14 +42,16 @@ fn random_uniform_handle_col_major_equal_to_host_data() {
     .generate_with_f32_host_data()
     .unwrap();
 
-    assert_equals_approx(&client, &handle, &host_data.into_f32(), 0.001).unwrap();
+    let actual = HostData::from_tensor_handle(&client, &handle, HostDataType::F32);
+
+    assert_equals_approx(&actual, &expected, 0.001).unwrap();
 }
 
 #[test]
 fn random_bernoulli_handle_equal_to_host_data() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
-    let (handle, host_data) = TestInput::random(
+    let (handle, expected) = TestInput::random(
         client.clone(),
         vec![4, 4],
         f32::as_type_native_unchecked(),
@@ -58,38 +62,44 @@ fn random_bernoulli_handle_equal_to_host_data() {
     .generate_with_f32_host_data()
     .unwrap();
 
-    assert_equals_approx(&client, &handle, &host_data.into_f32(), 0.001).unwrap();
+    let actual = HostData::from_tensor_handle(&client, &handle, HostDataType::F32);
+
+    assert_equals_approx(&actual, &expected, 0.001).unwrap();
 }
 
 #[test]
 fn zeros_handle_equal_to_host_data() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
-    let (handle, host_data) =
+    let (handle, expected) =
         TestInput::zeros(client.clone(), vec![4, 4], f32::as_type_native_unchecked())
             .generate_with_f32_host_data()
             .unwrap();
 
-    assert_equals_approx(&client, &handle, &host_data.into_f32(), 0.001).unwrap();
+    let actual = HostData::from_tensor_handle(&client, &handle, HostDataType::F32);
+
+    assert_equals_approx(&actual, &expected, 0.001).unwrap();
 }
 
 #[test]
 fn eye_handle_equal_to_host_data() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
-    let (handle, host_data) =
+    let (handle, expected) =
         TestInput::eye(client.clone(), vec![4, 4], f32::as_type_native_unchecked())
             .generate_with_f32_host_data()
             .unwrap();
 
-    assert_equals_approx(&client, &handle, &host_data.into_f32(), 0.001).unwrap();
+    let actual = HostData::from_tensor_handle(&client, &handle, HostDataType::F32);
+
+    assert_equals_approx(&actual, &expected, 0.001).unwrap();
 }
 
 #[test]
 fn arange_handle_equal_to_host_data() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
-    let (handle, host_data) = TestInput::arange(
+    let (handle, expected) = TestInput::arange(
         client.clone(),
         vec![4, 4],
         f32::as_type_native_unchecked(),
@@ -98,7 +108,9 @@ fn arange_handle_equal_to_host_data() {
     .generate_with_f32_host_data()
     .unwrap();
 
-    assert_equals_approx(&client, &handle, &host_data.into_f32(), 0.001).unwrap();
+    let actual = HostData::from_tensor_handle(&client, &handle, HostDataType::F32);
+
+    assert_equals_approx(&actual, &expected, 0.001).unwrap();
 }
 
 #[test]
@@ -108,7 +120,7 @@ fn arange_handle_col_major_equal_to_host_data() {
     let shape = vec![2, 3];
     let strides = batched_matrix_strides(&shape, true);
 
-    let (handle, host_data) = TestInput::arange(
+    let (handle, expected) = TestInput::arange(
         client.clone(),
         shape,
         f32::as_type_native_unchecked(),
@@ -117,8 +129,7 @@ fn arange_handle_col_major_equal_to_host_data() {
     .generate_with_f32_host_data()
     .unwrap();
 
-    let x = host_data.into_f32();
-    println!("{:?}", &x);
+    let actual = HostData::from_tensor_handle(&client, &handle, HostDataType::F32);
 
-    assert_equals_approx(&client, &handle, &x, 0.001).unwrap();
+    assert_equals_approx(&actual, &expected, 0.001).unwrap();
 }

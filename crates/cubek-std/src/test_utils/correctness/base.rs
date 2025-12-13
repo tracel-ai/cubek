@@ -1,21 +1,25 @@
-use crate::test_utils::copy_casted;
+use crate::test_utils::HostData;
 use crate::test_utils::correctness::color_printer::ColorPrinter;
 use crate::test_utils::test_mode::{TestMode, current_test_mode};
-use cubecl::CubeElement;
-use cubecl::frontend::CubePrimitive;
-use cubecl::{TestRuntime, client::ComputeClient, std::tensor::TensorHandle};
 
 pub fn assert_equals_approx(
-    client: &ComputeClient<TestRuntime>,
-    handle: &TensorHandle<TestRuntime>,
-    expected: &[f32],
+    actual: &HostData,
+    expected: &HostData,
     epsilon: f32,
 ) -> Result<(), String> {
-    let data_handle = copy_casted(client, handle, f32::as_type_native_unchecked());
-    let actual =
-        f32::from_bytes(&client.read_one_tensor(data_handle.as_copy_descriptor())).to_owned();
-    let shape = handle.shape.clone();
+    // let data_handle = copy_casted(client, handle, f32::as_type_native_unchecked());
+    // let actual =
+    //     f32::from_bytes(&client.read_one_tensor(data_handle.as_copy_descriptor())).to_owned();
+    // let shape = handle.shape.clone();
 
+    if actual.shape != expected.shape {
+        return Err(format!(
+            "Shape mismatch: got {:?}, expected {:?}",
+            actual.shape, expected.shape,
+        ));
+    }
+
+    let shape = &actual.shape;
     let test_mode = current_test_mode();
 
     let mut visitor: Box<dyn CompareVisitor> = match test_mode.clone() {
@@ -35,9 +39,14 @@ pub fn assert_equals_approx(
         _ => Box::new(FailFast),
     };
 
+    println!("{:?}", actual.data.clone().into_f32());
+    println!("{:?}", actual.strides);
+    println!("{:?}", expected.data.clone().into_f32());
+    println!("{:?}", expected.strides);
+
     let test_failed = compare_tensors(
-        &actual,
-        &expected,
+        actual,
+        expected,
         &shape,
         epsilon,
         &mut *visitor,
@@ -122,42 +131,76 @@ fn compare_elem(got: f32, expected: f32, epsilon: f32) -> ElemStatus {
 }
 
 fn compare_tensors(
-    actual_values: &[f32],
-    expected_values: &[f32],
+    actual: &HostData,
+    expected: &HostData,
     shape: &[usize],
     epsilon: f32,
     visitor: &mut dyn CompareVisitor,
     index: &mut Vec<usize>,
 ) -> bool {
     let mut failed = false;
-    if shape.len() == 1 {
-        for i in 0..shape[0] {
-            index.push(i);
-            let got = actual_values[i];
-            let expected = expected_values[i];
-            let status = compare_elem(got, expected, epsilon);
-            if matches!(status, ElemStatus::Wrong(_)) {
-                failed = true;
-            }
-            visitor.visit(index, status);
-            index.pop();
+
+    let dim = index.len();
+    if dim == shape.len() {
+        let got = actual.get(index);
+        let exp = expected.get(index);
+
+        let status = compare_elem(got, exp, epsilon);
+        if matches!(status, ElemStatus::Wrong(_)) {
+            failed = true;
         }
-    } else {
-        let stride: usize = shape[1..].iter().product();
-        for i in 0..shape[0] {
-            index.push(i);
-            if compare_tensors(
-                &actual_values[i * stride..(i + 1) * stride],
-                &expected_values[i * stride..(i + 1) * stride],
-                &shape[1..],
-                epsilon,
-                visitor,
-                index,
-            ) {
-                failed = true;
-            }
-            index.pop();
-        }
+        visitor.visit(index, status);
+        return failed;
     }
+
+    for i in 0..shape[dim] {
+        index.push(i);
+        if compare_tensors(actual, expected, shape, epsilon, visitor, index) {
+            failed = true;
+        }
+        index.pop();
+    }
+
     failed
 }
+
+// fn compare_tensors(
+//     actual_values: &HostData,
+//     expected_values: &HostData,
+//     shape: &[usize],
+//     epsilon: f32,
+//     visitor: &mut dyn CompareVisitor,
+//     index: &mut Vec<usize>,
+// ) -> bool {
+//     let mut failed = false;
+//     if shape.len() == 1 {
+//         for i in 0..shape[0] {
+//             index.push(i);
+//             let got = actual_values[i];
+//             let expected = expected_values[i];
+//             let status = compare_elem(got, expected, epsilon);
+//             if matches!(status, ElemStatus::Wrong(_)) {
+//                 failed = true;
+//             }
+//             visitor.visit(index, status);
+//             index.pop();
+//         }
+//     } else {
+//         let stride: usize = shape[1..].iter().product();
+//         for i in 0..shape[0] {
+//             index.push(i);
+//             if compare_tensors(
+//                 &actual_values[i * stride..(i + 1) * stride],
+//                 &expected_values[i * stride..(i + 1) * stride],
+//                 &shape[1..],
+//                 epsilon,
+//                 visitor,
+//                 index,
+//             ) {
+//                 failed = true;
+//             }
+//             index.pop();
+//         }
+//     }
+//     failed
+// }
