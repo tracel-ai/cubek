@@ -53,16 +53,21 @@ impl HostData {
         tensor_handle: &TensorHandle<TestRuntime>,
         host_data_type: HostDataType,
     ) -> Self {
+        println!("## From Tensor Handle");
         let shape = tensor_handle.shape.clone();
         let strides = tensor_handle.strides.clone();
 
         let data = match host_data_type {
             HostDataType::F32 => {
+                // Because read_one_tensor rejects non-contiguous strides, we have
+                // handle that, if is col major, its strides don't say that
+                // Therefore, we must reorder by strides on the received data
                 let handle = copy_casted(client, tensor_handle, f32::as_type_native_unchecked());
                 let data = f32::from_bytes(&client.read_one_tensor(handle.as_copy_descriptor()))
                     .to_owned();
-                // Reading the tensor puts it back in row major but we want to keep the original layout
+                println!("Before reorder: {:?}", data);
                 let data = reorder_by_strides(&data, &shape, &strides);
+                println!("With strides {:?}: {:?}", strides, data);
 
                 HostDataVec::F32(data)
             }

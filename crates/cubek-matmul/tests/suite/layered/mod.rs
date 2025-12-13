@@ -31,9 +31,9 @@ fn small_test_matmul() {
     let client = TestRuntime::client(&Default::default());
 
     let tiling_scheme = TilingScheme::builder()
-        .with_tile_size(TileSize::new(8, 8, 8))
+        .with_tile_size(TileSize::new(3, 3, 3))
         .with_partition_size(PartitionSize::new(1, 1, 1))
-        .with_stage_size(StageSize::new(1, 1, 1))
+        .with_stage_size(StageSize::new(32, 1, 1))
         .build()
         .unwrap();
     let plane_dim = client.properties().hardware.plane_size_max;
@@ -43,9 +43,9 @@ fn small_test_matmul() {
         .build();
 
     let mut problem = MatmulProblem {
-        m: 8,
-        n: 8,
-        k: 8,
+        m: 3,
+        n: 3,
+        k: 3,
         lhs_batches: vec![],
         rhs_batches: vec![],
         out_batches: vec![],
@@ -64,10 +64,12 @@ fn small_test_matmul() {
     let lhs_shape = problem.shape(MatmulIdent::Lhs);
     let rhs_shape = problem.shape(MatmulIdent::Rhs);
 
+    println!("Making LHS");
     let (lhs, lhs_data) = TestInput::eye(client.clone(), lhs_shape.clone(), *dtypes.lhs_global)
         .generate_with_f32_host_data()
         .unwrap();
 
+    println!("Making RHS");
     let (rhs, rhs_data) = TestInput::arange(
         client.clone(),
         rhs_shape.clone(),
@@ -80,6 +82,7 @@ fn small_test_matmul() {
     .generate_with_f32_host_data()
     .unwrap();
 
+    println!("Making OUT");
     let out = TestInput::zeros(
         client.clone(),
         problem.shape(MatmulIdent::Out),
@@ -90,7 +93,6 @@ fn small_test_matmul() {
 
     problem.lhs_strides = lhs.strides.clone();
     problem.rhs_strides = rhs.strides.clone();
-    println!("{:?}", problem);
 
     let lhs_handle = MatmulInputHandleRef::Normal(lhs.as_ref(), *dtypes.lhs_global);
     let rhs_handle = MatmulInputHandleRef::Normal(rhs.as_ref(), *dtypes.rhs_global);
@@ -99,7 +101,9 @@ fn small_test_matmul() {
     use cubek_matmul::components::tile::io::Filled;
     pub type TMM = cubek_matmul::components::tile::cmma::CmmaMatmul<Filled>;
 
-    if launch_matmul_algorithm::<SimpleAlgorithm<TMM>>(
+    println!("Executing GPU");
+    // if launch_matmul_algorithm::<SimpleAlgorithm<TMM>>(
+    if launch_matmul_algorithm::<SimpleUnitAlgorithm>(
         &client,
         &problem,
         selection,

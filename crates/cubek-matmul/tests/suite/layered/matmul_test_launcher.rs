@@ -134,27 +134,11 @@ pub fn launch_matmul_algorithm<A: Algorithm>(
             .unwrap(),
     };
 
-    let env = std::env::var("CUBEK_TEST_MODE");
-
-    let panic_on_launch_err = match env {
-        Ok(val) => match val.as_str() {
-            "panic" => true,
-            "skip" => false,
-            _ => false,
-        },
-        Err(_) => false,
-    };
-
     let config = match A::setup(&client, &problem, &selection, &line_sizes, &dtypes) {
         Ok(config) => config,
         Err(err) => {
-            let msg = format!("Can't launch the test: {err}");
-            if panic_on_launch_err {
-                panic!("{msg}");
-            } else {
-                println!("{msg}");
-                return false;
-            }
+            // TODO refactor and use CUBE_TEST_MODE
+            panic!("Can't launch the test: {err}");
         }
     };
 
@@ -181,7 +165,7 @@ pub fn launch_matmul_algorithm<A: Algorithm>(
         client.properties().hardware.max_cube_count.clone(),
     );
 
-    let x = match input_representation {
+    match input_representation {
         InputRepresentation::Normal => {
             let inputs = TensorInputs::create(
                 &client,
@@ -233,16 +217,5 @@ pub fn launch_matmul_algorithm<A: Algorithm>(
             }
         }
     }
-    .is_ok();
-
-    println!(
-        "{:?}",
-        HostData::from_tensor_handle(
-            client,
-            &TensorHandle::from_ref(&out, *dtypes.acc_global),
-            cubek_std::test_utils::HostDataType::F32
-        )
-    );
-
-    x
+    .is_ok()
 }

@@ -7,6 +7,10 @@ pub fn assert_equals_approx(
     expected: &HostData,
     epsilon: f32,
 ) -> Result<(), String> {
+    println!("--- assert equals approx --");
+    println!("Actual: {:?}", actual);
+    println!("Expected: {:?}", expected);
+
     if actual.shape != expected.shape {
         return Err(format!(
             "Shape mismatch: got {:?}, expected {:?}",
@@ -33,11 +37,6 @@ pub fn assert_equals_approx(
         }
         _ => Box::new(FailFast),
     };
-
-    println!("{:?}", actual.data.clone().into_f32());
-    println!("{:?}", actual.strides);
-    println!("{:?}", expected.data.clone().into_f32());
-    println!("{:?}", expected.strides);
 
     let test_failed = compare_tensors(
         actual,
