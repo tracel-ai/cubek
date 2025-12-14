@@ -16,7 +16,6 @@ use cubek_matmul::kernels::layered::simple::SimpleAlgorithm;
 use cubek_matmul::kernels::layered::simple_unit::SimpleUnitAlgorithm;
 use cubek_matmul::tune_key::MatmulElemType;
 use cubek_std::test_utils::TestInput;
-use cubek_std::test_utils::batched_matrix_strides;
 use cubek_std::test_utils::current_test_mode;
 
 use crate::suite::layered::matmul_test_launcher::InputRepresentation;
@@ -72,10 +71,7 @@ fn small_test_matmul() {
         client.clone(),
         rhs_shape.clone(),
         *dtypes.rhs_global,
-        Some(batched_matrix_strides(
-            &rhs_shape,
-            matches!(problem.rhs_layout, MatrixLayout::ColMajor),
-        )),
+        problem.rhs_layout.into(),
     )
     .generate_with_f32_host_data()
     .unwrap();

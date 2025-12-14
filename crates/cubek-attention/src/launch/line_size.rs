@@ -1,9 +1,9 @@
 use std::fmt::Debug;
 
 use cubecl::{Runtime, client::ComputeClient, tensor_line_size_parallel};
+use cubek_std::test_utils::StrideSpec;
 
 use crate::launch::{AttentionDefinition, AttentionIdent};
-use cubek_std::test_utils::batched_matrix_strides;
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 /// Line size used for each tensor in global memory accesses.
@@ -27,7 +27,7 @@ impl AttentionLineSizes {
             tensor_line_size_parallel(
                 supported_line_sizes,
                 shape,
-                &batched_matrix_strides(shape, false),
+                &StrideSpec::RowMajor.compute_strides(shape),
                 shape.len() - 1,
             )
         };

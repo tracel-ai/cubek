@@ -3,7 +3,9 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::{CubeElement, client::ComputeClient};
 use cubek_matmul::components::MatmulElems;
 use cubek_matmul::components::{MatmulIdent, MatmulProblem, MatrixLayout};
-use cubek_std::test_utils::{HostData, HostDataType, HostDataVec, assert_equals_approx};
+use cubek_std::test_utils::{
+    HostData, HostDataType, HostDataVec, StrideSpec, assert_equals_approx,
+};
 
 pub fn assert_result(
     lhs: &HostData,
@@ -101,52 +103,10 @@ fn matmul_cpu_reference(lhs: &HostData, rhs: &HostData, problem: &MatmulProblem)
         }
     }
 
-    let strides = row_major_strides(&output_shape);
+    let strides = StrideSpec::RowMajor.compute_strides(&output_shape);
     HostData {
         data: HostDataVec::F32(out),
         shape: output_shape,
         strides,
     }
-}
-
-fn row_major_strides(shape: &[usize]) -> Vec<usize> {
-    let mut strides = vec![0; shape.len()];
-    let mut acc = 1;
-    for i in (0..shape.len()).rev() {
-        strides[i] = acc;
-        acc *= shape[i];
-    }
-    strides
-}
-
-/// Returns the stride of the identified tensor, inferred by the problem definition
-fn strides(problem: &MatmulProblem, ident: MatmulIdent) -> Vec<usize> {
-    let shape = problem.shape(ident);
-    let rank = shape.len();
-    let mut strides = Vec::with_capacity(rank);
-
-    let (last_batch, x, y) = match ident {
-        MatmulIdent::Lhs => match problem.lhs_layout {
-            MatrixLayout::RowMajor => (problem.m * problem.k, problem.k, 1),
-            MatrixLayout::ColMajor => (problem.m * problem.k, 1, problem.m),
-        },
-        MatmulIdent::Rhs => match problem.rhs_layout {
-            MatrixLayout::RowMajor => (problem.k * problem.n, problem.n, 1),
-            MatrixLayout::ColMajor => (problem.k * problem.n, 1, problem.k),
-        },
-        MatmulIdent::Out => (problem.m * problem.n, problem.n, 1),
-    };
-
-    strides.push(y);
-    strides.push(x);
-
-    if rank > 2 {
-        strides.push(last_batch);
-
-        for b in shape.iter().rev().take(rank - 3) {
-            strides.push(last_batch * b)
-        }
-    }
-
-    strides.into_iter().rev().collect()
 }

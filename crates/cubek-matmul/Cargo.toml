@@ -56,6 +56,7 @@ matmul_tests_base = [
 [dependencies]
 cubek-random = { path = "../cubek-random", version = "=0.0.1", default-features = false }
 cubek-reduce = { path = "../cubek-reduce", version = "=0.0.1", default-features = false }
+cubek-std = { path = "../cubek-std", version = "=0.0.1", default-features = false }
 
 bytemuck = { workspace = true }
 cubecl = { workspace = true, features = ["stdlib"] }
@@ -67,4 +68,3 @@ serde = { workspace = true }
 trybuild = "1"
 pretty_assertions = { workspace = true }
 cubecl = { workspace = true, features = ["test-runtime"] }
-cubek-std = { path = "../cubek-std", version = "=0.0.1", default-features = false }

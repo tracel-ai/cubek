@@ -22,9 +22,7 @@ use cubek_matmul::{
 };
 use cubek_std::test_utils::HostData;
 use cubek_std::test_utils::current_test_mode;
-use cubek_std::test_utils::{
-    Distribution, RandomInputSpec, SimpleInputSpec, TestInput, batched_matrix_strides,
-};
+use cubek_std::test_utils::{Distribution, RandomInputSpec, SimpleInputSpec, TestInput};
 
 use crate::suite::assert_result;
 
@@ -52,10 +50,7 @@ pub fn test_matmul_algorithm<A: Algorithm>(
         *dtypes.lhs_global,
         1234,
         Distribution::Uniform(-1., 1.),
-        Some(batched_matrix_strides(
-            &lhs_shape,
-            matches!(problem.lhs_layout, MatrixLayout::ColMajor),
-        )),
+        problem.lhs_layout.into(),
     )
     .generate_with_f32_host_data()
     .unwrap();
@@ -66,10 +61,7 @@ pub fn test_matmul_algorithm<A: Algorithm>(
         *dtypes.rhs_global,
         5678,
         Distribution::Uniform(-1., 1.),
-        Some(batched_matrix_strides(
-            &rhs_shape,
-            matches!(problem.rhs_layout, MatrixLayout::ColMajor),
-        )),
+        problem.rhs_layout.into(),
     )
     .generate_with_f32_host_data()
     .unwrap();

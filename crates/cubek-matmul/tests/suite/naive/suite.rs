@@ -4,7 +4,6 @@ use cubecl::prelude::TensorHandleRef;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{Runtime, client};
 use cubek_matmul::MatmulInputHandleRef;
-use cubek_std::test_utils::batched_matrix_strides;
 
 use cubek_matmul::components::MatrixLayout;
 use cubek_matmul::components::{MatmulElems, MatmulIdent, MatmulProblem};
@@ -152,10 +151,7 @@ fn test_naive(case: MatmulTestCase) {
         *dtype,
         1234,
         Distribution::Uniform(-1., 1.),
-        Some(batched_matrix_strides(
-            &lhs_shape,
-            matches!(problem.lhs_layout, MatrixLayout::ColMajor),
-        )),
+        problem.lhs_layout.into(),
     )
     .generate_with_f32_host_data()
     .unwrap();
@@ -166,10 +162,7 @@ fn test_naive(case: MatmulTestCase) {
         *dtype,
         5678,
         Distribution::Uniform(-1., 1.),
-        Some(batched_matrix_strides(
-            &rhs_shape,
-            matches!(problem.rhs_layout, MatrixLayout::ColMajor),
-        )),
+        problem.rhs_layout.into(),
     )
     .generate_with_f32_host_data()
     .unwrap();

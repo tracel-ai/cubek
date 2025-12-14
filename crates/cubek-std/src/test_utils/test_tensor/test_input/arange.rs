@@ -4,10 +4,7 @@ use cubecl::{
     std::tensor::{TensorHandle, ViewOperationsMut, ViewOperationsMutExpand},
 };
 
-use crate::test_utils::{
-    batched_matrix_strides,
-    test_tensor::test_input::base::{SimpleInputSpec, TestInputError},
-};
+use crate::test_utils::test_tensor::test_input::base::{SimpleInputSpec, TestInputError};
 
 #[cube(launch)]
 fn arange_launch<T: Numeric>(tensor: &mut Tensor<T>, #[define(T)] _types: StorageType) {
@@ -59,9 +56,8 @@ fn new_arange(
 pub(crate) fn build_arange(
     spec: SimpleInputSpec,
 ) -> Result<TensorHandle<TestRuntime>, TestInputError> {
-    let strides = spec
-        .strides
-        .unwrap_or(batched_matrix_strides(&spec.shape, false));
+    let shape = spec.shape;
+    let strides = spec.stride_spec.compute_strides(&shape);
 
-    Ok(new_arange(&spec.client, spec.shape, strides, spec.dtype))
+    Ok(new_arange(&spec.client, shape, strides, spec.dtype))
 }

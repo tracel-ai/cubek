@@ -1,4 +1,5 @@
 use cubecl::prelude::*;
+use cubek_std::test_utils::StrideSpec;
 use serde::{Deserialize, Serialize};
 
 use super::{MatmulIdent, MatmulProblemSize};
@@ -177,5 +178,14 @@ pub fn from_cmma_layout(#[comptime] layout: cmma::MatrixLayout) -> comptime_type
         cmma::MatrixLayout::RowMajor => MatrixLayout::RowMajor,
         cmma::MatrixLayout::ColMajor => MatrixLayout::ColMajor,
         cmma::MatrixLayout::Undefined => MatrixLayout::RowMajor,
+    }
+}
+
+impl From<MatrixLayout> for StrideSpec {
+    fn from(layout: MatrixLayout) -> Self {
+        match layout {
+            MatrixLayout::RowMajor => StrideSpec::RowMajor,
+            MatrixLayout::ColMajor => StrideSpec::ColMajor,
+        }
     }
 }

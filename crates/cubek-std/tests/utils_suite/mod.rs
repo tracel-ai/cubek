@@ -1,7 +1,7 @@
 use cubecl::frontend::CubePrimitive;
 use cubecl::{Runtime, TestRuntime};
 use cubek_std::test_utils::{
-    Distribution, HostData, HostDataType, TestInput, assert_equals_approx, batched_matrix_strides,
+    Distribution, HostData, HostDataType, StrideSpec, TestInput, assert_equals_approx,
 };
 
 #[test]
@@ -14,7 +14,7 @@ fn random_uniform_handle_equal_to_host_data() {
         f32::as_type_native_unchecked(),
         42,
         Distribution::Uniform(-1., 1.),
-        None,
+        StrideSpec::RowMajor,
     )
     .generate_with_f32_host_data()
     .unwrap();
@@ -28,8 +28,7 @@ fn random_uniform_handle_equal_to_host_data() {
 fn random_uniform_handle_col_major_equal_to_host_data() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
-    let shape = vec![4, 4];
-    let strides = batched_matrix_strides(&shape, true);
+    let shape = vec![2, 4];
 
     let (handle, expected) = TestInput::random(
         client.clone(),
@@ -37,7 +36,7 @@ fn random_uniform_handle_col_major_equal_to_host_data() {
         f32::as_type_native_unchecked(),
         42,
         Distribution::Uniform(-1., 1.),
-        Some(strides),
+        StrideSpec::ColMajor,
     )
     .generate_with_f32_host_data()
     .unwrap();
@@ -57,7 +56,7 @@ fn random_bernoulli_handle_equal_to_host_data() {
         f32::as_type_native_unchecked(),
         42,
         Distribution::Bernoulli(0.4),
-        None,
+        StrideSpec::RowMajor,
     )
     .generate_with_f32_host_data()
     .unwrap();
@@ -103,7 +102,7 @@ fn arange_handle_equal_to_host_data() {
         client.clone(),
         vec![4, 4],
         f32::as_type_native_unchecked(),
-        None,
+        StrideSpec::RowMajor,
     )
     .generate_with_f32_host_data()
     .unwrap();
@@ -118,13 +117,12 @@ fn arange_handle_col_major_equal_to_host_data() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
     let shape = vec![2, 3];
-    let strides = batched_matrix_strides(&shape, true);
 
     let (handle, expected) = TestInput::arange(
         client.clone(),
         shape,
         f32::as_type_native_unchecked(),
-        Some(strides),
+        StrideSpec::ColMajor,
     )
     .generate_with_f32_host_data()
     .unwrap();

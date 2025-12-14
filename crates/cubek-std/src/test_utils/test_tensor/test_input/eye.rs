@@ -4,7 +4,10 @@ use cubecl::{
     std::tensor::{TensorHandle, ViewOperationsMut, ViewOperationsMutExpand},
 };
 
-use crate::test_utils::test_tensor::test_input::base::{SimpleInputSpec, TestInputError};
+use crate::test_utils::test_tensor::test_input::{
+    base::{SimpleInputSpec, TestInputError},
+    strides::StrideSpec,
+};
 
 #[cube(launch)]
 fn eye_launch<T: Numeric>(tensor: &mut Tensor<Line<T>>, #[define(T)] _types: StorageType) {
@@ -75,7 +78,7 @@ fn new_eyed(
 pub(crate) fn build_eye(
     spec: SimpleInputSpec,
 ) -> Result<TensorHandle<TestRuntime>, TestInputError> {
-    if spec.strides.is_some() {
+    if spec.stride_spec != StrideSpec::RowMajor {
         return Err(TestInputError::UnsupportedStrides);
     }
 

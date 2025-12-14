@@ -4,22 +4,26 @@ use core::f32;
 
 use cubecl::{TestRuntime, client::ComputeClient, std::tensor::TensorHandle};
 
-use cubek_std::test_utils::assert_equals_approx;
+use cubek_std::test_utils::{
+    HostData, HostDataType, HostDataVec, StrideSpec, assert_equals_approx,
+};
 
 pub fn assert_result(
-    query: &[f32],
-    key: &[f32],
-    value: &[f32],
-    mask: Option<&[bool]>,
+    query: &HostData,
+    key: &HostData,
+    value: &HostData,
+    mask: Option<&HostData>,
     definition: &AttentionDefinition,
     client: &ComputeClient<TestRuntime>,
     out: TensorHandle<TestRuntime>,
     elems: AttentionElems,
 ) {
-    let epsilon = attention_epsilon(&elems, 170.);
+    let epsilon = attention_epsilon(&elems, 0.1);
     let expected = flash_attention_v2_reference(query, key, value, mask, definition);
 
-    if let Err(e) = assert_equals_approx(client, &out, &expected, epsilon) {
+    let actual = HostData::from_tensor_handle(client, &out, HostDataType::F32);
+
+    if let Err(e) = assert_equals_approx(&actual, &expected, epsilon) {
         panic!("{}", e);
     }
 }
@@ -44,16 +48,13 @@ fn attention_epsilon(elems: &AttentionElems, safety_factor: f32) -> f32 {
 
     total_eps as f32 * safety_factor
 }
-
-pub(crate) fn flash_attention_v2_reference(
-    query: &[f32],
-    key: &[f32],
-    value: &[f32],
-    mask: Option<&[bool]>,
+pub fn flash_attention_v2_reference(
+    query: &HostData,
+    key: &HostData,
+    value: &HostData,
+    mask: Option<&HostData>,
     definition: &AttentionDefinition,
-) -> Vec<f32>
-where
-{
+) -> HostData {
     let batch = definition.dims.batch;
     let seq_q = definition.dims.seq_q;
     let seq_kv = definition.dims.seq_kv;
@@ -64,167 +65,100 @@ where
     let masked = mask.is_some();
     assert!(definition.masked == masked);
 
-    // Precompute strides for indexing
-    let query_strides = strides(definition, AttentionIdent::Query);
-    let key_strides = strides(definition, AttentionIdent::Key);
-    let value_strides = strides(definition, AttentionIdent::Value);
-    let mask_strides = strides(definition, AttentionIdent::Mask);
-    let out_strides = strides(definition, AttentionIdent::Out);
+    // Output shape: [batch, num_heads, seq_q, val_dim]
+    let out_shape = vec![batch, num_heads, seq_q, val_dim];
+    let mut out = vec![0.; batch * num_heads * seq_q * val_dim];
 
-    let out_size = definition.shape(AttentionIdent::Out).iter().product();
-    let mut out = vec![0.; out_size];
-
-    // scaling factor 1/sqrt(head_dim)
     let scale = (head_dim as f32).sqrt().recip();
+
+    // Use fixed-size arrays instead of heap Vec
+    let mut q_index: [usize; 4];
+    let mut k_index: [usize; 4];
+    let mut v_index: [usize; 4];
+    let mut m_index: [usize; 4];
+    let mut out_index = vec![0usize; 4];
 
     for b in 0..batch {
         for h in 0..num_heads {
             for i in 0..seq_q {
-                // Initialize running state for query row i
-                // m = -inf, l = 0, accumulator O (unnormalized numerator) = 0
+                // initialize running row accumulator
                 let mut m = f32::NEG_INFINITY;
                 let mut l = 0.;
                 let mut acc_row = vec![0.; val_dim];
 
-                // For each K/V block
-                let mut k_block_start = 0usize;
-                while k_block_start < seq_kv {
-                    let k_block_end = std::cmp::min(seq_kv, k_block_start + seq_kv);
-                    let cur_block_len = k_block_end - k_block_start;
+                for j in 0..seq_kv {
+                    // compute dot(Q_i, K_j)
+                    let mut dot = 0.;
+                    for d in 0..head_dim {
+                        q_index = [b, h, i, d];
+                        k_index = [b, h, j, d];
+                        dot += query.get(&q_index) * key.get(&k_index);
+                    }
+                    dot *= scale;
 
-                    // Step A: compute S_block[j'] = Q_i · K_{j'}  for j' in block
-                    // store in a small Vec<P::EA>
-                    let mut s_block = vec![0.; cur_block_len];
-                    for (bj, j) in (k_block_start..k_block_end).enumerate() {
-                        let mut dot = 0.;
-                        for d in 0..head_dim {
-                            let q_idx = b * query_strides[0]
-                                + h * query_strides[1]
-                                + i * query_strides[2]
-                                + d * query_strides[3];
-                            let k_idx = b * key_strides[0]
-                                + h * key_strides[1]
-                                + j * key_strides[2]
-                                + d * key_strides[3];
-                            let q_val = query[q_idx];
-                            let k_val = key[k_idx];
-
-                            dot += q_val * k_val;
-                        }
-                        // apply scale (1/sqrt(head_dim))
-                        dot *= scale;
-
-                        // Apply mask if applicable
-                        let s_val = if definition.options.causal && j > i {
-                            // Causal mask
+                    // apply causal/external mask
+                    let s_val = if definition.options.causal && j > i {
+                        f32::NEG_INFINITY
+                    } else if let Some(mask) = mask {
+                        m_index = [b, h, i, j];
+                        if mask.get_bool(&m_index) {
                             f32::NEG_INFINITY
-                        } else if masked {
-                            // Explicit mask
-                            let m_idx = b * mask_strides[0]
-                                + h * mask_strides[1]
-                                + i * mask_strides[2]
-                                + j * mask_strides[3];
-                            let m_val = mask.unwrap()[m_idx];
-
-                            if m_val { f32::NEG_INFINITY } else { dot }
                         } else {
                             dot
-                        };
-
-                        s_block[bj] = s_val;
-                    }
-
-                    // Step B: compute new row max m' = max(m, rowmax(S_block))
-                    let mut block_max = f32::NEG_INFINITY;
-                    for &v_s in &s_block {
-                        if v_s > block_max {
-                            block_max = v_s;
                         }
-                    }
+                    } else {
+                        dot
+                    };
 
-                    if block_max == f32::NEG_INFINITY {
-                        // the numerator is zero, so simply keep m, l, acc_row unchanged.
-                        // Move to next block.
-                        k_block_start += cur_block_len;
+                    // skip update if row is fully masked (prevent NaNs)
+                    if s_val == f32::NEG_INFINITY && m == f32::NEG_INFINITY {
                         continue;
                     }
 
-                    // m_new
-                    let mut m_new = m;
-                    if block_max > m_new {
-                        m_new = block_max;
-                    }
+                    // update row max
+                    let m_new = m.max(s_val);
 
-                    // Step C: compute Ptilde = exp(S_block - m_new)
-                    // and rowsum = sum Ptilde
-                    let mut rowsum = 0.;
-                    let mut p_tilde = vec![0.; cur_block_len];
-                    for (bj, &sval) in s_block.iter().enumerate() {
-                        let e = f32::exp(sval - m_new);
+                    // compute exp(S - m_new)
+                    let p_tilde = f32::exp(s_val - m_new);
 
-                        p_tilde[bj] = e;
-                        rowsum += e;
-                    }
+                    // update running sum l
+                    let l_new = f32::exp(m - m_new) * l + p_tilde;
 
-                    // Step D: update running l: l_new = exp(m - m_new)*l + rowsum
-                    // note: exp(prev_m - m_new) where prev_m==m
-                    let epm = f32::exp(m - m_new);
-                    let l_new = epm * l + rowsum;
-
-                    // Step E: update numerator accumulator:
-                    // acc = exp(m - m_new) * acc + Ptilde @ V_block
-                    // First scale old accumulator by epm
+                    // update accumulator: acc = exp(m - m_new) * acc + p_tilde * V_j
+                    let scale_old = f32::exp(m - m_new);
                     for d in 0..val_dim {
-                        acc_row[d] = epm * acc_row[d];
-                    }
-                    // Add Ptilde @ V_block
-                    for (bj, j) in (k_block_start..k_block_end).enumerate() {
-                        let p_val = p_tilde[bj];
-                        for d in 0..val_dim {
-                            let v_idx = b * value_strides[0]
-                                + h * value_strides[1]
-                                + j * value_strides[2]
-                                + d * value_strides[3];
-                            let v_val = value[v_idx];
-                            acc_row[d] += p_val * v_val;
-                        }
+                        acc_row[d] *= scale_old;
+                        v_index = [b, h, j, d];
+                        acc_row[d] += p_tilde * value.get(&v_index);
                     }
 
-                    // commit updated m and l for next block
+                    // commit
                     m = m_new;
                     l = l_new;
+                }
 
-                    // next block
-                    k_block_start += cur_block_len;
-                } // end while over K/V blocks
-
-                // Step final: normalize accumulator: O_final = acc_row / l
-                // write into output
-                let out_base = b * out_strides[0] + h * out_strides[1] + i * out_strides[2];
-
-                // guard against tiny l (numerical safety)
-                let eps = 1e-20f32;
+                // normalize and write output
+                out_index[0] = b;
+                out_index[1] = h;
+                out_index[2] = i;
+                let eps = 1e-20f32; // numerical safety
                 let denom = if l > eps { l } else { eps };
                 for d in 0..val_dim {
-                    let out_idx = out_base + d * out_strides[3];
-                    out[out_idx] = acc_row[d] / denom;
+                    out_index[3] = d;
+                    let linear_idx = out_index[0] * num_heads * seq_q * val_dim
+                        + out_index[1] * seq_q * val_dim
+                        + out_index[2] * val_dim
+                        + d;
+                    out[linear_idx] = acc_row[d] / denom;
                 }
             }
         }
     }
 
-    out
-}
-
-pub(crate) fn strides(problem: &AttentionDefinition, ident: AttentionIdent) -> Vec<usize> {
-    let shape = problem.shape(ident);
-
-    let mut strides = vec![0; shape.len()];
-    let mut acc = 1;
-    for i in (0..shape.len()).rev() {
-        strides[i] = acc;
-        acc *= shape[i];
+    let strides = StrideSpec::RowMajor.compute_strides(&out_shape);
+    HostData {
+        data: HostDataVec::F32(out),
+        shape: out_shape,
+        strides,
     }
-
-    strides
 }

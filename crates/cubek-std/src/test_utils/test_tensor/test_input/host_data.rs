@@ -3,7 +3,7 @@ use cubecl::{
     std::tensor::TensorHandle,
 };
 
-use crate::test_utils::{copy_casted, test_tensor::strides_utils::reorder_by_strides};
+use crate::test_utils::test_tensor::test_input::{cast::copy_casted, strides::reorder_by_strides};
 
 #[derive(Debug)]
 pub struct HostData {
@@ -45,6 +45,14 @@ impl HostDataVec {
             HostDataVec::Bool(_) => panic!("unsupported"),
         }
     }
+
+    // TODO abominable
+    pub fn get_bool(&self, i: usize) -> bool {
+        match self {
+            HostDataVec::F32(_) => panic!("unsupported"),
+            HostDataVec::Bool(items) => items[i],
+        }
+    }
 }
 
 impl HostData {
@@ -72,7 +80,6 @@ impl HostData {
                 let handle = copy_casted(client, tensor_handle, u8::as_type_native_unchecked());
                 let data =
                     u8::from_bytes(&client.read_one_tensor(handle.as_copy_descriptor())).to_owned();
-                // Reading the tensor puts it back in row major but we want to keep the original layout
                 let data = reorder_by_strides(&data, &shape, &strides);
 
                 HostDataVec::Bool(data.iter().map(|&x| x > 0).collect())
@@ -92,5 +99,13 @@ impl HostData {
             i += idx * self.strides[d];
         }
         self.data.get(i)
+    }
+
+    pub fn get_bool(&self, index: &[usize]) -> bool {
+        let mut i = 0usize;
+        for (d, idx) in index.iter().enumerate() {
+            i += idx * self.strides[d];
+        }
+        self.data.get_bool(i)
     }
 }

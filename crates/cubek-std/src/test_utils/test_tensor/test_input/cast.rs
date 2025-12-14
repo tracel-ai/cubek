@@ -30,6 +30,14 @@ pub fn copy_casted(
     original: &TensorHandle<TestRuntime>,
     target_type: StorageType,
 ) -> TensorHandle<TestRuntime> {
+    if target_type == original.dtype {
+        return TensorHandle::new_contiguous(
+            original.shape.clone(),
+            original.handle.clone(),
+            target_type,
+        );
+    }
+
     let num_elems: usize = original.shape.iter().product();
 
     let line_size = tensor_line_size_parallel(

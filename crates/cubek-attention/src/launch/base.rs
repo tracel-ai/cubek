@@ -132,7 +132,7 @@ pub fn launch_attention<R: Runtime, A: Routine>(
                 key.as_tensor_arg(device_settings.line_sizes.key),
                 value.as_tensor_arg(device_settings.line_sizes.value),
                 mask.as_ref()
-                    .map(|it| it.as_tensor_arg(device_settings.line_sizes.out))
+                    .map(|it| it.as_tensor_arg(device_settings.line_sizes.mask))
                     .into(),
             ),
             out.as_tensor_arg(device_settings.line_sizes.out),

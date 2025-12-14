@@ -5,6 +5,7 @@ use crate::test_utils::test_tensor::test_input::{
     eye::build_eye,
     host_data::{HostData, HostDataType},
     random::build_random,
+    strides::StrideSpec,
     zeros::build_zeros,
 };
 
@@ -27,9 +28,16 @@ impl TestInput {
         dtype: StorageType,
         seed: u64,
         distribution: Distribution,
-        strides: Option<Vec<usize>>,
+        stride_spec: StrideSpec,
     ) -> Self {
-        let spec = RandomInputSpec::new(client.clone(), shape, dtype, seed, distribution, strides);
+        let spec = RandomInputSpec::new(
+            client.clone(),
+            shape,
+            dtype,
+            seed,
+            distribution,
+            stride_spec,
+        );
         TestInput {
             client,
             spec: TestInputSpec::Random(spec),
@@ -43,14 +51,24 @@ impl TestInput {
     ) -> Self {
         TestInput {
             client: client.clone(),
-            spec: TestInputSpec::Zeros(SimpleInputSpec::new(client, shape, dtype, None)),
+            spec: TestInputSpec::Zeros(SimpleInputSpec::new(
+                client,
+                shape,
+                dtype,
+                StrideSpec::RowMajor,
+            )),
         }
     }
 
     pub fn eye(client: ComputeClient<TestRuntime>, shape: Vec<usize>, dtype: StorageType) -> Self {
         TestInput {
             client: client.clone(),
-            spec: TestInputSpec::Eye(SimpleInputSpec::new(client, shape, dtype, None)),
+            spec: TestInputSpec::Eye(SimpleInputSpec::new(
+                client,
+                shape,
+                dtype,
+                StrideSpec::RowMajor,
+            )),
         }
     }
 
@@ -58,9 +76,9 @@ impl TestInput {
         client: ComputeClient<TestRuntime>,
         shape: Vec<usize>,
         dtype: StorageType,
-        strides: Option<Vec<usize>>,
+        stride_spec: StrideSpec,
     ) -> Self {
-        let spec = SimpleInputSpec::new(client.clone(), shape, dtype, strides);
+        let spec = SimpleInputSpec::new(client.clone(), shape, dtype, stride_spec);
 
         TestInput {
             client,
@@ -110,8 +128,7 @@ pub struct SimpleInputSpec {
     pub(crate) client: ComputeClient<TestRuntime>,
     pub(crate) shape: Vec<usize>,
     pub(crate) dtype: StorageType,
-    // If None, contiguous is assumed
-    pub(crate) strides: Option<Vec<usize>>,
+    pub(crate) stride_spec: StrideSpec,
 }
 
 pub struct RandomInputSpec {
@@ -125,13 +142,13 @@ impl SimpleInputSpec {
         client: ComputeClient<TestRuntime>,
         shape: Vec<usize>,
         dtype: StorageType,
-        strides: Option<Vec<usize>>,
+        stride_spec: StrideSpec,
     ) -> Self {
         Self {
             client,
             shape,
             dtype,
-            strides,
+            stride_spec,
         }
     }
 }
@@ -143,7 +160,7 @@ impl RandomInputSpec {
         dtype: StorageType,
         seed: u64,
         distribution: Distribution,
-        strides: Option<Vec<usize>>,
+        strides: StrideSpec,
     ) -> Self {
         let inner = SimpleInputSpec::new(client, shape, dtype, strides);
         Self {
