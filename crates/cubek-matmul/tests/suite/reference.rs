@@ -94,7 +94,7 @@ fn matmul_cpu_reference(lhs: &HostData, rhs: &HostData, problem: &MatmulProblem)
                     rhs_index[batch_shape.len()] = kk;
                     rhs_index[batch_shape.len() + 1] = j;
 
-                    sum += lhs.get(&lhs_index) * rhs.get(&rhs_index);
+                    sum += lhs.get_f32(&lhs_index) * rhs.get_f32(&rhs_index);
                 }
 
                 let out_linear = batch_flat * (m * n) + i * n + j;

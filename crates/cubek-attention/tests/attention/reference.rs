@@ -1,4 +1,4 @@
-use cubek_attention::launch::{AttentionDefinition, AttentionElems, AttentionIdent};
+use cubek_attention::launch::{AttentionDefinition, AttentionElems};
 
 use core::f32;
 
@@ -92,7 +92,7 @@ pub fn flash_attention_v2_reference(
                     for d in 0..head_dim {
                         q_index = [b, h, i, d];
                         k_index = [b, h, j, d];
-                        dot += query.get(&q_index) * key.get(&k_index);
+                        dot += query.get_f32(&q_index) * key.get_f32(&k_index);
                     }
                     dot *= scale;
 
@@ -129,7 +129,7 @@ pub fn flash_attention_v2_reference(
                     for d in 0..val_dim {
                         acc_row[d] *= scale_old;
                         v_index = [b, h, j, d];
-                        acc_row[d] += p_tilde * value.get(&v_index);
+                        acc_row[d] += p_tilde * value.get_f32(&v_index);
                     }
 
                     // commit

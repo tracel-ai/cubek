@@ -25,31 +25,16 @@ pub enum HostDataVec {
 }
 
 impl HostDataVec {
-    pub fn into_f32(self) -> Vec<f32> {
-        match self {
-            HostDataVec::F32(v) => v,
-            _ => panic!("Expected F32 data"),
-        }
-    }
-
-    pub fn into_bool(self) -> Vec<bool> {
-        match self {
-            HostDataVec::Bool(v) => v,
-            _ => panic!("Expected Bool data"),
-        }
-    }
-
-    pub fn get(&self, i: usize) -> f32 {
+    pub fn get_f32(&self, i: usize) -> f32 {
         match self {
             HostDataVec::F32(items) => items[i],
-            HostDataVec::Bool(_) => panic!("unsupported"),
+            HostDataVec::Bool(_) => panic!("Can't get bool as f32"),
         }
     }
 
-    // TODO abominable
     pub fn get_bool(&self, i: usize) -> bool {
         match self {
-            HostDataVec::F32(_) => panic!("unsupported"),
+            HostDataVec::F32(_) => panic!("Can't get bool as f32"),
             HostDataVec::Bool(items) => items[i],
         }
     }
@@ -93,19 +78,19 @@ impl HostData {
         }
     }
 
-    pub fn get(&self, index: &[usize]) -> f32 {
-        let mut i = 0usize;
-        for (d, idx) in index.iter().enumerate() {
-            i += idx * self.strides[d];
-        }
-        self.data.get(i)
+    pub fn get_f32(&self, index: &[usize]) -> f32 {
+        self.data.get_f32(self.strided_index(index))
     }
 
     pub fn get_bool(&self, index: &[usize]) -> bool {
+        self.data.get_bool(self.strided_index(index))
+    }
+
+    fn strided_index(&self, index: &[usize]) -> usize {
         let mut i = 0usize;
         for (d, idx) in index.iter().enumerate() {
             i += idx * self.strides[d];
         }
-        self.data.get_bool(i)
+        i
     }
 }
