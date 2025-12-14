@@ -22,7 +22,7 @@ pub fn assert_equals_approx(
             filter,
             only_failing: _,
         } => {
-            if filter.len() > 0 && filter.len() != shape.len() {
+            if !filter.is_empty() && filter.len() != shape.len() {
                 return Err(format!(
                     "Print mode activated with invalid filter rank. Got {:?}, expected {:?}",
                     filter.len(),
@@ -37,7 +37,7 @@ pub fn assert_equals_approx(
     let test_failed = compare_tensors(
         actual,
         expected,
-        &shape,
+        shape,
         epsilon,
         &mut *visitor,
         &mut Vec::new(),
@@ -170,44 +170,3 @@ fn compare_tensors(
 
     failed
 }
-
-// fn compare_tensors(
-//     actual_values: &HostData,
-//     expected_values: &HostData,
-//     shape: &[usize],
-//     epsilon: f32,
-//     visitor: &mut dyn CompareVisitor,
-//     index: &mut Vec<usize>,
-// ) -> bool {
-//     let mut failed = false;
-//     if shape.len() == 1 {
-//         for i in 0..shape[0] {
-//             index.push(i);
-//             let got = actual_values[i];
-//             let expected = expected_values[i];
-//             let status = compare_elem(got, expected, epsilon);
-//             if matches!(status, ElemStatus::Wrong(_)) {
-//                 failed = true;
-//             }
-//             visitor.visit(index, status);
-//             index.pop();
-//         }
-//     } else {
-//         let stride: usize = shape[1..].iter().product();
-//         for i in 0..shape[0] {
-//             index.push(i);
-//             if compare_tensors(
-//                 &actual_values[i * stride..(i + 1) * stride],
-//                 &expected_values[i * stride..(i + 1) * stride],
-//                 &shape[1..],
-//                 epsilon,
-//                 visitor,
-//                 index,
-//             ) {
-//                 failed = true;
-//             }
-//             index.pop();
-//         }
-//     }
-//     failed
-// }

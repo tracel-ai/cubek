@@ -88,8 +88,8 @@ impl HostData {
 
     pub fn get(&self, index: &[usize]) -> f32 {
         let mut i = 0usize;
-        for d in 0..index.len() {
-            i += index[d] * self.strides[d];
+        for (d, idx) in index.iter().enumerate() {
+            i += idx * self.strides[d];
         }
         self.data.get(i)
     }

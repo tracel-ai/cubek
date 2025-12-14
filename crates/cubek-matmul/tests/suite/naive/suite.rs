@@ -146,27 +146,26 @@ fn test_naive(case: MatmulTestCase) {
     let lhs_shape = problem.shape(MatmulIdent::Lhs);
     let rhs_shape = problem.shape(MatmulIdent::Rhs);
 
-    // let (lhs, lhs_data) = TestInput::random(
-    let (lhs, lhs_data) = TestInput::eye(
+    let (lhs, lhs_data) = TestInput::random(
         client.clone(),
         lhs_shape.clone(),
         *dtype,
-        // 1234,
-        // Distribution::Uniform(-1., 1.),
-        // Some(batched_matrix_strides(
-        //     &lhs_shape,
-        //     matches!(problem.lhs_layout, MatrixLayout::ColMajor),
-        // )),
+        1234,
+        Distribution::Uniform(-1., 1.),
+        Some(batched_matrix_strides(
+            &lhs_shape,
+            matches!(problem.lhs_layout, MatrixLayout::ColMajor),
+        )),
     )
     .generate_with_f32_host_data()
     .unwrap();
 
-    let (rhs, rhs_data) = TestInput::arange(
+    let (rhs, rhs_data) = TestInput::random(
         client.clone(),
         rhs_shape.clone(),
         *dtype,
-        // 5678,
-        // Distribution::Uniform(-1., 1.),
+        5678,
+        Distribution::Uniform(-1., 1.),
         Some(batched_matrix_strides(
             &rhs_shape,
             matches!(problem.rhs_layout, MatrixLayout::ColMajor),
