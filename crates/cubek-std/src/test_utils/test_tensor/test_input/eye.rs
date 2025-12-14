@@ -84,17 +84,6 @@ pub(crate) fn build_eye(
     let cols = matrix[1];
     let total_batches = batches.iter().product::<usize>();
 
-    // let host_data = match host_data_type {
-    //     Some(HostDataType::F32) => Some(HostData::F32(eye_host_side(total_batches, rows, cols))),
-    //     Some(HostDataType::Bool) => Some(HostData::Bool(
-    //         eye_host_side(total_batches, rows, cols)
-    //             .into_iter()
-    //             .map(|x| x != 0.0)
-    //             .collect(),
-    //     )),
-    //     None => None,
-    // };
-
     Ok(new_eyed(
         &spec.client,
         spec.shape,

@@ -9,11 +9,5 @@ pub(crate) fn build_zeros(
         return Err(TestInputError::UnsupportedStrides);
     }
 
-    // let host_data = match host_data_type {
-    //     Some(HostDataType::F32) => Some(HostData::F32(vec![0.0; num_elems])),
-    //     Some(HostDataType::Bool) => Some(HostData::Bool(vec![false; num_elems])),
-    //     None => None,
-    // };
-
     Ok(TensorHandle::zeros(&spec.client, spec.shape, spec.dtype))
 }
