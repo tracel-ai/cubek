@@ -67,7 +67,7 @@ impl<
         let num_planes = compute_resources.num_planes(blueprint.plane_dim)?;
 
         let key_smem_config = StageMemoryConfig {
-            num_planes: num_planes,
+            num_planes,
             elements_per_tile_along_row: blueprint.tiling_scheme.tile_size.seq_kv,
             elements_per_tile_along_col: blueprint.tiling_scheme.tile_size.head_dim,
             tiles_per_partition_along_row: blueprint.tiling_scheme.partition_size.seq_kv,
@@ -81,7 +81,7 @@ impl<
         };
 
         let value_smem_config = StageMemoryConfig {
-            num_planes: num_planes,
+            num_planes,
             elements_per_tile_along_row: blueprint.tiling_scheme.tile_size.seq_kv,
             elements_per_tile_along_col: blueprint.tiling_scheme.tile_size.val_dim,
             tiles_per_partition_along_row: blueprint.tiling_scheme.partition_size.seq_kv,
@@ -95,7 +95,7 @@ impl<
         };
 
         let out_smem_config = StageMemoryConfig {
-            num_planes: num_planes,
+            num_planes,
             elements_per_tile_along_row: blueprint.tiling_scheme.tile_size.seq_q,
             elements_per_tile_along_col: blueprint.tiling_scheme.tile_size.val_dim,
             tiles_per_partition_along_row: 1,
@@ -115,7 +115,7 @@ impl<
                 partition_size: blueprint.tiling_scheme.partition_size,
                 stage_size: blueprint.tiling_scheme.stage_size,
                 reuse_key_value: blueprint.reuse_key_value,
-                num_planes: num_planes,
+                num_planes,
                 key_smem_config,
                 value_smem_config,
                 out_smem_config,

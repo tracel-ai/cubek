@@ -169,7 +169,6 @@ impl<Lhs: Numeric, Rhs: Numeric, Acc: Numeric> ConcreteInputsFactory
                     config: GlobalLayoutConfig,
                     line_size| match handle {
             MatmulInputHandleRef::Normal(handle, _dtype) => {
-                println!(">> in");
                 let layout = GlobalLayoutLaunch::from_handle(handle, line_size, config);
                 ViewArg::new::<GlobalLayout>(handle.as_array_arg(line_size), layout)
             }
@@ -237,7 +236,6 @@ impl<EG: Numeric> ConcreteOutputFactory for TensorOutput<EG> {
         _dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<'a, R> {
         let config = config.global_config();
-        println!(">> out");
         let layout = GlobalLayoutLaunch::from_handle(
             out,
             line_sizes.out,

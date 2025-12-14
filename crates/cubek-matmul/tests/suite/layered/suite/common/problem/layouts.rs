@@ -4,7 +4,7 @@ pub mod default {
     use cubek_matmul::components::MatrixLayout;
 
     pub fn layouts() -> (MatrixLayout, MatrixLayout) {
-        (MatrixLayout::ColMajor, MatrixLayout::ColMajor)
+        (MatrixLayout::RowMajor, MatrixLayout::RowMajor)
     }
 
     include!("problem_size.rs");

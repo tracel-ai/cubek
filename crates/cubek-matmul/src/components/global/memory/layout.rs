@@ -169,8 +169,6 @@ impl<'a, R: Runtime> GlobalLayoutLaunch<'a, R> {
         let cols = handle.shape[rank - 1];
         let stride_row = handle.strides[rank - 2];
         let stride_col = handle.strides[rank - 1];
-        println!("{:?}", stride_row);
-        println!("{:?}", stride_col);
 
         GlobalLayoutLaunch::new(
             VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new()),

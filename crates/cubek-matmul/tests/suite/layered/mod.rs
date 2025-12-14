@@ -52,7 +52,7 @@ fn small_test_matmul() {
         lhs_strides: vec![],
         rhs_strides: vec![],
         lhs_layout: MatrixLayout::RowMajor,
-        rhs_layout: MatrixLayout::ColMajor,
+        rhs_layout: MatrixLayout::RowMajor,
     };
     let selection = matmul_selection;
     let dtypes = MatmulElems::from_single_dtype(MatmulElemType {
@@ -64,12 +64,10 @@ fn small_test_matmul() {
     let lhs_shape = problem.shape(MatmulIdent::Lhs);
     let rhs_shape = problem.shape(MatmulIdent::Rhs);
 
-    println!("Making LHS");
     let (lhs, lhs_data) = TestInput::eye(client.clone(), lhs_shape.clone(), *dtypes.lhs_global)
         .generate_with_f32_host_data()
         .unwrap();
 
-    println!("Making RHS");
     let (rhs, rhs_data) = TestInput::arange(
         client.clone(),
         rhs_shape.clone(),
@@ -82,7 +80,6 @@ fn small_test_matmul() {
     .generate_with_f32_host_data()
     .unwrap();
 
-    println!("Making OUT");
     let out = TestInput::zeros(
         client.clone(),
         problem.shape(MatmulIdent::Out),
@@ -92,10 +89,7 @@ fn small_test_matmul() {
     .unwrap();
 
     problem.lhs_strides = lhs.strides.clone();
-    println!("saas");
-    println!("{:?}", problem.rhs_strides);
     problem.rhs_strides = rhs.strides.clone();
-    println!("{:?}", problem.rhs_strides);
 
     let lhs_handle = MatmulInputHandleRef::Normal(lhs.as_ref(), *dtypes.lhs_global);
     let rhs_handle = MatmulInputHandleRef::Normal(rhs.as_ref(), *dtypes.rhs_global);
@@ -104,8 +98,6 @@ fn small_test_matmul() {
     use cubek_matmul::components::tile::io::Filled;
     pub type TMM = cubek_matmul::components::tile::cmma::CmmaMatmul<Filled>;
 
-    println!("Executing GPU");
-    // if launch_matmul_algorithm::<SimpleAlgorithm<TMM>>(
     if launch_matmul_algorithm::<SimpleUnitAlgorithm>(
         &client,
         &problem,

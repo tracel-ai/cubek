@@ -15,10 +15,8 @@ pub fn assert_result(
 ) {
     let epsilon = matmul_epsilon(&dtypes, 100.);
 
-    println!("Executing CPU reference");
     let expected = matmul_cpu_reference(lhs, rhs, problem);
 
-    println!("Turning output into host data");
     let actual = HostData::from_tensor_handle(client, out, HostDataType::F32);
 
     if let Err(e) = assert_equals_approx(&actual, &expected, epsilon) {

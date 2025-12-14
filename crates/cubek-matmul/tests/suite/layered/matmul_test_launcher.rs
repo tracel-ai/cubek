@@ -21,6 +21,7 @@ use cubek_matmul::{
     components::{AvailableLineSizes, MatmulIdent},
 };
 use cubek_std::test_utils::HostData;
+use cubek_std::test_utils::current_test_mode;
 use cubek_std::test_utils::{
     Distribution, RandomInputSpec, SimpleInputSpec, TestInput, batched_matrix_strides,
 };
@@ -137,8 +138,10 @@ pub fn launch_matmul_algorithm<A: Algorithm>(
     let config = match A::setup(&client, &problem, &selection, &line_sizes, &dtypes) {
         Ok(config) => config,
         Err(err) => {
-            // TODO refactor and use CUBE_TEST_MODE
-            panic!("Can't launch the test: {err}");
+            if current_test_mode().should_fail_on_test_compilation_fail() {
+                panic!("Can't launch the test: {err}");
+            }
+            return false;
         }
     };
 

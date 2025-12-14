@@ -53,7 +53,6 @@ impl HostData {
         tensor_handle: &TensorHandle<TestRuntime>,
         host_data_type: HostDataType,
     ) -> Self {
-        println!("## From Tensor Handle");
         let shape = tensor_handle.shape.clone();
         let strides = tensor_handle.strides.clone();
 
@@ -65,9 +64,7 @@ impl HostData {
                 let handle = copy_casted(client, tensor_handle, f32::as_type_native_unchecked());
                 let data = f32::from_bytes(&client.read_one_tensor(handle.as_copy_descriptor()))
                     .to_owned();
-                println!("Before reorder: {:?}", data);
                 let data = reorder_by_strides(&data, &shape, &strides);
-                println!("With strides {:?}: {:?}", strides, data);
 
                 HostDataVec::F32(data)
             }

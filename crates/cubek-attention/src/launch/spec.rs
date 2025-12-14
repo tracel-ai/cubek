@@ -272,7 +272,7 @@ impl AttentionElems {
         accumulator_precision: &AccumulatorPrecision,
     ) -> AttentionElems {
         let accumulator = match accumulator_precision {
-            AccumulatorPrecision::Strict(storage_type) => storage_type.clone(),
+            AccumulatorPrecision::Strict(storage_type) => *storage_type,
             AccumulatorPrecision::Loose => AccumulatorPrecision::default_accumulator_type(),
         };
 
