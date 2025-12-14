@@ -4,6 +4,8 @@ use cubek_std::test_utils::{
     Distribution, HostData, HostDataType, StrideSpec, TestInput, assert_equals_approx,
 };
 
+mod col_major;
+
 #[test]
 fn random_uniform_handle_equal_to_host_data() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
