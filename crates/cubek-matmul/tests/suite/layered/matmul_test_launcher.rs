@@ -20,7 +20,11 @@ use cubek_matmul::{
     MatmulInputHandleRef,
     components::{AvailableLineSizes, MatmulIdent},
 };
-use cubek_std::test_utils::{contiguous_strides, random_tensor};
+use cubek_std::test_utils::HostData;
+use cubek_std::test_utils::current_test_mode;
+use cubek_std::test_utils::{
+    Distribution, RandomInputSpec, SimpleInputSpec, TestInput, batched_matrix_strides,
+};
 
 use crate::suite::assert_result;
 
@@ -29,7 +33,6 @@ pub enum InputRepresentation {
     Tma,
 }
 
-// TODO should be always used, remove some feature flags
 #[allow(unused)]
 /// Test the correctness of the specified Matmul on the given device,
 /// against a naive CPU implementation over the given problem
@@ -43,27 +46,41 @@ pub fn test_matmul_algorithm<A: Algorithm>(
     let lhs_shape = problem.shape(MatmulIdent::Lhs);
     let rhs_shape = problem.shape(MatmulIdent::Rhs);
 
-    let (lhs, lhs_data) = random_tensor(
-        &client,
+    let (lhs, lhs_data) = TestInput::random(
+        client.clone(),
+        lhs_shape.clone(),
         *dtypes.lhs_global,
         1234,
-        &contiguous_strides(
+        Distribution::Uniform(-1., 1.),
+        Some(batched_matrix_strides(
             &lhs_shape,
             matches!(problem.lhs_layout, MatrixLayout::ColMajor),
-        ),
-        &lhs_shape,
-    );
-    let (rhs, rhs_data) = random_tensor(
-        &client,
+        )),
+    )
+    .generate_with_f32_host_data()
+    .unwrap();
+
+    let (rhs, rhs_data) = TestInput::random(
+        client.clone(),
+        rhs_shape.clone(),
         *dtypes.rhs_global,
         5678,
-        &contiguous_strides(
+        Distribution::Uniform(-1., 1.),
+        Some(batched_matrix_strides(
             &rhs_shape,
             matches!(problem.rhs_layout, MatrixLayout::ColMajor),
-        ),
-        &rhs_shape,
-    );
-    let out = TensorHandle::zeros(&client, problem.shape(MatmulIdent::Out), *dtypes.acc_global);
+        )),
+    )
+    .generate_with_f32_host_data()
+    .unwrap();
+
+    let out = TestInput::zeros(
+        client.clone(),
+        problem.shape(MatmulIdent::Out),
+        *dtypes.acc_global,
+    )
+    .generate_without_host_data()
+    .unwrap();
 
     problem.lhs_strides = lhs.strides.clone();
     problem.rhs_strides = rhs.strides.clone();
@@ -119,27 +136,13 @@ pub fn launch_matmul_algorithm<A: Algorithm>(
             .unwrap(),
     };
 
-    let env = std::env::var("CUBEK_TEST_MODE");
-
-    let panic_on_launch_err = match env {
-        Ok(val) => match val.as_str() {
-            "panic" => true,
-            "skip" => false,
-            _ => false,
-        },
-        Err(_) => false,
-    };
-
     let config = match A::setup(client, problem, &selection, &line_sizes, dtypes) {
         Ok(config) => config,
         Err(err) => {
-            let msg = format!("Can't launch the test: {err}");
-            if panic_on_launch_err {
-                panic!("{msg}");
-            } else {
-                println!("{msg}");
-                return false;
+            if current_test_mode().should_fail_on_test_compilation_fail() {
+                panic!("Can't launch the test: {err}");
             }
+            return false;
         }
     };
 
@@ -160,6 +163,7 @@ pub fn launch_matmul_algorithm<A: Algorithm>(
         config,
         dtypes,
     );
+
     let cube_count_plan = config
         .hypercube_config()
         .cube_count_plan(problem, client.properties().hardware.max_cube_count.clone());

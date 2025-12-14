@@ -4,6 +4,8 @@ use cubecl::{
     std::tensor::{TensorHandle, ViewOperationsMut, ViewOperationsMutExpand},
 };
 
+use crate::test_utils::test_tensor::test_input::base::{SimpleInputSpec, TestInputError};
+
 #[cube(launch)]
 fn eye_launch<T: Numeric>(tensor: &mut Tensor<Line<T>>, #[define(T)] _types: StorageType) {
     let batch = CUBE_POS_Z;
@@ -24,23 +26,25 @@ fn eye_launch<T: Numeric>(tensor: &mut Tensor<Line<T>>, #[define(T)] _types: Sto
 }
 
 #[allow(unused)]
-pub fn new_eyed(
+fn new_eyed(
     client: &ComputeClient<TestRuntime>,
     shape: Vec<usize>,
+    rows: usize,
+    cols: usize,
+    total_batches: usize,
     dtype: StorageType,
 ) -> TensorHandle<TestRuntime> {
-    let (batches, matrix) = shape.split_at(shape.len() - 2);
-    let rows = matrix[0] as u32;
-    let cols = matrix[1] as u32;
-    let total_batches = batches.iter().product::<usize>() as u32;
-
     // Performance is not important here and this simplifies greatly the problem
     let line_size = 1;
 
     let dim_x = 32;
     let dim_y = 32;
     let cube_dim = CubeDim::new_2d(dim_x, dim_y);
-    let cube_count = CubeCount::new_3d(rows.div_ceil(dim_x), cols.div_ceil(dim_y), total_batches);
+    let cube_count = CubeCount::new_3d(
+        (rows as u32).div_ceil(dim_x),
+        (cols as u32).div_ceil(dim_y),
+        total_batches as u32,
+    );
 
     let out = TensorHandle::new_contiguous(
         shape.clone(),
@@ -66,4 +70,26 @@ pub fn new_eyed(
     .unwrap();
 
     out
+}
+
+pub(crate) fn build_eye(
+    spec: SimpleInputSpec,
+) -> Result<TensorHandle<TestRuntime>, TestInputError> {
+    if spec.strides.is_some() {
+        return Err(TestInputError::UnsupportedStrides);
+    }
+
+    let (batches, matrix) = spec.shape.split_at(spec.shape.len() - 2);
+    let rows = matrix[0];
+    let cols = matrix[1];
+    let total_batches = batches.iter().product::<usize>();
+
+    Ok(new_eyed(
+        &spec.client,
+        spec.shape,
+        rows,
+        cols,
+        total_batches,
+        spec.dtype,
+    ))
 }

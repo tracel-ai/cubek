@@ -3,6 +3,7 @@ use std::fmt::Debug;
 use cubecl::{Runtime, client::ComputeClient, tensor_line_size_parallel};
 
 use crate::launch::{AttentionDefinition, AttentionIdent};
+use cubek_std::test_utils::batched_matrix_strides;
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 /// Line size used for each tensor in global memory accesses.
@@ -26,7 +27,7 @@ impl AttentionLineSizes {
             tensor_line_size_parallel(
                 supported_line_sizes,
                 shape,
-                &contiguous_strides(shape),
+                &batched_matrix_strides(shape, false),
                 shape.len() - 1,
             )
         };
@@ -52,13 +53,4 @@ impl AttentionLineSizes {
             ),
         }
     }
-}
-
-pub(crate) fn contiguous_strides(shape: &[usize]) -> Vec<usize> {
-    let rank = shape.len();
-    let mut strides = vec![1; rank];
-    for i in (0..rank - 1).rev() {
-        strides[i] = strides[i + 1] * shape[i + 1];
-    }
-    strides
 }

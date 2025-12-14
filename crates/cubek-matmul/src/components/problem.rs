@@ -33,7 +33,7 @@ pub struct MatmulProblem {
 
 impl MatmulProblem {
     /// Returns the batch dimensions of the output
-    fn output_batch_dims(&self) -> Vec<usize> {
+    pub fn output_batch_dims(&self) -> Vec<usize> {
         self.lhs_batches
             .iter()
             .rev()
