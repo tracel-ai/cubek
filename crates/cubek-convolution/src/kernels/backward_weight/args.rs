@@ -131,21 +131,19 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory for TensorIn
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
         config: impl ConvGemmConfig,
-        dtypes: &MatmulElems,
+        _dtypes: &MatmulElems,
     ) -> (Self::RuntimeArg<'a, R>, RuntimeArgsLaunch<'a, R>) {
         type LhsLayout = Chain<NhwcLayout, Transpose<OutLayout>>;
         type RhsLayout = Chain<NhwcLayout, Im2colLayout>;
 
-        let load_width = client.properties().hardware.load_width;
-        let channel_align = load_width as usize / dtypes.lhs_global.size_bits();
-        let padded_channels = problem.channels as u32;
+        let padded_channels = problem.padded_channels as u32;
 
         let layout_nhwc = |handle, line_size, check_spatial| {
             NhwcLayoutLaunch::from_handle(
                 handle,
                 line_size as u32,
                 check_spatial,
-                !problem.channels.is_multiple_of(channel_align),
+                problem.check_channel(),
             )
         };
 
