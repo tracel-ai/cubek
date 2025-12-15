@@ -52,8 +52,7 @@ pub fn test_matmul_algorithm<A: Algorithm>(
         Distribution::Uniform(-1., 1.),
         problem.lhs_layout.into(),
     )
-    .generate_with_f32_host_data()
-    .unwrap();
+    .generate_with_f32_host_data();
 
     let (rhs, rhs_data) = TestInput::random(
         client.clone(),
@@ -63,8 +62,7 @@ pub fn test_matmul_algorithm<A: Algorithm>(
         Distribution::Uniform(-1., 1.),
         problem.rhs_layout.into(),
     )
-    .generate_with_f32_host_data()
-    .unwrap();
+    .generate_with_f32_host_data();
 
     let out = TestInput::zeros(
         client.clone(),
@@ -72,8 +70,7 @@ pub fn test_matmul_algorithm<A: Algorithm>(
         *dtypes.acc_global,
         MatrixLayout::RowMajor.into(),
     )
-    .generate_without_host_data()
-    .unwrap();
+    .generate_without_host_data();
 
     problem.lhs_strides = lhs.strides.clone();
     problem.rhs_strides = rhs.strides.clone();

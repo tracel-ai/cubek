@@ -1,6 +1,7 @@
 mod arange;
 mod base;
 mod cast;
+mod custom;
 mod eye;
 mod host_data;
 mod random;

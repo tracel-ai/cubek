@@ -2,6 +2,7 @@ use cubecl::{TestRuntime, client::ComputeClient, ir::StorageType, std::tensor::T
 
 use crate::test_utils::test_tensor::{
     arange::build_arange,
+    custom::build_custom,
     eye::build_eye,
     host_data::{HostData, HostDataType},
     random::build_random,
@@ -19,6 +20,7 @@ pub enum TestInputSpec {
     Eye(SimpleInputSpec),
     Random(RandomInputSpec),
     Zeros(SimpleInputSpec),
+    Custom(CustomInputSpec),
 }
 
 impl TestInput {
@@ -30,14 +32,19 @@ impl TestInput {
         distribution: Distribution,
         stride_spec: StrideSpec,
     ) -> Self {
-        let spec = RandomInputSpec::new(
-            client.clone(),
+        let inner = SimpleInputSpec {
+            client: client.clone(),
             shape,
             dtype,
+            stride_spec,
+        };
+
+        let spec = RandomInputSpec {
+            inner,
             seed,
             distribution,
-            stride_spec,
-        );
+        };
+
         TestInput {
             client,
             spec: TestInputSpec::Random(spec),
@@ -52,7 +59,12 @@ impl TestInput {
     ) -> Self {
         TestInput {
             client: client.clone(),
-            spec: TestInputSpec::Zeros(SimpleInputSpec::new(client, shape, dtype, stride_spec)),
+            spec: TestInputSpec::Zeros(SimpleInputSpec {
+                client,
+                shape,
+                dtype,
+                stride_spec,
+            }),
         }
     }
 
@@ -64,7 +76,12 @@ impl TestInput {
     ) -> Self {
         TestInput {
             client: client.clone(),
-            spec: TestInputSpec::Eye(SimpleInputSpec::new(client, shape, dtype, stride_spec)),
+            spec: TestInputSpec::Eye(SimpleInputSpec {
+                client,
+                shape,
+                dtype,
+                stride_spec,
+            }),
         }
     }
 
@@ -74,7 +91,12 @@ impl TestInput {
         dtype: StorageType,
         stride_spec: StrideSpec,
     ) -> Self {
-        let spec = SimpleInputSpec::new(client.clone(), shape, dtype, stride_spec);
+        let spec = SimpleInputSpec {
+            client: client.clone(),
+            shape,
+            dtype,
+            stride_spec,
+        };
 
         TestInput {
             client,
@@ -82,41 +104,66 @@ impl TestInput {
         }
     }
 
-    pub fn generate_with_f32_host_data(
-        self,
-    ) -> Result<(TensorHandle<TestRuntime>, HostData), TestInputError> {
-        self.generate_with_host_data(HostDataType::F32)
+    pub fn custom(
+        client: ComputeClient<TestRuntime>,
+        shape: Vec<usize>,
+        dtype: StorageType,
+        stride_spec: StrideSpec,
+        data: Vec<f32>,
+    ) -> Self {
+        let inner = SimpleInputSpec {
+            client: client.clone(),
+            shape,
+            dtype,
+            stride_spec,
+        };
+
+        let spec = CustomInputSpec { inner, data };
+
+        TestInput {
+            client,
+            spec: TestInputSpec::Custom(spec),
+        }
+    }
+    pub fn generate_with_f32_host_data(self) -> (TensorHandle<TestRuntime>, HostData) {
+        self.generate_host_data(HostDataType::F32)
     }
 
-    pub fn generate_with_bool_host_data(
-        self,
-    ) -> Result<(TensorHandle<TestRuntime>, HostData), TestInputError> {
-        self.generate_with_host_data(HostDataType::Bool)
+    pub fn generate_with_bool_host_data(self) -> (TensorHandle<TestRuntime>, HostData) {
+        self.generate_host_data(HostDataType::Bool)
     }
 
-    pub fn generate_without_host_data(self) -> Result<TensorHandle<TestRuntime>, TestInputError> {
+    pub fn f32_host_data(self) -> HostData {
+        self.generate_host_data(HostDataType::F32).1
+    }
+
+    pub fn bool_host_data(self) -> HostData {
+        self.generate_host_data(HostDataType::Bool).1
+    }
+
+    // Public API returning only TensorHandle
+    pub fn generate_without_host_data(self) -> TensorHandle<TestRuntime> {
         self.generate()
     }
 
-    fn generate(self) -> Result<TensorHandle<TestRuntime>, TestInputError> {
+    pub fn generate(self) -> TensorHandle<TestRuntime> {
         match self.spec {
             TestInputSpec::Arange(spec) => build_arange(spec),
             TestInputSpec::Eye(spec) => build_eye(spec),
             TestInputSpec::Random(spec) => build_random(spec),
             TestInputSpec::Zeros(spec) => build_zeros(spec),
+            TestInputSpec::Custom(spec) => build_custom(spec),
         }
     }
 
-    fn generate_with_host_data(
+    fn generate_host_data(
         self,
         host_data_type: HostDataType,
-    ) -> Result<(TensorHandle<TestRuntime>, HostData), TestInputError> {
+    ) -> (TensorHandle<TestRuntime>, HostData) {
         let client = self.client.clone();
-        let tensor_handle = self.generate()?;
-
+        let tensor_handle = self.generate();
         let host_data = HostData::from_tensor_handle(&client, &tensor_handle, host_data_type);
-
-        Ok((tensor_handle, host_data))
+        (tensor_handle, host_data)
     }
 }
 
@@ -139,38 +186,9 @@ pub struct RandomInputSpec {
     pub(crate) distribution: Distribution,
 }
 
-impl SimpleInputSpec {
-    pub fn new(
-        client: ComputeClient<TestRuntime>,
-        shape: Vec<usize>,
-        dtype: StorageType,
-        stride_spec: StrideSpec,
-    ) -> Self {
-        Self {
-            client,
-            shape,
-            dtype,
-            stride_spec,
-        }
-    }
-}
-
-impl RandomInputSpec {
-    pub fn new(
-        client: ComputeClient<TestRuntime>,
-        shape: Vec<usize>,
-        dtype: StorageType,
-        seed: u64,
-        distribution: Distribution,
-        strides: StrideSpec,
-    ) -> Self {
-        let inner = SimpleInputSpec::new(client, shape, dtype, strides);
-        Self {
-            inner,
-            seed,
-            distribution,
-        }
-    }
+pub struct CustomInputSpec {
+    pub(crate) inner: SimpleInputSpec,
+    pub(crate) data: Vec<f32>,
 }
 
 #[derive(Copy, Clone)]
@@ -179,10 +197,4 @@ pub enum Distribution {
     Uniform(f32, f32),
     // prob
     Bernoulli(f32),
-}
-
-#[derive(Debug)]
-pub enum TestInputError {
-    UnsupportedStrides,
-    InvalidReturnData,
 }
