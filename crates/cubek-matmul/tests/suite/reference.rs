@@ -3,9 +3,7 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::{CubeElement, client::ComputeClient};
 use cubek_matmul::components::MatmulElems;
 use cubek_matmul::components::{MatmulIdent, MatmulProblem, MatrixLayout};
-use cubek_std::test_utils::{
-    HostData, HostDataType, HostDataVec, StrideSpec, assert_equals_approx,
-};
+use cubek_test_utils::{HostData, HostDataType, HostDataVec, StrideSpec, assert_equals_approx};
 
 pub fn assert_result(
     lhs: &HostData,

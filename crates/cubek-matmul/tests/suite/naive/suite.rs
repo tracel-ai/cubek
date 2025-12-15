@@ -5,11 +5,11 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::{Runtime, client};
 use cubek_matmul::MatmulInputHandleRef;
 
+use crate::suite::layout_to_stride_spec;
 use cubek_matmul::components::MatrixLayout;
 use cubek_matmul::components::{MatmulElems, MatmulIdent, MatmulProblem};
 use cubek_matmul::kernels::naive;
-use cubek_std::test_utils::SimpleInputSpec;
-use cubek_std::test_utils::{Distribution, TestInput};
+use cubek_test_utils::{Distribution, SimpleInputSpec, TestInput};
 
 type TestRuntime = cubecl::TestRuntime;
 
@@ -151,7 +151,7 @@ fn test_naive(case: MatmulTestCase) {
         *dtype,
         1234,
         Distribution::Uniform(-1., 1.),
-        problem.lhs_layout.into(),
+        layout_to_stride_spec(problem.lhs_layout),
     )
     .generate_with_f32_host_data();
 
@@ -161,7 +161,7 @@ fn test_naive(case: MatmulTestCase) {
         *dtype,
         5678,
         Distribution::Uniform(-1., 1.),
-        problem.rhs_layout.into(),
+        layout_to_stride_spec(problem.rhs_layout),
     )
     .generate_with_f32_host_data();
 
@@ -169,7 +169,7 @@ fn test_naive(case: MatmulTestCase) {
         client.clone(),
         problem.shape(MatmulIdent::Out),
         *dtype,
-        MatrixLayout::RowMajor.into(),
+        layout_to_stride_spec(MatrixLayout::RowMajor),
     )
     .generate_without_host_data();
 

@@ -16,11 +16,11 @@ use cubek_matmul::components::{PartitionSize, StageSize, TileSize, TilingScheme}
 use cubek_matmul::kernels::layered::simple::SimpleAlgorithm;
 use cubek_matmul::kernels::layered::simple_unit::SimpleUnitAlgorithm;
 use cubek_matmul::tune_key::MatmulElemType;
-use cubek_std::test_utils::HostData;
-use cubek_std::test_utils::HostDataType;
-use cubek_std::test_utils::StrideSpec;
-use cubek_std::test_utils::TestInput;
-use cubek_std::test_utils::current_test_mode;
+use cubek_test_utils::HostData;
+use cubek_test_utils::HostDataType;
+use cubek_test_utils::StrideSpec;
+use cubek_test_utils::TestInput;
+use cubek_test_utils::current_test_mode;
 
 use crate::suite::layered::matmul_test_launcher::InputRepresentation;
 use crate::suite::layered::matmul_test_launcher::test_matmul_algorithm;

@@ -4,10 +4,14 @@ use cubecl::{
     std::tensor::{TensorHandle, ViewOperationsMut, ViewOperationsMutExpand},
 };
 
-use crate::test_utils::test_tensor::base::SimpleInputSpec;
+use crate::CustomInputSpec;
 
 #[cube(launch)]
-fn arange_launch<T: Numeric>(tensor: &mut Tensor<T>, #[define(T)] _types: StorageType) {
+fn custom_data_launch<T: Numeric>(
+    tensor: &mut Tensor<T>,
+    contiguous_data: Array<f32>,
+    #[define(T)] _types: StorageType,
+) {
     let linear = ABSOLUTE_POS;
 
     if linear >= tensor.len() {
@@ -24,16 +28,18 @@ fn arange_launch<T: Numeric>(tensor: &mut Tensor<T>, #[define(T)] _types: Storag
         offset += idx * tensor.stride(tensor.rank() - 1 - d);
     }
 
-    tensor.write_checked(offset, T::cast_from(linear));
+    tensor.write_checked(offset, T::cast_from(contiguous_data[linear]));
 }
 
-fn new_arange(
+fn new_custom_data(
     client: &ComputeClient<TestRuntime>,
     shape: Vec<usize>,
     strides: Vec<usize>,
     dtype: StorageType,
+    contiguous_data: Vec<f32>,
 ) -> TensorHandle<TestRuntime> {
     let num_elems = shape.iter().product::<usize>();
+    assert!(contiguous_data.len() == num_elems);
 
     // Performance is not important here and this simplifies greatly the problem
     let line_size = 1;
@@ -49,7 +55,9 @@ fn new_arange(
         dtype,
     );
 
-    arange_launch::launch::<TestRuntime>(
+    let contiguous_handle = client.create_from_slice(f32::as_bytes(&contiguous_data));
+
+    custom_data_launch::launch::<TestRuntime>(
         client,
         CubeCount::new_1d(cube_count),
         cube_dim,
@@ -62,6 +70,14 @@ fn new_arange(
                 dtype.size(),
             )
         },
+        unsafe {
+            ArrayArg::from_raw_parts_and_size(
+                &contiguous_handle,
+                num_elems,
+                line_size,
+                dtype.size(),
+            )
+        },
         dtype,
     )
     .unwrap();
@@ -69,6 +85,12 @@ fn new_arange(
     out
 }
 
-pub(crate) fn build_arange(spec: SimpleInputSpec) -> TensorHandle<TestRuntime> {
-    new_arange(&spec.client, spec.shape.clone(), spec.strides(), spec.dtype)
+pub(crate) fn build_custom(spec: CustomInputSpec) -> TensorHandle<TestRuntime> {
+    new_custom_data(
+        &spec.inner.client,
+        spec.inner.shape.clone(),
+        spec.inner.strides(),
+        spec.inner.dtype,
+        spec.data,
+    )
 }

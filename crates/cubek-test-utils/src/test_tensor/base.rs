@@ -1,6 +1,6 @@
 use cubecl::{TestRuntime, client::ComputeClient, ir::StorageType, std::tensor::TensorHandle};
 
-use crate::test_utils::test_tensor::{
+use crate::test_tensor::{
     arange::build_arange,
     custom::build_custom,
     eye::build_eye,

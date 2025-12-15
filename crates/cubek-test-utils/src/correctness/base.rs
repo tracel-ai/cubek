@@ -1,6 +1,6 @@
-use crate::test_utils::HostData;
-use crate::test_utils::correctness::color_printer::ColorPrinter;
-use crate::test_utils::test_mode::{TestMode, current_test_mode};
+use crate::HostData;
+use crate::correctness::color_printer::ColorPrinter;
+use crate::test_mode::{TestMode, current_test_mode};
 
 pub fn assert_equals_approx(
     actual: &HostData,

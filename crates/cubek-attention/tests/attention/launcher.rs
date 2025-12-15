@@ -5,7 +5,7 @@ use cubek_attention::launch::{
 };
 
 use cubecl::client::ComputeClient;
-use cubek_std::test_utils::{Distribution, StrideSpec, TestInput, current_test_mode};
+use cubek_test_utils::{Distribution, StrideSpec, TestInput, current_test_mode};
 
 pub fn test_launch(
     client: ComputeClient<TestRuntime>,

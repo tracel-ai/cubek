@@ -1,5 +1,5 @@
 [package]
-name = "cubek-std"
+name = "cubek-test-utils"
 edition.workspace = true
 license.workspace = true
 readme.workspace = true
@@ -7,7 +7,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
-default = ["cubecl/default"]
+default = ["cubecl/default", "tests"]
 std = ["cubecl/std"]
 tests = []
 

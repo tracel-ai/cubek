@@ -1,6 +1,6 @@
 use cubecl::frontend::CubePrimitive;
 use cubecl::{Runtime, TestRuntime};
-use cubek_std::test_utils::{HostData, HostDataType, StrideSpec, TestInput, assert_equals_approx};
+use cubek_test_utils::{HostData, HostDataType, StrideSpec, TestInput, assert_equals_approx};
 
 #[test]
 fn eye_handle_row_major() {

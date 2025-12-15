@@ -20,11 +20,12 @@ use cubek_matmul::{
     MatmulInputHandleRef,
     components::{AvailableLineSizes, MatmulIdent},
 };
-use cubek_std::test_utils::HostData;
-use cubek_std::test_utils::current_test_mode;
-use cubek_std::test_utils::{Distribution, RandomInputSpec, SimpleInputSpec, TestInput};
+use cubek_test_utils::HostData;
+use cubek_test_utils::current_test_mode;
+use cubek_test_utils::{Distribution, RandomInputSpec, SimpleInputSpec, TestInput};
 
 use crate::suite::assert_result;
+use crate::suite::layout_to_stride_spec;
 
 pub enum InputRepresentation {
     Normal,
@@ -50,7 +51,7 @@ pub fn test_matmul_algorithm<A: Algorithm>(
         *dtypes.lhs_global,
         1234,
         Distribution::Uniform(-1., 1.),
-        problem.lhs_layout.into(),
+        layout_to_stride_spec(problem.lhs_layout),
     )
     .generate_with_f32_host_data();
 
@@ -60,7 +61,7 @@ pub fn test_matmul_algorithm<A: Algorithm>(
         *dtypes.rhs_global,
         5678,
         Distribution::Uniform(-1., 1.),
-        problem.rhs_layout.into(),
+        layout_to_stride_spec(problem.rhs_layout),
     )
     .generate_with_f32_host_data();
 
@@ -68,7 +69,7 @@ pub fn test_matmul_algorithm<A: Algorithm>(
         client.clone(),
         problem.shape(MatmulIdent::Out),
         *dtypes.acc_global,
-        MatrixLayout::RowMajor.into(),
+        layout_to_stride_spec(MatrixLayout::RowMajor),
     )
     .generate_without_host_data();
 

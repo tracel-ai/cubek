@@ -2,7 +2,7 @@ use cubecl::client::ComputeClient;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{TestRuntime, prelude::*};
 
-use crate::test_utils::test_tensor::base::{Distribution, RandomInputSpec};
+use crate::{Distribution, RandomInputSpec};
 
 fn random_tensor_handle(
     client: &ComputeClient<TestRuntime>,
