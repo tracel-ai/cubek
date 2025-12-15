@@ -19,8 +19,8 @@ use crate::components::{
 };
 use crate::components::{global::PlaneWriterFamily, stage::StageFamily};
 use crate::components::{stage::FilledStageFamily, tile::TileMatmulFamily};
-use crate::kernels::layered::algorithm::base;
-use crate::kernels::layered::selector::{PlaneMatmulSelectionOptions, plane_matmul_selection};
+use crate::routines::layered::algorithm::base;
+use crate::routines::layered::selector::{PlaneMatmulSelectionOptions, plane_matmul_selection};
 use crate::{
     components::{
         MatmulElems, MatmulLineSizes, MatmulSelection, MatmulSetupError, MatrixLayout,
@@ -29,7 +29,7 @@ use crate::{
         global::{LoadSpecializationConfig, SpecializationTensorConfig},
         stage::PartitionBuffering,
     },
-    kernels::layered::selector::select_swizzle,
+    routines::layered::selector::select_swizzle,
 };
 
 /// Plane accelerated specialized matmul with TMA readers

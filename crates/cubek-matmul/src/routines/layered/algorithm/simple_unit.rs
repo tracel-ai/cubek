@@ -17,7 +17,7 @@ use crate::{
         },
         tile::{TileMatmulFamily, io::Filled, register::RegisterMatmul},
     },
-    kernels::layered::{
+    routines::layered::{
         TileSizeSelection,
         selector::{
             PartitionScaling, StageScaling, UnitMatmulSelectionOptions, unit_matmul_selection,

@@ -1,6 +1,8 @@
 use cubecl::TestRuntime;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
+use cubek_matmul::components::AvailableLineSizes;
+use cubek_matmul::components::MatmulIdent;
 use cubek_matmul::components::MatrixLayout;
 use cubek_matmul::components::global::args::TensorMapArgs;
 use cubek_matmul::components::global::args::TensorMapInputs;
@@ -15,11 +17,8 @@ use cubek_matmul::components::{
     batch::{BatchConfig, BatchMatmulFamily},
     global::args::TensorInputs,
 };
-use cubek_matmul::kernels::layered::Algorithm;
-use cubek_matmul::{
-    MatmulInputHandleRef,
-    components::{AvailableLineSizes, MatmulIdent},
-};
+use cubek_matmul::launch::MatmulInputHandleRef;
+use cubek_matmul::routines::layered::Algorithm;
 use cubek_test_utils::HostData;
 use cubek_test_utils::current_test_mode;
 use cubek_test_utils::{Distribution, RandomInputSpec, SimpleInputSpec, TestInput};

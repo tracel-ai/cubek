@@ -12,7 +12,6 @@ use cubecl::std::{
 use cubecl::{server::TensorMapMeta, unexpanded};
 
 use crate::{
-    MatmulInputHandleRef,
     components::{
         self, MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection,
         batch::BatchConfig,
@@ -26,6 +25,7 @@ use crate::{
         },
         stage::SwizzleMode,
     },
+    launch::MatmulInputHandleRef,
 };
 
 /// Create the input runtime arguments for a matmul kernel that works on concrete inputs and

@@ -8,8 +8,8 @@ use crate::components::{
     batch::{BatchMatmulFamily, CubeCountInputArgs},
     global::args::{MatmulArgs, TensorArgs, TensorMapArgs},
 };
-use crate::kernels::layered::selector::launch_kernel_concrete;
-use crate::{MatmulInputHandle, MatmulInputHandleRef};
+use crate::launch::{MatmulInputHandle, MatmulInputHandleRef};
+use crate::routines::layered::selector::launch_kernel_concrete;
 use cubecl::features::TypeUsage;
 use cubecl::prelude::*;
 use cubecl::std::tensor::{MatrixBatchLayout, TensorHandle, matrix_batch_layout};

@@ -21,7 +21,7 @@ use crate::{
         },
         tile::{cmma::CmmaMatmul, io::Filled, mma::MmaMatmul},
     },
-    kernels::layered::{
+    routines::layered::{
         Selection,
         double_buffering::*,
         double_unit::{DoubleUnitAlgorithm, DoubleUnitSelectionArgs},
@@ -33,12 +33,12 @@ use crate::{
     },
 };
 
-use super::{
+use crate::{
     components::{
         global::read::{async_full_cyclic, sync_full_strided, sync_full_tilewise},
         stage::{ColMajorTilingOrder, RowMajorTilingOrder},
     },
-    kernels::{
+    routines::{
         layered::{
             self,
             double_buffering::{

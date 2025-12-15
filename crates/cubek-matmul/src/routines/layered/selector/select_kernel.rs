@@ -1,5 +1,6 @@
 use crate::components::batch::BatchConfig;
 use crate::components::global::args::MatmulArgs;
+use crate::components::tile::TileMatmulFamily;
 use crate::components::{
     InputArg, InputRuntimeArg, MatmulElems, MatmulLineSizes, MatmulSetupError, OutputRuntimeArg,
 };
@@ -7,9 +8,9 @@ use crate::components::{
     MatmulProblem, OutputArg,
     global::args::{ConcreteInputsFactory, ConcreteOutputFactory},
 };
-use crate::kernels::layered::base::Selection;
-use crate::kernels::layered::{Algorithm, launch_with_config};
-use crate::{MatmulInputHandleRef, components::tile::TileMatmulFamily};
+use crate::launch::MatmulInputHandleRef;
+use crate::routines::layered::base::Selection;
+use crate::routines::layered::{Algorithm, launch_with_config};
 use cubecl::prelude::TensorHandleRef;
 use cubecl::{Runtime, client::ComputeClient};
 

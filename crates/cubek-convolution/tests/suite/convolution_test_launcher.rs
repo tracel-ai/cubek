@@ -14,7 +14,7 @@ use cubek_convolution::{
 };
 use cubek_matmul::components::{InputArg, MatmulSelection, OutputArg};
 use cubek_matmul::components::{MatmulElems, MatmulIdent};
-use cubek_matmul::{MatmulInputHandleRef, components::AvailableLineSizes};
+use cubek_matmul::{components::AvailableLineSizes, launch::MatmulInputHandleRef};
 
 use super::test_utils::TestPrecision;
 

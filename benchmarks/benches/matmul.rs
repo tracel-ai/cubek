@@ -12,7 +12,7 @@ use cubek::{
             LoadingPrecomputeStrategy, MatmulElems, MatmulPrecision, MatmulSelection, StageSize,
             TilingScheme, batch::HypercubeSelection, stage::PartitionBuffering,
         },
-        kernels::layered::{
+        routines::layered::{
             Selection, TileSizeSelection, double_buffering::DoubleBufferingArgs,
             double_unit::DoubleUnitSelectionArgs, ordered_double_buffering::OrderedSelectionArgs,
             simple::SimpleArgs, simple_unit::SimpleUnitSelectionArgs,

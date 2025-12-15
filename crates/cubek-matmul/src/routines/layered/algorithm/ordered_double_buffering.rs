@@ -19,8 +19,8 @@ use crate::components::{
 use crate::components::{
     global::read::sync_partial_cyclic::SyncPartialCyclicLoading, tile::io::Strided,
 };
-use crate::kernels::layered::Algorithm;
-use crate::kernels::layered::selector::{PlaneMatmulSelectionOptions, plane_matmul_selection};
+use crate::routines::layered::Algorithm;
+use crate::routines::layered::selector::{PlaneMatmulSelectionOptions, plane_matmul_selection};
 
 /// Plane accelerated double buffered matmul ordered on Lhs with cyclic reader on Rhs
 pub struct OrderedDoubleBufferingAlgorithm<TMM> {

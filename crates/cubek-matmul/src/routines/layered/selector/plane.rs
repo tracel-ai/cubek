@@ -16,7 +16,7 @@ use crate::components::{
     SwizzleConfig,
     global::{LoadSpecializationConfig, SpecializationTensorConfig},
 };
-use crate::kernels::layered::selector::is_tiny;
+use crate::routines::layered::selector::is_tiny;
 
 pub const NUM_SM_APPROX: u32 = 50;
 pub const NUM_TENSOR_CORES_APPROX: u32 = 4;

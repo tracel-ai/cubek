@@ -13,16 +13,14 @@ use cubecl::{
     prelude::*,
     std::{CubeOption, tensor::TensorHandle},
 };
+use cubek_matmul::launch::MatmulInputHandleRef;
 use cubek_matmul::{
-    AcceleratedTileKind, MatmulInputHandle, ReadingStrategy,
     components::{
         self, AvailableLineSizes, MatmulElems, MatrixLayout,
         tile::{cmma::CmmaMatmul, io::Strided, mma::MmaMatmul},
     },
-};
-use cubek_matmul::{
-    MatmulInputHandleRef,
     components::{InputArg, OutputArg},
+    launch::{AcceleratedTileKind, MatmulInputHandle, ReadingStrategy},
 };
 use derive_new::new;
 

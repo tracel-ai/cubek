@@ -1,7 +1,7 @@
 #[cfg(all(feature = "matmul_tests_simple", feature = "matmul_tests_cyclic"))]
 mod simple_cyclic {
     use super::*;
-    type Algorithm = cubek_matmul::kernels::layered::simple::SimpleAlgorithm<TMM>;
+    type Algorithm = cubek_matmul::routines::layered::simple::SimpleAlgorithm<TMM>;
 
     include!("precision.rs");
 }
@@ -10,7 +10,7 @@ mod simple_cyclic {
 mod double_buffering_cyclic {
     use super::*;
     type Algorithm =
-        cubek_matmul::kernels::layered::double_buffering::CyclicDoubleBufferingAlgorithm<TMM>;
+        cubek_matmul::routines::layered::double_buffering::CyclicDoubleBufferingAlgorithm<TMM>;
 
     include!("precision.rs");
 }

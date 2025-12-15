@@ -27,7 +27,7 @@ use crate::{
             io::{Filled, Strided},
         },
     },
-    kernels::layered::{
+    routines::layered::{
         Algorithm,
         selector::{PlaneMatmulSelectionOptions, plane_matmul_selection},
     },

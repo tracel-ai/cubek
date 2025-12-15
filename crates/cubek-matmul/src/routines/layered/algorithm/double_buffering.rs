@@ -22,9 +22,9 @@ use crate::components::{
     global::multi_stage::double_buffering::DoubleBufferingMatmulFamily,
     stage::{FilledStageFamily, StridedStageFamily},
 };
-use crate::kernels::layered::Algorithm;
-use crate::kernels::layered::algorithm::base;
-use crate::kernels::layered::selector::{PlaneMatmulSelectionOptions, plane_matmul_selection};
+use crate::routines::layered::Algorithm;
+use crate::routines::layered::algorithm::base;
+use crate::routines::layered::selector::{PlaneMatmulSelectionOptions, plane_matmul_selection};
 
 /// Plane accelerated double buffered matmul with cyclic readers
 pub struct CyclicDoubleBufferingAlgorithm<TMM> {

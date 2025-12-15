@@ -11,7 +11,7 @@ use crate::{
         stage::{FilledStageFamily, RowMajorTilingOrder, StridedStageFamily, UnitMatmulFamily},
         tile::{io::Filled, register::RegisterMatmul},
     },
-    kernels::layered::{
+    routines::layered::{
         Algorithm,
         selector::{TileSizeSelection, UnitMatmulSelectionOptions, unit_matmul_selection},
     },

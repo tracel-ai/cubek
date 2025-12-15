@@ -9,7 +9,7 @@ use cubek_matmul::components::{
 };
 use cubek_matmul::{
     components::tile::TileMatmulFamily,
-    kernels::layered::{NUM_SM_APPROX, NUM_TENSOR_CORES_APPROX, find_instruction_size},
+    routines::layered::{NUM_SM_APPROX, NUM_TENSOR_CORES_APPROX, find_instruction_size},
 };
 
 use crate::components::ConvolutionProblem;

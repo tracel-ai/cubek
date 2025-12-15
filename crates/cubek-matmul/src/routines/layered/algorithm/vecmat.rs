@@ -23,7 +23,7 @@ use crate::{
         },
         tile::{io::Filled, plane_vec_mat_inner_product::PlaneVecMatInnerProduct},
     },
-    kernels::layered::Algorithm,
+    routines::layered::Algorithm,
 };
 
 pub struct SimpleVecMatAlgorithm {}

@@ -4,10 +4,10 @@ use cubecl::{Runtime, client::ComputeClient};
 use cubek_matmul::components::MatmulElems;
 use cubek_matmul::components::global::args::MatmulArgs;
 use cubek_matmul::{
-    MatmulInputHandleRef,
     components::{
         InputArg, InputRuntimeArg, MatmulLineSizes, MatmulSelection, OutputArg, OutputRuntimeArg,
     },
+    launch::MatmulInputHandleRef,
 };
 
 use crate::{

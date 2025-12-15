@@ -8,13 +8,12 @@ use cubecl::std::tensor::{
     MatrixBatchLayout, View, launch::ViewArg, layout::Coords3d, matrix_batch_layout,
 };
 
-use crate::{
-    MatmulInputHandle, MatmulInputHandleRef,
-    components::{
-        MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError, MatrixLayout,
-        global::memory::{GlobalLayout, GlobalLayoutConfig, GlobalLayoutLaunch, GlobalScaleLayout},
-    },
+use crate::components::{
+    MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError, MatrixLayout,
+    global::memory::{GlobalLayout, GlobalLayoutConfig, GlobalLayoutLaunch, GlobalScaleLayout},
 };
+use crate::launch::MatmulInputHandle;
+use crate::launch::MatmulInputHandleRef;
 
 #[cube]
 fn load_unrolled<I: Numeric>(

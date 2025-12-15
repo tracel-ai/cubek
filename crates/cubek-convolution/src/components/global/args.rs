@@ -12,7 +12,6 @@ use cubecl::std::{
 
 use crate::components::{ConvGemmConfig, ConvolutionParams, ConvolutionProblem, global::layout::*};
 use cubek_matmul::{
-    MatmulInputHandleRef,
     components::{
         MatmulElems, MatmulLineSizes, MatmulSelection,
         global::{
@@ -25,6 +24,7 @@ use cubek_matmul::{
         },
         stage::StageConfig as _,
     },
+    launch::MatmulInputHandleRef,
 };
 
 #[derive(CubeType, CubeLaunch, Clone)]
