@@ -11,8 +11,8 @@ use crate::{
         stage::{FilledStageFamily, RowMajorTilingOrder, StridedStageFamily, UnitMatmulFamily},
         tile::{io::Filled, register::RegisterMatmul},
     },
-    routines::layered::{
-        Algorithm,
+    routines::{
+        Routine,
         selector::{TileSizeSelection, UnitMatmulSelectionOptions, unit_matmul_selection},
     },
 };
@@ -25,7 +25,7 @@ pub struct DoubleUnitSelectionArgs {
     pub tile_size: TileSizeSelection,
 }
 
-impl Algorithm for DoubleUnitAlgorithm {
+impl Routine for DoubleUnitAlgorithm {
     type SelectionArgs = DoubleUnitSelectionArgs;
     type TileMatmul = RegisterMatmul<Filled>;
     type StageMatmul = UnitMatmulFamily<Self::TileMatmul, StridedStageFamily, FilledStageFamily>;

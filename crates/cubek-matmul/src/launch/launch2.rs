@@ -1,55 +1,27 @@
 use crate::components::global::args::{ConcreteInputsFactory, ConcreteOutputFactory};
 use crate::components::{
     AvailableLineSizes, InputArg, InputRuntimeArg, MatmulAvailabilityError, MatmulProblem,
-    MatmulSelection, MatmulSetupError, MatrixLayout, OutputArg, OutputRuntimeArg,
+    MatmulSetupError, MatrixLayout, OutputArg, OutputRuntimeArg,
 };
 use crate::components::{
     MatmulElems,
     batch::{BatchMatmulFamily, CubeCountInputArgs},
     global::args::{MatmulArgs, TensorArgs, TensorMapArgs},
 };
+use crate::launch::select_kernel::launch_kernel_concrete;
 use crate::launch::{MatmulInputHandle, MatmulInputHandleRef};
-use crate::routines::layered::selector::launch_kernel_concrete;
+use crate::routines::{Routine, Selection};
 use cubecl::features::TypeUsage;
 use cubecl::prelude::*;
 use cubecl::std::tensor::{MatrixBatchLayout, TensorHandle, matrix_batch_layout};
 use cubecl::{Runtime, client::ComputeClient, frontend::TensorHandleRef};
-
-use super::Algorithm;
-
-#[derive(Debug, Clone)]
-pub enum Selection<S> {
-    /// Use a predefined MatmulSelection
-    Forced(MatmulSelection),
-    /// Allows to give limited MatmulSelection information, and the rest is inferred from it
-    Inferred(S),
-}
-
-impl<S: Default + Clone> Selection<S> {
-    pub fn maybe_forced_default(s: &Option<MatmulSelection>) -> Self {
-        s.as_ref()
-            .map(|s| Self::Forced(s.clone()))
-            .unwrap_or_default()
-    }
-    pub fn maybe_forced_or(s: &Option<MatmulSelection>, args: &S) -> Self {
-        s.as_ref()
-            .map(|s| Self::Forced(s.clone()))
-            .unwrap_or_else(|| Self::Inferred(args.clone()))
-    }
-}
-
-impl<S: Default> Default for Selection<S> {
-    fn default() -> Self {
-        Self::Inferred(Default::default())
-    }
-}
 
 /// Launch a matrix multiplication kernel.
 ///
 /// Cmma will be used if enabled
 /// Will fail if unavailable
 #[allow(clippy::result_large_err)]
-pub fn launch<R: Runtime, A: Algorithm>(
+pub fn launch<R: Runtime, A: Routine>(
     client: &ComputeClient<R>,
     lhs: MatmulInputHandle<R>,
     rhs: MatmulInputHandle<R>,
@@ -77,7 +49,7 @@ pub fn launch<R: Runtime, A: Algorithm>(
 /// Cmma will be used if available and enabled,
 /// otherwise it will fall back on a non-cmma implementation
 #[allow(clippy::result_large_err)]
-pub fn launch_ref<R: Runtime, A: Algorithm>(
+pub fn launch_ref<R: Runtime, A: Routine>(
     client: &ComputeClient<R>,
     lhs: &MatmulInputHandleRef<'_, R>,
     rhs: &MatmulInputHandleRef<'_, R>,
@@ -137,7 +109,7 @@ pub fn launch_ref<R: Runtime, A: Algorithm>(
 /// Cmma will be used if available and enabled,
 /// otherwise it will fall back on a non-cmma implementation
 #[allow(clippy::result_large_err)]
-pub fn launch_ref_tma<R: Runtime, A: Algorithm>(
+pub fn launch_ref_tma<R: Runtime, A: Routine>(
     client: &ComputeClient<R>,
     lhs: &MatmulInputHandleRef<'_, R>,
     rhs: &MatmulInputHandleRef<'_, R>,
@@ -187,7 +159,7 @@ pub fn launch_ref_tma<R: Runtime, A: Algorithm>(
 }
 
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
-fn launch_inner_ref<R: Runtime, MA: MatmulArgs, A: Algorithm>(
+fn launch_inner_ref<R: Runtime, MA: MatmulArgs, A: Routine>(
     client: &ComputeClient<R>,
     lhs_handle: &MatmulInputHandleRef<'_, R>,
     rhs_handle: &MatmulInputHandleRef<'_, R>,
@@ -297,7 +269,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments, clippy::result_large_err)]
-pub fn launch_with_config<'a, MA: MatmulArgs, R: Runtime, A: Algorithm>(
+pub fn launch_with_config<'a, MA: MatmulArgs, R: Runtime, A: Routine>(
     client: &ComputeClient<R>,
     cube_dim: CubeDim,
     cube_count: CubeCount,

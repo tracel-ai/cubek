@@ -18,7 +18,7 @@ use cubek_matmul::components::{
     global::args::TensorInputs,
 };
 use cubek_matmul::launch::MatmulInputHandleRef;
-use cubek_matmul::routines::layered::Algorithm;
+use cubek_matmul::routines::Routine;
 use cubek_test_utils::HostData;
 use cubek_test_utils::current_test_mode;
 use cubek_test_utils::{Distribution, RandomInputSpec, SimpleInputSpec, TestInput};
@@ -34,7 +34,7 @@ pub enum InputRepresentation {
 #[allow(unused)]
 /// Test the correctness of the specified Matmul on the given device,
 /// against a naive CPU implementation over the given problem
-pub fn test_matmul_algorithm<A: Algorithm>(
+pub fn test_matmul_algorithm<A: Routine>(
     client: ComputeClient<TestRuntime>,
     mut problem: MatmulProblem,
     selection: MatmulSelection,
@@ -94,7 +94,7 @@ pub fn test_matmul_algorithm<A: Algorithm>(
 }
 
 /// Returns whether execution succeeded
-pub fn launch_matmul_algorithm<A: Algorithm>(
+pub fn launch_matmul_algorithm<A: Routine>(
     client: &ComputeClient<TestRuntime>,
     problem: &MatmulProblem,
     selection: MatmulSelection,

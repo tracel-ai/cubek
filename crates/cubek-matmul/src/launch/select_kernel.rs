@@ -9,8 +9,8 @@ use crate::components::{
     global::args::{ConcreteInputsFactory, ConcreteOutputFactory},
 };
 use crate::launch::MatmulInputHandleRef;
-use crate::routines::layered::base::Selection;
-use crate::routines::layered::{Algorithm, launch_with_config};
+use crate::launch::launch2::launch_with_config;
+use crate::routines::{Routine, Selection};
 use cubecl::prelude::TensorHandleRef;
 use cubecl::{Runtime, client::ComputeClient};
 
@@ -18,7 +18,7 @@ use cubecl::{Runtime, client::ComputeClient};
 ///
 /// Only works for concrete tensor inputs and output.
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
-pub fn launch_kernel_concrete<MA: MatmulArgs, R: Runtime, A: Algorithm>(
+pub fn launch_kernel_concrete<MA: MatmulArgs, R: Runtime, A: Routine>(
     client: &ComputeClient<R>,
     lhs: &MatmulInputHandleRef<'_, R>,
     rhs: &MatmulInputHandleRef<'_, R>,
@@ -94,7 +94,7 @@ where
 
 /// Select which kernel to launch for the given Algorithm.
 #[allow(clippy::too_many_arguments)]
-pub fn launch_kernel_virtual<'a, MA: MatmulArgs, R: Runtime, A: Algorithm>(
+pub fn launch_kernel_virtual<'a, MA: MatmulArgs, R: Runtime, A: Routine>(
     client: &ComputeClient<R>,
     input: InputRuntimeArg<'a, MA, R>,
     output: OutputRuntimeArg<'a, MA, R>,

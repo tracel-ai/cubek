@@ -1,5 +1,3 @@
-use std::fmt::Display;
-
 use cubecl::{
     Runtime,
     client::ComputeClient,
@@ -10,8 +8,13 @@ use cubecl::{
 use cubecl_common::quant::scheme::{QuantScheme, QuantStore, QuantValue};
 
 use cubecl::std::tensor::{TensorHandle, into_contiguous_packed, into_contiguous_pitched};
-use serde::{Deserialize, Serialize};
 
+use crate::launch::{
+    launch2,
+    strategy::{
+        AcceleratedTileKind, AsyncPartialReadingStrategy, PartialReadingStrategy, ReadingStrategy,
+    },
+};
 use crate::{
     components::{
         MatmulElems, MatmulSetupError,
@@ -21,13 +24,10 @@ use crate::{
         },
         tile::{cmma::CmmaMatmul, io::Filled, mma::MmaMatmul},
     },
-    routines::layered::{
-        Selection,
+    launch::strategy::Strategy,
+    routines::{
         double_buffering::*,
-        double_unit::{DoubleUnitAlgorithm, DoubleUnitSelectionArgs},
-        ordered_double_buffering::OrderedSelectionArgs,
-        simple::SimpleArgs,
-        simple_unit::SimpleUnitSelectionArgs,
+        double_unit::DoubleUnitAlgorithm,
         specialized::SpecializedAlgorithm,
         vecmat::{DoubleVecMatAlgorithm, SimpleVecMatAlgorithm},
     },
@@ -39,270 +39,16 @@ use crate::{
         stage::{ColMajorTilingOrder, RowMajorTilingOrder},
     },
     routines::{
-        layered::{
-            self,
-            double_buffering::{
-                CyclicDoubleBufferingAlgorithm, HybridDoubleBufferingAlgorithm,
-                TilewiseDoubleBufferingAlgorithm,
-            },
-            ordered_double_buffering::OrderedDoubleBufferingAlgorithm,
-            simple::{SimpleAlgorithm, SimpleTmaAlgorithm},
-            simple_unit::SimpleUnitAlgorithm,
+        double_buffering::{
+            CyclicDoubleBufferingAlgorithm, HybridDoubleBufferingAlgorithm,
+            TilewiseDoubleBufferingAlgorithm,
         },
         naive,
+        ordered_double_buffering::OrderedDoubleBufferingAlgorithm,
+        simple::{SimpleAlgorithm, SimpleTmaAlgorithm},
+        simple_unit::SimpleUnitAlgorithm,
     },
 };
-
-#[derive(Debug, Clone, Default)]
-/// The matmul algorithm to launch
-///
-/// Most strategies have a selection input that can be overwritten or inferred from minimal information
-/// Some strategies must have a specified loading strategy
-pub enum Strategy {
-    Simple {
-        read_strategy: ReadingStrategy,
-        selection: Selection<SimpleArgs>,
-        tile_kind: AcceleratedTileKind,
-    },
-    DoubleBuffering {
-        read_strategy: PartialReadingStrategy,
-        selection: Selection<DoubleBufferingArgs>,
-        tile_kind: AcceleratedTileKind,
-    },
-    Specialized {
-        read_strategy: AsyncPartialReadingStrategy,
-        selection: Selection<()>,
-        tile_kind: AcceleratedTileKind,
-    },
-    SimpleUnit(Selection<SimpleUnitSelectionArgs>),
-    DoubleUnit(Selection<DoubleUnitSelectionArgs>),
-    SimpleVecMat(Selection<()>),
-    DoubleVecMat(Selection<()>),
-    OrderedDoubleBuffering {
-        selection: Selection<OrderedSelectionArgs>,
-        tile_kind: AcceleratedTileKind,
-    },
-    Naive,
-    #[default]
-    /// Tries using a Simple matmul, then a SimpleUnit if the former failed
-    Auto,
-}
-
-impl Display for Strategy {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Strategy::Simple {
-                read_strategy,
-                selection,
-                tile_kind,
-            } => {
-                f.write_fmt(format_args!("matmul_simple_{read_strategy}_{tile_kind}"))?;
-
-                match selection {
-                    Selection::Forced(_) => f.write_str("_forced_selection")?,
-                    Selection::Inferred(args) => {
-                        if args.multi_rows {
-                            f.write_str("_multirows")?;
-                        }
-                    }
-                };
-            }
-            Strategy::DoubleBuffering {
-                read_strategy,
-                selection,
-                tile_kind,
-            } => {
-                f.write_fmt(format_args!(
-                    "matmul_double_buffering_{read_strategy}_{tile_kind}"
-                ))?;
-
-                match selection {
-                    Selection::Forced(_) => f.write_str("_forced_selection")?,
-                    Selection::Inferred(args) => {
-                        if args.specialized {
-                            f.write_str("_specialized")?;
-                        }
-                    }
-                };
-            }
-            Strategy::Specialized {
-                read_strategy,
-                selection,
-                tile_kind,
-            } => {
-                f.write_fmt(format_args!(
-                    "matmul_specialized_{read_strategy}_{tile_kind}"
-                ))?;
-
-                match selection {
-                    Selection::Forced(_) => f.write_str("_forced_selection")?,
-                    Selection::Inferred(_) => {}
-                };
-            }
-            Strategy::SimpleUnit(selection) => {
-                f.write_fmt(format_args!("matmul_simple_unit"))?;
-
-                match selection {
-                    Selection::Forced(_) => f.write_str("_forced_selection")?,
-                    Selection::Inferred(args) => {
-                        f.write_fmt(format_args!("_{}", args.tile_size))?;
-                    }
-                };
-            }
-            Strategy::DoubleUnit(selection) => {
-                f.write_str("matmul_double_buffering_unit")?;
-
-                match selection {
-                    Selection::Forced(_) => f.write_str("_forced_selection")?,
-                    Selection::Inferred(args) => {
-                        f.write_fmt(format_args!("_{}", args.tile_size))?;
-                    }
-                };
-            }
-            Strategy::SimpleVecMat(selection) => {
-                f.write_str("vecmat_simple")?;
-
-                match selection {
-                    Selection::Forced(_) => f.write_str("_forced_selection")?,
-                    Selection::Inferred(_) => {}
-                };
-            }
-            Strategy::DoubleVecMat(selection) => {
-                f.write_str("vecmat_double_buffering")?;
-
-                match selection {
-                    Selection::Forced(_) => f.write_str("_forced_selection")?,
-                    Selection::Inferred(_) => {}
-                };
-            }
-            Strategy::OrderedDoubleBuffering {
-                selection,
-                tile_kind,
-            } => {
-                f.write_fmt(format_args!("matmul_double_buffering_ordered_{tile_kind}"))?;
-
-                match selection {
-                    Selection::Forced(_) => f.write_str("_forced_selection")?,
-                    Selection::Inferred(args) => {
-                        if let Some(k) = args.partition_k {
-                            f.write_fmt(format_args!("_partition_k{}", k))?;
-                        }
-                        if let Some(r) = args.row_count {
-                            f.write_fmt(format_args!("_row_count{}", r))?;
-                        }
-                        if let Some(r) = args.rows_per_plane {
-                            f.write_fmt(format_args!("_row_per_plane{}", r))?;
-                        }
-                    }
-                };
-            }
-            Strategy::Naive => f.write_str("matmul_naive")?,
-            Strategy::Auto => f.write_str("matmul_auto")?,
-        };
-
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-/// Which reader to use in simple algorithms
-pub enum ReadingStrategy {
-    Cyclic,
-    Strided,
-    Tilewise,
-    AsyncCyclic,
-    AsyncStrided,
-    Tma,
-}
-
-#[derive(Debug, Clone, Copy)]
-/// Which reader to use in double buffering algorithms
-pub enum PartialReadingStrategy {
-    Cyclic,
-    Tilewise,
-    Hybrid,
-    Tma,
-    AsyncCyclic,
-    AsyncStrided,
-}
-
-#[derive(Debug, Clone, Copy)]
-/// Which reader to use in specialized algorithms
-pub enum AsyncPartialReadingStrategy {
-    Cyclic,
-    Strided,
-    Tma,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-/// Which tile matmul to use for accelerated algorithms
-pub enum AcceleratedTileKind {
-    #[default]
-    Cmma,
-    Mma,
-}
-
-// Display implementations are used to combine and save names when autotuning.
-
-impl Display for AcceleratedTileKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AcceleratedTileKind::Cmma => f.write_str("cmma"),
-            AcceleratedTileKind::Mma => f.write_str("mma"),
-        }
-    }
-}
-
-impl Display for ReadingStrategy {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ReadingStrategy::Cyclic => f.write_str("cyclic"),
-            ReadingStrategy::Strided => f.write_str("strided"),
-            ReadingStrategy::Tilewise => f.write_str("tilewise"),
-            ReadingStrategy::AsyncCyclic => f.write_str("async_cyclic"),
-            ReadingStrategy::AsyncStrided => f.write_str("async_strided"),
-            ReadingStrategy::Tma => f.write_str("tma"),
-        }
-    }
-}
-
-impl Display for PartialReadingStrategy {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PartialReadingStrategy::Cyclic => f.write_str("cyclic"),
-            PartialReadingStrategy::Tilewise => f.write_str("tilewise"),
-            PartialReadingStrategy::Hybrid => f.write_str("hybrid"),
-            PartialReadingStrategy::Tma => f.write_str("tma"),
-            PartialReadingStrategy::AsyncCyclic => f.write_str("async_cyclic"),
-            PartialReadingStrategy::AsyncStrided => f.write_str("async_strided"),
-        }
-    }
-}
-
-impl Display for AsyncPartialReadingStrategy {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AsyncPartialReadingStrategy::Cyclic => f.write_str("cyclic"),
-            AsyncPartialReadingStrategy::Strided => f.write_str("strided"),
-            AsyncPartialReadingStrategy::Tma => f.write_str("tma"),
-        }
-    }
-}
-
-macro_rules! with_tile_kind {
-    ($kind: expr, $T: ident, $launch: expr) => {
-        match $kind {
-            AcceleratedTileKind::Cmma => {
-                type $T = CmmaMatmul<Filled>;
-                ($launch)()
-            }
-            AcceleratedTileKind::Mma => {
-                type $T = MmaMatmul;
-                ($launch)()
-            }
-        }
-    };
-}
 
 pub enum MatmulInputHandle<R: Runtime> {
     Normal(TensorHandle<R>),
@@ -558,6 +304,21 @@ pub fn launch<R: Runtime>(
     )
 }
 
+macro_rules! with_tile_kind {
+    ($kind: expr, $T: ident, $launch: expr) => {
+        match $kind {
+            AcceleratedTileKind::Cmma => {
+                type $T = CmmaMatmul<Filled>;
+                ($launch)()
+            }
+            AcceleratedTileKind::Mma => {
+                type $T = MmaMatmul;
+                ($launch)()
+            }
+        }
+    };
+}
+
 #[allow(clippy::result_large_err)]
 /// Launches a matrix multiplication kernel..
 ///
@@ -581,11 +342,11 @@ pub fn launch_ref<R: Runtime>(
             tile_kind,
         } => with_tile_kind!(tile_kind, Accelerated, || match read_strategy {
             ReadingStrategy::Cyclic => {
-                layered::launch_ref::<R, SimpleAlgorithm<Accelerated>>(
+                launch2::launch_ref::<R, SimpleAlgorithm<Accelerated>>(
                     client, lhs, rhs, out, selection, dtypes,
                 )
             }
-            ReadingStrategy::Strided => layered::launch_ref::<
+            ReadingStrategy::Strided => launch2::launch_ref::<
                 R,
                 SimpleAlgorithm<
                     Accelerated,
@@ -594,7 +355,7 @@ pub fn launch_ref<R: Runtime>(
                 >,
             >(client, lhs, rhs, out, selection, dtypes),
             ReadingStrategy::Tilewise => {
-                layered::launch_ref::<
+                launch2::launch_ref::<
                     R,
                     SimpleAlgorithm<
                         Accelerated,
@@ -604,7 +365,7 @@ pub fn launch_ref<R: Runtime>(
                 >(client, lhs, rhs, out, selection, dtypes)
             }
             ReadingStrategy::AsyncStrided => {
-                layered::launch_ref::<
+                launch2::launch_ref::<
                     R,
                     SimpleAlgorithm<
                         Accelerated,
@@ -614,7 +375,7 @@ pub fn launch_ref<R: Runtime>(
                 >(client, lhs, rhs, out, selection, dtypes)
             }
             ReadingStrategy::AsyncCyclic => {
-                layered::launch_ref::<
+                launch2::launch_ref::<
                     R,
                     SimpleAlgorithm<
                         Accelerated,
@@ -623,7 +384,7 @@ pub fn launch_ref<R: Runtime>(
                     >,
                 >(client, lhs, rhs, out, selection, dtypes)
             }
-            ReadingStrategy::Tma => layered::launch_ref_tma::<R, SimpleTmaAlgorithm<Accelerated>>(
+            ReadingStrategy::Tma => launch2::launch_ref_tma::<R, SimpleTmaAlgorithm<Accelerated>>(
                 client, lhs, rhs, out, selection, dtypes
             ),
         }),
@@ -633,32 +394,32 @@ pub fn launch_ref<R: Runtime>(
             tile_kind,
         } => with_tile_kind!(tile_kind, Accelerated, || match read_strategy {
             PartialReadingStrategy::Cyclic => {
-                layered::launch_ref::<R, CyclicDoubleBufferingAlgorithm<Accelerated>>(
+                launch2::launch_ref::<R, CyclicDoubleBufferingAlgorithm<Accelerated>>(
                     client, lhs, rhs, out, selection, dtypes,
                 )
             }
             PartialReadingStrategy::Tilewise => {
-                layered::launch_ref::<R, TilewiseDoubleBufferingAlgorithm<Accelerated>>(
+                launch2::launch_ref::<R, TilewiseDoubleBufferingAlgorithm<Accelerated>>(
                     client, lhs, rhs, out, selection, dtypes,
                 )
             }
             PartialReadingStrategy::Hybrid => {
-                layered::launch_ref::<R, HybridDoubleBufferingAlgorithm<Accelerated>>(
+                launch2::launch_ref::<R, HybridDoubleBufferingAlgorithm<Accelerated>>(
                     client, lhs, rhs, out, selection, dtypes,
                 )
             }
             PartialReadingStrategy::Tma => {
-                layered::launch_ref_tma::<R, TmaDoubleBufferingAlgorithm<Accelerated>>(
+                launch2::launch_ref_tma::<R, TmaDoubleBufferingAlgorithm<Accelerated>>(
                     client, lhs, rhs, out, selection, dtypes,
                 )
             }
             PartialReadingStrategy::AsyncCyclic => {
-                layered::launch_ref::<R, AsyncCyclicDoubleBufferingAlgorithm<Accelerated>>(
+                launch2::launch_ref::<R, AsyncCyclicDoubleBufferingAlgorithm<Accelerated>>(
                     client, lhs, rhs, out, selection, dtypes,
                 )
             }
             PartialReadingStrategy::AsyncStrided => {
-                layered::launch_ref::<R, AsyncStridedDoubleBufferingAlgorithm<Accelerated>>(
+                launch2::launch_ref::<R, AsyncStridedDoubleBufferingAlgorithm<Accelerated>>(
                     client, lhs, rhs, out, selection, dtypes,
                 )
             }
@@ -668,43 +429,43 @@ pub fn launch_ref<R: Runtime>(
             selection,
             tile_kind,
         } => with_tile_kind!(tile_kind, Accelerated, || match read_strategy {
-            AsyncPartialReadingStrategy::Cyclic => layered::launch_ref::<
+            AsyncPartialReadingStrategy::Cyclic => launch2::launch_ref::<
                 R,
                 SpecializedAlgorithm<Accelerated, AsyncPartialCyclicLoading<ColMajorTilingOrder>>,
             >(
                 client, lhs, rhs, out, selection, dtypes
             ),
             AsyncPartialReadingStrategy::Strided =>
-                layered::launch_ref::<
+                launch2::launch_ref::<
                     R,
                     SpecializedAlgorithm<Accelerated, AsyncPartialStridedLoading>,
                 >(client, lhs, rhs, out, selection, dtypes),
             AsyncPartialReadingStrategy::Tma =>
-                layered::launch_ref_tma::<R, SpecializedAlgorithm<Accelerated>>(
+                launch2::launch_ref_tma::<R, SpecializedAlgorithm<Accelerated>>(
                     client, lhs, rhs, out, selection, dtypes
                 ),
         }),
         Strategy::OrderedDoubleBuffering {
             selection,
             tile_kind,
-        } => with_tile_kind!(tile_kind, Accelerated, || layered::launch_ref::<
+        } => with_tile_kind!(tile_kind, Accelerated, || launch2::launch_ref::<
             R,
             OrderedDoubleBufferingAlgorithm<Accelerated>,
         >(
             client, lhs, rhs, out, selection, dtypes
         )),
         Strategy::SimpleUnit(selection) => {
-            layered::launch_ref::<R, SimpleUnitAlgorithm>(client, lhs, rhs, out, selection, dtypes)
+            launch2::launch_ref::<R, SimpleUnitAlgorithm>(client, lhs, rhs, out, selection, dtypes)
         }
         Strategy::DoubleUnit(selection) => {
-            layered::launch_ref::<R, DoubleUnitAlgorithm>(client, lhs, rhs, out, selection, dtypes)
+            launch2::launch_ref::<R, DoubleUnitAlgorithm>(client, lhs, rhs, out, selection, dtypes)
         }
         Strategy::Naive => {
             naive::launch_ref(client, lhs, rhs, out, dtypes)?;
             Ok(())
         }
         Strategy::Auto => {
-            if let Err(err) = layered::launch_ref::<R, SimpleAlgorithm<CmmaMatmul<Filled>>>(
+            if let Err(err) = launch2::launch_ref::<R, SimpleAlgorithm<CmmaMatmul<Filled>>>(
                 client,
                 lhs,
                 rhs,
@@ -714,7 +475,7 @@ pub fn launch_ref<R: Runtime>(
             ) {
                 match err {
                     MatmulSetupError::Unavailable(_) => {
-                        layered::launch_ref::<R, SimpleUnitAlgorithm>(
+                        launch2::launch_ref::<R, SimpleUnitAlgorithm>(
                             client,
                             lhs,
                             rhs,
@@ -730,10 +491,10 @@ pub fn launch_ref<R: Runtime>(
 
             Ok(())
         }
-        Strategy::SimpleVecMat(selection) => layered::launch_ref::<R, SimpleVecMatAlgorithm>(
+        Strategy::SimpleVecMat(selection) => launch2::launch_ref::<R, SimpleVecMatAlgorithm>(
             client, lhs, rhs, out, selection, dtypes,
         ),
-        Strategy::DoubleVecMat(selection) => layered::launch_ref::<R, DoubleVecMatAlgorithm>(
+        Strategy::DoubleVecMat(selection) => launch2::launch_ref::<R, DoubleVecMatAlgorithm>(
             client, lhs, rhs, out, selection, dtypes,
         ),
     }

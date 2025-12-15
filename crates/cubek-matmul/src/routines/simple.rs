@@ -27,8 +27,8 @@ use crate::{
             io::{Filled, Strided},
         },
     },
-    routines::layered::{
-        Algorithm,
+    routines::{
+        Routine,
         selector::{PlaneMatmulSelectionOptions, plane_matmul_selection},
     },
 };
@@ -53,7 +53,7 @@ pub struct SimpleArgs {
     pub multi_rows: bool,
 }
 
-impl<TMM, LL, RL> Algorithm for SimpleAlgorithm<TMM, LL, RL>
+impl<TMM, LL, RL> Routine for SimpleAlgorithm<TMM, LL, RL>
 where
     TMM:
         TileMatmulFamily<LhsTile = Strided, RhsTile = Strided, AccTile = Filled, OutTile = Strided>,

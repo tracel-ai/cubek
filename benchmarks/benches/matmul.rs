@@ -15,7 +15,7 @@ use cubek::{
             AcceleratedTileKind, AsyncPartialReadingStrategy, MatmulInputHandle,
             PartialReadingStrategy, ReadingStrategy,
         },
-        routines::layered::{
+        routines::{
             Selection, TileSizeSelection, double_buffering::DoubleBufferingArgs,
             double_unit::DoubleUnitSelectionArgs, ordered_double_buffering::OrderedSelectionArgs,
             simple::SimpleArgs, simple_unit::SimpleUnitSelectionArgs,

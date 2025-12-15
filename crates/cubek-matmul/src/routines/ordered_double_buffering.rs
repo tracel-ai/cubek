@@ -19,8 +19,8 @@ use crate::components::{
 use crate::components::{
     global::read::sync_partial_cyclic::SyncPartialCyclicLoading, tile::io::Strided,
 };
-use crate::routines::layered::Algorithm;
-use crate::routines::layered::selector::{PlaneMatmulSelectionOptions, plane_matmul_selection};
+use crate::routines::Routine;
+use crate::routines::selector::{PlaneMatmulSelectionOptions, plane_matmul_selection};
 
 /// Plane accelerated double buffered matmul ordered on Lhs with cyclic reader on Rhs
 pub struct OrderedDoubleBufferingAlgorithm<TMM> {
@@ -34,7 +34,7 @@ pub struct OrderedSelectionArgs {
     pub rows_per_plane: Option<u32>,
 }
 
-impl<TMM> Algorithm for OrderedDoubleBufferingAlgorithm<TMM>
+impl<TMM> Routine for OrderedDoubleBufferingAlgorithm<TMM>
 where
     TMM: tile::TileMatmulFamily<
             LhsTile = Strided,

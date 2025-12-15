@@ -17,15 +17,13 @@ use crate::{
         },
         tile::{TileMatmulFamily, io::Filled, register::RegisterMatmul},
     },
-    routines::layered::{
-        TileSizeSelection,
-        selector::{
-            PartitionScaling, StageScaling, UnitMatmulSelectionOptions, unit_matmul_selection,
-        },
+    routines::selector::{
+        PartitionScaling, StageScaling, TileSizeSelection, UnitMatmulSelectionOptions,
+        unit_matmul_selection,
     },
 };
 
-use super::Algorithm;
+use super::Routine;
 
 /// Unit single stage matmul with configurable readers (default to cyclic)
 pub struct SimpleUnitAlgorithm<
@@ -41,7 +39,7 @@ pub struct SimpleUnitSelectionArgs {
     pub tile_size: TileSizeSelection,
 }
 
-impl<LL, RL> Algorithm for SimpleUnitAlgorithm<LL, RL>
+impl<LL, RL> Routine for SimpleUnitAlgorithm<LL, RL>
 where
     LL: FullLoadingStrategy,
     RL: FullLoadingStrategy<SyncStrategy = LL::SyncStrategy>,

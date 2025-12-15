@@ -22,9 +22,9 @@ use crate::components::{
     global::multi_stage::double_buffering::DoubleBufferingMatmulFamily,
     stage::{FilledStageFamily, StridedStageFamily},
 };
-use crate::routines::layered::Algorithm;
-use crate::routines::layered::algorithm::base;
-use crate::routines::layered::selector::{PlaneMatmulSelectionOptions, plane_matmul_selection};
+use crate::routines::Routine;
+use crate::routines::base;
+use crate::routines::selector::{PlaneMatmulSelectionOptions, plane_matmul_selection};
 
 /// Plane accelerated double buffered matmul with cyclic readers
 pub struct CyclicDoubleBufferingAlgorithm<TMM> {
@@ -61,7 +61,7 @@ pub struct DoubleBufferingArgs {
     pub specialized: bool,
 }
 
-impl<TMM> base::Algorithm for CyclicDoubleBufferingAlgorithm<TMM>
+impl<TMM> base::Routine for CyclicDoubleBufferingAlgorithm<TMM>
 where
     TMM: tile::TileMatmulFamily<
             LhsTile = Strided,
@@ -113,7 +113,7 @@ where
     }
 }
 
-impl<TMM> base::Algorithm for AsyncCyclicDoubleBufferingAlgorithm<TMM>
+impl<TMM> base::Routine for AsyncCyclicDoubleBufferingAlgorithm<TMM>
 where
     TMM: tile::TileMatmulFamily<
             LhsTile = Strided,
@@ -165,7 +165,7 @@ where
     }
 }
 
-impl<TMM> Algorithm for TilewiseDoubleBufferingAlgorithm<TMM>
+impl<TMM> Routine for TilewiseDoubleBufferingAlgorithm<TMM>
 where
     TMM: tile::TileMatmulFamily<
             LhsTile = Strided,
@@ -218,7 +218,7 @@ where
     }
 }
 
-impl<TMM> base::Algorithm for HybridDoubleBufferingAlgorithm<TMM>
+impl<TMM> base::Routine for HybridDoubleBufferingAlgorithm<TMM>
 where
     TMM: tile::TileMatmulFamily<
             LhsTile = Strided,
@@ -270,7 +270,7 @@ where
     }
 }
 
-impl<TMM> base::Algorithm for TmaDoubleBufferingAlgorithm<TMM>
+impl<TMM> base::Routine for TmaDoubleBufferingAlgorithm<TMM>
 where
     TMM: tile::TileMatmulFamily<
             LhsTile = Strided,
@@ -322,7 +322,7 @@ where
     }
 }
 
-impl<TMM> base::Algorithm for AsyncStridedDoubleBufferingAlgorithm<TMM>
+impl<TMM> base::Routine for AsyncStridedDoubleBufferingAlgorithm<TMM>
 where
     TMM: tile::TileMatmulFamily<
             LhsTile = Strided,

@@ -19,8 +19,8 @@ use crate::components::{
 };
 use crate::components::{global::PlaneWriterFamily, stage::StageFamily};
 use crate::components::{stage::FilledStageFamily, tile::TileMatmulFamily};
-use crate::routines::layered::algorithm::base;
-use crate::routines::layered::selector::{PlaneMatmulSelectionOptions, plane_matmul_selection};
+use crate::routines::base;
+use crate::routines::selector::{PlaneMatmulSelectionOptions, plane_matmul_selection};
 use crate::{
     components::{
         MatmulElems, MatmulLineSizes, MatmulSelection, MatmulSetupError, MatrixLayout,
@@ -29,7 +29,7 @@ use crate::{
         global::{LoadSpecializationConfig, SpecializationTensorConfig},
         stage::PartitionBuffering,
     },
-    routines::layered::selector::select_swizzle,
+    routines::selector::select_swizzle,
 };
 
 /// Plane accelerated specialized matmul with TMA readers
@@ -37,7 +37,7 @@ pub struct SpecializedAlgorithm<TMM, L = AsyncPartialTmaLoading> {
     pub _phantom: PhantomData<(TMM, L)>,
 }
 
-impl<TMM, L> base::Algorithm for SpecializedAlgorithm<TMM, L>
+impl<TMM, L> base::Routine for SpecializedAlgorithm<TMM, L>
 where
     TMM: tile::TileMatmulFamily<
             LhsTile = <L::Stage as StageFamily>::TileKind,

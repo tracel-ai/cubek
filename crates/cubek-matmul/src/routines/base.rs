@@ -9,7 +9,7 @@ use crate::components::{
 use cubecl::prelude::*;
 
 /// Specifications for a matmul algorithm
-pub trait Algorithm {
+pub trait Routine {
     type SelectionArgs: Default + Clone;
     type TileMatmul: TileMatmulFamily;
     type StageMatmul: StageMatmulFamily;

@@ -23,12 +23,12 @@ use crate::{
         },
         tile::{io::Filled, plane_vec_mat_inner_product::PlaneVecMatInnerProduct},
     },
-    routines::layered::Algorithm,
+    routines::Routine,
 };
 
 pub struct SimpleVecMatAlgorithm {}
 
-impl Algorithm for SimpleVecMatAlgorithm {
+impl Routine for SimpleVecMatAlgorithm {
     type SelectionArgs = ();
     type TileMatmul = PlaneVecMatInnerProduct<Filled>;
     type StageMatmul = PlaneMatmulFamily<
@@ -65,7 +65,7 @@ impl Algorithm for SimpleVecMatAlgorithm {
 
 pub struct DoubleVecMatAlgorithm {}
 
-impl Algorithm for DoubleVecMatAlgorithm {
+impl Routine for DoubleVecMatAlgorithm {
     type SelectionArgs = ();
     type TileMatmul = PlaneVecMatInnerProduct<Filled>;
     type StageMatmul = PlaneMatmulFamily<
