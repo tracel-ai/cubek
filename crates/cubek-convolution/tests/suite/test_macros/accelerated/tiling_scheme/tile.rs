@@ -1,7 +1,7 @@
 #[macro_export]
 macro_rules! testgen_convolution_accelerated_tile {
     ($algorithm: ty, $precision: ty, $tiling_scheme_builder: expr) => {
-        use cubek_matmul::components::TileSize;
+        use cubek_matmul::definition::TileSize;
 
         #[cfg(target_os = "macos")]
         mod t8x8x8 {

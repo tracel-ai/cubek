@@ -1,6 +1,6 @@
 use core::fmt::Debug;
 use cubecl::server::LaunchError;
-use cubek_matmul::components::{MatmulAvailabilityError, MatmulSetupError};
+use cubek_matmul::definition::{MatmulAvailabilityError, MatmulSetupError};
 
 #[allow(clippy::large_enum_variant)]
 pub enum ConvSetupError {

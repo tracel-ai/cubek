@@ -12,9 +12,9 @@ use cubek_convolution::{
     },
     kernels::layered::algorithm::Algorithm,
 };
-use cubek_matmul::components::{InputArg, MatmulSelection, OutputArg};
-use cubek_matmul::components::{MatmulElems, MatmulIdent};
-use cubek_matmul::{components::AvailableLineSizes, definition::MatmulInputHandleRef};
+use cubek_matmul::definition::{MatmulElems, MatmulIdent, MatmulSelection};
+use cubek_matmul::launch::{InputArg, OutputArg};
+use cubek_matmul::{definition::AvailableLineSizes, launch::MatmulInputHandleRef};
 
 use super::test_utils::TestPrecision;
 

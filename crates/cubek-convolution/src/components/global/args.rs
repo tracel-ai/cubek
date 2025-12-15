@@ -9,22 +9,19 @@ use cubecl::std::{
         },
     },
 };
+use cubek_matmul::definition::{MatmulElems, MatmulLineSizes, MatmulSelection};
+use cubek_matmul::launch::{
+    MatmulInputHandleRef, TensorInputs, TensorInputsLaunch, TensorMapInputs, TensorMapInputsLaunch,
+    TensorOutput, TensorOutputLaunch,
+};
 
 use crate::components::{ConvGemmConfig, ConvolutionParams, ConvolutionProblem, global::layout::*};
-use cubek_matmul::{
-    components::{
-        MatmulElems, MatmulLineSizes, MatmulSelection,
-        global::{
-            GlobalConfig,
-            args::{
-                TensorInputs, TensorInputsLaunch, TensorMapInputs, TensorMapInputsLaunch,
-                TensorOutput, TensorOutputLaunch,
-            },
-            memory::{NoopLayout, NoopLayoutLaunch},
-        },
-        stage::StageConfig as _,
+use cubek_matmul::components::{
+    global::{
+        GlobalConfig,
+        memory::{NoopLayout, NoopLayoutLaunch},
     },
-    definition::MatmulInputHandleRef,
+    stage::StageConfig as _,
 };
 
 #[derive(CubeType, CubeLaunch, Clone)]

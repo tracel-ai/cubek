@@ -2,12 +2,11 @@ use cubecl;
 use cubecl::prelude::*;
 use cubecl::std::{CubeOption, CubeOptionExpand};
 use cubecl::{Runtime, client::ComputeClient};
-use cubek_matmul::components::MatmulElems;
+use cubek_matmul::components::batch::SliceIndex;
 use cubek_matmul::components::global::GlobalConfig;
 use cubek_matmul::components::stage::StageConfig as _;
-use cubek_matmul::components::{
-    InputRuntimeArg, OutputRuntimeArg, batch::SliceIndex, global::args::MatmulArgs,
-};
+use cubek_matmul::definition::MatmulElems;
+use cubek_matmul::launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
 
 use crate::components::global::{GlobalConvolution, GlobalConvolutionFamily};
 use crate::components::{

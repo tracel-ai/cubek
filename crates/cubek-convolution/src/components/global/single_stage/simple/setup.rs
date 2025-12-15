@@ -1,7 +1,5 @@
 use cubecl::{Runtime, client::ComputeClient};
 use cubek_matmul::components::{
-    AvailableLineSizes, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem,
-    MatmulSelection, MatmulSetupError, MatrixLayout, StageIdent,
     global::{
         GlobalReaderConfig, GlobalWriterConfig, MatmulPlaneCounts, PartitionedStageFamily,
         SharedGlobalMatmulConfig, WriteTiling, cube_dim_validation,
@@ -13,6 +11,10 @@ use cubek_matmul::components::{
         ColMajorTilingOrder, ContiguousTilingLayout, RowMajorTilingOrder, StageConfig,
         StageMatmulFamily, StridedStageFamily,
     },
+};
+use cubek_matmul::definition::{
+    AvailableLineSizes, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem,
+    MatmulSelection, MatmulSetupError, MatrixLayout, StageIdent,
 };
 use std::marker::PhantomData;
 

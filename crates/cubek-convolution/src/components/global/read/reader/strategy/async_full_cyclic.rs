@@ -4,7 +4,6 @@ use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Layout, LayoutExpand};
 use cubek_matmul::components::{
-    InvalidConfigError, MatmulElems, MatmulProblem,
     global::{
         GlobalReaderConfig, RoleRule,
         memory::GlobalIterator,
@@ -16,6 +15,7 @@ use cubek_matmul::components::{
     },
     stage::{ContiguousTilingLayout, StridedStageFamily, StridedStageMemory, TilingOrder},
 };
+use cubek_matmul::definition::{InvalidConfigError, MatmulElems, MatmulProblem};
 
 use crate::components::global::{
     args::RuntimeArgs,

@@ -5,10 +5,12 @@ use cubecl::std::{
     tensor::{View, layout::Coords2d},
 };
 use cubek_matmul::components::{
-    AccG, AvailableLineSizes, LhsG, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulSelection,
-    MatmulSetupError, RhsG,
     global::GlobalWriter,
     stage::{ContiguousTilingLayout, RowMajorTilingOrder},
+};
+use cubek_matmul::definition::{
+    AccG, AvailableLineSizes, LhsG, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulSelection,
+    MatmulSetupError, RhsG,
 };
 
 use crate::components::{

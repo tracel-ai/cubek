@@ -4,13 +4,13 @@ use cubecl::std::{
     tensor::{View, layout::Coords2d},
 };
 use cubek_matmul::components::{
-    AccG, AccS, LhsG, LhsS, MatmulPrecision, RhsG, RhsS,
     global::{
         GlobalConfig, GlobalWriter, PartitionedStage, PlaneWriter, SharedGlobalMatmulConfig,
         read::SyncStrategy,
     },
     stage::{StageConfig, StageMatmul, StridedStageMemory},
 };
+use cubek_matmul::definition::{AccG, AccS, LhsG, LhsS, MatmulPrecision, RhsG, RhsS};
 use std::marker::PhantomData;
 
 use crate::components::{

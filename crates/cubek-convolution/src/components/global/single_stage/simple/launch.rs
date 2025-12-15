@@ -1,8 +1,12 @@
 use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, server::LaunchError};
-use cubek_matmul::components::{
-    InputRuntimeArg, MatmulElems, OutputRuntimeArg,
-    global::{PartitionedStageFamily, args::MatmulArgs},
-    stage::{StageMatmulFamily, StridedStageFamily},
+use cubek_matmul::launch::{InputRuntimeArg, OutputRuntimeArg};
+use cubek_matmul::{
+    components::{
+        global::PartitionedStageFamily,
+        stage::{StageMatmulFamily, StridedStageFamily},
+    },
+    definition::MatmulElems,
+    launch::MatmulArgs,
 };
 
 use crate::components::global::{

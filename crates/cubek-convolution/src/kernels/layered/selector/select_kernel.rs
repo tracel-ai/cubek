@@ -1,14 +1,8 @@
 use crate::components::{ConvGemmConfig as _, global::args::RuntimeArgsLaunch};
 use cubecl::prelude::TensorHandleRef;
 use cubecl::{Runtime, client::ComputeClient};
-use cubek_matmul::components::MatmulElems;
-use cubek_matmul::components::global::args::MatmulArgs;
-use cubek_matmul::{
-    components::{
-        InputArg, InputRuntimeArg, MatmulLineSizes, MatmulSelection, OutputArg, OutputRuntimeArg,
-    },
-    definition::MatmulInputHandleRef,
-};
+use cubek_matmul::definition::{MatmulElems, MatmulLineSizes, MatmulSelection};
+use cubek_matmul::launch::{InputArg, InputRuntimeArg, MatmulArgs, MatmulInputHandleRef, OutputArg, OutputRuntimeArg};
 
 use crate::{
     components::{

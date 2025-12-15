@@ -1,25 +1,24 @@
 use cubecl::server::LaunchError;
 use cubecl::std::{CubeOption, tensor::TensorHandle};
 use cubecl::{Runtime, client::ComputeClient, ir::StorageType, prelude::TensorHandleRef};
-use cubek_matmul::components::{
-    AvailableLineSizes, MatmulElems, MatmulLineSizes, MatmulSelection, MatmulSetupError,
-    global::{
-        args::TensorMapArgs,
-        read::{
-            async_full_tma::AsyncFullTmaLoading, sync_full_strided::SyncFullStridedLoading,
-            sync_full_tilewise::SyncFullTilewiseLoading,
-        },
-    },
-    stage::StridedStageFamily,
-    tile::io::Strided,
-};
-use cubek_matmul::components::{
-    global::args::TensorArgs, stage::PlaneMatmulFamily, tile::TileMatmulFamily,
-};
+use cubek_matmul::components::stage::PlaneMatmulFamily;
+use cubek_matmul::components::tile::TileMatmulFamily;
 use cubek_matmul::components::{
     global::read::sync_full_cyclic::SyncFullCyclicLoading,
     stage::{ColMajorTilingOrder, RowMajorTilingOrder},
 };
+use cubek_matmul::components::{
+    global::read::{
+        async_full_tma::AsyncFullTmaLoading, sync_full_strided::SyncFullStridedLoading,
+        sync_full_tilewise::SyncFullTilewiseLoading,
+    },
+    stage::StridedStageFamily,
+    tile::io::Strided,
+};
+use cubek_matmul::definition::{
+    AvailableLineSizes, MatmulElems, MatmulLineSizes, MatmulSelection, MatmulSetupError,
+};
+use cubek_matmul::launch::{TensorArgs, TensorMapArgs};
 use std::marker::PhantomData;
 
 use crate::{
