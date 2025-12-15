@@ -1,6 +1,9 @@
 use cubecl::{TestRuntime, std::tensor::TensorHandle};
 
-use crate::test_utils::test_tensor::test_input::{base::{SimpleInputSpec, TestInputError}, strides::StrideSpec};
+use crate::test_utils::test_tensor::test_input::{
+    base::{SimpleInputSpec, TestInputError},
+    strides::StrideSpec,
+};
 
 pub(crate) fn build_zeros(
     spec: SimpleInputSpec,
