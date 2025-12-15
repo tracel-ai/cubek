@@ -1,6 +1,6 @@
 use cubecl::{TestRuntime, client::ComputeClient, ir::StorageType, std::tensor::TensorHandle};
 
-use crate::test_utils::test_tensor::test_input::{
+use crate::test_utils::test_tensor::{
     arange::build_arange,
     eye::build_eye,
     host_data::{HostData, HostDataType},
@@ -48,27 +48,23 @@ impl TestInput {
         client: ComputeClient<TestRuntime>,
         shape: Vec<usize>,
         dtype: StorageType,
+        stride_spec: StrideSpec,
     ) -> Self {
         TestInput {
             client: client.clone(),
-            spec: TestInputSpec::Zeros(SimpleInputSpec::new(
-                client,
-                shape,
-                dtype,
-                StrideSpec::RowMajor,
-            )),
+            spec: TestInputSpec::Zeros(SimpleInputSpec::new(client, shape, dtype, stride_spec)),
         }
     }
 
-    pub fn eye(client: ComputeClient<TestRuntime>, shape: Vec<usize>, dtype: StorageType) -> Self {
+    pub fn eye(
+        client: ComputeClient<TestRuntime>,
+        shape: Vec<usize>,
+        dtype: StorageType,
+        stride_spec: StrideSpec,
+    ) -> Self {
         TestInput {
             client: client.clone(),
-            spec: TestInputSpec::Eye(SimpleInputSpec::new(
-                client,
-                shape,
-                dtype,
-                StrideSpec::RowMajor,
-            )),
+            spec: TestInputSpec::Eye(SimpleInputSpec::new(client, shape, dtype, stride_spec)),
         }
     }
 
@@ -129,6 +125,12 @@ pub struct SimpleInputSpec {
     pub(crate) shape: Vec<usize>,
     pub(crate) dtype: StorageType,
     pub(crate) stride_spec: StrideSpec,
+}
+
+impl SimpleInputSpec {
+    pub(crate) fn strides(&self) -> Vec<usize> {
+        self.stride_spec.compute_strides(&self.shape)
+    }
 }
 
 pub struct RandomInputSpec {

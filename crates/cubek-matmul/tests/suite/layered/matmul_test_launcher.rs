@@ -70,6 +70,7 @@ pub fn test_matmul_algorithm<A: Algorithm>(
         client.clone(),
         problem.shape(MatmulIdent::Out),
         *dtypes.acc_global,
+        MatrixLayout::RowMajor.into(),
     )
     .generate_without_host_data()
     .unwrap();

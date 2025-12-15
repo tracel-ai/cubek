@@ -72,6 +72,7 @@ pub fn test_launch(
         client.clone(),
         out_shape.to_vec(),
         definition.global_dtypes.out,
+        StrideSpec::RowMajor,
     )
     .generate_without_host_data()
     .unwrap();

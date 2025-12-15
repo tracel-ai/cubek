@@ -3,7 +3,7 @@ use cubecl::{
     std::tensor::TensorHandle,
 };
 
-use crate::test_utils::test_tensor::test_input::cast::copy_casted;
+use crate::test_utils::test_tensor::cast::copy_casted;
 
 #[derive(Debug)]
 pub struct HostData {

@@ -4,10 +4,7 @@ use cubecl::{
     std::tensor::{TensorHandle, ViewOperationsMut, ViewOperationsMutExpand},
 };
 
-use crate::test_utils::test_tensor::test_input::{
-    base::{SimpleInputSpec, TestInputError},
-    strides::StrideSpec,
-};
+use crate::test_utils::test_tensor::base::{SimpleInputSpec, TestInputError};
 
 #[cube(launch)]
 fn eye_launch<T: Numeric>(tensor: &mut Tensor<Line<T>>, #[define(T)] _types: StorageType) {
@@ -36,6 +33,7 @@ fn new_eyed(
     cols: usize,
     total_batches: usize,
     dtype: StorageType,
+    strides: Vec<usize>,
 ) -> TensorHandle<TestRuntime> {
     // Performance is not important here and this simplifies greatly the problem
     let line_size = 1;
@@ -49,9 +47,10 @@ fn new_eyed(
         total_batches as u32,
     );
 
-    let out = TensorHandle::new_contiguous(
-        shape.clone(),
+    let out = TensorHandle::new(
         client.empty(dtype.size() * shape.iter().product::<usize>()),
+        shape.clone(),
+        strides,
         dtype,
     );
 
@@ -78,10 +77,6 @@ fn new_eyed(
 pub(crate) fn build_eye(
     spec: SimpleInputSpec,
 ) -> Result<TensorHandle<TestRuntime>, TestInputError> {
-    if spec.stride_spec != StrideSpec::RowMajor {
-        return Err(TestInputError::UnsupportedStrides);
-    }
-
     let (batches, matrix) = spec.shape.split_at(spec.shape.len() - 2);
     let rows = matrix[0];
     let cols = matrix[1];
@@ -89,10 +84,11 @@ pub(crate) fn build_eye(
 
     Ok(new_eyed(
         &spec.client,
-        spec.shape,
+        spec.shape.clone(),
         rows,
         cols,
         total_batches,
         spec.dtype,
+        spec.strides(),
     ))
 }
