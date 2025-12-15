@@ -7,14 +7,7 @@ use cubecl::{
 use cubek::{
     matmul::{
         self as matmul,
-        components::{
-            LoadingPrecomputeStrategy, MatmulElems, MatmulPrecision, MatmulSelection, StageSize,
-            TilingScheme, batch::HypercubeSelection, stage::PartitionBuffering,
-        },
-        definition::{
-            AcceleratedTileKind, AsyncPartialReadingStrategy, MatmulInputHandle,
-            PartialReadingStrategy, ReadingStrategy,
-        },
+        launch::MatmulInputHandle,
         routines::{
             Selection, TileSizeSelection, double_buffering::DoubleBufferingArgs,
             double_unit::DoubleUnitSelectionArgs, ordered_double_buffering::OrderedSelectionArgs,

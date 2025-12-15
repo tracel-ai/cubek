@@ -1,3 +1,4 @@
+use crate::components::tile::mma::config::{LoadMethod, MmaMatmulConfig};
 use crate::components::tile::{SharedTileConfig, mma::config::StoreMethod};
 use crate::components::tile::{
     TileMatmulFamily,
@@ -10,15 +11,11 @@ use crate::components::{
     resource::ComputeResources,
     tile::io::{Strided, TileKind},
 };
-use crate::definition::MatmulSelection;
 use crate::definition::{
     InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatmulProblem,
     MatmulSetupError, TileSize,
 };
-use crate::{
-    components::tile::mma::config::{LoadMethod, MmaMatmulConfig},
-    tune_key::MatmulElemType,
-};
+use crate::definition::{MatmulElemType, MatmulSelection};
 use cubecl::features::MmaConfig;
 use cubecl::{ir::StorageType, prelude::*};
 

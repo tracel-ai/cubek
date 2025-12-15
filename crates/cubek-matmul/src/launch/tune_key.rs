@@ -1,11 +1,10 @@
 use cubecl::{AutotuneKey, Runtime};
 use cubecl::{client::ComputeClient, ir::StorageType};
 use serde::{Deserialize, Serialize};
-use std::ops::Deref;
 
 use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
 
-use crate::definition::{MatmulKind, MatmulProblemSize};
+use crate::definition::{MatmulElemType, MatmulKind, MatmulProblemSize};
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 /// Autotune key representative of matmul versions
@@ -72,20 +71,6 @@ pub fn should_tune_double_buffering(fused: bool, key: &MatmulAutotuneKey) -> boo
             MatmulGlobalScale::Medium => true,
             MatmulGlobalScale::Small => fused,
         }
-}
-
-#[derive(Hash, Eq, PartialEq, Debug, Clone, Copy, Serialize, Deserialize, AutotuneKey)]
-pub struct MatmulElemType {
-    pub dtype: StorageType,
-    pub quantized: bool,
-}
-
-impl Deref for MatmulElemType {
-    type Target = StorageType;
-
-    fn deref(&self) -> &Self::Target {
-        &self.dtype
-    }
 }
 
 impl MatmulAutotuneKey {

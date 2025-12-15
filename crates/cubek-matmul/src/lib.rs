@@ -4,6 +4,3 @@ pub mod definition;
 pub mod launch;
 /// Contains matmul kernels
 pub mod routines;
-
-/// Autotune key for matmul.
-pub mod tune_key;

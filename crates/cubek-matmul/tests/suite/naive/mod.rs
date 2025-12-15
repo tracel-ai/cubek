@@ -1,5 +1,5 @@
 mod f16_ty {
-    use cubek_matmul::tune_key::MatmulElemType;
+    use cubek_matmul::definition::MatmulElemType;
 
     fn elem() -> MatmulElemType {
         MatmulElemType::new(half::f16::as_type_native_unchecked(), false)
@@ -9,7 +9,7 @@ mod f16_ty {
 }
 
 mod f32_ty {
-    use cubek_matmul::tune_key::MatmulElemType;
+    use cubek_matmul::definition::MatmulElemType;
 
     fn elem() -> MatmulElemType {
         MatmulElemType::new(f32::as_type_native_unchecked(), false)

@@ -1,9 +1,10 @@
-use cubecl::{ir::StorageType, prelude::*};
-use half::{bf16, f16};
+use std::ops::Deref;
 
-use crate::{
-    components::tile::TileMatmulFamily, definition::MatmulIdent, tune_key::MatmulElemType,
-};
+use cubecl::{AutotuneKey, ir::StorageType, prelude::*};
+use half::{bf16, f16};
+use serde::{Deserialize, Serialize};
+
+use crate::{components::tile::TileMatmulFamily, definition::MatmulIdent};
 
 /// Matrix multiplication precisions.
 pub trait MatmulPrecision: Send + Sync + Copy + 'static {
@@ -22,6 +23,20 @@ pub trait MatrixPrecision: Send + Sync + Copy + 'static {
     type Stage: Numeric;
     /// Element type once in registers for computation
     type Register: Numeric;
+}
+
+#[derive(Hash, Eq, PartialEq, Debug, Clone, Copy, Serialize, Deserialize, AutotuneKey)]
+pub struct MatmulElemType {
+    pub dtype: StorageType,
+    pub quantized: bool,
+}
+
+impl Deref for MatmulElemType {
+    type Target = StorageType;
+
+    fn deref(&self) -> &Self::Target {
+        &self.dtype
+    }
 }
 
 impl<EG: Numeric, ES: Numeric> MatrixPrecision for (EG, ES) {
