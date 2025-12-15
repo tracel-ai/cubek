@@ -44,7 +44,7 @@ impl Routine for PlaneRoutine {
 
                 let working_cubes = working_planes.div_ceil(cube_dim.y);
                 let (cube_count, launched_cubes) = cube_count_safe(client, working_cubes as u32);
-                let plane_idle = launched_cubes * cube_dim.y == working_planes;
+                let plane_idle = launched_cubes * cube_dim.y != working_planes;
 
                 if plane_idle && !blueprint.plane_idle {
                     return Err(ReduceError::Validation {
@@ -100,10 +100,10 @@ fn generate_blueprint<R: Runtime>(
     let cube_dim = CubeDim::new_2d(plane_size, plane_count);
     let (cube_count, cube_launched) = cube_count_safe(client, working_cubes);
 
-    let plane_idle = cube_launched * plane_count == working_planes;
-    let bound_checks = match !problem.vector_size.is_multiple_of(plane_size) {
-        true => BoundChecks::Mask,
-        false => BoundChecks::None,
+    let plane_idle = cube_launched * plane_count != working_planes;
+    let bound_checks = match problem.vector_size.is_multiple_of(plane_size) {
+        true => BoundChecks::None,
+        false => BoundChecks::Mask,
     };
 
     let blueprint = ReduceBlueprint {
