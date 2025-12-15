@@ -5,6 +5,7 @@ pub enum ConvolutionOperation {
     Forward,
     BackwardData,
     BackwardWeight,
+    ForwardTransposed,
 }
 
 #[derive(Clone, Debug)]
@@ -78,8 +79,12 @@ impl ConvolutionProblem {
         }
     }
 
-    pub fn check_channel(&self) -> bool {
+    pub fn should_check_channel(&self) -> bool {
         self.channels != self.padded_channels
+    }
+
+    pub fn should_check_spatial_bounds(&self) -> bool {
+        self.padding.iter().any(|&pad| pad != 0)
     }
 }
 

@@ -6,6 +6,7 @@ use cubecl::std::tensor::{
     },
     r#virtual::VirtualTensor,
 };
+use enumset::{EnumSet, EnumSetType};
 
 use crate::components::Dimensionality;
 
@@ -82,6 +83,13 @@ impl Coordinates for NhwcCoords {
     }
 }
 
+#[derive(EnumSetType, Debug, Hash)]
+pub enum NhwcCheck {
+    Batch,
+    Spatial,
+    Channel,
+}
+
 /// Layout for a spatial (i.e. NHWC) tensor. Bounds check only applies to spatial dimensions, not
 /// channel or batch (because these are implicitly checked in the layouts used with spatial tensors).
 #[derive(CubeType, CubeLaunch, Clone)]
@@ -103,9 +111,7 @@ pub struct NhwcLayout {
     #[cube(comptime)]
     pub line_size: u32,
     #[cube(comptime)]
-    pub check_spatial: bool,
-    #[cube(comptime)]
-    pub check_channel: bool,
+    pub checks: EnumSet<NhwcCheck>,
 }
 
 #[cube]
@@ -113,8 +119,7 @@ impl NhwcLayout {
     pub fn new<E: Numeric, IO: Clone>(
         tensor: VirtualTensor<E, IO>,
         #[comptime] dim: Dimensionality,
-        #[comptime] check_spatial: bool,
-        #[comptime] check_channel: bool,
+        #[comptime] checks: EnumSet<NhwcCheck>,
     ) -> Self {
         let spatial_dims = comptime![dim.num_dims()];
         let mut strides_spatial = Sequence::new();
@@ -140,8 +145,7 @@ impl NhwcLayout {
             shapes_spatial,
             shape_channel,
             line_size: tensor.line_size(),
-            check_spatial,
-            check_channel,
+            checks,
         }
     }
 }
@@ -175,7 +179,10 @@ impl Layout for NhwcLayout {
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
         let mut in_bounds = true.runtime();
-        if comptime![self.check_spatial] {
+        if comptime![self.checks.contains(NhwcCheck::Batch)] {
+            in_bounds &= pos.batch < self.shape_batch;
+        }
+        if comptime![self.checks.contains(NhwcCheck::Spatial)] {
             let spatial_dims = self.shapes_spatial.len();
 
             #[unroll]
@@ -184,7 +191,7 @@ impl Layout for NhwcLayout {
                 in_bounds &= pos >= 0 && (pos as u32) < *self.shapes_spatial.index(i);
             }
         }
-        if comptime![self.check_channel] {
+        if comptime![self.checks.contains(NhwcCheck::Channel)] {
             in_bounds &= pos.channel < self.shape_channel;
         }
 
@@ -218,8 +225,7 @@ impl<'a, R: Runtime> NhwcLayoutLaunch<'a, R> {
     pub fn from_handle(
         handle: &TensorHandleRef<'a, R>,
         line_size: u32,
-        check_spatial: bool,
-        check_channel: bool,
+        checks: EnumSet<NhwcCheck>,
     ) -> Self {
         let rank = handle.shape.len();
         let dim_c = rank - 1;
@@ -246,8 +252,7 @@ impl<'a, R: Runtime> NhwcLayoutLaunch<'a, R> {
             shapes_spatial,
             shape_channel,
             line_size,
-            check_spatial,
-            check_channel,
+            checks,
         )
     }
 }

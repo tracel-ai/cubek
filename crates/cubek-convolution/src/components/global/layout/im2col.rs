@@ -85,7 +85,7 @@ impl Layout for Im2colLayout {
                 ConvolutionOperation::Forward | ConvolutionOperation::BackwardWeight => {
                     (out_pos as i32 * stride + k_pos * dilate) - pad
                 }
-                ConvolutionOperation::BackwardData => {
+                ConvolutionOperation::ForwardTransposed | ConvolutionOperation::BackwardData => {
                     (out_pos as i32 + pad - k_pos * dilate) / stride
                 }
             };
@@ -125,6 +125,23 @@ impl<'a, R: Runtime> Im2colLayoutLaunch<'a, R> {
         params: ConvolutionParams,
         config: GlobalMemoryConfig,
     ) -> Self {
+        match problem.operation {
+            ConvolutionOperation::Forward => Self::from_args_fprop(client, problem, params, config),
+            ConvolutionOperation::ForwardTransposed | ConvolutionOperation::BackwardData => {
+                Self::from_args_dgrad(client, problem, params, config)
+            }
+            ConvolutionOperation::BackwardWeight => {
+                Self::from_args_wgrad(client, problem, params, config)
+            }
+        }
+    }
+
+    fn from_args_fprop(
+        client: &ComputeClient<R>,
+        problem: &ConvolutionProblem,
+        params: ConvolutionParams,
+        config: GlobalMemoryConfig,
+    ) -> Self {
         let shape_out = problem
             .out_shape
             .iter()
@@ -140,7 +157,7 @@ impl<'a, R: Runtime> Im2colLayoutLaunch<'a, R> {
         Im2colLayoutLaunch::new(shape_out, padded_channels, shape_m, shape_k, params, config)
     }
 
-    pub fn from_args_dgrad(
+    fn from_args_dgrad(
         client: &ComputeClient<R>,
         problem: &ConvolutionProblem,
         params: ConvolutionParams,
@@ -161,7 +178,7 @@ impl<'a, R: Runtime> Im2colLayoutLaunch<'a, R> {
         Im2colLayoutLaunch::new(shape, padded_channels, shape_m, shape_k, params, config)
     }
 
-    pub fn from_args_wgrad(
+    fn from_args_wgrad(
         client: &ComputeClient<R>,
         problem: &ConvolutionProblem,
         params: ConvolutionParams,

@@ -29,15 +29,16 @@ use cubek_matmul::{
         stage::StageConfig as _,
     },
 };
+use enumset::EnumSet;
 
 use crate::components::{
     ConvGemmConfig, ConvolutionParams, ConvolutionProblem,
     global::{
         args::RuntimeArgsLaunch,
         layout::{
-            Im2colLayout, Im2colLayoutLaunch, NhwcLayout, NhwcLayoutLaunch, OutLayout,
+            Im2colLayout, Im2colLayoutLaunch, NhwcCheck, NhwcLayout, NhwcLayoutLaunch, OutLayout,
             OutLayoutLaunch, TmaIm2colLayout, TmaIm2colLayoutLaunch, TmaOutGradLayout,
-            TmaOutGradLayoutLaunch, WeightDgradLayout, WeightDgradLayoutLaunch,
+            TmaOutGradLayoutLaunch, WeightLayout, WeightLayoutLaunch,
         },
     },
 };
@@ -134,38 +135,40 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory for TensorIn
         _dtypes: &MatmulElems,
     ) -> (Self::RuntimeArg<'a, R>, RuntimeArgsLaunch<'a, R>) {
         type LhsLayout = Chain<NhwcLayout, Im2colLayout>;
-        type RhsLayout = Chain<NhwcLayout, WeightDgradLayout>;
+        type RhsLayout = Chain<NhwcLayout, WeightLayout>;
 
         let padded_channels = problem.padded_channels as u32;
 
-        let layout_nhwc = |handle, line_size, check_spatial| {
-            NhwcLayoutLaunch::from_handle(
-                handle,
-                line_size as u32,
-                check_spatial,
-                problem.check_channel(),
-            )
+        let layout_nhwc = |handle, line_size, checks| {
+            NhwcLayoutLaunch::from_handle(handle, line_size as u32, checks)
         };
 
-        let layout_lhs = Im2colLayoutLaunch::from_args_dgrad(
+        let layout_lhs = Im2colLayoutLaunch::from_args(
             client,
             problem,
             config.params(),
             config.lhs_global_memory_config(),
         );
         let layout_rhs =
-            WeightDgradLayoutLaunch::from_args(client, problem, config.rhs_global_memory_config());
+            WeightLayoutLaunch::from_args(client, problem, config.rhs_global_memory_config());
 
         let layout_lhs = {
-            let global = layout_nhwc(
-                out_grad.data(),
-                line_sizes.lhs,
-                config.check_spatial_bounds(),
-            );
+            let mut checks = EnumSet::empty();
+            if problem.should_check_spatial_bounds() {
+                checks.insert(NhwcCheck::Spatial);
+            }
+            if problem.should_check_channel() {
+                checks.insert(NhwcCheck::Channel);
+            }
+            let global = layout_nhwc(out_grad.data(), line_sizes.lhs, checks);
             ChainLaunch::new(global, layout_lhs)
         };
         let layout_rhs = {
-            let global = layout_nhwc(weights.data(), line_sizes.rhs, false);
+            let mut checks = EnumSet::empty();
+            if problem.should_check_channel() {
+                checks.insert(NhwcCheck::Batch);
+            }
+            let global = layout_nhwc(weights.data(), line_sizes.rhs, checks);
             ChainLaunch::new(global, layout_rhs)
         };
 
@@ -200,14 +203,8 @@ impl<EG: Numeric> ConcreteOutputFactory for TensorOutput<EG> {
     ) -> Self::RuntimeArg<'a, R> {
         type Layout = Chain<NhwcLayout, OutLayout>;
 
-        let global = NhwcLayoutLaunch::from_handle(
-            out,
-            line_sizes.out as u32,
-            false,
-            problem.check_channel(),
-        );
-        let layout =
-            OutLayoutLaunch::from_args_dgrad(client, problem, config.rhs_global_memory_config());
+        let global = NhwcLayoutLaunch::from_handle(out, line_sizes.out as u32, EnumSet::empty());
+        let layout = OutLayoutLaunch::from_args(client, problem, config.rhs_global_memory_config());
         let layout = ChainLaunch::new(global, layout);
         let view = ViewArg::new::<Layout>(out.as_array_arg(line_sizes.out), layout);
         let batch = VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new());

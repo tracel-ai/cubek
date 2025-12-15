@@ -6,7 +6,7 @@ use cubecl::std::{
 use cubek_matmul::components::global::memory::GlobalMemoryConfig;
 
 use crate::components::{
-    ConvolutionProblem,
+    ConvolutionOperation, ConvolutionProblem,
     global::layout::{NhwcCoords, cast_seq, div_mod_seq},
 };
 
@@ -82,6 +82,20 @@ impl<'a, R: Runtime> OutLayoutLaunch<'a, R> {
         problem: &ConvolutionProblem,
         config: GlobalMemoryConfig,
     ) -> Self {
+        match problem.operation {
+            ConvolutionOperation::Forward => Self::from_args_fprop(client, problem, config),
+            ConvolutionOperation::ForwardTransposed | ConvolutionOperation::BackwardData => {
+                Self::from_args_dgrad(client, problem, config)
+            }
+            ConvolutionOperation::BackwardWeight => Self::from_args_wgrad(client, problem, config),
+        }
+    }
+
+    fn from_args_fprop(
+        client: &ComputeClient<R>,
+        problem: &ConvolutionProblem,
+        config: GlobalMemoryConfig,
+    ) -> Self {
         let shape_out = problem
             .out_shape
             .iter()
@@ -93,7 +107,7 @@ impl<'a, R: Runtime> OutLayoutLaunch<'a, R> {
         Self::new(shape_out, shape_m, shape_n, config)
     }
 
-    pub fn from_args_dgrad(
+    fn from_args_dgrad(
         client: &ComputeClient<R>,
         problem: &ConvolutionProblem,
         config: GlobalMemoryConfig,
@@ -109,7 +123,7 @@ impl<'a, R: Runtime> OutLayoutLaunch<'a, R> {
         Self::new(shape, shape_m, shape_n, config)
     }
 
-    pub fn from_args_wgrad(
+    fn from_args_wgrad(
         client: &ComputeClient<R>,
         problem: &ConvolutionProblem,
         config: GlobalMemoryConfig,
