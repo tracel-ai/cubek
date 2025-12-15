@@ -1,20 +1,17 @@
 use cubecl::features::MmaConfig;
 use cubecl::{Runtime, client::ComputeClient, ir::StorageType};
 
+use crate::components::global::{LoadSpecializationConfig, SpecializationTensorConfig};
+use crate::components::stage::PartitionBuffering;
+use crate::components::tile::TileMatmulFamily;
 use crate::components::{
-    MatmulAvailabilityError, MatmulElems, MatmulSelection, MatmulSetupError, MultiRowStrategy,
-    PartitionSize, StageSize, TileSize, TilingScheme, adjust_dtypes,
-};
-use crate::components::{MatmulLineSizes, stage::PartitionBuffering};
-use crate::components::{MatmulProblem, tile::TileMatmulFamily};
-use crate::components::{
-    MatrixLayout,
     batch::{CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection, SmAllocation},
     stage::SwizzleMode,
 };
-use crate::components::{
-    SwizzleConfig,
-    global::{LoadSpecializationConfig, SpecializationTensorConfig},
+use crate::launch::{
+    MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection,
+    MatmulSetupError, MatrixLayout, MultiRowStrategy, PartitionSize, StageSize, SwizzleConfig,
+    TileSize, TilingScheme, adjust_dtypes,
 };
 use crate::routines::selector::is_tiny;
 

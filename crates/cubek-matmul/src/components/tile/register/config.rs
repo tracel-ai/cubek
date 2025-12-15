@@ -1,8 +1,8 @@
-use crate::components::MatrixLayout;
 use crate::components::tile::{SharedTileConfig, TileConfig};
+use crate::launch::MatrixLayout;
 
-use crate::components::StageIdent;
 use crate::components::stage::SwizzleMode;
+use crate::launch::StageIdent;
 
 /// Execution mode for the RegisterMatmul
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]

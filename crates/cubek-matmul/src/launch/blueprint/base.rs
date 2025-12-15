@@ -1,10 +1,12 @@
 use cubecl::{Runtime, client::ComputeClient, flex32, prelude::CubePrimitive, tf32};
 
-use crate::components::{
-    MatmulElems, TilingScheme,
-    batch::HypercubeSelection,
-    global::{LoadSpecializationConfig, read::ReaderMode},
-    stage::{PartitionBuffering, SwizzleMode},
+use crate::{
+    components::{
+        batch::HypercubeSelection,
+        global::{LoadSpecializationConfig, read::ReaderMode},
+        stage::{PartitionBuffering, SwizzleMode},
+    },
+    launch::{MatmulElems, blueprint::tiling_scheme::TilingScheme},
 };
 
 #[derive(Debug, Clone)]

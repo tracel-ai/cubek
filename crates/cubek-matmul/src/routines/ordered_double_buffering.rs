@@ -3,12 +3,9 @@ use std::marker::PhantomData;
 use cubecl::Runtime;
 use cubecl::client::ComputeClient;
 
+use crate::components::global::PlaneWriterFamily;
 use crate::components::stage::{PlaneMatmulFamily, RowMajorTilingOrder};
-use crate::components::{
-    MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError,
-    global::PlaneWriterFamily,
-};
-use crate::components::{MultiRowStrategy, tile};
+use crate::components::tile;
 use crate::components::{
     batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
     stage::{FilledStageFamily, StridedStageFamily},
@@ -18,6 +15,10 @@ use crate::components::{
 };
 use crate::components::{
     global::read::sync_partial_cyclic::SyncPartialCyclicLoading, tile::io::Strided,
+};
+use crate::launch::{
+    MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError,
+    MultiRowStrategy,
 };
 use crate::routines::Routine;
 use crate::routines::selector::{PlaneMatmulSelectionOptions, plane_matmul_selection};

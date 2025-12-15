@@ -2,10 +2,12 @@ use cubecl::features::MmaConfig;
 use cubecl::{Runtime, client::ComputeClient};
 use std::marker::PhantomData;
 
+use crate::launch::{
+    MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError,
+    MultiRowStrategy, TilingScheme, adjust_dtypes,
+};
 use crate::{
     components::{
-        MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError,
-        MultiRowStrategy, TilingScheme, adjust_dtypes,
         batch::{
             CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection,
             PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul, SmAllocation,

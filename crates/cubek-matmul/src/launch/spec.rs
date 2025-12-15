@@ -2,11 +2,10 @@ use cubecl::{ir::StorageType, prelude::*};
 use half::{bf16, f16};
 
 use crate::{
-    components::{MatmulIdent, tile::TileMatmulFamily},
+    components::tile::TileMatmulFamily,
+    launch::{MatmulArgs, MatmulIdent},
     tune_key::MatmulElemType,
 };
-
-use super::global::args::MatmulArgs;
 
 /// Matrix multiplication precisions.
 pub trait MatmulPrecision: Send + Sync + Copy + 'static {

@@ -4,7 +4,6 @@ use std::marker::PhantomData;
 
 use crate::{
     components::{
-        MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError,
         batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
         global::{
             UnitWriterFamily,
@@ -17,6 +16,7 @@ use crate::{
         },
         tile::{TileMatmulFamily, io::Filled, register::RegisterMatmul},
     },
+    launch::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError},
     routines::selector::{
         PartitionScaling, StageScaling, TileSizeSelection, UnitMatmulSelectionOptions,
         unit_matmul_selection,

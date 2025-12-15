@@ -2,8 +2,8 @@ use super::*;
 use crate::suite::layered::matmul_test_launcher::test_matmul_algorithm;
 use cubecl::Runtime;
 use cubecl::TestRuntime;
-use cubek_matmul::components::MatmulElems;
-use cubek_matmul::components::MatmulSelection;
+use cubek_matmul::launch::MatmulElems;
+use cubek_matmul::launch::MatmulSelection;
 
 #[test]
 pub fn test() {

@@ -6,8 +6,8 @@ use cubecl::{Runtime, client};
 use cubek_matmul::launch::MatmulInputHandleRef;
 
 use crate::suite::layout_to_stride_spec;
-use cubek_matmul::components::MatrixLayout;
-use cubek_matmul::components::{MatmulElems, MatmulIdent, MatmulProblem};
+use cubek_matmul::launch::MatrixLayout;
+use cubek_matmul::launch::{MatmulElems, MatmulIdent, MatmulProblem};
 use cubek_matmul::routines::naive;
 use cubek_test_utils::{Distribution, SimpleInputSpec, TestInput};
 

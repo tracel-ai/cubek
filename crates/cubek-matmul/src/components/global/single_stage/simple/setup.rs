@@ -1,6 +1,4 @@
 use crate::components::{
-    MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulSelection, MatrixLayout, StageIdent,
-    error::MatmulSetupError,
     global::{
         GlobalReaderConfig, GlobalWriterConfig, GlobalWriterFamily, SharedGlobalMatmulConfig,
         SpecializationTensorConfig, WriteTiling, cube_dim_validation,
@@ -11,14 +9,14 @@ use crate::components::{
     },
     stage::{FilledStageFamily, NoTilingLayout, StageConfig, StridedStageFamily},
 };
+use crate::launch::{
+    MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSelection,
+    MatmulSetupError, MatrixLayout, StageIdent,
+};
 use cubecl::prelude::*;
 use std::marker::PhantomData;
 
-use crate::components::{
-    MatmulProblem,
-    global::GlobalMatmulFamily,
-    stage::{self},
-};
+use crate::components::{global::GlobalMatmulFamily, stage};
 
 /// Simple matmul family for any precision
 pub struct SimpleMatmulFamily<

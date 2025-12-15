@@ -1,11 +1,11 @@
 use cubecl::prelude::*;
 
 use crate::components::{
-    AccG, LhsG, MatmulPrecision, RhsG,
     batch::SliceIndex,
-    global::{self, GlobalConfig, args::MatmulArgs},
+    global::{self, GlobalConfig},
     stage::StageConfig,
 };
+use crate::launch::{AccG, LhsG, MatmulArgs, MatmulPrecision, RhsG};
 use cubecl::std::{CubeOption, CubeOptionExpand};
 
 #[derive(CubeType)]

@@ -4,14 +4,7 @@ use cubecl::Runtime;
 use cubecl::client::ComputeClient;
 use cubecl::features::MmaConfig;
 
-use crate::components::{MatmulProblem, MultiRowStrategy, SwizzleConfig, tile};
-use crate::components::{
-    adjust_dtypes,
-    global::{
-        multi_stage::specialized::SpecializedMatmulFamily,
-        read::{AsyncPartialLoadingStrategy, async_partial_tma::AsyncPartialTmaLoading},
-    },
-};
+use crate::components::tile;
 use crate::components::{batch::CubeCountPlanSelection, stage::PlaneMatmulFamily};
 use crate::components::{
     batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
@@ -19,12 +12,21 @@ use crate::components::{
 };
 use crate::components::{global::PlaneWriterFamily, stage::StageFamily};
 use crate::components::{stage::FilledStageFamily, tile::TileMatmulFamily};
+use crate::launch::{
+    MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError, MatrixLayout, SwizzleConfig,
+    adjust_dtypes,
+};
 use crate::routines::base;
 use crate::routines::selector::{PlaneMatmulSelectionOptions, plane_matmul_selection};
 use crate::{
+    components::global::{
+        multi_stage::specialized::SpecializedMatmulFamily,
+        read::{AsyncPartialLoadingStrategy, async_partial_tma::AsyncPartialTmaLoading},
+    },
+    launch::{MatmulElems, MultiRowStrategy, TilingScheme},
+};
+use crate::{
     components::{
-        MatmulElems, MatmulLineSizes, MatmulSelection, MatmulSetupError, MatrixLayout,
-        TilingScheme,
         batch::{GlobalOrderSelection, HypercubeSelection, SmAllocation},
         global::{LoadSpecializationConfig, SpecializationTensorConfig},
         stage::PartitionBuffering,

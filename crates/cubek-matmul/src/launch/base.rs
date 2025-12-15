@@ -10,6 +10,8 @@ use cubecl_common::quant::scheme::{QuantScheme, QuantStore, QuantValue};
 use cubecl::std::tensor::{TensorHandle, into_contiguous_packed, into_contiguous_pitched};
 
 use crate::launch::{
+    MatmulElems,
+    error::MatmulSetupError,
     launch2,
     strategy::{
         AcceleratedTileKind, AsyncPartialReadingStrategy, PartialReadingStrategy, ReadingStrategy,
@@ -17,7 +19,6 @@ use crate::launch::{
 };
 use crate::{
     components::{
-        MatmulElems, MatmulSetupError,
         global::read::{
             async_full_strided, async_partial_cyclic::AsyncPartialCyclicLoading,
             async_partial_strided::AsyncPartialStridedLoading,

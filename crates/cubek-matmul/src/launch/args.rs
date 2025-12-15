@@ -11,9 +11,9 @@ use cubecl::std::{
 };
 use cubecl::{server::TensorMapMeta, unexpanded};
 
+use crate::launch::{self, MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection};
 use crate::{
     components::{
-        self, MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection,
         batch::BatchConfig,
         global::{
             GlobalConfig,
@@ -365,36 +365,36 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory
         // For swizzled, bank conflicts aren't an issue so the tile size is the full stage.
         let stage_size_lhs = match config.lhs_reader_config().smem_config.swizzle {
             SwizzleMode::None => match problem.lhs_layout {
-                components::MatrixLayout::RowMajor => {
+                launch::MatrixLayout::RowMajor => {
                     vec![1, stage_m, tiling_scheme.tile_size.k]
                 }
-                components::MatrixLayout::ColMajor => {
+                launch::MatrixLayout::ColMajor => {
                     vec![1, stage_k, tiling_scheme.tile_size.m]
                 }
             },
             _ => match problem.lhs_layout {
-                components::MatrixLayout::RowMajor => {
+                launch::MatrixLayout::RowMajor => {
                     vec![1, stage_m, stage_k]
                 }
-                components::MatrixLayout::ColMajor => {
+                launch::MatrixLayout::ColMajor => {
                     vec![1, stage_k, stage_m]
                 }
             },
         };
         let stage_size_rhs = match config.rhs_reader_config().smem_config.swizzle {
             SwizzleMode::None => match problem.rhs_layout {
-                components::MatrixLayout::RowMajor => {
+                launch::MatrixLayout::RowMajor => {
                     vec![1, stage_k, tiling_scheme.tile_size.n]
                 }
-                components::MatrixLayout::ColMajor => {
+                launch::MatrixLayout::ColMajor => {
                     vec![1, stage_n, tiling_scheme.tile_size.k]
                 }
             },
             _ => match problem.rhs_layout {
-                components::MatrixLayout::RowMajor => {
+                launch::MatrixLayout::RowMajor => {
                     vec![1, stage_k, stage_n]
                 }
-                components::MatrixLayout::ColMajor => {
+                launch::MatrixLayout::ColMajor => {
                     vec![1, stage_n, stage_k]
                 }
             },
@@ -432,12 +432,12 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory
 
         // TMA assumes the last stride is contiguous and won't even take it, so we need to map it
         // with transposed shape and stride. Tensor metadata still has the normal layout.
-        if matches!(problem.lhs_layout, components::MatrixLayout::ColMajor) {
+        if matches!(problem.lhs_layout, launch::MatrixLayout::ColMajor) {
             lhs_shape.swap(2, 1);
             lhs_strides.swap(lhs_rank - 1, lhs_rank - 2);
             lhs_transposed = true;
         }
-        if matches!(problem.rhs_layout, components::MatrixLayout::ColMajor) {
+        if matches!(problem.rhs_layout, launch::MatrixLayout::ColMajor) {
             rhs_shape.swap(2, 1);
             rhs_strides.swap(rhs_rank - 1, rhs_rank - 2);
             rhs_transposed = true;

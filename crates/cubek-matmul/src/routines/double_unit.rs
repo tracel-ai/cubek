@@ -2,7 +2,6 @@ use cubecl::{Runtime, client::ComputeClient};
 
 use crate::{
     components::{
-        MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError,
         batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
         global::{
             UnitWriterFamily, multi_stage::double_buffering::DoubleBufferingMatmulFamily,
@@ -11,6 +10,7 @@ use crate::{
         stage::{FilledStageFamily, RowMajorTilingOrder, StridedStageFamily, UnitMatmulFamily},
         tile::{io::Filled, register::RegisterMatmul},
     },
+    launch::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError},
     routines::{
         Routine,
         selector::{TileSizeSelection, UnitMatmulSelectionOptions, unit_matmul_selection},

@@ -1,15 +1,17 @@
 use std::marker::PhantomData;
 
-use cubek_matmul::components::{
-    LoadingPrecomputeStrategy, MatrixLayout, StageIdent,
-    global::{
-        GlobalReaderConfig, GlobalWriterConfig, PartitionedStageFamily, PlaneRoleConfig,
-        RoleRuleConfig, SpecializationTensorConfig,
-        memory::{GlobalMemoryConfig, ViewDirection},
-        multi_stage::EventLoadingMode,
-        read::ReaderMode,
+use cubek_matmul::{
+    components::{
+        global::{
+            GlobalReaderConfig, GlobalWriterConfig, PartitionedStageFamily, PlaneRoleConfig,
+            RoleRuleConfig, SpecializationTensorConfig,
+            memory::{GlobalMemoryConfig, ViewDirection},
+            multi_stage::EventLoadingMode,
+            read::ReaderMode,
+        },
+        stage::StridedStageFamily,
     },
-    stage::StridedStageFamily,
+    launch::{LoadingPrecomputeStrategy, MatrixLayout, StageIdent},
 };
 
 use crate::{

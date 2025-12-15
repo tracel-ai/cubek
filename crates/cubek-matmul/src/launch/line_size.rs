@@ -1,7 +1,8 @@
 use cubecl::{LineSizeError, Runtime, client::ComputeClient, tensor_line_size_parallel};
 
-use crate::components::{MatrixLayout, error::MatmulSetupError};
 use std::fmt::Debug;
+
+use crate::launch::{definition::MatrixLayout, error::MatmulSetupError};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 /// Line size used for each tensor in global memory accesses.

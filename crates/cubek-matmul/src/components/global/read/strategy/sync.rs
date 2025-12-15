@@ -1,10 +1,9 @@
 use cubecl::prelude::*;
 
-use crate::components::{
-    MatmulPrecision,
+use crate::{components::{
     global::{SharedGlobalMatmulConfig, read::SyncStrategy},
     stage::StageConfig,
-};
+}, launch::MatmulPrecision};
 
 /// Simple synchronous barrier, using `cube_sync()`
 pub struct Synchronous {}

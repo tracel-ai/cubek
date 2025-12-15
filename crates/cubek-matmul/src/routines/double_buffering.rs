@@ -12,8 +12,7 @@ use crate::components::global::{
     PlaneWriterFamily, read::sync_partial_tilewise::SyncPartialTilewiseLoading,
 };
 use crate::components::stage::{ColMajorTilingOrder, PlaneMatmulFamily, RowMajorTilingOrder};
-use crate::components::{MatmulElems, MatmulLineSizes, MatmulSelection, MatmulSetupError};
-use crate::components::{MatmulProblem, MultiRowStrategy, tile};
+use crate::components::tile;
 use crate::components::{
     batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
     tile::io::{Filled, Strided},
@@ -21,6 +20,9 @@ use crate::components::{
 use crate::components::{
     global::multi_stage::double_buffering::DoubleBufferingMatmulFamily,
     stage::{FilledStageFamily, StridedStageFamily},
+};
+use crate::launch::{
+    MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError, MultiRowStrategy
 };
 use crate::routines::Routine;
 use crate::routines::base;

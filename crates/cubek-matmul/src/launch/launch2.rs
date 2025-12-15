@@ -1,14 +1,12 @@
-use crate::components::global::args::{ConcreteInputsFactory, ConcreteOutputFactory};
-use crate::components::{
-    AvailableLineSizes, InputArg, InputRuntimeArg, MatmulAvailabilityError, MatmulProblem,
-    MatmulSetupError, MatrixLayout, OutputArg, OutputRuntimeArg,
-};
-use crate::components::{
-    MatmulElems,
-    batch::{BatchMatmulFamily, CubeCountInputArgs},
-    global::args::{MatmulArgs, TensorArgs, TensorMapArgs},
-};
+use crate::components::batch::{BatchMatmulFamily, CubeCountInputArgs};
+use crate::launch::definition::{MatmulProblem, MatrixLayout};
+use crate::launch::error::{MatmulAvailabilityError, MatmulSetupError};
+use crate::launch::line_size::AvailableLineSizes;
 use crate::launch::select_kernel::launch_kernel_concrete;
+use crate::launch::{
+    ConcreteInputsFactory, ConcreteOutputFactory, InputArg, InputRuntimeArg, MatmulArgs,
+    MatmulElems, OutputArg, OutputRuntimeArg, TensorArgs, TensorMapArgs,
+};
 use crate::launch::{MatmulInputHandle, MatmulInputHandleRef};
 use crate::routines::{Routine, Selection};
 use cubecl::features::TypeUsage;

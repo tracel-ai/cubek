@@ -12,11 +12,11 @@ use crate::{
     launch::{AttentionBlueprint, AttentionPrecision, AttentionSetupError, attention_types::*},
 };
 use cubecl::prelude::ReadWrite;
-use cubek_matmul::components::{
-    ComputeResources, MatrixLayout,
+use cubek_matmul::{components::{
+    ComputeResources,
     stage::{StageFamily, StageMemoryConfig, SwizzleMode},
     tile::io::Strided,
-};
+}, launch::MatrixLayout};
 
 use crate::components::stage::StageAttentionFamily;
 

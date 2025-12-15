@@ -1,16 +1,17 @@
 use cubecl::prelude::*;
 use cubecl::std::{CubeOption, CubeOptionExpand, tensor::layout::Coords2d};
 
+use crate::components::global::WriteEventListener;
 use crate::components::global::{MaxGlobalReaderPlanes, PlaneRoleConfig};
 use crate::components::stage::StageMemoryConfig;
-use crate::components::{
-    AccS, AvailableLineSizes, LhsS, MatmulElems, MatmulLineSizes, MatmulSelection, RhsS,
-};
-use crate::components::{MatmulPrecision, MatmulProblem, tile::TileConfig};
-use crate::components::{error::MatmulSetupError, global::WriteEventListener};
+use crate::components::tile::TileConfig;
 use crate::components::{
     stage::{NumStages, PartitionScheduler},
     tile::io::TileKind,
+};
+use crate::launch::{
+    AccS, AvailableLineSizes, LhsS, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem,
+    MatmulSelection, MatmulSetupError, RhsS,
 };
 use std::{fmt::Debug, hash::Hash};
 

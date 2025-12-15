@@ -1,15 +1,15 @@
 use crate::components::tile::SharedTileConfig;
+use crate::components::tile::io::TileKind;
 use crate::components::tile::plane_vec_mat_inner_product::config::PlaneVecMatInnerProductConfig;
 use crate::components::tile::plane_vec_mat_inner_product::matmul::PlaneVecMatInnerProduct;
 use crate::components::tile::{TileMatmulFamily, io::Strided};
 use crate::components::{
-    InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatmulProblem,
-    MatmulSelection, MatrixLayout,
-};
-use crate::components::{error::MatmulSetupError, tile::io::TileKind};
-use crate::components::{
     resource::ComputeResources,
     tile::plane_vec_mat_inner_product::reader::{MatrixFragmentReader, MatrixStageReader},
+};
+use crate::launch::{
+    InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatmulProblem,
+    MatmulSelection, MatmulSetupError, MatrixLayout,
 };
 use cubecl::features::{Plane, TypeUsage};
 use cubecl::ir::{ElemType, FloatKind};

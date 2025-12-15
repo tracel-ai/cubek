@@ -1,17 +1,14 @@
 use cubecl::prelude::*;
 use std::marker::PhantomData;
 
+use crate::components::batch::partitioned_matmul::config::PartitionedBatchConfig;
+use crate::components::batch::partitioned_matmul::partition::{
+    GlobalPartitionMatmul, PartitionRangeDim, PartitionRanges,
+};
 use crate::components::batch::{BatchConfig as _, BatchMatmul, CubeCountInput};
 use crate::components::global::{self, GlobalConfig, GlobalMatmul};
 use crate::components::stage::StageConfig as _;
-use crate::components::{AccG, batch::partitioned_matmul::config::PartitionedBatchConfig};
-use crate::components::{LhsG, MatmulPrecision, RhsG};
-use crate::components::{
-    batch::partitioned_matmul::partition::{
-        GlobalPartitionMatmul, PartitionRangeDim, PartitionRanges,
-    },
-    global::args::MatmulArgs,
-};
+use crate::launch::{AccG, LhsG, MatmulArgs, MatmulPrecision, RhsG};
 
 /// Executes matrix multiplication at the batch level,
 /// assigning each cube to handle multiple global matmuls.

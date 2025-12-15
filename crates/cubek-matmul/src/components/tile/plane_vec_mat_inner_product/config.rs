@@ -1,7 +1,9 @@
-use crate::components::{
-    StageIdent,
-    stage::SwizzleMode,
-    tile::{SharedTileConfig, TileConfig},
+use crate::{
+    components::{
+        stage::SwizzleMode,
+        tile::{SharedTileConfig, TileConfig},
+    },
+    launch::StageIdent,
 };
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]

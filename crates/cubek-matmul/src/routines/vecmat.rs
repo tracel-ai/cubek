@@ -2,8 +2,6 @@ use cubecl::{Runtime, client::ComputeClient};
 
 use crate::{
     components::{
-        MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError,
-        PartitionSize, TileSize, TilingScheme,
         batch::{
             CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection,
             PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul, SmAllocation,
@@ -22,6 +20,10 @@ use crate::{
             RowMajorTilingOrder, StridedStageFamily,
         },
         tile::{io::Filled, plane_vec_mat_inner_product::PlaneVecMatInnerProduct},
+    },
+    launch::{
+        MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError,
+        PartitionSize, TileSize, TilingScheme,
     },
     routines::Routine,
 };

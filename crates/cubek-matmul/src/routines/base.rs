@@ -2,7 +2,7 @@ use crate::components::batch::BatchMatmulFamily;
 use crate::components::global::GlobalMatmulFamily;
 use crate::components::stage::StageMatmulFamily;
 use crate::components::tile::TileMatmulFamily;
-use crate::components::{
+use crate::launch::{
     AvailableLineSizes, MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection,
     MatmulSetupError,
 };

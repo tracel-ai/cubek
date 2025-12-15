@@ -1,6 +1,6 @@
 use std::{fmt::Debug, hash::Hash};
 
-use crate::components::MatrixLayout;
+use crate::launch::MatrixLayout;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct StageMemoryConfig {

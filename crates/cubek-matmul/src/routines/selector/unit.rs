@@ -1,10 +1,14 @@
 use std::fmt::Display;
 
-use crate::components::{
-    MatmulElems, MatmulKind, MatmulLineSizes, MatmulProblem, MatmulSelection, MatrixLayout,
-    SwizzleConfig, TilingScheme,
-    batch::{CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection, SmAllocation},
-    stage::{PartitionBuffering, SwizzleMode},
+use crate::{
+    components::{
+        batch::{CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection, SmAllocation},
+        stage::{PartitionBuffering, SwizzleMode},
+    },
+    launch::{
+        MatmulElems, MatmulKind, MatmulLineSizes, MatmulProblem, MatmulSelection, MatrixLayout,
+        SwizzleConfig, TilingScheme,
+    },
 };
 use cubecl::{Runtime, client::ComputeClient, ir::StorageType};
 

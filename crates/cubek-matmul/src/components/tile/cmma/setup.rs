@@ -1,16 +1,15 @@
-use crate::components::TileSize;
 use crate::components::tile::SharedTileConfig;
 use crate::components::tile::cmma::matmul::CmmaMatmul;
+use crate::components::tile::io::Strided;
 use crate::components::tile::{
     TileMatmulFamily,
     cmma::reader::{CmmaFragmentReader, CmmaStageReader},
 };
-use crate::components::{
-    InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatmulProblem,
-    MatmulSelection,
-};
-use crate::components::{error::MatmulSetupError, tile::io::Strided};
 use crate::components::{resource::ComputeResources, tile::io::TileKind};
+use crate::launch::{
+    InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatmulProblem,
+    MatmulSelection, MatmulSetupError, TileSize,
+};
 use cubecl::features::MmaConfig;
 use cubecl::{ir::StorageType, prelude::*};
 

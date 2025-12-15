@@ -1,15 +1,8 @@
-use crate::components::{InvalidConfigError, StageIdent};
-use crate::components::{MatmulElems, global::read::validate_async_barrier};
-use crate::components::{
-    MatmulPrecision,
-    global::{GlobalReaderConfig, RoleRule},
-};
-use crate::components::{
-    MatmulProblem,
-    global::{
-        SharedGlobalMatmulConfig,
-        read::{AsyncPartialLoadingStrategy, PartialLoadingStrategy, async_copy::ASYNC_COPY_WIDTH},
-    },
+use crate::components::global::read::validate_async_barrier;
+use crate::components::global::{GlobalReaderConfig, RoleRule};
+use crate::components::global::{
+    SharedGlobalMatmulConfig,
+    read::{AsyncPartialLoadingStrategy, PartialLoadingStrategy, async_copy::ASYNC_COPY_WIDTH},
 };
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
 use crate::components::{global::read::async_copy::async_copy_from, stage::StridedStageMemory};
@@ -22,6 +15,7 @@ use crate::components::{
     },
     stage::StridedTilingLayout,
 };
+use crate::launch::{InvalidConfigError, MatmulElems, MatmulPrecision, MatmulProblem, StageIdent};
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Layout, LayoutExpand};
