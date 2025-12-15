@@ -205,7 +205,7 @@ impl<EG: Numeric> ConcreteOutputFactory for TensorOutput<EG> {
             problem.check_channel(),
         );
         let layout =
-            WeightLayoutLaunch::from_args_wgrad(client, problem, config.rhs_global_memory_config());
+            WeightLayoutLaunch::from_args_wgrad(client, problem, config.out_global_memory_config());
         let layout = ChainLaunch::new(global, TransposeLaunch::new(layout));
         let view = ViewArg::new::<Layout>(out.as_array_arg(line_sizes.out), layout);
         let batch = VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new());
