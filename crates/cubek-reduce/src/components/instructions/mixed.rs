@@ -36,7 +36,7 @@ pub enum ReduceOperationConfig {
 
 impl ReduceOperationConfig {
     /// Computes the best case precision for the given config.
-    pub fn precision(&self, input: ElemType) -> ReduceDtypes {
+    pub fn precision(&self, input: ElemType, output: Option<ElemType>) -> ReduceDtypes {
         match self {
             ReduceOperationConfig::Sum
             | ReduceOperationConfig::Prod
@@ -54,7 +54,9 @@ impl ReduceOperationConfig {
             ReduceOperationConfig::ArgMax | ReduceOperationConfig::ArgMin => {
                 return ReduceDtypes {
                     input: input.into(),
-                    output: i32::as_type_native_unchecked(),
+                    output: output
+                        .expect("ArgMax and ArgMin must specify output type")
+                        .into(),
                     accumulation: input.into(),
                 };
             }

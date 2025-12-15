@@ -14,7 +14,7 @@ pub struct PlaneRoutine;
 #[derive(Debug, Clone)]
 pub struct PlaneStrategy {
     /// How the accumulators are handled in a plane.
-    pub independant: bool,
+    pub independent: bool,
 }
 
 impl Routine for PlaneRoutine {
@@ -99,7 +99,7 @@ fn generate_blueprint<R: Runtime>(
         global: GlobalReduceBlueprint::FullPlane(PlaneReduceBlueprint {
             plane_idle,
             bound_checks,
-            independant: strategy.independant,
+            independant: strategy.independent,
         }),
     };
 
