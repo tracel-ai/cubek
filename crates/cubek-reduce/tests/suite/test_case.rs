@@ -12,13 +12,24 @@ use rand::{
 
 static PRECISION: i32 = 4;
 
-#[derive(Debug)]
 pub struct TestCase<P> {
     pub shape: Vec<usize>,
     pub stride: Vec<usize>,
     pub axis: Option<usize>,
     pub strategy: ReduceStrategy,
     pub elem: PhantomData<P>,
+}
+
+impl<P> core::fmt::Debug for TestCase<P> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TestCase")
+            .field("shape", &self.shape)
+            .field("stride", &self.stride)
+            .field("axis", &self.axis)
+            .field("strategy", &self.strategy)
+            .field("elem", &self.elem)
+            .finish()
+    }
 }
 
 impl<P: ReducePrecision> TestCase<P>
@@ -119,6 +130,7 @@ where
     }
 
     pub fn test_sum(&self) {
+        println!("Printing test: {self:?}");
         let input_values: Vec<P::EI> = self.random_input_values();
         let expected_values = match self.axis {
             Some(axis) if self.stride[axis] == 0 => input_values
@@ -192,12 +204,20 @@ where
                 accumulation: <P as ReducePrecision>::EA::as_type_native_unchecked(),
             },
         );
-        if result.is_err_and(|e| {
-            matches!(e, ReduceError::PlanesUnavailable)
-                || matches!(e, ReduceError::ImprecisePlaneDim)
-                || matches!(e, ReduceError::Validation { .. })
-        }) {
-            return; // We don't test in that case.
+        match result {
+            Ok(_) => {}
+            Err(e) => {
+                let is_ok = matches!(e, ReduceError::PlanesUnavailable)
+                    || matches!(e, ReduceError::ImprecisePlaneDim)
+                    || matches!(e, ReduceError::Validation { .. });
+
+                if is_ok {
+                    // Skip the kernel.
+                    return;
+                } else {
+                    panic!("{e:?}");
+                }
+            }
         }
 
         let bytes = client.read_one(output_handle);
