@@ -80,8 +80,8 @@ impl<R: Runtime, E: Float> Benchmark for ReduceBench<R, E> {
 fn run<R: Runtime, E: frontend::Float>(device: R::Device) {
     let client = R::client(&device);
     for shape in [
-        vec![2, 2, 4099 * 32],
         vec![32, 512, 4096],
+        vec![2, 2, 4099 * 32],
         vec![4096, 512, 32],
         vec![512, 512],
     ] {
