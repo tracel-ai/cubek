@@ -4,6 +4,7 @@ use cubecl::prelude::TensorHandleRef;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{Runtime, client};
 use cubek_matmul::launch::MatmulInputHandleRef;
+use cubek_matmul::launch::launch_naive;
 
 use crate::suite::layout_to_stride_spec;
 use cubek_matmul::definition::MatrixLayout;
@@ -177,7 +178,7 @@ fn test_naive(case: MatmulTestCase) {
     let rhs_handle = MatmulInputHandleRef::Normal(rhs.as_ref(), dtype.dtype);
     let out_handle = out.as_ref();
 
-    naive::launch_ref(
+    launch_naive::launch_ref(
         &client,
         &lhs_handle,
         &rhs_handle,

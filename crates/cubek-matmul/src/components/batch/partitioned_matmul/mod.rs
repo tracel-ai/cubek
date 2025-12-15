@@ -1,4 +1,5 @@
 mod config;
+mod entry_point;
 mod hypercube;
 mod matmul;
 mod partition;

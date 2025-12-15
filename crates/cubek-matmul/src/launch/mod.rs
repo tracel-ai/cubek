@@ -1,6 +1,8 @@
+pub mod launch2;
+pub mod launch_naive;
+
 mod args;
 mod base;
-pub mod launch2;
 mod select_kernel;
 mod strategy;
 mod tune_key;

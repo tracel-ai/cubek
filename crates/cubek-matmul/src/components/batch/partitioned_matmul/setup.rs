@@ -1,9 +1,10 @@
 use std::marker::PhantomData;
 
 use crate::components::batch::partitioned_matmul::config::PartitionedBatchConfig;
+use crate::components::batch::partitioned_matmul::entry_point;
 use crate::components::batch::partitioned_matmul::matmul::PartitionedBatchMatmul;
 use crate::components::batch::partitioned_matmul::partition::GlobalPartitionMatmul;
-use crate::components::batch::{BatchMatmulFamily, CubeCountInputArgs, entry_point};
+use crate::components::batch::{BatchMatmulFamily, CubeCountInputArgs};
 use crate::components::global::GlobalMatmulFamily;
 use crate::definition::MatmulSelection;
 use crate::definition::{

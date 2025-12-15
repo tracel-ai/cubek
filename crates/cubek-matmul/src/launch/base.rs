@@ -9,7 +9,7 @@ use cubecl_common::quant::scheme::{QuantScheme, QuantStore, QuantValue};
 
 use cubecl::std::tensor::{TensorHandle, into_contiguous_packed, into_contiguous_pitched};
 
-use crate::launch::AcceleratedTileKind;
+use crate::launch::{AcceleratedTileKind, launch_naive};
 use crate::{
     components::{
         global::read::{
@@ -41,7 +41,6 @@ use crate::{
             CyclicDoubleBufferingAlgorithm, HybridDoubleBufferingAlgorithm,
             TilewiseDoubleBufferingAlgorithm,
         },
-        naive,
         ordered_double_buffering::OrderedDoubleBufferingAlgorithm,
         simple::{SimpleAlgorithm, SimpleTmaAlgorithm},
         simple_unit::SimpleUnitAlgorithm,
@@ -459,7 +458,7 @@ pub fn launch_ref<R: Runtime>(
             launch2::launch_ref::<R, DoubleUnitAlgorithm>(client, lhs, rhs, out, selection, dtypes)
         }
         Strategy::Naive => {
-            naive::launch_ref(client, lhs, rhs, out, dtypes)?;
+            launch_naive::launch_ref(client, lhs, rhs, out, dtypes)?;
             Ok(())
         }
         Strategy::Auto => {
