@@ -6,7 +6,9 @@ use cubecl::prelude::TensorHandleRef;
 use cubecl::{Runtime, client::ComputeClient};
 use cubek_matmul::{
     definition::{MatmulElems, MatmulLineSizes, MatmulSelection},
-    launch::{InputArg, InputRuntimeArg, MatmulArgs, MatmulInputHandleRef, OutputArg, OutputRuntimeArg},
+    launch::{
+        InputArg, InputRuntimeArg, MatmulArgs, MatmulInputHandleRef, OutputArg, OutputRuntimeArg,
+    },
 };
 
 use crate::{

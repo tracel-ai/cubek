@@ -92,12 +92,7 @@ pub fn test_matmul_algorithm<A: Routine>(
 }
 
 /// Returns whether execution succeeded
-<<<<<<< HEAD
 pub fn launch_matmul_algorithm<A: Routine>(
-=======
-#[allow(clippy::too_many_arguments)]
-pub fn launch_matmul_algorithm<A: Algorithm>(
->>>>>>> main
     client: &ComputeClient<TestRuntime>,
     problem: &MatmulProblem,
     selection: MatmulSelection,

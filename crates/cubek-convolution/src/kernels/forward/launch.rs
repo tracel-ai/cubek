@@ -15,12 +15,12 @@ use cubecl::{
     prelude::*,
     std::{CubeOption, tensor::TensorHandle},
 };
-use cubek_matmul::{definition, launch::MatmulInputHandleRef};
 use cubek_matmul::{
     components::tile::{cmma::CmmaMatmul, io::Strided, mma::MmaMatmul},
     definition::{AvailableLineSizes, MatmulElems, MatrixLayout},
     launch::{AcceleratedTileKind, MatmulInputHandle, ReadingStrategy},
 };
+use cubek_matmul::{definition, launch::MatmulInputHandleRef};
 use derive_new::new;
 
 macro_rules! with_tile_kind {
