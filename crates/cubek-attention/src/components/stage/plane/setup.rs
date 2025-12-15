@@ -9,7 +9,7 @@ use crate::{
         },
         tile::TileAttentionFamily,
     },
-    launch::{AttentionBlueprint, AttentionPrecision, AttentionSetupError, attention_types::*},
+    definition::{AttentionBlueprint, AttentionPrecision, AttentionSetupError, attention_types::*},
 };
 use cubecl::prelude::ReadWrite;
 use cubek_matmul::{

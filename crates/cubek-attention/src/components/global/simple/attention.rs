@@ -15,8 +15,8 @@ use crate::components::stage::{
     AttentionLoadingStrategy, AttentionPartitioner, AttentionTilingLayout, StageAttention,
     StageAttentionConfig as _,
 };
-use crate::launch::AttentionPrecision;
-use crate::launch::attention_types::*;
+use crate::definition::AttentionPrecision;
+use crate::definition::attention_types::*;
 
 pub struct SimpleGlobalAttention<AP: AttentionPrecision, SA: StageAttention<AP>> {
     _phantom: PhantomData<(AP, SA)>,

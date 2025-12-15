@@ -1,6 +1,6 @@
 use crate::components::tile::TileAttentionConfig;
-use crate::launch::attention_types::MSK;
-use crate::launch::{AttentionPrecision, AttentionTileSize};
+use crate::definition::attention_types::MSK;
+use crate::definition::{AttentionPrecision, AttentionTileSize};
 use cubecl;
 use cubecl::prelude::*;
 use cubecl::std::tensor::{View, layout::Coords2d};

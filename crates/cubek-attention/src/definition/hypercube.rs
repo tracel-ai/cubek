@@ -1,7 +1,7 @@
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::launch::{AttentionBlueprint, AttentionDims};
+use crate::definition::{AttentionBlueprint, AttentionDims};
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct HypercubeBlueprint {}

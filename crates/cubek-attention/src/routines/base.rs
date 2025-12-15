@@ -7,10 +7,11 @@ use crate::components::tile::TileAttentionFamily;
 use crate::components::{
     batch::BatchAttentionFamily, global::GlobalAttentionFamily, stage::StageAttentionFamily,
 };
-use crate::launch::{
+use crate::definition::{
     AttentionBlueprint, AttentionDefinition, AttentionElems, AttentionLineSizes,
-    AttentionSetupError, CubeCountPlan, RoutineStrategy,
+    AttentionSetupError, CubeCountPlan,
 };
+use crate::launch::RoutineStrategy;
 
 pub trait Routine: Debug + Clone {
     type TileAttention: TileAttentionFamily;

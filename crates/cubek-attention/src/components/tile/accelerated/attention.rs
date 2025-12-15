@@ -7,8 +7,8 @@ use crate::components::tile::accelerated::local_tile::LocalTile;
 use crate::components::tile::accelerated::local_tile::LocalTileLayout;
 use crate::components::tile::accelerated::setup::BlackboxAcceleratedAttentionMatmulConfig;
 use crate::components::tile::{TileAttention, TileAttentionConfig as _};
-use crate::launch::AttentionPrecision;
-use crate::launch::attention_types::*;
+use crate::definition::AttentionPrecision;
+use crate::definition::attention_types::*;
 
 /// Uses accelerated instruction, but relies on shared memory for row-dependent computations
 /// because the fragment layout is blackbox

@@ -3,7 +3,7 @@ use cubek_matmul::components::ComputeResources;
 use crate::components::tile::TileAttentionFamily;
 use crate::components::tile::unit_register::UnitRegisterTileAttention;
 use crate::components::tile::{SharedTileAttentionConfig, TileAttentionConfig};
-use crate::launch::{
+use crate::definition::{
     AttentionBlueprint, AttentionPrecision, AttentionSetupError, AttentionTileSize,
     InvalidConfigError,
 };

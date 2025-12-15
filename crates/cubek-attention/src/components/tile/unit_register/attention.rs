@@ -16,8 +16,8 @@ use crate::components::tile::{RowwiseFormat, RowwiseFormatExpand};
 
 use crate::components::tile::TileAttention;
 use crate::components::tile::{FragmentLayout, FragmentLayoutExpand};
-use crate::launch::AttentionPrecision;
-use crate::launch::attention_types::*;
+use crate::definition::AttentionPrecision;
+use crate::definition::attention_types::*;
 
 pub struct UnitRegisterTileAttention;
 

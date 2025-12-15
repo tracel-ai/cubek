@@ -14,10 +14,11 @@ use crate::{
         },
         global::GlobalAttentionFamily,
     },
-    launch::{
+    definition::{
         AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError,
-        CubeCountInputArgs, InputRuntimeArg, OutputRuntimeArg, args::AttentionArgs,
+        CubeCountInputArgs, InputRuntimeArg, OutputRuntimeArg,
     },
+    launch::AttentionArgs,
 };
 
 pub struct SimpleBatchAttentionFamily<GA: GlobalAttentionFamily> {

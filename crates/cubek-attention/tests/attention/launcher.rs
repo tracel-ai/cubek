@@ -1,7 +1,8 @@
 use crate::attention::assert_result;
 use cubecl::TestRuntime;
-use cubek_attention::launch::{
-    AttentionDefinition, AttentionElems, AttentionIdent, AttentionOptions, Strategy, launch,
+use cubek_attention::{
+    definition::{AttentionDefinition, AttentionElems, AttentionIdent, AttentionOptions},
+    launch::{Strategy, launch},
 };
 
 use cubecl::client::ComputeClient;

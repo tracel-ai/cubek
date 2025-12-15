@@ -5,11 +5,11 @@ use crate::components::tile::TileAttentionConfig;
 use crate::components::tile::TileAttentionFamily;
 use crate::components::tile::accelerated::BlackboxAcceleratedTileAttention;
 use crate::components::tile::accelerated::local_tile::InnerLayout;
-use crate::launch::AttentionBlueprint;
-use crate::launch::AttentionPrecision;
-use crate::launch::AttentionSetupError;
-use crate::launch::AttentionTileSize;
-use crate::launch::InvalidConfigError;
+use crate::definition::AttentionBlueprint;
+use crate::definition::AttentionPrecision;
+use crate::definition::AttentionSetupError;
+use crate::definition::AttentionTileSize;
+use crate::definition::InvalidConfigError;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct BlackboxAcceleratedAttentionMatmulConfig {

@@ -22,7 +22,7 @@ use crate::{
         },
         stage::{StageAttentionConfig as _, StageAttentionFamily},
     },
-    launch::{AttentionBlueprint, AttentionPrecision, AttentionSetupError},
+    definition::{AttentionBlueprint, AttentionPrecision, AttentionSetupError},
 };
 
 pub struct SimpleGlobalAttentionFamily<SA: StageAttentionFamily> {

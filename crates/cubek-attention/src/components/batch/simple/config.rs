@@ -2,7 +2,7 @@ use cubecl::CubeDim;
 
 use crate::{
     components::{batch::BatchAttentionConfig, global::GlobalAttentionConfig},
-    launch::HypercubeBlueprint,
+    definition::HypercubeBlueprint,
 };
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]

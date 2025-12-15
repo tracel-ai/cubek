@@ -17,14 +17,14 @@ use crate::components::{
     },
     tile::{FragmentSoftmax, FragmentSoftmaxExpand, RowWise, TileAttention},
 };
-use crate::{components::stage::StageAttention, launch::AttentionPrecision};
+use crate::{components::stage::StageAttention, definition::AttentionPrecision};
 use crate::{
     components::{
         global::GlobalAttentionConfig,
         stage::{PartitionAttentionConfig, tile_softmax},
         tile::TileAttentionConfig as _,
     },
-    launch::attention_types::*,
+    definition::attention_types::*,
 };
 use cubecl::std::CubeOption;
 use cubecl::std::tensor::layout::Coords2d;

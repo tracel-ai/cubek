@@ -1,9 +1,9 @@
 use cubecl::prelude::*;
 use half::{bf16, f16};
 
-use crate::launch::{
-    AccumulatorPrecision, AttentionGlobalTypes,
-    args::{AttentionArgs, TensorArgs},
+use crate::{
+    definition::{AccumulatorPrecision, AttentionGlobalTypes},
+    launch::{AttentionArgs, TensorArgs},
 };
 
 /// Attention spec defining each element types used in the computation as well as
@@ -224,7 +224,9 @@ pub type InputRuntimeArg<'a, AA, R> = <InputArg<AA> as LaunchArg>::RuntimeArg<'a
 pub type OutputRuntimeArg<'a, AA, R> = <OutputArg<AA> as LaunchArg>::RuntimeArg<'a, R>;
 
 pub mod attention_types {
-    use crate::launch::{AttentionPrecision, AttentionSpec, QueryPrecision, StagedMatrixPrecision};
+    use crate::definition::{
+        AttentionPrecision, AttentionSpec, QueryPrecision, StagedMatrixPrecision,
+    };
 
     pub type QG<AS> =
         <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Query as QueryPrecision>::Global;

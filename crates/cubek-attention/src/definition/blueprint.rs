@@ -1,6 +1,6 @@
 use cubek_matmul::definition::TileSize;
 
-use crate::launch::{AttentionDims, AttentionLineSizes, HypercubeBlueprint};
+use crate::definition::{AttentionDims, AttentionLineSizes, HypercubeBlueprint};
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct AttentionBlueprint {

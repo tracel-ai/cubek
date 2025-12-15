@@ -6,8 +6,8 @@ use cubek_matmul::components::global::memory::GlobalMemoryConfig;
 use cubek_matmul::components::tile::StridedTile;
 
 use crate::components::stage::AttentionPartitioner;
-use crate::launch::attention_types::QG;
-use crate::launch::{AttentionPrecision, AttentionTileSize};
+use crate::definition::attention_types::QG;
+use crate::definition::{AttentionPrecision, AttentionTileSize};
 
 #[derive(CubeType)]
 pub struct QueryReader<AP: AttentionPrecision> {
