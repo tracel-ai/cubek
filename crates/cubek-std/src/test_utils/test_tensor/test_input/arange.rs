@@ -8,7 +8,23 @@ use crate::test_utils::test_tensor::test_input::base::{SimpleInputSpec, TestInpu
 
 #[cube(launch)]
 fn arange_launch<T: Numeric>(tensor: &mut Tensor<T>, #[define(T)] _types: StorageType) {
-    tensor.write_checked(ABSOLUTE_POS, T::cast_from(ABSOLUTE_POS));
+    let linear = ABSOLUTE_POS;
+
+    if linear >= tensor.len() {
+        terminate!();
+    }
+
+    let mut remaining = linear;
+    let mut offset = 0u32;
+
+    for d in 0..tensor.rank() {
+        let dim = tensor.shape(tensor.rank() - 1 - d);
+        let idx = remaining % dim;
+        remaining /= dim;
+        offset += idx * tensor.stride(tensor.rank() - 1 - d);
+    }
+
+    tensor.write_checked(offset, T::cast_from(linear));
 }
 
 fn new_arange(

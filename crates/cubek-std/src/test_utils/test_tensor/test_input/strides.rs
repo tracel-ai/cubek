@@ -40,37 +40,3 @@ impl StrideSpec {
         }
     }
 }
-
-/// Reorders a flat array according to given strides.
-pub(crate) fn reorder_by_strides<T: Copy + Default>(
-    flat: &[T],
-    shape: &[usize],
-    strides: &[usize],
-) -> Vec<T> {
-    let total = flat.len();
-    let mut out = vec![T::default(); total];
-
-    let rank = shape.len();
-    let mut index = vec![0usize; rank];
-
-    #[allow(clippy::needless_range_loop)]
-    for logical_flat_idx in 0..total {
-        // Compute multi-dim index in row-major order
-        let mut remaining = logical_flat_idx;
-        for d in (0..rank).rev() {
-            let dim = shape[d];
-            index[d] = remaining % dim;
-            remaining /= dim;
-        }
-
-        // Compute physical offset using custom strides
-        let mut physical = 0usize;
-        for d in 0..rank {
-            physical += index[d] * strides[d];
-        }
-
-        out[logical_flat_idx] = flat[physical];
-    }
-
-    out
-}
