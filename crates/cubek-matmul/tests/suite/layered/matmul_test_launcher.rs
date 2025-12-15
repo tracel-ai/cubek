@@ -20,13 +20,12 @@ use cubek_matmul::{
     MatmulInputHandleRef,
     components::{AvailableLineSizes, MatmulIdent},
 };
-use cubek_std::test_utils::HostData;
-use cubek_std::test_utils::current_test_mode;
-use cubek_std::test_utils::{
-    Distribution, RandomInputSpec, SimpleInputSpec, TestInput, batched_matrix_strides,
-};
+use cubek_test_utils::HostData;
+use cubek_test_utils::current_test_mode;
+use cubek_test_utils::{Distribution, RandomInputSpec, SimpleInputSpec, TestInput};
 
 use crate::suite::assert_result;
+use crate::suite::layout_to_stride_spec;
 
 pub enum InputRepresentation {
     Normal,
@@ -52,13 +51,9 @@ pub fn test_matmul_algorithm<A: Algorithm>(
         *dtypes.lhs_global,
         1234,
         Distribution::Uniform(-1., 1.),
-        Some(batched_matrix_strides(
-            &lhs_shape,
-            matches!(problem.lhs_layout, MatrixLayout::ColMajor),
-        )),
+        layout_to_stride_spec(problem.lhs_layout),
     )
-    .generate_with_f32_host_data()
-    .unwrap();
+    .generate_with_f32_host_data();
 
     let (rhs, rhs_data) = TestInput::random(
         client.clone(),
@@ -66,21 +61,17 @@ pub fn test_matmul_algorithm<A: Algorithm>(
         *dtypes.rhs_global,
         5678,
         Distribution::Uniform(-1., 1.),
-        Some(batched_matrix_strides(
-            &rhs_shape,
-            matches!(problem.rhs_layout, MatrixLayout::ColMajor),
-        )),
+        layout_to_stride_spec(problem.rhs_layout),
     )
-    .generate_with_f32_host_data()
-    .unwrap();
+    .generate_with_f32_host_data();
 
     let out = TestInput::zeros(
         client.clone(),
         problem.shape(MatmulIdent::Out),
         *dtypes.acc_global,
+        layout_to_stride_spec(MatrixLayout::RowMajor),
     )
-    .generate_without_host_data()
-    .unwrap();
+    .generate_without_host_data();
 
     problem.lhs_strides = lhs.strides.clone();
     problem.rhs_strides = rhs.strides.clone();

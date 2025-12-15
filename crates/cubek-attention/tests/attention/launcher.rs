@@ -5,7 +5,7 @@ use cubek_attention::launch::{
 };
 
 use cubecl::client::ComputeClient;
-use cubek_std::test_utils::{Distribution, TestInput, current_test_mode};
+use cubek_test_utils::{Distribution, StrideSpec, TestInput, current_test_mode};
 
 pub fn test_launch(
     client: ComputeClient<TestRuntime>,
@@ -24,10 +24,9 @@ pub fn test_launch(
         definition.global_dtypes.query,
         12,
         Distribution::Uniform(-1., 1.),
-        None,
+        StrideSpec::RowMajor,
     )
-    .generate_with_f32_host_data()
-    .unwrap();
+    .generate_with_f32_host_data();
 
     let (key_handle, key_data) = TestInput::random(
         client.clone(),
@@ -35,10 +34,9 @@ pub fn test_launch(
         definition.global_dtypes.key,
         34,
         Distribution::Uniform(-1., 1.),
-        None,
+        StrideSpec::RowMajor,
     )
-    .generate_with_f32_host_data()
-    .unwrap();
+    .generate_with_f32_host_data();
 
     let (value_handle, value_data) = TestInput::random(
         client.clone(),
@@ -46,10 +44,9 @@ pub fn test_launch(
         definition.global_dtypes.value,
         56,
         Distribution::Uniform(-1., 1.),
-        None,
+        StrideSpec::RowMajor,
     )
-    .generate_with_f32_host_data()
-    .unwrap();
+    .generate_with_f32_host_data();
 
     let (mask_handle, mask_data) = if definition.masked {
         let (mask_handle, mask_data) = TestInput::random(
@@ -58,12 +55,11 @@ pub fn test_launch(
             definition.global_dtypes.mask,
             78,
             Distribution::Bernoulli(0.1),
-            None,
+            StrideSpec::RowMajor,
         )
-        .generate_with_bool_host_data()
-        .unwrap();
+        .generate_with_bool_host_data();
 
-        (Some(mask_handle), Some(mask_data.into_bool()))
+        (Some(mask_handle), Some(mask_data))
     } else {
         (None, None)
     };
@@ -72,9 +68,9 @@ pub fn test_launch(
         client.clone(),
         out_shape.to_vec(),
         definition.global_dtypes.out,
+        StrideSpec::RowMajor,
     )
-    .generate_without_host_data()
-    .unwrap();
+    .generate_without_host_data();
 
     match launch(
         strategy,
@@ -91,10 +87,10 @@ pub fn test_launch(
         },
     ) {
         Ok(_) => assert_result(
-            &query_data.into_f32(),
-            &key_data.into_f32(),
-            &value_data.into_f32(),
-            mask_data.as_deref(),
+            &query_data,
+            &key_data,
+            &value_data,
+            mask_data.as_ref(),
             &definition,
             &client,
             out_handle,
