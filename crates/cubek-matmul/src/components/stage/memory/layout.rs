@@ -330,31 +330,15 @@ impl<TO: TilingOrder> TilingLayout for ContiguousTilingLayout<TO> {
         let (row, col) = tile;
 
         let stage_line_size = config.line_size;
-        let matrix_layout = config.matrix_layout;
 
-        let (tile_size_x, tile_size_y) = match matrix_layout {
-            MatrixLayout::RowMajor => {
-                let tile_size_x = config.elements_per_tile_along_row;
-                let tile_size_y = config.elements_per_tile_along_col / stage_line_size;
-
-                (tile_size_x, tile_size_y)
-            }
-            MatrixLayout::ColMajor => {
-                let tile_size_x = config.elements_per_tile_along_row / stage_line_size;
-                let tile_size_y = config.elements_per_tile_along_col;
-
-                (tile_size_x, tile_size_y)
-            }
-        };
-
-        let start = tile_size_x
-            * tile_size_y
+        let start = config.elements_per_tile()
             * TO::to_nth_tile(
                 (row, col),
                 config.tiles_per_stage_along_row(),
                 config.tiles_per_stage_along_col(),
                 config,
             );
+        let start = start / config.line_size;
 
         StridedTile::new_contiguous(stage_memory.as_slice(stage_line_size), start, config)
     }

@@ -19,7 +19,8 @@ pub trait ConvGemmConfig:
     fn matmul_config(&self) -> Self::GlobalMatmulConfig;
 
     /// The size of the convolution kernel at `dim`
-    fn convolution_params(&self) -> ConvolutionParams;
+    fn params(&self) -> ConvolutionParams;
+    fn operation(&self) -> ConvolutionOperation;
     fn line_sizes(&self) -> MatmulLineSizes;
     fn check_spatial_bounds(&self) -> bool;
     fn cube_dim(&self) -> CubeDim;
@@ -31,8 +32,8 @@ pub trait ConvGemmConfig:
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct ConvolutionConfig<M: GlobalConfig> {
     pub matmul: M,
-    pub convolution_params: ConvolutionParams,
-    pub num_stages: u32,
+    pub params: ConvolutionParams,
+    pub operation: ConvolutionOperation,
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -87,16 +88,20 @@ impl<M: GlobalConfig> ConvGemmConfig for ConvolutionConfig<M> {
     }
 
     fn check_spatial_bounds(&self) -> bool {
-        let spatial_dims = self.convolution_params.dimensionality.num_dims();
+        let spatial_dims = self.params.dimensionality.num_dims();
         let mut has_padding = false;
         for i in 0..spatial_dims {
-            has_padding |= self.convolution_params.padding[i as usize] != 0;
+            has_padding |= self.params.padding[i as usize] != 0;
         }
         has_padding
     }
 
-    fn convolution_params(&self) -> ConvolutionParams {
-        self.convolution_params
+    fn params(&self) -> ConvolutionParams {
+        self.params
+    }
+
+    fn operation(&self) -> ConvolutionOperation {
+        self.operation
     }
 
     fn lhs_global_memory_config(&self) -> GlobalMemoryConfig {
@@ -121,7 +126,7 @@ impl<M: GlobalConfig> ConvolutionConfig<M> {
         dilation: &[u32],
         padding: &[i32],
         dim: Dimensionality,
-        num_stages: u32,
+        operation: ConvolutionOperation,
     ) -> Result<Self, MatmulSetupError> {
         let dims = kernel_size.len();
 
@@ -138,8 +143,8 @@ impl<M: GlobalConfig> ConvolutionConfig<M> {
         params.padding[0..dims].copy_from_slice(padding);
         Ok(Self {
             matmul,
-            convolution_params: params,
-            num_stages,
+            params,
+            operation,
         })
     }
 }

@@ -3,8 +3,8 @@ use super::{
 };
 use crate::{
     BoundChecks, LineMode, ReduceError,
-    launch::{calculate_plane_count, support_plane},
-    routines::{PlaneReduceBlueprint, Routine, RoutineStrategy},
+    launch::{calculate_plane_count_per_cube, support_plane},
+    routines::{PlaneReduceBlueprint, Routine, RoutineStrategy, cube_count_safe},
 };
 use cubecl::{CubeCount, CubeDim, Runtime, prelude::ComputeClient};
 
@@ -28,7 +28,7 @@ impl Routine for PlaneRoutine {
         settings: ReduceLineSettings,
         strategy: RoutineStrategy<Self>,
     ) -> Result<(ReduceBlueprint, ReduceLaunchSettings), ReduceError> {
-        let (blueprint, cube_dim, working_planes) = match strategy {
+        let (blueprint, cube_dim, cube_count) = match strategy {
             RoutineStrategy::Forced(blueprint, cube_dim) => {
                 if !support_plane(client) {
                     return Err(ReduceError::PlanesUnavailable);
@@ -41,22 +41,31 @@ impl Routine for PlaneRoutine {
                 }
 
                 let working_planes = working_planes(&settings, &problem);
+
+                let working_cubes = working_planes.div_ceil(cube_dim.y);
+                let (cube_count, launched_cubes) = cube_count_safe(client, working_cubes);
+                let plane_idle = launched_cubes * cube_dim.y != working_planes;
+
+                if plane_idle && !blueprint.plane_idle {
+                    return Err(ReduceError::Validation {
+                        details: "Too many planes launched for the problem causing OOD, but `plane_idle` is off.",
+                    });
+                }
+
                 let blueprint = ReduceBlueprint {
                     line_mode: settings.line_mode,
                     global: GlobalReduceBlueprint::FullPlane(blueprint),
                 };
 
-                (blueprint, cube_dim, working_planes)
+                (blueprint, cube_dim, cube_count)
             }
             RoutineStrategy::Strategy(strategy) => {
-                let (blueprint, cube_dim, working_planes) =
+                let (blueprint, cube_dim, cube_count) =
                     generate_blueprint::<R>(client, problem, &settings, strategy)?;
-                (blueprint, cube_dim, working_planes)
+                (blueprint, cube_dim, cube_count)
             }
         };
 
-        let cube_count = working_planes.div_ceil(cube_dim.y);
-        let cube_count = CubeCount::new_1d(cube_count);
         let launch = ReduceLaunchSettings {
             cube_dim,
             cube_count,
@@ -72,7 +81,7 @@ fn generate_blueprint<R: Runtime>(
     problem: ReduceProblem,
     settings: &ReduceLineSettings,
     strategy: PlaneStrategy,
-) -> Result<(ReduceBlueprint, CubeDim, u32), ReduceError> {
+) -> Result<(ReduceBlueprint, CubeDim, CubeCount), ReduceError> {
     if !support_plane(client) {
         return Err(ReduceError::PlanesUnavailable);
     }
@@ -84,14 +93,17 @@ fn generate_blueprint<R: Runtime>(
         LineMode::Perpendicular => problem.vector_count / settings.line_size_input as u32,
     };
     let working_units = working_planes * plane_size;
-
-    let plane_count = calculate_plane_count(working_units, plane_size, properties.num_cpu_cores);
+    let plane_count =
+        calculate_plane_count_per_cube(working_units, plane_size, properties.num_cpu_cores);
+    let working_cubes = working_planes.div_ceil(plane_count);
 
     let cube_dim = CubeDim::new_2d(plane_size, plane_count);
-    let plane_idle = working_planes % plane_count != 0;
-    let bound_checks = match !problem.vector_size.is_multiple_of(plane_size) {
-        true => BoundChecks::Mask,
-        false => BoundChecks::None,
+    let (cube_count, cube_launched) = cube_count_safe(client, working_cubes);
+
+    let plane_idle = cube_launched * plane_count != working_planes;
+    let bound_checks = match problem.vector_size.is_multiple_of(plane_size) {
+        true => BoundChecks::None,
+        false => BoundChecks::Mask,
     };
 
     let blueprint = ReduceBlueprint {
@@ -103,7 +115,7 @@ fn generate_blueprint<R: Runtime>(
         }),
     };
 
-    Ok((blueprint, cube_dim, working_planes))
+    Ok((blueprint, cube_dim, cube_count))
 }
 
 fn working_planes(settings: &ReduceLineSettings, problem: &ReduceProblem) -> u32 {

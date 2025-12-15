@@ -105,6 +105,7 @@ macro_rules! testgen_reduce {
                 strategy: ReduceStrategy::FullCube(
                     RoutineStrategy::Forced(
                         CubeReduceBlueprint {
+                            cube_idle: true,
                             bound_checks: BoundChecks::Mask,
                             num_shared_accumulators: 8,
                             use_planes: false,
@@ -310,6 +311,38 @@ mod reduce_dim {
         );
     }
 
+    mod parallel_matrix_xxlarge {
+        testgen_reduce!(
+            shape: vec![64*4, 1024*4],
+            strides: vec![1024*4, 1],
+            axis: Some(1),
+        );
+    }
+
+    mod perpendicular_matrix_xxlarge {
+        testgen_reduce!(
+            shape: vec![64*4, 1024*4],
+            strides: vec![1024*4, 1],
+            axis: Some(0),
+        );
+    }
+
+    mod parallel_matrix_large_odd_batch {
+        testgen_reduce!(
+            shape: vec![33, 1024],
+            strides: vec![1024, 1],
+            axis: Some(1),
+        );
+    }
+
+    mod perpendicular_matrix_large_odd_batch {
+        testgen_reduce!(
+            shape: vec![33, 1024],
+            strides: vec![1024, 1],
+            axis: Some(0),
+        );
+    }
+
     mod parallel_rank_three_tensor {
         testgen_reduce!(
             shape: vec![16, 16, 16],
@@ -360,16 +393,16 @@ mod reduce_dim {
 
     mod parallel_matrix_with_jumps {
         testgen_reduce!(
-            shape: vec![8, 8],
-            strides: vec![64, 1],
+            shape: vec![256, 256],
+            strides: vec![512, 1],
             axis: Some(1),
         );
     }
 
     mod perpendicular_matrix_with_jumps {
         testgen_reduce!(
-            shape: vec![8, 8],
-            strides: vec![64, 1],
+            shape: vec![256, 256],
+            strides: vec![512, 1],
             axis: Some(0),
         );
     }

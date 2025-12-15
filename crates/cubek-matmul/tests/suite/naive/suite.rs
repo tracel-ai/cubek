@@ -23,7 +23,7 @@ struct MatmulTestCase {
 }
 
 impl MatmulTestCase {
-    fn to_problem(self) -> MatmulProblem {
+    fn into_problem(self) -> MatmulProblem {
         MatmulProblem {
             m: self.m,
             n: self.n,
@@ -139,7 +139,7 @@ pub fn test_with_batches() {
 
 fn test_naive(case: MatmulTestCase) {
     let client = TestRuntime::client(&Default::default());
-    let problem = case.to_problem();
+    let problem = case.into_problem();
 
     let dtype = elem();
     let lhs_shape = problem.shape(MatmulIdent::Lhs);

@@ -11,6 +11,18 @@ pub struct GlobalMemoryConfig {
     pub view_direction: ViewDirection,
 }
 
+impl Default for GlobalMemoryConfig {
+    fn default() -> Self {
+        Self {
+            line_size: 1,
+            check_row_bounds: false,
+            check_col_bounds: false,
+            matrix_layout: MatrixLayout::RowMajor,
+            view_direction: ViewDirection::None,
+        }
+    }
+}
+
 impl GlobalMemoryConfig {
     #[allow(clippy::too_many_arguments)]
     pub fn new(

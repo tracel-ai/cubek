@@ -17,10 +17,10 @@ pub struct WeightLayout {
     /// Number of channels, including padding, used for decomposing `k`
     pub padded_channels: FastDivmod,
 
-    /// Shape of the conceptual `k` size, including padding
-    pub shape_k: u32,
-    /// Shape of the conceptual `n` size, or `out_c`
-    pub shape_n: u32,
+    /// Shape of the combined kernel and channels dim, including padding
+    pub rows: u32,
+    /// Shape of the `out_c` dimension
+    pub cols: u32,
 
     /// Size of the convolution kernel
     #[cube(comptime)]
@@ -33,16 +33,16 @@ pub struct WeightLayout {
 #[cube]
 impl WeightLayout {
     pub fn new<E: Numeric, G: GlobalConfig>(
-        shape_k: u32,
-        shape_n: u32,
+        rows: u32,
+        cols: u32,
         padded_channels: FastDivmod,
         #[comptime] config: ConvolutionConfig<G>,
     ) -> WeightLayout {
         WeightLayout {
-            shape_k,
-            shape_n,
+            rows,
+            cols,
             padded_channels,
-            params: config.convolution_params,
+            params: config.params,
             config: config.rhs_global_memory_config(),
         }
     }
@@ -86,14 +86,14 @@ impl Layout for WeightLayout {
     }
 
     fn shape(&self) -> Self::Coordinates {
-        (1, self.shape_k, self.shape_n)
+        (1, self.rows, self.cols)
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
         let (_, k, n) = pos;
         let check_k = comptime![self.config.check_row_bounds];
         let check_n = comptime![self.config.check_col_bounds];
-        (!check_k || k < self.shape_k) && (!check_n || n < self.shape_n)
+        (!check_k || k < self.rows) && (!check_n || n < self.cols)
     }
 }
 
@@ -101,15 +101,30 @@ impl<'a, R: Runtime> WeightLayoutLaunch<'a, R> {
     pub fn from_args(
         client: &ComputeClient<R>,
         problem: &ConvolutionProblem,
-        padded_channels: u32,
-        params: ConvolutionParams,
         config: GlobalMemoryConfig,
     ) -> Self {
-        let size_k = problem.kernel_size.iter().product::<u32>() * padded_channels;
+        let padded_channels = problem.padded_channels as u32;
         let padded_channels = FastDivmodArgs::new(client, padded_channels);
-        let shape_k = ScalarArg::new(size_k);
+        let shape_k = ScalarArg::new(problem.k as u32);
         let shape_n = ScalarArg::new(problem.n as u32);
 
+        let params = ConvolutionParams::from_problem(problem);
+
         WeightLayoutLaunch::new(padded_channels, shape_k, shape_n, params, config)
+    }
+
+    pub fn from_args_wgrad(
+        client: &ComputeClient<R>,
+        problem: &ConvolutionProblem,
+        config: GlobalMemoryConfig,
+    ) -> Self {
+        let padded_channels = problem.padded_channels as u32;
+        let padded_channels = FastDivmodArgs::new(client, padded_channels);
+        let shape_m = ScalarArg::new(problem.m as u32);
+        let shape_n = ScalarArg::new(problem.n as u32);
+
+        let params = ConvolutionParams::from_problem(problem);
+
+        WeightLayoutLaunch::new(padded_channels, shape_n, shape_m, params, config)
     }
 }

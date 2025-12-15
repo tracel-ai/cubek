@@ -4,7 +4,7 @@ macro_rules! testgen_convolution_accelerated_algorithm {
         use cubek_convolution::components::global::read::strategy::{
             async_full_cyclic, async_full_strided,
         };
-        use cubek_convolution::kernels::layered::simple::*;
+        use cubek_convolution::kernels::forward::simple::*;
         use cubek_matmul::components::global::read::{
             sync_full_cyclic, sync_full_strided, sync_full_tilewise,
         };

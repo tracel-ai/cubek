@@ -454,3 +454,40 @@ impl Layout for GlobalScaleLayout {
         }
     }
 }
+
+#[derive(CubeType, CubeLaunch)]
+pub struct Transpose<Inner: Layout + LaunchArg> {
+    inner: Inner,
+}
+
+#[cube]
+impl<Inner: Layout + LaunchArg> Transpose<Inner> {
+    pub fn new(inner: Inner) -> Self {
+        Transpose::<Inner> { inner }
+    }
+}
+
+#[cube]
+impl<Inner: Layout<Coordinates = Coords3d> + LaunchArg> Layout for Transpose<Inner> {
+    type Coordinates = Coords3d;
+    type SourceCoordinates = Inner::SourceCoordinates;
+
+    fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
+        let (batch, row, col) = pos;
+        self.inner.to_source_pos((batch, col, row))
+    }
+
+    fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
+        let (batch, row, col) = pos;
+        self.inner.is_in_bounds((batch, col, row))
+    }
+
+    fn shape(&self) -> Self::Coordinates {
+        let (batches, rows, cols) = self.inner.shape();
+        (batches, cols, rows)
+    }
+
+    fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
+        (self.to_source_pos(pos), self.is_in_bounds(pos))
+    }
+}

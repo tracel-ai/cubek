@@ -19,7 +19,7 @@ use cubek_matmul::definition::{
 use std::marker::PhantomData;
 
 use crate::components::{
-    ConvolutionConfig, ConvolutionProblem,
+    ConvolutionConfig, ConvolutionOperation, ConvolutionProblem,
     global::{
         GlobalConvolutionFamily, read::full_reader::FullLoadingStrategy,
         single_stage::simple::SimpleConvolution,
@@ -80,12 +80,21 @@ where
 
         let stage_size_m = stage_config.elements_in_stage_m() as usize;
         let stage_size_n = stage_config.elements_in_stage_n() as usize;
+        let stage_size_k = stage_config.elements_in_stage_k() as usize;
 
         // k is tricky and is handled specially by different loaders so always check for now.
         // m and n don't have padding so checks work as normal.
         let check_m_bounds = !problem.m.is_multiple_of(stage_size_m);
-        let check_n_bounds = !problem.n.is_multiple_of(stage_size_n);
-        let check_k_bounds = true;
+        let check_n_bounds = match problem.operation {
+            ConvolutionOperation::Forward | ConvolutionOperation::BackwardData => {
+                !problem.n.is_multiple_of(stage_size_n)
+            }
+            ConvolutionOperation::BackwardWeight => true,
+        };
+        let check_k_bounds = match problem.operation {
+            ConvolutionOperation::BackwardWeight => !problem.k.is_multiple_of(stage_size_k),
+            ConvolutionOperation::Forward | ConvolutionOperation::BackwardData => true,
+        };
 
         let plane_role_config = stage_config.plane_role_config();
         let plane_counts = MatmulPlaneCounts::new(
@@ -93,7 +102,6 @@ where
             plane_role_config.plane_roles,
         );
 
-        let num_stages = 1;
         let precompute_job = selection.loading_precompute_strategy.into();
         let plane_dim = selection.plane_dim;
         let event_loading_mode = EventLoadingMode::Relaxed;
@@ -172,7 +180,7 @@ where
             &problem.dilation,
             &problem.padding,
             problem.dimensionality,
-            num_stages,
+            problem.operation,
         )
     }
 }

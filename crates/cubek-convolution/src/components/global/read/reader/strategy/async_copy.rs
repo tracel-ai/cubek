@@ -10,7 +10,7 @@ use cubek_matmul::components::{
 };
 use cubek_matmul::definition::{MatrixLayout, StageIdent};
 
-use crate::components::global::args::RuntimeArgs;
+use crate::components::{ConvolutionOperation, global::args::RuntimeArgs};
 
 /// The instruction has a max width of 128 bits, even on Blackwell which supports 256-bit loads
 pub(crate) const ASYNC_COPY_WIDTH: u32 = 128;
@@ -27,6 +27,8 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
     #[comptime] config: GlobalReaderConfig,
     #[comptime] copy_line_size: u32,
 ) {
+    let operation = comptime![runtime_args.operation];
+
     let mut stage_slice = stage.as_slice_mut(stage.smem.line_size());
     let slice_size = comptime![match config.smem_config.matrix_layout {
         MatrixLayout::RowMajor => (1u32, copy_line_size),
@@ -37,8 +39,9 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
     let mut slice_len_global = copy_line_size.runtime();
     let slice_len_stage = copy_line_size / stage_slice.line_size();
 
-    match config.stage_ident {
-        StageIdent::Lhs => {
+    match (config.stage_ident, operation) {
+        (StageIdent::Lhs, ConvolutionOperation::Forward)
+        | (StageIdent::Rhs, ConvolutionOperation::BackwardWeight) => {
             // im2col can give negative spatial indices so need to do a full bounds check on Lhs
             slice_len_global *= u32::cast_from(view.is_in_bounds(pos));
 
@@ -50,7 +53,8 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
                 );
             }
         }
-        StageIdent::Rhs => {
+        (StageIdent::Rhs, ConvolutionOperation::Forward)
+        | (StageIdent::Out, ConvolutionOperation::BackwardWeight) => {
             if config.gmem_config.check_row_bounds {
                 let in_c = runtime_args.padded_channels.modulo(k_offset + pos.0);
                 slice_len_global = Min::min(
@@ -62,7 +66,7 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
                 slice_len_global *= u32::cast_from(pos.1 < view.shape().1);
             }
         }
-        StageIdent::Acc | StageIdent::Out => {
+        _ => {
             if config.gmem_config.check_row_bounds {
                 let pos = pos.0;
                 let shape = view.shape().0;

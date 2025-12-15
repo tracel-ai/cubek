@@ -18,9 +18,9 @@ pub struct OutLayout {
     pub shape_out: Sequence<FastDivmod>,
 
     /// Shape of the conceptual `m` size
-    pub shape_m: u32,
+    pub rows: u32,
     /// Shape of the conceptual `n`size, or channels
-    pub shape_n: u32,
+    pub cols: u32,
 
     /// Global memory config for the backing tensor
     #[cube(comptime)]
@@ -30,15 +30,15 @@ pub struct OutLayout {
 #[cube]
 impl OutLayout {
     pub fn new(
-        shape_m: u32,
-        shape_n: u32,
+        rows: u32,
+        cols: u32,
         shape_out: Sequence<FastDivmod>,
         #[comptime] config: GlobalMemoryConfig,
     ) -> OutLayout {
         OutLayout {
             shape_out,
-            shape_m,
-            shape_n,
+            rows,
+            cols,
             config,
         }
     }
@@ -65,14 +65,14 @@ impl Layout for OutLayout {
     }
 
     fn shape(&self) -> Self::Coordinates {
-        (1, self.shape_m, self.shape_n)
+        (1, self.rows, self.cols)
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
         let (_, m, n) = pos;
         let check_m = comptime![self.config.check_row_bounds];
         let check_n = comptime![self.config.check_col_bounds];
-        (!check_m || m < self.shape_m) && (!check_n || n < self.shape_n)
+        (!check_m || m < self.rows) && (!check_n || n < self.cols)
     }
 }
 
@@ -91,5 +91,21 @@ impl<'a, R: Runtime> OutLayoutLaunch<'a, R> {
         let shape_n = ScalarArg::new(problem.n as u32);
 
         Self::new(shape_out, shape_m, shape_n, config)
+    }
+
+    pub fn from_args_wgrad(
+        client: &ComputeClient<R>,
+        problem: &ConvolutionProblem,
+        config: GlobalMemoryConfig,
+    ) -> Self {
+        let shape_out = problem
+            .out_shape
+            .iter()
+            .map(|s| FastDivmodArgs::new(client, *s as u32))
+            .collect();
+        let shape_m = ScalarArg::new(problem.m as u32);
+        let shape_k = ScalarArg::new(problem.k as u32);
+
+        Self::new(shape_out, shape_k, shape_m, config)
     }
 }

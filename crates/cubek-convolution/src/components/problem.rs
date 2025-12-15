@@ -1,5 +1,12 @@
 use cubek_matmul::definition::{MatmulProblem, MatrixLayout};
 
+#[derive(Clone, Debug, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ConvolutionOperation {
+    Forward,
+    BackwardData,
+    BackwardWeight,
+}
+
 #[derive(Clone, Debug)]
 /// Description of a matmul problem to solve, regardless of actual data
 pub struct ConvolutionProblem {
@@ -23,19 +30,38 @@ pub struct ConvolutionProblem {
     pub shape: Vec<usize>,
     pub out_shape: Vec<usize>,
 
+    /// Channels after applying loader-specific padding
+    pub padded_channels: usize,
+    pub operation: ConvolutionOperation,
+
     pub dimensionality: Dimensionality,
 }
 
 impl ConvolutionProblem {
     pub fn as_matmul_problem(&self) -> MatmulProblem {
+        let rank = self.lhs_strides.len();
+
         // Strides are expected to be in row major (m, n) format so for matmul checks we need to
         // convert them to that format, with all other dims treated as batch dims so they're still
         // checked.
         // lhs already has the right format, but rhs needs special handling.
-        let rank = self.lhs_strides.len();
         // (h, w, c, n)
-        let mut rhs_strides = self.rhs_strides[1..rank].to_vec();
-        rhs_strides.push(self.rhs_strides[0]);
+        let lhs_strides = match self.lhs_layout {
+            MatrixLayout::RowMajor => self.lhs_strides.clone(),
+            MatrixLayout::ColMajor => {
+                let mut lhs_strides = self.lhs_strides[1..rank].to_vec();
+                lhs_strides.push(self.lhs_strides[0]);
+                lhs_strides
+            }
+        };
+        let rhs_strides = match self.rhs_layout {
+            MatrixLayout::RowMajor => self.rhs_strides.clone(),
+            MatrixLayout::ColMajor => {
+                let mut rhs_strides = self.rhs_strides[1..rank].to_vec();
+                rhs_strides.push(self.rhs_strides[0]);
+                rhs_strides
+            }
+        };
 
         MatmulProblem {
             m: self.m,
@@ -44,11 +70,15 @@ impl ConvolutionProblem {
             lhs_batches: vec![],
             rhs_batches: vec![],
             out_batches: vec![],
-            lhs_strides: self.lhs_strides.clone(),
+            lhs_strides,
             rhs_strides,
             lhs_layout: self.lhs_layout,
             rhs_layout: self.rhs_layout,
         }
+    }
+
+    pub fn check_channel(&self) -> bool {
+        self.channels != self.padded_channels
     }
 }
 

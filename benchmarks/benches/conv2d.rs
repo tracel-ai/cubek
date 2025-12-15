@@ -82,7 +82,7 @@ impl<R: Runtime, MP: MatmulPrecision> Benchmark for Conv2dBench<R, MP> {
         let out: TensorHandle<R> =
             TensorHandle::empty(&client, vec![n, c_out, h_out, w_out], *elems.acc_global);
 
-        convolution::launch_ref::<R, 2>(
+        convolution::forward::launch_ref::<R, 2>(
             &Strategy::Simple {
                 read_strategy: ReadingStrategy::Cyclic,
                 tile_kind: AcceleratedTileKind::Cmma,

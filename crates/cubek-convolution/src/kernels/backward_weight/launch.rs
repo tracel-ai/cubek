@@ -1,11 +1,15 @@
-use crate::{components::ConvGemmConfig as _, kernels::layered::simple::*};
-use crate::{components::ConvSetupError, kernels::layered::selector::launch_kernel_concrete};
 use crate::{
-    components::{
-        ConvolutionProblem, Dimensionality,
-        global::args::{ConcreteInputsFactory, ConcreteOutputFactory},
-    },
-    kernels::layered::algorithm::Algorithm,
+    ConvolutionArgs, Strategy,
+    backward_weight::args::ConcreteArgs,
+    components::{ConvGemmConfig as _, ConvolutionOperation},
+    kernels::forward::simple::*,
+};
+use crate::{
+    components::ConvSetupError, kernels::backward_weight::selector::launch_kernel_concrete,
+};
+use crate::{
+    components::{ConvolutionProblem, Dimensionality},
+    kernels::forward::algorithm::Algorithm,
 };
 use cubecl::{
     Runtime,
@@ -13,27 +17,15 @@ use cubecl::{
     prelude::*,
     std::{CubeOption, tensor::TensorHandle},
 };
-use cubek_matmul::components::tile::{cmma::CmmaMatmul, io::Strided, mma::MmaMatmul};
-use cubek_matmul::definition::{self, AvailableLineSizes, MatmulElems, MatrixLayout};
+use cubek_matmul::definition::{AvailableLineSizes, MatmulElems, MatrixLayout};
 use cubek_matmul::launch::{
-    AcceleratedTileKind, InputArg, MatmulInputHandle, MatmulInputHandleRef, OutputArg,
-    ReadingStrategy,
+    AcceleratedTileKind, MatmulInputHandle, MatmulInputHandleRef, ReadingStrategy,
+};
+use cubek_matmul::{
+    components::tile::{cmma::CmmaMatmul, io::Strided, mma::MmaMatmul},
+    definition,
 };
 use derive_new::new;
-
-#[derive(Clone)]
-pub struct ConvolutionArgs<const N_SPATIAL: usize> {
-    pub stride: [usize; N_SPATIAL],
-    pub padding: [usize; N_SPATIAL],
-    pub dilation: [usize; N_SPATIAL],
-}
-
-pub enum Strategy {
-    Simple {
-        read_strategy: ReadingStrategy,
-        tile_kind: AcceleratedTileKind,
-    },
-}
 
 macro_rules! with_tile_kind {
     ($kind: expr, $T: ident, $launch: expr) => {
@@ -55,9 +47,8 @@ pub fn launch<R: Runtime, const N_SPATIAL: usize>(
     strategy: &Strategy,
     client: &ComputeClient<R>,
     input: MatmulInputHandle<R>,
-    weight: MatmulInputHandle<R>,
-    bias: Option<MatmulInputHandle<R>>,
-    out: TensorHandle<R>,
+    out_grad: MatmulInputHandle<R>,
+    weight_grad: TensorHandle<R>,
     args: ConvolutionArgs<N_SPATIAL>,
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError> {
@@ -65,9 +56,8 @@ pub fn launch<R: Runtime, const N_SPATIAL: usize>(
         strategy,
         client,
         &input.as_ref(),
-        &weight.as_ref(),
-        &bias.as_ref().map(|it| it.as_ref()),
-        &out.as_ref(),
+        &out_grad.as_ref(),
+        &weight_grad.as_ref(),
         args,
         dtypes,
     )
@@ -86,45 +76,43 @@ pub fn launch_ref<R: Runtime, const N_SPATIAL: usize>(
     strategy: &Strategy,
     client: &ComputeClient<R>,
     input: &MatmulInputHandleRef<'_, R>,
-    weight: &MatmulInputHandleRef<'_, R>,
-    bias: &Option<MatmulInputHandleRef<'_, R>>,
-    out: &TensorHandleRef<'_, R>,
+    out_grad: &MatmulInputHandleRef<'_, R>,
+    weight_grad: &TensorHandleRef<'_, R>,
     args: ConvolutionArgs<N_SPATIAL>,
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError> {
-    let conv = Convolution::new(client, input, weight, bias, out, args, dtypes);
+    let backprop = BackwardsWeight::new(client, input, out_grad, weight_grad, args, dtypes);
 
     match strategy {
         Strategy::Simple {
             read_strategy,
             tile_kind,
         } => with_tile_kind!(tile_kind, Accelerated, || match read_strategy {
-            ReadingStrategy::Cyclic => conv.launch::<SimpleSyncCyclicConv<Accelerated>>(),
-            ReadingStrategy::Strided => conv.launch::<SimpleSyncStridedConv<Accelerated>>(),
-            ReadingStrategy::Tilewise => conv.launch::<SimpleSyncTilewiseConv<Accelerated>>(),
-            ReadingStrategy::AsyncCyclic => conv.launch::<SimpleAsyncCyclicConv<Accelerated>>(),
-            ReadingStrategy::AsyncStrided => conv.launch::<SimpleAsyncStridedConv<Accelerated>>(),
-            ReadingStrategy::Tma => conv.launch::<SimpleAsyncTmaConv<Accelerated>>(),
+            ReadingStrategy::Cyclic => backprop.launch::<SimpleSyncCyclicConv<Accelerated>>(),
+            ReadingStrategy::Strided => backprop.launch::<SimpleSyncStridedConv<Accelerated>>(),
+            ReadingStrategy::Tilewise => backprop.launch::<SimpleSyncTilewiseConv<Accelerated>>(),
+            ReadingStrategy::AsyncCyclic => backprop.launch::<SimpleAsyncCyclicConv<Accelerated>>(),
+            ReadingStrategy::AsyncStrided =>
+                backprop.launch::<SimpleAsyncStridedConv<Accelerated>>(),
+            ReadingStrategy::Tma => backprop.launch::<SimpleAsyncTmaConv<Accelerated>>(),
         }),
     }
 }
 
 #[derive(new)]
-struct Convolution<'a, R: Runtime, const N_SPATIAL: usize> {
+struct BackwardsWeight<'a, R: Runtime, const N_SPATIAL: usize> {
     client: &'a ComputeClient<R>,
     input: &'a MatmulInputHandleRef<'a, R>,
-    weight: &'a MatmulInputHandleRef<'a, R>,
-    bias: &'a Option<MatmulInputHandleRef<'a, R>>,
-    out: &'a TensorHandleRef<'a, R>,
+    out_grad: &'a MatmulInputHandleRef<'a, R>,
+    weight_grad: &'a TensorHandleRef<'a, R>,
     args: ConvolutionArgs<N_SPATIAL>,
     dtypes: MatmulElems,
 }
 
-impl<'a, R: Runtime, const N_SPATIAL: usize> Convolution<'a, R, N_SPATIAL> {
+impl<'a, R: Runtime, const N_SPATIAL: usize> BackwardsWeight<'a, R, N_SPATIAL> {
     fn launch<Alg: Algorithm>(self) -> Result<(), ConvSetupError>
     where
-        InputArg<Alg::Args>: ConcreteInputsFactory,
-        OutputArg<Alg::Args>: ConcreteOutputFactory,
+        Alg::Args: ConcreteArgs,
     {
         let ConvolutionArgs {
             stride,
@@ -142,9 +130,8 @@ impl<'a, R: Runtime, const N_SPATIAL: usize> Convolution<'a, R, N_SPATIAL> {
         launch_with_algorithm::<R, Alg>(
             self.client,
             self.input,
-            self.weight,
-            self.bias,
-            self.out,
+            self.out_grad,
+            self.weight_grad,
             (&stride, &padding, &dilation),
             dimensionality,
             self.dtypes,
@@ -156,46 +143,46 @@ impl<'a, R: Runtime, const N_SPATIAL: usize> Convolution<'a, R, N_SPATIAL> {
 fn launch_with_algorithm<R: Runtime, Alg: Algorithm>(
     client: &ComputeClient<R>,
     input: &MatmulInputHandleRef<'_, R>,
-    weight: &MatmulInputHandleRef<'_, R>,
-    bias: &Option<MatmulInputHandleRef<'_, R>>,
-    out: &TensorHandleRef<'_, R>,
+    out_grad: &MatmulInputHandleRef<'_, R>,
+    weight_grad: &TensorHandleRef<'_, R>,
     (stride, padding, dilation): (&[usize], &[usize], &[usize]),
     dimensionality: Dimensionality,
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError>
 where
-    InputArg<Alg::Args>: ConcreteInputsFactory,
-    OutputArg<Alg::Args>: ConcreteOutputFactory,
+    Alg::Args: ConcreteArgs,
 {
     let rank = input.data().shape.len();
     let dim_c = rank - 1;
 
-    let n = input.data().shape[0];
-    let c = input.data().shape[dim_c];
+    let n = input.shape()[0];
+    let c = input.shape()[dim_c];
 
-    let out_c = weight.data().shape[0];
+    let out_c = out_grad.shape()[dim_c];
 
-    let in_shape = &input.data().shape[1..dim_c];
-    let kernel_shape = &weight.data().shape[1..dim_c];
-    let out_shape = &out.shape[1..dim_c];
+    let in_shape = &input.shape()[1..dim_c];
+    let kernel_shape = &weight_grad.shape[1..dim_c];
+    let out_shape = &out_grad.shape()[1..dim_c];
 
-    let input_data = Alg::into_tensor_handle(client, input.data(), *dtypes.lhs_global)?;
-    let weight_data = Alg::into_tensor_handle(client, weight.data(), *dtypes.rhs_global)?;
+    let op = ConvolutionOperation::BackwardWeight;
+
+    let input_data = Alg::into_tensor_handle(client, input.data(), *dtypes.lhs_global, op)?;
+    let out_grad_data = Alg::into_tensor_handle(client, out_grad.data(), *dtypes.rhs_global, op)?;
 
     let mut input = *input;
-    let mut weight = *weight;
+    let mut out_grad = *out_grad;
 
     *input.data_mut() = input_data.as_ref();
-    *weight.data_mut() = weight_data.as_ref();
+    *out_grad.data_mut() = out_grad_data.as_ref();
 
     let problem = ConvolutionProblem {
-        m: n * out_shape.iter().product::<usize>(),
-        n: out_c,
-        k: c * kernel_shape.iter().product::<usize>(),
+        m: out_c,
+        n: c * kernel_shape.iter().product::<usize>(),
+        k: n * out_shape.iter().product::<usize>(),
         lhs_strides: input.data().strides.to_vec(),
-        rhs_strides: weight.data().strides.to_vec(),
-        lhs_layout: definition::MatrixLayout::RowMajor,
-        rhs_layout: definition::MatrixLayout::ColMajor,
+        rhs_strides: out_grad.data().strides.to_vec(),
+        lhs_layout: definition::MatrixLayout::ColMajor,
+        rhs_layout: definition::MatrixLayout::RowMajor,
         kernel_size: kernel_shape.iter().map(|it| *it as u32).collect(),
         stride: stride.iter().map(|it| *it as u32).collect(),
         padding: padding.iter().map(|it| *it as i32).collect(),
@@ -206,25 +193,26 @@ where
         out_shape: out_shape.to_vec(),
         channels: c,
 
+        padded_channels: c,
+        operation: op,
+
         dimensionality,
     };
 
-    launch_kernel::<R, Alg>(client, &input, &weight, bias, out, problem, dtypes)
+    launch_kernel::<R, Alg>(client, &input, &out_grad, weight_grad, problem, dtypes)
 }
 
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
 pub fn launch_kernel<R: Runtime, Alg: Algorithm>(
     client: &ComputeClient<R>,
     input: &MatmulInputHandleRef<'_, R>,
-    weight: &MatmulInputHandleRef<'_, R>,
-    bias: &Option<MatmulInputHandleRef<'_, R>>,
-    out: &TensorHandleRef<'_, R>,
+    out_grad: &MatmulInputHandleRef<'_, R>,
+    weight_grad: &TensorHandleRef<'_, R>,
     problem: ConvolutionProblem,
     mut dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError>
 where
-    InputArg<Alg::Args>: ConcreteInputsFactory,
-    OutputArg<Alg::Args>: ConcreteOutputFactory,
+    Alg::Args: ConcreteArgs,
 {
     let plane_dim = client.properties().hardware.plane_size_max;
     // Shape/strides are treated as k-major, with the last dim always being the contiguous one.
@@ -232,30 +220,38 @@ where
     let line_sizes = AvailableLineSizes::from_type_sizes(
         client,
         input.data().elem_size,
-        weight.data().elem_size,
-        out.elem_size,
+        out_grad.data().elem_size,
+        weight_grad.elem_size,
     )
     .filter_lhs_with_tensor(
+        out_grad.data().strides,
+        out_grad.data().shape,
+        MatrixLayout::RowMajor,
+    )
+    .filter_rhs_with_tensor(
         input.data().strides,
         input.data().shape,
         MatrixLayout::RowMajor,
     )
-    .filter_rhs_with_tensor(
-        weight.data().strides,
-        weight.data().shape,
-        MatrixLayout::RowMajor,
-    )
-    .filter_out_with_tensor(out.strides, out.shape);
+    .filter_out_with_tensor(weight_grad.strides, weight_grad.shape);
 
     let line_sizes = Alg::filter_line_sizes(line_sizes).pick_max()?;
 
     let selection = Alg::selection(client, &problem, plane_dim, &line_sizes, &mut dtypes)?;
+    let problem = Alg::Args::adjust_problem(client, problem, &selection, &dtypes);
 
     let config = Alg::setup(client, &problem, &selection, &line_sizes, &dtypes)?;
 
     let line_sizes = config.line_sizes();
 
     launch_kernel_concrete::<R, Alg>(
-        client, input, weight, bias, out, problem, line_sizes, selection, &dtypes,
+        client,
+        input,
+        out_grad,
+        weight_grad,
+        problem,
+        line_sizes,
+        selection,
+        &dtypes,
     )
 }

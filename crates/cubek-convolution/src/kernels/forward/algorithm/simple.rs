@@ -23,7 +23,7 @@ use std::marker::PhantomData;
 
 use crate::{
     components::{
-        ConvolutionProblem, convolution_matmul_selection,
+        ConvolutionOperation, ConvolutionProblem, convolution_matmul_selection,
         global::{
             read::{
                 full_reader::FullLoadingStrategy,
@@ -35,7 +35,7 @@ use crate::{
             single_stage::simple::SimpleConvolutionFamily,
         },
     },
-    kernels::layered::{into_tensor_handle, into_tensor_handle_tma},
+    kernels::forward::{into_tensor_handle, into_tensor_handle_tma},
 };
 
 use super::Algorithm;
@@ -96,6 +96,7 @@ impl<
         client: &ComputeClient<R>,
         handle: &TensorHandleRef<'_, R>,
         dtype: StorageType,
+        _operation: ConvolutionOperation,
     ) -> Result<TensorHandle<R>, LaunchError> {
         into_tensor_handle(client, handle, dtype)
     }
@@ -143,8 +144,9 @@ impl<
         client: &ComputeClient<R>,
         handle: &TensorHandleRef<'_, R>,
         dtype: StorageType,
+        operation: ConvolutionOperation,
     ) -> Result<TensorHandle<R>, LaunchError> {
-        into_tensor_handle_tma(client, handle, dtype)
+        into_tensor_handle_tma(client, handle, dtype, operation)
     }
 
     fn selection<R: Runtime>(

@@ -40,14 +40,12 @@ pub(crate) fn build_random(spec: RandomInputSpec) -> TensorHandle<TestRuntime> {
     let shape = &spec.inner.shape;
     let strides = &spec.inner.strides();
 
-    let handle = random_tensor_handle(
+    random_tensor_handle(
         &spec.inner.client,
         spec.inner.dtype,
         spec.seed,
         strides,
         shape,
         spec.distribution,
-    );
-
-    handle
+    )
 }

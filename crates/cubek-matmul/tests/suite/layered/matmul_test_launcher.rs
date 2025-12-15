@@ -92,7 +92,12 @@ pub fn test_matmul_algorithm<A: Routine>(
 }
 
 /// Returns whether execution succeeded
+<<<<<<< HEAD
 pub fn launch_matmul_algorithm<A: Routine>(
+=======
+#[allow(clippy::too_many_arguments)]
+pub fn launch_matmul_algorithm<A: Algorithm>(
+>>>>>>> main
     client: &ComputeClient<TestRuntime>,
     problem: &MatmulProblem,
     selection: MatmulSelection,
@@ -103,7 +108,7 @@ pub fn launch_matmul_algorithm<A: Routine>(
     out: TensorHandleRef<TestRuntime>,
 ) -> bool {
     let line_sizes = AvailableLineSizes::from_type_sizes(
-        &client,
+        client,
         dtypes.lhs_global.size(),
         dtypes.rhs_global.size(),
         dtypes.acc_global.size(),
@@ -111,9 +116,9 @@ pub fn launch_matmul_algorithm<A: Routine>(
     let line_sizes = A::filter_line_sizes(line_sizes);
     let line_sizes = match input_representation {
         InputRepresentation::Normal => line_sizes
-            .filter_lhs_with_tensor(&lhs.data().strides, &lhs.data().shape, problem.lhs_layout)
-            .filter_rhs_with_tensor(&rhs.data().strides, &rhs.data().shape, problem.rhs_layout)
-            .filter_out_with_tensor(&out.strides, &out.shape)
+            .filter_lhs_with_tensor(lhs.data().strides, lhs.data().shape, problem.lhs_layout)
+            .filter_rhs_with_tensor(rhs.data().strides, rhs.data().shape, problem.rhs_layout)
+            .filter_out_with_tensor(out.strides, out.shape)
             .pick_max()
             .unwrap(),
         InputRepresentation::Tma => line_sizes
@@ -123,7 +128,7 @@ pub fn launch_matmul_algorithm<A: Routine>(
             .unwrap(),
     };
 
-    let config = match A::setup(&client, &problem, &selection, &line_sizes, &dtypes) {
+    let config = match A::setup(client, problem, &selection, &line_sizes, dtypes) {
         Ok(config) => config,
         Err(err) => {
             if current_test_mode().should_fail_on_test_compilation_fail() {
@@ -142,68 +147,67 @@ pub fn launch_matmul_algorithm<A: Routine>(
     }
 
     let output = TensorOutput::create(
-        &client,
+        client,
         &out,
         &selection,
-        &problem,
+        problem,
         &line_sizes,
         config,
-        &dtypes,
+        dtypes,
     );
 
-    let cube_count_plan = config.hypercube_config().cube_count_plan(
-        &problem,
-        client.properties().hardware.max_cube_count.clone(),
-    );
+    let cube_count_plan = config
+        .hypercube_config()
+        .cube_count_plan(problem, client.properties().hardware.max_cube_count.clone());
 
     match input_representation {
         InputRepresentation::Normal => {
             let inputs = TensorInputs::create(
-                &client,
+                client,
                 &lhs,
                 &rhs,
                 &selection,
-                &problem,
+                problem,
                 &line_sizes,
                 config,
-                &dtypes,
+                dtypes,
             );
 
             unsafe {
                 A::BatchMatmul::launch_unchecked::<TensorArgs, TestRuntime>(
-                    &client,
+                    client,
                     config.cube_dim(),
                     cube_count_plan.resolve(),
                     inputs,
                     output,
                     cube_count_plan.as_args(),
                     config,
-                    &dtypes,
+                    dtypes,
                 )
             }
         }
         InputRepresentation::Tma => {
             let inputs = TensorMapInputs::create(
-                &client,
+                client,
                 &lhs,
                 &rhs,
                 &selection,
-                &problem,
+                problem,
                 &line_sizes,
                 config,
-                &dtypes,
+                dtypes,
             );
 
             unsafe {
                 A::BatchMatmul::launch_unchecked::<TensorMapArgs, TestRuntime>(
-                    &client,
+                    client,
                     config.cube_dim(),
                     cube_count_plan.resolve(),
                     inputs,
                     output,
                     cube_count_plan.as_args(),
                     config,
-                    &dtypes,
+                    dtypes,
                 )
             }
         }

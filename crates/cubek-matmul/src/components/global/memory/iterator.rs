@@ -18,11 +18,12 @@ pub struct GlobalIterator<EI: CubePrimitive> {
 unsafe impl<EG: CubePrimitive> Sync for GlobalIterator<EG> {}
 unsafe impl<EG: CubePrimitive> Send for GlobalIterator<EG> {}
 
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, Default)]
 pub enum ViewDirection {
     Row,
     Col,
     /// Cannot advance if direction is none
+    #[default]
     None,
 }
 

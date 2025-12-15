@@ -1,7 +1,7 @@
 [package]
-name = "cubek-test-utils"
 edition.workspace = true
 license.workspace = true
+name = "cubek-test-utils"
 readme.workspace = true
 rust-version.workspace = true
 version.workspace = true
@@ -21,6 +21,6 @@ half = { workspace = true, features = ["bytemuck"] }
 serde = { workspace = true }
 
 [dev-dependencies]
-trybuild = "1"
-pretty_assertions = { workspace = true }
 cubecl = { workspace = true, features = ["test-runtime"] }
+pretty_assertions = { workspace = true }
+trybuild = "1"

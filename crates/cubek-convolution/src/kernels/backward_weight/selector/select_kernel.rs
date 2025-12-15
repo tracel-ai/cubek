@@ -1,20 +1,17 @@
-use crate::components::{ConvGemmConfig as _, global::args::RuntimeArgsLaunch};
+use crate::{
+    backward_weight::args::{ConcreteInputsFactory, ConcreteOutputFactory},
+    components::{ConvGemmConfig as _, global::args::RuntimeArgsLaunch},
+};
 use cubecl::prelude::TensorHandleRef;
 use cubecl::{Runtime, client::ComputeClient};
-use cubek_matmul::definition::{MatmulElems, MatmulLineSizes, MatmulSelection};
-use cubek_matmul::launch::{
-    InputArg, InputRuntimeArg, MatmulArgs, MatmulInputHandleRef, OutputArg, OutputRuntimeArg,
+use cubek_matmul::{
+    definition::{MatmulElems, MatmulLineSizes, MatmulSelection},
+    launch::{InputArg, InputRuntimeArg, MatmulArgs, MatmulInputHandleRef, OutputArg, OutputRuntimeArg},
 };
 
 use crate::{
-    components::{
-        ConvSetupError, ConvolutionProblem,
-        global::{
-            args::{ConcreteInputsFactory, ConcreteOutputFactory},
-            entry_point::ConvolutionLaunch,
-        },
-    },
-    kernels::layered::algorithm::Algorithm,
+    components::{ConvSetupError, ConvolutionProblem, global::entry_point::ConvolutionLaunch},
+    kernels::forward::algorithm::Algorithm,
 };
 
 /// Select which kernel to launch for the given Algorithm.
@@ -24,9 +21,8 @@ use crate::{
 pub fn launch_kernel_concrete<R: Runtime, A: Algorithm>(
     client: &ComputeClient<R>,
     input: &MatmulInputHandleRef<'_, R>,
-    weight: &MatmulInputHandleRef<'_, R>,
-    bias: &Option<MatmulInputHandleRef<'_, R>>,
-    out: &TensorHandleRef<'_, R>,
+    out_grad: &MatmulInputHandleRef<'_, R>,
+    weight_grad: &TensorHandleRef<'_, R>,
     problem: ConvolutionProblem,
     line_sizes: MatmulLineSizes,
     selection: MatmulSelection,
@@ -41,8 +37,7 @@ where
     let (input, runtime_args) = <InputArg<A::Args> as ConcreteInputsFactory>::create(
         client,
         input,
-        weight,
-        bias.as_ref(),
+        out_grad,
         &selection,
         &problem,
         &line_sizes,
@@ -51,12 +46,11 @@ where
     );
     let output = <OutputArg<A::Args> as ConcreteOutputFactory>::create(
         client,
-        out,
+        weight_grad,
         &selection,
         &problem,
         &line_sizes,
         config,
-        dtypes,
     );
 
     let result = unsafe {

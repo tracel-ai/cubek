@@ -1,6 +1,7 @@
 use crate::{
     LineMode, ReduceInstruction, ReducePrecision,
     components::{
+        global::reduce_count,
         instructions::{SharedAccumulator, fuse_accumulator_inplace, reduce_inplace},
         readers::{Reader, cube::CubeReader},
         writer,
@@ -23,6 +24,18 @@ impl GlobalFullCubeReduce {
         #[comptime] blueprint: CubeReduceBlueprint,
     ) {
         let reduce_index = CUBE_POS;
+        if comptime![blueprint.cube_idle] {
+            let reduce_count = reduce_count(
+                output.len() * output.line_size(),
+                line_mode,
+                input.line_size(),
+            );
+
+            if reduce_index >= reduce_count {
+                terminate!();
+            }
+        }
+
         let input_line_size = input.line_size();
 
         let reader = Reader::<P>::new::<I, Out>(

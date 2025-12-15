@@ -21,9 +21,9 @@ pub struct Im2colLayout {
     pub padded_channels: FastDivmod,
 
     /// Shape of the combined `m` dimension, including padding
-    pub shape_m: u32,
+    pub rows: u32,
     /// Shape of the combined `k` dimension, including padding
-    pub shape_k: u32,
+    pub cols: u32,
 
     /// Comptime parameters for the convolution
     #[cube(comptime)]
@@ -36,8 +36,8 @@ pub struct Im2colLayout {
 #[cube]
 impl Im2colLayout {
     pub fn new<G: GlobalConfig>(
-        shape_m: u32,
-        shape_k: u32,
+        rows: u32,
+        cols: u32,
         padded_channels: FastDivmod,
         shape_out: Sequence<FastDivmod>,
         #[comptime] config: ConvolutionConfig<G>,
@@ -45,9 +45,9 @@ impl Im2colLayout {
         Im2colLayout {
             shape_out,
             padded_channels,
-            shape_m,
-            shape_k,
-            params: config.convolution_params,
+            rows,
+            cols,
+            params: config.params,
             config: config.lhs_global_memory_config(),
         }
     }
@@ -95,7 +95,7 @@ impl Layout for Im2colLayout {
     }
 
     fn shape(&self) -> Self::Coordinates {
-        (1, self.shape_m, self.shape_k)
+        (1, self.rows, self.cols)
     }
 
     fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (NhwcCoords, bool) {
@@ -105,8 +105,8 @@ impl Layout for Im2colLayout {
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
         let (_, view_m, view_k) = pos;
         // Shouldn't be relied on because it doesn't check spatial
-        let m_in_bounds = comptime!(!self.config.check_row_bounds) || view_m < self.shape_m;
-        let k_in_bounds = comptime!(!self.config.check_col_bounds) || view_k < self.shape_k;
+        let m_in_bounds = comptime!(!self.config.check_row_bounds) || view_m < self.rows;
+        let k_in_bounds = comptime!(!self.config.check_col_bounds) || view_k < self.cols;
         m_in_bounds && k_in_bounds
     }
 }
@@ -115,7 +115,6 @@ impl<'a, R: Runtime> Im2colLayoutLaunch<'a, R> {
     pub fn from_args(
         client: &ComputeClient<R>,
         problem: &ConvolutionProblem,
-        padded_channels: u32,
         params: ConvolutionParams,
         config: GlobalMemoryConfig,
     ) -> Self {
@@ -125,12 +124,33 @@ impl<'a, R: Runtime> Im2colLayoutLaunch<'a, R> {
             .map(|s| FastDivmodArgs::new(client, *s as u32))
             .collect();
 
-        let size_k = problem.kernel_size.iter().product::<u32>() * padded_channels;
+        let padded_channels = problem.padded_channels as u32;
         let padded_channels = FastDivmodArgs::new(client, padded_channels);
 
         let shape_m = ScalarArg::new(problem.m as u32);
-        let shape_k = ScalarArg::new(size_k);
+        let shape_k = ScalarArg::new(problem.k as u32);
 
         Im2colLayoutLaunch::new(shape_out, padded_channels, shape_m, shape_k, params, config)
+    }
+
+    pub fn from_args_wgrad(
+        client: &ComputeClient<R>,
+        problem: &ConvolutionProblem,
+        params: ConvolutionParams,
+        config: GlobalMemoryConfig,
+    ) -> Self {
+        let shape_out = problem
+            .out_shape
+            .iter()
+            .map(|s| FastDivmodArgs::new(client, *s as u32))
+            .collect();
+
+        let padded_channels = problem.padded_channels as u32;
+        let padded_channels = FastDivmodArgs::new(client, padded_channels);
+
+        let shape_k = ScalarArg::new(problem.k as u32);
+        let shape_n = ScalarArg::new(problem.n as u32);
+
+        Im2colLayoutLaunch::new(shape_out, padded_channels, shape_k, shape_n, params, config)
     }
 }

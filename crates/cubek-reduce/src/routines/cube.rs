@@ -3,8 +3,8 @@ use super::{
 };
 use crate::{
     BoundChecks, LineMode, ReduceError,
-    launch::{calculate_plane_count, support_plane},
-    routines::{CubeReduceBlueprint, Routine, RoutineStrategy},
+    launch::{calculate_plane_count_per_cube, support_plane},
+    routines::{CubeReduceBlueprint, Routine, RoutineStrategy, cube_count_safe},
 };
 use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient};
 
@@ -28,7 +28,7 @@ impl Routine for CubeRoutine {
         settings: ReduceLineSettings,
         strategy: RoutineStrategy<Self>,
     ) -> Result<(ReduceBlueprint, ReduceLaunchSettings), ReduceError> {
-        let (blueprint, cube_dim, cube_count) = match strategy {
+        let (blueprint, cube_dim, num_cubes) = match strategy {
             RoutineStrategy::Forced(blueprint, cube_dim) => {
                 // One accumulator per plane.
                 if blueprint.use_planes {
@@ -54,22 +54,31 @@ impl Routine for CubeRoutine {
                 }
 
                 let working_cubes = working_cubes(&settings, &problem);
+                let (cube_count, launched_cubes) = cube_count_safe(client, working_cubes);
+
+                if working_cubes != launched_cubes && !blueprint.cube_idle {
+                    return Err(ReduceError::Validation {
+                        details: "Too many cubes launched for the problem causing OOD, but `cube_idle` is off.",
+                    });
+                }
+
                 let blueprint = ReduceBlueprint {
                     line_mode: settings.line_mode,
                     global: GlobalReduceBlueprint::Cube(blueprint),
                 };
-                (blueprint, cube_dim, CubeCount::new_1d(working_cubes))
+
+                (blueprint, cube_dim, cube_count)
             }
             RoutineStrategy::Strategy(strategy) => {
-                let (blueprint, cube_dim, working_cubes) =
+                let (blueprint, cube_dim, cube_count) =
                     generate_blueprint::<R>(client, problem, &settings, strategy)?;
-                (blueprint, cube_dim, CubeCount::new_1d(working_cubes))
+                (blueprint, cube_dim, cube_count)
             }
         };
 
         let launch = ReduceLaunchSettings {
             cube_dim,
-            cube_count,
+            cube_count: num_cubes,
             line: settings,
         };
 
@@ -82,7 +91,7 @@ fn generate_blueprint<R: Runtime>(
     problem: ReduceProblem,
     settings: &ReduceLineSettings,
     strategy: CubeStrategy,
-) -> Result<(ReduceBlueprint, CubeDim, u32), ReduceError> {
+) -> Result<(ReduceBlueprint, CubeDim, CubeCount), ReduceError> {
     if strategy.use_planes && !support_plane(client) {
         return Err(ReduceError::PlanesUnavailable);
     }
@@ -90,17 +99,21 @@ fn generate_blueprint<R: Runtime>(
     let properties = &client.properties().hardware;
     let plane_size = properties.plane_size_max;
     let working_cubes = working_cubes(settings, &problem);
-    let plane_count = calculate_plane_count(
-        working_cubes * problem.vector_size,
-        plane_size,
-        properties.num_cpu_cores,
-    );
+    let working_units = working_cubes
+        * problem
+            .vector_size
+            .div_ceil(settings.line_size_input as u32);
+    let plane_count =
+        calculate_plane_count_per_cube(working_units, plane_size, properties.num_cpu_cores);
     let cube_dim = CubeDim::new_2d(plane_size, plane_count);
     let cube_size = cube_dim.num_elems();
 
-    let bound_checks = match !problem.vector_size.is_multiple_of(cube_size) {
-        true => BoundChecks::Mask,
-        false => BoundChecks::Mask, // TODO
+    let bound_checks = match problem
+        .vector_size
+        .is_multiple_of(cube_size * settings.line_size_input as u32)
+    {
+        true => BoundChecks::None,
+        false => BoundChecks::Mask,
     };
 
     let num_shared_accumulators = match strategy.use_planes {
@@ -108,16 +121,20 @@ fn generate_blueprint<R: Runtime>(
         false => cube_size,
     };
 
+    let (cube_count, launched_cubes) = cube_count_safe(client, working_cubes);
+
+    let cube_idle = working_cubes != launched_cubes;
     let blueprint = ReduceBlueprint {
         line_mode: settings.line_mode,
         global: GlobalReduceBlueprint::Cube(CubeReduceBlueprint {
+            cube_idle,
             bound_checks,
             num_shared_accumulators,
             use_planes: strategy.use_planes,
         }),
     };
 
-    Ok((blueprint, cube_dim, working_cubes))
+    Ok((blueprint, cube_dim, cube_count))
 }
 
 fn working_cubes(settings: &ReduceLineSettings, problem: &ReduceProblem) -> u32 {

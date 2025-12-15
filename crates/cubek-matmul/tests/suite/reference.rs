@@ -73,11 +73,9 @@ fn matmul_cpu_reference(lhs: &HostData, rhs: &HostData, problem: &MatmulProblem)
         }
 
         // copy batch dims into indices
-        for d in 0..batch_shape.len() {
-            lhs_index[d] = batch_index[d];
-            rhs_index[d] = batch_index[d];
-            out_index[d] = batch_index[d];
-        }
+        lhs_index[..batch_shape.len()].copy_from_slice(&batch_index);
+        rhs_index[..batch_shape.len()].copy_from_slice(&batch_index);
+        out_index[..batch_shape.len()].copy_from_slice(&batch_index);
 
         for i in 0..m {
             out_index[batch_shape.len()] = i;

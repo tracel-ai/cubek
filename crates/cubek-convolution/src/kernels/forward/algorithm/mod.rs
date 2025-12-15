@@ -11,12 +11,12 @@ use cubek_matmul::{
     launch::MatmulArgs,
 };
 
-use cubecl::std::tensor::{TensorHandle, into_contiguous_pitched};
+use cubecl::std::tensor::{TensorHandle, into_contiguous_pitched, is_contiguous_pitched};
 
 use cubecl::prelude::*;
 
 use crate::components::{
-    ConvolutionProblem,
+    ConvolutionOperation, ConvolutionProblem,
     global::{GlobalConfig, GlobalConvolutionFamily},
 };
 
@@ -80,6 +80,7 @@ pub trait Algorithm {
         client: &ComputeClient<R>,
         handle: &TensorHandleRef<'_, R>,
         dtype: StorageType,
+        operation: ConvolutionOperation,
     ) -> Result<TensorHandle<R>, LaunchError>;
 
     fn selection<R: Runtime>(
@@ -116,8 +117,9 @@ pub(crate) fn into_tensor_handle_tma<R: Runtime>(
     client: &ComputeClient<R>,
     handle: &TensorHandleRef<'_, R>,
     dtype: StorageType,
+    operation: ConvolutionOperation,
 ) -> Result<TensorHandle<R>, LaunchError> {
-    let handle = if has_valid_layout_tma(handle) {
+    let handle = if has_valid_layout_tma(handle, operation) {
         TensorHandle::from_ref(handle, dtype)
     } else {
         into_contiguous_pitched(client, handle, dtype)?
@@ -125,7 +127,10 @@ pub(crate) fn into_tensor_handle_tma<R: Runtime>(
     Ok(handle)
 }
 
-pub(crate) fn has_valid_layout_tma<R: Runtime>(handle: &TensorHandleRef<'_, R>) -> bool {
+pub(crate) fn has_valid_layout_tma<R: Runtime>(
+    handle: &TensorHandleRef<'_, R>,
+    operation: ConvolutionOperation,
+) -> bool {
     let stride_align = TMA_STRIDE_ALIGN / handle.elem_size;
     let rank = handle.shape.len();
     let dim_c = rank - 1;
@@ -136,5 +141,11 @@ pub(crate) fn has_valid_layout_tma<R: Runtime>(handle: &TensorHandleRef<'_, R>) 
 
     let valid_layout = handle.strides[dim_c] == 1;
 
-    valid_layout && aligned
+    let is_valid_wgrad = if operation == ConvolutionOperation::BackwardWeight {
+        is_contiguous_pitched(handle.shape, handle.strides)
+    } else {
+        true
+    };
+
+    valid_layout && aligned && is_valid_wgrad
 }

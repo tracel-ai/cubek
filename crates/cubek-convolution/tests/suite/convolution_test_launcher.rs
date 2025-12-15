@@ -1,16 +1,13 @@
 use crate::suite::test_utils::{Sample, TensorRawParts};
 use cubecl::prelude::*;
 use cubecl::{CubeElement, server::Allocation};
-use cubek_convolution::components::ConvGemmConfig;
 use cubek_convolution::{
-    components::{
-        ConvolutionProblem,
-        global::{
-            args::{ConcreteInputsFactory, ConcreteOutputFactory},
-            entry_point::ConvolutionLaunch,
-        },
-    },
-    kernels::layered::algorithm::Algorithm,
+    components::{ConvGemmConfig, ConvolutionOperation},
+    forward::args::{ConcreteArgs, ConcreteInputsFactory, ConcreteOutputFactory},
+};
+use cubek_convolution::{
+    components::{ConvolutionProblem, global::entry_point::ConvolutionLaunch},
+    kernels::forward::algorithm::Algorithm,
 };
 use cubek_matmul::definition::{MatmulElems, MatmulIdent, MatmulSelection};
 use cubek_matmul::launch::{InputArg, OutputArg};
@@ -30,6 +27,7 @@ pub fn test_convolution_algorithm<A, P, R>(
     R: Runtime,
     InputArg<A::Args>: ConcreteInputsFactory,
     OutputArg<A::Args>: ConcreteOutputFactory,
+    A::Args: ConcreteArgs,
 {
     let env = std::env::var("CUBEK_TEST_MODE");
 
@@ -62,6 +60,8 @@ pub fn test_convolution_algorithm<A, P, R>(
     .unwrap();
 
     let dtypes = MatmulElems::new::<((P::EG, P::ES), (P::EG, P::ES), (P::EG, f32))>();
+    let problem = A::Args::adjust_problem(&client, problem, &selection, &dtypes);
+
     let config = match A::setup(&client, &problem, &selection, &line_sizes, &dtypes) {
         Ok(config) => config,
         Err(err) => {
@@ -94,10 +94,12 @@ pub fn test_convolution_algorithm<A, P, R>(
         TensorHandleRef::from_raw_parts(&out.handle, &out.strides, &out.shape, elem_size)
     };
 
+    let op = ConvolutionOperation::Forward;
+
     let lhs_handle =
-        A::into_tensor_handle(&client, &lhs_handle, P::EG::as_type_native_unchecked()).unwrap();
+        A::into_tensor_handle(&client, &lhs_handle, P::EG::as_type_native_unchecked(), op).unwrap();
     let rhs_handle =
-        A::into_tensor_handle(&client, &rhs_handle, P::EG::as_type_native_unchecked()).unwrap();
+        A::into_tensor_handle(&client, &rhs_handle, P::EG::as_type_native_unchecked(), op).unwrap();
 
     let lhs_handle =
         MatmulInputHandleRef::new(lhs_handle.as_ref(), P::EG::as_type_native_unchecked());

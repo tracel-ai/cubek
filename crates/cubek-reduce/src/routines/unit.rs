@@ -1,7 +1,7 @@
 use super::{GlobalReduceBlueprint, ReduceBlueprint, ReduceLaunchSettings};
 use crate::{
     LineMode, ReduceError,
-    launch::calculate_plane_count,
+    launch::calculate_plane_count_per_cube,
     routines::{Routine, RoutineStrategy, UnitReduceBlueprint},
 };
 use cubecl::{CubeCount, CubeDim, Runtime};
@@ -30,7 +30,7 @@ impl Routine for UnitRoutine {
             LineMode::Perpendicular => problem.vector_count / settings.line_size_input as u32,
         };
         let plane_count =
-            calculate_plane_count(working_units, plane_size, properties.num_cpu_cores);
+            calculate_plane_count_per_cube(working_units, plane_size, properties.num_cpu_cores);
 
         let cube_dim = CubeDim::new_2d(plane_size, plane_count);
         let num_units_in_cube = cube_dim.num_elems();
