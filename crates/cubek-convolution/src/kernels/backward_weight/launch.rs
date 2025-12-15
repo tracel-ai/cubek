@@ -192,6 +192,7 @@ where
         shape: in_shape.to_vec(),
         out_shape: out_shape.to_vec(),
         channels: c,
+        out_channels: out_c,
 
         padded_channels: c,
         operation: op,

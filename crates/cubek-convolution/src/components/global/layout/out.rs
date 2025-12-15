@@ -93,6 +93,22 @@ impl<'a, R: Runtime> OutLayoutLaunch<'a, R> {
         Self::new(shape_out, shape_m, shape_n, config)
     }
 
+    pub fn from_args_dgrad(
+        client: &ComputeClient<R>,
+        problem: &ConvolutionProblem,
+        config: GlobalMemoryConfig,
+    ) -> Self {
+        let shape = problem
+            .shape
+            .iter()
+            .map(|s| FastDivmodArgs::new(client, *s as u32))
+            .collect();
+        let shape_m = ScalarArg::new(problem.m as u32);
+        let shape_n = ScalarArg::new(problem.n as u32);
+
+        Self::new(shape, shape_m, shape_n, config)
+    }
+
     pub fn from_args_wgrad(
         client: &ComputeClient<R>,
         problem: &ConvolutionProblem,

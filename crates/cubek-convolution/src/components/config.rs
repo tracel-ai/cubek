@@ -33,7 +33,6 @@ pub trait ConvGemmConfig:
 pub struct ConvolutionConfig<M: GlobalConfig> {
     pub matmul: M,
     pub params: ConvolutionParams,
-    pub operation: ConvolutionOperation,
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -43,6 +42,7 @@ pub struct ConvolutionParams {
     pub dilation: [u32; 3],
     pub padding: [i32; 3],
     pub dimensionality: Dimensionality,
+    pub operation: ConvolutionOperation,
 }
 
 impl ConvolutionParams {
@@ -55,6 +55,7 @@ impl ConvolutionParams {
             dilation: [0; 3],
             padding: [0; 3],
             dimensionality: problem.dimensionality,
+            operation: problem.operation,
         };
         params.kernel_size[0..dims].copy_from_slice(&problem.kernel_size);
         params.stride[0..dims].copy_from_slice(&problem.stride);
@@ -101,7 +102,7 @@ impl<M: GlobalConfig> ConvGemmConfig for ConvolutionConfig<M> {
     }
 
     fn operation(&self) -> ConvolutionOperation {
-        self.operation
+        self.params.operation
     }
 
     fn lhs_global_memory_config(&self) -> GlobalMemoryConfig {
@@ -136,15 +137,12 @@ impl<M: GlobalConfig> ConvolutionConfig<M> {
             dilation: [0; 3],
             padding: [0; 3],
             dimensionality: dim,
+            operation,
         };
         params.kernel_size[0..dims].copy_from_slice(kernel_size);
         params.stride[0..dims].copy_from_slice(stride);
         params.dilation[0..dims].copy_from_slice(dilation);
         params.padding[0..dims].copy_from_slice(padding);
-        Ok(Self {
-            matmul,
-            params,
-            operation,
-        })
+        Ok(Self { matmul, params })
     }
 }
