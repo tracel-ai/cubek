@@ -1,4 +1,4 @@
-use crate::test_utils::correctness::{CompareVisitor, ElemStatus, WrongStatus};
+use crate::correctness::{CompareVisitor, ElemStatus, WrongStatus};
 
 const RED: &str = "\x1b[31m";
 const GREEN: &str = "\x1b[32m";

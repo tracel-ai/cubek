@@ -39,7 +39,7 @@
 //! export CUBE_TEST_MODE=PrintFail:.,10-20
 //! ```
 
-use crate::test_utils::correctness::{TensorFilter, parse_tensor_filter};
+use crate::correctness::{TensorFilter, parse_tensor_filter};
 
 const CUBE_TEST_MODE_ENV: &str = "CUBE_TEST_MODE";
 

@@ -23,12 +23,18 @@ impl AttentionLineSizes {
         let find_line_size = |shape: &[usize; 4], dtype_size: usize| -> u8 {
             let supported_line_sizes = client.io_optimized_line_sizes_unchecked(dtype_size);
 
-            tensor_line_size_parallel(
-                supported_line_sizes,
-                shape,
-                &batched_matrix_strides(shape),
-                shape.len() - 1,
-            )
+            let n = shape.len();
+
+            let row_major_strides = {
+                let mut strides = vec![0; n];
+                strides[n - 1] = 1;
+                for i in (0..n - 1).rev() {
+                    strides[i] = strides[i + 1] * shape[i + 1];
+                }
+                strides
+            };
+
+            tensor_line_size_parallel(supported_line_sizes, shape, &row_major_strides, n - 1)
         };
 
         AttentionLineSizes {
@@ -52,19 +58,4 @@ impl AttentionLineSizes {
             ),
         }
     }
-}
-
-pub(crate) fn batched_matrix_strides(shape: &[usize]) -> Vec<usize> {
-    let n = shape.len();
-    assert!(n >= 2);
-
-    let mut strides = vec![0; n];
-
-    // Start row-major for all dims
-    strides[n - 1] = 1;
-    for i in (0..n - 1).rev() {
-        strides[i] = strides[i + 1] * shape[i + 1];
-    }
-
-    strides
 }

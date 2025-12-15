@@ -1,6 +1,6 @@
-use crate::test_utils::HostData;
-use crate::test_utils::correctness::color_printer::ColorPrinter;
-use crate::test_utils::test_mode::{TestMode, current_test_mode};
+use crate::HostData;
+use crate::correctness::color_printer::ColorPrinter;
+use crate::test_mode::{TestMode, current_test_mode};
 
 pub fn assert_equals_approx(
     actual: &HostData,
@@ -149,8 +149,8 @@ fn compare_tensors(
 
     let dim = index.len();
     if dim == shape.len() {
-        let got = actual.get(index);
-        let exp = expected.get(index);
+        let got = actual.get_f32(index);
+        let exp = expected.get_f32(index);
 
         let status = compare_elem(got, exp, epsilon);
         if matches!(status, ElemStatus::Wrong(_)) {

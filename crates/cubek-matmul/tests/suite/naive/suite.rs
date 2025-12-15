@@ -4,13 +4,12 @@ use cubecl::prelude::TensorHandleRef;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{Runtime, client};
 use cubek_matmul::MatmulInputHandleRef;
-use cubek_std::test_utils::batched_matrix_strides;
 
+use crate::suite::layout_to_stride_spec;
 use cubek_matmul::components::MatrixLayout;
 use cubek_matmul::components::{MatmulElems, MatmulIdent, MatmulProblem};
 use cubek_matmul::kernels::naive;
-use cubek_std::test_utils::SimpleInputSpec;
-use cubek_std::test_utils::{Distribution, TestInput};
+use cubek_test_utils::{Distribution, SimpleInputSpec, TestInput};
 
 type TestRuntime = cubecl::TestRuntime;
 
@@ -152,13 +151,9 @@ fn test_naive(case: MatmulTestCase) {
         *dtype,
         1234,
         Distribution::Uniform(-1., 1.),
-        Some(batched_matrix_strides(
-            &lhs_shape,
-            matches!(problem.lhs_layout, MatrixLayout::ColMajor),
-        )),
+        layout_to_stride_spec(problem.lhs_layout),
     )
-    .generate_with_f32_host_data()
-    .unwrap();
+    .generate_with_f32_host_data();
 
     let (rhs, rhs_data) = TestInput::random(
         client.clone(),
@@ -166,17 +161,17 @@ fn test_naive(case: MatmulTestCase) {
         *dtype,
         5678,
         Distribution::Uniform(-1., 1.),
-        Some(batched_matrix_strides(
-            &rhs_shape,
-            matches!(problem.rhs_layout, MatrixLayout::ColMajor),
-        )),
+        layout_to_stride_spec(problem.rhs_layout),
     )
-    .generate_with_f32_host_data()
-    .unwrap();
+    .generate_with_f32_host_data();
 
-    let out = TestInput::zeros(client.clone(), problem.shape(MatmulIdent::Out), *dtype)
-        .generate_without_host_data()
-        .unwrap();
+    let out = TestInput::zeros(
+        client.clone(),
+        problem.shape(MatmulIdent::Out),
+        *dtype,
+        layout_to_stride_spec(MatrixLayout::RowMajor),
+    )
+    .generate_without_host_data();
 
     let lhs_handle = MatmulInputHandleRef::Normal(lhs.as_ref(), dtype.dtype);
     let rhs_handle = MatmulInputHandleRef::Normal(rhs.as_ref(), dtype.dtype);

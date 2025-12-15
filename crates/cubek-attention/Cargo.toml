@@ -16,7 +16,6 @@ std = ["cubecl/std"]
 tests = []
 
 [dependencies]
-
 cubecl = { workspace = true, features = ["stdlib"] }
 cubecl-common = { workspace = true }
 cubek-matmul = { path = "../cubek-matmul", version = "0.0.1", default-features = false }
@@ -28,4 +27,6 @@ serde = { workspace = true }
 
 [dev-dependencies]
 cubecl = { workspace = true, features = ["test-runtime"] }
-cubek-std = { path = "../cubek-std", version = "=0.0.1", default-features = false }
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.0.1", default-features = false }
+pretty_assertions = { workspace = true }
+trybuild = "1"

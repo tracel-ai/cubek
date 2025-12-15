@@ -59,11 +59,11 @@ impl GlobalFullPlaneReduce {
                 &mut accumulator,
                 item,
                 coordinate,
-                comptime!(!blueprint.independant),
+                comptime!(!blueprint.independent),
             );
         }
 
-        let result = match blueprint.independant {
+        let result = match blueprint.independent {
             true => {
                 let (item, coordinate) = I::read_accumulator(inst, &accumulator);
                 let mut result = I::null_accumulator(inst, input_line_size);

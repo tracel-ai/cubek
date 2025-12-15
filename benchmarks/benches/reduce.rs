@@ -95,10 +95,10 @@ fn run<R: Runtime, E: frontend::Float>(device: R::Device) {
                     use_planes: false,
                 })),
                 ReduceStrategy::FullPlane(RoutineStrategy::Strategy(PlaneStrategy {
-                    independant: true,
+                    independent: true,
                 })),
                 ReduceStrategy::FullPlane(RoutineStrategy::Strategy(PlaneStrategy {
-                    independant: false,
+                    independent: false,
                 })),
             ] {
                 let bench = ReduceBench::<R, E> {
