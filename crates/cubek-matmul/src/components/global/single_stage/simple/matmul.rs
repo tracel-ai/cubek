@@ -6,12 +6,12 @@ use crate::components::{
     stage::StridedStageMemory,
     stage::{FilledStage, StageConfig, StageMatmul},
 };
+use crate::definition::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS};
 use cubecl::prelude::*;
 use cubecl::std::{
     CubeOption, CubeOptionExpand,
     tensor::{View, layout::Coords2d},
 };
-use crate::definition::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS};
 use std::marker::PhantomData;
 
 /// Performs matrix multiplication at the global level.

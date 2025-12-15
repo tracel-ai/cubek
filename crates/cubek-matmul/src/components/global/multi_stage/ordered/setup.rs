@@ -17,9 +17,9 @@ use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{self, StageConfig};
 use crate::components::{global::GlobalMatmulFamily, stage::FilledStageFamily};
 use crate::components::{global::MaxGlobalReaderPlanes, stage::NoTilingLayout};
+use crate::definition::MatmulSelection;
 use crate::definition::{MatmulElems, MatmulPrecision, MatmulProblem, MatmulSetupError};
 use crate::definition::{MatmulLineSizes, MatrixLayout, StageIdent, TilingScheme};
-use crate::definition::MatmulSelection;
 use cubecl::prelude::*;
 use std::marker::PhantomData;
 

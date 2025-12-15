@@ -22,7 +22,8 @@ use crate::components::{
     stage::{FilledStageFamily, StridedStageFamily},
 };
 use crate::definition::{
-    MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError, MultiRowStrategy
+    MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError,
+    MultiRowStrategy,
 };
 use crate::routines::Routine;
 use crate::routines::base;

@@ -23,12 +23,12 @@ use crate::definition::MatmulElems;
 use crate::definition::MatmulLineSizes;
 use crate::definition::MatmulPrecision;
 use crate::definition::MatmulProblem;
+use crate::definition::MatmulSelection;
 use crate::definition::MatmulSetupError;
 use crate::definition::MatrixLayout;
 use crate::definition::MatrixPrecision;
 use crate::definition::RhsS;
 use crate::definition::TilingScheme;
-use crate::definition::MatmulSelection;
 use core::marker::PhantomData;
 use cubecl::prelude::*;
 

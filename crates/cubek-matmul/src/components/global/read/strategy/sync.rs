@@ -1,9 +1,12 @@
 use cubecl::prelude::*;
 
-use crate::{components::{
-    global::{SharedGlobalMatmulConfig, read::SyncStrategy},
-    stage::StageConfig,
-}, definition::MatmulPrecision};
+use crate::{
+    components::{
+        global::{SharedGlobalMatmulConfig, read::SyncStrategy},
+        stage::StageConfig,
+    },
+    definition::MatmulPrecision,
+};
 
 /// Simple synchronous barrier, using `cube_sync()`
 pub struct Synchronous {}
