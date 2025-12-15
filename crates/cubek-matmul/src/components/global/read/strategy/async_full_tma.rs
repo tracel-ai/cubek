@@ -6,7 +6,7 @@ use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{StridedStageMemory, SwizzleMode};
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
 use crate::components::{global::multi_stage::LoadMaxRoundPlaneCount, stage::TmaTilingLayout};
-use crate::launch::{InvalidConfigError, MatmulElems, MatmulProblem, MatrixLayout};
+use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem, MatrixLayout};
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 

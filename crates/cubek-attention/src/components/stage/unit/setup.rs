@@ -16,7 +16,7 @@ use cubek_matmul::{components::{
     ComputeResources,
     stage::{StageFamily, StageMemoryConfig, SwizzleMode},
     tile::io::Strided,
-}, launch::MatrixLayout};
+}, definition::MatrixLayout};
 
 use crate::components::stage::StageAttentionFamily;
 

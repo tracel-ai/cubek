@@ -11,7 +11,7 @@ use cubecl::std::{
     CubeOption, CubeOptionExpand,
     tensor::{View, layout::Coords2d},
 };
-use crate::launch::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS};
+use crate::definition::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS};
 use std::marker::PhantomData;
 
 /// Performs matrix multiplication at the global level.

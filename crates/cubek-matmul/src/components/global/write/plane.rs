@@ -8,7 +8,7 @@ use crate::{
         stage::{PlanePartitioner, StageMemoryConfig, StagePartitioner},
         tile::StridedTile,
     },
-    launch::{MatrixPrecision, StageIdent},
+    definition::{MatrixPrecision, StageIdent},
 };
 use cubecl::prelude::*;
 use cubecl::std::tensor::View;

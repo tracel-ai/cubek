@@ -16,7 +16,7 @@ use crate::components::{
 use crate::components::{
     global::read::sync_partial_cyclic::SyncPartialCyclicLoading, tile::io::Strided,
 };
-use crate::launch::{
+use crate::definition::{
     MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError,
     MultiRowStrategy,
 };

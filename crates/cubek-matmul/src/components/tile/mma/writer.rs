@@ -5,7 +5,7 @@ use crate::components::tile::{
     StridedTile,
     mma::config::{MmaMatmulConfig, StoreMethod},
 };
-use crate::launch::{MatrixLayout, as_cmma_layout};
+use crate::definition::{MatrixLayout, as_cmma_layout};
 
 /// Writer for storing the output registers.
 #[derive(CubeType)]

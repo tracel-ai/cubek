@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use cubecl::{CubeType, prelude::*};
 
-use crate::{components::stage::FilledStage, launch::MatrixPrecision};
+use crate::{components::stage::FilledStage, definition::MatrixPrecision};
 
 #[derive(CubeType)]
 /// Accumulator reader that zeros the accumulator

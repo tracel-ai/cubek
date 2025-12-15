@@ -5,7 +5,7 @@ use std::ops::Deref;
 
 use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
 
-use crate::launch::{MatmulKind, MatmulProblemSize};
+use crate::definition::{MatmulKind, MatmulProblemSize};
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 /// Autotune key representative of matmul versions

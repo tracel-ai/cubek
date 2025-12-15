@@ -5,7 +5,7 @@ use crate::{
         batch::{CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection, SmAllocation},
         stage::{PartitionBuffering, SwizzleMode},
     },
-    launch::{
+    definition::{
         MatmulElems, MatmulKind, MatmulLineSizes, MatmulProblem, MatmulSelection, MatrixLayout,
         SwizzleConfig, TilingScheme,
     },

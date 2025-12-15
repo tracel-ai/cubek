@@ -2,9 +2,7 @@ use cubecl::{ir::StorageType, prelude::*};
 use half::{bf16, f16};
 
 use crate::{
-    components::tile::TileMatmulFamily,
-    launch::{MatmulArgs, MatmulIdent},
-    tune_key::MatmulElemType,
+    components::tile::TileMatmulFamily, definition::MatmulIdent, tune_key::MatmulElemType,
 };
 
 /// Matrix multiplication precisions.
@@ -141,19 +139,6 @@ pub type RhsR<MP> = <<MP as MatmulPrecision>::Rhs as MatrixPrecision>::Register;
 pub type AccG<MP> = <<MP as MatmulPrecision>::Acc as MatrixPrecision>::Global;
 pub type AccS<MP> = <<MP as MatmulPrecision>::Acc as MatrixPrecision>::Stage;
 pub type AccR<MP> = <<MP as MatmulPrecision>::Acc as MatrixPrecision>::Register;
-
-/// Input argument
-pub type InputArg<MA> =
-    <MA as MatmulArgs>::Input<NumericExpand<0>, NumericExpand<1>, NumericExpand<2>>;
-
-/// Output argument
-pub type OutputArg<MA> = <MA as MatmulArgs>::Output<NumericExpand<2>>;
-
-/// Input runtime argument
-pub type InputRuntimeArg<'a, MA, R> = <InputArg<MA> as LaunchArg>::RuntimeArg<'a, R>;
-
-/// Output runtime argument
-pub type OutputRuntimeArg<'a, MA, R> = <OutputArg<MA> as LaunchArg>::RuntimeArg<'a, R>;
 
 #[derive(Clone, Debug)]
 pub struct MatmulElems {

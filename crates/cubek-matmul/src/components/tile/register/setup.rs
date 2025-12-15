@@ -7,10 +7,11 @@ use crate::components::{
     resource::ComputeResources,
     tile::register::reader::{RegisterFragmentReader, RegisterStageReader},
 };
-use crate::launch::MatmulSetupError;
-use crate::launch::{
+use crate::definition::MatmulSelection;
+use crate::definition::MatmulSetupError;
+use crate::definition::{
     AvailableLineSizes, InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulLineSizes,
-    MatmulProblem, MatmulSelection, MatrixLayout,
+    MatmulProblem, MatrixLayout,
 };
 use cubecl::features::TypeUsage;
 use cubecl::ir::{ElemType, FloatKind};

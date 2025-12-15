@@ -8,7 +8,7 @@ use crate::components::{
     batch::{CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection, SmAllocation},
     stage::SwizzleMode,
 };
-use crate::launch::{
+use crate::definition::{
     MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection,
     MatmulSetupError, MatrixLayout, MultiRowStrategy, PartitionSize, StageSize, SwizzleConfig,
     TileSize, TilingScheme, adjust_dtypes,

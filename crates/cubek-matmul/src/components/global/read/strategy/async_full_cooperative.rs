@@ -11,7 +11,7 @@ use crate::{
         },
         stage::{StridedStageFamily, StridedStageMemory, StridedTilingLayout, TilingValidation},
     },
-    launch::{InvalidConfigError, MatmulElems, MatmulProblem, MatrixLayout},
+    definition::{InvalidConfigError, MatmulElems, MatmulProblem, MatrixLayout},
 };
 use cubecl::prelude::{barrier::Barrier, *};
 

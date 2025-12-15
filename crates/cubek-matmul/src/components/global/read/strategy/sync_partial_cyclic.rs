@@ -8,7 +8,7 @@ use crate::components::stage::StridedStageFamily;
 use crate::components::stage::StridedStageMemory;
 use crate::components::stage::{ContiguousTilingLayout, TilingOrder};
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
-use crate::launch::{InvalidConfigError, MatmulElems, MatmulProblem, StageIdent};
+use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem, StageIdent};
 use cubecl::prelude::*;
 use cubecl::std::type_size;
 

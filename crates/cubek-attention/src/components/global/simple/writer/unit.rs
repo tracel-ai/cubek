@@ -6,7 +6,7 @@ use cubek_matmul::components::global::{
     read::tiled::{TiledCoords, TiledLayout},
     unit_write,
 };
-use cubek_matmul::launch::StageIdent;
+use cubek_matmul::definition::StageIdent;
 
 use crate::components::{
     global::simple::{AttentionWriter, AttentionWriterExpand},

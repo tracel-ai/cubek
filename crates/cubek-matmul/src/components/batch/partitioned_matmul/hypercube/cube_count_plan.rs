@@ -3,7 +3,7 @@ use cubecl::prelude::*;
 use crate::components::batch::partitioned_matmul::hypercube::global_order::{GlobalOrder, swizzle};
 use crate::components::batch::partitioned_matmul::hypercube::sm_allocation::SmAllocation;
 use crate::components::batch::{HypercubeConfig, HypercubeSelection};
-use crate::launch::MatmulProblem;
+use crate::definition::MatmulProblem;
 
 #[derive(Default, Copy, Clone, Debug, Hash, PartialEq, Eq)]
 /// Front-facing configuration when crafting a MatmulSelection

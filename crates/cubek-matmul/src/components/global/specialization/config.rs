@@ -1,6 +1,6 @@
 use crate::{
     components::global::{MaxGlobalReaderPlanes, specialization::roles::PlaneRoles},
-    launch::StageIdent,
+    definition::StageIdent,
 };
 
 /// Configuration for how each input tensor (Lhs and Rhs) is loaded,

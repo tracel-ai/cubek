@@ -9,7 +9,7 @@ use crate::components::global::{Specializer, read::SyncStrategy};
 use crate::components::stage;
 use crate::components::stage::{FilledStage, StridedStageMemory};
 use crate::components::stage::{StageConfig, StridedStageFamily};
-use crate::launch::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS};
+use crate::definition::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS};
 use cubecl::prelude::*;
 use cubecl::std::{
     CubeOption, CubeOptionExpand,

@@ -5,11 +5,11 @@ use crate::components::global::{multi_stage::LoadMaxRoundPlaneCount, read::sync:
 use crate::components::stage::ContiguousTilingLayout;
 use crate::components::stage::OrderedTilingOrder;
 use crate::components::{global::RoleRule, stage::TilingValidation};
-use crate::launch::FormattedConfigError;
-use crate::launch::InvalidConfigError;
-use crate::launch::MatmulElems;
-use crate::launch::MatmulProblem;
-use crate::launch::StageIdent;
+use crate::definition::FormattedConfigError;
+use crate::definition::InvalidConfigError;
+use crate::definition::MatmulElems;
+use crate::definition::MatmulProblem;
+use crate::definition::StageIdent;
 use cubecl::prelude::*;
 
 use super::{LoadingValidation, sync_full_tilewise};

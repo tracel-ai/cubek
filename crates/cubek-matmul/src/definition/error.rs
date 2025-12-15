@@ -1,7 +1,7 @@
 use cubecl::{CubeCount, CubeDim, LineSizeError, ir::StorageType, server::LaunchError};
 use std::fmt::{Debug, Display};
 
-use crate::launch::{blueprint::TileSize, definition::MatrixLayout};
+use crate::definition::{MatrixLayout, TileSize};
 
 /// Errors that can occur during the setup phase of a matmul operation.
 pub enum MatmulSetupError {

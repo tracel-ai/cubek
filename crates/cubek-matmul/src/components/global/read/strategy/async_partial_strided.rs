@@ -15,7 +15,7 @@ use crate::components::{
     },
     stage::StridedTilingLayout,
 };
-use crate::launch::{InvalidConfigError, MatmulElems, MatmulPrecision, MatmulProblem, StageIdent};
+use crate::definition::{InvalidConfigError, MatmulElems, MatmulPrecision, MatmulProblem, StageIdent};
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Layout, LayoutExpand};

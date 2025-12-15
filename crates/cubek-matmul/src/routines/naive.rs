@@ -11,10 +11,11 @@ use cubecl::std::tensor::{
 use crate::components::global::memory::{
     GlobalLayout, GlobalLayoutConfig, GlobalLayoutLaunch, GlobalScaleLayout,
 };
-use crate::launch::{
-    MatmulAvailabilityError, MatmulInputHandle, MatmulInputHandleRef, MatmulProblem,
-    MatmulSetupError, MatrixLayout, MatmulElems
+use crate::definition::{
+    MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError, MatrixLayout,
 };
+use crate::launch::MatmulInputHandle;
+use crate::launch::MatmulInputHandleRef;
 
 #[cube]
 fn load_unrolled<I: Numeric>(

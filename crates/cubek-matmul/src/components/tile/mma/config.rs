@@ -3,7 +3,7 @@ use cubecl::ir::MatrixIdent;
 use crate::components::tile::{SharedTileConfig, TileConfig};
 
 use crate::components::stage::SwizzleMode;
-use crate::launch::StageIdent;
+use crate::definition::StageIdent;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum LoadMethod {

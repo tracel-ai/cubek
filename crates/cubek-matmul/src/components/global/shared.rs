@@ -1,6 +1,6 @@
 use crate::{
     components::global::{GlobalConfig, multi_stage::LoadMaxRoundPlaneCount},
-    launch::{MatmulElems, MatmulLineSizes, MatmulSetupError, TilingScheme},
+    definition::{MatmulElems, MatmulLineSizes, MatmulSetupError, TilingScheme},
 };
 
 #[allow(unused_variables)]
@@ -9,7 +9,7 @@ pub fn cube_dim_validation<G: GlobalConfig>(config: G) -> Result<(), MatmulSetup
     {
         let cube_dim = config.cube_dim();
         if cube_dim.num_elems() >= 512 {
-            use crate::launch::{MatmulAvailabilityError, MatmulSetupError};
+            use crate::definition::{MatmulAvailabilityError, MatmulSetupError};
 
             return Err(MatmulSetupError::Unavailable(
                 MatmulAvailabilityError::CubeDimTooBig(cube_dim),

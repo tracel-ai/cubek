@@ -1,4 +1,4 @@
-use cubek_matmul::launch::TileSize;
+use cubek_matmul::definition::TileSize;
 
 use crate::launch::{AttentionDims, AttentionLineSizes, HypercubeBlueprint};
 

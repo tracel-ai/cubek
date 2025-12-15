@@ -13,7 +13,7 @@ use crate::components::global::read::TaskCounter;
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::StridedStageMemory;
 use crate::components::stage::TilingLayout;
-use crate::launch::StageIdent;
+use crate::definition::StageIdent;
 use cubecl::prelude::*;
 use cubecl::std::{
     CubeOption, CubeOptionExpand,

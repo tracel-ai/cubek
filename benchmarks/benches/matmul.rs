@@ -11,7 +11,7 @@ use cubek::{
             LoadingPrecomputeStrategy, MatmulElems, MatmulPrecision, MatmulSelection, StageSize,
             TilingScheme, batch::HypercubeSelection, stage::PartitionBuffering,
         },
-        launch::{
+        definition::{
             AcceleratedTileKind, AsyncPartialReadingStrategy, MatmulInputHandle,
             PartialReadingStrategy, ReadingStrategy,
         },
@@ -70,7 +70,7 @@ impl<R: Runtime> Benchmark for MatmulBench<R> {
             *self.dtypes.acc_global,
         );
 
-        match matmul::launch(
+        match matmul::definition(
             &self.strategy,
             &self.client,
             lhs,

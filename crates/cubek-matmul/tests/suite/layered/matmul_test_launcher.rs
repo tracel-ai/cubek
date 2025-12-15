@@ -1,21 +1,21 @@
 use cubecl::TestRuntime;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
-use cubek_matmul::launch::AvailableLineSizes;
+use cubek_matmul::definition::AvailableLineSizes;
+use cubek_matmul::definition::MatmulIdent;
+use cubek_matmul::definition::MatrixLayout;
 use cubek_matmul::launch::ConcreteOutputFactory as _;
-use cubek_matmul::launch::MatmulIdent;
-use cubek_matmul::launch::MatrixLayout;
 
 use cubek_matmul::components::batch::{BatchConfig, BatchMatmulFamily};
+use cubek_matmul::definition::MatmulElems;
+use cubek_matmul::definition::{MatmulProblem, MatmulSelection};
 use cubek_matmul::launch::ConcreteInputsFactory;
-use cubek_matmul::launch::MatmulElems;
 use cubek_matmul::launch::MatmulInputHandleRef;
 use cubek_matmul::launch::TensorArgs;
 use cubek_matmul::launch::TensorInputs;
 use cubek_matmul::launch::TensorMapArgs;
 use cubek_matmul::launch::TensorMapInputs;
 use cubek_matmul::launch::TensorOutput;
-use cubek_matmul::launch::{MatmulProblem, MatmulSelection};
 use cubek_matmul::routines::Routine;
 use cubek_test_utils::HostData;
 use cubek_test_utils::current_test_mode;

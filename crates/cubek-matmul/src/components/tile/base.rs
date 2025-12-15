@@ -7,9 +7,10 @@ use crate::components::{
     resource::ComputeResources,
     tile::io::{Tile, TileKind},
 };
-use crate::launch::{
+use crate::definition::MatmulSelection;
+use crate::definition::{
     AvailableLineSizes, InvalidConfigError, MatmulElems, MatmulLineSizes, MatmulProblem,
-    MatmulSelection, MatmulSetupError, MatrixLayout, TileSize,
+    MatmulSetupError, MatrixLayout, TileSize,
 };
 
 /// A family of [TileMatmul] implementations that operate with any precision.

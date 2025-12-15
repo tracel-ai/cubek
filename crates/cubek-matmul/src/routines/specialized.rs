@@ -12,7 +12,7 @@ use crate::components::{
 };
 use crate::components::{global::PlaneWriterFamily, stage::StageFamily};
 use crate::components::{stage::FilledStageFamily, tile::TileMatmulFamily};
-use crate::launch::{
+use crate::definition::{
     MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError, MatrixLayout, SwizzleConfig,
     adjust_dtypes,
 };
@@ -23,7 +23,7 @@ use crate::{
         multi_stage::specialized::SpecializedMatmulFamily,
         read::{AsyncPartialLoadingStrategy, async_partial_tma::AsyncPartialTmaLoading},
     },
-    launch::{MatmulElems, MultiRowStrategy, TilingScheme},
+    definition::{MatmulElems, MultiRowStrategy, TilingScheme},
 };
 use crate::{
     components::{

@@ -13,7 +13,7 @@ use cubecl::{
     prelude::*,
     std::{CubeOption, tensor::TensorHandle},
 };
-use cubek_matmul::launch::{
+use cubek_matmul::definition::{
     AcceleratedTileKind, MatmulInputHandle, MatmulInputHandleRef, ReadingStrategy,
 };
 use cubek_matmul::{

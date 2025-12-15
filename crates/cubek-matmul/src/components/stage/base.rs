@@ -9,9 +9,10 @@ use crate::components::{
     stage::{NumStages, PartitionScheduler},
     tile::io::TileKind,
 };
-use crate::launch::{
+use crate::definition::MatmulSelection;
+use crate::definition::{
     AccS, AvailableLineSizes, LhsS, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem,
-    MatmulSelection, MatmulSetupError, RhsS,
+    MatmulSetupError, RhsS,
 };
 use std::{fmt::Debug, hash::Hash};
 

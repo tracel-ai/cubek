@@ -6,7 +6,7 @@ use crate::components::tile::register::writer::RegisterStageWriter;
 use crate::components::tile::{TileMatmul, io::Filled, register::reader::RegisterFragmentReader};
 use crate::components::tile::{io::Strided, register::reader::RegisterStageReader};
 use crate::components::tile::{io::TileKind, tile_data::StridedTile};
-use crate::launch::{MatrixLayout, StageIdent};
+use crate::definition::{MatrixLayout, StageIdent};
 
 /// Uses one unit to perform a small matmul directly in registers
 pub struct RegisterMatmul<Acc: TileKind = Filled> {

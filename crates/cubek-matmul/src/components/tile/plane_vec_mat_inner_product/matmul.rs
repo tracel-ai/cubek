@@ -12,7 +12,7 @@ use crate::components::tile::{
 use crate::components::tile::{
     io::TileKind, plane_vec_mat_inner_product::reader::VectorStageReader,
 };
-use crate::launch::MatrixLayout;
+use crate::definition::MatrixLayout;
 
 /// Uses one unit to perform a small matmul directly in registers
 pub struct PlaneVecMatInnerProduct<Acc: TileKind> {

@@ -10,7 +10,7 @@ use crate::components::tile::{
         config::{ProductType, RegisterMatmulConfig},
     },
 };
-use crate::launch::{MatrixLayout, StageIdent};
+use crate::definition::{MatrixLayout, StageIdent};
 
 /// Reader for the register matmul fragments. Implementation depends on the tile kind.
 #[derive(CubeType)]

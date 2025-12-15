@@ -3,7 +3,7 @@ use crate::{
         global::{RoleRuleConfig, WriteEventListener, WriteTiling, memory::GlobalMemoryConfig},
         stage::{Stage, StageFamily, StageMemoryConfig},
     },
-    launch::MatrixPrecision,
+    definition::MatrixPrecision,
 };
 use cubecl::prelude::*;
 use cubecl::std::tensor::{View, layout::Coords2d};

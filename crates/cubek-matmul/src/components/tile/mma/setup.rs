@@ -10,9 +10,10 @@ use crate::components::{
     resource::ComputeResources,
     tile::io::{Strided, TileKind},
 };
-use crate::launch::{
+use crate::definition::MatmulSelection;
+use crate::definition::{
     InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatmulProblem,
-    MatmulSelection, MatmulSetupError, TileSize,
+    MatmulSetupError, TileSize,
 };
 use crate::{
     components::tile::mma::config::{LoadMethod, MmaMatmulConfig},

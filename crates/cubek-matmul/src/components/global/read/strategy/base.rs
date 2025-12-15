@@ -4,7 +4,7 @@ use crate::components::stage::TilingLayout;
 use crate::components::stage::{StageMemoryConfig, SwizzleMode};
 use crate::components::{global::GlobalReaderConfig, stage::StageConfig};
 use crate::components::{global::SharedGlobalMatmulConfig, stage::StageFamily};
-use crate::launch::{
+use crate::definition::{
     InvalidConfigError, MatmulElems, MatmulPrecision, MatmulProblem, MatrixLayout, StageIdent,
 };
 use cubecl::ir::{BarrierLevel, OpaqueType, SemanticType};

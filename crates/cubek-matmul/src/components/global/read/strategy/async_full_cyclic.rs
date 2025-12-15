@@ -12,7 +12,7 @@ use crate::components::global::{
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{ContiguousTilingLayout, StridedStageMemory, TilingOrder};
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
-use crate::launch::{InvalidConfigError, MatmulElems, MatmulProblem};
+use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem};
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Layout, LayoutExpand};

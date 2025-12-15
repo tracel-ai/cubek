@@ -5,7 +5,7 @@ use crate::components::{
     global::{GlobalConfig, SharedGlobalMatmulConfig, read::SyncStrategy},
     stage::StageConfig,
 };
-use crate::launch::{LhsS, MatmulPrecision, RhsS};
+use crate::definition::{LhsS, MatmulPrecision, RhsS};
 
 /// Asynchronous barrier for TMA loads
 pub struct AsyncTma {}

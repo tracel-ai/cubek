@@ -10,7 +10,7 @@ use cubek::{
     convolution::{self as convolution, ConvolutionArgs, Strategy},
     matmul::{
         components::{AccG, AccR, LhsG, LhsS, MatmulElems, MatmulPrecision, RhsG},
-        launch::{AcceleratedTileKind, MatmulInputHandleRef, ReadingStrategy},
+        definition::{AcceleratedTileKind, MatmulInputHandleRef, ReadingStrategy},
     },
     random::random_uniform,
 };

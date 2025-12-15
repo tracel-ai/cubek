@@ -21,11 +21,11 @@ use crate::components::{
     },
     stage::StageConfig,
 };
-use crate::launch::InvalidConfigError;
-use crate::launch::MatmulElems;
-use crate::launch::MatmulPrecision;
-use crate::launch::MatmulProblem;
-use crate::launch::StageIdent;
+use crate::definition::InvalidConfigError;
+use crate::definition::MatmulElems;
+use crate::definition::MatmulPrecision;
+use crate::definition::MatmulProblem;
+use crate::definition::StageIdent;
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Layout, LayoutExpand};

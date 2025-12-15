@@ -9,7 +9,7 @@ use crate::components::tile::{
     io::{Filled, Strided, Tile, TileKind},
     plane_vec_mat_inner_product::LineContainer,
 };
-use crate::launch::MatrixLayout;
+use crate::definition::MatrixLayout;
 
 /// Reader for the vector side of the VecMat operation
 #[derive(CubeType)]

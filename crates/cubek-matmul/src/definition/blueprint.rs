@@ -6,7 +6,7 @@ use crate::{
         global::{LoadSpecializationConfig, read::ReaderMode},
         stage::{PartitionBuffering, SwizzleMode},
     },
-    launch::{MatmulElems, blueprint::tiling_scheme::TilingScheme},
+    definition::{MatmulElems, TilingScheme},
 };
 
 #[derive(Debug, Clone)]

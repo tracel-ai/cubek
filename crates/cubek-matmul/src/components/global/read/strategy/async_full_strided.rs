@@ -9,7 +9,7 @@ use crate::components::global::{multi_stage::LoadMaxRoundPlaneCount, read::valid
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{StridedStageMemory, StridedTilingLayout};
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
-use crate::launch::{InvalidConfigError, MatmulElems, MatmulProblem};
+use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem};
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Layout, LayoutExpand};

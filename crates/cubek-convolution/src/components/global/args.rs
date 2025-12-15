@@ -24,7 +24,7 @@ use cubek_matmul::{
         },
         stage::StageConfig as _,
     },
-    launch::MatmulInputHandleRef,
+    definition::MatmulInputHandleRef,
 };
 
 #[derive(CubeType, CubeLaunch, Clone)]

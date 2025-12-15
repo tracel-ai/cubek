@@ -8,7 +8,7 @@ use cubecl::std::{
 use cubecl_common::quant::scheme::{QuantLevel, QuantScheme};
 
 use crate::components::global::memory::GlobalMemoryConfig;
-use crate::launch::{MatmulProblem, MatrixLayout};
+use crate::definition::{MatmulProblem, MatrixLayout};
 
 /// Global layout that uses the last two dimensions and ignores all others.
 #[derive(CubeType, CubeLaunch, Clone, Copy)]

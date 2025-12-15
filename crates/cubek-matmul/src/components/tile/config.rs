@@ -1,6 +1,7 @@
 use crate::{
     components::stage::SwizzleMode,
-    launch::{StageIdent, SwizzleConfig, TileSize},
+    definition::SwizzleConfig,
+    definition::{StageIdent, TileSize},
 };
 use std::{fmt::Debug, hash::Hash};
 

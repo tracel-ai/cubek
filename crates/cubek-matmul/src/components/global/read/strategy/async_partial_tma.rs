@@ -10,7 +10,7 @@ use crate::components::{
     stage::{StageConfig, StridedStageFamily},
 };
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
-use crate::launch::{
+use crate::definition::{
     InvalidConfigError, LhsS, MatmulElems, MatmulPrecision, MatmulProblem, MatrixLayout, RhsS,
     StageIdent,
 };

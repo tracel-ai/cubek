@@ -6,7 +6,7 @@ pub use base::*;
 pub use plane::*;
 pub use unit::*;
 
-use crate::launch::{MatmulProblem, TileSize};
+use crate::definition::{MatmulProblem, TileSize};
 
 /// Returns  true if a [matmul problem](MatmulProblem) is very small.
 ///

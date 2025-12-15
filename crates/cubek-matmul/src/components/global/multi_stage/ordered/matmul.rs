@@ -14,7 +14,7 @@ use crate::components::{
     stage,
     stage::{FilledStage, StridedStageMemory},
 };
-use crate::launch::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS};
+use crate::definition::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS};
 use cubecl::prelude::*;
 use cubecl::std::tensor::{View, layout::Coords2d};
 use cubecl::std::{CubeOption, CubeOptionExpand};

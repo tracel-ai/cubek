@@ -1,6 +1,4 @@
-use crate::launch::blueprint::size::{
-    GlobalPartitionSize, MatmulDim, PartitionSize, StageSize, TileSize,
-};
+use crate::definition::size::{GlobalPartitionSize, MatmulDim, PartitionSize, StageSize, TileSize};
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 /// Complete tiling configuration for a matmul.

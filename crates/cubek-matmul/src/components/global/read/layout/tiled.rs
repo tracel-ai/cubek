@@ -2,7 +2,7 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Coords2d, Layout, LayoutExpand};
 
 use crate::components::stage::StageMemoryConfig;
-use crate::launch::{MatrixLayout, StageIdent};
+use crate::definition::{MatrixLayout, StageIdent};
 
 pub type TiledCoords = (Coords2d, u32);
 

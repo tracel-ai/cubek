@@ -6,9 +6,10 @@ use crate::components::tile::{
     cmma::reader::{CmmaFragmentReader, CmmaStageReader},
 };
 use crate::components::{resource::ComputeResources, tile::io::TileKind};
-use crate::launch::{
+use crate::definition::MatmulSelection;
+use crate::definition::{
     InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatmulProblem,
-    MatmulSelection, MatmulSetupError, TileSize,
+    MatmulSetupError, TileSize,
 };
 use cubecl::features::MmaConfig;
 use cubecl::{ir::StorageType, prelude::*};

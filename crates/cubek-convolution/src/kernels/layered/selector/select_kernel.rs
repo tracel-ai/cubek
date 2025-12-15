@@ -7,7 +7,7 @@ use cubek_matmul::{
     components::{
         InputArg, InputRuntimeArg, MatmulLineSizes, MatmulSelection, OutputArg, OutputRuntimeArg,
     },
-    launch::MatmulInputHandleRef,
+    definition::MatmulInputHandleRef,
 };
 
 use crate::{

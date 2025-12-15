@@ -3,7 +3,7 @@ use cubecl::prelude::*;
 use cubecl::std::{Swizzle, type_size};
 
 use crate::components::stage::{StageMemoryConfig, as_swizzle_object};
-use crate::launch::MatrixLayout;
+use crate::definition::MatrixLayout;
 
 #[derive(CubeType, Clone, Copy)]
 /// Tile with a linear major dimension, and a strided minor dimension.

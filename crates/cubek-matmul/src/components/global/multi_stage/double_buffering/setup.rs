@@ -13,10 +13,11 @@ use crate::components::stage::StageConfig;
 use crate::components::stage::StridedStageFamily;
 use crate::components::{global::GlobalMatmulFamily, stage, stage::FilledStageFamily};
 use crate::components::{global::MaxGlobalReaderPlanes, stage::NoTilingLayout};
-use crate::launch::{
-    MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSelection,
-    MatmulSetupError, MatrixLayout, StageIdent,
+use crate::definition::{
+    MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError, MatrixLayout,
+    StageIdent,
 };
+use crate::definition::MatmulSelection;
 use cubecl::prelude::*;
 use std::marker::PhantomData;
 

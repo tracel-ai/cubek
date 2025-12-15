@@ -6,7 +6,7 @@ use crate::components::global::{RoleRule, read::AsyncPartialLoadingStrategy};
 use crate::components::stage;
 use crate::components::stage::FilledStage;
 use crate::components::stage::StageConfig as _;
-use crate::launch::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS};
+use crate::definition::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS};
 
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;

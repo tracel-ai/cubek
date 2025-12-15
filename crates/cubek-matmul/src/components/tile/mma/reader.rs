@@ -9,7 +9,7 @@ use crate::components::tile::{
     io::{Filled, Strided, TileKind},
     mma::config::{LoadMethod, MmaMatmulConfig},
 };
-use crate::launch::{MatrixLayout, as_cmma_layout, from_cmma_layout};
+use crate::definition::{MatrixLayout, as_cmma_layout, from_cmma_layout};
 
 /// Generic CMMA reader over any tile type
 #[cube]

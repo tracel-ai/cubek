@@ -7,9 +7,10 @@ use crate::components::{
     resource::ComputeResources,
     tile::plane_vec_mat_inner_product::reader::{MatrixFragmentReader, MatrixStageReader},
 };
-use crate::launch::{
+use crate::definition::MatmulSelection;
+use crate::definition::{
     InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatmulProblem,
-    MatmulSelection, MatmulSetupError, MatrixLayout,
+    MatmulSetupError, MatrixLayout,
 };
 use cubecl::features::{Plane, TypeUsage};
 use cubecl::ir::{ElemType, FloatKind};

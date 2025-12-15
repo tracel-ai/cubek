@@ -8,7 +8,7 @@ use crate::components::stage::matmul::scheduler::PartitionScheduler;
 use crate::components::stage::{PartitionBuffering, StageEventListener};
 use crate::components::stage::{PartitionSchedulerScheme, StageMemoryConfig};
 use crate::components::tile::{TileConfig, TileMatmul};
-use crate::launch::{AccS, LhsS, MatmulPrecision, MatrixPrecision, PartitionSize, RhsS, StageSize};
+use crate::definition::{AccS, LhsS, MatmulPrecision, MatrixPrecision, PartitionSize, RhsS, StageSize};
 use cubecl::prelude::*;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]

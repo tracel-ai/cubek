@@ -9,14 +9,7 @@ use cubecl_common::quant::scheme::{QuantScheme, QuantStore, QuantValue};
 
 use cubecl::std::tensor::{TensorHandle, into_contiguous_packed, into_contiguous_pitched};
 
-use crate::launch::{
-    MatmulElems,
-    error::MatmulSetupError,
-    launch2,
-    strategy::{
-        AcceleratedTileKind, AsyncPartialReadingStrategy, PartialReadingStrategy, ReadingStrategy,
-    },
-};
+use crate::launch::AcceleratedTileKind;
 use crate::{
     components::{
         global::read::{
@@ -25,13 +18,17 @@ use crate::{
         },
         tile::{cmma::CmmaMatmul, io::Filled, mma::MmaMatmul},
     },
-    launch::strategy::Strategy,
+    launch::{AsyncPartialReadingStrategy, PartialReadingStrategy, ReadingStrategy, launch2},
     routines::{
         double_buffering::*,
         double_unit::DoubleUnitAlgorithm,
         specialized::SpecializedAlgorithm,
         vecmat::{DoubleVecMatAlgorithm, SimpleVecMatAlgorithm},
     },
+};
+use crate::{
+    definition::{MatmulElems, MatmulSetupError},
+    launch::Strategy,
 };
 
 use crate::{

@@ -12,7 +12,7 @@ use crate::components::{
     stage::{ContiguousTilingLayout, TilingOrder},
 };
 use crate::components::{global::multi_stage::LoadMaxRoundPlaneCount, stage::TilingValidation};
-use crate::launch::{
+use crate::definition::{
     FormattedConfigError, InvalidConfigError, MatmulElems, MatmulProblem, StageIdent,
 };
 use cubecl::prelude::*;

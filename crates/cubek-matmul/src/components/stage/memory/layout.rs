@@ -6,8 +6,8 @@ use cubecl::std::tensor::layout::Coords2d;
 use crate::components::stage::StageMemoryConfig;
 use crate::components::stage::SwizzleMode;
 use crate::components::tile::StridedTile;
-use crate::launch::InvalidConfigError;
-use crate::launch::MatrixLayout;
+use crate::definition::InvalidConfigError;
+use crate::definition::MatrixLayout;
 
 use super::StridedStageMemory;
 

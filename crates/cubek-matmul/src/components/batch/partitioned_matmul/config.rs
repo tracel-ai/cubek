@@ -4,7 +4,7 @@ use crate::components::{
     batch::{BatchConfig, HypercubeConfig},
     global::GlobalConfig,
 };
-use crate::launch::{GlobalPartitionSize, MatmulLineSizes, MatmulProblem, MatmulSetupError};
+use crate::definition::{GlobalPartitionSize, MatmulLineSizes, MatmulProblem, MatmulSetupError};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 /// Configuration for partitioned batch matmul

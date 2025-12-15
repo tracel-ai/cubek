@@ -10,7 +10,7 @@ use crate::{
         stage::{FilledStageFamily, RowMajorTilingOrder, StridedStageFamily, UnitMatmulFamily},
         tile::{io::Filled, register::RegisterMatmul},
     },
-    launch::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError},
+    definition::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError},
     routines::{
         Routine,
         selector::{TileSizeSelection, UnitMatmulSelectionOptions, unit_matmul_selection},

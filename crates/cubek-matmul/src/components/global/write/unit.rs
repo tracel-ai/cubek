@@ -10,7 +10,7 @@ use crate::components::{
     stage::{StageMemoryConfig, StagePartitioner, UnitPartitioner},
     tile::StridedTile,
 };
-use crate::launch::{MatrixPrecision, StageIdent};
+use crate::definition::{MatrixPrecision, StageIdent};
 
 #[derive(CubeType)]
 /// Writes tiles from out shared memory to output global memory

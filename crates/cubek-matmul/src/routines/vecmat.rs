@@ -21,7 +21,7 @@ use crate::{
         },
         tile::{io::Filled, plane_vec_mat_inner_product::PlaneVecMatInnerProduct},
     },
-    launch::{
+    definition::{
         MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError,
         PartitionSize, TileSize, TilingScheme,
     },

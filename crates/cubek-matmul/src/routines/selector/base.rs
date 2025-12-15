@@ -1,4 +1,4 @@
-use crate::launch::MatmulSelection;
+use crate::definition::MatmulSelection;
 
 #[derive(Debug, Clone)]
 pub enum Selection<S> {

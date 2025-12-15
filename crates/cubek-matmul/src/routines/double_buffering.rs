@@ -21,7 +21,7 @@ use crate::components::{
     global::multi_stage::double_buffering::DoubleBufferingMatmulFamily,
     stage::{FilledStageFamily, StridedStageFamily},
 };
-use crate::launch::{
+use crate::definition::{
     MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError, MultiRowStrategy
 };
 use crate::routines::Routine;

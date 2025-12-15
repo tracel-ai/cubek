@@ -2,7 +2,7 @@ use crate::components::batch::partitioned_matmul::hypercube::{
     cube_count_plan::{CubeCountPlan, CubeCountPlanConfig, CubeCountPlanSelection},
     global_order::{GlobalOrder, GlobalOrderSelection},
 };
-use crate::launch::{MatmulProblem, MatmulSetupError, TilingScheme};
+use crate::definition::{MatmulProblem, MatmulSetupError, TilingScheme};
 use cubecl::CubeCount;
 
 #[derive(Debug, Clone)]

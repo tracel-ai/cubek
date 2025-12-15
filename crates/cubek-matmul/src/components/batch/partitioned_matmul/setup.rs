@@ -5,10 +5,11 @@ use crate::components::batch::partitioned_matmul::matmul::PartitionedBatchMatmul
 use crate::components::batch::partitioned_matmul::partition::GlobalPartitionMatmul;
 use crate::components::batch::{BatchMatmulFamily, CubeCountInputArgs, entry_point};
 use crate::components::global::GlobalMatmulFamily;
-use crate::launch::{
-    InputRuntimeArg, MatmulArgs, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem,
-    MatmulSelection, MatmulSetupError, OutputRuntimeArg,
+use crate::definition::{
+    MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError,
 };
+use crate::definition::MatmulSelection;
+use crate::launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
 use cubecl::prelude::*;
 
 /// Simple partitioned batch matmul family for any precision

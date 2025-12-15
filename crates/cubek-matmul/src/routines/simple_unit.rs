@@ -16,7 +16,7 @@ use crate::{
         },
         tile::{TileMatmulFamily, io::Filled, register::RegisterMatmul},
     },
-    launch::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError},
+    definition::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError},
     routines::selector::{
         PartitionScaling, StageScaling, TileSizeSelection, UnitMatmulSelectionOptions,
         unit_matmul_selection,

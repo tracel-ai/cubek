@@ -2,7 +2,7 @@ use cubecl::features::MmaConfig;
 use cubecl::{Runtime, client::ComputeClient};
 use std::marker::PhantomData;
 
-use crate::launch::{
+use crate::definition::{
     MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError,
     MultiRowStrategy, TilingScheme, adjust_dtypes,
 };

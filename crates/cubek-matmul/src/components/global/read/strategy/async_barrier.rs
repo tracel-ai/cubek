@@ -4,7 +4,7 @@ use cubecl::prelude::*;
 use crate::{components::{
     global::{SharedGlobalMatmulConfig, read::SyncStrategy},
     stage::StageConfig,
-}, launch::MatmulPrecision};
+}, definition::MatmulPrecision};
 
 /// Asynchronous barrier for `async_memcpy`
 pub struct AsyncBarrier {}

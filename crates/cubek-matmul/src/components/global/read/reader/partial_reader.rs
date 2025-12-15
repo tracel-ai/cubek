@@ -15,7 +15,7 @@ use crate::components::{
     global::{SharedGlobalMatmulConfig, multi_stage::JobExecutor},
     stage::StageConfig,
 };
-use crate::launch::MatmulPrecision;
+use crate::definition::MatmulPrecision;
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 use cubecl::std::{

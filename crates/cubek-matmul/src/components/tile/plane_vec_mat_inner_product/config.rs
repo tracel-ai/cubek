@@ -3,7 +3,7 @@ use crate::{
         stage::SwizzleMode,
         tile::{SharedTileConfig, TileConfig},
     },
-    launch::StageIdent,
+    definition::StageIdent,
 };
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]

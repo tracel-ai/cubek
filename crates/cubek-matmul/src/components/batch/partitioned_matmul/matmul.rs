@@ -8,7 +8,8 @@ use crate::components::batch::partitioned_matmul::partition::{
 use crate::components::batch::{BatchConfig as _, BatchMatmul, CubeCountInput};
 use crate::components::global::{self, GlobalConfig, GlobalMatmul};
 use crate::components::stage::StageConfig as _;
-use crate::launch::{AccG, LhsG, MatmulArgs, MatmulPrecision, RhsG};
+use crate::definition::{AccG, LhsG, MatmulPrecision, RhsG};
+use crate::launch::MatmulArgs;
 
 /// Executes matrix multiplication at the batch level,
 /// assigning each cube to handle multiple global matmuls.

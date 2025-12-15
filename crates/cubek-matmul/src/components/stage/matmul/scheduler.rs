@@ -1,6 +1,6 @@
 use cubecl::prelude::*;
 
-use crate::launch::PartitionSize;
+use crate::definition::PartitionSize;
 
 /// Defines how partition indices are scheduled across axes.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]

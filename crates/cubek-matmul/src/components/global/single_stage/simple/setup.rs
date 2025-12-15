@@ -1,17 +1,20 @@
-use crate::components::{
-    global::{
-        GlobalReaderConfig, GlobalWriterConfig, GlobalWriterFamily, SharedGlobalMatmulConfig,
-        SpecializationTensorConfig, WriteTiling, cube_dim_validation,
-        memory::{GlobalMemoryConfig, ViewDirection},
-        multi_stage::EventLoadingMode,
-        read::{FullLoadingStrategy, LoadingValidation},
-        single_stage::simple::matmul::SimpleMatmul,
-    },
-    stage::{FilledStageFamily, NoTilingLayout, StageConfig, StridedStageFamily},
+use crate::definition::{
+    MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError, MatrixLayout,
+    StageIdent,
 };
-use crate::launch::{
-    MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSelection,
-    MatmulSetupError, MatrixLayout, StageIdent,
+use crate::{
+    components::{
+        global::{
+            GlobalReaderConfig, GlobalWriterConfig, GlobalWriterFamily, SharedGlobalMatmulConfig,
+            SpecializationTensorConfig, WriteTiling, cube_dim_validation,
+            memory::{GlobalMemoryConfig, ViewDirection},
+            multi_stage::EventLoadingMode,
+            read::{FullLoadingStrategy, LoadingValidation},
+            single_stage::simple::matmul::SimpleMatmul,
+        },
+        stage::{FilledStageFamily, NoTilingLayout, StageConfig, StridedStageFamily},
+    },
+    definition::MatmulSelection,
 };
 use cubecl::prelude::*;
 use std::marker::PhantomData;

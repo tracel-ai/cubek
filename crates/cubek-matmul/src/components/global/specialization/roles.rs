@@ -2,7 +2,7 @@ use cubecl::prelude::*;
 
 use crate::components::global::specialization::config::LoadSpecializationConfig;
 use crate::components::global::{MaxGlobalReaderPlanes, SpecializationTensorConfig};
-use crate::launch::MatmulSetupError;
+use crate::definition::MatmulSetupError;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 /// Represents how many planes are used for main matmul computation and for loading-only tasks.

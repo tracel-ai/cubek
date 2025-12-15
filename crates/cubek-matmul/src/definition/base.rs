@@ -178,7 +178,7 @@ pub fn from_cmma_layout(#[comptime] layout: cmma::MatrixLayout) -> comptime_type
     }
 }
 
-use crate::{components::global::memory::ViewDirection, launch::blueprint::MatmulProblemSize};
+use crate::{components::global::memory::ViewDirection, definition::MatmulProblemSize};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 /// Identifier for all three tensors in a matmul
