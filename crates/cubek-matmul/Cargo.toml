@@ -66,3 +66,5 @@ serde = { workspace = true }
 [dev-dependencies]
 cubecl = { workspace = true, features = ["test-runtime"] }
 cubek-test-utils = { path = "../cubek-test-utils", version = "=0.0.1", default-features = false }
+pretty_assertions = { workspace = true }
+trybuild = "1"
