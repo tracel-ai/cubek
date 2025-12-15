@@ -99,7 +99,7 @@ fn generate_blueprint<R: Runtime>(
         global: GlobalReduceBlueprint::FullPlane(PlaneReduceBlueprint {
             plane_idle,
             bound_checks,
-            independant: strategy.independent,
+            independent: strategy.independent,
         }),
     };
 

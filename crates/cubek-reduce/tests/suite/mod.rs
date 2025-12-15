@@ -136,7 +136,7 @@ macro_rules! testgen_reduce {
                             PlaneReduceBlueprint {
                                 plane_idle: true,
                                 bound_checks: BoundChecks::Mask,
-                                independant: true,
+                                independent: true,
                             },
                             CubeDim::new_2d(32, 2),
                         )
@@ -157,7 +157,7 @@ macro_rules! testgen_reduce {
                             PlaneReduceBlueprint {
                                 plane_idle: true,
                                 bound_checks: BoundChecks::Mask,
-                                independant: true,
+                                independent: true,
                             },
                             CubeDim::new_2d(64, 2),
                         )
@@ -176,7 +176,7 @@ macro_rules! testgen_reduce {
                 strides: $strides,
                 axis: $axis,
                 strategy: ReduceStrategy::FullPlane(
-                    RoutineStrategy::Strategy(PlaneStrategy { independant: false })
+                    RoutineStrategy::Strategy(PlaneStrategy { independent: false })
                 ),
             );
         }
@@ -191,7 +191,7 @@ macro_rules! testgen_reduce {
                 strides: $strides,
                 axis: $axis,
                 strategy: ReduceStrategy::FullPlane(
-                    RoutineStrategy::Strategy(PlaneStrategy { independant: true })
+                    RoutineStrategy::Strategy(PlaneStrategy { independent: true })
                 ),
             );
         }

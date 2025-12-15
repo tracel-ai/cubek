@@ -37,13 +37,13 @@ pub struct PlaneReduceBlueprint {
     pub plane_idle: bool,
     // There are too many units in a plane causing out-of-bound.
     pub bound_checks: BoundChecks,
-    // Wheter all units in a plane work independantly during the reduction.
+    // Wheter all units in a plane work independently during the reduction.
     //
     // # Notes
     //
     // When this setting is turned on, there is an extra step at the end to merge accumulators
     // within the plane using plane instructions.
-    pub independant: bool,
+    pub independent: bool,
 }
 
 /// A single unit reduces a full vector.
