@@ -4,9 +4,7 @@ use core::f32;
 
 use cubecl::{TestRuntime, client::ComputeClient, std::tensor::TensorHandle};
 
-use cubek_test_utils::{
-    HostData, HostDataType, HostDataVec, StrideSpec, assert_equals_approx,
-};
+use cubek_test_utils::{HostData, HostDataType, HostDataVec, StrideSpec, assert_equals_approx};
 
 pub fn assert_result(
     query: &HostData,
