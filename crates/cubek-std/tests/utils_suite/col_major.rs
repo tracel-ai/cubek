@@ -45,12 +45,6 @@ fn test_col_major() {
     let cube_dim = CubeDim::new_single();
     let cube_count = CubeCount::new_single();
 
-    let input_host_data = HostData::from_tensor_handle(
-        &client,
-        &TensorHandle::from_ref(&input_ref, f32::as_type_native_unchecked()),
-        HostDataType::F32,
-    );
-
     let result = unsafe {
         copy_matrix_strided::launch_unchecked(
             &client,
@@ -62,16 +56,16 @@ fn test_col_major() {
         )
     };
 
-    let output_host_data = HostData::from_tensor_handle(
+    let output_data = HostData::from_tensor_handle(
         &client,
         &TensorHandle::from_ref(&out_ref, f32::as_type_native_unchecked()),
         HostDataType::F32,
     );
 
-    println!("{:?}", input_host_data);
-    println!("{:?}", output_host_data);
+    println!("{:?}", input_data);
+    println!("{:?}", output_data);
 
-    match assert_equals_approx(&output_host_data, &input_host_data, 0.01) {
+    match assert_equals_approx(&output_data, &input_data, 0.01) {
         Ok(_) => {}
         Err(_) => panic!(),
     }
