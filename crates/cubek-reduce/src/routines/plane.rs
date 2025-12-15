@@ -43,7 +43,7 @@ impl Routine for PlaneRoutine {
                 let working_planes = working_planes(&settings, &problem);
 
                 let working_cubes = working_planes.div_ceil(cube_dim.y);
-                let (cube_count, launched_cubes) = cube_count_safe(client, working_cubes as u32);
+                let (cube_count, launched_cubes) = cube_count_safe(client, working_cubes);
                 let plane_idle = launched_cubes * cube_dim.y != working_planes;
 
                 if plane_idle && !blueprint.plane_idle {

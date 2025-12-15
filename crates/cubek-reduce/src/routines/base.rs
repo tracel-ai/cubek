@@ -56,7 +56,7 @@ fn cube_count_spread(max: &CubeCount, num_cubes: u32) -> [u32; 3] {
         CubeCount::Static(x, y, z) => [*x, *y, *z],
         CubeCount::Dynamic(_) => panic!("No static max cube count"),
     };
-    let mut num_cubes = [num_cubes as u32, 1, 1];
+    let mut num_cubes = [num_cubes, 1, 1];
     let base = 2;
 
     let mut reduce_count = |i: usize| {
