@@ -9,10 +9,10 @@ use cubecl::{
     std::tensor::TensorHandle,
 };
 use cubek::{
-    attention::launch::{
-        AttentionDefinition, AttentionElems, AttentionIdent, AttentionPrecision, Strategy,
-        attention_types::*,
+    attention::definition::{
+        AttentionDefinition, AttentionElems, AttentionIdent, AttentionPrecision, attention_types::*,
     },
+    attention::launch::Strategy,
     random::random_uniform,
 };
 use std::marker::PhantomData;
