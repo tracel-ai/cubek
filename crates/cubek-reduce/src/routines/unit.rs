@@ -79,7 +79,8 @@ fn generate_blueprint<R: Runtime>(
 
     let working_cubes = working_units.div_ceil(num_units_in_cube);
     let (cube_count, cube_launched) = cube_count_safe(client, working_cubes);
-    let unit_idle = working_units % num_units_in_cube != 0 || cube_launched != working_cubes;
+    let unit_idle =
+        !working_units.is_multiple_of(num_units_in_cube) || cube_launched != working_cubes;
 
     let blueprint = ReduceBlueprint {
         line_mode: settings.line_mode,

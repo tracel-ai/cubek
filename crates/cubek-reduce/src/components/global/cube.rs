@@ -92,8 +92,9 @@ impl GlobalFullCubeReduce {
 
         let commit_required = writer.commit_required();
 
+        #[allow(clippy::collapsible_if)]
         if comptime!(commit_required) {
-            if worker_pos == 0 {
+            if worker_pos == 0u32 {
                 writer.commit();
             }
         }

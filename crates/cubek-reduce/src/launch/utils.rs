@@ -117,7 +117,7 @@ pub fn generate_line_size<R: Runtime>(
         && axis == input.shape.len() - 1
     {
         let supported_line_sizes = client.io_optimized_line_sizes_unchecked(dtype.size());
-        let num_reduce = output.shape.iter().map(|i| *i).product::<usize>();
+        let num_reduce = output.shape.iter().copied().product::<usize>();
         line_size_output = supported_line_sizes
             .filter(|&line_size| num_reduce % line_size as usize == 0)
             .max()

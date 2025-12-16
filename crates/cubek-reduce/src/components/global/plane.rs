@@ -62,8 +62,9 @@ impl GlobalFullPlaneReduce {
 
         let commit_required = writer.commit_required();
 
+        #[allow(clippy::collapsible_if)]
         if comptime!(commit_required) {
-            if UNIT_POS_X == 0 {
+            if UNIT_POS_X == 0u32 {
                 writer.commit();
             }
         }
