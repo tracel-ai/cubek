@@ -1,49 +1,39 @@
-use crate::components::batch::BatchMatmulFamily;
-use crate::components::global::GlobalMatmulFamily;
-use crate::components::stage::StageMatmulFamily;
-use crate::components::tile::TileMatmulFamily;
-use crate::definition::{
-    AvailableLineSizes, MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection,
-    MatmulSetupError,
-};
+use crate::components::batch::{BatchConfig, BatchMatmulFamily};
+use crate::definition::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError};
 use cubecl::prelude::*;
+use std::fmt::Debug;
 
 /// Specifications for a matmul algorithm
 pub trait Routine {
-    type SelectionArgs: Default + Clone;
-    type TileMatmul: TileMatmulFamily;
-    type StageMatmul: StageMatmulFamily;
-    type GlobalMatmul: GlobalMatmulFamily;
-    type BatchMatmul: BatchMatmulFamily;
+    type Strategy: Default + Debug + Clone;
+    type Blueprint: Debug + Clone;
+    type Config: BatchConfig;
+
+    type BatchMatmul: BatchMatmulFamily<Blueprint = Self::Blueprint, Config = Self::Config>;
 
     fn setup<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
-        selection: &MatmulSelection,
+        selection: &Self::Blueprint,
         line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
     ) -> Result<<Self::BatchMatmul as BatchMatmulFamily>::Config, MatmulSetupError> {
         Self::BatchMatmul::setup(client, problem, selection, line_sizes, dtypes)
     }
 
-    fn selection<R: Runtime>(
+    fn prepare<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
         plane_dim: u32,
         line_sizes: &MatmulLineSizes,
-        args: &Self::SelectionArgs,
+        args: &Self::Strategy,
         dtypes: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError>;
-
-    fn filter_line_sizes(available_line_sizes: AvailableLineSizes) -> AvailableLineSizes {
-        Self::BatchMatmul::filter_line_sizes(Self::GlobalMatmul::filter_line_sizes(
-            Self::StageMatmul::filter_line_sizes(Self::TileMatmul::filter_line_sizes(
-                available_line_sizes,
-            )),
-        ))
-    }
+    ) -> Result<Self::Blueprint, MatmulSetupError>;
 
     fn select_plane_dim<R: Runtime>(client: &ComputeClient<R>) -> u32 {
         client.properties().hardware.plane_size_max
     }
+
+    // Ideally put this elsewhere
+    fn can_cast_stage_element() -> bool;
 }

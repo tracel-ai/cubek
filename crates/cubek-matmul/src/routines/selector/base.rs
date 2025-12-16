@@ -1,28 +1,47 @@
-use crate::definition::MatmulSelection;
+use crate::routines::Routine;
+use std::fmt::Debug;
 
-#[derive(Debug, Clone)]
-pub enum Selection<S> {
+// #[derive(Debug, Clone)]
+pub enum BlueprintStrategy<A: Routine> {
     /// Use a predefined MatmulSelection
-    Forced(MatmulSelection),
+    Forced(A::Blueprint),
     /// Allows to give limited MatmulSelection information, and the rest is inferred from it
-    Inferred(S),
+    Inferred(A::Strategy),
 }
 
-impl<S: Default + Clone> Selection<S> {
-    pub fn maybe_forced_default(s: &Option<MatmulSelection>) -> Self {
+impl<A: Routine> BlueprintStrategy<A> {
+    pub fn maybe_forced_default(s: &Option<A::Blueprint>) -> Self {
         s.as_ref()
             .map(|s| Self::Forced(s.clone()))
             .unwrap_or_default()
     }
-    pub fn maybe_forced_or(s: &Option<MatmulSelection>, args: &S) -> Self {
+    pub fn maybe_forced_or(s: &Option<A::Blueprint>, args: &A::Strategy) -> Self {
         s.as_ref()
             .map(|s| Self::Forced(s.clone()))
             .unwrap_or_else(|| Self::Inferred(args.clone()))
     }
 }
 
-impl<S: Default> Default for Selection<S> {
+impl<A: Routine> Default for BlueprintStrategy<A> {
     fn default() -> Self {
         Self::Inferred(Default::default())
+    }
+}
+
+impl<A: Routine> Debug for BlueprintStrategy<A> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Forced(arg0) => f.debug_tuple("Forced").field(arg0).finish(),
+            Self::Inferred(arg0) => f.debug_tuple("Inferred").field(arg0).finish(),
+        }
+    }
+}
+
+impl<A: Routine> Clone for BlueprintStrategy<A> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Forced(arg0) => Self::Forced(arg0.clone()),
+            Self::Inferred(arg0) => Self::Inferred(arg0.clone()),
+        }
     }
 }

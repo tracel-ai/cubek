@@ -1,15 +1,23 @@
-use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, server::LaunchError};
+use cubecl::{
+    CubeCount, CubeDim, Runtime,
+    client::ComputeClient,
+    server::LaunchError,
+    std::tensor::{launch::ViewArg, layout::Coords3d},
+};
 
 use crate::{
-    components::batch::{
-        BatchMatmulFamily, CubeCountInputArgs,
-        naive::{NaiveMatmul, NaiveMatmulConfig, naive_matmul},
+    components::{
+        batch::{
+            BatchConfig, BatchMatmulFamily, CubeCountInputArgs,
+            naive::{NaiveMatmul, NaiveMatmulConfig, naive_matmul},
+        },
+        global::memory::{GlobalLayout, GlobalLayoutConfig, GlobalLayoutLaunch, GlobalScaleLayout},
     },
     definition::{
         MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSelection,
-        MatmulSetupError,
+        MatmulSetupError, MatrixLayout,
     },
-    launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
+    launch::{InputRuntimeArg, MatmulArgs, MatmulInputHandleRef, OutputRuntimeArg},
 };
 
 /// Simple partitioned batch matmul family for any precision
@@ -18,11 +26,12 @@ pub struct NaiveBatchMatmulFamily {}
 impl BatchMatmulFamily for NaiveBatchMatmulFamily {
     type Matmul<MP: MatmulPrecision> = NaiveMatmul;
     type Config = NaiveMatmulConfig;
+    type Blueprint = ();
 
     fn setup<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
-        selection: &MatmulSelection,
+        selection: &Self::Blueprint,
         line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
     ) -> Result<Self::Config, MatmulSetupError> {
@@ -39,22 +48,22 @@ impl BatchMatmulFamily for NaiveBatchMatmulFamily {
         config: Self::Config,
         dtypes: &MatmulElems,
     ) -> Result<(), LaunchError> {
-        unsafe {
-            naive_matmul::launch_unchecked(
-                client,
-                cube_count,
-                cube_dim,
-                lhs_view,
-                rhs_view,
-                out.as_tensor_arg(1),
-                *dtypes.lhs_global,
-                *dtypes.acc_register,
-                *dtypes.acc_global,
-            )
-        }
+        todo!()
+        // unsafe {
+        //     naive_matmul::launch_unchecked(
+        //         client,
+        //         cube_count,
+        //         cube_dim,
+        //         lhs_view,
+        //         rhs_view,
+        //         out.as_tensor_arg(1),
+        //         *dtypes.lhs_global,
+        //         *dtypes.acc_register,
+        //         *dtypes.acc_global,
+        //     )
+        // }
     }
 }
-
 // naive_matmul::launch_unchecked(
 //             client,
 //             cube_count,

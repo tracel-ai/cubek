@@ -74,10 +74,6 @@ where
         // optimal settings in the future.
         client.properties().features.alignment
     }
-
-    fn filter_line_sizes(available_line_sizes: AvailableLineSizes) -> AvailableLineSizes {
-        available_line_sizes
-    }
 }
 
 fn validate<R: Runtime>(

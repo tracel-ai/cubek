@@ -25,6 +25,7 @@ use crate::components::{
 };
 use crate::definition::{self, MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection};
 use crate::launch::MatmulInputHandleRef;
+use crate::routines::Routine;
 
 /// Input argument
 pub type InputArg<MA> =
@@ -41,31 +42,31 @@ pub type OutputRuntimeArg<'a, MA, R> = <OutputArg<MA> as LaunchArg>::RuntimeArg<
 
 /// Create the input runtime arguments for a matmul kernel that works on concrete inputs and
 /// output (not fused).
-pub trait ConcreteInputsFactory: LaunchArg {
+pub trait ConcreteInputsFactory<A: Routine>: LaunchArg {
     #[allow(clippy::too_many_arguments)]
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
         lhs: &'a MatmulInputHandleRef<'a, R>,
         rhs: &'a MatmulInputHandleRef<'a, R>,
-        selection: &MatmulSelection,
+        blueprint: &A::Blueprint,
         problem: &MatmulProblem,
         line_sizes: &MatmulLineSizes,
-        config: impl BatchConfig,
+        config: A::Config,
         dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<'a, R>;
 }
 
 /// Create the output runtime argument for a matmul kernel that works on concrete inputs and
 /// output (not fused).
-pub trait ConcreteOutputFactory: LaunchArg {
+pub trait ConcreteOutputFactory<A: Routine>: LaunchArg {
     #[allow(clippy::too_many_arguments)]
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
         out: &'a TensorHandleRef<'a, R>,
-        selection: &MatmulSelection,
+        blueprint: &A::Blueprint,
         problem: &MatmulProblem,
         line_sizes: &MatmulLineSizes,
-        config: impl BatchConfig,
+        config: A::Config,
         dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<'a, R>;
 }
@@ -163,17 +164,17 @@ pub struct TensorInputs<Lhs: Numeric, Rhs: Numeric, Acc: Numeric> {
     acc_batch: CubeOption<VirtualLayout<Coords1d, Coords1d>>,
 }
 
-impl<Lhs: Numeric, Rhs: Numeric, Acc: Numeric> ConcreteInputsFactory
+impl<Lhs: Numeric, Rhs: Numeric, Acc: Numeric, A: Routine> ConcreteInputsFactory<A>
     for TensorInputs<Lhs, Rhs, Acc>
 {
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
         lhs: &'a MatmulInputHandleRef<'a, R>,
         rhs: &'a MatmulInputHandleRef<'a, R>,
-        _selection: &MatmulSelection,
+        _blueprint: &A::Blueprint,
         problem: &MatmulProblem,
         line_sizes: &MatmulLineSizes,
-        config: impl BatchConfig,
+        config: A::Config,
         _dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<'a, R> {
         let view = |handle: &'a MatmulInputHandleRef<'a, R>,
@@ -236,14 +237,14 @@ pub struct TensorOutput<EG: Numeric> {
     batch: VirtualLayout<Coords1d, Coords1d>,
 }
 
-impl<EG: Numeric> ConcreteOutputFactory for TensorOutput<EG> {
+impl<EG: Numeric, A: Routine> ConcreteOutputFactory<A> for TensorOutput<EG> {
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
         out: &'a TensorHandleRef<'a, R>,
-        _selection: &MatmulSelection,
+        _blueprint: &A::Blueprint,
         problem: &MatmulProblem,
         line_sizes: &MatmulLineSizes,
-        config: impl BatchConfig,
+        config: A::Config,
         _dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<'a, R> {
         let config = config.global_config();
@@ -348,17 +349,17 @@ pub struct TensorMapInputs<Lhs: Numeric, Rhs: Numeric, EO: Numeric> {
     pub acc_batch: CubeOption<VirtualLayout<Coords1d, Coords1d>>,
 }
 
-impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory
-    for TensorMapInputs<Lhs, Rhs, EO>
+impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<Blueprint = MatmulSelection>>
+    ConcreteInputsFactory<A> for TensorMapInputs<Lhs, Rhs, EO>
 {
     fn create<'a, R: Runtime>(
         _client: &ComputeClient<R>,
         lhs_handle: &'a MatmulInputHandleRef<'a, R>,
         rhs_handle: &'a MatmulInputHandleRef<'a, R>,
-        selection: &MatmulSelection,
+        blueprint: &A::Blueprint,
         problem: &MatmulProblem,
         line_sizes: &MatmulLineSizes,
-        config: impl BatchConfig,
+        config: A::Config,
         dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<'a, R> {
         let lhs = lhs_handle.data();
@@ -366,7 +367,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory
 
         let config = config.global_config();
 
-        let tiling_scheme = selection.tiling_scheme;
+        let tiling_scheme = blueprint.tiling_scheme;
         let stage_m = tiling_scheme.elements_per_stage_along_m();
         let stage_n = tiling_scheme.elements_per_stage_along_n();
         let stage_k = tiling_scheme.elements_per_stage_along_k();

@@ -4,6 +4,7 @@ use cubecl::std::tensor::TensorHandle;
 use cubek_matmul::definition::AvailableLineSizes;
 use cubek_matmul::definition::MatmulIdent;
 use cubek_matmul::definition::MatrixLayout;
+use cubek_matmul::launch::ConcreteOutputFactory;
 use cubek_matmul::launch::ConcreteOutputFactory as _;
 
 use cubek_matmul::components::batch::{BatchConfig, BatchMatmulFamily};
@@ -32,10 +33,10 @@ pub enum InputRepresentation {
 #[allow(unused)]
 /// Test the correctness of the specified Matmul on the given device,
 /// against a naive CPU implementation over the given problem
-pub fn test_matmul_algorithm<A: Routine>(
+pub fn test_matmul_algorithm<A: Routine<Blueprint = MatmulSelection>>(
     client: ComputeClient<TestRuntime>,
     mut problem: MatmulProblem,
-    selection: MatmulSelection,
+    selection: A::Blueprint,
     dtypes: MatmulElems,
     input_representation: InputRepresentation,
 ) {
@@ -92,10 +93,10 @@ pub fn test_matmul_algorithm<A: Routine>(
 }
 
 /// Returns whether execution succeeded
-pub fn launch_matmul_algorithm<A: Routine>(
+pub fn launch_matmul_algorithm<A: Routine<Blueprint = MatmulSelection>>(
     client: &ComputeClient<TestRuntime>,
     problem: &MatmulProblem,
-    selection: MatmulSelection,
+    selection: A::Blueprint,
     dtypes: &MatmulElems,
     input_representation: InputRepresentation,
     lhs: MatmulInputHandleRef<TestRuntime>,
@@ -108,7 +109,6 @@ pub fn launch_matmul_algorithm<A: Routine>(
         dtypes.rhs_global.size(),
         dtypes.acc_global.size(),
     );
-    let line_sizes = A::filter_line_sizes(line_sizes);
     let line_sizes = match input_representation {
         InputRepresentation::Normal => line_sizes
             .filter_lhs_with_tensor(lhs.data().strides, lhs.data().shape, problem.lhs_layout)
@@ -141,7 +141,7 @@ pub fn launch_matmul_algorithm<A: Routine>(
         return false;
     }
 
-    let output = TensorOutput::create(
+    let output = <TensorOutput<_> as ConcreteOutputFactory<A>>::create(
         client,
         &out,
         &selection,
@@ -157,7 +157,7 @@ pub fn launch_matmul_algorithm<A: Routine>(
 
     match input_representation {
         InputRepresentation::Normal => {
-            let inputs = TensorInputs::create(
+            let inputs = <TensorInputs<_, _, _> as ConcreteInputsFactory<A>>::create(
                 client,
                 &lhs,
                 &rhs,
@@ -182,7 +182,7 @@ pub fn launch_matmul_algorithm<A: Routine>(
             }
         }
         InputRepresentation::Tma => {
-            let inputs = TensorMapInputs::create(
+            let inputs = <TensorMapInputs<_, _, _> as ConcreteInputsFactory<A>>::create(
                 client,
                 &lhs,
                 &rhs,

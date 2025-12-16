@@ -24,11 +24,12 @@ impl<GMM: GlobalMatmulFamily, S: GlobalPartitionMatmul> BatchMatmulFamily
 {
     type Matmul<MP: MatmulPrecision> = PartitionedBatchMatmul<MP, GMM::Matmul<MP>, S>;
     type Config = PartitionedBatchConfig<GMM::Config>;
+    type Blueprint = MatmulSelection;
 
     fn setup<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
-        selection: &MatmulSelection,
+        selection: &Self::Blueprint,
         line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
     ) -> Result<Self::Config, MatmulSetupError> {

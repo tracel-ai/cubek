@@ -1,6 +1,6 @@
 use crate::definition::{
     AccG, AvailableLineSizes, LhsG, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem,
-    MatmulSelection, MatmulSetupError, RhsG,
+    MatmulSetupError, RhsG,
 };
 use crate::{
     components::{
@@ -20,13 +20,15 @@ pub trait BatchMatmulFamily: 'static + Send + Sync {
     /// The configuration type associated with this matmul family.
     type Config: BatchConfig;
 
+    type Blueprint;
+
     /// Constructs the configuration based on the matmul problem, selection, and line sizes.
     ///
     /// This function may return an error if the configuration cannot be supported on the current runtime.
     fn setup<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
-        selection: &MatmulSelection,
+        selection: &Self::Blueprint,
         line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
     ) -> Result<Self::Config, MatmulSetupError>;
@@ -47,13 +49,6 @@ pub trait BatchMatmulFamily: 'static + Send + Sync {
         config: Self::Config,
         dtypes: &MatmulElems,
     ) -> Result<(), LaunchError>;
-
-    /// Filters out line sizes that are incompatible with this matmul family.
-    ///
-    /// By default, returns the input unchanged.
-    fn filter_line_sizes(available_line_sizes: AvailableLineSizes) -> AvailableLineSizes {
-        available_line_sizes
-    }
 }
 
 #[cube]

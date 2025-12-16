@@ -63,13 +63,6 @@ pub trait TileMatmulFamily: Send + Sync + 'static {
         dtypes: &MatmulElems,
     ) -> Result<Self::Config, MatmulSetupError>;
 
-    /// Filters out line sizes that are incompatible with this matmul family.
-    ///
-    /// By default, returns the input unchanged.
-    fn filter_line_sizes(available_line_sizes: AvailableLineSizes) -> AvailableLineSizes {
-        available_line_sizes
-    }
-
     /// Returns whether a tile configuration is supported
     fn is_supported<R: Runtime>(_client: &ComputeClient<R>, _config: MmaConfig) -> bool {
         !Self::requires_accelerator()

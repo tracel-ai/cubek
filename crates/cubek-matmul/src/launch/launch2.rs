@@ -1,5 +1,5 @@
 use crate::components::batch::{BatchMatmulFamily, CubeCountInputArgs};
-use crate::definition::{AvailableLineSizes, MatmulElems};
+use crate::definition::{AvailableLineSizes, MatmulElems, MatmulSelection};
 use crate::definition::{MatmulAvailabilityError, MatmulSetupError};
 use crate::definition::{MatmulProblem, MatrixLayout};
 use crate::launch::{
@@ -7,7 +7,7 @@ use crate::launch::{
     OutputRuntimeArg, TensorArgs, TensorMapArgs,
 };
 use crate::launch::{MatmulInputHandle, MatmulInputHandleRef, launch_kernel_concrete};
-use crate::routines::{Routine, Selection};
+use crate::routines::{BlueprintStrategy, Routine};
 use cubecl::features::TypeUsage;
 use cubecl::prelude::*;
 use cubecl::std::tensor::{MatrixBatchLayout, TensorHandle, matrix_batch_layout};
@@ -23,7 +23,7 @@ pub fn launch<R: Runtime, A: Routine>(
     lhs: MatmulInputHandle<R>,
     rhs: MatmulInputHandle<R>,
     out: TensorHandle<R>,
-    selection: &Selection<A::SelectionArgs>,
+    blueprint_strategy: &BlueprintStrategy<A>,
     mut dtypes: MatmulElems,
 ) -> Result<TensorHandle<R>, MatmulSetupError> {
     let result = launch_ref::<R, A>(
@@ -31,7 +31,7 @@ pub fn launch<R: Runtime, A: Routine>(
         &lhs.as_ref(),
         &rhs.as_ref(),
         &out.as_ref(),
-        selection,
+        blueprint_strategy,
         &mut dtypes,
     );
 
@@ -51,7 +51,7 @@ pub fn launch_ref<R: Runtime, A: Routine>(
     lhs: &MatmulInputHandleRef<'_, R>,
     rhs: &MatmulInputHandleRef<'_, R>,
     out: &TensorHandleRef<'_, R>,
-    selection: &Selection<A::SelectionArgs>,
+    selection: &BlueprintStrategy<A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let check_layout = |tensor: &TensorHandleRef<'_, R>| match matrix_batch_layout(tensor.strides) {
@@ -106,12 +106,12 @@ pub fn launch_ref<R: Runtime, A: Routine>(
 /// Cmma will be used if available and enabled,
 /// otherwise it will fall back on a non-cmma implementation
 #[allow(clippy::result_large_err)]
-pub fn launch_ref_tma<R: Runtime, A: Routine>(
+pub fn launch_ref_tma<R: Runtime, A: Routine<Blueprint = MatmulSelection>>(
     client: &ComputeClient<R>,
     lhs: &MatmulInputHandleRef<'_, R>,
     rhs: &MatmulInputHandleRef<'_, R>,
     out: &TensorHandleRef<'_, R>,
-    selection: &Selection<A::SelectionArgs>,
+    selection: &BlueprintStrategy<A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let check_layout = |tensor: &TensorHandleRef<'_, R>| match matrix_batch_layout(tensor.strides) {
@@ -162,13 +162,13 @@ fn launch_inner_ref<R: Runtime, MA: MatmulArgs, A: Routine>(
     rhs_handle: &MatmulInputHandleRef<'_, R>,
     out: &TensorHandleRef<'_, R>,
     transposed: (bool, bool),
-    selection: &Selection<A::SelectionArgs>,
+    selection: &BlueprintStrategy<A>,
     line_sizes: AvailableLineSizes,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError>
 where
-    InputArg<MA>: ConcreteInputsFactory,
-    OutputArg<MA>: ConcreteOutputFactory,
+    InputArg<MA>: ConcreteInputsFactory<A>,
+    OutputArg<MA>: ConcreteOutputFactory<A>,
 {
     let lhs_shape = lhs_handle.shape();
     let rhs_shape = rhs_handle.shape();
@@ -233,7 +233,6 @@ where
     let lhs = lhs_handle.data();
     let rhs = rhs_handle.data();
 
-    let line_sizes = A::filter_line_sizes(line_sizes);
     let mut line_sizes = line_sizes
         .filter_lhs_with_tensor(lhs.strides, lhs.shape, problem.lhs_layout)
         .filter_rhs_with_tensor(rhs.strides, rhs.shape, problem.rhs_layout)

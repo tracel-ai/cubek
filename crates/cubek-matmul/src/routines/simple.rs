@@ -2,6 +2,7 @@ use cubecl::features::MmaConfig;
 use cubecl::{Runtime, client::ComputeClient};
 use std::marker::PhantomData;
 
+use crate::components::batch::BatchMatmulFamily;
 use crate::definition::{
     MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError,
     MultiRowStrategy, TilingScheme, adjust_dtypes,
@@ -62,24 +63,25 @@ where
     LL: FullLoadingStrategy,
     RL: FullLoadingStrategy<SyncStrategy = LL::SyncStrategy>,
 {
-    type SelectionArgs = SimpleArgs;
-    type TileMatmul = TMM;
-    type StageMatmul = PlaneMatmulFamily<
-        Self::TileMatmul,
-        StridedStageFamily,
-        StridedStageFamily,
-        FilledStageFamily,
+    type Strategy = SimpleArgs;
+    type BatchMatmul = PartitionedBatchMatmulFamily<
+        SimpleMatmulFamily<
+            PlaneMatmulFamily<TMM, StridedStageFamily, StridedStageFamily, FilledStageFamily>,
+            LL,
+            RL,
+            PlaneWriterFamily,
+        >,
+        RowMajorGlobalPartitionMatmul,
     >;
-    type GlobalMatmul = SimpleMatmulFamily<Self::StageMatmul, LL, RL, PlaneWriterFamily>;
-    type BatchMatmul =
-        PartitionedBatchMatmulFamily<Self::GlobalMatmul, RowMajorGlobalPartitionMatmul>;
+    type Blueprint = MatmulSelection;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
-    fn selection<R: Runtime>(
+    fn prepare<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
         plane_dim: u32,
         line_sizes: &MatmulLineSizes,
-        args: &Self::SelectionArgs,
+        args: &Self::Strategy,
         dtypes: &mut MatmulElems,
     ) -> Result<MatmulSelection, MatmulSetupError> {
         if args.multi_rows {
@@ -99,6 +101,10 @@ where
                 },
             )
         }
+    }
+
+    fn can_cast_stage_element() -> bool {
+        TMM::can_cast_stage_element()
     }
 }
 

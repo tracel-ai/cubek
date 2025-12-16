@@ -3,6 +3,7 @@ use std::marker::PhantomData;
 use cubecl::Runtime;
 use cubecl::client::ComputeClient;
 
+use crate::components::batch::BatchMatmulFamily;
 use crate::components::global::PlaneWriterFamily;
 use crate::components::stage::{PlaneMatmulFamily, RowMajorTilingOrder};
 use crate::components::tile;
@@ -44,28 +45,24 @@ where
             OutTile = Strided,
         >,
 {
-    type SelectionArgs = OrderedSelectionArgs;
-    type TileMatmul = TMM;
-    type StageMatmul = PlaneMatmulFamily<
-        Self::TileMatmul,
-        StridedStageFamily,
-        StridedStageFamily,
-        FilledStageFamily,
+    type Strategy = OrderedSelectionArgs;
+    type BatchMatmul = PartitionedBatchMatmulFamily<
+        OrderedDoubleBufferingMatmulFamily<
+            PlaneMatmulFamily<TMM, StridedStageFamily, StridedStageFamily, FilledStageFamily>,
+            SyncPartialCyclicLoading<RowMajorTilingOrder>,
+            PlaneWriterFamily,
+        >,
+        RowMajorGlobalPartitionMatmul,
     >;
-    type GlobalMatmul = OrderedDoubleBufferingMatmulFamily<
-        Self::StageMatmul,
-        SyncPartialCyclicLoading<RowMajorTilingOrder>,
-        PlaneWriterFamily,
-    >;
-    type BatchMatmul =
-        PartitionedBatchMatmulFamily<Self::GlobalMatmul, RowMajorGlobalPartitionMatmul>;
+    type Blueprint = MatmulSelection;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
-    fn selection<R: Runtime>(
+    fn prepare<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
         plane_dim: u32,
         line_sizes: &MatmulLineSizes,
-        args: &Self::SelectionArgs,
+        args: &Self::Strategy,
         dtypes: &mut MatmulElems,
     ) -> Result<MatmulSelection, MatmulSetupError> {
         plane_matmul_selection::<TMM, R>(
@@ -87,5 +84,9 @@ where
                 ..Default::default()
             },
         )
+    }
+
+    fn can_cast_stage_element() -> bool {
+        TMM::can_cast_stage_element()
     }
 }

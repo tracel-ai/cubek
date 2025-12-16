@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 
 use crate::{
     components::{
-        batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
+        batch::{BatchMatmulFamily, PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
         global::{
             UnitWriterFamily,
             read::{FullLoadingStrategy, sync_full_cyclic::SyncFullCyclicLoading},
@@ -44,20 +44,25 @@ where
     LL: FullLoadingStrategy,
     RL: FullLoadingStrategy<SyncStrategy = LL::SyncStrategy>,
 {
-    type SelectionArgs = SimpleUnitSelectionArgs;
-    type TileMatmul = RegisterMatmul<Filled>;
-    type StageMatmul = UnitMatmulFamily<Self::TileMatmul, StridedStageFamily, FilledStageFamily>;
-    type GlobalMatmul = SimpleMatmulFamily<Self::StageMatmul, LL, RL, UnitWriterFamily>;
+    type Strategy = SimpleUnitSelectionArgs;
+    type BatchMatmul = PartitionedBatchMatmulFamily<
+        SimpleMatmulFamily<
+            UnitMatmulFamily<RegisterMatmul<Filled>, StridedStageFamily, FilledStageFamily>,
+            LL,
+            RL,
+            UnitWriterFamily,
+        >,
+        RowMajorGlobalPartitionMatmul,
+    >;
+    type Blueprint = MatmulSelection;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
-    type BatchMatmul =
-        PartitionedBatchMatmulFamily<Self::GlobalMatmul, RowMajorGlobalPartitionMatmul>;
-
-    fn selection<R: Runtime>(
+    fn prepare<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
         plane_dim: u32,
         line_sizes: &MatmulLineSizes,
-        args: &Self::SelectionArgs,
+        args: &Self::Strategy,
         dtypes: &mut MatmulElems,
     ) -> Result<MatmulSelection, MatmulSetupError> {
         Ok(unit_matmul_selection(
@@ -84,5 +89,9 @@ where
 
     fn select_plane_dim<R: Runtime>(client: &ComputeClient<R>) -> u32 {
         client.properties().hardware.plane_size_min
+    }
+
+    fn can_cast_stage_element() -> bool {
+        RegisterMatmul::<Filled>::can_cast_stage_element()
     }
 }

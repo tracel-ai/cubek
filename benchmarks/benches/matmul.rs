@@ -18,7 +18,7 @@ use cubek::{
             PartialReadingStrategy, ReadingStrategy, Strategy,
         },
         routines::{
-            Selection, TileSizeSelection, double_buffering::DoubleBufferingArgs,
+            BlueprintStrategy, TileSizeSelection, double_buffering::DoubleBufferingArgs,
             double_unit::DoubleUnitSelectionArgs, ordered_double_buffering::OrderedSelectionArgs,
             simple::SimpleArgs, simple_unit::SimpleUnitSelectionArgs,
         },
@@ -256,7 +256,7 @@ fn run_grid_search<R: Runtime, MP: MatmulPrecision>() {
                     Default::default(),
                     Strategy::Simple {
                         read_strategy: ReadingStrategy::Cyclic,
-                        selection: Selection::Forced(selection.clone()),
+                        selection: BlueprintStrategy::Forced(selection.clone()),
                         tile_kind: AcceleratedTileKind::Cmma,
                     },
                     (4096, 10, 64, 10),
@@ -286,19 +286,19 @@ fn run_algos_vecmat<R: Runtime, MP: MatmulPrecision>() {
     println!("Simple VecMat");
     run::<R, MP>(
         Default::default(),
-        Strategy::SimpleVecMat(Selection::Inferred(())),
+        Strategy::SimpleVecMat(BlueprintStrategy::Inferred(())),
     );
 
     println!("Double VecMat");
     run::<R, MP>(
         Default::default(),
-        Strategy::DoubleVecMat(Selection::Inferred(())),
+        Strategy::DoubleVecMat(BlueprintStrategy::Inferred(())),
     );
 
     println!("Simple Unit Min");
     run::<R, MP>(
         Default::default(),
-        Strategy::SimpleUnit(Selection::Inferred(SimpleUnitSelectionArgs {
+        Strategy::SimpleUnit(BlueprintStrategy::Inferred(SimpleUnitSelectionArgs {
             tile_size: TileSizeSelection::MinTileSize,
         })),
     );
@@ -306,7 +306,7 @@ fn run_algos_vecmat<R: Runtime, MP: MatmulPrecision>() {
     println!("Simple Unit Max");
     run::<R, MP>(
         Default::default(),
-        Strategy::SimpleUnit(Selection::Inferred(SimpleUnitSelectionArgs {
+        Strategy::SimpleUnit(BlueprintStrategy::Inferred(SimpleUnitSelectionArgs {
             tile_size: TileSizeSelection::MaxTileSize,
         })),
     );
@@ -319,7 +319,7 @@ fn run_algos_unit<R: Runtime, MP: MatmulPrecision>() {
     println!("Simple Unit Min");
     run::<R, MP>(
         Default::default(),
-        Strategy::SimpleUnit(Selection::Inferred(SimpleUnitSelectionArgs {
+        Strategy::SimpleUnit(BlueprintStrategy::Inferred(SimpleUnitSelectionArgs {
             tile_size: TileSizeSelection::MinTileSize,
         })),
     );
@@ -327,7 +327,7 @@ fn run_algos_unit<R: Runtime, MP: MatmulPrecision>() {
     println!("Simple Unit Max");
     run::<R, MP>(
         Default::default(),
-        Strategy::SimpleUnit(Selection::Inferred(SimpleUnitSelectionArgs {
+        Strategy::SimpleUnit(BlueprintStrategy::Inferred(SimpleUnitSelectionArgs {
             tile_size: TileSizeSelection::MaxTileSize,
         })),
     );
@@ -335,7 +335,7 @@ fn run_algos_unit<R: Runtime, MP: MatmulPrecision>() {
     println!("Double Unit Min");
     run::<R, MP>(
         Default::default(),
-        Strategy::DoubleUnit(Selection::Inferred(DoubleUnitSelectionArgs {
+        Strategy::DoubleUnit(BlueprintStrategy::Inferred(DoubleUnitSelectionArgs {
             tile_size: TileSizeSelection::MinTileSize,
         })),
     );
@@ -343,7 +343,7 @@ fn run_algos_unit<R: Runtime, MP: MatmulPrecision>() {
     println!("Double Unit Max");
     run::<R, MP>(
         Default::default(),
-        Strategy::DoubleUnit(Selection::Inferred(DoubleUnitSelectionArgs {
+        Strategy::DoubleUnit(BlueprintStrategy::Inferred(DoubleUnitSelectionArgs {
             tile_size: TileSizeSelection::MaxTileSize,
         })),
     );
@@ -358,7 +358,7 @@ fn run_algos_wmma<R: Runtime, MP: MatmulPrecision>() {
         Default::default(),
         Strategy::Simple {
             read_strategy: ReadingStrategy::Cyclic,
-            selection: Selection::Inferred(SimpleArgs { multi_rows: false }),
+            selection: BlueprintStrategy::Inferred(SimpleArgs { multi_rows: false }),
             tile_kind: AcceleratedTileKind::Cmma,
         },
     );
@@ -368,7 +368,7 @@ fn run_algos_wmma<R: Runtime, MP: MatmulPrecision>() {
         Default::default(),
         Strategy::Simple {
             read_strategy: ReadingStrategy::Cyclic,
-            selection: Selection::Inferred(SimpleArgs { multi_rows: true }),
+            selection: BlueprintStrategy::Inferred(SimpleArgs { multi_rows: true }),
             tile_kind: AcceleratedTileKind::Cmma,
         },
     );
@@ -378,7 +378,7 @@ fn run_algos_wmma<R: Runtime, MP: MatmulPrecision>() {
         Default::default(),
         Strategy::DoubleBuffering {
             read_strategy: PartialReadingStrategy::Tilewise,
-            selection: Selection::Inferred(DoubleBufferingArgs { specialized: false }),
+            selection: BlueprintStrategy::Inferred(DoubleBufferingArgs { specialized: false }),
             tile_kind: AcceleratedTileKind::Cmma,
         },
     );
@@ -388,7 +388,7 @@ fn run_algos_wmma<R: Runtime, MP: MatmulPrecision>() {
         Default::default(),
         Strategy::DoubleBuffering {
             read_strategy: PartialReadingStrategy::Tilewise,
-            selection: Selection::Inferred(DoubleBufferingArgs { specialized: true }),
+            selection: BlueprintStrategy::Inferred(DoubleBufferingArgs { specialized: true }),
             tile_kind: AcceleratedTileKind::Cmma,
         },
     );
@@ -397,7 +397,7 @@ fn run_algos_wmma<R: Runtime, MP: MatmulPrecision>() {
     run::<R, MP>(
         Default::default(),
         Strategy::OrderedDoubleBuffering {
-            selection: Selection::Inferred(OrderedSelectionArgs {
+            selection: BlueprintStrategy::Inferred(OrderedSelectionArgs {
                 row_count: Some(8),
                 rows_per_plane: Some(2),
                 partition_k: Some(2),
@@ -436,7 +436,7 @@ fn run_algos_mma<R: Runtime, MP: MatmulPrecision>() {
         Default::default(),
         Strategy::Specialized {
             read_strategy: AsyncPartialReadingStrategy::Strided,
-            selection: Selection::Inferred(()),
+            selection: BlueprintStrategy::Inferred(()),
             tile_kind: AcceleratedTileKind::Mma,
         },
     );

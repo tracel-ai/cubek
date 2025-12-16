@@ -4,6 +4,7 @@ use cubecl::Runtime;
 use cubecl::client::ComputeClient;
 use cubecl::features::MmaConfig;
 
+use crate::components::batch::BatchMatmulFamily;
 use crate::components::tile;
 use crate::components::{batch::CubeCountPlanSelection, stage::PlaneMatmulFamily};
 use crate::components::{
@@ -49,19 +50,24 @@ where
         >,
     L: AsyncPartialLoadingStrategy,
 {
-    type SelectionArgs = ();
-    type TileMatmul = TMM;
-    type StageMatmul = PlaneMatmulFamily<Self::TileMatmul, L::Stage, L::Stage, FilledStageFamily>;
-    type GlobalMatmul = SpecializedMatmulFamily<Self::StageMatmul, L, PlaneWriterFamily>;
-    type BatchMatmul =
-        PartitionedBatchMatmulFamily<Self::GlobalMatmul, RowMajorGlobalPartitionMatmul>;
+    type Strategy = ();
+    type BatchMatmul = PartitionedBatchMatmulFamily<
+        SpecializedMatmulFamily<
+            PlaneMatmulFamily<TMM, L::Stage, L::Stage, FilledStageFamily>,
+            L,
+            PlaneWriterFamily,
+        >,
+        RowMajorGlobalPartitionMatmul,
+    >;
+    type Blueprint = MatmulSelection;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
-    fn selection<R: Runtime>(
+    fn prepare<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
         plane_dim: u32,
         line_sizes: &MatmulLineSizes,
-        _args: &Self::SelectionArgs,
+        _args: &Self::Strategy,
         dtypes: &mut MatmulElems,
     ) -> Result<MatmulSelection, MatmulSetupError> {
         plane_matmul_selection::<TMM, R>(
@@ -79,6 +85,10 @@ where
                 ..Default::default()
             },
         )
+    }
+
+    fn can_cast_stage_element() -> bool {
+        TMM::can_cast_stage_element()
     }
 }
 

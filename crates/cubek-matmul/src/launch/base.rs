@@ -9,42 +9,11 @@ use cubecl_common::quant::scheme::{QuantScheme, QuantStore, QuantValue};
 
 use cubecl::std::tensor::{TensorHandle, into_contiguous_packed, into_contiguous_pitched};
 
-use crate::launch::{AcceleratedTileKind, launch_naive};
-use crate::{
-    components::{
-        global::read::{
-            async_full_strided, async_partial_cyclic::AsyncPartialCyclicLoading,
-            async_partial_strided::AsyncPartialStridedLoading,
-        },
-        tile::{cmma::CmmaMatmul, io::Filled, mma::MmaMatmul},
-    },
-    launch::{AsyncPartialReadingStrategy, PartialReadingStrategy, ReadingStrategy, launch2},
-    routines::{
-        double_buffering::*,
-        double_unit::DoubleUnitAlgorithm,
-        specialized::SpecializedAlgorithm,
-        vecmat::{DoubleVecMatAlgorithm, SimpleVecMatAlgorithm},
-    },
-};
+use crate::launch::launch_naive;
+use crate::launch::launch2;
 use crate::{
     definition::{MatmulElems, MatmulSetupError},
     launch::Strategy,
-};
-
-use crate::{
-    components::{
-        global::read::{async_full_cyclic, sync_full_strided, sync_full_tilewise},
-        stage::{ColMajorTilingOrder, RowMajorTilingOrder},
-    },
-    routines::{
-        double_buffering::{
-            CyclicDoubleBufferingAlgorithm, HybridDoubleBufferingAlgorithm,
-            TilewiseDoubleBufferingAlgorithm,
-        },
-        ordered_double_buffering::OrderedDoubleBufferingAlgorithm,
-        simple::{SimpleAlgorithm, SimpleTmaAlgorithm},
-        simple_unit::SimpleUnitAlgorithm,
-    },
 };
 
 pub enum MatmulInputHandle<R: Runtime> {
@@ -301,21 +270,6 @@ pub fn launch<R: Runtime>(
     )
 }
 
-macro_rules! with_tile_kind {
-    ($kind: expr, $T: ident, $launch: expr) => {
-        match $kind {
-            AcceleratedTileKind::Cmma => {
-                type $T = CmmaMatmul<Filled>;
-                ($launch)()
-            }
-            AcceleratedTileKind::Mma => {
-                type $T = MmaMatmul;
-                ($launch)()
-            }
-        }
-    };
-}
-
 #[allow(clippy::result_large_err)]
 /// Launches a matrix multiplication kernel..
 ///
@@ -333,166 +287,149 @@ pub fn launch_ref<R: Runtime>(
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     match strategy {
-        Strategy::Simple {
-            read_strategy,
-            selection,
-            tile_kind,
-        } => with_tile_kind!(tile_kind, Accelerated, || match read_strategy {
-            ReadingStrategy::Cyclic => {
-                launch2::launch_ref::<R, SimpleAlgorithm<Accelerated>>(
-                    client, lhs, rhs, out, selection, dtypes,
-                )
-            }
-            ReadingStrategy::Strided => launch2::launch_ref::<
-                R,
-                SimpleAlgorithm<
-                    Accelerated,
-                    sync_full_strided::SyncFullStridedLoading,
-                    sync_full_strided::SyncFullStridedLoading,
-                >,
-            >(client, lhs, rhs, out, selection, dtypes),
-            ReadingStrategy::Tilewise => {
-                launch2::launch_ref::<
-                    R,
-                    SimpleAlgorithm<
-                        Accelerated,
-                        sync_full_tilewise::SyncFullTilewiseLoading<ColMajorTilingOrder>,
-                        sync_full_tilewise::SyncFullTilewiseLoading<RowMajorTilingOrder>,
-                    >,
-                >(client, lhs, rhs, out, selection, dtypes)
-            }
-            ReadingStrategy::AsyncStrided => {
-                launch2::launch_ref::<
-                    R,
-                    SimpleAlgorithm<
-                        Accelerated,
-                        async_full_strided::AsyncFullStridedLoading,
-                        async_full_strided::AsyncFullStridedLoading,
-                    >,
-                >(client, lhs, rhs, out, selection, dtypes)
-            }
-            ReadingStrategy::AsyncCyclic => {
-                launch2::launch_ref::<
-                    R,
-                    SimpleAlgorithm<
-                        Accelerated,
-                        async_full_cyclic::AsyncFullCyclicLoading<ColMajorTilingOrder>,
-                        async_full_cyclic::AsyncFullCyclicLoading<RowMajorTilingOrder>,
-                    >,
-                >(client, lhs, rhs, out, selection, dtypes)
-            }
-            ReadingStrategy::Tma => launch2::launch_ref_tma::<R, SimpleTmaAlgorithm<Accelerated>>(
-                client, lhs, rhs, out, selection, dtypes
-            ),
-        }),
-        Strategy::DoubleBuffering {
-            read_strategy,
-            selection,
-            tile_kind,
-        } => with_tile_kind!(tile_kind, Accelerated, || match read_strategy {
-            PartialReadingStrategy::Cyclic => {
-                launch2::launch_ref::<R, CyclicDoubleBufferingAlgorithm<Accelerated>>(
-                    client, lhs, rhs, out, selection, dtypes,
-                )
-            }
-            PartialReadingStrategy::Tilewise => {
-                launch2::launch_ref::<R, TilewiseDoubleBufferingAlgorithm<Accelerated>>(
-                    client, lhs, rhs, out, selection, dtypes,
-                )
-            }
-            PartialReadingStrategy::Hybrid => {
-                launch2::launch_ref::<R, HybridDoubleBufferingAlgorithm<Accelerated>>(
-                    client, lhs, rhs, out, selection, dtypes,
-                )
-            }
-            PartialReadingStrategy::Tma => {
-                launch2::launch_ref_tma::<R, TmaDoubleBufferingAlgorithm<Accelerated>>(
-                    client, lhs, rhs, out, selection, dtypes,
-                )
-            }
-            PartialReadingStrategy::AsyncCyclic => {
-                launch2::launch_ref::<R, AsyncCyclicDoubleBufferingAlgorithm<Accelerated>>(
-                    client, lhs, rhs, out, selection, dtypes,
-                )
-            }
-            PartialReadingStrategy::AsyncStrided => {
-                launch2::launch_ref::<R, AsyncStridedDoubleBufferingAlgorithm<Accelerated>>(
-                    client, lhs, rhs, out, selection, dtypes,
-                )
-            }
-        }),
-        Strategy::Specialized {
-            read_strategy,
-            selection,
-            tile_kind,
-        } => with_tile_kind!(tile_kind, Accelerated, || match read_strategy {
-            AsyncPartialReadingStrategy::Cyclic => launch2::launch_ref::<
-                R,
-                SpecializedAlgorithm<Accelerated, AsyncPartialCyclicLoading<ColMajorTilingOrder>>,
-            >(
-                client, lhs, rhs, out, selection, dtypes
-            ),
-            AsyncPartialReadingStrategy::Strided =>
-                launch2::launch_ref::<
-                    R,
-                    SpecializedAlgorithm<Accelerated, AsyncPartialStridedLoading>,
-                >(client, lhs, rhs, out, selection, dtypes),
-            AsyncPartialReadingStrategy::Tma =>
-                launch2::launch_ref_tma::<R, SpecializedAlgorithm<Accelerated>>(
-                    client, lhs, rhs, out, selection, dtypes
-                ),
-        }),
-        Strategy::OrderedDoubleBuffering {
-            selection,
-            tile_kind,
-        } => with_tile_kind!(tile_kind, Accelerated, || launch2::launch_ref::<
-            R,
-            OrderedDoubleBufferingAlgorithm<Accelerated>,
-        >(
-            client, lhs, rhs, out, selection, dtypes
-        )),
+        Strategy::SimpleCyclicCmma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::SimpleCyclicMma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::SimpleStridedCmma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::SimpleStridedMma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::SimpleTilewiseCmma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::SimpleTilewiseMma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::SimpleAsyncStridedCmma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::SimpleAsyncStridedMma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::SimpleAsyncCyclicCmma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::SimpleAsyncCyclicMma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::SimpleTmaCmma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::SimpleTmaMma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::DoubleCyclicCmma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::DoubleCyclicMma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::DoubleTilewiseCmma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::DoubleTilewiseMma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::DoubleHybridCmma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::DoubleHybridMma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::DoubleAsyncCyclicCmma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::DoubleAsyncCyclicMma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::DoubleAsyncStridedCmma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::DoubleAsyncStridedMma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::DoubleTmaCmma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::DoubleTmaMma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::SpecializedCyclicCmma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::SpecializedCyclicMma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::SpecializedStridedCmma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::SpecializedStridedMma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::SpecializedTmaCmma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::SpecializedTmaMma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::OrderedDoubleCmma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
+        Strategy::OrderedDoubleMma(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+        }
         Strategy::SimpleUnit(selection) => {
-            launch2::launch_ref::<R, SimpleUnitAlgorithm>(client, lhs, rhs, out, selection, dtypes)
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
         }
         Strategy::DoubleUnit(selection) => {
-            launch2::launch_ref::<R, DoubleUnitAlgorithm>(client, lhs, rhs, out, selection, dtypes)
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
         }
-        Strategy::Naive => {
-            launch_naive::launch_ref(client, lhs, rhs, out, dtypes)?;
-            Ok(())
+        Strategy::SimpleVecMat(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
         }
-        Strategy::Auto => {
-            if let Err(err) = launch2::launch_ref::<R, SimpleAlgorithm<CmmaMatmul<Filled>>>(
-                client,
-                lhs,
-                rhs,
-                out,
-                &Default::default(),
-                dtypes,
-            ) {
-                match err {
-                    MatmulSetupError::Unavailable(_) => {
-                        launch2::launch_ref::<R, SimpleUnitAlgorithm>(
-                            client,
-                            lhs,
-                            rhs,
-                            out,
-                            &Default::default(),
-                            dtypes,
-                        )
-                        .unwrap();
-                    }
-                    _ => panic!("{err:?}"),
-                }
-            }
-
-            Ok(())
+        Strategy::DoubleVecMat(selection) => {
+            launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
         }
-        Strategy::SimpleVecMat(selection) => launch2::launch_ref::<R, SimpleVecMatAlgorithm>(
-            client, lhs, rhs, out, selection, dtypes,
-        ),
-        Strategy::DoubleVecMat(selection) => launch2::launch_ref::<R, DoubleVecMatAlgorithm>(
-            client, lhs, rhs, out, selection, dtypes,
-        ),
+        Strategy::Naive => launch_naive::launch_ref(client, lhs, rhs, out, dtypes),
+        Strategy::Auto => auto(client, lhs, rhs, out, dtypes),
     }
+}
+
+fn auto<R: Runtime>(
+    client: &ComputeClient<R>,
+    lhs: &MatmulInputHandleRef<'_, R>,
+    rhs: &MatmulInputHandleRef<'_, R>,
+    out: &TensorHandleRef<'_, R>,
+    dtypes: &mut MatmulElems,
+) -> Result<(), MatmulSetupError> {
+    if let Err(err) = launch_ref(
+        &Strategy::SimpleCyclicCmma(Default::default()),
+        client,
+        lhs,
+        rhs,
+        out,
+        dtypes,
+    ) {
+        match err {
+            MatmulSetupError::Unavailable(_) => {
+                launch_ref(
+                    &Strategy::SimpleUnit(Default::default()),
+                    client,
+                    lhs,
+                    rhs,
+                    out,
+                    dtypes,
+                )
+                .unwrap();
+            }
+            _ => panic!("{err:?}"),
+        }
+    }
+
+    Ok(())
 }

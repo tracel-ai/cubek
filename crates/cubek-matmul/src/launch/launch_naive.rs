@@ -4,17 +4,13 @@
 use cubecl::prelude::*;
 use cubecl::tensor_line_size_parallel;
 
-use cubecl::std::tensor::{
-    MatrixBatchLayout, launch::ViewArg, layout::Coords3d, matrix_batch_layout,
-};
+use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
 
-use crate::components::batch;
-use crate::components::global::memory::{
-    GlobalLayout, GlobalLayoutConfig, GlobalLayoutLaunch, GlobalScaleLayout,
-};
+use crate::definition::MatmulLineSizes;
 use crate::definition::{
     MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError, MatrixLayout,
 };
+
 use crate::launch::MatmulInputHandle;
 use crate::launch::MatmulInputHandleRef;
 
@@ -100,6 +96,11 @@ pub fn launch_ref<R: Runtime>(
         rhs.data().strides,
         rank - 2,
     );
+    let line_sizes = MatmulLineSizes {
+        lhs: lhs_line_size,
+        rhs: rhs_line_size,
+        out: 1,
+    };
 
     let problem = MatmulProblem {
         m: out_shape[rank - 2],
@@ -114,77 +115,91 @@ pub fn launch_ref<R: Runtime>(
         rhs_layout: MatrixLayout::ColMajor,
     };
 
-    fn view<'a, R: Runtime>(
-        client: &ComputeClient<R>,
-        handle: &'a MatmulInputHandleRef<'a, R>,
-        layout: MatrixLayout,
-        line_size: u8,
-        problem: &MatmulProblem,
-    ) -> ViewArg<'a, Coords3d, R> {
-        // Checks off, other properties are unused
-        let config = GlobalLayoutConfig {
-            matrix_layout: layout,
-            ..Default::default()
-        };
-        match handle {
-            MatmulInputHandleRef::Normal(handle, _dtype) => {
-                let layout = GlobalLayoutLaunch::from_handle_batched(
-                    client, handle, problem, line_size, config,
-                );
-                ViewArg::new::<GlobalLayout>(handle.as_array_arg(line_size), layout)
-            }
-            MatmulInputHandleRef::Quantized {
-                data,
-                scale,
-                shape,
-                scheme,
-                ..
-            } => {
-                let (data_layout, scales_layout) = GlobalLayoutLaunch::from_quantized_handle(
-                    client, data, scale, shape, problem, **scheme, line_size, config,
-                );
-                let data_view =
-                    ViewArg::new::<GlobalLayout>(data.as_array_arg(line_size), data_layout);
-                let scales_view =
-                    ViewArg::new::<GlobalScaleLayout>(scale.as_array_arg(1), scales_layout);
-                ViewArg::new_quantized(data_view, scales_view, **scheme)
-            }
-        }
-    }
+    // fn view<'a, R: Runtime>(
+    //     client: &ComputeClient<R>,
+    //     handle: &'a MatmulInputHandleRef<'a, R>,
+    //     layout: MatrixLayout,
+    //     line_size: u8,
+    //     problem: &MatmulProblem,
+    // ) -> ViewArg<'a, Coords3d, R> {
+    //     // Checks off, other properties are unused
+    //     let config = GlobalLayoutConfig {
+    //         matrix_layout: layout,
+    //         ..Default::default()
+    //     };
+    //     match handle {
+    //         MatmulInputHandleRef::Normal(handle, _dtype) => {
+    //             let layout = GlobalLayoutLaunch::from_handle_batched(
+    //                 client, handle, problem, line_size, config,
+    //             );
+    //             ViewArg::new::<GlobalLayout>(handle.as_array_arg(line_size), layout)
+    //         }
+    //         MatmulInputHandleRef::Quantized {
+    //             data,
+    //             scale,
+    //             shape,
+    //             scheme,
+    //             ..
+    //         } => {
+    //             let (data_layout, scales_layout) = GlobalLayoutLaunch::from_quantized_handle(
+    //                 client, data, scale, shape, problem, **scheme, line_size, config,
+    //             );
+    //             let data_view =
+    //                 ViewArg::new::<GlobalLayout>(data.as_array_arg(line_size), data_layout);
+    //             let scales_view =
+    //                 ViewArg::new::<GlobalScaleLayout>(scale.as_array_arg(1), scales_layout);
+    //             ViewArg::new_quantized(data_view, scales_view, **scheme)
+    //         }
+    //     }
+    // }
 
-    let lhs_view = view(
-        client,
-        &lhs,
-        MatrixLayout::RowMajor,
-        lhs_line_size,
-        &problem,
-    );
-    let rhs_view = view(
-        client,
-        &rhs,
-        MatrixLayout::ColMajor,
-        rhs_line_size,
-        &problem,
-    );
+    // let lhs_view = view(
+    //     client,
+    //     &lhs,
+    //     MatrixLayout::RowMajor,
+    //     lhs_line_size,
+    //     &problem,
+    // );
+    // let rhs_view = view(
+    //     client,
+    //     &rhs,
+    //     MatrixLayout::ColMajor,
+    //     rhs_line_size,
+    //     &problem,
+    // );
 
-    let result = unsafe {
-        batch::naive::naive_matmul::launch_unchecked(
-            client,
-            cube_count,
-            CubeDim::new(cube_dim_x as u32, cube_dim_y as u32, 1),
-            lhs_view,
-            rhs_view,
-            out.as_tensor_arg(1),
-            *dtypes.lhs_global,
-            *dtypes.acc_register,
-            *dtypes.acc_global,
-        )
-    };
+    // let config = NaiveBatchMatmulFamily::setup(client, &problem, &(), &line_sizes, dtypes)?;
 
-    match result {
-        Ok(_) => Ok(()),
-        Err(err) => Err(MatmulSetupError::Launch(err)),
-    }
+    // let inputs = ConcreteInputsFactory::create(
+    //     client,
+    //     &lhs,
+    //     &rhs,
+    //     &(),
+    //     &problem,
+    //     &line_sizes,
+    //     config,
+    //     dtypes,
+    // );
+
+    // let result = unsafe {
+    //     batch::naive::naive_matmul::launch_unchecked(
+    //         client,
+    //         cube_count,
+    //         CubeDim::new(cube_dim_x as u32, cube_dim_y as u32, 1),
+    //         lhs_view,
+    //         rhs_view,
+    //         out.as_tensor_arg(1),
+    //         *dtypes.lhs_global,
+    //         *dtypes.acc_register,
+    //         *dtypes.acc_global,
+    //     )
+    // };
+
+    // match result {
+    //     Ok(_) => Ok(()),
+    //     Err(err) => Err(MatmulSetupError::Launch(err)),
+    // }
+    todo!()
 }
 
 #[allow(clippy::result_large_err)]

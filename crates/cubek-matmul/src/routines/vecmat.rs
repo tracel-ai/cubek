@@ -3,7 +3,7 @@ use cubecl::{Runtime, client::ComputeClient};
 use crate::{
     components::{
         batch::{
-            CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection,
+            BatchMatmulFamily, CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection,
             PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul, SmAllocation,
         },
         global::{
@@ -19,7 +19,9 @@ use crate::{
             ColMajorTilingOrder, FilledStageFamily, PartitionBuffering, PlaneMatmulFamily,
             RowMajorTilingOrder, StridedStageFamily,
         },
-        tile::{io::Filled, plane_vec_mat_inner_product::PlaneVecMatInnerProduct},
+        tile::{
+            TileMatmulFamily, io::Filled, plane_vec_mat_inner_product::PlaneVecMatInnerProduct,
+        },
     },
     definition::{
         MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError,
@@ -31,29 +33,30 @@ use crate::{
 pub struct SimpleVecMatAlgorithm {}
 
 impl Routine for SimpleVecMatAlgorithm {
-    type SelectionArgs = ();
-    type TileMatmul = PlaneVecMatInnerProduct<Filled>;
-    type StageMatmul = PlaneMatmulFamily<
-        Self::TileMatmul,
-        StridedStageFamily,
-        StridedStageFamily,
-        FilledStageFamily,
+    type Strategy = ();
+    type BatchMatmul = PartitionedBatchMatmulFamily<
+        SimpleMatmulFamily<
+            PlaneMatmulFamily<
+                PlaneVecMatInnerProduct<Filled>,
+                StridedStageFamily,
+                StridedStageFamily,
+                FilledStageFamily,
+            >,
+            SyncFullCyclicLoading<RowMajorTilingOrder>,
+            SyncFullCyclicLoading<ColMajorTilingOrder>,
+            PlaneWriterFamily,
+        >,
+        RowMajorGlobalPartitionMatmul,
     >;
-    type GlobalMatmul = SimpleMatmulFamily<
-        Self::StageMatmul,
-        SyncFullCyclicLoading<RowMajorTilingOrder>,
-        SyncFullCyclicLoading<ColMajorTilingOrder>,
-        PlaneWriterFamily,
-    >;
-    type BatchMatmul =
-        PartitionedBatchMatmulFamily<Self::GlobalMatmul, RowMajorGlobalPartitionMatmul>;
+    type Blueprint = MatmulSelection;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
-    fn selection<R: Runtime>(
+    fn prepare<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
         plane_dim: u32,
         line_sizes: &MatmulLineSizes,
-        _args: &Self::SelectionArgs,
+        _args: &Self::Strategy,
         _dtypes: &mut MatmulElems,
     ) -> Result<MatmulSelection, MatmulSetupError> {
         Ok(selection_vecmat(
@@ -63,34 +66,40 @@ impl Routine for SimpleVecMatAlgorithm {
             plane_dim,
         ))
     }
+
+    fn can_cast_stage_element() -> bool {
+        PlaneVecMatInnerProduct::<Filled>::can_cast_stage_element()
+    }
 }
 
 pub struct DoubleVecMatAlgorithm {}
 
 impl Routine for DoubleVecMatAlgorithm {
-    type SelectionArgs = ();
-    type TileMatmul = PlaneVecMatInnerProduct<Filled>;
-    type StageMatmul = PlaneMatmulFamily<
-        Self::TileMatmul,
-        StridedStageFamily,
-        StridedStageFamily,
-        FilledStageFamily,
-    >;
-    type GlobalMatmul = DoubleBufferingMatmulFamily<
-        Self::StageMatmul,
-        SyncPartialCyclicLoading<RowMajorTilingOrder>,
-        SyncPartialCyclicLoading<ColMajorTilingOrder>,
-        PlaneWriterFamily,
-    >;
-    type BatchMatmul =
-        PartitionedBatchMatmulFamily<Self::GlobalMatmul, RowMajorGlobalPartitionMatmul>;
+    type Strategy = ();
 
-    fn selection<R: Runtime>(
+    type BatchMatmul = PartitionedBatchMatmulFamily<
+        DoubleBufferingMatmulFamily<
+            PlaneMatmulFamily<
+                PlaneVecMatInnerProduct<Filled>,
+                StridedStageFamily,
+                StridedStageFamily,
+                FilledStageFamily,
+            >,
+            SyncPartialCyclicLoading<RowMajorTilingOrder>,
+            SyncPartialCyclicLoading<ColMajorTilingOrder>,
+            PlaneWriterFamily,
+        >,
+        RowMajorGlobalPartitionMatmul,
+    >;
+    type Blueprint = MatmulSelection;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+
+    fn prepare<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
         plane_dim: u32,
         line_sizes: &MatmulLineSizes,
-        _args: &Self::SelectionArgs,
+        _args: &Self::Strategy,
         _dtypes: &mut MatmulElems,
     ) -> Result<MatmulSelection, MatmulSetupError> {
         Ok(selection_vecmat(
@@ -99,6 +108,10 @@ impl Routine for DoubleVecMatAlgorithm {
             (1, line_sizes.out as u32, plane_dim * line_sizes.lhs as u32).into(),
             plane_dim,
         ))
+    }
+
+    fn can_cast_stage_element() -> bool {
+        PlaneVecMatInnerProduct::<Filled>::can_cast_stage_element()
     }
 }
 

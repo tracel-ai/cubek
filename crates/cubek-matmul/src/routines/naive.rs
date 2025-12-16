@@ -1,26 +1,33 @@
-use crate::{components::batch::naive::NaiveBatchMatmulFamily, routines::Routine};
+use cubecl::client::ComputeClient;
+
+use crate::{
+    components::batch::{BatchMatmulFamily, naive::NaiveBatchMatmulFamily},
+    definition::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError},
+    routines::Routine,
+};
 
 pub struct Naive {}
 
 impl Routine for Naive {
-    type SelectionArgs;
-
-    type TileMatmul;
-
-    type StageMatmul;
-
-    type GlobalMatmul;
+    type Strategy = ();
+    type Blueprint = ();
 
     type BatchMatmul = NaiveBatchMatmulFamily;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
-    fn selection<R: cubecl::Runtime>(
-        client: &cubecl::prelude::ComputeClient<R>,
-        problem: &crate::definition::MatmulProblem,
+    fn prepare<R: cubecl::Runtime>(
+        client: &ComputeClient<R>,
+        problem: &MatmulProblem,
         plane_dim: u32,
-        line_sizes: &crate::definition::MatmulLineSizes,
-        args: &Self::SelectionArgs,
-        dtypes: &mut crate::definition::MatmulElems,
-    ) -> Result<crate::definition::MatmulSelection, crate::definition::MatmulSetupError> {
+        line_sizes: &MatmulLineSizes,
+        args: &Self::Strategy,
+        dtypes: &mut MatmulElems,
+    ) -> Result<Self::Blueprint, MatmulSetupError> {
         todo!()
+    }
+
+    fn can_cast_stage_element() -> bool {
+        // Irrelevant
+        false
     }
 }
