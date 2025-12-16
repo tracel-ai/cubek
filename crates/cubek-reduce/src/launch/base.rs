@@ -7,10 +7,10 @@ use crate::{
         },
         instructions::*,
     },
-    launch::{ReduceStrategy, generate_line_size},
+    launch::{ReduceStrategy, RoutineStrategy, generate_line_size},
     routines::{
         GlobalReduceBlueprint, ReduceBlueprint, ReduceLineSettings, ReduceProblem, Routine,
-        RoutineStrategy, cube::CubeRoutine, plane::PlaneRoutine, unit::UnitRoutine,
+        cube::CubeRoutine, plane::PlaneRoutine, unit::UnitRoutine,
     },
 };
 use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
@@ -52,18 +52,7 @@ pub(crate) fn launch_reduce<Run: Runtime>(
         axis as usize,
         problem.dtypes.input,
         line_mode,
-        match &strategy {
-            ReduceStrategy::FullUnit(s) => match s {
-                RoutineStrategy::Forced(..) => false,
-                RoutineStrategy::Strategy(s) => s.parallel_output_vectorization,
-            },
-            ReduceStrategy::FullPlane(..) => {
-                matches!(line_mode, LineMode::Perpendicular)
-            }
-            ReduceStrategy::FullCube(..) => {
-                matches!(line_mode, LineMode::Perpendicular)
-            }
-        },
+        &strategy.line_size,
     );
     let settings = ReduceLineSettings {
         line_mode,
@@ -71,16 +60,16 @@ pub(crate) fn launch_reduce<Run: Runtime>(
         line_size_output,
     };
 
-    let (blueprint, settings) = match strategy {
-        ReduceStrategy::FullUnit(strategy) => {
+    let (blueprint, settings) = match strategy.routine {
+        RoutineStrategy::Unit(strategy) => {
             let routine = UnitRoutine;
             routine.prepare(client, problem, settings, strategy)?
         }
-        ReduceStrategy::FullPlane(strategy) => {
+        RoutineStrategy::Plane(strategy) => {
             let routine = PlaneRoutine;
             routine.prepare(client, problem, settings, strategy)?
         }
-        ReduceStrategy::FullCube(strategy) => {
+        RoutineStrategy::Cube(strategy) => {
             let routine = CubeRoutine;
             routine.prepare(client, problem, settings, strategy)?
         }

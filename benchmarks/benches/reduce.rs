@@ -8,8 +8,10 @@ use cubek::{
     random::random_uniform,
     reduce::{
         components::instructions::ReduceOperationConfig,
-        launch::ReduceStrategy,
-        routines::{RoutineStrategy, cube::CubeStrategy, plane::PlaneStrategy, unit::UnitStrategy},
+        launch::{LineSizeStrategy, ReduceStrategy, RoutineStrategy},
+        routines::{
+            BlueprintStrategy, cube::CubeStrategy, plane::PlaneStrategy, unit::UnitStrategy,
+        },
     },
 };
 use std::marker::PhantomData;
@@ -88,12 +90,34 @@ fn run<R: Runtime, E: frontend::Float>(device: R::Device) {
         // for axis in 0..1 {
         for axis in 2..shape.len() {
             for strategy in [
-                ReduceStrategy::FullUnit(RoutineStrategy::Strategy(UnitStrategy {
-                    parallel_output_vectorization: true,
-                })),
-                ReduceStrategy::FullUnit(RoutineStrategy::Strategy(UnitStrategy {
-                    parallel_output_vectorization: false,
-                })),
+                ReduceStrategy {
+                    routine: RoutineStrategy::Unit(BlueprintStrategy::Inferred(UnitStrategy)),
+                    line_size: LineSizeStrategy {
+                        parallel_output_vectorization: true,
+                    },
+                },
+                ReduceStrategy {
+                    routine: RoutineStrategy::Unit(BlueprintStrategy::Inferred(UnitStrategy)),
+                    line_size: LineSizeStrategy {
+                        parallel_output_vectorization: false,
+                    },
+                },
+                ReduceStrategy {
+                    routine: RoutineStrategy::Plane(BlueprintStrategy::Inferred(PlaneStrategy {
+                        independent: true,
+                    })),
+                    line_size: LineSizeStrategy {
+                        parallel_output_vectorization: true,
+                    },
+                },
+                ReduceStrategy {
+                    routine: RoutineStrategy::Plane(BlueprintStrategy::Inferred(PlaneStrategy {
+                        independent: true,
+                    })),
+                    line_size: LineSizeStrategy {
+                        parallel_output_vectorization: false,
+                    },
+                },
                 // ReduceStrategy::FullCube(RoutineStrategy::Strategy(CubeStrategy {
                 //     use_planes: true,
                 // })),

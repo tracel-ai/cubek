@@ -24,9 +24,9 @@ pub struct ReduceProblem {
 }
 
 #[derive(Debug, Clone)]
-pub enum RoutineStrategy<R: Routine> {
+pub enum BlueprintStrategy<R: Routine> {
     Forced(R::Blueprint, CubeDim),
-    Strategy(R::Strategy),
+    Inferred(R::Strategy),
 }
 
 pub trait Routine: core::fmt::Debug + Clone + Sized {
@@ -38,7 +38,7 @@ pub trait Routine: core::fmt::Debug + Clone + Sized {
         client: &ComputeClient<R>,
         problem: ReduceProblem,
         settings: ReduceLineSettings,
-        strategy: RoutineStrategy<Self>,
+        strategy: BlueprintStrategy<Self>,
     ) -> Result<(ReduceBlueprint, ReduceLaunchSettings), ReduceError>;
 }
 

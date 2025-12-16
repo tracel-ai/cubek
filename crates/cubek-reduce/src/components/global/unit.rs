@@ -30,21 +30,20 @@ impl GlobalFullUnitReduce {
         let write_count = writer.write_count();
         let reduce_index_start = write_index * write_count;
 
+        if comptime![blueprint.unit_idle] {
+            let reduce_count = reduce_count(
+                output.len() * output.line_size(),
+                line_mode,
+                input.line_size(),
+            );
+
+            if reduce_index_start >= reduce_count {
+                terminate!();
+            }
+        }
+
         for b in 0..write_count {
             let reduce_index = reduce_index_start + b;
-
-            if comptime![blueprint.unit_idle] {
-                let reduce_count = reduce_count(
-                    output.len() * output.line_size(),
-                    line_mode,
-                    input.line_size(),
-                );
-
-                if reduce_index >= reduce_count {
-                    terminate!();
-                }
-            }
-
             let accumulator = Self::reduce_single::<P, Out, I>(
                 input,
                 output,

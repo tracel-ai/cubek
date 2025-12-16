@@ -4,7 +4,7 @@ use super::{
 use crate::{
     LineMode, ReduceError,
     launch::calculate_plane_count_per_cube,
-    routines::{Routine, RoutineStrategy, UnitReduceBlueprint, cube_count_safe},
+    routines::{BlueprintStrategy, Routine, UnitReduceBlueprint, cube_count_safe},
 };
 use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient};
 
@@ -12,11 +12,7 @@ use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient};
 pub struct UnitRoutine;
 
 #[derive(Debug, Clone)]
-pub struct UnitStrategy {
-    /// When the vectorization is parallel, enable vectorization of the output so that each
-    /// unit can perform N reductions, where N is the output `line_size`.
-    pub parallel_output_vectorization: bool,
-}
+pub struct UnitStrategy;
 
 impl Routine for UnitRoutine {
     type Strategy = UnitStrategy;
@@ -27,16 +23,11 @@ impl Routine for UnitRoutine {
         client: &cubecl::prelude::ComputeClient<R>,
         problem: ReduceProblem,
         settings: ReduceLineSettings,
-        strategy: RoutineStrategy<Self>,
+        strategy: BlueprintStrategy<Self>,
     ) -> Result<(ReduceBlueprint, ReduceLaunchSettings), ReduceError> {
         let (blueprint, cube_dim, cube_count) = match strategy {
-            RoutineStrategy::Forced(blueprint, cube_dim) => {
-                let working_units = match settings.line_mode {
-                    LineMode::Parallel => problem.vector_count / settings.line_size_output as u32,
-                    LineMode::Perpendicular => {
-                        problem.vector_count / settings.line_size_input as u32
-                    }
-                };
+            BlueprintStrategy::Forced(blueprint, cube_dim) => {
+                let working_units = working_units(&settings, &problem);
                 let num_units_in_cube = cube_dim.num_elems();
                 let working_cubes = working_units.div_ceil(num_units_in_cube);
 
@@ -55,7 +46,7 @@ impl Routine for UnitRoutine {
 
                 (blueprint, cube_dim, cube_count)
             }
-            RoutineStrategy::Strategy(_) => {
+            BlueprintStrategy::Inferred(_) => {
                 let (blueprint, cube_dim, cube_count) =
                     generate_blueprint::<R>(client, problem, &settings)?;
                 (blueprint, cube_dim, cube_count)
@@ -79,10 +70,7 @@ fn generate_blueprint<R: Runtime>(
 ) -> Result<(ReduceBlueprint, CubeDim, CubeCount), ReduceError> {
     let properties = &client.properties().hardware;
     let plane_size = properties.plane_size_max;
-    let working_units = match settings.line_mode {
-        LineMode::Parallel => problem.vector_count / settings.line_size_output as u32,
-        LineMode::Perpendicular => problem.vector_count / settings.line_size_input as u32,
-    };
+    let working_units = working_units(settings, &problem);
     let plane_count =
         calculate_plane_count_per_cube(working_units, plane_size, properties.num_cpu_cores);
 
@@ -99,4 +87,11 @@ fn generate_blueprint<R: Runtime>(
     };
 
     Ok((blueprint, cube_dim, cube_count))
+}
+
+fn working_units(settings: &ReduceLineSettings, problem: &ReduceProblem) -> u32 {
+    match settings.line_mode {
+        LineMode::Parallel => problem.vector_count / settings.line_size_output as u32,
+        LineMode::Perpendicular => problem.vector_count / settings.line_size_input as u32,
+    }
 }

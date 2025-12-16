@@ -52,6 +52,13 @@ impl<Out: Numeric> Writer<Out> {
         }
     }
 
+    pub fn commit_required(&self) -> comptime_type!(bool) {
+        match self {
+            Writer::Parallel(writer) => writer.commit_required(),
+            Writer::Perpendicular(writer) => writer.commit_required(),
+        }
+    }
+
     pub fn commit(&mut self) {
         match self {
             Writer::Parallel(writer) => writer.commit(),
@@ -107,6 +114,10 @@ impl<Out: Numeric> ParallelWriter<Out> {
 
     pub fn write_count(&self) -> comptime_type!(u32) {
         self.buffer.line_size()
+    }
+
+    pub fn commit_required(&self) -> comptime_type!(bool) {
+        true
     }
 }
 
@@ -175,5 +186,9 @@ impl<Out: Numeric> PerpendicularWriter<Out> {
 
     pub fn write_count(&self) -> comptime_type!(u32) {
         1u32
+    }
+
+    pub fn commit_required(&self) -> comptime_type!(bool) {
+        false
     }
 }
