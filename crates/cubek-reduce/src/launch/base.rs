@@ -10,7 +10,7 @@ use crate::{
     launch::{ReduceStrategy, generate_line_size},
     routines::{
         GlobalReduceBlueprint, ReduceBlueprint, ReduceLineSettings, ReduceProblem, Routine,
-        cube::CubeRoutine, plane::PlaneRoutine, unit::UnitRoutine,
+        RoutineStrategy, cube::CubeRoutine, plane::PlaneRoutine, unit::UnitRoutine,
     },
 };
 use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
@@ -52,8 +52,11 @@ pub(crate) fn launch_reduce<Run: Runtime>(
         axis as usize,
         problem.dtypes.input,
         line_mode,
-        match strategy {
-            ReduceStrategy::FullUnit(..) => false,
+        match &strategy {
+            ReduceStrategy::FullUnit(s) => match s {
+                RoutineStrategy::Forced(..) => false,
+                RoutineStrategy::Strategy(s) => s.parallel_output_vectorization,
+            },
             ReduceStrategy::FullPlane(..) => {
                 matches!(line_mode, LineMode::Perpendicular)
             }

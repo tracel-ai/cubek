@@ -4,7 +4,7 @@ use crate::{
         global::reduce_count,
         instructions::reduce_inplace,
         readers::{Reader, plane::PlaneReader},
-        writer,
+        writer::Writer,
     },
     routines::PlaneReduceBlueprint,
 };
@@ -24,6 +24,9 @@ impl GlobalFullPlaneReduce {
         #[comptime] blueprint: PlaneReduceBlueprint,
     ) {
         let reduce_index = CUBE_POS * CUBE_DIM_Y + UNIT_POS_Y;
+
+        let mut writer =
+            Writer::<Out>::new::<P>(input, output, reduce_axis, reduce_index, line_mode);
 
         if comptime![blueprint.plane_idle] {
             let reduce_count = reduce_count(
@@ -74,15 +77,8 @@ impl GlobalFullPlaneReduce {
         };
 
         if UNIT_POS_X == 0 {
-            writer::write_accumulator::<P, Out, I>(
-                output,
-                result,
-                reduce_index,
-                input.shape(reduce_axis),
-                line_mode,
-                input.line_size(),
-                inst,
-            )
+            writer.write::<P, I>(0u32, result, inst);
+            writer.commit();
         }
     }
 }

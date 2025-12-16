@@ -206,7 +206,24 @@ macro_rules! testgen_reduce {
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy::FullUnit(RoutineStrategy::Strategy(UnitStrategy)),
+                strategy: ReduceStrategy::FullUnit(RoutineStrategy::Strategy(UnitStrategy {
+                    parallel_output_vectorization: false,
+                })),
+            );
+        }
+
+        mod full_unit_vect {
+            use super::*;
+            use cubek_reduce::routines::unit::UnitStrategy;
+
+            testgen_reduce!(
+                dtype: $dtype,
+                shape: $shape,
+                strides: $strides,
+                axis: $axis,
+                strategy: ReduceStrategy::FullUnit(RoutineStrategy::Strategy(UnitStrategy {
+                    parallel_output_vectorization: true,
+                })),
             );
         }
     };

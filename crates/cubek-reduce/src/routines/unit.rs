@@ -12,7 +12,11 @@ use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient};
 pub struct UnitRoutine;
 
 #[derive(Debug, Clone)]
-pub struct UnitStrategy;
+pub struct UnitStrategy {
+    /// When the vectorization is parallel, enable vectorization of the output so that each
+    /// unit can perform N reductions, where N is the output `line_size`.
+    pub parallel_output_vectorization: bool,
+}
 
 impl Routine for UnitRoutine {
     type Strategy = UnitStrategy;
@@ -25,7 +29,6 @@ impl Routine for UnitRoutine {
         settings: ReduceLineSettings,
         strategy: RoutineStrategy<Self>,
     ) -> Result<(ReduceBlueprint, ReduceLaunchSettings), ReduceError> {
-        println!("{settings:?}");
         let (blueprint, cube_dim, cube_count) = match strategy {
             RoutineStrategy::Forced(blueprint, cube_dim) => {
                 let working_units = match settings.line_mode {
@@ -94,7 +97,6 @@ fn generate_blueprint<R: Runtime>(
         line_mode: settings.line_mode,
         global: GlobalReduceBlueprint::FullUnit(UnitReduceBlueprint { unit_idle }),
     };
-    println!("{blueprint:?} {cube_dim:?} {cube_count:?}");
 
     Ok((blueprint, cube_dim, cube_count))
 }

@@ -88,7 +88,12 @@ fn run<R: Runtime, E: frontend::Float>(device: R::Device) {
         // for axis in 0..1 {
         for axis in 2..shape.len() {
             for strategy in [
-                ReduceStrategy::FullUnit(RoutineStrategy::Strategy(UnitStrategy)),
+                ReduceStrategy::FullUnit(RoutineStrategy::Strategy(UnitStrategy {
+                    parallel_output_vectorization: true,
+                })),
+                ReduceStrategy::FullUnit(RoutineStrategy::Strategy(UnitStrategy {
+                    parallel_output_vectorization: false,
+                })),
                 // ReduceStrategy::FullCube(RoutineStrategy::Strategy(CubeStrategy {
                 //     use_planes: true,
                 // })),

@@ -4,7 +4,7 @@ use crate::{
         global::reduce_count,
         instructions::{SharedAccumulator, fuse_accumulator_inplace, reduce_inplace},
         readers::{Reader, cube::CubeReader},
-        writer,
+        writer::Writer,
     },
     routines::CubeReduceBlueprint,
 };
@@ -24,6 +24,10 @@ impl GlobalFullCubeReduce {
         #[comptime] blueprint: CubeReduceBlueprint,
     ) {
         let reduce_index = CUBE_POS;
+
+        let mut writer =
+            Writer::<Out>::new::<P>(input, output, reduce_axis, reduce_index, line_mode);
+
         if comptime![blueprint.cube_idle] {
             let reduce_count = reduce_count(
                 output.len() * output.line_size(),
@@ -95,15 +99,8 @@ impl GlobalFullCubeReduce {
                         &mut accumulator_final,
                         accumulator_size,
                     );
-                    writer::write_accumulator::<P, Out, I>(
-                        output,
-                        accumulator_final,
-                        reduce_index,
-                        input.shape(reduce_axis),
-                        line_mode,
-                        input.line_size(),
-                        inst,
-                    )
+                    writer.write::<P, I>(0u32, accumulator_final, inst);
+                    writer.commit();
                 }
             }
             false => {
@@ -115,15 +112,8 @@ impl GlobalFullCubeReduce {
                     accumulator_size,
                 );
                 if worker_pos == 0 {
-                    writer::write_accumulator::<P, Out, I>(
-                        output,
-                        accumulator_final,
-                        reduce_index,
-                        input.shape(reduce_axis),
-                        line_mode,
-                        input.line_size(),
-                        inst,
-                    )
+                    writer.write::<P, I>(0u32, accumulator_final, inst);
+                    writer.commit();
                 }
             }
         };
