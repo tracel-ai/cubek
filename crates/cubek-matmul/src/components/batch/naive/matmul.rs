@@ -1,71 +1,16 @@
 use std::marker::PhantomData;
 
+use crate::components::batch::SliceIndex;
 use crate::definition::MatrixLayout;
 use crate::{
-    components::{
-        batch::{BatchConfig, BatchMatmul, naive::NaiveMatmulConfig},
-        global::{GlobalReaderConfig, GlobalWriterConfig},
-    },
+    components::batch::{BatchMatmul, naive::NaiveMatmulConfig},
     definition::*,
     launch::MatmulArgs,
 };
+use cubecl::cube;
 use cubecl::prelude::*;
-use cubecl::std::tensor::{View, layout::Coords3d};
-use cubecl::{CubeDim, cube};
-
-// #[cube(launch_unchecked)]
-// fn naive_matmul_entry<I: Numeric, M: Numeric, O: Numeric>(
-//     lhs: &View<Line<I>, Coords3d>,
-//     rhs: &View<Line<I>, Coords3d>,
-//     out: &mut Tensor<O>,
-//     #[define(I)] _input_dtype: StorageType,
-//     #[define(M)] _acc_dtype: StorageType,
-//     #[define(O)] _output_dtype: StorageType,
-// ) {
-//     let rank = out.rank();
-
-//     let (_, _, k) = lhs.shape();
-//     let size_m = out.shape(rank - 2);
-//     let size_n = out.shape(rank - 1);
-
-//     let batch = ABSOLUTE_POS_Z;
-//     let m = ABSOLUTE_POS_X;
-//     let n = ABSOLUTE_POS_Y;
-
-//     if m >= size_m || n >= size_n {
-//         terminate!();
-//     }
-
-//     let offset_out = batch * out.stride(rank - 2) * out.shape(rank - 2);
-
-//     let line_size = comptime![Ord::max(lhs.line_size(), rhs.line_size())];
-//     let mut sum = Line::empty(line_size).fill(O::from_int(0));
-
-//     for k in range_stepped(0, k, line_size) {
-//         let lhs = load_unrolled(lhs, (batch, m, k), MatrixLayout::RowMajor, line_size);
-//         let rhs = load_unrolled(rhs, (batch, k, n), MatrixLayout::ColMajor, line_size);
-
-//         sum += Line::cast_from(Line::<M>::cast_from(lhs) * Line::<M>::cast_from(rhs));
-//     }
-
-//     let mut out_index = m * out.stride(rank - 2) + n;
-//     out_index += offset_out;
-
-//     let unroll_sum = line_size != 1;
-//     if unroll_sum {
-//         let mut accum = O::from_int(0);
-//         // we unroll the loop to sum `vectorization_factor` elements at once, which lets us
-//         // use SIMD instructions to speed up the computation
-//         #[unroll]
-//         for v in 0..line_size {
-//             accum += sum[v];
-//         }
-
-//         out[out_index] = accum;
-//     } else {
-//         out[out_index] = sum[0];
-//     }
-// }
+use cubecl::std::tensor::View;
+use cubecl::std::tensor::layout::Coords2d;
 
 #[cube(launch_unchecked)]
 /// Launches the matmul kernel
@@ -113,7 +58,7 @@ impl<MP: MatmulPrecision> BatchMatmul<MP> for NaiveMatmul<MP> {
     ) {
         let lhs = Args::view_lhs(state);
         let rhs = Args::view_rhs(state);
-        let mut out = Args::view_out(state);
+        let out = Args::view_out(state);
 
         let (_, _, k) = lhs.shape();
         let (_, size_m, size_n) = out.shape();
@@ -122,9 +67,12 @@ impl<MP: MatmulPrecision> BatchMatmul<MP> for NaiveMatmul<MP> {
         let n = ABSOLUTE_POS_Y;
         let batch = ABSOLUTE_POS_Z;
 
-        // if batch != 2 {
-        //     terminate!();
-        // }
+        let lhs_batch = Args::batch_lhs(state, batch);
+        let lhs = lhs.view(SliceIndex::new(lhs_batch, lhs.shape()));
+        let rhs_batch = Args::batch_rhs(state, batch);
+        let rhs = rhs.view(SliceIndex::new(rhs_batch, rhs.shape()));
+        let out_batch = Args::batch_out(state, batch);
+        let mut out = out.view_mut(SliceIndex::new(out_batch, out.shape()));
 
         if m >= size_m || n >= size_n {
             terminate!();
@@ -134,8 +82,8 @@ impl<MP: MatmulPrecision> BatchMatmul<MP> for NaiveMatmul<MP> {
         let mut sum = Line::empty(line_size).fill(<AccG<MP> as Numeric>::from_int(0));
 
         for k in range_stepped(0u32, k, line_size) {
-            let lhs = load_unrolled(&lhs, (batch, m, k), MatrixLayout::RowMajor, line_size);
-            let rhs = load_unrolled(&rhs, (batch, k, n), MatrixLayout::ColMajor, line_size);
+            let lhs = load_unrolled(&lhs, (m, k), MatrixLayout::RowMajor, line_size);
+            let rhs = load_unrolled(&rhs, (k, n), MatrixLayout::ColMajor, line_size);
 
             sum += Line::cast_from(
                 Line::<AccR<MP>>::cast_from(lhs) * Line::<AccR<MP>>::cast_from(rhs),
@@ -152,18 +100,18 @@ impl<MP: MatmulPrecision> BatchMatmul<MP> for NaiveMatmul<MP> {
                 accum += sum[v];
             }
 
-            // out[(batch, m, n)] = Line::empty(1u32).fill(accum);
-            out[(batch, m, n)] = Line::cast_from(batch);
+            out[(m, n)] = Line::empty(1u32).fill(accum);
+            // out[(m, n)] = Line::cast_from(tmp);
         } else {
-            out[(batch, m, n)] = Line::empty(1u32).fill(sum[0u32]);
+            out[(m, n)] = Line::empty(1u32).fill(sum[0u32]);
         }
     }
 }
 
 #[cube]
 fn load_unrolled<I: Numeric>(
-    view: &View<Line<I>, Coords3d>,
-    pos: Coords3d,
+    view: &View<Line<I>, Coords2d>,
+    pos: Coords2d,
     #[comptime] layout: MatrixLayout,
     #[comptime] line_size: u32,
 ) -> Line<I> {
@@ -172,13 +120,13 @@ fn load_unrolled<I: Numeric>(
     if comptime![view.line_size() == line_size] {
         view[pos]
     } else {
-        let (b, row, col) = pos;
+        let (row, col) = pos;
         let mut out = Line::empty(line_size);
         #[unroll]
         for i in range_stepped(0, line_size, view_line_size) {
             let pos = match layout {
-                MatrixLayout::RowMajor => (b, row, col + i),
-                MatrixLayout::ColMajor => (b, row + i, col),
+                MatrixLayout::RowMajor => (row, col + i),
+                MatrixLayout::ColMajor => (row + i, col),
             };
             let value = view[pos];
             #[unroll]

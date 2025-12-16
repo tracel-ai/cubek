@@ -1,7 +1,10 @@
 use cubecl::client::ComputeClient;
 
 use crate::{
-    components::batch::{BatchMatmulFamily, naive::NaiveBatchMatmulFamily},
+    components::batch::{
+        BatchMatmulFamily,
+        naive::{NaiveBatchMatmulFamily, NaiveBlueprint},
+    },
     definition::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError},
     routines::Routine,
 };
@@ -15,14 +18,14 @@ impl Routine for NaiveRoutine {
     type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
     fn prepare<R: cubecl::Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
-        plane_dim: u32,
-        line_sizes: &MatmulLineSizes,
-        args: &Self::Strategy,
-        dtypes: &mut MatmulElems,
+        _client: &ComputeClient<R>,
+        _problem: &MatmulProblem,
+        _plane_dim: u32,
+        _line_sizes: &MatmulLineSizes,
+        _args: &Self::Strategy,
+        _dtypes: &mut MatmulElems,
     ) -> Result<Self::Blueprint, MatmulSetupError> {
-        todo!()
+        Ok(NaiveBlueprint {})
     }
 
     fn can_cast_stage_element() -> bool {

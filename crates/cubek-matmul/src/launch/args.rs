@@ -341,7 +341,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<Blueprint = MatmulSelec
         blueprint: &A::Blueprint,
         problem: &MatmulProblem,
         line_sizes: &MatmulLineSizes,
-        config: A::Config,
+        _config: A::Config,
         dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<'a, R> {
         let lhs = lhs_handle.data();

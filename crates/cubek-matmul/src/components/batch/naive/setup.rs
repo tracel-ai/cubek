@@ -1,23 +1,15 @@
-use cubecl::{
-    CubeCount, CubeDim, LineSizeError, Runtime,
-    client::ComputeClient,
-    server::LaunchError,
-    std::tensor::{launch::ViewArg, layout::Coords3d},
-};
+use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, server::LaunchError};
 
 use crate::{
-    components::{
-        batch::{
-            BatchConfig, BatchMatmul, BatchMatmulFamily,
-            naive::{NaiveMatmul, NaiveMatmulConfig, matmul, matmul_entry},
-        },
-        global::memory::{GlobalLayout, GlobalLayoutConfig, GlobalLayoutLaunch, GlobalScaleLayout},
+    components::batch::{
+        BatchMatmulFamily,
+        naive::{NaiveMatmul, NaiveMatmulConfig, matmul_entry},
     },
     definition::{
-        CubeCountInputArgs, HypercubeConfig, HypercubeSelection, MatmulElems, MatmulLineSizes,
-        MatmulPrecision, MatmulProblem, MatmulSelection, MatmulSetupError, MatrixLayout,
+        CubeCountInputArgs, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem,
+        MatmulSetupError,
     },
-    launch::{InputRuntimeArg, MatmulArgs, MatmulInputHandleRef, OutputRuntimeArg},
+    launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
 };
 
 /// Simple partitioned batch matmul family for any precision
@@ -31,11 +23,11 @@ impl BatchMatmulFamily for NaiveBatchMatmulFamily {
     type Blueprint = NaiveBlueprint;
 
     fn setup<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
-        selection: &Self::Blueprint,
+        _client: &ComputeClient<R>,
+        _problem: &MatmulProblem,
+        _selection: &Self::Blueprint,
         line_sizes: &MatmulLineSizes,
-        dtypes: &MatmulElems,
+        _dtypes: &MatmulElems,
     ) -> Result<Self::Config, MatmulSetupError> {
         if line_sizes.out > 1 {
             return Err(MatmulSetupError::InvalidConfig(Box::new(

@@ -1,5 +1,4 @@
 use crate::components::global::memory::GlobalLayoutConfig;
-use crate::components::stage::SwizzleMode;
 use crate::definition::{
     AccG, CubeCountInput, CubeCountInputArgs, CubeCountPlan, LhsG, MatmulElems, MatmulLineSizes,
     MatmulPrecision, MatmulProblem, MatmulSetupError, RhsG,
