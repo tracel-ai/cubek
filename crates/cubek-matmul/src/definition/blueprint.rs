@@ -12,7 +12,7 @@ use crate::{
 pub struct MatmulSelection {
     pub plane_dim: u32,
     pub tiling_scheme: TilingScheme,
-    pub shared_swizzle: SwizzleConfig,
+    pub shared_swizzle: SwizzleBlueprint,
     pub partition_buffering: PartitionBuffering,
     pub loading_precompute_strategy: LoadingPrecomputeStrategy,
     pub reader_mode: ReaderMode,
@@ -53,14 +53,14 @@ pub fn adjust_dtypes<R: Runtime>(
 }
 
 #[derive(Default, Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct SwizzleConfig {
+pub struct SwizzleBlueprint {
     pub lhs: SwizzleMode,
     pub rhs: SwizzleMode,
     pub acc: SwizzleMode,
     pub out: SwizzleMode,
 }
 
-impl SwizzleConfig {
+impl SwizzleBlueprint {
     pub fn has_swizzle(&self) -> bool {
         self.lhs != SwizzleMode::None
             || self.rhs != SwizzleMode::None
@@ -82,7 +82,7 @@ impl MatmulSelection {
 pub struct MatmulSelectionBuilder {
     plane_dim: Option<u32>,
     pub tiling_scheme: Option<TilingScheme>,
-    shared_swizzle: SwizzleConfig,
+    shared_swizzle: SwizzleBlueprint,
     hypercube_selection: Option<HypercubeSelection>,
     partition_buffering: PartitionBuffering,
     loading_precompute_strategy: LoadingPrecomputeStrategy,
@@ -114,7 +114,7 @@ impl MatmulSelectionBuilder {
         self
     }
 
-    pub fn shared_swizzle(mut self, swizzle: SwizzleConfig) -> Self {
+    pub fn shared_swizzle(mut self, swizzle: SwizzleBlueprint) -> Self {
         self.shared_swizzle = swizzle;
         self
     }

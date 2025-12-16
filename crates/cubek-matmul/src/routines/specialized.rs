@@ -15,7 +15,7 @@ use crate::components::{global::PlaneWriterFamily, stage::StageFamily};
 use crate::components::{stage::FilledStageFamily, tile::TileMatmulFamily};
 use crate::definition::{
     CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection, MatmulLineSizes,
-    MatmulProblem, MatmulSelection, MatmulSetupError, MatrixLayout, SmAllocation, SwizzleConfig,
+    MatmulProblem, MatmulSelection, MatmulSetupError, MatrixLayout, SmAllocation, SwizzleBlueprint,
     adjust_dtypes,
 };
 use crate::routines::base;
@@ -183,7 +183,7 @@ fn selection_specialized<R: Runtime, TMM: TileMatmulFamily>(
 
         let lhs = select_swizzle(lhs_swizzle_dim, *dtypes.lhs_stage, line_sizes.lhs);
         let rhs = select_swizzle(rhs_swizzle_dim, *dtypes.rhs_stage, line_sizes.rhs);
-        builder = builder.shared_swizzle(SwizzleConfig {
+        builder = builder.shared_swizzle(SwizzleBlueprint {
             lhs,
             rhs,
             ..Default::default()

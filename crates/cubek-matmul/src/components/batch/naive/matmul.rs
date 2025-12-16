@@ -89,13 +89,6 @@ pub(crate) fn matmul_entry<
     #[define(LhsS, RhsS, AccS)] _stage: [StorageType; 3],
     #[define(LhsR, RhsR, AccR)] _register: [StorageType; 3],
 ) {
-    #[allow(clippy::collapsible_if)]
-    if comptime!(config.can_yield_extra_cubes()) {
-        if CUBE_POS >= cube_count_args.num_valid_cubes() {
-            terminate!()
-        }
-    }
-
     let mut state = Args::init_state::<LhsG, RhsG, AccG>(inputs, output);
 
     NaiveMatmul::<((LhsG, LhsS, LhsR), (RhsG, RhsS, RhsR), (AccG, AccS, AccR))>::execute::<Args>(
@@ -125,9 +118,13 @@ impl<MP: MatmulPrecision> BatchMatmul<MP> for NaiveMatmul<MP> {
         let (_, _, k) = lhs.shape();
         let (_, size_m, size_n) = out.shape();
 
-        let batch = ABSOLUTE_POS_Z;
         let m = ABSOLUTE_POS_X;
         let n = ABSOLUTE_POS_Y;
+        let batch = ABSOLUTE_POS_Z;
+
+        // if batch != 2 {
+        //     terminate!();
+        // }
 
         if m >= size_m || n >= size_n {
             terminate!();
@@ -155,7 +152,8 @@ impl<MP: MatmulPrecision> BatchMatmul<MP> for NaiveMatmul<MP> {
                 accum += sum[v];
             }
 
-            out[(batch, m, n)] = Line::empty(1u32).fill(accum);
+            // out[(batch, m, n)] = Line::empty(1u32).fill(accum);
+            out[(batch, m, n)] = Line::cast_from(batch);
         } else {
             out[(batch, m, n)] = Line::empty(1u32).fill(sum[0u32]);
         }

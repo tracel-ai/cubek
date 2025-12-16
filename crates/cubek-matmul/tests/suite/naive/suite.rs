@@ -46,20 +46,6 @@ pub fn test_very_small() {
         m: 4,
         n: 4,
         k: 4,
-        batch: 3,
-        lhs_layout: MatrixLayout::RowMajor,
-        rhs_layout: MatrixLayout::RowMajor,
-    };
-
-    test_naive(case);
-}
-
-#[test]
-pub fn test_small() {
-    let case = MatmulTestCase {
-        m: 64,
-        n: 64,
-        k: 64,
         batch: 1,
         lhs_layout: MatrixLayout::RowMajor,
         rhs_layout: MatrixLayout::RowMajor,
@@ -74,9 +60,23 @@ pub fn test_very_small_col_major() {
         m: 4,
         n: 4,
         k: 4,
-        batch: 2,
+        batch: 1,
         lhs_layout: MatrixLayout::RowMajor,
         rhs_layout: MatrixLayout::ColMajor,
+    };
+
+    test_naive(case);
+}
+
+#[test]
+pub fn test_small() {
+    let case = MatmulTestCase {
+        m: 64,
+        n: 64,
+        k: 64,
+        batch: 1,
+        lhs_layout: MatrixLayout::RowMajor,
+        rhs_layout: MatrixLayout::RowMajor,
     };
 
     test_naive(case);

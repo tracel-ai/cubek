@@ -1,11 +1,8 @@
-use cubecl::CubeDim;
+use cubecl::{CubeCount, CubeDim};
 
 use crate::{
-    components::{
-        batch::BatchConfig,
-        global::{GlobalReaderConfig, GlobalWriterConfig},
-    },
-    definition::{HypercubeBlueprint, MatmulLineSizes},
+    components::{batch::BatchConfig, global::memory::GlobalLayoutConfig},
+    definition::{CubeCountPlan, MatmulLineSizes, MatmulProblem, MatrixLayout},
 };
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -20,23 +17,39 @@ impl BatchConfig for NaiveMatmulConfig {
         todo!()
     }
 
-    fn hypercube_blueprint(&self) -> HypercubeBlueprint {
-        todo!()
-    }
-
     fn can_yield_extra_cubes(&self) -> bool {
         todo!()
     }
 
-    fn lhs_global_reader_config(&self) -> GlobalReaderConfig {
-        todo!()
+    fn lhs_global_layout_config(&self) -> GlobalLayoutConfig {
+        GlobalLayoutConfig {
+            matrix_layout: MatrixLayout::RowMajor,
+            check_row_bounds: true,
+            check_col_bounds: true,
+        }
     }
 
-    fn rhs_global_reader_config(&self) -> GlobalReaderConfig {
-        todo!()
+    fn rhs_global_layout_config(&self) -> GlobalLayoutConfig {
+        GlobalLayoutConfig {
+            matrix_layout: MatrixLayout::ColMajor,
+            check_row_bounds: true,
+            check_col_bounds: true,
+        }
     }
 
-    fn global_writer_config(&self) -> GlobalWriterConfig {
+    fn out_global_layout_config(&self) -> GlobalLayoutConfig {
+        GlobalLayoutConfig {
+            matrix_layout: MatrixLayout::RowMajor,
+            check_row_bounds: true,
+            check_col_bounds: true,
+        }
+    }
+
+    fn cube_count_plan(
+        &self,
+        _problem: &MatmulProblem,
+        _max_cube_count: &CubeCount,
+    ) -> CubeCountPlan {
         todo!()
     }
 }

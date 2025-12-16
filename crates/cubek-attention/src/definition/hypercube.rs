@@ -4,9 +4,9 @@ use cubecl::prelude::*;
 use crate::definition::{AttentionBlueprint, AttentionDims};
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct HypercubeBlueprint {}
+pub struct HypercubeConfig {}
 
-impl HypercubeBlueprint {
+impl HypercubeConfig {
     pub fn cube_count_plan(
         &self,
         dims: &AttentionDims,

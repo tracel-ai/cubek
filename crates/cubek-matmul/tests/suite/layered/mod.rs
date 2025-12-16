@@ -11,7 +11,7 @@ use cubek_matmul::definition::MatmulIdent;
 use cubek_matmul::definition::MatmulProblem;
 use cubek_matmul::definition::MatmulSelection;
 use cubek_matmul::definition::MatrixLayout;
-use cubek_matmul::definition::SwizzleConfig;
+use cubek_matmul::definition::SwizzleBlueprint;
 use cubek_matmul::definition::{PartitionSize, StageSize, TileSize, TilingScheme};
 use cubek_matmul::routines::simple::SimpleAlgorithm;
 use cubek_matmul::routines::simple_unit::SimpleUnitAlgorithm;

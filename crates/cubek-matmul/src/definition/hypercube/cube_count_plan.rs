@@ -3,7 +3,7 @@ use cubecl::prelude::*;
 use crate::definition::{
     MatmulProblem,
     hypercube::{
-        GlobalOrder, HypercubeBlueprint, HypercubeSelection, SmAllocation, global_order::swizzle,
+        GlobalOrder, HypercubeConfig, HypercubeSelection, SmAllocation, global_order::swizzle,
     },
 };
 
@@ -215,10 +215,10 @@ impl CubeCountPlan {
     /// Because we don't want to store the CubeCountPlan values in config, we have to recompute it
     ///
     /// Assumes the hypercube config is valid
-    pub fn from_config(
-        config: &HypercubeBlueprint,
+    pub fn from_blueprint(
+        config: &HypercubeConfig,
         problem: &MatmulProblem,
-        max_cube_count: CubeCount,
+        max_cube_count: &CubeCount,
     ) -> CubeCountPlan {
         let (max_x, max_y, max_z) = match max_cube_count {
             CubeCount::Static(x, y, z) => (x, y, z),
@@ -229,7 +229,7 @@ impl CubeCountPlan {
         let n_cubes = (problem.n as u32).div_ceil(config.cube_span.n);
         let batch_cubes = (problem.num_batches() as u32).div_ceil(config.cube_span.batch);
 
-        match config.cube_count_plan_config {
+        match config.cube_count_plan_blueprint {
             CubeCountPlanBlueprint::FromProblem => CubeCountPlan::FromProblem {
                 m_cubes,
                 n_cubes,
@@ -260,7 +260,7 @@ impl CubeCountPlan {
                 batch_cubes,
             },
             CubeCountPlanBlueprint::Spread { .. } => {
-                spread_cube_count_plan(m_cubes, n_cubes, batch_cubes, max_x, max_y, max_z)
+                spread_cube_count_plan(m_cubes, n_cubes, batch_cubes, *max_x, *max_y, *max_z)
             }
         }
     }

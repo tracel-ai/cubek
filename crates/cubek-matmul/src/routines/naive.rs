@@ -10,9 +10,8 @@ pub struct NaiveRoutine {}
 
 impl Routine for NaiveRoutine {
     type Strategy = ();
-    type Blueprint = ();
-
     type BatchMatmul = NaiveBatchMatmulFamily;
+    type Blueprint = <Self::BatchMatmul as BatchMatmulFamily>::Blueprint;
     type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
     fn prepare<R: cubecl::Runtime>(

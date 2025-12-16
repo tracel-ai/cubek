@@ -2,24 +2,21 @@
 //!
 //! Each local unit will compute a single element of the output matrix.
 use cubecl::prelude::*;
-use cubecl::std::tensor::launch::ViewArg;
-use cubecl::std::tensor::layout::Coords3d;
+use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
 use cubecl::tensor_line_size_parallel;
 
-use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
-
-use crate::components::batch::naive::NaiveBatchMatmulFamily;
-use crate::components::global::memory::{
-    GlobalLayout, GlobalLayoutConfig, GlobalLayoutLaunch, GlobalScaleLayout,
-};
-use crate::definition::MatmulLineSizes;
+use crate::components::batch::naive::{NaiveBatchMatmulFamily, NaiveBlueprint};
+use crate::definition::{CubeCountPlan, MatmulLineSizes};
 use crate::definition::{
     MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError, MatrixLayout,
 };
 
 use crate::components::batch::BatchMatmulFamily;
-use crate::launch::MatmulInputHandle;
-use crate::launch::MatmulInputHandleRef;
+use crate::launch::{
+    ConcreteInputsFactory, ConcreteOutputFactory, MatmulInputHandleRef, OutputArg, TensorArgs,
+};
+use crate::launch::{InputArg, MatmulInputHandle};
+use crate::routines::naive::NaiveRoutine;
 
 /// Matrix multiplication using memory coalescing algorithm with custom cube dimensions
 #[allow(clippy::result_large_err)]
@@ -89,8 +86,6 @@ pub fn launch_ref<R: Runtime>(
     let rhs_shape = rhs.shape();
     let out_shape = out.shape;
 
-    let cube_count = simple_cube_count(lhs_shape, rhs_shape, out_shape, cube_dim_x, cube_dim_y)?;
-
     let lhs_line_size = tensor_line_size_parallel(
         client.io_optimized_line_sizes(&dtypes.lhs_global),
         lhs.data().shape,
@@ -122,83 +117,43 @@ pub fn launch_ref<R: Runtime>(
         rhs_layout: MatrixLayout::ColMajor,
     };
 
-    fn view<'a, R: Runtime>(
-        client: &ComputeClient<R>,
-        handle: &'a MatmulInputHandleRef<'a, R>,
-        layout: MatrixLayout,
-        line_size: u8,
-        problem: &MatmulProblem,
-    ) -> ViewArg<'a, Coords3d, R> {
-        // Checks off, other properties are unused
-        let config = GlobalLayoutConfig {
-            matrix_layout: layout,
-            ..Default::default()
-        };
-        match handle {
-            MatmulInputHandleRef::Normal(handle, _dtype) => {
-                let layout = GlobalLayoutLaunch::from_handle_batched(
-                    client, handle, problem, line_size, config,
-                );
-                ViewArg::new::<GlobalLayout>(handle.as_array_arg(line_size), layout)
-            }
-            MatmulInputHandleRef::Quantized {
-                data,
-                scale,
-                shape,
-                scheme,
-                ..
-            } => {
-                let (data_layout, scales_layout) = GlobalLayoutLaunch::from_quantized_handle(
-                    client, data, scale, shape, problem, **scheme, line_size, config,
-                );
-                let data_view =
-                    ViewArg::new::<GlobalLayout>(data.as_array_arg(line_size), data_layout);
-                let scales_view =
-                    ViewArg::new::<GlobalScaleLayout>(scale.as_array_arg(1), scales_layout);
-                ViewArg::new_quantized(data_view, scales_view, **scheme)
-            }
-        }
-    }
+    let blueprint = NaiveBlueprint {};
+    let config = NaiveBatchMatmulFamily::setup(client, &problem, &blueprint, &line_sizes, dtypes)?;
 
-    let lhs_view = view(
+    let cube_count_plan =
+        simple_cube_count(lhs_shape, rhs_shape, out_shape, cube_dim_x, cube_dim_y)?;
+
+    let input = <InputArg<TensorArgs> as ConcreteInputsFactory<NaiveRoutine>>::create(
         client,
         &lhs,
-        MatrixLayout::RowMajor,
-        lhs_line_size,
-        &problem,
-    );
-    let rhs_view = view(
-        client,
         &rhs,
-        MatrixLayout::ColMajor,
-        rhs_line_size,
+        &blueprint,
         &problem,
+        &line_sizes,
+        config,
+        dtypes,
     );
-
-    let config = NaiveBatchMatmulFamily::setup(client, &problem, &(), &line_sizes, dtypes)?;
+    let output = <OutputArg<TensorArgs> as ConcreteOutputFactory<NaiveRoutine>>::create(
+        client,
+        &out,
+        &blueprint,
+        &problem,
+        &line_sizes,
+        config,
+        dtypes,
+    );
 
     let result = unsafe {
-        NaiveBatchMatmulFamily::launch_unchecked(
+        NaiveBatchMatmulFamily::launch_unchecked::<TensorArgs, R>(
             client,
             CubeDim::new(cube_dim_x as u32, cube_dim_y as u32, 1),
-            cube_count,
+            cube_count_plan.resolve(),
             input,
             output,
-            cube_count_input,
+            cube_count_plan.as_args(),
             config,
             dtypes,
         )
-        // naive_matmul::launch_unchecked(
-        //     client,
-        //     cube_count,
-        //
-        //     lhs_view,
-        //     rhs_view,
-        //     out.as_tensor_arg(1),
-        //     *dtypes.lhs_global,
-        //     *dtypes.acc_register,
-        //     *dtypes.acc_global,
-        // )
     };
 
     match result {
@@ -214,28 +169,32 @@ fn simple_cube_count(
     output_shape: &[usize],
     cube_dim_x: usize,
     cube_dim_y: usize,
-) -> Result<CubeCount, MatmulSetupError> {
+) -> Result<CubeCountPlan, MatmulSetupError> {
     let ndims = lhs_shape.len();
     let num_rows = lhs_shape[ndims - 2];
     let num_cols = rhs_shape[ndims - 1];
 
-    let cubes_x = f32::ceil(num_rows as f32 / cube_dim_x as f32) as u32;
-    let cubes_y = f32::ceil(num_cols as f32 / cube_dim_y as f32) as u32;
-    let mut num_iter = 1u32;
+    let m_cubes = f32::ceil(num_rows as f32 / cube_dim_x as f32) as u32;
+    let n_cubes = f32::ceil(num_cols as f32 / cube_dim_y as f32) as u32;
+    let mut batch_cubes = 1u32;
 
     #[allow(clippy::needless_range_loop)]
     for i in 0..ndims - 2 {
-        num_iter *= output_shape[i] as u32;
+        batch_cubes *= output_shape[i] as u32;
     }
 
-    let result = CubeCount::Static(cubes_x, cubes_y, num_iter);
+    let cube_count_plan = CubeCountPlan::FromProblem {
+        m_cubes,
+        n_cubes,
+        batch_cubes,
+    };
     let max_cube_count = u16::MAX as u32;
 
-    if cubes_x > max_cube_count || cubes_y > max_cube_count || num_iter > max_cube_count {
+    if m_cubes > max_cube_count || n_cubes > max_cube_count || batch_cubes > max_cube_count {
         return Err(MatmulSetupError::Unavailable(
-            MatmulAvailabilityError::CubeCountTooBig(result),
+            MatmulAvailabilityError::CubeCountTooBig(cube_count_plan.resolve()),
         ));
     }
 
-    Ok(result)
+    Ok(cube_count_plan)
 }

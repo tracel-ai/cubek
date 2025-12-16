@@ -27,10 +27,10 @@ pub struct HypercubeSelectionBuilder<'a> {
 /// Determines how to launch the hypercube, i.e. anything
 /// relevant to CubeCount and where a Cube at a cube position should work
 /// Similar to HyperCubeSelection but injected in kernel as comptime struct
-pub struct HypercubeBlueprint {
+pub struct HypercubeConfig {
     pub cube_span: CubeSpan,
     pub global_order: GlobalOrder,
-    pub cube_count_plan_config: CubeCountPlanBlueprint,
+    pub cube_count_plan_blueprint: CubeCountPlanBlueprint,
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -51,19 +51,19 @@ impl HypercubeSelection {
         &self,
         problem: &MatmulProblem,
         max_cube_count: CubeCount,
-    ) -> HypercubeBlueprint {
+    ) -> HypercubeConfig {
         let cube_count_plan = CubeCountPlan::from_selection(self, problem, max_cube_count);
         let cube_count_plan_config = CubeCountPlanBlueprint::from_cube_count_plan(cube_count_plan);
 
-        HypercubeBlueprint {
+        HypercubeConfig {
             cube_span: self.cube_span,
             global_order: self.global_order,
-            cube_count_plan_config,
+            cube_count_plan_blueprint: cube_count_plan_config,
         }
     }
 }
 
-impl HypercubeBlueprint {
+impl HypercubeConfig {
     /// Returns an error if:
     /// - The global order is swizzle but its assumptions are not met
     pub fn validate(&self, problem: &MatmulProblem) -> Result<(), MatmulSetupError> {
@@ -132,13 +132,13 @@ impl<'a> HypercubeSelectionBuilder<'a> {
     }
 }
 
-impl HypercubeBlueprint {
+impl HypercubeConfig {
     /// Make a CubeCountPlan from the problem, constrained to not exceed the maximal cube count
     pub fn cube_count_plan(
         &self,
         problem: &MatmulProblem,
-        max_cube_count: CubeCount,
+        max_cube_count: &CubeCount,
     ) -> CubeCountPlan {
-        CubeCountPlan::from_config(self, problem, max_cube_count)
+        CubeCountPlan::from_blueprint(self, problem, max_cube_count)
     }
 }

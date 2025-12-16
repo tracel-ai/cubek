@@ -1,7 +1,8 @@
-use crate::components::global::{GlobalReaderConfig, GlobalWriterConfig};
+use crate::components::global::memory::GlobalLayoutConfig;
+use crate::components::stage::SwizzleMode;
 use crate::definition::{
-    AccG, CubeCountInput, CubeCountInputArgs, HypercubeBlueprint, LhsG, MatmulElems,
-    MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError, RhsG,
+    AccG, CubeCountInput, CubeCountInputArgs, CubeCountPlan, LhsG, MatmulElems, MatmulLineSizes,
+    MatmulPrecision, MatmulProblem, MatmulSetupError, RhsG,
 };
 use crate::launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
 use cubecl::prelude::*;
@@ -82,16 +83,16 @@ pub trait BatchConfig:
     /// Returns the [CubeDim]
     fn cube_dim(&self) -> CubeDim;
 
+    fn cube_count_plan(&self, problem: &MatmulProblem, max_cube_count: &CubeCount)
+    -> CubeCountPlan;
+
     /// Returns the line sizes for Lhs, Rhs and output
     fn line_sizes(&self) -> MatmulLineSizes;
-
-    /// Returns the [HypercubeConfig]
-    fn hypercube_blueprint(&self) -> HypercubeBlueprint;
 
     /// Whether it may launch more cubes than the minimum required
     fn can_yield_extra_cubes(&self) -> bool;
 
-    fn lhs_global_reader_config(&self) -> GlobalReaderConfig;
-    fn rhs_global_reader_config(&self) -> GlobalReaderConfig;
-    fn global_writer_config(&self) -> GlobalWriterConfig;
+    fn lhs_global_layout_config(&self) -> GlobalLayoutConfig;
+    fn rhs_global_layout_config(&self) -> GlobalLayoutConfig;
+    fn out_global_layout_config(&self) -> GlobalLayoutConfig;
 }

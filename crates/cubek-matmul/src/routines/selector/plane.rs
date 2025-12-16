@@ -8,7 +8,7 @@ use crate::components::tile::TileMatmulFamily;
 use crate::definition::{
     CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection, MatmulAvailabilityError,
     MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError, MatrixLayout,
-    MultiRowStrategy, PartitionSize, SmAllocation, StageSize, SwizzleConfig, TileSize,
+    MultiRowStrategy, PartitionSize, SmAllocation, StageSize, SwizzleBlueprint, TileSize,
     TilingScheme, adjust_dtypes,
 };
 use crate::routines::selector::is_tiny;
@@ -177,7 +177,7 @@ pub fn plane_matmul_selection<TMM: TileMatmulFamily, R: Runtime>(
 
         let lhs = select_swizzle(lhs_swizzle_dim, *dtypes.lhs_stage, line_sizes.lhs);
         let rhs = select_swizzle(rhs_swizzle_dim, *dtypes.rhs_stage, line_sizes.rhs);
-        builder = builder.shared_swizzle(SwizzleConfig {
+        builder = builder.shared_swizzle(SwizzleBlueprint {
             lhs,
             rhs,
             ..Default::default()

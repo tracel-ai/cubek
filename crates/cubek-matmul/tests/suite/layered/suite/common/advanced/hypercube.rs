@@ -1,7 +1,7 @@
 #[cfg(not(feature = "matmul_tests_hypercube"))]
 pub mod row_fp {
     use super::*;
-    use cubek_matmul::components::batch::{
+    use cubek_matmul::definition::{
         CubeCountPlanSelection, GlobalOrder, GlobalOrderSelection, HypercubeSelection,
     };
 

@@ -1,10 +1,7 @@
 use std::marker::PhantomData;
 
 use crate::components::batch::BatchMatmulFamily;
-use crate::components::batch::base::BatchConfig;
-use crate::components::batch::base::BatchMatmul;
 use crate::components::batch::partitioned_matmul::config::PartitionedBatchConfig;
-use crate::components::batch::partitioned_matmul::matmul;
 use crate::components::batch::partitioned_matmul::matmul::PartitionedBatchMatmul;
 use crate::components::batch::partitioned_matmul::matmul::matmul_entry;
 use crate::components::batch::partitioned_matmul::partition::GlobalPartitionMatmul;

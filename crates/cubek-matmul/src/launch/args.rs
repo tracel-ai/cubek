@@ -208,17 +208,9 @@ impl<Lhs: Numeric, Rhs: Numeric, Acc: Numeric, A: Routine> ConcreteInputsFactory
         };
 
         TensorInputsLaunch::new(
-            view(
-                lhs,
-                config.lhs_global_reader_config().gmem_config.into(),
-                line_sizes.lhs,
-            ),
+            view(lhs, config.lhs_global_layout_config(), line_sizes.lhs),
             batch_layout(lhs),
-            view(
-                rhs,
-                config.rhs_global_reader_config().gmem_config.into(),
-                line_sizes.rhs,
-            ),
+            view(rhs, config.rhs_global_layout_config(), line_sizes.rhs),
             batch_layout(rhs),
             CubeOptionArgs::None,
             CubeOptionArgs::None,
@@ -242,11 +234,8 @@ impl<EG: Numeric, A: Routine> ConcreteOutputFactory<A> for TensorOutput<EG> {
         config: A::Config,
         _dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<'a, R> {
-        let layout = GlobalLayoutLaunch::from_handle(
-            out,
-            line_sizes.out,
-            config.global_writer_config().gmem_config.into(),
-        );
+        let layout =
+            GlobalLayoutLaunch::from_handle(out, line_sizes.out, config.out_global_layout_config());
         let batch = BatchLayoutLaunch::from_handle(client, out, problem);
         let view = ViewArg::new::<GlobalLayout>(out.as_array_arg(line_sizes.out), layout);
         TensorOutputLaunch::new(view, VirtualLayoutLaunch::new::<BatchLayout>(batch))
@@ -366,7 +355,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<Blueprint = MatmulSelec
         // Loaders use dynamic layout based on swizzle setting. For no swizzle, contiguous tiles are
         // loaded and TMA loads single tile wide columns.
         // For swizzled, bank conflicts aren't an issue so the tile size is the full stage.
-        let stage_size_lhs = match config.lhs_global_reader_config().smem_config.swizzle {
+        let stage_size_lhs = match blueprint.shared_swizzle.lhs {
             SwizzleMode::None => match problem.lhs_layout {
                 definition::MatrixLayout::RowMajor => {
                     vec![1, stage_m, tiling_scheme.tile_size.k]
@@ -384,7 +373,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<Blueprint = MatmulSelec
                 }
             },
         };
-        let stage_size_rhs = match config.rhs_global_reader_config().smem_config.swizzle {
+        let stage_size_rhs = match blueprint.shared_swizzle.rhs {
             SwizzleMode::None => match problem.rhs_layout {
                 definition::MatrixLayout::RowMajor => {
                     vec![1, stage_k, tiling_scheme.tile_size.n]
@@ -465,8 +454,8 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<Blueprint = MatmulSelec
             }
         }
 
-        let swizzle_lhs = swizzle(config.lhs_global_reader_config().smem_config.swizzle);
-        let swizzle_rhs = swizzle(config.rhs_global_reader_config().smem_config.swizzle);
+        let swizzle_lhs = swizzle(blueprint.shared_swizzle.lhs);
+        let swizzle_rhs = swizzle(blueprint.shared_swizzle.rhs);
 
         // f32 gets remapped to tf32 for the tensor map just to ensure CUDA loads them correctly.
         // It shouldn't matter, but it's better to be safe.

@@ -14,19 +14,21 @@ use crate::{
         global::memory::{GlobalLayout, GlobalLayoutConfig, GlobalLayoutLaunch, GlobalScaleLayout},
     },
     definition::{
-        CubeCountInputArgs, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem,
-        MatmulSelection, MatmulSetupError, MatrixLayout,
+        CubeCountInputArgs, HypercubeConfig, HypercubeSelection, MatmulElems, MatmulLineSizes,
+        MatmulPrecision, MatmulProblem, MatmulSelection, MatmulSetupError, MatrixLayout,
     },
     launch::{InputRuntimeArg, MatmulArgs, MatmulInputHandleRef, OutputRuntimeArg},
 };
 
 /// Simple partitioned batch matmul family for any precision
 pub struct NaiveBatchMatmulFamily {}
+#[derive(Debug, Clone)]
+pub struct NaiveBlueprint {}
 
 impl BatchMatmulFamily for NaiveBatchMatmulFamily {
     type Matmul<MP: MatmulPrecision> = NaiveMatmul<MP>;
     type Config = NaiveMatmulConfig;
-    type Blueprint = ();
+    type Blueprint = NaiveBlueprint;
 
     fn setup<R: Runtime>(
         client: &ComputeClient<R>,

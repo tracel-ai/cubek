@@ -81,7 +81,7 @@ impl<MP: MatmulPrecision, GMM: GlobalMatmul<MP>, GPMM: GlobalPartitionMatmul> Ba
         let k_range = (0, problem_k);
 
         let (m_index, n_index, batch_index) =
-            cube_count_args.cube_pos_to_tensor_pos(config.hypercube_blueprint().global_order);
+            cube_count_args.cube_pos_to_tensor_pos(config.hypercube_config.global_order);
 
         let ranges = PartitionRanges::new(
             PartitionRangeDim::new(

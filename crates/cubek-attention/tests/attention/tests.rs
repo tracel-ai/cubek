@@ -3,7 +3,7 @@ use crate::attention::tiling_scheme_ops::*;
 use cubecl::{Runtime, TestRuntime};
 use cubek_attention::definition::{
     AccumulatorPrecision, AttentionDefinition, AttentionDims, AttentionOptions,
-    AttentionPartitionSize, AttentionStageSize, AttentionTilingScheme, HypercubeBlueprint,
+    AttentionPartitionSize, AttentionStageSize, AttentionTilingScheme, HypercubeConfig,
 };
 use cubek_attention::routines::DeviceSettings;
 
@@ -44,7 +44,7 @@ fn one_tile_simple() {
     let launch_settings = DeviceSettings::new(&client, &definition);
 
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -97,7 +97,7 @@ fn one_partition_several_planes() {
     let launch_settings = DeviceSettings::new(&client, &definition);
 
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -150,7 +150,7 @@ fn problem_smaller_than_one_tile_seq_q_seq_kv_val_dim() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -198,7 +198,7 @@ fn head_dim_oob() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -245,7 +245,7 @@ fn two_rows_in_array_tile() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -293,7 +293,7 @@ fn one_tile_seqq16() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -341,7 +341,7 @@ fn one_tile_seqq4() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -388,7 +388,7 @@ fn seqq2() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -435,7 +435,7 @@ fn hd2() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -482,7 +482,7 @@ fn kv2() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -529,7 +529,7 @@ fn vd2() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -576,7 +576,7 @@ fn hd2_vd2() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -623,7 +623,7 @@ fn all2() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -671,7 +671,7 @@ fn global_iterations_2() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -719,7 +719,7 @@ fn global_iterations_2_kv2() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -767,7 +767,7 @@ fn partition_kv1_global1_with_oob() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -815,7 +815,7 @@ fn partition_seqq2_global2_kv2_global2() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -862,7 +862,7 @@ fn partition_many_planes() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -910,7 +910,7 @@ fn partition_kv1_global3_with_oob() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -958,7 +958,7 @@ fn partition_oob_in_q() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -1005,7 +1005,7 @@ fn partition_kv2_with_oob() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -1052,7 +1052,7 @@ fn partition_kv2_causal() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -1099,7 +1099,7 @@ fn partition_kv2_masked() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -1146,7 +1146,7 @@ fn stage2() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -1193,7 +1193,7 @@ fn stage4() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -1242,7 +1242,7 @@ fn stage2_problem4() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -1289,7 +1289,7 @@ fn reuse_key_value() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: true,
@@ -1336,7 +1336,7 @@ fn double_row_wise() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -1383,7 +1383,7 @@ fn one_tile_masked() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -1430,7 +1430,7 @@ fn one_tile_causal() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -1477,7 +1477,7 @@ fn one_tile_masked_causal() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -1525,7 +1525,7 @@ fn masked_oob() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -1573,7 +1573,7 @@ fn masked_larger() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -1620,7 +1620,7 @@ fn num_heads_2() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -1667,7 +1667,7 @@ fn batch_2() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -1714,7 +1714,7 @@ fn batch_2_seqq2() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -1761,7 +1761,7 @@ fn num_heads_2_batch_2() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -1808,7 +1808,7 @@ fn num_heads_2_masked() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,
@@ -1860,7 +1860,7 @@ fn huge_problem() {
     };
     let launch_settings = DeviceSettings::new(&client, &definition);
     let blueprint = AttentionBlueprint {
-        hypercube_blueprint: HypercubeBlueprint {},
+        hypercube_blueprint: HypercubeConfig {},
         tiling_scheme,
         plane_dim: launch_settings.plane_dim,
         reuse_key_value: false,

@@ -1,6 +1,6 @@
 use crate::{
     components::stage::SwizzleMode,
-    definition::SwizzleConfig,
+    definition::SwizzleBlueprint,
     definition::{StageIdent, TileSize},
 };
 use std::{fmt::Debug, hash::Hash};
@@ -25,7 +25,7 @@ pub trait TileConfig: Copy + Clone + Eq + PartialEq + Hash + Debug + Send + Sync
 pub struct SharedTileConfig {
     pub tile_size: TileSize,
     pub plane_dim: u32,
-    pub swizzle_config: SwizzleConfig,
+    pub swizzle_config: SwizzleBlueprint,
 }
 
 impl TileConfig for SharedTileConfig {
@@ -56,7 +56,7 @@ impl TileConfig for SharedTileConfig {
 }
 
 impl SharedTileConfig {
-    pub fn new(tile_size: TileSize, plane_dim: u32, swizzle_config: SwizzleConfig) -> Self {
+    pub fn new(tile_size: TileSize, plane_dim: u32, swizzle_config: SwizzleBlueprint) -> Self {
         SharedTileConfig {
             tile_size,
             plane_dim,

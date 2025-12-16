@@ -8,7 +8,7 @@ use crate::components::tile::unit_register::UnitRegisterTileAttention;
 use crate::definition::{
     AttentionBlueprint, AttentionDefinition, AttentionElems, AttentionPartitionSize,
     AttentionSetupError, AttentionStageSize, AttentionTileSize, AttentionTilingScheme,
-    HypercubeBlueprint,
+    HypercubeConfig,
 };
 use crate::launch::RoutineStrategy;
 use crate::routines::{DeviceSettings, LaunchInfo};
@@ -105,7 +105,7 @@ fn blueprint(
             };
 
             let blueprint = AttentionBlueprint {
-                hypercube_blueprint: HypercubeBlueprint {},
+                hypercube_blueprint: HypercubeConfig {},
                 tiling_scheme,
                 plane_dim,
                 reuse_key_value: false,

@@ -4,7 +4,7 @@ use crate::{
     components::stage::{PartitionBuffering, SwizzleMode},
     definition::{
         CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection, MatmulElems, MatmulKind,
-        MatmulLineSizes, MatmulProblem, MatmulSelection, MatrixLayout, SmAllocation, SwizzleConfig,
+        MatmulLineSizes, MatmulProblem, MatmulSelection, MatrixLayout, SmAllocation, SwizzleBlueprint,
         TilingScheme,
     },
 };
@@ -540,7 +540,7 @@ fn selection(
             MatrixLayout::ColMajor => tiling_scheme.elements_per_stage_along_k(),
         };
 
-        builder = builder.shared_swizzle(SwizzleConfig {
+        builder = builder.shared_swizzle(SwizzleBlueprint {
             lhs: select_swizzle(lhs_swizzle_dim, *dtypes.lhs_stage, line_sizes.lhs),
             rhs: select_swizzle(rhs_swizzle_dim, *dtypes.rhs_stage, line_sizes.rhs),
             ..Default::default()

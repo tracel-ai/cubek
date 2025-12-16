@@ -151,9 +151,10 @@ pub fn launch_matmul_algorithm<A: Routine<Blueprint = MatmulSelection>>(
         dtypes,
     );
 
-    let cube_count_plan = config
-        .hypercube_blueprint()
-        .cube_count_plan(problem, client.properties().hardware.max_cube_count.clone());
+    let cube_count_plan = config.cube_count_plan(
+        problem,
+        &client.properties().hardware.max_cube_count.clone(),
+    );
 
     match input_representation {
         InputRepresentation::Normal => {

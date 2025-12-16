@@ -2,7 +2,7 @@ use cubecl::{Runtime, client::ComputeClient, ir::StorageType};
 use cubek_matmul::components::stage::{PartitionBuffering, SwizzleMode};
 
 use cubek_matmul::definition::{
-    MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatmulSelection, SwizzleConfig,
+    MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatmulSelection, SwizzleBlueprint,
     TilingScheme, adjust_dtypes,
 };
 use cubek_matmul::{
@@ -124,7 +124,7 @@ pub fn convolution_matmul_selection<TMM: TileMatmulFamily, R: Runtime>(
 
         let lhs = select_swizzle(swizzle_dim, *dtypes.lhs_stage, line_sizes.lhs);
         let rhs = select_swizzle(swizzle_dim, *dtypes.rhs_stage, line_sizes.rhs);
-        builder = builder.shared_swizzle(SwizzleConfig {
+        builder = builder.shared_swizzle(SwizzleBlueprint {
             lhs,
             rhs,
             ..Default::default()
