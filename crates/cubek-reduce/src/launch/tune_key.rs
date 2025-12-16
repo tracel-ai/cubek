@@ -7,7 +7,7 @@ pub struct ReduceAutotuneKey {
     elem_input: ElemType,
     elem_output: ElemType,
     elem_acc: ElemType,
-    /// Wether the axis is contiguous.
+    /// Whether the axis is contiguous.
     pub axis_is_contiguous: bool,
     /// The length of the vector to reduce.
     ///
