@@ -1,26 +1,23 @@
 use cubecl::CubeDim;
 
-use crate::components::{
-    batch::{BatchConfig, HypercubeConfig},
-    global::GlobalConfig,
-};
 use crate::definition::{GlobalPartitionSize, MatmulLineSizes, MatmulProblem, MatmulSetupError};
+use crate::{
+    components::{
+        batch::BatchConfig,
+        global::{GlobalConfig, GlobalReaderConfig, GlobalWriterConfig},
+    },
+    definition::HypercubeBlueprint,
+};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 /// Configuration for partitioned batch matmul
 pub struct PartitionedBatchConfig<G: GlobalConfig> {
-    global_config: G,
-    hypercube_config: HypercubeConfig,
+    pub global_config: G,
+    hypercube_config: HypercubeBlueprint,
     pub global_partition_size: GlobalPartitionSize,
 }
 
 impl<G: GlobalConfig> BatchConfig for PartitionedBatchConfig<G> {
-    type GlobalConfig = G;
-
-    fn global_config(&self) -> Self::GlobalConfig {
-        self.global_config
-    }
-
     fn cube_dim(&self) -> CubeDim {
         self.global_config.cube_dim()
     }
@@ -29,7 +26,7 @@ impl<G: GlobalConfig> BatchConfig for PartitionedBatchConfig<G> {
         self.global_config.global_line_sizes()
     }
 
-    fn hypercube_config(&self) -> HypercubeConfig {
+    fn hypercube_blueprint(&self) -> HypercubeBlueprint {
         self.hypercube_config
     }
 
@@ -38,13 +35,25 @@ impl<G: GlobalConfig> BatchConfig for PartitionedBatchConfig<G> {
             .cube_count_plan_config
             .can_yield_extra_cubes()
     }
+
+    fn lhs_global_reader_config(&self) -> GlobalReaderConfig {
+        self.global_config.lhs_reader_config()
+    }
+
+    fn rhs_global_reader_config(&self) -> GlobalReaderConfig {
+        self.global_config.rhs_reader_config()
+    }
+
+    fn global_writer_config(&self) -> GlobalWriterConfig {
+        self.global_config.writer_config()
+    }
 }
 
 impl<G: GlobalConfig> PartitionedBatchConfig<G> {
     /// Create a new config for partitioned batch matmul
     pub fn new(
         global_config: G,
-        hypercube_config: HypercubeConfig,
+        hypercube_config: HypercubeBlueprint,
         global_partition_size: GlobalPartitionSize,
     ) -> Self {
         Self {

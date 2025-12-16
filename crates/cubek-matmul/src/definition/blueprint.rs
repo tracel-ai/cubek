@@ -2,11 +2,10 @@ use cubecl::{Runtime, client::ComputeClient, flex32, prelude::CubePrimitive, tf3
 
 use crate::{
     components::{
-        batch::HypercubeSelection,
         global::{LoadSpecializationConfig, read::ReaderMode},
         stage::{PartitionBuffering, SwizzleMode},
     },
-    definition::{MatmulElems, TilingScheme},
+    definition::{MatmulElems, TilingScheme, hypercube::HypercubeSelection},
 };
 
 #[derive(Debug, Clone)]

@@ -1,14 +1,9 @@
+use crate::components::global::{GlobalReaderConfig, GlobalWriterConfig};
 use crate::definition::{
-    AccG, LhsG, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError,
-    RhsG,
+    AccG, CubeCountInput, CubeCountInputArgs, HypercubeBlueprint, LhsG, MatmulElems,
+    MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError, RhsG,
 };
-use crate::{
-    components::{
-        batch::{CubeCountInput, CubeCountInputArgs, HypercubeConfig},
-        global::GlobalConfig,
-    },
-    launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
-};
+use crate::launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
 use cubecl::prelude::*;
 use std::{fmt::Debug, hash::Hash};
 
@@ -84,12 +79,6 @@ pub trait BatchMatmul<MP: MatmulPrecision>: 'static + Send + Sync {
 pub trait BatchConfig:
     Copy + Clone + Eq + PartialEq + Hash + Debug + Send + Sync + 'static
 {
-    /// Underlying Global matmul config
-    type GlobalConfig: GlobalConfig;
-
-    /// Convert itself to the underlying global matmul config
-    fn global_config(&self) -> Self::GlobalConfig;
-
     /// Returns the [CubeDim]
     fn cube_dim(&self) -> CubeDim;
 
@@ -97,8 +86,12 @@ pub trait BatchConfig:
     fn line_sizes(&self) -> MatmulLineSizes;
 
     /// Returns the [HypercubeConfig]
-    fn hypercube_config(&self) -> HypercubeConfig;
+    fn hypercube_blueprint(&self) -> HypercubeBlueprint;
 
     /// Whether it may launch more cubes than the minimum required
     fn can_yield_extra_cubes(&self) -> bool;
+
+    fn lhs_global_reader_config(&self) -> GlobalReaderConfig;
+    fn rhs_global_reader_config(&self) -> GlobalReaderConfig;
+    fn global_writer_config(&self) -> GlobalWriterConfig;
 }

@@ -5,8 +5,8 @@ use cubecl::client::ComputeClient;
 use cubecl::features::MmaConfig;
 
 use crate::components::batch::BatchMatmulFamily;
+use crate::components::stage::PlaneMatmulFamily;
 use crate::components::tile;
-use crate::components::{batch::CubeCountPlanSelection, stage::PlaneMatmulFamily};
 use crate::components::{
     batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
     tile::io::{Filled, Strided},
@@ -14,7 +14,8 @@ use crate::components::{
 use crate::components::{global::PlaneWriterFamily, stage::StageFamily};
 use crate::components::{stage::FilledStageFamily, tile::TileMatmulFamily};
 use crate::definition::{
-    MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError, MatrixLayout, SwizzleConfig,
+    CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection, MatmulLineSizes,
+    MatmulProblem, MatmulSelection, MatmulSetupError, MatrixLayout, SmAllocation, SwizzleConfig,
     adjust_dtypes,
 };
 use crate::routines::base;
@@ -28,7 +29,6 @@ use crate::{
 };
 use crate::{
     components::{
-        batch::{GlobalOrderSelection, HypercubeSelection, SmAllocation},
         global::{LoadSpecializationConfig, SpecializationTensorConfig},
         stage::PartitionBuffering,
     },

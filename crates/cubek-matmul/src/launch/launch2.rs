@@ -1,5 +1,5 @@
-use crate::components::batch::{BatchMatmulFamily, CubeCountInputArgs};
-use crate::definition::{AvailableLineSizes, MatmulElems, MatmulSelection};
+use crate::components::batch::BatchMatmulFamily;
+use crate::definition::{AvailableLineSizes, CubeCountInputArgs, MatmulElems, MatmulSelection};
 use crate::definition::{MatmulAvailabilityError, MatmulSetupError};
 use crate::definition::{MatmulProblem, MatrixLayout};
 use crate::launch::{

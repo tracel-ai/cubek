@@ -13,13 +13,10 @@ use cubecl::{server::TensorMapMeta, unexpanded};
 
 use crate::components::{
     batch::BatchConfig,
-    global::{
-        GlobalConfig,
-        memory::{
-            BatchLayout, BatchLayoutLaunch, GlobalLayout, GlobalLayoutConfig, GlobalLayoutLaunch,
-            GlobalScaleLayout, NoopLayout, NoopLayoutLaunch, SimpleTmaGlobalLayout,
-            SimpleTmaGlobalLayoutLaunch,
-        },
+    global::memory::{
+        BatchLayout, BatchLayoutLaunch, GlobalLayout, GlobalLayoutConfig, GlobalLayoutLaunch,
+        GlobalScaleLayout, NoopLayout, NoopLayoutLaunch, SimpleTmaGlobalLayout,
+        SimpleTmaGlobalLayoutLaunch,
     },
     stage::SwizzleMode,
 };
@@ -85,10 +82,9 @@ pub trait MatmulArgs: Send + Sync + 'static + Clone {
     type State<Lhs: Numeric, Rhs: Numeric, EO: Numeric>: CubeType;
 
     /// Init the state.
-    fn init_state<Lhs: Numeric, Rhs: Numeric, EO: Numeric, G: GlobalConfig>(
+    fn init_state<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         input: &Self::Input<Lhs, Rhs, EO>,
         output: &mut Self::Output<EO>,
-        #[comptime] config: G,
     ) -> Self::State<Lhs, Rhs, EO>;
 
     fn view_lhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
@@ -211,17 +207,16 @@ impl<Lhs: Numeric, Rhs: Numeric, Acc: Numeric, A: Routine> ConcreteInputsFactory
             }
         };
 
-        let config = config.global_config();
         TensorInputsLaunch::new(
             view(
                 lhs,
-                config.lhs_reader_config().gmem_config.into(),
+                config.lhs_global_reader_config().gmem_config.into(),
                 line_sizes.lhs,
             ),
             batch_layout(lhs),
             view(
                 rhs,
-                config.rhs_reader_config().gmem_config.into(),
+                config.rhs_global_reader_config().gmem_config.into(),
                 line_sizes.rhs,
             ),
             batch_layout(rhs),
@@ -247,11 +242,10 @@ impl<EG: Numeric, A: Routine> ConcreteOutputFactory<A> for TensorOutput<EG> {
         config: A::Config,
         _dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<'a, R> {
-        let config = config.global_config();
         let layout = GlobalLayoutLaunch::from_handle(
             out,
             line_sizes.out,
-            config.writer_config().gmem_config.into(),
+            config.global_writer_config().gmem_config.into(),
         );
         let batch = BatchLayoutLaunch::from_handle(client, out, problem);
         let view = ViewArg::new::<GlobalLayout>(out.as_array_arg(line_sizes.out), layout);
@@ -266,10 +260,9 @@ impl MatmulArgs for TensorArgs {
     type State<Lhs: Numeric, Rhs: Numeric, EO: Numeric> =
         (TensorInputs<Lhs, Rhs, EO>, TensorOutput<EO>);
 
-    fn init_state<Lhs: Numeric, Rhs: Numeric, EO: Numeric, G: GlobalConfig>(
+    fn init_state<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         input: &Self::Input<Lhs, Rhs, EO>,
         output: &mut Self::Output<EO>,
-        #[comptime] _config: G,
     ) -> Self::State<Lhs, Rhs, EO> {
         (*input, *output)
     }
@@ -365,8 +358,6 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<Blueprint = MatmulSelec
         let lhs = lhs_handle.data();
         let rhs = rhs_handle.data();
 
-        let config = config.global_config();
-
         let tiling_scheme = blueprint.tiling_scheme;
         let stage_m = tiling_scheme.elements_per_stage_along_m();
         let stage_n = tiling_scheme.elements_per_stage_along_n();
@@ -375,7 +366,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<Blueprint = MatmulSelec
         // Loaders use dynamic layout based on swizzle setting. For no swizzle, contiguous tiles are
         // loaded and TMA loads single tile wide columns.
         // For swizzled, bank conflicts aren't an issue so the tile size is the full stage.
-        let stage_size_lhs = match config.lhs_reader_config().smem_config.swizzle {
+        let stage_size_lhs = match config.lhs_global_reader_config().smem_config.swizzle {
             SwizzleMode::None => match problem.lhs_layout {
                 definition::MatrixLayout::RowMajor => {
                     vec![1, stage_m, tiling_scheme.tile_size.k]
@@ -393,7 +384,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<Blueprint = MatmulSelec
                 }
             },
         };
-        let stage_size_rhs = match config.rhs_reader_config().smem_config.swizzle {
+        let stage_size_rhs = match config.rhs_global_reader_config().smem_config.swizzle {
             SwizzleMode::None => match problem.rhs_layout {
                 definition::MatrixLayout::RowMajor => {
                     vec![1, stage_k, tiling_scheme.tile_size.n]
@@ -474,8 +465,8 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<Blueprint = MatmulSelec
             }
         }
 
-        let swizzle_lhs = swizzle(config.lhs_reader_config().smem_config.swizzle);
-        let swizzle_rhs = swizzle(config.rhs_reader_config().smem_config.swizzle);
+        let swizzle_lhs = swizzle(config.lhs_global_reader_config().smem_config.swizzle);
+        let swizzle_rhs = swizzle(config.rhs_global_reader_config().smem_config.swizzle);
 
         // f32 gets remapped to tf32 for the tensor map just to ensure CUDA loads them correctly.
         // It shouldn't matter, but it's better to be safe.
@@ -564,10 +555,9 @@ impl MatmulArgs for TensorMapArgs {
     type State<Lhs: Numeric, Rhs: Numeric, EO: Numeric> =
         (TensorMapInputs<Lhs, Rhs, EO>, TensorOutput<EO>);
 
-    fn init_state<Lhs: Numeric, Rhs: Numeric, EO: Numeric, G: GlobalConfig>(
+    fn init_state<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         input: &Self::Input<Lhs, Rhs, EO>,
         output: &mut Self::Output<EO>,
-        #[comptime] _config: G,
     ) -> Self::State<Lhs, Rhs, EO> {
         (*input, *output)
     }

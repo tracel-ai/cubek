@@ -152,7 +152,7 @@ pub fn launch_matmul_algorithm<A: Routine<Blueprint = MatmulSelection>>(
     );
 
     let cube_count_plan = config
-        .hypercube_config()
+        .hypercube_blueprint()
         .cube_count_plan(problem, client.properties().hardware.max_cube_count.clone());
 
     match input_representation {

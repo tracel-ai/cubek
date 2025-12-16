@@ -3,15 +3,13 @@ use cubecl::{Runtime, client::ComputeClient, ir::StorageType};
 
 use crate::components::global::{LoadSpecializationConfig, SpecializationTensorConfig};
 use crate::components::stage::PartitionBuffering;
+use crate::components::stage::SwizzleMode;
 use crate::components::tile::TileMatmulFamily;
-use crate::components::{
-    batch::{CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection, SmAllocation},
-    stage::SwizzleMode,
-};
 use crate::definition::{
-    MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection,
-    MatmulSetupError, MatrixLayout, MultiRowStrategy, PartitionSize, StageSize, SwizzleConfig,
-    TileSize, TilingScheme, adjust_dtypes,
+    CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection, MatmulAvailabilityError,
+    MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError, MatrixLayout,
+    MultiRowStrategy, PartitionSize, SmAllocation, StageSize, SwizzleConfig, TileSize,
+    TilingScheme, adjust_dtypes,
 };
 use crate::routines::selector::is_tiny;
 

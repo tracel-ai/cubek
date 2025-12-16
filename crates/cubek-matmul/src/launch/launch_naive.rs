@@ -18,7 +18,6 @@ use crate::definition::{
 };
 
 use crate::components::batch::BatchMatmulFamily;
-use crate::components::batch::naive::naive_matmul;
 use crate::launch::MatmulInputHandle;
 use crate::launch::MatmulInputHandleRef;
 
@@ -179,17 +178,27 @@ pub fn launch_ref<R: Runtime>(
     let config = NaiveBatchMatmulFamily::setup(client, &problem, &(), &line_sizes, dtypes)?;
 
     let result = unsafe {
-        naive_matmul::launch_unchecked(
+        NaiveBatchMatmulFamily::launch_unchecked(
             client,
-            cube_count,
             CubeDim::new(cube_dim_x as u32, cube_dim_y as u32, 1),
-            lhs_view,
-            rhs_view,
-            out.as_tensor_arg(1),
-            *dtypes.lhs_global,
-            *dtypes.acc_register,
-            *dtypes.acc_global,
+            cube_count,
+            input,
+            output,
+            cube_count_input,
+            config,
+            dtypes,
         )
+        // naive_matmul::launch_unchecked(
+        //     client,
+        //     cube_count,
+        //
+        //     lhs_view,
+        //     rhs_view,
+        //     out.as_tensor_arg(1),
+        //     *dtypes.lhs_global,
+        //     *dtypes.acc_register,
+        //     *dtypes.acc_global,
+        // )
     };
 
     match result {

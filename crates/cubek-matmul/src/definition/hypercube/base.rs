@@ -1,8 +1,10 @@
-use crate::components::batch::partitioned_matmul::hypercube::{
-    cube_count_plan::{CubeCountPlan, CubeCountPlanConfig, CubeCountPlanSelection},
-    global_order::{GlobalOrder, GlobalOrderSelection},
+use crate::definition::{
+    MatmulProblem, MatmulSetupError, TilingScheme,
+    hypercube::{
+        CubeCountPlanSelection, GlobalOrder, GlobalOrderSelection,
+        cube_count_plan::{CubeCountPlan, CubeCountPlanBlueprint},
+    },
 };
-use crate::definition::{MatmulProblem, MatmulSetupError, TilingScheme};
 use cubecl::CubeCount;
 
 #[derive(Debug, Clone)]
@@ -25,10 +27,10 @@ pub struct HypercubeSelectionBuilder<'a> {
 /// Determines how to launch the hypercube, i.e. anything
 /// relevant to CubeCount and where a Cube at a cube position should work
 /// Similar to HyperCubeSelection but injected in kernel as comptime struct
-pub struct HypercubeConfig {
+pub struct HypercubeBlueprint {
     pub cube_span: CubeSpan,
     pub global_order: GlobalOrder,
-    pub cube_count_plan_config: CubeCountPlanConfig,
+    pub cube_count_plan_config: CubeCountPlanBlueprint,
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -49,11 +51,11 @@ impl HypercubeSelection {
         &self,
         problem: &MatmulProblem,
         max_cube_count: CubeCount,
-    ) -> HypercubeConfig {
+    ) -> HypercubeBlueprint {
         let cube_count_plan = CubeCountPlan::from_selection(self, problem, max_cube_count);
-        let cube_count_plan_config = CubeCountPlanConfig::from_cube_count_plan(cube_count_plan);
+        let cube_count_plan_config = CubeCountPlanBlueprint::from_cube_count_plan(cube_count_plan);
 
-        HypercubeConfig {
+        HypercubeBlueprint {
             cube_span: self.cube_span,
             global_order: self.global_order,
             cube_count_plan_config,
@@ -61,7 +63,7 @@ impl HypercubeSelection {
     }
 }
 
-impl HypercubeConfig {
+impl HypercubeBlueprint {
     /// Returns an error if:
     /// - The global order is swizzle but its assumptions are not met
     pub fn validate(&self, problem: &MatmulProblem) -> Result<(), MatmulSetupError> {
@@ -130,7 +132,7 @@ impl<'a> HypercubeSelectionBuilder<'a> {
     }
 }
 
-impl HypercubeConfig {
+impl HypercubeBlueprint {
     /// Make a CubeCountPlan from the problem, constrained to not exceed the maximal cube count
     pub fn cube_count_plan(
         &self,

@@ -1,5 +1,5 @@
 use cubecl::{
-    CubeCount, CubeDim, Runtime,
+    CubeCount, CubeDim, LineSizeError, Runtime,
     client::ComputeClient,
     server::LaunchError,
     std::tensor::{launch::ViewArg, layout::Coords3d},
@@ -8,14 +8,14 @@ use cubecl::{
 use crate::{
     components::{
         batch::{
-            BatchConfig, BatchMatmulFamily, CubeCountInputArgs,
-            naive::{NaiveMatmul, NaiveMatmulConfig, naive_matmul},
+            BatchConfig, BatchMatmul, BatchMatmulFamily,
+            naive::{NaiveMatmul, NaiveMatmulConfig, matmul, matmul_entry},
         },
         global::memory::{GlobalLayout, GlobalLayoutConfig, GlobalLayoutLaunch, GlobalScaleLayout},
     },
     definition::{
-        MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSelection,
-        MatmulSetupError, MatrixLayout,
+        CubeCountInputArgs, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem,
+        MatmulSelection, MatmulSetupError, MatrixLayout,
     },
     launch::{InputRuntimeArg, MatmulArgs, MatmulInputHandleRef, OutputRuntimeArg},
 };
@@ -24,7 +24,7 @@ use crate::{
 pub struct NaiveBatchMatmulFamily {}
 
 impl BatchMatmulFamily for NaiveBatchMatmulFamily {
-    type Matmul<MP: MatmulPrecision> = NaiveMatmul;
+    type Matmul<MP: MatmulPrecision> = NaiveMatmul<MP>;
     type Config = NaiveMatmulConfig;
     type Blueprint = ();
 
@@ -35,6 +35,12 @@ impl BatchMatmulFamily for NaiveBatchMatmulFamily {
         line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
     ) -> Result<Self::Config, MatmulSetupError> {
+        if line_sizes.out > 1 {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(
+                "Line size on output not supported",
+            )));
+        }
+
         Ok(NaiveMatmulConfig {})
     }
 
@@ -48,30 +54,23 @@ impl BatchMatmulFamily for NaiveBatchMatmulFamily {
         config: Self::Config,
         dtypes: &MatmulElems,
     ) -> Result<(), LaunchError> {
-        todo!()
-        // unsafe {
-        //     naive_matmul::launch_unchecked(
-        //         client,
-        //         cube_count,
-        //         cube_dim,
-        //         lhs_view,
-        //         rhs_view,
-        //         out.as_tensor_arg(1),
-        //         *dtypes.lhs_global,
-        //         *dtypes.acc_register,
-        //         *dtypes.acc_global,
-        //     )
-        // }
+        unsafe {
+            matmul_entry::launch_unchecked::<MA, R>(
+                client,
+                cube_count,
+                cube_dim,
+                input,
+                output,
+                cube_count_input,
+                config,
+                [*dtypes.lhs_global, *dtypes.rhs_global, *dtypes.acc_global],
+                [*dtypes.lhs_stage, *dtypes.rhs_stage, *dtypes.acc_stage],
+                [
+                    *dtypes.lhs_register,
+                    *dtypes.rhs_register,
+                    *dtypes.acc_register,
+                ],
+            )
+        }
     }
 }
-// naive_matmul::launch_unchecked(
-//             client,
-//             cube_count,
-//             CubeDim::new(cube_dim_x as u32, cube_dim_y as u32, 1),
-//             lhs_view,
-//             rhs_view,
-//             out.as_tensor_arg(1),
-//             *dtypes.lhs_global,
-//             *dtypes.acc_register,
-//             *dtypes.acc_global,
-//         )

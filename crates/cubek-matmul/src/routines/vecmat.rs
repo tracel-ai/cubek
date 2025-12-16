@@ -2,10 +2,7 @@ use cubecl::{Runtime, client::ComputeClient};
 
 use crate::{
     components::{
-        batch::{
-            BatchMatmulFamily, CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection,
-            PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul, SmAllocation,
-        },
+        batch::{BatchMatmulFamily, PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
         global::{
             PlaneWriterFamily,
             multi_stage::double_buffering::DoubleBufferingMatmulFamily,
@@ -24,8 +21,7 @@ use crate::{
         },
     },
     definition::{
-        MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError,
-        PartitionSize, TileSize, TilingScheme,
+        CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection, MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError, PartitionSize, SmAllocation, TileSize, TilingScheme
     },
     routines::Routine,
 };

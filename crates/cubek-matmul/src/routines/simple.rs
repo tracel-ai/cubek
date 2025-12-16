@@ -4,15 +4,13 @@ use std::marker::PhantomData;
 
 use crate::components::batch::BatchMatmulFamily;
 use crate::definition::{
-    MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError,
-    MultiRowStrategy, TilingScheme, adjust_dtypes,
+    CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection, MatmulElems, MatmulLineSizes,
+    MatmulProblem, MatmulSelection, MatmulSetupError, MultiRowStrategy, SmAllocation, TilingScheme,
+    adjust_dtypes,
 };
 use crate::{
     components::{
-        batch::{
-            CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection,
-            PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul, SmAllocation,
-        },
+        batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
         global::{
             PlaneWriterFamily,
             read::{
