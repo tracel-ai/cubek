@@ -11,8 +11,8 @@ use crate::components::{
 };
 use crate::definition::MatmulSelection;
 use crate::definition::{
-    AccS, AvailableLineSizes, LhsS, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem,
-    MatmulSetupError, RhsS,
+    AccS, LhsS, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError,
+    RhsS,
 };
 use std::{fmt::Debug, hash::Hash};
 

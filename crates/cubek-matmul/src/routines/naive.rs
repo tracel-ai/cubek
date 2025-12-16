@@ -6,9 +6,9 @@ use crate::{
     routines::Routine,
 };
 
-pub struct Naive {}
+pub struct NaiveRoutine {}
 
-impl Routine for Naive {
+impl Routine for NaiveRoutine {
     type Strategy = ();
     type Blueprint = ();
 

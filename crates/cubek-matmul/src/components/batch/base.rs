@@ -1,6 +1,6 @@
 use crate::definition::{
-    AccG, AvailableLineSizes, LhsG, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem,
-    MatmulSetupError, RhsG,
+    AccG, LhsG, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError,
+    RhsG,
 };
 use crate::{
     components::{

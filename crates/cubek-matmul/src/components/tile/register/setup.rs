@@ -10,8 +10,8 @@ use crate::components::{
 use crate::definition::MatmulSelection;
 use crate::definition::MatmulSetupError;
 use crate::definition::{
-    AvailableLineSizes, InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulLineSizes,
-    MatmulProblem, MatrixLayout,
+    InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatmulProblem,
+    MatrixLayout,
 };
 use cubecl::features::TypeUsage;
 use cubecl::ir::{ElemType, FloatKind};
