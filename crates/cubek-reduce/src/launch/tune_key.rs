@@ -8,7 +8,7 @@ pub struct ReduceAutotuneKey {
     elem_output: ElemType,
     elem_acc: ElemType,
     potential_line_size: u8,
-    axis_is_contiguous: bool,
+    pub axis_is_contiguous: bool,
     #[autotune(anchor(exp(min = 16, max = 4096)))]
     reduce_axis_shape: usize,
     #[autotune(anchor(exp(max = 16384, base = 4)))]
@@ -53,8 +53,8 @@ impl ReduceAutotuneKey {
 
     fn potential_line_size(elem_size: usize, mut shape: usize) -> u8 {
         let mut potential_line_size = 1;
-        let max_bytes_in_line = 16; // 128 bits
-        //
+        let max_bytes_in_line = 64; // 512 bits
+
         while shape.is_multiple_of(2)
             && potential_line_size as usize * elem_size < max_bytes_in_line
         {
