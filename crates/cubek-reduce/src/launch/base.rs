@@ -146,7 +146,7 @@ fn reduce_kernel_inner<P: ReducePrecision, Out: Numeric, R: ReduceFamily>(
                 cube,
             )
         }
-        GlobalReduceBlueprint::FullPlane(plane) => {
+        GlobalReduceBlueprint::Plane(plane) => {
             GlobalFullPlaneReduce::execute::<P, Out, R::Instruction<P>>(
                 input,
                 output,
@@ -156,7 +156,7 @@ fn reduce_kernel_inner<P: ReducePrecision, Out: Numeric, R: ReduceFamily>(
                 plane,
             )
         }
-        GlobalReduceBlueprint::FullUnit(unit) => {
+        GlobalReduceBlueprint::Unit(unit) => {
             GlobalFullUnitReduce::execute::<P, Out, R::Instruction<P>>(
                 input,
                 output,

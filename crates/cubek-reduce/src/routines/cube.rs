@@ -108,10 +108,11 @@ fn generate_blueprint<R: Runtime>(
     let cube_dim = CubeDim::new_2d(plane_size, plane_count);
     let cube_size = cube_dim.num_elems();
 
-    let bound_checks = match problem
-        .vector_size
-        .is_multiple_of(cube_size * settings.line_size_input as u32)
-    {
+    let work_size = match settings.line_mode {
+        LineMode::Parallel => problem.vector_size / settings.line_size_input as u32,
+        LineMode::Perpendicular => problem.vector_size,
+    };
+    let bound_checks = match work_size.is_multiple_of(cube_size) {
         true => BoundChecks::None,
         false => BoundChecks::Mask,
     };

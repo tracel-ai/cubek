@@ -41,7 +41,7 @@ impl Routine for UnitRoutine {
 
                 let blueprint = ReduceBlueprint {
                     line_mode: settings.line_mode,
-                    global: GlobalReduceBlueprint::FullUnit(blueprint),
+                    global: GlobalReduceBlueprint::Unit(blueprint),
                 };
 
                 (blueprint, cube_dim, cube_count)
@@ -83,7 +83,7 @@ fn generate_blueprint<R: Runtime>(
 
     let blueprint = ReduceBlueprint {
         line_mode: settings.line_mode,
-        global: GlobalReduceBlueprint::FullUnit(UnitReduceBlueprint { unit_idle }),
+        global: GlobalReduceBlueprint::Unit(UnitReduceBlueprint { unit_idle }),
     };
 
     Ok((blueprint, cube_dim, cube_count))

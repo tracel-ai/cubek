@@ -10,8 +10,8 @@ pub struct ReduceBlueprint {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GlobalReduceBlueprint {
-    FullUnit(UnitReduceBlueprint),
-    FullPlane(PlaneReduceBlueprint),
+    Unit(UnitReduceBlueprint),
+    Plane(PlaneReduceBlueprint),
     Cube(CubeBlueprint),
 }
 
