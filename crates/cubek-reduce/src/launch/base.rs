@@ -52,6 +52,15 @@ pub(crate) fn launch_reduce<Run: Runtime>(
         axis as usize,
         problem.dtypes.input,
         line_mode,
+        match strategy {
+            ReduceStrategy::FullUnit(..) => false,
+            ReduceStrategy::FullPlane(..) => {
+                matches!(line_mode, LineMode::Perpendicular)
+            }
+            ReduceStrategy::FullCube(..) => {
+                matches!(line_mode, LineMode::Perpendicular)
+            }
+        },
     );
     let settings = ReduceLineSettings {
         line_mode,

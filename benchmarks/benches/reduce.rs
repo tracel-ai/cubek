@@ -81,25 +81,26 @@ fn run<R: Runtime, E: frontend::Float>(device: R::Device) {
     let client = R::client(&device);
     for shape in [
         vec![32, 512, 4096],
-        vec![2, 2, 4099 * 32],
-        vec![4096, 512, 32],
-        vec![512, 512],
+        // vec![2, 2, 4099 * 32],
+        // vec![4096, 512, 32],
+        // vec![512, 512],
     ] {
-        for axis in 0..shape.len() {
+        // for axis in 0..1 {
+        for axis in 2..shape.len() {
             for strategy in [
                 ReduceStrategy::FullUnit(RoutineStrategy::Strategy(UnitStrategy)),
-                ReduceStrategy::FullCube(RoutineStrategy::Strategy(CubeStrategy {
-                    use_planes: true,
-                })),
-                ReduceStrategy::FullCube(RoutineStrategy::Strategy(CubeStrategy {
-                    use_planes: false,
-                })),
-                ReduceStrategy::FullPlane(RoutineStrategy::Strategy(PlaneStrategy {
-                    independent: true,
-                })),
-                ReduceStrategy::FullPlane(RoutineStrategy::Strategy(PlaneStrategy {
-                    independent: false,
-                })),
+                // ReduceStrategy::FullCube(RoutineStrategy::Strategy(CubeStrategy {
+                //     use_planes: true,
+                // })),
+                // ReduceStrategy::FullCube(RoutineStrategy::Strategy(CubeStrategy {
+                //     use_planes: false,
+                // })),
+                // ReduceStrategy::FullPlane(RoutineStrategy::Strategy(PlaneStrategy {
+                //     independent: true,
+                // })),
+                // ReduceStrategy::FullPlane(RoutineStrategy::Strategy(PlaneStrategy {
+                //     independent: false,
+                // })),
             ] {
                 let bench = ReduceBench::<R, E> {
                     shape: shape.clone(),

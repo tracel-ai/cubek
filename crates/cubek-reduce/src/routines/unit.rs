@@ -25,10 +25,11 @@ impl Routine for UnitRoutine {
         settings: ReduceLineSettings,
         strategy: RoutineStrategy<Self>,
     ) -> Result<(ReduceBlueprint, ReduceLaunchSettings), ReduceError> {
+        println!("{settings:?}");
         let (blueprint, cube_dim, cube_count) = match strategy {
             RoutineStrategy::Forced(blueprint, cube_dim) => {
                 let working_units = match settings.line_mode {
-                    LineMode::Parallel => problem.vector_count,
+                    LineMode::Parallel => problem.vector_count / settings.line_size_output as u32,
                     LineMode::Perpendicular => {
                         problem.vector_count / settings.line_size_input as u32
                     }
@@ -76,7 +77,7 @@ fn generate_blueprint<R: Runtime>(
     let properties = &client.properties().hardware;
     let plane_size = properties.plane_size_max;
     let working_units = match settings.line_mode {
-        LineMode::Parallel => problem.vector_count,
+        LineMode::Parallel => problem.vector_count / settings.line_size_output as u32,
         LineMode::Perpendicular => problem.vector_count / settings.line_size_input as u32,
     };
     let plane_count =
@@ -93,6 +94,7 @@ fn generate_blueprint<R: Runtime>(
         line_mode: settings.line_mode,
         global: GlobalReduceBlueprint::FullUnit(UnitReduceBlueprint { unit_idle }),
     };
+    println!("{blueprint:?} {cube_dim:?} {cube_count:?}");
 
     Ok((blueprint, cube_dim, cube_count))
 }
