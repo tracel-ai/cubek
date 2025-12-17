@@ -238,8 +238,9 @@ fn quantize_native<R: Runtime>(
         input.strides,
         input.shape.len() - 1,
     );
-    let cube_dim = CubeDim::default();
-    let cube_count = calculate_cube_count_elemwise(num_elems / line_size as usize, cube_dim);
+    let working_units = num_elems / line_size as usize;
+    let cube_dim = CubeDim::new(client, working_units);
+    let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
     let (range_min, range_max) = scheme.value.range();
 
     match scheme {
@@ -290,9 +291,9 @@ fn quantize_packed<R: Runtime>(
     let num_quants = scheme.num_quants() as u8;
     let line_size = num_quants;
 
-    let cube_dim = CubeDim::default();
-    let cube_count =
-        calculate_cube_count_elemwise(num_elems.div_ceil(line_size as usize), cube_dim);
+    let working_units = num_elems.div_ceil(line_size as usize);
+    let cube_dim = CubeDim::new(client, working_units);
+    let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
     let (range_min, range_max) = scheme.value.range();
 
     match scheme {

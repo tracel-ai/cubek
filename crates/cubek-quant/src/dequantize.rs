@@ -253,9 +253,9 @@ fn dequantize_packed<R: Runtime>(
         line_size_in = 1;
     }
 
-    let cube_dim = CubeDim::default();
-    let cube_count =
-        calculate_cube_count_elemwise(num_elems_input / line_size_in as usize, cube_dim);
+    let num_elems = num_elems_input / line_size_in as usize;
+    let cube_dim = CubeDim::new(client, num_elems);
+    let cube_count = calculate_cube_count_elemwise(client, num_elems, cube_dim);
 
     match scheme {
         QuantScheme {
@@ -295,8 +295,9 @@ fn dequantize_native<R: Runtime>(
         input.strides,
         input.shape.len() - 1,
     );
-    let cube_dim = CubeDim::default();
-    let cube_count = calculate_cube_count_elemwise(num_elems / line_size as usize, cube_dim);
+    let working_units = num_elems / line_size as usize;
+    let cube_dim = CubeDim::new(client, working_units);
+    let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
 
     match scheme {
         QuantScheme {

@@ -140,7 +140,7 @@ pub fn launch_ref<R: Runtime>(
 
     NaiveRoutine::launch::<TensorArgs, R>(
         client,
-        CubeDim::new(cube_dim_x as u32, cube_dim_y as u32, 1),
+        CubeDim::new_2d(cube_dim_x as u32, cube_dim_y as u32),
         cube_count_plan.resolve(),
         input,
         output,
