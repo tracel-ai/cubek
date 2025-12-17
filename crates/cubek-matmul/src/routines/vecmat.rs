@@ -21,7 +21,9 @@ use crate::{
         },
     },
     definition::{
-        CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection, MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError, PartitionSize, SmAllocation, TileSize, TilingScheme
+        CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection, MatmulElems,
+        MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError, PartitionSize,
+        SmAllocation, TileSize, TilingScheme,
     },
     routines::Routine,
 };

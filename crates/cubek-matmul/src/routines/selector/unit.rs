@@ -4,8 +4,8 @@ use crate::{
     components::stage::{PartitionBuffering, SwizzleMode},
     definition::{
         CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection, MatmulElems, MatmulKind,
-        MatmulLineSizes, MatmulProblem, MatmulSelection, MatrixLayout, SmAllocation, SwizzleBlueprint,
-        TilingScheme,
+        MatmulLineSizes, MatmulProblem, MatmulSelection, MatrixLayout, SmAllocation,
+        SwizzleBlueprint, TilingScheme,
     },
 };
 use cubecl::{Runtime, client::ComputeClient, ir::StorageType};
