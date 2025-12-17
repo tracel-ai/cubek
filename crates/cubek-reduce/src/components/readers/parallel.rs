@@ -7,10 +7,13 @@ use crate::{
 };
 use cubecl::{
     prelude::*,
-    std::tensor::{
-        View,
-        layout::{Coords1d, plain::PlainLayout},
-        r#virtual::VirtualTensor,
+    std::{
+        CubeOption,
+        tensor::{
+            View,
+            layout::{Coords1d, plain::PlainLayout},
+            r#virtual::VirtualTensor,
+        },
     },
 };
 
@@ -34,6 +37,7 @@ impl<P: ReducePrecision> ParallelReader<P> {
         inst: &I,
         reduce_axis: u32,
         reduce_index: u32,
+        idle: CubeOption<bool>,
         #[comptime] bound_checks: BoundChecks,
     ) -> ParallelReader<P> {
         let line_size = input.line_size();
@@ -50,7 +54,8 @@ impl<P: ReducePrecision> ParallelReader<P> {
         let shape = input.shape(reduce_axis);
 
         let num_chunks = shape / line_size;
-        let bound_checks = ReaderBoundChecks::new::<I>(inst, num_chunks, line_size, bound_checks);
+        let bound_checks =
+            ReaderBoundChecks::new::<I>(inst, num_chunks, idle, line_size, bound_checks);
 
         ParallelReader::<P> {
             view: input.view(PlainLayout::new(input.len())),

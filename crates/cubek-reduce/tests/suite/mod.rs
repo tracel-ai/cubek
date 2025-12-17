@@ -136,7 +136,7 @@ macro_rules! testgen_reduce {
         mod full_cube_single_plane {
             use super::*;
             use cubek_reduce::routines::CubeBlueprint;
-            use cubek_reduce::BoundChecks;
+            use cubek_reduce::{BoundChecks, IdleMode};
             use cubecl::prelude::CubeDim;
 
             testgen_reduce!(
@@ -149,7 +149,7 @@ macro_rules! testgen_reduce {
                     routine: RoutineStrategy::Cube(
                         BlueprintStrategy::Forced(
                             CubeBlueprint {
-                                cube_idle: true,
+                                cube_idle: IdleMode::Terminate,
                                 bound_checks: BoundChecks::Mask,
                                 num_shared_accumulators: 8,
                                 use_planes: false,
@@ -166,7 +166,7 @@ macro_rules! testgen_reduce {
         mod full_plane_single_plane {
             use super::*;
             use cubek_reduce::routines::PlaneReduceBlueprint;
-            use cubek_reduce::BoundChecks;
+            use cubek_reduce::{BoundChecks, IdleMode};
             use cubecl::prelude::CubeDim;
 
             mod plane_size_32 {
@@ -182,7 +182,7 @@ macro_rules! testgen_reduce {
                         routine: RoutineStrategy::Plane(
                             BlueprintStrategy::Forced(
                                 PlaneReduceBlueprint {
-                                    plane_idle: true,
+                                    plane_idle: IdleMode::Terminate,
                                     bound_checks: BoundChecks::Mask,
                                     independent: true,
                                 },
@@ -206,7 +206,7 @@ macro_rules! testgen_reduce {
                         routine: RoutineStrategy::Plane(
                             BlueprintStrategy::Forced(
                                 PlaneReduceBlueprint {
-                                    plane_idle: true,
+                                    plane_idle: IdleMode::Terminate,
                                     bound_checks: BoundChecks::Mask,
                                     independent: true,
                                 },

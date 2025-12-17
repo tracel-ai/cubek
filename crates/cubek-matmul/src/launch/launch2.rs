@@ -25,6 +25,22 @@ pub fn launch_ref<R: Runtime, A: Routine>(
     selection: &BlueprintStrategy<A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
+    let lhs_owned;
+    let lhs = if matrix_batch_layout(lhs.data().strides) == MatrixBatchLayout::HighlyPermuted {
+        lhs_owned = lhs.into_contiguous(client)?;
+        &lhs_owned.as_ref()
+    } else {
+        lhs
+    };
+
+    let rhs_owned;
+    let rhs = if matrix_batch_layout(rhs.data().strides) == MatrixBatchLayout::HighlyPermuted {
+        rhs_owned = rhs.into_contiguous(client)?;
+        &rhs_owned.as_ref()
+    } else {
+        rhs
+    };
+
     launch_inner_ref::<R, TensorArgs, A>(
         client,
         lhs,
@@ -55,6 +71,40 @@ pub fn launch_ref_tma<R: Runtime, A: Routine<Blueprint = TilingBlueprint>>(
     selection: &BlueprintStrategy<A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
+    let lhs_owned;
+    let lhs = match matrix_batch_layout(lhs.data().strides) {
+        MatrixBatchLayout::Contiguous
+        | MatrixBatchLayout::MildlyPermuted {
+            transposed: _,
+            batch_swap: false,
+        } => lhs,
+        MatrixBatchLayout::MildlyPermuted {
+            transposed: _,
+            batch_swap: true,
+        }
+        | MatrixBatchLayout::HighlyPermuted => {
+            lhs_owned = lhs.into_contiguous(client)?;
+            &lhs_owned.as_ref()
+        }
+    };
+
+    let rhs_owned;
+    let rhs = match matrix_batch_layout(rhs.data().strides) {
+        MatrixBatchLayout::Contiguous
+        | MatrixBatchLayout::MildlyPermuted {
+            transposed: _,
+            batch_swap: false,
+        } => rhs,
+        MatrixBatchLayout::MildlyPermuted {
+            transposed: _,
+            batch_swap: true,
+        }
+        | MatrixBatchLayout::HighlyPermuted => {
+            rhs_owned = rhs.into_contiguous(client)?;
+            &rhs_owned.as_ref()
+        }
+    };
+
     launch_inner_ref::<R, TensorMapArgs, A>(
         client,
         lhs,
@@ -80,22 +130,6 @@ where
     InputArg<MA>: ConcreteInputsFactory<A>,
     OutputArg<MA>: ConcreteOutputFactory<A>,
 {
-    let lhs_owned;
-    let lhs = if matrix_batch_layout(lhs.data().strides) == MatrixBatchLayout::HighlyPermuted {
-        lhs_owned = lhs.into_contiguous(client)?;
-        &lhs_owned.as_ref()
-    } else {
-        lhs
-    };
-
-    let rhs_owned;
-    let rhs = if matrix_batch_layout(rhs.data().strides) == MatrixBatchLayout::HighlyPermuted {
-        rhs_owned = rhs.into_contiguous(client)?;
-        &rhs_owned.as_ref()
-    } else {
-        rhs
-    };
-
     let problem = MatmulProblem::from_shapes_and_strides(
         lhs.shape().to_vec(),
         rhs.shape().to_vec(),
