@@ -298,7 +298,7 @@ impl Display for Strategy {
 #[allow(clippy::result_large_err)]
 impl Strategy {
     pub(crate) fn launch_ref<R: Runtime>(
-        &self,
+        self,
         client: &ComputeClient<R>,
         lhs: &MatmulInputHandleRef<R>,
         rhs: &MatmulInputHandleRef<R>,

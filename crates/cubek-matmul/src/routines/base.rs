@@ -53,15 +53,6 @@ pub trait Routine: Sized {
         }
     }
 
-    // fn prepare<R: Runtime>(
-    //     client: &ComputeClient<R>,
-    //     problem: &MatmulProblem,
-    //     plane_dim: u32,
-    //     line_sizes: &MatmulLineSizes,
-    //     args: &Self::Strategy,
-    //     dtypes: &mut MatmulElems,
-    // ) -> Result<Self::Blueprint, MatmulSetupError>;
-
     fn prepare<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: DeviceSettings<R>,
@@ -85,11 +76,4 @@ pub struct DeviceSettings<R: Runtime> {
     pub client: ComputeClient<R>,
     pub plane_dim: u32,
     pub line_sizes: MatmulLineSizes,
-}
-
-impl<R: Runtime> DeviceSettings<R> {
-    pub fn new(client: &ComputeClient<R>, problem: &MatmulProblem) -> Self {
-        // check the actual requirements in launchers
-        todo!()
-    }
 }

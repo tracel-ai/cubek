@@ -8,6 +8,7 @@ use crate::launch::{
     ConcreteInputsFactory, ConcreteOutputFactory, InputArg, InputRuntimeArg, MatmulArgs, OutputArg,
     OutputRuntimeArg,
 };
+use crate::routines::DeviceSettings;
 use crate::routines::{BlueprintStrategy, Routine};
 use cubecl::prelude::TensorHandleRef;
 use cubecl::{Runtime, client::ComputeClient};
@@ -24,7 +25,7 @@ pub fn launch_kernel_concrete<MA: MatmulArgs, R: Runtime, A: Routine>(
     problem: MatmulProblem,
     line_sizes: MatmulLineSizes,
     plane_dim: u32,
-    blueprint_strategy: &BlueprintStrategy<A>,
+    blueprint_strategy: BlueprintStrategy<A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError>
 where
@@ -40,21 +41,27 @@ where
         view_line_sizes.rhs *= scheme.num_quants() as u8;
     }
 
-    let blueprint = match blueprint_strategy {
-        BlueprintStrategy::Forced(selection) => selection.clone(),
-        BlueprintStrategy::Inferred(args) => {
-            A::prepare(client, &problem, plane_dim, &view_line_sizes, args, dtypes)?
-        }
+    let device_settings = DeviceSettings {
+        client: client.clone(),
+        plane_dim,
+        line_sizes: view_line_sizes,
     };
+    let launch_info = A::prepare(&problem, device_settings, blueprint_strategy)?;
 
     // TODO should be inside kernel
-    let config = A::expand_config(client, &problem, &blueprint, &view_line_sizes, dtypes)?;
+    let config = A::expand_config(
+        client,
+        &problem,
+        &launch_info.blueprint,
+        &view_line_sizes,
+        dtypes,
+    )?;
 
     let input = <InputArg<MA> as ConcreteInputsFactory<A>>::create(
         client,
         lhs,
         rhs,
-        &blueprint,
+        &launch_info.blueprint,
         &problem,
         &line_sizes,
         config,
@@ -63,7 +70,7 @@ where
     let output = <OutputArg<MA> as ConcreteOutputFactory<A>>::create(
         client,
         out,
-        &blueprint,
+        &launch_info.blueprint,
         &problem,
         &line_sizes,
         config,
@@ -82,18 +89,24 @@ pub fn launch_kernel_virtual<'a, MA: MatmulArgs, R: Runtime, A: Routine>(
     problem: MatmulProblem,
     view_line_sizes: MatmulLineSizes,
     plane_dim: u32,
-    blueprint_strategy: &BlueprintStrategy<A>,
+    blueprint_strategy: BlueprintStrategy<A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
-    let blueprint = match blueprint_strategy {
-        BlueprintStrategy::Forced(selection) => selection.clone(),
-        BlueprintStrategy::Inferred(args) => {
-            A::prepare(client, &problem, plane_dim, &view_line_sizes, args, dtypes)?
-        }
+    let device_settings = DeviceSettings {
+        client: client.clone(),
+        plane_dim,
+        line_sizes: view_line_sizes,
     };
+    let launch_info = A::prepare(&problem, device_settings, blueprint_strategy)?;
 
     // TODO should be inside kernel
-    let config = A::expand_config(client, &problem, &blueprint, &view_line_sizes, dtypes)?;
+    let config = A::expand_config(
+        client,
+        &problem,
+        &launch_info.blueprint,
+        &view_line_sizes,
+        dtypes,
+    )?;
 
     launch_kernel::<MA, R, A>(client, input, output, problem, config, dtypes)
 }

@@ -180,7 +180,7 @@ fn test_naive(case: MatmulTestCase) {
     let rhs_handle = MatmulInputHandleRef::Normal(rhs.as_ref(), *problem.global_dtypes.rhs);
     let out_handle = out.as_ref();
 
-    let all_elems = MatmulElems::from_globals(problem.global_dtypes.clone());
+    let all_elems = MatmulElems::from_globals(&problem.global_dtypes.clone());
 
     launch_naive::launch_ref(&client, &lhs_handle, &rhs_handle, &out_handle, &all_elems).unwrap();
 

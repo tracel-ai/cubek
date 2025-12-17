@@ -74,7 +74,7 @@ pub fn test_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
     let rhs_handle = MatmulInputHandleRef::Normal(rhs.as_ref(), *problem.global_dtypes.rhs);
     let out_handle = out.as_ref();
 
-    let all_elems = MatmulElems::from_globals(problem.global_dtypes.clone());
+    let all_elems = MatmulElems::from_globals(&problem.global_dtypes.clone());
 
     if launch_matmul_algorithm::<A>(
         &client,

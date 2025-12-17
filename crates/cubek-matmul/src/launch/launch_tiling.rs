@@ -22,7 +22,7 @@ pub fn launch_ref<R: Runtime, A: Routine>(
     lhs: &MatmulInputHandleRef<'_, R>,
     rhs: &MatmulInputHandleRef<'_, R>,
     out: &TensorHandleRef<'_, R>,
-    selection: &BlueprintStrategy<A>,
+    blueprint_strategy: BlueprintStrategy<A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let lhs_owned;
@@ -46,7 +46,7 @@ pub fn launch_ref<R: Runtime, A: Routine>(
         lhs,
         rhs,
         out,
-        selection,
+        blueprint_strategy,
         AvailableLineSizes::from_type_sizes(
             client,
             lhs.data().elem_size,
@@ -68,7 +68,7 @@ pub fn launch_ref_tma<R: Runtime, A: Routine<Blueprint = TilingBlueprint>>(
     lhs: &MatmulInputHandleRef<'_, R>,
     rhs: &MatmulInputHandleRef<'_, R>,
     out: &TensorHandleRef<'_, R>,
-    selection: &BlueprintStrategy<A>,
+    blueprint_strategy: BlueprintStrategy<A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let lhs_owned;
@@ -110,7 +110,7 @@ pub fn launch_ref_tma<R: Runtime, A: Routine<Blueprint = TilingBlueprint>>(
         lhs,
         rhs,
         out,
-        selection,
+        blueprint_strategy,
         AvailableLineSizes::from_type_size_tma(client, out.elem_size),
         dtypes,
     )
@@ -122,7 +122,7 @@ fn launch_inner_ref<R: Runtime, MA: MatmulArgs, A: Routine>(
     lhs: &MatmulInputHandleRef<'_, R>,
     rhs: &MatmulInputHandleRef<'_, R>,
     out: &TensorHandleRef<'_, R>,
-    selection: &BlueprintStrategy<A>,
+    blueprint_strategy: BlueprintStrategy<A>,
     line_sizes: AvailableLineSizes,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError>
@@ -192,6 +192,14 @@ where
     let plane_dim = fix_plane_dim(A::select_plane_dim(client));
 
     launch_kernel_concrete::<MA, R, A>(
-        client, lhs, rhs, out, problem, line_sizes, plane_dim, selection, dtypes,
+        client,
+        lhs,
+        rhs,
+        out,
+        problem,
+        line_sizes,
+        plane_dim,
+        blueprint_strategy,
+        dtypes,
     )
 }
