@@ -11,7 +11,7 @@ fn values_open_interval() {
     kernel_to_unit_interval_oo::launch::<TestRuntime>(
         &client,
         CubeCount::Static(1, 1, 1),
-        CubeDim::new_single(),
+        CubeDim::new_1d(2),
         unsafe { ArrayArg::from_raw_parts::<u32>(&input, 2, 1) },
         unsafe { ArrayArg::from_raw_parts::<f32>(&output, 2, 1) },
     )
@@ -59,7 +59,7 @@ fn values_closed_open_interval() {
     kernel_to_unit_interval_co::launch::<TestRuntime>(
         &client,
         CubeCount::Static(1, 1, 1),
-        CubeDim::new_single(),
+        CubeDim::new_1d(2),
         unsafe { ArrayArg::from_raw_parts::<u32>(&input, 2, 1) },
         unsafe { ArrayArg::from_raw_parts::<f32>(&output, 2, 1) },
     )
