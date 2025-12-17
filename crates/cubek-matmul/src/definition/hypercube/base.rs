@@ -1,10 +1,8 @@
-use crate::definition::{
-    MatmulProblem, MatmulSetupError, TilingScheme,
-    hypercube::{
-        CubeCountPlanSelection, GlobalOrder, GlobalOrderSelection,
-        cube_count_plan::{CubeCountPlan, CubeCountPlanBlueprint},
-    },
+use crate::definition::hypercube::{
+    CubeCountPlanSelection, GlobalOrder, GlobalOrderSelection,
+    cube_count_plan::{CubeCountPlan, CubeCountPlanBlueprint},
 };
+use crate::definition::{MatmulProblem, MatmulSetupError, TilingScheme};
 use cubecl::CubeCount;
 
 #[derive(Debug, Clone)]

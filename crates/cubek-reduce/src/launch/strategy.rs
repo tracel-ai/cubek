@@ -1,14 +1,29 @@
-use crate::routines::{RoutineStrategy, cube::CubeRoutine, plane::PlaneRoutine, unit::UnitRoutine};
+use crate::routines::{
+    BlueprintStrategy, cube::CubeRoutine, plane::PlaneRoutine, unit::UnitRoutine,
+};
 use cubecl::{features::Plane, prelude::*};
 
 #[derive(Debug, Clone)]
-pub enum ReduceStrategy {
+pub struct ReduceStrategy {
+    pub routine: RoutineStrategy,
+    pub line_size: LineSizeStrategy,
+}
+
+#[derive(Debug, Clone)]
+pub enum RoutineStrategy {
     /// A unit is responsable to reduce a full vector.
-    FullUnit(RoutineStrategy<UnitRoutine>),
+    Unit(BlueprintStrategy<UnitRoutine>),
     /// A plane is responsable to reduce a full vector.
-    FullPlane(RoutineStrategy<PlaneRoutine>),
+    Plane(BlueprintStrategy<PlaneRoutine>),
     /// A cube is responsable to reduce a full vector.
-    FullCube(RoutineStrategy<CubeRoutine>),
+    Cube(BlueprintStrategy<CubeRoutine>),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct LineSizeStrategy {
+    /// When the vectorization is parallel, enable vectorization of the output so that each
+    /// unit can perform N reductions, where N is the output `line_size`.
+    pub parallel_output_vectorization: bool,
 }
 
 pub(crate) fn support_plane<R: Runtime>(client: &ComputeClient<R>) -> bool {

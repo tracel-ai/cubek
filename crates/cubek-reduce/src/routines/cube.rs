@@ -4,7 +4,7 @@ use super::{
 use crate::{
     BoundChecks, LineMode, ReduceError,
     launch::{calculate_plane_count_per_cube, support_plane},
-    routines::{CubeReduceBlueprint, Routine, RoutineStrategy, cube_count_safe},
+    routines::{BlueprintStrategy, CubeBlueprint, Routine, cube_count_safe},
 };
 use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient};
 
@@ -19,17 +19,17 @@ pub struct CubeStrategy {
 
 impl Routine for CubeRoutine {
     type Strategy = CubeStrategy;
-    type Blueprint = CubeReduceBlueprint;
+    type Blueprint = CubeBlueprint;
 
     fn prepare<R: Runtime>(
         &self,
         client: &ComputeClient<R>,
         problem: ReduceProblem,
         settings: ReduceLineSettings,
-        strategy: RoutineStrategy<Self>,
+        strategy: BlueprintStrategy<Self>,
     ) -> Result<(ReduceBlueprint, ReduceLaunchSettings), ReduceError> {
         let (blueprint, cube_dim, num_cubes) = match strategy {
-            RoutineStrategy::Forced(blueprint, cube_dim) => {
+            BlueprintStrategy::Forced(blueprint, cube_dim) => {
                 // One accumulator per plane.
                 if blueprint.use_planes {
                     if !support_plane(client) {
@@ -69,7 +69,7 @@ impl Routine for CubeRoutine {
 
                 (blueprint, cube_dim, cube_count)
             }
-            RoutineStrategy::Strategy(strategy) => {
+            BlueprintStrategy::Inferred(strategy) => {
                 let (blueprint, cube_dim, cube_count) =
                     generate_blueprint::<R>(client, problem, &settings, strategy)?;
                 (blueprint, cube_dim, cube_count)
@@ -108,10 +108,11 @@ fn generate_blueprint<R: Runtime>(
     let cube_dim = CubeDim::new_2d(plane_size, plane_count);
     let cube_size = cube_dim.num_elems();
 
-    let bound_checks = match problem
-        .vector_size
-        .is_multiple_of(cube_size * settings.line_size_input as u32)
-    {
+    let work_size = match settings.line_mode {
+        LineMode::Parallel => problem.vector_size / settings.line_size_input as u32,
+        LineMode::Perpendicular => problem.vector_size,
+    };
+    let bound_checks = match work_size.is_multiple_of(cube_size) {
         true => BoundChecks::None,
         false => BoundChecks::Mask,
     };
@@ -126,7 +127,7 @@ fn generate_blueprint<R: Runtime>(
     let cube_idle = working_cubes != launched_cubes;
     let blueprint = ReduceBlueprint {
         line_mode: settings.line_mode,
-        global: GlobalReduceBlueprint::Cube(CubeReduceBlueprint {
+        global: GlobalReduceBlueprint::Cube(CubeBlueprint {
             cube_idle,
             bound_checks,
             num_shared_accumulators,
@@ -139,7 +140,7 @@ fn generate_blueprint<R: Runtime>(
 
 fn working_cubes(settings: &ReduceLineSettings, problem: &ReduceProblem) -> u32 {
     match settings.line_mode {
-        LineMode::Parallel => problem.vector_count,
+        LineMode::Parallel => problem.vector_count / settings.line_size_output as u32,
         LineMode::Perpendicular => problem.vector_count / settings.line_size_input as u32,
     }
 }

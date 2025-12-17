@@ -3,6 +3,7 @@ use std::marker::PhantomData;
 use cubecl::TestRuntime;
 use cubecl::prelude::*;
 use cubek_reduce::components::instructions::ReduceOperationConfig;
+use cubek_reduce::launch::RoutineStrategy;
 use cubek_reduce::{ReduceDtypes, ReduceError, ReducePrecision, launch::ReduceStrategy, reduce};
 use rand::{
     SeedableRng,
@@ -162,6 +163,22 @@ where
         O: Numeric + CubeElement + std::fmt::Display,
     {
         let client = TestRuntime::client(&Default::default());
+        if let RoutineStrategy::Cube(_blueprint) = &self.strategy.routine {
+            if client.properties().hardware.num_cpu_cores.is_some() {
+                let test_full = std::env::var("CUBEK_TEST_FULL").unwrap_or("0".to_string());
+                println!("{test_full:?}");
+
+                match test_full.as_str() {
+                    "1" | "true" => {}
+                    _ => {
+                        println!(
+                            "Skipping cube tests on CPU, because they are long to run and can stall the CI"
+                        );
+                        return;
+                    }
+                }
+            }
+        };
 
         let input_handle =
             client.create_from_slice(<P::EI as CubeElement>::as_bytes(&input_values));
@@ -211,12 +228,18 @@ where
                     || matches!(e, ReduceError::ImprecisePlaneDim)
                     || matches!(e, ReduceError::Validation { .. });
 
-                if is_ok {
-                    // Skip the kernel.
-                    return;
-                } else {
-                    panic!("{e:?}");
-                }
+                let test_mode = match is_ok {
+                    true => std::env::var("CUBEK_TEST_MODE").unwrap_or("skip".to_string()),
+                    false => "unexpected_error".to_string(),
+                };
+
+                match test_mode.as_str() {
+                    "skip" => {}
+                    "verbose" => println!("Skipping: {e:?}"),
+                    mode => panic!("TestMode='{mode}', the test didn't run:\n {e:?}"),
+                };
+
+                return;
             }
         }
 

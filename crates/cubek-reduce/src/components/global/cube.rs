@@ -4,9 +4,9 @@ use crate::{
         global::reduce_count,
         instructions::{SharedAccumulator, fuse_accumulator_inplace, reduce_inplace},
         readers::{Reader, cube::CubeReader},
-        writer,
+        writer::Writer,
     },
-    routines::CubeReduceBlueprint,
+    routines::CubeBlueprint,
 };
 use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
 
@@ -21,9 +21,21 @@ impl GlobalFullCubeReduce {
         reduce_axis: u32,
         inst: &I,
         #[comptime] line_mode: LineMode,
-        #[comptime] blueprint: CubeReduceBlueprint,
+        #[comptime] blueprint: CubeBlueprint,
     ) {
-        let reduce_index = CUBE_POS;
+        let write_index = CUBE_POS;
+
+        let input_line_size = input.line_size();
+        let accumulator_size = blueprint.num_shared_accumulators;
+        let worker_pos = Self::worker_pos(blueprint);
+
+        let mut writer =
+            Writer::<Out>::new::<P>(input, output, reduce_axis, write_index, line_mode);
+
+        let write_count = writer.write_count();
+
+        let reduce_index_start = write_index * write_count;
+
         if comptime![blueprint.cube_idle] {
             let reduce_count = reduce_count(
                 output.len() * output.line_size(),
@@ -31,11 +43,79 @@ impl GlobalFullCubeReduce {
                 input.line_size(),
             );
 
-            if reduce_index >= reduce_count {
+            if reduce_index_start >= reduce_count {
                 terminate!();
             }
         }
 
+        for b in 0..write_count {
+            let reduce_index = reduce_index_start + b;
+
+            let mut accumulator_shared = Self::reduce_shared::<P, Out, I>(
+                input,
+                output,
+                reduce_axis,
+                reduce_index,
+                inst,
+                line_mode,
+                blueprint,
+            );
+
+            let mut accumulator_final = I::null_accumulator(inst, input_line_size);
+
+            match comptime!(blueprint.use_planes) {
+                true => {
+                    if worker_pos == 0 {
+                        reduce_scan::<P, I>(
+                            inst,
+                            &mut accumulator_shared,
+                            &mut accumulator_final,
+                            accumulator_size,
+                        );
+                        writer.write::<P, I>(b, accumulator_final, inst);
+                    }
+                }
+                false => {
+                    reduce_tree::<P, I>(
+                        inst,
+                        &mut accumulator_shared,
+                        &mut accumulator_final,
+                        worker_pos,
+                        accumulator_size,
+                    );
+                    if worker_pos == 0 {
+                        writer.write::<P, I>(b, accumulator_final, inst);
+                    }
+                }
+            };
+        }
+
+        let commit_required = writer.commit_required();
+
+        #[allow(clippy::collapsible_if)]
+        if comptime!(commit_required) {
+            if worker_pos == 0u32 {
+                writer.commit();
+            }
+        }
+    }
+
+    fn worker_pos(#[comptime] blueprint: CubeBlueprint) -> u32 {
+        match comptime!(blueprint.use_planes) {
+            true => UNIT_POS_Y,
+            false => UNIT_POS,
+        }
+    }
+
+    fn reduce_shared<P: ReducePrecision, Out: Numeric, I: ReduceInstruction<P>>(
+        input: &VirtualTensor<P::EI>,
+        output: &mut VirtualTensor<Out, ReadWrite>,
+        reduce_axis: u32,
+        reduce_index: u32,
+        inst: &I,
+        #[comptime] line_mode: LineMode,
+        #[comptime] blueprint: CubeBlueprint,
+    ) -> I::SharedAccumulator {
         let input_line_size = input.line_size();
 
         let reader = Reader::<P>::new::<I, Out>(
@@ -55,10 +135,7 @@ impl GlobalFullCubeReduce {
             reduce_inplace::<P, I>(inst, &mut accumulator, item, coordinate, false);
         }
 
-        let worker_pos = match comptime!(blueprint.use_planes) {
-            true => UNIT_POS_Y,
-            false => UNIT_POS,
-        };
+        let worker_pos = Self::worker_pos(blueprint);
 
         let accumulator_plane = match comptime!(blueprint.use_planes) {
             true => {
@@ -84,49 +161,7 @@ impl GlobalFullCubeReduce {
 
         sync_cube();
 
-        let mut accumulator_final = I::null_accumulator(inst, input_line_size);
-
-        match comptime!(blueprint.use_planes) {
-            true => {
-                if worker_pos == 0 {
-                    reduce_scan::<P, I>(
-                        inst,
-                        &mut accumulator_shared,
-                        &mut accumulator_final,
-                        accumulator_size,
-                    );
-                    writer::write_accumulator::<P, Out, I>(
-                        output,
-                        accumulator_final,
-                        reduce_index,
-                        input.shape(reduce_axis),
-                        line_mode,
-                        input.line_size(),
-                        inst,
-                    )
-                }
-            }
-            false => {
-                reduce_tree::<P, I>(
-                    inst,
-                    &mut accumulator_shared,
-                    &mut accumulator_final,
-                    worker_pos,
-                    accumulator_size,
-                );
-                if worker_pos == 0 {
-                    writer::write_accumulator::<P, Out, I>(
-                        output,
-                        accumulator_final,
-                        reduce_index,
-                        input.shape(reduce_axis),
-                        line_mode,
-                        input.line_size(),
-                        inst,
-                    )
-                }
-            }
-        };
+        accumulator_shared
     }
 }
 
