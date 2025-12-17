@@ -6,7 +6,7 @@ use crate::components::tile::accelerated::BlackboxAcceleratedTileAttention;
 use crate::definition::AttentionTileSize;
 use crate::definition::{
     AttentionBlueprint, AttentionDefinition, AttentionElems, AttentionPartitionSize,
-    AttentionSetupError, AttentionStageSize, AttentionTilingScheme, HypercubeConfig,
+    AttentionSetupError, AttentionStageSize, AttentionTilingScheme, HypercubeBlueprint,
 };
 use crate::launch::RoutineStrategy;
 use crate::routines::{DeviceSettings, LaunchInfo};
@@ -99,7 +99,7 @@ fn blueprint(
             };
 
             let blueprint = AttentionBlueprint {
-                hypercube_blueprint: HypercubeConfig {},
+                hypercube_blueprint: HypercubeBlueprint {},
                 plane_dim: launch_settings.plane_dim,
                 reuse_key_value: false,
                 two_rows_in_array_tile: false,

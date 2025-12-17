@@ -1,10 +1,10 @@
 use cubek_matmul::definition::TileSize;
 
-use crate::definition::{AttentionDims, AttentionLineSizes, HypercubeConfig};
+use crate::definition::{AttentionDims, AttentionLineSizes, HypercubeBlueprint};
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct AttentionBlueprint {
-    pub hypercube_blueprint: HypercubeConfig,
+    pub hypercube_blueprint: HypercubeBlueprint,
 
     pub tiling_scheme: AttentionTilingScheme,
     pub plane_dim: u32,

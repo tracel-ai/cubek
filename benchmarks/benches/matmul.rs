@@ -8,15 +8,13 @@ use cubecl::{
 use cubek::{
     matmul::{
         self as matmul,
-        components::{batch::HypercubeSelection, stage::PartitionBuffering},
+        components::stage::PartitionBuffering,
         definition::{
+            CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection,
             LoadingPrecomputeStrategy, MatmulElems, MatmulPrecision, MatmulSelection, StageSize,
             TilingScheme,
         },
-        launch::{
-            AcceleratedTileKind, AsyncPartialReadingStrategy, MatmulInputHandle,
-            PartialReadingStrategy, ReadingStrategy, Strategy,
-        },
+        launch::{MatmulInputHandle, Strategy},
         routines::{
             BlueprintStrategy, TileSizeSelection, double_buffering::DoubleBufferingArgs,
             double_unit::DoubleUnitSelectionArgs, ordered_double_buffering::OrderedSelectionArgs,
@@ -241,10 +239,8 @@ fn run_grid_search<R: Runtime, MP: MatmulPrecision>() {
                     .build()
                     .unwrap();
                 let hypercube = HypercubeSelection::builder(&tiling)
-                    .global_order(cubek::matmul::components::batch::GlobalOrderSelection::Default)
-                    .cube_count_plan(
-                        cubek::matmul::components::batch::CubeCountPlanSelection::Flattened,
-                    )
+                    .global_order(GlobalOrderSelection::Default)
+                    .cube_count_plan(CubeCountPlanSelection::Flattened)
                     .build();
                 let selection = MatmulSelection::builder(tiling, plane_dim)
                     .plane_dim(plane_dim)
@@ -254,11 +250,7 @@ fn run_grid_search<R: Runtime, MP: MatmulPrecision>() {
                     .build();
                 let result = run_one::<R, MP>(
                     Default::default(),
-                    Strategy::Simple {
-                        read_strategy: ReadingStrategy::Cyclic,
-                        selection: BlueprintStrategy::Forced(selection.clone()),
-                        tile_kind: AcceleratedTileKind::Cmma,
-                    },
+                    Strategy::SimpleCyclicCmma(BlueprintStrategy::Forced(selection.clone())),
                     (4096, 10, 64, 10),
                     (false, false),
                 );
@@ -356,54 +348,41 @@ fn run_algos_wmma<R: Runtime, MP: MatmulPrecision>() {
     println!("Simple");
     run::<R, MP>(
         Default::default(),
-        Strategy::Simple {
-            read_strategy: ReadingStrategy::Cyclic,
-            selection: BlueprintStrategy::Inferred(SimpleArgs { multi_rows: false }),
-            tile_kind: AcceleratedTileKind::Cmma,
-        },
+        Strategy::SimpleCyclicCmma(BlueprintStrategy::Inferred(SimpleArgs {
+            multi_rows: false,
+        })),
     );
 
     println!("Simple multi rows");
     run::<R, MP>(
         Default::default(),
-        Strategy::Simple {
-            read_strategy: ReadingStrategy::Cyclic,
-            selection: BlueprintStrategy::Inferred(SimpleArgs { multi_rows: true }),
-            tile_kind: AcceleratedTileKind::Cmma,
-        },
+        Strategy::SimpleCyclicCmma(BlueprintStrategy::Inferred(SimpleArgs { multi_rows: true })),
     );
 
     println!("Double Buffering");
     run::<R, MP>(
         Default::default(),
-        Strategy::DoubleBuffering {
-            read_strategy: PartialReadingStrategy::Tilewise,
-            selection: BlueprintStrategy::Inferred(DoubleBufferingArgs { specialized: false }),
-            tile_kind: AcceleratedTileKind::Cmma,
-        },
+        Strategy::DoubleTilewiseCmma(BlueprintStrategy::Inferred(DoubleBufferingArgs {
+            specialized: false,
+        })),
     );
 
     println!("Double Buffering Specialized");
     run::<R, MP>(
         Default::default(),
-        Strategy::DoubleBuffering {
-            read_strategy: PartialReadingStrategy::Tilewise,
-            selection: BlueprintStrategy::Inferred(DoubleBufferingArgs { specialized: true }),
-            tile_kind: AcceleratedTileKind::Cmma,
-        },
+        Strategy::DoubleTilewiseCmma(BlueprintStrategy::Inferred(DoubleBufferingArgs {
+            specialized: true,
+        })),
     );
 
     println!("Double Buffering Ordered");
     run::<R, MP>(
         Default::default(),
-        Strategy::OrderedDoubleBuffering {
-            selection: BlueprintStrategy::Inferred(OrderedSelectionArgs {
-                row_count: Some(8),
-                rows_per_plane: Some(2),
-                partition_k: Some(2),
-            }),
-            tile_kind: AcceleratedTileKind::Cmma,
-        },
+        Strategy::OrderedDoubleCmma(BlueprintStrategy::Inferred(OrderedSelectionArgs {
+            row_count: Some(8),
+            rows_per_plane: Some(2),
+            partition_k: Some(2),
+        })),
     );
 }
 
@@ -434,11 +413,7 @@ fn run_algos_mma<R: Runtime, MP: MatmulPrecision>() {
     println!("Specialized Strided");
     run::<R, MP>(
         Default::default(),
-        Strategy::Specialized {
-            read_strategy: AsyncPartialReadingStrategy::Strided,
-            selection: BlueprintStrategy::Inferred(()),
-            tile_kind: AcceleratedTileKind::Mma,
-        },
+        Strategy::SpecializedStridedMma(BlueprintStrategy::Inferred(())),
     );
 }
 
