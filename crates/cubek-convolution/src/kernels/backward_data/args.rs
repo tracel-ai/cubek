@@ -2,7 +2,6 @@ use cubecl::{
     Runtime,
     client::ComputeClient,
     prelude::*,
-    server::TensorMapMeta,
     std::{
         CubeOptionArgs, FastDivmodArgs,
         tensor::{
@@ -18,7 +17,7 @@ use cubek_matmul::{
     components::{
         global::{
             GlobalConfig as _,
-            memory::{NoopLayout, NoopLayoutLaunch, Transpose, TransposeLaunch},
+            memory::{NoopLayout, NoopLayoutLaunch},
         },
         stage::StageConfig as _,
     },
@@ -36,8 +35,8 @@ use crate::components::{
         args::RuntimeArgsLaunch,
         layout::{
             Im2colLayout, Im2colLayoutLaunch, NhwcCheck, NhwcLayout, NhwcLayoutLaunch, OutLayout,
-            OutLayoutLaunch, TmaIm2colLayout, TmaIm2colLayoutLaunch, TmaOutGradLayout,
-            TmaOutGradLayoutLaunch, WeightLayout, WeightLayoutLaunch,
+            OutLayoutLaunch, TmaIm2colLayout, TmaIm2colLayoutLaunch, WeightLayout,
+            WeightLayoutLaunch,
         },
     },
 };
@@ -82,7 +81,7 @@ impl ConcreteArgs for TensorMapArgs {
         selection: &MatmulSelection,
         _dtypes: &MatmulElems,
     ) -> ConvolutionProblem {
-        let channel_align = selection.tiling_scheme.tile_size.n() as usize;
+        let channel_align = selection.tiling_scheme.tile_size.k() as usize;
         let padded_channels = problem.out_channels.next_multiple_of(channel_align);
         let shape_k = problem.kernel_size.iter().product::<u32>() as usize * padded_channels;
 
@@ -216,24 +215,25 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory
 {
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
-        input: &'a MatmulInputHandleRef<'a, R>,
         out_grad: &'a MatmulInputHandleRef<'a, R>,
+        weights: &'a MatmulInputHandleRef<'a, R>,
         selection: &MatmulSelection,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
         config: impl ConvGemmConfig,
         dtypes: &MatmulElems,
     ) -> (Self::RuntimeArg<'a, R>, RuntimeArgsLaunch<'a, R>) {
-        type LhsLayout = Transpose<TmaOutGradLayout>;
-        type RhsLayout = TmaIm2colLayout;
+        type LhsLayout = TmaIm2colLayout;
+        type RhsLayout = WeightLayout;
 
         let tiling_scheme = selection.tiling_scheme;
-        let stage_k = tiling_scheme.elements_per_stage_along_k();
-        let tile_size_m = tiling_scheme.tile_size.m;
-        let tile_size_n = tiling_scheme.tile_size.n;
+        let stage_m = tiling_scheme.elements_per_stage_along_m();
+        let stage_n = tiling_scheme.elements_per_stage_along_n();
+        let tile_size_k = tiling_scheme.tile_size.k;
 
-        let dim_c = out_grad.shape().len() - 1;
-        let stage_size_lhs = vec![stage_k, tile_size_m];
+        let mut stage_size_rhs = vec![1; problem.dimensionality.num_dims() as usize];
+        stage_size_rhs.insert(0, tile_size_k);
+        stage_size_rhs.push(stage_n);
 
         // f32 gets remapped to tf32 for the tensor map just to ensure CUDA loads them correctly.
         // It shouldn't matter, but it's better to be safe.
@@ -242,11 +242,6 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory
         } else {
             *dtypes.lhs_stage
         };
-        let rhs_elem = if *dtypes.rhs_stage == f32::as_type_native_unchecked() {
-            tf32::as_type_native_unchecked()
-        } else {
-            *dtypes.rhs_stage
-        };
 
         let mut elem_stride = vec![1; 2 + problem.stride.len()];
 
@@ -254,52 +249,28 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory
             elem_stride[i + 1] = *stride as usize;
         }
 
-        let lhs_shape = vec![problem.k, problem.m];
-        let lhs_strides = vec![
-            out_grad.data().strides[dim_c - 1],
-            out_grad.data().strides[dim_c],
-        ];
-
-        let lhs_meta = TensorMapMeta {
-            format: TensorMapFormat::Tiled(TiledArgs {
-                tile_size: stage_size_lhs,
-            }),
-            rank: 2,
-            shape: lhs_shape,
-            strides: lhs_strides,
-            elem_stride: vec![1, 1],
-            interleave: TensorMapInterleave::None,
-            swizzle: TensorMapSwizzle::None,
-            prefetch: TensorMapPrefetch::None,
-            oob_fill: OobFill::Zero,
-            storage_ty: lhs_elem,
-        };
-
-        let lhs = TensorMapArg {
-            tensor: out_grad.data().as_tensor_arg(line_sizes.lhs),
-            metadata: lhs_meta,
-            _kind: core::marker::PhantomData,
-        };
-
-        let rhs = TensorMapArg::new(
+        let lhs = TensorMapArg::new(
             Im2colArgs {
-                pixel_box_lower_corner: calculate_lower_corner(&problem.padding),
-                pixel_box_upper_corner: calculate_upper_corner(
-                    &problem.padding,
-                    &problem.kernel_size,
-                    &problem.dilation,
-                ),
-                channels_per_pixel: tile_size_n,
-                pixels_per_column: stage_k,
+                pixel_box_lower_corner: calculate_lower_corner(problem),
+                pixel_box_upper_corner: calculate_upper_corner(problem),
+                channels_per_pixel: tile_size_k,
+                pixels_per_column: stage_m,
             },
-            input.data().as_tensor_arg(line_sizes.rhs),
-            rhs_elem,
+            out_grad.data().as_tensor_arg(line_sizes.lhs),
+            lhs_elem,
         )
         .with_elem_stride(elem_stride);
 
+        let rhs = TensorMapArg::new(
+            TiledArgs {
+                tile_size: stage_size_rhs,
+            },
+            weights.data().as_tensor_arg(line_sizes.rhs),
+            *dtypes.rhs_global,
+        );
+
         let padded_channels = problem.padded_channels as u32;
         let shape_k = problem.k as u32;
-        let shape_n = problem.n as u32;
 
         let shape_out = problem
             .out_shape
@@ -307,32 +278,29 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory
             .map(|it| FastDivmodArgs::new(client, *it as u32))
             .collect();
 
-        // Im2col needs extra checking because if `n` is OOB it wraps around the kernel and can load
+        // Im2col needs extra checking because if `k` is OOB it wraps around the kernel and can load
         // in-bounds but not in-kernel elements. Other TMA layouts are always outside the shape if
         // any matrix dim is out of bounds.
-        let stages_rhs = config.stage_config().rhs_smem_config().num_stages;
-        let stages_size_n = selection.tiling_scheme.elements_per_stage_along_n() * stages_rhs;
-
-        let lhs_layout = TmaOutGradLayoutLaunch::new();
-        let lhs_layout = TransposeLaunch::new(lhs_layout);
-
-        let rhs_layout = TmaIm2colLayoutLaunch::new(
+        let stages_lhs = config.stage_config().lhs_smem_config().num_stages;
+        let stages_size_k = selection.tiling_scheme.elements_per_stage_along_k() * stages_lhs;
+        let lhs_layout = TmaIm2colLayoutLaunch::new(
             shape_out,
             FastDivmodArgs::new(client, padded_channels),
             ConvolutionParams::from_problem(problem),
-            !shape_n.is_multiple_of(stages_size_n),
+            !shape_k.is_multiple_of(stages_size_k),
         );
+        let rhs_layout = WeightLayoutLaunch::from_args(client, problem, Default::default());
 
         let inputs = TensorMapInputsLaunch::new(
-            ViewArg::new_tensor_map_tiled::<LhsLayout>(lhs, lhs_layout),
-            ViewArg::new_tensor_map_im2col::<RhsLayout, _, _>(rhs, rhs_layout),
+            ViewArg::new_tensor_map_im2col::<LhsLayout, _, _>(lhs, lhs_layout),
+            ViewArg::new_tensor_map_tiled::<RhsLayout>(rhs, rhs_layout),
             CubeOptionArgs::None,
             CubeOptionArgs::None,
         );
 
         let runtime_args = RuntimeArgsLaunch::new(
             ScalarArg::new(shape_k),
-            ScalarArg::new(problem.channels as u32),
+            ScalarArg::new(problem.out_channels as u32),
             FastDivmodArgs::new(client, padded_channels),
             config.operation(),
         );
@@ -341,17 +309,24 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory
     }
 }
 
-fn calculate_lower_corner(padding: &[i32]) -> Vec<i32> {
-    padding.iter().map(|padding| -*padding).collect()
+#[allow(clippy::needless_range_loop)]
+fn calculate_lower_corner(problem: &ConvolutionProblem) -> Vec<i32> {
+    let mut out = vec![0; problem.padding.len()];
+    for i in 0..problem.padding.len() {
+        out[i] =
+            problem.padding[i] - (problem.kernel_size[i] as i32 - 1) * problem.dilation[i] as i32;
+    }
+    out
 }
 
-fn calculate_upper_corner(padding: &[i32], kernel_size: &[u32], dilation: &[u32]) -> Vec<i32> {
-    padding
-        .iter()
-        .zip(kernel_size)
-        .zip(dilation)
-        .map(|((padding, kernel_size), dilation)| {
-            *padding - (*kernel_size - 1) as i32 * *dilation as i32
-        })
-        .collect()
+#[allow(clippy::needless_range_loop)]
+fn calculate_upper_corner(problem: &ConvolutionProblem) -> Vec<i32> {
+    let mut out = vec![0; problem.padding.len()];
+    for i in 0..problem.padding.len() {
+        out[i] = problem.padding[i]
+            - (problem.kernel_size[i] as i32 - 1) * problem.dilation[i] as i32
+            + problem.in_shape[i] as i32
+            - problem.out_shape[i] as i32;
+    }
+    out
 }

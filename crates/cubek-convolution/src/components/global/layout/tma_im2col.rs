@@ -6,7 +6,7 @@ use cubecl::{
     },
 };
 
-use crate::components::{ConvolutionParams, global::layout::NhwcCoords};
+use crate::components::{ConvolutionOperation, ConvolutionParams, global::layout::NhwcCoords};
 
 /// Im2col layout, producing both the position and offset
 #[derive(CubeType, CubeLaunch)]
@@ -52,8 +52,19 @@ impl Layout for TmaIm2colLayout {
 
         #[unroll]
         for dim in 0..spatial_dims {
-            let offs = spatial_offsets.index(dim) * comptime![params.stride[dim as usize]];
-            let offs = offs as i32 - comptime![params.padding[dim as usize]];
+            let dim = comptime![dim as usize];
+            let stride = comptime!(params.stride[dim] as i32);
+            let pad = comptime!(params.padding[dim]);
+            let out_pos = *spatial_offsets.index(comptime![dim as u32]) as i32;
+            let offs = match params.operation {
+                ConvolutionOperation::Forward | ConvolutionOperation::BackwardWeight => {
+                    out_pos * stride - pad
+                }
+                ConvolutionOperation::ForwardTransposed | ConvolutionOperation::BackwardData => {
+                    let ksize = comptime!(params.kernel_size[dim] as i32);
+                    (out_pos + pad - comptime!((ksize - 1) * params.dilation[dim] as i32)) / stride
+                }
+            };
             in_offs.push(offs);
         }
 
@@ -72,7 +83,17 @@ impl Layout for TmaIm2colLayout {
         for i in 0..k_rank {
             let dim = comptime![(k_rank - i - 1) as usize];
             let k_size = comptime!(params.kernel_size[dim]);
-            k_offs.push((k_idx % k_size) * comptime!(params.dilation[dim]));
+            let k_pos = k_idx % k_size;
+
+            let k_pos = match params.operation {
+                ConvolutionOperation::Forward | ConvolutionOperation::BackwardWeight => k_pos,
+                ConvolutionOperation::ForwardTransposed | ConvolutionOperation::BackwardData => {
+                    // Since kernels are always positive, we need to subtract the bottom right
+                    // corner (see position above), then add the inverted index to it.
+                    k_size - k_pos - 1
+                }
+            };
+            k_offs.push(k_pos * comptime!(params.dilation[dim]));
             k_idx /= k_size;
         }
 

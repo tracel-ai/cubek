@@ -140,8 +140,8 @@ pub(crate) fn conv_cpu_reference<P: TestPrecision>(
 where
 {
     let n = problem.batches;
-    let h = problem.shape[0];
-    let w = problem.shape[1];
+    let h = problem.in_shape[0];
+    let w = problem.in_shape[1];
     let c = problem.channels;
 
     let out_h = problem.out_shape[0];

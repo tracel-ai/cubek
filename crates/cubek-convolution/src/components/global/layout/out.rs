@@ -113,7 +113,7 @@ impl<'a, R: Runtime> OutLayoutLaunch<'a, R> {
         config: GlobalMemoryConfig,
     ) -> Self {
         let shape = problem
-            .shape
+            .in_shape
             .iter()
             .map(|s| FastDivmodArgs::new(client, *s as u32))
             .collect();

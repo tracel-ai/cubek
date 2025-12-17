@@ -185,7 +185,7 @@ where
         dilation: dilation.iter().map(|it| *it as u32).collect(),
 
         batches: n,
-        shape: in_shape.to_vec(),
+        in_shape: in_shape.to_vec(),
         out_shape: out_shape.to_vec(),
         channels: c,
         out_channels: out_c,

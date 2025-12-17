@@ -41,6 +41,8 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
 
     match (config.stage_ident, operation) {
         (StageIdent::Lhs, ConvolutionOperation::Forward)
+        | (StageIdent::Lhs, ConvolutionOperation::ForwardTransposed)
+        | (StageIdent::Lhs, ConvolutionOperation::BackwardData)
         | (StageIdent::Rhs, ConvolutionOperation::BackwardWeight) => {
             // im2col can give negative spatial indices so need to do a full bounds check on Lhs
             slice_len_global *= u32::cast_from(view.is_in_bounds(pos));
@@ -54,6 +56,8 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
             }
         }
         (StageIdent::Rhs, ConvolutionOperation::Forward)
+        | (StageIdent::Rhs, ConvolutionOperation::ForwardTransposed)
+        | (StageIdent::Rhs, ConvolutionOperation::BackwardData)
         | (StageIdent::Out, ConvolutionOperation::BackwardWeight) => {
             if config.gmem_config.check_row_bounds {
                 let in_c = runtime_args.padded_channels.modulo(k_offset + pos.0);

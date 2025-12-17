@@ -61,7 +61,7 @@ pub fn test_algo<A: Algorithm, P: TestPrecision, R: Runtime>(
         padding,
         dilation,
         batches,
-        shape: vec![problem.h, problem.w],
+        in_shape: vec![problem.h, problem.w],
         channels: problem.c,
         out_channels: problem.out_c,
         padded_channels: problem.c,

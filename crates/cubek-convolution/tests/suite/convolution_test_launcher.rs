@@ -232,8 +232,8 @@ pub(crate) fn shape(problem: &ConvolutionProblem, ident: MatmulIdent) -> Vec<usi
     match ident {
         MatmulIdent::Lhs => vec![
             problem.batches,
-            problem.shape[0],
-            problem.shape[1],
+            problem.in_shape[0],
+            problem.in_shape[1],
             problem.channels,
         ],
         MatmulIdent::Rhs => vec![

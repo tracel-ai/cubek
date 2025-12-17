@@ -29,7 +29,7 @@ pub struct ConvolutionProblem {
     pub batches: usize,
     pub channels: usize,
     pub out_channels: usize,
-    pub shape: Vec<usize>,
+    pub in_shape: Vec<usize>,
     pub out_shape: Vec<usize>,
 
     /// Channels after applying loader-specific padding
