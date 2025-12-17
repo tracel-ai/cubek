@@ -3,14 +3,14 @@ use cubecl::prelude::*;
 use crate::definition::{
     MatmulProblem,
     hypercube::{
-        GlobalOrder, HypercubeConfig, HypercubeSelection, SmAllocation, global_order::swizzle,
+        GlobalOrder, HypercubeBlueprint, HypercubeConfig, SmAllocation, global_order::swizzle,
     },
 };
 
 #[derive(Default, Copy, Clone, Debug, Hash, PartialEq, Eq)]
-/// Front-facing configuration when crafting a MatmulSelection
+/// Front-facing configuration when crafting a TilingBlueprint
 /// Allows choosing a strategy before knowing actual values
-pub enum CubeCountPlanSelection {
+pub enum CubeCountPlanBlueprint {
     #[default]
     /// X: num cubes in m, Y: num cubes in n, Z: num cubes in batch
     FromProblem,
@@ -35,7 +35,7 @@ pub enum CubeCountPlanSelection {
 /// Because this struct depends on the problem size, it is simplified into
 /// [CubeCountPlanConfig] to be injected as comptime in the kernel.
 ///
-/// Refer to [CubeCountPlanSelection] for more details
+/// Refer to [CubeCountPlanBlueprint] for more details
 pub enum CubeCountPlan {
     FromProblem {
         m_cubes: u32,
@@ -95,8 +95,8 @@ impl CubeCountPlan {
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 /// Config derived from CubeCountPlan to be used comptime in kernels
 ///
-/// Refer to [CubeCountPlanSelection] for more details
-pub enum CubeCountPlanBlueprint {
+/// Refer to [CubeCountPlanBlueprint] for more details
+pub enum CubeCountPlanConfig {
     FromProblem,
 
     Sm {
@@ -143,7 +143,7 @@ pub enum CubeCountInput {
 impl CubeCountPlan {
     // Will check if the wanted cube count plan is possible, otherwise will fallback to spread
     pub fn from_selection(
-        selection: &HypercubeSelection,
+        selection: &HypercubeBlueprint,
         problem: &MatmulProblem,
         max_cube_count: CubeCount,
     ) -> CubeCountPlan {
@@ -157,7 +157,7 @@ impl CubeCountPlan {
         let batch_cubes = (problem.num_batches() as u32).div_ceil(selection.cube_span.batch);
 
         let plan = match selection.cube_count_plan_selection {
-            CubeCountPlanSelection::FromProblem => {
+            CubeCountPlanBlueprint::FromProblem => {
                 if m_cubes > max_x || n_cubes > max_y || batch_cubes > max_z {
                     None
                 } else {
@@ -168,7 +168,7 @@ impl CubeCountPlan {
                     })
                 }
             }
-            CubeCountPlanSelection::Sm {
+            CubeCountPlanBlueprint::Sm {
                 cubes_first,
                 num_sms,
                 sm_usage,
@@ -193,7 +193,7 @@ impl CubeCountPlan {
                     })
                 }
             }
-            CubeCountPlanSelection::Flattened => {
+            CubeCountPlanBlueprint::Flattened => {
                 if m_cubes * n_cubes * batch_cubes >= max_x {
                     None
                 } else {
@@ -204,7 +204,7 @@ impl CubeCountPlan {
                     })
                 }
             }
-            CubeCountPlanSelection::Spread => None,
+            CubeCountPlanBlueprint::Spread => None,
         };
 
         plan.unwrap_or_else(|| {
@@ -230,12 +230,12 @@ impl CubeCountPlan {
         let batch_cubes = (problem.num_batches() as u32).div_ceil(config.cube_span.batch);
 
         match config.cube_count_plan_blueprint {
-            CubeCountPlanBlueprint::FromProblem => CubeCountPlan::FromProblem {
+            CubeCountPlanConfig::FromProblem => CubeCountPlan::FromProblem {
                 m_cubes,
                 n_cubes,
                 batch_cubes,
             },
-            CubeCountPlanBlueprint::Sm {
+            CubeCountPlanConfig::Sm {
                 cubes_first,
                 num_sms,
                 sm_usage,
@@ -254,49 +254,49 @@ impl CubeCountPlan {
                     sm_usage,
                 }
             }
-            CubeCountPlanBlueprint::Flattened => CubeCountPlan::Flattened {
+            CubeCountPlanConfig::Flattened => CubeCountPlan::Flattened {
                 m_cubes,
                 n_cubes,
                 batch_cubes,
             },
-            CubeCountPlanBlueprint::Spread { .. } => {
+            CubeCountPlanConfig::Spread { .. } => {
                 spread_cube_count_plan(m_cubes, n_cubes, batch_cubes, *max_x, *max_y, *max_z)
             }
         }
     }
 }
 
-impl CubeCountPlanBlueprint {
+impl CubeCountPlanConfig {
     /// Whether the CubeCount will have more cubes than strictly necessary.
     pub fn can_yield_extra_cubes(&self) -> bool {
         match self {
-            CubeCountPlanBlueprint::FromProblem | CubeCountPlanBlueprint::Flattened => false,
-            CubeCountPlanBlueprint::Sm {
+            CubeCountPlanConfig::FromProblem | CubeCountPlanConfig::Flattened => false,
+            CubeCountPlanConfig::Sm {
                 can_yield_extra_cubes,
                 ..
             } => *can_yield_extra_cubes,
-            CubeCountPlanBlueprint::Spread {
+            CubeCountPlanConfig::Spread {
                 can_yield_extra_cubes,
             } => *can_yield_extra_cubes,
         }
     }
 
-    pub(crate) fn from_cube_count_plan(cube_count_plan: CubeCountPlan) -> CubeCountPlanBlueprint {
+    pub(crate) fn from_cube_count_plan(cube_count_plan: CubeCountPlan) -> CubeCountPlanConfig {
         match cube_count_plan {
-            CubeCountPlan::FromProblem { .. } => CubeCountPlanBlueprint::FromProblem,
+            CubeCountPlan::FromProblem { .. } => CubeCountPlanConfig::FromProblem,
             CubeCountPlan::Sm {
                 cubes_first,
                 num_sms,
                 sm_usage,
                 ..
-            } => CubeCountPlanBlueprint::Sm {
+            } => CubeCountPlanConfig::Sm {
                 cubes_first,
                 num_sms,
                 sm_usage,
                 can_yield_extra_cubes: cube_count_plan.can_yield_extra_cubes(),
             },
-            CubeCountPlan::Flattened { .. } => CubeCountPlanBlueprint::Flattened,
-            CubeCountPlan::Spread { .. } => CubeCountPlanBlueprint::Spread {
+            CubeCountPlan::Flattened { .. } => CubeCountPlanConfig::Flattened,
+            CubeCountPlan::Spread { .. } => CubeCountPlanConfig::Spread {
                 can_yield_extra_cubes: cube_count_plan.can_yield_extra_cubes(),
             },
         }

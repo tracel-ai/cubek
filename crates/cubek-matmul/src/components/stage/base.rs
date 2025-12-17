@@ -9,7 +9,7 @@ use crate::components::{
     stage::{NumStages, PartitionScheduler},
     tile::io::TileKind,
 };
-use crate::definition::MatmulSelection;
+use crate::definition::TilingBlueprint;
 use crate::definition::{
     AccS, LhsS, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError,
     RhsS,
@@ -47,10 +47,10 @@ pub trait StageMatmulFamily: Send + Sync + 'static {
     ///
     /// This function may return an error if the configuration cannot be supported on the current runtime.
     #[allow(clippy::too_many_arguments)]
-    fn setup<R: Runtime>(
+    fn expand_config<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
-        selection: &MatmulSelection,
+        selection: &TilingBlueprint,
         line_sizes: &MatmulLineSizes,
         num_stages: NumStages,
         max_global_readers: Option<MaxGlobalReaderPlanes>,

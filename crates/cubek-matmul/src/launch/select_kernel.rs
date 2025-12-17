@@ -3,8 +3,7 @@ use crate::definition::MatmulElems;
 use crate::definition::MatmulLineSizes;
 use crate::definition::MatmulProblem;
 use crate::definition::MatmulSetupError;
-use crate::launch::MatmulInputHandleRef;
-use crate::launch::launch2::launch_with_config;
+use crate::launch::handle::MatmulInputHandleRef;
 use crate::launch::{
     ConcreteInputsFactory, ConcreteOutputFactory, InputArg, InputRuntimeArg, MatmulArgs, OutputArg,
     OutputRuntimeArg,
@@ -25,7 +24,7 @@ pub fn launch_kernel_concrete<MA: MatmulArgs, R: Runtime, A: Routine>(
     problem: MatmulProblem,
     line_sizes: MatmulLineSizes,
     plane_dim: u32,
-    selection: &BlueprintStrategy<A>,
+    blueprint_strategy: &BlueprintStrategy<A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError>
 where
@@ -50,19 +49,19 @@ where
         dtypes.acc_stage.dtype = dtypes.acc_global.dtype;
     }
 
-    let blueprint = match selection {
+    let blueprint = match blueprint_strategy {
         BlueprintStrategy::Forced(selection) => selection.clone(),
         BlueprintStrategy::Inferred(args) => {
             A::prepare(client, &problem, plane_dim, &view_line_sizes, args, dtypes)?
         }
     };
-    let config = A::setup(client, &problem, &blueprint, &view_line_sizes, dtypes)?;
+    let config = A::expand_config(client, &problem, &blueprint, &view_line_sizes, dtypes)?;
     let cube_count_plan = config.cube_count_plan(
         &problem,
         &client.properties().hardware.max_cube_count.clone(),
     );
 
-    launch_with_config::<MA, R, A>(
+    A::launch::<MA, R>(
         client,
         config.cube_dim(),
         cube_count_plan.resolve(),
@@ -118,14 +117,14 @@ pub fn launch_kernel_virtual<'a, MA: MatmulArgs, R: Runtime, A: Routine>(
             A::prepare(client, &problem, plane_dim, &view_line_sizes, args, dtypes)?
         }
     };
-    let config = A::setup(client, &problem, &selection, &view_line_sizes, dtypes)?;
+    let config = A::expand_config(client, &problem, &selection, &view_line_sizes, dtypes)?;
 
     let cube_count_plan = config.cube_count_plan(
         &problem,
         &client.properties().hardware.max_cube_count.clone(),
     );
 
-    launch_with_config::<MA, R, A>(
+    A::launch::<MA, R>(
         client,
         config.cube_dim(),
         cube_count_plan.resolve(),

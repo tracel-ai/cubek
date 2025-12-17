@@ -3,7 +3,7 @@ use crate::suite::layered::matmul_test_launcher::test_matmul_algorithm;
 use cubecl::Runtime;
 use cubecl::TestRuntime;
 use cubek_matmul::definition::MatmulElems;
-use cubek_matmul::definition::MatmulSelection;
+use cubek_matmul::definition::TilingBlueprint;
 
 #[test]
 pub fn test() {
@@ -13,7 +13,7 @@ pub fn test() {
         .build()
         .unwrap();
     let plane_dim = client.properties().hardware.plane_size_max;
-    let selection_builder = MatmulSelection::builder(tiling_scheme, plane_dim);
+    let selection_builder = TilingBlueprint::builder(tiling_scheme, plane_dim);
     let matmul_selection = selection_builder
         .shared_swizzle(swizzle())
         .hypercube_config(hypercube_selection(&tiling_scheme))

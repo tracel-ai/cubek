@@ -6,7 +6,7 @@ use cubek_convolution::{
     forward::args::{ConcreteInputsFactory, ConcreteOutputFactory},
 };
 use cubek_convolution::{forward::args::ConcreteArgs, kernels::forward::algorithm::Algorithm};
-use cubek_matmul::definition::{MatmulSelection, MatrixLayout};
+use cubek_matmul::definition::{MatrixLayout, TilingBlueprint};
 use cubek_matmul::launch::{InputArg, OutputArg};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -19,7 +19,7 @@ pub struct ConvolutionSize {
 }
 
 pub fn test_algo<A: Algorithm, P: TestPrecision, R: Runtime>(
-    selection: MatmulSelection,
+    selection: TilingBlueprint,
     problem: ConvolutionSize,
 ) where
     A::Args: ConcreteArgs,

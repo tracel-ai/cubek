@@ -9,7 +9,7 @@ use cubek_matmul::launch::ConcreteOutputFactory as _;
 
 use cubek_matmul::components::batch::{BatchConfig, BatchMatmulFamily};
 use cubek_matmul::definition::MatmulElems;
-use cubek_matmul::definition::{MatmulProblem, MatmulSelection};
+use cubek_matmul::definition::{MatmulProblem, TilingBlueprint};
 use cubek_matmul::launch::ConcreteInputsFactory;
 use cubek_matmul::launch::MatmulInputHandleRef;
 use cubek_matmul::launch::TensorArgs;
@@ -33,19 +33,16 @@ pub enum InputRepresentation {
 #[allow(unused)]
 /// Test the correctness of the specified Matmul on the given device,
 /// against a naive CPU implementation over the given problem
-pub fn test_matmul_algorithm<A: Routine<Blueprint = MatmulSelection>>(
+pub fn test_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
     client: ComputeClient<TestRuntime>,
     mut problem: MatmulProblem,
     selection: A::Blueprint,
     dtypes: MatmulElems,
     input_representation: InputRepresentation,
 ) {
-    let lhs_shape = problem.shape(MatmulIdent::Lhs);
-    let rhs_shape = problem.shape(MatmulIdent::Rhs);
-
     let (lhs, lhs_data) = TestInput::random(
         client.clone(),
-        lhs_shape.clone(),
+        problem.lhs_shape.clone(),
         *dtypes.lhs_global,
         1234,
         Distribution::Uniform(-1., 1.),
@@ -55,7 +52,7 @@ pub fn test_matmul_algorithm<A: Routine<Blueprint = MatmulSelection>>(
 
     let (rhs, rhs_data) = TestInput::random(
         client.clone(),
-        rhs_shape.clone(),
+        problem.rhs_shape.clone(),
         *dtypes.rhs_global,
         5678,
         Distribution::Uniform(-1., 1.),
@@ -65,7 +62,7 @@ pub fn test_matmul_algorithm<A: Routine<Blueprint = MatmulSelection>>(
 
     let out = TestInput::zeros(
         client.clone(),
-        problem.shape(MatmulIdent::Out),
+        problem.out_shape.clone(),
         *dtypes.acc_global,
         layout_to_stride_spec(MatrixLayout::RowMajor),
     )
@@ -93,7 +90,7 @@ pub fn test_matmul_algorithm<A: Routine<Blueprint = MatmulSelection>>(
 }
 
 /// Returns whether execution succeeded
-pub fn launch_matmul_algorithm<A: Routine<Blueprint = MatmulSelection>>(
+pub fn launch_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
     client: &ComputeClient<TestRuntime>,
     problem: &MatmulProblem,
     selection: A::Blueprint,
@@ -123,7 +120,7 @@ pub fn launch_matmul_algorithm<A: Routine<Blueprint = MatmulSelection>>(
             .unwrap(),
     };
 
-    let config = match A::setup(client, problem, &selection, &line_sizes, dtypes) {
+    let config = match A::expand_config(client, problem, &selection, &line_sizes, dtypes) {
         Ok(config) => config,
         Err(err) => {
             if current_test_mode().should_fail_on_test_compilation_fail() {

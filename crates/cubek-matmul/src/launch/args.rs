@@ -20,8 +20,8 @@ use crate::components::{
     },
     stage::SwizzleMode,
 };
-use crate::definition::{self, MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection};
-use crate::launch::MatmulInputHandleRef;
+use crate::definition::{self, MatmulElems, MatmulLineSizes, MatmulProblem, TilingBlueprint};
+use crate::launch::handle::MatmulInputHandleRef;
 use crate::routines::Routine;
 
 /// Input argument
@@ -331,7 +331,7 @@ pub struct TensorMapInputs<Lhs: Numeric, Rhs: Numeric, EO: Numeric> {
     pub acc_batch: CubeOption<VirtualLayout<Coords1d, Coords1d>>,
 }
 
-impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<Blueprint = MatmulSelection>>
+impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<Blueprint = TilingBlueprint>>
     ConcreteInputsFactory<A> for TensorMapInputs<Lhs, Rhs, EO>
 {
     fn create<'a, R: Runtime>(

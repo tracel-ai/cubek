@@ -22,7 +22,7 @@ use cubek_matmul::{
         },
         stage::StageConfig as _,
     },
-    definition::{MatmulElems, MatmulLineSizes, MatmulSelection},
+    definition::{MatmulElems, MatmulLineSizes, TilingBlueprint},
     launch::{
         MatmulArgs, MatmulInputHandleRef, TensorArgs, TensorInputs, TensorInputsLaunch,
         TensorMapArgs, TensorMapInputs, TensorMapInputsLaunch, TensorOutput, TensorOutputLaunch,
@@ -50,7 +50,7 @@ pub trait ConcreteArgs:
     fn adjust_problem<R: Runtime>(
         client: &ComputeClient<R>,
         problem: ConvolutionProblem,
-        selection: &MatmulSelection,
+        selection: &TilingBlueprint,
         dtypes: &MatmulElems,
     ) -> ConvolutionProblem;
 }
@@ -59,7 +59,7 @@ impl ConcreteArgs for TensorArgs {
     fn adjust_problem<R: Runtime>(
         client: &ComputeClient<R>,
         mut problem: ConvolutionProblem,
-        _selection: &MatmulSelection,
+        _selection: &TilingBlueprint,
         dtypes: &MatmulElems,
     ) -> ConvolutionProblem {
         let load_width = client.properties().hardware.load_width;
@@ -78,7 +78,7 @@ impl ConcreteArgs for TensorMapArgs {
     fn adjust_problem<R: Runtime>(
         _client: &ComputeClient<R>,
         mut problem: ConvolutionProblem,
-        selection: &MatmulSelection,
+        selection: &TilingBlueprint,
         _dtypes: &MatmulElems,
     ) -> ConvolutionProblem {
         let channel_align = selection.tiling_scheme.tile_size.n() as usize;
@@ -100,7 +100,7 @@ pub trait ConcreteInputsFactory: LaunchArg {
         client: &ComputeClient<R>,
         input: &'a MatmulInputHandleRef<'a, R>,
         out_grad: &'a MatmulInputHandleRef<'a, R>,
-        selection: &MatmulSelection,
+        selection: &TilingBlueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
         config: impl ConvGemmConfig,
@@ -114,7 +114,7 @@ pub trait ConcreteOutputFactory: LaunchArg {
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
         out: &'a TensorHandleRef<'a, R>,
-        selection: &MatmulSelection,
+        selection: &TilingBlueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
         config: impl ConvGemmConfig,
@@ -126,7 +126,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory for TensorIn
         client: &ComputeClient<R>,
         input: &'a MatmulInputHandleRef<'a, R>,
         out_grad: &'a MatmulInputHandleRef<'a, R>,
-        _selection: &MatmulSelection,
+        _selection: &TilingBlueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
         config: impl ConvGemmConfig,
@@ -188,7 +188,7 @@ impl<EG: Numeric> ConcreteOutputFactory for TensorOutput<EG> {
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
         out: &'a TensorHandleRef<'a, R>,
-        _selection: &MatmulSelection,
+        _selection: &TilingBlueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
         config: impl ConvGemmConfig,
@@ -219,7 +219,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory
         client: &ComputeClient<R>,
         input: &'a MatmulInputHandleRef<'a, R>,
         out_grad: &'a MatmulInputHandleRef<'a, R>,
-        selection: &MatmulSelection,
+        selection: &TilingBlueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
         config: impl ConvGemmConfig,

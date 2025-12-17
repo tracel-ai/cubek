@@ -10,10 +10,10 @@ use crate::{
         stage::{FilledStageFamily, RowMajorTilingOrder, StridedStageFamily, UnitMatmulFamily},
         tile::{TileMatmulFamily, io::Filled, register::RegisterMatmul},
     },
-    definition::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError},
+    definition::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, TilingBlueprint},
     routines::{
         Routine,
-        selector::{TileSizeSelection, UnitMatmulSelectionOptions, unit_matmul_selection},
+        selector::{TileSizeSelection, UnitTilingBlueprintOptions, infer_blueprint_unit},
     },
 };
 
@@ -36,7 +36,7 @@ impl Routine for DoubleUnitAlgorithm {
         >,
         RowMajorGlobalPartitionMatmul,
     >;
-    type Blueprint = MatmulSelection;
+    type Blueprint = TilingBlueprint;
     type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
     fn prepare<R: Runtime>(
@@ -46,14 +46,14 @@ impl Routine for DoubleUnitAlgorithm {
         line_sizes: &MatmulLineSizes,
         args: &Self::Strategy,
         dtypes: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError> {
-        Ok(unit_matmul_selection(
+    ) -> Result<TilingBlueprint, MatmulSetupError> {
+        Ok(infer_blueprint_unit(
             client,
             problem,
             plane_dim,
             true,
             line_sizes,
-            UnitMatmulSelectionOptions {
+            UnitTilingBlueprintOptions {
                 tile: args.tile_size,
                 ..Default::default()
             },

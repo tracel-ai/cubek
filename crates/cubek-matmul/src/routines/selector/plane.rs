@@ -6,9 +6,9 @@ use crate::components::stage::PartitionBuffering;
 use crate::components::stage::SwizzleMode;
 use crate::components::tile::TileMatmulFamily;
 use crate::definition::{
-    CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection, MatmulAvailabilityError,
-    MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError, MatrixLayout,
-    MultiRowStrategy, PartitionSize, SmAllocation, StageSize, SwizzleBlueprint, TileSize,
+    CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulAvailabilityError,
+    MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, MatrixLayout, MultiRowStrategy,
+    PartitionSize, SmAllocation, StageSize, SwizzleBlueprint, TileSize, TilingBlueprint,
     TilingScheme, adjust_dtypes,
 };
 use crate::routines::selector::is_tiny;
@@ -17,8 +17,8 @@ pub const NUM_SM_APPROX: u32 = 50;
 pub const NUM_TENSOR_CORES_APPROX: u32 = 4;
 
 #[derive(Default, Debug)]
-/// Options to select the best plane matmul [selection](MatmulSelection).
-pub struct PlaneMatmulSelectionOptions {
+/// Options to select the best plane matmul [selection](TilingBlueprint).
+pub struct PlaneTilingBlueprintOptions {
     pub partition_k: Option<u32>,
     pub specialized: bool,
     pub swizzled: bool,
@@ -29,14 +29,14 @@ pub struct PlaneMatmulSelectionOptions {
     pub tiny_selection_enabled: bool,
 }
 
-pub fn plane_matmul_selection<TMM: TileMatmulFamily, R: Runtime>(
+pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
     client: &ComputeClient<R>,
     problem: &MatmulProblem,
     plane_dim: u32,
     dtypes: &mut MatmulElems,
     line_sizes: &MatmulLineSizes,
-    options: PlaneMatmulSelectionOptions,
-) -> Result<MatmulSelection, MatmulSetupError> {
+    options: PlaneTilingBlueprintOptions,
+) -> Result<TilingBlueprint, MatmulSetupError> {
     adjust_dtypes(client, dtypes, TMM::requires_accelerator());
 
     if plane_dim == 1 {
@@ -138,23 +138,23 @@ pub fn plane_matmul_selection<TMM: TileMatmulFamily, R: Runtime>(
     });
 
     let cube_count_plan = match client.properties().hardware.num_streaming_multiprocessors {
-        Some(num_sms) => CubeCountPlanSelection::Sm {
+        Some(num_sms) => CubeCountPlanBlueprint::Sm {
             num_sms,
             sm_usage: SmAllocation::Exact,
             cubes_first: true,
         },
-        None => CubeCountPlanSelection::FromProblem,
+        None => CubeCountPlanBlueprint::FromProblem,
     };
 
-    let hypercube = HypercubeSelection::builder(&tiling_scheme)
-        .global_order(GlobalOrderSelection::SwizzleRow {
+    let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
+        .global_order(GlobalOrderBlueprint::SwizzleRow {
             m: problem.m as u32,
             w: 4,
         })
         .cube_count_plan(cube_count_plan)
         .build();
 
-    let mut builder = MatmulSelection::builder(tiling_scheme, plane_dim)
+    let mut builder = TilingBlueprint::builder(tiling_scheme, plane_dim)
         .partition_buffering(partition_buffering)
         .hypercube_config(hypercube);
 
@@ -285,7 +285,7 @@ fn selection_tiny<R: Runtime>(
     problem: &MatmulProblem,
     tile_size: TileSize,
     plane_dim: u32,
-) -> MatmulSelection {
+) -> TilingBlueprint {
     // If the K axis is big, we can leverage that.
     let pk = u32::min(problem.k as u32 / tile_size.k(), 8);
     let pk = u32::max(pk, 1);
@@ -297,23 +297,23 @@ fn selection_tiny<R: Runtime>(
         .build()
         .unwrap();
     let cube_count_plan = match client.properties().hardware.num_streaming_multiprocessors {
-        Some(num_sms) => CubeCountPlanSelection::Sm {
+        Some(num_sms) => CubeCountPlanBlueprint::Sm {
             num_sms,
             sm_usage: SmAllocation::Exact,
             cubes_first: true,
         },
-        None => CubeCountPlanSelection::FromProblem,
+        None => CubeCountPlanBlueprint::FromProblem,
     };
 
-    let hypercube = HypercubeSelection::builder(&tiling_scheme)
-        .global_order(GlobalOrderSelection::SwizzleRow {
+    let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
+        .global_order(GlobalOrderBlueprint::SwizzleRow {
             m: problem.m as u32,
             w: 2,
         })
         .cube_count_plan(cube_count_plan)
         .build();
 
-    MatmulSelection::builder(tiling_scheme, plane_dim)
+    TilingBlueprint::builder(tiling_scheme, plane_dim)
         .partition_buffering(PartitionBuffering::Single)
         .hypercube_config(hypercube)
         .build()

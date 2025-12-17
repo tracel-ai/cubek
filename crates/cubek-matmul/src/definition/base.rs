@@ -18,55 +18,100 @@ pub struct MatmulProblem {
     /// Batch shape for Out tensor
     pub out_batches: Vec<usize>,
 
+    /// Shape of Lhs tensor
+    pub lhs_shape: Vec<usize>,
+    /// Shape of Rhs tensor
+    pub rhs_shape: Vec<usize>,
+    /// Shape of Out tensor
+    pub out_shape: Vec<usize>,
+
     /// Strides for the Lhs tensor
     pub lhs_strides: Vec<usize>,
     /// Strides for the Rhs tensor
     pub rhs_strides: Vec<usize>,
+    /// Strides for the Out tensor
+    pub out_strides: Vec<usize>,
 
     /// Memory layout of the Lhs matrix.
     pub lhs_layout: MatrixLayout,
     /// Memory layout of the Rhs matrix.
     pub rhs_layout: MatrixLayout,
+    /// Memory layout of the Out matrix.
+    pub out_layout: MatrixLayout,
 }
 
 impl MatmulProblem {
-    /// Returns the batch dimensions of the output
-    pub fn output_batch_dims(&self) -> Vec<usize> {
-        self.lhs_batches
-            .iter()
-            .rev()
-            .zip(self.rhs_batches.iter().rev())
-            .map(|(&dim_lhs, &dim_rhs)| std::cmp::max(dim_lhs, dim_rhs))
-            .collect()
+    pub fn from_shapes_and_strides(
+        lhs_shape: Vec<usize>,
+        rhs_shape: Vec<usize>,
+        out_shape: Vec<usize>,
+        lhs_strides: Vec<usize>,
+        rhs_strides: Vec<usize>,
+        out_strides: Vec<usize>,
+    ) -> Self {
+        let rank = out_shape.len();
+        let lhs_layout = MatrixLayout::from_shape_and_strides(&lhs_shape, &lhs_strides);
+        let rhs_layout = MatrixLayout::from_shape_and_strides(&rhs_shape, &rhs_strides);
+        let out_layout = MatrixLayout::from_shape_and_strides(&out_shape, &out_strides);
+
+        Self {
+            m: lhs_shape[rank - 2],
+            n: rhs_shape[rank - 1],
+            k: lhs_shape[rank - 1],
+            lhs_batches: lhs_shape[..lhs_shape.len() - 2].to_vec(),
+            rhs_batches: rhs_shape[..rhs_shape.len() - 2].to_vec(),
+            out_batches: out_shape[..out_shape.len() - 2].to_vec(),
+            lhs_shape,
+            rhs_shape,
+            out_shape,
+            lhs_strides,
+            rhs_strides,
+            out_strides,
+            lhs_layout,
+            rhs_layout,
+            out_layout,
+        }
+    }
+
+    pub fn from_parameters(
+        m: usize,
+        n: usize,
+        k: usize,
+        batches: Vec<usize>,
+        lhs_layout: MatrixLayout,
+        rhs_layout: MatrixLayout,
+        out_layout: MatrixLayout,
+    ) -> Self {
+        let lhs_shape: Vec<usize> = batches.iter().cloned().chain(vec![m, k]).collect();
+        let rhs_shape: Vec<usize> = batches.iter().cloned().chain(vec![k, n]).collect();
+        let out_shape: Vec<usize> = batches.iter().cloned().chain(vec![m, n]).collect();
+
+        let lhs_strides = lhs_layout.to_strides(&lhs_shape);
+        let rhs_strides = rhs_layout.to_strides(&rhs_shape);
+        let out_strides = out_layout.to_strides(&out_shape);
+
+        Self {
+            m,
+            n,
+            k,
+            lhs_batches: batches.clone(),
+            rhs_batches: batches.clone(),
+            out_batches: batches,
+            lhs_shape,
+            rhs_shape,
+            out_shape,
+            lhs_strides,
+            rhs_strides,
+            out_strides,
+            lhs_layout,
+            rhs_layout,
+            out_layout,
+        }
     }
 
     /// Returns the total number of batches of the output
     pub fn num_batches(&self) -> usize {
-        self.output_batch_dims().iter().product()
-    }
-
-    /// Returns the shape of the identified tensor, inferred by the problem definition
-    pub fn shape(&self, ident: MatmulIdent) -> Vec<usize> {
-        match ident {
-            MatmulIdent::Lhs => self
-                .lhs_batches
-                .iter()
-                .cloned()
-                .chain(vec![self.m, self.k])
-                .collect(),
-            MatmulIdent::Rhs => self
-                .rhs_batches
-                .iter()
-                .cloned()
-                .chain(vec![self.k, self.n])
-                .collect(),
-            MatmulIdent::Out => self
-                .output_batch_dims()
-                .iter()
-                .cloned()
-                .chain(vec![self.m, self.n])
-                .collect(),
-        }
+        self.out_batches.iter().product()
     }
 }
 
@@ -157,6 +202,64 @@ pub enum MatrixLayout {
     #[default]
     RowMajor,
     ColMajor,
+}
+
+impl MatrixLayout {
+    pub fn from_shape_and_strides(shape: &[usize], strides: &[usize]) -> Self {
+        assert!(
+            shape.len() >= 2 && shape.len() == strides.len(),
+            "Shape/stride mismatch or not a matrix"
+        );
+
+        let n = shape.len();
+
+        let outer = shape[n - 2];
+        let inner = shape[n - 1];
+
+        let stride_outer = strides[n - 2];
+        let stride_inner = strides[n - 1];
+
+        // Row-major: inner dimension is contiguous
+        if stride_inner == 1 && stride_outer == inner {
+            return MatrixLayout::RowMajor;
+        }
+
+        // Col-major: outer dimension is contiguous
+        if stride_outer == 1 && stride_inner == outer {
+            return MatrixLayout::ColMajor;
+        }
+
+        panic!(
+            "Invalid or non-contiguous matrix layout: shape={:?}, strides={:?}",
+            shape, strides
+        );
+    }
+
+    pub fn to_strides(&self, shape: &[usize]) -> Vec<usize> {
+        assert!(shape.len() >= 2, "Shape must have at least 2 dimensions");
+
+        let n = shape.len();
+        let mut strides = vec![0; n];
+
+        // Start with contiguous layout for last two dims
+        match self {
+            MatrixLayout::RowMajor => {
+                strides[n - 1] = 1; // inner dim contiguous
+                strides[n - 2] = shape[n - 1]; // outer stride = inner size
+            }
+            MatrixLayout::ColMajor => {
+                strides[n - 2] = 1; // outer dim contiguous
+                strides[n - 1] = shape[n - 2]; // inner stride = outer size
+            }
+        }
+
+        // Batch dims: contiguous
+        for i in (0..n - 2).rev() {
+            strides[i] = strides[i + 1] * shape[i + 1];
+        }
+
+        strides
+    }
 }
 
 #[cube]

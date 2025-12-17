@@ -18,11 +18,11 @@ use crate::components::{
     global::read::sync_partial_cyclic::SyncPartialCyclicLoading, tile::io::Strided,
 };
 use crate::definition::{
-    MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError,
-    MultiRowStrategy,
+    MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, MultiRowStrategy,
+    TilingBlueprint,
 };
 use crate::routines::Routine;
-use crate::routines::selector::{PlaneMatmulSelectionOptions, plane_matmul_selection};
+use crate::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
 
 /// Plane accelerated double buffered matmul ordered on Lhs with cyclic reader on Rhs
 pub struct OrderedDoubleBufferingAlgorithm<TMM> {
@@ -54,7 +54,7 @@ where
         >,
         RowMajorGlobalPartitionMatmul,
     >;
-    type Blueprint = MatmulSelection;
+    type Blueprint = TilingBlueprint;
     type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
     fn prepare<R: Runtime>(
@@ -64,14 +64,14 @@ where
         line_sizes: &MatmulLineSizes,
         args: &Self::Strategy,
         dtypes: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError> {
-        plane_matmul_selection::<TMM, R>(
+    ) -> Result<TilingBlueprint, MatmulSetupError> {
+        infer_blueprint_plane::<TMM, R>(
             client,
             problem,
             plane_dim,
             dtypes,
             line_sizes,
-            PlaneMatmulSelectionOptions {
+            PlaneTilingBlueprintOptions {
                 partition_k: args.partition_k,
                 row_count: args.row_count,
                 multi_row_strategy: args

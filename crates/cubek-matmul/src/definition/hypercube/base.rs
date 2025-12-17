@@ -1,6 +1,6 @@
 use crate::definition::hypercube::{
-    CubeCountPlanSelection, GlobalOrder, GlobalOrderSelection,
-    cube_count_plan::{CubeCountPlan, CubeCountPlanBlueprint},
+    CubeCountPlanBlueprint, GlobalOrder, GlobalOrderBlueprint,
+    cube_count_plan::{CubeCountPlan, CubeCountPlanConfig},
 };
 use crate::definition::{MatmulProblem, MatmulSetupError, TilingScheme};
 use cubecl::CubeCount;
@@ -8,27 +8,27 @@ use cubecl::CubeCount;
 #[derive(Debug, Clone)]
 /// Determines how to launch the hypercube, i.e. anything
 /// relevant to CubeCount and where a Cube at a cube position should work
-pub struct HypercubeSelection {
+pub struct HypercubeBlueprint {
     pub cube_span: CubeSpan,
     pub global_order: GlobalOrder,
-    pub cube_count_plan_selection: CubeCountPlanSelection,
+    pub cube_count_plan_selection: CubeCountPlanBlueprint,
 }
 
-/// Builder for creating a [HypercubeSelection]
-pub struct HypercubeSelectionBuilder<'a> {
+/// Builder for creating a [HypercubeBlueprint]
+pub struct HypercubeBlueprintBuilder<'a> {
     tiling_scheme: &'a TilingScheme,
-    global_order: GlobalOrderSelection,
-    cube_count_plan_config: Option<CubeCountPlanSelection>,
+    global_order: GlobalOrderBlueprint,
+    cube_count_plan_config: Option<CubeCountPlanBlueprint>,
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 /// Determines how to launch the hypercube, i.e. anything
 /// relevant to CubeCount and where a Cube at a cube position should work
-/// Similar to HyperCubeSelection but injected in kernel as comptime struct
+/// Similar to HypercubeBlueprint but injected in kernel as comptime struct
 pub struct HypercubeConfig {
     pub cube_span: CubeSpan,
     pub global_order: GlobalOrder,
-    pub cube_count_plan_blueprint: CubeCountPlanBlueprint,
+    pub cube_count_plan_blueprint: CubeCountPlanConfig,
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -39,10 +39,10 @@ pub struct CubeSpan {
     pub batch: u32,
 }
 
-impl HypercubeSelection {
-    /// Create a builder for HypercubeSelection
-    pub fn builder<'a>(tiling_scheme: &'a TilingScheme) -> HypercubeSelectionBuilder<'a> {
-        HypercubeSelectionBuilder::new(tiling_scheme)
+impl HypercubeBlueprint {
+    /// Create a builder for HypercubeBlueprint
+    pub fn builder<'a>(tiling_scheme: &'a TilingScheme) -> HypercubeBlueprintBuilder<'a> {
+        HypercubeBlueprintBuilder::new(tiling_scheme)
     }
 
     pub(crate) fn to_hypercube_config(
@@ -51,7 +51,7 @@ impl HypercubeSelection {
         max_cube_count: CubeCount,
     ) -> HypercubeConfig {
         let cube_count_plan = CubeCountPlan::from_selection(self, problem, max_cube_count);
-        let cube_count_plan_config = CubeCountPlanBlueprint::from_cube_count_plan(cube_count_plan);
+        let cube_count_plan_config = CubeCountPlanConfig::from_cube_count_plan(cube_count_plan);
 
         HypercubeConfig {
             cube_span: self.cube_span,
@@ -90,29 +90,29 @@ impl HypercubeConfig {
     }
 }
 
-impl<'a> HypercubeSelectionBuilder<'a> {
+impl<'a> HypercubeBlueprintBuilder<'a> {
     fn new(tiling_scheme: &'a TilingScheme) -> Self {
         Self {
             tiling_scheme,
-            global_order: GlobalOrderSelection::default(),
+            global_order: GlobalOrderBlueprint::default(),
             cube_count_plan_config: None,
         }
     }
 
-    /// Set the [GlobalOrderSelection]
-    pub fn global_order(mut self, global_order: GlobalOrderSelection) -> Self {
+    /// Set the [GlobalOrderBlueprint]
+    pub fn global_order(mut self, global_order: GlobalOrderBlueprint) -> Self {
         self.global_order = global_order;
         self
     }
 
-    /// Set the [CubeCountPlanSelection]
-    pub fn cube_count_plan(mut self, cube_count_plan_config: CubeCountPlanSelection) -> Self {
+    /// Set the [CubeCountPlanBlueprint]
+    pub fn cube_count_plan(mut self, cube_count_plan_config: CubeCountPlanBlueprint) -> Self {
         self.cube_count_plan_config = Some(cube_count_plan_config);
         self
     }
 
-    /// Build the HypercubeSelection
-    pub fn build(self) -> HypercubeSelection {
+    /// Build the HypercubeBlueprint
+    pub fn build(self) -> HypercubeBlueprint {
         let cube_span = CubeSpan {
             m: self.tiling_scheme.elements_per_global_partition_along_m(),
             n: self.tiling_scheme.elements_per_global_partition_along_n(),
@@ -122,7 +122,7 @@ impl<'a> HypercubeSelectionBuilder<'a> {
         let global_order = self.global_order.into_order(&cube_span);
         let cube_pos_strategy = self.cube_count_plan_config.unwrap_or_default();
 
-        HypercubeSelection {
+        HypercubeBlueprint {
             cube_span,
             global_order,
             cube_count_plan_selection: cube_pos_strategy,

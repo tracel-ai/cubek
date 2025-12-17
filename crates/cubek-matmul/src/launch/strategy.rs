@@ -1,6 +1,4 @@
-use std::fmt::Display;
-
-use serde::{Deserialize, Serialize};
+use cubecl::{Runtime, client::ComputeClient, prelude::TensorHandleRef};
 
 use crate::{
     components::{
@@ -12,6 +10,8 @@ use crate::{
         stage::{ColMajorTilingOrder, RowMajorTilingOrder},
         tile::{cmma::CmmaMatmul, io::Filled, mma::MmaMatmul},
     },
+    definition::{MatmulElems, MatmulSetupError},
+    launch::{handle::MatmulInputHandleRef, launch_naive, launch2},
     routines::{
         BlueprintStrategy,
         double_buffering::{
@@ -148,238 +148,150 @@ pub enum Strategy {
     Auto,
 }
 
-// #[derive(Debug, Clone, Default)]
-// /// The matmul algorithm to launch
-// ///
-// /// Most strategies have a selection input that can be overwritten or inferred from minimal information
-// /// Some strategies must have a specified loading strategy
-// pub enum Strategy {
-//     Simple {
-//         read_strategy: ReadingStrategy,
-//         selection: BlueprintStrategy<SimpleAlgorithm>,
-//         tile_kind: AcceleratedTileKind,
-//     },
-//     DoubleBuffering {
-//         read_strategy: PartialReadingStrategy,
-//         selection: BlueprintStrategy<CyclicDoubleBufferingAlgorithm>,
-//         tile_kind: AcceleratedTileKind,
-//     },
-//     Specialized {
-//         read_strategy: AsyncPartialReadingStrategy,
-//         selection: BlueprintStrategy<SpecializedAlgorithm>,
-//         tile_kind: AcceleratedTileKind,
-//     },
-//     SimpleUnit(BlueprintStrategy<SimpleUnitAlgorithm>),
-//     DoubleUnit(BlueprintStrategy<DoubleUnitAlgorithm>),
-//     SimpleVecMat(BlueprintStrategy<SimpleVecMatAlgorithm>),
-//     DoubleVecMat(BlueprintStrategy<DoubleVecMatAlgorithm>),
-//     OrderedDoubleBuffering {
-//         selection: BlueprintStrategy<OrderedDoubleBufferingAlgorithm>,
-//         tile_kind: AcceleratedTileKind,
-//     },
-//     Naive,
-//     #[default]
-//     /// Tries using a Simple matmul, then a SimpleUnit if the former failed
-//     Auto,
-// }
-
-// impl Display for Strategy {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         match self {
-//             Strategy::Simple {
-//                 read_strategy,
-//                 selection,
-//                 tile_kind,
-//             } => {
-//                 f.write_fmt(format_args!("matmul_simple_{read_strategy}_{tile_kind}"))?;
-
-//                 match selection {
-//                     BlueprintStrategy::Forced(_) => f.write_str("_forced_selection")?,
-//                     BlueprintStrategy::Inferred(args) => {
-//                         if args.multi_rows {
-//                             f.write_str("_multirows")?;
-//                         }
-//                     }
-//                 };
-//             }
-//             Strategy::DoubleBuffering {
-//                 read_strategy,
-//                 selection,
-//                 tile_kind,
-//             } => {
-//                 f.write_fmt(format_args!(
-//                     "matmul_double_buffering_{read_strategy}_{tile_kind}"
-//                 ))?;
-
-//                 match selection {
-//                     BlueprintStrategy::Forced(_) => f.write_str("_forced_selection")?,
-//                     BlueprintStrategy::Inferred(args) => {
-//                         if args.specialized {
-//                             f.write_str("_specialized")?;
-//                         }
-//                     }
-//                 };
-//             }
-//             Strategy::Specialized {
-//                 read_strategy,
-//                 selection,
-//                 tile_kind,
-//             } => {
-//                 f.write_fmt(format_args!(
-//                     "matmul_specialized_{read_strategy}_{tile_kind}"
-//                 ))?;
-
-//                 match selection {
-//                     BlueprintStrategy::Forced(_) => f.write_str("_forced_selection")?,
-//                     BlueprintStrategy::Inferred(_) => {}
-//                 };
-//             }
-//             Strategy::SimpleUnit(selection) => {
-//                 f.write_fmt(format_args!("matmul_simple_unit"))?;
-
-//                 match selection {
-//                     BlueprintStrategy::Forced(_) => f.write_str("_forced_selection")?,
-//                     BlueprintStrategy::Inferred(args) => {
-//                         f.write_fmt(format_args!("_{}", args.tile_size))?;
-//                     }
-//                 };
-//             }
-//             Strategy::DoubleUnit(selection) => {
-//                 f.write_str("matmul_double_buffering_unit")?;
-
-//                 match selection {
-//                     BlueprintStrategy::Forced(_) => f.write_str("_forced_selection")?,
-//                     BlueprintStrategy::Inferred(args) => {
-//                         f.write_fmt(format_args!("_{}", args.tile_size))?;
-//                     }
-//                 };
-//             }
-//             Strategy::SimpleVecMat(selection) => {
-//                 f.write_str("vecmat_simple")?;
-
-//                 match selection {
-//                     BlueprintStrategy::Forced(_) => f.write_str("_forced_selection")?,
-//                     BlueprintStrategy::Inferred(_) => {}
-//                 };
-//             }
-//             Strategy::DoubleVecMat(selection) => {
-//                 f.write_str("vecmat_double_buffering")?;
-
-//                 match selection {
-//                     BlueprintStrategy::Forced(_) => f.write_str("_forced_selection")?,
-//                     BlueprintStrategy::Inferred(_) => {}
-//                 };
-//             }
-//             Strategy::OrderedDoubleBuffering {
-//                 selection,
-//                 tile_kind,
-//             } => {
-//                 f.write_fmt(format_args!("matmul_double_buffering_ordered_{tile_kind}"))?;
-
-//                 match selection {
-//                     BlueprintStrategy::Forced(_) => f.write_str("_forced_selection")?,
-//                     BlueprintStrategy::Inferred(args) => {
-//                         if let Some(k) = args.partition_k {
-//                             f.write_fmt(format_args!("_partition_k{}", k))?;
-//                         }
-//                         if let Some(r) = args.row_count {
-//                             f.write_fmt(format_args!("_row_count{}", r))?;
-//                         }
-//                         if let Some(r) = args.rows_per_plane {
-//                             f.write_fmt(format_args!("_row_per_plane{}", r))?;
-//                         }
-//                     }
-//                 };
-//             }
-//             Strategy::Naive => f.write_str("matmul_naive")?,
-//             Strategy::Auto => f.write_str("matmul_auto")?,
-//         };
-
-//         Ok(())
-//     }
-// }
-
-#[derive(Debug, Clone, Copy)]
-/// Which reader to use in simple algorithms
-pub enum ReadingStrategy {
-    Cyclic,
-    Strided,
-    Tilewise,
-    AsyncCyclic,
-    AsyncStrided,
-    Tma,
-}
-
-#[derive(Debug, Clone, Copy)]
-/// Which reader to use in double buffering algorithms
-pub enum PartialReadingStrategy {
-    Cyclic,
-    Tilewise,
-    Hybrid,
-    Tma,
-    AsyncCyclic,
-    AsyncStrided,
-}
-
-#[derive(Debug, Clone, Copy)]
-/// Which reader to use in specialized algorithms
-pub enum AsyncPartialReadingStrategy {
-    Cyclic,
-    Strided,
-    Tma,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-/// Which tile matmul to use for accelerated algorithms
-pub enum AcceleratedTileKind {
-    #[default]
-    Cmma,
-    Mma,
-}
-
-// Display implementations are used to combine and save names when autotuning.
-
-impl Display for AcceleratedTileKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+#[allow(clippy::result_large_err)]
+impl Strategy {
+    pub(crate) fn launch_ref<R: Runtime>(
+        &self,
+        client: &ComputeClient<R>,
+        lhs: &MatmulInputHandleRef<R>,
+        rhs: &MatmulInputHandleRef<R>,
+        out: &TensorHandleRef<R>,
+        dtypes: &mut MatmulElems,
+    ) -> Result<(), MatmulSetupError> {
         match self {
-            AcceleratedTileKind::Cmma => f.write_str("cmma"),
-            AcceleratedTileKind::Mma => f.write_str("mma"),
+            Strategy::SimpleCyclicCmma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::SimpleCyclicMma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::SimpleStridedCmma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::SimpleStridedMma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::SimpleTilewiseCmma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::SimpleTilewiseMma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::SimpleAsyncStridedCmma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::SimpleAsyncStridedMma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::SimpleAsyncCyclicCmma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::SimpleAsyncCyclicMma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::SimpleTmaCmma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::SimpleTmaMma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::DoubleCyclicCmma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::DoubleCyclicMma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::DoubleTilewiseCmma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::DoubleTilewiseMma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::DoubleHybridCmma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::DoubleHybridMma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::DoubleAsyncCyclicCmma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::DoubleAsyncCyclicMma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::DoubleAsyncStridedCmma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::DoubleAsyncStridedMma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::DoubleTmaCmma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::DoubleTmaMma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::SpecializedCyclicCmma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::SpecializedCyclicMma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::SpecializedStridedCmma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::SpecializedStridedMma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::SpecializedTmaCmma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::SpecializedTmaMma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::OrderedDoubleCmma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::OrderedDoubleMma(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::SimpleUnit(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::DoubleUnit(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::SimpleVecMat(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::DoubleVecMat(selection) => {
+                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+            }
+            Strategy::Naive => launch_naive::launch_ref(client, lhs, rhs, out, dtypes),
+            Strategy::Auto => auto(client, lhs, rhs, out, dtypes),
         }
     }
 }
 
-impl Display for ReadingStrategy {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ReadingStrategy::Cyclic => f.write_str("cyclic"),
-            ReadingStrategy::Strided => f.write_str("strided"),
-            ReadingStrategy::Tilewise => f.write_str("tilewise"),
-            ReadingStrategy::AsyncCyclic => f.write_str("async_cyclic"),
-            ReadingStrategy::AsyncStrided => f.write_str("async_strided"),
-            ReadingStrategy::Tma => f.write_str("tma"),
+fn auto<R: Runtime>(
+    client: &ComputeClient<R>,
+    lhs: &MatmulInputHandleRef<'_, R>,
+    rhs: &MatmulInputHandleRef<'_, R>,
+    out: &TensorHandleRef<'_, R>,
+    dtypes: &mut MatmulElems,
+) -> Result<(), MatmulSetupError> {
+    if let Err(err) =
+        Strategy::SimpleCyclicCmma(Default::default()).launch_ref(client, lhs, rhs, out, dtypes)
+    {
+        match err {
+            MatmulSetupError::Unavailable(_) => {
+                Strategy::SimpleUnit(Default::default())
+                    .launch_ref(client, lhs, rhs, out, dtypes)
+                    .unwrap();
+            }
+            _ => panic!("{err:?}"),
         }
     }
-}
 
-impl Display for PartialReadingStrategy {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PartialReadingStrategy::Cyclic => f.write_str("cyclic"),
-            PartialReadingStrategy::Tilewise => f.write_str("tilewise"),
-            PartialReadingStrategy::Hybrid => f.write_str("hybrid"),
-            PartialReadingStrategy::Tma => f.write_str("tma"),
-            PartialReadingStrategy::AsyncCyclic => f.write_str("async_cyclic"),
-            PartialReadingStrategy::AsyncStrided => f.write_str("async_strided"),
-        }
-    }
-}
-
-impl Display for AsyncPartialReadingStrategy {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AsyncPartialReadingStrategy::Cyclic => f.write_str("cyclic"),
-            AsyncPartialReadingStrategy::Strided => f.write_str("strided"),
-            AsyncPartialReadingStrategy::Tma => f.write_str("tma"),
-        }
-    }
+    Ok(())
 }

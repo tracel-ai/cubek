@@ -10,8 +10,8 @@ use cubek::{
         self as matmul,
         components::stage::PartitionBuffering,
         definition::{
-            CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection,
-            LoadingPrecomputeStrategy, MatmulElems, MatmulPrecision, MatmulSelection, StageSize,
+            CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint,
+            LoadingPrecomputeStrategy, MatmulElems, MatmulPrecision, StageSize, TilingBlueprint,
             TilingScheme,
         },
         launch::{MatmulInputHandle, Strategy},
@@ -222,7 +222,7 @@ fn run_one<R: Runtime, MP: MatmulPrecision>(
 fn run_grid_search<R: Runtime, MP: MatmulPrecision>() {
     let client = R::client(&Default::default());
 
-    let mut algos = BTreeMap::<u64, (BenchmarkDurations, MatmulSelection, f64)>::new();
+    let mut algos = BTreeMap::<u64, (BenchmarkDurations, TilingBlueprint, f64)>::new();
 
     for t in [(16, 16, 16)] {
         for p in [(1, 1, 1)] {
@@ -238,11 +238,11 @@ fn run_grid_search<R: Runtime, MP: MatmulPrecision>() {
                     })
                     .build()
                     .unwrap();
-                let hypercube = HypercubeSelection::builder(&tiling)
-                    .global_order(GlobalOrderSelection::Default)
-                    .cube_count_plan(CubeCountPlanSelection::Flattened)
+                let hypercube = HypercubeBlueprint::builder(&tiling)
+                    .global_order(GlobalOrderBlueprint::Default)
+                    .cube_count_plan(CubeCountPlanBlueprint::Flattened)
                     .build();
-                let selection = MatmulSelection::builder(tiling, plane_dim)
+                let selection = TilingBlueprint::builder(tiling, plane_dim)
                     .plane_dim(plane_dim)
                     .partition_buffering(PartitionBuffering::Single)
                     .hypercube_config(hypercube)

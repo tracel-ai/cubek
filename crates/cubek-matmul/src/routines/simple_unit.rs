@@ -16,10 +16,10 @@ use crate::{
         },
         tile::{TileMatmulFamily, io::Filled, register::RegisterMatmul},
     },
-    definition::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError},
+    definition::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, TilingBlueprint},
     routines::selector::{
-        PartitionScaling, StageScaling, TileSizeSelection, UnitMatmulSelectionOptions,
-        unit_matmul_selection,
+        PartitionScaling, StageScaling, TileSizeSelection, UnitTilingBlueprintOptions,
+        infer_blueprint_unit,
     },
 };
 
@@ -54,7 +54,7 @@ where
         >,
         RowMajorGlobalPartitionMatmul,
     >;
-    type Blueprint = MatmulSelection;
+    type Blueprint = TilingBlueprint;
     type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
     fn prepare<R: Runtime>(
@@ -64,14 +64,14 @@ where
         line_sizes: &MatmulLineSizes,
         args: &Self::Strategy,
         dtypes: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError> {
-        Ok(unit_matmul_selection(
+    ) -> Result<TilingBlueprint, MatmulSetupError> {
+        Ok(infer_blueprint_unit(
             client,
             problem,
             plane_dim,
             false,
             line_sizes,
-            UnitMatmulSelectionOptions {
+            UnitTilingBlueprintOptions {
                 tile: args.tile_size,
                 stage: match args.tile_size {
                     TileSizeSelection::MinTileSize => StageScaling::Enabled(2),

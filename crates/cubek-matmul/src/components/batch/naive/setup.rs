@@ -22,7 +22,7 @@ impl BatchMatmulFamily for NaiveBatchMatmulFamily {
     type Config = NaiveMatmulConfig;
     type Blueprint = NaiveBlueprint;
 
-    fn setup<R: Runtime>(
+    fn expand_config<R: Runtime>(
         _client: &ComputeClient<R>,
         _problem: &MatmulProblem,
         _selection: &Self::Blueprint,

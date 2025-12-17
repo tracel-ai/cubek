@@ -7,15 +7,12 @@ use cubecl::tensor_line_size_parallel;
 
 use crate::components::batch::naive::{NaiveBatchMatmulFamily, NaiveBlueprint};
 use crate::definition::{CubeCountPlan, MatmulLineSizes};
-use crate::definition::{
-    MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError, MatrixLayout,
-};
+use crate::definition::{MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError};
 
 use crate::components::batch::BatchMatmulFamily;
-use crate::launch::{
-    ConcreteInputsFactory, ConcreteOutputFactory, MatmulInputHandleRef, OutputArg, TensorArgs,
-};
-use crate::launch::{InputArg, MatmulInputHandle};
+use crate::launch::InputArg;
+use crate::launch::handle::{MatmulInputHandle, MatmulInputHandleRef};
+use crate::launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs};
 use crate::routines::naive::NaiveRoutine;
 
 /// Matrix multiplication using memory coalescing algorithm with custom cube dimensions
@@ -104,21 +101,18 @@ pub fn launch_ref<R: Runtime>(
         out: 1,
     };
 
-    let problem = MatmulProblem {
-        m: out_shape[rank - 2],
-        n: out_shape[rank - 1],
-        k: lhs_shape[rank - 1],
-        lhs_batches: lhs_shape[..rank - 2].to_vec(),
-        rhs_batches: rhs_shape[..rank - 2].to_vec(),
-        out_batches: out_shape[..rank - 2].to_vec(),
-        lhs_strides: lhs.data().strides.to_vec(),
-        rhs_strides: rhs.data().strides.to_vec(),
-        lhs_layout: MatrixLayout::RowMajor,
-        rhs_layout: MatrixLayout::ColMajor,
-    };
+    let problem = MatmulProblem::from_shapes_and_strides(
+        lhs_shape.to_vec(),
+        rhs_shape.to_vec(),
+        out_shape.to_vec(),
+        lhs.data().strides.to_vec(),
+        rhs.data().strides.to_vec(),
+        out.strides.to_vec(),
+    );
 
     let blueprint = NaiveBlueprint {};
-    let config = NaiveBatchMatmulFamily::setup(client, &problem, &blueprint, &line_sizes, dtypes)?;
+    let config =
+        NaiveBatchMatmulFamily::expand_config(client, &problem, &blueprint, &line_sizes, dtypes)?;
 
     let cube_count_plan =
         simple_cube_count(lhs_shape, rhs_shape, out_shape, cube_dim_x, cube_dim_y)?;
@@ -135,7 +129,7 @@ pub fn launch_ref<R: Runtime>(
     );
     let output = <OutputArg<TensorArgs> as ConcreteOutputFactory<NaiveRoutine>>::create(
         client,
-        &out,
+        out,
         &blueprint,
         &problem,
         &line_sizes,

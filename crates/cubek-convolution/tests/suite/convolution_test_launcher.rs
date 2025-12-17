@@ -9,7 +9,7 @@ use cubek_convolution::{
     components::{ConvolutionProblem, global::entry_point::ConvolutionLaunch},
     kernels::forward::algorithm::Algorithm,
 };
-use cubek_matmul::definition::{MatmulElems, MatmulIdent, MatmulSelection};
+use cubek_matmul::definition::{MatmulElems, MatmulIdent, TilingBlueprint};
 use cubek_matmul::launch::{InputArg, OutputArg};
 use cubek_matmul::{definition::AvailableLineSizes, launch::MatmulInputHandleRef};
 
@@ -20,7 +20,7 @@ use super::test_utils::TestPrecision;
 pub fn test_convolution_algorithm<A, P, R>(
     client: ComputeClient<R>,
     mut problem: ConvolutionProblem,
-    selection: MatmulSelection,
+    selection: TilingBlueprint,
 ) where
     A: Algorithm,
     P: TestPrecision,
@@ -62,7 +62,7 @@ pub fn test_convolution_algorithm<A, P, R>(
     let dtypes = MatmulElems::new::<((P::EG, P::ES), (P::EG, P::ES), (P::EG, f32))>();
     let problem = A::Args::adjust_problem(&client, problem, &selection, &dtypes);
 
-    let config = match A::setup(&client, &problem, &selection, &line_sizes, &dtypes) {
+    let config = match A::expand_config(&client, &problem, &selection, &line_sizes, &dtypes) {
         Ok(config) => config,
         Err(err) => {
             let msg = format!("Can't launch the test: {err}");

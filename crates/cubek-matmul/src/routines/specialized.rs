@@ -14,12 +14,12 @@ use crate::components::{
 use crate::components::{global::PlaneWriterFamily, stage::StageFamily};
 use crate::components::{stage::FilledStageFamily, tile::TileMatmulFamily};
 use crate::definition::{
-    CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection, MatmulLineSizes,
-    MatmulProblem, MatmulSelection, MatmulSetupError, MatrixLayout, SmAllocation, SwizzleBlueprint,
+    CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulLineSizes,
+    MatmulProblem, MatmulSetupError, MatrixLayout, SmAllocation, SwizzleBlueprint, TilingBlueprint,
     adjust_dtypes,
 };
 use crate::routines::base;
-use crate::routines::selector::{PlaneMatmulSelectionOptions, plane_matmul_selection};
+use crate::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
 use crate::{
     components::global::{
         multi_stage::specialized::SpecializedMatmulFamily,
@@ -59,7 +59,7 @@ where
         >,
         RowMajorGlobalPartitionMatmul,
     >;
-    type Blueprint = MatmulSelection;
+    type Blueprint = TilingBlueprint;
     type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
     fn prepare<R: Runtime>(
@@ -69,14 +69,14 @@ where
         line_sizes: &MatmulLineSizes,
         _args: &Self::Strategy,
         dtypes: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError> {
-        plane_matmul_selection::<TMM, R>(
+    ) -> Result<TilingBlueprint, MatmulSetupError> {
+        infer_blueprint_plane::<TMM, R>(
             client,
             problem,
             plane_dim,
             dtypes,
             line_sizes,
-            PlaneMatmulSelectionOptions {
+            PlaneTilingBlueprintOptions {
                 specialized: true,
                 multi_row_strategy: MultiRowStrategy::Adaptive {
                     minimum_stage_count: 8,
@@ -93,14 +93,14 @@ where
 }
 
 #[allow(unused, reason = "needs more tuning")]
-fn selection_specialized<R: Runtime, TMM: TileMatmulFamily>(
+fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
     client: &ComputeClient<R>,
     problem: &MatmulProblem,
     plane_dim: u32,
     swizzle: bool,
     dtypes: &mut MatmulElems,
     line_sizes: &MatmulLineSizes,
-) -> Result<MatmulSelection, MatmulSetupError> {
+) -> Result<TilingBlueprint, MatmulSetupError> {
     adjust_dtypes(client, dtypes, TMM::requires_accelerator());
 
     let supported = |m: u32, n: u32, k: u32| {
@@ -117,12 +117,12 @@ fn selection_specialized<R: Runtime, TMM: TileMatmulFamily>(
         )
     };
     let cube_count_plan = match client.properties().hardware.num_streaming_multiprocessors {
-        Some(num_sms) => CubeCountPlanSelection::Sm {
+        Some(num_sms) => CubeCountPlanBlueprint::Sm {
             num_sms,
             sm_usage: SmAllocation::Exact,
             cubes_first: true,
         },
-        None => CubeCountPlanSelection::Flattened,
+        None => CubeCountPlanBlueprint::Flattened,
     };
 
     let tiling_scheme = if supported(16, 8, 16) {
@@ -140,13 +140,13 @@ fn selection_specialized<R: Runtime, TMM: TileMatmulFamily>(
             .build()
             .unwrap()
     } else {
-        return plane_matmul_selection::<TMM, R>(
+        return infer_blueprint_plane::<TMM, R>(
             client,
             problem,
             plane_dim,
             dtypes,
             line_sizes,
-            PlaneMatmulSelectionOptions {
+            PlaneTilingBlueprintOptions {
                 partition_buffering: Some(PartitionBuffering::Single),
                 multi_row_strategy: MultiRowStrategy::Always(2),
                 partition_k: Some(2),
@@ -155,15 +155,15 @@ fn selection_specialized<R: Runtime, TMM: TileMatmulFamily>(
         );
     };
 
-    let hypercube = HypercubeSelection::builder(&tiling_scheme)
-        .global_order(GlobalOrderSelection::SwizzleRow {
+    let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
+        .global_order(GlobalOrderBlueprint::SwizzleRow {
             m: problem.m as u32,
             w: 4,
         })
         .cube_count_plan(cube_count_plan)
         .build();
 
-    let mut builder = MatmulSelection::builder(tiling_scheme, plane_dim)
+    let mut builder = TilingBlueprint::builder(tiling_scheme, plane_dim)
         .partition_buffering(PartitionBuffering::Single)
         .hypercube_config(hypercube)
         .load_specialization_config(LoadSpecializationConfig {

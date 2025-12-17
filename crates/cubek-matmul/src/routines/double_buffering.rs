@@ -23,12 +23,12 @@ use crate::components::{
     stage::{FilledStageFamily, StridedStageFamily},
 };
 use crate::definition::{
-    MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError,
-    MultiRowStrategy,
+    MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, MultiRowStrategy,
+    TilingBlueprint,
 };
 use crate::routines::Routine;
 use crate::routines::base;
-use crate::routines::selector::{PlaneMatmulSelectionOptions, plane_matmul_selection};
+use crate::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
 
 /// Plane accelerated double buffered matmul with cyclic readers
 pub struct CyclicDoubleBufferingAlgorithm<TMM> {
@@ -85,7 +85,7 @@ where
         >,
         RowMajorGlobalPartitionMatmul,
     >;
-    type Blueprint = MatmulSelection;
+    type Blueprint = TilingBlueprint;
     type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
     fn prepare<R: Runtime>(
@@ -95,14 +95,14 @@ where
         line_sizes: &MatmulLineSizes,
         args: &Self::Strategy,
         dtypes: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError> {
-        plane_matmul_selection::<TMM, R>(
+    ) -> Result<TilingBlueprint, MatmulSetupError> {
+        infer_blueprint_plane::<TMM, R>(
             client,
             problem,
             plane_dim,
             dtypes,
             line_sizes,
-            PlaneMatmulSelectionOptions {
+            PlaneTilingBlueprintOptions {
                 specialized: args.specialized,
                 multi_row_strategy: MultiRowStrategy::Adaptive {
                     minimum_stage_count: 8,
@@ -137,7 +137,7 @@ where
         >,
         RowMajorGlobalPartitionMatmul,
     >;
-    type Blueprint = MatmulSelection;
+    type Blueprint = TilingBlueprint;
     type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
     fn prepare<R: Runtime>(
@@ -147,14 +147,14 @@ where
         line_sizes: &MatmulLineSizes,
         args: &Self::Strategy,
         dtypes: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError> {
-        plane_matmul_selection::<TMM, R>(
+    ) -> Result<TilingBlueprint, MatmulSetupError> {
+        infer_blueprint_plane::<TMM, R>(
             client,
             problem,
             plane_dim,
             dtypes,
             line_sizes,
-            PlaneMatmulSelectionOptions {
+            PlaneTilingBlueprintOptions {
                 specialized: args.specialized,
                 multi_row_strategy: MultiRowStrategy::Adaptive {
                     minimum_stage_count: 8,
@@ -191,7 +191,7 @@ where
         >,
         RowMajorGlobalPartitionMatmul,
     >;
-    type Blueprint = MatmulSelection;
+    type Blueprint = TilingBlueprint;
     type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
     fn prepare<R: Runtime>(
@@ -201,14 +201,14 @@ where
         line_sizes: &MatmulLineSizes,
         args: &Self::Strategy,
         dtypes: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError> {
-        plane_matmul_selection::<TMM, R>(
+    ) -> Result<TilingBlueprint, MatmulSetupError> {
+        infer_blueprint_plane::<TMM, R>(
             client,
             problem,
             plane_dim,
             dtypes,
             line_sizes,
-            PlaneMatmulSelectionOptions {
+            PlaneTilingBlueprintOptions {
                 specialized: args.specialized,
                 multi_row_strategy: MultiRowStrategy::Adaptive {
                     minimum_stage_count: 8,
@@ -244,7 +244,7 @@ where
         >,
         RowMajorGlobalPartitionMatmul,
     >;
-    type Blueprint = MatmulSelection;
+    type Blueprint = TilingBlueprint;
     type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
     fn prepare<R: Runtime>(
@@ -254,14 +254,14 @@ where
         line_sizes: &MatmulLineSizes,
         args: &Self::Strategy,
         dtypes: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError> {
-        plane_matmul_selection::<TMM, R>(
+    ) -> Result<TilingBlueprint, MatmulSetupError> {
+        infer_blueprint_plane::<TMM, R>(
             client,
             problem,
             plane_dim,
             dtypes,
             line_sizes,
-            PlaneMatmulSelectionOptions {
+            PlaneTilingBlueprintOptions {
                 specialized: args.specialized,
                 multi_row_strategy: MultiRowStrategy::Adaptive {
                     minimum_stage_count: 8,
@@ -296,7 +296,7 @@ where
         >,
         RowMajorGlobalPartitionMatmul,
     >;
-    type Blueprint = MatmulSelection;
+    type Blueprint = TilingBlueprint;
     type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
     fn prepare<R: Runtime>(
@@ -306,14 +306,14 @@ where
         line_sizes: &MatmulLineSizes,
         args: &Self::Strategy,
         dtypes: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError> {
-        plane_matmul_selection::<TMM, R>(
+    ) -> Result<TilingBlueprint, MatmulSetupError> {
+        infer_blueprint_plane::<TMM, R>(
             client,
             problem,
             plane_dim,
             dtypes,
             line_sizes,
-            PlaneMatmulSelectionOptions {
+            PlaneTilingBlueprintOptions {
                 specialized: args.specialized,
                 multi_row_strategy: MultiRowStrategy::Adaptive {
                     minimum_stage_count: 8,
@@ -348,7 +348,7 @@ where
         >,
         RowMajorGlobalPartitionMatmul,
     >;
-    type Blueprint = MatmulSelection;
+    type Blueprint = TilingBlueprint;
     type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
     fn prepare<R: Runtime>(
@@ -358,14 +358,14 @@ where
         line_sizes: &MatmulLineSizes,
         args: &Self::Strategy,
         dtypes: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError> {
-        plane_matmul_selection::<TMM, R>(
+    ) -> Result<TilingBlueprint, MatmulSetupError> {
+        infer_blueprint_plane::<TMM, R>(
             client,
             problem,
             plane_dim,
             dtypes,
             line_sizes,
-            PlaneMatmulSelectionOptions {
+            PlaneTilingBlueprintOptions {
                 specialized: args.specialized,
                 multi_row_strategy: MultiRowStrategy::Adaptive {
                     minimum_stage_count: 8,

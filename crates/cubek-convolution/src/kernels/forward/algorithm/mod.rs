@@ -1,6 +1,6 @@
 use cubek_matmul::definition::{
-    LoadingPrecomputeStrategy, MatmulElems, MatmulLineSizes, MatmulSelection, MatmulSetupError,
-    MultiRowStrategy,
+    LoadingPrecomputeStrategy, MatmulElems, MatmulLineSizes, MatmulSetupError, MultiRowStrategy,
+    TilingBlueprint,
 };
 use cubek_matmul::{
     components::{
@@ -30,7 +30,7 @@ pub trait Algorithm {
 
     type Args: MatmulArgs;
 
-    fn cube_count(selection: &MatmulSelection, problem: &ConvolutionProblem) -> CubeCount {
+    fn cube_count(selection: &TilingBlueprint, problem: &ConvolutionProblem) -> CubeCount {
         let m_stage = selection.tiling_scheme.elements_per_stage_along_m();
         let n_stage = selection.tiling_scheme.elements_per_stage_along_n();
         let cubes_needed_m = (problem.m as u32).div_ceil(m_stage);
@@ -60,14 +60,14 @@ pub trait Algorithm {
     }
 
     /// Make a convolution config from a convolution problem, and launch options
-    fn setup<R: Runtime>(
+    fn expand_config<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &ConvolutionProblem,
-        selection: &MatmulSelection,
+        selection: &TilingBlueprint,
         line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
     ) -> Result<GlobalConfig<Self::GlobalConvolution>, MatmulSetupError> {
-        Self::GlobalConvolution::setup(client, problem, selection, line_sizes, dtypes)
+        Self::GlobalConvolution::expand_config(client, problem, selection, line_sizes, dtypes)
     }
 
     fn into_tensor_handle<R: Runtime>(
@@ -83,7 +83,7 @@ pub trait Algorithm {
         plane_dim: u32,
         line_sizes: &MatmulLineSizes,
         matmul_elems: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError>;
+    ) -> Result<TilingBlueprint, MatmulSetupError>;
 }
 
 pub(crate) fn into_tensor_handle<R: Runtime>(

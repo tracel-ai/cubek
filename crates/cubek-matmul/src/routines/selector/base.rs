@@ -3,9 +3,9 @@ use std::fmt::Debug;
 
 // #[derive(Debug, Clone)]
 pub enum BlueprintStrategy<A: Routine> {
-    /// Use a predefined MatmulSelection
+    /// Use a predefined blueprint
     Forced(A::Blueprint),
-    /// Allows to give limited MatmulSelection information, and the rest is inferred from it
+    /// Allows to give limited blueprint information, and the rest is inferred from it
     Inferred(A::Strategy),
 }
 

@@ -14,7 +14,7 @@ use crate::{
         },
         stage::{FilledStageFamily, NoTilingLayout, StageConfig, StridedStageFamily},
     },
-    definition::MatmulSelection,
+    definition::TilingBlueprint,
 };
 use cubecl::prelude::*;
 use std::marker::PhantomData;
@@ -55,14 +55,14 @@ where
     >;
     type Config = SharedGlobalMatmulConfig<SMM::Config>;
 
-    fn setup<R: Runtime>(
+    fn expand_config<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
-        selection: &MatmulSelection,
+        selection: &TilingBlueprint,
         line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
     ) -> Result<Self::Config, MatmulSetupError> {
-        let stage_config = SMM::setup(
+        let stage_config = SMM::expand_config(
             client,
             problem,
             selection,

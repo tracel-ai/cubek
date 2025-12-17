@@ -1,3 +1,4 @@
+use crate::{AcceleratedTileKind, ReadingStrategy};
 use crate::{
     ConvolutionArgs, Strategy,
     components::{ConvGemmConfig as _, ConvolutionOperation},
@@ -15,10 +16,10 @@ use cubecl::{
     prelude::*,
     std::{CubeOption, tensor::TensorHandle},
 };
+use cubek_matmul::launch::MatmulInputHandle;
 use cubek_matmul::{
     components::tile::{cmma::CmmaMatmul, io::Strided, mma::MmaMatmul},
     definition::{AvailableLineSizes, MatmulElems, MatrixLayout},
-    launch::{AcceleratedTileKind, MatmulInputHandle, ReadingStrategy},
 };
 use cubek_matmul::{definition, launch::MatmulInputHandleRef};
 use derive_new::new;
@@ -241,7 +242,7 @@ where
     let selection = Alg::selection(client, &problem, plane_dim, &line_sizes, &mut dtypes)?;
     let problem = Alg::Args::adjust_problem(client, problem, &selection, &dtypes);
 
-    let config = Alg::setup(client, &problem, &selection, &line_sizes, &dtypes)?;
+    let config = Alg::expand_config(client, &problem, &selection, &line_sizes, &dtypes)?;
 
     let line_sizes = config.line_sizes();
 

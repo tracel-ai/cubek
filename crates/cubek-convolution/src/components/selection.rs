@@ -2,7 +2,7 @@ use cubecl::{Runtime, client::ComputeClient, ir::StorageType};
 use cubek_matmul::components::stage::{PartitionBuffering, SwizzleMode};
 
 use cubek_matmul::definition::{
-    MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatmulSelection, SwizzleBlueprint,
+    MatmulAvailabilityError, MatmulElems, MatmulLineSizes, SwizzleBlueprint, TilingBlueprint,
     TilingScheme, adjust_dtypes,
 };
 use cubek_matmul::{
@@ -84,7 +84,7 @@ pub fn convolution_matmul_selection<TMM: TileMatmulFamily, R: Runtime>(
     swizzle: bool,
     line_sizes: &MatmulLineSizes,
     dtypes: &mut MatmulElems,
-) -> Result<MatmulSelection, MatmulAvailabilityError> {
+) -> Result<TilingBlueprint, MatmulAvailabilityError> {
     adjust_dtypes(client, dtypes, TMM::requires_accelerator());
 
     // rough heuristic based on previous bench results where 512 channels with a 3x3 kernel seemed
@@ -116,7 +116,7 @@ pub fn convolution_matmul_selection<TMM: TileMatmulFamily, R: Runtime>(
         .build()
         .unwrap();
 
-    let mut builder = MatmulSelection::builder(tiling_scheme, plane_dim)
+    let mut builder = TilingBlueprint::builder(tiling_scheme, plane_dim)
         .partition_buffering(PartitionBuffering::Single);
 
     if swizzle {

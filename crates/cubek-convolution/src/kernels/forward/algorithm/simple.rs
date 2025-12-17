@@ -15,7 +15,7 @@ use cubek_matmul::components::{
     stage::StridedStageFamily,
     tile::io::Strided,
 };
-use cubek_matmul::definition::{MatmulElems, MatmulLineSizes, MatmulSelection, MatmulSetupError};
+use cubek_matmul::definition::{MatmulElems, MatmulLineSizes, MatmulSetupError, TilingBlueprint};
 use cubek_matmul::launch::{TensorArgs, TensorMapArgs};
 use std::marker::PhantomData;
 
@@ -105,7 +105,7 @@ impl<
         plane_dim: u32,
         line_sizes: &MatmulLineSizes,
         dtypes: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError> {
+    ) -> Result<TilingBlueprint, MatmulSetupError> {
         Ok(convolution_matmul_selection::<TMM, R>(
             client,
             problem,
@@ -153,7 +153,7 @@ impl<
         plane_dim: u32,
         line_sizes: &MatmulLineSizes,
         dtypes: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError> {
+    ) -> Result<TilingBlueprint, MatmulSetupError> {
         if line_sizes.lhs > 1 || line_sizes.rhs > 1 {
             return Err(MatmulSetupError::InvalidConfig(Box::new(
                 "Not available with input line sizes > 1",

@@ -21,9 +21,9 @@ use crate::{
         },
     },
     definition::{
-        CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection, MatmulElems,
-        MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError, PartitionSize,
-        SmAllocation, TileSize, TilingScheme,
+        CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulElems,
+        MatmulLineSizes, MatmulProblem, MatmulSetupError, PartitionSize, SmAllocation, TileSize,
+        TilingBlueprint, TilingScheme,
     },
     routines::Routine,
 };
@@ -46,7 +46,7 @@ impl Routine for SimpleVecMatAlgorithm {
         >,
         RowMajorGlobalPartitionMatmul,
     >;
-    type Blueprint = MatmulSelection;
+    type Blueprint = TilingBlueprint;
     type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
     fn prepare<R: Runtime>(
@@ -56,8 +56,8 @@ impl Routine for SimpleVecMatAlgorithm {
         line_sizes: &MatmulLineSizes,
         _args: &Self::Strategy,
         _dtypes: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError> {
-        Ok(selection_vecmat(
+    ) -> Result<TilingBlueprint, MatmulSetupError> {
+        Ok(infer_blueprint_vecmat(
             client,
             problem,
             (1, line_sizes.out as u32, plane_dim * line_sizes.lhs as u32).into(),
@@ -89,7 +89,7 @@ impl Routine for DoubleVecMatAlgorithm {
         >,
         RowMajorGlobalPartitionMatmul,
     >;
-    type Blueprint = MatmulSelection;
+    type Blueprint = TilingBlueprint;
     type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
     fn prepare<R: Runtime>(
@@ -99,8 +99,8 @@ impl Routine for DoubleVecMatAlgorithm {
         line_sizes: &MatmulLineSizes,
         _args: &Self::Strategy,
         _dtypes: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError> {
-        Ok(selection_vecmat(
+    ) -> Result<TilingBlueprint, MatmulSetupError> {
+        Ok(infer_blueprint_vecmat(
             client,
             problem,
             (1, line_sizes.out as u32, plane_dim * line_sizes.lhs as u32).into(),
@@ -113,12 +113,12 @@ impl Routine for DoubleVecMatAlgorithm {
     }
 }
 
-fn selection_vecmat<R: Runtime>(
+fn infer_blueprint_vecmat<R: Runtime>(
     client: &ComputeClient<R>,
     problem: &MatmulProblem,
     tile_size: TileSize,
     plane_dim: u32,
-) -> MatmulSelection {
+) -> TilingBlueprint {
     let tiling_scheme = TilingScheme::builder()
         .with_tile_size(tile_size)
         .with_partition_size(PartitionSize::new(1, 1, 1))
@@ -126,23 +126,23 @@ fn selection_vecmat<R: Runtime>(
         .build()
         .unwrap();
     let cube_count_plan = match client.properties().hardware.num_streaming_multiprocessors {
-        Some(num_sms) => CubeCountPlanSelection::Sm {
+        Some(num_sms) => CubeCountPlanBlueprint::Sm {
             num_sms,
             sm_usage: SmAllocation::Exact,
             cubes_first: true,
         },
-        None => CubeCountPlanSelection::FromProblem,
+        None => CubeCountPlanBlueprint::FromProblem,
     };
 
-    let hypercube = HypercubeSelection::builder(&tiling_scheme)
-        .global_order(GlobalOrderSelection::SwizzleRow {
+    let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
+        .global_order(GlobalOrderBlueprint::SwizzleRow {
             m: problem.m as u32,
             w: 2,
         })
         .cube_count_plan(cube_count_plan)
         .build();
 
-    MatmulSelection::builder(tiling_scheme, plane_dim)
+    TilingBlueprint::builder(tiling_scheme, plane_dim)
         .partition_buffering(PartitionBuffering::Single)
         .hypercube_config(hypercube)
         .build()
