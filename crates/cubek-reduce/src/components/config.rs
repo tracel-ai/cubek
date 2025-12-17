@@ -18,3 +18,23 @@ pub enum BoundChecks {
     /// Probably the right setting when performing fuse on read.
     Branch,
 }
+
+impl BoundChecks {
+    pub fn idle(self) -> Self {
+        Self::Mask
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+pub enum IdleMode {
+    None,
+    Mask,
+    Terminate,
+}
+
+impl IdleMode {
+    /// Whether idle is activated.
+    pub fn is_enabled(&self) -> bool {
+        !matches!(self, Self::None)
+    }
+}

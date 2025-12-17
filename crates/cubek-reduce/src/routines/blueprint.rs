@@ -1,4 +1,4 @@
-use crate::{BoundChecks, LineMode};
+use crate::{BoundChecks, IdleMode, LineMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ReduceBlueprint {
@@ -18,12 +18,12 @@ pub enum GlobalReduceBlueprint {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// A single cube reduces a full vector.
 pub struct CubeBlueprint {
-    // Too much cubes are spawned, we should put some to idle.
+    // When too much cubes are spawned, we should put some to idle.
     //
     // # Notes
     //
     // This only happens when we hit the hardware limit in spawning cubes on a single axis.
-    pub cube_idle: bool,
+    pub cube_idle: IdleMode,
     // There are too many units in a cube causing out-of-bound.
     //
     // # Notes
@@ -40,7 +40,7 @@ pub struct CubeBlueprint {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneReduceBlueprint {
     // Too much planes are spawned, we should put some to idle.
-    pub plane_idle: bool,
+    pub plane_idle: IdleMode,
     // There are too many units in a plane causing out-of-bound.
     pub bound_checks: BoundChecks,
     // Wheter all units in a plane work independently during the reduction.
@@ -56,5 +56,5 @@ pub struct PlaneReduceBlueprint {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UnitReduceBlueprint {
     // Too much units are spawned, we should put some to idle.
-    pub unit_idle: bool,
+    pub unit_idle: IdleMode,
 }
