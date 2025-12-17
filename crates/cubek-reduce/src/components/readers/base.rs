@@ -18,6 +18,7 @@ pub enum Reader<P: ReducePrecision> {
 
 #[cube]
 impl<P: ReducePrecision> Reader<P> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new<I: ReduceInstruction<P>, Out: Numeric>(
         input: &VirtualTensor<P::EI>,
         output: &mut VirtualTensor<Out, ReadWrite>,

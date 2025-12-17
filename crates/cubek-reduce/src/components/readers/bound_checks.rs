@@ -32,11 +32,13 @@ impl<P: ReducePrecision> ReaderBoundChecks<P> {
         #[comptime] bound_checks: BoundChecks,
     ) -> ReaderBoundChecks<P> {
         let pos_max = match idle {
+            // When idle we set the pos_max to zero so that we always mask values.
             CubeOption::Some(idle) => pos_max * u32::cast_from(!idle),
             CubeOption::None => pos_max,
         };
 
         let bound_checks = comptime!(match idle.is_some() {
+            // When idle may be true, we have to force bound checks.
             true => BoundChecks::Mask,
             false => bound_checks,
         });
@@ -62,8 +64,7 @@ impl<P: ReducePrecision> ReaderBoundChecks<P> {
                     select(mask, view[index], checks.null_input)
                 }
                 BoundChecks::Branch => {
-                    let cond = pos < checks.pos_max;
-                    if cond {
+                    if pos < checks.pos_max {
                         view[offset]
                     } else {
                         checks.null_input

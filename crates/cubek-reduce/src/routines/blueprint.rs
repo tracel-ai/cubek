@@ -18,7 +18,7 @@ pub enum GlobalReduceBlueprint {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// A single cube reduces a full vector.
 pub struct CubeBlueprint {
-    // When too much cubes are spawned, we should put some to idle.
+    // When too many cubes are spawned, we should put some to idle.
     //
     // # Notes
     //
@@ -39,7 +39,7 @@ pub struct CubeBlueprint {
 /// A single plane reduces a full vector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneReduceBlueprint {
-    // Too much planes are spawned, we should put some to idle.
+    // Too many planes are spawned, we should put some to idle.
     pub plane_idle: IdleMode,
     // There are too many units in a plane causing out-of-bound.
     pub bound_checks: BoundChecks,
@@ -55,6 +55,6 @@ pub struct PlaneReduceBlueprint {
 /// A single unit reduces a full vector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UnitReduceBlueprint {
-    // Too much units are spawned, we should put some to idle.
+    // Too many units are spawned, we should put some to idle.
     pub unit_idle: IdleMode,
 }
