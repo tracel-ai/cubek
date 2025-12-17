@@ -15,18 +15,17 @@ use cubecl::{
     },
 };
 use cubek_matmul::{
-    MatmulInputHandleRef,
     components::{
-        MatmulElems, MatmulLineSizes, MatmulSelection,
         global::{
             GlobalConfig as _,
-            args::{
-                MatmulArgs, TensorArgs, TensorInputs, TensorInputsLaunch, TensorMapArgs,
-                TensorMapInputs, TensorMapInputsLaunch, TensorOutput, TensorOutputLaunch,
-            },
             memory::{NoopLayout, NoopLayoutLaunch, Transpose, TransposeLaunch},
         },
         stage::StageConfig as _,
+    },
+    definition::{MatmulElems, MatmulLineSizes, MatmulSelection},
+    launch::{
+        MatmulArgs, MatmulInputHandleRef, TensorArgs, TensorInputs, TensorInputsLaunch,
+        TensorMapArgs, TensorMapInputs, TensorMapInputsLaunch, TensorOutput, TensorOutputLaunch,
     },
 };
 use enumset::EnumSet;

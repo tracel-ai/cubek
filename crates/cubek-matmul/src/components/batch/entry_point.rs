@@ -1,9 +1,7 @@
 use crate::components::batch::CubeCountInput;
 use crate::components::batch::base::BatchMatmul;
-use crate::components::{
-    batch::{BatchConfig, BatchMatmulFamily},
-    global::args::MatmulArgs,
-};
+use crate::components::batch::{BatchConfig, BatchMatmulFamily};
+use crate::launch::MatmulArgs;
 use cubecl::prelude::*;
 
 type Input<Args, Lhs, Rhs, AccG> = <Args as MatmulArgs>::Input<Lhs, Rhs, AccG>;

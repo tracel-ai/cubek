@@ -8,8 +8,10 @@ use cubek::{
     random::random_uniform,
     reduce::{
         components::instructions::ReduceOperationConfig,
-        launch::ReduceStrategy,
-        routines::{RoutineStrategy, cube::CubeStrategy, plane::PlaneStrategy, unit::UnitStrategy},
+        launch::{LineSizeStrategy, ReduceStrategy, RoutineStrategy},
+        routines::{
+            BlueprintStrategy, cube::CubeStrategy, plane::PlaneStrategy, unit::UnitStrategy,
+        },
     },
 };
 use std::marker::PhantomData;
@@ -80,41 +82,65 @@ impl<R: Runtime, E: Float> Benchmark for ReduceBench<R, E> {
 fn run<R: Runtime, E: frontend::Float>(device: R::Device) {
     let client = R::client(&device);
     for shape in [
-        vec![2, 2, 4099 * 32],
         vec![32, 512, 4096],
+        vec![2, 2, 4099 * 32],
         vec![4096, 512, 32],
         vec![512, 512],
     ] {
-        for axis in 0..shape.len() {
+        for line_size in [
+            LineSizeStrategy {
+                parallel_output_vectorization: false,
+            },
+            LineSizeStrategy {
+                parallel_output_vectorization: true,
+            },
+        ] {
             for strategy in [
-                ReduceStrategy::FullUnit(RoutineStrategy::Strategy(UnitStrategy)),
-                ReduceStrategy::FullCube(RoutineStrategy::Strategy(CubeStrategy {
-                    use_planes: true,
-                })),
-                ReduceStrategy::FullCube(RoutineStrategy::Strategy(CubeStrategy {
-                    use_planes: false,
-                })),
-                ReduceStrategy::FullPlane(RoutineStrategy::Strategy(PlaneStrategy {
-                    independent: true,
-                })),
-                ReduceStrategy::FullPlane(RoutineStrategy::Strategy(PlaneStrategy {
-                    independent: false,
-                })),
+                ReduceStrategy {
+                    routine: RoutineStrategy::Unit(BlueprintStrategy::Inferred(UnitStrategy)),
+                    line_size,
+                },
+                ReduceStrategy {
+                    routine: RoutineStrategy::Plane(BlueprintStrategy::Inferred(PlaneStrategy {
+                        independent: true,
+                    })),
+                    line_size,
+                },
+                ReduceStrategy {
+                    routine: RoutineStrategy::Plane(BlueprintStrategy::Inferred(PlaneStrategy {
+                        independent: false,
+                    })),
+                    line_size,
+                },
+                ReduceStrategy {
+                    routine: RoutineStrategy::Cube(BlueprintStrategy::Inferred(CubeStrategy {
+                        use_planes: true,
+                    })),
+                    line_size,
+                },
+                ReduceStrategy {
+                    routine: RoutineStrategy::Cube(BlueprintStrategy::Inferred(CubeStrategy {
+                        use_planes: false,
+                    })),
+                    line_size,
+                },
             ] {
-                let bench = ReduceBench::<R, E> {
-                    shape: shape.clone(),
-                    axis,
-                    client: client.clone(),
-                    device: device.clone(),
-                    strategy,
-                    _e: PhantomData,
-                };
-                println!("Running: ==== {} ====", bench.name());
-                match bench.run(TimingMethod::System) {
-                    Ok(val) => {
-                        println!("{val}");
+                for axis in 0..shape.len() {
+                    let bench = ReduceBench::<R, E> {
+                        shape: shape.clone(),
+                        axis,
+                        client: client.clone(),
+                        device: device.clone(),
+                        strategy: strategy.clone(),
+                        _e: PhantomData,
+                    };
+                    println!("Running: ==== {} ====", bench.name());
+                    match bench.run(TimingMethod::System) {
+                        Ok(val) => {
+                            println!("{val}");
+                        }
+                        Err(err) => println!("Can't run the benchmark: {err}"),
                     }
-                    Err(err) => println!("Can't run the benchmark: {err}"),
                 }
             }
         }

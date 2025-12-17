@@ -15,18 +15,17 @@ use cubecl::{
     },
 };
 use cubek_matmul::{
-    MatmulInputHandleRef,
     components::{
-        MatmulElems, MatmulLineSizes, MatmulSelection,
         global::{
             GlobalConfig as _,
-            args::{
-                MatmulArgs, TensorArgs, TensorInputs, TensorInputsLaunch, TensorMapArgs,
-                TensorMapInputs, TensorMapInputsLaunch, TensorOutput, TensorOutputLaunch,
-            },
             memory::{NoopLayout, NoopLayoutLaunch, Transpose, TransposeLaunch},
         },
         stage::StageConfig as _,
+    },
+    definition::{MatmulElems, MatmulLineSizes, MatmulSelection},
+    launch::{
+        MatmulArgs, MatmulInputHandleRef, TensorArgs, TensorInputs, TensorInputsLaunch,
+        TensorMapArgs, TensorMapInputs, TensorMapInputsLaunch, TensorOutput, TensorOutputLaunch,
     },
 };
 use enumset::EnumSet;
@@ -207,7 +206,7 @@ impl<EG: Numeric> ConcreteOutputFactory for TensorOutput<EG> {
         }
         let global = NhwcLayoutLaunch::from_handle(out, line_sizes.out as u32, checks);
         let layout =
-            WeightLayoutLaunch::from_args(client, problem, config.rhs_global_memory_config());
+            WeightLayoutLaunch::from_args(client, problem, config.out_global_memory_config());
         let layout = ChainLaunch::new(global, TransposeLaunch::new(layout));
         let view = ViewArg::new::<Layout>(out.as_array_arg(line_sizes.out), layout);
         let batch = VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new());

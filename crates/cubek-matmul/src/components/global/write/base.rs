@@ -1,7 +1,9 @@
-use crate::components::{
-    MatrixPrecision,
-    global::{RoleRuleConfig, WriteEventListener, WriteTiling, memory::GlobalMemoryConfig},
-    stage::{Stage, StageFamily, StageMemoryConfig},
+use crate::{
+    components::{
+        global::{RoleRuleConfig, WriteEventListener, WriteTiling, memory::GlobalMemoryConfig},
+        stage::{Stage, StageFamily, StageMemoryConfig},
+    },
+    definition::MatrixPrecision,
 };
 use cubecl::prelude::*;
 use cubecl::std::tensor::{View, layout::Coords2d};

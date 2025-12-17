@@ -3,12 +3,12 @@ use cubek_matmul::components::{global::PartitionedStageFamily, stage::StridedSta
 
 use crate::components::stage::plane::PlanePartitionStageAttentionFamily;
 use crate::components::tile::accelerated::BlackboxAcceleratedTileAttention;
-use crate::launch::AttentionTileSize;
-use crate::launch::{
+use crate::definition::AttentionTileSize;
+use crate::definition::{
     AttentionBlueprint, AttentionDefinition, AttentionElems, AttentionPartitionSize,
     AttentionSetupError, AttentionStageSize, AttentionTilingScheme, HypercubeBlueprint,
-    RoutineStrategy,
 };
+use crate::launch::RoutineStrategy;
 use crate::routines::{DeviceSettings, LaunchInfo};
 use crate::{
     components::{

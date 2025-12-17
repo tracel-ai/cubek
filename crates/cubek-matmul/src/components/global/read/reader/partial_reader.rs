@@ -1,6 +1,7 @@
 use super::StageBuffer;
 use super::TaskCounter;
 use crate::components::global::GlobalReaderConfig;
+use crate::components::global::memory::GlobalIterator;
 use crate::components::global::multi_stage::JobIterator;
 use crate::components::global::multi_stage::LoadMaxRoundPlaneCount;
 use crate::components::global::read::LoadingJob;
@@ -10,11 +11,11 @@ use crate::components::global::read::SyncStrategy;
 use crate::components::stage::LoadStageFamily;
 use crate::components::stage::StageFamily;
 use crate::components::stage::TilingLayout;
-use crate::components::{MatmulPrecision, global::memory::GlobalIterator};
 use crate::components::{
     global::{SharedGlobalMatmulConfig, multi_stage::JobExecutor},
     stage::StageConfig,
 };
+use crate::definition::MatmulPrecision;
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 use cubecl::std::{

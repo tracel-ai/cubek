@@ -1,15 +1,12 @@
-use crate::components::global::SharedGlobalMatmulConfig;
 use crate::components::global::read::LoaderStage;
+use crate::components::global::read::{PartialStageGlobalReader, StageBuffer, ZeroGlobalReader};
 use crate::components::global::{GlobalConfig, GlobalWriter};
+use crate::components::global::{GlobalMatmul, SharedGlobalMatmulConfig};
 use crate::components::global::{RoleRule, read::AsyncPartialLoadingStrategy};
+use crate::components::stage;
 use crate::components::stage::FilledStage;
 use crate::components::stage::StageConfig as _;
-use crate::components::{
-    AccG,
-    global::read::{PartialStageGlobalReader, StageBuffer, ZeroGlobalReader},
-};
-use crate::components::{AccS, LhsG, LhsS, MatrixPrecision, RhsG, RhsS, global};
-use crate::components::{MatmulPrecision, stage};
+use crate::definition::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS};
 
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
@@ -37,7 +34,7 @@ pub struct SpecializedMatmul<
 }
 
 #[cube]
-impl<MP: MatmulPrecision, SMM, L, GW> global::GlobalMatmul<MP> for SpecializedMatmul<MP, SMM, L, GW>
+impl<MP: MatmulPrecision, SMM, L, GW> GlobalMatmul<MP> for SpecializedMatmul<MP, SMM, L, GW>
 where
     SMM: stage::StageMatmul<
             MP,

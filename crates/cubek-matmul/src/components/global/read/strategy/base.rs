@@ -1,13 +1,12 @@
+use crate::components::global::memory::GlobalIterator;
+use crate::components::global::stride_align_bits;
 use crate::components::stage::TilingLayout;
-use crate::components::{InvalidConfigError, MatmulProblem};
-use crate::components::{
-    MatmulElems, MatrixLayout,
-    stage::{StageMemoryConfig, SwizzleMode},
-};
-use crate::components::{MatmulPrecision, global::memory::GlobalIterator};
-use crate::components::{StageIdent, global::stride_align_bits};
+use crate::components::stage::{StageMemoryConfig, SwizzleMode};
 use crate::components::{global::GlobalReaderConfig, stage::StageConfig};
 use crate::components::{global::SharedGlobalMatmulConfig, stage::StageFamily};
+use crate::definition::{
+    InvalidConfigError, MatmulElems, MatmulPrecision, MatmulProblem, MatrixLayout, StageIdent,
+};
 use cubecl::ir::{BarrierLevel, OpaqueType, SemanticType};
 use cubecl::prelude::*;
 

@@ -7,8 +7,9 @@ pub(crate) use reference::assert_result;
 pub(crate) use utils::tiling_scheme_ops;
 
 mod unit {
-    use cubek_attention::launch::{
-        AttentionBlueprint, AttentionTileSize, RoutineStrategy, Strategy,
+    use cubek_attention::{
+        definition::{AttentionBlueprint, AttentionTileSize},
+        launch::{RoutineStrategy, Strategy},
     };
     fn strategy(blueprint: AttentionBlueprint) -> Strategy {
         Strategy::Unit(RoutineStrategy::Forced(blueprint))
@@ -30,7 +31,7 @@ mod unit {
     mod f16_ty {
         use super::*;
         use cubecl::frontend::CubePrimitive;
-        use cubek_attention::launch::AttentionGlobalTypes;
+        use cubek_attention::definition::AttentionGlobalTypes;
 
         fn global_dtypes() -> AttentionGlobalTypes {
             AttentionGlobalTypes::from_single_dtype(half::f16::as_type_native_unchecked())
@@ -42,7 +43,7 @@ mod unit {
     mod f32_ty {
         use super::*;
         use cubecl::frontend::CubePrimitive;
-        use cubek_attention::launch::AttentionGlobalTypes;
+        use cubek_attention::definition::AttentionGlobalTypes;
 
         fn global_dtypes() -> AttentionGlobalTypes {
             AttentionGlobalTypes::from_single_dtype(f32::as_type_native_unchecked())
@@ -53,8 +54,9 @@ mod unit {
 }
 
 mod blackbox_accelerated {
-    use cubek_attention::launch::{
-        AttentionBlueprint, AttentionTileSize, RoutineStrategy, Strategy,
+    use cubek_attention::{
+        definition::{AttentionBlueprint, AttentionTileSize},
+        launch::{RoutineStrategy, Strategy},
     };
 
     fn strategy(blueprint: AttentionBlueprint) -> Strategy {
@@ -64,7 +66,7 @@ mod blackbox_accelerated {
     fn tile_size() -> AttentionTileSize {
         #[cfg(target_os = "macos")]
         {
-            use cubek_attention::launch::AttentionTileSize;
+            use cubek_attention::definition::AttentionTileSize;
 
             AttentionTileSize {
                 seq_q: 8,
@@ -90,7 +92,7 @@ mod blackbox_accelerated {
     mod f16_ty {
         use super::*;
         use cubecl::frontend::CubePrimitive;
-        use cubek_attention::launch::AttentionGlobalTypes;
+        use cubek_attention::definition::AttentionGlobalTypes;
 
         fn global_dtypes() -> AttentionGlobalTypes {
             AttentionGlobalTypes::from_single_dtype(half::f16::as_type_native_unchecked())
@@ -102,7 +104,7 @@ mod blackbox_accelerated {
     mod f32_ty {
         use super::*;
         use cubecl::frontend::CubePrimitive;
-        use cubek_attention::launch::AttentionGlobalTypes;
+        use cubek_attention::definition::AttentionGlobalTypes;
 
         fn global_dtypes() -> AttentionGlobalTypes {
             AttentionGlobalTypes::from_single_dtype(f32::as_type_native_unchecked())

@@ -1,9 +1,8 @@
-use cubek_attention::launch::{AttentionDefinition, AttentionElems};
-
 use core::f32;
 
 use cubecl::{TestRuntime, client::ComputeClient, std::tensor::TensorHandle};
 
+use cubek_attention::definition::{AttentionDefinition, AttentionElems};
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, StrideSpec, assert_equals_approx};
 
 #[allow(clippy::too_many_arguments)]

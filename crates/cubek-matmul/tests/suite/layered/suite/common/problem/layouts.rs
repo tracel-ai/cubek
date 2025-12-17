@@ -1,7 +1,7 @@
 #[cfg(all(not(feature = "matmul_tests_layouts"),))]
 pub mod default {
     use super::*;
-    use cubek_matmul::components::MatrixLayout;
+    use cubek_matmul::definition::MatrixLayout;
 
     pub fn layouts() -> (MatrixLayout, MatrixLayout) {
         (MatrixLayout::RowMajor, MatrixLayout::RowMajor)

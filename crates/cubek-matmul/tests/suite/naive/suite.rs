@@ -3,12 +3,12 @@ use cubecl::frontend::CubePrimitive;
 use cubecl::prelude::TensorHandleRef;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{Runtime, client};
-use cubek_matmul::MatmulInputHandleRef;
+use cubek_matmul::launch::MatmulInputHandleRef;
 
 use crate::suite::layout_to_stride_spec;
-use cubek_matmul::components::MatrixLayout;
-use cubek_matmul::components::{MatmulElems, MatmulIdent, MatmulProblem};
-use cubek_matmul::kernels::naive;
+use cubek_matmul::definition::MatrixLayout;
+use cubek_matmul::definition::{MatmulElems, MatmulIdent, MatmulProblem};
+use cubek_matmul::routines::naive;
 use cubek_test_utils::{Distribution, SimpleInputSpec, TestInput};
 
 type TestRuntime = cubecl::TestRuntime;

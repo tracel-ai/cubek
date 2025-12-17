@@ -4,14 +4,12 @@ use cubecl::prelude::*;
 
 use cubecl::std::{CubeOption, CubeOptionExpand};
 
-use crate::components::{
-    MatrixLayout,
-    tile::{
-        StridedTile,
-        io::{Filled, Strided, Tile, TileKind},
-        plane_vec_mat_inner_product::LineContainer,
-    },
+use crate::components::tile::{
+    StridedTile,
+    io::{Filled, Strided, Tile, TileKind},
+    plane_vec_mat_inner_product::LineContainer,
 };
+use crate::definition::MatrixLayout;
 
 /// Reader for the vector side of the VecMat operation
 #[derive(CubeType)]

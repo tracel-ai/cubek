@@ -1,12 +1,12 @@
 use cubecl::prelude::*;
 use std::marker::PhantomData;
 
-use crate::components::MatrixLayout;
 use crate::components::tile::register::config::{ProductType, RegisterMatmulConfig};
+use crate::components::tile::register::writer::RegisterStageWriter;
 use crate::components::tile::{TileMatmul, io::Filled, register::reader::RegisterFragmentReader};
 use crate::components::tile::{io::Strided, register::reader::RegisterStageReader};
 use crate::components::tile::{io::TileKind, tile_data::StridedTile};
-use crate::components::{StageIdent, tile::register::writer::RegisterStageWriter};
+use crate::definition::{MatrixLayout, StageIdent};
 
 /// Uses one unit to perform a small matmul directly in registers
 pub struct RegisterMatmul<Acc: TileKind = Filled> {

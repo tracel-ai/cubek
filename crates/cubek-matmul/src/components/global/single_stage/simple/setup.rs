@@ -1,24 +1,25 @@
-use crate::components::{
-    MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulSelection, MatrixLayout, StageIdent,
-    error::MatmulSetupError,
-    global::{
-        GlobalReaderConfig, GlobalWriterConfig, GlobalWriterFamily, SharedGlobalMatmulConfig,
-        SpecializationTensorConfig, WriteTiling, cube_dim_validation,
-        memory::{GlobalMemoryConfig, ViewDirection},
-        multi_stage::EventLoadingMode,
-        read::{FullLoadingStrategy, LoadingValidation},
-        single_stage::simple::matmul::SimpleMatmul,
+use crate::definition::{
+    MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError, MatrixLayout,
+    StageIdent,
+};
+use crate::{
+    components::{
+        global::{
+            GlobalReaderConfig, GlobalWriterConfig, GlobalWriterFamily, SharedGlobalMatmulConfig,
+            SpecializationTensorConfig, WriteTiling, cube_dim_validation,
+            memory::{GlobalMemoryConfig, ViewDirection},
+            multi_stage::EventLoadingMode,
+            read::{FullLoadingStrategy, LoadingValidation},
+            single_stage::simple::matmul::SimpleMatmul,
+        },
+        stage::{FilledStageFamily, NoTilingLayout, StageConfig, StridedStageFamily},
     },
-    stage::{FilledStageFamily, NoTilingLayout, StageConfig, StridedStageFamily},
+    definition::MatmulSelection,
 };
 use cubecl::prelude::*;
 use std::marker::PhantomData;
 
-use crate::components::{
-    MatmulProblem,
-    global::GlobalMatmulFamily,
-    stage::{self},
-};
+use crate::components::{global::GlobalMatmulFamily, stage};
 
 /// Simple matmul family for any precision
 pub struct SimpleMatmulFamily<

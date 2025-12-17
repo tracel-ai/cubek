@@ -1,9 +1,13 @@
-use crate::components::{
-    AccG, AvailableLineSizes, InputRuntimeArg, LhsG, MatmulElems, MatmulLineSizes, MatmulPrecision,
-    MatmulProblem, MatmulSelection, OutputRuntimeArg, RhsG,
-    batch::{CubeCountInput, CubeCountInputArgs, HypercubeConfig},
-    error::MatmulSetupError,
-    global::{GlobalConfig, args::MatmulArgs},
+use crate::definition::{
+    AccG, AvailableLineSizes, LhsG, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem,
+    MatmulSelection, MatmulSetupError, RhsG,
+};
+use crate::{
+    components::{
+        batch::{CubeCountInput, CubeCountInputArgs, HypercubeConfig},
+        global::GlobalConfig,
+    },
+    launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
 };
 use cubecl::prelude::*;
 use std::{fmt::Debug, hash::Hash};

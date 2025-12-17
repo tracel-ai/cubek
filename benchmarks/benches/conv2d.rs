@@ -9,8 +9,8 @@ use cubecl::{
 use cubek::{
     convolution::{self as convolution, ConvolutionArgs, Strategy},
     matmul::{
-        AcceleratedTileKind, MatmulInputHandleRef, ReadingStrategy,
-        components::{AccG, AccR, LhsG, LhsS, MatmulElems, MatmulPrecision, RhsG},
+        definition::{AccG, AccR, LhsG, LhsS, MatmulElems, MatmulPrecision, RhsG},
+        launch::{AcceleratedTileKind, MatmulInputHandleRef, ReadingStrategy},
     },
     random::random_uniform,
 };

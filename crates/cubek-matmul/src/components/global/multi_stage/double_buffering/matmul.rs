@@ -1,18 +1,15 @@
 use crate::components::global::multi_stage::double_buffer_execution::{
     execute_current_and_read_next, execute_last_and_write_results, read_first,
 };
+use crate::components::global::read::{
+    PartialLoadingStrategy, PartialStageGlobalReader, StageBuffer, ZeroGlobalReader,
+};
 use crate::components::global::{GlobalMatmul, GlobalWriter, SharedGlobalMatmulConfig};
 use crate::components::global::{Specializer, read::SyncStrategy};
+use crate::components::stage;
 use crate::components::stage::{FilledStage, StridedStageMemory};
 use crate::components::stage::{StageConfig, StridedStageFamily};
-use crate::components::{
-    AccG,
-    global::read::{
-        PartialLoadingStrategy, PartialStageGlobalReader, StageBuffer, ZeroGlobalReader,
-    },
-};
-use crate::components::{AccS, LhsG, LhsS, MatrixPrecision, RhsG, RhsS};
-use crate::components::{MatmulPrecision, stage};
+use crate::definition::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS};
 use cubecl::prelude::*;
 use cubecl::std::{
     CubeOption, CubeOptionExpand,

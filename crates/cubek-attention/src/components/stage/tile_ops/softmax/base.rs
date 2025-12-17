@@ -11,8 +11,8 @@ use crate::components::stage::{MaskTile, RunningState};
 use crate::components::tile::RowwiseFormatExpand;
 
 use crate::components::tile::TileAttention;
-use crate::launch::AttentionPrecision;
-use crate::launch::attention_types::SM;
+use crate::definition::AttentionPrecision;
+use crate::definition::attention_types::SM;
 
 #[cube]
 /// Applies softmax to a tile with masking and updates the running state.

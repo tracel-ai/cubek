@@ -1,15 +1,17 @@
 use cubecl::features::MmaConfig;
 use cubecl::{ir::StorageType, prelude::*};
 
-use crate::components::error::MatmulSetupError;
 use crate::components::tile::TileConfig;
 use crate::components::tile::io::TileMut;
 use crate::components::{
-    AvailableLineSizes, InvalidConfigError, MatmulProblem, TileSize,
     resource::ComputeResources,
     tile::io::{Tile, TileKind},
 };
-use crate::components::{MatmulElems, MatmulLineSizes, MatmulSelection, MatrixLayout};
+use crate::definition::MatmulSelection;
+use crate::definition::{
+    AvailableLineSizes, InvalidConfigError, MatmulElems, MatmulLineSizes, MatmulProblem,
+    MatmulSetupError, MatrixLayout, TileSize,
+};
 
 /// A family of [TileMatmul] implementations that operate with any precision.
 pub trait TileMatmulFamily: Send + Sync + 'static {

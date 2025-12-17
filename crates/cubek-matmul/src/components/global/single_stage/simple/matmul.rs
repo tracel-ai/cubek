@@ -1,5 +1,4 @@
 use crate::components::{
-    AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS,
     global::{
         GlobalMatmul, GlobalWriter, SharedGlobalMatmulConfig,
         read::{FullLoadingStrategy, FullStageGlobalReader, SyncStrategy, ZeroGlobalReader},
@@ -7,6 +6,7 @@ use crate::components::{
     stage::StridedStageMemory,
     stage::{FilledStage, StageConfig, StageMatmul},
 };
+use crate::definition::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS};
 use cubecl::prelude::*;
 use cubecl::std::{
     CubeOption, CubeOptionExpand,

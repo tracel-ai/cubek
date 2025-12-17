@@ -2,13 +2,15 @@ use std::marker::PhantomData;
 
 use super::fragments::{Accumulators, RhsTile, RhsTileExpand};
 use crate::components::global::PlaneRoleConfig;
+use crate::components::stage::Stage;
+use crate::components::stage::StageEvent;
 use crate::components::stage::matmul::scheduler::PartitionScheduler;
 use crate::components::stage::{PartitionBuffering, StageEventListener};
 use crate::components::stage::{PartitionSchedulerScheme, StageMemoryConfig};
 use crate::components::tile::{TileConfig, TileMatmul};
-use crate::components::{AccS, stage::StageEvent};
-use crate::components::{LhsS, MatmulPrecision, PartitionSize, RhsS, StageSize};
-use crate::components::{MatrixPrecision, stage::Stage};
+use crate::definition::{
+    AccS, LhsS, MatmulPrecision, MatrixPrecision, PartitionSize, RhsS, StageSize,
+};
 use cubecl::prelude::*;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]

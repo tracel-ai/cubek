@@ -5,7 +5,7 @@ pub mod naive;
 
 mod reference;
 
-use cubek_matmul::components::MatrixLayout;
+use cubek_matmul::definition::MatrixLayout;
 use cubek_test_utils::StrideSpec;
 pub use reference::assert_result;
 

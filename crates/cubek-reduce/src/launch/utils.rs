@@ -1,10 +1,11 @@
-use crate::LineMode;
+use crate::{LineMode, launch::LineSizeStrategy};
 use cubecl::{
     prelude::*, std::tensor::is_contiguous, tensor_line_size_parallel,
     tensor_line_size_perpendicular,
 };
 
-pub fn calculate_plane_count(
+/// Calculate the number of planes in a cube.
+pub fn calculate_plane_count_per_cube(
     working_units: u32,
     plane_dim: u32,
     num_cpu_cores: Option<u32>,
@@ -31,6 +32,7 @@ pub fn generate_line_size<R: Runtime>(
     axis: usize,
     dtype: StorageType,
     line_mode: LineMode,
+    strategy: &LineSizeStrategy,
 ) -> (u8, u8) {
     let supported_line_sizes = client.io_optimized_line_sizes_unchecked(dtype.size());
     let line_size_input = match line_mode {
@@ -95,6 +97,7 @@ pub fn generate_line_size<R: Runtime>(
     };
 
     let mut line_size_output = 1;
+
     if line_size_input > 1 && line_mode == LineMode::Perpendicular {
         // TODO that this can be improved
         let rank = output.strides.len();
@@ -105,6 +108,20 @@ pub fn generate_line_size<R: Runtime>(
         if is_contiguous && shape.is_multiple_of(line_size_input) {
             line_size_output = line_size_input;
         }
+    }
+
+    if strategy.parallel_output_vectorization
+        && line_mode == LineMode::Parallel
+        && line_size_input > 1
+        && is_contiguous(input.shape, input.strides)
+        && axis == input.shape.len() - 1
+    {
+        let supported_line_sizes = client.io_optimized_line_sizes_unchecked(dtype.size());
+        let num_reduce = output.shape.iter().copied().product::<usize>();
+        line_size_output = supported_line_sizes
+            .filter(|&line_size| num_reduce % line_size as usize == 0)
+            .max()
+            .unwrap_or(1u8) as u32;
     }
 
     (line_size_input as u8, line_size_output as u8)

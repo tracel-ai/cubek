@@ -1,12 +1,14 @@
 use cubecl;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
-use cubek_matmul::components::{
-    InvalidConfigError, MatrixLayout,
-    stage::{
-        StageMemoryConfig, StridedStageMemory, TilingLayout, TilingLayoutEnum, TilingValidation,
+use cubek_matmul::{
+    components::{
+        stage::{
+            StageMemoryConfig, StridedStageMemory, TilingLayout, TilingLayoutEnum, TilingValidation,
+        },
+        tile::StridedTile,
     },
-    tile::StridedTile,
+    definition::{InvalidConfigError, MatrixLayout},
 };
 
 #[derive(Clone, Copy)]

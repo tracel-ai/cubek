@@ -4,9 +4,12 @@ use crate::components::global::read::validate_swizzle_atom_size;
 use crate::components::global::{multi_stage::LoadMaxRoundPlaneCount, read::sync::Synchronous};
 use crate::components::stage::ContiguousTilingLayout;
 use crate::components::stage::OrderedTilingOrder;
-use crate::components::{FormattedConfigError, InvalidConfigError, StageIdent};
-use crate::components::{MatmulElems, MatmulProblem};
 use crate::components::{global::RoleRule, stage::TilingValidation};
+use crate::definition::FormattedConfigError;
+use crate::definition::InvalidConfigError;
+use crate::definition::MatmulElems;
+use crate::definition::MatmulProblem;
+use crate::definition::StageIdent;
 use cubecl::prelude::*;
 
 use super::{LoadingValidation, sync_full_tilewise};

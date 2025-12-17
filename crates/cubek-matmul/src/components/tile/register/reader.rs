@@ -2,17 +2,15 @@ use cubecl::prelude::*;
 use cubecl::std::{CubeOption, CubeOptionExpand};
 use std::marker::PhantomData;
 
-use crate::components::{
-    MatrixLayout, StageIdent,
-    tile::{
-        StridedTile,
-        io::{Filled, Strided, TileKind},
-        register::{
-            RegisterMatmul, UnitFragment,
-            config::{ProductType, RegisterMatmulConfig},
-        },
+use crate::components::tile::{
+    StridedTile,
+    io::{Filled, Strided, TileKind},
+    register::{
+        RegisterMatmul, UnitFragment,
+        config::{ProductType, RegisterMatmulConfig},
     },
 };
+use crate::definition::{MatrixLayout, StageIdent};
 
 /// Reader for the register matmul fragments. Implementation depends on the tile kind.
 #[derive(CubeType)]

@@ -4,10 +4,10 @@ use cubecl::std::{
     tensor::{View, layout::Coords2d},
 };
 use cubek_matmul::components::{
-    MatrixPrecision,
     global::GlobalConfig,
     stage::{StageConfig as _, StageMemoryConfig, StridedStageMemory},
 };
+use cubek_matmul::definition::MatrixPrecision;
 
 use crate::components::stage::reader::BiasTilingLayout;
 

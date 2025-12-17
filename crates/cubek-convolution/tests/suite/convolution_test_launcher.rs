@@ -9,9 +9,9 @@ use cubek_convolution::{
     components::{ConvolutionProblem, global::entry_point::ConvolutionLaunch},
     kernels::forward::algorithm::Algorithm,
 };
-use cubek_matmul::components::{InputArg, MatmulSelection, OutputArg};
-use cubek_matmul::components::{MatmulElems, MatmulIdent};
-use cubek_matmul::{MatmulInputHandleRef, components::AvailableLineSizes};
+use cubek_matmul::definition::{MatmulElems, MatmulIdent, MatmulSelection};
+use cubek_matmul::launch::{InputArg, OutputArg};
+use cubek_matmul::{definition::AvailableLineSizes, launch::MatmulInputHandleRef};
 
 use super::test_utils::TestPrecision;
 

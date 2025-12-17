@@ -1,9 +1,6 @@
-mod base;
 /// Components for matrix multiplication
 pub mod components;
+pub mod definition;
+pub mod launch;
 /// Contains matmul kernels
-pub mod kernels;
-pub use base::*;
-
-/// Autotune key for matmul.
-pub mod tune_key;
+pub mod routines;

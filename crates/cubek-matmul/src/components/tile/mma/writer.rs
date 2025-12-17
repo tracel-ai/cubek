@@ -1,13 +1,11 @@
 use cubecl::prelude::*;
 use cubecl::{cmma::MmaDefinition, ir::MatrixIdent};
 
-use crate::components::{
-    MatrixLayout, as_cmma_layout,
-    tile::{
-        StridedTile,
-        mma::config::{MmaMatmulConfig, StoreMethod},
-    },
+use crate::components::tile::{
+    StridedTile,
+    mma::config::{MmaMatmulConfig, StoreMethod},
 };
+use crate::definition::{MatrixLayout, as_cmma_layout};
 
 /// Writer for storing the output registers.
 #[derive(CubeType)]

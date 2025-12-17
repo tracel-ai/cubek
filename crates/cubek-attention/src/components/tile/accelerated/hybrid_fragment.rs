@@ -1,6 +1,6 @@
 use cubecl;
 use cubecl::prelude::*;
-use cubek_matmul::components::TileSize;
+use cubek_matmul::definition::TileSize;
 
 use crate::components::tile::accelerated::local_tile::{LocalTile, LocalTileLayout};
 use crate::components::tile::accelerated::setup::BlackboxAcceleratedAttentionMatmulConfig;

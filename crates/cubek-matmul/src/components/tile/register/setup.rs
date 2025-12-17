@@ -1,15 +1,17 @@
 use crate::components::tile::SharedTileConfig;
+use crate::components::tile::io::TileKind;
 use crate::components::tile::register::config::RegisterMatmulConfig;
 use crate::components::tile::register::matmul::RegisterMatmul;
 use crate::components::tile::{TileMatmulFamily, io::Strided};
 use crate::components::{
-    AvailableLineSizes, InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulLineSizes,
-    MatmulProblem, MatmulSelection, MatrixLayout,
-};
-use crate::components::{error::MatmulSetupError, tile::io::TileKind};
-use crate::components::{
     resource::ComputeResources,
     tile::register::reader::{RegisterFragmentReader, RegisterStageReader},
+};
+use crate::definition::MatmulSelection;
+use crate::definition::MatmulSetupError;
+use crate::definition::{
+    AvailableLineSizes, InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulLineSizes,
+    MatmulProblem, MatrixLayout,
 };
 use cubecl::features::TypeUsage;
 use cubecl::ir::{ElemType, FloatKind};

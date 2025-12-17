@@ -10,14 +10,20 @@ pub struct ReduceBlueprint {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GlobalReduceBlueprint {
-    FullUnit(UnitReduceBlueprint),
-    FullPlane(PlaneReduceBlueprint),
-    Cube(CubeReduceBlueprint),
+    Unit(UnitReduceBlueprint),
+    Plane(PlaneReduceBlueprint),
+    Cube(CubeBlueprint),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// A single cube reduces a full vector.
-pub struct CubeReduceBlueprint {
+pub struct CubeBlueprint {
+    // Too much cubes are spawned, we should put some to idle.
+    //
+    // # Notes
+    //
+    // This only happens when we hit the hardware limit in spawning cubes on a single axis.
+    pub cube_idle: bool,
     // There are too many units in a cube causing out-of-bound.
     //
     // # Notes

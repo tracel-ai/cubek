@@ -6,8 +6,8 @@ use cubek_matmul::components::tile::StridedTile;
 use crate::components::tile::{
     FragmentAccumulator, FragmentLayout, FragmentMask, FragmentSoftmax, RowwiseFormat,
 };
-use crate::launch::attention_types::{ACC, SM};
-use crate::launch::{
+use crate::definition::attention_types::{ACC, SM};
+use crate::definition::{
     AttentionBlueprint, AttentionPrecision, AttentionSetupError, AttentionTileSize,
     InvalidConfigError,
 };

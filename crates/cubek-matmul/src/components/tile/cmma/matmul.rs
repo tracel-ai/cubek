@@ -9,7 +9,7 @@ use crate::components::tile::{
     io::{Strided, TileKind},
 };
 use crate::components::tile::{cmma::writer::CmmaStageWriter, tile_data::StridedTile};
-use crate::components::{MatrixLayout, as_cmma_layout};
+use crate::definition::{MatrixLayout, as_cmma_layout};
 use cubecl::cmma;
 use cubecl::std::CubeOption;
 

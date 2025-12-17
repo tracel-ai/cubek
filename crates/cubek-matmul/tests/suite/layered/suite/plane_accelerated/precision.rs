@@ -2,8 +2,8 @@
 mod f16_ty {
     use super::*;
     use cubecl::frontend::CubePrimitive;
-    use cubek_matmul::components::MatmulElems;
-    use cubek_matmul::tune_key::MatmulElemType;
+    use cubek_matmul::definition::MatmulElemType;
+    use cubek_matmul::definition::MatmulElems;
 
     fn elems() -> MatmulElems {
         MatmulElems::from_single_dtype(MatmulElemType {

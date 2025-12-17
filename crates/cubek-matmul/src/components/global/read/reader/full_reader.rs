@@ -1,6 +1,5 @@
 use std::marker::PhantomData;
 
-use crate::components::StageIdent;
 use crate::components::global::GlobalReaderConfig;
 use crate::components::global::memory::GlobalIterator;
 use crate::components::global::multi_stage::JobExecutor;
@@ -14,6 +13,7 @@ use crate::components::global::read::TaskCounter;
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::StridedStageMemory;
 use crate::components::stage::TilingLayout;
+use crate::definition::StageIdent;
 use cubecl::prelude::*;
 use cubecl::std::{
     CubeOption, CubeOptionExpand,

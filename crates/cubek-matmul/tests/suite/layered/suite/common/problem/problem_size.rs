@@ -1,6 +1,6 @@
 mod g16x8x16 {
     use super::*;
-    use cubek_matmul::components::MatmulProblem;
+    use cubek_matmul::definition::MatmulProblem;
 
     fn problem() -> MatmulProblem {
         let layouts = layouts();
@@ -23,7 +23,7 @@ mod g16x8x16 {
 
 mod g256x256x256 {
     use super::*;
-    use cubek_matmul::components::MatmulProblem;
+    use cubek_matmul::definition::MatmulProblem;
 
     fn problem() -> MatmulProblem {
         let layouts = layouts();
@@ -47,7 +47,7 @@ mod g256x256x256 {
 #[cfg(feature = "matmul_tests_alt_shapes")]
 mod g100x100x100 {
     use super::*;
-    use cubek_matmul::components::MatmulProblem;
+    use cubek_matmul::definition::MatmulProblem;
 
     fn problem() -> MatmulProblem {
         let layouts = layouts();
@@ -72,7 +72,7 @@ mod g100x100x100 {
 #[cfg(feature = "matmul_tests_alt_shapes")]
 mod g100x99x100 {
     use super::*;
-    use cubek_matmul::components::MatmulProblem;
+    use cubek_matmul::definition::MatmulProblem;
 
     fn problem() -> MatmulProblem {
         let layouts = layouts();
@@ -97,7 +97,7 @@ mod g100x99x100 {
 #[cfg(feature = "matmul_tests_alt_shapes")]
 mod g100x100x99 {
     use super::*;
-    use cubek_matmul::components::MatmulProblem;
+    use cubek_matmul::definition::MatmulProblem;
 
     fn problem() -> MatmulProblem {
         let layouts = layouts();
@@ -122,7 +122,7 @@ mod g100x100x99 {
 #[cfg(feature = "matmul_tests_alt_shapes")]
 mod g23x1x17 {
     use super::*;
-    use cubek_matmul::components::MatmulProblem;
+    use cubek_matmul::definition::MatmulProblem;
 
     fn problem() -> MatmulProblem {
         let layouts = layouts();
@@ -146,7 +146,7 @@ mod g23x1x17 {
 #[cfg(feature = "matmul_tests_alt_shapes")]
 mod g1x256x256 {
     use super::*;
-    use cubek_matmul::components::MatmulProblem;
+    use cubek_matmul::definition::MatmulProblem;
 
     fn problem() -> MatmulProblem {
         let layouts = layouts();

@@ -4,7 +4,7 @@ mod swizzle;
 #[macro_export]
 macro_rules! testgen_convolution_advanced {
     ($algorithm: ty, $precision: ty, $tiling_scheme_builder: expr) => {
-        use cubek_matmul::components::{MatmulSelection, MatmulSelectionBuilder};
+        use cubek_matmul::definition::{MatmulSelection, MatmulSelectionBuilder};
 
         mod _advanced {
             use super::*;

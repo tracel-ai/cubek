@@ -7,8 +7,9 @@ use crate::components::global::multi_stage::JobExecutor;
 use crate::components::global::read::StageBuffer;
 use crate::components::global::{GlobalConfig, GlobalWriter};
 use crate::components::global::{LoadingSides, read::SyncStrategy};
+use crate::components::stage;
 use crate::components::stage::PartitionScheduler;
-use crate::components::{MatmulPrecision, stage};
+use crate::definition::MatmulPrecision;
 use cubecl::prelude::*;
 
 #[cube]

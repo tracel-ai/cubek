@@ -1,15 +1,15 @@
+use crate::components::global::read::async_barrier::AsyncCopy;
+use crate::components::global::read::async_copy::ASYNC_COPY_WIDTH;
+use crate::components::global::read::{
+    FullLoadingStrategy, stage::FullStageLayout, validate_async_barrier,
+};
 use crate::components::global::read::{async_copy::async_copy_from, validate_swizzle_atom_size};
 use crate::components::global::{GlobalReaderConfig, RoleRule};
 use crate::components::global::{multi_stage::LoadMaxRoundPlaneCount, read::validate_async_copy};
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{StridedStageMemory, StridedTilingLayout};
-use crate::components::{InvalidConfigError, global::read::async_copy::ASYNC_COPY_WIDTH};
-use crate::components::{MatmulElems, global::read::async_barrier::AsyncCopy};
-use crate::components::{
-    MatmulProblem,
-    global::read::{FullLoadingStrategy, stage::FullStageLayout, validate_async_barrier},
-};
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
+use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem};
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Layout, LayoutExpand};

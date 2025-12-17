@@ -1,10 +1,13 @@
 use cubecl::prelude::*;
 
-use crate::components::{
-    AccG, LhsG, MatmulPrecision, RhsG,
-    batch::SliceIndex,
-    global::{self, GlobalConfig, args::MatmulArgs},
-    stage::StageConfig,
+use crate::definition::{AccG, LhsG, MatmulPrecision, RhsG};
+use crate::{
+    components::{
+        batch::SliceIndex,
+        global::{self, GlobalConfig},
+        stage::StageConfig,
+    },
+    launch::MatmulArgs,
 };
 use cubecl::std::{CubeOption, CubeOptionExpand};
 

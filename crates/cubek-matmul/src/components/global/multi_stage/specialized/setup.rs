@@ -13,12 +13,13 @@ use crate::components::global::{
     read::AsyncPartialLoadingStrategy,
 };
 use crate::components::stage::StageConfig;
-use crate::components::{MatmulElems, error::MatmulSetupError};
-use crate::components::{MatmulLineSizes, MatmulSelection};
-use crate::components::{MatmulPrecision, MatmulProblem, stage};
-use crate::components::{MatrixLayout, StageIdent};
-use crate::components::{global::GlobalMatmulFamily, stage::FilledStageFamily};
+use crate::components::{global::GlobalMatmulFamily, stage, stage::FilledStageFamily};
 use crate::components::{global::MaxGlobalReaderPlanes, stage::NoTilingLayout};
+use crate::definition::MatmulLineSizes;
+use crate::definition::MatmulSelection;
+use crate::definition::{MatmulElems, MatmulSetupError};
+use crate::definition::{MatmulPrecision, MatmulProblem};
+use crate::definition::{MatrixLayout, StageIdent};
 use cubecl::prelude::*;
 use std::marker::PhantomData;
 

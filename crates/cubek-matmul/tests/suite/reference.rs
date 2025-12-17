@@ -1,8 +1,8 @@
 use cubecl::TestRuntime;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{CubeElement, client::ComputeClient};
-use cubek_matmul::components::MatmulElems;
-use cubek_matmul::components::{MatmulIdent, MatmulProblem, MatrixLayout};
+use cubek_matmul::definition::MatmulElems;
+use cubek_matmul::definition::{MatmulIdent, MatmulProblem, MatrixLayout};
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, StrideSpec, assert_equals_approx};
 
 pub fn assert_result(

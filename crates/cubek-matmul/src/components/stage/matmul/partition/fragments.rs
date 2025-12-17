@@ -1,5 +1,5 @@
-use crate::components::{AccS, stage::Stage, tile::TileMatmul};
-use crate::components::{MatmulPrecision, MatrixLayout, MatrixPrecision, PartitionSize};
+use crate::components::{stage::Stage, tile::TileMatmul};
+use crate::definition::{AccS, MatmulPrecision, MatrixLayout, MatrixPrecision, PartitionSize};
 use cubecl::prelude::*;
 
 #[derive(CubeType)]

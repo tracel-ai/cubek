@@ -5,17 +5,19 @@ use crate::components::global::{
     GlobalReaderConfig, GlobalWriterConfig, MatmulPlaneCounts, SharedGlobalMatmulConfig,
     cube_dim_validation,
 };
+use crate::components::global::{
+    GlobalWriterFamily, multi_stage::double_buffering::DoubleBufferingMatmul,
+};
 use crate::components::global::{WriteTiling, read::PartialLoadingStrategy};
 use crate::components::stage::StageConfig;
-use crate::components::{
-    MatmulElems,
-    global::{GlobalWriterFamily, multi_stage::double_buffering::DoubleBufferingMatmul},
-};
-use crate::components::{MatmulLineSizes, MatmulSelection, MatrixLayout, StageIdent};
-use crate::components::{MatmulPrecision, MatmulProblem, stage};
-use crate::components::{error::MatmulSetupError, stage::StridedStageFamily};
-use crate::components::{global::GlobalMatmulFamily, stage::FilledStageFamily};
+use crate::components::stage::StridedStageFamily;
+use crate::components::{global::GlobalMatmulFamily, stage, stage::FilledStageFamily};
 use crate::components::{global::MaxGlobalReaderPlanes, stage::NoTilingLayout};
+use crate::definition::MatmulSelection;
+use crate::definition::{
+    MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError, MatrixLayout,
+    StageIdent,
+};
 use cubecl::prelude::*;
 use std::marker::PhantomData;
 

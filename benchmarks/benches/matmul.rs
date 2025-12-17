@@ -1,3 +1,4 @@
+use crate::matmul::launch::launch;
 use cubecl::{
     benchmark::{Benchmark, BenchmarkComputations, BenchmarkDurations, TimingMethod},
     future,
@@ -6,13 +7,17 @@ use cubecl::{
 };
 use cubek::{
     matmul::{
-        self as matmul, AcceleratedTileKind, AsyncPartialReadingStrategy, MatmulInputHandle,
-        PartialReadingStrategy, ReadingStrategy,
-        components::{
+        self as matmul,
+        components::{batch::HypercubeSelection, stage::PartitionBuffering},
+        definition::{
             LoadingPrecomputeStrategy, MatmulElems, MatmulPrecision, MatmulSelection, StageSize,
-            TilingScheme, batch::HypercubeSelection, stage::PartitionBuffering,
+            TilingScheme,
         },
-        kernels::layered::{
+        launch::{
+            AcceleratedTileKind, AsyncPartialReadingStrategy, MatmulInputHandle,
+            PartialReadingStrategy, ReadingStrategy, Strategy,
+        },
+        routines::{
             Selection, TileSizeSelection, double_buffering::DoubleBufferingArgs,
             double_unit::DoubleUnitSelectionArgs, ordered_double_buffering::OrderedSelectionArgs,
             simple::SimpleArgs, simple_unit::SimpleUnitSelectionArgs,
@@ -67,7 +72,7 @@ impl<R: Runtime> Benchmark for MatmulBench<R> {
             *self.dtypes.acc_global,
         );
 
-        match matmul::launch(
+        match launch(
             &self.strategy,
             &self.client,
             lhs,
@@ -119,7 +124,7 @@ struct MatmulBench<R: Runtime> {
     n: usize,
     tl: bool,
     tr: bool,
-    strategy: matmul::Strategy,
+    strategy: Strategy,
     device: R::Device,
     client: ComputeClient<R>,
     dtypes: MatmulElems,
@@ -138,7 +143,7 @@ fn entry(m: usize, n: usize, k: usize) -> (usize, usize, usize, usize) {
 }
 
 #[allow(dead_code, clippy::single_element_loop)]
-fn run<R: Runtime, MP: MatmulPrecision>(device: R::Device, strategy: matmul::Strategy) {
+fn run<R: Runtime, MP: MatmulPrecision>(device: R::Device, strategy: Strategy) {
     for tl in [true, false] {
         for tr in [true, false] {
             for (b, m, n, k) in [
@@ -174,7 +179,7 @@ fn run<R: Runtime, MP: MatmulPrecision>(device: R::Device, strategy: matmul::Str
 #[allow(dead_code)]
 fn run_one<R: Runtime, MP: MatmulPrecision>(
     device: R::Device,
-    strategy: matmul::Strategy,
+    strategy: Strategy,
     shapes: (usize, usize, usize, usize),
     transposed: (bool, bool),
 ) -> Result<(BenchmarkDurations, f64), String> {
@@ -249,7 +254,7 @@ fn run_grid_search<R: Runtime, MP: MatmulPrecision>() {
                     .build();
                 let result = run_one::<R, MP>(
                     Default::default(),
-                    matmul::Strategy::Simple {
+                    Strategy::Simple {
                         read_strategy: ReadingStrategy::Cyclic,
                         selection: Selection::Forced(selection.clone()),
                         tile_kind: AcceleratedTileKind::Cmma,
@@ -281,19 +286,19 @@ fn run_algos_vecmat<R: Runtime, MP: MatmulPrecision>() {
     println!("Simple VecMat");
     run::<R, MP>(
         Default::default(),
-        matmul::Strategy::SimpleVecMat(Selection::Inferred(())),
+        Strategy::SimpleVecMat(Selection::Inferred(())),
     );
 
     println!("Double VecMat");
     run::<R, MP>(
         Default::default(),
-        matmul::Strategy::DoubleVecMat(Selection::Inferred(())),
+        Strategy::DoubleVecMat(Selection::Inferred(())),
     );
 
     println!("Simple Unit Min");
     run::<R, MP>(
         Default::default(),
-        matmul::Strategy::SimpleUnit(Selection::Inferred(SimpleUnitSelectionArgs {
+        Strategy::SimpleUnit(Selection::Inferred(SimpleUnitSelectionArgs {
             tile_size: TileSizeSelection::MinTileSize,
         })),
     );
@@ -301,7 +306,7 @@ fn run_algos_vecmat<R: Runtime, MP: MatmulPrecision>() {
     println!("Simple Unit Max");
     run::<R, MP>(
         Default::default(),
-        matmul::Strategy::SimpleUnit(Selection::Inferred(SimpleUnitSelectionArgs {
+        Strategy::SimpleUnit(Selection::Inferred(SimpleUnitSelectionArgs {
             tile_size: TileSizeSelection::MaxTileSize,
         })),
     );
@@ -314,7 +319,7 @@ fn run_algos_unit<R: Runtime, MP: MatmulPrecision>() {
     println!("Simple Unit Min");
     run::<R, MP>(
         Default::default(),
-        matmul::Strategy::SimpleUnit(Selection::Inferred(SimpleUnitSelectionArgs {
+        Strategy::SimpleUnit(Selection::Inferred(SimpleUnitSelectionArgs {
             tile_size: TileSizeSelection::MinTileSize,
         })),
     );
@@ -322,7 +327,7 @@ fn run_algos_unit<R: Runtime, MP: MatmulPrecision>() {
     println!("Simple Unit Max");
     run::<R, MP>(
         Default::default(),
-        matmul::Strategy::SimpleUnit(Selection::Inferred(SimpleUnitSelectionArgs {
+        Strategy::SimpleUnit(Selection::Inferred(SimpleUnitSelectionArgs {
             tile_size: TileSizeSelection::MaxTileSize,
         })),
     );
@@ -330,7 +335,7 @@ fn run_algos_unit<R: Runtime, MP: MatmulPrecision>() {
     println!("Double Unit Min");
     run::<R, MP>(
         Default::default(),
-        matmul::Strategy::DoubleUnit(Selection::Inferred(DoubleUnitSelectionArgs {
+        Strategy::DoubleUnit(Selection::Inferred(DoubleUnitSelectionArgs {
             tile_size: TileSizeSelection::MinTileSize,
         })),
     );
@@ -338,7 +343,7 @@ fn run_algos_unit<R: Runtime, MP: MatmulPrecision>() {
     println!("Double Unit Max");
     run::<R, MP>(
         Default::default(),
-        matmul::Strategy::DoubleUnit(Selection::Inferred(DoubleUnitSelectionArgs {
+        Strategy::DoubleUnit(Selection::Inferred(DoubleUnitSelectionArgs {
             tile_size: TileSizeSelection::MaxTileSize,
         })),
     );
@@ -351,7 +356,7 @@ fn run_algos_wmma<R: Runtime, MP: MatmulPrecision>() {
     println!("Simple");
     run::<R, MP>(
         Default::default(),
-        matmul::Strategy::Simple {
+        Strategy::Simple {
             read_strategy: ReadingStrategy::Cyclic,
             selection: Selection::Inferred(SimpleArgs { multi_rows: false }),
             tile_kind: AcceleratedTileKind::Cmma,
@@ -361,7 +366,7 @@ fn run_algos_wmma<R: Runtime, MP: MatmulPrecision>() {
     println!("Simple multi rows");
     run::<R, MP>(
         Default::default(),
-        matmul::Strategy::Simple {
+        Strategy::Simple {
             read_strategy: ReadingStrategy::Cyclic,
             selection: Selection::Inferred(SimpleArgs { multi_rows: true }),
             tile_kind: AcceleratedTileKind::Cmma,
@@ -371,7 +376,7 @@ fn run_algos_wmma<R: Runtime, MP: MatmulPrecision>() {
     println!("Double Buffering");
     run::<R, MP>(
         Default::default(),
-        matmul::Strategy::DoubleBuffering {
+        Strategy::DoubleBuffering {
             read_strategy: PartialReadingStrategy::Tilewise,
             selection: Selection::Inferred(DoubleBufferingArgs { specialized: false }),
             tile_kind: AcceleratedTileKind::Cmma,
@@ -381,7 +386,7 @@ fn run_algos_wmma<R: Runtime, MP: MatmulPrecision>() {
     println!("Double Buffering Specialized");
     run::<R, MP>(
         Default::default(),
-        matmul::Strategy::DoubleBuffering {
+        Strategy::DoubleBuffering {
             read_strategy: PartialReadingStrategy::Tilewise,
             selection: Selection::Inferred(DoubleBufferingArgs { specialized: true }),
             tile_kind: AcceleratedTileKind::Cmma,
@@ -391,7 +396,7 @@ fn run_algos_wmma<R: Runtime, MP: MatmulPrecision>() {
     println!("Double Buffering Ordered");
     run::<R, MP>(
         Default::default(),
-        matmul::Strategy::OrderedDoubleBuffering {
+        Strategy::OrderedDoubleBuffering {
             selection: Selection::Inferred(OrderedSelectionArgs {
                 row_count: Some(8),
                 rows_per_plane: Some(2),
@@ -429,7 +434,7 @@ fn run_algos_mma<R: Runtime, MP: MatmulPrecision>() {
     println!("Specialized Strided");
     run::<R, MP>(
         Default::default(),
-        matmul::Strategy::Specialized {
+        Strategy::Specialized {
             read_strategy: AsyncPartialReadingStrategy::Strided,
             selection: Selection::Inferred(()),
             tile_kind: AcceleratedTileKind::Mma,

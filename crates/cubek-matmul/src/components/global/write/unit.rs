@@ -2,7 +2,6 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::{View, layout::Coords2d};
 
 use crate::components::{
-    MatrixPrecision, StageIdent,
     global::{
         GlobalWriter, GlobalWriterConfig, GlobalWriterFamily, PartitionedStage,
         PartitionedStageFamily, WriteEvent, WriteEventExpand, WriteEventListener,
@@ -11,6 +10,7 @@ use crate::components::{
     stage::{StageMemoryConfig, StagePartitioner, UnitPartitioner},
     tile::StridedTile,
 };
+use crate::definition::{MatrixPrecision, StageIdent};
 
 #[derive(CubeType)]
 /// Writes tiles from out shared memory to output global memory

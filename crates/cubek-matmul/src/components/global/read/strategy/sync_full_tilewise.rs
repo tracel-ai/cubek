@@ -6,10 +6,9 @@ use crate::components::global::read::{FullLoadingStrategy, sync::Synchronous};
 use crate::components::global::{RoleRule, read::tiled::TiledLayout};
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{StridedStageMemory, TilingOrder};
-use crate::components::{FormattedConfigError, InvalidConfigError};
-use crate::components::{MatmulElems, MatmulProblem};
 use crate::components::{global::memory::GlobalIterator, stage::ContiguousTilingLayout};
 use crate::components::{global::multi_stage::LoadMaxRoundPlaneCount, stage::TilingValidation};
+use crate::definition::{FormattedConfigError, InvalidConfigError, MatmulElems, MatmulProblem};
 use cubecl::prelude::*;
 use cubecl::std::{tensor::layout::Coords2d, type_size};
 

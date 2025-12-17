@@ -1,5 +1,5 @@
 pub mod tiling_scheme_ops {
-    use cubek_attention::launch::{AttentionDims, AttentionTilingScheme};
+    use cubek_attention::definition::{AttentionDims, AttentionTilingScheme};
 
     pub fn elements_in_stage_seq_q(tiling_scheme: &AttentionTilingScheme) -> usize {
         tiling_scheme.stage_size.seq_q as usize * elements_in_partition_seq_q(tiling_scheme)

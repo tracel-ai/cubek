@@ -1,4 +1,4 @@
-use cubek_matmul::{AcceleratedTileKind, ReadingStrategy};
+use cubek_matmul::launch::{AcceleratedTileKind, ReadingStrategy};
 
 #[derive(Clone)]
 pub struct ConvolutionArgs<const N_SPATIAL: usize> {

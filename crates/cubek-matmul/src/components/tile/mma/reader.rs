@@ -4,14 +4,12 @@ use cubecl::prelude::*;
 use cubecl::std::{CubeOption, CubeOptionExpand};
 use cubecl::{cmma::MmaDefinition, ir::MatrixIdent};
 
-use crate::components::{
-    MatrixLayout, as_cmma_layout, from_cmma_layout,
-    tile::{
-        StridedTile,
-        io::{Filled, Strided, TileKind},
-        mma::config::{LoadMethod, MmaMatmulConfig},
-    },
+use crate::components::tile::{
+    StridedTile,
+    io::{Filled, Strided, TileKind},
+    mma::config::{LoadMethod, MmaMatmulConfig},
 };
+use crate::definition::{MatrixLayout, as_cmma_layout, from_cmma_layout};
 
 /// Generic CMMA reader over any tile type
 #[cube]

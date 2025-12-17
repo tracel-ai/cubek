@@ -1,25 +1,22 @@
 use cubecl::TestRuntime;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
-use cubek_matmul::components::MatrixLayout;
-use cubek_matmul::components::global::args::TensorMapArgs;
-use cubek_matmul::components::global::args::TensorMapInputs;
+use cubek_matmul::definition::AvailableLineSizes;
+use cubek_matmul::definition::MatmulIdent;
+use cubek_matmul::definition::MatrixLayout;
+use cubek_matmul::launch::ConcreteOutputFactory as _;
 
-use cubek_matmul::components::global::args::ConcreteInputsFactory;
-use cubek_matmul::components::{
-    MatmulElems,
-    global::args::{ConcreteOutputFactory, TensorArgs, TensorOutput},
-};
-use cubek_matmul::components::{MatmulProblem, MatmulSelection};
-use cubek_matmul::components::{
-    batch::{BatchConfig, BatchMatmulFamily},
-    global::args::TensorInputs,
-};
-use cubek_matmul::kernels::layered::Algorithm;
-use cubek_matmul::{
-    MatmulInputHandleRef,
-    components::{AvailableLineSizes, MatmulIdent},
-};
+use cubek_matmul::components::batch::{BatchConfig, BatchMatmulFamily};
+use cubek_matmul::definition::MatmulElems;
+use cubek_matmul::definition::{MatmulProblem, MatmulSelection};
+use cubek_matmul::launch::ConcreteInputsFactory;
+use cubek_matmul::launch::MatmulInputHandleRef;
+use cubek_matmul::launch::TensorArgs;
+use cubek_matmul::launch::TensorInputs;
+use cubek_matmul::launch::TensorMapArgs;
+use cubek_matmul::launch::TensorMapInputs;
+use cubek_matmul::launch::TensorOutput;
+use cubek_matmul::routines::Routine;
 use cubek_test_utils::HostData;
 use cubek_test_utils::current_test_mode;
 use cubek_test_utils::{Distribution, RandomInputSpec, SimpleInputSpec, TestInput};
@@ -35,7 +32,7 @@ pub enum InputRepresentation {
 #[allow(unused)]
 /// Test the correctness of the specified Matmul on the given device,
 /// against a naive CPU implementation over the given problem
-pub fn test_matmul_algorithm<A: Algorithm>(
+pub fn test_matmul_algorithm<A: Routine>(
     client: ComputeClient<TestRuntime>,
     mut problem: MatmulProblem,
     selection: MatmulSelection,
@@ -96,7 +93,7 @@ pub fn test_matmul_algorithm<A: Algorithm>(
 
 /// Returns whether execution succeeded
 #[allow(clippy::too_many_arguments)]
-pub fn launch_matmul_algorithm<A: Algorithm>(
+pub fn launch_matmul_algorithm<A: Routine>(
     client: &ComputeClient<TestRuntime>,
     problem: &MatmulProblem,
     selection: MatmulSelection,

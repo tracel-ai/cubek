@@ -1,9 +1,14 @@
-use cubek_matmul::components::{
+use cubek_matmul::definition::{
     AvailableLineSizes, LoadingPrecomputeStrategy, MatmulElems, MatmulLineSizes, MatmulSelection,
     MatmulSetupError, MultiRowStrategy,
-    global::{LoadSpecializationConfig, args::MatmulArgs, read::ReaderMode},
-    stage::{PartitionBuffering, StageMatmulFamily},
-    tile::TileMatmulFamily,
+};
+use cubek_matmul::{
+    components::{
+        global::{LoadSpecializationConfig, read::ReaderMode},
+        stage::{PartitionBuffering, StageMatmulFamily},
+        tile::TileMatmulFamily,
+    },
+    launch::MatmulArgs,
 };
 
 use cubecl::std::tensor::{TensorHandle, into_contiguous_pitched, is_contiguous_pitched};

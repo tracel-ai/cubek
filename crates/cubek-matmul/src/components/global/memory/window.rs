@@ -1,9 +1,8 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::{View, layout::Coords2d};
 
-use crate::components::{
-    MatrixLayout, global::memory::GlobalMemoryConfig, stage::StageMemoryConfig,
-};
+use crate::components::{global::memory::GlobalMemoryConfig, stage::StageMemoryConfig};
+use crate::definition::MatrixLayout;
 
 /// Reads data from the tensor view as a window, i.e. a slice of global memory
 /// Also returns the length of the slice

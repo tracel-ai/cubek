@@ -1,14 +1,12 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::{View, layout::Coords2d};
 use cubecl::{self as cubecl};
-use cubek_matmul::components::{
-    StageIdent,
-    global::{
-        GlobalWriterConfig, PartitionedStage, WriteEvent, WriteEventExpand, WriteEventListener,
-        plane_write,
-        read::tiled::{TiledCoords, TiledLayout},
-    },
+use cubek_matmul::components::global::{
+    GlobalWriterConfig, PartitionedStage, WriteEvent, WriteEventExpand, WriteEventListener,
+    plane_write,
+    read::tiled::{TiledCoords, TiledLayout},
 };
+use cubek_matmul::definition::StageIdent;
 
 use crate::components::{
     global::simple::{AttentionWriter, AttentionWriterExpand},

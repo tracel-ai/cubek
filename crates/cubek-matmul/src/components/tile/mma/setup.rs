@@ -1,24 +1,21 @@
+use crate::components::tile::mma::config::{LoadMethod, MmaMatmulConfig};
 use crate::components::tile::{SharedTileConfig, mma::config::StoreMethod};
-use crate::components::{
-    InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatmulProblem,
-    MatmulSelection,
-};
-use crate::components::{
-    TileSize,
-    tile::{
-        TileMatmulFamily,
-        mma::{
-            MmaMatmul,
-            reader::{MmaFragmentReader, MmaStageReader},
-        },
+use crate::components::tile::{
+    TileMatmulFamily,
+    mma::{
+        MmaMatmul,
+        reader::{MmaFragmentReader, MmaStageReader},
     },
 };
-use crate::components::{error::MatmulSetupError, tile::io::Strided};
-use crate::components::{resource::ComputeResources, tile::io::TileKind};
-use crate::{
-    components::tile::mma::config::{LoadMethod, MmaMatmulConfig},
-    tune_key::MatmulElemType,
+use crate::components::{
+    resource::ComputeResources,
+    tile::io::{Strided, TileKind},
 };
+use crate::definition::{
+    InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatmulProblem,
+    MatmulSetupError, TileSize,
+};
+use crate::definition::{MatmulElemType, MatmulSelection};
 use cubecl::features::MmaConfig;
 use cubecl::{ir::StorageType, prelude::*};
 

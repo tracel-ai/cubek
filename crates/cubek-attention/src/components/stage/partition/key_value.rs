@@ -4,7 +4,7 @@ use cubecl::prelude::*;
 use crate::components::stage::StageAttentionConfig;
 use crate::components::stage::{KeyValueTile, PartitionAttentionConfig};
 use crate::components::tile::TileAttention;
-use crate::launch::AttentionPrecision;
+use crate::definition::AttentionPrecision;
 
 #[derive(CubeType)]
 /// To save registers, key and value can reuse the same fragment, since they run sequentially.

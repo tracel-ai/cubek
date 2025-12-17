@@ -2,11 +2,11 @@ use cubecl::{Runtime, client::ComputeClient, prelude::TensorHandleRef};
 
 use cubecl::std::tensor::TensorHandle;
 
-use crate::launch::args::{TensorArgs, TensorInputsLaunch};
-use crate::launch::definition::{
+use crate::definition::{AttentionBlueprint, AttentionSetupError};
+use crate::definition::{
     AttentionDefinition, AttentionDims, AttentionGlobalTypes, AttentionOptions,
 };
-use crate::launch::{AttentionBlueprint, AttentionSetupError};
+use crate::launch::args::{TensorArgs, TensorInputsLaunch};
 use crate::routines::DeviceSettings;
 use crate::routines::{
     Routine, blackbox_accelerated::BlackboxAcceleratedRoutine, unit::UnitRoutine,

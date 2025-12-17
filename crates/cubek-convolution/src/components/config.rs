@@ -1,9 +1,9 @@
 use std::ops::Deref;
 
 use cubecl::CubeDim;
-use cubek_matmul::components::{
-    MatmulLineSizes, MatmulSetupError,
-    global::{GlobalConfig, memory::GlobalMemoryConfig},
+use cubek_matmul::{
+    components::global::{GlobalConfig, memory::GlobalMemoryConfig},
+    definition::{MatmulLineSizes, MatmulSetupError},
 };
 use std::fmt::Debug;
 use std::hash::Hash;
@@ -80,7 +80,7 @@ impl<M: GlobalConfig> ConvGemmConfig for ConvolutionConfig<M> {
         self.matmul
     }
 
-    fn line_sizes(&self) -> cubek_matmul::components::MatmulLineSizes {
+    fn line_sizes(&self) -> MatmulLineSizes {
         self.matmul.global_line_sizes()
     }
 

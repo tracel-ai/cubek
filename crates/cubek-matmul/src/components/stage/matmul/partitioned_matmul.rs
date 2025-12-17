@@ -1,6 +1,6 @@
-use crate::components::MatmulPrecision;
 use crate::components::global;
 use crate::components::global::RoleRuleConfig;
+use crate::components::stage::Stage;
 use crate::components::stage::StageConfig;
 use crate::components::stage::StageMemoryConfig;
 use crate::components::stage::matmul::partition::SharedPartitionMatmulConfig;
@@ -11,8 +11,9 @@ use crate::components::stage::matmul::unit_partitioned::UnitPartitionedStageConf
 use crate::components::stage::{NoEvent, StageEventListener};
 use crate::components::tile::TileConfig;
 use crate::components::tile::TileMatmul;
-use crate::components::{MatrixPrecision, stage::Stage};
 use crate::components::{global::WriteEventListener, stage::StageMatmul};
+use crate::definition::MatmulPrecision;
+use crate::definition::MatrixPrecision;
 use core::marker::PhantomData;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;

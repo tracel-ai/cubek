@@ -1,6 +1,6 @@
 use cubecl::prelude::*;
 
-use crate::components::InvalidConfigError;
+use crate::definition::InvalidConfigError;
 
 /// Number of compute primitives required by some component, specified as either units or planes.
 pub enum ComputeResources {

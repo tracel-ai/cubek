@@ -1,15 +1,17 @@
-use crate::components::{
-    InvalidConfigError, MatmulElems, MatmulProblem, MatrixLayout,
-    global::{
-        GlobalReaderConfig,
-        memory::{GlobalIterator, load_window_in_stage},
-        multi_stage::LoadMaxRoundPlaneCount,
-        read::{
-            FullLoadingStrategy, LoadingJob, async_barrier::AsyncBarrier, validate_async_barrier,
-            validate_noswizzle,
+use crate::{
+    components::{
+        global::{
+            GlobalReaderConfig,
+            memory::{GlobalIterator, load_window_in_stage},
+            multi_stage::LoadMaxRoundPlaneCount,
+            read::{
+                FullLoadingStrategy, LoadingJob, async_barrier::AsyncBarrier,
+                validate_async_barrier, validate_noswizzle,
+            },
         },
+        stage::{StridedStageFamily, StridedStageMemory, StridedTilingLayout, TilingValidation},
     },
-    stage::{StridedStageFamily, StridedStageMemory, StridedTilingLayout, TilingValidation},
+    definition::{InvalidConfigError, MatmulElems, MatmulProblem, MatrixLayout},
 };
 use cubecl::prelude::{barrier::Barrier, *};
 

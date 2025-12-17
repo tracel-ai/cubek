@@ -9,13 +9,16 @@ use crate::{
         },
         tile::TileAttentionFamily,
     },
-    launch::{AttentionBlueprint, AttentionPrecision, AttentionSetupError, attention_types::*},
+    definition::{AttentionBlueprint, AttentionPrecision, AttentionSetupError, attention_types::*},
 };
 use cubecl::prelude::ReadWrite;
-use cubek_matmul::components::{
-    ComputeResources, MatrixLayout,
-    stage::{StageFamily, StageMemoryConfig, SwizzleMode},
-    tile::io::Strided,
+use cubek_matmul::{
+    components::{
+        ComputeResources,
+        stage::{StageFamily, StageMemoryConfig, SwizzleMode},
+        tile::io::Strided,
+    },
+    definition::MatrixLayout,
 };
 
 use crate::components::stage::StageAttentionFamily;

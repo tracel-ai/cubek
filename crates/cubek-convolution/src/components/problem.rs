@@ -1,4 +1,4 @@
-use cubek_matmul::components::{MatmulProblem, MatrixLayout};
+use cubek_matmul::definition::{MatmulProblem, MatrixLayout};
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ConvolutionOperation {

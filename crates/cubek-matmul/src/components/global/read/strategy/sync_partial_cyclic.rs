@@ -7,9 +7,8 @@ use crate::components::global::{multi_stage::LoadMaxRoundPlaneCount, read::sync:
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::StridedStageMemory;
 use crate::components::stage::{ContiguousTilingLayout, TilingOrder};
-use crate::components::{InvalidConfigError, StageIdent};
-use crate::components::{MatmulElems, MatmulProblem};
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
+use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem, StageIdent};
 use cubecl::prelude::*;
 use cubecl::std::type_size;
 

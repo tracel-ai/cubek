@@ -6,8 +6,8 @@ use cubek_convolution::{
     forward::args::{ConcreteInputsFactory, ConcreteOutputFactory},
 };
 use cubek_convolution::{forward::args::ConcreteArgs, kernels::forward::algorithm::Algorithm};
-use cubek_matmul::components::{InputArg, OutputArg};
-use cubek_matmul::components::{MatmulSelection, MatrixLayout};
+use cubek_matmul::definition::{MatmulSelection, MatrixLayout};
+use cubek_matmul::launch::{InputArg, OutputArg};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct ConvolutionSize {

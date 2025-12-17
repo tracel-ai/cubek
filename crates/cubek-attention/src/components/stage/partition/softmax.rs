@@ -4,7 +4,7 @@ use cubecl::prelude::*;
 use crate::components::stage::PartitionAttentionConfig;
 use crate::components::stage::StageAttentionConfig;
 use crate::components::tile::TileAttention;
-use crate::launch::AttentionPrecision;
+use crate::definition::AttentionPrecision;
 
 #[derive(CubeType)]
 /// Because at each hd we will perform matmul with all of seq_q, we keep seq_q softmax tiles at a time.

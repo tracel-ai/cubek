@@ -1,7 +1,7 @@
 #[cfg(target_os = "macos")]
 mod t8x8x8 {
     use super::*;
-    use cubek_matmul::components::{TileSize, TilingScheme, TilingSchemeBuilder};
+    use cubek_matmul::definition::{TileSize, TilingScheme, TilingSchemeBuilder};
 
     fn tile_size(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
         builder.with_tile_size(TileSize { m: 8, n: 8, k: 8 })

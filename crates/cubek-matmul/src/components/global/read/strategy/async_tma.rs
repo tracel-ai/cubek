@@ -2,10 +2,10 @@ use cubecl::prelude::barrier::{Barrier, BarrierToken};
 use cubecl::prelude::*;
 
 use crate::components::{
-    LhsS, MatmulPrecision, RhsS,
     global::{GlobalConfig, SharedGlobalMatmulConfig, read::SyncStrategy},
     stage::StageConfig,
 };
+use crate::definition::{LhsS, MatmulPrecision, RhsS};
 
 /// Asynchronous barrier for TMA loads
 pub struct AsyncTma {}

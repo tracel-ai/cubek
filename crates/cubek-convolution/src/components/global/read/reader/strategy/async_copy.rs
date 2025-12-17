@@ -5,10 +5,10 @@ use cubecl::std::{
     type_size,
 };
 use cubek_matmul::components::{
-    MatrixLayout, StageIdent,
     global::GlobalReaderConfig,
     stage::{StridedStageMemory, TilingLayout},
 };
+use cubek_matmul::definition::{MatrixLayout, StageIdent};
 
 use crate::components::{ConvolutionOperation, global::args::RuntimeArgs};
 

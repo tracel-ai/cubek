@@ -54,7 +54,43 @@ macro_rules! testgen_reduce {
         strides: $strides:expr,
         axis: $axis:expr,
     ) => {
-        use cubek_reduce::{ReduceStrategy, routines::RoutineStrategy};
+        mod parallel_vectorization_enabled {
+            use cubek_reduce::launch::LineSizeStrategy;
+
+            testgen_reduce!(
+                dtype: $dtype,
+                shape: $shape,
+                strides: $strides,
+                axis: $axis,
+                line_size_strategy: LineSizeStrategy {
+                    parallel_output_vectorization: true,
+                },
+            );
+        }
+
+        mod parallel_vectorization_disabled {
+            use cubek_reduce::launch::LineSizeStrategy;
+
+            testgen_reduce!(
+                dtype: $dtype,
+                shape: $shape,
+                strides: $strides,
+                axis: $axis,
+                line_size_strategy: LineSizeStrategy {
+                    parallel_output_vectorization: false,
+                },
+            );
+        }
+    };
+
+    (
+        dtype: $dtype:ty,
+        shape: $shape:expr,
+        strides: $strides:expr,
+        axis: $axis:expr,
+        line_size_strategy: $line_size_strategy:expr,
+    ) => {
+        use cubek_reduce::{ReduceStrategy, routines::BlueprintStrategy, launch::RoutineStrategy};
 
         mod full_cube {
             use super::*;
@@ -65,9 +101,12 @@ macro_rules! testgen_reduce {
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy::FullCube(
-                    RoutineStrategy::Strategy(CubeStrategy { use_planes: false })
-                ),
+                strategy: ReduceStrategy {
+                    line_size: $line_size_strategy,
+                    routine: RoutineStrategy::Cube(
+                        BlueprintStrategy::Inferred(CubeStrategy{ use_planes: false })
+                    ),
+                },
             );
         }
 
@@ -80,9 +119,12 @@ macro_rules! testgen_reduce {
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy::FullCube(
-                    RoutineStrategy::Strategy(CubeStrategy { use_planes: true })
-                ),
+                strategy: ReduceStrategy {
+                    line_size: $line_size_strategy,
+                    routine: RoutineStrategy::Cube(
+                        BlueprintStrategy::Inferred(CubeStrategy{ use_planes: true })
+                    ),
+                },
             );
         }
 
@@ -93,7 +135,7 @@ macro_rules! testgen_reduce {
         /// plane_size`.
         mod full_cube_single_plane {
             use super::*;
-            use cubek_reduce::routines::CubeReduceBlueprint;
+            use cubek_reduce::routines::CubeBlueprint;
             use cubek_reduce::BoundChecks;
             use cubecl::prelude::CubeDim;
 
@@ -102,16 +144,20 @@ macro_rules! testgen_reduce {
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy::FullCube(
-                    RoutineStrategy::Forced(
-                        CubeReduceBlueprint {
-                            bound_checks: BoundChecks::Mask,
-                            num_shared_accumulators: 8,
-                            use_planes: false,
-                        },
-                        CubeDim::new_2d(8, 1),
-                    )
-                ),
+                strategy: ReduceStrategy {
+                    line_size: $line_size_strategy,
+                    routine: RoutineStrategy::Cube(
+                        BlueprintStrategy::Forced(
+                            CubeBlueprint {
+                                cube_idle: true,
+                                bound_checks: BoundChecks::Mask,
+                                num_shared_accumulators: 8,
+                                use_planes: false,
+                            },
+                            CubeDim::new_2d(8, 1),
+                        )
+                    ),
+                },
             );
         }
 
@@ -131,16 +177,19 @@ macro_rules! testgen_reduce {
                     shape: $shape,
                     strides: $strides,
                     axis: $axis,
-                    strategy: ReduceStrategy::FullPlane(
-                        RoutineStrategy::Forced(
-                            PlaneReduceBlueprint {
-                                plane_idle: true,
-                                bound_checks: BoundChecks::Mask,
-                                independent: true,
-                            },
-                            CubeDim::new_2d(32, 2),
-                        )
-                    ),
+                    strategy: ReduceStrategy {
+                        line_size: $line_size_strategy,
+                        routine: RoutineStrategy::Plane(
+                            BlueprintStrategy::Forced(
+                                PlaneReduceBlueprint {
+                                    plane_idle: true,
+                                    bound_checks: BoundChecks::Mask,
+                                    independent: true,
+                                },
+                                CubeDim::new_2d(32, 2),
+                            )
+                        ),
+                    },
                 );
             }
 
@@ -152,16 +201,19 @@ macro_rules! testgen_reduce {
                     shape: $shape,
                     strides: $strides,
                     axis: $axis,
-                    strategy: ReduceStrategy::FullPlane(
-                        RoutineStrategy::Forced(
-                            PlaneReduceBlueprint {
-                                plane_idle: true,
-                                bound_checks: BoundChecks::Mask,
-                                independent: true,
-                            },
-                            CubeDim::new_2d(64, 2),
-                        )
-                    ),
+                    strategy: ReduceStrategy {
+                        line_size: $line_size_strategy,
+                        routine: RoutineStrategy::Plane(
+                            BlueprintStrategy::Forced(
+                                PlaneReduceBlueprint {
+                                    plane_idle: true,
+                                    bound_checks: BoundChecks::Mask,
+                                    independent: true,
+                                },
+                                CubeDim::new_2d(64, 2),
+                            )
+                        ),
+                    },
                 );
             }
         }
@@ -175,9 +227,12 @@ macro_rules! testgen_reduce {
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy::FullPlane(
-                    RoutineStrategy::Strategy(PlaneStrategy { independent: false })
-                ),
+                strategy: ReduceStrategy {
+                    line_size: $line_size_strategy,
+                    routine: RoutineStrategy::Plane(
+                        BlueprintStrategy::Inferred(PlaneStrategy{ independent: false })
+                    ),
+                },
             );
         }
 
@@ -190,9 +245,12 @@ macro_rules! testgen_reduce {
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy::FullPlane(
-                    RoutineStrategy::Strategy(PlaneStrategy { independent: true })
-                ),
+                strategy: ReduceStrategy {
+                    line_size: $line_size_strategy,
+                    routine: RoutineStrategy::Plane(
+                        BlueprintStrategy::Inferred(PlaneStrategy{ independent: true })
+                    ),
+                },
             );
         }
 
@@ -205,10 +263,16 @@ macro_rules! testgen_reduce {
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy::FullUnit(RoutineStrategy::Strategy(UnitStrategy)),
+                strategy: ReduceStrategy {
+                    line_size: $line_size_strategy,
+                    routine: RoutineStrategy::Unit(
+                        BlueprintStrategy::Inferred(UnitStrategy)
+                    ),
+                },
             );
         }
     };
+
     (
         shape: $shape:expr,
         strides: $strides:expr,
@@ -310,6 +374,38 @@ mod reduce_dim {
         );
     }
 
+    mod parallel_matrix_xxlarge {
+        testgen_reduce!(
+            shape: vec![64*4, 1024*4],
+            strides: vec![1024*4, 1],
+            axis: Some(1),
+        );
+    }
+
+    mod perpendicular_matrix_xxlarge {
+        testgen_reduce!(
+            shape: vec![64*4, 1024*4],
+            strides: vec![1024*4, 1],
+            axis: Some(0),
+        );
+    }
+
+    mod parallel_matrix_large_odd_batch {
+        testgen_reduce!(
+            shape: vec![33, 1024],
+            strides: vec![1024, 1],
+            axis: Some(1),
+        );
+    }
+
+    mod perpendicular_matrix_large_odd_batch {
+        testgen_reduce!(
+            shape: vec![33, 1024],
+            strides: vec![1024, 1],
+            axis: Some(0),
+        );
+    }
+
     mod parallel_rank_three_tensor {
         testgen_reduce!(
             shape: vec![16, 16, 16],
@@ -360,16 +456,16 @@ mod reduce_dim {
 
     mod parallel_matrix_with_jumps {
         testgen_reduce!(
-            shape: vec![8, 8],
-            strides: vec![64, 1],
+            shape: vec![256, 256],
+            strides: vec![512, 1],
             axis: Some(1),
         );
     }
 
     mod perpendicular_matrix_with_jumps {
         testgen_reduce!(
-            shape: vec![8, 8],
-            strides: vec![64, 1],
+            shape: vec![256, 256],
+            strides: vec![512, 1],
             axis: Some(0),
         );
     }

@@ -1,12 +1,14 @@
-use crate::components::{
-    MatrixPrecision, StageIdent,
-    global::{
-        GlobalWriter, GlobalWriterConfig, GlobalWriterFamily, PartitionedStage,
-        PartitionedStageFamily, WriteEvent, WriteEventExpand, WriteEventListener,
-        read::tiled::{TiledCoords, TiledLayout},
+use crate::{
+    components::{
+        global::{
+            GlobalWriter, GlobalWriterConfig, GlobalWriterFamily, PartitionedStage,
+            PartitionedStageFamily, WriteEvent, WriteEventExpand, WriteEventListener,
+            read::tiled::{TiledCoords, TiledLayout},
+        },
+        stage::{PlanePartitioner, StageMemoryConfig, StagePartitioner},
+        tile::StridedTile,
     },
-    stage::{PlanePartitioner, StageMemoryConfig, StagePartitioner},
-    tile::StridedTile,
+    definition::{MatrixPrecision, StageIdent},
 };
 use cubecl::prelude::*;
 use cubecl::std::tensor::View;

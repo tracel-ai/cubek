@@ -1,10 +1,10 @@
 use cubecl::CubeDim;
 
 use crate::components::{
-    GlobalPartitionSize, MatmulLineSizes, MatmulProblem, MatmulSetupError,
     batch::{BatchConfig, HypercubeConfig},
     global::GlobalConfig,
 };
+use crate::definition::{GlobalPartitionSize, MatmulLineSizes, MatmulProblem, MatmulSetupError};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 /// Configuration for partitioned batch matmul

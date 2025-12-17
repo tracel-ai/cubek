@@ -1,15 +1,17 @@
 use std::marker::PhantomData;
 
-use cubek_matmul::components::{
-    LoadingPrecomputeStrategy, MatrixLayout, StageIdent,
-    global::{
-        GlobalReaderConfig, GlobalWriterConfig, PartitionedStageFamily, PlaneRoleConfig,
-        RoleRuleConfig, SpecializationTensorConfig,
-        memory::{GlobalMemoryConfig, ViewDirection},
-        multi_stage::EventLoadingMode,
-        read::ReaderMode,
+use cubek_matmul::{
+    components::{
+        global::{
+            GlobalReaderConfig, GlobalWriterConfig, PartitionedStageFamily, PlaneRoleConfig,
+            RoleRuleConfig, SpecializationTensorConfig,
+            memory::{GlobalMemoryConfig, ViewDirection},
+            multi_stage::EventLoadingMode,
+            read::ReaderMode,
+        },
+        stage::StridedStageFamily,
     },
-    stage::StridedStageFamily,
+    definition::{LoadingPrecomputeStrategy, MatrixLayout, StageIdent},
 };
 
 use crate::{
@@ -20,7 +22,7 @@ use crate::{
         },
         stage::{StageAttentionConfig as _, StageAttentionFamily},
     },
-    launch::{AttentionBlueprint, AttentionPrecision, AttentionSetupError},
+    definition::{AttentionBlueprint, AttentionPrecision, AttentionSetupError},
 };
 
 pub struct SimpleGlobalAttentionFamily<SA: StageAttentionFamily> {

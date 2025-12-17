@@ -1,28 +1,19 @@
+use crate::components::global::read::AsyncPartialLoadingStrategy;
+use crate::components::global::read::{PartialLoadingStrategy, async_tma::AsyncTma};
+use crate::components::global::read::{validate_async_barrier, validate_tma};
+use crate::components::global::{GlobalConfig, GlobalReaderConfig};
+use crate::components::global::{RoleRule, multi_stage::LoadMaxRoundPlaneCount};
+use crate::components::stage::TmaTilingLayout;
 use crate::components::stage::{StridedStageMemory, SwizzleMode};
-use crate::components::{InvalidConfigError, StageIdent};
-use crate::components::{
-    LhsS,
-    global::{GlobalConfig, GlobalReaderConfig},
-};
-use crate::components::{MatmulElems, global::read::AsyncPartialLoadingStrategy};
-use crate::components::{
-    MatmulPrecision,
-    global::read::{validate_async_barrier, validate_tma},
-};
-use crate::components::{MatmulProblem, stage::TmaTilingLayout};
-use crate::components::{
-    MatrixLayout,
-    global::read::{PartialLoadingStrategy, async_tma::AsyncTma},
-};
-use crate::components::{
-    RhsS,
-    global::{RoleRule, multi_stage::LoadMaxRoundPlaneCount},
-};
 use crate::components::{
     global::SharedGlobalMatmulConfig,
     stage::{StageConfig, StridedStageFamily},
 };
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
+use crate::definition::{
+    InvalidConfigError, LhsS, MatmulElems, MatmulPrecision, MatmulProblem, MatrixLayout, RhsS,
+    StageIdent,
+};
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 

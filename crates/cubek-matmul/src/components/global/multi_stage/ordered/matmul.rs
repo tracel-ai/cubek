@@ -1,22 +1,20 @@
+use crate::components::global::multi_stage::ordered::LL;
+use crate::components::global::read::{
+    FullLoadingStrategy, FullStageGlobalReader, PartialLoadingStrategy, PartialStageGlobalReader,
+    StageBuffer, ZeroGlobalReader,
+};
 use crate::components::global::{self, GlobalWriter, SharedGlobalMatmulConfig};
 use crate::components::global::{Specializer, read::sync::Synchronous};
 use crate::components::stage::StageConfig as _;
 use crate::components::stage::StridedStageFamily;
 use crate::components::{
-    AccG,
-    global::read::{
-        FullLoadingStrategy, FullStageGlobalReader, PartialLoadingStrategy,
-        PartialStageGlobalReader, StageBuffer, ZeroGlobalReader,
-    },
-};
-use crate::components::{AccS, global::multi_stage::ordered::LL};
-use crate::components::{LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS, stage};
-use crate::components::{
     global::multi_stage::double_buffer_execution::{
         execute_current_and_read_next, execute_last_and_write_results, read_first,
     },
+    stage,
     stage::{FilledStage, StridedStageMemory},
 };
+use crate::definition::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS};
 use cubecl::prelude::*;
 use cubecl::std::tensor::{View, layout::Coords2d};
 use cubecl::std::{CubeOption, CubeOptionExpand};

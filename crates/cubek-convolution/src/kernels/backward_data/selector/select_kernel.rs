@@ -4,12 +4,10 @@ use crate::{
 };
 use cubecl::prelude::TensorHandleRef;
 use cubecl::{Runtime, client::ComputeClient};
-use cubek_matmul::components::MatmulElems;
-use cubek_matmul::components::global::args::MatmulArgs;
 use cubek_matmul::{
-    MatmulInputHandleRef,
-    components::{
-        InputArg, InputRuntimeArg, MatmulLineSizes, MatmulSelection, OutputArg, OutputRuntimeArg,
+    definition::{MatmulElems, MatmulLineSizes, MatmulSelection},
+    launch::{
+        InputArg, InputRuntimeArg, MatmulArgs, MatmulInputHandleRef, OutputArg, OutputRuntimeArg,
     },
 };
 

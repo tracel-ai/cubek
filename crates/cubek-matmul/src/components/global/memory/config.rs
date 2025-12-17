@@ -1,6 +1,6 @@
 use std::{fmt::Debug, hash::Hash};
 
-use crate::components::{MatrixLayout, global::memory::ViewDirection};
+use crate::{components::global::memory::ViewDirection, definition::MatrixLayout};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct GlobalMemoryConfig {

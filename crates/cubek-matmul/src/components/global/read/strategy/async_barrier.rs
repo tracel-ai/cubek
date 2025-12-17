@@ -1,10 +1,12 @@
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 
-use crate::components::{
-    MatmulPrecision,
-    global::{SharedGlobalMatmulConfig, read::SyncStrategy},
-    stage::StageConfig,
+use crate::{
+    components::{
+        global::{SharedGlobalMatmulConfig, read::SyncStrategy},
+        stage::StageConfig,
+    },
+    definition::MatmulPrecision,
 };
 
 /// Asynchronous barrier for `async_memcpy`

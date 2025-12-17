@@ -1,12 +1,11 @@
-use crate::components::MatmulElems;
 use crate::components::global::read::validate_swizzle_atom_size;
 use crate::components::global::read::{FullLoadingStrategy, stage::FullStageLayout};
 use crate::components::global::{GlobalReaderConfig, RoleRule};
 use crate::components::global::{multi_stage::LoadMaxRoundPlaneCount, read::sync::Synchronous};
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{StridedStageMemory, StridedTilingLayout};
-use crate::components::{InvalidConfigError, MatmulProblem};
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
+use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem};
 use cubecl::prelude::*;
 use cubecl::std::type_size;
 

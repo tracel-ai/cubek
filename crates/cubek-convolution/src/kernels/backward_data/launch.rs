@@ -15,13 +15,10 @@ use cubecl::{
     prelude::*,
     std::{CubeOption, tensor::TensorHandle},
 };
-use cubek_matmul::MatmulInputHandleRef;
 use cubek_matmul::{
-    AcceleratedTileKind, MatmulInputHandle, ReadingStrategy,
-    components::{
-        self, AvailableLineSizes, MatmulElems, MatrixLayout,
-        tile::{cmma::CmmaMatmul, io::Strided, mma::MmaMatmul},
-    },
+    components::tile::{cmma::CmmaMatmul, io::Strided, mma::MmaMatmul},
+    definition::{AvailableLineSizes, MatmulElems, MatrixLayout},
+    launch::{AcceleratedTileKind, MatmulInputHandle, MatmulInputHandleRef, ReadingStrategy},
 };
 use derive_new::new;
 
@@ -180,8 +177,8 @@ where
 
         lhs_strides: out_grad.data().strides.to_vec(),
         rhs_strides: weights.data().strides.to_vec(),
-        lhs_layout: components::MatrixLayout::RowMajor,
-        rhs_layout: components::MatrixLayout::RowMajor,
+        lhs_layout: MatrixLayout::RowMajor,
+        rhs_layout: MatrixLayout::RowMajor,
         kernel_size: kernel_shape.iter().map(|it| *it as u32).collect(),
         stride: stride.iter().map(|it| *it as u32).collect(),
         padding: padding.iter().map(|it| *it as i32).collect(),

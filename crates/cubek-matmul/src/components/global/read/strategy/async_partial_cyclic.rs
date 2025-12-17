@@ -1,5 +1,8 @@
 use std::marker::PhantomData;
 
+use crate::components::global::read::validate_async_barrier;
+use crate::components::global::read::validate_swizzle_atom_size;
+use crate::components::global::{GlobalReaderConfig, RoleRule, read::async_copy::ASYNC_COPY_WIDTH};
 use crate::components::global::{
     multi_stage::LoadMaxRoundPlaneCount,
     read::{
@@ -10,13 +13,6 @@ use crate::components::global::{
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::StridedStageMemory;
 use crate::components::stage::{ContiguousTilingLayout, TilingOrder};
-use crate::components::{InvalidConfigError, StageIdent};
-use crate::components::{MatmulElems, global::read::validate_async_barrier};
-use crate::components::{MatmulPrecision, global::read::validate_swizzle_atom_size};
-use crate::components::{
-    MatmulProblem,
-    global::{GlobalReaderConfig, RoleRule, read::async_copy::ASYNC_COPY_WIDTH},
-};
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
 use crate::components::{
     global::{
@@ -25,6 +21,11 @@ use crate::components::{
     },
     stage::StageConfig,
 };
+use crate::definition::InvalidConfigError;
+use crate::definition::MatmulElems;
+use crate::definition::MatmulPrecision;
+use crate::definition::MatmulProblem;
+use crate::definition::StageIdent;
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Layout, LayoutExpand};

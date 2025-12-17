@@ -8,10 +8,11 @@ use crate::components::global::{
     SpecializedLoadingSides,
 };
 use crate::components::stage::{StageConfig, StageMemoryConfig};
-use crate::components::{AccG, error::MatmulSetupError};
-use crate::components::{AvailableLineSizes, MatmulPrecision, MatmulProblem};
-use crate::components::{LhsG, MatmulElems, MatmulLineSizes, MatmulSelection, RhsG};
-use crate::components::{MatmulIdent, StageIdent, problem};
+use crate::definition::MatmulSelection;
+use crate::definition::{self, AccG, MatmulSetupError};
+use crate::definition::{AvailableLineSizes, MatmulPrecision, MatmulProblem};
+use crate::definition::{LhsG, MatmulElems, MatmulLineSizes, RhsG};
+use crate::definition::{MatmulIdent, StageIdent};
 use cubecl::std::{
     CubeOption,
     tensor::{View, layout::Coords2d},
@@ -243,8 +244,8 @@ pub fn stride_align_bits(problem: &MatmulProblem, dtypes: &MatmulElems, ident: M
         MatmulIdent::Out => return 31,
     };
     let exclude_dim = match layout {
-        problem::MatrixLayout::RowMajor => strides.len() - 1,
-        problem::MatrixLayout::ColMajor => strides.len() - 2,
+        definition::MatrixLayout::RowMajor => strides.len() - 1,
+        definition::MatrixLayout::ColMajor => strides.len() - 2,
     };
     strides
         .iter()

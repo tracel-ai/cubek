@@ -1,8 +1,8 @@
 #[macro_export]
 macro_rules! testgen_convolution_swizzle {
     ($algorithm: ty, $precision: ty, $selection_builder: expr) => {
-        use cubek_matmul::components::SwizzleConfig;
         use cubek_matmul::components::stage::SwizzleMode;
+        use cubek_matmul::definition::SwizzleConfig;
 
         #[cfg(not(feature = "conv_tests_swizzle"))]
         $crate::testgen_convolution_partition_buffering!(

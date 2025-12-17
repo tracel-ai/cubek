@@ -4,7 +4,7 @@ use cubecl::prelude::*;
 use crate::components::stage::StageAttentionConfig;
 use crate::components::stage::{PartitionAttentionConfig, QueryTile};
 use crate::components::tile::TileAttention;
-use crate::launch::AttentionPrecision;
+use crate::definition::AttentionPrecision;
 
 #[derive(CubeType)]
 /// Contains all seq_q·head_dim materialized tiles at once because they are reused extensively

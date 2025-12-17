@@ -54,8 +54,8 @@ tests = [
 
 
 [dependencies]
-cubek-random = { path = "../cubek-random", version = "=0.0.1", default-features = false }
-cubek-reduce = { path = "../cubek-reduce", version = "=0.0.1", default-features = false }
+# cubek-random = { path = "../cubek-random", version = "=0.0.1", default-features = false }
+# cubek-reduce = { path = "../cubek-reduce", version = "=0.0.1", default-features = false }
 
 bytemuck = { workspace = true }
 cubecl = { workspace = true, features = ["stdlib"] }

@@ -1,10 +1,10 @@
-use crate::components::MatmulPrecision;
-use crate::components::MatrixPrecision;
 use crate::components::global::RoleRule;
 use crate::components::global::RoleRuleConfig;
 use crate::components::stage::matmul::partitioned_matmul::PartitionedStageMatmul;
 use crate::components::stage::matmul::partitioned_matmul::StagePartitioner;
 use crate::components::tile::TileMatmul;
+use crate::definition::MatmulPrecision;
+use crate::definition::MatrixPrecision;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
 

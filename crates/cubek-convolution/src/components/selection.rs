@@ -1,15 +1,13 @@
 use cubecl::{Runtime, client::ComputeClient, ir::StorageType};
-use cubek_matmul::components::{
-    MatmulLineSizes, SwizzleConfig,
-    stage::{PartitionBuffering, SwizzleMode},
-};
+use cubek_matmul::components::stage::{PartitionBuffering, SwizzleMode};
 
-use cubek_matmul::components::{
-    MatmulAvailabilityError, MatmulElems, MatmulSelection, TilingScheme, adjust_dtypes,
+use cubek_matmul::definition::{
+    MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatmulSelection, SwizzleConfig,
+    TilingScheme, adjust_dtypes,
 };
 use cubek_matmul::{
     components::tile::TileMatmulFamily,
-    kernels::layered::{NUM_SM_APPROX, NUM_TENSOR_CORES_APPROX, find_instruction_size},
+    routines::{NUM_SM_APPROX, NUM_TENSOR_CORES_APPROX, find_instruction_size},
 };
 
 use crate::components::ConvolutionProblem;
