@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use cubecl::{Runtime, client::ComputeClient, tensor_line_size_parallel};
 
-use crate::definition::{AttentionDefinition, AttentionIdent};
+use crate::definition::{AttentionProblem, AttentionIdent};
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 /// Line size used for each tensor in global memory accesses.
@@ -18,7 +18,7 @@ pub struct AttentionLineSizes {
 impl AttentionLineSizes {
     pub(crate) fn new_max<R: Runtime>(
         client: &ComputeClient<R>,
-        definition: &AttentionDefinition,
+        problem: &AttentionProblem,
     ) -> AttentionLineSizes {
         let find_line_size = |shape: &[usize; 4], dtype_size: usize| -> u8 {
             let supported_line_sizes = client.io_optimized_line_sizes_unchecked(dtype_size);
@@ -39,22 +39,22 @@ impl AttentionLineSizes {
 
         AttentionLineSizes {
             query: find_line_size(
-                &definition.dims.shape(AttentionIdent::Query),
-                definition.global_dtypes.query.size(),
+                &problem.dims.shape(AttentionIdent::Query),
+                problem.global_dtypes.query.size(),
             ),
             key: find_line_size(
-                &definition.dims.shape(AttentionIdent::Key),
-                definition.global_dtypes.key.size(),
+                &problem.dims.shape(AttentionIdent::Key),
+                problem.global_dtypes.key.size(),
             ),
             value: find_line_size(
-                &definition.dims.shape(AttentionIdent::Value),
-                definition.global_dtypes.value.size(),
+                &problem.dims.shape(AttentionIdent::Value),
+                problem.global_dtypes.value.size(),
             ),
             // lined mask not always supported at the moment
             mask: 1,
             out: find_line_size(
-                &definition.dims.shape(AttentionIdent::Out),
-                definition.global_dtypes.out.size(),
+                &problem.dims.shape(AttentionIdent::Out),
+                problem.global_dtypes.out.size(),
             ),
         }
     }

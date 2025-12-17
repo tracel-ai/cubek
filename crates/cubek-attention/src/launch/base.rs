@@ -2,9 +2,9 @@ use cubecl::{Runtime, client::ComputeClient, prelude::TensorHandleRef};
 
 use cubecl::std::tensor::TensorHandle;
 
-use crate::definition::{AttentionBlueprint, AttentionSetupError};
+use crate::definition::AttentionSetupError;
 use crate::definition::{
-    AttentionDefinition, AttentionDims, AttentionGlobalTypes, AttentionOptions,
+    AttentionProblem, AttentionDims, AttentionGlobalTypes, AttentionOptions,
 };
 use crate::launch::args::{TensorArgs, TensorInputsLaunch};
 use crate::routines::DeviceSettings;
@@ -15,17 +15,17 @@ use crate::routines::{
 use crate::components::batch::BatchAttentionFamily;
 
 #[derive(Debug, Clone)]
-pub enum RoutineStrategy<R: Routine> {
+pub enum BlueprintStrategy<R: Routine> {
     /// Use a predefined blueprint
-    Forced(AttentionBlueprint),
+    Forced(R::Blueprint),
     /// Allows to give limited settings information, and the rest is inferred from it
     Inferred(R::Strategy),
 }
 
 #[derive(Debug, Clone)]
 pub enum Strategy {
-    BlackboxAccelerated(RoutineStrategy<BlackboxAcceleratedRoutine>),
-    Unit(RoutineStrategy<UnitRoutine>),
+    BlackboxAccelerated(BlueprintStrategy<BlackboxAcceleratedRoutine>),
+    Unit(BlueprintStrategy<UnitRoutine>),
 }
 
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
@@ -102,10 +102,10 @@ pub fn launch_attention<R: Runtime, A: Routine>(
     mask: &Option<TensorHandleRef<R>>,
     out: &TensorHandleRef<R>,
     global_dtypes: &AttentionGlobalTypes,
-    strategy: RoutineStrategy<A>,
+    strategy: BlueprintStrategy<A>,
     attention_options: AttentionOptions,
 ) -> Result<(), AttentionSetupError> {
-    let definition = AttentionDefinition {
+    let definition = AttentionProblem {
         dims: AttentionDims {
             batch: query.shape[0],
             num_heads: query.shape[1],

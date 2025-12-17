@@ -5,10 +5,10 @@ use crate::components::stage::plane::PlanePartitionStageAttentionFamily;
 use crate::components::tile::accelerated::BlackboxAcceleratedTileAttention;
 use crate::definition::AttentionTileSize;
 use crate::definition::{
-    AttentionBlueprint, AttentionDefinition, AttentionElems, AttentionPartitionSize,
+    AttentionBlueprint, AttentionElems, AttentionPartitionSize, AttentionProblem,
     AttentionSetupError, AttentionStageSize, AttentionTilingScheme, HypercubeBlueprint,
 };
-use crate::launch::RoutineStrategy;
+use crate::launch::BlueprintStrategy;
 use crate::routines::{DeviceSettings, LaunchInfo};
 use crate::{
     components::{
@@ -32,17 +32,18 @@ impl Routine for BlackboxAcceleratedRoutine {
     type BatchAttention = SimpleBatchAttentionFamily<Self::GlobalAttention>;
 
     type Strategy = ();
+    type Blueprint = AttentionBlueprint;
 
     fn prepare(
-        definition: &AttentionDefinition,
+        problem: &AttentionProblem,
         device_settings: &DeviceSettings,
-        strategy: RoutineStrategy<Self>,
+        strategy: BlueprintStrategy<Self>,
     ) -> Result<super::LaunchInfo, AttentionSetupError> {
-        let blueprint = blueprint(definition, device_settings, strategy)?;
+        let blueprint = blueprint(problem, device_settings, strategy)?;
 
         let dtypes = AttentionElems::from_global_types(
-            &definition.global_dtypes,
-            &definition.options.accumulator_precision,
+            &problem.global_dtypes,
+            &problem.options.accumulator_precision,
         );
 
         let num_planes = blueprint.tiling_scheme.stage_size.seq_q;
@@ -50,7 +51,7 @@ impl Routine for BlackboxAcceleratedRoutine {
 
         let cube_count_plan = blueprint
             .hypercube_blueprint
-            .cube_count_plan(&definition.dims, &blueprint);
+            .cube_count_plan(&problem.dims, &blueprint);
 
         Ok(LaunchInfo {
             blueprint,
@@ -62,13 +63,13 @@ impl Routine for BlackboxAcceleratedRoutine {
 }
 
 fn blueprint(
-    definition: &AttentionDefinition,
+    problem: &AttentionProblem,
     launch_settings: &DeviceSettings,
-    strategy: RoutineStrategy<BlackboxAcceleratedRoutine>,
+    strategy: BlueprintStrategy<BlackboxAcceleratedRoutine>,
 ) -> Result<AttentionBlueprint, AttentionSetupError> {
     match strategy {
-        RoutineStrategy::Forced(attention_blueprint) => validate(definition, attention_blueprint),
-        RoutineStrategy::Inferred(_) => {
+        BlueprintStrategy::Forced(attention_blueprint) => validate(problem, attention_blueprint),
+        BlueprintStrategy::Inferred(_) => {
             #[cfg(target_os = "macos")]
             let tile_size = AttentionTileSize {
                 seq_q: 8,
@@ -84,7 +85,7 @@ fn blueprint(
                 val_dim: 16,
             };
 
-            let partition_head_dim = definition.dims.head_dim as u32 / tile_size.head_dim;
+            let partition_head_dim = problem.dims.head_dim as u32 / tile_size.head_dim;
             let partition_val_dim = partition_head_dim;
 
             let tiling_scheme = AttentionTilingScheme {
@@ -104,29 +105,29 @@ fn blueprint(
                 reuse_key_value: false,
                 two_rows_in_array_tile: false,
                 line_sizes: launch_settings.line_sizes.clone(),
-                masked: definition.masked,
-                causal: definition.options.causal,
+                masked: problem.masked,
+                causal: problem.options.causal,
                 tiling_scheme,
-                check_bounds: tiling_scheme.check_bounds(&definition.dims),
+                check_bounds: tiling_scheme.check_bounds(&problem.dims),
             };
 
-            validate(definition, blueprint)
+            validate(problem, blueprint)
         }
     }
 }
 
 fn validate(
-    definition: &AttentionDefinition,
+    problem: &AttentionProblem,
     blueprint: AttentionBlueprint,
 ) -> Result<AttentionBlueprint, AttentionSetupError> {
-    if definition.dims.head_dim as u32 % blueprint.tiling_scheme.tile_size.head_dim != 0 {
+    if problem.dims.head_dim as u32 % blueprint.tiling_scheme.tile_size.head_dim != 0 {
         return Err(AttentionSetupError::InvalidConfig(Box::new(
             "Tile size head dim must divide problem head dim".to_string(),
         )));
     }
 
     if blueprint.tiling_scheme.partition_size.head_dim * blueprint.tiling_scheme.tile_size.head_dim
-        != definition.dims.head_dim as u32
+        != problem.dims.head_dim as u32
     {
         return Err(AttentionSetupError::InvalidConfig(Box::new(
             "Tiling scheme's total head dim must equal problem's head dim".to_string(),

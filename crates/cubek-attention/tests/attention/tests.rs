@@ -2,8 +2,8 @@ use crate::attention::launcher::test_launch;
 use crate::attention::tiling_scheme_ops::*;
 use cubecl::{Runtime, TestRuntime};
 use cubek_attention::definition::{
-    AccumulatorPrecision, AttentionDefinition, AttentionDims, AttentionOptions,
-    AttentionPartitionSize, AttentionStageSize, AttentionTilingScheme, HypercubeBlueprint,
+    AccumulatorPrecision, AttentionDims, AttentionOptions, AttentionPartitionSize,
+    AttentionProblem, AttentionStageSize, AttentionTilingScheme, HypercubeBlueprint,
 };
 use cubek_attention::routines::DeviceSettings;
 
@@ -24,7 +24,7 @@ fn one_tile_simple() {
         },
     };
 
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -41,7 +41,7 @@ fn one_tile_simple() {
         },
     };
 
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
 
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
@@ -50,14 +50,14 @@ fn one_tile_simple() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
 
     let strategy = strategy(blueprint);
 
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -77,7 +77,7 @@ fn one_partition_several_planes() {
         },
     };
 
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -94,7 +94,7 @@ fn one_partition_several_planes() {
         },
     };
 
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
 
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
@@ -103,14 +103,14 @@ fn one_partition_several_planes() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
 
     let strategy = strategy(blueprint);
 
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -132,7 +132,7 @@ fn problem_smaller_than_one_tile_seq_q_seq_kv_val_dim() {
     let seq_kv = tiling_scheme.tile_size.seq_kv as usize - 1;
     let head_dim = tiling_scheme.tile_size.head_dim as usize;
     let val_dim = tiling_scheme.tile_size.val_dim as usize - 1;
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -148,7 +148,7 @@ fn problem_smaller_than_one_tile_seq_q_seq_kv_val_dim() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -156,12 +156,12 @@ fn problem_smaller_than_one_tile_seq_q_seq_kv_val_dim() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -180,7 +180,7 @@ fn head_dim_oob() {
         },
     };
     let head_dim = tiling_scheme.tile_size.head_dim as usize - 1;
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -196,7 +196,7 @@ fn head_dim_oob() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -204,12 +204,12 @@ fn head_dim_oob() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -227,7 +227,7 @@ fn two_rows_in_array_tile() {
             seq_q: minimal_seq_q_stage(),
         },
     };
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -243,7 +243,7 @@ fn two_rows_in_array_tile() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -251,12 +251,12 @@ fn two_rows_in_array_tile() {
         reuse_key_value: false,
         two_rows_in_array_tile: true,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -275,7 +275,7 @@ fn one_tile_seqq16() {
         },
     };
     let seq_q = 16;
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -291,7 +291,7 @@ fn one_tile_seqq16() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -299,12 +299,12 @@ fn one_tile_seqq16() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -323,7 +323,7 @@ fn one_tile_seqq4() {
         },
     };
     let seq_q = 4;
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -339,7 +339,7 @@ fn one_tile_seqq4() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -347,12 +347,12 @@ fn one_tile_seqq4() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -370,7 +370,7 @@ fn seqq2() {
             seq_q: minimal_seq_q_stage(),
         },
     };
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -386,7 +386,7 @@ fn seqq2() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -394,12 +394,12 @@ fn seqq2() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -417,7 +417,7 @@ fn hd2() {
             seq_q: minimal_seq_q_stage(),
         },
     };
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -433,7 +433,7 @@ fn hd2() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -441,12 +441,12 @@ fn hd2() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -464,7 +464,7 @@ fn kv2() {
             seq_q: minimal_seq_q_stage(),
         },
     };
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -480,7 +480,7 @@ fn kv2() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -488,12 +488,12 @@ fn kv2() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -511,7 +511,7 @@ fn vd2() {
             seq_q: minimal_seq_q_stage(),
         },
     };
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -527,7 +527,7 @@ fn vd2() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -535,12 +535,12 @@ fn vd2() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -558,7 +558,7 @@ fn hd2_vd2() {
             seq_q: minimal_seq_q_stage(),
         },
     };
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -574,7 +574,7 @@ fn hd2_vd2() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -582,12 +582,12 @@ fn hd2_vd2() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -605,7 +605,7 @@ fn all2() {
             seq_q: minimal_seq_q_stage(),
         },
     };
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -621,7 +621,7 @@ fn all2() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -629,12 +629,12 @@ fn all2() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -653,7 +653,7 @@ fn global_iterations_2() {
         },
     };
     let seq_kv = elements_in_partition_seq_kv(&tiling_scheme) * 2;
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -669,7 +669,7 @@ fn global_iterations_2() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -677,12 +677,12 @@ fn global_iterations_2() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -701,7 +701,7 @@ fn global_iterations_2_kv2() {
         },
     };
     let seq_kv = elements_in_partition_seq_kv(&tiling_scheme) * 2;
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -717,7 +717,7 @@ fn global_iterations_2_kv2() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -725,12 +725,12 @@ fn global_iterations_2_kv2() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -749,7 +749,7 @@ fn partition_kv1_global1_with_oob() {
         },
     };
     let seq_kv = elements_in_partition_seq_kv(&tiling_scheme) - 1;
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -765,7 +765,7 @@ fn partition_kv1_global1_with_oob() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -773,12 +773,12 @@ fn partition_kv1_global1_with_oob() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -797,7 +797,7 @@ fn partition_seqq2_global2_kv2_global2() {
         },
     };
     let seq_kv = elements_in_partition_seq_kv(&tiling_scheme) * 2;
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -813,7 +813,7 @@ fn partition_seqq2_global2_kv2_global2() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -821,12 +821,12 @@ fn partition_seqq2_global2_kv2_global2() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -844,7 +844,7 @@ fn partition_many_planes() {
             seq_q: 15 * minimal_seq_q_stage(),
         },
     };
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -860,7 +860,7 @@ fn partition_many_planes() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -868,12 +868,12 @@ fn partition_many_planes() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -892,7 +892,7 @@ fn partition_kv1_global3_with_oob() {
         },
     };
     let seq_kv = elements_in_partition_seq_kv(&tiling_scheme) * 2 + 1;
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -908,7 +908,7 @@ fn partition_kv1_global3_with_oob() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -916,12 +916,12 @@ fn partition_kv1_global3_with_oob() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -940,7 +940,7 @@ fn partition_oob_in_q() {
         },
     };
     let seq_q = 1;
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -956,7 +956,7 @@ fn partition_oob_in_q() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -964,12 +964,12 @@ fn partition_oob_in_q() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -987,7 +987,7 @@ fn partition_kv2_with_oob() {
             seq_q: minimal_seq_q_stage(),
         },
     };
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -1003,7 +1003,7 @@ fn partition_kv2_with_oob() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -1011,12 +1011,12 @@ fn partition_kv2_with_oob() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1034,7 +1034,7 @@ fn partition_kv2_causal() {
             seq_q: minimal_seq_q_stage(),
         },
     };
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -1050,7 +1050,7 @@ fn partition_kv2_causal() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -1058,12 +1058,12 @@ fn partition_kv2_causal() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1081,7 +1081,7 @@ fn partition_kv2_masked() {
             seq_q: minimal_seq_q_stage(),
         },
     };
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -1097,7 +1097,7 @@ fn partition_kv2_masked() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -1105,12 +1105,12 @@ fn partition_kv2_masked() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1128,7 +1128,7 @@ fn stage2() {
             seq_q: 2 * minimal_seq_q_stage(),
         },
     };
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -1144,7 +1144,7 @@ fn stage2() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -1152,12 +1152,12 @@ fn stage2() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1175,7 +1175,7 @@ fn stage4() {
             seq_q: 4 * minimal_seq_q_stage(),
         },
     };
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -1191,7 +1191,7 @@ fn stage4() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -1199,12 +1199,12 @@ fn stage4() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1224,7 +1224,7 @@ fn stage2_problem4() {
     };
     let seq_q = elements_in_stage_seq_q(&tiling_scheme) * 2;
     let seq_kv = elements_in_partition_seq_kv(&tiling_scheme) * 2;
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -1240,7 +1240,7 @@ fn stage2_problem4() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -1248,12 +1248,12 @@ fn stage2_problem4() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1271,7 +1271,7 @@ fn reuse_key_value() {
             seq_q: minimal_seq_q_stage(),
         },
     };
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -1287,7 +1287,7 @@ fn reuse_key_value() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -1295,12 +1295,12 @@ fn reuse_key_value() {
         reuse_key_value: true,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1318,7 +1318,7 @@ fn double_row_wise() {
             seq_q: minimal_seq_q_stage(),
         },
     };
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -1334,7 +1334,7 @@ fn double_row_wise() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -1342,12 +1342,12 @@ fn double_row_wise() {
         reuse_key_value: false,
         two_rows_in_array_tile: true,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1365,7 +1365,7 @@ fn one_tile_masked() {
             seq_q: minimal_seq_q_stage(),
         },
     };
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -1381,7 +1381,7 @@ fn one_tile_masked() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -1389,12 +1389,12 @@ fn one_tile_masked() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1412,7 +1412,7 @@ fn one_tile_causal() {
             seq_q: minimal_seq_q_stage(),
         },
     };
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -1428,7 +1428,7 @@ fn one_tile_causal() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -1436,12 +1436,12 @@ fn one_tile_causal() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1459,7 +1459,7 @@ fn one_tile_masked_causal() {
             seq_q: minimal_seq_q_stage(),
         },
     };
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -1475,7 +1475,7 @@ fn one_tile_masked_causal() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -1483,12 +1483,12 @@ fn one_tile_masked_causal() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1507,7 +1507,7 @@ fn masked_oob() {
         },
     };
     let seq_kv = elements_in_partition_seq_kv(&tiling_scheme) - 1;
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -1523,7 +1523,7 @@ fn masked_oob() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -1531,12 +1531,12 @@ fn masked_oob() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1555,7 +1555,7 @@ fn masked_larger() {
         },
     };
     let seq_kv = elements_in_partition_seq_kv(&tiling_scheme) * 2;
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -1571,7 +1571,7 @@ fn masked_larger() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -1579,12 +1579,12 @@ fn masked_larger() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1602,7 +1602,7 @@ fn num_heads_2() {
             seq_q: minimal_seq_q_stage(),
         },
     };
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 2,
@@ -1618,7 +1618,7 @@ fn num_heads_2() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -1626,12 +1626,12 @@ fn num_heads_2() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1649,7 +1649,7 @@ fn batch_2() {
             seq_q: minimal_seq_q_stage(),
         },
     };
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 2,
             num_heads: 1,
@@ -1665,7 +1665,7 @@ fn batch_2() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -1673,12 +1673,12 @@ fn batch_2() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1696,7 +1696,7 @@ fn batch_2_seqq2() {
             seq_q: minimal_seq_q_stage(),
         },
     };
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 2,
             num_heads: 1,
@@ -1712,7 +1712,7 @@ fn batch_2_seqq2() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -1720,12 +1720,12 @@ fn batch_2_seqq2() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1743,7 +1743,7 @@ fn num_heads_2_batch_2() {
             seq_q: minimal_seq_q_stage(),
         },
     };
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 2,
             num_heads: 2,
@@ -1759,7 +1759,7 @@ fn num_heads_2_batch_2() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -1767,12 +1767,12 @@ fn num_heads_2_batch_2() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1790,7 +1790,7 @@ fn num_heads_2_masked() {
             seq_q: minimal_seq_q_stage(),
         },
     };
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 2,
@@ -1806,7 +1806,7 @@ fn num_heads_2_masked() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -1814,12 +1814,12 @@ fn num_heads_2_masked() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }
 
 #[test]
@@ -1842,7 +1842,7 @@ fn huge_problem() {
             seq_q: minimal_seq_q_stage(),
         },
     };
-    let definition = AttentionDefinition {
+    let problem = AttentionProblem {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
@@ -1858,7 +1858,7 @@ fn huge_problem() {
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };
-    let launch_settings = DeviceSettings::new(&client, &definition);
+    let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
         hypercube_blueprint: HypercubeBlueprint {},
         tiling_scheme,
@@ -1866,10 +1866,10 @@ fn huge_problem() {
         reuse_key_value: false,
         two_rows_in_array_tile: false,
         line_sizes: launch_settings.line_sizes,
-        masked: definition.masked,
-        causal: definition.options.causal,
-        check_bounds: tiling_scheme.check_bounds(&definition.dims),
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = strategy(blueprint);
-    test_launch(client, definition, strategy)
+    test_launch(client, problem, strategy)
 }

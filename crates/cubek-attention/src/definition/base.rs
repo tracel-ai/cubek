@@ -2,7 +2,7 @@ use cubecl::ir::{ElemType, FloatKind, StorageType};
 
 #[derive(Clone, Debug)]
 /// Description of an attention problem to solve, regardless of actual data
-pub struct AttentionDefinition {
+pub struct AttentionProblem {
     pub dims: AttentionDims,
 
     /// Whether a mask is supplied (shape is always [batch, seq_q, heads, seq_kv])
@@ -29,7 +29,7 @@ pub struct AttentionOptions {
     pub accumulator_precision: AccumulatorPrecision,
 }
 
-impl AttentionDefinition {
+impl AttentionProblem {
     pub fn shape(&self, ident: AttentionIdent) -> [usize; 4] {
         self.dims.shape(ident)
     }

@@ -10,7 +10,7 @@ use cubecl::{
 };
 use cubek::{
     attention::definition::{
-        AttentionDefinition, AttentionElems, AttentionIdent, AttentionPrecision, attention_types::*,
+        AttentionProblem, AttentionElems, AttentionIdent, AttentionPrecision, attention_types::*,
     },
     attention::launch::Strategy,
     random::random_uniform,
@@ -122,7 +122,7 @@ impl<R: Runtime, AP: AttentionPrecision> Benchmark for AttentionBench<R, AP> {
 
 #[allow(dead_code)]
 pub struct AttentionBench<R: Runtime, AP> {
-    problem: AttentionDefinition,
+    problem: AttentionProblem,
     strategy: Strategy,
     device: R::Device,
     client: ComputeClient<R>,

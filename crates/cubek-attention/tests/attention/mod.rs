@@ -9,10 +9,10 @@ pub(crate) use utils::tiling_scheme_ops;
 mod unit {
     use cubek_attention::{
         definition::{AttentionBlueprint, AttentionTileSize},
-        launch::{RoutineStrategy, Strategy},
+        launch::{BlueprintStrategy, Strategy},
     };
     fn strategy(blueprint: AttentionBlueprint) -> Strategy {
-        Strategy::Unit(RoutineStrategy::Forced(blueprint))
+        Strategy::Unit(BlueprintStrategy::Forced(blueprint))
     }
 
     fn tile_size() -> AttentionTileSize {
@@ -56,11 +56,11 @@ mod unit {
 mod blackbox_accelerated {
     use cubek_attention::{
         definition::{AttentionBlueprint, AttentionTileSize},
-        launch::{RoutineStrategy, Strategy},
+        launch::{BlueprintStrategy, Strategy},
     };
 
     fn strategy(blueprint: AttentionBlueprint) -> Strategy {
-        Strategy::BlackboxAccelerated(RoutineStrategy::Forced(blueprint))
+        Strategy::BlackboxAccelerated(BlueprintStrategy::Forced(blueprint))
     }
 
     fn tile_size() -> AttentionTileSize {

@@ -13,7 +13,7 @@ use crate::{
         tile::{cmma::CmmaMatmul, io::Filled, mma::MmaMatmul},
     },
     definition::{MatmulElems, MatmulSetupError},
-    launch::{handle::MatmulInputHandleRef, launch_naive, launch2},
+    launch::{handle::MatmulInputHandleRef, launch_naive, launch_tiling},
     routines::{
         BlueprintStrategy,
         double_buffering::{
@@ -307,112 +307,112 @@ impl Strategy {
     ) -> Result<(), MatmulSetupError> {
         match self {
             Strategy::SimpleCyclicCmma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleCyclicMma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleStridedCmma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleStridedMma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleTilewiseCmma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleTilewiseMma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleAsyncStridedCmma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleAsyncStridedMma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleAsyncCyclicCmma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleAsyncCyclicMma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleTmaCmma(selection) => {
-                launch2::launch_ref_tma(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref_tma(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleTmaMma(selection) => {
-                launch2::launch_ref_tma(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref_tma(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleCyclicCmma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleCyclicMma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleTilewiseCmma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleTilewiseMma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleHybridCmma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleHybridMma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleAsyncCyclicCmma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleAsyncCyclicMma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleAsyncStridedCmma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleAsyncStridedMma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleTmaCmma(selection) => {
-                launch2::launch_ref_tma(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref_tma(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleTmaMma(selection) => {
-                launch2::launch_ref_tma(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref_tma(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SpecializedCyclicCmma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SpecializedCyclicMma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SpecializedStridedCmma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SpecializedStridedMma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SpecializedTmaCmma(selection) => {
-                launch2::launch_ref_tma(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref_tma(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SpecializedTmaMma(selection) => {
-                launch2::launch_ref_tma(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref_tma(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::OrderedDoubleCmma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::OrderedDoubleMma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleUnit(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleUnit(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleVecMat(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleVecMat(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::Naive => launch_naive::launch_ref(client, lhs, rhs, out, dtypes),
             Strategy::Auto => auto(client, lhs, rhs, out, dtypes),

@@ -2,7 +2,7 @@ use core::f32;
 
 use cubecl::{TestRuntime, client::ComputeClient, std::tensor::TensorHandle};
 
-use cubek_attention::definition::{AttentionDefinition, AttentionElems};
+use cubek_attention::definition::{AttentionElems, AttentionProblem};
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, StrideSpec, assert_equals_approx};
 
 #[allow(clippy::too_many_arguments)]
@@ -11,13 +11,13 @@ pub fn assert_result(
     key: &HostData,
     value: &HostData,
     mask: Option<&HostData>,
-    definition: &AttentionDefinition,
+    problem: &AttentionProblem,
     client: &ComputeClient<TestRuntime>,
     out: TensorHandle<TestRuntime>,
     elems: AttentionElems,
 ) {
     let epsilon = attention_epsilon(&elems, 0.1);
-    let expected = flash_attention_v2_reference(query, key, value, mask, definition);
+    let expected = flash_attention_v2_reference(query, key, value, mask, problem);
 
     let actual = HostData::from_tensor_handle(client, &out, HostDataType::F32);
 
@@ -51,17 +51,17 @@ pub fn flash_attention_v2_reference(
     key: &HostData,
     value: &HostData,
     mask: Option<&HostData>,
-    definition: &AttentionDefinition,
+    problem: &AttentionProblem,
 ) -> HostData {
-    let batch = definition.dims.batch;
-    let seq_q = definition.dims.seq_q;
-    let seq_kv = definition.dims.seq_kv;
-    let num_heads = definition.dims.num_heads;
-    let head_dim = definition.dims.head_dim;
-    let val_dim = definition.dims.val_dim;
+    let batch = problem.dims.batch;
+    let seq_q = problem.dims.seq_q;
+    let seq_kv = problem.dims.seq_kv;
+    let num_heads = problem.dims.num_heads;
+    let head_dim = problem.dims.head_dim;
+    let val_dim = problem.dims.val_dim;
 
     let masked = mask.is_some();
-    assert!(definition.masked == masked);
+    assert!(problem.masked == masked);
 
     // Output shape: [batch, num_heads, seq_q, val_dim]
     let out_shape = vec![batch, num_heads, seq_q, val_dim];
@@ -95,7 +95,7 @@ pub fn flash_attention_v2_reference(
                     dot *= scale;
 
                     // apply causal/external mask
-                    let s_val = if definition.options.causal && j > i {
+                    let s_val = if problem.options.causal && j > i {
                         f32::NEG_INFINITY
                     } else if let Some(mask) = mask {
                         m_index = [b, h, i, j];

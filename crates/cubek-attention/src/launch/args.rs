@@ -5,7 +5,7 @@ use cubecl::std::{
 };
 use cubecl::{self as cubecl};
 
-use crate::definition::{AttentionBlueprint, AttentionDefinition, AttentionLineSizes};
+use crate::definition::{AttentionBlueprint, AttentionProblem, AttentionLineSizes};
 
 /// Create the input runtime arguments for a attention kernel that works on concrete inputs and
 /// output (not fused).
@@ -16,7 +16,7 @@ pub trait ConcreteInputsFactory: LaunchArg {
         value: &'a TensorHandleRef<'a, R>,
         mask: &'a Option<TensorHandleRef<'a, R>>,
         selection: &AttentionBlueprint,
-        problem: &AttentionDefinition,
+        problem: &AttentionProblem,
         line_sizes: &AttentionLineSizes,
     ) -> Self::RuntimeArg<'a, R>;
 }
@@ -27,7 +27,7 @@ pub trait ConcreteOutputFactory: LaunchArg {
     fn create<'a, R: Runtime>(
         out: &'a TensorHandleRef<'a, R>,
         selection: &AttentionBlueprint,
-        problem: &AttentionDefinition,
+        problem: &AttentionProblem,
         line_sizes: &AttentionLineSizes,
     ) -> Self::RuntimeArg<'a, R>;
 }
@@ -1021,7 +1021,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric> ConcreteInputsFactory for TensorI
         value: &'a TensorHandleRef<'a, R>,
         mask: &'a Option<TensorHandleRef<'a, R>>,
         _selection: &AttentionBlueprint,
-        _problem: &AttentionDefinition,
+        _problem: &AttentionProblem,
         line_sizes: &AttentionLineSizes,
     ) -> Self::RuntimeArg<'a, R> {
         TensorInputsLaunch::new(
@@ -1040,7 +1040,7 @@ impl<EG: Numeric> ConcreteOutputFactory for Tensor<Line<EG>> {
     fn create<'a, R: Runtime>(
         out: &'a TensorHandleRef<'a, R>,
         _selection: &AttentionBlueprint,
-        _problem: &AttentionDefinition,
+        _problem: &AttentionProblem,
         line_sizes: &AttentionLineSizes,
     ) -> Self::RuntimeArg<'a, R> {
         out.as_tensor_arg(line_sizes.out)
