@@ -15,12 +15,12 @@ use crate::components::{
 use crate::components::{global::PlaneWriterFamily, stage::StageFamily};
 use crate::components::{stage::FilledStageFamily, tile::TileMatmulFamily};
 use crate::definition::{
-    CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulLineSizes,
-    MatmulProblem, MatmulSetupError, MatrixLayout, SmAllocation, SwizzleBlueprint, TilingBlueprint,
-    adjust_dtypes,
+    CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulGlobalElems,
+    MatmulLineSizes, MatmulProblem, MatmulSetupError, MatrixLayout, SmAllocation, SwizzleBlueprint,
+    TilingBlueprint, adjust_dtypes,
 };
-use crate::routines::base;
 use crate::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
+use crate::routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, base};
 use crate::{
     components::global::{
         multi_stage::specialized::SpecializedMatmulFamily,
@@ -79,28 +79,31 @@ where
     type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
     fn prepare<R: Runtime>(
-        client: &ComputeClient<R>,
         problem: &MatmulProblem,
-        plane_dim: u32,
-        line_sizes: &MatmulLineSizes,
-        _args: &Self::Strategy,
-        dtypes: &mut MatmulElems,
-    ) -> Result<TilingBlueprint, MatmulSetupError> {
-        infer_blueprint_plane::<TMM, R>(
-            client,
-            problem,
-            plane_dim,
-            dtypes,
-            line_sizes,
-            PlaneTilingBlueprintOptions {
-                specialized: true,
-                multi_row_strategy: MultiRowStrategy::Adaptive {
-                    minimum_stage_count: 8,
+        device_settings: DeviceSettings<R>,
+        strategy: BlueprintStrategy<Self>,
+    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        match strategy {
+            BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
+                blueprint,
+                dtypes: MatmulElems::from_globals(&problem.global_dtypes),
+            }),
+            BlueprintStrategy::Inferred(_) => infer_blueprint_plane::<TMM, R>(
+                &device_settings.client,
+                problem,
+                device_settings.plane_dim,
+                &problem.global_dtypes,
+                &device_settings.line_sizes,
+                PlaneTilingBlueprintOptions {
+                    specialized: true,
+                    multi_row_strategy: MultiRowStrategy::Adaptive {
+                        minimum_stage_count: 8,
+                    },
+                    swizzled: TMM::should_swizzle(&device_settings.client),
+                    ..Default::default()
                 },
-                swizzled: TMM::should_swizzle(client),
-                ..Default::default()
-            },
-        )
+            ),
+        }
     }
 
     fn can_cast_stage_element() -> bool {
@@ -114,10 +117,11 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
     problem: &MatmulProblem,
     plane_dim: u32,
     swizzle: bool,
-    dtypes: &mut MatmulElems,
+    global_dtypes: &mut MatmulGlobalElems,
     line_sizes: &MatmulLineSizes,
-) -> Result<TilingBlueprint, MatmulSetupError> {
-    adjust_dtypes(client, dtypes, TMM::requires_accelerator());
+) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+    let mut dtypes = MatmulElems::from_globals(&global_dtypes);
+    adjust_dtypes(client, &mut dtypes, TMM::requires_accelerator());
 
     let supported = |m: u32, n: u32, k: u32| {
         TMM::is_supported(
@@ -160,7 +164,7 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
             client,
             problem,
             plane_dim,
-            dtypes,
+            global_dtypes,
             line_sizes,
             PlaneTilingBlueprintOptions {
                 partition_buffering: Some(PartitionBuffering::Single),
@@ -206,5 +210,8 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
         });
     }
 
-    Ok(builder.build())
+    Ok(LaunchInfo {
+        blueprint: builder.build(),
+        dtypes,
+    })
 }

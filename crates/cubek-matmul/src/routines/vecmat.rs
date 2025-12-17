@@ -24,10 +24,10 @@ use crate::{
     },
     definition::{
         CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulElems,
-        MatmulLineSizes, MatmulProblem, MatmulSetupError, PartitionSize, SmAllocation, TileSize,
-        TilingBlueprint, TilingScheme,
+        MatmulProblem, MatmulSetupError, PartitionSize, SmAllocation, TileSize, TilingBlueprint,
+        TilingScheme,
     },
-    routines::Routine,
+    routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, Routine},
 };
 
 pub struct SimpleVecMatAlgorithm {}
@@ -43,7 +43,7 @@ impl Display for VecMatStrategy {
 
 impl From<()> for VecMatStrategy {
     fn from(_value: ()) -> Self {
-        Self {  }
+        Self {}
     }
 }
 
@@ -67,19 +67,29 @@ impl Routine for SimpleVecMatAlgorithm {
     type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
     fn prepare<R: Runtime>(
-        client: &ComputeClient<R>,
         problem: &MatmulProblem,
-        plane_dim: u32,
-        line_sizes: &MatmulLineSizes,
-        _args: &Self::Strategy,
-        _dtypes: &mut MatmulElems,
-    ) -> Result<TilingBlueprint, MatmulSetupError> {
-        Ok(infer_blueprint_vecmat(
-            client,
-            problem,
-            (1, line_sizes.out as u32, plane_dim * line_sizes.lhs as u32).into(),
-            plane_dim,
-        ))
+        device_settings: DeviceSettings<R>,
+        strategy: BlueprintStrategy<Self>,
+    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        let blueprint = match strategy {
+            BlueprintStrategy::Forced(blueprint) => blueprint,
+            BlueprintStrategy::Inferred(_) => {
+                let line_sizes = device_settings.line_sizes;
+                let plane_dim = device_settings.plane_dim;
+
+                infer_blueprint_vecmat(
+                    &device_settings.client,
+                    problem,
+                    (1, line_sizes.out as u32, plane_dim * line_sizes.lhs as u32).into(),
+                    plane_dim,
+                )
+            }
+        };
+
+        Ok(LaunchInfo {
+            blueprint,
+            dtypes: MatmulElems::from_globals(&problem.global_dtypes),
+        })
     }
 
     fn can_cast_stage_element() -> bool {
@@ -110,19 +120,29 @@ impl Routine for DoubleVecMatAlgorithm {
     type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
     fn prepare<R: Runtime>(
-        client: &ComputeClient<R>,
         problem: &MatmulProblem,
-        plane_dim: u32,
-        line_sizes: &MatmulLineSizes,
-        _args: &Self::Strategy,
-        _dtypes: &mut MatmulElems,
-    ) -> Result<TilingBlueprint, MatmulSetupError> {
-        Ok(infer_blueprint_vecmat(
-            client,
-            problem,
-            (1, line_sizes.out as u32, plane_dim * line_sizes.lhs as u32).into(),
-            plane_dim,
-        ))
+        device_settings: DeviceSettings<R>,
+        strategy: BlueprintStrategy<Self>,
+    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        let blueprint = match strategy {
+            BlueprintStrategy::Forced(blueprint) => blueprint,
+            BlueprintStrategy::Inferred(_) => {
+                let line_sizes = device_settings.line_sizes;
+                let plane_dim = device_settings.plane_dim;
+
+                infer_blueprint_vecmat(
+                    &device_settings.client,
+                    problem,
+                    (1, line_sizes.out as u32, plane_dim * line_sizes.lhs as u32).into(),
+                    plane_dim,
+                )
+            }
+        };
+
+        Ok(LaunchInfo {
+            blueprint,
+            dtypes: MatmulElems::from_globals(&problem.global_dtypes),
+        })
     }
 
     fn can_cast_stage_element() -> bool {

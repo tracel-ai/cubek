@@ -260,7 +260,7 @@ impl MatmulElems {
         }
     }
 
-    pub fn from_globals(global_elems: MatmulGlobalElems) -> Self {
+    pub fn from_globals(global_elems: &MatmulGlobalElems) -> Self {
         let acc_type = |dtype: StorageType| {
             if dtype == half::f16::as_type_native_unchecked()
                 || dtype == half::bf16::as_type_native_unchecked()

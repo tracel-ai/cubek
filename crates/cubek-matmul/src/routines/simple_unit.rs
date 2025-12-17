@@ -16,10 +16,13 @@ use crate::{
         },
         tile::{TileMatmulFamily, io::Filled, register::RegisterMatmul},
     },
-    definition::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, TilingBlueprint},
-    routines::selector::{
-        PartitionScaling, StageScaling, TileSizeSelection, UnitTilingBlueprintOptions,
-        infer_blueprint_unit,
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError, TilingBlueprint},
+    routines::{
+        BlueprintStrategy, DeviceSettings, LaunchInfo,
+        selector::{
+            PartitionScaling, StageScaling, TileSizeSelection, UnitTilingBlueprintOptions,
+            infer_blueprint_unit,
+        },
     },
 };
 
@@ -64,33 +67,38 @@ where
     type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
     fn prepare<R: Runtime>(
-        client: &ComputeClient<R>,
         problem: &MatmulProblem,
-        plane_dim: u32,
-        line_sizes: &MatmulLineSizes,
-        args: &Self::Strategy,
-        dtypes: &mut MatmulElems,
-    ) -> Result<TilingBlueprint, MatmulSetupError> {
-        Ok(infer_blueprint_unit(
-            client,
-            problem,
-            plane_dim,
-            false,
-            line_sizes,
-            UnitTilingBlueprintOptions {
-                tile: args.tile_size,
-                stage: match args.tile_size {
-                    TileSizeSelection::MinTileSize => StageScaling::Enabled(2),
-                    TileSizeSelection::MaxTileSize => StageScaling::Disabled,
+        device_settings: DeviceSettings<R>,
+        strategy: BlueprintStrategy<Self>,
+    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        match strategy {
+            BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
+                blueprint,
+                dtypes: MatmulElems::from_globals(&problem.global_dtypes),
+            }),
+            BlueprintStrategy::Inferred(strategy) => Ok(infer_blueprint_unit(
+                &device_settings.client,
+                problem,
+                device_settings.plane_dim,
+                false,
+                &device_settings.line_sizes,
+                UnitTilingBlueprintOptions {
+                    tile: strategy.tile_size,
+                    stage: match strategy.tile_size {
+                        TileSizeSelection::MinTileSize => StageScaling::Enabled(2),
+                        TileSizeSelection::MaxTileSize => StageScaling::Disabled,
+                    },
+                    partition: match strategy.tile_size {
+                        TileSizeSelection::MinTileSize => PartitionScaling::Disabled,
+                        TileSizeSelection::MaxTileSize => PartitionScaling::Enabled,
+                    },
+                    swizzle: <RegisterMatmul as TileMatmulFamily>::should_swizzle(
+                        &device_settings.client,
+                    ),
                 },
-                partition: match args.tile_size {
-                    TileSizeSelection::MinTileSize => PartitionScaling::Disabled,
-                    TileSizeSelection::MaxTileSize => PartitionScaling::Enabled,
-                },
-                swizzle: <RegisterMatmul as TileMatmulFamily>::should_swizzle(client),
-            },
-            dtypes,
-        ))
+                &problem.global_dtypes,
+            )),
+        }
     }
 
     fn select_plane_dim<R: Runtime>(client: &ComputeClient<R>) -> u32 {

@@ -1,14 +1,12 @@
 use std::fmt::Display;
 
-use cubecl::client::ComputeClient;
-
 use crate::{
     components::batch::{
         BatchMatmulFamily,
         naive::{NaiveBatchMatmulFamily, NaiveBlueprint},
     },
-    definition::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError},
-    routines::Routine,
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError},
+    routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, Routine},
 };
 
 pub struct NaiveRoutine {}
@@ -35,14 +33,14 @@ impl Routine for NaiveRoutine {
     type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
     fn prepare<R: cubecl::Runtime>(
-        _client: &ComputeClient<R>,
-        _problem: &MatmulProblem,
-        _plane_dim: u32,
-        _line_sizes: &MatmulLineSizes,
-        _args: &Self::Strategy,
-        _dtypes: &mut MatmulElems,
-    ) -> Result<Self::Blueprint, MatmulSetupError> {
-        Ok(NaiveBlueprint {})
+        problem: &MatmulProblem,
+        _device_settings: DeviceSettings<R>,
+        _strategy: BlueprintStrategy<Self>,
+    ) -> Result<LaunchInfo<Self::Blueprint>, MatmulSetupError> {
+        Ok(LaunchInfo {
+            blueprint: NaiveBlueprint {},
+            dtypes: MatmulElems::from_globals(&problem.global_dtypes),
+        })
     }
 
     fn can_cast_stage_element() -> bool {

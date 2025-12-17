@@ -12,9 +12,9 @@ use crate::{
         stage::{FilledStageFamily, RowMajorTilingOrder, StridedStageFamily, UnitMatmulFamily},
         tile::{TileMatmulFamily, io::Filled, register::RegisterMatmul},
     },
-    definition::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, TilingBlueprint},
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError, TilingBlueprint},
     routines::{
-        Routine,
+        BlueprintStrategy, DeviceSettings, LaunchInfo, Routine,
         selector::{TileSizeSelection, UnitTilingBlueprintOptions, infer_blueprint_unit},
     },
 };
@@ -48,25 +48,28 @@ impl Routine for DoubleUnitAlgorithm {
     type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
     fn prepare<R: Runtime>(
-        client: &ComputeClient<R>,
         problem: &MatmulProblem,
-        plane_dim: u32,
-        line_sizes: &MatmulLineSizes,
-        args: &Self::Strategy,
-        dtypes: &mut MatmulElems,
-    ) -> Result<TilingBlueprint, MatmulSetupError> {
-        Ok(infer_blueprint_unit(
-            client,
-            problem,
-            plane_dim,
-            true,
-            line_sizes,
-            UnitTilingBlueprintOptions {
-                tile: args.tile_size,
-                ..Default::default()
-            },
-            dtypes,
-        ))
+        device_settings: DeviceSettings<R>,
+        strategy: BlueprintStrategy<Self>,
+    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        match strategy {
+            BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
+                blueprint,
+                dtypes: MatmulElems::from_globals(&problem.global_dtypes),
+            }),
+            BlueprintStrategy::Inferred(strategy) => Ok(infer_blueprint_unit(
+                &device_settings.client,
+                problem,
+                device_settings.plane_dim,
+                true,
+                &device_settings.line_sizes,
+                UnitTilingBlueprintOptions {
+                    tile: strategy.tile_size,
+                    ..Default::default()
+                },
+                &problem.global_dtypes,
+            )),
+        }
     }
 
     fn select_plane_dim<R: Runtime>(client: &ComputeClient<R>) -> u32 {

@@ -2,7 +2,6 @@ use std::fmt::Display;
 use std::marker::PhantomData;
 
 use cubecl::Runtime;
-use cubecl::client::ComputeClient;
 
 use crate::components::batch::BatchMatmulFamily;
 use crate::components::global::PlaneWriterFamily;
@@ -19,11 +18,10 @@ use crate::components::{
     global::read::sync_partial_cyclic::SyncPartialCyclicLoading, tile::io::Strided,
 };
 use crate::definition::{
-    MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, MultiRowStrategy,
-    TilingBlueprint,
+    MatmulElems, MatmulProblem, MatmulSetupError, MultiRowStrategy, TilingBlueprint,
 };
-use crate::routines::Routine;
 use crate::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
+use crate::routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, Routine};
 
 /// Plane accelerated double buffered matmul ordered on Lhs with cyclic reader on Rhs
 pub struct OrderedDoubleBufferingAlgorithm<TMM> {
@@ -75,32 +73,35 @@ where
     type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
     fn prepare<R: Runtime>(
-        client: &ComputeClient<R>,
         problem: &MatmulProblem,
-        plane_dim: u32,
-        line_sizes: &MatmulLineSizes,
-        args: &Self::Strategy,
-        dtypes: &mut MatmulElems,
-    ) -> Result<TilingBlueprint, MatmulSetupError> {
-        infer_blueprint_plane::<TMM, R>(
-            client,
-            problem,
-            plane_dim,
-            dtypes,
-            line_sizes,
-            PlaneTilingBlueprintOptions {
-                partition_k: args.partition_k,
-                row_count: args.row_count,
-                multi_row_strategy: args
-                    .rows_per_plane
-                    .map(MultiRowStrategy::Always)
-                    .unwrap_or_else(|| MultiRowStrategy::Adaptive {
-                        minimum_stage_count: 8,
-                    }),
-                swizzled: TMM::should_swizzle(client),
-                ..Default::default()
-            },
-        )
+        device_settings: DeviceSettings<R>,
+        strategy: BlueprintStrategy<Self>,
+    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        match strategy {
+            BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
+                blueprint,
+                dtypes: MatmulElems::from_globals(&problem.global_dtypes),
+            }),
+            BlueprintStrategy::Inferred(strategy) => infer_blueprint_plane::<TMM, R>(
+                &device_settings.client,
+                problem,
+                device_settings.plane_dim,
+                &problem.global_dtypes,
+                &device_settings.line_sizes,
+                PlaneTilingBlueprintOptions {
+                    partition_k: strategy.partition_k,
+                    row_count: strategy.row_count,
+                    multi_row_strategy: strategy
+                        .rows_per_plane
+                        .map(MultiRowStrategy::Always)
+                        .unwrap_or_else(|| MultiRowStrategy::Adaptive {
+                            minimum_stage_count: 8,
+                        }),
+                    swizzled: TMM::should_swizzle(&device_settings.client),
+                    ..Default::default()
+                },
+            ),
+        }
     }
 
     fn can_cast_stage_element() -> bool {

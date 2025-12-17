@@ -3,10 +3,11 @@ use std::fmt::Display;
 use crate::{
     components::stage::{PartitionBuffering, SwizzleMode},
     definition::{
-        CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulElems, MatmulKind,
-        MatmulLineSizes, MatmulProblem, MatrixLayout, SmAllocation, SwizzleBlueprint,
-        TilingBlueprint, TilingScheme,
+        CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulElems,
+        MatmulGlobalElems, MatmulKind, MatmulLineSizes, MatmulProblem, MatrixLayout, SmAllocation,
+        SwizzleBlueprint, TilingBlueprint, TilingScheme,
     },
+    routines::LaunchInfo,
 };
 use cubecl::{Runtime, client::ComputeClient, ir::StorageType};
 
@@ -58,15 +59,16 @@ pub fn infer_blueprint_unit<R: Runtime>(
     double_buffering: bool,
     line_sizes: &MatmulLineSizes,
     options: UnitTilingBlueprintOptions,
-    dtypes: &MatmulElems,
-) -> TilingBlueprint {
+    global_elems: &MatmulGlobalElems,
+) -> LaunchInfo<TilingBlueprint> {
     let kind: MatmulKind = problem.into();
     let num_sms = client.properties().hardware.num_streaming_multiprocessors;
     let min_tile_size = u8::max(line_sizes.lhs, line_sizes.rhs);
     let min_tile_size = u8::max(line_sizes.out, min_tile_size) as u32;
     let tile_size = u32::max(min_tile_size, 4);
+    let dtypes = MatmulElems::from_globals(global_elems);
 
-    match kind {
+    let blueprint = match kind {
         MatmulKind::General => general_unit_selector(
             problem,
             plane_dim,
@@ -74,7 +76,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
             tile_size,
             num_sms,
             options,
-            dtypes,
+            &dtypes,
             line_sizes,
         ),
         MatmulKind::MatVec => matvec_unit_selector(
@@ -84,7 +86,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
             tile_size,
             num_sms,
             options,
-            dtypes,
+            &dtypes,
             line_sizes,
         ),
         MatmulKind::VecMat => vecmat_unit_selector(
@@ -94,7 +96,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
             tile_size,
             num_sms,
             options,
-            dtypes,
+            &dtypes,
             line_sizes,
         ),
         MatmulKind::ScalarVec => scalarvec_unit_selector(
@@ -104,7 +106,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
             tile_size,
             num_sms,
             options,
-            dtypes,
+            &dtypes,
             line_sizes,
         ),
         MatmulKind::VecScalar => vecscalar_unit_selector(
@@ -114,7 +116,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
             tile_size,
             num_sms,
             options,
-            dtypes,
+            &dtypes,
             line_sizes,
         ),
         MatmulKind::InnerProduct => inner_product_unit_selector(
@@ -124,7 +126,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
             tile_size,
             num_sms,
             options,
-            dtypes,
+            &dtypes,
             line_sizes,
         ),
         MatmulKind::OuterProduct => outer_product_unit_selector(
@@ -134,7 +136,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
             tile_size,
             num_sms,
             options,
-            dtypes,
+            &dtypes,
             line_sizes,
         ),
         MatmulKind::ScalarProduct => scalar_product_unit_selector(
@@ -144,10 +146,12 @@ pub fn infer_blueprint_unit<R: Runtime>(
             tile_size,
             num_sms,
             options,
-            dtypes,
+            &dtypes,
             line_sizes,
         ),
-    }
+    };
+
+    LaunchInfo { blueprint, dtypes }
 }
 
 /// (M, K) @ (K, N) → (M, N), with M, K, N > 1
