@@ -168,6 +168,13 @@ pub struct MatmulElems {
     pub acc_register: MatmulElemType,
 }
 
+#[derive(Clone, Debug)]
+pub struct MatmulGlobalElems {
+    pub lhs: MatmulElemType,
+    pub rhs: MatmulElemType,
+    pub out: MatmulElemType,
+}
+
 impl MatmulElems {
     pub fn new<MP: MatmulPrecision>() -> Self {
         Self {
@@ -253,7 +260,7 @@ impl MatmulElems {
         }
     }
 
-    pub fn from_globals(lhs: MatmulElemType, rhs: MatmulElemType, out: MatmulElemType) -> Self {
+    pub fn from_globals(global_elems: MatmulGlobalElems) -> Self {
         let acc_type = |dtype: StorageType| {
             if dtype == half::f16::as_type_native_unchecked()
                 || dtype == half::bf16::as_type_native_unchecked()
@@ -265,15 +272,15 @@ impl MatmulElems {
         };
 
         Self {
-            lhs_global: lhs,
-            rhs_global: rhs,
-            acc_global: out,
-            lhs_stage: MatmulElemType::new(lhs.dtype, false),
-            rhs_stage: MatmulElemType::new(rhs.dtype, false),
-            acc_stage: acc_type(out.dtype),
-            lhs_register: MatmulElemType::new(lhs.dtype, false),
-            rhs_register: MatmulElemType::new(rhs.dtype, false),
-            acc_register: acc_type(out.dtype),
+            lhs_global: global_elems.lhs,
+            rhs_global: global_elems.rhs,
+            acc_global: global_elems.out,
+            lhs_stage: MatmulElemType::new(global_elems.lhs.dtype, false),
+            rhs_stage: MatmulElemType::new(global_elems.rhs.dtype, false),
+            acc_stage: acc_type(global_elems.out.dtype),
+            lhs_register: MatmulElemType::new(global_elems.lhs.dtype, false),
+            rhs_register: MatmulElemType::new(global_elems.rhs.dtype, false),
+            acc_register: acc_type(global_elems.out.dtype),
         }
     }
 
@@ -312,6 +319,14 @@ impl MatmulElems {
             MatmulIdent::Lhs => self.lhs_register,
             MatmulIdent::Rhs => self.rhs_register,
             MatmulIdent::Out => self.acc_register,
+        }
+    }
+
+    pub fn as_global_elems(&self) -> MatmulGlobalElems {
+        MatmulGlobalElems {
+            lhs: self.lhs_global,
+            rhs: self.rhs_global,
+            out: self.acc_global,
         }
     }
 }

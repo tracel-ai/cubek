@@ -1,12 +1,15 @@
 use crate::suite::convolution_test_launcher::test_convolution_algorithm;
 use crate::suite::test_utils::TestPrecision;
 use cubecl::Runtime;
+use cubecl::frontend::CubePrimitive;
 use cubek_convolution::{
     components::{ConvolutionOperation, ConvolutionProblem, Dimensionality},
     forward::args::{ConcreteInputsFactory, ConcreteOutputFactory},
 };
 use cubek_convolution::{forward::args::ConcreteArgs, kernels::forward::algorithm::Algorithm};
-use cubek_matmul::definition::{MatrixLayout, TilingBlueprint};
+use cubek_matmul::definition::{
+    MatmulElemType, MatmulElems, MatmulGlobalElems, MatrixLayout, TilingBlueprint,
+};
 use cubek_matmul::launch::{InputArg, OutputArg};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -19,8 +22,8 @@ pub struct ConvolutionSize {
 }
 
 pub fn test_algo<A: Algorithm, P: TestPrecision, R: Runtime>(
-    selection: TilingBlueprint,
-    problem: ConvolutionSize,
+    blueprint: TilingBlueprint,
+    convolution_size: ConvolutionSize,
 ) where
     A::Args: ConcreteArgs,
 {
@@ -38,20 +41,25 @@ pub fn test_algo<A: Algorithm, P: TestPrecision, R: Runtime>(
         stride[0],
         padding[0],
         dilation[0],
-        problem.h,
+        convolution_size.h,
     );
     let out_w = calculate_conv_output_size(
         kernel_size[1],
         stride[1],
         padding[1],
         dilation[1],
-        problem.w,
+        convolution_size.w,
     );
+
+    let elem_type = MatmulElemType {
+        dtype: P::EG::as_type_native_unchecked(),
+        quantized: false,
+    };
 
     let problem = ConvolutionProblem {
         m: batches * out_h * out_w,
-        n: problem.out_c,
-        k: kernel_size.iter().product::<u32>() as usize * problem.c,
+        n: convolution_size.out_c,
+        k: kernel_size.iter().product::<u32>() as usize * convolution_size.c,
         lhs_strides: vec![],
         rhs_strides: vec![],
         lhs_layout: MatrixLayout::RowMajor,
@@ -61,15 +69,20 @@ pub fn test_algo<A: Algorithm, P: TestPrecision, R: Runtime>(
         padding,
         dilation,
         batches,
-        shape: vec![problem.h, problem.w],
-        channels: problem.c,
-        padded_channels: problem.c,
+        shape: vec![convolution_size.h, convolution_size.w],
+        channels: convolution_size.c,
+        padded_channels: convolution_size.c,
         out_shape: vec![out_h, out_w],
         dimensionality: Dimensionality::Dim2,
         operation: ConvolutionOperation::Forward,
+        global_dtypes: MatmulGlobalElems {
+            lhs: elem_type,
+            rhs: elem_type,
+            out: elem_type,
+        },
     };
 
-    test_convolution_algorithm::<A, P, R>(client, problem, selection);
+    test_convolution_algorithm::<A, P, R>(client, problem, blueprint);
 }
 
 /// Calculate the expected output size when doing a convolution operation.

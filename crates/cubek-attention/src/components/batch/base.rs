@@ -18,6 +18,7 @@ pub trait BatchAttentionFamily: Send + Sync + 'static {
 
     /// The configuration type associated with this Attention family.
     type Config: BatchAttentionConfig;
+    type Blueprint;
 
     /// Entry point
     ///
@@ -33,7 +34,7 @@ pub trait BatchAttentionFamily: Send + Sync + 'static {
         output: OutputRuntimeArg<'a, AA, R>,
         cube_count_input: CubeCountInputArgs<'a, R>,
         dtypes: &AttentionElems,
-        attention_blueprint: AttentionBlueprint,
+        attention_blueprint: Self::Blueprint,
     ) -> Result<(), LaunchError>;
 
     /// Constructs the configuration based on the algorithm's blueprint.

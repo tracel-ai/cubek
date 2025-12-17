@@ -1,3 +1,7 @@
+use crate::{
+    components::global::memory::ViewDirection,
+    definition::{MatmulGlobalElems, MatmulProblemSize},
+};
 use cubecl::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -38,6 +42,8 @@ pub struct MatmulProblem {
     pub rhs_layout: MatrixLayout,
     /// Memory layout of the Out matrix.
     pub out_layout: MatrixLayout,
+
+    pub global_dtypes: MatmulGlobalElems,
 }
 
 impl MatmulProblem {
@@ -48,6 +54,7 @@ impl MatmulProblem {
         lhs_strides: Vec<usize>,
         rhs_strides: Vec<usize>,
         out_strides: Vec<usize>,
+        global_dtypes: MatmulGlobalElems,
     ) -> Self {
         let rank = out_shape.len();
         let lhs_layout = MatrixLayout::from_shape_and_strides(&lhs_shape, &lhs_strides);
@@ -70,6 +77,7 @@ impl MatmulProblem {
             lhs_layout,
             rhs_layout,
             out_layout,
+            global_dtypes,
         }
     }
 
@@ -81,6 +89,7 @@ impl MatmulProblem {
         lhs_layout: MatrixLayout,
         rhs_layout: MatrixLayout,
         out_layout: MatrixLayout,
+        global_dtypes: MatmulGlobalElems,
     ) -> Self {
         let lhs_shape: Vec<usize> = batches.iter().cloned().chain(vec![m, k]).collect();
         let rhs_shape: Vec<usize> = batches.iter().cloned().chain(vec![k, n]).collect();
@@ -106,6 +115,7 @@ impl MatmulProblem {
             lhs_layout,
             rhs_layout,
             out_layout,
+            global_dtypes,
         }
     }
 
@@ -280,8 +290,6 @@ pub fn from_cmma_layout(#[comptime] layout: cmma::MatrixLayout) -> comptime_type
         cmma::MatrixLayout::Undefined => MatrixLayout::RowMajor,
     }
 }
-
-use crate::{components::global::memory::ViewDirection, definition::MatmulProblemSize};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 /// Identifier for all three tensors in a matmul

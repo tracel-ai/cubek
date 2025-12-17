@@ -109,6 +109,7 @@ pub fn launch_ref<R: Runtime>(
         lhs.data().strides.to_vec(),
         rhs.data().strides.to_vec(),
         out.strides.to_vec(),
+        dtypes.as_global_elems(),
     );
 
     let blueprint = NaiveBlueprint {};

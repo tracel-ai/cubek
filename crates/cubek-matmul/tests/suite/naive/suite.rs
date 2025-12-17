@@ -6,8 +6,8 @@ use cubecl::{Runtime, client};
 use cubek_matmul::launch::launch_naive;
 
 use crate::suite::layout_to_stride_spec;
-use cubek_matmul::definition::MatrixLayout;
 use cubek_matmul::definition::{MatmulElems, MatmulIdent, MatmulProblem};
+use cubek_matmul::definition::{MatmulGlobalElems, MatrixLayout};
 use cubek_matmul::launch::MatmulInputHandleRef;
 use cubek_matmul::routines::naive;
 use cubek_test_utils::{Distribution, SimpleInputSpec, TestInput};
@@ -21,6 +21,7 @@ struct MatmulTestCase {
     pub batch: usize,
     pub lhs_layout: MatrixLayout,
     pub rhs_layout: MatrixLayout,
+    pub elems: MatmulGlobalElems,
 }
 
 impl MatmulTestCase {
@@ -33,6 +34,7 @@ impl MatmulTestCase {
             self.lhs_layout,
             self.rhs_layout,
             MatrixLayout::RowMajor,
+            self.elems,
         )
     }
 }
@@ -46,6 +48,7 @@ pub fn test_very_small() {
         batch: 1,
         lhs_layout: MatrixLayout::RowMajor,
         rhs_layout: MatrixLayout::RowMajor,
+        elems: elems(),
     };
 
     test_naive(case);
@@ -60,6 +63,7 @@ pub fn test_very_small_col_major() {
         batch: 1,
         lhs_layout: MatrixLayout::RowMajor,
         rhs_layout: MatrixLayout::ColMajor,
+        elems: elems(),
     };
 
     test_naive(case);
@@ -74,6 +78,7 @@ pub fn test_small() {
         batch: 1,
         lhs_layout: MatrixLayout::RowMajor,
         rhs_layout: MatrixLayout::RowMajor,
+        elems: elems(),
     };
 
     test_naive(case);
@@ -88,6 +93,7 @@ pub fn test_odd() {
         batch: 1,
         lhs_layout: MatrixLayout::RowMajor,
         rhs_layout: MatrixLayout::RowMajor,
+        elems: elems(),
     };
 
     test_naive(case);
@@ -102,6 +108,7 @@ pub fn test_large() {
         batch: 1,
         lhs_layout: MatrixLayout::RowMajor,
         rhs_layout: MatrixLayout::RowMajor,
+        elems: elems(),
     };
 
     test_naive(case);
@@ -116,6 +123,7 @@ pub fn test_with_check_bounds() {
         batch: 1,
         lhs_layout: MatrixLayout::RowMajor,
         rhs_layout: MatrixLayout::RowMajor,
+        elems: elems(),
     };
 
     test_naive(case);
@@ -130,6 +138,7 @@ pub fn test_with_batches() {
         batch: 3,
         lhs_layout: MatrixLayout::RowMajor,
         rhs_layout: MatrixLayout::RowMajor,
+        elems: elems(),
     };
 
     test_naive(case);
@@ -139,12 +148,10 @@ fn test_naive(case: MatmulTestCase) {
     let client = TestRuntime::client(&Default::default());
     let problem = case.into_problem();
 
-    let dtype = elem();
-
     let (lhs, lhs_data) = TestInput::random(
         client.clone(),
         problem.lhs_shape.clone(),
-        *dtype,
+        *problem.global_dtypes.lhs,
         1234,
         Distribution::Uniform(-1., 1.),
         layout_to_stride_spec(problem.lhs_layout),
@@ -154,7 +161,7 @@ fn test_naive(case: MatmulTestCase) {
     let (rhs, rhs_data) = TestInput::random(
         client.clone(),
         problem.rhs_shape.clone(),
-        *dtype,
+        *problem.global_dtypes.rhs,
         5678,
         Distribution::Uniform(-1., 1.),
         layout_to_stride_spec(problem.rhs_layout),
@@ -164,30 +171,18 @@ fn test_naive(case: MatmulTestCase) {
     let out = TestInput::zeros(
         client.clone(),
         problem.out_shape.clone(),
-        *dtype,
+        *problem.global_dtypes.out,
         layout_to_stride_spec(MatrixLayout::RowMajor),
     )
     .generate_without_host_data();
 
-    let lhs_handle = MatmulInputHandleRef::Normal(lhs.as_ref(), dtype.dtype);
-    let rhs_handle = MatmulInputHandleRef::Normal(rhs.as_ref(), dtype.dtype);
+    let lhs_handle = MatmulInputHandleRef::Normal(lhs.as_ref(), *problem.global_dtypes.lhs);
+    let rhs_handle = MatmulInputHandleRef::Normal(rhs.as_ref(), *problem.global_dtypes.rhs);
     let out_handle = out.as_ref();
 
-    launch_naive::launch_ref(
-        &client,
-        &lhs_handle,
-        &rhs_handle,
-        &out_handle,
-        &MatmulElems::from_single_dtype(dtype),
-    )
-    .unwrap();
+    let all_elems = MatmulElems::from_globals(problem.global_dtypes.clone());
 
-    assert_result(
-        &lhs_data,
-        &rhs_data,
-        &problem,
-        &client,
-        &out,
-        MatmulElems::from_single_dtype(dtype),
-    );
+    launch_naive::launch_ref(&client, &lhs_handle, &rhs_handle, &out_handle, &all_elems).unwrap();
+
+    assert_result(&lhs_data, &rhs_data, &problem, &client, &out, all_elems);
 }

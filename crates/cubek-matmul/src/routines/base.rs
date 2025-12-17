@@ -1,8 +1,10 @@
 use crate::components::batch::{BatchConfig, BatchMatmulFamily};
 use crate::definition::{
-    CubeCountInputArgs, MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError,
+    CubeCountInputArgs, CubeCountPlan, MatmulElems, MatmulLineSizes, MatmulProblem,
+    MatmulSetupError,
 };
 use crate::launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
+use crate::routines::BlueprintStrategy;
 use cubecl::prelude::*;
 use std::fmt::{Debug, Display};
 
@@ -61,10 +63,38 @@ pub trait Routine {
         dtypes: &mut MatmulElems,
     ) -> Result<Self::Blueprint, MatmulSetupError>;
 
+    // fn prepare<R: Runtime>(
+    //     problem: &MatmulProblem,
+    //     device_settings: DeviceSettings,
+    //     // client: &ComputeClient<R>,
+    //     // plane_dim: u32,
+    //     // line_sizes: &MatmulLineSizes,
+    //     strategy: BlueprintStrategy<Self>,
+    // ) -> Result<LaunchInfo<Self::Blueprint>, MatmulSetupError>;
+
     fn select_plane_dim<R: Runtime>(client: &ComputeClient<R>) -> u32 {
         client.properties().hardware.plane_size_max
     }
 
     // Ideally put this elsewhere
     fn can_cast_stage_element() -> bool;
+}
+
+pub struct LaunchInfo<B: Debug + Clone> {
+    pub blueprint: B,
+    pub dtypes: MatmulElems,
+    pub cube_dim: CubeDim,
+    pub cube_count_plan: CubeCountPlan,
+}
+
+pub struct DeviceSettings {
+    pub plane_dim: u32,
+    pub line_sizes: MatmulLineSizes,
+}
+
+impl DeviceSettings {
+    pub fn new<R: Runtime>(client: &ComputeClient<R>, problem: &MatmulProblem) -> Self {
+        // check the actual requirements in launchers
+        todo!()
+    }
 }

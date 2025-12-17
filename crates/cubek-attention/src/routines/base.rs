@@ -8,8 +8,7 @@ use crate::components::{
     batch::BatchAttentionFamily, global::GlobalAttentionFamily, stage::StageAttentionFamily,
 };
 use crate::definition::{
-    AttentionBlueprint, AttentionElems, AttentionLineSizes, AttentionProblem, AttentionSetupError,
-    CubeCountPlan,
+    AttentionElems, AttentionLineSizes, AttentionProblem, AttentionSetupError, CubeCountPlan,
 };
 use crate::launch::BlueprintStrategy;
 
@@ -17,7 +16,7 @@ pub trait Routine: Debug + Clone {
     type TileAttention: TileAttentionFamily;
     type StageAttention: StageAttentionFamily;
     type GlobalAttention: GlobalAttentionFamily;
-    type BatchAttention: BatchAttentionFamily;
+    type BatchAttention: BatchAttentionFamily<Blueprint = Self::Blueprint>;
 
     type Strategy;
     type Blueprint;
@@ -26,11 +25,11 @@ pub trait Routine: Debug + Clone {
         problem: &AttentionProblem,
         device_settings: &DeviceSettings,
         strategy: BlueprintStrategy<Self>,
-    ) -> Result<LaunchInfo, AttentionSetupError>;
+    ) -> Result<LaunchInfo<Self::Blueprint>, AttentionSetupError>;
 }
 
-pub struct LaunchInfo {
-    pub blueprint: AttentionBlueprint,
+pub struct LaunchInfo<B> {
+    pub blueprint: B,
     pub dtypes: AttentionElems,
     pub cube_dim: CubeDim,
     pub cube_count_plan: CubeCountPlan,

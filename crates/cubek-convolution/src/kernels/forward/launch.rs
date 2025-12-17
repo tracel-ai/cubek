@@ -199,6 +199,7 @@ where
         operation: op,
 
         dimensionality,
+        global_dtypes: dtypes.as_global_elems(),
     };
 
     launch_kernel::<R, Alg>(client, &input, &weight, bias, out, problem, dtypes)

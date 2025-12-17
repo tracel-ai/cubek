@@ -38,7 +38,7 @@ impl Routine for BlackboxAcceleratedRoutine {
         problem: &AttentionProblem,
         device_settings: &DeviceSettings,
         strategy: BlueprintStrategy<Self>,
-    ) -> Result<super::LaunchInfo, AttentionSetupError> {
+    ) -> Result<LaunchInfo<Self::Blueprint>, AttentionSetupError> {
         let blueprint = blueprint(problem, device_settings, strategy)?;
 
         let dtypes = AttentionElems::from_global_types(

@@ -196,6 +196,7 @@ where
         operation: op,
 
         dimensionality,
+        global_dtypes: dtypes.as_global_elems(),
     };
 
     launch_kernel::<R, Alg>(client, &input, &out_grad, weight_grad, problem, dtypes)

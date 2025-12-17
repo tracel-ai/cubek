@@ -25,6 +25,7 @@ pub struct SimpleBatchAttentionFamily<GA: GlobalAttentionFamily> {
 impl<GA: GlobalAttentionFamily> BatchAttentionFamily for SimpleBatchAttentionFamily<GA> {
     type Attention<AP: AttentionPrecision> = SimpleBatchAttention<AP, GA::Attention<AP>>;
     type Config = SimpleBatchConfig<GA::Config>;
+    type Blueprint = AttentionBlueprint;
 
     unsafe fn launch_unchecked<'a, AA: AttentionArgs, R: cubecl::Runtime>(
         client: &cubecl::prelude::ComputeClient<R>,
