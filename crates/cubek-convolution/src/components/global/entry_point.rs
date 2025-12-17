@@ -59,12 +59,7 @@ pub(crate) fn implicit_conv<
     #[define(LhsS, RhsS, AccS)] _stage: [StorageType; 3],
     #[define(LhsR, RhsR, AccR)] _register: [StorageType; 3],
 ) {
-    let mut state = Args::init_state::<
-        LhsG,
-        RhsG,
-        AccG,
-        <GMM::Config as ConvGemmConfig>::GlobalMatmulConfig,
-    >(inputs, output, config.matmul_config());
+    let mut state = Args::init_state::<LhsG, RhsG, AccG>(inputs, output);
 
     let lhs = Args::view_lhs(&state);
     let rhs = Args::view_rhs(&state);

@@ -1,6 +1,6 @@
 use cubek_matmul::definition::{
-    AvailableLineSizes, LoadingPrecomputeStrategy, MatmulElems, MatmulLineSizes, MatmulSelection,
-    MatmulSetupError, MultiRowStrategy,
+    LoadingPrecomputeStrategy, MatmulElems, MatmulLineSizes, MatmulSelection, MatmulSetupError,
+    MultiRowStrategy,
 };
 use cubek_matmul::{
     components::{
@@ -68,12 +68,6 @@ pub trait Algorithm {
         dtypes: &MatmulElems,
     ) -> Result<GlobalConfig<Self::GlobalConvolution>, MatmulSetupError> {
         Self::GlobalConvolution::setup(client, problem, selection, line_sizes, dtypes)
-    }
-
-    fn filter_line_sizes(available_line_sizes: AvailableLineSizes) -> AvailableLineSizes {
-        Self::GlobalConvolution::filter_line_sizes(Self::StageMatmul::filter_line_sizes(
-            Self::TileMatmul::filter_line_sizes(available_line_sizes),
-        ))
     }
 
     fn into_tensor_handle<R: Runtime>(

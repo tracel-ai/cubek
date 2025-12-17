@@ -233,9 +233,8 @@ where
         input.data().shape,
         MatrixLayout::RowMajor,
     )
-    .filter_out_with_tensor(weight_grad.strides, weight_grad.shape);
-
-    let line_sizes = Alg::filter_line_sizes(line_sizes).pick_max()?;
+    .filter_out_with_tensor(weight_grad.strides, weight_grad.shape)
+    .pick_max()?;
 
     let selection = Alg::selection(client, &problem, plane_dim, &line_sizes, &mut dtypes)?;
     let problem = Alg::Args::adjust_problem(client, problem, &selection, &dtypes);

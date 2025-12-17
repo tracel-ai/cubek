@@ -235,9 +235,8 @@ where
         weight.data().shape,
         MatrixLayout::RowMajor,
     )
-    .filter_out_with_tensor(out.strides, out.shape);
-
-    let line_sizes = Alg::filter_line_sizes(line_sizes).pick_max()?;
+    .filter_out_with_tensor(out.strides, out.shape)
+    .pick_max()?;
 
     let selection = Alg::selection(client, &problem, plane_dim, &line_sizes, &mut dtypes)?;
     let problem = Alg::Args::adjust_problem(client, problem, &selection, &dtypes);
