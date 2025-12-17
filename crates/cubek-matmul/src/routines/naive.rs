@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use cubecl::client::ComputeClient;
 
 use crate::{
@@ -11,8 +13,23 @@ use crate::{
 
 pub struct NaiveRoutine {}
 
+#[derive(Default, Clone)]
+pub struct NaiveStrategy {}
+
+impl Display for NaiveStrategy {
+    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Ok(())
+    }
+}
+
+impl From<()> for NaiveStrategy {
+    fn from(_value: ()) -> Self {
+        Self {}
+    }
+}
+
 impl Routine for NaiveRoutine {
-    type Strategy = ();
+    type Strategy = NaiveStrategy;
     type BatchMatmul = NaiveBatchMatmulFamily;
     type Blueprint = <Self::BatchMatmul as BatchMatmulFamily>::Blueprint;
     type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;

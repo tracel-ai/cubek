@@ -1,5 +1,6 @@
 use cubecl::features::MmaConfig;
 use cubecl::{Runtime, client::ComputeClient};
+use std::fmt::Display;
 use std::marker::PhantomData;
 
 use crate::components::batch::BatchMatmulFamily;
@@ -52,6 +53,12 @@ pub type SimpleBarrierAlgorithm<TMM, L> = SimpleAlgorithm<TMM, L, L>;
 pub struct SimpleArgs {
     // Uses an optimized multi rows strategy.
     pub multi_rows: bool,
+}
+
+impl Display for SimpleArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.multi_rows { "_multi_rows" } else { "" })
+    }
 }
 
 impl<TMM, LL, RL> Routine for SimpleAlgorithm<TMM, LL, RL>

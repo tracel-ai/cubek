@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use cubecl::{Runtime, client::ComputeClient};
 
 use crate::{
@@ -30,8 +32,23 @@ use crate::{
 
 pub struct SimpleVecMatAlgorithm {}
 
+#[derive(Default, Clone)]
+pub struct VecMatStrategy {}
+
+impl Display for VecMatStrategy {
+    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Ok(())
+    }
+}
+
+impl From<()> for VecMatStrategy {
+    fn from(_value: ()) -> Self {
+        Self {  }
+    }
+}
+
 impl Routine for SimpleVecMatAlgorithm {
-    type Strategy = ();
+    type Strategy = VecMatStrategy;
     type BatchMatmul = PartitionedBatchMatmulFamily<
         SimpleMatmulFamily<
             PlaneMatmulFamily<
@@ -73,7 +90,7 @@ impl Routine for SimpleVecMatAlgorithm {
 pub struct DoubleVecMatAlgorithm {}
 
 impl Routine for DoubleVecMatAlgorithm {
-    type Strategy = ();
+    type Strategy = VecMatStrategy;
 
     type BatchMatmul = PartitionedBatchMatmulFamily<
         DoubleBufferingMatmulFamily<

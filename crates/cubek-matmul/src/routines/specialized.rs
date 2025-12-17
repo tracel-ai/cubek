@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::marker::PhantomData;
 
 use cubecl::Runtime;
@@ -40,6 +41,21 @@ pub struct SpecializedAlgorithm<TMM, L = AsyncPartialTmaLoading> {
     pub _phantom: PhantomData<(TMM, L)>,
 }
 
+#[derive(Default, Clone)]
+pub struct SpecializedStrategy {}
+
+impl Display for SpecializedStrategy {
+    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Ok(())
+    }
+}
+
+impl From<()> for SpecializedStrategy {
+    fn from(_value: ()) -> Self {
+        Self {}
+    }
+}
+
 impl<TMM, L> base::Routine for SpecializedAlgorithm<TMM, L>
 where
     TMM: tile::TileMatmulFamily<
@@ -50,7 +66,7 @@ where
         >,
     L: AsyncPartialLoadingStrategy,
 {
-    type Strategy = ();
+    type Strategy = SpecializedStrategy;
     type BatchMatmul = PartitionedBatchMatmulFamily<
         SpecializedMatmulFamily<
             PlaneMatmulFamily<TMM, L::Stage, L::Stage, FilledStageFamily>,

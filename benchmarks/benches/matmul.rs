@@ -87,7 +87,7 @@ impl<R: Runtime> Benchmark for MatmulBench<R> {
         let client = R::client(&self.device);
 
         format!(
-            "{}-matmul-Lhs<{}-{}-{}>-Rhs<{}-{}-{}>-{}-{}-{:?}",
+            "{}-matmul-Lhs<{}-{}-{}>-Rhs<{}-{}-{}>-{}-{}-{}",
             R::name(&client),
             self.dtypes.lhs_global,
             self.dtypes.lhs_stage,
@@ -278,13 +278,13 @@ fn run_algos_vecmat<R: Runtime, MP: MatmulPrecision>() {
     println!("Simple VecMat");
     run::<R, MP>(
         Default::default(),
-        Strategy::SimpleVecMat(BlueprintStrategy::Inferred(())),
+        Strategy::SimpleVecMat(BlueprintStrategy::Inferred(().into())),
     );
 
     println!("Double VecMat");
     run::<R, MP>(
         Default::default(),
-        Strategy::DoubleVecMat(BlueprintStrategy::Inferred(())),
+        Strategy::DoubleVecMat(BlueprintStrategy::Inferred(().into())),
     );
 
     println!("Simple Unit Min");
@@ -413,7 +413,7 @@ fn run_algos_mma<R: Runtime, MP: MatmulPrecision>() {
     println!("Specialized Strided");
     run::<R, MP>(
         Default::default(),
-        Strategy::SpecializedStridedMma(BlueprintStrategy::Inferred(())),
+        Strategy::SpecializedStridedMma(BlueprintStrategy::Inferred(().into())),
     );
 }
 

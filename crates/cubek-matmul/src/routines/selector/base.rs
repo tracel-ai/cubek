@@ -1,7 +1,6 @@
 use crate::routines::Routine;
-use std::fmt::Debug;
+use std::fmt::Display;
 
-// #[derive(Debug, Clone)]
 pub enum BlueprintStrategy<A: Routine> {
     /// Use a predefined blueprint
     Forced(A::Blueprint),
@@ -28,11 +27,11 @@ impl<A: Routine> Default for BlueprintStrategy<A> {
     }
 }
 
-impl<A: Routine> Debug for BlueprintStrategy<A> {
+impl<A: Routine> Display for BlueprintStrategy<A> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Forced(arg0) => f.debug_tuple("Forced").field(arg0).finish(),
-            Self::Inferred(arg0) => f.debug_tuple("Inferred").field(arg0).finish(),
+            Self::Forced(_) => f.write_str("_forced"),
+            Self::Inferred(strategy) => write!(f, "{}", strategy),
         }
     }
 }
@@ -40,8 +39,8 @@ impl<A: Routine> Debug for BlueprintStrategy<A> {
 impl<A: Routine> Clone for BlueprintStrategy<A> {
     fn clone(&self) -> Self {
         match self {
-            Self::Forced(arg0) => Self::Forced(arg0.clone()),
-            Self::Inferred(arg0) => Self::Inferred(arg0.clone()),
+            Self::Forced(blueprint) => Self::Forced(blueprint.clone()),
+            Self::Inferred(strategy) => Self::Inferred(strategy.clone()),
         }
     }
 }

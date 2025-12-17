@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use cubecl::{Runtime, client::ComputeClient};
 
 use crate::{
@@ -23,6 +25,12 @@ pub struct DoubleUnitAlgorithm {}
 #[derive(Default, Clone, Debug)]
 pub struct DoubleUnitSelectionArgs {
     pub tile_size: TileSizeSelection,
+}
+
+impl Display for DoubleUnitSelectionArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "_{}", self.tile_size)
+    }
 }
 
 impl Routine for DoubleUnitAlgorithm {

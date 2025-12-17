@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::marker::PhantomData;
 
 use cubecl::Runtime;
@@ -34,6 +35,22 @@ pub struct OrderedSelectionArgs {
     pub partition_k: Option<u32>,
     pub row_count: Option<u32>,
     pub rows_per_plane: Option<u32>,
+}
+
+impl Display for OrderedSelectionArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(k) = self.partition_k {
+            f.write_fmt(format_args!("_partition_k{}", k))?;
+        }
+        if let Some(r) = self.row_count {
+            f.write_fmt(format_args!("_row_count{}", r))?;
+        }
+        if let Some(r) = self.rows_per_plane {
+            f.write_fmt(format_args!("_rows_per_plane{}", r))?;
+        }
+
+        Ok(())
+    }
 }
 
 impl<TMM> Routine for OrderedDoubleBufferingAlgorithm<TMM>

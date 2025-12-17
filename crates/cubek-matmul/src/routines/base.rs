@@ -4,11 +4,11 @@ use crate::definition::{
 };
 use crate::launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
 use cubecl::prelude::*;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 
 /// Specifications for a matmul algorithm
 pub trait Routine {
-    type Strategy: Default + Debug + Clone;
+    type Strategy: Default + Display + Clone;
     type Blueprint: Debug + Clone;
     type Config: BatchConfig;
 

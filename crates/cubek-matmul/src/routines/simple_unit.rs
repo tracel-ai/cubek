@@ -1,6 +1,6 @@
 use cubecl::{Runtime, client::ComputeClient};
 
-use std::marker::PhantomData;
+use std::{fmt::Display, marker::PhantomData};
 
 use crate::{
     components::{
@@ -37,6 +37,12 @@ pub struct SimpleUnitAlgorithm<
 #[derive(Default, Clone, Debug)]
 pub struct SimpleUnitSelectionArgs {
     pub tile_size: TileSizeSelection,
+}
+
+impl Display for SimpleUnitSelectionArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "_{}", self.tile_size)
+    }
 }
 
 impl<LL, RL> Routine for SimpleUnitAlgorithm<LL, RL>

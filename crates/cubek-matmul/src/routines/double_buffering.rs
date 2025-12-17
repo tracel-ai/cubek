@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::marker::PhantomData;
 
 use cubecl::Runtime;
@@ -63,6 +64,12 @@ pub struct AsyncStridedDoubleBufferingAlgorithm<TMM> {
 #[derive(Default, Debug, Clone, Copy)]
 pub struct DoubleBufferingArgs {
     pub specialized: bool,
+}
+
+impl Display for DoubleBufferingArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.specialized { "_specialized" } else { "" })
+    }
 }
 
 impl<TMM> base::Routine for CyclicDoubleBufferingAlgorithm<TMM>
