@@ -13,6 +13,7 @@ use crate::components::batch::BatchMatmulFamily;
 use crate::launch::InputArg;
 use crate::launch::handle::{MatmulInputHandle, MatmulInputHandleRef};
 use crate::launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs};
+use crate::routines::Routine as _;
 use crate::routines::naive::NaiveRoutine;
 
 /// Matrix multiplication using memory coalescing algorithm with custom cube dimensions
@@ -137,23 +138,16 @@ pub fn launch_ref<R: Runtime>(
         dtypes,
     );
 
-    let result = unsafe {
-        NaiveBatchMatmulFamily::launch_unchecked::<TensorArgs, R>(
-            client,
-            CubeDim::new(cube_dim_x as u32, cube_dim_y as u32, 1),
-            cube_count_plan.resolve(),
-            input,
-            output,
-            cube_count_plan.as_args(),
-            config,
-            dtypes,
-        )
-    };
-
-    match result {
-        Ok(_) => Ok(()),
-        Err(err) => Err(MatmulSetupError::Launch(err)),
-    }
+    NaiveRoutine::launch::<TensorArgs, R>(
+        client,
+        CubeDim::new(cube_dim_x as u32, cube_dim_y as u32, 1),
+        cube_count_plan.resolve(),
+        input,
+        output,
+        cube_count_plan.as_args(),
+        config,
+        dtypes,
+    )
 }
 
 #[allow(clippy::result_large_err)]

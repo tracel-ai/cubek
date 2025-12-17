@@ -190,10 +190,10 @@ impl Strategy {
                 launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleTmaCmma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch2::launch_ref_tma(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleTmaMma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch2::launch_ref_tma(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleCyclicCmma(selection) => {
                 launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
@@ -226,10 +226,10 @@ impl Strategy {
                 launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleTmaCmma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch2::launch_ref_tma(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleTmaMma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch2::launch_ref_tma(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SpecializedCyclicCmma(selection) => {
                 launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
@@ -244,10 +244,10 @@ impl Strategy {
                 launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SpecializedTmaCmma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch2::launch_ref_tma(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SpecializedTmaMma(selection) => {
-                launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)
+                launch2::launch_ref_tma(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::OrderedDoubleCmma(selection) => {
                 launch2::launch_ref(client, lhs, rhs, out, selection, dtypes)

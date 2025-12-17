@@ -25,30 +25,20 @@ pub fn launch_ref<R: Runtime, A: Routine>(
     selection: &BlueprintStrategy<A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
-    let lhs_owned;
-    let lhs = if matrix_batch_layout(lhs.data().strides) == MatrixBatchLayout::HighlyPermuted {
-        lhs_owned = lhs.into_contiguous(client)?;
-        &lhs_owned.as_ref()
-    } else {
-        lhs
-    };
-
-    let rhs_owned;
-    let rhs = if matrix_batch_layout(rhs.data().strides) == MatrixBatchLayout::HighlyPermuted {
-        rhs_owned = rhs.into_contiguous(client)?;
-        &rhs_owned.as_ref()
-    } else {
-        rhs
-    };
-
-    let line_sizes = AvailableLineSizes::from_type_sizes(
+    launch_inner_ref::<R, TensorArgs, A>(
         client,
-        lhs.data().elem_size,
-        rhs.data().elem_size,
-        out.elem_size,
-    );
-
-    launch_inner_ref::<R, TensorArgs, A>(client, lhs, rhs, out, selection, line_sizes, dtypes)
+        lhs,
+        rhs,
+        out,
+        selection,
+        AvailableLineSizes::from_type_sizes(
+            client,
+            lhs.data().elem_size,
+            rhs.data().elem_size,
+            out.elem_size,
+        ),
+        dtypes,
+    )
 }
 
 /// Launch a matrix multiplication kernel, with TMA restrictions enabled.
@@ -65,6 +55,31 @@ pub fn launch_ref_tma<R: Runtime, A: Routine<Blueprint = TilingBlueprint>>(
     selection: &BlueprintStrategy<A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
+    launch_inner_ref::<R, TensorMapArgs, A>(
+        client,
+        lhs,
+        rhs,
+        out,
+        selection,
+        AvailableLineSizes::from_type_size_tma(client, out.elem_size),
+        dtypes,
+    )
+}
+
+#[allow(clippy::result_large_err, clippy::too_many_arguments)]
+fn launch_inner_ref<R: Runtime, MA: MatmulArgs, A: Routine>(
+    client: &ComputeClient<R>,
+    lhs: &MatmulInputHandleRef<'_, R>,
+    rhs: &MatmulInputHandleRef<'_, R>,
+    out: &TensorHandleRef<'_, R>,
+    selection: &BlueprintStrategy<A>,
+    line_sizes: AvailableLineSizes,
+    dtypes: &mut MatmulElems,
+) -> Result<(), MatmulSetupError>
+where
+    InputArg<MA>: ConcreteInputsFactory<A>,
+    OutputArg<MA>: ConcreteOutputFactory<A>,
+{
     let lhs_owned;
     let lhs = if matrix_batch_layout(lhs.data().strides) == MatrixBatchLayout::HighlyPermuted {
         lhs_owned = lhs.into_contiguous(client)?;
@@ -81,31 +96,12 @@ pub fn launch_ref_tma<R: Runtime, A: Routine<Blueprint = TilingBlueprint>>(
         rhs
     };
 
-    let line_sizes = AvailableLineSizes::from_type_size_tma(client, out.elem_size);
-
-    launch_inner_ref::<R, TensorMapArgs, A>(client, lhs, rhs, out, selection, line_sizes, dtypes)
-}
-
-#[allow(clippy::result_large_err, clippy::too_many_arguments)]
-fn launch_inner_ref<R: Runtime, MA: MatmulArgs, A: Routine>(
-    client: &ComputeClient<R>,
-    lhs_handle: &MatmulInputHandleRef<'_, R>,
-    rhs_handle: &MatmulInputHandleRef<'_, R>,
-    out: &TensorHandleRef<'_, R>,
-    selection: &BlueprintStrategy<A>,
-    line_sizes: AvailableLineSizes,
-    dtypes: &mut MatmulElems,
-) -> Result<(), MatmulSetupError>
-where
-    InputArg<MA>: ConcreteInputsFactory<A>,
-    OutputArg<MA>: ConcreteOutputFactory<A>,
-{
     let problem = MatmulProblem::from_shapes_and_strides(
-        lhs_handle.shape().to_vec(),
-        rhs_handle.shape().to_vec(),
+        lhs.shape().to_vec(),
+        rhs.shape().to_vec(),
         out.shape.to_vec(),
-        lhs_handle.data().strides.to_vec(),
-        rhs_handle.data().strides.to_vec(),
+        lhs.data().strides.to_vec(),
+        rhs.data().strides.to_vec(),
         out.strides.to_vec(),
     );
 
@@ -142,10 +138,10 @@ where
 
     // The large line size resulting from dequantizing ends up slower due to restrictions on
     // algorithms. Use this as a quick and dirty fix.
-    if lhs_handle.scale().is_some() {
+    if lhs.scale().is_some() {
         line_sizes.lhs = 1;
     }
-    if rhs_handle.scale().is_some() {
+    if rhs.scale().is_some() {
         line_sizes.rhs = 1;
     }
 
@@ -161,6 +157,6 @@ where
     let plane_dim = fix_plane_dim(A::select_plane_dim(client));
 
     launch_kernel_concrete::<MA, R, A>(
-        client, lhs_handle, rhs_handle, out, problem, line_sizes, plane_dim, selection, dtypes,
+        client, lhs, rhs, out, problem, line_sizes, plane_dim, selection, dtypes,
     )
 }
