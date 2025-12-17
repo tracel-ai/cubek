@@ -42,7 +42,13 @@ pub(crate) fn matmul_entry<
         }
     }
 
-    let mut state = Args::init_state::<LhsG, RhsG, AccG>(inputs, output);
+    let mut state = Args::init_state::<LhsG, RhsG, AccG>(
+        inputs,
+        output,
+        config.lhs_global_layout_config(),
+        config.rhs_global_layout_config(),
+        config.out_global_layout_config(),
+    );
 
     PartitionedBatchMatmul::<
         ((LhsG, LhsS, LhsR), (RhsG, RhsS, RhsR), (AccG, AccS, AccR)),

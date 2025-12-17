@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use crate::components::batch::SliceIndex;
+use crate::components::batch::{BatchConfig as _, SliceIndex};
 use crate::definition::MatrixLayout;
 use crate::{
     components::batch::{BatchMatmul, naive::NaiveMatmulConfig},
@@ -34,7 +34,13 @@ pub(crate) fn matmul_entry<
     #[define(LhsS, RhsS, AccS)] _stage: [StorageType; 3],
     #[define(LhsR, RhsR, AccR)] _register: [StorageType; 3],
 ) {
-    let mut state = Args::init_state::<LhsG, RhsG, AccG>(inputs, output);
+    let mut state = Args::init_state::<LhsG, RhsG, AccG>(
+        inputs,
+        output,
+        config.lhs_global_layout_config(),
+        config.rhs_global_layout_config(),
+        config.out_global_layout_config(),
+    );
 
     NaiveMatmul::<((LhsG, LhsS, LhsR), (RhsG, RhsS, RhsR), (AccG, AccS, AccR))>::execute::<Args>(
         &mut state,

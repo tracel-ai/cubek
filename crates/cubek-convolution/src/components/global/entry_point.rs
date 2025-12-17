@@ -59,7 +59,25 @@ pub(crate) fn implicit_conv<
     #[define(LhsS, RhsS, AccS)] _stage: [StorageType; 3],
     #[define(LhsR, RhsR, AccR)] _register: [StorageType; 3],
 ) {
-    let mut state = Args::init_state::<LhsG, RhsG, AccG>(inputs, output);
+    let mut state = Args::init_state::<LhsG, RhsG, AccG>(
+        inputs,
+        output,
+        config
+            .matmul_config()
+            .lhs_reader_config()
+            .gmem_config
+            .as_global_layout_config(),
+        config
+            .matmul_config()
+            .rhs_reader_config()
+            .gmem_config
+            .as_global_layout_config(),
+        config
+            .matmul_config()
+            .writer_config()
+            .gmem_config
+            .as_global_layout_config(),
+    );
 
     let lhs = Args::view_lhs(&state);
     let rhs = Args::view_rhs(&state);

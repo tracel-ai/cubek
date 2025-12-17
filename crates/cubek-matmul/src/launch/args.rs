@@ -85,6 +85,9 @@ pub trait MatmulArgs: Send + Sync + 'static + Clone {
     fn init_state<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         input: &Self::Input<Lhs, Rhs, EO>,
         output: &mut Self::Output<EO>,
+        #[comptime] lhs_layout_config: GlobalLayoutConfig,
+        #[comptime] rhs_layout_config: GlobalLayoutConfig,
+        #[comptime] out_layout_config: GlobalLayoutConfig,
     ) -> Self::State<Lhs, Rhs, EO>;
 
     fn view_lhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
@@ -252,6 +255,9 @@ impl MatmulArgs for TensorArgs {
     fn init_state<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         input: &Self::Input<Lhs, Rhs, EO>,
         output: &mut Self::Output<EO>,
+        #[comptime] _lhs_layout_config: GlobalLayoutConfig,
+        #[comptime] _rhs_layout_config: GlobalLayoutConfig,
+        #[comptime] _out_layout_config: GlobalLayoutConfig,
     ) -> Self::State<Lhs, Rhs, EO> {
         (*input, *output)
     }
@@ -547,6 +553,9 @@ impl MatmulArgs for TensorMapArgs {
     fn init_state<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         input: &Self::Input<Lhs, Rhs, EO>,
         output: &mut Self::Output<EO>,
+        #[comptime] _lhs_layout_config: GlobalLayoutConfig,
+        #[comptime] _rhs_layout_config: GlobalLayoutConfig,
+        #[comptime] _out_layout_config: GlobalLayoutConfig,
     ) -> Self::State<Lhs, Rhs, EO> {
         (*input, *output)
     }
