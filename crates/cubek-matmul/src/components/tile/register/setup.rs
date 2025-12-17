@@ -7,11 +7,11 @@ use crate::components::{
     resource::ComputeResources,
     tile::register::reader::{RegisterFragmentReader, RegisterStageReader},
 };
-use crate::definition::MatmulSelection;
 use crate::definition::MatmulSetupError;
+use crate::definition::TilingBlueprint;
 use crate::definition::{
-    AvailableLineSizes, InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulLineSizes,
-    MatmulProblem, MatrixLayout,
+    InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatmulProblem,
+    MatrixLayout,
 };
 use cubecl::features::TypeUsage;
 use cubecl::ir::{ElemType, FloatKind};
@@ -41,10 +41,10 @@ where
         Ok(ComputeResources::Units(1))
     }
 
-    fn setup<R: Runtime>(
+    fn expand_config<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
-        selection: &MatmulSelection,
+        selection: &TilingBlueprint,
         matmul_line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
     ) -> Result<Self::Config, MatmulSetupError> {
@@ -73,10 +73,6 @@ where
         // reduce conflicts significantly (i.e. average 18 vs average 5). Should try to find more
         // optimal settings in the future.
         client.properties().features.alignment
-    }
-
-    fn filter_line_sizes(available_line_sizes: AvailableLineSizes) -> AvailableLineSizes {
-        available_line_sizes
     }
 }
 

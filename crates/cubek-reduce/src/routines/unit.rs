@@ -2,7 +2,7 @@ use super::{
     GlobalReduceBlueprint, ReduceBlueprint, ReduceLaunchSettings, ReduceLineSettings, ReduceProblem,
 };
 use crate::{
-    LineMode, ReduceError,
+    IdleMode, LineMode, ReduceError,
     launch::calculate_plane_count_per_cube,
     routines::{BlueprintStrategy, Routine, UnitReduceBlueprint, cube_count_safe},
 };
@@ -33,7 +33,7 @@ impl Routine for UnitRoutine {
 
                 let (cube_count, launched_cubes) = cube_count_safe(client, working_cubes);
 
-                if working_cubes != launched_cubes && blueprint.unit_idle {
+                if working_cubes != launched_cubes && blueprint.unit_idle.is_enabled() {
                     return Err(ReduceError::Validation {
                         details: "Too many units launched for the problem causing OOD, but `unit_idle` is off.",
                     });
@@ -82,6 +82,10 @@ fn generate_blueprint<R: Runtime>(
     let unit_idle =
         !working_units.is_multiple_of(num_units_in_cube) || cube_launched != working_cubes;
 
+    let unit_idle = match unit_idle {
+        true => IdleMode::Terminate,
+        false => IdleMode::None,
+    };
     let blueprint = ReduceBlueprint {
         line_mode: settings.line_mode,
         global: GlobalReduceBlueprint::Unit(UnitReduceBlueprint { unit_idle }),

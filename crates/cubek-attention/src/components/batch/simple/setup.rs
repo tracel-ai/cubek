@@ -7,10 +7,7 @@ use crate::{
         batch::{
             BatchAttentionFamily,
             entry_point::attention,
-            simple::{
-                SimpleBatchAttention,
-                config::{HypercubeConfig, SimpleBatchConfig},
-            },
+            simple::{SimpleBatchAttention, config::SimpleBatchConfig},
         },
         global::GlobalAttentionFamily,
     },
@@ -58,9 +55,6 @@ impl<GA: GlobalAttentionFamily> BatchAttentionFamily for SimpleBatchAttentionFam
     ) -> Result<Self::Config, AttentionSetupError> {
         let global_config = GA::expand_blueprint(&blueprint)?;
 
-        Ok(SimpleBatchConfig::new(
-            global_config,
-            HypercubeConfig::from_blueprint(blueprint.hypercube_blueprint),
-        ))
+        Ok(SimpleBatchConfig::new(global_config))
     }
 }

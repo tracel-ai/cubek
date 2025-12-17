@@ -4,7 +4,7 @@ use crate::{
 };
 use cubecl::prelude::TensorHandleRef;
 use cubecl::{Runtime, client::ComputeClient};
-use cubek_matmul::definition::{MatmulElems, MatmulLineSizes, MatmulSelection};
+use cubek_matmul::definition::{MatmulElems, MatmulLineSizes, TilingBlueprint};
 use cubek_matmul::launch::{
     InputArg, InputRuntimeArg, MatmulArgs, MatmulInputHandleRef, OutputArg, OutputRuntimeArg,
 };
@@ -26,14 +26,14 @@ pub fn launch_kernel_concrete<R: Runtime, A: Algorithm>(
     out: &TensorHandleRef<'_, R>,
     problem: ConvolutionProblem,
     line_sizes: MatmulLineSizes,
-    selection: MatmulSelection,
+    selection: TilingBlueprint,
     dtypes: &MatmulElems,
 ) -> Result<(), ConvSetupError>
 where
     InputArg<A::Args>: ConcreteInputsFactory,
     OutputArg<A::Args>: ConcreteOutputFactory,
 {
-    let config = A::setup(client, &problem, &selection, &line_sizes, dtypes)?;
+    let config = A::expand_config(client, &problem, &selection, &line_sizes, dtypes)?;
 
     let (input, runtime_args) = <InputArg<A::Args> as ConcreteInputsFactory>::create(
         client,
@@ -84,10 +84,10 @@ pub fn launch_kernel_virtual<'a, MA: MatmulArgs, R: Runtime, A: Algorithm>(
     runtime_args: RuntimeArgsLaunch<'a, R>,
     problem: ConvolutionProblem,
     line_sizes: MatmulLineSizes,
-    selection: MatmulSelection,
+    selection: TilingBlueprint,
     dtypes: &MatmulElems,
 ) -> Result<(), ConvSetupError> {
-    let config = A::setup(client, &problem, &selection, &line_sizes, dtypes)?;
+    let config = A::expand_config(client, &problem, &selection, &line_sizes, dtypes)?;
 
     let result = unsafe {
         A::GlobalConvolution::launch_unchecked::<MA, R>(

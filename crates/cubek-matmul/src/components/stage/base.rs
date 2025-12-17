@@ -9,10 +9,10 @@ use crate::components::{
     stage::{NumStages, PartitionScheduler},
     tile::io::TileKind,
 };
-use crate::definition::MatmulSelection;
+use crate::definition::TilingBlueprint;
 use crate::definition::{
-    AccS, AvailableLineSizes, LhsS, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem,
-    MatmulSetupError, RhsS,
+    AccS, LhsS, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError,
+    RhsS,
 };
 use std::{fmt::Debug, hash::Hash};
 
@@ -47,22 +47,15 @@ pub trait StageMatmulFamily: Send + Sync + 'static {
     ///
     /// This function may return an error if the configuration cannot be supported on the current runtime.
     #[allow(clippy::too_many_arguments)]
-    fn setup<R: Runtime>(
+    fn expand_config<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
-        selection: &MatmulSelection,
+        selection: &TilingBlueprint,
         line_sizes: &MatmulLineSizes,
         num_stages: NumStages,
         max_global_readers: Option<MaxGlobalReaderPlanes>,
         dtypes: &MatmulElems,
     ) -> Result<Self::Config, MatmulSetupError>;
-
-    /// Filters out line sizes that are incompatible with this matmul family.
-    ///
-    /// By default, returns the input unchanged.
-    fn filter_line_sizes(available_line_sizes: AvailableLineSizes) -> AvailableLineSizes {
-        available_line_sizes
-    }
 }
 
 #[cube]

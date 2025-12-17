@@ -8,7 +8,7 @@ use crate::components::global::{
     SpecializedLoadingSides,
 };
 use crate::components::stage::{StageConfig, StageMemoryConfig};
-use crate::definition::MatmulSelection;
+use crate::definition::TilingBlueprint;
 use crate::definition::{self, AccG, MatmulSetupError};
 use crate::definition::{AvailableLineSizes, MatmulPrecision, MatmulProblem};
 use crate::definition::{LhsG, MatmulElems, MatmulLineSizes, RhsG};
@@ -31,10 +31,10 @@ pub trait GlobalMatmulFamily: Send + Sync + 'static {
     /// Constructs the configuration based on the matmul problem, selection, and line sizes.
     ///
     /// This function may return an error if the configuration cannot be supported on the current runtime.
-    fn setup<R: Runtime>(
+    fn expand_config<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
-        selection: &MatmulSelection,
+        selection: &TilingBlueprint,
         matmul_line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
     ) -> Result<Self::Config, MatmulSetupError>;

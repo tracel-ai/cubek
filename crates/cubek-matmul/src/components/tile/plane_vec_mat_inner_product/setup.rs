@@ -7,7 +7,7 @@ use crate::components::{
     resource::ComputeResources,
     tile::plane_vec_mat_inner_product::reader::{MatrixFragmentReader, MatrixStageReader},
 };
-use crate::definition::MatmulSelection;
+use crate::definition::TilingBlueprint;
 use crate::definition::{
     InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatmulProblem,
     MatmulSetupError, MatrixLayout,
@@ -40,10 +40,10 @@ where
         Ok(ComputeResources::Planes(1))
     }
 
-    fn setup<R: Runtime>(
+    fn expand_config<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
-        selection: &MatmulSelection,
+        selection: &TilingBlueprint,
         matmul_line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
     ) -> Result<PlaneVecMatInnerProductConfig, MatmulSetupError> {

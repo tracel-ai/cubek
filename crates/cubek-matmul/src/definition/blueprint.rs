@@ -2,23 +2,22 @@ use cubecl::{Runtime, client::ComputeClient, flex32, prelude::CubePrimitive, tf3
 
 use crate::{
     components::{
-        batch::HypercubeSelection,
         global::{LoadSpecializationConfig, read::ReaderMode},
         stage::{PartitionBuffering, SwizzleMode},
     },
-    definition::{MatmulElems, TilingScheme},
+    definition::{MatmulElems, TilingScheme, hypercube::HypercubeBlueprint},
 };
 
 #[derive(Debug, Clone)]
-pub struct MatmulSelection {
+pub struct TilingBlueprint {
     pub plane_dim: u32,
     pub tiling_scheme: TilingScheme,
-    pub shared_swizzle: SwizzleConfig,
+    pub shared_swizzle: SwizzleBlueprint,
     pub partition_buffering: PartitionBuffering,
     pub loading_precompute_strategy: LoadingPrecomputeStrategy,
     pub reader_mode: ReaderMode,
     pub load_specialization_config: LoadSpecializationConfig,
-    pub hypercube_selection: HypercubeSelection,
+    pub hypercube_selection: HypercubeBlueprint,
 }
 
 /// Modifies the given matmul element types based on the kind of accelerator the kernel is run on.
@@ -54,14 +53,14 @@ pub fn adjust_dtypes<R: Runtime>(
 }
 
 #[derive(Default, Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct SwizzleConfig {
+pub struct SwizzleBlueprint {
     pub lhs: SwizzleMode,
     pub rhs: SwizzleMode,
     pub acc: SwizzleMode,
     pub out: SwizzleMode,
 }
 
-impl SwizzleConfig {
+impl SwizzleBlueprint {
     pub fn has_swizzle(&self) -> bool {
         self.lhs != SwizzleMode::None
             || self.rhs != SwizzleMode::None
@@ -70,28 +69,28 @@ impl SwizzleConfig {
     }
 }
 
-impl MatmulSelection {
-    pub fn builder(tiling_scheme: TilingScheme, plane_dim: u32) -> MatmulSelectionBuilder {
-        let hypercube_config = HypercubeSelection::builder(&tiling_scheme).build();
-        MatmulSelectionBuilder::new()
+impl TilingBlueprint {
+    pub fn builder(tiling_scheme: TilingScheme, plane_dim: u32) -> TilingBlueprintBuilder {
+        let hypercube_config = HypercubeBlueprint::builder(&tiling_scheme).build();
+        TilingBlueprintBuilder::new()
             .tiling_scheme(tiling_scheme)
             .hypercube_config(hypercube_config)
             .plane_dim(plane_dim)
     }
 }
 
-pub struct MatmulSelectionBuilder {
+pub struct TilingBlueprintBuilder {
     plane_dim: Option<u32>,
     pub tiling_scheme: Option<TilingScheme>,
-    shared_swizzle: SwizzleConfig,
-    hypercube_selection: Option<HypercubeSelection>,
+    shared_swizzle: SwizzleBlueprint,
+    hypercube_selection: Option<HypercubeBlueprint>,
     partition_buffering: PartitionBuffering,
     loading_precompute_strategy: LoadingPrecomputeStrategy,
     reader_mode: ReaderMode,
     load_specialization_config: LoadSpecializationConfig,
 }
 
-impl MatmulSelectionBuilder {
+impl TilingBlueprintBuilder {
     fn new() -> Self {
         Self {
             plane_dim: None,
@@ -115,12 +114,12 @@ impl MatmulSelectionBuilder {
         self
     }
 
-    pub fn shared_swizzle(mut self, swizzle: SwizzleConfig) -> Self {
+    pub fn shared_swizzle(mut self, swizzle: SwizzleBlueprint) -> Self {
         self.shared_swizzle = swizzle;
         self
     }
 
-    pub fn hypercube_config(mut self, hypercube_config: HypercubeSelection) -> Self {
+    pub fn hypercube_config(mut self, hypercube_config: HypercubeBlueprint) -> Self {
         self.hypercube_selection = Some(hypercube_config);
         self
     }
@@ -151,8 +150,8 @@ impl MatmulSelectionBuilder {
         self
     }
 
-    pub fn build(self) -> MatmulSelection {
-        MatmulSelection {
+    pub fn build(self) -> TilingBlueprint {
+        TilingBlueprint {
             plane_dim: self.plane_dim.unwrap(),
             tiling_scheme: self.tiling_scheme.unwrap(),
             shared_swizzle: self.shared_swizzle,

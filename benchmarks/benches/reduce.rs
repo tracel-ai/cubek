@@ -82,10 +82,10 @@ impl<R: Runtime, E: Float> Benchmark for ReduceBench<R, E> {
 fn run<R: Runtime, E: frontend::Float>(device: R::Device) {
     let client = R::client(&device);
     for shape in [
-        vec![32, 512, 4096],
-        vec![2, 2, 4099 * 32],
-        vec![4096, 512, 32],
-        vec![512, 512],
+        vec![32, 512, 4095],
+        // vec![2, 2, 4099 * 32],
+        // vec![4096, 512, 32],
+        // vec![512, 512],
     ] {
         for line_size in [
             LineSizeStrategy {
@@ -106,26 +106,26 @@ fn run<R: Runtime, E: frontend::Float>(device: R::Device) {
                     })),
                     line_size,
                 },
-                ReduceStrategy {
-                    routine: RoutineStrategy::Plane(BlueprintStrategy::Inferred(PlaneStrategy {
-                        independent: false,
-                    })),
-                    line_size,
-                },
+                // ReduceStrategy {
+                //     routine: RoutineStrategy::Plane(BlueprintStrategy::Inferred(PlaneStrategy {
+                //         independent: false,
+                //     })),
+                //     line_size,
+                // },
                 ReduceStrategy {
                     routine: RoutineStrategy::Cube(BlueprintStrategy::Inferred(CubeStrategy {
                         use_planes: true,
                     })),
                     line_size,
                 },
-                ReduceStrategy {
-                    routine: RoutineStrategy::Cube(BlueprintStrategy::Inferred(CubeStrategy {
-                        use_planes: false,
-                    })),
-                    line_size,
-                },
+                // ReduceStrategy {
+                //     routine: RoutineStrategy::Cube(BlueprintStrategy::Inferred(CubeStrategy {
+                //         use_planes: false,
+                //     })),
+                //     line_size,
+                // },
             ] {
-                for axis in 0..shape.len() {
+                for axis in 2..shape.len() {
                     let bench = ReduceBench::<R, E> {
                         shape: shape.clone(),
                         axis,

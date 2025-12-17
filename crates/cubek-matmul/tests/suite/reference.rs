@@ -50,45 +50,43 @@ fn matmul_cpu_reference(lhs: &HostData, rhs: &HostData, problem: &MatmulProblem)
     let n = problem.n;
     let k = problem.k;
 
-    let batch_shape = problem.output_batch_dims();
-    let num_batches: usize = batch_shape.iter().product();
-    let mut output_shape = batch_shape.clone();
-    output_shape.push(m);
-    output_shape.push(n);
+    let out_shape = problem.out_shape.clone();
+    let rank = out_shape.len();
+    let num_batches = problem.num_batches();
 
     let mut out = vec![0.0; num_batches * m * n];
 
-    let mut batch_index = vec![0usize; batch_shape.len()];
-    let mut lhs_index = vec![0usize; batch_shape.len() + 2];
-    let mut rhs_index = vec![0usize; batch_shape.len() + 2];
-    let mut out_index = vec![0usize; batch_shape.len() + 2];
+    let mut batch_index = vec![0usize; rank - 2];
+    let mut lhs_index = vec![0usize; rank];
+    let mut rhs_index = vec![0usize; rank];
+    let mut out_index = vec![0usize; rank];
 
     // Iterate over all batches (cartesian product)
     for batch_flat in 0..num_batches {
         // decode flat batch index → multidim batch index
         let mut t = batch_flat;
-        for d in (0..batch_shape.len()).rev() {
-            batch_index[d] = t % batch_shape[d];
-            t /= batch_shape[d];
+        for d in (0..rank - 2).rev() {
+            batch_index[d] = t % out_shape[d];
+            t /= out_shape[d];
         }
 
         // copy batch dims into indices
-        lhs_index[..batch_shape.len()].copy_from_slice(&batch_index);
-        rhs_index[..batch_shape.len()].copy_from_slice(&batch_index);
-        out_index[..batch_shape.len()].copy_from_slice(&batch_index);
+        lhs_index[..rank - 2].copy_from_slice(&batch_index);
+        rhs_index[..rank - 2].copy_from_slice(&batch_index);
+        out_index[..rank - 2].copy_from_slice(&batch_index);
 
         for i in 0..m {
-            out_index[batch_shape.len()] = i;
-            lhs_index[batch_shape.len()] = i;
+            out_index[rank - 2] = i;
+            lhs_index[rank - 2] = i;
 
             for j in 0..n {
-                out_index[batch_shape.len() + 1] = j;
+                out_index[rank - 1] = j;
 
                 let mut sum = 0.0;
                 for kk in 0..k {
-                    lhs_index[batch_shape.len() + 1] = kk;
-                    rhs_index[batch_shape.len()] = kk;
-                    rhs_index[batch_shape.len() + 1] = j;
+                    lhs_index[rank - 1] = kk;
+                    rhs_index[rank - 2] = kk;
+                    rhs_index[rank - 1] = j;
 
                     sum += lhs.get_f32(&lhs_index) * rhs.get_f32(&rhs_index);
                 }
@@ -99,10 +97,10 @@ fn matmul_cpu_reference(lhs: &HostData, rhs: &HostData, problem: &MatmulProblem)
         }
     }
 
-    let strides = StrideSpec::RowMajor.compute_strides(&output_shape);
+    let strides = StrideSpec::RowMajor.compute_strides(&out_shape);
     HostData {
         data: HostDataVec::F32(out),
-        shape: output_shape,
+        shape: out_shape,
         strides,
     }
 }

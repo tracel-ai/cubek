@@ -1,16 +1,14 @@
 use crate::components::batch::BatchConfig;
-use crate::components::tile::TileMatmulFamily;
 use crate::definition::MatmulElems;
 use crate::definition::MatmulLineSizes;
 use crate::definition::MatmulProblem;
 use crate::definition::MatmulSetupError;
-use crate::launch::MatmulInputHandleRef;
-use crate::launch::launch2::launch_with_config;
+use crate::launch::handle::MatmulInputHandleRef;
 use crate::launch::{
     ConcreteInputsFactory, ConcreteOutputFactory, InputArg, InputRuntimeArg, MatmulArgs, OutputArg,
     OutputRuntimeArg,
 };
-use crate::routines::{Routine, Selection};
+use crate::routines::{BlueprintStrategy, Routine};
 use cubecl::prelude::TensorHandleRef;
 use cubecl::{Runtime, client::ComputeClient};
 
@@ -26,12 +24,12 @@ pub fn launch_kernel_concrete<MA: MatmulArgs, R: Runtime, A: Routine>(
     problem: MatmulProblem,
     line_sizes: MatmulLineSizes,
     plane_dim: u32,
-    selection: &Selection<A::SelectionArgs>,
+    blueprint_strategy: &BlueprintStrategy<A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError>
 where
-    InputArg<MA>: ConcreteInputsFactory,
-    OutputArg<MA>: ConcreteOutputFactory,
+    InputArg<MA>: ConcreteInputsFactory<A>,
+    OutputArg<MA>: ConcreteOutputFactory<A>,
 {
     let mut view_line_sizes = line_sizes;
 
@@ -42,54 +40,37 @@ where
         view_line_sizes.rhs *= scheme.num_quants() as u8;
     }
 
-    // Prefer output type for stage because it's the same size at best, but often smaller.
-    // Having stage == global also enables things like TMA, and an f16 stage for output enables
-    // using `stmatrix` on the registers after casting.
-    if A::TileMatmul::can_cast_stage_element() {
-        dtypes.lhs_stage.dtype = dtypes.lhs_global.dtype;
-        dtypes.rhs_stage.dtype = dtypes.rhs_global.dtype;
-        dtypes.acc_stage.dtype = dtypes.acc_global.dtype;
-    }
-
-    let selection = match selection {
-        Selection::Forced(selection) => selection.clone(),
-        Selection::Inferred(args) => {
-            A::selection(client, &problem, plane_dim, &view_line_sizes, args, dtypes)?
+    let blueprint = match blueprint_strategy {
+        BlueprintStrategy::Forced(selection) => selection.clone(),
+        BlueprintStrategy::Inferred(args) => {
+            A::prepare(client, &problem, plane_dim, &view_line_sizes, args, dtypes)?
         }
     };
-    let config = A::setup(client, &problem, &selection, &view_line_sizes, dtypes)?;
-    let cube_count_plan = config.hypercube_config().cube_count_plan(
-        &problem,
-        client.properties().hardware.max_cube_count.clone(),
-    );
 
-    launch_with_config::<MA, R, A>(
+    // TODO should be inside kernel
+    let config = A::expand_config(client, &problem, &blueprint, &view_line_sizes, dtypes)?;
+
+    let input = <InputArg<MA> as ConcreteInputsFactory<A>>::create(
         client,
-        config.cube_dim(),
-        cube_count_plan.resolve(),
-        <InputArg<MA> as ConcreteInputsFactory>::create(
-            client,
-            lhs,
-            rhs,
-            &selection,
-            &problem,
-            &line_sizes,
-            config,
-            dtypes,
-        ),
-        <OutputArg<MA> as ConcreteOutputFactory>::create(
-            client,
-            out,
-            &selection,
-            &problem,
-            &line_sizes,
-            config,
-            dtypes,
-        ),
-        cube_count_plan.as_args(),
+        lhs,
+        rhs,
+        &blueprint,
+        &problem,
+        &line_sizes,
         config,
         dtypes,
-    )
+    );
+    let output = <OutputArg<MA> as ConcreteOutputFactory<A>>::create(
+        client,
+        out,
+        &blueprint,
+        &problem,
+        &line_sizes,
+        config,
+        dtypes,
+    );
+
+    launch_kernel::<MA, R, A>(client, input, output, problem, config, dtypes)
 }
 
 /// Select which kernel to launch for the given Algorithm.
@@ -101,32 +82,47 @@ pub fn launch_kernel_virtual<'a, MA: MatmulArgs, R: Runtime, A: Routine>(
     problem: MatmulProblem,
     view_line_sizes: MatmulLineSizes,
     plane_dim: u32,
-    selection: &Selection<A::SelectionArgs>,
+    blueprint_strategy: &BlueprintStrategy<A>,
+    dtypes: &mut MatmulElems,
+) -> Result<(), MatmulSetupError> {
+    let blueprint = match blueprint_strategy {
+        BlueprintStrategy::Forced(selection) => selection.clone(),
+        BlueprintStrategy::Inferred(args) => {
+            A::prepare(client, &problem, plane_dim, &view_line_sizes, args, dtypes)?
+        }
+    };
+
+    // TODO should be inside kernel
+    let config = A::expand_config(client, &problem, &blueprint, &view_line_sizes, dtypes)?;
+
+    launch_kernel::<MA, R, A>(client, input, output, problem, config, dtypes)
+}
+
+/// Select which kernel to launch for the given Algorithm.
+#[allow(clippy::too_many_arguments)]
+fn launch_kernel<'a, MA: MatmulArgs, R: Runtime, A: Routine>(
+    client: &ComputeClient<R>,
+    input: InputRuntimeArg<'a, MA, R>,
+    output: OutputRuntimeArg<'a, MA, R>,
+    problem: MatmulProblem,
+    config: A::Config,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     // Prefer output type for stage because it's the same size at best, but often smaller.
     // Having stage == global also enables things like TMA, and an f16 stage for output enables
     // using `stmatrix` on the registers after casting.
-    if A::TileMatmul::can_cast_stage_element() {
+    if A::can_cast_stage_element() {
         dtypes.lhs_stage.dtype = dtypes.lhs_global.dtype;
         dtypes.rhs_stage.dtype = dtypes.rhs_global.dtype;
         dtypes.acc_stage.dtype = dtypes.acc_global.dtype;
     }
 
-    let selection = match selection {
-        Selection::Forced(selection) => selection.clone(),
-        Selection::Inferred(args) => {
-            A::selection(client, &problem, plane_dim, &view_line_sizes, args, dtypes)?
-        }
-    };
-    let config = A::setup(client, &problem, &selection, &view_line_sizes, dtypes)?;
-
-    let cube_count_plan = config.hypercube_config().cube_count_plan(
+    let cube_count_plan = config.cube_count_plan(
         &problem,
-        client.properties().hardware.max_cube_count.clone(),
+        &client.properties().hardware.max_cube_count.clone(),
     );
 
-    launch_with_config::<MA, R, A>(
+    A::launch::<MA, R>(
         client,
         config.cube_dim(),
         cube_count_plan.resolve(),

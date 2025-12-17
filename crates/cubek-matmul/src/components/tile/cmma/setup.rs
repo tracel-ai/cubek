@@ -6,7 +6,7 @@ use crate::components::tile::{
     cmma::reader::{CmmaFragmentReader, CmmaStageReader},
 };
 use crate::components::{resource::ComputeResources, tile::io::TileKind};
-use crate::definition::MatmulSelection;
+use crate::definition::TilingBlueprint;
 use crate::definition::{
     InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatmulProblem,
     MatmulSetupError, TileSize,
@@ -37,10 +37,10 @@ where
         Ok(ComputeResources::Planes(1))
     }
 
-    fn setup<R: Runtime>(
+    fn expand_config<R: Runtime>(
         client: &ComputeClient<R>,
         _problem: &MatmulProblem,
-        selection: &MatmulSelection,
+        selection: &TilingBlueprint,
         _matmul_line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
     ) -> Result<SharedTileConfig, MatmulSetupError> {

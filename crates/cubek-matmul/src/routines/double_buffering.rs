@@ -1,8 +1,10 @@
+use std::fmt::Display;
 use std::marker::PhantomData;
 
 use cubecl::Runtime;
 use cubecl::client::ComputeClient;
 
+use crate::components::batch::BatchMatmulFamily;
 use crate::components::global::read::{
     async_partial_cyclic::AsyncPartialCyclicLoading,
     async_partial_strided::AsyncPartialStridedLoading, async_partial_tma::AsyncPartialTmaLoading,
@@ -22,12 +24,12 @@ use crate::components::{
     stage::{FilledStageFamily, StridedStageFamily},
 };
 use crate::definition::{
-    MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError,
-    MultiRowStrategy,
+    MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, MultiRowStrategy,
+    TilingBlueprint,
 };
 use crate::routines::Routine;
 use crate::routines::base;
-use crate::routines::selector::{PlaneMatmulSelectionOptions, plane_matmul_selection};
+use crate::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
 
 /// Plane accelerated double buffered matmul with cyclic readers
 pub struct CyclicDoubleBufferingAlgorithm<TMM> {
@@ -64,6 +66,12 @@ pub struct DoubleBufferingArgs {
     pub specialized: bool,
 }
 
+impl Display for DoubleBufferingArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.specialized { "_specialized" } else { "" })
+    }
+}
+
 impl<TMM> base::Routine for CyclicDoubleBufferingAlgorithm<TMM>
 where
     TMM: tile::TileMatmulFamily<
@@ -73,38 +81,35 @@ where
             OutTile = Strided,
         >,
 {
-    type SelectionArgs = DoubleBufferingArgs;
-    type TileMatmul = TMM;
-    type StageMatmul = PlaneMatmulFamily<
-        Self::TileMatmul,
-        StridedStageFamily,
-        StridedStageFamily,
-        FilledStageFamily,
-    >;
-    type GlobalMatmul = DoubleBufferingMatmulFamily<
-        Self::StageMatmul,
-        SyncPartialCyclicLoading<RowMajorTilingOrder>,
-        SyncPartialCyclicLoading<RowMajorTilingOrder>,
-        PlaneWriterFamily,
-    >;
-    type BatchMatmul =
-        PartitionedBatchMatmulFamily<Self::GlobalMatmul, RowMajorGlobalPartitionMatmul>;
+    type Strategy = DoubleBufferingArgs;
 
-    fn selection<R: Runtime>(
+    type BatchMatmul = PartitionedBatchMatmulFamily<
+        DoubleBufferingMatmulFamily<
+            PlaneMatmulFamily<TMM, StridedStageFamily, StridedStageFamily, FilledStageFamily>,
+            SyncPartialCyclicLoading<RowMajorTilingOrder>,
+            SyncPartialCyclicLoading<RowMajorTilingOrder>,
+            PlaneWriterFamily,
+        >,
+        RowMajorGlobalPartitionMatmul,
+    >;
+    type Blueprint = TilingBlueprint;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+
+    fn prepare<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
         plane_dim: u32,
         line_sizes: &MatmulLineSizes,
-        args: &Self::SelectionArgs,
+        args: &Self::Strategy,
         dtypes: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError> {
-        plane_matmul_selection::<TMM, R>(
+    ) -> Result<TilingBlueprint, MatmulSetupError> {
+        infer_blueprint_plane::<TMM, R>(
             client,
             problem,
             plane_dim,
             dtypes,
             line_sizes,
-            PlaneMatmulSelectionOptions {
+            PlaneTilingBlueprintOptions {
                 specialized: args.specialized,
                 multi_row_strategy: MultiRowStrategy::Adaptive {
                     minimum_stage_count: 8,
@@ -113,6 +118,10 @@ where
                 ..Default::default()
             },
         )
+    }
+
+    fn can_cast_stage_element() -> bool {
+        TMM::can_cast_stage_element()
     }
 }
 
@@ -125,38 +134,34 @@ where
             OutTile = Strided,
         >,
 {
-    type SelectionArgs = DoubleBufferingArgs;
-    type TileMatmul = TMM;
-    type StageMatmul = PlaneMatmulFamily<
-        Self::TileMatmul,
-        StridedStageFamily,
-        StridedStageFamily,
-        FilledStageFamily,
+    type Strategy = DoubleBufferingArgs;
+    type BatchMatmul = PartitionedBatchMatmulFamily<
+        DoubleBufferingMatmulFamily<
+            PlaneMatmulFamily<TMM, StridedStageFamily, StridedStageFamily, FilledStageFamily>,
+            AsyncPartialCyclicLoading<RowMajorTilingOrder>,
+            AsyncPartialCyclicLoading<RowMajorTilingOrder>,
+            PlaneWriterFamily,
+        >,
+        RowMajorGlobalPartitionMatmul,
     >;
-    type GlobalMatmul = DoubleBufferingMatmulFamily<
-        Self::StageMatmul,
-        AsyncPartialCyclicLoading<RowMajorTilingOrder>,
-        AsyncPartialCyclicLoading<RowMajorTilingOrder>,
-        PlaneWriterFamily,
-    >;
-    type BatchMatmul =
-        PartitionedBatchMatmulFamily<Self::GlobalMatmul, RowMajorGlobalPartitionMatmul>;
+    type Blueprint = TilingBlueprint;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
-    fn selection<R: Runtime>(
+    fn prepare<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
         plane_dim: u32,
         line_sizes: &MatmulLineSizes,
-        args: &Self::SelectionArgs,
+        args: &Self::Strategy,
         dtypes: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError> {
-        plane_matmul_selection::<TMM, R>(
+    ) -> Result<TilingBlueprint, MatmulSetupError> {
+        infer_blueprint_plane::<TMM, R>(
             client,
             problem,
             plane_dim,
             dtypes,
             line_sizes,
-            PlaneMatmulSelectionOptions {
+            PlaneTilingBlueprintOptions {
                 specialized: args.specialized,
                 multi_row_strategy: MultiRowStrategy::Adaptive {
                     minimum_stage_count: 8,
@@ -165,6 +170,10 @@ where
                 ..Default::default()
             },
         )
+    }
+
+    fn can_cast_stage_element() -> bool {
+        TMM::can_cast_stage_element()
     }
 }
 
@@ -177,39 +186,36 @@ where
             OutTile = Strided,
         >,
 {
-    type SelectionArgs = DoubleBufferingArgs;
-    type TileMatmul = TMM;
-    type StageMatmul = PlaneMatmulFamily<
-        Self::TileMatmul,
-        StridedStageFamily,
-        StridedStageFamily,
-        FilledStageFamily,
-    >;
-    type GlobalMatmul = DoubleBufferingMatmulFamily<
-        Self::StageMatmul,
-        // Other tiling orders are not supported
-        SyncPartialTilewiseLoading<RowMajorTilingOrder>,
-        SyncPartialTilewiseLoading<ColMajorTilingOrder>,
-        PlaneWriterFamily,
-    >;
-    type BatchMatmul =
-        PartitionedBatchMatmulFamily<Self::GlobalMatmul, RowMajorGlobalPartitionMatmul>;
+    type Strategy = DoubleBufferingArgs;
 
-    fn selection<R: Runtime>(
+    type BatchMatmul = PartitionedBatchMatmulFamily<
+        DoubleBufferingMatmulFamily<
+            PlaneMatmulFamily<TMM, StridedStageFamily, StridedStageFamily, FilledStageFamily>,
+            // Other tiling orders are not supported
+            SyncPartialTilewiseLoading<RowMajorTilingOrder>,
+            SyncPartialTilewiseLoading<ColMajorTilingOrder>,
+            PlaneWriterFamily,
+        >,
+        RowMajorGlobalPartitionMatmul,
+    >;
+    type Blueprint = TilingBlueprint;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+
+    fn prepare<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
         plane_dim: u32,
         line_sizes: &MatmulLineSizes,
-        args: &Self::SelectionArgs,
+        args: &Self::Strategy,
         dtypes: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError> {
-        plane_matmul_selection::<TMM, R>(
+    ) -> Result<TilingBlueprint, MatmulSetupError> {
+        infer_blueprint_plane::<TMM, R>(
             client,
             problem,
             plane_dim,
             dtypes,
             line_sizes,
-            PlaneMatmulSelectionOptions {
+            PlaneTilingBlueprintOptions {
                 specialized: args.specialized,
                 multi_row_strategy: MultiRowStrategy::Adaptive {
                     minimum_stage_count: 8,
@@ -218,6 +224,10 @@ where
                 ..Default::default()
             },
         )
+    }
+
+    fn can_cast_stage_element() -> bool {
+        TMM::can_cast_stage_element()
     }
 }
 
@@ -230,38 +240,35 @@ where
             OutTile = Strided,
         >,
 {
-    type SelectionArgs = DoubleBufferingArgs;
-    type TileMatmul = TMM;
-    type StageMatmul = PlaneMatmulFamily<
-        Self::TileMatmul,
-        StridedStageFamily,
-        StridedStageFamily,
-        FilledStageFamily,
-    >;
-    type GlobalMatmul = DoubleBufferingMatmulFamily<
-        Self::StageMatmul,
-        SyncPartialTilewiseLoading<RowMajorTilingOrder>,
-        SyncPartialCyclicLoading<RowMajorTilingOrder>,
-        PlaneWriterFamily,
-    >;
-    type BatchMatmul =
-        PartitionedBatchMatmulFamily<Self::GlobalMatmul, RowMajorGlobalPartitionMatmul>;
+    type Strategy = DoubleBufferingArgs;
 
-    fn selection<R: Runtime>(
+    type BatchMatmul = PartitionedBatchMatmulFamily<
+        DoubleBufferingMatmulFamily<
+            PlaneMatmulFamily<TMM, StridedStageFamily, StridedStageFamily, FilledStageFamily>,
+            SyncPartialTilewiseLoading<RowMajorTilingOrder>,
+            SyncPartialCyclicLoading<RowMajorTilingOrder>,
+            PlaneWriterFamily,
+        >,
+        RowMajorGlobalPartitionMatmul,
+    >;
+    type Blueprint = TilingBlueprint;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+
+    fn prepare<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
         plane_dim: u32,
         line_sizes: &MatmulLineSizes,
-        args: &Self::SelectionArgs,
+        args: &Self::Strategy,
         dtypes: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError> {
-        plane_matmul_selection::<TMM, R>(
+    ) -> Result<TilingBlueprint, MatmulSetupError> {
+        infer_blueprint_plane::<TMM, R>(
             client,
             problem,
             plane_dim,
             dtypes,
             line_sizes,
-            PlaneMatmulSelectionOptions {
+            PlaneTilingBlueprintOptions {
                 specialized: args.specialized,
                 multi_row_strategy: MultiRowStrategy::Adaptive {
                     minimum_stage_count: 8,
@@ -270,6 +277,10 @@ where
                 ..Default::default()
             },
         )
+    }
+
+    fn can_cast_stage_element() -> bool {
+        TMM::can_cast_stage_element()
     }
 }
 
@@ -282,38 +293,34 @@ where
             OutTile = Strided,
         >,
 {
-    type SelectionArgs = DoubleBufferingArgs;
-    type TileMatmul = TMM;
-    type StageMatmul = PlaneMatmulFamily<
-        Self::TileMatmul,
-        StridedStageFamily,
-        StridedStageFamily,
-        FilledStageFamily,
+    type Strategy = DoubleBufferingArgs;
+    type BatchMatmul = PartitionedBatchMatmulFamily<
+        DoubleBufferingMatmulFamily<
+            PlaneMatmulFamily<TMM, StridedStageFamily, StridedStageFamily, FilledStageFamily>,
+            AsyncPartialTmaLoading,
+            AsyncPartialTmaLoading,
+            PlaneWriterFamily,
+        >,
+        RowMajorGlobalPartitionMatmul,
     >;
-    type GlobalMatmul = DoubleBufferingMatmulFamily<
-        Self::StageMatmul,
-        AsyncPartialTmaLoading,
-        AsyncPartialTmaLoading,
-        PlaneWriterFamily,
-    >;
-    type BatchMatmul =
-        PartitionedBatchMatmulFamily<Self::GlobalMatmul, RowMajorGlobalPartitionMatmul>;
+    type Blueprint = TilingBlueprint;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
-    fn selection<R: Runtime>(
+    fn prepare<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
         plane_dim: u32,
         line_sizes: &MatmulLineSizes,
-        args: &Self::SelectionArgs,
+        args: &Self::Strategy,
         dtypes: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError> {
-        plane_matmul_selection::<TMM, R>(
+    ) -> Result<TilingBlueprint, MatmulSetupError> {
+        infer_blueprint_plane::<TMM, R>(
             client,
             problem,
             plane_dim,
             dtypes,
             line_sizes,
-            PlaneMatmulSelectionOptions {
+            PlaneTilingBlueprintOptions {
                 specialized: args.specialized,
                 multi_row_strategy: MultiRowStrategy::Adaptive {
                     minimum_stage_count: 8,
@@ -322,6 +329,10 @@ where
                 ..Default::default()
             },
         )
+    }
+
+    fn can_cast_stage_element() -> bool {
+        TMM::can_cast_stage_element()
     }
 }
 
@@ -334,38 +345,34 @@ where
             OutTile = Strided,
         >,
 {
-    type SelectionArgs = DoubleBufferingArgs;
-    type TileMatmul = TMM;
-    type StageMatmul = PlaneMatmulFamily<
-        Self::TileMatmul,
-        StridedStageFamily,
-        StridedStageFamily,
-        FilledStageFamily,
+    type Strategy = DoubleBufferingArgs;
+    type BatchMatmul = PartitionedBatchMatmulFamily<
+        DoubleBufferingMatmulFamily<
+            PlaneMatmulFamily<TMM, StridedStageFamily, StridedStageFamily, FilledStageFamily>,
+            AsyncPartialStridedLoading,
+            AsyncPartialStridedLoading,
+            PlaneWriterFamily,
+        >,
+        RowMajorGlobalPartitionMatmul,
     >;
-    type GlobalMatmul = DoubleBufferingMatmulFamily<
-        Self::StageMatmul,
-        AsyncPartialStridedLoading,
-        AsyncPartialStridedLoading,
-        PlaneWriterFamily,
-    >;
-    type BatchMatmul =
-        PartitionedBatchMatmulFamily<Self::GlobalMatmul, RowMajorGlobalPartitionMatmul>;
+    type Blueprint = TilingBlueprint;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
-    fn selection<R: Runtime>(
+    fn prepare<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
         plane_dim: u32,
         line_sizes: &MatmulLineSizes,
-        args: &Self::SelectionArgs,
+        args: &Self::Strategy,
         dtypes: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError> {
-        plane_matmul_selection::<TMM, R>(
+    ) -> Result<TilingBlueprint, MatmulSetupError> {
+        infer_blueprint_plane::<TMM, R>(
             client,
             problem,
             plane_dim,
             dtypes,
             line_sizes,
-            PlaneMatmulSelectionOptions {
+            PlaneTilingBlueprintOptions {
                 specialized: args.specialized,
                 multi_row_strategy: MultiRowStrategy::Adaptive {
                     minimum_stage_count: 8,
@@ -374,5 +381,9 @@ where
                 ..Default::default()
             },
         )
+    }
+
+    fn can_cast_stage_element() -> bool {
+        TMM::can_cast_stage_element()
     }
 }

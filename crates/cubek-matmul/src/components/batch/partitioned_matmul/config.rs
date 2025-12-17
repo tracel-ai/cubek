@@ -1,26 +1,23 @@
-use cubecl::CubeDim;
+use cubecl::{CubeCount, CubeDim};
 
-use crate::components::{
-    batch::{BatchConfig, HypercubeConfig},
-    global::GlobalConfig,
+use crate::components::global::memory::GlobalLayoutConfig;
+use crate::definition::{
+    CubeCountPlan, GlobalPartitionSize, MatmulLineSizes, MatmulProblem, MatmulSetupError,
 };
-use crate::definition::{GlobalPartitionSize, MatmulLineSizes, MatmulProblem, MatmulSetupError};
+use crate::{
+    components::{batch::BatchConfig, global::GlobalConfig},
+    definition::HypercubeConfig,
+};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 /// Configuration for partitioned batch matmul
 pub struct PartitionedBatchConfig<G: GlobalConfig> {
-    global_config: G,
-    hypercube_config: HypercubeConfig,
+    pub global_config: G,
+    pub hypercube_config: HypercubeConfig,
     pub global_partition_size: GlobalPartitionSize,
 }
 
 impl<G: GlobalConfig> BatchConfig for PartitionedBatchConfig<G> {
-    type GlobalConfig = G;
-
-    fn global_config(&self) -> Self::GlobalConfig {
-        self.global_config
-    }
-
     fn cube_dim(&self) -> CubeDim {
         self.global_config.cube_dim()
     }
@@ -29,14 +26,31 @@ impl<G: GlobalConfig> BatchConfig for PartitionedBatchConfig<G> {
         self.global_config.global_line_sizes()
     }
 
-    fn hypercube_config(&self) -> HypercubeConfig {
-        self.hypercube_config
-    }
-
     fn can_yield_extra_cubes(&self) -> bool {
         self.hypercube_config
-            .cube_count_plan_config
+            .cube_count_plan_blueprint
             .can_yield_extra_cubes()
+    }
+
+    fn lhs_global_layout_config(&self) -> GlobalLayoutConfig {
+        self.global_config.lhs_reader_config().gmem_config.into()
+    }
+
+    fn rhs_global_layout_config(&self) -> GlobalLayoutConfig {
+        self.global_config.rhs_reader_config().gmem_config.into()
+    }
+
+    fn out_global_layout_config(&self) -> GlobalLayoutConfig {
+        self.global_config.writer_config().gmem_config.into()
+    }
+
+    fn cube_count_plan(
+        &self,
+        problem: &MatmulProblem,
+        max_cube_count: &CubeCount,
+    ) -> CubeCountPlan {
+        self.hypercube_config
+            .cube_count_plan(problem, max_cube_count)
     }
 }
 

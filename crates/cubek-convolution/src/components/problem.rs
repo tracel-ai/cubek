@@ -76,6 +76,11 @@ impl ConvolutionProblem {
             rhs_strides,
             lhs_layout: self.lhs_layout,
             rhs_layout: self.rhs_layout,
+            lhs_shape: vec![self.m, self.k],
+            rhs_shape: vec![self.k, self.n],
+            out_shape: vec![self.m, self.n],
+            out_strides: MatrixLayout::RowMajor.to_strides(&[self.m, self.n]),
+            out_layout: MatrixLayout::RowMajor,
         }
     }
 

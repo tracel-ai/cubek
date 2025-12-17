@@ -1,14 +1,16 @@
 use cubecl::prelude::*;
 
-use crate::components::batch::partitioned_matmul::hypercube::global_order::{GlobalOrder, swizzle};
-use crate::components::batch::partitioned_matmul::hypercube::sm_allocation::SmAllocation;
-use crate::components::batch::{HypercubeConfig, HypercubeSelection};
-use crate::definition::MatmulProblem;
+use crate::definition::{
+    MatmulProblem,
+    hypercube::{
+        GlobalOrder, HypercubeBlueprint, HypercubeConfig, SmAllocation, global_order::swizzle,
+    },
+};
 
 #[derive(Default, Copy, Clone, Debug, Hash, PartialEq, Eq)]
-/// Front-facing configuration when crafting a MatmulSelection
+/// Front-facing configuration when crafting a TilingBlueprint
 /// Allows choosing a strategy before knowing actual values
-pub enum CubeCountPlanSelection {
+pub enum CubeCountPlanBlueprint {
     #[default]
     /// X: num cubes in m, Y: num cubes in n, Z: num cubes in batch
     FromProblem,
@@ -33,7 +35,7 @@ pub enum CubeCountPlanSelection {
 /// Because this struct depends on the problem size, it is simplified into
 /// [CubeCountPlanConfig] to be injected as comptime in the kernel.
 ///
-/// Refer to [CubeCountPlanSelection] for more details
+/// Refer to [CubeCountPlanBlueprint] for more details
 pub enum CubeCountPlan {
     FromProblem {
         m_cubes: u32,
@@ -93,7 +95,7 @@ impl CubeCountPlan {
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 /// Config derived from CubeCountPlan to be used comptime in kernels
 ///
-/// Refer to [CubeCountPlanSelection] for more details
+/// Refer to [CubeCountPlanBlueprint] for more details
 pub enum CubeCountPlanConfig {
     FromProblem,
 
@@ -141,7 +143,7 @@ pub enum CubeCountInput {
 impl CubeCountPlan {
     // Will check if the wanted cube count plan is possible, otherwise will fallback to spread
     pub fn from_selection(
-        selection: &HypercubeSelection,
+        selection: &HypercubeBlueprint,
         problem: &MatmulProblem,
         max_cube_count: CubeCount,
     ) -> CubeCountPlan {
@@ -155,7 +157,7 @@ impl CubeCountPlan {
         let batch_cubes = (problem.num_batches() as u32).div_ceil(selection.cube_span.batch);
 
         let plan = match selection.cube_count_plan_selection {
-            CubeCountPlanSelection::FromProblem => {
+            CubeCountPlanBlueprint::FromProblem => {
                 if m_cubes > max_x || n_cubes > max_y || batch_cubes > max_z {
                     None
                 } else {
@@ -166,7 +168,7 @@ impl CubeCountPlan {
                     })
                 }
             }
-            CubeCountPlanSelection::Sm {
+            CubeCountPlanBlueprint::Sm {
                 cubes_first,
                 num_sms,
                 sm_usage,
@@ -191,7 +193,7 @@ impl CubeCountPlan {
                     })
                 }
             }
-            CubeCountPlanSelection::Flattened => {
+            CubeCountPlanBlueprint::Flattened => {
                 if m_cubes * n_cubes * batch_cubes >= max_x {
                     None
                 } else {
@@ -202,7 +204,7 @@ impl CubeCountPlan {
                     })
                 }
             }
-            CubeCountPlanSelection::Spread => None,
+            CubeCountPlanBlueprint::Spread => None,
         };
 
         plan.unwrap_or_else(|| {
@@ -213,10 +215,10 @@ impl CubeCountPlan {
     /// Because we don't want to store the CubeCountPlan values in config, we have to recompute it
     ///
     /// Assumes the hypercube config is valid
-    pub fn from_config(
+    pub fn from_blueprint(
         config: &HypercubeConfig,
         problem: &MatmulProblem,
-        max_cube_count: CubeCount,
+        max_cube_count: &CubeCount,
     ) -> CubeCountPlan {
         let (max_x, max_y, max_z) = match max_cube_count {
             CubeCount::Static(x, y, z) => (x, y, z),
@@ -227,7 +229,7 @@ impl CubeCountPlan {
         let n_cubes = (problem.n as u32).div_ceil(config.cube_span.n);
         let batch_cubes = (problem.num_batches() as u32).div_ceil(config.cube_span.batch);
 
-        match config.cube_count_plan_config {
+        match config.cube_count_plan_blueprint {
             CubeCountPlanConfig::FromProblem => CubeCountPlan::FromProblem {
                 m_cubes,
                 n_cubes,
@@ -258,7 +260,7 @@ impl CubeCountPlan {
                 batch_cubes,
             },
             CubeCountPlanConfig::Spread { .. } => {
-                spread_cube_count_plan(m_cubes, n_cubes, batch_cubes, max_x, max_y, max_z)
+                spread_cube_count_plan(m_cubes, n_cubes, batch_cubes, *max_x, *max_y, *max_z)
             }
         }
     }

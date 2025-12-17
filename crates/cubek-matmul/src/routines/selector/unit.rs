@@ -1,13 +1,11 @@
 use std::fmt::Display;
 
 use crate::{
-    components::{
-        batch::{CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection, SmAllocation},
-        stage::{PartitionBuffering, SwizzleMode},
-    },
+    components::stage::{PartitionBuffering, SwizzleMode},
     definition::{
-        MatmulElems, MatmulKind, MatmulLineSizes, MatmulProblem, MatmulSelection, MatrixLayout,
-        SwizzleConfig, TilingScheme,
+        CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulElems, MatmulKind,
+        MatmulLineSizes, MatmulProblem, MatrixLayout, SmAllocation, SwizzleBlueprint,
+        TilingBlueprint, TilingScheme,
     },
 };
 use cubecl::{Runtime, client::ComputeClient, ir::StorageType};
@@ -45,23 +43,23 @@ pub enum StageScaling {
 }
 
 #[derive(Default, Clone, Copy, Debug)]
-pub struct UnitMatmulSelectionOptions {
+pub struct UnitTilingBlueprintOptions {
     pub tile: TileSizeSelection,
     pub stage: StageScaling,
     pub partition: PartitionScaling,
     pub swizzle: bool,
 }
 
-/// Computes a [MatmulSelection] depending on the problem kind
-pub fn unit_matmul_selection<R: Runtime>(
+/// Computes a [TilingBlueprint] depending on the problem kind
+pub fn infer_blueprint_unit<R: Runtime>(
     client: &ComputeClient<R>,
     problem: &MatmulProblem,
     plane_dim: u32,
     double_buffering: bool,
     line_sizes: &MatmulLineSizes,
-    options: UnitMatmulSelectionOptions,
+    options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
-) -> MatmulSelection {
+) -> TilingBlueprint {
     let kind: MatmulKind = problem.into();
     let num_sms = client.properties().hardware.num_streaming_multiprocessors;
     let min_tile_size = u8::max(line_sizes.lhs, line_sizes.rhs);
@@ -160,10 +158,10 @@ fn general_unit_selector(
     double_buffering: bool,
     tile_size: u32,
     num_sms: Option<u32>,
-    options: UnitMatmulSelectionOptions,
+    options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
     line_sizes: &MatmulLineSizes,
-) -> MatmulSelection {
+) -> TilingBlueprint {
     use MatrixLayout::*;
 
     // Manually tested for good performance on many shapes.
@@ -213,7 +211,7 @@ fn general_unit_selector(
             num_plane,
         },
         num_sms,
-        GlobalOrderSelection::SwizzleRow {
+        GlobalOrderBlueprint::SwizzleRow {
             m: problem.m as u32,
             w: 4,
         },
@@ -233,10 +231,10 @@ fn matvec_unit_selector(
     _double_buffering: bool,
     tile_size: u32,
     num_sms: Option<u32>,
-    options: UnitMatmulSelectionOptions,
+    options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
     line_sizes: &MatmulLineSizes,
-) -> MatmulSelection {
+) -> TilingBlueprint {
     let (tile_size, partition_size) = match (problem.lhs_layout, problem.rhs_layout) {
         (MatrixLayout::RowMajor, _) => ((1, 1, tile_size), (1, 1, tile_size * 2)),
         _ => ((tile_size, 1, tile_size), (1, 1, 1)),
@@ -252,7 +250,7 @@ fn matvec_unit_selector(
             n: 2,
         },
         num_sms,
-        GlobalOrderSelection::Default,
+        GlobalOrderBlueprint::Default,
         StageScaling::Disabled,
         options.swizzle,
         problem,
@@ -269,10 +267,10 @@ fn vecmat_unit_selector(
     _double_buffering: bool,
     tile_size: u32,
     num_sms: Option<u32>,
-    options: UnitMatmulSelectionOptions,
+    options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
     line_sizes: &MatmulLineSizes,
-) -> MatmulSelection {
+) -> TilingBlueprint {
     let (tile_size, partition_size) = ((1, tile_size, tile_size), (1, 1, 1));
 
     selection(
@@ -285,7 +283,7 @@ fn vecmat_unit_selector(
             n: plane_dim / 2,
         },
         num_sms,
-        GlobalOrderSelection::Default,
+        GlobalOrderBlueprint::Default,
         StageScaling::Disabled,
         options.swizzle,
         problem,
@@ -302,10 +300,10 @@ fn scalarvec_unit_selector(
     _double_buffering: bool,
     tile_size: u32,
     num_sms: Option<u32>,
-    options: UnitMatmulSelectionOptions,
+    options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
     line_sizes: &MatmulLineSizes,
-) -> MatmulSelection {
+) -> TilingBlueprint {
     use MatrixLayout::*;
     let (tile_size, partition_size) = match (problem.lhs_layout, problem.rhs_layout) {
         (RowMajor, RowMajor) => ((1, tile_size, tile_size), (1, 2, 1)),
@@ -324,7 +322,7 @@ fn scalarvec_unit_selector(
             n: plane_dim / 2,
         },
         num_sms,
-        GlobalOrderSelection::Default,
+        GlobalOrderBlueprint::Default,
         StageScaling::Disabled,
         options.swizzle,
         problem,
@@ -341,10 +339,10 @@ fn vecscalar_unit_selector(
     _double_buffering: bool,
     tile_size: u32,
     num_sms: Option<u32>,
-    options: UnitMatmulSelectionOptions,
+    options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
     line_sizes: &MatmulLineSizes,
-) -> MatmulSelection {
+) -> TilingBlueprint {
     let (tile_size, partition_size) = ((tile_size, 1, 1), (1, 1, 1));
 
     selection(
@@ -357,7 +355,7 @@ fn vecscalar_unit_selector(
             n: 2,
         },
         num_sms,
-        GlobalOrderSelection::Default,
+        GlobalOrderBlueprint::Default,
         StageScaling::Disabled,
         options.swizzle,
         problem,
@@ -374,10 +372,10 @@ fn inner_product_unit_selector(
     _double_buffering: bool,
     tile_size: u32,
     num_sms: Option<u32>,
-    options: UnitMatmulSelectionOptions,
+    options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
     line_sizes: &MatmulLineSizes,
-) -> MatmulSelection {
+) -> TilingBlueprint {
     use MatrixLayout::*;
     let (tile_size, partition_size) = match (problem.lhs_layout, problem.rhs_layout) {
         (RowMajor, RowMajor) => ((1, 1, tile_size), (1, 1, 1)),
@@ -393,7 +391,7 @@ fn inner_product_unit_selector(
         plane_dim,
         StageSelection::Fixed { m: plane_dim, n: 1 }, // TODO: most planes does nothing.
         num_sms,
-        GlobalOrderSelection::Default,
+        GlobalOrderBlueprint::Default,
         StageScaling::Disabled,
         options.swizzle,
         problem,
@@ -410,10 +408,10 @@ fn outer_product_unit_selector(
     _double_buffering: bool,
     tile_size: u32,
     num_sms: Option<u32>,
-    options: UnitMatmulSelectionOptions,
+    options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
     line_sizes: &MatmulLineSizes,
-) -> MatmulSelection {
+) -> TilingBlueprint {
     let (tile_size, partition_size) = ((tile_size, tile_size, 1), (1, 1, 1));
 
     selection(
@@ -423,7 +421,7 @@ fn outer_product_unit_selector(
         plane_dim,
         StageSelection::Fixed { m: 8, n: 8 },
         num_sms,
-        GlobalOrderSelection::Default,
+        GlobalOrderBlueprint::Default,
         StageScaling::Disabled,
         options.swizzle,
         problem,
@@ -440,10 +438,10 @@ fn scalar_product_unit_selector(
     _double_buffering: bool,
     _tile_size: u32,
     num_sms: Option<u32>,
-    options: UnitMatmulSelectionOptions,
+    options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
     line_sizes: &MatmulLineSizes,
-) -> MatmulSelection {
+) -> TilingBlueprint {
     let (tile_size, partition_size) = ((1, 1, 1), (1, 1, 1));
 
     selection(
@@ -456,7 +454,7 @@ fn scalar_product_unit_selector(
             num_plane: 1,
         },
         num_sms,
-        GlobalOrderSelection::Default,
+        GlobalOrderBlueprint::Default,
         StageScaling::Disabled,
         options.swizzle,
         problem,
@@ -493,13 +491,13 @@ fn selection(
     plane_dim: u32,
     stage: StageSelection,
     num_sms: Option<u32>,
-    global_order_config: GlobalOrderSelection,
+    global_order_config: GlobalOrderBlueprint,
     stage_scaling: StageScaling,
     swizzle: bool,
     problem: &MatmulProblem,
     dtypes: &MatmulElems,
     line_sizes: &MatmulLineSizes,
-) -> MatmulSelection {
+) -> TilingBlueprint {
     let (stage_size_m, stage_size_n) = stage.into_stages();
 
     let (stage_size_m, stage_size_n) = match stage_scaling {
@@ -515,20 +513,20 @@ fn selection(
         .unwrap();
 
     let cube_count_plan = match num_sms {
-        Some(num_sms) => CubeCountPlanSelection::Sm {
+        Some(num_sms) => CubeCountPlanBlueprint::Sm {
             num_sms,
             sm_usage: SmAllocation::Exact,
             cubes_first: false,
         },
-        None => CubeCountPlanSelection::Flattened,
+        None => CubeCountPlanBlueprint::Flattened,
     };
 
-    let hypercube = HypercubeSelection::builder(&tiling_scheme)
+    let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
         .global_order(global_order_config)
         .cube_count_plan(cube_count_plan)
         .build();
 
-    let mut builder = MatmulSelection::builder(tiling_scheme, plane_dim)
+    let mut builder = TilingBlueprint::builder(tiling_scheme, plane_dim)
         .partition_buffering(buffering)
         .hypercube_config(hypercube);
 
@@ -542,7 +540,7 @@ fn selection(
             MatrixLayout::ColMajor => tiling_scheme.elements_per_stage_along_k(),
         };
 
-        builder = builder.shared_swizzle(SwizzleConfig {
+        builder = builder.shared_swizzle(SwizzleBlueprint {
             lhs: select_swizzle(lhs_swizzle_dim, *dtypes.lhs_stage, line_sizes.lhs),
             rhs: select_swizzle(rhs_swizzle_dim, *dtypes.rhs_stage, line_sizes.rhs),
             ..Default::default()

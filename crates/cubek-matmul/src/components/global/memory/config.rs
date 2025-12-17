@@ -1,6 +1,9 @@
 use std::{fmt::Debug, hash::Hash};
 
-use crate::{components::global::memory::ViewDirection, definition::MatrixLayout};
+use crate::{
+    components::global::memory::{GlobalLayoutConfig, ViewDirection},
+    definition::MatrixLayout,
+};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct GlobalMemoryConfig {
@@ -38,6 +41,14 @@ impl GlobalMemoryConfig {
             check_col_bounds,
             matrix_layout,
             view_direction,
+        }
+    }
+
+    pub fn as_global_layout_config(self) -> GlobalLayoutConfig {
+        GlobalLayoutConfig {
+            matrix_layout: self.matrix_layout,
+            check_row_bounds: self.check_row_bounds,
+            check_col_bounds: self.check_col_bounds,
         }
     }
 }

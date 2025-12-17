@@ -2,11 +2,11 @@ use super::{
     GlobalReduceBlueprint, ReduceBlueprint, ReduceLaunchSettings, ReduceLineSettings, ReduceProblem,
 };
 use crate::{
-    BoundChecks, LineMode, ReduceError,
+    BoundChecks, IdleMode, LineMode, ReduceError,
     launch::{calculate_plane_count_per_cube, support_plane},
     routines::{BlueprintStrategy, CubeBlueprint, Routine, cube_count_safe},
 };
-use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient};
+use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, features::Plane};
 
 #[derive(Debug, Clone)]
 pub struct CubeRoutine;
@@ -56,7 +56,7 @@ impl Routine for CubeRoutine {
                 let working_cubes = working_cubes(&settings, &problem);
                 let (cube_count, launched_cubes) = cube_count_safe(client, working_cubes);
 
-                if working_cubes != launched_cubes && !blueprint.cube_idle {
+                if working_cubes != launched_cubes && !blueprint.cube_idle.is_enabled() {
                     return Err(ReduceError::Validation {
                         details: "Too many cubes launched for the problem causing OOD, but `cube_idle` is off.",
                     });
@@ -124,7 +124,19 @@ fn generate_blueprint<R: Runtime>(
 
     let (cube_count, launched_cubes) = cube_count_safe(client, working_cubes);
 
-    let cube_idle = working_cubes != launched_cubes;
+    let cube_idle = match working_cubes != launched_cubes {
+        true => match strategy.use_planes
+            && !client
+                .properties()
+                .features
+                .plane
+                .contains(Plane::NonUniformControlFlow)
+        {
+            true => IdleMode::Mask,
+            false => IdleMode::Terminate,
+        },
+        false => IdleMode::None,
+    };
     let blueprint = ReduceBlueprint {
         line_mode: settings.line_mode,
         global: GlobalReduceBlueprint::Cube(CubeBlueprint {

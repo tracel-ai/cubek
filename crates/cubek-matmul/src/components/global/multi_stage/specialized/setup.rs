@@ -16,7 +16,7 @@ use crate::components::stage::StageConfig;
 use crate::components::{global::GlobalMatmulFamily, stage, stage::FilledStageFamily};
 use crate::components::{global::MaxGlobalReaderPlanes, stage::NoTilingLayout};
 use crate::definition::MatmulLineSizes;
-use crate::definition::MatmulSelection;
+use crate::definition::TilingBlueprint;
 use crate::definition::{MatmulElems, MatmulSetupError};
 use crate::definition::{MatmulPrecision, MatmulProblem};
 use crate::definition::{MatrixLayout, StageIdent};
@@ -53,10 +53,10 @@ where
     >;
     type Config = SharedGlobalMatmulConfig<SMM::Config>;
 
-    fn setup<R: Runtime>(
+    fn expand_config<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
-        selection: &MatmulSelection,
+        selection: &TilingBlueprint,
         line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
     ) -> Result<Self::Config, MatmulSetupError> {
@@ -75,7 +75,7 @@ where
             dtypes,
         );
 
-        let stage_config = SMM::setup(
+        let stage_config = SMM::expand_config(
             client,
             problem,
             &selection,

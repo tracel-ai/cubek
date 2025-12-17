@@ -1,17 +1,17 @@
 use cubecl::features::MmaConfig;
 use cubecl::{Runtime, client::ComputeClient};
+use std::fmt::Display;
 use std::marker::PhantomData;
 
+use crate::components::batch::BatchMatmulFamily;
 use crate::definition::{
-    MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError,
-    MultiRowStrategy, TilingScheme, adjust_dtypes,
+    CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulElems, MatmulLineSizes,
+    MatmulProblem, MatmulSetupError, MultiRowStrategy, SmAllocation, TilingBlueprint, TilingScheme,
+    adjust_dtypes,
 };
 use crate::{
     components::{
-        batch::{
-            CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection,
-            PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul, SmAllocation,
-        },
+        batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
         global::{
             PlaneWriterFamily,
             read::{
@@ -31,7 +31,7 @@ use crate::{
     },
     routines::{
         Routine,
-        selector::{PlaneMatmulSelectionOptions, plane_matmul_selection},
+        selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane},
     },
 };
 
@@ -55,6 +55,12 @@ pub struct SimpleArgs {
     pub multi_rows: bool,
 }
 
+impl Display for SimpleArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.multi_rows { "_multi_rows" } else { "" })
+    }
+}
+
 impl<TMM, LL, RL> Routine for SimpleAlgorithm<TMM, LL, RL>
 where
     TMM:
@@ -62,36 +68,37 @@ where
     LL: FullLoadingStrategy,
     RL: FullLoadingStrategy<SyncStrategy = LL::SyncStrategy>,
 {
-    type SelectionArgs = SimpleArgs;
-    type TileMatmul = TMM;
-    type StageMatmul = PlaneMatmulFamily<
-        Self::TileMatmul,
-        StridedStageFamily,
-        StridedStageFamily,
-        FilledStageFamily,
+    type Strategy = SimpleArgs;
+    type BatchMatmul = PartitionedBatchMatmulFamily<
+        SimpleMatmulFamily<
+            PlaneMatmulFamily<TMM, StridedStageFamily, StridedStageFamily, FilledStageFamily>,
+            LL,
+            RL,
+            PlaneWriterFamily,
+        >,
+        RowMajorGlobalPartitionMatmul,
     >;
-    type GlobalMatmul = SimpleMatmulFamily<Self::StageMatmul, LL, RL, PlaneWriterFamily>;
-    type BatchMatmul =
-        PartitionedBatchMatmulFamily<Self::GlobalMatmul, RowMajorGlobalPartitionMatmul>;
+    type Blueprint = TilingBlueprint;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
-    fn selection<R: Runtime>(
+    fn prepare<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
         plane_dim: u32,
         line_sizes: &MatmulLineSizes,
-        args: &Self::SelectionArgs,
+        args: &Self::Strategy,
         dtypes: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError> {
+    ) -> Result<TilingBlueprint, MatmulSetupError> {
         if args.multi_rows {
-            selection_multi_rows::<R, TMM>(client, problem, plane_dim, dtypes, line_sizes)
+            infer_blueprint_multi_rows::<R, TMM>(client, problem, plane_dim, dtypes, line_sizes)
         } else {
-            plane_matmul_selection::<TMM, R>(
+            infer_blueprint_plane::<TMM, R>(
                 client,
                 problem,
                 plane_dim,
                 dtypes,
                 line_sizes,
-                PlaneMatmulSelectionOptions {
+                PlaneTilingBlueprintOptions {
                     partition_buffering: Some(PartitionBuffering::Single),
                     tiny_selection_enabled: true,
                     swizzled: TMM::should_swizzle(client),
@@ -100,15 +107,19 @@ where
             )
         }
     }
+
+    fn can_cast_stage_element() -> bool {
+        TMM::can_cast_stage_element()
+    }
 }
 
-fn selection_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
+fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
     client: &ComputeClient<R>,
     problem: &MatmulProblem,
     plane_dim: u32,
     dtypes: &mut MatmulElems,
     line_sizes: &MatmulLineSizes,
-) -> Result<MatmulSelection, MatmulSetupError> {
+) -> Result<TilingBlueprint, MatmulSetupError> {
     adjust_dtypes(client, dtypes, TMM::requires_accelerator());
 
     let supported = |m: u32, n: u32, k: u32| {
@@ -125,12 +136,12 @@ fn selection_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
         )
     };
     let cube_count_plan = match client.properties().hardware.num_streaming_multiprocessors {
-        Some(num_sms) => CubeCountPlanSelection::Sm {
+        Some(num_sms) => CubeCountPlanBlueprint::Sm {
             num_sms,
             sm_usage: SmAllocation::Exact,
             cubes_first: true,
         },
-        None => CubeCountPlanSelection::Flattened,
+        None => CubeCountPlanBlueprint::Flattened,
     };
 
     if supported(8, 32, 16) {
@@ -143,15 +154,15 @@ fn selection_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
             .build()
             .unwrap();
 
-        let hypercube = HypercubeSelection::builder(&tiling_scheme)
-            .global_order(GlobalOrderSelection::SwizzleRow {
+        let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
+            .global_order(GlobalOrderBlueprint::SwizzleRow {
                 m: problem.m as u32,
                 w: 4,
             })
             .cube_count_plan(cube_count_plan)
             .build();
 
-        Ok(MatmulSelection::builder(tiling_scheme, plane_dim)
+        Ok(TilingBlueprint::builder(tiling_scheme, plane_dim)
             .partition_buffering(PartitionBuffering::Single)
             .hypercube_config(hypercube)
             .build())
@@ -162,26 +173,26 @@ fn selection_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
             .with_stage_size((4, 1, 1).into())
             .build()
             .unwrap();
-        let hypercube = HypercubeSelection::builder(&tiling_scheme)
-            .global_order(GlobalOrderSelection::SwizzleRow {
+        let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
+            .global_order(GlobalOrderBlueprint::SwizzleRow {
                 m: problem.m as u32,
                 w: 4,
             })
             .cube_count_plan(cube_count_plan)
             .build();
 
-        Ok(MatmulSelection::builder(tiling_scheme, plane_dim)
+        Ok(TilingBlueprint::builder(tiling_scheme, plane_dim)
             .partition_buffering(PartitionBuffering::Single)
             .hypercube_config(hypercube)
             .build())
     } else {
-        plane_matmul_selection::<TMM, R>(
+        infer_blueprint_plane::<TMM, R>(
             client,
             problem,
             plane_dim,
             dtypes,
             line_sizes,
-            PlaneMatmulSelectionOptions {
+            PlaneTilingBlueprintOptions {
                 partition_buffering: Some(PartitionBuffering::Single),
                 multi_row_strategy: MultiRowStrategy::Always(2),
                 partition_k: Some(2),

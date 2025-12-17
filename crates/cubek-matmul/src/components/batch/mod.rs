@@ -1,7 +1,8 @@
 //! Executes multiple independent global matmuls with optional broadcasting.
 
+pub mod naive;
+
 mod base;
-mod entry_point;
 mod layout;
 mod partitioned_matmul;
 

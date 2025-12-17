@@ -7,10 +7,12 @@ use cubecl::{
     std::tensor::TensorHandle,
 };
 use cubek::{
-    convolution::{self as convolution, ConvolutionArgs, Strategy},
+    convolution::{
+        self as convolution, AcceleratedTileKind, ConvolutionArgs, ReadingStrategy, Strategy,
+    },
     matmul::{
         definition::{AccG, AccR, LhsG, LhsS, MatmulElems, MatmulPrecision, RhsG},
-        launch::{AcceleratedTileKind, MatmulInputHandleRef, ReadingStrategy},
+        launch::MatmulInputHandleRef,
     },
     random::random_uniform,
 };

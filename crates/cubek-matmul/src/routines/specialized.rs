@@ -1,11 +1,13 @@
+use std::fmt::Display;
 use std::marker::PhantomData;
 
 use cubecl::Runtime;
 use cubecl::client::ComputeClient;
 use cubecl::features::MmaConfig;
 
+use crate::components::batch::BatchMatmulFamily;
+use crate::components::stage::PlaneMatmulFamily;
 use crate::components::tile;
-use crate::components::{batch::CubeCountPlanSelection, stage::PlaneMatmulFamily};
 use crate::components::{
     batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
     tile::io::{Filled, Strided},
@@ -13,11 +15,12 @@ use crate::components::{
 use crate::components::{global::PlaneWriterFamily, stage::StageFamily};
 use crate::components::{stage::FilledStageFamily, tile::TileMatmulFamily};
 use crate::definition::{
-    MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError, MatrixLayout, SwizzleConfig,
+    CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulLineSizes,
+    MatmulProblem, MatmulSetupError, MatrixLayout, SmAllocation, SwizzleBlueprint, TilingBlueprint,
     adjust_dtypes,
 };
 use crate::routines::base;
-use crate::routines::selector::{PlaneMatmulSelectionOptions, plane_matmul_selection};
+use crate::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
 use crate::{
     components::global::{
         multi_stage::specialized::SpecializedMatmulFamily,
@@ -27,7 +30,6 @@ use crate::{
 };
 use crate::{
     components::{
-        batch::{GlobalOrderSelection, HypercubeSelection, SmAllocation},
         global::{LoadSpecializationConfig, SpecializationTensorConfig},
         stage::PartitionBuffering,
     },
@@ -37,6 +39,21 @@ use crate::{
 /// Plane accelerated specialized matmul with TMA readers
 pub struct SpecializedAlgorithm<TMM, L = AsyncPartialTmaLoading> {
     pub _phantom: PhantomData<(TMM, L)>,
+}
+
+#[derive(Default, Clone)]
+pub struct SpecializedStrategy {}
+
+impl Display for SpecializedStrategy {
+    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Ok(())
+    }
+}
+
+impl From<()> for SpecializedStrategy {
+    fn from(_value: ()) -> Self {
+        Self {}
+    }
 }
 
 impl<TMM, L> base::Routine for SpecializedAlgorithm<TMM, L>
@@ -49,28 +66,33 @@ where
         >,
     L: AsyncPartialLoadingStrategy,
 {
-    type SelectionArgs = ();
-    type TileMatmul = TMM;
-    type StageMatmul = PlaneMatmulFamily<Self::TileMatmul, L::Stage, L::Stage, FilledStageFamily>;
-    type GlobalMatmul = SpecializedMatmulFamily<Self::StageMatmul, L, PlaneWriterFamily>;
-    type BatchMatmul =
-        PartitionedBatchMatmulFamily<Self::GlobalMatmul, RowMajorGlobalPartitionMatmul>;
+    type Strategy = SpecializedStrategy;
+    type BatchMatmul = PartitionedBatchMatmulFamily<
+        SpecializedMatmulFamily<
+            PlaneMatmulFamily<TMM, L::Stage, L::Stage, FilledStageFamily>,
+            L,
+            PlaneWriterFamily,
+        >,
+        RowMajorGlobalPartitionMatmul,
+    >;
+    type Blueprint = TilingBlueprint;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
-    fn selection<R: Runtime>(
+    fn prepare<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
         plane_dim: u32,
         line_sizes: &MatmulLineSizes,
-        _args: &Self::SelectionArgs,
+        _args: &Self::Strategy,
         dtypes: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError> {
-        plane_matmul_selection::<TMM, R>(
+    ) -> Result<TilingBlueprint, MatmulSetupError> {
+        infer_blueprint_plane::<TMM, R>(
             client,
             problem,
             plane_dim,
             dtypes,
             line_sizes,
-            PlaneMatmulSelectionOptions {
+            PlaneTilingBlueprintOptions {
                 specialized: true,
                 multi_row_strategy: MultiRowStrategy::Adaptive {
                     minimum_stage_count: 8,
@@ -80,17 +102,21 @@ where
             },
         )
     }
+
+    fn can_cast_stage_element() -> bool {
+        TMM::can_cast_stage_element()
+    }
 }
 
 #[allow(unused, reason = "needs more tuning")]
-fn selection_specialized<R: Runtime, TMM: TileMatmulFamily>(
+fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
     client: &ComputeClient<R>,
     problem: &MatmulProblem,
     plane_dim: u32,
     swizzle: bool,
     dtypes: &mut MatmulElems,
     line_sizes: &MatmulLineSizes,
-) -> Result<MatmulSelection, MatmulSetupError> {
+) -> Result<TilingBlueprint, MatmulSetupError> {
     adjust_dtypes(client, dtypes, TMM::requires_accelerator());
 
     let supported = |m: u32, n: u32, k: u32| {
@@ -107,12 +133,12 @@ fn selection_specialized<R: Runtime, TMM: TileMatmulFamily>(
         )
     };
     let cube_count_plan = match client.properties().hardware.num_streaming_multiprocessors {
-        Some(num_sms) => CubeCountPlanSelection::Sm {
+        Some(num_sms) => CubeCountPlanBlueprint::Sm {
             num_sms,
             sm_usage: SmAllocation::Exact,
             cubes_first: true,
         },
-        None => CubeCountPlanSelection::Flattened,
+        None => CubeCountPlanBlueprint::Flattened,
     };
 
     let tiling_scheme = if supported(16, 8, 16) {
@@ -130,13 +156,13 @@ fn selection_specialized<R: Runtime, TMM: TileMatmulFamily>(
             .build()
             .unwrap()
     } else {
-        return plane_matmul_selection::<TMM, R>(
+        return infer_blueprint_plane::<TMM, R>(
             client,
             problem,
             plane_dim,
             dtypes,
             line_sizes,
-            PlaneMatmulSelectionOptions {
+            PlaneTilingBlueprintOptions {
                 partition_buffering: Some(PartitionBuffering::Single),
                 multi_row_strategy: MultiRowStrategy::Always(2),
                 partition_k: Some(2),
@@ -145,15 +171,15 @@ fn selection_specialized<R: Runtime, TMM: TileMatmulFamily>(
         );
     };
 
-    let hypercube = HypercubeSelection::builder(&tiling_scheme)
-        .global_order(GlobalOrderSelection::SwizzleRow {
+    let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
+        .global_order(GlobalOrderBlueprint::SwizzleRow {
             m: problem.m as u32,
             w: 4,
         })
         .cube_count_plan(cube_count_plan)
         .build();
 
-    let mut builder = MatmulSelection::builder(tiling_scheme, plane_dim)
+    let mut builder = TilingBlueprint::builder(tiling_scheme, plane_dim)
         .partition_buffering(PartitionBuffering::Single)
         .hypercube_config(hypercube)
         .load_specialization_config(LoadSpecializationConfig {
@@ -173,7 +199,7 @@ fn selection_specialized<R: Runtime, TMM: TileMatmulFamily>(
 
         let lhs = select_swizzle(lhs_swizzle_dim, *dtypes.lhs_stage, line_sizes.lhs);
         let rhs = select_swizzle(rhs_swizzle_dim, *dtypes.rhs_stage, line_sizes.rhs);
-        builder = builder.shared_swizzle(SwizzleConfig {
+        builder = builder.shared_swizzle(SwizzleBlueprint {
             lhs,
             rhs,
             ..Default::default()

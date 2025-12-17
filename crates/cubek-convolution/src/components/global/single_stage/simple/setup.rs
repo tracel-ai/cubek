@@ -14,7 +14,7 @@ use cubek_matmul::components::{
 };
 use cubek_matmul::definition::{
     AvailableLineSizes, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem,
-    MatmulSelection, MatmulSetupError, MatrixLayout, StageIdent,
+    MatmulSetupError, MatrixLayout, StageIdent, TilingBlueprint,
 };
 use std::marker::PhantomData;
 
@@ -61,14 +61,14 @@ where
         available_line_sizes
     }
 
-    fn setup<R: Runtime>(
+    fn expand_config<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &ConvolutionProblem,
-        selection: &MatmulSelection,
+        selection: &TilingBlueprint,
         line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
     ) -> Result<Self::Config, MatmulSetupError> {
-        let stage_config = SMM::setup(
+        let stage_config = SMM::expand_config(
             client,
             &problem.as_matmul_problem(),
             selection,

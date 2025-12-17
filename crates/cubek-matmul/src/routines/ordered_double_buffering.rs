@@ -1,8 +1,10 @@
+use std::fmt::Display;
 use std::marker::PhantomData;
 
 use cubecl::Runtime;
 use cubecl::client::ComputeClient;
 
+use crate::components::batch::BatchMatmulFamily;
 use crate::components::global::PlaneWriterFamily;
 use crate::components::stage::{PlaneMatmulFamily, RowMajorTilingOrder};
 use crate::components::tile;
@@ -17,11 +19,11 @@ use crate::components::{
     global::read::sync_partial_cyclic::SyncPartialCyclicLoading, tile::io::Strided,
 };
 use crate::definition::{
-    MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError,
-    MultiRowStrategy,
+    MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, MultiRowStrategy,
+    TilingBlueprint,
 };
 use crate::routines::Routine;
-use crate::routines::selector::{PlaneMatmulSelectionOptions, plane_matmul_selection};
+use crate::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
 
 /// Plane accelerated double buffered matmul ordered on Lhs with cyclic reader on Rhs
 pub struct OrderedDoubleBufferingAlgorithm<TMM> {
@@ -35,6 +37,22 @@ pub struct OrderedSelectionArgs {
     pub rows_per_plane: Option<u32>,
 }
 
+impl Display for OrderedSelectionArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(k) = self.partition_k {
+            f.write_fmt(format_args!("_partition_k{}", k))?;
+        }
+        if let Some(r) = self.row_count {
+            f.write_fmt(format_args!("_row_count{}", r))?;
+        }
+        if let Some(r) = self.rows_per_plane {
+            f.write_fmt(format_args!("_rows_per_plane{}", r))?;
+        }
+
+        Ok(())
+    }
+}
+
 impl<TMM> Routine for OrderedDoubleBufferingAlgorithm<TMM>
 where
     TMM: tile::TileMatmulFamily<
@@ -44,37 +62,33 @@ where
             OutTile = Strided,
         >,
 {
-    type SelectionArgs = OrderedSelectionArgs;
-    type TileMatmul = TMM;
-    type StageMatmul = PlaneMatmulFamily<
-        Self::TileMatmul,
-        StridedStageFamily,
-        StridedStageFamily,
-        FilledStageFamily,
+    type Strategy = OrderedSelectionArgs;
+    type BatchMatmul = PartitionedBatchMatmulFamily<
+        OrderedDoubleBufferingMatmulFamily<
+            PlaneMatmulFamily<TMM, StridedStageFamily, StridedStageFamily, FilledStageFamily>,
+            SyncPartialCyclicLoading<RowMajorTilingOrder>,
+            PlaneWriterFamily,
+        >,
+        RowMajorGlobalPartitionMatmul,
     >;
-    type GlobalMatmul = OrderedDoubleBufferingMatmulFamily<
-        Self::StageMatmul,
-        SyncPartialCyclicLoading<RowMajorTilingOrder>,
-        PlaneWriterFamily,
-    >;
-    type BatchMatmul =
-        PartitionedBatchMatmulFamily<Self::GlobalMatmul, RowMajorGlobalPartitionMatmul>;
+    type Blueprint = TilingBlueprint;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
 
-    fn selection<R: Runtime>(
+    fn prepare<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
         plane_dim: u32,
         line_sizes: &MatmulLineSizes,
-        args: &Self::SelectionArgs,
+        args: &Self::Strategy,
         dtypes: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError> {
-        plane_matmul_selection::<TMM, R>(
+    ) -> Result<TilingBlueprint, MatmulSetupError> {
+        infer_blueprint_plane::<TMM, R>(
             client,
             problem,
             plane_dim,
             dtypes,
             line_sizes,
-            PlaneMatmulSelectionOptions {
+            PlaneTilingBlueprintOptions {
                 partition_k: args.partition_k,
                 row_count: args.row_count,
                 multi_row_strategy: args
@@ -87,5 +101,9 @@ where
                 ..Default::default()
             },
         )
+    }
+
+    fn can_cast_stage_element() -> bool {
+        TMM::can_cast_stage_element()
     }
 }

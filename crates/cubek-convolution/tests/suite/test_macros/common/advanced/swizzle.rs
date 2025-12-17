@@ -2,13 +2,13 @@
 macro_rules! testgen_convolution_swizzle {
     ($algorithm: ty, $precision: ty, $selection_builder: expr) => {
         use cubek_matmul::components::stage::SwizzleMode;
-        use cubek_matmul::definition::SwizzleConfig;
+        use cubek_matmul::definition::SwizzleBlueprint;
 
         #[cfg(not(feature = "conv_tests_swizzle"))]
         $crate::testgen_convolution_partition_buffering!(
             $algorithm,
             $precision,
-            $selection_builder.shared_swizzle(SwizzleConfig::default())
+            $selection_builder.shared_swizzle(SwizzleBlueprint::default())
         );
 
         #[cfg(feature = "conv_tests_swizzle")]
@@ -18,7 +18,7 @@ macro_rules! testgen_convolution_swizzle {
             $crate::testgen_convolution_partition_buffering!(
                 $algorithm,
                 $precision,
-                $selection_builder.shared_swizzle(SwizzleConfig {
+                $selection_builder.shared_swizzle(SwizzleBlueprint {
                     lhs: SwizzleMode::None,
                     rhs: SwizzleMode::None,
                     ..Default::default()
@@ -33,7 +33,7 @@ macro_rules! testgen_convolution_swizzle {
             $crate::testgen_convolution_partition_buffering!(
                 $algorithm,
                 $precision,
-                $selection_builder.shared_swizzle(SwizzleConfig {
+                $selection_builder.shared_swizzle(SwizzleBlueprint {
                     lhs: SwizzleMode::B32,
                     rhs: SwizzleMode::B32,
                     ..Default::default()
@@ -48,7 +48,7 @@ macro_rules! testgen_convolution_swizzle {
             $crate::testgen_convolution_partition_buffering!(
                 $algorithm,
                 $precision,
-                $selection_builder.shared_swizzle(SwizzleConfig {
+                $selection_builder.shared_swizzle(SwizzleBlueprint {
                     lhs: SwizzleMode::B64,
                     rhs: SwizzleMode::B64,
                     ..Default::default()
@@ -63,7 +63,7 @@ macro_rules! testgen_convolution_swizzle {
             $crate::testgen_convolution_partition_buffering!(
                 $algorithm,
                 $precision,
-                $selection_builder.shared_swizzle(SwizzleConfig {
+                $selection_builder.shared_swizzle(SwizzleBlueprint {
                     lhs: SwizzleMode::B128,
                     rhs: SwizzleMode::B128,
                     ..Default::default()

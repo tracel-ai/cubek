@@ -1,11 +1,10 @@
+use std::fmt::Display;
+
 use cubecl::{Runtime, client::ComputeClient};
 
 use crate::{
     components::{
-        batch::{
-            CubeCountPlanSelection, GlobalOrderSelection, HypercubeSelection,
-            PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul, SmAllocation,
-        },
+        batch::{BatchMatmulFamily, PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
         global::{
             PlaneWriterFamily,
             multi_stage::double_buffering::DoubleBufferingMatmulFamily,
@@ -19,95 +18,124 @@ use crate::{
             ColMajorTilingOrder, FilledStageFamily, PartitionBuffering, PlaneMatmulFamily,
             RowMajorTilingOrder, StridedStageFamily,
         },
-        tile::{io::Filled, plane_vec_mat_inner_product::PlaneVecMatInnerProduct},
+        tile::{
+            TileMatmulFamily, io::Filled, plane_vec_mat_inner_product::PlaneVecMatInnerProduct,
+        },
     },
     definition::{
-        MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError,
-        PartitionSize, TileSize, TilingScheme,
+        CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulElems,
+        MatmulLineSizes, MatmulProblem, MatmulSetupError, PartitionSize, SmAllocation, TileSize,
+        TilingBlueprint, TilingScheme,
     },
     routines::Routine,
 };
 
 pub struct SimpleVecMatAlgorithm {}
 
-impl Routine for SimpleVecMatAlgorithm {
-    type SelectionArgs = ();
-    type TileMatmul = PlaneVecMatInnerProduct<Filled>;
-    type StageMatmul = PlaneMatmulFamily<
-        Self::TileMatmul,
-        StridedStageFamily,
-        StridedStageFamily,
-        FilledStageFamily,
-    >;
-    type GlobalMatmul = SimpleMatmulFamily<
-        Self::StageMatmul,
-        SyncFullCyclicLoading<RowMajorTilingOrder>,
-        SyncFullCyclicLoading<ColMajorTilingOrder>,
-        PlaneWriterFamily,
-    >;
-    type BatchMatmul =
-        PartitionedBatchMatmulFamily<Self::GlobalMatmul, RowMajorGlobalPartitionMatmul>;
+#[derive(Default, Clone)]
+pub struct VecMatStrategy {}
 
-    fn selection<R: Runtime>(
+impl Display for VecMatStrategy {
+    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Ok(())
+    }
+}
+
+impl From<()> for VecMatStrategy {
+    fn from(_value: ()) -> Self {
+        Self {  }
+    }
+}
+
+impl Routine for SimpleVecMatAlgorithm {
+    type Strategy = VecMatStrategy;
+    type BatchMatmul = PartitionedBatchMatmulFamily<
+        SimpleMatmulFamily<
+            PlaneMatmulFamily<
+                PlaneVecMatInnerProduct<Filled>,
+                StridedStageFamily,
+                StridedStageFamily,
+                FilledStageFamily,
+            >,
+            SyncFullCyclicLoading<RowMajorTilingOrder>,
+            SyncFullCyclicLoading<ColMajorTilingOrder>,
+            PlaneWriterFamily,
+        >,
+        RowMajorGlobalPartitionMatmul,
+    >;
+    type Blueprint = TilingBlueprint;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+
+    fn prepare<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
         plane_dim: u32,
         line_sizes: &MatmulLineSizes,
-        _args: &Self::SelectionArgs,
+        _args: &Self::Strategy,
         _dtypes: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError> {
-        Ok(selection_vecmat(
+    ) -> Result<TilingBlueprint, MatmulSetupError> {
+        Ok(infer_blueprint_vecmat(
             client,
             problem,
             (1, line_sizes.out as u32, plane_dim * line_sizes.lhs as u32).into(),
             plane_dim,
         ))
+    }
+
+    fn can_cast_stage_element() -> bool {
+        PlaneVecMatInnerProduct::<Filled>::can_cast_stage_element()
     }
 }
 
 pub struct DoubleVecMatAlgorithm {}
 
 impl Routine for DoubleVecMatAlgorithm {
-    type SelectionArgs = ();
-    type TileMatmul = PlaneVecMatInnerProduct<Filled>;
-    type StageMatmul = PlaneMatmulFamily<
-        Self::TileMatmul,
-        StridedStageFamily,
-        StridedStageFamily,
-        FilledStageFamily,
-    >;
-    type GlobalMatmul = DoubleBufferingMatmulFamily<
-        Self::StageMatmul,
-        SyncPartialCyclicLoading<RowMajorTilingOrder>,
-        SyncPartialCyclicLoading<ColMajorTilingOrder>,
-        PlaneWriterFamily,
-    >;
-    type BatchMatmul =
-        PartitionedBatchMatmulFamily<Self::GlobalMatmul, RowMajorGlobalPartitionMatmul>;
+    type Strategy = VecMatStrategy;
 
-    fn selection<R: Runtime>(
+    type BatchMatmul = PartitionedBatchMatmulFamily<
+        DoubleBufferingMatmulFamily<
+            PlaneMatmulFamily<
+                PlaneVecMatInnerProduct<Filled>,
+                StridedStageFamily,
+                StridedStageFamily,
+                FilledStageFamily,
+            >,
+            SyncPartialCyclicLoading<RowMajorTilingOrder>,
+            SyncPartialCyclicLoading<ColMajorTilingOrder>,
+            PlaneWriterFamily,
+        >,
+        RowMajorGlobalPartitionMatmul,
+    >;
+    type Blueprint = TilingBlueprint;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+
+    fn prepare<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
         plane_dim: u32,
         line_sizes: &MatmulLineSizes,
-        _args: &Self::SelectionArgs,
+        _args: &Self::Strategy,
         _dtypes: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError> {
-        Ok(selection_vecmat(
+    ) -> Result<TilingBlueprint, MatmulSetupError> {
+        Ok(infer_blueprint_vecmat(
             client,
             problem,
             (1, line_sizes.out as u32, plane_dim * line_sizes.lhs as u32).into(),
             plane_dim,
         ))
     }
+
+    fn can_cast_stage_element() -> bool {
+        PlaneVecMatInnerProduct::<Filled>::can_cast_stage_element()
+    }
 }
 
-fn selection_vecmat<R: Runtime>(
+fn infer_blueprint_vecmat<R: Runtime>(
     client: &ComputeClient<R>,
     problem: &MatmulProblem,
     tile_size: TileSize,
     plane_dim: u32,
-) -> MatmulSelection {
+) -> TilingBlueprint {
     let tiling_scheme = TilingScheme::builder()
         .with_tile_size(tile_size)
         .with_partition_size(PartitionSize::new(1, 1, 1))
@@ -115,23 +143,23 @@ fn selection_vecmat<R: Runtime>(
         .build()
         .unwrap();
     let cube_count_plan = match client.properties().hardware.num_streaming_multiprocessors {
-        Some(num_sms) => CubeCountPlanSelection::Sm {
+        Some(num_sms) => CubeCountPlanBlueprint::Sm {
             num_sms,
             sm_usage: SmAllocation::Exact,
             cubes_first: true,
         },
-        None => CubeCountPlanSelection::FromProblem,
+        None => CubeCountPlanBlueprint::FromProblem,
     };
 
-    let hypercube = HypercubeSelection::builder(&tiling_scheme)
-        .global_order(GlobalOrderSelection::SwizzleRow {
+    let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
+        .global_order(GlobalOrderBlueprint::SwizzleRow {
             m: problem.m as u32,
             w: 2,
         })
         .cube_count_plan(cube_count_plan)
         .build();
 
-    MatmulSelection::builder(tiling_scheme, plane_dim)
+    TilingBlueprint::builder(tiling_scheme, plane_dim)
         .partition_buffering(PartitionBuffering::Single)
         .hypercube_config(hypercube)
         .build()

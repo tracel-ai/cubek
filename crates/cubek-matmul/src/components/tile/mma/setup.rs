@@ -15,7 +15,7 @@ use crate::definition::{
     InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatmulProblem,
     MatmulSetupError, TileSize,
 };
-use crate::definition::{MatmulElemType, MatmulSelection};
+use crate::definition::{MatmulElemType, TilingBlueprint};
 use cubecl::features::MmaConfig;
 use cubecl::{ir::StorageType, prelude::*};
 
@@ -46,10 +46,10 @@ where
         Ok(ComputeResources::Planes(1))
     }
 
-    fn setup<R: Runtime>(
+    fn expand_config<R: Runtime>(
         client: &ComputeClient<R>,
         _problem: &MatmulProblem,
-        selection: &MatmulSelection,
+        selection: &TilingBlueprint,
         _matmul_line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
     ) -> Result<Self::Config, MatmulSetupError> {

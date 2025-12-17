@@ -5,7 +5,10 @@ use crate::{
         readers::{parallel::ParallelReader, perpendicular::PerpendicularReader},
     },
 };
-use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
+use cubecl::{
+    prelude::*,
+    std::{CubeOption, tensor::r#virtual::VirtualTensor},
+};
 
 #[derive(CubeType)]
 pub enum Reader<P: ReducePrecision> {
@@ -15,12 +18,14 @@ pub enum Reader<P: ReducePrecision> {
 
 #[cube]
 impl<P: ReducePrecision> Reader<P> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new<I: ReduceInstruction<P>, Out: Numeric>(
         input: &VirtualTensor<P::EI>,
         output: &mut VirtualTensor<Out, ReadWrite>,
         inst: &I,
         reduce_axis: u32,
         reduce_index: u32,
+        idle: CubeOption<bool>,
         #[comptime] bound_checks: BoundChecks,
         #[comptime] line_mode: LineMode,
     ) -> Reader<P> {
@@ -31,6 +36,7 @@ impl<P: ReducePrecision> Reader<P> {
                 inst,
                 reduce_axis,
                 reduce_index,
+                idle,
                 bound_checks,
             )),
             LineMode::Perpendicular => {
@@ -40,6 +46,7 @@ impl<P: ReducePrecision> Reader<P> {
                     inst,
                     reduce_axis,
                     reduce_index,
+                    idle,
                     bound_checks,
                 ))
             }

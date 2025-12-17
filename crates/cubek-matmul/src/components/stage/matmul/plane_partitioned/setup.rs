@@ -23,11 +23,11 @@ use crate::definition::MatmulElems;
 use crate::definition::MatmulLineSizes;
 use crate::definition::MatmulPrecision;
 use crate::definition::MatmulProblem;
-use crate::definition::MatmulSelection;
 use crate::definition::MatmulSetupError;
 use crate::definition::MatrixLayout;
 use crate::definition::MatrixPrecision;
 use crate::definition::RhsS;
+use crate::definition::TilingBlueprint;
 use crate::definition::TilingScheme;
 use core::marker::PhantomData;
 use cubecl::prelude::*;
@@ -75,16 +75,16 @@ impl<
 
     type Config = PartitionMatmulConfig<TM::Config>;
 
-    fn setup<R: Runtime>(
+    fn expand_config<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
-        selection: &MatmulSelection,
+        selection: &TilingBlueprint,
         line_sizes: &MatmulLineSizes,
         num_stages: NumStages,
         max_global_readers: Option<MaxGlobalReaderPlanes>,
         dtypes: &MatmulElems,
     ) -> Result<Self::Config, MatmulSetupError> {
-        let tile_config = TM::setup(client, problem, selection, line_sizes, dtypes)?;
+        let tile_config = TM::expand_config(client, problem, selection, line_sizes, dtypes)?;
 
         let compute_resources =
             if let ComputeResources::Planes(planes) = TM::computation_resources()? {

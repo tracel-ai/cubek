@@ -1,19 +1,21 @@
+use std::fmt::Display;
+
 use cubecl::{Runtime, client::ComputeClient};
 
 use crate::{
     components::{
-        batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
+        batch::{BatchMatmulFamily, PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
         global::{
             UnitWriterFamily, multi_stage::double_buffering::DoubleBufferingMatmulFamily,
             read::sync_partial_cyclic::SyncPartialCyclicLoading,
         },
         stage::{FilledStageFamily, RowMajorTilingOrder, StridedStageFamily, UnitMatmulFamily},
-        tile::{io::Filled, register::RegisterMatmul},
+        tile::{TileMatmulFamily, io::Filled, register::RegisterMatmul},
     },
-    definition::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSelection, MatmulSetupError},
+    definition::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, TilingBlueprint},
     routines::{
         Routine,
-        selector::{TileSizeSelection, UnitMatmulSelectionOptions, unit_matmul_selection},
+        selector::{TileSizeSelection, UnitTilingBlueprintOptions, infer_blueprint_unit},
     },
 };
 
@@ -25,34 +27,41 @@ pub struct DoubleUnitSelectionArgs {
     pub tile_size: TileSizeSelection,
 }
 
-impl Routine for DoubleUnitAlgorithm {
-    type SelectionArgs = DoubleUnitSelectionArgs;
-    type TileMatmul = RegisterMatmul<Filled>;
-    type StageMatmul = UnitMatmulFamily<Self::TileMatmul, StridedStageFamily, FilledStageFamily>;
-    type GlobalMatmul = DoubleBufferingMatmulFamily<
-        Self::StageMatmul,
-        SyncPartialCyclicLoading<RowMajorTilingOrder>,
-        SyncPartialCyclicLoading<RowMajorTilingOrder>,
-        UnitWriterFamily,
-    >;
-    type BatchMatmul =
-        PartitionedBatchMatmulFamily<Self::GlobalMatmul, RowMajorGlobalPartitionMatmul>;
+impl Display for DoubleUnitSelectionArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "_{}", self.tile_size)
+    }
+}
 
-    fn selection<R: Runtime>(
+impl Routine for DoubleUnitAlgorithm {
+    type Strategy = DoubleUnitSelectionArgs;
+    type BatchMatmul = PartitionedBatchMatmulFamily<
+        DoubleBufferingMatmulFamily<
+            UnitMatmulFamily<RegisterMatmul<Filled>, StridedStageFamily, FilledStageFamily>,
+            SyncPartialCyclicLoading<RowMajorTilingOrder>,
+            SyncPartialCyclicLoading<RowMajorTilingOrder>,
+            UnitWriterFamily,
+        >,
+        RowMajorGlobalPartitionMatmul,
+    >;
+    type Blueprint = TilingBlueprint;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+
+    fn prepare<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
         plane_dim: u32,
         line_sizes: &MatmulLineSizes,
-        args: &Self::SelectionArgs,
+        args: &Self::Strategy,
         dtypes: &mut MatmulElems,
-    ) -> Result<MatmulSelection, MatmulSetupError> {
-        Ok(unit_matmul_selection(
+    ) -> Result<TilingBlueprint, MatmulSetupError> {
+        Ok(infer_blueprint_unit(
             client,
             problem,
             plane_dim,
             true,
             line_sizes,
-            UnitMatmulSelectionOptions {
+            UnitTilingBlueprintOptions {
                 tile: args.tile_size,
                 ..Default::default()
             },
@@ -62,5 +71,9 @@ impl Routine for DoubleUnitAlgorithm {
 
     fn select_plane_dim<R: Runtime>(client: &ComputeClient<R>) -> u32 {
         client.properties().hardware.plane_size_min
+    }
+
+    fn can_cast_stage_element() -> bool {
+        RegisterMatmul::<Filled>::can_cast_stage_element()
     }
 }

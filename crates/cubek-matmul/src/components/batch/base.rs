@@ -1,14 +1,9 @@
+use crate::components::global::memory::GlobalLayoutConfig;
 use crate::definition::{
-    AccG, AvailableLineSizes, LhsG, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem,
-    MatmulSelection, MatmulSetupError, RhsG,
+    AccG, CubeCountInput, CubeCountInputArgs, CubeCountPlan, LhsG, MatmulElems, MatmulLineSizes,
+    MatmulPrecision, MatmulProblem, MatmulSetupError, RhsG,
 };
-use crate::{
-    components::{
-        batch::{CubeCountInput, CubeCountInputArgs, HypercubeConfig},
-        global::GlobalConfig,
-    },
-    launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
-};
+use crate::launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
 use cubecl::prelude::*;
 use std::{fmt::Debug, hash::Hash};
 
@@ -20,13 +15,15 @@ pub trait BatchMatmulFamily: 'static + Send + Sync {
     /// The configuration type associated with this matmul family.
     type Config: BatchConfig;
 
+    type Blueprint;
+
     /// Constructs the configuration based on the matmul problem, selection, and line sizes.
     ///
     /// This function may return an error if the configuration cannot be supported on the current runtime.
-    fn setup<R: Runtime>(
+    fn expand_config<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
-        selection: &MatmulSelection,
+        blueprint: &Self::Blueprint,
         line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
     ) -> Result<Self::Config, MatmulSetupError>;
@@ -47,13 +44,6 @@ pub trait BatchMatmulFamily: 'static + Send + Sync {
         config: Self::Config,
         dtypes: &MatmulElems,
     ) -> Result<(), LaunchError>;
-
-    /// Filters out line sizes that are incompatible with this matmul family.
-    ///
-    /// By default, returns the input unchanged.
-    fn filter_line_sizes(available_line_sizes: AvailableLineSizes) -> AvailableLineSizes {
-        available_line_sizes
-    }
 }
 
 #[cube]
@@ -89,21 +79,19 @@ pub trait BatchMatmul<MP: MatmulPrecision>: 'static + Send + Sync {
 pub trait BatchConfig:
     Copy + Clone + Eq + PartialEq + Hash + Debug + Send + Sync + 'static
 {
-    /// Underlying Global matmul config
-    type GlobalConfig: GlobalConfig;
-
-    /// Convert itself to the underlying global matmul config
-    fn global_config(&self) -> Self::GlobalConfig;
-
     /// Returns the [CubeDim]
     fn cube_dim(&self) -> CubeDim;
+
+    fn cube_count_plan(&self, problem: &MatmulProblem, max_cube_count: &CubeCount)
+    -> CubeCountPlan;
 
     /// Returns the line sizes for Lhs, Rhs and output
     fn line_sizes(&self) -> MatmulLineSizes;
 
-    /// Returns the [HypercubeConfig]
-    fn hypercube_config(&self) -> HypercubeConfig;
-
     /// Whether it may launch more cubes than the minimum required
     fn can_yield_extra_cubes(&self) -> bool;
+
+    fn lhs_global_layout_config(&self) -> GlobalLayoutConfig;
+    fn rhs_global_layout_config(&self) -> GlobalLayoutConfig;
+    fn out_global_layout_config(&self) -> GlobalLayoutConfig;
 }

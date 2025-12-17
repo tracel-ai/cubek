@@ -2,7 +2,6 @@ use cubecl;
 use cubecl::prelude::*;
 use cubecl::std::{CubeOption, tensor::r#virtual::VirtualTensor};
 
-use crate::components::batch::simple::HypercubeConfig;
 use crate::components::global::GlobalAttentionConfig;
 use crate::definition::{
     AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError, CubeCountInput,
@@ -68,6 +67,5 @@ pub trait BatchAttentionConfig:
 
     fn global_config(&self) -> Self::GlobalConfig;
 
-    fn hypercube_config(&self) -> HypercubeConfig;
     fn cube_dim(&self) -> CubeDim;
 }

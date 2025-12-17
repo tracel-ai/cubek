@@ -9,8 +9,8 @@ use cubek_matmul::components::{
     stage::{ContiguousTilingLayout, RowMajorTilingOrder},
 };
 use cubek_matmul::definition::{
-    AccG, AvailableLineSizes, LhsG, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulSelection,
-    MatmulSetupError, RhsG,
+    AccG, AvailableLineSizes, LhsG, MatmulElems, MatmulLineSizes, MatmulPrecision,
+    MatmulSetupError, RhsG, TilingBlueprint,
 };
 
 use crate::components::{
@@ -29,10 +29,10 @@ pub trait GlobalConvolutionFamily: ConvolutionLaunch<Self::Config> + 'static {
 
     fn filter_line_sizes(available_line_sizes: AvailableLineSizes) -> AvailableLineSizes;
 
-    fn setup<R: Runtime>(
+    fn expand_config<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &ConvolutionProblem,
-        selection: &MatmulSelection,
+        selection: &TilingBlueprint,
         line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
     ) -> Result<Self::Config, MatmulSetupError>;

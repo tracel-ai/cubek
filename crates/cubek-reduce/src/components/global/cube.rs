@@ -1,14 +1,17 @@
 use crate::{
     LineMode, ReduceInstruction, ReducePrecision,
     components::{
-        global::reduce_count,
+        global::idle_check,
         instructions::{SharedAccumulator, fuse_accumulator_inplace, reduce_inplace},
         readers::{Reader, cube::CubeReader},
         writer::Writer,
     },
     routines::CubeBlueprint,
 };
-use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
+use cubecl::{
+    prelude::*,
+    std::{CubeOption, tensor::r#virtual::VirtualTensor},
+};
 
 #[derive(CubeType)]
 pub struct GlobalFullCubeReduce;
@@ -36,17 +39,13 @@ impl GlobalFullCubeReduce {
 
         let reduce_index_start = write_index * write_count;
 
-        if comptime![blueprint.cube_idle] {
-            let reduce_count = reduce_count(
-                output.len() * output.line_size(),
-                line_mode,
-                input.line_size(),
-            );
-
-            if reduce_index_start >= reduce_count {
-                terminate!();
-            }
-        }
+        let idle = idle_check::<P, Out>(
+            input,
+            output,
+            reduce_index_start,
+            line_mode,
+            blueprint.cube_idle,
+        );
 
         for b in 0..write_count {
             let reduce_index = reduce_index_start + b;
@@ -57,6 +56,7 @@ impl GlobalFullCubeReduce {
                 reduce_axis,
                 reduce_index,
                 inst,
+                idle,
                 line_mode,
                 blueprint,
             );
@@ -107,12 +107,14 @@ impl GlobalFullCubeReduce {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn reduce_shared<P: ReducePrecision, Out: Numeric, I: ReduceInstruction<P>>(
         input: &VirtualTensor<P::EI>,
         output: &mut VirtualTensor<Out, ReadWrite>,
         reduce_axis: u32,
         reduce_index: u32,
         inst: &I,
+        idle: CubeOption<bool>,
         #[comptime] line_mode: LineMode,
         #[comptime] blueprint: CubeBlueprint,
     ) -> I::SharedAccumulator {
@@ -124,6 +126,7 @@ impl GlobalFullCubeReduce {
             inst,
             reduce_axis,
             reduce_index,
+            idle,
             blueprint.bound_checks,
             line_mode,
         );
