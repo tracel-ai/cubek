@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use cubecl::{Runtime, client::ComputeClient, tensor_line_size_parallel};
 
-use crate::definition::{AttentionProblem, AttentionIdent};
+use crate::definition::{AttentionIdent, AttentionProblem};
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 /// Line size used for each tensor in global memory accesses.

@@ -71,7 +71,7 @@ impl<R: Runtime> Benchmark for MatmulBench<R> {
         );
 
         match launch(
-            &self.strategy,
+            self.strategy,
             &self.client,
             lhs,
             rhs,

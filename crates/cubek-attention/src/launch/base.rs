@@ -3,9 +3,7 @@ use cubecl::{Runtime, client::ComputeClient, prelude::TensorHandleRef};
 use cubecl::std::tensor::TensorHandle;
 
 use crate::definition::AttentionSetupError;
-use crate::definition::{
-    AttentionProblem, AttentionDims, AttentionGlobalTypes, AttentionOptions,
-};
+use crate::definition::{AttentionDims, AttentionGlobalTypes, AttentionOptions, AttentionProblem};
 use crate::launch::args::{TensorArgs, TensorInputsLaunch};
 use crate::routines::DeviceSettings;
 use crate::routines::{

@@ -5,7 +5,7 @@ use cubecl::std::{
 };
 use cubecl::{self as cubecl};
 
-use crate::definition::{AttentionBlueprint, AttentionProblem, AttentionLineSizes};
+use crate::definition::{AttentionBlueprint, AttentionLineSizes, AttentionProblem};
 
 /// Create the input runtime arguments for a attention kernel that works on concrete inputs and
 /// output (not fused).

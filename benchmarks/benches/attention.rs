@@ -10,7 +10,7 @@ use cubecl::{
 };
 use cubek::{
     attention::definition::{
-        AttentionProblem, AttentionElems, AttentionIdent, AttentionPrecision, attention_types::*,
+        AttentionElems, AttentionIdent, AttentionPrecision, AttentionProblem, attention_types::*,
     },
     attention::launch::Strategy,
     random::random_uniform,
