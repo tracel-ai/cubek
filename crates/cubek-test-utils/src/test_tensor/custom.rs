@@ -1,5 +1,5 @@
 use cubecl::{
-    TestRuntime,
+    TestRuntime, calculate_cube_count_elemwise,
     prelude::*,
     std::tensor::{TensorHandle, ViewOperationsMut, ViewOperationsMutExpand},
 };
@@ -44,9 +44,9 @@ fn new_custom_data(
     // Performance is not important here and this simplifies greatly the problem
     let line_size = 1;
 
-    let num_units_needed: u32 = num_elems as u32 / line_size as u32;
-    let cube_dim = CubeDim::default();
-    let cube_count = num_units_needed.div_ceil(cube_dim.num_elems());
+    let working_units: u32 = num_elems as u32 / line_size as u32;
+    let cube_dim = CubeDim::new(client, working_units as usize);
+    let cube_count = calculate_cube_count_elemwise(client, working_units as usize, cube_dim);
 
     let out = TensorHandle::new(
         client.empty(dtype.size() * num_elems),
@@ -59,7 +59,7 @@ fn new_custom_data(
 
     custom_data_launch::launch::<TestRuntime>(
         client,
-        CubeCount::new_1d(cube_count),
+        cube_count,
         cube_dim,
         unsafe {
             TensorArg::from_raw_parts_and_size(
