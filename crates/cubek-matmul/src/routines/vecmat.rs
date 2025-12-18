@@ -43,7 +43,7 @@ impl Display for VecMatStrategy {
 
 impl From<()> for VecMatStrategy {
     fn from(_value: ()) -> Self {
-        Self {  }
+        Self {}
     }
 }
 
