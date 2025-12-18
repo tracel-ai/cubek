@@ -34,8 +34,8 @@ impl Routine for NaiveRoutine {
 
     fn prepare<R: cubecl::Runtime>(
         problem: &MatmulProblem,
-        _device_settings: DeviceSettings<R>,
-        _strategy: BlueprintStrategy<Self>,
+        _device_settings: &DeviceSettings<R>,
+        _strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<Self::Blueprint>, MatmulSetupError> {
         Ok(LaunchInfo {
             blueprint: NaiveBlueprint {},

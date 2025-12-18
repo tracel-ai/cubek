@@ -22,7 +22,7 @@ pub fn launch_ref<R: Runtime, A: Routine>(
     lhs: &MatmulInputHandleRef<'_, R>,
     rhs: &MatmulInputHandleRef<'_, R>,
     out: &TensorHandleRef<'_, R>,
-    blueprint_strategy: BlueprintStrategy<A>,
+    blueprint_strategy: &BlueprintStrategy<A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let lhs_owned;
@@ -68,7 +68,7 @@ pub fn launch_ref_tma<R: Runtime, A: Routine<Blueprint = TilingBlueprint>>(
     lhs: &MatmulInputHandleRef<'_, R>,
     rhs: &MatmulInputHandleRef<'_, R>,
     out: &TensorHandleRef<'_, R>,
-    blueprint_strategy: BlueprintStrategy<A>,
+    blueprint_strategy: &BlueprintStrategy<A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let lhs_owned;
@@ -122,7 +122,7 @@ fn launch_inner_ref<R: Runtime, MA: MatmulArgs, A: Routine>(
     lhs: &MatmulInputHandleRef<'_, R>,
     rhs: &MatmulInputHandleRef<'_, R>,
     out: &TensorHandleRef<'_, R>,
-    blueprint_strategy: BlueprintStrategy<A>,
+    blueprint_strategy: &BlueprintStrategy<A>,
     line_sizes: AvailableLineSizes,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError>

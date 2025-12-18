@@ -10,7 +10,7 @@ use crate::{
 
 #[allow(clippy::result_large_err)]
 pub fn launch<R: Runtime>(
-    strategy: Strategy,
+    strategy: &Strategy,
     client: &ComputeClient<R>,
     lhs: MatmulInputHandle<R>,
     rhs: MatmulInputHandle<R>,
@@ -36,7 +36,7 @@ pub fn launch<R: Runtime>(
 /// the hardware supports it.
 /// Only the inner element types may change such as the stage or register element types.
 pub fn launch_ref<R: Runtime>(
-    strategy: Strategy,
+    strategy: &Strategy,
     client: &ComputeClient<R>,
     lhs: &MatmulInputHandleRef<R>,
     rhs: &MatmulInputHandleRef<R>,

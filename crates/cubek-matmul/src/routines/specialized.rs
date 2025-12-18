@@ -80,12 +80,12 @@ where
 
     fn prepare<R: Runtime>(
         problem: &MatmulProblem,
-        device_settings: DeviceSettings<R>,
-        strategy: BlueprintStrategy<Self>,
+        device_settings: &DeviceSettings<R>,
+        strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
         match strategy {
             BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
-                blueprint,
+                blueprint: blueprint.clone(),
                 dtypes: MatmulElems::from_globals(&problem.global_dtypes),
             }),
             BlueprintStrategy::Inferred(_) => infer_blueprint_plane::<TMM, R>(
@@ -120,7 +120,7 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
     global_dtypes: &mut MatmulGlobalElems,
     line_sizes: &MatmulLineSizes,
 ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
-    let mut dtypes = MatmulElems::from_globals(&global_dtypes);
+    let mut dtypes = MatmulElems::from_globals(global_dtypes);
     adjust_dtypes(client, &mut dtypes, TMM::requires_accelerator());
 
     let supported = |m: u32, n: u32, k: u32| {

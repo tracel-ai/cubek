@@ -25,7 +25,7 @@ pub fn launch_kernel_concrete<MA: MatmulArgs, R: Runtime, A: Routine>(
     problem: MatmulProblem,
     line_sizes: MatmulLineSizes,
     plane_dim: u32,
-    blueprint_strategy: BlueprintStrategy<A>,
+    blueprint_strategy: &BlueprintStrategy<A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError>
 where
@@ -46,7 +46,7 @@ where
         plane_dim,
         line_sizes: view_line_sizes,
     };
-    let launch_info = A::prepare(&problem, device_settings, blueprint_strategy)?;
+    let launch_info = A::prepare(&problem, &device_settings, blueprint_strategy)?;
 
     // TODO should be inside kernel
     let config = A::expand_config(
@@ -89,7 +89,7 @@ pub fn launch_kernel_virtual<'a, MA: MatmulArgs, R: Runtime, A: Routine>(
     problem: MatmulProblem,
     view_line_sizes: MatmulLineSizes,
     plane_dim: u32,
-    blueprint_strategy: BlueprintStrategy<A>,
+    blueprint_strategy: &BlueprintStrategy<A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let device_settings = DeviceSettings {
@@ -97,7 +97,7 @@ pub fn launch_kernel_virtual<'a, MA: MatmulArgs, R: Runtime, A: Routine>(
         plane_dim,
         line_sizes: view_line_sizes,
     };
-    let launch_info = A::prepare(&problem, device_settings, blueprint_strategy)?;
+    let launch_info = A::prepare(&problem, &device_settings, blueprint_strategy)?;
 
     // TODO should be inside kernel
     let config = A::expand_config(

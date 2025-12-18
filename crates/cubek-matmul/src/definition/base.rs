@@ -81,6 +81,7 @@ impl MatmulProblem {
         }
     }
 
+    #[clippy::allow(too_many_arguments)]
     pub fn from_parameters(
         m: usize,
         n: usize,

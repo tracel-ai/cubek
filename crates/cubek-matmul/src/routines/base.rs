@@ -55,8 +55,8 @@ pub trait Routine: Sized {
 
     fn prepare<R: Runtime>(
         problem: &MatmulProblem,
-        device_settings: DeviceSettings<R>,
-        strategy: BlueprintStrategy<Self>,
+        device_settings: &DeviceSettings<R>,
+        strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<Self::Blueprint>, MatmulSetupError>;
 
     fn select_plane_dim<R: Runtime>(client: &ComputeClient<R>) -> u32 {

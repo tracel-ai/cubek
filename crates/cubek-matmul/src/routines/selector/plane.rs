@@ -38,7 +38,7 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
     line_sizes: &MatmulLineSizes,
     options: PlaneTilingBlueprintOptions,
 ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
-    let mut matmul_elems = MatmulElems::from_globals(&global_elems);
+    let mut matmul_elems = MatmulElems::from_globals(global_elems);
 
     adjust_dtypes(client, &mut matmul_elems, TMM::requires_accelerator());
 
@@ -48,8 +48,7 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
         ));
     }
 
-    let tile_size =
-        find_instruction_size::<R, TMM>(client, &mut matmul_elems, problem.m, problem.n)?;
+    let tile_size = find_instruction_size::<R, TMM>(client, &matmul_elems, problem.m, problem.n)?;
 
     if options.tiny_selection_enabled && is_tiny(problem, &tile_size) {
         return Ok(LaunchInfo {

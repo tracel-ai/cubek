@@ -74,12 +74,12 @@ where
 
     fn prepare<R: Runtime>(
         problem: &MatmulProblem,
-        device_settings: DeviceSettings<R>,
-        strategy: BlueprintStrategy<Self>,
+        device_settings: &DeviceSettings<R>,
+        strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
         match strategy {
             BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
-                blueprint,
+                blueprint: blueprint.clone(),
                 dtypes: MatmulElems::from_globals(&problem.global_dtypes),
             }),
             BlueprintStrategy::Inferred(strategy) => infer_blueprint_plane::<TMM, R>(

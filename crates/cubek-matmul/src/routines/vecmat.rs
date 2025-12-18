@@ -68,11 +68,11 @@ impl Routine for SimpleVecMatAlgorithm {
 
     fn prepare<R: Runtime>(
         problem: &MatmulProblem,
-        device_settings: DeviceSettings<R>,
-        strategy: BlueprintStrategy<Self>,
+        device_settings: &DeviceSettings<R>,
+        strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
         let blueprint = match strategy {
-            BlueprintStrategy::Forced(blueprint) => blueprint,
+            BlueprintStrategy::Forced(blueprint) => blueprint.clone(),
             BlueprintStrategy::Inferred(_) => {
                 let line_sizes = device_settings.line_sizes;
                 let plane_dim = device_settings.plane_dim;
@@ -121,11 +121,11 @@ impl Routine for DoubleVecMatAlgorithm {
 
     fn prepare<R: Runtime>(
         problem: &MatmulProblem,
-        device_settings: DeviceSettings<R>,
-        strategy: BlueprintStrategy<Self>,
+        device_settings: &DeviceSettings<R>,
+        strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
         let blueprint = match strategy {
-            BlueprintStrategy::Forced(blueprint) => blueprint,
+            BlueprintStrategy::Forced(blueprint) => blueprint.clone(),
             BlueprintStrategy::Inferred(_) => {
                 let line_sizes = device_settings.line_sizes;
                 let plane_dim = device_settings.plane_dim;
