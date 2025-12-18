@@ -5,13 +5,13 @@ use crate::definition::hypercube::{
 use crate::definition::{MatmulProblem, MatmulSetupError, TilingScheme};
 use cubecl::CubeCount;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 /// Determines how to launch the hypercube, i.e. anything
 /// relevant to CubeCount and where a Cube at a cube position should work
 pub struct HypercubeBlueprint {
     pub cube_span: CubeSpan,
     pub global_order: GlobalOrder,
-    pub cube_count_plan_selection: CubeCountPlanBlueprint,
+    pub cube_count_plan_blueprint: CubeCountPlanBlueprint,
 }
 
 /// Builder for creating a [HypercubeBlueprint]
@@ -50,7 +50,7 @@ impl HypercubeBlueprint {
         problem: &MatmulProblem,
         max_cube_count: CubeCount,
     ) -> HypercubeConfig {
-        let cube_count_plan = CubeCountPlan::from_selection(self, problem, max_cube_count);
+        let cube_count_plan = CubeCountPlan::from_blueprint(self, problem, &max_cube_count);
         let cube_count_plan_config = CubeCountPlanConfig::from_cube_count_plan(cube_count_plan);
 
         HypercubeConfig {
@@ -125,7 +125,7 @@ impl<'a> HypercubeBlueprintBuilder<'a> {
         HypercubeBlueprint {
             cube_span,
             global_order,
-            cube_count_plan_selection: cube_pos_strategy,
+            cube_count_plan_blueprint: cube_pos_strategy,
         }
     }
 }
@@ -137,6 +137,6 @@ impl HypercubeConfig {
         problem: &MatmulProblem,
         max_cube_count: &CubeCount,
     ) -> CubeCountPlan {
-        CubeCountPlan::from_blueprint(self, problem, max_cube_count)
+        CubeCountPlan::from_config(self, problem, max_cube_count)
     }
 }

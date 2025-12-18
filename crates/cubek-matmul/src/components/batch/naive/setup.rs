@@ -1,35 +1,46 @@
 use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, server::LaunchError};
 
 use crate::{
-    components::batch::{
-        BatchMatmulFamily,
-        naive::{NaiveMatmul, NaiveMatmulConfig, matmul_entry},
+    components::{
+        batch::{
+            BatchMatmulFamily,
+            naive::{NaiveMatmul, NaiveMatmulConfig, matmul_entry},
+        },
+        global::memory::GlobalLayoutConfig,
     },
     definition::{
-        CubeCountInputArgs, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem,
-        MatmulSetupError,
+        Blueprint, CubeCountInputArgs, MatmulElems, MatmulLineSizes, MatmulPrecision,
+        MatmulProblem, MatmulSetupError,
     },
     launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
 };
 
 /// Simple partitioned batch matmul family for any precision
 pub struct NaiveBatchMatmulFamily {}
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct NaiveBlueprint {}
+
+impl Blueprint for NaiveBlueprint {
+    fn lhs_global_layout_config(&self) -> GlobalLayoutConfig {
+        todo!()
+    }
+
+    fn rhs_global_layout_config(&self) -> GlobalLayoutConfig {
+        todo!()
+    }
+
+    fn out_global_layout_config(&self) -> GlobalLayoutConfig {
+        todo!()
+    }
+}
 
 impl BatchMatmulFamily for NaiveBatchMatmulFamily {
     type Matmul<MP: MatmulPrecision> = NaiveMatmul<MP>;
     type Config = NaiveMatmulConfig;
     type Blueprint = NaiveBlueprint;
 
-    fn expand_config<R: Runtime>(
-        _client: &ComputeClient<R>,
-        _problem: &MatmulProblem,
-        _selection: &Self::Blueprint,
-        line_sizes: &MatmulLineSizes,
-        _dtypes: &MatmulElems,
-    ) -> Result<Self::Config, MatmulSetupError> {
-        if line_sizes.out > 1 {
+    fn expand_config(blueprint: Self::Blueprint) -> Result<Self::Config, MatmulSetupError> {
+        if blueprint.line_sizes.out > 1 {
             return Err(MatmulSetupError::InvalidConfig(Box::new(
                 "Line size on output not supported",
             )));
@@ -45,8 +56,8 @@ impl BatchMatmulFamily for NaiveBatchMatmulFamily {
         input: InputRuntimeArg<'a, MA, R>,
         output: OutputRuntimeArg<'a, MA, R>,
         cube_count_input: CubeCountInputArgs<'a, R>,
-        config: Self::Config,
         dtypes: &MatmulElems,
+        blueprint: Self::Blueprint,
     ) -> Result<(), LaunchError> {
         unsafe {
             matmul_entry::launch_unchecked::<MA, R>(
@@ -56,7 +67,7 @@ impl BatchMatmulFamily for NaiveBatchMatmulFamily {
                 input,
                 output,
                 cube_count_input,
-                config,
+                blueprint,
                 [*dtypes.lhs_global, *dtypes.rhs_global, *dtypes.acc_global],
                 [*dtypes.lhs_stage, *dtypes.rhs_stage, *dtypes.acc_stage],
                 [

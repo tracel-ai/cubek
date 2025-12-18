@@ -94,11 +94,8 @@ where
         }
 
         let client = &device_settings.client;
-        match strategy {
-            BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
-                blueprint: blueprint.clone(),
-                dtypes,
-            }),
+        let (blueprint, dtypes) = match strategy {
+            BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
             BlueprintStrategy::Inferred(strategy) => {
                 if strategy.multi_rows {
                     infer_blueprint_multi_rows::<R, TMM>(
@@ -122,9 +119,17 @@ where
                             ..Default::default()
                         },
                     )
-                }
+                }?
             }
-        }
+        };
+
+        LaunchInfo::new(
+            blueprint,
+            dtypes,
+            problem,
+            Self::BatchMatmul::cubedim_resource()?,
+            device_settings,
+        )
     }
 }
 
@@ -134,7 +139,7 @@ fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
     plane_dim: u32,
     mut dtypes: MatmulElems,
     line_sizes: &MatmulLineSizes,
-) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+) -> Result<(TilingBlueprint, MatmulElems), MatmulSetupError> {
     adjust_dtypes(client, &mut dtypes, TMM::requires_accelerator());
 
     let supported = |m: u32, n: u32, k: u32| {
@@ -177,13 +182,13 @@ fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
             .cube_count_plan(cube_count_plan)
             .build();
 
-        Ok(LaunchInfo {
-            blueprint: TilingBlueprint::builder(tiling_scheme, plane_dim)
+        Ok((
+            TilingBlueprint::builder(tiling_scheme, plane_dim)
                 .partition_buffering(PartitionBuffering::Single)
                 .hypercube_config(hypercube)
                 .build(),
             dtypes,
-        })
+        ))
     } else if supported(8, 8, 8) {
         let tiling_scheme = TilingScheme::builder()
             .with_tile_size((8, 8, 8).into())
@@ -199,13 +204,13 @@ fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
             .cube_count_plan(cube_count_plan)
             .build();
 
-        Ok(LaunchInfo {
-            blueprint: TilingBlueprint::builder(tiling_scheme, plane_dim)
+        Ok((
+            TilingBlueprint::builder(tiling_scheme, plane_dim)
                 .partition_buffering(PartitionBuffering::Single)
                 .hypercube_config(hypercube)
                 .build(),
             dtypes,
-        })
+        ))
     } else {
         infer_blueprint_plane::<TMM, R>(
             client,

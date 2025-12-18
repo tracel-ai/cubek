@@ -4,7 +4,7 @@ use cubecl::{ir::StorageType, prelude::*};
 use crate::components::tile::TileConfig;
 use crate::components::tile::io::TileMut;
 use crate::components::{
-    resource::ComputeResources,
+    resource::CubeDimResource,
     tile::io::{Tile, TileKind},
 };
 use crate::definition::TilingBlueprint;
@@ -49,8 +49,8 @@ pub trait TileMatmulFamily: Send + Sync + 'static {
     /// Used to determine the selection, since swizzling may require different stage sizes.
     fn should_swizzle<R: Runtime>(client: &ComputeClient<R>) -> bool;
 
-    /// Returns the compute resources required to run this tile matmul.
-    fn computation_resources() -> Result<ComputeResources, InvalidConfigError>;
+    /// Returns the compute resources required to run this matmul.
+    fn computation_resources() -> Result<CubeDimResource, InvalidConfigError>;
 
     /// Constructs the configuration based on the matmul problem, selection, and line sizes.
     ///

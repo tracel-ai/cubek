@@ -5,7 +5,7 @@ use crate::components::tile::{
     TileMatmulFamily,
     cmma::reader::{CmmaFragmentReader, CmmaStageReader},
 };
-use crate::components::{resource::ComputeResources, tile::io::TileKind};
+use crate::components::{resource::CubeDimResource, tile::io::TileKind};
 use crate::definition::TilingBlueprint;
 use crate::definition::{
     InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatmulProblem,
@@ -33,8 +33,8 @@ where
         false
     }
 
-    fn computation_resources() -> Result<ComputeResources, InvalidConfigError> {
-        Ok(ComputeResources::Planes(1))
+    fn computation_resources() -> Result<CubeDimResource, InvalidConfigError> {
+        Ok(CubeDimResource::Planes(1))
     }
 
     fn expand_config<R: Runtime>(

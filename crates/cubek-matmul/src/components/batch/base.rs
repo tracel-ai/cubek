@@ -1,7 +1,8 @@
+use crate::components::CubeDimResource;
 use crate::components::global::memory::GlobalLayoutConfig;
 use crate::definition::{
-    AccG, CubeCountInput, CubeCountInputArgs, CubeCountPlan, LhsG, MatmulElems, MatmulLineSizes,
-    MatmulPrecision, MatmulProblem, MatmulSetupError, RhsG,
+    AccG, Blueprint, CubeCountInput, CubeCountInputArgs, CubeCountPlan, InvalidConfigError, LhsG,
+    MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError, RhsG,
 };
 use crate::launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
 use cubecl::prelude::*;
@@ -15,18 +16,12 @@ pub trait BatchMatmulFamily: 'static + Send + Sync {
     /// The configuration type associated with this matmul family.
     type Config: BatchConfig;
 
-    type Blueprint;
+    type Blueprint: Blueprint;
 
     /// Constructs the configuration based on the matmul problem, selection, and line sizes.
     ///
     /// This function may return an error if the configuration cannot be supported on the current runtime.
-    fn expand_config<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
-        blueprint: &Self::Blueprint,
-        line_sizes: &MatmulLineSizes,
-        dtypes: &MatmulElems,
-    ) -> Result<Self::Config, MatmulSetupError>;
+    fn expand_config(blueprint: Self::Blueprint) -> Result<Self::Config, MatmulSetupError>;
 
     /// Entry point
     ///
@@ -41,9 +36,12 @@ pub trait BatchMatmulFamily: 'static + Send + Sync {
         input: InputRuntimeArg<'a, MA, R>,
         output: OutputRuntimeArg<'a, MA, R>,
         cube_count_input: CubeCountInputArgs<'a, R>,
-        config: Self::Config,
         dtypes: &MatmulElems,
+        blueprint: Self::Blueprint,
     ) -> Result<(), LaunchError>;
+
+    /// Returns the compute resources required to run this matmul.
+    fn cubedim_resource() -> Result<CubeDimResource, InvalidConfigError>;
 }
 
 #[cube]

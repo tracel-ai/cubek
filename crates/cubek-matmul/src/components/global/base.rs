@@ -1,5 +1,6 @@
 use cubecl::prelude::*;
 
+use crate::components::CubeDimResource;
 use crate::components::global::memory::GlobalMemoryConfig;
 use crate::components::global::multi_stage::EventLoadingMode;
 use crate::components::global::read::ReaderMode;
@@ -8,11 +9,11 @@ use crate::components::global::{
     SpecializedLoadingSides,
 };
 use crate::components::stage::{StageConfig, StageMemoryConfig};
-use crate::definition::TilingBlueprint;
+use crate::definition::{InvalidConfigError, TilingBlueprint};
 use crate::definition::{self, AccG, MatmulSetupError};
-use crate::definition::{AvailableLineSizes, MatmulPrecision, MatmulProblem};
 use crate::definition::{LhsG, MatmulElems, MatmulLineSizes, RhsG};
 use crate::definition::{MatmulIdent, StageIdent};
+use crate::definition::{MatmulPrecision, MatmulProblem};
 use cubecl::std::{
     CubeOption,
     tensor::{View, layout::Coords2d},
@@ -32,19 +33,11 @@ pub trait GlobalMatmulFamily: Send + Sync + 'static {
     ///
     /// This function may return an error if the configuration cannot be supported on the current runtime.
     fn expand_config<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
-        selection: &TilingBlueprint,
-        matmul_line_sizes: &MatmulLineSizes,
-        dtypes: &MatmulElems,
+        blueprint: TilingBlueprint,
     ) -> Result<Self::Config, MatmulSetupError>;
 
-    /// Filters out line sizes that are incompatible with this matmul family.
-    ///
-    /// By default, returns the input unchanged.
-    fn filter_line_sizes(available_line_sizes: AvailableLineSizes) -> AvailableLineSizes {
-        available_line_sizes
-    }
+    /// Returns the compute resources required to run this matmul.
+    fn computation_resources() -> Result<CubeDimResource, InvalidConfigError>;
 }
 
 #[cube]

@@ -5,10 +5,14 @@ use crate::components::batch::partitioned_matmul::config::PartitionedBatchConfig
 use crate::components::batch::partitioned_matmul::partition::{
     GlobalPartitionMatmul, PartitionRangeDim, PartitionRanges,
 };
-use crate::components::batch::{BatchConfig as _, BatchMatmul};
+use crate::components::batch::{
+    BatchConfig as _, BatchMatmul, BatchMatmulFamily, PartitionedBatchMatmulFamily,
+};
 use crate::components::global::{self, GlobalConfig, GlobalMatmul, GlobalMatmulFamily};
 use crate::components::stage::StageConfig as _;
-use crate::definition::{AccG, CubeCountInput, LhsG, MatmulPrecision, RhsG};
+use crate::definition::{
+    AccG, Blueprint as _, CubeCountInput, LhsG, MatmulPrecision, RhsG, TilingBlueprint,
+};
 use crate::launch::MatmulArgs;
 
 #[cube(launch_unchecked)]
@@ -30,11 +34,20 @@ pub(crate) fn matmul_entry<
     inputs: &<Args as MatmulArgs>::Input<LhsG, RhsG, AccG>,
     output: &mut <Args as MatmulArgs>::Output<AccG>,
     cube_count_args: CubeCountInput,
-    #[comptime] config: PartitionedBatchConfig<GMMF::Config>,
+    #[comptime] blueprint: TilingBlueprint,
     #[define(LhsG, RhsG, AccG)] _global: [StorageType; 3],
     #[define(LhsS, RhsS, AccS)] _stage: [StorageType; 3],
     #[define(LhsR, RhsR, AccR)] _register: [StorageType; 3],
 ) {
+    let config = comptime!(PartitionedBatchMatmulFamily::<GMMF, GPM>::expand_config(
+        blueprint
+    ));
+    if comptime!(config.is_err()) {
+        push_validation_error(config.err().unwrap().to_string());
+        comptime!(return);
+    }
+    let config = comptime!(config.unwrap());
+
     #[allow(clippy::collapsible_if)]
     if comptime!(config.can_yield_extra_cubes()) {
         if CUBE_POS >= cube_count_args.num_valid_cubes() {

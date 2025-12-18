@@ -14,7 +14,7 @@ use crate::{
 use cubecl::prelude::ReadWrite;
 use cubek_matmul::{
     components::{
-        ComputeResources,
+        CubeDimResource,
         stage::{StageFamily, StageMemoryConfig, SwizzleMode},
         tile::io::Strided,
     },
@@ -58,8 +58,8 @@ impl<
     ) -> Result<Self::Config, AttentionSetupError> {
         let tile_config = TA::expand_blueprint(blueprint)?;
         let compute_resources = match TA::computation_resources()? {
-            ComputeResources::Units(units) => {
-                ComputeResources::Units(units * blueprint.tiling_scheme.stage_size.seq_q)
+            CubeDimResource::Units(units) => {
+                CubeDimResource::Units(units * blueprint.tiling_scheme.stage_size.seq_q)
             }
             _ => {
                 return Err(AttentionSetupError::InvalidConfig(Box::new(

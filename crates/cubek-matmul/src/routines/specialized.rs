@@ -89,11 +89,8 @@ where
             dtypes.adjust_stage_dtypes();
         }
 
-        match strategy {
-            BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
-                blueprint: blueprint.clone(),
-                dtypes,
-            }),
+        let (blueprint, dtypes) = match strategy {
+            BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
             BlueprintStrategy::Inferred(_) => infer_blueprint_plane::<TMM, R>(
                 &device_settings.client,
                 problem,
@@ -108,8 +105,16 @@ where
                     swizzled: TMM::should_swizzle(&device_settings.client),
                     ..Default::default()
                 },
-            ),
-        }
+            )?,
+        };
+
+        LaunchInfo::new(
+            blueprint,
+            dtypes,
+            problem,
+            Self::BatchMatmul::cubedim_resource()?,
+            device_settings,
+        )
     }
 }
 
@@ -121,7 +126,7 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
     swizzle: bool,
     mut dtypes: MatmulElems,
     line_sizes: &MatmulLineSizes,
-) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+) -> Result<(TilingBlueprint, MatmulElems), MatmulSetupError> {
     adjust_dtypes(client, &mut dtypes, TMM::requires_accelerator());
 
     let supported = |m: u32, n: u32, k: u32| {
@@ -211,8 +216,5 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
         });
     }
 
-    Ok(LaunchInfo {
-        blueprint: builder.build(),
-        dtypes,
-    })
+    Ok((builder.build(), dtypes))
 }

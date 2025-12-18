@@ -1,14 +1,26 @@
-use cubecl::{Runtime, client::ComputeClient, flex32, prelude::CubePrimitive, tf32};
+use cubecl::{CubeDim, Runtime, client::ComputeClient, flex32, prelude::CubePrimitive, tf32};
 
 use crate::{
     components::{
-        global::{LoadSpecializationConfig, read::ReaderMode},
+        CubeDimResource,
+        global::{LoadSpecializationConfig, memory::GlobalLayoutConfig, read::ReaderMode},
         stage::{PartitionBuffering, SwizzleMode},
     },
-    definition::{MatmulElems, TilingScheme, hypercube::HypercubeBlueprint},
+    definition::{
+        CubeCountPlan, MatmulElems, MatmulProblem, MatmulSetupError, TilingScheme,
+        hypercube::HypercubeBlueprint,
+    },
+    routines::DeviceSettings,
 };
+use std::{fmt::Debug, hash::Hash};
 
-#[derive(Debug, Clone)]
+pub trait Blueprint: Debug + Clone + Eq + PartialEq + Hash {
+    fn lhs_global_layout_config(&self) -> GlobalLayoutConfig;
+    fn rhs_global_layout_config(&self) -> GlobalLayoutConfig;
+    fn out_global_layout_config(&self) -> GlobalLayoutConfig;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TilingBlueprint {
     pub plane_dim: u32,
     pub tiling_scheme: TilingScheme,
@@ -17,7 +29,21 @@ pub struct TilingBlueprint {
     pub loading_precompute_strategy: LoadingPrecomputeStrategy,
     pub reader_mode: ReaderMode,
     pub load_specialization_config: LoadSpecializationConfig,
-    pub hypercube_selection: HypercubeBlueprint,
+    pub hypercube_blueprint: HypercubeBlueprint,
+}
+
+impl Blueprint for TilingBlueprint {
+    fn lhs_global_layout_config(&self) -> GlobalLayoutConfig {
+        todo!()
+    }
+
+    fn rhs_global_layout_config(&self) -> GlobalLayoutConfig {
+        todo!()
+    }
+
+    fn out_global_layout_config(&self) -> GlobalLayoutConfig {
+        todo!()
+    }
 }
 
 /// Modifies the given matmul element types based on the kind of accelerator the kernel is run on.
@@ -76,6 +102,29 @@ impl TilingBlueprint {
             .tiling_scheme(tiling_scheme)
             .hypercube_config(hypercube_config)
             .plane_dim(plane_dim)
+    }
+
+    //     let plane_dim = device_settings.plane_dim;
+    // let num_planes =
+    //     Self::BatchMatmul::computation_resources()?.num_planes(plane_dim)?;
+    // let cube_dim = CubeDim::new_2d(plane_dim, num_planes);
+    // let cube_count_plan =
+
+    pub fn cube_launch_info<R: Runtime>(
+        &self,
+        cubedim_resource: CubeDimResource,
+        problem: &MatmulProblem,
+        device_settings: &DeviceSettings<R>,
+    ) -> Result<(CubeDim, CubeCountPlan), MatmulSetupError> {
+        let plane_dim = device_settings.plane_dim;
+        let cube_dim = cubedim_resource.to_cube_dim(plane_dim)?;
+        let cube_count_plan = CubeCountPlan::from_blueprint(
+            &self.hypercube_blueprint,
+            problem,
+            &device_settings.max_cube_count,
+        );
+
+        Ok((cube_dim, cube_count_plan))
     }
 }
 
@@ -155,7 +204,7 @@ impl TilingBlueprintBuilder {
             plane_dim: self.plane_dim.unwrap(),
             tiling_scheme: self.tiling_scheme.unwrap(),
             shared_swizzle: self.shared_swizzle,
-            hypercube_selection: self.hypercube_selection.unwrap(),
+            hypercube_blueprint: self.hypercube_selection.unwrap(),
             partition_buffering: self.partition_buffering,
             loading_precompute_strategy: self.loading_precompute_strategy,
             reader_mode: self.reader_mode,

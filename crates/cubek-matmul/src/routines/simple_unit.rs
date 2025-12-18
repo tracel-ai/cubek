@@ -77,12 +77,9 @@ where
             dtypes.adjust_stage_dtypes();
         }
 
-        match strategy {
-            BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
-                blueprint: blueprint.clone(),
-                dtypes: MatmulElems::from_globals(&problem.global_dtypes),
-            }),
-            BlueprintStrategy::Inferred(strategy) => Ok(infer_blueprint_unit(
+        let (blueprint, dtypes) = match strategy {
+            BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
+            BlueprintStrategy::Inferred(strategy) => infer_blueprint_unit(
                 &device_settings.client,
                 problem,
                 device_settings.plane_dim,
@@ -103,8 +100,16 @@ where
                     ),
                 },
                 &problem.global_dtypes,
-            )),
-        }
+            ),
+        };
+
+        LaunchInfo::new(
+            blueprint,
+            dtypes,
+            problem,
+            Self::BatchMatmul::cubedim_resource()?,
+            device_settings,
+        )
     }
 
     fn device_settings<R: Runtime>(
@@ -120,6 +125,7 @@ where
             client: client.clone(),
             plane_dim,
             line_sizes,
+            max_cube_count: client.properties().hardware.max_cube_count.clone(),
         }
     }
 }

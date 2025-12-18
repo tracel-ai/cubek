@@ -40,7 +40,7 @@ pub(crate) fn attention<
     #[comptime] blueprint: AttentionBlueprint,
     #[define(QG, QT, KG, KS, VG, VS, KVT, SM, ACC, MSK, OG, OS)] _elem_types: [StorageType; 12],
 ) {
-    let config = comptime!(BMMF::expand_blueprint(blueprint));
+    let config = comptime!(BMMF::expand_config(blueprint));
     if comptime!(config.is_err()) {
         push_validation_error(config.err().unwrap().to_string());
         comptime!(return);

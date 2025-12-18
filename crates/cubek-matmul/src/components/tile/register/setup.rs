@@ -4,7 +4,7 @@ use crate::components::tile::register::config::RegisterMatmulConfig;
 use crate::components::tile::register::matmul::RegisterMatmul;
 use crate::components::tile::{TileMatmulFamily, io::Strided};
 use crate::components::{
-    resource::ComputeResources,
+    resource::CubeDimResource,
     tile::register::reader::{RegisterFragmentReader, RegisterStageReader},
 };
 use crate::definition::MatmulSetupError;
@@ -37,8 +37,8 @@ where
         true
     }
 
-    fn computation_resources() -> Result<ComputeResources, InvalidConfigError> {
-        Ok(ComputeResources::Units(1))
+    fn computation_resources() -> Result<CubeDimResource, InvalidConfigError> {
+        Ok(CubeDimResource::Units(1))
     }
 
     fn expand_config<R: Runtime>(

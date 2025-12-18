@@ -1,4 +1,3 @@
-use crate::components::batch::BatchConfig;
 use crate::definition::MatmulElems;
 use crate::definition::MatmulLineSizes;
 use crate::definition::MatmulProblem;
@@ -8,6 +7,7 @@ use crate::launch::{
     ConcreteInputsFactory, ConcreteOutputFactory, InputArg, InputRuntimeArg, MatmulArgs, OutputArg,
     OutputRuntimeArg,
 };
+use crate::routines::LaunchInfo;
 use crate::routines::{BlueprintStrategy, Routine};
 use cubecl::prelude::TensorHandleRef;
 use cubecl::{Runtime, client::ComputeClient};
@@ -42,15 +42,6 @@ where
     let device_settings = A::device_settings(client, view_line_sizes);
     let launch_info = A::prepare(&problem, &device_settings, blueprint_strategy)?;
 
-    // TODO should be inside kernel
-    let config = A::expand_config(
-        client,
-        &problem,
-        &launch_info.blueprint,
-        &view_line_sizes,
-        dtypes,
-    )?;
-
     let input = <InputArg<MA> as ConcreteInputsFactory<A>>::create(
         client,
         lhs,
@@ -58,7 +49,6 @@ where
         &launch_info.blueprint,
         &problem,
         &line_sizes,
-        config,
         dtypes,
     );
     let output = <OutputArg<MA> as ConcreteOutputFactory<A>>::create(
@@ -67,11 +57,10 @@ where
         &launch_info.blueprint,
         &problem,
         &line_sizes,
-        config,
         dtypes,
     );
 
-    launch_kernel::<MA, R, A>(client, input, output, problem, config, dtypes)
+    launch_kernel::<MA, R, A>(client, input, output, launch_info)
 }
 
 /// Select which kernel to launch for the given Algorithm.
@@ -83,21 +72,11 @@ pub fn launch_kernel_virtual<'a, MA: MatmulArgs, R: Runtime, A: Routine>(
     problem: MatmulProblem,
     view_line_sizes: MatmulLineSizes,
     blueprint_strategy: &BlueprintStrategy<A>,
-    dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let device_settings = A::device_settings(client, view_line_sizes);
     let launch_info = A::prepare(&problem, &device_settings, blueprint_strategy)?;
 
-    // TODO should be inside kernel
-    let config = A::expand_config(
-        client,
-        &problem,
-        &launch_info.blueprint,
-        &view_line_sizes,
-        dtypes,
-    )?;
-
-    launch_kernel::<MA, R, A>(client, input, output, problem, config, dtypes)
+    launch_kernel::<MA, R, A>(client, input, output, launch_info)
 }
 
 /// Select which kernel to launch for the given Algorithm.
@@ -106,23 +85,16 @@ fn launch_kernel<'a, MA: MatmulArgs, R: Runtime, A: Routine>(
     client: &ComputeClient<R>,
     input: InputRuntimeArg<'a, MA, R>,
     output: OutputRuntimeArg<'a, MA, R>,
-    problem: MatmulProblem,
-    config: A::Config,
-    dtypes: &mut MatmulElems,
+    launch_info: LaunchInfo<A::Blueprint>,
 ) -> Result<(), MatmulSetupError> {
-    let cube_count_plan = config.cube_count_plan(
-        &problem,
-        &client.properties().hardware.max_cube_count.clone(),
-    );
-
     A::launch::<MA, R>(
         client,
-        config.cube_dim(),
-        cube_count_plan.resolve(),
+        launch_info.cube_dim,
+        launch_info.cube_count_plan.resolve(),
         input,
         output,
-        cube_count_plan.as_args(),
-        config,
-        dtypes,
+        launch_info.cube_count_plan.as_args(),
+        &launch_info.dtypes,
+        launch_info.blueprint,
     )
 }

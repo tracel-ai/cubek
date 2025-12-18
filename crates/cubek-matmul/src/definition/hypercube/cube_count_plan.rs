@@ -142,21 +142,21 @@ pub enum CubeCountInput {
 
 impl CubeCountPlan {
     // Will check if the wanted cube count plan is possible, otherwise will fallback to spread
-    pub fn from_selection(
-        selection: &HypercubeBlueprint,
+    pub fn from_blueprint(
+        blueprint: &HypercubeBlueprint,
         problem: &MatmulProblem,
-        max_cube_count: CubeCount,
+        max_cube_count: &CubeCount,
     ) -> CubeCountPlan {
         let (max_x, max_y, max_z) = match max_cube_count {
-            CubeCount::Static(x, y, z) => (x, y, z),
+            CubeCount::Static(x, y, z) => (*x, *y, *z),
             CubeCount::Dynamic(_) => panic!("Dynamic cube count not supported for cube count plan"),
         };
 
-        let m_cubes = (problem.m as u32).div_ceil(selection.cube_span.m);
-        let n_cubes = (problem.n as u32).div_ceil(selection.cube_span.n);
-        let batch_cubes = (problem.num_batches() as u32).div_ceil(selection.cube_span.batch);
+        let m_cubes = (problem.m as u32).div_ceil(blueprint.cube_span.m);
+        let n_cubes = (problem.n as u32).div_ceil(blueprint.cube_span.n);
+        let batch_cubes = (problem.num_batches() as u32).div_ceil(blueprint.cube_span.batch);
 
-        let plan = match selection.cube_count_plan_selection {
+        let plan = match blueprint.cube_count_plan_blueprint {
             CubeCountPlanBlueprint::FromProblem => {
                 if m_cubes > max_x || n_cubes > max_y || batch_cubes > max_z {
                     None
@@ -215,7 +215,7 @@ impl CubeCountPlan {
     /// Because we don't want to store the CubeCountPlan values in config, we have to recompute it
     ///
     /// Assumes the hypercube config is valid
-    pub fn from_blueprint(
+    pub fn from_config(
         config: &HypercubeConfig,
         problem: &MatmulProblem,
         max_cube_count: &CubeCount,

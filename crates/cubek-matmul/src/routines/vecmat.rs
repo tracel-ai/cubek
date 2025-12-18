@@ -92,7 +92,13 @@ impl Routine for SimpleVecMatAlgorithm {
             }
         };
 
-        Ok(LaunchInfo { blueprint, dtypes })
+        LaunchInfo::new(
+            blueprint,
+            dtypes,
+            problem,
+            Self::BatchMatmul::cubedim_resource()?,
+            device_settings,
+        )
     }
 }
 
@@ -144,7 +150,13 @@ impl Routine for DoubleVecMatAlgorithm {
             }
         };
 
-        Ok(LaunchInfo { blueprint, dtypes })
+        LaunchInfo::new(
+            blueprint,
+            dtypes,
+            problem,
+            Self::BatchMatmul::cubedim_resource()?,
+            device_settings,
+        )
     }
 }
 

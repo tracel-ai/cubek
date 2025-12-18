@@ -1,7 +1,10 @@
 use std::marker::PhantomData;
 
+use crate::components::batch::base::BatchMatmulFamily;
+use crate::components::batch::naive::{NaiveBatchMatmulFamily, NaiveBlueprint};
 use crate::components::batch::{BatchConfig as _, SliceIndex};
 use crate::definition::MatrixLayout;
+
 use crate::{
     components::batch::{BatchMatmul, naive::NaiveMatmulConfig},
     definition::*,
@@ -29,11 +32,18 @@ pub(crate) fn matmul_entry<
     inputs: &<Args as MatmulArgs>::Input<LhsG, RhsG, AccG>,
     output: &mut <Args as MatmulArgs>::Output<AccG>,
     cube_count_args: CubeCountInput,
-    #[comptime] config: NaiveMatmulConfig,
+    #[comptime] blueprint: NaiveBlueprint,
     #[define(LhsG, RhsG, AccG)] _global: [StorageType; 3],
     #[define(LhsS, RhsS, AccS)] _stage: [StorageType; 3],
     #[define(LhsR, RhsR, AccR)] _register: [StorageType; 3],
 ) {
+    let config = comptime!(NaiveBatchMatmulFamily::expand_config(blueprint));
+    if comptime!(config.is_err()) {
+        push_validation_error(config.err().unwrap().to_string());
+        comptime!(return);
+    }
+    let config = comptime!(config.unwrap());
+
     let mut state = Args::init_state::<LhsG, RhsG, AccG>(
         inputs,
         output,

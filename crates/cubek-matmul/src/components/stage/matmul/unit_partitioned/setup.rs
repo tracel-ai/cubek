@@ -1,4 +1,4 @@
-use crate::components::ComputeResources;
+use crate::components::CubeDimResource;
 use crate::components::global::MatmulPlaneCounts;
 use crate::components::global::MaxGlobalReaderPlanes;
 use crate::components::global::PartitionedStage;
@@ -85,9 +85,9 @@ impl<
     ) -> Result<Self::Config, MatmulSetupError> {
         let tile_config = TM::expand_config(client, problem, selection, line_sizes, dtypes)?;
 
-        let compute_resources = if let ComputeResources::Units(units) = TM::computation_resources()?
+        let compute_resources = if let CubeDimResource::Units(units) = TM::computation_resources()?
         {
-            ComputeResources::Units(
+            CubeDimResource::Units(
                 units
                     * selection.tiling_scheme.partitions_per_stage_along_m()
                     * selection.tiling_scheme.partitions_per_stage_along_n(),

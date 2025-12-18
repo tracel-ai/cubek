@@ -11,7 +11,6 @@ use crate::definition::{
     PartitionSize, SmAllocation, StageSize, SwizzleBlueprint, TileSize, TilingBlueprint,
     TilingScheme, adjust_dtypes,
 };
-use crate::routines::LaunchInfo;
 use crate::routines::selector::is_tiny;
 
 pub const NUM_SM_APPROX: u32 = 50;
@@ -37,7 +36,7 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
     mut dtypes: MatmulElems,
     line_sizes: &MatmulLineSizes,
     options: PlaneTilingBlueprintOptions,
-) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+) -> Result<(TilingBlueprint, MatmulElems), MatmulSetupError> {
     adjust_dtypes(client, &mut dtypes, TMM::requires_accelerator());
 
     if plane_dim == 1 {
@@ -49,10 +48,10 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
     let tile_size = find_instruction_size::<R, TMM>(client, &dtypes, problem.m, problem.n)?;
 
     if options.tiny_selection_enabled && is_tiny(problem, &tile_size) {
-        return Ok(LaunchInfo {
-            blueprint: selection_tiny(client, problem, tile_size, plane_dim),
+        return Ok((
+            selection_tiny(client, problem, tile_size, plane_dim),
             dtypes,
-        });
+        ));
     }
 
     let row_count = options.row_count.unwrap_or_else(|| {
@@ -188,10 +187,7 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
         });
     }
 
-    Ok(LaunchInfo {
-        blueprint: builder.build(),
-        dtypes,
-    })
+    Ok((builder.build(), dtypes))
 }
 
 /// All modes currently use atom size 16

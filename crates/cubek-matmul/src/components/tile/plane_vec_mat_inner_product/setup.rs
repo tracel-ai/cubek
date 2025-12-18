@@ -4,7 +4,7 @@ use crate::components::tile::plane_vec_mat_inner_product::config::PlaneVecMatInn
 use crate::components::tile::plane_vec_mat_inner_product::matmul::PlaneVecMatInnerProduct;
 use crate::components::tile::{TileMatmulFamily, io::Strided};
 use crate::components::{
-    resource::ComputeResources,
+    resource::CubeDimResource,
     tile::plane_vec_mat_inner_product::reader::{MatrixFragmentReader, MatrixStageReader},
 };
 use crate::definition::TilingBlueprint;
@@ -36,8 +36,8 @@ where
         true
     }
 
-    fn computation_resources() -> Result<ComputeResources, InvalidConfigError> {
-        Ok(ComputeResources::Planes(1))
+    fn computation_resources() -> Result<CubeDimResource, InvalidConfigError> {
+        Ok(CubeDimResource::Planes(1))
     }
 
     fn expand_config<R: Runtime>(

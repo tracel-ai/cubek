@@ -51,7 +51,7 @@ impl<GA: GlobalAttentionFamily> BatchAttentionFamily for SimpleBatchAttentionFam
         }
     }
 
-    fn expand_blueprint(
+    fn expand_config(
         blueprint: AttentionBlueprint,
     ) -> Result<Self::Config, AttentionSetupError> {
         let global_config = GA::expand_blueprint(&blueprint)?;

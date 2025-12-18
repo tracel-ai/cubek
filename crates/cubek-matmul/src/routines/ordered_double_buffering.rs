@@ -83,11 +83,8 @@ where
             dtypes.adjust_stage_dtypes();
         }
 
-        match strategy {
-            BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
-                blueprint: blueprint.clone(),
-                dtypes,
-            }),
+        let (blueprint, dtypes) = match strategy {
+            BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
             BlueprintStrategy::Inferred(strategy) => infer_blueprint_plane::<TMM, R>(
                 &device_settings.client,
                 problem,
@@ -106,7 +103,15 @@ where
                     swizzled: TMM::should_swizzle(&device_settings.client),
                     ..Default::default()
                 },
-            ),
-        }
+            )?,
+        };
+
+        LaunchInfo::new(
+            blueprint,
+            dtypes,
+            problem,
+            Self::BatchMatmul::cubedim_resource()?,
+            device_settings,
+        )
     }
 }

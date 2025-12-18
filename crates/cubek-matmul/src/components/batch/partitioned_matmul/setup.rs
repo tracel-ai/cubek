@@ -8,9 +8,7 @@ use crate::components::batch::partitioned_matmul::partition::GlobalPartitionMatm
 use crate::components::global::GlobalMatmulFamily;
 use crate::definition::CubeCountInputArgs;
 use crate::definition::TilingBlueprint;
-use crate::definition::{
-    MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError,
-};
+use crate::definition::{MatmulElems, MatmulPrecision, MatmulSetupError};
 use crate::launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
 use cubecl::prelude::*;
 
@@ -27,19 +25,13 @@ impl<GMM: GlobalMatmulFamily, S: GlobalPartitionMatmul> BatchMatmulFamily
     type Config = PartitionedBatchConfig<GMM::Config>;
     type Blueprint = TilingBlueprint;
 
-    fn expand_config<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
-        blueprint: &Self::Blueprint,
-        line_sizes: &MatmulLineSizes,
-        dtypes: &MatmulElems,
-    ) -> Result<Self::Config, MatmulSetupError> {
-        let global_config = GMM::expand_config(client, problem, blueprint, line_sizes, dtypes)?;
+    fn expand_config(blueprint: Self::Blueprint) -> Result<Self::Config, MatmulSetupError> {
+        let global_config = GMM::expand_config(blueprint)?;
 
         PartitionedBatchConfig::new(
             global_config,
             blueprint
-                .hypercube_selection
+                .hypercube_blueprint
                 .to_hypercube_config(problem, client.properties().hardware.max_cube_count.clone()),
             blueprint.tiling_scheme.global_partition_size,
         )
@@ -53,8 +45,8 @@ impl<GMM: GlobalMatmulFamily, S: GlobalPartitionMatmul> BatchMatmulFamily
         input: InputRuntimeArg<'a, MA, R>,
         output: OutputRuntimeArg<'a, MA, R>,
         cube_count_input: CubeCountInputArgs<'a, R>,
-        config: Self::Config,
         dtypes: &MatmulElems,
+        blueprint: Self::Blueprint,
     ) -> Result<(), LaunchError> {
         unsafe {
             matmul_entry::launch_unchecked::<MA, GMM, S, R>(
@@ -64,7 +56,7 @@ impl<GMM: GlobalMatmulFamily, S: GlobalPartitionMatmul> BatchMatmulFamily
                 input,
                 output,
                 cube_count_input,
-                config,
+                blueprint,
                 [*dtypes.lhs_global, *dtypes.rhs_global, *dtypes.acc_global],
                 [*dtypes.lhs_stage, *dtypes.rhs_stage, *dtypes.acc_stage],
                 [

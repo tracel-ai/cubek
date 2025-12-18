@@ -8,7 +8,7 @@ use crate::components::tile::{
     },
 };
 use crate::components::{
-    resource::ComputeResources,
+    resource::CubeDimResource,
     tile::io::{Strided, TileKind},
 };
 use crate::definition::{
@@ -42,8 +42,8 @@ where
         true
     }
 
-    fn computation_resources() -> Result<ComputeResources, InvalidConfigError> {
-        Ok(ComputeResources::Planes(1))
+    fn computation_resources() -> Result<CubeDimResource, InvalidConfigError> {
+        Ok(CubeDimResource::Planes(1))
     }
 
     fn expand_config<R: Runtime>(

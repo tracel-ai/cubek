@@ -40,8 +40,7 @@ pub trait BatchAttentionFamily: Send + Sync + 'static {
     /// Constructs the configuration based on the algorithm's blueprint.
     ///
     /// This function may return an error if the configuration cannot be supported.
-    fn expand_blueprint(blueprint: AttentionBlueprint)
-    -> Result<Self::Config, AttentionSetupError>;
+    fn expand_config(blueprint: AttentionBlueprint) -> Result<Self::Config, AttentionSetupError>;
 }
 
 #[cube]

@@ -7,7 +7,6 @@ use crate::{
         MatmulGlobalElems, MatmulKind, MatmulLineSizes, MatmulProblem, MatrixLayout, SmAllocation,
         SwizzleBlueprint, TilingBlueprint, TilingScheme,
     },
-    routines::LaunchInfo,
 };
 use cubecl::{Runtime, client::ComputeClient, ir::StorageType};
 
@@ -60,7 +59,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
     line_sizes: &MatmulLineSizes,
     options: UnitTilingBlueprintOptions,
     global_elems: &MatmulGlobalElems,
-) -> LaunchInfo<TilingBlueprint> {
+) -> (TilingBlueprint, MatmulElems) {
     let kind: MatmulKind = problem.into();
     let num_sms = client.properties().hardware.num_streaming_multiprocessors;
     let min_tile_size = u8::max(line_sizes.lhs, line_sizes.rhs);
@@ -151,7 +150,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
         ),
     };
 
-    LaunchInfo { blueprint, dtypes }
+    (blueprint, dtypes)
 }
 
 /// (M, K) @ (K, N) → (M, N), with M, K, N > 1
