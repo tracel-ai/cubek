@@ -29,7 +29,7 @@ pub(crate) fn random<F: RandomFamily, R: Runtime>(
     let seeds = get_seeds();
     let args = prng.args();
 
-    let cube_dim = CubeDim::default();
+    let cube_dim = CubeDim::new(client, output.size().div_ceil(N_VALUES_PER_THREAD));
     let cube_count = prng_cube_count(output.size(), cube_dim, N_VALUES_PER_THREAD);
 
     let output_line_size = 1;
