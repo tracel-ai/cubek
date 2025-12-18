@@ -98,6 +98,12 @@ where
         device_settings: &DeviceSettings<R>,
         strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+
+        if TMM::can_cast_stage_element() {
+            dtypes.adjust_stage_dtypes();
+        }
+
         match strategy {
             BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
                 blueprint: blueprint.clone(),
@@ -107,7 +113,7 @@ where
                 &device_settings.client,
                 problem,
                 device_settings.plane_dim,
-                &problem.global_dtypes,
+                dtypes,
                 &device_settings.line_sizes,
                 PlaneTilingBlueprintOptions {
                     specialized: strategy.specialized,
@@ -119,10 +125,6 @@ where
                 },
             ),
         }
-    }
-
-    fn can_cast_stage_element() -> bool {
-        TMM::can_cast_stage_element()
     }
 }
 
@@ -153,6 +155,12 @@ where
         device_settings: &DeviceSettings<R>,
         strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+
+        if TMM::can_cast_stage_element() {
+            dtypes.adjust_stage_dtypes();
+        }
+
         match strategy {
             BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
                 blueprint: blueprint.clone(),
@@ -162,7 +170,7 @@ where
                 &device_settings.client,
                 problem,
                 device_settings.plane_dim,
-                &problem.global_dtypes,
+                dtypes,
                 &device_settings.line_sizes,
                 PlaneTilingBlueprintOptions {
                     specialized: strategy.specialized,
@@ -174,10 +182,6 @@ where
                 },
             ),
         }
-    }
-
-    fn can_cast_stage_element() -> bool {
-        TMM::can_cast_stage_element()
     }
 }
 
@@ -210,6 +214,12 @@ where
         device_settings: &DeviceSettings<R>,
         strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+
+        if TMM::can_cast_stage_element() {
+            dtypes.adjust_stage_dtypes();
+        }
+
         match strategy {
             BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
                 blueprint: blueprint.clone(),
@@ -219,7 +229,7 @@ where
                 &device_settings.client,
                 problem,
                 device_settings.plane_dim,
-                &problem.global_dtypes,
+                dtypes,
                 &device_settings.line_sizes,
                 PlaneTilingBlueprintOptions {
                     specialized: strategy.specialized,
@@ -231,10 +241,6 @@ where
                 },
             ),
         }
-    }
-
-    fn can_cast_stage_element() -> bool {
-        TMM::can_cast_stage_element()
     }
 }
 
@@ -266,6 +272,12 @@ where
         device_settings: &DeviceSettings<R>,
         strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+
+        if TMM::can_cast_stage_element() {
+            dtypes.adjust_stage_dtypes();
+        }
+
         match strategy {
             BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
                 blueprint: blueprint.clone(),
@@ -275,7 +287,7 @@ where
                 &device_settings.client,
                 problem,
                 device_settings.plane_dim,
-                &problem.global_dtypes,
+                dtypes,
                 &device_settings.line_sizes,
                 PlaneTilingBlueprintOptions {
                     specialized: strategy.specialized,
@@ -287,10 +299,6 @@ where
                 },
             ),
         }
-    }
-
-    fn can_cast_stage_element() -> bool {
-        TMM::can_cast_stage_element()
     }
 }
 
@@ -321,6 +329,12 @@ where
         device_settings: &DeviceSettings<R>,
         strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+
+        if TMM::can_cast_stage_element() {
+            dtypes.adjust_stage_dtypes();
+        }
+
         match strategy {
             BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
                 blueprint: blueprint.clone(),
@@ -330,7 +344,7 @@ where
                 &device_settings.client,
                 problem,
                 device_settings.plane_dim,
-                &problem.global_dtypes,
+                dtypes,
                 &device_settings.line_sizes,
                 PlaneTilingBlueprintOptions {
                     specialized: strategy.specialized,
@@ -342,10 +356,6 @@ where
                 },
             ),
         }
-    }
-
-    fn can_cast_stage_element() -> bool {
-        TMM::can_cast_stage_element()
     }
 }
 
@@ -376,6 +386,12 @@ where
         device_settings: &DeviceSettings<R>,
         strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+
+        if TMM::can_cast_stage_element() {
+            dtypes.adjust_stage_dtypes();
+        }
+
         match strategy {
             BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
                 blueprint: blueprint.clone(),
@@ -385,7 +401,7 @@ where
                 &device_settings.client,
                 problem,
                 device_settings.plane_dim,
-                &problem.global_dtypes,
+                dtypes,
                 &device_settings.line_sizes,
                 PlaneTilingBlueprintOptions {
                     specialized: strategy.specialized,
@@ -397,9 +413,5 @@ where
                 },
             ),
         }
-    }
-
-    fn can_cast_stage_element() -> bool {
-        TMM::can_cast_stage_element()
     }
 }

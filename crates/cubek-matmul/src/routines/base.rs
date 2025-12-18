@@ -59,12 +59,26 @@ pub trait Routine: Sized {
         strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<Self::Blueprint>, MatmulSetupError>;
 
-    fn select_plane_dim<R: Runtime>(client: &ComputeClient<R>) -> u32 {
-        client.properties().hardware.plane_size_max
-    }
+    fn device_settings<R: Runtime>(
+        client: &ComputeClient<R>,
+        line_sizes: MatmulLineSizes,
+    ) -> DeviceSettings<R> {
+        // Sometimes the GPU doesn't support plane instructions and doesn't report the
+        // plane size, but we can still execute algorithms that don't use plane instructions.
+        //
+        // In this case, we set a plane size for the selector to work, defaulting to 32 as it
+        // is a common plane size.
+        let plane_dim = match client.properties().hardware.plane_size_max {
+            0 => 32,
+            plane_dim => plane_dim,
+        };
 
-    // Ideally put this elsewhere
-    fn can_cast_stage_element() -> bool;
+        DeviceSettings {
+            client: client.clone(),
+            plane_dim,
+            line_sizes,
+        }
+    }
 }
 
 pub struct LaunchInfo<B: Debug + Clone> {

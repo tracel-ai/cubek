@@ -5,9 +5,9 @@ use std::marker::PhantomData;
 
 use crate::components::batch::BatchMatmulFamily;
 use crate::definition::{
-    CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulElems,
-    MatmulGlobalElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, MultiRowStrategy,
-    SmAllocation, TilingBlueprint, TilingScheme, adjust_dtypes,
+    CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulElems, MatmulLineSizes,
+    MatmulProblem, MatmulSetupError, MultiRowStrategy, SmAllocation, TilingBlueprint, TilingScheme,
+    adjust_dtypes,
 };
 use crate::routines::{BlueprintStrategy, DeviceSettings, LaunchInfo};
 use crate::{
@@ -87,11 +87,17 @@ where
         device_settings: &DeviceSettings<R>,
         strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+
+        if TMM::can_cast_stage_element() {
+            dtypes.adjust_stage_dtypes();
+        }
+
         let client = &device_settings.client;
         match strategy {
             BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
                 blueprint: blueprint.clone(),
-                dtypes: MatmulElems::from_globals(&problem.global_dtypes),
+                dtypes,
             }),
             BlueprintStrategy::Inferred(strategy) => {
                 if strategy.multi_rows {
@@ -99,7 +105,7 @@ where
                         client,
                         problem,
                         device_settings.plane_dim,
-                        &problem.global_dtypes,
+                        dtypes,
                         &device_settings.line_sizes,
                     )
                 } else {
@@ -107,7 +113,7 @@ where
                         client,
                         problem,
                         device_settings.plane_dim,
-                        &problem.global_dtypes,
+                        dtypes,
                         &device_settings.line_sizes,
                         PlaneTilingBlueprintOptions {
                             partition_buffering: Some(PartitionBuffering::Single),
@@ -120,20 +126,15 @@ where
             }
         }
     }
-
-    fn can_cast_stage_element() -> bool {
-        TMM::can_cast_stage_element()
-    }
 }
 
 fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
     client: &ComputeClient<R>,
     problem: &MatmulProblem,
     plane_dim: u32,
-    global_dtypes: &MatmulGlobalElems,
+    mut dtypes: MatmulElems,
     line_sizes: &MatmulLineSizes,
 ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
-    let mut dtypes = MatmulElems::from_globals(global_dtypes);
     adjust_dtypes(client, &mut dtypes, TMM::requires_accelerator());
 
     let supported = |m: u32, n: u32, k: u32| {
@@ -210,7 +211,7 @@ fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
             client,
             problem,
             plane_dim,
-            global_dtypes,
+            dtypes,
             line_sizes,
             PlaneTilingBlueprintOptions {
                 partition_buffering: Some(PartitionBuffering::Single),

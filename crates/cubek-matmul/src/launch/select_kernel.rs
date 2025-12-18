@@ -8,7 +8,6 @@ use crate::launch::{
     ConcreteInputsFactory, ConcreteOutputFactory, InputArg, InputRuntimeArg, MatmulArgs, OutputArg,
     OutputRuntimeArg,
 };
-use crate::routines::DeviceSettings;
 use crate::routines::{BlueprintStrategy, Routine};
 use cubecl::prelude::TensorHandleRef;
 use cubecl::{Runtime, client::ComputeClient};
@@ -24,7 +23,6 @@ pub fn launch_kernel_concrete<MA: MatmulArgs, R: Runtime, A: Routine>(
     out: &TensorHandleRef<'_, R>,
     problem: MatmulProblem,
     line_sizes: MatmulLineSizes,
-    plane_dim: u32,
     blueprint_strategy: &BlueprintStrategy<A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError>
@@ -41,11 +39,7 @@ where
         view_line_sizes.rhs *= scheme.num_quants() as u8;
     }
 
-    let device_settings = DeviceSettings {
-        client: client.clone(),
-        plane_dim,
-        line_sizes: view_line_sizes,
-    };
+    let device_settings = A::device_settings(client, view_line_sizes);
     let launch_info = A::prepare(&problem, &device_settings, blueprint_strategy)?;
 
     // TODO should be inside kernel
@@ -88,15 +82,10 @@ pub fn launch_kernel_virtual<'a, MA: MatmulArgs, R: Runtime, A: Routine>(
     output: OutputRuntimeArg<'a, MA, R>,
     problem: MatmulProblem,
     view_line_sizes: MatmulLineSizes,
-    plane_dim: u32,
     blueprint_strategy: &BlueprintStrategy<A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
-    let device_settings = DeviceSettings {
-        client: client.clone(),
-        plane_dim,
-        line_sizes: view_line_sizes,
-    };
+    let device_settings = A::device_settings(client, view_line_sizes);
     let launch_info = A::prepare(&problem, &device_settings, blueprint_strategy)?;
 
     // TODO should be inside kernel
@@ -121,15 +110,6 @@ fn launch_kernel<'a, MA: MatmulArgs, R: Runtime, A: Routine>(
     config: A::Config,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
-    // Prefer output type for stage because it's the same size at best, but often smaller.
-    // Having stage == global also enables things like TMA, and an f16 stage for output enables
-    // using `stmatrix` on the registers after casting.
-    if A::can_cast_stage_element() {
-        dtypes.lhs_stage.dtype = dtypes.lhs_global.dtype;
-        dtypes.rhs_stage.dtype = dtypes.rhs_global.dtype;
-        dtypes.acc_stage.dtype = dtypes.acc_global.dtype;
-    }
-
     let cube_count_plan = config.cube_count_plan(
         &problem,
         &client.properties().hardware.max_cube_count.clone(),

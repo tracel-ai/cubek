@@ -42,9 +42,4 @@ impl Routine for NaiveRoutine {
             dtypes: MatmulElems::from_globals(&problem.global_dtypes),
         })
     }
-
-    fn can_cast_stage_element() -> bool {
-        // Irrelevant
-        false
-    }
 }

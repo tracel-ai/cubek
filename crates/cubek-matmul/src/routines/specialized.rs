@@ -15,9 +15,9 @@ use crate::components::{
 use crate::components::{global::PlaneWriterFamily, stage::StageFamily};
 use crate::components::{stage::FilledStageFamily, tile::TileMatmulFamily};
 use crate::definition::{
-    CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulGlobalElems,
-    MatmulLineSizes, MatmulProblem, MatmulSetupError, MatrixLayout, SmAllocation, SwizzleBlueprint,
-    TilingBlueprint, adjust_dtypes,
+    CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulLineSizes,
+    MatmulProblem, MatmulSetupError, MatrixLayout, SmAllocation, SwizzleBlueprint, TilingBlueprint,
+    adjust_dtypes,
 };
 use crate::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
 use crate::routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, base};
@@ -83,16 +83,22 @@ where
         device_settings: &DeviceSettings<R>,
         strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+
+        if TMM::can_cast_stage_element() {
+            dtypes.adjust_stage_dtypes();
+        }
+
         match strategy {
             BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
                 blueprint: blueprint.clone(),
-                dtypes: MatmulElems::from_globals(&problem.global_dtypes),
+                dtypes,
             }),
             BlueprintStrategy::Inferred(_) => infer_blueprint_plane::<TMM, R>(
                 &device_settings.client,
                 problem,
                 device_settings.plane_dim,
-                &problem.global_dtypes,
+                dtypes,
                 &device_settings.line_sizes,
                 PlaneTilingBlueprintOptions {
                     specialized: true,
@@ -105,10 +111,6 @@ where
             ),
         }
     }
-
-    fn can_cast_stage_element() -> bool {
-        TMM::can_cast_stage_element()
-    }
 }
 
 #[allow(unused, reason = "needs more tuning")]
@@ -117,10 +119,9 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
     problem: &MatmulProblem,
     plane_dim: u32,
     swizzle: bool,
-    global_dtypes: &mut MatmulGlobalElems,
+    mut dtypes: MatmulElems,
     line_sizes: &MatmulLineSizes,
 ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
-    let mut dtypes = MatmulElems::from_globals(global_dtypes);
     adjust_dtypes(client, &mut dtypes, TMM::requires_accelerator());
 
     let supported = |m: u32, n: u32, k: u32| {
@@ -164,7 +165,7 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
             client,
             problem,
             plane_dim,
-            global_dtypes,
+            dtypes,
             line_sizes,
             PlaneTilingBlueprintOptions {
                 partition_buffering: Some(PartitionBuffering::Single),

@@ -12,7 +12,7 @@ use crate::{
         stage::{FilledStageFamily, RowMajorTilingOrder, StridedStageFamily, UnitMatmulFamily},
         tile::{TileMatmulFamily, io::Filled, register::RegisterMatmul},
     },
-    definition::{MatmulElems, MatmulProblem, MatmulSetupError, TilingBlueprint},
+    definition::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, TilingBlueprint},
     routines::{
         BlueprintStrategy, DeviceSettings, LaunchInfo, Routine,
         selector::{TileSizeSelection, UnitTilingBlueprintOptions, infer_blueprint_unit},
@@ -52,6 +52,12 @@ impl Routine for DoubleUnitAlgorithm {
         device_settings: &DeviceSettings<R>,
         strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+
+        if RegisterMatmul::<Filled>::can_cast_stage_element() {
+            dtypes.adjust_stage_dtypes();
+        }
+
         match strategy {
             BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
                 blueprint: blueprint.clone(),
@@ -72,11 +78,19 @@ impl Routine for DoubleUnitAlgorithm {
         }
     }
 
-    fn select_plane_dim<R: Runtime>(client: &ComputeClient<R>) -> u32 {
-        client.properties().hardware.plane_size_min
-    }
+    fn device_settings<R: Runtime>(
+        client: &ComputeClient<R>,
+        line_sizes: MatmulLineSizes,
+    ) -> DeviceSettings<R> {
+        let plane_dim = match client.properties().hardware.plane_size_min {
+            0 => 32,
+            plane_dim => plane_dim,
+        };
 
-    fn can_cast_stage_element() -> bool {
-        RegisterMatmul::<Filled>::can_cast_stage_element()
+        DeviceSettings {
+            client: client.clone(),
+            plane_dim,
+            line_sizes,
+        }
     }
 }

@@ -329,4 +329,13 @@ impl MatmulElems {
             out: self.acc_global,
         }
     }
+
+    /// Prefer output type for stage because it's the same size at best, but often smaller.
+    /// Having stage == global also enables things like TMA, and an f16 stage for output enables
+    /// using `stmatrix` on the registers after casting.
+    pub fn adjust_stage_dtypes(&mut self) {
+        self.lhs_stage.dtype = self.lhs_global.dtype;
+        self.rhs_stage.dtype = self.rhs_global.dtype;
+        self.acc_stage.dtype = self.acc_global.dtype;
+    }
 }

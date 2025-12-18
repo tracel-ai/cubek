@@ -71,6 +71,12 @@ impl Routine for SimpleVecMatAlgorithm {
         device_settings: &DeviceSettings<R>,
         strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+
+        if PlaneVecMatInnerProduct::<Filled>::can_cast_stage_element() {
+            dtypes.adjust_stage_dtypes();
+        }
+
         let blueprint = match strategy {
             BlueprintStrategy::Forced(blueprint) => blueprint.clone(),
             BlueprintStrategy::Inferred(_) => {
@@ -86,14 +92,7 @@ impl Routine for SimpleVecMatAlgorithm {
             }
         };
 
-        Ok(LaunchInfo {
-            blueprint,
-            dtypes: MatmulElems::from_globals(&problem.global_dtypes),
-        })
-    }
-
-    fn can_cast_stage_element() -> bool {
-        PlaneVecMatInnerProduct::<Filled>::can_cast_stage_element()
+        Ok(LaunchInfo { blueprint, dtypes })
     }
 }
 
@@ -124,6 +123,12 @@ impl Routine for DoubleVecMatAlgorithm {
         device_settings: &DeviceSettings<R>,
         strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+
+        if PlaneVecMatInnerProduct::<Filled>::can_cast_stage_element() {
+            dtypes.adjust_stage_dtypes();
+        }
+
         let blueprint = match strategy {
             BlueprintStrategy::Forced(blueprint) => blueprint.clone(),
             BlueprintStrategy::Inferred(_) => {
@@ -139,14 +144,7 @@ impl Routine for DoubleVecMatAlgorithm {
             }
         };
 
-        Ok(LaunchInfo {
-            blueprint,
-            dtypes: MatmulElems::from_globals(&problem.global_dtypes),
-        })
-    }
-
-    fn can_cast_stage_element() -> bool {
-        PlaneVecMatInnerProduct::<Filled>::can_cast_stage_element()
+        Ok(LaunchInfo { blueprint, dtypes })
     }
 }
 
