@@ -56,8 +56,6 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
             }
         }
         (StageIdent::Rhs, ConvolutionOperation::Forward)
-        | (StageIdent::Rhs, ConvolutionOperation::ForwardTransposed)
-        | (StageIdent::Rhs, ConvolutionOperation::BackwardData)
         | (StageIdent::Out, ConvolutionOperation::BackwardWeight) => {
             if config.gmem_config.check_row_bounds {
                 let in_c = runtime_args.padded_channels.modulo(k_offset + pos.0);
@@ -68,6 +66,20 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
             }
             if config.gmem_config.check_col_bounds {
                 slice_len_global *= u32::cast_from(pos.1 < view.shape().1);
+            }
+        }
+        (StageIdent::Rhs, ConvolutionOperation::ForwardTransposed)
+        | (StageIdent::Rhs, ConvolutionOperation::BackwardData) => {
+            if config.gmem_config.check_row_bounds {
+                let out_c = runtime_args.padded_channels.modulo(k_offset + pos.0);
+                slice_len_global *=
+                    u32::cast_from(out_c < runtime_args.channels && pos.0 < view.shape().0);
+            }
+            if config.gmem_config.check_col_bounds {
+                let pos = pos.1;
+                let shape = view.shape().1;
+                slice_len_global =
+                    Min::min(SaturatingSub::saturating_sub(shape, pos), slice_len_global);
             }
         }
         _ => {

@@ -17,7 +17,7 @@ use cubecl::{
 };
 use cubek_matmul::{
     components::tile::{cmma::CmmaMatmul, io::Strided, mma::MmaMatmul},
-    definition::{AvailableLineSizes, MatmulElems, MatrixLayout},
+    definition::{AvailableLineSizes, MatmulElems, MatmulSetupError, MatrixLayout},
     launch::{MatmulInputHandle, MatmulInputHandleRef},
 };
 use derive_new::new;
@@ -89,7 +89,9 @@ pub fn launch_ref<R: Runtime, const N_SPATIAL: usize>(
             ReadingStrategy::AsyncCyclic => backprop.launch::<SimpleAsyncCyclicConv<Accelerated>>(),
             ReadingStrategy::AsyncStrided =>
                 backprop.launch::<SimpleAsyncStridedConv<Accelerated>>(),
-            ReadingStrategy::Tma => backprop.launch::<SimpleAsyncTmaConv<Accelerated>>(),
+            ReadingStrategy::Tma => Err(ConvSetupError::Matmul(MatmulSetupError::InvalidConfig(
+                Box::new("Data backprop doesn't yet work with current TMA tiling strategy")
+            ))),
         }),
     }
 }
@@ -230,8 +232,9 @@ where
         weights.data().shape,
         MatrixLayout::RowMajor,
     )
-    .filter_out_with_tensor(in_grad.strides, in_grad.shape)
-    .pick_max()?;
+    .filter_out_with_tensor(in_grad.strides, in_grad.shape);
+
+    let line_sizes = Alg::filter_line_sizes(line_sizes).pick_max()?;
 
     let selection = Alg::selection(client, &problem, plane_dim, &line_sizes, &mut dtypes)?;
     let problem = Alg::Args::adjust_problem(client, problem, &selection, &dtypes);

@@ -220,12 +220,12 @@ impl MatrixLayout {
         let stride_inner = strides[n - 1];
 
         // Row-major: inner dimension is contiguous
-        if stride_inner == 1 && stride_outer == inner {
+        if stride_inner == 1 && stride_outer >= inner {
             return MatrixLayout::RowMajor;
         }
 
         // Col-major: outer dimension is contiguous
-        if stride_outer == 1 && stride_inner == outer {
+        if stride_outer == 1 && stride_inner >= outer {
             return MatrixLayout::ColMajor;
         }
 

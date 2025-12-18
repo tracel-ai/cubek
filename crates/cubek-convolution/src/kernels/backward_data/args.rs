@@ -181,7 +181,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory for TensorIn
 
         let runtime_args = RuntimeArgsLaunch::new(
             ScalarArg::new(problem.k as u32),
-            ScalarArg::new(problem.channels as u32),
+            ScalarArg::new(problem.out_channels as u32),
             FastDivmodArgs::new(client, padded_channels),
             config.operation(),
         );
@@ -229,10 +229,11 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory
         let tiling_scheme = selection.tiling_scheme;
         let stage_m = tiling_scheme.elements_per_stage_along_m();
         let stage_n = tiling_scheme.elements_per_stage_along_n();
+        let stage_k = tiling_scheme.elements_per_stage_along_k();
         let tile_size_k = tiling_scheme.tile_size.k;
 
         let mut stage_size_rhs = vec![1; problem.dimensionality.num_dims() as usize];
-        stage_size_rhs.insert(0, tile_size_k);
+        stage_size_rhs.insert(0, stage_k);
         stage_size_rhs.push(stage_n);
 
         // f32 gets remapped to tf32 for the tensor map just to ensure CUDA loads them correctly.

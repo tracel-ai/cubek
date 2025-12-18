@@ -1,6 +1,6 @@
 use cubek_matmul::definition::{
-    LoadingPrecomputeStrategy, MatmulElems, MatmulLineSizes, MatmulSetupError, MultiRowStrategy,
-    TilingBlueprint,
+    AvailableLineSizes, LoadingPrecomputeStrategy, MatmulElems, MatmulLineSizes, MatmulSetupError,
+    MultiRowStrategy, TilingBlueprint,
 };
 use cubek_matmul::{
     components::{
@@ -76,6 +76,10 @@ pub trait Algorithm {
         dtype: StorageType,
         operation: ConvolutionOperation,
     ) -> Result<TensorHandle<R>, LaunchError>;
+
+    fn filter_line_sizes(line_sizes: AvailableLineSizes) -> AvailableLineSizes {
+        line_sizes
+    }
 
     fn selection<R: Runtime>(
         client: &ComputeClient<R>,

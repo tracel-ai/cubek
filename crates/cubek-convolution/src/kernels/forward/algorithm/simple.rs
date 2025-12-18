@@ -1,7 +1,6 @@
 use cubecl::server::LaunchError;
 use cubecl::std::{CubeOption, tensor::TensorHandle};
 use cubecl::{Runtime, client::ComputeClient, ir::StorageType, prelude::TensorHandleRef};
-use cubek_matmul::components::stage::PlaneMatmulFamily;
 use cubek_matmul::components::tile::TileMatmulFamily;
 use cubek_matmul::components::{
     global::read::sync_full_cyclic::SyncFullCyclicLoading,
@@ -17,6 +16,7 @@ use cubek_matmul::components::{
 };
 use cubek_matmul::definition::{MatmulElems, MatmulLineSizes, MatmulSetupError, TilingBlueprint};
 use cubek_matmul::launch::{TensorArgs, TensorMapArgs};
+use cubek_matmul::{components::stage::PlaneMatmulFamily, definition::AvailableLineSizes};
 use std::marker::PhantomData;
 
 use crate::{
@@ -145,6 +145,14 @@ impl<
         operation: ConvolutionOperation,
     ) -> Result<TensorHandle<R>, LaunchError> {
         into_tensor_handle_tma(client, handle, dtype, operation)
+    }
+
+    fn filter_line_sizes(line_sizes: AvailableLineSizes) -> AvailableLineSizes {
+        AvailableLineSizes {
+            lhs: vec![1],
+            rhs: vec![1],
+            out: line_sizes.out,
+        }
     }
 
     fn selection<R: Runtime>(
