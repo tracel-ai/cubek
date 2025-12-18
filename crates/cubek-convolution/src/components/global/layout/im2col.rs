@@ -6,7 +6,7 @@ use cubecl::std::{
 use cubek_matmul::components::global::{GlobalConfig, memory::GlobalMemoryConfig};
 
 use crate::components::{
-    ConvGemmConfig, ConvolutionConfig, ConvolutionParams, ConvolutionProblem,
+    ConvGemmConfig, ConvolutionConfig, ConvolutionOperation, ConvolutionParams, ConvolutionProblem,
     global::layout::{NhwcCoords, div_mod_seq},
 };
 
@@ -73,15 +73,22 @@ impl Layout for Im2colLayout {
         for i in 0..spatial_dims {
             let dim = comptime![spatial_dims - i - 1];
             let ksize = comptime![params.kernel_size[dim as usize]];
-            let k_pos = rem % ksize;
+            let k_pos = (rem % ksize) as i32;
             rem /= ksize;
 
             let out_pos = *out_offs.index(dim);
-            let stride = comptime![params.stride[dim as usize]];
-            let dilate = comptime![params.dilation[dim as usize]];
+            let stride = comptime![params.stride[dim as usize] as i32];
+            let dilate = comptime![params.dilation[dim as usize] as i32];
             let pad = comptime![params.padding[dim as usize]];
 
-            let pos = (out_pos * stride + k_pos * dilate) as i32 - pad;
+            let pos = match params.operation {
+                ConvolutionOperation::Forward | ConvolutionOperation::BackwardWeight => {
+                    (out_pos as i32 * stride + k_pos * dilate) - pad
+                }
+                ConvolutionOperation::ForwardTransposed | ConvolutionOperation::BackwardData => {
+                    (out_pos as i32 + pad - k_pos * dilate) / stride
+                }
+            };
             in_pos.push(pos);
         }
 
@@ -118,6 +125,23 @@ impl<'a, R: Runtime> Im2colLayoutLaunch<'a, R> {
         params: ConvolutionParams,
         config: GlobalMemoryConfig,
     ) -> Self {
+        match problem.operation {
+            ConvolutionOperation::Forward => Self::from_args_fprop(client, problem, params, config),
+            ConvolutionOperation::ForwardTransposed | ConvolutionOperation::BackwardData => {
+                Self::from_args_dgrad(client, problem, params, config)
+            }
+            ConvolutionOperation::BackwardWeight => {
+                Self::from_args_wgrad(client, problem, params, config)
+            }
+        }
+    }
+
+    fn from_args_fprop(
+        client: &ComputeClient<R>,
+        problem: &ConvolutionProblem,
+        params: ConvolutionParams,
+        config: GlobalMemoryConfig,
+    ) -> Self {
         let shape_out = problem
             .out_shape
             .iter()
@@ -133,7 +157,28 @@ impl<'a, R: Runtime> Im2colLayoutLaunch<'a, R> {
         Im2colLayoutLaunch::new(shape_out, padded_channels, shape_m, shape_k, params, config)
     }
 
-    pub fn from_args_wgrad(
+    fn from_args_dgrad(
+        client: &ComputeClient<R>,
+        problem: &ConvolutionProblem,
+        params: ConvolutionParams,
+        config: GlobalMemoryConfig,
+    ) -> Self {
+        let shape = problem
+            .in_shape
+            .iter()
+            .map(|s| FastDivmodArgs::new(client, *s as u32))
+            .collect();
+
+        let padded_channels = problem.padded_channels as u32;
+        let padded_channels = FastDivmodArgs::new(client, padded_channels);
+
+        let shape_m = ScalarArg::new(problem.m as u32);
+        let shape_k = ScalarArg::new(problem.k as u32);
+
+        Im2colLayoutLaunch::new(shape, padded_channels, shape_m, shape_k, params, config)
+    }
+
+    fn from_args_wgrad(
         client: &ComputeClient<R>,
         problem: &ConvolutionProblem,
         params: ConvolutionParams,

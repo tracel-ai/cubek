@@ -230,13 +230,20 @@ impl MatrixLayout {
         let stride_outer = strides[n - 2];
         let stride_inner = strides[n - 1];
 
+        // These checks are actually broken for quantized inputs (and are not trivially fixable).
+        // For quantized tensors the quantized axis will probably need to be stored, since it can be
+        // hard to tell on which axis it is packed.
+        // The packed axis is always the contiguous one. One test case has a logical shape of [4, 4]
+        // for example, with strides of [1, 1]. It is not possible to determine the packing dimension
+        // accurately for this problem.
+
         // Row-major: inner dimension is contiguous
-        if stride_inner == 1 && stride_outer == inner {
+        if stride_inner == 1 && stride_outer >= inner {
             return MatrixLayout::RowMajor;
         }
 
         // Col-major: outer dimension is contiguous
-        if stride_outer == 1 && stride_inner == outer {
+        if stride_outer == 1 && stride_inner >= outer {
             return MatrixLayout::ColMajor;
         }
 

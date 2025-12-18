@@ -86,14 +86,16 @@ where
         // m and n don't have padding so checks work as normal.
         let check_m_bounds = !problem.m.is_multiple_of(stage_size_m);
         let check_n_bounds = match problem.operation {
-            ConvolutionOperation::Forward | ConvolutionOperation::BackwardData => {
-                !problem.n.is_multiple_of(stage_size_n)
-            }
+            ConvolutionOperation::Forward
+            | ConvolutionOperation::ForwardTransposed
+            | ConvolutionOperation::BackwardData => !problem.n.is_multiple_of(stage_size_n),
             ConvolutionOperation::BackwardWeight => true,
         };
         let check_k_bounds = match problem.operation {
             ConvolutionOperation::BackwardWeight => !problem.k.is_multiple_of(stage_size_k),
-            ConvolutionOperation::Forward | ConvolutionOperation::BackwardData => true,
+            ConvolutionOperation::Forward
+            | ConvolutionOperation::ForwardTransposed
+            | ConvolutionOperation::BackwardData => true,
         };
 
         let plane_role_config = stage_config.plane_role_config();

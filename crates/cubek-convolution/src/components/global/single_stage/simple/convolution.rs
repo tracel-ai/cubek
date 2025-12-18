@@ -72,7 +72,7 @@ where
     ) {
         let k_step = config.stage_config.elements_in_stage_k();
         let range = k_range.1 - k_range.0;
-        let num_loops = range.div_ceil(k_step);
+        let k_iterations = range.div_ceil(k_step);
 
         acc_reader.load_stage::<SharedGlobalMatmulConfig<SMM::Config>>(config.matmul);
         let (mut lhs_tile, mut rhs_tile) = SMM::init_tile_inputs(config.stage_config());
@@ -84,7 +84,7 @@ where
 
         let mut barrier = LL::SyncStrategy::create_barrier();
 
-        for _ in 0..num_loops {
+        for _ in 0..k_iterations {
             lhs_reader.load_stage(&mut barrier, config.lhs_reader_config());
             rhs_reader.load_stage(&mut barrier, config.rhs_reader_config());
 

@@ -55,6 +55,7 @@ cubek-matmul = { path = "../cubek-matmul", default-features = false, version = "
 derive-new = { workspace = true }
 
 bytemuck = { workspace = true }
+enumset = { workspace = true }
 half = { workspace = true, features = ["bytemuck"] }
 serde = { workspace = true }
 

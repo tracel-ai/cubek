@@ -6,7 +6,7 @@ use cubecl::std::{
 use cubek_matmul::components::global::{GlobalConfig, memory::GlobalMemoryConfig};
 
 use crate::components::{
-    ConvGemmConfig, ConvolutionConfig, ConvolutionParams, ConvolutionProblem,
+    ConvGemmConfig, ConvolutionConfig, ConvolutionOperation, ConvolutionParams, ConvolutionProblem,
     global::layout::NhwcCoords,
 };
 
@@ -57,7 +57,7 @@ impl Layout for WeightLayout {
         let params = comptime![self.params];
         let (_, k, n) = coords;
 
-        let (mut rem, in_c) = self.padded_channels.div_mod(k);
+        let (mut rem, k_channel) = self.padded_channels.div_mod(k);
 
         let spatial_dims = comptime![params.dimensionality.num_dims()];
         let mut kernel_pos = Sequence::<i32>::new();
@@ -74,10 +74,17 @@ impl Layout for WeightLayout {
 
         let kernel_pos = kernel_pos.rev();
 
+        let (batch, channel) = match params.operation {
+            ConvolutionOperation::Forward | ConvolutionOperation::BackwardWeight => (n, k_channel),
+            ConvolutionOperation::ForwardTransposed | ConvolutionOperation::BackwardData => {
+                (k_channel, n)
+            }
+        };
+
         NhwcCoords {
-            batch: n,
+            batch,
             spatial: kernel_pos,
-            channel: in_c,
+            channel,
         }
     }
 
@@ -103,6 +110,19 @@ impl<'a, R: Runtime> WeightLayoutLaunch<'a, R> {
         problem: &ConvolutionProblem,
         config: GlobalMemoryConfig,
     ) -> Self {
+        match problem.operation {
+            ConvolutionOperation::Forward
+            | ConvolutionOperation::ForwardTransposed
+            | ConvolutionOperation::BackwardData => Self::from_args_rhs(client, problem, config),
+            ConvolutionOperation::BackwardWeight => Self::from_args_out(client, problem, config),
+        }
+    }
+
+    fn from_args_rhs(
+        client: &ComputeClient<R>,
+        problem: &ConvolutionProblem,
+        config: GlobalMemoryConfig,
+    ) -> Self {
         let padded_channels = problem.padded_channels as u32;
         let padded_channels = FastDivmodArgs::new(client, padded_channels);
         let shape_k = ScalarArg::new(problem.k as u32);
@@ -113,7 +133,7 @@ impl<'a, R: Runtime> WeightLayoutLaunch<'a, R> {
         WeightLayoutLaunch::new(padded_channels, shape_k, shape_n, params, config)
     }
 
-    pub fn from_args_wgrad(
+    fn from_args_out(
         client: &ComputeClient<R>,
         problem: &ConvolutionProblem,
         config: GlobalMemoryConfig,

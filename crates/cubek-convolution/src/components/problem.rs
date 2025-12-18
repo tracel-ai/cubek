@@ -5,6 +5,7 @@ pub enum ConvolutionOperation {
     Forward,
     BackwardData,
     BackwardWeight,
+    ForwardTransposed,
 }
 
 #[derive(Clone, Debug)]
@@ -27,7 +28,8 @@ pub struct ConvolutionProblem {
 
     pub batches: usize,
     pub channels: usize,
-    pub shape: Vec<usize>,
+    pub out_channels: usize,
+    pub in_shape: Vec<usize>,
     pub out_shape: Vec<usize>,
 
     /// Channels after applying loader-specific padding
@@ -85,8 +87,12 @@ impl ConvolutionProblem {
         }
     }
 
-    pub fn check_channel(&self) -> bool {
+    pub fn should_check_channel(&self) -> bool {
         self.channels != self.padded_channels
+    }
+
+    pub fn should_check_spatial_bounds(&self) -> bool {
+        self.padding.iter().any(|&pad| pad != 0)
     }
 }
 

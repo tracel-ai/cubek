@@ -163,19 +163,19 @@ where
         O: Numeric + CubeElement + std::fmt::Display,
     {
         let client = TestRuntime::client(&Default::default());
-        if let RoutineStrategy::Cube(_blueprint) = &self.strategy.routine {
-            if client.properties().hardware.num_cpu_cores.is_some() {
-                let test_full = std::env::var("CUBEK_TEST_FULL").unwrap_or("0".to_string());
-                println!("{test_full:?}");
+        if let RoutineStrategy::Cube(_blueprint) = &self.strategy.routine
+            && client.properties().hardware.num_cpu_cores.is_some()
+        {
+            let test_full = std::env::var("CUBEK_TEST_FULL").unwrap_or("0".to_string());
+            println!("{test_full:?}");
 
-                match test_full.as_str() {
-                    "1" | "true" => {}
-                    _ => {
-                        println!(
-                            "Skipping cube tests on CPU, because they are long to run and can stall the CI"
-                        );
-                        return;
-                    }
+            match test_full.as_str() {
+                "1" | "true" => {}
+                _ => {
+                    println!(
+                        "Skipping cube tests on CPU, because they are long to run and can stall the CI"
+                    );
+                    return;
                 }
             }
         };
