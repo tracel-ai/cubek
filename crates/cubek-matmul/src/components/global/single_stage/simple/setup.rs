@@ -1,6 +1,7 @@
+use crate::components::CubeDimResource;
 use crate::definition::{
-    MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError, MatrixLayout,
-    StageIdent,
+    InvalidConfigError, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem,
+    MatmulSetupError, MatrixLayout, StageIdent,
 };
 use crate::{
     components::{
@@ -156,6 +157,10 @@ where
         };
 
         validate::<LL, RL, SMM::Config, R>(config, client, problem, dtypes)
+    }
+
+    fn cubedim_resource() -> Result<CubeDimResource, InvalidConfigError> {
+        todo!()
     }
 }
 

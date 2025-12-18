@@ -36,16 +36,12 @@ where
         true
     }
 
-    fn computation_resources() -> Result<CubeDimResource, InvalidConfigError> {
+    fn cubedim_resource() -> Result<CubeDimResource, InvalidConfigError> {
         Ok(CubeDimResource::Planes(1))
     }
 
-    fn expand_config<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
-        selection: &TilingBlueprint,
-        matmul_line_sizes: &MatmulLineSizes,
-        dtypes: &MatmulElems,
+    fn expand_config(
+        blueprint: TilingBlueprint,
     ) -> Result<PlaneVecMatInnerProductConfig, MatmulSetupError> {
         let tile_config = PlaneVecMatInnerProductConfig::new(
             SharedTileConfig::new(

@@ -1,3 +1,4 @@
+use crate::components::CubeDimResource;
 use crate::components::global::memory::{GlobalMemoryConfig, ViewDirection};
 use crate::components::global::multi_stage::EventLoadingMode;
 use crate::components::global::read::LoadingValidation;
@@ -13,7 +14,7 @@ use crate::components::stage::StageConfig;
 use crate::components::stage::StridedStageFamily;
 use crate::components::{global::GlobalMatmulFamily, stage, stage::FilledStageFamily};
 use crate::components::{global::MaxGlobalReaderPlanes, stage::NoTilingLayout};
-use crate::definition::TilingBlueprint;
+use crate::definition::{InvalidConfigError, TilingBlueprint};
 use crate::definition::{
     MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError, MatrixLayout,
     StageIdent,
@@ -55,13 +56,7 @@ where
     >;
     type Config = SharedGlobalMatmulConfig<SMM::Config>;
 
-    fn expand_config<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
-        selection: &TilingBlueprint,
-        line_sizes: &MatmulLineSizes,
-        dtypes: &MatmulElems,
-    ) -> Result<Self::Config, MatmulSetupError> {
+    fn expand_config(blueprint: TilingBlueprint) -> Result<Self::Config, MatmulSetupError> {
         let max_global_readers = selection
             .load_specialization_config
             .has_specialization()
@@ -169,6 +164,10 @@ where
         };
 
         validate::<LL, RL, SMM::Config, R>(config, client, problem, dtypes)
+    }
+
+    fn cubedim_resource() -> Result<CubeDimResource, InvalidConfigError> {
+        todo!()
     }
 }
 

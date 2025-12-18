@@ -2,6 +2,7 @@ use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, server::LaunchE
 
 use crate::{
     components::{
+        CubeDimResource,
         batch::{
             BatchMatmulFamily,
             naive::{NaiveMatmul, NaiveMatmulConfig, matmul_entry},
@@ -9,8 +10,8 @@ use crate::{
         global::memory::GlobalLayoutConfig,
     },
     definition::{
-        Blueprint, CubeCountInputArgs, MatmulElems, MatmulLineSizes, MatmulPrecision,
-        MatmulProblem, MatmulSetupError,
+        Blueprint, CubeCountInputArgs, InvalidConfigError, MatmulElems, MatmulLineSizes,
+        MatmulPrecision, MatmulProblem, MatmulSetupError,
     },
     launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
 };
@@ -77,5 +78,9 @@ impl BatchMatmulFamily for NaiveBatchMatmulFamily {
                 ],
             )
         }
+    }
+
+    fn cubedim_resource() -> Result<CubeDimResource, InvalidConfigError> {
+        Ok(CubeDimResource::Planes(8))
     }
 }

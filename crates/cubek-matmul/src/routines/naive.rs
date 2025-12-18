@@ -1,7 +1,5 @@
 use std::fmt::Display;
 
-use cubecl::CubeDim;
-
 use crate::{
     components::batch::{
         BatchMatmulFamily,
@@ -38,21 +36,21 @@ impl Routine for NaiveRoutine {
 
     fn prepare<R: cubecl::Runtime>(
         problem: &MatmulProblem,
-        _device_settings: &DeviceSettings<R>,
+        device_settings: &DeviceSettings<R>,
         _strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<Self::Blueprint>, MatmulSetupError> {
-        let (cube_dim_x, cube_dim_y) = (32, 8);
-
+        let cube_dim =
+            Self::BatchMatmul::cubedim_resource()?.to_cube_dim(device_settings.plane_dim)?;
         Ok(LaunchInfo {
             blueprint: NaiveBlueprint {},
             dtypes: MatmulElems::from_globals(&problem.global_dtypes),
-            cube_dim: CubeDim::new_2d(cube_dim_x as u32, cube_dim_y as u32),
+            cube_dim,
             cube_count_plan: simple_cube_count(
                 &problem.lhs_shape,
                 &problem.rhs_shape,
                 &problem.out_shape,
-                cube_dim_x,
-                cube_dim_y,
+                cube_dim.x,
+                cube_dim.y,
             )?,
         })
     }
@@ -63,8 +61,8 @@ fn simple_cube_count(
     lhs_shape: &[usize],
     rhs_shape: &[usize],
     output_shape: &[usize],
-    cube_dim_x: usize,
-    cube_dim_y: usize,
+    cube_dim_x: u32,
+    cube_dim_y: u32,
 ) -> Result<CubeCountPlan, MatmulSetupError> {
     let ndims = lhs_shape.len();
     let m = lhs_shape[ndims - 2];

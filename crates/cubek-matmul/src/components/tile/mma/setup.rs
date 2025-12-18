@@ -42,17 +42,11 @@ where
         true
     }
 
-    fn computation_resources() -> Result<CubeDimResource, InvalidConfigError> {
+    fn cubedim_resource() -> Result<CubeDimResource, InvalidConfigError> {
         Ok(CubeDimResource::Planes(1))
     }
 
-    fn expand_config<R: Runtime>(
-        client: &ComputeClient<R>,
-        _problem: &MatmulProblem,
-        selection: &TilingBlueprint,
-        _matmul_line_sizes: &MatmulLineSizes,
-        dtypes: &MatmulElems,
-    ) -> Result<Self::Config, MatmulSetupError> {
+    fn expand_config(blueprint: TilingBlueprint) -> Result<Self::Config, MatmulSetupError> {
         let tile_config = MmaMatmulConfig::from_shared_tile_config(
             SharedTileConfig {
                 tile_size: selection.tiling_scheme.tile_size,

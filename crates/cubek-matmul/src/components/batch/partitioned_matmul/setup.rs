@@ -67,4 +67,8 @@ impl<GMM: GlobalMatmulFamily, S: GlobalPartitionMatmul> BatchMatmulFamily
             )
         }
     }
+
+    fn cubedim_resource() -> Result<CubeDimResource, InvalidConfigError> {
+        todo!()
+    }
 }

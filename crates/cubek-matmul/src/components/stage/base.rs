@@ -2,18 +2,12 @@ use cubecl::prelude::*;
 use cubecl::std::{CubeOption, CubeOptionExpand, tensor::layout::Coords2d};
 
 use crate::components::CubeDimResource;
+use crate::components::global::PlaneRoleConfig;
 use crate::components::global::WriteEventListener;
-use crate::components::global::{MaxGlobalReaderPlanes, PlaneRoleConfig};
 use crate::components::stage::StageMemoryConfig;
 use crate::components::tile::TileConfig;
-use crate::components::{
-    stage::{NumStages, PartitionScheduler},
-    tile::io::TileKind,
-};
-use crate::definition::{
-    AccS, LhsS, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError,
-    RhsS,
-};
+use crate::components::{stage::PartitionScheduler, tile::io::TileKind};
+use crate::definition::{AccS, LhsS, MatmulPrecision, MatmulSetupError, RhsS};
 use crate::definition::{InvalidConfigError, TilingBlueprint};
 use std::{fmt::Debug, hash::Hash};
 
@@ -48,18 +42,10 @@ pub trait StageMatmulFamily: Send + Sync + 'static {
     ///
     /// This function may return an error if the configuration cannot be supported on the current runtime.
     #[allow(clippy::too_many_arguments)]
-    fn expand_config<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
-        selection: &TilingBlueprint,
-        line_sizes: &MatmulLineSizes,
-        num_stages: NumStages,
-        max_global_readers: Option<MaxGlobalReaderPlanes>,
-        dtypes: &MatmulElems,
-    ) -> Result<Self::Config, MatmulSetupError>;
+    fn expand_config(blueprint: TilingBlueprint) -> Result<Self::Config, MatmulSetupError>;
 
     /// Returns the compute resources required to run this matmul.
-    fn computation_resources() -> Result<CubeDimResource, InvalidConfigError>;
+    fn cubedim_resource() -> Result<CubeDimResource, InvalidConfigError>;
 }
 
 #[cube]

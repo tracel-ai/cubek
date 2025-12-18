@@ -10,8 +10,7 @@ use crate::components::{
 use crate::definition::MatmulSetupError;
 use crate::definition::TilingBlueprint;
 use crate::definition::{
-    InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatmulProblem,
-    MatrixLayout,
+    InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatrixLayout,
 };
 use cubecl::features::TypeUsage;
 use cubecl::ir::{ElemType, FloatKind};
@@ -37,17 +36,11 @@ where
         true
     }
 
-    fn computation_resources() -> Result<CubeDimResource, InvalidConfigError> {
+    fn cubedim_resource() -> Result<CubeDimResource, InvalidConfigError> {
         Ok(CubeDimResource::Units(1))
     }
 
-    fn expand_config<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
-        selection: &TilingBlueprint,
-        matmul_line_sizes: &MatmulLineSizes,
-        dtypes: &MatmulElems,
-    ) -> Result<Self::Config, MatmulSetupError> {
+    fn expand_config(blueprint: TilingBlueprint) -> Result<Self::Config, MatmulSetupError> {
         let tile_config = RegisterMatmulConfig::from_shared_tile_config(
             problem.lhs_layout,
             problem.rhs_layout,

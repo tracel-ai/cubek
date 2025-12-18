@@ -8,10 +8,7 @@ use crate::components::{
     tile::io::{Tile, TileKind},
 };
 use crate::definition::TilingBlueprint;
-use crate::definition::{
-    InvalidConfigError, MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError,
-    MatrixLayout, TileSize,
-};
+use crate::definition::{InvalidConfigError, MatmulSetupError, MatrixLayout, TileSize};
 
 /// A family of [TileMatmul] implementations that operate with any precision.
 pub trait TileMatmulFamily: Send + Sync + 'static {
@@ -50,18 +47,12 @@ pub trait TileMatmulFamily: Send + Sync + 'static {
     fn should_swizzle<R: Runtime>(client: &ComputeClient<R>) -> bool;
 
     /// Returns the compute resources required to run this matmul.
-    fn computation_resources() -> Result<CubeDimResource, InvalidConfigError>;
+    fn cubedim_resource() -> Result<CubeDimResource, InvalidConfigError>;
 
     /// Constructs the configuration based on the matmul problem, selection, and line sizes.
     ///
     /// This function may return an error if the configuration cannot be supported on the current runtime.
-    fn expand_config<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
-        selection: &TilingBlueprint,
-        matmul_line_sizes: &MatmulLineSizes,
-        dtypes: &MatmulElems,
-    ) -> Result<Self::Config, MatmulSetupError>;
+    fn expand_config(blueprint: TilingBlueprint) -> Result<Self::Config, MatmulSetupError>;
 
     /// Returns whether a tile configuration is supported
     fn is_supported<R: Runtime>(_client: &ComputeClient<R>, _config: MmaConfig) -> bool {

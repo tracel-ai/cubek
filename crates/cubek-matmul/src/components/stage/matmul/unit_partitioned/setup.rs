@@ -18,6 +18,7 @@ use crate::components::tile::TileConfig;
 use crate::components::tile::TileMatmulFamily;
 use crate::components::tile::io::Strided;
 use crate::definition::AccS;
+use crate::definition::InvalidConfigError;
 use crate::definition::LhsS;
 use crate::definition::MatmulElems;
 use crate::definition::MatmulLineSizes;
@@ -74,19 +75,10 @@ impl<
 
     type Config = PartitionMatmulConfig<TM::Config>;
 
-    fn expand_config<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
-        selection: &TilingBlueprint,
-        line_sizes: &MatmulLineSizes,
-        num_stages: NumStages,
-        max_global_readers: Option<MaxGlobalReaderPlanes>,
-        dtypes: &MatmulElems,
-    ) -> Result<Self::Config, MatmulSetupError> {
+    fn expand_config(blueprint: TilingBlueprint) -> Result<Self::Config, MatmulSetupError> {
         let tile_config = TM::expand_config(client, problem, selection, line_sizes, dtypes)?;
 
-        let compute_resources = if let CubeDimResource::Units(units) = TM::computation_resources()?
-        {
+        let compute_resources = if let CubeDimResource::Units(units) = TM::cubedim_resource()? {
             CubeDimResource::Units(
                 units
                     * selection.tiling_scheme.partitions_per_stage_along_m()
@@ -180,6 +172,10 @@ impl<
             selection.plane_dim,
             num_stages,
         )
+    }
+
+    fn cubedim_resource() -> Result<CubeDimResource, InvalidConfigError> {
+        todo!()
     }
 }
 

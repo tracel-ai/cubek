@@ -18,6 +18,7 @@ use crate::components::tile::TileConfig;
 use crate::components::tile::TileMatmulFamily;
 use crate::components::tile::io::Strided;
 use crate::definition::AccS;
+use crate::definition::InvalidConfigError;
 use crate::definition::LhsS;
 use crate::definition::MatmulElems;
 use crate::definition::MatmulLineSizes;
@@ -75,29 +76,20 @@ impl<
 
     type Config = PartitionMatmulConfig<TM::Config>;
 
-    fn expand_config<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
-        selection: &TilingBlueprint,
-        line_sizes: &MatmulLineSizes,
-        num_stages: NumStages,
-        max_global_readers: Option<MaxGlobalReaderPlanes>,
-        dtypes: &MatmulElems,
-    ) -> Result<Self::Config, MatmulSetupError> {
+    fn expand_config(blueprint: TilingBlueprint) -> Result<Self::Config, MatmulSetupError> {
         let tile_config = TM::expand_config(client, problem, selection, line_sizes, dtypes)?;
 
-        let compute_resources =
-            if let CubeDimResource::Planes(planes) = TM::computation_resources()? {
-                CubeDimResource::Planes(
-                    planes
-                        * selection.tiling_scheme.partitions_per_stage_along_m()
-                        * selection.tiling_scheme.partitions_per_stage_along_n(),
-                )
-            } else {
-                return Err(MatmulSetupError::InvalidConfig(Box::new(
-                    "Error: Tried to use a plane stage matmul with a unit tile matmul.".to_string(),
-                )));
-            };
+        let compute_resources = if let CubeDimResource::Planes(planes) = TM::cubedim_resource()? {
+            CubeDimResource::Planes(
+                planes
+                    * selection.tiling_scheme.partitions_per_stage_along_m()
+                    * selection.tiling_scheme.partitions_per_stage_along_n(),
+            )
+        } else {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(
+                "Error: Tried to use a plane stage matmul with a unit tile matmul.".to_string(),
+            )));
+        };
 
         let compute_planes = compute_resources.num_planes(tile_config.plane_dim())?;
 
@@ -181,6 +173,10 @@ impl<
             selection.partition_buffering,
             num_stages,
         )
+    }
+
+    fn cubedim_resource() -> Result<CubeDimResource, InvalidConfigError> {
+        todo!()
     }
 }
 

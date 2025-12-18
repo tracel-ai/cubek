@@ -9,8 +9,8 @@ use crate::components::global::{
     SpecializedLoadingSides,
 };
 use crate::components::stage::{StageConfig, StageMemoryConfig};
-use crate::definition::{InvalidConfigError, TilingBlueprint};
 use crate::definition::{self, AccG, MatmulSetupError};
+use crate::definition::{InvalidConfigError, TilingBlueprint};
 use crate::definition::{LhsG, MatmulElems, MatmulLineSizes, RhsG};
 use crate::definition::{MatmulIdent, StageIdent};
 use crate::definition::{MatmulPrecision, MatmulProblem};
@@ -32,12 +32,10 @@ pub trait GlobalMatmulFamily: Send + Sync + 'static {
     /// Constructs the configuration based on the matmul problem, selection, and line sizes.
     ///
     /// This function may return an error if the configuration cannot be supported on the current runtime.
-    fn expand_config<R: Runtime>(
-        blueprint: TilingBlueprint,
-    ) -> Result<Self::Config, MatmulSetupError>;
+    fn expand_config(blueprint: TilingBlueprint) -> Result<Self::Config, MatmulSetupError>;
 
     /// Returns the compute resources required to run this matmul.
-    fn computation_resources() -> Result<CubeDimResource, InvalidConfigError>;
+    fn cubedim_resource() -> Result<CubeDimResource, InvalidConfigError>;
 }
 
 #[cube]

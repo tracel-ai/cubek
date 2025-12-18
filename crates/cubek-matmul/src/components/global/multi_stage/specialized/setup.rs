@@ -1,3 +1,4 @@
+use crate::components::CubeDimResource;
 use crate::components::global::multi_stage::EventLoadingMode;
 use crate::components::global::read::LoadingValidation;
 use crate::components::global::{
@@ -15,8 +16,8 @@ use crate::components::global::{
 use crate::components::stage::StageConfig;
 use crate::components::{global::GlobalMatmulFamily, stage, stage::FilledStageFamily};
 use crate::components::{global::MaxGlobalReaderPlanes, stage::NoTilingLayout};
-use crate::definition::MatmulLineSizes;
 use crate::definition::TilingBlueprint;
+use crate::definition::{InvalidConfigError, MatmulLineSizes};
 use crate::definition::{MatmulElems, MatmulSetupError};
 use crate::definition::{MatmulPrecision, MatmulProblem};
 use crate::definition::{MatrixLayout, StageIdent};
@@ -53,13 +54,7 @@ where
     >;
     type Config = SharedGlobalMatmulConfig<SMM::Config>;
 
-    fn expand_config<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
-        selection: &TilingBlueprint,
-        line_sizes: &MatmulLineSizes,
-        dtypes: &MatmulElems,
-    ) -> Result<Self::Config, MatmulSetupError> {
+    fn expand_config(blueprint: TilingBlueprint) -> Result<Self::Config, MatmulSetupError> {
         // Should be set from selection, but tests won't work properly. This algorithm fails without
         // specialization so it needs to be enabled.
         let mut selection = selection.clone();
@@ -169,6 +164,10 @@ where
         };
 
         validate::<L, L, SMM::Config, R>(config, client, problem, dtypes)
+    }
+
+    fn cubedim_resource() -> Result<CubeDimResource, InvalidConfigError> {
+        todo!()
     }
 }
 
