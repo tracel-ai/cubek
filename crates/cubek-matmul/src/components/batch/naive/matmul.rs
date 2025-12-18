@@ -37,7 +37,7 @@ pub(crate) fn matmul_entry<
     #[define(LhsS, RhsS, AccS)] _stage: [StorageType; 3],
     #[define(LhsR, RhsR, AccR)] _register: [StorageType; 3],
 ) {
-    let config = comptime!(NaiveBatchMatmulFamily::expand_config(blueprint));
+    let config = comptime!(NaiveBatchMatmulFamily::expand_config(&blueprint));
     if comptime!(config.is_err()) {
         push_validation_error(config.err().unwrap().to_string());
         comptime!(return);

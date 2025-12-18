@@ -60,68 +60,52 @@ where
     >;
     type Config = SharedGlobalMatmulConfig<SMM::Config>;
 
-    fn expand_config(blueprint: TilingBlueprint) -> Result<Self::Config, MatmulSetupError> {
-        let max_global_readers = selection
+    fn expand_config(blueprint: &TilingBlueprint) -> Result<Self::Config, MatmulSetupError> {
+        let max_global_readers = blueprint
             .load_specialization_config
             .has_specialization()
             .then(|| {
                 MaxGlobalReaderPlanes::new::<LL, RL>(
-                    &selection.tiling_scheme,
-                    line_sizes,
-                    selection.plane_dim,
-                    dtypes,
+                    &blueprint.tiling_scheme,
+                    &blueprint.line_sizes,
+                    blueprint.plane_dim,
+                    &blueprint.dtypes,
                 )
             });
 
-        let stage_config = SMM::expand_config(
-            client,
-            problem,
-            selection,
-            line_sizes,
-            (1, 2).into(),
-            max_global_readers,
-            dtypes,
-        )?;
+        let stage_config = SMM::expand_config(blueprint, max_global_readers, (1, 2).into())?;
 
         let plane_role_config = stage_config.plane_role_config();
         let plane_counts = MatmulPlaneCounts::new(
-            selection.load_specialization_config,
+            blueprint.load_specialization_config,
             plane_role_config.plane_roles,
         );
 
-        let stage_shape_m = stage_config.elements_in_stage_m();
-        let stage_shape_n = stage_config.elements_in_stage_n();
-        let stage_shape_k = stage_config.elements_in_stage_k();
-
-        let check_m_bounds = !(problem.m as u32).is_multiple_of(stage_shape_m);
-        let check_n_bounds = !(problem.n as u32).is_multiple_of(stage_shape_n);
-        let check_k_bounds = !(problem.k as u32).is_multiple_of(2 * stage_shape_k);
-
-        let precompute_job = selection.loading_precompute_strategy.into();
-        let plane_dim = selection.plane_dim;
-        let reader_mode = selection.reader_mode;
+        let precompute_job = blueprint.loading_precompute_strategy.into();
+        let plane_dim = blueprint.plane_dim;
+        let reader_mode = blueprint.reader_mode;
 
         let lhs_gmem_config = GlobalMemoryConfig {
-            line_size: line_sizes.lhs as u32,
-            check_row_bounds: check_m_bounds,
-            check_col_bounds: check_k_bounds,
-            matrix_layout: problem.lhs_layout,
+            line_size: blueprint.line_sizes.lhs as u32,
+            check_row_bounds: blueprint.check_m_bounds,
+            check_col_bounds: blueprint.check_k_bounds,
+            matrix_layout: blueprint.lhs_layout,
             view_direction: ViewDirection::Col,
         };
 
         let rhs_gmem_config = GlobalMemoryConfig {
-            line_size: line_sizes.rhs as u32,
-            check_row_bounds: check_k_bounds,
-            check_col_bounds: check_n_bounds,
-            matrix_layout: problem.rhs_layout,
+            line_size: blueprint.line_sizes.rhs as u32,
+            check_row_bounds: blueprint.check_k_bounds,
+            check_col_bounds: blueprint.check_n_bounds,
+            matrix_layout: blueprint.rhs_layout,
             view_direction: ViewDirection::Row,
         };
 
         let out_gmem_config = GlobalMemoryConfig {
-            line_size: line_sizes.out as u32,
+            line_size: blueprint.line_sizes.out as u32,
             matrix_layout: MatrixLayout::RowMajor,
-            check_row_bounds: check_m_bounds,
-            check_col_bounds: check_n_bounds,
+            check_row_bounds: blueprint.check_m_bounds,
+            check_col_bounds: blueprint.check_n_bounds,
             view_direction: ViewDirection::None,
         };
 
@@ -134,7 +118,7 @@ where
             reader_mode,
             stage_ident: StageIdent::Lhs,
             event_loading_mode: EventLoadingMode::Ordered,
-            specialization_tensor_config: selection.load_specialization_config.lhs,
+            specialization_tensor_config: blueprint.load_specialization_config.lhs,
         };
 
         let rhs_reader_config = GlobalReaderConfig {
@@ -146,59 +130,58 @@ where
             reader_mode,
             stage_ident: StageIdent::Rhs,
             event_loading_mode: EventLoadingMode::Relaxed,
-            specialization_tensor_config: selection.load_specialization_config.rhs,
+            specialization_tensor_config: blueprint.load_specialization_config.rhs,
         };
 
         let writer_config = GlobalWriterConfig {
             gmem_config: out_gmem_config,
             smem_config: stage_config.out_smem_config(),
             role_rule_config: plane_role_config.rule,
-            plane_dim: selection.plane_dim,
+            plane_dim: blueprint.plane_dim,
         };
 
-        let config = SharedGlobalMatmulConfig {
+        Ok(SharedGlobalMatmulConfig {
             stage_config,
             num_planes: plane_counts.total,
             lhs_reader_config,
             rhs_reader_config,
             writer_config,
             must_sync_plane_after_execution: true,
-        };
-
-        validate::<LL, RL, SMM::Config, R>(config, client, problem, selection.tiling_scheme, dtypes)
+        })
     }
 
-    fn cubedim_resource() -> Result<CubeDimResource, InvalidConfigError> {
+    fn cubedim_resource(
+        blueprint: &TilingBlueprint,
+    ) -> Result<CubeDimResource, InvalidConfigError> {
         todo!()
     }
-}
 
-fn validate<LL: LoadingValidation, RL: LoadingValidation, S: StageConfig, R: Runtime>(
-    config: SharedGlobalMatmulConfig<S>,
-    client: &ComputeClient<R>,
-    problem: &MatmulProblem,
-    tiling_scheme: TilingScheme,
-    dtypes: &MatmulElems,
-) -> Result<SharedGlobalMatmulConfig<S>, MatmulSetupError> {
-    LL::check(client, problem, &config.lhs_reader_config, dtypes)?;
-    RL::check(client, problem, &config.rhs_reader_config, dtypes)?;
-    cube_dim_validation(config)?;
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &TilingBlueprint,
+        problem: &MatmulProblem,
+    ) -> Result<(), MatmulSetupError> {
+        todo!();
+        // LL::check(client, problem, &config.lhs_reader_config, dtypes)?;
+        // RL::check(client, problem, &config.rhs_reader_config, dtypes)?;
 
-    if tiling_scheme.partitions_per_stage_along_n() > 1 {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(
-            "Ordered does not support number of stage partitions > 1 in n",
-        )));
+        if blueprint.tiling_scheme.partitions_per_stage_along_n() > 1 {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(
+                "Ordered does not support number of stage partitions > 1 in n",
+            )));
+        }
+
+        todo!();
+        // if config
+        //     .lhs_reader_config
+        //     .specialization_tensor_config
+        //     .has_specialization()
+        // {
+        //     return Err(MatmulSetupError::InvalidConfig(Box::new(
+        //         "Error: In Ordered lhs loading cannot be outside of main flow",
+        //     )));
+        // }
+
+        Ok(())
     }
-
-    if config
-        .lhs_reader_config
-        .specialization_tensor_config
-        .has_specialization()
-    {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(
-            "Error: In Ordered lhs loading cannot be outside of main flow",
-        )));
-    }
-
-    Ok(config)
 }

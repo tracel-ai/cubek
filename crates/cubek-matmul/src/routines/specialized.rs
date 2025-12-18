@@ -16,7 +16,7 @@ use crate::components::{global::PlaneWriterFamily, stage::StageFamily};
 use crate::components::{stage::FilledStageFamily, tile::TileMatmulFamily};
 use crate::definition::{
     CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulLineSizes,
-    MatmulProblem, MatmulSetupError, MatrixLayout, SmAllocation, SwizzleBlueprint, TilingBlueprint,
+    MatmulProblem, MatmulSetupError, MatrixLayout, SmAllocation, SwizzleModes, TilingBlueprint,
     adjust_dtypes,
 };
 use crate::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
@@ -107,6 +107,8 @@ where
                 },
             )?,
         };
+
+        Self::validate_blueprint(&device_settings.client, &blueprint, problem)?;
 
         LaunchInfo::new(
             blueprint,
@@ -209,7 +211,7 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
 
         let lhs = select_swizzle(lhs_swizzle_dim, *dtypes.lhs_stage, line_sizes.lhs);
         let rhs = select_swizzle(rhs_swizzle_dim, *dtypes.rhs_stage, line_sizes.rhs);
-        builder = builder.shared_swizzle(SwizzleBlueprint {
+        builder = builder.shared_swizzle(SwizzleModes {
             lhs,
             rhs,
             ..Default::default()

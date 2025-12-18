@@ -141,7 +141,6 @@ pub fn launch_ref<R: Runtime>(
         input,
         output,
         launch_info.cube_count_plan.as_args(),
-        dtypes,
         launch_info.blueprint,
     )
 }

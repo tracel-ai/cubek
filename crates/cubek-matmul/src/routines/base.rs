@@ -1,5 +1,6 @@
 use crate::components::CubeDimResource;
 use crate::components::batch::{BatchConfig, BatchMatmulFamily};
+use crate::components::global::cube_dim_validation;
 use crate::definition::{
     Blueprint, CubeCountInputArgs, CubeCountPlan, MatmulElems, MatmulLineSizes, MatmulProblem,
     MatmulSetupError, TilingBlueprint,
@@ -25,7 +26,6 @@ pub trait Routine: Sized {
         input: InputRuntimeArg<'a, MA, R>,
         output: OutputRuntimeArg<'a, MA, R>,
         cube_count_input: CubeCountInputArgs<'a, R>,
-        dtypes: &MatmulElems,
         blueprint: Self::Blueprint,
     ) -> Result<(), MatmulSetupError> {
         match unsafe {
@@ -36,7 +36,6 @@ pub trait Routine: Sized {
                 input,
                 output,
                 cube_count_input,
-                dtypes,
                 blueprint,
             )
         } {
@@ -72,6 +71,14 @@ pub trait Routine: Sized {
             max_cube_count: client.properties().hardware.max_cube_count.clone(),
         }
     }
+
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &Self::Blueprint,
+        problem: &MatmulProblem,
+    ) -> Result<(), MatmulSetupError> {
+        Self::BatchMatmul::validate_blueprint(client, blueprint, problem)
+    }
 }
 
 pub struct LaunchInfo<B: Blueprint> {
@@ -91,6 +98,7 @@ impl LaunchInfo<TilingBlueprint> {
     ) -> Result<Self, MatmulSetupError> {
         let (cube_dim, cube_count_plan) =
             blueprint.cube_launch_info(compute_resources, problem, device_settings)?;
+        cube_dim_validation(cube_dim)?;
 
         Ok(LaunchInfo {
             blueprint,

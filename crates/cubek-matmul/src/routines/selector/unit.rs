@@ -5,7 +5,7 @@ use crate::{
     definition::{
         CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulElems,
         MatmulGlobalElems, MatmulKind, MatmulLineSizes, MatmulProblem, MatrixLayout, SmAllocation,
-        SwizzleBlueprint, TilingBlueprint, TilingScheme,
+        SwizzleModes, TilingBlueprint, TilingScheme,
     },
 };
 use cubecl::{Runtime, client::ComputeClient, ir::StorageType};
@@ -543,7 +543,7 @@ fn selection(
             MatrixLayout::ColMajor => tiling_scheme.elements_per_stage_along_k(),
         };
 
-        builder = builder.shared_swizzle(SwizzleBlueprint {
+        builder = builder.shared_swizzle(SwizzleModes {
             lhs: select_swizzle(lhs_swizzle_dim, *dtypes.lhs_stage, line_sizes.lhs),
             rhs: select_swizzle(rhs_swizzle_dim, *dtypes.rhs_stage, line_sizes.rhs),
             ..Default::default()

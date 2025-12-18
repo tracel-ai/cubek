@@ -7,8 +7,8 @@ use crate::{
         stage::{PartitionBuffering, SwizzleMode},
     },
     definition::{
-        CubeCountPlan, MatmulElems, MatmulProblem, MatmulSetupError, TilingScheme,
-        hypercube::HypercubeBlueprint,
+        CubeCountPlan, MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, MatrixLayout,
+        TilingScheme, hypercube::HypercubeBlueprint,
     },
     routines::DeviceSettings,
 };
@@ -24,12 +24,20 @@ pub trait Blueprint: Debug + Clone + Eq + PartialEq + Hash {
 pub struct TilingBlueprint {
     pub plane_dim: u32,
     pub tiling_scheme: TilingScheme,
-    pub shared_swizzle: SwizzleBlueprint,
+    pub swizzle_modes: SwizzleModes,
     pub partition_buffering: PartitionBuffering,
     pub loading_precompute_strategy: LoadingPrecomputeStrategy,
     pub reader_mode: ReaderMode,
     pub load_specialization_config: LoadSpecializationConfig,
     pub hypercube_blueprint: HypercubeBlueprint,
+    pub lhs_layout: MatrixLayout,
+    pub rhs_layout: MatrixLayout,
+    pub line_sizes: MatmulLineSizes,
+    pub check_m_bounds: bool,
+    pub check_n_bounds: bool,
+    pub check_k_bounds: bool,
+    // TODO should eventually be removed because it's duplication
+    pub dtypes: MatmulElems,
 }
 
 impl Blueprint for TilingBlueprint {
@@ -79,14 +87,14 @@ pub fn adjust_dtypes<R: Runtime>(
 }
 
 #[derive(Default, Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct SwizzleBlueprint {
+pub struct SwizzleModes {
     pub lhs: SwizzleMode,
     pub rhs: SwizzleMode,
     pub acc: SwizzleMode,
     pub out: SwizzleMode,
 }
 
-impl SwizzleBlueprint {
+impl SwizzleModes {
     pub fn has_swizzle(&self) -> bool {
         self.lhs != SwizzleMode::None
             || self.rhs != SwizzleMode::None
@@ -131,7 +139,7 @@ impl TilingBlueprint {
 pub struct TilingBlueprintBuilder {
     plane_dim: Option<u32>,
     pub tiling_scheme: Option<TilingScheme>,
-    shared_swizzle: SwizzleBlueprint,
+    shared_swizzle: SwizzleModes,
     hypercube_selection: Option<HypercubeBlueprint>,
     partition_buffering: PartitionBuffering,
     loading_precompute_strategy: LoadingPrecomputeStrategy,
@@ -163,7 +171,7 @@ impl TilingBlueprintBuilder {
         self
     }
 
-    pub fn shared_swizzle(mut self, swizzle: SwizzleBlueprint) -> Self {
+    pub fn shared_swizzle(mut self, swizzle: SwizzleModes) -> Self {
         self.shared_swizzle = swizzle;
         self
     }
@@ -203,13 +211,23 @@ impl TilingBlueprintBuilder {
         TilingBlueprint {
             plane_dim: self.plane_dim.unwrap(),
             tiling_scheme: self.tiling_scheme.unwrap(),
-            shared_swizzle: self.shared_swizzle,
+            swizzle_modes: self.shared_swizzle,
             hypercube_blueprint: self.hypercube_selection.unwrap(),
             partition_buffering: self.partition_buffering,
             loading_precompute_strategy: self.loading_precompute_strategy,
             reader_mode: self.reader_mode,
             load_specialization_config: self.load_specialization_config,
+            lhs_layout: todo!(),
+            rhs_layout: todo!(),
+            line_sizes: todo!(),
+            check_m_bounds: todo!(),
+            check_n_bounds: todo!(),
+            check_k_bounds: todo!(),
+            dtypes: todo!()
         }
+        // let check_k_bounds = !(problem.k as u32).is_multiple_of(stage_shape_k);
+        // let check_m_bounds = !(problem.m as u32).is_multiple_of(stage_shape_m);
+        // let check_n_bounds = !(problem.n as u32).is_multiple_of(stage_shape_n);
     }
 }
 

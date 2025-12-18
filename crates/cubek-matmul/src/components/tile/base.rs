@@ -52,7 +52,7 @@ pub trait TileMatmulFamily: Send + Sync + 'static {
     /// Constructs the configuration based on the matmul problem, selection, and line sizes.
     ///
     /// This function may return an error if the configuration cannot be supported on the current runtime.
-    fn expand_config(blueprint: TilingBlueprint) -> Result<Self::Config, MatmulSetupError>;
+    fn expand_config(blueprint: &TilingBlueprint) -> Result<Self::Config, MatmulSetupError>;
 
     /// Returns whether a tile configuration is supported
     fn is_supported<R: Runtime>(_client: &ComputeClient<R>, _config: MmaConfig) -> bool {
@@ -68,6 +68,11 @@ pub trait TileMatmulFamily: Send + Sync + 'static {
     ) -> Vec<TileSize> {
         Vec::new()
     }
+
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &TilingBlueprint,
+    ) -> Result<(), MatmulSetupError>;
 }
 
 /// Provides matrix multiplication operations at the tile level.

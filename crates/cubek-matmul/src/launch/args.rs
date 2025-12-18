@@ -360,7 +360,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<Blueprint = TilingBluep
         // Loaders use dynamic layout based on swizzle setting. For no swizzle, contiguous tiles are
         // loaded and TMA loads single tile wide columns.
         // For swizzled, bank conflicts aren't an issue so the tile size is the full stage.
-        let stage_size_lhs = match blueprint.shared_swizzle.lhs {
+        let stage_size_lhs = match blueprint.swizzle_modes.lhs {
             SwizzleMode::None => match problem.lhs_layout {
                 definition::MatrixLayout::RowMajor => {
                     vec![1, stage_m, tiling_scheme.tile_size.k]
@@ -378,7 +378,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<Blueprint = TilingBluep
                 }
             },
         };
-        let stage_size_rhs = match blueprint.shared_swizzle.rhs {
+        let stage_size_rhs = match blueprint.swizzle_modes.rhs {
             SwizzleMode::None => match problem.rhs_layout {
                 definition::MatrixLayout::RowMajor => {
                     vec![1, stage_k, tiling_scheme.tile_size.n]
@@ -459,8 +459,8 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<Blueprint = TilingBluep
             }
         }
 
-        let swizzle_lhs = swizzle(blueprint.shared_swizzle.lhs);
-        let swizzle_rhs = swizzle(blueprint.shared_swizzle.rhs);
+        let swizzle_lhs = swizzle(blueprint.swizzle_modes.lhs);
+        let swizzle_rhs = swizzle(blueprint.swizzle_modes.rhs);
 
         // f32 gets remapped to tf32 for the tensor map just to ensure CUDA loads them correctly.
         // It shouldn't matter, but it's better to be safe.

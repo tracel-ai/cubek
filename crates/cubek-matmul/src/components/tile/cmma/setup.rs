@@ -7,10 +7,7 @@ use crate::components::tile::{
 };
 use crate::components::{resource::CubeDimResource, tile::io::TileKind};
 use crate::definition::TilingBlueprint;
-use crate::definition::{
-    InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatmulProblem,
-    MatmulSetupError, TileSize,
-};
+use crate::definition::{InvalidConfigError, MatmulAvailabilityError, MatmulSetupError, TileSize};
 use cubecl::features::MmaConfig;
 use cubecl::{ir::StorageType, prelude::*};
 
@@ -37,14 +34,12 @@ where
         Ok(CubeDimResource::Planes(1))
     }
 
-    fn expand_config(blueprint: TilingBlueprint) -> Result<SharedTileConfig, MatmulSetupError> {
-        let tile_config = SharedTileConfig::new(
-            selection.tiling_scheme.tile_size,
-            selection.plane_dim,
-            selection.shared_swizzle,
-        );
-
-        validate(tile_config, client, dtypes)
+    fn expand_config(blueprint: &TilingBlueprint) -> Result<SharedTileConfig, MatmulSetupError> {
+        Ok(SharedTileConfig::new(
+            blueprint.tiling_scheme.tile_size,
+            blueprint.plane_dim,
+            blueprint.swizzle_modes,
+        ))
     }
 
     fn should_swizzle<R: Runtime>(_client: &ComputeClient<R>) -> bool {
@@ -71,41 +66,40 @@ where
             .map(|it| (it.m, it.n, it.k).into())
             .collect()
     }
-}
 
-fn validate<R: Runtime>(
-    tile_config: SharedTileConfig,
-    client: &ComputeClient<R>,
-    dtypes: &MatmulElems,
-) -> Result<SharedTileConfig, MatmulSetupError> {
-    let lhs = *dtypes.lhs_register;
-    let rhs = *dtypes.rhs_register;
-    let acc = *dtypes.acc_register;
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &TilingBlueprint,
+    ) -> Result<(), MatmulSetupError> {
+        let lhs = *blueprint.dtypes.lhs_register;
+        let rhs = *blueprint.dtypes.rhs_register;
+        let acc = *blueprint.dtypes.acc_register;
 
-    let size = tile_config.tile_size;
-    if !client.properties().features.cmma.contains(&MmaConfig {
-        a_type: lhs,
-        b_type: rhs,
-        cd_type: acc,
-        m: size.m(),
-        k: size.k(),
-        n: size.n(),
-    }) {
-        return Err(MatmulSetupError::Unavailable(
-            MatmulAvailabilityError::CmmaInstructionUnavailable {
-                lhs,
-                rhs,
-                output: acc,
-                size: Some(TileSize::new(size.m(), size.n(), size.k())),
-            },
-        ));
+        let size = blueprint.tiling_scheme.tile_size;
+        if !client.properties().features.cmma.contains(&MmaConfig {
+            a_type: lhs,
+            b_type: rhs,
+            cd_type: acc,
+            m: size.m(),
+            k: size.k(),
+            n: size.n(),
+        }) {
+            return Err(MatmulSetupError::Unavailable(
+                MatmulAvailabilityError::CmmaInstructionUnavailable {
+                    lhs,
+                    rhs,
+                    output: acc,
+                    size: Some(TileSize::new(size.m(), size.n(), size.k())),
+                },
+            ));
+        }
+
+        if blueprint.swizzle_modes.has_swizzle() {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(
+                "This tile matmul doesn't support swizzling",
+            )));
+        }
+
+        Ok(())
     }
-
-    if tile_config.swizzle_config.has_swizzle() {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(
-            "This tile matmul doesn't support swizzling",
-        )));
-    }
-
-    Ok(tile_config)
 }

@@ -10,8 +10,8 @@ use crate::{
         global::memory::GlobalLayoutConfig,
     },
     definition::{
-        Blueprint, CubeCountInputArgs, InvalidConfigError, MatmulElems, MatmulLineSizes,
-        MatmulPrecision, MatmulProblem, MatmulSetupError,
+        Blueprint, CubeCountInputArgs, InvalidConfigError, MatmulElems, MatmulPrecision,
+        MatmulProblem, MatmulSetupError,
     },
     launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
 };
@@ -19,7 +19,10 @@ use crate::{
 /// Simple partitioned batch matmul family for any precision
 pub struct NaiveBatchMatmulFamily {}
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct NaiveBlueprint {}
+pub struct NaiveBlueprint {
+    pub line_size_out: u32,
+    pub dtypes: MatmulElems,
+}
 
 impl Blueprint for NaiveBlueprint {
     fn lhs_global_layout_config(&self) -> GlobalLayoutConfig {
@@ -40,13 +43,7 @@ impl BatchMatmulFamily for NaiveBatchMatmulFamily {
     type Config = NaiveMatmulConfig;
     type Blueprint = NaiveBlueprint;
 
-    fn expand_config(blueprint: Self::Blueprint) -> Result<Self::Config, MatmulSetupError> {
-        if blueprint.line_sizes.out > 1 {
-            return Err(MatmulSetupError::InvalidConfig(Box::new(
-                "Line size on output not supported",
-            )));
-        }
-
+    fn expand_config(_blueprint: &Self::Blueprint) -> Result<Self::Config, MatmulSetupError> {
         Ok(NaiveMatmulConfig {})
     }
 
@@ -57,9 +54,9 @@ impl BatchMatmulFamily for NaiveBatchMatmulFamily {
         input: InputRuntimeArg<'a, MA, R>,
         output: OutputRuntimeArg<'a, MA, R>,
         cube_count_input: CubeCountInputArgs<'a, R>,
-        dtypes: &MatmulElems,
-        blueprint: Self::Blueprint,
+        blueprint: NaiveBlueprint,
     ) -> Result<(), LaunchError> {
+        let dtypes = blueprint.dtypes.clone();
         unsafe {
             matmul_entry::launch_unchecked::<MA, R>(
                 client,
@@ -82,5 +79,19 @@ impl BatchMatmulFamily for NaiveBatchMatmulFamily {
 
     fn cubedim_resource() -> Result<CubeDimResource, InvalidConfigError> {
         Ok(CubeDimResource::Planes(8))
+    }
+
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &Self::Blueprint,
+        problem: &MatmulProblem,
+    ) -> Result<(), MatmulSetupError> {
+        if blueprint.line_size_out > 1 {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(
+                "Line size on output not supported",
+            )));
+        }
+
+        Ok(())
     }
 }

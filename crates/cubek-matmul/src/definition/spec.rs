@@ -155,7 +155,7 @@ pub type AccG<MP> = <<MP as MatmulPrecision>::Acc as MatrixPrecision>::Global;
 pub type AccS<MP> = <<MP as MatmulPrecision>::Acc as MatrixPrecision>::Stage;
 pub type AccR<MP> = <<MP as MatmulPrecision>::Acc as MatrixPrecision>::Register;
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct MatmulElems {
     pub lhs_global: MatmulElemType,
     pub rhs_global: MatmulElemType,

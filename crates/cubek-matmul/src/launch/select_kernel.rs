@@ -94,7 +94,6 @@ fn launch_kernel<'a, MA: MatmulArgs, R: Runtime, A: Routine>(
         input,
         output,
         launch_info.cube_count_plan.as_args(),
-        &launch_info.dtypes,
         launch_info.blueprint,
     )
 }

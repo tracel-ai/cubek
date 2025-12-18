@@ -11,7 +11,7 @@ use crate::components::batch::{
 use crate::components::global::{self, GlobalConfig, GlobalMatmul, GlobalMatmulFamily};
 use crate::components::stage::StageConfig as _;
 use crate::definition::{
-    AccG, Blueprint as _, CubeCountInput, LhsG, MatmulPrecision, RhsG, TilingBlueprint,
+    AccG, Blueprint as _, CubeCountInput, LhsG, MatmulElems, MatmulPrecision, RhsG, TilingBlueprint,
 };
 use crate::launch::MatmulArgs;
 
@@ -35,12 +35,12 @@ pub(crate) fn matmul_entry<
     output: &mut <Args as MatmulArgs>::Output<AccG>,
     cube_count_args: CubeCountInput,
     #[comptime] blueprint: TilingBlueprint,
-    #[define(LhsG, RhsG, AccG)] _global: [StorageType; 3],
-    #[define(LhsS, RhsS, AccS)] _stage: [StorageType; 3],
-    #[define(LhsR, RhsR, AccR)] _register: [StorageType; 3],
+    #[define(LhsG, RhsG, AccG)] global: [StorageType; 3],
+    #[define(LhsS, RhsS, AccS)] stage: [StorageType; 3],
+    #[define(LhsR, RhsR, AccR)] register: [StorageType; 3],
 ) {
     let config = comptime!(PartitionedBatchMatmulFamily::<GMMF, GPM>::expand_config(
-        blueprint
+        &blueprint,
     ));
     if comptime!(config.is_err()) {
         push_validation_error(config.err().unwrap().to_string());

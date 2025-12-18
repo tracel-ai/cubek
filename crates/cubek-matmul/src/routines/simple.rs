@@ -123,6 +123,8 @@ where
             }
         };
 
+        Self::validate_blueprint(client, &blueprint, problem)?;
+
         LaunchInfo::new(
             blueprint,
             dtypes,

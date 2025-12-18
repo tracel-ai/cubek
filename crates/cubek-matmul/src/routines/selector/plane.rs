@@ -8,7 +8,7 @@ use crate::components::tile::TileMatmulFamily;
 use crate::definition::{
     CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulAvailabilityError,
     MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, MatrixLayout, MultiRowStrategy,
-    PartitionSize, SmAllocation, StageSize, SwizzleBlueprint, TileSize, TilingBlueprint,
+    PartitionSize, SmAllocation, StageSize, SwizzleModes, TileSize, TilingBlueprint,
     TilingScheme, adjust_dtypes,
 };
 use crate::routines::selector::is_tiny;
@@ -180,7 +180,7 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
 
         let lhs = select_swizzle(lhs_swizzle_dim, *dtypes.lhs_stage, line_sizes.lhs);
         let rhs = select_swizzle(rhs_swizzle_dim, *dtypes.rhs_stage, line_sizes.rhs);
-        builder = builder.shared_swizzle(SwizzleBlueprint {
+        builder = builder.shared_swizzle(SwizzleModes {
             lhs,
             rhs,
             ..Default::default()

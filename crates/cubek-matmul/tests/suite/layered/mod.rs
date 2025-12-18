@@ -10,7 +10,7 @@ use cubek_matmul::definition::MatmulElems;
 use cubek_matmul::definition::MatmulIdent;
 use cubek_matmul::definition::MatmulProblem;
 use cubek_matmul::definition::MatrixLayout;
-use cubek_matmul::definition::SwizzleBlueprint;
+use cubek_matmul::definition::SwizzleModes;
 use cubek_matmul::definition::TilingBlueprint;
 use cubek_matmul::definition::{PartitionSize, StageSize, TileSize, TilingScheme};
 use cubek_matmul::routines::simple::SimpleAlgorithm;

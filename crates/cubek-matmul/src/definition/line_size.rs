@@ -4,7 +4,7 @@ use std::fmt::Debug;
 
 use crate::definition::{base::MatrixLayout, error::MatmulSetupError};
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
 /// Line size used for each tensor in global memory accesses.
 /// Represents the number of elements processed per SIMD load/store.
 pub struct MatmulLineSizes {

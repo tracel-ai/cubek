@@ -123,6 +123,8 @@ where
             )?,
         };
 
+        Self::validate_blueprint(&device_settings.client, &blueprint, problem)?;
+
         LaunchInfo::new(
             blueprint,
             dtypes,
@@ -184,6 +186,8 @@ where
                 },
             )?,
         };
+
+        Self::validate_blueprint(&device_settings.client, &blueprint, problem)?;
 
         LaunchInfo::new(
             blueprint,
@@ -249,6 +253,8 @@ where
             )?,
         };
 
+        Self::validate_blueprint(&device_settings.client, &blueprint, problem)?;
+
         LaunchInfo::new(
             blueprint,
             dtypes,
@@ -312,6 +318,8 @@ where
             )?,
         };
 
+        Self::validate_blueprint(&device_settings.client, &blueprint, problem)?;
+
         LaunchInfo::new(
             blueprint,
             dtypes,
@@ -374,6 +382,8 @@ where
             )?,
         };
 
+        Self::validate_blueprint(&device_settings.client, &blueprint, problem)?;
+
         LaunchInfo::new(
             blueprint,
             dtypes,
@@ -435,6 +445,8 @@ where
                 },
             )?,
         };
+
+        Self::validate_blueprint(&device_settings.client, &blueprint, problem)?;
 
         LaunchInfo::new(
             blueprint,

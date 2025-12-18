@@ -1,5 +1,5 @@
+use crate::components::tile::mma::config::StoreMethod;
 use crate::components::tile::mma::config::{LoadMethod, MmaMatmulConfig};
-use crate::components::tile::{SharedTileConfig, mma::config::StoreMethod};
 use crate::components::tile::{
     TileMatmulFamily,
     mma::{
@@ -11,10 +11,7 @@ use crate::components::{
     resource::CubeDimResource,
     tile::io::{Strided, TileKind},
 };
-use crate::definition::{
-    InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatmulProblem,
-    MatmulSetupError, TileSize,
-};
+use crate::definition::{InvalidConfigError, MatmulAvailabilityError, MatmulSetupError, TileSize};
 use crate::definition::{MatmulElemType, TilingBlueprint};
 use cubecl::features::MmaConfig;
 use cubecl::{ir::StorageType, prelude::*};
@@ -46,20 +43,19 @@ where
         Ok(CubeDimResource::Planes(1))
     }
 
-    fn expand_config(blueprint: TilingBlueprint) -> Result<Self::Config, MatmulSetupError> {
-        let tile_config = MmaMatmulConfig::from_shared_tile_config(
-            SharedTileConfig {
-                tile_size: selection.tiling_scheme.tile_size,
-                plane_dim: selection.plane_dim,
-                swizzle_config: selection.shared_swizzle,
-            },
-            load_method(client, dtypes.lhs_stage),
-            load_method(client, dtypes.rhs_stage),
-            load_method(client, dtypes.acc_stage),
-            store_method(client, dtypes.acc_stage),
-        );
-
-        validate(tile_config, client, dtypes)
+    fn expand_config(blueprint: &TilingBlueprint) -> Result<Self::Config, MatmulSetupError> {
+        todo!()
+        // Ok(MmaMatmulConfig::from_shared_tile_config(
+        //     SharedTileConfig {
+        //         tile_size: blueprint.tiling_scheme.tile_size,
+        //         plane_dim: blueprint.plane_dim,
+        //         swizzle_modes: blueprint.swizzle_modes,
+        //     },
+        //     load_method(client, dtypes.lhs_stage),
+        //     load_method(client, dtypes.rhs_stage),
+        //     load_method(client, dtypes.acc_stage),
+        //     store_method(client, dtypes.acc_stage),
+        // ))
     }
 
     fn should_swizzle<R: Runtime>(client: &ComputeClient<R>) -> bool {
@@ -87,37 +83,36 @@ where
             .map(|it| (it.m, it.n, it.k).into())
             .collect()
     }
-}
 
-fn validate<R: Runtime>(
-    tile_config: MmaMatmulConfig,
-    client: &ComputeClient<R>,
-    dtypes: &MatmulElems,
-) -> Result<MmaMatmulConfig, MatmulSetupError> {
-    let lhs = *dtypes.lhs_register;
-    let rhs = *dtypes.rhs_register;
-    let acc = *dtypes.acc_register;
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &TilingBlueprint,
+    ) -> Result<(), MatmulSetupError> {
+        let lhs = *blueprint.dtypes.lhs_register;
+        let rhs = *blueprint.dtypes.rhs_register;
+        let acc = *blueprint.dtypes.acc_register;
 
-    let size = tile_config.shared.tile_size;
-    if !client.properties().features.mma.contains(&MmaConfig {
-        a_type: lhs,
-        b_type: rhs,
-        cd_type: acc,
-        m: size.m(),
-        k: size.k(),
-        n: size.n(),
-    }) {
-        return Err(MatmulSetupError::Unavailable(
-            MatmulAvailabilityError::CmmaInstructionUnavailable {
-                lhs,
-                rhs,
-                output: acc,
-                size: Some(TileSize::new(size.m(), size.n(), size.k())),
-            },
-        ));
+        let size = blueprint.tiling_scheme.tile_size;
+        if !client.properties().features.mma.contains(&MmaConfig {
+            a_type: lhs,
+            b_type: rhs,
+            cd_type: acc,
+            m: size.m(),
+            k: size.k(),
+            n: size.n(),
+        }) {
+            return Err(MatmulSetupError::Unavailable(
+                MatmulAvailabilityError::CmmaInstructionUnavailable {
+                    lhs,
+                    rhs,
+                    output: acc,
+                    size: Some(TileSize::new(size.m(), size.n(), size.k())),
+                },
+            ));
+        }
+
+        Ok(())
     }
-
-    Ok(tile_config)
 }
 
 fn load_method<R: Runtime>(client: &ComputeClient<R>, dtype: MatmulElemType) -> LoadMethod {

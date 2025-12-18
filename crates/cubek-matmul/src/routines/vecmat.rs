@@ -92,6 +92,8 @@ impl Routine for SimpleVecMatAlgorithm {
             }
         };
 
+        Self::validate_blueprint(&device_settings.client, &blueprint, problem)?;
+
         LaunchInfo::new(
             blueprint,
             dtypes,
@@ -149,6 +151,8 @@ impl Routine for DoubleVecMatAlgorithm {
                 )
             }
         };
+
+        Self::validate_blueprint(&device_settings.client, &blueprint, problem)?;
 
         LaunchInfo::new(
             blueprint,
