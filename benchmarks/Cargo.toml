@@ -22,7 +22,7 @@ wgpu-spirv = ["cubecl/wgpu-spirv"]
 
 [dependencies]
 cubecl = { workspace = true, features = ["test-runtime", "stdlib"] }
-cubek = { path = "../crates/cubek", version = "0.0.1", default-features = false, features = [
+cubek = { path = "../crates/cubek", version = "=0.1.0-pre.1", default-features = false, features = [
     "random",
     "reduce",
     "matmul",
