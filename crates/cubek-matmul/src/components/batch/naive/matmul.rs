@@ -87,7 +87,7 @@ impl<MP: MatmulPrecision> BatchMatmul<MP> for NaiveMatmul<MP> {
         let line_size = comptime![Ord::max(lhs.line_size(), rhs.line_size())];
         let mut sum = Line::empty(line_size).fill(<AccG<MP> as Numeric>::from_int(0));
 
-        for k in range_stepped(0u32, k, line_size) {
+        for k in range_stepped(0u32, k, line_size as u32) {
             let lhs = load_unrolled(&lhs, (m, k), MatrixLayout::RowMajor, line_size);
             let rhs = load_unrolled(&rhs, (k, n), MatrixLayout::ColMajor, line_size);
 
@@ -96,20 +96,20 @@ impl<MP: MatmulPrecision> BatchMatmul<MP> for NaiveMatmul<MP> {
             );
         }
 
-        let unroll_sum = line_size != 1u32;
+        let unroll_sum = line_size != 1usize;
         if unroll_sum {
             let mut accum = <AccG<MP> as Numeric>::from_int(0);
             // we unroll the loop to sum `vectorization_factor` elements at once, which lets us
             // use SIMD instructions to speed up the computation
             #[unroll]
-            for v in 0u32..line_size {
+            for v in 0..line_size {
                 accum += sum[v];
             }
 
-            out[(m, n)] = Line::empty(1u32).fill(accum);
+            out[(m, n)] = Line::empty(1usize).fill(accum);
             // out[(m, n)] = Line::cast_from(tmp);
         } else {
-            out[(m, n)] = Line::empty(1u32).fill(sum[0u32]);
+            out[(m, n)] = Line::empty(1usize).fill(sum[0]);
         }
     }
 }
@@ -119,7 +119,7 @@ fn load_unrolled<I: Numeric>(
     view: &View<Line<I>, Coords2d>,
     pos: Coords2d,
     #[comptime] layout: MatrixLayout,
-    #[comptime] line_size: u32,
+    #[comptime] line_size: LineSize,
 ) -> Line<I> {
     comptime![assert!(line_size >= view.line_size())];
     let view_line_size = view.line_size();
@@ -129,7 +129,7 @@ fn load_unrolled<I: Numeric>(
         let (row, col) = pos;
         let mut out = Line::empty(line_size);
         #[unroll]
-        for i in range_stepped(0, line_size, view_line_size) {
+        for i in range_stepped(0, line_size as u32, view_line_size as u32) {
             let pos = match layout {
                 MatrixLayout::RowMajor => (row, col + i),
                 MatrixLayout::ColMajor => (row + i, col),
@@ -137,7 +137,7 @@ fn load_unrolled<I: Numeric>(
             let value = view[pos];
             #[unroll]
             for n in 0..view_line_size {
-                out[i + n] = value[n];
+                out[i as usize + n] = value[n];
             }
         }
         out

@@ -69,7 +69,7 @@ where
         let line_count = def.lines_per_lane(MatrixIdent::A);
 
         MmaFragment::<L> {
-            fragment: Array::vectorized(line_count, line_size),
+            fragment: Array::lined(line_count, line_size),
             layout,
         }
     }
@@ -83,7 +83,7 @@ where
         let line_count = def.lines_per_lane(MatrixIdent::B);
 
         MmaFragment::<R> {
-            fragment: Array::vectorized(line_count, line_size),
+            fragment: Array::lined(line_count, line_size),
             layout,
         }
     }
@@ -97,7 +97,7 @@ where
         let line_count = def.lines_per_lane(MatrixIdent::Accumulator);
 
         MmaFragment::<A> {
-            fragment: Array::vectorized(line_count, line_size),
+            fragment: Array::lined(line_count, line_size),
             layout,
         }
     }
@@ -168,5 +168,5 @@ pub(super) fn mma_definition<L: Numeric, R: Numeric, A: Numeric>(
     #[comptime] config: MmaMatmulConfig,
 ) -> MmaDefinition<L, R, A> {
     let size = config.shared.tile_size;
-    MmaDefinition::new(size.m(), size.n(), size.k())
+    MmaDefinition::new(size.m() as usize, size.n() as usize, size.k() as usize)
 }

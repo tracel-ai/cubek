@@ -31,7 +31,7 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
     .runtime();
 
     let mut slice_len_global = copy_line_size.runtime();
-    let slice_len_stage = copy_line_size / stage_slice.line_size();
+    let slice_len_stage = copy_line_size / stage_slice.line_size() as u32;
 
     if config.gmem_config.check_row_bounds {
         let pos = pos.0;
@@ -61,18 +61,18 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
         }
     }
 
-    slice_len_global /= view.line_size();
+    slice_len_global /= view.line_size() as u32;
 
     let global_slice = view.slice_unchecked(pos, slice_size).to_linear_slice();
 
     let type_size = type_size::<ES>(stage_slice.line_size());
     let offset = stage.swizzle.apply(stage_offset, type_size);
 
-    let stage_slice = stage_slice.slice_mut(offset, offset + slice_len_stage);
+    let stage_slice = stage_slice.slice_mut(offset as usize, (offset + slice_len_stage) as usize);
 
     if comptime![config.gmem_config.check_row_bounds || config.gmem_config.check_col_bounds] {
         copy_async_checked(
-            &global_slice.slice(0, slice_len_global),
+            &global_slice.slice(0, slice_len_global as usize),
             &mut stage_slice.try_cast_unchecked(),
             copy_line_size,
         );

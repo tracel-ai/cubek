@@ -12,11 +12,11 @@ impl MatrixStageWriter {
         tile: &mut StridedTile<S, ReadWrite>,
         acc: &Sequence<LineContainer<A>>,
         #[comptime] n: u32,
-        #[comptime] reduce_line_size: u32,
+        #[comptime] reduce_line_size: LineSize,
     ) {
         if UNIT_POS_X == 0 {
             let out_line_size = tile.stage.line_size();
-            let total_out_lines = comptime![n / out_line_size];
+            let total_out_lines = comptime![n as usize / out_line_size];
             #[unroll]
             for out_line_iter in 0..total_out_lines {
                 let mut out_line = Line::<S>::empty(out_line_size);
@@ -34,9 +34,9 @@ impl MatrixStageWriter {
                     out_line[within_line] = S::cast_from(sum);
                 }
 
-                let offset = tile.stage_offset(out_line_iter);
+                let offset = tile.stage_offset(out_line_iter as u32);
 
-                tile.stage[offset] = out_line;
+                tile.stage[offset as usize] = out_line;
             }
         }
     }

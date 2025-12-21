@@ -37,7 +37,7 @@ impl LoadMaxRoundPlaneCount for AsyncFullTmaLoading {
     fn max_round_plane_count(
         _elements_per_tile: u32,
         _tiles_per_stage: u32,
-        _line_size: u8,
+        _line_size: LineSize,
         _plane_dim: u32,
         _dtype: StorageType,
     ) -> u32 {
@@ -54,7 +54,7 @@ impl FullLoadingStrategy for AsyncFullTmaLoading {
     type Job<EG: Numeric, ES: Numeric> = AsyncFullTmaJob;
 
     fn new_job<EG: Numeric, ES: Numeric>(
-        #[comptime] _line_size: u32,
+        #[comptime] _line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, ES> {
         let role_rule_config = config.plane_role_config.rule;
@@ -113,10 +113,10 @@ impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, TmaTilingLayout, AsyncTma> for
 
             let global_view = global_iter.view();
             let mut stage = stage.as_slice_mut(stage.smem.line_size());
-            let slice_size = size_row * size_col / stage.line_size();
+            let slice_size = size_row * size_col / stage.line_size() as u32;
 
             let slice_start = task_id * slice_size;
-            let slice = stage.slice_mut(slice_start, slice_start + slice_size);
+            let slice = stage.slice_mut(slice_start as usize, (slice_start + slice_size) as usize);
             let col = task_id * size_col;
 
             let pos = match config.matrix_layout {

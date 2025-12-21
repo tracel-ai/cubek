@@ -185,8 +185,8 @@ where
     ) {
         acc.load::<StageAcc>(
             stage,
-            shared_config.partition_size.m(),
-            shared_config.partition_size.n(),
+            shared_config.partition_size.m() as usize,
+            shared_config.partition_size.n() as usize,
             shared_config.tile_config,
         );
     }
@@ -207,24 +207,24 @@ where
     ) {
         SEL::on_event(&mut listener, StageEvent::Begin);
 
-        let m_iterations = shared_config.partition_size.m();
-        let n_iterations = shared_config.partition_size.n();
-        let k_iterations = shared_config.partition_size.k();
+        let m_iterations = shared_config.partition_size.m() as usize;
+        let n_iterations = shared_config.partition_size.n() as usize;
+        let k_iterations = shared_config.partition_size.k() as usize;
 
         let mut lhs_load_counter = comptime![0];
         let mut rhs_load_counter = comptime![0];
         let mut execute_counter = comptime![0];
-        let lhs_load_total = comptime!(m_iterations * k_iterations);
-        let rhs_load_total = comptime!(n_iterations * k_iterations);
-        let execute_total = comptime!(m_iterations * n_iterations * k_iterations);
+        let lhs_load_total = comptime!(m_iterations * k_iterations) as u32;
+        let rhs_load_total = comptime!(n_iterations * k_iterations) as u32;
+        let execute_total = comptime!(m_iterations * n_iterations * k_iterations) as u32;
 
         #[unroll]
         for k_iter in 0..k_iterations {
-            let k_load_iter = partition_scheduler.map_k(k_iter);
+            let k_load_iter = partition_scheduler.map_k(k_iter as u32);
 
             #[unroll]
             for m_iter in 0..m_iterations {
-                let m_load_iter = partition_scheduler.map_m(m_iter);
+                let m_load_iter = partition_scheduler.map_m(m_iter as u32);
 
                 let tile_lhs = StageLhs::tile(lhs_stage, (m_load_iter, k_load_iter));
                 TM::load_lhs(
@@ -244,7 +244,7 @@ where
 
             #[unroll]
             for n_iter in 0..n_iterations {
-                let n_load_iter = partition_scheduler.map_n(n_iter);
+                let n_load_iter = partition_scheduler.map_n(n_iter as u32);
 
                 let rhs_tile_next = StageRhs::tile(rhs_stage, (k_load_iter, n_load_iter));
                 TM::load_rhs(&rhs_tile_next, rhs_fragment, shared_config.tile_config);
@@ -301,24 +301,24 @@ where
     ) {
         SEL::on_event(&mut listener, StageEvent::Begin);
 
-        let m_iterations = shared_config.partition_size.m();
-        let n_iterations = shared_config.partition_size.n();
-        let k_iterations = shared_config.partition_size.k();
+        let m_iterations = shared_config.partition_size.m() as usize;
+        let n_iterations = shared_config.partition_size.n() as usize;
+        let k_iterations = shared_config.partition_size.k() as usize;
 
         let mut lhs_load_counter = comptime![0];
         let mut rhs_load_counter = comptime![0];
         let mut execute_counter = comptime![0];
-        let lhs_load_total = comptime!(m_iterations * k_iterations);
-        let rhs_load_total = comptime!(n_iterations * k_iterations);
-        let execute_total = comptime!(m_iterations * n_iterations * k_iterations);
+        let lhs_load_total = comptime!(m_iterations * k_iterations) as u32;
+        let rhs_load_total = comptime!(n_iterations * k_iterations) as u32;
+        let execute_total = comptime!(m_iterations * n_iterations * k_iterations) as u32;
 
         #[unroll]
         for k_iter in 0..k_iterations {
-            let k_load_iter = partition_scheduler.map_k(k_iter);
+            let k_load_iter = partition_scheduler.map_k(k_iter as u32);
 
             #[unroll]
             for m_iter in 0..m_iterations {
-                let m_load_iter = partition_scheduler.map_m(m_iter);
+                let m_load_iter = partition_scheduler.map_m(m_iter as u32);
 
                 let tile_lhs = StageLhs::tile(lhs_stage, (m_load_iter, k_load_iter));
                 TM::load_lhs(
@@ -336,8 +336,8 @@ where
                 comptime!(lhs_load_counter += 1);
             }
 
-            let mut n_iter = comptime![0u32];
-            let n_load_iter = partition_scheduler.map_n(n_iter);
+            let mut n_iter = comptime![0usize];
+            let n_load_iter = partition_scheduler.map_n(n_iter as u32);
 
             let rhs_tile_first = StageRhs::tile(rhs_stage, (k_load_iter, n_load_iter));
             TM::load_rhs(
@@ -363,7 +363,7 @@ where
                     (&mut rhs_fragments.1, &mut rhs_fragments.0)
                 };
 
-                let n_load_iter = partition_scheduler.map_n(comptime![n_iter + 1]);
+                let n_load_iter = partition_scheduler.map_n(comptime![n_iter as u32 + 1]);
                 let rhs_tile_next = StageRhs::tile(rhs_stage, (k_load_iter, n_load_iter));
                 TM::load_rhs(&rhs_tile_next, next, shared_config.tile_config);
                 SEL::on_event(

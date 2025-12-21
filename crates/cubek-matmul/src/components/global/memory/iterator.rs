@@ -77,7 +77,7 @@ impl<EG: CubePrimitive> GlobalIterator<EG> {
     }
 
     /// Returns the line size of the global view
-    pub fn line_size(&self) -> comptime_type!(u32) {
+    pub fn line_size(&self) -> comptime_type!(LineSize) {
         self.global_view.line_size()
     }
 

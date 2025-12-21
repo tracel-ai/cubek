@@ -100,13 +100,13 @@ pub fn plane_write<ES: Numeric, EG: Numeric>(
 ) {
     let output_line_size = global.line_size();
 
-    let unit_step = comptime![plane_dim * output_line_size];
+    let unit_step = comptime![plane_dim * output_line_size as u32];
     let num_unit_writes = comptime!(elements_in_tile.div_ceil(unit_step));
     let balanced_workload = comptime!(elements_in_tile.is_multiple_of(unit_step));
 
     #[unroll(num_unit_writes == 1)]
     for i in 0..num_unit_writes {
-        let unit_write = UNIT_POS_X * output_line_size + i * unit_step;
+        let unit_write = UNIT_POS_X * output_line_size as u32 + i * unit_step;
 
         #[allow(clippy::collapsible_else_if)]
         if comptime!(balanced_workload) {
@@ -130,7 +130,8 @@ fn write_line<ES: Numeric, EG: Numeric>(
     let out_smem_line_size = out_smem_tile.stage.line_size();
 
     let value = if comptime!(output_line_size == out_smem_line_size) {
-        out_smem_tile.stage[out_smem_tile.stage_offset(unit_write / output_line_size)]
+        let offs = out_smem_tile.stage_offset(unit_write / output_line_size as u32);
+        out_smem_tile.stage[offs as usize]
     } else if comptime!(
         out_smem_line_size < output_line_size
             && output_line_size.is_multiple_of(out_smem_line_size)
@@ -138,10 +139,10 @@ fn write_line<ES: Numeric, EG: Numeric>(
         let mut value = Line::empty(output_line_size);
         #[unroll]
         for i in 0..comptime!(output_line_size / out_smem_line_size) {
-            let offs = out_smem_tile.stage_offset(unit_write + i);
+            let offs = out_smem_tile.stage_offset(unit_write + i as u32);
             #[unroll]
             for j in 0..out_smem_line_size {
-                value[i * out_smem_line_size + j] = out_smem_tile.stage[offs][j];
+                value[i * out_smem_line_size + j] = out_smem_tile.stage[offs as usize][j];
             }
         }
         value

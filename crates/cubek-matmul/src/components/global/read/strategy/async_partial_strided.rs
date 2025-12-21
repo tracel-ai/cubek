@@ -71,7 +71,7 @@ impl LoadMaxRoundPlaneCount for AsyncPartialStridedLoading {
     fn max_round_plane_count(
         elements_per_tile: u32,
         tiles_per_stage: u32,
-        _line_size: u8,
+        _line_size: LineSize,
         plane_dim: u32,
         dtype: StorageType,
     ) -> u32 {
@@ -91,11 +91,11 @@ impl PartialLoadingStrategy for AsyncPartialStridedLoading {
 
     fn new_job<EG: Numeric, ES: Numeric>(
         #[comptime] stage_index: u32,
-        #[comptime] _line_size: u32,
+        #[comptime] _line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, ES> {
         let type_size = ES::type_size_bits();
-        let line_size = comptime![ASYNC_COPY_WIDTH / type_size];
+        let line_size = comptime![ASYNC_COPY_WIDTH / type_size as u32];
 
         let num_stage_lines = config.smem_config.elements_per_stage() / line_size;
         let unit_count = config.loading_planes_count() * config.plane_dim;
@@ -165,7 +165,7 @@ impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, StridedTilingLayout, AsyncCopy
             _ => pos,
         };
 
-        let stage_offset = unit_position_abs / stage.smem.line_size();
+        let stage_offset = unit_position_abs / stage.smem.line_size() as u32;
 
         async_copy_from(
             view,

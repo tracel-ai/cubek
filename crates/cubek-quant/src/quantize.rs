@@ -2,7 +2,6 @@ use cubecl::calculate_cube_count_elemwise;
 use cubecl::features::TypeUsage;
 use cubecl::ir::ElemType;
 use cubecl::prelude::*;
-use cubecl::std::scalar::InputScalar;
 use cubecl::std::tensor::layout::linear::LinearView;
 use cubecl::std::tensor::{View, layout::linear::linear_view};
 use cubecl::tensor_line_size_parallel;
@@ -59,13 +58,13 @@ fn quantize_packed_value<F: Float, FS: CubePrimitive, QS: Int>(
 #[allow(clippy::explicit_counter_loop)]
 #[cube]
 fn pack_q<F: Float, QS: Int>(value: Line<F>, #[comptime] quant: QuantValue) -> QS {
-    let size_quant = comptime!(quant.size_bits() as u32);
+    let size_quant = comptime!(quant.size_bits());
 
-    let size_store = comptime!(QS::size_bits().unwrap() as u32);
+    let size_store = comptime!(QS::size_bits().unwrap());
     let num_quants = comptime!(size_store / size_quant);
 
     let mask = i32::cast_from(comptime!((1 << size_quant) - 1));
-    let mut position = comptime!(0);
+    let mut position = comptime!(0usize);
     let mut packed = QS::cast_from(0);
 
     // Shift and combine into QS (using i32 for sign extension)
@@ -82,9 +81,9 @@ fn pack_q<F: Float, QS: Int>(value: Line<F>, #[comptime] quant: QuantValue) -> Q
 
 #[cube]
 fn write_scale<F: Float, FS: CubePrimitive>(
-    in_pos: u32,
-    scale: &View<F, u32>,
-    out_scale: &mut View<FS, u32, ReadWrite>,
+    in_pos: usize,
+    scale: &View<F, usize>,
+    out_scale: &mut View<FS, usize, ReadWrite>,
     scales_layout: ScalesLayout,
 ) -> FS {
     let scale = FS::cast_from(scale[in_pos]);
@@ -113,7 +112,7 @@ fn quantize_symmetric_native_kernel<F: Float, FS: Numeric, Q: Numeric>(
     }
 
     let native_packing = Q::packing_factor();
-    let in_pos = ABSOLUTE_POS * input.line_size() * native_packing;
+    let in_pos = ABSOLUTE_POS as usize * input.line_size() * native_packing;
     let scale = write_scale(in_pos, scale, out_scale, scales_layout);
 
     output[ABSOLUTE_POS] = quantize_symmetric_q::<F, FS, Q>(

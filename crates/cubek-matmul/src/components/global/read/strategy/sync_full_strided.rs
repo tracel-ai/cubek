@@ -46,7 +46,7 @@ impl LoadMaxRoundPlaneCount for SyncFullStridedLoading {
     fn max_round_plane_count(
         elements_per_tile: u32,
         tiles_per_stage: u32,
-        line_size: u8,
+        line_size: LineSize,
         plane_dim: u32,
         _dtype: StorageType,
     ) -> u32 {
@@ -63,10 +63,10 @@ impl FullLoadingStrategy for SyncFullStridedLoading {
     type Job<EG: Numeric, ES: Numeric> = SyncFullStridedJob;
 
     fn new_job<EG: Numeric, ES: Numeric>(
-        #[comptime] line_size: u32,
+        #[comptime] line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, ES> {
-        let num_stage_lines = config.smem_config.elements_per_stage() / line_size;
+        let num_stage_lines = config.smem_config.elements_per_stage() / line_size as u32;
         let unit_count = config.loading_planes_count() * config.plane_dim;
         let num_tasks_per_unit = comptime!(num_stage_lines / unit_count);
 
@@ -93,7 +93,7 @@ pub struct SyncFullStridedJob {
     #[cube(comptime)]
     unit_count: u32,
     #[cube(comptime)]
-    line_size: u32,
+    line_size: LineSize,
 }
 
 #[cube]
@@ -115,11 +115,11 @@ impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, StridedTilingLayout, Synchrono
         let layout = FullStageLayout::new(comptime![config.smem_config]);
         let view = global_iter.view().view(layout);
 
-        let line_read = view.read_checked(unit_position * this.line_size);
+        let line_read = view.read_checked(unit_position * this.line_size as u32);
         let type_size = type_size::<ES>(this.line_size);
         let stage_offs = stage.swizzle.apply(unit_position, type_size);
 
-        stage.as_slice_mut(this.line_size)[stage_offs] = Line::cast_from(line_read);
+        stage.as_slice_mut(this.line_size)[stage_offs as usize] = Line::cast_from(line_read);
     }
 
     fn task_count(this: &Self) -> comptime_type!(u32) {

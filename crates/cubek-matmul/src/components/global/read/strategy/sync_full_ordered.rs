@@ -51,7 +51,8 @@ impl LoadingValidation for SyncFullOrderedLoading {
         }
 
         let num_tiles_per_plane = comptime!(num_tiles / num_planes);
-        let num_lines_per_tile = comptime!(config.smem_config.elements_per_tile() / line_size);
+        let num_lines_per_tile =
+            comptime!(config.smem_config.elements_per_tile() / line_size as u32);
         let num_lines_per_plane = num_lines_per_tile * num_tiles_per_plane;
         let num_planes = config.loading_planes_count();
         let plane_dim = config.plane_dim;
@@ -85,7 +86,7 @@ impl LoadMaxRoundPlaneCount for SyncFullOrderedLoading {
     fn max_round_plane_count(
         _elements_per_tile: u32,
         tiles_per_stage: u32,
-        _line_size: u8,
+        _line_size: LineSize,
         _plane_dim: u32,
         _dtype: StorageType,
     ) -> u32 {
@@ -100,7 +101,7 @@ impl FullLoadingStrategy for SyncFullOrderedLoading {
     type Job<EG: Numeric, ES: Numeric> = sync_full_tilewise::SyncFullTilewiseJob;
 
     fn new_job<EG: Numeric, ES: Numeric>(
-        #[comptime] line_size: u32,
+        #[comptime] line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, ES> {
         let num_planes = config.loading_planes_count();
@@ -108,7 +109,8 @@ impl FullLoadingStrategy for SyncFullOrderedLoading {
         let plane_dim = config.plane_dim;
 
         let num_tiles_per_plane = comptime!(num_tiles / num_planes);
-        let num_lines_per_tile = comptime!(config.smem_config.elements_per_tile() / line_size);
+        let num_lines_per_tile =
+            comptime!(config.smem_config.elements_per_tile() / line_size as u32);
         let num_lines_per_plane = num_lines_per_tile * num_tiles_per_plane;
         let num_lines_per_unit = num_lines_per_plane / plane_dim;
 

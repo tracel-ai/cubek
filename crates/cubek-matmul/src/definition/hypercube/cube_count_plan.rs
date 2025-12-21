@@ -120,23 +120,23 @@ pub enum CubeCountPlanConfig {
 pub enum CubeCountInput {
     FromProblem,
     SmFirst {
-        m_cubes: u32,
-        n_cubes: u32,
-        batch_cubes: u32,
+        m_cubes: usize,
+        n_cubes: usize,
+        batch_cubes: usize,
     },
     CubeFirst {
-        m_cubes: u32,
-        n_cubes: u32,
-        batch_cubes: u32,
+        m_cubes: usize,
+        n_cubes: usize,
+        batch_cubes: usize,
     },
     Flattened {
-        m_cubes: u32,
-        n_cubes: u32,
+        m_cubes: usize,
+        n_cubes: usize,
     },
     Spread {
-        m_cubes: u32,
-        n_cubes: u32,
-        batch_cubes: u32,
+        m_cubes: usize,
+        n_cubes: usize,
+        batch_cubes: usize,
     },
 }
 
@@ -431,7 +431,7 @@ impl CubeCountPlan {
 #[cube]
 impl CubeCountInput {
     /// Returns the number of valid cubes
-    pub fn num_valid_cubes(&self) -> u32 {
+    pub fn num_valid_cubes(&self) -> usize {
         match self {
             CubeCountInput::FromProblem | CubeCountInput::Flattened { .. } => {
                 panic!("Shouldn't need to be called because the cube count should always be exact")

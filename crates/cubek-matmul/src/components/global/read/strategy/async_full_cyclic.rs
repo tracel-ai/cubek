@@ -71,7 +71,7 @@ impl<TO: TilingOrder> LoadMaxRoundPlaneCount for AsyncFullCyclicLoading<TO> {
     fn max_round_plane_count(
         elements_per_tile: u32,
         tiles_per_stage: u32,
-        _line_size: u8,
+        _line_size: LineSize,
         plane_dim: u32,
         dtype: StorageType,
     ) -> u32 {
@@ -89,11 +89,11 @@ impl<TO: TilingOrder> FullLoadingStrategy for AsyncFullCyclicLoading<TO> {
     type Job<EG: Numeric, ES: Numeric> = AsyncFullCyclicJob;
 
     fn new_job<EG: Numeric, ES: Numeric>(
-        #[comptime] _line_size: u32,
+        #[comptime] _line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, ES> {
         let type_size = ES::type_size_bits();
-        let line_size = comptime![ASYNC_COPY_WIDTH / type_size];
+        let line_size = comptime![ASYNC_COPY_WIDTH / type_size as u32];
         let tile_num_elements = config.smem_config.elements_per_tile();
         let num_stage_elements = config.smem_config.elements_per_stage();
 
@@ -190,7 +190,7 @@ pub(crate) fn copy_line<EG: Numeric, ES: Numeric, TO: TilingOrder>(
     let tile = ContiguousTilingLayout::<TO>::to_x_y(nth_tile, config.smem_config);
 
     let pos = layout.to_source_pos((tile, pos_within_tile));
-    let stage_offset = unit_position / stage.smem.line_size();
+    let stage_offset = unit_position / stage.smem.line_size() as u32;
 
     async_copy_from(view, pos, stage, stage_offset, config, job.copy_line_size);
 }

@@ -253,25 +253,25 @@ where
         partition_scheduler: &PartitionScheduler,
         #[comptime] stage_config: Self::Config,
     ) {
-        let m_iterations = stage_config.shared().partition_size.m();
-        let n_iterations = stage_config.shared().partition_size.n();
+        let m_iterations = stage_config.shared().partition_size.m() as usize;
+        let n_iterations = stage_config.shared().partition_size.n() as usize;
 
         W::on_event(listener, global::WriteEvent::new_Begin());
 
         // Iterate over each tile in the partition
         #[unroll]
         for m_iter in 0..m_iterations {
-            let m_load_iter = partition_scheduler.map_m(m_iter);
+            let m_load_iter = partition_scheduler.map_m(m_iter as u32);
 
             #[unroll]
             for n_iter in 0..n_iterations {
-                let n_load_iter = partition_scheduler.map_n(n_iter);
+                let n_load_iter = partition_scheduler.map_n(n_iter as u32);
 
                 let tile_accumulator = Accumulators::<MP, TM>::get_at(
                     acc,
                     m_iter,
                     n_iter,
-                    stage_config.shared().partition_size.n(),
+                    stage_config.shared().partition_size.n() as usize,
                 );
 
                 let tile_pos = (m_load_iter, n_load_iter);

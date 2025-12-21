@@ -48,8 +48,8 @@ impl<
     pub fn load<R: Stage<AccS<MP>, ReadOnly, TileKind = TM::AccTile>>(
         &mut self,
         stage: &R,
-        #[comptime] tiles_in_stage_partition_m: u32,
-        #[comptime] tiles_in_stage_partition_n: u32,
+        #[comptime] tiles_in_stage_partition_m: usize,
+        #[comptime] tiles_in_stage_partition_n: usize,
         #[comptime] tile_config: TM::Config,
     ) {
         #[unroll]
@@ -57,7 +57,7 @@ impl<
             #[unroll]
             for n in 0..tiles_in_stage_partition_n {
                 let acc = self.get_at_mut(m, n, tiles_in_stage_partition_n);
-                let tile = R::tile(stage, (m, n).runtime());
+                let tile = R::tile(stage, (m as u32, n as u32));
                 TM::load_acc(&tile, acc, tile_config);
             }
         }
@@ -66,23 +66,21 @@ impl<
     /// Fetch a reference to the accumulator at (`m`, `n`)
     pub fn get_at(
         &self,
-        #[comptime] m: u32,
-        #[comptime] n: u32,
-        #[comptime] tiles_in_stage_partition_n: u32,
+        #[comptime] m: usize,
+        #[comptime] n: usize,
+        #[comptime] tiles_in_stage_partition_n: usize,
     ) -> &TM::AccFragment {
-        self.sequence
-            .index(comptime!(m * tiles_in_stage_partition_n + n))
+        self.sequence.index(m * tiles_in_stage_partition_n + n)
     }
 
     /// Fetch a mutable reference to the accumulator at (`m`, `n`)
     pub fn get_at_mut(
         &mut self,
-        #[comptime] m: u32,
-        #[comptime] n: u32,
-        #[comptime] tiles_in_stage_partition_n: u32,
+        #[comptime] m: usize,
+        #[comptime] n: usize,
+        #[comptime] tiles_in_stage_partition_n: usize,
     ) -> &mut TM::AccFragment {
-        self.sequence
-            .index_mut(comptime!(m * tiles_in_stage_partition_n + n))
+        self.sequence.index_mut(m * tiles_in_stage_partition_n + n)
     }
 }
 

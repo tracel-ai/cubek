@@ -63,7 +63,7 @@ impl<TO: TilingOrder> LoadMaxRoundPlaneCount for SyncPartialCyclicLoading<TO> {
     fn max_round_plane_count(
         elements_per_tile: u32,
         tiles_per_stage: u32,
-        line_size: u8,
+        line_size: LineSize,
         plane_dim: u32,
         _dtype: StorageType,
     ) -> u32 {
@@ -83,7 +83,7 @@ impl<TO: TilingOrder> PartialLoadingStrategy for SyncPartialCyclicLoading<TO> {
 
     fn new_job<EG: Numeric, ES: Numeric>(
         #[comptime] stage_index: u32,
-        #[comptime] line_size: u32,
+        #[comptime] line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> SyncPartialCyclicJob {
         let num_stage_elements = config.smem_config.elements_per_stage();
@@ -92,19 +92,19 @@ impl<TO: TilingOrder> PartialLoadingStrategy for SyncPartialCyclicLoading<TO> {
         let tile_count_row = config.smem_config.tiles_per_stage_along_row();
         let tile_count_col = config.smem_config.tiles_per_stage_along_col();
 
-        let num_lines_per_tile = tile_size / line_size;
+        let num_lines_per_tile = tile_size / line_size as u32;
         let total_units = config.loading_units_count();
 
         let num_tiles_in_stage = tile_count_row * tile_count_col;
         let total_num_lines = num_tiles_in_stage * num_lines_per_tile;
         let balanced_workload = total_num_lines.is_multiple_of(total_units);
         let num_tasks_per_unit = total_num_lines.div_ceil(total_units);
-        let jump_length = total_units * line_size;
+        let jump_length = total_units * line_size as u32;
 
         let plane_id = RoleRule::new(config.plane_role_config.rule)
             .load_index(config.specialization_tensor_config);
         let unit_id = plane_id * config.plane_dim + UNIT_POS_X;
-        let unit_position_base = unit_id * line_size;
+        let unit_position_base = unit_id * line_size as u32;
 
         SyncPartialCyclicJob {
             unit_position_base,
@@ -223,9 +223,9 @@ pub(crate) fn load_and_store_line<EG: Numeric, ES: Numeric, TO: TilingOrder>(
 
     let tile_start = tile_index * job.num_lines_per_tile;
     let mut tile_slice = stage.as_slice_mut(line_size);
-    let offset = tile_start + pos_within_tile / line_size;
+    let offset = tile_start + pos_within_tile / line_size as u32;
     let type_size = type_size::<ES>(line_size);
     let offset = stage.swizzle.apply(offset, type_size);
 
-    tile_slice[offset] = Line::cast_from(line_read);
+    tile_slice[offset as usize] = Line::cast_from(line_read);
 }

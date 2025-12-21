@@ -1,5 +1,5 @@
 use cubecl::prelude::*;
-use cubecl::std::tensor::layout::{Coords1d, Coords2d, Layout, LayoutExpand};
+use cubecl::std::tensor::layout::{Coords2d, Layout, LayoutExpand};
 
 use crate::components::stage::StageMemoryConfig;
 use crate::definition::MatrixLayout;
@@ -20,7 +20,7 @@ impl FullStageLayout {
 
 #[cube]
 impl Layout for FullStageLayout {
-    type Coordinates = Coords1d;
+    type Coordinates = u32;
     type SourceCoordinates = Coords2d;
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {

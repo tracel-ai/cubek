@@ -55,7 +55,7 @@ impl Layout for ScalesLayout {
 impl ScalesLayout {
     /// Whether the position is at the start of a new block. Used for electing a unit to write each
     /// scale.
-    pub fn is_block_start(&self, pos: u32) -> bool {
+    pub fn is_block_start(&self, pos: usize) -> bool {
         match self {
             ScalesLayout::PerTensor(layout) => layout.is_block_start(pos),
             ScalesLayout::BlockScaled(layout) => layout.is_block_start(pos),
@@ -101,16 +101,16 @@ impl Layout for PerTensorLayout {
 impl PerTensorLayout {
     /// Whether the position is at the start of a new block. Used for electing a unit to write each
     /// scale.
-    pub fn is_block_start(&self, pos: u32) -> bool {
+    pub fn is_block_start(&self, pos: usize) -> bool {
         pos == 0
     }
 }
 
 #[derive(CubeType, CubeLaunch)]
 pub struct BlockScaledLayout {
-    tensor_shape: Sequence<FastDivmod>,
+    tensor_shape: Sequence<FastDivmod<usize>>,
     tensor_len: u32,
-    scales_strides: Sequence<u32>,
+    scales_strides: Sequence<usize>,
     #[cube(comptime)]
     block_size: Vec<u8>,
     #[cube(comptime)]
@@ -176,7 +176,7 @@ impl Layout for BlockScaledLayout {
 impl BlockScaledLayout {
     /// Whether the position is at the start of a new block. Used for electing a unit to write each
     /// scale.
-    pub fn is_block_start(&self, pos: u32) -> bool {
+    pub fn is_block_start(&self, pos: usize) -> bool {
         let rank = comptime![self.scales_strides.len()];
         let mut offs = pos;
         let mut is_start = true;
@@ -184,7 +184,7 @@ impl BlockScaledLayout {
         #[unroll]
         for i in 0..rank {
             let dim = comptime![rank - i - 1];
-            let block_size_local = comptime![self.block_size[dim as usize] as u32];
+            let block_size_local = comptime![self.block_size[dim as usize] as usize];
             let (rem, offs_local) = self.tensor_shape.index(dim).div_mod(offs);
             offs = rem;
             is_start &= offs_local.is_multiple_of(block_size_local);

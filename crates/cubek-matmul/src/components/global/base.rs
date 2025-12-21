@@ -180,9 +180,9 @@ impl<S: StageConfig> GlobalConfig for SharedGlobalMatmulConfig<S> {
 
     fn global_line_sizes(&self) -> MatmulLineSizes {
         MatmulLineSizes {
-            lhs: self.lhs_reader_config.gmem_config.line_size as u8,
-            rhs: self.rhs_reader_config.gmem_config.line_size as u8,
-            out: self.writer_config.gmem_config.line_size as u8,
+            lhs: self.lhs_reader_config.gmem_config.line_size as usize,
+            rhs: self.rhs_reader_config.gmem_config.line_size as usize,
+            out: self.writer_config.gmem_config.line_size as usize,
         }
     }
 

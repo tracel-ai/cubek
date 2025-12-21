@@ -37,7 +37,7 @@ impl<TO: TilingOrder> LoadMaxRoundPlaneCount for SyncPartialTilewiseLoading<TO> 
     fn max_round_plane_count(
         _elements_per_tile: u32,
         tiles_per_stage: u32,
-        _line_size: u8,
+        _line_size: LineSize,
         _plane_dim: u32,
         _dtype: StorageType,
     ) -> u32 {
@@ -110,7 +110,7 @@ impl<TO: TilingOrder> PartialLoadingStrategy for SyncPartialTilewiseLoading<TO> 
 
     fn new_job<EG: Numeric, ES: Numeric>(
         #[comptime] stage_index: u32,
-        #[comptime] line_size: u32,
+        #[comptime] line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> SyncPartialTilewiseJob {
         let num_planes = config.loading_planes_count();
@@ -118,7 +118,8 @@ impl<TO: TilingOrder> PartialLoadingStrategy for SyncPartialTilewiseLoading<TO> 
         let plane_dim = config.plane_dim;
 
         let num_tiles_per_plane = comptime!(num_tiles / num_planes);
-        let num_lines_per_tile = comptime!(config.smem_config.elements_per_tile() / line_size);
+        let num_lines_per_tile =
+            comptime!(config.smem_config.elements_per_tile() / line_size as u32);
         let num_lines_per_plane = num_lines_per_tile * num_tiles_per_plane;
         let num_lines_per_unit = num_lines_per_plane / plane_dim;
 
@@ -158,7 +159,7 @@ pub struct SyncPartialTilewiseJob {
     #[cube(comptime)]
     plane_dim: u32,
     #[cube(comptime)]
-    line_size: u32,
+    line_size: LineSize,
 }
 
 #[cube]
@@ -228,12 +229,12 @@ impl SyncPartialTilewiseJob {
         let layout = TiledLayout::new(config.stage_ident, config.smem_config);
         let view = global_iter.view().view(layout);
 
-        let line_read = view.read_checked((tile, line_index_within_tile * this.line_size));
+        let line_read = view.read_checked((tile, line_index_within_tile * this.line_size as u32));
 
         let offset = line_index_within_tile + num_lines_to_skip_global;
         let type_size = type_size::<ES>(this.line_size);
         let offset = stage.swizzle.apply(offset, type_size);
 
-        stage.as_slice_mut(this.line_size)[offset] = Line::cast_from(line_read);
+        stage.as_slice_mut(this.line_size)[offset as usize] = Line::cast_from(line_read);
     }
 }

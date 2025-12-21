@@ -44,7 +44,7 @@ pub trait PartialLoadingStrategy:
     /// Returns the job with preliminary calculations done.
     fn new_job<EG: Numeric, ES: Numeric>(
         #[comptime] stage_index: u32,
-        #[comptime] line_size: u32,
+        #[comptime] line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, ES>;
 }
@@ -87,7 +87,7 @@ impl<EG: Numeric, ES: Numeric, L: PartialLoadingStrategy> PartialStageGlobalRead
         k_step: u32,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self {
-        let stage_memory = L::Stage::create(128u32, config.smem_config);
+        let stage_memory = L::Stage::create(128usize, config.smem_config);
         let global_iter =
             GlobalIterator::new(tensor, k_step, config.gmem_config.view_direction, false);
 

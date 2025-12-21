@@ -41,32 +41,35 @@ pub struct StridedStageMemory<ES: Numeric, T: TilingLayout> {
 impl<ES: Numeric, T: TilingLayout> StridedStageMemory<ES, T> {
     /// Instantiate a new stage memory for the given identifier
     pub fn new(#[comptime] config: StageMemoryConfig) -> StridedStageMemory<ES, T> {
-        Self::new_aligned(type_size::<ES>(config.line_size), config)
+        Self::new_aligned(type_size::<ES>(config.line_size as usize), config)
     }
 
     /// Instantiate a new stage memory for the given identifier, with shared memory alignment
     pub fn new_aligned(
-        #[comptime] alignment: u32,
+        #[comptime] alignment: usize,
         #[comptime] config: StageMemoryConfig,
     ) -> StridedStageMemory<ES, T> {
-        let line_size = config.line_size;
+        let line_size = config.line_size as usize;
         let swizzle = as_swizzle_object(config.swizzle);
         let swizzle_align = swizzle.repeats_after();
-        let align = comptime![Ord::max(alignment, swizzle_align)];
+        let align = comptime![Ord::max(alignment, swizzle_align as usize)];
         let type_size = type_size::<ES>(line_size);
 
-        let stage_size_bytes = comptime![config.elements_per_stage() * type_size];
+        let stage_size_bytes = comptime![config.elements_per_stage() as usize * type_size];
         // Ensure all stages are aligned properly
         let stage_size =
             comptime![stage_size_bytes.next_multiple_of(align) / type_size / line_size];
 
-        let smem =
-            SharedMemory::new_aligned(comptime!(config.num_stages * stage_size), line_size, align);
+        let smem = SharedMemory::new_aligned(
+            comptime!(config.num_stages as usize * stage_size),
+            line_size,
+            align,
+        );
 
         StridedStageMemory::<ES, T> {
             smem,
             swizzle,
-            stage_size,
+            stage_size: stage_size as u32,
             config,
             buffer_index: 0u32,
             _phantom: PhantomData::<T>,
@@ -133,18 +136,18 @@ impl<ES: Numeric, T: TilingLayout> StridedStageMemory<ES, T> {
     }
 
     /// Return the whole stage as a slice, for reading
-    pub fn as_slice(&self, #[comptime] line_size: u32) -> Slice<Line<ES>> {
-        let stage_offset = self.buffer_index * self.stage_size;
+    pub fn as_slice(&self, #[comptime] line_size: LineSize) -> Slice<Line<ES>> {
+        let stage_offset = (self.buffer_index * self.stage_size) as usize;
         self.smem
-            .slice(stage_offset, stage_offset + self.stage_size)
+            .slice(stage_offset, stage_offset + self.stage_size as usize)
             .with_line_size(line_size)
     }
 
     /// Return the whole stage as a mutable slice, for loading
-    pub fn as_slice_mut(&mut self, #[comptime] line_size: u32) -> SliceMut<Line<ES>> {
-        let stage_offset = self.buffer_index * self.stage_size;
+    pub fn as_slice_mut(&mut self, #[comptime] line_size: LineSize) -> SliceMut<Line<ES>> {
+        let stage_offset = (self.buffer_index * self.stage_size) as usize;
         self.smem
-            .slice_mut(stage_offset, stage_offset + self.stage_size)
+            .slice_mut(stage_offset, stage_offset + self.stage_size as usize)
             .with_line_size(line_size)
     }
 
@@ -167,10 +170,10 @@ impl<ES: Numeric, T: TilingLayout> StridedStageMemory<ES, T> {
 
             #[allow(clippy::collapsible_else_if)]
             if comptime!(smem_length % unit_count == 0) {
-                self.smem[offset] = Line::cast_from(0);
+                self.smem[offset as usize] = Line::cast_from(0);
             } else {
                 if offset < smem_length {
-                    self.smem[offset] = Line::cast_from(0);
+                    self.smem[offset as usize] = Line::cast_from(0);
                 }
             }
         }
@@ -184,7 +187,7 @@ impl<ES: Numeric, T: TilingLayout> StridedStageMemory<ES, T> {
         #[comptime] config: GlobalReaderConfig,
     ) {
         let mut this = self.with_buffer_index(stage_buffer.to_index());
-        let line_size = comptime![this.config.line_size];
+        let line_size = comptime![this.config.line_size as usize];
 
         let unit_count = config.loading_units_count();
         let num_writes_per_unit = comptime![this.stage_size.div_ceil(unit_count)];
@@ -201,10 +204,10 @@ impl<ES: Numeric, T: TilingLayout> StridedStageMemory<ES, T> {
 
             #[allow(clippy::collapsible_else_if)]
             if comptime!(this.stage_size.is_multiple_of(unit_count)) {
-                stage[unit_position] = Line::cast_from(0);
+                stage[unit_position as usize] = Line::cast_from(0);
             } else {
                 if unit_position < this.stage_size {
-                    stage[unit_position] = Line::cast_from(0);
+                    stage[unit_position as usize] = Line::cast_from(0);
                 }
             }
         }
@@ -241,7 +244,7 @@ impl<ES: Numeric, T: TilingLayout> Stage<ES, ReadWrite> for StridedStageMemory<E
 #[cube]
 impl LoadStageFamily<ReadOnly> for StridedStageFamily {
     fn create<ES: Numeric, T: TilingLayout>(
-        #[comptime] alignment: u32,
+        #[comptime] alignment: usize,
         #[comptime] config: StageMemoryConfig,
     ) -> Self::Stage<ES, T> {
         StridedStageMemory::new_aligned(alignment, config)

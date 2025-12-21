@@ -1,4 +1,6 @@
-use cubecl::{LineSizeError, Runtime, client::ComputeClient, tensor_line_size_parallel};
+use cubecl::{
+    LineSizeError, Runtime, client::ComputeClient, ir::LineSize, tensor_line_size_parallel,
+};
 
 use std::fmt::Debug;
 
@@ -8,9 +10,9 @@ use crate::definition::{base::MatrixLayout, error::MatmulSetupError};
 /// Line size used for each tensor in global memory accesses.
 /// Represents the number of elements processed per SIMD load/store.
 pub struct MatmulLineSizes {
-    pub lhs: u8,
-    pub rhs: u8,
-    pub out: u8,
+    pub lhs: LineSize,
+    pub rhs: LineSize,
+    pub out: LineSize,
 }
 
 #[derive(Clone, Debug)]
@@ -19,9 +21,9 @@ pub struct MatmulLineSizes {
 /// These lists begin with compiler-supported sizes and are progressively
 /// filtered based on problem shape divisibility and hardware constraints.
 pub struct AvailableLineSizes {
-    pub lhs: Vec<u8>,
-    pub rhs: Vec<u8>,
-    pub out: Vec<u8>,
+    pub lhs: Vec<LineSize>,
+    pub rhs: Vec<LineSize>,
+    pub out: Vec<LineSize>,
 }
 
 impl AvailableLineSizes {

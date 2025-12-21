@@ -340,7 +340,11 @@ impl<TO: TilingOrder> TilingLayout for ContiguousTilingLayout<TO> {
             );
         let start = start / config.line_size;
 
-        StridedTile::new_contiguous(stage_memory.as_slice(stage_line_size), start, config)
+        StridedTile::new_contiguous(
+            stage_memory.as_slice(stage_line_size as usize),
+            start,
+            config,
+        )
     }
 
     fn to_enum() -> comptime_type!(TilingLayoutEnum) {
@@ -376,8 +380,8 @@ impl StridedTilingLayout {
 
         let start = slice_length * nth;
         stage
-            .as_slice_mut(stage_line_size)
-            .slice_mut(start, start + slice_length)
+            .as_slice_mut(stage_line_size as usize)
+            .slice_mut(start as usize, (start + slice_length) as usize)
     }
 }
 
@@ -406,7 +410,7 @@ impl TilingLayout for StridedTilingLayout {
                 let start = x * tile_size_x * stride + y * tile_size_y;
 
                 StridedTile::new_strided(
-                    stage.as_slice(stage_line_size),
+                    stage.as_slice(stage_line_size as usize),
                     start,
                     start + length,
                     stride,
@@ -424,7 +428,7 @@ impl TilingLayout for StridedTilingLayout {
                 let start = x * tile_size_x + y * tile_size_y * stride;
 
                 StridedTile::new_strided(
-                    stage.as_slice(stage_line_size),
+                    stage.as_slice(stage_line_size as usize),
                     start,
                     start + length,
                     stride,

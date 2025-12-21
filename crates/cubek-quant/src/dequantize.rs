@@ -30,9 +30,9 @@ pub fn dequantize_symmetric<F: Float, FS: CubePrimitive>(value: Line<F>, scale: 
 /// values in the stored quantization type.
 #[cube]
 pub fn dequantize_symmetric_packed_values<F: Float, FS: CubePrimitive, QI: Int>(
-    position: u32,
-    values: &View<Line<QI>, u32>,
-    scales: &View<FS, u32>,
+    position: usize,
+    values: &View<Line<QI>, usize>,
+    scales: &View<FS, usize>,
     #[comptime] scheme: QuantScheme,
 ) -> Array<Line<F>> {
     dequantize_symmetric_packed_value_at::<F, FS, QI>(position, values[position], scales, scheme)
@@ -44,9 +44,9 @@ pub fn dequantize_symmetric_packed_values<F: Float, FS: CubePrimitive, QI: Int>(
 /// values in the stored quantization type.
 #[cube]
 pub fn dequantize_symmetric_packed_value_at<F: Float, FS: CubePrimitive, QI: Int>(
-    position: u32,
+    position: usize,
     values: Line<QI>,
-    scales: &View<FS, u32>,
+    scales: &View<FS, usize>,
     #[comptime] scheme: QuantScheme,
 ) -> Array<Line<F>> {
     dequantize_symmetric_packed_value::<F, FS, QI>(values, scales, position, scheme)
@@ -59,13 +59,13 @@ pub fn dequantize_symmetric_packed_value_at<F: Float, FS: CubePrimitive, QI: Int
 #[cube]
 pub fn dequantize_symmetric_packed_value<F: Float, FS: CubePrimitive, QS: Int>(
     values: Line<QS>,
-    scales: &View<FS, u32>,
-    position: u32,
+    scales: &View<FS, usize>,
+    position: usize,
     #[comptime] scheme: QuantScheme,
 ) -> Array<Line<F>> {
     let line_size_values = values.line_size();
-    let num_quants = comptime!(scheme.num_quants() as u32);
-    let mut tmp = Array::vectorized(line_size_values, num_quants);
+    let num_quants = scheme.num_quants();
+    let mut tmp = Array::lined(line_size_values, num_quants);
 
     #[unroll]
     for i in 0..line_size_values {
@@ -88,8 +88,8 @@ fn unpack_q<F: Float, QS: Int>(
     #[comptime] quant: QuantValue,
     #[comptime] store: QuantStore,
 ) -> Line<F> {
-    let size_quant = comptime!(quant.size_bits() as u32);
-    let size_store = comptime!(store.size_bits(&quant) as u32);
+    let size_quant = quant.size_bits();
+    let size_store = store.size_bits(&quant);
     let num_quant = comptime!(size_store / size_quant);
 
     let mut output = Line::empty(num_quant);
@@ -133,11 +133,11 @@ fn dequantize_symmetric_packed_kernel<F: Float, FS: Numeric>(
     let line_size_out = output.line_size();
 
     comptime! {
-        assert_eq!(line_size_out, scheme.num_quants() as u32);
+        assert_eq!(line_size_out, scheme.num_quants());
     }
 
     let values = input[ABSOLUTE_POS];
-    let packed_pos = ABSOLUTE_POS * comptime![scheme.num_quants() as u32];
+    let packed_pos = ABSOLUTE_POS * comptime![scheme.num_quants()];
 
     let out = dequantize_symmetric_packed_value::<F, FS, u32>(values, scales, packed_pos, scheme);
 
@@ -245,7 +245,7 @@ fn dequantize_packed<R: Runtime>(
         input.strides,
         input.shape.len() - 1,
     );
-    let num_quants = scheme.num_quants() as u8;
+    let num_quants = scheme.num_quants();
     let line_size_out = num_quants;
     let rank = output.shape.len();
 
