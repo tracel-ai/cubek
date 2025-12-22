@@ -43,7 +43,7 @@ pub struct PlaneReduceBlueprint {
     pub plane_idle: IdleMode,
     // There are too many units in a plane causing out-of-bound.
     pub bound_checks: BoundChecks,
-    // Wheter all units in a plane work independently during the reduction.
+    // Whether all units in a plane work independently during the reduction.
     //
     // # Notes
     //
