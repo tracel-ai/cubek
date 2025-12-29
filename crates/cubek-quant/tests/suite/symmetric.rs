@@ -30,18 +30,15 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
     let half = num_elems as f32 / 2.0;
     let data: Vec<_> = (0..num_elems).map(|v| v as f32 - half).collect();
     let input_alloc =
-        client.create_tensor_from_slice(f32::as_bytes(&data), &shape, f32::type_size() as usize);
+        client.create_tensor_from_slice(f32::as_bytes(&data), &shape, f32::type_size());
 
     let (q_min, q_max) = value.range();
     // input data range is not affected by quant range symmetry
     let scale_f32 = (2.0 * half) / (q_max - q_min);
     let data_scale = vec![scale_f32];
 
-    let scale_alloc = client.create_tensor_from_slice(
-        f32::as_bytes(&data_scale),
-        &[1],
-        f32::type_size() as usize,
-    );
+    let scale_alloc =
+        client.create_tensor_from_slice(f32::as_bytes(&data_scale), &[1], f32::type_size());
 
     let input = TensorHandle::new(
         input_alloc.handle,
@@ -73,12 +70,12 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
             AllocationDescriptor {
                 kind: cubecl::server::AllocationKind::Contiguous,
                 shape: &shape_out,
-                elem_size: u32::type_size() as usize,
+                elem_size: u32::type_size(),
             },
             AllocationDescriptor {
                 kind: cubecl::server::AllocationKind::Contiguous,
                 shape: &[1],
-                elem_size: f32::type_size() as usize,
+                elem_size: f32::type_size(),
             },
         ])
         .try_into()
@@ -151,7 +148,7 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
         .map(|v| (v as f32 - half) / num_elems as f32)
         .collect();
     let input_alloc =
-        client.create_tensor_from_slice(f32::as_bytes(&data), &shape, f32::type_size() as usize);
+        client.create_tensor_from_slice(f32::as_bytes(&data), &shape, f32::type_size());
 
     let (q_min, q_max) = value.range();
 
@@ -178,11 +175,8 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
         scales.push(scale);
     }
 
-    let scale_alloc = client.create_tensor_from_slice(
-        f32::as_bytes(&scales),
-        &shape_scale,
-        f32::type_size() as usize,
-    );
+    let scale_alloc =
+        client.create_tensor_from_slice(f32::as_bytes(&scales), &shape_scale, f32::type_size());
 
     let input = TensorHandle::new(
         input_alloc.handle,
@@ -214,12 +208,12 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
             AllocationDescriptor {
                 kind: cubecl::server::AllocationKind::Contiguous,
                 shape: &shape_out,
-                elem_size: u32::type_size() as usize,
+                elem_size: u32::type_size(),
             },
             AllocationDescriptor {
                 kind: cubecl::server::AllocationKind::Contiguous,
                 shape: &shape_scale,
-                elem_size: f32::type_size() as usize,
+                elem_size: f32::type_size(),
             },
         ])
         .try_into()

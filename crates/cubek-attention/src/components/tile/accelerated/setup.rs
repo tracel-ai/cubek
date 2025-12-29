@@ -1,3 +1,4 @@
+use cubecl::ir::LineSize;
 use cubek_matmul::components::ComputeResources;
 
 use crate::components::tile::SharedTileAttentionConfig;
@@ -86,7 +87,7 @@ impl TileAttentionFamily for BlackboxAcceleratedTileAttention {
 fn validate(
     config: BlackboxAcceleratedAttentionMatmulConfig,
     reuse_key_value: bool,
-    line_sizes_mask: u8,
+    line_sizes_mask: LineSize,
 ) -> Result<BlackboxAcceleratedAttentionMatmulConfig, AttentionSetupError> {
     if line_sizes_mask > 1 {
         return Err(AttentionSetupError::InvalidConfig(Box::new(

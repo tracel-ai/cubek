@@ -105,7 +105,7 @@ where
         let reader_mode = selection.reader_mode;
 
         let lhs_gmem_config = GlobalMemoryConfig {
-            line_size: line_sizes.lhs as u32,
+            line_size: line_sizes.lhs,
             check_row_bounds: check_m_bounds,
             check_col_bounds: check_k_bounds,
             matrix_layout: problem.lhs_layout,
@@ -113,7 +113,7 @@ where
         };
 
         let rhs_gmem_config = GlobalMemoryConfig {
-            line_size: line_sizes.rhs as u32,
+            line_size: line_sizes.rhs,
             check_row_bounds: check_k_bounds,
             check_col_bounds: check_n_bounds,
             matrix_layout: problem.rhs_layout,
@@ -121,7 +121,7 @@ where
         };
 
         let out_gmem_config = GlobalMemoryConfig {
-            line_size: line_sizes.out as u32,
+            line_size: line_sizes.out,
             matrix_layout: MatrixLayout::RowMajor,
             check_row_bounds: check_m_bounds,
             check_col_bounds: check_n_bounds,

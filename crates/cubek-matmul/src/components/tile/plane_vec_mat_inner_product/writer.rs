@@ -25,7 +25,7 @@ impl MatrixStageWriter {
                 for within_line in 0..out_line_size {
                     let n = comptime!(out_line_iter * out_line_size + within_line);
 
-                    let line_container = acc.index(n);
+                    let line_container = &acc[n];
                     let mut sum = A::from_int(0);
                     for i in 0..reduce_line_size {
                         sum += line_container.line[i];

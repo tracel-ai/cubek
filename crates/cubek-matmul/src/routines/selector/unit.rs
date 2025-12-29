@@ -9,7 +9,11 @@ use crate::{
     },
     routines::LaunchInfo,
 };
-use cubecl::{Runtime, client::ComputeClient, ir::StorageType};
+use cubecl::{
+    Runtime,
+    client::ComputeClient,
+    ir::{LineSize, StorageType},
+};
 
 #[derive(Default, Clone, Copy, Debug)]
 pub enum TileSizeSelection {
@@ -63,8 +67,8 @@ pub fn infer_blueprint_unit<R: Runtime>(
 ) -> LaunchInfo<TilingBlueprint> {
     let kind: MatmulKind = problem.into();
     let num_sms = client.properties().hardware.num_streaming_multiprocessors;
-    let min_tile_size = u8::max(line_sizes.lhs, line_sizes.rhs);
-    let min_tile_size = u8::max(line_sizes.out, min_tile_size) as u32;
+    let min_tile_size = usize::max(line_sizes.lhs, line_sizes.rhs);
+    let min_tile_size = usize::max(line_sizes.out, min_tile_size) as u32;
     let tile_size = u32::max(min_tile_size, 4);
     let dtypes = MatmulElems::from_globals(global_elems);
 
@@ -536,12 +540,12 @@ fn selection(
 
     if swizzle {
         let lhs_swizzle_dim = match problem.lhs_layout {
-            MatrixLayout::RowMajor => tiling_scheme.elements_per_stage_along_k(),
-            MatrixLayout::ColMajor => tiling_scheme.elements_per_stage_along_m(),
+            MatrixLayout::RowMajor => tiling_scheme.elements_per_stage_along_k() as usize,
+            MatrixLayout::ColMajor => tiling_scheme.elements_per_stage_along_m() as usize,
         };
         let rhs_swizzle_dim = match problem.rhs_layout {
-            MatrixLayout::RowMajor => tiling_scheme.elements_per_stage_along_n(),
-            MatrixLayout::ColMajor => tiling_scheme.elements_per_stage_along_k(),
+            MatrixLayout::RowMajor => tiling_scheme.elements_per_stage_along_n() as usize,
+            MatrixLayout::ColMajor => tiling_scheme.elements_per_stage_along_k() as usize,
         };
 
         builder = builder.shared_swizzle(SwizzleBlueprint {
@@ -557,12 +561,12 @@ fn selection(
 /// All modes currently use atom size 16
 const SWIZZLE_ATOM: usize = 16;
 
-fn select_swizzle(swizzle_dim: u32, elem: StorageType, line_size: u8) -> SwizzleMode {
+fn select_swizzle(swizzle_dim: usize, elem: StorageType, line_size: LineSize) -> SwizzleMode {
     // Can't swizzle if line size > swizzle atom
-    if elem.size() * line_size as usize > SWIZZLE_ATOM {
+    if elem.size() * line_size > SWIZZLE_ATOM {
         return SwizzleMode::None;
     }
-    let swizzle_dim_bytes = swizzle_dim as usize * elem.size();
+    let swizzle_dim_bytes = swizzle_dim * elem.size();
     if !swizzle_dim_bytes.is_power_of_two() {
         return SwizzleMode::None;
     }

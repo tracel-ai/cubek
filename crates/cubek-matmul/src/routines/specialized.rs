@@ -193,12 +193,12 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
 
     if swizzle {
         let lhs_swizzle_dim = match problem.lhs_layout {
-            MatrixLayout::RowMajor => tiling_scheme.elements_per_stage_along_k(),
-            MatrixLayout::ColMajor => tiling_scheme.elements_per_stage_along_m(),
+            MatrixLayout::RowMajor => tiling_scheme.elements_per_stage_along_k() as usize,
+            MatrixLayout::ColMajor => tiling_scheme.elements_per_stage_along_m() as usize,
         };
         let rhs_swizzle_dim = match problem.rhs_layout {
-            MatrixLayout::RowMajor => tiling_scheme.elements_per_stage_along_n(),
-            MatrixLayout::ColMajor => tiling_scheme.elements_per_stage_along_k(),
+            MatrixLayout::RowMajor => tiling_scheme.elements_per_stage_along_n() as usize,
+            MatrixLayout::ColMajor => tiling_scheme.elements_per_stage_along_k() as usize,
         };
 
         let lhs = select_swizzle(lhs_swizzle_dim, *dtypes.lhs_stage, line_sizes.lhs);

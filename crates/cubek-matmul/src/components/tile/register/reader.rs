@@ -148,7 +148,7 @@ impl RegisterFragmentReader for RegisterStageReader<Filled> {
         };
 
         for i in 0..size {
-            fragment.array[i] = E::cast_from(*value);
+            fragment.array[i as usize] = E::cast_from(*value);
         }
     }
 }

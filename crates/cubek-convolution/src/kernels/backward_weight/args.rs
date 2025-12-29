@@ -138,9 +138,8 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory for TensorIn
 
         let padded_channels = problem.padded_channels as u32;
 
-        let layout_nhwc = |handle, line_size, checks| {
-            NhwcLayoutLaunch::from_handle(handle, line_size as u32, checks)
-        };
+        let layout_nhwc =
+            |handle, line_size, checks| NhwcLayoutLaunch::from_handle(handle, line_size, checks);
 
         let layout_lhs =
             OutLayoutLaunch::from_args(client, problem, config.lhs_global_memory_config());
@@ -179,7 +178,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory for TensorIn
         let runtime_args = RuntimeArgsLaunch::new(
             ScalarArg::new(problem.k as u32),
             ScalarArg::new(problem.channels as u32),
-            FastDivmodArgs::new(client, padded_channels),
+            FastDivmodArgs::<u32>::new(client, padded_channels),
             config.operation(),
         );
 
@@ -204,7 +203,7 @@ impl<EG: Numeric> ConcreteOutputFactory for TensorOutput<EG> {
         if problem.should_check_channel() {
             checks.insert(NhwcCheck::Channel);
         }
-        let global = NhwcLayoutLaunch::from_handle(out, line_sizes.out as u32, checks);
+        let global = NhwcLayoutLaunch::from_handle(out, line_sizes.out, checks);
         let layout =
             WeightLayoutLaunch::from_args(client, problem, config.out_global_memory_config());
         let layout = ChainLaunch::new(global, TransposeLaunch::new(layout));
@@ -307,7 +306,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory
         let shape_out = problem
             .out_shape
             .iter()
-            .map(|it| FastDivmodArgs::new(client, *it as u32))
+            .map(|it| FastDivmodArgs::<u32>::new(client, *it as u32))
             .collect();
 
         // Im2col needs extra checking because if `n` is OOB it wraps around the kernel and can load
@@ -321,7 +320,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory
 
         let rhs_layout = TmaIm2colLayoutLaunch::new(
             shape_out,
-            FastDivmodArgs::new(client, padded_channels),
+            FastDivmodArgs::<u32>::new(client, padded_channels),
             ConvolutionParams::from_problem(problem),
             !shape_n.is_multiple_of(stages_size_n),
         );
@@ -336,7 +335,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory
         let runtime_args = RuntimeArgsLaunch::new(
             ScalarArg::new(shape_k),
             ScalarArg::new(problem.channels as u32),
-            FastDivmodArgs::new(client, padded_channels),
+            FastDivmodArgs::<u32>::new(client, padded_channels),
             config.operation(),
         );
 

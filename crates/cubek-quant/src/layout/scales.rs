@@ -65,12 +65,12 @@ impl ScalesLayout {
 
 #[derive(CubeType, CubeLaunch)]
 pub struct PerTensorLayout {
-    tensor_len: u32,
+    tensor_len: usize,
 }
 
 #[cube]
 impl PerTensorLayout {
-    pub fn new(tensor_len: u32) -> Self {
+    pub fn new(tensor_len: usize) -> Self {
         PerTensorLayout { tensor_len }
     }
 }
@@ -81,7 +81,7 @@ impl Layout for PerTensorLayout {
     type SourceCoordinates = Coords1d;
 
     fn to_source_pos(&self, _pos: Self::Coordinates) -> Self::SourceCoordinates {
-        0u32.runtime()
+        0usize.runtime()
     }
 
     fn shape(&self) -> Self::Coordinates {
@@ -109,22 +109,22 @@ impl PerTensorLayout {
 #[derive(CubeType, CubeLaunch)]
 pub struct BlockScaledLayout {
     tensor_shape: Sequence<FastDivmod<usize>>,
-    tensor_len: u32,
+    tensor_len: usize,
     scales_strides: Sequence<usize>,
     #[cube(comptime)]
     block_size: Vec<u8>,
     #[cube(comptime)]
-    scales_line_size: u32,
+    scales_line_size: usize,
 }
 
 #[cube]
 impl BlockScaledLayout {
     pub fn new(
-        tensor_shape: Sequence<FastDivmod>,
-        tensor_len: u32,
-        scales_strides: Sequence<u32>,
+        tensor_shape: Sequence<FastDivmod<usize>>,
+        tensor_len: usize,
+        scales_strides: Sequence<usize>,
         #[comptime] block_size: Vec<u8>,
-        #[comptime] scales_line_size: u32,
+        #[comptime] scales_line_size: usize,
     ) -> Self {
         BlockScaledLayout {
             tensor_shape,
@@ -149,11 +149,11 @@ impl Layout for BlockScaledLayout {
         #[unroll]
         for i in 0..rank {
             let dim = comptime![rank - i - 1];
-            let block_size_local = comptime![self.block_size[dim as usize] as u32];
-            let (rem, offs_local) = self.tensor_shape.index(dim).div_mod(offs);
+            let block_size_local = comptime![self.block_size[dim] as usize];
+            let (rem, offs_local) = self.tensor_shape[dim].div_mod(offs);
 
             offs = rem;
-            scale_offs += (offs_local / block_size_local) * *self.scales_strides.index(dim);
+            scale_offs += (offs_local / block_size_local) * self.scales_strides[dim];
         }
 
         scale_offs / self.scales_line_size
@@ -184,8 +184,8 @@ impl BlockScaledLayout {
         #[unroll]
         for i in 0..rank {
             let dim = comptime![rank - i - 1];
-            let block_size_local = comptime![self.block_size[dim as usize] as usize];
-            let (rem, offs_local) = self.tensor_shape.index(dim).div_mod(offs);
+            let block_size_local = comptime![self.block_size[dim] as usize];
+            let (rem, offs_local) = self.tensor_shape[dim].div_mod(offs);
             offs = rem;
             is_start &= offs_local.is_multiple_of(block_size_local);
         }
@@ -206,7 +206,7 @@ pub fn scales_view<'a, R: Runtime>(
     client: &ComputeClient<R>,
     values: &'a TensorHandleRef<'a, R>,
     scales: &'a TensorHandleRef<'a, R>,
-    scales_line_size: u8,
+    scales_line_size: usize,
     quant_scheme: &QuantScheme,
 ) -> ScalesViewLaunch<'a, R> {
     let layout = scales_layout(client, values, scales, scales_line_size, quant_scheme);
@@ -221,11 +221,11 @@ pub fn scales_layout<'a, R: Runtime>(
     client: &ComputeClient<R>,
     values: &'a TensorHandleRef<'a, R>,
     scales: &'a TensorHandleRef<'a, R>,
-    scales_line_size: u8,
+    scales_line_size: usize,
     scheme: &QuantScheme,
 ) -> ScalesLayoutArgs<'a, R> {
     let values_len = values.shape.iter().product::<usize>() * scheme.num_quants();
-    let values_len = ScalarArg::new(values_len as u32);
+    let values_len = ScalarArg::new(values_len);
 
     match &scheme.level {
         QuantLevel::Tensor => ScalesLayoutArgs::PerTensor(PerTensorLayoutLaunch::new(values_len)),
@@ -237,7 +237,7 @@ pub fn scales_layout<'a, R: Runtime>(
                 values_len,
                 scales_strides,
                 block_size.to_dim_vec(values.shape.len()),
-                scales_line_size as u32,
+                scales_line_size,
             ))
         }
     }
@@ -247,20 +247,20 @@ fn shape_divmod_quant<'a, R: Runtime>(
     client: &ComputeClient<R>,
     shape: &'a [usize],
     num_quants: usize,
-) -> SequenceArg<'a, R, FastDivmod> {
+) -> SequenceArg<'a, R, FastDivmod<usize>> {
     let mut out_seq = SequenceArg::new();
     for s in &shape[..shape.len() - 1] {
-        out_seq.push(FastDivmodArgs::new(client, *s as u32));
+        out_seq.push(FastDivmodArgs::<usize>::new(client, *s));
     }
     let last = *shape.last().unwrap() * num_quants;
-    out_seq.push(FastDivmodArgs::new(client, last as u32));
+    out_seq.push(FastDivmodArgs::<usize>::new(client, last));
     out_seq
 }
 
-fn strides_seq<'a, R: Runtime>(strides: &'a [usize]) -> SequenceArg<'a, R, u32> {
+fn strides_seq<'a, R: Runtime>(strides: &'a [usize]) -> SequenceArg<'a, R, usize> {
     let mut out_seq = SequenceArg::new();
     for s in strides {
-        out_seq.push(ScalarArg::new(*s as u32));
+        out_seq.push(ScalarArg::new(*s));
     }
     out_seq
 }

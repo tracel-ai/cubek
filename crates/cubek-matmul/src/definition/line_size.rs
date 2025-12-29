@@ -56,7 +56,7 @@ impl AvailableLineSizes {
         shape: &[usize],
         layout: MatrixLayout,
     ) -> Self {
-        let lhs_vec: Vec<u8> = self.lhs.to_vec();
+        let lhs_vec: Vec<usize> = self.lhs.to_vec();
         let rank = strides.len();
 
         let target = tensor_line_size_parallel(
@@ -79,7 +79,7 @@ impl AvailableLineSizes {
         shape: &[usize],
         layout: MatrixLayout,
     ) -> Self {
-        let rhs_vec: Vec<u8> = self.rhs.to_vec();
+        let rhs_vec: Vec<usize> = self.rhs.to_vec();
         let rank = strides.len();
 
         let target = tensor_line_size_parallel(
@@ -97,7 +97,7 @@ impl AvailableLineSizes {
 
     /// Filter available line sizes considering tensor shapes and strides for output
     pub fn filter_out_with_tensor(self, strides: &[usize], shape: &[usize]) -> Self {
-        let out_vec: Vec<u8> = self.out.to_vec();
+        let out_vec: Vec<usize> = self.out.to_vec();
         let rank = strides.len();
 
         let target = tensor_line_size_parallel(out_vec.iter().copied(), shape, strides, rank - 1);
@@ -108,7 +108,7 @@ impl AvailableLineSizes {
     /// Filter available line sizes for Lhs
     pub fn filter_lhs<F>(self, pred: F) -> Self
     where
-        F: FnMut(&u8) -> bool,
+        F: FnMut(&usize) -> bool,
     {
         Self {
             lhs: self.lhs.iter().copied().filter(pred).collect(),
@@ -120,7 +120,7 @@ impl AvailableLineSizes {
     /// Filter available line sizes for Rhs
     pub fn filter_rhs<F>(self, pred: F) -> Self
     where
-        F: FnMut(&u8) -> bool,
+        F: FnMut(&usize) -> bool,
     {
         Self {
             lhs: self.lhs,
@@ -132,7 +132,7 @@ impl AvailableLineSizes {
     /// Filter available line sizes for output
     pub fn filter_out<F>(self, pred: F) -> Self
     where
-        F: FnMut(&u8) -> bool,
+        F: FnMut(&usize) -> bool,
     {
         Self {
             lhs: self.lhs,
@@ -143,7 +143,7 @@ impl AvailableLineSizes {
 
     /// Pick the largest remaining line size for each tensor
     pub fn pick_max(self) -> Result<MatmulLineSizes, MatmulSetupError> {
-        let pick = |v: Vec<u8>| {
+        let pick = |v: Vec<usize>| {
             v.into_iter()
                 .max()
                 .ok_or(MatmulSetupError::LineSize(LineSizeError::NoValidLineSize))

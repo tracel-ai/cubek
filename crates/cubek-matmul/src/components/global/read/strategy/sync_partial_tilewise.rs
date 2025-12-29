@@ -63,7 +63,8 @@ impl<T: TilingOrder> LoadingValidation for SyncPartialTilewiseLoading<T> {
         }
 
         let num_tiles_per_plane = comptime!(num_tiles / num_planes);
-        let num_lines_per_tile = comptime!(config.smem_config.elements_per_tile() / line_size);
+        let num_lines_per_tile =
+            comptime!(config.smem_config.elements_per_tile() / line_size as u32);
         let num_lines_per_plane = num_lines_per_tile * num_tiles_per_plane;
         let num_planes = config.plane_dim;
 

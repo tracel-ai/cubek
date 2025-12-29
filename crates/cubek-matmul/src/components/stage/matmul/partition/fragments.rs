@@ -70,7 +70,7 @@ impl<
         #[comptime] n: usize,
         #[comptime] tiles_in_stage_partition_n: usize,
     ) -> &TM::AccFragment {
-        self.sequence.index(m * tiles_in_stage_partition_n + n)
+        &self.sequence[m * tiles_in_stage_partition_n + n]
     }
 
     /// Fetch a mutable reference to the accumulator at (`m`, `n`)

@@ -64,7 +64,7 @@ where
         #[allow(clippy::explicit_counter_loop)]
         for n in 0..config.shared.tile_size.n() as usize {
             let lhs: Line<A> = Line::cast_from(lhs.line);
-            let rhs: Line<A> = Line::cast_from(rhs.index(n).line);
+            let rhs: Line<A> = Line::cast_from(rhs[n].line);
 
             plane_sum_lined(lhs * rhs, acc.index_mut(n), config.reduce_line_size);
         }

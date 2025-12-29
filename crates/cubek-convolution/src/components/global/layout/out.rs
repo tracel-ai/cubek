@@ -1,9 +1,9 @@
 use cubecl::prelude::*;
 use cubecl::std::{
     FastDivmod, FastDivmodArgs,
-    tensor::layout::{Coords3d, Layout, LayoutExpand},
+    tensor::layout::{Layout, LayoutExpand},
 };
-use cubek_matmul::components::global::memory::GlobalMemoryConfig;
+use cubek_matmul::{components::global::memory::GlobalMemoryConfig, launch::BatchedCoords};
 
 use crate::components::{
     ConvolutionOperation, ConvolutionProblem,
@@ -46,7 +46,7 @@ impl OutLayout {
 
 #[cube]
 impl Layout for OutLayout {
-    type Coordinates = Coords3d;
+    type Coordinates = BatchedCoords;
     type SourceCoordinates = NhwcCoords;
 
     fn to_source_pos(&self, coords: Self::Coordinates) -> NhwcCoords {
@@ -99,7 +99,7 @@ impl<'a, R: Runtime> OutLayoutLaunch<'a, R> {
         let shape_out = problem
             .out_shape
             .iter()
-            .map(|s| FastDivmodArgs::new(client, *s as u32))
+            .map(|s| FastDivmodArgs::<u32>::new(client, *s as u32))
             .collect();
         let shape_m = ScalarArg::new(problem.m as u32);
         let shape_n = ScalarArg::new(problem.n as u32);
@@ -115,7 +115,7 @@ impl<'a, R: Runtime> OutLayoutLaunch<'a, R> {
         let shape = problem
             .in_shape
             .iter()
-            .map(|s| FastDivmodArgs::new(client, *s as u32))
+            .map(|s| FastDivmodArgs::<u32>::new(client, *s as u32))
             .collect();
         let shape_m = ScalarArg::new(problem.m as u32);
         let shape_n = ScalarArg::new(problem.n as u32);
@@ -131,7 +131,7 @@ impl<'a, R: Runtime> OutLayoutLaunch<'a, R> {
         let shape_out = problem
             .out_shape
             .iter()
-            .map(|s| FastDivmodArgs::new(client, *s as u32))
+            .map(|s| FastDivmodArgs::<u32>::new(client, *s as u32))
             .collect();
         let shape_m = ScalarArg::new(problem.m as u32);
         let shape_k = ScalarArg::new(problem.k as u32);

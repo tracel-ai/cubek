@@ -25,7 +25,7 @@ impl LoadingValidation for SyncFullStridedLoading {
     ) -> Result<(), InvalidConfigError> {
         let line_size = config.gmem_config.line_size;
 
-        let num_stage_lines = config.smem_config.elements_per_stage() / line_size;
+        let num_stage_lines = config.smem_config.elements_per_stage() / line_size as u32;
         let total_units = config.loading_units_count();
 
         if !num_stage_lines.is_multiple_of(total_units) {

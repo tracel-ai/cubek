@@ -32,7 +32,7 @@ use crate::components::tile::FULLY_MASKED_ROW_THRESHOLD;
 /// 24, 25, 26, 27, 28, 29, 30, 31,
 pub struct RowWise<E: Numeric> {
     #[cube(comptime)]
-    pub num_rows: u32,
+    pub num_rows: usize,
     pub vals: Sequence<RowVal<E>>,
 }
 
@@ -45,7 +45,7 @@ pub struct RowVal<E: Numeric> {
 #[cube]
 impl<E: Numeric> RowWise<E> {
     /// Create a RowWise with the provided value at every row
-    pub fn new_filled(#[comptime] num_rows: u32, val: E) -> RowWise<E> {
+    pub fn new_filled(#[comptime] num_rows: usize, val: E) -> RowWise<E> {
         let mut vals = Sequence::new();
         #[unroll]
         for _ in 0..num_rows {
@@ -64,12 +64,12 @@ impl<E: Numeric> RowWise<E> {
     }
 
     /// Create a RowWise with -infinity at every row
-    pub fn new_min_value(#[comptime] num_rows: u32) -> RowWise<E> {
+    pub fn new_min_value(#[comptime] num_rows: usize) -> RowWise<E> {
         Self::new_filled(num_rows, E::min_value())
     }
 
     /// Create a RowWise with zero at every row
-    pub fn new_zero(#[comptime] num_rows: u32) -> RowWise<E> {
+    pub fn new_zero(#[comptime] num_rows: usize) -> RowWise<E> {
         Self::new_filled(num_rows, E::from_int(0))
     }
 
@@ -83,8 +83,8 @@ impl<E: Numeric> RowWise<E> {
     }
 
     /// Return the value at row i
-    pub fn index(&self, i: u32) -> E {
-        self.vals.index(i).val
+    pub fn index(&self, i: usize) -> E {
+        self.vals[i].val
     }
 
     /// For each row, add the the current and other, and outputs a new RowWise
@@ -147,7 +147,7 @@ impl<E: Numeric> RowWise<E> {
     }
 
     /// Changes the value at index i
-    pub fn replace_at(&mut self, #[comptime] i: u32, new_val: E) {
+    pub fn replace_at(&mut self, #[comptime] i: usize, new_val: E) {
         let row_val = self.vals.index_mut(i);
         row_val.val = new_val;
     }
@@ -174,14 +174,11 @@ impl<E: Float> RowWise<E> {
     /// Computes e^(self.val - other.val) for every row, and outputs a new RowWise
     pub fn exp_diff(&self, other: &RowWise<E>) -> RowWise<E> {
         let mut vals = Sequence::new();
-        let mut i = comptime![0u32];
 
         #[unroll]
-        for _ in 0..self.num_rows {
+        for i in 0..self.num_rows {
             let val = Exp::exp(self.index(i) - other.index(i));
             vals.push(RowVal::<E> { val });
-
-            comptime![i += 1];
         }
 
         RowWise::<E> {
@@ -196,9 +193,8 @@ impl<E: Float> RowWise<E> {
     /// This occurs when the entire row is masked, meaning it should
     /// contribute no information, and ensures numerical stability.
     pub fn recip_inplace(&mut self) {
-        let mut i = comptime![0u32];
         #[unroll]
-        for _ in 0..self.num_rows {
+        for i in 0..self.num_rows {
             let row_val = self.vals.index_mut(i);
 
             let epsilon = E::new(FULLY_MASKED_ROW_THRESHOLD);
@@ -206,8 +202,6 @@ impl<E: Float> RowWise<E> {
             let safe_val = Max::max(row_val.val, epsilon);
             let recip = Recip::recip(safe_val);
             row_val.val = not_masked * recip;
-
-            comptime![i += 1];
         }
     }
 }

@@ -8,11 +8,11 @@ use crate::definition::{AttentionIdent, AttentionProblem};
 /// Line size used for each tensor in global memory accesses.
 /// Represents the number of elements processed per SIMD load/store.
 pub struct AttentionLineSizes {
-    pub query: u8,
-    pub key: u8,
-    pub value: u8,
-    pub mask: u8,
-    pub out: u8,
+    pub query: usize,
+    pub key: usize,
+    pub value: usize,
+    pub mask: usize,
+    pub out: usize,
 }
 
 impl AttentionLineSizes {
@@ -20,7 +20,7 @@ impl AttentionLineSizes {
         client: &ComputeClient<R>,
         problem: &AttentionProblem,
     ) -> AttentionLineSizes {
-        let find_line_size = |shape: &[usize; 4], dtype_size: usize| -> u8 {
+        let find_line_size = |shape: &[usize; 4], dtype_size: usize| -> usize {
             let supported_line_sizes = client.io_optimized_line_sizes_unchecked(dtype_size);
 
             let n = shape.len();

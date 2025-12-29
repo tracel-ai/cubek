@@ -167,11 +167,11 @@ pub(crate) fn execute_global_matmul<
     let c = Args::view_acc(state);
     let out = Args::view_out(state);
 
-    let a_batch = Args::batch_lhs(state, nth_batch);
+    let a_batch = Args::batch_lhs(state, nth_batch as usize);
     let a = a.view(SliceIndex::new(a_batch, a.shape()));
-    let b_batch = Args::batch_rhs(state, nth_batch);
+    let b_batch = Args::batch_rhs(state, nth_batch as usize);
     let b = b.view(SliceIndex::new(b_batch, b.shape()));
-    let c_batch = Args::batch_acc(state, nth_batch);
+    let c_batch = Args::batch_acc(state, nth_batch as usize);
     let c = match c {
         CubeOption::Some(c) => {
             let c = c.view(SliceIndex::new(c_batch, c.shape()));
@@ -179,7 +179,7 @@ pub(crate) fn execute_global_matmul<
         }
         CubeOption::None => CubeOption::new_None(),
     };
-    let out_batch = Args::batch_out(state, nth_batch);
+    let out_batch = Args::batch_out(state, nth_batch as usize);
     let out = out.view_mut(SliceIndex::new(out_batch, out.shape()));
 
     GMM::execute(

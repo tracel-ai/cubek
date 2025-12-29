@@ -1,7 +1,5 @@
 use std::{fmt::Debug, hash::Hash};
 
-use cubecl::ir::LineSize;
-
 use crate::definition::MatrixLayout;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]

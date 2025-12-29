@@ -71,7 +71,7 @@ impl<MP: MatmulPrecision> BatchMatmul<MP> for NaiveMatmul<MP> {
 
         let m = ABSOLUTE_POS_X;
         let n = ABSOLUTE_POS_Y;
-        let batch = ABSOLUTE_POS_Z;
+        let batch = ABSOLUTE_POS_Z as usize;
 
         let lhs_batch = Args::batch_lhs(state, batch);
         let lhs = lhs.view(SliceIndex::new(lhs_batch, lhs.shape()));

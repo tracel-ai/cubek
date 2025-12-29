@@ -6,10 +6,10 @@ use cubecl::{
 
 #[cube]
 pub(crate) fn reduce_count(
-    output_size: u32,
+    output_size: usize,
     #[comptime] line_mode: LineMode,
-    #[comptime] input_line_size: u32,
-) -> u32 {
+    #[comptime] input_line_size: LineSize,
+) -> usize {
     match comptime!(line_mode) {
         LineMode::Parallel => output_size,
         LineMode::Perpendicular => output_size / input_line_size,
@@ -20,7 +20,7 @@ pub(crate) fn reduce_count(
 pub fn idle_check<P: ReducePrecision, Out: Numeric>(
     input: &VirtualTensor<P::EI>,
     output: &mut VirtualTensor<Out, ReadWrite>,
-    reduce_index_start: u32,
+    reduce_index_start: usize,
     #[comptime] line_mode: LineMode,
     #[comptime] idle_mode: IdleMode,
 ) -> CubeOption<bool> {

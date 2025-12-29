@@ -41,11 +41,11 @@ pub trait ReduceInstruction<P: ReducePrecision>:
     fn from_config(#[comptime] config: Self::Config) -> Self;
     /// A input such that `Self::reduce(accumulator, Self::null_input(), coordinate, use_planes)`
     /// is guaranteed to return `accumulator` unchanged for any choice of `coordinate`.
-    fn null_input(this: &Self, #[comptime] line_size: u32) -> Line<P::EI>;
+    fn null_input(this: &Self, #[comptime] line_size: LineSize) -> Line<P::EI>;
 
     /// A accumulator such that `Self::fuse_accumulators(accumulator, Self::null_accumulator()` always returns
     /// is guaranteed to return `accumulator` unchanged.
-    fn null_accumulator(this: &Self, #[comptime] line_size: u32) -> Self::AccumulatorItem;
+    fn null_accumulator(this: &Self, #[comptime] line_size: LineSize) -> Self::AccumulatorItem;
 
     /// Assign the value of `source` into `destination`.
     /// In spirit, this is equivalent to `destination = source;`,
@@ -82,14 +82,14 @@ pub trait ReduceInstruction<P: ReducePrecision>:
     fn merge_line<Out: Numeric>(
         this: &Self,
         accumulator: Self::AccumulatorItem,
-        shape_axis_reduce: u32,
+        shape_axis_reduce: usize,
     ) -> Out;
 
     /// Convert each element of the accumulator into the expected output element of type `Out`.
     fn to_output_perpendicular<Out: Numeric>(
         this: &Self,
         accumulator: Self::AccumulatorItem,
-        shape_axis_reduce: u32,
+        shape_axis_reduce: usize,
     ) -> Line<Out>;
 }
 
@@ -105,14 +105,14 @@ pub trait SharedAccumulator: CubeType + Send + Sync + 'static {
     type Item: CubeType;
 
     fn allocate(
-        #[comptime] length: u32,
-        #[comptime] line_size: u32,
+        #[comptime] length: usize,
+        #[comptime] line_size: LineSize,
         #[comptime] _coordinate: bool,
     ) -> Self;
 
-    fn read(accumulator: &Self, index: u32) -> Self::Item;
+    fn read(accumulator: &Self, index: usize) -> Self::Item;
 
-    fn write(accumulator: &mut Self, index: u32, item: Self::Item);
+    fn write(accumulator: &mut Self, index: usize, item: Self::Item);
 }
 
 #[cube]
@@ -120,18 +120,18 @@ impl<In: Numeric> SharedAccumulator for SharedMemory<Line<In>> {
     type Item = Line<In>;
 
     fn allocate(
-        #[comptime] length: u32,
-        #[comptime] line_size: u32,
+        #[comptime] length: usize,
+        #[comptime] line_size: LineSize,
         #[comptime] _coordinate: bool,
     ) -> Self {
         SharedMemory::new_lined(length, line_size)
     }
 
-    fn read(accumulator: &Self, index: u32) -> Self::Item {
+    fn read(accumulator: &Self, index: usize) -> Self::Item {
         accumulator[index]
     }
 
-    fn write(accumulator: &mut Self, index: u32, item: Self::Item) {
+    fn write(accumulator: &mut Self, index: usize, item: Self::Item) {
         accumulator[index] = item;
     }
 }
@@ -148,8 +148,8 @@ impl<In: Numeric> SharedAccumulator for ArgAccumulator<In> {
     type Item = (Line<In>, Line<u32>);
 
     fn allocate(
-        #[comptime] length: u32,
-        #[comptime] line_size: u32,
+        #[comptime] length: usize,
+        #[comptime] line_size: LineSize,
         #[comptime] _coordinate: bool,
     ) -> Self {
         ArgAccumulator::<In> {
@@ -158,11 +158,11 @@ impl<In: Numeric> SharedAccumulator for ArgAccumulator<In> {
         }
     }
 
-    fn read(accumulator: &Self, index: u32) -> Self::Item {
+    fn read(accumulator: &Self, index: usize) -> Self::Item {
         (accumulator.elements[index], accumulator.args[index])
     }
 
-    fn write(accumulator: &mut Self, index: u32, item: Self::Item) {
+    fn write(accumulator: &mut Self, index: usize, item: Self::Item) {
         accumulator.elements[index] = item.0;
         accumulator.args[index] = item.1;
     }
@@ -184,7 +184,7 @@ pub fn reduce_inplace<P: ReducePrecision, R: ReduceInstruction<P>>(
 pub fn reduce_shared_inplace<P: ReducePrecision, R: ReduceInstruction<P>>(
     inst: &R,
     accumulator: &mut R::SharedAccumulator,
-    index: u32,
+    index: usize,
     item: Line<P::EI>,
     coordinate: ReduceCoordinate,
     #[comptime] use_planes: bool,
@@ -198,8 +198,8 @@ pub fn reduce_shared_inplace<P: ReducePrecision, R: ReduceInstruction<P>>(
 pub fn fuse_accumulator_inplace<P: ReducePrecision, R: ReduceInstruction<P>>(
     inst: &R,
     accumulator: &mut R::SharedAccumulator,
-    destination: u32,
-    origin: u32,
+    destination: usize,
+    origin: usize,
 ) {
     let fused = R::fuse_accumulators(
         inst,

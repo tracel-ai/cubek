@@ -126,8 +126,8 @@ impl<In: Numeric> SharedAccumulator for DynamicAccumulator<In> {
     type Item = DynamicAccumulatorItem<In>;
 
     fn allocate(
-        #[comptime] length: u32,
-        #[comptime] line_size: u32,
+        #[comptime] length: usize,
+        #[comptime] line_size: LineSize,
         #[comptime] coordinate: bool,
     ) -> Self {
         let elements = SharedMemory::new_lined(length, line_size);
@@ -141,7 +141,7 @@ impl<In: Numeric> SharedAccumulator for DynamicAccumulator<In> {
         DynamicAccumulator::<In> { elements, args }
     }
 
-    fn read(accumulator: &Self, index: u32) -> Self::Item {
+    fn read(accumulator: &Self, index: usize) -> Self::Item {
         let elements = accumulator.elements[index];
         let args = match accumulator.args {
             CubeOption::Some(args) => CubeOption::new_Some(args[index]),
@@ -151,7 +151,7 @@ impl<In: Numeric> SharedAccumulator for DynamicAccumulator<In> {
         DynamicAccumulatorItem::<In> { elements, args }
     }
 
-    fn write(accumulator: &mut Self, index: u32, item: Self::Item) {
+    fn write(accumulator: &mut Self, index: usize, item: Self::Item) {
         accumulator.elements[index] = item.elements;
 
         let args = &mut accumulator.args;
@@ -199,7 +199,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
         }
     }
 
-    fn null_input(this: &Self, #[comptime] line_size: u32) -> Line<P::EI> {
+    fn null_input(this: &Self, #[comptime] line_size: LineSize) -> Line<P::EI> {
         match this {
             ReduceOperation::Sum(sum) => <Sum as ReduceInstruction<P>>::null_input(sum, line_size),
             ReduceOperation::Prod(prod) => {
@@ -222,7 +222,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
         }
     }
 
-    fn null_accumulator(this: &Self, #[comptime] line_size: u32) -> Self::AccumulatorItem {
+    fn null_accumulator(this: &Self, #[comptime] line_size: LineSize) -> Self::AccumulatorItem {
         match this {
             ReduceOperation::Sum(sum) => {
                 let elements = <Sum as ReduceInstruction<P>>::null_accumulator(sum, line_size);
@@ -560,7 +560,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
     fn merge_line<Out: Numeric>(
         this: &Self,
         accumulator: Self::AccumulatorItem,
-        shape_axis_reduce: u32,
+        shape_axis_reduce: usize,
     ) -> Out {
         match this {
             ReduceOperation::Sum(sum) => <Sum as ReduceInstruction<P>>::merge_line::<Out>(
@@ -609,7 +609,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
     fn to_output_perpendicular<Out: Numeric>(
         this: &Self,
         accumulator: Self::AccumulatorItem,
-        shape_axis_reduce: u32,
+        shape_axis_reduce: usize,
     ) -> Line<Out> {
         match this {
             ReduceOperation::Sum(sum) => <Sum as ReduceInstruction<P>>::to_output_perpendicular::<

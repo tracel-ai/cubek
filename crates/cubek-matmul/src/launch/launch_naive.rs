@@ -163,13 +163,13 @@ fn simple_cube_count(
     let num_rows = lhs_shape[ndims - 2];
     let num_cols = rhs_shape[ndims - 1];
 
-    let m_cubes = f32::ceil(num_rows as f32 / cube_dim_x as f32) as u32;
-    let n_cubes = f32::ceil(num_cols as f32 / cube_dim_y as f32) as u32;
-    let mut batch_cubes = 1u32;
+    let m_cubes = num_rows.div_ceil(cube_dim_x);
+    let n_cubes = num_cols.div_ceil(cube_dim_y);
+    let mut batch_cubes = 1;
 
     #[allow(clippy::needless_range_loop)]
     for i in 0..ndims - 2 {
-        batch_cubes *= output_shape[i] as u32;
+        batch_cubes *= output_shape[i];
     }
 
     let cube_count_plan = CubeCountPlan::FromProblem {
@@ -177,7 +177,7 @@ fn simple_cube_count(
         n_cubes,
         batch_cubes,
     };
-    let max_cube_count = u16::MAX as u32;
+    let max_cube_count = u16::MAX as usize;
 
     if m_cubes > max_cube_count || n_cubes > max_cube_count || batch_cubes > max_cube_count {
         return Err(MatmulSetupError::Unavailable(

@@ -36,7 +36,7 @@ impl Routine for CubeRoutine {
                         return Err(ReduceError::PlanesUnavailable);
                     }
 
-                    if blueprint.num_shared_accumulators != cube_dim.x {
+                    if blueprint.num_shared_accumulators != cube_dim.x as usize {
                         return Err(ReduceError::Validation {
                             details: "Num accumulators should match cube_dim.x",
                         });
@@ -47,7 +47,7 @@ impl Routine for CubeRoutine {
                         });
                     }
                 // One accumulator per unit.
-                } else if blueprint.num_shared_accumulators != cube_dim.num_elems() {
+                } else if blueprint.num_shared_accumulators != cube_dim.num_elems() as usize {
                     return Err(ReduceError::Validation {
                         details: "Num accumulators should match cube_dim.num_elems()",
                     });
@@ -99,27 +99,24 @@ fn generate_blueprint<R: Runtime>(
     let properties = &client.properties().hardware;
     let plane_size = properties.plane_size_max;
     let working_cubes = working_cubes(settings, &problem);
-    let working_units = working_cubes
-        * problem
-            .vector_size
-            .div_ceil(settings.line_size_input as u32);
+    let working_units = working_cubes * problem.vector_size.div_ceil(settings.line_size_input);
     let plane_count =
         calculate_plane_count_per_cube(working_units, plane_size, properties.num_cpu_cores);
     let cube_dim = CubeDim::new_2d(plane_size, plane_count);
     let cube_size = cube_dim.num_elems();
 
     let work_size = match settings.line_mode {
-        LineMode::Parallel => problem.vector_size / settings.line_size_input as u32,
+        LineMode::Parallel => problem.vector_size / settings.line_size_input,
         LineMode::Perpendicular => problem.vector_size,
     };
-    let bound_checks = match work_size.is_multiple_of(cube_size) {
+    let bound_checks = match work_size.is_multiple_of(cube_size as usize) {
         true => BoundChecks::None,
         false => BoundChecks::Mask,
     };
 
     let num_shared_accumulators = match strategy.use_planes {
-        true => plane_count,
-        false => cube_size,
+        true => plane_count as usize,
+        false => cube_size as usize,
     };
 
     let (cube_count, launched_cubes) = cube_count_safe(client, working_cubes);
@@ -150,9 +147,9 @@ fn generate_blueprint<R: Runtime>(
     Ok((blueprint, cube_dim, cube_count))
 }
 
-fn working_cubes(settings: &ReduceLineSettings, problem: &ReduceProblem) -> u32 {
+fn working_cubes(settings: &ReduceLineSettings, problem: &ReduceProblem) -> usize {
     match settings.line_mode {
-        LineMode::Parallel => problem.vector_count / settings.line_size_output as u32,
-        LineMode::Perpendicular => problem.vector_count / settings.line_size_input as u32,
+        LineMode::Parallel => problem.vector_count / settings.line_size_output,
+        LineMode::Perpendicular => problem.vector_count / settings.line_size_input,
     }
 }

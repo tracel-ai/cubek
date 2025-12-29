@@ -38,32 +38,32 @@ pub enum CubeCountPlanBlueprint {
 /// Refer to [CubeCountPlanBlueprint] for more details
 pub enum CubeCountPlan {
     FromProblem {
-        m_cubes: u32,
-        n_cubes: u32,
-        batch_cubes: u32,
+        m_cubes: usize,
+        n_cubes: usize,
+        batch_cubes: usize,
     },
     Sm {
         cubes_first: bool,
         num_sms_used: u32,
         cubes_per_sm: u32,
-        m_cubes: u32,
-        n_cubes: u32,
-        batch_cubes: u32,
+        m_cubes: usize,
+        n_cubes: usize,
+        batch_cubes: usize,
         num_sms: u32,
         sm_usage: SmAllocation,
     },
     Flattened {
-        m_cubes: u32,
-        n_cubes: u32,
-        batch_cubes: u32,
+        m_cubes: usize,
+        n_cubes: usize,
+        batch_cubes: usize,
     },
     Spread {
-        m_cubes: u32,
-        n_cubes: u32,
-        batch_cubes: u32,
-        x: u32,
-        y: u32,
-        z: u32,
+        m_cubes: usize,
+        n_cubes: usize,
+        batch_cubes: usize,
+        x: usize,
+        y: usize,
+        z: usize,
     },
 }
 
@@ -79,7 +79,7 @@ impl CubeCountPlan {
                 n_cubes,
                 batch_cubes,
                 ..
-            } => num_sms_used * cubes_per_sm != m_cubes * n_cubes * batch_cubes,
+            } => *num_sms_used as usize * *cubes_per_sm as usize != m_cubes * n_cubes * batch_cubes,
             CubeCountPlan::Spread {
                 m_cubes,
                 n_cubes,
@@ -152,13 +152,16 @@ impl CubeCountPlan {
             CubeCount::Dynamic(_) => panic!("Dynamic cube count not supported for cube count plan"),
         };
 
-        let m_cubes = (problem.m as u32).div_ceil(selection.cube_span.m);
-        let n_cubes = (problem.n as u32).div_ceil(selection.cube_span.n);
-        let batch_cubes = (problem.num_batches() as u32).div_ceil(selection.cube_span.batch);
+        let m_cubes = (problem.m).div_ceil(selection.cube_span.m);
+        let n_cubes = (problem.n).div_ceil(selection.cube_span.n);
+        let batch_cubes = (problem.num_batches()).div_ceil(selection.cube_span.batch);
 
         let plan = match selection.cube_count_plan_selection {
             CubeCountPlanBlueprint::FromProblem => {
-                if m_cubes > max_x || n_cubes > max_y || batch_cubes > max_z {
+                if m_cubes > max_x as usize
+                    || n_cubes > max_y as usize
+                    || batch_cubes > max_z as usize
+                {
                     None
                 } else {
                     Some(CubeCountPlan::FromProblem {
@@ -194,7 +197,7 @@ impl CubeCountPlan {
                 }
             }
             CubeCountPlanBlueprint::Flattened => {
-                if m_cubes * n_cubes * batch_cubes >= max_x {
+                if m_cubes * n_cubes * batch_cubes >= max_x as usize {
                     None
                 } else {
                     Some(CubeCountPlan::Flattened {
@@ -225,9 +228,9 @@ impl CubeCountPlan {
             CubeCount::Dynamic(_) => panic!("Dynamic cube count not supported for cube count plan"),
         };
 
-        let m_cubes = (problem.m as u32).div_ceil(config.cube_span.m);
-        let n_cubes = (problem.n as u32).div_ceil(config.cube_span.n);
-        let batch_cubes = (problem.num_batches() as u32).div_ceil(config.cube_span.batch);
+        let m_cubes = (problem.m).div_ceil(config.cube_span.m);
+        let n_cubes = (problem.n).div_ceil(config.cube_span.n);
+        let batch_cubes = (problem.num_batches()).div_ceil(config.cube_span.batch);
 
         match config.cube_count_plan_blueprint {
             CubeCountPlanConfig::FromProblem => CubeCountPlan::FromProblem {
@@ -306,9 +309,9 @@ impl CubeCountPlanConfig {
 /// Heuristic algorithm to factor the total number of cubes into (x, y, z) dimensions
 /// such that no dimension surpasses its maximum.
 pub(crate) fn spread_cube_count_plan(
-    m_cubes: u32,
-    n_cubes: u32,
-    batch_cubes: u32,
+    m_cubes: usize,
+    n_cubes: usize,
+    batch_cubes: usize,
     max_x: u32,
     max_y: u32,
     max_z: u32,
@@ -317,14 +320,14 @@ pub(crate) fn spread_cube_count_plan(
 
     let mut best = None;
 
-    let mut z = max_z;
+    let mut z = max_z as usize;
     while z >= 1 {
         let xy_cubes = total_cubes.div_ceil(z);
 
-        let mut y = max_y;
+        let mut y = max_y as usize;
         while y >= 1 {
             let x = xy_cubes.div_ceil(y);
-            if x <= max_x {
+            if x <= max_x as usize {
                 let volume = x * y * z;
                 let score = (volume, std::cmp::Reverse(z), std::cmp::Reverse(y));
 
@@ -367,7 +370,7 @@ impl CubeCountPlan {
                 m_cubes,
                 n_cubes,
                 batch_cubes,
-            } => CubeCount::Static(*m_cubes, *n_cubes, *batch_cubes),
+            } => CubeCount::Static(*m_cubes as u32, *n_cubes as u32, *batch_cubes as u32),
             CubeCountPlan::Sm {
                 cubes_first,
                 num_sms_used,
@@ -381,8 +384,10 @@ impl CubeCountPlan {
                 m_cubes,
                 n_cubes,
                 batch_cubes,
-            } => CubeCount::Static(*m_cubes * *n_cubes * *batch_cubes, 1, 1),
-            CubeCountPlan::Spread { x, y, z, .. } => CubeCount::Static(*x, *y, *z),
+            } => CubeCount::Static((*m_cubes * *n_cubes * *batch_cubes) as u32, 1, 1),
+            CubeCountPlan::Spread { x, y, z, .. } => {
+                CubeCount::Static(*x as u32, *y as u32, *z as u32)
+            }
         }
     }
 
@@ -464,14 +469,17 @@ impl CubeCountInput {
             CubeCountInput::CubeFirst {
                 m_cubes, n_cubes, ..
             } => self.absolute_index_to_m_n_batch(
-                CUBE_POS_Y * CUBE_COUNT_X + CUBE_POS_X,
+                CUBE_POS_Y as usize * CUBE_COUNT_X as usize + CUBE_POS_X as usize,
                 *m_cubes,
                 *n_cubes,
                 global_order,
             ),
-            CubeCountInput::Flattened { m_cubes, n_cubes } => {
-                self.absolute_index_to_m_n_batch(CUBE_POS_X, *m_cubes, *n_cubes, global_order)
-            }
+            CubeCountInput::Flattened { m_cubes, n_cubes } => self.absolute_index_to_m_n_batch(
+                CUBE_POS_X as usize,
+                *m_cubes,
+                *n_cubes,
+                global_order,
+            ),
             CubeCountInput::Spread {
                 m_cubes, n_cubes, ..
             } => self.absolute_index_to_m_n_batch(CUBE_POS, *m_cubes, *n_cubes, global_order),
@@ -480,18 +488,18 @@ impl CubeCountInput {
 
     fn absolute_index_to_m_n_batch(
         &self,
-        absolute_index: u32,
-        m_cubes: u32,
-        n_cubes: u32,
+        absolute_index: usize,
+        m_cubes: usize,
+        n_cubes: usize,
         #[comptime] global_order: GlobalOrder,
     ) -> (u32, u32, u32) {
         let batch_stride = m_cubes * n_cubes;
-        let batch_pos = absolute_index / batch_stride;
+        let batch_pos = (absolute_index / batch_stride) as u32;
         let matrix_pos = absolute_index % batch_stride;
 
         let (m_pos, n_pos) = match comptime!(global_order) {
-            GlobalOrder::RowMajor => (matrix_pos / n_cubes, matrix_pos % n_cubes),
-            GlobalOrder::ColMajor => (matrix_pos % m_cubes, matrix_pos / m_cubes),
+            GlobalOrder::RowMajor => ((matrix_pos / n_cubes) as u32, (matrix_pos % n_cubes) as u32),
+            GlobalOrder::ColMajor => ((matrix_pos % m_cubes) as u32, (matrix_pos / m_cubes) as u32),
             GlobalOrder::SwizzleRowMajor(w) => {
                 let (x, y) = swizzle(matrix_pos, n_cubes, w);
                 (y, x)

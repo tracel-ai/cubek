@@ -23,15 +23,15 @@ impl RandomFamily for NormalFamily {
 impl PrngRuntime for Normal {
     fn inner_loop<E: Numeric>(
         args: Normal,
-        write_index_base: u32,
+        write_index_base: usize,
         n_invocations: u32,
-        #[comptime] n_values_per_thread: u32,
-        #[comptime] line_size: u32,
+        #[comptime] n_values_per_thread: usize,
+        #[comptime] line_size: LineSize,
         state_0: &mut u32,
         state_1: &mut u32,
         state_2: &mut u32,
         state_3: &mut u32,
-        output: &mut View<Line<E>, u32, ReadWrite>,
+        output: &mut View<Line<E>, usize, ReadWrite>,
     ) {
         let mean = f32::cast_from(args.mean);
         let std = f32::cast_from(args.std);
@@ -75,9 +75,9 @@ impl PrngRuntime for Normal {
                 output_line_1[i] = E::cast_from(normal_1);
             }
 
-            let iteration_offset = line_index * n_invocations * 2;
+            let iteration_offset = line_index * n_invocations as usize * 2;
             let write_index_0 = write_index_base + iteration_offset;
-            let write_index_1 = write_index_0 + n_invocations;
+            let write_index_1 = write_index_0 + n_invocations as usize;
 
             output[write_index_0] = output_line_0;
             output[write_index_1] = output_line_1;

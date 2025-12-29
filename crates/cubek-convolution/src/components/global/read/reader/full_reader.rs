@@ -35,7 +35,7 @@ pub trait FullLoadingStrategy:
     /// Returns the job with preliminary calculations done.
     fn new_job<EG: Numeric, ES: Numeric>(
         runtime_args: RuntimeArgs,
-        #[comptime] line_size: u32,
+        #[comptime] line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, ES>;
 }
@@ -65,7 +65,7 @@ impl<EG: Numeric, ES: Numeric, L: FullLoadingStrategy> FullStageGlobalReader<EG,
     ) -> Self {
         // Maybe make align a property on the strategy, but it's fine to over-align so this works
         // for now. Swizzling will require more though.
-        let stage = StridedStageMemory::new_aligned(128u32, config.smem_config);
+        let stage = StridedStageMemory::new_aligned(128usize, config.smem_config);
 
         let global_iter =
             GlobalIterator::new(view, k_step, config.gmem_config.view_direction, false);

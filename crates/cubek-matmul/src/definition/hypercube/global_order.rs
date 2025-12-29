@@ -61,7 +61,7 @@ impl GlobalOrderBlueprint {
             GlobalOrderBlueprint::Default => GlobalOrder::default(),
             GlobalOrderBlueprint::Fixed(order) => order,
             GlobalOrderBlueprint::SwizzleRow { m, w } => {
-                let m_cubes = m.div_ceil(span.m);
+                let m_cubes = m.div_ceil(span.m as u32);
                 if m_cubes % w != 0 {
                     GlobalOrder::RowMajor
                 } else {
@@ -69,7 +69,7 @@ impl GlobalOrderBlueprint {
                 }
             }
             GlobalOrderBlueprint::SwizzleCol { n, w } => {
-                let n_cubes = n.div_ceil(span.n);
+                let n_cubes = n.div_ceil(span.n as u32);
                 if n_cubes % w != 0 {
                     GlobalOrder::RowMajor
                 } else {
@@ -98,12 +98,12 @@ impl GlobalOrderBlueprint {
 ///
 /// # Returns
 /// `(x, y)` coordinates after swizzling
-pub fn swizzle(index: u32, num_steps: u32, #[comptime] step_length: u32) -> Coords2d {
+pub fn swizzle(index: usize, num_steps: usize, #[comptime] step_length: u32) -> Coords2d {
     comptime!(assert!(step_length > 0));
 
-    let num_elements_per_strip = num_steps * step_length;
-    let strip_index = index / num_elements_per_strip;
-    let pos_in_strip = index % num_elements_per_strip;
+    let num_elements_per_strip = num_steps * step_length as usize;
+    let strip_index = (index / num_elements_per_strip) as u32;
+    let pos_in_strip = (index % num_elements_per_strip) as u32;
     let strip_offset = step_length * strip_index;
 
     // Indices without regards to direction
@@ -116,8 +116,8 @@ pub fn swizzle(index: u32, num_steps: u32, #[comptime] step_length: u32) -> Coor
     let step_direction = abs_step_index % 2;
 
     // Update indices with direction
-    let step_index =
-        strip_direction * (num_steps - abs_step_index - 1) + (1 - strip_direction) * abs_step_index;
+    let step_index = strip_direction * (num_steps as u32 - abs_step_index - 1)
+        + (1 - strip_direction) * abs_step_index;
 
     let pos_in_step = if comptime!(step_length & (step_length - 1) == 0) {
         abs_pos_in_step ^ (step_direction * (step_length - 1))

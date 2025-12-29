@@ -2,9 +2,10 @@ use cubecl::{
     prelude::*,
     std::{
         FastDivmod,
-        tensor::layout::{Coords3d, CoordsDyn, Layout, LayoutExpand},
+        tensor::layout::{CoordsDyn, Layout, LayoutExpand},
     },
 };
+use cubek_matmul::launch::BatchedCoords;
 
 use crate::components::{ConvolutionOperation, ConvolutionParams, global::layout::NhwcCoords};
 
@@ -38,7 +39,7 @@ impl TmaIm2colLayout {
 
 #[cube]
 impl Layout for TmaIm2colLayout {
-    type Coordinates = Coords3d;
+    type Coordinates = BatchedCoords;
     type SourceCoordinates = (NhwcCoords, CoordsDyn);
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
@@ -52,10 +53,9 @@ impl Layout for TmaIm2colLayout {
 
         #[unroll]
         for dim in 0..spatial_dims {
-            let dim = comptime![dim as usize];
             let stride = comptime!(params.stride[dim] as i32);
             let pad = comptime!(params.padding[dim]);
-            let out_pos = *spatial_offsets.index(comptime![dim as u32]) as i32;
+            let out_pos = spatial_offsets[dim] as i32;
             let offs = match params.operation {
                 ConvolutionOperation::Forward | ConvolutionOperation::BackwardWeight => {
                     out_pos * stride - pad
@@ -81,7 +81,7 @@ impl Layout for TmaIm2colLayout {
 
         #[unroll]
         for i in 0..k_rank {
-            let dim = comptime![(k_rank - i - 1) as usize];
+            let dim = comptime![k_rank - i - 1];
             let k_size = comptime!(params.kernel_size[dim]);
             let k_pos = k_idx % k_size;
 
@@ -115,7 +115,7 @@ impl Layout for TmaIm2colLayout {
     }
 
     fn shape(&self) -> Self::Coordinates {
-        (u32::MAX, u32::MAX, u32::MAX).runtime()
+        (u32::MAX as usize, u32::MAX, u32::MAX).runtime()
     }
 
     fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
@@ -134,7 +134,7 @@ pub(crate) fn div_mod_seq(pos: u32, shape: &Sequence<FastDivmod>) -> (u32, Seque
     #[unroll]
     for i in 0..rank {
         let dim = comptime![rank - i - 1];
-        let (rem, offs_local) = shape.index(dim).div_mod(offs);
+        let (rem, offs_local) = shape[dim].div_mod(offs);
         out.push(offs_local);
         offs = rem;
     }

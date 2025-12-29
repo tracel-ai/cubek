@@ -112,7 +112,7 @@ fn quantize_symmetric_native_kernel<F: Float, FS: Numeric, Q: Numeric>(
     }
 
     let native_packing = Q::packing_factor();
-    let in_pos = ABSOLUTE_POS as usize * input.line_size() * native_packing;
+    let in_pos = ABSOLUTE_POS * input.line_size() * native_packing;
     let scale = write_scale(in_pos, scale, out_scale, scales_layout);
 
     output[ABSOLUTE_POS] = quantize_symmetric_q::<F, FS, Q>(
@@ -140,7 +140,7 @@ fn quantize_symmetric_packed_kernel<F: Float, FS: Numeric>(
         terminate!();
     }
 
-    let num_quants = comptime!(scheme.num_quants() as u32);
+    let num_quants = comptime!(scheme.num_quants());
     let packed_pos = ABSOLUTE_POS * num_quants;
     let scale = write_scale(packed_pos, scale, out_scale, scales_layout);
 
@@ -287,10 +287,10 @@ fn quantize_packed<R: Runtime>(
 ) -> Result<(), LaunchError> {
     let num_elems: usize = input.shape.iter().product();
 
-    let num_quants = scheme.num_quants() as u8;
+    let num_quants = scheme.num_quants();
     let line_size = num_quants;
 
-    let working_units = num_elems.div_ceil(line_size as usize);
+    let working_units = num_elems.div_ceil(line_size);
     let cube_dim = CubeDim::new(client, working_units);
     let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
     let (range_min, range_max) = scheme.value.range();
@@ -302,7 +302,7 @@ fn quantize_packed<R: Runtime>(
             store: QuantStore::U32,
             ..
         } => {
-            check_block_size_compat(scheme, num_quants as usize); // 32 / 8 = 4
+            check_block_size_compat(scheme, num_quants); // 32 / 8 = 4
             unsafe {
                 quantize_symmetric_packed_kernel::launch_unchecked(
                     client,

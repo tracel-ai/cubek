@@ -31,7 +31,7 @@ pub struct CubeBlueprint {
     // There are never too many cubes spawned.
     pub bound_checks: BoundChecks,
     /// The number of accumulators in shared memory.
-    pub num_shared_accumulators: u32,
+    pub num_shared_accumulators: usize,
     // Whether we use plane instructions to merge accumulators.
     pub use_planes: bool,
 }

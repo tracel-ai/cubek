@@ -262,7 +262,7 @@ where
                     let accumulator =
                         Accumulators::<MP, TM>::get_at_mut(acc, m_iter, n_iter, n_iterations);
                     TM::execute(
-                        lhs_fragment.index(m_iter),
+                        &lhs_fragment[m_iter],
                         rhs_fragment,
                         accumulator,
                         shared_config.tile_config,
@@ -381,7 +381,7 @@ where
                         Accumulators::<MP, TM>::get_at_mut(acc, m_iter, n_iter, n_iterations);
 
                     TM::execute(
-                        lhs_fragment.index(m_iter),
+                        &lhs_fragment[m_iter],
                         current,
                         accumulator,
                         shared_config.tile_config,
@@ -410,7 +410,7 @@ where
                 let accumulator =
                     Accumulators::<MP, TM>::get_at_mut(acc, m_iter, n_iter, n_iterations);
                 TM::execute(
-                    lhs_fragment.index(m_iter),
+                    &lhs_fragment[m_iter],
                     last,
                     accumulator,
                     shared_config.tile_config,

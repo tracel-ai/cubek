@@ -34,9 +34,9 @@ pub struct HypercubeConfig {
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 // Number of elements each cube covers in the tensors
 pub struct CubeSpan {
-    pub m: u32,
-    pub n: u32,
-    pub batch: u32,
+    pub m: usize,
+    pub n: usize,
+    pub batch: usize,
 }
 
 impl HypercubeBlueprint {
@@ -65,21 +65,21 @@ impl HypercubeConfig {
     /// Returns an error if:
     /// - The global order is swizzle but its assumptions are not met
     pub fn validate(&self, problem: &MatmulProblem) -> Result<(), MatmulSetupError> {
-        let m_cubes = (problem.m as u32).div_ceil(self.cube_span.m);
-        let n_cubes = (problem.n as u32).div_ceil(self.cube_span.n);
+        let m_cubes = (problem.m).div_ceil(self.cube_span.m);
+        let n_cubes = (problem.n).div_ceil(self.cube_span.n);
 
         use GlobalOrder::*;
 
         match self.global_order {
             RowMajor | ColMajor => Ok(()),
 
-            SwizzleRowMajor(w) if !m_cubes.is_multiple_of(w) => {
+            SwizzleRowMajor(w) if !m_cubes.is_multiple_of(w as usize) => {
                 Err(MatmulSetupError::InvalidConfig(Box::new(format!(
                     "In swizzle row major, number of cubes in m {m_cubes:?} must be divisible by swizzle step length {w:?}."
                 ))))
             }
 
-            SwizzleColMajor(w) if !n_cubes.is_multiple_of(w) => {
+            SwizzleColMajor(w) if !n_cubes.is_multiple_of(w as usize) => {
                 Err(MatmulSetupError::InvalidConfig(Box::new(format!(
                     "In swizzle col major, number of cubes in n {n_cubes:?} must be divisible by swizzle step length {w:?}."
                 ))))
@@ -114,9 +114,9 @@ impl<'a> HypercubeBlueprintBuilder<'a> {
     /// Build the HypercubeBlueprint
     pub fn build(self) -> HypercubeBlueprint {
         let cube_span = CubeSpan {
-            m: self.tiling_scheme.elements_per_global_partition_along_m(),
-            n: self.tiling_scheme.elements_per_global_partition_along_n(),
-            batch: self.tiling_scheme.global_partition_size.batches,
+            m: self.tiling_scheme.elements_per_global_partition_along_m() as usize,
+            n: self.tiling_scheme.elements_per_global_partition_along_n() as usize,
+            batch: self.tiling_scheme.global_partition_size.batches as usize,
         };
 
         let global_order = self.global_order.into_order(&cube_span);

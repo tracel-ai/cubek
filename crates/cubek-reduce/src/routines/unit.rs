@@ -29,7 +29,7 @@ impl Routine for UnitRoutine {
             BlueprintStrategy::Forced(blueprint, cube_dim) => {
                 let working_units = working_units(&settings, &problem);
                 let num_units_in_cube = cube_dim.num_elems();
-                let working_cubes = working_units.div_ceil(num_units_in_cube);
+                let working_cubes = working_units.div_ceil(num_units_in_cube as usize);
 
                 let (cube_count, launched_cubes) = cube_count_safe(client, working_cubes);
 
@@ -77,10 +77,10 @@ fn generate_blueprint<R: Runtime>(
     let cube_dim = CubeDim::new_2d(plane_size, plane_count);
     let num_units_in_cube = cube_dim.num_elems();
 
-    let working_cubes = working_units.div_ceil(num_units_in_cube);
+    let working_cubes = working_units.div_ceil(num_units_in_cube as usize);
     let (cube_count, cube_launched) = cube_count_safe(client, working_cubes);
     let unit_idle =
-        !working_units.is_multiple_of(num_units_in_cube) || cube_launched != working_cubes;
+        !working_units.is_multiple_of(num_units_in_cube as usize) || cube_launched != working_cubes;
 
     let unit_idle = match unit_idle {
         true => IdleMode::Terminate,
@@ -94,9 +94,9 @@ fn generate_blueprint<R: Runtime>(
     Ok((blueprint, cube_dim, cube_count))
 }
 
-fn working_units(settings: &ReduceLineSettings, problem: &ReduceProblem) -> u32 {
+fn working_units(settings: &ReduceLineSettings, problem: &ReduceProblem) -> usize {
     match settings.line_mode {
-        LineMode::Parallel => problem.vector_count / settings.line_size_output as u32,
-        LineMode::Perpendicular => problem.vector_count / settings.line_size_input as u32,
+        LineMode::Parallel => problem.vector_count / settings.line_size_output,
+        LineMode::Perpendicular => problem.vector_count / settings.line_size_input,
     }
 }

@@ -133,9 +133,9 @@ fn entry(m: usize, n: usize, k: usize) -> (usize, usize, usize, usize) {
     let expected = 2 * 6144 * 6144 * 6144;
     let num_ops = 2 * m * n * k;
 
-    let b = usize::max(expected / num_ops, 1);
-    let b = 2usize.pow((b as f64).log(2.0).floor() as u32);
-    let b = usize::min(4096, b);
+    let b = Ord::max(expected / num_ops, 1);
+    let b = 2usize.pow(b.ilog2());
+    let b = Ord::min(4096, b);
 
     (b, m, n, k)
 }

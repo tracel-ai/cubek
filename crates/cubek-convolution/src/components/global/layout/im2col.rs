@@ -1,9 +1,12 @@
 use cubecl::prelude::*;
 use cubecl::std::{
     FastDivmod, FastDivmodArgs,
-    tensor::layout::{Coords3d, Layout, LayoutExpand},
+    tensor::layout::{Layout, LayoutExpand},
 };
-use cubek_matmul::components::global::{GlobalConfig, memory::GlobalMemoryConfig};
+use cubek_matmul::{
+    components::global::{GlobalConfig, memory::GlobalMemoryConfig},
+    launch::BatchedCoords,
+};
 
 use crate::components::{
     ConvGemmConfig, ConvolutionConfig, ConvolutionOperation, ConvolutionParams, ConvolutionProblem,
@@ -55,7 +58,7 @@ impl Im2colLayout {
 
 #[cube]
 impl Layout for Im2colLayout {
-    type Coordinates = Coords3d;
+    type Coordinates = BatchedCoords;
     type SourceCoordinates = NhwcCoords;
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> NhwcCoords {
@@ -72,14 +75,14 @@ impl Layout for Im2colLayout {
         #[unroll]
         for i in 0..spatial_dims {
             let dim = comptime![spatial_dims - i - 1];
-            let ksize = comptime![params.kernel_size[dim as usize]];
+            let ksize = comptime![params.kernel_size[dim]];
             let k_pos = (rem % ksize) as i32;
             rem /= ksize;
 
-            let out_pos = *out_offs.index(dim);
-            let stride = comptime![params.stride[dim as usize] as i32];
-            let dilate = comptime![params.dilation[dim as usize] as i32];
-            let pad = comptime![params.padding[dim as usize]];
+            let out_pos = out_offs[dim];
+            let stride = comptime![params.stride[dim] as i32];
+            let dilate = comptime![params.dilation[dim] as i32];
+            let pad = comptime![params.padding[dim]];
 
             let pos = match params.operation {
                 ConvolutionOperation::Forward | ConvolutionOperation::BackwardWeight => {
@@ -145,11 +148,11 @@ impl<'a, R: Runtime> Im2colLayoutLaunch<'a, R> {
         let shape_out = problem
             .out_shape
             .iter()
-            .map(|s| FastDivmodArgs::new(client, *s as u32))
+            .map(|s| FastDivmodArgs::<u32>::new(client, *s as u32))
             .collect();
 
         let padded_channels = problem.padded_channels as u32;
-        let padded_channels = FastDivmodArgs::new(client, padded_channels);
+        let padded_channels = FastDivmodArgs::<u32>::new(client, padded_channels);
 
         let shape_m = ScalarArg::new(problem.m as u32);
         let shape_k = ScalarArg::new(problem.k as u32);
@@ -166,11 +169,11 @@ impl<'a, R: Runtime> Im2colLayoutLaunch<'a, R> {
         let shape = problem
             .in_shape
             .iter()
-            .map(|s| FastDivmodArgs::new(client, *s as u32))
+            .map(|s| FastDivmodArgs::<u32>::new(client, *s as u32))
             .collect();
 
         let padded_channels = problem.padded_channels as u32;
-        let padded_channels = FastDivmodArgs::new(client, padded_channels);
+        let padded_channels = FastDivmodArgs::<u32>::new(client, padded_channels);
 
         let shape_m = ScalarArg::new(problem.m as u32);
         let shape_k = ScalarArg::new(problem.k as u32);
@@ -187,11 +190,11 @@ impl<'a, R: Runtime> Im2colLayoutLaunch<'a, R> {
         let shape_out = problem
             .out_shape
             .iter()
-            .map(|s| FastDivmodArgs::new(client, *s as u32))
+            .map(|s| FastDivmodArgs::<u32>::new(client, *s as u32))
             .collect();
 
         let padded_channels = problem.padded_channels as u32;
-        let padded_channels = FastDivmodArgs::new(client, padded_channels);
+        let padded_channels = FastDivmodArgs::<u32>::new(client, padded_channels);
 
         let shape_k = ScalarArg::new(problem.k as u32);
         let shape_n = ScalarArg::new(problem.n as u32);

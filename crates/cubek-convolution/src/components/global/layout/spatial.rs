@@ -95,11 +95,11 @@ pub enum NhwcCheck {
 #[derive(CubeType, CubeLaunch, Clone)]
 pub struct NhwcLayout {
     /// Stride for N
-    pub stride_batch: u32,
+    pub stride_batch: usize,
     /// Strides for DHW
-    pub strides_spatial: Sequence<u32>,
+    pub strides_spatial: Sequence<usize>,
     /// Stride for C
-    pub stride_channel: u32,
+    pub stride_channel: usize,
 
     /// Shape of N
     pub shape_batch: u32,
@@ -109,7 +109,7 @@ pub struct NhwcLayout {
     pub shape_channel: u32,
 
     #[cube(comptime)]
-    pub line_size: u32,
+    pub line_size: LineSize,
     #[cube(comptime)]
     pub checks: EnumSet<NhwcCheck>,
 }
@@ -128,14 +128,14 @@ impl NhwcLayout {
         #[unroll]
         for i in 0..spatial_dims {
             strides_spatial.push(tensor.stride(i + 1));
-            shapes_spatial.push(tensor.shape(i + 1));
+            shapes_spatial.push(tensor.shape(i + 1) as u32);
         }
 
         let stride_batch = tensor.stride(0);
         let stride_channel = tensor.stride(spatial_dims + 1);
 
-        let shape_batch = tensor.shape(0);
-        let shape_channel = tensor.shape(spatial_dims + 1);
+        let shape_batch = tensor.shape(0) as u32;
+        let shape_channel = tensor.shape(spatial_dims + 1) as u32;
 
         NhwcLayout {
             stride_batch,
@@ -163,11 +163,12 @@ impl Layout for NhwcLayout {
         } = pos;
 
         let spatial_dims = self.shapes_spatial.len();
-        let mut read_pos = batch * self.stride_batch + channel * self.stride_channel;
+        let mut read_pos =
+            batch as usize * self.stride_batch + channel as usize * self.stride_channel;
 
         #[unroll]
         for i in 0..spatial_dims {
-            read_pos += *spatial.index(i) as u32 * *self.strides_spatial.index(i);
+            read_pos += spatial[i] as usize * self.strides_spatial[i];
         }
 
         read_pos / self.line_size
@@ -187,8 +188,8 @@ impl Layout for NhwcLayout {
 
             #[unroll]
             for i in 0..spatial_dims {
-                let pos = *pos.spatial.index(i);
-                in_bounds &= pos >= 0 && (pos as u32) < *self.shapes_spatial.index(i);
+                let pos = pos.spatial[i];
+                in_bounds &= pos >= 0 && (pos as u32) < self.shapes_spatial[i];
             }
         }
         if comptime![self.checks.contains(NhwcCheck::Channel)] {
@@ -215,7 +216,7 @@ pub(crate) fn cast_seq<From: CubePrimitive, To: CubePrimitive>(
     let mut out_seq = Sequence::new();
     #[unroll]
     for i in 0..num_elems {
-        let elem = To::cast_from(*seq.index(i));
+        let elem = To::cast_from(seq[i]);
         out_seq.push(elem);
     }
     out_seq
@@ -224,18 +225,18 @@ pub(crate) fn cast_seq<From: CubePrimitive, To: CubePrimitive>(
 impl<'a, R: Runtime> NhwcLayoutLaunch<'a, R> {
     pub fn from_handle(
         handle: &TensorHandleRef<'a, R>,
-        line_size: u32,
+        line_size: LineSize,
         checks: EnumSet<NhwcCheck>,
     ) -> Self {
         let rank = handle.shape.len();
         let dim_c = rank - 1;
 
-        let stride_batch = ScalarArg::new(handle.strides[0] as u32);
+        let stride_batch = ScalarArg::new(handle.strides[0]);
         let strides_spatial = handle.strides[1..dim_c]
             .iter()
-            .map(|s| ScalarArg::new(*s as u32))
+            .map(|s| ScalarArg::new(*s))
             .collect();
-        let stride_channel = ScalarArg::new(handle.strides[dim_c] as u32);
+        let stride_channel = ScalarArg::new(handle.strides[dim_c]);
 
         let shape_batch = ScalarArg::new(handle.shape[0] as u32);
         let shapes_spatial = handle.shape[1..dim_c]

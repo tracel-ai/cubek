@@ -1,5 +1,5 @@
-use cubecl::features::MmaConfig;
 use cubecl::{Runtime, client::ComputeClient, ir::StorageType};
+use cubecl::{features::MmaConfig, ir::LineSize};
 
 use crate::components::global::{LoadSpecializationConfig, SpecializationTensorConfig};
 use crate::components::stage::PartitionBuffering;
@@ -173,12 +173,12 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
 
     if options.swizzled {
         let lhs_swizzle_dim = match problem.lhs_layout {
-            MatrixLayout::RowMajor => tiling_scheme.elements_per_stage_along_k(),
-            MatrixLayout::ColMajor => tiling_scheme.elements_per_stage_along_m(),
+            MatrixLayout::RowMajor => tiling_scheme.elements_per_stage_along_k() as usize,
+            MatrixLayout::ColMajor => tiling_scheme.elements_per_stage_along_m() as usize,
         };
         let rhs_swizzle_dim = match problem.rhs_layout {
-            MatrixLayout::RowMajor => tiling_scheme.elements_per_stage_along_n(),
-            MatrixLayout::ColMajor => tiling_scheme.elements_per_stage_along_k(),
+            MatrixLayout::RowMajor => tiling_scheme.elements_per_stage_along_n() as usize,
+            MatrixLayout::ColMajor => tiling_scheme.elements_per_stage_along_k() as usize,
         };
 
         let lhs = select_swizzle(lhs_swizzle_dim, *matmul_elems.lhs_stage, line_sizes.lhs);
@@ -199,12 +199,12 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
 /// All modes currently use atom size 16
 const SWIZZLE_ATOM: usize = 16;
 
-pub fn select_swizzle(swizzle_dim: u32, elem: StorageType, line_size: u8) -> SwizzleMode {
+pub fn select_swizzle(swizzle_dim: usize, elem: StorageType, line_size: LineSize) -> SwizzleMode {
     // Line size exceeds swizzle atom
-    if elem.size() * line_size as usize > SWIZZLE_ATOM {
+    if elem.size() * line_size > SWIZZLE_ATOM {
         return SwizzleMode::None;
     }
-    let swizzle_dim_bytes = swizzle_dim as usize * elem.size();
+    let swizzle_dim_bytes = swizzle_dim * elem.size();
     if !swizzle_dim_bytes.is_power_of_two() {
         return SwizzleMode::None;
     }

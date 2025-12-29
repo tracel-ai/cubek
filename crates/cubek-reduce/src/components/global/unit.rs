@@ -21,7 +21,7 @@ impl GlobalFullUnitReduce {
     pub fn execute<P: ReducePrecision, Out: Numeric, I: ReduceInstruction<P>>(
         input: &VirtualTensor<P::EI>,
         output: &mut VirtualTensor<Out, ReadWrite>,
-        reduce_axis: u32,
+        reduce_axis: usize,
         inst: &I,
         #[comptime] line_mode: LineMode,
         #[comptime] blueprint: UnitReduceBlueprint,
@@ -62,8 +62,8 @@ impl GlobalFullUnitReduce {
     fn reduce_single<P: ReducePrecision, Out: Numeric, I: ReduceInstruction<P>>(
         input: &VirtualTensor<P::EI>,
         output: &mut VirtualTensor<Out, ReadWrite>,
-        reduce_axis: u32,
-        reduce_index: u32,
+        reduce_axis: usize,
+        reduce_index: usize,
         inst: &I,
         idle: CubeOption<bool>,
         #[comptime] line_mode: LineMode,

@@ -246,7 +246,7 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig>
         let mut rhs_num_task_executed = comptime!(0u32);
 
         if comptime!(lhs_len > 0) {
-            let lhs_job = self.state_lhs.index(0usize);
+            let lhs_job = &self.state_lhs[0];
             let num_tasks = L::JobIterator::num_tasks(lhs_job);
             let current = L::JobIterator::current(lhs_job);
             comptime!(lhs_num_tasks += num_tasks);
@@ -254,7 +254,7 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig>
         }
 
         if comptime!(rhs_len > 0) {
-            let rhs_job = self.state_rhs.index(0usize);
+            let rhs_job = &self.state_rhs[0];
             let num_tasks = R::JobIterator::num_tasks(rhs_job);
             let current = R::JobIterator::current(rhs_job);
             comptime!(rhs_num_tasks += num_tasks);

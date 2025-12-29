@@ -35,10 +35,10 @@ where
     let mut view_line_sizes = line_sizes;
 
     if let MatmulInputHandleRef::Quantized { scheme, .. } = lhs {
-        view_line_sizes.lhs *= scheme.num_quants() as u8;
+        view_line_sizes.lhs *= scheme.num_quants();
     }
     if let MatmulInputHandleRef::Quantized { scheme, .. } = rhs {
-        view_line_sizes.rhs *= scheme.num_quants() as u8;
+        view_line_sizes.rhs *= scheme.num_quants();
     }
 
     let device_settings = DeviceSettings {

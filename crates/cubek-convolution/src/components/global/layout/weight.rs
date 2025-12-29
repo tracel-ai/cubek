@@ -1,9 +1,12 @@
 use cubecl::prelude::*;
 use cubecl::std::{
     FastDivmod, FastDivmodArgs,
-    tensor::layout::{Coords3d, Layout, LayoutExpand},
+    tensor::layout::{Layout, LayoutExpand},
 };
-use cubek_matmul::components::global::{GlobalConfig, memory::GlobalMemoryConfig};
+use cubek_matmul::{
+    components::global::{GlobalConfig, memory::GlobalMemoryConfig},
+    launch::BatchedCoords,
+};
 
 use crate::components::{
     ConvGemmConfig, ConvolutionConfig, ConvolutionOperation, ConvolutionParams, ConvolutionProblem,
@@ -50,7 +53,7 @@ impl WeightLayout {
 
 #[cube]
 impl Layout for WeightLayout {
-    type Coordinates = Coords3d;
+    type Coordinates = BatchedCoords;
     type SourceCoordinates = NhwcCoords;
 
     fn to_source_pos(&self, coords: Self::Coordinates) -> NhwcCoords {
@@ -65,7 +68,7 @@ impl Layout for WeightLayout {
         #[unroll]
         for i in 0..spatial_dims {
             let dim = comptime![spatial_dims - i - 1];
-            let ksize = comptime![params.kernel_size[dim as usize]];
+            let ksize = comptime![params.kernel_size[dim]];
             let k_pos = rem % ksize;
             rem /= ksize;
 
@@ -124,7 +127,7 @@ impl<'a, R: Runtime> WeightLayoutLaunch<'a, R> {
         config: GlobalMemoryConfig,
     ) -> Self {
         let padded_channels = problem.padded_channels as u32;
-        let padded_channels = FastDivmodArgs::new(client, padded_channels);
+        let padded_channels = FastDivmodArgs::<u32>::new(client, padded_channels);
         let shape_k = ScalarArg::new(problem.k as u32);
         let shape_n = ScalarArg::new(problem.n as u32);
 
@@ -139,7 +142,7 @@ impl<'a, R: Runtime> WeightLayoutLaunch<'a, R> {
         config: GlobalMemoryConfig,
     ) -> Self {
         let padded_channels = problem.padded_channels as u32;
-        let padded_channels = FastDivmodArgs::new(client, padded_channels);
+        let padded_channels = FastDivmodArgs::<u32>::new(client, padded_channels);
         let shape_m = ScalarArg::new(problem.m as u32);
         let shape_n = ScalarArg::new(problem.n as u32);
 

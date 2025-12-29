@@ -1,5 +1,7 @@
 use std::{fmt::Debug, hash::Hash};
 
+use cubecl::ir::LineSize;
+
 use crate::{
     components::global::memory::{GlobalLayoutConfig, ViewDirection},
     definition::MatrixLayout,
@@ -7,7 +9,7 @@ use crate::{
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct GlobalMemoryConfig {
-    pub line_size: u32,
+    pub line_size: LineSize,
     pub check_row_bounds: bool,
     pub check_col_bounds: bool,
     pub matrix_layout: MatrixLayout,
@@ -29,7 +31,7 @@ impl Default for GlobalMemoryConfig {
 impl GlobalMemoryConfig {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        line_size: u32,
+        line_size: LineSize,
         check_row_bounds: bool,
         check_col_bounds: bool,
         matrix_layout: MatrixLayout,

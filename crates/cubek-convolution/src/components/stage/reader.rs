@@ -35,7 +35,7 @@ impl TilingLayout for BiasTilingLayout {
         let start = col * tile_size_col;
 
         StridedTile::new_strided(
-            stage.as_slice(stage_line_size),
+            stage.as_slice(stage_line_size as usize),
             start,
             start + length,
             0,

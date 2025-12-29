@@ -223,7 +223,7 @@ impl<'a, R: Runtime> MatmulInputHandleRef<'a, R> {
                             client,
                             data,
                             shape,
-                            scheme.num_quants() as u32,
+                            scheme.num_quants(),
                             u32::as_type_native_unchecked(),
                         )?;
                         // Unsafely cast to E

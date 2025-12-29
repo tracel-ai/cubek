@@ -6,7 +6,7 @@ use cubecl::std::{
     tensor::{
         View,
         launch::ViewArg,
-        layout::{Coords1d, Coords3d, VirtualLayout, VirtualLayoutLaunch},
+        layout::{Coords1d, VirtualLayout, VirtualLayoutLaunch},
     },
 };
 use cubecl::{server::TensorMapMeta, unexpanded};
@@ -36,6 +36,8 @@ pub type InputRuntimeArg<'a, MA, R> = <InputArg<MA> as LaunchArg>::RuntimeArg<'a
 
 /// Output runtime argument
 pub type OutputRuntimeArg<'a, MA, R> = <OutputArg<MA> as LaunchArg>::RuntimeArg<'a, R>;
+
+pub type BatchedCoords = (usize, u32, u32);
 
 /// Create the input runtime arguments for a matmul kernel that works on concrete inputs and
 /// output (not fused).
@@ -92,46 +94,46 @@ pub trait MatmulArgs: Send + Sync + 'static + Clone {
 
     fn view_lhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         _state: &Self::State<Lhs, Rhs, EO>,
-    ) -> View<Line<Lhs>, Coords3d> {
+    ) -> View<Line<Lhs>, BatchedCoords> {
         unexpanded!()
     }
     fn batch_lhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         _state: &Self::State<Lhs, Rhs, EO>,
-        _batch: u32,
-    ) -> u32 {
+        _batch: usize,
+    ) -> usize {
         unexpanded!()
     }
     fn view_rhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         _state: &Self::State<Lhs, Rhs, EO>,
-    ) -> View<Line<Rhs>, Coords3d> {
+    ) -> View<Line<Rhs>, BatchedCoords> {
         unexpanded!()
     }
     fn batch_rhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         _state: &Self::State<Lhs, Rhs, EO>,
-        _batch: u32,
-    ) -> u32 {
+        _batch: usize,
+    ) -> usize {
         unexpanded!()
     }
     fn view_acc<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         _state: &Self::State<Lhs, Rhs, EO>,
-    ) -> CubeOption<View<Line<EO>, Coords3d>> {
+    ) -> CubeOption<View<Line<EO>, BatchedCoords>> {
         unexpanded!()
     }
     fn batch_acc<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         _state: &Self::State<Lhs, Rhs, EO>,
-        _batch: u32,
-    ) -> u32 {
+        _batch: usize,
+    ) -> usize {
         unexpanded!()
     }
     fn view_out<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         _state: &mut Self::State<Lhs, Rhs, EO>,
-    ) -> View<Line<EO>, Coords3d, ReadWrite> {
+    ) -> View<Line<EO>, BatchedCoords, ReadWrite> {
         unexpanded!()
     }
     fn batch_out<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         _state: &Self::State<Lhs, Rhs, EO>,
-        _batch: u32,
-    ) -> u32 {
+        _batch: usize,
+    ) -> usize {
         unexpanded!()
     }
 }
@@ -153,13 +155,13 @@ pub struct TensorArgs;
 /// Input representation for [TensorArgs] implementing [MatmulArgs].
 pub struct TensorInputs<Lhs: Numeric, Rhs: Numeric, Acc: Numeric> {
     /// The lhs tensor.
-    lhs: View<Line<Lhs>, Coords3d>,
+    lhs: View<Line<Lhs>, BatchedCoords>,
     lhs_batch: VirtualLayout<Coords1d, Coords1d>,
     /// The rhs tensor.
-    rhs: View<Line<Rhs>, Coords3d>,
+    rhs: View<Line<Rhs>, BatchedCoords>,
     rhs_batch: VirtualLayout<Coords1d, Coords1d>,
     /// The tensor for loading the accumulator, if present
-    acc: CubeOption<View<Line<Acc>, Coords3d>>,
+    acc: CubeOption<View<Line<Acc>, BatchedCoords>>,
     acc_batch: CubeOption<VirtualLayout<Coords1d, Coords1d>>,
 }
 
@@ -223,7 +225,7 @@ impl<Lhs: Numeric, Rhs: Numeric, Acc: Numeric, A: Routine> ConcreteInputsFactory
 
 #[derive(CubeType, CubeLaunch, Clone, Copy)]
 pub struct TensorOutput<EG: Numeric> {
-    view: View<Line<EG>, Coords3d, ReadWrite>,
+    view: View<Line<EG>, BatchedCoords, ReadWrite>,
     batch: VirtualLayout<Coords1d, Coords1d>,
 }
 
@@ -264,40 +266,40 @@ impl MatmulArgs for TensorArgs {
 
     fn view_lhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &Self::State<Lhs, Rhs, EO>,
-    ) -> View<Line<Lhs>, Coords3d> {
+    ) -> View<Line<Lhs>, BatchedCoords> {
         state.0.lhs
     }
 
     fn batch_lhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &Self::State<Lhs, Rhs, EO>,
-        batch: u32,
-    ) -> u32 {
+        batch: usize,
+    ) -> usize {
         state.0.lhs_batch.to_source_pos(batch)
     }
 
     fn view_rhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &Self::State<Lhs, Rhs, EO>,
-    ) -> View<Line<Rhs>, Coords3d> {
+    ) -> View<Line<Rhs>, BatchedCoords> {
         state.0.rhs
     }
 
     fn batch_rhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &Self::State<Lhs, Rhs, EO>,
-        batch: u32,
-    ) -> u32 {
+        batch: usize,
+    ) -> usize {
         state.0.rhs_batch.to_source_pos(batch)
     }
 
     fn view_acc<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &Self::State<Lhs, Rhs, EO>,
-    ) -> CubeOption<View<Line<EO>, Coords3d>> {
+    ) -> CubeOption<View<Line<EO>, BatchedCoords>> {
         state.0.acc
     }
 
     fn batch_acc<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &Self::State<Lhs, Rhs, EO>,
-        batch: u32,
-    ) -> u32 {
+        batch: usize,
+    ) -> usize {
         match state.0.acc_batch {
             CubeOption::Some(layout) => layout.to_source_pos(batch),
             CubeOption::None => batch,
@@ -306,14 +308,14 @@ impl MatmulArgs for TensorArgs {
 
     fn view_out<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &mut Self::State<Lhs, Rhs, EO>,
-    ) -> View<Line<EO>, Coords3d, ReadWrite> {
+    ) -> View<Line<EO>, BatchedCoords, ReadWrite> {
         state.1.view
     }
 
     fn batch_out<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &Self::State<Lhs, Rhs, EO>,
-        batch: u32,
-    ) -> u32 {
+        batch: usize,
+    ) -> usize {
         state.1.batch.to_source_pos(batch)
     }
 }
@@ -328,11 +330,11 @@ pub struct TensorMapArgs;
 /// Input representation for [TensorArgs] implementing [MatmulArgs].
 pub struct TensorMapInputs<Lhs: Numeric, Rhs: Numeric, EO: Numeric> {
     /// The lhs tensor.
-    pub lhs: View<Line<Lhs>, Coords3d>,
+    pub lhs: View<Line<Lhs>, BatchedCoords>,
     /// The rhs tensor.
-    pub rhs: View<Line<Rhs>, Coords3d>,
+    pub rhs: View<Line<Rhs>, BatchedCoords>,
     /// The accumulator
-    pub acc: CubeOption<View<Line<EO>, Coords3d>>,
+    pub acc: CubeOption<View<Line<EO>, BatchedCoords>>,
     /// The accumulator batch layout
     pub acc_batch: CubeOption<VirtualLayout<Coords1d, Coords1d>>,
 }
@@ -518,7 +520,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<Blueprint = TilingBluep
         };
 
         let view = |buffer, shape: &[usize], transposed| {
-            let batches = ScalarArg::new(shape[0] as u32);
+            let batches = ScalarArg::new(shape[0]);
             let (rows, cols) = match transposed {
                 true => (
                     ScalarArg::new(shape[2] as u32),
@@ -562,40 +564,40 @@ impl MatmulArgs for TensorMapArgs {
 
     fn view_lhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &Self::State<Lhs, Rhs, EO>,
-    ) -> View<Line<Lhs>, Coords3d> {
+    ) -> View<Line<Lhs>, BatchedCoords> {
         state.0.lhs
     }
 
     fn batch_lhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         _state: &Self::State<Lhs, Rhs, EO>,
-        batch: u32,
-    ) -> u32 {
+        batch: usize,
+    ) -> usize {
         batch
     }
 
     fn view_rhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &Self::State<Lhs, Rhs, EO>,
-    ) -> View<Line<Rhs>, Coords3d> {
+    ) -> View<Line<Rhs>, BatchedCoords> {
         state.0.rhs
     }
 
     fn batch_rhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         _state: &Self::State<Lhs, Rhs, EO>,
-        batch: u32,
-    ) -> u32 {
+        batch: usize,
+    ) -> usize {
         batch
     }
 
     fn view_acc<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &Self::State<Lhs, Rhs, EO>,
-    ) -> CubeOption<View<Line<EO>, Coords3d>> {
+    ) -> CubeOption<View<Line<EO>, BatchedCoords>> {
         state.0.acc
     }
 
     fn batch_acc<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &Self::State<Lhs, Rhs, EO>,
-        batch: u32,
-    ) -> u32 {
+        batch: usize,
+    ) -> usize {
         match state.0.acc_batch {
             CubeOption::Some(layout) => layout.to_source_pos(batch),
             CubeOption::None => batch,
@@ -604,14 +606,14 @@ impl MatmulArgs for TensorMapArgs {
 
     fn view_out<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &mut Self::State<Lhs, Rhs, EO>,
-    ) -> View<Line<EO>, Coords3d, ReadWrite> {
+    ) -> View<Line<EO>, BatchedCoords, ReadWrite> {
         state.1.view
     }
 
     fn batch_out<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &Self::State<Lhs, Rhs, EO>,
-        batch: u32,
-    ) -> u32 {
+        batch: usize,
+    ) -> usize {
         state.1.batch.to_source_pos(batch)
     }
 }

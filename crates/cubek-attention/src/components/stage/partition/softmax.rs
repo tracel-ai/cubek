@@ -29,11 +29,11 @@ impl<AP: AttentionPrecision, TA: TileAttention<AP>> SoftmaxPartition<AP, TA> {
         SoftmaxPartition::<AP, TA> { sequence }
     }
 
-    pub fn get_at(&self, #[comptime] q: u32) -> &TA::Softmax {
-        self.sequence.index(q)
+    pub fn get_at(&self, #[comptime] q: usize) -> &TA::Softmax {
+        &self.sequence[q]
     }
 
-    pub fn get_at_mut(&mut self, #[comptime] q: u32) -> &mut TA::Softmax {
+    pub fn get_at_mut(&mut self, #[comptime] q: usize) -> &mut TA::Softmax {
         self.sequence.index_mut(q)
     }
 }
