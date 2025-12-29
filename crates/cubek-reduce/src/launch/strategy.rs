@@ -11,11 +11,11 @@ pub struct ReduceStrategy {
 
 #[derive(Debug, Clone)]
 pub enum RoutineStrategy {
-    /// A unit is responsable to reduce a full vector.
+    /// A unit is responsible to reduce a full vector.
     Unit(BlueprintStrategy<UnitRoutine>),
-    /// A plane is responsable to reduce a full vector.
+    /// A plane is responsible to reduce a full vector.
     Plane(BlueprintStrategy<PlaneRoutine>),
-    /// A cube is responsable to reduce a full vector.
+    /// A cube is responsible to reduce a full vector.
     Cube(BlueprintStrategy<CubeRoutine>),
 }
 

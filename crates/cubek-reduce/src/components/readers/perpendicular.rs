@@ -72,7 +72,7 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
         self.shape
     }
 
-    pub fn lenth_plane(&self) -> u32 {
+    pub fn length_plane(&self) -> u32 {
         self.shape.div_ceil(CUBE_DIM_X)
     }
 

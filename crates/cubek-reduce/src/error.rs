@@ -2,7 +2,7 @@ use cubecl::{ir::StorageType, server::LaunchError};
 use thiserror::Error;
 
 #[derive(Error, Debug, Clone)]
-/// This error should be catched and properly handled.
+/// This error should be caught and properly handled.
 pub enum ReduceError {
     /// Indicate that the hardware / API doesn't support SIMT plane instructions.
     #[error(
