@@ -142,13 +142,13 @@ impl Layout for BlockScaledLayout {
     type SourceCoordinates = Coords1d;
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
-        let rank = comptime![self.scales_strides.len()];
+        let rank = self.scales_strides.len().comptime();
         let mut offs = pos;
         let mut scale_offs = 0;
 
         #[unroll]
         for i in 0..rank {
-            let dim = comptime![rank - i - 1];
+            let dim = rank - i - 1;
             let block_size_local = comptime![self.block_size[dim] as usize];
             let (rem, offs_local) = self.tensor_shape[dim].div_mod(offs);
 
@@ -177,13 +177,13 @@ impl BlockScaledLayout {
     /// Whether the position is at the start of a new block. Used for electing a unit to write each
     /// scale.
     pub fn is_block_start(&self, pos: usize) -> bool {
-        let rank = comptime![self.scales_strides.len()];
+        let rank = self.scales_strides.len().comptime();
         let mut offs = pos;
         let mut is_start = true;
 
         #[unroll]
         for i in 0..rank {
-            let dim = comptime![rank - i - 1];
+            let dim = rank - i - 1;
             let block_size_local = comptime![self.block_size[dim] as usize];
             let (rem, offs_local) = self.tensor_shape[dim].div_mod(offs);
             offs = rem;

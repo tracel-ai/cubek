@@ -36,7 +36,7 @@ pub(crate) fn matmul_entry<
     #[define(LhsR, RhsR, AccR)] _register: [StorageType; 3],
 ) {
     #[allow(clippy::collapsible_if)]
-    if comptime!(config.can_yield_extra_cubes()) {
+    if config.can_yield_extra_cubes() {
         if CUBE_POS >= cube_count_args.num_valid_cubes() {
             terminate!()
         }

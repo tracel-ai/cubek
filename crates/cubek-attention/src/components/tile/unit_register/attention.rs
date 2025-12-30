@@ -97,7 +97,7 @@ impl<E: Float> RowwiseFormat<E> for UnitTile<E> {
         }
 
         RowWise::<E> {
-            num_rows: comptime![self.layout.num_rows as usize],
+            num_rows: self.layout.num_rows.comptime() as usize,
             vals,
         }
     }
@@ -120,7 +120,7 @@ impl<E: Float> RowwiseFormat<E> for UnitTile<E> {
         }
 
         RowWise::<E> {
-            num_rows: comptime![self.layout.num_rows as usize],
+            num_rows: self.layout.num_rows.comptime() as usize,
             vals,
         }
     }
@@ -367,9 +367,9 @@ fn strided_tile_to_transposed_unit_tile<E: Numeric, E2: Numeric>(
     let line_size = strided_tile.line_size;
     assert!(unit_tile.layout.num_cols % line_size == 0);
 
-    let input_num_rows = unit_tile.layout.num_cols;
-    let input_num_cols = unit_tile.layout.num_rows;
-    let line_iterations = comptime!(input_num_cols / line_size);
+    let input_num_rows = unit_tile.layout.num_cols.comptime();
+    let input_num_cols = unit_tile.layout.num_rows.comptime();
+    let line_iterations = input_num_cols / line_size;
 
     for input_row in 0..input_num_rows {
         for input_col_line in 0..line_iterations {
@@ -389,8 +389,7 @@ fn unit_tile_to_slice<E: Numeric, E2: Numeric>(
     unit_tile: &UnitTile<E>,
     slice: &mut SliceMut<Line<E2>>,
 ) {
-    let line_size = slice.line_size();
-    let line_size = comptime![line_size as u32];
+    let line_size = slice.line_size().comptime() as u32;
     assert!(unit_tile.layout.num_cols % line_size == 0);
 
     let col_iterations = comptime!(unit_tile.layout.num_cols / line_size);

@@ -22,7 +22,7 @@ impl<AP: AttentionPrecision, TA: TileAttention<AP>> AccumulatorPartition<AP, TA>
         let mut sequence = Sequence::new();
 
         #[unroll]
-        for _ in 0..comptime!(p.seq_q * p.val_dim) {
+        for _ in 0..p.seq_q * p.val_dim {
             sequence.push(AccumulatorTile::new(config.tile_config()));
         }
 

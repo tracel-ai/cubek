@@ -135,7 +135,7 @@ fn reduce_kernel_inner<P: ReducePrecision, Out: Numeric, R: ReduceFamily>(
 ) {
     let inst = &R::Instruction::<P>::from_config(config);
 
-    match comptime!(blueprint.global) {
+    match blueprint.global {
         GlobalReduceBlueprint::Cube(cube) => {
             GlobalFullCubeReduce::execute::<P, Out, R::Instruction<P>>(
                 input,

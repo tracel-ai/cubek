@@ -134,7 +134,7 @@ where
         let mut lhs = Sequence::new();
 
         #[unroll]
-        for _ in 0..comptime!(shared_config.partition_size.m()) {
+        for _ in 0..shared_config.partition_size.m() {
             lhs.push(TM::allocate_lhs(
                 shared_config.lhs_smem_config.matrix_layout,
                 shared_config.tile_config,
@@ -211,12 +211,12 @@ where
         let n_iterations = shared_config.partition_size.n() as usize;
         let k_iterations = shared_config.partition_size.k() as usize;
 
-        let mut lhs_load_counter = comptime![0];
-        let mut rhs_load_counter = comptime![0];
-        let mut execute_counter = comptime![0];
-        let lhs_load_total = comptime!(m_iterations * k_iterations) as u32;
-        let rhs_load_total = comptime!(n_iterations * k_iterations) as u32;
-        let execute_total = comptime!(m_iterations * n_iterations * k_iterations) as u32;
+        let mut lhs_load_counter = 0.comptime();
+        let mut rhs_load_counter = 0.comptime();
+        let mut execute_counter = 0.comptime();
+        let lhs_load_total = (m_iterations * k_iterations) as u32;
+        let rhs_load_total = (n_iterations * k_iterations) as u32;
+        let execute_total = (m_iterations * n_iterations * k_iterations) as u32;
 
         #[unroll]
         for k_iter in 0..k_iterations {
@@ -305,12 +305,12 @@ where
         let n_iterations = shared_config.partition_size.n() as usize;
         let k_iterations = shared_config.partition_size.k() as usize;
 
-        let mut lhs_load_counter = comptime![0];
-        let mut rhs_load_counter = comptime![0];
-        let mut execute_counter = comptime![0];
-        let lhs_load_total = comptime!(m_iterations * k_iterations) as u32;
-        let rhs_load_total = comptime!(n_iterations * k_iterations) as u32;
-        let execute_total = comptime!(m_iterations * n_iterations * k_iterations) as u32;
+        let mut lhs_load_counter = 0.comptime();
+        let mut rhs_load_counter = 0.comptime();
+        let mut execute_counter = 0.comptime();
+        let lhs_load_total = (m_iterations * k_iterations) as u32;
+        let rhs_load_total = (n_iterations * k_iterations) as u32;
+        let execute_total = (m_iterations * n_iterations * k_iterations) as u32;
 
         #[unroll]
         for k_iter in 0..k_iterations {
@@ -336,7 +336,7 @@ where
                 comptime!(lhs_load_counter += 1);
             }
 
-            let mut n_iter = comptime![0usize];
+            let mut n_iter = 0usize.comptime();
             let n_load_iter = partition_scheduler.map_n(n_iter as u32);
 
             let rhs_tile_first = StageRhs::tile(rhs_stage, (k_load_iter, n_load_iter));
@@ -357,7 +357,7 @@ where
             #[unroll]
             #[allow(clippy::explicit_counter_loop)]
             for _ in 1..n_iterations {
-                let (current, next) = if comptime! {n_iter % 2 == 0} {
+                let (current, next) = if comptime! {n_iter.is_multiple_of(2)} {
                     (&mut rhs_fragments.0, &mut rhs_fragments.1)
                 } else {
                     (&mut rhs_fragments.1, &mut rhs_fragments.0)
@@ -399,7 +399,7 @@ where
                 comptime![n_iter += 1];
             }
 
-            let last = if comptime! {n_iter % 2 == 0} {
+            let last = if comptime! {n_iter.is_multiple_of(2)} {
                 &mut rhs_fragments.0
             } else {
                 &mut rhs_fragments.1

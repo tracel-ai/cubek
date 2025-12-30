@@ -53,18 +53,14 @@ impl<ES: Numeric, T: TilingLayout> StridedStageMemory<ES, T> {
         let swizzle = as_swizzle_object(config.swizzle);
         let swizzle_align = swizzle.repeats_after();
         let align = comptime![Ord::max(alignment, swizzle_align as usize)];
-        let type_size = type_size::<ES>(line_size);
+        let type_size = type_size::<ES>(line_size).comptime();
 
-        let stage_size_bytes = comptime![config.elements_per_stage() as usize * type_size];
+        let stage_size_bytes = config.elements_per_stage() as usize * type_size;
         // Ensure all stages are aligned properly
-        let stage_size =
-            comptime![stage_size_bytes.next_multiple_of(align) / type_size / line_size];
+        let stage_size = stage_size_bytes.next_multiple_of(align) / type_size / line_size;
 
-        let smem = SharedMemory::new_aligned(
-            comptime!(config.num_stages as usize * stage_size),
-            line_size,
-            align,
-        );
+        let smem =
+            SharedMemory::new_aligned(config.num_stages as usize * stage_size, line_size, align);
 
         StridedStageMemory::<ES, T> {
             smem,
@@ -169,7 +165,7 @@ impl<ES: Numeric, T: TilingLayout> StridedStageMemory<ES, T> {
             let offset = unit_base_position + i * unit_count;
 
             #[allow(clippy::collapsible_else_if)]
-            if comptime!(smem_length % unit_count == 0) {
+            if smem_length % unit_count == 0 {
                 self.smem[offset as usize] = Line::cast_from(0);
             } else {
                 if offset < smem_length {
@@ -187,10 +183,10 @@ impl<ES: Numeric, T: TilingLayout> StridedStageMemory<ES, T> {
         #[comptime] config: GlobalReaderConfig,
     ) {
         let mut this = self.with_buffer_index(stage_buffer.to_index());
-        let line_size = comptime![this.config.line_size as usize];
+        let line_size = this.config.line_size.comptime() as usize;
 
         let unit_count = config.loading_units_count();
-        let num_writes_per_unit = comptime![this.stage_size.div_ceil(unit_count)];
+        let num_writes_per_unit = this.stage_size.comptime().div_ceil(unit_count);
 
         let unit_base_position = RoleRule::new(config.plane_role_config.rule)
             .load_index(config.specialization_tensor_config)
@@ -203,7 +199,7 @@ impl<ES: Numeric, T: TilingLayout> StridedStageMemory<ES, T> {
             let unit_position = unit_base_position + i * unit_count;
 
             #[allow(clippy::collapsible_else_if)]
-            if comptime!(this.stage_size.is_multiple_of(unit_count)) {
+            if this.stage_size.comptime().is_multiple_of(unit_count) {
                 stage[unit_position as usize] = Line::cast_from(0);
             } else {
                 if unit_position < this.stage_size {

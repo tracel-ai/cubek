@@ -57,18 +57,18 @@ impl Layout for WeightLayout {
     type SourceCoordinates = NhwcCoords;
 
     fn to_source_pos(&self, coords: Self::Coordinates) -> NhwcCoords {
-        let params = comptime![self.params];
+        let params = self.params.comptime();
         let (_, k, n) = coords;
 
         let (mut rem, k_channel) = self.padded_channels.div_mod(k);
 
-        let spatial_dims = comptime![params.dimensionality.num_dims()];
+        let spatial_dims = params.dimensionality.num_dims();
         let mut kernel_pos = Sequence::<i32>::new();
 
         #[unroll]
         for i in 0..spatial_dims {
-            let dim = comptime![spatial_dims - i - 1];
-            let ksize = comptime![params.kernel_size[dim]];
+            let dim = spatial_dims - i - 1;
+            let ksize = params.kernel_size[dim];
             let k_pos = rem % ksize;
             rem /= ksize;
 
@@ -101,8 +101,8 @@ impl Layout for WeightLayout {
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
         let (_, k, n) = pos;
-        let check_k = comptime![self.config.check_row_bounds];
-        let check_n = comptime![self.config.check_col_bounds];
+        let check_k = self.config.check_row_bounds;
+        let check_n = self.config.check_col_bounds;
         (!check_k || k < self.rows) && (!check_n || n < self.cols)
     }
 }

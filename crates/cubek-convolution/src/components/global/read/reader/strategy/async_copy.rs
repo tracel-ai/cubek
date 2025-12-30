@@ -27,13 +27,13 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
     #[comptime] config: GlobalReaderConfig,
     #[comptime] copy_line_size: u32,
 ) {
-    let operation = comptime![runtime_args.operation];
+    let operation = runtime_args.operation.comptime();
 
     let mut stage_slice = stage.as_slice_mut(stage.smem.line_size());
-    let slice_size = comptime![match config.smem_config.matrix_layout {
+    let slice_size = match config.smem_config.matrix_layout {
         MatrixLayout::RowMajor => (1u32, copy_line_size),
         MatrixLayout::ColMajor => (copy_line_size, 1u32),
-    }]
+    }
     .runtime();
 
     let mut slice_len_global = copy_line_size.runtime();

@@ -131,7 +131,7 @@ impl<In: Numeric> SharedAccumulator for DynamicAccumulator<In> {
         #[comptime] coordinate: bool,
     ) -> Self {
         let elements = SharedMemory::new_lined(length, line_size);
-        let args = if comptime![coordinate] {
+        let args = if coordinate {
             let args = SharedMemory::new_lined(length, line_size);
             CubeOption::new_Some(args)
         } else {
@@ -172,18 +172,16 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
 
     fn requirements(this: &Self) -> ReduceRequirements {
         let coordinates = match this {
-            ReduceOperation::Sum(..) => comptime![false],
-            ReduceOperation::Prod(..) => comptime![false],
-            ReduceOperation::Mean(..) => comptime![false],
-            ReduceOperation::MaxAbs(..) => comptime![false],
-            ReduceOperation::ArgMax(..) => comptime![true],
-            ReduceOperation::ArgMin(..) => comptime![true],
-            ReduceOperation::Max(..) => comptime![false],
-            ReduceOperation::Min(..) => comptime![false],
+            ReduceOperation::Sum(..) => false,
+            ReduceOperation::Prod(..) => false,
+            ReduceOperation::Mean(..) => false,
+            ReduceOperation::MaxAbs(..) => false,
+            ReduceOperation::ArgMax(..) => true,
+            ReduceOperation::ArgMin(..) => true,
+            ReduceOperation::Max(..) => false,
+            ReduceOperation::Min(..) => false,
         };
-        ReduceRequirements {
-            coordinates: comptime! {coordinates},
-        }
+        ReduceRequirements { coordinates }
     }
 
     fn from_config(#[comptime] config: Self::Config) -> Self {

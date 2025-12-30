@@ -25,7 +25,7 @@ pub fn read_first<S: SyncStrategy, LJ: JobExecutor<S>, RJ: JobExecutor<S>>(
     #[comptime] lhs_config: GlobalReaderConfig,
     #[comptime] rhs_config: GlobalReaderConfig,
 ) {
-    match comptime!(specializer.kind) {
+    match specializer.kind.comptime() {
         SpecializerKind::Specialized {
             main_flow_loading_side,
             load_only_loading_side,
@@ -80,7 +80,7 @@ pub fn execute_current_and_read_next<
     #[comptime] stage_to_load: StageBuffer,
     #[comptime] config: G,
 ) {
-    match comptime!(specializer.kind) {
+    match specializer.kind.comptime() {
         SpecializerKind::Specialized {
             main_flow_loading_side,
             load_only_loading_side,
@@ -168,7 +168,7 @@ pub fn execute_last_and_write_results<
 ) {
     let mut out_stage = GW::stage(out_writer);
 
-    match comptime!(specializer.kind) {
+    match specializer.kind.comptime() {
         SpecializerKind::Specialized {
             main_flow_loading_side: _,
             load_only_loading_side: _,

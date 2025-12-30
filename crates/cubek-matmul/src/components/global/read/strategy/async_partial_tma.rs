@@ -74,10 +74,10 @@ impl PartialLoadingStrategy for AsyncPartialTmaLoading {
         };
         // Swizzle renders the column format irrelevant, so we load the whole stage at once
         // The tiling is set on launch for TMA, so no further change is needed here.
-        let num_tasks = comptime![match config.swizzle {
+        let num_tasks = match config.swizzle {
             SwizzleMode::None => tile_count_col,
             _ => 1u32,
-        }];
+        };
 
         let is_elected = RoleRule::new(role_rule_config).elect_load_leader();
 
@@ -174,13 +174,13 @@ impl AsyncPartialLoadingStrategy for AsyncPartialTmaLoading {
         barrier: &mut Barrier,
         #[comptime] config: SharedGlobalMatmulConfig<S>,
     ) {
-        let lhs_elem_size = LhsS::<MP>::type_size();
-        let rhs_elem_size = RhsS::<MP>::type_size();
-        let stage_bytes = comptime! {
-            let lhs_bytes = config.lhs_reader_config().smem_config.elements_per_stage() * lhs_elem_size as u32;
-            let rhs_bytes = config.rhs_reader_config().smem_config.elements_per_stage() * rhs_elem_size as u32;
-            lhs_bytes + rhs_bytes
-        };
+        let lhs_elem_size = LhsS::<MP>::type_size().comptime();
+        let rhs_elem_size = RhsS::<MP>::type_size().comptime();
+        let lhs_bytes =
+            config.lhs_reader_config().smem_config.elements_per_stage() * lhs_elem_size as u32;
+        let rhs_bytes =
+            config.rhs_reader_config().smem_config.elements_per_stage() * rhs_elem_size as u32;
+        let stage_bytes = lhs_bytes + rhs_bytes;
         barrier.arrive_and_expect_tx(1, stage_bytes);
     }
 

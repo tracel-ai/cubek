@@ -55,8 +55,8 @@ impl<IP: MatrixPrecision> PlaneWriter<IP> {
             &mut self.global,
             &self.stage.unit_tile,
             tile_pos,
-            comptime!(self.plane_dim),
-            comptime!(self.smem_config.elements_per_tile()),
+            self.plane_dim,
+            self.smem_config.comptime().elements_per_tile(),
         )
     }
 }
@@ -98,18 +98,18 @@ pub fn plane_write<ES: Numeric, EG: Numeric>(
     #[comptime] plane_dim: u32,
     #[comptime] elements_in_tile: u32,
 ) {
-    let output_line_size = global.line_size();
+    let output_line_size = global.line_size().comptime();
 
-    let unit_step = comptime![plane_dim * output_line_size as u32];
-    let num_unit_writes = comptime!(elements_in_tile.div_ceil(unit_step));
-    let balanced_workload = comptime!(elements_in_tile.is_multiple_of(unit_step));
+    let unit_step = plane_dim * output_line_size as u32;
+    let num_unit_writes = elements_in_tile.div_ceil(unit_step);
+    let balanced_workload = elements_in_tile.is_multiple_of(unit_step);
 
     #[unroll(num_unit_writes == 1)]
     for i in 0..num_unit_writes {
         let unit_write = UNIT_POS_X * output_line_size as u32 + i * unit_step;
 
         #[allow(clippy::collapsible_else_if)]
-        if comptime!(balanced_workload) {
+        if balanced_workload {
             write_line(global, smem_tile, unit_write, tile_pos);
         } else {
             if unit_write < elements_in_tile {
@@ -126,19 +126,18 @@ fn write_line<ES: Numeric, EG: Numeric>(
     unit_write: u32,
     tile: Coords2d,
 ) {
-    let output_line_size = view.line_size();
-    let out_smem_line_size = out_smem_tile.stage.line_size();
+    let output_line_size = view.line_size().comptime();
+    let out_smem_line_size = out_smem_tile.stage.line_size().comptime();
 
-    let value = if comptime!(output_line_size == out_smem_line_size) {
+    let value = if output_line_size == out_smem_line_size {
         let offs = out_smem_tile.stage_offset(unit_write / output_line_size as u32);
         out_smem_tile.stage[offs as usize]
-    } else if comptime!(
-        out_smem_line_size < output_line_size
-            && output_line_size.is_multiple_of(out_smem_line_size)
-    ) {
+    } else if out_smem_line_size < output_line_size
+        && output_line_size.is_multiple_of(out_smem_line_size)
+    {
         let mut value = Line::empty(output_line_size);
         #[unroll]
-        for i in 0..comptime!(output_line_size / out_smem_line_size) {
+        for i in 0..output_line_size / out_smem_line_size {
             let offs = out_smem_tile.stage_offset(unit_write + i as u32);
             #[unroll]
             for j in 0..out_smem_line_size {

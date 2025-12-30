@@ -24,20 +24,20 @@ impl Layout for FullStageLayout {
     type SourceCoordinates = Coords2d;
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
-        let stage_shape_row = comptime![self.config.elements_per_stage_along_row()];
-        let stage_shape_col = comptime![self.config.elements_per_stage_along_col()];
+        let stage_shape_row = self.config.comptime().elements_per_stage_along_row();
+        let stage_shape_col = self.config.comptime().elements_per_stage_along_col();
 
-        match comptime![self.config.matrix_layout] {
+        match self.config.matrix_layout.comptime() {
             MatrixLayout::RowMajor => (pos / stage_shape_col, pos % stage_shape_col),
             MatrixLayout::ColMajor => (pos % stage_shape_row, pos / stage_shape_row),
         }
     }
 
     fn shape(&self) -> Self::Coordinates {
-        let stage_shape_row = comptime![self.config.elements_per_stage_along_row()];
-        let stage_shape_y = comptime![self.config.elements_per_stage_along_col()];
+        let stage_shape_row = self.config.comptime().elements_per_stage_along_row();
+        let stage_shape_y = self.config.comptime().elements_per_stage_along_col();
 
-        comptime!(stage_shape_row * stage_shape_y).runtime()
+        (stage_shape_row * stage_shape_y).runtime()
     }
 
     fn is_in_bounds(&self, _pos: Self::Coordinates) -> bool {

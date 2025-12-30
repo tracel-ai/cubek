@@ -22,7 +22,7 @@ impl TilingLayout for BiasTilingLayout {
         tile: Coords2d,
         #[comptime] config: StageMemoryConfig,
     ) -> StridedTile<ES> {
-        if comptime!(config.num_stages > 1) {
+        if config.num_stages > 1 {
             unimplemented!()
         }
 
@@ -46,7 +46,7 @@ impl TilingLayout for BiasTilingLayout {
     }
 
     fn to_enum() -> comptime_type!(TilingLayoutEnum) {
-        comptime![TilingLayoutEnum::Other]
+        TilingLayoutEnum::Other
     }
 }
 

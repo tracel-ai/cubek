@@ -69,11 +69,11 @@ impl FullLoadingStrategy for AsyncFullStridedLoading {
         #[comptime] _line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, ES> {
-        let type_size = ES::type_size_bits();
-        let line_size = comptime![ASYNC_COPY_WIDTH / type_size as u32];
+        let type_size = ES::type_size_bits().comptime();
+        let line_size = ASYNC_COPY_WIDTH / type_size as u32;
         let num_stage_lines = config.smem_config.elements_per_stage() / line_size;
         let unit_count = config.loading_planes_count() * config.plane_dim;
-        let num_tasks_per_unit = comptime!(num_stage_lines / unit_count);
+        let num_tasks_per_unit = num_stage_lines / unit_count;
 
         let unit_position_base = RoleRule::new(config.plane_role_config.rule)
             .load_index(config.specialization_tensor_config)
@@ -120,7 +120,7 @@ impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, StridedTilingLayout, AsyncCopy
         let unit_position = this.unit_position_base + task_id * this.unit_count;
         let unit_position_abs = unit_position * this.copy_line_size;
 
-        let layout = FullStageLayout::new(comptime![config.smem_config]);
+        let layout = FullStageLayout::new(config.smem_config);
         let view = global_iter.view();
 
         let pos = layout.to_source_pos(unit_position_abs);

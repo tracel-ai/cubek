@@ -90,18 +90,17 @@ fn unpack_q<F: Float, QS: Int>(
 ) -> Line<F> {
     let size_quant = quant.size_bits();
     let size_store = store.size_bits(&quant);
-    let num_quant = comptime!(size_store / size_quant);
+    let num_quant = size_store / size_quant;
 
     let mut output = Line::empty(num_quant);
-    let mut position = comptime!(0);
 
-    let mask = QS::cast_from(comptime!((1 << size_quant) - 1));
-    let sign_bit = QS::cast_from(comptime!(1 << (size_quant - 1)));
-    let two_pow_n = comptime!(1 << size_quant);
+    let mask = QS::from_int((1 << size_quant) - 1);
+    let sign_bit = QS::from_int(1 << (size_quant - 1));
+    let two_pow_n = 1 << size_quant;
 
     #[unroll]
-    for _ in 0..num_quant {
-        let offset = QS::cast_from(comptime!(position * size_quant));
+    for position in 0..num_quant {
+        let offset = QS::cast_from(position * size_quant);
         let raw = (value >> offset) & mask;
 
         // Branchless two's complement conversion
@@ -111,7 +110,6 @@ fn unpack_q<F: Float, QS: Int>(
         let signed_value = raw_i32 - (is_negative * two_pow_n);
 
         output[position] = F::cast_from(signed_value);
-        comptime!(position += 1);
     }
 
     output
@@ -137,7 +135,7 @@ fn dequantize_symmetric_packed_kernel<F: Float, FS: Numeric>(
     }
 
     let values = input[ABSOLUTE_POS];
-    let packed_pos = ABSOLUTE_POS * comptime![scheme.num_quants()];
+    let packed_pos = ABSOLUTE_POS * scheme.num_quants();
 
     let out = dequantize_symmetric_packed_value::<F, FS, u32>(values, scales, packed_pos, scheme);
 

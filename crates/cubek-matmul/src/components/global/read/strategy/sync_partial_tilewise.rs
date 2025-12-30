@@ -62,13 +62,12 @@ impl<T: TilingOrder> LoadingValidation for SyncPartialTilewiseLoading<T> {
             }));
         }
 
-        let num_tiles_per_plane = comptime!(num_tiles / num_planes);
-        let num_lines_per_tile =
-            comptime!(config.smem_config.elements_per_tile() / line_size as u32);
+        let num_tiles_per_plane = num_tiles / num_planes;
+        let num_lines_per_tile = config.smem_config.elements_per_tile() / line_size as u32;
         let num_lines_per_plane = num_lines_per_tile * num_tiles_per_plane;
         let num_planes = config.plane_dim;
 
-        if num_lines_per_plane % num_planes != 0 {
+        if !num_lines_per_plane.is_multiple_of(num_planes) {
             return Err(FormattedConfigError::new(move || {
                 "Number of planes {num_planes:?} must divide number of lines per plane {num_lines_per_plane:?} for tilewise loading.".to_string()
             }));
@@ -118,17 +117,16 @@ impl<TO: TilingOrder> PartialLoadingStrategy for SyncPartialTilewiseLoading<TO> 
         let num_tiles = config.smem_config.tiles_per_stage();
         let plane_dim = config.plane_dim;
 
-        let num_tiles_per_plane = comptime!(num_tiles / num_planes);
-        let num_lines_per_tile =
-            comptime!(config.smem_config.elements_per_tile() / line_size as u32);
+        let num_tiles_per_plane = num_tiles / num_planes;
+        let num_lines_per_tile = config.smem_config.elements_per_tile() / line_size as u32;
         let num_lines_per_plane = num_lines_per_tile * num_tiles_per_plane;
         let num_lines_per_unit = num_lines_per_plane / plane_dim;
 
-        let stage_width = comptime!(match config.stage_ident {
+        let stage_width = match config.stage_ident {
             StageIdent::Lhs => config.smem_config.tiles_per_stage_along_col(),
             StageIdent::Rhs => config.smem_config.tiles_per_stage_along_row(),
             _ => unreachable!(),
-        });
+        };
 
         let num_tiles_to_skip = RoleRule::new(config.plane_role_config.rule)
             .load_index(config.specialization_tensor_config)
@@ -191,7 +189,7 @@ impl<EG: Numeric, ES: Numeric, TO: TilingOrder>
             config.smem_config,
         );
 
-        let tile = match comptime![config.stage_ident] {
+        let tile = match config.stage_ident {
             StageIdent::Lhs => (tile.0, tile.1 + this.stage_index * this.stage_width),
             StageIdent::Rhs => (tile.0 + this.stage_index * this.stage_width, tile.1),
             _ => tile,
@@ -211,7 +209,7 @@ impl<EG: Numeric, ES: Numeric, TO: TilingOrder>
     }
 
     fn task_count(this: &Self) -> comptime_type!(u32) {
-        comptime!(this.num_lines_per_unit)
+        this.num_lines_per_unit
     }
 }
 

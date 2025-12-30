@@ -123,7 +123,7 @@ fn load_unrolled<I: Numeric>(
 ) -> Line<I> {
     comptime![assert!(line_size >= view.line_size())];
     let view_line_size = view.line_size();
-    if comptime![view.line_size() == line_size] {
+    if view.line_size().comptime() == line_size {
         view[pos]
     } else {
         let (row, col) = pos;

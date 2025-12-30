@@ -103,7 +103,7 @@ impl<
                 // Get the only mask tile and fill it with q,kv-th data
                 let mask_tile = mask_partition.get_mut();
                 let (new_origin, mask_data) =
-                    mask_reader.read::<P, Self::Config>((comptime![q as u32], kv), config);
+                    mask_reader.read::<P, Self::Config>((q as u32, kv), config);
                 mask_tile.update(new_origin, mask_data);
 
                 #[unroll]
@@ -115,7 +115,7 @@ impl<
 
                     // Get the only key-value tile and fill it with hd,kv-th key data
                     let key_tile = key_value_partition.get_key_mut();
-                    let key_data = SK::tile(key_stage, (kv.runtime(), hd as u32));
+                    let key_data = SK::tile(key_stage, (kv, hd as u32).runtime());
                     TA::load_key_transposed(&key_data, key_tile.key_mut(), config.tile_config());
 
                     // Perform score matmul on query and key, and accumulate in softmax tile
@@ -161,7 +161,7 @@ impl<
                 // The same accumulators will be accumulated to at the next kv iteration
                 for vd in 0..p.val_dim as usize {
                     // Get the only key-value tile and fill it with hd,kv-th key data
-                    let value_data = SV::tile(value_stage, (kv.runtime(), vd as u32));
+                    let value_data = SV::tile(value_stage, (kv, vd as u32).runtime());
                     let value_tile = key_value_partition.get_value_mut();
                     TA::load_value(&value_data, value_tile.value_mut(), config.tile_config());
 
@@ -227,7 +227,7 @@ impl<
         for q in 0..p.seq_q as usize {
             #[unroll]
             for vd in 0..p.val_dim as usize {
-                let tile_pos = (q as u32 + P::seq_q_index() * p.seq_q, vd as u32);
+                let tile_pos = (q as u32 + P::seq_q_index() * p.seq_q, vd.runtime() as u32);
                 let tile = SO::tile(stage, tile_pos);
 
                 TA::write_results(
@@ -281,7 +281,7 @@ impl<
             for hd in 0..partition_head_dim as usize {
                 let tile_to_write = registers.get_at_mut(q, hd, config);
                 let tile_read = reader.get_tile::<P>(
-                    (q as u32, hd as u32),
+                    (q as u32, hd as u32).runtime(),
                     attention_tile_size,
                     partition_seq_q,
                     partition_head_dim,

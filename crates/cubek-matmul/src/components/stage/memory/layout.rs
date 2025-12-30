@@ -370,10 +370,9 @@ impl StridedTilingLayout {
         nth: u32,
         #[comptime] config: StageMemoryConfig,
     ) -> SliceMut<Line<ES>> {
-        let matrix_layout = config.matrix_layout;
         let stage_line_size = config.line_size;
 
-        let slice_length = match comptime!(matrix_layout) {
+        let slice_length = match config.matrix_layout {
             MatrixLayout::RowMajor => config.elements_per_stage_along_col(),
             MatrixLayout::ColMajor => config.elements_per_stage_along_row(),
         } / stage_line_size;
@@ -441,7 +440,7 @@ impl TilingLayout for StridedTilingLayout {
     }
 
     fn to_enum() -> comptime_type!(TilingLayoutEnum) {
-        comptime![TilingLayoutEnum::Strided]
+        TilingLayoutEnum::Strided
     }
 }
 
@@ -473,7 +472,7 @@ impl TilingLayout for TmaTilingLayout {
     }
 
     fn to_enum() -> comptime_type!(TilingLayoutEnum) {
-        comptime![TilingLayoutEnum::Other]
+        TilingLayoutEnum::Other
     }
 }
 
@@ -503,7 +502,7 @@ impl TilingLayout for NoTilingLayout {
     }
 
     fn to_enum() -> comptime_type!(TilingLayoutEnum) {
-        comptime![TilingLayoutEnum::Other]
+        TilingLayoutEnum::Other
     }
 }
 

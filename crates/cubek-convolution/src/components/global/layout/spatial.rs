@@ -121,7 +121,7 @@ impl NhwcLayout {
         #[comptime] dim: Dimensionality,
         #[comptime] checks: EnumSet<NhwcCheck>,
     ) -> Self {
-        let spatial_dims = comptime![dim.num_dims()];
+        let spatial_dims = dim.num_dims();
         let mut strides_spatial = Sequence::new();
         let mut shapes_spatial = Sequence::new();
 
@@ -180,10 +180,10 @@ impl Layout for NhwcLayout {
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
         let mut in_bounds = true.runtime();
-        if comptime![self.checks.contains(NhwcCheck::Batch)] {
+        if self.checks.comptime().contains(NhwcCheck::Batch) {
             in_bounds &= pos.batch < self.shape_batch;
         }
-        if comptime![self.checks.contains(NhwcCheck::Spatial)] {
+        if self.checks.comptime().contains(NhwcCheck::Spatial) {
             let spatial_dims = self.shapes_spatial.len();
 
             #[unroll]
@@ -192,7 +192,7 @@ impl Layout for NhwcLayout {
                 in_bounds &= pos >= 0 && (pos as u32) < self.shapes_spatial[i];
             }
         }
-        if comptime![self.checks.contains(NhwcCheck::Channel)] {
+        if self.checks.comptime().contains(NhwcCheck::Channel) {
             in_bounds &= pos.channel < self.shape_channel;
         }
 

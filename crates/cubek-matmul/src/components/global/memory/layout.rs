@@ -36,7 +36,7 @@ impl Layout for SimpleTmaGlobalLayout {
         let (batch, row, col) = coords;
         // Tensor maps are required to have a stride of 1 on the last dim, so their shape is
         // transposed for col-major matrices. Need to compensate by swapping the coordinates.
-        if comptime![self.transposed] {
+        if self.transposed.comptime() {
             (batch, col, row)
         } else {
             (batch, row, col)
@@ -121,18 +121,17 @@ impl Layout for GlobalLayout {
     type SourceCoordinates = Coords1d;
 
     fn to_source_pos(&self, coords: Self::Coordinates) -> usize {
-        let line_size = comptime![self.line_size];
         let (batch, row, col) = coords;
         let batch_offs = self.batch_layout.to_source_pos(batch);
 
-        let (row, col) = match comptime![self.config.matrix_layout] {
+        let (row, col) = match self.config.matrix_layout.comptime() {
             MatrixLayout::RowMajor => (row, col / self.packing),
             MatrixLayout::ColMajor => (row / self.packing, col),
         };
 
         let idx = batch_offs + row as usize * self.stride_row + col as usize * self.stride_col;
 
-        idx / line_size
+        idx / self.line_size
     }
 
     fn to_source_pos_checked(&self, coords: Self::Coordinates) -> (usize, bool) {
@@ -144,9 +143,10 @@ impl Layout for GlobalLayout {
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
+        let config = self.config.comptime();
         let (_, row, col) = pos;
 
-        match comptime!((self.config.check_row_bounds, self.config.check_col_bounds)) {
+        match (config.check_row_bounds, config.check_col_bounds) {
             (true, true) => row < self.rows && col < self.cols,
             (true, false) => row < self.rows,
             (false, true) => col < self.cols,
@@ -441,10 +441,10 @@ impl Layout for GlobalScaleLayout {
             GlobalScaleLayout::PerTensor { .. } => true.runtime(),
             GlobalScaleLayout::BlockScaled(layout) => {
                 let (_, row, col) = pos;
-                let l = &layout.scales_layout;
+                let config = &layout.scales_layout.config.comptime();
                 let (rows, cols) = layout.shape;
 
-                match comptime!((l.config.check_row_bounds, l.config.check_col_bounds)) {
+                match (config.check_row_bounds, config.check_col_bounds) {
                     (true, true) => row < rows && col < cols,
                     (true, false) => row < rows,
                     (false, true) => col < cols,

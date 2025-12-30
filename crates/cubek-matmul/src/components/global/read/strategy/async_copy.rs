@@ -24,10 +24,10 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
     #[comptime] copy_line_size: u32,
 ) {
     let mut stage_slice = stage.as_slice_mut(stage.smem.line_size());
-    let slice_size = comptime![match config.smem_config.matrix_layout {
+    let slice_size = match config.smem_config.matrix_layout {
         MatrixLayout::RowMajor => (1u32, copy_line_size),
         MatrixLayout::ColMajor => (copy_line_size, 1u32),
-    }]
+    }
     .runtime();
 
     let mut slice_len_global = copy_line_size.runtime();
@@ -70,7 +70,7 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
 
     let stage_slice = stage_slice.slice_mut(offset as usize, (offset + slice_len_stage) as usize);
 
-    if comptime![config.gmem_config.check_row_bounds || config.gmem_config.check_col_bounds] {
+    if config.gmem_config.check_row_bounds || config.gmem_config.check_col_bounds {
         copy_async_checked(
             &global_slice.slice(0, slice_len_global as usize),
             &mut stage_slice.try_cast_unchecked(),

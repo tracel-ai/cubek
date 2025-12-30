@@ -20,7 +20,7 @@ impl<AP: AttentionPrecision, TA: TileAttention<AP>> QueryPartition<AP, TA> {
         let mut sequence = Sequence::new();
 
         #[unroll]
-        for _ in 0..comptime!(p.seq_q * p.head_dim) {
+        for _ in 0..p.seq_q * p.head_dim {
             sequence.push(QueryTile::<AP, TA>::new(config.tile_config()));
         }
 

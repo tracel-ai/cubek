@@ -85,7 +85,7 @@ where
             sync_cube();
 
             #[allow(clippy::collapsible_if)]
-            if comptime![(LL::SHOULD_CLEAR || RL::SHOULD_CLEAR) && config.check_k_bounds()] {
+            if (LL::SHOULD_CLEAR || RL::SHOULD_CLEAR) && config.check_k_bounds() {
                 if i == num_loops - 1 {
                     lhs_reader.clear_stage(config.lhs_reader_config);
                     rhs_reader.clear_stage(config.rhs_reader_config);

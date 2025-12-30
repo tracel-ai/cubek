@@ -59,13 +59,12 @@ impl<T: TilingOrder> LoadingValidation for SyncFullTilewiseLoading<T> {
             }));
         }
 
-        let num_tiles_per_plane = comptime!(num_tiles / num_planes);
-        let num_lines_per_tile =
-            comptime!(config.smem_config.elements_per_tile() / line_size as u32);
+        let num_tiles_per_plane = num_tiles / num_planes;
+        let num_lines_per_tile = config.smem_config.elements_per_tile() / line_size as u32;
         let num_lines_per_plane = num_lines_per_tile * num_tiles_per_plane;
         let plane_dim = config.plane_dim;
 
-        if num_lines_per_plane % plane_dim != 0 {
+        if !num_lines_per_plane.is_multiple_of(plane_dim) {
             return Err(FormattedConfigError::new(move || {
                 format!(
                     "Plane dimension {plane_dim:?} must divide number of lines per plane {num_lines_per_plane:?} for tilewise loading.",
@@ -93,9 +92,8 @@ impl<TO: TilingOrder> FullLoadingStrategy for SyncFullTilewiseLoading<TO> {
         let num_planes = config.loading_planes_count();
         let num_tiles = config.smem_config.tiles_per_stage();
 
-        let num_tiles_per_plane = comptime!(num_tiles / num_planes);
-        let num_lines_per_tile =
-            comptime!(config.smem_config.elements_per_tile() / line_size as u32);
+        let num_tiles_per_plane = num_tiles / num_planes;
+        let num_lines_per_tile = config.smem_config.elements_per_tile() / line_size as u32;
         let num_lines_per_plane = num_lines_per_tile * num_tiles_per_plane;
         let num_lines_per_unit = num_lines_per_plane / config.plane_dim;
 
@@ -149,8 +147,7 @@ impl<EG: Numeric, ES: Numeric, TO: TilingOrder>
         let line_index_within_tile = pos_across_tiles % this.num_lines_per_tile;
 
         let nth_tile_global = nth_tile_for_this_plane + this.num_tiles_to_skip;
-        let tile =
-            ContiguousTilingLayout::<TO>::to_x_y(nth_tile_global, comptime!(config.smem_config));
+        let tile = ContiguousTilingLayout::<TO>::to_x_y(nth_tile_global, config.smem_config);
 
         SyncFullTilewiseJob::load_and_store_line::<EG, ES, TO>(
             this,
@@ -164,7 +161,7 @@ impl<EG: Numeric, ES: Numeric, TO: TilingOrder>
     }
 
     fn task_count(this: &Self) -> comptime_type!(u32) {
-        comptime!(this.num_lines_per_unit)
+        this.num_lines_per_unit
     }
 }
 

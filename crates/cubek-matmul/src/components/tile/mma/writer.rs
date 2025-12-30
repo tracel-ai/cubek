@@ -120,12 +120,12 @@ fn store_stmatrix<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     #[comptime] ident: MatrixIdent,
     #[comptime] config: MmaMatmulConfig,
 ) {
-    let stage_line_size = tile.stage.line_size();
+    let stage_line_size = tile.stage.line_size().comptime();
     let (_, stride) = tile.as_unlined_mut();
 
-    let elem_size = E::type_size();
+    let elem_size = E::type_size().comptime();
     let num_regs = def.lines_per_lane(ident);
-    let width = comptime![16 / elem_size / stage_line_size] as u32;
+    let width = (16 / elem_size / stage_line_size) as u32;
 
     let start = stmatrix_offset::<V, A, B, CD>(stride, def, stage_line_size, ident, config);
     let start = tile.stage_offset(start);
@@ -134,9 +134,9 @@ fn store_stmatrix<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
         .stage
         .slice_mut(start as usize, (start + width) as usize);
 
-    let stage_ty = type_of::<V>();
-    let frag_ty = type_of::<E>();
-    if comptime![stage_ty == frag_ty] {
+    let stage_ty = type_of::<V>().comptime();
+    let frag_ty = type_of::<E>().comptime();
+    if stage_ty == frag_ty {
         def.store_matrix(
             &mut row_slice.try_cast_unchecked(),
             fragment,
@@ -167,9 +167,9 @@ pub(crate) fn stmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     let tiling = config.shared.tile_size;
     let (stride_row, stride_col) = (stride, 1);
 
-    let elem_size = E::type_size();
+    let elem_size = E::type_size().comptime();
     let num_regs = def.lines_per_lane(ident);
-    let width = comptime![16 / elem_size] as u32;
+    let width = (16 / elem_size) as u32;
     // Height is always 8, and lanes are divided into blocks of 8.
     let height = 8;
 

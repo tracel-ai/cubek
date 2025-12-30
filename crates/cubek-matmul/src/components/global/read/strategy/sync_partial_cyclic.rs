@@ -188,13 +188,9 @@ pub(crate) fn load_and_store_line<EG: Numeric, ES: Numeric, TO: TilingOrder>(
     let layout = TiledLayout::new(config.stage_ident, config.smem_config);
     let view = global_iter.view().view(layout);
 
-    let (tile_size, tile_count_row, tile_count_col) = comptime! {
-        (
-            config.smem_config.elements_per_tile(),
-            config.smem_config.tiles_per_stage_along_row(),
-            config.smem_config.tiles_per_stage_along_col(),
-        )
-    };
+    let tile_size = config.smem_config.elements_per_tile();
+    let tile_count_row = config.smem_config.tiles_per_stage_along_row();
+    let tile_count_col = config.smem_config.tiles_per_stage_along_col();
     let line_size = view.line_size();
 
     let tile_index = unit_position / tile_size;
@@ -204,10 +200,10 @@ pub(crate) fn load_and_store_line<EG: Numeric, ES: Numeric, TO: TilingOrder>(
         tile_index,
         tile_count_row,
         tile_count_col,
-        comptime!(config.smem_config),
+        config.smem_config,
     );
 
-    let tile = match comptime!(config.stage_ident) {
+    let tile = match config.stage_ident {
         StageIdent::Lhs => (
             tile_x_within_stage,
             job.stage_index * tile_count_col + tile_y_within_stage,
@@ -216,7 +212,7 @@ pub(crate) fn load_and_store_line<EG: Numeric, ES: Numeric, TO: TilingOrder>(
             job.stage_index * tile_count_row + tile_x_within_stage,
             tile_y_within_stage,
         ),
-        _ => comptime!(unreachable!()),
+        _ => unreachable!(),
     };
 
     let line_read = view.read_checked((tile, pos_within_tile));

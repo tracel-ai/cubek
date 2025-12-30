@@ -119,7 +119,7 @@ pub fn swizzle(index: usize, num_steps: usize, #[comptime] step_length: u32) -> 
     let step_index = strip_direction * (num_steps as u32 - abs_step_index - 1)
         + (1 - strip_direction) * abs_step_index;
 
-    let pos_in_step = if comptime!(step_length & (step_length - 1) == 0) {
+    let pos_in_step = if step_length & (step_length - 1) == 0 {
         abs_pos_in_step ^ (step_direction * (step_length - 1))
     } else {
         step_direction * (step_length - abs_pos_in_step - 1)

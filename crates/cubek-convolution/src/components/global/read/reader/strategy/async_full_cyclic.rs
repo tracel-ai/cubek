@@ -73,16 +73,16 @@ impl<TO: TilingOrder> FullLoadingStrategy for AsyncFullCyclicLoading<TO> {
         #[comptime] _line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, ES> {
-        let type_size = ES::type_size_bits();
-        let line_size = comptime![ASYNC_COPY_WIDTH / type_size as u32];
+        let type_size = ES::type_size_bits().comptime();
+        let line_size = ASYNC_COPY_WIDTH / type_size as u32;
         let tile_num_elements = config.smem_config.elements_per_tile();
         let num_stage_elements = config.smem_config.elements_per_stage();
 
         let num_stage_lines = num_stage_elements.div_ceil(line_size);
         let total_units = config.loading_units_count();
-        let num_tasks_per_unit = comptime!(num_stage_lines.div_ceil(total_units));
-        let balanced_workload = comptime!(num_stage_lines.is_multiple_of(total_units));
-        let jump_length = comptime!(total_units * line_size);
+        let num_tasks_per_unit = num_stage_lines.div_ceil(total_units);
+        let balanced_workload = num_stage_lines.is_multiple_of(total_units);
+        let jump_length = total_units * line_size;
 
         let unit_id = RoleRule::new(config.plane_role_config.rule)
             .load_index(config.specialization_tensor_config)

@@ -117,8 +117,8 @@ impl<TO: TilingOrder> PartialLoadingStrategy for AsyncPartialCyclicLoading<TO> {
         #[comptime] _line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> AsyncPartialCyclicJob {
-        let type_size = ES::type_size_bits();
-        let line_size = comptime![ASYNC_COPY_WIDTH / type_size as u32];
+        let type_size = ES::type_size_bits().comptime();
+        let line_size = ASYNC_COPY_WIDTH / type_size as u32;
         let num_stage_elements = config.smem_config.elements_per_stage();
 
         let tile_size = config.smem_config.elements_per_tile();
@@ -218,13 +218,9 @@ pub(crate) fn copy_line<EG: Numeric, ES: Numeric, TO: TilingOrder>(
     let layout = TiledLayout::new(config.stage_ident, config.smem_config);
     let view = global_iter.view();
 
-    let (tile_size, tile_count_row, tile_count_col) = comptime! {
-        (
-            config.smem_config.elements_per_tile(),
-            config.smem_config.tiles_per_stage_along_row(),
-            config.smem_config.tiles_per_stage_along_col(),
-        )
-    };
+    let tile_size = config.smem_config.elements_per_tile();
+    let tile_count_row = config.smem_config.tiles_per_stage_along_row();
+    let tile_count_col = config.smem_config.tiles_per_stage_along_col();
 
     let tile_index = unit_position / tile_size;
     let pos_within_tile = unit_position % tile_size;
@@ -233,10 +229,10 @@ pub(crate) fn copy_line<EG: Numeric, ES: Numeric, TO: TilingOrder>(
         tile_index,
         tile_count_row,
         tile_count_col,
-        comptime!(config.smem_config),
+        config.smem_config,
     );
 
-    let tile = match comptime!(config.stage_ident) {
+    let tile = match config.stage_ident {
         StageIdent::Lhs => (
             tile_x_within_stage,
             job.stage_index * tile_count_col + tile_y_within_stage,
@@ -245,7 +241,7 @@ pub(crate) fn copy_line<EG: Numeric, ES: Numeric, TO: TilingOrder>(
             job.stage_index * tile_count_row + tile_x_within_stage,
             tile_y_within_stage,
         ),
-        _ => comptime!(unreachable!()),
+        _ => unreachable!(),
     };
 
     let pos = layout.to_source_pos((tile, pos_within_tile));

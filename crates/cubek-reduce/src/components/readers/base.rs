@@ -62,7 +62,7 @@ impl ReduceCoordinate {
         #[comptime] line_size: LineSize,
         #[comptime] line_mode: LineMode,
     ) -> Self {
-        if comptime![requirements.coordinates] {
+        if requirements.coordinates.comptime() {
             // TODO: Make this generic to allow 64-bit coordinate output.
             // Can't directly use `usize` for the buffer, since its size isn't defined beyond the
             // kernel boundary.
@@ -85,7 +85,7 @@ pub(crate) fn fill_coordinate_line(
     #[comptime] line_size: LineSize,
     #[comptime] line_mode: LineMode,
 ) -> Line<u32> {
-    match comptime!(line_mode) {
+    match line_mode {
         LineMode::Parallel => {
             let mut coordinates = Line::empty(line_size);
             #[unroll]

@@ -84,9 +84,9 @@ impl GlobalPartitionMatmul for RowMajorGlobalPartitionMatmul {
         #[comptime] config: GMM::Config,
     ) {
         // Needed for the unroll macro to work.
-        let num_steps_batch = comptime!(ranges.batch.num_steps);
-        let num_steps_row = comptime!(ranges.row.num_steps);
-        let num_steps_col = comptime!(ranges.col.num_steps);
+        let num_steps_batch = ranges.batch.num_steps.comptime();
+        let num_steps_row = ranges.row.num_steps.comptime();
+        let num_steps_col = ranges.col.num_steps.comptime();
 
         #[unroll(num_steps_batch == 1)]
         for batch in 0..num_steps_batch {
@@ -118,9 +118,9 @@ impl GlobalPartitionMatmul for ColMajorGlobalPartitionMatmul {
         #[comptime] config: GMM::Config,
     ) {
         // Needed for the unroll macro to work.
-        let num_steps_batch = comptime!(ranges.batch.num_steps);
-        let num_steps_row = comptime!(ranges.row.num_steps);
-        let num_steps_col = comptime!(ranges.col.num_steps);
+        let num_steps_batch = ranges.batch.num_steps.comptime();
+        let num_steps_row = ranges.row.num_steps.comptime();
+        let num_steps_col = ranges.col.num_steps.comptime();
 
         #[unroll(num_steps_batch == 1)]
         for batch in 0..num_steps_batch {

@@ -62,27 +62,27 @@ impl Layout for Im2colLayout {
     type SourceCoordinates = NhwcCoords;
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> NhwcCoords {
-        let params = comptime![self.params];
+        let params = self.params.comptime();
         let (_, view_m, view_k) = pos;
 
         let (batch, out_offs) = div_mod_seq(view_m, &self.shape_out);
 
         let (mut rem, channel) = self.padded_channels.div_mod(view_k);
 
-        let spatial_dims = comptime![self.shape_out.len()];
+        let spatial_dims = params.dimensionality.num_dims();
         let mut in_pos = Sequence::<i32>::new();
 
         #[unroll]
         for i in 0..spatial_dims {
-            let dim = comptime![spatial_dims - i - 1];
-            let ksize = comptime![params.kernel_size[dim]];
+            let dim = spatial_dims - i - 1;
+            let ksize = params.kernel_size[dim];
             let k_pos = (rem % ksize) as i32;
             rem /= ksize;
 
             let out_pos = out_offs[dim];
-            let stride = comptime![params.stride[dim] as i32];
-            let dilate = comptime![params.dilation[dim] as i32];
-            let pad = comptime![params.padding[dim]];
+            let stride = params.stride[dim] as i32;
+            let dilate = params.dilation[dim] as i32;
+            let pad = params.padding[dim];
 
             let pos = match params.operation {
                 ConvolutionOperation::Forward | ConvolutionOperation::BackwardWeight => {
@@ -115,8 +115,8 @@ impl Layout for Im2colLayout {
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
         let (_, view_m, view_k) = pos;
         // Shouldn't be relied on because it doesn't check spatial
-        let m_in_bounds = comptime!(!self.config.check_row_bounds) || view_m < self.rows;
-        let k_in_bounds = comptime!(!self.config.check_col_bounds) || view_k < self.cols;
+        let m_in_bounds = !self.config.check_row_bounds || view_m < self.rows;
+        let k_in_bounds = !self.config.check_col_bounds || view_k < self.cols;
         m_in_bounds && k_in_bounds
     }
 }

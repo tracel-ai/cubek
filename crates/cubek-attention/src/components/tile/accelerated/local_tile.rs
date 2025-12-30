@@ -120,7 +120,7 @@ impl LocalTileLayout {
         };
         let unit_size = (num_rows_per_unit, num_cols_per_unit);
 
-        let num_units_per_row = comptime!(total_size.1 / unit_size.1);
+        let num_units_per_row = total_size.1 / unit_size.1;
 
         LocalTileLayout {
             total_size,
@@ -185,7 +185,7 @@ impl<E: Float> RowwiseFormat<E> for LocalTile<E> {
         }
 
         RowWise::<E> {
-            num_rows: comptime![self.layout.unit_size.0 as usize],
+            num_rows: self.layout.unit_size.0.comptime() as usize,
             vals,
         }
     }
@@ -208,7 +208,7 @@ impl<E: Float> RowwiseFormat<E> for LocalTile<E> {
         }
 
         RowWise::<E> {
-            num_rows: comptime![self.layout.unit_size.0 as usize],
+            num_rows: self.layout.unit_size.0.comptime() as usize,
             vals,
         }
     }

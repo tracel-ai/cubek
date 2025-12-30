@@ -121,7 +121,7 @@ impl PlaneRoleConfig {
 impl RoleRule {
     /// Make a cube role rule from comptime config
     pub fn new(#[comptime] comptime_rule: RoleRuleConfig) -> RoleRule {
-        match comptime!(comptime_rule) {
+        match comptime_rule {
             RoleRuleConfig::MainFlowOnly => RoleRule::new_MainFlowOnly(),
             RoleRuleConfig::LoadOnlyFirst { load_only } => RoleRule::new_LoadOnlyFirst(Threshold {
                 threshold: load_only,
@@ -167,7 +167,7 @@ impl RoleRule {
     /// Only used with TMA, so has some CUDA optimizations. `plane_broadcast` and `plane_elect`
     /// ensure the compiler recognizes the values as warp uniform.
     pub fn elect_load_leader(self) -> bool {
-        let plane_id = plane_broadcast(UNIT_POS_Y, 0);
+        let plane_id = plane_broadcast(UNIT_POS_Y, 0u32);
 
         let is_elected_plane = match self {
             RoleRule::MainFlowOnly | RoleRule::LoadOnlyFirst(_) => plane_id == 0,
@@ -191,7 +191,7 @@ impl RoleRule {
     /// Only used in specialized, so has some CUDA optimizations. `plane_broadcast` ensure the
     /// compiler recognizes the values as warp uniform.
     pub fn is_compute_plane(self) -> bool {
-        let plane_id = plane_broadcast(UNIT_POS_Y, 0);
+        let plane_id = plane_broadcast(UNIT_POS_Y, 0u32);
 
         match self {
             RoleRule::MainFlowOnly => true,

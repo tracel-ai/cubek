@@ -44,7 +44,7 @@ impl<ES: Numeric> StridedTile<ES> {
             MatrixLayout::ColMajor => config.elements_per_tile_along_row,
         };
 
-        let stride = comptime![stride / config.line_size];
+        let stride = stride / config.line_size;
 
         StridedTile::<ES> {
             stage,
@@ -72,7 +72,7 @@ impl<ES: Numeric> StridedTile<ES> {
             MatrixLayout::ColMajor => config.elements_per_tile_along_row,
         };
 
-        let stride = comptime![stride / config.line_size];
+        let stride = stride / config.line_size;
 
         StridedTile::<ES, ReadWrite> {
             stage,
@@ -140,7 +140,7 @@ impl<ES: Numeric> StridedTile<ES, ReadOnly> {
     /// - The unlined slice
     /// - The updated stride to account for line width removal
     pub fn as_unlined(&self) -> (Slice<ES, ReadOnly>, u32) {
-        let stage_line_size = comptime![self.stage.line_size()];
+        let stage_line_size = self.stage.line_size();
         (
             self.stage
                 .slice(self.start as usize, self.end as usize)
@@ -158,7 +158,7 @@ impl<ES: Numeric> StridedTile<ES, ReadWrite> {
     /// - The unlined slice
     /// - The updated stride to account for line width removal
     pub fn as_unlined_mut(&self) -> (Slice<ES, ReadWrite>, u32) {
-        let stage_line_size = comptime![self.stage.line_size()];
+        let stage_line_size = self.stage.line_size();
         (
             self.stage
                 .slice(self.start as usize, self.end as usize)

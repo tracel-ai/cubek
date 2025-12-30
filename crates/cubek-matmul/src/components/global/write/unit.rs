@@ -51,7 +51,7 @@ impl<IP: MatrixPrecision> UnitWriter<IP> {
             &mut self.global,
             &self.stage.unit_tile,
             tile,
-            comptime!(self.smem_config.elements_per_tile()),
+            self.smem_config.comptime().elements_per_tile(),
         )
     }
 }

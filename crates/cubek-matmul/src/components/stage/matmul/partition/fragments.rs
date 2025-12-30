@@ -35,7 +35,7 @@ impl<
         let mut accumulators = Sequence::new();
 
         #[unroll]
-        for _ in 0..comptime!(partition_size.mn()) {
+        for _ in 0..partition_size.mn() {
             accumulators.push(TM::allocate_acc(acc_layout, tile_config));
         }
 
@@ -57,7 +57,7 @@ impl<
             #[unroll]
             for n in 0..tiles_in_stage_partition_n {
                 let acc = self.get_at_mut(m, n, tiles_in_stage_partition_n);
-                let tile = R::tile(stage, (m as u32, n as u32));
+                let tile = R::tile(stage, (m as u32, n as u32).runtime());
                 TM::load_acc(&tile, acc, tile_config);
             }
         }

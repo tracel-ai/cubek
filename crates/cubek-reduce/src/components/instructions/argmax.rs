@@ -125,8 +125,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMax {
         accumulator: Self::AccumulatorItem,
         _shape_axis_reduce: usize,
     ) -> Out {
-        let line_size = accumulator.0.size();
-        if comptime!(line_size > 1) {
+        let line_size = accumulator.0.size().comptime();
+        if line_size > 1 {
             let mut max = P::EA::min_value();
             let mut coordinate = u32::MAX.runtime();
             #[unroll]

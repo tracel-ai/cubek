@@ -65,10 +65,10 @@ impl FullLoadingStrategy for AsyncFullTmaLoading {
         };
         // Swizzle renders the column format irrelevant, so we load the whole stage at once
         // The tiling is set on launch for TMA, so no further change is needed here.
-        let num_tasks = comptime![match config.swizzle {
+        let num_tasks = match config.swizzle {
             SwizzleMode::None => tile_count_col,
             _ => 1u32,
-        }];
+        };
 
         let is_elected = RoleRule::new(role_rule_config).elect_load_leader();
 
@@ -100,7 +100,7 @@ impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, TmaTilingLayout, AsyncTma> for
         #[comptime] config: GlobalReaderConfig,
     ) {
         if this.is_elected {
-            let config = comptime![config.smem_config];
+            let config = config.smem_config;
 
             let size_row = match config.matrix_layout {
                 MatrixLayout::RowMajor => config.elements_per_stage_along_row(),
@@ -120,8 +120,8 @@ impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, TmaTilingLayout, AsyncTma> for
             let col = task_id * size_col;
 
             let pos = match config.matrix_layout {
-                MatrixLayout::RowMajor => (0, col),
-                MatrixLayout::ColMajor => (col, 0),
+                MatrixLayout::RowMajor => (0u32, col).runtime(),
+                MatrixLayout::ColMajor => (col, 0u32).runtime(),
             };
 
             global_view.tensor_map_load(barrier, &mut slice.try_cast_unchecked(), pos);

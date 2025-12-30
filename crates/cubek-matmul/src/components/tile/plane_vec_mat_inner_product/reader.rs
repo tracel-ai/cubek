@@ -61,7 +61,7 @@ impl MatrixFragmentReader for MatrixStageReader<Strided> {
 
         #[unroll]
         for n in 0..n {
-            let line_container = frag.index_mut(comptime![n as usize]);
+            let line_container = frag.index_mut(n as usize);
             let offset = tile.stage_offset(UNIT_POS_X + n * tile.stride);
             line_container.line = Line::cast_from(tile.stage[offset as usize]);
         }

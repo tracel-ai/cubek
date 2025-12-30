@@ -17,8 +17,7 @@ impl Reducer for NaiveReducer {
         #[comptime] config: FC,
     ) {
         let num_vals_in_plane = config.num_rows_per_unit() * config.plane_dim();
-        let mut smem =
-            SharedMemory::<E>::new(comptime!(num_vals_in_plane * config.num_planes()) as usize);
+        let mut smem = SharedMemory::<E>::new((num_vals_in_plane * config.num_planes()) as usize);
 
         let local_vals = RO::reduce_local::<F>(data);
 

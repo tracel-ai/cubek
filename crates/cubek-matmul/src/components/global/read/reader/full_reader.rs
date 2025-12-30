@@ -100,7 +100,7 @@ impl<EG: Numeric, ES: Numeric, L: FullLoadingStrategy> FullStageGlobalReader<EG,
                         }
                     }
                 }
-                _ => comptime!(unreachable!()),
+                _ => unreachable!(),
             }
         }
 
@@ -189,7 +189,7 @@ impl<EG: Numeric, ES: Numeric, L: FullLoadingStrategy> JobExecutor<L::SyncStrate
         barrier: &mut SyncBarrier<L::SyncStrategy>,
         #[comptime] config: GlobalReaderConfig,
     ) {
-        let task_id = job_iterator.current.read().counter;
+        let task_id = job_iterator.current.read().counter.comptime();
 
         L::Job::<EG, ES>::execute_task(
             &mut job_iterator.job,
@@ -201,7 +201,7 @@ impl<EG: Numeric, ES: Numeric, L: FullLoadingStrategy> JobExecutor<L::SyncStrate
         );
 
         job_iterator.current.store(TaskCounter {
-            counter: comptime!(task_id + 1u32),
+            counter: task_id + 1,
         });
     }
 
@@ -226,7 +226,7 @@ impl<EG: Numeric, ES: Numeric, L: FullLoadingStrategy> JobExecutor<L::SyncStrate
         }
 
         job_iterator.current.store(TaskCounter {
-            counter: comptime!(job_iterator.num_tasks),
+            counter: job_iterator.num_tasks,
         });
     }
 

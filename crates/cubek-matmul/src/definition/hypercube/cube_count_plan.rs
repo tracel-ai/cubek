@@ -497,7 +497,7 @@ impl CubeCountInput {
         let batch_pos = (absolute_index / batch_stride) as u32;
         let matrix_pos = absolute_index % batch_stride;
 
-        let (m_pos, n_pos) = match comptime!(global_order) {
+        let (m_pos, n_pos) = match global_order {
             GlobalOrder::RowMajor => ((matrix_pos / n_cubes) as u32, (matrix_pos % n_cubes) as u32),
             GlobalOrder::ColMajor => ((matrix_pos % m_cubes) as u32, (matrix_pos / m_cubes) as u32),
             GlobalOrder::SwizzleRowMajor(w) => {

@@ -63,7 +63,7 @@ impl GlobalFullCubeReduce {
 
             let mut accumulator_final = I::null_accumulator(inst, input_line_size);
 
-            match comptime!(blueprint.use_planes) {
+            match blueprint.use_planes {
                 true => {
                     if worker_pos == 0 {
                         reduce_scan::<P, I>(
@@ -93,7 +93,7 @@ impl GlobalFullCubeReduce {
         let commit_required = writer.commit_required();
 
         #[allow(clippy::collapsible_if)]
-        if comptime!(commit_required) {
+        if commit_required {
             if worker_pos == 0 {
                 writer.commit();
             }
@@ -101,7 +101,7 @@ impl GlobalFullCubeReduce {
     }
 
     fn worker_pos(#[comptime] blueprint: CubeBlueprint) -> usize {
-        match comptime!(blueprint.use_planes) {
+        match blueprint.use_planes {
             true => UNIT_POS_Y as usize,
             false => UNIT_POS as usize,
         }
@@ -140,7 +140,7 @@ impl GlobalFullCubeReduce {
 
         let worker_pos = Self::worker_pos(blueprint);
 
-        let accumulator_plane = match comptime!(blueprint.use_planes) {
+        let accumulator_plane = match blueprint.use_planes {
             true => {
                 // Sync at the plane level.
                 let (item, coordinate) = I::read_accumulator(inst, &accumulator);
@@ -214,7 +214,7 @@ fn reduce_tree<P: ReducePrecision, I: ReduceInstruction<P>>(
     worker_index: usize,
     #[comptime] size: usize,
 ) {
-    if comptime!(size.is_power_of_two()) {
+    if size.is_power_of_two() {
         let mut num_active_units = size.runtime();
         let mut jump = 1;
         while num_active_units > 1 {

@@ -42,7 +42,7 @@ impl<P: ReducePrecision> ReaderBoundChecks<P> {
             true => BoundChecks::Mask,
             false => bound_checks,
         });
-        match comptime!(bound_checks) {
+        match bound_checks {
             BoundChecks::None => ReaderBoundChecks::new_NotRequired(),
             BoundChecks::Mask | BoundChecks::Branch => {
                 ReaderBoundChecks::new_Required(RequiredReaderBoundChecks::<P> {
@@ -61,7 +61,7 @@ impl<P: ReducePrecision> ReaderBoundChecks<P> {
     ) -> Line<P::EI> {
         match self {
             ReaderBoundChecks::NotRequired => view[offset],
-            ReaderBoundChecks::Required(checks) => match comptime!(checks.bound_checks) {
+            ReaderBoundChecks::Required(checks) => match checks.bound_checks.comptime() {
                 BoundChecks::None => view[offset],
                 BoundChecks::Mask => {
                     let mask = pos < checks.pos_max;
