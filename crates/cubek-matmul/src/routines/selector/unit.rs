@@ -250,7 +250,7 @@ fn matvec_unit_selector(
         PartitionBuffering::Single,
         plane_dim,
         StageSelection::Fixed {
-            m: plane_dim / 2,
+            m: (plane_dim / 2).max(1),
             n: 2,
         },
         num_sms,
@@ -284,7 +284,7 @@ fn vecmat_unit_selector(
         plane_dim,
         StageSelection::Fixed {
             m: 2,
-            n: plane_dim / 2,
+            n: (plane_dim / 2).max(1),
         },
         num_sms,
         GlobalOrderBlueprint::Default,
@@ -323,7 +323,7 @@ fn scalarvec_unit_selector(
         plane_dim,
         StageSelection::Fixed {
             m: 2,
-            n: plane_dim / 2,
+            n: (plane_dim / 2).max(1),
         },
         num_sms,
         GlobalOrderBlueprint::Default,
@@ -355,7 +355,7 @@ fn vecscalar_unit_selector(
         PartitionBuffering::Single,
         plane_dim,
         StageSelection::Fixed {
-            m: plane_dim / 2,
+            m: (plane_dim / 2).max(1),
             n: 2,
         },
         num_sms,
