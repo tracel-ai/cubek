@@ -82,7 +82,7 @@ impl<R: Runtime, MP: MatmulPrecision> Benchmark for Conv2dBench<R, MP> {
         let elems = MatmulElems::new_deprecated::<MP>();
 
         let out: TensorHandle<R> =
-            TensorHandle::empty(&client, vec![n, c_out, h_out, w_out], *elems.acc_global);
+            TensorHandle::empty(&client, vec![n, c_out, h_out, w_out], elems.acc_global);
 
         convolution::forward::launch_ref::<R, 2>(
             &Strategy::Simple {
@@ -90,11 +90,11 @@ impl<R: Runtime, MP: MatmulPrecision> Benchmark for Conv2dBench<R, MP> {
                 tile_kind: AcceleratedTileKind::Cmma,
             },
             &self.client,
-            &MatmulInputHandleRef::Normal(input.as_ref(), *elems.lhs_global),
-            &MatmulInputHandleRef::Normal(weight.as_ref(), *elems.rhs_global),
+            &MatmulInputHandleRef::Normal(input.as_ref(), elems.lhs_global),
+            &MatmulInputHandleRef::Normal(weight.as_ref(), elems.rhs_global),
             &Some(MatmulInputHandleRef::Normal(
                 bias.as_ref(),
-                *elems.acc_global,
+                elems.acc_global,
             )),
             &out.as_ref(),
             self.args.clone(),

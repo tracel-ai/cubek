@@ -11,8 +11,8 @@ use cubek::{
         components::stage::PartitionBuffering,
         definition::{
             CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint,
-            LoadingPrecomputeStrategy, MatmulElems, MatmulPrecision, StageSize, TilingBlueprint,
-            TilingScheme,
+            LoadingPrecomputeStrategy, MatmulElems, MatmulGlobalElems, MatmulPrecision,
+            MatmulProblem, MatrixLayout, StageSize, TilingBlueprint, TilingScheme,
         },
         launch::{MatmulInputHandle, Strategy},
         routines::{
@@ -35,18 +35,18 @@ impl<R: Runtime> Benchmark for MatmulBench<R> {
         let mut lhs = TensorHandle::empty(
             &client,
             vec![self.b, self.m, self.k],
-            *self.dtypes.lhs_global,
+            self.dtypes.lhs_global,
         );
         if self.tl {
             let len = lhs.shape.len();
             lhs.strides.swap(len - 2, len - 1);
         }
-        random_uniform(&client, 0.0, 1.0, lhs.as_ref(), *self.dtypes.lhs_global).unwrap();
+        random_uniform(&client, 0.0, 1.0, lhs.as_ref(), self.dtypes.lhs_global).unwrap();
 
         let mut rhs = TensorHandle::empty(
             &client,
             vec![self.b, self.k, self.n],
-            *self.dtypes.rhs_global,
+            self.dtypes.rhs_global,
         );
 
         if self.tr {
@@ -54,7 +54,7 @@ impl<R: Runtime> Benchmark for MatmulBench<R> {
             rhs.strides.swap(len - 2, len - 1);
         }
 
-        random_uniform(&client, 0.0, 1.1, rhs.as_ref(), *self.dtypes.rhs_global).unwrap();
+        random_uniform(&client, 0.0, 1.1, rhs.as_ref(), self.dtypes.rhs_global).unwrap();
 
         (
             MatmulInputHandle::Normal(lhs),
@@ -142,8 +142,8 @@ fn entry(m: usize, n: usize, k: usize) -> (usize, usize, usize, usize) {
 
 #[allow(dead_code, clippy::single_element_loop)]
 fn run<R: Runtime, MP: MatmulPrecision>(device: R::Device, strategy: Strategy) {
-    for tl in [true, false] {
-        for tr in [true, false] {
+    for tl in [MatrixLayout::ColMajor, MatrixLayout::RowMajor] {
+        for tr in [MatrixLayout::ColMajor, MatrixLayout::RowMajor] {
             for (b, m, n, k) in [
                 // entry(8192, 8192, 8192),
                 // entry(6144, 6144, 6144),
@@ -168,7 +168,17 @@ fn run<R: Runtime, MP: MatmulPrecision>(device: R::Device, strategy: Strategy) {
                 //(2, 1, 8192, 8192), // VecMat
             ] {
                 println!("-------------------");
-                let _ = run_one::<R, MP>(device.clone(), strategy.clone(), (b, m, n, k), (tl, tr));
+                let problem = MatmulProblem::from_parameters(
+                    m,
+                    n,
+                    k,
+                    vec![b],
+                    tl,
+                    tr,
+                    MatrixLayout::RowMajor,
+                    MatmulElems::new_deprecated::<MP>().as_global_elems(),
+                );
+                let _ = run_one::<R, MP>(device.clone(), strategy.clone(), &problem);
             }
         }
     }
@@ -178,8 +188,7 @@ fn run<R: Runtime, MP: MatmulPrecision>(device: R::Device, strategy: Strategy) {
 fn run_one<R: Runtime, MP: MatmulPrecision>(
     device: R::Device,
     strategy: Strategy,
-    shapes: (usize, usize, usize, usize),
-    transposed: (bool, bool),
+    problem: &MatmulProblem,
 ) -> Result<(BenchmarkDurations, f64), String> {
     let client = R::client(&device);
     let (b, m, n, k) = shapes;
@@ -224,6 +233,20 @@ fn run_grid_search<R: Runtime, MP: MatmulPrecision>() {
 
     let mut algos = BTreeMap::<u64, (BenchmarkDurations, TilingBlueprint, f64)>::new();
 
+    let (b, m, n, k) = (4096, 10, 64, 10);
+    let tl = MatrixLayout::RowMajor;
+    let tr = MatrixLayout::RowMajor;
+    let problem = MatmulProblem::from_parameters(
+        m,
+        n,
+        k,
+        vec![b],
+        tl,
+        tr,
+        MatrixLayout::RowMajor,
+        MatmulElems::new_deprecated::<MP>().as_global_elems(),
+    );
+
     for t in [(16, 16, 16)] {
         for p in [(1, 1, 1)] {
             for s in [(1, 1, 1)] {
@@ -242,7 +265,7 @@ fn run_grid_search<R: Runtime, MP: MatmulPrecision>() {
                     .global_order(GlobalOrderBlueprint::Default)
                     .cube_count_plan(CubeCountPlanBlueprint::Flattened)
                     .build();
-                let selection = TilingBlueprint::builder(tiling, plane_dim)
+                let blueprint = TilingBlueprint::builder(tiling, plane_dim, &problem)
                     .plane_dim(plane_dim)
                     .partition_buffering(PartitionBuffering::Single)
                     .hypercube_config(hypercube)
@@ -250,14 +273,12 @@ fn run_grid_search<R: Runtime, MP: MatmulPrecision>() {
                     .build();
                 let result = run_one::<R, MP>(
                     Default::default(),
-                    Strategy::SimpleCyclicCmma(BlueprintStrategy::Forced(selection.clone())),
-                    (4096, 10, 64, 10),
-                    (false, false),
+                    Strategy::SimpleCyclicCmma(BlueprintStrategy::Forced(blueprint.clone())),
+                    &problem,
                 );
-
                 if let Ok((duration, tflops)) = result {
                     let key = tflops * 1000000.0;
-                    algos.insert(key as u64, (duration, selection, tflops));
+                    algos.insert(key as u64, (duration, blueprint, tflops));
                 }
             }
         }

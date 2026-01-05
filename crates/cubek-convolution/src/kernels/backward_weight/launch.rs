@@ -165,8 +165,8 @@ where
 
     let op = ConvolutionOperation::BackwardWeight;
 
-    let input_data = Alg::into_tensor_handle(client, input.data(), *dtypes.lhs_global, op)?;
-    let out_grad_data = Alg::into_tensor_handle(client, out_grad.data(), *dtypes.rhs_global, op)?;
+    let input_data = Alg::into_tensor_handle(client, input.data(), dtypes.lhs_global, op)?;
+    let out_grad_data = Alg::into_tensor_handle(client, out_grad.data(), dtypes.rhs_global, op)?;
 
     let mut input = *input;
     let mut out_grad = *out_grad;

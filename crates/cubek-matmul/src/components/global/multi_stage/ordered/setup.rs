@@ -77,8 +77,13 @@ where
                 )
             });
 
-        let stage_config =
-            SMM::expand_config(blueprint, max_global_readers, (1, 2).into(), line_sizes)?;
+        let stage_config = SMM::expand_config(
+            blueprint,
+            max_global_readers,
+            (1, 2).into(),
+            dtypes,
+            line_sizes,
+        )?;
 
         let plane_role_config = stage_config.plane_role_config();
         let plane_counts = MatmulPlaneCounts::new(
@@ -189,6 +194,6 @@ where
         //     )));
         // }
 
-        Ok(())
+        SMM::validate_blueprint(client, blueprint, (1, 2).into(), dtypes, line_sizes)
     }
 }

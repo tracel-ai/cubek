@@ -78,6 +78,7 @@ where
             &blueprint,
             Some(max_global_readers),
             (2, 2).into(),
+            dtypes,
             line_sizes,
         )?;
 
@@ -173,6 +174,6 @@ where
         todo!();
         // LL::check(client, problem, &config.lhs_reader_config, dtypes)?;
         // RL::check(client, problem, &config.rhs_reader_config, dtypes)?;
-        Ok(())
+        SMM::validate_blueprint(client, blueprint, (2, 2).into(), dtypes, line_sizes)
     }
 }

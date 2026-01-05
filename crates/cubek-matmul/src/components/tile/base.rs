@@ -56,6 +56,7 @@ pub trait TileMatmulFamily: Send + Sync + 'static {
     /// This function may return an error if the configuration cannot be supported on the current runtime.
     fn expand_config(
         blueprint: &TilingBlueprint,
+        dtypes: &MatmulElems,
         line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError>;
 

@@ -47,6 +47,7 @@ where
 
     fn expand_config(
         blueprint: &TilingBlueprint,
+        dtypes: &MatmulElems,
         line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
         todo!()
@@ -93,7 +94,7 @@ where
         client: &ComputeClient<R>,
         blueprint: &TilingBlueprint,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        _line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError> {
         let lhs = dtypes.lhs_register;
         let rhs = dtypes.rhs_register;

@@ -48,6 +48,7 @@ pub trait StageMatmulFamily: Send + Sync + 'static {
         blueprint: &TilingBlueprint,
         reader_tasks: Option<MaxGlobalReaderPlanes>,
         num_stages: NumStages,
+        dtypes: &MatmulElems,
         line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError>;
 

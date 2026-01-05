@@ -40,7 +40,8 @@ where
 
     fn expand_config(
         blueprint: &TilingBlueprint,
-        line_sizes: &MatmulLineSizes,
+        dtypes: &MatmulElems,
+        _line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
         Ok(RegisterMatmulConfig::from_shared_tile_config(
             blueprint.lhs_layout,

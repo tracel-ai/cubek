@@ -168,8 +168,8 @@ where
 
     let op = ConvolutionOperation::Forward;
 
-    let input_data = Alg::into_tensor_handle(client, input.data(), *dtypes.lhs_global, op)?;
-    let weight_data = Alg::into_tensor_handle(client, weight.data(), *dtypes.rhs_global, op)?;
+    let input_data = Alg::into_tensor_handle(client, input.data(), dtypes.lhs_global, op)?;
+    let weight_data = Alg::into_tensor_handle(client, weight.data(), dtypes.rhs_global, op)?;
 
     let mut input = *input;
     let mut weight = *weight;

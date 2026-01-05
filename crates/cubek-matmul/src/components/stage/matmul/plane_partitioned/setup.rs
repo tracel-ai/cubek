@@ -77,6 +77,7 @@ impl<
         blueprint: &TilingBlueprint,
         reader_tasks: Option<MaxGlobalReaderPlanes>,
         num_stages: NumStages,
+        dtypes: &MatmulElems,
         line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
         let compute_planes = Self::cubedim_resource(blueprint)?.num_planes(blueprint.plane_dim)?;
@@ -137,7 +138,7 @@ impl<
         Ok(PartitionMatmulConfig::Plane(
             PlanePartitionedStageConfig::from_shared_partition_config(
                 SharedPartitionMatmulConfig::new(
-                    TM::expand_config(blueprint, line_sizes)?,
+                    TM::expand_config(blueprint, dtypes, line_sizes)?,
                     blueprint.tiling_scheme.partition_size,
                     blueprint.partition_buffering,
                     plane_role_config,

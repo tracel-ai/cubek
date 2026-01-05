@@ -73,8 +73,13 @@ where
                 )
             });
 
-        let stage_config =
-            SMM::expand_config(blueprint, max_global_readers, (2, 2).into(), line_sizes)?;
+        let stage_config = SMM::expand_config(
+            blueprint,
+            max_global_readers,
+            (2, 2).into(),
+            dtypes,
+            line_sizes,
+        )?;
 
         let plane_role_config = stage_config.plane_role_config();
 
@@ -170,6 +175,6 @@ where
         // LL::check(client, problem, &config.lhs_reader_config, dtypes)?;
         // RL::check(client, problem, &config.rhs_reader_config, dtypes)?;
 
-        Ok(())
+        SMM::validate_blueprint(client, blueprint, (2, 2).into(), dtypes, line_sizes)
     }
 }

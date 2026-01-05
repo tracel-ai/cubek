@@ -41,6 +41,7 @@ where
 
     fn expand_config(
         blueprint: &TilingBlueprint,
+        dtypes: &MatmulElems,
         line_sizes: &MatmulLineSizes,
     ) -> Result<PlaneVecMatInnerProductConfig, MatmulSetupError> {
         Ok(PlaneVecMatInnerProductConfig::new(

@@ -14,7 +14,7 @@ macro_rules! testgen_convolution_advanced {
                 let tiling_scheme = $tiling_scheme_builder.build().unwrap();
                 let client = cubecl::TestRuntime::client(&Default::default());
                 let plane_dim = client.properties().hardware.plane_size_max;
-                TilingBlueprint::builder(tiling_scheme, plane_dim)
+                TilingBlueprint::builder(tiling_scheme, plane_dim, todo!())
             }
         }
 

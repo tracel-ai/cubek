@@ -61,7 +61,7 @@ where
         dtypes: &MatmulElems,
         line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
-        let stage_config = SMM::expand_config(&blueprint, None, (1, 1).into(), line_sizes)?;
+        let stage_config = SMM::expand_config(&blueprint, None, (1, 1).into(), dtypes, line_sizes)?;
 
         let plane_role_config = stage_config.plane_role_config();
         let precompute_job = blueprint.loading_precompute_strategy.into();
@@ -161,6 +161,6 @@ where
         todo!();
         // LL::check(client, problem, &config.lhs_reader_config, dtypes)?;
         // RL::check(client, problem, &config.rhs_reader_config, dtypes)?;
-        Ok(())
+        SMM::validate_blueprint(client, blueprint, (1, 1).into(), dtypes, line_sizes)
     }
 }
