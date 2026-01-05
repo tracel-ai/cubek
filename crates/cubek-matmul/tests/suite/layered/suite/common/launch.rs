@@ -13,15 +13,15 @@ pub fn test() {
         .build()
         .unwrap();
     let plane_dim = client.properties().hardware.plane_size_max;
-    let selection_builder = TilingBlueprint::builder(tiling_scheme, plane_dim);
-    let matmul_selection = selection_builder
+    let blueprint_builder = TilingBlueprint::builder(tiling_scheme, plane_dim);
+    let blueprint = blueprint_builder
         .shared_swizzle(swizzle())
         .hypercube_config(hypercube_selection(&tiling_scheme))
         .partition_buffering(partition_buffering())
         .load_specialization_config(specialization())
         .build();
 
-    test_matmul_algorithm::<Algorithm>(client, problem(), matmul_selection, input_representation());
+    test_matmul_algorithm::<Algorithm>(client, problem(), blueprint, input_representation());
 }
 // };
 

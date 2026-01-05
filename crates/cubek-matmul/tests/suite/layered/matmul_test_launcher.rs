@@ -17,6 +17,7 @@ use cubek_matmul::launch::TensorInputs;
 use cubek_matmul::launch::TensorMapArgs;
 use cubek_matmul::launch::TensorMapInputs;
 use cubek_matmul::launch::TensorOutput;
+use cubek_matmul::routines::BlueprintStrategy;
 use cubek_matmul::routines::Routine;
 use cubek_test_utils::HostData;
 use cubek_test_utils::current_test_mode;
@@ -36,7 +37,7 @@ pub enum InputRepresentation {
 pub fn test_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
     client: ComputeClient<TestRuntime>,
     mut problem: MatmulProblem,
-    selection: A::Blueprint,
+    blueprint: A::Blueprint,
     input_representation: InputRepresentation,
 ) {
     let (lhs, lhs_data) = TestInput::random(
@@ -79,7 +80,7 @@ pub fn test_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
     if launch_matmul_algorithm::<A>(
         &client,
         &problem,
-        selection,
+        blueprint,
         &all_elems,
         input_representation,
         lhs_handle,
@@ -95,7 +96,7 @@ pub fn test_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
 pub fn launch_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
     client: &ComputeClient<TestRuntime>,
     problem: &MatmulProblem,
-    selection: A::Blueprint,
+    blueprint: A::Blueprint,
     dtypes: &MatmulElems,
     input_representation: InputRepresentation,
     lhs: MatmulInputHandleRef<TestRuntime>,
@@ -122,8 +123,12 @@ pub fn launch_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
             .unwrap(),
     };
 
-    let config = match A::expand_config(client, problem, &selection, &line_sizes, dtypes) {
-        Ok(config) => config,
+    let launch_info = match A::prepare(
+        problem,
+        &A::device_settings(client, line_sizes),
+        &BlueprintStrategy::Forced(blueprint),
+    ) {
+        Ok(launch_info) => launch_info,
         Err(err) => {
             if current_test_mode().should_fail_on_test_compilation_fail() {
                 panic!("Can't launch the test: {err}");
@@ -132,9 +137,13 @@ pub fn launch_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
         }
     };
 
+    let cube_dim = launch_info.cube_dim;
+    let cube_count_plan = launch_info.cube_count_plan;
+    let blueprint = launch_info.blueprint;
+    let dtypes = &launch_info.dtypes;
+
     let props = &client.properties().hardware;
-    if !props.max_cube_dim.can_contain(config.cube_dim())
-        || config.cube_dim().num_elems() > props.max_units_per_cube
+    if !props.max_cube_dim.can_contain(cube_dim) || cube_dim.num_elems() > props.max_units_per_cube
     {
         println!("Skipping test, too many resources requested");
         return false;
@@ -143,16 +152,10 @@ pub fn launch_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
     let output = <TensorOutput<_> as ConcreteOutputFactory<A>>::create(
         client,
         &out,
-        &selection,
+        &blueprint,
         problem,
         &line_sizes,
-        config,
         dtypes,
-    );
-
-    let cube_count_plan = config.cube_count_plan(
-        problem,
-        &client.properties().hardware.max_cube_count.clone(),
     );
 
     match input_representation {
@@ -161,23 +164,21 @@ pub fn launch_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
                 client,
                 &lhs,
                 &rhs,
-                &selection,
+                &blueprint,
                 problem,
                 &line_sizes,
-                config,
                 dtypes,
             );
 
             unsafe {
                 A::BatchMatmul::launch_unchecked::<TensorArgs, TestRuntime>(
                     client,
-                    config.cube_dim(),
+                    cube_dim,
                     cube_count_plan.resolve(),
                     inputs,
                     output,
                     cube_count_plan.as_args(),
-                    config,
-                    dtypes,
+                    blueprint,
                 )
             }
         }
@@ -186,23 +187,21 @@ pub fn launch_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
                 client,
                 &lhs,
                 &rhs,
-                &selection,
+                &blueprint,
                 problem,
                 &line_sizes,
-                config,
                 dtypes,
             );
 
             unsafe {
                 A::BatchMatmul::launch_unchecked::<TensorMapArgs, TestRuntime>(
                     client,
-                    config.cube_dim(),
+                    cube_dim,
                     cube_count_plan.resolve(),
                     inputs,
                     output,
                     cube_count_plan.as_args(),
-                    config,
-                    dtypes,
+                    blueprint,
                 )
             }
         }
