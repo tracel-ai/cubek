@@ -10,8 +10,8 @@ use crate::{
         global::memory::GlobalLayoutConfig,
     },
     definition::{
-        Blueprint, CubeCountInputArgs, InvalidConfigError, MatmulElems, MatmulPrecision,
-        MatmulProblem, MatmulSetupError,
+        Blueprint, CubeCountInputArgs, InvalidConfigError, MatmulElems, MatmulLineSizes,
+        MatmulPrecision, MatmulProblem, MatmulSetupError, MatrixLayout,
     },
     launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
 };
@@ -26,15 +26,27 @@ pub struct NaiveBlueprint {
 
 impl Blueprint for NaiveBlueprint {
     fn lhs_global_layout_config(&self) -> GlobalLayoutConfig {
-        todo!()
+        GlobalLayoutConfig {
+            matrix_layout: MatrixLayout::RowMajor,
+            check_row_bounds: false,
+            check_col_bounds: false,
+        }
     }
 
     fn rhs_global_layout_config(&self) -> GlobalLayoutConfig {
-        todo!()
+        GlobalLayoutConfig {
+            matrix_layout: MatrixLayout::ColMajor,
+            check_row_bounds: false,
+            check_col_bounds: false,
+        }
     }
 
     fn out_global_layout_config(&self) -> GlobalLayoutConfig {
-        todo!()
+        GlobalLayoutConfig {
+            matrix_layout: MatrixLayout::RowMajor,
+            check_row_bounds: false,
+            check_col_bounds: false,
+        }
     }
 }
 
@@ -43,7 +55,11 @@ impl BatchMatmulFamily for NaiveBatchMatmulFamily {
     type Config = NaiveMatmulConfig;
     type Blueprint = NaiveBlueprint;
 
-    fn expand_config(_blueprint: &Self::Blueprint) -> Result<Self::Config, MatmulSetupError> {
+    fn expand_config(
+        _blueprint: &Self::Blueprint,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
+    ) -> Result<Self::Config, MatmulSetupError> {
         Ok(NaiveMatmulConfig {})
     }
 
@@ -55,8 +71,8 @@ impl BatchMatmulFamily for NaiveBatchMatmulFamily {
         output: OutputRuntimeArg<'a, MA, R>,
         cube_count_input: CubeCountInputArgs<'a, R>,
         blueprint: NaiveBlueprint,
+        dtypes: &MatmulElems,
     ) -> Result<(), LaunchError> {
-        let dtypes = blueprint.dtypes.clone();
         unsafe {
             matmul_entry::launch_unchecked::<MA, R>(
                 client,
@@ -66,12 +82,12 @@ impl BatchMatmulFamily for NaiveBatchMatmulFamily {
                 output,
                 cube_count_input,
                 blueprint,
-                [*dtypes.lhs_global, *dtypes.rhs_global, *dtypes.acc_global],
-                [*dtypes.lhs_stage, *dtypes.rhs_stage, *dtypes.acc_stage],
+                [dtypes.lhs_global, dtypes.rhs_global, dtypes.acc_global],
+                [dtypes.lhs_stage, dtypes.rhs_stage, dtypes.acc_stage],
                 [
-                    *dtypes.lhs_register,
-                    *dtypes.rhs_register,
-                    *dtypes.acc_register,
+                    dtypes.lhs_register,
+                    dtypes.rhs_register,
+                    dtypes.acc_register,
                 ],
             )
         }
@@ -85,6 +101,8 @@ impl BatchMatmulFamily for NaiveBatchMatmulFamily {
         client: &ComputeClient<R>,
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError> {
         if blueprint.line_size_out > 1 {
             return Err(MatmulSetupError::InvalidConfig(Box::new(

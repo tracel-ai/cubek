@@ -529,7 +529,7 @@ fn selection(
         .cube_count_plan(cube_count_plan)
         .build();
 
-    let mut builder = TilingBlueprint::builder(tiling_scheme, plane_dim)
+    let mut builder = TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
         .partition_buffering(buffering)
         .hypercube_config(hypercube);
 
@@ -544,8 +544,8 @@ fn selection(
         };
 
         builder = builder.shared_swizzle(SwizzleModes {
-            lhs: select_swizzle(lhs_swizzle_dim, *dtypes.lhs_stage, line_sizes.lhs),
-            rhs: select_swizzle(rhs_swizzle_dim, *dtypes.rhs_stage, line_sizes.rhs),
+            lhs: select_swizzle(lhs_swizzle_dim, dtypes.lhs_stage, line_sizes.lhs),
+            rhs: select_swizzle(rhs_swizzle_dim, dtypes.rhs_stage, line_sizes.rhs),
             ..Default::default()
         })
     }

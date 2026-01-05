@@ -108,7 +108,13 @@ where
             )?,
         };
 
-        Self::validate_blueprint(&device_settings.client, &blueprint, problem)?;
+        Self::validate_blueprint(
+            &device_settings.client,
+            &blueprint,
+            problem,
+            &dtypes,
+            &device_settings.line_sizes,
+        )?;
 
         LaunchInfo::new(
             blueprint,
@@ -135,9 +141,9 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
         TMM::is_supported(
             client,
             MmaConfig {
-                a_type: *dtypes.lhs_register,
-                b_type: *dtypes.rhs_register,
-                cd_type: *dtypes.acc_register,
+                a_type: dtypes.lhs_register,
+                b_type: dtypes.rhs_register,
+                cd_type: dtypes.acc_register,
                 m,
                 n,
                 k,
@@ -191,7 +197,7 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
         .cube_count_plan(cube_count_plan)
         .build();
 
-    let mut builder = TilingBlueprint::builder(tiling_scheme, plane_dim)
+    let mut builder = TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
         .partition_buffering(PartitionBuffering::Single)
         .hypercube_config(hypercube)
         .load_specialization_config(LoadSpecializationConfig {
@@ -209,8 +215,8 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
             MatrixLayout::ColMajor => tiling_scheme.elements_per_stage_along_k(),
         };
 
-        let lhs = select_swizzle(lhs_swizzle_dim, *dtypes.lhs_stage, line_sizes.lhs);
-        let rhs = select_swizzle(rhs_swizzle_dim, *dtypes.rhs_stage, line_sizes.rhs);
+        let lhs = select_swizzle(lhs_swizzle_dim, dtypes.lhs_stage, line_sizes.lhs);
+        let rhs = select_swizzle(rhs_swizzle_dim, dtypes.rhs_stage, line_sizes.rhs);
         builder = builder.shared_swizzle(SwizzleModes {
             lhs,
             rhs,

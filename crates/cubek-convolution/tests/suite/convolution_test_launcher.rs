@@ -59,7 +59,7 @@ pub fn test_convolution_algorithm<A, P, R>(
     .pick_max()
     .unwrap();
 
-    let dtypes = MatmulElems::new::<((P::EG, P::ES), (P::EG, P::ES), (P::EG, f32))>();
+    let dtypes = MatmulElems::new_deprecated::<((P::EG, P::ES), (P::EG, P::ES), (P::EG, f32))>();
     let problem = A::Args::adjust_problem(&client, problem, &selection, &dtypes);
 
     let config = match A::expand_config(&client, &problem, &selection, &line_sizes, &dtypes) {
@@ -127,7 +127,7 @@ pub fn test_convolution_algorithm<A, P, R>(
         &dtypes,
     );
 
-    let dtypes = MatmulElems::new::<((P::EG, P::ES), (P::EG, P::ES), (P::EG, P::EA))>();
+    let dtypes = MatmulElems::new_deprecated::<((P::EG, P::ES), (P::EG, P::ES), (P::EG, P::EA))>();
 
     let result = unsafe {
         A::GlobalConvolution::launch_unchecked::<A::Args, R>(

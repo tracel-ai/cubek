@@ -7,7 +7,9 @@ use crate::components::global::{MaxGlobalReaderPlanes, PlaneRoleConfig};
 use crate::components::stage::{NumStages, StageMemoryConfig};
 use crate::components::tile::TileConfig;
 use crate::components::{stage::PartitionScheduler, tile::io::TileKind};
-use crate::definition::{AccS, LhsS, MatmulPrecision, MatmulSetupError, RhsS};
+use crate::definition::{
+    AccS, LhsS, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulSetupError, RhsS,
+};
 use crate::definition::{InvalidConfigError, TilingBlueprint};
 use std::{fmt::Debug, hash::Hash};
 
@@ -46,6 +48,7 @@ pub trait StageMatmulFamily: Send + Sync + 'static {
         blueprint: &TilingBlueprint,
         reader_tasks: Option<MaxGlobalReaderPlanes>,
         num_stages: NumStages,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError>;
 
     /// Returns the compute resources required to run this matmul.
@@ -56,6 +59,8 @@ pub trait StageMatmulFamily: Send + Sync + 'static {
         client: &ComputeClient<R>,
         blueprint: &TilingBlueprint,
         num_stages: NumStages,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError>;
 }
 

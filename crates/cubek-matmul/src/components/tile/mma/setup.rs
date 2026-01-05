@@ -11,8 +11,10 @@ use crate::components::{
     resource::CubeDimResource,
     tile::io::{Strided, TileKind},
 };
-use crate::definition::{InvalidConfigError, MatmulAvailabilityError, MatmulSetupError, TileSize};
-use crate::definition::{MatmulElemType, TilingBlueprint};
+use crate::definition::{
+    InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulSetupError, TileSize,
+};
+use crate::definition::{MatmulLineSizes, TilingBlueprint};
 use cubecl::features::MmaConfig;
 use cubecl::{ir::StorageType, prelude::*};
 
@@ -43,7 +45,10 @@ where
         Ok(CubeDimResource::Planes(1))
     }
 
-    fn expand_config(blueprint: &TilingBlueprint) -> Result<Self::Config, MatmulSetupError> {
+    fn expand_config(
+        blueprint: &TilingBlueprint,
+        line_sizes: &MatmulLineSizes,
+    ) -> Result<Self::Config, MatmulSetupError> {
         todo!()
         // Ok(MmaMatmulConfig::from_shared_tile_config(
         //     SharedTileConfig {
@@ -87,10 +92,12 @@ where
     fn validate_blueprint<R: Runtime>(
         client: &ComputeClient<R>,
         blueprint: &TilingBlueprint,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError> {
-        let lhs = *blueprint.dtypes.lhs_register;
-        let rhs = *blueprint.dtypes.rhs_register;
-        let acc = *blueprint.dtypes.acc_register;
+        let lhs = dtypes.lhs_register;
+        let rhs = dtypes.rhs_register;
+        let acc = dtypes.acc_register;
 
         let size = blueprint.tiling_scheme.tile_size;
         if !client.properties().features.mma.contains(&MmaConfig {
@@ -115,16 +122,20 @@ where
     }
 }
 
-fn load_method<R: Runtime>(client: &ComputeClient<R>, dtype: MatmulElemType) -> LoadMethod {
-    if !dtype.quantized && client.properties().features.ldmatrix.contains(&dtype) {
+fn load_method<R: Runtime>(client: &ComputeClient<R>, dtype: StorageType) -> LoadMethod {
+    if !matches!(dtype, StorageType::Packed(_, _))
+        && client.properties().features.ldmatrix.contains(&dtype)
+    {
         LoadMethod::LoadMatrix
     } else {
         LoadMethod::Manual
     }
 }
 
-fn store_method<R: Runtime>(client: &ComputeClient<R>, dtype: MatmulElemType) -> StoreMethod {
-    if !dtype.quantized && client.properties().features.stmatrix.contains(&dtype) {
+fn store_method<R: Runtime>(client: &ComputeClient<R>, dtype: StorageType) -> StoreMethod {
+    if !matches!(dtype, StorageType::Packed(_, _))
+        && client.properties().features.stmatrix.contains(&dtype)
+    {
         StoreMethod::StoreMatrix
     } else {
         StoreMethod::Manual

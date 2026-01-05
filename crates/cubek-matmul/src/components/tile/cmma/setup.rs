@@ -6,8 +6,10 @@ use crate::components::tile::{
     cmma::reader::{CmmaFragmentReader, CmmaStageReader},
 };
 use crate::components::{resource::CubeDimResource, tile::io::TileKind};
-use crate::definition::TilingBlueprint;
-use crate::definition::{InvalidConfigError, MatmulAvailabilityError, MatmulSetupError, TileSize};
+use crate::definition::{
+    InvalidConfigError, MatmulAvailabilityError, MatmulLineSizes, MatmulSetupError, TileSize,
+};
+use crate::definition::{MatmulElems, TilingBlueprint};
 use cubecl::features::MmaConfig;
 use cubecl::{ir::StorageType, prelude::*};
 
@@ -34,7 +36,10 @@ where
         Ok(CubeDimResource::Planes(1))
     }
 
-    fn expand_config(blueprint: &TilingBlueprint) -> Result<SharedTileConfig, MatmulSetupError> {
+    fn expand_config(
+        blueprint: &TilingBlueprint,
+        line_sizes: &MatmulLineSizes,
+    ) -> Result<SharedTileConfig, MatmulSetupError> {
         Ok(SharedTileConfig::new(
             blueprint.tiling_scheme.tile_size,
             blueprint.plane_dim,
@@ -70,10 +75,12 @@ where
     fn validate_blueprint<R: Runtime>(
         client: &ComputeClient<R>,
         blueprint: &TilingBlueprint,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError> {
-        let lhs = *blueprint.dtypes.lhs_register;
-        let rhs = *blueprint.dtypes.rhs_register;
-        let acc = *blueprint.dtypes.acc_register;
+        let lhs = dtypes.lhs_register;
+        let rhs = dtypes.rhs_register;
+        let acc = dtypes.acc_register;
 
         let size = blueprint.tiling_scheme.tile_size;
         if !client.properties().features.cmma.contains(&MmaConfig {

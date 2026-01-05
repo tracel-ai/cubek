@@ -98,7 +98,9 @@ pub fn validate_async_copy<R: Runtime>(
         ));
     }
 
-    if dtype_global.quantized && !dtype_stage.quantized {
+    if matches!(dtype_global, StorageType::Packed(_, _))
+        && !matches!(dtype_stage, StorageType::Packed(_, _))
+    {
         return Err(Box::new(
             "Async copy doesn't support dequantizing on global read",
         ));
@@ -168,7 +170,9 @@ pub fn validate_tma<R: Runtime>(
         ));
     }
 
-    if dtype_global.quantized && !dtype_stage.quantized {
+    if matches!(dtype_global, StorageType::Packed(_, _))
+        && !matches!(dtype_stage, StorageType::Packed(_, _))
+    {
         return Err(Box::new("TMA doesn't support dequantizing on global read"));
     }
 

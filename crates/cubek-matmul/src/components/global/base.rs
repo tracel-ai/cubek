@@ -32,7 +32,11 @@ pub trait GlobalMatmulFamily: Send + Sync + 'static {
     /// Constructs the configuration based on the matmul problem, selection, and line sizes.
     ///
     /// This function may return an error if the configuration cannot be supported on the current runtime.
-    fn expand_config(blueprint: &TilingBlueprint) -> Result<Self::Config, MatmulSetupError>;
+    fn expand_config(
+        blueprint: &TilingBlueprint,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
+    ) -> Result<Self::Config, MatmulSetupError>;
 
     /// Returns the compute resources required to run this matmul.
     fn cubedim_resource(blueprint: &TilingBlueprint)
@@ -42,6 +46,8 @@ pub trait GlobalMatmulFamily: Send + Sync + 'static {
         client: &ComputeClient<R>,
         blueprint: &TilingBlueprint,
         problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError>;
 }
 

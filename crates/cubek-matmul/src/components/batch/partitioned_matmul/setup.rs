@@ -9,6 +9,7 @@ use crate::components::batch::partitioned_matmul::partition::GlobalPartitionMatm
 use crate::components::global::GlobalMatmulFamily;
 use crate::definition::CubeCountInputArgs;
 use crate::definition::InvalidConfigError;
+use crate::definition::MatmulLineSizes;
 use crate::definition::MatmulProblem;
 use crate::definition::TilingBlueprint;
 use crate::definition::{MatmulElems, MatmulPrecision, MatmulSetupError};
@@ -28,8 +29,12 @@ impl<GMM: GlobalMatmulFamily, S: GlobalPartitionMatmul> BatchMatmulFamily
     type Config = PartitionedBatchConfig<GMM::Config>;
     type Blueprint = TilingBlueprint;
 
-    fn expand_config(blueprint: &Self::Blueprint) -> Result<Self::Config, MatmulSetupError> {
-        let global_config = GMM::expand_config(blueprint)?;
+    fn expand_config(
+        blueprint: &Self::Blueprint,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
+    ) -> Result<Self::Config, MatmulSetupError> {
+        let global_config = GMM::expand_config(blueprint, dtypes, line_sizes)?;
 
         todo!()
         // PartitionedBatchConfig::new(
@@ -50,8 +55,8 @@ impl<GMM: GlobalMatmulFamily, S: GlobalPartitionMatmul> BatchMatmulFamily
         output: OutputRuntimeArg<'a, MA, R>,
         cube_count_input: CubeCountInputArgs<'a, R>,
         blueprint: Self::Blueprint,
+        dtypes: &MatmulElems,
     ) -> Result<(), LaunchError> {
-        let dtypes = blueprint.dtypes.clone();
         unsafe {
             matmul_entry::launch_unchecked::<MA, GMM, S, R>(
                 client,
@@ -61,12 +66,12 @@ impl<GMM: GlobalMatmulFamily, S: GlobalPartitionMatmul> BatchMatmulFamily
                 output,
                 cube_count_input,
                 blueprint,
-                [*dtypes.lhs_global, *dtypes.rhs_global, *dtypes.acc_global],
-                [*dtypes.lhs_stage, *dtypes.rhs_stage, *dtypes.acc_stage],
+                [dtypes.lhs_global, dtypes.rhs_global, dtypes.acc_global],
+                [dtypes.lhs_stage, dtypes.rhs_stage, dtypes.acc_stage],
                 [
-                    *dtypes.lhs_register,
-                    *dtypes.rhs_register,
-                    *dtypes.acc_register,
+                    dtypes.lhs_register,
+                    dtypes.rhs_register,
+                    dtypes.acc_register,
                 ],
             )
         }
@@ -80,7 +85,9 @@ impl<GMM: GlobalMatmulFamily, S: GlobalPartitionMatmul> BatchMatmulFamily
         client: &ComputeClient<R>,
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError> {
-        GMM::validate_blueprint(client, blueprint, problem)
+        GMM::validate_blueprint(client, blueprint, problem, dtypes, line_sizes)
     }
 }

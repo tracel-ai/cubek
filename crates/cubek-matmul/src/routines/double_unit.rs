@@ -74,7 +74,13 @@ impl Routine for DoubleUnitAlgorithm {
             ),
         };
 
-        Self::validate_blueprint(&device_settings.client, &blueprint, problem)?;
+        Self::validate_blueprint(
+            &device_settings.client,
+            &blueprint,
+            problem,
+            &dtypes,
+            &device_settings.line_sizes,
+        )?;
 
         LaunchInfo::new(
             blueprint,

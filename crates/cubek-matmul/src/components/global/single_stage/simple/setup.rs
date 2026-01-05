@@ -1,6 +1,7 @@
 use crate::components::CubeDimResource;
 use crate::definition::{
-    InvalidConfigError, MatmulPrecision, MatmulProblem, MatmulSetupError, MatrixLayout, StageIdent,
+    InvalidConfigError, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem,
+    MatmulSetupError, MatrixLayout, StageIdent,
 };
 use crate::{
     components::{
@@ -55,8 +56,12 @@ where
     >;
     type Config = SharedGlobalMatmulConfig<SMM::Config>;
 
-    fn expand_config(blueprint: &TilingBlueprint) -> Result<Self::Config, MatmulSetupError> {
-        let stage_config = SMM::expand_config(&blueprint, None, (1, 1).into())?;
+    fn expand_config(
+        blueprint: &TilingBlueprint,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
+    ) -> Result<Self::Config, MatmulSetupError> {
+        let stage_config = SMM::expand_config(&blueprint, None, (1, 1).into(), line_sizes)?;
 
         let plane_role_config = stage_config.plane_role_config();
         let precompute_job = blueprint.loading_precompute_strategy.into();
@@ -68,7 +73,7 @@ where
         let event_loading_mode = EventLoadingMode::Relaxed;
 
         let lhs_gmem_config = GlobalMemoryConfig {
-            line_size: blueprint.line_sizes.lhs as u32,
+            line_size: line_sizes.lhs as u32,
             check_row_bounds: blueprint.check_m_bounds,
             check_col_bounds: blueprint.check_k_bounds,
             matrix_layout: blueprint.lhs_layout,
@@ -76,7 +81,7 @@ where
         };
 
         let rhs_gmem_config = GlobalMemoryConfig {
-            line_size: blueprint.line_sizes.rhs as u32,
+            line_size: line_sizes.rhs as u32,
             check_row_bounds: blueprint.check_k_bounds,
             check_col_bounds: blueprint.check_n_bounds,
             matrix_layout: blueprint.rhs_layout,
@@ -84,7 +89,7 @@ where
         };
 
         let out_gmem_config = GlobalMemoryConfig {
-            line_size: blueprint.line_sizes.out as u32,
+            line_size: line_sizes.out as u32,
             matrix_layout: MatrixLayout::RowMajor,
             check_row_bounds: blueprint.check_m_bounds,
             check_col_bounds: blueprint.check_n_bounds,
@@ -150,6 +155,8 @@ where
         client: &ComputeClient<R>,
         blueprint: &TilingBlueprint,
         problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError> {
         todo!();
         // LL::check(client, problem, &config.lhs_reader_config, dtypes)?;

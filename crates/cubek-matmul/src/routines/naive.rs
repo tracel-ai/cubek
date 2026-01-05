@@ -47,7 +47,13 @@ impl Routine for NaiveRoutine {
             line_size_out: device_settings.line_sizes.out as u32,
             dtypes: dtypes.clone(),
         };
-        Self::validate_blueprint(&device_settings.client, &blueprint, problem)?;
+        Self::validate_blueprint(
+            &device_settings.client,
+            &blueprint,
+            problem,
+            &dtypes,
+            &device_settings.line_sizes,
+        )?;
 
         Ok(LaunchInfo {
             blueprint,

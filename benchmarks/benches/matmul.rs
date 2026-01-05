@@ -195,7 +195,7 @@ fn run_one<R: Runtime, MP: MatmulPrecision>(
         client: client.clone(),
         device: device.clone(),
         strategy: strategy.clone(),
-        dtypes: MatmulElems::new::<MP>(),
+        dtypes: MatmulElems::new_deprecated::<MP>(),
     };
     println!("b: {b} m: {m} n: {n} k: {k}, tl {tl}, tr {tr}");
     println!("{}", bench.name());

@@ -123,7 +123,13 @@ where
             }
         };
 
-        Self::validate_blueprint(client, &blueprint, problem)?;
+        Self::validate_blueprint(
+            client,
+            &blueprint,
+            problem,
+            &dtypes,
+            &device_settings.line_sizes,
+        )?;
 
         LaunchInfo::new(
             blueprint,
@@ -148,9 +154,9 @@ fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
         TMM::is_supported(
             client,
             MmaConfig {
-                a_type: *dtypes.lhs_register,
-                b_type: *dtypes.rhs_register,
-                cd_type: *dtypes.acc_register,
+                a_type: dtypes.lhs_register,
+                b_type: dtypes.rhs_register,
+                cd_type: dtypes.acc_register,
                 m,
                 n,
                 k,
@@ -185,7 +191,7 @@ fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
             .build();
 
         Ok((
-            TilingBlueprint::builder(tiling_scheme, plane_dim)
+            TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
                 .partition_buffering(PartitionBuffering::Single)
                 .hypercube_config(hypercube)
                 .build(),
@@ -207,7 +213,7 @@ fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
             .build();
 
         Ok((
-            TilingBlueprint::builder(tiling_scheme, plane_dim)
+            TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
                 .partition_buffering(PartitionBuffering::Single)
                 .hypercube_config(hypercube)
                 .build(),

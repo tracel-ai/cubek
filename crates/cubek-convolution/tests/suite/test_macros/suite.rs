@@ -7,9 +7,7 @@ use cubek_convolution::{
     forward::args::{ConcreteInputsFactory, ConcreteOutputFactory},
 };
 use cubek_convolution::{forward::args::ConcreteArgs, kernels::forward::algorithm::Algorithm};
-use cubek_matmul::definition::{
-    MatmulElemType, MatmulElems, MatmulGlobalElems, MatrixLayout, TilingBlueprint,
-};
+use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems, MatrixLayout, TilingBlueprint};
 use cubek_matmul::launch::{InputArg, OutputArg};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -51,10 +49,7 @@ pub fn test_algo<A: Algorithm, P: TestPrecision, R: Runtime>(
         convolution_size.w,
     );
 
-    let elem_type = MatmulElemType {
-        dtype: P::EG::as_type_native_unchecked(),
-        quantized: false,
-    };
+    let elem_type = P::EG::as_type_native_unchecked();
 
     let problem = ConvolutionProblem {
         m: batches * out_h * out_w,

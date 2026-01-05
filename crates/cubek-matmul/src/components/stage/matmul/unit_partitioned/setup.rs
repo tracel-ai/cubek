@@ -19,6 +19,8 @@ use crate::components::tile::io::Strided;
 use crate::definition::AccS;
 use crate::definition::InvalidConfigError;
 use crate::definition::LhsS;
+use crate::definition::MatmulElems;
+use crate::definition::MatmulLineSizes;
 use crate::definition::MatmulPrecision;
 use crate::definition::MatmulSetupError;
 use crate::definition::MatrixLayout;
@@ -74,6 +76,7 @@ impl<
         blueprint: &TilingBlueprint,
         reader_tasks: Option<MaxGlobalReaderPlanes>,
         num_stages: NumStages,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
         let num_planes = Self::cubedim_resource(blueprint)?.num_planes(blueprint.plane_dim)?;
 
@@ -96,7 +99,7 @@ impl<
             tiles_per_partition_along_col: blueprint.tiling_scheme.partition_size.k as u32,
             partitions_per_stage_along_row: blueprint.tiling_scheme.stage_size.m as u32,
             partitions_per_stage_along_col: blueprint.tiling_scheme.stage_size.k as u32,
-            line_size: blueprint.line_sizes.lhs as u32,
+            line_size: line_sizes.lhs as u32,
             matrix_layout: blueprint.lhs_layout,
             swizzle: blueprint.swizzle_modes.lhs,
             num_stages: num_stages.lhs,
@@ -110,7 +113,7 @@ impl<
             tiles_per_partition_along_col: blueprint.tiling_scheme.partition_size.n as u32,
             partitions_per_stage_along_row: blueprint.tiling_scheme.stage_size.k as u32,
             partitions_per_stage_along_col: blueprint.tiling_scheme.stage_size.n as u32,
-            line_size: blueprint.line_sizes.rhs as u32,
+            line_size: line_sizes.rhs as u32,
             matrix_layout: blueprint.rhs_layout,
             swizzle: blueprint.swizzle_modes.rhs,
             num_stages: num_stages.rhs,
@@ -124,7 +127,7 @@ impl<
             tiles_per_partition_along_col: blueprint.tiling_scheme.partition_size.n as u32,
             partitions_per_stage_along_row: blueprint.tiling_scheme.stage_size.m as u32,
             partitions_per_stage_along_col: blueprint.tiling_scheme.stage_size.n as u32,
-            line_size: blueprint.line_sizes.out as u32,
+            line_size: line_sizes.out as u32,
             matrix_layout: MatrixLayout::RowMajor,
             swizzle: blueprint.swizzle_modes.out,
             num_stages: 1,
@@ -133,7 +136,7 @@ impl<
         Ok(PartitionMatmulConfig::Unit(
             UnitPartitionedStageConfig::from_shared_partition_config(
                 SharedPartitionMatmulConfig::new(
-                    TM::expand_config(blueprint)?,
+                    TM::expand_config(blueprint, line_sizes)?,
                     blueprint.tiling_scheme.partition_size,
                     blueprint.partition_buffering,
                     plane_role_config,
@@ -168,6 +171,8 @@ impl<
         client: &ComputeClient<R>,
         blueprint: &TilingBlueprint,
         num_stages: NumStages,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError> {
         let working_units = blueprint.tiling_scheme.partitions_per_stage_along_m()
             * blueprint.tiling_scheme.partitions_per_stage_along_n();
@@ -197,9 +202,9 @@ impl<
             * num_stages.rhs;
         let out_smem_size =
             blueprint.tiling_scheme.tile_size.m * blueprint.tiling_scheme.tile_size.n * num_units;
-        let smem_total_size = blueprint.dtypes.lhs_stage.size() as u32 * lhs_smem_size
-            + blueprint.dtypes.rhs_stage.size() as u32 * rhs_smem_size
-            + blueprint.dtypes.acc_stage.size() as u32 * out_smem_size;
+        let smem_total_size = dtypes.lhs_stage.size() as u32 * lhs_smem_size
+            + dtypes.rhs_stage.size() as u32 * rhs_smem_size
+            + dtypes.acc_stage.size() as u32 * out_smem_size;
 
         let smem_limit = client.properties().hardware.max_shared_memory_size as u32;
         if smem_total_size > smem_limit {

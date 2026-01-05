@@ -92,7 +92,13 @@ impl Routine for SimpleVecMatAlgorithm {
             }
         };
 
-        Self::validate_blueprint(&device_settings.client, &blueprint, problem)?;
+        Self::validate_blueprint(
+            &device_settings.client,
+            &blueprint,
+            problem,
+            &dtypes,
+            &device_settings.line_sizes,
+        )?;
 
         LaunchInfo::new(
             blueprint,
@@ -152,7 +158,13 @@ impl Routine for DoubleVecMatAlgorithm {
             }
         };
 
-        Self::validate_blueprint(&device_settings.client, &blueprint, problem)?;
+        Self::validate_blueprint(
+            &device_settings.client,
+            &blueprint,
+            problem,
+            &dtypes,
+            &device_settings.line_sizes,
+        )?;
 
         LaunchInfo::new(
             blueprint,
@@ -193,7 +205,7 @@ fn infer_blueprint_vecmat<R: Runtime>(
         .cube_count_plan(cube_count_plan)
         .build();
 
-    TilingBlueprint::builder(tiling_scheme, plane_dim)
+    TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
         .partition_buffering(PartitionBuffering::Single)
         .hypercube_config(hypercube)
         .build()

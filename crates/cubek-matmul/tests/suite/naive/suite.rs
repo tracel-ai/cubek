@@ -151,7 +151,7 @@ fn test_naive(case: MatmulTestCase) {
     let (lhs, lhs_data) = TestInput::random(
         client.clone(),
         problem.lhs_shape.clone(),
-        *problem.global_dtypes.lhs,
+        problem.global_dtypes.lhs,
         1234,
         Distribution::Uniform(-1., 1.),
         layout_to_stride_spec(problem.lhs_layout),
@@ -161,7 +161,7 @@ fn test_naive(case: MatmulTestCase) {
     let (rhs, rhs_data) = TestInput::random(
         client.clone(),
         problem.rhs_shape.clone(),
-        *problem.global_dtypes.rhs,
+        problem.global_dtypes.rhs,
         5678,
         Distribution::Uniform(-1., 1.),
         layout_to_stride_spec(problem.rhs_layout),
@@ -171,13 +171,13 @@ fn test_naive(case: MatmulTestCase) {
     let out = TestInput::zeros(
         client.clone(),
         problem.out_shape.clone(),
-        *problem.global_dtypes.out,
+        problem.global_dtypes.out,
         layout_to_stride_spec(MatrixLayout::RowMajor),
     )
     .generate_without_host_data();
 
-    let lhs_handle = MatmulInputHandleRef::Normal(lhs.as_ref(), *problem.global_dtypes.lhs);
-    let rhs_handle = MatmulInputHandleRef::Normal(rhs.as_ref(), *problem.global_dtypes.rhs);
+    let lhs_handle = MatmulInputHandleRef::Normal(lhs.as_ref(), problem.global_dtypes.lhs);
+    let rhs_handle = MatmulInputHandleRef::Normal(rhs.as_ref(), problem.global_dtypes.rhs);
     let out_handle = out.as_ref();
 
     let all_elems = MatmulElems::from_globals(&problem.global_dtypes.clone());

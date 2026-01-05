@@ -143,24 +143,24 @@ where
     if !client
         .properties()
         .features
-        .type_usage(*dtypes.lhs_global)
+        .type_usage(dtypes.lhs_global)
         .contains(TypeUsage::Conversion)
         || !client
             .properties()
             .features
-            .type_usage(*dtypes.rhs_global)
+            .type_usage(dtypes.rhs_global)
             .contains(TypeUsage::Conversion)
         || !client
             .properties()
             .features
-            .type_usage(*dtypes.acc_global)
+            .type_usage(dtypes.acc_global)
             .contains(TypeUsage::Conversion)
     {
         return Err(MatmulSetupError::Unavailable(
             MatmulAvailabilityError::TypesUnavailable {
-                lhs: *dtypes.lhs_global,
-                rhs: *dtypes.rhs_global,
-                output: *dtypes.acc_global,
+                lhs: dtypes.lhs_global,
+                rhs: dtypes.rhs_global,
+                output: dtypes.acc_global,
             },
         ));
     }

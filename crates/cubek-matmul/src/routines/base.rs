@@ -27,6 +27,7 @@ pub trait Routine: Sized {
         output: OutputRuntimeArg<'a, MA, R>,
         cube_count_input: CubeCountInputArgs<'a, R>,
         blueprint: Self::Blueprint,
+        dtypes: &MatmulElems,
     ) -> Result<(), MatmulSetupError> {
         match unsafe {
             Self::BatchMatmul::launch_unchecked::<MA, R>(
@@ -37,6 +38,7 @@ pub trait Routine: Sized {
                 output,
                 cube_count_input,
                 blueprint,
+                dtypes,
             )
         } {
             Ok(_) => Ok(()),
@@ -76,8 +78,10 @@ pub trait Routine: Sized {
         client: &ComputeClient<R>,
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError> {
-        Self::BatchMatmul::validate_blueprint(client, blueprint, problem)
+        Self::BatchMatmul::validate_blueprint(client, blueprint, problem, dtypes, line_sizes)
     }
 }
 

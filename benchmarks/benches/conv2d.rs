@@ -79,7 +79,7 @@ impl<R: Runtime, MP: MatmulPrecision> Benchmark for Conv2dBench<R, MP> {
         let h_out = (h_in + 2 * p_h - d_h * (k_h - 1) - 1) / s_h + 1;
         let w_out = (w_in + 2 * p_w - d_w * (k_w - 1) - 1) / s_w + 1;
 
-        let elems = MatmulElems::new::<MP>();
+        let elems = MatmulElems::new_deprecated::<MP>();
 
         let out: TensorHandle<R> =
             TensorHandle::empty(&client, vec![n, c_out, h_out, w_out], *elems.acc_global);

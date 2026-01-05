@@ -27,16 +27,15 @@ pub fn assert_result(
 fn matmul_epsilon(elems: &MatmulElems, safety_factor: f32) -> f32 {
     let total_eps = elems
         .lhs_global
-        .dtype
         .epsilon()
-        .max(elems.rhs_global.dtype.epsilon())
-        .max(elems.acc_global.dtype.epsilon())
-        .max(elems.lhs_stage.dtype.epsilon())
-        .max(elems.rhs_stage.dtype.epsilon())
-        .max(elems.acc_stage.dtype.epsilon())
-        .max(elems.lhs_register.dtype.epsilon())
-        .max(elems.rhs_register.dtype.epsilon())
-        .max(elems.acc_register.dtype.epsilon());
+        .max(elems.rhs_global.epsilon())
+        .max(elems.acc_global.epsilon())
+        .max(elems.lhs_stage.epsilon())
+        .max(elems.rhs_stage.epsilon())
+        .max(elems.acc_stage.epsilon())
+        .max(elems.lhs_register.epsilon())
+        .max(elems.rhs_register.epsilon())
+        .max(elems.acc_register.epsilon());
 
     total_eps as f32 * safety_factor
 }

@@ -13,7 +13,8 @@ pub fn test() {
         .build()
         .unwrap();
     let plane_dim = client.properties().hardware.plane_size_max;
-    let blueprint_builder = TilingBlueprint::builder(tiling_scheme, plane_dim);
+    let problem = problem();
+    let blueprint_builder = TilingBlueprint::builder(tiling_scheme, plane_dim, &problem);
     let blueprint = blueprint_builder
         .shared_swizzle(swizzle())
         .hypercube_config(hypercube_selection(&tiling_scheme))
@@ -21,7 +22,7 @@ pub fn test() {
         .load_specialization_config(specialization())
         .build();
 
-    test_matmul_algorithm::<Algorithm>(client, problem(), blueprint, input_representation());
+    test_matmul_algorithm::<Algorithm>(client, problem, blueprint, input_representation());
 }
 // };
 

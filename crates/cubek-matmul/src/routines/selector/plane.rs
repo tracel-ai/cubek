@@ -8,8 +8,8 @@ use crate::components::tile::TileMatmulFamily;
 use crate::definition::{
     CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulAvailabilityError,
     MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, MatrixLayout, MultiRowStrategy,
-    PartitionSize, SmAllocation, StageSize, SwizzleModes, TileSize, TilingBlueprint,
-    TilingScheme, adjust_dtypes,
+    PartitionSize, SmAllocation, StageSize, SwizzleModes, TileSize, TilingBlueprint, TilingScheme,
+    adjust_dtypes,
 };
 use crate::routines::selector::is_tiny;
 
@@ -157,7 +157,7 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
         .cube_count_plan(cube_count_plan)
         .build();
 
-    let mut builder = TilingBlueprint::builder(tiling_scheme, plane_dim)
+    let mut builder = TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
         .partition_buffering(partition_buffering)
         .hypercube_config(hypercube);
 
@@ -178,8 +178,8 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
             MatrixLayout::ColMajor => tiling_scheme.elements_per_stage_along_k(),
         };
 
-        let lhs = select_swizzle(lhs_swizzle_dim, *dtypes.lhs_stage, line_sizes.lhs);
-        let rhs = select_swizzle(rhs_swizzle_dim, *dtypes.rhs_stage, line_sizes.rhs);
+        let lhs = select_swizzle(lhs_swizzle_dim, dtypes.lhs_stage, line_sizes.lhs);
+        let rhs = select_swizzle(rhs_swizzle_dim, dtypes.rhs_stage, line_sizes.rhs);
         builder = builder.shared_swizzle(SwizzleModes {
             lhs,
             rhs,
@@ -247,9 +247,9 @@ pub fn find_instruction_size<R: Runtime, TMM: TileMatmulFamily>(
         TMM::is_supported(
             client,
             MmaConfig {
-                a_type: *elems.lhs_register,
-                b_type: *elems.rhs_register,
-                cd_type: *elems.acc_register,
+                a_type: elems.lhs_register,
+                b_type: elems.rhs_register,
+                cd_type: elems.acc_register,
                 m,
                 n,
                 k,
@@ -268,9 +268,9 @@ pub fn find_instruction_size<R: Runtime, TMM: TileMatmulFamily>(
     } else {
         match TMM::supported_sizes(
             client,
-            *elems.lhs_register,
-            *elems.rhs_register,
-            *elems.acc_register,
+            elems.lhs_register,
+            elems.rhs_register,
+            elems.acc_register,
         )
         .first()
         .copied()
@@ -316,7 +316,7 @@ fn selection_tiny<R: Runtime>(
         .cube_count_plan(cube_count_plan)
         .build();
 
-    TilingBlueprint::builder(tiling_scheme, plane_dim)
+    TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
         .partition_buffering(PartitionBuffering::Single)
         .hypercube_config(hypercube)
         .build()

@@ -7,10 +7,10 @@ use crate::components::{
     resource::CubeDimResource,
     tile::plane_vec_mat_inner_product::reader::{MatrixFragmentReader, MatrixStageReader},
 };
-use crate::definition::TilingBlueprint;
 use crate::definition::{
     InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulSetupError, MatrixLayout,
 };
+use crate::definition::{MatmulLineSizes, TilingBlueprint};
 use cubecl::features::{Plane, TypeUsage};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
@@ -41,6 +41,7 @@ where
 
     fn expand_config(
         blueprint: &TilingBlueprint,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<PlaneVecMatInnerProductConfig, MatmulSetupError> {
         Ok(PlaneVecMatInnerProductConfig::new(
             SharedTileConfig::new(
@@ -48,7 +49,7 @@ where
                 blueprint.plane_dim,
                 blueprint.swizzle_modes,
             ),
-            blueprint.line_sizes.lhs as u32,
+            line_sizes.lhs as u32,
         ))
     }
 
@@ -61,8 +62,10 @@ where
     fn validate_blueprint<R: Runtime>(
         client: &ComputeClient<R>,
         blueprint: &TilingBlueprint,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError> {
-        check_availability(client, &blueprint.dtypes)?;
+        check_availability(client, dtypes)?;
 
         if blueprint.lhs_layout != MatrixLayout::RowMajor {
             return Err(MatmulSetupError::InvalidConfig(Box::new(
@@ -80,9 +83,9 @@ where
         let n = blueprint.tiling_scheme.tile_size.n();
         let k = blueprint.tiling_scheme.tile_size.k();
 
-        let lhs_line = blueprint.line_sizes.lhs as u32;
-        let rhs_line = blueprint.line_sizes.rhs as u32;
-        let out_line = blueprint.line_sizes.out as u32;
+        let lhs_line = line_sizes.lhs as u32;
+        let rhs_line = line_sizes.rhs as u32;
+        let out_line = line_sizes.out as u32;
 
         if m != 1 {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
@@ -123,9 +126,9 @@ fn check_availability<R: Runtime>(
         ));
     }
 
-    let lhs = *dtypes.lhs_register;
-    let rhs = *dtypes.rhs_register;
-    let acc = *dtypes.acc_register;
+    let lhs = dtypes.lhs_register;
+    let rhs = dtypes.rhs_register;
+    let acc = dtypes.acc_register;
 
     let lhs = match lhs {
         StorageType::Scalar(ElemType::Float(FloatKind::Flex32)) => {

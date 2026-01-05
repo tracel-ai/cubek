@@ -24,6 +24,8 @@ pub trait BatchMatmulFamily: 'static + Send + Sync {
     /// This function may return an error if the configuration cannot be supported on the current runtime.
     fn expand_config(
         blueprint: &Self::Blueprint,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError>;
 
     /// Entry point
@@ -40,6 +42,7 @@ pub trait BatchMatmulFamily: 'static + Send + Sync {
         output: OutputRuntimeArg<'a, MA, R>,
         cube_count_input: CubeCountInputArgs<'a, R>,
         blueprint: Self::Blueprint,
+        dtypes: &MatmulElems,
     ) -> Result<(), LaunchError>;
 
     /// Returns the compute resources required to run this matmul.
@@ -49,6 +52,8 @@ pub trait BatchMatmulFamily: 'static + Send + Sync {
         client: &ComputeClient<R>,
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError>;
 }
 

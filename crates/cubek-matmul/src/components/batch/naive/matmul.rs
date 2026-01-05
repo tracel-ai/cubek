@@ -33,11 +33,33 @@ pub(crate) fn matmul_entry<
     output: &mut <Args as MatmulArgs>::Output<AccG>,
     cube_count_args: CubeCountInput,
     #[comptime] blueprint: NaiveBlueprint,
-    #[define(LhsG, RhsG, AccG)] _global: [StorageType; 3],
-    #[define(LhsS, RhsS, AccS)] _stage: [StorageType; 3],
-    #[define(LhsR, RhsR, AccR)] _register: [StorageType; 3],
+    #[define(LhsG, RhsG, AccG)] global: [StorageType; 3],
+    #[define(LhsS, RhsS, AccS)] stage: [StorageType; 3],
+    #[define(LhsR, RhsR, AccR)] register: [StorageType; 3],
 ) {
-    let config = comptime!(NaiveBatchMatmulFamily::expand_config(&blueprint));
+    let mut state = Args::init_state::<LhsG, RhsG, AccG>(
+        inputs,
+        output,
+        blueprint.lhs_global_layout_config(),
+        blueprint.rhs_global_layout_config(),
+        blueprint.out_global_layout_config(),
+    );
+
+    let line_size_lhs = Args::view_lhs(&state).line_size();
+    let line_size_rhs = Args::view_rhs(&state).line_size();
+    let line_size_out = Args::view_out(&mut state).line_size();
+    let line_sizes = comptime!(MatmulLineSizes {
+        lhs: line_size_lhs as u8,
+        rhs: line_size_rhs as u8,
+        out: line_size_out as u8,
+    });
+
+    let config = comptime!(NaiveBatchMatmulFamily::expand_config(
+        &blueprint,
+        &MatmulElems::from_define_arrays(global, stage, register),
+        &line_sizes
+    ));
+
     if comptime!(config.is_err()) {
         push_validation_error(config.err().unwrap().to_string());
         comptime!(return);
@@ -117,7 +139,6 @@ impl<MP: MatmulPrecision> BatchMatmul<MP> for NaiveMatmul<MP> {
             }
 
             out[(m, n)] = Line::empty(1u32).fill(accum);
-            // out[(m, n)] = Line::cast_from(tmp);
         } else {
             out[(m, n)] = Line::empty(1u32).fill(sum[0u32]);
         }

@@ -7,9 +7,9 @@ use crate::components::{
     resource::CubeDimResource,
     tile::register::reader::{RegisterFragmentReader, RegisterStageReader},
 };
-use crate::definition::MatmulSetupError;
 use crate::definition::TilingBlueprint;
 use crate::definition::{InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatrixLayout};
+use crate::definition::{MatmulLineSizes, MatmulSetupError};
 use cubecl::features::TypeUsage;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
@@ -38,7 +38,10 @@ where
         Ok(CubeDimResource::Units(1))
     }
 
-    fn expand_config(blueprint: &TilingBlueprint) -> Result<Self::Config, MatmulSetupError> {
+    fn expand_config(
+        blueprint: &TilingBlueprint,
+        line_sizes: &MatmulLineSizes,
+    ) -> Result<Self::Config, MatmulSetupError> {
         Ok(RegisterMatmulConfig::from_shared_tile_config(
             blueprint.lhs_layout,
             blueprint.rhs_layout,
@@ -60,16 +63,18 @@ where
     fn validate_blueprint<R: Runtime>(
         client: &ComputeClient<R>,
         blueprint: &TilingBlueprint,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError> {
-        check_availability(client, &blueprint.dtypes)?;
+        check_availability(client, dtypes)?;
 
         let m = blueprint.tiling_scheme.tile_size.m();
         let n = blueprint.tiling_scheme.tile_size.n();
         let k = blueprint.tiling_scheme.tile_size.k();
 
-        let lhs = blueprint.line_sizes.lhs as u32;
-        let rhs = blueprint.line_sizes.rhs as u32;
-        let out = blueprint.line_sizes.out as u32;
+        let lhs = line_sizes.lhs as u32;
+        let rhs = line_sizes.rhs as u32;
+        let out = line_sizes.out as u32;
 
         match blueprint.lhs_layout {
             MatrixLayout::RowMajor => {
@@ -118,9 +123,9 @@ fn check_availability<R: Runtime>(
     client: &ComputeClient<R>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
-    let lhs = *dtypes.lhs_register;
-    let rhs = *dtypes.rhs_register;
-    let acc = *dtypes.acc_register;
+    let lhs = dtypes.lhs_register;
+    let rhs = dtypes.rhs_register;
+    let acc = dtypes.acc_register;
 
     let lhs = match lhs {
         StorageType::Scalar(ElemType::Float(FloatKind::Flex32)) => {

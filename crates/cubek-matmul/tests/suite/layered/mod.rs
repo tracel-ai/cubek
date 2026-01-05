@@ -5,7 +5,6 @@ use cubecl::TestRuntime;
 use cubecl::frontend::CubePrimitive;
 use cubecl::std::tensor::TensorHandle;
 use cubek_matmul::components::stage::PartitionBuffering;
-use cubek_matmul::definition::MatmulElemType;
 use cubek_matmul::definition::MatmulElems;
 use cubek_matmul::definition::MatmulIdent;
 use cubek_matmul::definition::MatmulProblem;

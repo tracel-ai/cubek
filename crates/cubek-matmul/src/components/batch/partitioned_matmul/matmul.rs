@@ -11,7 +11,8 @@ use crate::components::batch::{
 use crate::components::global::{self, GlobalConfig, GlobalMatmul, GlobalMatmulFamily};
 use crate::components::stage::StageConfig as _;
 use crate::definition::{
-    AccG, Blueprint as _, CubeCountInput, LhsG, MatmulElems, MatmulPrecision, RhsG, TilingBlueprint,
+    AccG, Blueprint as _, CubeCountInput, LhsG, MatmulElems, MatmulLineSizes, MatmulPrecision,
+    RhsG, TilingBlueprint,
 };
 use crate::launch::MatmulArgs;
 
@@ -39,9 +40,29 @@ pub(crate) fn matmul_entry<
     #[define(LhsS, RhsS, AccS)] stage: [StorageType; 3],
     #[define(LhsR, RhsR, AccR)] register: [StorageType; 3],
 ) {
+    let mut state = Args::init_state::<LhsG, RhsG, AccG>(
+        inputs,
+        output,
+        blueprint.lhs_global_layout_config(),
+        blueprint.rhs_global_layout_config(),
+        blueprint.out_global_layout_config(),
+    );
+
+    let line_size_lhs = Args::view_lhs(&state).line_size();
+    let line_size_rhs = Args::view_rhs(&state).line_size();
+    let line_size_out = Args::view_out(&mut state).line_size();
+    let line_sizes = comptime!(MatmulLineSizes {
+        lhs: line_size_lhs as u8,
+        rhs: line_size_rhs as u8,
+        out: line_size_out as u8,
+    });
+
     let config = comptime!(PartitionedBatchMatmulFamily::<GMMF, GPM>::expand_config(
         &blueprint,
+        &MatmulElems::from_define_arrays(global, stage, register),
+        &line_sizes
     ));
+
     if comptime!(config.is_err()) {
         push_validation_error(config.err().unwrap().to_string());
         comptime!(return);
@@ -54,14 +75,6 @@ pub(crate) fn matmul_entry<
             terminate!()
         }
     }
-
-    let mut state = Args::init_state::<LhsG, RhsG, AccG>(
-        inputs,
-        output,
-        config.lhs_global_layout_config(),
-        config.rhs_global_layout_config(),
-        config.out_global_layout_config(),
-    );
 
     PartitionedBatchMatmul::<
         ((LhsG, LhsS, LhsR), (RhsG, RhsS, RhsR), (AccG, AccS, AccR)),

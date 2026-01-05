@@ -54,7 +54,11 @@ where
     >;
     type Config = SharedGlobalMatmulConfig<SMM::Config>;
 
-    fn expand_config(blueprint: &TilingBlueprint) -> Result<Self::Config, MatmulSetupError> {
+    fn expand_config(
+        blueprint: &TilingBlueprint,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
+    ) -> Result<Self::Config, MatmulSetupError> {
         // Should be set from selection, but tests won't work properly. This algorithm fails without
         // specialization so it needs to be enabled.
         let mut blueprint = blueprint.clone();
@@ -65,12 +69,17 @@ where
 
         let max_global_readers = MaxGlobalReaderPlanes::new::<L, L>(
             &blueprint.tiling_scheme,
-            &blueprint.line_sizes,
+            line_sizes,
             blueprint.plane_dim,
-            &blueprint.dtypes,
+            dtypes,
         );
 
-        let stage_config = SMM::expand_config(&blueprint, Some(max_global_readers), (2, 2).into())?;
+        let stage_config = SMM::expand_config(
+            &blueprint,
+            Some(max_global_readers),
+            (2, 2).into(),
+            line_sizes,
+        )?;
 
         let plane_role_config = stage_config.plane_role_config();
         let plane_counts = MatmulPlaneCounts::new(
@@ -84,7 +93,7 @@ where
         let reader_mode = blueprint.reader_mode;
 
         let lhs_gmem_config = GlobalMemoryConfig {
-            line_size: blueprint.line_sizes.lhs as u32,
+            line_size: line_sizes.lhs as u32,
             check_row_bounds: blueprint.check_m_bounds,
             check_col_bounds: blueprint.check_k_bounds,
             matrix_layout: blueprint.lhs_layout,
@@ -92,7 +101,7 @@ where
         };
 
         let rhs_gmem_config = GlobalMemoryConfig {
-            line_size: blueprint.line_sizes.rhs as u32,
+            line_size: line_sizes.rhs as u32,
             check_row_bounds: blueprint.check_k_bounds,
             check_col_bounds: blueprint.check_n_bounds,
             matrix_layout: blueprint.rhs_layout,
@@ -100,7 +109,7 @@ where
         };
 
         let out_gmem_config = GlobalMemoryConfig {
-            line_size: blueprint.line_sizes.out as u32,
+            line_size: line_sizes.out as u32,
             matrix_layout: MatrixLayout::RowMajor,
             check_row_bounds: blueprint.check_m_bounds,
             check_col_bounds: blueprint.check_n_bounds,
@@ -158,6 +167,8 @@ where
         client: &ComputeClient<R>,
         blueprint: &TilingBlueprint,
         problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError> {
         todo!();
         // LL::check(client, problem, &config.lhs_reader_config, dtypes)?;
