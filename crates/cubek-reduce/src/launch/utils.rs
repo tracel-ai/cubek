@@ -92,11 +92,11 @@ pub fn generate_line_size<R: Runtime>(
                     // On CPU we benefit from bigger line size, which increases the number of
                     // consecutive loads from global memory on perpendicular reduce.
                     let supported_line_sizes = R::supported_line_sizes()
-                        .into_iter()
+                        .iter()
                         .filter(|size| {
                             **size as usize <= max_line_size && max_line_size % **size as usize == 0
                         })
-                        .map(|l| *l);
+                        .copied();
 
                     tensor_line_size_perpendicular(
                         supported_line_sizes,
