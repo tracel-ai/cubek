@@ -7,7 +7,7 @@ use cubecl::{
 };
 use cubecl_common::quant::scheme::{QuantScheme, QuantStore, QuantValue};
 
-use cubecl::std::tensor::{TensorHandle, into_contiguous_packed, into_contiguous_pitched};
+use cubecl::std::tensor::{TensorHandle, into_contiguous_packed, into_contiguous_pitched_ref};
 
 pub enum MatmulInputHandle<R: Runtime> {
     Normal(TensorHandle<R>),
@@ -195,7 +195,7 @@ impl<'a, R: Runtime> MatmulInputHandleRef<'a, R> {
     ) -> Result<MatmulInputHandle<R>, LaunchError> {
         let val = match self {
             MatmulInputHandleRef::Normal(data, dtype) => {
-                MatmulInputHandle::Normal(into_contiguous_pitched(client, data, *dtype)?)
+                MatmulInputHandle::Normal(into_contiguous_pitched_ref(client, data, *dtype)?)
             }
             MatmulInputHandleRef::Quantized {
                 data,
@@ -229,7 +229,7 @@ impl<'a, R: Runtime> MatmulInputHandleRef<'a, R> {
                         // Unsafely cast to E
                         TensorHandle::from_ref(&data.as_ref(), *data_dtype)
                     }
-                    _ => into_contiguous_pitched(client, data, *data_dtype)?,
+                    _ => into_contiguous_pitched_ref(client, data, *data_dtype)?,
                 };
                 MatmulInputHandle::Quantized {
                     data,
