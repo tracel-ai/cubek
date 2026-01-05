@@ -261,13 +261,13 @@ impl<'a, R: Runtime> GlobalLayoutLaunch<'a, R> {
 
 #[derive(CubeType, CubeLaunch)]
 pub struct BatchLayout {
-    batch_shape: Sequence<FastDivmod>,
+    batch_shape: Sequence<FastDivmod<u32>>,
     batch_strides: Sequence<usize>,
 }
 
 #[cube]
 impl BatchLayout {
-    pub fn new(batch_strides: Sequence<usize>, batch_shape: Sequence<FastDivmod>) -> Self {
+    pub fn new(batch_strides: Sequence<usize>, batch_shape: Sequence<FastDivmod<u32>>) -> Self {
         BatchLayout {
             batch_shape,
             batch_strides,

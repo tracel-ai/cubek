@@ -12,8 +12,8 @@ use crate::components::{ConvolutionOperation, ConvolutionParams, global::layout:
 /// Im2col layout, producing both the position and offset
 #[derive(CubeType, CubeLaunch)]
 pub struct TmaIm2colLayout {
-    shape_out: Sequence<FastDivmod>,
-    padded_channels: FastDivmod,
+    shape_out: Sequence<FastDivmod<u32>>,
+    padded_channels: FastDivmod<u32>,
     #[cube(comptime)]
     params: ConvolutionParams,
     #[cube(comptime)]
@@ -23,8 +23,8 @@ pub struct TmaIm2colLayout {
 #[cube]
 impl TmaIm2colLayout {
     pub fn new(
-        shape_out: Sequence<FastDivmod>,
-        padded_channels: FastDivmod,
+        shape_out: Sequence<FastDivmod<u32>>,
+        padded_channels: FastDivmod<u32>,
         #[comptime] params: ConvolutionParams,
         #[comptime] check_kernel: bool,
     ) -> Self {
@@ -126,7 +126,7 @@ impl Layout for TmaIm2colLayout {
 /// Decompose a linear index into local positions along each dimension in `shape`. Also returns the
 /// left over remainder.
 #[cube]
-pub(crate) fn div_mod_seq(pos: u32, shape: &Sequence<FastDivmod>) -> (u32, Sequence<u32>) {
+pub(crate) fn div_mod_seq(pos: u32, shape: &Sequence<FastDivmod<u32>>) -> (u32, Sequence<u32>) {
     let rank = shape.len().comptime();
     let mut offs = pos;
     let mut out = Sequence::new();

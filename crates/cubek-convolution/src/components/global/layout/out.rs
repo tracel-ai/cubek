@@ -15,7 +15,7 @@ use crate::components::{
 #[derive(CubeType, CubeLaunch, Clone)]
 pub struct OutLayout {
     /// Shape of DHW
-    pub shape_out: Sequence<FastDivmod>,
+    pub shape_out: Sequence<FastDivmod<u32>>,
 
     /// Shape of the conceptual `m` size
     pub rows: u32,
@@ -32,7 +32,7 @@ impl OutLayout {
     pub fn new(
         rows: u32,
         cols: u32,
-        shape_out: Sequence<FastDivmod>,
+        shape_out: Sequence<FastDivmod<u32>>,
         #[comptime] config: GlobalMemoryConfig,
     ) -> OutLayout {
         OutLayout {

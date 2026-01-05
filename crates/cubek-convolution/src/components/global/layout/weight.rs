@@ -18,7 +18,7 @@ use crate::components::{
 #[derive(CubeType, CubeLaunch, Clone)]
 pub struct WeightLayout {
     /// Number of channels, including padding, used for decomposing `k`
-    pub padded_channels: FastDivmod,
+    pub padded_channels: FastDivmod<u32>,
 
     /// Shape of the combined kernel and channels dim, including padding
     pub rows: u32,
@@ -38,7 +38,7 @@ impl WeightLayout {
     pub fn new<E: Numeric, G: GlobalConfig>(
         rows: u32,
         cols: u32,
-        padded_channels: FastDivmod,
+        padded_channels: FastDivmod<u32>,
         #[comptime] config: ConvolutionConfig<G>,
     ) -> WeightLayout {
         WeightLayout {

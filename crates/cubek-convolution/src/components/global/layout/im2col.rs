@@ -19,9 +19,9 @@ use crate::components::{
 #[derive(CubeType, CubeLaunch, Clone)]
 pub struct Im2colLayout {
     /// Shape of output DHW
-    pub shape_out: Sequence<FastDivmod>,
+    pub shape_out: Sequence<FastDivmod<u32>>,
     /// Shape of channel, for decomposing k
-    pub padded_channels: FastDivmod,
+    pub padded_channels: FastDivmod<u32>,
 
     /// Shape of the combined `m` dimension, including padding
     pub rows: u32,
@@ -41,8 +41,8 @@ impl Im2colLayout {
     pub fn new<G: GlobalConfig>(
         rows: u32,
         cols: u32,
-        padded_channels: FastDivmod,
-        shape_out: Sequence<FastDivmod>,
+        padded_channels: FastDivmod<u32>,
+        shape_out: Sequence<FastDivmod<u32>>,
         #[comptime] config: ConvolutionConfig<G>,
     ) -> Im2colLayout {
         Im2colLayout {
