@@ -23,7 +23,7 @@ use crate::{
         },
     },
     definition::{
-        CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulElems,
+        CubeCountPlanBlueprint, GlobalOrderDefinition, HypercubeBlueprint, MatmulElems,
         MatmulProblem, MatmulSetupError, PartitionSize, SmAllocation, TileSize, TilingBlueprint,
         TilingScheme,
     },
@@ -198,7 +198,7 @@ fn infer_blueprint_vecmat<R: Runtime>(
     };
 
     let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
-        .global_order(GlobalOrderBlueprint::SwizzleRow {
+        .global_order(GlobalOrderDefinition::SwizzleRow {
             m: problem.m as u32,
             w: 2,
         })

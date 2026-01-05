@@ -2,7 +2,7 @@
 pub mod row_fp {
     use super::*;
     use cubek_matmul::definition::{
-        CubeCountPlanBlueprint, GlobalOrder, GlobalOrderBlueprint, HypercubeBlueprint,
+        CubeCountPlanBlueprint, GlobalOrder, GlobalOrderDefinition, HypercubeBlueprint,
     };
 
     fn hypercube_selection(tiling_scheme: &TilingScheme) -> HypercubeBlueprint {

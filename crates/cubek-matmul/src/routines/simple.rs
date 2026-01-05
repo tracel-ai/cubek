@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 
 use crate::components::batch::BatchMatmulFamily;
 use crate::definition::{
-    CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulElems, MatmulLineSizes,
+    CubeCountPlanBlueprint, GlobalOrderDefinition, HypercubeBlueprint, MatmulElems, MatmulLineSizes,
     MatmulProblem, MatmulSetupError, MultiRowStrategy, SmAllocation, TilingBlueprint, TilingScheme,
     adjust_dtypes,
 };
@@ -183,7 +183,7 @@ fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
             .unwrap();
 
         let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
-            .global_order(GlobalOrderBlueprint::SwizzleRow {
+            .global_order(GlobalOrderDefinition::SwizzleRow {
                 m: problem.m as u32,
                 w: 4,
             })
@@ -205,7 +205,7 @@ fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
             .build()
             .unwrap();
         let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
-            .global_order(GlobalOrderBlueprint::SwizzleRow {
+            .global_order(GlobalOrderDefinition::SwizzleRow {
                 m: problem.m as u32,
                 w: 4,
             })

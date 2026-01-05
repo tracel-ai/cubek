@@ -28,7 +28,7 @@ impl<G: GlobalConfig> BatchConfig for PartitionedBatchConfig<G> {
 
     fn can_yield_extra_cubes(&self) -> bool {
         self.hypercube_config
-            .cube_count_plan_blueprint
+            .cube_count_plan_config
             .can_yield_extra_cubes()
     }
 

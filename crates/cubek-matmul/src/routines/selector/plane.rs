@@ -6,7 +6,7 @@ use crate::components::stage::PartitionBuffering;
 use crate::components::stage::SwizzleMode;
 use crate::components::tile::TileMatmulFamily;
 use crate::definition::{
-    CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulAvailabilityError,
+    CubeCountPlanBlueprint, GlobalOrderDefinition, HypercubeBlueprint, MatmulAvailabilityError,
     MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, MatrixLayout, MultiRowStrategy,
     PartitionSize, SmAllocation, StageSize, SwizzleModes, TileSize, TilingBlueprint, TilingScheme,
     adjust_dtypes,
@@ -150,7 +150,7 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
     };
 
     let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
-        .global_order(GlobalOrderBlueprint::SwizzleRow {
+        .global_order(GlobalOrderDefinition::SwizzleRow {
             m: problem.m as u32,
             w: 4,
         })
@@ -309,7 +309,7 @@ fn selection_tiny<R: Runtime>(
     };
 
     let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
-        .global_order(GlobalOrderBlueprint::SwizzleRow {
+        .global_order(GlobalOrderDefinition::SwizzleRow {
             m: problem.m as u32,
             w: 2,
         })

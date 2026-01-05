@@ -229,7 +229,7 @@ impl CubeCountPlan {
         let n_cubes = (problem.n as u32).div_ceil(config.cube_span.n);
         let batch_cubes = (problem.num_batches() as u32).div_ceil(config.cube_span.batch);
 
-        match config.cube_count_plan_blueprint {
+        match config.cube_count_plan_config {
             CubeCountPlanConfig::FromProblem => CubeCountPlan::FromProblem {
                 m_cubes,
                 n_cubes,

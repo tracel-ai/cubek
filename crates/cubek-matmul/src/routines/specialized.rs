@@ -15,7 +15,7 @@ use crate::components::{
 use crate::components::{global::PlaneWriterFamily, stage::StageFamily};
 use crate::components::{stage::FilledStageFamily, tile::TileMatmulFamily};
 use crate::definition::{
-    CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulLineSizes,
+    CubeCountPlanBlueprint, GlobalOrderDefinition, HypercubeBlueprint, MatmulLineSizes,
     MatmulProblem, MatmulSetupError, MatrixLayout, SmAllocation, SwizzleModes, TilingBlueprint,
     adjust_dtypes,
 };
@@ -190,7 +190,7 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
     };
 
     let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
-        .global_order(GlobalOrderBlueprint::SwizzleRow {
+        .global_order(GlobalOrderDefinition::SwizzleRow {
             m: problem.m as u32,
             w: 4,
         })
