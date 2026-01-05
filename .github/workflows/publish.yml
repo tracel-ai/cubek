@@ -21,9 +21,20 @@ jobs:
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
 
+  publish-cubek-test-utils:
+    needs:
+      - publish-cubek-random
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v5
+    with:
+      crate: cubek-test-utils
+      dry-run-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run-only || false }}
+    secrets:
+      CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
+
   publish-cubek-quant:
     needs:
       - publish-cubek-random
+      - publish-cubek-test-utils
     uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v5
     with:
       crate: cubek-quant
@@ -34,6 +45,7 @@ jobs:
   publish-cubek-reduce:
     needs:
       - publish-cubek-random
+      - publish-cubek-test-utils
     uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v5
     with:
       crate: cubek-reduce
@@ -46,6 +58,7 @@ jobs:
       - publish-cubek-random
       - publish-cubek-reduce
       - publish-cubek-quant
+      - publish-cubek-test-utils
     uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v5
     with:
       crate: cubek-matmul
@@ -58,6 +71,7 @@ jobs:
       - publish-cubek-random
       - publish-cubek-reduce
       - publish-cubek-matmul
+      - publish-cubek-test-utils
     uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v5
     with:
       crate: cubek-convolution
@@ -70,6 +84,7 @@ jobs:
       - publish-cubek-random
       - publish-cubek-reduce
       - publish-cubek-matmul
+      - publish-cubek-test-utils
     uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v5
     with:
       crate: cubek-attention
@@ -86,10 +101,10 @@ jobs:
       - publish-cubek-matmul
       - publish-cubek-attention
       - publish-cubek-convolution
+      - publish-cubek-test-utils
     uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v5
     with:
       crate: cubek
       dry-run-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run-only || false }}
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
-

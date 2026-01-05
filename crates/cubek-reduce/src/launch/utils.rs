@@ -34,11 +34,13 @@ pub fn generate_line_size<R: Runtime>(
     line_mode: LineMode,
     strategy: &LineSizeStrategy,
 ) -> (u8, u8) {
-    let supported_line_sizes = client.io_optimized_line_sizes_unchecked(dtype.size());
     let line_size_input = match line_mode {
-        LineMode::Parallel => {
-            tensor_line_size_parallel(supported_line_sizes, input.shape, input.strides, axis) as u32
-        }
+        LineMode::Parallel => tensor_line_size_parallel(
+            client.io_optimized_line_sizes_unchecked(dtype.size()),
+            input.shape,
+            input.strides,
+            axis,
+        ) as u32,
         LineMode::Perpendicular => {
             // To compute the maximum line size we can used,
             // we first sort both the input and output axes by increasing strides.
@@ -85,14 +87,36 @@ pub fn generate_line_size<R: Runtime>(
                 .filter_map(|(i, o)| (i == o).then_some(output.shape[i]))
                 .product();
 
-            tensor_line_size_perpendicular(
-                supported_line_sizes.filter(|size| {
-                    *size as usize <= max_line_size && max_line_size % *size as usize == 0
-                }),
-                input.shape,
-                input.strides,
-                axis,
-            ) as u32
+            match client.properties().hardware.num_cpu_cores.is_some() {
+                true => {
+                    // On CPU we benefit from bigger line size, which increases the number of
+                    // consecutive loads from global memory on perpendicular reduce.
+                    let supported_line_sizes = R::supported_line_sizes()
+                        .iter()
+                        .filter(|size| {
+                            **size as usize <= max_line_size && max_line_size % **size as usize == 0
+                        })
+                        .copied();
+
+                    tensor_line_size_perpendicular(
+                        supported_line_sizes,
+                        input.shape,
+                        input.strides,
+                        axis,
+                    ) as u32
+                }
+                false => {
+                    let supported_line_sizes =
+                        client.io_optimized_line_sizes_unchecked(dtype.size());
+
+                    tensor_line_size_perpendicular(
+                        supported_line_sizes,
+                        input.shape,
+                        input.strides,
+                        axis,
+                    ) as u32
+                }
+            }
         }
     };
 

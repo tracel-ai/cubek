@@ -11,7 +11,7 @@ use cubek_matmul::{
     launch::MatmulArgs,
 };
 
-use cubecl::std::tensor::{TensorHandle, into_contiguous_pitched, is_contiguous_pitched};
+use cubecl::std::tensor::{TensorHandle, into_contiguous_pitched_ref, is_contiguous_pitched};
 
 use cubecl::prelude::*;
 
@@ -98,7 +98,7 @@ pub(crate) fn into_tensor_handle<R: Runtime>(
     let handle = if has_valid_layout(handle) {
         TensorHandle::from_ref(handle, dtype)
     } else {
-        into_contiguous_pitched(client, handle, dtype)?
+        into_contiguous_pitched_ref(client, handle, dtype)?
     };
     Ok(handle)
 }
@@ -120,7 +120,7 @@ pub(crate) fn into_tensor_handle_tma<R: Runtime>(
     let handle = if has_valid_layout_tma(handle, operation) {
         TensorHandle::from_ref(handle, dtype)
     } else {
-        into_contiguous_pitched(client, handle, dtype)?
+        into_contiguous_pitched_ref(client, handle, dtype)?
     };
     Ok(handle)
 }

@@ -14,15 +14,10 @@ repository = "https://github.com/tracel-ai/cubek"
 version.workspace = true
 
 [features]
-cuda = ["cubecl/cuda"]
-hip = ["cubecl/hip"]
-wgpu = ["cubecl/wgpu"]
-wgpu-msl = ["cubecl/wgpu-msl"]
-wgpu-spirv = ["cubecl/wgpu-spirv"]
 
 [dependencies]
 cubecl = { workspace = true, features = ["test-runtime", "stdlib"] }
-cubek = { path = "../crates/cubek", version = "0.0.1", default-features = false, features = [
+cubek = { path = "../crates/cubek", version = "=0.1.0-pre.1", default-features = false, features = [
     "random",
     "reduce",
     "matmul",
@@ -54,3 +49,7 @@ name = "unary"
 [[bench]]
 harness = false
 name = "attention"
+
+[[bench]]
+harness = false
+name = "contiguous"

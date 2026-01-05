@@ -1,4 +1,4 @@
-# Runnning
+# Running
 
 Example with matmul on vulkan:
 

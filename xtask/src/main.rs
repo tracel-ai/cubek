@@ -26,16 +26,14 @@ pub enum Command {
 }
 
 fn main() -> anyhow::Result<()> {
-    let args = init_xtask::<Command>(parse_args::<Command>()?)?;
+    let (args, env) = init_xtask::<Command>(parse_args::<Command>()?)?;
     match args.command {
-        Command::Test(cmd_args) => {
-            commands::test::handle_command(cmd_args, args.environment, args.context)
-        }
+        Command::Test(cmd_args) => commands::test::handle_command(cmd_args, env, args.context),
         Command::Profile(cmd_args) => cmd_args.run(),
         Command::Check(cmd_args) => {
-            base_commands::check::handle_command(cmd_args, args.environment, args.context)
+            base_commands::check::handle_command(cmd_args, env, args.context)
         }
-        _ => dispatch_base_commands(args),
+        _ => dispatch_base_commands(args, env),
     }?;
     Ok(())
 }
