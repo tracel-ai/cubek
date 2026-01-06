@@ -1,16 +1,16 @@
 use crate::{
-    components::global::{MaxGlobalReaderPlanes, specialization::roles::PlaneRoles},
+    components::global::{MaxGlobalReaderPlanes, specialization::roles::PlaneFlowCounts},
     definition::StageIdent,
 };
 
 /// Configuration for how each input tensor (Lhs and Rhs) is loaded,
 /// specifying the plane roles responsible for loading them.
 #[derive(Default, Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct LoadSpecializationConfig {
+pub struct LoadFlows {
     /// Load strategy for the Lhs tensor.
-    pub lhs: SpecializationTensorConfig,
+    pub lhs: InputLoadFlow,
     /// Load strategy for the Rhs tensor.
-    pub rhs: SpecializationTensorConfig,
+    pub rhs: InputLoadFlow,
 }
 
 /// Determines which types of planes are responsible for loading a tensor.
@@ -18,58 +18,58 @@ pub struct LoadSpecializationConfig {
 /// TODO: maybe we want a "MainPlusExtra" variant that uses main flow planes and load-only planes
 /// for the same tensor
 #[derive(Default, Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub enum SpecializationTensorConfig {
+pub enum InputLoadFlow {
     /// The tensor is loaded exclusively by planes that participate in the main computation flow.
     #[default]
-    MainFlowOnly,
+    MainOnly,
 
     /// The tensor is loaded exclusively by planes dedicated to loading (load-only planes),
     /// which do not participate in computation.
-    LoadFlowOnly,
+    LoadOnly,
 }
 
-impl LoadSpecializationConfig {
+impl LoadFlows {
     /// Whether there is specialization in the algorithm
     pub fn has_specialization(&self) -> bool {
         self.lhs.has_specialization() || self.rhs.has_specialization()
     }
 }
 
-impl SpecializationTensorConfig {
+impl InputLoadFlow {
     /// Whether there is specialization for the tensor
     pub fn has_specialization(&self) -> bool {
         match self {
-            SpecializationTensorConfig::MainFlowOnly => false,
-            SpecializationTensorConfig::LoadFlowOnly => true,
+            InputLoadFlow::MainOnly => false,
+            InputLoadFlow::LoadOnly => true,
         }
     }
 }
 
-impl LoadSpecializationConfig {
+impl LoadFlows {
     /// Computes how many planes of each role there should be,
     /// using the number of planes needed for main execution, and how
     /// many planes each reader can handle
     ///
     /// The strategy is to find a balanced divisor for reader planes that stays as
     /// close as possible to the main execution plane count.
-    pub fn to_plane_roles(
+    pub fn to_plane_flow_counts(
         &self,
         main_flow: u32,
         reader_tasks: MaxGlobalReaderPlanes,
-    ) -> PlaneRoles {
-        use SpecializationTensorConfig::*;
+    ) -> PlaneFlowCounts {
+        use InputLoadFlow::*;
 
         let ideal_load_only = match (self.lhs, self.rhs) {
-            (MainFlowOnly, MainFlowOnly) => 0,
-            (MainFlowOnly, LoadFlowOnly) => reader_tasks.rhs,
-            (LoadFlowOnly, MainFlowOnly) => reader_tasks.lhs,
-            (LoadFlowOnly, LoadFlowOnly) => gcd(reader_tasks.lhs, reader_tasks.rhs),
+            (MainOnly, MainOnly) => 0,
+            (MainOnly, LoadOnly) => reader_tasks.rhs,
+            (LoadOnly, MainOnly) => reader_tasks.lhs,
+            (LoadOnly, LoadOnly) => gcd(reader_tasks.lhs, reader_tasks.rhs),
         };
 
         // Don't stray too far from main_flow
         let load_only = best_divisor_close_to_reference(ideal_load_only, main_flow);
 
-        PlaneRoles {
+        PlaneFlowCounts {
             main_flow,
             load_only,
         }
@@ -95,7 +95,7 @@ fn best_divisor_close_to_reference(dividible_value: u32, reference: u32) -> u32 
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-/// Specifies which input(s) a plane role participates in loading.
+/// Specifies which input(s) a plane flow participates in loading.
 pub enum LoadingSides {
     /// Load both Lhs and Rhs
     Both,
@@ -142,40 +142,40 @@ impl SpecializedLoadingSides {
         &self,
         specialized: bool,
         ident: StageIdent,
-        plane_roles: PlaneRoles,
+        plane_flow_counts: PlaneFlowCounts,
     ) -> u32 {
         if specialized {
             let mut num_loading_planes = 0;
             if self.main_flow.includes(ident) {
-                num_loading_planes += plane_roles.main_flow;
+                num_loading_planes += plane_flow_counts.main_flow;
             }
             if self.load_only.includes(ident) {
-                num_loading_planes += plane_roles.load_only;
+                num_loading_planes += plane_flow_counts.load_only;
             }
             num_loading_planes
         } else {
-            plane_roles.main_flow
+            plane_flow_counts.main_flow
         }
     }
 }
 
-impl From<LoadSpecializationConfig> for SpecializedLoadingSides {
-    fn from(lsc: LoadSpecializationConfig) -> Self {
-        use SpecializationTensorConfig::*;
+impl From<LoadFlows> for SpecializedLoadingSides {
+    fn from(lsc: LoadFlows) -> Self {
+        use InputLoadFlow::*;
         match (lsc.lhs, lsc.rhs) {
-            (MainFlowOnly, MainFlowOnly) => SpecializedLoadingSides {
+            (MainOnly, MainOnly) => SpecializedLoadingSides {
                 main_flow: LoadingSides::Both,
                 load_only: LoadingSides::None,
             },
-            (MainFlowOnly, LoadFlowOnly) => SpecializedLoadingSides {
+            (MainOnly, LoadOnly) => SpecializedLoadingSides {
                 main_flow: LoadingSides::Lhs,
                 load_only: LoadingSides::Rhs,
             },
-            (LoadFlowOnly, MainFlowOnly) => SpecializedLoadingSides {
+            (LoadOnly, MainOnly) => SpecializedLoadingSides {
                 main_flow: LoadingSides::Rhs,
                 load_only: LoadingSides::Lhs,
             },
-            (LoadFlowOnly, LoadFlowOnly) => SpecializedLoadingSides {
+            (LoadOnly, LoadOnly) => SpecializedLoadingSides {
                 main_flow: LoadingSides::None,
                 load_only: LoadingSides::Both,
             },
@@ -200,19 +200,16 @@ pub struct MatmulPlaneCounts {
 }
 
 impl MatmulPlaneCounts {
-    pub fn new(
-        load_specialization_config: LoadSpecializationConfig,
-        plane_roles: PlaneRoles,
-    ) -> Self {
-        let total = plane_roles.total_count();
-        match load_specialization_config.has_specialization() {
+    pub fn new(tensor_load_flows: LoadFlows, plane_flow_counts: PlaneFlowCounts) -> Self {
+        let total = plane_flow_counts.total_count();
+        match tensor_load_flows.has_specialization() {
             true => {
-                let loading_sides: SpecializedLoadingSides = load_specialization_config.into();
+                let loading_sides: SpecializedLoadingSides = tensor_load_flows.into();
 
                 Self {
-                    lhs: loading_sides.num_loading_planes(true, StageIdent::Lhs, plane_roles),
-                    rhs: loading_sides.num_loading_planes(true, StageIdent::Rhs, plane_roles),
-                    out: plane_roles.main_flow,
+                    lhs: loading_sides.num_loading_planes(true, StageIdent::Lhs, plane_flow_counts),
+                    rhs: loading_sides.num_loading_planes(true, StageIdent::Rhs, plane_flow_counts),
+                    out: plane_flow_counts.main_flow,
                     total,
                 }
             }

@@ -5,8 +5,8 @@ mod roles;
 mod specializer;
 
 pub use config::{
-    LoadSpecializationConfig, LoadingSides, MatmulPlaneCounts, SpecializationTensorConfig,
+    LoadFlows, LoadingSides, MatmulPlaneCounts, InputLoadFlow,
     SpecializedLoadingSides,
 };
-pub use roles::{PlaneRoleConfig, RoleRule, RoleRuleConfig};
+pub use roles::{PlaneFlowConfig, PlaneFlowPartition, PlaneFlowPartitionRule};
 pub use specializer::{Specializer, SpecializerKind};

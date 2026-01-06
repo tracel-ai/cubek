@@ -99,10 +99,10 @@ where
         //     | ConvolutionOperation::BackwardData => true,
         // };
 
-        // let plane_role_config = stage_config.plane_role_config();
+        // let plane_flow_config = stage_config.plane_flow_config();
         // let plane_counts = MatmulPlaneCounts::new(
         //     selection.load_specialization_config,
-        //     plane_role_config.plane_roles,
+        //     plane_flow_config.plane_roles,
         // );
 
         // let precompute_job = selection.loading_precompute_strategy.into();
@@ -139,7 +139,7 @@ where
         //     smem_config: stage_config.lhs_smem_config(),
         //     precompute_job,
         //     plane_dim,
-        //     plane_role_config,
+        //     plane_flow_config,
         //     reader_mode,
         //     stage_ident: StageIdent::Lhs,
         //     event_loading_mode,
@@ -151,7 +151,7 @@ where
         //     smem_config: stage_config.rhs_smem_config(),
         //     precompute_job,
         //     plane_dim,
-        //     plane_role_config,
+        //     plane_flow_config,
         //     reader_mode,
         //     stage_ident: StageIdent::Rhs,
         //     event_loading_mode,
@@ -161,7 +161,7 @@ where
         // let writer_config = GlobalWriterConfig {
         //     gmem_config: out_gmem_config,
         //     smem_config: stage_config.out_smem_config(),
-        //     role_rule_config: plane_role_config.rule,
+        //     role_rule_config: plane_flow_config.rule,
         //     plane_dim: selection.plane_dim,
         // };
 
@@ -194,8 +194,9 @@ fn validate<LL: LoadingValidation, RL: LoadingValidation, S: StageConfig, R: Run
     problem: &MatmulProblem,
     dtypes: &MatmulElems,
 ) -> Result<SharedGlobalMatmulConfig<S>, MatmulSetupError> {
-    LL::validate_with_config(client, problem, &config.lhs_reader_config, dtypes)?;
-    RL::validate_with_config(client, problem, &config.rhs_reader_config, dtypes)?;
+    todo!();
+    // LL::validate_with_config(client, problem, &config.lhs_reader_config, dtypes)?;
+    // RL::validate_with_config(client, problem, &config.rhs_reader_config, dtypes)?;
     cube_dim_validation(config.cube_dim())?;
     Ok(config)
 }

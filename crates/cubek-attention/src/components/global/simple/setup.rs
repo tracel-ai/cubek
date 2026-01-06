@@ -3,8 +3,8 @@ use std::marker::PhantomData;
 use cubek_matmul::{
     components::{
         global::{
-            GlobalReaderConfig, GlobalWriterConfig, PartitionedStageFamily, PlaneRoleConfig,
-            RoleRuleConfig, SpecializationTensorConfig,
+            GlobalReaderConfig, GlobalWriterConfig, PartitionedStageFamily, PlaneFlowConfig,
+            PlaneFlowPartitionRule, InputLoadFlow,
             memory::{GlobalMemoryConfig, ViewDirection},
             multi_stage::EventLoadingMode,
             read::ReaderMode,
@@ -50,8 +50,8 @@ impl<
         let plane_dim = stage_config.plane_dim();
         let reader_mode = ReaderMode::Relaxed;
         let event_loading_mode = EventLoadingMode::Relaxed;
-        let specialization_tensor_config = SpecializationTensorConfig::MainFlowOnly;
-        let plane_role_config = PlaneRoleConfig::new_unspecialized(stage_config.num_planes());
+        let specialization_tensor_config = InputLoadFlow::MainOnly;
+        let plane_flow_config = PlaneFlowConfig::new_unspecialized(stage_config.num_planes());
 
         let query_gmem_config = GlobalMemoryConfig {
             line_size: blueprint.line_sizes.query as u32,
@@ -101,7 +101,7 @@ impl<
             reader_mode,
             event_loading_mode,
             specialization_tensor_config,
-            plane_role_config,
+            plane_flow_config,
             stage_ident: StageIdent::Rhs,
         };
 
@@ -113,14 +113,14 @@ impl<
             reader_mode,
             event_loading_mode,
             specialization_tensor_config,
-            plane_role_config,
+            plane_flow_config,
             stage_ident: StageIdent::Rhs,
         };
 
         let writer_config = GlobalWriterConfig {
             gmem_config: out_gmem_config,
             smem_config: stage_config.out_smem_config(),
-            role_rule_config: RoleRuleConfig::MainFlowOnly,
+            role_rule_config: PlaneFlowPartitionRule::MainFlowOnly,
             plane_dim,
         };
 

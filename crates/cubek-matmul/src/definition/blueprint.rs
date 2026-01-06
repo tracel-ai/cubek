@@ -3,7 +3,7 @@ use cubecl::{CubeDim, Runtime, client::ComputeClient, flex32, prelude::CubePrimi
 use crate::{
     components::{
         CubeDimResource,
-        global::{LoadSpecializationConfig, memory::GlobalLayoutConfig, read::ReaderMode},
+        global::{LoadFlows, memory::GlobalLayoutConfig, read::ReaderMode},
         stage::{PartitionBuffering, SwizzleMode},
     },
     definition::{
@@ -29,7 +29,7 @@ pub struct TilingBlueprint {
     pub partition_buffering: PartitionBuffering,
     pub loading_precompute_strategy: LoadingPrecomputeStrategy,
     pub reader_mode: ReaderMode,
-    pub load_specialization_config: LoadSpecializationConfig,
+    pub load_flows: LoadFlows,
     pub hypercube_blueprint: HypercubeBlueprint,
     pub lhs_layout: MatrixLayout,
     pub rhs_layout: MatrixLayout,
@@ -40,15 +40,27 @@ pub struct TilingBlueprint {
 
 impl Blueprint for TilingBlueprint {
     fn lhs_global_layout_config(&self) -> GlobalLayoutConfig {
-        todo!()
+        GlobalLayoutConfig {
+            matrix_layout: self.lhs_layout,
+            check_row_bounds: self.check_m_bounds,
+            check_col_bounds: self.check_k_bounds,
+        }
     }
 
     fn rhs_global_layout_config(&self) -> GlobalLayoutConfig {
-        todo!()
+        GlobalLayoutConfig {
+            matrix_layout: self.rhs_layout,
+            check_row_bounds: self.check_k_bounds,
+            check_col_bounds: self.check_n_bounds,
+        }
     }
 
     fn out_global_layout_config(&self) -> GlobalLayoutConfig {
-        todo!()
+        GlobalLayoutConfig {
+            matrix_layout: MatrixLayout::RowMajor,
+            check_row_bounds: self.check_m_bounds,
+            check_col_bounds: self.check_n_bounds,
+        }
     }
 }
 
@@ -129,7 +141,7 @@ impl TilingBlueprint {
             partition_buffering: PartitionBuffering::default(),
             loading_precompute_strategy: LoadingPrecomputeStrategy::default(),
             reader_mode: ReaderMode::default(),
-            load_specialization_config: LoadSpecializationConfig::default(),
+            load_specialization_config: LoadFlows::default(),
         }
     }
 
@@ -168,7 +180,7 @@ pub struct TilingBlueprintBuilder {
     partition_buffering: PartitionBuffering,
     loading_precompute_strategy: LoadingPrecomputeStrategy,
     reader_mode: ReaderMode,
-    load_specialization_config: LoadSpecializationConfig,
+    load_specialization_config: LoadFlows,
 }
 
 impl TilingBlueprintBuilder {
@@ -200,10 +212,7 @@ impl TilingBlueprintBuilder {
         self
     }
 
-    pub fn load_specialization_config(
-        mut self,
-        load_specialization_config: LoadSpecializationConfig,
-    ) -> Self {
+    pub fn load_specialization_config(mut self, load_specialization_config: LoadFlows) -> Self {
         self.load_specialization_config = load_specialization_config;
         self
     }
@@ -217,7 +226,7 @@ impl TilingBlueprintBuilder {
             partition_buffering: self.partition_buffering,
             loading_precompute_strategy: self.loading_precompute_strategy,
             reader_mode: self.reader_mode,
-            load_specialization_config: self.load_specialization_config,
+            load_flows: self.load_specialization_config,
             lhs_layout: self.lhs_layout,
             rhs_layout: self.rhs_layout,
             check_m_bounds: self.check_m_bounds,

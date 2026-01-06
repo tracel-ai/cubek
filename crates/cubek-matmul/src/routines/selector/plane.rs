@@ -1,7 +1,7 @@
 use cubecl::features::MmaConfig;
 use cubecl::{Runtime, client::ComputeClient, ir::StorageType};
 
-use crate::components::global::{LoadSpecializationConfig, SpecializationTensorConfig};
+use crate::components::global::{LoadFlows, InputLoadFlow};
 use crate::components::stage::PartitionBuffering;
 use crate::components::stage::SwizzleMode;
 use crate::components::tile::TileMatmulFamily;
@@ -162,9 +162,9 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
         .hypercube_blueprint(hypercube);
 
     if options.specialized {
-        builder = builder.load_specialization_config(LoadSpecializationConfig {
-            lhs: SpecializationTensorConfig::LoadFlowOnly,
-            rhs: SpecializationTensorConfig::LoadFlowOnly,
+        builder = builder.load_specialization_config(LoadFlows {
+            lhs: InputLoadFlow::LoadOnly,
+            rhs: InputLoadFlow::LoadOnly,
         });
     }
 

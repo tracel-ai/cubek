@@ -2,7 +2,7 @@ use crate::components::global::read::LoaderStage;
 use crate::components::global::read::{PartialStageGlobalReader, StageBuffer, ZeroGlobalReader};
 use crate::components::global::{GlobalConfig, GlobalWriter};
 use crate::components::global::{GlobalMatmul, SharedGlobalMatmulConfig};
-use crate::components::global::{RoleRule, read::AsyncPartialLoadingStrategy};
+use crate::components::global::{PlaneFlowPartition, read::AsyncPartialLoadingStrategy};
 use crate::components::stage;
 use crate::components::stage::FilledStage;
 use crate::components::stage::StageConfig as _;
@@ -87,9 +87,9 @@ where
         let rhs_stage_a = rhs_reader.stage(StageBuffer::A);
         let rhs_stage_b = rhs_reader.stage(StageBuffer::B);
 
-        let compute_units = config.plane_role_config().plane_roles.main_flow * config.plane_dim();
+        let compute_units = config.plane_flow_config().counts.main_flow * config.plane_dim();
 
-        let role_rule = RoleRule::new(config.plane_role_config().rule);
+        let role_rule = PlaneFlowPartition::new(config.plane_flow_config().partition_rule);
 
         // Barrier for writing out
         let barrier_done = Barrier::shared_uninit();

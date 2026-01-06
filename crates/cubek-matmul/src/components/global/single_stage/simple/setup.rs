@@ -1,4 +1,5 @@
 use crate::components::CubeDimResource;
+use crate::components::global::PlaneFlowConfig;
 use crate::definition::{
     InvalidConfigError, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem,
     MatmulSetupError, MatrixLayout, StageIdent,
@@ -6,8 +7,8 @@ use crate::definition::{
 use crate::{
     components::{
         global::{
-            GlobalReaderConfig, GlobalWriterConfig, GlobalWriterFamily, SharedGlobalMatmulConfig,
-            SpecializationTensorConfig, WriteTiling,
+            GlobalReaderConfig, GlobalWriterConfig, GlobalWriterFamily, InputLoadFlow,
+            SharedGlobalMatmulConfig, WriteTiling,
             memory::{GlobalMemoryConfig, ViewDirection},
             multi_stage::EventLoadingMode,
             read::FullLoadingStrategy,
@@ -61,13 +62,24 @@ where
         dtypes: &MatmulElems,
         line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
-        let stage_config = SMM::expand_config(&blueprint, None, (1, 1).into(), dtypes, line_sizes)?;
+        let plane_dim = blueprint.plane_dim;
+        let plane_flow_config = PlaneFlowConfig::new(
+            blueprint.load_flows,
+            None,
+            SMM::cubedim_resource(blueprint)?.num_planes(plane_dim)?,
+        )?;
 
-        let plane_role_config = stage_config.plane_role_config();
+        let stage_config = SMM::expand_config(
+            &blueprint,
+            plane_flow_config,
+            (1, 1).into(),
+            dtypes,
+            line_sizes,
+        )?;
+
         let precompute_job = blueprint.loading_precompute_strategy.into();
         let reader_mode = blueprint.reader_mode;
-        let plane_dim = blueprint.plane_dim;
-        let specialization_tensor_config = SpecializationTensorConfig::MainFlowOnly;
+        let specialization_tensor_config = InputLoadFlow::MainOnly;
 
         // Not used in simple
         let event_loading_mode = EventLoadingMode::Relaxed;
@@ -101,7 +113,7 @@ where
             smem_config: stage_config.lhs_smem_config(),
             precompute_job,
             plane_dim,
-            plane_role_config,
+            plane_flow_config,
             reader_mode,
             stage_ident: StageIdent::Lhs,
             event_loading_mode,
@@ -113,7 +125,7 @@ where
             smem_config: stage_config.rhs_smem_config(),
             precompute_job,
             plane_dim,
-            plane_role_config,
+            plane_flow_config,
             reader_mode,
             stage_ident: StageIdent::Rhs,
             event_loading_mode,
@@ -123,7 +135,7 @@ where
         let writer_config = GlobalWriterConfig {
             gmem_config: out_gmem_config,
             smem_config: stage_config.out_smem_config(),
-            role_rule_config: plane_role_config.rule,
+            role_rule_config: plane_flow_config.partition_rule,
             plane_dim,
         };
 
@@ -140,7 +152,7 @@ where
     fn cubedim_resource(
         blueprint: &TilingBlueprint,
     ) -> Result<CubeDimResource, InvalidConfigError> {
-        let resources = if !blueprint.load_specialization_config.has_specialization() {
+        let resources = if !blueprint.load_flows.has_specialization() {
             SMM::cubedim_resource(blueprint)
         } else {
             return Err(Box::new(

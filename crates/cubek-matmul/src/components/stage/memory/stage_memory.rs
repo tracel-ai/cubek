@@ -2,7 +2,7 @@ use cubecl::prelude::*;
 use std::marker::PhantomData;
 
 use crate::components::global::GlobalReaderConfig;
-use crate::components::global::RoleRule;
+use crate::components::global::PlaneFlowPartition;
 use crate::components::stage::SwizzleMode;
 use crate::components::stage::{LoadStageFamily, StageMemoryConfig, TilingLayout};
 use crate::components::tile::StridedTile;
@@ -157,7 +157,7 @@ impl<ES: Numeric, T: TilingLayout> StridedStageMemory<ES, T> {
         let unit_count = config.loading_units_count();
         let num_writes_per_unit = smem_length.div_ceil(unit_count);
 
-        let unit_base_position = RoleRule::new(config.plane_role_config.rule)
+        let unit_base_position = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
             .load_index(config.specialization_tensor_config)
             * config.plane_dim
             + UNIT_POS_X;
@@ -189,7 +189,7 @@ impl<ES: Numeric, T: TilingLayout> StridedStageMemory<ES, T> {
         let unit_count = config.loading_units_count();
         let num_writes_per_unit = comptime![this.stage_size.div_ceil(unit_count)];
 
-        let unit_base_position = RoleRule::new(config.plane_role_config.rule)
+        let unit_base_position = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
             .load_index(config.specialization_tensor_config)
             * config.plane_dim
             + UNIT_POS_X;

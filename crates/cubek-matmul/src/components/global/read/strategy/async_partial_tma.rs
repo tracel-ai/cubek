@@ -2,7 +2,7 @@ use crate::components::global::read::{AsyncPartialLoadingStrategy, validate_tma_
 use crate::components::global::read::{PartialLoadingStrategy, async_tma::AsyncTma};
 use crate::components::global::read::{validate_async_barrier, validate_tma};
 use crate::components::global::{GlobalConfig, GlobalReaderConfig};
-use crate::components::global::{RoleRule, multi_stage::LoadMaxRoundPlaneCount};
+use crate::components::global::{PlaneFlowPartition, multi_stage::LoadMaxRoundPlaneCount};
 use crate::components::stage::TmaTilingLayout;
 use crate::components::stage::{StridedStageMemory, SwizzleMode};
 use crate::components::{
@@ -71,7 +71,7 @@ impl PartialLoadingStrategy for AsyncPartialTmaLoading {
         #[comptime] _line_size: u32,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, ES> {
-        let role_rule_config = config.plane_role_config.rule;
+        let role_rule_config = config.plane_flow_config.partition_rule;
         let config = config.smem_config;
         let tile_count_col = match config.matrix_layout {
             MatrixLayout::RowMajor => config.tiles_per_stage_along_col(),
@@ -84,7 +84,7 @@ impl PartialLoadingStrategy for AsyncPartialTmaLoading {
             _ => 1u32,
         }];
 
-        let is_elected = RoleRule::new(role_rule_config).elect_load_leader();
+        let is_elected = PlaneFlowPartition::new(role_rule_config).elect_load_leader();
 
         AsyncPartialTmaJob {
             is_elected,
@@ -190,7 +190,7 @@ impl AsyncPartialLoadingStrategy for AsyncPartialTmaLoading {
     }
 
     fn is_elected<S: StageConfig>(#[comptime] config: SharedGlobalMatmulConfig<S>) -> bool {
-        let role_rule = RoleRule::new(config.plane_role_config().rule);
+        let role_rule = PlaneFlowPartition::new(config.plane_flow_config().partition_rule);
         role_rule.elect_load_leader()
     }
 }

@@ -1,12 +1,11 @@
 use crate::components::CubeDimResource;
 use crate::components::global::multi_stage::EventLoadingMode;
 use crate::components::global::{
-    GlobalReaderConfig, GlobalWriterConfig, MatmulPlaneCounts, SharedGlobalMatmulConfig,
+    GlobalReaderConfig, GlobalWriterConfig, MatmulPlaneCounts, PlaneFlowConfig,
+    SharedGlobalMatmulConfig,
 };
 use crate::components::global::{GlobalWriterFamily, multi_stage::specialized::SpecializedMatmul};
-use crate::components::global::{
-    LoadSpecializationConfig, SpecializationTensorConfig, WriteTiling,
-};
+use crate::components::global::{InputLoadFlow, LoadFlows, WriteTiling};
 use crate::components::global::{
     memory::{GlobalMemoryConfig, ViewDirection},
     read::AsyncPartialLoadingStrategy,
@@ -60,9 +59,9 @@ where
         // Should be set from selection, but tests won't work properly. This algorithm fails without
         // specialization so it needs to be enabled.
         let mut blueprint = blueprint.clone();
-        blueprint.load_specialization_config = LoadSpecializationConfig {
-            lhs: SpecializationTensorConfig::LoadFlowOnly,
-            rhs: SpecializationTensorConfig::LoadFlowOnly,
+        blueprint.load_flows = LoadFlows {
+            lhs: InputLoadFlow::LoadOnly,
+            rhs: InputLoadFlow::LoadOnly,
         };
 
         let max_global_readers = MaxGlobalReaderPlanes::new::<L, L>(
@@ -72,22 +71,25 @@ where
             dtypes,
         );
 
+        let plane_dim = blueprint.plane_dim;
+        let plane_flow_config = PlaneFlowConfig::new(
+            blueprint.load_flows,
+            Some(max_global_readers),
+            SMM::cubedim_resource(&blueprint)?.num_planes(plane_dim)?,
+        )?;
+
         let stage_config = SMM::expand_config(
             &blueprint,
-            Some(max_global_readers),
+            plane_flow_config,
             (2, 2).into(),
             dtypes,
             line_sizes,
         )?;
 
-        let plane_role_config = stage_config.plane_role_config();
-        let plane_counts = MatmulPlaneCounts::new(
-            blueprint.load_specialization_config,
-            plane_role_config.plane_roles,
-        );
+        let plane_flow_config = stage_config.plane_flow_config();
+        let plane_counts = MatmulPlaneCounts::new(blueprint.load_flows, plane_flow_config.counts);
 
         let precompute_job = blueprint.loading_precompute_strategy.into();
-        let plane_dim = blueprint.plane_dim;
         let event_loading_mode = EventLoadingMode::Relaxed;
         let reader_mode = blueprint.reader_mode;
 
@@ -120,11 +122,11 @@ where
             smem_config: stage_config.lhs_smem_config(),
             precompute_job,
             plane_dim,
-            plane_role_config,
+            plane_flow_config,
             reader_mode,
             stage_ident: StageIdent::Lhs,
             event_loading_mode,
-            specialization_tensor_config: blueprint.load_specialization_config.lhs,
+            specialization_tensor_config: blueprint.load_flows.lhs,
         };
 
         let rhs_reader_config = GlobalReaderConfig {
@@ -132,17 +134,17 @@ where
             smem_config: stage_config.rhs_smem_config(),
             precompute_job,
             plane_dim,
-            plane_role_config,
+            plane_flow_config,
             reader_mode,
             stage_ident: StageIdent::Rhs,
             event_loading_mode,
-            specialization_tensor_config: blueprint.load_specialization_config.rhs,
+            specialization_tensor_config: blueprint.load_flows.rhs,
         };
 
         let writer_config = GlobalWriterConfig {
             gmem_config: out_gmem_config,
             smem_config: stage_config.out_smem_config(),
-            role_rule_config: plane_role_config.rule,
+            role_rule_config: plane_flow_config.partition_rule,
             plane_dim: blueprint.plane_dim,
         };
 

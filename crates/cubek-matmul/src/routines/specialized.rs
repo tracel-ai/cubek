@@ -29,7 +29,7 @@ use crate::{
 };
 use crate::{
     components::{
-        global::{LoadSpecializationConfig, SpecializationTensorConfig},
+        global::{InputLoadFlow, LoadFlows},
         stage::PartitionBuffering,
     },
     routines::selector::select_swizzle,
@@ -115,11 +115,13 @@ where
             &device_settings.line_sizes,
         )?;
 
+        let cubedim_resource = Self::BatchMatmul::cubedim_resource(&blueprint)?;
+
         LaunchInfo::new(
             blueprint,
             dtypes,
             problem,
-            Self::BatchMatmul::cubedim_resource()?,
+            cubedim_resource,
             device_settings,
         )
     }
@@ -199,9 +201,9 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
     let mut builder = TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
         .partition_buffering(PartitionBuffering::Single)
         .hypercube_blueprint(hypercube)
-        .load_specialization_config(LoadSpecializationConfig {
-            lhs: SpecializationTensorConfig::LoadFlowOnly,
-            rhs: SpecializationTensorConfig::LoadFlowOnly,
+        .load_specialization_config(LoadFlows {
+            lhs: InputLoadFlow::LoadOnly,
+            rhs: InputLoadFlow::LoadOnly,
         });
 
     if swizzle {

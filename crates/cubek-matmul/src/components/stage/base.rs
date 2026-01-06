@@ -3,7 +3,7 @@ use cubecl::std::{CubeOption, CubeOptionExpand, tensor::layout::Coords2d};
 
 use crate::components::CubeDimResource;
 use crate::components::global::WriteEventListener;
-use crate::components::global::{MaxGlobalReaderPlanes, PlaneRoleConfig};
+use crate::components::global::{MaxGlobalReaderPlanes, PlaneFlowConfig};
 use crate::components::stage::{NumStages, StageMemoryConfig};
 use crate::components::tile::TileConfig;
 use crate::components::{stage::PartitionScheduler, tile::io::TileKind};
@@ -46,7 +46,7 @@ pub trait StageMatmulFamily: Send + Sync + 'static {
     #[allow(clippy::too_many_arguments)]
     fn expand_config(
         blueprint: &TilingBlueprint,
-        reader_tasks: Option<MaxGlobalReaderPlanes>,
+        plane_flow_config: PlaneFlowConfig,
         num_stages: NumStages,
         dtypes: &MatmulElems,
         line_sizes: &MatmulLineSizes,
@@ -167,7 +167,7 @@ pub trait StageConfig:
     fn tiles_in_partition_mn(&self) -> u32;
     fn num_main_flow_planes(&self) -> u32;
     fn plane_dim(&self) -> u32;
-    fn plane_role_config(&self) -> PlaneRoleConfig;
+    fn plane_flow_config(&self) -> PlaneFlowConfig;
 
     fn lhs_smem_config(&self) -> StageMemoryConfig;
     fn rhs_smem_config(&self) -> StageMemoryConfig;

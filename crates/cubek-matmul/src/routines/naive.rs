@@ -39,14 +39,12 @@ impl Routine for NaiveRoutine {
         device_settings: &DeviceSettings<R>,
         _strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<Self::Blueprint>, MatmulSetupError> {
-        let cube_dim =
-            Self::BatchMatmul::cubedim_resource()?.to_cube_dim(device_settings.plane_dim)?;
-
         let dtypes = MatmulElems::from_globals(&problem.global_dtypes);
         let blueprint = NaiveBlueprint {
             line_size_out: device_settings.line_sizes.out as u32,
             dtypes: dtypes.clone(),
         };
+
         Self::validate_blueprint(
             &device_settings.client,
             &blueprint,
@@ -54,6 +52,9 @@ impl Routine for NaiveRoutine {
             &dtypes,
             &device_settings.line_sizes,
         )?;
+
+        let cube_dim = Self::BatchMatmul::cubedim_resource(&blueprint)?
+            .to_cube_dim(device_settings.plane_dim)?;
 
         Ok(LaunchInfo {
             blueprint,

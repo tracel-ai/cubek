@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use crate::components::global::GlobalReaderConfig;
 use crate::components::global::read::validate_swizzle_atom_size;
 use crate::components::global::read::{PartialLoadingStrategy, sync::Synchronous};
-use crate::components::global::{RoleRule, read::tiled::TiledLayout};
+use crate::components::global::{PlaneFlowPartition, read::tiled::TiledLayout};
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::StridedStageMemory;
 use crate::components::stage::TilingOrderEnum;
@@ -134,7 +134,7 @@ impl<TO: TilingOrder> PartialLoadingStrategy for SyncPartialTilewiseLoading<TO> 
             _ => unreachable!(),
         });
 
-        let num_tiles_to_skip = RoleRule::new(config.plane_role_config.rule)
+        let num_tiles_to_skip = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
             .load_index(config.specialization_tensor_config)
             * num_tiles_per_plane;
 

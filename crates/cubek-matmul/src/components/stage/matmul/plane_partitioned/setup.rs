@@ -8,10 +8,7 @@ use crate::definition::{
 use crate::{
     components::{
         CubeDimResource,
-        global::{
-            MatmulPlaneCounts, MaxGlobalReaderPlanes, PartitionedStage, PartitionedStageFamily,
-            PlaneRoleConfig,
-        },
+        global::{MatmulPlaneCounts, PartitionedStage, PartitionedStageFamily, PlaneFlowConfig},
         stage::{
             NumStages, PartitionBuffering, PartitionSchedulerScheme, StageFamily,
             StageMatmulFamily, StageMemoryConfig, TilingLayout,
@@ -71,23 +68,12 @@ impl<
 
     fn expand_config(
         blueprint: &TilingBlueprint,
-        reader_tasks: Option<MaxGlobalReaderPlanes>,
+        plane_flow_config: PlaneFlowConfig,
         num_stages: NumStages,
         dtypes: &MatmulElems,
         line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
-        let compute_planes = Self::cubedim_resource(blueprint)?.num_planes(blueprint.plane_dim)?;
-
-        let plane_role_config = PlaneRoleConfig::new(
-            blueprint.load_specialization_config,
-            reader_tasks,
-            compute_planes,
-        )?;
-
-        let plane_counts = MatmulPlaneCounts::new(
-            blueprint.load_specialization_config,
-            plane_role_config.plane_roles,
-        );
+        let plane_counts = MatmulPlaneCounts::new(blueprint.load_flows, plane_flow_config.counts);
 
         let lhs_smem_config = StageMemoryConfig {
             num_planes: plane_counts.lhs,
@@ -137,7 +123,7 @@ impl<
                     TM::expand_config(blueprint, dtypes, line_sizes)?,
                     blueprint.tiling_scheme.partition_size,
                     blueprint.partition_buffering,
-                    plane_role_config,
+                    plane_flow_config,
                     blueprint.plane_dim,
                     blueprint.tiling_scheme.stage_size,
                     PartitionSchedulerScheme::Naive,

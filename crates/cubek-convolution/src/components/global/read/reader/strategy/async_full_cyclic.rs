@@ -5,7 +5,7 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Layout, LayoutExpand};
 use cubek_matmul::components::{
     global::{
-        GlobalReaderConfig, RoleRule,
+        GlobalReaderConfig, PlaneFlowPartition,
         memory::GlobalIterator,
         multi_stage::LoadMaxRoundPlaneCount,
         read::{
@@ -84,7 +84,7 @@ impl<TO: TilingOrder> FullLoadingStrategy for AsyncFullCyclicLoading<TO> {
         let balanced_workload = comptime!(num_stage_lines.is_multiple_of(total_units));
         let jump_length = comptime!(total_units * line_size);
 
-        let unit_id = RoleRule::new(config.plane_role_config.rule)
+        let unit_id = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
             .load_index(config.specialization_tensor_config)
             * config.plane_dim
             + UNIT_POS_X;

@@ -5,8 +5,7 @@ use crate::components::global::memory::GlobalMemoryConfig;
 use crate::components::global::multi_stage::EventLoadingMode;
 use crate::components::global::read::ReaderMode;
 use crate::components::global::{
-    GlobalWriterConfig, LoadSpecializationConfig, PlaneRoleConfig, SpecializationTensorConfig,
-    SpecializedLoadingSides,
+    GlobalWriterConfig, PlaneFlowConfig, SpecializedLoadingSides, InputLoadFlow, LoadFlows,
 };
 use crate::components::stage::{StageConfig, StageMemoryConfig};
 use crate::definition::StageIdent;
@@ -150,12 +149,12 @@ impl<S: StageConfig> SharedGlobalMatmulConfig<S> {
         self.stage_config.plane_dim()
     }
 
-    pub fn plane_role_config(&self) -> PlaneRoleConfig {
-        self.stage_config.plane_role_config()
+    pub fn plane_flow_config(&self) -> PlaneFlowConfig {
+        self.stage_config.plane_flow_config()
     }
 
     pub fn specialized_loading_sides(&self) -> SpecializedLoadingSides {
-        LoadSpecializationConfig {
+        LoadFlows {
             lhs: self.lhs_reader_config.specialization_tensor_config,
             rhs: self.rhs_reader_config.specialization_tensor_config,
         }
@@ -223,8 +222,8 @@ pub struct GlobalReaderConfig {
     pub plane_dim: u32,
     pub reader_mode: ReaderMode,
     pub event_loading_mode: EventLoadingMode,
-    pub specialization_tensor_config: SpecializationTensorConfig,
-    pub plane_role_config: PlaneRoleConfig,
+    pub specialization_tensor_config: InputLoadFlow,
+    pub plane_flow_config: PlaneFlowConfig,
 
     // ideally remove because doesn't apply to any kind of problem
     pub stage_ident: StageIdent,

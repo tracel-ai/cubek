@@ -1,5 +1,5 @@
-use crate::components::global::RoleRule;
-use crate::components::global::RoleRuleConfig;
+use crate::components::global::PlaneFlowPartition;
+use crate::components::global::PlaneFlowPartitionRule;
 use crate::components::stage::matmul::partitioned_matmul::PartitionedStageMatmul;
 use crate::components::stage::matmul::partitioned_matmul::StagePartitioner;
 use crate::components::tile::TileMatmul;
@@ -44,11 +44,11 @@ pub struct PlanePartitioner {}
 impl StagePartitioner for PlanePartitioner {
     /// Returns the (row, col) of the current compute primitive within the stage.
     fn coordinates(
-        #[comptime] role_rule_config: RoleRuleConfig,
+        #[comptime] role_rule_config: PlaneFlowPartitionRule,
         #[comptime] _plane_dim: u32,
         #[comptime] num_partitions_col: u32,
     ) -> Coords2d {
-        let absolute_index = RoleRule::new(role_rule_config).compute_index();
+        let absolute_index = PlaneFlowPartition::new(role_rule_config).compute_index();
 
         (
             absolute_index / num_partitions_col,

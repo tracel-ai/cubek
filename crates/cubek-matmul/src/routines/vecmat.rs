@@ -99,11 +99,13 @@ impl Routine for SimpleVecMatAlgorithm {
             &device_settings.line_sizes,
         )?;
 
+        let cubedim_resource = Self::BatchMatmul::cubedim_resource(&blueprint)?;
+
         LaunchInfo::new(
             blueprint,
             dtypes,
             problem,
-            Self::BatchMatmul::cubedim_resource()?,
+            cubedim_resource,
             device_settings,
         )
     }
@@ -165,11 +167,13 @@ impl Routine for DoubleVecMatAlgorithm {
             &device_settings.line_sizes,
         )?;
 
+        let cubedim_resource = Self::BatchMatmul::cubedim_resource(&blueprint)?;
+
         LaunchInfo::new(
             blueprint,
             dtypes,
             problem,
-            Self::BatchMatmul::cubedim_resource()?,
+            cubedim_resource,
             device_settings,
         )
     }

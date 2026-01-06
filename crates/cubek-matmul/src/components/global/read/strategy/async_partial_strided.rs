@@ -1,5 +1,5 @@
 use crate::components::global::read::{validate_async_barrier, validate_async_copy_with_problem};
-use crate::components::global::{GlobalReaderConfig, RoleRule};
+use crate::components::global::{GlobalReaderConfig, PlaneFlowPartition};
 use crate::components::global::{
     SharedGlobalMatmulConfig,
     read::{AsyncPartialLoadingStrategy, PartialLoadingStrategy, async_copy::ASYNC_COPY_WIDTH},
@@ -107,7 +107,7 @@ impl PartialLoadingStrategy for AsyncPartialStridedLoading {
         let unit_count = config.loading_planes_count() * config.plane_dim;
         let num_tasks_per_unit = comptime!(num_stage_lines / unit_count);
 
-        let unit_position_base = RoleRule::new(config.plane_role_config.rule)
+        let unit_position_base = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
             .load_index(config.specialization_tensor_config)
             * config.plane_dim
             + UNIT_POS_X;
@@ -192,7 +192,7 @@ impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, StridedTilingLayout, AsyncCopy
 impl AsyncPartialLoadingStrategy for AsyncPartialStridedLoading {
     fn arrival_count<S: StageConfig>(#[comptime] config: SharedGlobalMatmulConfig<S>) -> u32 {
         let total_load_units =
-            config.plane_role_config().plane_roles.load_only * config.plane_dim();
+            config.plane_flow_config().counts.load_only * config.plane_dim();
         total_load_units.runtime()
     }
 
@@ -207,7 +207,7 @@ impl AsyncPartialLoadingStrategy for AsyncPartialStridedLoading {
     }
 
     fn is_elected<S: StageConfig>(#[comptime] config: SharedGlobalMatmulConfig<S>) -> bool {
-        let role_rule = RoleRule::new(config.plane_role_config().rule);
+        let role_rule = PlaneFlowPartition::new(config.plane_flow_config().partition_rule);
         role_rule.is_load_plane()
     }
 }

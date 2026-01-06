@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use crate::components::global::read::validate_async_barrier;
 use crate::components::global::read::validate_async_copy_with_problem;
 use crate::components::global::read::validate_swizzle_atom_size;
-use crate::components::global::{GlobalReaderConfig, RoleRule, read::async_copy::ASYNC_COPY_WIDTH};
+use crate::components::global::{GlobalReaderConfig, PlaneFlowPartition, read::async_copy::ASYNC_COPY_WIDTH};
 use crate::components::global::{
     multi_stage::LoadMaxRoundPlaneCount,
     read::{
@@ -141,7 +141,7 @@ impl<TO: TilingOrder> PartialLoadingStrategy for AsyncPartialCyclicLoading<TO> {
         let num_tasks_per_unit = total_num_lines.div_ceil(total_units);
         let jump_length = total_units * line_size;
 
-        let plane_id = RoleRule::new(config.plane_role_config.rule)
+        let plane_id = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
             .load_index(config.specialization_tensor_config);
         let unit_id = plane_id * config.plane_dim + UNIT_POS_X;
         let unit_position_base = unit_id * line_size;
@@ -267,7 +267,7 @@ pub(crate) fn copy_line<EG: Numeric, ES: Numeric, TO: TilingOrder>(
 impl<TO: TilingOrder> AsyncPartialLoadingStrategy for AsyncPartialCyclicLoading<TO> {
     fn arrival_count<S: StageConfig>(#[comptime] config: SharedGlobalMatmulConfig<S>) -> u32 {
         let total_load_units =
-            config.plane_role_config().plane_roles.load_only * config.plane_dim();
+            config.plane_flow_config().counts.load_only * config.plane_dim();
         total_load_units.runtime()
     }
 
@@ -282,7 +282,7 @@ impl<TO: TilingOrder> AsyncPartialLoadingStrategy for AsyncPartialCyclicLoading<
     }
 
     fn is_elected<S: StageConfig>(#[comptime] config: SharedGlobalMatmulConfig<S>) -> bool {
-        let role_rule = RoleRule::new(config.plane_role_config().rule);
+        let role_rule = PlaneFlowPartition::new(config.plane_flow_config().partition_rule);
         role_rule.is_load_plane()
     }
 }

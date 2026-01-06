@@ -128,14 +128,16 @@ where
             &blueprint,
             problem,
             &dtypes,
-            &device_settings.line_sizes
+            &device_settings.line_sizes,
         )?;
+
+        let cubedim_resource = Self::BatchMatmul::cubedim_resource(&blueprint)?;
 
         LaunchInfo::new(
             blueprint,
             dtypes,
             problem,
-            Self::BatchMatmul::cubedim_resource()?,
+            cubedim_resource,
             device_settings,
         )
     }
@@ -201,11 +203,13 @@ where
             &device_settings.line_sizes,
         )?;
 
+        let cubedim_resource = Self::BatchMatmul::cubedim_resource(&blueprint)?;
+
         LaunchInfo::new(
             blueprint,
             dtypes,
             problem,
-            Self::BatchMatmul::cubedim_resource()?,
+            cubedim_resource,
             device_settings,
         )
     }
@@ -273,11 +277,13 @@ where
             &device_settings.line_sizes,
         )?;
 
+        let cubedim_resource = Self::BatchMatmul::cubedim_resource(&blueprint)?;
+
         LaunchInfo::new(
             blueprint,
             dtypes,
             problem,
-            Self::BatchMatmul::cubedim_resource()?,
+            cubedim_resource,
             device_settings,
         )
     }
@@ -344,11 +350,13 @@ where
             &device_settings.line_sizes,
         )?;
 
+        let cubedim_resource = Self::BatchMatmul::cubedim_resource(&blueprint)?;
+
         LaunchInfo::new(
             blueprint,
             dtypes,
             problem,
-            Self::BatchMatmul::cubedim_resource()?,
+            cubedim_resource,
             device_settings,
         )
     }
@@ -414,11 +422,13 @@ where
             &device_settings.line_sizes,
         )?;
 
+        let cubedim_resource = Self::BatchMatmul::cubedim_resource(&blueprint)?;
+
         LaunchInfo::new(
             blueprint,
             dtypes,
             problem,
-            Self::BatchMatmul::cubedim_resource()?,
+            cubedim_resource,
             device_settings,
         )
     }
@@ -484,11 +494,13 @@ where
             &device_settings.line_sizes,
         )?;
 
+        let cubedim_resource = Self::BatchMatmul::cubedim_resource(&blueprint)?;
+
         LaunchInfo::new(
             blueprint,
             dtypes,
             problem,
-            Self::BatchMatmul::cubedim_resource()?,
+            cubedim_resource,
             device_settings,
         )
     }

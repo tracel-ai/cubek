@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use super::fragments::{Accumulators, RhsTile, RhsTileExpand};
-use crate::components::global::PlaneRoleConfig;
+use crate::components::global::PlaneFlowConfig;
 use crate::components::stage::Stage;
 use crate::components::stage::StageEvent;
 use crate::components::stage::matmul::scheduler::PartitionScheduler;
@@ -18,7 +18,7 @@ pub struct SharedPartitionMatmulConfig<TC: TileConfig> {
     pub tile_config: TC,
     pub partition_size: PartitionSize,
     pub partition_buffering: PartitionBuffering,
-    pub plane_role_config: PlaneRoleConfig,
+    pub plane_flow_config: PlaneFlowConfig,
     pub plane_dim: u32,
     pub stage_size: StageSize,
     pub partition_schedule_scheme: PartitionSchedulerScheme,
@@ -33,7 +33,7 @@ impl<TC: TileConfig> SharedPartitionMatmulConfig<TC> {
         tile_config: TC,
         partition_size: PartitionSize,
         partition_buffering: PartitionBuffering,
-        plane_role_config: PlaneRoleConfig,
+        plane_flow_config: PlaneFlowConfig,
         plane_dim: u32,
         stage_size: StageSize,
         partition_schedule_scheme: PartitionSchedulerScheme,
@@ -45,7 +45,7 @@ impl<TC: TileConfig> SharedPartitionMatmulConfig<TC> {
             tile_config,
             partition_size,
             partition_buffering,
-            plane_role_config,
+            plane_flow_config,
             plane_dim,
             stage_size,
             partition_schedule_scheme,

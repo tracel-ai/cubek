@@ -99,7 +99,7 @@ where
         let mut barrier_b = LL::SyncStrategy::create_barrier();
 
         let specializer = Specializer::new(
-            config.plane_role_config(),
+            config.plane_flow_config(),
             config.specialized_loading_sides(),
         );
 

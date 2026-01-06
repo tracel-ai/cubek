@@ -4,7 +4,7 @@ use cubek_matmul::definition::{
 };
 use cubek_matmul::{
     components::{
-        global::{LoadSpecializationConfig, read::ReaderMode},
+        global::{LoadFlows, read::ReaderMode},
         stage::{PartitionBuffering, StageMatmulFamily},
         tile::TileMatmulFamily,
     },
@@ -51,8 +51,8 @@ pub trait Algorithm {
         ReaderMode::Relaxed
     }
 
-    fn load_specialization() -> LoadSpecializationConfig {
-        LoadSpecializationConfig::default()
+    fn load_specialization() -> LoadFlows {
+        LoadFlows::default()
     }
 
     fn partition_buffering_strategy() -> PartitionBuffering {

@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use crate::components::global::read::validate_swizzle_atom_size;
 use crate::components::global::read::{FullLoadingStrategy, tiled::TiledLayout};
-use crate::components::global::{GlobalReaderConfig, RoleRule};
+use crate::components::global::{GlobalReaderConfig, PlaneFlowPartition};
 use crate::components::global::{multi_stage::LoadMaxRoundPlaneCount, read::sync::Synchronous};
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{ContiguousTilingLayout, StridedStageMemory, TilingOrder};
@@ -87,7 +87,7 @@ impl<TO: TilingOrder> FullLoadingStrategy for SyncFullCyclicLoading<TO> {
         let balanced_workload = comptime!(num_stage_lines.is_multiple_of(total_units));
         let jump_length = comptime!(total_units * line_size);
 
-        let unit_id = RoleRule::new(config.plane_role_config.rule)
+        let unit_id = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
             .load_index(config.specialization_tensor_config)
             * config.plane_dim
             + UNIT_POS_X;

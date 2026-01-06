@@ -5,7 +5,7 @@ use crate::components::global::read::{
 };
 use crate::components::global::read::{validate_async_barrier, validate_swizzle_atom_size};
 use crate::components::global::read::{validate_async_copy, validate_async_copy_with_problem};
-use crate::components::global::{GlobalReaderConfig, RoleRule};
+use crate::components::global::{GlobalReaderConfig, PlaneFlowPartition};
 use crate::components::global::{
     multi_stage::LoadMaxRoundPlaneCount, read::async_copy::async_copy_from,
 };
@@ -109,7 +109,7 @@ impl<TO: TilingOrder> FullLoadingStrategy for AsyncFullCyclicLoading<TO> {
         let balanced_workload = comptime!(num_stage_lines.is_multiple_of(total_units));
         let jump_length = comptime!(total_units * line_size);
 
-        let unit_id = RoleRule::new(config.plane_role_config.rule)
+        let unit_id = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
             .load_index(config.specialization_tensor_config)
             * config.plane_dim
             + UNIT_POS_X;
