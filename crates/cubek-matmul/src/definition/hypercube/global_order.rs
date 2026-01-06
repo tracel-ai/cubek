@@ -1,7 +1,7 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
 
-use crate::definition::hypercube::base::CubeSpan;
+use crate::definition::TilingScheme;
 
 #[derive(Default, Copy, Clone, Debug, Hash, PartialEq, Eq)]
 /// Describes the global traversal order as flattened cube position increases.
@@ -60,12 +60,13 @@ pub enum GlobalOrderStrategy {
 }
 
 impl GlobalOrderStrategy {
-    pub fn into_order(self, span: &CubeSpan) -> GlobalOrder {
+    pub fn into_order(self, tiling_scheme: &TilingScheme) -> GlobalOrder {
         match self {
             GlobalOrderStrategy::Default => GlobalOrder::default(),
             GlobalOrderStrategy::Fixed(order) => order,
             GlobalOrderStrategy::SwizzleRow { m, w } => {
-                let m_cubes = m.div_ceil(span.m);
+                let m_cubes = m.div_ceil(tiling_scheme.elements_per_global_partition_along_m());
+
                 if m_cubes % w != 0 {
                     GlobalOrder::RowMajor
                 } else {
@@ -73,11 +74,12 @@ impl GlobalOrderStrategy {
                 }
             }
             GlobalOrderStrategy::SwizzleCol { n, w } => {
-                let n_cubes = n.div_ceil(span.n);
+                let n_cubes = n.div_ceil(tiling_scheme.elements_per_global_partition_along_n());
+
                 if n_cubes % w != 0 {
-                    GlobalOrder::RowMajor
+                    GlobalOrder::ColMajor
                 } else {
-                    GlobalOrder::SwizzleRowMajor(w)
+                    GlobalOrder::SwizzleColMajor(w)
                 }
             }
         }

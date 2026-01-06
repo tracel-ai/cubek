@@ -1,6 +1,6 @@
 use crate::definition::{
     GlobalOrderStrategy, TilingScheme,
-    hypercube::{base::CubeSpan, blueprint::HypercubeBlueprint, cube_count::CubeCountStrategy},
+    hypercube::{blueprint::HypercubeBlueprint, cube_count::CubeCountStrategy},
 };
 
 /// Builder for creating a [HypercubeBlueprint]
@@ -33,17 +33,10 @@ impl<'a> HypercubeBlueprintBuilder<'a> {
 
     /// Build the HypercubeBlueprint
     pub fn build(self) -> HypercubeBlueprint {
-        let cube_span = CubeSpan {
-            m: self.tiling_scheme.elements_per_global_partition_along_m(),
-            n: self.tiling_scheme.elements_per_global_partition_along_n(),
-            batch: self.tiling_scheme.global_partition_size.batches,
-        };
-
-        let global_order = self.global_order_strategy.into_order(&cube_span);
+        let global_order = self.global_order_strategy.into_order(&self.tiling_scheme);
         let cube_count_strategy = self.cube_count_strategy.unwrap_or_default();
 
         HypercubeBlueprint {
-            cube_span,
             global_order,
             cube_count_strategy,
         }

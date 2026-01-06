@@ -2,9 +2,8 @@
 //! becomes a [CubeCountPlan] where all information is known.
 //! Then the [CubeCountPlan] is split into:
 //! - The CubeCount
-//! - The [CubeMapping] which maps a Cube to where it will works
+//! - The [CubeMapping] which maps a Cube to where it will work
 
-mod config;
 mod mapping;
 mod plan;
 mod strategy;

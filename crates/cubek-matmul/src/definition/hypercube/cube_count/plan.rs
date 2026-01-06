@@ -1,7 +1,7 @@
 use cubecl::{CubeCount, Runtime, prelude::ScalarArg};
 
 use crate::definition::{
-    GlobalOrder, MatmulProblem, SmAllocation,
+    GlobalOrder, MatmulProblem, SmAllocation, TilingScheme,
     hypercube::{
         blueprint::HypercubeBlueprint,
         cube_count::{
@@ -53,6 +53,7 @@ impl CubeCountPlan {
     // Will check if the wanted cube count plan is possible, otherwise will fallback to spread
     pub fn from_blueprint(
         blueprint: &HypercubeBlueprint,
+        tiling_scheme: &TilingScheme,
         problem: &MatmulProblem,
         max_cube_count: &CubeCount,
     ) -> CubeCountPlan {
@@ -61,9 +62,12 @@ impl CubeCountPlan {
             CubeCount::Dynamic(_) => panic!("Dynamic cube count not supported for cube count plan"),
         };
 
-        let m_cubes = (problem.m as u32).div_ceil(blueprint.cube_span.m);
-        let n_cubes = (problem.n as u32).div_ceil(blueprint.cube_span.n);
-        let batch_cubes = (problem.num_batches() as u32).div_ceil(blueprint.cube_span.batch);
+        let m_cubes =
+            (problem.m as u32).div_ceil(tiling_scheme.elements_per_global_partition_along_m());
+        let n_cubes =
+            (problem.n as u32).div_ceil(tiling_scheme.elements_per_global_partition_along_n());
+        let batch_cubes =
+            (problem.num_batches() as u32).div_ceil(tiling_scheme.global_partition_size.batches);
 
         let plan_kind = match blueprint.cube_count_strategy {
             CubeCountStrategy::FromProblem => {

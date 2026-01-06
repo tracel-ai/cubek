@@ -142,6 +142,7 @@ impl TilingBlueprint {
         let cube_dim = cubedim_resource.to_cube_dim(plane_dim)?;
         let cube_count_plan = CubeCountPlan::from_blueprint(
             &self.hypercube_blueprint,
+            &self.tiling_scheme,
             problem,
             &device_settings.max_cube_count,
         );
