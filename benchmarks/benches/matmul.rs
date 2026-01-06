@@ -10,9 +10,9 @@ use cubek::{
         self as matmul,
         components::stage::PartitionBuffering,
         definition::{
-            CubeCountPlanBlueprint, CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint,
-            LoadingPrecomputeStrategy, MatmulElems, MatmulGlobalElems, MatmulPrecision,
-            MatmulProblem, MatrixLayout, StageSize, TilingBlueprint, TilingScheme,
+            CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, LoadingPrecomputeStrategy,
+            MatmulElems, MatmulPrecision, MatmulProblem, MatrixLayout, StageSize, TilingBlueprint,
+            TilingScheme,
         },
         launch::{MatmulInputHandle, Strategy},
         routines::{
@@ -67,7 +67,7 @@ impl<R: Runtime> Benchmark for MatmulBench<R> {
         let out = TensorHandle::empty(
             &client,
             vec![self.b, self.m, self.n],
-            *self.dtypes.acc_global,
+            self.dtypes.acc_global,
         );
 
         match launch(
@@ -191,8 +191,12 @@ fn run_one<R: Runtime, MP: MatmulPrecision>(
     problem: &MatmulProblem,
 ) -> Result<(BenchmarkDurations, f64), String> {
     let client = R::client(&device);
-    let (b, m, n, k) = shapes;
-    let (tl, tr) = transposed;
+    let b = problem.num_batches();
+    let m = problem.m;
+    let n = problem.n;
+    let k = problem.k;
+    let tl = matches!(problem.lhs_layout, MatrixLayout::ColMajor);
+    let tr = matches!(problem.rhs_layout, MatrixLayout::ColMajor);
 
     let bench = MatmulBench {
         b,
@@ -266,9 +270,8 @@ fn run_grid_search<R: Runtime, MP: MatmulPrecision>() {
                     .cube_count_strategy(CubeCountStrategy::Flattened)
                     .build();
                 let blueprint = TilingBlueprint::builder(tiling, plane_dim, &problem)
-                    .plane_dim(plane_dim)
                     .partition_buffering(PartitionBuffering::Single)
-                    .hypercube_config(hypercube)
+                    .hypercube_blueprint(hypercube)
                     .loading_precompute_strategy(LoadingPrecomputeStrategy::Always)
                     .build();
                 let result = run_one::<R, MP>(
