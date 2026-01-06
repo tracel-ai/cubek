@@ -27,3 +27,7 @@
 | [Matmul](https://github.com/tracel-ai/cubek/tree/main/crates/cubek-matmul)             | `mma` `unit` `tma` `multi-stage` `specialization` `ordered` `multi-rows` |
 | [Convolution](https://github.com/tracel-ai/cubek/tree/main/crates/cubek-convolution)   | `mma` `unit` `tma` `multi-stage` `im2col`                                |
 | [Attention](https://github.com/tracel-ai/cubek/tree/main/crates/cubek-attention)       | `mma` `unit` `multi-rows`                                                |
+
+# Contributing
+
+If you want to contribute new kernels, please read the [`GUIDE.md`](./GUIDE.md).
