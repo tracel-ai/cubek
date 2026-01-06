@@ -38,8 +38,8 @@ where
 
     fn expand_config(
         blueprint: &TilingBlueprint,
-        dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        _dtypes: &MatmulElems,
+        _line_sizes: &MatmulLineSizes,
     ) -> Result<SharedTileConfig, MatmulSetupError> {
         Ok(SharedTileConfig::new(
             blueprint.tiling_scheme.tile_size,
@@ -77,7 +77,7 @@ where
         client: &ComputeClient<R>,
         blueprint: &TilingBlueprint,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        _line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError> {
         let lhs = dtypes.lhs_register;
         let rhs = dtypes.rhs_register;

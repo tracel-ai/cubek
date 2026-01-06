@@ -1,8 +1,8 @@
-use cubecl::{CubeCount, CubeDim};
+use cubecl::CubeDim;
 
 use crate::{
     components::{batch::BatchConfig, global::memory::GlobalLayoutConfig},
-    definition::{CubeCountPlan, MatmulLineSizes, MatmulProblem, MatrixLayout},
+    definition::{MatmulLineSizes, MatrixLayout},
 };
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]

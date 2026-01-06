@@ -57,8 +57,8 @@ impl BatchMatmulFamily for NaiveBatchMatmulFamily {
 
     fn expand_config(
         _blueprint: &Self::Blueprint,
-        dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        _dtypes: &MatmulElems,
+        _line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
         Ok(NaiveMatmulConfig {})
     }
@@ -98,11 +98,11 @@ impl BatchMatmulFamily for NaiveBatchMatmulFamily {
     }
 
     fn validate_blueprint<R: Runtime>(
-        client: &ComputeClient<R>,
+        _client: &ComputeClient<R>,
         blueprint: &Self::Blueprint,
-        problem: &MatmulProblem,
-        dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        _problem: &MatmulProblem,
+        _dtypes: &MatmulElems,
+        _line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError> {
         if blueprint.line_size_out > 1 {
             return Err(MatmulSetupError::InvalidConfig(Box::new(

@@ -4,7 +4,6 @@ use crate::components::global::multi_stage::EventLoadingMode;
 use crate::components::global::read::LoadingValidation;
 use crate::components::global::{
     GlobalReaderConfig, GlobalWriterConfig, MatmulPlaneCounts, SharedGlobalMatmulConfig,
-    cube_dim_validation,
 };
 use crate::components::global::{
     GlobalWriterFamily, multi_stage::double_buffering::DoubleBufferingMatmul,

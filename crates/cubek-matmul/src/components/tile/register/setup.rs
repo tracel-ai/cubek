@@ -40,7 +40,7 @@ where
 
     fn expand_config(
         blueprint: &TilingBlueprint,
-        dtypes: &MatmulElems,
+        _dtypes: &MatmulElems,
         _line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
         Ok(RegisterMatmulConfig::from_shared_tile_config(

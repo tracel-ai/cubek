@@ -1,8 +1,8 @@
-use cubecl::{CubeCount, CubeDim};
+use cubecl::CubeDim;
 
 use crate::components::global::memory::GlobalLayoutConfig;
 use crate::components::{batch::BatchConfig, global::GlobalConfig};
-use crate::definition::{GlobalPartitionSize, MatmulLineSizes, MatmulProblem, MatmulSetupError};
+use crate::definition::{GlobalPartitionSize, MatmulLineSizes};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 /// Configuration for partitioned batch matmul
@@ -19,12 +19,6 @@ impl<G: GlobalConfig> BatchConfig for PartitionedBatchConfig<G> {
     fn line_sizes(&self) -> MatmulLineSizes {
         self.global_config.global_line_sizes()
     }
-
-    // fn can_yield_extra_cubes(&self) -> bool {
-    //     self.hypercube_config
-    //         .cube_count_plan_config
-    //         .can_yield_extra_cubes()
-    // }
 
     fn lhs_global_layout_config(&self) -> GlobalLayoutConfig {
         self.global_config.lhs_reader_config().gmem_config.into()

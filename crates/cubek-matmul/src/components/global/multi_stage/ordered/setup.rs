@@ -3,7 +3,6 @@ use crate::components::global::memory::{GlobalMemoryConfig, ViewDirection};
 use crate::components::global::multi_stage::EventLoadingMode;
 use crate::components::global::{
     GlobalReaderConfig, GlobalWriterConfig, MatmulPlaneCounts, SharedGlobalMatmulConfig,
-    cube_dim_validation,
 };
 use crate::components::global::{
     GlobalWriterFamily,
@@ -12,7 +11,6 @@ use crate::components::global::{
 use crate::components::global::{
     WriteTiling,
     multi_stage::ordered::{LL, OrderedDoubleBufferingMatmul},
-    read::LoadingValidation,
 };
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{self, StageConfig};
@@ -20,7 +18,7 @@ use crate::components::{global::GlobalMatmulFamily, stage::FilledStageFamily};
 use crate::components::{global::MaxGlobalReaderPlanes, stage::NoTilingLayout};
 use crate::definition::{InvalidConfigError, TilingBlueprint};
 use crate::definition::{MatmulElems, MatmulPrecision, MatmulProblem, MatmulSetupError};
-use crate::definition::{MatmulLineSizes, MatrixLayout, StageIdent, TilingScheme};
+use crate::definition::{MatmulLineSizes, MatrixLayout, StageIdent};
 use cubecl::prelude::*;
 use std::marker::PhantomData;
 

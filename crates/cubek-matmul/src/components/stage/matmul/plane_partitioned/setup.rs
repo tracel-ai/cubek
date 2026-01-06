@@ -1,32 +1,28 @@
-use crate::components::CubeDimResource;
-use crate::components::global::MatmulPlaneCounts;
-use crate::components::global::MaxGlobalReaderPlanes;
-use crate::components::global::PartitionedStage;
-use crate::components::global::PartitionedStageFamily;
-use crate::components::global::PlaneRoleConfig;
-use crate::components::stage::NumStages;
-use crate::components::stage::PartitionBuffering;
-use crate::components::stage::PartitionSchedulerScheme;
-use crate::components::stage::StageFamily;
-use crate::components::stage::StageMemoryConfig;
-use crate::components::stage::matmul::partition::SharedPartitionMatmulConfig;
-use crate::components::stage::matmul::partitioned_matmul::PartitionMatmulConfig;
-use crate::components::stage::matmul::plane_partitioned::PlaneMatmul;
-use crate::components::stage::matmul::plane_partitioned::PlanePartitionedStageConfig;
-use crate::components::stage::{StageMatmulFamily, TilingLayout};
-use crate::components::tile::TileMatmulFamily;
-use crate::components::tile::io::Strided;
-use crate::definition::AccS;
-use crate::definition::InvalidConfigError;
-use crate::definition::LhsS;
-use crate::definition::MatmulElems;
-use crate::definition::MatmulLineSizes;
-use crate::definition::MatmulPrecision;
-use crate::definition::MatmulSetupError;
-use crate::definition::MatrixLayout;
-use crate::definition::MatrixPrecision;
-use crate::definition::RhsS;
-use crate::definition::TilingBlueprint;
+use crate::components::stage::matmul::plane_partitioned::{
+    PlaneMatmul, PlanePartitionedStageConfig,
+};
+use crate::definition::{
+    InvalidConfigError, LhsS, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulSetupError,
+    MatrixLayout, MatrixPrecision, RhsS, TilingBlueprint,
+};
+use crate::{
+    components::{
+        CubeDimResource,
+        global::{
+            MatmulPlaneCounts, MaxGlobalReaderPlanes, PartitionedStage, PartitionedStageFamily,
+            PlaneRoleConfig,
+        },
+        stage::{
+            NumStages, PartitionBuffering, PartitionSchedulerScheme, StageFamily,
+            StageMatmulFamily, StageMemoryConfig, TilingLayout,
+            matmul::{
+                partition::SharedPartitionMatmulConfig, partitioned_matmul::PartitionMatmulConfig,
+            },
+        },
+        tile::{TileMatmulFamily, io::Strided},
+    },
+    definition::AccS,
+};
 use core::marker::PhantomData;
 use cubecl::prelude::*;
 
@@ -174,7 +170,7 @@ impl<
         blueprint: &TilingBlueprint,
         num_stages: NumStages,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        _line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError> {
         let num_planes_needed = blueprint.tiling_scheme.partitions_per_stage_along_m()
             * blueprint.tiling_scheme.partitions_per_stage_along_n();
