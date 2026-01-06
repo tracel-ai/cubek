@@ -55,12 +55,9 @@ impl CubeCountPlan {
         blueprint: &HypercubeBlueprint,
         tiling_scheme: &TilingScheme,
         problem: &MatmulProblem,
-        max_cube_count: &CubeCount,
+        max_cube_count: &(u32, u32, u32),
     ) -> CubeCountPlan {
-        let (max_x, max_y, max_z) = match max_cube_count {
-            CubeCount::Static(x, y, z) => (*x, *y, *z),
-            CubeCount::Dynamic(_) => panic!("Dynamic cube count not supported for cube count plan"),
-        };
+        let (max_x, max_y, max_z) = *max_cube_count;
 
         let m_cubes =
             (problem.m as u32).div_ceil(tiling_scheme.elements_per_global_partition_along_m());

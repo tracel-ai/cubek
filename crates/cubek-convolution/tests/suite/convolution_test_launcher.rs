@@ -76,7 +76,10 @@ pub fn test_convolution_algorithm<A, P, R>(
     };
 
     let props = &client.properties().hardware;
-    if !props.max_cube_dim.can_contain(config.cube_dim())
+    let cube_dim = config.cube_dim();
+    if props.max_cube_dim.0 < cube_dim.x
+        || props.max_cube_dim.1 < cube_dim.y
+        || props.max_cube_dim.2 < cube_dim.z
         || config.cube_dim().num_elems() > props.max_units_per_cube
     {
         println!("Skipping test, too many resources requested");

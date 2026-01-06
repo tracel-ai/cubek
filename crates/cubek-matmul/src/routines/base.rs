@@ -117,5 +117,5 @@ pub struct DeviceSettings<R: Runtime> {
     pub client: ComputeClient<R>,
     pub plane_dim: u32,
     pub line_sizes: MatmulLineSizes,
-    pub max_cube_count: CubeCount,
+    pub max_cube_count: (u32, u32, u32),
 }

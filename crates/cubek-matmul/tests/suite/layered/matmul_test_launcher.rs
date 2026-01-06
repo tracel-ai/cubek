@@ -143,7 +143,10 @@ pub fn launch_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
     let dtypes = &launch_info.dtypes;
 
     let props = &client.properties().hardware;
-    if !props.max_cube_dim.can_contain(cube_dim) || cube_dim.num_elems() > props.max_units_per_cube
+    if props.max_cube_dim.0 < cube_dim.x
+        || props.max_cube_dim.1 < cube_dim.y
+        || props.max_cube_dim.2 < cube_dim.z
+        || cube_dim.num_elems() > props.max_units_per_cube
     {
         println!("Skipping test, too many resources requested");
         return false;
