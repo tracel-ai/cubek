@@ -6,7 +6,7 @@ use crate::components::stage::PartitionBuffering;
 use crate::components::stage::SwizzleMode;
 use crate::components::tile::TileMatmulFamily;
 use crate::definition::{
-    CubeCountPlanBlueprint, GlobalOrderDefinition, HypercubeBlueprint, MatmulAvailabilityError,
+    CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulAvailabilityError,
     MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, MatrixLayout, MultiRowStrategy,
     PartitionSize, SmAllocation, StageSize, SwizzleModes, TileSize, TilingBlueprint, TilingScheme,
     adjust_dtypes,
@@ -140,26 +140,26 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
         }
     });
 
-    let cube_count_plan = match client.properties().hardware.num_streaming_multiprocessors {
-        Some(num_sms) => CubeCountPlanBlueprint::Sm {
+    let cube_count_strategy = match client.properties().hardware.num_streaming_multiprocessors {
+        Some(num_sms) => CubeCountStrategy::Sm {
             num_sms,
             sm_usage: SmAllocation::Exact,
             cubes_first: true,
         },
-        None => CubeCountPlanBlueprint::FromProblem,
+        None => CubeCountStrategy::FromProblem,
     };
 
     let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
-        .global_order(GlobalOrderDefinition::SwizzleRow {
+        .global_order_strategy(GlobalOrderStrategy::SwizzleRow {
             m: problem.m as u32,
             w: 4,
         })
-        .cube_count_plan(cube_count_plan)
+        .cube_count_strategy(cube_count_strategy)
         .build();
 
     let mut builder = TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
         .partition_buffering(partition_buffering)
-        .hypercube_config(hypercube);
+        .hypercube_blueprint(hypercube);
 
     if options.specialized {
         builder = builder.load_specialization_config(LoadSpecializationConfig {
@@ -299,25 +299,25 @@ fn selection_tiny<R: Runtime>(
         .with_stage_size((1, 1, 1).into())
         .build()
         .unwrap();
-    let cube_count_plan = match client.properties().hardware.num_streaming_multiprocessors {
-        Some(num_sms) => CubeCountPlanBlueprint::Sm {
+    let cube_count_strategy = match client.properties().hardware.num_streaming_multiprocessors {
+        Some(num_sms) => CubeCountStrategy::Sm {
             num_sms,
             sm_usage: SmAllocation::Exact,
             cubes_first: true,
         },
-        None => CubeCountPlanBlueprint::FromProblem,
+        None => CubeCountStrategy::FromProblem,
     };
 
     let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
-        .global_order(GlobalOrderDefinition::SwizzleRow {
+        .global_order_strategy(GlobalOrderStrategy::SwizzleRow {
             m: problem.m as u32,
             w: 2,
         })
-        .cube_count_plan(cube_count_plan)
+        .cube_count_strategy(cube_count_strategy)
         .build();
 
     TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
         .partition_buffering(PartitionBuffering::Single)
-        .hypercube_config(hypercube)
+        .hypercube_blueprint(hypercube)
         .build()
 }

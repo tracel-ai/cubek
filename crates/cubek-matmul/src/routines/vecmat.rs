@@ -23,9 +23,8 @@ use crate::{
         },
     },
     definition::{
-        CubeCountPlanBlueprint, GlobalOrderDefinition, HypercubeBlueprint, MatmulElems,
-        MatmulProblem, MatmulSetupError, PartitionSize, SmAllocation, TileSize, TilingBlueprint,
-        TilingScheme,
+        CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulElems, MatmulProblem,
+        MatmulSetupError, PartitionSize, SmAllocation, TileSize, TilingBlueprint, TilingScheme,
     },
     routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, Routine},
 };
@@ -188,25 +187,25 @@ fn infer_blueprint_vecmat<R: Runtime>(
         .with_stage_size((1, 1, 1).into())
         .build()
         .unwrap();
-    let cube_count_plan = match client.properties().hardware.num_streaming_multiprocessors {
-        Some(num_sms) => CubeCountPlanBlueprint::Sm {
+    let cube_count_strategy = match client.properties().hardware.num_streaming_multiprocessors {
+        Some(num_sms) => CubeCountStrategy::Sm {
             num_sms,
             sm_usage: SmAllocation::Exact,
             cubes_first: true,
         },
-        None => CubeCountPlanBlueprint::FromProblem,
+        None => CubeCountStrategy::FromProblem,
     };
 
     let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
-        .global_order(GlobalOrderDefinition::SwizzleRow {
+        .global_order_strategy(GlobalOrderStrategy::SwizzleRow {
             m: problem.m as u32,
             w: 2,
         })
-        .cube_count_plan(cube_count_plan)
+        .cube_count_strategy(cube_count_strategy)
         .build();
 
     TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
         .partition_buffering(PartitionBuffering::Single)
-        .hypercube_config(hypercube)
+        .hypercube_blueprint(hypercube)
         .build()
 }

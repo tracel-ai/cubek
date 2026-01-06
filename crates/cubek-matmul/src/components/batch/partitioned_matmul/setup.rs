@@ -7,7 +7,7 @@ use crate::components::batch::partitioned_matmul::matmul::PartitionedBatchMatmul
 use crate::components::batch::partitioned_matmul::matmul::matmul_entry;
 use crate::components::batch::partitioned_matmul::partition::GlobalPartitionMatmul;
 use crate::components::global::GlobalMatmulFamily;
-use crate::definition::CubeCountInputArgs;
+use crate::definition::CubeMappingLaunch;
 use crate::definition::InvalidConfigError;
 use crate::definition::MatmulLineSizes;
 use crate::definition::MatmulProblem;
@@ -36,14 +36,14 @@ impl<GMM: GlobalMatmulFamily, S: GlobalPartitionMatmul> BatchMatmulFamily
     ) -> Result<Self::Config, MatmulSetupError> {
         let global_config = GMM::expand_config(blueprint, dtypes, line_sizes)?;
 
-        PartitionedBatchConfig::new(
+        // blueprint
+        //     .hypercube_blueprint
+        //     .to_hypercube_config(problem, client.properties().hardware.max_cube_count.clone()),
+
+        Ok(PartitionedBatchConfig::new(
             global_config,
-            blueprint
-                .hypercube_blueprint
-                .to_hypercube_config(problem, client.properties().hardware.max_cube_count.clone()),
             blueprint.tiling_scheme.global_partition_size,
-        )
-        .validate(problem)
+        ))
     }
 
     unsafe fn launch_unchecked<'a, MA: MatmulArgs, R: Runtime>(
@@ -52,7 +52,7 @@ impl<GMM: GlobalMatmulFamily, S: GlobalPartitionMatmul> BatchMatmulFamily
         cube_count: CubeCount,
         input: InputRuntimeArg<'a, MA, R>,
         output: OutputRuntimeArg<'a, MA, R>,
-        cube_count_input: CubeCountInputArgs<'a, R>,
+        cube_count_input: CubeMappingLaunch<'a, R>,
         blueprint: Self::Blueprint,
         dtypes: &MatmulElems,
     ) -> Result<(), LaunchError> {

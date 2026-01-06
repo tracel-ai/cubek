@@ -10,7 +10,7 @@ use crate::{
         global::memory::GlobalLayoutConfig,
     },
     definition::{
-        Blueprint, CubeCountInputArgs, InvalidConfigError, MatmulElems, MatmulLineSizes,
+        Blueprint, CubeMappingLaunch, InvalidConfigError, MatmulElems, MatmulLineSizes,
         MatmulPrecision, MatmulProblem, MatmulSetupError, MatrixLayout,
     },
     launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
@@ -69,7 +69,7 @@ impl BatchMatmulFamily for NaiveBatchMatmulFamily {
         cube_count: CubeCount,
         input: InputRuntimeArg<'a, MA, R>,
         output: OutputRuntimeArg<'a, MA, R>,
-        cube_count_input: CubeCountInputArgs<'a, R>,
+        cube_mapping: CubeMappingLaunch<'a, R>,
         blueprint: NaiveBlueprint,
         dtypes: &MatmulElems,
     ) -> Result<(), LaunchError> {
@@ -80,7 +80,7 @@ impl BatchMatmulFamily for NaiveBatchMatmulFamily {
                 cube_dim,
                 input,
                 output,
-                cube_count_input,
+                cube_mapping,
                 blueprint,
                 [dtypes.lhs_global, dtypes.rhs_global, dtypes.acc_global],
                 [dtypes.lhs_stage, dtypes.rhs_stage, dtypes.acc_stage],

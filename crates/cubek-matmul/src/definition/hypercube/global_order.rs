@@ -39,7 +39,7 @@ impl GlobalOrder {
 #[derive(Default)]
 /// Used to create [GlobalOrder]
 #[allow(unused)]
-pub enum GlobalOrderDefinition {
+pub enum GlobalOrderStrategy {
     /// It creates the default global order.
     #[default]
     Default,
@@ -59,12 +59,12 @@ pub enum GlobalOrderDefinition {
     SwizzleCol { n: u32, w: u32 },
 }
 
-impl GlobalOrderDefinition {
+impl GlobalOrderStrategy {
     pub fn into_order(self, span: &CubeSpan) -> GlobalOrder {
         match self {
-            GlobalOrderDefinition::Default => GlobalOrder::default(),
-            GlobalOrderDefinition::Fixed(order) => order,
-            GlobalOrderDefinition::SwizzleRow { m, w } => {
+            GlobalOrderStrategy::Default => GlobalOrder::default(),
+            GlobalOrderStrategy::Fixed(order) => order,
+            GlobalOrderStrategy::SwizzleRow { m, w } => {
                 let m_cubes = m.div_ceil(span.m);
                 if m_cubes % w != 0 {
                     GlobalOrder::RowMajor
@@ -72,7 +72,7 @@ impl GlobalOrderDefinition {
                     GlobalOrder::SwizzleRowMajor(w)
                 }
             }
-            GlobalOrderDefinition::SwizzleCol { n, w } => {
+            GlobalOrderStrategy::SwizzleCol { n, w } => {
                 let n_cubes = n.div_ceil(span.n);
                 if n_cubes % w != 0 {
                     GlobalOrder::RowMajor

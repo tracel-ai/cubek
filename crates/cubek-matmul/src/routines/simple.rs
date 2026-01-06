@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 
 use crate::components::batch::BatchMatmulFamily;
 use crate::definition::{
-    CubeCountPlanBlueprint, GlobalOrderDefinition, HypercubeBlueprint, MatmulElems, MatmulLineSizes,
+    CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulElems, MatmulLineSizes,
     MatmulProblem, MatmulSetupError, MultiRowStrategy, SmAllocation, TilingBlueprint, TilingScheme,
     adjust_dtypes,
 };
@@ -163,13 +163,13 @@ fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
             },
         )
     };
-    let cube_count_plan = match client.properties().hardware.num_streaming_multiprocessors {
-        Some(num_sms) => CubeCountPlanBlueprint::Sm {
+    let cube_count_strategy = match client.properties().hardware.num_streaming_multiprocessors {
+        Some(num_sms) => CubeCountStrategy::Sm {
             num_sms,
             sm_usage: SmAllocation::Exact,
             cubes_first: true,
         },
-        None => CubeCountPlanBlueprint::Flattened,
+        None => CubeCountStrategy::Flattened,
     };
 
     if supported(8, 32, 16) {
@@ -183,17 +183,17 @@ fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
             .unwrap();
 
         let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
-            .global_order(GlobalOrderDefinition::SwizzleRow {
+            .global_order_strategy(GlobalOrderStrategy::SwizzleRow {
                 m: problem.m as u32,
                 w: 4,
             })
-            .cube_count_plan(cube_count_plan)
+            .cube_count_strategy(cube_count_strategy)
             .build();
 
         Ok((
             TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
                 .partition_buffering(PartitionBuffering::Single)
-                .hypercube_config(hypercube)
+                .hypercube_blueprint(hypercube)
                 .build(),
             dtypes,
         ))
@@ -205,17 +205,17 @@ fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
             .build()
             .unwrap();
         let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
-            .global_order(GlobalOrderDefinition::SwizzleRow {
+            .global_order_strategy(GlobalOrderStrategy::SwizzleRow {
                 m: problem.m as u32,
                 w: 4,
             })
-            .cube_count_plan(cube_count_plan)
+            .cube_count_strategy(cube_count_strategy)
             .build();
 
         Ok((
             TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
                 .partition_buffering(PartitionBuffering::Single)
-                .hypercube_config(hypercube)
+                .hypercube_blueprint(hypercube)
                 .build(),
             dtypes,
         ))

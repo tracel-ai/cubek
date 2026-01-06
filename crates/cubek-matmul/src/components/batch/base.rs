@@ -1,9 +1,8 @@
 use crate::components::CubeDimResource;
 use crate::components::global::memory::GlobalLayoutConfig;
 use crate::definition::{
-    AccG, Blueprint, CubeCountInput, CubeCountInputArgs, CubeCountPlan, InvalidConfigError, LhsG,
-    MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError, RhsG,
-    TilingBlueprint,
+    AccG, Blueprint, CubeMapping, CubeMappingLaunch, InvalidConfigError, LhsG, MatmulElems,
+    MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError, RhsG,
 };
 use crate::launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
 use cubecl::prelude::*;
@@ -40,7 +39,7 @@ pub trait BatchMatmulFamily: 'static + Send + Sync {
         cube_count: CubeCount,
         input: InputRuntimeArg<'a, MA, R>,
         output: OutputRuntimeArg<'a, MA, R>,
-        cube_count_input: CubeCountInputArgs<'a, R>,
+        cube_mapping: CubeMappingLaunch<'a, R>,
         blueprint: Self::Blueprint,
         dtypes: &MatmulElems,
     ) -> Result<(), LaunchError>;
@@ -81,7 +80,7 @@ pub trait BatchMatmul<MP: MatmulPrecision>: 'static + Send + Sync {
     /// Performs batchwise matrix multiplication over tensors.
     fn execute<Args: MatmulArgs>(
         state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
-        cube_count_args: CubeCountInput,
+        cube_mapping: CubeMapping,
         #[comptime] config: Self::Config,
     );
 }
@@ -93,14 +92,11 @@ pub trait BatchConfig:
     /// Returns the [CubeDim]
     fn cube_dim(&self) -> CubeDim;
 
-    fn cube_count_plan(&self, problem: &MatmulProblem, max_cube_count: &CubeCount)
-    -> CubeCountPlan;
-
     /// Returns the line sizes for Lhs, Rhs and output
     fn line_sizes(&self) -> MatmulLineSizes;
 
-    /// Whether it may launch more cubes than the minimum required
-    fn can_yield_extra_cubes(&self) -> bool;
+    // / Whether it may launch more cubes than the minimum required
+    // fn can_yield_extra_cubes(&self) -> bool;
 
     fn lhs_global_layout_config(&self) -> GlobalLayoutConfig;
     fn rhs_global_layout_config(&self) -> GlobalLayoutConfig;

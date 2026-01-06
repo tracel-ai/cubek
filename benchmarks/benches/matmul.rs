@@ -10,7 +10,7 @@ use cubek::{
         self as matmul,
         components::stage::PartitionBuffering,
         definition::{
-            CubeCountPlanBlueprint, GlobalOrderDefinition, HypercubeBlueprint,
+            CubeCountPlanBlueprint, GlobalOrderStrategy, HypercubeBlueprint,
             LoadingPrecomputeStrategy, MatmulElems, MatmulGlobalElems, MatmulPrecision,
             MatmulProblem, MatrixLayout, StageSize, TilingBlueprint, TilingScheme,
         },
@@ -262,7 +262,7 @@ fn run_grid_search<R: Runtime, MP: MatmulPrecision>() {
                     .build()
                     .unwrap();
                 let hypercube = HypercubeBlueprint::builder(&tiling)
-                    .global_order(GlobalOrderDefinition::Default)
+                    .global_order(GlobalOrderStrategy::Default)
                     .cube_count_plan(CubeCountPlanBlueprint::Flattened)
                     .build();
                 let blueprint = TilingBlueprint::builder(tiling, plane_dim, &problem)

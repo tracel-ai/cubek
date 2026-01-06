@@ -91,11 +91,7 @@ fn simple_cube_count(
         batch_cubes *= output_shape[i] as u32;
     }
 
-    let cube_count_plan = CubeCountPlan::FromProblem {
-        m_cubes,
-        n_cubes,
-        batch_cubes,
-    };
+    let cube_count_plan = CubeCountPlan::new_from_problem(m_cubes, n_cubes, batch_cubes);
     let max_cube_count = u16::MAX as u32;
 
     if m_cubes > max_cube_count || n_cubes > max_cube_count || batch_cubes > max_cube_count {

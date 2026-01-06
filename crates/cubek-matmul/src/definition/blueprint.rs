@@ -7,8 +7,8 @@ use crate::{
         stage::{PartitionBuffering, SwizzleMode},
     },
     definition::{
-        CubeCountPlan, MatmulElems, MatmulProblem, MatmulSetupError, MatrixLayout, TilingScheme,
-        hypercube::HypercubeBlueprint,
+        CubeCountPlan, HypercubeBlueprint, MatmulElems, MatmulProblem, MatmulSetupError,
+        MatrixLayout, TilingScheme,
     },
     routines::DeviceSettings,
 };
@@ -170,7 +170,7 @@ pub struct TilingBlueprintBuilder {
 }
 
 impl TilingBlueprintBuilder {
-    pub fn hypercube_config(mut self, hypercube_blueprint: HypercubeBlueprint) -> Self {
+    pub fn hypercube_blueprint(mut self, hypercube_blueprint: HypercubeBlueprint) -> Self {
         self.hypercube_blueprint = hypercube_blueprint;
         self
     }

@@ -2,7 +2,7 @@ use crate::components::CubeDimResource;
 use crate::components::batch::{BatchConfig, BatchMatmulFamily};
 use crate::components::global::cube_dim_validation;
 use crate::definition::{
-    Blueprint, CubeCountInputArgs, CubeCountPlan, MatmulElems, MatmulLineSizes, MatmulProblem,
+    Blueprint, CubeCountPlan, CubeMappingLaunch, MatmulElems, MatmulLineSizes, MatmulProblem,
     MatmulSetupError, TilingBlueprint,
 };
 use crate::launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
@@ -25,7 +25,7 @@ pub trait Routine: Sized {
         cube_count: CubeCount,
         input: InputRuntimeArg<'a, MA, R>,
         output: OutputRuntimeArg<'a, MA, R>,
-        cube_count_input: CubeCountInputArgs<'a, R>,
+        cube_count_input: CubeMappingLaunch<'a, R>,
         blueprint: Self::Blueprint,
         dtypes: &MatmulElems,
     ) -> Result<(), MatmulSetupError> {

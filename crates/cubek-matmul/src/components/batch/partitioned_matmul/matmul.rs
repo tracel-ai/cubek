@@ -5,14 +5,12 @@ use crate::components::batch::partitioned_matmul::config::PartitionedBatchConfig
 use crate::components::batch::partitioned_matmul::partition::{
     GlobalPartitionMatmul, PartitionRangeDim, PartitionRanges,
 };
-use crate::components::batch::{
-    BatchConfig as _, BatchMatmul, BatchMatmulFamily, PartitionedBatchMatmulFamily,
-};
+use crate::components::batch::{BatchMatmul, BatchMatmulFamily, PartitionedBatchMatmulFamily};
 use crate::components::global::{self, GlobalConfig, GlobalMatmul, GlobalMatmulFamily};
 use crate::components::stage::StageConfig as _;
 use crate::definition::{
-    AccG, Blueprint as _, CubeCountInput, LhsG, MatmulElems, MatmulLineSizes, MatmulPrecision,
-    RhsG, TilingBlueprint,
+    AccG, Blueprint as _, CubeMapping, LhsG, MatmulElems, MatmulLineSizes, MatmulPrecision, RhsG,
+    TilingBlueprint,
 };
 use crate::launch::MatmulArgs;
 
@@ -34,7 +32,7 @@ pub(crate) fn matmul_entry<
 >(
     inputs: &<Args as MatmulArgs>::Input<LhsG, RhsG, AccG>,
     output: &mut <Args as MatmulArgs>::Output<AccG>,
-    cube_count_args: CubeCountInput,
+    cube_mapping: CubeMapping,
     #[comptime] blueprint: TilingBlueprint,
     #[define(LhsG, RhsG, AccG)] global: [StorageType; 3],
     #[define(LhsS, RhsS, AccS)] stage: [StorageType; 3],
@@ -70,8 +68,8 @@ pub(crate) fn matmul_entry<
     let config = comptime!(config.unwrap());
 
     #[allow(clippy::collapsible_if)]
-    if comptime!(config.can_yield_extra_cubes()) {
-        if CUBE_POS >= cube_count_args.num_valid_cubes() {
+    if comptime!(cube_mapping.can_yield_extra_cubes) {
+        if CUBE_POS >= cube_mapping.num_valid_cubes() {
             terminate!()
         }
     }
@@ -80,7 +78,7 @@ pub(crate) fn matmul_entry<
         ((LhsG, LhsS, LhsR), (RhsG, RhsS, RhsR), (AccG, AccS, AccR)),
         GMMF::Matmul<((LhsG, LhsS, LhsR), (RhsG, RhsS, RhsR), (AccG, AccS, AccR))>,
         GPM,
-    >::execute::<Args>(&mut state, cube_count_args, config);
+    >::execute::<Args>(&mut state, cube_mapping, config);
 }
 
 /// Executes matrix multiplication at the batch level,
@@ -106,14 +104,13 @@ impl<MP: MatmulPrecision, GMM: GlobalMatmul<MP>, GPMM: GlobalPartitionMatmul> Ba
 
     fn execute<Args: MatmulArgs>(
         state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
-        cube_count_args: CubeCountInput,
+        cube_mapping: CubeMapping,
         #[comptime] config: Self::Config,
     ) {
         let (_, _, problem_k) = Args::view_lhs(state).shape();
         let k_range = (0, problem_k);
 
-        let (m_index, n_index, batch_index) =
-            cube_count_args.cube_pos_to_tensor_pos(config.hypercube_config.global_order);
+        let (m_index, n_index, batch_index) = cube_mapping.cube_pos_to_tensor_pos();
 
         let ranges = PartitionRanges::new(
             PartitionRangeDim::new(

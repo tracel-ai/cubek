@@ -1,8 +1,8 @@
-use cubecl::CubeCount;
-
 use crate::definition::{
     GlobalOrder, MatmulProblem, MatmulSetupError, TilingScheme,
-    hypercube::{base::CubeSpan, builder::HypercubeBlueprintBuilder},
+    hypercube::{
+        base::CubeSpan, builder::HypercubeBlueprintBuilder, cube_count::CubeCountStrategy,
+    },
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -11,7 +11,7 @@ use crate::definition::{
 pub struct HypercubeBlueprint {
     pub cube_span: CubeSpan,
     pub global_order: GlobalOrder,
-    pub cube_count_plan_blueprint: CubeCountPlanBlueprint,
+    pub cube_count_strategy: CubeCountStrategy,
 }
 
 impl HypercubeBlueprint {
@@ -20,24 +20,24 @@ impl HypercubeBlueprint {
         HypercubeBlueprintBuilder::new(tiling_scheme)
     }
 
-    pub(crate) fn to_hypercube_config(
-        &self,
-        // this is bad. we don't know m,n,total_batches when turning blueprint into config (comptime inside kernel)
-        m: u32,
-        n: u32,
-        total_batches: u32,
-        max_cube_count: CubeCount,
-    ) -> HypercubeConfig {
-        let cube_count_plan =
-            CubeCountPlan::from_blueprint(self, m, n, total_batches, &max_cube_count);
-        let cube_count_plan_config = CubeCountPlanConfig::from_cube_count_plan(cube_count_plan);
+    // pub(crate) fn to_hypercube_config(
+    //     &self,
+    //     // this is bad. we don't know m,n,total_batches when turning blueprint into config (comptime inside kernel)
+    //     m: u32,
+    //     n: u32,
+    //     total_batches: u32,
+    //     max_cube_count: CubeCount,
+    // ) -> HypercubeConfig {
+    //     let cube_count_plan =
+    //         CubeCountPlan::from_blueprint(self, m, n, total_batches, &max_cube_count);
+    //     let cube_count_plan_config = CubeCountPlanConfig::from_cube_count_plan(cube_count_plan);
 
-        HypercubeConfig {
-            cube_span: self.cube_span,
-            global_order: self.global_order,
-            cube_count_plan_config,
-        }
-    }
+    //     HypercubeConfig {
+    //         cube_span: self.cube_span,
+    //         global_order: self.global_order,
+    //         cube_count_plan_config,
+    //     }
+    // }
 
     /// Returns an error if:
     /// - The global order is swizzle but its assumptions are not met

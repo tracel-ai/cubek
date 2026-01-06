@@ -15,9 +15,8 @@ use crate::components::{
 use crate::components::{global::PlaneWriterFamily, stage::StageFamily};
 use crate::components::{stage::FilledStageFamily, tile::TileMatmulFamily};
 use crate::definition::{
-    CubeCountPlanBlueprint, GlobalOrderDefinition, HypercubeBlueprint, MatmulLineSizes,
-    MatmulProblem, MatmulSetupError, MatrixLayout, SmAllocation, SwizzleModes, TilingBlueprint,
-    adjust_dtypes,
+    CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulLineSizes, MatmulProblem,
+    MatmulSetupError, MatrixLayout, SmAllocation, SwizzleModes, TilingBlueprint, adjust_dtypes,
 };
 use crate::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
 use crate::routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, base};
@@ -150,13 +149,13 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
             },
         )
     };
-    let cube_count_plan = match client.properties().hardware.num_streaming_multiprocessors {
-        Some(num_sms) => CubeCountPlanBlueprint::Sm {
+    let cube_count_strategy = match client.properties().hardware.num_streaming_multiprocessors {
+        Some(num_sms) => CubeCountStrategy::Sm {
             num_sms,
             sm_usage: SmAllocation::Exact,
             cubes_first: true,
         },
-        None => CubeCountPlanBlueprint::Flattened,
+        None => CubeCountStrategy::Flattened,
     };
 
     let tiling_scheme = if supported(16, 8, 16) {
@@ -190,16 +189,16 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
     };
 
     let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
-        .global_order(GlobalOrderDefinition::SwizzleRow {
+        .global_order_strategy(GlobalOrderStrategy::SwizzleRow {
             m: problem.m as u32,
             w: 4,
         })
-        .cube_count_plan(cube_count_plan)
+        .cube_count_strategy(cube_count_strategy)
         .build();
 
     let mut builder = TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
         .partition_buffering(PartitionBuffering::Single)
-        .hypercube_config(hypercube)
+        .hypercube_blueprint(hypercube)
         .load_specialization_config(LoadSpecializationConfig {
             lhs: SpecializationTensorConfig::LoadFlowOnly,
             rhs: SpecializationTensorConfig::LoadFlowOnly,

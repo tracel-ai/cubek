@@ -31,7 +31,7 @@ pub(crate) fn matmul_entry<
 >(
     inputs: &<Args as MatmulArgs>::Input<LhsG, RhsG, AccG>,
     output: &mut <Args as MatmulArgs>::Output<AccG>,
-    cube_count_args: CubeCountInput,
+    cube_mapping: CubeMapping,
     #[comptime] blueprint: NaiveBlueprint,
     #[define(LhsG, RhsG, AccG)] global: [StorageType; 3],
     #[define(LhsS, RhsS, AccS)] stage: [StorageType; 3],
@@ -76,7 +76,7 @@ pub(crate) fn matmul_entry<
 
     NaiveMatmul::<((LhsG, LhsS, LhsR), (RhsG, RhsS, RhsR), (AccG, AccS, AccR))>::execute::<Args>(
         &mut state,
-        cube_count_args,
+        cube_mapping,
         config,
     );
 }
@@ -91,7 +91,7 @@ impl<MP: MatmulPrecision> BatchMatmul<MP> for NaiveMatmul<MP> {
 
     fn execute<Args: MatmulArgs>(
         state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
-        _cube_count_args: CubeCountInput,
+        _cube_mapping: CubeMapping,
         #[comptime] _config: Self::Config,
     ) {
         let lhs = Args::view_lhs(state);
