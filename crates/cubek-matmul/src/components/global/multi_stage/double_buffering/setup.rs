@@ -170,9 +170,8 @@ where
         dtypes: &MatmulElems,
         line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError> {
-        todo!();
-        // LL::check(client, problem, &config.lhs_reader_config, dtypes)?;
-        // RL::check(client, problem, &config.rhs_reader_config, dtypes)?;
+        LL::validate_with_problem(problem, dtypes, StageIdent::Lhs)?;
+        RL::validate_with_problem(problem, dtypes, StageIdent::Rhs)?;
 
         SMM::validate_blueprint(client, blueprint, (2, 2).into(), dtypes, line_sizes)
     }

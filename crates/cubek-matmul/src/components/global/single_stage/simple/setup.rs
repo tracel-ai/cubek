@@ -124,7 +124,7 @@ where
             gmem_config: out_gmem_config,
             smem_config: stage_config.out_smem_config(),
             role_rule_config: plane_role_config.rule,
-            plane_dim: blueprint.plane_dim,
+            plane_dim,
         };
 
         Ok(SharedGlobalMatmulConfig {
@@ -144,7 +144,7 @@ where
             SMM::cubedim_resource(blueprint)
         } else {
             return Err(Box::new(
-                "Error: Specialization is unavailable for simple tma matmul.",
+                "Error: Specialization is unavailable for simple matmul.",
             ));
         }?;
 
@@ -158,9 +158,8 @@ where
         dtypes: &MatmulElems,
         line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError> {
-        todo!();
-        // LL::check(client, problem, &config.lhs_reader_config, dtypes)?;
-        // RL::check(client, problem, &config.rhs_reader_config, dtypes)?;
+        LL::validate_with_problem(problem, dtypes, StageIdent::Lhs)?;
+        RL::validate_with_problem(problem, dtypes, StageIdent::Rhs)?;
         SMM::validate_blueprint(client, blueprint, (1, 1).into(), dtypes, line_sizes)
     }
 }

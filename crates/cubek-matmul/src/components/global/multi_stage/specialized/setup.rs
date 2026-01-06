@@ -1,9 +1,7 @@
 use crate::components::CubeDimResource;
 use crate::components::global::multi_stage::EventLoadingMode;
-use crate::components::global::read::LoadingValidation;
 use crate::components::global::{
     GlobalReaderConfig, GlobalWriterConfig, MatmulPlaneCounts, SharedGlobalMatmulConfig,
-    cube_dim_validation,
 };
 use crate::components::global::{GlobalWriterFamily, multi_stage::specialized::SpecializedMatmul};
 use crate::components::global::{
@@ -171,9 +169,8 @@ where
         dtypes: &MatmulElems,
         line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError> {
-        todo!();
-        // LL::check(client, problem, &config.lhs_reader_config, dtypes)?;
-        // RL::check(client, problem, &config.rhs_reader_config, dtypes)?;
+        L::validate_with_problem(problem, dtypes, StageIdent::Lhs)?;
+        L::validate_with_problem(problem, dtypes, StageIdent::Rhs)?;
         SMM::validate_blueprint(client, blueprint, (2, 2).into(), dtypes, line_sizes)
     }
 }

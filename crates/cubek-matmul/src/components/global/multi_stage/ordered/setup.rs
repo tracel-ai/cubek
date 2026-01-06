@@ -1,6 +1,7 @@
 use crate::components::CubeDimResource;
 use crate::components::global::memory::{GlobalMemoryConfig, ViewDirection};
 use crate::components::global::multi_stage::EventLoadingMode;
+use crate::components::global::read::LoadingValidation as _;
 use crate::components::global::{
     GlobalReaderConfig, GlobalWriterConfig, MatmulPlaneCounts, SharedGlobalMatmulConfig,
 };
@@ -171,9 +172,8 @@ where
         dtypes: &MatmulElems,
         line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError> {
-        todo!();
-        // LL::check(client, problem, &config.lhs_reader_config, dtypes)?;
-        // RL::check(client, problem, &config.rhs_reader_config, dtypes)?;
+        LL::validate_with_problem(problem, dtypes, StageIdent::Lhs)?;
+        RL::validate_with_problem(problem, dtypes, StageIdent::Rhs)?;
 
         if blueprint.tiling_scheme.partitions_per_stage_along_n() > 1 {
             return Err(MatmulSetupError::InvalidConfig(Box::new(

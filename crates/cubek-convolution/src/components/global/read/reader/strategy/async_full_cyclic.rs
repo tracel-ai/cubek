@@ -34,13 +34,13 @@ pub struct AsyncFullCyclicLoading<T: TilingOrder> {
 }
 
 impl<TO: TilingOrder> LoadingValidation for AsyncFullCyclicLoading<TO> {
-    fn check<R: Runtime>(
+    fn validate_with_config<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
         config: &GlobalReaderConfig,
         dtypes: &MatmulElems,
     ) -> Result<(), InvalidConfigError> {
-        MatmulCyclicLoading::<TO>::check(client, problem, config, dtypes)
+        MatmulCyclicLoading::<TO>::validate_with_config(client, problem, config, dtypes)
     }
 }
 

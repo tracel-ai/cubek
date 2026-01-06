@@ -1,5 +1,6 @@
 use crate::components::global::read::async_barrier::AsyncCopy;
 use crate::components::global::read::async_copy::ASYNC_COPY_WIDTH;
+use crate::components::global::read::validate_async_copy_with_problem;
 use crate::components::global::read::{
     FullLoadingStrategy, stage::FullStageLayout, validate_async_barrier,
 };
@@ -9,7 +10,7 @@ use crate::components::global::{multi_stage::LoadMaxRoundPlaneCount, read::valid
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{StridedStageMemory, StridedTilingLayout};
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
-use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem};
+use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem, StageIdent};
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Layout, LayoutExpand};
@@ -22,9 +23,7 @@ use super::{LoadingJob, LoadingValidation};
 pub struct AsyncFullStridedLoading {}
 
 impl LoadingValidation for AsyncFullStridedLoading {
-    fn check<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
+    fn validate_with_config(
         config: &GlobalReaderConfig,
         dtypes: &MatmulElems,
     ) -> Result<(), InvalidConfigError> {
@@ -50,12 +49,20 @@ impl LoadingValidation for AsyncFullStridedLoading {
             )));
         }
 
-        validate_async_copy(client, problem, dtypes, config)?;
-        validate_async_barrier(client)?;
+        validate_async_barrier()?;
         validate_swizzle_atom_size(config.smem_config, config.stage_ident, dtypes)?;
+        validate_async_copy(dtypes, config)?;
         StridedTilingLayout::check(config.smem_config)?;
 
         Ok(())
+    }
+
+    fn validate_with_problem(
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        ident: StageIdent,
+    ) -> Result<(), InvalidConfigError> {
+        validate_async_copy_with_problem(problem, dtypes, ident)
     }
 }
 

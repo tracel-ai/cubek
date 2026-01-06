@@ -76,8 +76,10 @@ impl<GMM: GlobalMatmulFamily, S: GlobalPartitionMatmul> BatchMatmulFamily
         }
     }
 
-    fn cubedim_resource() -> Result<CubeDimResource, InvalidConfigError> {
-        todo!()
+    fn cubedim_resource(
+        blueprint: &Self::Blueprint,
+    ) -> Result<CubeDimResource, InvalidConfigError> {
+        GMM::cubedim_resource(blueprint)
     }
 
     fn validate_blueprint<R: Runtime>(

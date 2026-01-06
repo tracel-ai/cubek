@@ -1,5 +1,4 @@
 use crate::components::global::memory::GlobalIterator;
-use crate::components::global::stride_align_bits;
 use crate::components::stage::TilingLayout;
 use crate::components::stage::{StageMemoryConfig, SwizzleMode};
 use crate::components::{global::GlobalReaderConfig, stage::StageConfig};
@@ -51,20 +50,21 @@ pub trait SyncStrategy {
 /// Allows to verify configs are valid for a reader
 pub trait LoadingValidation {
     /// Verify that configs are valid for a reader, otherwise return an error stating why
-    fn check<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
+    fn validate_with_config(
         config: &GlobalReaderConfig,
         dtypes: &MatmulElems,
+    ) -> Result<(), InvalidConfigError>;
+
+    fn validate_with_problem(
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        ident: StageIdent,
     ) -> Result<(), InvalidConfigError>;
 }
 
 /// Validates if async barrier instructions is available on the current device.
-pub fn validate_async_barrier<R: Runtime>(
-    client: &ComputeClient<R>,
-) -> Result<(), InvalidConfigError> {
-    if !client
-        .properties()
+pub fn validate_async_barrier() -> Result<(), InvalidConfigError> {
+    if !comptime::device_properties()
         .features
         .supports_type(OpaqueType::Barrier(BarrierLevel::Cube))
     {
@@ -77,13 +77,11 @@ pub fn validate_async_barrier<R: Runtime>(
 }
 
 /// Validates if async copy instructions is available on the current device.
-pub fn validate_async_copy<R: Runtime>(
-    client: &ComputeClient<R>,
-    problem: &MatmulProblem,
+pub fn validate_async_copy(
     dtypes: &MatmulElems,
     config: &GlobalReaderConfig,
 ) -> Result<(), InvalidConfigError> {
-    if !client.properties().features.copy_async {
+    if !comptime::device_properties().features.copy_async {
         return Err(Box::new(
             "Async copy instructions are not available on the current device",
         ));
@@ -103,12 +101,6 @@ pub fn validate_async_copy<R: Runtime>(
     {
         return Err(Box::new(
             "Async copy doesn't support dequantizing on global read",
-        ));
-    }
-
-    if stride_align_bits(problem, dtypes, config.stage_ident.into()) < 4 {
-        return Err(Box::new(
-            "Async copy requires strides to be aligned to 16 bytes",
         ));
     }
 
@@ -145,14 +137,11 @@ pub fn validate_swizzle_atom_size(
 
 /// Validates if [tensor memory accelerator features](SemanticType::TensorMap) are available on the current
 /// device.
-pub fn validate_tma<R: Runtime>(
-    client: &ComputeClient<R>,
-    problem: &MatmulProblem,
+pub fn validate_tma(
     config: &GlobalReaderConfig,
     dtypes: &MatmulElems,
 ) -> Result<(), InvalidConfigError> {
-    if !client
-        .properties()
+    if !comptime::device_properties()
         .features
         .supports_type(SemanticType::TensorMap)
     {
@@ -176,10 +165,6 @@ pub fn validate_tma<R: Runtime>(
         return Err(Box::new("TMA doesn't support dequantizing on global read"));
     }
 
-    if stride_align_bits(problem, dtypes, config.stage_ident.into()) < 4 {
-        return Err(Box::new("TMA requires strides to be aligned to 16 bytes"));
-    }
-
     if matches!(config.smem_config.swizzle, SwizzleMode::None) {
         return Ok(());
     }
@@ -199,14 +184,74 @@ pub fn validate_tma<R: Runtime>(
     Ok(())
 }
 
+pub fn validate_async_copy_with_problem(
+    problem: &MatmulProblem,
+    dtypes: &MatmulElems,
+    ident: StageIdent,
+) -> Result<(), InvalidConfigError> {
+    let (strides, layout) = match ident {
+        StageIdent::Lhs => (&problem.lhs_strides, &problem.lhs_layout),
+        StageIdent::Rhs => (&problem.rhs_strides, &problem.rhs_layout),
+        _ => unreachable!("Should be a loadable tensors"),
+    };
+
+    if stride_align_bits(strides, layout, &dtypes.global(ident.into())) < 4 {
+        return Err(Box::new(
+            "Async copy requires strides to be aligned to 16 bytes",
+        ));
+    }
+
+    Ok(())
+}
+
+pub fn validate_tma_with_problem(
+    problem: &MatmulProblem,
+    dtypes: &MatmulElems,
+    ident: StageIdent,
+) -> Result<(), InvalidConfigError> {
+    let (strides, layout) = match ident {
+        StageIdent::Lhs => (&problem.lhs_strides, &problem.lhs_layout),
+        StageIdent::Rhs => (&problem.rhs_strides, &problem.rhs_layout),
+        _ => unreachable!("Should be a loadable tensors"),
+    };
+
+    if stride_align_bits(strides, layout, &dtypes.global(ident.into())) < 4 {
+        return Err(Box::new("TMA requires strides to be aligned to 16 bytes"));
+    }
+
+    Ok(())
+}
+
+/// Defines the non-contiguous stride alignment in terms of powers of two
+fn stride_align_bits(strides: &[usize], layout: &MatrixLayout, dtype: &StorageType) -> u32 {
+    let exclude_dim = match layout {
+        MatrixLayout::RowMajor => strides.len() - 1,
+        MatrixLayout::ColMajor => strides.len() - 2,
+    };
+    strides
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != exclude_dim)
+        .map(|(_, it)| (*it * dtype.size_bits()) / 8)
+        .map(|it| it.trailing_zeros())
+        .min()
+        .unwrap_or(31)
+}
+
 /// Dummy trait implementation
 pub struct NoLoadingValidation {}
 impl LoadingValidation for NoLoadingValidation {
-    fn check<R: Runtime>(
-        _client: &ComputeClient<R>,
-        _problem: &MatmulProblem,
+    fn validate_with_config(
         _config: &GlobalReaderConfig,
         _dtypes: &MatmulElems,
+    ) -> Result<(), InvalidConfigError> {
+        Ok(())
+    }
+
+    fn validate_with_problem(
+        _problem: &MatmulProblem,
+        _dtypes: &MatmulElems,
+        _ident: StageIdent,
     ) -> Result<(), InvalidConfigError> {
         Ok(())
     }

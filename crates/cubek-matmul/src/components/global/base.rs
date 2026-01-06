@@ -9,10 +9,10 @@ use crate::components::global::{
     SpecializedLoadingSides,
 };
 use crate::components::stage::{StageConfig, StageMemoryConfig};
-use crate::definition::{self, AccG, MatmulSetupError};
+use crate::definition::StageIdent;
+use crate::definition::{AccG, MatmulSetupError};
 use crate::definition::{InvalidConfigError, TilingBlueprint};
 use crate::definition::{LhsG, MatmulElems, MatmulLineSizes, RhsG};
-use crate::definition::{MatmulIdent, StageIdent};
 use crate::definition::{MatmulPrecision, MatmulProblem};
 use cubecl::std::{
     CubeOption,
@@ -238,25 +238,4 @@ impl GlobalReaderConfig {
     pub fn loading_units_count(&self) -> u32 {
         self.plane_dim * self.loading_planes_count()
     }
-}
-
-/// Defines the non-contiguous stride alignment in terms of powers of two
-pub fn stride_align_bits(problem: &MatmulProblem, dtypes: &MatmulElems, ident: MatmulIdent) -> u32 {
-    let (strides, layout) = match ident {
-        MatmulIdent::Lhs => (&problem.lhs_strides, problem.lhs_layout),
-        MatmulIdent::Rhs => (&problem.rhs_strides, problem.rhs_layout),
-        MatmulIdent::Out => return 31,
-    };
-    let exclude_dim = match layout {
-        definition::MatrixLayout::RowMajor => strides.len() - 1,
-        definition::MatrixLayout::ColMajor => strides.len() - 2,
-    };
-    strides
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| *i != exclude_dim)
-        .map(|(_, it)| (*it * dtypes.global(ident).size_bits()) / 8)
-        .map(|it| it.trailing_zeros())
-        .min()
-        .unwrap_or(31)
 }

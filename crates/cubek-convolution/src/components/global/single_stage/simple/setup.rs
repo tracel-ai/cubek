@@ -194,8 +194,8 @@ fn validate<LL: LoadingValidation, RL: LoadingValidation, S: StageConfig, R: Run
     problem: &MatmulProblem,
     dtypes: &MatmulElems,
 ) -> Result<SharedGlobalMatmulConfig<S>, MatmulSetupError> {
-    LL::check(client, problem, &config.lhs_reader_config, dtypes)?;
-    RL::check(client, problem, &config.rhs_reader_config, dtypes)?;
+    LL::validate_with_config(client, problem, &config.lhs_reader_config, dtypes)?;
+    RL::validate_with_config(client, problem, &config.rhs_reader_config, dtypes)?;
     cube_dim_validation(config.cube_dim())?;
     Ok(config)
 }

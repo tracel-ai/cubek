@@ -1,4 +1,4 @@
-use crate::components::global::read::AsyncPartialLoadingStrategy;
+use crate::components::global::read::{AsyncPartialLoadingStrategy, validate_tma_with_problem};
 use crate::components::global::read::{PartialLoadingStrategy, async_tma::AsyncTma};
 use crate::components::global::read::{validate_async_barrier, validate_tma};
 use crate::components::global::{GlobalConfig, GlobalReaderConfig};
@@ -26,18 +26,23 @@ use super::{LoadingJob, LoadingValidation};
 pub struct AsyncPartialTmaLoading {}
 
 impl LoadingValidation for AsyncPartialTmaLoading {
-    fn check<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
+    fn validate_with_config(
         config: &GlobalReaderConfig,
         dtypes: &MatmulElems,
     ) -> Result<(), InvalidConfigError> {
         TmaTilingLayout::check(config.smem_config)?;
-        validate_tma(client, problem, config, dtypes)?;
-
-        validate_async_barrier(client)?;
+        validate_async_barrier()?;
+        validate_tma(config, dtypes)?;
 
         Ok(())
+    }
+
+    fn validate_with_problem(
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        ident: StageIdent,
+    ) -> Result<(), InvalidConfigError> {
+        validate_tma_with_problem(problem, dtypes, ident)
     }
 }
 

@@ -1,6 +1,7 @@
 use std::marker::PhantomData;
 
 use crate::components::global::read::validate_async_barrier;
+use crate::components::global::read::validate_async_copy_with_problem;
 use crate::components::global::read::validate_swizzle_atom_size;
 use crate::components::global::{GlobalReaderConfig, RoleRule, read::async_copy::ASYNC_COPY_WIDTH};
 use crate::components::global::{
@@ -41,9 +42,7 @@ pub struct AsyncPartialCyclicLoading<T: TilingOrder> {
 }
 
 impl<TO: TilingOrder> LoadingValidation for AsyncPartialCyclicLoading<TO> {
-    fn check<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
+    fn validate_with_config(
         config: &GlobalReaderConfig,
         dtypes: &MatmulElems,
     ) -> Result<(), InvalidConfigError> {
@@ -81,11 +80,19 @@ impl<TO: TilingOrder> LoadingValidation for AsyncPartialCyclicLoading<TO> {
         }
 
         validate_swizzle_atom_size(config.smem_config, config.stage_ident, dtypes)?;
-        validate_async_barrier(client)?;
-        validate_async_copy(client, problem, dtypes, config)?;
+        validate_async_barrier()?;
+        validate_async_copy(dtypes, config)?;
         ContiguousTilingLayout::<TO>::check(config.smem_config)?;
 
         Ok(())
+    }
+
+    fn validate_with_problem(
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        ident: StageIdent,
+    ) -> Result<(), InvalidConfigError> {
+        validate_async_copy_with_problem(problem, dtypes, ident)
     }
 }
 

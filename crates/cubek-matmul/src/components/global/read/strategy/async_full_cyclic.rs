@@ -1,10 +1,10 @@
 use std::marker::PhantomData;
 
-use crate::components::global::read::validate_async_copy;
 use crate::components::global::read::{
     FullLoadingStrategy, async_barrier::AsyncCopy, async_copy::ASYNC_COPY_WIDTH, tiled::TiledLayout,
 };
 use crate::components::global::read::{validate_async_barrier, validate_swizzle_atom_size};
+use crate::components::global::read::{validate_async_copy, validate_async_copy_with_problem};
 use crate::components::global::{GlobalReaderConfig, RoleRule};
 use crate::components::global::{
     multi_stage::LoadMaxRoundPlaneCount, read::async_copy::async_copy_from,
@@ -12,7 +12,7 @@ use crate::components::global::{
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{ContiguousTilingLayout, StridedStageMemory, TilingOrder};
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
-use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem};
+use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem, StageIdent};
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Layout, LayoutExpand};
@@ -28,9 +28,7 @@ pub struct AsyncFullCyclicLoading<T: TilingOrder> {
 }
 
 impl<TO: TilingOrder> LoadingValidation for AsyncFullCyclicLoading<TO> {
-    fn check<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
+    fn validate_with_config(
         config: &GlobalReaderConfig,
         dtypes: &MatmulElems,
     ) -> Result<(), InvalidConfigError> {
@@ -59,11 +57,19 @@ impl<TO: TilingOrder> LoadingValidation for AsyncFullCyclicLoading<TO> {
         }
 
         validate_swizzle_atom_size(config.smem_config, config.stage_ident, dtypes)?;
-        validate_async_copy(client, problem, dtypes, config)?;
-        validate_async_barrier(client)?;
+        validate_async_barrier()?;
+        validate_async_copy(dtypes, config)?;
         ContiguousTilingLayout::<TO>::check(config.smem_config)?;
 
         Ok(())
+    }
+
+    fn validate_with_problem(
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        ident: StageIdent,
+    ) -> Result<(), InvalidConfigError> {
+        validate_async_copy_with_problem(problem, dtypes, ident)
     }
 }
 

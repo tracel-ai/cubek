@@ -22,6 +22,7 @@ pub trait Blueprint: Debug + Clone + Eq + PartialEq + Hash {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TilingBlueprint {
+    // TODO remove
     pub plane_dim: u32,
     pub tiling_scheme: TilingScheme,
     pub swizzle_modes: SwizzleModes,

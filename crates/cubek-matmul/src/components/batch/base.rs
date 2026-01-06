@@ -45,7 +45,8 @@ pub trait BatchMatmulFamily: 'static + Send + Sync {
     ) -> Result<(), LaunchError>;
 
     /// Returns the compute resources required to run this matmul.
-    fn cubedim_resource() -> Result<CubeDimResource, InvalidConfigError>;
+    fn cubedim_resource(blueprint: &Self::Blueprint)
+    -> Result<CubeDimResource, InvalidConfigError>;
 
     fn validate_blueprint<R: Runtime>(
         client: &ComputeClient<R>,
@@ -94,9 +95,6 @@ pub trait BatchConfig:
 
     /// Returns the line sizes for Lhs, Rhs and output
     fn line_sizes(&self) -> MatmulLineSizes;
-
-    // / Whether it may launch more cubes than the minimum required
-    // fn can_yield_extra_cubes(&self) -> bool;
 
     fn lhs_global_layout_config(&self) -> GlobalLayoutConfig;
     fn rhs_global_layout_config(&self) -> GlobalLayoutConfig;

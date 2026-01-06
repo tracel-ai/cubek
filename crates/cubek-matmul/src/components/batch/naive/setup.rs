@@ -93,7 +93,9 @@ impl BatchMatmulFamily for NaiveBatchMatmulFamily {
         }
     }
 
-    fn cubedim_resource() -> Result<CubeDimResource, InvalidConfigError> {
+    fn cubedim_resource(
+        _blueprint: &Self::Blueprint,
+    ) -> Result<CubeDimResource, InvalidConfigError> {
         Ok(CubeDimResource::Planes(8))
     }
 

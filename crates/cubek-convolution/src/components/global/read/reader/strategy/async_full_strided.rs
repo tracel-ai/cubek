@@ -30,13 +30,13 @@ use crate::components::global::{
 pub struct AsyncFullStridedLoading {}
 
 impl LoadingValidation for AsyncFullStridedLoading {
-    fn check<R: Runtime>(
+    fn validate_with_config<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &MatmulProblem,
         config: &GlobalReaderConfig,
         dtypes: &MatmulElems,
     ) -> Result<(), InvalidConfigError> {
-        MatmulStridedLoading::check(client, problem, config, dtypes)
+        MatmulStridedLoading::validate_with_config(client, problem, config, dtypes)
     }
 }
 
