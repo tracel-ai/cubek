@@ -41,8 +41,7 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
                 slice_len_global *= u32::cast_from(pos < shape);
             }
             MatrixLayout::ColMajor => {
-                slice_len_global =
-                    Min::min(SaturatingSub::saturating_sub(shape, pos), slice_len_global);
+                slice_len_global = shape.saturating_sub(pos).min(slice_len_global);
             }
         }
     }
@@ -52,8 +51,7 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
         let shape = view.shape().1;
         match config.gmem_config.matrix_layout {
             MatrixLayout::RowMajor => {
-                slice_len_global =
-                    Min::min(SaturatingSub::saturating_sub(shape, pos), slice_len_global);
+                slice_len_global = shape.saturating_sub(pos).min(slice_len_global);
             }
             MatrixLayout::ColMajor => {
                 slice_len_global *= u32::cast_from(pos < shape);

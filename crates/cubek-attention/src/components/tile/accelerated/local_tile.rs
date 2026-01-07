@@ -178,7 +178,7 @@ impl<E: Float> RowwiseFormat<E> for LocalTile<E> {
             #[unroll]
             for c in 0..self.layout.unit_size.1 {
                 let index = row_offset + c;
-                val = Max::max(val, self.array[index]);
+                val = max(val, self.array[index]);
             }
 
             vals.push(RowVal::<E> { val });
@@ -239,9 +239,9 @@ impl<E: Float> RowwiseFormat<E> for LocalTile<E> {
             for c in 0..self.layout.unit_size.1 {
                 let index = row_offset + c;
 
-                let safe_val = Max::max(val, threshold);
+                let safe_val = clamp_min(val, threshold);
                 let not_masked = E::cast_from(val >= threshold);
-                self.array[index] = not_masked * Exp::exp(self.array[index] - safe_val);
+                self.array[index] = not_masked * (self.array[index] - safe_val).exp();
             }
         }
     }
