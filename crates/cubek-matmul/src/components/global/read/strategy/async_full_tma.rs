@@ -1,12 +1,12 @@
 use crate::components::global::GlobalReaderConfig;
-use crate::components::global::read::FullLoadingStrategy;
+use crate::components::global::read::{FullLoadingStrategy, validate_tma_with_problem};
 use crate::components::global::read::{validate_async_barrier, validate_tma};
-use crate::components::global::{RoleRule, read::async_tma::AsyncTma};
+use crate::components::global::{PlaneFlowPartition, read::async_tma::AsyncTma};
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{StridedStageMemory, SwizzleMode};
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
 use crate::components::{global::multi_stage::LoadMaxRoundPlaneCount, stage::TmaTilingLayout};
-use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem, MatrixLayout};
+use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem, MatrixLayout, StageIdent};
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 
@@ -19,17 +19,20 @@ use super::{LoadingJob, LoadingValidation};
 pub struct AsyncFullTmaLoading {}
 
 impl LoadingValidation for AsyncFullTmaLoading {
-    fn check<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
-        config: &GlobalReaderConfig,
-        dtypes: &MatmulElems,
-    ) -> Result<(), InvalidConfigError> {
+    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
         TmaTilingLayout::check(config.smem_config)?;
-        validate_tma(client, problem, config, dtypes)?;
-        validate_async_barrier(client)?;
+        validate_async_barrier()?;
+        validate_tma(&config.smem_config, &config.gmem_config.dtype)?;
 
         Ok(())
+    }
+
+    fn validate_with_problem(
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        ident: StageIdent,
+    ) -> Result<(), InvalidConfigError> {
+        validate_tma_with_problem(problem, dtypes, ident)
     }
 }
 
@@ -57,7 +60,7 @@ impl FullLoadingStrategy for AsyncFullTmaLoading {
         #[comptime] _line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, ES> {
-        let role_rule_config = config.plane_role_config.rule;
+        let role_rule_config = config.plane_flow_config.partition_rule;
         let config = config.smem_config;
         let tile_count_col = match config.matrix_layout {
             MatrixLayout::RowMajor => config.tiles_per_stage_along_col(),
@@ -70,7 +73,7 @@ impl FullLoadingStrategy for AsyncFullTmaLoading {
             _ => 1u32,
         };
 
-        let is_elected = RoleRule::new(role_rule_config).elect_load_leader();
+        let is_elected = PlaneFlowPartition::new(role_rule_config).elect_load_leader();
 
         AsyncFullTmaJob {
             is_elected,

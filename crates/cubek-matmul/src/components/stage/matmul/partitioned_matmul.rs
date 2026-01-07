@@ -1,5 +1,5 @@
 use crate::components::global;
-use crate::components::global::RoleRuleConfig;
+use crate::components::global::PlaneFlowPartitionRule;
 use crate::components::stage::Stage;
 use crate::components::stage::StageConfig;
 use crate::components::stage::StageMemoryConfig;
@@ -24,7 +24,7 @@ use cubecl::std::tensor::layout::Coords2d;
 pub trait StagePartitioner: Send + Sync + 'static {
     /// Returns the (row, col) of the current compute primitive within the stage.
     fn coordinates(
-        #[comptime] role_rule_config: RoleRuleConfig,
+        #[comptime] role_rule_config: PlaneFlowPartitionRule,
         #[comptime] plane_dim: u32,
         #[comptime] num_partitions_col: u32,
     ) -> Coords2d;
@@ -71,15 +71,15 @@ impl<TC: TileConfig> StageConfig for PartitionMatmulConfig<TC> {
     }
 
     fn num_main_flow_planes(&self) -> u32 {
-        self.shared().plane_role_config.main_flow_count()
+        self.shared().plane_flow_config.main_flow_count()
     }
 
     fn plane_dim(&self) -> u32 {
         self.shared().plane_dim
     }
 
-    fn plane_role_config(&self) -> global::PlaneRoleConfig {
-        self.shared().plane_role_config
+    fn plane_flow_config(&self) -> global::PlaneFlowConfig {
+        self.shared().plane_flow_config
     }
 
     fn tiles_in_partition_mn(&self) -> u32 {
@@ -293,7 +293,7 @@ where
 
     fn init_scheduler(#[comptime] config: Self::Config) -> PartitionScheduler {
         let (partition_row, partition_col) = SP::coordinates(
-            config.shared().plane_role_config.rule,
+            config.shared().plane_flow_config.partition_rule,
             config.shared().plane_dim,
             config.shared().stage_size.n(),
         );

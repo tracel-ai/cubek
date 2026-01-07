@@ -1,23 +1,67 @@
-use cubecl::{Runtime, client::ComputeClient, flex32, prelude::CubePrimitive, tf32};
+use cubecl::{CubeDim, Runtime, client::ComputeClient, flex32, prelude::CubePrimitive, tf32};
 
 use crate::{
     components::{
-        global::{LoadSpecializationConfig, read::ReaderMode},
+        CubeDimResource,
+        global::{LoadFlows, memory::GlobalLayoutConfig, read::ReaderMode},
         stage::{PartitionBuffering, SwizzleMode},
     },
-    definition::{MatmulElems, TilingScheme, hypercube::HypercubeBlueprint},
+    definition::{
+        CubeCountPlan, HypercubeBlueprint, MatmulElems, MatmulProblem, MatmulSetupError,
+        MatrixLayout, TilingScheme,
+    },
+    routines::DeviceSettings,
 };
+use std::{fmt::Debug, hash::Hash};
 
-#[derive(Debug, Clone)]
+pub trait Blueprint: Debug + Clone + Eq + PartialEq + Hash {
+    fn lhs_global_layout_config(&self) -> GlobalLayoutConfig;
+    fn rhs_global_layout_config(&self) -> GlobalLayoutConfig;
+    fn out_global_layout_config(&self) -> GlobalLayoutConfig;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TilingBlueprint {
+    // TODO remove
     pub plane_dim: u32,
     pub tiling_scheme: TilingScheme,
-    pub shared_swizzle: SwizzleBlueprint,
+    pub swizzle_modes: SwizzleModes,
     pub partition_buffering: PartitionBuffering,
     pub loading_precompute_strategy: LoadingPrecomputeStrategy,
     pub reader_mode: ReaderMode,
-    pub load_specialization_config: LoadSpecializationConfig,
-    pub hypercube_selection: HypercubeBlueprint,
+    pub load_flows: LoadFlows,
+    pub hypercube_blueprint: HypercubeBlueprint,
+    pub lhs_layout: MatrixLayout,
+    pub rhs_layout: MatrixLayout,
+    pub check_m_bounds: bool,
+    pub check_n_bounds: bool,
+    pub check_k_bounds: bool,
+}
+
+impl Blueprint for TilingBlueprint {
+    fn lhs_global_layout_config(&self) -> GlobalLayoutConfig {
+        GlobalLayoutConfig {
+            matrix_layout: self.lhs_layout,
+            check_row_bounds: self.check_m_bounds,
+            check_col_bounds: self.check_k_bounds,
+        }
+    }
+
+    fn rhs_global_layout_config(&self) -> GlobalLayoutConfig {
+        GlobalLayoutConfig {
+            matrix_layout: self.rhs_layout,
+            check_row_bounds: self.check_k_bounds,
+            check_col_bounds: self.check_n_bounds,
+        }
+    }
+
+    fn out_global_layout_config(&self) -> GlobalLayoutConfig {
+        GlobalLayoutConfig {
+            matrix_layout: MatrixLayout::RowMajor,
+            check_row_bounds: self.check_m_bounds,
+            check_col_bounds: self.check_n_bounds,
+        }
+    }
 }
 
 /// Modifies the given matmul element types based on the kind of accelerator the kernel is run on.
@@ -32,35 +76,35 @@ pub fn adjust_dtypes<R: Runtime>(
     let f16_dtype = half::f16::as_type_native_unchecked();
 
     if requires_accelerator {
-        if *dtypes.lhs_global == f32_dtype
-            && *dtypes.rhs_global == f32_dtype
+        if dtypes.lhs_global == f32_dtype
+            && dtypes.rhs_global == f32_dtype
             && client.properties().supports_type(tf32_dtype)
         {
-            dtypes.lhs_stage.dtype = tf32_dtype;
-            dtypes.rhs_stage.dtype = tf32_dtype;
-            dtypes.lhs_register.dtype = tf32_dtype;
-            dtypes.rhs_register.dtype = tf32_dtype;
-        } else if *dtypes.lhs_global == flex_dtype
-            && *dtypes.rhs_global == flex_dtype
+            dtypes.lhs_stage = tf32_dtype;
+            dtypes.rhs_stage = tf32_dtype;
+            dtypes.lhs_register = tf32_dtype;
+            dtypes.rhs_register = tf32_dtype;
+        } else if dtypes.lhs_global == flex_dtype
+            && dtypes.rhs_global == flex_dtype
             && client.properties().supports_type(f16_dtype)
         {
-            dtypes.lhs_stage.dtype = f16_dtype;
-            dtypes.rhs_stage.dtype = f16_dtype;
-            dtypes.lhs_register.dtype = f16_dtype;
-            dtypes.rhs_register.dtype = f16_dtype;
+            dtypes.lhs_stage = f16_dtype;
+            dtypes.rhs_stage = f16_dtype;
+            dtypes.lhs_register = f16_dtype;
+            dtypes.rhs_register = f16_dtype;
         }
     }
 }
 
 #[derive(Default, Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct SwizzleBlueprint {
+pub struct SwizzleModes {
     pub lhs: SwizzleMode,
     pub rhs: SwizzleMode,
     pub acc: SwizzleMode,
     pub out: SwizzleMode,
 }
 
-impl SwizzleBlueprint {
+impl SwizzleModes {
     pub fn has_swizzle(&self) -> bool {
         self.lhs != SwizzleMode::None
             || self.rhs != SwizzleMode::None
@@ -70,57 +114,83 @@ impl SwizzleBlueprint {
 }
 
 impl TilingBlueprint {
-    pub fn builder(tiling_scheme: TilingScheme, plane_dim: u32) -> TilingBlueprintBuilder {
-        let hypercube_config = HypercubeBlueprint::builder(&tiling_scheme).build();
-        TilingBlueprintBuilder::new()
-            .tiling_scheme(tiling_scheme)
-            .hypercube_config(hypercube_config)
-            .plane_dim(plane_dim)
+    pub fn builder(
+        tiling_scheme: TilingScheme,
+        plane_dim: u32,
+        problem: &MatmulProblem,
+    ) -> TilingBlueprintBuilder {
+        let hypercube_blueprint = HypercubeBlueprint::builder(&tiling_scheme).build();
+
+        let check_m_bounds =
+            !(problem.m as u32).is_multiple_of(tiling_scheme.elements_per_stage_along_m());
+        let check_n_bounds =
+            !(problem.n as u32).is_multiple_of(tiling_scheme.elements_per_stage_along_n());
+        let check_k_bounds =
+            !(problem.k as u32).is_multiple_of(tiling_scheme.elements_per_stage_along_k());
+
+        TilingBlueprintBuilder {
+            plane_dim,
+            tiling_scheme,
+            hypercube_blueprint,
+            check_m_bounds,
+            check_n_bounds,
+            check_k_bounds,
+            lhs_layout: problem.lhs_layout,
+            rhs_layout: problem.rhs_layout,
+            shared_swizzle: Default::default(),
+            partition_buffering: PartitionBuffering::default(),
+            loading_precompute_strategy: LoadingPrecomputeStrategy::default(),
+            reader_mode: ReaderMode::default(),
+            load_specialization_config: LoadFlows::default(),
+        }
+    }
+
+    pub fn cube_launch_info<R: Runtime>(
+        &self,
+        cubedim_resource: CubeDimResource,
+        problem: &MatmulProblem,
+        device_settings: &DeviceSettings<R>,
+    ) -> Result<(CubeDim, CubeCountPlan), MatmulSetupError> {
+        let plane_dim = device_settings.plane_dim;
+        let cube_dim = cubedim_resource.to_cube_dim(plane_dim)?;
+        let cube_count_plan = CubeCountPlan::from_blueprint(
+            &self.hypercube_blueprint,
+            &self.tiling_scheme,
+            problem,
+            &device_settings.max_cube_count,
+        );
+
+        Ok((cube_dim, cube_count_plan))
     }
 }
 
 pub struct TilingBlueprintBuilder {
-    plane_dim: Option<u32>,
-    pub tiling_scheme: Option<TilingScheme>,
-    shared_swizzle: SwizzleBlueprint,
-    hypercube_selection: Option<HypercubeBlueprint>,
+    plane_dim: u32,
+    tiling_scheme: TilingScheme,
+
+    check_m_bounds: bool,
+    check_n_bounds: bool,
+    check_k_bounds: bool,
+    lhs_layout: MatrixLayout,
+    rhs_layout: MatrixLayout,
+
+    hypercube_blueprint: HypercubeBlueprint,
+
+    shared_swizzle: SwizzleModes,
     partition_buffering: PartitionBuffering,
     loading_precompute_strategy: LoadingPrecomputeStrategy,
     reader_mode: ReaderMode,
-    load_specialization_config: LoadSpecializationConfig,
+    load_specialization_config: LoadFlows,
 }
 
 impl TilingBlueprintBuilder {
-    fn new() -> Self {
-        Self {
-            plane_dim: None,
-            tiling_scheme: None,
-            shared_swizzle: Default::default(),
-            hypercube_selection: None,
-            partition_buffering: PartitionBuffering::default(),
-            loading_precompute_strategy: LoadingPrecomputeStrategy::default(),
-            reader_mode: ReaderMode::default(),
-            load_specialization_config: LoadSpecializationConfig::default(),
-        }
-    }
-
-    pub fn plane_dim(mut self, plane_dim: u32) -> Self {
-        self.plane_dim = Some(plane_dim);
+    pub fn hypercube_blueprint(mut self, hypercube_blueprint: HypercubeBlueprint) -> Self {
+        self.hypercube_blueprint = hypercube_blueprint;
         self
     }
 
-    pub fn tiling_scheme(mut self, tiling_scheme: TilingScheme) -> Self {
-        self.tiling_scheme = Some(tiling_scheme);
-        self
-    }
-
-    pub fn shared_swizzle(mut self, swizzle: SwizzleBlueprint) -> Self {
+    pub fn shared_swizzle(mut self, swizzle: SwizzleModes) -> Self {
         self.shared_swizzle = swizzle;
-        self
-    }
-
-    pub fn hypercube_config(mut self, hypercube_config: HypercubeBlueprint) -> Self {
-        self.hypercube_selection = Some(hypercube_config);
         self
     }
 
@@ -142,24 +212,26 @@ impl TilingBlueprintBuilder {
         self
     }
 
-    pub fn load_specialization_config(
-        mut self,
-        load_specialization_config: LoadSpecializationConfig,
-    ) -> Self {
+    pub fn load_specialization_config(mut self, load_specialization_config: LoadFlows) -> Self {
         self.load_specialization_config = load_specialization_config;
         self
     }
 
     pub fn build(self) -> TilingBlueprint {
         TilingBlueprint {
-            plane_dim: self.plane_dim.unwrap(),
-            tiling_scheme: self.tiling_scheme.unwrap(),
-            shared_swizzle: self.shared_swizzle,
-            hypercube_selection: self.hypercube_selection.unwrap(),
+            plane_dim: self.plane_dim,
+            tiling_scheme: self.tiling_scheme,
+            swizzle_modes: self.shared_swizzle,
+            hypercube_blueprint: self.hypercube_blueprint,
             partition_buffering: self.partition_buffering,
             loading_precompute_strategy: self.loading_precompute_strategy,
             reader_mode: self.reader_mode,
-            load_specialization_config: self.load_specialization_config,
+            load_flows: self.load_specialization_config,
+            lhs_layout: self.lhs_layout,
+            rhs_layout: self.rhs_layout,
+            check_m_bounds: self.check_m_bounds,
+            check_n_bounds: self.check_n_bounds,
+            check_k_bounds: self.check_k_bounds,
         }
     }
 }

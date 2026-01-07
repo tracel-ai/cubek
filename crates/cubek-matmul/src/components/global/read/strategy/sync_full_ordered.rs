@@ -4,7 +4,7 @@ use crate::components::global::read::validate_swizzle_atom_size;
 use crate::components::global::{multi_stage::LoadMaxRoundPlaneCount, read::sync::Synchronous};
 use crate::components::stage::ContiguousTilingLayout;
 use crate::components::stage::OrderedTilingOrder;
-use crate::components::{global::RoleRule, stage::TilingValidation};
+use crate::components::{global::PlaneFlowPartition, stage::TilingValidation};
 use crate::definition::FormattedConfigError;
 use crate::definition::InvalidConfigError;
 use crate::definition::MatmulElems;
@@ -26,12 +26,7 @@ use super::{LoadingValidation, sync_full_tilewise};
 pub struct SyncFullOrderedLoading {}
 
 impl LoadingValidation for SyncFullOrderedLoading {
-    fn check<R: Runtime>(
-        _client: &ComputeClient<R>,
-        _problem: &MatmulProblem,
-        config: &GlobalReaderConfig,
-        dtypes: &MatmulElems,
-    ) -> Result<(), InvalidConfigError> {
+    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
         if config.stage_ident != StageIdent::Lhs {
             return Err(FormattedConfigError::new(move || {
                 "Ordered loading only available on Lhs".to_string()
@@ -74,9 +69,17 @@ impl LoadingValidation for SyncFullOrderedLoading {
             }));
         }
 
-        validate_swizzle_atom_size(config.smem_config, config.stage_ident, dtypes)?;
+        validate_swizzle_atom_size(config.smem_config)?;
         ContiguousTilingLayout::<OrderedTilingOrder>::check(config.smem_config)?;
 
+        Ok(())
+    }
+
+    fn validate_with_problem(
+        _problem: &MatmulProblem,
+        _dtypes: &MatmulElems,
+        _ident: StageIdent,
+    ) -> Result<(), InvalidConfigError> {
         Ok(())
     }
 }
@@ -112,8 +115,8 @@ impl FullLoadingStrategy for SyncFullOrderedLoading {
         let num_lines_per_plane = num_lines_per_tile * num_tiles_per_plane;
         let num_lines_per_unit = num_lines_per_plane / plane_dim;
 
-        let num_tiles_to_skip = RoleRule::new(config.plane_role_config.rule)
-            .load_index(config.specialization_tensor_config)
+        let num_tiles_to_skip = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
+            .load_index(config.input_load_flow)
             * num_tiles_per_plane;
         let num_lines_to_skip = num_tiles_to_skip * num_lines_per_tile;
 

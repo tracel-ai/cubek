@@ -5,9 +5,9 @@ use std::marker::PhantomData;
 
 use crate::components::batch::BatchMatmulFamily;
 use crate::definition::{
-    CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulElems,
-    MatmulGlobalElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, MultiRowStrategy,
-    SmAllocation, TilingBlueprint, TilingScheme, adjust_dtypes,
+    CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulElems, MatmulLineSizes,
+    MatmulProblem, MatmulSetupError, MultiRowStrategy, SmAllocation, TilingBlueprint, TilingScheme,
+    adjust_dtypes,
 };
 use crate::routines::{BlueprintStrategy, DeviceSettings, LaunchInfo};
 use crate::{
@@ -87,19 +87,22 @@ where
         device_settings: &DeviceSettings<R>,
         strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+
+        if TMM::can_cast_stage_element() {
+            dtypes.adjust_stage_dtypes();
+        }
+
         let client = &device_settings.client;
-        match strategy {
-            BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
-                blueprint: blueprint.clone(),
-                dtypes: MatmulElems::from_globals(&problem.global_dtypes),
-            }),
+        let (blueprint, dtypes) = match strategy {
+            BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
             BlueprintStrategy::Inferred(strategy) => {
                 if strategy.multi_rows {
                     infer_blueprint_multi_rows::<R, TMM>(
                         client,
                         problem,
                         device_settings.plane_dim,
-                        &problem.global_dtypes,
+                        dtypes,
                         &device_settings.line_sizes,
                     )
                 } else {
@@ -107,7 +110,7 @@ where
                         client,
                         problem,
                         device_settings.plane_dim,
-                        &problem.global_dtypes,
+                        dtypes,
                         &device_settings.line_sizes,
                         PlaneTilingBlueprintOptions {
                             partition_buffering: Some(PartitionBuffering::Single),
@@ -116,13 +119,28 @@ where
                             ..Default::default()
                         },
                     )
-                }
+                }?
             }
-        }
-    }
+        };
 
-    fn can_cast_stage_element() -> bool {
-        TMM::can_cast_stage_element()
+        Self::validate_blueprint(
+            client,
+            &blueprint,
+            problem,
+            &dtypes,
+            &device_settings.line_sizes,
+        )?;
+
+        let cubedim_resource =
+            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
+
+        LaunchInfo::new(
+            blueprint,
+            dtypes,
+            problem,
+            cubedim_resource,
+            device_settings,
+        )
     }
 }
 
@@ -130,32 +148,31 @@ fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
     client: &ComputeClient<R>,
     problem: &MatmulProblem,
     plane_dim: u32,
-    global_dtypes: &MatmulGlobalElems,
+    mut dtypes: MatmulElems,
     line_sizes: &MatmulLineSizes,
-) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
-    let mut dtypes = MatmulElems::from_globals(global_dtypes);
+) -> Result<(TilingBlueprint, MatmulElems), MatmulSetupError> {
     adjust_dtypes(client, &mut dtypes, TMM::requires_accelerator());
 
     let supported = |m: u32, n: u32, k: u32| {
         TMM::is_supported(
             client,
             MmaConfig {
-                a_type: *dtypes.lhs_register,
-                b_type: *dtypes.rhs_register,
-                cd_type: *dtypes.acc_register,
+                a_type: dtypes.lhs_register,
+                b_type: dtypes.rhs_register,
+                cd_type: dtypes.acc_register,
                 m,
                 n,
                 k,
             },
         )
     };
-    let cube_count_plan = match client.properties().hardware.num_streaming_multiprocessors {
-        Some(num_sms) => CubeCountPlanBlueprint::Sm {
+    let cube_count_strategy = match client.properties().hardware.num_streaming_multiprocessors {
+        Some(num_sms) => CubeCountStrategy::Sm {
             num_sms,
             sm_usage: SmAllocation::Exact,
             cubes_first: true,
         },
-        None => CubeCountPlanBlueprint::Flattened,
+        None => CubeCountStrategy::Flattened,
     };
 
     if supported(8, 32, 16) {
@@ -169,20 +186,20 @@ fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
             .unwrap();
 
         let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
-            .global_order(GlobalOrderBlueprint::SwizzleRow {
+            .global_order_strategy(GlobalOrderStrategy::SwizzleRow {
                 m: problem.m as u32,
                 w: 4,
             })
-            .cube_count_plan(cube_count_plan)
+            .cube_count_strategy(cube_count_strategy)
             .build();
 
-        Ok(LaunchInfo {
-            blueprint: TilingBlueprint::builder(tiling_scheme, plane_dim)
+        Ok((
+            TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
                 .partition_buffering(PartitionBuffering::Single)
-                .hypercube_config(hypercube)
+                .hypercube_blueprint(hypercube)
                 .build(),
             dtypes,
-        })
+        ))
     } else if supported(8, 8, 8) {
         let tiling_scheme = TilingScheme::builder()
             .with_tile_size((8, 8, 8).into())
@@ -191,26 +208,26 @@ fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
             .build()
             .unwrap();
         let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
-            .global_order(GlobalOrderBlueprint::SwizzleRow {
+            .global_order_strategy(GlobalOrderStrategy::SwizzleRow {
                 m: problem.m as u32,
                 w: 4,
             })
-            .cube_count_plan(cube_count_plan)
+            .cube_count_strategy(cube_count_strategy)
             .build();
 
-        Ok(LaunchInfo {
-            blueprint: TilingBlueprint::builder(tiling_scheme, plane_dim)
+        Ok((
+            TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
                 .partition_buffering(PartitionBuffering::Single)
-                .hypercube_config(hypercube)
+                .hypercube_blueprint(hypercube)
                 .build(),
             dtypes,
-        })
+        ))
     } else {
         infer_blueprint_plane::<TMM, R>(
             client,
             problem,
             plane_dim,
-            global_dtypes,
+            dtypes,
             line_sizes,
             PlaneTilingBlueprintOptions {
                 partition_buffering: Some(PartitionBuffering::Single),

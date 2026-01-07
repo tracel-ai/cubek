@@ -5,10 +5,13 @@ use crate::components::batch::partitioned_matmul::config::PartitionedBatchConfig
 use crate::components::batch::partitioned_matmul::partition::{
     GlobalPartitionMatmul, PartitionRangeDim, PartitionRanges,
 };
-use crate::components::batch::{BatchConfig as _, BatchMatmul};
+use crate::components::batch::{BatchMatmul, BatchMatmulFamily, PartitionedBatchMatmulFamily};
 use crate::components::global::{self, GlobalConfig, GlobalMatmul, GlobalMatmulFamily};
 use crate::components::stage::StageConfig as _;
-use crate::definition::{AccG, CubeCountInput, LhsG, MatmulPrecision, RhsG};
+use crate::definition::{
+    AccG, Blueprint as _, CubeMapping, LhsG, MatmulElems, MatmulLineSizes, MatmulPrecision, RhsG,
+    TilingBlueprint,
+};
 use crate::launch::MatmulArgs;
 
 #[cube(launch_unchecked)]
@@ -29,32 +32,54 @@ pub(crate) fn matmul_entry<
 >(
     inputs: &<Args as MatmulArgs>::Input<LhsG, RhsG, AccG>,
     output: &mut <Args as MatmulArgs>::Output<AccG>,
-    cube_count_args: CubeCountInput,
-    #[comptime] config: PartitionedBatchConfig<GMMF::Config>,
-    #[define(LhsG, RhsG, AccG)] _global: [StorageType; 3],
-    #[define(LhsS, RhsS, AccS)] _stage: [StorageType; 3],
-    #[define(LhsR, RhsR, AccR)] _register: [StorageType; 3],
+    cube_mapping: CubeMapping,
+    #[comptime] blueprint: TilingBlueprint,
+    #[define(LhsG, RhsG, AccG)] global: [StorageType; 3],
+    #[define(LhsS, RhsS, AccS)] stage: [StorageType; 3],
+    #[define(LhsR, RhsR, AccR)] register: [StorageType; 3],
 ) {
-    #[allow(clippy::collapsible_if)]
-    if config.can_yield_extra_cubes() {
-        if CUBE_POS >= cube_count_args.num_valid_cubes() {
-            terminate!()
-        }
-    }
-
     let mut state = Args::init_state::<LhsG, RhsG, AccG>(
         inputs,
         output,
-        config.lhs_global_layout_config(),
-        config.rhs_global_layout_config(),
-        config.out_global_layout_config(),
+        blueprint.lhs_global_layout_config(),
+        blueprint.rhs_global_layout_config(),
+        blueprint.out_global_layout_config(),
     );
+
+    let line_size_lhs = Args::view_lhs(&state).line_size();
+    let line_size_rhs = Args::view_rhs(&state).line_size();
+    let line_size_out = Args::view_out(&mut state).line_size();
+    let line_sizes = comptime!(MatmulLineSizes {
+        lhs: line_size_lhs,
+        rhs: line_size_rhs,
+        out: line_size_out,
+    });
+
+    let config = comptime!(PartitionedBatchMatmulFamily::<GMMF, GPM>::expand_config(
+        &blueprint,
+        &MatmulElems::from_define_arrays(global, stage, register),
+        &line_sizes
+    ));
+
+    if comptime!(config.is_err()) {
+        push_validation_error(config.err().unwrap().to_string());
+        comptime!(return);
+    }
+
+    let config = comptime!(config.unwrap());
+
+    #[allow(clippy::collapsible_if)]
+    if cube_mapping.can_yield_extra_cubes {
+        if CUBE_POS >= cube_mapping.num_valid_cubes() {
+            terminate!()
+        }
+    }
 
     PartitionedBatchMatmul::<
         ((LhsG, LhsS, LhsR), (RhsG, RhsS, RhsR), (AccG, AccS, AccR)),
         GMMF::Matmul<((LhsG, LhsS, LhsR), (RhsG, RhsS, RhsR), (AccG, AccS, AccR))>,
         GPM,
-    >::execute::<Args>(&mut state, cube_count_args, config);
+    >::execute::<Args>(&mut state, cube_mapping, config);
 }
 
 /// Executes matrix multiplication at the batch level,
@@ -80,14 +105,13 @@ impl<MP: MatmulPrecision, GMM: GlobalMatmul<MP>, GPMM: GlobalPartitionMatmul> Ba
 
     fn execute<Args: MatmulArgs>(
         state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
-        cube_count_args: CubeCountInput,
+        cube_mapping: CubeMapping,
         #[comptime] config: Self::Config,
     ) {
         let (_, _, problem_k) = Args::view_lhs(state).shape();
         let k_range = (0, problem_k);
 
-        let (m_index, n_index, batch_index) =
-            cube_count_args.cube_pos_to_tensor_pos(config.hypercube_config.global_order);
+        let (m_index, n_index, batch_index) = cube_mapping.cube_pos_to_tensor_pos();
 
         let ranges = PartitionRanges::new(
             PartitionRangeDim::new(

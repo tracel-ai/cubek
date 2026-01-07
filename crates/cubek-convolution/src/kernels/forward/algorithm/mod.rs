@@ -4,7 +4,7 @@ use cubek_matmul::definition::{
 };
 use cubek_matmul::{
     components::{
-        global::{LoadSpecializationConfig, read::ReaderMode},
+        global::{LoadFlows, read::ReaderMode},
         stage::{PartitionBuffering, StageMatmulFamily},
         tile::TileMatmulFamily,
     },
@@ -51,8 +51,8 @@ pub trait Algorithm {
         ReaderMode::Relaxed
     }
 
-    fn load_specialization() -> LoadSpecializationConfig {
-        LoadSpecializationConfig::default()
+    fn load_specialization() -> LoadFlows {
+        LoadFlows::default()
     }
 
     fn partition_buffering_strategy() -> PartitionBuffering {
@@ -60,14 +60,13 @@ pub trait Algorithm {
     }
 
     /// Make a convolution config from a convolution problem, and launch options
-    fn expand_config<R: Runtime>(
-        client: &ComputeClient<R>,
+    fn expand_config(
         problem: &ConvolutionProblem,
         selection: &TilingBlueprint,
         line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
     ) -> Result<GlobalConfig<Self::GlobalConvolution>, MatmulSetupError> {
-        Self::GlobalConvolution::expand_config(client, problem, selection, line_sizes, dtypes)
+        Self::GlobalConvolution::expand_config(problem, selection, line_sizes, dtypes)
     }
 
     fn into_tensor_handle<R: Runtime>(

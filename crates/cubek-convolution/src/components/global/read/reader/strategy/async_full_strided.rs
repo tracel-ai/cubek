@@ -3,7 +3,7 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Layout, LayoutExpand};
 use cubek_matmul::components::{
     global::{
-        GlobalReaderConfig, RoleRule,
+        GlobalReaderConfig, PlaneFlowPartition,
         memory::GlobalIterator,
         multi_stage::LoadMaxRoundPlaneCount,
         read::{
@@ -14,7 +14,7 @@ use cubek_matmul::components::{
     },
     stage::{StridedStageFamily, StridedStageMemory, StridedTilingLayout},
 };
-use cubek_matmul::definition::{InvalidConfigError, MatmulElems, MatmulProblem};
+use cubek_matmul::definition::{InvalidConfigError, MatmulElems, MatmulProblem, StageIdent};
 
 use crate::components::global::{
     args::RuntimeArgs,
@@ -30,13 +30,16 @@ use crate::components::global::{
 pub struct AsyncFullStridedLoading {}
 
 impl LoadingValidation for AsyncFullStridedLoading {
-    fn check<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
-        config: &GlobalReaderConfig,
-        dtypes: &MatmulElems,
+    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
+        MatmulStridedLoading::validate_with_config(config)
+    }
+
+    fn validate_with_problem(
+        _problem: &MatmulProblem,
+        _dtypes: &MatmulElems,
+        _ident: StageIdent,
     ) -> Result<(), InvalidConfigError> {
-        MatmulStridedLoading::check(client, problem, config, dtypes)
+        Ok(())
     }
 }
 
@@ -75,8 +78,8 @@ impl FullLoadingStrategy for AsyncFullStridedLoading {
         let unit_count = config.loading_planes_count() * config.plane_dim;
         let num_tasks_per_unit = num_stage_lines / unit_count;
 
-        let unit_position_base = RoleRule::new(config.plane_role_config.rule)
-            .load_index(config.specialization_tensor_config)
+        let unit_position_base = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
+            .load_index(config.input_load_flow)
             * config.plane_dim
             + UNIT_POS_X;
 

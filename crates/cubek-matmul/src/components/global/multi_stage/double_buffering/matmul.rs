@@ -74,6 +74,15 @@ where
         k_range: (u32, u32),
         #[comptime] config: Self::Config,
     ) {
+        if let Err(e) = comptime!(LL::validate_with_config(&config.lhs_reader_config)) {
+            push_validation_error(e.to_string());
+            comptime!(return);
+        }
+        if let Err(e) = comptime!(RL::validate_with_config(&config.rhs_reader_config)) {
+            push_validation_error(e.to_string());
+            comptime!(return);
+        }
+
         let stage_step = config.stage_config.elements_in_stage_k();
 
         let range = k_range.1 - k_range.0;
@@ -99,7 +108,7 @@ where
         let mut barrier_b = LL::SyncStrategy::create_barrier();
 
         let specializer = Specializer::new(
-            config.plane_role_config(),
+            config.plane_flow_config(),
             config.specialized_loading_sides(),
         );
 

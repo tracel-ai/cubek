@@ -1,6 +1,6 @@
 use crate::suite::test_utils::{Sample, TensorRawParts};
-use cubecl::prelude::*;
 use cubecl::{CubeElement, server::Allocation};
+use cubecl::{TestRuntime, prelude::*};
 use cubek_convolution::{
     components::{ConvGemmConfig, ConvolutionOperation},
     forward::args::{ConcreteArgs, ConcreteInputsFactory, ConcreteOutputFactory},
@@ -17,14 +17,13 @@ use super::test_utils::TestPrecision;
 
 /// Test the correctness of the specified Matmul on the given device,
 /// against a naive CPU implementation over the given problem
-pub fn test_convolution_algorithm<A, P, R>(
-    client: ComputeClient<R>,
+pub fn test_convolution_algorithm<A, P>(
+    client: ComputeClient<TestRuntime>,
     mut problem: ConvolutionProblem,
     selection: TilingBlueprint,
 ) where
     A: Algorithm,
     P: TestPrecision,
-    R: Runtime,
     InputArg<A::Args>: ConcreteInputsFactory,
     OutputArg<A::Args>: ConcreteOutputFactory,
     A::Args: ConcreteArgs,
@@ -39,9 +38,9 @@ pub fn test_convolution_algorithm<A, P, R>(
         },
         Err(_) => false,
     };
-    let lhs = tensor_raw_parts::<P, R>(&client, &problem, MatmulIdent::Lhs);
-    let rhs = tensor_raw_parts::<P, R>(&client, &problem, MatmulIdent::Rhs);
-    let out = tensor_raw_parts::<P, R>(&client, &problem, MatmulIdent::Out);
+    let lhs = tensor_raw_parts::<P, TestRuntime>(&client, &problem, MatmulIdent::Lhs);
+    let rhs = tensor_raw_parts::<P, TestRuntime>(&client, &problem, MatmulIdent::Rhs);
+    let out = tensor_raw_parts::<P, TestRuntime>(&client, &problem, MatmulIdent::Out);
 
     problem.lhs_strides = lhs.strides.clone();
     problem.rhs_strides = rhs.strides.clone();
@@ -59,10 +58,10 @@ pub fn test_convolution_algorithm<A, P, R>(
     .pick_max()
     .unwrap();
 
-    let dtypes = MatmulElems::new::<((P::EG, P::ES), (P::EG, P::ES), (P::EG, f32))>();
+    let dtypes = MatmulElems::new_deprecated::<((P::EG, P::ES), (P::EG, P::ES), (P::EG, f32))>();
     let problem = A::Args::adjust_problem(&client, problem, &selection, &dtypes);
 
-    let config = match A::expand_config(&client, &problem, &selection, &line_sizes, &dtypes) {
+    let config = match A::expand_config(&problem, &selection, &line_sizes, &dtypes) {
         Ok(config) => config,
         Err(err) => {
             let msg = format!("Can't launch the test: {err}");
@@ -76,7 +75,10 @@ pub fn test_convolution_algorithm<A, P, R>(
     };
 
     let props = &client.properties().hardware;
-    if !props.max_cube_dim.can_contain(config.cube_dim())
+    let cube_dim = config.cube_dim();
+    if props.max_cube_dim.0 < cube_dim.x
+        || props.max_cube_dim.1 < cube_dim.y
+        || props.max_cube_dim.2 < cube_dim.z
         || config.cube_dim().num_elems() > props.max_units_per_cube
     {
         println!("Skipping test, too many resources requested");
@@ -127,10 +129,10 @@ pub fn test_convolution_algorithm<A, P, R>(
         &dtypes,
     );
 
-    let dtypes = MatmulElems::new::<((P::EG, P::ES), (P::EG, P::ES), (P::EG, P::EA))>();
+    let dtypes = MatmulElems::new_deprecated::<((P::EG, P::ES), (P::EG, P::ES), (P::EG, P::EA))>();
 
     let result = unsafe {
-        A::GlobalConvolution::launch_unchecked::<A::Args, R>(
+        A::GlobalConvolution::launch_unchecked::<A::Args, TestRuntime>(
             &client,
             config.cube_dim(),
             A::cube_count(&selection, &problem),

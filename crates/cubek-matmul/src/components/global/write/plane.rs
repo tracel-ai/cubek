@@ -35,7 +35,7 @@ impl<IP: MatrixPrecision> PlaneWriter<IP> {
     ) -> Self {
         let stage = PartitionedStage::new(
             PlanePartitioner::coordinates(
-                config.role_rule_config,
+                config.plane_flow_partition_rule,
                 config.plane_dim,
                 config.smem_config.partitions_per_stage_along_col,
             ),

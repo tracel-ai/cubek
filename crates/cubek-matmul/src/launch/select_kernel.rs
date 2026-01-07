@@ -1,4 +1,3 @@
-use crate::components::batch::BatchConfig;
 use crate::definition::MatmulElems;
 use crate::definition::MatmulLineSizes;
 use crate::definition::MatmulProblem;
@@ -8,7 +7,7 @@ use crate::launch::{
     ConcreteInputsFactory, ConcreteOutputFactory, InputArg, InputRuntimeArg, MatmulArgs, OutputArg,
     OutputRuntimeArg,
 };
-use crate::routines::DeviceSettings;
+use crate::routines::LaunchInfo;
 use crate::routines::{BlueprintStrategy, Routine};
 use cubecl::prelude::TensorHandleRef;
 use cubecl::{Runtime, client::ComputeClient};
@@ -24,7 +23,6 @@ pub fn launch_kernel_concrete<MA: MatmulArgs, R: Runtime, A: Routine>(
     out: &TensorHandleRef<'_, R>,
     problem: MatmulProblem,
     line_sizes: MatmulLineSizes,
-    plane_dim: u32,
     blueprint_strategy: &BlueprintStrategy<A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError>
@@ -41,21 +39,8 @@ where
         view_line_sizes.rhs *= scheme.num_quants();
     }
 
-    let device_settings = DeviceSettings {
-        client: client.clone(),
-        plane_dim,
-        line_sizes: view_line_sizes,
-    };
+    let device_settings = A::device_settings(client, view_line_sizes);
     let launch_info = A::prepare(&problem, &device_settings, blueprint_strategy)?;
-
-    // TODO should be inside kernel
-    let config = A::expand_config(
-        client,
-        &problem,
-        &launch_info.blueprint,
-        &view_line_sizes,
-        dtypes,
-    )?;
 
     let input = <InputArg<MA> as ConcreteInputsFactory<A>>::create(
         client,
@@ -64,7 +49,6 @@ where
         &launch_info.blueprint,
         &problem,
         &line_sizes,
-        config,
         dtypes,
     );
     let output = <OutputArg<MA> as ConcreteOutputFactory<A>>::create(
@@ -73,11 +57,10 @@ where
         &launch_info.blueprint,
         &problem,
         &line_sizes,
-        config,
         dtypes,
     );
 
-    launch_kernel::<MA, R, A>(client, input, output, problem, config, dtypes)
+    launch_kernel::<MA, R, A>(client, input, output, launch_info)
 }
 
 /// Select which kernel to launch for the given Algorithm.
@@ -88,27 +71,12 @@ pub fn launch_kernel_virtual<'a, MA: MatmulArgs, R: Runtime, A: Routine>(
     output: OutputRuntimeArg<'a, MA, R>,
     problem: MatmulProblem,
     view_line_sizes: MatmulLineSizes,
-    plane_dim: u32,
     blueprint_strategy: &BlueprintStrategy<A>,
-    dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
-    let device_settings = DeviceSettings {
-        client: client.clone(),
-        plane_dim,
-        line_sizes: view_line_sizes,
-    };
+    let device_settings = A::device_settings(client, view_line_sizes);
     let launch_info = A::prepare(&problem, &device_settings, blueprint_strategy)?;
 
-    // TODO should be inside kernel
-    let config = A::expand_config(
-        client,
-        &problem,
-        &launch_info.blueprint,
-        &view_line_sizes,
-        dtypes,
-    )?;
-
-    launch_kernel::<MA, R, A>(client, input, output, problem, config, dtypes)
+    launch_kernel::<MA, R, A>(client, input, output, launch_info)
 }
 
 /// Select which kernel to launch for the given Algorithm.
@@ -117,32 +85,16 @@ fn launch_kernel<'a, MA: MatmulArgs, R: Runtime, A: Routine>(
     client: &ComputeClient<R>,
     input: InputRuntimeArg<'a, MA, R>,
     output: OutputRuntimeArg<'a, MA, R>,
-    problem: MatmulProblem,
-    config: A::Config,
-    dtypes: &mut MatmulElems,
+    launch_info: LaunchInfo<A::Blueprint>,
 ) -> Result<(), MatmulSetupError> {
-    // Prefer output type for stage because it's the same size at best, but often smaller.
-    // Having stage == global also enables things like TMA, and an f16 stage for output enables
-    // using `stmatrix` on the registers after casting.
-    if A::can_cast_stage_element() {
-        dtypes.lhs_stage.dtype = dtypes.lhs_global.dtype;
-        dtypes.rhs_stage.dtype = dtypes.rhs_global.dtype;
-        dtypes.acc_stage.dtype = dtypes.acc_global.dtype;
-    }
-
-    let cube_count_plan = config.cube_count_plan(
-        &problem,
-        &client.properties().hardware.max_cube_count.clone(),
-    );
-
     A::launch::<MA, R>(
         client,
-        config.cube_dim(),
-        cube_count_plan.resolve(),
+        launch_info.cube_dim,
+        launch_info.cube_count_plan.resolve(),
         input,
         output,
-        cube_count_plan.as_args(),
-        config,
-        dtypes,
+        launch_info.cube_count_plan.as_args(),
+        launch_info.blueprint,
+        &launch_info.dtypes,
     )
 }

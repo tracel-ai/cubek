@@ -1,15 +1,16 @@
 use crate::components::global::read::async_barrier::AsyncCopy;
 use crate::components::global::read::async_copy::ASYNC_COPY_WIDTH;
+use crate::components::global::read::validate_async_copy_with_problem;
 use crate::components::global::read::{
     FullLoadingStrategy, stage::FullStageLayout, validate_async_barrier,
 };
 use crate::components::global::read::{async_copy::async_copy_from, validate_swizzle_atom_size};
-use crate::components::global::{GlobalReaderConfig, RoleRule};
+use crate::components::global::{GlobalReaderConfig, PlaneFlowPartition};
 use crate::components::global::{multi_stage::LoadMaxRoundPlaneCount, read::validate_async_copy};
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{StridedStageMemory, StridedTilingLayout};
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
-use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem};
+use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem, StageIdent};
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Layout, LayoutExpand};
@@ -22,14 +23,8 @@ use super::{LoadingJob, LoadingValidation};
 pub struct AsyncFullStridedLoading {}
 
 impl LoadingValidation for AsyncFullStridedLoading {
-    fn check<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
-        config: &GlobalReaderConfig,
-        dtypes: &MatmulElems,
-    ) -> Result<(), InvalidConfigError> {
-        let line_size =
-            ASYNC_COPY_WIDTH / dtypes.stage(config.stage_ident.into()).size_bits() as u32;
+    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
+        let line_size = ASYNC_COPY_WIDTH / config.smem_config.dtype.size_bits() as u32;
 
         // Needs separate check because copy size may be larger than global line size
         if !config
@@ -50,12 +45,20 @@ impl LoadingValidation for AsyncFullStridedLoading {
             )));
         }
 
-        validate_async_copy(client, problem, dtypes, config)?;
-        validate_async_barrier(client)?;
-        validate_swizzle_atom_size(config.smem_config, config.stage_ident, dtypes)?;
+        validate_async_barrier()?;
+        validate_swizzle_atom_size(config.smem_config)?;
+        validate_async_copy(&config.gmem_config.dtype, &config.smem_config.dtype)?;
         StridedTilingLayout::check(config.smem_config)?;
 
         Ok(())
+    }
+
+    fn validate_with_problem(
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        ident: StageIdent,
+    ) -> Result<(), InvalidConfigError> {
+        validate_async_copy_with_problem(problem, dtypes, ident)
     }
 }
 
@@ -90,8 +93,8 @@ impl FullLoadingStrategy for AsyncFullStridedLoading {
         let unit_count = config.loading_planes_count() * config.plane_dim;
         let num_tasks_per_unit = num_stage_lines / unit_count;
 
-        let unit_position_base = RoleRule::new(config.plane_role_config.rule)
-            .load_index(config.specialization_tensor_config)
+        let unit_position_base = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
+            .load_index(config.input_load_flow)
             * config.plane_dim
             + UNIT_POS_X;
 

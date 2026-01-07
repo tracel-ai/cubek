@@ -23,9 +23,8 @@ use crate::{
         },
     },
     definition::{
-        CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulElems,
-        MatmulProblem, MatmulSetupError, PartitionSize, SmAllocation, TileSize, TilingBlueprint,
-        TilingScheme,
+        CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulElems, MatmulProblem,
+        MatmulSetupError, PartitionSize, SmAllocation, TileSize, TilingBlueprint, TilingScheme,
     },
     routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, Routine},
 };
@@ -71,6 +70,12 @@ impl Routine for SimpleVecMatAlgorithm {
         device_settings: &DeviceSettings<R>,
         strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+
+        if PlaneVecMatInnerProduct::<Filled>::can_cast_stage_element() {
+            dtypes.adjust_stage_dtypes();
+        }
+
         let blueprint = match strategy {
             BlueprintStrategy::Forced(blueprint) => blueprint.clone(),
             BlueprintStrategy::Inferred(_) => {
@@ -86,14 +91,24 @@ impl Routine for SimpleVecMatAlgorithm {
             }
         };
 
-        Ok(LaunchInfo {
-            blueprint,
-            dtypes: MatmulElems::from_globals(&problem.global_dtypes),
-        })
-    }
+        Self::validate_blueprint(
+            &device_settings.client,
+            &blueprint,
+            problem,
+            &dtypes,
+            &device_settings.line_sizes,
+        )?;
 
-    fn can_cast_stage_element() -> bool {
-        PlaneVecMatInnerProduct::<Filled>::can_cast_stage_element()
+        let cubedim_resource =
+            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
+
+        LaunchInfo::new(
+            blueprint,
+            dtypes,
+            problem,
+            cubedim_resource,
+            device_settings,
+        )
     }
 }
 
@@ -124,6 +139,12 @@ impl Routine for DoubleVecMatAlgorithm {
         device_settings: &DeviceSettings<R>,
         strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+
+        if PlaneVecMatInnerProduct::<Filled>::can_cast_stage_element() {
+            dtypes.adjust_stage_dtypes();
+        }
+
         let blueprint = match strategy {
             BlueprintStrategy::Forced(blueprint) => blueprint.clone(),
             BlueprintStrategy::Inferred(_) => {
@@ -139,14 +160,24 @@ impl Routine for DoubleVecMatAlgorithm {
             }
         };
 
-        Ok(LaunchInfo {
-            blueprint,
-            dtypes: MatmulElems::from_globals(&problem.global_dtypes),
-        })
-    }
+        Self::validate_blueprint(
+            &device_settings.client,
+            &blueprint,
+            problem,
+            &dtypes,
+            &device_settings.line_sizes,
+        )?;
 
-    fn can_cast_stage_element() -> bool {
-        PlaneVecMatInnerProduct::<Filled>::can_cast_stage_element()
+        let cubedim_resource =
+            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
+
+        LaunchInfo::new(
+            blueprint,
+            dtypes,
+            problem,
+            cubedim_resource,
+            device_settings,
+        )
     }
 }
 
@@ -162,25 +193,25 @@ fn infer_blueprint_vecmat<R: Runtime>(
         .with_stage_size((1, 1, 1).into())
         .build()
         .unwrap();
-    let cube_count_plan = match client.properties().hardware.num_streaming_multiprocessors {
-        Some(num_sms) => CubeCountPlanBlueprint::Sm {
+    let cube_count_strategy = match client.properties().hardware.num_streaming_multiprocessors {
+        Some(num_sms) => CubeCountStrategy::Sm {
             num_sms,
             sm_usage: SmAllocation::Exact,
             cubes_first: true,
         },
-        None => CubeCountPlanBlueprint::FromProblem,
+        None => CubeCountStrategy::FromProblem,
     };
 
     let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
-        .global_order(GlobalOrderBlueprint::SwizzleRow {
+        .global_order_strategy(GlobalOrderStrategy::SwizzleRow {
             m: problem.m as u32,
             w: 2,
         })
-        .cube_count_plan(cube_count_plan)
+        .cube_count_strategy(cube_count_strategy)
         .build();
 
-    TilingBlueprint::builder(tiling_scheme, plane_dim)
+    TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
         .partition_buffering(PartitionBuffering::Single)
-        .hypercube_config(hypercube)
+        .hypercube_blueprint(hypercube)
         .build()
 }

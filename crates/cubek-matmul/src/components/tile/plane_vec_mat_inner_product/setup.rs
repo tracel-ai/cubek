@@ -4,14 +4,13 @@ use crate::components::tile::plane_vec_mat_inner_product::config::PlaneVecMatInn
 use crate::components::tile::plane_vec_mat_inner_product::matmul::PlaneVecMatInnerProduct;
 use crate::components::tile::{TileMatmulFamily, io::Strided};
 use crate::components::{
-    resource::ComputeResources,
+    resource::CubeDimResource,
     tile::plane_vec_mat_inner_product::reader::{MatrixFragmentReader, MatrixStageReader},
 };
-use crate::definition::TilingBlueprint;
 use crate::definition::{
-    InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulLineSizes, MatmulProblem,
-    MatmulSetupError, MatrixLayout,
+    InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulSetupError, MatrixLayout,
 };
+use crate::definition::{MatmulLineSizes, TilingBlueprint};
 use cubecl::features::{Plane, TypeUsage};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
@@ -36,34 +35,23 @@ where
         true
     }
 
-    fn computation_resources() -> Result<ComputeResources, InvalidConfigError> {
-        Ok(ComputeResources::Planes(1))
+    fn cubedim_resource() -> Result<CubeDimResource, InvalidConfigError> {
+        Ok(CubeDimResource::Planes(1))
     }
 
-    fn expand_config<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
-        selection: &TilingBlueprint,
-        matmul_line_sizes: &MatmulLineSizes,
-        dtypes: &MatmulElems,
+    fn expand_config(
+        blueprint: &TilingBlueprint,
+        _dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<PlaneVecMatInnerProductConfig, MatmulSetupError> {
-        let tile_config = PlaneVecMatInnerProductConfig::new(
+        Ok(PlaneVecMatInnerProductConfig::new(
             SharedTileConfig::new(
-                selection.tiling_scheme.tile_size,
-                selection.plane_dim,
-                selection.shared_swizzle,
+                blueprint.tiling_scheme.tile_size,
+                blueprint.plane_dim,
+                blueprint.swizzle_modes,
             ),
-            matmul_line_sizes.lhs as u32,
-        );
-
-        validate(
-            tile_config,
-            problem.lhs_layout,
-            problem.rhs_layout,
-            matmul_line_sizes,
-            client,
-            dtypes,
-        )
+            line_sizes.lhs as u32,
+        ))
     }
 
     fn should_swizzle<R: Runtime>(_client: &ComputeClient<R>) -> bool {
@@ -71,80 +59,77 @@ where
         // Need to profile at some point
         false
     }
-}
 
-fn validate<R: Runtime>(
-    tile_config: PlaneVecMatInnerProductConfig,
-    lhs_layout: MatrixLayout,
-    rhs_layout: MatrixLayout,
-    matmul_line_sizes: &MatmulLineSizes,
-    client: &ComputeClient<R>,
-    dtypes: &MatmulElems,
-) -> Result<PlaneVecMatInnerProductConfig, MatmulSetupError> {
-    let tile_config = check_availability(tile_config, client, dtypes)?;
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &TilingBlueprint,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
+    ) -> Result<(), MatmulSetupError> {
+        check_availability(client, dtypes)?;
 
-    if lhs_layout != MatrixLayout::RowMajor {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(
-            "Only Row Major layout is supported for Lhs",
-        )));
+        if blueprint.lhs_layout != MatrixLayout::RowMajor {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(
+                "Only Row Major layout is supported for Lhs",
+            )));
+        }
+
+        if blueprint.rhs_layout != MatrixLayout::ColMajor {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(
+                "Only Col Major layout is supported for Rhs",
+            )));
+        }
+
+        let m = blueprint.tiling_scheme.tile_size.m();
+        let n = blueprint.tiling_scheme.tile_size.n();
+        let k = blueprint.tiling_scheme.tile_size.k();
+
+        let lhs_line = line_sizes.lhs as u32;
+        let rhs_line = line_sizes.rhs as u32;
+        let out_line = line_sizes.out as u32;
+
+        if m != 1 {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "Only m=1 is supported, got m={m:?}",
+            ))));
+        }
+
+        if lhs_line != rhs_line {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "Lhs and Rhs must have same line size, got lhs={lhs_line:?} and rhs={rhs_line:?}",
+            ))));
+        }
+
+        if k != blueprint.plane_dim * lhs_line {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "k must be equal to plane_dim times line size (of both lhs and rhs), got k={:?}, plane_dim={:?} line_size={:?}",
+                k, blueprint.plane_dim, lhs_line
+            ))));
+        }
+
+        if !n.is_multiple_of(out_line) {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "n must be divisible by out line size, got n={n:?}, out_line_size={out_line:?}",
+            ))));
+        }
+
+        Ok(())
     }
-
-    if rhs_layout != MatrixLayout::ColMajor {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(
-            "Only Col Major layout is supported for Rhs",
-        )));
-    }
-
-    let m = tile_config.shared.tile_size.m();
-    let n = tile_config.shared.tile_size.n();
-    let k = tile_config.shared.tile_size.k();
-
-    let lhs_line = matmul_line_sizes.lhs as u32;
-    let rhs_line = matmul_line_sizes.rhs as u32;
-    let out_line = matmul_line_sizes.out as u32;
-
-    if m != 1 {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-            "Only m=1 is supported, got m={m:?}",
-        ))));
-    }
-
-    if lhs_line != rhs_line {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-            "Lhs and Rhs must have same line size, got lhs={lhs_line:?} and rhs={rhs_line:?}",
-        ))));
-    }
-
-    if k != tile_config.shared.plane_dim * lhs_line {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-            "k must be equal to plane_dim times line size (of both lhs and rhs), got k={:?}, plane_dim={:?} line_size={:?}",
-            k, tile_config.shared.plane_dim, lhs_line
-        ))));
-    }
-
-    if !n.is_multiple_of(out_line) {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-            "n must be divisible by out line size, got n={n:?}, out_line_size={out_line:?}",
-        ))));
-    }
-
-    Ok(tile_config)
 }
 
 fn check_availability<R: Runtime>(
-    tile_config: PlaneVecMatInnerProductConfig,
     client: &ComputeClient<R>,
     dtypes: &MatmulElems,
-) -> Result<PlaneVecMatInnerProductConfig, MatmulSetupError> {
+) -> Result<(), MatmulSetupError> {
     if !client.properties().features.plane.contains(Plane::Ops) {
         return Err(MatmulSetupError::Unavailable(
             MatmulAvailabilityError::PlaneOpsUnavailable,
         ));
     }
 
-    let lhs = *dtypes.lhs_register;
-    let rhs = *dtypes.rhs_register;
-    let acc = *dtypes.acc_register;
+    let lhs = dtypes.lhs_register;
+    let rhs = dtypes.rhs_register;
+    let acc = dtypes.acc_register;
 
     let lhs = match lhs {
         StorageType::Scalar(ElemType::Float(FloatKind::Flex32)) => {
@@ -187,5 +172,5 @@ fn check_availability<R: Runtime>(
         ));
     }
 
-    Ok(tile_config)
+    Ok(())
 }

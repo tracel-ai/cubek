@@ -98,16 +98,19 @@ where
         device_settings: &DeviceSettings<R>,
         strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
-        match strategy {
-            BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
-                blueprint: blueprint.clone(),
-                dtypes: MatmulElems::from_globals(&problem.global_dtypes),
-            }),
+        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+
+        if TMM::can_cast_stage_element() {
+            dtypes.adjust_stage_dtypes();
+        }
+
+        let (blueprint, dtypes) = match strategy {
+            BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
             BlueprintStrategy::Inferred(strategy) => infer_blueprint_plane::<TMM, R>(
                 &device_settings.client,
                 problem,
                 device_settings.plane_dim,
-                &problem.global_dtypes,
+                dtypes,
                 &device_settings.line_sizes,
                 PlaneTilingBlueprintOptions {
                     specialized: strategy.specialized,
@@ -117,12 +120,27 @@ where
                     swizzled: TMM::should_swizzle(&device_settings.client),
                     ..Default::default()
                 },
-            ),
-        }
-    }
+            )?,
+        };
 
-    fn can_cast_stage_element() -> bool {
-        TMM::can_cast_stage_element()
+        Self::validate_blueprint(
+            &device_settings.client,
+            &blueprint,
+            problem,
+            &dtypes,
+            &device_settings.line_sizes,
+        )?;
+
+        let cubedim_resource =
+            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
+
+        LaunchInfo::new(
+            blueprint,
+            dtypes,
+            problem,
+            cubedim_resource,
+            device_settings,
+        )
     }
 }
 
@@ -153,16 +171,19 @@ where
         device_settings: &DeviceSettings<R>,
         strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
-        match strategy {
-            BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
-                blueprint: blueprint.clone(),
-                dtypes: MatmulElems::from_globals(&problem.global_dtypes),
-            }),
+        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+
+        if TMM::can_cast_stage_element() {
+            dtypes.adjust_stage_dtypes();
+        }
+
+        let (blueprint, dtypes) = match strategy {
+            BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
             BlueprintStrategy::Inferred(strategy) => infer_blueprint_plane::<TMM, R>(
                 &device_settings.client,
                 problem,
                 device_settings.plane_dim,
-                &problem.global_dtypes,
+                dtypes,
                 &device_settings.line_sizes,
                 PlaneTilingBlueprintOptions {
                     specialized: strategy.specialized,
@@ -172,12 +193,27 @@ where
                     swizzled: TMM::should_swizzle(&device_settings.client),
                     ..Default::default()
                 },
-            ),
-        }
-    }
+            )?,
+        };
 
-    fn can_cast_stage_element() -> bool {
-        TMM::can_cast_stage_element()
+        Self::validate_blueprint(
+            &device_settings.client,
+            &blueprint,
+            problem,
+            &dtypes,
+            &device_settings.line_sizes,
+        )?;
+
+        let cubedim_resource =
+            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
+
+        LaunchInfo::new(
+            blueprint,
+            dtypes,
+            problem,
+            cubedim_resource,
+            device_settings,
+        )
     }
 }
 
@@ -210,16 +246,19 @@ where
         device_settings: &DeviceSettings<R>,
         strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
-        match strategy {
-            BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
-                blueprint: blueprint.clone(),
-                dtypes: MatmulElems::from_globals(&problem.global_dtypes),
-            }),
+        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+
+        if TMM::can_cast_stage_element() {
+            dtypes.adjust_stage_dtypes();
+        }
+
+        let (blueprint, dtypes) = match strategy {
+            BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
             BlueprintStrategy::Inferred(strategy) => infer_blueprint_plane::<TMM, R>(
                 &device_settings.client,
                 problem,
                 device_settings.plane_dim,
-                &problem.global_dtypes,
+                dtypes,
                 &device_settings.line_sizes,
                 PlaneTilingBlueprintOptions {
                     specialized: strategy.specialized,
@@ -229,12 +268,27 @@ where
                     swizzled: TMM::should_swizzle(&device_settings.client),
                     ..Default::default()
                 },
-            ),
-        }
-    }
+            )?,
+        };
 
-    fn can_cast_stage_element() -> bool {
-        TMM::can_cast_stage_element()
+        Self::validate_blueprint(
+            &device_settings.client,
+            &blueprint,
+            problem,
+            &dtypes,
+            &device_settings.line_sizes,
+        )?;
+
+        let cubedim_resource =
+            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
+
+        LaunchInfo::new(
+            blueprint,
+            dtypes,
+            problem,
+            cubedim_resource,
+            device_settings,
+        )
     }
 }
 
@@ -266,16 +320,19 @@ where
         device_settings: &DeviceSettings<R>,
         strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
-        match strategy {
-            BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
-                blueprint: blueprint.clone(),
-                dtypes: MatmulElems::from_globals(&problem.global_dtypes),
-            }),
+        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+
+        if TMM::can_cast_stage_element() {
+            dtypes.adjust_stage_dtypes();
+        }
+
+        let (blueprint, dtypes) = match strategy {
+            BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
             BlueprintStrategy::Inferred(strategy) => infer_blueprint_plane::<TMM, R>(
                 &device_settings.client,
                 problem,
                 device_settings.plane_dim,
-                &problem.global_dtypes,
+                dtypes,
                 &device_settings.line_sizes,
                 PlaneTilingBlueprintOptions {
                     specialized: strategy.specialized,
@@ -285,12 +342,27 @@ where
                     swizzled: TMM::should_swizzle(&device_settings.client),
                     ..Default::default()
                 },
-            ),
-        }
-    }
+            )?,
+        };
 
-    fn can_cast_stage_element() -> bool {
-        TMM::can_cast_stage_element()
+        Self::validate_blueprint(
+            &device_settings.client,
+            &blueprint,
+            problem,
+            &dtypes,
+            &device_settings.line_sizes,
+        )?;
+
+        let cubedim_resource =
+            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
+
+        LaunchInfo::new(
+            blueprint,
+            dtypes,
+            problem,
+            cubedim_resource,
+            device_settings,
+        )
     }
 }
 
@@ -321,16 +393,19 @@ where
         device_settings: &DeviceSettings<R>,
         strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
-        match strategy {
-            BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
-                blueprint: blueprint.clone(),
-                dtypes: MatmulElems::from_globals(&problem.global_dtypes),
-            }),
+        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+
+        if TMM::can_cast_stage_element() {
+            dtypes.adjust_stage_dtypes();
+        }
+
+        let (blueprint, dtypes) = match strategy {
+            BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
             BlueprintStrategy::Inferred(strategy) => infer_blueprint_plane::<TMM, R>(
                 &device_settings.client,
                 problem,
                 device_settings.plane_dim,
-                &problem.global_dtypes,
+                dtypes,
                 &device_settings.line_sizes,
                 PlaneTilingBlueprintOptions {
                     specialized: strategy.specialized,
@@ -340,12 +415,27 @@ where
                     swizzled: TMM::should_swizzle(&device_settings.client),
                     ..Default::default()
                 },
-            ),
-        }
-    }
+            )?,
+        };
 
-    fn can_cast_stage_element() -> bool {
-        TMM::can_cast_stage_element()
+        Self::validate_blueprint(
+            &device_settings.client,
+            &blueprint,
+            problem,
+            &dtypes,
+            &device_settings.line_sizes,
+        )?;
+
+        let cubedim_resource =
+            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
+
+        LaunchInfo::new(
+            blueprint,
+            dtypes,
+            problem,
+            cubedim_resource,
+            device_settings,
+        )
     }
 }
 
@@ -376,16 +466,19 @@ where
         device_settings: &DeviceSettings<R>,
         strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
-        match strategy {
-            BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
-                blueprint: blueprint.clone(),
-                dtypes: MatmulElems::from_globals(&problem.global_dtypes),
-            }),
+        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+
+        if TMM::can_cast_stage_element() {
+            dtypes.adjust_stage_dtypes();
+        }
+
+        let (blueprint, dtypes) = match strategy {
+            BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
             BlueprintStrategy::Inferred(strategy) => infer_blueprint_plane::<TMM, R>(
                 &device_settings.client,
                 problem,
                 device_settings.plane_dim,
-                &problem.global_dtypes,
+                dtypes,
                 &device_settings.line_sizes,
                 PlaneTilingBlueprintOptions {
                     specialized: strategy.specialized,
@@ -395,11 +488,26 @@ where
                     swizzled: TMM::should_swizzle(&device_settings.client),
                     ..Default::default()
                 },
-            ),
-        }
-    }
+            )?,
+        };
 
-    fn can_cast_stage_element() -> bool {
-        TMM::can_cast_stage_element()
+        Self::validate_blueprint(
+            &device_settings.client,
+            &blueprint,
+            problem,
+            &dtypes,
+            &device_settings.line_sizes,
+        )?;
+
+        let cubedim_resource =
+            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
+
+        LaunchInfo::new(
+            blueprint,
+            dtypes,
+            problem,
+            cubedim_resource,
+            device_settings,
+        )
     }
 }

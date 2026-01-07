@@ -12,7 +12,6 @@ use cubecl::std::{
 use cubecl::{server::TensorMapMeta, unexpanded};
 
 use crate::components::{
-    batch::BatchConfig,
     global::memory::{
         BatchLayout, BatchLayoutLaunch, GlobalLayout, GlobalLayoutConfig, GlobalLayoutLaunch,
         GlobalScaleLayout, NoopLayout, NoopLayoutLaunch, SimpleTmaGlobalLayout,
@@ -20,7 +19,9 @@ use crate::components::{
     },
     stage::SwizzleMode,
 };
-use crate::definition::{self, MatmulElems, MatmulLineSizes, MatmulProblem, TilingBlueprint};
+use crate::definition::{
+    self, Blueprint as _, MatmulElems, MatmulLineSizes, MatmulProblem, TilingBlueprint,
+};
 use crate::launch::handle::MatmulInputHandleRef;
 use crate::routines::Routine;
 
@@ -50,7 +51,6 @@ pub trait ConcreteInputsFactory<A: Routine>: LaunchArg {
         blueprint: &A::Blueprint,
         problem: &MatmulProblem,
         line_sizes: &MatmulLineSizes,
-        config: A::Config,
         dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<'a, R>;
 }
@@ -65,7 +65,6 @@ pub trait ConcreteOutputFactory<A: Routine>: LaunchArg {
         blueprint: &A::Blueprint,
         problem: &MatmulProblem,
         line_sizes: &MatmulLineSizes,
-        config: A::Config,
         dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<'a, R>;
 }
@@ -172,10 +171,9 @@ impl<Lhs: Numeric, Rhs: Numeric, Acc: Numeric, A: Routine> ConcreteInputsFactory
         client: &ComputeClient<R>,
         lhs: &'a MatmulInputHandleRef<'a, R>,
         rhs: &'a MatmulInputHandleRef<'a, R>,
-        _blueprint: &A::Blueprint,
+        blueprint: &A::Blueprint,
         problem: &MatmulProblem,
         line_sizes: &MatmulLineSizes,
-        config: A::Config,
         _dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<'a, R> {
         let view = |handle: &'a MatmulInputHandleRef<'a, R>,
@@ -213,9 +211,9 @@ impl<Lhs: Numeric, Rhs: Numeric, Acc: Numeric, A: Routine> ConcreteInputsFactory
         };
 
         TensorInputsLaunch::new(
-            view(lhs, config.lhs_global_layout_config(), line_sizes.lhs),
+            view(lhs, blueprint.lhs_global_layout_config(), line_sizes.lhs),
             batch_layout(lhs),
-            view(rhs, config.rhs_global_layout_config(), line_sizes.rhs),
+            view(rhs, blueprint.rhs_global_layout_config(), line_sizes.rhs),
             batch_layout(rhs),
             CubeOptionArgs::None,
             CubeOptionArgs::None,
@@ -233,14 +231,16 @@ impl<EG: Numeric, A: Routine> ConcreteOutputFactory<A> for TensorOutput<EG> {
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
         out: &'a TensorHandleRef<'a, R>,
-        _blueprint: &A::Blueprint,
+        blueprint: &A::Blueprint,
         problem: &MatmulProblem,
         line_sizes: &MatmulLineSizes,
-        config: A::Config,
         _dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<'a, R> {
-        let layout =
-            GlobalLayoutLaunch::from_handle(out, line_sizes.out, config.out_global_layout_config());
+        let layout = GlobalLayoutLaunch::from_handle(
+            out,
+            line_sizes.out,
+            blueprint.out_global_layout_config(),
+        );
         let batch = BatchLayoutLaunch::from_handle(client, out, problem);
         let view = ViewArg::new::<GlobalLayout>(out.as_array_arg(line_sizes.out), layout);
         TensorOutputLaunch::new(view, VirtualLayoutLaunch::new::<BatchLayout>(batch))
@@ -349,7 +349,6 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<Blueprint = TilingBluep
         blueprint: &A::Blueprint,
         problem: &MatmulProblem,
         line_sizes: &MatmulLineSizes,
-        _config: A::Config,
         dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<'a, R> {
         let lhs = lhs_handle.data();
@@ -363,7 +362,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<Blueprint = TilingBluep
         // Loaders use dynamic layout based on swizzle setting. For no swizzle, contiguous tiles are
         // loaded and TMA loads single tile wide columns.
         // For swizzled, bank conflicts aren't an issue so the tile size is the full stage.
-        let stage_size_lhs = match blueprint.shared_swizzle.lhs {
+        let stage_size_lhs = match blueprint.swizzle_modes.lhs {
             SwizzleMode::None => match problem.lhs_layout {
                 definition::MatrixLayout::RowMajor => {
                     vec![1, stage_m, tiling_scheme.tile_size.k]
@@ -381,7 +380,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<Blueprint = TilingBluep
                 }
             },
         };
-        let stage_size_rhs = match blueprint.shared_swizzle.rhs {
+        let stage_size_rhs = match blueprint.swizzle_modes.rhs {
             SwizzleMode::None => match problem.rhs_layout {
                 definition::MatrixLayout::RowMajor => {
                     vec![1, stage_k, tiling_scheme.tile_size.n]
@@ -462,20 +461,20 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<Blueprint = TilingBluep
             }
         }
 
-        let swizzle_lhs = swizzle(blueprint.shared_swizzle.lhs);
-        let swizzle_rhs = swizzle(blueprint.shared_swizzle.rhs);
+        let swizzle_lhs = swizzle(blueprint.swizzle_modes.lhs);
+        let swizzle_rhs = swizzle(blueprint.swizzle_modes.rhs);
 
         // f32 gets remapped to tf32 for the tensor map just to ensure CUDA loads them correctly.
         // It shouldn't matter, but it's better to be safe.
-        let lhs_elem = if *dtypes.lhs_stage == f32::as_type_native_unchecked() {
+        let lhs_elem = if dtypes.lhs_stage == f32::as_type_native_unchecked() {
             tf32::as_type_native_unchecked()
         } else {
-            *dtypes.lhs_stage
+            dtypes.lhs_stage
         };
-        let rhs_elem = if *dtypes.rhs_stage == f32::as_type_native_unchecked() {
+        let rhs_elem = if dtypes.rhs_stage == f32::as_type_native_unchecked() {
             tf32::as_type_native_unchecked()
         } else {
-            *dtypes.rhs_stage
+            dtypes.rhs_stage
         };
 
         let meta_lhs = TensorMapMeta {

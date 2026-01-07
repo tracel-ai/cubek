@@ -5,7 +5,7 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Layout, LayoutExpand};
 use cubek_matmul::components::{
     global::{
-        GlobalReaderConfig, RoleRule,
+        GlobalReaderConfig, PlaneFlowPartition,
         memory::GlobalIterator,
         multi_stage::LoadMaxRoundPlaneCount,
         read::{
@@ -15,7 +15,7 @@ use cubek_matmul::components::{
     },
     stage::{ContiguousTilingLayout, StridedStageFamily, StridedStageMemory, TilingOrder},
 };
-use cubek_matmul::definition::{InvalidConfigError, MatmulElems, MatmulProblem};
+use cubek_matmul::definition::{InvalidConfigError, MatmulElems, MatmulProblem, StageIdent};
 
 use crate::components::global::{
     args::RuntimeArgs,
@@ -34,13 +34,16 @@ pub struct AsyncFullCyclicLoading<T: TilingOrder> {
 }
 
 impl<TO: TilingOrder> LoadingValidation for AsyncFullCyclicLoading<TO> {
-    fn check<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
-        config: &GlobalReaderConfig,
-        dtypes: &MatmulElems,
+    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
+        MatmulCyclicLoading::<TO>::validate_with_config(config)
+    }
+
+    fn validate_with_problem(
+        _problem: &MatmulProblem,
+        _dtypes: &MatmulElems,
+        _ident: StageIdent,
     ) -> Result<(), InvalidConfigError> {
-        MatmulCyclicLoading::<TO>::check(client, problem, config, dtypes)
+        Ok(())
     }
 }
 
@@ -84,8 +87,8 @@ impl<TO: TilingOrder> FullLoadingStrategy for AsyncFullCyclicLoading<TO> {
         let balanced_workload = num_stage_lines.is_multiple_of(total_units);
         let jump_length = total_units * line_size;
 
-        let unit_id = RoleRule::new(config.plane_role_config.rule)
-            .load_index(config.specialization_tensor_config)
+        let unit_id = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
+            .load_index(config.input_load_flow)
             * config.plane_dim
             + UNIT_POS_X;
         let unit_position_base = unit_id * line_size;

@@ -17,11 +17,11 @@ use cubek_matmul::{
     components::{
         global::{
             GlobalConfig as _,
-            memory::{NoopLayout, NoopLayoutLaunch},
+            memory::{GlobalMemoryConfig, NoopLayout, NoopLayoutLaunch, ViewDirection},
         },
         stage::StageConfig as _,
     },
-    definition::{MatmulElems, MatmulLineSizes, TilingBlueprint},
+    definition::{MatmulElems, MatmulLineSizes, MatrixLayout, TilingBlueprint},
     launch::{
         MatmulArgs, MatmulInputHandleRef, TensorArgs, TensorInputs, TensorInputsLaunch,
         TensorMapArgs, TensorMapInputs, TensorMapInputsLaunch, TensorOutput, TensorOutputLaunch,
@@ -237,10 +237,10 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory
 
         // f32 gets remapped to tf32 for the tensor map just to ensure CUDA loads them correctly.
         // It shouldn't matter, but it's better to be safe.
-        let lhs_elem = if *dtypes.lhs_stage == f32::as_type_native_unchecked() {
+        let lhs_elem = if dtypes.lhs_stage == f32::as_type_native_unchecked() {
             tf32::as_type_native_unchecked()
         } else {
-            *dtypes.lhs_stage
+            dtypes.lhs_stage
         };
 
         let mut elem_stride = vec![1; 2 + problem.stride.len()];
@@ -266,7 +266,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory
                 tile_size: stage_size_rhs,
             },
             weights.data().as_tensor_arg(line_sizes.rhs),
-            *dtypes.rhs_global,
+            dtypes.rhs_global,
         );
 
         let padded_channels = problem.padded_channels as u32;
@@ -289,7 +289,18 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory
             ConvolutionParams::from_problem(problem),
             !shape_k.is_multiple_of(stages_size_k),
         );
-        let rhs_layout = WeightLayoutLaunch::from_args(client, problem, Default::default());
+        let rhs_layout = WeightLayoutLaunch::from_args(
+            client,
+            problem,
+            GlobalMemoryConfig {
+                line_size: line_sizes.rhs,
+                check_row_bounds: false,
+                check_col_bounds: false,
+                matrix_layout: MatrixLayout::default(),
+                view_direction: ViewDirection::default(),
+                dtype: dtypes.rhs_global,
+            },
+        );
 
         let inputs = TensorMapInputsLaunch::new(
             ViewArg::new_tensor_map_im2col::<LhsLayout, _, _>(lhs, lhs_layout),

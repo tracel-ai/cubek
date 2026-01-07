@@ -1,16 +1,17 @@
 use std::marker::PhantomData;
 
+use crate::components::CubeDimResource;
 use crate::components::batch::BatchMatmulFamily;
 use crate::components::batch::partitioned_matmul::config::PartitionedBatchConfig;
 use crate::components::batch::partitioned_matmul::matmul::PartitionedBatchMatmul;
 use crate::components::batch::partitioned_matmul::matmul::matmul_entry;
 use crate::components::batch::partitioned_matmul::partition::GlobalPartitionMatmul;
 use crate::components::global::GlobalMatmulFamily;
-use crate::definition::CubeCountInputArgs;
+use crate::definition::CubeMappingLaunch;
+use crate::definition::MatmulLineSizes;
+use crate::definition::MatmulProblem;
 use crate::definition::TilingBlueprint;
-use crate::definition::{
-    MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError,
-};
+use crate::definition::{MatmulElems, MatmulPrecision, MatmulSetupError};
 use crate::launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
 use cubecl::prelude::*;
 
@@ -27,23 +28,17 @@ impl<GMM: GlobalMatmulFamily, S: GlobalPartitionMatmul> BatchMatmulFamily
     type Config = PartitionedBatchConfig<GMM::Config>;
     type Blueprint = TilingBlueprint;
 
-    fn expand_config<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
+    fn expand_config(
         blueprint: &Self::Blueprint,
-        line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
-        let global_config = GMM::expand_config(client, problem, blueprint, line_sizes, dtypes)?;
+        let global_config = GMM::expand_config(blueprint, dtypes, line_sizes)?;
 
-        PartitionedBatchConfig::new(
+        Ok(PartitionedBatchConfig::new(
             global_config,
-            blueprint
-                .hypercube_selection
-                .to_hypercube_config(problem, client.properties().hardware.max_cube_count.clone()),
             blueprint.tiling_scheme.global_partition_size,
-        )
-        .validate(problem)
+        ))
     }
 
     unsafe fn launch_unchecked<'a, MA: MatmulArgs, R: Runtime>(
@@ -52,8 +47,8 @@ impl<GMM: GlobalMatmulFamily, S: GlobalPartitionMatmul> BatchMatmulFamily
         cube_count: CubeCount,
         input: InputRuntimeArg<'a, MA, R>,
         output: OutputRuntimeArg<'a, MA, R>,
-        cube_count_input: CubeCountInputArgs<'a, R>,
-        config: Self::Config,
+        cube_count_input: CubeMappingLaunch<'a, R>,
+        blueprint: Self::Blueprint,
         dtypes: &MatmulElems,
     ) -> Result<(), LaunchError> {
         unsafe {
@@ -64,15 +59,33 @@ impl<GMM: GlobalMatmulFamily, S: GlobalPartitionMatmul> BatchMatmulFamily
                 input,
                 output,
                 cube_count_input,
-                config,
-                [*dtypes.lhs_global, *dtypes.rhs_global, *dtypes.acc_global],
-                [*dtypes.lhs_stage, *dtypes.rhs_stage, *dtypes.acc_stage],
+                blueprint,
+                [dtypes.lhs_global, dtypes.rhs_global, dtypes.acc_global],
+                [dtypes.lhs_stage, dtypes.rhs_stage, dtypes.acc_stage],
                 [
-                    *dtypes.lhs_register,
-                    *dtypes.rhs_register,
-                    *dtypes.acc_register,
+                    dtypes.lhs_register,
+                    dtypes.rhs_register,
+                    dtypes.acc_register,
                 ],
             )
         }
+    }
+
+    fn cubedim_resource(
+        blueprint: &Self::Blueprint,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
+    ) -> Result<CubeDimResource, MatmulSetupError> {
+        GMM::cubedim_resource(blueprint, dtypes, line_sizes)
+    }
+
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &Self::Blueprint,
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
+    ) -> Result<(), MatmulSetupError> {
+        GMM::validate_blueprint(client, blueprint, problem, dtypes, line_sizes)
     }
 }

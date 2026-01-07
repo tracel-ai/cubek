@@ -1,6 +1,7 @@
 use crate::components::batch::BatchAttentionFamily;
 use crate::components::batch::base::BatchAttention;
 use crate::definition::AttentionBlueprint;
+use crate::definition::AttentionElems;
 use crate::definition::CubeCountInput;
 use crate::launch::AttentionArgs;
 use crate::launch::TensorKey;
@@ -38,9 +39,12 @@ pub(crate) fn attention<
     output: &mut Output<Args, OG>,
     cube_count_args: CubeCountInput,
     #[comptime] blueprint: AttentionBlueprint,
-    #[define(QG, QT, KG, KS, VG, VS, KVT, SM, ACC, MSK, OG, OS)] _elem_types: [StorageType; 12],
+    #[define(QG, QT, KG, KS, VG, VS, KVT, SM, ACC, MSK, OG, OS)] elem_types: [StorageType; 12],
 ) {
-    let config = comptime!(BMMF::expand_blueprint(blueprint));
+    let config = comptime!(BMMF::expand_config(
+        blueprint,
+        &AttentionElems::from_define_array(elem_types)
+    ));
     if config.is_err() {
         push_validation_error(config.err().unwrap().to_string());
         comptime!(return);

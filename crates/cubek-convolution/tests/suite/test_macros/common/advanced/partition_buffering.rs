@@ -1,13 +1,15 @@
 #[macro_export]
 macro_rules! testgen_convolution_partition_buffering {
-    ($algorithm: ty, $precision: ty, $selection_builder: expr) => {
+    ($algorithm: ty, $precision: ty, $tiling_scheme: expr, $swizzle: expr) => {
         use cubek_matmul::components::stage::PartitionBuffering;
 
         #[cfg(not(feature = "conv_tests_partition_buffering"))]
         $crate::testgen_convolution_problem!(
             $algorithm,
             $precision,
-            $selection_builder.partition_buffering(PartitionBuffering::Single)
+            $tiling_scheme,
+            $swizzle,
+            PartitionBuffering::Single
         );
 
         #[cfg(feature = "conv_tests_partition_buffering")]
@@ -17,7 +19,9 @@ macro_rules! testgen_convolution_partition_buffering {
             $crate::testgen_convolution_problem!(
                 $algorithm,
                 $precision,
-                $selection_builder.partition_buffering(PartitionBuffering::Single)
+                $tiling_scheme,
+                $swizzle,
+                PartitionBuffering::Single
             );
         }
 
@@ -28,7 +32,9 @@ macro_rules! testgen_convolution_partition_buffering {
             $crate::testgen_convolution_problem!(
                 $algorithm,
                 $precision,
-                $selection_builder.partition_buffering(PartitionBuffering::Double)
+                $tiling_scheme,
+                $swizzle,
+                PartitionBuffering::Double
             );
         }
     };

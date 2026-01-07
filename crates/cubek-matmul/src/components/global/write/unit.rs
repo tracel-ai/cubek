@@ -32,7 +32,7 @@ impl<IP: MatrixPrecision> UnitWriter<IP> {
         let smem_config = config.smem_config;
         let stage = PartitionedStage::new(
             UnitPartitioner::coordinates(
-                config.role_rule_config,
+                config.plane_flow_partition_rule,
                 config.plane_dim,
                 smem_config.partitions_per_stage_along_col,
             ),

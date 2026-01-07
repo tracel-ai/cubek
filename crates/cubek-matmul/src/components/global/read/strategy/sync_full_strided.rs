@@ -1,11 +1,11 @@
 use crate::components::global::read::validate_swizzle_atom_size;
 use crate::components::global::read::{FullLoadingStrategy, stage::FullStageLayout};
-use crate::components::global::{GlobalReaderConfig, RoleRule};
+use crate::components::global::{GlobalReaderConfig, PlaneFlowPartition};
 use crate::components::global::{multi_stage::LoadMaxRoundPlaneCount, read::sync::Synchronous};
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{StridedStageMemory, StridedTilingLayout};
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
-use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem};
+use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem, StageIdent};
 use cubecl::prelude::*;
 use cubecl::std::type_size;
 
@@ -17,12 +17,7 @@ use super::{LoadingJob, LoadingValidation};
 pub struct SyncFullStridedLoading {}
 
 impl LoadingValidation for SyncFullStridedLoading {
-    fn check<R: Runtime>(
-        _client: &ComputeClient<R>,
-        _problem: &MatmulProblem,
-        config: &GlobalReaderConfig,
-        dtypes: &MatmulElems,
-    ) -> Result<(), InvalidConfigError> {
+    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
         let line_size = config.gmem_config.line_size;
 
         let num_stage_lines = config.smem_config.elements_per_stage() / line_size as u32;
@@ -35,9 +30,17 @@ impl LoadingValidation for SyncFullStridedLoading {
             )));
         }
 
-        validate_swizzle_atom_size(config.smem_config, config.stage_ident, dtypes)?;
+        validate_swizzle_atom_size(config.smem_config)?;
         StridedTilingLayout::check(config.smem_config)?;
 
+        Ok(())
+    }
+
+    fn validate_with_problem(
+        _problem: &MatmulProblem,
+        _dtypes: &MatmulElems,
+        _ident: StageIdent,
+    ) -> Result<(), InvalidConfigError> {
         Ok(())
     }
 }
@@ -70,8 +73,8 @@ impl FullLoadingStrategy for SyncFullStridedLoading {
         let unit_count = config.loading_planes_count() * config.plane_dim;
         let num_tasks_per_unit = num_stage_lines / unit_count;
 
-        let unit_position_base = RoleRule::new(config.plane_role_config.rule)
-            .load_index(config.specialization_tensor_config)
+        let unit_position_base = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
+            .load_index(config.input_load_flow)
             * config.plane_dim
             + UNIT_POS_X;
 

@@ -143,24 +143,24 @@ where
     if !client
         .properties()
         .features
-        .type_usage(*dtypes.lhs_global)
+        .type_usage(dtypes.lhs_global)
         .contains(TypeUsage::Conversion)
         || !client
             .properties()
             .features
-            .type_usage(*dtypes.rhs_global)
+            .type_usage(dtypes.rhs_global)
             .contains(TypeUsage::Conversion)
         || !client
             .properties()
             .features
-            .type_usage(*dtypes.acc_global)
+            .type_usage(dtypes.acc_global)
             .contains(TypeUsage::Conversion)
     {
         return Err(MatmulSetupError::Unavailable(
             MatmulAvailabilityError::TypesUnavailable {
-                lhs: *dtypes.lhs_global,
-                rhs: *dtypes.rhs_global,
-                output: *dtypes.acc_global,
+                lhs: dtypes.lhs_global,
+                rhs: dtypes.rhs_global,
+                output: dtypes.acc_global,
             },
         ));
     }
@@ -180,17 +180,6 @@ where
         line_sizes.rhs = 1;
     }
 
-    let fix_plane_dim = |plane_dim: u32| {
-        // Sometimes the GPU doesn't support plane instructions and doesn't report the
-        // plane size, but we can still execute algorithms that don't use plane instructions.
-        //
-        // In this case, we set a plane size for the selector to work, defaulting to 32 as it
-        // is a common plane size.
-        if plane_dim == 0 { 32 } else { plane_dim }
-    };
-
-    let plane_dim = fix_plane_dim(A::select_plane_dim(client));
-
     launch_kernel_concrete::<MA, R, A>(
         client,
         lhs,
@@ -198,7 +187,6 @@ where
         out,
         problem,
         line_sizes,
-        plane_dim,
         blueprint_strategy,
         dtypes,
     )

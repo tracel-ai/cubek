@@ -11,7 +11,7 @@ use crate::{
         },
         stage::{StridedStageFamily, StridedStageMemory, StridedTilingLayout, TilingValidation},
     },
-    definition::{InvalidConfigError, MatmulElems, MatmulProblem, MatrixLayout},
+    definition::{InvalidConfigError, MatmulElems, MatmulProblem, MatrixLayout, StageIdent},
 };
 use cubecl::prelude::{barrier::Barrier, *};
 
@@ -25,16 +25,19 @@ use super::LoadingValidation;
 pub struct AsyncFullCooperativeLoading {}
 
 impl LoadingValidation for AsyncFullCooperativeLoading {
-    fn check<R: Runtime>(
-        client: &ComputeClient<R>,
-        _problem: &MatmulProblem,
-        config: &GlobalReaderConfig,
-        _dtypes: &MatmulElems,
-    ) -> Result<(), InvalidConfigError> {
+    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
         StridedTilingLayout::check(config.smem_config)?;
-        validate_async_barrier(client)?;
+        validate_async_barrier()?;
         validate_noswizzle(config.smem_config)?;
 
+        Ok(())
+    }
+
+    fn validate_with_problem(
+        _problem: &MatmulProblem,
+        _dtypes: &MatmulElems,
+        _ident: StageIdent,
+    ) -> Result<(), InvalidConfigError> {
         Ok(())
     }
 }

@@ -4,14 +4,13 @@ use cubecl::{ir::StorageType, prelude::*};
 use crate::components::tile::TileConfig;
 use crate::components::tile::io::TileMut;
 use crate::components::{
-    resource::ComputeResources,
+    resource::CubeDimResource,
     tile::io::{Tile, TileKind},
 };
-use crate::definition::TilingBlueprint;
 use crate::definition::{
-    InvalidConfigError, MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError,
-    MatrixLayout, TileSize,
+    InvalidConfigError, MatmulLineSizes, MatmulSetupError, MatrixLayout, TileSize,
 };
+use crate::definition::{MatmulElems, TilingBlueprint};
 
 /// A family of [TileMatmul] implementations that operate with any precision.
 pub trait TileMatmulFamily: Send + Sync + 'static {
@@ -49,18 +48,16 @@ pub trait TileMatmulFamily: Send + Sync + 'static {
     /// Used to determine the selection, since swizzling may require different stage sizes.
     fn should_swizzle<R: Runtime>(client: &ComputeClient<R>) -> bool;
 
-    /// Returns the compute resources required to run this tile matmul.
-    fn computation_resources() -> Result<ComputeResources, InvalidConfigError>;
+    /// Returns the compute resources required to run this matmul.
+    fn cubedim_resource() -> Result<CubeDimResource, InvalidConfigError>;
 
     /// Constructs the configuration based on the matmul problem, selection, and line sizes.
     ///
     /// This function may return an error if the configuration cannot be supported on the current runtime.
-    fn expand_config<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
-        selection: &TilingBlueprint,
-        matmul_line_sizes: &MatmulLineSizes,
+    fn expand_config(
+        blueprint: &TilingBlueprint,
         dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError>;
 
     /// Returns whether a tile configuration is supported
@@ -77,6 +74,13 @@ pub trait TileMatmulFamily: Send + Sync + 'static {
     ) -> Vec<TileSize> {
         Vec::new()
     }
+
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &TilingBlueprint,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
+    ) -> Result<(), MatmulSetupError>;
 }
 
 /// Provides matrix multiplication operations at the tile level.

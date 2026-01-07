@@ -6,7 +6,7 @@ use cubecl::{
 use cubek_matmul::components::stage::{PartitionBuffering, SwizzleMode};
 
 use cubek_matmul::definition::{
-    MatmulAvailabilityError, MatmulElems, MatmulLineSizes, SwizzleBlueprint, TilingBlueprint,
+    MatmulAvailabilityError, MatmulElems, MatmulLineSizes, SwizzleModes, TilingBlueprint,
     TilingScheme, adjust_dtypes,
 };
 use cubek_matmul::{
@@ -120,15 +120,16 @@ pub fn convolution_matmul_selection<TMM: TileMatmulFamily, R: Runtime>(
         .build()
         .unwrap();
 
-    let mut builder = TilingBlueprint::builder(tiling_scheme, plane_dim)
-        .partition_buffering(PartitionBuffering::Single);
+    let mut builder =
+        TilingBlueprint::builder(tiling_scheme, plane_dim, &problem.as_matmul_problem())
+            .partition_buffering(PartitionBuffering::Single);
 
     if swizzle {
         let swizzle_dim = tiling_scheme.elements_per_stage_along_k() as usize;
 
-        let lhs = select_swizzle(swizzle_dim, *dtypes.lhs_stage, line_sizes.lhs);
-        let rhs = select_swizzle(swizzle_dim, *dtypes.rhs_stage, line_sizes.rhs);
-        builder = builder.shared_swizzle(SwizzleBlueprint {
+        let lhs = select_swizzle(swizzle_dim, dtypes.lhs_stage, line_sizes.lhs);
+        let rhs = select_swizzle(swizzle_dim, dtypes.rhs_stage, line_sizes.rhs);
+        builder = builder.shared_swizzle(SwizzleModes {
             lhs,
             rhs,
             ..Default::default()

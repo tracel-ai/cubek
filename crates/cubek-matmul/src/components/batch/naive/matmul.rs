@@ -1,7 +1,10 @@
 use std::marker::PhantomData;
 
+use crate::components::batch::base::BatchMatmulFamily;
+use crate::components::batch::naive::{NaiveBatchMatmulFamily, NaiveBlueprint};
 use crate::components::batch::{BatchConfig as _, SliceIndex};
 use crate::definition::MatrixLayout;
+
 use crate::{
     components::batch::{BatchMatmul, naive::NaiveMatmulConfig},
     definition::*,
@@ -28,12 +31,41 @@ pub(crate) fn matmul_entry<
 >(
     inputs: &<Args as MatmulArgs>::Input<LhsG, RhsG, AccG>,
     output: &mut <Args as MatmulArgs>::Output<AccG>,
-    cube_count_args: CubeCountInput,
-    #[comptime] config: NaiveMatmulConfig,
-    #[define(LhsG, RhsG, AccG)] _global: [StorageType; 3],
-    #[define(LhsS, RhsS, AccS)] _stage: [StorageType; 3],
-    #[define(LhsR, RhsR, AccR)] _register: [StorageType; 3],
+    cube_mapping: CubeMapping,
+    #[comptime] blueprint: NaiveBlueprint,
+    #[define(LhsG, RhsG, AccG)] global: [StorageType; 3],
+    #[define(LhsS, RhsS, AccS)] stage: [StorageType; 3],
+    #[define(LhsR, RhsR, AccR)] register: [StorageType; 3],
 ) {
+    let mut state = Args::init_state::<LhsG, RhsG, AccG>(
+        inputs,
+        output,
+        blueprint.lhs_global_layout_config(),
+        blueprint.rhs_global_layout_config(),
+        blueprint.out_global_layout_config(),
+    );
+
+    let line_size_lhs = Args::view_lhs(&state).line_size();
+    let line_size_rhs = Args::view_rhs(&state).line_size();
+    let line_size_out = Args::view_out(&mut state).line_size();
+    let line_sizes = comptime!(MatmulLineSizes {
+        lhs: line_size_lhs,
+        rhs: line_size_rhs,
+        out: line_size_out,
+    });
+
+    let config = comptime!(NaiveBatchMatmulFamily::expand_config(
+        &blueprint,
+        &MatmulElems::from_define_arrays(global, stage, register),
+        &line_sizes
+    ));
+
+    if comptime!(config.is_err()) {
+        push_validation_error(config.err().unwrap().to_string());
+        comptime!(return);
+    }
+    let config = comptime!(config.unwrap());
+
     let mut state = Args::init_state::<LhsG, RhsG, AccG>(
         inputs,
         output,
@@ -44,7 +76,7 @@ pub(crate) fn matmul_entry<
 
     NaiveMatmul::<((LhsG, LhsS, LhsR), (RhsG, RhsS, RhsR), (AccG, AccS, AccR))>::execute::<Args>(
         &mut state,
-        cube_count_args,
+        cube_mapping,
         config,
     );
 }
@@ -59,7 +91,7 @@ impl<MP: MatmulPrecision> BatchMatmul<MP> for NaiveMatmul<MP> {
 
     fn execute<Args: MatmulArgs>(
         state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
-        _cube_count_args: CubeCountInput,
+        _cube_mapping: CubeMapping,
         #[comptime] _config: Self::Config,
     ) {
         let lhs = Args::view_lhs(state);
@@ -107,7 +139,6 @@ impl<MP: MatmulPrecision> BatchMatmul<MP> for NaiveMatmul<MP> {
             }
 
             out[(m, n)] = Line::empty(1usize).fill(accum);
-            // out[(m, n)] = Line::cast_from(tmp);
         } else {
             out[(m, n)] = Line::empty(1usize).fill(sum[0]);
         }

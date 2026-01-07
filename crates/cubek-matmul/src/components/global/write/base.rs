@@ -1,6 +1,8 @@
 use crate::{
     components::{
-        global::{RoleRuleConfig, WriteEventListener, WriteTiling, memory::GlobalMemoryConfig},
+        global::{
+            PlaneFlowPartitionRule, WriteEventListener, WriteTiling, memory::GlobalMemoryConfig,
+        },
         stage::{Stage, StageFamily, StageMemoryConfig},
     },
     definition::MatrixPrecision,
@@ -39,6 +41,6 @@ pub trait GlobalWriter<IP: MatrixPrecision>:
 pub struct GlobalWriterConfig {
     pub gmem_config: GlobalMemoryConfig,
     pub smem_config: StageMemoryConfig,
-    pub role_rule_config: RoleRuleConfig,
+    pub plane_flow_partition_rule: PlaneFlowPartitionRule,
     pub plane_dim: u32,
 }

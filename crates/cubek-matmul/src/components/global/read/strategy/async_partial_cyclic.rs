@@ -1,8 +1,11 @@
 use std::marker::PhantomData;
 
 use crate::components::global::read::validate_async_barrier;
+use crate::components::global::read::validate_async_copy_with_problem;
 use crate::components::global::read::validate_swizzle_atom_size;
-use crate::components::global::{GlobalReaderConfig, RoleRule, read::async_copy::ASYNC_COPY_WIDTH};
+use crate::components::global::{
+    GlobalReaderConfig, PlaneFlowPartition, read::async_copy::ASYNC_COPY_WIDTH,
+};
 use crate::components::global::{
     multi_stage::LoadMaxRoundPlaneCount,
     read::{
@@ -41,14 +44,8 @@ pub struct AsyncPartialCyclicLoading<T: TilingOrder> {
 }
 
 impl<TO: TilingOrder> LoadingValidation for AsyncPartialCyclicLoading<TO> {
-    fn check<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
-        config: &GlobalReaderConfig,
-        dtypes: &MatmulElems,
-    ) -> Result<(), InvalidConfigError> {
-        let line_size =
-            ASYNC_COPY_WIDTH / dtypes.stage(config.stage_ident.into()).size_bits() as u32;
+    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
+        let line_size = ASYNC_COPY_WIDTH / config.smem_config.dtype.size_bits() as u32;
         if let ReaderMode::Strict = config.reader_mode {
             let num_lines_per_tile = config.smem_config.elements_per_tile() / line_size;
             let num_tiles_in_stage = config.smem_config.tiles_per_stage();
@@ -80,12 +77,20 @@ impl<TO: TilingOrder> LoadingValidation for AsyncPartialCyclicLoading<TO> {
             return Err(Box::new("Tile size isn't divisible by copy line size"));
         }
 
-        validate_swizzle_atom_size(config.smem_config, config.stage_ident, dtypes)?;
-        validate_async_barrier(client)?;
-        validate_async_copy(client, problem, dtypes, config)?;
+        validate_swizzle_atom_size(config.smem_config)?;
+        validate_async_barrier()?;
+        validate_async_copy(&config.gmem_config.dtype, &config.smem_config.dtype)?;
         ContiguousTilingLayout::<TO>::check(config.smem_config)?;
 
         Ok(())
+    }
+
+    fn validate_with_problem(
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        ident: StageIdent,
+    ) -> Result<(), InvalidConfigError> {
+        validate_async_copy_with_problem(problem, dtypes, ident)
     }
 }
 
@@ -134,8 +139,8 @@ impl<TO: TilingOrder> PartialLoadingStrategy for AsyncPartialCyclicLoading<TO> {
         let num_tasks_per_unit = total_num_lines.div_ceil(total_units);
         let jump_length = total_units * line_size;
 
-        let plane_id = RoleRule::new(config.plane_role_config.rule)
-            .load_index(config.specialization_tensor_config);
+        let plane_id = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
+            .load_index(config.input_load_flow);
         let unit_id = plane_id * config.plane_dim + UNIT_POS_X;
         let unit_position_base = unit_id * line_size;
 
@@ -255,8 +260,7 @@ pub(crate) fn copy_line<EG: Numeric, ES: Numeric, TO: TilingOrder>(
 #[cube]
 impl<TO: TilingOrder> AsyncPartialLoadingStrategy for AsyncPartialCyclicLoading<TO> {
     fn arrival_count<S: StageConfig>(#[comptime] config: SharedGlobalMatmulConfig<S>) -> u32 {
-        let total_load_units =
-            config.plane_role_config().plane_roles.load_only * config.plane_dim();
+        let total_load_units = config.plane_flow_config().counts.load_only * config.plane_dim();
         total_load_units.runtime()
     }
 
@@ -271,7 +275,7 @@ impl<TO: TilingOrder> AsyncPartialLoadingStrategy for AsyncPartialCyclicLoading<
     }
 
     fn is_elected<S: StageConfig>(#[comptime] config: SharedGlobalMatmulConfig<S>) -> bool {
-        let role_rule = RoleRule::new(config.plane_role_config().rule);
+        let role_rule = PlaneFlowPartition::new(config.plane_flow_config().partition_rule);
         role_rule.is_load_plane()
     }
 }

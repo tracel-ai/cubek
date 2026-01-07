@@ -1,19 +1,16 @@
 use cubecl::prelude::*;
 use cubecl::std::{CubeOption, CubeOptionExpand, tensor::layout::Coords2d};
 
+use crate::components::CubeDimResource;
+use crate::components::global::PlaneFlowConfig;
 use crate::components::global::WriteEventListener;
-use crate::components::global::{MaxGlobalReaderPlanes, PlaneRoleConfig};
-use crate::components::stage::StageMemoryConfig;
+use crate::components::stage::{NumStages, StageMemoryConfig};
 use crate::components::tile::TileConfig;
-use crate::components::{
-    stage::{NumStages, PartitionScheduler},
-    tile::io::TileKind,
-};
-use crate::definition::TilingBlueprint;
+use crate::components::{stage::PartitionScheduler, tile::io::TileKind};
 use crate::definition::{
-    AccS, LhsS, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError,
-    RhsS,
+    AccS, LhsS, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulSetupError, RhsS,
 };
+use crate::definition::{InvalidConfigError, TilingBlueprint};
 use std::{fmt::Debug, hash::Hash};
 
 use super::{StageEventListener, TilingLayout};
@@ -47,15 +44,25 @@ pub trait StageMatmulFamily: Send + Sync + 'static {
     ///
     /// This function may return an error if the configuration cannot be supported on the current runtime.
     #[allow(clippy::too_many_arguments)]
-    fn expand_config<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
-        selection: &TilingBlueprint,
-        line_sizes: &MatmulLineSizes,
+    fn expand_config(
+        blueprint: &TilingBlueprint,
+        plane_flow_config: PlaneFlowConfig,
         num_stages: NumStages,
-        max_global_readers: Option<MaxGlobalReaderPlanes>,
         dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError>;
+
+    /// Returns the compute resources required to run this matmul.
+    fn cubedim_resource(blueprint: &TilingBlueprint)
+    -> Result<CubeDimResource, InvalidConfigError>;
+
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &TilingBlueprint,
+        num_stages: NumStages,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
+    ) -> Result<(), MatmulSetupError>;
 }
 
 #[cube]
@@ -160,7 +167,7 @@ pub trait StageConfig:
     fn tiles_in_partition_mn(&self) -> u32;
     fn num_main_flow_planes(&self) -> u32;
     fn plane_dim(&self) -> u32;
-    fn plane_role_config(&self) -> PlaneRoleConfig;
+    fn plane_flow_config(&self) -> PlaneFlowConfig;
 
     fn lhs_smem_config(&self) -> StageMemoryConfig;
     fn rhs_smem_config(&self) -> StageMemoryConfig;

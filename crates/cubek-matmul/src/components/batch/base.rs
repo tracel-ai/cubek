@@ -1,6 +1,7 @@
+use crate::components::CubeDimResource;
 use crate::components::global::memory::GlobalLayoutConfig;
 use crate::definition::{
-    AccG, CubeCountInput, CubeCountInputArgs, CubeCountPlan, LhsG, MatmulElems, MatmulLineSizes,
+    AccG, Blueprint, CubeMapping, CubeMappingLaunch, LhsG, MatmulElems, MatmulLineSizes,
     MatmulPrecision, MatmulProblem, MatmulSetupError, RhsG,
 };
 use crate::launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
@@ -15,17 +16,15 @@ pub trait BatchMatmulFamily: 'static + Send + Sync {
     /// The configuration type associated with this matmul family.
     type Config: BatchConfig;
 
-    type Blueprint;
+    type Blueprint: Blueprint;
 
     /// Constructs the configuration based on the matmul problem, selection, and line sizes.
     ///
     /// This function may return an error if the configuration cannot be supported on the current runtime.
-    fn expand_config<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
+    fn expand_config(
         blueprint: &Self::Blueprint,
-        line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError>;
 
     /// Entry point
@@ -40,10 +39,25 @@ pub trait BatchMatmulFamily: 'static + Send + Sync {
         cube_count: CubeCount,
         input: InputRuntimeArg<'a, MA, R>,
         output: OutputRuntimeArg<'a, MA, R>,
-        cube_count_input: CubeCountInputArgs<'a, R>,
-        config: Self::Config,
+        cube_mapping: CubeMappingLaunch<'a, R>,
+        blueprint: Self::Blueprint,
         dtypes: &MatmulElems,
     ) -> Result<(), LaunchError>;
+
+    /// Returns the compute resources required to run this matmul.
+    fn cubedim_resource(
+        blueprint: &Self::Blueprint,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
+    ) -> Result<CubeDimResource, MatmulSetupError>;
+
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &Self::Blueprint,
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
+    ) -> Result<(), MatmulSetupError>;
 }
 
 #[cube]
@@ -70,7 +84,7 @@ pub trait BatchMatmul<MP: MatmulPrecision>: 'static + Send + Sync {
     /// Performs batchwise matrix multiplication over tensors.
     fn execute<Args: MatmulArgs>(
         state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
-        cube_count_args: CubeCountInput,
+        cube_mapping: CubeMapping,
         #[comptime] config: Self::Config,
     );
 }
@@ -79,18 +93,6 @@ pub trait BatchMatmul<MP: MatmulPrecision>: 'static + Send + Sync {
 pub trait BatchConfig:
     Copy + Clone + Eq + PartialEq + Hash + Debug + Send + Sync + 'static
 {
-    /// Returns the [CubeDim]
-    fn cube_dim(&self) -> CubeDim;
-
-    fn cube_count_plan(&self, problem: &MatmulProblem, max_cube_count: &CubeCount)
-    -> CubeCountPlan;
-
-    /// Returns the line sizes for Lhs, Rhs and output
-    fn line_sizes(&self) -> MatmulLineSizes;
-
-    /// Whether it may launch more cubes than the minimum required
-    fn can_yield_extra_cubes(&self) -> bool;
-
     fn lhs_global_layout_config(&self) -> GlobalLayoutConfig;
     fn rhs_global_layout_config(&self) -> GlobalLayoutConfig;
     fn out_global_layout_config(&self) -> GlobalLayoutConfig;

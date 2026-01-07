@@ -1,18 +1,18 @@
 use cubecl::prelude::*;
 
+use crate::components::CubeDimResource;
 use crate::components::global::memory::GlobalMemoryConfig;
 use crate::components::global::multi_stage::EventLoadingMode;
 use crate::components::global::read::ReaderMode;
 use crate::components::global::{
-    GlobalWriterConfig, LoadSpecializationConfig, PlaneRoleConfig, SpecializationTensorConfig,
-    SpecializedLoadingSides,
+    GlobalWriterConfig, InputLoadFlow, LoadFlows, PlaneFlowConfig, SpecializedLoadingSides,
 };
 use crate::components::stage::{StageConfig, StageMemoryConfig};
+use crate::definition::StageIdent;
 use crate::definition::TilingBlueprint;
-use crate::definition::{self, AccG, MatmulSetupError};
-use crate::definition::{AvailableLineSizes, MatmulPrecision, MatmulProblem};
+use crate::definition::{AccG, MatmulSetupError};
 use crate::definition::{LhsG, MatmulElems, MatmulLineSizes, RhsG};
-use crate::definition::{MatmulIdent, StageIdent};
+use crate::definition::{MatmulPrecision, MatmulProblem};
 use cubecl::std::{
     CubeOption,
     tensor::{View, layout::Coords2d},
@@ -31,20 +31,26 @@ pub trait GlobalMatmulFamily: Send + Sync + 'static {
     /// Constructs the configuration based on the matmul problem, selection, and line sizes.
     ///
     /// This function may return an error if the configuration cannot be supported on the current runtime.
-    fn expand_config<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
-        selection: &TilingBlueprint,
-        matmul_line_sizes: &MatmulLineSizes,
+    fn expand_config(
+        blueprint: &TilingBlueprint,
         dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError>;
 
-    /// Filters out line sizes that are incompatible with this matmul family.
-    ///
-    /// By default, returns the input unchanged.
-    fn filter_line_sizes(available_line_sizes: AvailableLineSizes) -> AvailableLineSizes {
-        available_line_sizes
-    }
+    /// Returns the compute resources required to run this matmul.
+    fn cubedim_resource(
+        blueprint: &TilingBlueprint,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
+    ) -> Result<CubeDimResource, MatmulSetupError>;
+
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &TilingBlueprint,
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
+    ) -> Result<(), MatmulSetupError>;
 }
 
 #[cube]
@@ -146,14 +152,14 @@ impl<S: StageConfig> SharedGlobalMatmulConfig<S> {
         self.stage_config.plane_dim()
     }
 
-    pub fn plane_role_config(&self) -> PlaneRoleConfig {
-        self.stage_config.plane_role_config()
+    pub fn plane_flow_config(&self) -> PlaneFlowConfig {
+        self.stage_config.plane_flow_config()
     }
 
     pub fn specialized_loading_sides(&self) -> SpecializedLoadingSides {
-        LoadSpecializationConfig {
-            lhs: self.lhs_reader_config.specialization_tensor_config,
-            rhs: self.rhs_reader_config.specialization_tensor_config,
+        LoadFlows {
+            lhs: self.lhs_reader_config.input_load_flow,
+            rhs: self.rhs_reader_config.input_load_flow,
         }
         .into()
     }
@@ -219,8 +225,8 @@ pub struct GlobalReaderConfig {
     pub plane_dim: u32,
     pub reader_mode: ReaderMode,
     pub event_loading_mode: EventLoadingMode,
-    pub specialization_tensor_config: SpecializationTensorConfig,
-    pub plane_role_config: PlaneRoleConfig,
+    pub input_load_flow: InputLoadFlow,
+    pub plane_flow_config: PlaneFlowConfig,
 
     // ideally remove because doesn't apply to any kind of problem
     pub stage_ident: StageIdent,
@@ -234,25 +240,4 @@ impl GlobalReaderConfig {
     pub fn loading_units_count(&self) -> u32 {
         self.plane_dim * self.loading_planes_count()
     }
-}
-
-/// Defines the non-contiguous stride alignment in terms of powers of two
-pub fn stride_align_bits(problem: &MatmulProblem, dtypes: &MatmulElems, ident: MatmulIdent) -> u32 {
-    let (strides, layout) = match ident {
-        MatmulIdent::Lhs => (&problem.lhs_strides, problem.lhs_layout),
-        MatmulIdent::Rhs => (&problem.rhs_strides, problem.rhs_layout),
-        MatmulIdent::Out => return 31,
-    };
-    let exclude_dim = match layout {
-        definition::MatrixLayout::RowMajor => strides.len() - 1,
-        definition::MatrixLayout::ColMajor => strides.len() - 2,
-    };
-    strides
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| *i != exclude_dim)
-        .map(|(_, it)| (*it * dtypes.global(ident).size_bits()) / 8)
-        .map(|it| it.trailing_zeros())
-        .min()
-        .unwrap_or(31)
 }

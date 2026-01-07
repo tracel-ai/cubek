@@ -1,5 +1,5 @@
-use crate::components::global::RoleRule;
-use crate::components::global::RoleRuleConfig;
+use crate::components::global::PlaneFlowPartition;
+use crate::components::global::PlaneFlowPartitionRule;
 use crate::components::stage::matmul::partitioned_matmul::PartitionedStageMatmul;
 use crate::components::stage::matmul::partitioned_matmul::StagePartitioner;
 use crate::components::tile::TileMatmul;
@@ -43,11 +43,11 @@ pub struct UnitPartitioner {}
 #[cube]
 impl StagePartitioner for UnitPartitioner {
     fn coordinates(
-        #[comptime] role_rule_config: RoleRuleConfig,
+        #[comptime] role_rule_config: PlaneFlowPartitionRule,
         #[comptime] plane_dim: u32,
         #[comptime] num_partitions_col: u32,
     ) -> Coords2d {
-        let plane_id = RoleRule::new(role_rule_config).compute_index();
+        let plane_id = PlaneFlowPartition::new(role_rule_config).compute_index();
 
         let absolute_index = UNIT_POS_X + plane_dim * plane_id;
 

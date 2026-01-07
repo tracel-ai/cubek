@@ -1,7 +1,7 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
 
-use crate::definition::hypercube::base::CubeSpan;
+use crate::definition::TilingScheme;
 
 #[derive(Default, Copy, Clone, Debug, Hash, PartialEq, Eq)]
 /// Describes the global traversal order as flattened cube position increases.
@@ -37,43 +37,49 @@ impl GlobalOrder {
 }
 
 #[derive(Default)]
-/// Used to create [GlobalOrder].
+/// Used to create [GlobalOrder]
 #[allow(unused)]
-pub enum GlobalOrderBlueprint {
+pub enum GlobalOrderStrategy {
     /// It creates the default global order.
     #[default]
     Default,
     /// Set a global order.
     Fixed(GlobalOrder),
     /// Creates swizzle row global order if possible.
+    /// Registers problem's `m` until it can be converted
+    /// into a global order, i.e. when cube span known
     ///
-    /// Fallbacks to row global order otherwise.
+    /// Fallbacks to row global order if not possible.
     SwizzleRow { m: u32, w: u32 },
     /// Creates swizzle col global order if possible.
+    /// Registers problem's `n` until it can be converted
+    /// into a global order, i.e. when cube span known
     ///
-    /// Fallbacks to col global order otherwise.
+    /// Fallbacks to col global order if not possible.
     SwizzleCol { n: u32, w: u32 },
 }
 
-impl GlobalOrderBlueprint {
-    pub fn into_order(self, span: &CubeSpan) -> GlobalOrder {
+impl GlobalOrderStrategy {
+    pub fn into_order(self, tiling_scheme: &TilingScheme) -> GlobalOrder {
         match self {
-            GlobalOrderBlueprint::Default => GlobalOrder::default(),
-            GlobalOrderBlueprint::Fixed(order) => order,
-            GlobalOrderBlueprint::SwizzleRow { m, w } => {
-                let m_cubes = m.div_ceil(span.m as u32);
+            GlobalOrderStrategy::Default => GlobalOrder::default(),
+            GlobalOrderStrategy::Fixed(order) => order,
+            GlobalOrderStrategy::SwizzleRow { m, w } => {
+                let m_cubes = m.div_ceil(tiling_scheme.elements_per_global_partition_along_m());
+
                 if m_cubes % w != 0 {
                     GlobalOrder::RowMajor
                 } else {
                     GlobalOrder::SwizzleRowMajor(w)
                 }
             }
-            GlobalOrderBlueprint::SwizzleCol { n, w } => {
-                let n_cubes = n.div_ceil(span.n as u32);
+            GlobalOrderStrategy::SwizzleCol { n, w } => {
+                let n_cubes = n.div_ceil(tiling_scheme.elements_per_global_partition_along_n());
+
                 if n_cubes % w != 0 {
-                    GlobalOrder::RowMajor
+                    GlobalOrder::ColMajor
                 } else {
-                    GlobalOrder::SwizzleRowMajor(w)
+                    GlobalOrder::SwizzleColMajor(w)
                 }
             }
         }
