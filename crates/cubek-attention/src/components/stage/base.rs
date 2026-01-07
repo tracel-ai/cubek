@@ -8,7 +8,7 @@ use std::{fmt::Debug, hash::Hash};
 
 use crate::{
     components::tile::TileAttentionConfig,
-    definition::{AttentionPartitionSize, AttentionPrecision, AttentionStageSize},
+    definition::{AttentionElems, AttentionPartitionSize, AttentionPrecision, AttentionStageSize},
 };
 use crate::{
     components::{global::GlobalAttentionConfig, stage::RunningState},
@@ -52,8 +52,9 @@ pub trait StageAttentionFamily: Send + Sync + 'static {
     /// Constructs the configuration based on the algorithm's blueprint.
     ///
     /// This function may return an error if the configuration cannot be supported.
-    fn expand_blueprint(
+    fn expand_config(
         blueprint: &AttentionBlueprint,
+        dtypes: &AttentionElems,
     ) -> Result<Self::Config, AttentionSetupError>;
 }
 
