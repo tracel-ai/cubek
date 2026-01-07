@@ -93,12 +93,6 @@ pub trait BatchMatmul<MP: MatmulPrecision>: 'static + Send + Sync {
 pub trait BatchConfig:
     Copy + Clone + Eq + PartialEq + Hash + Debug + Send + Sync + 'static
 {
-    /// Returns the [CubeDim]
-    fn cube_dim(&self) -> CubeDim;
-
-    /// Returns the line sizes for Lhs, Rhs and output
-    fn line_sizes(&self) -> MatmulLineSizes;
-
     fn lhs_global_layout_config(&self) -> GlobalLayoutConfig;
     fn rhs_global_layout_config(&self) -> GlobalLayoutConfig;
     fn out_global_layout_config(&self) -> GlobalLayoutConfig;

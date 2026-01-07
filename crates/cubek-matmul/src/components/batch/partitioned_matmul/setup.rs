@@ -35,10 +35,6 @@ impl<GMM: GlobalMatmulFamily, S: GlobalPartitionMatmul> BatchMatmulFamily
     ) -> Result<Self::Config, MatmulSetupError> {
         let global_config = GMM::expand_config(blueprint, dtypes, line_sizes)?;
 
-        // blueprint
-        //     .hypercube_blueprint
-        //     .to_hypercube_config(problem, client.properties().hardware.max_cube_count.clone()),
-
         Ok(PartitionedBatchConfig::new(
             global_config,
             blueprint.tiling_scheme.global_partition_size,

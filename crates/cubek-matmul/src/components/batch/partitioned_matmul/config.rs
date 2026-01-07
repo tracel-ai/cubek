@@ -1,8 +1,6 @@
-use cubecl::CubeDim;
-
 use crate::components::global::memory::GlobalLayoutConfig;
 use crate::components::{batch::BatchConfig, global::GlobalConfig};
-use crate::definition::{GlobalPartitionSize, MatmulLineSizes};
+use crate::definition::GlobalPartitionSize;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 /// Configuration for partitioned batch matmul
@@ -12,14 +10,6 @@ pub struct PartitionedBatchConfig<G: GlobalConfig> {
 }
 
 impl<G: GlobalConfig> BatchConfig for PartitionedBatchConfig<G> {
-    fn cube_dim(&self) -> CubeDim {
-        self.global_config.cube_dim()
-    }
-
-    fn line_sizes(&self) -> MatmulLineSizes {
-        self.global_config.global_line_sizes()
-    }
-
     fn lhs_global_layout_config(&self) -> GlobalLayoutConfig {
         self.global_config.lhs_reader_config().gmem_config.into()
     }

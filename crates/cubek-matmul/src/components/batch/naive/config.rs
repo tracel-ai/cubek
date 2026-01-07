@@ -1,22 +1,12 @@
-use cubecl::CubeDim;
-
 use crate::{
     components::{batch::BatchConfig, global::memory::GlobalLayoutConfig},
-    definition::{MatmulLineSizes, MatrixLayout},
+    definition::MatrixLayout,
 };
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct NaiveMatmulConfig {}
 
 impl BatchConfig for NaiveMatmulConfig {
-    fn cube_dim(&self) -> CubeDim {
-        todo!()
-    }
-
-    fn line_sizes(&self) -> MatmulLineSizes {
-        todo!()
-    }
-
     fn lhs_global_layout_config(&self) -> GlobalLayoutConfig {
         GlobalLayoutConfig {
             matrix_layout: MatrixLayout::RowMajor,
