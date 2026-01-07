@@ -66,7 +66,7 @@ where
             .as_plane_flow_config(plane_dim)?;
 
         let stage_config = SMM::expand_config(
-            &blueprint,
+            blueprint,
             plane_flow_config,
             (1, 1).into(),
             dtypes,

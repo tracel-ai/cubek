@@ -155,7 +155,7 @@ where
         let max_global_readers = blueprint.load_flows.has_specialization().then(|| {
             MaxGlobalReaderPlanes::new::<LL, RL>(
                 &blueprint.tiling_scheme,
-                &line_sizes,
+                line_sizes,
                 blueprint.plane_dim,
                 dtypes,
             )
@@ -165,7 +165,7 @@ where
         let plane_flow_config = PlaneFlowConfig::new(
             blueprint.load_flows,
             max_global_readers,
-            SMM::cubedim_resource(&blueprint)?.num_planes(plane_dim)?,
+            SMM::cubedim_resource(blueprint)?.num_planes(plane_dim)?,
         )?;
 
         Ok(CubeDimResource::Specialized(plane_flow_config))

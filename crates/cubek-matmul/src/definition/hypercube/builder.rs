@@ -33,7 +33,7 @@ impl<'a> HypercubeBlueprintBuilder<'a> {
 
     /// Build the HypercubeBlueprint
     pub fn build(self) -> HypercubeBlueprint {
-        let global_order = self.global_order_strategy.into_order(&self.tiling_scheme);
+        let global_order = self.global_order_strategy.into_order(self.tiling_scheme);
         let cube_count_strategy = self.cube_count_strategy.unwrap_or_default();
 
         HypercubeBlueprint {

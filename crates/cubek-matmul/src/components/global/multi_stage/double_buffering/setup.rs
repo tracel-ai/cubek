@@ -161,7 +161,7 @@ where
         let plane_flow_config = PlaneFlowConfig::new(
             blueprint.load_flows,
             max_global_readers,
-            SMM::cubedim_resource(&blueprint)?.num_planes(blueprint.plane_dim)?,
+            SMM::cubedim_resource(blueprint)?.num_planes(blueprint.plane_dim)?,
         )?;
 
         Ok(CubeDimResource::Specialized(plane_flow_config))

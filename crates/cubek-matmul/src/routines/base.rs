@@ -70,7 +70,7 @@ pub trait Routine: Sized {
             client: client.clone(),
             plane_dim,
             line_sizes,
-            max_cube_count: client.properties().hardware.max_cube_count.clone(),
+            max_cube_count: client.properties().hardware.max_cube_count,
         }
     }
 

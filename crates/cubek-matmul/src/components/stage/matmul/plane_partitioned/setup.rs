@@ -148,9 +148,9 @@ impl<
                     * blueprint.tiling_scheme.partitions_per_stage_along_n(),
             ))
         } else {
-            return Err(Box::new(
+            Err(Box::new(
                 "Error: Tried to use a plane stage matmul with a unit tile matmul.".to_string(),
-            ));
+            ))
         }
     }
 
