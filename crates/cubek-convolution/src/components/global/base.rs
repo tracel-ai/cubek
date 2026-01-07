@@ -29,8 +29,7 @@ pub trait GlobalConvolutionFamily: ConvolutionLaunch<Self::Config> + 'static {
 
     fn filter_line_sizes(available_line_sizes: AvailableLineSizes) -> AvailableLineSizes;
 
-    fn expand_config<R: Runtime>(
-        client: &ComputeClient<R>,
+    fn expand_config(
         problem: &ConvolutionProblem,
         selection: &TilingBlueprint,
         line_sizes: &MatmulLineSizes,

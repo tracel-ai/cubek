@@ -17,11 +17,11 @@ use cubek_matmul::{
     components::{
         global::{
             GlobalConfig as _,
-            memory::{NoopLayout, NoopLayoutLaunch},
+            memory::{GlobalMemoryConfig, NoopLayout, NoopLayoutLaunch, ViewDirection},
         },
         stage::StageConfig as _,
     },
-    definition::{MatmulElems, MatmulLineSizes, TilingBlueprint},
+    definition::{MatmulElems, MatmulLineSizes, MatrixLayout, TilingBlueprint},
     launch::{
         MatmulArgs, MatmulInputHandleRef, TensorArgs, TensorInputs, TensorInputsLaunch,
         TensorMapArgs, TensorMapInputs, TensorMapInputsLaunch, TensorOutput, TensorOutputLaunch,
@@ -300,7 +300,18 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory
             ConvolutionParams::from_problem(problem),
             !shape_k.is_multiple_of(stages_size_k),
         );
-        let rhs_layout = WeightLayoutLaunch::from_args(client, problem, Default::default());
+        let rhs_layout = WeightLayoutLaunch::from_args(
+            client,
+            problem,
+            GlobalMemoryConfig {
+                line_size: line_sizes.rhs as u32,
+                check_row_bounds: false,
+                check_col_bounds: false,
+                matrix_layout: MatrixLayout::default(),
+                view_direction: ViewDirection::default(),
+                dtype: dtypes.rhs_global,
+            },
+        );
 
         let bias = bias.map(|bias| {
             let layout =

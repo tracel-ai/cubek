@@ -15,7 +15,7 @@ use cubek_matmul::components::{
     },
     stage::{ContiguousTilingLayout, StridedStageFamily, StridedStageMemory, TilingOrder},
 };
-use cubek_matmul::definition::{InvalidConfigError, MatmulElems, MatmulProblem};
+use cubek_matmul::definition::{InvalidConfigError, MatmulElems, MatmulProblem, StageIdent};
 
 use crate::components::global::{
     args::RuntimeArgs,
@@ -34,13 +34,16 @@ pub struct AsyncFullCyclicLoading<T: TilingOrder> {
 }
 
 impl<TO: TilingOrder> LoadingValidation for AsyncFullCyclicLoading<TO> {
-    fn validate_with_config<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
-        config: &GlobalReaderConfig,
-        dtypes: &MatmulElems,
+    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
+        MatmulCyclicLoading::<TO>::validate_with_config(config)
+    }
+
+    fn validate_with_problem(
+        _problem: &MatmulProblem,
+        _dtypes: &MatmulElems,
+        _ident: StageIdent,
     ) -> Result<(), InvalidConfigError> {
-        MatmulCyclicLoading::<TO>::validate_with_config(client, problem, config, dtypes)
+        Ok(())
     }
 }
 

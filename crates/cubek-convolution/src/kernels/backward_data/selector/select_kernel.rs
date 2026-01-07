@@ -34,7 +34,7 @@ where
     InputArg<A::Args>: ConcreteInputsFactory,
     OutputArg<A::Args>: ConcreteOutputFactory,
 {
-    let config = A::expand_config(client, &problem, &selection, &line_sizes, dtypes)?;
+    let config = A::expand_config(&problem, &selection, &line_sizes, dtypes)?;
 
     let (input, runtime_args) = <InputArg<A::Args> as ConcreteInputsFactory>::create(
         client,
@@ -86,7 +86,7 @@ pub fn launch_kernel_virtual<'a, MA: MatmulArgs, R: Runtime, A: Algorithm>(
     selection: TilingBlueprint,
     dtypes: &MatmulElems,
 ) -> Result<(), ConvSetupError> {
-    let config = A::expand_config(client, &problem, &selection, &line_sizes, dtypes)?;
+    let config = A::expand_config(&problem, &selection, &line_sizes, dtypes)?;
 
     let result = unsafe {
         A::GlobalConvolution::launch_unchecked::<MA, R>(

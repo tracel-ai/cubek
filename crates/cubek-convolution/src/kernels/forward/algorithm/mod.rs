@@ -60,14 +60,13 @@ pub trait Algorithm {
     }
 
     /// Make a convolution config from a convolution problem, and launch options
-    fn expand_config<R: Runtime>(
-        client: &ComputeClient<R>,
+    fn expand_config(
         problem: &ConvolutionProblem,
         selection: &TilingBlueprint,
         line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
     ) -> Result<GlobalConfig<Self::GlobalConvolution>, MatmulSetupError> {
-        Self::GlobalConvolution::expand_config(client, problem, selection, line_sizes, dtypes)
+        Self::GlobalConvolution::expand_config(problem, selection, line_sizes, dtypes)
     }
 
     fn into_tensor_handle<R: Runtime>(

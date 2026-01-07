@@ -1,11 +1,11 @@
-use cubecl::{Runtime, client::ComputeClient};
 use cubek_matmul::components::{
     global::{
         GlobalConfig, GlobalReaderConfig, GlobalWriterConfig, MatmulPlaneCounts,
-        PartitionedStageFamily, SharedGlobalMatmulConfig, WriteTiling, cube_dim_validation,
+        PartitionedStageFamily, PlaneFlowConfig, SharedGlobalMatmulConfig, WriteTiling,
+        cube_dim_validation,
         memory::{GlobalMemoryConfig, ViewDirection},
         multi_stage::EventLoadingMode,
-        read::{LoadingValidation, sync_full_cyclic::SyncFullCyclicLoading},
+        read::sync_full_cyclic::SyncFullCyclicLoading,
     },
     stage::{
         ColMajorTilingOrder, ContiguousTilingLayout, RowMajorTilingOrder, StageConfig,
@@ -13,8 +13,8 @@ use cubek_matmul::components::{
     },
 };
 use cubek_matmul::definition::{
-    AvailableLineSizes, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem,
-    MatmulSetupError, MatrixLayout, StageIdent, TilingBlueprint,
+    AvailableLineSizes, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulSetupError,
+    MatrixLayout, StageIdent, TilingBlueprint,
 };
 use std::marker::PhantomData;
 
@@ -61,142 +61,128 @@ where
         available_line_sizes
     }
 
-    fn expand_config<R: Runtime>(
-        client: &ComputeClient<R>,
+    fn expand_config(
         problem: &ConvolutionProblem,
-        selection: &TilingBlueprint,
+        blueprint: &TilingBlueprint,
         line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
     ) -> Result<Self::Config, MatmulSetupError> {
-        todo!();
-        // let stage_config = SMM::expand_config(
-        //     client,
-        //     &problem.as_matmul_problem(),
-        //     selection,
-        //     line_sizes,
-        //     (1, 1).into(),
-        //     None,
-        //     dtypes,
-        // )?;
+        let num_main_flow_planes =
+            SMM::cubedim_resource(blueprint)?.num_planes(blueprint.plane_dim)?;
+        let plane_flow_config =
+            PlaneFlowConfig::new(blueprint.load_flows, None, num_main_flow_planes)?;
+        let plane_counts = MatmulPlaneCounts::new(blueprint.load_flows, plane_flow_config.counts);
 
-        // let stage_size_m = stage_config.elements_in_stage_m() as usize;
-        // let stage_size_n = stage_config.elements_in_stage_n() as usize;
-        // let stage_size_k = stage_config.elements_in_stage_k() as usize;
+        let stage_config = SMM::expand_config(
+            blueprint,
+            plane_flow_config,
+            (1, 1).into(),
+            dtypes,
+            line_sizes,
+        )?;
 
-        // // k is tricky and is handled specially by different loaders so always check for now.
-        // // m and n don't have padding so checks work as normal.
-        // let check_m_bounds = !problem.m.is_multiple_of(stage_size_m);
-        // let check_n_bounds = match problem.operation {
-        //     ConvolutionOperation::Forward
-        //     | ConvolutionOperation::ForwardTransposed
-        //     | ConvolutionOperation::BackwardData => !problem.n.is_multiple_of(stage_size_n),
-        //     ConvolutionOperation::BackwardWeight => true,
-        // };
-        // let check_k_bounds = match problem.operation {
-        //     ConvolutionOperation::BackwardWeight => !problem.k.is_multiple_of(stage_size_k),
-        //     ConvolutionOperation::Forward
-        //     | ConvolutionOperation::ForwardTransposed
-        //     | ConvolutionOperation::BackwardData => true,
-        // };
+        let stage_size_m = stage_config.elements_in_stage_m() as usize;
+        let stage_size_n = stage_config.elements_in_stage_n() as usize;
+        let stage_size_k = stage_config.elements_in_stage_k() as usize;
 
-        // let plane_flow_config = stage_config.plane_flow_config();
-        // let plane_counts = MatmulPlaneCounts::new(
-        //     selection.load_specialization_config,
-        //     plane_flow_config.plane_roles,
-        // );
+        // k is tricky and is handled specially by different loaders so always check for now.
+        // m and n don't have padding so checks work as normal.
+        let check_m_bounds = !problem.m.is_multiple_of(stage_size_m);
+        let check_n_bounds = match problem.operation {
+            ConvolutionOperation::Forward
+            | ConvolutionOperation::ForwardTransposed
+            | ConvolutionOperation::BackwardData => !problem.n.is_multiple_of(stage_size_n),
+            ConvolutionOperation::BackwardWeight => true,
+        };
+        let check_k_bounds = match problem.operation {
+            ConvolutionOperation::BackwardWeight => !problem.k.is_multiple_of(stage_size_k),
+            ConvolutionOperation::Forward
+            | ConvolutionOperation::ForwardTransposed
+            | ConvolutionOperation::BackwardData => true,
+        };
 
-        // let precompute_job = selection.loading_precompute_strategy.into();
-        // let plane_dim = selection.plane_dim;
-        // let event_loading_mode = EventLoadingMode::Relaxed;
-        // let reader_mode = selection.reader_mode;
+        let precompute_job = blueprint.loading_precompute_strategy.into();
+        let plane_dim = blueprint.plane_dim;
+        let event_loading_mode = EventLoadingMode::Relaxed;
+        let reader_mode = blueprint.reader_mode;
 
-        // let lhs_gmem_config = GlobalMemoryConfig {
-        //     line_size: line_sizes.lhs as u32,
-        //     check_row_bounds: check_m_bounds,
-        //     check_col_bounds: check_k_bounds,
-        //     matrix_layout: problem.lhs_layout,
-        //     view_direction: ViewDirection::Col,
-        // };
+        let lhs_gmem_config = GlobalMemoryConfig {
+            line_size: line_sizes.lhs as u32,
+            check_row_bounds: check_m_bounds,
+            check_col_bounds: check_k_bounds,
+            matrix_layout: problem.lhs_layout,
+            view_direction: ViewDirection::Col,
+            dtype: dtypes.lhs_global,
+        };
 
-        // let rhs_gmem_config = GlobalMemoryConfig {
-        //     line_size: line_sizes.rhs as u32,
-        //     check_row_bounds: check_k_bounds,
-        //     check_col_bounds: check_n_bounds,
-        //     matrix_layout: problem.rhs_layout,
-        //     view_direction: ViewDirection::Row,
-        // };
+        let rhs_gmem_config = GlobalMemoryConfig {
+            line_size: line_sizes.rhs as u32,
+            check_row_bounds: check_k_bounds,
+            check_col_bounds: check_n_bounds,
+            matrix_layout: problem.rhs_layout,
+            view_direction: ViewDirection::Row,
+            dtype: dtypes.rhs_global,
+        };
 
-        // let out_gmem_config = GlobalMemoryConfig {
-        //     line_size: line_sizes.out as u32,
-        //     matrix_layout: MatrixLayout::RowMajor,
-        //     check_row_bounds: check_m_bounds,
-        //     check_col_bounds: check_n_bounds,
-        //     view_direction: ViewDirection::None,
-        // };
+        let out_gmem_config = GlobalMemoryConfig {
+            line_size: line_sizes.out as u32,
+            matrix_layout: MatrixLayout::RowMajor,
+            check_row_bounds: check_m_bounds,
+            check_col_bounds: check_n_bounds,
+            view_direction: ViewDirection::None,
+            dtype: dtypes.acc_global,
+        };
 
-        // let lhs_reader_config = GlobalReaderConfig {
-        //     gmem_config: lhs_gmem_config,
-        //     smem_config: stage_config.lhs_smem_config(),
-        //     precompute_job,
-        //     plane_dim,
-        //     plane_flow_config,
-        //     reader_mode,
-        //     stage_ident: StageIdent::Lhs,
-        //     event_loading_mode,
-        //     specialization_tensor_config: selection.load_specialization_config.lhs,
-        // };
+        let lhs_reader_config = GlobalReaderConfig {
+            gmem_config: lhs_gmem_config,
+            smem_config: stage_config.lhs_smem_config(),
+            precompute_job,
+            plane_dim,
+            plane_flow_config,
+            reader_mode,
+            stage_ident: StageIdent::Lhs,
+            event_loading_mode,
+            input_load_flow: blueprint.load_flows.lhs,
+        };
 
-        // let rhs_reader_config = GlobalReaderConfig {
-        //     gmem_config: rhs_gmem_config,
-        //     smem_config: stage_config.rhs_smem_config(),
-        //     precompute_job,
-        //     plane_dim,
-        //     plane_flow_config,
-        //     reader_mode,
-        //     stage_ident: StageIdent::Rhs,
-        //     event_loading_mode,
-        //     specialization_tensor_config: selection.load_specialization_config.rhs,
-        // };
+        let rhs_reader_config = GlobalReaderConfig {
+            gmem_config: rhs_gmem_config,
+            smem_config: stage_config.rhs_smem_config(),
+            precompute_job,
+            plane_dim,
+            plane_flow_config,
+            reader_mode,
+            stage_ident: StageIdent::Rhs,
+            event_loading_mode,
+            input_load_flow: blueprint.load_flows.rhs,
+        };
 
-        // let writer_config = GlobalWriterConfig {
-        //     gmem_config: out_gmem_config,
-        //     smem_config: stage_config.out_smem_config(),
-        //     role_rule_config: plane_flow_config.rule,
-        //     plane_dim: selection.plane_dim,
-        // };
+        let writer_config = GlobalWriterConfig {
+            gmem_config: out_gmem_config,
+            smem_config: stage_config.out_smem_config(),
+            plane_dim: blueprint.plane_dim,
+            plane_flow_partition_rule: plane_flow_config.partition_rule,
+        };
 
-        // let matmul_config = SharedGlobalMatmulConfig {
-        //     stage_config,
-        //     num_planes: plane_counts.total,
-        //     lhs_reader_config,
-        //     rhs_reader_config,
-        //     writer_config,
-        //     must_sync_plane_after_execution: false,
-        // };
+        let matmul_config = SharedGlobalMatmulConfig {
+            stage_config,
+            num_planes: plane_counts.total,
+            lhs_reader_config,
+            rhs_reader_config,
+            writer_config,
+            must_sync_plane_after_execution: false,
+        };
 
-        // validate::<LL, LR, _, _>(matmul_config, client, &problem.as_matmul_problem(), dtypes)?;
+        cube_dim_validation(matmul_config.cube_dim())?;
 
-        // ConvolutionConfig::new(
-        //     matmul_config,
-        //     &problem.kernel_size,
-        //     &problem.stride,
-        //     &problem.dilation,
-        //     &problem.padding,
-        //     problem.dimensionality,
-        //     problem.operation,
-        // )
+        ConvolutionConfig::new(
+            matmul_config,
+            &problem.kernel_size,
+            &problem.stride,
+            &problem.dilation,
+            &problem.padding,
+            problem.dimensionality,
+            problem.operation,
+        )
     }
-}
-
-fn validate<LL: LoadingValidation, RL: LoadingValidation, S: StageConfig, R: Runtime>(
-    config: SharedGlobalMatmulConfig<S>,
-    client: &ComputeClient<R>,
-    problem: &MatmulProblem,
-    dtypes: &MatmulElems,
-) -> Result<SharedGlobalMatmulConfig<S>, MatmulSetupError> {
-    todo!();
-    // LL::validate_with_config(client, problem, &config.lhs_reader_config, dtypes)?;
-    // RL::validate_with_config(client, problem, &config.rhs_reader_config, dtypes)?;
-    cube_dim_validation(config.cube_dim())?;
-    Ok(config)
 }
