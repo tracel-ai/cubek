@@ -5,7 +5,7 @@ use crate::definition::{
     MatmulPrecision, MatmulProblem, MatmulSetupError, RhsG,
 };
 use crate::launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
-use cubecl::prelude::*;
+use cubecl::{ir::DeviceProperties, prelude::*};
 use std::{fmt::Debug, hash::Hash};
 
 /// A family of [matmuls](BatchMatmul) working with any [precision](MatmulPrecision).
@@ -22,6 +22,7 @@ pub trait BatchMatmulFamily: 'static + Send + Sync {
     ///
     /// This function may return an error if the configuration cannot be supported on the current runtime.
     fn expand_config(
+        device_props: &DeviceProperties,
         blueprint: &Self::Blueprint,
         dtypes: &MatmulElems,
         line_sizes: &MatmulLineSizes,

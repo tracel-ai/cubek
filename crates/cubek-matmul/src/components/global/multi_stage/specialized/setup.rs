@@ -17,7 +17,7 @@ use crate::definition::TilingBlueprint;
 use crate::definition::{MatmulElems, MatmulSetupError};
 use crate::definition::{MatmulPrecision, MatmulProblem};
 use crate::definition::{MatrixLayout, StageIdent};
-use cubecl::prelude::*;
+use cubecl::{ir::DeviceProperties, prelude::*};
 use std::marker::PhantomData;
 
 /// Double buffering matmul family for any precision
@@ -51,6 +51,7 @@ where
     type Config = SharedGlobalMatmulConfig<SMM::Config>;
 
     fn expand_config(
+        device_props: &DeviceProperties,
         blueprint: &TilingBlueprint,
         dtypes: &MatmulElems,
         line_sizes: &MatmulLineSizes,
@@ -60,6 +61,7 @@ where
             .as_plane_flow_config(plane_dim)?;
 
         let stage_config = SMM::expand_config(
+            device_props,
             blueprint,
             plane_flow_config,
             (2, 2).into(),

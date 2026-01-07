@@ -18,9 +18,9 @@ use crate::components::{
 use crate::definition::{
     InvalidConfigError, MatmulElems, MatmulPrecision, MatmulProblem, StageIdent,
 };
-use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Layout, LayoutExpand};
+use cubecl::{ir::DeviceProperties, prelude::barrier::Barrier};
 
 use super::{LoadingJob, LoadingValidation};
 
@@ -30,7 +30,10 @@ use super::{LoadingJob, LoadingValidation};
 pub struct AsyncPartialStridedLoading {}
 
 impl LoadingValidation for AsyncPartialStridedLoading {
-    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
+    fn validate_with_config(
+        device_props: &DeviceProperties,
+        config: &GlobalReaderConfig,
+    ) -> Result<(), InvalidConfigError> {
         let line_size = ASYNC_COPY_WIDTH / config.smem_config.dtype.size_bits() as u32;
 
         // Needs separate check because copy size may be larger than global line size
@@ -53,8 +56,12 @@ impl LoadingValidation for AsyncPartialStridedLoading {
         }
 
         validate_swizzle_atom_size(config.smem_config)?;
-        validate_async_barrier()?;
-        validate_async_copy(&config.gmem_config.dtype, &config.smem_config.dtype)?;
+        validate_async_barrier(device_props)?;
+        validate_async_copy(
+            device_props,
+            &config.gmem_config.dtype,
+            &config.smem_config.dtype,
+        )?;
         StridedTilingLayout::check(config.smem_config)?;
 
         Ok(())

@@ -74,11 +74,18 @@ where
         k_range: (u32, u32),
         #[comptime] config: Self::Config,
     ) {
-        if let Err(e) = comptime!(LL::validate_with_config(&config.lhs_reader_config)) {
+        let device_props = comptime::device_properties();
+        if let Err(e) = comptime!(LL::validate_with_config(
+            &device_props,
+            &config.lhs_reader_config
+        )) {
             push_validation_error(e.to_string());
             comptime!(return);
         }
-        if let Err(e) = comptime!(RL::validate_with_config(&config.rhs_reader_config)) {
+        if let Err(e) = comptime!(RL::validate_with_config(
+            &device_props,
+            &config.rhs_reader_config
+        )) {
             push_validation_error(e.to_string());
             comptime!(return);
         }

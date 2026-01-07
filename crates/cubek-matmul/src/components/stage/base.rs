@@ -1,5 +1,5 @@
-use cubecl::prelude::*;
 use cubecl::std::{CubeOption, CubeOptionExpand, tensor::layout::Coords2d};
+use cubecl::{ir::DeviceProperties, prelude::*};
 
 use crate::components::CubeDimResource;
 use crate::components::global::PlaneFlowConfig;
@@ -45,6 +45,7 @@ pub trait StageMatmulFamily: Send + Sync + 'static {
     /// This function may return an error if the configuration cannot be supported on the current runtime.
     #[allow(clippy::too_many_arguments)]
     fn expand_config(
+        device_props: &DeviceProperties,
         blueprint: &TilingBlueprint,
         plane_flow_config: PlaneFlowConfig,
         num_stages: NumStages,

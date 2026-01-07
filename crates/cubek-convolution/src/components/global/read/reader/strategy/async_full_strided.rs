@@ -1,6 +1,6 @@
-use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Layout, LayoutExpand};
+use cubecl::{ir::DeviceProperties, prelude::barrier::Barrier};
 use cubek_matmul::components::{
     global::{
         GlobalReaderConfig, PlaneFlowPartition,
@@ -30,8 +30,11 @@ use crate::components::global::{
 pub struct AsyncFullStridedLoading {}
 
 impl LoadingValidation for AsyncFullStridedLoading {
-    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
-        MatmulStridedLoading::validate_with_config(config)
+    fn validate_with_config(
+        device_props: &DeviceProperties,
+        config: &GlobalReaderConfig,
+    ) -> Result<(), InvalidConfigError> {
+        MatmulStridedLoading::validate_with_config(device_props, config)
     }
 
     fn validate_with_problem(

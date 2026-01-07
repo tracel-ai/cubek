@@ -29,9 +29,9 @@ use crate::definition::MatmulElems;
 use crate::definition::MatmulPrecision;
 use crate::definition::MatmulProblem;
 use crate::definition::StageIdent;
-use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Layout, LayoutExpand};
+use cubecl::{ir::DeviceProperties, prelude::barrier::Barrier};
 
 use super::{LoadingJob, LoadingValidation, ReaderMode};
 
@@ -44,7 +44,10 @@ pub struct AsyncPartialCyclicLoading<T: TilingOrder> {
 }
 
 impl<TO: TilingOrder> LoadingValidation for AsyncPartialCyclicLoading<TO> {
-    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
+    fn validate_with_config(
+        device_props: &DeviceProperties,
+        config: &GlobalReaderConfig,
+    ) -> Result<(), InvalidConfigError> {
         let line_size = ASYNC_COPY_WIDTH / config.smem_config.dtype.size_bits() as u32;
         if let ReaderMode::Strict = config.reader_mode {
             let num_lines_per_tile = config.smem_config.elements_per_tile() / line_size;
@@ -78,8 +81,12 @@ impl<TO: TilingOrder> LoadingValidation for AsyncPartialCyclicLoading<TO> {
         }
 
         validate_swizzle_atom_size(config.smem_config)?;
-        validate_async_barrier()?;
-        validate_async_copy(&config.gmem_config.dtype, &config.smem_config.dtype)?;
+        validate_async_barrier(device_props)?;
+        validate_async_copy(
+            device_props,
+            &config.gmem_config.dtype,
+            &config.smem_config.dtype,
+        )?;
         ContiguousTilingLayout::<TO>::check(config.smem_config)?;
 
         Ok(())

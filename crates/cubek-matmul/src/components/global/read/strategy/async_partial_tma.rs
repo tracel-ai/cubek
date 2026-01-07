@@ -14,8 +14,8 @@ use crate::definition::{
     InvalidConfigError, LhsS, MatmulElems, MatmulPrecision, MatmulProblem, MatrixLayout, RhsS,
     StageIdent,
 };
-use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
+use cubecl::{ir::DeviceProperties, prelude::barrier::Barrier};
 
 use super::{LoadingJob, LoadingValidation};
 
@@ -26,10 +26,13 @@ use super::{LoadingJob, LoadingValidation};
 pub struct AsyncPartialTmaLoading {}
 
 impl LoadingValidation for AsyncPartialTmaLoading {
-    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
+    fn validate_with_config(
+        device_props: &DeviceProperties,
+        config: &GlobalReaderConfig,
+    ) -> Result<(), InvalidConfigError> {
         TmaTilingLayout::check(config.smem_config)?;
-        validate_async_barrier()?;
-        validate_tma(&config.smem_config, &config.gmem_config.dtype)?;
+        validate_async_barrier(device_props)?;
+        validate_tma(device_props, &config.smem_config, &config.gmem_config.dtype)?;
 
         Ok(())
     }

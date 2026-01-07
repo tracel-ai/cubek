@@ -1,3 +1,4 @@
+use cubecl::ir::DeviceProperties;
 use cubek_matmul::components::{
     global::{
         GlobalConfig, GlobalReaderConfig, GlobalWriterConfig, MatmulPlaneCounts,
@@ -62,6 +63,7 @@ where
     }
 
     fn expand_config(
+        device_props: &DeviceProperties,
         problem: &ConvolutionProblem,
         blueprint: &TilingBlueprint,
         line_sizes: &MatmulLineSizes,
@@ -74,6 +76,7 @@ where
         let plane_counts = MatmulPlaneCounts::new(blueprint.load_flows, plane_flow_config.counts);
 
         let stage_config = SMM::expand_config(
+            device_props,
             blueprint,
             plane_flow_config,
             (1, 1).into(),

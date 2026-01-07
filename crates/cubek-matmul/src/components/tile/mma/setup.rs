@@ -16,7 +16,7 @@ use crate::definition::{
     InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulSetupError, TileSize,
 };
 use crate::definition::{MatmulLineSizes, TilingBlueprint};
-use cubecl::features::MmaConfig;
+use cubecl::{features::MmaConfig, ir::DeviceProperties};
 use cubecl::{ir::StorageType, prelude::*};
 
 impl<LhsTile: TileKind, RhsTile: TileKind, AccTile: TileKind> TileMatmulFamily
@@ -47,6 +47,7 @@ where
     }
 
     fn expand_config(
+        device_props: &DeviceProperties,
         blueprint: &TilingBlueprint,
         dtypes: &MatmulElems,
         _line_sizes: &MatmulLineSizes,
@@ -57,10 +58,10 @@ where
                 plane_dim: blueprint.plane_dim,
                 swizzle_modes: blueprint.swizzle_modes,
             },
-            load_method(dtypes.lhs_stage),
-            load_method(dtypes.rhs_stage),
-            load_method(dtypes.acc_stage),
-            store_method(dtypes.acc_stage),
+            load_method(device_props, dtypes.lhs_stage),
+            load_method(device_props, dtypes.rhs_stage),
+            load_method(device_props, dtypes.acc_stage),
+            store_method(device_props, dtypes.acc_stage),
         ))
     }
 
@@ -123,12 +124,9 @@ where
     }
 }
 
-fn load_method(dtype: StorageType) -> LoadMethod {
+fn load_method(device_props: &DeviceProperties, dtype: StorageType) -> LoadMethod {
     if !matches!(dtype, StorageType::Packed(_, _))
-        && comptime::device_properties()
-            .features
-            .ldmatrix
-            .contains(&dtype)
+        && device_props.features.ldmatrix.contains(&dtype)
     {
         LoadMethod::LoadMatrix
     } else {
@@ -136,12 +134,9 @@ fn load_method(dtype: StorageType) -> LoadMethod {
     }
 }
 
-fn store_method(dtype: StorageType) -> StoreMethod {
+fn store_method(device_props: &DeviceProperties, dtype: StorageType) -> StoreMethod {
     if !matches!(dtype, StorageType::Packed(_, _))
-        && comptime::device_properties()
-            .features
-            .stmatrix
-            .contains(&dtype)
+        && device_props.features.stmatrix.contains(&dtype)
     {
         StoreMethod::StoreMatrix
     } else {

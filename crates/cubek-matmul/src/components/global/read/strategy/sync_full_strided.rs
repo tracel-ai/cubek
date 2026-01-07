@@ -6,8 +6,8 @@ use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{StridedStageMemory, StridedTilingLayout};
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
 use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem, StageIdent};
-use cubecl::prelude::*;
 use cubecl::std::type_size;
+use cubecl::{ir::DeviceProperties, prelude::*};
 
 use super::{LoadingJob, LoadingValidation};
 
@@ -17,7 +17,10 @@ use super::{LoadingJob, LoadingValidation};
 pub struct SyncFullStridedLoading {}
 
 impl LoadingValidation for SyncFullStridedLoading {
-    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
+    fn validate_with_config(
+        _device_props: &DeviceProperties,
+        config: &GlobalReaderConfig,
+    ) -> Result<(), InvalidConfigError> {
         let line_size = config.gmem_config.line_size;
 
         let num_stage_lines = config.smem_config.elements_per_stage() / line_size as u32;

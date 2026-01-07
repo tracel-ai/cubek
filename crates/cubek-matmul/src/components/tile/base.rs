@@ -1,4 +1,4 @@
-use cubecl::features::MmaConfig;
+use cubecl::{features::MmaConfig, ir::DeviceProperties};
 use cubecl::{ir::StorageType, prelude::*};
 
 use crate::components::tile::TileConfig;
@@ -55,6 +55,7 @@ pub trait TileMatmulFamily: Send + Sync + 'static {
     ///
     /// This function may return an error if the configuration cannot be supported on the current runtime.
     fn expand_config(
+        device_props: &DeviceProperties,
         blueprint: &TilingBlueprint,
         dtypes: &MatmulElems,
         line_sizes: &MatmulLineSizes,

@@ -13,7 +13,10 @@ use crate::{
     },
     definition::{InvalidConfigError, MatmulElems, MatmulProblem, MatrixLayout, StageIdent},
 };
-use cubecl::prelude::{barrier::Barrier, *};
+use cubecl::{
+    ir::DeviceProperties,
+    prelude::{barrier::Barrier, *},
+};
 
 use super::LoadingValidation;
 
@@ -25,9 +28,12 @@ use super::LoadingValidation;
 pub struct AsyncFullCooperativeLoading {}
 
 impl LoadingValidation for AsyncFullCooperativeLoading {
-    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
+    fn validate_with_config(
+        device_props: &DeviceProperties,
+        config: &GlobalReaderConfig,
+    ) -> Result<(), InvalidConfigError> {
         StridedTilingLayout::check(config.smem_config)?;
-        validate_async_barrier()?;
+        validate_async_barrier(device_props)?;
         validate_noswizzle(config.smem_config)?;
 
         Ok(())

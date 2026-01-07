@@ -55,7 +55,9 @@ pub(crate) fn matmul_entry<
         out: line_size_out,
     });
 
+    let device_props = comptime::device_properties();
     let config = comptime!(PartitionedBatchMatmulFamily::<GMMF, GPM>::expand_config(
+        &device_props,
         &blueprint,
         &MatmulElems::from_define_arrays(global, stage, register),
         &line_sizes

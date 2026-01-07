@@ -61,7 +61,13 @@ pub fn test_convolution_algorithm<A, P>(
     let dtypes = MatmulElems::new_deprecated::<((P::EG, P::ES), (P::EG, P::ES), (P::EG, f32))>();
     let problem = A::Args::adjust_problem(&client, problem, &selection, &dtypes);
 
-    let config = match A::expand_config(&problem, &selection, &line_sizes, &dtypes) {
+    let config = match A::expand_config(
+        client.properties(),
+        &problem,
+        &selection,
+        &line_sizes,
+        &dtypes,
+    ) {
         Ok(config) => config,
         Err(err) => {
             let msg = format!("Can't launch the test: {err}");

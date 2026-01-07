@@ -8,7 +8,7 @@ use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{ContiguousTilingLayout, StridedStageMemory, TilingOrder};
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
 use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem, StageIdent};
-use cubecl::prelude::*;
+use cubecl::{ir::DeviceProperties, prelude::*};
 
 use super::{LoadingJob, LoadingValidation, ReaderMode};
 
@@ -21,7 +21,10 @@ pub struct SyncFullCyclicLoading<T: TilingOrder> {
 }
 
 impl<TO: TilingOrder> LoadingValidation for SyncFullCyclicLoading<TO> {
-    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
+    fn validate_with_config(
+        _device_props: &DeviceProperties,
+        config: &GlobalReaderConfig,
+    ) -> Result<(), InvalidConfigError> {
         if let ReaderMode::Strict = config.reader_mode {
             let line_size = config.gmem_config.line_size;
 

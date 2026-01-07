@@ -10,9 +10,9 @@ use crate::components::{
 use crate::definition::TilingBlueprint;
 use crate::definition::{InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatrixLayout};
 use crate::definition::{MatmulLineSizes, MatmulSetupError};
-use cubecl::features::TypeUsage;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
+use cubecl::{features::TypeUsage, ir::DeviceProperties};
 
 impl<AccTile: TileKind> TileMatmulFamily for RegisterMatmul<AccTile>
 where
@@ -39,6 +39,7 @@ where
     }
 
     fn expand_config(
+        _device_props: &DeviceProperties,
         blueprint: &TilingBlueprint,
         _dtypes: &MatmulElems,
         _line_sizes: &MatmulLineSizes,

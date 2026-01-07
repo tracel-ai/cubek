@@ -1,9 +1,9 @@
-use cubecl;
 use cubecl::prelude::*;
 use cubecl::std::{
     CubeOption,
     tensor::{View, layout::Coords2d},
 };
+use cubecl::{self, ir::DeviceProperties};
 use cubek_matmul::components::{
     global::GlobalWriter,
     stage::{ContiguousTilingLayout, RowMajorTilingOrder},
@@ -30,6 +30,7 @@ pub trait GlobalConvolutionFamily: ConvolutionLaunch<Self::Config> + 'static {
     fn filter_line_sizes(available_line_sizes: AvailableLineSizes) -> AvailableLineSizes;
 
     fn expand_config(
+        device_props: &DeviceProperties,
         problem: &ConvolutionProblem,
         selection: &TilingBlueprint,
         line_sizes: &MatmulLineSizes,

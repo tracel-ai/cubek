@@ -11,9 +11,12 @@ use crate::definition::{
     InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulSetupError, MatrixLayout,
 };
 use crate::definition::{MatmulLineSizes, TilingBlueprint};
-use cubecl::features::{Plane, TypeUsage};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
+use cubecl::{
+    features::{Plane, TypeUsage},
+    ir::DeviceProperties,
+};
 
 impl<Kind: TileKind> TileMatmulFamily for PlaneVecMatInnerProduct<Kind>
 where
@@ -40,6 +43,7 @@ where
     }
 
     fn expand_config(
+        _device_props: &DeviceProperties,
         blueprint: &TilingBlueprint,
         _dtypes: &MatmulElems,
         line_sizes: &MatmulLineSizes,

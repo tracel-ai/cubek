@@ -10,7 +10,7 @@ use crate::definition::InvalidConfigError;
 use crate::definition::MatmulElems;
 use crate::definition::MatmulProblem;
 use crate::definition::StageIdent;
-use cubecl::prelude::*;
+use cubecl::{ir::DeviceProperties, prelude::*};
 
 use super::{LoadingValidation, sync_full_tilewise};
 
@@ -26,7 +26,10 @@ use super::{LoadingValidation, sync_full_tilewise};
 pub struct SyncFullOrderedLoading {}
 
 impl LoadingValidation for SyncFullOrderedLoading {
-    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
+    fn validate_with_config(
+        _device_props: &DeviceProperties,
+        config: &GlobalReaderConfig,
+    ) -> Result<(), InvalidConfigError> {
         if config.stage_ident != StageIdent::Lhs {
             return Err(FormattedConfigError::new(move || {
                 "Ordered loading only available on Lhs".to_string()

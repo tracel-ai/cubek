@@ -11,7 +11,10 @@ use cubek_matmul::{
     launch::MatmulArgs,
 };
 
-use cubecl::std::tensor::{TensorHandle, into_contiguous_pitched_ref, is_contiguous_pitched};
+use cubecl::{
+    ir::DeviceProperties,
+    std::tensor::{TensorHandle, into_contiguous_pitched_ref, is_contiguous_pitched},
+};
 
 use cubecl::prelude::*;
 
@@ -61,12 +64,13 @@ pub trait Algorithm {
 
     /// Make a convolution config from a convolution problem, and launch options
     fn expand_config(
+        device_props: &DeviceProperties,
         problem: &ConvolutionProblem,
         selection: &TilingBlueprint,
         line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
     ) -> Result<GlobalConfig<Self::GlobalConvolution>, MatmulSetupError> {
-        Self::GlobalConvolution::expand_config(problem, selection, line_sizes, dtypes)
+        Self::GlobalConvolution::expand_config(device_props, problem, selection, line_sizes, dtypes)
     }
 
     fn into_tensor_handle<R: Runtime>(

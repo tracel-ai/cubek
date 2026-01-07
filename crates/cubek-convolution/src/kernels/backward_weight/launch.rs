@@ -241,7 +241,13 @@ where
     let selection = Alg::selection(client, &problem, plane_dim, &line_sizes, &mut dtypes)?;
     let problem = Alg::Args::adjust_problem(client, problem, &selection, &dtypes);
 
-    let config = Alg::expand_config(&problem, &selection, &line_sizes, &dtypes)?;
+    let config = Alg::expand_config(
+        client.properties(),
+        &problem,
+        &selection,
+        &line_sizes,
+        &dtypes,
+    )?;
 
     let line_sizes = config.line_sizes();
 

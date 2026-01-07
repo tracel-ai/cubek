@@ -10,7 +10,7 @@ use crate::definition::{
     InvalidConfigError, MatmulAvailabilityError, MatmulLineSizes, MatmulSetupError, TileSize,
 };
 use crate::definition::{MatmulElems, TilingBlueprint};
-use cubecl::features::MmaConfig;
+use cubecl::{features::MmaConfig, ir::DeviceProperties};
 use cubecl::{ir::StorageType, prelude::*};
 
 impl<Tile: TileKind> TileMatmulFamily for CmmaMatmul<Tile>
@@ -37,6 +37,7 @@ where
     }
 
     fn expand_config(
+        _device_props: &DeviceProperties,
         blueprint: &TilingBlueprint,
         _dtypes: &MatmulElems,
         _line_sizes: &MatmulLineSizes,

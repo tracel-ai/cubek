@@ -6,7 +6,7 @@ use crate::components::{global::SharedGlobalMatmulConfig, stage::StageFamily};
 use crate::definition::{
     InvalidConfigError, MatmulElems, MatmulPrecision, MatmulProblem, MatrixLayout, StageIdent,
 };
-use cubecl::ir::{BarrierLevel, OpaqueType, SemanticType};
+use cubecl::ir::{BarrierLevel, DeviceProperties, OpaqueType, SemanticType};
 use cubecl::prelude::*;
 
 #[cube]
@@ -50,7 +50,10 @@ pub trait SyncStrategy {
 /// Allows to verify configs are valid for a reader
 pub trait LoadingValidation {
     /// Verify that configs are valid for a reader, otherwise return an error stating why
-    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError>;
+    fn validate_with_config(
+        device_props: &DeviceProperties,
+        config: &GlobalReaderConfig,
+    ) -> Result<(), InvalidConfigError>;
 
     fn validate_with_problem(
         problem: &MatmulProblem,
@@ -60,8 +63,8 @@ pub trait LoadingValidation {
 }
 
 /// Validates if async barrier instructions is available on the current device.
-pub fn validate_async_barrier() -> Result<(), InvalidConfigError> {
-    if !comptime::device_properties()
+pub fn validate_async_barrier(device_props: &DeviceProperties) -> Result<(), InvalidConfigError> {
+    if !device_props
         .features
         .supports_type(OpaqueType::Barrier(BarrierLevel::Cube))
     {
@@ -75,10 +78,11 @@ pub fn validate_async_barrier() -> Result<(), InvalidConfigError> {
 
 /// Validates if async copy instructions is available on the current device.
 pub fn validate_async_copy(
+    device_props: &DeviceProperties,
     dtype_global: &StorageType,
     dtype_stage: &StorageType,
 ) -> Result<(), InvalidConfigError> {
-    if !comptime::device_properties().features.copy_async {
+    if !device_props.features.copy_async {
         return Err(Box::new(
             "Async copy instructions are not available on the current device",
         ));
@@ -128,13 +132,11 @@ pub fn validate_swizzle_atom_size(config: StageMemoryConfig) -> Result<(), Inval
 /// Validates if [tensor memory accelerator features](SemanticType::TensorMap) are available on the current
 /// device.
 pub fn validate_tma(
+    device_props: &DeviceProperties,
     smem_config: &StageMemoryConfig,
     global_dtype: &StorageType,
 ) -> Result<(), InvalidConfigError> {
-    if !comptime::device_properties()
-        .features
-        .supports_type(SemanticType::TensorMap)
-    {
+    if !device_props.features.supports_type(SemanticType::TensorMap) {
         return Err(Box::new(
             "Tensor memory accelerator features are not available on the current device",
         ));
@@ -230,7 +232,10 @@ fn stride_align_bits(strides: &[usize], layout: &MatrixLayout, dtype: &StorageTy
 /// Dummy trait implementation
 pub struct NoLoadingValidation {}
 impl LoadingValidation for NoLoadingValidation {
-    fn validate_with_config(_config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
+    fn validate_with_config(
+        _device_props: &DeviceProperties,
+        _config: &GlobalReaderConfig,
+    ) -> Result<(), InvalidConfigError> {
         Ok(())
     }
 

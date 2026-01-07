@@ -21,7 +21,7 @@ use crate::{
     definition::AccS,
 };
 use core::marker::PhantomData;
-use cubecl::prelude::*;
+use cubecl::{ir::DeviceProperties, prelude::*};
 
 /// Plane Matmul family for any precision
 pub struct PlaneMatmulFamily<
@@ -67,6 +67,7 @@ impl<
     type Config = PartitionMatmulConfig<TM::Config>;
 
     fn expand_config(
+        device_props: &DeviceProperties,
         blueprint: &TilingBlueprint,
         plane_flow_config: PlaneFlowConfig,
         num_stages: NumStages,
@@ -123,7 +124,7 @@ impl<
         Ok(PartitionMatmulConfig::Plane(
             PlanePartitionedStageConfig::from_shared_partition_config(
                 SharedPartitionMatmulConfig::new(
-                    TM::expand_config(blueprint, dtypes, line_sizes)?,
+                    TM::expand_config(device_props, blueprint, dtypes, line_sizes)?,
                     blueprint.tiling_scheme.partition_size,
                     blueprint.partition_buffering,
                     plane_flow_config,

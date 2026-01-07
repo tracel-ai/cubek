@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
-use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Layout, LayoutExpand};
+use cubecl::{ir::DeviceProperties, prelude::barrier::Barrier};
 use cubek_matmul::components::{
     global::{
         GlobalReaderConfig, PlaneFlowPartition,
@@ -34,8 +34,11 @@ pub struct AsyncFullCyclicLoading<T: TilingOrder> {
 }
 
 impl<TO: TilingOrder> LoadingValidation for AsyncFullCyclicLoading<TO> {
-    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
-        MatmulCyclicLoading::<TO>::validate_with_config(config)
+    fn validate_with_config(
+        device_props: &DeviceProperties,
+        config: &GlobalReaderConfig,
+    ) -> Result<(), InvalidConfigError> {
+        MatmulCyclicLoading::<TO>::validate_with_config(device_props, config)
     }
 
     fn validate_with_problem(

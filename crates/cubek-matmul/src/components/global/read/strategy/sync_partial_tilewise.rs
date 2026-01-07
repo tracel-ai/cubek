@@ -15,8 +15,8 @@ use crate::components::{global::multi_stage::LoadMaxRoundPlaneCount, stage::Tili
 use crate::definition::{
     FormattedConfigError, InvalidConfigError, MatmulElems, MatmulProblem, StageIdent,
 };
-use cubecl::prelude::*;
 use cubecl::std::{tensor::layout::Coords2d, type_size};
+use cubecl::{ir::DeviceProperties, prelude::*};
 
 use super::{LoadingJob, LoadingValidation};
 
@@ -46,7 +46,10 @@ impl<TO: TilingOrder> LoadMaxRoundPlaneCount for SyncPartialTilewiseLoading<TO> 
 }
 
 impl<T: TilingOrder> LoadingValidation for SyncPartialTilewiseLoading<T> {
-    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
+    fn validate_with_config(
+        _device_props: &DeviceProperties,
+        config: &GlobalReaderConfig,
+    ) -> Result<(), InvalidConfigError> {
         let line_size = config.gmem_config.line_size;
         let num_planes = config.loading_planes_count();
         let num_tiles = config.smem_config.tiles_per_stage();

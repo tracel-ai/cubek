@@ -1,4 +1,6 @@
-use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, server::LaunchError};
+use cubecl::{
+    CubeCount, CubeDim, Runtime, client::ComputeClient, ir::DeviceProperties, server::LaunchError,
+};
 
 use crate::{
     components::{
@@ -56,6 +58,7 @@ impl BatchMatmulFamily for NaiveBatchMatmulFamily {
     type Blueprint = NaiveBlueprint;
 
     fn expand_config(
+        _device_props: &DeviceProperties,
         _blueprint: &Self::Blueprint,
         _dtypes: &MatmulElems,
         _line_sizes: &MatmulLineSizes,

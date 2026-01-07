@@ -13,7 +13,7 @@ use crate::definition::MatmulProblem;
 use crate::definition::TilingBlueprint;
 use crate::definition::{MatmulElems, MatmulPrecision, MatmulSetupError};
 use crate::launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
-use cubecl::prelude::*;
+use cubecl::{ir::DeviceProperties, prelude::*};
 
 /// Simple partitioned batch matmul family for any precision
 pub struct PartitionedBatchMatmulFamily<GMM: GlobalMatmulFamily, S: GlobalPartitionMatmul> {
@@ -29,11 +29,12 @@ impl<GMM: GlobalMatmulFamily, S: GlobalPartitionMatmul> BatchMatmulFamily
     type Blueprint = TilingBlueprint;
 
     fn expand_config(
+        device_props: &DeviceProperties,
         blueprint: &Self::Blueprint,
         dtypes: &MatmulElems,
         line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
-        let global_config = GMM::expand_config(blueprint, dtypes, line_sizes)?;
+        let global_config = GMM::expand_config(device_props, blueprint, dtypes, line_sizes)?;
 
         Ok(PartitionedBatchConfig::new(
             global_config,
