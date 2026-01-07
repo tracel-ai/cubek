@@ -5,12 +5,12 @@ use crate::components::global::memory::GlobalMemoryConfig;
 use crate::components::global::multi_stage::EventLoadingMode;
 use crate::components::global::read::ReaderMode;
 use crate::components::global::{
-    GlobalWriterConfig, PlaneFlowConfig, SpecializedLoadingSides, InputLoadFlow, LoadFlows,
+    GlobalWriterConfig, InputLoadFlow, LoadFlows, PlaneFlowConfig, SpecializedLoadingSides,
 };
 use crate::components::stage::{StageConfig, StageMemoryConfig};
 use crate::definition::StageIdent;
+use crate::definition::TilingBlueprint;
 use crate::definition::{AccG, MatmulSetupError};
-use crate::definition::{InvalidConfigError, TilingBlueprint};
 use crate::definition::{LhsG, MatmulElems, MatmulLineSizes, RhsG};
 use crate::definition::{MatmulPrecision, MatmulProblem};
 use cubecl::std::{
@@ -38,8 +38,11 @@ pub trait GlobalMatmulFamily: Send + Sync + 'static {
     ) -> Result<Self::Config, MatmulSetupError>;
 
     /// Returns the compute resources required to run this matmul.
-    fn cubedim_resource(blueprint: &TilingBlueprint)
-    -> Result<CubeDimResource, InvalidConfigError>;
+    fn cubedim_resource(
+        blueprint: &TilingBlueprint,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
+    ) -> Result<CubeDimResource, MatmulSetupError>;
 
     fn validate_blueprint<R: Runtime>(
         client: &ComputeClient<R>,
@@ -155,8 +158,8 @@ impl<S: StageConfig> SharedGlobalMatmulConfig<S> {
 
     pub fn specialized_loading_sides(&self) -> SpecializedLoadingSides {
         LoadFlows {
-            lhs: self.lhs_reader_config.specialization_tensor_config,
-            rhs: self.rhs_reader_config.specialization_tensor_config,
+            lhs: self.lhs_reader_config.input_load_flow,
+            rhs: self.rhs_reader_config.input_load_flow,
         }
         .into()
     }
@@ -222,7 +225,7 @@ pub struct GlobalReaderConfig {
     pub plane_dim: u32,
     pub reader_mode: ReaderMode,
     pub event_loading_mode: EventLoadingMode,
-    pub specialization_tensor_config: InputLoadFlow,
+    pub input_load_flow: InputLoadFlow,
     pub plane_flow_config: PlaneFlowConfig,
 
     // ideally remove because doesn't apply to any kind of problem

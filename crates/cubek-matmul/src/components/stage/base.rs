@@ -2,8 +2,8 @@ use cubecl::prelude::*;
 use cubecl::std::{CubeOption, CubeOptionExpand, tensor::layout::Coords2d};
 
 use crate::components::CubeDimResource;
+use crate::components::global::PlaneFlowConfig;
 use crate::components::global::WriteEventListener;
-use crate::components::global::{MaxGlobalReaderPlanes, PlaneFlowConfig};
 use crate::components::stage::{NumStages, StageMemoryConfig};
 use crate::components::tile::TileConfig;
 use crate::components::{stage::PartitionScheduler, tile::io::TileKind};

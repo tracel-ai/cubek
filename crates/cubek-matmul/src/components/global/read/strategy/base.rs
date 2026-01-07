@@ -50,10 +50,7 @@ pub trait SyncStrategy {
 /// Allows to verify configs are valid for a reader
 pub trait LoadingValidation {
     /// Verify that configs are valid for a reader, otherwise return an error stating why
-    fn validate_with_config(
-        config: &GlobalReaderConfig,
-        dtypes: &MatmulElems,
-    ) -> Result<(), InvalidConfigError>;
+    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError>;
 
     fn validate_with_problem(
         problem: &MatmulProblem,
@@ -78,17 +75,14 @@ pub fn validate_async_barrier() -> Result<(), InvalidConfigError> {
 
 /// Validates if async copy instructions is available on the current device.
 pub fn validate_async_copy(
-    dtypes: &MatmulElems,
-    config: &GlobalReaderConfig,
+    dtype_global: &StorageType,
+    dtype_stage: &StorageType,
 ) -> Result<(), InvalidConfigError> {
     if !comptime::device_properties().features.copy_async {
         return Err(Box::new(
             "Async copy instructions are not available on the current device",
         ));
     }
-
-    let dtype_global = dtypes.global(config.stage_ident.into());
-    let dtype_stage = dtypes.stage(config.stage_ident.into());
 
     if dtype_global.size() != dtype_stage.size() {
         return Err(Box::new(
@@ -118,16 +112,12 @@ pub fn validate_noswizzle(config: StageMemoryConfig) -> Result<(), InvalidConfig
 
 /// Validates if swizzling is valid with the line size, for sync readers that read in terms of full
 /// lines
-pub fn validate_swizzle_atom_size(
-    config: StageMemoryConfig,
-    ident: StageIdent,
-    dtypes: &MatmulElems,
-) -> Result<(), InvalidConfigError> {
+pub fn validate_swizzle_atom_size(config: StageMemoryConfig) -> Result<(), InvalidConfigError> {
     if config.swizzle == SwizzleMode::None {
         return Ok(());
     }
 
-    let line_bytes = dtypes.stage(ident.into()).size() * config.line_size as usize;
+    let line_bytes = config.dtype.size() * config.line_size as usize;
     if line_bytes > config.swizzle.atom_size() {
         return Err(Box::new("Load atom can't be larger than swizzle atom"));
     }
@@ -138,8 +128,8 @@ pub fn validate_swizzle_atom_size(
 /// Validates if [tensor memory accelerator features](SemanticType::TensorMap) are available on the current
 /// device.
 pub fn validate_tma(
-    config: &GlobalReaderConfig,
-    dtypes: &MatmulElems,
+    smem_config: &StageMemoryConfig,
+    global_dtype: &StorageType,
 ) -> Result<(), InvalidConfigError> {
     if !comptime::device_properties()
         .features
@@ -150,34 +140,33 @@ pub fn validate_tma(
         ));
     }
 
-    let dtype_global = dtypes.global(config.stage_ident.into());
-    let dtype_stage = dtypes.stage(config.stage_ident.into());
+    let stage_dtype = smem_config.dtype;
 
-    if dtype_global.size() != dtype_stage.size() {
+    if global_dtype.size() != stage_dtype.size() {
         return Err(Box::new(
             "TMA requires stage and global types to be the same",
         ));
     }
 
-    if matches!(dtype_global, StorageType::Packed(_, _))
-        && !matches!(dtype_stage, StorageType::Packed(_, _))
+    if matches!(global_dtype, StorageType::Packed(_, _))
+        && !matches!(stage_dtype, StorageType::Packed(_, _))
     {
         return Err(Box::new("TMA doesn't support dequantizing on global read"));
     }
 
-    if matches!(config.smem_config.swizzle, SwizzleMode::None) {
+    if matches!(smem_config.swizzle, SwizzleMode::None) {
         return Ok(());
     }
 
-    let row_size = match config.smem_config.matrix_layout {
-        MatrixLayout::RowMajor => config.smem_config.elements_per_stage_along_col(),
-        MatrixLayout::ColMajor => config.smem_config.elements_per_stage_along_row(),
+    let row_size = match smem_config.matrix_layout {
+        MatrixLayout::RowMajor => smem_config.elements_per_stage_along_col(),
+        MatrixLayout::ColMajor => smem_config.elements_per_stage_along_row(),
     };
-    let row_bytes = row_size * dtypes.global(config.stage_ident.into()).size() as u32;
+    let row_bytes = row_size * global_dtype.size() as u32;
 
     // Slightly tighter than the actual requirements, but simple enough and is always followed by
     // selection. Getting illegal memory access if this isn't followed for some reason.
-    if row_bytes as usize != config.smem_config.swizzle.span_size() {
+    if row_bytes as usize != smem_config.swizzle.span_size() {
         return Err(Box::new("Swizzling size must be equal to row size for TMA"));
     }
 
@@ -241,10 +230,7 @@ fn stride_align_bits(strides: &[usize], layout: &MatrixLayout, dtype: &StorageTy
 /// Dummy trait implementation
 pub struct NoLoadingValidation {}
 impl LoadingValidation for NoLoadingValidation {
-    fn validate_with_config(
-        _config: &GlobalReaderConfig,
-        _dtypes: &MatmulElems,
-    ) -> Result<(), InvalidConfigError> {
+    fn validate_with_config(_config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
         Ok(())
     }
 

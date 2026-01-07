@@ -53,8 +53,9 @@ impl Routine for NaiveRoutine {
             &device_settings.line_sizes,
         )?;
 
-        let cube_dim = Self::BatchMatmul::cubedim_resource(&blueprint)?
-            .to_cube_dim(device_settings.plane_dim)?;
+        let cube_dim =
+            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?
+                .to_cube_dim(device_settings.plane_dim)?;
 
         Ok(LaunchInfo {
             blueprint,

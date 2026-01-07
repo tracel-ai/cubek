@@ -85,7 +85,7 @@ impl<TO: TilingOrder> FullLoadingStrategy for AsyncFullCyclicLoading<TO> {
         let jump_length = comptime!(total_units * line_size);
 
         let unit_id = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
-            .load_index(config.specialization_tensor_config)
+            .load_index(config.input_load_flow)
             * config.plane_dim
             + UNIT_POS_X;
         let unit_position_base = unit_id * line_size;

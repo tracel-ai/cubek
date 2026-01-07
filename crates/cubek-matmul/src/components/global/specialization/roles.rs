@@ -61,17 +61,17 @@ pub enum PlaneFlowPartition {
 impl PlaneFlowConfig {
     /// Make a new PlaneFlowConfig
     pub fn new(
-        load_specialization_config: LoadFlows,
+        load_flows: LoadFlows,
         reader_tasks: Option<MaxGlobalReaderPlanes>,
         num_main_flow_planes: u32,
     ) -> Result<PlaneFlowConfig, MatmulSetupError> {
         let counts = match reader_tasks {
             Some(reader_tasks) => {
-                load_specialization_config.to_plane_flow_counts(num_main_flow_planes, reader_tasks)
+                load_flows.to_plane_flow_counts(num_main_flow_planes, reader_tasks)
             }
 
             None => {
-                if load_specialization_config.has_specialization() {
+                if load_flows.has_specialization() {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(
                         "Error: Load specialization config has specialization but no reader tasks were given."
                             .to_string(),

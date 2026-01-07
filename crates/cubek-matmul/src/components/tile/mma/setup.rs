@@ -1,3 +1,4 @@
+use crate::components::tile::SharedTileConfig;
 use crate::components::tile::mma::config::StoreMethod;
 use crate::components::tile::mma::config::{LoadMethod, MmaMatmulConfig};
 use crate::components::tile::{
@@ -48,20 +49,19 @@ where
     fn expand_config(
         blueprint: &TilingBlueprint,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        _line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
-        todo!()
-        // Ok(MmaMatmulConfig::from_shared_tile_config(
-        //     SharedTileConfig {
-        //         tile_size: blueprint.tiling_scheme.tile_size,
-        //         plane_dim: blueprint.plane_dim,
-        //         swizzle_modes: blueprint.swizzle_modes,
-        //     },
-        //     load_method(client, dtypes.lhs_stage),
-        //     load_method(client, dtypes.rhs_stage),
-        //     load_method(client, dtypes.acc_stage),
-        //     store_method(client, dtypes.acc_stage),
-        // ))
+        Ok(MmaMatmulConfig::from_shared_tile_config(
+            SharedTileConfig {
+                tile_size: blueprint.tiling_scheme.tile_size,
+                plane_dim: blueprint.plane_dim,
+                swizzle_modes: blueprint.swizzle_modes,
+            },
+            load_method(dtypes.lhs_stage),
+            load_method(dtypes.rhs_stage),
+            load_method(dtypes.acc_stage),
+            store_method(dtypes.acc_stage),
+        ))
     }
 
     fn should_swizzle<R: Runtime>(client: &ComputeClient<R>) -> bool {
@@ -123,9 +123,12 @@ where
     }
 }
 
-fn load_method<R: Runtime>(client: &ComputeClient<R>, dtype: StorageType) -> LoadMethod {
+fn load_method(dtype: StorageType) -> LoadMethod {
     if !matches!(dtype, StorageType::Packed(_, _))
-        && client.properties().features.ldmatrix.contains(&dtype)
+        && comptime::device_properties()
+            .features
+            .ldmatrix
+            .contains(&dtype)
     {
         LoadMethod::LoadMatrix
     } else {
@@ -133,9 +136,12 @@ fn load_method<R: Runtime>(client: &ComputeClient<R>, dtype: StorageType) -> Loa
     }
 }
 
-fn store_method<R: Runtime>(client: &ComputeClient<R>, dtype: StorageType) -> StoreMethod {
+fn store_method(dtype: StorageType) -> StoreMethod {
     if !matches!(dtype, StorageType::Packed(_, _))
-        && client.properties().features.stmatrix.contains(&dtype)
+        && comptime::device_properties()
+            .features
+            .stmatrix
+            .contains(&dtype)
     {
         StoreMethod::StoreMatrix
     } else {

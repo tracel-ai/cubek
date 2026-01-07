@@ -65,6 +65,7 @@ pub(crate) fn matmul_entry<
         push_validation_error(config.err().unwrap().to_string());
         comptime!(return);
     }
+
     let config = comptime!(config.unwrap());
 
     #[allow(clippy::collapsible_if)]

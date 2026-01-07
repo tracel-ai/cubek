@@ -10,8 +10,8 @@ use crate::{
         global::memory::GlobalLayoutConfig,
     },
     definition::{
-        Blueprint, CubeMappingLaunch, InvalidConfigError, MatmulElems, MatmulLineSizes,
-        MatmulPrecision, MatmulProblem, MatmulSetupError, MatrixLayout,
+        Blueprint, CubeMappingLaunch, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem,
+        MatmulSetupError, MatrixLayout,
     },
     launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
 };
@@ -95,7 +95,10 @@ impl BatchMatmulFamily for NaiveBatchMatmulFamily {
 
     fn cubedim_resource(
         _blueprint: &Self::Blueprint,
-    ) -> Result<CubeDimResource, InvalidConfigError> {
+        _dtypes: &MatmulElems,
+        _line_sizes: &MatmulLineSizes,
+    ) -> Result<CubeDimResource, MatmulSetupError> {
+        // Could be moved to blueprint to be less hard coded
         Ok(CubeDimResource::Planes(8))
     }
 

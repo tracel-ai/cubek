@@ -27,7 +27,6 @@ pub struct AsyncFullCooperativeLoading {}
 impl LoadingValidation for AsyncFullCooperativeLoading {
     fn validate_with_config(
         config: &GlobalReaderConfig,
-        _dtypes: &MatmulElems,
     ) -> Result<(), InvalidConfigError> {
         StridedTilingLayout::check(config.smem_config)?;
         validate_async_barrier()?;

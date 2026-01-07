@@ -2,7 +2,7 @@ mod matmul_plane_vecmat {
     use crate::suite::layered::matmul_test_launcher::InputRepresentation;
 
     fn input_representation() -> InputRepresentation {
-        InputRepresentation::Tma
+        InputRepresentation::Normal
     }
 
     #[cfg(all(feature = "matmul_tests_plane", feature = "matmul_tests_vecmat"))]

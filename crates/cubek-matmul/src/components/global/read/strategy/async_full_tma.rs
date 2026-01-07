@@ -21,11 +21,10 @@ pub struct AsyncFullTmaLoading {}
 impl LoadingValidation for AsyncFullTmaLoading {
     fn validate_with_config(
         config: &GlobalReaderConfig,
-        dtypes: &MatmulElems,
     ) -> Result<(), InvalidConfigError> {
         TmaTilingLayout::check(config.smem_config)?;
         validate_async_barrier()?;
-        validate_tma(config, dtypes)?;
+        validate_tma(&config.smem_config, &config.gmem_config.dtype)?;
 
         Ok(())
     }

@@ -131,7 +131,8 @@ where
             &device_settings.line_sizes,
         )?;
 
-        let cubedim_resource = Self::BatchMatmul::cubedim_resource(&blueprint)?;
+        let cubedim_resource =
+            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
 
         LaunchInfo::new(
             blueprint,
@@ -203,7 +204,8 @@ where
             &device_settings.line_sizes,
         )?;
 
-        let cubedim_resource = Self::BatchMatmul::cubedim_resource(&blueprint)?;
+        let cubedim_resource =
+            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
 
         LaunchInfo::new(
             blueprint,
@@ -277,7 +279,8 @@ where
             &device_settings.line_sizes,
         )?;
 
-        let cubedim_resource = Self::BatchMatmul::cubedim_resource(&blueprint)?;
+        let cubedim_resource =
+            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
 
         LaunchInfo::new(
             blueprint,
@@ -350,7 +353,8 @@ where
             &device_settings.line_sizes,
         )?;
 
-        let cubedim_resource = Self::BatchMatmul::cubedim_resource(&blueprint)?;
+        let cubedim_resource =
+            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
 
         LaunchInfo::new(
             blueprint,
@@ -422,7 +426,8 @@ where
             &device_settings.line_sizes,
         )?;
 
-        let cubedim_resource = Self::BatchMatmul::cubedim_resource(&blueprint)?;
+        let cubedim_resource =
+            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
 
         LaunchInfo::new(
             blueprint,
@@ -494,7 +499,8 @@ where
             &device_settings.line_sizes,
         )?;
 
-        let cubedim_resource = Self::BatchMatmul::cubedim_resource(&blueprint)?;
+        let cubedim_resource =
+            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
 
         LaunchInfo::new(
             blueprint,

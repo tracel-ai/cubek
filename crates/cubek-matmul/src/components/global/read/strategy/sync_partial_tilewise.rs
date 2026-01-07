@@ -46,10 +46,7 @@ impl<TO: TilingOrder> LoadMaxRoundPlaneCount for SyncPartialTilewiseLoading<TO> 
 }
 
 impl<T: TilingOrder> LoadingValidation for SyncPartialTilewiseLoading<T> {
-    fn validate_with_config(
-        config: &GlobalReaderConfig,
-        dtypes: &MatmulElems,
-    ) -> Result<(), InvalidConfigError> {
+    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
         let line_size = config.gmem_config.line_size;
         let num_planes = config.loading_planes_count();
         let num_tiles = config.smem_config.tiles_per_stage();
@@ -91,7 +88,7 @@ impl<T: TilingOrder> LoadingValidation for SyncPartialTilewiseLoading<T> {
             _ => unreachable!(),
         }
 
-        validate_swizzle_atom_size(config.smem_config, config.stage_ident, dtypes)?;
+        validate_swizzle_atom_size(config.smem_config)?;
         ContiguousTilingLayout::<T>::check(config.smem_config)?;
 
         Ok(())
@@ -135,7 +132,7 @@ impl<TO: TilingOrder> PartialLoadingStrategy for SyncPartialTilewiseLoading<TO> 
         });
 
         let num_tiles_to_skip = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
-            .load_index(config.specialization_tensor_config)
+            .load_index(config.input_load_flow)
             * num_tiles_per_plane;
 
         SyncPartialTilewiseJob {

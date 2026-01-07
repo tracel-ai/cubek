@@ -23,10 +23,7 @@ pub struct SyncPartialCyclicLoading<T: TilingOrder> {
 }
 
 impl<TO: TilingOrder> LoadingValidation for SyncPartialCyclicLoading<TO> {
-    fn validate_with_config(
-        config: &GlobalReaderConfig,
-        dtypes: &MatmulElems,
-    ) -> Result<(), InvalidConfigError> {
+    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
         if let ReaderMode::Strict = config.reader_mode {
             let line_size = config.gmem_config.line_size;
             let num_lines_per_tile = config.smem_config.elements_per_tile() / line_size;
@@ -50,7 +47,7 @@ impl<TO: TilingOrder> LoadingValidation for SyncPartialCyclicLoading<TO> {
             }
         }
 
-        validate_swizzle_atom_size(config.smem_config, config.stage_ident, dtypes)?;
+        validate_swizzle_atom_size(config.smem_config)?;
         ContiguousTilingLayout::<TO>::check(config.smem_config)?;
 
         Ok(())
@@ -108,7 +105,7 @@ impl<TO: TilingOrder> PartialLoadingStrategy for SyncPartialCyclicLoading<TO> {
         let jump_length = total_units * line_size;
 
         let plane_id = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
-            .load_index(config.specialization_tensor_config);
+            .load_index(config.input_load_flow);
         let unit_id = plane_id * config.plane_dim + UNIT_POS_X;
         let unit_position_base = unit_id * line_size;
 

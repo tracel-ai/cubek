@@ -30,12 +30,8 @@ use super::{LoadingJob, LoadingValidation};
 pub struct AsyncPartialStridedLoading {}
 
 impl LoadingValidation for AsyncPartialStridedLoading {
-    fn validate_with_config(
-        config: &GlobalReaderConfig,
-        dtypes: &MatmulElems,
-    ) -> Result<(), InvalidConfigError> {
-        let line_size =
-            ASYNC_COPY_WIDTH / dtypes.stage(config.stage_ident.into()).size_bits() as u32;
+    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
+        let line_size = ASYNC_COPY_WIDTH / config.smem_config.dtype.size_bits() as u32;
 
         // Needs separate check because copy size may be larger than global line size
         if !config
@@ -56,9 +52,9 @@ impl LoadingValidation for AsyncPartialStridedLoading {
             )));
         }
 
-        validate_swizzle_atom_size(config.smem_config, config.stage_ident, dtypes)?;
+        validate_swizzle_atom_size(config.smem_config)?;
         validate_async_barrier()?;
-        validate_async_copy(dtypes, config)?;
+        validate_async_copy(&config.gmem_config.dtype, &config.smem_config.dtype)?;
         StridedTilingLayout::check(config.smem_config)?;
 
         Ok(())
@@ -108,7 +104,7 @@ impl PartialLoadingStrategy for AsyncPartialStridedLoading {
         let num_tasks_per_unit = comptime!(num_stage_lines / unit_count);
 
         let unit_position_base = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
-            .load_index(config.specialization_tensor_config)
+            .load_index(config.input_load_flow)
             * config.plane_dim
             + UNIT_POS_X;
 
@@ -191,8 +187,7 @@ impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, StridedTilingLayout, AsyncCopy
 #[cube]
 impl AsyncPartialLoadingStrategy for AsyncPartialStridedLoading {
     fn arrival_count<S: StageConfig>(#[comptime] config: SharedGlobalMatmulConfig<S>) -> u32 {
-        let total_load_units =
-            config.plane_flow_config().counts.load_only * config.plane_dim();
+        let total_load_units = config.plane_flow_config().counts.load_only * config.plane_dim();
         total_load_units.runtime()
     }
 

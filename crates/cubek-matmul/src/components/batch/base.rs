@@ -1,8 +1,8 @@
 use crate::components::CubeDimResource;
 use crate::components::global::memory::GlobalLayoutConfig;
 use crate::definition::{
-    AccG, Blueprint, CubeMapping, CubeMappingLaunch, InvalidConfigError, LhsG, MatmulElems,
-    MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError, RhsG,
+    AccG, Blueprint, CubeMapping, CubeMappingLaunch, LhsG, MatmulElems, MatmulLineSizes,
+    MatmulPrecision, MatmulProblem, MatmulSetupError, RhsG,
 };
 use crate::launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
 use cubecl::prelude::*;
@@ -45,8 +45,11 @@ pub trait BatchMatmulFamily: 'static + Send + Sync {
     ) -> Result<(), LaunchError>;
 
     /// Returns the compute resources required to run this matmul.
-    fn cubedim_resource(blueprint: &Self::Blueprint)
-    -> Result<CubeDimResource, InvalidConfigError>;
+    fn cubedim_resource(
+        blueprint: &Self::Blueprint,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
+    ) -> Result<CubeDimResource, MatmulSetupError>;
 
     fn validate_blueprint<R: Runtime>(
         client: &ComputeClient<R>,

@@ -158,7 +158,7 @@ impl<ES: Numeric, T: TilingLayout> StridedStageMemory<ES, T> {
         let num_writes_per_unit = smem_length.div_ceil(unit_count);
 
         let unit_base_position = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
-            .load_index(config.specialization_tensor_config)
+            .load_index(config.input_load_flow)
             * config.plane_dim
             + UNIT_POS_X;
 
@@ -190,7 +190,7 @@ impl<ES: Numeric, T: TilingLayout> StridedStageMemory<ES, T> {
         let num_writes_per_unit = comptime![this.stage_size.div_ceil(unit_count)];
 
         let unit_base_position = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
-            .load_index(config.specialization_tensor_config)
+            .load_index(config.input_load_flow)
             * config.plane_dim
             + UNIT_POS_X;
 

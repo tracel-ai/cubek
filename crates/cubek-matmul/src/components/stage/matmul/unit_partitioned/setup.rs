@@ -85,6 +85,7 @@ impl<
             matrix_layout: blueprint.lhs_layout,
             swizzle: blueprint.swizzle_modes.lhs,
             num_stages: num_stages.lhs,
+            dtype: dtypes.lhs_stage,
         };
 
         let rhs_smem_config = StageMemoryConfig {
@@ -99,6 +100,7 @@ impl<
             matrix_layout: blueprint.rhs_layout,
             swizzle: blueprint.swizzle_modes.rhs,
             num_stages: num_stages.rhs,
+            dtype: dtypes.rhs_stage,
         };
 
         let out_smem_config = StageMemoryConfig {
@@ -113,6 +115,7 @@ impl<
             matrix_layout: MatrixLayout::RowMajor,
             swizzle: blueprint.swizzle_modes.out,
             num_stages: 1,
+            dtype: dtypes.acc_stage,
         };
 
         Ok(PartitionMatmulConfig::Unit(
@@ -154,7 +157,7 @@ impl<
         blueprint: &TilingBlueprint,
         num_stages: NumStages,
         dtypes: &MatmulElems,
-        _line_sizes: &MatmulLineSizes,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError> {
         let working_units = blueprint.tiling_scheme.partitions_per_stage_along_m()
             * blueprint.tiling_scheme.partitions_per_stage_along_n();
@@ -195,6 +198,6 @@ impl<
             ))));
         }
 
-        Ok(())
+        TM::validate_blueprint(client, blueprint, dtypes, line_sizes)
     }
 }

@@ -100,7 +100,7 @@ impl<
             plane_dim,
             reader_mode,
             event_loading_mode,
-            specialization_tensor_config,
+            input_load_flow: specialization_tensor_config,
             plane_flow_config,
             stage_ident: StageIdent::Rhs,
         };
@@ -112,7 +112,7 @@ impl<
             plane_dim,
             reader_mode,
             event_loading_mode,
-            specialization_tensor_config,
+            input_load_flow: specialization_tensor_config,
             plane_flow_config,
             stage_ident: StageIdent::Rhs,
         };
@@ -120,7 +120,7 @@ impl<
         let writer_config = GlobalWriterConfig {
             gmem_config: out_gmem_config,
             smem_config: stage_config.out_smem_config(),
-            role_rule_config: PlaneFlowPartitionRule::MainFlowOnly,
+            plane_flow_partition_rule: PlaneFlowPartitionRule::MainFlowOnly,
             plane_dim,
         };
 

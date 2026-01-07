@@ -1,8 +1,7 @@
 use crate::components::CubeDimResource;
 use crate::components::global::multi_stage::EventLoadingMode;
 use crate::components::global::{
-    GlobalReaderConfig, GlobalWriterConfig, MatmulPlaneCounts, PlaneFlowConfig,
-    SharedGlobalMatmulConfig,
+    GlobalReaderConfig, GlobalWriterConfig, PlaneFlowConfig, SharedGlobalMatmulConfig,
 };
 use crate::components::global::{GlobalWriterFamily, multi_stage::specialized::SpecializedMatmul};
 use crate::components::global::{InputLoadFlow, LoadFlows, WriteTiling};
@@ -13,8 +12,8 @@ use crate::components::global::{
 use crate::components::stage::StageConfig;
 use crate::components::{global::GlobalMatmulFamily, stage, stage::FilledStageFamily};
 use crate::components::{global::MaxGlobalReaderPlanes, stage::NoTilingLayout};
+use crate::definition::MatmulLineSizes;
 use crate::definition::TilingBlueprint;
-use crate::definition::{InvalidConfigError, MatmulLineSizes};
 use crate::definition::{MatmulElems, MatmulSetupError};
 use crate::definition::{MatmulPrecision, MatmulProblem};
 use crate::definition::{MatrixLayout, StageIdent};
@@ -56,8 +55,95 @@ where
         dtypes: &MatmulElems,
         line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
-        // Should be set from selection, but tests won't work properly. This algorithm fails without
-        // specialization so it needs to be enabled.
+        let plane_dim = blueprint.plane_dim;
+        let plane_flow_config = Self::cubedim_resource(blueprint, dtypes, line_sizes)?
+            .as_plane_flow_config(plane_dim)?;
+
+        let stage_config = SMM::expand_config(
+            &blueprint,
+            plane_flow_config,
+            (2, 2).into(),
+            dtypes,
+            line_sizes,
+        )?;
+
+        let precompute_job = blueprint.loading_precompute_strategy.into();
+        let event_loading_mode = EventLoadingMode::Relaxed;
+        let reader_mode = blueprint.reader_mode;
+
+        let lhs_gmem_config = GlobalMemoryConfig {
+            line_size: line_sizes.lhs as u32,
+            check_row_bounds: blueprint.check_m_bounds,
+            check_col_bounds: blueprint.check_k_bounds,
+            matrix_layout: blueprint.lhs_layout,
+            view_direction: ViewDirection::Col,
+            dtype: dtypes.lhs_global,
+        };
+
+        let rhs_gmem_config = GlobalMemoryConfig {
+            line_size: line_sizes.rhs as u32,
+            check_row_bounds: blueprint.check_k_bounds,
+            check_col_bounds: blueprint.check_n_bounds,
+            matrix_layout: blueprint.rhs_layout,
+            view_direction: ViewDirection::Row,
+            dtype: dtypes.rhs_global,
+        };
+
+        let out_gmem_config = GlobalMemoryConfig {
+            line_size: line_sizes.out as u32,
+            matrix_layout: MatrixLayout::RowMajor,
+            check_row_bounds: blueprint.check_m_bounds,
+            check_col_bounds: blueprint.check_n_bounds,
+            view_direction: ViewDirection::None,
+            dtype: dtypes.acc_global,
+        };
+
+        let lhs_reader_config = GlobalReaderConfig {
+            gmem_config: lhs_gmem_config,
+            smem_config: stage_config.lhs_smem_config(),
+            precompute_job,
+            plane_dim,
+            plane_flow_config,
+            reader_mode,
+            stage_ident: StageIdent::Lhs,
+            event_loading_mode,
+            input_load_flow: blueprint.load_flows.lhs,
+        };
+
+        let rhs_reader_config = GlobalReaderConfig {
+            gmem_config: rhs_gmem_config,
+            smem_config: stage_config.rhs_smem_config(),
+            precompute_job,
+            plane_dim,
+            plane_flow_config,
+            reader_mode,
+            stage_ident: StageIdent::Rhs,
+            event_loading_mode,
+            input_load_flow: blueprint.load_flows.rhs,
+        };
+
+        let writer_config = GlobalWriterConfig {
+            gmem_config: out_gmem_config,
+            smem_config: stage_config.out_smem_config(),
+            plane_flow_partition_rule: plane_flow_config.partition_rule,
+            plane_dim: blueprint.plane_dim,
+        };
+
+        Ok(SharedGlobalMatmulConfig {
+            stage_config,
+            num_planes: plane_flow_config.counts.total_count(),
+            lhs_reader_config,
+            rhs_reader_config,
+            writer_config,
+            must_sync_plane_after_execution: false,
+        })
+    }
+
+    fn cubedim_resource(
+        blueprint: &TilingBlueprint,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
+    ) -> Result<CubeDimResource, MatmulSetupError> {
         let mut blueprint = blueprint.clone();
         blueprint.load_flows = LoadFlows {
             lhs: InputLoadFlow::LoadOnly,
@@ -78,90 +164,7 @@ where
             SMM::cubedim_resource(&blueprint)?.num_planes(plane_dim)?,
         )?;
 
-        let stage_config = SMM::expand_config(
-            &blueprint,
-            plane_flow_config,
-            (2, 2).into(),
-            dtypes,
-            line_sizes,
-        )?;
-
-        let plane_flow_config = stage_config.plane_flow_config();
-        let plane_counts = MatmulPlaneCounts::new(blueprint.load_flows, plane_flow_config.counts);
-
-        let precompute_job = blueprint.loading_precompute_strategy.into();
-        let event_loading_mode = EventLoadingMode::Relaxed;
-        let reader_mode = blueprint.reader_mode;
-
-        let lhs_gmem_config = GlobalMemoryConfig {
-            line_size: line_sizes.lhs as u32,
-            check_row_bounds: blueprint.check_m_bounds,
-            check_col_bounds: blueprint.check_k_bounds,
-            matrix_layout: blueprint.lhs_layout,
-            view_direction: ViewDirection::Col,
-        };
-
-        let rhs_gmem_config = GlobalMemoryConfig {
-            line_size: line_sizes.rhs as u32,
-            check_row_bounds: blueprint.check_k_bounds,
-            check_col_bounds: blueprint.check_n_bounds,
-            matrix_layout: blueprint.rhs_layout,
-            view_direction: ViewDirection::Row,
-        };
-
-        let out_gmem_config = GlobalMemoryConfig {
-            line_size: line_sizes.out as u32,
-            matrix_layout: MatrixLayout::RowMajor,
-            check_row_bounds: blueprint.check_m_bounds,
-            check_col_bounds: blueprint.check_n_bounds,
-            view_direction: ViewDirection::None,
-        };
-
-        let lhs_reader_config = GlobalReaderConfig {
-            gmem_config: lhs_gmem_config,
-            smem_config: stage_config.lhs_smem_config(),
-            precompute_job,
-            plane_dim,
-            plane_flow_config,
-            reader_mode,
-            stage_ident: StageIdent::Lhs,
-            event_loading_mode,
-            specialization_tensor_config: blueprint.load_flows.lhs,
-        };
-
-        let rhs_reader_config = GlobalReaderConfig {
-            gmem_config: rhs_gmem_config,
-            smem_config: stage_config.rhs_smem_config(),
-            precompute_job,
-            plane_dim,
-            plane_flow_config,
-            reader_mode,
-            stage_ident: StageIdent::Rhs,
-            event_loading_mode,
-            specialization_tensor_config: blueprint.load_flows.rhs,
-        };
-
-        let writer_config = GlobalWriterConfig {
-            gmem_config: out_gmem_config,
-            smem_config: stage_config.out_smem_config(),
-            role_rule_config: plane_flow_config.partition_rule,
-            plane_dim: blueprint.plane_dim,
-        };
-
-        Ok(SharedGlobalMatmulConfig {
-            stage_config,
-            num_planes: plane_counts.total,
-            lhs_reader_config,
-            rhs_reader_config,
-            writer_config,
-            must_sync_plane_after_execution: false,
-        })
-    }
-
-    fn cubedim_resource(
-        blueprint: &TilingBlueprint,
-    ) -> Result<CubeDimResource, InvalidConfigError> {
-        todo!()
+        Ok(CubeDimResource::Specialized(plane_flow_config))
     }
 
     fn validate_blueprint<R: Runtime>(

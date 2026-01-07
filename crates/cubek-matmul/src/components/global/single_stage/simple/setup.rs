@@ -1,8 +1,7 @@
 use crate::components::CubeDimResource;
-use crate::components::global::PlaneFlowConfig;
 use crate::definition::{
-    InvalidConfigError, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem,
-    MatmulSetupError, MatrixLayout, StageIdent,
+    MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError, MatrixLayout,
+    StageIdent,
 };
 use crate::{
     components::{
@@ -63,11 +62,8 @@ where
         line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
         let plane_dim = blueprint.plane_dim;
-        let plane_flow_config = PlaneFlowConfig::new(
-            blueprint.load_flows,
-            None,
-            SMM::cubedim_resource(blueprint)?.num_planes(plane_dim)?,
-        )?;
+        let plane_flow_config = Self::cubedim_resource(blueprint, dtypes, line_sizes)?
+            .as_plane_flow_config(plane_dim)?;
 
         let stage_config = SMM::expand_config(
             &blueprint,
@@ -79,7 +75,7 @@ where
 
         let precompute_job = blueprint.loading_precompute_strategy.into();
         let reader_mode = blueprint.reader_mode;
-        let specialization_tensor_config = InputLoadFlow::MainOnly;
+        let input_load_flow = InputLoadFlow::MainOnly;
 
         // Not used in simple
         let event_loading_mode = EventLoadingMode::Relaxed;
@@ -90,6 +86,7 @@ where
             check_col_bounds: blueprint.check_k_bounds,
             matrix_layout: blueprint.lhs_layout,
             view_direction: ViewDirection::Col,
+            dtype: dtypes.lhs_global,
         };
 
         let rhs_gmem_config = GlobalMemoryConfig {
@@ -98,6 +95,7 @@ where
             check_col_bounds: blueprint.check_n_bounds,
             matrix_layout: blueprint.rhs_layout,
             view_direction: ViewDirection::Row,
+            dtype: dtypes.rhs_global,
         };
 
         let out_gmem_config = GlobalMemoryConfig {
@@ -106,6 +104,7 @@ where
             check_row_bounds: blueprint.check_m_bounds,
             check_col_bounds: blueprint.check_n_bounds,
             view_direction: ViewDirection::None,
+            dtype: dtypes.acc_global,
         };
 
         let lhs_reader_config = GlobalReaderConfig {
@@ -117,7 +116,7 @@ where
             reader_mode,
             stage_ident: StageIdent::Lhs,
             event_loading_mode,
-            specialization_tensor_config,
+            input_load_flow,
         };
 
         let rhs_reader_config = GlobalReaderConfig {
@@ -129,19 +128,19 @@ where
             reader_mode,
             stage_ident: StageIdent::Rhs,
             event_loading_mode,
-            specialization_tensor_config,
+            input_load_flow,
         };
 
         let writer_config = GlobalWriterConfig {
             gmem_config: out_gmem_config,
             smem_config: stage_config.out_smem_config(),
-            role_rule_config: plane_flow_config.partition_rule,
+            plane_flow_partition_rule: plane_flow_config.partition_rule,
             plane_dim,
         };
 
         Ok(SharedGlobalMatmulConfig {
             stage_config,
-            num_planes: Self::cubedim_resource(blueprint)?.num_planes(blueprint.plane_dim)?,
+            num_planes: plane_flow_config.counts.total_count(),
             lhs_reader_config,
             rhs_reader_config,
             writer_config,
@@ -151,13 +150,15 @@ where
 
     fn cubedim_resource(
         blueprint: &TilingBlueprint,
-    ) -> Result<CubeDimResource, InvalidConfigError> {
+        _dtypes: &MatmulElems,
+        _line_sizes: &MatmulLineSizes,
+    ) -> Result<CubeDimResource, MatmulSetupError> {
         let resources = if !blueprint.load_flows.has_specialization() {
             SMM::cubedim_resource(blueprint)
         } else {
-            return Err(Box::new(
-                "Error: Specialization is unavailable for simple matmul.",
-            ));
+            return Err(MatmulSetupError::InvalidConfig(Box::new(
+                "Specialization is unavailable for simple matmul.",
+            )));
         }?;
 
         Ok(resources)

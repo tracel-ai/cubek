@@ -76,7 +76,7 @@ impl FullLoadingStrategy for AsyncFullStridedLoading {
         let num_tasks_per_unit = comptime!(num_stage_lines / unit_count);
 
         let unit_position_base = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
-            .load_index(config.specialization_tensor_config)
+            .load_index(config.input_load_flow)
             * config.plane_dim
             + UNIT_POS_X;
 

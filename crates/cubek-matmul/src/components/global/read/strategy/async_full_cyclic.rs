@@ -28,12 +28,8 @@ pub struct AsyncFullCyclicLoading<T: TilingOrder> {
 }
 
 impl<TO: TilingOrder> LoadingValidation for AsyncFullCyclicLoading<TO> {
-    fn validate_with_config(
-        config: &GlobalReaderConfig,
-        dtypes: &MatmulElems,
-    ) -> Result<(), InvalidConfigError> {
-        let line_size =
-            ASYNC_COPY_WIDTH / dtypes.stage(config.stage_ident.into()).size_bits() as u32;
+    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
+        let line_size = ASYNC_COPY_WIDTH / config.smem_config.dtype.size_bits() as u32;
 
         if let ReaderMode::Strict = config.reader_mode {
             let num_stage_lines = config.smem_config.elements_per_stage() / line_size;
@@ -56,9 +52,9 @@ impl<TO: TilingOrder> LoadingValidation for AsyncFullCyclicLoading<TO> {
             return Err(Box::new("Tile size isn't divisible by copy line size"));
         }
 
-        validate_swizzle_atom_size(config.smem_config, config.stage_ident, dtypes)?;
+        validate_swizzle_atom_size(config.smem_config)?;
         validate_async_barrier()?;
-        validate_async_copy(dtypes, config)?;
+        validate_async_copy(&config.gmem_config.dtype, &config.smem_config.dtype)?;
         ContiguousTilingLayout::<TO>::check(config.smem_config)?;
 
         Ok(())
@@ -110,7 +106,7 @@ impl<TO: TilingOrder> FullLoadingStrategy for AsyncFullCyclicLoading<TO> {
         let jump_length = comptime!(total_units * line_size);
 
         let unit_id = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
-            .load_index(config.specialization_tensor_config)
+            .load_index(config.input_load_flow)
             * config.plane_dim
             + UNIT_POS_X;
         let unit_position_base = unit_id * line_size;

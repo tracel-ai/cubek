@@ -1,11 +1,13 @@
 use cubecl::prelude::*;
 
-use crate::definition::InvalidConfigError;
+use crate::{components::global::PlaneFlowConfig, definition::InvalidConfigError};
 
+#[derive(Debug)]
 /// Number of compute primitives required by some component, specified as either units or planes.
 pub enum CubeDimResource {
     Units(u32),
     Planes(u32),
+    Specialized(PlaneFlowConfig),
 }
 
 impl CubeDimResource {
@@ -25,6 +27,9 @@ impl CubeDimResource {
                 }
             }
             CubeDimResource::Planes(_) => Ok(self),
+            CubeDimResource::Specialized(plane_flow_config) => Ok(CubeDimResource::Planes(
+                plane_flow_config.counts.total_count(),
+            )),
         }
     }
 
@@ -37,6 +42,9 @@ impl CubeDimResource {
         match self {
             CubeDimResource::Units(_) => self.as_plane_resource(plane_dim)?.to_cube_dim(plane_dim),
             CubeDimResource::Planes(num_planes) => Ok(CubeDim::new_2d(plane_dim, num_planes)),
+            CubeDimResource::Specialized(_) => {
+                self.as_plane_resource(plane_dim)?.to_cube_dim(plane_dim)
+            }
         }
     }
 
@@ -49,6 +57,21 @@ impl CubeDimResource {
             Ok(num_planes)
         } else {
             unreachable!()
+        }
+    }
+
+    pub fn as_plane_flow_config(
+        self,
+        plane_dim: u32,
+    ) -> Result<PlaneFlowConfig, InvalidConfigError> {
+        match self {
+            CubeDimResource::Units(_) => self
+                .as_plane_resource(plane_dim)?
+                .as_plane_flow_config(plane_dim),
+            CubeDimResource::Planes(num_planes) => {
+                Ok(PlaneFlowConfig::new_unspecialized(num_planes))
+            }
+            CubeDimResource::Specialized(plane_flow_config) => Ok(plane_flow_config),
         }
     }
 }

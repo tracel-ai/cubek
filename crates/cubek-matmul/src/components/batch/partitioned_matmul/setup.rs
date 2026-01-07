@@ -8,7 +8,6 @@ use crate::components::batch::partitioned_matmul::matmul::matmul_entry;
 use crate::components::batch::partitioned_matmul::partition::GlobalPartitionMatmul;
 use crate::components::global::GlobalMatmulFamily;
 use crate::definition::CubeMappingLaunch;
-use crate::definition::InvalidConfigError;
 use crate::definition::MatmulLineSizes;
 use crate::definition::MatmulProblem;
 use crate::definition::TilingBlueprint;
@@ -78,8 +77,10 @@ impl<GMM: GlobalMatmulFamily, S: GlobalPartitionMatmul> BatchMatmulFamily
 
     fn cubedim_resource(
         blueprint: &Self::Blueprint,
-    ) -> Result<CubeDimResource, InvalidConfigError> {
-        GMM::cubedim_resource(blueprint)
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
+    ) -> Result<CubeDimResource, MatmulSetupError> {
+        GMM::cubedim_resource(blueprint, dtypes, line_sizes)
     }
 
     fn validate_blueprint<R: Runtime>(
