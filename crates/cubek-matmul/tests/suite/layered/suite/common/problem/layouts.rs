@@ -1,14 +1,14 @@
-// #[cfg(all(not(feature = "matmul_tests_layouts"),))]
-// pub mod default {
-//     use super::*;
-//     use cubek_matmul::definition::MatrixLayout;
+#[cfg(all(not(feature = "matmul_tests_layouts"),))]
+pub mod default {
+    use super::*;
+    use cubek_matmul::definition::MatrixLayout;
 
-//     pub fn layouts() -> (MatrixLayout, MatrixLayout) {
-//         (MatrixLayout::RowMajor, MatrixLayout::RowMajor)
-//     }
+    pub fn layouts() -> (MatrixLayout, MatrixLayout) {
+        (MatrixLayout::RowMajor, MatrixLayout::RowMajor)
+    }
 
-//     include!("problem_size.rs");
-// }
+    include!("problem_size.rs");
+}
 
 #[cfg(feature = "matmul_tests_layouts")]
 mod rr {
