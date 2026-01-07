@@ -19,9 +19,7 @@ use super::{LoadingJob, LoadingValidation};
 pub struct AsyncFullTmaLoading {}
 
 impl LoadingValidation for AsyncFullTmaLoading {
-    fn validate_with_config(
-        config: &GlobalReaderConfig,
-    ) -> Result<(), InvalidConfigError> {
+    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
         TmaTilingLayout::check(config.smem_config)?;
         validate_async_barrier()?;
         validate_tma(&config.smem_config, &config.gmem_config.dtype)?;

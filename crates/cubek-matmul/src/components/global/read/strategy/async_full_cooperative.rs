@@ -25,9 +25,7 @@ use super::LoadingValidation;
 pub struct AsyncFullCooperativeLoading {}
 
 impl LoadingValidation for AsyncFullCooperativeLoading {
-    fn validate_with_config(
-        config: &GlobalReaderConfig,
-    ) -> Result<(), InvalidConfigError> {
+    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
         StridedTilingLayout::check(config.smem_config)?;
         validate_async_barrier()?;
         validate_noswizzle(config.smem_config)?;

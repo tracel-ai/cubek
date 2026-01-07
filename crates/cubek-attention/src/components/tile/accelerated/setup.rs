@@ -59,9 +59,7 @@ impl TileAttentionFamily for BlackboxAcceleratedTileAttention {
         Ok(CubeDimResource::Planes(1))
     }
 
-    fn expand_config(
-        blueprint: &AttentionBlueprint,
-    ) -> Result<Self::Config, AttentionSetupError> {
+    fn expand_config(blueprint: &AttentionBlueprint) -> Result<Self::Config, AttentionSetupError> {
         validate(
             BlackboxAcceleratedAttentionMatmulConfig {
                 shared: SharedTileAttentionConfig {

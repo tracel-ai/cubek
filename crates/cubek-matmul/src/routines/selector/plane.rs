@@ -1,7 +1,7 @@
 use cubecl::features::MmaConfig;
 use cubecl::{Runtime, client::ComputeClient, ir::StorageType};
 
-use crate::components::global::{LoadFlows, InputLoadFlow};
+use crate::components::global::{InputLoadFlow, LoadFlows};
 use crate::components::stage::PartitionBuffering;
 use crate::components::stage::SwizzleMode;
 use crate::components::tile::TileMatmulFamily;

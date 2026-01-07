@@ -21,9 +21,7 @@ pub struct SyncFullCyclicLoading<T: TilingOrder> {
 }
 
 impl<TO: TilingOrder> LoadingValidation for SyncFullCyclicLoading<TO> {
-    fn validate_with_config(
-        config: &GlobalReaderConfig,
-    ) -> Result<(), InvalidConfigError> {
+    fn validate_with_config(config: &GlobalReaderConfig) -> Result<(), InvalidConfigError> {
         if let ReaderMode::Strict = config.reader_mode {
             let line_size = config.gmem_config.line_size;
 

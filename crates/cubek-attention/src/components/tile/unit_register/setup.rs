@@ -52,9 +52,7 @@ impl TileAttentionFamily for UnitRegisterTileAttention {
         Ok(CubeDimResource::Units(1))
     }
 
-    fn expand_config(
-        blueprint: &AttentionBlueprint,
-    ) -> Result<Self::Config, AttentionSetupError> {
+    fn expand_config(blueprint: &AttentionBlueprint) -> Result<Self::Config, AttentionSetupError> {
         Ok(UnitTileAttentionConfig {
             shared: SharedTileAttentionConfig {
                 plane_dim: blueprint.plane_dim,

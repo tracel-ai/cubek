@@ -3,7 +3,10 @@ use cubecl::prelude::*;
 
 use crate::{
     components::global::simple::AttentionWriter,
-    definition::{AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError, attention_types::*},
+    definition::{
+        AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError,
+        attention_types::*,
+    },
 };
 use cubecl::std::{CubeOption, tensor::r#virtual::VirtualTensor};
 
