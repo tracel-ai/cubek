@@ -53,6 +53,9 @@ mod unit {
     }
 }
 
+// Tests for Inferred blueprint strategy alignment with half-precision types
+mod inferred;
+
 mod blackbox_accelerated {
     use cubek_attention::{
         definition::{AttentionBlueprint, AttentionTileSize},

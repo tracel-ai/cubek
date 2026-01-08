@@ -82,11 +82,23 @@ fn blueprint(
     match strategy {
         BlueprintStrategy::Forced(attention_blueprint) => validate(problem, attention_blueprint),
         BlueprintStrategy::Inferred(_) => {
+            // Tile dimensions must be at least as large as the line sizes for alignment.
+            // Query/Key use head_dim, Value/Out use val_dim.
+            // For f16/bf16, line_size is typically 8; for f32, it's 4.
+            let min_head_dim = launch_settings
+                .line_sizes
+                .query
+                .max(launch_settings.line_sizes.key) as u32;
+            let min_val_dim = launch_settings
+                .line_sizes
+                .value
+                .max(launch_settings.line_sizes.out) as u32;
+
             let tile_size = AttentionTileSize {
                 seq_q: 4,
-                head_dim: 4,
+                head_dim: min_head_dim.max(4),
                 seq_kv: 4,
-                val_dim: 4,
+                val_dim: min_val_dim.max(4),
             };
 
             let partition_head_dim = problem.dims.head_dim as u32 / tile_size.head_dim;
