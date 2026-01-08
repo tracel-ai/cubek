@@ -23,8 +23,8 @@ impl<Out: Numeric> Writer<Out> {
     pub fn new<P: ReducePrecision>(
         input: &VirtualTensor<P::EI>,
         output: &mut VirtualTensor<Out, ReadWrite>,
-        reduce_axis: u32,
-        write_index: u32,
+        reduce_axis: usize,
+        write_index: usize,
         #[comptime] line_mode: LineMode,
     ) -> Writer<Out> {
         match line_mode {
@@ -42,7 +42,7 @@ impl<Out: Numeric> Writer<Out> {
 
     pub fn write<P: ReducePrecision, I: ReduceInstruction<P>>(
         &mut self,
-        local_index: u32,
+        local_index: usize,
         accumulator: I::AccumulatorItem,
         inst: &I,
     ) {
@@ -66,7 +66,7 @@ impl<Out: Numeric> Writer<Out> {
         }
     }
 
-    pub fn write_count(&self) -> comptime_type!(u32) {
+    pub fn write_count(&self) -> comptime_type!(LineSize) {
         match self {
             Writer::Parallel(writer) => writer.write_count(),
             Writer::Perpendicular(writer) => writer.write_count(),
@@ -78,8 +78,8 @@ impl<Out: Numeric> Writer<Out> {
 pub struct ParallelWriter<Out: Numeric> {
     output: View<Line<Out>, Coords1d, ReadWrite>,
     buffer: Line<Out>,
-    axis_size: u32,
-    write_index: u32,
+    axis_size: usize,
+    write_index: usize,
 }
 
 #[cube]
@@ -87,8 +87,8 @@ impl<Out: Numeric> ParallelWriter<Out> {
     pub fn new<P: ReducePrecision>(
         input: &VirtualTensor<P::EI>,
         output: &mut VirtualTensor<Out, ReadWrite>,
-        reduce_axis: u32,
-        write_index: u32,
+        reduce_axis: usize,
+        write_index: usize,
     ) -> ParallelWriter<Out> {
         ParallelWriter::<Out> {
             output: output.view_mut(PlainLayout::new(output.len())),
@@ -100,7 +100,7 @@ impl<Out: Numeric> ParallelWriter<Out> {
 
     pub fn write<P: ReducePrecision, I: ReduceInstruction<P>>(
         &mut self,
-        local_index: u32,
+        local_index: usize,
         accumulator: I::AccumulatorItem,
         inst: &I,
     ) {
@@ -112,7 +112,7 @@ impl<Out: Numeric> ParallelWriter<Out> {
         self.output.write(self.write_index, self.buffer)
     }
 
-    pub fn write_count(&self) -> comptime_type!(u32) {
+    pub fn write_count(&self) -> comptime_type!(LineSize) {
         self.buffer.line_size()
     }
 
@@ -124,12 +124,12 @@ impl<Out: Numeric> ParallelWriter<Out> {
 #[derive(CubeType)]
 pub struct PerpendicularWriter<Out: Numeric> {
     output: View<Line<Out>, Coords1d, ReadWrite>,
-    axis_size: u32,
+    axis_size: usize,
     #[cube(comptime)]
-    input_line_size: u32,
+    input_line_size: LineSize,
     #[cube(comptime)]
-    output_line_size: u32,
-    write_index: u32,
+    output_line_size: LineSize,
+    write_index: usize,
 }
 
 #[cube]
@@ -137,8 +137,8 @@ impl<Out: Numeric> PerpendicularWriter<Out> {
     pub fn new<P: ReducePrecision>(
         input: &VirtualTensor<P::EI>,
         output: &mut VirtualTensor<Out, ReadWrite>,
-        reduce_axis: u32,
-        write_index: u32,
+        reduce_axis: usize,
+        write_index: usize,
     ) -> PerpendicularWriter<Out> {
         let input_line_size = input.line_size();
         let output_line_size = output.line_size();
@@ -154,7 +154,7 @@ impl<Out: Numeric> PerpendicularWriter<Out> {
 
     pub fn write<P: ReducePrecision, I: ReduceInstruction<P>>(
         &mut self,
-        _local_index: u32,
+        _local_index: usize,
         accumulator: I::AccumulatorItem,
         inst: &I,
     ) {
@@ -184,8 +184,8 @@ impl<Out: Numeric> PerpendicularWriter<Out> {
         // Nothing to do.
     }
 
-    pub fn write_count(&self) -> comptime_type!(u32) {
-        1u32
+    pub fn write_count(&self) -> comptime_type!(LineSize) {
+        1
     }
 
     pub fn commit_required(&self) -> comptime_type!(bool) {

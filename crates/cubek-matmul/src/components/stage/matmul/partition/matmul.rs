@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use super::fragments::{Accumulators, RhsTile, RhsTileExpand};
-use crate::components::global::PlaneRoleConfig;
+use crate::components::global::PlaneFlowConfig;
 use crate::components::stage::Stage;
 use crate::components::stage::StageEvent;
 use crate::components::stage::matmul::scheduler::PartitionScheduler;
@@ -18,7 +18,7 @@ pub struct SharedPartitionMatmulConfig<TC: TileConfig> {
     pub tile_config: TC,
     pub partition_size: PartitionSize,
     pub partition_buffering: PartitionBuffering,
-    pub plane_role_config: PlaneRoleConfig,
+    pub plane_flow_config: PlaneFlowConfig,
     pub plane_dim: u32,
     pub stage_size: StageSize,
     pub partition_schedule_scheme: PartitionSchedulerScheme,
@@ -33,7 +33,7 @@ impl<TC: TileConfig> SharedPartitionMatmulConfig<TC> {
         tile_config: TC,
         partition_size: PartitionSize,
         partition_buffering: PartitionBuffering,
-        plane_role_config: PlaneRoleConfig,
+        plane_flow_config: PlaneFlowConfig,
         plane_dim: u32,
         stage_size: StageSize,
         partition_schedule_scheme: PartitionSchedulerScheme,
@@ -45,7 +45,7 @@ impl<TC: TileConfig> SharedPartitionMatmulConfig<TC> {
             tile_config,
             partition_size,
             partition_buffering,
-            plane_role_config,
+            plane_flow_config,
             plane_dim,
             stage_size,
             partition_schedule_scheme,
@@ -134,7 +134,7 @@ where
         let mut lhs = Sequence::new();
 
         #[unroll]
-        for _ in 0..comptime!(shared_config.partition_size.m()) {
+        for _ in 0..shared_config.partition_size.m() {
             lhs.push(TM::allocate_lhs(
                 shared_config.lhs_smem_config.matrix_layout,
                 shared_config.tile_config,
@@ -185,8 +185,8 @@ where
     ) {
         acc.load::<StageAcc>(
             stage,
-            shared_config.partition_size.m(),
-            shared_config.partition_size.n(),
+            shared_config.partition_size.m() as usize,
+            shared_config.partition_size.n() as usize,
             shared_config.tile_config,
         );
     }
@@ -207,24 +207,24 @@ where
     ) {
         SEL::on_event(&mut listener, StageEvent::Begin);
 
-        let m_iterations = shared_config.partition_size.m();
-        let n_iterations = shared_config.partition_size.n();
-        let k_iterations = shared_config.partition_size.k();
+        let m_iterations = shared_config.partition_size.m() as usize;
+        let n_iterations = shared_config.partition_size.n() as usize;
+        let k_iterations = shared_config.partition_size.k() as usize;
 
-        let mut lhs_load_counter = comptime![0];
-        let mut rhs_load_counter = comptime![0];
-        let mut execute_counter = comptime![0];
-        let lhs_load_total = comptime!(m_iterations * k_iterations);
-        let rhs_load_total = comptime!(n_iterations * k_iterations);
-        let execute_total = comptime!(m_iterations * n_iterations * k_iterations);
+        let mut lhs_load_counter = 0.comptime();
+        let mut rhs_load_counter = 0.comptime();
+        let mut execute_counter = 0.comptime();
+        let lhs_load_total = (m_iterations * k_iterations) as u32;
+        let rhs_load_total = (n_iterations * k_iterations) as u32;
+        let execute_total = (m_iterations * n_iterations * k_iterations) as u32;
 
         #[unroll]
         for k_iter in 0..k_iterations {
-            let k_load_iter = partition_scheduler.map_k(k_iter);
+            let k_load_iter = partition_scheduler.map_k(k_iter as u32);
 
             #[unroll]
             for m_iter in 0..m_iterations {
-                let m_load_iter = partition_scheduler.map_m(m_iter);
+                let m_load_iter = partition_scheduler.map_m(m_iter as u32);
 
                 let tile_lhs = StageLhs::tile(lhs_stage, (m_load_iter, k_load_iter));
                 TM::load_lhs(
@@ -244,7 +244,7 @@ where
 
             #[unroll]
             for n_iter in 0..n_iterations {
-                let n_load_iter = partition_scheduler.map_n(n_iter);
+                let n_load_iter = partition_scheduler.map_n(n_iter as u32);
 
                 let rhs_tile_next = StageRhs::tile(rhs_stage, (k_load_iter, n_load_iter));
                 TM::load_rhs(&rhs_tile_next, rhs_fragment, shared_config.tile_config);
@@ -262,7 +262,7 @@ where
                     let accumulator =
                         Accumulators::<MP, TM>::get_at_mut(acc, m_iter, n_iter, n_iterations);
                     TM::execute(
-                        lhs_fragment.index(m_iter),
+                        &lhs_fragment[m_iter],
                         rhs_fragment,
                         accumulator,
                         shared_config.tile_config,
@@ -301,24 +301,24 @@ where
     ) {
         SEL::on_event(&mut listener, StageEvent::Begin);
 
-        let m_iterations = shared_config.partition_size.m();
-        let n_iterations = shared_config.partition_size.n();
-        let k_iterations = shared_config.partition_size.k();
+        let m_iterations = shared_config.partition_size.m() as usize;
+        let n_iterations = shared_config.partition_size.n() as usize;
+        let k_iterations = shared_config.partition_size.k() as usize;
 
-        let mut lhs_load_counter = comptime![0];
-        let mut rhs_load_counter = comptime![0];
-        let mut execute_counter = comptime![0];
-        let lhs_load_total = comptime!(m_iterations * k_iterations);
-        let rhs_load_total = comptime!(n_iterations * k_iterations);
-        let execute_total = comptime!(m_iterations * n_iterations * k_iterations);
+        let mut lhs_load_counter = 0.comptime();
+        let mut rhs_load_counter = 0.comptime();
+        let mut execute_counter = 0.comptime();
+        let lhs_load_total = (m_iterations * k_iterations) as u32;
+        let rhs_load_total = (n_iterations * k_iterations) as u32;
+        let execute_total = (m_iterations * n_iterations * k_iterations) as u32;
 
         #[unroll]
         for k_iter in 0..k_iterations {
-            let k_load_iter = partition_scheduler.map_k(k_iter);
+            let k_load_iter = partition_scheduler.map_k(k_iter as u32);
 
             #[unroll]
             for m_iter in 0..m_iterations {
-                let m_load_iter = partition_scheduler.map_m(m_iter);
+                let m_load_iter = partition_scheduler.map_m(m_iter as u32);
 
                 let tile_lhs = StageLhs::tile(lhs_stage, (m_load_iter, k_load_iter));
                 TM::load_lhs(
@@ -336,8 +336,8 @@ where
                 comptime!(lhs_load_counter += 1);
             }
 
-            let mut n_iter = comptime![0u32];
-            let n_load_iter = partition_scheduler.map_n(n_iter);
+            let mut n_iter = 0usize.comptime();
+            let n_load_iter = partition_scheduler.map_n(n_iter as u32);
 
             let rhs_tile_first = StageRhs::tile(rhs_stage, (k_load_iter, n_load_iter));
             TM::load_rhs(
@@ -357,13 +357,13 @@ where
             #[unroll]
             #[allow(clippy::explicit_counter_loop)]
             for _ in 1..n_iterations {
-                let (current, next) = if comptime! {n_iter % 2 == 0} {
+                let (current, next) = if comptime! {n_iter.is_multiple_of(2)} {
                     (&mut rhs_fragments.0, &mut rhs_fragments.1)
                 } else {
                     (&mut rhs_fragments.1, &mut rhs_fragments.0)
                 };
 
-                let n_load_iter = partition_scheduler.map_n(comptime![n_iter + 1]);
+                let n_load_iter = partition_scheduler.map_n(comptime![n_iter as u32 + 1]);
                 let rhs_tile_next = StageRhs::tile(rhs_stage, (k_load_iter, n_load_iter));
                 TM::load_rhs(&rhs_tile_next, next, shared_config.tile_config);
                 SEL::on_event(
@@ -381,7 +381,7 @@ where
                         Accumulators::<MP, TM>::get_at_mut(acc, m_iter, n_iter, n_iterations);
 
                     TM::execute(
-                        lhs_fragment.index(m_iter),
+                        &lhs_fragment[m_iter],
                         current,
                         accumulator,
                         shared_config.tile_config,
@@ -399,7 +399,7 @@ where
                 comptime![n_iter += 1];
             }
 
-            let last = if comptime! {n_iter % 2 == 0} {
+            let last = if comptime! {n_iter.is_multiple_of(2)} {
                 &mut rhs_fragments.0
             } else {
                 &mut rhs_fragments.1
@@ -410,7 +410,7 @@ where
                 let accumulator =
                     Accumulators::<MP, TM>::get_at_mut(acc, m_iter, n_iter, n_iterations);
                 TM::execute(
-                    lhs_fragment.index(m_iter),
+                    &lhs_fragment[m_iter],
                     last,
                     accumulator,
                     shared_config.tile_config,

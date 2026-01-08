@@ -17,7 +17,7 @@ impl Reducer for NaiveReducer {
         #[comptime] config: FC,
     ) {
         let num_vals_in_plane = config.num_rows_per_unit() * config.plane_dim();
-        let mut smem = SharedMemory::<E>::new(num_vals_in_plane * config.num_planes());
+        let mut smem = SharedMemory::<E>::new((num_vals_in_plane * config.num_planes()) as usize);
 
         let local_vals = RO::reduce_local::<F>(data);
 
@@ -25,11 +25,11 @@ impl Reducer for NaiveReducer {
         let unit_offset = UNIT_POS_X;
 
         #[unroll]
-        for r in 0..config.num_rows_per_unit() {
-            let row_offset = r * config.plane_dim();
+        for r in 0..config.num_rows_per_unit() as usize {
+            let row_offset = r as u32 * config.plane_dim();
             let offset = plane_offset + row_offset + unit_offset;
 
-            smem[offset] = local_vals.index(r);
+            smem[offset as usize] = local_vals.index(r);
         }
 
         sync_cube();
@@ -37,16 +37,16 @@ impl Reducer for NaiveReducer {
         let num_units_per_row = data.num_units_per_row();
 
         #[unroll]
-        for r in 0..config.num_rows_per_unit() {
+        for r in 0..config.num_rows_per_unit() as usize {
             let mut val = vals.index(r);
 
-            let row_offset = r * config.plane_dim();
+            let row_offset = r as u32 * config.plane_dim();
 
             for c in 0..num_units_per_row {
                 let unit_offset = (UNIT_POS_X / num_units_per_row) * num_units_per_row;
                 let offset = plane_offset + row_offset + unit_offset;
 
-                val = RO::reduce_step_scalar(val, smem[offset + c]);
+                val = RO::reduce_step_scalar(val, smem[(offset + c) as usize]);
             }
 
             vals.replace_at(r, val);

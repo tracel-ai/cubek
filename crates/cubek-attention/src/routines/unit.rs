@@ -1,5 +1,5 @@
 use cubecl::CubeDim;
-use cubek_matmul::components::ComputeResources;
+use cubek_matmul::components::CubeDimResource;
 use cubek_matmul::components::{global::PartitionedStageFamily, stage::StridedStageFamily};
 
 use crate::components::stage::unit::UnitPartitionStageAttentionFamily;
@@ -49,8 +49,8 @@ impl Routine for UnitRoutine {
         );
 
         let compute_resources = match Self::TileAttention::computation_resources()? {
-            ComputeResources::Units(units) => {
-                ComputeResources::Units(units * blueprint.tiling_scheme.stage_size.seq_q)
+            CubeDimResource::Units(units) => {
+                CubeDimResource::Units(units * blueprint.tiling_scheme.stage_size.seq_q)
             }
             _ => {
                 return Err(AttentionSetupError::InvalidConfig(Box::new(

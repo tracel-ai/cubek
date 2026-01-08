@@ -3,13 +3,16 @@ use std::fmt::Display;
 use crate::{
     components::stage::{PartitionBuffering, SwizzleMode},
     definition::{
-        CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulElems,
-        MatmulGlobalElems, MatmulKind, MatmulLineSizes, MatmulProblem, MatrixLayout, SmAllocation,
-        SwizzleBlueprint, TilingBlueprint, TilingScheme,
+        CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulElems, MatmulGlobalElems,
+        MatmulKind, MatmulLineSizes, MatmulProblem, MatrixLayout, SmAllocation, SwizzleModes,
+        TilingBlueprint, TilingScheme,
     },
-    routines::LaunchInfo,
 };
-use cubecl::{Runtime, client::ComputeClient, ir::StorageType};
+use cubecl::{
+    Runtime,
+    client::ComputeClient,
+    ir::{LineSize, StorageType},
+};
 
 #[derive(Default, Clone, Copy, Debug)]
 pub enum TileSizeSelection {
@@ -60,11 +63,11 @@ pub fn infer_blueprint_unit<R: Runtime>(
     line_sizes: &MatmulLineSizes,
     options: UnitTilingBlueprintOptions,
     global_elems: &MatmulGlobalElems,
-) -> LaunchInfo<TilingBlueprint> {
+) -> (TilingBlueprint, MatmulElems) {
     let kind: MatmulKind = problem.into();
     let num_sms = client.properties().hardware.num_streaming_multiprocessors;
-    let min_tile_size = u8::max(line_sizes.lhs, line_sizes.rhs);
-    let min_tile_size = u8::max(line_sizes.out, min_tile_size) as u32;
+    let min_tile_size = usize::max(line_sizes.lhs, line_sizes.rhs);
+    let min_tile_size = usize::max(line_sizes.out, min_tile_size) as u32;
     let tile_size = u32::max(min_tile_size, 4);
     let dtypes = MatmulElems::from_globals(global_elems);
 
@@ -151,7 +154,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
         ),
     };
 
-    LaunchInfo { blueprint, dtypes }
+    (blueprint, dtypes)
 }
 
 /// (M, K) @ (K, N) → (M, N), with M, K, N > 1
@@ -215,7 +218,7 @@ fn general_unit_selector(
             num_plane,
         },
         num_sms,
-        GlobalOrderBlueprint::SwizzleRow {
+        GlobalOrderStrategy::SwizzleRow {
             m: problem.m as u32,
             w: 4,
         },
@@ -254,7 +257,7 @@ fn matvec_unit_selector(
             n: 2,
         },
         num_sms,
-        GlobalOrderBlueprint::Default,
+        GlobalOrderStrategy::Default,
         StageScaling::Disabled,
         options.swizzle,
         problem,
@@ -287,7 +290,7 @@ fn vecmat_unit_selector(
             n: plane_dim / 2,
         },
         num_sms,
-        GlobalOrderBlueprint::Default,
+        GlobalOrderStrategy::Default,
         StageScaling::Disabled,
         options.swizzle,
         problem,
@@ -326,7 +329,7 @@ fn scalarvec_unit_selector(
             n: plane_dim / 2,
         },
         num_sms,
-        GlobalOrderBlueprint::Default,
+        GlobalOrderStrategy::Default,
         StageScaling::Disabled,
         options.swizzle,
         problem,
@@ -359,7 +362,7 @@ fn vecscalar_unit_selector(
             n: 2,
         },
         num_sms,
-        GlobalOrderBlueprint::Default,
+        GlobalOrderStrategy::Default,
         StageScaling::Disabled,
         options.swizzle,
         problem,
@@ -395,7 +398,7 @@ fn inner_product_unit_selector(
         plane_dim,
         StageSelection::Fixed { m: plane_dim, n: 1 }, // TODO: most planes does nothing.
         num_sms,
-        GlobalOrderBlueprint::Default,
+        GlobalOrderStrategy::Default,
         StageScaling::Disabled,
         options.swizzle,
         problem,
@@ -425,7 +428,7 @@ fn outer_product_unit_selector(
         plane_dim,
         StageSelection::Fixed { m: 8, n: 8 },
         num_sms,
-        GlobalOrderBlueprint::Default,
+        GlobalOrderStrategy::Default,
         StageScaling::Disabled,
         options.swizzle,
         problem,
@@ -458,7 +461,7 @@ fn scalar_product_unit_selector(
             num_plane: 1,
         },
         num_sms,
-        GlobalOrderBlueprint::Default,
+        GlobalOrderStrategy::Default,
         StageScaling::Disabled,
         options.swizzle,
         problem,
@@ -495,7 +498,7 @@ fn selection(
     plane_dim: u32,
     stage: StageSelection,
     num_sms: Option<u32>,
-    global_order_config: GlobalOrderBlueprint,
+    global_order_config: GlobalOrderStrategy,
     stage_scaling: StageScaling,
     swizzle: bool,
     problem: &MatmulProblem,
@@ -516,37 +519,37 @@ fn selection(
         .build()
         .unwrap();
 
-    let cube_count_plan = match num_sms {
-        Some(num_sms) => CubeCountPlanBlueprint::Sm {
+    let cube_count_strategy = match num_sms {
+        Some(num_sms) => CubeCountStrategy::Sm {
             num_sms,
             sm_usage: SmAllocation::Exact,
             cubes_first: false,
         },
-        None => CubeCountPlanBlueprint::Flattened,
+        None => CubeCountStrategy::Flattened,
     };
 
     let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
-        .global_order(global_order_config)
-        .cube_count_plan(cube_count_plan)
+        .global_order_strategy(global_order_config)
+        .cube_count_strategy(cube_count_strategy)
         .build();
 
-    let mut builder = TilingBlueprint::builder(tiling_scheme, plane_dim)
+    let mut builder = TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
         .partition_buffering(buffering)
-        .hypercube_config(hypercube);
+        .hypercube_blueprint(hypercube);
 
     if swizzle {
         let lhs_swizzle_dim = match problem.lhs_layout {
-            MatrixLayout::RowMajor => tiling_scheme.elements_per_stage_along_k(),
-            MatrixLayout::ColMajor => tiling_scheme.elements_per_stage_along_m(),
+            MatrixLayout::RowMajor => tiling_scheme.elements_per_stage_along_k() as usize,
+            MatrixLayout::ColMajor => tiling_scheme.elements_per_stage_along_m() as usize,
         };
         let rhs_swizzle_dim = match problem.rhs_layout {
-            MatrixLayout::RowMajor => tiling_scheme.elements_per_stage_along_n(),
-            MatrixLayout::ColMajor => tiling_scheme.elements_per_stage_along_k(),
+            MatrixLayout::RowMajor => tiling_scheme.elements_per_stage_along_n() as usize,
+            MatrixLayout::ColMajor => tiling_scheme.elements_per_stage_along_k() as usize,
         };
 
-        builder = builder.shared_swizzle(SwizzleBlueprint {
-            lhs: select_swizzle(lhs_swizzle_dim, *dtypes.lhs_stage, line_sizes.lhs),
-            rhs: select_swizzle(rhs_swizzle_dim, *dtypes.rhs_stage, line_sizes.rhs),
+        builder = builder.shared_swizzle(SwizzleModes {
+            lhs: select_swizzle(lhs_swizzle_dim, dtypes.lhs_stage, line_sizes.lhs),
+            rhs: select_swizzle(rhs_swizzle_dim, dtypes.rhs_stage, line_sizes.rhs),
             ..Default::default()
         })
     }
@@ -557,12 +560,12 @@ fn selection(
 /// All modes currently use atom size 16
 const SWIZZLE_ATOM: usize = 16;
 
-fn select_swizzle(swizzle_dim: u32, elem: StorageType, line_size: u8) -> SwizzleMode {
+fn select_swizzle(swizzle_dim: usize, elem: StorageType, line_size: LineSize) -> SwizzleMode {
     // Can't swizzle if line size > swizzle atom
-    if elem.size() * line_size as usize > SWIZZLE_ATOM {
+    if elem.size() * line_size > SWIZZLE_ATOM {
         return SwizzleMode::None;
     }
-    let swizzle_dim_bytes = swizzle_dim as usize * elem.size();
+    let swizzle_dim_bytes = swizzle_dim * elem.size();
     if !swizzle_dim_bytes.is_power_of_two() {
         return SwizzleMode::None;
     }

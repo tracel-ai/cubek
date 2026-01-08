@@ -1,5 +1,5 @@
-use crate::components::global::read::validate_async_barrier;
-use crate::components::global::{GlobalReaderConfig, RoleRule};
+use crate::components::global::read::{validate_async_barrier, validate_async_copy_with_problem};
+use crate::components::global::{GlobalReaderConfig, PlaneFlowPartition};
 use crate::components::global::{
     SharedGlobalMatmulConfig,
     read::{AsyncPartialLoadingStrategy, PartialLoadingStrategy, async_copy::ASYNC_COPY_WIDTH},
@@ -18,9 +18,9 @@ use crate::components::{
 use crate::definition::{
     InvalidConfigError, MatmulElems, MatmulPrecision, MatmulProblem, StageIdent,
 };
-use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Layout, LayoutExpand};
+use cubecl::{ir::DeviceProperties, prelude::barrier::Barrier};
 
 use super::{LoadingJob, LoadingValidation};
 
@@ -30,14 +30,11 @@ use super::{LoadingJob, LoadingValidation};
 pub struct AsyncPartialStridedLoading {}
 
 impl LoadingValidation for AsyncPartialStridedLoading {
-    fn check<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
+    fn validate_with_config(
+        device_props: &DeviceProperties,
         config: &GlobalReaderConfig,
-        dtypes: &MatmulElems,
     ) -> Result<(), InvalidConfigError> {
-        let line_size =
-            ASYNC_COPY_WIDTH / dtypes.stage(config.stage_ident.into()).size_bits() as u32;
+        let line_size = ASYNC_COPY_WIDTH / config.smem_config.dtype.size_bits() as u32;
 
         // Needs separate check because copy size may be larger than global line size
         if !config
@@ -58,12 +55,24 @@ impl LoadingValidation for AsyncPartialStridedLoading {
             )));
         }
 
-        validate_swizzle_atom_size(config.smem_config, config.stage_ident, dtypes)?;
-        validate_async_barrier(client)?;
-        validate_async_copy(client, problem, dtypes, config)?;
+        validate_swizzle_atom_size(config.smem_config)?;
+        validate_async_barrier(device_props)?;
+        validate_async_copy(
+            device_props,
+            &config.gmem_config.dtype,
+            &config.smem_config.dtype,
+        )?;
         StridedTilingLayout::check(config.smem_config)?;
 
         Ok(())
+    }
+
+    fn validate_with_problem(
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        ident: StageIdent,
+    ) -> Result<(), InvalidConfigError> {
+        validate_async_copy_with_problem(problem, dtypes, ident)
     }
 }
 
@@ -71,7 +80,7 @@ impl LoadMaxRoundPlaneCount for AsyncPartialStridedLoading {
     fn max_round_plane_count(
         elements_per_tile: u32,
         tiles_per_stage: u32,
-        _line_size: u8,
+        _line_size: LineSize,
         plane_dim: u32,
         dtype: StorageType,
     ) -> u32 {
@@ -91,18 +100,18 @@ impl PartialLoadingStrategy for AsyncPartialStridedLoading {
 
     fn new_job<EG: Numeric, ES: Numeric>(
         #[comptime] stage_index: u32,
-        #[comptime] _line_size: u32,
+        #[comptime] _line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, ES> {
-        let type_size = ES::type_size_bits();
-        let line_size = comptime![ASYNC_COPY_WIDTH / type_size];
+        let type_size = ES::type_size_bits().comptime();
+        let line_size = ASYNC_COPY_WIDTH / type_size as u32;
 
         let num_stage_lines = config.smem_config.elements_per_stage() / line_size;
         let unit_count = config.loading_planes_count() * config.plane_dim;
-        let num_tasks_per_unit = comptime!(num_stage_lines / unit_count);
+        let num_tasks_per_unit = num_stage_lines / unit_count;
 
-        let unit_position_base = RoleRule::new(config.plane_role_config.rule)
-            .load_index(config.specialization_tensor_config)
+        let unit_position_base = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
+            .load_index(config.input_load_flow)
             * config.plane_dim
             + UNIT_POS_X;
 
@@ -149,7 +158,7 @@ impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, StridedTilingLayout, AsyncCopy
         let unit_position = this.unit_position_base + task_id * this.unit_count;
         let unit_position_abs = unit_position * this.copy_line_size;
 
-        let layout = FullStageLayout::new(comptime![config.smem_config]);
+        let layout = FullStageLayout::new(config.smem_config);
         let view = global_iter.view();
 
         let pos = layout.to_source_pos(unit_position_abs);
@@ -165,7 +174,7 @@ impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, StridedTilingLayout, AsyncCopy
             _ => pos,
         };
 
-        let stage_offset = unit_position_abs / stage.smem.line_size();
+        let stage_offset = unit_position_abs / stage.smem.line_size() as u32;
 
         async_copy_from(
             view,
@@ -185,8 +194,7 @@ impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, StridedTilingLayout, AsyncCopy
 #[cube]
 impl AsyncPartialLoadingStrategy for AsyncPartialStridedLoading {
     fn arrival_count<S: StageConfig>(#[comptime] config: SharedGlobalMatmulConfig<S>) -> u32 {
-        let total_load_units =
-            config.plane_role_config().plane_roles.load_only * config.plane_dim();
+        let total_load_units = config.plane_flow_config().counts.load_only * config.plane_dim();
         total_load_units.runtime()
     }
 
@@ -201,7 +209,7 @@ impl AsyncPartialLoadingStrategy for AsyncPartialStridedLoading {
     }
 
     fn is_elected<S: StageConfig>(#[comptime] config: SharedGlobalMatmulConfig<S>) -> bool {
-        let role_rule = RoleRule::new(config.plane_role_config().rule);
+        let role_rule = PlaneFlowPartition::new(config.plane_flow_config().partition_rule);
         role_rule.is_load_plane()
     }
 }

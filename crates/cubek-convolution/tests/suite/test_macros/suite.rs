@@ -1,14 +1,15 @@
 use crate::suite::convolution_test_launcher::test_convolution_algorithm;
 use crate::suite::test_utils::TestPrecision;
-use cubecl::Runtime;
 use cubecl::frontend::CubePrimitive;
+use cubecl::{Runtime, TestRuntime};
 use cubek_convolution::{
     components::{ConvolutionOperation, ConvolutionProblem, Dimensionality},
     forward::args::{ConcreteInputsFactory, ConcreteOutputFactory},
 };
 use cubek_convolution::{forward::args::ConcreteArgs, kernels::forward::algorithm::Algorithm};
+use cubek_matmul::components::stage::PartitionBuffering;
 use cubek_matmul::definition::{
-    MatmulElemType, MatmulElems, MatmulGlobalElems, MatrixLayout, TilingBlueprint,
+    MatmulElems, MatmulGlobalElems, MatrixLayout, SwizzleModes, TilingBlueprint, TilingScheme,
 };
 use cubek_matmul::launch::{InputArg, OutputArg};
 
@@ -21,13 +22,16 @@ pub struct ConvolutionSize {
     pub out_c: usize,
 }
 
-pub fn test_algo<A: Algorithm, P: TestPrecision, R: Runtime>(
-    blueprint: TilingBlueprint,
+pub fn test_algo<A: Algorithm, P: TestPrecision>(
+    tiling_scheme: TilingScheme,
+    swizzle: SwizzleModes,
+    partition_buffering: PartitionBuffering,
     convolution_size: ConvolutionSize,
 ) where
     A::Args: ConcreteArgs,
 {
-    let client = R::client(&Default::default());
+    let client = TestRuntime::client(&Default::default());
+    let plane_dim = client.properties().hardware.plane_size_max;
 
     // TODO: Automate more params
     let batches = 2;
@@ -51,19 +55,29 @@ pub fn test_algo<A: Algorithm, P: TestPrecision, R: Runtime>(
         convolution_size.w,
     );
 
-    let elem_type = MatmulElemType {
-        dtype: P::EG::as_type_native_unchecked(),
-        quantized: false,
-    };
+    let elem_type = P::EG::as_type_native_unchecked();
+
+    let lhs_layout = MatrixLayout::RowMajor;
+    let rhs_layout = MatrixLayout::ColMajor;
+
+    let m = batches * out_h * out_w;
+    let k = kernel_size.iter().product::<u32>() as usize * convolution_size.c;
+    let n = convolution_size.out_c;
+
+    let lhs_shape = vec![m, k];
+    let rhs_shape = vec![k, n];
+
+    let lhs_strides = lhs_layout.to_strides(&lhs_shape);
+    let rhs_strides = rhs_layout.to_strides(&rhs_shape);
 
     let problem = ConvolutionProblem {
-        m: batches * out_h * out_w,
-        n: convolution_size.out_c,
-        k: kernel_size.iter().product::<u32>() as usize * convolution_size.c,
-        lhs_strides: vec![],
-        rhs_strides: vec![],
-        lhs_layout: MatrixLayout::RowMajor,
-        rhs_layout: MatrixLayout::ColMajor,
+        m,
+        n,
+        k,
+        lhs_strides,
+        rhs_strides,
+        lhs_layout,
+        rhs_layout,
         kernel_size,
         stride,
         padding,
@@ -83,7 +97,13 @@ pub fn test_algo<A: Algorithm, P: TestPrecision, R: Runtime>(
         },
     };
 
-    test_convolution_algorithm::<A, P, R>(client, problem, blueprint);
+    let blueprint =
+        TilingBlueprint::builder(tiling_scheme, plane_dim, &problem.as_matmul_problem())
+            .shared_swizzle(swizzle)
+            .partition_buffering(partition_buffering)
+            .build();
+
+    test_convolution_algorithm::<A, P>(client, problem, blueprint);
 }
 
 /// Calculate the expected output size when doing a convolution operation.

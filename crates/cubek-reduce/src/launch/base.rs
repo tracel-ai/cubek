@@ -30,18 +30,18 @@ pub(crate) fn launch_reduce<Run: Runtime>(
     client: &ComputeClient<Run>,
     input: TensorHandleRef<Run>,
     output: TensorHandleRef<Run>,
-    axis: u32,
+    axis: usize,
     strategy: ReduceStrategy,
     dtypes: ReduceDtypes,
     inst: ReduceOperationConfig,
 ) -> Result<(), ReduceError> {
     let problem = ReduceProblem {
-        vector_size: input.shape[axis as usize] as u32,
-        vector_count: output.shape.iter().map(|i| *i as u32).product(),
+        vector_size: input.shape[axis],
+        vector_count: output.shape.iter().copied().product(),
         axis,
         dtypes,
     };
-    let line_mode = match input.strides[axis as usize] {
+    let line_mode = match input.strides[axis] {
         1 => LineMode::Parallel,
         _ => LineMode::Perpendicular,
     };
@@ -49,7 +49,7 @@ pub(crate) fn launch_reduce<Run: Runtime>(
         client,
         &input,
         &output,
-        axis as usize,
+        axis,
         problem.dtypes.input,
         line_mode,
         &strategy.line_size,
@@ -97,7 +97,7 @@ pub(crate) fn launch_reduce<Run: Runtime>(
 pub fn reduce_kernel<In: Numeric, Out: Numeric, Acc: Numeric, RA: ReduceArgs>(
     input: &RA::Input<In>,
     output: &mut RA::Output<Out>,
-    axis_reduce: u32,
+    axis_reduce: usize,
     #[comptime] blueprint: ReduceBlueprint,
     #[comptime] config: ReduceOperationConfig,
     #[define(In)] _input_dtype: StorageType,
@@ -112,7 +112,7 @@ pub fn reduce_kernel<In: Numeric, Out: Numeric, Acc: Numeric, RA: ReduceArgs>(
 pub fn reduce_kernel_virtual<In: Numeric, Out: Numeric, Acc: Numeric>(
     input: &VirtualTensor<In>,
     output: &mut VirtualTensor<Out, ReadWrite>,
-    axis_reduce: u32,
+    axis_reduce: usize,
     #[comptime] blueprint: ReduceBlueprint,
     #[comptime] config: ReduceOperationConfig,
 ) {
@@ -129,13 +129,13 @@ pub fn reduce_kernel_virtual<In: Numeric, Out: Numeric, Acc: Numeric>(
 fn reduce_kernel_inner<P: ReducePrecision, Out: Numeric, R: ReduceFamily>(
     input: &VirtualTensor<P::EI>,
     output: &mut VirtualTensor<Out, ReadWrite>,
-    axis_reduce: u32,
+    axis_reduce: usize,
     #[comptime] blueprint: ReduceBlueprint,
     #[comptime] config: R::Config,
 ) {
     let inst = &R::Instruction::<P>::from_config(config);
 
-    match comptime!(blueprint.global) {
+    match blueprint.global {
         GlobalReduceBlueprint::Cube(cube) => {
             GlobalFullCubeReduce::execute::<P, Out, R::Instruction<P>>(
                 input,

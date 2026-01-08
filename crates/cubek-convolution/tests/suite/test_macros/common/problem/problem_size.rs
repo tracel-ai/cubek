@@ -1,6 +1,6 @@
 #[macro_export]
 macro_rules! testgen_convolution_problem_size {
-    ($algorithm: ty, $precision: ty, $selection: expr) => {
+    ($algorithm: ty, $precision: ty, $tiling_scheme: expr, $swizzle: expr, $partition_buffering: expr) => {
         use $crate::suite::test_macros::suite::ConvolutionSize;
 
         mod g4x4x1x1 {
@@ -8,7 +8,9 @@ macro_rules! testgen_convolution_problem_size {
             $crate::testgen_convolution_launch!(
                 $algorithm,
                 $precision,
-                $selection,
+                $tiling_scheme,
+                $swizzle,
+                $partition_buffering,
                 ConvolutionSize {
                     h: 4,
                     w: 4,
@@ -23,7 +25,9 @@ macro_rules! testgen_convolution_problem_size {
             $crate::testgen_convolution_launch!(
                 $algorithm,
                 $precision,
-                $selection,
+                $tiling_scheme,
+                $swizzle,
+                $partition_buffering,
                 ConvolutionSize {
                     h: 17,
                     w: 17,
@@ -38,7 +42,9 @@ macro_rules! testgen_convolution_problem_size {
             $crate::testgen_convolution_launch!(
                 $algorithm,
                 $precision,
-                $selection,
+                $tiling_scheme,
+                $swizzle,
+                $partition_buffering,
                 ConvolutionSize {
                     h: 16,
                     w: 16,
@@ -53,7 +59,9 @@ macro_rules! testgen_convolution_problem_size {
             $crate::testgen_convolution_launch!(
                 $algorithm,
                 $precision,
-                $selection,
+                $tiling_scheme,
+                $swizzle,
+                $partition_buffering,
                 ConvolutionSize {
                     h: 32,
                     w: 32,
@@ -68,7 +76,9 @@ macro_rules! testgen_convolution_problem_size {
             $crate::testgen_convolution_launch!(
                 $algorithm,
                 $precision,
-                $selection,
+                $tiling_scheme,
+                $swizzle,
+                $partition_buffering,
                 ConvolutionSize {
                     h: 64,
                     w: 32,
@@ -83,7 +93,9 @@ macro_rules! testgen_convolution_problem_size {
             $crate::testgen_convolution_launch!(
                 $algorithm,
                 $precision,
-                $selection,
+                $tiling_scheme,
+                $swizzle,
+                $partition_buffering,
                 ConvolutionSize {
                     h: 32,
                     w: 32,
@@ -93,28 +105,14 @@ macro_rules! testgen_convolution_problem_size {
             );
         }
 
-        // Deactivated, too long to run on cpu
-        // mod g100x100x100x100 {
-        //     use super::*;
-        //     $crate::testgen_convolution_launch!(
-        //         $tile,
-        //         $partition,
-        //         $stage,
-        //         ConvolutionSize {
-        //             h: 100,
-        //             w: 100,
-        //             c: 100,
-        //             out_c: 100
-        //         }
-        //     );
-        // }
-
         mod g20x20x16x32 {
             use super::*;
             $crate::testgen_convolution_launch!(
                 $algorithm,
                 $precision,
-                $selection,
+                $tiling_scheme,
+                $swizzle,
+                $partition_buffering,
                 ConvolutionSize {
                     h: 20,
                     w: 20,
@@ -129,7 +127,9 @@ macro_rules! testgen_convolution_problem_size {
             $crate::testgen_convolution_launch!(
                 $algorithm,
                 $precision,
-                $selection,
+                $tiling_scheme,
+                $swizzle,
+                $partition_buffering,
                 ConvolutionSize {
                     h: 23,
                     w: 10,

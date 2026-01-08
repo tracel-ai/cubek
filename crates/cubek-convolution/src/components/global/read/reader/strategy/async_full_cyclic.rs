@@ -1,11 +1,11 @@
 use std::marker::PhantomData;
 
-use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Layout, LayoutExpand};
+use cubecl::{ir::DeviceProperties, prelude::barrier::Barrier};
 use cubek_matmul::components::{
     global::{
-        GlobalReaderConfig, RoleRule,
+        GlobalReaderConfig, PlaneFlowPartition,
         memory::GlobalIterator,
         multi_stage::LoadMaxRoundPlaneCount,
         read::{
@@ -15,7 +15,7 @@ use cubek_matmul::components::{
     },
     stage::{ContiguousTilingLayout, StridedStageFamily, StridedStageMemory, TilingOrder},
 };
-use cubek_matmul::definition::{InvalidConfigError, MatmulElems, MatmulProblem};
+use cubek_matmul::definition::{InvalidConfigError, MatmulElems, MatmulProblem, StageIdent};
 
 use crate::components::global::{
     args::RuntimeArgs,
@@ -34,13 +34,19 @@ pub struct AsyncFullCyclicLoading<T: TilingOrder> {
 }
 
 impl<TO: TilingOrder> LoadingValidation for AsyncFullCyclicLoading<TO> {
-    fn check<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
+    fn validate_with_config(
+        device_props: &DeviceProperties,
         config: &GlobalReaderConfig,
-        dtypes: &MatmulElems,
     ) -> Result<(), InvalidConfigError> {
-        MatmulCyclicLoading::<TO>::check(client, problem, config, dtypes)
+        MatmulCyclicLoading::<TO>::validate_with_config(device_props, config)
+    }
+
+    fn validate_with_problem(
+        _problem: &MatmulProblem,
+        _dtypes: &MatmulElems,
+        _ident: StageIdent,
+    ) -> Result<(), InvalidConfigError> {
+        Ok(())
     }
 }
 
@@ -48,7 +54,7 @@ impl<TO: TilingOrder> LoadMaxRoundPlaneCount for AsyncFullCyclicLoading<TO> {
     fn max_round_plane_count(
         elements_per_tile: u32,
         tiles_per_stage: u32,
-        line_size: u8,
+        line_size: LineSize,
         plane_dim: u32,
         dtype: StorageType,
     ) -> u32 {
@@ -70,22 +76,22 @@ impl<TO: TilingOrder> FullLoadingStrategy for AsyncFullCyclicLoading<TO> {
 
     fn new_job<EG: Numeric, ES: Numeric>(
         runtime_args: RuntimeArgs,
-        #[comptime] _line_size: u32,
+        #[comptime] _line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, ES> {
-        let type_size = ES::type_size_bits();
-        let line_size = comptime![ASYNC_COPY_WIDTH / type_size];
+        let type_size = ES::type_size_bits().comptime();
+        let line_size = ASYNC_COPY_WIDTH / type_size as u32;
         let tile_num_elements = config.smem_config.elements_per_tile();
         let num_stage_elements = config.smem_config.elements_per_stage();
 
         let num_stage_lines = num_stage_elements.div_ceil(line_size);
         let total_units = config.loading_units_count();
-        let num_tasks_per_unit = comptime!(num_stage_lines.div_ceil(total_units));
-        let balanced_workload = comptime!(num_stage_lines.is_multiple_of(total_units));
-        let jump_length = comptime!(total_units * line_size);
+        let num_tasks_per_unit = num_stage_lines.div_ceil(total_units);
+        let balanced_workload = num_stage_lines.is_multiple_of(total_units);
+        let jump_length = total_units * line_size;
 
-        let unit_id = RoleRule::new(config.plane_role_config.rule)
-            .load_index(config.specialization_tensor_config)
+        let unit_id = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
+            .load_index(config.input_load_flow)
             * config.plane_dim
             + UNIT_POS_X;
         let unit_position_base = unit_id * line_size;
@@ -188,7 +194,7 @@ pub(crate) fn copy_line<EG: Numeric, ES: Numeric, TO: TilingOrder>(
     let tile = ContiguousTilingLayout::<TO>::to_x_y(nth_tile, config.smem_config);
 
     let pos = layout.to_source_pos((tile, pos_within_tile));
-    let stage_offset = unit_position / stage.smem.line_size();
+    let stage_offset = unit_position / stage.smem.line_size() as u32;
 
     async_copy_from(
         view,

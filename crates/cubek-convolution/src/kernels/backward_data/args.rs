@@ -17,11 +17,11 @@ use cubek_matmul::{
     components::{
         global::{
             GlobalConfig as _,
-            memory::{NoopLayout, NoopLayoutLaunch},
+            memory::{GlobalMemoryConfig, NoopLayout, NoopLayoutLaunch, ViewDirection},
         },
         stage::StageConfig as _,
     },
-    definition::{MatmulElems, MatmulLineSizes, TilingBlueprint},
+    definition::{MatmulElems, MatmulLineSizes, MatrixLayout, TilingBlueprint},
     launch::{
         MatmulArgs, MatmulInputHandleRef, TensorArgs, TensorInputs, TensorInputsLaunch,
         TensorMapArgs, TensorMapInputs, TensorMapInputsLaunch, TensorOutput, TensorOutputLaunch,
@@ -137,9 +137,8 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory for TensorIn
 
         let padded_channels = problem.padded_channels as u32;
 
-        let layout_nhwc = |handle, line_size, checks| {
-            NhwcLayoutLaunch::from_handle(handle, line_size as u32, checks)
-        };
+        let layout_nhwc =
+            |handle, line_size, checks| NhwcLayoutLaunch::from_handle(handle, line_size, checks);
 
         let layout_lhs = Im2colLayoutLaunch::from_args(
             client,
@@ -182,7 +181,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory for TensorIn
         let runtime_args = RuntimeArgsLaunch::new(
             ScalarArg::new(problem.k as u32),
             ScalarArg::new(problem.out_channels as u32),
-            FastDivmodArgs::new(client, padded_channels),
+            FastDivmodArgs::<u32>::new(client, padded_channels),
             config.operation(),
         );
 
@@ -201,7 +200,7 @@ impl<EG: Numeric> ConcreteOutputFactory for TensorOutput<EG> {
     ) -> Self::RuntimeArg<'a, R> {
         type Layout = Chain<NhwcLayout, OutLayout>;
 
-        let global = NhwcLayoutLaunch::from_handle(out, line_sizes.out as u32, EnumSet::empty());
+        let global = NhwcLayoutLaunch::from_handle(out, line_sizes.out, EnumSet::empty());
         let layout = OutLayoutLaunch::from_args(client, problem, config.rhs_global_memory_config());
         let layout = ChainLaunch::new(global, layout);
         let view = ViewArg::new::<Layout>(out.as_array_arg(line_sizes.out), layout);
@@ -232,16 +231,16 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory
         let stage_k = tiling_scheme.elements_per_stage_along_k();
         let tile_size_k = tiling_scheme.tile_size.k;
 
-        let mut stage_size_rhs = vec![1; problem.dimensionality.num_dims() as usize];
+        let mut stage_size_rhs = vec![1; problem.dimensionality.num_dims()];
         stage_size_rhs.insert(0, stage_k);
         stage_size_rhs.push(stage_n);
 
         // f32 gets remapped to tf32 for the tensor map just to ensure CUDA loads them correctly.
         // It shouldn't matter, but it's better to be safe.
-        let lhs_elem = if *dtypes.lhs_stage == f32::as_type_native_unchecked() {
+        let lhs_elem = if dtypes.lhs_stage == f32::as_type_native_unchecked() {
             tf32::as_type_native_unchecked()
         } else {
-            *dtypes.lhs_stage
+            dtypes.lhs_stage
         };
 
         let mut elem_stride = vec![1; 2 + problem.stride.len()];
@@ -267,7 +266,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory
                 tile_size: stage_size_rhs,
             },
             weights.data().as_tensor_arg(line_sizes.rhs),
-            *dtypes.rhs_global,
+            dtypes.rhs_global,
         );
 
         let padded_channels = problem.padded_channels as u32;
@@ -276,7 +275,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory
         let shape_out = problem
             .out_shape
             .iter()
-            .map(|it| FastDivmodArgs::new(client, *it as u32))
+            .map(|it| FastDivmodArgs::<u32>::new(client, *it as u32))
             .collect();
 
         // Im2col needs extra checking because if `k` is OOB it wraps around the kernel and can load
@@ -286,11 +285,22 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory
         let stages_size_k = selection.tiling_scheme.elements_per_stage_along_k() * stages_lhs;
         let lhs_layout = TmaIm2colLayoutLaunch::new(
             shape_out,
-            FastDivmodArgs::new(client, padded_channels),
+            FastDivmodArgs::<u32>::new(client, padded_channels),
             ConvolutionParams::from_problem(problem),
             !shape_k.is_multiple_of(stages_size_k),
         );
-        let rhs_layout = WeightLayoutLaunch::from_args(client, problem, Default::default());
+        let rhs_layout = WeightLayoutLaunch::from_args(
+            client,
+            problem,
+            GlobalMemoryConfig {
+                line_size: line_sizes.rhs,
+                check_row_bounds: false,
+                check_col_bounds: false,
+                matrix_layout: MatrixLayout::default(),
+                view_direction: ViewDirection::default(),
+                dtype: dtypes.rhs_global,
+            },
+        );
 
         let inputs = TensorMapInputsLaunch::new(
             ViewArg::new_tensor_map_im2col::<LhsLayout, _, _>(lhs, lhs_layout),
@@ -302,7 +312,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory
         let runtime_args = RuntimeArgsLaunch::new(
             ScalarArg::new(shape_k),
             ScalarArg::new(problem.out_channels as u32),
-            FastDivmodArgs::new(client, padded_channels),
+            FastDivmodArgs::<u32>::new(client, padded_channels),
             config.operation(),
         );
 

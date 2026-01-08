@@ -1,5 +1,6 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::*;
+use cubek_matmul::launch::BatchedCoords;
 
 #[derive(CubeType, CubeLaunch)]
 pub struct BiasLayout {
@@ -10,12 +11,12 @@ pub struct BiasLayout {
 
 #[cube]
 impl Layout for BiasLayout {
-    type Coordinates = Coords3d;
+    type Coordinates = BatchedCoords;
     type SourceCoordinates = Coords1d;
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
         let (_, _, n) = pos;
-        n / self.line_size
+        (n / self.line_size) as usize
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {

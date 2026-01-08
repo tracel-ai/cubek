@@ -44,7 +44,7 @@ pub trait PartialLoadingStrategy:
     /// Returns the job with preliminary calculations done.
     fn new_job<EG: Numeric, ES: Numeric>(
         #[comptime] stage_index: u32,
-        #[comptime] line_size: u32,
+        #[comptime] line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, ES>;
 }
@@ -87,7 +87,7 @@ impl<EG: Numeric, ES: Numeric, L: PartialLoadingStrategy> PartialStageGlobalRead
         k_step: u32,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self {
-        let stage_memory = L::Stage::create(128u32, config.smem_config);
+        let stage_memory = L::Stage::create(128usize, config.smem_config);
         let global_iter =
             GlobalIterator::new(tensor, k_step, config.gmem_config.view_direction, false);
 
@@ -193,7 +193,7 @@ impl<EG: Numeric, ES: Numeric, L: PartialLoadingStrategy> JobExecutor<L::SyncStr
         barrier: &mut SyncBarrier<L::SyncStrategy>,
         #[comptime] config: GlobalReaderConfig,
     ) {
-        let task_id = job_iterator.current.read().counter;
+        let task_id = job_iterator.current.read().counter.comptime();
 
         L::Job::<EG, ES>::execute_task(
             &mut job_iterator.job,
@@ -205,7 +205,7 @@ impl<EG: Numeric, ES: Numeric, L: PartialLoadingStrategy> JobExecutor<L::SyncStr
         );
 
         job_iterator.current.store(TaskCounter {
-            counter: comptime!(task_id + 1u32),
+            counter: task_id + 1,
         });
     }
 
@@ -230,7 +230,7 @@ impl<EG: Numeric, ES: Numeric, L: PartialLoadingStrategy> JobExecutor<L::SyncStr
         }
 
         job_iterator.current.store(TaskCounter {
-            counter: comptime!(job_iterator.num_tasks),
+            counter: job_iterator.num_tasks,
         });
     }
 

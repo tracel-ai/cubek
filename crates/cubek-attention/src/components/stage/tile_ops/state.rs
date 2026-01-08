@@ -13,7 +13,7 @@ pub struct RunningState<E: Float> {
 #[cube]
 impl<E: Float> RunningState<E> {
     /// Init the state with neutral values
-    pub fn init(#[comptime] num_rows: u32) -> RunningState<E> {
+    pub fn init(#[comptime] num_rows: usize) -> RunningState<E> {
         RunningState::<E> {
             m: RowWise::new_min_value(num_rows),
             l: RowWise::new_zero(num_rows),

@@ -61,9 +61,9 @@ where
             fragment: unsafe {
                 cmma::Matrix::<L>::uninitialized(
                     cmma::MatrixIdent::A,
-                    size.m(),
-                    size.n(),
-                    size.k(),
+                    size.m() as usize,
+                    size.n() as usize,
+                    size.k() as usize,
                     as_cmma_layout(layout),
                 )
             },
@@ -81,9 +81,9 @@ where
             fragment: unsafe {
                 cmma::Matrix::uninitialized(
                     cmma::MatrixIdent::B,
-                    size.m(),
-                    size.n(),
-                    size.k(),
+                    size.m() as usize,
+                    size.n() as usize,
+                    size.k() as usize,
                     as_cmma_layout(layout),
                 )
             },
@@ -101,9 +101,9 @@ where
             fragment: unsafe {
                 cmma::Matrix::<A>::uninitialized(
                     cmma::MatrixIdent::Accumulator,
-                    size.m(),
-                    size.n(),
-                    size.k(),
+                    size.m() as usize,
+                    size.n() as usize,
+                    size.k() as usize,
                     cmma::MatrixLayout::Undefined,
                 )
             },

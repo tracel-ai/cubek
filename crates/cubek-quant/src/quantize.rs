@@ -2,7 +2,6 @@ use cubecl::calculate_cube_count_elemwise;
 use cubecl::features::TypeUsage;
 use cubecl::ir::ElemType;
 use cubecl::prelude::*;
-use cubecl::std::scalar::InputScalar;
 use cubecl::std::tensor::layout::linear::LinearView;
 use cubecl::std::tensor::{View, layout::linear::linear_view};
 use cubecl::tensor_line_size_parallel;
@@ -59,22 +58,20 @@ fn quantize_packed_value<F: Float, FS: CubePrimitive, QS: Int>(
 #[allow(clippy::explicit_counter_loop)]
 #[cube]
 fn pack_q<F: Float, QS: Int>(value: Line<F>, #[comptime] quant: QuantValue) -> QS {
-    let size_quant = comptime!(quant.size_bits() as u32);
+    let size_quant = quant.size_bits();
 
-    let size_store = comptime!(QS::size_bits().unwrap() as u32);
-    let num_quants = comptime!(size_store / size_quant);
+    let size_store = QS::type_size_bits().comptime();
+    let num_quants = size_store / size_quant;
 
-    let mask = i32::cast_from(comptime!((1 << size_quant) - 1));
-    let mut position = comptime!(0);
-    let mut packed = QS::cast_from(0);
+    let mask = (1 << size_quant) - 1;
+    let mut packed = QS::from_int(0);
 
     // Shift and combine into QS (using i32 for sign extension)
     #[unroll]
-    for _ in 0..num_quants {
-        let offset = QS::cast_from(comptime!(position * size_quant));
+    for position in 0..num_quants {
+        let offset = QS::cast_from(position * size_quant);
         let shifted = QS::cast_from(i32::cast_from(value[position]) & mask) << offset;
         packed |= shifted;
-        comptime!(position += 1);
     }
 
     packed
@@ -82,9 +79,9 @@ fn pack_q<F: Float, QS: Int>(value: Line<F>, #[comptime] quant: QuantValue) -> Q
 
 #[cube]
 fn write_scale<F: Float, FS: CubePrimitive>(
-    in_pos: u32,
-    scale: &View<F, u32>,
-    out_scale: &mut View<FS, u32, ReadWrite>,
+    in_pos: usize,
+    scale: &View<F, usize>,
+    out_scale: &mut View<FS, usize, ReadWrite>,
     scales_layout: ScalesLayout,
 ) -> FS {
     let scale = FS::cast_from(scale[in_pos]);
@@ -141,11 +138,11 @@ fn quantize_symmetric_packed_kernel<F: Float, FS: Numeric>(
         terminate!();
     }
 
-    let num_quants = comptime!(scheme.num_quants() as u32);
+    let num_quants = scheme.num_quants();
     let packed_pos = ABSOLUTE_POS * num_quants;
     let scale = write_scale(packed_pos, scale, out_scale, scales_layout);
 
-    if comptime!(input.line_size() == num_quants) {
+    if input.line_size().comptime() == num_quants {
         output[ABSOLUTE_POS] = Line::cast_from(quantize_packed_value::<F, FS, u32>(
             input[ABSOLUTE_POS],
             scale,
@@ -288,10 +285,10 @@ fn quantize_packed<R: Runtime>(
 ) -> Result<(), LaunchError> {
     let num_elems: usize = input.shape.iter().product();
 
-    let num_quants = scheme.num_quants() as u8;
+    let num_quants = scheme.num_quants();
     let line_size = num_quants;
 
-    let working_units = num_elems.div_ceil(line_size as usize);
+    let working_units = num_elems.div_ceil(line_size);
     let cube_dim = CubeDim::new(client, working_units);
     let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
     let (range_min, range_max) = scheme.value.range();
@@ -303,7 +300,7 @@ fn quantize_packed<R: Runtime>(
             store: QuantStore::U32,
             ..
         } => {
-            check_block_size_compat(scheme, num_quants as usize); // 32 / 8 = 4
+            check_block_size_compat(scheme, num_quants); // 32 / 8 = 4
             unsafe {
                 quantize_symmetric_packed_kernel::launch_unchecked(
                     client,

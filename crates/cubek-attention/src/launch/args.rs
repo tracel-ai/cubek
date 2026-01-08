@@ -58,47 +58,47 @@ pub trait AttentionArgs: Send + Sync + 'static + Clone {
     /// Read the line of the query tensor using the state at the given coordinate.
     fn read_query<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        coordinate: u32,
+        coordinate: usize,
     ) -> Line<Q>;
     /// Read the line of the key tensor using the state at the given coordinate.
     fn read_key<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        coordinate: u32,
+        coordinate: usize,
     ) -> Line<K>;
     /// Read the line of the value tensor using the state at the given coordinate.
     fn read_value<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        coordinate: u32,
+        coordinate: usize,
     ) -> Line<V>;
     /// Read the line of the mask tensor using the state at the given coordinate.
     fn read_mask<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        coordinate: u32,
+        coordinate: usize,
     ) -> Line<M>;
 
     /// Read the line of the query tensor using the state at the given coordinate.
     fn read_window_query<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        start: u32,
-        end: u32,
+        start: usize,
+        end: usize,
     ) -> Slice<Line<Q>>;
     /// Read the line of the key tensor using the state at the given coordinate.
     fn read_window_key<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        start: u32,
-        end: u32,
+        start: usize,
+        end: usize,
     ) -> Slice<Line<K>>;
     /// Read the line of the value tensor using the state at the given coordinate.
     fn read_window_value<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        start: u32,
-        end: u32,
+        start: usize,
+        end: usize,
     ) -> Slice<Line<V>>;
     /// Read the line of the mask tensor using the state at the given coordinate.
     fn read_window_mask<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        start: u32,
-        end: u32,
+        start: usize,
+        end: usize,
     ) -> Slice<Line<M>>;
 
     /// Reinterpret query as tensor map
@@ -121,145 +121,145 @@ pub trait AttentionArgs: Send + Sync + 'static + Clone {
     /// Write the line to the output at the given coordinate using the state.
     fn write_out<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &mut Self::State<Q, K, V, M, O>,
-        coordinate: u32,
+        coordinate: usize,
         val: Line<O>,
     );
 
     /// Get the rank of the query tensor using the state.
     fn rank_query<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32;
+    ) -> usize;
     /// Get the rank of the key tensor using the state.
     fn rank_key<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32;
+    ) -> usize;
     /// Get the rank of the value tensor using the state.
     fn rank_value<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32;
+    ) -> usize;
     /// Get the rank of the mask tensor using the state.
     fn rank_mask<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32;
+    ) -> usize;
     /// Get the rank of the out tensor using the state.
     fn rank_out<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32;
+    ) -> usize;
 
     /// Get the length of the query tensor using the state.
     fn len_query<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32;
+    ) -> usize;
     /// Get the length of the key tensor using the state.
     fn len_key<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32;
+    ) -> usize;
     /// Get the length of the value tensor using the state.
     fn len_value<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32;
+    ) -> usize;
     /// Get the length of the mask tensor using the state.
     fn len_mask<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32;
+    ) -> usize;
     /// Get the length of the out tensor using the state.
     fn len_out<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32;
+    ) -> usize;
 
     /// Get the buffer length of the query tensor using the state.
     fn buffer_len_query<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32;
+    ) -> usize;
     /// Get the buffer length of the key tensor using the state.
     fn buffer_len_key<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32;
+    ) -> usize;
     /// Get the buffer length of the value tensor using the state.
     fn buffer_len_value<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32;
+    ) -> usize;
     /// Get the buffer length of the mask tensor using the state.
     fn buffer_len_mask<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32;
+    ) -> usize;
     /// Get the buffer length of the out tensor using the state.
     fn buffer_len_out<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32;
+    ) -> usize;
 
     /// Get the shape of the query tensor using the state.
     fn shape_query<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        axis: u32,
-    ) -> u32;
+        axis: usize,
+    ) -> usize;
     /// Get the shape of the key tensor using the state.
     fn shape_key<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        axis: u32,
-    ) -> u32;
+        axis: usize,
+    ) -> usize;
     /// Get the shape of the value tensor using the state.
     fn shape_value<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        axis: u32,
-    ) -> u32;
+        axis: usize,
+    ) -> usize;
     /// Get the shape of the mask tensor using the state.
     fn shape_mask<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        axis: u32,
-    ) -> u32;
+        axis: usize,
+    ) -> usize;
     /// Get the shape of the out tensor using the state.
     fn shape_out<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        axis: u32,
-    ) -> u32;
+        axis: usize,
+    ) -> usize;
 
     /// Get the stride of the query tensor using the state.
     fn stride_query<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        axis: u32,
-    ) -> u32;
+        axis: usize,
+    ) -> usize;
     /// Get the stride of the key tensor using the state.
     fn stride_key<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        axis: u32,
-    ) -> u32;
+        axis: usize,
+    ) -> usize;
     /// Get the stride of the value tensor using the state.
     fn stride_value<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        axis: u32,
-    ) -> u32;
+        axis: usize,
+    ) -> usize;
     /// Get the stride of the mask tensor using the state.
     fn stride_mask<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        axis: u32,
-    ) -> u32;
+        axis: usize,
+    ) -> usize;
     /// Get the stride of the out tensor using the state.
     fn stride_out<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        axis: u32,
-    ) -> u32;
+        axis: usize,
+    ) -> usize;
 
     /// Get the line size of the query tensor using the state.
     fn line_size_query<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> comptime_type!(u32);
+    ) -> comptime_type!(LineSize);
     /// Get the line size of the key tensor using the state.
     fn line_size_key<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> comptime_type!(u32);
+    ) -> comptime_type!(LineSize);
     /// Get the line size of the value tensor using the state.
     fn line_size_value<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> comptime_type!(u32);
+    ) -> comptime_type!(LineSize);
     /// Get the line size of the mask tensor using the state.
     fn line_size_mask<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> comptime_type!(u32);
+    ) -> comptime_type!(LineSize);
     /// Get the line size of the out tensor using the state.
     fn line_size_out<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> comptime_type!(u32);
+    ) -> comptime_type!(LineSize);
 }
 
 /// Tensor input representation.
@@ -312,7 +312,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     fn __expand_read_method(
         &self,
         _scope: &mut Scope,
-        _index: ExpandElementTyped<u32>,
+        _index: ExpandElementTyped<usize>,
     ) -> ExpandElementTyped<Line<O>> {
         panic!("Can't read output tensor");
     }
@@ -320,8 +320,8 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     fn __expand_read_window_method(
         &self,
         _context: &mut Scope,
-        _start: ExpandElementTyped<u32>,
-        _end: ExpandElementTyped<u32>,
+        _start: ExpandElementTyped<usize>,
+        _end: ExpandElementTyped<usize>,
     ) -> SliceExpand<Line<O>, ReadOnly> {
         panic!("Can't read output tensor");
     }
@@ -329,7 +329,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     fn __expand_write_method(
         &self,
         scope: &mut Scope,
-        index: ExpandElementTyped<u32>,
+        index: ExpandElementTyped<usize>,
         val: ExpandElementTyped<Line<O>>,
     ) {
         TensorOutputExpand::__expand_write_method(self.clone(), scope, index, val)
@@ -338,28 +338,28 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     fn __expand_shape_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<u32>,
-    ) -> ExpandElementTyped<u32> {
+        axis: ExpandElementTyped<usize>,
+    ) -> ExpandElementTyped<usize> {
         TensorOutputExpand::__expand_shape_method(self.clone(), scope, axis)
     }
 
     fn __expand_stride_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<u32>,
-    ) -> ExpandElementTyped<u32> {
+        axis: ExpandElementTyped<usize>,
+    ) -> ExpandElementTyped<usize> {
         TensorOutputExpand::__expand_stride_method(self.clone(), scope, axis)
     }
 
-    fn __expand_rank_method(&self, scope: &mut Scope) -> ExpandElementTyped<u32> {
+    fn __expand_rank_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
         TensorOutputExpand::__expand_rank_method(self.clone(), scope)
     }
 
-    fn __expand_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<u32> {
+    fn __expand_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
         TensorOutputExpand::__expand_len_method(self.clone(), scope)
     }
 
-    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<u32> {
+    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
         TensorOutputExpand::__expand_buffer_len_method(self.clone(), scope)
     }
 
@@ -378,7 +378,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs> Line
 impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs> LinedExpand
     for TensorOutputExpand<Q, K, V, M, O, MA>
 {
-    fn line_size(&self) -> u32 {
+    fn line_size(&self) -> LineSize {
         let mut scope = Scope::root(false);
         TensorOutputExpand::__expand_line_size_method(self.clone(), &mut scope)
     }
@@ -390,15 +390,15 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     fn __expand_read_method(
         &self,
         scope: &mut Scope,
-        index: ExpandElementTyped<u32>,
+        index: ExpandElementTyped<usize>,
     ) -> ExpandElementTyped<Line<Q>> {
         TensorQueryExpand::__expand_read_method(self.clone(), scope, index)
     }
     fn __expand_read_window_method(
         &self,
         context: &mut Scope,
-        start: ExpandElementTyped<u32>,
-        end: ExpandElementTyped<u32>,
+        start: ExpandElementTyped<usize>,
+        end: ExpandElementTyped<usize>,
     ) -> SliceExpand<Line<Q>, ReadOnly> {
         TensorQueryExpand::__expand_read_window_method(self.clone(), context, start, end)
     }
@@ -406,7 +406,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     fn __expand_write_method(
         &self,
         _scope: &mut Scope,
-        _index: ExpandElementTyped<u32>,
+        _index: ExpandElementTyped<usize>,
         _val: ExpandElementTyped<Line<Q>>,
     ) {
         panic!("Can't write to input tensor");
@@ -415,28 +415,28 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     fn __expand_shape_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<u32>,
-    ) -> ExpandElementTyped<u32> {
+        axis: ExpandElementTyped<usize>,
+    ) -> ExpandElementTyped<usize> {
         TensorQueryExpand::__expand_shape_method(self.clone(), scope, axis)
     }
 
     fn __expand_stride_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<u32>,
-    ) -> ExpandElementTyped<u32> {
+        axis: ExpandElementTyped<usize>,
+    ) -> ExpandElementTyped<usize> {
         TensorQueryExpand::__expand_stride_method(self.clone(), scope, axis)
     }
 
-    fn __expand_rank_method(&self, scope: &mut Scope) -> ExpandElementTyped<u32> {
+    fn __expand_rank_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
         TensorQueryExpand::__expand_rank_method(self.clone(), scope)
     }
 
-    fn __expand_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<u32> {
+    fn __expand_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
         TensorQueryExpand::__expand_len_method(self.clone(), scope)
     }
 
-    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<u32> {
+    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
         TensorQueryExpand::__expand_buffer_len_method(self.clone(), scope)
     }
 
@@ -455,7 +455,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs> Line
 impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs> LinedExpand
     for TensorQueryExpand<Q, K, V, M, O, MA>
 {
-    fn line_size(&self) -> u32 {
+    fn line_size(&self) -> LineSize {
         let mut scope = Scope::root(false);
         TensorQueryExpand::__expand_line_size_method(self.clone(), &mut scope)
     }
@@ -467,15 +467,15 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     fn __expand_read_method(
         &self,
         scope: &mut Scope,
-        index: ExpandElementTyped<u32>,
+        index: ExpandElementTyped<usize>,
     ) -> ExpandElementTyped<Line<K>> {
         TensorKeyExpand::__expand_read_method(self.clone(), scope, index)
     }
     fn __expand_read_window_method(
         &self,
         context: &mut Scope,
-        start: ExpandElementTyped<u32>,
-        end: ExpandElementTyped<u32>,
+        start: ExpandElementTyped<usize>,
+        end: ExpandElementTyped<usize>,
     ) -> SliceExpand<Line<K>, ReadOnly> {
         TensorKeyExpand::__expand_read_window_method(self.clone(), context, start, end)
     }
@@ -483,7 +483,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     fn __expand_write_method(
         &self,
         _scope: &mut Scope,
-        _index: ExpandElementTyped<u32>,
+        _index: ExpandElementTyped<usize>,
         _val: ExpandElementTyped<Line<K>>,
     ) {
         panic!("Can't write to input tensor");
@@ -492,28 +492,28 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     fn __expand_shape_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<u32>,
-    ) -> ExpandElementTyped<u32> {
+        axis: ExpandElementTyped<usize>,
+    ) -> ExpandElementTyped<usize> {
         TensorKeyExpand::__expand_shape_method(self.clone(), scope, axis)
     }
 
     fn __expand_stride_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<u32>,
-    ) -> ExpandElementTyped<u32> {
+        axis: ExpandElementTyped<usize>,
+    ) -> ExpandElementTyped<usize> {
         TensorKeyExpand::__expand_stride_method(self.clone(), scope, axis)
     }
 
-    fn __expand_rank_method(&self, scope: &mut Scope) -> ExpandElementTyped<u32> {
+    fn __expand_rank_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
         TensorKeyExpand::__expand_rank_method(self.clone(), scope)
     }
 
-    fn __expand_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<u32> {
+    fn __expand_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
         TensorKeyExpand::__expand_len_method(self.clone(), scope)
     }
 
-    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<u32> {
+    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
         TensorKeyExpand::__expand_buffer_len_method(self.clone(), scope)
     }
 
@@ -532,7 +532,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs> Line
 impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs> LinedExpand
     for TensorKeyExpand<Q, K, V, M, O, MA>
 {
-    fn line_size(&self) -> u32 {
+    fn line_size(&self) -> LineSize {
         let mut scope = Scope::root(false);
         TensorKeyExpand::__expand_line_size_method(self.clone(), &mut scope)
     }
@@ -544,15 +544,15 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     fn __expand_read_method(
         &self,
         scope: &mut Scope,
-        index: ExpandElementTyped<u32>,
+        index: ExpandElementTyped<usize>,
     ) -> ExpandElementTyped<Line<V>> {
         TensorValueExpand::__expand_read_method(self.clone(), scope, index)
     }
     fn __expand_read_window_method(
         &self,
         context: &mut Scope,
-        start: ExpandElementTyped<u32>,
-        end: ExpandElementTyped<u32>,
+        start: ExpandElementTyped<usize>,
+        end: ExpandElementTyped<usize>,
     ) -> SliceExpand<Line<V>, ReadOnly> {
         TensorValueExpand::__expand_read_window_method(self.clone(), context, start, end)
     }
@@ -560,7 +560,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     fn __expand_write_method(
         &self,
         _scope: &mut Scope,
-        _index: ExpandElementTyped<u32>,
+        _index: ExpandElementTyped<usize>,
         _val: ExpandElementTyped<Line<V>>,
     ) {
         panic!("Can't write to input tensor");
@@ -569,28 +569,28 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     fn __expand_shape_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<u32>,
-    ) -> ExpandElementTyped<u32> {
+        axis: ExpandElementTyped<usize>,
+    ) -> ExpandElementTyped<usize> {
         TensorValueExpand::__expand_shape_method(self.clone(), scope, axis)
     }
 
     fn __expand_stride_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<u32>,
-    ) -> ExpandElementTyped<u32> {
+        axis: ExpandElementTyped<usize>,
+    ) -> ExpandElementTyped<usize> {
         TensorValueExpand::__expand_stride_method(self.clone(), scope, axis)
     }
 
-    fn __expand_rank_method(&self, scope: &mut Scope) -> ExpandElementTyped<u32> {
+    fn __expand_rank_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
         TensorValueExpand::__expand_rank_method(self.clone(), scope)
     }
 
-    fn __expand_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<u32> {
+    fn __expand_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
         TensorValueExpand::__expand_len_method(self.clone(), scope)
     }
 
-    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<u32> {
+    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
         TensorValueExpand::__expand_buffer_len_method(self.clone(), scope)
     }
 
@@ -609,7 +609,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs> Line
 impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs> LinedExpand
     for TensorValueExpand<Q, K, V, M, O, MA>
 {
-    fn line_size(&self) -> u32 {
+    fn line_size(&self) -> LineSize {
         let mut scope = Scope::root(false);
         TensorValueExpand::__expand_line_size_method(self.clone(), &mut scope)
     }
@@ -621,15 +621,15 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     fn __expand_read_method(
         &self,
         scope: &mut Scope,
-        index: ExpandElementTyped<u32>,
+        index: ExpandElementTyped<usize>,
     ) -> ExpandElementTyped<Line<M>> {
         TensorMaskExpand::__expand_read_method(self.clone(), scope, index)
     }
     fn __expand_read_window_method(
         &self,
         context: &mut Scope,
-        start: ExpandElementTyped<u32>,
-        end: ExpandElementTyped<u32>,
+        start: ExpandElementTyped<usize>,
+        end: ExpandElementTyped<usize>,
     ) -> SliceExpand<Line<M>, ReadOnly> {
         TensorMaskExpand::__expand_read_window_method(self.clone(), context, start, end)
     }
@@ -637,7 +637,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     fn __expand_write_method(
         &self,
         _scope: &mut Scope,
-        _index: ExpandElementTyped<u32>,
+        _index: ExpandElementTyped<usize>,
         _val: ExpandElementTyped<Line<M>>,
     ) {
         panic!("Can't write to input tensor");
@@ -646,28 +646,28 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     fn __expand_shape_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<u32>,
-    ) -> ExpandElementTyped<u32> {
+        axis: ExpandElementTyped<usize>,
+    ) -> ExpandElementTyped<usize> {
         TensorMaskExpand::__expand_shape_method(self.clone(), scope, axis)
     }
 
     fn __expand_stride_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<u32>,
-    ) -> ExpandElementTyped<u32> {
+        axis: ExpandElementTyped<usize>,
+    ) -> ExpandElementTyped<usize> {
         TensorMaskExpand::__expand_stride_method(self.clone(), scope, axis)
     }
 
-    fn __expand_rank_method(&self, scope: &mut Scope) -> ExpandElementTyped<u32> {
+    fn __expand_rank_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
         TensorMaskExpand::__expand_rank_method(self.clone(), scope)
     }
 
-    fn __expand_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<u32> {
+    fn __expand_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
         TensorMaskExpand::__expand_len_method(self.clone(), scope)
     }
 
-    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<u32> {
+    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
         TensorMaskExpand::__expand_buffer_len_method(self.clone(), scope)
     }
 
@@ -686,7 +686,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs> Line
 impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs> LinedExpand
     for TensorMaskExpand<Q, K, V, M, O, MA>
 {
-    fn line_size(&self) -> u32 {
+    fn line_size(&self) -> LineSize {
         let mut scope = Scope::root(false);
         TensorMaskExpand::__expand_line_size_method(self.clone(), &mut scope)
     }
@@ -739,38 +739,38 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     }
 
     //// Read the tensor at the given coordinate.
-    pub fn read_window(&self, start: u32, end: u32) -> Slice<Line<Q>> {
+    pub fn read_window(&self, start: usize, end: usize) -> Slice<Line<Q>> {
         unsafe { MA::read_window_query(&(*self.state), start, end) }
     }
 
     /// Read the tensor at the given coordinate.
-    pub fn read(&self, coordinate: u32) -> Line<Q> {
+    pub fn read(&self, coordinate: usize) -> Line<Q> {
         unsafe { MA::read_query(&(*self.state), coordinate) }
     }
 
     /// Get the shape of the tensor at the given axis.
-    pub fn shape(&self, axis: u32) -> u32 {
+    pub fn shape(&self, axis: usize) -> usize {
         unsafe { MA::shape_query(&(*self.state), axis) }
     }
 
     /// Get the stride of the tensor at the given axis.
-    pub fn stride(&self, axis: u32) -> u32 {
+    pub fn stride(&self, axis: usize) -> usize {
         unsafe { MA::stride_query(&(*self.state), axis) }
     }
 
     /// Get the rank of the tensor.
-    pub fn rank(&self) -> u32 {
+    pub fn rank(&self) -> usize {
         unsafe { MA::rank_query(&(*self.state)) }
     }
 
     /// Get the length of the tensor.
     #[allow(clippy::len_without_is_empty)]
-    pub fn len(&self) -> u32 {
+    pub fn len(&self) -> usize {
         unsafe { MA::len_query(&(*self.state)) }
     }
 
     /// Get the buffer length of the tensor.
-    pub fn buffer_len(&self) -> u32 {
+    pub fn buffer_len(&self) -> usize {
         unsafe { MA::buffer_len_query(&(*self.state)) }
     }
 
@@ -780,7 +780,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     }
 
     /// Get the line size of the tensor.
-    pub fn line_size(&self) -> comptime_type!(u32) {
+    pub fn line_size(&self) -> comptime_type!(LineSize) {
         unsafe { MA::line_size_query(&(*self.state)) }
     }
 }
@@ -795,38 +795,38 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     }
 
     //// Read the tensor at the given coordinate.
-    pub fn read_window(&self, start: u32, end: u32) -> Slice<Line<K>> {
+    pub fn read_window(&self, start: usize, end: usize) -> Slice<Line<K>> {
         unsafe { MA::read_window_key(&(*self.state), start, end) }
     }
 
     /// Read the tensor at the given coordinate.
-    pub fn read(&self, coordinate: u32) -> Line<K> {
+    pub fn read(&self, coordinate: usize) -> Line<K> {
         unsafe { MA::read_key(&(*self.state), coordinate) }
     }
 
     /// Get the shape of the tensor at the given axis.
-    pub fn shape(&self, axis: u32) -> u32 {
+    pub fn shape(&self, axis: usize) -> usize {
         unsafe { MA::shape_key(&(*self.state), axis) }
     }
 
     /// Get the stride of the tensor at the given axis.
-    pub fn stride(&self, axis: u32) -> u32 {
+    pub fn stride(&self, axis: usize) -> usize {
         unsafe { MA::stride_key(&(*self.state), axis) }
     }
 
     /// Get the rank of the tensor.
-    pub fn rank(&self) -> u32 {
+    pub fn rank(&self) -> usize {
         unsafe { MA::rank_key(&(*self.state)) }
     }
 
     /// Get the length of the tensor.
     #[allow(clippy::len_without_is_empty)]
-    pub fn len(&self) -> u32 {
+    pub fn len(&self) -> usize {
         unsafe { MA::len_key(&(*self.state)) }
     }
 
     /// Get the buffer length of the tensor.
-    pub fn buffer_len(&self) -> u32 {
+    pub fn buffer_len(&self) -> usize {
         unsafe { MA::buffer_len_key(&(*self.state)) }
     }
 
@@ -836,7 +836,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     }
 
     /// Get the line size of the tensor.
-    pub fn line_size(&self) -> comptime_type!(u32) {
+    pub fn line_size(&self) -> comptime_type!(LineSize) {
         unsafe { MA::line_size_key(&(*self.state)) }
     }
 }
@@ -851,38 +851,38 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     }
 
     //// Read the tensor at the given coordinate.
-    pub fn read_window(&self, start: u32, end: u32) -> Slice<Line<V>> {
+    pub fn read_window(&self, start: usize, end: usize) -> Slice<Line<V>> {
         unsafe { MA::read_window_value(&(*self.state), start, end) }
     }
 
     /// Read the tensor at the given coordinate.
-    pub fn read(&self, coordinate: u32) -> Line<V> {
+    pub fn read(&self, coordinate: usize) -> Line<V> {
         unsafe { MA::read_value(&(*self.state), coordinate) }
     }
 
     /// Get the shape of the tensor at the given axis.
-    pub fn shape(&self, axis: u32) -> u32 {
+    pub fn shape(&self, axis: usize) -> usize {
         unsafe { MA::shape_value(&(*self.state), axis) }
     }
 
     /// Get the stride of the tensor at the given axis.
-    pub fn stride(&self, axis: u32) -> u32 {
+    pub fn stride(&self, axis: usize) -> usize {
         unsafe { MA::stride_value(&(*self.state), axis) }
     }
 
     /// Get the rank of the tensor.
-    pub fn rank(&self) -> u32 {
+    pub fn rank(&self) -> usize {
         unsafe { MA::rank_value(&(*self.state)) }
     }
 
     /// Get the length of the tensor.
     #[allow(clippy::len_without_is_empty)]
-    pub fn len(&self) -> u32 {
+    pub fn len(&self) -> usize {
         unsafe { MA::len_value(&(*self.state)) }
     }
 
     /// Get the buffer length of the tensor.
-    pub fn buffer_len(&self) -> u32 {
+    pub fn buffer_len(&self) -> usize {
         unsafe { MA::buffer_len_value(&(*self.state)) }
     }
 
@@ -892,7 +892,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     }
 
     /// Get the line size of the tensor.
-    pub fn line_size(&self) -> comptime_type!(u32) {
+    pub fn line_size(&self) -> comptime_type!(LineSize) {
         unsafe { MA::line_size_value(&(*self.state)) }
     }
 }
@@ -907,38 +907,38 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     }
 
     //// Read the tensor at the given coordinate.
-    pub fn read_window(&self, start: u32, end: u32) -> Slice<Line<M>> {
+    pub fn read_window(&self, start: usize, end: usize) -> Slice<Line<M>> {
         unsafe { MA::read_window_mask(&(*self.state), start, end) }
     }
 
     /// Read the tensor at the given coordinate.
-    pub fn read(&self, coordinate: u32) -> Line<M> {
+    pub fn read(&self, coordinate: usize) -> Line<M> {
         unsafe { MA::read_mask(&(*self.state), coordinate) }
     }
 
     /// Get the shape of the tensor at the given axis.
-    pub fn shape(&self, axis: u32) -> u32 {
+    pub fn shape(&self, axis: usize) -> usize {
         unsafe { MA::shape_mask(&(*self.state), axis) }
     }
 
     /// Get the stride of the tensor at the given axis.
-    pub fn stride(&self, axis: u32) -> u32 {
+    pub fn stride(&self, axis: usize) -> usize {
         unsafe { MA::stride_mask(&(*self.state), axis) }
     }
 
     /// Get the rank of the tensor.
-    pub fn rank(&self) -> u32 {
+    pub fn rank(&self) -> usize {
         unsafe { MA::rank_mask(&(*self.state)) }
     }
 
     /// Get the length of the tensor.
     #[allow(clippy::len_without_is_empty)]
-    pub fn len(&self) -> u32 {
+    pub fn len(&self) -> usize {
         unsafe { MA::len_mask(&(*self.state)) }
     }
 
     /// Get the buffer length of the tensor.
-    pub fn buffer_len(&self) -> u32 {
+    pub fn buffer_len(&self) -> usize {
         unsafe { MA::buffer_len_mask(&(*self.state)) }
     }
 
@@ -948,7 +948,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     }
 
     /// Get the line size of the tensor.
-    pub fn line_size(&self) -> comptime_type!(u32) {
+    pub fn line_size(&self) -> comptime_type!(LineSize) {
         unsafe { MA::line_size_mask(&(*self.state)) }
     }
 }
@@ -963,38 +963,38 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, GA: AttentionArgs>
     }
 
     /// Write the val to tensor at the given coordinate.
-    pub fn write(&self, coordinate: u32, val: Line<O>) {
+    pub fn write(&self, coordinate: usize, val: Line<O>) {
         unsafe { GA::write_out(&mut (*self.state), coordinate, val) }
     }
 
     /// Get the shape of the tensor at the given axis.
-    pub fn shape(&self, axis: u32) -> u32 {
+    pub fn shape(&self, axis: usize) -> usize {
         unsafe { GA::shape_out(&(*self.state), axis) }
     }
 
     /// Get the stride of the tensor at the given axis.
-    pub fn stride(&self, dim: u32) -> u32 {
+    pub fn stride(&self, dim: usize) -> usize {
         unsafe { GA::stride_out(&(*self.state), dim) }
     }
 
     /// Get the rank of the tensor.
-    pub fn rank(&self) -> u32 {
+    pub fn rank(&self) -> usize {
         unsafe { GA::rank_out(&(*self.state)) }
     }
 
     /// Get the length of the tensor.
     #[allow(clippy::len_without_is_empty)]
-    pub fn len(&self) -> u32 {
+    pub fn len(&self) -> usize {
         unsafe { GA::len_out(&(*self.state)) }
     }
 
     /// Get the buffer length of the tensor.
-    pub fn buffer_len(&self) -> u32 {
+    pub fn buffer_len(&self) -> usize {
         unsafe { GA::buffer_len_out(&(*self.state)) }
     }
 
     /// Get the line size of the tensor.
-    pub fn line_size(&self) -> comptime_type!(u32) {
+    pub fn line_size(&self) -> comptime_type!(LineSize) {
         unsafe { GA::line_size_out(&(*self.state)) }
     }
 }
@@ -1094,60 +1094,60 @@ impl AttentionArgs for TensorArgs {
 
     fn read_query<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        coordinate: u32,
+        coordinate: usize,
     ) -> Line<Q> {
         unsafe { (*state.query)[coordinate] }
     }
 
     fn read_key<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        coordinate: u32,
+        coordinate: usize,
     ) -> Line<K> {
         unsafe { (*state.key)[coordinate] }
     }
 
     fn read_value<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        coordinate: u32,
+        coordinate: usize,
     ) -> Line<V> {
         unsafe { (*state.value)[coordinate] }
     }
 
     fn read_mask<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        coordinate: u32,
+        coordinate: usize,
     ) -> Line<M> {
         unsafe { (*state.mask.unwrap())[coordinate] }
     }
 
     fn read_window_query<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        start: u32,
-        end: u32,
+        start: usize,
+        end: usize,
     ) -> Slice<Line<Q>> {
         unsafe { (*state.query).slice(start, end) }
     }
 
     fn read_window_key<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        start: u32,
-        end: u32,
+        start: usize,
+        end: usize,
     ) -> Slice<Line<K>> {
         unsafe { (*state.key).slice(start, end) }
     }
 
     fn read_window_value<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        start: u32,
-        end: u32,
+        start: usize,
+        end: usize,
     ) -> Slice<Line<V>> {
         unsafe { (*state.value).slice(start, end) }
     }
 
     fn read_window_mask<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        start: u32,
-        end: u32,
+        start: usize,
+        end: usize,
     ) -> Slice<Line<M>> {
         unsafe { (*state.mask.unwrap()).slice(start, end) }
     }
@@ -1178,77 +1178,77 @@ impl AttentionArgs for TensorArgs {
 
     fn shape_query<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        dim: u32,
-    ) -> u32 {
+        dim: usize,
+    ) -> usize {
         unsafe { (*state.query).shape(dim) }
     }
 
     fn shape_key<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        dim: u32,
-    ) -> u32 {
+        dim: usize,
+    ) -> usize {
         unsafe { (*state.key).shape(dim) }
     }
 
     fn shape_value<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        dim: u32,
-    ) -> u32 {
+        dim: usize,
+    ) -> usize {
         unsafe { (*state.value).shape(dim) }
     }
 
     fn shape_mask<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        dim: u32,
-    ) -> u32 {
+        dim: usize,
+    ) -> usize {
         unsafe { (*state.mask.unwrap()).shape(dim) }
     }
 
     fn shape_out<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        dim: u32,
-    ) -> u32 {
+        dim: usize,
+    ) -> usize {
         unsafe { (*state.output).shape(dim) }
     }
 
     fn stride_query<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        dim: u32,
-    ) -> u32 {
+        dim: usize,
+    ) -> usize {
         unsafe { (*state.query).stride(dim) }
     }
 
     fn stride_key<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        dim: u32,
-    ) -> u32 {
+        dim: usize,
+    ) -> usize {
         unsafe { (*state.key).stride(dim) }
     }
 
     fn stride_value<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        dim: u32,
-    ) -> u32 {
+        dim: usize,
+    ) -> usize {
         unsafe { (*state.value).stride(dim) }
     }
 
     fn stride_mask<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        dim: u32,
-    ) -> u32 {
+        dim: usize,
+    ) -> usize {
         unsafe { (*state.mask.unwrap()).stride(dim) }
     }
 
     fn stride_out<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-        dim: u32,
-    ) -> u32 {
+        dim: usize,
+    ) -> usize {
         unsafe { (*state.output).stride(dim) }
     }
 
     fn write_out<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &mut Self::State<Q, K, V, M, O>,
-        coordinate: u32,
+        coordinate: usize,
         val: Line<O>,
     ) {
         unsafe { (*state.output)[coordinate] = val }
@@ -1256,121 +1256,121 @@ impl AttentionArgs for TensorArgs {
 
     fn rank_query<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32 {
+    ) -> usize {
         unsafe { (*state.query).rank() }
     }
 
     fn rank_key<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32 {
+    ) -> usize {
         unsafe { (*state.key).rank() }
     }
 
     fn rank_value<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32 {
+    ) -> usize {
         unsafe { (*state.value).rank() }
     }
 
     fn rank_mask<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32 {
+    ) -> usize {
         unsafe { (*state.mask.unwrap()).rank() }
     }
 
     fn rank_out<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32 {
+    ) -> usize {
         unsafe { (*state.output).rank() }
     }
 
     fn len_query<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32 {
+    ) -> usize {
         unsafe { (*state.query).len() }
     }
 
     fn len_key<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32 {
+    ) -> usize {
         unsafe { (*state.key).len() }
     }
 
     fn len_value<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32 {
+    ) -> usize {
         unsafe { (*state.value).len() }
     }
 
     fn len_mask<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32 {
+    ) -> usize {
         unsafe { (*state.mask.unwrap()).len() }
     }
 
     fn len_out<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32 {
+    ) -> usize {
         unsafe { (*state.output).len() }
     }
 
     fn buffer_len_query<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32 {
+    ) -> usize {
         unsafe { (*state.query).buffer_len() }
     }
 
     fn buffer_len_key<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32 {
+    ) -> usize {
         unsafe { (*state.key).buffer_len() }
     }
 
     fn buffer_len_value<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32 {
+    ) -> usize {
         unsafe { (*state.value).buffer_len() }
     }
 
     fn buffer_len_mask<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32 {
+    ) -> usize {
         unsafe { (*state.mask.unwrap()).buffer_len() }
     }
 
     fn buffer_len_out<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> u32 {
+    ) -> usize {
         unsafe { (*state.output).buffer_len() }
     }
 
     fn line_size_query<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> comptime_type!(u32) {
+    ) -> comptime_type!(usize) {
         unsafe { (*state.query).line_size() }
     }
 
     fn line_size_key<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> comptime_type!(u32) {
+    ) -> comptime_type!(usize) {
         unsafe { (*state.key).line_size() }
     }
 
     fn line_size_value<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> comptime_type!(u32) {
+    ) -> comptime_type!(usize) {
         unsafe { (*state.value).line_size() }
     }
 
     fn line_size_mask<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> comptime_type!(u32) {
+    ) -> comptime_type!(usize) {
         unsafe { (*state.mask.unwrap()).line_size() }
     }
 
     fn line_size_out<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> comptime_type!(u32) {
+    ) -> comptime_type!(usize) {
         unsafe { (*state.output).line_size() }
     }
 }

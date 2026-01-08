@@ -1,13 +1,14 @@
+use cubecl::CubeDim;
+
 use crate::{
-    components::global::{GlobalConfig, multi_stage::LoadMaxRoundPlaneCount},
+    components::global::multi_stage::LoadMaxRoundPlaneCount,
     definition::{MatmulElems, MatmulLineSizes, MatmulSetupError, TilingScheme},
 };
 
 #[allow(unused_variables)]
-pub fn cube_dim_validation<G: GlobalConfig>(config: G) -> Result<(), MatmulSetupError> {
+pub fn cube_dim_validation(cube_dim: CubeDim) -> Result<(), MatmulSetupError> {
     #[cfg(target_os = "macos")]
     {
-        let cube_dim = config.cube_dim();
         if cube_dim.num_elems() >= 512 {
             use crate::definition::{MatmulAvailabilityError, MatmulSetupError};
 
@@ -43,7 +44,7 @@ impl MaxGlobalReaderPlanes {
                     * tiling_scheme.stage_size.k) as u32,
                 line_sizes.lhs,
                 plane_dim,
-                *dtypes.lhs_global,
+                dtypes.lhs_global,
             ),
             rhs: RL::max_round_plane_count(
                 tiling_scheme.tile_size.k * tiling_scheme.tile_size.n,
@@ -53,7 +54,7 @@ impl MaxGlobalReaderPlanes {
                     * tiling_scheme.stage_size.n) as u32,
                 line_sizes.rhs,
                 plane_dim,
-                *dtypes.rhs_global,
+                dtypes.rhs_global,
             ),
         }
     }

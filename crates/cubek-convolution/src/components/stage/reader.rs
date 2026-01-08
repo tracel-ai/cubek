@@ -22,7 +22,7 @@ impl TilingLayout for BiasTilingLayout {
         tile: Coords2d,
         #[comptime] config: StageMemoryConfig,
     ) -> StridedTile<ES> {
-        if comptime!(config.num_stages > 1) {
+        if config.num_stages > 1 {
             unimplemented!()
         }
 
@@ -35,7 +35,7 @@ impl TilingLayout for BiasTilingLayout {
         let start = col * tile_size_col;
 
         StridedTile::new_strided(
-            stage.as_slice(stage_line_size),
+            stage.as_slice(stage_line_size as usize),
             start,
             start + length,
             0,
@@ -46,7 +46,7 @@ impl TilingLayout for BiasTilingLayout {
     }
 
     fn to_enum() -> comptime_type!(TilingLayoutEnum) {
-        comptime![TilingLayoutEnum::Other]
+        TilingLayoutEnum::Other
     }
 }
 

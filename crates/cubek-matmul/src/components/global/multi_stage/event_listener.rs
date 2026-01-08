@@ -117,7 +117,7 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig> Sta
             let analysis = this.analyse(current, total);
 
             if comptime![analysis.lhs.should_execute(current)] {
-                let lhs_job = this.state_lhs.index_mut(0);
+                let lhs_job = this.state_lhs.index_mut(0usize);
 
                 if this.must_sync_plane_after_execution {
                     sync_plane();
@@ -127,12 +127,12 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig> Sta
                     &mut this.reader_lhs,
                     lhs_job,
                     &mut this.barrier,
-                    comptime!(this.config.lhs_reader_config()),
+                    this.config.comptime().lhs_reader_config(),
                 );
             }
 
             if comptime![analysis.rhs.should_execute(current)] {
-                let rhs_job = this.state_rhs.index_mut(0);
+                let rhs_job = this.state_rhs.index_mut(0usize);
 
                 if this.must_sync_plane_after_execution {
                     sync_plane();
@@ -142,31 +142,31 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig> Sta
                     &mut this.reader_rhs,
                     rhs_job,
                     &mut this.barrier,
-                    comptime!(this.config.rhs_reader_config()),
+                    this.config.comptime().rhs_reader_config(),
                 );
             }
         }
 
         // Cleanup remaining tasks if any.
         if let StageEvent::Finish = event {
-            let lhs_len = this.state_lhs.len();
-            let rhs_len = this.state_rhs.len();
+            let lhs_len = this.state_lhs.len().comptime();
+            let rhs_len = this.state_rhs.len().comptime();
 
-            let mut lhs_num_tasks = comptime!(0u32);
-            let mut rhs_num_tasks = comptime!(0u32);
-            let mut lhs_num_task_executed = comptime!(0u32);
-            let mut rhs_num_task_executed = comptime!(0u32);
+            let mut lhs_num_tasks = 0u32.comptime();
+            let mut rhs_num_tasks = 0u32.comptime();
+            let mut lhs_num_task_executed = 0u32.comptime();
+            let mut rhs_num_task_executed = 0u32.comptime();
 
-            if comptime!(lhs_len > 0) {
-                let lhs_job = this.state_lhs.index_mut(0);
+            if lhs_len > 0 {
+                let lhs_job = this.state_lhs.index_mut(0usize);
                 let num_tasks = L::JobIterator::num_tasks(lhs_job);
                 let num_task_executed = L::JobIterator::current(lhs_job);
                 comptime!(lhs_num_tasks += num_tasks);
                 comptime!(lhs_num_task_executed += num_task_executed);
             }
 
-            if comptime!(rhs_len > 0) {
-                let rhs_job = this.state_rhs.index_mut(0);
+            if rhs_len > 0 {
+                let rhs_job = this.state_rhs.index_mut(0usize);
                 let num_tasks = R::JobIterator::num_tasks(rhs_job);
                 let num_task_executed = R::JobIterator::current(rhs_job);
                 comptime!(rhs_num_tasks += num_tasks);
@@ -174,35 +174,35 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig> Sta
             }
 
             #[allow(clippy::collapsible_if)]
-            if comptime!(this.must_sync_plane_after_execution) {
+            if this.must_sync_plane_after_execution.comptime() {
                 if lhs_num_tasks - lhs_num_task_executed + rhs_num_tasks - rhs_num_task_executed > 0
                 {
                     sync_plane();
                 }
             }
 
-            if comptime!(lhs_len > 0) {
-                let lhs_job = this.state_lhs.index_mut(0);
+            if lhs_len > 0 {
+                let lhs_job = this.state_lhs.index_mut(0usize);
                 #[unroll]
                 for _ in lhs_num_task_executed..lhs_num_tasks {
                     L::execute_task(
                         &mut this.reader_lhs,
                         lhs_job,
                         &mut this.barrier,
-                        comptime!(this.config.lhs_reader_config()),
+                        this.config.comptime().lhs_reader_config(),
                     );
                 }
             }
 
-            if comptime!(rhs_len > 0) {
-                let rhs_job = this.state_rhs.index_mut(0);
+            if rhs_len > 0 {
+                let rhs_job = this.state_rhs.index_mut(0usize);
                 #[unroll]
                 for _ in rhs_num_task_executed..rhs_num_tasks {
                     R::execute_task(
                         &mut this.reader_rhs,
                         rhs_job,
                         &mut this.barrier,
-                        comptime!(this.config.rhs_reader_config()),
+                        this.config.comptime().rhs_reader_config(),
                     );
                 }
             }
@@ -215,7 +215,7 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig>
     DoubleBufferingEventListener<S, L, R, G>
 {
     fn init(&mut self) {
-        if comptime!(self.event_loading_side.includes_lhs()) {
+        if self.event_loading_side.comptime().includes_lhs() {
             self.state_lhs.push(L::create_job_iterator(
                 &self.reader_lhs,
                 self.stage_buffer,
@@ -223,7 +223,7 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig>
             ));
         }
 
-        if comptime!(self.event_loading_side.includes_rhs()) {
+        if self.event_loading_side.comptime().includes_rhs() {
             self.state_rhs.push(R::create_job_iterator(
                 &self.reader_rhs,
                 self.stage_buffer,
@@ -237,33 +237,33 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig>
         #[comptime] current_event: u32,
         #[comptime] event_count_total: u32,
     ) -> comptime_type!(EventAnalysis) {
-        let lhs_len = self.state_lhs.len();
-        let rhs_len = self.state_rhs.len();
+        let lhs_len = self.state_lhs.len().comptime();
+        let rhs_len = self.state_rhs.len().comptime();
 
-        let mut lhs_num_tasks = comptime!(0u32);
-        let mut rhs_num_tasks = comptime!(0u32);
-        let mut lhs_num_task_executed = comptime!(0u32);
-        let mut rhs_num_task_executed = comptime!(0u32);
+        let mut lhs_num_tasks = 0u32.comptime();
+        let mut rhs_num_tasks = 0u32.comptime();
+        let mut lhs_num_task_executed = 0u32.comptime();
+        let mut rhs_num_task_executed = 0u32.comptime();
 
-        if comptime!(lhs_len > 0) {
-            let lhs_job = self.state_lhs.index(0);
+        if lhs_len > 0 {
+            let lhs_job = &self.state_lhs[0];
             let num_tasks = L::JobIterator::num_tasks(lhs_job);
             let current = L::JobIterator::current(lhs_job);
             comptime!(lhs_num_tasks += num_tasks);
             comptime!(lhs_num_task_executed += current);
         }
 
-        if comptime!(rhs_len > 0) {
-            let rhs_job = self.state_rhs.index(0);
+        if rhs_len > 0 {
+            let rhs_job = &self.state_rhs[0];
             let num_tasks = R::JobIterator::num_tasks(rhs_job);
             let current = R::JobIterator::current(rhs_job);
             comptime!(rhs_num_tasks += num_tasks);
             comptime!(rhs_num_task_executed += current);
         }
 
-        let num_tasks_total = comptime!(lhs_num_tasks + rhs_num_tasks);
-
         comptime! {
+            let num_tasks_total = lhs_num_tasks + rhs_num_tasks;
+
             // When ordered, we cannot start loading before all were loaded in fragments
             // Eventually, Lhs loads for k = i could start as soon as k_iterations_done = i, but probably overkill
             let can_start = |event_loading_mode: EventLoadingMode| if let EventLoadingMode::Ordered = event_loading_mode {
@@ -272,8 +272,8 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig>
                 true
             };
 
-            let lhs_can_start = lhs_len > 0 && can_start(comptime!(self.config.lhs_reader_config().event_loading_mode));
-            let rhs_can_start = rhs_len > 0 && can_start(comptime!(self.config.rhs_reader_config().event_loading_mode));
+            let lhs_can_start = lhs_len > 0 && can_start(self.config.lhs_reader_config().event_loading_mode);
+            let rhs_can_start = rhs_len > 0 && can_start(self.config.rhs_reader_config().event_loading_mode);
 
             let step = 1u32;
             let start = event_count_total.saturating_sub(step * num_tasks_total);
@@ -354,7 +354,7 @@ pub trait LoadMaxRoundPlaneCount {
     fn max_round_plane_count(
         elements_per_tile: u32,
         tiles_per_stage: u32,
-        line_size: u8,
+        line_size: LineSize,
         plane_dim: u32,
         dtype: StorageType,
     ) -> u32;

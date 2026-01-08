@@ -21,7 +21,7 @@ impl GlobalFullCubeReduce {
     pub fn execute<P: ReducePrecision, Out: Numeric, I: ReduceInstruction<P>>(
         input: &VirtualTensor<P::EI>,
         output: &mut VirtualTensor<Out, ReadWrite>,
-        reduce_axis: u32,
+        reduce_axis: usize,
         inst: &I,
         #[comptime] line_mode: LineMode,
         #[comptime] blueprint: CubeBlueprint,
@@ -63,7 +63,7 @@ impl GlobalFullCubeReduce {
 
             let mut accumulator_final = I::null_accumulator(inst, input_line_size);
 
-            match comptime!(blueprint.use_planes) {
+            match blueprint.use_planes {
                 true => {
                     if worker_pos == 0 {
                         reduce_scan::<P, I>(
@@ -93,17 +93,17 @@ impl GlobalFullCubeReduce {
         let commit_required = writer.commit_required();
 
         #[allow(clippy::collapsible_if)]
-        if comptime!(commit_required) {
-            if worker_pos == 0u32 {
+        if commit_required {
+            if worker_pos == 0 {
                 writer.commit();
             }
         }
     }
 
-    fn worker_pos(#[comptime] blueprint: CubeBlueprint) -> u32 {
-        match comptime!(blueprint.use_planes) {
-            true => UNIT_POS_Y,
-            false => UNIT_POS,
+    fn worker_pos(#[comptime] blueprint: CubeBlueprint) -> usize {
+        match blueprint.use_planes {
+            true => UNIT_POS_Y as usize,
+            false => UNIT_POS as usize,
         }
     }
 
@@ -111,8 +111,8 @@ impl GlobalFullCubeReduce {
     fn reduce_shared<P: ReducePrecision, Out: Numeric, I: ReduceInstruction<P>>(
         input: &VirtualTensor<P::EI>,
         output: &mut VirtualTensor<Out, ReadWrite>,
-        reduce_axis: u32,
-        reduce_index: u32,
+        reduce_axis: usize,
+        reduce_index: usize,
         inst: &I,
         idle: CubeOption<bool>,
         #[comptime] line_mode: LineMode,
@@ -140,7 +140,7 @@ impl GlobalFullCubeReduce {
 
         let worker_pos = Self::worker_pos(blueprint);
 
-        let accumulator_plane = match comptime!(blueprint.use_planes) {
+        let accumulator_plane = match blueprint.use_planes {
             true => {
                 // Sync at the plane level.
                 let (item, coordinate) = I::read_accumulator(inst, &accumulator);
@@ -173,7 +173,7 @@ fn reduce_scan<P: ReducePrecision, I: ReduceInstruction<P>>(
     inst: &I,
     accumulator: &mut I::SharedAccumulator,
     result: &mut I::AccumulatorItem,
-    #[comptime] size: u32,
+    #[comptime] size: usize,
 ) {
     for i in 0..size {
         let item = I::SharedAccumulator::read(accumulator, i);
@@ -211,10 +211,10 @@ fn reduce_tree<P: ReducePrecision, I: ReduceInstruction<P>>(
     inst: &I,
     accumulator: &mut I::SharedAccumulator,
     result: &mut I::AccumulatorItem,
-    worker_index: u32,
-    #[comptime] size: u32,
+    worker_index: usize,
+    #[comptime] size: usize,
 ) {
-    if comptime!(size.is_power_of_two()) {
+    if size.is_power_of_two() {
         let mut num_active_units = size.runtime();
         let mut jump = 1;
         while num_active_units > 1 {

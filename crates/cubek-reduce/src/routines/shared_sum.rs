@@ -68,19 +68,19 @@ pub fn shared_sum<R: Runtime>(
         return Err(ReduceError::MissingAtomicAdd(input_elem.into()));
     }
 
-    let input_len = input.shape.iter().map(|s| *s as u32).product::<u32>();
+    let input_len = input.shape.iter().product::<usize>();
 
     // Compute the optimal line size.
     let line_size = client
         .io_optimized_line_sizes_unchecked(input.elem_size)
-        .filter(|line_size| input_len % *line_size as u32 == 0)
+        .filter(|line_size| input_len % *line_size == 0)
         .max()
-        .unwrap_or(1) as u32;
+        .unwrap_or(1);
 
     // Compute extra parameters.
     let cube_dim = CubeDim::new_2d(32, 8); // NOTE: If you change that, keep the unit count a power of 2.
     let num_units = cube_count * cube_dim.num_elems();
-    let num_lines_per_unit = input_len.div_ceil(num_units * line_size);
+    let num_lines_per_unit = input_len.div_ceil(num_units as usize * line_size);
     let cube_count = CubeCount::new_1d(cube_count);
 
     // Launch kernel
@@ -89,9 +89,9 @@ pub fn shared_sum<R: Runtime>(
             client,
             cube_count,
             cube_dim,
-            input.as_tensor_arg(line_size as u8),
+            input.as_tensor_arg(line_size),
             output.as_tensor_arg(1),
-            cube_dim.num_elems(),
+            cube_dim.num_elems() as usize,
             line_size,
             num_lines_per_unit,
             input_elem,
@@ -108,13 +108,13 @@ pub fn shared_sum<R: Runtime>(
 fn shared_sum_kernel<N: Numeric>(
     input: &Tensor<Line<N>>,
     output: &mut Tensor<Atomic<N>>,
-    #[comptime] shared_memory_size: u32,
-    #[comptime] line_size: u32,
-    #[comptime] num_lines_per_unit: u32,
+    #[comptime] shared_memory_size: usize,
+    #[comptime] line_size: LineSize,
+    #[comptime] num_lines_per_unit: usize,
     #[define(N)] _dtype: ElemType,
 ) {
     let mut shared_memory = SharedMemory::new_lined(shared_memory_size, line_size);
-    shared_memory[UNIT_POS] = Line::empty(line_size).fill(N::from_int(0));
+    shared_memory[UNIT_POS as usize] = Line::empty(line_size).fill(N::from_int(0));
 
     // Each unit reduce `num_lines_per_unit` lines.
     let start = ABSOLUTE_POS * num_lines_per_unit;
@@ -126,7 +126,7 @@ fn shared_sum_kernel<N: Numeric>(
 
     // Each unit sum its lines.
     for k in start..end {
-        shared_memory[UNIT_POS] += input[k];
+        shared_memory[UNIT_POS as usize] += input[k];
     }
 
     // Sum all lines within the shared_memory to a single line.
@@ -159,8 +159,8 @@ fn sum_shared_memory<N: Numeric>(accumulator: &mut SharedMemory<Line<N>>) -> Lin
         let destination = jump * 2 * UNIT_POS;
         let origin = jump * (2 * UNIT_POS + 1);
         if UNIT_POS < num_active_units {
-            let element = accumulator[origin];
-            accumulator[destination] += element;
+            let element = accumulator[origin as usize];
+            accumulator[destination as usize] += element;
         }
         jump *= 2;
         sync_cube();

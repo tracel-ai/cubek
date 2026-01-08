@@ -1,11 +1,11 @@
 mod mm {
     use super::*;
-    use cubek_matmul::components::global::{LoadSpecializationConfig, SpecializationTensorConfig};
+    use cubek_matmul::components::global::{InputLoadFlow, LoadFlows};
 
-    fn specialization() -> LoadSpecializationConfig {
-        LoadSpecializationConfig {
-            lhs: SpecializationTensorConfig::MainFlowOnly,
-            rhs: SpecializationTensorConfig::MainFlowOnly,
+    fn specialization() -> LoadFlows {
+        LoadFlows {
+            lhs: InputLoadFlow::MainOnly,
+            rhs: InputLoadFlow::MainOnly,
         }
     }
 
@@ -15,12 +15,12 @@ mod mm {
 #[cfg(feature = "matmul_tests_specialized")]
 mod ml {
     use super::*;
-    use cubek_matmul::components::global::{LoadSpecializationConfig, SpecializationTensorConfig};
+    use cubek_matmul::components::global::{InputLoadFlow, LoadFlows};
 
-    fn specialization() -> LoadSpecializationConfig {
-        LoadSpecializationConfig {
-            lhs: SpecializationTensorConfig::MainFlowOnly,
-            rhs: SpecializationTensorConfig::LoadFlowOnly,
+    fn specialization() -> LoadFlows {
+        LoadFlows {
+            lhs: InputLoadFlow::MainOnly,
+            rhs: InputLoadFlow::LoadOnly,
         }
     }
 
@@ -30,12 +30,12 @@ mod ml {
 #[cfg(feature = "matmul_tests_specialized")]
 mod lm {
     use super::*;
-    use cubek_matmul::components::global::{LoadSpecializationConfig, SpecializationTensorConfig};
+    use cubek_matmul::components::global::{InputLoadFlow, LoadFlows};
 
-    fn specialization() -> LoadSpecializationConfig {
-        LoadSpecializationConfig {
-            lhs: SpecializationTensorConfig::LoadFlowOnly,
-            rhs: SpecializationTensorConfig::MainFlowOnly,
+    fn specialization() -> LoadFlows {
+        LoadFlows {
+            lhs: InputLoadFlow::LoadOnly,
+            rhs: InputLoadFlow::MainOnly,
         }
     }
 
@@ -45,12 +45,12 @@ mod lm {
 #[cfg(feature = "matmul_tests_specialized")]
 mod ll {
     use super::*;
-    use cubek_matmul::components::global::{LoadSpecializationConfig, SpecializationTensorConfig};
+    use cubek_matmul::components::global::{InputLoadFlow, LoadFlows};
 
-    fn specialization() -> LoadSpecializationConfig {
-        LoadSpecializationConfig {
-            lhs: SpecializationTensorConfig::LoadFlowOnly,
-            rhs: SpecializationTensorConfig::LoadFlowOnly,
+    fn specialization() -> LoadFlows {
+        LoadFlows {
+            lhs: InputLoadFlow::LoadOnly,
+            rhs: InputLoadFlow::LoadOnly,
         }
     }
 

@@ -2,13 +2,13 @@ use std::marker::PhantomData;
 
 use crate::components::global::read::validate_swizzle_atom_size;
 use crate::components::global::read::{FullLoadingStrategy, tiled::TiledLayout};
-use crate::components::global::{GlobalReaderConfig, RoleRule};
+use crate::components::global::{GlobalReaderConfig, PlaneFlowPartition};
 use crate::components::global::{multi_stage::LoadMaxRoundPlaneCount, read::sync::Synchronous};
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{ContiguousTilingLayout, StridedStageMemory, TilingOrder};
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
-use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem};
-use cubecl::prelude::*;
+use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem, StageIdent};
+use cubecl::{ir::DeviceProperties, prelude::*};
 
 use super::{LoadingJob, LoadingValidation, ReaderMode};
 
@@ -21,16 +21,14 @@ pub struct SyncFullCyclicLoading<T: TilingOrder> {
 }
 
 impl<TO: TilingOrder> LoadingValidation for SyncFullCyclicLoading<TO> {
-    fn check<R: Runtime>(
-        _client: &ComputeClient<R>,
-        _problem: &MatmulProblem,
+    fn validate_with_config(
+        _device_props: &DeviceProperties,
         config: &GlobalReaderConfig,
-        dtypes: &MatmulElems,
     ) -> Result<(), InvalidConfigError> {
         if let ReaderMode::Strict = config.reader_mode {
             let line_size = config.gmem_config.line_size;
 
-            let num_stage_lines = config.smem_config.elements_per_stage() / line_size;
+            let num_stage_lines = config.smem_config.elements_per_stage() / line_size as u32;
             let total_units = config.loading_units_count();
 
             if !num_stage_lines.is_multiple_of(total_units) {
@@ -41,9 +39,17 @@ impl<TO: TilingOrder> LoadingValidation for SyncFullCyclicLoading<TO> {
             }
         }
 
-        validate_swizzle_atom_size(config.smem_config, config.stage_ident, dtypes)?;
+        validate_swizzle_atom_size(config.smem_config)?;
         ContiguousTilingLayout::<TO>::check(config.smem_config)?;
 
+        Ok(())
+    }
+
+    fn validate_with_problem(
+        _problem: &MatmulProblem,
+        _dtypes: &MatmulElems,
+        _ident: StageIdent,
+    ) -> Result<(), InvalidConfigError> {
         Ok(())
     }
 }
@@ -52,7 +58,7 @@ impl<TO: TilingOrder> LoadMaxRoundPlaneCount for SyncFullCyclicLoading<TO> {
     fn max_round_plane_count(
         elements_per_tile: u32,
         tiles_per_stage: u32,
-        line_size: u8,
+        line_size: LineSize,
         plane_dim: u32,
         _dtype: StorageType,
     ) -> u32 {
@@ -69,23 +75,23 @@ impl<TO: TilingOrder> FullLoadingStrategy for SyncFullCyclicLoading<TO> {
     type Job<EG: Numeric, ES: Numeric> = SyncFullCyclicJob;
 
     fn new_job<EG: Numeric, ES: Numeric>(
-        #[comptime] line_size: u32,
+        #[comptime] line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, ES> {
         let tile_num_elements = config.smem_config.elements_per_tile();
         let num_stage_elements = config.smem_config.elements_per_stage();
 
-        let num_stage_lines = num_stage_elements.div_ceil(line_size);
+        let num_stage_lines = num_stage_elements.div_ceil(line_size as u32);
         let total_units = config.loading_units_count();
-        let num_tasks_per_unit = comptime!(num_stage_lines.div_ceil(total_units));
-        let balanced_workload = comptime!(num_stage_lines.is_multiple_of(total_units));
-        let jump_length = comptime!(total_units * line_size);
+        let num_tasks_per_unit = num_stage_lines.div_ceil(total_units);
+        let balanced_workload = num_stage_lines.is_multiple_of(total_units);
+        let jump_length = total_units * line_size as u32;
 
-        let unit_id = RoleRule::new(config.plane_role_config.rule)
-            .load_index(config.specialization_tensor_config)
+        let unit_id = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
+            .load_index(config.input_load_flow)
             * config.plane_dim
             + UNIT_POS_X;
-        let unit_position_base = unit_id * line_size;
+        let unit_position_base = unit_id * line_size as u32;
 
         SyncFullCyclicJob {
             unit_position_base,
@@ -111,7 +117,7 @@ pub struct SyncFullCyclicJob {
     #[cube(comptime)]
     jump_length: u32,
     #[cube(comptime)]
-    line_size: u32,
+    line_size: LineSize,
     #[cube(comptime)]
     balanced_workload: bool,
     #[cube(comptime)]
@@ -166,12 +172,12 @@ pub(crate) fn load_and_store_line<EG: Numeric, ES: Numeric, TO: TilingOrder>(
     let layout = TiledLayout::new(config.stage_ident, config.smem_config);
     let view = global_iter.view().view(layout);
 
-    let tile = ContiguousTilingLayout::<TO>::to_x_y(nth_tile, comptime!(config.smem_config));
+    let tile = ContiguousTilingLayout::<TO>::to_x_y(nth_tile, config.smem_config);
 
     let mut slice = stage.as_slice_mut(line_size);
 
     let line_read = view.read_checked((tile, pos_within_tile));
     let stage_offs = stage.swizzle.apply(unit_position, ES::type_size());
 
-    slice[stage_offs / job.line_size] = Line::cast_from(line_read);
+    slice[stage_offs as usize / job.line_size] = Line::cast_from(line_read);
 }

@@ -5,16 +5,14 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
 use cubecl::tensor_line_size_parallel;
 
-use crate::components::batch::naive::{NaiveBatchMatmulFamily, NaiveBlueprint};
-use crate::definition::{CubeCountPlan, MatmulLineSizes};
-use crate::definition::{MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError};
+use crate::definition::MatmulLineSizes;
+use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError};
 
-use crate::components::batch::BatchMatmulFamily;
 use crate::launch::InputArg;
 use crate::launch::handle::{MatmulInputHandle, MatmulInputHandleRef};
 use crate::launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs};
-use crate::routines::Routine as _;
 use crate::routines::naive::NaiveRoutine;
+use crate::routines::{BlueprintStrategy, Routine as _};
 
 /// Matrix multiplication using memory coalescing algorithm with custom cube dimensions
 #[allow(clippy::result_large_err)]
@@ -36,7 +34,6 @@ pub fn launch_ref<R: Runtime>(
     out: &TensorHandleRef<'_, R>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
-    let (cube_dim_x, cube_dim_y) = (32, 8);
     let rank = lhs.shape().len();
     let dim1 = rank - 1;
     let dim2 = rank - 2;
@@ -112,78 +109,39 @@ pub fn launch_ref<R: Runtime>(
         dtypes.as_global_elems(),
     );
 
-    let blueprint = NaiveBlueprint {};
-    let config =
-        NaiveBatchMatmulFamily::expand_config(client, &problem, &blueprint, &line_sizes, dtypes)?;
-
-    let cube_count_plan =
-        simple_cube_count(lhs_shape, rhs_shape, out_shape, cube_dim_x, cube_dim_y)?;
+    let device_settings = NaiveRoutine::device_settings(client, line_sizes);
+    let launch_info = NaiveRoutine::prepare(
+        &problem,
+        &device_settings,
+        &BlueprintStrategy::Inferred(().into()),
+    )?;
 
     let input = <InputArg<TensorArgs> as ConcreteInputsFactory<NaiveRoutine>>::create(
         client,
         &lhs,
         &rhs,
-        &blueprint,
+        &launch_info.blueprint,
         &problem,
         &line_sizes,
-        config,
         dtypes,
     );
     let output = <OutputArg<TensorArgs> as ConcreteOutputFactory<NaiveRoutine>>::create(
         client,
         out,
-        &blueprint,
+        &launch_info.blueprint,
         &problem,
         &line_sizes,
-        config,
         dtypes,
     );
 
     NaiveRoutine::launch::<TensorArgs, R>(
         client,
-        CubeDim::new_2d(cube_dim_x as u32, cube_dim_y as u32),
-        cube_count_plan.resolve(),
+        launch_info.cube_dim,
+        launch_info.cube_count_plan.resolve(),
         input,
         output,
-        cube_count_plan.as_args(),
-        config,
+        launch_info.cube_count_plan.as_args(),
+        launch_info.blueprint,
         dtypes,
     )
-}
-
-#[allow(clippy::result_large_err)]
-fn simple_cube_count(
-    lhs_shape: &[usize],
-    rhs_shape: &[usize],
-    output_shape: &[usize],
-    cube_dim_x: usize,
-    cube_dim_y: usize,
-) -> Result<CubeCountPlan, MatmulSetupError> {
-    let ndims = lhs_shape.len();
-    let num_rows = lhs_shape[ndims - 2];
-    let num_cols = rhs_shape[ndims - 1];
-
-    let m_cubes = f32::ceil(num_rows as f32 / cube_dim_x as f32) as u32;
-    let n_cubes = f32::ceil(num_cols as f32 / cube_dim_y as f32) as u32;
-    let mut batch_cubes = 1u32;
-
-    #[allow(clippy::needless_range_loop)]
-    for i in 0..ndims - 2 {
-        batch_cubes *= output_shape[i] as u32;
-    }
-
-    let cube_count_plan = CubeCountPlan::FromProblem {
-        m_cubes,
-        n_cubes,
-        batch_cubes,
-    };
-    let max_cube_count = u16::MAX as u32;
-
-    if m_cubes > max_cube_count || n_cubes > max_cube_count || batch_cubes > max_cube_count {
-        return Err(MatmulSetupError::Unavailable(
-            MatmulAvailabilityError::CubeCountTooBig(cube_count_plan.resolve()),
-        ));
-    }
-
-    Ok(cube_count_plan)
 }

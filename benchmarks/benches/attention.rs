@@ -216,28 +216,5 @@ fn run_benches<R: Runtime, AP: AttentionPrecision>() {
 }
 
 fn main() {
-    #[cfg(feature = "wgpu")]
-    {
-        run_benches::<cubecl::wgpu::WgpuRuntime, f32>();
-    }
-
-    #[cfg(feature = "wgpu-spirv")]
-    {
-        run_benches::<cubecl::wgpu::WgpuRuntime, half::f16>();
-    }
-
-    #[cfg(all(feature = "hip", target_os = "linux"))]
-    {
-        run_benches::<cubecl::hip::HipRuntime, half::f16>();
-    }
-
-    #[cfg(feature = "cuda")]
-    {
-        run_benches::<cubecl::cuda::CudaRuntime, half::f16>();
-    }
-
-    #[cfg(feature = "wgpu-msl")]
-    {
-        run_benches::<cubecl::wgpu::WgpuRuntime, half::f16>();
-    }
+    run_benches::<cubecl::TestRuntime, half::f16>();
 }

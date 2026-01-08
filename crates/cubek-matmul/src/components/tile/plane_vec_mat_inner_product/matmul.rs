@@ -26,7 +26,7 @@ pub struct LineContainer<E: Numeric> {
 
 #[cube]
 impl<E: Numeric> LineContainer<E> {
-    fn new(#[comptime] size: u32) -> LineContainer<E> {
+    fn new(#[comptime] size: LineSize) -> LineContainer<E> {
         LineContainer::<E> {
             line: Line::empty(size),
         }
@@ -60,17 +60,17 @@ where
         acc: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     ) {
-        let mut n = comptime![0];
-
         #[unroll]
         #[allow(clippy::explicit_counter_loop)]
-        for _ in 0..config.shared.tile_size.n() {
+        for n in 0..config.shared.tile_size.n() as usize {
             let lhs: Line<A> = Line::cast_from(lhs.line);
-            let rhs: Line<A> = Line::cast_from(rhs.index(n).line);
+            let rhs: Line<A> = Line::cast_from(rhs[n].line);
 
-            plane_sum_lined(lhs * rhs, acc.index_mut(n), config.reduce_line_size);
-
-            comptime![n += 1];
+            plane_sum_lined(
+                lhs * rhs,
+                acc.index_mut(n),
+                config.reduce_line_size as usize,
+            );
         }
     }
 
@@ -78,7 +78,7 @@ where
         #[comptime] _layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Self::LhsFragment {
-        LineContainer::<L>::new(config.reduce_line_size)
+        LineContainer::<L>::new(config.reduce_line_size as usize)
     }
 
     fn allocate_rhs(
@@ -88,7 +88,7 @@ where
         let mut rhs = Sequence::new();
         #[unroll]
         for _ in 0..config.shared.tile_size.n() {
-            rhs.push(LineContainer::new(config.reduce_line_size))
+            rhs.push(LineContainer::new(config.reduce_line_size as usize))
         }
         rhs
     }
@@ -100,7 +100,7 @@ where
         let mut acc = Sequence::new();
         #[unroll]
         for _ in 0..config.shared.tile_size.n() {
-            acc.push(LineContainer::new(config.reduce_line_size))
+            acc.push(LineContainer::new(config.reduce_line_size as usize))
         }
         acc
     }
@@ -138,7 +138,7 @@ where
             tile,
             acc,
             config.shared.tile_size.n(),
-            config.reduce_line_size,
+            config.reduce_line_size as usize,
         )
     }
 }
@@ -147,15 +147,11 @@ where
 fn plane_sum_lined<E: Numeric>(
     line_to_sum: Line<E>,
     line_accumulator: &mut LineContainer<E>,
-    #[comptime] line_size: u32,
+    #[comptime] line_size: LineSize,
 ) {
-    let mut line_iterator = comptime![0];
-
     #[unroll]
     #[allow(clippy::explicit_counter_loop)]
-    for _ in 0..line_size {
+    for line_iterator in 0..line_size {
         line_accumulator.line[line_iterator] += plane_sum(line_to_sum[line_iterator]);
-
-        comptime![line_iterator += 1];
     }
 }

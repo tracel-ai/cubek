@@ -24,15 +24,15 @@ impl RandomFamily for UniformFamily {
 impl PrngRuntime for Uniform {
     fn inner_loop<E: Numeric>(
         args: Uniform,
-        write_index_base: u32,
+        write_index_base: usize,
         n_invocations: u32,
-        #[comptime] n_values_per_thread: u32,
-        #[comptime] line_size: u32,
+        #[comptime] n_values_per_thread: usize,
+        #[comptime] line_size: LineSize,
         state_0: &mut u32,
         state_1: &mut u32,
         state_2: &mut u32,
         state_3: &mut u32,
-        output: &mut View<Line<E>, u32, ReadWrite>,
+        output: &mut View<Line<E>, usize, ReadWrite>,
     ) {
         let lower_bound = args.lower_bound;
         let upper_bound = args.upper_bound;
@@ -62,7 +62,7 @@ impl PrngRuntime for Uniform {
                 output_line[i] = uniform;
             }
 
-            let write_index = line_index * n_invocations + write_index_base;
+            let write_index = line_index * n_invocations as usize + write_index_base;
 
             output[write_index] = output_line;
         }

@@ -64,7 +64,7 @@ fn load_lhs<E: Numeric, V: Numeric>(
     let size = config.shared.tile_size;
 
     match config.product_type {
-        ProductType::Inner => match comptime!(frag.layout) {
+        ProductType::Inner => match frag.layout.comptime() {
             MatrixLayout::RowMajor => {
                 MM::load_plain(tile, &mut frag.array, size.m(), size.k(), tile.line_size);
             }
@@ -72,7 +72,7 @@ fn load_lhs<E: Numeric, V: Numeric>(
                 MM::load_transposed(tile, &mut frag.array, size.k(), size.m(), tile.line_size);
             }
         },
-        ProductType::Outer => match comptime!(frag.layout) {
+        ProductType::Outer => match frag.layout.comptime() {
             MatrixLayout::RowMajor => {
                 MM::load_transposed(tile, &mut frag.array, size.m(), size.k(), tile.line_size);
             }
@@ -92,7 +92,7 @@ fn load_rhs<E: Numeric, V: Numeric>(
     let size = config.shared.tile_size;
 
     match config.product_type {
-        ProductType::Inner => match comptime!(frag.layout) {
+        ProductType::Inner => match frag.layout.comptime() {
             MatrixLayout::RowMajor => {
                 MM::load_transposed(tile, &mut frag.array, size.k(), size.n(), tile.line_size);
             }
@@ -100,7 +100,7 @@ fn load_rhs<E: Numeric, V: Numeric>(
                 MM::load_plain(tile, &mut frag.array, size.n(), size.k(), tile.line_size);
             }
         },
-        ProductType::Outer => match comptime!(frag.layout) {
+        ProductType::Outer => match frag.layout.comptime() {
             MatrixLayout::RowMajor => {
                 MM::load_plain(tile, &mut frag.array, size.k(), size.n(), tile.line_size);
             }
@@ -119,7 +119,7 @@ fn load_acc<E: Numeric, V: Numeric>(
 ) {
     let size = config.shared.tile_size;
 
-    match comptime!(frag.layout) {
+    match frag.layout.comptime() {
         MatrixLayout::RowMajor => {
             MM::load_plain(tile, &mut frag.array, size.m(), size.n(), tile.line_size);
         }
@@ -148,7 +148,7 @@ impl RegisterFragmentReader for RegisterStageReader<Filled> {
         };
 
         for i in 0..size {
-            fragment.array[i] = E::cast_from(*value);
+            fragment.array[i as usize] = E::cast_from(*value);
         }
     }
 }

@@ -64,12 +64,12 @@ impl<EG: CubePrimitive> GlobalIterator<EG> {
 
     /// Returns the current view slice of the iterator
     pub fn view(&self) -> View<EG, Coords2d> {
-        let offset = match comptime![self.view_direction] {
+        let offset = match self.view_direction.comptime() {
             ViewDirection::Row => (self.offset.read(), 0u32),
             ViewDirection::Col => (0u32, self.offset.read()),
             ViewDirection::None => (0u32, 0u32).runtime(),
         };
-        if comptime![self.checked] {
+        if self.checked.comptime() {
             self.global_view.slice(offset, self.view_size)
         } else {
             self.global_view.slice_unchecked(offset, self.view_size)
@@ -77,7 +77,7 @@ impl<EG: CubePrimitive> GlobalIterator<EG> {
     }
 
     /// Returns the line size of the global view
-    pub fn line_size(&self) -> comptime_type!(u32) {
+    pub fn line_size(&self) -> comptime_type!(LineSize) {
         self.global_view.line_size()
     }
 

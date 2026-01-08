@@ -23,11 +23,11 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Prod {
     fn from_config(_config: Self::Config) -> Self {
         Prod {}
     }
-    fn null_input(_this: &Self, #[comptime] line_size: u32) -> Line<P::EI> {
+    fn null_input(_this: &Self, #[comptime] line_size: LineSize) -> Line<P::EI> {
         Line::empty(line_size).fill(P::EI::from_int(1))
     }
 
-    fn null_accumulator(_this: &Self, #[comptime] line_size: u32) -> Self::AccumulatorItem {
+    fn null_accumulator(_this: &Self, #[comptime] line_size: LineSize) -> Self::AccumulatorItem {
         Line::empty(line_size).fill(P::EA::from_int(1))
     }
 
@@ -74,7 +74,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Prod {
     fn merge_line<Out: Numeric>(
         _this: &Self,
         accumulator: Self::AccumulatorItem,
-        _shape_axis_reduce: u32,
+        _shape_axis_reduce: usize,
     ) -> Out {
         let mut prod = P::EA::from_int(1);
         #[unroll]
@@ -87,7 +87,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Prod {
     fn to_output_perpendicular<Out: Numeric>(
         _this: &Self,
         accumulator: Self::AccumulatorItem,
-        _shape_axis_reduce: u32,
+        _shape_axis_reduce: usize,
     ) -> Line<Out> {
         Line::cast_from(accumulator)
     }

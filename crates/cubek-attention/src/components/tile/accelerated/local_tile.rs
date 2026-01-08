@@ -47,14 +47,14 @@ pub enum InnerLayout {
 #[cube]
 impl<E: Numeric> LocalTile<E> {
     pub fn new(layout: LocalTileLayout) -> LocalTile<E> {
-        let array = Array::<E>::new(comptime!(layout.unit_size.0 * layout.unit_size.1));
+        let array = Array::<E>::new(comptime!(layout.unit_size.0 * layout.unit_size.1) as usize);
 
         LocalTile::<E> { array, layout }
     }
 
     pub fn zero(&mut self) {
         for i in 0..self.layout.unit_size.0 * self.layout.unit_size.1 {
-            self.array[i] = E::from_int(0);
+            self.array[i as usize] = E::from_int(0);
         }
     }
 
@@ -64,7 +64,7 @@ impl<E: Numeric> LocalTile<E> {
                 let (row, col) = self.layout.absolute_pos((r, c));
                 let index = row * self.layout.total_size.1 + col;
 
-                self.array[r * self.layout.unit_size.1 + c] = smem_slice[index];
+                self.array[(r * self.layout.unit_size.1 + c) as usize] = smem_slice[index as usize];
             }
         }
     }
@@ -74,7 +74,7 @@ impl<E: Numeric> LocalTile<E> {
         for r in 0..self.layout.unit_size.0 {
             for c in 0..self.layout.unit_size.1 {
                 let (row, col) = self.layout.absolute_pos((r, c));
-                self.array[r * self.layout.unit_size.1 + c] =
+                self.array[(r * self.layout.unit_size.1 + c) as usize] =
                     E::cast_from(strided_tile.get_line(row, col))
             }
         }
@@ -86,7 +86,7 @@ impl<E: Numeric> LocalTile<E> {
                 let (row, col) = self.layout.absolute_pos((r, c));
                 let index = row * self.layout.total_size.1 + col;
 
-                smem_slice[index] = self.array[r * self.layout.unit_size.1 + c];
+                smem_slice[index as usize] = self.array[(r * self.layout.unit_size.1 + c) as usize];
             }
         }
     }
@@ -120,7 +120,7 @@ impl LocalTileLayout {
         };
         let unit_size = (num_rows_per_unit, num_cols_per_unit);
 
-        let num_units_per_row = comptime!(total_size.1 / unit_size.1);
+        let num_units_per_row = total_size.1 / unit_size.1;
 
         LocalTileLayout {
             total_size,
@@ -137,7 +137,7 @@ impl LocalTileLayout {
                 let (row, col) = self.absolute_pos((r, c));
                 let index = row * self.total_size.1 + col;
 
-                slice[index] = E::from_int(0);
+                slice[index as usize] = E::from_int(0);
             }
         }
     }
@@ -178,14 +178,14 @@ impl<E: Float> RowwiseFormat<E> for LocalTile<E> {
             #[unroll]
             for c in 0..self.layout.unit_size.1 {
                 let index = row_offset + c;
-                val = max(val, self.array[index]);
+                val = max(val, self.array[index as usize]);
             }
 
             vals.push(RowVal::<E> { val });
         }
 
         RowWise::<E> {
-            num_rows: self.layout.unit_size.0,
+            num_rows: self.layout.unit_size.0.comptime() as usize,
             vals,
         }
     }
@@ -201,14 +201,14 @@ impl<E: Float> RowwiseFormat<E> for LocalTile<E> {
             #[unroll]
             for c in 0..self.layout.unit_size.1 {
                 let index = row_offset + c;
-                val += self.array[index];
+                val += self.array[index as usize];
             }
 
             vals.push(RowVal::<E> { val });
         }
 
         RowWise::<E> {
-            num_rows: self.layout.unit_size.0,
+            num_rows: self.layout.unit_size.0.comptime() as usize,
             vals,
         }
     }
@@ -220,7 +220,7 @@ impl<E: Float> RowwiseFormat<E> for LocalTile<E> {
             #[unroll]
             for c in 0..this.layout.unit_size.1 {
                 let index = row_offset + c;
-                this.array[index] = this.array[index] * scale
+                this.array[index as usize] = this.array[index as usize] * scale
                     + E::cast_from(mask.should_mask((r, c).runtime())) * E::min_value();
             }
         }
@@ -230,8 +230,8 @@ impl<E: Float> RowwiseFormat<E> for LocalTile<E> {
         let threshold = E::new(LOGIT_MASKED);
 
         #[unroll]
-        for r in 0..self.layout.unit_size.0 {
-            let row_offset = r * self.layout.unit_size.1;
+        for r in 0..self.layout.unit_size.0 as usize {
+            let row_offset = r as u32 * self.layout.unit_size.1;
 
             let val = val.index(r);
 
@@ -241,7 +241,8 @@ impl<E: Float> RowwiseFormat<E> for LocalTile<E> {
 
                 let safe_val = clamp_min(val, threshold);
                 let not_masked = E::cast_from(val >= threshold);
-                self.array[index] = not_masked * (self.array[index] - safe_val).exp();
+                self.array[index as usize] =
+                    not_masked * (self.array[index as usize] - safe_val).exp();
             }
         }
     }
@@ -255,12 +256,12 @@ impl<E: Float> RowwiseFormat<E> for LocalTile<E> {
 impl<E: Float> FragmentAccumulator<E> for LocalTile<E> {
     fn rowwise_scale(&mut self, scale: &RowWise<E>) {
         #[unroll]
-        for r in 0..self.layout.unit_size.0 {
-            let row_offset = r * self.layout.unit_size.1;
+        for r in 0..self.layout.unit_size.0 as usize {
+            let row_offset = r as u32 * self.layout.unit_size.1;
             #[unroll]
             for c in 0..self.layout.unit_size.1 {
                 let index = row_offset + c;
-                self.array[index] = self.array[index] * scale.index(r);
+                self.array[index as usize] = self.array[index as usize] * scale.index(r);
             }
         }
     }
@@ -275,6 +276,6 @@ impl<E: Numeric> FragmentMask for LocalTile<E> {
     type Layout = LocalTileLayout;
 
     fn should_mask(&self, local_pos: Coords2d) -> bool {
-        bool::cast_from(self.array[local_pos.0 * self.layout.unit_size.1 + local_pos.1])
+        bool::cast_from(self.array[(local_pos.0 * self.layout.unit_size.1 + local_pos.1) as usize])
     }
 }

@@ -36,22 +36,22 @@ pub struct UnitTileLayout {
 #[cube]
 impl<E: Numeric> UnitTile<E> {
     pub fn new(layout: UnitTileLayout) -> UnitTile<E> {
-        let data = Array::<E>::new(comptime!(layout.num_rows * layout.num_cols));
+        let data = Array::<E>::new(comptime!(layout.num_rows * layout.num_cols) as usize);
         UnitTile::<E> { data, layout }
     }
 
     pub fn zero(&mut self) {
         for i in 0..self.layout.num_rows * self.layout.num_cols {
-            self.data[i] = E::from_int(0);
+            self.data[i as usize] = E::from_int(0);
         }
     }
 
     pub fn get(&self, i: u32, j: u32) -> E {
-        self.data[i * self.layout.num_cols + j]
+        self.data[(i * self.layout.num_cols + j) as usize]
     }
 
     pub fn accumulate(&mut self, i: u32, j: u32, val: E) {
-        self.data[i * self.layout.num_cols + j] += val;
+        self.data[(i * self.layout.num_cols + j) as usize] += val;
     }
 }
 
@@ -88,14 +88,14 @@ impl<E: Float> RowwiseFormat<E> for UnitTile<E> {
             #[unroll]
             for c in 0..self.layout.num_cols {
                 let index = row_offset + c;
-                val = max(val, self.data[index]);
+                val = max(val, self.data[index as usize]);
             }
 
             vals.push(RowVal::<E> { val });
         }
 
         RowWise::<E> {
-            num_rows: self.layout.num_rows,
+            num_rows: self.layout.num_rows.comptime() as usize,
             vals,
         }
     }
@@ -111,14 +111,14 @@ impl<E: Float> RowwiseFormat<E> for UnitTile<E> {
             #[unroll]
             for c in 0..self.layout.num_cols {
                 let index = row_offset + c;
-                val += self.data[index];
+                val += self.data[index as usize];
             }
 
             vals.push(RowVal::<E> { val });
         }
 
         RowWise::<E> {
-            num_rows: self.layout.num_rows,
+            num_rows: self.layout.num_rows.comptime() as usize,
             vals,
         }
     }
@@ -130,7 +130,7 @@ impl<E: Float> RowwiseFormat<E> for UnitTile<E> {
             #[unroll]
             for c in 0..this.layout.num_cols {
                 let index = row_offset + c;
-                this.data[index] = this.data[index] * scale
+                this.data[index as usize] = this.data[index as usize] * scale
                     + E::cast_from(mask.should_mask((r, c).runtime())) * E::min_value();
             }
         }
@@ -140,8 +140,8 @@ impl<E: Float> RowwiseFormat<E> for UnitTile<E> {
         let threshold = E::new(LOGIT_MASKED);
 
         #[unroll]
-        for r in 0..self.layout.num_rows {
-            let row_offset = r * self.layout.num_cols;
+        for r in 0..self.layout.num_rows as usize {
+            let row_offset = r as u32 * self.layout.num_cols;
 
             let val = val.index(r);
 
@@ -151,7 +151,8 @@ impl<E: Float> RowwiseFormat<E> for UnitTile<E> {
 
                 let safe_val = clamp_min(val, threshold);
                 let not_masked = E::cast_from(val >= threshold);
-                self.data[index] = not_masked * (self.data[index] - safe_val).exp();
+                self.data[index as usize] =
+                    not_masked * (self.data[index as usize] - safe_val).exp();
             }
         }
     }
@@ -165,12 +166,12 @@ impl<E: Float> RowwiseFormat<E> for UnitTile<E> {
 impl<E: Float> FragmentAccumulator<E> for UnitTile<E> {
     fn rowwise_scale(&mut self, scale: &RowWise<E>) {
         #[unroll]
-        for r in 0..self.layout.num_rows {
-            let row_offset = r * self.layout.num_cols;
+        for r in 0..self.layout.num_rows as usize {
+            let row_offset = r as u32 * self.layout.num_cols;
             #[unroll]
             for c in 0..self.layout.num_cols {
                 let index = row_offset + c;
-                self.data[index] = self.data[index] * scale.index(r);
+                self.data[index as usize] = self.data[index as usize] * scale.index(r);
             }
         }
     }
@@ -205,7 +206,7 @@ impl<E: Numeric> FragmentMask for UnitTile<E> {
     type Layout = UnitTileLayout;
 
     fn should_mask(&self, local_pos: Coords2d) -> bool {
-        bool::cast_from(self.data[local_pos.0 * self.layout.num_cols + local_pos.1])
+        bool::cast_from(self.data[(local_pos.0 * self.layout.num_cols + local_pos.1) as usize])
     }
 }
 
@@ -349,8 +350,8 @@ fn strided_tile_to_unit_tile<E: Numeric, E2: Numeric>(
             let line_read = strided_tile.get_line(row, col);
             #[unroll]
             for i in 0..line_size {
-                unit_tile.data[row * unit_tile.layout.num_cols + col * line_size + i] =
-                    E2::cast_from(line_read[i]);
+                unit_tile.data[(row * unit_tile.layout.num_cols + col * line_size + i) as usize] =
+                    E2::cast_from(line_read[i as usize]);
             }
         }
     }
@@ -364,9 +365,9 @@ fn strided_tile_to_transposed_unit_tile<E: Numeric, E2: Numeric>(
     let line_size = strided_tile.line_size;
     assert!(unit_tile.layout.num_cols % line_size == 0);
 
-    let input_num_rows = unit_tile.layout.num_cols;
-    let input_num_cols = unit_tile.layout.num_rows;
-    let line_iterations = comptime!(input_num_cols / line_size);
+    let input_num_rows = unit_tile.layout.num_cols.comptime();
+    let input_num_cols = unit_tile.layout.num_rows.comptime();
+    let line_iterations = input_num_cols / line_size;
 
     for input_row in 0..input_num_rows {
         for input_col_line in 0..line_iterations {
@@ -374,8 +375,8 @@ fn strided_tile_to_transposed_unit_tile<E: Numeric, E2: Numeric>(
 
             #[unroll]
             for i in 0..line_size {
-                unit_tile.data[(input_col_line + i) * input_num_rows + input_row] =
-                    E2::cast_from(line_read[i]);
+                unit_tile.data[((input_col_line + i) * input_num_rows + input_row) as usize] =
+                    E2::cast_from(line_read[i as usize]);
             }
         }
     }
@@ -386,23 +387,23 @@ fn unit_tile_to_slice<E: Numeric, E2: Numeric>(
     unit_tile: &UnitTile<E>,
     slice: &mut SliceMut<Line<E2>>,
 ) {
-    let line_size = slice.line_size();
+    let line_size = slice.line_size().comptime() as u32;
     assert!(unit_tile.layout.num_cols % line_size == 0);
 
     let col_iterations = comptime!(unit_tile.layout.num_cols / line_size);
 
     for row in 0..unit_tile.layout.num_rows {
         for col in 0..col_iterations {
-            let mut out_line = Line::empty(line_size);
+            let mut out_line = Line::empty(line_size as usize);
 
             #[unroll]
             for i in 0..line_size {
                 let index = row * unit_tile.layout.num_cols + col * line_size + i;
-                out_line[i] = E2::cast_from(unit_tile.data[index]);
+                out_line[i as usize] = E2::cast_from(unit_tile.data[index as usize]);
             }
 
             let line_index = row * col_iterations + col;
-            slice[line_index] = out_line;
+            slice[line_index as usize] = out_line;
         }
     }
 }

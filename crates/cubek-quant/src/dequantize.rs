@@ -30,9 +30,9 @@ pub fn dequantize_symmetric<F: Float, FS: CubePrimitive>(value: Line<F>, scale: 
 /// values in the stored quantization type.
 #[cube]
 pub fn dequantize_symmetric_packed_values<F: Float, FS: CubePrimitive, QI: Int>(
-    position: u32,
-    values: &View<Line<QI>, u32>,
-    scales: &View<FS, u32>,
+    position: usize,
+    values: &View<Line<QI>, usize>,
+    scales: &View<FS, usize>,
     #[comptime] scheme: QuantScheme,
 ) -> Array<Line<F>> {
     dequantize_symmetric_packed_value_at::<F, FS, QI>(position, values[position], scales, scheme)
@@ -44,9 +44,9 @@ pub fn dequantize_symmetric_packed_values<F: Float, FS: CubePrimitive, QI: Int>(
 /// values in the stored quantization type.
 #[cube]
 pub fn dequantize_symmetric_packed_value_at<F: Float, FS: CubePrimitive, QI: Int>(
-    position: u32,
+    position: usize,
     values: Line<QI>,
-    scales: &View<FS, u32>,
+    scales: &View<FS, usize>,
     #[comptime] scheme: QuantScheme,
 ) -> Array<Line<F>> {
     dequantize_symmetric_packed_value::<F, FS, QI>(values, scales, position, scheme)
@@ -59,13 +59,13 @@ pub fn dequantize_symmetric_packed_value_at<F: Float, FS: CubePrimitive, QI: Int
 #[cube]
 pub fn dequantize_symmetric_packed_value<F: Float, FS: CubePrimitive, QS: Int>(
     values: Line<QS>,
-    scales: &View<FS, u32>,
-    position: u32,
+    scales: &View<FS, usize>,
+    position: usize,
     #[comptime] scheme: QuantScheme,
 ) -> Array<Line<F>> {
     let line_size_values = values.line_size();
-    let num_quants = comptime!(scheme.num_quants() as u32);
-    let mut tmp = Array::vectorized(line_size_values, num_quants);
+    let num_quants = scheme.num_quants();
+    let mut tmp = Array::lined(line_size_values, num_quants);
 
     #[unroll]
     for i in 0..line_size_values {
@@ -88,20 +88,19 @@ fn unpack_q<F: Float, QS: Int>(
     #[comptime] quant: QuantValue,
     #[comptime] store: QuantStore,
 ) -> Line<F> {
-    let size_quant = comptime!(quant.size_bits() as u32);
-    let size_store = comptime!(store.size_bits(&quant) as u32);
-    let num_quant = comptime!(size_store / size_quant);
+    let size_quant = quant.size_bits();
+    let size_store = store.size_bits(&quant);
+    let num_quant = size_store / size_quant;
 
     let mut output = Line::empty(num_quant);
-    let mut position = comptime!(0);
 
-    let mask = QS::cast_from(comptime!((1 << size_quant) - 1));
-    let sign_bit = QS::cast_from(comptime!(1 << (size_quant - 1)));
-    let two_pow_n = comptime!(1 << size_quant);
+    let mask = QS::from_int((1 << size_quant) - 1);
+    let sign_bit = QS::from_int(1 << (size_quant - 1));
+    let two_pow_n = 1 << size_quant;
 
     #[unroll]
-    for _ in 0..num_quant {
-        let offset = QS::cast_from(comptime!(position * size_quant));
+    for position in 0..num_quant {
+        let offset = QS::cast_from(position * size_quant);
         let raw = (value >> offset) & mask;
 
         // Branchless two's complement conversion
@@ -111,7 +110,6 @@ fn unpack_q<F: Float, QS: Int>(
         let signed_value = raw_i32 - (is_negative * two_pow_n);
 
         output[position] = F::cast_from(signed_value);
-        comptime!(position += 1);
     }
 
     output
@@ -133,11 +131,11 @@ fn dequantize_symmetric_packed_kernel<F: Float, FS: Numeric>(
     let line_size_out = output.line_size();
 
     comptime! {
-        assert_eq!(line_size_out, scheme.num_quants() as u32);
+        assert_eq!(line_size_out, scheme.num_quants());
     }
 
     let values = input[ABSOLUTE_POS];
-    let packed_pos = ABSOLUTE_POS * comptime![scheme.num_quants() as u32];
+    let packed_pos = ABSOLUTE_POS * scheme.num_quants();
 
     let out = dequantize_symmetric_packed_value::<F, FS, u32>(values, scales, packed_pos, scheme);
 
@@ -245,11 +243,11 @@ fn dequantize_packed<R: Runtime>(
         input.strides,
         input.shape.len() - 1,
     );
-    let num_quants = scheme.num_quants() as u8;
+    let num_quants = scheme.num_quants();
     let line_size_out = num_quants;
     let rank = output.shape.len();
 
-    if !output.shape[rank - 1].is_multiple_of(line_size_out as usize) {
+    if !output.shape[rank - 1].is_multiple_of(line_size_out) {
         line_size_in = 1;
     }
 

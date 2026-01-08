@@ -21,13 +21,13 @@ use cubecl::{
 pub struct PerpendicularReader<P: ReducePrecision> {
     view: View<Line<P::EI>, Coords1d>,
     /// The global offset that points where the vector to reduce is located in global memory.
-    batch_offset: u32,
-    vector_offset_stride: u32,
+    batch_offset: usize,
+    vector_offset_stride: usize,
     requirements: ReduceRequirements,
     #[cube(comptime)]
-    line_size: u32,
+    line_size: LineSize,
     bound_checks: ReaderBoundChecks<P>,
-    shape: u32,
+    shape: usize,
 }
 
 #[cube]
@@ -36,8 +36,8 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
         input: &VirtualTensor<P::EI>,
         output: &mut VirtualTensor<Out, ReadWrite>,
         inst: &I,
-        reduce_axis: u32,
-        reduce_index: u32,
+        reduce_axis: usize,
+        reduce_index: usize,
         idle: CubeOption<bool>,
         #[comptime] bound_checks: BoundChecks,
     ) -> PerpendicularReader<P> {
@@ -68,21 +68,21 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
         }
     }
 
-    pub fn length_unit(&self) -> u32 {
+    pub fn length_unit(&self) -> usize {
         self.shape
     }
 
-    pub fn length_plane(&self) -> u32 {
-        self.shape.div_ceil(CUBE_DIM_X)
+    pub fn length_plane(&self) -> usize {
+        self.shape.div_ceil(CUBE_DIM_X as usize)
     }
 
-    pub fn length_cube(&self) -> u32 {
-        self.shape.div_ceil(CUBE_DIM)
+    pub fn length_cube(&self) -> usize {
+        self.shape.div_ceil(CUBE_DIM as usize)
     }
 
-    pub fn read_cube(&self, line_index: u32) -> (Line<P::EI>, ReduceCoordinate) {
-        let plane_pos = line_index * CUBE_DIM;
-        let unit_pos = UNIT_POS;
+    pub fn read_cube(&self, line_index: usize) -> (Line<P::EI>, ReduceCoordinate) {
+        let plane_pos = line_index * CUBE_DIM as usize;
+        let unit_pos = UNIT_POS as usize;
         let pos = plane_pos + unit_pos;
         let offset = plane_pos * self.vector_offset_stride
             + unit_pos * self.vector_offset_stride
@@ -91,7 +91,7 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
         let item = self.bound_checks.read(pos, offset, &self.view);
 
         let coordinate = ReduceCoordinate::new(
-            line_index * CUBE_DIM + UNIT_POS,
+            plane_pos + unit_pos,
             self.requirements,
             self.line_size,
             LineMode::Perpendicular,
@@ -100,9 +100,9 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
         (item, coordinate)
     }
 
-    pub fn read_plane(&self, line_index: u32) -> (Line<P::EI>, ReduceCoordinate) {
-        let plane_pos = line_index * CUBE_DIM_X;
-        let unit_pos = UNIT_POS_X;
+    pub fn read_plane(&self, line_index: usize) -> (Line<P::EI>, ReduceCoordinate) {
+        let plane_pos = line_index * CUBE_DIM_X as usize;
+        let unit_pos = UNIT_POS_X as usize;
         let pos = plane_pos + unit_pos;
         let offset = plane_pos * self.vector_offset_stride
             + unit_pos * self.vector_offset_stride
@@ -111,7 +111,7 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
         let item = self.bound_checks.read(pos, offset, &self.view);
 
         let coordinate = ReduceCoordinate::new(
-            line_index * CUBE_DIM_X + UNIT_POS_X,
+            plane_pos + unit_pos,
             self.requirements,
             self.line_size,
             LineMode::Perpendicular,
@@ -120,7 +120,7 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
         (item, coordinate)
     }
 
-    pub fn read_unit(&self, line_index: u32) -> (Line<P::EI>, ReduceCoordinate) {
+    pub fn read_unit(&self, line_index: usize) -> (Line<P::EI>, ReduceCoordinate) {
         let offset = self.batch_offset + line_index * self.vector_offset_stride;
         let item = self.view[offset];
 

@@ -44,7 +44,7 @@ impl VectorStageReader {
         comptime!(assert!(tile.layout == MatrixLayout::RowMajor));
 
         let offset = tile.stage_offset(UNIT_POS_X);
-        frag.line = Line::cast_from(tile.stage[offset]);
+        frag.line = Line::cast_from(tile.stage[offset as usize]);
     }
 }
 
@@ -61,9 +61,9 @@ impl MatrixFragmentReader for MatrixStageReader<Strided> {
 
         #[unroll]
         for n in 0..n {
-            let line_container = frag.index_mut(n);
+            let line_container = frag.index_mut(n as usize);
             let offset = tile.stage_offset(UNIT_POS_X + n * tile.stride);
-            line_container.line = Line::cast_from(tile.stage[offset]);
+            line_container.line = Line::cast_from(tile.stage[offset as usize]);
         }
     }
 }
@@ -78,7 +78,7 @@ impl MatrixFragmentReader for MatrixStageReader<Filled> {
         #[comptime] n: u32,
     ) {
         #[unroll]
-        for n in 0..n {
+        for n in 0..n as usize {
             let line_container = frag.index_mut(n);
             line_container.line = Line::cast_from(*value);
         }

@@ -1,5 +1,7 @@
 use std::{fmt::Debug, hash::Hash};
 
+use cubecl::ir::StorageType;
+
 use crate::definition::MatrixLayout;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -16,6 +18,7 @@ pub struct StageMemoryConfig {
     pub matrix_layout: MatrixLayout,
     pub swizzle: SwizzleMode,
     pub num_stages: u32,
+    pub dtype: StorageType,
 }
 
 /// Swizzling mode of the shared memory. Default `None`.

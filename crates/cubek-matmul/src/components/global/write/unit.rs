@@ -32,7 +32,7 @@ impl<IP: MatrixPrecision> UnitWriter<IP> {
         let smem_config = config.smem_config;
         let stage = PartitionedStage::new(
             UnitPartitioner::coordinates(
-                config.role_rule_config,
+                config.plane_flow_partition_rule,
                 config.plane_dim,
                 smem_config.partitions_per_stage_along_col,
             ),
@@ -51,7 +51,7 @@ impl<IP: MatrixPrecision> UnitWriter<IP> {
             &mut self.global,
             &self.stage.unit_tile,
             tile,
-            comptime!(self.smem_config.elements_per_tile()),
+            self.smem_config.comptime().elements_per_tile(),
         )
     }
 }
@@ -66,11 +66,14 @@ pub fn unit_write<ES: Numeric, EG: Numeric>(
     let output_line_size = global.line_size();
     let out_smem_stage = smem_tile.stage.with_line_size(output_line_size);
 
-    let num_lines = elements_in_tile / output_line_size;
+    let num_lines = elements_in_tile / output_line_size as u32;
 
     for i in 0..num_lines {
-        let value = out_smem_stage[smem_tile.stage_offset(i)];
-        global.write_checked((tile_pos, i * output_line_size), Line::cast_from(value));
+        let value = out_smem_stage[smem_tile.stage_offset(i) as usize];
+        global.write_checked(
+            (tile_pos, i * output_line_size as u32),
+            Line::cast_from(value),
+        );
     }
 }
 

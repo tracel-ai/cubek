@@ -65,9 +65,9 @@ impl<AP: AttentionPrecision> TileAttention<AP> for BlackboxAcceleratedTileAttent
         unsafe {
             cmma::Matrix::<QT<AP>>::uninitialized(
                 cmma::MatrixIdent::A,
-                size.m(),
-                size.n(),
-                size.k(),
+                size.m() as usize,
+                size.n() as usize,
+                size.k() as usize,
                 cmma::MatrixLayout::RowMajor,
             )
         }
@@ -84,9 +84,9 @@ impl<AP: AttentionPrecision> TileAttention<AP> for BlackboxAcceleratedTileAttent
         unsafe {
             cmma::Matrix::<KVT<AP>>::uninitialized(
                 cmma::MatrixIdent::B,
-                size.seq_q,
-                size.seq_kv,
-                size.head_dim,
+                size.seq_q as usize,
+                size.seq_kv as usize,
+                size.head_dim as usize,
                 cmma::MatrixLayout::ColMajor,
             )
         }
@@ -97,9 +97,9 @@ impl<AP: AttentionPrecision> TileAttention<AP> for BlackboxAcceleratedTileAttent
         unsafe {
             cmma::Matrix::<KVT<AP>>::uninitialized(
                 cmma::MatrixIdent::B,
-                size.seq_q,
-                size.val_dim,
-                size.seq_kv,
+                size.seq_q as usize,
+                size.val_dim as usize,
+                size.seq_kv as usize,
                 cmma::MatrixLayout::RowMajor,
             )
         }

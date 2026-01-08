@@ -63,7 +63,7 @@ where
         #[comptime] config: Self::Config,
     ) -> Self::LhsFragment {
         UnitFragment::<L> {
-            array: Array::new(config.shared.tile_size.mk()),
+            array: Array::new(config.shared.tile_size.mk() as usize),
             layout,
         }
     }
@@ -73,7 +73,7 @@ where
         #[comptime] config: Self::Config,
     ) -> Self::RhsFragment {
         UnitFragment::<R> {
-            array: Array::new(config.shared.tile_size.nk()),
+            array: Array::new(config.shared.tile_size.nk() as usize),
             layout,
         }
     }
@@ -83,7 +83,7 @@ where
         #[comptime] config: Self::Config,
     ) -> Self::AccFragment {
         UnitFragment::<A> {
-            array: Array::new(config.shared.tile_size.mn()),
+            array: Array::new(config.shared.tile_size.mn() as usize),
             layout,
         }
     }
@@ -138,9 +138,9 @@ impl<Acc: TileKind> RegisterMatmul<Acc> {
             for n_ in 0..n {
                 #[unroll(UNROLL)]
                 for k_ in 0..k {
-                    let lhs_elem = EA::cast_from(lhs[m_ * k + k_]);
-                    let rhs_elem = EA::cast_from(rhs[n_ * k + k_]);
-                    acc[m_ * n + n_] += lhs_elem * rhs_elem;
+                    let lhs_elem = EA::cast_from(lhs[(m_ * k + k_) as usize]);
+                    let rhs_elem = EA::cast_from(rhs[(n_ * k + k_) as usize]);
+                    acc[(m_ * n + n_) as usize] += lhs_elem * rhs_elem;
                 }
             }
         }
@@ -159,11 +159,11 @@ impl<Acc: TileKind> RegisterMatmul<Acc> {
         for k_ in 0..k {
             #[unroll(UNROLL)]
             for m_ in 0..m {
-                let lhs_elem = EA::cast_from(lhs[k_ * m + m_]);
+                let lhs_elem = EA::cast_from(lhs[(k_ * m + m_) as usize]);
                 #[unroll(UNROLL)]
                 for n_ in 0..n {
-                    let rhs_elem = EA::cast_from(rhs[k_ * n + n_]);
-                    acc[m_ * n + n_] += lhs_elem * rhs_elem;
+                    let rhs_elem = EA::cast_from(rhs[(k_ * n + n_) as usize]);
+                    acc[(m_ * n + n_) as usize] += lhs_elem * rhs_elem;
                 }
             }
         }
@@ -185,9 +185,9 @@ impl<Acc: TileKind> RegisterMatmul<Acc> {
                 let line = tile.get_line(segment, line_within_segment);
                 #[unroll]
                 for pos_within_line in 0..line_size {
-                    array[segment * segment_size
-                        + line_within_segment * line_size
-                        + pos_within_line] = ER::cast_from(line[pos_within_line]);
+                    let offs =
+                        segment * segment_size + line_within_segment * line_size + pos_within_line;
+                    array[offs as usize] = ER::cast_from(line[pos_within_line as usize]);
                 }
             }
         }
@@ -209,8 +209,9 @@ impl<Acc: TileKind> RegisterMatmul<Acc> {
                 let line = tile.get_line(segment, line_within_segment);
                 #[unroll]
                 for pos_within_line in 0..line_size {
-                    array[(line_within_segment * line_size + pos_within_line) * num_segments
-                        + segment] = ER::cast_from(line[pos_within_line]);
+                    let offs = (line_within_segment * line_size + pos_within_line) * num_segments
+                        + segment;
+                    array[offs as usize] = ER::cast_from(line[pos_within_line as usize]);
                 }
             }
         }

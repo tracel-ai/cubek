@@ -94,15 +94,7 @@ pub fn reduce<R: Runtime>(
     validate_axis(input.shape.len(), axis)?;
     valid_output_shape(input.shape, output.shape, axis)?;
 
-    launch_reduce::<R>(
-        client,
-        input,
-        output,
-        axis as u32,
-        strategy,
-        dtypes,
-        operation,
-    )
+    launch_reduce::<R>(client, input, output, axis, strategy, dtypes, operation)
 }
 
 // Check that the given axis is less than the rank of the input.

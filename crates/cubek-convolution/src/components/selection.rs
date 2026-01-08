@@ -1,8 +1,12 @@
-use cubecl::{Runtime, client::ComputeClient, ir::StorageType};
+use cubecl::{
+    Runtime,
+    client::ComputeClient,
+    ir::{LineSize, StorageType},
+};
 use cubek_matmul::components::stage::{PartitionBuffering, SwizzleMode};
 
 use cubek_matmul::definition::{
-    MatmulAvailabilityError, MatmulElems, MatmulLineSizes, SwizzleBlueprint, TilingBlueprint,
+    MatmulAvailabilityError, MatmulElems, MatmulLineSizes, SwizzleModes, TilingBlueprint,
     TilingScheme, adjust_dtypes,
 };
 use cubek_matmul::{
@@ -116,15 +120,16 @@ pub fn convolution_matmul_selection<TMM: TileMatmulFamily, R: Runtime>(
         .build()
         .unwrap();
 
-    let mut builder = TilingBlueprint::builder(tiling_scheme, plane_dim)
-        .partition_buffering(PartitionBuffering::Single);
+    let mut builder =
+        TilingBlueprint::builder(tiling_scheme, plane_dim, &problem.as_matmul_problem())
+            .partition_buffering(PartitionBuffering::Single);
 
     if swizzle {
-        let swizzle_dim = tiling_scheme.elements_per_stage_along_k();
+        let swizzle_dim = tiling_scheme.elements_per_stage_along_k() as usize;
 
-        let lhs = select_swizzle(swizzle_dim, *dtypes.lhs_stage, line_sizes.lhs);
-        let rhs = select_swizzle(swizzle_dim, *dtypes.rhs_stage, line_sizes.rhs);
-        builder = builder.shared_swizzle(SwizzleBlueprint {
+        let lhs = select_swizzle(swizzle_dim, dtypes.lhs_stage, line_sizes.lhs);
+        let rhs = select_swizzle(swizzle_dim, dtypes.rhs_stage, line_sizes.rhs);
+        builder = builder.shared_swizzle(SwizzleModes {
             lhs,
             rhs,
             ..Default::default()
@@ -137,12 +142,12 @@ pub fn convolution_matmul_selection<TMM: TileMatmulFamily, R: Runtime>(
 /// All modes currently use atom size 16
 const SWIZZLE_ATOM: usize = 16;
 
-fn select_swizzle(swizzle_dim: u32, elem: StorageType, line_size: u8) -> SwizzleMode {
+fn select_swizzle(swizzle_dim: usize, elem: StorageType, line_size: LineSize) -> SwizzleMode {
     // Line size exceeds swizzle atom
-    if elem.size() * line_size as usize > SWIZZLE_ATOM {
+    if elem.size() * line_size > SWIZZLE_ATOM {
         return SwizzleMode::None;
     }
-    let swizzle_dim_bytes = swizzle_dim as usize * elem.size();
+    let swizzle_dim_bytes = swizzle_dim * elem.size();
     if !swizzle_dim_bytes.is_power_of_two() {
         return SwizzleMode::None;
     }

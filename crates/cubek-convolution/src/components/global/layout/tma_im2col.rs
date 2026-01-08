@@ -2,17 +2,18 @@ use cubecl::{
     prelude::*,
     std::{
         FastDivmod,
-        tensor::layout::{Coords3d, CoordsDyn, Layout, LayoutExpand},
+        tensor::layout::{CoordsDyn, Layout, LayoutExpand},
     },
 };
+use cubek_matmul::launch::BatchedCoords;
 
 use crate::components::{ConvolutionOperation, ConvolutionParams, global::layout::NhwcCoords};
 
 /// Im2col layout, producing both the position and offset
 #[derive(CubeType, CubeLaunch)]
 pub struct TmaIm2colLayout {
-    shape_out: Sequence<FastDivmod>,
-    padded_channels: FastDivmod,
+    shape_out: Sequence<FastDivmod<u32>>,
+    padded_channels: FastDivmod<u32>,
     #[cube(comptime)]
     params: ConvolutionParams,
     #[cube(comptime)]
@@ -22,8 +23,8 @@ pub struct TmaIm2colLayout {
 #[cube]
 impl TmaIm2colLayout {
     pub fn new(
-        shape_out: Sequence<FastDivmod>,
-        padded_channels: FastDivmod,
+        shape_out: Sequence<FastDivmod<u32>>,
+        padded_channels: FastDivmod<u32>,
         #[comptime] params: ConvolutionParams,
         #[comptime] check_kernel: bool,
     ) -> Self {
@@ -38,12 +39,12 @@ impl TmaIm2colLayout {
 
 #[cube]
 impl Layout for TmaIm2colLayout {
-    type Coordinates = Coords3d;
+    type Coordinates = BatchedCoords;
     type SourceCoordinates = (NhwcCoords, CoordsDyn);
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
         let (_, m, k) = pos;
-        let params = comptime![self.params];
+        let params = self.params.comptime();
 
         let (n_offs, spatial_offsets) = div_mod_seq(m, &self.shape_out);
         let spatial_dims = spatial_offsets.len();
@@ -52,17 +53,16 @@ impl Layout for TmaIm2colLayout {
 
         #[unroll]
         for dim in 0..spatial_dims {
-            let dim = comptime![dim as usize];
-            let stride = comptime!(params.stride[dim] as i32);
-            let pad = comptime!(params.padding[dim]);
-            let out_pos = *spatial_offsets.index(comptime![dim as u32]) as i32;
+            let stride = params.stride[dim] as i32;
+            let pad = params.padding[dim];
+            let out_pos = spatial_offsets[dim] as i32;
             let offs = match params.operation {
                 ConvolutionOperation::Forward | ConvolutionOperation::BackwardWeight => {
                     out_pos * stride - pad
                 }
                 ConvolutionOperation::ForwardTransposed | ConvolutionOperation::BackwardData => {
-                    let ksize = comptime!(params.kernel_size[dim] as i32);
-                    (out_pos + pad - comptime!((ksize - 1) * params.dilation[dim] as i32)) / stride
+                    let ksize = params.kernel_size[dim] as i32;
+                    (out_pos + pad - ((ksize - 1) * params.dilation[dim] as i32)) / stride
                 }
             };
             in_offs.push(offs);
@@ -81,8 +81,8 @@ impl Layout for TmaIm2colLayout {
 
         #[unroll]
         for i in 0..k_rank {
-            let dim = comptime![(k_rank - i - 1) as usize];
-            let k_size = comptime!(params.kernel_size[dim]);
+            let dim = k_rank - i - 1;
+            let k_size = params.kernel_size[dim];
             let k_pos = k_idx % k_size;
 
             let k_pos = match params.operation {
@@ -93,11 +93,11 @@ impl Layout for TmaIm2colLayout {
                     k_size - k_pos - 1
                 }
             };
-            k_offs.push(k_pos * comptime!(params.dilation[dim]));
+            k_offs.push(k_pos * params.dilation[dim]);
             k_idx /= k_size;
         }
 
-        if comptime![self.check_kernel] {
+        if self.check_kernel.comptime() {
             // This is the largest index that's aligned to the channel count in all cases.
             // Alignment is 256, and that's the largest tile size possible with TMA.
             // Could alternatively solve this by only loading if in bounds, and adjusting the awaited
@@ -115,7 +115,7 @@ impl Layout for TmaIm2colLayout {
     }
 
     fn shape(&self) -> Self::Coordinates {
-        (u32::MAX, u32::MAX, u32::MAX).runtime()
+        (u32::MAX as usize, u32::MAX, u32::MAX).runtime()
     }
 
     fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
@@ -126,15 +126,15 @@ impl Layout for TmaIm2colLayout {
 /// Decompose a linear index into local positions along each dimension in `shape`. Also returns the
 /// left over remainder.
 #[cube]
-pub(crate) fn div_mod_seq(pos: u32, shape: &Sequence<FastDivmod>) -> (u32, Sequence<u32>) {
-    let rank = comptime![shape.len()];
+pub(crate) fn div_mod_seq(pos: u32, shape: &Sequence<FastDivmod<u32>>) -> (u32, Sequence<u32>) {
+    let rank = shape.len().comptime();
     let mut offs = pos;
     let mut out = Sequence::new();
 
     #[unroll]
     for i in 0..rank {
-        let dim = comptime![rank - i - 1];
-        let (rem, offs_local) = shape.index(dim).div_mod(offs);
+        let dim = rank - i - 1;
+        let (rem, offs_local) = shape[dim].div_mod(offs);
         out.push(offs_local);
         offs = rem;
     }

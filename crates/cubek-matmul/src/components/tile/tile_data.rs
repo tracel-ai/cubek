@@ -44,7 +44,7 @@ impl<ES: Numeric> StridedTile<ES> {
             MatrixLayout::ColMajor => config.elements_per_tile_along_row,
         };
 
-        let stride = comptime![stride / config.line_size];
+        let stride = stride / config.line_size;
 
         StridedTile::<ES> {
             stage,
@@ -72,7 +72,7 @@ impl<ES: Numeric> StridedTile<ES> {
             MatrixLayout::ColMajor => config.elements_per_tile_along_row,
         };
 
-        let stride = comptime![stride / config.line_size];
+        let stride = stride / config.line_size;
 
         StridedTile::<ES, ReadWrite> {
             stage,
@@ -140,10 +140,12 @@ impl<ES: Numeric> StridedTile<ES, ReadOnly> {
     /// - The unlined slice
     /// - The updated stride to account for line width removal
     pub fn as_unlined(&self) -> (Slice<ES, ReadOnly>, u32) {
-        let stage_line_size = comptime![self.stage.line_size()];
+        let stage_line_size = self.stage.line_size();
         (
-            self.stage.slice(self.start, self.end).try_cast_unchecked(),
-            self.stride * stage_line_size,
+            self.stage
+                .slice(self.start as usize, self.end as usize)
+                .try_cast_unchecked(),
+            self.stride * stage_line_size as u32,
         )
     }
 }
@@ -156,20 +158,22 @@ impl<ES: Numeric> StridedTile<ES, ReadWrite> {
     /// - The unlined slice
     /// - The updated stride to account for line width removal
     pub fn as_unlined_mut(&self) -> (Slice<ES, ReadWrite>, u32) {
-        let stage_line_size = comptime![self.stage.line_size()];
+        let stage_line_size = self.stage.line_size();
         (
             self.stage
-                .slice(self.start, self.end)
+                .slice(self.start as usize, self.end as usize)
                 .as_mut_unchecked()
                 .try_cast_unchecked(),
-            self.stride * stage_line_size,
+            self.stride * stage_line_size as u32,
         )
     }
 
     /// Returns the tile as an offset slice. Should only be used when swizzling is definitely not
     /// applicable.
     pub fn as_slice_mut(&self) -> Slice<Line<ES>, ReadWrite> {
-        self.stage.slice(self.start, self.end).as_mut_unchecked()
+        self.stage
+            .slice(self.start as usize, self.end as usize)
+            .as_mut_unchecked()
     }
 }
 
@@ -181,7 +185,7 @@ impl<ES: Numeric, IO: SliceVisibility> StridedTile<ES, IO> {
         let offset_abs = self.start + offset;
         let type_size = type_size::<ES>(self.stage.line_size());
         let offset_swizzled = self.swizzle.apply(offset_abs, type_size);
-        self.stage[offset_swizzled]
+        self.stage[offset_swizzled as usize]
     }
 
     pub fn stage_offset(&self, relative_offset: u32) -> u32 {
@@ -191,7 +195,7 @@ impl<ES: Numeric, IO: SliceVisibility> StridedTile<ES, IO> {
     }
 
     #[allow(unused_variables)]
-    pub fn with_line_size(&self, #[comptime] line_size: u32) -> Self {
+    pub fn with_line_size(&self, #[comptime] line_size: LineSize) -> Self {
         intrinsic!(|scope| {
             let stage_line_size = self.stage.line_size();
 
@@ -203,15 +207,16 @@ impl<ES: Numeric, IO: SliceVisibility> StridedTile<ES, IO> {
             let mut out = self.clone();
 
             if current < line_size {
-                let ratio = line_size / current;
+                let ratio = (line_size / current) as u32;
                 let end = cubecl::frontend::div::expand(scope, self.end, ratio.into());
                 let start = cubecl::frontend::div::expand(scope, self.start, ratio.into());
-                let stride = cubecl::frontend::div::expand(scope, self.stride, ratio.into());
+                let stride =
+                    cubecl::frontend::div::expand(scope, self.stride, (ratio as u32).into());
                 out.start = start;
                 out.end = end;
                 out.stride = stride;
             } else {
-                let ratio = current / line_size;
+                let ratio = (current / line_size) as u32;
                 let start = cubecl::frontend::mul::expand(scope, self.start, ratio.into());
                 let end = cubecl::frontend::mul::expand(scope, self.end, ratio.into());
                 let stride = cubecl::frontend::mul::expand(scope, self.stride, ratio.into());

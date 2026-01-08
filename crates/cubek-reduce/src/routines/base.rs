@@ -4,8 +4,8 @@ use cubecl::prelude::*;
 #[derive(Debug)]
 pub struct ReduceLineSettings {
     pub line_mode: LineMode,
-    pub line_size_input: u8,
-    pub line_size_output: u8,
+    pub line_size_input: LineSize,
+    pub line_size_output: LineSize,
 }
 
 #[derive(Debug)]
@@ -17,9 +17,9 @@ pub struct ReduceLaunchSettings {
 
 #[derive(Debug)]
 pub struct ReduceProblem {
-    pub vector_size: u32,
-    pub vector_count: u32,
-    pub axis: u32,
+    pub vector_size: usize,
+    pub vector_count: usize,
+    pub axis: usize,
     pub dtypes: ReduceDtypes,
 }
 
@@ -42,25 +42,29 @@ pub trait Routine: core::fmt::Debug + Clone + Sized {
     ) -> Result<(ReduceBlueprint, ReduceLaunchSettings), ReduceError>;
 }
 
-pub fn cube_count_safe<R: Runtime>(client: &ComputeClient<R>, num_cubes: u32) -> (CubeCount, u32) {
+pub fn cube_count_safe<R: Runtime>(
+    client: &ComputeClient<R>,
+    num_cubes: usize,
+) -> (CubeCount, usize) {
     let cube_count = cube_count_spread(&client.properties().hardware.max_cube_count, num_cubes);
 
     (
-        CubeCount::Static(cube_count[0], cube_count[1], cube_count[2]),
+        CubeCount::Static(
+            cube_count[0] as u32,
+            cube_count[1] as u32,
+            cube_count[2] as u32,
+        ),
         cube_count[0] * cube_count[1] * cube_count[2],
     )
 }
 
-fn cube_count_spread(max: &CubeCount, num_cubes: u32) -> [u32; 3] {
-    let max_cube_counts = match max {
-        CubeCount::Static(x, y, z) => [*x, *y, *z],
-        CubeCount::Dynamic(_) => panic!("No static max cube count"),
-    };
+fn cube_count_spread(max_cube_count: &(u32, u32, u32), num_cubes: usize) -> [usize; 3] {
+    let max_cube_count = [max_cube_count.0, max_cube_count.1, max_cube_count.2];
     let mut num_cubes = [num_cubes, 1, 1];
     let base = 2;
 
     let mut reduce_count = |i: usize| {
-        if num_cubes[i] <= max_cube_counts[i] {
+        if num_cubes[i] <= max_cube_count[i] as usize {
             return true;
         }
 
@@ -68,7 +72,7 @@ fn cube_count_spread(max: &CubeCount, num_cubes: u32) -> [u32; 3] {
             num_cubes[i] = num_cubes[i].div_ceil(base);
             num_cubes[i + 1] *= base;
 
-            if num_cubes[i] <= max_cube_counts[i] {
+            if num_cubes[i] <= max_cube_count[i] as usize {
                 return false;
             }
         }
@@ -89,7 +93,7 @@ mod tests {
 
     #[test]
     fn safe_num_cubes_even() {
-        let max = CubeCount::Static(32, 32, 32);
+        let max = (32, 32, 32);
         let required = 2048;
 
         let actual = cube_count_spread(&max, required);
@@ -99,7 +103,7 @@ mod tests {
 
     #[test]
     fn safe_num_cubes_odd() {
-        let max = CubeCount::Static(48, 32, 16);
+        let max = (48, 32, 16);
         let required = 3177;
 
         let actual = cube_count_spread(&max, required);

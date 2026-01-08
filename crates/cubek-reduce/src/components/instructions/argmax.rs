@@ -50,11 +50,11 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMax {
         ArgMax {}
     }
 
-    fn null_input(_this: &Self, #[comptime] line_size: u32) -> Line<P::EI> {
+    fn null_input(_this: &Self, #[comptime] line_size: LineSize) -> Line<P::EI> {
         Line::empty(line_size).fill(P::EI::min_value())
     }
 
-    fn null_accumulator(_this: &Self, #[comptime] line_size: u32) -> Self::AccumulatorItem {
+    fn null_accumulator(_this: &Self, #[comptime] line_size: LineSize) -> Self::AccumulatorItem {
         (
             Line::empty(line_size).fill(P::EA::min_value()),
             Line::empty(line_size).fill(u32::MAX),
@@ -123,10 +123,10 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMax {
     fn merge_line<Out: Numeric>(
         _this: &Self,
         accumulator: Self::AccumulatorItem,
-        _shape_axis_reduce: u32,
+        _shape_axis_reduce: usize,
     ) -> Out {
-        let line_size = accumulator.0.size();
-        if comptime!(line_size > 1) {
+        let line_size = accumulator.0.size().comptime();
+        if line_size > 1 {
             let mut max = P::EA::min_value();
             let mut coordinate = u32::MAX.runtime();
             #[unroll]
@@ -149,7 +149,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMax {
     fn to_output_perpendicular<Out: Numeric>(
         _this: &Self,
         accumulator: Self::AccumulatorItem,
-        _shape_axis_reduce: u32,
+        _shape_axis_reduce: usize,
     ) -> Line<Out> {
         Line::cast_from(accumulator.1)
     }

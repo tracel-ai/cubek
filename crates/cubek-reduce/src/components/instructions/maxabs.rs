@@ -26,11 +26,11 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
         MaxAbs {}
     }
 
-    fn null_input(_this: &Self, #[comptime] line_size: u32) -> Line<P::EI> {
+    fn null_input(_this: &Self, #[comptime] line_size: LineSize) -> Line<P::EI> {
         Line::empty(line_size).fill(P::EI::from_int(0))
     }
 
-    fn null_accumulator(_this: &Self, #[comptime] line_size: u32) -> Self::AccumulatorItem {
+    fn null_accumulator(_this: &Self, #[comptime] line_size: LineSize) -> Self::AccumulatorItem {
         Line::empty(line_size).fill(P::EA::from_int(0))
     }
 
@@ -83,7 +83,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
     fn merge_line<Out: Numeric>(
         _this: &Self,
         accumulator: Self::AccumulatorItem,
-        _shape_axis_reduce: u32,
+        _shape_axis_reduce: usize,
     ) -> Out {
         let mut max = P::EA::from_int(0);
         #[unroll]
@@ -97,7 +97,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
     fn to_output_perpendicular<Out: Numeric>(
         _this: &Self,
         accumulator: Self::AccumulatorItem,
-        _shape_axis_reduce: u32,
+        _shape_axis_reduce: usize,
     ) -> Line<Out> {
         Line::cast_from(accumulator)
     }
