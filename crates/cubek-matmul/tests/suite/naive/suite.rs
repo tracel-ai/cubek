@@ -31,6 +31,7 @@ impl MatmulTestCase {
             self.n,
             self.k,
             vec![self.batch],
+            vec![self.batch],
             self.lhs_layout,
             self.rhs_layout,
             MatrixLayout::RowMajor,

@@ -1,3 +1,5 @@
+use std::cmp::max;
+
 use crate::{
     components::global::memory::ViewDirection,
     definition::{MatmulGlobalElems, MatmulProblemSize},
@@ -86,15 +88,40 @@ impl MatmulProblem {
         m: usize,
         n: usize,
         k: usize,
-        batches: Vec<usize>,
+        lhs_batches: Vec<usize>,
+        rhs_batches: Vec<usize>,
         lhs_layout: MatrixLayout,
         rhs_layout: MatrixLayout,
         out_layout: MatrixLayout,
         global_dtypes: MatmulGlobalElems,
     ) -> Self {
-        let lhs_shape: Vec<usize> = batches.iter().cloned().chain(vec![m, k]).collect();
-        let rhs_shape: Vec<usize> = batches.iter().cloned().chain(vec![k, n]).collect();
-        let out_shape: Vec<usize> = batches.iter().cloned().chain(vec![m, n]).collect();
+        fn broadcast_batches(lhs: &[usize], rhs: &[usize]) -> Option<Vec<usize>> {
+            let max_len = max(lhs.len(), rhs.len());
+            let lhs_padded = std::iter::repeat(1)
+                .take(max_len - lhs.len())
+                .chain(lhs.iter().cloned());
+            let rhs_padded = std::iter::repeat(1)
+                .take(max_len - rhs.len())
+                .chain(rhs.iter().cloned());
+
+            lhs_padded
+                .zip(rhs_padded)
+                .map(|(l, r)| {
+                    if l != r && l != 1 && r != 1 {
+                        None
+                    } else {
+                        Some(max(l, r))
+                    }
+                })
+                .collect()
+        }
+
+        let out_batches: Vec<usize> =
+            broadcast_batches(&lhs_batches, &rhs_batches).expect("Batches should match");
+
+        let lhs_shape: Vec<usize> = lhs_batches.iter().cloned().chain(vec![m, k]).collect();
+        let rhs_shape: Vec<usize> = rhs_batches.iter().cloned().chain(vec![k, n]).collect();
+        let out_shape: Vec<usize> = out_batches.iter().cloned().chain(vec![m, n]).collect();
 
         let lhs_strides = lhs_layout.to_strides(&lhs_shape);
         let rhs_strides = rhs_layout.to_strides(&rhs_shape);
@@ -104,9 +131,9 @@ impl MatmulProblem {
             m,
             n,
             k,
-            lhs_batches: batches.clone(),
-            rhs_batches: batches.clone(),
-            out_batches: batches,
+            lhs_batches: lhs_batches,
+            rhs_batches: rhs_batches,
+            out_batches: out_batches,
             lhs_shape,
             rhs_shape,
             out_shape,
