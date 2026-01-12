@@ -13,3 +13,11 @@ mod double_buffering {
 
     include!("precision.rs");
 }
+
+// TODO not really a unit matmul, should refactor test suite
+mod interleaved {
+    use super::*;
+    type Algorithm = cubek_matmul::routines::interleaved::InterleavedAlgorithm;
+
+    include!("precision.rs");
+}
