@@ -178,7 +178,7 @@ pub fn launch_ref<R: Runtime>(
 
     match scheme {
         QuantScheme {
-            store: QuantStore::U32,
+            store: QuantStore::PackedU32(_),
             ..
         } => dequantize_packed(
             client,
@@ -190,13 +190,13 @@ pub fn launch_ref<R: Runtime>(
             dtype_scale,
         ),
         QuantScheme {
-            value:
-                QuantValue::Q8F
-                | QuantValue::Q8S
-                | QuantValue::E4M3
-                | QuantValue::E5M2
-                | QuantValue::E2M1,
+            value: QuantValue::Q8F | QuantValue::Q8S | QuantValue::E4M3 | QuantValue::E5M2,
             store: QuantStore::Native,
+            ..
+        }
+        | QuantScheme {
+            value: QuantValue::E2M1,
+            store: QuantStore::PackedNative(_),
             ..
         } => {
             if !i8::supported_uses(client).contains(TypeUsage::Conversion) {
@@ -217,7 +217,7 @@ pub fn launch_ref<R: Runtime>(
             )
         }
         QuantScheme {
-            store: QuantStore::Native,
+            store: QuantStore::Native | QuantStore::PackedNative(_),
             value,
             ..
         } => {
@@ -258,7 +258,7 @@ fn dequantize_packed<R: Runtime>(
     match scheme {
         QuantScheme {
             level: QuantLevel::Tensor | QuantLevel::Block(_),
-            store: QuantStore::U32,
+            store: QuantStore::PackedU32(_),
             mode: QuantMode::Symmetric,
             ..
         } => unsafe {

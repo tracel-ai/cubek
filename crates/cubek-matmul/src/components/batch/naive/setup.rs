@@ -1,5 +1,6 @@
 use cubecl::{
-    CubeCount, CubeDim, Runtime, client::ComputeClient, ir::DeviceProperties, server::LaunchError,
+    CubeCount, CubeDim, Runtime, client::ComputeClient, ir::DeviceProperties,
+    quant::scheme::QuantLevel, server::LaunchError,
 };
 
 use crate::{
@@ -108,14 +109,40 @@ impl BatchMatmulFamily for NaiveBatchMatmulFamily {
     fn validate_blueprint<R: Runtime>(
         _client: &ComputeClient<R>,
         blueprint: &Self::Blueprint,
-        _problem: &MatmulProblem,
+        problem: &MatmulProblem,
         _dtypes: &MatmulElems,
-        _line_sizes: &MatmulLineSizes,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError> {
         if blueprint.line_size_out > 1 {
             return Err(MatmulSetupError::InvalidConfig(Box::new(
                 "Line size on output not supported",
             )));
+        }
+
+        if let Some(scheme) = problem.lhs_scheme
+            && let QuantLevel::Block(block_size) = scheme.level
+        {
+            let line_size = line_sizes.lhs * scheme.num_quants();
+            let block_size = block_size.to_dim_vec(2.max(block_size.len()));
+            let block_width = block_size[block_size.len() - 1] as usize;
+            if !block_width.is_multiple_of(line_size) {
+                return Err(MatmulSetupError::InvalidConfig(Box::new(
+                    "Block size isn't a multiple of load size on lhs",
+                )));
+            }
+        }
+
+        if let Some(scheme) = problem.rhs_scheme
+            && let QuantLevel::Block(block_size) = scheme.level
+        {
+            let line_size = line_sizes.rhs * scheme.num_quants();
+            let block_size = block_size.to_dim_vec(2.max(block_size.len()));
+            let block_width = block_size[block_size.len() - 2] as usize;
+            if !block_width.is_multiple_of(line_size) {
+                return Err(MatmulSetupError::InvalidConfig(Box::new(
+                    "Block size isn't a multiple of load size on rhs",
+                )));
+            }
         }
 
         Ok(())

@@ -1,4 +1,4 @@
-use cubecl::{AutotuneKey, Runtime};
+use cubecl::{AutotuneKey, Runtime, quant::scheme::QuantScheme};
 use cubecl::{client::ComputeClient, ir::StorageType};
 use serde::{Deserialize, Serialize};
 
@@ -86,14 +86,16 @@ impl MatmulAutotuneKey {
         elem_lhs: StorageType,
         elem_rhs: StorageType,
         elem_out: StorageType,
+        lhs_scheme: Option<&QuantScheme>,
+        rhs_scheme: Option<&QuantScheme>,
     ) -> MatmulAutotuneKey {
         let ndims = lhs_shape.len();
         let m = lhs_shape[ndims - 2];
         let k = lhs_shape[ndims - 1];
         let n = rhs_shape[ndims - 1];
 
-        let matrix_layout_lhs = matrix_batch_layout(lhs_strides);
-        let matrix_layout_rhs = matrix_batch_layout(rhs_strides);
+        let matrix_layout_lhs = matrix_batch_layout(lhs_strides, lhs_scheme);
+        let matrix_layout_rhs = matrix_batch_layout(rhs_strides, rhs_scheme);
 
         let kind = MatmulKind::from(MatmulProblemSize {
             m: m as u32,

@@ -176,6 +176,8 @@ fn run<R: Runtime, MP: MatmulPrecision>(device: R::Device, strategy: Strategy) {
                     tl,
                     tr,
                     MatrixLayout::RowMajor,
+                    None,
+                    None,
                     MatmulElems::new_deprecated::<MP>().as_global_elems(),
                 );
                 let _ = run_one::<R, MP>(device.clone(), strategy.clone(), &problem);
@@ -248,6 +250,8 @@ fn run_grid_search<R: Runtime, MP: MatmulPrecision>() {
         tl,
         tr,
         MatrixLayout::RowMajor,
+        None,
+        None,
         MatmulElems::new_deprecated::<MP>().as_global_elems(),
     );
 

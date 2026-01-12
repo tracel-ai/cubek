@@ -83,6 +83,8 @@ impl ConvolutionProblem {
             out_shape: vec![self.m, self.n],
             out_strides: MatrixLayout::RowMajor.to_strides(&[self.m, self.n]),
             out_layout: MatrixLayout::RowMajor,
+            lhs_scheme: None,
+            rhs_scheme: None,
             global_dtypes: self.global_dtypes.clone(),
         }
     }

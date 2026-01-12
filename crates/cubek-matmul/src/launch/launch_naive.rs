@@ -38,8 +38,8 @@ pub fn launch_ref<R: Runtime>(
     let dim1 = rank - 1;
     let dim2 = rank - 2;
 
-    let lhs_layout = matrix_batch_layout(lhs.data().strides);
-    let rhs_layout = matrix_batch_layout(rhs.data().strides);
+    let lhs_layout = matrix_batch_layout(lhs.data().strides, lhs.scheme());
+    let rhs_layout = matrix_batch_layout(rhs.data().strides, rhs.scheme());
 
     let lhs = if !matches!(lhs_layout, MatrixBatchLayout::Contiguous) {
         lhs.into_contiguous(client)?
@@ -57,6 +57,7 @@ pub fn launch_ref<R: Runtime>(
         let mut rhs = rhs.as_ref().into_contiguous(client)?;
 
         rhs.swap_dims(dim1, dim2);
+
         let returned: Result<MatmulInputHandle<R>, LaunchError> = Ok(rhs);
         returned
     };
@@ -107,6 +108,8 @@ pub fn launch_ref<R: Runtime>(
         rhs.data().strides.to_vec(),
         out.strides.to_vec(),
         dtypes.as_global_elems(),
+        lhs.scheme(),
+        rhs.scheme(),
     );
 
     let device_settings = NaiveRoutine::device_settings(client, line_sizes);
