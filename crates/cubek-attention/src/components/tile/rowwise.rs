@@ -142,7 +142,7 @@ impl<E: Numeric> RowWise<E> {
         #[unroll]
         for i in 0..self.num_rows {
             let row_val = self.vals.index_mut(i);
-            row_val.val = Max::max(row_val.val, other.index(i));
+            row_val.val = max(row_val.val, other.index(i));
         }
     }
 
@@ -177,7 +177,7 @@ impl<E: Float> RowWise<E> {
 
         #[unroll]
         for i in 0..self.num_rows {
-            let val = Exp::exp(self.index(i) - other.index(i));
+            let val = (self.index(i) - other.index(i)).exp();
             vals.push(RowVal::<E> { val });
         }
 
@@ -199,8 +199,8 @@ impl<E: Float> RowWise<E> {
 
             let epsilon = E::new(FULLY_MASKED_ROW_THRESHOLD);
             let not_masked = E::cast_from(row_val.val >= epsilon);
-            let safe_val = Max::max(row_val.val, epsilon);
-            let recip = Recip::recip(safe_val);
+            let safe_val = clamp_min(row_val.val, epsilon);
+            let recip = safe_val.recip();
             row_val.val = not_masked * recip;
         }
     }

@@ -28,6 +28,7 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
     #[comptime] copy_line_size: u32,
 ) {
     let operation = runtime_args.operation.comptime();
+    let channels = runtime_args.channels;
 
     let mut stage_slice = stage.as_slice_mut(stage.smem.line_size());
     let slice_size = match config.smem_config.matrix_layout {
@@ -49,20 +50,14 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
 
             if config.gmem_config.check_col_bounds {
                 let in_c = runtime_args.padded_channels.modulo(k_offset + pos.1);
-                slice_len_global = Min::min(
-                    SaturatingSub::saturating_sub(runtime_args.channels, in_c),
-                    slice_len_global,
-                );
+                slice_len_global = channels.saturating_sub(in_c).min(slice_len_global);
             }
         }
         (StageIdent::Rhs, ConvolutionOperation::Forward)
         | (StageIdent::Out, ConvolutionOperation::BackwardWeight) => {
             if config.gmem_config.check_row_bounds {
                 let in_c = runtime_args.padded_channels.modulo(k_offset + pos.0);
-                slice_len_global = Min::min(
-                    SaturatingSub::saturating_sub(runtime_args.channels, in_c),
-                    slice_len_global,
-                );
+                slice_len_global = channels.saturating_sub(in_c).min(slice_len_global);
             }
             if config.gmem_config.check_col_bounds {
                 slice_len_global *= u32::cast_from(pos.1 < view.shape().1);
@@ -78,8 +73,7 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
             if config.gmem_config.check_col_bounds {
                 let pos = pos.1;
                 let shape = view.shape().1;
-                slice_len_global =
-                    Min::min(SaturatingSub::saturating_sub(shape, pos), slice_len_global);
+                slice_len_global = shape.saturating_sub(pos).min(slice_len_global);
             }
         }
         _ => {
@@ -91,8 +85,7 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
                         slice_len_global *= u32::cast_from(pos < shape);
                     }
                     MatrixLayout::ColMajor => {
-                        slice_len_global =
-                            Min::min(SaturatingSub::saturating_sub(shape, pos), slice_len_global);
+                        slice_len_global = shape.saturating_sub(pos).min(slice_len_global);
                     }
                 }
             }
@@ -102,8 +95,7 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
                 let shape = view.shape().1;
                 match config.gmem_config.matrix_layout {
                     MatrixLayout::RowMajor => {
-                        slice_len_global =
-                            Min::min(SaturatingSub::saturating_sub(shape, pos), slice_len_global);
+                        slice_len_global = shape.saturating_sub(pos).min(slice_len_global);
                     }
                     MatrixLayout::ColMajor => {
                         slice_len_global *= u32::cast_from(pos < shape);

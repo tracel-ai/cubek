@@ -104,7 +104,7 @@ impl Layout for TmaIm2colLayout {
             // bytes by the in-bounds tiles but that's more complicated than just trying to load a very
             // large channel index and letting bounds checks handle it.
             let kernel_mask = (k_idx > 0) as u32 * 0x7FFFFF00u32;
-            pos.channel = Max::max(pos.channel, kernel_mask);
+            pos.channel = pos.channel.max(kernel_mask);
         }
 
         (pos, k_offs.rev())

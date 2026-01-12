@@ -1,5 +1,3 @@
-use std::cmp::max;
-
 use cubecl;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
@@ -90,7 +88,7 @@ impl<E: Float> RowwiseFormat<E> for UnitTile<E> {
             #[unroll]
             for c in 0..self.layout.num_cols {
                 let index = row_offset + c;
-                val = Max::max(val, self.data[index as usize]);
+                val = max(val, self.data[index as usize]);
             }
 
             vals.push(RowVal::<E> { val });
@@ -151,10 +149,10 @@ impl<E: Float> RowwiseFormat<E> for UnitTile<E> {
             for c in 0..self.layout.num_cols {
                 let index = row_offset + c;
 
-                let safe_val = Max::max(val, threshold);
+                let safe_val = clamp_min(val, threshold);
                 let not_masked = E::cast_from(val >= threshold);
                 self.data[index as usize] =
-                    not_masked * Exp::exp(self.data[index as usize] - safe_val);
+                    not_masked * (self.data[index as usize] - safe_val).exp();
             }
         }
     }

@@ -22,7 +22,7 @@ fn quantize_symmetric<F: Float, FS: CubePrimitive>(
     range_min: F,
     range_max: F,
 ) -> Line<F> {
-    Line::clamp(
+    clamp(
         Line::round(value / Line::cast_from(scale)),
         Line::new(range_min),
         Line::new(range_max),
