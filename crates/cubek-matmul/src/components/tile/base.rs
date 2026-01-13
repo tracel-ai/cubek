@@ -181,7 +181,7 @@ pub trait TileMatmul<L: Numeric, R: Numeric, A: Numeric>: 'static + Send + Sync 
     /// Write the content of the output container to the given slice
     fn write_results<E: Numeric>(
         tile: &mut TileMut<Self::OutTile, E>,
-        out: &Self::AccFragment,
+        out: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     );
 }

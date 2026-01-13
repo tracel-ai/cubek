@@ -63,7 +63,7 @@ impl TestOutcome {
     /// # Example
     ///
     /// ```
-    /// let outcome = assert_equals_approx(&actual, &expected, 0.001).into();
+    /// let outcome = assert_equals_approx(&actual, &expected, 0.001).as_test_outcome();
     /// outcome.enforce(); // panics if TestMode rejects it
     /// ```
     pub fn enforce(self) {

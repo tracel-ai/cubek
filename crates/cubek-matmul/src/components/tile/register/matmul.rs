@@ -120,7 +120,7 @@ where
 
     fn write_results<E: Numeric>(
         tile: &mut StridedTile<E, ReadWrite>,
-        acc: &Self::AccFragment,
+        acc: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     ) {
         RegisterStageWriter::store_fragment(tile, acc, config)

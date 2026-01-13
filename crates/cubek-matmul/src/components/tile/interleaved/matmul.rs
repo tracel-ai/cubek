@@ -4,7 +4,6 @@ use crate::components::tile::interleaved::config::InterleavedMatmulConfig;
 use crate::components::tile::interleaved::reader::InterleavedStageReader;
 use crate::components::tile::interleaved::writer::InterleavedStageWriter;
 use crate::components::tile::io::Strided;
-use crate::components::tile::register::RegisterMatmul;
 use crate::components::tile::tile_data::StridedTile;
 use crate::components::tile::{TileMatmul, io::Filled};
 use crate::definition::{MatrixLayout, StageIdent};
@@ -21,6 +20,20 @@ pub struct InterleavedFragment<E: Numeric> {
     pub array: Array<E>,
     #[cube(comptime)]
     pub layout: MatrixLayout,
+    #[cube(comptime)]
+    row_count: usize,
+    #[cube(comptime)]
+    col_count: usize,
+}
+
+#[cube]
+impl<E: Numeric> InterleavedFragment<E> {
+    fn get(&self, i: usize, j: usize) -> E {
+        match comptime!(self.layout) {
+            MatrixLayout::RowMajor => self.array[i * self.col_count + j],
+            MatrixLayout::ColMajor => self.array[j * self.row_count + i],
+        }
+    }
 }
 
 #[derive(CubeType)]
@@ -41,18 +54,17 @@ impl<E: Numeric> InterleavedAccumulator<E> {
     /// Every unit will hold the sum
     pub fn consolidate(&mut self) {
         #[unroll]
-        for i in 0..self.m * self.n {
+        for i in 0..comptime!(self.m * self.n) {
             self.array[i] = plane_sum(self.array[i])
         }
     }
 }
 
-// u = k / plane_dim (exact division only)
-
 #[cube]
 impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for InterleavedMatmul {
     type Config = InterleavedMatmulConfig;
 
+    // u = k / plane_dim (exact division only)
     // Size m * u
     type LhsFragment = InterleavedFragment<L>;
     // Size u * n
@@ -71,21 +83,35 @@ impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for InterleavedMatm
         acc: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     ) {
-        RegisterMatmul::<Self::AccTile>::inner_product(
-            &lhs.array,
-            &rhs.array,
-            &mut acc.array,
-            config.local_tile_size(),
-        );
+        let m = config.elements_per_unit_m();
+        let n = config.elements_per_unit_n();
+        let local_k = config.elements_per_unit_k();
+
+        #[unroll]
+        for m_ in 0..m {
+            #[unroll]
+            for n_ in 0..n {
+                #[unroll]
+                for k_ in 0..local_k {
+                    let lhs_elem = A::cast_from(lhs.get(m_, k_));
+                    let rhs_elem = A::cast_from(rhs.get(k_, n_));
+                    acc.array[(m_ * n + n_) as usize] += lhs_elem * rhs_elem;
+                }
+            }
+        }
     }
 
     fn allocate_lhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Self::LhsFragment {
+        let row_count = config.elements_per_unit_m();
+        let col_count = config.elements_per_unit_k();
         InterleavedFragment::<L> {
-            array: Array::new(config.elements_per_unit_m() * config.elements_per_unit_k()),
+            array: Array::new(row_count * col_count),
             layout,
+            row_count,
+            col_count,
         }
     }
 
@@ -93,9 +119,13 @@ impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for InterleavedMatm
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Self::RhsFragment {
+        let row_count = config.elements_per_unit_k();
+        let col_count = config.elements_per_unit_n();
         InterleavedFragment::<R> {
-            array: Array::new(config.elements_per_unit_k() * config.elements_per_unit_n()),
+            array: Array::new(row_count * col_count),
             layout,
+            row_count,
+            col_count,
         }
     }
 
@@ -139,9 +169,10 @@ impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for InterleavedMatm
 
     fn write_results<E: Numeric>(
         tile: &mut StridedTile<E, ReadWrite>,
-        acc: &Self::AccFragment,
+        acc: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     ) {
+        acc.consolidate();
         InterleavedStageWriter::store_fragment(tile, acc, config)
     }
 }

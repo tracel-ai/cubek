@@ -104,7 +104,7 @@ impl TestMode {
                         if *fail_only {
                             Accept
                         } else {
-                            Reject("printed (pass)".into())
+                            Reject("printed".into())
                         }
                     }
                     Fail(reason) => Reject(reason),
@@ -121,7 +121,7 @@ impl TestMode {
             },
             FailIfRun => match outcome {
                 Validated(result) => match result {
-                    Pass => Reject("FailIfRun mode".to_string()),
+                    Pass => Reject("Actually passed, but FailIfRun mode activated".to_string()),
                     Fail(_) => Accept,
                     Skipped(_) => Accept,
                 },

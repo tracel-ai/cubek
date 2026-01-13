@@ -144,7 +144,7 @@ pub trait StageMatmul<MP: MatmulPrecision>: 'static + Send + Sync {
 
     /// Reads the result of the accumulator and hands it to the stage writer
     fn write_results<W: WriteEventListener>(
-        acc: &Self::Accumulators,
+        acc: &mut Self::Accumulators,
         stage: &mut Self::OutStage,
         listener: &mut W,
         partition_scheduler: &PartitionScheduler,

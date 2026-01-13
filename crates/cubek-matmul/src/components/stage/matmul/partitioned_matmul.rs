@@ -247,7 +247,7 @@ where
     }
 
     fn write_results<W: WriteEventListener>(
-        acc: &Self::Accumulators,
+        acc: &mut Self::Accumulators,
         stage: &mut Self::OutStage,
         listener: &mut W,
         partition_scheduler: &PartitionScheduler,
@@ -267,7 +267,7 @@ where
             for n_iter in 0..n_iterations {
                 let n_load_iter = partition_scheduler.map_n(n_iter as u32);
 
-                let tile_accumulator = Accumulators::<MP, TM>::get_at(
+                let tile_accumulator = Accumulators::<MP, TM>::get_at_mut(
                     acc,
                     m_iter,
                     n_iter,

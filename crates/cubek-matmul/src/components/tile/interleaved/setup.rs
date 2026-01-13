@@ -6,9 +6,9 @@ use crate::components::tile::{
     TileMatmulFamily,
     io::{Filled, Strided},
 };
-use crate::definition::TilingBlueprint;
 use crate::definition::{InvalidConfigError, MatmulAvailabilityError, MatmulElems};
 use crate::definition::{MatmulLineSizes, MatmulSetupError};
+use crate::definition::{MatrixLayout, TilingBlueprint};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::{features::TypeUsage, ir::DeviceProperties};
@@ -63,6 +63,63 @@ impl TileMatmulFamily for InterleavedMatmul {
         line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError> {
         check_availability(client, dtypes)?;
+
+        let m = blueprint.tiling_scheme.tile_size.m();
+        let n = blueprint.tiling_scheme.tile_size.n();
+        let k = blueprint.tiling_scheme.tile_size.k();
+
+        let plane_dim = blueprint.plane_dim;
+        if k % plane_dim != 0 {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "k must be divisible by plane_dim. Got k={:?}, plane_dim={:?}",
+                k, plane_dim,
+            ))));
+        }
+
+        let k_local = k / plane_dim;
+
+        let lhs = line_sizes.lhs as u32;
+        let rhs = line_sizes.rhs as u32;
+        let out = line_sizes.out as u32;
+
+        match blueprint.lhs_layout {
+            MatrixLayout::RowMajor => {
+                if !k_local.is_multiple_of(lhs) {
+                    return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                        "Local shape in lined axis k ({k_local:?}) should be divisible by line size lhs ({lhs:?})"
+                    ))));
+                }
+            }
+            MatrixLayout::ColMajor => {
+                if !m.is_multiple_of(lhs) {
+                    return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                        "Tile shape in lined axis m ({m:?}) should be divisible by line size lhs ({lhs:?})"
+                    ))));
+                }
+            }
+        }
+        match blueprint.rhs_layout {
+            MatrixLayout::RowMajor => {
+                if !n.is_multiple_of(rhs) {
+                    return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                        "Tile shape in lined axis n ({n:?}) should be divisible by line size rhs ({rhs:?})"
+                    ))));
+                }
+            }
+            MatrixLayout::ColMajor => {
+                if !k_local.is_multiple_of(rhs) {
+                    return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                        "Local shape in lined axis k ({k_local:?}) should be divisible by line size rhs ({rhs:?})"
+                    ))));
+                }
+            }
+        }
+
+        if !n.is_multiple_of(out) {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "Tile shape in lined axis n ({n:?}) should be divisible by line size out ({out:?})"
+            ))));
+        }
 
         Ok(())
     }
