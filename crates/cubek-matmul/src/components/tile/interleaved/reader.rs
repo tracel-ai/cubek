@@ -70,7 +70,7 @@ impl InterleavedStageReader {
         let size = config.elements_per_unit_m() * config.elements_per_unit_n();
 
         for i in 0..size {
-            fragment.array[i as usize] = A::cast_from(*value);
+            fragment.array[i] = A::cast_from(*value);
         }
     }
 }

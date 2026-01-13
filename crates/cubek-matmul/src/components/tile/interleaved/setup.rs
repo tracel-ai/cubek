@@ -69,7 +69,7 @@ impl TileMatmulFamily for InterleavedMatmul {
         let k = blueprint.tiling_scheme.tile_size.k();
 
         let plane_dim = blueprint.plane_dim;
-        if k % plane_dim != 0 {
+        if !k.is_multiple_of(plane_dim) {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
                 "k must be divisible by plane_dim. Got k={:?}, plane_dim={:?}",
                 k, plane_dim,

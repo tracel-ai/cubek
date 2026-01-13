@@ -94,7 +94,7 @@ impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for InterleavedMatm
                 for k_ in 0..local_k {
                     let lhs_elem = A::cast_from(lhs.get(m_, k_));
                     let rhs_elem = A::cast_from(rhs.get(k_, n_));
-                    acc.array[(m_ * n + n_) as usize] += lhs_elem * rhs_elem;
+                    acc.array[m_ * n + n_] += lhs_elem * rhs_elem;
                 }
             }
         }

@@ -32,7 +32,7 @@ impl InterleavedMatmulConfig {
         let k = self.shared.elements_in_tile_k() as usize;
         let plane_dim = self.plane_dim() as usize;
         assert!(
-            k % plane_dim == 0,
+            k.is_multiple_of(plane_dim),
             "k must be divisible by plane_dim. Got k={:?}, plane_dim={:?}",
             k,
             plane_dim
