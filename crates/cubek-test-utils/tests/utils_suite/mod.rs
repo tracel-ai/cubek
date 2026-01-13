@@ -1,6 +1,8 @@
 use cubecl::frontend::CubePrimitive;
 use cubecl::{Runtime, TestRuntime};
-use cubek_test_utils::{HostData, HostDataType, StrideSpec, TestInput, assert_equals_approx};
+use cubek_test_utils::{
+    HostData, HostDataType, StrideSpec, TestInput, assert_equals_approx, current_test_mode,
+};
 
 #[test]
 fn eye_handle_row_major() {
@@ -27,7 +29,9 @@ fn eye_handle_row_major() {
 
     let actual = HostData::from_tensor_handle(&client, &handle, HostDataType::F32);
 
-    assert_equals_approx(&actual, &expected, 0.001).unwrap();
+    current_test_mode()
+        .decide(assert_equals_approx(&actual, &expected, 0.001).into())
+        .enforce();
 }
 
 #[test]
@@ -55,7 +59,9 @@ fn eye_handle_col_major() {
 
     let actual = HostData::from_tensor_handle(&client, &handle, HostDataType::F32);
 
-    assert_equals_approx(&actual, &expected, 0.001).unwrap();
+    current_test_mode()
+        .decide(assert_equals_approx(&actual, &expected, 0.001).into())
+        .enforce();
 }
 
 #[test]
@@ -83,7 +89,9 @@ fn arange_handle_row_major() {
 
     let actual = HostData::from_tensor_handle(&client, &handle, HostDataType::F32);
 
-    assert_equals_approx(&actual, &expected, 0.001).unwrap();
+    current_test_mode()
+        .decide(assert_equals_approx(&actual, &expected, 0.001).into())
+        .enforce();
 }
 
 #[test]
@@ -111,7 +119,9 @@ fn arange_handle_col_major() {
 
     let actual = HostData::from_tensor_handle(&client, &handle, HostDataType::F32);
 
-    assert_equals_approx(&actual, &expected, 0.001).unwrap();
+    current_test_mode()
+        .decide(assert_equals_approx(&actual, &expected, 0.001).into())
+        .enforce();
 }
 
 #[test]
@@ -138,5 +148,7 @@ fn custom_handle_row_major_col_major() {
     )
     .generate_with_f32_host_data();
 
-    assert_equals_approx(&col_major, &row_major, 0.001).unwrap();
+    current_test_mode()
+        .decide(assert_equals_approx(&col_major, &row_major, 0.001).into())
+        .enforce();
 }

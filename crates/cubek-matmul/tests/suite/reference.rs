@@ -3,7 +3,9 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::{CubeElement, client::ComputeClient};
 use cubek_matmul::definition::MatmulElems;
 use cubek_matmul::definition::{MatmulIdent, MatmulProblem, MatrixLayout};
-use cubek_test_utils::{HostData, HostDataType, HostDataVec, StrideSpec, assert_equals_approx};
+use cubek_test_utils::{
+    HostData, HostDataType, HostDataVec, StrideSpec, ValidationResult, assert_equals_approx,
+};
 
 pub fn assert_result(
     lhs: &HostData,
@@ -12,16 +14,14 @@ pub fn assert_result(
     client: &ComputeClient<TestRuntime>,
     out: &TensorHandle<TestRuntime>,
     dtypes: MatmulElems,
-) {
+) -> ValidationResult {
     let epsilon = matmul_epsilon(&dtypes, 100.);
 
     let expected = matmul_cpu_reference(lhs, rhs, problem);
 
     let actual = HostData::from_tensor_handle(client, out, HostDataType::F32);
 
-    if let Err(e) = assert_equals_approx(&actual, &expected, epsilon) {
-        panic!("{}", e);
-    }
+    assert_equals_approx(&actual, &expected, epsilon)
 }
 
 fn matmul_epsilon(elems: &MatmulElems, safety_factor: f32) -> f32 {

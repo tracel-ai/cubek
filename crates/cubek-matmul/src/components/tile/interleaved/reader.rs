@@ -1,74 +1,76 @@
-use cubecl::prelude::*;
-use cubecl::std::CubeOption;
-use std::marker::PhantomData;
-
+use crate::components::tile::StridedTile;
 use crate::components::tile::interleaved::config::InterleavedMatmulConfig;
-use crate::components::tile::{
-    StridedTile,
-    io::{Filled, Strided, TileKind},
-    register::{RegisterMatmul, UnitFragment},
-};
-use crate::definition::StageIdent;
+use crate::components::tile::interleaved::{InterleavedAccumulator, InterleavedFragment};
+use crate::definition::{MatrixLayout, StageIdent};
+use cubecl::prelude::*;
 
-/// Reader for the register matmul fragments. Implementation depends on the tile kind.
 #[derive(CubeType)]
-pub struct InterleavedStageReader<Kind: TileKind> {
-    #[cube(comptime)]
-    _ty: PhantomData<Kind>,
-}
-
-/// Generic register reader over any tile kind
-#[cube]
-pub(super) trait InterleavedFragmentReader {
-    type TileKind: TileKind;
-
-    /// Fill a fragment with data, with the implementation depending on the tile kind.
-    fn load_fragment<E: Numeric, V: Numeric>(
-        tile: &<Self::TileKind as TileKind>::Tile<V>,
-        fragment: &mut UnitFragment<E>,
-        #[comptime] ident: StageIdent,
-        #[comptime] config: InterleavedMatmulConfig,
-    );
-}
+pub struct InterleavedStageReader {}
 
 #[cube]
-impl InterleavedFragmentReader for InterleavedStageReader<Strided> {
-    type TileKind = Strided;
-
-    fn load_fragment<E: Numeric, V: Numeric>(
+impl InterleavedStageReader {
+    pub fn load_fragment<E: Numeric, V: Numeric>(
         tile: &StridedTile<V>,
-        frag: &mut UnitFragment<E>,
+        fragment: &mut InterleavedFragment<E>,
         #[comptime] ident: StageIdent,
         #[comptime] config: InterleavedMatmulConfig,
     ) {
+        let (m, n, k_local) = (
+            config.elements_per_unit_m(),
+            config.elements_per_unit_n(),
+            config.elements_per_unit_k(),
+        );
+        let layout = comptime!(tile.layout);
+        let line_size = comptime!(tile.line_size as usize);
+
+        let unit_id = UNIT_POS_X as usize;
+        let k_offset = k_local * unit_id;
+
+        let (strided_dim_count, contiguous_dim_count) = match (layout, ident) {
+            (MatrixLayout::RowMajor, StageIdent::Lhs) => (m, k_local),
+            (MatrixLayout::RowMajor, StageIdent::Rhs) => (k_local, n),
+            (MatrixLayout::ColMajor, StageIdent::Lhs) => (k_local, m),
+            (MatrixLayout::ColMajor, StageIdent::Rhs) => (n, k_local),
+            _ => unreachable!(),
+        };
+
+        let (strided_dim_offset, contiguous_dim_offset) = match (layout, ident) {
+            // k is contiguous dim
+            (MatrixLayout::RowMajor, StageIdent::Lhs)
+            | (MatrixLayout::ColMajor, StageIdent::Rhs) => (0, k_offset / line_size),
+            // k is not contiguous dim
+            (MatrixLayout::RowMajor, StageIdent::Rhs)
+            | (MatrixLayout::ColMajor, StageIdent::Lhs) => (k_offset, 0),
+            _ => unreachable!(),
+        };
+
+        assert!(contiguous_dim_count % line_size == 0);
+        let line_count_in_dim = contiguous_dim_count / line_size;
+
+        for i in 0..strided_dim_count {
+            for j in 0..line_count_in_dim {
+                let line = Line::cast_from(tile.get_line(
+                    (i + strided_dim_offset) as u32,
+                    (j + contiguous_dim_offset) as u32,
+                ));
+
+                let line_start = i * contiguous_dim_count + j * line_size;
+                for l in 0..line_size {
+                    fragment.array[line_start + l] = line[l];
+                }
+            }
+        }
     }
-}
 
-#[cube]
-impl InterleavedFragmentReader for InterleavedStageReader<Filled> {
-    type TileKind = Filled;
-
-    fn load_fragment<E: Numeric, V: Numeric>(
+    pub fn load_accumulator<A: Numeric, V: Numeric>(
         value: &V,
-        fragment: &mut UnitFragment<E>,
-        #[comptime] ident: StageIdent,
+        fragment: &mut InterleavedAccumulator<A>,
         #[comptime] config: InterleavedMatmulConfig,
     ) {
-    }
-}
+        let size = config.elements_per_unit_m() * config.elements_per_unit_n();
 
-#[cube]
-impl<Inner: TileKind> InterleavedFragmentReader for InterleavedStageReader<CubeOption<Inner>>
-where
-    InterleavedStageReader<Inner>: InterleavedFragmentReader<TileKind = Inner>,
-{
-    type TileKind = CubeOption<Inner>;
-
-    fn load_fragment<E: Numeric, V: Numeric>(
-        tile: &CubeOption<Inner::Tile<V>>,
-        fragment: &mut UnitFragment<E>,
-        #[comptime] ident: StageIdent,
-        #[comptime] config: InterleavedMatmulConfig,
-    ) {
+        for i in 0..size {
+            fragment.array[i as usize] = A::cast_from(*value);
+        }
     }
 }

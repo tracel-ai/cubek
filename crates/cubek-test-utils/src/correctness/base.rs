@@ -1,14 +1,14 @@
-use crate::HostData;
 use crate::correctness::color_printer::ColorPrinter;
 use crate::test_mode::{TestMode, current_test_mode};
+use crate::{HostData, ValidationResult};
 
 pub fn assert_equals_approx(
     actual: &HostData,
     expected: &HostData,
     epsilon: f32,
-) -> Result<(), String> {
+) -> ValidationResult {
     if actual.shape != expected.shape {
-        return Err(format!(
+        return ValidationResult::Fail(format!(
             "Shape mismatch: got {:?}, expected {:?}",
             actual.shape, expected.shape,
         ));
@@ -20,10 +20,10 @@ pub fn assert_equals_approx(
     let mut visitor: Box<dyn CompareVisitor> = match test_mode.clone() {
         TestMode::Print {
             filter,
-            only_failing: _,
+            fail_only: _,
         } => {
             if !filter.is_empty() && filter.len() != shape.len() {
-                return Err(format!(
+                return ValidationResult::Skipped(format!(
                     "Print mode activated with invalid filter rank. Got {:?}, expected {:?}",
                     filter.len(),
                     shape.len()
@@ -43,15 +43,9 @@ pub fn assert_equals_approx(
         &mut Vec::new(),
     );
 
-    match test_mode {
-        TestMode::Print { only_failing, .. } => {
-            if !only_failing || test_failed {
-                Err("Print mode activated".to_string())
-            } else {
-                Ok(())
-            }
-        }
-        _ => Ok(()),
+    match test_failed {
+        true => ValidationResult::Fail("Got incorrect results".to_string()),
+        false => ValidationResult::Pass,
     }
 }
 

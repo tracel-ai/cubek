@@ -19,7 +19,9 @@ use cubek_matmul::launch::TensorMapInputs;
 use cubek_matmul::launch::TensorOutput;
 use cubek_matmul::routines::BlueprintStrategy;
 use cubek_matmul::routines::Routine;
+use cubek_test_utils::ExecutionOutcome;
 use cubek_test_utils::HostData;
+use cubek_test_utils::TestOutcome;
 use cubek_test_utils::current_test_mode;
 use cubek_test_utils::{Distribution, RandomInputSpec, SimpleInputSpec, TestInput};
 
@@ -77,7 +79,7 @@ pub fn test_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
 
     let all_elems = MatmulElems::from_globals(&problem.global_dtypes.clone());
 
-    if launch_matmul_algorithm::<A>(
+    let test_outcome = match launch_matmul_algorithm::<A>(
         &client,
         &problem,
         blueprint,
@@ -87,8 +89,13 @@ pub fn test_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
         rhs_handle,
         out_handle,
     ) {
-        assert_result(&lhs_data, &rhs_data, &problem, &client, &out, all_elems);
-    }
+        ExecutionOutcome::Executed => {
+            assert_result(&lhs_data, &rhs_data, &problem, &client, &out, all_elems).into()
+        }
+        ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
+    };
+
+    current_test_mode().decide(test_outcome).enforce();
 }
 
 /// Returns whether execution succeeded
@@ -102,7 +109,7 @@ pub fn launch_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
     lhs: MatmulInputHandleRef<TestRuntime>,
     rhs: MatmulInputHandleRef<TestRuntime>,
     out: TensorHandleRef<TestRuntime>,
-) -> bool {
+) -> ExecutionOutcome {
     let line_sizes = AvailableLineSizes::from_type_sizes(
         client,
         dtypes.lhs_global.size(),
@@ -130,10 +137,7 @@ pub fn launch_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
     ) {
         Ok(launch_info) => launch_info,
         Err(err) => {
-            if current_test_mode().should_fail_on_test_compilation_fail() {
-                panic!("Can't launch the test: {err}");
-            }
-            return false;
+            return ExecutionOutcome::CompileError(format!("Can't launch the test: {err}"));
         }
     };
 
@@ -148,8 +152,9 @@ pub fn launch_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
         || props.max_cube_dim.2 < cube_dim.z
         || cube_dim.num_elems() > props.max_units_per_cube
     {
-        println!("Skipping test, too many resources requested");
-        return false;
+        return ExecutionOutcome::CompileError(
+            "Skipping test, too many resources requested".to_string(),
+        );
     }
 
     let output = <TensorOutput<_> as ConcreteOutputFactory<A>>::create(
@@ -161,7 +166,7 @@ pub fn launch_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
         dtypes,
     );
 
-    match input_representation {
+    let result = match input_representation {
         InputRepresentation::Normal => {
             let inputs = <TensorInputs<_, _, _> as ConcreteInputsFactory<A>>::create(
                 client,
@@ -210,6 +215,10 @@ pub fn launch_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
                 )
             }
         }
+    };
+
+    match result {
+        Ok(_) => ExecutionOutcome::Executed,
+        Err(err) => ExecutionOutcome::CompileError(format!("Test did not run: {}", err)),
     }
-    .is_ok()
 }

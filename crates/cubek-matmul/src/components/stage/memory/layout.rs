@@ -356,7 +356,10 @@ impl<TO: TilingOrder> TilingValidation for ContiguousTilingLayout<TO> {
     fn check(config: StageMemoryConfig) -> Result<(), InvalidConfigError> {
         let tile_width = config.elements_per_tile_along_contiguous_dim();
         if config.line_size > tile_width {
-            return Err(Box::new("Invalid line size"));
+            return Err(Box::new(format!(
+                "Invalid line size. Got {:?} which should not be >{:?}",
+                config.line_size, tile_width,
+            )));
         }
         Ok(())
     }
@@ -448,7 +451,10 @@ impl TilingValidation for StridedTilingLayout {
     fn check(config: StageMemoryConfig) -> Result<(), InvalidConfigError> {
         let stage_width = config.elements_per_stage_along_contiguous_dim();
         if config.line_size > stage_width {
-            return Err(Box::new("Invalid line size"));
+            return Err(Box::new(format!(
+                "Invalid line size. Got {:?} which should not be >{:?}",
+                config.line_size, stage_width,
+            )));
         }
         Ok(())
     }
