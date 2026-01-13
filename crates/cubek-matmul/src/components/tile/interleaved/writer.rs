@@ -2,8 +2,7 @@ use cubecl::prelude::*;
 
 use crate::components::tile::{
     StridedTile,
-    interleaved::{InterleavedAccumulator, InterleavedFragment, config::InterleavedMatmulConfig},
-    register::UnitFragment,
+    interleaved::{InterleavedAccumulator, config::InterleavedMatmulConfig},
 };
 
 /// Writer for the interleaved matmul fragments.

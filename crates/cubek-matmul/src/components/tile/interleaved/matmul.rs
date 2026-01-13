@@ -1,5 +1,4 @@
 use cubecl::prelude::*;
-use std::marker::PhantomData;
 
 use crate::components::tile::interleaved::config::InterleavedMatmulConfig;
 use crate::components::tile::interleaved::reader::InterleavedStageReader;
