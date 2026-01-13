@@ -86,6 +86,8 @@ impl<R: Runtime> MatmulInputHandle<R> {
 
                 data.shape.swap(dim0, dim1);
                 data.strides.swap(dim0, dim1);
+
+                // Swap dims for scale and block size if block scaled quant is used
                 if let QuantLevel::Block(block) = &mut scheme.level {
                     scale.shape.swap(dim0, dim1);
                     scale.strides.swap(dim0, dim1);
@@ -95,15 +97,8 @@ impl<R: Runtime> MatmulInputHandle<R> {
                 }
                 shape.swap(dim0, dim1);
 
-                if let QuantStore::PackedU32(packed_dim) | QuantStore::PackedNative(packed_dim) =
-                    &mut scheme.store
-                {
-                    if *packed_dim == rank - dim0 - 1 {
-                        *packed_dim = rank - dim1 - 1;
-                    } else if *packed_dim == rank - dim1 - 1 {
-                        *packed_dim = rank - dim0 - 1;
-                    }
-                }
+                // Swap packed dim if packed dim is either of `dim0` or `dim1`
+                scheme.swap_packing_dim(dim0, dim1);
             }
         }
     }
