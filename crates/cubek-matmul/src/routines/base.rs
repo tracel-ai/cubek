@@ -85,6 +85,7 @@ pub trait Routine: Sized {
     }
 }
 
+#[derive(Debug)]
 pub struct LaunchInfo<B: Blueprint> {
     pub blueprint: B,
     pub dtypes: MatmulElems,

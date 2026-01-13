@@ -6,7 +6,7 @@ use crate::components::tile::register::writer::RegisterStageWriter;
 use crate::components::tile::{TileMatmul, io::Filled, register::reader::RegisterFragmentReader};
 use crate::components::tile::{io::Strided, register::reader::RegisterStageReader};
 use crate::components::tile::{io::TileKind, tile_data::StridedTile};
-use crate::definition::{MatrixLayout, StageIdent};
+use crate::definition::{MatrixLayout, StageIdent, TileSize};
 
 /// Uses one unit to perform a small matmul directly in registers
 pub struct RegisterMatmul<Acc: TileKind = Filled> {
@@ -49,12 +49,18 @@ where
         #[comptime] config: Self::Config,
     ) {
         match config.product_type {
-            ProductType::Inner => {
-                Self::inner_product(&lhs.array, &rhs.array, &mut acc.array, config)
-            }
-            ProductType::Outer => {
-                Self::outer_product(&lhs.array, &rhs.array, &mut acc.array, config)
-            }
+            ProductType::Inner => Self::inner_product(
+                &lhs.array,
+                &rhs.array,
+                &mut acc.array,
+                config.shared.tile_size,
+            ),
+            ProductType::Outer => Self::outer_product(
+                &lhs.array,
+                &rhs.array,
+                &mut acc.array,
+                config.shared.tile_size,
+            ),
         }
     }
 
@@ -114,7 +120,7 @@ where
 
     fn write_results<E: Numeric>(
         tile: &mut StridedTile<E, ReadWrite>,
-        acc: &Self::AccFragment,
+        acc: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     ) {
         RegisterStageWriter::store_fragment(tile, acc, config)
@@ -123,14 +129,13 @@ where
 
 #[cube]
 impl<Acc: TileKind> RegisterMatmul<Acc> {
-    fn inner_product<Lhs: Numeric, Rhs: Numeric, EA: Numeric>(
+    pub fn inner_product<Lhs: Numeric, Rhs: Numeric, EA: Numeric>(
         lhs: &Array<Lhs>,
         rhs: &Array<Rhs>,
         acc: &mut Array<EA>,
-        #[comptime] config: RegisterMatmulConfig,
+        #[comptime] tile_size: TileSize,
     ) {
-        let (m, n, k) =
-            comptime! {let (m, n, k): (u32, u32, u32) = config.shared.tile_size.into(); (m, n, k)};
+        let (m, n, k) = comptime! {let (m, n, k): (u32, u32, u32) = tile_size.into(); (m, n, k)};
 
         #[unroll(UNROLL)]
         for m_ in 0..m {
@@ -146,14 +151,13 @@ impl<Acc: TileKind> RegisterMatmul<Acc> {
         }
     }
 
-    fn outer_product<Lhs: Numeric, Rhs: Numeric, EA: Numeric>(
+    pub fn outer_product<Lhs: Numeric, Rhs: Numeric, EA: Numeric>(
         lhs: &Array<Lhs>,
         rhs: &Array<Rhs>,
         acc: &mut Array<EA>,
-        #[comptime] config: RegisterMatmulConfig,
+        #[comptime] tile_size: TileSize,
     ) {
-        let (m, n, k) =
-            comptime! {let (m, n, k): (u32, u32, u32) = config.shared.tile_size.into(); (m, n, k)};
+        let (m, n, k) = comptime! {let (m, n, k): (u32, u32, u32) = tile_size.into(); (m, n, k)};
 
         #[unroll(UNROLL)]
         for k_ in 0..k {

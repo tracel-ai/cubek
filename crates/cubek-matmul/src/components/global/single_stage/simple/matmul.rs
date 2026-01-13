@@ -142,7 +142,7 @@ where
         let mut out_stage = Self::GlobalWriter::stage(&out_writer);
 
         SMM::write_results::<Self::GlobalWriter>(
-            &acc,
+            &mut acc,
             &mut out_stage,
             &mut out_writer,
             &partition_scheduler,

@@ -149,7 +149,7 @@ where
 
     fn write_results<E: Numeric>(
         tile: &mut StridedTile<E, ReadWrite>,
-        out: &Self::AccFragment,
+        out: &mut Self::AccFragment,
         #[comptime] _config: Self::Config,
     ) {
         let out = cmma::cast::<A, E>(&out.fragment);

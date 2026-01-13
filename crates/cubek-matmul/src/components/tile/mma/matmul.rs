@@ -149,7 +149,7 @@ where
 
     fn write_results<E: Numeric>(
         tile: &mut StridedTile<E, ReadWrite>,
-        out: &Self::AccFragment,
+        out: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     ) {
         MmaStageWriter::store_fragment(

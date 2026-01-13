@@ -10,6 +10,7 @@ mod g16x8x16 {
             8,
             16,
             vec![1],
+            vec![1],
             layouts.0,
             layouts.1,
             MatrixLayout::RowMajor,
@@ -31,6 +32,7 @@ mod g256x256x256 {
             256,
             256,
             256,
+            vec![2],
             vec![2],
             layouts.0,
             layouts.1,
@@ -54,6 +56,7 @@ mod g100x100x100 {
             100,
             100,
             100,
+            vec![2],
             vec![2],
             layouts.0,
             layouts.1,
@@ -79,6 +82,7 @@ mod g100x99x100 {
             99,
             100,
             vec![2],
+            vec![2],
             layouts.0,
             layouts.1,
             MatrixLayout::RowMajor,
@@ -102,6 +106,7 @@ mod g100x100x99 {
             100,
             100,
             99,
+            vec![2],
             vec![2],
             layouts.0,
             layouts.1,
@@ -127,6 +132,7 @@ mod g23x1x17 {
             1,
             17,
             vec![2],
+            vec![2],
             layouts.0,
             layouts.1,
             MatrixLayout::RowMajor,
@@ -150,6 +156,31 @@ mod g1x256x256 {
             256,
             256,
             vec![2],
+            vec![2],
+            layouts.0,
+            layouts.1,
+            MatrixLayout::RowMajor,
+            elems(),
+        )
+    }
+
+    include!("../launch.rs");
+}
+
+#[cfg(feature = "matmul_tests_alt_shapes")]
+mod batched_vecmat {
+    use super::*;
+    use cubek_matmul::definition::MatmulProblem;
+
+    fn problem() -> MatmulProblem {
+        let layouts = layouts();
+
+        MatmulProblem::from_parameters(
+            1,
+            10,
+            5,
+            vec![3],
+            vec![1],
             layouts.0,
             layouts.1,
             MatrixLayout::RowMajor,

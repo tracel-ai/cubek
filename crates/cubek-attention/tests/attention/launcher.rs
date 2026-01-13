@@ -6,7 +6,7 @@ use cubek_attention::{
 };
 
 use cubecl::client::ComputeClient;
-use cubek_test_utils::{Distribution, StrideSpec, TestInput, current_test_mode};
+use cubek_test_utils::{Distribution, ExecutionOutcome, StrideSpec, TestInput, TestOutcome};
 
 pub fn test_launch(
     client: ComputeClient<TestRuntime>,
@@ -86,8 +86,10 @@ pub fn test_launch(
             causal: problem.options.causal,
             accumulator_precision: problem.options.accumulator_precision,
         },
-    ) {
-        Ok(_) => assert_result(
+    )
+    .into()
+    {
+        ExecutionOutcome::Executed => assert_result(
             &query_data,
             &key_data,
             &value_data,
@@ -100,11 +102,9 @@ pub fn test_launch(
                 &problem.global_dtypes,
                 &problem.options.accumulator_precision,
             ),
-        ),
-        Err(err) => {
-            if current_test_mode().should_fail_on_test_compilation_fail() {
-                panic!("Test did not run: {}", err)
-            }
-        }
+        )
+        .as_test_outcome(),
+        ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
     }
+    .enforce();
 }
