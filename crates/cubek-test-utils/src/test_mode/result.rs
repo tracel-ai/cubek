@@ -1,3 +1,28 @@
+//! Kernel Test Workflow
+//!
+//! 1. **Execution**  
+//!    - Kernel runs or fails to compile [`ExecutionOutcome`].
+//!      - `Executed`: ran (correctness not checked).  
+//!      - `CompileError`: did not compile.
+//!
+//! 2. **Validation**  
+//!    - Check correctness of the executed kernel [`ValidationResult`].
+//!      - `Pass`: result matches reference.  
+//!      - `Fail`: result incorrect.  
+//!      - `Skipped`: could not decide.
+//!
+//! 3. **Test Outcome**  
+//!    - Combines execution + validation [`TestOutcome`].
+//!
+//! 4. **Policy Decision**  
+//!    - Applies test mode to decide if the test passes [`TestDecision`].
+//!      - `Accept`: test passes.  
+//!      - `Reject(String)`: test fails.  
+//!    - Call [`TestDecision::enforce`] to actually fail the test.
+
+use crate::current_test_mode;
+use std::fmt::Display;
+
 #[derive(Debug)]
 /// Whether a kernel was executed (without regard to correctness)
 /// or failed to compile.
@@ -29,6 +54,23 @@ pub enum TestOutcome {
     CompileError(String),
 }
 
+impl TestOutcome {
+    /// Apply the current test mode to this outcome and fail the test if rejected.
+    ///
+    /// This is a convenience wrapper around
+    /// `current_test_mode().decide(self).enforce()`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let outcome = assert_equals_approx(&actual, &expected, 0.001).into();
+    /// outcome.enforce(); // panics if TestMode rejects it
+    /// ```
+    pub fn enforce(self) {
+        current_test_mode().decide(self).enforce();
+    }
+}
+
 #[derive(Debug)]
 /// The final policy-based verdict of a test, after applying the test mode.
 /// Determines whether the test should be considered passing or failing.
@@ -50,8 +92,18 @@ impl TestDecision {
     }
 }
 
-impl From<ValidationResult> for TestOutcome {
-    fn from(validated: ValidationResult) -> Self {
-        TestOutcome::Validated(validated)
+impl ValidationResult {
+    /// Convert a `ValidationResult` into a `TestOutcome`.
+    pub fn as_test_outcome(self) -> TestOutcome {
+        TestOutcome::Validated(self)
+    }
+}
+
+impl<E: Display> From<Result<(), E>> for ExecutionOutcome {
+    fn from(result: Result<(), E>) -> Self {
+        match result {
+            Ok(_) => ExecutionOutcome::Executed,
+            Err(err) => ExecutionOutcome::CompileError(format!("Test did not run: {}", err)),
+        }
     }
 }

@@ -79,7 +79,7 @@ pub fn test_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
 
     let all_elems = MatmulElems::from_globals(&problem.global_dtypes.clone());
 
-    let test_outcome = match launch_matmul_algorithm::<A>(
+    match launch_matmul_algorithm::<A>(
         &client,
         &problem,
         blueprint,
@@ -90,12 +90,12 @@ pub fn test_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
         out_handle,
     ) {
         ExecutionOutcome::Executed => {
-            assert_result(&lhs_data, &rhs_data, &problem, &client, &out, all_elems).into()
+            assert_result(&lhs_data, &rhs_data, &problem, &client, &out, all_elems)
+                .as_test_outcome()
         }
         ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
-    };
-
-    current_test_mode().decide(test_outcome).enforce();
+    }
+    .enforce();
 }
 
 /// Returns whether execution succeeded
@@ -166,7 +166,7 @@ pub fn launch_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
         dtypes,
     );
 
-    let result = match input_representation {
+    match input_representation {
         InputRepresentation::Normal => {
             let inputs = <TensorInputs<_, _, _> as ConcreteInputsFactory<A>>::create(
                 client,
@@ -215,10 +215,6 @@ pub fn launch_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
                 )
             }
         }
-    };
-
-    match result {
-        Ok(_) => ExecutionOutcome::Executed,
-        Err(err) => ExecutionOutcome::CompileError(format!("Test did not run: {}", err)),
     }
+    .into()
 }

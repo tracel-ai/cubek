@@ -3,7 +3,9 @@ use core::f32;
 use cubecl::{TestRuntime, client::ComputeClient, std::tensor::TensorHandle};
 
 use cubek_attention::definition::{AttentionElems, AttentionProblem};
-use cubek_test_utils::{HostData, HostDataType, HostDataVec, StrideSpec, assert_equals_approx};
+use cubek_test_utils::{
+    HostData, HostDataType, HostDataVec, StrideSpec, ValidationResult, assert_equals_approx,
+};
 
 #[allow(clippy::too_many_arguments)]
 pub fn assert_result(
@@ -15,15 +17,13 @@ pub fn assert_result(
     client: &ComputeClient<TestRuntime>,
     out: TensorHandle<TestRuntime>,
     elems: AttentionElems,
-) {
+) -> ValidationResult {
     let epsilon = attention_epsilon(&elems, 0.1);
     let expected = flash_attention_v2_reference(query, key, value, mask, problem);
 
     let actual = HostData::from_tensor_handle(client, &out, HostDataType::F32);
 
-    if let Err(e) = assert_equals_approx(&actual, &expected, epsilon) {
-        panic!("{}", e);
-    }
+    assert_equals_approx(&actual, &expected, epsilon)
 }
 
 fn attention_epsilon(elems: &AttentionElems, safety_factor: f32) -> f32 {
