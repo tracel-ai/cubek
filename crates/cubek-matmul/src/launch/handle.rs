@@ -98,7 +98,15 @@ impl<R: Runtime> MatmulInputHandle<R> {
                 shape.swap(dim0, dim1);
 
                 // Swap packed dim if packed dim is either of `dim0` or `dim1`
-                scheme.swap_packing_dim(rank - dim0 - 1, rank - dim1 - 1);
+                if let QuantStore::PackedU32(packed_dim) | QuantStore::PackedNative(packed_dim) =
+                    &mut scheme.store
+                {
+                    if *packed_dim == rank - dim0 - 1 {
+                        *packed_dim = rank - dim1 - 1;
+                    } else if *packed_dim == rank - dim1 - 1 {
+                        *packed_dim = rank - dim0 - 1;
+                    }
+                }
             }
         }
     }
