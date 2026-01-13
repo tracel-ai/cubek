@@ -64,10 +64,9 @@ impl<E: Numeric> InterleavedAccumulator<E> {
 impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for InterleavedMatmul {
     type Config = InterleavedMatmulConfig;
 
-    // u = k / plane_dim (exact division only)
-    // Size m * u
+    // Size m * k_local
     type LhsFragment = InterleavedFragment<L>;
-    // Size u * n
+    // Size k_local * n
     type RhsFragment = InterleavedFragment<R>;
     // Size m * n
     type AccFragment = InterleavedAccumulator<A>;
