@@ -64,8 +64,8 @@ impl PrngRuntime for Normal {
                 let unit_1 = to_unit_interval_open(int_random);
 
                 // Box-Muller transform
-                let coeff = Log::log(unit_0) * -2.0;
-                let coeff = Sqrt::sqrt(coeff) * std;
+                let coeff = unit_0.ln() * -2.0;
+                let coeff = coeff.sqrt() * std;
                 let trigo_arg = 2.0 * PI * unit_1;
 
                 let normal_0 = f32::cos(trigo_arg) * coeff + mean;

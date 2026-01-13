@@ -142,7 +142,7 @@ fn shared_sum_kernel<N: Numeric>(
 
     // Add the sum for the current cube to the output.
     if UNIT_POS == 0 {
-        Atomic::add(&output[0], sum.consume());
+        output[0].fetch_add(sum.consume());
     }
 }
 
