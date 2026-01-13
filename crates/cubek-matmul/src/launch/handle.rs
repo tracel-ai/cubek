@@ -98,7 +98,7 @@ impl<R: Runtime> MatmulInputHandle<R> {
                 shape.swap(dim0, dim1);
 
                 // Swap packed dim if packed dim is either of `dim0` or `dim1`
-                scheme.swap_packing_dim(dim0, dim1);
+                scheme.swap_packing_dim(rank - dim0 - 1, rank - dim1 - 1);
             }
         }
     }
