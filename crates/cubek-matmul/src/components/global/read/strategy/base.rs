@@ -180,6 +180,18 @@ pub fn validate_async_copy_with_problem(
     dtypes: &MatmulElems,
     ident: StageIdent,
 ) -> Result<(), InvalidConfigError> {
+    let is_quantized = match ident {
+        StageIdent::Lhs => problem.lhs_scheme.is_some(),
+        StageIdent::Rhs => problem.rhs_scheme.is_some(),
+        StageIdent::Acc | StageIdent::Out => false,
+    };
+
+    if is_quantized {
+        return Err(Box::new(
+            "Async copy doesn't support dequantizing on global read",
+        ));
+    }
+
     let (strides, layout) = match ident {
         StageIdent::Lhs => (&problem.lhs_strides, &problem.lhs_layout),
         StageIdent::Rhs => (&problem.rhs_strides, &problem.rhs_layout),
@@ -200,6 +212,18 @@ pub fn validate_tma_with_problem(
     dtypes: &MatmulElems,
     ident: StageIdent,
 ) -> Result<(), InvalidConfigError> {
+    let is_quantized = match ident {
+        StageIdent::Lhs => problem.lhs_scheme.is_some(),
+        StageIdent::Rhs => problem.rhs_scheme.is_some(),
+        StageIdent::Acc | StageIdent::Out => false,
+    };
+
+    if is_quantized {
+        return Err(Box::new(
+            "Async copy doesn't support dequantizing on global read",
+        ));
+    }
+
     let (strides, layout) = match ident {
         StageIdent::Lhs => (&problem.lhs_strides, &problem.lhs_layout),
         StageIdent::Rhs => (&problem.rhs_strides, &problem.rhs_layout),
