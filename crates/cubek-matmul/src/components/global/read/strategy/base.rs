@@ -219,9 +219,7 @@ pub fn validate_tma_with_problem(
     };
 
     if is_quantized {
-        return Err(Box::new(
-            "Async copy doesn't support dequantizing on global read",
-        ));
+        return Err(Box::new("TMA doesn't support dequantizing on global read"));
     }
 
     let (strides, layout) = match ident {
