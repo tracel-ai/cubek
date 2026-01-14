@@ -35,6 +35,8 @@ impl MatmulTestCase {
             self.lhs_layout,
             self.rhs_layout,
             MatrixLayout::RowMajor,
+            None,
+            None,
             self.elems,
         )
     }

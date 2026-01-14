@@ -181,19 +181,19 @@ pub fn launch_ref<R: Runtime>(
 
     match scheme {
         QuantScheme {
-            store: QuantStore::U32,
+            store: QuantStore::PackedU32(_),
             ..
         } => quantize_packed(
             client, input, scheme, scale, out_scale, output, input_elem, param_elem,
         ),
         QuantScheme {
-            value:
-                QuantValue::Q8F
-                | QuantValue::Q8S
-                | QuantValue::E4M3
-                | QuantValue::E5M2
-                | QuantValue::E2M1,
+            value: QuantValue::Q8F | QuantValue::Q8S | QuantValue::E4M3 | QuantValue::E5M2,
             store: QuantStore::Native,
+            ..
+        }
+        | QuantScheme {
+            value: QuantValue::E2M1,
+            store: QuantStore::PackedNative(_),
             ..
         } => {
             if !i8::supported_uses(client).contains(TypeUsage::Conversion) {
@@ -208,7 +208,7 @@ pub fn launch_ref<R: Runtime>(
             )
         }
         QuantScheme {
-            store: QuantStore::Native,
+            store: QuantStore::Native | QuantStore::PackedNative(_),
             value,
             ..
         } => {
@@ -297,7 +297,7 @@ fn quantize_packed<R: Runtime>(
         QuantScheme {
             level: QuantLevel::Tensor | QuantLevel::Block(_),
             mode: QuantMode::Symmetric,
-            store: QuantStore::U32,
+            store: QuantStore::PackedU32(_),
             ..
         } => {
             check_block_size_compat(scheme, num_quants); // 32 / 8 = 4

@@ -4,7 +4,7 @@ use crate::{
     components::global::memory::ViewDirection,
     definition::{MatmulGlobalElems, MatmulProblemSize},
 };
-use cubecl::prelude::*;
+use cubecl::{prelude::*, quant::scheme::QuantScheme};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug)]
@@ -45,10 +45,16 @@ pub struct MatmulProblem {
     /// Memory layout of the Out matrix.
     pub out_layout: MatrixLayout,
 
+    /// Quantization scheme of lhs, if present
+    pub lhs_scheme: Option<QuantScheme>,
+    /// Quantization scheme of rhs, if present
+    pub rhs_scheme: Option<QuantScheme>,
+
     pub global_dtypes: MatmulGlobalElems,
 }
 
 impl MatmulProblem {
+    #[allow(clippy::too_many_arguments)]
     pub fn from_shapes_and_strides(
         lhs_shape: Vec<usize>,
         rhs_shape: Vec<usize>,
@@ -57,11 +63,13 @@ impl MatmulProblem {
         rhs_strides: Vec<usize>,
         out_strides: Vec<usize>,
         global_dtypes: MatmulGlobalElems,
+        lhs_scheme: Option<&QuantScheme>,
+        rhs_scheme: Option<&QuantScheme>,
     ) -> Self {
         let rank = out_shape.len();
-        let lhs_layout = MatrixLayout::from_shape_and_strides(&lhs_shape, &lhs_strides);
-        let rhs_layout = MatrixLayout::from_shape_and_strides(&rhs_shape, &rhs_strides);
-        let out_layout = MatrixLayout::from_shape_and_strides(&out_shape, &out_strides);
+        let lhs_layout = MatrixLayout::from_shape_and_strides(&lhs_shape, &lhs_strides, lhs_scheme);
+        let rhs_layout = MatrixLayout::from_shape_and_strides(&rhs_shape, &rhs_strides, rhs_scheme);
+        let out_layout = MatrixLayout::from_shape_and_strides(&out_shape, &out_strides, None);
 
         Self {
             m: lhs_shape[rank - 2],
@@ -79,6 +87,8 @@ impl MatmulProblem {
             lhs_layout,
             rhs_layout,
             out_layout,
+            lhs_scheme: lhs_scheme.copied(),
+            rhs_scheme: rhs_scheme.copied(),
             global_dtypes,
         }
     }
@@ -93,6 +103,8 @@ impl MatmulProblem {
         lhs_layout: MatrixLayout,
         rhs_layout: MatrixLayout,
         out_layout: MatrixLayout,
+        lhs_scheme: Option<QuantScheme>,
+        rhs_scheme: Option<QuantScheme>,
         global_dtypes: MatmulGlobalElems,
     ) -> Self {
         fn broadcast_batches(lhs: &[usize], rhs: &[usize]) -> Option<Vec<usize>> {
@@ -140,6 +152,8 @@ impl MatmulProblem {
             lhs_layout,
             rhs_layout,
             out_layout,
+            lhs_scheme,
+            rhs_scheme,
             global_dtypes,
         }
     }
@@ -240,11 +254,25 @@ pub enum MatrixLayout {
 }
 
 impl MatrixLayout {
-    pub fn from_shape_and_strides(shape: &[usize], strides: &[usize]) -> Self {
+    pub fn from_shape_and_strides(
+        shape: &[usize],
+        strides: &[usize],
+        scheme: Option<&QuantScheme>,
+    ) -> Self {
         assert!(
             shape.len() >= 2 && shape.len() == strides.len(),
             "Shape/stride mismatch or not a matrix"
         );
+
+        if let Some(packing_dim) = scheme.and_then(|s| s.packing_dim()) {
+            if packing_dim == 0 {
+                return MatrixLayout::RowMajor;
+            }
+            if packing_dim == 1 {
+                return MatrixLayout::ColMajor;
+            }
+            panic!("Invalid or non-contiguous matrix layout: packing_dim={packing_dim:?}");
+        }
 
         let n = shape.len();
 

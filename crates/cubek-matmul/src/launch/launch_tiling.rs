@@ -26,7 +26,9 @@ pub fn launch_ref<R: Runtime, A: Routine>(
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let lhs_owned;
-    let lhs = if matrix_batch_layout(lhs.data().strides) == MatrixBatchLayout::HighlyPermuted {
+    let lhs = if matrix_batch_layout(lhs.data().strides, lhs.scheme())
+        == MatrixBatchLayout::HighlyPermuted
+    {
         lhs_owned = lhs.into_contiguous(client)?;
         &lhs_owned.as_ref()
     } else {
@@ -34,7 +36,9 @@ pub fn launch_ref<R: Runtime, A: Routine>(
     };
 
     let rhs_owned;
-    let rhs = if matrix_batch_layout(rhs.data().strides) == MatrixBatchLayout::HighlyPermuted {
+    let rhs = if matrix_batch_layout(rhs.data().strides, rhs.scheme())
+        == MatrixBatchLayout::HighlyPermuted
+    {
         rhs_owned = rhs.into_contiguous(client)?;
         &rhs_owned.as_ref()
     } else {
@@ -72,7 +76,7 @@ pub fn launch_ref_tma<R: Runtime, A: Routine<Blueprint = TilingBlueprint>>(
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let lhs_owned;
-    let lhs = match matrix_batch_layout(lhs.data().strides) {
+    let lhs = match matrix_batch_layout(lhs.data().strides, lhs.scheme()) {
         MatrixBatchLayout::Contiguous
         | MatrixBatchLayout::MildlyPermuted {
             transposed: _,
@@ -89,7 +93,7 @@ pub fn launch_ref_tma<R: Runtime, A: Routine<Blueprint = TilingBlueprint>>(
     };
 
     let rhs_owned;
-    let rhs = match matrix_batch_layout(rhs.data().strides) {
+    let rhs = match matrix_batch_layout(rhs.data().strides, rhs.scheme()) {
         MatrixBatchLayout::Contiguous
         | MatrixBatchLayout::MildlyPermuted {
             transposed: _,
@@ -138,6 +142,8 @@ where
         rhs.data().strides.to_vec(),
         out.strides.to_vec(),
         dtypes.as_global_elems(),
+        lhs.scheme(),
+        rhs.scheme(),
     );
 
     if !client

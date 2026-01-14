@@ -58,7 +58,7 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
         .with_level(QuantLevel::Tensor)
         .with_mode(mode)
         .with_value(value)
-        .with_store(QuantStore::U32)
+        .with_store(QuantStore::PackedU32(0))
         .with_param(QuantParam::F32)
         .with_mode(QuantMode::Symmetric);
 
@@ -196,7 +196,7 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
         .with_level(QuantLevel::block([block_size as u8]))
         .with_mode(mode)
         .with_value(value)
-        .with_store(QuantStore::U32)
+        .with_store(QuantStore::PackedU32(0))
         .with_param(QuantParam::F32)
         .with_mode(QuantMode::Symmetric);
 

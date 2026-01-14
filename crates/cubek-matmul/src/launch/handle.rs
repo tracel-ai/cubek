@@ -3,6 +3,7 @@ use cubecl::{
     client::ComputeClient,
     ir::StorageType,
     prelude::{CubePrimitive, TensorHandleRef},
+    quant::scheme::{BlockSize, QuantLevel},
     server::LaunchError,
 };
 use cubecl_common::quant::scheme::{QuantScheme, QuantStore, QuantValue};
@@ -76,15 +77,36 @@ impl<R: Runtime> MatmulInputHandle<R> {
                 handle.strides.swap(dim0, dim1);
             }
             MatmulInputHandle::Quantized {
-                data, scale, shape, ..
+                data,
+                scale,
+                shape,
+                scheme,
             } => {
+                let rank = data.shape.len();
+
                 data.shape.swap(dim0, dim1);
                 data.strides.swap(dim0, dim1);
-                if scale.shape.len() == data.shape.len() {
+
+                // Swap dims for scale and block size if block scaled quant is used
+                if let QuantLevel::Block(block) = &mut scheme.level {
                     scale.shape.swap(dim0, dim1);
                     scale.strides.swap(dim0, dim1);
+                    let mut block_size = block.to_dim_vec(rank);
+                    block_size.swap(dim0, dim1);
+                    *block = BlockSize::new_trim(block_size)
                 }
                 shape.swap(dim0, dim1);
+
+                // Swap packed dim if packed dim is either of `dim0` or `dim1`
+                if let QuantStore::PackedU32(packed_dim) | QuantStore::PackedNative(packed_dim) =
+                    &mut scheme.store
+                {
+                    if *packed_dim == rank - dim0 - 1 {
+                        *packed_dim = rank - dim1 - 1;
+                    } else if *packed_dim == rank - dim1 - 1 {
+                        *packed_dim = rank - dim0 - 1;
+                    }
+                }
             }
         }
     }
@@ -205,27 +227,32 @@ impl<'a, R: Runtime> MatmulInputHandleRef<'a, R> {
                 data_dtype,
                 scale_dtype,
             } => {
+                let mut scheme = **scheme;
                 let data = match scheme.store {
                     // e2m1 has native packing (e2m1x2) so also needs to be re-packed
-                    QuantStore::Native if scheme.value == QuantValue::E2M1 => {
+                    QuantStore::PackedNative(packed_dim) if scheme.value == QuantValue::E2M1 => {
                         let data = into_contiguous_packed(
                             client,
                             data,
+                            packed_dim,
                             shape,
-                            2,
+                            scheme.num_quants(),
                             u8::as_type_native_unchecked(),
                         )?;
+                        scheme = scheme.with_store(QuantStore::PackedNative(0));
                         // Unsafely cast to E
                         TensorHandle::from_ref(&data.as_ref(), *data_dtype)
                     }
-                    QuantStore::U32 => {
+                    QuantStore::PackedU32(packed_dim) => {
                         let data = into_contiguous_packed(
                             client,
                             data,
+                            packed_dim,
                             shape,
                             scheme.num_quants(),
                             u32::as_type_native_unchecked(),
                         )?;
+                        scheme = scheme.with_store(QuantStore::PackedU32(0));
                         // Unsafely cast to E
                         TensorHandle::from_ref(&data.as_ref(), *data_dtype)
                     }
@@ -235,7 +262,7 @@ impl<'a, R: Runtime> MatmulInputHandleRef<'a, R> {
                     data,
                     scale: TensorHandle::from_ref(scale, *scale_dtype),
                     shape: shape.to_vec(),
-                    scheme: **scheme,
+                    scheme,
                 }
             }
         };
