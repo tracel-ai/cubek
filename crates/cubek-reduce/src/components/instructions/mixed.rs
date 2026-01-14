@@ -10,8 +10,7 @@ use cubecl::{
 };
 
 #[derive(Debug, CubeType, Clone)]
-#[allow(unused)]
-pub(crate) enum ReduceOperation {
+pub enum ReduceOperation {
     Sum(Sum),
     Prod(Prod),
     Mean(Mean),
