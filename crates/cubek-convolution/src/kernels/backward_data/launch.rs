@@ -241,8 +241,10 @@ where
     let problem = Alg::Args::adjust_problem(client, problem, &selection, &dtypes);
 
     let device_props = client.properties();
-    let config = Alg::expand_config(device_props, &problem, &selection, &line_sizes, &dtypes)?;
 
+    Alg::validate_blueprint(client, &selection, &problem, &dtypes, &line_sizes)?;
+
+    let config = Alg::expand_config(device_props, &problem, &selection, &line_sizes, &dtypes)?;
     let line_sizes = config.line_sizes();
 
     launch_kernel_concrete::<R, Alg>(

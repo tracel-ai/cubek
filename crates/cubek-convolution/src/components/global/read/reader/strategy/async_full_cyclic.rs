@@ -42,11 +42,11 @@ impl<TO: TilingOrder> LoadingValidation for AsyncFullCyclicLoading<TO> {
     }
 
     fn validate_with_problem(
-        _problem: &MatmulProblem,
-        _dtypes: &MatmulElems,
-        _ident: StageIdent,
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        ident: StageIdent,
     ) -> Result<(), InvalidConfigError> {
-        Ok(())
+        MatmulCyclicLoading::<TO>::validate_with_problem(problem, dtypes, ident)
     }
 }
 
