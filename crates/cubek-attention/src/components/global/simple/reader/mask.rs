@@ -148,7 +148,7 @@ impl<M: Numeric> MaterializedMaskReader<M> {
             )
             .to_linear_slice();
 
-        let line_size = self.gmem_config.line_size;
+        let line_size = self.gmem_config.line_size.comptime() as u32;
         let start = 0;
         let length = attention_tile_size.seq_q * attention_tile_size.seq_kv / line_size;
         let end = start + length;

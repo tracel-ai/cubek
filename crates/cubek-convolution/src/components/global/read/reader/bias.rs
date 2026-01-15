@@ -35,13 +35,13 @@ impl<IP: MatrixPrecision> BiasGlobalReader<IP> {
                 let num_stage_elements = config.stage_config().elements_in_stage_n();
 
                 let unit_id = UNIT_POS_Y * config.stage_config().plane_dim() + UNIT_POS_X;
-                let unit_pos = unit_id * line_size;
+                let unit_pos = unit_id * line_size as u32;
 
                 let mut slice = stage.as_slice_mut(line_size);
 
                 if unit_pos < num_stage_elements {
                     let read_line = view.read_checked((0, unit_pos));
-                    slice[unit_id] = Line::cast_from(read_line);
+                    slice[unit_id as usize] = Line::cast_from(read_line);
                 }
             }
             BiasGlobalReader::None => {}
@@ -83,8 +83,8 @@ fn init_stage<ES: Numeric>(
 ) -> StridedStageMemory<ES, BiasTilingLayout> {
     let line_size = config.line_size;
 
-    let stage_len = comptime!(config.elements_per_stage_along_col() / line_size);
-    let smem = SharedMemory::new_lined(stage_len, line_size);
+    let stage_len = config.elements_per_stage_along_col() / line_size;
+    let smem = SharedMemory::new_lined(stage_len as usize, line_size as usize);
 
     StridedStageMemory::<ES, BiasTilingLayout>::new_with_smem(smem, stage_len, config)
 }

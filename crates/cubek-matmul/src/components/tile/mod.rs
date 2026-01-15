@@ -2,6 +2,7 @@
 //! Optimized for fixed shapes and low-level compute strategies.
 
 pub mod cmma;
+pub mod interleaved;
 pub mod io;
 pub mod mma;
 pub mod plane_vec_mat_inner_product;

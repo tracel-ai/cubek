@@ -20,7 +20,7 @@ pub enum SmAllocation {
 
 impl SmAllocation {
     /// Returns a pair (`num_sms_used`, `cubes_per_sm`) depending on the strategy
-    pub fn allocate(&self, num_sms: u32, total_cubes: u32) -> (u32, u32) {
+    pub fn allocate(&self, num_sms: u32, total_cubes: usize) -> (u32, u32) {
         match self {
             SmAllocation::Exact => SmAllocation::Ratio {
                 max_extra_numerator: 0,
@@ -42,8 +42,8 @@ impl SmAllocation {
                     .saturating_mul(*max_extra_numerator)
                     .div_ceil(*max_extra_denominator);
 
-                let fallback_cubes_per_sm = total_cubes.div_ceil(num_sms);
-                let mut best = (num_sms, fallback_cubes_per_sm);
+                let fallback_cubes_per_sm = total_cubes.div_ceil(num_sms as usize);
+                let mut best = (num_sms, fallback_cubes_per_sm as u32);
 
                 // Generate divisors in descending order
                 let divisors_desc = |n: u32| {
@@ -65,12 +65,12 @@ impl SmAllocation {
                 };
 
                 for sms_used in divisors_desc(num_sms) {
-                    let cubes_per_sm = total_cubes.div_ceil(sms_used);
-                    let total_allocated = cubes_per_sm * sms_used;
-                    let slack = total_allocated.saturating_sub(total_cubes);
+                    let cubes_per_sm = total_cubes.div_ceil(sms_used as usize);
+                    let total_allocated = cubes_per_sm * sms_used as usize;
+                    let slack = total_allocated.saturating_sub(total_cubes) as u32;
 
                     if slack <= max_slack {
-                        best = (sms_used, cubes_per_sm);
+                        best = (sms_used, cubes_per_sm as u32);
                         break;
                     }
                 }

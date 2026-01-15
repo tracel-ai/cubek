@@ -1,13 +1,13 @@
 use crate::components::global::read::validate_swizzle_atom_size;
 use crate::components::global::read::{FullLoadingStrategy, stage::FullStageLayout};
-use crate::components::global::{GlobalReaderConfig, RoleRule};
+use crate::components::global::{GlobalReaderConfig, PlaneFlowPartition};
 use crate::components::global::{multi_stage::LoadMaxRoundPlaneCount, read::sync::Synchronous};
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{StridedStageMemory, StridedTilingLayout};
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
-use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem};
-use cubecl::prelude::*;
+use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem, StageIdent};
 use cubecl::std::type_size;
+use cubecl::{ir::DeviceProperties, prelude::*};
 
 use super::{LoadingJob, LoadingValidation};
 
@@ -17,15 +17,13 @@ use super::{LoadingJob, LoadingValidation};
 pub struct SyncFullStridedLoading {}
 
 impl LoadingValidation for SyncFullStridedLoading {
-    fn check<R: Runtime>(
-        _client: &ComputeClient<R>,
-        _problem: &MatmulProblem,
+    fn validate_with_config(
+        _device_props: &DeviceProperties,
         config: &GlobalReaderConfig,
-        dtypes: &MatmulElems,
     ) -> Result<(), InvalidConfigError> {
         let line_size = config.gmem_config.line_size;
 
-        let num_stage_lines = config.smem_config.elements_per_stage() / line_size;
+        let num_stage_lines = config.smem_config.elements_per_stage() / line_size as u32;
         let total_units = config.loading_units_count();
 
         if !num_stage_lines.is_multiple_of(total_units) {
@@ -35,9 +33,17 @@ impl LoadingValidation for SyncFullStridedLoading {
             )));
         }
 
-        validate_swizzle_atom_size(config.smem_config, config.stage_ident, dtypes)?;
+        validate_swizzle_atom_size(config.smem_config)?;
         StridedTilingLayout::check(config.smem_config)?;
 
+        Ok(())
+    }
+
+    fn validate_with_problem(
+        _problem: &MatmulProblem,
+        _dtypes: &MatmulElems,
+        _ident: StageIdent,
+    ) -> Result<(), InvalidConfigError> {
         Ok(())
     }
 }
@@ -46,7 +52,7 @@ impl LoadMaxRoundPlaneCount for SyncFullStridedLoading {
     fn max_round_plane_count(
         elements_per_tile: u32,
         tiles_per_stage: u32,
-        line_size: u8,
+        line_size: LineSize,
         plane_dim: u32,
         _dtype: StorageType,
     ) -> u32 {
@@ -63,15 +69,15 @@ impl FullLoadingStrategy for SyncFullStridedLoading {
     type Job<EG: Numeric, ES: Numeric> = SyncFullStridedJob;
 
     fn new_job<EG: Numeric, ES: Numeric>(
-        #[comptime] line_size: u32,
+        #[comptime] line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, ES> {
-        let num_stage_lines = config.smem_config.elements_per_stage() / line_size;
+        let num_stage_lines = config.smem_config.elements_per_stage() / line_size as u32;
         let unit_count = config.loading_planes_count() * config.plane_dim;
-        let num_tasks_per_unit = comptime!(num_stage_lines / unit_count);
+        let num_tasks_per_unit = num_stage_lines / unit_count;
 
-        let unit_position_base = RoleRule::new(config.plane_role_config.rule)
-            .load_index(config.specialization_tensor_config)
+        let unit_position_base = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
+            .load_index(config.input_load_flow)
             * config.plane_dim
             + UNIT_POS_X;
 
@@ -93,7 +99,7 @@ pub struct SyncFullStridedJob {
     #[cube(comptime)]
     unit_count: u32,
     #[cube(comptime)]
-    line_size: u32,
+    line_size: LineSize,
 }
 
 #[cube]
@@ -112,14 +118,14 @@ impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, StridedTilingLayout, Synchrono
     ) {
         let unit_position = this.unit_position_base + task_id * this.unit_count;
 
-        let layout = FullStageLayout::new(comptime![config.smem_config]);
+        let layout = FullStageLayout::new(config.smem_config);
         let view = global_iter.view().view(layout);
 
-        let line_read = view.read_checked(unit_position * this.line_size);
+        let line_read = view.read_checked(unit_position * this.line_size as u32);
         let type_size = type_size::<ES>(this.line_size);
         let stage_offs = stage.swizzle.apply(unit_position, type_size);
 
-        stage.as_slice_mut(this.line_size)[stage_offs] = Line::cast_from(line_read);
+        stage.as_slice_mut(this.line_size)[stage_offs as usize] = Line::cast_from(line_read);
     }
 
     fn task_count(this: &Self) -> comptime_type!(u32) {

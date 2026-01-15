@@ -6,20 +6,20 @@ use cubecl::{
 
 /// Calculate the number of planes in a cube.
 pub fn calculate_plane_count_per_cube(
-    working_units: u32,
+    working_units: usize,
     plane_dim: u32,
     num_cpu_cores: Option<u32>,
 ) -> u32 {
     match num_cpu_cores {
-        Some(num_cores) => core::cmp::min(num_cores, working_units),
+        Some(num_cores) => core::cmp::min(num_cores, working_units as u32),
         None => {
-            let plane_count_max = core::cmp::max(1, working_units / plane_dim);
+            let plane_count_max = core::cmp::max(1, working_units / plane_dim as usize);
 
             // Ensures `plane_count` is a power of 2.
             const NUM_PLANE_MAX: u32 = 8u32;
             const NUM_PLANE_MAX_LOG2: u32 = NUM_PLANE_MAX.ilog2();
             let plane_count_max_log2 =
-                core::cmp::min(NUM_PLANE_MAX_LOG2, u32::ilog2(plane_count_max));
+                core::cmp::min(NUM_PLANE_MAX_LOG2, usize::ilog2(plane_count_max));
             2u32.pow(plane_count_max_log2)
         }
     }
@@ -33,14 +33,14 @@ pub fn generate_line_size<R: Runtime>(
     dtype: StorageType,
     line_mode: LineMode,
     strategy: &LineSizeStrategy,
-) -> (u8, u8) {
+) -> (usize, usize) {
     let line_size_input = match line_mode {
         LineMode::Parallel => tensor_line_size_parallel(
             client.io_optimized_line_sizes_unchecked(dtype.size()),
             input.shape,
             input.strides,
             axis,
-        ) as u32,
+        ),
         LineMode::Perpendicular => {
             // To compute the maximum line size we can used,
             // we first sort both the input and output axes by increasing strides.
@@ -93,9 +93,7 @@ pub fn generate_line_size<R: Runtime>(
                     // consecutive loads from global memory on perpendicular reduce.
                     let supported_line_sizes = R::supported_line_sizes()
                         .iter()
-                        .filter(|size| {
-                            **size as usize <= max_line_size && max_line_size % **size as usize == 0
-                        })
+                        .filter(|size| **size <= max_line_size && max_line_size % **size == 0)
                         .copied();
 
                     tensor_line_size_perpendicular(
@@ -103,7 +101,7 @@ pub fn generate_line_size<R: Runtime>(
                         input.shape,
                         input.strides,
                         axis,
-                    ) as u32
+                    )
                 }
                 false => {
                     let supported_line_sizes =
@@ -114,7 +112,7 @@ pub fn generate_line_size<R: Runtime>(
                         input.shape,
                         input.strides,
                         axis,
-                    ) as u32
+                    )
                 }
             }
         }
@@ -127,7 +125,7 @@ pub fn generate_line_size<R: Runtime>(
         let rank = output.strides.len();
         let is_contiguous = is_contiguous(&output.shape[axis..rank], &output.strides[axis..rank])
             && output.strides[rank - 1] == 1;
-        let shape = output.shape.get(axis + 1).cloned().unwrap_or(1) as u32;
+        let shape = output.shape.get(axis + 1).copied().unwrap_or(1);
 
         if is_contiguous && shape.is_multiple_of(line_size_input) {
             line_size_output = line_size_input;
@@ -143,10 +141,10 @@ pub fn generate_line_size<R: Runtime>(
         let supported_line_sizes = client.io_optimized_line_sizes_unchecked(dtype.size());
         let num_reduce = output.shape.iter().copied().product::<usize>();
         line_size_output = supported_line_sizes
-            .filter(|&line_size| num_reduce % line_size as usize == 0)
+            .filter(|&line_size| num_reduce % line_size == 0)
             .max()
-            .unwrap_or(1u8) as u32;
+            .unwrap_or(1);
     }
 
-    (line_size_input as u8, line_size_output as u8)
+    (line_size_input, line_size_output)
 }

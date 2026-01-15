@@ -35,7 +35,7 @@ impl ComputeTask for DummyCompute {
         // An offset to make sure units need the data loaded by other units
         let offset = 256;
 
-        let position = (UNIT_POS * config.acc_len + offset) % config.smem_size;
+        let position = (UNIT_POS as usize * config.acc_len + offset) % config.smem_size;
         for i in 0..config.acc_len {
             acc[i] += input[position + i];
         }
@@ -46,7 +46,7 @@ impl ComputeTask for DummyCompute {
         output: &mut SliceMut<Line<E>>,
         #[comptime] config: Config,
     ) {
-        let position = UNIT_POS * config.acc_len;
+        let position = UNIT_POS as usize * config.acc_len;
         for i in 0..config.acc_len {
             acc[i] += output[position + i];
         }
@@ -112,10 +112,10 @@ impl CopyStrategy for CoalescedCopy {
         #[comptime] config: Config,
     ) {
         let num_units = config.num_planes * config.plane_dim;
-        let num_copies_per_unit = source.len() / num_units;
+        let num_copies_per_unit = source.len() as u32 / num_units;
         for i in 0..num_copies_per_unit {
             let pos = UNIT_POS + i * num_units;
-            destination[pos] = source[pos];
+            destination[pos as usize] = source[pos as usize];
         }
     }
 
@@ -231,13 +231,13 @@ impl CopyStrategy for MemcpyAsyncSplitPlaneDuplicatedUnit {
         barrier: Self::Barrier,
         #[comptime] config: Config,
     ) {
-        let sub_length = source.len() / config.num_planes;
+        let sub_length = source.len() as u32 / config.num_planes;
         let start = UNIT_POS_Y * sub_length;
         let end = start + sub_length;
 
         barrier.memcpy_async(
-            &source.slice(start, end),
-            &mut destination.slice_mut(start, end),
+            &source.slice(start as usize, end as usize),
+            &mut destination.slice_mut(start as usize, end as usize),
         )
     }
 
@@ -265,14 +265,14 @@ impl CopyStrategy for MemcpyAsyncSplitPlaneElectedUnit {
         barrier: Self::Barrier,
         #[comptime] config: Config,
     ) {
-        let sub_length = source.len() / config.num_planes;
+        let sub_length = source.len() as u32 / config.num_planes;
         let start = UNIT_POS_Y * sub_length;
         let end = start + sub_length;
 
         if UNIT_POS_X == 0 {
             barrier.memcpy_async(
-                &source.slice(start, end),
-                &mut destination.slice_mut(start, end),
+                &source.slice(start as usize, end as usize),
+                &mut destination.slice_mut(start as usize, end as usize),
             )
         }
     }
@@ -302,14 +302,14 @@ impl CopyStrategy for MemcpyAsyncSplitDuplicatedAll {
         barrier: Self::Barrier,
         #[comptime] config: Config,
     ) {
-        let sub_length = source.len() / config.num_planes;
+        let sub_length = source.len() as u32 / config.num_planes;
         for i in 0..config.num_planes {
             let start = i * sub_length;
             let end = start + sub_length;
 
             barrier.memcpy_async(
-                &source.slice(start, end),
-                &mut destination.slice_mut(start, end),
+                &source.slice(start as usize, end as usize),
+                &mut destination.slice_mut(start as usize, end as usize),
             )
         }
     }
@@ -337,15 +337,15 @@ impl CopyStrategy for MemcpyAsyncSplitLargeUnitWithIdle {
         barrier: Self::Barrier,
         #[comptime] config: Config,
     ) {
-        let sub_length = source.len() / config.num_planes;
+        let sub_length = source.len() as u32 / config.num_planes;
 
         if UNIT_POS < config.num_planes {
             let start = UNIT_POS * sub_length;
             let end = start + sub_length;
 
             barrier.memcpy_async(
-                &source.slice(start, end),
-                &mut destination.slice_mut(start, end),
+                &source.slice(start as usize, end as usize),
+                &mut destination.slice_mut(start as usize, end as usize),
             )
         }
     }
@@ -375,15 +375,15 @@ impl CopyStrategy for MemcpyAsyncSplitSmallUnitCoalescedLoop {
         #[comptime] config: Config,
     ) {
         let num_units = config.num_planes * config.plane_dim;
-        let num_loops = source.len() / num_units;
+        let num_loops = source.len() as u32 / num_units;
 
         for i in 0..num_loops {
             let start = UNIT_POS + i * num_units;
             let end = start + 1;
 
             barrier.memcpy_async(
-                &source.slice(start, end),
-                &mut destination.slice_mut(start, end),
+                &source.slice(start as usize, end as usize),
+                &mut destination.slice_mut(start as usize, end as usize),
             )
         }
     }
@@ -413,14 +413,14 @@ impl CopyStrategy for MemcpyAsyncSplitMediumUnitCoalescedOnce {
         barrier: Self::Barrier,
         #[comptime] config: Config,
     ) {
-        let sub_length = source.len() / (config.num_planes * config.plane_dim);
+        let sub_length = source.len() as u32 / (config.num_planes * config.plane_dim);
 
         let start = UNIT_POS * sub_length;
         let end = start + sub_length;
 
         barrier.memcpy_async(
-            &source.slice(start, end),
-            &mut destination.slice_mut(start, end),
+            &source.slice(start as usize, end as usize),
+            &mut destination.slice_mut(start as usize, end as usize),
         )
     }
 
@@ -433,8 +433,8 @@ impl CopyStrategy for MemcpyAsyncSplitMediumUnitCoalescedOnce {
 struct Config {
     plane_dim: u32,
     num_planes: u32,
-    smem_size: u32,
-    acc_len: u32,
+    smem_size: usize,
+    acc_len: usize,
     double_buffering: bool,
 }
 
@@ -461,7 +461,7 @@ fn memcpy_test_single_buffer<E: Float, Cpy: CopyStrategy, Cpt: ComputeTask>(
     let mut acc = Array::<Line<E>>::new(config.acc_len);
     let num_iterations = data_count.div_ceil(config.smem_size);
 
-    let mut smem = SharedMemory::<E>::new_lined(config.smem_size, 1u32);
+    let mut smem = SharedMemory::<E>::new_lined(config.smem_size, 1usize);
     let barrier = Cpy::barrier();
 
     for i in 0..num_iterations {
@@ -492,8 +492,8 @@ fn memcpy_test_double_buffer<E: Float, Cpy: CopyStrategy, Cpt: ComputeTask>(
     #[comptime] config: Config,
 ) {
     let data_count = input.shape(0);
-    let mut smem1 = SharedMemory::<E>::new_lined(config.smem_size, 1u32);
-    let mut smem2 = SharedMemory::<E>::new_lined(config.smem_size, 1u32);
+    let mut smem1 = SharedMemory::<E>::new_lined(config.smem_size, 1usize);
+    let mut smem2 = SharedMemory::<E>::new_lined(config.smem_size, 1usize);
     let mut acc = Array::<Line<E>>::new(config.acc_len);
     let num_iterations = data_count.div_ceil(config.smem_size);
 
@@ -566,7 +566,7 @@ fn launch_ref<R: Runtime, E: Float>(
     client: &ComputeClient<R>,
     input: &TensorHandleRef<R>,
     output: &TensorHandleRef<R>,
-    smem_size: u32,
+    smem_size: usize,
     double_buffering: bool,
 ) {
     let cube_count = CubeCount::Static(1, 1, 1);
@@ -577,7 +577,7 @@ fn launch_ref<R: Runtime, E: Float>(
         plane_dim,
         num_planes,
         smem_size,
-        acc_len: smem_size / (plane_dim * num_planes),
+        acc_len: smem_size / (plane_dim * num_planes) as usize,
         double_buffering,
     };
 
@@ -746,7 +746,7 @@ impl<R: Runtime, E: Float> Benchmark for MemcpyAsyncBench<R, E> {
     }
 
     fn execute(&self, args: Self::Input) -> Result<(), String> {
-        let smem_size = args.1.shape[0] as u32;
+        let smem_size = args.1.shape[0];
         launch_ref::<R, E>(
             self.strategy,
             &self.client,
@@ -815,45 +815,42 @@ fn run<R: Runtime, E: Float>(device: R::Device, strategy: CopyStrategyEnum) {
 }
 
 fn main() {
-    #[cfg(feature = "cuda")]
-    {
-        run::<cubecl::cuda::CudaRuntime, f32>(Default::default(), CopyStrategyEnum::DummyCopy);
-        run::<cubecl::cuda::CudaRuntime, f32>(Default::default(), CopyStrategyEnum::CoalescedCopy);
-        run::<cubecl::cuda::CudaRuntime, f32>(
-            Default::default(),
-            CopyStrategyEnum::MemcpyAsyncSingleSliceDuplicatedAll,
-        );
-        run::<cubecl::cuda::CudaRuntime, f32>(
-            Default::default(),
-            CopyStrategyEnum::MemcpyAsyncSingleSliceElected,
-        );
-        run::<cubecl::cuda::CudaRuntime, f32>(
-            Default::default(),
-            CopyStrategyEnum::MemcpyAsyncSingleSliceElectedCooperative,
-        );
-        run::<cubecl::cuda::CudaRuntime, f32>(
-            Default::default(),
-            CopyStrategyEnum::MemcpyAsyncSplitPlaneDuplicatedUnit,
-        );
-        run::<cubecl::cuda::CudaRuntime, f32>(
-            Default::default(),
-            CopyStrategyEnum::MemcpyAsyncSplitPlaneElectedUnit,
-        );
-        run::<cubecl::cuda::CudaRuntime, f32>(
-            Default::default(),
-            CopyStrategyEnum::MemcpyAsyncSplitDuplicatedAll,
-        );
-        run::<cubecl::cuda::CudaRuntime, f32>(
-            Default::default(),
-            CopyStrategyEnum::MemcpyAsyncSplitLargeUnitWithIdle,
-        );
-        run::<cubecl::cuda::CudaRuntime, f32>(
-            Default::default(),
-            CopyStrategyEnum::MemcpyAsyncSplitSmallUnitCoalescedLoop,
-        );
-        run::<cubecl::cuda::CudaRuntime, f32>(
-            Default::default(),
-            CopyStrategyEnum::MemcpyAsyncSplitMediumUnitCoalescedOnce,
-        );
-    }
+    run::<cubecl::TestRuntime, f32>(Default::default(), CopyStrategyEnum::DummyCopy);
+    run::<cubecl::TestRuntime, f32>(Default::default(), CopyStrategyEnum::CoalescedCopy);
+    run::<cubecl::TestRuntime, f32>(
+        Default::default(),
+        CopyStrategyEnum::MemcpyAsyncSingleSliceDuplicatedAll,
+    );
+    run::<cubecl::TestRuntime, f32>(
+        Default::default(),
+        CopyStrategyEnum::MemcpyAsyncSingleSliceElected,
+    );
+    run::<cubecl::TestRuntime, f32>(
+        Default::default(),
+        CopyStrategyEnum::MemcpyAsyncSingleSliceElectedCooperative,
+    );
+    run::<cubecl::TestRuntime, f32>(
+        Default::default(),
+        CopyStrategyEnum::MemcpyAsyncSplitPlaneDuplicatedUnit,
+    );
+    run::<cubecl::TestRuntime, f32>(
+        Default::default(),
+        CopyStrategyEnum::MemcpyAsyncSplitPlaneElectedUnit,
+    );
+    run::<cubecl::TestRuntime, f32>(
+        Default::default(),
+        CopyStrategyEnum::MemcpyAsyncSplitDuplicatedAll,
+    );
+    run::<cubecl::TestRuntime, f32>(
+        Default::default(),
+        CopyStrategyEnum::MemcpyAsyncSplitLargeUnitWithIdle,
+    );
+    run::<cubecl::TestRuntime, f32>(
+        Default::default(),
+        CopyStrategyEnum::MemcpyAsyncSplitSmallUnitCoalescedLoop,
+    );
+    run::<cubecl::TestRuntime, f32>(
+        Default::default(),
+        CopyStrategyEnum::MemcpyAsyncSplitMediumUnitCoalescedOnce,
+    );
 }

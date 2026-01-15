@@ -1,9 +1,9 @@
 use cubecl::prelude::*;
 use cubecl::std::{
     FastDivmod, FastDivmodArgs,
-    tensor::layout::{Coords3d, Layout, LayoutExpand},
+    tensor::layout::{Layout, LayoutExpand},
 };
-use cubek_matmul::components::global::memory::GlobalMemoryConfig;
+use cubek_matmul::{components::global::memory::GlobalMemoryConfig, launch::BatchedCoords};
 
 use crate::components::{
     ConvolutionOperation, ConvolutionProblem,
@@ -15,7 +15,7 @@ use crate::components::{
 #[derive(CubeType, CubeLaunch, Clone)]
 pub struct OutLayout {
     /// Shape of DHW
-    pub shape_out: Sequence<FastDivmod>,
+    pub shape_out: Sequence<FastDivmod<u32>>,
 
     /// Shape of the conceptual `m` size
     pub rows: u32,
@@ -32,7 +32,7 @@ impl OutLayout {
     pub fn new(
         rows: u32,
         cols: u32,
-        shape_out: Sequence<FastDivmod>,
+        shape_out: Sequence<FastDivmod<u32>>,
         #[comptime] config: GlobalMemoryConfig,
     ) -> OutLayout {
         OutLayout {
@@ -46,7 +46,7 @@ impl OutLayout {
 
 #[cube]
 impl Layout for OutLayout {
-    type Coordinates = Coords3d;
+    type Coordinates = BatchedCoords;
     type SourceCoordinates = NhwcCoords;
 
     fn to_source_pos(&self, coords: Self::Coordinates) -> NhwcCoords {
@@ -69,10 +69,9 @@ impl Layout for OutLayout {
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
-        let (_, m, n) = pos;
-        let check_m = comptime![self.config.check_row_bounds];
-        let check_n = comptime![self.config.check_col_bounds];
-        (!check_m || m < self.rows) && (!check_n || n < self.cols)
+        let (_, row, col) = pos;
+        (!self.config.check_row_bounds || row < self.rows)
+            && (!self.config.check_col_bounds || col < self.cols)
     }
 }
 
@@ -99,7 +98,7 @@ impl<'a, R: Runtime> OutLayoutLaunch<'a, R> {
         let shape_out = problem
             .out_shape
             .iter()
-            .map(|s| FastDivmodArgs::new(client, *s as u32))
+            .map(|s| FastDivmodArgs::<u32>::new(client, *s as u32))
             .collect();
         let shape_m = ScalarArg::new(problem.m as u32);
         let shape_n = ScalarArg::new(problem.n as u32);
@@ -115,7 +114,7 @@ impl<'a, R: Runtime> OutLayoutLaunch<'a, R> {
         let shape = problem
             .in_shape
             .iter()
-            .map(|s| FastDivmodArgs::new(client, *s as u32))
+            .map(|s| FastDivmodArgs::<u32>::new(client, *s as u32))
             .collect();
         let shape_m = ScalarArg::new(problem.m as u32);
         let shape_n = ScalarArg::new(problem.n as u32);
@@ -131,7 +130,7 @@ impl<'a, R: Runtime> OutLayoutLaunch<'a, R> {
         let shape_out = problem
             .out_shape
             .iter()
-            .map(|s| FastDivmodArgs::new(client, *s as u32))
+            .map(|s| FastDivmodArgs::<u32>::new(client, *s as u32))
             .collect();
         let shape_m = ScalarArg::new(problem.m as u32);
         let shape_k = ScalarArg::new(problem.k as u32);

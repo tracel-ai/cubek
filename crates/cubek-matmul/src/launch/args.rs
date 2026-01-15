@@ -6,13 +6,12 @@ use cubecl::std::{
     tensor::{
         View,
         launch::ViewArg,
-        layout::{Coords1d, Coords3d, VirtualLayout, VirtualLayoutLaunch},
+        layout::{Coords1d, VirtualLayout, VirtualLayoutLaunch},
     },
 };
 use cubecl::{server::TensorMapMeta, unexpanded};
 
 use crate::components::{
-    batch::BatchConfig,
     global::memory::{
         BatchLayout, BatchLayoutLaunch, GlobalLayout, GlobalLayoutConfig, GlobalLayoutLaunch,
         GlobalScaleLayout, NoopLayout, NoopLayoutLaunch, SimpleTmaGlobalLayout,
@@ -20,7 +19,9 @@ use crate::components::{
     },
     stage::SwizzleMode,
 };
-use crate::definition::{self, MatmulElems, MatmulLineSizes, MatmulProblem, TilingBlueprint};
+use crate::definition::{
+    self, Blueprint as _, MatmulElems, MatmulLineSizes, MatmulProblem, TilingBlueprint,
+};
 use crate::launch::handle::MatmulInputHandleRef;
 use crate::routines::Routine;
 
@@ -37,6 +38,8 @@ pub type InputRuntimeArg<'a, MA, R> = <InputArg<MA> as LaunchArg>::RuntimeArg<'a
 /// Output runtime argument
 pub type OutputRuntimeArg<'a, MA, R> = <OutputArg<MA> as LaunchArg>::RuntimeArg<'a, R>;
 
+pub type BatchedCoords = (usize, u32, u32);
+
 /// Create the input runtime arguments for a matmul kernel that works on concrete inputs and
 /// output (not fused).
 pub trait ConcreteInputsFactory<A: Routine>: LaunchArg {
@@ -48,7 +51,6 @@ pub trait ConcreteInputsFactory<A: Routine>: LaunchArg {
         blueprint: &A::Blueprint,
         problem: &MatmulProblem,
         line_sizes: &MatmulLineSizes,
-        config: A::Config,
         dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<'a, R>;
 }
@@ -63,7 +65,6 @@ pub trait ConcreteOutputFactory<A: Routine>: LaunchArg {
         blueprint: &A::Blueprint,
         problem: &MatmulProblem,
         line_sizes: &MatmulLineSizes,
-        config: A::Config,
         dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<'a, R>;
 }
@@ -92,46 +93,46 @@ pub trait MatmulArgs: Send + Sync + 'static + Clone {
 
     fn view_lhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         _state: &Self::State<Lhs, Rhs, EO>,
-    ) -> View<Line<Lhs>, Coords3d> {
+    ) -> View<Line<Lhs>, BatchedCoords> {
         unexpanded!()
     }
     fn batch_lhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         _state: &Self::State<Lhs, Rhs, EO>,
-        _batch: u32,
-    ) -> u32 {
+        _batch: usize,
+    ) -> usize {
         unexpanded!()
     }
     fn view_rhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         _state: &Self::State<Lhs, Rhs, EO>,
-    ) -> View<Line<Rhs>, Coords3d> {
+    ) -> View<Line<Rhs>, BatchedCoords> {
         unexpanded!()
     }
     fn batch_rhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         _state: &Self::State<Lhs, Rhs, EO>,
-        _batch: u32,
-    ) -> u32 {
+        _batch: usize,
+    ) -> usize {
         unexpanded!()
     }
     fn view_acc<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         _state: &Self::State<Lhs, Rhs, EO>,
-    ) -> CubeOption<View<Line<EO>, Coords3d>> {
+    ) -> CubeOption<View<Line<EO>, BatchedCoords>> {
         unexpanded!()
     }
     fn batch_acc<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         _state: &Self::State<Lhs, Rhs, EO>,
-        _batch: u32,
-    ) -> u32 {
+        _batch: usize,
+    ) -> usize {
         unexpanded!()
     }
     fn view_out<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         _state: &mut Self::State<Lhs, Rhs, EO>,
-    ) -> View<Line<EO>, Coords3d, ReadWrite> {
+    ) -> View<Line<EO>, BatchedCoords, ReadWrite> {
         unexpanded!()
     }
     fn batch_out<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         _state: &Self::State<Lhs, Rhs, EO>,
-        _batch: u32,
-    ) -> u32 {
+        _batch: usize,
+    ) -> usize {
         unexpanded!()
     }
 }
@@ -153,13 +154,13 @@ pub struct TensorArgs;
 /// Input representation for [TensorArgs] implementing [MatmulArgs].
 pub struct TensorInputs<Lhs: Numeric, Rhs: Numeric, Acc: Numeric> {
     /// The lhs tensor.
-    lhs: View<Line<Lhs>, Coords3d>,
+    lhs: View<Line<Lhs>, BatchedCoords>,
     lhs_batch: VirtualLayout<Coords1d, Coords1d>,
     /// The rhs tensor.
-    rhs: View<Line<Rhs>, Coords3d>,
+    rhs: View<Line<Rhs>, BatchedCoords>,
     rhs_batch: VirtualLayout<Coords1d, Coords1d>,
     /// The tensor for loading the accumulator, if present
-    acc: CubeOption<View<Line<Acc>, Coords3d>>,
+    acc: CubeOption<View<Line<Acc>, BatchedCoords>>,
     acc_batch: CubeOption<VirtualLayout<Coords1d, Coords1d>>,
 }
 
@@ -170,10 +171,9 @@ impl<Lhs: Numeric, Rhs: Numeric, Acc: Numeric, A: Routine> ConcreteInputsFactory
         client: &ComputeClient<R>,
         lhs: &'a MatmulInputHandleRef<'a, R>,
         rhs: &'a MatmulInputHandleRef<'a, R>,
-        _blueprint: &A::Blueprint,
+        blueprint: &A::Blueprint,
         problem: &MatmulProblem,
         line_sizes: &MatmulLineSizes,
-        config: A::Config,
         _dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<'a, R> {
         let view = |handle: &'a MatmulInputHandleRef<'a, R>,
@@ -211,9 +211,9 @@ impl<Lhs: Numeric, Rhs: Numeric, Acc: Numeric, A: Routine> ConcreteInputsFactory
         };
 
         TensorInputsLaunch::new(
-            view(lhs, config.lhs_global_layout_config(), line_sizes.lhs),
+            view(lhs, blueprint.lhs_global_layout_config(), line_sizes.lhs),
             batch_layout(lhs),
-            view(rhs, config.rhs_global_layout_config(), line_sizes.rhs),
+            view(rhs, blueprint.rhs_global_layout_config(), line_sizes.rhs),
             batch_layout(rhs),
             CubeOptionArgs::None,
             CubeOptionArgs::None,
@@ -223,7 +223,7 @@ impl<Lhs: Numeric, Rhs: Numeric, Acc: Numeric, A: Routine> ConcreteInputsFactory
 
 #[derive(CubeType, CubeLaunch, Clone, Copy)]
 pub struct TensorOutput<EG: Numeric> {
-    view: View<Line<EG>, Coords3d, ReadWrite>,
+    view: View<Line<EG>, BatchedCoords, ReadWrite>,
     batch: VirtualLayout<Coords1d, Coords1d>,
 }
 
@@ -231,14 +231,16 @@ impl<EG: Numeric, A: Routine> ConcreteOutputFactory<A> for TensorOutput<EG> {
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
         out: &'a TensorHandleRef<'a, R>,
-        _blueprint: &A::Blueprint,
+        blueprint: &A::Blueprint,
         problem: &MatmulProblem,
         line_sizes: &MatmulLineSizes,
-        config: A::Config,
         _dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<'a, R> {
-        let layout =
-            GlobalLayoutLaunch::from_handle(out, line_sizes.out, config.out_global_layout_config());
+        let layout = GlobalLayoutLaunch::from_handle(
+            out,
+            line_sizes.out,
+            blueprint.out_global_layout_config(),
+        );
         let batch = BatchLayoutLaunch::from_handle(client, out, problem);
         let view = ViewArg::new::<GlobalLayout>(out.as_array_arg(line_sizes.out), layout);
         TensorOutputLaunch::new(view, VirtualLayoutLaunch::new::<BatchLayout>(batch))
@@ -264,40 +266,40 @@ impl MatmulArgs for TensorArgs {
 
     fn view_lhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &Self::State<Lhs, Rhs, EO>,
-    ) -> View<Line<Lhs>, Coords3d> {
+    ) -> View<Line<Lhs>, BatchedCoords> {
         state.0.lhs
     }
 
     fn batch_lhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &Self::State<Lhs, Rhs, EO>,
-        batch: u32,
-    ) -> u32 {
+        batch: usize,
+    ) -> usize {
         state.0.lhs_batch.to_source_pos(batch)
     }
 
     fn view_rhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &Self::State<Lhs, Rhs, EO>,
-    ) -> View<Line<Rhs>, Coords3d> {
+    ) -> View<Line<Rhs>, BatchedCoords> {
         state.0.rhs
     }
 
     fn batch_rhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &Self::State<Lhs, Rhs, EO>,
-        batch: u32,
-    ) -> u32 {
+        batch: usize,
+    ) -> usize {
         state.0.rhs_batch.to_source_pos(batch)
     }
 
     fn view_acc<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &Self::State<Lhs, Rhs, EO>,
-    ) -> CubeOption<View<Line<EO>, Coords3d>> {
+    ) -> CubeOption<View<Line<EO>, BatchedCoords>> {
         state.0.acc
     }
 
     fn batch_acc<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &Self::State<Lhs, Rhs, EO>,
-        batch: u32,
-    ) -> u32 {
+        batch: usize,
+    ) -> usize {
         match state.0.acc_batch {
             CubeOption::Some(layout) => layout.to_source_pos(batch),
             CubeOption::None => batch,
@@ -306,14 +308,14 @@ impl MatmulArgs for TensorArgs {
 
     fn view_out<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &mut Self::State<Lhs, Rhs, EO>,
-    ) -> View<Line<EO>, Coords3d, ReadWrite> {
+    ) -> View<Line<EO>, BatchedCoords, ReadWrite> {
         state.1.view
     }
 
     fn batch_out<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &Self::State<Lhs, Rhs, EO>,
-        batch: u32,
-    ) -> u32 {
+        batch: usize,
+    ) -> usize {
         state.1.batch.to_source_pos(batch)
     }
 }
@@ -328,11 +330,11 @@ pub struct TensorMapArgs;
 /// Input representation for [TensorArgs] implementing [MatmulArgs].
 pub struct TensorMapInputs<Lhs: Numeric, Rhs: Numeric, EO: Numeric> {
     /// The lhs tensor.
-    pub lhs: View<Line<Lhs>, Coords3d>,
+    pub lhs: View<Line<Lhs>, BatchedCoords>,
     /// The rhs tensor.
-    pub rhs: View<Line<Rhs>, Coords3d>,
+    pub rhs: View<Line<Rhs>, BatchedCoords>,
     /// The accumulator
-    pub acc: CubeOption<View<Line<EO>, Coords3d>>,
+    pub acc: CubeOption<View<Line<EO>, BatchedCoords>>,
     /// The accumulator batch layout
     pub acc_batch: CubeOption<VirtualLayout<Coords1d, Coords1d>>,
 }
@@ -347,7 +349,6 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<Blueprint = TilingBluep
         blueprint: &A::Blueprint,
         problem: &MatmulProblem,
         line_sizes: &MatmulLineSizes,
-        _config: A::Config,
         dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<'a, R> {
         let lhs = lhs_handle.data();
@@ -361,7 +362,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<Blueprint = TilingBluep
         // Loaders use dynamic layout based on swizzle setting. For no swizzle, contiguous tiles are
         // loaded and TMA loads single tile wide columns.
         // For swizzled, bank conflicts aren't an issue so the tile size is the full stage.
-        let stage_size_lhs = match blueprint.shared_swizzle.lhs {
+        let stage_size_lhs = match blueprint.swizzle_modes.lhs {
             SwizzleMode::None => match problem.lhs_layout {
                 definition::MatrixLayout::RowMajor => {
                     vec![1, stage_m, tiling_scheme.tile_size.k]
@@ -379,7 +380,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<Blueprint = TilingBluep
                 }
             },
         };
-        let stage_size_rhs = match blueprint.shared_swizzle.rhs {
+        let stage_size_rhs = match blueprint.swizzle_modes.rhs {
             SwizzleMode::None => match problem.rhs_layout {
                 definition::MatrixLayout::RowMajor => {
                     vec![1, stage_k, tiling_scheme.tile_size.n]
@@ -460,20 +461,20 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<Blueprint = TilingBluep
             }
         }
 
-        let swizzle_lhs = swizzle(blueprint.shared_swizzle.lhs);
-        let swizzle_rhs = swizzle(blueprint.shared_swizzle.rhs);
+        let swizzle_lhs = swizzle(blueprint.swizzle_modes.lhs);
+        let swizzle_rhs = swizzle(blueprint.swizzle_modes.rhs);
 
         // f32 gets remapped to tf32 for the tensor map just to ensure CUDA loads them correctly.
         // It shouldn't matter, but it's better to be safe.
-        let lhs_elem = if *dtypes.lhs_stage == f32::as_type_native_unchecked() {
+        let lhs_elem = if dtypes.lhs_stage == f32::as_type_native_unchecked() {
             tf32::as_type_native_unchecked()
         } else {
-            *dtypes.lhs_stage
+            dtypes.lhs_stage
         };
-        let rhs_elem = if *dtypes.rhs_stage == f32::as_type_native_unchecked() {
+        let rhs_elem = if dtypes.rhs_stage == f32::as_type_native_unchecked() {
             tf32::as_type_native_unchecked()
         } else {
-            *dtypes.rhs_stage
+            dtypes.rhs_stage
         };
 
         let meta_lhs = TensorMapMeta {
@@ -518,7 +519,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<Blueprint = TilingBluep
         };
 
         let view = |buffer, shape: &[usize], transposed| {
-            let batches = ScalarArg::new(shape[0] as u32);
+            let batches = ScalarArg::new(shape[0]);
             let (rows, cols) = match transposed {
                 true => (
                     ScalarArg::new(shape[2] as u32),
@@ -562,40 +563,40 @@ impl MatmulArgs for TensorMapArgs {
 
     fn view_lhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &Self::State<Lhs, Rhs, EO>,
-    ) -> View<Line<Lhs>, Coords3d> {
+    ) -> View<Line<Lhs>, BatchedCoords> {
         state.0.lhs
     }
 
     fn batch_lhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         _state: &Self::State<Lhs, Rhs, EO>,
-        batch: u32,
-    ) -> u32 {
+        batch: usize,
+    ) -> usize {
         batch
     }
 
     fn view_rhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &Self::State<Lhs, Rhs, EO>,
-    ) -> View<Line<Rhs>, Coords3d> {
+    ) -> View<Line<Rhs>, BatchedCoords> {
         state.0.rhs
     }
 
     fn batch_rhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         _state: &Self::State<Lhs, Rhs, EO>,
-        batch: u32,
-    ) -> u32 {
+        batch: usize,
+    ) -> usize {
         batch
     }
 
     fn view_acc<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &Self::State<Lhs, Rhs, EO>,
-    ) -> CubeOption<View<Line<EO>, Coords3d>> {
+    ) -> CubeOption<View<Line<EO>, BatchedCoords>> {
         state.0.acc
     }
 
     fn batch_acc<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &Self::State<Lhs, Rhs, EO>,
-        batch: u32,
-    ) -> u32 {
+        batch: usize,
+    ) -> usize {
         match state.0.acc_batch {
             CubeOption::Some(layout) => layout.to_source_pos(batch),
             CubeOption::None => batch,
@@ -604,14 +605,14 @@ impl MatmulArgs for TensorMapArgs {
 
     fn view_out<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &mut Self::State<Lhs, Rhs, EO>,
-    ) -> View<Line<EO>, Coords3d, ReadWrite> {
+    ) -> View<Line<EO>, BatchedCoords, ReadWrite> {
         state.1.view
     }
 
     fn batch_out<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &Self::State<Lhs, Rhs, EO>,
-        batch: u32,
-    ) -> u32 {
+        batch: usize,
+    ) -> usize {
         state.1.batch.to_source_pos(batch)
     }
 }

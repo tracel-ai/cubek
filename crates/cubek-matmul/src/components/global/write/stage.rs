@@ -36,7 +36,7 @@ impl<ES: Numeric> PartitionedStage<ES> {
         }];
 
         // Needs to be 16-byte aligned for `stmatrix`
-        let inner = StridedStageMemory::<ES, WriteTiling>::new_aligned(16u32, config);
+        let inner = StridedStageMemory::<ES, WriteTiling>::new_aligned(16usize, config);
 
         let tile = inner.get_tile_mut(unit_pos);
 

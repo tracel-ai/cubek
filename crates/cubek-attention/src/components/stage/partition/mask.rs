@@ -28,10 +28,10 @@ impl<AP: AttentionPrecision, TA: TileAttention<AP>> MaskPartition<AP, TA> {
     }
 
     pub fn get(&self) -> &MaskTile<AP, TA> {
-        self.sequence.index(0u32)
+        &self.sequence[0]
     }
 
     pub fn get_mut(&mut self) -> &mut MaskTile<AP, TA> {
-        self.sequence.index_mut(0u32)
+        self.sequence.index_mut(0usize)
     }
 }

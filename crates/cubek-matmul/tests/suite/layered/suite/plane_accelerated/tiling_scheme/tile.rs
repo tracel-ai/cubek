@@ -13,7 +13,7 @@ mod t8x8x8 {
 #[cfg(not(target_os = "macos"))]
 mod t16x16x16 {
     use super::*;
-    use cubek_matmul::components::{TileSize, TilingScheme, TilingSchemeBuilder};
+    use cubek_matmul::definition::{TileSize, TilingScheme, TilingSchemeBuilder};
 
     fn tile_size(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
         builder.with_tile_size(TileSize {
@@ -29,7 +29,7 @@ mod t16x16x16 {
 #[cfg(not(target_os = "macos"))]
 mod t32x8x16 {
     use super::*;
-    use cubek_matmul::components::{TileSize, TilingScheme, TilingSchemeBuilder};
+    use cubek_matmul::definition::{TileSize, TilingScheme, TilingSchemeBuilder};
 
     fn tile_size(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
         builder.with_tile_size(TileSize { m: 32, n: 8, k: 16 })
@@ -41,7 +41,7 @@ mod t32x8x16 {
 #[cfg(not(target_os = "macos"))]
 mod t8x32x16 {
     use super::*;
-    use cubek_matmul::components::{TileSize, TilingScheme, TilingSchemeBuilder};
+    use cubek_matmul::definition::{TileSize, TilingScheme, TilingSchemeBuilder};
 
     fn tile_size(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
         builder.with_tile_size(TileSize { m: 8, n: 32, k: 16 })
@@ -53,7 +53,7 @@ mod t8x32x16 {
 #[cfg(not(target_os = "macos"))]
 mod t16x16x8 {
     use super::*;
-    use cubek_matmul::components::{TileSize, TilingScheme, TilingSchemeBuilder};
+    use cubek_matmul::definition::{TileSize, TilingScheme, TilingSchemeBuilder};
 
     fn tile_size(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
         builder.with_tile_size(TileSize { m: 16, n: 16, k: 8 })

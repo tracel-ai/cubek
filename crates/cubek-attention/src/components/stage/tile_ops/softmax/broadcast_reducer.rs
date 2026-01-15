@@ -16,8 +16,8 @@ impl Reducer for BroadcastReducer {
         data: &F,
         #[comptime] _config: FC,
     ) {
-        let num_units_per_row = data.num_units_per_row();
-        let num_shares_within_plane = comptime!((num_units_per_row as f32).log2().ceil() as u32);
+        let num_units_per_row = data.num_units_per_row().comptime();
+        let num_shares_within_plane = num_units_per_row.next_power_of_two().ilog2();
 
         let unit_pos = UNIT_POS_X;
         let unit_pos_in_row = unit_pos % num_units_per_row;
@@ -48,7 +48,7 @@ fn rowwise_plane_broadcast<E: Float>(val: &RowWise<E>, source_unit: u32) -> RowW
     #[unroll]
     for row in 0..val.num_rows {
         result.push(RowVal::<E> {
-            val: plane_broadcast(val.index(row), source_unit),
+            val: plane_shuffle(val.index(row), source_unit),
         });
     }
 

@@ -8,9 +8,9 @@ use crate::SimpleInputSpec;
 
 #[cube(launch)]
 fn eye_launch<T: Numeric>(tensor: &mut Tensor<Line<T>>, #[define(T)] _types: StorageType) {
-    let batch = CUBE_POS_Z;
-    let i = CUBE_POS_X * CUBE_DIM_X + UNIT_POS_X;
-    let j = CUBE_POS_Y * CUBE_DIM_Y + UNIT_POS_Y;
+    let batch = CUBE_POS_Z as usize;
+    let i = ABSOLUTE_POS_X as usize;
+    let j = ABSOLUTE_POS_Y as usize;
 
     let rank = tensor.rank();
     let rows = tensor.shape(rank - 2);

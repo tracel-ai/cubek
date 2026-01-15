@@ -32,7 +32,7 @@ pub fn tile_softmax<AP: AttentionPrecision, TA: TileAttention<AP>, R: Reducer>(
 ) -> RowWise<SM<AP>> {
     TA::SoftmaxRow::scale_and_mask::<MaskTile<AP, TA>>(
         rowwise_softmax,
-        SM::<AP>::new(comptime!(1.0 / (head_dim as f32).sqrt())),
+        SM::<AP>::new(1.0 / (head_dim as f32).sqrt()),
         mask,
     );
 

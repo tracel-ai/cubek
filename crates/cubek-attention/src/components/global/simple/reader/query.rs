@@ -39,7 +39,7 @@ impl<AP: AttentionPrecision> QueryReader<AP> {
 
         let row = row_in_partition + P::seq_q_index() * partition_seq_q;
 
-        let line_size = self.gmem_config.line_size;
+        let line_size = self.gmem_config.line_size.comptime() as u32;
 
         let tile_head_dim = attention_tile_size.head_dim;
 

@@ -340,7 +340,11 @@ impl<TO: TilingOrder> TilingLayout for ContiguousTilingLayout<TO> {
             );
         let start = start / config.line_size;
 
-        StridedTile::new_contiguous(stage_memory.as_slice(stage_line_size), start, config)
+        StridedTile::new_contiguous(
+            stage_memory.as_slice(stage_line_size as usize),
+            start,
+            config,
+        )
     }
 
     fn to_enum() -> comptime_type!(TilingLayoutEnum) {
@@ -352,7 +356,10 @@ impl<TO: TilingOrder> TilingValidation for ContiguousTilingLayout<TO> {
     fn check(config: StageMemoryConfig) -> Result<(), InvalidConfigError> {
         let tile_width = config.elements_per_tile_along_contiguous_dim();
         if config.line_size > tile_width {
-            return Err(Box::new("Invalid line size"));
+            return Err(Box::new(format!(
+                "Invalid line size. Got {:?} which should not be >{:?}",
+                config.line_size, tile_width,
+            )));
         }
         Ok(())
     }
@@ -366,18 +373,17 @@ impl StridedTilingLayout {
         nth: u32,
         #[comptime] config: StageMemoryConfig,
     ) -> SliceMut<Line<ES>> {
-        let matrix_layout = config.matrix_layout;
         let stage_line_size = config.line_size;
 
-        let slice_length = match comptime!(matrix_layout) {
+        let slice_length = match config.matrix_layout {
             MatrixLayout::RowMajor => config.elements_per_stage_along_col(),
             MatrixLayout::ColMajor => config.elements_per_stage_along_row(),
         } / stage_line_size;
 
         let start = slice_length * nth;
         stage
-            .as_slice_mut(stage_line_size)
-            .slice_mut(start, start + slice_length)
+            .as_slice_mut(stage_line_size as usize)
+            .slice_mut(start as usize, (start + slice_length) as usize)
     }
 }
 
@@ -406,7 +412,7 @@ impl TilingLayout for StridedTilingLayout {
                 let start = x * tile_size_x * stride + y * tile_size_y;
 
                 StridedTile::new_strided(
-                    stage.as_slice(stage_line_size),
+                    stage.as_slice(stage_line_size as usize),
                     start,
                     start + length,
                     stride,
@@ -424,7 +430,7 @@ impl TilingLayout for StridedTilingLayout {
                 let start = x * tile_size_x + y * tile_size_y * stride;
 
                 StridedTile::new_strided(
-                    stage.as_slice(stage_line_size),
+                    stage.as_slice(stage_line_size as usize),
                     start,
                     start + length,
                     stride,
@@ -437,7 +443,7 @@ impl TilingLayout for StridedTilingLayout {
     }
 
     fn to_enum() -> comptime_type!(TilingLayoutEnum) {
-        comptime![TilingLayoutEnum::Strided]
+        TilingLayoutEnum::Strided
     }
 }
 
@@ -445,7 +451,10 @@ impl TilingValidation for StridedTilingLayout {
     fn check(config: StageMemoryConfig) -> Result<(), InvalidConfigError> {
         let stage_width = config.elements_per_stage_along_contiguous_dim();
         if config.line_size > stage_width {
-            return Err(Box::new("Invalid line size"));
+            return Err(Box::new(format!(
+                "Invalid line size. Got {:?} which should not be >{:?}",
+                config.line_size, stage_width,
+            )));
         }
         Ok(())
     }
@@ -469,7 +478,7 @@ impl TilingLayout for TmaTilingLayout {
     }
 
     fn to_enum() -> comptime_type!(TilingLayoutEnum) {
-        comptime![TilingLayoutEnum::Other]
+        TilingLayoutEnum::Other
     }
 }
 
@@ -499,7 +508,7 @@ impl TilingLayout for NoTilingLayout {
     }
 
     fn to_enum() -> comptime_type!(TilingLayoutEnum) {
-        comptime![TilingLayoutEnum::Other]
+        TilingLayoutEnum::Other
     }
 }
 

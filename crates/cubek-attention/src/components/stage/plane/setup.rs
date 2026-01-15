@@ -9,7 +9,10 @@ use crate::{
         },
         tile::TileAttentionFamily,
     },
-    definition::{AttentionBlueprint, AttentionPrecision, AttentionSetupError, attention_types::*},
+    definition::{
+        AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError,
+        attention_types::*,
+    },
 };
 use cubecl::prelude::ReadWrite;
 use cubek_matmul::{
@@ -52,13 +55,14 @@ impl<
 
     type Config = PartitionAttentionConfig<TA::Config>;
 
-    fn expand_blueprint(
+    fn expand_config(
         blueprint: &AttentionBlueprint,
+        dtypes: &AttentionElems,
     ) -> Result<Self::Config, AttentionSetupError> {
         let num_planes = blueprint.tiling_scheme.stage_size.seq_q
             * TA::computation_resources()?.num_planes(blueprint.plane_dim)?;
 
-        let tile_config = TA::expand_blueprint(blueprint)?;
+        let tile_config = TA::expand_config(blueprint)?;
 
         let key_smem_config = StageMemoryConfig {
             num_planes,
@@ -72,6 +76,7 @@ impl<
             matrix_layout: MatrixLayout::RowMajor,
             swizzle: SwizzleMode::None,
             num_stages: 1,
+            dtype: dtypes.key_stage,
         };
 
         let value_smem_config = StageMemoryConfig {
@@ -86,6 +91,7 @@ impl<
             matrix_layout: MatrixLayout::RowMajor,
             swizzle: SwizzleMode::None,
             num_stages: 1,
+            dtype: dtypes.value_stage,
         };
 
         let out_smem_config = StageMemoryConfig {
@@ -101,6 +107,7 @@ impl<
             matrix_layout: MatrixLayout::RowMajor,
             swizzle: SwizzleMode::None,
             num_stages: 1,
+            dtype: dtypes.out_stage,
         };
 
         validate(PartitionAttentionConfig::Plane(PlanePartitionStageConfig {

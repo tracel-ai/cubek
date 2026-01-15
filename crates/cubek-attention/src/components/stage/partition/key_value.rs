@@ -52,29 +52,29 @@ impl<AP: AttentionPrecision, TA: TileAttention<AP>> KeyValuePartition<AP, TA> {
 
     pub fn get_key(&self) -> &KeyValueTile<AP, TA> {
         match self {
-            KeyValuePartition::Reuse(key_values) => key_values.sequence.index(0u32),
-            KeyValuePartition::Separate(keys, _) => keys.sequence.index(0u32),
+            KeyValuePartition::Reuse(key_values) => &key_values.sequence[0],
+            KeyValuePartition::Separate(keys, _) => &keys.sequence[0],
         }
     }
 
     pub fn get_key_mut(&mut self) -> &mut KeyValueTile<AP, TA> {
         match self {
-            KeyValuePartition::Reuse(key_values) => key_values.sequence.index_mut(0u32),
-            KeyValuePartition::Separate(keys, _) => keys.sequence.index_mut(0u32),
+            KeyValuePartition::Reuse(key_values) => key_values.sequence.index_mut(0usize),
+            KeyValuePartition::Separate(keys, _) => keys.sequence.index_mut(0usize),
         }
     }
 
     pub fn get_value(&self) -> &KeyValueTile<AP, TA> {
         match self {
-            KeyValuePartition::Reuse(key_values) => key_values.sequence.index(0u32),
-            KeyValuePartition::Separate(_, values) => values.sequence.index(0u32),
+            KeyValuePartition::Reuse(key_values) => &key_values.sequence[0],
+            KeyValuePartition::Separate(_, values) => &values.sequence[0],
         }
     }
 
     pub fn get_value_mut(&mut self) -> &mut KeyValueTile<AP, TA> {
         match self {
-            KeyValuePartition::Reuse(key_values) => key_values.sequence.index_mut(0u32),
-            KeyValuePartition::Separate(_, values) => values.sequence.index_mut(0u32),
+            KeyValuePartition::Reuse(key_values) => key_values.sequence.index_mut(0usize),
+            KeyValuePartition::Separate(_, values) => values.sequence.index_mut(0usize),
         }
     }
 }

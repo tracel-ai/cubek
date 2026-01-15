@@ -1,10 +1,10 @@
-use cubecl::{AutotuneKey, Runtime};
+use cubecl::{AutotuneKey, Runtime, quant::scheme::QuantScheme};
 use cubecl::{client::ComputeClient, ir::StorageType};
 use serde::{Deserialize, Serialize};
 
 use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
 
-use crate::definition::{MatmulElemType, MatmulKind, MatmulProblemSize};
+use crate::definition::{MatmulKind, MatmulProblemSize};
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 /// Autotune key representative of matmul versions
@@ -31,9 +31,9 @@ pub struct MatmulProblemDefinition {
     pub rhs_pow2_factor: u8,
     /// Power of two that rhs strides are aligned to
     pub rhs_stride_factor: u8,
-    pub elem_lhs: MatmulElemType,
-    pub elem_rhs: MatmulElemType,
-    pub elem_out: MatmulElemType,
+    pub elem_lhs: StorageType,
+    pub elem_rhs: StorageType,
+    pub elem_out: StorageType,
     pub matrix_layout_lhs: MatrixBatchLayout,
     pub matrix_layout_rhs: MatrixBatchLayout,
 }
@@ -83,17 +83,19 @@ impl MatmulAutotuneKey {
         rhs_shape: &[usize],
         lhs_strides: &[usize],
         rhs_strides: &[usize],
-        elem_lhs: MatmulElemType,
-        elem_rhs: MatmulElemType,
-        elem_out: MatmulElemType,
+        elem_lhs: StorageType,
+        elem_rhs: StorageType,
+        elem_out: StorageType,
+        lhs_scheme: Option<&QuantScheme>,
+        rhs_scheme: Option<&QuantScheme>,
     ) -> MatmulAutotuneKey {
         let ndims = lhs_shape.len();
         let m = lhs_shape[ndims - 2];
         let k = lhs_shape[ndims - 1];
         let n = rhs_shape[ndims - 1];
 
-        let matrix_layout_lhs = matrix_batch_layout(lhs_strides);
-        let matrix_layout_rhs = matrix_batch_layout(rhs_strides);
+        let matrix_layout_lhs = matrix_batch_layout(lhs_strides, lhs_scheme);
+        let matrix_layout_rhs = matrix_batch_layout(rhs_strides, rhs_scheme);
 
         let kind = MatmulKind::from(MatmulProblemSize {
             m: m as u32,
@@ -119,21 +121,21 @@ impl MatmulAutotuneKey {
         };
 
         let lhs_stride_factor = match matrix_layout_lhs {
-            MatrixBatchLayout::Contiguous => stride_align(lhs_strides, ndims - 1, elem_lhs.dtype),
+            MatrixBatchLayout::Contiguous => stride_align(lhs_strides, ndims - 1, elem_lhs),
             // TMA can't handle discontiguous batches because they're all combined into one dim
             MatrixBatchLayout::MildlyPermuted {
                 transposed: true,
                 batch_swap: false,
-            } => stride_align(lhs_strides, ndims - 2, elem_lhs.dtype),
+            } => stride_align(lhs_strides, ndims - 2, elem_lhs),
             _ => 0,
         };
         let rhs_stride_factor = match matrix_layout_rhs {
-            MatrixBatchLayout::Contiguous => stride_align(rhs_strides, ndims - 1, elem_rhs.dtype),
+            MatrixBatchLayout::Contiguous => stride_align(rhs_strides, ndims - 1, elem_rhs),
             // TMA can't handle discontiguous batches because they're all combined into one dim
             MatrixBatchLayout::MildlyPermuted {
                 transposed: true,
                 batch_swap: false,
-            } => stride_align(rhs_strides, ndims - 2, elem_rhs.dtype),
+            } => stride_align(rhs_strides, ndims - 2, elem_rhs),
             _ => 0,
         };
 

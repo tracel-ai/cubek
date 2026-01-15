@@ -293,6 +293,23 @@ impl AttentionElems {
             out_stage: global_dtypes.out,
         }
     }
+
+    pub fn from_define_array(elem_types: [StorageType; 12]) -> AttentionElems {
+        AttentionElems {
+            query_global: elem_types[0],
+            query_tile: elem_types[1],
+            key_global: elem_types[2],
+            key_stage: elem_types[3],
+            value_global: elem_types[4],
+            value_stage: elem_types[5],
+            key_value_tile: elem_types[6],
+            softmax: elem_types[7],
+            accumulator: elem_types[8],
+            mask: elem_types[9],
+            out_global: elem_types[10],
+            out_stage: elem_types[11],
+        }
+    }
 }
 
 impl From<&AttentionElems> for [StorageType; 12] {

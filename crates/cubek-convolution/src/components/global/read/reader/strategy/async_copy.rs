@@ -27,17 +27,18 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
     #[comptime] config: GlobalReaderConfig,
     #[comptime] copy_line_size: u32,
 ) {
-    let operation = comptime![runtime_args.operation];
+    let operation = runtime_args.operation.comptime();
+    let channels = runtime_args.channels;
 
     let mut stage_slice = stage.as_slice_mut(stage.smem.line_size());
-    let slice_size = comptime![match config.smem_config.matrix_layout {
+    let slice_size = match config.smem_config.matrix_layout {
         MatrixLayout::RowMajor => (1u32, copy_line_size),
         MatrixLayout::ColMajor => (copy_line_size, 1u32),
-    }]
+    }
     .runtime();
 
     let mut slice_len_global = copy_line_size.runtime();
-    let slice_len_stage = copy_line_size / stage_slice.line_size();
+    let slice_len_stage = copy_line_size / stage_slice.line_size() as u32;
 
     match (config.stage_ident, operation) {
         (StageIdent::Lhs, ConvolutionOperation::Forward)
@@ -49,20 +50,14 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
 
             if config.gmem_config.check_col_bounds {
                 let in_c = runtime_args.padded_channels.modulo(k_offset + pos.1);
-                slice_len_global = Min::min(
-                    SaturatingSub::saturating_sub(runtime_args.channels, in_c),
-                    slice_len_global,
-                );
+                slice_len_global = channels.saturating_sub(in_c).min(slice_len_global);
             }
         }
         (StageIdent::Rhs, ConvolutionOperation::Forward)
         | (StageIdent::Out, ConvolutionOperation::BackwardWeight) => {
             if config.gmem_config.check_row_bounds {
                 let in_c = runtime_args.padded_channels.modulo(k_offset + pos.0);
-                slice_len_global = Min::min(
-                    SaturatingSub::saturating_sub(runtime_args.channels, in_c),
-                    slice_len_global,
-                );
+                slice_len_global = channels.saturating_sub(in_c).min(slice_len_global);
             }
             if config.gmem_config.check_col_bounds {
                 slice_len_global *= u32::cast_from(pos.1 < view.shape().1);
@@ -78,8 +73,7 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
             if config.gmem_config.check_col_bounds {
                 let pos = pos.1;
                 let shape = view.shape().1;
-                slice_len_global =
-                    Min::min(SaturatingSub::saturating_sub(shape, pos), slice_len_global);
+                slice_len_global = shape.saturating_sub(pos).min(slice_len_global);
             }
         }
         _ => {
@@ -91,8 +85,7 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
                         slice_len_global *= u32::cast_from(pos < shape);
                     }
                     MatrixLayout::ColMajor => {
-                        slice_len_global =
-                            Min::min(SaturatingSub::saturating_sub(shape, pos), slice_len_global);
+                        slice_len_global = shape.saturating_sub(pos).min(slice_len_global);
                     }
                 }
             }
@@ -102,8 +95,7 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
                 let shape = view.shape().1;
                 match config.gmem_config.matrix_layout {
                     MatrixLayout::RowMajor => {
-                        slice_len_global =
-                            Min::min(SaturatingSub::saturating_sub(shape, pos), slice_len_global);
+                        slice_len_global = shape.saturating_sub(pos).min(slice_len_global);
                     }
                     MatrixLayout::ColMajor => {
                         slice_len_global *= u32::cast_from(pos < shape);
@@ -113,17 +105,17 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
         }
     }
 
-    slice_len_global /= view.line_size();
+    slice_len_global /= view.line_size() as u32;
 
     let global_slice = view.slice_unchecked(pos, slice_size).to_linear_slice();
 
     let type_size = type_size::<ES>(stage_slice.line_size());
     let offset = stage.swizzle.apply(stage_offset, type_size);
 
-    let stage_slice = stage_slice.slice_mut(offset, offset + slice_len_stage);
+    let stage_slice = stage_slice.slice_mut(offset as usize, (offset + slice_len_stage) as usize);
 
     copy_async_checked(
-        &global_slice.slice(0, slice_len_global),
+        &global_slice.slice(0, slice_len_global as usize),
         &mut stage_slice.try_cast_unchecked(),
         copy_line_size,
     );

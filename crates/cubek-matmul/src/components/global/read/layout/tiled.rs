@@ -31,13 +31,13 @@ impl Layout for TiledLayout {
         let (tile, unit_pos) = pos;
         let (tile_row, tile_col) = tile;
 
-        let tile_size_row = comptime![self.config.elements_per_tile_along_row];
-        let tile_size_col = comptime![self.config.elements_per_tile_along_col];
+        let tile_size_row = self.config.elements_per_tile_along_row.comptime();
+        let tile_size_col = self.config.elements_per_tile_along_col.comptime();
 
         let view_tile_row = tile_row * tile_size_row;
         let view_tile_col = tile_col * tile_size_col;
 
-        let (unit_row, unit_col) = match comptime![self.config.matrix_layout] {
+        let (unit_row, unit_col) = match self.config.matrix_layout.comptime() {
             MatrixLayout::RowMajor => (unit_pos / tile_size_col, unit_pos % tile_size_col),
             MatrixLayout::ColMajor => (unit_pos % tile_size_row, unit_pos / tile_size_row),
         };
@@ -46,7 +46,7 @@ impl Layout for TiledLayout {
     }
 
     fn shape(&self) -> Self::Coordinates {
-        let config = comptime![self.config];
+        let config = self.config.comptime();
         let tile_size_row = config.elements_per_tile_along_row;
         let tile_size_col = config.elements_per_tile_along_col;
 
@@ -54,7 +54,7 @@ impl Layout for TiledLayout {
         let tiles_col = config.elements_per_stage_along_col() / tile_size_col;
         let tile_size = tile_size_row * tile_size_col;
 
-        let (tiles_row, tiles_col) = match comptime![self.ident] {
+        let (tiles_row, tiles_col) = match self.ident.comptime() {
             StageIdent::Lhs => (tiles_row, tiles_col * config.num_stages).runtime(),
             StageIdent::Rhs => (tiles_row * config.num_stages, tiles_col).runtime(),
             StageIdent::Acc => (tiles_row, tiles_col).runtime(),

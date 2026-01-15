@@ -41,7 +41,7 @@ impl<R: Runtime, E: Float> Benchmark for UnaryBench<R, E> {
     fn execute(&self, (lhs, rhs, out): Self::Input) -> Result<(), String> {
         let num_elems: usize = out.shape.iter().product();
 
-        let working_units = num_elems / self.vectorization as usize;
+        let working_units = num_elems / self.vectorization;
         let cube_dim = CubeDim::new(&self.client, working_units);
         let cube_count = calculate_cube_count_elemwise(&self.client, working_units, cube_dim);
 
@@ -84,14 +84,14 @@ impl<R: Runtime, E: Float> Benchmark for UnaryBench<R, E> {
 #[allow(dead_code)]
 struct UnaryBench<R: Runtime, E> {
     shape: Vec<usize>,
-    vectorization: u8,
+    vectorization: LineSize,
     device: R::Device,
     client: ComputeClient<R>,
     _e: PhantomData<E>,
 }
 
 #[allow(dead_code)]
-fn run<R: Runtime, E: frontend::Float>(device: R::Device, vectorization: u8) {
+fn run<R: Runtime, E: frontend::Float>(device: R::Device, vectorization: LineSize) {
     let client = R::client(&device);
     let bench = UnaryBench::<R, E> {
         shape: vec![32, 512, 2048],

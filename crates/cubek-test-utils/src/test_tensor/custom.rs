@@ -19,7 +19,7 @@ fn custom_data_launch<T: Numeric>(
     }
 
     let mut remaining = linear;
-    let mut offset = 0u32;
+    let mut offset = 0;
 
     for d in 0..tensor.rank() {
         let dim = tensor.shape(tensor.rank() - 1 - d);

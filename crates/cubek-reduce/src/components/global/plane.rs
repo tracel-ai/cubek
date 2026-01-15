@@ -21,12 +21,12 @@ impl GlobalFullPlaneReduce {
     pub fn execute<P: ReducePrecision, Out: Numeric, I: ReduceInstruction<P>>(
         input: &VirtualTensor<P::EI>,
         output: &mut VirtualTensor<Out, ReadWrite>,
-        reduce_axis: u32,
+        reduce_axis: usize,
         inst: &I,
         #[comptime] line_mode: LineMode,
         #[comptime] blueprint: PlaneReduceBlueprint,
     ) {
-        let write_index = CUBE_POS * CUBE_DIM_Y + UNIT_POS_Y;
+        let write_index = CUBE_POS * CUBE_DIM_Y as usize + UNIT_POS_Y as usize;
 
         let mut writer =
             Writer::<Out>::new::<P>(input, output, reduce_axis, write_index, line_mode);
@@ -63,7 +63,7 @@ impl GlobalFullPlaneReduce {
         let commit_required = writer.commit_required();
 
         #[allow(clippy::collapsible_if)]
-        if comptime!(commit_required) {
+        if commit_required {
             if UNIT_POS_X == 0u32 {
                 writer.commit();
             }
@@ -74,8 +74,8 @@ impl GlobalFullPlaneReduce {
     fn reduce_single<P: ReducePrecision, Out: Numeric, I: ReduceInstruction<P>>(
         input: &VirtualTensor<P::EI>,
         output: &mut VirtualTensor<Out, ReadWrite>,
-        reduce_axis: u32,
-        reduce_index: u32,
+        reduce_axis: usize,
+        reduce_index: usize,
         inst: &I,
         idle: CubeOption<bool>,
         #[comptime] line_mode: LineMode,
@@ -104,7 +104,7 @@ impl GlobalFullPlaneReduce {
                 &mut accumulator,
                 item,
                 coordinate,
-                comptime!(!blueprint.independent),
+                !blueprint.independent,
             );
         }
 

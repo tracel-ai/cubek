@@ -54,8 +54,8 @@ pub(crate) fn random<F: RandomFamily, R: Runtime>(
         ScalarArg::new(seeds[2]),
         ScalarArg::new(seeds[3]),
         args,
-        N_VALUES_PER_THREAD as u32,
-        output_line_size as u32,
+        N_VALUES_PER_THREAD,
+        output_line_size,
         dtype,
     )
 }
@@ -99,10 +99,10 @@ pub(crate) trait PrngRuntime: Send + Sync + 'static + PrngArgs {
     #[allow(clippy::too_many_arguments)]
     fn inner_loop<E: Numeric>(
         args: Self::Args,
-        write_index_base: u32,
+        write_index_base: usize,
         n_invocations: u32,
-        #[comptime] n_values_per_thread: u32,
-        #[comptime] line_size: u32,
+        #[comptime] n_values_per_thread: usize,
+        #[comptime] line_size: usize,
         state_0: &mut u32,
         state_1: &mut u32,
         state_2: &mut u32,
@@ -121,16 +121,17 @@ fn prng_kernel<F: RandomFamily, E: Numeric>(
     seed_2: u32,
     seed_3: u32,
     args: Args<F>,
-    #[comptime] n_values_per_thread: u32,
-    #[comptime] line_size: u32,
+    #[comptime] n_values_per_thread: usize,
+    #[comptime] line_size: usize,
     #[define(E)] _dtype: StorageType,
 ) {
-    let cube_offset = CUBE_POS * CUBE_DIM;
+    let cube_offset = CUBE_POS * CUBE_DIM as usize;
 
-    let write_index_base = cube_offset * n_values_per_thread / line_size + UNIT_POS;
+    let write_index_base = cube_offset * n_values_per_thread / line_size + UNIT_POS as usize;
 
+    // Truncating position should be fine here, it's no issue if the seed repeats
     #[allow(arithmetic_overflow)]
-    let thread_seed = 1000000007u32 * ABSOLUTE_POS;
+    let thread_seed = 1000000007u32 * ABSOLUTE_POS as u32;
 
     let mut state_0 = thread_seed + seed_0;
     let mut state_1 = thread_seed + seed_1;

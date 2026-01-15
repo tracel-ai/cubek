@@ -1,6 +1,5 @@
 use cubecl;
 use cubecl::prelude::*;
-use cubecl::std::tensor::layout::Coords1d;
 
 use crate::components::{
     global::simple::UnitAttentionWriter,
@@ -26,7 +25,7 @@ impl AttentionPartitioner for UnitPartitioner {
     type Reducer = UnitReducer;
     type Writer<ES: Float, EG: Float> = UnitAttentionWriter<ES, EG>;
 
-    fn seq_q_index() -> Coords1d {
+    fn seq_q_index() -> u32 {
         UNIT_POS
     }
 }

@@ -78,7 +78,7 @@ fn load_manual_transposed<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Nu
     let lane_id = UNIT_POS_PLANE;
 
     let (_, stride) = tile.as_unlined();
-    let tile = tile.with_line_size(1u32);
+    let tile = tile.with_line_size(1usize);
 
     let (stride_row, stride_col) = match layout {
         MatrixLayout::RowMajor => (stride, 1),
@@ -91,11 +91,11 @@ fn load_manual_transposed<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Nu
         #[unroll]
         for n in 0..line_size {
             let elem_idx = i * line_size + n;
-            let (row, col) = def.position_of_nth(lane_id, elem_idx, ident);
+            let (row, col) = def.position_of_nth(lane_id, elem_idx as u32, ident);
             let offset = row * stride_row + col * stride_col;
             let offset = tile.stage_offset(offset);
 
-            line[n] = E::cast_from(tile.stage[offset]);
+            line[n] = E::cast_from(tile.stage[offset as usize]);
         }
         fragment[i] = line;
     }
@@ -125,11 +125,11 @@ fn load_manual_plain<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeric
     #[unroll]
     for i in 0..num_lines {
         let elem_idx = i * line_size;
-        let (row, col) = def.position_of_nth(lane_id, elem_idx, ident);
+        let (row, col) = def.position_of_nth(lane_id, elem_idx as u32, ident);
         let offset = row * stride_row + col * stride_col;
-        let stage_offset = tile.stage_offset(offset / line_size);
+        let stage_offset = tile.stage_offset(offset / line_size as u32);
 
-        fragment[i] = Line::cast_from(tile.stage[stage_offset]);
+        fragment[i] = Line::cast_from(tile.stage[stage_offset as usize]);
     }
 }
 
@@ -149,17 +149,17 @@ fn load_ldmatrix<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: MmaMatmulConfig,
 ) {
-    let stage_line_size = tile.stage.line_size();
+    let stage_line_size = tile.stage.line_size().comptime();
     let (_, stride) = tile.as_unlined();
 
-    let elem_size = E::type_size();
+    let elem_size = E::type_size().comptime();
     let num_regs = def.lines_per_lane(ident);
-    let width = comptime![16 / elem_size / stage_line_size];
+    let width = (16 / elem_size / stage_line_size) as u32;
 
     let start = ldmatrix_offset::<V, A, B, CD>(stride, def, stage_line_size, ident, layout, config);
     let start = tile.stage_offset(start);
 
-    let row_slice = tile.stage.slice(start, start + width);
+    let row_slice = tile.stage.slice(start as usize, (start + width) as usize);
     let regs = def.load_matrix(&row_slice, ident, num_regs, transposed);
 
     #[unroll]
@@ -174,21 +174,21 @@ fn load_ldmatrix<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
 pub(crate) fn ldmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     stride: u32,
     def: MmaDefinition<A, B, CD>,
-    #[comptime] stage_line_size: u32,
+    #[comptime] stage_line_size: LineSize,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
     #[comptime] config: MmaMatmulConfig,
 ) -> u32 {
-    let expected_layout = from_cmma_layout(def.line_layout(ident));
+    let expected_layout = from_cmma_layout(def.line_layout(ident)).comptime();
     let tiling = config.shared.tile_size;
     let (stride_row, stride_col) = match layout {
         MatrixLayout::RowMajor => (stride, 1),
         MatrixLayout::ColMajor => (1, stride),
     };
 
-    let elem_size = E::type_size();
-    let num_regs = def.lines_per_lane(ident);
-    let width = comptime![16 / elem_size];
+    let elem_size = E::type_size().comptime();
+    let num_regs = def.lines_per_lane(ident).comptime() as u32;
+    let width = 16 / elem_size as u32;
     // Height is always 8, and lanes are divided into blocks of 8.
     let height = 8;
 
@@ -198,7 +198,7 @@ pub(crate) fn ldmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
         MatrixIdent::Accumulator => (tiling.m(), tiling.n()),
     };
     // tile is treated as row-major, if col-major the tile shape is just inverted
-    let total_cols = match comptime![expected_layout] {
+    let total_cols = match expected_layout {
         MatrixLayout::RowMajor => total_cols,
         MatrixLayout::ColMajor => total_rows,
     };
@@ -220,7 +220,7 @@ pub(crate) fn ldmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     };
 
     let start = row * stride_row + col * stride_col;
-    start / stage_line_size
+    start / stage_line_size as u32
 }
 
 #[cube]

@@ -15,7 +15,7 @@ fn arange_launch<T: Numeric>(tensor: &mut Tensor<T>, #[define(T)] _types: Storag
     }
 
     let mut remaining = linear;
-    let mut offset = 0u32;
+    let mut offset = 0;
 
     for d in 0..tensor.rank() {
         let dim = tensor.shape(tensor.rank() - 1 - d);

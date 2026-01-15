@@ -12,7 +12,7 @@ use crate::{
         stage::{FilledStageFamily, RowMajorTilingOrder, StridedStageFamily, UnitMatmulFamily},
         tile::{TileMatmulFamily, io::Filled, register::RegisterMatmul},
     },
-    definition::{MatmulElems, MatmulProblem, MatmulSetupError, TilingBlueprint},
+    definition::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, TilingBlueprint},
     routines::{
         BlueprintStrategy, DeviceSettings, LaunchInfo, Routine,
         selector::{TileSizeSelection, UnitTilingBlueprintOptions, infer_blueprint_unit},
@@ -52,12 +52,15 @@ impl Routine for DoubleUnitAlgorithm {
         device_settings: &DeviceSettings<R>,
         strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
-        match strategy {
-            BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
-                blueprint: blueprint.clone(),
-                dtypes: MatmulElems::from_globals(&problem.global_dtypes),
-            }),
-            BlueprintStrategy::Inferred(strategy) => Ok(infer_blueprint_unit(
+        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+
+        if RegisterMatmul::<Filled>::can_cast_stage_element() {
+            dtypes.adjust_stage_dtypes();
+        }
+
+        let (blueprint, dtypes) = match strategy {
+            BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
+            BlueprintStrategy::Inferred(strategy) => infer_blueprint_unit(
                 &device_settings.client,
                 problem,
                 device_settings.plane_dim,
@@ -68,15 +71,43 @@ impl Routine for DoubleUnitAlgorithm {
                     ..Default::default()
                 },
                 &problem.global_dtypes,
-            )),
+            ),
+        };
+
+        Self::validate_blueprint(
+            &device_settings.client,
+            &blueprint,
+            problem,
+            &dtypes,
+            &device_settings.line_sizes,
+        )?;
+
+        let cubedim_resource =
+            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
+
+        LaunchInfo::new(
+            blueprint,
+            dtypes,
+            problem,
+            cubedim_resource,
+            device_settings,
+        )
+    }
+
+    fn device_settings<R: Runtime>(
+        client: &ComputeClient<R>,
+        line_sizes: MatmulLineSizes,
+    ) -> DeviceSettings<R> {
+        let plane_dim = match client.properties().hardware.plane_size_min {
+            0 => 32,
+            plane_dim => plane_dim,
+        };
+
+        DeviceSettings {
+            client: client.clone(),
+            plane_dim,
+            line_sizes,
+            max_cube_count: client.properties().hardware.max_cube_count,
         }
-    }
-
-    fn select_plane_dim<R: Runtime>(client: &ComputeClient<R>) -> u32 {
-        client.properties().hardware.plane_size_min
-    }
-
-    fn can_cast_stage_element() -> bool {
-        RegisterMatmul::<Filled>::can_cast_stage_element()
     }
 }

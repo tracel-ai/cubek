@@ -1,3 +1,4 @@
+use crate::components::CubeDimResource;
 use crate::definition::{
     MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError, MatrixLayout,
     StageIdent,
@@ -5,18 +6,18 @@ use crate::definition::{
 use crate::{
     components::{
         global::{
-            GlobalReaderConfig, GlobalWriterConfig, GlobalWriterFamily, SharedGlobalMatmulConfig,
-            SpecializationTensorConfig, WriteTiling, cube_dim_validation,
+            GlobalReaderConfig, GlobalWriterConfig, GlobalWriterFamily, InputLoadFlow,
+            SharedGlobalMatmulConfig, WriteTiling,
             memory::{GlobalMemoryConfig, ViewDirection},
             multi_stage::EventLoadingMode,
-            read::{FullLoadingStrategy, LoadingValidation},
+            read::FullLoadingStrategy,
             single_stage::simple::matmul::SimpleMatmul,
         },
         stage::{FilledStageFamily, NoTilingLayout, StageConfig, StridedStageFamily},
     },
     definition::TilingBlueprint,
 };
-use cubecl::prelude::*;
+use cubecl::{ir::DeviceProperties, prelude::*};
 use std::marker::PhantomData;
 
 use crate::components::{global::GlobalMatmulFamily, stage};
@@ -55,70 +56,57 @@ where
     >;
     type Config = SharedGlobalMatmulConfig<SMM::Config>;
 
-    fn expand_config<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
-        selection: &TilingBlueprint,
-        line_sizes: &MatmulLineSizes,
+    fn expand_config(
+        device_props: &DeviceProperties,
+        blueprint: &TilingBlueprint,
         dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
+        let plane_dim = blueprint.plane_dim;
+        let plane_flow_config = Self::cubedim_resource(blueprint, dtypes, line_sizes)?
+            .as_plane_flow_config(plane_dim)?;
+
         let stage_config = SMM::expand_config(
-            client,
-            problem,
-            selection,
-            line_sizes,
+            device_props,
+            blueprint,
+            plane_flow_config,
             (1, 1).into(),
-            None,
             dtypes,
+            line_sizes,
         )?;
 
-        let stage_shape_m = stage_config.elements_in_stage_m();
-        let stage_shape_n = stage_config.elements_in_stage_n();
-        let stage_shape_k = stage_config.elements_in_stage_k();
-
-        let check_k_bounds = !(problem.k as u32).is_multiple_of(stage_shape_k);
-        let check_m_bounds = !(problem.m as u32).is_multiple_of(stage_shape_m);
-        let check_n_bounds = !(problem.n as u32).is_multiple_of(stage_shape_n);
-
-        let num_planes = if !selection.load_specialization_config.has_specialization() {
-            stage_config.num_main_flow_planes()
-        } else {
-            return Err(MatmulSetupError::InvalidConfig(Box::new(
-                "Error: Specialization is unavailable for simple tma matmul.",
-            )));
-        };
-
-        let plane_role_config = stage_config.plane_role_config();
-        let precompute_job = selection.loading_precompute_strategy.into();
-        let reader_mode = selection.reader_mode;
-        let plane_dim = selection.plane_dim;
-        let specialization_tensor_config = SpecializationTensorConfig::MainFlowOnly;
+        let precompute_job = blueprint.loading_precompute_strategy.into();
+        let reader_mode = blueprint.reader_mode;
+        let input_load_flow = InputLoadFlow::MainOnly;
 
         // Not used in simple
         let event_loading_mode = EventLoadingMode::Relaxed;
 
         let lhs_gmem_config = GlobalMemoryConfig {
-            line_size: line_sizes.lhs as u32,
-            check_row_bounds: check_m_bounds,
-            check_col_bounds: check_k_bounds,
-            matrix_layout: problem.lhs_layout,
+            line_size: line_sizes.lhs,
+            check_row_bounds: blueprint.check_m_bounds,
+            check_col_bounds: blueprint.check_k_bounds,
+            matrix_layout: blueprint.lhs_layout,
             view_direction: ViewDirection::Col,
+            dtype: dtypes.lhs_global,
         };
 
         let rhs_gmem_config = GlobalMemoryConfig {
-            line_size: line_sizes.rhs as u32,
-            check_row_bounds: check_k_bounds,
-            check_col_bounds: check_n_bounds,
-            matrix_layout: problem.rhs_layout,
+            line_size: line_sizes.rhs,
+            check_row_bounds: blueprint.check_k_bounds,
+            check_col_bounds: blueprint.check_n_bounds,
+            matrix_layout: blueprint.rhs_layout,
             view_direction: ViewDirection::Row,
+            dtype: dtypes.rhs_global,
         };
 
         let out_gmem_config = GlobalMemoryConfig {
-            line_size: line_sizes.out as u32,
+            line_size: line_sizes.out,
             matrix_layout: MatrixLayout::RowMajor,
-            check_row_bounds: check_m_bounds,
-            check_col_bounds: check_n_bounds,
+            check_row_bounds: blueprint.check_m_bounds,
+            check_col_bounds: blueprint.check_n_bounds,
             view_direction: ViewDirection::None,
+            dtype: dtypes.acc_global,
         };
 
         let lhs_reader_config = GlobalReaderConfig {
@@ -126,11 +114,11 @@ where
             smem_config: stage_config.lhs_smem_config(),
             precompute_job,
             plane_dim,
-            plane_role_config,
+            plane_flow_config,
             reader_mode,
             stage_ident: StageIdent::Lhs,
             event_loading_mode,
-            specialization_tensor_config,
+            input_load_flow,
         };
 
         let rhs_reader_config = GlobalReaderConfig {
@@ -138,41 +126,55 @@ where
             smem_config: stage_config.rhs_smem_config(),
             precompute_job,
             plane_dim,
-            plane_role_config,
+            plane_flow_config,
             reader_mode,
             stage_ident: StageIdent::Rhs,
             event_loading_mode,
-            specialization_tensor_config,
+            input_load_flow,
         };
 
         let writer_config = GlobalWriterConfig {
             gmem_config: out_gmem_config,
             smem_config: stage_config.out_smem_config(),
-            role_rule_config: plane_role_config.rule,
-            plane_dim: selection.plane_dim,
+            plane_flow_partition_rule: plane_flow_config.partition_rule,
+            plane_dim,
         };
 
-        let config = SharedGlobalMatmulConfig {
+        Ok(SharedGlobalMatmulConfig {
             stage_config,
-            num_planes,
+            num_planes: plane_flow_config.counts.total_count(),
             lhs_reader_config,
             rhs_reader_config,
             writer_config,
             must_sync_plane_after_execution: false,
-        };
-
-        validate::<LL, RL, SMM::Config, R>(config, client, problem, dtypes)
+        })
     }
-}
 
-fn validate<LL: LoadingValidation, RL: LoadingValidation, S: StageConfig, R: Runtime>(
-    config: SharedGlobalMatmulConfig<S>,
-    client: &ComputeClient<R>,
-    problem: &MatmulProblem,
-    dtypes: &MatmulElems,
-) -> Result<SharedGlobalMatmulConfig<S>, MatmulSetupError> {
-    LL::check(client, problem, &config.lhs_reader_config, dtypes)?;
-    RL::check(client, problem, &config.rhs_reader_config, dtypes)?;
-    cube_dim_validation(config)?;
-    Ok(config)
+    fn cubedim_resource(
+        blueprint: &TilingBlueprint,
+        _dtypes: &MatmulElems,
+        _line_sizes: &MatmulLineSizes,
+    ) -> Result<CubeDimResource, MatmulSetupError> {
+        let resources = if !blueprint.load_flows.has_specialization() {
+            SMM::cubedim_resource(blueprint)
+        } else {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(
+                "Specialization is unavailable for simple matmul.",
+            )));
+        }?;
+
+        Ok(resources)
+    }
+
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &TilingBlueprint,
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
+    ) -> Result<(), MatmulSetupError> {
+        LL::validate_with_problem(problem, dtypes, StageIdent::Lhs)?;
+        RL::validate_with_problem(problem, dtypes, StageIdent::Rhs)?;
+        SMM::validate_blueprint(client, blueprint, (1, 1).into(), dtypes, line_sizes)
+    }
 }

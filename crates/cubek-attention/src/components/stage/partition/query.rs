@@ -20,7 +20,7 @@ impl<AP: AttentionPrecision, TA: TileAttention<AP>> QueryPartition<AP, TA> {
         let mut sequence = Sequence::new();
 
         #[unroll]
-        for _ in 0..comptime!(p.seq_q * p.head_dim) {
+        for _ in 0..p.seq_q * p.head_dim {
             sequence.push(QueryTile::<AP, TA>::new(config.tile_config()));
         }
 
@@ -29,22 +29,21 @@ impl<AP: AttentionPrecision, TA: TileAttention<AP>> QueryPartition<AP, TA> {
 
     pub fn get_at(
         &self,
-        #[comptime] q: u32,
-        #[comptime] hd: u32,
+        #[comptime] q: usize,
+        #[comptime] hd: usize,
         #[comptime] config: PartitionAttentionConfig<TA::Config>,
     ) -> &QueryTile<AP, TA> {
-        let partition_head_dim = config.shared().partition_size.head_dim;
-        self.sequence.index(comptime!(q * partition_head_dim + hd))
+        let partition_head_dim = config.shared().partition_size.head_dim as usize;
+        &self.sequence[q * partition_head_dim + hd]
     }
 
     pub fn get_at_mut(
         &mut self,
-        #[comptime] q: u32,
-        #[comptime] hd: u32,
+        #[comptime] q: usize,
+        #[comptime] hd: usize,
         #[comptime] config: PartitionAttentionConfig<TA::Config>,
     ) -> &mut QueryTile<AP, TA> {
-        let partition_head_dim = config.shared().partition_size.head_dim;
-        self.sequence
-            .index_mut(comptime!(q * partition_head_dim + hd))
+        let partition_head_dim = config.shared().partition_size.head_dim as usize;
+        self.sequence.index_mut(q * partition_head_dim + hd)
     }
 }

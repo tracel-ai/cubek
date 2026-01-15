@@ -1,6 +1,6 @@
 use cubecl;
 use cubecl::prelude::*;
-use cubek_matmul::components::ComputeResources;
+use cubek_matmul::components::CubeDimResource;
 use cubek_matmul::components::tile::StridedTile;
 
 use crate::components::tile::{
@@ -111,14 +111,12 @@ pub trait TileAttentionFamily: Send + Sync + 'static {
     fn requires_accelerator() -> bool;
 
     /// Returns the compute resources required to run this tile matmul.
-    fn computation_resources() -> Result<ComputeResources, InvalidConfigError>;
+    fn computation_resources() -> Result<CubeDimResource, InvalidConfigError>;
 
     /// Constructs the configuration based on the algorithm's blueprint.
     ///
     /// This function may return an error if the configuration cannot be supported.
-    fn expand_blueprint(
-        blueprint: &AttentionBlueprint,
-    ) -> Result<Self::Config, AttentionSetupError>;
+    fn expand_config(blueprint: &AttentionBlueprint) -> Result<Self::Config, AttentionSetupError>;
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]

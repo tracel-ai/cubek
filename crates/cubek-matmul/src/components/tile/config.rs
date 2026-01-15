@@ -1,6 +1,6 @@
 use crate::{
     components::stage::SwizzleMode,
-    definition::SwizzleBlueprint,
+    definition::SwizzleModes,
     definition::{StageIdent, TileSize},
 };
 use std::{fmt::Debug, hash::Hash};
@@ -25,7 +25,7 @@ pub trait TileConfig: Copy + Clone + Eq + PartialEq + Hash + Debug + Send + Sync
 pub struct SharedTileConfig {
     pub tile_size: TileSize,
     pub plane_dim: u32,
-    pub swizzle_config: SwizzleBlueprint,
+    pub swizzle_modes: SwizzleModes,
 }
 
 impl TileConfig for SharedTileConfig {
@@ -47,20 +47,20 @@ impl TileConfig for SharedTileConfig {
 
     fn swizzle_mode(&self, ident: StageIdent) -> SwizzleMode {
         match ident {
-            StageIdent::Lhs => self.swizzle_config.lhs,
-            StageIdent::Rhs => self.swizzle_config.rhs,
-            StageIdent::Acc => self.swizzle_config.acc,
-            StageIdent::Out => self.swizzle_config.out,
+            StageIdent::Lhs => self.swizzle_modes.lhs,
+            StageIdent::Rhs => self.swizzle_modes.rhs,
+            StageIdent::Acc => self.swizzle_modes.acc,
+            StageIdent::Out => self.swizzle_modes.out,
         }
     }
 }
 
 impl SharedTileConfig {
-    pub fn new(tile_size: TileSize, plane_dim: u32, swizzle_config: SwizzleBlueprint) -> Self {
+    pub fn new(tile_size: TileSize, plane_dim: u32, swizzle: SwizzleModes) -> Self {
         SharedTileConfig {
             tile_size,
             plane_dim,
-            swizzle_config,
+            swizzle_modes: swizzle,
         }
     }
 }

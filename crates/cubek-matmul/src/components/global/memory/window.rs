@@ -76,7 +76,7 @@ fn load_window<EG: Numeric>(
         MatrixLayout::ColMajor => (0, nth_window),
     };
 
-    if comptime![gmem_config.check_row_bounds || gmem_config.check_col_bounds] {
+    if gmem_config.check_row_bounds || gmem_config.check_col_bounds {
         view.slice(offset, size).to_linear_slice()
     } else {
         view.slice_unchecked(offset, size).to_linear_slice()

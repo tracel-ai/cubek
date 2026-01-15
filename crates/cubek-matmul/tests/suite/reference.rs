@@ -3,7 +3,9 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::{CubeElement, client::ComputeClient};
 use cubek_matmul::definition::MatmulElems;
 use cubek_matmul::definition::{MatmulIdent, MatmulProblem, MatrixLayout};
-use cubek_test_utils::{HostData, HostDataType, HostDataVec, StrideSpec, assert_equals_approx};
+use cubek_test_utils::{
+    HostData, HostDataType, HostDataVec, StrideSpec, ValidationResult, assert_equals_approx,
+};
 
 pub fn assert_result(
     lhs: &HostData,
@@ -12,31 +14,28 @@ pub fn assert_result(
     client: &ComputeClient<TestRuntime>,
     out: &TensorHandle<TestRuntime>,
     dtypes: MatmulElems,
-) {
+) -> ValidationResult {
     let epsilon = matmul_epsilon(&dtypes, 100.);
 
     let expected = matmul_cpu_reference(lhs, rhs, problem);
 
     let actual = HostData::from_tensor_handle(client, out, HostDataType::F32);
 
-    if let Err(e) = assert_equals_approx(&actual, &expected, epsilon) {
-        panic!("{}", e);
-    }
+    assert_equals_approx(&actual, &expected, epsilon)
 }
 
 fn matmul_epsilon(elems: &MatmulElems, safety_factor: f32) -> f32 {
     let total_eps = elems
         .lhs_global
-        .dtype
         .epsilon()
-        .max(elems.rhs_global.dtype.epsilon())
-        .max(elems.acc_global.dtype.epsilon())
-        .max(elems.lhs_stage.dtype.epsilon())
-        .max(elems.rhs_stage.dtype.epsilon())
-        .max(elems.acc_stage.dtype.epsilon())
-        .max(elems.lhs_register.dtype.epsilon())
-        .max(elems.rhs_register.dtype.epsilon())
-        .max(elems.acc_register.dtype.epsilon());
+        .max(elems.rhs_global.epsilon())
+        .max(elems.acc_global.epsilon())
+        .max(elems.lhs_stage.epsilon())
+        .max(elems.rhs_stage.epsilon())
+        .max(elems.acc_stage.epsilon())
+        .max(elems.lhs_register.epsilon())
+        .max(elems.rhs_register.epsilon())
+        .max(elems.acc_register.epsilon());
 
     total_eps as f32 * safety_factor
 }
@@ -56,41 +55,58 @@ fn matmul_cpu_reference(lhs: &HostData, rhs: &HostData, problem: &MatmulProblem)
 
     let mut out = vec![0.0; num_batches * m * n];
 
+    // Multi-dimensional indices
     let mut batch_index = vec![0usize; rank - 2];
     let mut lhs_index = vec![0usize; rank];
     let mut rhs_index = vec![0usize; rank];
     let mut out_index = vec![0usize; rank];
 
-    // Iterate over all batches (cartesian product)
+    let lhs_batches = &problem.lhs_batches;
+    let rhs_batches = &problem.rhs_batches;
+    let out_batches = &problem.out_batches;
+
+    // Iterate over all batches (cartesian product over broadcasted output)
     for batch_flat in 0..num_batches {
-        // decode flat batch index → multidim batch index
+        // Decode flat batch index → multidimensional batch index
         let mut t = batch_flat;
         for d in (0..rank - 2).rev() {
-            batch_index[d] = t % out_shape[d];
-            t /= out_shape[d];
+            batch_index[d] = t % out_batches[d];
+            t /= out_batches[d];
         }
 
-        // copy batch dims into indices
-        lhs_index[..rank - 2].copy_from_slice(&batch_index);
-        rhs_index[..rank - 2].copy_from_slice(&batch_index);
-        out_index[..rank - 2].copy_from_slice(&batch_index);
+        // Map batch_index into lhs_index and rhs_index with broadcasting
+        for d in 0..rank - 2 {
+            lhs_index[d] = if d < lhs_batches.len() && lhs_batches[d] != 1 {
+                batch_index[d]
+            } else {
+                0
+            };
+            rhs_index[d] = if d < rhs_batches.len() && rhs_batches[d] != 1 {
+                batch_index[d]
+            } else {
+                0
+            };
+            out_index[d] = batch_index[d];
+        }
 
+        // Inner matrix multiplication
         for i in 0..m {
-            out_index[rank - 2] = i;
             lhs_index[rank - 2] = i;
+            out_index[rank - 2] = i;
 
             for j in 0..n {
+                rhs_index[rank - 1] = j;
                 out_index[rank - 1] = j;
 
                 let mut sum = 0.0;
                 for kk in 0..k {
                     lhs_index[rank - 1] = kk;
                     rhs_index[rank - 2] = kk;
-                    rhs_index[rank - 1] = j;
 
                     sum += lhs.get_f32(&lhs_index) * rhs.get_f32(&rhs_index);
                 }
 
+                // Compute linear index in the output buffer
                 let out_linear = batch_flat * (m * n) + i * n + j;
                 out[out_linear] = sum;
             }
@@ -98,6 +114,7 @@ fn matmul_cpu_reference(lhs: &HostData, rhs: &HostData, problem: &MatmulProblem)
     }
 
     let strides = StrideSpec::RowMajor.compute_strides(&out_shape);
+
     HostData {
         data: HostDataVec::F32(out),
         shape: out_shape,
