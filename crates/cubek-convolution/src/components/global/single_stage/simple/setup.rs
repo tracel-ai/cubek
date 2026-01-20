@@ -1,4 +1,4 @@
-use cubecl::ir::DeviceProperties;
+use cubecl::{Runtime, client::ComputeClient, ir::DeviceProperties};
 use cubek_matmul::components::{
     global::{
         GlobalConfig, GlobalReaderConfig, GlobalWriterConfig, MatmulPlaneCounts,
@@ -187,5 +187,25 @@ where
             problem.dimensionality,
             problem.operation,
         )
+    }
+
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &TilingBlueprint,
+        problem: &ConvolutionProblem,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
+    ) -> Result<(), MatmulSetupError> {
+        let problem = problem.as_matmul_problem();
+        LL::validate_with_problem(&problem, dtypes, StageIdent::Lhs)?;
+        LR::validate_with_problem(&problem, dtypes, StageIdent::Rhs)?;
+
+        if blueprint.tiling_scheme.partitions_per_stage_along_n() > 1 {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(
+                "Ordered does not support number of stage partitions > 1 in n",
+            )));
+        }
+
+        SMM::validate_blueprint(client, blueprint, (1, 2).into(), dtypes, line_sizes)
     }
 }

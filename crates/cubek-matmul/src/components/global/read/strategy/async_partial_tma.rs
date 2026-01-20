@@ -156,7 +156,7 @@ impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, TmaTilingLayout, AsyncTma>
                 MatrixLayout::ColMajor => (load_col + offs_row, offs_col),
             };
 
-            global_view.tensor_map_load(barrier, &mut slice.try_cast_unchecked(), pos);
+            global_view.tensor_map_load(barrier, &mut slice.downcast(), pos);
         }
     }
 

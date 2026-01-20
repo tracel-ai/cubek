@@ -138,7 +138,7 @@ fn store_stmatrix<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     let frag_ty = type_of::<E>().comptime();
     if stage_ty == frag_ty {
         def.store_matrix(
-            &mut row_slice.try_cast_unchecked(),
+            &mut row_slice.downcast(),
             fragment,
             ident,
             num_regs,

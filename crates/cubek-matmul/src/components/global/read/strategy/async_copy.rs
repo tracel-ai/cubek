@@ -71,14 +71,10 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
     if config.gmem_config.check_row_bounds || config.gmem_config.check_col_bounds {
         copy_async_checked(
             &global_slice.slice(0, slice_len_global as usize),
-            &mut stage_slice.try_cast_unchecked(),
+            &mut stage_slice.downcast(),
             copy_line_size,
         );
     } else {
-        copy_async(
-            &global_slice,
-            &mut stage_slice.try_cast_unchecked(),
-            copy_line_size,
-        );
+        copy_async(&global_slice, &mut stage_slice.downcast(), copy_line_size);
     }
 }

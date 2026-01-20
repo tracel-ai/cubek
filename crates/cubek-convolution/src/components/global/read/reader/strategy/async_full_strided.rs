@@ -38,11 +38,11 @@ impl LoadingValidation for AsyncFullStridedLoading {
     }
 
     fn validate_with_problem(
-        _problem: &MatmulProblem,
-        _dtypes: &MatmulElems,
-        _ident: StageIdent,
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        ident: StageIdent,
     ) -> Result<(), InvalidConfigError> {
-        Ok(())
+        MatmulStridedLoading::validate_with_problem(problem, dtypes, ident)
     }
 }
 

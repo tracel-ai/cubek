@@ -115,7 +115,7 @@ impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, StridedTilingLayout, AsyncBarr
         let mut destination: SliceMut<Line<ES>> =
             StridedTilingLayout::nth_slice::<ES>(stage, task_id, config.smem_config);
 
-        barrier.memcpy_async_cooperative(&window.try_cast_unchecked(), &mut destination);
+        barrier.memcpy_async_cooperative(&window.downcast(), &mut destination);
     }
 
     fn task_count(this: &Self) -> comptime_type!(u32) {

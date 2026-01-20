@@ -245,6 +245,8 @@ where
     let selection = Alg::selection(client, &problem, plane_dim, &line_sizes, &mut dtypes)?;
     let problem = Alg::Args::adjust_problem(client, problem, &selection, &dtypes);
 
+    Alg::validate_blueprint(client, &selection, &problem, &dtypes, &line_sizes)?;
+
     let config = Alg::expand_config(
         client.properties(),
         &problem,

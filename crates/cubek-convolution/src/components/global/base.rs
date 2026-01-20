@@ -36,6 +36,14 @@ pub trait GlobalConvolutionFamily: ConvolutionLaunch<Self::Config> + 'static {
         line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
     ) -> Result<Self::Config, MatmulSetupError>;
+
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &TilingBlueprint,
+        problem: &ConvolutionProblem,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
+    ) -> Result<(), MatmulSetupError>;
 }
 
 #[cube]

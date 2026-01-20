@@ -130,7 +130,7 @@ impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, TmaTilingLayout, AsyncTma> for
                 MatrixLayout::ColMajor => (col, 0u32).runtime(),
             };
 
-            global_view.tensor_map_load(barrier, &mut slice.try_cast_unchecked(), pos);
+            global_view.tensor_map_load(barrier, &mut slice.downcast(), pos);
         }
     }
 

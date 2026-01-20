@@ -73,6 +73,16 @@ pub trait Algorithm {
         Self::GlobalConvolution::expand_config(device_props, problem, selection, line_sizes, dtypes)
     }
 
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &TilingBlueprint,
+        problem: &ConvolutionProblem,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
+    ) -> Result<(), MatmulSetupError> {
+        Self::GlobalConvolution::validate_blueprint(client, blueprint, problem, dtypes, line_sizes)
+    }
+
     fn into_tensor_handle<R: Runtime>(
         client: &ComputeClient<R>,
         handle: &TensorHandleRef<'_, R>,

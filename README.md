@@ -22,7 +22,7 @@
 | Algorithms                                                                             | Variants                                                                 |
 | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | [Random](https://github.com/tracel-ai/cubek/tree/main/crates/cubek-random)             | `bernoulli` `normal` `uniform`                                           |
-| [Quantization](https://github.com/tracel-ai/cubek/tree/main/crates/cubek-quantization) | `symmetric` `per-block` `per-tensor` `q2` `q4` `q8` `fp4`                |
+| [Quantization](https://github.com/tracel-ai/cubek/tree/main/crates/cubek-quant) | `symmetric` `per-block` `per-tensor` `q2` `q4` `q8` `fp4`                |
 | [Reduction](https://github.com/tracel-ai/cubek/tree/main/crates/cubek-reduce)          | `mean` `sum` `prod` `max` `min` `arg[max\|min]` `per-cube` `per-plane`   |
 | [Matmul](https://github.com/tracel-ai/cubek/tree/main/crates/cubek-matmul)             | `mma` `unit` `tma` `multi-stage` `specialization` `ordered` `multi-rows` |
 | [Convolution](https://github.com/tracel-ai/cubek/tree/main/crates/cubek-convolution)   | `mma` `unit` `tma` `multi-stage` `im2col`                                |
