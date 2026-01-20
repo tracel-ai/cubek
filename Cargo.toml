@@ -23,8 +23,10 @@ version = "0.1.0"
 # cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "d060bfd58126b790ea0f9794dd3b3d791eb74fd6", default-features = false }
 
 ### For releases ###
-cubecl = { version = "=0.9.0", default-features = false }
-cubecl-common = { version = "=0.9.0", default-features = false }
+# cubecl = { version = "=0.9.0", default-features = false }
+# cubecl-common = { version = "=0.9.0", default-features = false }
+cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "91630e96a1518642f64e239026c0cc532e602eb0", default-features = false }
+cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "91630e96a1518642f64e239026c0cc532e602eb0", default-features = false }
 
 bitflags = { version = "2.9.1", features = ["serde"] }
 derive-new = { version = "0.7.0", default-features = false }

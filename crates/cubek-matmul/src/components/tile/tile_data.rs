@@ -144,7 +144,7 @@ impl<ES: Numeric> StridedTile<ES, ReadOnly> {
         (
             self.stage
                 .slice(self.start as usize, self.end as usize)
-                .try_cast_unchecked(),
+                .downcast(),
             self.stride * stage_line_size as u32,
         )
     }
@@ -163,7 +163,7 @@ impl<ES: Numeric> StridedTile<ES, ReadWrite> {
             self.stage
                 .slice(self.start as usize, self.end as usize)
                 .as_mut_unchecked()
-                .try_cast_unchecked(),
+                .downcast(),
             self.stride * stage_line_size as u32,
         )
     }

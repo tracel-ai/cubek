@@ -116,7 +116,7 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
 
     copy_async_checked(
         &global_slice.slice(0, slice_len_global as usize),
-        &mut stage_slice.try_cast_unchecked(),
+        &mut stage_slice.downcast(),
         copy_line_size,
     );
 }
