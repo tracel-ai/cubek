@@ -75,10 +75,6 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
             copy_line_size,
         );
     } else {
-        copy_async(
-            &global_slice,
-            &mut stage_slice.downcast(),
-            copy_line_size,
-        );
+        copy_async(&global_slice, &mut stage_slice.downcast(), copy_line_size);
     }
 }
