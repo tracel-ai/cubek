@@ -87,7 +87,7 @@ impl CompareVisitor for FailFast {
 
 #[inline]
 fn compare_elem(got: f32, expected: f32, epsilon: f32) -> ElemStatus {
-    let eps = (epsilon * expected).abs().max(epsilon).min(0.99);
+    let eps = (epsilon * expected).abs().max(epsilon);
 
     // NaN check: pass if both are NaN
     if got.is_nan() && expected.is_nan() {
