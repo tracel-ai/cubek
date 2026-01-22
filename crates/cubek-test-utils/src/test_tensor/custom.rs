@@ -4,7 +4,7 @@ use cubecl::{
     std::tensor::{TensorHandle, ViewOperationsMut, ViewOperationsMutExpand},
 };
 
-use crate::CustomInputSpec;
+use crate::BaseInputSpec;
 
 #[cube(launch)]
 fn custom_data_launch<T: Numeric>(
@@ -85,12 +85,15 @@ fn new_custom_data(
     out
 }
 
-pub(crate) fn build_custom(spec: CustomInputSpec) -> TensorHandle<TestRuntime> {
+pub(crate) fn build_custom(
+    base_spec: BaseInputSpec,
+    contiguous_data: Vec<f32>,
+) -> TensorHandle<TestRuntime> {
     new_custom_data(
-        &spec.inner.client,
-        spec.inner.shape.clone(),
-        spec.inner.strides(),
-        spec.inner.dtype,
-        spec.data,
+        &base_spec.client,
+        base_spec.shape.clone(),
+        base_spec.strides(),
+        base_spec.dtype,
+        contiguous_data,
     )
 }

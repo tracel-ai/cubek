@@ -10,7 +10,7 @@ use cubek_matmul::definition::{MatmulElems, MatmulIdent, MatmulProblem};
 use cubek_matmul::definition::{MatmulGlobalElems, MatrixLayout};
 use cubek_matmul::launch::MatmulInputHandleRef;
 use cubek_matmul::routines::naive;
-use cubek_test_utils::{Distribution, SimpleInputSpec, TestInput};
+use cubek_test_utils::{BaseInputSpec, DataKind, Distribution, TestInput};
 
 type TestRuntime = cubecl::TestRuntime;
 
@@ -151,31 +151,36 @@ fn test_naive(case: MatmulTestCase) {
     let client = TestRuntime::client(&Default::default());
     let problem = case.into_problem();
 
-    let (lhs, lhs_data) = TestInput::random(
+    let (lhs, lhs_data) = TestInput::new(
         client.clone(),
         problem.lhs_shape.clone(),
         problem.global_dtypes.lhs,
-        1234,
-        Distribution::Uniform(-1., 1.),
         layout_to_stride_spec(problem.lhs_layout),
+        DataKind::Random {
+            seed: 1234,
+            distribution: Distribution::Uniform(-1., 1.),
+        },
     )
     .generate_with_f32_host_data();
 
-    let (rhs, rhs_data) = TestInput::random(
+    let (rhs, rhs_data) = TestInput::new(
         client.clone(),
         problem.rhs_shape.clone(),
         problem.global_dtypes.rhs,
-        5678,
-        Distribution::Uniform(-1., 1.),
         layout_to_stride_spec(problem.rhs_layout),
+        DataKind::Random {
+            seed: 5678,
+            distribution: Distribution::Uniform(-1., 1.),
+        },
     )
     .generate_with_f32_host_data();
 
-    let out = TestInput::zeros(
+    let out = TestInput::new(
         client.clone(),
         problem.out_shape.clone(),
         problem.global_dtypes.out,
         layout_to_stride_spec(MatrixLayout::RowMajor),
+        DataKind::Zeros,
     )
     .generate_without_host_data();
 
