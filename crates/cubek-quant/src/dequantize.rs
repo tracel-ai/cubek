@@ -313,7 +313,6 @@ fn dequantize_native<R: Runtime>(
                 other => panic!("Unsupported quantization value {other:?}"),
             };
 
-            println!("{input_dtype:?} {scale_dtype:?} {quant_dtype:?}");
             unsafe {
                 dequantize_symmetric_native_kernel::launch_unchecked(
                     client,
