@@ -73,14 +73,15 @@ fn assert_equals_approx_inner(
 
     // Enforce filter rank only if the test failed and we would print
     if test_failed {
-        if let TestMode::Print { filter, .. } = test_mode {
-            if !filter.is_empty() && filter.len() != shape.len() {
-                return ValidationResult::Skipped(format!(
-                    "Print mode activated with invalid filter rank. Got {:?}, expected {:?}",
-                    filter.len(),
-                    shape.len()
-                ));
-            }
+        if let TestMode::Print { filter, .. } = test_mode
+            && !filter.is_empty()
+            && filter.len() != shape.len()
+        {
+            return ValidationResult::Skipped(format!(
+                "Print mode activated with invalid filter rank. Got {:?}, expected {:?}",
+                filter.len(),
+                shape.len()
+            ));
         }
 
         return ValidationResult::Fail("Got incorrect results".to_string());
