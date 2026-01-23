@@ -13,7 +13,13 @@ use crate::{
         cube::CubeRoutine, plane::PlaneRoutine, unit::UnitRoutine,
     },
 };
-use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
+use cubecl::{
+    prelude::*,
+    std::tensor::{
+        layout::linear::{LinearLayout, LinearLayoutArgs},
+        r#virtual::VirtualTensor,
+    },
+};
 
 #[derive(Clone, Copy, Debug)]
 pub struct ReduceDtypes {
@@ -81,7 +87,10 @@ pub(crate) fn launch_reduce<Run: Runtime>(
             settings.cube_count,
             settings.cube_dim,
             input.as_tensor_arg(settings.line.line_size_input),
-            output.as_tensor_arg(settings.line.line_size_output),
+            (
+                output.as_tensor_arg(settings.line.line_size_output),
+                LinearLayoutArgs::from_handle(client, &output, settings.line.line_size_output),
+            ),
             ScalarArg::new(axis),
             blueprint,
             inst,
@@ -104,14 +113,22 @@ pub fn reduce_kernel<In: Numeric, Out: Numeric, Acc: Numeric, RA: ReduceArgs>(
     #[define(Out)] _output_dtype: StorageType,
     #[define(Acc)] _acc_dtype: StorageType,
 ) {
-    let (input, mut output) = init_tensors::<RA, In, Out>(input, output);
-    reduce_kernel_virtual::<In, Out, Acc>(&input, &mut output, axis_reduce, blueprint, config);
+    let (input, mut output, out_layout) = init_tensors::<RA, In, Out>(input, output);
+    reduce_kernel_virtual::<In, Out, Acc>(
+        &input,
+        &mut output,
+        out_layout,
+        axis_reduce,
+        blueprint,
+        config,
+    );
 }
 
 #[cube]
 pub fn reduce_kernel_virtual<In: Numeric, Out: Numeric, Acc: Numeric>(
     input: &VirtualTensor<In>,
     output: &mut VirtualTensor<Out, ReadWrite>,
+    out_layout: LinearLayout,
     axis_reduce: usize,
     #[comptime] blueprint: ReduceBlueprint,
     #[comptime] config: ReduceOperationConfig,
@@ -119,6 +136,7 @@ pub fn reduce_kernel_virtual<In: Numeric, Out: Numeric, Acc: Numeric>(
     reduce_kernel_inner::<(In, Acc), Out, ReduceOperation>(
         input,
         output,
+        out_layout,
         axis_reduce,
         blueprint,
         config,
@@ -129,6 +147,7 @@ pub fn reduce_kernel_virtual<In: Numeric, Out: Numeric, Acc: Numeric>(
 fn reduce_kernel_inner<P: ReducePrecision, Out: Numeric, R: ReduceFamily>(
     input: &VirtualTensor<P::EI>,
     output: &mut VirtualTensor<Out, ReadWrite>,
+    out_layout: LinearLayout,
     axis_reduce: usize,
     #[comptime] blueprint: ReduceBlueprint,
     #[comptime] config: R::Config,
@@ -140,6 +159,7 @@ fn reduce_kernel_inner<P: ReducePrecision, Out: Numeric, R: ReduceFamily>(
             GlobalFullCubeReduce::execute::<P, Out, R::Instruction<P>>(
                 input,
                 output,
+                out_layout,
                 axis_reduce,
                 inst,
                 blueprint.line_mode,
@@ -150,6 +170,7 @@ fn reduce_kernel_inner<P: ReducePrecision, Out: Numeric, R: ReduceFamily>(
             GlobalFullPlaneReduce::execute::<P, Out, R::Instruction<P>>(
                 input,
                 output,
+                out_layout,
                 axis_reduce,
                 inst,
                 blueprint.line_mode,
@@ -160,6 +181,7 @@ fn reduce_kernel_inner<P: ReducePrecision, Out: Numeric, R: ReduceFamily>(
             GlobalFullUnitReduce::execute::<P, Out, R::Instruction<P>>(
                 input,
                 output,
+                out_layout,
                 axis_reduce,
                 inst,
                 blueprint.line_mode,

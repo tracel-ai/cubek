@@ -41,10 +41,16 @@ impl<P: ReducePrecision> ParallelReader<P> {
         #[comptime] bound_checks: BoundChecks,
     ) -> ParallelReader<P> {
         let line_size = input.line_size();
+        let rank = input.rank();
 
+        let mut reduce_index = reduce_index;
         let mut batch_offset = 0;
-        for axis in 0..input.rank() {
-            let coordinate = output.coordinate(reduce_index, axis);
+        for axis in 0..rank {
+            let axis = rank - axis - 1;
+            let shape = output.shape(axis);
+            let coordinate = reduce_index % shape;
+            reduce_index /= shape;
+
             batch_offset += coordinate * input.stride(axis);
         }
         batch_offset /= line_size;

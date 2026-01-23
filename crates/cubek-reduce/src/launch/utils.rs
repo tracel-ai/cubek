@@ -136,6 +136,7 @@ pub fn generate_line_size<R: Runtime>(
         && line_mode == LineMode::Parallel
         && line_size_input > 1
         && is_contiguous(input.shape, input.strides)
+        && is_contiguous(output.shape, output.strides)
         && axis == input.shape.len() - 1
     {
         let supported_line_sizes = client.io_optimized_line_sizes_unchecked(dtype.size());

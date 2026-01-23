@@ -3,7 +3,7 @@ use cubecl::{
     prelude::*,
     std::tensor::{
         View,
-        layout::{Coords1d, plain::PlainLayout},
+        layout::{Coords1d, linear::LinearView},
         r#virtual::VirtualTensor,
     },
 };
@@ -22,7 +22,7 @@ pub enum Writer<Out: Numeric> {
 impl<Out: Numeric> Writer<Out> {
     pub fn new<P: ReducePrecision>(
         input: &VirtualTensor<P::EI>,
-        output: &mut VirtualTensor<Out, ReadWrite>,
+        output: LinearView<Line<Out>, ReadWrite>,
         reduce_axis: usize,
         write_index: usize,
         #[comptime] line_mode: LineMode,
@@ -86,12 +86,12 @@ pub struct ParallelWriter<Out: Numeric> {
 impl<Out: Numeric> ParallelWriter<Out> {
     pub fn new<P: ReducePrecision>(
         input: &VirtualTensor<P::EI>,
-        output: &mut VirtualTensor<Out, ReadWrite>,
+        output: LinearView<Line<Out>, ReadWrite>,
         reduce_axis: usize,
         write_index: usize,
     ) -> ParallelWriter<Out> {
         ParallelWriter::<Out> {
-            output: output.view_mut(PlainLayout::new(output.len())),
+            output,
             buffer: Line::empty(output.line_size()),
             axis_size: input.shape(reduce_axis),
             write_index,
@@ -136,7 +136,7 @@ pub struct PerpendicularWriter<Out: Numeric> {
 impl<Out: Numeric> PerpendicularWriter<Out> {
     pub fn new<P: ReducePrecision>(
         input: &VirtualTensor<P::EI>,
-        output: &mut VirtualTensor<Out, ReadWrite>,
+        output: LinearView<Line<Out>, ReadWrite>,
         reduce_axis: usize,
         write_index: usize,
     ) -> PerpendicularWriter<Out> {
@@ -144,7 +144,7 @@ impl<Out: Numeric> PerpendicularWriter<Out> {
         let output_line_size = output.line_size();
 
         PerpendicularWriter::<Out> {
-            output: output.view_mut(PlainLayout::new(output.len())),
+            output,
             axis_size: input.shape(reduce_axis),
             write_index,
             input_line_size,

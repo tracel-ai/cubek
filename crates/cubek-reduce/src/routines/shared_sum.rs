@@ -1,6 +1,6 @@
-use cubecl::features::TypeUsage;
-use cubecl::ir::ElemType;
-use cubecl::prelude::*;
+use cubecl::{features::TypeUsage, std::tensor::layout::linear::LinearView};
+use cubecl::{ir::ElemType, std::tensor::layout::linear::linear_view};
+use cubecl::{prelude::*, std::tensor::is_contiguous, tensor_line_size_parallel};
 
 use crate::ReduceError;
 
@@ -71,11 +71,20 @@ pub fn shared_sum<R: Runtime>(
     let input_len = input.shape.iter().product::<usize>();
 
     // Compute the optimal line size.
-    let line_size = client
-        .io_optimized_line_sizes_unchecked(input.elem_size)
-        .filter(|line_size| input_len % *line_size == 0)
-        .max()
-        .unwrap_or(1);
+    let line_size = if is_contiguous(input.shape, input.strides) {
+        client
+            .io_optimized_line_sizes_unchecked(input.elem_size)
+            .filter(|line_size| input_len % *line_size == 0)
+            .max()
+            .unwrap_or(1)
+    } else {
+        tensor_line_size_parallel(
+            client.io_optimized_line_sizes_unchecked(input.elem_size),
+            input.shape,
+            input.strides,
+            input.shape.len() - 1,
+        )
+    };
 
     // Compute extra parameters.
     let cube_dim = CubeDim::new_2d(32, 8); // NOTE: If you change that, keep the unit count a power of 2.
@@ -89,7 +98,7 @@ pub fn shared_sum<R: Runtime>(
             client,
             cube_count,
             cube_dim,
-            input.as_tensor_arg(line_size),
+            linear_view(client, &input, line_size),
             output.as_tensor_arg(1),
             cube_dim.num_elems() as usize,
             line_size,
@@ -106,7 +115,7 @@ pub fn shared_sum<R: Runtime>(
 
 #[cube(launch_unchecked)]
 fn shared_sum_kernel<N: Numeric>(
-    input: &Tensor<Line<N>>,
+    input: &LinearView<Line<N>>,
     output: &mut Tensor<Atomic<N>>,
     #[comptime] shared_memory_size: usize,
     #[comptime] line_size: LineSize,
@@ -121,8 +130,8 @@ fn shared_sum_kernel<N: Numeric>(
     let end = start + num_lines_per_unit;
 
     // Prevent out-of-bound access
-    let start = select(start < input.len(), start, input.len());
-    let end = select(end < input.len(), end, input.len());
+    let start = select(start < input.shape(), start, input.shape());
+    let end = select(end < input.shape(), end, input.shape());
 
     // Each unit sum its lines.
     for k in start..end {

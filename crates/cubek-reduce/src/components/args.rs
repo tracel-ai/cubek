@@ -1,9 +1,9 @@
-use cubecl::prelude::*;
 use cubecl::std::{
     CubeOption, CubeOptionExpand,
     tensor::r#virtual::{VirtualTensor, VirtualTensorOperations, VirtualTensorOperationsExpand},
 };
 use cubecl::unexpanded;
+use cubecl::{prelude::*, std::tensor::layout::linear::LinearLayout};
 use std::marker::PhantomData;
 
 pub trait ReduceDType {
@@ -52,13 +52,19 @@ pub trait ReduceArgs: Send + Sync + 'static + Clone {
 
     fn line_size_input<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(LineSize);
     fn line_size_output<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(LineSize);
+
+    fn out_layout<P: ReduceDType>(state: &Self::State<P>) -> LinearLayout;
 }
 
 #[cube]
 pub fn init_tensors<RA: ReduceArgs, In: Numeric, Out: Numeric>(
     input: &RA::Input<In>,
     output: &mut RA::Output<Out>,
-) -> (VirtualTensor<In>, VirtualTensor<Out, ReadWrite>) {
+) -> (
+    VirtualTensor<In>,
+    VirtualTensor<Out, ReadWrite>,
+    LinearLayout,
+) {
     let mut state = RA::init_state::<(In, Out)>(input, output);
 
     let input = TensorArg::new_input(&state);
@@ -67,8 +73,9 @@ pub fn init_tensors<RA: ReduceArgs, In: Numeric, Out: Numeric>(
     let input = VirtualTensor::<In>::new::<TensorArg<(In, Out), RA, Input>>(&input);
     let output =
         VirtualTensor::<Out, ReadWrite>::new::<TensorArg<(In, Out), RA, Output>>(&mut output);
+    let out_layout = RA::out_layout(&state);
 
-    (input, output)
+    (input, output, out_layout)
 }
 
 #[derive(Clone)]
@@ -77,14 +84,19 @@ pub struct TensorArgs;
 #[cube]
 impl ReduceArgs for TensorArgs {
     type Input<EG: Numeric> = Tensor<Line<EG>>;
-    type Output<EG: Numeric> = Tensor<Line<EG>>;
-    type State<P: ReduceDType> = (*const Tensor<Line<P::In>>, *mut Tensor<Line<P::Out>>);
+    type Output<EG: Numeric> = (Tensor<Line<EG>>, LinearLayout);
+    type State<P: ReduceDType> = (
+        *const Tensor<Line<P::In>>,
+        *mut Tensor<Line<P::Out>>,
+        LinearLayout,
+    );
 
     fn init_state<P: ReduceDType>(
         input: &Self::Input<P::In>,
         output: &mut Self::Output<P::Out>,
     ) -> Self::State<P> {
-        (input, output)
+        let out: *mut Tensor<Line<P::Out>> = &mut output.0;
+        (input, out, comptime![output.1.clone()])
     }
 
     fn read_input<P: ReduceDType>(state: &Self::State<P>, index: usize) -> Line<P::In> {
@@ -144,6 +156,10 @@ impl ReduceArgs for TensorArgs {
 
     fn line_size_output<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(LineSize) {
         unsafe { (*state.1).line_size() }
+    }
+
+    fn out_layout<P: ReduceDType>(state: &Self::State<P>) -> LinearLayout {
+        comptime![state.2.clone()]
     }
 }
 

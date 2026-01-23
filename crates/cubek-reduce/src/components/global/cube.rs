@@ -10,7 +10,10 @@ use crate::{
 };
 use cubecl::{
     prelude::*,
-    std::{CubeOption, tensor::r#virtual::VirtualTensor},
+    std::{
+        CubeOption,
+        tensor::{layout::linear::LinearLayout, r#virtual::VirtualTensor},
+    },
 };
 
 #[derive(CubeType)]
@@ -21,6 +24,7 @@ impl GlobalFullCubeReduce {
     pub fn execute<P: ReducePrecision, Out: Numeric, I: ReduceInstruction<P>>(
         input: &VirtualTensor<P::EI>,
         output: &mut VirtualTensor<Out, ReadWrite>,
+        out_layout: LinearLayout,
         reduce_axis: usize,
         inst: &I,
         #[comptime] line_mode: LineMode,
@@ -32,8 +36,13 @@ impl GlobalFullCubeReduce {
         let accumulator_size = blueprint.num_shared_accumulators;
         let worker_pos = Self::worker_pos(blueprint);
 
-        let mut writer =
-            Writer::<Out>::new::<P>(input, output, reduce_axis, write_index, line_mode);
+        let mut writer = Writer::<Out>::new::<P>(
+            input,
+            output.view_mut(out_layout),
+            reduce_axis,
+            write_index,
+            line_mode,
+        );
 
         let write_count = writer.write_count();
 

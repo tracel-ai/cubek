@@ -10,7 +10,10 @@ use crate::{
 };
 use cubecl::{
     prelude::*,
-    std::{CubeOption, tensor::r#virtual::VirtualTensor},
+    std::{
+        CubeOption,
+        tensor::{layout::linear::LinearLayout, r#virtual::VirtualTensor},
+    },
 };
 
 #[derive(CubeType)]
@@ -21,6 +24,7 @@ impl GlobalFullPlaneReduce {
     pub fn execute<P: ReducePrecision, Out: Numeric, I: ReduceInstruction<P>>(
         input: &VirtualTensor<P::EI>,
         output: &mut VirtualTensor<Out, ReadWrite>,
+        out_layout: LinearLayout,
         reduce_axis: usize,
         inst: &I,
         #[comptime] line_mode: LineMode,
@@ -28,8 +32,13 @@ impl GlobalFullPlaneReduce {
     ) {
         let write_index = CUBE_POS * CUBE_DIM_Y as usize + UNIT_POS_Y as usize;
 
-        let mut writer =
-            Writer::<Out>::new::<P>(input, output, reduce_axis, write_index, line_mode);
+        let mut writer = Writer::<Out>::new::<P>(
+            input,
+            output.view_mut(out_layout),
+            reduce_axis,
+            write_index,
+            line_mode,
+        );
 
         let write_count = writer.write_count();
         let reduce_index_start = write_index * write_count;
