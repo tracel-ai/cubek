@@ -4,7 +4,7 @@ use cubecl::{
     std::tensor::{TensorHandle, ViewOperationsMut, ViewOperationsMutExpand},
 };
 
-use crate::SimpleInputSpec;
+use crate::BaseInputSpec;
 
 #[cube(launch)]
 fn eye_launch<T: Numeric>(tensor: &mut Tensor<Line<T>>, #[define(T)] _types: StorageType) {
@@ -74,7 +74,7 @@ fn new_eyed(
     out
 }
 
-pub(crate) fn build_eye(spec: SimpleInputSpec) -> TensorHandle<TestRuntime> {
+pub(crate) fn build_eye(spec: BaseInputSpec) -> TensorHandle<TestRuntime> {
     let (batches, matrix) = spec.shape.split_at(spec.shape.len() - 2);
     let rows = matrix[0];
     let cols = matrix[1];

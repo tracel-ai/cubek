@@ -2,7 +2,7 @@ use cubecl::client::ComputeClient;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{TestRuntime, prelude::*};
 
-use crate::{Distribution, RandomInputSpec};
+use crate::{BaseInputSpec, Distribution};
 
 fn random_tensor_handle(
     client: &ComputeClient<TestRuntime>,
@@ -36,16 +36,20 @@ fn random_tensor_handle(
     )
 }
 
-pub(crate) fn build_random(spec: RandomInputSpec) -> TensorHandle<TestRuntime> {
-    let shape = &spec.inner.shape;
-    let strides = &spec.inner.strides();
+pub(crate) fn build_random(
+    base_spec: BaseInputSpec,
+    seed: u64,
+    distribution: Distribution,
+) -> TensorHandle<TestRuntime> {
+    let shape = &base_spec.shape;
+    let strides = &base_spec.strides();
 
     random_tensor_handle(
-        &spec.inner.client,
-        spec.inner.dtype,
-        spec.seed,
+        &base_spec.client,
+        base_spec.dtype,
+        seed,
         strides,
         shape,
-        spec.distribution,
+        distribution,
     )
 }

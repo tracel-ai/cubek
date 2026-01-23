@@ -19,11 +19,12 @@ use cubek_matmul::launch::TensorMapInputs;
 use cubek_matmul::launch::TensorOutput;
 use cubek_matmul::routines::BlueprintStrategy;
 use cubek_matmul::routines::Routine;
+use cubek_test_utils::DataKind;
 use cubek_test_utils::ExecutionOutcome;
 use cubek_test_utils::HostData;
 use cubek_test_utils::TestOutcome;
 use cubek_test_utils::current_test_mode;
-use cubek_test_utils::{Distribution, RandomInputSpec, SimpleInputSpec, TestInput};
+use cubek_test_utils::{BaseInputSpec, Distribution, RandomInputSpec, TestInput};
 
 use crate::suite::assert_result;
 use crate::suite::layout_to_stride_spec;
@@ -42,31 +43,36 @@ pub fn test_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
     blueprint: A::Blueprint,
     input_representation: InputRepresentation,
 ) {
-    let (lhs, lhs_data) = TestInput::random(
+    let (lhs, lhs_data) = TestInput::new(
         client.clone(),
         problem.lhs_shape.clone(),
         problem.global_dtypes.lhs,
-        1234,
-        Distribution::Uniform(-1., 1.),
         layout_to_stride_spec(problem.lhs_layout),
+        DataKind::Random {
+            seed: 1234,
+            distribution: Distribution::Uniform(-1., 1.),
+        },
     )
     .generate_with_f32_host_data();
 
-    let (rhs, rhs_data) = TestInput::random(
+    let (rhs, rhs_data) = TestInput::new(
         client.clone(),
         problem.rhs_shape.clone(),
         problem.global_dtypes.rhs,
-        5678,
-        Distribution::Uniform(-1., 1.),
         layout_to_stride_spec(problem.rhs_layout),
+        DataKind::Random {
+            seed: 1234,
+            distribution: Distribution::Uniform(-1., 1.),
+        },
     )
     .generate_with_f32_host_data();
 
-    let out = TestInput::zeros(
+    let out = TestInput::new(
         client.clone(),
         problem.out_shape.clone(),
         problem.global_dtypes.out,
         layout_to_stride_spec(MatrixLayout::RowMajor),
+        DataKind::Zeros,
     )
     .generate_without_host_data();
 

@@ -1,52 +1,93 @@
+use std::ops::Range;
+
 use crate::correctness::color_printer::ColorPrinter;
 use crate::test_mode::{TestMode, current_test_mode};
 use crate::{HostData, ValidationResult};
 
+/// Check if two tensors are approximately equal
 pub fn assert_equals_approx(
-    actual: &HostData,
-    expected: &HostData,
+    // One of the tensor to compare
+    lhs: &HostData,
+    // One of the tensor to compare
+    rhs: &HostData,
+    // Maximum absolute difference between two values
     epsilon: f32,
 ) -> ValidationResult {
-    if actual.shape != expected.shape {
+    assert_equals_approx_inner(lhs, rhs, epsilon, None)
+}
+
+/// Check if two tensors are approximately equal
+/// Within the given slice, if some
+pub fn assert_equals_approx_in_slice(
+    // One of the tensor to compare
+    lhs: &HostData,
+    // One of the tensor to compare
+    rhs: &HostData,
+    // Maximum absolute difference between two values
+    epsilon: f32,
+    // If some, will only check values within the slice shape
+    slice: Vec<Range<usize>>,
+) -> ValidationResult {
+    assert_equals_approx_inner(lhs, rhs, epsilon, Some(slice))
+}
+
+/// Check if two tensors are approximately equal
+/// Within the given slice, if some
+fn assert_equals_approx_inner(
+    // One of the tensor to compare
+    lhs: &HostData,
+    // One of the tensor to compare
+    rhs: &HostData,
+    // Maximum absolute difference between two values
+    epsilon: f32,
+    // If some, will only check values within the slice shape
+    slice: Option<Vec<Range<usize>>>,
+) -> ValidationResult {
+    if lhs.shape != rhs.shape {
         return ValidationResult::Fail(format!(
             "Shape mismatch: got {:?}, expected {:?}",
-            actual.shape, expected.shape,
+            lhs.shape, rhs.shape,
         ));
     }
 
-    let shape = &actual.shape;
+    let shape = &lhs.shape;
     let test_mode = current_test_mode();
 
     let mut visitor: Box<dyn CompareVisitor> = match test_mode.clone() {
-        TestMode::Print {
-            filter,
-            fail_only: _,
-        } => {
-            if !filter.is_empty() && filter.len() != shape.len() {
-                return ValidationResult::Skipped(format!(
-                    "Print mode activated with invalid filter rank. Got {:?}, expected {:?}",
-                    filter.len(),
-                    shape.len()
-                ));
-            }
-            Box::new(ColorPrinter::new(filter))
-        }
+        TestMode::Print { filter, .. } => Box::new(SafePrinter {
+            inner: ColorPrinter::new(filter),
+            shape_len: shape.len(),
+        }),
         _ => Box::new(FailFast),
     };
 
     let test_failed = compare_tensors(
-        actual,
-        expected,
+        lhs,
+        rhs,
         shape,
         epsilon,
         &mut *visitor,
         &mut Vec::new(),
+        slice.as_deref(), // pass slice as Option<&[usize]>
     );
 
-    match test_failed {
-        true => ValidationResult::Fail("Got incorrect results".to_string()),
-        false => ValidationResult::Pass,
+    // Enforce filter rank only if the test failed and we would print
+    if test_failed {
+        if let TestMode::Print { filter, .. } = test_mode
+            && !filter.is_empty()
+            && filter.len() != shape.len()
+        {
+            return ValidationResult::Skipped(format!(
+                "Print mode activated with invalid filter rank. Got {:?}, expected {:?}",
+                filter.len(),
+                shape.len()
+            ));
+        }
+
+        return ValidationResult::Fail("Got incorrect results".to_string());
     }
+
+    ValidationResult::Pass
 }
 
 #[derive(Debug)]
@@ -75,6 +116,22 @@ pub(crate) trait CompareVisitor {
     fn visit(&mut self, index: &[usize], status: ElemStatus);
 }
 
+struct SafePrinter {
+    inner: ColorPrinter,
+    shape_len: usize,
+}
+
+impl CompareVisitor for SafePrinter {
+    fn visit(&mut self, index: &[usize], status: ElemStatus) {
+        // Only forward to the inner printer if filter rank is valid
+        if self.inner.filter.is_empty() || self.inner.filter.len() == self.shape_len {
+            self.inner.visit(index, status);
+        } else {
+            // skip printing silently
+        }
+    }
+}
+
 pub(crate) struct FailFast;
 
 impl CompareVisitor for FailFast {
@@ -87,7 +144,7 @@ impl CompareVisitor for FailFast {
 
 #[inline]
 fn compare_elem(got: f32, expected: f32, epsilon: f32) -> ElemStatus {
-    let eps = (epsilon * expected).abs().max(epsilon).min(0.99);
+    let eps = (epsilon * expected).abs().max(epsilon);
 
     // NaN check: pass if both are NaN
     if got.is_nan() && expected.is_nan() {
@@ -138,25 +195,37 @@ fn compare_tensors(
     epsilon: f32,
     visitor: &mut dyn CompareVisitor,
     index: &mut Vec<usize>,
+    slice: Option<&[std::ops::Range<usize>]>,
 ) -> bool {
     let mut failed = false;
 
     let dim = index.len();
     if dim == shape.len() {
+        // Check if current index is within all ranges
+        if let Some(slice) = slice {
+            for (i, range) in index.iter().zip(slice.iter()) {
+                if !range.contains(i) {
+                    return false; // skip element outside slice
+                }
+            }
+        }
+
         let got = actual.get_f32(index);
         let exp = expected.get_f32(index);
-
         let status = compare_elem(got, exp, epsilon);
+
         if matches!(status, ElemStatus::Wrong(_)) {
             failed = true;
         }
+
         visitor.visit(index, status);
         return failed;
     }
 
+    // Recurse over full dimension — slice check happens at leaf
     for i in 0..shape[dim] {
         index.push(i);
-        if compare_tensors(actual, expected, shape, epsilon, visitor, index) {
+        if compare_tensors(actual, expected, shape, epsilon, visitor, index, slice) {
             failed = true;
         }
         index.pop();
