@@ -78,19 +78,11 @@ pub fn shared_sum<R: Runtime>(
             .max()
             .unwrap_or(1)
     } else {
-        let contiguous_dim = input
-            .strides
-            .iter()
-            .enumerate()
-            .rev()
-            .find(|(_, s)| **s == 1)
-            .map(|(dim, _)| dim)
-            .unwrap_or(input.shape.len() - 1);
         tensor_line_size_parallel(
             client.io_optimized_line_sizes_unchecked(input.elem_size),
             input.shape,
             input.strides,
-            contiguous_dim,
+            input.shape.len() - 1,
         )
     };
 
