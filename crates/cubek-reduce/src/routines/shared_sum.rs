@@ -94,7 +94,9 @@ pub fn shared_sum<R: Runtime>(
     };
 
     let input_view = if contiguous_buffer {
-        let layout = LinearLayoutArgs::Plain(PlainLayoutLaunch::new(ScalarArg::new(input_len)));
+        let layout = LinearLayoutArgs::Plain(PlainLayoutLaunch::new(ScalarArg::new(
+            input_len / line_size,
+        )));
         let buffer = unsafe {
             ArrayArg::from_raw_parts_and_size(input.handle, input_len, line_size, input.elem_size)
         };
