@@ -71,20 +71,26 @@ pub fn shared_sum<R: Runtime>(
     let input_len = input.shape.iter().product::<usize>();
 
     // Compute the optimal line size.
-    let line_size = if input.shape.iter().product::<usize>() * input.elem_size
-        == input.handle.size() as usize
-    {
+    let line_size = if input_len * input.elem_size == input.handle.size() as usize {
         client
             .io_optimized_line_sizes_unchecked(input.elem_size)
             .filter(|line_size| input_len % *line_size == 0)
             .max()
             .unwrap_or(1)
     } else {
+        let contiguous_dim = input
+            .strides
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, s)| **s == 1)
+            .map(|(dim, _)| dim)
+            .unwrap_or(input.shape.len() - 1);
         tensor_line_size_parallel(
             client.io_optimized_line_sizes_unchecked(input.elem_size),
             input.shape,
             input.strides,
-            input.shape.len() - 1,
+            contiguous_dim,
         )
     };
 
