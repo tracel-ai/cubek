@@ -1,4 +1,10 @@
-use cubecl::{features::TypeUsage, std::tensor::layout::linear::LinearView};
+use cubecl::{
+    features::TypeUsage,
+    std::tensor::layout::{
+        linear::{LinearLayout, LinearLayoutArgs, LinearView, LinearViewLaunch},
+        plain::PlainLayoutLaunch,
+    },
+};
 use cubecl::{ir::ElemType, std::tensor::layout::linear::linear_view};
 use cubecl::{prelude::*, tensor_line_size_parallel};
 
@@ -69,9 +75,10 @@ pub fn shared_sum<R: Runtime>(
     }
 
     let input_len = input.shape.iter().product::<usize>();
+    let contiguous_buffer = input_len * input.elem_size == input.handle.size() as usize;
 
     // Compute the optimal line size.
-    let line_size = if input_len * input.elem_size == input.handle.size() as usize {
+    let line_size = if contiguous_buffer {
         client
             .io_optimized_line_sizes_unchecked(input.elem_size)
             .filter(|line_size| input_len % *line_size == 0)
@@ -86,6 +93,16 @@ pub fn shared_sum<R: Runtime>(
         )
     };
 
+    let input_view = if contiguous_buffer {
+        let layout = LinearLayoutArgs::Plain(PlainLayoutLaunch::new(ScalarArg::new(input_len)));
+        let buffer = unsafe {
+            ArrayArg::from_raw_parts_and_size(input.handle, input_len, line_size, input.elem_size)
+        };
+        LinearViewLaunch::new::<LinearLayout>(buffer, layout)
+    } else {
+        linear_view(client, &input, line_size)
+    };
+
     // Compute extra parameters.
     let cube_dim = CubeDim::new_2d(32, 8); // NOTE: If you change that, keep the unit count a power of 2.
     let num_units = cube_count * cube_dim.num_elems();
@@ -98,7 +115,7 @@ pub fn shared_sum<R: Runtime>(
             client,
             cube_count,
             cube_dim,
-            linear_view(client, &input, line_size),
+            input_view,
             output.as_tensor_arg(1),
             cube_dim.num_elems() as usize,
             line_size,
