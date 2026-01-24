@@ -1,6 +1,6 @@
 use cubecl::{features::TypeUsage, std::tensor::layout::linear::LinearView};
 use cubecl::{ir::ElemType, std::tensor::layout::linear::linear_view};
-use cubecl::{prelude::*, std::tensor::is_contiguous, tensor_line_size_parallel};
+use cubecl::{prelude::*, tensor_line_size_parallel};
 
 use crate::ReduceError;
 
@@ -71,7 +71,9 @@ pub fn shared_sum<R: Runtime>(
     let input_len = input.shape.iter().product::<usize>();
 
     // Compute the optimal line size.
-    let line_size = if is_contiguous(input.shape, input.strides) {
+    let line_size = if input.shape.iter().product::<usize>() * input.elem_size
+        == input.handle.size() as usize
+    {
         client
             .io_optimized_line_sizes_unchecked(input.elem_size)
             .filter(|line_size| input_len % *line_size == 0)
