@@ -54,6 +54,15 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
         ));
     }
 
+    if tile_size == TileSize::new(8, 8, 8) {
+        let selection = if problem.m >= 1024 && problem.n >= 1024 {
+            selection_large_tiles_8x8(client, problem, tile_size, plane_dim)
+        } else {
+            selection_small_tiles_8x8(client, problem, tile_size, plane_dim)
+        };
+        return Ok((selection, dtypes));
+    }
+
     let row_count = options.row_count.unwrap_or_else(|| {
         let max_plane_per_cube = client.properties().hardware.max_units_per_cube / plane_dim;
         // Compensate for register use
@@ -320,4 +329,71 @@ fn selection_tiny<R: Runtime>(
         .partition_buffering(PartitionBuffering::Single)
         .hypercube_blueprint(hypercube)
         .build()
+}
+
+fn selection_large_tiles_8x8<R: Runtime>(
+    client: &ComputeClient<R>,
+    problem: &MatmulProblem,
+    tile_size: TileSize,
+    plane_dim: u32,
+) -> TilingBlueprint {
+    let tiling_scheme = TilingScheme::builder()
+        .with_tile_size(tile_size)
+        .with_partition_size(PartitionSize::new(4, 4, 2))
+        .with_stage_size(StageSize::new(2, 2, 1))
+        .build()
+        .unwrap();
+
+    let cube_count_strategy = cube_count_strategy_from_client(client);
+    let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
+        .global_order_strategy(GlobalOrderStrategy::SwizzleRow {
+            m: problem.m as u32,
+            w: 4,
+        })
+        .cube_count_strategy(cube_count_strategy)
+        .build();
+
+    TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
+        .partition_buffering(PartitionBuffering::Single)
+        .hypercube_blueprint(hypercube)
+        .build()
+}
+
+fn selection_small_tiles_8x8<R: Runtime>(
+    client: &ComputeClient<R>,
+    problem: &MatmulProblem,
+    tile_size: TileSize,
+    plane_dim: u32,
+) -> TilingBlueprint {
+    let tiling_scheme = TilingScheme::builder()
+        .with_tile_size(tile_size)
+        .with_partition_size(PartitionSize::new(4, 8, 2))
+        .with_stage_size(StageSize::new(4, 1, 1))
+        .build()
+        .unwrap();
+
+    let cube_count_strategy = cube_count_strategy_from_client(client);
+    let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
+        .global_order_strategy(GlobalOrderStrategy::SwizzleRow {
+            m: problem.m as u32,
+            w: 4,
+        })
+        .cube_count_strategy(cube_count_strategy)
+        .build();
+
+    TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
+        .partition_buffering(PartitionBuffering::Single)
+        .hypercube_blueprint(hypercube)
+        .build()
+}
+
+fn cube_count_strategy_from_client<R: Runtime>(client: &ComputeClient<R>) -> CubeCountStrategy {
+    match client.properties().hardware.num_streaming_multiprocessors {
+        Some(num_sms) => CubeCountStrategy::Sm {
+            num_sms,
+            sm_usage: SmAllocation::Exact,
+            cubes_first: true,
+        },
+        None => CubeCountStrategy::Flattened,
+    }
 }

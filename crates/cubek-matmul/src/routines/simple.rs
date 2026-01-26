@@ -58,7 +58,11 @@ pub struct SimpleArgs {
 
 impl Display for SimpleArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(if self.multi_rows { "_multi_rows" } else { "" })
+        if self.multi_rows {
+            f.write_str("_multi_rows")
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -201,12 +205,22 @@ fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
             dtypes,
         ))
     } else if supported(8, 8, 8) {
-        let tiling_scheme = TilingScheme::builder()
-            .with_tile_size((8, 8, 8).into())
-            .with_partition_size((4, 8, 2).into())
-            .with_stage_size((4, 1, 1).into())
-            .build()
-            .unwrap();
+        let tiling_scheme = if problem.m >= 1024 && problem.n >= 1024 {
+            TilingScheme::builder()
+                .with_tile_size((8, 8, 8).into())
+                .with_partition_size((4, 4, 2).into())
+                .with_stage_size((2, 2, 1).into())
+                .build()
+                .unwrap()
+        } else {
+            TilingScheme::builder()
+                .with_tile_size((8, 8, 8).into())
+                .with_partition_size((4, 8, 2).into())
+                .with_stage_size((4, 1, 1).into())
+                .build()
+                .unwrap()
+        };
+
         let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
             .global_order_strategy(GlobalOrderStrategy::SwizzleRow {
                 m: problem.m as u32,
