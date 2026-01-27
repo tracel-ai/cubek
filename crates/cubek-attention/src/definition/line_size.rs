@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use cubecl::{Runtime, client::ComputeClient, tensor_line_size_parallel};
 
-use crate::definition::{AttentionIdent, AttentionProblem};
+use crate::definition::{AttentionIdent, AttentionProblem, AttentionTileSize};
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 /// Line size used for each tensor in global memory accesses.
@@ -56,6 +56,32 @@ impl AttentionLineSizes {
                 &problem.dims.shape(AttentionIdent::Out),
                 problem.global_dtypes.out.size(),
             ),
+        }
+    }
+
+    /// Cap line sizes to be compatible with the given tile size.
+    /// Line sizes must evenly divide the corresponding tile dimensions.
+    pub fn cap_to_tile_size(self, tile_size: &AttentionTileSize) -> AttentionLineSizes {
+        fn cap(line_size: usize, tile_dim: u32) -> usize {
+            let tile_dim = tile_dim as usize;
+            if line_size > tile_dim || tile_dim % line_size != 0 {
+                // Find largest power of 2 <= tile_dim that divides tile_dim
+                let mut capped = 1;
+                while capped * 2 <= tile_dim && tile_dim % (capped * 2) == 0 {
+                    capped *= 2;
+                }
+                capped
+            } else {
+                line_size
+            }
+        }
+
+        AttentionLineSizes {
+            query: cap(self.query, tile_size.head_dim),
+            key: cap(self.key, tile_size.head_dim),
+            value: cap(self.value, tile_size.val_dim),
+            mask: self.mask,
+            out: cap(self.out, tile_size.val_dim),
         }
     }
 }

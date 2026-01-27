@@ -111,7 +111,10 @@ fn blueprint(
                 plane_dim,
                 reuse_key_value: false,
                 two_rows_in_array_tile: false,
-                line_sizes: launch_settings.line_sizes.clone(),
+                line_sizes: launch_settings
+                    .line_sizes
+                    .clone()
+                    .cap_to_tile_size(&tile_size),
                 masked: problem.masked,
                 causal: problem.options.causal,
                 check_bounds: tiling_scheme.check_bounds(&problem.dims),
