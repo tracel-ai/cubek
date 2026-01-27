@@ -163,8 +163,8 @@ where
 
     let op = ConvolutionOperation::BackwardData;
 
-    let out_grad_data = Alg::into_tensor_handle(client, out_grad.data(), *dtypes.lhs_global, op)?;
-    let weights_data = Alg::into_tensor_handle(client, weights.data(), *dtypes.rhs_global, op)?;
+    let out_grad_data = Alg::into_tensor_handle(client, out_grad.data(), dtypes.lhs_global, op)?;
+    let weights_data = Alg::into_tensor_handle(client, weights.data(), dtypes.rhs_global, op)?;
 
     let mut out_grad = *out_grad;
     let mut weights = *weights;
@@ -240,8 +240,11 @@ where
     let selection = Alg::selection(client, &problem, plane_dim, &line_sizes, &mut dtypes)?;
     let problem = Alg::Args::adjust_problem(client, problem, &selection, &dtypes);
 
-    let config = Alg::expand_config(client, &problem, &selection, &line_sizes, &dtypes)?;
+    let device_props = client.properties();
 
+    Alg::validate_blueprint(client, &selection, &problem, &dtypes, &line_sizes)?;
+
+    let config = Alg::expand_config(device_props, &problem, &selection, &line_sizes, &dtypes)?;
     let line_sizes = config.line_sizes();
 
     launch_kernel_concrete::<R, Alg>(

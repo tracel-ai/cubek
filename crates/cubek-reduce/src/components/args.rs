@@ -30,28 +30,28 @@ pub trait ReduceArgs: Send + Sync + 'static + Clone {
         output: &mut Self::Output<P::Out>,
     ) -> Self::State<P>;
 
-    fn read_input<P: ReduceDType>(state: &Self::State<P>, index: u32) -> Line<P::In>;
-    fn read_output<P: ReduceDType>(state: &Self::State<P>, index: u32) -> Line<P::Out>;
+    fn read_input<P: ReduceDType>(state: &Self::State<P>, index: usize) -> Line<P::In>;
+    fn read_output<P: ReduceDType>(state: &Self::State<P>, index: usize) -> Line<P::Out>;
 
-    fn write_output<P: ReduceDType>(state: &mut Self::State<P>, index: u32, value: Line<P::Out>);
+    fn write_output<P: ReduceDType>(state: &mut Self::State<P>, index: usize, value: Line<P::Out>);
 
-    fn len_input<P: ReduceDType>(state: &Self::State<P>) -> u32;
-    fn len_output<P: ReduceDType>(state: &Self::State<P>) -> u32;
+    fn len_input<P: ReduceDType>(state: &Self::State<P>) -> usize;
+    fn len_output<P: ReduceDType>(state: &Self::State<P>) -> usize;
 
-    fn buffer_len_input<P: ReduceDType>(state: &Self::State<P>) -> u32;
-    fn buffer_len_output<P: ReduceDType>(state: &Self::State<P>) -> u32;
+    fn buffer_len_input<P: ReduceDType>(state: &Self::State<P>) -> usize;
+    fn buffer_len_output<P: ReduceDType>(state: &Self::State<P>) -> usize;
 
-    fn rank_input<P: ReduceDType>(state: &Self::State<P>) -> u32;
-    fn rank_output<P: ReduceDType>(state: &Self::State<P>) -> u32;
+    fn rank_input<P: ReduceDType>(state: &Self::State<P>) -> usize;
+    fn rank_output<P: ReduceDType>(state: &Self::State<P>) -> usize;
 
-    fn shape_input<P: ReduceDType>(state: &Self::State<P>, dim: u32) -> u32;
-    fn shape_output<P: ReduceDType>(state: &Self::State<P>, dim: u32) -> u32;
+    fn shape_input<P: ReduceDType>(state: &Self::State<P>, dim: usize) -> usize;
+    fn shape_output<P: ReduceDType>(state: &Self::State<P>, dim: usize) -> usize;
 
-    fn stride_input<P: ReduceDType>(state: &Self::State<P>, dim: u32) -> u32;
-    fn stride_output<P: ReduceDType>(state: &Self::State<P>, dim: u32) -> u32;
+    fn stride_input<P: ReduceDType>(state: &Self::State<P>, dim: usize) -> usize;
+    fn stride_output<P: ReduceDType>(state: &Self::State<P>, dim: usize) -> usize;
 
-    fn line_size_input<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(u32);
-    fn line_size_output<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(u32);
+    fn line_size_input<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(LineSize);
+    fn line_size_output<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(LineSize);
 }
 
 #[cube]
@@ -87,62 +87,62 @@ impl ReduceArgs for TensorArgs {
         (input, output)
     }
 
-    fn read_input<P: ReduceDType>(state: &Self::State<P>, index: u32) -> Line<P::In> {
+    fn read_input<P: ReduceDType>(state: &Self::State<P>, index: usize) -> Line<P::In> {
         unsafe { (*state.0)[index] }
     }
 
-    fn read_output<P: ReduceDType>(state: &Self::State<P>, index: u32) -> Line<P::Out> {
+    fn read_output<P: ReduceDType>(state: &Self::State<P>, index: usize) -> Line<P::Out> {
         unsafe { (*state.1)[index] }
     }
 
-    fn write_output<P: ReduceDType>(state: &mut Self::State<P>, index: u32, value: Line<P::Out>) {
+    fn write_output<P: ReduceDType>(state: &mut Self::State<P>, index: usize, value: Line<P::Out>) {
         unsafe { (*state.1)[index] = value }
     }
 
-    fn buffer_len_input<P: ReduceDType>(state: &Self::State<P>) -> u32 {
+    fn buffer_len_input<P: ReduceDType>(state: &Self::State<P>) -> usize {
         unsafe { (*state.0).buffer_len() }
     }
 
-    fn buffer_len_output<P: ReduceDType>(state: &Self::State<P>) -> u32 {
+    fn buffer_len_output<P: ReduceDType>(state: &Self::State<P>) -> usize {
         unsafe { (*state.1).buffer_len() }
     }
 
-    fn len_input<P: ReduceDType>(state: &Self::State<P>) -> u32 {
+    fn len_input<P: ReduceDType>(state: &Self::State<P>) -> usize {
         unsafe { (*state.0).len() }
     }
 
-    fn len_output<P: ReduceDType>(state: &Self::State<P>) -> u32 {
+    fn len_output<P: ReduceDType>(state: &Self::State<P>) -> usize {
         unsafe { (*state.1).len() }
     }
-    fn rank_input<P: ReduceDType>(state: &Self::State<P>) -> u32 {
+    fn rank_input<P: ReduceDType>(state: &Self::State<P>) -> usize {
         unsafe { (*state.0).rank() }
     }
 
-    fn rank_output<P: ReduceDType>(state: &Self::State<P>) -> u32 {
+    fn rank_output<P: ReduceDType>(state: &Self::State<P>) -> usize {
         unsafe { (*state.1).rank() }
     }
 
-    fn shape_input<P: ReduceDType>(state: &Self::State<P>, dim: u32) -> u32 {
+    fn shape_input<P: ReduceDType>(state: &Self::State<P>, dim: usize) -> usize {
         unsafe { (*state.0).shape(dim) }
     }
 
-    fn shape_output<P: ReduceDType>(state: &Self::State<P>, dim: u32) -> u32 {
+    fn shape_output<P: ReduceDType>(state: &Self::State<P>, dim: usize) -> usize {
         unsafe { (*state.1).shape(dim) }
     }
 
-    fn stride_input<P: ReduceDType>(state: &Self::State<P>, dim: u32) -> u32 {
+    fn stride_input<P: ReduceDType>(state: &Self::State<P>, dim: usize) -> usize {
         unsafe { (*state.0).stride(dim) }
     }
 
-    fn stride_output<P: ReduceDType>(state: &Self::State<P>, dim: u32) -> u32 {
+    fn stride_output<P: ReduceDType>(state: &Self::State<P>, dim: usize) -> usize {
         unsafe { (*state.1).stride(dim) }
     }
 
-    fn line_size_input<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(u32) {
+    fn line_size_input<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(LineSize) {
         unsafe { (*state.0).line_size() }
     }
 
-    fn line_size_output<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(u32) {
+    fn line_size_output<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(LineSize) {
         unsafe { (*state.1).line_size() }
     }
 }
@@ -199,7 +199,7 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::In>
     fn __expand_read_method(
         &self,
         scope: &mut Scope,
-        index: ExpandElementTyped<u32>,
+        index: ExpandElementTyped<usize>,
     ) -> ExpandElementTyped<Line<P::In>> {
         RA::__expand_read_input(scope, self.state.clone(), index)
     }
@@ -207,7 +207,7 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::In>
     fn __expand_write_method(
         &self,
         _scope: &mut Scope,
-        _index: ExpandElementTyped<u32>,
+        _index: ExpandElementTyped<usize>,
         _value: ExpandElementTyped<Line<P::In>>,
     ) {
         unreachable!("Can't write to input")
@@ -216,34 +216,34 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::In>
     fn __expand_shape_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<u32>,
-    ) -> ExpandElementTyped<u32> {
+        axis: ExpandElementTyped<usize>,
+    ) -> ExpandElementTyped<usize> {
         RA::__expand_shape_input(scope, self.state.clone(), axis)
     }
 
     fn __expand_stride_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<u32>,
-    ) -> ExpandElementTyped<u32> {
+        axis: ExpandElementTyped<usize>,
+    ) -> ExpandElementTyped<usize> {
         RA::__expand_stride_input(scope, self.state.clone(), axis)
     }
 
-    fn __expand_rank_method(&self, scope: &mut Scope) -> ExpandElementTyped<u32> {
+    fn __expand_rank_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
         RA::__expand_rank_input(scope, self.state.clone())
     }
-    fn __expand_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<u32> {
+    fn __expand_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
         RA::__expand_len_input(scope, self.state.clone())
     }
-    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<u32> {
+    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
         RA::__expand_buffer_len_input(scope, self.state.clone())
     }
 
     fn __expand_read_window_method(
         &self,
         _context: &mut Scope,
-        _start: ExpandElementTyped<u32>,
-        _end: ExpandElementTyped<u32>,
+        _start: ExpandElementTyped<usize>,
+        _end: ExpandElementTyped<usize>,
     ) -> SliceExpand<Line<P::In>, ReadOnly> {
         panic!("Unsupported")
     }
@@ -258,7 +258,7 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::In>
 
 impl<P: ReduceDType, RA: ReduceArgs> Lined for TensorArg<P, RA, Input> {}
 impl<P: ReduceDType, RA: ReduceArgs> LinedExpand for TensorArgExpand<P, RA, Input> {
-    fn line_size(&self) -> u32 {
+    fn line_size(&self) -> usize {
         let mut scope = Scope::root(false);
         RA::__expand_line_size_input(&mut scope, self.state.clone())
     }
@@ -270,7 +270,7 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::Out>
     fn __expand_read_method(
         &self,
         scope: &mut Scope,
-        index: ExpandElementTyped<u32>,
+        index: ExpandElementTyped<usize>,
     ) -> ExpandElementTyped<Line<P::Out>> {
         RA::__expand_read_output(scope, self.state.clone(), index)
     }
@@ -278,7 +278,7 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::Out>
     fn __expand_write_method(
         &self,
         scope: &mut Scope,
-        index: ExpandElementTyped<u32>,
+        index: ExpandElementTyped<usize>,
         value: ExpandElementTyped<Line<P::Out>>,
     ) {
         RA::__expand_write_output(scope, self.state.clone(), index, value)
@@ -287,35 +287,35 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::Out>
     fn __expand_shape_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<u32>,
-    ) -> ExpandElementTyped<u32> {
+        axis: ExpandElementTyped<usize>,
+    ) -> ExpandElementTyped<usize> {
         RA::__expand_shape_output(scope, self.state.clone(), axis)
     }
 
     fn __expand_stride_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<u32>,
-    ) -> ExpandElementTyped<u32> {
+        axis: ExpandElementTyped<usize>,
+    ) -> ExpandElementTyped<usize> {
         RA::__expand_stride_output(scope, self.state.clone(), axis)
     }
 
-    fn __expand_rank_method(&self, scope: &mut Scope) -> ExpandElementTyped<u32> {
+    fn __expand_rank_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
         RA::__expand_rank_output(scope, self.state.clone())
     }
 
-    fn __expand_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<u32> {
+    fn __expand_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
         RA::__expand_len_output(scope, self.state.clone())
     }
-    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<u32> {
+    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
         RA::__expand_buffer_len_output(scope, self.state.clone())
     }
 
     fn __expand_read_window_method(
         &self,
         _context: &mut Scope,
-        _start: ExpandElementTyped<u32>,
-        _end: ExpandElementTyped<u32>,
+        _start: ExpandElementTyped<usize>,
+        _end: ExpandElementTyped<usize>,
     ) -> SliceExpand<Line<P::Out>, ReadOnly> {
         panic!("Unsupported")
     }
@@ -330,7 +330,7 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::Out>
 
 impl<P: ReduceDType, RA: ReduceArgs> Lined for TensorArg<P, RA, Output> {}
 impl<P: ReduceDType, RA: ReduceArgs> LinedExpand for TensorArgExpand<P, RA, Output> {
-    fn line_size(&self) -> u32 {
+    fn line_size(&self) -> usize {
         let mut scope = Scope::root(false);
         RA::__expand_line_size_output(&mut scope, self.state.clone())
     }

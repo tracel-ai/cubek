@@ -11,120 +11,44 @@ use crate::test_tensor::{
 };
 
 pub struct TestInput {
-    client: ComputeClient<TestRuntime>,
-    spec: TestInputSpec,
+    base_spec: BaseInputSpec,
+    data_kind: DataKind,
 }
 
-pub enum TestInputSpec {
-    Arange(SimpleInputSpec),
-    Eye(SimpleInputSpec),
-    Random(RandomInputSpec),
-    Zeros(SimpleInputSpec),
-    Custom(CustomInputSpec),
+pub enum DataKind {
+    Arange,
+    Eye,
+    Zeros,
+    Random {
+        seed: u64,
+        distribution: Distribution,
+    },
+    Custom {
+        data: Vec<f32>,
+    },
 }
 
 impl TestInput {
-    pub fn random(
+    pub fn new(
         client: ComputeClient<TestRuntime>,
         shape: Vec<usize>,
         dtype: StorageType,
-        seed: u64,
-        distribution: Distribution,
         stride_spec: StrideSpec,
+        data_kind: DataKind,
     ) -> Self {
-        let inner = SimpleInputSpec {
-            client: client.clone(),
+        let base_spec = BaseInputSpec {
+            client,
             shape,
             dtype,
             stride_spec,
         };
 
-        let spec = RandomInputSpec {
-            inner,
-            seed,
-            distribution,
-        };
-
-        TestInput {
-            client,
-            spec: TestInputSpec::Random(spec),
+        Self {
+            base_spec,
+            data_kind,
         }
     }
 
-    pub fn zeros(
-        client: ComputeClient<TestRuntime>,
-        shape: Vec<usize>,
-        dtype: StorageType,
-        stride_spec: StrideSpec,
-    ) -> Self {
-        TestInput {
-            client: client.clone(),
-            spec: TestInputSpec::Zeros(SimpleInputSpec {
-                client,
-                shape,
-                dtype,
-                stride_spec,
-            }),
-        }
-    }
-
-    pub fn eye(
-        client: ComputeClient<TestRuntime>,
-        shape: Vec<usize>,
-        dtype: StorageType,
-        stride_spec: StrideSpec,
-    ) -> Self {
-        TestInput {
-            client: client.clone(),
-            spec: TestInputSpec::Eye(SimpleInputSpec {
-                client,
-                shape,
-                dtype,
-                stride_spec,
-            }),
-        }
-    }
-
-    pub fn arange(
-        client: ComputeClient<TestRuntime>,
-        shape: Vec<usize>,
-        dtype: StorageType,
-        stride_spec: StrideSpec,
-    ) -> Self {
-        let spec = SimpleInputSpec {
-            client: client.clone(),
-            shape,
-            dtype,
-            stride_spec,
-        };
-
-        TestInput {
-            client,
-            spec: TestInputSpec::Arange(spec),
-        }
-    }
-
-    pub fn custom(
-        client: ComputeClient<TestRuntime>,
-        shape: Vec<usize>,
-        dtype: StorageType,
-        stride_spec: StrideSpec,
-        data: Vec<f32>,
-    ) -> Self {
-        let inner = SimpleInputSpec {
-            client: client.clone(),
-            shape,
-            dtype,
-            stride_spec,
-        };
-
-        let spec = CustomInputSpec { inner, data };
-
-        TestInput {
-            client,
-            spec: TestInputSpec::Custom(spec),
-        }
-    }
     pub fn generate_with_f32_host_data(self) -> (TensorHandle<TestRuntime>, HostData) {
         self.generate_host_data(HostDataType::F32)
     }
@@ -147,12 +71,14 @@ impl TestInput {
     }
 
     pub fn generate(self) -> TensorHandle<TestRuntime> {
-        match self.spec {
-            TestInputSpec::Arange(spec) => build_arange(spec),
-            TestInputSpec::Eye(spec) => build_eye(spec),
-            TestInputSpec::Random(spec) => build_random(spec),
-            TestInputSpec::Zeros(spec) => build_zeros(spec),
-            TestInputSpec::Custom(spec) => build_custom(spec),
+        match self.data_kind {
+            DataKind::Arange => build_arange(self.base_spec),
+            DataKind::Eye => build_eye(self.base_spec),
+            DataKind::Random { seed, distribution } => {
+                build_random(self.base_spec, seed, distribution)
+            }
+            DataKind::Zeros => build_zeros(self.base_spec),
+            DataKind::Custom { data } => build_custom(self.base_spec, data),
         }
     }
 
@@ -160,35 +86,29 @@ impl TestInput {
         self,
         host_data_type: HostDataType,
     ) -> (TensorHandle<TestRuntime>, HostData) {
-        let client = self.client.clone();
+        let client = self.base_spec.client.clone();
         let tensor_handle = self.generate();
         let host_data = HostData::from_tensor_handle(&client, &tensor_handle, host_data_type);
         (tensor_handle, host_data)
     }
 }
 
-pub struct SimpleInputSpec {
-    pub(crate) client: ComputeClient<TestRuntime>,
-    pub(crate) shape: Vec<usize>,
-    pub(crate) dtype: StorageType,
-    pub(crate) stride_spec: StrideSpec,
+pub struct BaseInputSpec {
+    pub client: ComputeClient<TestRuntime>,
+    pub shape: Vec<usize>,
+    pub dtype: StorageType,
+    pub stride_spec: StrideSpec,
 }
 
-impl SimpleInputSpec {
+impl BaseInputSpec {
     pub(crate) fn strides(&self) -> Vec<usize> {
         self.stride_spec.compute_strides(&self.shape)
     }
 }
 
 pub struct RandomInputSpec {
-    pub(crate) inner: SimpleInputSpec,
-    pub(crate) seed: u64,
-    pub(crate) distribution: Distribution,
-}
-
-pub struct CustomInputSpec {
-    pub(crate) inner: SimpleInputSpec,
-    pub(crate) data: Vec<f32>,
+    pub seed: u64,
+    pub distribution: Distribution,
 }
 
 #[derive(Copy, Clone)]

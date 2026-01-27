@@ -29,7 +29,7 @@ macro_rules! impl_full_load_strategy {
 
                 fn new_job<EG: Numeric, ES: Numeric>(
                     _runtime_args: RuntimeArgs,
-                    line_size: u32,
+                    line_size: LineSize,
                     config: GlobalReaderConfig,
                 ) -> Self::Job<EG, ES> {
                     <Self as MatmulFullLoadingStrategy>::new_job::<EG, ES>(
@@ -40,7 +40,7 @@ macro_rules! impl_full_load_strategy {
                 fn __expand_new_job<EG: Numeric, ES: Numeric>(
                     scope: &mut Scope,
                     _runtime_args: RuntimeArgsExpand,
-                    line_size: u32,
+                    line_size: LineSize,
                     config: GlobalReaderConfig,
                 ) -> <Self::Job<EG, ES> as CubeType>::ExpandType {
                     <Self as MatmulFullLoadingStrategy>::__expand_new_job::<EG, ES>(

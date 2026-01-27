@@ -1,9 +1,12 @@
 use cubecl::prelude::*;
 use cubecl::std::{
     FastDivmod, FastDivmodArgs,
-    tensor::layout::{Coords3d, Layout, LayoutExpand},
+    tensor::layout::{Layout, LayoutExpand},
 };
-use cubek_matmul::components::global::{GlobalConfig, memory::GlobalMemoryConfig};
+use cubek_matmul::{
+    components::global::{GlobalConfig, memory::GlobalMemoryConfig},
+    launch::BatchedCoords,
+};
 
 use crate::components::{
     ConvGemmConfig, ConvolutionConfig, ConvolutionOperation, ConvolutionParams, ConvolutionProblem,
@@ -15,7 +18,7 @@ use crate::components::{
 #[derive(CubeType, CubeLaunch, Clone)]
 pub struct WeightLayout {
     /// Number of channels, including padding, used for decomposing `k`
-    pub padded_channels: FastDivmod,
+    pub padded_channels: FastDivmod<u32>,
 
     /// Shape of the combined kernel and channels dim, including padding
     pub rows: u32,
@@ -35,7 +38,7 @@ impl WeightLayout {
     pub fn new<E: Numeric, G: GlobalConfig>(
         rows: u32,
         cols: u32,
-        padded_channels: FastDivmod,
+        padded_channels: FastDivmod<u32>,
         #[comptime] config: ConvolutionConfig<G>,
     ) -> WeightLayout {
         WeightLayout {
@@ -50,22 +53,22 @@ impl WeightLayout {
 
 #[cube]
 impl Layout for WeightLayout {
-    type Coordinates = Coords3d;
+    type Coordinates = BatchedCoords;
     type SourceCoordinates = NhwcCoords;
 
     fn to_source_pos(&self, coords: Self::Coordinates) -> NhwcCoords {
-        let params = comptime![self.params];
+        let params = self.params.comptime();
         let (_, k, n) = coords;
 
         let (mut rem, k_channel) = self.padded_channels.div_mod(k);
 
-        let spatial_dims = comptime![params.dimensionality.num_dims()];
+        let spatial_dims = params.dimensionality.num_dims();
         let mut kernel_pos = Sequence::<i32>::new();
 
         #[unroll]
         for i in 0..spatial_dims {
-            let dim = comptime![spatial_dims - i - 1];
-            let ksize = comptime![params.kernel_size[dim as usize]];
+            let dim = spatial_dims - i - 1;
+            let ksize = params.kernel_size[dim];
             let k_pos = rem % ksize;
             rem /= ksize;
 
@@ -98,8 +101,8 @@ impl Layout for WeightLayout {
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
         let (_, k, n) = pos;
-        let check_k = comptime![self.config.check_row_bounds];
-        let check_n = comptime![self.config.check_col_bounds];
+        let check_k = self.config.check_row_bounds;
+        let check_n = self.config.check_col_bounds;
         (!check_k || k < self.rows) && (!check_n || n < self.cols)
     }
 }
@@ -124,7 +127,7 @@ impl<'a, R: Runtime> WeightLayoutLaunch<'a, R> {
         config: GlobalMemoryConfig,
     ) -> Self {
         let padded_channels = problem.padded_channels as u32;
-        let padded_channels = FastDivmodArgs::new(client, padded_channels);
+        let padded_channels = FastDivmodArgs::<u32>::new(client, padded_channels);
         let shape_k = ScalarArg::new(problem.k as u32);
         let shape_n = ScalarArg::new(problem.n as u32);
 
@@ -139,7 +142,7 @@ impl<'a, R: Runtime> WeightLayoutLaunch<'a, R> {
         config: GlobalMemoryConfig,
     ) -> Self {
         let padded_channels = problem.padded_channels as u32;
-        let padded_channels = FastDivmodArgs::new(client, padded_channels);
+        let padded_channels = FastDivmodArgs::<u32>::new(client, padded_channels);
         let shape_m = ScalarArg::new(problem.m as u32);
         let shape_n = ScalarArg::new(problem.n as u32);
 

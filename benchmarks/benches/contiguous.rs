@@ -10,15 +10,10 @@ impl<R: Runtime> Benchmark for IntoContiguousBench<R> {
     type Output = TensorHandle<R>;
 
     fn prepare(&self) -> Self::Input {
-        fn swap(array: &mut [usize], dims: (usize, usize)) {
-            let tmp = array[dims.0];
-            array[dims.0] = array[dims.1];
-            array[dims.1] = tmp;
-        }
         let mut handle = TensorHandle::empty(&self.client, self.shape.clone(), self.dtype);
-        for dims in self.dims.iter() {
-            swap(&mut handle.shape, *dims);
-            swap(&mut handle.strides, *dims);
+        for (dim0, dim1) in self.dims.iter() {
+            handle.shape.swap(*dim0, *dim1);
+            handle.strides.swap(*dim0, *dim1);
         }
 
         handle
@@ -53,6 +48,7 @@ struct IntoContiguousBench<R: Runtime> {
 
 #[allow(dead_code)]
 fn run<R: Runtime>(device: R::Device, dtype: StorageType) {
+    #[allow(clippy::single_element_loop)]
     for shape in [vec![16, 16, 512, 512]] {
         // for shape in [vec![32, 512, 2048], vec![16, 16, 512, 512]] {
         // for dims in get_combinations(shape.len()) {
@@ -70,6 +66,7 @@ fn run<R: Runtime>(device: R::Device, dtype: StorageType) {
     //}
 }
 
+#[allow(unused)]
 fn get_combinations(n: usize) -> impl Iterator<Item = (usize, usize)> {
     // Iterate from 0 up to n
     (0..n).flat_map(move |i| {

@@ -4,7 +4,7 @@ use cubecl::{
     std::tensor::{TensorHandle, ViewOperationsMut, ViewOperationsMutExpand},
 };
 
-use crate::test_tensor::base::SimpleInputSpec;
+use crate::test_tensor::base::BaseInputSpec;
 
 #[cube(launch)]
 fn arange_launch<T: Numeric>(tensor: &mut Tensor<T>, #[define(T)] _types: StorageType) {
@@ -15,7 +15,7 @@ fn arange_launch<T: Numeric>(tensor: &mut Tensor<T>, #[define(T)] _types: Storag
     }
 
     let mut remaining = linear;
-    let mut offset = 0u32;
+    let mut offset = 0;
 
     for d in 0..tensor.rank() {
         let dim = tensor.shape(tensor.rank() - 1 - d);
@@ -69,6 +69,6 @@ fn new_arange(
     out
 }
 
-pub(crate) fn build_arange(spec: SimpleInputSpec) -> TensorHandle<TestRuntime> {
+pub(crate) fn build_arange(spec: BaseInputSpec) -> TensorHandle<TestRuntime> {
     new_arange(&spec.client, spec.shape.clone(), spec.strides(), spec.dtype)
 }

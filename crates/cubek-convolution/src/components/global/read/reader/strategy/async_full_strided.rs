@@ -1,9 +1,9 @@
-use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Layout, LayoutExpand};
+use cubecl::{ir::DeviceProperties, prelude::barrier::Barrier};
 use cubek_matmul::components::{
     global::{
-        GlobalReaderConfig, RoleRule,
+        GlobalReaderConfig, PlaneFlowPartition,
         memory::GlobalIterator,
         multi_stage::LoadMaxRoundPlaneCount,
         read::{
@@ -14,7 +14,7 @@ use cubek_matmul::components::{
     },
     stage::{StridedStageFamily, StridedStageMemory, StridedTilingLayout},
 };
-use cubek_matmul::definition::{InvalidConfigError, MatmulElems, MatmulProblem};
+use cubek_matmul::definition::{InvalidConfigError, MatmulElems, MatmulProblem, StageIdent};
 
 use crate::components::global::{
     args::RuntimeArgs,
@@ -30,13 +30,19 @@ use crate::components::global::{
 pub struct AsyncFullStridedLoading {}
 
 impl LoadingValidation for AsyncFullStridedLoading {
-    fn check<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &MatmulProblem,
+    fn validate_with_config(
+        device_props: &DeviceProperties,
         config: &GlobalReaderConfig,
-        dtypes: &MatmulElems,
     ) -> Result<(), InvalidConfigError> {
-        MatmulStridedLoading::check(client, problem, config, dtypes)
+        MatmulStridedLoading::validate_with_config(device_props, config)
+    }
+
+    fn validate_with_problem(
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        ident: StageIdent,
+    ) -> Result<(), InvalidConfigError> {
+        MatmulStridedLoading::validate_with_problem(problem, dtypes, ident)
     }
 }
 
@@ -44,7 +50,7 @@ impl LoadMaxRoundPlaneCount for AsyncFullStridedLoading {
     fn max_round_plane_count(
         elements_per_tile: u32,
         tiles_per_stage: u32,
-        line_size: u8,
+        line_size: LineSize,
         plane_dim: u32,
         dtype: StorageType,
     ) -> u32 {
@@ -66,17 +72,17 @@ impl FullLoadingStrategy for AsyncFullStridedLoading {
 
     fn new_job<EG: Numeric, ES: Numeric>(
         runtime_args: RuntimeArgs,
-        #[comptime] _line_size: u32,
+        #[comptime] _line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, ES> {
-        let type_size = ES::type_size_bits();
-        let line_size = comptime![ASYNC_COPY_WIDTH / type_size];
+        let type_size = ES::type_size_bits().comptime();
+        let line_size = ASYNC_COPY_WIDTH / type_size as u32;
         let num_stage_lines = config.smem_config.elements_per_stage() / line_size;
         let unit_count = config.loading_planes_count() * config.plane_dim;
-        let num_tasks_per_unit = comptime!(num_stage_lines / unit_count);
+        let num_tasks_per_unit = num_stage_lines / unit_count;
 
-        let unit_position_base = RoleRule::new(config.plane_role_config.rule)
-            .load_index(config.specialization_tensor_config)
+        let unit_position_base = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
+            .load_index(config.input_load_flow)
             * config.plane_dim
             + UNIT_POS_X;
 
@@ -120,11 +126,11 @@ impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, StridedTilingLayout, AsyncCopy
         let unit_position = this.unit_position_base + task_id * this.unit_count;
         let unit_position_abs = unit_position * this.copy_line_size;
 
-        let layout = FullStageLayout::new(comptime![config.smem_config]);
+        let layout = FullStageLayout::new(config.smem_config);
         let view = global_iter.view();
 
         let pos = layout.to_source_pos(unit_position_abs);
-        let stage_offset = unit_position_abs / stage.smem.line_size();
+        let stage_offset = unit_position_abs / stage.smem.line_size() as u32;
 
         async_copy_from(
             view,

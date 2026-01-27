@@ -37,8 +37,8 @@ impl<GA: GlobalAttention<AP>, AP: AttentionPrecision> BatchAttention<AP>
         let stage_q_offset = q_index * global_config.stage_config().elements_in_stage_seq_q();
 
         // Assume [batch, num_heads, seq_*, head_dim] layout
-        let seq_q = query.shape(2);
-        let seq_kv = key.shape(2);
+        let seq_q = query.shape(2) as u32;
+        let seq_kv = key.shape(2) as u32;
 
         GA::execute(
             GA::init_query_reader(batch_index, stage_q_offset, query, global_config),

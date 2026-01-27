@@ -6,7 +6,7 @@
 //! ## Modes
 //! - `Correct` (default): Numerical errors fail the test, compilation errors are ignored.
 //! - `Strict`: Both numerical and compilation errors fail the test.
-//! - `Print { filter, only_failing }`:
+//! - `Print { filter, fail_only }`:
 //!     - `printall:<filter>` — all tests fail and matching elements are printed.
 //!     - `printfail:<filter>` — only numerical errors fail and matching elements are printed.
 //!
@@ -39,7 +39,10 @@
 //! export CUBE_TEST_MODE=PrintFail:.,10-20
 //! ```
 
-use crate::correctness::{TensorFilter, parse_tensor_filter};
+use crate::{
+    TestDecision, TestOutcome, ValidationResult,
+    correctness::{TensorFilter, parse_tensor_filter},
+};
 
 const CUBE_TEST_MODE_ENV: &str = "CUBE_TEST_MODE";
 
@@ -54,20 +57,76 @@ pub enum TestMode {
     Strict,
 
     /// All tests can be printed according to the given `filter`.
-    /// `only_failing = true`: only tests with numerical errors are marked as failed and printed.
-    /// `only_failing = false`: all tests are marked as failed and printed.
+    /// `fail_only = true`: only tests with numerical errors are marked as failed and printed.
+    /// `fail_only = false`: all tests are marked as failed and printed.
     Print {
         filter: TensorFilter,
-        only_failing: bool,
+        fail_only: bool,
     },
+
+    /// Fail only if the test successfully runs.
+    /// Compilation failures are ignored.
+    ///
+    /// Helpful to isolate relevant tests
+    FailIfRun,
 }
 
 impl TestMode {
-    pub fn should_fail_on_test_compilation_fail(self) -> bool {
+    pub fn decide(&self, outcome: TestOutcome) -> TestDecision {
+        use TestDecision::*;
+        use TestMode::*;
+        use TestOutcome::*;
+        use ValidationResult::*;
+
         match self {
-            TestMode::Correct => false,
-            TestMode::Strict => true,
-            TestMode::Print { only_failing, .. } => !only_failing,
+            Correct => match outcome {
+                Validated(result) => match result {
+                    Pass => Accept,
+                    Fail(reason) => Reject(reason),
+                    Skipped(reason) => Reject(reason),
+                },
+                CompileError(_) => Accept,
+            },
+            Strict => match outcome {
+                Validated(result) => match result {
+                    Pass => Accept,
+                    Fail(reason) => Reject(reason),
+                    Skipped(reason) => Reject(reason),
+                },
+                CompileError(reason) => Reject(reason),
+            },
+            Print {
+                filter: _,
+                fail_only,
+            } => match outcome {
+                Validated(result) => match result {
+                    Pass => {
+                        if *fail_only {
+                            Accept
+                        } else {
+                            Reject("printed".into())
+                        }
+                    }
+                    Fail(reason) => Reject(reason),
+                    Skipped(reason) => Reject(reason),
+                },
+
+                CompileError(reason) => {
+                    if *fail_only {
+                        Accept
+                    } else {
+                        Reject(reason)
+                    }
+                }
+            },
+            FailIfRun => match outcome {
+                Validated(result) => match result {
+                    Pass => Reject("Actually passed, but FailIfRun mode activated".to_string()),
+                    Fail(_) => Accept,
+                    Skipped(_) => Accept,
+                },
+                CompileError(_) => Accept,
+            },
         }
     }
 }
@@ -84,12 +143,14 @@ pub fn current_test_mode() -> TestMode {
         parse_print_mode(print_mode, true)
     } else if val == "strict" {
         TestMode::Strict
+    } else if val == "failifrun" {
+        TestMode::FailIfRun
     } else {
         TestMode::Correct
     }
 }
 
-fn parse_print_mode(suffix: &str, only_failing: bool) -> TestMode {
+fn parse_print_mode(suffix: &str, fail_only: bool) -> TestMode {
     let filter = if let Some(rest) = suffix.strip_prefix(':') {
         match parse_tensor_filter(rest) {
             Ok(f) => f,
@@ -102,8 +163,5 @@ fn parse_print_mode(suffix: &str, only_failing: bool) -> TestMode {
         vec![]
     };
 
-    TestMode::Print {
-        filter,
-        only_failing,
-    }
+    TestMode::Print { filter, fail_only }
 }

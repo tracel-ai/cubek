@@ -1,7 +1,8 @@
 use cubecl::{
     prelude::*,
-    std::tensor::layout::{Coords2d, Coords3d, Layout, LayoutExpand},
+    std::tensor::layout::{Coords2d, Layout, LayoutExpand},
 };
+use cubek_matmul::launch::BatchedCoords;
 
 /// Weight backwards needs a consolidated layout to work properly across the combined `k` dimension.
 /// Padding to an even tile shape on width isn't valid, because `im2col` doesn't do this.
@@ -11,7 +12,7 @@ pub struct TmaOutGradLayout {}
 
 #[cube]
 impl Layout for TmaOutGradLayout {
-    type Coordinates = Coords3d;
+    type Coordinates = BatchedCoords;
     type SourceCoordinates = Coords2d;
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
@@ -24,7 +25,7 @@ impl Layout for TmaOutGradLayout {
     }
 
     fn shape(&self) -> Self::Coordinates {
-        (u32::MAX, u32::MAX, u32::MAX).runtime()
+        (u32::MAX as usize, u32::MAX, u32::MAX).runtime()
     }
 
     fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {

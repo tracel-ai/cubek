@@ -6,7 +6,7 @@ use crate::components::tile::register::writer::RegisterStageWriter;
 use crate::components::tile::{TileMatmul, io::Filled, register::reader::RegisterFragmentReader};
 use crate::components::tile::{io::Strided, register::reader::RegisterStageReader};
 use crate::components::tile::{io::TileKind, tile_data::StridedTile};
-use crate::definition::{MatrixLayout, StageIdent};
+use crate::definition::{MatrixLayout, StageIdent, TileSize};
 
 /// Uses one unit to perform a small matmul directly in registers
 pub struct RegisterMatmul<Acc: TileKind = Filled> {
@@ -49,12 +49,18 @@ where
         #[comptime] config: Self::Config,
     ) {
         match config.product_type {
-            ProductType::Inner => {
-                Self::inner_product(&lhs.array, &rhs.array, &mut acc.array, config)
-            }
-            ProductType::Outer => {
-                Self::outer_product(&lhs.array, &rhs.array, &mut acc.array, config)
-            }
+            ProductType::Inner => Self::inner_product(
+                &lhs.array,
+                &rhs.array,
+                &mut acc.array,
+                config.shared.tile_size,
+            ),
+            ProductType::Outer => Self::outer_product(
+                &lhs.array,
+                &rhs.array,
+                &mut acc.array,
+                config.shared.tile_size,
+            ),
         }
     }
 
@@ -63,7 +69,7 @@ where
         #[comptime] config: Self::Config,
     ) -> Self::LhsFragment {
         UnitFragment::<L> {
-            array: Array::new(config.shared.tile_size.mk()),
+            array: Array::new(config.shared.tile_size.mk() as usize),
             layout,
         }
     }
@@ -73,7 +79,7 @@ where
         #[comptime] config: Self::Config,
     ) -> Self::RhsFragment {
         UnitFragment::<R> {
-            array: Array::new(config.shared.tile_size.nk()),
+            array: Array::new(config.shared.tile_size.nk() as usize),
             layout,
         }
     }
@@ -83,7 +89,7 @@ where
         #[comptime] config: Self::Config,
     ) -> Self::AccFragment {
         UnitFragment::<A> {
-            array: Array::new(config.shared.tile_size.mn()),
+            array: Array::new(config.shared.tile_size.mn() as usize),
             layout,
         }
     }
@@ -114,7 +120,7 @@ where
 
     fn write_results<E: Numeric>(
         tile: &mut StridedTile<E, ReadWrite>,
-        acc: &Self::AccFragment,
+        acc: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     ) {
         RegisterStageWriter::store_fragment(tile, acc, config)
@@ -123,14 +129,13 @@ where
 
 #[cube]
 impl<Acc: TileKind> RegisterMatmul<Acc> {
-    fn inner_product<Lhs: Numeric, Rhs: Numeric, EA: Numeric>(
+    pub fn inner_product<Lhs: Numeric, Rhs: Numeric, EA: Numeric>(
         lhs: &Array<Lhs>,
         rhs: &Array<Rhs>,
         acc: &mut Array<EA>,
-        #[comptime] config: RegisterMatmulConfig,
+        #[comptime] tile_size: TileSize,
     ) {
-        let (m, n, k) =
-            comptime! {let (m, n, k): (u32, u32, u32) = config.shared.tile_size.into(); (m, n, k)};
+        let (m, n, k) = comptime! {let (m, n, k): (u32, u32, u32) = tile_size.into(); (m, n, k)};
 
         #[unroll(UNROLL)]
         for m_ in 0..m {
@@ -138,32 +143,31 @@ impl<Acc: TileKind> RegisterMatmul<Acc> {
             for n_ in 0..n {
                 #[unroll(UNROLL)]
                 for k_ in 0..k {
-                    let lhs_elem = EA::cast_from(lhs[m_ * k + k_]);
-                    let rhs_elem = EA::cast_from(rhs[n_ * k + k_]);
-                    acc[m_ * n + n_] += lhs_elem * rhs_elem;
+                    let lhs_elem = EA::cast_from(lhs[(m_ * k + k_) as usize]);
+                    let rhs_elem = EA::cast_from(rhs[(n_ * k + k_) as usize]);
+                    acc[(m_ * n + n_) as usize] += lhs_elem * rhs_elem;
                 }
             }
         }
     }
 
-    fn outer_product<Lhs: Numeric, Rhs: Numeric, EA: Numeric>(
+    pub fn outer_product<Lhs: Numeric, Rhs: Numeric, EA: Numeric>(
         lhs: &Array<Lhs>,
         rhs: &Array<Rhs>,
         acc: &mut Array<EA>,
-        #[comptime] config: RegisterMatmulConfig,
+        #[comptime] tile_size: TileSize,
     ) {
-        let (m, n, k) =
-            comptime! {let (m, n, k): (u32, u32, u32) = config.shared.tile_size.into(); (m, n, k)};
+        let (m, n, k) = comptime! {let (m, n, k): (u32, u32, u32) = tile_size.into(); (m, n, k)};
 
         #[unroll(UNROLL)]
         for k_ in 0..k {
             #[unroll(UNROLL)]
             for m_ in 0..m {
-                let lhs_elem = EA::cast_from(lhs[k_ * m + m_]);
+                let lhs_elem = EA::cast_from(lhs[(k_ * m + m_) as usize]);
                 #[unroll(UNROLL)]
                 for n_ in 0..n {
-                    let rhs_elem = EA::cast_from(rhs[k_ * n + n_]);
-                    acc[m_ * n + n_] += lhs_elem * rhs_elem;
+                    let rhs_elem = EA::cast_from(rhs[(k_ * n + n_) as usize]);
+                    acc[(m_ * n + n_) as usize] += lhs_elem * rhs_elem;
                 }
             }
         }
@@ -185,9 +189,9 @@ impl<Acc: TileKind> RegisterMatmul<Acc> {
                 let line = tile.get_line(segment, line_within_segment);
                 #[unroll]
                 for pos_within_line in 0..line_size {
-                    array[segment * segment_size
-                        + line_within_segment * line_size
-                        + pos_within_line] = ER::cast_from(line[pos_within_line]);
+                    let offs =
+                        segment * segment_size + line_within_segment * line_size + pos_within_line;
+                    array[offs as usize] = ER::cast_from(line[pos_within_line as usize]);
                 }
             }
         }
@@ -209,8 +213,9 @@ impl<Acc: TileKind> RegisterMatmul<Acc> {
                 let line = tile.get_line(segment, line_within_segment);
                 #[unroll]
                 for pos_within_line in 0..line_size {
-                    array[(line_within_segment * line_size + pos_within_line) * num_segments
-                        + segment] = ER::cast_from(line[pos_within_line]);
+                    let offs = (line_within_segment * line_size + pos_within_line) * num_segments
+                        + segment;
+                    array[offs as usize] = ER::cast_from(line[pos_within_line as usize]);
                 }
             }
         }

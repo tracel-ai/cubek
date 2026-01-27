@@ -1,4 +1,4 @@
-use cubek_matmul::components::ComputeResources;
+use cubek_matmul::components::CubeDimResource;
 
 use crate::components::tile::TileAttentionFamily;
 use crate::components::tile::unit_register::UnitRegisterTileAttention;
@@ -48,13 +48,11 @@ impl TileAttentionFamily for UnitRegisterTileAttention {
         false
     }
 
-    fn computation_resources() -> Result<ComputeResources, InvalidConfigError> {
-        Ok(ComputeResources::Units(1))
+    fn computation_resources() -> Result<CubeDimResource, InvalidConfigError> {
+        Ok(CubeDimResource::Units(1))
     }
 
-    fn expand_blueprint(
-        blueprint: &AttentionBlueprint,
-    ) -> Result<Self::Config, AttentionSetupError> {
+    fn expand_config(blueprint: &AttentionBlueprint) -> Result<Self::Config, AttentionSetupError> {
         Ok(UnitTileAttentionConfig {
             shared: SharedTileAttentionConfig {
                 plane_dim: blueprint.plane_dim,

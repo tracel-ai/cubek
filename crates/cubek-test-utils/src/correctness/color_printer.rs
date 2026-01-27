@@ -5,7 +5,7 @@ const GREEN: &str = "\x1b[32m";
 const RESET: &str = "\x1b[0m";
 
 pub(crate) struct ColorPrinter {
-    filter: TensorFilter,
+    pub filter: TensorFilter,
     indent: usize,
 }
 

@@ -18,7 +18,7 @@ std = ["cubecl/std"]
 tests = []
 
 [dependencies]
-cubek-random = { path = "../cubek-random", version = "=0.1.0-pre.1", default-features = false }
+cubek-random = { path = "../cubek-random", version = "=0.1.0", default-features = false }
 
 bytemuck = { workspace = true }
 cubecl = { workspace = true, features = ["stdlib", "test-runtime"] }

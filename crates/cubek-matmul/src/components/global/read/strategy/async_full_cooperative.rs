@@ -11,9 +11,12 @@ use crate::{
         },
         stage::{StridedStageFamily, StridedStageMemory, StridedTilingLayout, TilingValidation},
     },
-    definition::{InvalidConfigError, MatmulElems, MatmulProblem, MatrixLayout},
+    definition::{InvalidConfigError, MatmulElems, MatmulProblem, MatrixLayout, StageIdent},
 };
-use cubecl::prelude::{barrier::Barrier, *};
+use cubecl::{
+    ir::DeviceProperties,
+    prelude::{barrier::Barrier, *},
+};
 
 use super::LoadingValidation;
 
@@ -25,16 +28,22 @@ use super::LoadingValidation;
 pub struct AsyncFullCooperativeLoading {}
 
 impl LoadingValidation for AsyncFullCooperativeLoading {
-    fn check<R: Runtime>(
-        client: &ComputeClient<R>,
-        _problem: &MatmulProblem,
+    fn validate_with_config(
+        device_props: &DeviceProperties,
         config: &GlobalReaderConfig,
-        _dtypes: &MatmulElems,
     ) -> Result<(), InvalidConfigError> {
         StridedTilingLayout::check(config.smem_config)?;
-        validate_async_barrier(client)?;
+        validate_async_barrier(device_props)?;
         validate_noswizzle(config.smem_config)?;
 
+        Ok(())
+    }
+
+    fn validate_with_problem(
+        _problem: &MatmulProblem,
+        _dtypes: &MatmulElems,
+        _ident: StageIdent,
+    ) -> Result<(), InvalidConfigError> {
         Ok(())
     }
 }
@@ -43,7 +52,7 @@ impl LoadMaxRoundPlaneCount for AsyncFullCooperativeLoading {
     fn max_round_plane_count(
         _elements_per_tile: u32,
         _tiles_per_stage: u32,
-        _line_size: u8,
+        _line_size: LineSize,
         _plane_dim: u32,
         _dtype: StorageType,
     ) -> u32 {
@@ -62,7 +71,7 @@ impl FullLoadingStrategy for AsyncFullCooperativeLoading {
     const SHOULD_CLEAR: bool = true;
 
     fn new_job<EG: Numeric, ES: Numeric>(
-        #[comptime] _line_size: u32,
+        #[comptime] _line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> AsyncFullCooperativeJob {
         let matrix_layout = config.gmem_config.matrix_layout;
@@ -104,9 +113,9 @@ impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, StridedTilingLayout, AsyncBarr
         );
 
         let mut destination: SliceMut<Line<ES>> =
-            StridedTilingLayout::nth_slice::<ES>(stage, task_id, comptime!(config.smem_config));
+            StridedTilingLayout::nth_slice::<ES>(stage, task_id, config.smem_config);
 
-        barrier.memcpy_async_cooperative(&window.try_cast_unchecked(), &mut destination);
+        barrier.memcpy_async_cooperative(&window.downcast(), &mut destination);
     }
 
     fn task_count(this: &Self) -> comptime_type!(u32) {

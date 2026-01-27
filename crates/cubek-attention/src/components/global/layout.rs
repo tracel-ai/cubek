@@ -10,10 +10,10 @@ use cubek_matmul::components::global::memory::GlobalMemoryConfig;
 #[derive(CubeType, Clone, Copy)]
 pub struct AttentionGlobalLayout {
     rows: u32,
-    stride_row: u32,
+    stride_row: usize,
     columns: u32,
-    stride_col: u32,
-    batch_offset: u32,
+    stride_col: usize,
+    batch_offset: usize,
     #[cube(comptime)]
     config: GlobalMemoryConfig,
 }
@@ -28,11 +28,11 @@ impl AttentionGlobalLayout {
     ) -> Self {
         let stride_batch = tensor.stride(1);
         AttentionGlobalLayout {
-            rows: tensor.shape(2),
+            rows: tensor.shape(2) as u32,
             stride_row: tensor.stride(2),
-            columns: tensor.shape(3),
+            columns: tensor.shape(3) as u32,
             stride_col: tensor.stride(3),
-            batch_offset: batch_index * stride_batch,
+            batch_offset: batch_index as usize * stride_batch,
             config,
         }
     }
@@ -43,15 +43,16 @@ impl Layout for AttentionGlobalLayout {
     type Coordinates = Coords2d;
     type SourceCoordinates = Coords1d;
 
-    fn to_source_pos(&self, coords: Self::Coordinates) -> u32 {
-        let line_size = comptime![self.config.line_size];
+    fn to_source_pos(&self, coords: Self::Coordinates) -> usize {
+        let line_size = self.config.line_size.comptime();
         let (row, col) = coords;
-        let idx = self.batch_offset + row * self.stride_row + col * self.stride_col;
+        let idx =
+            self.batch_offset + row as usize * self.stride_row + col as usize * self.stride_col;
 
         idx / line_size
     }
 
-    fn to_source_pos_checked(&self, coords: Self::Coordinates) -> (u32, bool) {
+    fn to_source_pos_checked(&self, coords: Self::Coordinates) -> (usize, bool) {
         (self.to_source_pos(coords), self.is_in_bounds(coords))
     }
 
@@ -60,9 +61,10 @@ impl Layout for AttentionGlobalLayout {
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
+        let config = self.config.comptime();
         let (row, col) = pos;
 
-        match comptime!((self.config.check_row_bounds, self.config.check_col_bounds)) {
+        match (config.check_row_bounds, config.check_col_bounds) {
             (true, true) => row < self.rows && col < self.columns,
             (true, false) => row < self.rows,
             (false, true) => col < self.columns,

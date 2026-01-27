@@ -1,14 +1,15 @@
 #[macro_export]
 macro_rules! testgen_convolution_swizzle {
-    ($algorithm: ty, $precision: ty, $selection_builder: expr) => {
+    ($algorithm: ty, $precision: ty, $tiling_scheme: expr) => {
         use cubek_matmul::components::stage::SwizzleMode;
-        use cubek_matmul::definition::SwizzleBlueprint;
+        use cubek_matmul::definition::SwizzleModes;
 
         #[cfg(not(feature = "conv_tests_swizzle"))]
         $crate::testgen_convolution_partition_buffering!(
             $algorithm,
             $precision,
-            $selection_builder.shared_swizzle(SwizzleBlueprint::default())
+            $tiling_scheme,
+            SwizzleModes::default()
         );
 
         #[cfg(feature = "conv_tests_swizzle")]
@@ -18,11 +19,12 @@ macro_rules! testgen_convolution_swizzle {
             $crate::testgen_convolution_partition_buffering!(
                 $algorithm,
                 $precision,
-                $selection_builder.shared_swizzle(SwizzleBlueprint {
+                $tiling_scheme,
+                SwizzleModes {
                     lhs: SwizzleMode::None,
                     rhs: SwizzleMode::None,
                     ..Default::default()
-                })
+                }
             );
         }
 
@@ -33,11 +35,12 @@ macro_rules! testgen_convolution_swizzle {
             $crate::testgen_convolution_partition_buffering!(
                 $algorithm,
                 $precision,
-                $selection_builder.shared_swizzle(SwizzleBlueprint {
+                $tiling_scheme,
+                SwizzleModes {
                     lhs: SwizzleMode::B32,
                     rhs: SwizzleMode::B32,
                     ..Default::default()
-                })
+                }
             );
         }
 
@@ -48,11 +51,12 @@ macro_rules! testgen_convolution_swizzle {
             $crate::testgen_convolution_partition_buffering!(
                 $algorithm,
                 $precision,
-                $selection_builder.shared_swizzle(SwizzleBlueprint {
+                $tiling_scheme,
+                SwizzleModes {
                     lhs: SwizzleMode::B64,
                     rhs: SwizzleMode::B64,
                     ..Default::default()
-                })
+                }
             );
         }
 
@@ -63,11 +67,12 @@ macro_rules! testgen_convolution_swizzle {
             $crate::testgen_convolution_partition_buffering!(
                 $algorithm,
                 $precision,
-                $selection_builder.shared_swizzle(SwizzleBlueprint {
+                $tiling_scheme,
+                SwizzleModes {
                     lhs: SwizzleMode::B128,
                     rhs: SwizzleMode::B128,
                     ..Default::default()
-                })
+                }
             );
         }
     };

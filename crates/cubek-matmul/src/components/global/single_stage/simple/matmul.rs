@@ -65,6 +65,23 @@ where
         k_range: (u32, u32),
         #[comptime] config: Self::Config,
     ) {
+        let device_props = comptime::device_properties();
+        if let Err(e) = comptime!(LL::validate_with_config(
+            &device_props,
+            &config.lhs_reader_config
+        )) {
+            push_validation_error(e.to_string());
+            comptime!(return);
+        }
+
+        if let Err(e) = comptime!(RL::validate_with_config(
+            &device_props,
+            &config.rhs_reader_config
+        )) {
+            push_validation_error(e.to_string());
+            comptime!(return);
+        }
+
         let k_step = config.stage_config.elements_in_stage_k();
         let range = k_range.1 - k_range.0;
         let num_loops = range.div_ceil(k_step);
@@ -85,7 +102,7 @@ where
             sync_cube();
 
             #[allow(clippy::collapsible_if)]
-            if comptime![(LL::SHOULD_CLEAR || RL::SHOULD_CLEAR) && config.check_k_bounds()] {
+            if (LL::SHOULD_CLEAR || RL::SHOULD_CLEAR) && config.check_k_bounds() {
                 if i == num_loops - 1 {
                     lhs_reader.clear_stage(config.lhs_reader_config);
                     rhs_reader.clear_stage(config.rhs_reader_config);
@@ -125,7 +142,7 @@ where
         let mut out_stage = Self::GlobalWriter::stage(&out_writer);
 
         SMM::write_results::<Self::GlobalWriter>(
-            &acc,
+            &mut acc,
             &mut out_stage,
             &mut out_writer,
             &partition_scheduler,

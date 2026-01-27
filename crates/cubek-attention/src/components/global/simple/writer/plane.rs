@@ -35,7 +35,7 @@ impl<ES: Numeric, EG: Numeric> WriteEventListener for PlaneAttentionWriter<ES, E
                 &this.stage.unit_tile,
                 tile,
                 this.config.plane_dim,
-                comptime!(this.config.smem_config.elements_per_tile()),
+                this.config.comptime().smem_config.elements_per_tile(),
             ),
             _ => {}
         }

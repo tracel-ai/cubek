@@ -42,9 +42,9 @@ impl Routine for PlaneRoutine {
 
                 let working_planes = working_planes(&settings, &problem);
 
-                let working_cubes = working_planes.div_ceil(cube_dim.y);
+                let working_cubes = working_planes.div_ceil(cube_dim.y as usize);
                 let (cube_count, launched_cubes) = cube_count_safe(client, working_cubes);
-                let plane_idle = launched_cubes * cube_dim.y != working_planes;
+                let plane_idle = launched_cubes * cube_dim.y as usize != working_planes;
 
                 if plane_idle && !blueprint.plane_idle.is_enabled() {
                     return Err(ReduceError::Validation {
@@ -89,20 +89,20 @@ fn generate_blueprint<R: Runtime>(
     let properties = &client.properties().hardware;
     let plane_size = properties.plane_size_max;
     let working_planes = working_planes(settings, &problem);
-    let working_units = working_planes * plane_size;
+    let working_units = working_planes * plane_size as usize;
     let plane_count =
         calculate_plane_count_per_cube(working_units, plane_size, properties.num_cpu_cores);
-    let working_cubes = working_planes.div_ceil(plane_count);
+    let working_cubes = working_planes.div_ceil(plane_count as usize);
 
     let cube_dim = CubeDim::new_2d(plane_size, plane_count);
     let (cube_count, cube_launched) = cube_count_safe(client, working_cubes);
 
-    let plane_idle = cube_launched * cube_dim.num_elems() != working_units;
+    let plane_idle = cube_launched * cube_dim.num_elems() as usize != working_units;
     let work_size = match settings.line_mode {
-        LineMode::Parallel => problem.vector_size / settings.line_size_input as u32,
+        LineMode::Parallel => problem.vector_size / settings.line_size_input,
         LineMode::Perpendicular => problem.vector_size,
     };
-    let bound_checks = match work_size.is_multiple_of(plane_size) {
+    let bound_checks = match work_size.is_multiple_of(plane_size as usize) {
         true => BoundChecks::None,
         false => BoundChecks::Mask,
     };
@@ -132,9 +132,9 @@ fn generate_blueprint<R: Runtime>(
     Ok((blueprint, cube_dim, cube_count))
 }
 
-fn working_planes(settings: &ReduceLineSettings, problem: &ReduceProblem) -> u32 {
+fn working_planes(settings: &ReduceLineSettings, problem: &ReduceProblem) -> usize {
     match settings.line_mode {
-        LineMode::Parallel => problem.vector_count / settings.line_size_output as u32,
-        LineMode::Perpendicular => problem.vector_count / settings.line_size_input as u32,
+        LineMode::Parallel => problem.vector_count / settings.line_size_output,
+        LineMode::Perpendicular => problem.vector_count / settings.line_size_input,
     }
 }

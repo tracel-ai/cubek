@@ -15,9 +15,8 @@ use crate::components::{
 use crate::components::{global::PlaneWriterFamily, stage::StageFamily};
 use crate::components::{stage::FilledStageFamily, tile::TileMatmulFamily};
 use crate::definition::{
-    CubeCountPlanBlueprint, GlobalOrderBlueprint, HypercubeBlueprint, MatmulGlobalElems,
-    MatmulLineSizes, MatmulProblem, MatmulSetupError, MatrixLayout, SmAllocation, SwizzleBlueprint,
-    TilingBlueprint, adjust_dtypes,
+    CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulLineSizes, MatmulProblem,
+    MatmulSetupError, MatrixLayout, SmAllocation, SwizzleModes, TilingBlueprint, adjust_dtypes,
 };
 use crate::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
 use crate::routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, base};
@@ -30,7 +29,7 @@ use crate::{
 };
 use crate::{
     components::{
-        global::{LoadSpecializationConfig, SpecializationTensorConfig},
+        global::{InputLoadFlow, LoadFlows},
         stage::PartitionBuffering,
     },
     routines::selector::select_swizzle,
@@ -83,16 +82,19 @@ where
         device_settings: &DeviceSettings<R>,
         strategy: &BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
-        match strategy {
-            BlueprintStrategy::Forced(blueprint) => Ok(LaunchInfo {
-                blueprint: blueprint.clone(),
-                dtypes: MatmulElems::from_globals(&problem.global_dtypes),
-            }),
+        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+
+        if TMM::can_cast_stage_element() {
+            dtypes.adjust_stage_dtypes();
+        }
+
+        let (blueprint, dtypes) = match strategy {
+            BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
             BlueprintStrategy::Inferred(_) => infer_blueprint_plane::<TMM, R>(
                 &device_settings.client,
                 problem,
                 device_settings.plane_dim,
-                &problem.global_dtypes,
+                dtypes,
                 &device_settings.line_sizes,
                 PlaneTilingBlueprintOptions {
                     specialized: true,
@@ -102,12 +104,27 @@ where
                     swizzled: TMM::should_swizzle(&device_settings.client),
                     ..Default::default()
                 },
-            ),
-        }
-    }
+            )?,
+        };
 
-    fn can_cast_stage_element() -> bool {
-        TMM::can_cast_stage_element()
+        Self::validate_blueprint(
+            &device_settings.client,
+            &blueprint,
+            problem,
+            &dtypes,
+            &device_settings.line_sizes,
+        )?;
+
+        let cubedim_resource =
+            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
+
+        LaunchInfo::new(
+            blueprint,
+            dtypes,
+            problem,
+            cubedim_resource,
+            device_settings,
+        )
     }
 }
 
@@ -117,32 +134,31 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
     problem: &MatmulProblem,
     plane_dim: u32,
     swizzle: bool,
-    global_dtypes: &mut MatmulGlobalElems,
+    mut dtypes: MatmulElems,
     line_sizes: &MatmulLineSizes,
-) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
-    let mut dtypes = MatmulElems::from_globals(global_dtypes);
+) -> Result<(TilingBlueprint, MatmulElems), MatmulSetupError> {
     adjust_dtypes(client, &mut dtypes, TMM::requires_accelerator());
 
     let supported = |m: u32, n: u32, k: u32| {
         TMM::is_supported(
             client,
             MmaConfig {
-                a_type: *dtypes.lhs_register,
-                b_type: *dtypes.rhs_register,
-                cd_type: *dtypes.acc_register,
+                a_type: dtypes.lhs_register,
+                b_type: dtypes.rhs_register,
+                cd_type: dtypes.acc_register,
                 m,
                 n,
                 k,
             },
         )
     };
-    let cube_count_plan = match client.properties().hardware.num_streaming_multiprocessors {
-        Some(num_sms) => CubeCountPlanBlueprint::Sm {
+    let cube_count_strategy = match client.properties().hardware.num_streaming_multiprocessors {
+        Some(num_sms) => CubeCountStrategy::Sm {
             num_sms,
             sm_usage: SmAllocation::Exact,
             cubes_first: true,
         },
-        None => CubeCountPlanBlueprint::Flattened,
+        None => CubeCountStrategy::Flattened,
     };
 
     let tiling_scheme = if supported(16, 8, 16) {
@@ -164,7 +180,7 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
             client,
             problem,
             plane_dim,
-            global_dtypes,
+            dtypes,
             line_sizes,
             PlaneTilingBlueprintOptions {
                 partition_buffering: Some(PartitionBuffering::Single),
@@ -176,42 +192,39 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
     };
 
     let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
-        .global_order(GlobalOrderBlueprint::SwizzleRow {
+        .global_order_strategy(GlobalOrderStrategy::SwizzleRow {
             m: problem.m as u32,
             w: 4,
         })
-        .cube_count_plan(cube_count_plan)
+        .cube_count_strategy(cube_count_strategy)
         .build();
 
-    let mut builder = TilingBlueprint::builder(tiling_scheme, plane_dim)
+    let mut builder = TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
         .partition_buffering(PartitionBuffering::Single)
-        .hypercube_config(hypercube)
-        .load_specialization_config(LoadSpecializationConfig {
-            lhs: SpecializationTensorConfig::LoadFlowOnly,
-            rhs: SpecializationTensorConfig::LoadFlowOnly,
+        .hypercube_blueprint(hypercube)
+        .load_specialization_config(LoadFlows {
+            lhs: InputLoadFlow::LoadOnly,
+            rhs: InputLoadFlow::LoadOnly,
         });
 
     if swizzle {
         let lhs_swizzle_dim = match problem.lhs_layout {
-            MatrixLayout::RowMajor => tiling_scheme.elements_per_stage_along_k(),
-            MatrixLayout::ColMajor => tiling_scheme.elements_per_stage_along_m(),
+            MatrixLayout::RowMajor => tiling_scheme.elements_per_stage_along_k() as usize,
+            MatrixLayout::ColMajor => tiling_scheme.elements_per_stage_along_m() as usize,
         };
         let rhs_swizzle_dim = match problem.rhs_layout {
-            MatrixLayout::RowMajor => tiling_scheme.elements_per_stage_along_n(),
-            MatrixLayout::ColMajor => tiling_scheme.elements_per_stage_along_k(),
+            MatrixLayout::RowMajor => tiling_scheme.elements_per_stage_along_n() as usize,
+            MatrixLayout::ColMajor => tiling_scheme.elements_per_stage_along_k() as usize,
         };
 
-        let lhs = select_swizzle(lhs_swizzle_dim, *dtypes.lhs_stage, line_sizes.lhs);
-        let rhs = select_swizzle(rhs_swizzle_dim, *dtypes.rhs_stage, line_sizes.rhs);
-        builder = builder.shared_swizzle(SwizzleBlueprint {
+        let lhs = select_swizzle(lhs_swizzle_dim, dtypes.lhs_stage, line_sizes.lhs);
+        let rhs = select_swizzle(rhs_swizzle_dim, dtypes.rhs_stage, line_sizes.rhs);
+        builder = builder.shared_swizzle(SwizzleModes {
             lhs,
             rhs,
             ..Default::default()
         });
     }
 
-    Ok(LaunchInfo {
-        blueprint: builder.build(),
-        dtypes,
-    })
+    Ok((builder.build(), dtypes))
 }

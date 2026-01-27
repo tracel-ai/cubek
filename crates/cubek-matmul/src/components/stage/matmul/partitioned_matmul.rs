@@ -1,5 +1,5 @@
 use crate::components::global;
-use crate::components::global::RoleRuleConfig;
+use crate::components::global::PlaneFlowPartitionRule;
 use crate::components::stage::Stage;
 use crate::components::stage::StageConfig;
 use crate::components::stage::StageMemoryConfig;
@@ -24,7 +24,7 @@ use cubecl::std::tensor::layout::Coords2d;
 pub trait StagePartitioner: Send + Sync + 'static {
     /// Returns the (row, col) of the current compute primitive within the stage.
     fn coordinates(
-        #[comptime] role_rule_config: RoleRuleConfig,
+        #[comptime] role_rule_config: PlaneFlowPartitionRule,
         #[comptime] plane_dim: u32,
         #[comptime] num_partitions_col: u32,
     ) -> Coords2d;
@@ -71,15 +71,15 @@ impl<TC: TileConfig> StageConfig for PartitionMatmulConfig<TC> {
     }
 
     fn num_main_flow_planes(&self) -> u32 {
-        self.shared().plane_role_config.main_flow_count()
+        self.shared().plane_flow_config.main_flow_count()
     }
 
     fn plane_dim(&self) -> u32 {
         self.shared().plane_dim
     }
 
-    fn plane_role_config(&self) -> global::PlaneRoleConfig {
-        self.shared().plane_role_config
+    fn plane_flow_config(&self) -> global::PlaneFlowConfig {
+        self.shared().plane_flow_config
     }
 
     fn tiles_in_partition_mn(&self) -> u32 {
@@ -247,31 +247,31 @@ where
     }
 
     fn write_results<W: WriteEventListener>(
-        acc: &Self::Accumulators,
+        acc: &mut Self::Accumulators,
         stage: &mut Self::OutStage,
         listener: &mut W,
         partition_scheduler: &PartitionScheduler,
         #[comptime] stage_config: Self::Config,
     ) {
-        let m_iterations = stage_config.shared().partition_size.m();
-        let n_iterations = stage_config.shared().partition_size.n();
+        let m_iterations = stage_config.shared().partition_size.m() as usize;
+        let n_iterations = stage_config.shared().partition_size.n() as usize;
 
         W::on_event(listener, global::WriteEvent::new_Begin());
 
         // Iterate over each tile in the partition
         #[unroll]
         for m_iter in 0..m_iterations {
-            let m_load_iter = partition_scheduler.map_m(m_iter);
+            let m_load_iter = partition_scheduler.map_m(m_iter as u32);
 
             #[unroll]
             for n_iter in 0..n_iterations {
-                let n_load_iter = partition_scheduler.map_n(n_iter);
+                let n_load_iter = partition_scheduler.map_n(n_iter as u32);
 
-                let tile_accumulator = Accumulators::<MP, TM>::get_at(
+                let tile_accumulator = Accumulators::<MP, TM>::get_at_mut(
                     acc,
                     m_iter,
                     n_iter,
-                    stage_config.shared().partition_size.n(),
+                    stage_config.shared().partition_size.n() as usize,
                 );
 
                 let tile_pos = (m_load_iter, n_load_iter);
@@ -293,7 +293,7 @@ where
 
     fn init_scheduler(#[comptime] config: Self::Config) -> PartitionScheduler {
         let (partition_row, partition_col) = SP::coordinates(
-            config.shared().plane_role_config.rule,
+            config.shared().plane_flow_config.partition_rule,
             config.shared().plane_dim,
             config.shared().stage_size.n(),
         );

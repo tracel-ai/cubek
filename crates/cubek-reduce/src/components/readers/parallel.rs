@@ -21,12 +21,12 @@ use cubecl::{
 pub struct ParallelReader<P: ReducePrecision> {
     view: View<Line<P::EI>, Coords1d>,
     /// The global offset that points where the vector to reduce is located in global memory.
-    batch_offset: u32,
+    batch_offset: usize,
     requirements: ReduceRequirements,
     #[cube(comptime)]
-    line_size: u32,
+    line_size: LineSize,
     bound_checks: ReaderBoundChecks<P>,
-    num_chunks: u32,
+    num_chunks: usize,
 }
 
 #[cube]
@@ -35,8 +35,8 @@ impl<P: ReducePrecision> ParallelReader<P> {
         input: &VirtualTensor<P::EI>,
         output: &mut VirtualTensor<Out, ReadWrite>,
         inst: &I,
-        reduce_axis: u32,
-        reduce_index: u32,
+        reduce_axis: usize,
+        reduce_index: usize,
         idle: CubeOption<bool>,
         #[comptime] bound_checks: BoundChecks,
     ) -> ParallelReader<P> {
@@ -67,28 +67,28 @@ impl<P: ReducePrecision> ParallelReader<P> {
         }
     }
 
-    pub fn length_unit(&self) -> u32 {
+    pub fn length_unit(&self) -> usize {
         self.num_chunks
     }
 
-    pub fn length_plane(&self) -> u32 {
-        self.num_chunks.div_ceil(CUBE_DIM_X)
+    pub fn length_plane(&self) -> usize {
+        self.num_chunks.div_ceil(CUBE_DIM_X as usize)
     }
 
-    pub fn length_cube(&self) -> u32 {
-        self.num_chunks.div_ceil(CUBE_DIM)
+    pub fn length_cube(&self) -> usize {
+        self.num_chunks.div_ceil(CUBE_DIM as usize)
     }
 
-    pub fn read_cube(&self, line_index: u32) -> (Line<P::EI>, ReduceCoordinate) {
-        let plane_pos = line_index * CUBE_DIM;
-        let unit_pos = UNIT_POS;
+    pub fn read_cube(&self, line_index: usize) -> (Line<P::EI>, ReduceCoordinate) {
+        let plane_pos = line_index * CUBE_DIM as usize;
+        let unit_pos = UNIT_POS as usize;
         let pos = plane_pos + unit_pos;
         let offset = pos + self.batch_offset;
 
         let item = self.bound_checks.read(pos, offset, &self.view);
 
         let coordinate = ReduceCoordinate::new(
-            (line_index * self.line_size * CUBE_DIM) + UNIT_POS * self.line_size,
+            (plane_pos * self.line_size) + unit_pos * self.line_size,
             self.requirements,
             self.line_size,
             LineMode::Parallel,
@@ -97,16 +97,16 @@ impl<P: ReducePrecision> ParallelReader<P> {
         (item, coordinate)
     }
 
-    pub fn read_plane(&self, line_index: u32) -> (Line<P::EI>, ReduceCoordinate) {
-        let plane_pos = line_index * CUBE_DIM_X;
-        let unit_pos = UNIT_POS_X;
+    pub fn read_plane(&self, line_index: usize) -> (Line<P::EI>, ReduceCoordinate) {
+        let plane_pos = line_index * CUBE_DIM_X as usize;
+        let unit_pos = UNIT_POS_X as usize;
         let pos = plane_pos + unit_pos;
         let offset = pos + self.batch_offset;
 
         let item = self.bound_checks.read(pos, offset, &self.view);
 
         let coordinate = ReduceCoordinate::new(
-            (line_index * self.line_size * CUBE_DIM_X) + UNIT_POS_X * self.line_size,
+            (plane_pos * self.line_size) + unit_pos * self.line_size,
             self.requirements,
             self.line_size,
             LineMode::Parallel,
@@ -115,7 +115,7 @@ impl<P: ReducePrecision> ParallelReader<P> {
         (item, coordinate)
     }
 
-    pub fn read_unit(&self, line_index: u32) -> (Line<P::EI>, ReduceCoordinate) {
+    pub fn read_unit(&self, line_index: usize) -> (Line<P::EI>, ReduceCoordinate) {
         let offset = line_index + self.batch_offset;
         let item = self.view[offset];
 

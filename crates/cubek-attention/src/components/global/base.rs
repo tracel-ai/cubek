@@ -3,7 +3,10 @@ use cubecl::prelude::*;
 
 use crate::{
     components::global::simple::AttentionWriter,
-    definition::{AttentionBlueprint, AttentionPrecision, AttentionSetupError, attention_types::*},
+    definition::{
+        AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError,
+        attention_types::*,
+    },
 };
 use cubecl::std::{CubeOption, tensor::r#virtual::VirtualTensor};
 
@@ -21,8 +24,9 @@ pub trait GlobalAttentionFamily: Send + Sync + 'static {
     /// Constructs the configuration based on the algorithm's blueprint.
     ///
     /// This function may return an error if the configuration cannot be supported.
-    fn expand_blueprint(
+    fn expand_config(
         blueprint: &AttentionBlueprint,
+        dtypes: &AttentionElems,
     ) -> Result<Self::Config, AttentionSetupError>;
 }
 

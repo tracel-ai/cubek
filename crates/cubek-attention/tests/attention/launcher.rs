@@ -6,7 +6,9 @@ use cubek_attention::{
 };
 
 use cubecl::client::ComputeClient;
-use cubek_test_utils::{Distribution, StrideSpec, TestInput, current_test_mode};
+use cubek_test_utils::{
+    DataKind, Distribution, ExecutionOutcome, StrideSpec, TestInput, TestOutcome,
+};
 
 pub fn test_launch(
     client: ComputeClient<TestRuntime>,
@@ -19,44 +21,52 @@ pub fn test_launch(
     let mask_shape = problem.shape(AttentionIdent::Mask);
     let out_shape = problem.shape(AttentionIdent::Out);
 
-    let (query_handle, query_data) = TestInput::random(
+    let (query_handle, query_data) = TestInput::new(
         client.clone(),
         query_shape.to_vec(),
         problem.global_dtypes.query,
-        12,
-        Distribution::Uniform(-1., 1.),
         StrideSpec::RowMajor,
+        DataKind::Random {
+            seed: 12,
+            distribution: Distribution::Uniform(-1., 1.),
+        },
     )
     .generate_with_f32_host_data();
 
-    let (key_handle, key_data) = TestInput::random(
+    let (key_handle, key_data) = TestInput::new(
         client.clone(),
         key_shape.to_vec(),
         problem.global_dtypes.key,
-        34,
-        Distribution::Uniform(-1., 1.),
         StrideSpec::RowMajor,
+        DataKind::Random {
+            seed: 34,
+            distribution: Distribution::Uniform(-1., 1.),
+        },
     )
     .generate_with_f32_host_data();
 
-    let (value_handle, value_data) = TestInput::random(
+    let (value_handle, value_data) = TestInput::new(
         client.clone(),
         value_shape.to_vec(),
         problem.global_dtypes.value,
-        56,
-        Distribution::Uniform(-1., 1.),
         StrideSpec::RowMajor,
+        DataKind::Random {
+            seed: 56,
+            distribution: Distribution::Uniform(-1., 1.),
+        },
     )
     .generate_with_f32_host_data();
 
     let (mask_handle, mask_data) = if problem.masked {
-        let (mask_handle, mask_data) = TestInput::random(
+        let (mask_handle, mask_data) = TestInput::new(
             client.clone(),
             mask_shape.to_vec(),
             problem.global_dtypes.mask,
-            78,
-            Distribution::Bernoulli(0.1),
             StrideSpec::RowMajor,
+            DataKind::Random {
+                seed: 78,
+                distribution: Distribution::Bernoulli(0.1),
+            },
         )
         .generate_with_bool_host_data();
 
@@ -65,11 +75,12 @@ pub fn test_launch(
         (None, None)
     };
 
-    let out_handle = TestInput::zeros(
+    let out_handle = TestInput::new(
         client.clone(),
         out_shape.to_vec(),
         problem.global_dtypes.out,
         StrideSpec::RowMajor,
+        DataKind::Zeros,
     )
     .generate_without_host_data();
 
@@ -86,8 +97,10 @@ pub fn test_launch(
             causal: problem.options.causal,
             accumulator_precision: problem.options.accumulator_precision,
         },
-    ) {
-        Ok(_) => assert_result(
+    )
+    .into()
+    {
+        ExecutionOutcome::Executed => assert_result(
             &query_data,
             &key_data,
             &value_data,
@@ -100,11 +113,9 @@ pub fn test_launch(
                 &problem.global_dtypes,
                 &problem.options.accumulator_precision,
             ),
-        ),
-        Err(err) => {
-            if current_test_mode().should_fail_on_test_compilation_fail() {
-                panic!("Test did not run: {}", err)
-            }
-        }
+        )
+        .as_test_outcome(),
+        ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
     }
+    .enforce();
 }

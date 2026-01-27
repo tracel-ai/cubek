@@ -1,5 +1,5 @@
 use crate::components::global::GlobalReaderConfig;
-use crate::components::global::RoleRule;
+use crate::components::global::PlaneFlowPartition;
 use crate::components::global::Specializer;
 use crate::components::global::SpecializerKind;
 use crate::components::global::multi_stage::DoubleBufferingEventListener;
@@ -25,13 +25,13 @@ pub fn read_first<S: SyncStrategy, LJ: JobExecutor<S>, RJ: JobExecutor<S>>(
     #[comptime] lhs_config: GlobalReaderConfig,
     #[comptime] rhs_config: GlobalReaderConfig,
 ) {
-    match comptime!(specializer.kind) {
+    match specializer.kind.comptime() {
         SpecializerKind::Specialized {
             main_flow_loading_side,
             load_only_loading_side,
             role_rule_config,
         } => {
-            let rule = RoleRule::new(role_rule_config);
+            let rule = PlaneFlowPartition::new(role_rule_config);
             if !rule.is_load_plane() {
                 if main_flow_loading_side.includes_lhs() {
                     LJ::execute_whole_job(lhs_global_reader, barrier, stage_to_load, lhs_config);
@@ -80,13 +80,13 @@ pub fn execute_current_and_read_next<
     #[comptime] stage_to_load: StageBuffer,
     #[comptime] config: G,
 ) {
-    match comptime!(specializer.kind) {
+    match specializer.kind.comptime() {
         SpecializerKind::Specialized {
             main_flow_loading_side,
             load_only_loading_side,
             role_rule_config,
         } => {
-            let rule = RoleRule::new(role_rule_config);
+            let rule = PlaneFlowPartition::new(role_rule_config);
             if !rule.is_load_plane() {
                 SMM::execute_with_listener::<DoubleBufferingEventListener<S, LJ, RJ, G>>(
                     lhs_stage,
@@ -168,13 +168,13 @@ pub fn execute_last_and_write_results<
 ) {
     let mut out_stage = GW::stage(out_writer);
 
-    match comptime!(specializer.kind) {
+    match specializer.kind.comptime() {
         SpecializerKind::Specialized {
             main_flow_loading_side: _,
             load_only_loading_side: _,
             role_rule_config,
         } => {
-            let rule = RoleRule::new(role_rule_config);
+            let rule = PlaneFlowPartition::new(role_rule_config);
             if !rule.is_load_plane() {
                 SMM::execute(
                     lhs_stage,

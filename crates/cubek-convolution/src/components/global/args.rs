@@ -7,7 +7,7 @@ use crate::components::ConvolutionOperation;
 pub struct RuntimeArgs {
     pub shape_k: u32,
     pub channels: u32,
-    pub padded_channels: FastDivmod,
+    pub padded_channels: FastDivmod<u32>,
     #[cube(comptime)]
     pub operation: ConvolutionOperation,
 }

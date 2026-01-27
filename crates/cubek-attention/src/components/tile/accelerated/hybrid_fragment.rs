@@ -30,9 +30,9 @@ impl<E: Float> HybridFragment<E> {
         let fragment = unsafe {
             cmma::Matrix::<E>::uninitialized(
                 cmma::MatrixIdent::Accumulator,
-                tile_size.m,
-                tile_size.n,
-                tile_size.k,
+                tile_size.m as usize,
+                tile_size.n as usize,
+                tile_size.k as usize,
                 cmma::MatrixLayout::RowMajor,
             )
         };
@@ -47,9 +47,12 @@ impl<E: Float> HybridFragment<E> {
 
         let smem_slot_size = tile_size.m * tile_size.n;
         let smem_slice_start = UNIT_POS_Y * smem_slot_size;
-        let mut shared_memory = SharedMemory::new(config.num_planes() * smem_slot_size);
-        let smem_slice =
-            shared_memory.slice_mut(smem_slice_start, smem_slice_start + smem_slot_size);
+        let mut shared_memory =
+            SharedMemory::new(config.num_planes() as usize * smem_slot_size as usize);
+        let smem_slice = shared_memory.slice_mut(
+            smem_slice_start as usize,
+            (smem_slice_start + smem_slot_size) as usize,
+        );
 
         HybridFragment::<E> {
             fragment,

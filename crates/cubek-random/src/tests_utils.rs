@@ -23,7 +23,7 @@ pub fn calculate_bin_stats<E: Numeric>(
             continue;
         }
         // When num = high, index should be clamped to `number_of_bins` - 1
-        let index = (f32::floor((num - low) / range) as usize).min(number_of_bins - 1);
+        let index = Ord::min(f32::floor((num - low) / range) as usize, number_of_bins - 1);
         output[index].count += 1;
         if initialized && index != current_runs {
             output[current_runs].n_runs += 1;

@@ -2,26 +2,26 @@ use cubecl::prelude::*;
 use cubecl::std::{
     FastDivmod, FastDivmodArgs,
     tensor::layout::{
-        Coords1d, Coords2d, Coords3d, Layout, LayoutExpand, VirtualLayout, VirtualLayoutLaunch,
+        Coords1d, Coords2d, Layout, LayoutExpand, VirtualLayout, VirtualLayoutLaunch,
     },
 };
 use cubecl_common::quant::scheme::{QuantLevel, QuantScheme};
 
-use crate::components::global::memory::GlobalMemoryConfig;
 use crate::definition::{MatmulProblem, MatrixLayout};
+use crate::{components::global::memory::GlobalMemoryConfig, launch::BatchedCoords};
 
 /// Global layout that uses the last two dimensions and ignores all others.
 #[derive(CubeType, CubeLaunch, Clone, Copy)]
 pub struct SimpleTmaGlobalLayout {
     #[cube(comptime)]
     transposed: bool,
-    shape: Coords3d,
+    shape: BatchedCoords,
 }
 
 #[cube]
 impl SimpleTmaGlobalLayout {
     /// Creates a new 2D layout with the batch set to `nth_batch`.
-    pub fn new(shape: Coords3d, #[comptime] layout: MatrixLayout) -> Self {
+    pub fn new(shape: BatchedCoords, #[comptime] layout: MatrixLayout) -> Self {
         let transposed = comptime![matches!(layout, MatrixLayout::ColMajor)];
         SimpleTmaGlobalLayout { shape, transposed }
     }
@@ -29,21 +29,21 @@ impl SimpleTmaGlobalLayout {
 
 #[cube]
 impl Layout for SimpleTmaGlobalLayout {
-    type Coordinates = Coords3d;
-    type SourceCoordinates = Coords3d;
+    type Coordinates = BatchedCoords;
+    type SourceCoordinates = BatchedCoords;
 
-    fn to_source_pos(&self, coords: Self::Coordinates) -> Coords3d {
+    fn to_source_pos(&self, coords: Self::Coordinates) -> BatchedCoords {
         let (batch, row, col) = coords;
         // Tensor maps are required to have a stride of 1 on the last dim, so their shape is
         // transposed for col-major matrices. Need to compensate by swapping the coordinates.
-        if comptime![self.transposed] {
+        if self.transposed.comptime() {
             (batch, col, row)
         } else {
             (batch, row, col)
         }
     }
 
-    fn to_source_pos_checked(&self, coords: Self::Coordinates) -> (Coords3d, bool) {
+    fn to_source_pos_checked(&self, coords: Self::Coordinates) -> (BatchedCoords, bool) {
         (self.to_source_pos(coords), self.is_in_bounds(coords))
     }
 
@@ -77,11 +77,11 @@ pub struct GlobalLayout {
     rows: u32,
     cols: u32,
 
-    stride_row: u32,
-    stride_col: u32,
+    stride_row: usize,
+    stride_col: usize,
 
     #[cube(comptime)]
-    line_size: u32,
+    line_size: LineSize,
     #[cube(comptime)]
     packing: u32,
     #[cube(comptime)]
@@ -96,9 +96,9 @@ impl GlobalLayout {
         batch_layout: VirtualLayout<Coords1d, Coords1d>,
         shape_row: u32,
         shape_col: u32,
-        stride_row: u32,
-        stride_col: u32,
-        #[comptime] line_size: u32,
+        stride_row: usize,
+        stride_col: usize,
+        #[comptime] line_size: LineSize,
         #[comptime] packing: u32,
         #[comptime] config: GlobalLayoutConfig,
     ) -> Self {
@@ -117,36 +117,36 @@ impl GlobalLayout {
 
 #[cube]
 impl Layout for GlobalLayout {
-    type Coordinates = Coords3d;
+    type Coordinates = BatchedCoords;
     type SourceCoordinates = Coords1d;
 
-    fn to_source_pos(&self, coords: Self::Coordinates) -> u32 {
-        let line_size = comptime![self.line_size];
+    fn to_source_pos(&self, coords: Self::Coordinates) -> usize {
         let (batch, row, col) = coords;
         let batch_offs = self.batch_layout.to_source_pos(batch);
 
-        let (row, col) = match comptime![self.config.matrix_layout] {
+        let (row, col) = match self.config.matrix_layout.comptime() {
             MatrixLayout::RowMajor => (row, col / self.packing),
             MatrixLayout::ColMajor => (row / self.packing, col),
         };
 
-        let idx = batch_offs + row * self.stride_row + col * self.stride_col;
+        let idx = batch_offs + row as usize * self.stride_row + col as usize * self.stride_col;
 
-        idx / line_size
+        idx / self.line_size
     }
 
-    fn to_source_pos_checked(&self, coords: Self::Coordinates) -> (u32, bool) {
+    fn to_source_pos_checked(&self, coords: Self::Coordinates) -> (usize, bool) {
         (self.to_source_pos(coords), self.is_in_bounds(coords))
     }
 
     fn shape(&self) -> Self::Coordinates {
-        (u32::MAX.runtime(), self.rows, self.cols)
+        (u32::MAX.runtime() as usize, self.rows, self.cols)
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
+        let config = self.config.comptime();
         let (_, row, col) = pos;
 
-        match comptime!((self.config.check_row_bounds, self.config.check_col_bounds)) {
+        match (config.check_row_bounds, config.check_col_bounds) {
             (true, true) => row < self.rows && col < self.cols,
             (true, false) => row < self.rows,
             (false, true) => col < self.cols,
@@ -158,7 +158,7 @@ impl Layout for GlobalLayout {
 impl<'a, R: Runtime> GlobalLayoutLaunch<'a, R> {
     pub fn from_handle(
         handle: &TensorHandleRef<'a, R>,
-        line_size: u8,
+        line_size: LineSize,
         config: GlobalLayoutConfig,
     ) -> Self {
         let rank = handle.shape.len();
@@ -171,9 +171,9 @@ impl<'a, R: Runtime> GlobalLayoutLaunch<'a, R> {
             VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new()),
             ScalarArg::new(rows as u32),
             ScalarArg::new(cols as u32),
-            ScalarArg::new(stride_row as u32),
-            ScalarArg::new(stride_col as u32),
-            line_size as u32,
+            ScalarArg::new(stride_row),
+            ScalarArg::new(stride_col),
+            line_size,
             1,
             config,
         )
@@ -183,7 +183,7 @@ impl<'a, R: Runtime> GlobalLayoutLaunch<'a, R> {
         client: &ComputeClient<R>,
         handle: &TensorHandleRef<'a, R>,
         problem: &MatmulProblem,
-        line_size: u8,
+        line_size: LineSize,
         config: GlobalLayoutConfig,
     ) -> Self {
         let rank = handle.shape.len();
@@ -198,9 +198,9 @@ impl<'a, R: Runtime> GlobalLayoutLaunch<'a, R> {
             VirtualLayoutLaunch::new::<BatchLayout>(batch_layout),
             ScalarArg::new(rows as u32),
             ScalarArg::new(cols as u32),
-            ScalarArg::new(stride_row as u32),
-            ScalarArg::new(stride_col as u32),
-            line_size as u32,
+            ScalarArg::new(stride_row),
+            ScalarArg::new(stride_col),
+            line_size,
             1,
             config,
         )
@@ -214,7 +214,7 @@ impl<'a, R: Runtime> GlobalLayoutLaunch<'a, R> {
         shape: &'a [usize],
         problem: &MatmulProblem,
         scheme: QuantScheme,
-        line_size: u8,
+        line_size: LineSize,
         config: GlobalLayoutConfig,
     ) -> (GlobalLayoutLaunch<'a, R>, GlobalScaleLayoutArgs<'a, R>) {
         let rank = values.shape.len();
@@ -228,9 +228,9 @@ impl<'a, R: Runtime> GlobalLayoutLaunch<'a, R> {
                 VirtualLayoutLaunch::new::<BatchLayout>(batch_layout),
                 ScalarArg::new(rows as u32),
                 ScalarArg::new(cols as u32),
-                ScalarArg::new(stride_row as u32),
-                ScalarArg::new(stride_col as u32),
-                line_size as u32,
+                ScalarArg::new(stride_row),
+                ScalarArg::new(stride_col),
+                line_size,
                 scheme.num_quants() as u32,
                 config,
             )
@@ -261,13 +261,13 @@ impl<'a, R: Runtime> GlobalLayoutLaunch<'a, R> {
 
 #[derive(CubeType, CubeLaunch)]
 pub struct BatchLayout {
-    batch_shape: Sequence<FastDivmod>,
-    batch_strides: Sequence<u32>,
+    batch_shape: Sequence<FastDivmod<u32>>,
+    batch_strides: Sequence<usize>,
 }
 
 #[cube]
 impl BatchLayout {
-    pub fn new(batch_strides: Sequence<u32>, batch_shape: Sequence<FastDivmod>) -> Self {
+    pub fn new(batch_strides: Sequence<usize>, batch_shape: Sequence<FastDivmod<u32>>) -> Self {
         BatchLayout {
             batch_shape,
             batch_strides,
@@ -281,23 +281,24 @@ impl Layout for BatchLayout {
     type SourceCoordinates = Coords1d;
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
-        let mut batch = pos;
+        let mut batch = pos as u32;
         let mut batch_offs = 0;
         let batch_shape = self.batch_shape.rev();
         let batch_strides = self.batch_strides.rev();
 
         #[unroll]
         for i in 0..batch_shape.len() {
-            let (rem, local_pos) = batch_shape.index(i).div_mod(batch);
+            let (rem, local_pos) = batch_shape[i].div_mod(batch);
             batch = rem;
-            batch_offs += local_pos * *batch_strides.index(i);
+            batch_offs += local_pos as usize * batch_strides[i];
         }
 
         batch_offs
     }
 
+    #[allow(clippy::legacy_numeric_constants)]
     fn shape(&self) -> Self::Coordinates {
-        u32::MAX.runtime()
+        usize::max_value()
     }
 
     fn is_in_bounds(&self, _pos: Self::Coordinates) -> bool {
@@ -330,8 +331,9 @@ impl Layout for NoopLayout {
         pos
     }
 
+    #[allow(clippy::legacy_numeric_constants)]
     fn shape(&self) -> Self::Coordinates {
-        u32::MAX.runtime()
+        usize::max_value()
     }
 
     fn is_in_bounds(&self, _pos: Self::Coordinates) -> bool {
@@ -353,13 +355,13 @@ impl<'a, R: Runtime> BatchLayoutLaunch<'a, R> {
         let batch_shape = problem
             .out_batches
             .iter()
-            .map(|shape| FastDivmodArgs::new(client, *shape as u32))
+            .map(|shape| FastDivmodArgs::<u32>::new(client, *shape as u32))
             .collect();
         let batch_strides = handle.strides[..rank - 2]
             .iter()
             .zip(&handle.shape[..rank - 2])
             .map(|(stride, shape)| if *shape == 1 { 0 } else { *stride })
-            .map(|stride| ScalarArg::new(stride as u32))
+            .map(ScalarArg::new)
             .collect();
         BatchLayoutLaunch::new(batch_shape, batch_strides)
     }
@@ -397,12 +399,12 @@ impl BlockScaledLayout {
 
 #[cube]
 impl Layout for GlobalScaleLayout {
-    type Coordinates = Coords3d;
+    type Coordinates = BatchedCoords;
     type SourceCoordinates = Coords1d;
 
-    fn to_source_pos(&self, coords: Self::Coordinates) -> u32 {
+    fn to_source_pos(&self, coords: Self::Coordinates) -> usize {
         match self {
-            GlobalScaleLayout::PerTensor { .. } => 0u32.runtime(),
+            GlobalScaleLayout::PerTensor { .. } => 0usize.runtime(),
             GlobalScaleLayout::BlockScaled(layout) => {
                 let BlockScaledLayout {
                     scales_layout,
@@ -418,16 +420,18 @@ impl Layout for GlobalScaleLayout {
         }
     }
 
-    fn to_source_pos_checked(&self, coords: Self::Coordinates) -> (u32, bool) {
+    fn to_source_pos_checked(&self, coords: Self::Coordinates) -> (usize, bool) {
         (self.to_source_pos(coords), self.is_in_bounds(coords))
     }
 
     fn shape(&self) -> Self::Coordinates {
         match self {
-            GlobalScaleLayout::PerTensor { shape } => (u32::MAX.runtime(), shape.0, shape.1),
+            GlobalScaleLayout::PerTensor { shape } => {
+                (u32::MAX.runtime() as usize, shape.0, shape.1)
+            }
             GlobalScaleLayout::BlockScaled(layout) => {
                 let (row, col) = layout.shape;
-                (u32::MAX.runtime(), row, col)
+                (u32::MAX.runtime() as usize, row, col)
             }
         }
     }
@@ -437,10 +441,10 @@ impl Layout for GlobalScaleLayout {
             GlobalScaleLayout::PerTensor { .. } => true.runtime(),
             GlobalScaleLayout::BlockScaled(layout) => {
                 let (_, row, col) = pos;
-                let l = &layout.scales_layout;
+                let config = &layout.scales_layout.config.comptime();
                 let (rows, cols) = layout.shape;
 
-                match comptime!((l.config.check_row_bounds, l.config.check_col_bounds)) {
+                match (config.check_row_bounds, config.check_col_bounds) {
                     (true, true) => row < rows && col < cols,
                     (true, false) => row < rows,
                     (false, true) => col < cols,
@@ -464,8 +468,8 @@ impl<Inner: Layout + LaunchArg> Transpose<Inner> {
 }
 
 #[cube]
-impl<Inner: Layout<Coordinates = Coords3d> + LaunchArg> Layout for Transpose<Inner> {
-    type Coordinates = Coords3d;
+impl<Inner: Layout<Coordinates = BatchedCoords> + LaunchArg> Layout for Transpose<Inner> {
+    type Coordinates = BatchedCoords;
     type SourceCoordinates = Inner::SourceCoordinates;
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {

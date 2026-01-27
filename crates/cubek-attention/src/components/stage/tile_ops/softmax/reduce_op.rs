@@ -32,7 +32,7 @@ impl<E: Float> ReduceOp<E> for RowMax {
     }
 
     fn reduce_step_scalar(a: E, b: E) -> E {
-        Max::max(a, b)
+        a.max(b)
     }
 }
 

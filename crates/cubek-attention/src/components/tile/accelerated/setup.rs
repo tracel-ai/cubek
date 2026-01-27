@@ -1,4 +1,5 @@
-use cubek_matmul::components::ComputeResources;
+use cubecl::ir::LineSize;
+use cubek_matmul::components::CubeDimResource;
 
 use crate::components::tile::SharedTileAttentionConfig;
 use crate::components::tile::TileAttentionConfig;
@@ -55,13 +56,11 @@ impl TileAttentionFamily for BlackboxAcceleratedTileAttention {
         false
     }
 
-    fn computation_resources() -> Result<ComputeResources, InvalidConfigError> {
-        Ok(ComputeResources::Planes(1))
+    fn computation_resources() -> Result<CubeDimResource, InvalidConfigError> {
+        Ok(CubeDimResource::Planes(1))
     }
 
-    fn expand_blueprint(
-        blueprint: &AttentionBlueprint,
-    ) -> Result<Self::Config, AttentionSetupError> {
+    fn expand_config(blueprint: &AttentionBlueprint) -> Result<Self::Config, AttentionSetupError> {
         validate(
             BlackboxAcceleratedAttentionMatmulConfig {
                 shared: SharedTileAttentionConfig {
@@ -86,7 +85,7 @@ impl TileAttentionFamily for BlackboxAcceleratedTileAttention {
 fn validate(
     config: BlackboxAcceleratedAttentionMatmulConfig,
     reuse_key_value: bool,
-    line_sizes_mask: u8,
+    line_sizes_mask: LineSize,
 ) -> Result<BlackboxAcceleratedAttentionMatmulConfig, AttentionSetupError> {
     if line_sizes_mask > 1 {
         return Err(AttentionSetupError::InvalidConfig(Box::new(

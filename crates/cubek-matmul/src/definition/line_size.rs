@@ -1,16 +1,18 @@
-use cubecl::{LineSizeError, Runtime, client::ComputeClient, tensor_line_size_parallel};
+use cubecl::{
+    LineSizeError, Runtime, client::ComputeClient, ir::LineSize, tensor_line_size_parallel,
+};
 
 use std::fmt::Debug;
 
 use crate::definition::{base::MatrixLayout, error::MatmulSetupError};
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
 /// Line size used for each tensor in global memory accesses.
 /// Represents the number of elements processed per SIMD load/store.
 pub struct MatmulLineSizes {
-    pub lhs: u8,
-    pub rhs: u8,
-    pub out: u8,
+    pub lhs: LineSize,
+    pub rhs: LineSize,
+    pub out: LineSize,
 }
 
 #[derive(Clone, Debug)]
@@ -19,9 +21,9 @@ pub struct MatmulLineSizes {
 /// These lists begin with compiler-supported sizes and are progressively
 /// filtered based on problem shape divisibility and hardware constraints.
 pub struct AvailableLineSizes {
-    pub lhs: Vec<u8>,
-    pub rhs: Vec<u8>,
-    pub out: Vec<u8>,
+    pub lhs: Vec<LineSize>,
+    pub rhs: Vec<LineSize>,
+    pub out: Vec<LineSize>,
 }
 
 impl AvailableLineSizes {
@@ -54,7 +56,7 @@ impl AvailableLineSizes {
         shape: &[usize],
         layout: MatrixLayout,
     ) -> Self {
-        let lhs_vec: Vec<u8> = self.lhs.to_vec();
+        let lhs_vec: Vec<usize> = self.lhs.to_vec();
         let rank = strides.len();
 
         let target = tensor_line_size_parallel(
@@ -77,7 +79,7 @@ impl AvailableLineSizes {
         shape: &[usize],
         layout: MatrixLayout,
     ) -> Self {
-        let rhs_vec: Vec<u8> = self.rhs.to_vec();
+        let rhs_vec: Vec<usize> = self.rhs.to_vec();
         let rank = strides.len();
 
         let target = tensor_line_size_parallel(
@@ -95,7 +97,7 @@ impl AvailableLineSizes {
 
     /// Filter available line sizes considering tensor shapes and strides for output
     pub fn filter_out_with_tensor(self, strides: &[usize], shape: &[usize]) -> Self {
-        let out_vec: Vec<u8> = self.out.to_vec();
+        let out_vec: Vec<usize> = self.out.to_vec();
         let rank = strides.len();
 
         let target = tensor_line_size_parallel(out_vec.iter().copied(), shape, strides, rank - 1);
@@ -106,7 +108,7 @@ impl AvailableLineSizes {
     /// Filter available line sizes for Lhs
     pub fn filter_lhs<F>(self, pred: F) -> Self
     where
-        F: FnMut(&u8) -> bool,
+        F: FnMut(&usize) -> bool,
     {
         Self {
             lhs: self.lhs.iter().copied().filter(pred).collect(),
@@ -118,7 +120,7 @@ impl AvailableLineSizes {
     /// Filter available line sizes for Rhs
     pub fn filter_rhs<F>(self, pred: F) -> Self
     where
-        F: FnMut(&u8) -> bool,
+        F: FnMut(&usize) -> bool,
     {
         Self {
             lhs: self.lhs,
@@ -130,7 +132,7 @@ impl AvailableLineSizes {
     /// Filter available line sizes for output
     pub fn filter_out<F>(self, pred: F) -> Self
     where
-        F: FnMut(&u8) -> bool,
+        F: FnMut(&usize) -> bool,
     {
         Self {
             lhs: self.lhs,
@@ -141,7 +143,7 @@ impl AvailableLineSizes {
 
     /// Pick the largest remaining line size for each tensor
     pub fn pick_max(self) -> Result<MatmulLineSizes, MatmulSetupError> {
-        let pick = |v: Vec<u8>| {
+        let pick = |v: Vec<usize>| {
             v.into_iter()
                 .max()
                 .ok_or(MatmulSetupError::LineSize(LineSizeError::NoValidLineSize))

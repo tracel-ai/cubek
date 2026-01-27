@@ -22,7 +22,7 @@ impl<AP: AttentionPrecision, TA: TileAttention<AP>> AccumulatorPartition<AP, TA>
         let mut sequence = Sequence::new();
 
         #[unroll]
-        for _ in 0..comptime!(p.seq_q * p.val_dim) {
+        for _ in 0..p.seq_q * p.val_dim {
             sequence.push(AccumulatorTile::new(config.tile_config()));
         }
 
@@ -31,22 +31,21 @@ impl<AP: AttentionPrecision, TA: TileAttention<AP>> AccumulatorPartition<AP, TA>
 
     pub fn get_at(
         &self,
-        #[comptime] i: u32,
-        #[comptime] j: u32,
+        #[comptime] i: usize,
+        #[comptime] j: usize,
         #[comptime] config: PartitionAttentionConfig<TA::Config>,
     ) -> &AccumulatorTile<AP, TA> {
-        let partition_val_dim = config.shared().partition_size.val_dim;
-        self.sequence.index(comptime!(i * partition_val_dim + j))
+        let partition_val_dim = config.shared().partition_size.val_dim as usize;
+        &self.sequence[i * partition_val_dim + j]
     }
 
     pub fn get_at_mut(
         &mut self,
-        #[comptime] i: u32,
-        #[comptime] j: u32,
+        #[comptime] i: usize,
+        #[comptime] j: usize,
         #[comptime] config: PartitionAttentionConfig<TA::Config>,
     ) -> &mut AccumulatorTile<AP, TA> {
-        let partition_val_dim = config.shared().partition_size.val_dim;
-        self.sequence
-            .index_mut(comptime!(i * partition_val_dim + j))
+        let partition_val_dim = config.shared().partition_size.val_dim as usize;
+        self.sequence.index_mut(i * partition_val_dim + j)
     }
 }

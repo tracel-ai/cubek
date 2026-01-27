@@ -24,13 +24,13 @@ impl SyncStrategy for AsyncTma {
         barrier: &mut Self::Barrier,
         #[comptime] config: SharedGlobalMatmulConfig<S>,
     ) {
-        let lhs_elem_size = LhsS::<MP>::type_size();
-        let rhs_elem_size = RhsS::<MP>::type_size();
-        let num_bytes = comptime! {
-            let lhs_bytes = config.lhs_reader_config().smem_config.elements_per_stage() * lhs_elem_size;
-            let rhs_bytes = config.rhs_reader_config().smem_config.elements_per_stage() * rhs_elem_size;
-            lhs_bytes + rhs_bytes
-        };
+        let lhs_elem_size = LhsS::<MP>::type_size().comptime();
+        let rhs_elem_size = RhsS::<MP>::type_size().comptime();
+        let lhs_bytes =
+            config.lhs_reader_config().smem_config.elements_per_stage() * lhs_elem_size as u32;
+        let rhs_bytes =
+            config.rhs_reader_config().smem_config.elements_per_stage() * rhs_elem_size as u32;
+        let num_bytes = lhs_bytes + rhs_bytes;
         let token = arrive_tma(barrier, num_bytes);
         barrier.wait(token);
     }

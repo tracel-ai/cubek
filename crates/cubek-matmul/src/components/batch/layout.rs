@@ -1,17 +1,19 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::*;
 
+use crate::launch::BatchedCoords;
+
 /// Slice the layout at a specific batch, and reduce its dimensionality
 /// Not general enough to be in cubecl-std
 #[derive(CubeType, Clone, Copy)]
 pub struct SliceIndex {
-    offset: u32,
+    offset: usize,
     shape: Coords2d,
 }
 
 #[cube]
 impl SliceIndex {
-    pub fn new(offset: u32, shape: Coords3d) -> Self {
+    pub fn new(offset: usize, shape: BatchedCoords) -> Self {
         let (_, rows, cols) = shape;
         SliceIndex {
             offset,
@@ -23,7 +25,7 @@ impl SliceIndex {
 #[cube]
 impl Layout for SliceIndex {
     type Coordinates = Coords2d;
-    type SourceCoordinates = Coords3d;
+    type SourceCoordinates = (usize, u32, u32);
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
         let (row, col) = pos;

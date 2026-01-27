@@ -83,6 +83,8 @@ impl ConvolutionProblem {
             out_shape: vec![self.m, self.n],
             out_strides: MatrixLayout::RowMajor.to_strides(&[self.m, self.n]),
             out_layout: MatrixLayout::RowMajor,
+            lhs_scheme: None,
+            rhs_scheme: None,
             global_dtypes: self.global_dtypes.clone(),
         }
     }
@@ -105,7 +107,7 @@ pub enum Dimensionality {
 }
 
 impl Dimensionality {
-    pub fn num_dims(&self) -> u32 {
+    pub fn num_dims(&self) -> usize {
         match self {
             Dimensionality::Dim1 => 1,
             Dimensionality::Dim2 => 2,
