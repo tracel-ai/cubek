@@ -10,7 +10,7 @@ members = ["crates/*", "xtask", "benchmarks"]
 edition = "2024"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
-rust-version = "1.88"
+rust-version = "1.92"
 version = "0.1.0"
 
 [workspace.dependencies]
@@ -19,14 +19,12 @@ version = "0.1.0"
 # cubecl-common = { path = "../cubecl/crates/cubecl-common", default-features = false }
 
 ### For the main cubek branch. ###
-# cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "d060bfd58126b790ea0f9794dd3b3d791eb74fd6", default-features = false }
-# cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "d060bfd58126b790ea0f9794dd3b3d791eb74fd6", default-features = false }
+cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "a3987c60e410d77b6b38e99d1c2a6bc0979d38ba", default-features = false }
+cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "a3987c60e410d77b6b38e99d1c2a6bc0979d38ba", default-features = false }
 
 ### For releases ###
 # cubecl = { version = "=0.9.0", default-features = false }
 # cubecl-common = { version = "=0.9.0", default-features = false }
-cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "99121222504ed362ff6d804a8628d2c5b2d33591", default-features = false }
-cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "99121222504ed362ff6d804a8628d2c5b2d33591", default-features = false }
 
 bitflags = { version = "2.9.1", features = ["serde"] }
 derive-new = { version = "0.7.0", default-features = false }
