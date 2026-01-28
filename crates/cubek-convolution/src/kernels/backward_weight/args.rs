@@ -33,7 +33,7 @@ use enumset::EnumSet;
 use crate::components::{
     ConvGemmConfig, ConvolutionParams, ConvolutionProblem,
     global::{
-        args::RuntimeArgsLaunch,
+        args::{RuntimeArgs, RuntimeArgsLaunch},
         layout::{
             Im2colLayout, Im2colLayoutLaunch, NhwcCheck, NhwcLayout, NhwcLayoutLaunch, OutLayout,
             OutLayoutLaunch, TmaIm2colLayout, TmaIm2colLayoutLaunch, TmaOutGradLayout,
@@ -56,7 +56,7 @@ pub trait ConcreteArgs:
     ) -> ConvolutionProblem;
 }
 
-impl ConcreteArgs for TensorArgs {
+impl ConcreteArgs for TensorArgs<RuntimeArgs> {
     fn adjust_problem<R: Runtime>(
         client: &ComputeClient<R>,
         mut problem: ConvolutionProblem,
@@ -75,7 +75,7 @@ impl ConcreteArgs for TensorArgs {
     }
 }
 
-impl ConcreteArgs for TensorMapArgs {
+impl ConcreteArgs for TensorMapArgs<RuntimeArgs> {
     fn adjust_problem<R: Runtime>(
         _client: &ComputeClient<R>,
         mut problem: ConvolutionProblem,

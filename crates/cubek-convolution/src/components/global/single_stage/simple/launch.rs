@@ -1,5 +1,8 @@
 use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, server::LaunchError};
-use cubek_matmul::launch::{InputRuntimeArg, OutputRuntimeArg};
+use cubek_matmul::{
+    components::global::read::FullLoadingStrategy,
+    launch::{InputRuntimeArg, OutputRuntimeArg},
+};
 use cubek_matmul::{
     components::{
         global::PartitionedStageFamily,
@@ -11,9 +14,8 @@ use cubek_matmul::{
 
 use crate::components::global::{
     GlobalConfig,
-    args::RuntimeArgsLaunch,
+    args::{RuntimeArgs, RuntimeArgsLaunch},
     entry_point::{ConvolutionLaunch, implicit_conv},
-    read::full_reader::FullLoadingStrategy,
     single_stage::simple::SimpleConvolutionFamily,
 };
 
@@ -24,11 +26,11 @@ impl<
             AccStage = Option<StridedStageFamily>,
             OutStage = PartitionedStageFamily,
         >,
-    LL: FullLoadingStrategy,
-    LR: FullLoadingStrategy<SyncStrategy = LL::SyncStrategy>,
+    LL: FullLoadingStrategy<RuntimeArgs>,
+    LR: FullLoadingStrategy<RuntimeArgs, SyncStrategy = LL::SyncStrategy>,
 > ConvolutionLaunch<GlobalConfig<Self>> for SimpleConvolutionFamily<SMM, LL, LR>
 {
-    unsafe fn launch_unchecked<'a, MA: MatmulArgs, R: Runtime>(
+    unsafe fn launch_unchecked<'a, MA: MatmulArgs<Config = RuntimeArgs>, R: Runtime>(
         client: &ComputeClient<R>,
         cube_dim: CubeDim,
         cube_count: CubeCount,

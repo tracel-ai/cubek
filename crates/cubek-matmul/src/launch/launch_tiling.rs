@@ -17,12 +17,12 @@ use cubecl::{Runtime, client::ComputeClient, frontend::TensorHandleRef};
 /// Cmma will be used if available and enabled,
 /// otherwise it will fall back on a non-cmma implementation
 #[allow(clippy::result_large_err)]
-pub fn launch_ref<R: Runtime, A: Routine>(
+pub fn launch_ref<R: Runtime, A: Routine<()>>(
     client: &ComputeClient<R>,
     lhs: &MatmulInputHandleRef<'_, R>,
     rhs: &MatmulInputHandleRef<'_, R>,
     out: &TensorHandleRef<'_, R>,
-    blueprint_strategy: &BlueprintStrategy<A>,
+    blueprint_strategy: &BlueprintStrategy<(), A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let lhs_owned;
@@ -67,12 +67,12 @@ pub fn launch_ref<R: Runtime, A: Routine>(
 /// Cmma will be used if available and enabled,
 /// otherwise it will fall back on a non-cmma implementation
 #[allow(clippy::result_large_err)]
-pub fn launch_ref_tma<R: Runtime, A: Routine<Blueprint = TilingBlueprint>>(
+pub fn launch_ref_tma<R: Runtime, A: Routine<(), Blueprint = TilingBlueprint>>(
     client: &ComputeClient<R>,
     lhs: &MatmulInputHandleRef<'_, R>,
     rhs: &MatmulInputHandleRef<'_, R>,
     out: &TensorHandleRef<'_, R>,
-    blueprint_strategy: &BlueprintStrategy<A>,
+    blueprint_strategy: &BlueprintStrategy<(), A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let lhs_owned;
@@ -121,12 +121,12 @@ pub fn launch_ref_tma<R: Runtime, A: Routine<Blueprint = TilingBlueprint>>(
 }
 
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
-fn launch_inner_ref<R: Runtime, MA: MatmulArgs, A: Routine>(
+fn launch_inner_ref<R: Runtime, MA: MatmulArgs<Config = ()>, A: Routine<()>>(
     client: &ComputeClient<R>,
     lhs: &MatmulInputHandleRef<'_, R>,
     rhs: &MatmulInputHandleRef<'_, R>,
     out: &TensorHandleRef<'_, R>,
-    blueprint_strategy: &BlueprintStrategy<A>,
+    blueprint_strategy: &BlueprintStrategy<(), A>,
     line_sizes: AvailableLineSizes,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError>

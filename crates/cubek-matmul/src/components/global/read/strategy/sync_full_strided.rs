@@ -1,4 +1,3 @@
-use crate::components::global::read::validate_swizzle_atom_size;
 use crate::components::global::read::{FullLoadingStrategy, stage::FullStageLayout};
 use crate::components::global::{GlobalReaderConfig, PlaneFlowPartition};
 use crate::components::global::{multi_stage::LoadMaxRoundPlaneCount, read::sync::Synchronous};
@@ -6,6 +5,7 @@ use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{StridedStageMemory, StridedTilingLayout};
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
 use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem, StageIdent};
+use crate::{components::global::read::validate_swizzle_atom_size, launch::RuntimeConfig};
 use cubecl::std::type_size;
 use cubecl::{ir::DeviceProperties, prelude::*};
 
@@ -63,12 +63,13 @@ impl LoadMaxRoundPlaneCount for SyncFullStridedLoading {
 }
 
 #[cube]
-impl FullLoadingStrategy for SyncFullStridedLoading {
+impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncFullStridedLoading {
     type TilingLayout = StridedTilingLayout;
     type SyncStrategy = Synchronous;
     type Job<EG: Numeric, ES: Numeric> = SyncFullStridedJob;
 
     fn new_job<EG: Numeric, ES: Numeric>(
+        _runtime_config: RC,
         #[comptime] line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, ES> {

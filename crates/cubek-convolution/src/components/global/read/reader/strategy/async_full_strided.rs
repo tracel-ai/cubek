@@ -7,7 +7,7 @@ use cubek_matmul::components::{
         memory::GlobalIterator,
         multi_stage::LoadMaxRoundPlaneCount,
         read::{
-            LoadingJob, LoadingValidation, async_barrier::AsyncCopy,
+            FullLoadingStrategy, LoadingJob, LoadingValidation, async_barrier::AsyncCopy,
             async_full_strided::AsyncFullStridedLoading as MatmulStridedLoading,
             stage::FullStageLayout,
         },
@@ -18,10 +18,7 @@ use cubek_matmul::definition::{InvalidConfigError, MatmulElems, MatmulProblem, S
 
 use crate::components::global::{
     args::RuntimeArgs,
-    read::{
-        full_reader::FullLoadingStrategy,
-        strategy::async_copy::{ASYNC_COPY_WIDTH, async_copy_from},
-    },
+    read::strategy::async_copy::{ASYNC_COPY_WIDTH, async_copy_from},
 };
 
 #[derive(CubeType, Clone, Copy)]
@@ -65,7 +62,7 @@ impl LoadMaxRoundPlaneCount for AsyncFullStridedLoading {
 }
 
 #[cube]
-impl FullLoadingStrategy for AsyncFullStridedLoading {
+impl FullLoadingStrategy<RuntimeArgs> for AsyncFullStridedLoading {
     type TilingLayout = StridedTilingLayout;
     type SyncStrategy = AsyncCopy;
     type Job<EG: Numeric, ES: Numeric> = AsyncFullStridedJob;

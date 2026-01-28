@@ -25,7 +25,7 @@ pub trait ConvolutionLaunch<Config> {
     ///
     /// Out-of-bounds can happen
     #[allow(clippy::too_many_arguments)]
-    unsafe fn launch_unchecked<'a, MA: MatmulArgs, R: Runtime>(
+    unsafe fn launch_unchecked<'a, MA: MatmulArgs<Config = RuntimeArgs>, R: Runtime>(
         client: &ComputeClient<R>,
         cube_dim: CubeDim,
         cube_count: CubeCount,
@@ -39,7 +39,7 @@ pub trait ConvolutionLaunch<Config> {
 
 #[cube(launch_unchecked)]
 pub(crate) fn implicit_conv<
-    Args: MatmulArgs,
+    Args: MatmulArgs<Config = RuntimeArgs>,
     LhsG: Numeric,
     RhsG: Numeric,
     AccG: Numeric,
@@ -62,6 +62,7 @@ pub(crate) fn implicit_conv<
     let mut state = Args::init_state::<LhsG, RhsG, AccG>(
         inputs,
         output,
+        runtime_args.clone(),
         config
             .matmul_config()
             .lhs_reader_config()

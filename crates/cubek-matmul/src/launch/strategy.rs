@@ -35,10 +35,11 @@ type Mma = MmaMatmul;
 
 #[derive(Clone, Default)]
 pub enum Strategy {
-    SimpleCyclicCmma(BlueprintStrategy<SimpleAlgorithm<Cmma>>),
-    SimpleCyclicMma(BlueprintStrategy<SimpleAlgorithm<Mma>>),
+    SimpleCyclicCmma(BlueprintStrategy<(), SimpleAlgorithm<Cmma>>),
+    SimpleCyclicMma(BlueprintStrategy<(), SimpleAlgorithm<Mma>>),
     SimpleStridedCmma(
         BlueprintStrategy<
+            (),
             SimpleAlgorithm<
                 Cmma,
                 sync_full_strided::SyncFullStridedLoading,
@@ -48,6 +49,7 @@ pub enum Strategy {
     ),
     SimpleStridedMma(
         BlueprintStrategy<
+            (),
             SimpleAlgorithm<
                 Mma,
                 sync_full_strided::SyncFullStridedLoading,
@@ -57,6 +59,7 @@ pub enum Strategy {
     ),
     SimpleTilewiseCmma(
         BlueprintStrategy<
+            (),
             SimpleAlgorithm<
                 Cmma,
                 sync_full_tilewise::SyncFullTilewiseLoading<ColMajorTilingOrder>,
@@ -66,6 +69,7 @@ pub enum Strategy {
     ),
     SimpleTilewiseMma(
         BlueprintStrategy<
+            (),
             SimpleAlgorithm<
                 Mma,
                 sync_full_tilewise::SyncFullTilewiseLoading<ColMajorTilingOrder>,
@@ -75,6 +79,7 @@ pub enum Strategy {
     ),
     SimpleAsyncStridedCmma(
         BlueprintStrategy<
+            (),
             SimpleAlgorithm<
                 Cmma,
                 async_full_strided::AsyncFullStridedLoading,
@@ -84,6 +89,7 @@ pub enum Strategy {
     ),
     SimpleAsyncStridedMma(
         BlueprintStrategy<
+            (),
             SimpleAlgorithm<
                 Mma,
                 async_full_strided::AsyncFullStridedLoading,
@@ -93,6 +99,7 @@ pub enum Strategy {
     ),
     SimpleAsyncCyclicCmma(
         BlueprintStrategy<
+            (),
             SimpleAlgorithm<
                 Cmma,
                 async_full_cyclic::AsyncFullCyclicLoading<ColMajorTilingOrder>,
@@ -102,6 +109,7 @@ pub enum Strategy {
     ),
     SimpleAsyncCyclicMma(
         BlueprintStrategy<
+            (),
             SimpleAlgorithm<
                 Mma,
                 async_full_cyclic::AsyncFullCyclicLoading<ColMajorTilingOrder>,
@@ -109,42 +117,46 @@ pub enum Strategy {
             >,
         >,
     ),
-    SimpleTmaCmma(BlueprintStrategy<SimpleTmaAlgorithm<Cmma>>),
-    SimpleTmaMma(BlueprintStrategy<SimpleTmaAlgorithm<Mma>>),
-    DoubleCyclicCmma(BlueprintStrategy<CyclicDoubleBufferingAlgorithm<Cmma>>),
-    DoubleCyclicMma(BlueprintStrategy<CyclicDoubleBufferingAlgorithm<Mma>>),
-    DoubleTilewiseCmma(BlueprintStrategy<TilewiseDoubleBufferingAlgorithm<Cmma>>),
-    DoubleTilewiseMma(BlueprintStrategy<TilewiseDoubleBufferingAlgorithm<Mma>>),
-    DoubleHybridCmma(BlueprintStrategy<HybridDoubleBufferingAlgorithm<Cmma>>),
-    DoubleHybridMma(BlueprintStrategy<HybridDoubleBufferingAlgorithm<Mma>>),
-    DoubleAsyncCyclicCmma(BlueprintStrategy<AsyncCyclicDoubleBufferingAlgorithm<Cmma>>),
-    DoubleAsyncCyclicMma(BlueprintStrategy<AsyncCyclicDoubleBufferingAlgorithm<Mma>>),
-    DoubleAsyncStridedCmma(BlueprintStrategy<AsyncStridedDoubleBufferingAlgorithm<Cmma>>),
-    DoubleAsyncStridedMma(BlueprintStrategy<AsyncStridedDoubleBufferingAlgorithm<Mma>>),
-    DoubleTmaCmma(BlueprintStrategy<TmaDoubleBufferingAlgorithm<Cmma>>),
-    DoubleTmaMma(BlueprintStrategy<TmaDoubleBufferingAlgorithm<Mma>>),
+    SimpleTmaCmma(BlueprintStrategy<(), SimpleTmaAlgorithm<Cmma>>),
+    SimpleTmaMma(BlueprintStrategy<(), SimpleTmaAlgorithm<Mma>>),
+    DoubleCyclicCmma(BlueprintStrategy<(), CyclicDoubleBufferingAlgorithm<Cmma>>),
+    DoubleCyclicMma(BlueprintStrategy<(), CyclicDoubleBufferingAlgorithm<Mma>>),
+    DoubleTilewiseCmma(BlueprintStrategy<(), TilewiseDoubleBufferingAlgorithm<Cmma>>),
+    DoubleTilewiseMma(BlueprintStrategy<(), TilewiseDoubleBufferingAlgorithm<Mma>>),
+    DoubleHybridCmma(BlueprintStrategy<(), HybridDoubleBufferingAlgorithm<Cmma>>),
+    DoubleHybridMma(BlueprintStrategy<(), HybridDoubleBufferingAlgorithm<Mma>>),
+    DoubleAsyncCyclicCmma(BlueprintStrategy<(), AsyncCyclicDoubleBufferingAlgorithm<Cmma>>),
+    DoubleAsyncCyclicMma(BlueprintStrategy<(), AsyncCyclicDoubleBufferingAlgorithm<Mma>>),
+    DoubleAsyncStridedCmma(BlueprintStrategy<(), AsyncStridedDoubleBufferingAlgorithm<Cmma>>),
+    DoubleAsyncStridedMma(BlueprintStrategy<(), AsyncStridedDoubleBufferingAlgorithm<Mma>>),
+    DoubleTmaCmma(BlueprintStrategy<(), TmaDoubleBufferingAlgorithm<Cmma>>),
+    DoubleTmaMma(BlueprintStrategy<(), TmaDoubleBufferingAlgorithm<Mma>>),
     SpecializedCyclicCmma(
         BlueprintStrategy<
+            (),
             SpecializedAlgorithm<Cmma, AsyncPartialCyclicLoading<ColMajorTilingOrder>>,
         >,
     ),
     SpecializedCyclicMma(
         BlueprintStrategy<
+            (),
             SpecializedAlgorithm<Mma, AsyncPartialCyclicLoading<ColMajorTilingOrder>>,
         >,
     ),
     SpecializedStridedCmma(
-        BlueprintStrategy<SpecializedAlgorithm<Cmma, AsyncPartialStridedLoading>>,
+        BlueprintStrategy<(), SpecializedAlgorithm<Cmma, AsyncPartialStridedLoading>>,
     ),
-    SpecializedStridedMma(BlueprintStrategy<SpecializedAlgorithm<Mma, AsyncPartialStridedLoading>>),
-    SpecializedTmaCmma(BlueprintStrategy<SpecializedAlgorithm<Cmma>>),
-    SpecializedTmaMma(BlueprintStrategy<SpecializedAlgorithm<Mma>>),
-    OrderedDoubleCmma(BlueprintStrategy<OrderedDoubleBufferingAlgorithm<Cmma>>),
-    OrderedDoubleMma(BlueprintStrategy<OrderedDoubleBufferingAlgorithm<Mma>>),
-    SimpleUnit(BlueprintStrategy<SimpleUnitAlgorithm>),
-    DoubleUnit(BlueprintStrategy<DoubleUnitAlgorithm>),
-    SimpleVecMat(BlueprintStrategy<SimpleVecMatAlgorithm>),
-    DoubleVecMat(BlueprintStrategy<DoubleVecMatAlgorithm>),
+    SpecializedStridedMma(
+        BlueprintStrategy<(), SpecializedAlgorithm<Mma, AsyncPartialStridedLoading>>,
+    ),
+    SpecializedTmaCmma(BlueprintStrategy<(), SpecializedAlgorithm<Cmma>>),
+    SpecializedTmaMma(BlueprintStrategy<(), SpecializedAlgorithm<Mma>>),
+    OrderedDoubleCmma(BlueprintStrategy<(), OrderedDoubleBufferingAlgorithm<Cmma>>),
+    OrderedDoubleMma(BlueprintStrategy<(), OrderedDoubleBufferingAlgorithm<Mma>>),
+    SimpleUnit(BlueprintStrategy<(), SimpleUnitAlgorithm>),
+    DoubleUnit(BlueprintStrategy<(), DoubleUnitAlgorithm>),
+    SimpleVecMat(BlueprintStrategy<(), SimpleVecMatAlgorithm>),
+    DoubleVecMat(BlueprintStrategy<(), DoubleVecMatAlgorithm>),
     Naive,
     #[default]
     Auto,

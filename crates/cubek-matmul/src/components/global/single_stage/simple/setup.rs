@@ -1,8 +1,8 @@
-use crate::components::CubeDimResource;
 use crate::definition::{
     MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError, MatrixLayout,
     StageIdent,
 };
+use crate::{components::CubeDimResource, launch::RuntimeConfig};
 use crate::{
     components::{
         global::{
@@ -25,17 +25,19 @@ use crate::components::{global::GlobalMatmulFamily, stage};
 /// Simple matmul family for any precision
 pub struct SimpleMatmulFamily<
     SMM: stage::StageMatmulFamily,
-    LL: FullLoadingStrategy,
-    RL: FullLoadingStrategy,
+    RC: RuntimeConfig,
+    LL: FullLoadingStrategy<RC>,
+    RL: FullLoadingStrategy<RC>,
     GW: GlobalWriterFamily,
 > {
     _stage_matmul: PhantomData<SMM>,
+    _rc: PhantomData<RC>,
     _lhs_loading: PhantomData<LL>,
     _rhs_loading: PhantomData<RL>,
     _writer: PhantomData<GW>,
 }
 
-impl<SMM, LL, RL, GW> GlobalMatmulFamily for SimpleMatmulFamily<SMM, LL, RL, GW>
+impl<SMM, RC, LL, RL, GW> GlobalMatmulFamily<RC> for SimpleMatmulFamily<SMM, RC, LL, RL, GW>
 where
     SMM: stage::StageMatmulFamily<
             LhsStage = StridedStageFamily,
@@ -43,13 +45,15 @@ where
             AccStage = FilledStageFamily,
             OutStage = GW::Stage,
         >,
-    LL: FullLoadingStrategy,
-    RL: FullLoadingStrategy<SyncStrategy = LL::SyncStrategy>,
+    RC: RuntimeConfig,
+    LL: FullLoadingStrategy<RC>,
+    RL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
     GW: GlobalWriterFamily,
 {
     type Matmul<MP: MatmulPrecision> = SimpleMatmul<
         MP,
         SMM::Matmul<MP, LL::TilingLayout, RL::TilingLayout, NoTilingLayout, WriteTiling>,
+        RC,
         LL,
         RL,
         GW::Writer<MP::Acc>,

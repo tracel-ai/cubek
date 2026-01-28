@@ -18,7 +18,7 @@ use cubecl::std::tensor::layout::Coords2d;
 #[cube(launch_unchecked)]
 /// Launches the matmul kernel
 pub(crate) fn matmul_entry<
-    Args: MatmulArgs,
+    Args: MatmulArgs<Config = ()>,
     LhsG: Numeric,
     RhsG: Numeric,
     AccG: Numeric,
@@ -31,6 +31,7 @@ pub(crate) fn matmul_entry<
 >(
     inputs: &<Args as MatmulArgs>::Input<LhsG, RhsG, AccG>,
     output: &mut <Args as MatmulArgs>::Output<AccG>,
+    runtime_config: (),
     cube_mapping: CubeMapping,
     #[comptime] blueprint: NaiveBlueprint,
     #[define(LhsG, RhsG, AccG)] global: [StorageType; 3],
@@ -40,6 +41,7 @@ pub(crate) fn matmul_entry<
     let mut state = Args::init_state::<LhsG, RhsG, AccG>(
         inputs,
         output,
+        runtime_config,
         blueprint.lhs_global_layout_config(),
         blueprint.rhs_global_layout_config(),
         blueprint.out_global_layout_config(),
@@ -71,6 +73,7 @@ pub(crate) fn matmul_entry<
     let mut state = Args::init_state::<LhsG, RhsG, AccG>(
         inputs,
         output,
+        runtime_config,
         config.lhs_global_layout_config(),
         config.rhs_global_layout_config(),
         config.out_global_layout_config(),
@@ -88,7 +91,7 @@ pub struct NaiveMatmul<MP: MatmulPrecision> {
 }
 
 #[cube]
-impl<MP: MatmulPrecision> BatchMatmul<MP> for NaiveMatmul<MP> {
+impl<MP: MatmulPrecision> BatchMatmul<(), MP> for NaiveMatmul<MP> {
     type Config = NaiveMatmulConfig;
 
     fn execute<Args: MatmulArgs>(

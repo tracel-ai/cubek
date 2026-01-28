@@ -1,4 +1,3 @@
-use crate::components::CubeDimResource;
 use crate::components::global::multi_stage::EventLoadingMode;
 use crate::components::global::{
     GlobalReaderConfig, GlobalWriterConfig, PlaneFlowConfig, SharedGlobalMatmulConfig,
@@ -17,21 +16,24 @@ use crate::definition::TilingBlueprint;
 use crate::definition::{MatmulElems, MatmulSetupError};
 use crate::definition::{MatmulPrecision, MatmulProblem};
 use crate::definition::{MatrixLayout, StageIdent};
+use crate::{components::CubeDimResource, launch::RuntimeConfig};
 use cubecl::{ir::DeviceProperties, prelude::*};
 use std::marker::PhantomData;
 
 /// Double buffering matmul family for any precision
 pub struct SpecializedMatmulFamily<
     SMM: stage::StageMatmulFamily,
-    L: AsyncPartialLoadingStrategy,
+    RC: RuntimeConfig,
+    L: AsyncPartialLoadingStrategy<RC>,
     GW: GlobalWriterFamily,
 > {
     _stage_matmul: PhantomData<SMM>,
+    _rc: PhantomData<RC>,
     _loading: PhantomData<L>,
     _writer: PhantomData<GW>,
 }
 
-impl<SMM, L, GW> GlobalMatmulFamily for SpecializedMatmulFamily<SMM, L, GW>
+impl<SMM, RC, L, GW> GlobalMatmulFamily<RC> for SpecializedMatmulFamily<SMM, RC, L, GW>
 where
     SMM: stage::StageMatmulFamily<
             LhsStage = L::Stage,
@@ -39,12 +41,14 @@ where
             AccStage = FilledStageFamily,
             OutStage = GW::Stage,
         >,
-    L: AsyncPartialLoadingStrategy,
+    RC: RuntimeConfig,
+    L: AsyncPartialLoadingStrategy<RC>,
     GW: GlobalWriterFamily,
 {
     type Matmul<MP: MatmulPrecision> = SpecializedMatmul<
         MP,
         SMM::Matmul<MP, L::TilingLayout, L::TilingLayout, NoTilingLayout, WriteTiling>,
+        RC,
         L,
         GW::Writer<MP::Acc>,
     >;

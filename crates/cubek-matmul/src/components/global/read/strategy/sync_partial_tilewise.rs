@@ -1,6 +1,5 @@
 use std::marker::PhantomData;
 
-use crate::components::global::GlobalReaderConfig;
 use crate::components::global::read::validate_swizzle_atom_size;
 use crate::components::global::read::{PartialLoadingStrategy, sync::Synchronous};
 use crate::components::global::{PlaneFlowPartition, read::tiled::TiledLayout};
@@ -15,6 +14,7 @@ use crate::components::{global::multi_stage::LoadMaxRoundPlaneCount, stage::Tili
 use crate::definition::{
     FormattedConfigError, InvalidConfigError, MatmulElems, MatmulProblem, StageIdent,
 };
+use crate::{components::global::GlobalReaderConfig, launch::RuntimeConfig};
 use cubecl::std::{tensor::layout::Coords2d, type_size};
 use cubecl::{ir::DeviceProperties, prelude::*};
 
@@ -107,7 +107,9 @@ impl<T: TilingOrder> LoadingValidation for SyncPartialTilewiseLoading<T> {
 }
 
 #[cube]
-impl<TO: TilingOrder> PartialLoadingStrategy for SyncPartialTilewiseLoading<TO> {
+impl<TO: TilingOrder, RC: RuntimeConfig> PartialLoadingStrategy<RC>
+    for SyncPartialTilewiseLoading<TO>
+{
     type TilingLayout = ContiguousTilingLayout<TO>;
     type SyncStrategy = Synchronous;
     type Stage = StridedStageFamily;
@@ -115,6 +117,7 @@ impl<TO: TilingOrder> PartialLoadingStrategy for SyncPartialTilewiseLoading<TO> 
     type Job<EG: Numeric, ES: Numeric> = SyncPartialTilewiseJob;
 
     fn new_job<EG: Numeric, ES: Numeric>(
+        _runtime_config: RC,
         #[comptime] stage_index: u32,
         #[comptime] line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,

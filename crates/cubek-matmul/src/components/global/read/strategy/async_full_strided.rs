@@ -1,4 +1,3 @@
-use crate::components::global::read::async_barrier::AsyncCopy;
 use crate::components::global::read::async_copy::ASYNC_COPY_WIDTH;
 use crate::components::global::read::validate_async_copy_with_problem;
 use crate::components::global::read::{
@@ -11,6 +10,7 @@ use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{StridedStageMemory, StridedTilingLayout};
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
 use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem, StageIdent};
+use crate::{components::global::read::async_barrier::AsyncCopy, launch::RuntimeConfig};
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Layout, LayoutExpand};
 use cubecl::{ir::DeviceProperties, prelude::barrier::Barrier};
@@ -85,12 +85,13 @@ impl LoadMaxRoundPlaneCount for AsyncFullStridedLoading {
 }
 
 #[cube]
-impl FullLoadingStrategy for AsyncFullStridedLoading {
+impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for AsyncFullStridedLoading {
     type TilingLayout = StridedTilingLayout;
     type SyncStrategy = AsyncCopy;
     type Job<EG: Numeric, ES: Numeric> = AsyncFullStridedJob;
 
     fn new_job<EG: Numeric, ES: Numeric>(
+        _runtime_args: RC,
         #[comptime] _line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, ES> {

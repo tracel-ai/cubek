@@ -6,7 +6,7 @@ use cubek_matmul::components::{
         cube_dim_validation,
         memory::{GlobalMemoryConfig, ViewDirection},
         multi_stage::EventLoadingMode,
-        read::sync_full_cyclic::SyncFullCyclicLoading,
+        read::{FullLoadingStrategy, sync_full_cyclic::SyncFullCyclicLoading},
     },
     stage::{
         ColMajorTilingOrder, ContiguousTilingLayout, RowMajorTilingOrder, StageConfig,
@@ -21,10 +21,7 @@ use std::marker::PhantomData;
 
 use crate::components::{
     ConvolutionConfig, ConvolutionOperation, ConvolutionProblem,
-    global::{
-        GlobalConvolutionFamily, read::full_reader::FullLoadingStrategy,
-        single_stage::simple::SimpleConvolution,
-    },
+    global::{GlobalConvolutionFamily, args::RuntimeArgs, single_stage::simple::SimpleConvolution},
     stage::reader::BiasTilingLayout,
 };
 
@@ -32,8 +29,8 @@ pub type ConvTilingLayout = ContiguousTilingLayout<RowMajorTilingOrder>;
 
 pub struct SimpleConvolutionFamily<
     SMM: StageMatmulFamily,
-    LL: FullLoadingStrategy = SyncFullCyclicLoading<RowMajorTilingOrder>,
-    LR: FullLoadingStrategy = SyncFullCyclicLoading<ColMajorTilingOrder>,
+    LL: FullLoadingStrategy<RuntimeArgs> = SyncFullCyclicLoading<RowMajorTilingOrder>,
+    LR: FullLoadingStrategy<RuntimeArgs> = SyncFullCyclicLoading<ColMajorTilingOrder>,
 > {
     _smm: PhantomData<SMM>,
     _loaders: PhantomData<(LL, LR)>,
@@ -47,8 +44,8 @@ where
             AccStage = Option<StridedStageFamily>,
             OutStage = PartitionedStageFamily,
         >,
-    LL: FullLoadingStrategy,
-    LR: FullLoadingStrategy<SyncStrategy = LL::SyncStrategy>,
+    LL: FullLoadingStrategy<RuntimeArgs>,
+    LR: FullLoadingStrategy<RuntimeArgs, SyncStrategy = LL::SyncStrategy>,
 {
     type Convolution<MP: MatmulPrecision> = SimpleConvolution<
         MP,
@@ -175,6 +172,27 @@ where
             writer_config,
             must_sync_plane_after_execution: false,
         };
+
+        let lhs_smem_size = blueprint.tiling_scheme.elements_per_stage_along_m()
+            * blueprint.tiling_scheme.elements_per_stage_along_k();
+        let rhs_smem_size = blueprint.tiling_scheme.elements_per_stage_along_k()
+            * blueprint.tiling_scheme.elements_per_stage_along_n();
+        let acc_smem_size = blueprint.tiling_scheme.elements_per_stage_along_n();
+        let out_smem_size = blueprint.tiling_scheme.tile_size.m
+            * blueprint.tiling_scheme.tile_size.n
+            * num_main_flow_planes;
+
+        let smem_total_size = dtypes.lhs_stage.size() as u32 * lhs_smem_size
+            + dtypes.rhs_stage.size() as u32 * rhs_smem_size
+            + dtypes.acc_stage.size() as u32 * acc_smem_size
+            + dtypes.acc_stage.size() as u32 * out_smem_size;
+
+        let smem_limit = device_props.hardware.max_shared_memory_size as u32;
+        if smem_total_size > smem_limit {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "This algorithm needs {smem_total_size:?} shared memory bytes but hardware limit is {smem_limit:?}. "
+            ))));
+        }
 
         cube_dim_validation(matmul_config.cube_dim())?;
 

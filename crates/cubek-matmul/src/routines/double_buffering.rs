@@ -3,7 +3,6 @@ use std::marker::PhantomData;
 
 use cubecl::Runtime;
 
-use crate::components::batch::BatchMatmulFamily;
 use crate::components::global::read::{
     async_partial_cyclic::AsyncPartialCyclicLoading,
     async_partial_strided::AsyncPartialStridedLoading, async_partial_tma::AsyncPartialTmaLoading,
@@ -28,6 +27,7 @@ use crate::definition::{
 use crate::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
 use crate::routines::{BlueprintStrategy, LaunchInfo, base};
 use crate::routines::{DeviceSettings, Routine};
+use crate::{components::batch::BatchMatmulFamily, launch::RuntimeConfig};
 
 /// Plane accelerated double buffered matmul with cyclic readers
 pub struct CyclicDoubleBufferingAlgorithm<TMM> {
@@ -70,7 +70,7 @@ impl Display for DoubleBufferingArgs {
     }
 }
 
-impl<TMM> base::Routine for CyclicDoubleBufferingAlgorithm<TMM>
+impl<TMM, RC> base::Routine<RC> for CyclicDoubleBufferingAlgorithm<TMM>
 where
     TMM: tile::TileMatmulFamily<
             LhsTile = Strided,
@@ -78,12 +78,15 @@ where
             AccTile = Filled,
             OutTile = Strided,
         >,
+    RC: RuntimeConfig,
 {
     type Strategy = DoubleBufferingArgs;
 
     type BatchMatmul = PartitionedBatchMatmulFamily<
+        RC,
         DoubleBufferingMatmulFamily<
             PlaneMatmulFamily<TMM, StridedStageFamily, StridedStageFamily, FilledStageFamily>,
+            RC,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
             PlaneWriterFamily,
@@ -91,12 +94,12 @@ where
         RowMajorGlobalPartitionMatmul,
     >;
     type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
 
     fn prepare<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<Self>,
+        strategy: &BlueprintStrategy<RC, Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
@@ -123,7 +126,7 @@ where
             )?,
         };
 
-        Self::validate_blueprint(
+        <Self as base::Routine<RC>>::validate_blueprint(
             &device_settings.client,
             &blueprint,
             problem,
@@ -144,7 +147,7 @@ where
     }
 }
 
-impl<TMM> base::Routine for AsyncCyclicDoubleBufferingAlgorithm<TMM>
+impl<TMM, RC> base::Routine<RC> for AsyncCyclicDoubleBufferingAlgorithm<TMM>
 where
     TMM: tile::TileMatmulFamily<
             LhsTile = Strided,
@@ -152,11 +155,14 @@ where
             AccTile = Filled,
             OutTile = Strided,
         >,
+    RC: RuntimeConfig,
 {
     type Strategy = DoubleBufferingArgs;
     type BatchMatmul = PartitionedBatchMatmulFamily<
+        RC,
         DoubleBufferingMatmulFamily<
             PlaneMatmulFamily<TMM, StridedStageFamily, StridedStageFamily, FilledStageFamily>,
+            RC,
             AsyncPartialCyclicLoading<RowMajorTilingOrder>,
             AsyncPartialCyclicLoading<RowMajorTilingOrder>,
             PlaneWriterFamily,
@@ -164,12 +170,12 @@ where
         RowMajorGlobalPartitionMatmul,
     >;
     type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
 
     fn prepare<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<Self>,
+        strategy: &BlueprintStrategy<RC, Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
@@ -196,7 +202,7 @@ where
             )?,
         };
 
-        Self::validate_blueprint(
+        <Self as base::Routine<RC>>::validate_blueprint(
             &device_settings.client,
             &blueprint,
             problem,
@@ -217,7 +223,7 @@ where
     }
 }
 
-impl<TMM> Routine for TilewiseDoubleBufferingAlgorithm<TMM>
+impl<TMM, RC> Routine<RC> for TilewiseDoubleBufferingAlgorithm<TMM>
 where
     TMM: tile::TileMatmulFamily<
             LhsTile = Strided,
@@ -225,12 +231,15 @@ where
             AccTile = Filled,
             OutTile = Strided,
         >,
+    RC: RuntimeConfig,
 {
     type Strategy = DoubleBufferingArgs;
 
     type BatchMatmul = PartitionedBatchMatmulFamily<
+        RC,
         DoubleBufferingMatmulFamily<
             PlaneMatmulFamily<TMM, StridedStageFamily, StridedStageFamily, FilledStageFamily>,
+            RC,
             // Other tiling orders are not supported
             SyncPartialTilewiseLoading<RowMajorTilingOrder>,
             SyncPartialTilewiseLoading<ColMajorTilingOrder>,
@@ -239,12 +248,12 @@ where
         RowMajorGlobalPartitionMatmul,
     >;
     type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
 
     fn prepare<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<Self>,
+        strategy: &BlueprintStrategy<RC, Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
@@ -271,7 +280,7 @@ where
             )?,
         };
 
-        Self::validate_blueprint(
+        <Self as base::Routine<RC>>::validate_blueprint(
             &device_settings.client,
             &blueprint,
             problem,
@@ -292,7 +301,7 @@ where
     }
 }
 
-impl<TMM> base::Routine for HybridDoubleBufferingAlgorithm<TMM>
+impl<TMM, RC> base::Routine<RC> for HybridDoubleBufferingAlgorithm<TMM>
 where
     TMM: tile::TileMatmulFamily<
             LhsTile = Strided,
@@ -300,12 +309,15 @@ where
             AccTile = Filled,
             OutTile = Strided,
         >,
+    RC: RuntimeConfig,
 {
     type Strategy = DoubleBufferingArgs;
 
     type BatchMatmul = PartitionedBatchMatmulFamily<
+        RC,
         DoubleBufferingMatmulFamily<
             PlaneMatmulFamily<TMM, StridedStageFamily, StridedStageFamily, FilledStageFamily>,
+            RC,
             SyncPartialTilewiseLoading<RowMajorTilingOrder>,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
             PlaneWriterFamily,
@@ -313,12 +325,12 @@ where
         RowMajorGlobalPartitionMatmul,
     >;
     type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
 
     fn prepare<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<Self>,
+        strategy: &BlueprintStrategy<RC, Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
@@ -345,7 +357,7 @@ where
             )?,
         };
 
-        Self::validate_blueprint(
+        <Self as base::Routine<RC>>::validate_blueprint(
             &device_settings.client,
             &blueprint,
             problem,
@@ -366,7 +378,7 @@ where
     }
 }
 
-impl<TMM> base::Routine for TmaDoubleBufferingAlgorithm<TMM>
+impl<TMM, RC> base::Routine<RC> for TmaDoubleBufferingAlgorithm<TMM>
 where
     TMM: tile::TileMatmulFamily<
             LhsTile = Strided,
@@ -374,11 +386,14 @@ where
             AccTile = Filled,
             OutTile = Strided,
         >,
+    RC: RuntimeConfig,
 {
     type Strategy = DoubleBufferingArgs;
     type BatchMatmul = PartitionedBatchMatmulFamily<
+        RC,
         DoubleBufferingMatmulFamily<
             PlaneMatmulFamily<TMM, StridedStageFamily, StridedStageFamily, FilledStageFamily>,
+            RC,
             AsyncPartialTmaLoading,
             AsyncPartialTmaLoading,
             PlaneWriterFamily,
@@ -386,12 +401,12 @@ where
         RowMajorGlobalPartitionMatmul,
     >;
     type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
 
     fn prepare<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<Self>,
+        strategy: &BlueprintStrategy<RC, Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
@@ -418,7 +433,7 @@ where
             )?,
         };
 
-        Self::validate_blueprint(
+        <Self as base::Routine<RC>>::validate_blueprint(
             &device_settings.client,
             &blueprint,
             problem,
@@ -439,7 +454,7 @@ where
     }
 }
 
-impl<TMM> base::Routine for AsyncStridedDoubleBufferingAlgorithm<TMM>
+impl<TMM, RC> base::Routine<RC> for AsyncStridedDoubleBufferingAlgorithm<TMM>
 where
     TMM: tile::TileMatmulFamily<
             LhsTile = Strided,
@@ -447,11 +462,14 @@ where
             AccTile = Filled,
             OutTile = Strided,
         >,
+    RC: RuntimeConfig,
 {
     type Strategy = DoubleBufferingArgs;
     type BatchMatmul = PartitionedBatchMatmulFamily<
+        RC,
         DoubleBufferingMatmulFamily<
             PlaneMatmulFamily<TMM, StridedStageFamily, StridedStageFamily, FilledStageFamily>,
+            RC,
             AsyncPartialStridedLoading,
             AsyncPartialStridedLoading,
             PlaneWriterFamily,
@@ -459,12 +477,12 @@ where
         RowMajorGlobalPartitionMatmul,
     >;
     type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
 
     fn prepare<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<Self>,
+        strategy: &BlueprintStrategy<RC, Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
@@ -491,7 +509,7 @@ where
             )?,
         };
 
-        Self::validate_blueprint(
+        <Self as base::Routine<RC>>::validate_blueprint(
             &device_settings.client,
             &blueprint,
             problem,

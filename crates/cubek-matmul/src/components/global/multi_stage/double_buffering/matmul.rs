@@ -1,6 +1,3 @@
-use crate::components::global::multi_stage::double_buffer_execution::{
-    execute_current_and_read_next, execute_last_and_write_results, read_first,
-};
 use crate::components::global::read::{
     PartialLoadingStrategy, PartialStageGlobalReader, StageBuffer, ZeroGlobalReader,
 };
@@ -10,6 +7,12 @@ use crate::components::stage;
 use crate::components::stage::{FilledStage, StridedStageMemory};
 use crate::components::stage::{StageConfig, StridedStageFamily};
 use crate::definition::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS};
+use crate::{
+    components::global::multi_stage::double_buffer_execution::{
+        execute_current_and_read_next, execute_last_and_write_results, read_first,
+    },
+    launch::RuntimeConfig,
+};
 use cubecl::prelude::*;
 use cubecl::std::{
     CubeOption, CubeOptionExpand,
@@ -23,20 +26,22 @@ use std::marker::PhantomData;
 pub struct DoubleBufferingMatmul<
     MP: MatmulPrecision,
     SMM: stage::StageMatmul<MP>,
-    LL: PartialLoadingStrategy,
-    RL: PartialLoadingStrategy,
+    RC: RuntimeConfig,
+    LL: PartialLoadingStrategy<RC>,
+    RL: PartialLoadingStrategy<RC>,
     GW: GlobalWriter<MP::Acc>,
 > {
     _ms: PhantomData<MP>,
     _stage_matmul: PhantomData<SMM>,
+    _rc: PhantomData<RC>,
     _lhs_loading: PhantomData<LL>,
     _rhs_loading: PhantomData<RL>,
     _writer: PhantomData<GW>,
 }
 
 #[cube]
-impl<MP: MatmulPrecision, SMM, LL, RL, GW> GlobalMatmul<MP>
-    for DoubleBufferingMatmul<MP, SMM, LL, RL, GW>
+impl<MP: MatmulPrecision, SMM, RC, LL, RL, GW> GlobalMatmul<RC, MP>
+    for DoubleBufferingMatmul<MP, SMM, RC, LL, RL, GW>
 where
     SMM: stage::StageMatmul<
             MP,
@@ -45,8 +50,9 @@ where
             AccStage = FilledStage<AccS<MP>>,
             OutStage = GW::Stage,
         >,
-    LL: PartialLoadingStrategy<Stage = StridedStageFamily>,
-    RL: PartialLoadingStrategy<Stage = StridedStageFamily, SyncStrategy = LL::SyncStrategy>,
+    RC: RuntimeConfig,
+    LL: PartialLoadingStrategy<RC, Stage = StridedStageFamily>,
+    RL: PartialLoadingStrategy<RC, Stage = StridedStageFamily, SyncStrategy = LL::SyncStrategy>,
     GW: GlobalWriter<MP::Acc>,
 {
     type Config = SharedGlobalMatmulConfig<SMM::Config>;
@@ -54,11 +60,13 @@ where
     type LhsGlobalReader = PartialStageGlobalReader<
         <MP::Lhs as MatrixPrecision>::Global,
         <MP::Lhs as MatrixPrecision>::Stage,
+        RC,
         LL,
     >;
     type RhsGlobalReader = PartialStageGlobalReader<
         <MP::Rhs as MatrixPrecision>::Global,
         <MP::Rhs as MatrixPrecision>::Stage,
+        RC,
         RL,
     >;
     type AccGlobalReader = ZeroGlobalReader<MP::Acc>;
@@ -223,6 +231,7 @@ where
 
     fn init_lhs_global_reader(
         lhs: View<Line<LhsG<MP>>, Coords2d>,
+        runtime_config: RC,
         #[comptime] config: Self::Config,
     ) -> Self::LhsGlobalReader {
         // We always advance by 2 * k because stage B shares the same global memory state as stage A,
@@ -231,12 +240,14 @@ where
         PartialStageGlobalReader::<
             <MP::Lhs as MatrixPrecision>::Global,
             <MP::Lhs as MatrixPrecision>::Stage,
+            RC,
             LL,
-        >::new(lhs, k_step, config.lhs_reader_config)
+        >::new(lhs, runtime_config, k_step, config.lhs_reader_config)
     }
 
     fn init_rhs_global_reader(
         rhs: View<Line<RhsG<MP>>, Coords2d>,
+        runtime_config: RC,
         #[comptime] config: Self::Config,
     ) -> Self::RhsGlobalReader {
         // We always advance by 2 * k because stage B shares the same global memory state as stage A,
@@ -245,12 +256,14 @@ where
         PartialStageGlobalReader::<
             <MP::Rhs as MatrixPrecision>::Global,
             <MP::Rhs as MatrixPrecision>::Stage,
+            RC,
             RL,
-        >::new(rhs, k_step, config.rhs_reader_config)
+        >::new(rhs, runtime_config, k_step, config.rhs_reader_config)
     }
 
     fn init_acc_global_reader(
         acc: CubeOption<View<Line<AccG<MP>>, Coords2d>>,
+        _runtime_config: RC,
         #[comptime] _config: Self::Config,
     ) -> Self::AccGlobalReader {
         match acc {

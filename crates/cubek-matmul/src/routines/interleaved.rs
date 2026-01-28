@@ -3,7 +3,6 @@ use cubecl::{Runtime, client::ComputeClient};
 use std::fmt::Display;
 use std::marker::PhantomData;
 
-use crate::components::batch::BatchMatmulFamily;
 use crate::components::tile::interleaved::InterleavedMatmul;
 use crate::definition::{
     CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulElems, MatmulLineSizes,
@@ -11,6 +10,7 @@ use crate::definition::{
     adjust_dtypes,
 };
 use crate::routines::{BlueprintStrategy, DeviceSettings, LaunchInfo};
+use crate::{components::batch::BatchMatmulFamily, launch::RuntimeConfig};
 use crate::{
     components::{
         batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
@@ -52,13 +52,15 @@ impl Display for InterleavedArgs {
     }
 }
 
-impl<LL, RL> Routine for InterleavedAlgorithm<LL, RL>
+impl<LL, RL, RC> Routine<RC> for InterleavedAlgorithm<LL, RL>
 where
-    LL: FullLoadingStrategy,
-    RL: FullLoadingStrategy<SyncStrategy = LL::SyncStrategy>,
+    RC: RuntimeConfig,
+    LL: FullLoadingStrategy<RC>,
+    RL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
 {
     type Strategy = InterleavedArgs;
     type BatchMatmul = PartitionedBatchMatmulFamily<
+        RC,
         SimpleMatmulFamily<
             PlaneMatmulFamily<
                 InterleavedMatmul,
@@ -66,6 +68,7 @@ where
                 StridedStageFamily,
                 FilledStageFamily,
             >,
+            RC,
             LL,
             RL,
             PlaneWriterFamily,
@@ -73,12 +76,12 @@ where
         RowMajorGlobalPartitionMatmul,
     >;
     type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
 
     fn prepare<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<Self>,
+        strategy: &BlueprintStrategy<RC, Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 

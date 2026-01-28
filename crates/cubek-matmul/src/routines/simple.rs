@@ -3,13 +3,13 @@ use cubecl::{Runtime, client::ComputeClient};
 use std::fmt::Display;
 use std::marker::PhantomData;
 
-use crate::components::batch::BatchMatmulFamily;
 use crate::definition::{
     CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulElems, MatmulLineSizes,
     MatmulProblem, MatmulSetupError, MultiRowStrategy, SmAllocation, TilingBlueprint, TilingScheme,
     adjust_dtypes,
 };
 use crate::routines::{BlueprintStrategy, DeviceSettings, LaunchInfo};
+use crate::{components::batch::BatchMatmulFamily, launch::RuntimeConfig};
 use crate::{
     components::{
         batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
@@ -62,17 +62,20 @@ impl Display for SimpleArgs {
     }
 }
 
-impl<TMM, LL, RL> Routine for SimpleAlgorithm<TMM, LL, RL>
+impl<TMM, RC, LL, RL> Routine<RC> for SimpleAlgorithm<TMM, LL, RL>
 where
     TMM:
         TileMatmulFamily<LhsTile = Strided, RhsTile = Strided, AccTile = Filled, OutTile = Strided>,
-    LL: FullLoadingStrategy,
-    RL: FullLoadingStrategy<SyncStrategy = LL::SyncStrategy>,
+    RC: RuntimeConfig,
+    LL: FullLoadingStrategy<RC>,
+    RL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
 {
     type Strategy = SimpleArgs;
     type BatchMatmul = PartitionedBatchMatmulFamily<
+        RC,
         SimpleMatmulFamily<
             PlaneMatmulFamily<TMM, StridedStageFamily, StridedStageFamily, FilledStageFamily>,
+            RC,
             LL,
             RL,
             PlaneWriterFamily,
@@ -80,12 +83,12 @@ where
         RowMajorGlobalPartitionMatmul,
     >;
     type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
 
     fn prepare<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<Self>,
+        strategy: &BlueprintStrategy<RC, Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 

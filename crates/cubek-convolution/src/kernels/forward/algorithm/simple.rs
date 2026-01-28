@@ -1,7 +1,7 @@
 use cubecl::server::LaunchError;
 use cubecl::std::{CubeOption, tensor::TensorHandle};
 use cubecl::{Runtime, client::ComputeClient, ir::StorageType, prelude::TensorHandleRef};
-use cubek_matmul::components::tile::TileMatmulFamily;
+use cubek_matmul::components::{global::read::FullLoadingStrategy, tile::TileMatmulFamily};
 use cubek_matmul::components::{
     global::read::sync_full_cyclic::SyncFullCyclicLoading,
     stage::{ColMajorTilingOrder, RowMajorTilingOrder},
@@ -23,12 +23,10 @@ use crate::{
     components::{
         ConvolutionOperation, ConvolutionProblem, convolution_matmul_selection,
         global::{
-            read::{
-                full_reader::FullLoadingStrategy,
-                strategy::{
-                    async_full_cyclic::AsyncFullCyclicLoading,
-                    async_full_strided::AsyncFullStridedLoading,
-                },
+            args::RuntimeArgs,
+            read::strategy::{
+                async_full_cyclic::AsyncFullCyclicLoading,
+                async_full_strided::AsyncFullStridedLoading,
             },
             single_stage::simple::SimpleConvolutionFamily,
         },
@@ -39,7 +37,11 @@ use crate::{
 use super::Algorithm;
 
 /// Cmma convolution
-pub struct SimpleConv<TMM: TileMatmulFamily, LL: FullLoadingStrategy, LR: FullLoadingStrategy> {
+pub struct SimpleConv<
+    TMM: TileMatmulFamily,
+    LL: FullLoadingStrategy<RuntimeArgs>,
+    LR: FullLoadingStrategy<RuntimeArgs>,
+> {
     _tmm: PhantomData<TMM>,
     _loader: PhantomData<(LL, LR)>,
 }
@@ -75,8 +77,8 @@ impl<
             AccTile = CubeOption<Strided>,
             OutTile = Strided,
         >,
-    LL: FullLoadingStrategy,
-    LR: FullLoadingStrategy<SyncStrategy = LL::SyncStrategy>,
+    LL: FullLoadingStrategy<RuntimeArgs>,
+    LR: FullLoadingStrategy<RuntimeArgs, SyncStrategy = LL::SyncStrategy>,
 > Algorithm for SimpleConv<TMM, LL, LR>
 {
     type TileMatmul = TMM;
@@ -88,7 +90,7 @@ impl<
     >;
     type GlobalConvolution = SimpleConvolutionFamily<Self::StageMatmul, LL, LR>;
 
-    type Args = TensorArgs;
+    type Args = TensorArgs<RuntimeArgs>;
 
     fn into_tensor_handle<R: Runtime>(
         client: &ComputeClient<R>,
@@ -136,7 +138,7 @@ impl<
     type GlobalConvolution =
         SimpleConvolutionFamily<Self::StageMatmul, AsyncFullTmaLoading, AsyncFullTmaLoading>;
 
-    type Args = TensorMapArgs;
+    type Args = TensorMapArgs<RuntimeArgs>;
 
     fn into_tensor_handle<R: Runtime>(
         client: &ComputeClient<R>,

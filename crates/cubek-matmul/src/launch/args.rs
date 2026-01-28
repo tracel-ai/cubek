@@ -32,8 +32,14 @@ pub type InputArg<MA> =
 /// Output argument
 pub type OutputArg<MA> = <MA as MatmulArgs>::Output<NumericExpand<2>>;
 
+/// Config argument
+pub type ConfigArg<MA> = <MA as MatmulArgs>::Config;
+
 /// Input runtime argument
 pub type InputRuntimeArg<'a, MA, R> = <InputArg<MA> as LaunchArg>::RuntimeArg<'a, R>;
+
+/// Config runtime argument
+pub type ConfigRuntimeArg<'a, MA, R> = <ConfigArg<MA> as LaunchArg>::RuntimeArg<'a, R>;
 
 /// Output runtime argument
 pub type OutputRuntimeArg<'a, MA, R> = <OutputArg<MA> as LaunchArg>::RuntimeArg<'a, R>;
@@ -42,7 +48,7 @@ pub type BatchedCoords = (usize, u32, u32);
 
 /// Create the input runtime arguments for a matmul kernel that works on concrete inputs and
 /// output (not fused).
-pub trait ConcreteInputsFactory<A: Routine>: LaunchArg {
+pub trait ConcreteInputsFactory<A: Routine<()>>: LaunchArg {
     #[allow(clippy::too_many_arguments)]
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
@@ -57,7 +63,7 @@ pub trait ConcreteInputsFactory<A: Routine>: LaunchArg {
 
 /// Create the output runtime argument for a matmul kernel that works on concrete inputs and
 /// output (not fused).
-pub trait ConcreteOutputFactory<A: Routine>: LaunchArg {
+pub trait ConcreteOutputFactory<A: Routine<()>>: LaunchArg {
     #[allow(clippy::too_many_arguments)]
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
@@ -69,6 +75,9 @@ pub trait ConcreteOutputFactory<A: Routine>: LaunchArg {
     ) -> Self::RuntimeArg<'a, R>;
 }
 
+pub trait RuntimeConfig: LaunchArg + CubeType + Clone + Send + Sync {}
+impl<T: LaunchArg + CubeType + Clone + Send + Sync> RuntimeConfig for T {}
+
 #[cube]
 /// Arguments for the matrix multiplication algorithm.
 pub trait MatmulArgs: Send + Sync + 'static + Clone {
@@ -76,7 +85,10 @@ pub trait MatmulArgs: Send + Sync + 'static + Clone {
     type Input<Lhs: Numeric, Rhs: Numeric, EO: Numeric>: LaunchArg + CubeType;
 
     /// Type used for the output.
-    type Output<EO: Numeric>: LaunchArg + LaunchArg + CubeType;
+    type Output<EO: Numeric>: LaunchArg + CubeType;
+
+    /// Type used for runtime configuration.
+    type Config: RuntimeConfig;
 
     /// Inner state that is used to create tensor inputs and
     /// tensor outputs.
@@ -86,6 +98,7 @@ pub trait MatmulArgs: Send + Sync + 'static + Clone {
     fn init_state<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         input: &Self::Input<Lhs, Rhs, EO>,
         output: &mut Self::Output<EO>,
+        config: Self::Config,
         #[comptime] lhs_layout_config: GlobalLayoutConfig,
         #[comptime] rhs_layout_config: GlobalLayoutConfig,
         #[comptime] out_layout_config: GlobalLayoutConfig,
@@ -135,6 +148,12 @@ pub trait MatmulArgs: Send + Sync + 'static + Clone {
     ) -> usize {
         unexpanded!()
     }
+
+    fn runtime_config<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
+        _state: &Self::State<Lhs, Rhs, EO>,
+    ) -> Self::Config {
+        unexpanded!()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -148,7 +167,9 @@ pub enum TensorInputIdent {
 /// Type implementing [MatmulArgs] where all inputs and the output are materialized tensors.
 ///
 /// Other types might implement [MatmulArgs] for fused matrix multiplication kernels.
-pub struct TensorArgs;
+pub struct TensorArgs<Config: RuntimeConfig = ()> {
+    _config: PhantomData<Config>,
+}
 
 #[derive(CubeLaunch, CubeType, Clone, Copy)]
 /// Input representation for [TensorArgs] implementing [MatmulArgs].
@@ -164,7 +185,7 @@ pub struct TensorInputs<Lhs: Numeric, Rhs: Numeric, Acc: Numeric> {
     acc_batch: CubeOption<VirtualLayout<Coords1d, Coords1d>>,
 }
 
-impl<Lhs: Numeric, Rhs: Numeric, Acc: Numeric, A: Routine> ConcreteInputsFactory<A>
+impl<Lhs: Numeric, Rhs: Numeric, Acc: Numeric, A: Routine<()>> ConcreteInputsFactory<A>
     for TensorInputs<Lhs, Rhs, Acc>
 {
     fn create<'a, R: Runtime>(
@@ -227,7 +248,7 @@ pub struct TensorOutput<EG: Numeric> {
     batch: VirtualLayout<Coords1d, Coords1d>,
 }
 
-impl<EG: Numeric, A: Routine> ConcreteOutputFactory<A> for TensorOutput<EG> {
+impl<EG: Numeric, A: Routine<()>> ConcreteOutputFactory<A> for TensorOutput<EG> {
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
         out: &'a TensorHandleRef<'a, R>,
@@ -248,20 +269,22 @@ impl<EG: Numeric, A: Routine> ConcreteOutputFactory<A> for TensorOutput<EG> {
 }
 
 #[cube]
-impl MatmulArgs for TensorArgs {
+impl<Config: RuntimeConfig> MatmulArgs for TensorArgs<Config> {
     type Output<EO: Numeric> = TensorOutput<EO>;
     type Input<Lhs: Numeric, Rhs: Numeric, EO: Numeric> = TensorInputs<Lhs, Rhs, EO>;
+    type Config = Config;
     type State<Lhs: Numeric, Rhs: Numeric, EO: Numeric> =
-        (TensorInputs<Lhs, Rhs, EO>, TensorOutput<EO>);
+        (TensorInputs<Lhs, Rhs, EO>, TensorOutput<EO>, Config);
 
     fn init_state<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         input: &Self::Input<Lhs, Rhs, EO>,
         output: &mut Self::Output<EO>,
+        config: Self::Config,
         #[comptime] _lhs_layout_config: GlobalLayoutConfig,
         #[comptime] _rhs_layout_config: GlobalLayoutConfig,
         #[comptime] _out_layout_config: GlobalLayoutConfig,
     ) -> Self::State<Lhs, Rhs, EO> {
-        (*input, *output)
+        (*input, *output, config)
     }
 
     fn view_lhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
@@ -318,13 +341,21 @@ impl MatmulArgs for TensorArgs {
     ) -> usize {
         state.1.batch.to_source_pos(batch)
     }
+
+    fn runtime_config<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
+        state: &Self::State<Lhs, Rhs, EO>,
+    ) -> Self::Config {
+        state.2.clone()
+    }
 }
 
 #[derive(Clone)]
 /// Type implementing [MatmulArgs] where all inputs and the output are materialized tensor maps.
 ///
 /// Other types might implement [MatmulArgs] for fused matrix multiplication kernels.
-pub struct TensorMapArgs;
+pub struct TensorMapArgs<Config: RuntimeConfig = ()> {
+    _config: PhantomData<Config>,
+}
 
 #[derive(CubeLaunch, CubeType, Clone, Copy)]
 /// Input representation for [TensorArgs] implementing [MatmulArgs].
@@ -339,7 +370,7 @@ pub struct TensorMapInputs<Lhs: Numeric, Rhs: Numeric, EO: Numeric> {
     pub acc_batch: CubeOption<VirtualLayout<Coords1d, Coords1d>>,
 }
 
-impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<Blueprint = TilingBlueprint>>
+impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<(), Blueprint = TilingBlueprint>>
     ConcreteInputsFactory<A> for TensorMapInputs<Lhs, Rhs, EO>
 {
     fn create<'a, R: Runtime>(
@@ -545,20 +576,22 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<Blueprint = TilingBluep
 }
 
 #[cube]
-impl MatmulArgs for TensorMapArgs {
+impl<Config: RuntimeConfig> MatmulArgs for TensorMapArgs<Config> {
     type Input<Lhs: Numeric, Rhs: Numeric, EO: Numeric> = TensorMapInputs<Lhs, Rhs, EO>;
     type Output<EO: Numeric> = TensorOutput<EO>;
+    type Config = Config;
     type State<Lhs: Numeric, Rhs: Numeric, EO: Numeric> =
-        (TensorMapInputs<Lhs, Rhs, EO>, TensorOutput<EO>);
+        (TensorMapInputs<Lhs, Rhs, EO>, TensorOutput<EO>, Config);
 
     fn init_state<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         input: &Self::Input<Lhs, Rhs, EO>,
         output: &mut Self::Output<EO>,
+        config: Self::Config,
         #[comptime] _lhs_layout_config: GlobalLayoutConfig,
         #[comptime] _rhs_layout_config: GlobalLayoutConfig,
         #[comptime] _out_layout_config: GlobalLayoutConfig,
     ) -> Self::State<Lhs, Rhs, EO> {
-        (*input, *output)
+        (*input, *output, config)
     }
 
     fn view_lhs<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
@@ -614,5 +647,11 @@ impl MatmulArgs for TensorMapArgs {
         batch: usize,
     ) -> usize {
         state.1.batch.to_source_pos(batch)
+    }
+
+    fn runtime_config<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
+        state: &Self::State<Lhs, Rhs, EO>,
+    ) -> Self::Config {
+        state.2.clone()
     }
 }

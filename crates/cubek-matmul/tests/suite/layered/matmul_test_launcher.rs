@@ -37,7 +37,7 @@ pub enum InputRepresentation {
 #[allow(unused)]
 /// Test the correctness of the specified Matmul on the given device,
 /// against a naive CPU implementation over the given problem
-pub fn test_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
+pub fn test_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
     client: ComputeClient<TestRuntime>,
     mut problem: MatmulProblem,
     blueprint: A::Blueprint,
@@ -106,7 +106,7 @@ pub fn test_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
 
 /// Returns whether execution succeeded
 #[allow(clippy::too_many_arguments)]
-pub fn launch_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
+pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
     client: &ComputeClient<TestRuntime>,
     problem: &MatmulProblem,
     blueprint: A::Blueprint,
@@ -191,6 +191,7 @@ pub fn launch_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
                     cube_count_plan.resolve(),
                     inputs,
                     output,
+                    (),
                     cube_count_plan.as_args(),
                     blueprint,
                     dtypes,
@@ -215,6 +216,7 @@ pub fn launch_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
                     cube_count_plan.resolve(),
                     inputs,
                     output,
+                    (),
                     cube_count_plan.as_args(),
                     blueprint,
                     dtypes,

@@ -28,16 +28,16 @@ impl From<()> for NaiveStrategy {
     }
 }
 
-impl Routine for NaiveRoutine {
+impl Routine<()> for NaiveRoutine {
     type Strategy = NaiveStrategy;
     type BatchMatmul = NaiveBatchMatmulFamily;
-    type Blueprint = <Self::BatchMatmul as BatchMatmulFamily>::Blueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+    type Blueprint = <Self::BatchMatmul as BatchMatmulFamily<()>>::Blueprint;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily<()>>::Config;
 
     fn prepare<R: cubecl::Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
-        _strategy: &BlueprintStrategy<Self>,
+        _strategy: &BlueprintStrategy<(), Self>,
     ) -> Result<LaunchInfo<Self::Blueprint>, MatmulSetupError> {
         let dtypes = MatmulElems::from_globals(&problem.global_dtypes);
         let blueprint = NaiveBlueprint {

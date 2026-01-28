@@ -20,7 +20,7 @@ use cubecl::prelude::*;
 
 use crate::components::{
     ConvolutionOperation, ConvolutionProblem,
-    global::{GlobalConfig, GlobalConvolutionFamily},
+    global::{GlobalConfig, GlobalConvolutionFamily, args::RuntimeArgs},
 };
 
 pub mod simple;
@@ -31,7 +31,7 @@ pub trait Algorithm {
     type StageMatmul: StageMatmulFamily;
     type GlobalConvolution: GlobalConvolutionFamily;
 
-    type Args: MatmulArgs;
+    type Args: MatmulArgs<Config = RuntimeArgs>;
 
     fn cube_count(selection: &TilingBlueprint, problem: &ConvolutionProblem) -> CubeCount {
         let m_stage = selection.tiling_scheme.elements_per_stage_along_m();

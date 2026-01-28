@@ -1,4 +1,3 @@
-use crate::components::CubeDimResource;
 use crate::components::global::memory::{GlobalMemoryConfig, ViewDirection};
 use crate::components::global::multi_stage::EventLoadingMode;
 use crate::components::global::read::LoadingValidation as _;
@@ -20,21 +19,24 @@ use crate::components::{global::MaxGlobalReaderPlanes, stage::NoTilingLayout};
 use crate::definition::TilingBlueprint;
 use crate::definition::{MatmulElems, MatmulPrecision, MatmulProblem, MatmulSetupError};
 use crate::definition::{MatmulLineSizes, MatrixLayout, StageIdent};
+use crate::{components::CubeDimResource, launch::RuntimeConfig};
 use cubecl::{ir::DeviceProperties, prelude::*};
 use std::marker::PhantomData;
 
 /// Ordered double buffering matmul family for any precision
 pub struct OrderedDoubleBufferingMatmulFamily<
     SMM: stage::StageMatmulFamily,
-    RL: PartialLoadingStrategy,
+    RC: RuntimeConfig,
+    RL: PartialLoadingStrategy<RC>,
     GW: GlobalWriterFamily,
 > {
     _stage_matmul: PhantomData<SMM>,
+    _rc: PhantomData<RC>,
     _rhs_loading: PhantomData<RL>,
     _writer: PhantomData<GW>,
 }
 
-impl<SMM, RL, GW> GlobalMatmulFamily for OrderedDoubleBufferingMatmulFamily<SMM, RL, GW>
+impl<SMM, RC, RL, GW> GlobalMatmulFamily<RC> for OrderedDoubleBufferingMatmulFamily<SMM, RC, RL, GW>
 where
     SMM: stage::StageMatmulFamily<
             LhsStage = StridedStageFamily,
@@ -42,18 +44,20 @@ where
             AccStage = FilledStageFamily,
             OutStage = GW::Stage,
         >,
-    RL: PartialLoadingStrategy<Stage = StridedStageFamily, SyncStrategy = Synchronous>,
+    RC: RuntimeConfig,
+    RL: PartialLoadingStrategy<RC, Stage = StridedStageFamily, SyncStrategy = Synchronous>,
     GW: GlobalWriterFamily,
 {
     type Matmul<MP: MatmulPrecision> = OrderedDoubleBufferingMatmul<
         MP,
         SMM::Matmul<
             MP,
-            <LL as FullLoadingStrategy>::TilingLayout,
+            <LL as FullLoadingStrategy<RC>>::TilingLayout,
             RL::TilingLayout,
             NoTilingLayout,
             WriteTiling,
         >,
+        RC,
         RL,
         GW::Writer<MP::Acc>,
     >;

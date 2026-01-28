@@ -6,7 +6,7 @@ use cubecl::std::{
 use cubek_matmul::components::{
     global::{
         GlobalConfig, GlobalWriter, PartitionedStage, PlaneWriter, SharedGlobalMatmulConfig,
-        read::SyncStrategy,
+        read::{FullLoadingStrategy, FullStageGlobalReader, SyncStrategy},
     },
     stage::{StageConfig, StageMatmul, StridedStageMemory},
 };
@@ -18,10 +18,7 @@ use crate::components::{
     global::{
         GlobalConvolution,
         args::RuntimeArgs,
-        read::{
-            bias::{BiasGlobalReader, BiasStage},
-            full_reader::{FullLoadingStrategy, FullStageGlobalReader},
-        },
+        read::bias::{BiasGlobalReader, BiasStage},
     },
 };
 
@@ -31,8 +28,8 @@ use crate::components::{
 pub struct SimpleConvolution<
     MP: MatmulPrecision,
     SMM: StageMatmul<MP>,
-    LL: FullLoadingStrategy,
-    LR: FullLoadingStrategy,
+    LL: FullLoadingStrategy<RuntimeArgs>,
+    LR: FullLoadingStrategy<RuntimeArgs>,
 > {
     _cs: PhantomData<MP>,
     _stage_matmul: PhantomData<SMM>,
@@ -49,11 +46,11 @@ where
             AccStage = BiasStage<AccS<MP>>,
             OutStage = PartitionedStage<AccS<MP>>,
         >,
-    LL: FullLoadingStrategy,
-    LR: FullLoadingStrategy<SyncStrategy = LL::SyncStrategy>,
+    LL: FullLoadingStrategy<RuntimeArgs>,
+    LR: FullLoadingStrategy<RuntimeArgs, SyncStrategy = LL::SyncStrategy>,
 {
-    type LhsGlobalReader = FullStageGlobalReader<LhsG<MP>, LhsS<MP>, LL>;
-    type RhsGlobalReader = FullStageGlobalReader<RhsG<MP>, RhsS<MP>, LR>;
+    type LhsGlobalReader = FullStageGlobalReader<LhsG<MP>, LhsS<MP>, RuntimeArgs, LL>;
+    type RhsGlobalReader = FullStageGlobalReader<RhsG<MP>, RhsS<MP>, RuntimeArgs, LR>;
     type AccGlobalReader = BiasGlobalReader<MP::Acc>;
     type GlobalWriter = PlaneWriter<MP::Acc>;
 

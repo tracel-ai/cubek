@@ -1,5 +1,8 @@
 use crate::{
-    components::{ConvGemmConfig as _, global::args::RuntimeArgsLaunch},
+    components::{
+        ConvGemmConfig as _,
+        global::args::{RuntimeArgs, RuntimeArgsLaunch},
+    },
     forward::args::{ConcreteInputsFactory, ConcreteOutputFactory},
 };
 use cubecl::prelude::TensorHandleRef;
@@ -83,7 +86,7 @@ where
 
 /// Select which kernel to launch for the given Algorithm.
 #[allow(clippy::too_many_arguments)]
-pub fn launch_kernel_virtual<'a, MA: MatmulArgs, R: Runtime, A: Algorithm>(
+pub fn launch_kernel_virtual<'a, MA: MatmulArgs<Config = RuntimeArgs>, R: Runtime, A: Algorithm>(
     client: &ComputeClient<R>,
     input: InputRuntimeArg<'a, MA, R>,
     output: OutputRuntimeArg<'a, MA, R>,

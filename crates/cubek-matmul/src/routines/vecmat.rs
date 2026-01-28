@@ -26,6 +26,7 @@ use crate::{
         CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulElems, MatmulProblem,
         MatmulSetupError, PartitionSize, SmAllocation, TileSize, TilingBlueprint, TilingScheme,
     },
+    launch::RuntimeConfig,
     routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, Routine},
 };
 
@@ -46,9 +47,10 @@ impl From<()> for VecMatStrategy {
     }
 }
 
-impl Routine for SimpleVecMatAlgorithm {
+impl<RC: RuntimeConfig> Routine<RC> for SimpleVecMatAlgorithm {
     type Strategy = VecMatStrategy;
     type BatchMatmul = PartitionedBatchMatmulFamily<
+        RC,
         SimpleMatmulFamily<
             PlaneMatmulFamily<
                 PlaneVecMatInnerProduct<Filled>,
@@ -56,6 +58,7 @@ impl Routine for SimpleVecMatAlgorithm {
                 StridedStageFamily,
                 FilledStageFamily,
             >,
+            RC,
             SyncFullCyclicLoading<RowMajorTilingOrder>,
             SyncFullCyclicLoading<ColMajorTilingOrder>,
             PlaneWriterFamily,
@@ -63,12 +66,12 @@ impl Routine for SimpleVecMatAlgorithm {
         RowMajorGlobalPartitionMatmul,
     >;
     type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
 
     fn prepare<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<Self>,
+        strategy: &BlueprintStrategy<RC, Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
@@ -91,7 +94,7 @@ impl Routine for SimpleVecMatAlgorithm {
             }
         };
 
-        Self::validate_blueprint(
+        <Self as Routine<RC>>::validate_blueprint(
             &device_settings.client,
             &blueprint,
             problem,
@@ -114,10 +117,11 @@ impl Routine for SimpleVecMatAlgorithm {
 
 pub struct DoubleVecMatAlgorithm {}
 
-impl Routine for DoubleVecMatAlgorithm {
+impl<RC: RuntimeConfig> Routine<RC> for DoubleVecMatAlgorithm {
     type Strategy = VecMatStrategy;
 
     type BatchMatmul = PartitionedBatchMatmulFamily<
+        RC,
         DoubleBufferingMatmulFamily<
             PlaneMatmulFamily<
                 PlaneVecMatInnerProduct<Filled>,
@@ -125,6 +129,7 @@ impl Routine for DoubleVecMatAlgorithm {
                 StridedStageFamily,
                 FilledStageFamily,
             >,
+            RC,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
             SyncPartialCyclicLoading<ColMajorTilingOrder>,
             PlaneWriterFamily,
@@ -132,12 +137,12 @@ impl Routine for DoubleVecMatAlgorithm {
         RowMajorGlobalPartitionMatmul,
     >;
     type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
 
     fn prepare<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<Self>,
+        strategy: &BlueprintStrategy<RC, Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
@@ -160,7 +165,7 @@ impl Routine for DoubleVecMatAlgorithm {
             }
         };
 
-        Self::validate_blueprint(
+        <Self as Routine<RC>>::validate_blueprint(
             &device_settings.client,
             &blueprint,
             problem,

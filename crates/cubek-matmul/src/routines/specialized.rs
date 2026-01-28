@@ -5,7 +5,6 @@ use cubecl::Runtime;
 use cubecl::client::ComputeClient;
 use cubecl::features::MmaConfig;
 
-use crate::components::batch::BatchMatmulFamily;
 use crate::components::stage::PlaneMatmulFamily;
 use crate::components::tile;
 use crate::components::{
@@ -20,6 +19,7 @@ use crate::definition::{
 };
 use crate::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
 use crate::routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, base};
+use crate::{components::batch::BatchMatmulFamily, launch::RuntimeConfig};
 use crate::{
     components::global::{
         multi_stage::specialized::SpecializedMatmulFamily,
@@ -55,7 +55,7 @@ impl From<()> for SpecializedStrategy {
     }
 }
 
-impl<TMM, L> base::Routine for SpecializedAlgorithm<TMM, L>
+impl<TMM, RC, L> base::Routine<RC> for SpecializedAlgorithm<TMM, L>
 where
     TMM: tile::TileMatmulFamily<
             LhsTile = <L::Stage as StageFamily>::TileKind,
@@ -63,24 +63,27 @@ where
             AccTile = Filled,
             OutTile = Strided,
         >,
-    L: AsyncPartialLoadingStrategy,
+    RC: RuntimeConfig,
+    L: AsyncPartialLoadingStrategy<RC>,
 {
     type Strategy = SpecializedStrategy;
     type BatchMatmul = PartitionedBatchMatmulFamily<
+        RC,
         SpecializedMatmulFamily<
             PlaneMatmulFamily<TMM, L::Stage, L::Stage, FilledStageFamily>,
+            RC,
             L,
             PlaneWriterFamily,
         >,
         RowMajorGlobalPartitionMatmul,
     >;
     type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
 
     fn prepare<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<Self>,
+        strategy: &BlueprintStrategy<RC, Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 

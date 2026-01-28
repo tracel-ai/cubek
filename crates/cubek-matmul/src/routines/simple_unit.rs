@@ -17,6 +17,7 @@ use crate::{
         tile::{TileMatmulFamily, io::Filled, register::RegisterMatmul},
     },
     definition::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, TilingBlueprint},
+    launch::RuntimeConfig,
     routines::{
         BlueprintStrategy, DeviceSettings, LaunchInfo,
         selector::{
@@ -48,15 +49,18 @@ impl Display for SimpleUnitSelectionArgs {
     }
 }
 
-impl<LL, RL> Routine for SimpleUnitAlgorithm<LL, RL>
+impl<RC, LL, RL> Routine<RC> for SimpleUnitAlgorithm<LL, RL>
 where
-    LL: FullLoadingStrategy,
-    RL: FullLoadingStrategy<SyncStrategy = LL::SyncStrategy>,
+    RC: RuntimeConfig,
+    LL: FullLoadingStrategy<RC>,
+    RL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
 {
     type Strategy = SimpleUnitSelectionArgs;
     type BatchMatmul = PartitionedBatchMatmulFamily<
+        RC,
         SimpleMatmulFamily<
             UnitMatmulFamily<RegisterMatmul<Filled>, StridedStageFamily, FilledStageFamily>,
+            RC,
             LL,
             RL,
             UnitWriterFamily,
@@ -64,12 +68,12 @@ where
         RowMajorGlobalPartitionMatmul,
     >;
     type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
 
     fn prepare<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<Self>,
+        strategy: &BlueprintStrategy<RC, Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 

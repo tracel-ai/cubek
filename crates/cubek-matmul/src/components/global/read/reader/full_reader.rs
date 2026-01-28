@@ -1,6 +1,5 @@
 use std::marker::PhantomData;
 
-use crate::components::global::GlobalReaderConfig;
 use crate::components::global::memory::GlobalIterator;
 use crate::components::global::multi_stage::JobExecutor;
 use crate::components::global::multi_stage::JobIterator;
@@ -14,6 +13,7 @@ use crate::components::stage::StridedStageFamily;
 use crate::components::stage::StridedStageMemory;
 use crate::components::stage::TilingLayout;
 use crate::definition::StageIdent;
+use crate::{components::global::GlobalReaderConfig, launch::RuntimeConfig};
 use cubecl::prelude::*;
 use cubecl::std::{
     CubeOption, CubeOptionExpand,
@@ -24,7 +24,7 @@ pub type SyncBarrier<S> = <S as SyncStrategy>::Barrier;
 
 #[cube]
 /// A strategy for synchronously loading a full stage memory.
-pub trait FullLoadingStrategy:
+pub trait FullLoadingStrategy<RC: RuntimeConfig>:
     'static + Send + Sync + Clone + LoadingValidation + LoadMaxRoundPlaneCount
 {
     /// The layout describing how data is tiled across the stage.
@@ -39,6 +39,7 @@ pub trait FullLoadingStrategy:
 
     /// Returns the job with preliminary calculations done.
     fn new_job<EG: Numeric, ES: Numeric>(
+        config: RC,
         #[comptime] line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, ES>;
@@ -49,8 +50,14 @@ pub trait FullLoadingStrategy:
 ///
 /// A complete load is referred to as a `Job`, which is divided into `Tasks`—
 /// each Task represents a single data transfer for a specific unit
-pub struct FullStageGlobalReader<EG: Numeric, ES: Numeric, L: FullLoadingStrategy> {
+pub struct FullStageGlobalReader<
+    EG: Numeric,
+    ES: Numeric,
+    RC: RuntimeConfig,
+    L: FullLoadingStrategy<RC>,
+> {
     global_iter: GlobalIterator<Line<EG>>,
+    runtime_config: RC,
     stage: StridedStageMemory<ES, L::TilingLayout>,
     loading_job: CubeOption<L::Job<EG, ES>>,
     #[cube(comptime)]
@@ -58,10 +65,13 @@ pub struct FullStageGlobalReader<EG: Numeric, ES: Numeric, L: FullLoadingStrateg
 }
 
 #[cube]
-impl<EG: Numeric, ES: Numeric, L: FullLoadingStrategy> FullStageGlobalReader<EG, ES, L> {
+impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: FullLoadingStrategy<RC>>
+    FullStageGlobalReader<EG, ES, RC, L>
+{
     /// Create a new SyncFullStageGlobalReader
     pub fn new(
         view: View<Line<EG>, Coords2d>,
+        runtime_config: RC,
         k_step: u32,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self {
@@ -74,7 +84,11 @@ impl<EG: Numeric, ES: Numeric, L: FullLoadingStrategy> FullStageGlobalReader<EG,
             GlobalIterator::new(view, k_step, config.gmem_config.view_direction, false);
 
         let loading_job = match config.precompute_job {
-            true => CubeOption::new_Some(L::new_job::<EG, ES>(view.line_size(), config)),
+            true => CubeOption::new_Some(L::new_job::<EG, ES>(
+                runtime_config.clone(),
+                view.line_size(),
+                config,
+            )),
             false => CubeOption::new_None(),
         };
 
@@ -104,8 +118,9 @@ impl<EG: Numeric, ES: Numeric, L: FullLoadingStrategy> FullStageGlobalReader<EG,
             }
         }
 
-        FullStageGlobalReader::<EG, ES, L> {
+        FullStageGlobalReader::<EG, ES, RC, L> {
             global_iter,
+            runtime_config,
             stage,
             loading_job,
             _phantom: PhantomData::<L>,
@@ -138,7 +153,11 @@ impl<EG: Numeric, ES: Numeric, L: FullLoadingStrategy> FullStageGlobalReader<EG,
     ) {
         let mut loading_job = match self.loading_job.clone() {
             CubeOption::Some(loading_job) => loading_job,
-            CubeOption::None => L::new_job::<EG, ES>(self.global_iter.line_size(), config),
+            CubeOption::None => L::new_job::<EG, ES>(
+                self.runtime_config.clone(),
+                self.global_iter.line_size(),
+                config,
+            ),
         };
 
         let len = L::Job::task_count(&loading_job);
@@ -158,10 +177,10 @@ impl<EG: Numeric, ES: Numeric, L: FullLoadingStrategy> FullStageGlobalReader<EG,
 }
 
 #[cube]
-impl<EG: Numeric, ES: Numeric, L: FullLoadingStrategy> JobExecutor<L::SyncStrategy>
-    for FullStageGlobalReader<EG, ES, L>
+impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: FullLoadingStrategy<RC>>
+    JobExecutor<L::SyncStrategy> for FullStageGlobalReader<EG, ES, RC, L>
 {
-    type JobIterator = FullStageJobIterator<EG, ES, L>;
+    type JobIterator = FullStageJobIterator<EG, ES, RC, L>;
 
     fn create_job_iterator(
         this: &Self,
@@ -171,12 +190,14 @@ impl<EG: Numeric, ES: Numeric, L: FullLoadingStrategy> JobExecutor<L::SyncStrate
         let view = this.global_iter.view();
         let job = match this.loading_job.clone() {
             CubeOption::Some(loading_job) => loading_job,
-            CubeOption::None => L::new_job::<EG, ES>(view.line_size(), config),
+            CubeOption::None => {
+                L::new_job::<EG, ES>(this.runtime_config.clone(), view.line_size(), config)
+            }
         };
 
         let num_tasks = L::Job::task_count(&job);
 
-        FullStageJobIterator::<EG, ES, L> {
+        FullStageJobIterator::<EG, ES, RC, L> {
             job,
             num_tasks,
             current: ComptimeCell::new(TaskCounter { counter: 0u32 }),
@@ -185,7 +206,7 @@ impl<EG: Numeric, ES: Numeric, L: FullLoadingStrategy> JobExecutor<L::SyncStrate
 
     fn execute_task(
         this: &mut Self,
-        job_iterator: &mut FullStageJobIterator<EG, ES, L>,
+        job_iterator: &mut FullStageJobIterator<EG, ES, RC, L>,
         barrier: &mut SyncBarrier<L::SyncStrategy>,
         #[comptime] config: GlobalReaderConfig,
     ) {
@@ -247,7 +268,12 @@ impl<EG: Numeric, ES: Numeric, L: FullLoadingStrategy> JobExecutor<L::SyncStrate
 
 #[derive(CubeType)]
 /// A comptime iterator over a job for sync full stage reader
-pub struct FullStageJobIterator<EG: Numeric, ES: Numeric, L: FullLoadingStrategy> {
+pub struct FullStageJobIterator<
+    EG: Numeric,
+    ES: Numeric,
+    RC: RuntimeConfig,
+    L: FullLoadingStrategy<RC>,
+> {
     job: L::Job<EG, ES>,
     #[cube(comptime)]
     pub num_tasks: u32,
@@ -255,8 +281,8 @@ pub struct FullStageJobIterator<EG: Numeric, ES: Numeric, L: FullLoadingStrategy
 }
 
 #[cube]
-impl<EG: Numeric, ES: Numeric, L: FullLoadingStrategy> JobIterator
-    for FullStageJobIterator<EG, ES, L>
+impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: FullLoadingStrategy<RC>> JobIterator
+    for FullStageJobIterator<EG, ES, RC, L>
 {
     fn current(this: &Self) -> comptime_type!(u32) {
         this.current.read().counter

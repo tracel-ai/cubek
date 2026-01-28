@@ -3,10 +3,12 @@ use crate::components::{
         GlobalMatmul, GlobalWriter, SharedGlobalMatmulConfig,
         read::{FullLoadingStrategy, FullStageGlobalReader, SyncStrategy, ZeroGlobalReader},
     },
-    stage::StridedStageMemory,
-    stage::{FilledStage, StageConfig, StageMatmul},
+    stage::{FilledStage, StageConfig, StageMatmul, StridedStageMemory},
 };
-use crate::definition::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS};
+use crate::{
+    definition::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS},
+    launch::RuntimeConfig,
+};
 use cubecl::prelude::*;
 use cubecl::std::{
     CubeOption, CubeOptionExpand,
@@ -21,15 +23,17 @@ use std::marker::PhantomData;
 pub struct SimpleMatmul<
     MP: MatmulPrecision,
     SMM: StageMatmul<MP>,
-    LL: FullLoadingStrategy,
-    RL: FullLoadingStrategy,
+    RC: RuntimeConfig,
+    LL: FullLoadingStrategy<RC>,
+    RL: FullLoadingStrategy<RC>,
     GW: GlobalWriter<MP::Acc>,
 > {
-    _phantom: PhantomData<(MP, SMM, LL, RL, GW)>,
+    _phantom: PhantomData<(MP, SMM, RC, LL, RL, GW)>,
 }
 
 #[cube]
-impl<MP: MatmulPrecision, SMM, LL, RL, GW> GlobalMatmul<MP> for SimpleMatmul<MP, SMM, LL, RL, GW>
+impl<MP: MatmulPrecision, SMM, RC, LL, RL, GW> GlobalMatmul<RC, MP>
+    for SimpleMatmul<MP, SMM, RC, LL, RL, GW>
 where
     SMM: StageMatmul<
             MP,
@@ -38,19 +42,22 @@ where
             AccStage = FilledStage<AccS<MP>>,
             OutStage = GW::Stage,
         >,
-    LL: FullLoadingStrategy,
-    RL: FullLoadingStrategy<SyncStrategy = LL::SyncStrategy>,
+    RC: RuntimeConfig,
+    LL: FullLoadingStrategy<RC>,
+    RL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
     GW: GlobalWriter<MP::Acc>,
 {
     type Config = SharedGlobalMatmulConfig<SMM::Config>;
     type LhsGlobalReader = FullStageGlobalReader<
         <MP::Lhs as MatrixPrecision>::Global,
         <MP::Lhs as MatrixPrecision>::Stage,
+        RC,
         LL,
     >;
     type RhsGlobalReader = FullStageGlobalReader<
         <MP::Rhs as MatrixPrecision>::Global,
         <MP::Rhs as MatrixPrecision>::Stage,
+        RC,
         RL,
     >;
     type AccGlobalReader = ZeroGlobalReader<MP::Acc>;
@@ -152,10 +159,12 @@ where
 
     fn init_lhs_global_reader(
         lhs: View<Line<LhsG<MP>>, Coords2d>,
+        runtime_config: RC,
         #[comptime] config: Self::Config,
     ) -> Self::LhsGlobalReader {
         Self::LhsGlobalReader::new(
             lhs,
+            runtime_config,
             config.stage_config.elements_in_stage_k(),
             config.lhs_reader_config,
         )
@@ -163,10 +172,12 @@ where
 
     fn init_rhs_global_reader(
         rhs: View<Line<RhsG<MP>>, Coords2d>,
+        runtime_config: RC,
         #[comptime] config: Self::Config,
     ) -> Self::RhsGlobalReader {
         Self::RhsGlobalReader::new(
             rhs,
+            runtime_config,
             config.stage_config.elements_in_stage_k(),
             config.rhs_reader_config,
         )
@@ -174,6 +185,7 @@ where
 
     fn init_acc_global_reader(
         acc: CubeOption<View<Line<AccG<MP>>, Coords2d>>,
+        _runtime_config: RC,
         #[comptime] _config: Self::Config,
     ) -> Self::AccGlobalReader {
         match acc {

@@ -3,7 +3,6 @@ use std::marker::PhantomData;
 
 use cubecl::Runtime;
 
-use crate::components::batch::BatchMatmulFamily;
 use crate::components::global::PlaneWriterFamily;
 use crate::components::stage::{PlaneMatmulFamily, RowMajorTilingOrder};
 use crate::components::tile;
@@ -22,6 +21,7 @@ use crate::definition::{
 };
 use crate::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
 use crate::routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, Routine};
+use crate::{components::batch::BatchMatmulFamily, launch::RuntimeConfig};
 
 /// Plane accelerated double buffered matmul ordered on Lhs with cyclic reader on Rhs
 pub struct OrderedDoubleBufferingAlgorithm<TMM> {
@@ -51,7 +51,7 @@ impl Display for OrderedSelectionArgs {
     }
 }
 
-impl<TMM> Routine for OrderedDoubleBufferingAlgorithm<TMM>
+impl<TMM, RC> Routine<RC> for OrderedDoubleBufferingAlgorithm<TMM>
 where
     TMM: tile::TileMatmulFamily<
             LhsTile = Strided,
@@ -59,23 +59,26 @@ where
             AccTile = Filled,
             OutTile = Strided,
         >,
+    RC: RuntimeConfig,
 {
     type Strategy = OrderedSelectionArgs;
     type BatchMatmul = PartitionedBatchMatmulFamily<
+        RC,
         OrderedDoubleBufferingMatmulFamily<
             PlaneMatmulFamily<TMM, StridedStageFamily, StridedStageFamily, FilledStageFamily>,
+            RC,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
             PlaneWriterFamily,
         >,
         RowMajorGlobalPartitionMatmul,
     >;
     type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
 
     fn prepare<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<Self>,
+        strategy: &BlueprintStrategy<RC, Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
@@ -106,7 +109,7 @@ where
             )?,
         };
 
-        Self::validate_blueprint(
+        <Self as Routine<RC>>::validate_blueprint(
             &device_settings.client,
             &blueprint,
             problem,

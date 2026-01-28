@@ -13,6 +13,7 @@ use crate::{
         tile::{TileMatmulFamily, io::Filled, register::RegisterMatmul},
     },
     definition::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, TilingBlueprint},
+    launch::RuntimeConfig,
     routines::{
         BlueprintStrategy, DeviceSettings, LaunchInfo, Routine,
         selector::{TileSizeSelection, UnitTilingBlueprintOptions, infer_blueprint_unit},
@@ -33,11 +34,13 @@ impl Display for DoubleUnitSelectionArgs {
     }
 }
 
-impl Routine for DoubleUnitAlgorithm {
+impl<RC: RuntimeConfig> Routine<RC> for DoubleUnitAlgorithm {
     type Strategy = DoubleUnitSelectionArgs;
     type BatchMatmul = PartitionedBatchMatmulFamily<
+        RC,
         DoubleBufferingMatmulFamily<
             UnitMatmulFamily<RegisterMatmul<Filled>, StridedStageFamily, FilledStageFamily>,
+            RC,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
             UnitWriterFamily,
@@ -45,12 +48,12 @@ impl Routine for DoubleUnitAlgorithm {
         RowMajorGlobalPartitionMatmul,
     >;
     type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
 
     fn prepare<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<Self>,
+        strategy: &BlueprintStrategy<RC, Self>,
     ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
@@ -74,7 +77,7 @@ impl Routine for DoubleUnitAlgorithm {
             ),
         };
 
-        Self::validate_blueprint(
+        <Self as Routine<RC>>::validate_blueprint(
             &device_settings.client,
             &blueprint,
             problem,

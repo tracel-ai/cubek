@@ -1,4 +1,3 @@
-use crate::components::CubeDimResource;
 use crate::components::global::memory::{GlobalMemoryConfig, ViewDirection};
 use crate::components::global::multi_stage::EventLoadingMode;
 use crate::components::global::{
@@ -17,23 +16,27 @@ use crate::definition::{
     MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError, MatrixLayout,
     StageIdent,
 };
+use crate::{components::CubeDimResource, launch::RuntimeConfig};
 use cubecl::{ir::DeviceProperties, prelude::*};
 use std::marker::PhantomData;
 
 /// Double buffering matmul family for any precision
 pub struct DoubleBufferingMatmulFamily<
     SMM: stage::StageMatmulFamily,
-    LL: PartialLoadingStrategy,
-    RL: PartialLoadingStrategy,
+    RC: RuntimeConfig,
+    LL: PartialLoadingStrategy<RC>,
+    RL: PartialLoadingStrategy<RC>,
     GW: GlobalWriterFamily,
 > {
     _stage_matmul: PhantomData<SMM>,
+    _rc: PhantomData<RC>,
     _lhs_loading: PhantomData<LL>,
     _rhs_loading: PhantomData<RL>,
     _writer: PhantomData<GW>,
 }
 
-impl<SMM, LL, RL, GW> GlobalMatmulFamily for DoubleBufferingMatmulFamily<SMM, LL, RL, GW>
+impl<SMM, RC: RuntimeConfig, LL, RL, GW> GlobalMatmulFamily<RC>
+    for DoubleBufferingMatmulFamily<SMM, RC, LL, RL, GW>
 where
     SMM: stage::StageMatmulFamily<
             LhsStage = StridedStageFamily,
@@ -41,13 +44,14 @@ where
             AccStage = FilledStageFamily,
             OutStage = GW::Stage,
         >,
-    LL: PartialLoadingStrategy<Stage = StridedStageFamily>,
-    RL: PartialLoadingStrategy<Stage = StridedStageFamily, SyncStrategy = LL::SyncStrategy>,
+    LL: PartialLoadingStrategy<RC, Stage = StridedStageFamily>,
+    RL: PartialLoadingStrategy<RC, Stage = StridedStageFamily, SyncStrategy = LL::SyncStrategy>,
     GW: GlobalWriterFamily,
 {
     type Matmul<MP: MatmulPrecision> = DoubleBufferingMatmul<
         MP,
         SMM::Matmul<MP, LL::TilingLayout, RL::TilingLayout, NoTilingLayout, WriteTiling>,
+        RC,
         LL,
         RL,
         GW::Writer<MP::Acc>,
