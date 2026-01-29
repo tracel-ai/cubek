@@ -16,4 +16,7 @@ pub use cubek_convolution as convolution;
 #[cfg(feature = "attention")]
 pub use cubek_attention as attention;
 
+#[cfg(feature = "sort")]
+pub use cubek_sort as sort;
+
 pub use cubecl;

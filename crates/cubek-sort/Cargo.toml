@@ -25,6 +25,6 @@ num-traits = "0.2.19"
 pretty_assertions = { workspace = true, optional = true }
 
 [dev-dependencies]
-cubecl = { workspace = true, features = ["test-runtime"] }
+cubecl = { workspace = true, features = ["test-runtime", "wgpu"] }
 cubecl-common = { workspace = true }
 rand = { workspace = true }
