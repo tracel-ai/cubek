@@ -2,7 +2,7 @@ use crate::components::config::{DIGIT_MASK, NUM_BUCKETS, RADIX_BITS};
 use crate::components::key::SortKey;
 use cubecl::prelude::*;
 
-const MAX_PLANES: u32 = 8;
+const NUM_BUCKETS_U32: u32 = NUM_BUCKETS as u32;
 
 #[cube(launch_unchecked)]
 pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
@@ -15,23 +15,31 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
     pass: u32,
     #[comptime] items_per_thread: u32,
     #[comptime] has_values: bool,
+    #[comptime] num_planes: u32,
+    #[comptime] items_per_block: u32,
 ) {
-    let plane_hists = SharedMemory::<Atomic<u32>>::new((MAX_PLANES as usize) * NUM_BUCKETS);
+    // Plane histograms for warp-level ranking
+    let plane_hists = SharedMemory::<Atomic<u32>>::new((num_planes as usize) * NUM_BUCKETS);
+    // Shared memory buffer for keys (reused for local reordering)
+    let mut shared_keys = SharedMemory::<u32>::new(items_per_block as usize);
+    // Shared memory buffer for values
+    let mut shared_values = SharedMemory::<u32>::new(items_per_block as usize);
+    // Where each digit starts in shared memory (exclusive prefix sum of digit counts)
+    let mut digit_start = SharedMemory::<u32>::new(NUM_BUCKETS);
+    // Global write offset for each digit (block_offset - digit_start, so global_pos = this + local_idx)
+    let mut digit_global = SharedMemory::<u32>::new(NUM_BUCKETS);
 
     let block_id = CUBE_POS_X;
     let thread_id = UNIT_POS_X;
     let lane_id = UNIT_POS_PLANE;
     let plane_id = UNIT_POS / PLANE_DIM;
-    #[allow(clippy::manual_div_ceil)]
-    let num_planes = (CUBE_DIM + PLANE_DIM - 1) / PLANE_DIM;
 
-    let items_per_block = CUBE_DIM * items_per_thread;
     let block_start = block_id * items_per_block;
-
     let sub_part_size = PLANE_DIM * items_per_thread;
     let sub_part_start = block_start + plane_id * sub_part_size;
 
-    let total_hist_entries = (MAX_PLANES as usize) * NUM_BUCKETS;
+    // Initialize plane histograms
+    let total_hist_entries = (num_planes as usize) * NUM_BUCKETS;
     #[allow(clippy::manual_div_ceil)]
     let entries_per_thread = (total_hist_entries + CUBE_DIM as usize - 1) / CUBE_DIM as usize;
     for i in 0..entries_per_thread {
@@ -42,11 +50,13 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
     }
     sync_cube();
 
+    // Register arrays for per-thread data
     let mut keys = Array::<u32>::new(items_per_thread as usize);
     let mut values = Array::<u32>::new(items_per_thread as usize);
-    let mut offsets = Array::<u32>::new(items_per_thread as usize);
+    let mut local_offsets = Array::<u32>::new(items_per_thread as usize);
     let mut valid_flags = Array::<bool>::new(items_per_thread as usize);
 
+    // Phase 1: Load keys and compute warp-level ranking
     #[unroll]
     for i in 0..items_per_thread {
         let local_idx = lane_id + i * PLANE_DIM;
@@ -64,12 +74,14 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
 
         let digit = (key >> (pass * RADIX_BITS as u32)) & DIGIT_MASK;
 
+        // Warp-level ranking using ballot
         let peer_mask = compute_peer_mask(digit, valid);
         let rank = count_lower_peers(peer_mask, lane_id);
         let total = count_set_bits(peer_mask);
         let leader = find_first_set_bit(peer_mask);
         let is_leader = lane_id == leader && valid;
 
+        // Atomically add to plane histogram, get base offset
         let hist_idx = plane_id as usize * NUM_BUCKETS + digit as usize;
         let mut base = 0u32;
         if is_leader {
@@ -77,44 +89,125 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
         }
         base = plane_shuffle(base, leader);
 
-        offsets[i as usize] = base + rank;
+        local_offsets[i as usize] = base + rank;
     }
     sync_cube();
 
-    if thread_id < NUM_BUCKETS as u32 {
-        let digit = thread_id as usize;
+    // Phase 2: Reduce plane histograms and compute digit starts
+    // Each thread handles one digit (first 256 threads)
+    if thread_id < NUM_BUCKETS_U32 {
         let mut sum = 0u32;
 
+        // Sum across all planes for this digit, converting to exclusive prefix within each plane
         #[unroll]
-        for p in 0..MAX_PLANES {
-            if p < num_planes {
-                let idx = (p as usize) * NUM_BUCKETS + digit;
-                let count = plane_hists[idx].load();
-                plane_hists[idx].store(sum);
-                sum += count;
+        for p in 0..num_planes {
+            let idx = (p as usize) * NUM_BUCKETS + thread_id as usize;
+            let count = plane_hists[idx].load();
+            plane_hists[idx].store(sum);
+            sum += count;
+        }
+
+        // sum is now total count for this digit in this block
+        // Store it temporarily in digit_start for the prefix sum
+        digit_start[thread_id as usize] = sum;
+    }
+    sync_cube();
+
+    // Compute exclusive prefix sum across 256 digits using warp-level primitives
+    // Note: This assumes PLANE_DIM divides 256 evenly and uses PLANE_DIM-based indexing
+    #[allow(clippy::manual_div_ceil)]
+    let num_digit_warps = (NUM_BUCKETS_U32 + PLANE_DIM - 1) / PLANE_DIM;
+
+    if thread_id < NUM_BUCKETS_U32 {
+        let val = digit_start[thread_id as usize];
+
+        // Step 1: Warp-level exclusive scan within each warp
+        let warp_exclusive = plane_exclusive_sum(val);
+        // Get the inclusive sum from the last lane of each warp
+        let my_inclusive = warp_exclusive + val;
+        let warp_total = select(
+            lane_id == PLANE_DIM - 1,
+            my_inclusive,
+            plane_shuffle(my_inclusive, PLANE_DIM - 1),
+        );
+
+        // Store warp exclusive result back
+        digit_start[thread_id as usize] = warp_exclusive;
+
+        // Step 2: Thread 0 of each warp stores its warp total for cross-warp scan
+        let digit_warp_id = thread_id / PLANE_DIM;
+        if lane_id == 0 {
+            digit_global[digit_warp_id as usize] = warp_total;
+        }
+    }
+    sync_cube();
+
+    // Step 3: First warp computes prefix sum of warp totals
+    if thread_id < num_digit_warps {
+        let warp_total = digit_global[thread_id as usize];
+        let warp_prefix = plane_exclusive_sum(warp_total);
+        digit_global[thread_id as usize] = warp_prefix;
+    }
+    sync_cube();
+
+    // Step 4: Add warp prefix to each element AND compute global offset in one pass
+    if thread_id < NUM_BUCKETS_U32 {
+        let digit_warp_id = thread_id / PLANE_DIM;
+        let warp_prefix = digit_global[digit_warp_id as usize];
+        let my_start = digit_start[thread_id as usize] + warp_prefix;
+        digit_start[thread_id as usize] = my_start;
+
+        // Compute global offset adjustment: block_offset - digit_start
+        let block_offset = block_offsets[block_id as usize * NUM_BUCKETS + thread_id as usize];
+        digit_global[thread_id as usize] = block_offset - my_start;
+    }
+    sync_cube();
+
+    // Phase 3: Scatter keys to shared memory (local reordering by digit)
+    #[unroll]
+    for i in 0..items_per_thread {
+        if valid_flags[i as usize] {
+            let key = keys[i as usize];
+            let digit = (key >> (pass * RADIX_BITS as u32)) & DIGIT_MASK;
+            let offset_in_plane = local_offsets[i as usize];
+
+            let hist_idx = plane_id as usize * NUM_BUCKETS + digit as usize;
+            let plane_prefix = plane_hists[hist_idx].load();
+            let digit_base = digit_start[digit as usize];
+            let local_pos = digit_base + plane_prefix + offset_in_plane;
+
+            shared_keys[local_pos as usize] = key;
+            if has_values {
+                shared_values[local_pos as usize] = values[i as usize];
             }
         }
     }
     sync_cube();
 
+    // Phase 4: Coalesced read from shared memory and write to global
+    // Keys are now grouped by digit, so sequential reads are cache-friendly
+    // and we can compute global position directly
+    let items_in_block = select(
+        block_start + items_per_block <= num_items,
+        items_per_block,
+        select(num_items > block_start, num_items - block_start, 0u32),
+    );
+
     #[unroll]
     for i in 0..items_per_thread {
-        if valid_flags[i as usize] {
-            let key = keys[i as usize];
-            let offset_in_plane = offsets[i as usize];
+        let local_idx = thread_id + i * CUBE_DIM;
+        if local_idx < items_in_block {
+            let key = shared_keys[local_idx as usize];
             let digit = (key >> (pass * RADIX_BITS as u32)) & DIGIT_MASK;
 
-            let hist_idx = plane_id as usize * NUM_BUCKETS + digit as usize;
-            let plane_prefix = plane_hists[hist_idx].load();
+            // global_pos = block_offset[digit] - digit_start[digit] + local_idx
+            //            = digit_global[digit] + local_idx
+            let global_pos = digit_global[digit as usize] + local_idx;
 
-            let block_offset_idx = block_id as usize * NUM_BUCKETS + digit as usize;
-            let global_offset = block_offsets[block_offset_idx];
-
-            let final_pos = global_offset + plane_prefix + offset_in_plane;
-            keys_out[final_pos as usize] = KOut::from_radix(key);
+            keys_out[global_pos as usize] = KOut::from_radix(key);
 
             if has_values {
-                values_out[final_pos as usize] = values[i as usize];
+                values_out[global_pos as usize] = shared_values[local_idx as usize];
             }
         }
     }

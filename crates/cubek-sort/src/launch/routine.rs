@@ -64,6 +64,8 @@ fn sort_impl<R: Runtime, K: SortKey>(
     let elem_size = core::mem::size_of::<u32>();
     let has_values = values_in.is_some();
     let num_passes = num_passes::<K>();
+    let plane_dim = client.properties().hardware.plane_size_min;
+    let num_planes = strategy.num_planes(plane_dim);
 
     let temp_keys = client.empty(num_items * elem_size);
     let temp_values = if has_values {
@@ -127,22 +129,22 @@ fn sort_impl<R: Runtime, K: SortKey>(
         if is_first && is_last {
             launch_scatter::<R, K, K>(
                 client, k_src, k_dst, v_src, v_dst, &offsets, num_items, num_blocks, pass,
-                &strategy, has_values,
+                &strategy, has_values, num_planes,
             )?;
         } else if is_first {
             launch_scatter::<R, K, u32>(
                 client, k_src, k_dst, v_src, v_dst, &offsets, num_items, num_blocks, pass,
-                &strategy, has_values,
+                &strategy, has_values, num_planes,
             )?;
         } else if is_last {
             launch_scatter::<R, u32, K>(
                 client, k_src, k_dst, v_src, v_dst, &offsets, num_items, num_blocks, pass,
-                &strategy, has_values,
+                &strategy, has_values, num_planes,
             )?;
         } else {
             launch_scatter::<R, u32, u32>(
                 client, k_src, k_dst, v_src, v_dst, &offsets, num_items, num_blocks, pass,
-                &strategy, has_values,
+                &strategy, has_values, num_planes,
             )?;
         }
     }
@@ -224,6 +226,7 @@ fn launch_scatter<R: Runtime, KIn: SortKey, KOut: SortKey>(
     pass: u32,
     strategy: &SortStrategy,
     has_values: bool,
+    num_planes: u32,
 ) -> Result<(), SortError> {
     let items_shape = [num_items];
     let items_strides = [1];
@@ -255,6 +258,8 @@ fn launch_scatter<R: Runtime, KIn: SortKey, KOut: SortKey>(
             ScalarArg::new(pass),
             strategy.items_per_thread,
             has_values,
+            num_planes,
+            strategy.items_per_block(),
         )
         .map_err(SortError::Launch)?;
     }

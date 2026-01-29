@@ -25,4 +25,8 @@ impl SortStrategy {
     pub fn num_blocks(&self, num_items: usize) -> u32 {
         num_items.div_ceil(self.items_per_block() as usize) as u32
     }
+
+    pub fn num_planes(&self, plane_dim: u32) -> u32 {
+        self.threads_per_block.div_ceil(plane_dim)
+    }
 }
