@@ -11,7 +11,7 @@ pub struct SortStrategy {
 impl Default for SortStrategy {
     fn default() -> Self {
         Self {
-            items_per_thread: 4,
+            items_per_thread: 12,
             threads_per_block: 256,
         }
     }
