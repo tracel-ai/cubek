@@ -1,18 +1,24 @@
 //! Histogram kernel for radix sort.
 //!
-//! This kernel counts the occurrences of each digit value within each thread block.
-//! The output is a 2D histogram of shape [num_blocks, NUM_BUCKETS].
+//! Computes per-block digit histograms for use in the scan and scatter phases.
+//! Each block processes a contiguous partition of the input and outputs a
+//! 256-entry histogram counting occurrences of each digit value.
 
 use crate::components::config::{DIGIT_MASK, NUM_BUCKETS, RADIX_BITS};
 use cubecl::prelude::*;
 
 /// Compute per-block histograms of digit values.
 ///
-/// Each thread block processes a contiguous chunk of keys and counts how many
-/// keys have each digit value (0-255) for the current radix pass.
+/// Each block processes `items_per_thread * threads_per_block` contiguous elements
+/// and counts occurrences of each digit (0-255) for the current radix pass.
 ///
-/// This implementation uses atomic operations on shared memory for counting,
-/// which is efficient and allows all threads to contribute in parallel.
+/// Uses atomic operations on shared memory for counting, which allows all threads
+/// to contribute in parallel with minimal synchronization.
+///
+/// # Memory Layout
+///
+/// Output histograms are stored in row-major order: `[num_blocks, NUM_BUCKETS]`
+/// where `histograms[block * 256 + digit]` is block's count for that digit.
 #[cube(launch_unchecked)]
 pub fn histogram_kernel(
     keys: &Tensor<u32>,
@@ -23,7 +29,6 @@ pub fn histogram_kernel(
     #[comptime] _num_buckets: u32,
     #[comptime] _cube_size: u32,
 ) {
-    // Shared memory histogram with atomic access
     let shared_hist = SharedMemory::<Atomic<u32>>::new(NUM_BUCKETS);
 
     let block_id = CUBE_POS_X;
@@ -32,7 +37,7 @@ pub fn histogram_kernel(
     let block_start = block_id * items_per_block;
 
     // Initialize shared histogram to zero
-    // Each thread initializes multiple buckets if needed
+    #[allow(clippy::manual_div_ceil)]
     let buckets_per_thread = (NUM_BUCKETS + CUBE_DIM as usize - 1) / CUBE_DIM as usize;
     for i in 0..buckets_per_thread {
         let bucket_idx = thread_id as usize + i * CUBE_DIM as usize;
@@ -42,7 +47,7 @@ pub fn histogram_kernel(
     }
     sync_cube();
 
-    // Each thread processes its assigned elements and atomically increments counts
+    // Each thread processes its assigned elements with strided access for coalescing
     #[unroll]
     for i in 0..items_per_thread {
         let idx = block_start + thread_id + i * CUBE_DIM;
@@ -55,7 +60,6 @@ pub fn histogram_kernel(
     sync_cube();
 
     // Write shared histogram to global memory
-    // Each thread writes multiple buckets if needed
     for i in 0..buckets_per_thread {
         let bucket_idx = thread_id as usize + i * CUBE_DIM as usize;
         if bucket_idx < NUM_BUCKETS {
