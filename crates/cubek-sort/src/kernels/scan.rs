@@ -17,8 +17,12 @@ use cubecl::prelude::*;
 /// 1. All elements from all blocks with smaller digit values
 /// 2. All elements from previous blocks with the same digit value
 ///
-/// For simplicity, this uses a single-threaded approach since the histogram
-/// is relatively small (num_blocks * 256 elements).
+/// This parallel implementation uses 256 threads (one per digit bucket).
+/// Each thread:
+/// 1. Computes prefix sum across all blocks for its digit
+/// 2. Computes the total count for its digit
+/// 3. Uses a workgroup prefix sum to get the base offset for its digit
+/// 4. Adds the base offset to all positions
 ///
 /// # Arguments
 ///
@@ -27,27 +31,49 @@ use cubecl::prelude::*;
 /// * `num_blocks` - Number of thread blocks used in histogram kernel
 #[cube(launch_unchecked)]
 pub fn scan_kernel(histograms: &Tensor<u32>, offsets: &mut Tensor<u32>, num_blocks: u32) {
-    // This kernel is launched with a single thread
-    // We need to compute a global prefix sum where elements are ordered:
-    // - First all (block, digit=0) entries
-    // - Then all (block, digit=1) entries
-    // - etc.
-    //
-    // But histograms are stored as [block][digit] (row-major).
-    // So we iterate in column-major order: for each digit, for each block.
+    // Shared memory for digit totals (for cross-digit prefix sum)
+    let mut digit_totals = SharedMemory::<u32>::new(NUM_BUCKETS);
 
-    if UNIT_POS_X == 0 {
+    let digit = UNIT_POS_X;
+
+    if digit < NUM_BUCKETS as u32 {
+        // Phase 1: Each thread computes exclusive prefix sum for its digit across all blocks
+        // and stores intermediate results + computes total
         let mut running_sum = 0u32;
 
-        // Process in column-major order (digit, then block)
-        // This ensures all digit=0 elements come before digit=1 elements
-        for digit in 0..NUM_BUCKETS as u32 {
-            for block in 0..num_blocks {
-                let idx = block * NUM_BUCKETS as u32 + digit;
-                let count = histograms[idx as usize];
-                offsets[idx as usize] = running_sum;
-                running_sum += count;
-            }
+        for block in 0..num_blocks {
+            let idx = block * NUM_BUCKETS as u32 + digit;
+            let count = histograms[idx as usize];
+            // Store the running sum (this is the intra-digit prefix)
+            offsets[idx as usize] = running_sum;
+            running_sum += count;
+        }
+
+        // Store total count for this digit
+        digit_totals[digit as usize] = running_sum;
+    }
+    sync_cube();
+
+    // Phase 2: Compute exclusive prefix sum across digit totals
+    // This gives us the base offset for each digit
+    // We use a simple sequential scan on thread 0 since NUM_BUCKETS is small (256)
+    if UNIT_POS_X == 0 {
+        let mut prefix = 0u32;
+        for d in 0..NUM_BUCKETS {
+            let total = digit_totals[d];
+            digit_totals[d] = prefix;
+            prefix += total;
+        }
+    }
+    sync_cube();
+
+    // Phase 3: Each thread adds its digit's base offset to all its positions
+    if digit < NUM_BUCKETS as u32 {
+        let base_offset = digit_totals[digit as usize];
+
+        for block in 0..num_blocks {
+            let idx = block * NUM_BUCKETS as u32 + digit;
+            offsets[idx as usize] = offsets[idx as usize] + base_offset;
         }
     }
 }

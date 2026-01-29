@@ -333,8 +333,8 @@ fn launch_scan<R: Runtime>(
     let hist_tensor = unsafe { TensorArg::from_raw_parts::<u32>(histograms, &shape, &strides, 1) };
     let offsets_tensor = unsafe { TensorArg::from_raw_parts::<u32>(offsets, &shape, &strides, 1) };
 
-    // Launch with a single thread (sequential scan for simplicity)
-    let cube_dim = CubeDim::new_1d(1);
+    // Launch with NUM_BUCKETS (256) threads for parallel scan
+    let cube_dim = CubeDim::new_1d(NUM_BUCKETS as u32);
     let cube_count = CubeCount::new_1d(1);
 
     unsafe {
