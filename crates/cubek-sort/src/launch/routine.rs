@@ -1,22 +1,10 @@
-//! Launch routines for radix sort.
-//!
-//! Orchestrates the multi-pass LSD (Least Significant Digit) radix sort:
-//! 1. **Transform**: Convert keys to sortable unsigned representation
-//! 2. **Histogram**: Count digit occurrences per block
-//! 3. **Scan**: Compute global write offsets via prefix sum
-//! 4. **Scatter**: Redistribute elements to sorted positions
-//! 5. **Transform back**: Convert keys back to original representation
-//!
-//! Repeats histogram/scan/scatter for each 8-bit digit (4 passes for 32-bit keys).
-
-use crate::components::config::{KeyTransform, NUM_BUCKETS, SortStrategy};
-use crate::components::key::SortKey;
+use crate::components::config::{NUM_BUCKETS, SortStrategy};
+use crate::components::key::{SortKey, num_passes};
 use crate::error::SortError;
-use crate::kernels::{histogram, scan, scatter, transform};
+use crate::kernels::{histogram, scan, scatter};
 use cubecl::prelude::*;
 use cubecl::server::Handle;
 
-/// Sort keys in ascending order.
 pub fn sort_keys<R: Runtime, K: SortKey>(
     client: &ComputeClient<R>,
     keys_in: TensorHandleRef<R>,
@@ -28,18 +16,17 @@ pub fn sort_keys<R: Runtime, K: SortKey>(
         return Ok(());
     }
 
-    sort_keys_u32::<R>(
+    sort_impl::<R, K>(
         client,
-        keys_in,
-        keys_out,
+        keys_in.handle,
+        keys_out.handle,
+        None,
+        None,
         num_items,
-        K::NUM_PASSES,
-        K::TRANSFORM,
         strategy,
     )
 }
 
-/// Sort key-value pairs by key in ascending order.
 pub fn sort_pairs<R: Runtime, K: SortKey, V: Numeric>(
     client: &ComputeClient<R>,
     keys_in: TensorHandleRef<R>,
@@ -53,181 +40,117 @@ pub fn sort_pairs<R: Runtime, K: SortKey, V: Numeric>(
         return Ok(());
     }
 
-    sort_pairs_u32::<R>(
+    sort_impl::<R, K>(
         client,
-        keys_in,
-        keys_out,
-        values_in,
-        values_out,
+        keys_in.handle,
+        keys_out.handle,
+        Some(values_in.handle),
+        Some(values_out.handle),
         num_items,
-        K::NUM_PASSES,
-        K::TRANSFORM,
         strategy,
     )
 }
 
-/// Sort u32 keys using ping-pong buffering.
-fn sort_keys_u32<R: Runtime>(
+fn sort_impl<R: Runtime, K: SortKey>(
     client: &ComputeClient<R>,
-    keys_in: TensorHandleRef<R>,
-    keys_out: TensorHandleRef<R>,
+    keys_in: &Handle,
+    keys_out: &Handle,
+    values_in: Option<&Handle>,
+    values_out: Option<&Handle>,
     num_items: usize,
-    num_passes: u32,
-    key_transform: KeyTransform,
     strategy: SortStrategy,
 ) -> Result<(), SortError> {
     let num_blocks = strategy.num_blocks(num_items);
     let elem_size = core::mem::size_of::<u32>();
+    let has_values = values_in.is_some();
+    let num_passes = num_passes::<K>();
 
-    // Allocate temporary buffers
     let temp_keys = client.empty(num_items * elem_size);
+    let temp_values = if has_values {
+        Some(client.empty(num_items * elem_size))
+    } else {
+        None
+    };
     let histogram_size = (num_blocks as usize) * NUM_BUCKETS * elem_size;
     let histograms = client.empty(histogram_size);
     let offsets = client.empty(histogram_size);
 
-    // Transform keys to sortable representation if needed
-    let transformed_input = match key_transform {
-        KeyTransform::None => None,
-        KeyTransform::SignedInt | KeyTransform::Float => {
-            let transformed = client.empty(num_items * elem_size);
-            launch_transform_to_radix::<R>(
-                client,
-                keys_in.handle,
-                &transformed,
-                num_items,
-                key_transform,
-            )?;
-            Some(transformed)
-        }
-    };
+    let last_pass = num_passes - 1;
 
-    // Determine the actual input for sorting
-    let sort_input = transformed_input.as_ref().unwrap_or(keys_in.handle);
-
-    // Ping-pong pattern:
-    // Pass 0: sort_input → temp_keys
-    // Pass 1: temp_keys → keys_out
-    // Pass 2: keys_out → temp_keys
-    // Pass 3: temp_keys → keys_out
     for pass in 0..num_passes {
-        let (src, dst) = match (pass == 0, pass % 2 == 0) {
-            (true, _) => (sort_input, &temp_keys),
-            (false, true) => (keys_out.handle, &temp_keys),
-            (false, false) => (&temp_keys, keys_out.handle),
+        let is_first = pass == 0;
+        let is_last = pass == last_pass;
+
+        let (k_src, k_dst) = match (is_first, pass % 2 == 0) {
+            (true, _) => (keys_in, &temp_keys),
+            (false, true) => (keys_out, &temp_keys),
+            (false, false) => (&temp_keys, keys_out),
         };
 
-        launch_histogram::<R>(
-            client,
-            src,
-            &histograms,
-            num_items,
-            num_blocks,
-            pass,
-            &strategy,
-        )?;
-        launch_scan::<R>(client, &histograms, &offsets, num_blocks)?;
-        launch_scatter_keys::<R>(
-            client, src, dst, &offsets, num_items, num_blocks, pass, &strategy,
-        )?;
-    }
+        let (v_src, v_dst) = if has_values {
+            match (is_first, pass % 2 == 0) {
+                (true, _) => (values_in.unwrap(), temp_values.as_ref().unwrap()),
+                (false, true) => (values_out.unwrap(), temp_values.as_ref().unwrap()),
+                (false, false) => (temp_values.as_ref().unwrap(), values_out.unwrap()),
+            }
+        } else {
+            (keys_in, keys_out)
+        };
 
-    // Transform keys back from sortable representation if needed
-    if key_transform != KeyTransform::None {
-        // Result is in keys_out, transform in-place
-        launch_transform_from_radix::<R>(
-            client,
-            keys_out.handle,
-            keys_out.handle,
-            num_items,
-            key_transform,
-        )?;
+        // First pass: read K, transform to u32
+        // Middle passes: read u32, write u32 (identity)
+        // Last pass: read u32, transform to K
+        if is_first {
+            launch_histogram::<R, K>(
+                client,
+                k_src,
+                &histograms,
+                num_items,
+                num_blocks,
+                pass,
+                &strategy,
+            )?;
+        } else {
+            launch_histogram::<R, u32>(
+                client,
+                k_src,
+                &histograms,
+                num_items,
+                num_blocks,
+                pass,
+                &strategy,
+            )?;
+        }
+
+        launch_scan::<R>(client, &histograms, &offsets, num_blocks)?;
+
+        if is_first && is_last {
+            launch_scatter::<R, K, K>(
+                client, k_src, k_dst, v_src, v_dst, &offsets, num_items, num_blocks, pass,
+                &strategy, has_values,
+            )?;
+        } else if is_first {
+            launch_scatter::<R, K, u32>(
+                client, k_src, k_dst, v_src, v_dst, &offsets, num_items, num_blocks, pass,
+                &strategy, has_values,
+            )?;
+        } else if is_last {
+            launch_scatter::<R, u32, K>(
+                client, k_src, k_dst, v_src, v_dst, &offsets, num_items, num_blocks, pass,
+                &strategy, has_values,
+            )?;
+        } else {
+            launch_scatter::<R, u32, u32>(
+                client, k_src, k_dst, v_src, v_dst, &offsets, num_items, num_blocks, pass,
+                &strategy, has_values,
+            )?;
+        }
     }
 
     Ok(())
 }
 
-/// Sort u32 key-value pairs using ping-pong buffering.
-#[allow(clippy::too_many_arguments)]
-fn sort_pairs_u32<R: Runtime>(
-    client: &ComputeClient<R>,
-    keys_in: TensorHandleRef<R>,
-    keys_out: TensorHandleRef<R>,
-    values_in: TensorHandleRef<R>,
-    values_out: TensorHandleRef<R>,
-    num_items: usize,
-    num_passes: u32,
-    key_transform: KeyTransform,
-    strategy: SortStrategy,
-) -> Result<(), SortError> {
-    let num_blocks = strategy.num_blocks(num_items);
-    let elem_size = core::mem::size_of::<u32>();
-
-    let temp_keys = client.empty(num_items * elem_size);
-    let temp_values = client.empty(num_items * elem_size);
-    let histogram_size = (num_blocks as usize) * NUM_BUCKETS * elem_size;
-    let histograms = client.empty(histogram_size);
-    let offsets = client.empty(histogram_size);
-
-    // Transform keys to sortable representation if needed
-    let transformed_input = match key_transform {
-        KeyTransform::None => None,
-        KeyTransform::SignedInt | KeyTransform::Float => {
-            let transformed = client.empty(num_items * elem_size);
-            launch_transform_to_radix::<R>(
-                client,
-                keys_in.handle,
-                &transformed,
-                num_items,
-                key_transform,
-            )?;
-            Some(transformed)
-        }
-    };
-
-    // Determine the actual input for sorting
-    let sort_input = transformed_input.as_ref().unwrap_or(keys_in.handle);
-
-    for pass in 0..num_passes {
-        let (k_src, k_dst, v_src, v_dst) = match (pass == 0, pass % 2 == 0) {
-            (true, _) => (sort_input, &temp_keys, values_in.handle, &temp_values),
-            (false, true) => (keys_out.handle, &temp_keys, values_out.handle, &temp_values),
-            (false, false) => (&temp_keys, keys_out.handle, &temp_values, values_out.handle),
-        };
-
-        launch_histogram::<R>(
-            client,
-            k_src,
-            &histograms,
-            num_items,
-            num_blocks,
-            pass,
-            &strategy,
-        )?;
-        launch_scan::<R>(client, &histograms, &offsets, num_blocks)?;
-        launch_scatter_pairs::<R>(
-            client, k_src, k_dst, v_src, v_dst, &offsets, num_items, num_blocks, pass, &strategy,
-        )?;
-    }
-
-    // Transform keys back from sortable representation if needed
-    if key_transform != KeyTransform::None {
-        launch_transform_from_radix::<R>(
-            client,
-            keys_out.handle,
-            keys_out.handle,
-            num_items,
-            key_transform,
-        )?;
-    }
-
-    Ok(())
-}
-
-// ============================================================================
-// Kernel Launchers
-// ============================================================================
-
-fn launch_histogram<R: Runtime>(
+fn launch_histogram<R: Runtime, K: SortKey>(
     client: &ComputeClient<R>,
     keys: &Handle,
     histograms: &Handle,
@@ -242,12 +165,12 @@ fn launch_histogram<R: Runtime>(
     let hist_strides = [1];
 
     let keys_tensor =
-        unsafe { TensorArg::from_raw_parts::<u32>(keys, &keys_shape, &keys_strides, 1) };
+        unsafe { TensorArg::from_raw_parts::<K>(keys, &keys_shape, &keys_strides, 1) };
     let hist_tensor =
         unsafe { TensorArg::from_raw_parts::<u32>(histograms, &hist_shape, &hist_strides, 1) };
 
     unsafe {
-        histogram::histogram_kernel::launch_unchecked::<R>(
+        histogram::histogram_kernel::launch_unchecked::<K, R>(
             client,
             CubeCount::new_1d(num_blocks),
             CubeDim::new_1d(strategy.threads_per_block),
@@ -256,8 +179,6 @@ fn launch_histogram<R: Runtime>(
             ScalarArg::new(num_items as u32),
             ScalarArg::new(pass),
             strategy.items_per_thread,
-            NUM_BUCKETS as u32,
-            strategy.threads_per_block,
         )
         .map_err(SortError::Launch)?;
     }
@@ -291,49 +212,7 @@ fn launch_scan<R: Runtime>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn launch_scatter_keys<R: Runtime>(
-    client: &ComputeClient<R>,
-    keys_in: &Handle,
-    keys_out: &Handle,
-    offsets: &Handle,
-    num_items: usize,
-    num_blocks: u32,
-    pass: u32,
-    strategy: &SortStrategy,
-) -> Result<(), SortError> {
-    let keys_shape = [num_items];
-    let keys_strides = [1];
-    let offsets_shape = [num_blocks as usize * NUM_BUCKETS];
-    let offsets_strides = [1];
-
-    let keys_in_tensor =
-        unsafe { TensorArg::from_raw_parts::<u32>(keys_in, &keys_shape, &keys_strides, 1) };
-    let keys_out_tensor =
-        unsafe { TensorArg::from_raw_parts::<u32>(keys_out, &keys_shape, &keys_strides, 1) };
-    let offsets_tensor =
-        unsafe { TensorArg::from_raw_parts::<u32>(offsets, &offsets_shape, &offsets_strides, 1) };
-
-    unsafe {
-        scatter::scatter_keys_kernel::launch_unchecked::<R>(
-            client,
-            CubeCount::new_1d(num_blocks),
-            CubeDim::new_1d(strategy.threads_per_block),
-            keys_in_tensor,
-            keys_out_tensor,
-            offsets_tensor,
-            ScalarArg::new(num_items as u32),
-            ScalarArg::new(pass),
-            strategy.items_per_thread,
-            NUM_BUCKETS as u32,
-            strategy.threads_per_block,
-        )
-        .map_err(SortError::Launch)?;
-    }
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn launch_scatter_pairs<R: Runtime>(
+fn launch_scatter<R: Runtime, KIn: SortKey, KOut: SortKey>(
     client: &ComputeClient<R>,
     keys_in: &Handle,
     keys_out: &Handle,
@@ -344,6 +223,7 @@ fn launch_scatter_pairs<R: Runtime>(
     num_blocks: u32,
     pass: u32,
     strategy: &SortStrategy,
+    has_values: bool,
 ) -> Result<(), SortError> {
     let items_shape = [num_items];
     let items_strides = [1];
@@ -351,9 +231,9 @@ fn launch_scatter_pairs<R: Runtime>(
     let offsets_strides = [1];
 
     let keys_in_tensor =
-        unsafe { TensorArg::from_raw_parts::<u32>(keys_in, &items_shape, &items_strides, 1) };
+        unsafe { TensorArg::from_raw_parts::<KIn>(keys_in, &items_shape, &items_strides, 1) };
     let keys_out_tensor =
-        unsafe { TensorArg::from_raw_parts::<u32>(keys_out, &items_shape, &items_strides, 1) };
+        unsafe { TensorArg::from_raw_parts::<KOut>(keys_out, &items_shape, &items_strides, 1) };
     let values_in_tensor =
         unsafe { TensorArg::from_raw_parts::<u32>(values_in, &items_shape, &items_strides, 1) };
     let values_out_tensor =
@@ -362,7 +242,7 @@ fn launch_scatter_pairs<R: Runtime>(
         unsafe { TensorArg::from_raw_parts::<u32>(offsets, &offsets_shape, &offsets_strides, 1) };
 
     unsafe {
-        scatter::scatter_pairs_kernel::launch_unchecked::<R>(
+        scatter::scatter_kernel::launch_unchecked::<KIn, KOut, R>(
             client,
             CubeCount::new_1d(num_blocks),
             CubeDim::new_1d(strategy.threads_per_block),
@@ -374,102 +254,9 @@ fn launch_scatter_pairs<R: Runtime>(
             ScalarArg::new(num_items as u32),
             ScalarArg::new(pass),
             strategy.items_per_thread,
-            NUM_BUCKETS as u32,
-            strategy.threads_per_block,
+            has_values,
         )
         .map_err(SortError::Launch)?;
     }
     Ok(())
-}
-
-// ============================================================================
-// Transform Kernel Launchers
-// ============================================================================
-
-const TRANSFORM_THREADS: u32 = 256;
-
-fn launch_transform_to_radix<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: &Handle,
-    output: &Handle,
-    num_items: usize,
-    key_transform: KeyTransform,
-) -> Result<(), SortError> {
-    let shape = [num_items];
-    let strides = [1];
-
-    let input_tensor = unsafe { TensorArg::from_raw_parts::<u32>(input, &shape, &strides, 1) };
-    let output_tensor = unsafe { TensorArg::from_raw_parts::<u32>(output, &shape, &strides, 1) };
-
-    #[allow(clippy::manual_div_ceil)]
-    let num_blocks = (num_items as u32 + TRANSFORM_THREADS - 1) / TRANSFORM_THREADS;
-
-    match key_transform {
-        KeyTransform::None => Ok(()),
-        KeyTransform::SignedInt => unsafe {
-            transform::transform_i32_to_radix::launch_unchecked::<R>(
-                client,
-                CubeCount::new_1d(num_blocks),
-                CubeDim::new_1d(TRANSFORM_THREADS),
-                input_tensor,
-                output_tensor,
-                ScalarArg::new(num_items as u32),
-            )
-            .map_err(SortError::Launch)
-        },
-        KeyTransform::Float => unsafe {
-            transform::transform_f32_to_radix::launch_unchecked::<R>(
-                client,
-                CubeCount::new_1d(num_blocks),
-                CubeDim::new_1d(TRANSFORM_THREADS),
-                input_tensor,
-                output_tensor,
-                ScalarArg::new(num_items as u32),
-            )
-            .map_err(SortError::Launch)
-        },
-    }
-}
-
-fn launch_transform_from_radix<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: &Handle,
-    output: &Handle,
-    num_items: usize,
-    key_transform: KeyTransform,
-) -> Result<(), SortError> {
-    let shape = [num_items];
-    let strides = [1];
-
-    let input_tensor = unsafe { TensorArg::from_raw_parts::<u32>(input, &shape, &strides, 1) };
-    let output_tensor = unsafe { TensorArg::from_raw_parts::<u32>(output, &shape, &strides, 1) };
-
-    #[allow(clippy::manual_div_ceil)]
-    let num_blocks = (num_items as u32 + TRANSFORM_THREADS - 1) / TRANSFORM_THREADS;
-
-    match key_transform {
-        KeyTransform::None => Ok(()),
-        KeyTransform::SignedInt => unsafe {
-            transform::transform_radix_to_i32::launch_unchecked::<R>(
-                client,
-                CubeCount::new_1d(num_blocks),
-                CubeDim::new_1d(TRANSFORM_THREADS),
-                input_tensor,
-                output_tensor,
-                ScalarArg::new(num_items as u32),
-            )
-            .map_err(SortError::Launch)
-        },
-        KeyTransform::Float => unsafe {
-            transform::transform_radix_to_f32::launch_unchecked::<R>(
-                client,
-                CubeCount::new_1d(num_blocks),
-                CubeDim::new_1d(TRANSFORM_THREADS),
-                input_tensor,
-                output_tensor,
-                ScalarArg::new(num_items as u32),
-            )
-            .map_err(SortError::Launch)
-        },
-    }
 }
