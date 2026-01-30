@@ -43,7 +43,7 @@ impl SortKey for f32 {
     }
 }
 
-/// Number of radix sort passes for a key type (1 per byte).
+/// Number of radix sort passes for a key type (one pass per byte).
 pub const fn num_passes<K>() -> u32 {
-    (core::mem::size_of::<K>() * 8 / 8) as u32
+    core::mem::size_of::<K>() as u32
 }

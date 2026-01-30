@@ -13,6 +13,9 @@ pub use error::SortError;
 use cubecl::prelude::*;
 
 /// Sort keys in ascending order.
+///
+/// If no strategy is provided, uses size-optimized tuning that adapts
+/// block sizes based on input count for better GPU occupancy.
 pub fn sort_keys<R: Runtime, K: SortKey>(
     client: &ComputeClient<R>,
     keys_in: TensorHandleRef<R>,
@@ -20,16 +23,15 @@ pub fn sort_keys<R: Runtime, K: SortKey>(
     num_items: usize,
     strategy: Option<SortStrategy>,
 ) -> Result<(), SortError> {
-    launch::sort_keys::<R, K>(
-        client,
-        keys_in,
-        keys_out,
-        num_items,
-        strategy.unwrap_or_default(),
-    )
+    // Use size-aware tuning when no explicit strategy provided
+    let strategy = strategy.unwrap_or_else(|| SortStrategy::for_keys(num_items));
+    launch::sort_keys::<R, K>(client, keys_in, keys_out, num_items, strategy)
 }
 
 /// Sort key-value pairs by key in ascending order (stable).
+///
+/// If no strategy is provided, uses size-optimized tuning that adapts
+/// block sizes based on input count for better GPU occupancy.
 pub fn sort_pairs<R: Runtime, K: SortKey, V: Numeric>(
     client: &ComputeClient<R>,
     keys_in: TensorHandleRef<R>,
@@ -39,13 +41,9 @@ pub fn sort_pairs<R: Runtime, K: SortKey, V: Numeric>(
     num_items: usize,
     strategy: Option<SortStrategy>,
 ) -> Result<(), SortError> {
+    // Use size-aware tuning when no explicit strategy provided
+    let strategy = strategy.unwrap_or_else(|| SortStrategy::for_pairs(num_items));
     launch::sort_pairs::<R, K, V>(
-        client,
-        keys_in,
-        keys_out,
-        values_in,
-        values_out,
-        num_items,
-        strategy.unwrap_or_default(),
+        client, keys_in, keys_out, values_in, values_out, num_items, strategy,
     )
 }

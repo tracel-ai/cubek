@@ -123,7 +123,14 @@ fn sort_impl<R: Runtime, K: SortKey>(
             )?;
         }
 
-        launch_scan::<R>(client, &histograms, &offsets, num_blocks)?;
+        // Choose scan strategy based on input size:
+        // - Small inputs (< 256 blocks): single-block scan has lower overhead
+        // - Large inputs (>= 256 blocks): cooperative scan has better parallelism
+        if num_blocks < 256 {
+            launch_scan::<R>(client, &histograms, &offsets, num_blocks)?;
+        } else {
+            launch_scan_cooperative::<R>(client, &histograms, &offsets, num_blocks, 256)?;
+        }
 
         if is_first && is_last {
             launch_scatter::<R, K, K>(
@@ -186,6 +193,89 @@ fn launch_histogram<R: Runtime, K: SortKey>(
     Ok(())
 }
 
+/// Three-phase cooperative scan for better parallelism.
+/// Phase A: Sum digit totals (256 blocks, SCAN_DIM threads each)
+/// Phase B: Cross-digit prefix sum (1 block, 256 threads)
+/// Phase C: Within-digit offsets (256 blocks, SCAN_DIM threads each)
+fn launch_scan_cooperative<R: Runtime>(
+    client: &ComputeClient<R>,
+    histograms: &Handle,
+    offsets: &Handle,
+    num_blocks: u32,
+    scan_dim: u32,
+) -> Result<(), SortError> {
+    let elem_size = core::mem::size_of::<u32>();
+    let hist_shape = [num_blocks as usize * NUM_BUCKETS];
+    let hist_strides = [1];
+    let digit_shape = [NUM_BUCKETS];
+    let digit_strides = [1];
+
+    // Allocate temp buffers for digit totals and prefixes
+    let digit_totals = client.empty(NUM_BUCKETS * elem_size);
+    let digit_prefixes = client.empty(NUM_BUCKETS * elem_size);
+
+    // Phase A: Compute digit totals
+    unsafe {
+        let hist_tensor =
+            TensorArg::from_raw_parts::<u32>(histograms, &hist_shape, &hist_strides, 1);
+        let totals_tensor =
+            TensorArg::from_raw_parts::<u32>(&digit_totals, &digit_shape, &digit_strides, 1);
+
+        scan::scan_sum_kernel::launch_unchecked::<R>(
+            client,
+            CubeCount::new_1d(NUM_BUCKETS as u32),
+            CubeDim::new_1d(scan_dim),
+            hist_tensor,
+            totals_tensor,
+            ScalarArg::new(num_blocks),
+            scan_dim,
+        )
+        .map_err(SortError::Launch)?;
+    }
+
+    // Phase B: Cross-digit prefix sum
+    unsafe {
+        let totals_tensor =
+            TensorArg::from_raw_parts::<u32>(&digit_totals, &digit_shape, &digit_strides, 1);
+        let prefixes_tensor =
+            TensorArg::from_raw_parts::<u32>(&digit_prefixes, &digit_shape, &digit_strides, 1);
+
+        scan::scan_prefix_totals_kernel::launch_unchecked::<R>(
+            client,
+            CubeCount::new_1d(1),
+            CubeDim::new_1d(NUM_BUCKETS as u32),
+            totals_tensor,
+            prefixes_tensor,
+        )
+        .map_err(SortError::Launch)?;
+    }
+
+    // Phase C: Within-digit cooperative offsets
+    unsafe {
+        let hist_tensor =
+            TensorArg::from_raw_parts::<u32>(histograms, &hist_shape, &hist_strides, 1);
+        let prefixes_tensor =
+            TensorArg::from_raw_parts::<u32>(&digit_prefixes, &digit_shape, &digit_strides, 1);
+        let offsets_tensor =
+            TensorArg::from_raw_parts::<u32>(offsets, &hist_shape, &hist_strides, 1);
+
+        scan::scan_offsets_cooperative_kernel::launch_unchecked::<R>(
+            client,
+            CubeCount::new_1d(NUM_BUCKETS as u32),
+            CubeDim::new_1d(scan_dim),
+            hist_tensor,
+            prefixes_tensor,
+            offsets_tensor,
+            ScalarArg::new(num_blocks),
+            scan_dim,
+        )
+        .map_err(SortError::Launch)?;
+    }
+
+    Ok(())
+}
+
+/// Single-block scan - fallback for small num_blocks.
 fn launch_scan<R: Runtime>(
     client: &ComputeClient<R>,
     histograms: &Handle,
