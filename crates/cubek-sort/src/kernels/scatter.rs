@@ -18,7 +18,7 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
     #[comptime] num_planes: u32,
     #[comptime] items_per_block: u32,
 ) {
-    // Plane histograms for warp-level ranking
+    // Plane histograms for warp-level ranking (atomic for concurrent updates)
     let plane_hists = SharedMemory::<Atomic<u32>>::new((num_planes as usize) * NUM_BUCKETS);
     // Shared memory buffer for keys (reused for local reordering)
     let mut shared_keys = SharedMemory::<u32>::new(items_per_block as usize);
@@ -60,13 +60,19 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
     let shift = pass * RADIX_BITS as u32;
 
     // Phase 1: Load keys and compute warp-level ranking
+    // Use 0xFFFFFFFF for invalid keys (sorts to end, maintains stability)
     #[unroll]
     for i in 0..items_per_thread {
         let local_idx = lane_id + i * PLANE_DIM;
         let global_idx = sub_part_start + local_idx;
         let valid = global_idx < num_items;
 
-        let raw_key = select(valid, keys_in[global_idx as usize], KIn::from_radix(0u32));
+        // Load key or use max value for invalid positions (like CUDA's dummy key approach)
+        let raw_key = select(
+            valid,
+            keys_in[global_idx as usize],
+            KIn::from_radix(0xFFFFFFFFu32),
+        );
         let key = KIn::to_radix(raw_key);
         keys[i as usize] = key;
         valid_flags[i as usize] = valid;
@@ -99,6 +105,7 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
 
     // Phase 2: Reduce plane histograms and compute digit starts
     // Each thread handles one digit (first 256 threads)
+    // Write prefix sums to non-atomic array for faster reads in Phase 3
     if thread_id < NUM_BUCKETS_U32 {
         let mut sum = 0u32;
 
@@ -164,7 +171,7 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
     for i in 0..items_per_thread {
         if valid_flags[i as usize] {
             let key = keys[i as usize];
-            let digit = digits[i as usize]; // Use stored digit instead of recomputing
+            let digit = digits[i as usize];
             let offset_in_plane = local_offsets[i as usize];
 
             let hist_idx = plane_id as usize * NUM_BUCKETS + digit as usize;
@@ -182,28 +189,41 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
 
     // Phase 4: Coalesced read from shared memory and write to global
     // Keys are now grouped by digit, so sequential reads are cache-friendly
-    // and we can compute global position directly
-    let items_in_block = select(
-        block_start + items_per_block <= num_items,
-        items_per_block,
-        select(num_items > block_start, num_items - block_start, 0u32),
-    );
+    // Separate full block vs partial block for better branch prediction
+    let is_full_block = block_start + items_per_block <= num_items;
 
-    #[unroll]
-    for i in 0..items_per_thread {
-        let local_idx = thread_id + i * CUBE_DIM;
-        if local_idx < items_in_block {
+    if is_full_block {
+        // Full block: no bounds check needed, all items valid
+        #[unroll]
+        for i in 0..items_per_thread {
+            let local_idx = thread_id + i * CUBE_DIM;
             let key = shared_keys[local_idx as usize];
-            let digit = (key >> (pass * RADIX_BITS as u32)) & DIGIT_MASK;
-
-            // global_pos = block_offset[digit] - digit_start[digit] + local_idx
-            //            = digit_global[digit] + local_idx
+            let digit = (key >> shift) & DIGIT_MASK;
             let global_pos = digit_global[digit as usize] + local_idx;
 
             keys_out[global_pos as usize] = KOut::from_radix(key);
 
             if has_values {
                 values_out[global_pos as usize] = shared_values[local_idx as usize];
+            }
+        }
+    } else {
+        // Partial block (last block): need bounds check
+        let items_in_block = select(num_items > block_start, num_items - block_start, 0u32);
+
+        #[unroll]
+        for i in 0..items_per_thread {
+            let local_idx = thread_id + i * CUBE_DIM;
+            if local_idx < items_in_block {
+                let key = shared_keys[local_idx as usize];
+                let digit = (key >> shift) & DIGIT_MASK;
+                let global_pos = digit_global[digit as usize] + local_idx;
+
+                keys_out[global_pos as usize] = KOut::from_radix(key);
+
+                if has_values {
+                    values_out[global_pos as usize] = shared_values[local_idx as usize];
+                }
             }
         }
     }

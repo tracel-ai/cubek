@@ -100,8 +100,7 @@ fn sort_impl<R: Runtime, K: SortKey>(
         };
 
         // First pass: read K, transform to u32
-        // Middle passes: read u32, write u32 (identity)
-        // Last pass: read u32, transform to K
+        // Middle/last passes: read u32
         if is_first {
             launch_histogram::<R, K>(
                 client,

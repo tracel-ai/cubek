@@ -34,7 +34,6 @@ pub fn histogram_kernel<K: SortKey>(
     }
     sync_cube();
 
-    // Process keys in groups of 4 for better memory throughput
     // Each thread handles items_per_thread keys total
     #[unroll]
     for i in 0..items_per_thread {
