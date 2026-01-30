@@ -1,6 +1,6 @@
 //! Benchmarks for cubek-sort.
 //!
-//! Measures throughput in GB/s for sorting operations.
+//! Measures throughput in GB/s for sorting operations with high fidelity.
 
 use cubecl::{
     benchmark::{Benchmark, BenchmarkComputations, TimingMethod},
@@ -9,6 +9,9 @@ use cubecl::{
 };
 use cubek::sort::{SortStrategy, sort_keys};
 use std::time::Duration;
+
+const NUM_WARMUP: usize = 5;
+const NUM_SAMPLES: usize = 50;
 
 struct SortBench<R: Runtime> {
     num_items: usize,
@@ -75,7 +78,7 @@ impl<R: Runtime> Benchmark for SortBench<R> {
     }
 
     fn num_samples(&self) -> usize {
-        10
+        NUM_SAMPLES
     }
 }
 
@@ -104,6 +107,41 @@ fn calculate_throughput(num_items: usize, duration: Duration) -> f64 {
     }
 }
 
+/// Run warmup iterations to stabilize GPU state (clocks, caches, etc.)
+fn warmup<R: Runtime>(bench: &SortBench<R>) {
+    for _ in 0..NUM_WARMUP {
+        let input = bench.prepare();
+        let _ = bench.execute(input);
+        bench.sync();
+    }
+}
+
+/// Calculate standard deviation from durations
+fn std_dev(durations: &[Duration], mean: Duration) -> Duration {
+    if durations.len() < 2 {
+        return Duration::ZERO;
+    }
+    let mean_nanos = mean.as_nanos() as f64;
+    let variance: f64 = durations
+        .iter()
+        .map(|d| {
+            let diff = d.as_nanos() as f64 - mean_nanos;
+            diff * diff
+        })
+        .sum::<f64>()
+        / (durations.len() - 1) as f64;
+    Duration::from_nanos(variance.sqrt() as u64)
+}
+
+/// Calculate percentile from sorted durations
+fn percentile(sorted_durations: &[Duration], p: f64) -> Duration {
+    if sorted_durations.is_empty() {
+        return Duration::ZERO;
+    }
+    let idx = ((sorted_durations.len() - 1) as f64 * p / 100.0).round() as usize;
+    sorted_durations[idx.min(sorted_durations.len() - 1)]
+}
+
 fn run<R: Runtime>(device: R::Device) {
     let client = R::client(&device);
     let strategy = SortStrategy::default();
@@ -116,6 +154,12 @@ fn run<R: Runtime>(device: R::Device) {
         16 * 1024 * 1024, // 16M
     ];
 
+    println!(
+        "Sort Benchmark (warmup={}, samples={})",
+        NUM_WARMUP, NUM_SAMPLES
+    );
+    println!("{}", "=".repeat(80));
+
     for size in sizes {
         let bench = SortBench::<R> {
             num_items: size,
@@ -125,25 +169,56 @@ fn run<R: Runtime>(device: R::Device) {
         };
 
         let name = bench.name();
-        println!("Running: ==== {} ====", name);
+
+        // Warmup
+        warmup(&bench);
 
         match bench.run(TimingMethod::System) {
-            Ok(durations) => {
-                let computed = BenchmarkComputations::new(&durations);
-                let throughput_median = calculate_throughput(size, computed.median);
-                let throughput_peak = calculate_throughput(size, computed.min);
+            Ok(bench_durations) => {
+                let durations = &bench_durations.durations;
+                let computed = BenchmarkComputations::new(&bench_durations);
 
+                // Calculate statistics
+                let mean: Duration = durations.iter().sum::<Duration>() / durations.len() as u32;
+                let std = std_dev(durations, mean);
+
+                let mut sorted = durations.clone();
+                sorted.sort();
+                let p5 = percentile(&sorted, 5.0);
+                let p95 = percentile(&sorted, 95.0);
+
+                // Throughput calculations
+                let throughput_median = calculate_throughput(size, computed.median);
+                let throughput_mean = calculate_throughput(size, mean);
+                let throughput_best = calculate_throughput(size, computed.min);
+                let throughput_p5 = calculate_throughput(size, p5);
+
+                println!("\n{}", name);
+                println!("  Items: {:>12}", size);
                 println!(
-                    "  Items: {} | Median: {:.2} ms | Throughput: {:.2} GB/s (median), {:.2} GB/s (peak)",
-                    size,
+                    "  Time (ms):  median={:>7.2}  mean={:>7.2}  std={:>6.2}  min={:>7.2}  max={:>7.2}",
                     computed.median.as_secs_f64() * 1000.0,
-                    throughput_median,
-                    throughput_peak
+                    mean.as_secs_f64() * 1000.0,
+                    std.as_secs_f64() * 1000.0,
+                    computed.min.as_secs_f64() * 1000.0,
+                    computed.max.as_secs_f64() * 1000.0,
+                );
+                println!(
+                    "  Throughput: median={:>7.2}  mean={:>7.2}  best={:>7.2}  p5={:>7.2} GB/s",
+                    throughput_median, throughput_mean, throughput_best, throughput_p5,
+                );
+                println!(
+                    "  Percentiles (ms): p5={:.2}  p50={:.2}  p95={:.2}",
+                    p5.as_secs_f64() * 1000.0,
+                    computed.median.as_secs_f64() * 1000.0,
+                    p95.as_secs_f64() * 1000.0,
                 );
             }
-            Err(e) => println!("  Failed: {}", e),
+            Err(e) => println!("{}: Failed - {}", name, e),
         }
     }
+
+    println!("\n{}", "=".repeat(80));
 }
 
 fn main() {
