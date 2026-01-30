@@ -22,8 +22,12 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
     let plane_hists = SharedMemory::<Atomic<u32>>::new((num_planes as usize) * NUM_BUCKETS);
     // Shared memory buffer for keys (reused for local reordering)
     let mut shared_keys = SharedMemory::<u32>::new(items_per_block as usize);
-    // Shared memory buffer for values
-    let mut shared_values = SharedMemory::<u32>::new(items_per_block as usize);
+    // Shared memory buffer for values - only allocate if needed
+    let mut shared_values = SharedMemory::<u32>::new(if has_values {
+        items_per_block as usize
+    } else {
+        1 // Minimum allocation when unused
+    });
     // Where each digit starts in shared memory (exclusive prefix sum of digit counts)
     let mut digit_start = SharedMemory::<u32>::new(NUM_BUCKETS);
     // Global write offset for each digit (block_offset - digit_start, so global_pos = this + local_idx)
@@ -39,6 +43,7 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
     let sub_part_start = block_start + plane_id * sub_part_size;
 
     // Initialize plane histograms
+    // With 512 threads, 16 planes * 256 buckets = 4096 entries = 8 per thread
     let total_hist_entries = (num_planes as usize) * NUM_BUCKETS;
     #[allow(clippy::manual_div_ceil)]
     let entries_per_thread = (total_hist_entries + CUBE_DIM as usize - 1) / CUBE_DIM as usize;
@@ -55,51 +60,89 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
     let mut digits = Array::<u32>::new(items_per_thread as usize); // Store digits to avoid recomputation
     let mut values = Array::<u32>::new(items_per_thread as usize);
     let mut local_offsets = Array::<u32>::new(items_per_thread as usize);
-    let mut valid_flags = Array::<bool>::new(items_per_thread as usize);
 
     let shift = pass * RADIX_BITS as u32;
 
+    // Check if this entire plane is full (all items valid) - enables bounds check elimination
+    let plane_end = sub_part_start + sub_part_size;
+    let is_full_plane = plane_end <= num_items;
+
     // Phase 1: Load keys and compute warp-level ranking
-    // Use 0xFFFFFFFF for invalid keys (sorts to end, maintains stability)
-    #[unroll]
-    for i in 0..items_per_thread {
-        let local_idx = lane_id + i * PLANE_DIM;
-        let global_idx = sub_part_start + local_idx;
-        let valid = global_idx < num_items;
+    // Specialized paths for full planes (no bounds checks) vs partial planes
+    if is_full_plane {
+        // FAST PATH: Full plane - all items valid, no bounds checks needed
+        #[unroll]
+        for i in 0..items_per_thread {
+            let local_idx = lane_id + i * PLANE_DIM;
+            let global_idx = sub_part_start + local_idx;
 
-        // Load key or use max value for invalid positions (like CUDA's dummy key approach)
-        let raw_key = select(
-            valid,
-            keys_in[global_idx as usize],
-            KIn::from_radix(0xFFFFFFFFu32),
-        );
-        let key = KIn::to_radix(raw_key);
-        keys[i as usize] = key;
-        valid_flags[i as usize] = valid;
+            // Direct load - no bounds check or select needed
+            let key = KIn::to_radix(keys_in[global_idx as usize]);
+            keys[i as usize] = key;
 
-        if has_values {
-            values[i as usize] = select(valid, values_in[global_idx as usize], 0u32);
+            if has_values {
+                values[i as usize] = values_in[global_idx as usize];
+            }
+
+            let digit = (key >> shift) & DIGIT_MASK;
+            digits[i as usize] = digit;
+
+            // Warp-level ranking - all threads valid (pass true)
+            let peer_mask = compute_peer_mask(digit, true);
+            let rank = count_lower_peers(peer_mask, lane_id);
+            let total = count_set_bits(peer_mask);
+            let leader = find_first_set_bit(peer_mask);
+            let is_leader = lane_id == leader;
+
+            let hist_idx = plane_id as usize * NUM_BUCKETS + digit as usize;
+            let mut base = 0u32;
+            if is_leader {
+                base = plane_hists[hist_idx].fetch_add(total);
+            }
+            base = plane_shuffle(base, leader);
+
+            local_offsets[i as usize] = base + rank;
         }
+    } else {
+        // SLOW PATH: Partial plane - need bounds checks
+        #[unroll]
+        for i in 0..items_per_thread {
+            let local_idx = lane_id + i * PLANE_DIM;
+            let global_idx = sub_part_start + local_idx;
+            let valid = global_idx < num_items;
 
-        let digit = (key >> shift) & DIGIT_MASK;
-        digits[i as usize] = digit; // Store for later use
+            // Load key or use max value for invalid positions
+            let raw_key = select(
+                valid,
+                keys_in[global_idx as usize],
+                KIn::from_radix(0xFFFFFFFFu32),
+            );
+            let key = KIn::to_radix(raw_key);
+            keys[i as usize] = key;
 
-        // Warp-level ranking using ballot
-        let peer_mask = compute_peer_mask(digit, valid);
-        let rank = count_lower_peers(peer_mask, lane_id);
-        let total = count_set_bits(peer_mask);
-        let leader = find_first_set_bit(peer_mask);
-        let is_leader = lane_id == leader && valid;
+            if has_values {
+                values[i as usize] = select(valid, values_in[global_idx as usize], 0u32);
+            }
 
-        // Atomically add to plane histogram, get base offset
-        let hist_idx = plane_id as usize * NUM_BUCKETS + digit as usize;
-        let mut base = 0u32;
-        if is_leader {
-            base = plane_hists[hist_idx].fetch_add(total);
+            let digit = (key >> shift) & DIGIT_MASK;
+            digits[i as usize] = digit;
+
+            // Warp-level ranking with validity mask
+            let peer_mask = compute_peer_mask(digit, valid);
+            let rank = count_lower_peers(peer_mask, lane_id);
+            let total = count_set_bits(peer_mask);
+            let leader = find_first_set_bit(peer_mask);
+            let is_leader = lane_id == leader && valid;
+
+            let hist_idx = plane_id as usize * NUM_BUCKETS + digit as usize;
+            let mut base = 0u32;
+            if is_leader {
+                base = plane_hists[hist_idx].fetch_add(total);
+            }
+            base = plane_shuffle(base, leader);
+
+            local_offsets[i as usize] = base + rank;
         }
-        base = plane_shuffle(base, leader);
-
-        local_offsets[i as usize] = base + rank;
     }
     sync_cube();
 
@@ -167,9 +210,11 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
     sync_cube();
 
     // Phase 3: Scatter keys to shared memory (local reordering by digit)
-    #[unroll]
-    for i in 0..items_per_thread {
-        if valid_flags[i as usize] {
+    // Use plane fullness to avoid bounds checks
+    if is_full_plane {
+        // FAST PATH: All items valid
+        #[unroll]
+        for i in 0..items_per_thread {
             let key = keys[i as usize];
             let digit = digits[i as usize];
             let offset_in_plane = local_offsets[i as usize];
@@ -182,6 +227,28 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
             shared_keys[local_pos as usize] = key;
             if has_values {
                 shared_values[local_pos as usize] = values[i as usize];
+            }
+        }
+    } else {
+        // SLOW PATH: Check bounds for each item
+        #[unroll]
+        for i in 0..items_per_thread {
+            let local_idx = lane_id + i * PLANE_DIM;
+            let global_idx = sub_part_start + local_idx;
+            if global_idx < num_items {
+                let key = keys[i as usize];
+                let digit = digits[i as usize];
+                let offset_in_plane = local_offsets[i as usize];
+
+                let hist_idx = plane_id as usize * NUM_BUCKETS + digit as usize;
+                let plane_prefix = plane_hists[hist_idx].load();
+                let digit_base = digit_start[digit as usize];
+                let local_pos = digit_base + plane_prefix + offset_in_plane;
+
+                shared_keys[local_pos as usize] = key;
+                if has_values {
+                    shared_values[local_pos as usize] = values[i as usize];
+                }
             }
         }
     }

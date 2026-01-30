@@ -39,25 +39,51 @@ pub fn histogram_kernel<K: SortKey>(
     }
     sync_cube();
 
+    // Check if this is a full block (all items valid)
+    let is_full_block = block_start + items_per_block <= num_items;
+
     // Each thread handles items_per_thread keys total
     // Use warp-level ballot to reduce atomic contention
-    #[unroll]
-    for i in 0..items_per_thread {
-        let idx = block_start + thread_id + i * CUBE_DIM;
-        let valid = idx < num_items;
+    if is_full_block {
+        // FAST PATH: Full block - no bounds checks needed
+        #[unroll]
+        for i in 0..items_per_thread {
+            let idx = block_start + thread_id + i * CUBE_DIM;
 
-        // Load key and extract digit (use 0 for invalid to minimize divergence)
-        let key = select(valid, K::to_radix(keys[idx as usize]), 0u32);
-        let digit = (key >> shift) & DIGIT_MASK;
+            // Direct load - no bounds check
+            let key = K::to_radix(keys[idx as usize]);
+            let digit = (key >> shift) & DIGIT_MASK;
 
-        // Use ballot to find all threads with the same digit
-        let peer_mask = compute_peer_mask_hist(digit, valid);
-        let count = count_set_bits_hist(peer_mask);
-        let leader = find_first_set_bit_hist(peer_mask);
+            // Use ballot to find all threads with the same digit (all valid)
+            let peer_mask = compute_peer_mask_hist(digit, true);
+            let count = count_set_bits_hist(peer_mask);
+            let leader = find_first_set_bit_hist(peer_mask);
 
-        // Only the leader performs the atomic add for the group
-        if lane_id == leader && valid {
-            shared_hist[digit as usize].fetch_add(count);
+            // Only the leader performs the atomic add for the group
+            if lane_id == leader {
+                shared_hist[digit as usize].fetch_add(count);
+            }
+        }
+    } else {
+        // SLOW PATH: Partial block - need bounds checks
+        #[unroll]
+        for i in 0..items_per_thread {
+            let idx = block_start + thread_id + i * CUBE_DIM;
+            let valid = idx < num_items;
+
+            // Load key and extract digit (use 0 for invalid to minimize divergence)
+            let key = select(valid, K::to_radix(keys[idx as usize]), 0u32);
+            let digit = (key >> shift) & DIGIT_MASK;
+
+            // Use ballot to find all threads with the same digit
+            let peer_mask = compute_peer_mask_hist(digit, valid);
+            let count = count_set_bits_hist(peer_mask);
+            let leader = find_first_set_bit_hist(peer_mask);
+
+            // Only the leader performs the atomic add for the group
+            if lane_id == leader && valid {
+                shared_hist[digit as usize].fetch_add(count);
+            }
         }
     }
     sync_cube();
