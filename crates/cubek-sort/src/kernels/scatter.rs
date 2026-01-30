@@ -168,7 +168,7 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
     sync_cube();
 
     // Compute exclusive prefix sum across 256 digits using warp-level primitives
-    // Optimized to use fewer sync barriers by computing warp totals inline
+    // Fused steps to reduce sync barriers
     #[allow(clippy::manual_div_ceil)]
     let num_digit_warps = (NUM_BUCKETS_U32 + PLANE_DIM - 1) / PLANE_DIM;
 
@@ -188,16 +188,17 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
     }
     sync_cube();
 
-    // Step 2: First warp computes prefix sum of warp totals, then all threads
-    // read their warp prefix and compute final offset in one pass
-    if thread_id < num_digit_warps {
-        let warp_total = digit_global[thread_id as usize];
+    // Step 2 & 3 fused: First warp computes prefix, all threads read and compute final
+    // First warp does the prefix sum of warp totals
+    let thread_warp_id = thread_id / PLANE_DIM;
+    if thread_warp_id == 0 && lane_id < num_digit_warps {
+        let warp_total = digit_global[lane_id as usize];
         let warp_prefix = plane_exclusive_sum(warp_total);
-        digit_global[thread_id as usize] = warp_prefix;
+        digit_global[lane_id as usize] = warp_prefix;
     }
     sync_cube();
 
-    // Step 3: Add warp prefix and compute global offset
+    // All digit threads add warp prefix and compute global offset
     if thread_id < NUM_BUCKETS_U32 {
         let digit_warp_id = thread_id / PLANE_DIM;
         let warp_prefix = digit_global[digit_warp_id as usize];
