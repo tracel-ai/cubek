@@ -52,9 +52,12 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
 
     // Register arrays for per-thread data
     let mut keys = Array::<u32>::new(items_per_thread as usize);
+    let mut digits = Array::<u32>::new(items_per_thread as usize); // Store digits to avoid recomputation
     let mut values = Array::<u32>::new(items_per_thread as usize);
     let mut local_offsets = Array::<u32>::new(items_per_thread as usize);
     let mut valid_flags = Array::<bool>::new(items_per_thread as usize);
+
+    let shift = pass * RADIX_BITS as u32;
 
     // Phase 1: Load keys and compute warp-level ranking
     #[unroll]
@@ -72,7 +75,8 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
             values[i as usize] = select(valid, values_in[global_idx as usize], 0u32);
         }
 
-        let digit = (key >> (pass * RADIX_BITS as u32)) & DIGIT_MASK;
+        let digit = (key >> shift) & DIGIT_MASK;
+        digits[i as usize] = digit; // Store for later use
 
         // Warp-level ranking using ballot
         let peer_mask = compute_peer_mask(digit, valid);
@@ -160,7 +164,7 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
     for i in 0..items_per_thread {
         if valid_flags[i as usize] {
             let key = keys[i as usize];
-            let digit = (key >> (pass * RADIX_BITS as u32)) & DIGIT_MASK;
+            let digit = digits[i as usize]; // Use stored digit instead of recomputing
             let offset_in_plane = local_offsets[i as usize];
 
             let hist_idx = plane_id as usize * NUM_BUCKETS + digit as usize;

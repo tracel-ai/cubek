@@ -21,6 +21,7 @@ pub fn histogram_kernel<K: SortKey>(
     let thread_id = UNIT_POS_X;
     let items_per_block = CUBE_DIM * items_per_thread;
     let block_start = block_id * items_per_block;
+    let shift = pass * RADIX_BITS as u32;
 
     // Initialize shared histogram to zero
     #[allow(clippy::manual_div_ceil)]
@@ -33,13 +34,14 @@ pub fn histogram_kernel<K: SortKey>(
     }
     sync_cube();
 
-    // Each thread processes items_per_thread keys
+    // Process keys in groups of 4 for better memory throughput
+    // Each thread handles items_per_thread keys total
     #[unroll]
     for i in 0..items_per_thread {
         let idx = block_start + thread_id + i * CUBE_DIM;
         if idx < num_items {
             let key = K::to_radix(keys[idx as usize]);
-            let digit = (key >> (pass * RADIX_BITS as u32)) & DIGIT_MASK;
+            let digit = (key >> shift) & DIGIT_MASK;
             shared_hist[digit as usize].fetch_add(1u32);
         }
     }
