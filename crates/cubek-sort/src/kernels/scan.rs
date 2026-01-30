@@ -9,7 +9,8 @@ const MAX_WARPS: usize = 8;
 /// - offsets[block, d] = sum of all histograms[b, d] for b < block, plus
 ///                       sum of all digit totals for digits < d
 ///
-/// This version fuses the two sequential loops into one pass over the data.
+/// This version reads histograms once, computes the cross-digit prefix sum,
+/// then writes offsets once (avoiding the read-modify-write of the previous version).
 #[cube(launch_unchecked)]
 pub fn scan_kernel(histograms: &Tensor<u32>, offsets: &mut Tensor<u32>, num_blocks: u32) {
     let mut digit_totals = SharedMemory::<u32>::new(NUM_BUCKETS);
@@ -19,14 +20,12 @@ pub fn scan_kernel(histograms: &Tensor<u32>, offsets: &mut Tensor<u32>, num_bloc
     let lane_id = UNIT_POS_PLANE;
     let warp_id = UNIT_POS_X / PLANE_DIM;
 
-    // Phase 1: Each thread computes running exclusive prefix sum for its digit
-    // and stores partial offsets (relative to digit 0)
+    // Phase 1: Each thread computes total count for its digit
     let mut running_sum = 0u32;
     if digit < NUM_BUCKETS as u32 {
         for block in 0..num_blocks {
             let idx = block * NUM_BUCKETS as u32 + digit;
             let count = histograms[idx as usize];
-            offsets[idx as usize] = running_sum;
             running_sum += count;
         }
         digit_totals[digit as usize] = running_sum;
@@ -55,15 +54,20 @@ pub fn scan_kernel(histograms: &Tensor<u32>, offsets: &mut Tensor<u32>, num_bloc
     }
     sync_cube();
 
-    // Phase 3: Add warp prefix and update all offsets in one pass
+    // Phase 3: Compute final offsets and write in one pass
+    // offset[block, digit] = base_offset + exclusive_sum_within_digit[block]
     if digit < NUM_BUCKETS as u32 {
         let my_exclusive = digit_totals[digit as usize];
         let warp_prefix = warp_sums[warp_id as usize];
         let base_offset = warp_prefix + my_exclusive;
 
+        // Recompute the per-block exclusive prefix sums and write final offsets
+        running_sum = 0u32;
         for block in 0..num_blocks {
             let idx = block * NUM_BUCKETS as u32 + digit;
-            offsets[idx as usize] += base_offset;
+            let count = histograms[idx as usize];
+            offsets[idx as usize] = base_offset + running_sum;
+            running_sum += count;
         }
     }
 }

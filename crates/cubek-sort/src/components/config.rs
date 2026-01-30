@@ -12,9 +12,10 @@ impl Default for SortStrategy {
     fn default() -> Self {
         Self {
             // Tuned for optimal performance on Metal/WGPU:
-            // - 512 threads with 8 items/thread (divisible by 4 for vectorized loads)
-            // - Total items_per_block = 4096, shared memory ~18KB (fits in 32KB limit)
-            items_per_thread: 8,
+            // - 512 threads with 16 items/thread = 8192 items per block
+            // - Larger blocks reduce scan kernel overhead (fewer blocks to process)
+            // - Sweet spot between parallelism and overhead
+            items_per_thread: 16,
             threads_per_block: 512,
         }
     }
