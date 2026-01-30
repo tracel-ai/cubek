@@ -56,8 +56,8 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
     sync_cube();
 
     // Register arrays for per-thread data
+    // Note: digits recomputed from keys in Phase 3 to reduce register pressure
     let mut keys = Array::<u32>::new(items_per_thread as usize);
-    let mut digits = Array::<u32>::new(items_per_thread as usize); // Store digits to avoid recomputation
     let mut values = Array::<u32>::new(items_per_thread as usize);
     let mut local_offsets = Array::<u32>::new(items_per_thread as usize);
 
@@ -85,7 +85,6 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
             }
 
             let digit = (key >> shift) & DIGIT_MASK;
-            digits[i as usize] = digit;
 
             // Warp-level ranking - all threads valid (pass true)
             let peer_mask = compute_peer_mask(digit, true);
@@ -125,7 +124,6 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
             }
 
             let digit = (key >> shift) & DIGIT_MASK;
-            digits[i as usize] = digit;
 
             // Warp-level ranking with validity mask
             let peer_mask = compute_peer_mask(digit, valid);
@@ -211,13 +209,13 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
     sync_cube();
 
     // Phase 3: Scatter keys to shared memory (local reordering by digit)
-    // Use plane fullness to avoid bounds checks
+    // Recompute digit from key to reduce register pressure
     if is_full_plane {
         // FAST PATH: All items valid
         #[unroll]
         for i in 0..items_per_thread {
             let key = keys[i as usize];
-            let digit = digits[i as usize];
+            let digit = (key >> shift) & DIGIT_MASK;
             let offset_in_plane = local_offsets[i as usize];
 
             let hist_idx = plane_id as usize * NUM_BUCKETS + digit as usize;
@@ -238,7 +236,7 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
             let global_idx = sub_part_start + local_idx;
             if global_idx < num_items {
                 let key = keys[i as usize];
-                let digit = digits[i as usize];
+                let digit = (key >> shift) & DIGIT_MASK;
                 let offset_in_plane = local_offsets[i as usize];
 
                 let hist_idx = plane_id as usize * NUM_BUCKETS + digit as usize;
