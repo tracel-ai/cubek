@@ -2,6 +2,11 @@ use crate::components::config::{DIGIT_MASK, NUM_BUCKETS, RADIX_BITS};
 use crate::components::key::SortKey;
 use cubecl::prelude::*;
 
+/// Histogram kernel that counts digit occurrences for each block.
+///
+/// Each block processes `items_per_thread * threads_per_block` keys and produces
+/// a histogram of 256 digit counts. The histograms are stored contiguously in
+/// global memory for subsequent prefix sum computation.
 #[cube(launch_unchecked)]
 pub fn histogram_kernel<K: SortKey>(
     keys: &Tensor<K>,
@@ -17,6 +22,7 @@ pub fn histogram_kernel<K: SortKey>(
     let items_per_block = CUBE_DIM * items_per_thread;
     let block_start = block_id * items_per_block;
 
+    // Initialize shared histogram to zero
     #[allow(clippy::manual_div_ceil)]
     let buckets_per_thread = (NUM_BUCKETS + CUBE_DIM as usize - 1) / CUBE_DIM as usize;
     for i in 0..buckets_per_thread {
@@ -27,6 +33,7 @@ pub fn histogram_kernel<K: SortKey>(
     }
     sync_cube();
 
+    // Each thread processes items_per_thread keys
     #[unroll]
     for i in 0..items_per_thread {
         let idx = block_start + thread_id + i * CUBE_DIM;
@@ -38,6 +45,7 @@ pub fn histogram_kernel<K: SortKey>(
     }
     sync_cube();
 
+    // Write histogram to global memory
     for i in 0..buckets_per_thread {
         let bucket_idx = thread_id as usize + i * CUBE_DIM as usize;
         if bucket_idx < NUM_BUCKETS {

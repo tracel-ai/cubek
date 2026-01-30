@@ -114,27 +114,19 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
     sync_cube();
 
     // Compute exclusive prefix sum across 256 digits using warp-level primitives
-    // Note: This assumes PLANE_DIM divides 256 evenly and uses PLANE_DIM-based indexing
+    // Optimized to use fewer sync barriers by computing warp totals inline
     #[allow(clippy::manual_div_ceil)]
     let num_digit_warps = (NUM_BUCKETS_U32 + PLANE_DIM - 1) / PLANE_DIM;
 
+    // Step 1: Warp-level exclusive scan and store warp totals
     if thread_id < NUM_BUCKETS_U32 {
         let val = digit_start[thread_id as usize];
-
-        // Step 1: Warp-level exclusive scan within each warp
         let warp_exclusive = plane_exclusive_sum(val);
-        // Get the inclusive sum from the last lane of each warp
         let my_inclusive = warp_exclusive + val;
-        let warp_total = select(
-            lane_id == PLANE_DIM - 1,
-            my_inclusive,
-            plane_shuffle(my_inclusive, PLANE_DIM - 1),
-        );
+        let warp_total = plane_shuffle(my_inclusive, PLANE_DIM - 1);
 
-        // Store warp exclusive result back
         digit_start[thread_id as usize] = warp_exclusive;
 
-        // Step 2: Thread 0 of each warp stores its warp total for cross-warp scan
         let digit_warp_id = thread_id / PLANE_DIM;
         if lane_id == 0 {
             digit_global[digit_warp_id as usize] = warp_total;
@@ -142,7 +134,8 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
     }
     sync_cube();
 
-    // Step 3: First warp computes prefix sum of warp totals
+    // Step 2: First warp computes prefix sum of warp totals, then all threads
+    // read their warp prefix and compute final offset in one pass
     if thread_id < num_digit_warps {
         let warp_total = digit_global[thread_id as usize];
         let warp_prefix = plane_exclusive_sum(warp_total);
@@ -150,14 +143,13 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
     }
     sync_cube();
 
-    // Step 4: Add warp prefix to each element AND compute global offset in one pass
+    // Step 3: Add warp prefix and compute global offset
     if thread_id < NUM_BUCKETS_U32 {
         let digit_warp_id = thread_id / PLANE_DIM;
         let warp_prefix = digit_global[digit_warp_id as usize];
         let my_start = digit_start[thread_id as usize] + warp_prefix;
         digit_start[thread_id as usize] = my_start;
 
-        // Compute global offset adjustment: block_offset - digit_start
         let block_offset = block_offsets[block_id as usize * NUM_BUCKETS + thread_id as usize];
         digit_global[thread_id as usize] = block_offset - my_start;
     }

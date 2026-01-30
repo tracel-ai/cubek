@@ -11,8 +11,12 @@ pub struct SortStrategy {
 impl Default for SortStrategy {
     fn default() -> Self {
         Self {
-            items_per_thread: 12,
-            threads_per_block: 256,
+            // Tuned for optimal performance on Metal/WGPU:
+            // - 512 threads provides good occupancy and parallelism
+            // - 8 items/thread balances work per thread vs shared memory usage
+            // - Total items_per_block = 4096, shared memory ~18KB (fits in 32KB limit)
+            items_per_thread: 8,
+            threads_per_block: 512,
         }
     }
 }
