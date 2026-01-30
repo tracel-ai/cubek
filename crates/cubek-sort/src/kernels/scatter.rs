@@ -36,7 +36,7 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
     let block_id = CUBE_POS_X;
     let thread_id = UNIT_POS_X;
     let lane_id = UNIT_POS_PLANE;
-    let plane_id = UNIT_POS / PLANE_DIM;
+    let plane_id = PLANE_POS;
 
     let block_start = block_id * items_per_block;
     let sub_part_size = PLANE_DIM * items_per_thread;
@@ -179,17 +179,15 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
 
         digit_start[thread_id as usize] = warp_exclusive;
 
-        let digit_warp_id = thread_id / PLANE_DIM;
         if lane_id == 0 {
-            digit_global[digit_warp_id as usize] = warp_total;
+            digit_global[plane_id as usize] = warp_total;
         }
     }
     sync_cube();
 
     // Step 2 & 3 fused: First warp computes prefix, all threads read and compute final
     // First warp does the prefix sum of warp totals
-    let thread_warp_id = thread_id / PLANE_DIM;
-    if thread_warp_id == 0 && lane_id < num_digit_warps {
+    if plane_id == 0 && lane_id < num_digit_warps {
         let warp_total = digit_global[lane_id as usize];
         let warp_prefix = plane_exclusive_sum(warp_total);
         digit_global[lane_id as usize] = warp_prefix;
@@ -198,8 +196,7 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
 
     // All digit threads add warp prefix and compute global offset
     if thread_id < NUM_BUCKETS_U32 {
-        let digit_warp_id = thread_id / PLANE_DIM;
-        let warp_prefix = digit_global[digit_warp_id as usize];
+        let warp_prefix = digit_global[plane_id as usize];
         let my_start = digit_start[thread_id as usize] + warp_prefix;
         digit_start[thread_id as usize] = my_start;
 

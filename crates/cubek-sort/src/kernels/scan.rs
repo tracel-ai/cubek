@@ -19,7 +19,7 @@ pub fn scan_sum_kernel(
     let digit = CUBE_POS_X; // Which digit this block handles (0-255)
     let tid = UNIT_POS_X;
     let lane_id = UNIT_POS_PLANE;
-    let warp_id = UNIT_POS_X / PLANE_DIM;
+    let warp_id = PLANE_POS;
 
     // Each thread sums its strided portion of histogram blocks
     let mut my_sum = 0u32;
@@ -69,7 +69,7 @@ pub fn scan_prefix_totals_kernel(
 
     let digit = UNIT_POS_X;
     let lane_id = UNIT_POS_PLANE;
-    let warp_id = UNIT_POS_X / PLANE_DIM;
+    let warp_id = PLANE_POS;
 
     // Load digit total
     let my_value = select(
@@ -122,7 +122,7 @@ pub fn scan_offsets_cooperative_kernel(
     let digit = CUBE_POS_X;
     let tid = UNIT_POS_X;
     let lane_id = UNIT_POS_PLANE;
-    let warp_id = UNIT_POS_X / PLANE_DIM;
+    let warp_id = PLANE_POS;
 
     // Load base offset for this digit (from cross-digit prefix sum)
     let base_offset = digit_prefixes[digit as usize];
@@ -224,7 +224,7 @@ pub fn scan_kernel(histograms: &Tensor<u32>, offsets: &mut Tensor<u32>, num_bloc
 
     let digit = UNIT_POS_X;
     let lane_id = UNIT_POS_PLANE;
-    let warp_id = UNIT_POS_X / PLANE_DIM;
+    let warp_id = PLANE_POS;
 
     // Phase 1: Compute digit totals
     let mut running_sum = 0u32;
