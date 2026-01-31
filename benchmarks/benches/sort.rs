@@ -204,15 +204,15 @@ fn run<R: Runtime>(device: R::Device) {
                 let throughput_mean = calculate_throughput(size, mean);
 
                 println!();
-                println!("Total time elapsed: {:.6} seconds", total_time.as_secs_f64());
+                println!(
+                    "Total time elapsed: {:.6} seconds",
+                    total_time.as_secs_f64()
+                );
                 println!(
                     "Estimated speed at {} 32-bit elements: {:.6E} keys/sec",
                     size, keys_per_sec
                 );
-                println!(
-                    "Memory throughput (mean): {:.2} GB/s",
-                    throughput_mean
-                );
+                println!("Memory throughput (mean): {:.2} GB/s", throughput_mean);
                 println!(
                     "Per-iteration: mean={:.3}ms  std={:.3}ms  min={:.3}ms  max={:.3}ms",
                     mean.as_secs_f64() * 1000.0,
@@ -233,109 +233,7 @@ fn run<R: Runtime>(device: R::Device) {
     println!("================================================================================");
 }
 
-/// Run batched benchmark: submit N sorts before syncing to measure sustained throughput.
-/// This amortizes per-submit overhead and measures how fast the GPU can actually sort
-/// when it's continuously busy (like in a production pipeline).
-fn run_batched<R: Runtime>(device: R::Device) {
-    let client = R::client(&device);
-
-    // (size, batch_size) - scale batch size down for larger inputs to avoid OOM
-    let configs: Vec<(usize, usize)> = vec![
-        (1 << 20, 100), // 1M: 100 batches = 400MB
-        (1 << 22, 25),  // 4M: 25 batches = 400MB
-        (1 << 24, 6),   // 16M: 6 batches = 384MB
-        (1 << 26, 2),   // 64M: 2 batches = 512MB
-    ];
-
-    println!("================================================================================");
-    println!("CubeK Sort Benchmark - BATCHED (sustained throughput)");
-    println!("================================================================================");
-    println!("Runtime: {}", R::name(&client));
-    println!("This measures GPU throughput when continuously busy.");
-    println!("================================================================================\n");
-
-    for (size, batch_size) in configs {
-        let size_bits = (size as f64).log2() as u32;
-        println!("Size: {} (2^{}), batch size: {}", size, size_bits, batch_size);
-
-        // Prepare all buffers upfront
-        let mut inputs = Vec::with_capacity(batch_size);
-        let mut outputs = Vec::with_capacity(batch_size);
-
-        let seed = 10u64;
-        for i in 0..batch_size {
-            let data: Vec<u32> = (0..size)
-                .scan(seed.wrapping_add(i as u64), |state, _| {
-                    *state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
-                    Some((*state >> 32) as u32)
-                })
-                .collect();
-            inputs.push(client.create_from_slice(u32::as_bytes(&data)));
-            outputs.push(client.empty(size * std::mem::size_of::<u32>()));
-        }
-
-        // Warmup
-        {
-            let shape = [size];
-            let strides = [1];
-            let input_ref = unsafe {
-                TensorHandleRef::from_raw_parts(&inputs[0], &strides, &shape, std::mem::size_of::<u32>())
-            };
-            let output_ref = unsafe {
-                TensorHandleRef::from_raw_parts(&outputs[0], &strides, &shape, std::mem::size_of::<u32>())
-            };
-            let _ = sort_keys::<R, u32>(&client, input_ref, output_ref, size, None);
-            future::block_on(client.sync()).expect("sync failed");
-        }
-
-        // Timed batched run
-        let start = std::time::Instant::now();
-
-        for i in 0..batch_size {
-            let shape = [size];
-            let strides = [1];
-            let input_ref = unsafe {
-                TensorHandleRef::from_raw_parts(&inputs[i], &strides, &shape, std::mem::size_of::<u32>())
-            };
-            let output_ref = unsafe {
-                TensorHandleRef::from_raw_parts(&outputs[i], &strides, &shape, std::mem::size_of::<u32>())
-            };
-            sort_keys::<R, u32>(&client, input_ref, output_ref, size, None)
-                .expect("sort failed");
-        }
-
-        future::block_on(client.sync()).expect("sync failed");
-        let elapsed = start.elapsed();
-
-        let per_sort = elapsed / batch_size as u32;
-        let keys_per_sec = (size as f64 * batch_size as f64) / elapsed.as_secs_f64();
-        let throughput = calculate_throughput(size, per_sort);
-
-        println!(
-            "  Total time: {:.3}ms for {} sorts = {:.3}ms per sort",
-            elapsed.as_secs_f64() * 1000.0,
-            batch_size,
-            per_sort.as_secs_f64() * 1000.0
-        );
-        println!(
-            "  Throughput: {:.2E} keys/sec, {:.1} GB/s",
-            keys_per_sec, throughput
-        );
-        println!();
-    }
-
-    println!("================================================================================");
-    println!("ANALYSIS: Batched throughput shows raw GPU performance.");
-    println!("At 1M, batched (6.6E9) matches D3D12 GPU-timed (6.5E9) performance.");
-    println!("The per-iteration gap is wgpu runtime overhead, not algorithmic.");
-    println!("================================================================================");
-}
-
 fn main() {
     // Standard per-iteration benchmark (matches b0nes methodology)
     run::<cubecl::TestRuntime>(Default::default());
-
-    // Batched benchmark (sustained throughput, amortizes per-submit overhead)
-    println!("\n\n");
-    run_batched::<cubecl::TestRuntime>(Default::default());
 }
