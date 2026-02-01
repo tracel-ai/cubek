@@ -1,4 +1,4 @@
-use crate::components::global::cube_dim_validation;
+use crate::components::{global::cube_dim_validation, stage::NumStages};
 use crate::definition::{
     Blueprint, CubeCountPlan, CubeMappingLaunch, MatmulElems, MatmulLineSizes, MatmulProblem,
     MatmulSetupError, TilingBlueprint,
@@ -56,6 +56,10 @@ pub trait Routine<RC: RuntimeConfig>: Sized {
         device_settings: &DeviceSettings<R>,
         strategy: &BlueprintStrategy<RC, Self>,
     ) -> Result<LaunchInfo<Self::Blueprint>, MatmulSetupError>;
+
+    fn num_stages() -> NumStages {
+        Self::BatchMatmul::num_stages()
+    }
 
     fn device_settings<R: Runtime>(
         client: &ComputeClient<R>,

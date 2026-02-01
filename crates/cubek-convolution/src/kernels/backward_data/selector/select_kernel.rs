@@ -16,11 +16,7 @@ use crate::components::{ConvSetupError, ConvolutionProblem};
 ///
 /// Only works for concrete tensor inputs and output.
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
-pub fn launch_kernel_concrete<
-    R: Runtime,
-    Args: ConcreteArgs<A::Blueprint>,
-    A: Routine<RuntimeArgs>,
->(
+pub fn launch_kernel_concrete<R: Runtime, Args: ConcreteArgs<A>, A: Routine<RuntimeArgs>>(
     client: &ComputeClient<R>,
     out_grad: &MatmulInputHandleRef<'_, R>,
     weights: &MatmulInputHandleRef<'_, R>,
@@ -48,7 +44,7 @@ pub fn launch_kernel_concrete<
 
     let problem = Args::adjust_problem(client, problem, &launch_info.blueprint, dtypes);
 
-    let (input, runtime_args) = <InputArg<Args> as ConcreteInputsFactory<A::Blueprint>>::create(
+    let (input, runtime_args) = <InputArg<Args> as ConcreteInputsFactory<A>>::create(
         client,
         out_grad,
         weights,
@@ -57,7 +53,7 @@ pub fn launch_kernel_concrete<
         &line_sizes,
         dtypes,
     );
-    let output = <OutputArg<Args> as ConcreteOutputFactory<A::Blueprint>>::create(
+    let output = <OutputArg<Args> as ConcreteOutputFactory<A>>::create(
         client,
         in_grad,
         &launch_info.blueprint,

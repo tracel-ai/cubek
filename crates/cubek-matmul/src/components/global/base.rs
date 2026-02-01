@@ -1,12 +1,12 @@
 use cubecl::{ir::DeviceProperties, prelude::*};
 
-use crate::components::global::memory::GlobalMemoryConfig;
 use crate::components::global::multi_stage::EventLoadingMode;
 use crate::components::global::read::ReaderMode;
 use crate::components::global::{
     GlobalWriterConfig, InputLoadFlow, LoadFlows, PlaneFlowConfig, SpecializedLoadingSides,
 };
 use crate::components::stage::{StageConfig, StageMemoryConfig};
+use crate::components::{global::memory::GlobalMemoryConfig, stage::NumStages};
 use crate::definition::StageIdent;
 use crate::definition::TilingBlueprint;
 use crate::definition::{AccG, MatmulSetupError};
@@ -37,6 +37,8 @@ pub trait GlobalMatmulFamily<RC: RuntimeConfig>: Send + Sync + 'static {
         dtypes: &MatmulElems,
         line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError>;
+
+    fn num_stages() -> NumStages;
 
     /// Returns the compute resources required to run this matmul.
     fn cubedim_resource(

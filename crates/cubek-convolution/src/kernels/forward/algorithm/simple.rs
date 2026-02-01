@@ -1,16 +1,13 @@
 use cubecl::server::LaunchError;
 use cubecl::std::{CubeOption, tensor::TensorHandle};
 use cubecl::{Runtime, client::ComputeClient, ir::StorageType, prelude::TensorHandleRef};
+use cubek_matmul::components::{global::read::FullLoadingStrategy, tile::TileMatmulFamily};
 use cubek_matmul::components::{
     global::read::sync_full_cyclic::SyncFullCyclicLoading,
     stage::{ColMajorTilingOrder, RowMajorTilingOrder},
 };
 use cubek_matmul::definition::AvailableLineSizes;
 use cubek_matmul::launch::{TensorArgs, TensorMapArgs};
-use cubek_matmul::{
-    components::{global::read::FullLoadingStrategy, tile::TileMatmulFamily},
-    definition::TilingBlueprint,
-};
 use cubek_matmul::{
     components::{
         global::read::{
@@ -85,7 +82,6 @@ impl<
 > Algorithm for SimpleConv<TMM, LL, LR>
 {
     type Routine = SimpleAlgorithm<TMM, LL, LR, SyncFullCyclicLoading<RowMajorTilingOrder>>;
-    type Blueprint = TilingBlueprint;
     type Args = TensorArgs<RuntimeArgs>;
 
     fn into_tensor_handle<R: Runtime>(
@@ -113,7 +109,6 @@ impl<
         AsyncFullTmaLoading,
         SyncFullCyclicLoading<RowMajorTilingOrder>,
     >;
-    type Blueprint = TilingBlueprint;
 
     type Args = TensorMapArgs<RuntimeArgs>;
 

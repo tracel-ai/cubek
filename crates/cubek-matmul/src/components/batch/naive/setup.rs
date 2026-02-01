@@ -11,6 +11,7 @@ use crate::{
             naive::{NaiveMatmul, NaiveMatmulConfig, matmul_entry},
         },
         global::memory::GlobalLayoutConfig,
+        stage::NumStages,
     },
     definition::{
         Blueprint, CubeMappingLaunch, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem,
@@ -65,6 +66,10 @@ impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
         _line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
         Ok(NaiveMatmulConfig {})
+    }
+
+    fn num_stages() -> NumStages {
+        (1, 1).into()
     }
 
     unsafe fn launch_unchecked<'a, MA: MatmulArgs<Config = ()>, R: Runtime>(

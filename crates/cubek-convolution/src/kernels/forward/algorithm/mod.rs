@@ -1,5 +1,5 @@
+use cubek_matmul::launch::MatmulArgs;
 use cubek_matmul::{definition::AvailableLineSizes, routines::Routine};
-use cubek_matmul::{definition::Blueprint, launch::MatmulArgs};
 
 use cubecl::std::tensor::{TensorHandle, into_contiguous_pitched_ref, is_contiguous_pitched};
 
@@ -11,9 +11,8 @@ pub mod simple;
 
 /// Specifications for a convolution algorithm
 pub trait Algorithm {
-    type Routine: Routine<RuntimeArgs, Blueprint = Self::Blueprint>;
+    type Routine: Routine<RuntimeArgs>;
     type Args: MatmulArgs<Config = RuntimeArgs>;
-    type Blueprint: Blueprint;
 
     fn into_tensor_handle<R: Runtime>(
         client: &ComputeClient<R>,

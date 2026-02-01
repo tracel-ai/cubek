@@ -20,6 +20,7 @@ use cubek_matmul::{
         MatmulArgs, MatmulInputHandleRef, TensorArgs, TensorInputs, TensorInputsLaunch,
         TensorMapArgs, TensorMapInputs, TensorMapInputsLaunch, TensorOutput, TensorOutputLaunch,
     },
+    routines::Routine,
 };
 use enumset::EnumSet;
 
@@ -35,26 +36,26 @@ use crate::components::{
     },
 };
 
-pub trait ConcreteArgs<B: Blueprint>:
+pub trait ConcreteArgs<A: Routine<RuntimeArgs>>:
     MatmulArgs<
-        Input<NumericExpand<0>, NumericExpand<1>, NumericExpand<2>>: ConcreteInputsFactory<B>,
-        Output<NumericExpand<2>>: ConcreteOutputFactory<B>,
+        Input<NumericExpand<0>, NumericExpand<1>, NumericExpand<2>>: ConcreteInputsFactory<A>,
+        Output<NumericExpand<2>>: ConcreteOutputFactory<A>,
         Config = RuntimeArgs,
     >
 {
     fn adjust_problem<R: Runtime>(
         client: &ComputeClient<R>,
         problem: ConvolutionProblem,
-        selection: &B,
+        selection: &A::Blueprint,
         dtypes: &MatmulElems,
     ) -> ConvolutionProblem;
 }
 
-impl<B: Blueprint> ConcreteArgs<B> for TensorArgs<RuntimeArgs> {
+impl<A: Routine<RuntimeArgs>> ConcreteArgs<A> for TensorArgs<RuntimeArgs> {
     fn adjust_problem<R: Runtime>(
         client: &ComputeClient<R>,
         mut problem: ConvolutionProblem,
-        _blueprint: &B,
+        _blueprint: &A::Blueprint,
         dtypes: &MatmulElems,
     ) -> ConvolutionProblem {
         let load_width = client.properties().hardware.load_width;
@@ -69,7 +70,9 @@ impl<B: Blueprint> ConcreteArgs<B> for TensorArgs<RuntimeArgs> {
     }
 }
 
-impl ConcreteArgs<TilingBlueprint> for TensorMapArgs<RuntimeArgs> {
+impl<A: Routine<RuntimeArgs, Blueprint = TilingBlueprint>> ConcreteArgs<A>
+    for TensorMapArgs<RuntimeArgs>
+{
     fn adjust_problem<R: Runtime>(
         _client: &ComputeClient<R>,
         mut problem: ConvolutionProblem,
@@ -89,13 +92,13 @@ impl ConcreteArgs<TilingBlueprint> for TensorMapArgs<RuntimeArgs> {
 
 /// Create the input runtime arguments for a matmul kernel that works on concrete inputs and
 /// output (not fused).
-pub trait ConcreteInputsFactory<B: Blueprint>: LaunchArg {
+pub trait ConcreteInputsFactory<A: Routine<RuntimeArgs>>: LaunchArg {
     #[allow(clippy::too_many_arguments)]
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
         out_grad: &'a MatmulInputHandleRef<'a, R>,
         weights: &'a MatmulInputHandleRef<'a, R>,
-        blueprint: &B,
+        blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
@@ -104,24 +107,24 @@ pub trait ConcreteInputsFactory<B: Blueprint>: LaunchArg {
 
 /// Create the output runtime arguments for a matmul kernel that works on concrete inputs and
 /// output (not fused).
-pub trait ConcreteOutputFactory<B: Blueprint>: LaunchArg {
+pub trait ConcreteOutputFactory<A: Routine<RuntimeArgs>>: LaunchArg {
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
         out: &'a TensorHandleRef<'a, R>,
-        blueprint: &B,
+        blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
     ) -> Self::RuntimeArg<'a, R>;
 }
 
-impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, B: Blueprint> ConcreteInputsFactory<B>
+impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs>> ConcreteInputsFactory<A>
     for TensorInputs<Lhs, Rhs, EO>
 {
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
         out_grad: &'a MatmulInputHandleRef<'a, R>,
         weights: &'a MatmulInputHandleRef<'a, R>,
-        blueprint: &B,
+        blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
         _dtypes: &MatmulElems,
@@ -184,11 +187,11 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, B: Blueprint> ConcreteInputsFactor
     }
 }
 
-impl<EG: Numeric, B: Blueprint> ConcreteOutputFactory<B> for TensorOutput<EG> {
+impl<EG: Numeric, A: Routine<RuntimeArgs>> ConcreteOutputFactory<A> for TensorOutput<EG> {
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
         out: &'a TensorHandleRef<'a, R>,
-        blueprint: &B,
+        blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
     ) -> Self::RuntimeArg<'a, R> {
@@ -204,8 +207,8 @@ impl<EG: Numeric, B: Blueprint> ConcreteOutputFactory<B> for TensorOutput<EG> {
     }
 }
 
-impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory<TilingBlueprint>
-    for TensorMapInputs<Lhs, Rhs, EO>
+impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint = TilingBlueprint>>
+    ConcreteInputsFactory<A> for TensorMapInputs<Lhs, Rhs, EO>
 {
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
@@ -269,7 +272,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory<TilingBluepr
         // Im2col needs extra checking because if `k` is OOB it wraps around the kernel and can load
         // in-bounds but not in-kernel elements. Other TMA layouts are always outside the shape if
         // any matrix dim is out of bounds.
-        let stages_lhs = 1; // Figure out how to do this with blueprint
+        let stages_lhs = A::num_stages().lhs;
         let stages_size_k = blueprint.tiling_scheme.elements_per_stage_along_k() * stages_lhs;
         let check_kernel = !shape_k.is_multiple_of(stages_size_k);
         let lhs_layout = TmaIm2colLayoutLaunch::from_args(client, problem, check_kernel);

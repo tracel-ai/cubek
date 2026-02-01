@@ -3,15 +3,17 @@ use crate::suite::test_utils::TestPrecision;
 use cubecl::frontend::CubePrimitive;
 use cubecl::{Runtime, TestRuntime};
 use cubek_convolution::{
-    components::{ConvolutionOperation, ConvolutionProblem, Dimensionality},
+    components::{
+        ConvolutionOperation, ConvolutionProblem, Dimensionality, global::args::RuntimeArgs,
+    },
     forward::args::{ConcreteInputsFactory, ConcreteOutputFactory},
 };
 use cubek_convolution::{forward::args::ConcreteArgs, kernels::forward::algorithm::Algorithm};
-use cubek_matmul::components::stage::PartitionBuffering;
 use cubek_matmul::definition::{
     MatmulElems, MatmulGlobalElems, MatrixLayout, SwizzleModes, TilingBlueprint, TilingScheme,
 };
 use cubek_matmul::launch::{InputArg, OutputArg};
+use cubek_matmul::{components::stage::PartitionBuffering, routines::Routine};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct ConvolutionSize {
@@ -22,13 +24,16 @@ pub struct ConvolutionSize {
     pub out_c: usize,
 }
 
-pub fn test_algo<A: Algorithm<Blueprint = TilingBlueprint>, P: TestPrecision>(
+pub fn test_algo<
+    A: Algorithm<Routine: Routine<RuntimeArgs, Blueprint = TilingBlueprint>>,
+    P: TestPrecision,
+>(
     tiling_scheme: TilingScheme,
     swizzle: SwizzleModes,
     partition_buffering: PartitionBuffering,
     convolution_size: ConvolutionSize,
 ) where
-    A::Args: ConcreteArgs<A::Blueprint>,
+    A::Args: ConcreteArgs<A::Routine>,
 {
     let client = TestRuntime::client(&Default::default());
     let plane_dim = client.properties().hardware.plane_size_max;

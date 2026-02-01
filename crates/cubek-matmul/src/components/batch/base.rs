@@ -1,10 +1,13 @@
-use crate::definition::{
-    AccG, Blueprint, CubeMapping, CubeMappingLaunch, LhsG, MatmulElems, MatmulLineSizes,
-    MatmulPrecision, MatmulProblem, MatmulSetupError, RhsG,
-};
 use crate::launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
 use crate::{components::CubeDimResource, launch::RuntimeConfig};
 use crate::{components::global::memory::GlobalLayoutConfig, launch::ConfigRuntimeArg};
+use crate::{
+    components::stage::NumStages,
+    definition::{
+        AccG, Blueprint, CubeMapping, CubeMappingLaunch, LhsG, MatmulElems, MatmulLineSizes,
+        MatmulPrecision, MatmulProblem, MatmulSetupError, RhsG,
+    },
+};
 use cubecl::{ir::DeviceProperties, prelude::*};
 use std::{fmt::Debug, hash::Hash};
 
@@ -27,6 +30,8 @@ pub trait BatchMatmulFamily<RC: RuntimeConfig>: 'static + Send + Sync {
         dtypes: &MatmulElems,
         line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError>;
+
+    fn num_stages() -> NumStages;
 
     /// Entry point
     ///

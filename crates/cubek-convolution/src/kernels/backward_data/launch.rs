@@ -110,7 +110,7 @@ struct BackwardsData<'a, R: Runtime, const N_SPATIAL: usize> {
 impl<'a, R: Runtime, const N_SPATIAL: usize> BackwardsData<'a, R, N_SPATIAL> {
     fn launch<Alg: Algorithm>(self) -> Result<(), ConvSetupError>
     where
-        Alg::Args: ConcreteArgs<Alg::Blueprint>,
+        Alg::Args: ConcreteArgs<Alg::Routine>,
     {
         let ConvolutionArgs {
             stride,
@@ -150,7 +150,7 @@ fn launch_with_algorithm<R: Runtime, Alg: Algorithm>(
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError>
 where
-    Alg::Args: ConcreteArgs<Alg::Blueprint>,
+    Alg::Args: ConcreteArgs<Alg::Routine>,
 {
     let rank = in_grad.shape.len();
     let dim_c = rank - 1;
@@ -224,7 +224,7 @@ pub fn launch_kernel<R: Runtime, Alg: Algorithm>(
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError>
 where
-    Alg::Args: ConcreteArgs<Alg::Blueprint>,
+    Alg::Args: ConcreteArgs<Alg::Routine>,
 {
     // Shape/strides are treated as k-major, with the last dim always being the contiguous one.
     // So for the sake of selecting a line size, the shape/strides are always row-major.

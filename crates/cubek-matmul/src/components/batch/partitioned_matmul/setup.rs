@@ -1,10 +1,12 @@
 use std::marker::PhantomData;
 
-use crate::components::batch::partitioned_matmul::config::PartitionedBatchConfig;
 use crate::components::batch::partitioned_matmul::matmul::PartitionedBatchMatmul;
 use crate::components::batch::partitioned_matmul::matmul::matmul_entry;
 use crate::components::batch::partitioned_matmul::partition::GlobalPartitionMatmul;
 use crate::components::global::GlobalMatmulFamily;
+use crate::components::{
+    batch::partitioned_matmul::config::PartitionedBatchConfig, stage::NumStages,
+};
 use crate::definition::CubeMappingLaunch;
 use crate::definition::MatmulLineSizes;
 use crate::definition::MatmulProblem;
@@ -45,6 +47,10 @@ impl<RC: RuntimeConfig, GMM: GlobalMatmulFamily<RC>, S: GlobalPartitionMatmul> B
             global_config,
             blueprint.tiling_scheme.global_partition_size,
         ))
+    }
+
+    fn num_stages() -> NumStages {
+        GMM::num_stages()
     }
 
     unsafe fn launch_unchecked<'a, MA: MatmulArgs<Config = RC>, R: Runtime>(

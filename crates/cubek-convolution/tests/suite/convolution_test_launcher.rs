@@ -1,10 +1,13 @@
 use crate::suite::test_utils::{Sample, TensorRawParts};
 use cubecl::{CubeElement, server::Allocation};
 use cubecl::{TestRuntime, prelude::*};
-use cubek_convolution::{components::ConvolutionProblem, kernels::forward::algorithm::Algorithm};
 use cubek_convolution::{
     components::{ConvGemmConfig, ConvSetupError, ConvolutionOperation},
     forward::args::{ConcreteArgs, ConcreteInputsFactory, ConcreteOutputFactory},
+};
+use cubek_convolution::{
+    components::{ConvolutionProblem, global::args::RuntimeArgs},
+    kernels::forward::algorithm::Algorithm,
 };
 use cubek_matmul::{
     definition::{AvailableLineSizes, MatmulSetupError},
@@ -26,9 +29,9 @@ use super::test_utils::TestPrecision;
 pub fn test_convolution_algorithm<A: Algorithm, P: TestPrecision>(
     client: ComputeClient<TestRuntime>,
     mut problem: ConvolutionProblem,
-    blueprint: A::Blueprint,
+    blueprint: <A::Routine as Routine<RuntimeArgs>>::Blueprint,
 ) where
-    A::Args: ConcreteArgs<A::Blueprint>,
+    A::Args: ConcreteArgs<A::Routine>,
 {
     let env = std::env::var("CUBEK_TEST_MODE");
 
@@ -59,10 +62,10 @@ pub fn test_convolution_algorithm<A: Algorithm, P: TestPrecision>(
 fn test_convolution_algorithm_inner<A: Algorithm, P: TestPrecision>(
     client: ComputeClient<TestRuntime>,
     mut problem: ConvolutionProblem,
-    blueprint: A::Blueprint,
+    blueprint: <A::Routine as Routine<RuntimeArgs>>::Blueprint,
 ) -> Result<(), MatmulSetupError>
 where
-    A::Args: ConcreteArgs<A::Blueprint>,
+    A::Args: ConcreteArgs<A::Routine>,
 {
     let lhs = tensor_raw_parts::<P, TestRuntime>(&client, &problem, MatmulIdent::Lhs);
     let rhs = tensor_raw_parts::<P, TestRuntime>(&client, &problem, MatmulIdent::Rhs);
@@ -118,7 +121,7 @@ where
     let rhs_handle =
         MatmulInputHandleRef::new(rhs_handle.as_ref(), P::EG::as_type_native_unchecked());
 
-    let (inputs, runtime_args) = <InputArg<A::Args> as ConcreteInputsFactory<A::Blueprint>>::create(
+    let (inputs, runtime_args) = <InputArg<A::Args> as ConcreteInputsFactory<A::Routine>>::create(
         &client,
         &lhs_handle,
         &rhs_handle,
@@ -128,7 +131,7 @@ where
         &line_sizes,
         &dtypes,
     );
-    let output = <OutputArg<A::Args> as ConcreteOutputFactory<A::Blueprint>>::create(
+    let output = <OutputArg<A::Args> as ConcreteOutputFactory<A::Routine>>::create(
         &client,
         &out_handle,
         &launch_info.blueprint,

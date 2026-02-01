@@ -1,4 +1,3 @@
-use crate::components::global::GlobalMatmulFamily;
 use crate::components::global::MaxGlobalReaderPlanes;
 use crate::components::global::memory::{GlobalMemoryConfig, ViewDirection};
 use crate::components::global::multi_stage::EventLoadingMode;
@@ -16,6 +15,7 @@ use crate::components::global::{
 };
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{self, StageConfig};
+use crate::components::{global::GlobalMatmulFamily, stage::NumStages};
 use crate::definition::TilingBlueprint;
 use crate::definition::{MatmulElems, MatmulPrecision, MatmulProblem, MatmulSetupError};
 use crate::definition::{MatmulLineSizes, MatrixLayout, StageIdent};
@@ -82,7 +82,7 @@ where
             device_props,
             blueprint,
             plane_flow_config,
-            (1, 2).into(),
+            Self::num_stages(),
             dtypes,
             line_sizes,
         )?;
@@ -169,6 +169,10 @@ where
             writer_config,
             must_sync_plane_after_execution: true,
         })
+    }
+
+    fn num_stages() -> NumStages {
+        (1, 2).into()
     }
 
     fn cubedim_resource(

@@ -1,8 +1,11 @@
-use crate::definition::{
-    MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError, MatrixLayout,
-    StageIdent,
-};
 use crate::{components::CubeDimResource, launch::RuntimeConfig};
+use crate::{
+    components::stage::NumStages,
+    definition::{
+        MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError,
+        MatrixLayout, StageIdent,
+    },
+};
 use crate::{
     components::{
         global::{
@@ -78,7 +81,7 @@ where
             device_props,
             blueprint,
             plane_flow_config,
-            (1, 1).into(),
+            Self::num_stages(),
             dtypes,
             line_sizes,
         )?;
@@ -169,6 +172,10 @@ where
             writer_config,
             must_sync_plane_after_execution: false,
         })
+    }
+
+    fn num_stages() -> NumStages {
+        (1, 1).into()
     }
 
     fn cubedim_resource(
