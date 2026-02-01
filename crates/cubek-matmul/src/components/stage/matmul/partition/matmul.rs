@@ -24,6 +24,7 @@ pub struct SharedPartitionMatmulConfig<TC: TileConfig> {
     pub partition_schedule_scheme: PartitionSchedulerScheme,
     pub lhs_smem_config: StageMemoryConfig,
     pub rhs_smem_config: StageMemoryConfig,
+    pub acc_smem_config: StageMemoryConfig,
     pub out_smem_config: StageMemoryConfig,
 }
 
@@ -39,6 +40,7 @@ impl<TC: TileConfig> SharedPartitionMatmulConfig<TC> {
         partition_schedule_scheme: PartitionSchedulerScheme,
         lhs_smem_config: StageMemoryConfig,
         rhs_smem_config: StageMemoryConfig,
+        acc_smem_config: StageMemoryConfig,
         out_smem_config: StageMemoryConfig,
     ) -> Self {
         Self {
@@ -51,6 +53,7 @@ impl<TC: TileConfig> SharedPartitionMatmulConfig<TC> {
             partition_schedule_scheme,
             lhs_smem_config,
             rhs_smem_config,
+            acc_smem_config,
             out_smem_config,
         }
     }

@@ -1,16 +1,24 @@
 use std::fmt::Display;
 
-use cubecl::{Runtime, client::ComputeClient};
+use cubecl::{Runtime, client::ComputeClient, std::CubeOption};
 
 use crate::{
     components::{
         batch::{BatchMatmulFamily, PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
         global::{
-            UnitWriterFamily, multi_stage::double_buffering::DoubleBufferingMatmulFamily,
-            read::sync_partial_cyclic::SyncPartialCyclicLoading,
+            UnitWriterFamily,
+            multi_stage::double_buffering::DoubleBufferingMatmulFamily,
+            read::{
+                sync_full_cyclic::SyncFullCyclicLoading,
+                sync_partial_cyclic::SyncPartialCyclicLoading,
+            },
         },
-        stage::{FilledStageFamily, RowMajorTilingOrder, StridedStageFamily, UnitMatmulFamily},
-        tile::{TileMatmulFamily, io::Filled, register::RegisterMatmul},
+        stage::{RowMajorTilingOrder, StridedStageFamily, UnitMatmulFamily},
+        tile::{
+            TileMatmulFamily,
+            io::{Filled, Strided},
+            register::RegisterMatmul,
+        },
     },
     definition::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, TilingBlueprint},
     launch::RuntimeConfig,
@@ -39,10 +47,15 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleUnitAlgorithm {
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
         DoubleBufferingMatmulFamily<
-            UnitMatmulFamily<RegisterMatmul<Filled>, StridedStageFamily, FilledStageFamily>,
+            UnitMatmulFamily<
+                RegisterMatmul<CubeOption<Strided>>,
+                StridedStageFamily,
+                Option<StridedStageFamily>,
+            >,
             RC,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
+            SyncFullCyclicLoading<RowMajorTilingOrder>,
             UnitWriterFamily,
         >,
         RowMajorGlobalPartitionMatmul,

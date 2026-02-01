@@ -1,4 +1,4 @@
-use crate::components::global::multi_stage::EventLoadingMode;
+use crate::components::global::MaxGlobalReaderPlanes;
 use crate::components::global::{
     GlobalReaderConfig, GlobalWriterConfig, PlaneFlowConfig, SharedGlobalMatmulConfig,
 };
@@ -8,15 +8,19 @@ use crate::components::global::{
     memory::{GlobalMemoryConfig, ViewDirection},
     read::AsyncPartialLoadingStrategy,
 };
+use crate::components::global::{
+    multi_stage::{EventLoadingMode, specialized::AL},
+    read::FullLoadingStrategy,
+};
 use crate::components::stage::StageConfig;
-use crate::components::{global::GlobalMatmulFamily, stage, stage::FilledStageFamily};
-use crate::components::{global::MaxGlobalReaderPlanes, stage::NoTilingLayout};
+use crate::components::{CubeDimResource, stage::StridedStageFamily};
+use crate::components::{global::GlobalMatmulFamily, stage};
 use crate::definition::MatmulLineSizes;
 use crate::definition::TilingBlueprint;
 use crate::definition::{MatmulElems, MatmulSetupError};
 use crate::definition::{MatmulPrecision, MatmulProblem};
 use crate::definition::{MatrixLayout, StageIdent};
-use crate::{components::CubeDimResource, launch::RuntimeConfig};
+use crate::launch::RuntimeConfig;
 use cubecl::{ir::DeviceProperties, prelude::*};
 use std::marker::PhantomData;
 
@@ -38,7 +42,7 @@ where
     SMM: stage::StageMatmulFamily<
             LhsStage = L::Stage,
             RhsStage = L::Stage,
-            AccStage = FilledStageFamily,
+            AccStage = Option<StridedStageFamily>,
             OutStage = GW::Stage,
         >,
     RC: RuntimeConfig,
@@ -47,7 +51,13 @@ where
 {
     type Matmul<MP: MatmulPrecision> = SpecializedMatmul<
         MP,
-        SMM::Matmul<MP, L::TilingLayout, L::TilingLayout, NoTilingLayout, WriteTiling>,
+        SMM::Matmul<
+            MP,
+            L::TilingLayout,
+            L::TilingLayout,
+            <AL as FullLoadingStrategy<RC>>::TilingLayout,
+            WriteTiling,
+        >,
         RC,
         L,
         GW::Writer<MP::Acc>,
@@ -128,6 +138,18 @@ where
             input_load_flow: blueprint.load_flows.rhs,
         };
 
+        let acc_reader_config = GlobalReaderConfig {
+            gmem_config: out_gmem_config,
+            smem_config: stage_config.acc_smem_config(),
+            precompute_job,
+            plane_dim,
+            plane_flow_config,
+            reader_mode,
+            stage_ident: StageIdent::Acc,
+            event_loading_mode,
+            input_load_flow: blueprint.load_flows.rhs,
+        };
+
         let writer_config = GlobalWriterConfig {
             gmem_config: out_gmem_config,
             smem_config: stage_config.out_smem_config(),
@@ -140,6 +162,7 @@ where
             num_planes: plane_flow_config.counts.total_count(),
             lhs_reader_config,
             rhs_reader_config,
+            acc_reader_config,
             writer_config,
             must_sync_plane_after_execution: false,
         })

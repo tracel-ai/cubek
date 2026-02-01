@@ -10,7 +10,7 @@ use crate::{
             sync_full_tilewise,
         },
         stage::{ColMajorTilingOrder, RowMajorTilingOrder},
-        tile::{cmma::CmmaMatmul, io::Filled, mma::MmaMatmul},
+        tile::{cmma::CmmaMatmul, mma::MmaMatmul},
     },
     definition::{MatmulElems, MatmulSetupError},
     launch::{handle::MatmulInputHandleRef, launch_naive, launch_tiling},
@@ -30,9 +30,10 @@ use crate::{
     },
 };
 
-type Cmma = CmmaMatmul<Filled>;
+type Cmma = CmmaMatmul;
 type Mma = MmaMatmul;
 
+#[allow(clippy::type_complexity)]
 #[derive(Clone, Default)]
 pub enum Strategy {
     SimpleCyclicCmma(BlueprintStrategy<(), SimpleAlgorithm<Cmma>>),
@@ -84,6 +85,7 @@ pub enum Strategy {
                 Cmma,
                 async_full_strided::AsyncFullStridedLoading,
                 async_full_strided::AsyncFullStridedLoading,
+                async_full_strided::AsyncFullStridedLoading,
             >,
         >,
     ),
@@ -92,6 +94,7 @@ pub enum Strategy {
             (),
             SimpleAlgorithm<
                 Mma,
+                async_full_strided::AsyncFullStridedLoading,
                 async_full_strided::AsyncFullStridedLoading,
                 async_full_strided::AsyncFullStridedLoading,
             >,
@@ -104,6 +107,7 @@ pub enum Strategy {
                 Cmma,
                 async_full_cyclic::AsyncFullCyclicLoading<ColMajorTilingOrder>,
                 async_full_cyclic::AsyncFullCyclicLoading<RowMajorTilingOrder>,
+                async_full_cyclic::AsyncFullCyclicLoading<RowMajorTilingOrder>,
             >,
         >,
     ),
@@ -113,6 +117,7 @@ pub enum Strategy {
             SimpleAlgorithm<
                 Mma,
                 async_full_cyclic::AsyncFullCyclicLoading<ColMajorTilingOrder>,
+                async_full_cyclic::AsyncFullCyclicLoading<RowMajorTilingOrder>,
                 async_full_cyclic::AsyncFullCyclicLoading<RowMajorTilingOrder>,
             >,
         >,

@@ -1,12 +1,18 @@
-use crate::components::global::read::{PartialStageGlobalReader, StageBuffer, ZeroGlobalReader};
-use crate::components::global::{GlobalConfig, GlobalWriter};
+use crate::components::global::{GlobalConfig, GlobalWriter, read::FullLoadingStrategy};
 use crate::components::global::{GlobalMatmul, SharedGlobalMatmulConfig};
 use crate::components::global::{PlaneFlowPartition, read::AsyncPartialLoadingStrategy};
 use crate::components::stage;
-use crate::components::stage::FilledStage;
 use crate::components::stage::StageConfig as _;
+use crate::components::{
+    global::read::{FullStageGlobalReader, LoaderStage, sync_full_cyclic::SyncFullCyclicLoading},
+    stage::RowMajorTilingOrder,
+};
+use crate::components::{
+    global::read::{PartialStageGlobalReader, StageBuffer},
+    stage::StridedStageMemory,
+};
 use crate::definition::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS};
-use crate::{components::global::read::LoaderStage, launch::RuntimeConfig};
+use crate::launch::RuntimeConfig;
 
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
@@ -35,6 +41,8 @@ pub struct SpecializedMatmul<
     _writer: PhantomData<GW>,
 }
 
+pub(super) type AL = SyncFullCyclicLoading<RowMajorTilingOrder>;
+
 #[cube]
 impl<MP: MatmulPrecision, SMM, RC, L, GW> GlobalMatmul<RC, MP>
     for SpecializedMatmul<MP, SMM, RC, L, GW>
@@ -43,7 +51,9 @@ where
             MP,
             LhsStage = LoaderStage<RC, L, LhsS<MP>>,
             RhsStage = LoaderStage<RC, L, RhsS<MP>>,
-            AccStage = FilledStage<AccS<MP>>,
+            AccStage = CubeOption<
+                StridedStageMemory<AccS<MP>, <AL as FullLoadingStrategy<RC>>::TilingLayout>,
+            >,
             OutStage = GW::Stage,
         >,
     RC: RuntimeConfig,
@@ -64,7 +74,14 @@ where
         RC,
         L,
     >;
-    type AccGlobalReader = ZeroGlobalReader<MP::Acc>;
+    type AccGlobalReader = CubeOption<
+        FullStageGlobalReader<
+            <MP::Acc as MatrixPrecision>::Global,
+            <MP::Acc as MatrixPrecision>::Stage,
+            RC,
+            AL,
+        >,
+    >;
 
     type GlobalWriter = GW;
     type Accumulators = SMM::Accumulators;
@@ -112,6 +129,16 @@ where
         let compute_units = config.plane_flow_config().counts.main_flow * config.plane_dim();
 
         let role_rule = PlaneFlowPartition::new(config.plane_flow_config().partition_rule);
+
+        let acc_stage = match acc_reader {
+            CubeOption::Some(mut reader) => {
+                let mut barrier = ();
+                reader.load_stage(&mut barrier, config.acc_reader_config);
+                sync_cube();
+                CubeOption::new_Some(reader.stage())
+            }
+            CubeOption::None => CubeOption::new_None(),
+        };
 
         // Barrier for writing out
         let barrier_done = Barrier::shared_uninit();
@@ -175,7 +202,7 @@ where
             let (mut lhs_tile, mut rhs_tile) = SMM::init_tile_inputs(config.stage_config());
             let mut acc = SMM::init_accumulators(config.stage_config());
 
-            SMM::load_accumulators(&acc_reader.stage(), &mut acc, config.stage_config());
+            SMM::load_accumulators(&acc_stage, &mut acc, config.stage_config());
 
             for _ in 0..num_loops {
                 barrier_full_a.wait_parity(phase);
@@ -255,12 +282,17 @@ where
 
     fn init_acc_global_reader(
         acc: CubeOption<View<Line<AccG<MP>>, Coords2d>>,
-        _runtime_config: RC,
-        #[comptime] _config: Self::Config,
+        runtime_config: RC,
+        #[comptime] config: Self::Config,
     ) -> Self::AccGlobalReader {
         match acc {
-            CubeOption::None => ZeroGlobalReader::new(),
-            CubeOption::Some(_) => panic!("Accumulator loading is not yet supported"),
+            CubeOption::None => CubeOption::new_None(),
+            CubeOption::Some(view) => CubeOption::new_Some(FullStageGlobalReader::new(
+                view,
+                runtime_config,
+                0,
+                config.acc_reader_config,
+            )),
         }
     }
 

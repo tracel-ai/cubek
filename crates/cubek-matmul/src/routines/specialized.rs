@@ -1,25 +1,26 @@
 use std::fmt::Display;
 use std::marker::PhantomData;
 
-use cubecl::Runtime;
 use cubecl::client::ComputeClient;
 use cubecl::features::MmaConfig;
+use cubecl::{Runtime, std::CubeOption};
 
-use crate::components::stage::PlaneMatmulFamily;
+use crate::components::batch::BatchMatmulFamily;
+use crate::components::stage::{PlaneMatmulFamily, StridedStageFamily};
 use crate::components::tile;
+use crate::components::tile::TileMatmulFamily;
 use crate::components::{
     batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
-    tile::io::{Filled, Strided},
+    tile::io::Strided,
 };
 use crate::components::{global::PlaneWriterFamily, stage::StageFamily};
-use crate::components::{stage::FilledStageFamily, tile::TileMatmulFamily};
 use crate::definition::{
     CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulLineSizes, MatmulProblem,
     MatmulSetupError, MatrixLayout, SmAllocation, SwizzleModes, TilingBlueprint, adjust_dtypes,
 };
+use crate::launch::RuntimeConfig;
 use crate::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
 use crate::routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, base};
-use crate::{components::batch::BatchMatmulFamily, launch::RuntimeConfig};
 use crate::{
     components::global::{
         multi_stage::specialized::SpecializedMatmulFamily,
@@ -60,7 +61,7 @@ where
     TMM: tile::TileMatmulFamily<
             LhsTile = <L::Stage as StageFamily>::TileKind,
             RhsTile = <L::Stage as StageFamily>::TileKind,
-            AccTile = Filled,
+            AccTile = CubeOption<Strided>,
             OutTile = Strided,
         >,
     RC: RuntimeConfig,
@@ -70,7 +71,7 @@ where
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
         SpecializedMatmulFamily<
-            PlaneMatmulFamily<TMM, L::Stage, L::Stage, FilledStageFamily>,
+            PlaneMatmulFamily<TMM, L::Stage, L::Stage, Option<StridedStageFamily>>,
             RC,
             L,
             PlaneWriterFamily,

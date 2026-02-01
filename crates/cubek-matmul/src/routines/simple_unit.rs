@@ -1,4 +1,4 @@
-use cubecl::{Runtime, client::ComputeClient};
+use cubecl::{Runtime, client::ComputeClient, std::CubeOption};
 
 use std::{fmt::Display, marker::PhantomData};
 
@@ -10,11 +10,12 @@ use crate::{
             read::{FullLoadingStrategy, sync_full_cyclic::SyncFullCyclicLoading},
             single_stage::simple::SimpleMatmulFamily,
         },
-        stage::{
-            ColMajorTilingOrder, FilledStageFamily, RowMajorTilingOrder, StridedStageFamily,
-            UnitMatmulFamily,
+        stage::{ColMajorTilingOrder, RowMajorTilingOrder, StridedStageFamily, UnitMatmulFamily},
+        tile::{
+            TileMatmulFamily,
+            io::{Filled, Strided},
+            register::RegisterMatmul,
         },
-        tile::{TileMatmulFamily, io::Filled, register::RegisterMatmul},
     },
     definition::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, TilingBlueprint},
     launch::RuntimeConfig,
@@ -33,9 +34,11 @@ use super::Routine;
 pub struct SimpleUnitAlgorithm<
     LL = SyncFullCyclicLoading<ColMajorTilingOrder>,
     RL = SyncFullCyclicLoading<RowMajorTilingOrder>,
+    AL = SyncFullCyclicLoading<RowMajorTilingOrder>,
 > {
     pub _ll: PhantomData<LL>,
     pub _rl: PhantomData<RL>,
+    pub _al: PhantomData<AL>,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -49,20 +52,26 @@ impl Display for SimpleUnitSelectionArgs {
     }
 }
 
-impl<RC, LL, RL> Routine<RC> for SimpleUnitAlgorithm<LL, RL>
+impl<RC, LL, RL, AL> Routine<RC> for SimpleUnitAlgorithm<LL, RL, AL>
 where
     RC: RuntimeConfig,
     LL: FullLoadingStrategy<RC>,
     RL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
+    AL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
 {
     type Strategy = SimpleUnitSelectionArgs;
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
         SimpleMatmulFamily<
-            UnitMatmulFamily<RegisterMatmul<Filled>, StridedStageFamily, FilledStageFamily>,
+            UnitMatmulFamily<
+                RegisterMatmul<CubeOption<Strided>>,
+                StridedStageFamily,
+                Option<StridedStageFamily>,
+            >,
             RC,
             LL,
             RL,
+            AL,
             UnitWriterFamily,
         >,
         RowMajorGlobalPartitionMatmul,

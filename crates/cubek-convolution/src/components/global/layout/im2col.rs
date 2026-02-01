@@ -4,12 +4,12 @@ use cubecl::std::{
     tensor::layout::{Layout, LayoutExpand},
 };
 use cubek_matmul::{
-    components::global::{GlobalConfig, memory::GlobalMemoryConfig},
+    components::global::{GlobalConfig, memory::GlobalLayoutConfig},
     launch::BatchedCoords,
 };
 
 use crate::components::{
-    ConvGemmConfig, ConvolutionConfig, ConvolutionOperation, ConvolutionParams, ConvolutionProblem,
+    ConvolutionOperation, ConvolutionParams, ConvolutionProblem,
     global::layout::{NhwcCoords, div_mod_seq},
 };
 
@@ -33,7 +33,7 @@ pub struct Im2colLayout {
     pub params: ConvolutionParams,
     /// Global memory config for the backing tensor
     #[cube(comptime)]
-    pub config: GlobalMemoryConfig,
+    pub config: GlobalLayoutConfig,
 }
 
 #[cube]
@@ -43,15 +43,16 @@ impl Im2colLayout {
         cols: u32,
         padded_channels: FastDivmod<u32>,
         shape_out: Sequence<FastDivmod<u32>>,
-        #[comptime] config: ConvolutionConfig<G>,
+        #[comptime] config: GlobalLayoutConfig,
+        #[comptime] params: ConvolutionParams,
     ) -> Im2colLayout {
         Im2colLayout {
             shape_out,
             padded_channels,
             rows,
             cols,
-            params: config.params,
-            config: config.lhs_global_memory_config(),
+            params,
+            config,
         }
     }
 }
@@ -126,7 +127,7 @@ impl<'a, R: Runtime> Im2colLayoutLaunch<'a, R> {
         client: &ComputeClient<R>,
         problem: &ConvolutionProblem,
         params: ConvolutionParams,
-        config: GlobalMemoryConfig,
+        config: GlobalLayoutConfig,
     ) -> Self {
         match problem.operation {
             ConvolutionOperation::Forward => Self::from_args_fprop(client, problem, params, config),
@@ -143,7 +144,7 @@ impl<'a, R: Runtime> Im2colLayoutLaunch<'a, R> {
         client: &ComputeClient<R>,
         problem: &ConvolutionProblem,
         params: ConvolutionParams,
-        config: GlobalMemoryConfig,
+        config: GlobalLayoutConfig,
     ) -> Self {
         let shape_out = problem
             .out_shape
@@ -164,7 +165,7 @@ impl<'a, R: Runtime> Im2colLayoutLaunch<'a, R> {
         client: &ComputeClient<R>,
         problem: &ConvolutionProblem,
         params: ConvolutionParams,
-        config: GlobalMemoryConfig,
+        config: GlobalLayoutConfig,
     ) -> Self {
         let shape = problem
             .in_shape
@@ -185,7 +186,7 @@ impl<'a, R: Runtime> Im2colLayoutLaunch<'a, R> {
         client: &ComputeClient<R>,
         problem: &ConvolutionProblem,
         params: ConvolutionParams,
-        config: GlobalMemoryConfig,
+        config: GlobalLayoutConfig,
     ) -> Self {
         let shape_out = problem
             .out_shape

@@ -15,14 +15,8 @@ use cubecl::{
     },
 };
 use cubek_matmul::{
-    components::{
-        global::{
-            GlobalConfig as _,
-            memory::{NoopLayout, NoopLayoutLaunch, Transpose, TransposeLaunch},
-        },
-        stage::StageConfig as _,
-    },
-    definition::{MatmulElems, MatmulLineSizes, TilingBlueprint},
+    components::global::memory::{NoopLayout, NoopLayoutLaunch, Transpose, TransposeLaunch},
+    definition::{Blueprint, MatmulElems, MatmulLineSizes, TilingBlueprint},
     launch::{
         MatmulArgs, MatmulInputHandleRef, TensorArgs, TensorInputs, TensorInputsLaunch,
         TensorMapArgs, TensorMapInputs, TensorMapInputsLaunch, TensorOutput, TensorOutputLaunch,
@@ -31,7 +25,7 @@ use cubek_matmul::{
 use enumset::EnumSet;
 
 use crate::components::{
-    ConvGemmConfig, ConvolutionParams, ConvolutionProblem,
+    ConvolutionParams, ConvolutionProblem,
     global::{
         args::{RuntimeArgs, RuntimeArgsLaunch},
         layout::{
@@ -42,25 +36,26 @@ use crate::components::{
     },
 };
 
-pub trait ConcreteArgs:
+pub trait ConcreteArgs<B: Blueprint>:
     MatmulArgs<
-        Input<NumericExpand<0>, NumericExpand<1>, NumericExpand<2>>: ConcreteInputsFactory,
-        Output<NumericExpand<2>>: ConcreteOutputFactory,
+        Input<NumericExpand<0>, NumericExpand<1>, NumericExpand<2>>: ConcreteInputsFactory<B>,
+        Output<NumericExpand<2>>: ConcreteOutputFactory<B>,
+        Config = RuntimeArgs,
     >
 {
     fn adjust_problem<R: Runtime>(
         client: &ComputeClient<R>,
         problem: ConvolutionProblem,
-        selection: &TilingBlueprint,
+        selection: &B,
         dtypes: &MatmulElems,
     ) -> ConvolutionProblem;
 }
 
-impl ConcreteArgs for TensorArgs<RuntimeArgs> {
+impl<B: Blueprint> ConcreteArgs<B> for TensorArgs<RuntimeArgs> {
     fn adjust_problem<R: Runtime>(
         client: &ComputeClient<R>,
         mut problem: ConvolutionProblem,
-        _selection: &TilingBlueprint,
+        _blueprint: &B,
         dtypes: &MatmulElems,
     ) -> ConvolutionProblem {
         let load_width = client.properties().hardware.load_width;
@@ -75,14 +70,14 @@ impl ConcreteArgs for TensorArgs<RuntimeArgs> {
     }
 }
 
-impl ConcreteArgs for TensorMapArgs<RuntimeArgs> {
+impl ConcreteArgs<TilingBlueprint> for TensorMapArgs<RuntimeArgs> {
     fn adjust_problem<R: Runtime>(
         _client: &ComputeClient<R>,
         mut problem: ConvolutionProblem,
-        selection: &TilingBlueprint,
+        blueprint: &TilingBlueprint,
         _dtypes: &MatmulElems,
     ) -> ConvolutionProblem {
-        let channel_align = selection.tiling_scheme.tile_size.n() as usize;
+        let channel_align = blueprint.tiling_scheme.tile_size.n() as usize;
         let padded_channels = problem.channels.next_multiple_of(channel_align);
         let shape_n = problem.kernel_size.iter().product::<u32>() as usize * padded_channels;
 
@@ -95,59 +90,59 @@ impl ConcreteArgs for TensorMapArgs<RuntimeArgs> {
 
 /// Create the input runtime arguments for a matmul kernel that works on concrete inputs and
 /// output (not fused).
-pub trait ConcreteInputsFactory: LaunchArg {
+pub trait ConcreteInputsFactory<B: Blueprint>: LaunchArg {
     #[allow(clippy::too_many_arguments)]
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
         input: &'a MatmulInputHandleRef<'a, R>,
         out_grad: &'a MatmulInputHandleRef<'a, R>,
-        selection: &TilingBlueprint,
+        blueprint: &B,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
-        config: impl ConvGemmConfig,
         dtypes: &MatmulElems,
     ) -> (Self::RuntimeArg<'a, R>, RuntimeArgsLaunch<'a, R>);
 }
 
 /// Create the output runtime arguments for a matmul kernel that works on concrete inputs and
 /// output (not fused).
-pub trait ConcreteOutputFactory: LaunchArg {
+pub trait ConcreteOutputFactory<B: Blueprint>: LaunchArg {
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
         out: &'a TensorHandleRef<'a, R>,
-        selection: &TilingBlueprint,
+        blueprint: &B,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
-        config: impl ConvGemmConfig,
     ) -> Self::RuntimeArg<'a, R>;
 }
 
-impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory for TensorInputs<Lhs, Rhs, EO> {
+impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, B: Blueprint> ConcreteInputsFactory<B>
+    for TensorInputs<Lhs, Rhs, EO>
+{
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
         input: &'a MatmulInputHandleRef<'a, R>,
         out_grad: &'a MatmulInputHandleRef<'a, R>,
-        _selection: &TilingBlueprint,
+        blueprint: &B,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
-        config: impl ConvGemmConfig,
         _dtypes: &MatmulElems,
     ) -> (Self::RuntimeArg<'a, R>, RuntimeArgsLaunch<'a, R>) {
         type LhsLayout = Chain<NhwcLayout, Transpose<OutLayout>>;
         type RhsLayout = Chain<NhwcLayout, Im2colLayout>;
 
         let padded_channels = problem.padded_channels as u32;
+        let params = ConvolutionParams::from_problem(problem);
 
         let layout_nhwc =
             |handle, line_size, checks| NhwcLayoutLaunch::from_handle(handle, line_size, checks);
 
         let layout_lhs =
-            OutLayoutLaunch::from_args(client, problem, config.lhs_global_memory_config());
+            OutLayoutLaunch::from_args(client, problem, blueprint.lhs_global_layout_config());
         let layout_rhs = Im2colLayoutLaunch::from_args(
             client,
             problem,
-            config.params(),
-            config.rhs_global_memory_config(),
+            params,
+            blueprint.rhs_global_layout_config(),
         );
 
         let layout_lhs = {
@@ -179,21 +174,20 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory for TensorIn
             ScalarArg::new(problem.k as u32),
             ScalarArg::new(problem.channels as u32),
             FastDivmodArgs::<u32>::new(client, padded_channels),
-            config.operation(),
+            problem.operation,
         );
 
         (inputs, runtime_args)
     }
 }
 
-impl<EG: Numeric> ConcreteOutputFactory for TensorOutput<EG> {
+impl<EG: Numeric, B: Blueprint> ConcreteOutputFactory<B> for TensorOutput<EG> {
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
         out: &'a TensorHandleRef<'a, R>,
-        _selection: &TilingBlueprint,
+        blueprint: &B,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
-        config: impl ConvGemmConfig,
     ) -> Self::RuntimeArg<'a, R> {
         // Weight layout assumes col-major so it's technically "transposed" when it's row-major.
         // Should look into maybe inverting this and using `Transpose` for forward instead.
@@ -205,7 +199,7 @@ impl<EG: Numeric> ConcreteOutputFactory for TensorOutput<EG> {
         }
         let global = NhwcLayoutLaunch::from_handle(out, line_sizes.out, checks);
         let layout =
-            WeightLayoutLaunch::from_args(client, problem, config.out_global_memory_config());
+            WeightLayoutLaunch::from_args(client, problem, blueprint.out_global_layout_config());
         let layout = ChainLaunch::new(global, TransposeLaunch::new(layout));
         let view = ViewArg::new::<Layout>(out.as_array_arg(line_sizes.out), layout);
         let batch = VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new());
@@ -213,7 +207,7 @@ impl<EG: Numeric> ConcreteOutputFactory for TensorOutput<EG> {
     }
 }
 
-impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory
+impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory<TilingBlueprint>
     for TensorMapInputs<Lhs, Rhs, EO>
 {
     fn create<'a, R: Runtime>(
@@ -223,7 +217,6 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory
         selection: &TilingBlueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
-        config: impl ConvGemmConfig,
         dtypes: &MatmulElems,
     ) -> (Self::RuntimeArg<'a, R>, RuntimeArgsLaunch<'a, R>) {
         type LhsLayout = Transpose<TmaOutGradLayout>;
@@ -312,7 +305,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory
         // Im2col needs extra checking because if `n` is OOB it wraps around the kernel and can load
         // in-bounds but not in-kernel elements. Other TMA layouts are always outside the shape if
         // any matrix dim is out of bounds.
-        let stages_rhs = config.stage_config().rhs_smem_config().num_stages;
+        let stages_rhs = 1; // Put this on blueprint
         let stages_size_n = selection.tiling_scheme.elements_per_stage_along_n() * stages_rhs;
 
         let lhs_layout = TmaOutGradLayoutLaunch::new();
@@ -336,7 +329,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory
             ScalarArg::new(shape_k),
             ScalarArg::new(problem.channels as u32),
             FastDivmodArgs::<u32>::new(client, padded_channels),
-            config.operation(),
+            problem.operation,
         );
 
         (inputs, runtime_args)

@@ -2,17 +2,13 @@ use cubecl;
 use cubecl::prelude::*;
 use cubecl::std::{CubeOption, CubeOptionExpand};
 use cubecl::{Runtime, client::ComputeClient};
-use cubek_matmul::components::batch::SliceIndex;
-use cubek_matmul::components::global::GlobalConfig;
+use cubek_matmul::components::global::{GlobalConfig, GlobalMatmul};
 use cubek_matmul::components::stage::StageConfig as _;
+use cubek_matmul::components::{batch::SliceIndex, global::GlobalMatmulFamily};
 use cubek_matmul::definition::MatmulElems;
 use cubek_matmul::launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
 
-use crate::components::global::{GlobalConvolution, GlobalConvolutionFamily};
-use crate::components::{
-    ConvGemmConfig,
-    global::args::{RuntimeArgs, RuntimeArgsLaunch},
-};
+use crate::components::global::args::{RuntimeArgs, RuntimeArgsLaunch};
 
 type Input<Args, Lhs, Rhs, EO> = <Args as MatmulArgs>::Input<Lhs, Rhs, EO>;
 type Output<Args, EO> = <Args as MatmulArgs>::Output<EO>;
@@ -49,7 +45,7 @@ pub(crate) fn implicit_conv<
     LhsR: Numeric,
     RhsR: Numeric,
     AccR: Numeric,
-    GMM: GlobalConvolutionFamily,
+    GMM: GlobalMatmulFamily<Args::Config>,
 >(
     inputs: &Input<Args, LhsG, RhsG, AccG>,
     output: &mut Output<Args, AccG>,
@@ -64,20 +60,14 @@ pub(crate) fn implicit_conv<
         output,
         runtime_args.clone(),
         config
-            .matmul_config()
             .lhs_reader_config()
             .gmem_config
             .as_global_layout_config(),
         config
-            .matmul_config()
             .rhs_reader_config()
             .gmem_config
             .as_global_layout_config(),
-        config
-            .matmul_config()
-            .writer_config()
-            .gmem_config
-            .as_global_layout_config(),
+        config.writer_config().gmem_config.as_global_layout_config(),
     );
 
     let lhs = Args::view_lhs(&state);
@@ -85,16 +75,8 @@ pub(crate) fn implicit_conv<
     let bias = Args::view_acc(&state);
     let out = Args::view_out(&mut state);
 
-    let stage_m = config
-        .matmul_config()
-        .stage_config()
-        .elements_in_stage_m()
-        .runtime();
-    let stage_n = config
-        .matmul_config()
-        .stage_config()
-        .elements_in_stage_n()
-        .runtime();
+    let stage_m = config.stage_config().elements_in_stage_m().runtime();
+    let stage_n = config.stage_config().elements_in_stage_n().runtime();
 
     let m_offset = CUBE_POS_X * stage_m;
     let n_offset = CUBE_POS_Y * stage_n;
@@ -113,27 +95,24 @@ pub(crate) fn implicit_conv<
     };
     let out = out.view_mut(SliceIndex::new(0, out.shape()));
 
-    GMM::Convolution::<((LhsG, LhsS, LhsR), (RhsG, RhsS, RhsR), (AccG, AccS, AccR))>::execute(
-        GMM::Convolution::<((LhsG, LhsS, LhsR), (RhsG, RhsS, RhsR), (AccG, AccS, AccR))>::init_lhs_global_reader(
-            lhs,
+    GMM::Matmul::<((LhsG, LhsS, LhsR), (RhsG, RhsS, RhsR), (AccG, AccS, AccR))>::execute(
+        GMM::Matmul::<((LhsG, LhsS, LhsR), (RhsG, RhsS, RhsR), (AccG, AccS, AccR))>::init_lhs_global_reader(
+            lhs.slice_unchecked(
             (m_offset, k_range.0),
-            (stage_m, k_size),
-            &runtime_args,
+            (stage_m, k_size)),
+            runtime_args.clone(),
             config,
         ),
-        GMM::Convolution::<((LhsG, LhsS, LhsR), (RhsG, RhsS, RhsR), (AccG, AccS, AccR))>::init_rhs_global_reader(
+        GMM::Matmul::<((LhsG, LhsS, LhsR), (RhsG, RhsS, RhsR), (AccG, AccS, AccR))>::init_rhs_global_reader(
             rhs.slice_unchecked((k_range.0, n_offset), (k_size, stage_n)),
-            &runtime_args,
+            runtime_args.clone(),
             config,
         ),
-        GMM::Convolution::<((LhsG, LhsS, LhsR), (RhsG, RhsS, RhsR), (AccG, AccS, AccR))>::init_bias_global_reader(
-            bias, config,
+        GMM::Matmul::<((LhsG, LhsS, LhsR), (RhsG, RhsS, RhsR), (AccG, AccS, AccR))>::init_acc_global_reader(
+            bias, runtime_args.clone(), config,
         ),
-        GMM::Convolution::<((LhsG, LhsS, LhsR), (RhsG, RhsS, RhsR), (AccG, AccS, AccR))>::init_global_writer(
+        GMM::Matmul::<((LhsG, LhsS, LhsR), (RhsG, RhsS, RhsR), (AccG, AccS, AccR))>::init_global_writer(
             out.slice_mut_unchecked((m_offset, n_offset), (stage_m, stage_n)),
-            config,
-        ),
-        &mut GMM::Convolution::<((LhsG, LhsS, LhsR), (RhsG, RhsS, RhsR), (AccG, AccS, AccR))>::init_accumulator(
             config,
         ),
         k_range,

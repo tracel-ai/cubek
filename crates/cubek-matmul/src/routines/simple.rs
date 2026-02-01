@@ -1,5 +1,5 @@
-use cubecl::features::MmaConfig;
 use cubecl::{Runtime, client::ComputeClient};
+use cubecl::{features::MmaConfig, std::CubeOption};
 use std::fmt::Display;
 use std::marker::PhantomData;
 
@@ -22,13 +22,10 @@ use crate::{
             single_stage::simple::SimpleMatmulFamily,
         },
         stage::{
-            ColMajorTilingOrder, FilledStageFamily, PartitionBuffering, PlaneMatmulFamily,
-            RowMajorTilingOrder, StridedStageFamily,
+            ColMajorTilingOrder, PartitionBuffering, PlaneMatmulFamily, RowMajorTilingOrder,
+            StridedStageFamily,
         },
-        tile::{
-            TileMatmulFamily,
-            io::{Filled, Strided},
-        },
+        tile::{TileMatmulFamily, io::Strided},
     },
     routines::{
         Routine,
@@ -41,13 +38,20 @@ pub struct SimpleAlgorithm<
     TMM,
     LL = SyncFullCyclicLoading<ColMajorTilingOrder>,
     RL = SyncFullCyclicLoading<RowMajorTilingOrder>,
+    AL = SyncFullCyclicLoading<RowMajorTilingOrder>,
 > {
     pub _tmm: PhantomData<TMM>,
     pub _ll: PhantomData<LL>,
     pub _rl: PhantomData<RL>,
+    pub _al: PhantomData<AL>,
 }
 
-pub type SimpleTmaAlgorithm<TMM> = SimpleAlgorithm<TMM, AsyncFullTmaLoading, AsyncFullTmaLoading>;
+pub type SimpleTmaAlgorithm<TMM> = SimpleAlgorithm<
+    TMM,
+    AsyncFullTmaLoading,
+    AsyncFullTmaLoading,
+    SyncFullCyclicLoading<RowMajorTilingOrder>,
+>;
 pub type SimpleBarrierAlgorithm<TMM, L> = SimpleAlgorithm<TMM, L, L>;
 
 #[derive(Default, Debug, Clone)]
@@ -62,22 +66,33 @@ impl Display for SimpleArgs {
     }
 }
 
-impl<TMM, RC, LL, RL> Routine<RC> for SimpleAlgorithm<TMM, LL, RL>
+impl<TMM, RC, LL, RL, AL> Routine<RC> for SimpleAlgorithm<TMM, LL, RL, AL>
 where
-    TMM:
-        TileMatmulFamily<LhsTile = Strided, RhsTile = Strided, AccTile = Filled, OutTile = Strided>,
+    TMM: TileMatmulFamily<
+            LhsTile = Strided,
+            RhsTile = Strided,
+            AccTile = CubeOption<Strided>,
+            OutTile = Strided,
+        >,
     RC: RuntimeConfig,
     LL: FullLoadingStrategy<RC>,
     RL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
+    AL: FullLoadingStrategy<RC>,
 {
     type Strategy = SimpleArgs;
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
         SimpleMatmulFamily<
-            PlaneMatmulFamily<TMM, StridedStageFamily, StridedStageFamily, FilledStageFamily>,
+            PlaneMatmulFamily<
+                TMM,
+                StridedStageFamily,
+                StridedStageFamily,
+                Option<StridedStageFamily>,
+            >,
             RC,
             LL,
             RL,
+            AL,
             PlaneWriterFamily,
         >,
         RowMajorGlobalPartitionMatmul,

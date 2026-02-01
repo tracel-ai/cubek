@@ -13,7 +13,7 @@ use crate::{
             read::FullLoadingStrategy,
             single_stage::simple::matmul::SimpleMatmul,
         },
-        stage::{FilledStageFamily, NoTilingLayout, StageConfig, StridedStageFamily},
+        stage::{StageConfig, StridedStageFamily},
     },
     definition::TilingBlueprint,
 };
@@ -28,34 +28,38 @@ pub struct SimpleMatmulFamily<
     RC: RuntimeConfig,
     LL: FullLoadingStrategy<RC>,
     RL: FullLoadingStrategy<RC>,
+    AL: FullLoadingStrategy<RC>,
     GW: GlobalWriterFamily,
 > {
     _stage_matmul: PhantomData<SMM>,
     _rc: PhantomData<RC>,
     _lhs_loading: PhantomData<LL>,
     _rhs_loading: PhantomData<RL>,
+    _acc_loading: PhantomData<AL>,
     _writer: PhantomData<GW>,
 }
 
-impl<SMM, RC, LL, RL, GW> GlobalMatmulFamily<RC> for SimpleMatmulFamily<SMM, RC, LL, RL, GW>
+impl<SMM, RC, LL, RL, AL, GW> GlobalMatmulFamily<RC> for SimpleMatmulFamily<SMM, RC, LL, RL, AL, GW>
 where
     SMM: stage::StageMatmulFamily<
             LhsStage = StridedStageFamily,
             RhsStage = StridedStageFamily,
-            AccStage = FilledStageFamily,
+            AccStage = Option<StridedStageFamily>,
             OutStage = GW::Stage,
         >,
     RC: RuntimeConfig,
     LL: FullLoadingStrategy<RC>,
     RL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
+    AL: FullLoadingStrategy<RC>,
     GW: GlobalWriterFamily,
 {
     type Matmul<MP: MatmulPrecision> = SimpleMatmul<
         MP,
-        SMM::Matmul<MP, LL::TilingLayout, RL::TilingLayout, NoTilingLayout, WriteTiling>,
+        SMM::Matmul<MP, LL::TilingLayout, RL::TilingLayout, AL::TilingLayout, WriteTiling>,
         RC,
         LL,
         RL,
+        AL,
         GW::Writer<MP::Acc>,
     >;
     type Config = SharedGlobalMatmulConfig<SMM::Config>;
@@ -137,6 +141,18 @@ where
             input_load_flow,
         };
 
+        let acc_reader_config = GlobalReaderConfig {
+            gmem_config: out_gmem_config,
+            smem_config: stage_config.acc_smem_config(),
+            precompute_job,
+            plane_dim,
+            plane_flow_config,
+            reader_mode,
+            stage_ident: StageIdent::Acc,
+            event_loading_mode,
+            input_load_flow,
+        };
+
         let writer_config = GlobalWriterConfig {
             gmem_config: out_gmem_config,
             smem_config: stage_config.out_smem_config(),
@@ -149,6 +165,7 @@ where
             num_planes: plane_flow_config.counts.total_count(),
             lhs_reader_config,
             rhs_reader_config,
+            acc_reader_config,
             writer_config,
             must_sync_plane_after_execution: false,
         })

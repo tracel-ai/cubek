@@ -1,34 +1,37 @@
 use cubecl::server::LaunchError;
 use cubecl::std::{CubeOption, tensor::TensorHandle};
 use cubecl::{Runtime, client::ComputeClient, ir::StorageType, prelude::TensorHandleRef};
-use cubek_matmul::components::{global::read::FullLoadingStrategy, tile::TileMatmulFamily};
 use cubek_matmul::components::{
     global::read::sync_full_cyclic::SyncFullCyclicLoading,
     stage::{ColMajorTilingOrder, RowMajorTilingOrder},
 };
-use cubek_matmul::components::{
-    global::read::{
-        async_full_tma::AsyncFullTmaLoading, sync_full_strided::SyncFullStridedLoading,
-        sync_full_tilewise::SyncFullTilewiseLoading,
-    },
-    stage::StridedStageFamily,
-    tile::io::Strided,
-};
-use cubek_matmul::definition::{MatmulElems, MatmulLineSizes, MatmulSetupError, TilingBlueprint};
+use cubek_matmul::definition::AvailableLineSizes;
 use cubek_matmul::launch::{TensorArgs, TensorMapArgs};
-use cubek_matmul::{components::stage::PlaneMatmulFamily, definition::AvailableLineSizes};
+use cubek_matmul::{
+    components::{global::read::FullLoadingStrategy, tile::TileMatmulFamily},
+    definition::TilingBlueprint,
+};
+use cubek_matmul::{
+    components::{
+        global::read::{
+            async_full_tma::AsyncFullTmaLoading, sync_full_strided::SyncFullStridedLoading,
+            sync_full_tilewise::SyncFullTilewiseLoading,
+        },
+        tile::io::Strided,
+    },
+    routines::simple::SimpleAlgorithm,
+};
 use std::marker::PhantomData;
 
 use crate::{
     components::{
-        ConvolutionOperation, ConvolutionProblem, convolution_matmul_selection,
+        ConvolutionOperation,
         global::{
             args::RuntimeArgs,
             read::strategy::{
                 async_full_cyclic::AsyncFullCyclicLoading,
                 async_full_strided::AsyncFullStridedLoading,
             },
-            single_stage::simple::SimpleConvolutionFamily,
         },
     },
     kernels::forward::{into_tensor_handle, into_tensor_handle_tma},
@@ -81,15 +84,8 @@ impl<
     LR: FullLoadingStrategy<RuntimeArgs, SyncStrategy = LL::SyncStrategy>,
 > Algorithm for SimpleConv<TMM, LL, LR>
 {
-    type TileMatmul = TMM;
-    type StageMatmul = PlaneMatmulFamily<
-        Self::TileMatmul,
-        StridedStageFamily,
-        StridedStageFamily,
-        Option<StridedStageFamily>,
-    >;
-    type GlobalConvolution = SimpleConvolutionFamily<Self::StageMatmul, LL, LR>;
-
+    type Routine = SimpleAlgorithm<TMM, LL, LR, SyncFullCyclicLoading<RowMajorTilingOrder>>;
+    type Blueprint = TilingBlueprint;
     type Args = TensorArgs<RuntimeArgs>;
 
     fn into_tensor_handle<R: Runtime>(
@@ -99,23 +95,6 @@ impl<
         _operation: ConvolutionOperation,
     ) -> Result<TensorHandle<R>, LaunchError> {
         into_tensor_handle(client, handle, dtype)
-    }
-
-    fn selection<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &ConvolutionProblem,
-        plane_dim: u32,
-        line_sizes: &MatmulLineSizes,
-        dtypes: &mut MatmulElems,
-    ) -> Result<TilingBlueprint, MatmulSetupError> {
-        Ok(convolution_matmul_selection::<TMM, R>(
-            client,
-            problem,
-            plane_dim,
-            TMM::should_swizzle(client),
-            line_sizes,
-            dtypes,
-        )?)
     }
 }
 
@@ -128,15 +107,13 @@ impl<
         >,
 > Algorithm for SimpleAsyncTmaConv<TMM>
 {
-    type TileMatmul = TMM;
-    type StageMatmul = PlaneMatmulFamily<
-        Self::TileMatmul,
-        StridedStageFamily,
-        StridedStageFamily,
-        Option<StridedStageFamily>,
+    type Routine = SimpleAlgorithm<
+        TMM,
+        AsyncFullTmaLoading,
+        AsyncFullTmaLoading,
+        SyncFullCyclicLoading<RowMajorTilingOrder>,
     >;
-    type GlobalConvolution =
-        SimpleConvolutionFamily<Self::StageMatmul, AsyncFullTmaLoading, AsyncFullTmaLoading>;
+    type Blueprint = TilingBlueprint;
 
     type Args = TensorMapArgs<RuntimeArgs>;
 
@@ -155,23 +132,5 @@ impl<
             rhs: vec![1],
             out: line_sizes.out,
         }
-    }
-
-    fn selection<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &ConvolutionProblem,
-        plane_dim: u32,
-        line_sizes: &MatmulLineSizes,
-        dtypes: &mut MatmulElems,
-    ) -> Result<TilingBlueprint, MatmulSetupError> {
-        if line_sizes.lhs > 1 || line_sizes.rhs > 1 {
-            return Err(MatmulSetupError::InvalidConfig(Box::new(
-                "Not available with input line sizes > 1",
-            )));
-        }
-
-        Ok(convolution_matmul_selection::<TMM, R>(
-            client, problem, plane_dim, false, line_sizes, dtypes,
-        )?)
     }
 }

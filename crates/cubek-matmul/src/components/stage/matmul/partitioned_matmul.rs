@@ -99,6 +99,10 @@ impl<TC: TileConfig> StageConfig for PartitionMatmulConfig<TC> {
         self.shared().rhs_smem_config
     }
 
+    fn acc_smem_config(&self) -> StageMemoryConfig {
+        self.shared().acc_smem_config
+    }
+
     fn out_smem_config(&self) -> StageMemoryConfig {
         self.shared().out_smem_config
     }

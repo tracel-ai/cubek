@@ -1,87 +1,19 @@
-use cubek_matmul::definition::{
-    AvailableLineSizes, LoadingPrecomputeStrategy, MatmulElems, MatmulLineSizes, MatmulSetupError,
-    MultiRowStrategy, TilingBlueprint,
-};
-use cubek_matmul::{
-    components::{
-        global::{LoadFlows, read::ReaderMode},
-        stage::{PartitionBuffering, StageMatmulFamily},
-        tile::TileMatmulFamily,
-    },
-    launch::MatmulArgs,
-};
+use cubek_matmul::{definition::AvailableLineSizes, routines::Routine};
+use cubek_matmul::{definition::Blueprint, launch::MatmulArgs};
 
-use cubecl::{
-    ir::DeviceProperties,
-    std::tensor::{TensorHandle, into_contiguous_pitched_ref, is_contiguous_pitched},
-};
+use cubecl::std::tensor::{TensorHandle, into_contiguous_pitched_ref, is_contiguous_pitched};
 
 use cubecl::prelude::*;
 
-use crate::components::{
-    ConvolutionOperation, ConvolutionProblem,
-    global::{GlobalConfig, GlobalConvolutionFamily, args::RuntimeArgs},
-};
+use crate::components::{ConvolutionOperation, global::args::RuntimeArgs};
 
 pub mod simple;
 
 /// Specifications for a convolution algorithm
 pub trait Algorithm {
-    type TileMatmul: TileMatmulFamily;
-    type StageMatmul: StageMatmulFamily;
-    type GlobalConvolution: GlobalConvolutionFamily;
-
+    type Routine: Routine<RuntimeArgs, Blueprint = Self::Blueprint>;
     type Args: MatmulArgs<Config = RuntimeArgs>;
-
-    fn cube_count(selection: &TilingBlueprint, problem: &ConvolutionProblem) -> CubeCount {
-        let m_stage = selection.tiling_scheme.elements_per_stage_along_m();
-        let n_stage = selection.tiling_scheme.elements_per_stage_along_n();
-        let cubes_needed_m = (problem.m as u32).div_ceil(m_stage);
-        let cubes_needed_n = (problem.n as u32).div_ceil(n_stage);
-
-        CubeCount::Static(cubes_needed_m, cubes_needed_n, 1)
-    }
-
-    fn multi_row_strategy() -> MultiRowStrategy {
-        MultiRowStrategy::Never
-    }
-
-    fn loading_precompute_strategy() -> LoadingPrecomputeStrategy {
-        LoadingPrecomputeStrategy::Never
-    }
-
-    fn reader_mode() -> ReaderMode {
-        ReaderMode::Relaxed
-    }
-
-    fn load_specialization() -> LoadFlows {
-        LoadFlows::default()
-    }
-
-    fn partition_buffering_strategy() -> PartitionBuffering {
-        PartitionBuffering::Double
-    }
-
-    /// Make a convolution config from a convolution problem, and launch options
-    fn expand_config(
-        device_props: &DeviceProperties,
-        problem: &ConvolutionProblem,
-        selection: &TilingBlueprint,
-        line_sizes: &MatmulLineSizes,
-        dtypes: &MatmulElems,
-    ) -> Result<GlobalConfig<Self::GlobalConvolution>, MatmulSetupError> {
-        Self::GlobalConvolution::expand_config(device_props, problem, selection, line_sizes, dtypes)
-    }
-
-    fn validate_blueprint<R: Runtime>(
-        client: &ComputeClient<R>,
-        blueprint: &TilingBlueprint,
-        problem: &ConvolutionProblem,
-        dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
-    ) -> Result<(), MatmulSetupError> {
-        Self::GlobalConvolution::validate_blueprint(client, blueprint, problem, dtypes, line_sizes)
-    }
+    type Blueprint: Blueprint;
 
     fn into_tensor_handle<R: Runtime>(
         client: &ComputeClient<R>,
@@ -93,14 +25,6 @@ pub trait Algorithm {
     fn filter_line_sizes(line_sizes: AvailableLineSizes) -> AvailableLineSizes {
         line_sizes
     }
-
-    fn selection<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &ConvolutionProblem,
-        plane_dim: u32,
-        line_sizes: &MatmulLineSizes,
-        matmul_elems: &mut MatmulElems,
-    ) -> Result<TilingBlueprint, MatmulSetupError>;
 }
 
 pub(crate) fn into_tensor_handle<R: Runtime>(

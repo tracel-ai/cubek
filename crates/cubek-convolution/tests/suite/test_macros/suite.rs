@@ -22,13 +22,13 @@ pub struct ConvolutionSize {
     pub out_c: usize,
 }
 
-pub fn test_algo<A: Algorithm, P: TestPrecision>(
+pub fn test_algo<A: Algorithm<Blueprint = TilingBlueprint>, P: TestPrecision>(
     tiling_scheme: TilingScheme,
     swizzle: SwizzleModes,
     partition_buffering: PartitionBuffering,
     convolution_size: ConvolutionSize,
 ) where
-    A::Args: ConcreteArgs,
+    A::Args: ConcreteArgs<A::Blueprint>,
 {
     let client = TestRuntime::client(&Default::default());
     let plane_dim = client.properties().hardware.plane_size_max;

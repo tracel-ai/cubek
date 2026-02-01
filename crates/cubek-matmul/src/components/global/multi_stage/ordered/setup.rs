@@ -1,3 +1,5 @@
+use crate::components::global::GlobalMatmulFamily;
+use crate::components::global::MaxGlobalReaderPlanes;
 use crate::components::global::memory::{GlobalMemoryConfig, ViewDirection};
 use crate::components::global::multi_stage::EventLoadingMode;
 use crate::components::global::read::LoadingValidation as _;
@@ -14,8 +16,6 @@ use crate::components::global::{
 };
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{self, StageConfig};
-use crate::components::{global::GlobalMatmulFamily, stage::FilledStageFamily};
-use crate::components::{global::MaxGlobalReaderPlanes, stage::NoTilingLayout};
 use crate::definition::TilingBlueprint;
 use crate::definition::{MatmulElems, MatmulPrecision, MatmulProblem, MatmulSetupError};
 use crate::definition::{MatmulLineSizes, MatrixLayout, StageIdent};
@@ -28,24 +28,28 @@ pub struct OrderedDoubleBufferingMatmulFamily<
     SMM: stage::StageMatmulFamily,
     RC: RuntimeConfig,
     RL: PartialLoadingStrategy<RC>,
+    AL: FullLoadingStrategy<RC>,
     GW: GlobalWriterFamily,
 > {
     _stage_matmul: PhantomData<SMM>,
     _rc: PhantomData<RC>,
     _rhs_loading: PhantomData<RL>,
+    _acc_loading: PhantomData<AL>,
     _writer: PhantomData<GW>,
 }
 
-impl<SMM, RC, RL, GW> GlobalMatmulFamily<RC> for OrderedDoubleBufferingMatmulFamily<SMM, RC, RL, GW>
+impl<SMM, RC, RL, AL, GW> GlobalMatmulFamily<RC>
+    for OrderedDoubleBufferingMatmulFamily<SMM, RC, RL, AL, GW>
 where
     SMM: stage::StageMatmulFamily<
             LhsStage = StridedStageFamily,
             RhsStage = StridedStageFamily,
-            AccStage = FilledStageFamily,
+            AccStage = Option<StridedStageFamily>,
             OutStage = GW::Stage,
         >,
     RC: RuntimeConfig,
     RL: PartialLoadingStrategy<RC, Stage = StridedStageFamily, SyncStrategy = Synchronous>,
+    AL: FullLoadingStrategy<RC, SyncStrategy = Synchronous>,
     GW: GlobalWriterFamily,
 {
     type Matmul<MP: MatmulPrecision> = OrderedDoubleBufferingMatmul<
@@ -54,11 +58,12 @@ where
             MP,
             <LL as FullLoadingStrategy<RC>>::TilingLayout,
             RL::TilingLayout,
-            NoTilingLayout,
+            AL::TilingLayout,
             WriteTiling,
         >,
         RC,
         RL,
+        AL,
         GW::Writer<MP::Acc>,
     >;
     type Config = SharedGlobalMatmulConfig<SMM::Config>;
@@ -136,6 +141,18 @@ where
             input_load_flow: blueprint.load_flows.rhs,
         };
 
+        let acc_reader_config = GlobalReaderConfig {
+            gmem_config: out_gmem_config,
+            smem_config: stage_config.acc_smem_config(),
+            precompute_job,
+            plane_dim,
+            plane_flow_config,
+            reader_mode,
+            stage_ident: StageIdent::Acc,
+            event_loading_mode: EventLoadingMode::Relaxed,
+            input_load_flow: blueprint.load_flows.rhs,
+        };
+
         let writer_config = GlobalWriterConfig {
             gmem_config: out_gmem_config,
             smem_config: stage_config.out_smem_config(),
@@ -148,6 +165,7 @@ where
             num_planes: plane_flow_config.counts.total_count(),
             lhs_reader_config,
             rhs_reader_config,
+            acc_reader_config,
             writer_config,
             must_sync_plane_after_execution: true,
         })

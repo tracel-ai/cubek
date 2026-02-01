@@ -1,11 +1,14 @@
-use cubecl::prelude::*;
+use cubecl::{
+    prelude::*,
+    std::{CubeOption, CubeOptionExpand},
+};
 
+use crate::components::tile::TileMatmul;
 use crate::components::tile::interleaved::config::InterleavedMatmulConfig;
 use crate::components::tile::interleaved::reader::InterleavedStageReader;
 use crate::components::tile::interleaved::writer::InterleavedStageWriter;
 use crate::components::tile::io::Strided;
 use crate::components::tile::tile_data::StridedTile;
-use crate::components::tile::{TileMatmul, io::Filled};
 use crate::definition::{MatrixLayout, StageIdent};
 
 /// Computes a tile matmul where each unit of the plane accumulates an interleaved (by plane_dim)
@@ -73,7 +76,7 @@ impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for InterleavedMatm
 
     type LhsTile = Strided;
     type RhsTile = Strided;
-    type AccTile = Filled;
+    type AccTile = CubeOption<Strided>;
     type OutTile = Strided;
 
     fn execute(
@@ -159,11 +162,19 @@ impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for InterleavedMatm
     }
 
     fn load_acc<E: Numeric>(
-        tile: &E,
+        tile: &CubeOption<StridedTile<E>>,
         acc: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     ) {
-        InterleavedStageReader::load_accumulator::<A, E>(tile, acc, config);
+        match tile {
+            CubeOption::Some(_) => {
+                todo!("Not yet implemented")
+            }
+            CubeOption::None => {
+                let value = E::from_int(0);
+                InterleavedStageReader::load_accumulator::<A, E>(&value, acc, config);
+            }
+        }
     }
 
     fn write_results<E: Numeric>(

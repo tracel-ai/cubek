@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use cubecl::{Runtime, client::ComputeClient};
+use cubecl::{Runtime, client::ComputeClient, std::CubeOption};
 
 use crate::{
     components::{
@@ -15,11 +15,13 @@ use crate::{
             single_stage::simple::SimpleMatmulFamily,
         },
         stage::{
-            ColMajorTilingOrder, FilledStageFamily, PartitionBuffering, PlaneMatmulFamily,
-            RowMajorTilingOrder, StridedStageFamily,
+            ColMajorTilingOrder, PartitionBuffering, PlaneMatmulFamily, RowMajorTilingOrder,
+            StridedStageFamily,
         },
         tile::{
-            TileMatmulFamily, io::Filled, plane_vec_mat_inner_product::PlaneVecMatInnerProduct,
+            TileMatmulFamily,
+            io::{Filled, Strided},
+            plane_vec_mat_inner_product::PlaneVecMatInnerProduct,
         },
     },
     definition::{
@@ -53,13 +55,14 @@ impl<RC: RuntimeConfig> Routine<RC> for SimpleVecMatAlgorithm {
         RC,
         SimpleMatmulFamily<
             PlaneMatmulFamily<
-                PlaneVecMatInnerProduct<Filled>,
+                PlaneVecMatInnerProduct<CubeOption<Strided>>,
                 StridedStageFamily,
                 StridedStageFamily,
-                FilledStageFamily,
+                Option<StridedStageFamily>,
             >,
             RC,
             SyncFullCyclicLoading<RowMajorTilingOrder>,
+            SyncFullCyclicLoading<ColMajorTilingOrder>,
             SyncFullCyclicLoading<ColMajorTilingOrder>,
             PlaneWriterFamily,
         >,
@@ -124,14 +127,15 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleVecMatAlgorithm {
         RC,
         DoubleBufferingMatmulFamily<
             PlaneMatmulFamily<
-                PlaneVecMatInnerProduct<Filled>,
+                PlaneVecMatInnerProduct<CubeOption<Strided>>,
                 StridedStageFamily,
                 StridedStageFamily,
-                FilledStageFamily,
+                Option<StridedStageFamily>,
             >,
             RC,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
             SyncPartialCyclicLoading<ColMajorTilingOrder>,
+            SyncFullCyclicLoading<ColMajorTilingOrder>,
             PlaneWriterFamily,
         >,
         RowMajorGlobalPartitionMatmul,

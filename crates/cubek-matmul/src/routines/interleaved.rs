@@ -20,8 +20,8 @@ use crate::{
             single_stage::simple::SimpleMatmulFamily,
         },
         stage::{
-            ColMajorTilingOrder, FilledStageFamily, PartitionBuffering, PlaneMatmulFamily,
-            RowMajorTilingOrder, StridedStageFamily,
+            ColMajorTilingOrder, PartitionBuffering, PlaneMatmulFamily, RowMajorTilingOrder,
+            StridedStageFamily,
         },
         tile::TileMatmulFamily,
     },
@@ -35,9 +35,11 @@ use crate::{
 pub struct InterleavedAlgorithm<
     LL = SyncFullCyclicLoading<ColMajorTilingOrder>,
     RL = SyncFullCyclicLoading<RowMajorTilingOrder>,
+    AL = SyncFullCyclicLoading<RowMajorTilingOrder>,
 > {
     pub _ll: PhantomData<LL>,
     pub _rl: PhantomData<RL>,
+    pub _al: PhantomData<AL>,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -52,11 +54,12 @@ impl Display for InterleavedArgs {
     }
 }
 
-impl<LL, RL, RC> Routine<RC> for InterleavedAlgorithm<LL, RL>
+impl<LL, RL, AL, RC> Routine<RC> for InterleavedAlgorithm<LL, RL, AL>
 where
     RC: RuntimeConfig,
     LL: FullLoadingStrategy<RC>,
     RL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
+    AL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
 {
     type Strategy = InterleavedArgs;
     type BatchMatmul = PartitionedBatchMatmulFamily<
@@ -66,11 +69,12 @@ where
                 InterleavedMatmul,
                 StridedStageFamily,
                 StridedStageFamily,
-                FilledStageFamily,
+                Option<StridedStageFamily>,
             >,
             RC,
             LL,
             RL,
+            AL,
             PlaneWriterFamily,
         >,
         RowMajorGlobalPartitionMatmul,

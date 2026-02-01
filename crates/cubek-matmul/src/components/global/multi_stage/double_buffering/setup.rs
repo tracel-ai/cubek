@@ -1,3 +1,4 @@
+use crate::components::global::MaxGlobalReaderPlanes;
 use crate::components::global::memory::{GlobalMemoryConfig, ViewDirection};
 use crate::components::global::multi_stage::EventLoadingMode;
 use crate::components::global::{
@@ -9,14 +10,14 @@ use crate::components::global::{
 use crate::components::global::{WriteTiling, read::PartialLoadingStrategy};
 use crate::components::stage::StageConfig;
 use crate::components::stage::StridedStageFamily;
-use crate::components::{global::GlobalMatmulFamily, stage, stage::FilledStageFamily};
-use crate::components::{global::MaxGlobalReaderPlanes, stage::NoTilingLayout};
+use crate::components::{CubeDimResource, global::read::FullLoadingStrategy};
+use crate::components::{global::GlobalMatmulFamily, stage};
 use crate::definition::TilingBlueprint;
 use crate::definition::{
     MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError, MatrixLayout,
     StageIdent,
 };
-use crate::{components::CubeDimResource, launch::RuntimeConfig};
+use crate::launch::RuntimeConfig;
 use cubecl::{ir::DeviceProperties, prelude::*};
 use std::marker::PhantomData;
 
@@ -26,34 +27,38 @@ pub struct DoubleBufferingMatmulFamily<
     RC: RuntimeConfig,
     LL: PartialLoadingStrategy<RC>,
     RL: PartialLoadingStrategy<RC>,
+    AL: FullLoadingStrategy<RC>,
     GW: GlobalWriterFamily,
 > {
     _stage_matmul: PhantomData<SMM>,
     _rc: PhantomData<RC>,
     _lhs_loading: PhantomData<LL>,
     _rhs_loading: PhantomData<RL>,
+    _acc_loading: PhantomData<AL>,
     _writer: PhantomData<GW>,
 }
 
-impl<SMM, RC: RuntimeConfig, LL, RL, GW> GlobalMatmulFamily<RC>
-    for DoubleBufferingMatmulFamily<SMM, RC, LL, RL, GW>
+impl<SMM, RC: RuntimeConfig, LL, RL, AL, GW> GlobalMatmulFamily<RC>
+    for DoubleBufferingMatmulFamily<SMM, RC, LL, RL, AL, GW>
 where
     SMM: stage::StageMatmulFamily<
             LhsStage = StridedStageFamily,
             RhsStage = StridedStageFamily,
-            AccStage = FilledStageFamily,
+            AccStage = Option<StridedStageFamily>,
             OutStage = GW::Stage,
         >,
     LL: PartialLoadingStrategy<RC, Stage = StridedStageFamily>,
     RL: PartialLoadingStrategy<RC, Stage = StridedStageFamily, SyncStrategy = LL::SyncStrategy>,
+    AL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
     GW: GlobalWriterFamily,
 {
     type Matmul<MP: MatmulPrecision> = DoubleBufferingMatmul<
         MP,
-        SMM::Matmul<MP, LL::TilingLayout, RL::TilingLayout, NoTilingLayout, WriteTiling>,
+        SMM::Matmul<MP, LL::TilingLayout, RL::TilingLayout, AL::TilingLayout, WriteTiling>,
         RC,
         LL,
         RL,
+        AL,
         GW::Writer<MP::Acc>,
     >;
     type Config = SharedGlobalMatmulConfig<SMM::Config>;
@@ -133,6 +138,18 @@ where
             input_load_flow: blueprint.load_flows.rhs,
         };
 
+        let acc_reader_config = GlobalReaderConfig {
+            gmem_config: out_gmem_config,
+            smem_config: stage_config.acc_smem_config(),
+            precompute_job,
+            plane_dim,
+            plane_flow_config,
+            reader_mode,
+            stage_ident: StageIdent::Acc,
+            event_loading_mode,
+            input_load_flow: blueprint.load_flows.rhs,
+        };
+
         let writer_config = GlobalWriterConfig {
             gmem_config: out_gmem_config,
             smem_config: stage_config.out_smem_config(),
@@ -145,6 +162,7 @@ where
             num_planes: plane_flow_config.counts.total_count(),
             lhs_reader_config,
             rhs_reader_config,
+            acc_reader_config,
             writer_config,
             must_sync_plane_after_execution: false,
         })

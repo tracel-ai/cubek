@@ -132,6 +132,7 @@ impl<
                     lhs_smem_config,
                     rhs_smem_config,
                     out_smem_config,
+                    out_smem_config,
                 ),
             ),
         ))

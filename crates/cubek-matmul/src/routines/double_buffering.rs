@@ -1,12 +1,13 @@
 use std::fmt::Display;
 use std::marker::PhantomData;
 
-use cubecl::Runtime;
+use cubecl::{Runtime, std::CubeOption};
 
 use crate::components::global::read::{
-    async_partial_cyclic::AsyncPartialCyclicLoading,
+    async_full_cyclic::AsyncFullCyclicLoading, async_full_strided::AsyncFullStridedLoading,
+    async_full_tma::AsyncFullTmaLoading, async_partial_cyclic::AsyncPartialCyclicLoading,
     async_partial_strided::AsyncPartialStridedLoading, async_partial_tma::AsyncPartialTmaLoading,
-    sync_partial_cyclic::SyncPartialCyclicLoading,
+    sync_full_tilewise::SyncFullTilewiseLoading, sync_partial_cyclic::SyncPartialCyclicLoading,
 };
 use crate::components::global::{
     PlaneWriterFamily, read::sync_partial_tilewise::SyncPartialTilewiseLoading,
@@ -14,20 +15,22 @@ use crate::components::global::{
 use crate::components::stage::{ColMajorTilingOrder, PlaneMatmulFamily, RowMajorTilingOrder};
 use crate::components::tile;
 use crate::components::{
-    batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
-    tile::io::{Filled, Strided},
+    batch::BatchMatmulFamily, global::read::sync_full_cyclic::SyncFullCyclicLoading,
 };
 use crate::components::{
-    global::multi_stage::double_buffering::DoubleBufferingMatmulFamily,
-    stage::{FilledStageFamily, StridedStageFamily},
+    batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
+    tile::io::Strided,
+};
+use crate::components::{
+    global::multi_stage::double_buffering::DoubleBufferingMatmulFamily, stage::StridedStageFamily,
 };
 use crate::definition::{
     MatmulElems, MatmulProblem, MatmulSetupError, MultiRowStrategy, TilingBlueprint,
 };
+use crate::launch::RuntimeConfig;
 use crate::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
 use crate::routines::{BlueprintStrategy, LaunchInfo, base};
 use crate::routines::{DeviceSettings, Routine};
-use crate::{components::batch::BatchMatmulFamily, launch::RuntimeConfig};
 
 /// Plane accelerated double buffered matmul with cyclic readers
 pub struct CyclicDoubleBufferingAlgorithm<TMM> {
@@ -75,7 +78,7 @@ where
     TMM: tile::TileMatmulFamily<
             LhsTile = Strided,
             RhsTile = Strided,
-            AccTile = Filled,
+            AccTile = CubeOption<Strided>,
             OutTile = Strided,
         >,
     RC: RuntimeConfig,
@@ -85,10 +88,16 @@ where
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
         DoubleBufferingMatmulFamily<
-            PlaneMatmulFamily<TMM, StridedStageFamily, StridedStageFamily, FilledStageFamily>,
+            PlaneMatmulFamily<
+                TMM,
+                StridedStageFamily,
+                StridedStageFamily,
+                Option<StridedStageFamily>,
+            >,
             RC,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
+            SyncFullCyclicLoading<RowMajorTilingOrder>,
             PlaneWriterFamily,
         >,
         RowMajorGlobalPartitionMatmul,
@@ -152,7 +161,7 @@ where
     TMM: tile::TileMatmulFamily<
             LhsTile = Strided,
             RhsTile = Strided,
-            AccTile = Filled,
+            AccTile = CubeOption<Strided>,
             OutTile = Strided,
         >,
     RC: RuntimeConfig,
@@ -161,10 +170,16 @@ where
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
         DoubleBufferingMatmulFamily<
-            PlaneMatmulFamily<TMM, StridedStageFamily, StridedStageFamily, FilledStageFamily>,
+            PlaneMatmulFamily<
+                TMM,
+                StridedStageFamily,
+                StridedStageFamily,
+                Option<StridedStageFamily>,
+            >,
             RC,
             AsyncPartialCyclicLoading<RowMajorTilingOrder>,
             AsyncPartialCyclicLoading<RowMajorTilingOrder>,
+            AsyncFullCyclicLoading<RowMajorTilingOrder>,
             PlaneWriterFamily,
         >,
         RowMajorGlobalPartitionMatmul,
@@ -228,7 +243,7 @@ where
     TMM: tile::TileMatmulFamily<
             LhsTile = Strided,
             RhsTile = Strided,
-            AccTile = Filled,
+            AccTile = CubeOption<Strided>,
             OutTile = Strided,
         >,
     RC: RuntimeConfig,
@@ -238,11 +253,17 @@ where
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
         DoubleBufferingMatmulFamily<
-            PlaneMatmulFamily<TMM, StridedStageFamily, StridedStageFamily, FilledStageFamily>,
+            PlaneMatmulFamily<
+                TMM,
+                StridedStageFamily,
+                StridedStageFamily,
+                Option<StridedStageFamily>,
+            >,
             RC,
             // Other tiling orders are not supported
             SyncPartialTilewiseLoading<RowMajorTilingOrder>,
             SyncPartialTilewiseLoading<ColMajorTilingOrder>,
+            SyncFullTilewiseLoading<ColMajorTilingOrder>,
             PlaneWriterFamily,
         >,
         RowMajorGlobalPartitionMatmul,
@@ -306,7 +327,7 @@ where
     TMM: tile::TileMatmulFamily<
             LhsTile = Strided,
             RhsTile = Strided,
-            AccTile = Filled,
+            AccTile = CubeOption<Strided>,
             OutTile = Strided,
         >,
     RC: RuntimeConfig,
@@ -316,10 +337,16 @@ where
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
         DoubleBufferingMatmulFamily<
-            PlaneMatmulFamily<TMM, StridedStageFamily, StridedStageFamily, FilledStageFamily>,
+            PlaneMatmulFamily<
+                TMM,
+                StridedStageFamily,
+                StridedStageFamily,
+                Option<StridedStageFamily>,
+            >,
             RC,
             SyncPartialTilewiseLoading<RowMajorTilingOrder>,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
+            SyncFullCyclicLoading<RowMajorTilingOrder>,
             PlaneWriterFamily,
         >,
         RowMajorGlobalPartitionMatmul,
@@ -383,7 +410,7 @@ where
     TMM: tile::TileMatmulFamily<
             LhsTile = Strided,
             RhsTile = Strided,
-            AccTile = Filled,
+            AccTile = CubeOption<Strided>,
             OutTile = Strided,
         >,
     RC: RuntimeConfig,
@@ -392,10 +419,16 @@ where
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
         DoubleBufferingMatmulFamily<
-            PlaneMatmulFamily<TMM, StridedStageFamily, StridedStageFamily, FilledStageFamily>,
+            PlaneMatmulFamily<
+                TMM,
+                StridedStageFamily,
+                StridedStageFamily,
+                Option<StridedStageFamily>,
+            >,
             RC,
             AsyncPartialTmaLoading,
             AsyncPartialTmaLoading,
+            AsyncFullTmaLoading,
             PlaneWriterFamily,
         >,
         RowMajorGlobalPartitionMatmul,
@@ -459,7 +492,7 @@ where
     TMM: tile::TileMatmulFamily<
             LhsTile = Strided,
             RhsTile = Strided,
-            AccTile = Filled,
+            AccTile = CubeOption<Strided>,
             OutTile = Strided,
         >,
     RC: RuntimeConfig,
@@ -468,10 +501,16 @@ where
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
         DoubleBufferingMatmulFamily<
-            PlaneMatmulFamily<TMM, StridedStageFamily, StridedStageFamily, FilledStageFamily>,
+            PlaneMatmulFamily<
+                TMM,
+                StridedStageFamily,
+                StridedStageFamily,
+                Option<StridedStageFamily>,
+            >,
             RC,
             AsyncPartialStridedLoading,
             AsyncPartialStridedLoading,
+            AsyncFullStridedLoading,
             PlaneWriterFamily,
         >,
         RowMajorGlobalPartitionMatmul,

@@ -1,17 +1,18 @@
 use std::fmt::Display;
 use std::marker::PhantomData;
 
-use cubecl::Runtime;
+use cubecl::{Runtime, std::CubeOption};
 
 use crate::components::global::PlaneWriterFamily;
+use crate::components::global::multi_stage::ordered::OrderedDoubleBufferingMatmulFamily;
 use crate::components::stage::{PlaneMatmulFamily, RowMajorTilingOrder};
 use crate::components::tile;
 use crate::components::{
-    batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
-    stage::{FilledStageFamily, StridedStageFamily},
+    batch::BatchMatmulFamily, global::read::sync_full_cyclic::SyncFullCyclicLoading,
 };
 use crate::components::{
-    global::multi_stage::ordered::OrderedDoubleBufferingMatmulFamily, tile::io::Filled,
+    batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
+    stage::StridedStageFamily,
 };
 use crate::components::{
     global::read::sync_partial_cyclic::SyncPartialCyclicLoading, tile::io::Strided,
@@ -19,9 +20,9 @@ use crate::components::{
 use crate::definition::{
     MatmulElems, MatmulProblem, MatmulSetupError, MultiRowStrategy, TilingBlueprint,
 };
+use crate::launch::RuntimeConfig;
 use crate::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
 use crate::routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, Routine};
-use crate::{components::batch::BatchMatmulFamily, launch::RuntimeConfig};
 
 /// Plane accelerated double buffered matmul ordered on Lhs with cyclic reader on Rhs
 pub struct OrderedDoubleBufferingAlgorithm<TMM> {
@@ -56,7 +57,7 @@ where
     TMM: tile::TileMatmulFamily<
             LhsTile = Strided,
             RhsTile = Strided,
-            AccTile = Filled,
+            AccTile = CubeOption<Strided>,
             OutTile = Strided,
         >,
     RC: RuntimeConfig,
@@ -65,9 +66,15 @@ where
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
         OrderedDoubleBufferingMatmulFamily<
-            PlaneMatmulFamily<TMM, StridedStageFamily, StridedStageFamily, FilledStageFamily>,
+            PlaneMatmulFamily<
+                TMM,
+                StridedStageFamily,
+                StridedStageFamily,
+                Option<StridedStageFamily>,
+            >,
             RC,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
+            SyncFullCyclicLoading<RowMajorTilingOrder>,
             PlaneWriterFamily,
         >,
         RowMajorGlobalPartitionMatmul,

@@ -1,6 +1,6 @@
 use crate::components::global::read::{
     FullLoadingStrategy, FullStageGlobalReader, LoadingValidation as _, PartialLoadingStrategy,
-    PartialStageGlobalReader, StageBuffer, ZeroGlobalReader,
+    PartialStageGlobalReader, StageBuffer,
 };
 use crate::components::global::{self, GlobalWriter, SharedGlobalMatmulConfig};
 use crate::components::global::{Specializer, read::sync::Synchronous};
@@ -11,7 +11,7 @@ use crate::components::{
         execute_current_and_read_next, execute_last_and_write_results, read_first,
     },
     stage,
-    stage::{FilledStage, StridedStageMemory},
+    stage::StridedStageMemory,
 };
 use crate::definition::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS};
 use crate::{components::global::multi_stage::ordered::LL, launch::RuntimeConfig};
@@ -30,6 +30,7 @@ pub struct OrderedDoubleBufferingMatmul<
     SMM: stage::StageMatmul<MP>,
     RC: RuntimeConfig,
     RL: PartialLoadingStrategy<RC>,
+    AL: FullLoadingStrategy<RC>,
     GW: GlobalWriter<MP::Acc>,
 > {
     _ms: PhantomData<MP>,
@@ -37,22 +38,24 @@ pub struct OrderedDoubleBufferingMatmul<
     _rc: PhantomData<RC>,
     _lhs_loading: PhantomData<LL>,
     _rhs_loading: PhantomData<RL>,
+    _acc_loading: PhantomData<AL>,
     _writer: PhantomData<GW>,
 }
 
 #[cube]
-impl<MP: MatmulPrecision, SMM, RC, RL, GW> global::GlobalMatmul<RC, MP>
-    for OrderedDoubleBufferingMatmul<MP, SMM, RC, RL, GW>
+impl<MP: MatmulPrecision, SMM, RC, RL, AL, GW> global::GlobalMatmul<RC, MP>
+    for OrderedDoubleBufferingMatmul<MP, SMM, RC, RL, AL, GW>
 where
     SMM: stage::StageMatmul<
             MP,
             LhsStage = StridedStageMemory<LhsS<MP>, <LL as FullLoadingStrategy<RC>>::TilingLayout>,
             RhsStage = StridedStageMemory<RhsS<MP>, RL::TilingLayout>,
-            AccStage = FilledStage<AccS<MP>>,
+            AccStage = CubeOption<StridedStageMemory<AccS<MP>, AL::TilingLayout>>,
             OutStage = GW::Stage,
         >,
     RC: RuntimeConfig,
     RL: PartialLoadingStrategy<RC, Stage = StridedStageFamily, SyncStrategy = Synchronous>,
+    AL: FullLoadingStrategy<RC, SyncStrategy = Synchronous>,
     GW: GlobalWriter<MP::Acc>,
 {
     type Config = SharedGlobalMatmulConfig<SMM::Config>;
@@ -68,7 +71,14 @@ where
         RC,
         RL,
     >;
-    type AccGlobalReader = ZeroGlobalReader<MP::Acc>;
+    type AccGlobalReader = CubeOption<
+        FullStageGlobalReader<
+            <MP::Acc as MatrixPrecision>::Global,
+            <MP::Acc as MatrixPrecision>::Stage,
+            RC,
+            AL,
+        >,
+    >;
     type GlobalWriter = GW;
     type Accumulators = SMM::Accumulators;
 
@@ -117,8 +127,18 @@ where
         let num_stage_matmuls = needed_stage_matmuls + (needed_stage_matmuls % 2);
         let num_loops = (num_stage_matmuls - 2) / 2;
 
-        let acc_reader = acc_reader.stage();
-        SMM::load_accumulators(&acc_reader, &mut acc, config.stage_config);
+        let mut barrier = ();
+
+        let acc_stage = match acc_reader {
+            CubeOption::Some(mut reader) => {
+                reader.load_stage(&mut barrier, config.acc_reader_config);
+                sync_cube();
+                CubeOption::new_Some(reader.stage())
+            }
+            CubeOption::None => CubeOption::new_None(),
+        };
+
+        SMM::load_accumulators(&acc_stage, &mut acc, config.stage_config);
 
         let (mut lhs_tile, mut rhs_tile) = SMM::init_tile_inputs(config.stage_config);
         let partition_scheduler = SMM::init_scheduler(config.stage_config);
@@ -126,8 +146,6 @@ where
         let lhs_stage = lhs_reader.stage();
         let rhs_stage_a = rhs_reader.stage(StageBuffer::A);
         let rhs_stage_b = rhs_reader.stage(StageBuffer::B);
-
-        let mut barrier = ();
 
         let specializer = Specializer::new(
             config.plane_flow_config(),
@@ -272,12 +290,17 @@ where
 
     fn init_acc_global_reader(
         acc: CubeOption<View<Line<AccG<MP>>, Coords2d>>,
-        _runtime_config: RC,
-        #[comptime] _config: Self::Config,
+        runtime_config: RC,
+        #[comptime] config: Self::Config,
     ) -> Self::AccGlobalReader {
         match acc {
-            CubeOption::None => ZeroGlobalReader::new(),
-            CubeOption::Some(_) => panic!("Accumulator loading is not yet supported"),
+            CubeOption::None => CubeOption::new_None(),
+            CubeOption::Some(view) => CubeOption::new_Some(FullStageGlobalReader::new(
+                view,
+                runtime_config,
+                0,
+                config.acc_reader_config,
+            )),
         }
     }
 

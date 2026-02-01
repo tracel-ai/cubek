@@ -82,7 +82,7 @@ pub fn launch_kernel_virtual<'a, MA: MatmulArgs, R: Runtime, A: Routine<MA::Conf
 
 /// Select which kernel to launch for the given Algorithm.
 #[allow(clippy::too_many_arguments)]
-fn launch_kernel<'a, MA: MatmulArgs, R: Runtime, A: Routine<MA::Config>>(
+pub fn launch_kernel<'a, MA: MatmulArgs, R: Runtime, A: Routine<MA::Config>>(
     client: &ComputeClient<R>,
     input: InputRuntimeArg<'a, MA, R>,
     output: OutputRuntimeArg<'a, MA, R>,

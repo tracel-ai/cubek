@@ -140,6 +140,7 @@ pub struct SharedGlobalMatmulConfig<S: StageConfig> {
     pub num_planes: u32,
     pub lhs_reader_config: GlobalReaderConfig,
     pub rhs_reader_config: GlobalReaderConfig,
+    pub acc_reader_config: GlobalReaderConfig,
     pub writer_config: GlobalWriterConfig,
     pub must_sync_plane_after_execution: bool,
 }

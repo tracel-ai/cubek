@@ -172,6 +172,7 @@ pub trait StageConfig:
 
     fn lhs_smem_config(&self) -> StageMemoryConfig;
     fn rhs_smem_config(&self) -> StageMemoryConfig;
+    fn acc_smem_config(&self) -> StageMemoryConfig;
     fn out_smem_config(&self) -> StageMemoryConfig;
 }
 
