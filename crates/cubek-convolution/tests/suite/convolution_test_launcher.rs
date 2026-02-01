@@ -1,13 +1,10 @@
 use crate::suite::test_utils::{Sample, TensorRawParts};
 use cubecl::{CubeElement, server::Allocation};
 use cubecl::{TestRuntime, prelude::*};
+use cubek_convolution::{components::ConvolutionProblem, kernels::forward::algorithm::Algorithm};
 use cubek_convolution::{
     components::{ConvGemmConfig, ConvSetupError, ConvolutionOperation},
     forward::args::{ConcreteArgs, ConcreteInputsFactory, ConcreteOutputFactory},
-};
-use cubek_convolution::{
-    components::{ConvolutionProblem, global::entry_point::ConvolutionLaunch},
-    kernels::forward::algorithm::Algorithm,
 };
 use cubek_matmul::{
     definition::{AvailableLineSizes, MatmulSetupError},

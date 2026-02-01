@@ -276,23 +276,13 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory<TilingBluepr
         let padded_channels = problem.padded_channels as u32;
         let shape_k = problem.k as u32;
 
-        let shape_out = problem
-            .out_shape
-            .iter()
-            .map(|it| FastDivmodArgs::<u32>::new(client, *it as u32))
-            .collect();
-
         // Im2col needs extra checking because if `k` is OOB it wraps around the kernel and can load
         // in-bounds but not in-kernel elements. Other TMA layouts are always outside the shape if
         // any matrix dim is out of bounds.
         let stages_lhs = 1; // Is there a way to get this from the blueprint?
         let stages_size_k = blueprint.tiling_scheme.elements_per_stage_along_k() * stages_lhs;
-        let lhs_layout = TmaIm2colLayoutLaunch::new(
-            shape_out,
-            FastDivmodArgs::<u32>::new(client, padded_channels),
-            ConvolutionParams::from_problem(problem),
-            !shape_k.is_multiple_of(stages_size_k),
-        );
+        let check_kernel = !shape_k.is_multiple_of(stages_size_k);
+        let lhs_layout = TmaIm2colLayoutLaunch::from_args(client, problem, check_kernel);
         let rhs_layout = WeightLayoutLaunch::from_args(
             client,
             problem,

@@ -296,12 +296,6 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory<TilingBluepr
         let shape_k = problem.k as u32;
         let shape_n = problem.n as u32;
 
-        let shape_out = problem
-            .out_shape
-            .iter()
-            .map(|it| FastDivmodArgs::<u32>::new(client, *it as u32))
-            .collect();
-
         // Im2col needs extra checking because if `n` is OOB it wraps around the kernel and can load
         // in-bounds but not in-kernel elements. Other TMA layouts are always outside the shape if
         // any matrix dim is out of bounds.
@@ -311,12 +305,8 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory<TilingBluepr
         let lhs_layout = TmaOutGradLayoutLaunch::new();
         let lhs_layout = TransposeLaunch::new(lhs_layout);
 
-        let rhs_layout = TmaIm2colLayoutLaunch::new(
-            shape_out,
-            FastDivmodArgs::<u32>::new(client, padded_channels),
-            ConvolutionParams::from_problem(problem),
-            !shape_n.is_multiple_of(stages_size_n),
-        );
+        let check_kernel = !shape_n.is_multiple_of(stages_size_n);
+        let rhs_layout = TmaIm2colLayoutLaunch::from_args(client, problem, check_kernel);
 
         let inputs = TensorMapInputsLaunch::new(
             ViewArg::new_tensor_map_tiled::<LhsLayout>(lhs, lhs_layout),

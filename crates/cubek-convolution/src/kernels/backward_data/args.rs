@@ -211,7 +211,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory<TilingBluepr
         client: &ComputeClient<R>,
         out_grad: &'a MatmulInputHandleRef<'a, R>,
         weights: &'a MatmulInputHandleRef<'a, R>,
-        selection: &TilingBlueprint,
+        blueprint: &TilingBlueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
@@ -219,7 +219,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory<TilingBluepr
         type LhsLayout = TmaIm2colLayout;
         type RhsLayout = WeightLayout;
 
-        let tiling_scheme = selection.tiling_scheme;
+        let tiling_scheme = blueprint.tiling_scheme;
         let stage_m = tiling_scheme.elements_per_stage_along_m();
         let stage_n = tiling_scheme.elements_per_stage_along_n();
         let stage_k = tiling_scheme.elements_per_stage_along_k();
@@ -266,23 +266,13 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric> ConcreteInputsFactory<TilingBluepr
         let padded_channels = problem.padded_channels as u32;
         let shape_k = problem.k as u32;
 
-        let shape_out = problem
-            .out_shape
-            .iter()
-            .map(|it| FastDivmodArgs::<u32>::new(client, *it as u32))
-            .collect();
-
         // Im2col needs extra checking because if `k` is OOB it wraps around the kernel and can load
         // in-bounds but not in-kernel elements. Other TMA layouts are always outside the shape if
         // any matrix dim is out of bounds.
         let stages_lhs = 1; // Figure out how to do this with blueprint
-        let stages_size_k = selection.tiling_scheme.elements_per_stage_along_k() * stages_lhs;
-        let lhs_layout = TmaIm2colLayoutLaunch::new(
-            shape_out,
-            FastDivmodArgs::<u32>::new(client, padded_channels),
-            ConvolutionParams::from_problem(problem),
-            !shape_k.is_multiple_of(stages_size_k),
-        );
+        let stages_size_k = blueprint.tiling_scheme.elements_per_stage_along_k() * stages_lhs;
+        let check_kernel = !shape_k.is_multiple_of(stages_size_k);
+        let lhs_layout = TmaIm2colLayoutLaunch::from_args(client, problem, check_kernel);
         let rhs_layout = WeightLayoutLaunch::from_args(
             client,
             problem,
