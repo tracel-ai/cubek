@@ -8,7 +8,7 @@ use cubecl::{
     future,
     prelude::*,
 };
-use cubek::sort::sort_keys;
+use cubek::sort::{SortOrder, sort_keys};
 use std::time::Duration;
 
 // Match b0nes benchmark parameters: 1 warmup + 100 timed iterations
@@ -71,7 +71,7 @@ impl<R: Runtime> Benchmark for SortBench<R> {
             input_ref,
             output_ref,
             self.num_items,
-            None, // Use auto-tuned strategy based on input size
+            SortOrder::Ascending,
         )
         .map_err(|e| format!("Sort failed: {:?}", e))?;
 

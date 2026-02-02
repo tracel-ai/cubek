@@ -1,611 +1,369 @@
-//! End-to-end tests for cubek-sort.
-//!
-//! These tests verify that the sorting algorithm produces correct results
-//! on actual GPU backends.
-
-use cubecl::TestRuntime;
+use cubecl::ir::{ElemType, FloatKind, IntKind, UIntKind};
 use cubecl::prelude::*;
-use cubek_sort::sort_keys;
+use cubecl::TestRuntime;
+use cubek_sort::{SortKey, SortOrder, sort_keys};
+use half::{bf16, f16};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 
-// =============================================================================
-// Test runner for i32
-// =============================================================================
+use SortOrder::{Ascending, Descending};
 
-/// Run a sort test with i32 input and verify correctness.
-fn run_sort_test_i32(input: &[i32]) {
-    let client = TestRuntime::client(&Default::default());
-    let num_items = input.len();
-
-    if num_items == 0 {
-        return;
-    }
-
-    // Create input and output handles
-    let input_handle = client.create_from_slice(i32::as_bytes(input));
-    let output_handle = client.empty(std::mem::size_of_val(input));
-
-    let shape = [num_items];
-    let strides = [1];
-
-    let input_ref = unsafe {
-        TensorHandleRef::from_raw_parts(&input_handle, &strides, &shape, size_of::<i32>())
-    };
-    let output_ref = unsafe {
-        TensorHandleRef::from_raw_parts(&output_handle, &strides, &shape, size_of::<i32>())
-    };
-
-    // Run the sort with default strategy
-    let result = sort_keys::<TestRuntime, i32>(&client, input_ref, output_ref, num_items, None);
-
-    match result {
-        Ok(()) => {}
-        Err(e) => panic!("Sort failed: {e:?}"),
-    }
-
-    // Read back the results
-    let bytes = client.read_one(output_handle);
-    let output = i32::from_bytes(&bytes);
-
-    // Compute expected result using CPU sort
-    let mut expected = input.to_vec();
-    expected.sort();
-
-    // Compare
-    assert_eq!(
-        output.len(),
-        expected.len(),
-        "Output length mismatch: got {}, expected {}",
-        output.len(),
-        expected.len()
-    );
-
-    for (i, (got, exp)) in output.iter().zip(expected.iter()).enumerate() {
-        assert_eq!(
-            got, exp,
-            "Mismatch at index {i}: got {got}, expected {exp}\nFull output: {output:?}\nExpected: {expected:?}"
-        );
-    }
-}
-
-// =============================================================================
-// Test runner for f32
-// =============================================================================
-
-/// Run a sort test with f32 input and verify correctness.
-/// NaN values are sorted by their bitwise representation (matching CUB behavior).
-fn run_sort_test_f32(input: &[f32]) {
-    let client = TestRuntime::client(&Default::default());
-    let num_items = input.len();
-
-    if num_items == 0 {
-        return;
-    }
-
-    // Create input and output handles
-    let input_handle = client.create_from_slice(f32::as_bytes(input));
-    let output_handle = client.empty(std::mem::size_of_val(input));
-
-    let shape = [num_items];
-    let strides = [1];
-
-    let input_ref = unsafe {
-        TensorHandleRef::from_raw_parts(&input_handle, &strides, &shape, size_of::<f32>())
-    };
-    let output_ref = unsafe {
-        TensorHandleRef::from_raw_parts(&output_handle, &strides, &shape, size_of::<f32>())
-    };
-
-    // Run the sort with default strategy
-    let result = sort_keys::<TestRuntime, f32>(&client, input_ref, output_ref, num_items, None);
-
-    match result {
-        Ok(()) => {}
-        Err(e) => panic!("Sort failed: {e:?}"),
-    }
-
-    // Read back the results
-    let bytes = client.read_one(output_handle);
-    let output = f32::from_bytes(&bytes);
-
-    // Compute expected result using CPU sort with same ordering as GPU
-    // For f32: -inf < negative < -0 < +0 < positive < +inf < NaN (by bits)
-    let mut expected = input.to_vec();
-    expected.sort_by(|a, b| f32_sort_order(*a, *b));
-
-    // Compare
-    assert_eq!(
-        output.len(),
-        expected.len(),
-        "Output length mismatch: got {}, expected {}",
-        output.len(),
-        expected.len()
-    );
-
-    for (i, (got, exp)) in output.iter().zip(expected.iter()).enumerate() {
-        // Use bitwise comparison to handle NaN correctly
-        let got_bits = got.to_bits();
-        let exp_bits = exp.to_bits();
-        assert_eq!(
-            got_bits, exp_bits,
-            "Mismatch at index {i}: got {got} (bits: {got_bits:#x}), expected {exp} (bits: {exp_bits:#x})"
-        );
-    }
-}
-
-/// Sort ordering for f32 that matches the GPU radix sort behavior.
-/// This uses the same bit transformation as SortKey::to_radix_key.
-fn f32_sort_order(a: f32, b: f32) -> std::cmp::Ordering {
-    let a_bits = a.to_bits();
-    let b_bits = b.to_bits();
-
-    // Transform to radix key (same as SortKey impl):
-    // Positive floats: flip sign bit (0x8000_0000 ^ bits)
-    // Negative floats: flip all bits (!bits)
-    let a_key = if (a_bits as i32) < 0 {
-        !a_bits
-    } else {
-        a_bits ^ 0x8000_0000
-    };
-    let b_key = if (b_bits as i32) < 0 {
-        !b_bits
-    } else {
-        b_bits ^ 0x8000_0000
-    };
-
-    a_key.cmp(&b_key)
-}
-
-/// Run a sort test with the given input and verify correctness.
-fn run_sort_test_u32(input: &[u32]) {
-    let client = TestRuntime::client(&Default::default());
-    let num_items = input.len();
-
-    if num_items == 0 {
-        return;
-    }
-
-    // Create input and output handles
-    let input_handle = client.create_from_slice(u32::as_bytes(input));
-    let output_handle = client.empty(std::mem::size_of_val(input));
-
-    let shape = [num_items];
-    let strides = [1];
-
-    let input_ref = unsafe {
-        TensorHandleRef::from_raw_parts(&input_handle, &strides, &shape, size_of::<u32>())
-    };
-    let output_ref = unsafe {
-        TensorHandleRef::from_raw_parts(&output_handle, &strides, &shape, size_of::<u32>())
-    };
-
-    // Run the sort with default strategy
-    let result = sort_keys::<TestRuntime, u32>(&client, input_ref, output_ref, num_items, None);
-
-    match result {
-        Ok(()) => {}
-        Err(e) => panic!("Sort failed: {e:?}"),
-    }
-
-    // Read back the results
-    let bytes = client.read_one(output_handle);
-    let output = u32::from_bytes(&bytes);
-
-    // Compute expected result using CPU sort
-    let mut expected = input.to_vec();
-    expected.sort();
-
-    // Compare
-    assert_eq!(
-        output.len(),
-        expected.len(),
-        "Output length mismatch: got {}, expected {}",
-        output.len(),
-        expected.len()
-    );
-
-    for (i, (got, exp)) in output.iter().zip(expected.iter()).enumerate() {
-        assert_eq!(
-            got, exp,
-            "Mismatch at index {i}: got {got}, expected {exp}\nFull output: {output:?}\nExpected: {expected:?}"
-        );
-    }
-}
-
-/// Generate random u32 values.
-fn random_u32_values(size: usize, seed: u64) -> Vec<u32> {
+fn random_values<T>(size: usize, seed: u64) -> Vec<T>
+where
+    rand::distr::StandardUniform: rand::distr::Distribution<T>,
+{
     let mut rng = StdRng::seed_from_u64(seed);
     (0..size).map(|_| rng.random()).collect()
 }
 
-/// Generate sequential values in reverse order (worst case for some sorts).
-fn reverse_sequential(size: usize) -> Vec<u32> {
-    (0..size as u32).rev().collect()
+fn is_supported(client: &ComputeClient<TestRuntime>, types: &[ElemType]) -> bool {
+    types.iter().all(|t| client.properties().features.supports_type(*t))
 }
 
-/// Generate values that are already sorted.
-fn already_sorted(size: usize) -> Vec<u32> {
-    (0..size as u32).collect()
+fn run_sort_test<T>(input: &[T], order: SortOrder, required_types: &[ElemType])
+where
+    T: SortKey + CubeElement + Clone + PartialOrd + std::fmt::Debug,
+    T::Radix: SortKey<Radix = T::Radix>,
+{
+    let client = TestRuntime::client(&Default::default());
+
+    if !is_supported(&client, required_types) {
+        return;
+    }
+
+    let num_items = input.len();
+    if num_items == 0 {
+        return;
+    }
+
+    let input_handle = client.create_from_slice(T::as_bytes(input));
+    let output_handle = client.empty(std::mem::size_of_val(input));
+
+    let shape = [num_items];
+    let strides = [1];
+
+    let input_ref =
+        unsafe { TensorHandleRef::from_raw_parts(&input_handle, &strides, &shape, size_of::<T>()) };
+    let output_ref =
+        unsafe { TensorHandleRef::from_raw_parts(&output_handle, &strides, &shape, size_of::<T>()) };
+
+    let result = sort_keys::<TestRuntime, T>(&client, input_ref, output_ref, num_items, order);
+    result.expect("Sort failed");
+
+    let bytes = client.read_one(output_handle);
+    let output = T::from_bytes(&bytes);
+
+    let mut expected = input.to_vec();
+    expected.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    if order.is_descending() {
+        expected.reverse();
+    }
+
+    assert_eq!(output.len(), expected.len(), "Length mismatch");
+    for (i, (got, exp)) in output.iter().zip(expected.iter()).enumerate() {
+        assert_eq!(got, exp, "Mismatch at index {i}: got {got:?}, expected {exp:?}");
+    }
 }
 
-/// Generate values with many duplicates.
-fn many_duplicates(size: usize, seed: u64) -> Vec<u32> {
-    let mut rng = StdRng::seed_from_u64(seed);
-    // Only use 16 distinct values
-    (0..size).map(|_| rng.random::<u32>() % 16).collect()
-}
-
-// =============================================================================
-// Test cases
-// =============================================================================
+// f32 tests (comprehensive)
 
 #[test]
-fn test_empty() {
-    run_sort_test_u32(&[]);
-}
-
-#[test]
-fn test_single_element() {
-    run_sort_test_u32(&[42]);
-}
-
-#[test]
-fn test_two_elements_sorted() {
-    run_sort_test_u32(&[1, 2]);
-}
-
-#[test]
-fn test_two_elements_reversed() {
-    run_sort_test_u32(&[2, 1]);
-}
-
-#[test]
-fn test_small_random() {
-    run_sort_test_u32(&random_u32_values(16, 12345));
-}
-
-#[test]
-fn test_medium_random() {
-    run_sort_test_u32(&random_u32_values(256, 12345));
-}
-
-#[test]
-fn test_large_random() {
-    run_sort_test_u32(&random_u32_values(4096, 12345));
-}
-
-#[test]
-fn test_xlarge_random() {
-    run_sort_test_u32(&random_u32_values(65536, 12345));
-}
-
-#[test]
-fn test_already_sorted_small() {
-    run_sort_test_u32(&already_sorted(64));
-}
-
-#[test]
-fn test_already_sorted_large() {
-    run_sort_test_u32(&already_sorted(4096));
-}
-
-#[test]
-fn test_reverse_sorted_small() {
-    run_sort_test_u32(&reverse_sequential(64));
-}
-
-#[test]
-fn test_reverse_sorted_large() {
-    run_sort_test_u32(&reverse_sequential(4096));
-}
-
-#[test]
-fn test_duplicates_small() {
-    run_sort_test_u32(&many_duplicates(64, 12345));
-}
-
-#[test]
-fn test_duplicates_large() {
-    run_sort_test_u32(&many_duplicates(4096, 12345));
-}
-
-#[test]
-fn test_all_same_value() {
-    run_sort_test_u32(&vec![42u32; 1024]);
-}
-
-#[test]
-fn test_all_zeros() {
-    run_sort_test_u32(&vec![0u32; 1024]);
-}
-
-#[test]
-fn test_all_max() {
-    run_sort_test_u32(&vec![u32::MAX; 1024]);
-}
-
-#[test]
-fn test_min_and_max() {
-    let mut values = vec![u32::MAX; 512];
-    values.extend(vec![0u32; 512]);
-    run_sort_test_u32(&values);
-}
-
-#[test]
-fn test_power_of_two_size() {
-    run_sort_test_u32(&random_u32_values(1024, 54321));
-}
-
-#[test]
-fn test_non_power_of_two_size() {
-    run_sort_test_u32(&random_u32_values(1000, 54321));
-}
-
-#[test]
-fn test_prime_size() {
-    run_sort_test_u32(&random_u32_values(1009, 54321)); // 1009 is prime
-}
-
-#[test]
-fn test_odd_size() {
-    run_sort_test_u32(&random_u32_values(1023, 54321));
-}
-
-// =============================================================================
-// i32 tests
-// =============================================================================
-
-/// Generate random i32 values (full range including negatives).
-fn random_i32_values(size: usize, seed: u64) -> Vec<i32> {
-    let mut rng = StdRng::seed_from_u64(seed);
-    (0..size).map(|_| rng.random()).collect()
-}
-
-#[test]
-fn test_i32_single_negative() {
-    run_sort_test_i32(&[-42]);
-}
-
-#[test]
-fn test_i32_two_elements() {
-    run_sort_test_i32(&[1, -1]);
-}
-
-#[test]
-fn test_i32_small_random() {
-    run_sort_test_i32(&random_i32_values(64, 12345));
-}
-
-#[test]
-fn test_i32_medium_random() {
-    run_sort_test_i32(&random_i32_values(1024, 12345));
-}
-
-#[test]
-fn test_i32_large_random() {
-    run_sort_test_i32(&random_i32_values(8192, 12345));
-}
-
-#[test]
-fn test_i32_all_negative() {
-    let values: Vec<i32> = (-1000..0).collect();
-    run_sort_test_i32(&values);
-}
-
-#[test]
-fn test_i32_all_positive() {
-    let values: Vec<i32> = (0..1000).collect();
-    run_sort_test_i32(&values);
-}
-
-#[test]
-fn test_i32_mixed_sign() {
-    let values: Vec<i32> = (-500..500).collect();
-    run_sort_test_i32(&values);
-}
-
-#[test]
-fn test_i32_reverse_mixed() {
-    let values: Vec<i32> = (-500..500).rev().collect();
-    run_sort_test_i32(&values);
-}
-
-#[test]
-fn test_i32_extremes() {
-    // Test with i32::MIN and i32::MAX
-    run_sort_test_i32(&[i32::MIN, i32::MAX, 0, -1, 1]);
-}
-
-#[test]
-fn test_i32_around_zero() {
-    // Values clustered around zero
-    run_sort_test_i32(&[-3, -2, -1, 0, 1, 2, 3]);
-}
-
-#[test]
-fn test_i32_min_values() {
-    // Multiple i32::MIN values
-    run_sort_test_i32(&[i32::MIN, i32::MIN, 0, i32::MIN]);
-}
-
-#[test]
-fn test_i32_max_values() {
-    // Multiple i32::MAX values
-    run_sort_test_i32(&[i32::MAX, i32::MAX, 0, i32::MAX]);
-}
-
-#[test]
-fn test_i32_boundary_crossing() {
-    // Values that cross the sign boundary in interesting ways
-    let mut values = vec![i32::MIN, i32::MIN + 1, -1, 0, 1, i32::MAX - 1, i32::MAX];
-    values.extend(random_i32_values(100, 99999));
-    run_sort_test_i32(&values);
-}
-
-#[test]
-fn test_i32_duplicates_negative() {
-    // Many duplicate negative values
-    let values: Vec<i32> = (0..1024).map(|i| -(i % 8)).collect();
-    run_sort_test_i32(&values);
-}
-
-// =============================================================================
-// f32 tests
-// =============================================================================
-
-/// Generate random f32 values in a reasonable range.
-fn random_f32_values(size: usize, seed: u64) -> Vec<f32> {
-    let mut rng = StdRng::seed_from_u64(seed);
-    (0..size)
-        .map(|_| {
-            // Generate in range [-1e6, 1e6] for variety
-            (rng.random::<f32>() - 0.5) * 2e6
-        })
-        .collect()
+fn test_f32_empty() {
+    run_sort_test::<f32>(&[], Ascending, &[]);
 }
 
 #[test]
 fn test_f32_single() {
-    run_sort_test_f32(&[3.5]);
+    run_sort_test(&[3.5f32], Ascending, &[]);
 }
 
 #[test]
 fn test_f32_two_elements() {
-    run_sort_test_f32(&[1.0, -1.0]);
+    run_sort_test(&[1.0f32, -1.0], Ascending, &[]);
+    run_sort_test(&[-1.0f32, 1.0], Ascending, &[]);
 }
 
 #[test]
 fn test_f32_small_random() {
-    run_sort_test_f32(&random_f32_values(64, 12345));
+    run_sort_test(&random_values::<f32>(64, 12345), Ascending, &[]);
 }
 
 #[test]
 fn test_f32_medium_random() {
-    run_sort_test_f32(&random_f32_values(1024, 12345));
+    run_sort_test(&random_values::<f32>(1009, 54321), Ascending, &[]);
 }
 
 #[test]
 fn test_f32_large_random() {
-    run_sort_test_f32(&random_f32_values(8192, 12345));
+    run_sort_test(&random_values::<f32>(65537, 99999), Ascending, &[]);
 }
 
 #[test]
-fn test_f32_positive_infinity() {
-    run_sort_test_f32(&[1.0, f32::INFINITY, 0.0, -1.0, f32::INFINITY]);
+fn test_f32_already_sorted() {
+    let values: Vec<f32> = (0..1024).map(|i| i as f32).collect();
+    run_sort_test(&values, Ascending, &[]);
 }
 
 #[test]
-fn test_f32_negative_infinity() {
-    run_sort_test_f32(&[1.0, f32::NEG_INFINITY, 0.0, -1.0, f32::NEG_INFINITY]);
-}
-
-#[test]
-fn test_f32_both_infinities() {
-    run_sort_test_f32(&[
-        f32::INFINITY,
-        f32::NEG_INFINITY,
-        0.0,
-        1.0,
-        -1.0,
-        f32::INFINITY,
-        f32::NEG_INFINITY,
-    ]);
-}
-
-#[test]
-fn test_f32_nan_single() {
-    // NaN should sort after +inf (by bit pattern)
-    run_sort_test_f32(&[1.0, f32::NAN, 0.0]);
-}
-
-#[test]
-fn test_f32_nan_multiple() {
-    // Multiple NaN values with different bit patterns
-    let nan1 = f32::NAN;
-    let nan2 = f32::from_bits(0x7FC0_0001); // Different NaN payload
-    let nan3 = f32::from_bits(0x7FFF_FFFF); // Max positive NaN
-    run_sort_test_f32(&[1.0, nan1, 0.0, nan2, -1.0, nan3]);
-}
-
-#[test]
-fn test_f32_negative_nan() {
-    // Negative NaN (sign bit set)
-    let neg_nan = f32::from_bits(0xFFC0_0000);
-    run_sort_test_f32(&[1.0, neg_nan, 0.0, f32::NAN, -1.0]);
-}
-
-#[test]
-fn test_f32_all_special_values() {
-    // Comprehensive test with all special float values
-    let neg_nan = f32::from_bits(0xFFC0_0000);
-    run_sort_test_f32(&[
-        f32::NEG_INFINITY,
-        -f32::MAX,
-        -1.0,
-        -f32::MIN_POSITIVE,
-        -0.0,
-        0.0,
-        f32::MIN_POSITIVE,
-        1.0,
-        f32::MAX,
-        f32::INFINITY,
-        neg_nan,
-        f32::NAN,
-    ]);
-}
-
-#[test]
-fn test_f32_subnormals() {
-    // Subnormal (denormalized) numbers
-    let subnormal_pos = f32::from_bits(0x0000_0001); // Smallest positive subnormal
-    let subnormal_neg = f32::from_bits(0x8000_0001); // Smallest negative subnormal
-    run_sort_test_f32(&[
-        0.0,
-        subnormal_pos,
-        -0.0,
-        subnormal_neg,
-        f32::MIN_POSITIVE,
-        -f32::MIN_POSITIVE,
-    ]);
-}
-
-#[test]
-fn test_f32_zero_variants() {
-    // +0.0 and -0.0 are different bit patterns
-    run_sort_test_f32(&[0.0, -0.0, 0.0, -0.0]);
-}
-
-#[test]
-fn test_f32_near_zero() {
-    // Values very close to zero
-    run_sort_test_f32(&[1e-38, -1e-38, 1e-30, -1e-30, 0.0, -0.0]);
-}
-
-#[test]
-fn test_f32_large_magnitude() {
-    // Very large and very small magnitudes
-    run_sort_test_f32(&[1e38, -1e38, 1e-38, -1e-38, 0.0]);
-}
-
-#[test]
-fn test_f32_mixed_with_special() {
-    // Mix of normal values and special values
-    let mut values = random_f32_values(100, 11111);
-    values.extend([
-        f32::INFINITY,
-        f32::NEG_INFINITY,
-        f32::NAN,
-        0.0,
-        -0.0,
-        f32::MAX,
-        -f32::MAX,
-    ]);
-    run_sort_test_f32(&values);
+fn test_f32_reverse_sorted() {
+    let values: Vec<f32> = (0..1024).rev().map(|i| i as f32).collect();
+    run_sort_test(&values, Ascending, &[]);
 }
 
 #[test]
 fn test_f32_duplicates() {
-    // Many duplicate float values
     let values: Vec<f32> = (0..1024).map(|i| (i % 16) as f32 - 8.0).collect();
-    run_sort_test_f32(&values);
+    run_sort_test(&values, Ascending, &[]);
+}
+
+#[test]
+fn test_f32_all_same() {
+    run_sort_test(&vec![42.0f32; 1024], Ascending, &[]);
+}
+
+#[test]
+fn test_f32_infinities() {
+    run_sort_test(
+        &[f32::NEG_INFINITY, -1.0, 0.0, 1.0, f32::INFINITY],
+        Ascending,
+        &[],
+    );
+    run_sort_test(
+        &[
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::INFINITY,
+            0.0,
+            f32::NEG_INFINITY,
+        ],
+        Ascending,
+        &[],
+    );
+}
+
+#[test]
+fn test_f32_zero_variants() {
+    run_sort_test(&[0.0f32, -0.0, 0.0, -0.0], Ascending, &[]);
+}
+
+#[test]
+fn test_f32_subnormals() {
+    let subnormal_pos = f32::from_bits(0x0000_0001);
+    let subnormal_neg = f32::from_bits(0x8000_0001);
+    run_sort_test(
+        &[0.0, subnormal_pos, -0.0, subnormal_neg, f32::MIN_POSITIVE],
+        Ascending,
+        &[],
+    );
+}
+
+#[test]
+fn test_f32_special_mixed() {
+    let mut values = random_values::<f32>(100, 11111);
+    values.extend([
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        0.0,
+        -0.0,
+        f32::MAX,
+        -f32::MAX,
+    ]);
+    run_sort_test(&values, Ascending, &[]);
+}
+
+#[test]
+fn test_f32_descending() {
+    run_sort_test(&random_values::<f32>(1009, 12345), Descending, &[]);
+}
+
+#[test]
+fn test_f32_descending_with_infinities() {
+    run_sort_test(
+        &[f32::NEG_INFINITY, -1.0, 0.0, 1.0, f32::INFINITY],
+        Descending,
+        &[],
+    );
+}
+
+// u32 tests (spot checks)
+
+#[test]
+fn test_u32_basic() {
+    run_sort_test(&[42u32], Ascending, &[]);
+    run_sort_test(&[2u32, 1], Ascending, &[]);
+    run_sort_test(&random_values::<u32>(1009, 12345), Ascending, &[]);
+}
+
+#[test]
+fn test_u32_extremes() {
+    run_sort_test(&[u32::MIN, u32::MAX, 0, 1, u32::MAX - 1], Ascending, &[]);
+}
+
+#[test]
+fn test_u32_descending() {
+    run_sort_test(&random_values::<u32>(1009, 12345), Descending, &[]);
+}
+
+// i32 tests (spot checks)
+
+#[test]
+fn test_i32_basic() {
+    run_sort_test(&[-42i32], Ascending, &[]);
+    run_sort_test(&[1i32, -1], Ascending, &[]);
+    run_sort_test(&random_values::<i32>(1009, 12345), Ascending, &[]);
+}
+
+#[test]
+fn test_i32_sign_boundary() {
+    run_sort_test(&[i32::MIN, i32::MAX, 0, -1, 1], Ascending, &[]);
+    let values: Vec<i32> = (-500..500).collect();
+    run_sort_test(&values, Ascending, &[]);
+}
+
+#[test]
+fn test_i32_descending() {
+    run_sort_test(&random_values::<i32>(1009, 12345), Descending, &[]);
+}
+
+// 16-bit types
+
+const U16: ElemType = ElemType::UInt(UIntKind::U16);
+const I16: ElemType = ElemType::Int(IntKind::I16);
+const F16: ElemType = ElemType::Float(FloatKind::F16);
+const BF16: ElemType = ElemType::Float(FloatKind::BF16);
+
+#[test]
+fn test_u16_basic() {
+    run_sort_test(&[42u16], Ascending, &[U16]);
+    run_sort_test(&random_values::<u16>(1009, 12345), Ascending, &[U16]);
+    run_sort_test(&[u16::MIN, u16::MAX, 1, 100], Ascending, &[U16]);
+}
+
+#[test]
+fn test_i16_basic() {
+    run_sort_test(&[-42i16], Ascending, &[I16]);
+    run_sort_test(&random_values::<i16>(1009, 12345), Ascending, &[I16]);
+    run_sort_test(&[i16::MIN, i16::MAX, 0, -1, 1], Ascending, &[I16]);
+}
+
+fn random_f16(size: usize, seed: u64) -> Vec<f16> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    (0..size)
+        .map(|_| f16::from_f32((rng.random::<f32>() - 0.5) * 1000.0))
+        .collect()
+}
+
+fn random_bf16(size: usize, seed: u64) -> Vec<bf16> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    (0..size)
+        .map(|_| bf16::from_f32((rng.random::<f32>() - 0.5) * 1000.0))
+        .collect()
+}
+
+#[test]
+fn test_f16_basic() {
+    run_sort_test(&[f16::from_f32(3.5)], Ascending, &[F16, U16]);
+    run_sort_test(&random_f16(1009, 12345), Ascending, &[F16, U16]);
+}
+
+#[test]
+fn test_f16_special() {
+    run_sort_test(
+        &[
+            f16::NEG_INFINITY,
+            f16::from_f32(-1.0),
+            f16::from_f32(0.0),
+            f16::from_f32(1.0),
+            f16::INFINITY,
+        ],
+        Ascending,
+        &[F16, U16],
+    );
+}
+
+#[test]
+fn test_bf16_basic() {
+    run_sort_test(&[bf16::from_f32(3.5)], Ascending, &[BF16, U16]);
+    run_sort_test(&random_bf16(1009, 12345), Ascending, &[BF16, U16]);
+}
+
+#[test]
+fn test_bf16_special() {
+    run_sort_test(
+        &[
+            bf16::NEG_INFINITY,
+            bf16::from_f32(-1.0),
+            bf16::from_f32(0.0),
+            bf16::from_f32(1.0),
+            bf16::INFINITY,
+        ],
+        Ascending,
+        &[BF16, U16],
+    );
+}
+
+// 8-bit types
+
+const U8: ElemType = ElemType::UInt(UIntKind::U8);
+const I8: ElemType = ElemType::Int(IntKind::I8);
+
+#[test]
+fn test_u8_basic() {
+    run_sort_test(&[42u8], Ascending, &[U8]);
+    run_sort_test(&random_values::<u8>(1009, 12345), Ascending, &[U8]);
+    run_sort_test(&[u8::MIN, u8::MAX, 1, 100], Ascending, &[U8]);
+}
+
+#[test]
+fn test_u8_all_values() {
+    let values: Vec<u8> = (0..=255).collect();
+    run_sort_test(&values, Ascending, &[U8]);
+}
+
+#[test]
+fn test_i8_basic() {
+    run_sort_test(&[-42i8], Ascending, &[I8]);
+    run_sort_test(&random_values::<i8>(1009, 12345), Ascending, &[I8]);
+    run_sort_test(&[i8::MIN, i8::MAX, 0, -1, 1], Ascending, &[I8]);
+}
+
+#[test]
+fn test_i8_all_values() {
+    let values: Vec<i8> = (-128..=127).map(|x| x as i8).collect();
+    run_sort_test(&values, Ascending, &[I8]);
+}
+
+// 64-bit types
+
+const U64: ElemType = ElemType::UInt(UIntKind::U64);
+const I64: ElemType = ElemType::Int(IntKind::I64);
+const F64: ElemType = ElemType::Float(FloatKind::F64);
+
+#[test]
+fn test_u64_basic() {
+    run_sort_test(&[42u64], Ascending, &[U64]);
+    run_sort_test(&random_values::<u64>(1009, 12345), Ascending, &[U64]);
+    run_sort_test(&[u64::MIN, u64::MAX, 1, u64::MAX / 2], Ascending, &[U64]);
+}
+
+#[test]
+fn test_i64_basic() {
+    run_sort_test(&[-42i64], Ascending, &[I64]);
+    run_sort_test(&random_values::<i64>(1009, 12345), Ascending, &[I64]);
+    run_sort_test(&[i64::MIN, i64::MAX, 0, -1, 1], Ascending, &[I64]);
+}
+
+#[test]
+fn test_f64_basic() {
+    run_sort_test(&[3.5f64], Ascending, &[F64, U64]);
+    run_sort_test(&random_values::<f64>(1009, 12345), Ascending, &[F64, U64]);
+}
+
+#[test]
+fn test_f64_special() {
+    run_sort_test(
+        &[f64::NEG_INFINITY, -1.0, 0.0, 1.0, f64::INFINITY],
+        Ascending,
+        &[F64, U64],
+    );
+    run_sort_test(&[0.0f64, -0.0, 0.0, -0.0], Ascending, &[F64, U64]);
 }

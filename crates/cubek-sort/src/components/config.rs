@@ -1,6 +1,5 @@
 pub const RADIX_BITS: usize = 8;
 pub const NUM_BUCKETS: usize = 1 << RADIX_BITS;
-pub const DIGIT_MASK: u32 = (NUM_BUCKETS - 1) as u32;
 
 #[derive(Clone, Debug)]
 pub struct SortStrategy {
@@ -19,6 +18,9 @@ impl Default for SortStrategy {
     }
 }
 
+// The current SortStrategy is a very simple heuristic. Instead we can probably use autotuning
+// in Burn to figure out settings. Eg. we could choose a low, mid and high blocksize that we tune.
+// Alternatively we figure out a more principled way to set these.
 impl SortStrategy {
     /// Create a strategy optimized for keys-only sorting at the given input size.
     pub fn for_keys(num_items: usize) -> Self {

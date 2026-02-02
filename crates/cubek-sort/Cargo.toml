@@ -19,12 +19,14 @@ std = ["cubecl/std", "thiserror/std"]
 
 [dependencies]
 cubecl = { workspace = true }
+cubecl-std = { workspace = true }
+half = { workspace = true }
 thiserror = { workspace = true }
 
 num-traits = "0.2.19"
 pretty_assertions = { workspace = true, optional = true }
 
 [dev-dependencies]
-cubecl = { workspace = true, features = ["test-runtime", "wgpu"] }
+cubecl = { workspace = true, features = ["test-runtime"] }
 cubecl-common = { workspace = true }
 rand = { workspace = true }

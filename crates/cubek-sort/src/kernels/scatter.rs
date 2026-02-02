@@ -1,27 +1,31 @@
-use crate::components::config::{DIGIT_MASK, NUM_BUCKETS, RADIX_BITS};
-use crate::components::key::SortKey;
+use super::warp_utils::{compute_peer_mask, count_lower_peers, count_set_bits, find_first_set_bit};
+use crate::components::config::{NUM_BUCKETS, RADIX_BITS};
+use crate::components::key::{Radix, SortKey};
 use cubecl::prelude::*;
+use cubecl_std::tensor::layout::linear::LinearView;
 
 const NUM_BUCKETS_U32: u32 = NUM_BUCKETS as u32;
 
 #[cube(launch_unchecked)]
-pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
-    keys_in: &Tensor<KIn>,
+pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radix>(
+    keys_in: &LinearView<KIn>,
     keys_out: &mut Tensor<KOut>,
-    values_in: &Tensor<u32>,
+    values_in: &LinearView<u32>,
     values_out: &mut Tensor<u32>,
     block_offsets: &Tensor<u32>,
     num_items: u32,
     pass: u32,
+    reverse_output_flag: u32,
     #[comptime] items_per_thread: u32,
     #[comptime] has_values: bool,
     #[comptime] num_planes: u32,
     #[comptime] items_per_block: u32,
 ) {
+    let reverse_output = reverse_output_flag != 0;
     // Plane histograms for warp-level ranking (atomic for concurrent updates)
     let plane_hists = SharedMemory::<Atomic<u32>>::new((num_planes as usize) * NUM_BUCKETS);
-    // Shared memory buffer for keys (reused for local reordering)
-    let mut shared_keys = SharedMemory::<u32>::new(items_per_block as usize);
+    // Shared memory buffer for keys (reused for local reordering) - uses Radix type
+    let mut shared_keys = SharedMemory::<R>::new(items_per_block as usize);
     // Shared memory buffer for values - only allocate if needed
     let mut shared_values = SharedMemory::<u32>::new(if has_values {
         items_per_block as usize
@@ -55,92 +59,55 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
     }
     sync_cube();
 
-    // Register arrays for per-thread data
+    // Register arrays for per-thread data - uses Radix type for keys
     // Note: digits recomputed from keys in Phase 3 to reduce register pressure
-    let mut keys = Array::<u32>::new(items_per_thread as usize);
+    let mut keys = Array::<R>::new(items_per_thread as usize);
     let mut values = Array::<u32>::new(items_per_thread as usize);
     let mut local_offsets = Array::<u32>::new(items_per_thread as usize);
 
-    let shift = pass * RADIX_BITS as u32;
+    // Compute shift amount and digit mask using cast
+    let shift_u32 = pass * RADIX_BITS as u32;
+    let shift = R::cast_from(shift_u32);
+    let digit_mask = R::cast_from(0xFFu32);
 
     // Check if this entire plane is full (all items valid) - enables bounds check elimination
-    let plane_end = sub_part_start + sub_part_size;
-    let is_full_plane = plane_end <= num_items;
+    let is_full_plane = (sub_part_start + sub_part_size) <= num_items;
+
+    // Use max radix value for invalid positions (sorts to end in ascending order)
+    let max_radix = R::max_value();
 
     // Phase 1: Load keys and compute warp-level ranking
-    // Specialized paths for full planes (no bounds checks) vs partial planes
-    if is_full_plane {
-        // FAST PATH: Full plane - all items valid, no bounds checks needed
-        #[unroll]
-        for i in 0..items_per_thread {
-            let local_idx = lane_id + i * PLANE_DIM;
-            let global_idx = sub_part_start + local_idx;
+    // When is_full_plane is true, the compiler can fold `valid` to true and eliminate branches
+    for i in 0..items_per_thread {
+        let local_idx = lane_id + i * PLANE_DIM;
+        let global_idx = sub_part_start + local_idx;
+        let valid = is_full_plane || global_idx < num_items;
 
-            // Direct load - no bounds check or select needed
-            let key = KIn::to_radix(keys_in[global_idx as usize]);
-            keys[i as usize] = key;
+        let key = select(valid, KIn::to_radix(keys_in[global_idx as usize]), max_radix);
+        keys[i as usize] = key;
 
-            if has_values {
-                values[i as usize] = values_in[global_idx as usize];
-            }
-
-            let digit = (key >> shift) & DIGIT_MASK;
-
-            // Warp-level ranking - all threads valid (pass true)
-            let peer_mask = compute_peer_mask(digit, true);
-            let rank = count_lower_peers(peer_mask, lane_id);
-            let total = count_set_bits(peer_mask);
-            let leader = find_first_set_bit(peer_mask);
-            let is_leader = lane_id == leader;
-
-            let hist_idx = plane_id as usize * NUM_BUCKETS + digit as usize;
-            let mut base = 0u32;
-            if is_leader {
-                base = plane_hists[hist_idx].fetch_add(total);
-            }
-            base = plane_shuffle(base, leader);
-
-            local_offsets[i as usize] = base + rank;
+        if has_values {
+            values[i as usize] = select(valid, values_in[global_idx as usize], 0u32);
         }
-    } else {
-        // SLOW PATH: Partial plane - need bounds checks
-        #[unroll]
-        for i in 0..items_per_thread {
-            let local_idx = lane_id + i * PLANE_DIM;
-            let global_idx = sub_part_start + local_idx;
-            let valid = global_idx < num_items;
 
-            // Load key or use max value for invalid positions
-            let raw_key = select(
-                valid,
-                keys_in[global_idx as usize],
-                KIn::from_radix(0xFFFFFFFFu32),
-            );
-            let key = KIn::to_radix(raw_key);
-            keys[i as usize] = key;
+        let digit_radix = (key >> shift) & digit_mask;
+        let digit = u32::cast_from(digit_radix);
 
-            if has_values {
-                values[i as usize] = select(valid, values_in[global_idx as usize], 0u32);
-            }
+        // Warp-level ranking with validity mask
+        let peer_mask = compute_peer_mask(digit, valid);
+        let rank = count_lower_peers(peer_mask, lane_id);
+        let total = count_set_bits(peer_mask);
+        let leader = find_first_set_bit(peer_mask);
+        let is_leader = lane_id == leader && valid;
 
-            let digit = (key >> shift) & DIGIT_MASK;
-
-            // Warp-level ranking with validity mask
-            let peer_mask = compute_peer_mask(digit, valid);
-            let rank = count_lower_peers(peer_mask, lane_id);
-            let total = count_set_bits(peer_mask);
-            let leader = find_first_set_bit(peer_mask);
-            let is_leader = lane_id == leader && valid;
-
-            let hist_idx = plane_id as usize * NUM_BUCKETS + digit as usize;
-            let mut base = 0u32;
-            if is_leader {
-                base = plane_hists[hist_idx].fetch_add(total);
-            }
-            base = plane_shuffle(base, leader);
-
-            local_offsets[i as usize] = base + rank;
+        let hist_idx = plane_id as usize * NUM_BUCKETS + digit as usize;
+        let mut base = 0u32;
+        if is_leader {
+            base = plane_hists[hist_idx].fetch_add(total);
         }
+        base = plane_shuffle(base, leader);
+
+        local_offsets[i as usize] = base + rank;
     }
     sync_cube();
 
@@ -151,7 +118,6 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
         let mut sum = 0u32;
 
         // Sum across all planes for this digit, converting to exclusive prefix within each plane
-        #[unroll]
         for p in 0..num_planes {
             let idx = (p as usize) * NUM_BUCKETS + thread_id as usize;
             let count = plane_hists[idx].load();
@@ -186,10 +152,16 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
     sync_cube();
 
     // Step 2 & 3 fused: First warp computes prefix, all threads read and compute final
-    // First warp does the prefix sum of warp totals
+    // All threads must participate in plane ops (partial participation hangs on CUDA)
+    let warp_input = if plane_id == 0 && lane_id < num_digit_warps {
+        digit_global[lane_id as usize]
+    } else {
+        #[allow(clippy::useless_conversion)]
+        0u32.into()
+    };
+
+    let warp_prefix = plane_exclusive_sum(warp_input);
     if plane_id == 0 && lane_id < num_digit_warps {
-        let warp_total = digit_global[lane_id as usize];
-        let warp_prefix = plane_exclusive_sum(warp_total);
         digit_global[lane_id as usize] = warp_prefix;
     }
     sync_cube();
@@ -207,12 +179,16 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
 
     // Phase 3: Scatter keys to shared memory (local reordering by digit)
     // Recompute digit from key to reduce register pressure
-    if is_full_plane {
-        // FAST PATH: All items valid
-        #[unroll]
-        for i in 0..items_per_thread {
+    // When is_full_plane is true, the compiler can fold `valid` to true and eliminate branches
+    for i in 0..items_per_thread {
+        let local_idx = lane_id + i * PLANE_DIM;
+        let global_idx = sub_part_start + local_idx;
+        let valid = is_full_plane || global_idx < num_items;
+
+        if valid {
             let key = keys[i as usize];
-            let digit = (key >> shift) & DIGIT_MASK;
+            let digit_radix = (key >> shift) & digit_mask;
+            let digit = u32::cast_from(digit_radix);
             let offset_in_plane = local_offsets[i as usize];
 
             let hist_idx = plane_id as usize * NUM_BUCKETS + digit as usize;
@@ -225,44 +201,27 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
                 shared_values[local_pos as usize] = values[i as usize];
             }
         }
-    } else {
-        // SLOW PATH: Check bounds for each item
-        #[unroll]
-        for i in 0..items_per_thread {
-            let local_idx = lane_id + i * PLANE_DIM;
-            let global_idx = sub_part_start + local_idx;
-            if global_idx < num_items {
-                let key = keys[i as usize];
-                let digit = (key >> shift) & DIGIT_MASK;
-                let offset_in_plane = local_offsets[i as usize];
-
-                let hist_idx = plane_id as usize * NUM_BUCKETS + digit as usize;
-                let plane_prefix = plane_hists[hist_idx].load();
-                let digit_base = digit_start[digit as usize];
-                let local_pos = digit_base + plane_prefix + offset_in_plane;
-
-                shared_keys[local_pos as usize] = key;
-                if has_values {
-                    shared_values[local_pos as usize] = values[i as usize];
-                }
-            }
-        }
     }
     sync_cube();
 
     // Phase 4: Coalesced read from shared memory and write to global
     // Keys are now grouped by digit, so sequential reads are cache-friendly
-    // Separate full block vs partial block for better branch prediction
+    // When is_full_block is true, the compiler can fold `valid` to true and eliminate branches
     let is_full_block = block_start + items_per_block <= num_items;
+    let items_in_block = select(num_items > block_start, num_items - block_start, 0u32);
 
-    if is_full_block {
-        // Full block: no bounds check needed, all items valid
-        #[unroll]
-        for i in 0..items_per_thread {
-            let local_idx = thread_id + i * CUBE_DIM;
+    for i in 0..items_per_thread {
+        let local_idx = thread_id + i * CUBE_DIM;
+        let valid = is_full_block || local_idx < items_in_block;
+
+        if valid {
             let key = shared_keys[local_idx as usize];
-            let digit = (key >> shift) & DIGIT_MASK;
-            let global_pos = digit_global[digit as usize] + local_idx;
+            let digit_radix = (key >> shift) & digit_mask;
+            let digit = u32::cast_from(digit_radix);
+            let ascending_pos = digit_global[digit as usize] + local_idx;
+
+            // For descending sort on the final pass, reverse the output position
+            let global_pos = select(reverse_output, num_items - 1 - ascending_pos, ascending_pos);
 
             keys_out[global_pos as usize] = KOut::from_radix(key);
 
@@ -270,132 +229,5 @@ pub fn scatter_kernel<KIn: SortKey, KOut: SortKey>(
                 values_out[global_pos as usize] = shared_values[local_idx as usize];
             }
         }
-    } else {
-        // Partial block (last block): need bounds check
-        let items_in_block = select(num_items > block_start, num_items - block_start, 0u32);
-
-        #[unroll]
-        for i in 0..items_per_thread {
-            let local_idx = thread_id + i * CUBE_DIM;
-            if local_idx < items_in_block {
-                let key = shared_keys[local_idx as usize];
-                let digit = (key >> shift) & DIGIT_MASK;
-                let global_pos = digit_global[digit as usize] + local_idx;
-
-                keys_out[global_pos as usize] = KOut::from_radix(key);
-
-                if has_values {
-                    values_out[global_pos as usize] = shared_values[local_idx as usize];
-                }
-            }
-        }
     }
-}
-
-#[cube]
-fn compute_peer_mask(digit: u32, valid: bool) -> Line<u32> {
-    let mut mask = plane_ballot(valid);
-
-    #[unroll]
-    for k in 0..RADIX_BITS {
-        let has_bit = ((digit >> k) & 1) != 0;
-        let ballot = plane_ballot(has_bit);
-        let xor_val = select(has_bit, 0u32, 0xFFFFFFFFu32);
-
-        mask[0] &= ballot[0] ^ xor_val;
-        if PLANE_DIM > 32 {
-            mask[1] &= ballot[1] ^ xor_val;
-        }
-        if PLANE_DIM > 64 {
-            mask[2] &= ballot[2] ^ xor_val;
-        }
-        if PLANE_DIM > 96 {
-            mask[3] &= ballot[3] ^ xor_val;
-        }
-    }
-    mask
-}
-
-#[cube]
-fn count_lower_peers(mask: Line<u32>, lane_id: u32) -> u32 {
-    let mut count = 0u32;
-
-    let lt_mask_0 = select(lane_id < 32, (1u32 << lane_id) - 1, 0xFFFFFFFFu32);
-    count += (mask[0] & lt_mask_0).count_ones();
-
-    if PLANE_DIM > 32 {
-        let lt_mask_1 = select(
-            lane_id < 32,
-            0u32,
-            select(lane_id < 64, (1u32 << (lane_id - 32)) - 1, 0xFFFFFFFFu32),
-        );
-        count += (mask[1] & lt_mask_1).count_ones();
-    }
-
-    if PLANE_DIM > 64 {
-        let lt_mask_2 = select(
-            lane_id < 64,
-            0u32,
-            select(lane_id < 96, (1u32 << (lane_id - 64)) - 1, 0xFFFFFFFFu32),
-        );
-        count += (mask[2] & lt_mask_2).count_ones();
-    }
-
-    if PLANE_DIM > 96 {
-        let lt_mask_3 = select(lane_id < 96, 0u32, (1u32 << (lane_id - 96)) - 1);
-        count += (mask[3] & lt_mask_3).count_ones();
-    }
-
-    count
-}
-
-#[cube]
-fn count_set_bits(mask: Line<u32>) -> u32 {
-    let mut count = mask[0].count_ones();
-    if PLANE_DIM > 32 {
-        count += mask[1].count_ones();
-    }
-    if PLANE_DIM > 64 {
-        count += mask[2].count_ones();
-    }
-    if PLANE_DIM > 96 {
-        count += mask[3].count_ones();
-    }
-    count
-}
-
-#[cube]
-fn find_first_set_bit(mask: Line<u32>) -> u32 {
-    let mut result = 0u32;
-    let mut found = false;
-
-    if !found && mask[0] != 0 {
-        result = count_trailing_zeros(mask[0]);
-        found = true;
-    }
-
-    if PLANE_DIM > 32 && !found && mask[1] != 0 {
-        result = 32 + count_trailing_zeros(mask[1]);
-        found = true;
-    }
-
-    if PLANE_DIM > 64 && !found && mask[2] != 0 {
-        result = 64 + count_trailing_zeros(mask[2]);
-        found = true;
-    }
-
-    if PLANE_DIM > 96 && !found && mask[3] != 0 {
-        result = 96 + count_trailing_zeros(mask[3]);
-    }
-
-    result
-}
-
-#[cube]
-fn count_trailing_zeros(x: u32) -> u32 {
-    let is_zero = x == 0;
-    let neg_x = (!x) + 1;
-    let lowest_bit = x & neg_x;
-    let count = (lowest_bit - 1).count_ones();
-    select(is_zero, 32u32, count)
 }

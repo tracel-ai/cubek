@@ -60,10 +60,7 @@ pub fn scan_sum_kernel(
 /// Phase B: Compute exclusive prefix sum across digit totals.
 /// Single block with 256 threads.
 #[cube(launch_unchecked)]
-pub fn scan_prefix_totals_kernel(
-    digit_totals: &Tensor<u32>,
-    digit_prefixes: &mut Tensor<u32>,
-) {
+pub fn scan_prefix_totals_kernel(digit_totals: &Tensor<u32>, digit_prefixes: &mut Tensor<u32>) {
     let mut shared = SharedMemory::<u32>::new(NUM_BUCKETS);
     let mut warp_sums = SharedMemory::<u32>::new(MAX_WARPS);
 
@@ -90,11 +87,17 @@ pub fn scan_prefix_totals_kernel(
     sync_cube();
 
     // Inter-warp prefix sum
+    // All threads must participate in plane ops.
     #[allow(clippy::manual_div_ceil)]
     let num_warps = (NUM_BUCKETS as u32 + PLANE_DIM - 1) / PLANE_DIM;
+    let warp_input = if warp_id == 0 && lane_id < num_warps {
+        warp_sums[lane_id as usize]
+    } else {
+        #[allow(clippy::useless_conversion)]
+        0u32.into()
+    };
+    let warp_prefix = plane_exclusive_sum(warp_input);
     if warp_id == 0 && lane_id < num_warps {
-        let warp_total_val = warp_sums[lane_id as usize];
-        let warp_prefix = plane_exclusive_sum(warp_total_val);
         warp_sums[lane_id as usize] = warp_prefix;
     }
     sync_cube();
@@ -148,12 +151,17 @@ pub fn scan_offsets_cooperative_kernel(
         g_scan[tid as usize] = my_exclusive;
         sync_cube();
 
-        // Inter-warp prefix
+        // Inter-warp prefix (all threads participate; partial participation is UB)
         #[allow(clippy::manual_div_ceil)]
         let num_warps = (scan_dim + PLANE_DIM - 1) / PLANE_DIM;
+        let warp_input = if warp_id == 0 && lane_id < num_warps {
+            warp_sums[lane_id as usize]
+        } else {
+            #[allow(clippy::useless_conversion)]
+            0u32.into()
+        };
+        let warp_prefix = plane_exclusive_sum(warp_input);
         if warp_id == 0 && lane_id < num_warps {
-            let warp_total_val = warp_sums[lane_id as usize];
-            let warp_prefix = plane_exclusive_sum(warp_total_val);
             warp_sums[lane_id as usize] = warp_prefix;
         }
         sync_cube();
@@ -197,11 +205,17 @@ pub fn scan_offsets_cooperative_kernel(
         g_scan[tid as usize] = my_exclusive;
         sync_cube();
 
+        // All threads must participate in plane ops (partial participation is UB)
         #[allow(clippy::manual_div_ceil)]
         let num_warps = (scan_dim + PLANE_DIM - 1) / PLANE_DIM;
+        let warp_input = if warp_id == 0 && lane_id < num_warps {
+            warp_sums[lane_id as usize]
+        } else {
+            #[allow(clippy::useless_conversion)]
+            0u32.into()
+        };
+        let warp_prefix = plane_exclusive_sum(warp_input);
         if warp_id == 0 && lane_id < num_warps {
-            let warp_total_val = warp_sums[lane_id as usize];
-            let warp_prefix = plane_exclusive_sum(warp_total_val);
             warp_sums[lane_id as usize] = warp_prefix;
         }
         sync_cube();
@@ -252,11 +266,17 @@ pub fn scan_kernel(histograms: &Tensor<u32>, offsets: &mut Tensor<u32>, num_bloc
     }
     sync_cube();
 
+    // All threads must participate in plane ops.
     #[allow(clippy::manual_div_ceil)]
     let num_warps = (NUM_BUCKETS as u32 + PLANE_DIM - 1) / PLANE_DIM;
+    let warp_input = if warp_id == 0 && lane_id < num_warps {
+        warp_sums[lane_id as usize]
+    } else {
+        #[allow(clippy::useless_conversion)]
+        0u32.into()
+    };
+    let warp_prefix = plane_exclusive_sum(warp_input);
     if warp_id == 0 && lane_id < num_warps {
-        let warp_total = warp_sums[lane_id as usize];
-        let warp_prefix = plane_exclusive_sum(warp_total);
         warp_sums[lane_id as usize] = warp_prefix;
     }
     sync_cube();
