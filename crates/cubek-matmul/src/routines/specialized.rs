@@ -5,7 +5,6 @@ use cubecl::client::ComputeClient;
 use cubecl::features::MmaConfig;
 use cubecl::{Runtime, std::CubeOption};
 
-use crate::components::batch::BatchMatmulFamily;
 use crate::components::stage::{PlaneMatmulFamily, StridedStageFamily};
 use crate::components::tile;
 use crate::components::tile::TileMatmulFamily;
@@ -21,6 +20,7 @@ use crate::definition::{
 use crate::launch::RuntimeConfig;
 use crate::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
 use crate::routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, base};
+use crate::{components::batch::BatchMatmulFamily, routines::ExpandInfo};
 use crate::{
     components::global::{
         multi_stage::specialized::SpecializedMatmulFamily,
@@ -81,11 +81,11 @@ where
     type Blueprint = TilingBlueprint;
     type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
 
-    fn prepare<R: Runtime>(
+    fn expand_blueprint<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
         strategy: &BlueprintStrategy<RC, Self>,
-    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+    ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
         if TMM::can_cast_stage_element() {
@@ -110,6 +110,15 @@ where
                 },
             )?,
         };
+        Ok(ExpandInfo { blueprint, dtypes })
+    }
+
+    fn prepare<R: Runtime>(
+        problem: &MatmulProblem,
+        device_settings: &DeviceSettings<R>,
+        expand_info: ExpandInfo<Self::Blueprint>,
+    ) -> Result<LaunchInfo<Self::Blueprint>, MatmulSetupError> {
+        let ExpandInfo { blueprint, dtypes } = expand_info;
 
         Self::validate_blueprint(
             &device_settings.client,

@@ -40,7 +40,8 @@ where
     }
 
     let device_settings = A::device_settings(client, view_line_sizes);
-    let launch_info = A::prepare(&problem, &device_settings, blueprint_strategy)?;
+    let expand_info = A::expand_blueprint(&problem, &device_settings, blueprint_strategy)?;
+    let launch_info = A::prepare(&problem, &device_settings, expand_info)?;
 
     let input = <InputArg<MA> as ConcreteInputsFactory<A>>::create(
         client,
@@ -75,7 +76,8 @@ pub fn launch_kernel_virtual<'a, MA: MatmulArgs, R: Runtime, A: Routine<MA::Conf
     blueprint_strategy: &BlueprintStrategy<MA::Config, A>,
 ) -> Result<(), MatmulSetupError> {
     let device_settings = A::device_settings(client, view_line_sizes);
-    let launch_info = A::prepare(&problem, &device_settings, blueprint_strategy)?;
+    let expand_info = A::expand_blueprint(&problem, &device_settings, blueprint_strategy)?;
+    let launch_info = A::prepare(&problem, &device_settings, expand_info)?;
 
     launch_kernel::<MA, R, A>(client, input, output, config, launch_info)
 }

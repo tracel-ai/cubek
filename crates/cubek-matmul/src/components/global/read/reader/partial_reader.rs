@@ -2,16 +2,15 @@ use std::marker::PhantomData;
 
 use super::StageBuffer;
 use super::TaskCounter;
-use crate::components::global::memory::GlobalIterator;
-use crate::components::global::multi_stage::JobIterator;
 use crate::components::global::multi_stage::LoadMaxRoundPlaneCount;
 use crate::components::global::read::LoadingJob;
 use crate::components::global::read::LoadingValidation;
 use crate::components::global::read::SyncBarrier;
 use crate::components::global::read::SyncStrategy;
+use crate::components::global::{memory::GlobalIterator, read::PartialLoaderStage};
 use crate::components::stage::LoadStageFamily;
-use crate::components::stage::StageFamily;
 use crate::components::stage::TilingLayout;
+use crate::components::{global::multi_stage::JobIterator, tile::io::TileKind};
 use crate::components::{
     global::{SharedGlobalMatmulConfig, multi_stage::JobExecutor},
     stage::StageConfig,
@@ -25,11 +24,6 @@ use cubecl::std::{
     tensor::{View, layout::Coords2d},
 };
 
-pub type LoaderStage<RC, L, IP> = <<L as PartialLoadingStrategy<RC>>::Stage as StageFamily>::Stage<
-    IP,
-    <L as PartialLoadingStrategy<RC>>::TilingLayout,
->;
-
 #[cube]
 /// A strategy for loading partial stage memory
 pub trait PartialLoadingStrategy<RC: RuntimeConfig>:
@@ -38,7 +32,8 @@ pub trait PartialLoadingStrategy<RC: RuntimeConfig>:
     /// The layout describing how data is tiled across the stage.
     type TilingLayout: TilingLayout;
     type SyncStrategy: SyncStrategy;
-    type Stage: LoadStageFamily<ReadOnly>;
+    type Stage: LoadStageFamily<ReadOnly, TileKind = Self::TileKind>;
+    type TileKind: TileKind;
 
     /// The [LoadingJob] for this strategy.
     type Job<EG: Numeric, ES: Numeric>: LoadingJob<EG, ES, Self::TilingLayout, Self::SyncStrategy, Stage = Self::Stage>;
@@ -84,7 +79,7 @@ pub struct PartialStageGlobalReader<
 > {
     global_iter: GlobalIterator<Line<EG>>,
     runtime_config: RC,
-    stage_memory: LoaderStage<RC, L, ES>,
+    stage_memory: PartialLoaderStage<RC, L, ES>,
     loading_job: CubeOption<(L::Job<EG, ES>, L::Job<EG, ES>)>,
 }
 
@@ -120,7 +115,7 @@ impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: PartialLoadingStrategy<RC>>
     }
 
     /// Give a reader to the loaded stage memory.
-    pub fn stage(&self, #[comptime] stage_buffer: StageBuffer) -> LoaderStage<RC, L, ES> {
+    pub fn stage(&self, #[comptime] stage_buffer: StageBuffer) -> PartialLoaderStage<RC, L, ES> {
         L::Stage::with_buffer_index(&self.stage_memory, stage_buffer.to_index())
     }
 

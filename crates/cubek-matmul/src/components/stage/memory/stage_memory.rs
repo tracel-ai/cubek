@@ -72,22 +72,6 @@ impl<ES: Numeric, T: TilingLayout> StridedStageMemory<ES, T> {
         }
     }
 
-    /// Instantiate with a custom shared memory
-    pub fn new_with_smem(
-        smem: SharedMemory<Line<ES>>,
-        #[comptime] smem_len: u32,
-        #[comptime] config: StageMemoryConfig,
-    ) -> StridedStageMemory<ES, T> {
-        StridedStageMemory::<ES, T> {
-            smem,
-            swizzle: as_swizzle_object(config.swizzle),
-            stage_size: smem_len,
-            config,
-            buffer_index: 0u32,
-            _phantom: PhantomData::<T>,
-        }
-    }
-
     pub fn with_buffer_index(&self, buffer_idx: u32) -> Self {
         StridedStageMemory::<ES, T> {
             smem: self.smem,

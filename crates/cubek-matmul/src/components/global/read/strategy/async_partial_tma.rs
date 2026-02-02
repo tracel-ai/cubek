@@ -1,4 +1,3 @@
-use crate::components::global::read::{PartialLoadingStrategy, async_tma::AsyncTma};
 use crate::components::global::read::{validate_async_barrier, validate_tma};
 use crate::components::global::{GlobalConfig, GlobalReaderConfig};
 use crate::components::global::{PlaneFlowPartition, multi_stage::LoadMaxRoundPlaneCount};
@@ -9,6 +8,10 @@ use crate::components::{
     stage::{StageConfig, StridedStageFamily},
 };
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
+use crate::components::{
+    global::read::{PartialLoadingStrategy, async_tma::AsyncTma},
+    tile::io::Strided,
+};
 use crate::definition::{
     InvalidConfigError, LhsS, MatmulElems, MatmulPrecision, MatmulProblem, MatrixLayout, RhsS,
     StageIdent,
@@ -66,6 +69,7 @@ impl<RC: RuntimeConfig> PartialLoadingStrategy<RC> for AsyncPartialTmaLoading {
     type TilingLayout = TmaTilingLayout;
     type SyncStrategy = AsyncTma;
     type Stage = StridedStageFamily;
+    type TileKind = Strided;
 
     type Job<EG: Numeric, ES: Numeric> = AsyncPartialTmaJob;
 

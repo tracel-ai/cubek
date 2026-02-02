@@ -13,6 +13,7 @@ use cubek_matmul::components::{
         },
     },
     stage::{StridedStageFamily, StridedStageMemory, StridedTilingLayout},
+    tile::io::Strided,
 };
 use cubek_matmul::definition::{InvalidConfigError, MatmulElems, MatmulProblem, StageIdent};
 
@@ -66,6 +67,8 @@ impl FullLoadingStrategy<RuntimeArgs> for AsyncFullStridedLoading {
     type TilingLayout = StridedTilingLayout;
     type SyncStrategy = AsyncCopy;
     type Job<EG: Numeric, ES: Numeric> = AsyncFullStridedJob;
+    type Stage = StridedStageFamily;
+    type TileKind = Strided;
 
     fn new_job<EG: Numeric, ES: Numeric>(
         runtime_args: RuntimeArgs,

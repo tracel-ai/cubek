@@ -36,13 +36,14 @@ pub fn launch_kernel_concrete<R: Runtime, Args: ConcreteArgs<A>, A: Routine<Runt
     }
 
     let device_settings = A::device_settings(client, view_line_sizes);
-    let launch_info = A::prepare(
+    let expand_info = A::expand_blueprint(
         &problem.as_matmul_problem(),
         &device_settings,
         blueprint_strategy,
     )?;
 
-    let problem = Args::adjust_problem(client, problem, &launch_info.blueprint, dtypes);
+    let problem = Args::adjust_problem(client, problem, &expand_info.blueprint, dtypes);
+    let launch_info = A::prepare(&problem.as_matmul_problem(), &device_settings, expand_info)?;
 
     let (input, runtime_args) = <InputArg<Args> as ConcreteInputsFactory<A>>::create(
         client,

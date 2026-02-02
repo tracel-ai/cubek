@@ -1,6 +1,5 @@
 use std::marker::PhantomData;
 
-use crate::components::global::read::{validate_async_barrier, validate_swizzle_atom_size};
 use crate::components::global::read::{validate_async_copy, validate_async_copy_with_problem};
 use crate::components::global::{GlobalReaderConfig, PlaneFlowPartition};
 use crate::components::global::{
@@ -9,6 +8,10 @@ use crate::components::global::{
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{ContiguousTilingLayout, StridedStageMemory, TilingOrder};
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
+use crate::components::{
+    global::read::{validate_async_barrier, validate_swizzle_atom_size},
+    tile::io::Strided,
+};
 use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem, StageIdent};
 use crate::{
     components::global::read::{
@@ -100,6 +103,8 @@ impl<TO: TilingOrder, RC: RuntimeConfig> FullLoadingStrategy<RC> for AsyncFullCy
     type TilingLayout = ContiguousTilingLayout<TO>;
     type SyncStrategy = AsyncCopy;
     type Job<EG: Numeric, ES: Numeric> = AsyncFullCyclicJob;
+    type Stage = StridedStageFamily;
+    type TileKind = Strided;
 
     fn new_job<EG: Numeric, ES: Numeric>(
         _runtime_config: RC,

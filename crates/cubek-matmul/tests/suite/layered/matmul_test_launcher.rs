@@ -136,10 +136,23 @@ pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
             .unwrap(),
     };
 
+    let device_settings = A::device_settings(client, line_sizes);
+
+    let expand_info = match A::expand_blueprint(
+        problem,
+        &device_settings,
+        &BlueprintStrategy::Forced(blueprint),
+    ) {
+        Ok(launch_info) => launch_info,
+        Err(err) => {
+            return ExecutionOutcome::CompileError(format!("Can't launch the test: {err}"));
+        }
+    };
+
     let launch_info = match A::prepare(
         problem,
         &A::device_settings(client, line_sizes),
-        &BlueprintStrategy::Forced(blueprint),
+        expand_info,
     ) {
         Ok(launch_info) => launch_info,
         Err(err) => {

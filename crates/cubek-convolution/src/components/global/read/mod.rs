@@ -10,6 +10,4 @@
 //!   - **Full**: Loads the entire shared memory region.
 //!   - **Partial**: Loads only a single stage, when multiple stages share the same memory.
 
-mod reader;
-
-pub use reader::*;
+pub mod strategy;

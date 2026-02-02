@@ -27,7 +27,7 @@ use crate::{
             args::RuntimeArgs,
             read::strategy::{
                 async_full_cyclic::AsyncFullCyclicLoading,
-                async_full_strided::AsyncFullStridedLoading,
+                async_full_strided::AsyncFullStridedLoading, sync_bias::SyncBiasLoading,
             },
         },
     },
@@ -77,11 +77,11 @@ impl<
             AccTile = CubeOption<Strided>,
             OutTile = Strided,
         >,
-    LL: FullLoadingStrategy<RuntimeArgs>,
-    LR: FullLoadingStrategy<RuntimeArgs, SyncStrategy = LL::SyncStrategy>,
+    LL: FullLoadingStrategy<RuntimeArgs, TileKind = Strided>,
+    LR: FullLoadingStrategy<RuntimeArgs, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
 > Algorithm for SimpleConv<TMM, LL, LR>
 {
-    type Routine = SimpleAlgorithm<TMM, LL, LR, SyncFullCyclicLoading<RowMajorTilingOrder>>;
+    type Routine = SimpleAlgorithm<TMM, LL, LR, SyncBiasLoading>;
     type Args = TensorArgs<RuntimeArgs>;
 
     fn into_tensor_handle<R: Runtime>(

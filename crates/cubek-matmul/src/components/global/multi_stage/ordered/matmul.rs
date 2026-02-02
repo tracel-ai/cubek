@@ -1,17 +1,18 @@
 use crate::components::global::read::{
-    FullLoadingStrategy, FullStageGlobalReader, LoadingValidation as _, PartialLoadingStrategy,
-    PartialStageGlobalReader, StageBuffer,
+    FullLoaderStage, FullLoadingStrategy, FullStageGlobalReader, LoadingValidation as _,
+    PartialLoaderStage, PartialLoadingStrategy, PartialStageGlobalReader, StageBuffer,
 };
-use crate::components::global::{self, GlobalWriter, SharedGlobalMatmulConfig};
 use crate::components::global::{Specializer, read::sync::Synchronous};
 use crate::components::stage::StageConfig as _;
-use crate::components::stage::StridedStageFamily;
 use crate::components::{
     global::multi_stage::double_buffer_execution::{
         execute_current_and_read_next, execute_last_and_write_results, read_first,
     },
     stage,
-    stage::StridedStageMemory,
+};
+use crate::components::{
+    global::{self, GlobalWriter, SharedGlobalMatmulConfig},
+    tile::io::Strided,
 };
 use crate::definition::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS};
 use crate::{components::global::multi_stage::ordered::LL, launch::RuntimeConfig};
@@ -48,14 +49,14 @@ impl<MP: MatmulPrecision, SMM, RC, RL, AL, GW> global::GlobalMatmul<RC, MP>
 where
     SMM: stage::StageMatmul<
             MP,
-            LhsStage = StridedStageMemory<LhsS<MP>, <LL as FullLoadingStrategy<RC>>::TilingLayout>,
-            RhsStage = StridedStageMemory<RhsS<MP>, RL::TilingLayout>,
-            AccStage = CubeOption<StridedStageMemory<AccS<MP>, AL::TilingLayout>>,
+            LhsStage = FullLoaderStage<RC, LL, LhsS<MP>>,
+            RhsStage = PartialLoaderStage<RC, RL, RhsS<MP>>,
+            AccStage = CubeOption<FullLoaderStage<RC, AL, AccS<MP>>>,
             OutStage = GW::Stage,
         >,
     RC: RuntimeConfig,
-    RL: PartialLoadingStrategy<RC, Stage = StridedStageFamily, SyncStrategy = Synchronous>,
-    AL: FullLoadingStrategy<RC, SyncStrategy = Synchronous>,
+    RL: PartialLoadingStrategy<RC, TileKind = Strided, SyncStrategy = Synchronous>,
+    AL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = Synchronous>,
     GW: GlobalWriter<MP::Acc>,
 {
     type Config = SharedGlobalMatmulConfig<SMM::Config>;

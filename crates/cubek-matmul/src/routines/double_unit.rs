@@ -23,7 +23,7 @@ use crate::{
     definition::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, TilingBlueprint},
     launch::RuntimeConfig,
     routines::{
-        BlueprintStrategy, DeviceSettings, LaunchInfo, Routine,
+        BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine,
         selector::{TileSizeSelection, UnitTilingBlueprintOptions, infer_blueprint_unit},
     },
 };
@@ -63,11 +63,11 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleUnitAlgorithm {
     type Blueprint = TilingBlueprint;
     type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
 
-    fn prepare<R: Runtime>(
+    fn expand_blueprint<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
         strategy: &BlueprintStrategy<RC, Self>,
-    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+    ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
         if RegisterMatmul::<Filled>::can_cast_stage_element() {
@@ -89,6 +89,15 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleUnitAlgorithm {
                 &problem.global_dtypes,
             ),
         };
+        Ok(ExpandInfo { blueprint, dtypes })
+    }
+
+    fn prepare<R: Runtime>(
+        problem: &MatmulProblem,
+        device_settings: &DeviceSettings<R>,
+        expand_info: ExpandInfo<Self::Blueprint>,
+    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        let ExpandInfo { blueprint, dtypes } = expand_info;
 
         <Self as Routine<RC>>::validate_blueprint(
             &device_settings.client,

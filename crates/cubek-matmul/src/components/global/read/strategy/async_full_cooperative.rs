@@ -10,6 +10,7 @@ use crate::{
             },
         },
         stage::{StridedStageFamily, StridedStageMemory, StridedTilingLayout, TilingValidation},
+        tile::io::Strided,
     },
     definition::{InvalidConfigError, MatmulElems, MatmulProblem, MatrixLayout, StageIdent},
     launch::RuntimeConfig,
@@ -68,6 +69,8 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for AsyncFullCooperativeLoading 
     type TilingLayout = StridedTilingLayout;
     type SyncStrategy = AsyncBarrier;
     type Job<EG: Numeric, ES: Numeric> = AsyncFullCooperativeJob;
+    type Stage = StridedStageFamily;
+    type TileKind = Strided;
 
     const SHOULD_CLEAR: bool = true;
 

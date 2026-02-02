@@ -1,4 +1,3 @@
-use crate::components::global::{GlobalReaderConfig, PlaneFlowPartition};
 use crate::components::global::{
     SharedGlobalMatmulConfig,
     read::{AsyncPartialLoadingStrategy, PartialLoadingStrategy, async_copy::ASYNC_COPY_WIDTH},
@@ -7,6 +6,10 @@ use crate::components::{global::memory::GlobalIterator, stage::TilingValidation}
 use crate::components::{global::read::async_copy::async_copy_from, stage::StridedStageMemory};
 use crate::components::{global::read::stage::FullStageLayout, stage::StridedStageFamily};
 use crate::components::{global::read::validate_swizzle_atom_size, stage::StageConfig};
+use crate::components::{
+    global::{GlobalReaderConfig, PlaneFlowPartition},
+    tile::io::Strided,
+};
 use crate::components::{
     global::{
         multi_stage::LoadMaxRoundPlaneCount,
@@ -100,6 +103,7 @@ impl<RC: RuntimeConfig> PartialLoadingStrategy<RC> for AsyncPartialStridedLoadin
     type SyncStrategy = AsyncCopy;
     type Job<EG: Numeric, ES: Numeric> = AsyncPartialStridedJob;
     type Stage = StridedStageFamily;
+    type TileKind = Strided;
 
     fn new_job<EG: Numeric, ES: Numeric>(
         _runtime_config: RC,

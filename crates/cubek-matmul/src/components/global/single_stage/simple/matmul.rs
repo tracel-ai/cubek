@@ -1,9 +1,10 @@
 use crate::components::{
     global::{
         GlobalMatmul, GlobalWriter, SharedGlobalMatmulConfig,
-        read::{FullLoadingStrategy, FullStageGlobalReader, SyncStrategy},
+        read::{FullLoaderStage, FullLoadingStrategy, FullStageGlobalReader, SyncStrategy},
     },
-    stage::{StageConfig, StageMatmul, StridedStageMemory},
+    stage::{StageConfig, StageMatmul},
+    tile::io::Strided,
 };
 use crate::{
     definition::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS},
@@ -38,15 +39,15 @@ impl<MP: MatmulPrecision, SMM, RC, LL, RL, AL, GW> GlobalMatmul<RC, MP>
 where
     SMM: StageMatmul<
             MP,
-            LhsStage = StridedStageMemory<LhsS<MP>, LL::TilingLayout>,
-            RhsStage = StridedStageMemory<RhsS<MP>, RL::TilingLayout>,
-            AccStage = CubeOption<StridedStageMemory<AccS<MP>, AL::TilingLayout>>,
+            LhsStage = FullLoaderStage<RC, LL, LhsS<MP>>,
+            RhsStage = FullLoaderStage<RC, RL, RhsS<MP>>,
+            AccStage = CubeOption<FullLoaderStage<RC, AL, AccS<MP>>>,
             OutStage = GW::Stage,
         >,
     RC: RuntimeConfig,
-    LL: FullLoadingStrategy<RC>,
-    RL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
-    AL: FullLoadingStrategy<RC>,
+    LL: FullLoadingStrategy<RC, TileKind = Strided>,
+    RL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
+    AL: FullLoadingStrategy<RC, TileKind = Strided>,
     GW: GlobalWriter<MP::Acc>,
 {
     type Config = SharedGlobalMatmulConfig<SMM::Config>;
@@ -124,16 +125,8 @@ where
         let lhs_stage = &lhs_reader.stage();
         let rhs_stage = &rhs_reader.stage();
 
-        for i in 0..num_loops {
+        for _ in 0..num_loops {
             sync_cube();
-
-            #[allow(clippy::collapsible_if)]
-            if (LL::SHOULD_CLEAR || RL::SHOULD_CLEAR) && config.check_k_bounds() {
-                if i == num_loops - 1 {
-                    lhs_reader.clear_stage(config.lhs_reader_config);
-                    rhs_reader.clear_stage(config.rhs_reader_config);
-                }
-            }
 
             lhs_reader.load_stage(&mut barrier, config.lhs_reader_config);
             rhs_reader.load_stage(&mut barrier, config.rhs_reader_config);

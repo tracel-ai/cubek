@@ -4,7 +4,7 @@ use crate::components::global::{PlaneFlowPartition, read::AsyncPartialLoadingStr
 use crate::components::stage;
 use crate::components::stage::StageConfig as _;
 use crate::components::{
-    global::read::{FullStageGlobalReader, LoaderStage, sync_full_cyclic::SyncFullCyclicLoading},
+    global::read::{FullStageGlobalReader, PartialLoaderStage, sync_full_cyclic::SyncFullCyclicLoading},
     stage::RowMajorTilingOrder,
 };
 use crate::components::{
@@ -49,8 +49,8 @@ impl<MP: MatmulPrecision, SMM, RC, L, GW> GlobalMatmul<RC, MP>
 where
     SMM: stage::StageMatmul<
             MP,
-            LhsStage = LoaderStage<RC, L, LhsS<MP>>,
-            RhsStage = LoaderStage<RC, L, RhsS<MP>>,
+            LhsStage = PartialLoaderStage<RC, L, LhsS<MP>>,
+            RhsStage = PartialLoaderStage<RC, L, RhsS<MP>>,
             AccStage = CubeOption<
                 StridedStageMemory<AccS<MP>, <AL as FullLoadingStrategy<RC>>::TilingLayout>,
             >,

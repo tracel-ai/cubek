@@ -1,5 +1,4 @@
 use crate::components::global::memory::{GlobalMemoryConfig, ViewDirection};
-use crate::components::global::multi_stage::EventLoadingMode;
 use crate::components::global::{
     GlobalReaderConfig, GlobalWriterConfig, PlaneFlowConfig, SharedGlobalMatmulConfig,
 };
@@ -8,10 +7,10 @@ use crate::components::global::{
 };
 use crate::components::global::{WriteTiling, read::PartialLoadingStrategy};
 use crate::components::stage::StageConfig;
-use crate::components::stage::StridedStageFamily;
 use crate::components::{CubeDimResource, global::read::FullLoadingStrategy};
 use crate::components::{global::GlobalMatmulFamily, stage};
 use crate::components::{global::MaxGlobalReaderPlanes, stage::NumStages};
+use crate::components::{global::multi_stage::EventLoadingMode, tile::io::Strided};
 use crate::definition::TilingBlueprint;
 use crate::definition::{
     MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError, MatrixLayout,
@@ -42,14 +41,14 @@ impl<SMM, RC: RuntimeConfig, LL, RL, AL, GW> GlobalMatmulFamily<RC>
     for DoubleBufferingMatmulFamily<SMM, RC, LL, RL, AL, GW>
 where
     SMM: stage::StageMatmulFamily<
-            LhsStage = StridedStageFamily,
-            RhsStage = StridedStageFamily,
-            AccStage = Option<StridedStageFamily>,
+            LhsStage = LL::Stage,
+            RhsStage = RL::Stage,
+            AccStage = Option<AL::Stage>,
             OutStage = GW::Stage,
         >,
-    LL: PartialLoadingStrategy<RC, Stage = StridedStageFamily>,
-    RL: PartialLoadingStrategy<RC, Stage = StridedStageFamily, SyncStrategy = LL::SyncStrategy>,
-    AL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
+    LL: PartialLoadingStrategy<RC, TileKind = Strided>,
+    RL: PartialLoadingStrategy<RC, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
+    AL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
     GW: GlobalWriterFamily,
 {
     type Matmul<MP: MatmulPrecision> = DoubleBufferingMatmul<

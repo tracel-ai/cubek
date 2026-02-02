@@ -1,12 +1,5 @@
 use crate::{components::CubeDimResource, launch::RuntimeConfig};
 use crate::{
-    components::stage::NumStages,
-    definition::{
-        MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError,
-        MatrixLayout, StageIdent,
-    },
-};
-use crate::{
     components::{
         global::{
             GlobalReaderConfig, GlobalWriterConfig, GlobalWriterFamily, InputLoadFlow,
@@ -16,9 +9,16 @@ use crate::{
             read::FullLoadingStrategy,
             single_stage::simple::matmul::SimpleMatmul,
         },
-        stage::{StageConfig, StridedStageFamily},
+        stage::StageConfig,
     },
     definition::TilingBlueprint,
+};
+use crate::{
+    components::{stage::NumStages, tile::io::Strided},
+    definition::{
+        MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError,
+        MatrixLayout, StageIdent,
+    },
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
 use std::marker::PhantomData;
@@ -45,15 +45,15 @@ pub struct SimpleMatmulFamily<
 impl<SMM, RC, LL, RL, AL, GW> GlobalMatmulFamily<RC> for SimpleMatmulFamily<SMM, RC, LL, RL, AL, GW>
 where
     SMM: stage::StageMatmulFamily<
-            LhsStage = StridedStageFamily,
-            RhsStage = StridedStageFamily,
-            AccStage = Option<StridedStageFamily>,
+            LhsStage = LL::Stage,
+            RhsStage = RL::Stage,
+            AccStage = Option<AL::Stage>,
             OutStage = GW::Stage,
         >,
     RC: RuntimeConfig,
-    LL: FullLoadingStrategy<RC>,
-    RL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
-    AL: FullLoadingStrategy<RC>,
+    LL: FullLoadingStrategy<RC, TileKind = Strided>,
+    RL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
+    AL: FullLoadingStrategy<RC, TileKind = Strided>,
     GW: GlobalWriterFamily,
 {
     type Matmul<MP: MatmulPrecision> = SimpleMatmul<

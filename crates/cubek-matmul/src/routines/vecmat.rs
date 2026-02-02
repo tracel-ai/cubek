@@ -29,7 +29,7 @@ use crate::{
         MatmulSetupError, PartitionSize, SmAllocation, TileSize, TilingBlueprint, TilingScheme,
     },
     launch::RuntimeConfig,
-    routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, Routine},
+    routines::{BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine},
 };
 
 pub struct SimpleVecMatAlgorithm {}
@@ -71,11 +71,11 @@ impl<RC: RuntimeConfig> Routine<RC> for SimpleVecMatAlgorithm {
     type Blueprint = TilingBlueprint;
     type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
 
-    fn prepare<R: Runtime>(
+    fn expand_blueprint<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
         strategy: &BlueprintStrategy<RC, Self>,
-    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+    ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
         if PlaneVecMatInnerProduct::<Filled>::can_cast_stage_element() {
@@ -96,6 +96,15 @@ impl<RC: RuntimeConfig> Routine<RC> for SimpleVecMatAlgorithm {
                 )
             }
         };
+        Ok(ExpandInfo { blueprint, dtypes })
+    }
+
+    fn prepare<R: Runtime>(
+        problem: &MatmulProblem,
+        device_settings: &DeviceSettings<R>,
+        expand_info: ExpandInfo<Self::Blueprint>,
+    ) -> Result<LaunchInfo<Self::Blueprint>, MatmulSetupError> {
+        let ExpandInfo { blueprint, dtypes } = expand_info;
 
         <Self as Routine<RC>>::validate_blueprint(
             &device_settings.client,
@@ -143,11 +152,11 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleVecMatAlgorithm {
     type Blueprint = TilingBlueprint;
     type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
 
-    fn prepare<R: Runtime>(
+    fn expand_blueprint<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
         strategy: &BlueprintStrategy<RC, Self>,
-    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+    ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
         if PlaneVecMatInnerProduct::<Filled>::can_cast_stage_element() {
@@ -168,6 +177,15 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleVecMatAlgorithm {
                 )
             }
         };
+        Ok(ExpandInfo { blueprint, dtypes })
+    }
+
+    fn prepare<R: Runtime>(
+        problem: &MatmulProblem,
+        device_settings: &DeviceSettings<R>,
+        expand_info: ExpandInfo<Self::Blueprint>,
+    ) -> Result<LaunchInfo<Self::Blueprint>, MatmulSetupError> {
+        let ExpandInfo { blueprint, dtypes } = expand_info;
 
         <Self as Routine<RC>>::validate_blueprint(
             &device_settings.client,

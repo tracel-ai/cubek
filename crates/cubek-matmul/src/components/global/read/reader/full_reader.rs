@@ -1,18 +1,15 @@
 use std::marker::PhantomData;
 
-use crate::components::global::memory::GlobalIterator;
 use crate::components::global::multi_stage::JobExecutor;
-use crate::components::global::multi_stage::JobIterator;
-use crate::components::global::multi_stage::LoadMaxRoundPlaneCount;
 use crate::components::global::read::LoadingJob;
 use crate::components::global::read::LoadingValidation;
 use crate::components::global::read::StageBuffer;
 use crate::components::global::read::SyncStrategy;
 use crate::components::global::read::TaskCounter;
-use crate::components::stage::StridedStageFamily;
-use crate::components::stage::StridedStageMemory;
+use crate::components::global::{multi_stage::JobIterator, read::FullLoaderStage};
 use crate::components::stage::TilingLayout;
-use crate::definition::StageIdent;
+use crate::components::{global::memory::GlobalIterator, stage::LoadStageFamily};
+use crate::components::{global::multi_stage::LoadMaxRoundPlaneCount, tile::io::TileKind};
 use crate::{components::global::GlobalReaderConfig, launch::RuntimeConfig};
 use cubecl::prelude::*;
 use cubecl::std::{
@@ -31,9 +28,11 @@ pub trait FullLoadingStrategy<RC: RuntimeConfig>:
     type TilingLayout: TilingLayout;
     /// The synchronization strategy that should be used with this loading strategy
     type SyncStrategy: SyncStrategy;
+    type Stage: LoadStageFamily<ReadOnly, TileKind = Self::TileKind>;
+    type TileKind: TileKind;
 
     /// The [LoadingJob] for this strategy.
-    type Job<EG: Numeric, ES: Numeric>: LoadingJob<EG, ES, Self::TilingLayout, Self::SyncStrategy, Stage = StridedStageFamily>;
+    type Job<EG: Numeric, ES: Numeric>: LoadingJob<EG, ES, Self::TilingLayout, Self::SyncStrategy, Stage = Self::Stage>;
 
     const SHOULD_CLEAR: bool = false;
 
@@ -58,7 +57,7 @@ pub struct FullStageGlobalReader<
 > {
     global_iter: GlobalIterator<Line<EG>>,
     runtime_config: RC,
-    stage: StridedStageMemory<ES, L::TilingLayout>,
+    stage: FullLoaderStage<RC, L, ES>,
     loading_job: CubeOption<L::Job<EG, ES>>,
     #[cube(comptime)]
     _phantom: PhantomData<L>,
@@ -77,9 +76,8 @@ impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: FullLoadingStrategy<RC>>
     ) -> Self {
         // Maybe make align a property on the strategy, but it's fine to over-align so this works
         // for now. Swizzling will require more though.
-        let mut stage = StridedStageMemory::new_aligned(128usize, config.smem_config);
+        let stage = L::Stage::create(128usize, config.smem_config);
 
-        let (shape_row, shape_col) = view.shape();
         let global_iter =
             GlobalIterator::new(view, k_step, config.gmem_config.view_direction, false);
 
@@ -92,32 +90,6 @@ impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: FullLoadingStrategy<RC>>
             false => CubeOption::new_None(),
         };
 
-        if L::SHOULD_CLEAR {
-            // Slices are clamped to the shape, so if the slice size is smaller than the stage size
-            // we are partially out of bounds.
-            match config.stage_ident {
-                StageIdent::Lhs =>
-                {
-                    #[allow(clippy::collapsible_if)]
-                    if config.gmem_config.check_row_bounds {
-                        if shape_row < config.smem_config.elements_per_stage_along_row() {
-                            stage.clear_all(config);
-                        }
-                    }
-                }
-                StageIdent::Rhs =>
-                {
-                    #[allow(clippy::collapsible_if)]
-                    if config.gmem_config.check_col_bounds {
-                        if shape_col < config.smem_config.elements_per_stage_along_col() {
-                            stage.clear_all(config);
-                        }
-                    }
-                }
-                _ => unreachable!(),
-            }
-        }
-
         FullStageGlobalReader::<EG, ES, RC, L> {
             global_iter,
             runtime_config,
@@ -128,16 +100,13 @@ impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: FullLoadingStrategy<RC>>
     }
 
     /// Give a reader to the loaded stage memory.
-    pub fn stage(&self) -> StridedStageMemory<ES, L::TilingLayout> {
-        self.stage
+    pub fn stage(&self) -> FullLoaderStage<RC, L, ES> {
+        L::Stage::with_buffer_index(&self.stage, 0)
     }
 
-    pub fn clear_stage(&mut self, #[comptime] config: GlobalReaderConfig) {
-        self.stage.clear_all(config);
-    }
-
+    /// Frees the stage memory for reuse
     pub fn free_stage(self) {
-        unsafe { self.stage.free() };
+        L::Stage::free(&self.stage);
     }
 
     /// Advance the view over global memory along the k dimension by a specified offset, `k_offset`.

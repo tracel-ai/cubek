@@ -1,6 +1,5 @@
 use std::marker::PhantomData;
 
-use crate::components::global::read::validate_async_copy_with_problem;
 use crate::components::global::read::validate_swizzle_atom_size;
 use crate::components::global::{
     GlobalReaderConfig, PlaneFlowPartition, read::async_copy::ASYNC_COPY_WIDTH,
@@ -16,6 +15,7 @@ use crate::components::stage::StridedStageFamily;
 use crate::components::stage::StridedStageMemory;
 use crate::components::stage::{ContiguousTilingLayout, TilingOrder};
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
+use crate::components::{global::read::validate_async_copy_with_problem, tile::io::Strided};
 use crate::components::{
     global::{
         SharedGlobalMatmulConfig,
@@ -123,6 +123,7 @@ impl<TO: TilingOrder, RC: RuntimeConfig> PartialLoadingStrategy<RC>
     type TilingLayout = ContiguousTilingLayout<TO>;
     type SyncStrategy = AsyncCopy;
     type Stage = StridedStageFamily;
+    type TileKind = Strided;
 
     type Job<EG: Numeric, ES: Numeric> = AsyncPartialCyclicJob;
 

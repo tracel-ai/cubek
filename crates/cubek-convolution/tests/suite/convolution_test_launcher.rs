@@ -90,13 +90,15 @@ where
     let dtypes = MatmulElems::new_deprecated::<((P::EG, P::ES), (P::EG, P::ES), (P::EG, f32))>();
 
     let device_settings = A::Routine::device_settings(&client, line_sizes);
-    let launch_info = A::Routine::prepare(
+    let expand_info = A::Routine::expand_blueprint(
         &problem.as_matmul_problem(),
         &device_settings,
         &BlueprintStrategy::Forced(blueprint),
     )?;
+    let problem = A::Args::adjust_problem(&client, problem, &expand_info.blueprint, &dtypes);
 
-    let problem = A::Args::adjust_problem(&client, problem, &launch_info.blueprint, &dtypes);
+    let launch_info =
+        A::Routine::prepare(&problem.as_matmul_problem(), &device_settings, expand_info)?;
 
     let elem_size = size_of::<P::EG>();
     let lhs_handle = unsafe {

@@ -1,5 +1,4 @@
 use crate::components::global::MaxGlobalReaderPlanes;
-use crate::components::global::memory::{GlobalMemoryConfig, ViewDirection};
 use crate::components::global::multi_stage::EventLoadingMode;
 use crate::components::global::read::LoadingValidation as _;
 use crate::components::global::{
@@ -16,6 +15,10 @@ use crate::components::global::{
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{self, StageConfig};
 use crate::components::{global::GlobalMatmulFamily, stage::NumStages};
+use crate::components::{
+    global::memory::{GlobalMemoryConfig, ViewDirection},
+    tile::io::Strided,
+};
 use crate::definition::TilingBlueprint;
 use crate::definition::{MatmulElems, MatmulPrecision, MatmulProblem, MatmulSetupError};
 use crate::definition::{MatmulLineSizes, MatrixLayout, StageIdent};
@@ -43,13 +46,13 @@ impl<SMM, RC, RL, AL, GW> GlobalMatmulFamily<RC>
 where
     SMM: stage::StageMatmulFamily<
             LhsStage = StridedStageFamily,
-            RhsStage = StridedStageFamily,
-            AccStage = Option<StridedStageFamily>,
+            RhsStage = RL::Stage,
+            AccStage = Option<AL::Stage>,
             OutStage = GW::Stage,
         >,
     RC: RuntimeConfig,
-    RL: PartialLoadingStrategy<RC, Stage = StridedStageFamily, SyncStrategy = Synchronous>,
-    AL: FullLoadingStrategy<RC, SyncStrategy = Synchronous>,
+    RL: PartialLoadingStrategy<RC, TileKind = Strided, SyncStrategy = Synchronous>,
+    AL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = Synchronous>,
     GW: GlobalWriterFamily,
 {
     type Matmul<MP: MatmulPrecision> = OrderedDoubleBufferingMatmul<

@@ -33,7 +33,7 @@ pub trait Routine<RC: RuntimeConfig>: Sized {
         blueprint: Self::Blueprint,
         dtypes: &MatmulElems,
     ) -> Result<(), MatmulSetupError> {
-        match unsafe {
+        unsafe {
             Self::BatchMatmul::launch_unchecked::<MA, R>(
                 client,
                 cube_dim,
@@ -44,17 +44,21 @@ pub trait Routine<RC: RuntimeConfig>: Sized {
                 cube_count_input,
                 blueprint,
                 dtypes,
-            )
-        } {
-            Ok(_) => Ok(()),
-            Err(err) => Err(MatmulSetupError::Launch(err)),
+            )?
         }
+        Ok(())
     }
+
+    fn expand_blueprint<R: Runtime>(
+        problem: &MatmulProblem,
+        device_settings: &DeviceSettings<R>,
+        strategy: &BlueprintStrategy<RC, Self>,
+    ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError>;
 
     fn prepare<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<RC, Self>,
+        expand_info: ExpandInfo<Self::Blueprint>,
     ) -> Result<LaunchInfo<Self::Blueprint>, MatmulSetupError>;
 
     fn num_stages() -> NumStages {
@@ -92,6 +96,12 @@ pub trait Routine<RC: RuntimeConfig>: Sized {
     ) -> Result<(), MatmulSetupError> {
         Self::BatchMatmul::validate_blueprint(client, blueprint, problem, dtypes, line_sizes)
     }
+}
+
+#[derive(Debug)]
+pub struct ExpandInfo<B: Blueprint> {
+    pub blueprint: B,
+    pub dtypes: MatmulElems,
 }
 
 #[derive(Debug)]
