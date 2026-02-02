@@ -395,17 +395,13 @@ fn test_large_scale_u32() {
         TensorHandleRef::from_raw_parts(&output_handle, &strides, &shape, size_of::<u32>())
     };
 
-    // This should not panic with illegal memory access
     sort_keys::<TestRuntime, u32>(&client, input_ref, output_ref, SIZE, Ascending)
         .expect("Sort failed");
 
-    // Verify a sample of results (full verification would be too slow)
+    // Verify sortedness by checking consecutive samples across the entire range
     let bytes = client.read_one(output_handle);
     let output = u32::from_bytes(&bytes);
-
     assert_eq!(output.len(), SIZE);
-
-    // Verify sortedness by checking consecutive samples across the entire range
     let mut prev = output[0];
     for i in (1..SIZE).step_by(10_000) {
         let curr = output[i];
