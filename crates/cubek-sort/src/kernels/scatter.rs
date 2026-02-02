@@ -57,6 +57,13 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
             plane_hists[idx].store(0u32);
         }
     }
+
+    // Initialize digit_start and digit_global to avoid reading uninitialized values
+    // during the prefix sum computation (important when PLANE_DIM < num_digit_warps)
+    if thread_id < NUM_BUCKETS_U32 {
+        digit_start[thread_id as usize] = 0u32;
+        digit_global[thread_id as usize] = 0u32;
+    }
     sync_cube();
 
     // Register arrays for per-thread data - uses Radix type for keys
@@ -75,6 +82,22 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
 
     // Use max radix value for invalid positions (sorts to end in ascending order)
     let max_radix = R::max_value();
+
+    // Initialize shared_keys to max_radix so unwritten positions have defined values
+    // This prevents undefined behavior if Phase 3 doesn't write all positions
+    // Also initialize shared_values to 0 when sorting pairs
+    #[allow(clippy::manual_div_ceil)]
+    let keys_init_per_thread = (items_per_block as usize + CUBE_DIM as usize - 1) / CUBE_DIM as usize;
+    for i in 0..keys_init_per_thread {
+        let idx = thread_id as usize + i * CUBE_DIM as usize;
+        if idx < items_per_block as usize {
+            shared_keys[idx] = max_radix;
+            if has_values {
+                shared_values[idx] = 0u32;
+            }
+        }
+    }
+    sync_cube();
 
     // Phase 1: Load keys and compute warp-level ranking
     // When is_full_plane is true, the compiler can fold `valid` to true and eliminate branches
@@ -107,7 +130,10 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
         if is_leader {
             base = plane_hists[hist_idx].fetch_add(total);
         }
-        base = plane_shuffle(base, leader);
+        // Clamp leader to valid lane range to avoid UB when peer_mask is empty
+        // (find_first_set_bit returns PLANE_DIM when mask is 0)
+        let safe_leader = u32::min(leader, PLANE_DIM - 1);
+        base = plane_shuffle(base, safe_leader);
 
         local_offsets[i as usize] = base + rank;
     }
@@ -198,9 +224,12 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
             let digit_base = digit_start[digit as usize];
             let local_pos = digit_base + plane_prefix + offset_in_plane;
 
-            shared_keys[local_pos as usize] = key;
-            if has_values {
-                shared_values[local_pos as usize] = values[i as usize];
+            // Bounds check: only write if position is within block
+            if local_pos < items_per_block {
+                shared_keys[local_pos as usize] = key;
+                if has_values {
+                    shared_values[local_pos as usize] = values[i as usize];
+                }
             }
         }
     }
@@ -225,10 +254,13 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
             // For descending sort on the final pass, reverse the output position
             let global_pos = select(reverse_output, num_items - 1 - ascending_pos, ascending_pos);
 
-            keys_out[global_pos as usize] = KOut::from_radix(key);
+            // Bounds check: only write if position is valid
+            if global_pos < num_items {
+                keys_out[global_pos as usize] = KOut::from_radix(key);
 
-            if has_values {
-                values_out[global_pos as usize] = shared_values[local_idx as usize];
+                if has_values {
+                    values_out[global_pos as usize] = shared_values[local_idx as usize];
+                }
             }
         }
     }

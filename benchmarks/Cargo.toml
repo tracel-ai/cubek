@@ -14,6 +14,8 @@ repository = "https://github.com/tracel-ai/cubek"
 version.workspace = true
 
 [features]
+default = []
+cuda = ["cubecl/cuda"]
 
 [dependencies]
 cubecl = { workspace = true, features = ["test-runtime", "stdlib"] }
@@ -26,6 +28,7 @@ cubek = { path = "../crates/cubek", version = "=0.1.0", default-features = false
     "sort",
 ] }
 half = { workspace = true }
+rand = { workspace = true }
 
 [[bench]]
 harness = false

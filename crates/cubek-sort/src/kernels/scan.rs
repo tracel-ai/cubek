@@ -1,7 +1,9 @@
 use crate::components::config::NUM_BUCKETS;
 use cubecl::prelude::*;
 
-const MAX_WARPS: usize = 8;
+// Maximum warps per block. Must accommodate scan_dim / PLANE_DIM.
+// PLANE_DIM can be as low as 8 on Intel, so with scan_dim=256 we need up to 32 warps.
+const MAX_WARPS: usize = 32;
 
 /// Phase A: Compute digit totals by summing histogram values across all blocks.
 /// Launches 256 blocks (one per digit), each with SCAN_DIM threads that
@@ -20,6 +22,14 @@ pub fn scan_sum_kernel(
     let tid = UNIT_POS_X;
     let lane_id = UNIT_POS_PLANE;
     let warp_id = PLANE_POS;
+
+    // Initialize shared memory to avoid reading uninitialized values
+    // when num_warps > PLANE_DIM (e.g., Intel with PLANE_DIM=8)
+    if tid < MAX_WARPS as u32 {
+        warp_sums[tid as usize] = 0u32;
+        shared_sum[tid as usize] = 0u32;
+    }
+    sync_cube();
 
     // Each thread sums its strided portion of histogram blocks
     let mut my_sum = 0u32;
@@ -67,6 +77,12 @@ pub fn scan_prefix_totals_kernel(digit_totals: &Tensor<u32>, digit_prefixes: &mu
     let digit = UNIT_POS_X;
     let lane_id = UNIT_POS_PLANE;
     let warp_id = PLANE_POS;
+
+    // Initialize warp_sums to avoid reading uninitialized values
+    if digit < MAX_WARPS as u32 {
+        warp_sums[digit as usize] = 0u32;
+    }
+    sync_cube();
 
     // Load digit total (clamp index to avoid out-of-bounds read)
     let safe_digit = select(digit < NUM_BUCKETS as u32, digit, 0u32);
@@ -127,6 +143,12 @@ pub fn scan_offsets_cooperative_kernel(
     let tid = UNIT_POS_X;
     let lane_id = UNIT_POS_PLANE;
     let warp_id = PLANE_POS;
+
+    // Initialize warp_sums to avoid reading uninitialized values
+    if tid < MAX_WARPS as u32 {
+        warp_sums[tid as usize] = 0u32;
+    }
+    sync_cube();
 
     // Load base offset for this digit (from cross-digit prefix sum)
     let base_offset = digit_prefixes[digit as usize];
@@ -242,6 +264,12 @@ pub fn scan_kernel(histograms: &Tensor<u32>, offsets: &mut Tensor<u32>, num_bloc
     let digit = UNIT_POS_X;
     let lane_id = UNIT_POS_PLANE;
     let warp_id = PLANE_POS;
+
+    // Initialize warp_sums to avoid reading uninitialized values
+    if digit < MAX_WARPS as u32 {
+        warp_sums[digit as usize] = 0u32;
+    }
+    sync_cube();
 
     // Phase 1: Compute digit totals
     let mut running_sum = 0u32;

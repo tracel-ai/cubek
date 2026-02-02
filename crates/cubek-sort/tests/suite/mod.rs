@@ -376,7 +376,7 @@ fn test_f64_special() {
 
 /// Test sorting 150M+ elements to catch out-of-bounds memory access issues.
 #[test]
-fn test_large_scale() {
+fn test_large_scale_u32() {
     const SIZE: usize = 150 * 1024 * 1024;
 
     let client = TestRuntime::client(&Default::default());
@@ -417,5 +417,61 @@ fn test_large_scale() {
             curr
         );
         prev = curr;
+    }
+}
+
+/// Test sorting u16 elements at multiple sizes repeatedly to catch memory/state issues.
+/// This mimics the benchmark pattern that triggers intermittent failures.
+#[test]
+fn test_large_scale_u16() {
+    const SIZES: [usize; 3] = [
+        67 * 1024 * 1024,  // 64M
+        134 * 1024 * 1024, // 128M
+        268 * 1024 * 1024, // 256M
+    ];
+    const ITERATIONS: usize = 100; // Match benchmark
+
+    let client = TestRuntime::client(&Default::default());
+
+    if !client.properties().features.supports_type(U16) {
+        return;
+    }
+
+    // Run u32 first (like benchmark does)
+    for &size in &SIZES {
+        let data: Vec<u32> = (0..size as u32).rev().collect();
+        for _ in 0..ITERATIONS {
+            let input_handle = client.create_from_slice(u32::as_bytes(&data));
+            let output_handle = client.empty(size * std::mem::size_of::<u32>());
+            let shape = [size];
+            let strides = [1];
+            let input_ref = unsafe {
+                TensorHandleRef::from_raw_parts(&input_handle, &strides, &shape, size_of::<u32>())
+            };
+            let output_ref = unsafe {
+                TensorHandleRef::from_raw_parts(&output_handle, &strides, &shape, size_of::<u32>())
+            };
+            sort_keys::<TestRuntime, u32>(&client, input_ref, output_ref, size, Ascending)
+                .expect("u32 sort failed");
+        }
+    }
+
+    // Then run u16
+    for &size in &SIZES {
+        let data: Vec<u16> = (0..size).map(|i| (size - 1 - i) as u16).collect();
+        for iter in 0..ITERATIONS {
+            let input_handle = client.create_from_slice(u16::as_bytes(&data));
+            let output_handle = client.empty(size * std::mem::size_of::<u16>());
+            let shape = [size];
+            let strides = [1];
+            let input_ref = unsafe {
+                TensorHandleRef::from_raw_parts(&input_handle, &strides, &shape, size_of::<u16>())
+            };
+            let output_ref = unsafe {
+                TensorHandleRef::from_raw_parts(&output_handle, &strides, &shape, size_of::<u16>())
+            };
+            sort_keys::<TestRuntime, u16>(&client, input_ref, output_ref, size, Ascending)
+                .expect(&format!("u16 sort failed at size {}M iteration {}", size / 1024 / 1024, iter));
+        }
     }
 }
