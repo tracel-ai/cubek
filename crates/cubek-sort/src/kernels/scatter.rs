@@ -83,11 +83,13 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
         let global_idx = sub_part_start + local_idx;
         let valid = is_full_plane || global_idx < num_items;
 
-        let key = select(valid, KIn::to_radix(keys_in[global_idx as usize]), max_radix);
+        // Clamp index to avoid out-of-bounds read (select doesn't short-circuit on GPU)
+        let safe_idx = select(valid, global_idx, 0u32);
+        let key = select(valid, KIn::to_radix(keys_in[safe_idx as usize]), max_radix);
         keys[i as usize] = key;
 
         if has_values {
-            values[i as usize] = select(valid, values_in[global_idx as usize], 0u32);
+            values[i as usize] = select(valid, values_in[safe_idx as usize], 0u32);
         }
 
         let digit_radix = (key >> shift) & digit_mask;

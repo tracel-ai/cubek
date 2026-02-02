@@ -55,7 +55,9 @@ pub fn histogram_kernel<K: SortKey<Radix = R>, R: Radix>(
         let idx = block_start + thread_id + i * CUBE_DIM;
         let valid = is_full_block || idx < num_items;
 
-        let radix_key = select(valid, K::to_radix(keys[idx as usize]), zero_radix);
+        // Clamp index to avoid out-of-bounds read (select doesn't short-circuit on GPU)
+        let safe_idx = select(valid, idx, 0u32);
+        let radix_key = select(valid, K::to_radix(keys[safe_idx as usize]), zero_radix);
         let digit_radix = (radix_key >> shift) & digit_mask;
         let digit = u32::cast_from(digit_radix);
 

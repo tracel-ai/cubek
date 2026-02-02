@@ -93,21 +93,6 @@ fn format_size(n: usize) -> String {
     }
 }
 
-/// Calculate throughput in GB/s for sorting.
-/// For radix sort: we read each element 4 times (4 passes) and write 4 times.
-/// Total memory movement = num_items * 4 bytes * 4 passes * 2 (read+write) = 32 bytes per element
-fn calculate_throughput(num_items: usize, duration: Duration) -> f64 {
-    let bytes_per_element = 4; // u32
-    let passes = 4;
-    let total_bytes = num_items * bytes_per_element * passes * 2; // read + write per pass
-    let duration_sec = duration.as_secs_f64();
-    if duration_sec > 0.0 {
-        (total_bytes as f64) / duration_sec / 1e9
-    } else {
-        0.0
-    }
-}
-
 /// Run warmup iterations to stabilize GPU state (clocks, caches, etc.)
 fn warmup<R: Runtime>(bench: &SortBench<R>) {
     for _ in 0..NUM_WARMUP {
@@ -149,21 +134,13 @@ fn run<R: Runtime>(device: R::Device) {
 
     // Sizes matching b0nes benchmark range (2^20 to 2^28)
     let sizes: Vec<usize> = vec![
-        1 << 20, // 1M (2^20)
-        1 << 22, // 4M (2^22)
-        1 << 24, // 16M (2^24)
         1 << 26, // 64M (2^26)
+        1 << 27, // 128M (2^27)
         1 << 28, // 268M (2^28) - b0nes default
     ];
 
     println!("================================================================================");
-    println!("CubeK Sort Benchmark - Normalized for b0nes comparison");
-    println!("================================================================================");
-    println!("Runtime: {}", R::name(&client));
-    println!("Timing:  GPU hardware timestamps (same as D3D12 timestamp queries)");
-    println!("Warmup iterations: {}", NUM_WARMUP);
-    println!("Timed iterations:  {}", NUM_SAMPLES);
-    println!("Using auto-tuned strategy based on input size");
+    println!("CubeK Sort Benchmark");
     println!("================================================================================\n");
 
     for size in sizes {
@@ -174,14 +151,7 @@ fn run<R: Runtime>(device: R::Device) {
         };
 
         let name = bench.name();
-        let size_bits = (size as f64).log2() as u32;
 
-        println!("Beginning sort keys-only u32 ascending batch timing test at:");
-        println!("Size: {} (2^{})", size, size_bits);
-        println!("Test size: {}", NUM_SAMPLES);
-        print!("Running");
-
-        // Warmup
         warmup(&bench);
 
         match bench.run(TimingMethod::Device) {
@@ -200,9 +170,6 @@ fn run<R: Runtime>(device: R::Device) {
                 // b0nes style: keys/sec = size / totalTime * batchCount
                 let keys_per_sec = calculate_keys_per_sec(size, total_time, NUM_SAMPLES);
 
-                // Also compute GB/s for memory bandwidth perspective
-                let throughput_mean = calculate_throughput(size, mean);
-
                 println!();
                 println!(
                     "Total time elapsed: {:.6} seconds",
@@ -212,7 +179,6 @@ fn run<R: Runtime>(device: R::Device) {
                     "Estimated speed at {} 32-bit elements: {:.6E} keys/sec",
                     size, keys_per_sec
                 );
-                println!("Memory throughput (mean): {:.2} GB/s", throughput_mean);
                 println!(
                     "Per-iteration: mean={:.3}ms  std={:.3}ms  min={:.3}ms  max={:.3}ms",
                     mean.as_secs_f64() * 1000.0,
@@ -229,8 +195,6 @@ fn run<R: Runtime>(device: R::Device) {
             }
         }
     }
-
-    println!("================================================================================");
 }
 
 fn main() {

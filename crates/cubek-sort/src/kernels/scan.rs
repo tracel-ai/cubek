@@ -68,10 +68,11 @@ pub fn scan_prefix_totals_kernel(digit_totals: &Tensor<u32>, digit_prefixes: &mu
     let lane_id = UNIT_POS_PLANE;
     let warp_id = PLANE_POS;
 
-    // Load digit total
+    // Load digit total (clamp index to avoid out-of-bounds read)
+    let safe_digit = select(digit < NUM_BUCKETS as u32, digit, 0u32);
     let my_value = select(
         digit < NUM_BUCKETS as u32,
-        digit_totals[digit as usize],
+        digit_totals[safe_digit as usize],
         0u32,
     );
 
@@ -192,7 +193,9 @@ pub fn scan_offsets_cooperative_kernel(
     if remaining > 0 {
         let block_idx = partial_start + tid;
         let hist_idx = block_idx * NUM_BUCKETS as u32 + digit;
-        let my_value = select(tid < remaining, histograms[hist_idx as usize], 0u32);
+        // Clamp index to avoid out-of-bounds read (select doesn't short-circuit on GPU)
+        let safe_idx = select(tid < remaining, hist_idx, 0u32);
+        let my_value = select(tid < remaining, histograms[safe_idx as usize], 0u32);
         g_scan[tid as usize] = my_value;
 
         let my_exclusive = plane_exclusive_sum(my_value);

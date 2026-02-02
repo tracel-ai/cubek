@@ -1,6 +1,6 @@
+use cubecl::TestRuntime;
 use cubecl::ir::{ElemType, FloatKind, IntKind, UIntKind};
 use cubecl::prelude::*;
-use cubecl::TestRuntime;
 use cubek_sort::{SortKey, SortOrder, sort_keys};
 use half::{bf16, f16};
 use rand::{Rng, SeedableRng, rngs::StdRng};
@@ -16,7 +16,9 @@ where
 }
 
 fn is_supported(client: &ComputeClient<TestRuntime>, types: &[ElemType]) -> bool {
-    types.iter().all(|t| client.properties().features.supports_type(*t))
+    types
+        .iter()
+        .all(|t| client.properties().features.supports_type(*t))
 }
 
 fn run_sort_test<T>(input: &[T], order: SortOrder, required_types: &[ElemType])
@@ -43,8 +45,9 @@ where
 
     let input_ref =
         unsafe { TensorHandleRef::from_raw_parts(&input_handle, &strides, &shape, size_of::<T>()) };
-    let output_ref =
-        unsafe { TensorHandleRef::from_raw_parts(&output_handle, &strides, &shape, size_of::<T>()) };
+    let output_ref = unsafe {
+        TensorHandleRef::from_raw_parts(&output_handle, &strides, &shape, size_of::<T>())
+    };
 
     let result = sort_keys::<TestRuntime, T>(&client, input_ref, output_ref, num_items, order);
     result.expect("Sort failed");
@@ -60,7 +63,10 @@ where
 
     assert_eq!(output.len(), expected.len(), "Length mismatch");
     for (i, (got, exp)) in output.iter().zip(expected.iter()).enumerate() {
-        assert_eq!(got, exp, "Mismatch at index {i}: got {got:?}, expected {exp:?}");
+        assert_eq!(
+            got, exp,
+            "Mismatch at index {i}: got {got:?}, expected {exp:?}"
+        );
     }
 }
 
@@ -366,4 +372,50 @@ fn test_f64_special() {
         &[F64, U64],
     );
     run_sort_test(&[0.0f64, -0.0, 0.0, -0.0], Ascending, &[F64, U64]);
+}
+
+/// Test sorting 150M+ elements to catch out-of-bounds memory access issues.
+#[test]
+fn test_large_scale() {
+    const SIZE: usize = 150 * 1024 * 1024;
+
+    let client = TestRuntime::client(&Default::default());
+    let data: Vec<u32> = (0..SIZE as u32).rev().collect();
+
+    let input_handle = client.create_from_slice(u32::as_bytes(&data));
+    let output_handle = client.empty(SIZE * std::mem::size_of::<u32>());
+
+    let shape = [SIZE];
+    let strides = [1];
+
+    let input_ref = unsafe {
+        TensorHandleRef::from_raw_parts(&input_handle, &strides, &shape, size_of::<u32>())
+    };
+    let output_ref = unsafe {
+        TensorHandleRef::from_raw_parts(&output_handle, &strides, &shape, size_of::<u32>())
+    };
+
+    // This should not panic with illegal memory access
+    sort_keys::<TestRuntime, u32>(&client, input_ref, output_ref, SIZE, Ascending)
+        .expect("Sort failed");
+
+    // Verify a sample of results (full verification would be too slow)
+    let bytes = client.read_one(output_handle);
+    let output = u32::from_bytes(&bytes);
+
+    assert_eq!(output.len(), SIZE);
+
+    // Verify sortedness by checking consecutive samples across the entire range
+    let mut prev = output[0];
+    for i in (1..SIZE).step_by(10_000) {
+        let curr = output[i];
+        assert!(
+            prev <= curr,
+            "Not sorted at index {}: {} > {}",
+            i,
+            prev,
+            curr
+        );
+        prev = curr;
+    }
 }
