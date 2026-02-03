@@ -129,7 +129,7 @@ pub fn scan_prefix_totals_kernel(digit_totals: &Tensor<u32>, digit_prefixes: &mu
 /// Phase C: Compute within-digit offsets using cooperative prefix + base offsets.
 /// Launches 256 blocks (one per digit), each with SCAN_DIM threads.
 #[cube(launch_unchecked)]
-pub fn scan_offsets_cooperative_kernel(
+pub fn scan_offsets(
     histograms: &Tensor<u32>,
     digit_prefixes: &Tensor<u32>,
     offsets: &mut Tensor<u32>,
@@ -250,80 +250,6 @@ pub fn scan_offsets_cooperative_kernel(
             let final_exclusive = g_scan[tid as usize] + warp_prefix;
             let out_idx = block_idx * NUM_BUCKETS as u32 + digit;
             offsets[out_idx as usize] = base_offset + reduction + final_exclusive;
-        }
-    }
-}
-
-/// Single-block scan kernel - fallback for when num_blocks is small.
-/// Each of 256 threads handles one digit, looping through all histogram blocks.
-#[cube(launch_unchecked)]
-pub fn scan_kernel(histograms: &Tensor<u32>, offsets: &mut Tensor<u32>, num_blocks: u32) {
-    let mut digit_totals = SharedMemory::<u32>::new(NUM_BUCKETS);
-    let mut warp_sums = SharedMemory::<u32>::new(MAX_WARPS);
-
-    let digit = UNIT_POS_X;
-    let lane_id = UNIT_POS_PLANE;
-    let warp_id = PLANE_POS;
-
-    // Initialize warp_sums to avoid reading uninitialized values
-    if digit < MAX_WARPS as u32 {
-        warp_sums[digit as usize] = 0u32;
-    }
-    sync_cube();
-
-    // Phase 1: Compute digit totals
-    let mut running_sum = 0u32;
-    if digit < NUM_BUCKETS as u32 {
-        for block in 0..num_blocks {
-            let idx = block * NUM_BUCKETS as u32 + digit;
-            let count = histograms[idx as usize];
-            running_sum += count;
-        }
-        digit_totals[digit as usize] = running_sum;
-    }
-    sync_cube();
-
-    // Phase 2: Compute exclusive prefix sum across all 256 digits
-    if digit < NUM_BUCKETS as u32 {
-        let my_value = digit_totals[digit as usize];
-        let my_exclusive = plane_exclusive_sum(my_value);
-        let my_inclusive = my_exclusive + my_value;
-        let warp_total = plane_shuffle(my_inclusive, PLANE_DIM - 1);
-
-        if lane_id == PLANE_DIM - 1 {
-            warp_sums[warp_id as usize] = warp_total;
-        }
-        digit_totals[digit as usize] = my_exclusive;
-    }
-    sync_cube();
-
-    // All threads must participate in plane ops.
-    #[allow(clippy::manual_div_ceil)]
-    let num_warps = (NUM_BUCKETS as u32 + PLANE_DIM - 1) / PLANE_DIM;
-    let warp_input = if warp_id == 0 && lane_id < num_warps {
-        warp_sums[lane_id as usize]
-    } else {
-        #[allow(clippy::useless_conversion)]
-        0u32.into()
-    };
-    let warp_prefix = plane_exclusive_sum(warp_input);
-    if warp_id == 0 && lane_id < num_warps {
-        warp_sums[lane_id as usize] = warp_prefix;
-    }
-    sync_cube();
-
-    // Phase 3: Compute base offset and write final offsets
-    if digit < NUM_BUCKETS as u32 {
-        let my_exclusive = digit_totals[digit as usize];
-        let warp_prefix = warp_sums[warp_id as usize];
-        let base_offset = warp_prefix + my_exclusive;
-
-        running_sum = 0u32;
-        for block in 0..num_blocks {
-            let idx = block * NUM_BUCKETS as u32 + digit;
-            let count = histograms[idx as usize];
-            offsets[idx as usize] = base_offset + running_sum;
-            running_sum += count;
         }
     }
 }

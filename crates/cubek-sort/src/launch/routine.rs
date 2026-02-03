@@ -107,89 +107,175 @@ where
             (keys_in.handle, keys_in.shape, keys_in.strides, &temp_keys)
         } else {
             match pass % 2 == 0 {
-                true => (keys_out, &contiguous_shape[..], &contiguous_strides[..], &temp_keys),
-                false => (&temp_keys, &contiguous_shape[..], &contiguous_strides[..], keys_out),
+                true => (
+                    keys_out,
+                    &contiguous_shape[..],
+                    &contiguous_strides[..],
+                    &temp_keys,
+                ),
+                false => (
+                    &temp_keys,
+                    &contiguous_shape[..],
+                    &contiguous_strides[..],
+                    keys_out,
+                ),
             }
         };
 
         // Buffer selection for values
-        let (v_src_handle, v_src_shape, v_src_strides, v_dst) = if first_pass_mode != ValuesMode::None {
-            let v_out = values_out.unwrap();
-            if is_first && is_last {
-                // For Indices mode, v_src is unused but we need a valid handle
-                let v_in = match values {
-                    SortValues::Tensor(t) => (t.handle, t.shape, t.strides),
-                    _ => (keys_in.handle, keys_in.shape, keys_in.strides), // Dummy, won't be read
-                };
-                (v_in.0, v_in.1, v_in.2, v_out)
-            } else if is_first {
-                let v_in = match values {
-                    SortValues::Tensor(t) => (t.handle, t.shape, t.strides),
-                    _ => (keys_in.handle, keys_in.shape, keys_in.strides),
-                };
-                (v_in.0, v_in.1, v_in.2, temp_values.as_ref().unwrap())
-            } else {
-                match pass % 2 == 0 {
-                    true => (v_out, &contiguous_shape[..], &contiguous_strides[..], temp_values.as_ref().unwrap()),
-                    false => (temp_values.as_ref().unwrap(), &contiguous_shape[..], &contiguous_strides[..], v_out),
+        let (v_src_handle, v_src_shape, v_src_strides, v_dst) =
+            if first_pass_mode != ValuesMode::None {
+                let v_out = values_out.unwrap();
+                if is_first && is_last {
+                    // For Indices mode, v_src is unused but we need a valid handle
+                    let v_in = match values {
+                        SortValues::Tensor(t) => (t.handle, t.shape, t.strides),
+                        _ => (keys_in.handle, keys_in.shape, keys_in.strides), // Dummy, won't be read
+                    };
+                    (v_in.0, v_in.1, v_in.2, v_out)
+                } else if is_first {
+                    let v_in = match values {
+                        SortValues::Tensor(t) => (t.handle, t.shape, t.strides),
+                        _ => (keys_in.handle, keys_in.shape, keys_in.strides),
+                    };
+                    (v_in.0, v_in.1, v_in.2, temp_values.as_ref().unwrap())
+                } else {
+                    match pass % 2 == 0 {
+                        true => (
+                            v_out,
+                            &contiguous_shape[..],
+                            &contiguous_strides[..],
+                            temp_values.as_ref().unwrap(),
+                        ),
+                        false => (
+                            temp_values.as_ref().unwrap(),
+                            &contiguous_shape[..],
+                            &contiguous_strides[..],
+                            v_out,
+                        ),
+                    }
                 }
-            }
-        } else {
-            // Dummy values when not sorting pairs
-            (keys_in.handle, keys_in.shape, keys_in.strides, keys_out)
-        };
+            } else {
+                // Dummy values when not sorting pairs
+                (keys_in.handle, keys_in.shape, keys_in.strides, keys_out)
+            };
 
         // Histogram phase
         if is_first {
             launch_histogram::<R, K, K::Radix>(
-                client, k_src_handle, k_src_shape, k_src_strides,
-                &histograms, num_items, num_blocks, pass, &strategy,
+                client,
+                k_src_handle,
+                k_src_shape,
+                k_src_strides,
+                &histograms,
+                num_items,
+                num_blocks,
+                pass,
+                &strategy,
             )?;
         } else {
             launch_histogram::<R, K::Radix, K::Radix>(
-                client, k_src_handle, k_src_shape, k_src_strides,
-                &histograms, num_items, num_blocks, pass, &strategy,
+                client,
+                k_src_handle,
+                k_src_shape,
+                k_src_strides,
+                &histograms,
+                num_items,
+                num_blocks,
+                pass,
+                &strategy,
             )?;
         }
 
-        // Scan phase
-        if num_blocks < 256 {
-            launch_scan::<R>(client, &histograms, &offsets, num_blocks)?;
-        } else {
-            launch_scan_cooperative::<R>(client, &histograms, &offsets, num_blocks, 256)?;
-        }
+        launch_scan_cooperative::<R>(client, &histograms, &offsets, num_blocks, 256)?;
 
         // Scatter phase
         let reverse_output = order.is_descending() && is_last;
-        let values_mode = if is_first { first_pass_mode } else { later_pass_mode };
+        let values_mode = if is_first {
+            first_pass_mode
+        } else {
+            later_pass_mode
+        };
 
         if is_first && is_last {
             launch_scatter::<R, K, K, K::Radix>(
-                client, k_src_handle, k_src_shape, k_src_strides, k_dst,
-                v_src_handle, v_src_shape, v_src_strides, v_dst,
-                &offsets, num_items, num_blocks, pass,
-                &strategy, values_mode, num_planes, reverse_output,
+                client,
+                k_src_handle,
+                k_src_shape,
+                k_src_strides,
+                k_dst,
+                v_src_handle,
+                v_src_shape,
+                v_src_strides,
+                v_dst,
+                &offsets,
+                num_items,
+                num_blocks,
+                pass,
+                &strategy,
+                values_mode,
+                num_planes,
+                reverse_output,
             )?;
         } else if is_first {
             launch_scatter::<R, K, K::Radix, K::Radix>(
-                client, k_src_handle, k_src_shape, k_src_strides, k_dst,
-                v_src_handle, v_src_shape, v_src_strides, v_dst,
-                &offsets, num_items, num_blocks, pass,
-                &strategy, values_mode, num_planes, reverse_output,
+                client,
+                k_src_handle,
+                k_src_shape,
+                k_src_strides,
+                k_dst,
+                v_src_handle,
+                v_src_shape,
+                v_src_strides,
+                v_dst,
+                &offsets,
+                num_items,
+                num_blocks,
+                pass,
+                &strategy,
+                values_mode,
+                num_planes,
+                reverse_output,
             )?;
         } else if is_last {
             launch_scatter::<R, K::Radix, K, K::Radix>(
-                client, k_src_handle, k_src_shape, k_src_strides, k_dst,
-                v_src_handle, v_src_shape, v_src_strides, v_dst,
-                &offsets, num_items, num_blocks, pass,
-                &strategy, values_mode, num_planes, reverse_output,
+                client,
+                k_src_handle,
+                k_src_shape,
+                k_src_strides,
+                k_dst,
+                v_src_handle,
+                v_src_shape,
+                v_src_strides,
+                v_dst,
+                &offsets,
+                num_items,
+                num_blocks,
+                pass,
+                &strategy,
+                values_mode,
+                num_planes,
+                reverse_output,
             )?;
         } else {
             launch_scatter::<R, K::Radix, K::Radix, K::Radix>(
-                client, k_src_handle, k_src_shape, k_src_strides, k_dst,
-                v_src_handle, v_src_shape, v_src_strides, v_dst,
-                &offsets, num_items, num_blocks, pass,
-                &strategy, values_mode, num_planes, reverse_output,
+                client,
+                k_src_handle,
+                k_src_shape,
+                k_src_strides,
+                k_dst,
+                v_src_handle,
+                v_src_shape,
+                v_src_strides,
+                v_dst,
+                &offsets,
+                num_items,
+                num_blocks,
+                pass,
+                &strategy,
+                values_mode,
+                num_planes,
+                reverse_output,
             )?;
         }
     }
@@ -304,7 +390,7 @@ fn launch_scan_cooperative<R: Runtime>(
         let offsets_tensor =
             TensorArg::from_raw_parts::<u32>(offsets, &hist_shape, &hist_strides, 1);
 
-        scan::scan_offsets_cooperative_kernel::launch_unchecked::<R>(
+        scan::scan_offsets::launch_unchecked::<R>(
             client,
             CubeCount::new_1d(NUM_BUCKETS as u32),
             CubeDim::new_1d(scan_dim),
@@ -317,32 +403,6 @@ fn launch_scan_cooperative<R: Runtime>(
         .map_err(SortError::Launch)?;
     }
 
-    Ok(())
-}
-
-fn launch_scan<R: Runtime>(
-    client: &ComputeClient<R>,
-    histograms: &Handle,
-    offsets: &Handle,
-    num_blocks: u32,
-) -> Result<(), SortError> {
-    let shape = [num_blocks as usize * NUM_BUCKETS];
-    let strides = [1];
-
-    let hist_tensor = unsafe { TensorArg::from_raw_parts::<u32>(histograms, &shape, &strides, 1) };
-    let offsets_tensor = unsafe { TensorArg::from_raw_parts::<u32>(offsets, &shape, &strides, 1) };
-
-    unsafe {
-        scan::scan_kernel::launch_unchecked::<R>(
-            client,
-            CubeCount::new_1d(1),
-            CubeDim::new_1d(NUM_BUCKETS as u32),
-            hist_tensor,
-            offsets_tensor,
-            ScalarArg::new(num_blocks),
-        )
-        .map_err(SortError::Launch)?;
-    }
     Ok(())
 }
 
@@ -371,8 +431,15 @@ fn launch_scatter<R: Runtime, KIn: SortKey<Radix = Rx>, KOut: SortKey<Radix = Rx
     let offsets_shape = [num_blocks as usize * NUM_BUCKETS];
     let offsets_strides = [1];
 
-    let keys_in_view = linear_view::<KIn, R>(client, keys_in, keys_in_shape, keys_in_strides, num_items);
-    let values_in_view = linear_view::<u32, R>(client, values_in, values_in_shape, values_in_strides, num_items);
+    let keys_in_view =
+        linear_view::<KIn, R>(client, keys_in, keys_in_shape, keys_in_strides, num_items);
+    let values_in_view = linear_view::<u32, R>(
+        client,
+        values_in,
+        values_in_shape,
+        values_in_strides,
+        num_items,
+    );
 
     let keys_out_tensor =
         unsafe { TensorArg::from_raw_parts::<KOut>(keys_out, &items_shape, &items_strides, 1) };
