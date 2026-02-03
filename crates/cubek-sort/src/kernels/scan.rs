@@ -209,9 +209,13 @@ pub fn scan_offsets(
         let block_idx = partial_start + tid;
         let hist_idx = block_idx * NUM_BUCKETS as u32 + digit;
         // Clamp index to avoid out-of-bounds read (select doesn't short-circuit on GPU)
-        let safe_idx = select(tid < remaining, hist_idx, 0u32);
-        let my_value = select(tid < remaining, histograms[safe_idx as usize], 0u32);
-        g_scan[tid as usize] = my_value;
+
+        let my_value = if tid < remaining {
+            histograms[hist_idx as usize]
+        } else {
+            #[allow(clippy::useless_conversion)]
+            0u32.into()
+        };
 
         let my_exclusive = plane_exclusive_sum(my_value);
         let my_inclusive = my_exclusive + my_value;
