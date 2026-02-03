@@ -1,7 +1,7 @@
 use cubecl::TestRuntime;
 use cubecl::ir::{ElemType, FloatKind, IntKind, UIntKind};
 use cubecl::prelude::*;
-use cubek_sort::{SortKey, SortOrder, sort_keys};
+use cubek_sort::{SortKey, SortOrder, SortValues, sort};
 use half::{bf16, f16};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 
@@ -38,21 +38,17 @@ where
     }
 
     let input_handle = client.create_from_slice(T::as_bytes(input));
-    let output_handle = client.empty(std::mem::size_of_val(input));
 
     let shape = [num_items];
     let strides = [1];
 
     let input_ref =
         unsafe { TensorHandleRef::from_raw_parts(&input_handle, &strides, &shape, size_of::<T>()) };
-    let output_ref = unsafe {
-        TensorHandleRef::from_raw_parts(&output_handle, &strides, &shape, size_of::<T>())
-    };
 
-    let result = sort_keys::<TestRuntime, T>(&client, input_ref, output_ref, num_items, order);
-    result.expect("Sort failed");
+    let result = sort::<TestRuntime, T>(&client, input_ref, SortValues::None, num_items, order);
+    let sort_output = result.expect("Sort failed");
 
-    let bytes = client.read_one(output_handle);
+    let bytes = client.read_one(sort_output.keys);
     let output = T::from_bytes(&bytes);
 
     let mut expected = input.to_vec();
@@ -209,8 +205,7 @@ fn test_u32_descending() {
     run_sort_test(&random_values::<u32>(1009, 12345), Descending, &[]);
 }
 
-// i32 tests (spot checks)
-
+// i32 tests
 #[test]
 fn test_i32_basic() {
     run_sort_test(&[-42i32], Ascending, &[]);
@@ -229,8 +224,6 @@ fn test_i32_sign_boundary() {
 fn test_i32_descending() {
     run_sort_test(&random_values::<i32>(1009, 12345), Descending, &[]);
 }
-
-// 16-bit types
 
 const U16: ElemType = ElemType::UInt(UIntKind::U16);
 const I16: ElemType = ElemType::Int(IntKind::I16);
@@ -374,6 +367,77 @@ fn test_f64_special() {
     run_sort_test(&[0.0f64, -0.0, 0.0, -0.0], Ascending, &[F64, U64]);
 }
 
+/// Test argsort with implicit indices.
+#[test]
+fn test_argsort_implicit_indices() {
+    let client = TestRuntime::client(&Default::default());
+    let data: Vec<u32> = vec![30, 10, 20, 50, 40];
+
+    let input_handle = client.create_from_slice(u32::as_bytes(&data));
+
+    let shape = [data.len()];
+    let strides = [1];
+
+    let input_ref = unsafe {
+        TensorHandleRef::from_raw_parts(&input_handle, &strides, &shape, size_of::<u32>())
+    };
+
+    let sort_output = sort::<TestRuntime, u32>(&client, input_ref, SortValues::Indices, data.len(), Ascending)
+        .expect("Sort failed");
+
+    let keys_bytes = client.read_one(sort_output.keys);
+    let sorted_keys = u32::from_bytes(&keys_bytes);
+
+    let values_handle = sort_output.values.expect("Should have values");
+    let values_bytes = client.read_one(values_handle);
+    let indices = u32::from_bytes(&values_bytes);
+
+    // Expected: sorted keys = [10, 20, 30, 40, 50]
+    // Expected: indices = [1, 2, 0, 4, 3] (original positions)
+    assert_eq!(sorted_keys, vec![10, 20, 30, 40, 50]);
+    assert_eq!(indices, vec![1, 2, 0, 4, 3]);
+}
+
+/// Test argsort with larger random data.
+#[test]
+fn test_argsort_random() {
+    let client = TestRuntime::client(&Default::default());
+    let data: Vec<u32> = random_values(1009, 12345);
+
+    let input_handle = client.create_from_slice(u32::as_bytes(&data));
+
+    let shape = [data.len()];
+    let strides = [1];
+
+    let input_ref = unsafe {
+        TensorHandleRef::from_raw_parts(&input_handle, &strides, &shape, size_of::<u32>())
+    };
+
+    let sort_output = sort::<TestRuntime, u32>(&client, input_ref, SortValues::Indices, data.len(), Ascending)
+        .expect("Sort failed");
+
+    let keys_bytes = client.read_one(sort_output.keys);
+    let sorted_keys = u32::from_bytes(&keys_bytes);
+
+    let values_handle = sort_output.values.expect("Should have values");
+    let values_bytes = client.read_one(values_handle);
+    let indices = u32::from_bytes(&values_bytes);
+
+    // Verify keys are sorted
+    for i in 1..sorted_keys.len() {
+        assert!(sorted_keys[i - 1] <= sorted_keys[i], "Keys not sorted at {}", i);
+    }
+
+    // Verify indices are a valid permutation and reconstruct original data
+    for (sorted_pos, &orig_idx) in indices.iter().enumerate() {
+        assert_eq!(
+            data[orig_idx as usize], sorted_keys[sorted_pos],
+            "Index {} at sorted position {} doesn't match",
+            orig_idx, sorted_pos
+        );
+    }
+}
+
 /// Test sorting 150M elements to catch out-of-bounds memory access issues.
 #[test]
 fn test_large_scale_u32() {
@@ -383,7 +447,6 @@ fn test_large_scale_u32() {
     let data: Vec<u32> = (0..SIZE as u32).rev().collect();
 
     let input_handle = client.create_from_slice(u32::as_bytes(&data));
-    let output_handle = client.empty(SIZE * std::mem::size_of::<u32>());
 
     let shape = [SIZE];
     let strides = [1];
@@ -391,15 +454,12 @@ fn test_large_scale_u32() {
     let input_ref = unsafe {
         TensorHandleRef::from_raw_parts(&input_handle, &strides, &shape, size_of::<u32>())
     };
-    let output_ref = unsafe {
-        TensorHandleRef::from_raw_parts(&output_handle, &strides, &shape, size_of::<u32>())
-    };
 
-    sort_keys::<TestRuntime, u32>(&client, input_ref, output_ref, SIZE, Ascending)
+    let sort_output = sort::<TestRuntime, u32>(&client, input_ref, SortValues::None, SIZE, Ascending)
         .expect("Sort failed");
 
     // Verify sortedness by checking consecutive samples across the entire range
-    let bytes = client.read_one(output_handle);
+    let bytes = client.read_one(sort_output.keys);
     let output = u32::from_bytes(&bytes);
     assert_eq!(output.len(), SIZE);
     let mut prev = output[0];

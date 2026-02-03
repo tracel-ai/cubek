@@ -1,75 +1,64 @@
 use crate::components::config::{NUM_BUCKETS, SortStrategy};
 use crate::components::key::{Radix, SortKey};
 use crate::error::SortError;
+use crate::kernels::scatter::ValuesMode;
 use crate::kernels::{histogram, scan, scatter};
-use crate::SortOrder;
+use crate::{SortOrder, SortOutput, SortValues};
 use cubecl::prelude::*;
 use cubecl::server::Handle;
 use cubecl_std::tensor::layout::linear::{LinearLayout, LinearLayoutArgs, LinearViewLaunch};
 
-pub fn sort_keys<R: Runtime, K: SortKey>(
+pub fn sort<'a, R: Runtime, K: SortKey>(
     client: &ComputeClient<R>,
-    keys_in: TensorHandleRef<R>,
-    keys_out: TensorHandleRef<R>,
+    keys_in: TensorHandleRef<'a, R>,
+    values: SortValues<'a, R>,
     num_items: usize,
     strategy: SortStrategy,
     order: SortOrder,
-) -> Result<(), SortError>
+) -> Result<SortOutput, SortError>
 where
     K::Radix: SortKey<Radix = K::Radix>,
 {
     if num_items == 0 {
-        return Ok(());
+        return Ok(SortOutput {
+            keys: client.empty(0),
+            values: None,
+        });
     }
+
+    let key_size = core::mem::size_of::<K>();
+    let value_size = core::mem::size_of::<u32>();
+
+    // Allocate output buffers
+    let keys_out = client.empty(num_items * key_size);
+    let values_out = match &values {
+        SortValues::None => None,
+        SortValues::Tensor(_) | SortValues::Indices => Some(client.empty(num_items * value_size)),
+    };
 
     sort_impl::<R, K>(
         client,
         &keys_in,
-        keys_out.handle,
-        None,
-        None,
+        &keys_out,
+        &values,
+        values_out.as_ref(),
         num_items,
         strategy,
         order,
-    )
+    )?;
+
+    Ok(SortOutput {
+        keys: keys_out,
+        values: values_out,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn sort_pairs<R: Runtime, K: SortKey, V: Numeric>(
-    client: &ComputeClient<R>,
-    keys_in: TensorHandleRef<R>,
-    keys_out: TensorHandleRef<R>,
-    values_in: TensorHandleRef<R>,
-    values_out: TensorHandleRef<R>,
-    num_items: usize,
-    strategy: SortStrategy,
-    order: SortOrder,
-) -> Result<(), SortError>
-where
-    K::Radix: SortKey<Radix = K::Radix>,
-{
-    if num_items == 0 {
-        return Ok(());
-    }
-
-    sort_impl::<R, K>(
-        client,
-        &keys_in,
-        keys_out.handle,
-        Some(&values_in),
-        Some(values_out.handle),
-        num_items,
-        strategy,
-        order,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn sort_impl<R: Runtime, K: SortKey>(
+fn sort_impl<'a, R: Runtime, K: SortKey>(
     client: &ComputeClient<R>,
     keys_in: &TensorHandleRef<R>,
     keys_out: &Handle,
-    values_in: Option<&TensorHandleRef<R>>,
+    values: &SortValues<'a, R>,
     values_out: Option<&Handle>,
     num_items: usize,
     strategy: SortStrategy,
@@ -79,20 +68,22 @@ where
     K::Radix: SortKey<Radix = K::Radix>,
 {
     let num_blocks = strategy.num_blocks(num_items);
-    // Use radix type size for intermediate buffers
     let radix_size = core::mem::size_of::<K::Radix>();
     let value_size = core::mem::size_of::<u32>();
-    let has_values = values_in.is_some();
-    // Number of passes = number of bytes in the key type (not radix type)
-    // This is correct because we only need to sort the meaningful bytes.
-    // For u8: 1 pass, u16: 2 passes, u32: 4 passes
     let num_passes = core::mem::size_of::<K>() as u32;
     let plane_dim = client.properties().hardware.plane_size_min;
     let num_planes = strategy.num_planes(plane_dim);
 
-    // Temp buffer for radix keys (may be u32 or u64)
+    // Determine values mode for first pass vs subsequent passes
+    let (first_pass_mode, later_pass_mode) = match values {
+        SortValues::None => (ValuesMode::None, ValuesMode::None),
+        SortValues::Tensor(_) => (ValuesMode::Tensor, ValuesMode::Tensor),
+        SortValues::Indices => (ValuesMode::Indices, ValuesMode::Tensor),
+    };
+
+    // Temp buffer for radix keys
     let temp_keys = client.empty(num_items * radix_size);
-    let temp_values = if has_values {
+    let temp_values = if first_pass_mode != ValuesMode::None {
         Some(client.empty(num_items * value_size))
     } else {
         None
@@ -102,8 +93,6 @@ where
     let offsets = client.empty(histogram_size);
 
     let last_pass = num_passes - 1;
-
-    // Contiguous shape/strides for temp buffers and outputs
     let contiguous_shape = [num_items];
     let contiguous_strides = [1];
 
@@ -111,109 +100,96 @@ where
         let is_first = pass == 0;
         let is_last = pass == last_pass;
 
-        // Buffer selection for keys - first pass uses original input, others use contiguous temps
+        // Buffer selection for keys
         let (k_src_handle, k_src_shape, k_src_strides, k_dst) = if is_first && is_last {
-            // Single pass: read from input (strided), write directly to output
             (keys_in.handle, keys_in.shape, keys_in.strides, keys_out)
         } else if is_first {
-            // First pass: read from input (strided), write to temp
             (keys_in.handle, keys_in.shape, keys_in.strides, &temp_keys)
         } else {
-            // Subsequent passes: alternate between temp and output (all contiguous)
             match pass % 2 == 0 {
                 true => (keys_out, &contiguous_shape[..], &contiguous_strides[..], &temp_keys),
                 false => (&temp_keys, &contiguous_shape[..], &contiguous_strides[..], keys_out),
             }
         };
 
-        let (v_src_handle, v_src_shape, v_src_strides, v_dst) = if has_values {
+        // Buffer selection for values
+        let (v_src_handle, v_src_shape, v_src_strides, v_dst) = if first_pass_mode != ValuesMode::None {
+            let v_out = values_out.unwrap();
             if is_first && is_last {
-                let v_in = values_in.unwrap();
-                (v_in.handle, v_in.shape, v_in.strides, values_out.unwrap())
+                // For Indices mode, v_src is unused but we need a valid handle
+                let v_in = match values {
+                    SortValues::Tensor(t) => (t.handle, t.shape, t.strides),
+                    _ => (keys_in.handle, keys_in.shape, keys_in.strides), // Dummy, won't be read
+                };
+                (v_in.0, v_in.1, v_in.2, v_out)
             } else if is_first {
-                let v_in = values_in.unwrap();
-                (v_in.handle, v_in.shape, v_in.strides, temp_values.as_ref().unwrap())
+                let v_in = match values {
+                    SortValues::Tensor(t) => (t.handle, t.shape, t.strides),
+                    _ => (keys_in.handle, keys_in.shape, keys_in.strides),
+                };
+                (v_in.0, v_in.1, v_in.2, temp_values.as_ref().unwrap())
             } else {
                 match pass % 2 == 0 {
-                    true => (values_out.unwrap(), &contiguous_shape[..], &contiguous_strides[..], temp_values.as_ref().unwrap()),
-                    false => (temp_values.as_ref().unwrap(), &contiguous_shape[..], &contiguous_strides[..], values_out.unwrap()),
+                    true => (v_out, &contiguous_shape[..], &contiguous_strides[..], temp_values.as_ref().unwrap()),
+                    false => (temp_values.as_ref().unwrap(), &contiguous_shape[..], &contiguous_strides[..], v_out),
                 }
             }
         } else {
-            // Dummy values when not sorting pairs - won't be used
+            // Dummy values when not sorting pairs
             (keys_in.handle, keys_in.shape, keys_in.strides, keys_out)
         };
 
+        // Histogram phase
         if is_first {
             launch_histogram::<R, K, K::Radix>(
-                client,
-                k_src_handle,
-                k_src_shape,
-                k_src_strides,
-                &histograms,
-                num_items,
-                num_blocks,
-                pass,
-                &strategy,
+                client, k_src_handle, k_src_shape, k_src_strides,
+                &histograms, num_items, num_blocks, pass, &strategy,
             )?;
         } else {
-            // K::Radix is SortKey with Radix = K::Radix (u32 or u64)
             launch_histogram::<R, K::Radix, K::Radix>(
-                client,
-                k_src_handle,
-                k_src_shape,
-                k_src_strides,
-                &histograms,
-                num_items,
-                num_blocks,
-                pass,
-                &strategy,
+                client, k_src_handle, k_src_shape, k_src_strides,
+                &histograms, num_items, num_blocks, pass, &strategy,
             )?;
         }
 
-        // Choose scan strategy based on input size:
-        // - Small inputs (< 256 blocks): single-block scan has lower overhead
-        // - Large inputs (>= 256 blocks): cooperative scan has better parallelism
+        // Scan phase
         if num_blocks < 256 {
             launch_scan::<R>(client, &histograms, &offsets, num_blocks)?;
         } else {
             launch_scan_cooperative::<R>(client, &histograms, &offsets, num_blocks, 256)?;
         }
 
-        // Only reverse output on the final pass when sorting descending
+        // Scatter phase
         let reverse_output = order.is_descending() && is_last;
+        let values_mode = if is_first { first_pass_mode } else { later_pass_mode };
 
         if is_first && is_last {
-            // Single pass: K -> K
             launch_scatter::<R, K, K, K::Radix>(
                 client, k_src_handle, k_src_shape, k_src_strides, k_dst,
                 v_src_handle, v_src_shape, v_src_strides, v_dst,
                 &offsets, num_items, num_blocks, pass,
-                &strategy, has_values, num_planes, reverse_output,
+                &strategy, values_mode, num_planes, reverse_output,
             )?;
         } else if is_first {
-            // First pass: K -> K::Radix
             launch_scatter::<R, K, K::Radix, K::Radix>(
                 client, k_src_handle, k_src_shape, k_src_strides, k_dst,
                 v_src_handle, v_src_shape, v_src_strides, v_dst,
                 &offsets, num_items, num_blocks, pass,
-                &strategy, has_values, num_planes, reverse_output,
+                &strategy, values_mode, num_planes, reverse_output,
             )?;
         } else if is_last {
-            // Last pass: K::Radix -> K
             launch_scatter::<R, K::Radix, K, K::Radix>(
                 client, k_src_handle, k_src_shape, k_src_strides, k_dst,
                 v_src_handle, v_src_shape, v_src_strides, v_dst,
                 &offsets, num_items, num_blocks, pass,
-                &strategy, has_values, num_planes, reverse_output,
+                &strategy, values_mode, num_planes, reverse_output,
             )?;
         } else {
-            // Middle pass: K::Radix -> K::Radix
             launch_scatter::<R, K::Radix, K::Radix, K::Radix>(
                 client, k_src_handle, k_src_shape, k_src_strides, k_dst,
                 v_src_handle, v_src_shape, v_src_strides, v_dst,
                 &offsets, num_items, num_blocks, pass,
-                &strategy, has_values, num_planes, reverse_output,
+                &strategy, values_mode, num_planes, reverse_output,
             )?;
         }
     }
@@ -236,7 +212,6 @@ fn launch_histogram<R: Runtime, K: SortKey<Radix = Rx>, Rx: Radix>(
     let hist_shape = [num_blocks as usize * NUM_BUCKETS];
     let hist_strides = [1];
 
-    // Create LinearView for keys - handles strided access automatically
     let keys_view = linear_view::<K, R>(client, keys, keys_shape, keys_strides, num_items);
     let hist_tensor =
         unsafe { TensorArg::from_raw_parts::<u32>(histograms, &hist_shape, &hist_strides, 1) };
@@ -257,7 +232,6 @@ fn launch_histogram<R: Runtime, K: SortKey<Radix = Rx>, Rx: Radix>(
     Ok(())
 }
 
-/// Helper to create a LinearView launch arg from a handle and shape/strides
 fn linear_view<'a, E: CubePrimitive, R: Runtime>(
     client: &ComputeClient<R>,
     handle: &'a Handle,
@@ -272,10 +246,6 @@ fn linear_view<'a, E: CubePrimitive, R: Runtime>(
     LinearViewLaunch::new::<LinearLayout>(buffer, layout)
 }
 
-/// Three-phase cooperative scan for better parallelism.
-/// Phase A: Sum digit totals (256 blocks, SCAN_DIM threads each)
-/// Phase B: Cross-digit prefix sum (1 block, 256 threads)
-/// Phase C: Within-digit offsets (256 blocks, SCAN_DIM threads each)
 fn launch_scan_cooperative<R: Runtime>(
     client: &ComputeClient<R>,
     histograms: &Handle,
@@ -289,11 +259,9 @@ fn launch_scan_cooperative<R: Runtime>(
     let digit_shape = [NUM_BUCKETS];
     let digit_strides = [1];
 
-    // Allocate temp buffers for digit totals and prefixes
     let digit_totals = client.empty(NUM_BUCKETS * elem_size);
     let digit_prefixes = client.empty(NUM_BUCKETS * elem_size);
 
-    // Phase A: Compute digit totals
     unsafe {
         let hist_tensor =
             TensorArg::from_raw_parts::<u32>(histograms, &hist_shape, &hist_strides, 1);
@@ -312,7 +280,6 @@ fn launch_scan_cooperative<R: Runtime>(
         .map_err(SortError::Launch)?;
     }
 
-    // Phase B: Cross-digit prefix sum
     unsafe {
         let totals_tensor =
             TensorArg::from_raw_parts::<u32>(&digit_totals, &digit_shape, &digit_strides, 1);
@@ -329,7 +296,6 @@ fn launch_scan_cooperative<R: Runtime>(
         .map_err(SortError::Launch)?;
     }
 
-    // Phase C: Within-digit cooperative offsets
     unsafe {
         let hist_tensor =
             TensorArg::from_raw_parts::<u32>(histograms, &hist_shape, &hist_strides, 1);
@@ -354,7 +320,6 @@ fn launch_scan_cooperative<R: Runtime>(
     Ok(())
 }
 
-/// Single-block scan - fallback for small num_blocks.
 fn launch_scan<R: Runtime>(
     client: &ComputeClient<R>,
     histograms: &Handle,
@@ -397,7 +362,7 @@ fn launch_scatter<R: Runtime, KIn: SortKey<Radix = Rx>, KOut: SortKey<Radix = Rx
     num_blocks: u32,
     pass: u32,
     strategy: &SortStrategy,
-    has_values: bool,
+    values_mode: ValuesMode,
     num_planes: u32,
     reverse_output: bool,
 ) -> Result<(), SortError> {
@@ -406,11 +371,9 @@ fn launch_scatter<R: Runtime, KIn: SortKey<Radix = Rx>, KOut: SortKey<Radix = Rx
     let offsets_shape = [num_blocks as usize * NUM_BUCKETS];
     let offsets_strides = [1];
 
-    // Create LinearViews for inputs - handles strided access automatically
     let keys_in_view = linear_view::<KIn, R>(client, keys_in, keys_in_shape, keys_in_strides, num_items);
     let values_in_view = linear_view::<u32, R>(client, values_in, values_in_shape, values_in_strides, num_items);
 
-    // Outputs are always contiguous
     let keys_out_tensor =
         unsafe { TensorArg::from_raw_parts::<KOut>(keys_out, &items_shape, &items_strides, 1) };
     let values_out_tensor =
@@ -432,7 +395,7 @@ fn launch_scatter<R: Runtime, KIn: SortKey<Radix = Rx>, KOut: SortKey<Radix = Rx
             ScalarArg::new(pass),
             ScalarArg::new(reverse_output as u32),
             strategy.items_per_thread,
-            has_values,
+            values_mode,
             num_planes,
             strategy.items_per_block(),
         )

@@ -6,6 +6,17 @@ use cubecl_std::tensor::layout::linear::LinearView;
 
 const NUM_BUCKETS_U32: u32 = NUM_BUCKETS as u32;
 
+/// How values are handled during scatter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ValuesMode {
+    /// No values - keys only.
+    None,
+    /// Read values from input tensor.
+    Tensor,
+    /// Generate implicit indices [0, 1, 2, ...].
+    Indices,
+}
+
 #[cube(launch_unchecked)]
 pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radix>(
     keys_in: &LinearView<KIn>,
@@ -17,20 +28,21 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
     pass: u32,
     reverse_output_flag: u32,
     #[comptime] items_per_thread: u32,
-    #[comptime] has_values: bool,
+    #[comptime] values_mode: ValuesMode,
     #[comptime] num_planes: u32,
     #[comptime] items_per_block: u32,
 ) {
     let reverse_output = reverse_output_flag != 0;
-    // Plane histograms for warp-level ranking (atomic for concurrent updates)
+    // Plane histograms for warp-level ranking.
     let plane_hists = SharedMemory::<Atomic<u32>>::new((num_planes as usize) * NUM_BUCKETS);
-    // Shared memory buffer for keys (reused for local reordering) - uses Radix type
+    // Shared memory buffer for keys (also reused for local reordering)
     let mut shared_keys = SharedMemory::<R>::new(items_per_block as usize);
-    // Shared memory buffer for values - only allocate if needed
+    // Shared memory buffer for values.
+    let has_values = values_mode != ValuesMode::None;
     let mut shared_values = SharedMemory::<u32>::new(if has_values {
         items_per_block as usize
     } else {
-        1 // Minimum allocation when unused
+        1
     });
     // Where each digit starts in shared memory (exclusive prefix sum of digit counts)
     let mut digit_start = SharedMemory::<u32>::new(NUM_BUCKETS);
@@ -58,16 +70,13 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
         }
     }
 
-    // Initialize digit_start and digit_global to avoid reading uninitialized values
-    // during the prefix sum computation (important when PLANE_DIM < num_digit_warps)
+    // Initialize shared memory (important when PLANE_DIM < num_digit_warps)
     if thread_id < NUM_BUCKETS_U32 {
         digit_start[thread_id as usize] = 0u32;
         digit_global[thread_id as usize] = 0u32;
     }
-    sync_cube();
 
-    // Register arrays for per-thread data - uses Radix type for keys
-    // Note: digits recomputed from keys in Phase 3 to reduce register pressure
+    // Register arrays for per-thread data.
     let mut keys = Array::<R>::new(items_per_thread as usize);
     let mut values = Array::<u32>::new(items_per_thread as usize);
     let mut local_offsets = Array::<u32>::new(items_per_thread as usize);
@@ -85,9 +94,9 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
 
     // Initialize shared_keys to max_radix so unwritten positions have defined values
     // This prevents undefined behavior if Phase 3 doesn't write all positions
-    // Also initialize shared_values to 0 when sorting pairs
     #[allow(clippy::manual_div_ceil)]
-    let keys_init_per_thread = (items_per_block as usize + CUBE_DIM as usize - 1) / CUBE_DIM as usize;
+    let keys_init_per_thread =
+        (items_per_block as usize + CUBE_DIM as usize - 1) / CUBE_DIM as usize;
     for i in 0..keys_init_per_thread {
         let idx = thread_id as usize + i * CUBE_DIM as usize;
         if idx < items_per_block as usize {
@@ -111,8 +120,10 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
         let key = select(valid, KIn::to_radix(keys_in[safe_idx as usize]), max_radix);
         keys[i as usize] = key;
 
-        if has_values {
+        if values_mode == ValuesMode::Tensor {
             values[i as usize] = select(valid, values_in[safe_idx as usize], 0u32);
+        } else if values_mode == ValuesMode::Indices {
+            values[i as usize] = select(valid, global_idx, 0u32);
         }
 
         let digit_radix = (key >> shift) & digit_mask;
@@ -134,7 +145,6 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
         // (find_first_set_bit returns PLANE_DIM when mask is 0)
         let safe_leader = u32::min(leader, PLANE_DIM - 1);
         base = plane_shuffle(base, safe_leader);
-
         local_offsets[i as usize] = base + rank;
     }
     sync_cube();
@@ -179,8 +189,7 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
     }
     sync_cube();
 
-    // Step 2 & 3 fused: First warp computes prefix, all threads read and compute final
-    // All threads must participate in plane ops (partial participation hangs on CUDA)
+    // First warp computes prefix, all threads read and compute final
     let warp_input = if plane_id == 0 && lane_id < num_digit_warps {
         digit_global[lane_id as usize]
     } else {
@@ -211,9 +220,8 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
     for i in 0..items_per_thread {
         let local_idx = lane_id + i * PLANE_DIM;
         let global_idx = sub_part_start + local_idx;
-        let valid = is_full_plane || global_idx < num_items;
 
-        if valid {
+        if is_full_plane || global_idx < num_items {
             let key = keys[i as usize];
             let digit_radix = (key >> shift) & digit_mask;
             let digit = u32::cast_from(digit_radix);
@@ -236,16 +244,14 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
     sync_cube();
 
     // Phase 4: Coalesced read from shared memory and write to global
-    // Keys are now grouped by digit, so sequential reads are cache-friendly
     // When is_full_block is true, the compiler can fold `valid` to true and eliminate branches
     let is_full_block = block_start + items_per_block <= num_items;
     let items_in_block = select(num_items > block_start, num_items - block_start, 0u32);
 
     for i in 0..items_per_thread {
         let local_idx = thread_id + i * CUBE_DIM;
-        let valid = is_full_block || local_idx < items_in_block;
 
-        if valid {
+        if is_full_block || local_idx < items_in_block {
             let key = shared_keys[local_idx as usize];
             let digit_radix = (key >> shift) & digit_mask;
             let digit = u32::cast_from(digit_radix);
@@ -254,13 +260,10 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
             // For descending sort on the final pass, reverse the output position
             let global_pos = select(reverse_output, num_items - 1 - ascending_pos, ascending_pos);
 
-            // Bounds check: only write if position is valid
-            if global_pos < num_items {
-                keys_out[global_pos as usize] = KOut::from_radix(key);
+            keys_out[global_pos as usize] = KOut::from_radix(key);
 
-                if has_values {
-                    values_out[global_pos as usize] = shared_values[local_idx as usize];
-                }
+            if has_values {
+                values_out[global_pos as usize] = shared_values[local_idx as usize];
             }
         }
     }

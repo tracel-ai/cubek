@@ -4,8 +4,9 @@ use cubecl::{
     benchmark::{Benchmark, BenchmarkComputations, TimingMethod},
     future,
     prelude::*,
+    server::Handle,
 };
-use cubek::sort::{SortKey, SortOrder, sort_keys};
+use cubek::sort::{SortKey, SortOrder, SortValues, sort};
 use std::marker::PhantomData;
 use std::time::Duration;
 
@@ -22,8 +23,8 @@ where
     K: SortKey + CubeElement + Numeric,
     K::Radix: SortKey<Radix = K::Radix>,
 {
-    type Input = (cubecl::server::Handle, cubecl::server::Handle);
-    type Output = cubecl::server::Handle;
+    type Input = Handle;
+    type Output = Handle;
 
     fn prepare(&self) -> Self::Input {
         // Sequential reversed data, wrapping for smaller types
@@ -37,11 +38,7 @@ where
             .rev()
             .map(|i| K::from_int((i % (max_val + 1)) as i64))
             .collect();
-        let input = self.client.create_from_slice(K::as_bytes(&data));
-        let output = self
-            .client
-            .empty(self.num_items * std::mem::size_of::<K>());
-        (input, output)
+        self.client.create_from_slice(K::as_bytes(&data))
     }
 
     fn name(&self) -> String {
@@ -58,27 +55,24 @@ where
         future::block_on(self.client.sync()).expect("sync failed")
     }
 
-    fn execute(&self, (input, output): Self::Input) -> Result<Self::Output, String> {
+    fn execute(&self, input: Self::Input) -> Result<Self::Output, String> {
         let shape = [self.num_items];
         let strides = [1];
 
         let input_ref = unsafe {
             TensorHandleRef::from_raw_parts(&input, &strides, &shape, std::mem::size_of::<K>())
         };
-        let output_ref = unsafe {
-            TensorHandleRef::from_raw_parts(&output, &strides, &shape, std::mem::size_of::<K>())
-        };
 
-        sort_keys::<R, K>(
+        let output = sort::<R, K>(
             &self.client,
             input_ref,
-            output_ref,
+            SortValues::None,
             self.num_items,
             SortOrder::Ascending,
         )
         .map_err(|e| format!("Sort failed: {:?}", e))?;
 
-        Ok(output)
+        Ok(output.keys)
     }
 
     fn num_samples(&self) -> usize {
