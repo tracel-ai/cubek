@@ -65,7 +65,7 @@ pub fn histogram_kernel<K: SortKey<Radix = R>, R: Radix>(
         let count = count_set_bits(peer_mask);
         let leader = find_first_set_bit(peer_mask);
 
-        if lane_id == leader && valid {
+        if lane_id == leader {
             shared_hist[digit as usize].fetch_add(count);
         }
     }

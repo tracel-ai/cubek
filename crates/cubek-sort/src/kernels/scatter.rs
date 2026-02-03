@@ -92,8 +92,8 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
     // Use max radix value for invalid positions (sorts to end in ascending order)
     let max_radix = R::max_value();
 
-    // Initialize shared_keys to max_radix so unwritten positions have defined values
-    // This prevents undefined behavior if Phase 3 doesn't write all positions
+    // Initialize shared_keys to max_radix so unwritten positions have defined values.
+    // This is necessary because Phase 4 reads ALL positions and computes digit from key.
     #[allow(clippy::manual_div_ceil)]
     let keys_init_per_thread =
         (items_per_block as usize + CUBE_DIM as usize - 1) / CUBE_DIM as usize;
@@ -101,9 +101,6 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
         let idx = thread_id as usize + i * CUBE_DIM as usize;
         if idx < items_per_block as usize {
             shared_keys[idx] = max_radix;
-            if has_values {
-                shared_values[idx] = 0u32;
-            }
         }
     }
     sync_cube();
@@ -134,11 +131,9 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
         let rank = count_lower_peers(peer_mask, lane_id);
         let total = count_set_bits(peer_mask);
         let leader = find_first_set_bit(peer_mask);
-        let is_leader = lane_id == leader && valid;
-
         let hist_idx = plane_id as usize * NUM_BUCKETS + digit as usize;
         let mut base = 0u32;
-        if is_leader {
+        if lane_id == leader {
             base = plane_hists[hist_idx].fetch_add(total);
         }
         // Clamp leader to valid lane range to avoid UB when peer_mask is empty
