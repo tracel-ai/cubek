@@ -60,7 +60,6 @@ pub trait StageMatmulFamily: Send + Sync + 'static {
     fn validate_blueprint<R: Runtime>(
         client: &ComputeClient<R>,
         blueprint: &TilingBlueprint,
-        num_stages: NumStages,
         dtypes: &MatmulElems,
         line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError>;

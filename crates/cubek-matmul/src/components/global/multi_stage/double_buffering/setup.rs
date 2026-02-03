@@ -204,6 +204,6 @@ where
         LL::validate_with_problem(problem, dtypes, StageIdent::Lhs)?;
         RL::validate_with_problem(problem, dtypes, StageIdent::Rhs)?;
 
-        SMM::validate_blueprint(client, blueprint, (2, 2).into(), dtypes, line_sizes)
+        SMM::validate_blueprint(client, blueprint, dtypes, line_sizes)
     }
 }

@@ -218,6 +218,6 @@ where
             )));
         }
 
-        SMM::validate_blueprint(client, blueprint, (1, 2).into(), dtypes, line_sizes)
+        SMM::validate_blueprint(client, blueprint, dtypes, line_sizes)
     }
 }
