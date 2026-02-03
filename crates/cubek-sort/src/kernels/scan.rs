@@ -84,13 +84,12 @@ pub fn scan_prefix_totals_kernel(digit_totals: &Tensor<u32>, digit_prefixes: &mu
     }
     sync_cube();
 
-    // Load digit total (clamp index to avoid out-of-bounds read)
-    let safe_digit = select(digit < NUM_BUCKETS as u32, digit, 0u32);
-    let my_value = select(
-        digit < NUM_BUCKETS as u32,
-        digit_totals[safe_digit as usize],
-        0u32,
-    );
+    let my_value = if digit < NUM_BUCKETS as u32 {
+        digit_totals[digit as usize]
+    } else {
+        #[allow(clippy::useless_conversion)]
+        0u32.into()
+    };
 
     // Intra-warp prefix sum
     let my_exclusive = plane_exclusive_sum(my_value);
@@ -143,12 +142,6 @@ pub fn scan_offsets(
     let tid = UNIT_POS_X;
     let lane_id = UNIT_POS_PLANE;
     let warp_id = PLANE_POS;
-
-    // Initialize warp_sums to avoid reading uninitialized values
-    if tid < MAX_WARPS as u32 {
-        warp_sums[tid as usize] = 0u32;
-    }
-    sync_cube();
 
     // Load base offset for this digit (from cross-digit prefix sum)
     let base_offset = digit_prefixes[digit as usize];
