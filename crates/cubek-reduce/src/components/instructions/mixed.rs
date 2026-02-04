@@ -8,6 +8,7 @@ use cubecl::{
     prelude::*,
     std::{CubeOption, CubeOptionExpand},
 };
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, CubeType, Clone)]
 pub enum ReduceOperation {
@@ -22,6 +23,7 @@ pub enum ReduceOperation {
 }
 
 #[derive_cube_comptime]
+#[derive(Serialize, Deserialize)]
 pub enum ReduceOperationConfig {
     Sum,
     Prod,
