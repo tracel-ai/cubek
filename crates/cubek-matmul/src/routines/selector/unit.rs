@@ -485,7 +485,7 @@ impl StageSelection {
                 let num_units = num_planes * plane_size;
                 closest_factor_pair(num_units)
             }
-            StageSelection::Fixed { m, n } => (m, n),
+            StageSelection::Fixed { m, n } => (m.max(1), n.max(1)), // non-zero
         }
     }
 }
@@ -506,6 +506,11 @@ fn selection(
     line_sizes: &MatmulLineSizes,
 ) -> TilingBlueprint {
     let (stage_size_m, stage_size_n) = stage.into_stages();
+
+    debug_assert!(
+        stage_size_m > 0 && stage_size_n > 0,
+        "Invalid stage size after normalization: m={stage_size_m}, n={stage_size_n}"
+    );
 
     let (stage_size_m, stage_size_n) = match stage_scaling {
         StageScaling::Enabled(f) => (stage_size_m / f as u32, stage_size_n / f as u32),
