@@ -59,7 +59,7 @@ impl GlobalFullUnitReduce {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn reduce_single<P: ReducePrecision, Out: Numeric, I: ReduceInstruction<P>>(
+    pub fn reduce_single<P: ReducePrecision, Out: Numeric, I: ReduceInstruction<P>>(
         input: &VirtualTensor<P::EI>,
         output: &mut VirtualTensor<Out, ReadWrite>,
         reduce_axis: usize,
