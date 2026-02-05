@@ -1,14 +1,15 @@
 use crate::{
-    AcceleratedTileKind, ReadingStrategy, components::global::args::RuntimeArgs, forward::simple::*,
+    AcceleratedTileKind, ReadingStrategy, algorithm::simple::*,
+    components::global::args::RuntimeArgs,
 };
 use crate::{
     ConvolutionArgs, Strategy, components::ConvolutionOperation, forward::args::ConcreteArgs,
 };
-use crate::{components::ConvSetupError, kernels::forward::selector::launch_kernel_concrete};
 use crate::{
+    algorithm::Algorithm,
     components::{ConvolutionProblem, Dimensionality},
-    forward::Algorithm,
 };
+use crate::{components::ConvSetupError, kernels::forward::selector::launch_kernel_concrete};
 use cubecl::{
     Runtime,
     client::ComputeClient,

@@ -17,6 +17,7 @@ pub(crate) const ASYNC_COPY_WIDTH: u32 = 128;
 
 /// Custom version of async copy to clamp slice on channels, not `k` as a whole.
 #[cube]
+#[expect(clippy::overly_complex_bool_expr, reason = "override")]
 pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
     view: View<Line<EG>, Coords2d>,
     pos: Coords2d,
@@ -48,14 +49,18 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
             // im2col can give negative spatial indices so need to do a full bounds check on Lhs
             slice_len_global *= u32::cast_from(view.is_in_bounds(pos));
 
-            if config.gmem_config.check_col_bounds {
+            // Remove check override later, currently checks are always false because matmul can't
+            // understand channel padding and treats padded `k` as actual shape
+            if config.gmem_config.check_col_bounds || true {
                 let in_c = runtime_args.padded_channels.modulo(k_offset + pos.1);
                 slice_len_global = channels.saturating_sub(in_c).min(slice_len_global);
             }
         }
         (StageIdent::Rhs, ConvolutionOperation::Forward)
         | (StageIdent::Out, ConvolutionOperation::BackwardWeight) => {
-            if config.gmem_config.check_row_bounds {
+            // Remove check override later, currently checks are always false because matmul can't
+            // understand channel padding and treats padded `k` as actual shape
+            if config.gmem_config.check_row_bounds || true {
                 let in_c = runtime_args.padded_channels.modulo(k_offset + pos.0);
                 slice_len_global = channels.saturating_sub(in_c).min(slice_len_global);
             }
@@ -65,7 +70,9 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
         }
         (StageIdent::Rhs, ConvolutionOperation::ForwardTransposed)
         | (StageIdent::Rhs, ConvolutionOperation::BackwardData) => {
-            if config.gmem_config.check_row_bounds {
+            // Remove check override later, currently checks are always false because matmul can't
+            // understand channel padding and treats padded `k` as actual shape
+            if config.gmem_config.check_row_bounds || true {
                 let out_c = runtime_args.padded_channels.modulo(k_offset + pos.0);
                 slice_len_global *=
                     u32::cast_from(out_c < runtime_args.channels && pos.0 < view.shape().0);

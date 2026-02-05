@@ -2,12 +2,12 @@ use crate::{
     AcceleratedTileKind, ConvolutionArgs, ReadingStrategy, Strategy,
     backward_data::args::ConcreteArgs,
     components::{ConvolutionOperation, global::args::RuntimeArgs},
-    kernels::forward::simple::*,
+    kernels::algorithm::simple::*,
 };
 use crate::{components::ConvSetupError, kernels::backward_data::selector::launch_kernel_concrete};
 use crate::{
     components::{ConvolutionProblem, Dimensionality},
-    kernels::forward::algorithm::Algorithm,
+    kernels::algorithm::Algorithm,
 };
 use cubecl::{
     Runtime,

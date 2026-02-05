@@ -5,14 +5,16 @@ use cubecl::client::ComputeClient;
 use cubecl::features::MmaConfig;
 use cubecl::{Runtime, std::CubeOption};
 
-use crate::components::stage::{PlaneMatmulFamily, StridedStageFamily};
-use crate::components::tile;
+use crate::components::global::PlaneWriterFamily;
 use crate::components::tile::TileMatmulFamily;
 use crate::components::{
     batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
     tile::io::Strided,
 };
-use crate::components::{global::PlaneWriterFamily, stage::StageFamily};
+use crate::components::{global::read::FullLoadingStrategy, tile};
+use crate::components::{
+    global::read::sync_full_strided::SyncFullStridedLoading, stage::PlaneMatmulFamily,
+};
 use crate::definition::{
     CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulLineSizes, MatmulProblem,
     MatmulSetupError, MatrixLayout, SmAllocation, SwizzleModes, TilingBlueprint, adjust_dtypes,
@@ -37,8 +39,8 @@ use crate::{
 };
 
 /// Plane accelerated specialized matmul with TMA readers
-pub struct SpecializedAlgorithm<TMM, L = AsyncPartialTmaLoading> {
-    pub _phantom: PhantomData<(TMM, L)>,
+pub struct SpecializedAlgorithm<TMM, L = AsyncPartialTmaLoading, AL = SyncFullStridedLoading> {
+    pub _phantom: PhantomData<(TMM, L, AL)>,
 }
 
 #[derive(Default, Clone)]
@@ -56,24 +58,26 @@ impl From<()> for SpecializedStrategy {
     }
 }
 
-impl<TMM, RC, L> base::Routine<RC> for SpecializedAlgorithm<TMM, L>
+impl<TMM, RC, L, AL> base::Routine<RC> for SpecializedAlgorithm<TMM, L, AL>
 where
     TMM: tile::TileMatmulFamily<
-            LhsTile = <L::Stage as StageFamily>::TileKind,
-            RhsTile = <L::Stage as StageFamily>::TileKind,
-            AccTile = CubeOption<Strided>,
+            LhsTile = L::TileKind,
+            RhsTile = L::TileKind,
+            AccTile = CubeOption<AL::TileKind>,
             OutTile = Strided,
         >,
     RC: RuntimeConfig,
     L: AsyncPartialLoadingStrategy<RC>,
+    AL: FullLoadingStrategy<RC>,
 {
     type Strategy = SpecializedStrategy;
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
         SpecializedMatmulFamily<
-            PlaneMatmulFamily<TMM, L::Stage, L::Stage, Option<StridedStageFamily>>,
+            PlaneMatmulFamily<TMM, L::Stage, L::Stage, Option<AL::Stage>>,
             RC,
             L,
+            AL,
             PlaneWriterFamily,
         >,
         RowMajorGlobalPartitionMatmul,

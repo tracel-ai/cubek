@@ -8,11 +8,16 @@ use cubecl::prelude::*;
 use crate::components::{ConvolutionOperation, global::args::RuntimeArgs};
 
 pub mod simple;
+pub mod specialized;
 
 /// Specifications for a convolution algorithm
 pub trait Algorithm {
     type Routine: Routine<RuntimeArgs>;
     type Args: MatmulArgs<Config = RuntimeArgs>;
+
+    /// Whether to select specialized load flow in tests. Should replace with something cleaner
+    /// eventually, but this is nice and simple.
+    const IS_SPECIALIZED: bool = false;
 
     fn into_tensor_handle<R: Runtime>(
         client: &ComputeClient<R>,

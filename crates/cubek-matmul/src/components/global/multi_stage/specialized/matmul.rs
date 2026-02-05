@@ -1,16 +1,13 @@
-use crate::components::global::{GlobalConfig, GlobalWriter, read::FullLoadingStrategy};
+use crate::components::global::read::{FullStageGlobalReader, PartialLoaderStage};
+use crate::components::global::read::{PartialStageGlobalReader, StageBuffer};
+use crate::components::global::{
+    GlobalConfig, GlobalWriter,
+    read::{FullLoaderStage, FullLoadingStrategy, SyncStrategy},
+};
 use crate::components::global::{GlobalMatmul, SharedGlobalMatmulConfig};
 use crate::components::global::{PlaneFlowPartition, read::AsyncPartialLoadingStrategy};
 use crate::components::stage;
 use crate::components::stage::StageConfig as _;
-use crate::components::{
-    global::read::{FullStageGlobalReader, PartialLoaderStage, sync_full_cyclic::SyncFullCyclicLoading},
-    stage::RowMajorTilingOrder,
-};
-use crate::components::{
-    global::read::{PartialStageGlobalReader, StageBuffer},
-    stage::StridedStageMemory,
-};
 use crate::definition::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS};
 use crate::launch::RuntimeConfig;
 
@@ -32,32 +29,31 @@ pub struct SpecializedMatmul<
     SMM: stage::StageMatmul<MP>,
     RC: RuntimeConfig,
     L: AsyncPartialLoadingStrategy<RC>,
+    AL: FullLoadingStrategy<RC>,
     GW: GlobalWriter<MP::Acc>,
 > {
     _ms: PhantomData<MP>,
     _stage_matmul: PhantomData<SMM>,
     _rc: PhantomData<RC>,
     _loading: PhantomData<L>,
+    _acc_loading: PhantomData<AL>,
     _writer: PhantomData<GW>,
 }
 
-pub(super) type AL = SyncFullCyclicLoading<RowMajorTilingOrder>;
-
 #[cube]
-impl<MP: MatmulPrecision, SMM, RC, L, GW> GlobalMatmul<RC, MP>
-    for SpecializedMatmul<MP, SMM, RC, L, GW>
+impl<MP: MatmulPrecision, SMM, RC, L, AL, GW> GlobalMatmul<RC, MP>
+    for SpecializedMatmul<MP, SMM, RC, L, AL, GW>
 where
     SMM: stage::StageMatmul<
             MP,
             LhsStage = PartialLoaderStage<RC, L, LhsS<MP>>,
             RhsStage = PartialLoaderStage<RC, L, RhsS<MP>>,
-            AccStage = CubeOption<
-                StridedStageMemory<AccS<MP>, <AL as FullLoadingStrategy<RC>>::TilingLayout>,
-            >,
+            AccStage = CubeOption<FullLoaderStage<RC, AL, AccS<MP>>>,
             OutStage = GW::Stage,
         >,
     RC: RuntimeConfig,
     L: AsyncPartialLoadingStrategy<RC>,
+    AL: FullLoadingStrategy<RC>,
     GW: GlobalWriter<MP::Acc>,
 {
     type Config = SharedGlobalMatmulConfig<SMM::Config>;
@@ -130,10 +126,10 @@ where
 
         let role_rule = PlaneFlowPartition::new(config.plane_flow_config().partition_rule);
 
+        let mut acc_barrier = AL::SyncStrategy::create_barrier();
         let acc_stage = match acc_reader {
             CubeOption::Some(mut reader) => {
-                let mut barrier = ();
-                reader.load_stage(&mut barrier, config.acc_reader_config);
+                reader.load_stage(&mut acc_barrier, config.acc_reader_config);
                 sync_cube();
                 CubeOption::new_Some(reader.stage())
             }

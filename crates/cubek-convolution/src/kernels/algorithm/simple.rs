@@ -21,6 +21,7 @@ use cubek_matmul::{
 use std::marker::PhantomData;
 
 use crate::{
+    algorithm::{into_tensor_handle, into_tensor_handle_tma},
     components::{
         ConvolutionOperation,
         global::{
@@ -31,7 +32,6 @@ use crate::{
             },
         },
     },
-    kernels::forward::{into_tensor_handle, into_tensor_handle_tma},
 };
 
 use super::Algorithm;
@@ -103,12 +103,7 @@ impl<
         >,
 > Algorithm for SimpleAsyncTmaConv<TMM>
 {
-    type Routine = SimpleAlgorithm<
-        TMM,
-        AsyncFullTmaLoading,
-        AsyncFullTmaLoading,
-        SyncFullCyclicLoading<RowMajorTilingOrder>,
-    >;
+    type Routine = SimpleAlgorithm<TMM, AsyncFullTmaLoading, AsyncFullTmaLoading, SyncBiasLoading>;
 
     type Args = TensorMapArgs<RuntimeArgs>;
 

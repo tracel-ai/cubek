@@ -1,3 +1,4 @@
+use crate::components::CubeDimResource;
 use crate::components::global::{
     GlobalReaderConfig, GlobalWriterConfig, PlaneFlowConfig, SharedGlobalMatmulConfig,
 };
@@ -7,12 +8,8 @@ use crate::components::global::{
     memory::{GlobalMemoryConfig, ViewDirection},
     read::AsyncPartialLoadingStrategy,
 };
-use crate::components::global::{
-    multi_stage::{EventLoadingMode, specialized::AL},
-    read::FullLoadingStrategy,
-};
+use crate::components::global::{multi_stage::EventLoadingMode, read::FullLoadingStrategy};
 use crate::components::stage::StageConfig;
-use crate::components::{CubeDimResource, stage::StridedStageFamily};
 use crate::components::{global::GlobalMatmulFamily, stage};
 use crate::components::{global::MaxGlobalReaderPlanes, stage::NumStages};
 use crate::definition::MatmulLineSizes;
@@ -29,37 +26,35 @@ pub struct SpecializedMatmulFamily<
     SMM: stage::StageMatmulFamily,
     RC: RuntimeConfig,
     L: AsyncPartialLoadingStrategy<RC>,
+    AL: FullLoadingStrategy<RC>,
     GW: GlobalWriterFamily,
 > {
     _stage_matmul: PhantomData<SMM>,
     _rc: PhantomData<RC>,
     _loading: PhantomData<L>,
+    _acc_loading: PhantomData<AL>,
     _writer: PhantomData<GW>,
 }
 
-impl<SMM, RC, L, GW> GlobalMatmulFamily<RC> for SpecializedMatmulFamily<SMM, RC, L, GW>
+impl<SMM, RC, L, AL, GW> GlobalMatmulFamily<RC> for SpecializedMatmulFamily<SMM, RC, L, AL, GW>
 where
     SMM: stage::StageMatmulFamily<
             LhsStage = L::Stage,
             RhsStage = L::Stage,
-            AccStage = Option<StridedStageFamily>,
+            AccStage = Option<AL::Stage>,
             OutStage = GW::Stage,
         >,
     RC: RuntimeConfig,
     L: AsyncPartialLoadingStrategy<RC>,
+    AL: FullLoadingStrategy<RC>,
     GW: GlobalWriterFamily,
 {
     type Matmul<MP: MatmulPrecision> = SpecializedMatmul<
         MP,
-        SMM::Matmul<
-            MP,
-            L::TilingLayout,
-            L::TilingLayout,
-            <AL as FullLoadingStrategy<RC>>::TilingLayout,
-            WriteTiling,
-        >,
+        SMM::Matmul<MP, L::TilingLayout, L::TilingLayout, AL::TilingLayout, WriteTiling>,
         RC,
         L,
+        AL,
         GW::Writer<MP::Acc>,
     >;
     type Config = SharedGlobalMatmulConfig<SMM::Config>;
