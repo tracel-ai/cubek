@@ -11,7 +11,6 @@ use cubecl::{
 use cubek_matmul::{
     components::{
         global::read::{AsyncPartialLoadingStrategy, async_partial_tma::AsyncPartialTmaLoading},
-        stage::ColMajorTilingOrder,
         tile::{TileMatmulFamily, io::Strided},
     },
     definition::AvailableLineSizes,
@@ -23,13 +22,7 @@ use crate::{
     algorithm::{Algorithm, into_tensor_handle, into_tensor_handle_tma},
     components::{
         ConvolutionOperation,
-        global::{
-            args::RuntimeArgs,
-            read::strategy::{
-                async_partial_cyclic::AsyncPartialCyclicLoading,
-                async_partial_strided::AsyncPartialStridedLoading, sync_bias::SyncBiasLoading,
-            },
-        },
+        global::{args::RuntimeArgs, read::strategy::sync_bias::SyncBiasLoading},
     },
 };
 
@@ -39,9 +32,9 @@ pub struct SpecializedConv<TMM: TileMatmulFamily, L: AsyncPartialLoadingStrategy
     _loader: PhantomData<L>,
 }
 
-pub type SpecializedCyclicConv<TMM> =
-    SpecializedConv<TMM, AsyncPartialCyclicLoading<ColMajorTilingOrder>>;
-pub type SpecializedStridedConv<TMM> = SpecializedConv<TMM, AsyncPartialStridedLoading>;
+// pub type SpecializedCyclicConv<TMM> =
+//     SpecializedConv<TMM, AsyncPartialCyclicLoading<ColMajorTilingOrder>>;
+// pub type SpecializedStridedConv<TMM> = SpecializedConv<TMM, AsyncPartialStridedLoading>;
 
 pub struct SpecializedTmaConv<TMM: TileMatmulFamily> {
     _tmm: PhantomData<TMM>,

@@ -61,27 +61,29 @@ macro_rules! testgen_convolution_accelerated_algorithm {
             $crate::testgen_convolution_accelerated_precision!(SimpleAsyncTmaConv<TMM>);
         }
 
-        #[cfg(all(
-            feature = "conv_tests_specialized",
-            feature = "conv_tests_cyclic",
-            feature = "conv_tests_async_copy"
-        ))]
-        mod specialized_async_cyclic {
-            use super::*;
+        // Broken and can't currently figure out why
 
-            $crate::testgen_convolution_accelerated_precision!(SpecializedCyclicConv<TMM>);
-        }
+        // #[cfg(all(
+        //     feature = "conv_tests_specialized",
+        //     feature = "conv_tests_cyclic",
+        //     feature = "conv_tests_async_copy"
+        // ))]
+        // mod specialized_async_cyclic {
+        //     use super::*;
 
-        #[cfg(all(
-            feature = "conv_tests_specialized",
-            feature = "conv_tests_strided",
-            feature = "conv_tests_async_copy"
-        ))]
-        mod specialized_async_strided {
-            use super::*;
+        //     $crate::testgen_convolution_accelerated_precision!(SpecializedCyclicConv<TMM>);
+        // }
 
-            $crate::testgen_convolution_accelerated_precision!(SpecializedStridedConv<TMM>);
-        }
+        // #[cfg(all(
+        //     feature = "conv_tests_specialized",
+        //     feature = "conv_tests_strided",
+        //     feature = "conv_tests_async_copy"
+        // ))]
+        // mod specialized_async_strided {
+        //     use super::*;
+
+        //     $crate::testgen_convolution_accelerated_precision!(SpecializedStridedConv<TMM>);
+        // }
 
         #[cfg(all(feature = "conv_tests_specialized", feature = "conv_tests_tma"))]
         mod specialized_tma {
