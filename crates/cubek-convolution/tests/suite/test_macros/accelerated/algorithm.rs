@@ -89,7 +89,7 @@ macro_rules! testgen_convolution_accelerated_algorithm {
         mod specialized_tma {
             use super::*;
 
-            $crate::testgen_convolution_accelerated_precision!(SimpleAsyncTmaConv<TMM>);
+            $crate::testgen_convolution_accelerated_precision!(SpecializedTmaConv<TMM>);
         }
     };
 }

@@ -47,7 +47,7 @@ pub fn test_convolution_algorithm<A: Algorithm, P: TestPrecision>(
     let result = test_convolution_algorithm_inner::<A, P>(client, problem, blueprint);
 
     match result {
-        Ok(config) => config,
+        Ok(_) => {}
         Err(err) => {
             let msg = format!("Can't launch the test: {err}");
             if panic_on_launch_err {
