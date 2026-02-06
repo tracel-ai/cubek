@@ -84,8 +84,13 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Mean {
         accumulator: Self::AccumulatorItem,
         shape_axis_reduce: LineSize,
     ) -> Out {
-        <Sum as ReduceInstruction<P>>::merge_line::<Out>(&this.sum, accumulator, shape_axis_reduce)
-            / Out::cast_from(shape_axis_reduce)
+        let sum = <Sum as ReduceInstruction<P>>::merge_line::<P::EA>(
+            &this.sum,
+            accumulator,
+            shape_axis_reduce,
+        );
+
+        Out::cast_from(sum / P::EA::cast_from(shape_axis_reduce))
     }
 
     fn to_output_perpendicular<Out: Numeric>(
@@ -93,11 +98,13 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Mean {
         accumulator: Self::AccumulatorItem,
         shape_axis_reduce: LineSize,
     ) -> Line<Out> {
-        let sum = <Sum as ReduceInstruction<P>>::to_output_perpendicular::<Out>(
+        let sum = <Sum as ReduceInstruction<P>>::to_output_perpendicular::<P::EA>(
             &this.sum,
             accumulator,
             shape_axis_reduce,
         );
-        sum / Line::empty(accumulator.size()).fill(Out::cast_from(shape_axis_reduce))
+        Line::cast_from(
+            sum / Line::empty(accumulator.size()).fill(P::EA::cast_from(shape_axis_reduce)),
+        )
     }
 }
