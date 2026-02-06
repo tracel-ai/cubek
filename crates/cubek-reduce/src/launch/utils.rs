@@ -104,8 +104,11 @@ pub fn generate_line_size<R: Runtime>(
                     )
                 }
                 false => {
-                    let supported_line_sizes =
-                        client.io_optimized_line_sizes_unchecked(dtype.size());
+                    let supported_line_sizes = client
+                        .io_optimized_line_sizes_unchecked(dtype.size())
+                        .filter(|&size| {
+                            size <= max_line_size && max_line_size.is_multiple_of(size)
+                        });
 
                     tensor_line_size_perpendicular(
                         supported_line_sizes,
