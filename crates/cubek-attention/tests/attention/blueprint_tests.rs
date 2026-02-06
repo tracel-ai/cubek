@@ -12,7 +12,7 @@ fn one_tile_simple() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -55,7 +55,7 @@ fn one_tile_simple() {
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
 
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
 
     test_launch(client, problem, strategy)
 }
@@ -65,7 +65,7 @@ fn one_partition_several_planes() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -108,7 +108,7 @@ fn one_partition_several_planes() {
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
 
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
 
     test_launch(client, problem, strategy)
 }
@@ -117,7 +117,7 @@ fn one_partition_several_planes() {
 fn problem_smaller_than_one_tile_seq_q_seq_kv_val_dim() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -160,7 +160,7 @@ fn problem_smaller_than_one_tile_seq_q_seq_kv_val_dim() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -168,7 +168,7 @@ fn problem_smaller_than_one_tile_seq_q_seq_kv_val_dim() {
 fn head_dim_oob() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -208,7 +208,7 @@ fn head_dim_oob() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -216,7 +216,7 @@ fn head_dim_oob() {
 fn two_rows_in_array_tile() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -255,7 +255,7 @@ fn two_rows_in_array_tile() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -263,7 +263,7 @@ fn two_rows_in_array_tile() {
 fn one_tile_seqq16() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -303,7 +303,7 @@ fn one_tile_seqq16() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -311,7 +311,7 @@ fn one_tile_seqq16() {
 fn one_tile_seqq4() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -351,7 +351,7 @@ fn one_tile_seqq4() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -359,7 +359,7 @@ fn one_tile_seqq4() {
 fn seqq2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 2,
             seq_kv: 1,
@@ -398,7 +398,7 @@ fn seqq2() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -406,7 +406,7 @@ fn seqq2() {
 fn hd2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -445,7 +445,7 @@ fn hd2() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -453,7 +453,7 @@ fn hd2() {
 fn kv2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 2,
@@ -492,7 +492,7 @@ fn kv2() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -500,7 +500,7 @@ fn kv2() {
 fn vd2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -539,7 +539,7 @@ fn vd2() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -547,7 +547,7 @@ fn vd2() {
 fn hd2_vd2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -586,7 +586,7 @@ fn hd2_vd2() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -594,7 +594,7 @@ fn hd2_vd2() {
 fn all2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 2,
             seq_kv: 2,
@@ -633,7 +633,7 @@ fn all2() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -641,7 +641,7 @@ fn all2() {
 fn global_iterations_2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -681,7 +681,7 @@ fn global_iterations_2() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -689,7 +689,7 @@ fn global_iterations_2() {
 fn global_iterations_2_kv2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 2,
@@ -729,7 +729,7 @@ fn global_iterations_2_kv2() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -737,7 +737,7 @@ fn global_iterations_2_kv2() {
 fn partition_kv1_global1_with_oob() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -777,7 +777,7 @@ fn partition_kv1_global1_with_oob() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -785,7 +785,7 @@ fn partition_kv1_global1_with_oob() {
 fn partition_seqq2_global2_kv2_global2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -825,7 +825,7 @@ fn partition_seqq2_global2_kv2_global2() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -833,7 +833,7 @@ fn partition_seqq2_global2_kv2_global2() {
 fn partition_many_planes() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -872,7 +872,7 @@ fn partition_many_planes() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -880,7 +880,7 @@ fn partition_many_planes() {
 fn partition_kv1_global3_with_oob() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -920,7 +920,7 @@ fn partition_kv1_global3_with_oob() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -928,7 +928,7 @@ fn partition_kv1_global3_with_oob() {
 fn partition_oob_in_q() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 2,
             seq_kv: 1,
@@ -968,7 +968,7 @@ fn partition_oob_in_q() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -976,7 +976,7 @@ fn partition_oob_in_q() {
 fn partition_kv2_with_oob() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 2,
@@ -1015,7 +1015,7 @@ fn partition_kv2_with_oob() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -1023,7 +1023,7 @@ fn partition_kv2_with_oob() {
 fn partition_kv2_causal() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 2,
@@ -1062,7 +1062,7 @@ fn partition_kv2_causal() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -1070,7 +1070,7 @@ fn partition_kv2_causal() {
 fn partition_kv2_masked() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 2,
@@ -1109,7 +1109,7 @@ fn partition_kv2_masked() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -1117,7 +1117,7 @@ fn partition_kv2_masked() {
 fn stage2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1156,7 +1156,7 @@ fn stage2() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -1164,7 +1164,7 @@ fn stage2() {
 fn stage4() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1203,7 +1203,7 @@ fn stage4() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -1211,7 +1211,7 @@ fn stage4() {
 fn stage2_problem4() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1252,7 +1252,7 @@ fn stage2_problem4() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -1260,7 +1260,7 @@ fn stage2_problem4() {
 fn reuse_key_value() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1299,7 +1299,7 @@ fn reuse_key_value() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -1307,7 +1307,7 @@ fn reuse_key_value() {
 fn double_row_wise() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1346,7 +1346,7 @@ fn double_row_wise() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -1354,7 +1354,7 @@ fn double_row_wise() {
 fn one_tile_masked() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1393,7 +1393,7 @@ fn one_tile_masked() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -1401,7 +1401,7 @@ fn one_tile_masked() {
 fn one_tile_causal() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1440,7 +1440,7 @@ fn one_tile_causal() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -1448,7 +1448,7 @@ fn one_tile_causal() {
 fn one_tile_masked_causal() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1487,7 +1487,7 @@ fn one_tile_masked_causal() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -1495,7 +1495,7 @@ fn one_tile_masked_causal() {
 fn masked_oob() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1535,7 +1535,7 @@ fn masked_oob() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -1543,7 +1543,7 @@ fn masked_oob() {
 fn masked_larger() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1583,7 +1583,7 @@ fn masked_larger() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -1591,7 +1591,7 @@ fn masked_larger() {
 fn num_heads_2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1630,7 +1630,7 @@ fn num_heads_2() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -1638,7 +1638,7 @@ fn num_heads_2() {
 fn batch_2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1677,7 +1677,7 @@ fn batch_2() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -1685,7 +1685,7 @@ fn batch_2() {
 fn batch_2_seqq2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 2,
             seq_kv: 1,
@@ -1724,7 +1724,7 @@ fn batch_2_seqq2() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -1732,7 +1732,7 @@ fn batch_2_seqq2() {
 fn num_heads_2_batch_2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1771,7 +1771,7 @@ fn num_heads_2_batch_2() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -1779,7 +1779,7 @@ fn num_heads_2_batch_2() {
 fn num_heads_2_masked() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1818,7 +1818,7 @@ fn num_heads_2_masked() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }
 
@@ -1829,9 +1829,9 @@ fn huge_problem() {
     let seq_kv = 128;
     let head_dim = 64;
     let val_dim = 64;
-    let hd = head_dim as u32 / tile_size().head_dim;
+    let hd = head_dim as u32 / tile_size(&client, global_dtypes()).head_dim;
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(),
+        tile_size: tile_size(&client, global_dtypes()),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1870,6 +1870,6 @@ fn huge_problem() {
         causal: problem.options.causal,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
-    let strategy = strategy(blueprint);
+    let strategy = forced_strategy(blueprint);
     test_launch(client, problem, strategy)
 }

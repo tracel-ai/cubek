@@ -44,7 +44,7 @@ impl DeviceSettings {
     pub fn new<R: Runtime>(client: &ComputeClient<R>, problem: &AttentionProblem) -> Self {
         DeviceSettings {
             plane_dim: client.properties().hardware.plane_size_max,
-            line_sizes: AttentionLineSizes::new_max(client, problem),
+            line_sizes: AttentionLineSizes::new_max_for_problem(client, problem),
         }
     }
 }
