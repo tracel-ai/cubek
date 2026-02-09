@@ -31,7 +31,7 @@ pub struct PartitionRangeDim {
 #[cube]
 /// Iterates on several global matmul across a global partition
 pub trait GlobalPartitionMatmul: 'static + Send + Sync {
-    fn execute<Args: MatmulArgs, MP: MatmulPrecision, GMM: global::GlobalMatmul<MP>>(
+    fn execute<Args: MatmulArgs, MP: MatmulPrecision, GMM: global::GlobalMatmul<Args::Config, MP>>(
         state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
         partition_ranges: PartitionRanges,
         k_range: (u32, u32),
@@ -77,7 +77,11 @@ impl PartitionRangeDim {
 
 #[cube]
 impl GlobalPartitionMatmul for RowMajorGlobalPartitionMatmul {
-    fn execute<Args: MatmulArgs, MP: MatmulPrecision, GMM: global::GlobalMatmul<MP>>(
+    fn execute<
+        Args: MatmulArgs,
+        MP: MatmulPrecision,
+        GMM: global::GlobalMatmul<Args::Config, MP>,
+    >(
         state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
         ranges: PartitionRanges,
         k_range: (u32, u32),
@@ -111,7 +115,11 @@ impl GlobalPartitionMatmul for RowMajorGlobalPartitionMatmul {
 
 #[cube]
 impl GlobalPartitionMatmul for ColMajorGlobalPartitionMatmul {
-    fn execute<Args: MatmulArgs, MP: MatmulPrecision, GMM: global::GlobalMatmul<MP>>(
+    fn execute<
+        Args: MatmulArgs,
+        MP: MatmulPrecision,
+        GMM: global::GlobalMatmul<Args::Config, MP>,
+    >(
         state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
         ranges: PartitionRanges,
         k_range: (u32, u32),
@@ -149,7 +157,7 @@ impl GlobalPartitionMatmul for ColMajorGlobalPartitionMatmul {
 pub(crate) fn execute_global_matmul<
     Args: MatmulArgs,
     MP: MatmulPrecision,
-    GMM: global::GlobalMatmul<MP>,
+    GMM: global::GlobalMatmul<Args::Config, MP>,
 >(
     state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
     nth_batch: u32,
@@ -166,6 +174,8 @@ pub(crate) fn execute_global_matmul<
     let b = Args::view_rhs(state);
     let c = Args::view_acc(state);
     let out = Args::view_out(state);
+
+    let runtime_config = Args::runtime_config(state);
 
     let a_batch = Args::batch_lhs(state, nth_batch as usize);
     let a = a.view(SliceIndex::new(a_batch, a.shape()));
@@ -185,13 +195,15 @@ pub(crate) fn execute_global_matmul<
     GMM::execute(
         GMM::init_lhs_global_reader(
             a.slice_unchecked((m_offset, k_range.0), (stage_m, k_size)),
+            runtime_config.clone(),
             config,
         ),
         GMM::init_rhs_global_reader(
             b.slice_unchecked((k_range.0, n_offset), (k_size, stage_n)),
+            runtime_config.clone(),
             config,
         ),
-        GMM::init_acc_global_reader(c, config),
+        GMM::init_acc_global_reader(c, runtime_config, config),
         GMM::init_global_writer(
             out.slice_mut_unchecked((m_offset, n_offset), (stage_m, stage_n)),
             config,

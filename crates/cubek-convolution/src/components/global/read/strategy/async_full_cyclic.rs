@@ -9,20 +9,19 @@ use cubek_matmul::components::{
         memory::GlobalIterator,
         multi_stage::LoadMaxRoundPlaneCount,
         read::{
-            LoadingJob, LoadingValidation, ReaderMode, async_barrier::AsyncCopy,
+            FullLoadingStrategy, LoadingJob, LoadingValidation, ReaderMode,
+            async_barrier::AsyncCopy,
             async_full_cyclic::AsyncFullCyclicLoading as MatmulCyclicLoading, tiled::TiledLayout,
         },
     },
     stage::{ContiguousTilingLayout, StridedStageFamily, StridedStageMemory, TilingOrder},
+    tile::io::Strided,
 };
 use cubek_matmul::definition::{InvalidConfigError, MatmulElems, MatmulProblem, StageIdent};
 
 use crate::components::global::{
     args::RuntimeArgs,
-    read::{
-        full_reader::FullLoadingStrategy,
-        strategy::async_copy::{ASYNC_COPY_WIDTH, async_copy_from},
-    },
+    read::strategy::async_copy::{ASYNC_COPY_WIDTH, async_copy_from},
 };
 
 #[derive(CubeType, Clone, Copy)]
@@ -69,10 +68,12 @@ impl<TO: TilingOrder> LoadMaxRoundPlaneCount for AsyncFullCyclicLoading<TO> {
 }
 
 #[cube]
-impl<TO: TilingOrder> FullLoadingStrategy for AsyncFullCyclicLoading<TO> {
+impl<TO: TilingOrder> FullLoadingStrategy<RuntimeArgs> for AsyncFullCyclicLoading<TO> {
     type TilingLayout = ContiguousTilingLayout<TO>;
     type SyncStrategy = AsyncCopy;
     type Job<EG: Numeric, ES: Numeric> = AsyncFullCyclicJob;
+    type Stage = StridedStageFamily;
+    type TileKind = Strided;
 
     fn new_job<EG: Numeric, ES: Numeric>(
         runtime_args: RuntimeArgs,

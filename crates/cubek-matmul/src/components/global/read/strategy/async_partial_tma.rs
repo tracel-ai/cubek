@@ -1,5 +1,3 @@
-use crate::components::global::read::{AsyncPartialLoadingStrategy, validate_tma_with_problem};
-use crate::components::global::read::{PartialLoadingStrategy, async_tma::AsyncTma};
 use crate::components::global::read::{validate_async_barrier, validate_tma};
 use crate::components::global::{GlobalConfig, GlobalReaderConfig};
 use crate::components::global::{PlaneFlowPartition, multi_stage::LoadMaxRoundPlaneCount};
@@ -10,9 +8,17 @@ use crate::components::{
     stage::{StageConfig, StridedStageFamily},
 };
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
+use crate::components::{
+    global::read::{PartialLoadingStrategy, async_tma::AsyncTma},
+    tile::io::Strided,
+};
 use crate::definition::{
     InvalidConfigError, LhsS, MatmulElems, MatmulPrecision, MatmulProblem, MatrixLayout, RhsS,
     StageIdent,
+};
+use crate::{
+    components::global::read::{AsyncPartialLoadingStrategy, validate_tma_with_problem},
+    launch::RuntimeConfig,
 };
 use cubecl::prelude::*;
 use cubecl::{ir::DeviceProperties, prelude::barrier::Barrier};
@@ -59,14 +65,16 @@ impl LoadMaxRoundPlaneCount for AsyncPartialTmaLoading {
 }
 
 #[cube]
-impl PartialLoadingStrategy for AsyncPartialTmaLoading {
+impl<RC: RuntimeConfig> PartialLoadingStrategy<RC> for AsyncPartialTmaLoading {
     type TilingLayout = TmaTilingLayout;
     type SyncStrategy = AsyncTma;
     type Stage = StridedStageFamily;
+    type TileKind = Strided;
 
     type Job<EG: Numeric, ES: Numeric> = AsyncPartialTmaJob;
 
     fn new_job<EG: Numeric, ES: Numeric>(
+        _runtime_config: RC,
         #[comptime] stage_index: u32,
         #[comptime] _line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
@@ -166,7 +174,7 @@ impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, TmaTilingLayout, AsyncTma>
 }
 
 #[cube]
-impl AsyncPartialLoadingStrategy for AsyncPartialTmaLoading {
+impl<RC: RuntimeConfig> AsyncPartialLoadingStrategy<RC> for AsyncPartialTmaLoading {
     fn arrival_count<S: StageConfig>(#[comptime] _config: SharedGlobalMatmulConfig<S>) -> u32 {
         1u32.runtime()
     }

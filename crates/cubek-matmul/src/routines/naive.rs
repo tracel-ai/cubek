@@ -8,7 +8,7 @@ use crate::{
     definition::{
         CubeCountPlan, MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError,
     },
-    routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, Routine},
+    routines::{BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine},
 };
 
 pub struct NaiveRoutine {}
@@ -28,22 +28,31 @@ impl From<()> for NaiveStrategy {
     }
 }
 
-impl Routine for NaiveRoutine {
+impl Routine<()> for NaiveRoutine {
     type Strategy = NaiveStrategy;
     type BatchMatmul = NaiveBatchMatmulFamily;
-    type Blueprint = <Self::BatchMatmul as BatchMatmulFamily>::Blueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+    type Blueprint = <Self::BatchMatmul as BatchMatmulFamily<()>>::Blueprint;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily<()>>::Config;
 
-    fn prepare<R: cubecl::Runtime>(
+    fn expand_blueprint<R: cubecl::Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
-        _strategy: &BlueprintStrategy<Self>,
-    ) -> Result<LaunchInfo<Self::Blueprint>, MatmulSetupError> {
+        _strategy: &BlueprintStrategy<(), Self>,
+    ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let dtypes = MatmulElems::from_globals(&problem.global_dtypes);
         let blueprint = NaiveBlueprint {
             line_size_out: device_settings.line_sizes.out as u32,
             dtypes: dtypes.clone(),
         };
+        Ok(ExpandInfo { blueprint, dtypes })
+    }
+
+    fn prepare<R: cubecl::Runtime>(
+        problem: &MatmulProblem,
+        device_settings: &DeviceSettings<R>,
+        expand_info: ExpandInfo<Self::Blueprint>,
+    ) -> Result<LaunchInfo<Self::Blueprint>, MatmulSetupError> {
+        let ExpandInfo { blueprint, dtypes } = expand_info;
 
         Self::validate_blueprint(
             &device_settings.client,

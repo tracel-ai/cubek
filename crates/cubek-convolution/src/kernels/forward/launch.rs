@@ -1,27 +1,27 @@
-use crate::{AcceleratedTileKind, ReadingStrategy};
 use crate::{
-    ConvolutionArgs, Strategy,
-    components::{ConvGemmConfig as _, ConvolutionOperation},
-    forward::args::ConcreteArgs,
-    kernels::forward::simple::*,
+    AcceleratedTileKind, ReadingStrategy, algorithm::simple::*,
+    components::global::args::RuntimeArgs,
+};
+use crate::{
+    ConvolutionArgs, Strategy, components::ConvolutionOperation, forward::args::ConcreteArgs,
+};
+use crate::{
+    algorithm::Algorithm,
+    components::{ConvolutionProblem, Dimensionality},
 };
 use crate::{components::ConvSetupError, kernels::forward::selector::launch_kernel_concrete};
-use crate::{
-    components::{ConvolutionProblem, Dimensionality},
-    kernels::forward::algorithm::Algorithm,
-};
 use cubecl::{
     Runtime,
     client::ComputeClient,
     prelude::*,
     std::{CubeOption, tensor::TensorHandle},
 };
-use cubek_matmul::launch::MatmulInputHandle;
 use cubek_matmul::{
     components::tile::{cmma::CmmaMatmul, io::Strided, mma::MmaMatmul},
     definition::{AvailableLineSizes, MatmulElems, MatrixLayout},
 };
 use cubek_matmul::{definition, launch::MatmulInputHandleRef};
+use cubek_matmul::{launch::MatmulInputHandle, routines::BlueprintStrategy};
 use derive_new::new;
 
 macro_rules! with_tile_kind {
@@ -112,7 +112,7 @@ struct Convolution<'a, R: Runtime, const N_SPATIAL: usize> {
 impl<'a, R: Runtime, const N_SPATIAL: usize> Convolution<'a, R, N_SPATIAL> {
     fn launch<Alg: Algorithm>(self) -> Result<(), ConvSetupError>
     where
-        Alg::Args: ConcreteArgs,
+        Alg::Args: ConcreteArgs<Alg::Routine>,
     {
         let ConvolutionArgs {
             stride,
@@ -135,6 +135,7 @@ impl<'a, R: Runtime, const N_SPATIAL: usize> Convolution<'a, R, N_SPATIAL> {
             self.out,
             (&stride, &padding, &dilation),
             dimensionality,
+            &BlueprintStrategy::Inferred(Default::default()),
             self.dtypes,
         )
     }
@@ -149,10 +150,11 @@ fn launch_with_algorithm<R: Runtime, Alg: Algorithm>(
     out: &TensorHandleRef<'_, R>,
     (stride, padding, dilation): (&[usize], &[usize], &[usize]),
     dimensionality: Dimensionality,
+    blueprint_strategy: &BlueprintStrategy<RuntimeArgs, Alg::Routine>,
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError>
 where
-    Alg::Args: ConcreteArgs,
+    Alg::Args: ConcreteArgs<Alg::Routine>,
 {
     let rank = input.data().shape.len();
     let dim_c = rank - 1;
@@ -203,7 +205,16 @@ where
         global_dtypes: dtypes.as_global_elems(),
     };
 
-    launch_kernel::<R, Alg>(client, &input, &weight, bias, out, problem, dtypes)
+    launch_kernel::<R, Alg>(
+        client,
+        &input,
+        &weight,
+        bias,
+        out,
+        problem,
+        blueprint_strategy,
+        dtypes,
+    )
 }
 
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
@@ -214,12 +225,12 @@ pub fn launch_kernel<R: Runtime, Alg: Algorithm>(
     bias: &Option<MatmulInputHandleRef<'_, R>>,
     out: &TensorHandleRef<'_, R>,
     problem: ConvolutionProblem,
-    mut dtypes: MatmulElems,
+    blueprint_strategy: &BlueprintStrategy<RuntimeArgs, Alg::Routine>,
+    dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError>
 where
-    Alg::Args: ConcreteArgs,
+    Alg::Args: ConcreteArgs<Alg::Routine>,
 {
-    let plane_dim = client.properties().hardware.plane_size_max;
     // Shape/strides are treated as k-major, with the last dim always being the contiguous one.
     // So for the sake of selecting a line size, the shape/strides are always row-major.
     let line_sizes = AvailableLineSizes::from_type_sizes(
@@ -240,24 +251,26 @@ where
     )
     .filter_out_with_tensor(out.strides, out.shape);
 
-    let line_sizes = Alg::filter_line_sizes(line_sizes).pick_max()?;
+    let mut line_sizes = Alg::filter_line_sizes(line_sizes).pick_max()?;
 
-    let selection = Alg::selection(client, &problem, plane_dim, &line_sizes, &mut dtypes)?;
-    let problem = Alg::Args::adjust_problem(client, problem, &selection, &dtypes);
+    // The large line size resulting from dequantizing ends up slower due to restrictions on
+    // algorithms. Use this as a quick and dirty fix.
+    if input.scale().is_some() {
+        line_sizes.lhs = 1;
+    }
+    if weight.scale().is_some() {
+        line_sizes.rhs = 1;
+    }
 
-    Alg::validate_blueprint(client, &selection, &problem, &dtypes, &line_sizes)?;
-
-    let config = Alg::expand_config(
-        client.properties(),
-        &problem,
-        &selection,
-        &line_sizes,
+    launch_kernel_concrete::<R, Alg::Args, Alg::Routine>(
+        client,
+        input,
+        weight,
+        bias,
+        out,
+        problem,
+        line_sizes,
+        blueprint_strategy,
         &dtypes,
-    )?;
-
-    let line_sizes = config.line_sizes();
-
-    launch_kernel_concrete::<R, Alg>(
-        client, input, weight, bias, out, problem, line_sizes, selection, &dtypes,
     )
 }

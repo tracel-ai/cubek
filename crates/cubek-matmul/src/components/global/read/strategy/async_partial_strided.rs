@@ -1,5 +1,3 @@
-use crate::components::global::read::{validate_async_barrier, validate_async_copy_with_problem};
-use crate::components::global::{GlobalReaderConfig, PlaneFlowPartition};
 use crate::components::global::{
     SharedGlobalMatmulConfig,
     read::{AsyncPartialLoadingStrategy, PartialLoadingStrategy, async_copy::ASYNC_COPY_WIDTH},
@@ -9,6 +7,10 @@ use crate::components::{global::read::async_copy::async_copy_from, stage::Stride
 use crate::components::{global::read::stage::FullStageLayout, stage::StridedStageFamily};
 use crate::components::{global::read::validate_swizzle_atom_size, stage::StageConfig};
 use crate::components::{
+    global::{GlobalReaderConfig, PlaneFlowPartition},
+    tile::io::Strided,
+};
+use crate::components::{
     global::{
         multi_stage::LoadMaxRoundPlaneCount,
         read::{async_barrier::AsyncCopy, validate_async_copy},
@@ -17,6 +19,10 @@ use crate::components::{
 };
 use crate::definition::{
     InvalidConfigError, MatmulElems, MatmulPrecision, MatmulProblem, StageIdent,
+};
+use crate::{
+    components::global::read::{validate_async_barrier, validate_async_copy_with_problem},
+    launch::RuntimeConfig,
 };
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Layout, LayoutExpand};
@@ -92,13 +98,15 @@ impl LoadMaxRoundPlaneCount for AsyncPartialStridedLoading {
 }
 
 #[cube]
-impl PartialLoadingStrategy for AsyncPartialStridedLoading {
+impl<RC: RuntimeConfig> PartialLoadingStrategy<RC> for AsyncPartialStridedLoading {
     type TilingLayout = StridedTilingLayout;
     type SyncStrategy = AsyncCopy;
     type Job<EG: Numeric, ES: Numeric> = AsyncPartialStridedJob;
     type Stage = StridedStageFamily;
+    type TileKind = Strided;
 
     fn new_job<EG: Numeric, ES: Numeric>(
+        _runtime_config: RC,
         #[comptime] stage_index: u32,
         #[comptime] _line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
@@ -192,7 +200,7 @@ impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, StridedTilingLayout, AsyncCopy
 }
 
 #[cube]
-impl AsyncPartialLoadingStrategy for AsyncPartialStridedLoading {
+impl<RC: RuntimeConfig> AsyncPartialLoadingStrategy<RC> for AsyncPartialStridedLoading {
     fn arrival_count<S: StageConfig>(#[comptime] config: SharedGlobalMatmulConfig<S>) -> u32 {
         let total_load_units = config.plane_flow_config().counts.load_only * config.plane_dim();
         total_load_units.runtime()

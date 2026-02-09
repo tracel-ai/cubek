@@ -1,20 +1,29 @@
 use std::fmt::Display;
 
-use cubecl::{Runtime, client::ComputeClient};
+use cubecl::{Runtime, client::ComputeClient, std::CubeOption};
 
 use crate::{
     components::{
         batch::{BatchMatmulFamily, PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
         global::{
-            UnitWriterFamily, multi_stage::double_buffering::DoubleBufferingMatmulFamily,
-            read::sync_partial_cyclic::SyncPartialCyclicLoading,
+            UnitWriterFamily,
+            multi_stage::double_buffering::DoubleBufferingMatmulFamily,
+            read::{
+                sync_full_cyclic::SyncFullCyclicLoading,
+                sync_partial_cyclic::SyncPartialCyclicLoading,
+            },
         },
-        stage::{FilledStageFamily, RowMajorTilingOrder, StridedStageFamily, UnitMatmulFamily},
-        tile::{TileMatmulFamily, io::Filled, register::RegisterMatmul},
+        stage::{RowMajorTilingOrder, StridedStageFamily, UnitMatmulFamily},
+        tile::{
+            TileMatmulFamily,
+            io::{Filled, Strided},
+            register::RegisterMatmul,
+        },
     },
     definition::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, TilingBlueprint},
+    launch::RuntimeConfig,
     routines::{
-        BlueprintStrategy, DeviceSettings, LaunchInfo, Routine,
+        BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine,
         selector::{TileSizeSelection, UnitTilingBlueprintOptions, infer_blueprint_unit},
     },
 };
@@ -33,25 +42,32 @@ impl Display for DoubleUnitSelectionArgs {
     }
 }
 
-impl Routine for DoubleUnitAlgorithm {
+impl<RC: RuntimeConfig> Routine<RC> for DoubleUnitAlgorithm {
     type Strategy = DoubleUnitSelectionArgs;
     type BatchMatmul = PartitionedBatchMatmulFamily<
+        RC,
         DoubleBufferingMatmulFamily<
-            UnitMatmulFamily<RegisterMatmul<Filled>, StridedStageFamily, FilledStageFamily>,
+            UnitMatmulFamily<
+                RegisterMatmul<CubeOption<Strided>>,
+                StridedStageFamily,
+                Option<StridedStageFamily>,
+            >,
+            RC,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
+            SyncFullCyclicLoading<RowMajorTilingOrder>,
             UnitWriterFamily,
         >,
         RowMajorGlobalPartitionMatmul,
     >;
     type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
 
-    fn prepare<R: Runtime>(
+    fn expand_blueprint<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<Self>,
-    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        strategy: &BlueprintStrategy<RC, Self>,
+    ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
         if RegisterMatmul::<Filled>::can_cast_stage_element() {
@@ -73,8 +89,17 @@ impl Routine for DoubleUnitAlgorithm {
                 &problem.global_dtypes,
             ),
         };
+        Ok(ExpandInfo { blueprint, dtypes })
+    }
 
-        Self::validate_blueprint(
+    fn prepare<R: Runtime>(
+        problem: &MatmulProblem,
+        device_settings: &DeviceSettings<R>,
+        expand_info: ExpandInfo<Self::Blueprint>,
+    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        let ExpandInfo { blueprint, dtypes } = expand_info;
+
+        <Self as Routine<RC>>::validate_blueprint(
             &device_settings.client,
             &blueprint,
             problem,

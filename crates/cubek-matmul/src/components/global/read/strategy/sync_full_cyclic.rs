@@ -1,13 +1,16 @@
 use std::marker::PhantomData;
 
-use crate::components::global::read::validate_swizzle_atom_size;
-use crate::components::global::read::{FullLoadingStrategy, tiled::TiledLayout};
 use crate::components::global::{GlobalReaderConfig, PlaneFlowPartition};
 use crate::components::global::{multi_stage::LoadMaxRoundPlaneCount, read::sync::Synchronous};
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{ContiguousTilingLayout, StridedStageMemory, TilingOrder};
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
+use crate::components::{
+    global::read::{FullLoadingStrategy, tiled::TiledLayout},
+    tile::io::Strided,
+};
 use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem, StageIdent};
+use crate::{components::global::read::validate_swizzle_atom_size, launch::RuntimeConfig};
 use cubecl::{ir::DeviceProperties, prelude::*};
 
 use super::{LoadingJob, LoadingValidation, ReaderMode};
@@ -69,12 +72,15 @@ impl<TO: TilingOrder> LoadMaxRoundPlaneCount for SyncFullCyclicLoading<TO> {
 }
 
 #[cube]
-impl<TO: TilingOrder> FullLoadingStrategy for SyncFullCyclicLoading<TO> {
+impl<TO: TilingOrder, RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncFullCyclicLoading<TO> {
     type TilingLayout = ContiguousTilingLayout<TO>;
     type SyncStrategy = Synchronous;
     type Job<EG: Numeric, ES: Numeric> = SyncFullCyclicJob;
+    type Stage = StridedStageFamily;
+    type TileKind = Strided;
 
     fn new_job<EG: Numeric, ES: Numeric>(
+        _runtime_config: RC,
         #[comptime] line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, ES> {

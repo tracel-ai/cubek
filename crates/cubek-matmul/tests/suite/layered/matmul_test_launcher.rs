@@ -37,7 +37,7 @@ pub enum InputRepresentation {
 #[allow(unused)]
 /// Test the correctness of the specified Matmul on the given device,
 /// against a naive CPU implementation over the given problem
-pub fn test_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
+pub fn test_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
     client: ComputeClient<TestRuntime>,
     mut problem: MatmulProblem,
     blueprint: A::Blueprint,
@@ -106,7 +106,7 @@ pub fn test_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
 
 /// Returns whether execution succeeded
 #[allow(clippy::too_many_arguments)]
-pub fn launch_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
+pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
     client: &ComputeClient<TestRuntime>,
     problem: &MatmulProblem,
     blueprint: A::Blueprint,
@@ -136,10 +136,23 @@ pub fn launch_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
             .unwrap(),
     };
 
+    let device_settings = A::device_settings(client, line_sizes);
+
+    let expand_info = match A::expand_blueprint(
+        problem,
+        &device_settings,
+        &BlueprintStrategy::Forced(blueprint),
+    ) {
+        Ok(launch_info) => launch_info,
+        Err(err) => {
+            return ExecutionOutcome::CompileError(format!("Can't launch the test: {err}"));
+        }
+    };
+
     let launch_info = match A::prepare(
         problem,
         &A::device_settings(client, line_sizes),
-        &BlueprintStrategy::Forced(blueprint),
+        expand_info,
     ) {
         Ok(launch_info) => launch_info,
         Err(err) => {
@@ -151,17 +164,6 @@ pub fn launch_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
     let cube_count_plan = launch_info.cube_count_plan;
     let blueprint = launch_info.blueprint;
     let dtypes = &launch_info.dtypes;
-
-    let props = &client.properties().hardware;
-    if props.max_cube_dim.0 < cube_dim.x
-        || props.max_cube_dim.1 < cube_dim.y
-        || props.max_cube_dim.2 < cube_dim.z
-        || cube_dim.num_elems() > props.max_units_per_cube
-    {
-        return ExecutionOutcome::CompileError(
-            "Skipping test, too many resources requested".to_string(),
-        );
-    }
 
     let output = <TensorOutput<_> as ConcreteOutputFactory<A>>::create(
         client,
@@ -191,6 +193,7 @@ pub fn launch_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
                     cube_count_plan.resolve(),
                     inputs,
                     output,
+                    (),
                     cube_count_plan.as_args(),
                     blueprint,
                     dtypes,
@@ -215,6 +218,7 @@ pub fn launch_matmul_algorithm<A: Routine<Blueprint = TilingBlueprint>>(
                     cube_count_plan.resolve(),
                     inputs,
                     output,
+                    (),
                     cube_count_plan.as_args(),
                     blueprint,
                     dtypes,

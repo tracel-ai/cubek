@@ -1,13 +1,13 @@
 use crate::{
     AcceleratedTileKind, ConvolutionArgs, ReadingStrategy, Strategy,
     backward_data::args::ConcreteArgs,
-    components::{ConvGemmConfig as _, ConvolutionOperation},
-    kernels::forward::simple::*,
+    components::{ConvolutionOperation, global::args::RuntimeArgs},
+    kernels::algorithm::simple::*,
 };
 use crate::{components::ConvSetupError, kernels::backward_data::selector::launch_kernel_concrete};
 use crate::{
     components::{ConvolutionProblem, Dimensionality},
-    kernels::forward::algorithm::Algorithm,
+    kernels::algorithm::Algorithm,
 };
 use cubecl::{
     Runtime,
@@ -19,6 +19,7 @@ use cubek_matmul::{
     components::tile::{cmma::CmmaMatmul, io::Strided, mma::MmaMatmul},
     definition::{AvailableLineSizes, MatmulElems, MatmulSetupError, MatrixLayout},
     launch::{MatmulInputHandle, MatmulInputHandleRef},
+    routines::BlueprintStrategy,
 };
 use derive_new::new;
 
@@ -109,7 +110,7 @@ struct BackwardsData<'a, R: Runtime, const N_SPATIAL: usize> {
 impl<'a, R: Runtime, const N_SPATIAL: usize> BackwardsData<'a, R, N_SPATIAL> {
     fn launch<Alg: Algorithm>(self) -> Result<(), ConvSetupError>
     where
-        Alg::Args: ConcreteArgs,
+        Alg::Args: ConcreteArgs<Alg::Routine>,
     {
         let ConvolutionArgs {
             stride,
@@ -131,6 +132,7 @@ impl<'a, R: Runtime, const N_SPATIAL: usize> BackwardsData<'a, R, N_SPATIAL> {
             self.in_grad,
             (&stride, &padding, &dilation),
             dimensionality,
+            &BlueprintStrategy::Inferred(Default::default()),
             self.dtypes,
         )
     }
@@ -144,10 +146,11 @@ fn launch_with_algorithm<R: Runtime, Alg: Algorithm>(
     in_grad: &TensorHandleRef<'_, R>,
     (stride, padding, dilation): (&[usize], &[usize], &[usize]),
     dimensionality: Dimensionality,
+    blueprint_strategy: &BlueprintStrategy<RuntimeArgs, Alg::Routine>,
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError>
 where
-    Alg::Args: ConcreteArgs,
+    Alg::Args: ConcreteArgs<Alg::Routine>,
 {
     let rank = in_grad.shape.len();
     let dim_c = rank - 1;
@@ -199,7 +202,15 @@ where
         global_dtypes: dtypes.as_global_elems(),
     };
 
-    launch_kernel::<R, Alg>(client, &out_grad, &weights, in_grad, problem, dtypes)
+    launch_kernel::<R, Alg>(
+        client,
+        &out_grad,
+        &weights,
+        in_grad,
+        problem,
+        blueprint_strategy,
+        dtypes,
+    )
 }
 
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
@@ -209,12 +220,12 @@ pub fn launch_kernel<R: Runtime, Alg: Algorithm>(
     weights: &MatmulInputHandleRef<'_, R>,
     in_grad: &TensorHandleRef<'_, R>,
     problem: ConvolutionProblem,
-    mut dtypes: MatmulElems,
+    blueprint_strategy: &BlueprintStrategy<RuntimeArgs, Alg::Routine>,
+    dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError>
 where
-    Alg::Args: ConcreteArgs,
+    Alg::Args: ConcreteArgs<Alg::Routine>,
 {
-    let plane_dim = client.properties().hardware.plane_size_max;
     // Shape/strides are treated as k-major, with the last dim always being the contiguous one.
     // So for the sake of selecting a line size, the shape/strides are always row-major.
     let line_sizes = AvailableLineSizes::from_type_sizes(
@@ -237,17 +248,14 @@ where
 
     let line_sizes = Alg::filter_line_sizes(line_sizes).pick_max()?;
 
-    let selection = Alg::selection(client, &problem, plane_dim, &line_sizes, &mut dtypes)?;
-    let problem = Alg::Args::adjust_problem(client, problem, &selection, &dtypes);
-
-    let device_props = client.properties();
-
-    Alg::validate_blueprint(client, &selection, &problem, &dtypes, &line_sizes)?;
-
-    let config = Alg::expand_config(device_props, &problem, &selection, &line_sizes, &dtypes)?;
-    let line_sizes = config.line_sizes();
-
-    launch_kernel_concrete::<R, Alg>(
-        client, out_grad, weights, in_grad, problem, line_sizes, selection, &dtypes,
+    launch_kernel_concrete::<R, Alg::Args, Alg::Routine>(
+        client,
+        out_grad,
+        weights,
+        in_grad,
+        problem,
+        line_sizes,
+        blueprint_strategy,
+        &dtypes,
     )
 }

@@ -1,56 +1,69 @@
-use crate::components::CubeDimResource;
-use crate::components::batch::{BatchConfig, BatchMatmulFamily};
-use crate::components::global::cube_dim_validation;
+use crate::components::{global::cube_dim_validation, stage::NumStages};
 use crate::definition::{
     Blueprint, CubeCountPlan, CubeMappingLaunch, MatmulElems, MatmulLineSizes, MatmulProblem,
     MatmulSetupError, TilingBlueprint,
 };
 use crate::launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
 use crate::routines::BlueprintStrategy;
+use crate::{components::CubeDimResource, launch::RuntimeConfig};
+use crate::{
+    components::batch::{BatchConfig, BatchMatmulFamily},
+    launch::ConfigRuntimeArg,
+};
 use cubecl::prelude::*;
 use std::fmt::Display;
 
 /// Specifications for a matmul algorithm
-pub trait Routine: Sized {
+pub trait Routine<RC: RuntimeConfig>: Sized {
     type Strategy: Default + Display + Clone;
     type Blueprint: Blueprint;
     type Config: BatchConfig;
 
-    type BatchMatmul: BatchMatmulFamily<Blueprint = Self::Blueprint, Config = Self::Config>;
+    type BatchMatmul: BatchMatmulFamily<RC, Blueprint = Self::Blueprint, Config = Self::Config>;
 
     #[allow(clippy::too_many_arguments, clippy::result_large_err)]
-    fn launch<'a, MA: MatmulArgs, R: Runtime>(
+    fn launch<'a, MA: MatmulArgs<Config = RC>, R: Runtime>(
         client: &ComputeClient<R>,
         cube_dim: CubeDim,
         cube_count: CubeCount,
         input: InputRuntimeArg<'a, MA, R>,
         output: OutputRuntimeArg<'a, MA, R>,
+        config: ConfigRuntimeArg<'a, MA, R>,
         cube_count_input: CubeMappingLaunch<'a, R>,
         blueprint: Self::Blueprint,
         dtypes: &MatmulElems,
     ) -> Result<(), MatmulSetupError> {
-        match unsafe {
+        unsafe {
             Self::BatchMatmul::launch_unchecked::<MA, R>(
                 client,
                 cube_dim,
                 cube_count,
                 input,
                 output,
+                config,
                 cube_count_input,
                 blueprint,
                 dtypes,
-            )
-        } {
-            Ok(_) => Ok(()),
-            Err(err) => Err(MatmulSetupError::Launch(err)),
+            )?
         }
+        Ok(())
     }
+
+    fn expand_blueprint<R: Runtime>(
+        problem: &MatmulProblem,
+        device_settings: &DeviceSettings<R>,
+        strategy: &BlueprintStrategy<RC, Self>,
+    ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError>;
 
     fn prepare<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<Self>,
+        expand_info: ExpandInfo<Self::Blueprint>,
     ) -> Result<LaunchInfo<Self::Blueprint>, MatmulSetupError>;
+
+    fn num_stages() -> NumStages {
+        Self::BatchMatmul::num_stages()
+    }
 
     fn device_settings<R: Runtime>(
         client: &ComputeClient<R>,
@@ -83,6 +96,12 @@ pub trait Routine: Sized {
     ) -> Result<(), MatmulSetupError> {
         Self::BatchMatmul::validate_blueprint(client, blueprint, problem, dtypes, line_sizes)
     }
+}
+
+#[derive(Debug)]
+pub struct ExpandInfo<B: Blueprint> {
+    pub blueprint: B,
+    pub dtypes: MatmulElems,
 }
 
 #[derive(Debug)]

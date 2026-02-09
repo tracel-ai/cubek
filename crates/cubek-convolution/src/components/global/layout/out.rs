@@ -3,7 +3,7 @@ use cubecl::std::{
     FastDivmod, FastDivmodArgs,
     tensor::layout::{Layout, LayoutExpand},
 };
-use cubek_matmul::{components::global::memory::GlobalMemoryConfig, launch::BatchedCoords};
+use cubek_matmul::{components::global::memory::GlobalLayoutConfig, launch::BatchedCoords};
 
 use crate::components::{
     ConvolutionOperation, ConvolutionProblem,
@@ -24,7 +24,7 @@ pub struct OutLayout {
 
     /// Global memory config for the backing tensor
     #[cube(comptime)]
-    pub config: GlobalMemoryConfig,
+    pub config: GlobalLayoutConfig,
 }
 
 #[cube]
@@ -33,7 +33,7 @@ impl OutLayout {
         rows: u32,
         cols: u32,
         shape_out: Sequence<FastDivmod<u32>>,
-        #[comptime] config: GlobalMemoryConfig,
+        #[comptime] config: GlobalLayoutConfig,
     ) -> OutLayout {
         OutLayout {
             shape_out,
@@ -79,7 +79,7 @@ impl<'a, R: Runtime> OutLayoutLaunch<'a, R> {
     pub fn from_args(
         client: &ComputeClient<R>,
         problem: &ConvolutionProblem,
-        config: GlobalMemoryConfig,
+        config: GlobalLayoutConfig,
     ) -> Self {
         match problem.operation {
             ConvolutionOperation::Forward => Self::from_args_fprop(client, problem, config),
@@ -93,7 +93,7 @@ impl<'a, R: Runtime> OutLayoutLaunch<'a, R> {
     fn from_args_fprop(
         client: &ComputeClient<R>,
         problem: &ConvolutionProblem,
-        config: GlobalMemoryConfig,
+        config: GlobalLayoutConfig,
     ) -> Self {
         let shape_out = problem
             .out_shape
@@ -109,7 +109,7 @@ impl<'a, R: Runtime> OutLayoutLaunch<'a, R> {
     fn from_args_dgrad(
         client: &ComputeClient<R>,
         problem: &ConvolutionProblem,
-        config: GlobalMemoryConfig,
+        config: GlobalLayoutConfig,
     ) -> Self {
         let shape = problem
             .in_shape
@@ -125,7 +125,7 @@ impl<'a, R: Runtime> OutLayoutLaunch<'a, R> {
     fn from_args_wgrad(
         client: &ComputeClient<R>,
         problem: &ConvolutionProblem,
-        config: GlobalMemoryConfig,
+        config: GlobalLayoutConfig,
     ) -> Self {
         let shape_out = problem
             .out_shape

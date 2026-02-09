@@ -1,30 +1,37 @@
 use std::marker::PhantomData;
 
-use crate::components::CubeDimResource;
-use crate::components::batch::BatchMatmulFamily;
-use crate::components::batch::partitioned_matmul::config::PartitionedBatchConfig;
 use crate::components::batch::partitioned_matmul::matmul::PartitionedBatchMatmul;
 use crate::components::batch::partitioned_matmul::matmul::matmul_entry;
 use crate::components::batch::partitioned_matmul::partition::GlobalPartitionMatmul;
 use crate::components::global::GlobalMatmulFamily;
+use crate::components::{
+    batch::partitioned_matmul::config::PartitionedBatchConfig, stage::NumStages,
+};
 use crate::definition::CubeMappingLaunch;
 use crate::definition::MatmulLineSizes;
 use crate::definition::MatmulProblem;
 use crate::definition::TilingBlueprint;
 use crate::definition::{MatmulElems, MatmulPrecision, MatmulSetupError};
 use crate::launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
+use crate::{components::CubeDimResource, launch::RuntimeConfig};
+use crate::{components::batch::BatchMatmulFamily, launch::ConfigRuntimeArg};
 use cubecl::{ir::DeviceProperties, prelude::*};
 
 /// Simple partitioned batch matmul family for any precision
-pub struct PartitionedBatchMatmulFamily<GMM: GlobalMatmulFamily, S: GlobalPartitionMatmul> {
+pub struct PartitionedBatchMatmulFamily<
+    RC: RuntimeConfig,
+    GMM: GlobalMatmulFamily<RC>,
+    S: GlobalPartitionMatmul,
+> {
+    _rc: PhantomData<RC>,
     _gmm: PhantomData<GMM>,
     _s: PhantomData<S>,
 }
 
-impl<GMM: GlobalMatmulFamily, S: GlobalPartitionMatmul> BatchMatmulFamily
-    for PartitionedBatchMatmulFamily<GMM, S>
+impl<RC: RuntimeConfig, GMM: GlobalMatmulFamily<RC>, S: GlobalPartitionMatmul> BatchMatmulFamily<RC>
+    for PartitionedBatchMatmulFamily<RC, GMM, S>
 {
-    type Matmul<MP: MatmulPrecision> = PartitionedBatchMatmul<MP, GMM::Matmul<MP>, S>;
+    type Matmul<MP: MatmulPrecision> = PartitionedBatchMatmul<RC, MP, GMM::Matmul<MP>, S>;
     type Config = PartitionedBatchConfig<GMM::Config>;
     type Blueprint = TilingBlueprint;
 
@@ -42,12 +49,17 @@ impl<GMM: GlobalMatmulFamily, S: GlobalPartitionMatmul> BatchMatmulFamily
         ))
     }
 
-    unsafe fn launch_unchecked<'a, MA: MatmulArgs, R: Runtime>(
+    fn num_stages() -> NumStages {
+        GMM::num_stages()
+    }
+
+    unsafe fn launch_unchecked<'a, MA: MatmulArgs<Config = RC>, R: Runtime>(
         client: &ComputeClient<R>,
         cube_dim: CubeDim,
         cube_count: CubeCount,
         input: InputRuntimeArg<'a, MA, R>,
         output: OutputRuntimeArg<'a, MA, R>,
+        config: ConfigRuntimeArg<'a, MA, R>,
         cube_count_input: CubeMappingLaunch<'a, R>,
         blueprint: Self::Blueprint,
         dtypes: &MatmulElems,
@@ -59,6 +71,7 @@ impl<GMM: GlobalMatmulFamily, S: GlobalPartitionMatmul> BatchMatmulFamily
                 cube_dim,
                 input,
                 output,
+                config,
                 cube_count_input,
                 blueprint,
                 [dtypes.lhs_global, dtypes.rhs_global, dtypes.acc_global],

@@ -11,12 +11,13 @@ use crate::{
             naive::{NaiveMatmul, NaiveMatmulConfig, matmul_entry},
         },
         global::memory::GlobalLayoutConfig,
+        stage::NumStages,
     },
     definition::{
         Blueprint, CubeMappingLaunch, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem,
         MatmulSetupError, MatrixLayout,
     },
-    launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
+    launch::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
 };
 
 /// Simple partitioned batch matmul family for any precision
@@ -53,7 +54,7 @@ impl Blueprint for NaiveBlueprint {
     }
 }
 
-impl BatchMatmulFamily for NaiveBatchMatmulFamily {
+impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
     type Matmul<MP: MatmulPrecision> = NaiveMatmul<MP>;
     type Config = NaiveMatmulConfig;
     type Blueprint = NaiveBlueprint;
@@ -67,12 +68,17 @@ impl BatchMatmulFamily for NaiveBatchMatmulFamily {
         Ok(NaiveMatmulConfig {})
     }
 
-    unsafe fn launch_unchecked<'a, MA: MatmulArgs, R: Runtime>(
+    fn num_stages() -> NumStages {
+        (1, 1).into()
+    }
+
+    unsafe fn launch_unchecked<'a, MA: MatmulArgs<Config = ()>, R: Runtime>(
         client: &ComputeClient<R>,
         cube_dim: CubeDim,
         cube_count: CubeCount,
         input: InputRuntimeArg<'a, MA, R>,
         output: OutputRuntimeArg<'a, MA, R>,
+        _config: ConfigRuntimeArg<'a, MA, R>,
         cube_mapping: CubeMappingLaunch<'a, R>,
         blueprint: NaiveBlueprint,
         dtypes: &MatmulElems,
@@ -84,6 +90,7 @@ impl BatchMatmulFamily for NaiveBatchMatmulFamily {
                 cube_dim,
                 input,
                 output,
+                (),
                 cube_mapping,
                 blueprint,
                 [dtypes.lhs_global, dtypes.rhs_global, dtypes.acc_global],

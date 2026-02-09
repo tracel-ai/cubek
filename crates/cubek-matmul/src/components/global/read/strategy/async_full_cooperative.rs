@@ -10,8 +10,10 @@ use crate::{
             },
         },
         stage::{StridedStageFamily, StridedStageMemory, StridedTilingLayout, TilingValidation},
+        tile::io::Strided,
     },
     definition::{InvalidConfigError, MatmulElems, MatmulProblem, MatrixLayout, StageIdent},
+    launch::RuntimeConfig,
 };
 use cubecl::{
     ir::DeviceProperties,
@@ -63,14 +65,17 @@ impl LoadMaxRoundPlaneCount for AsyncFullCooperativeLoading {
 }
 
 #[cube]
-impl FullLoadingStrategy for AsyncFullCooperativeLoading {
+impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for AsyncFullCooperativeLoading {
     type TilingLayout = StridedTilingLayout;
     type SyncStrategy = AsyncBarrier;
     type Job<EG: Numeric, ES: Numeric> = AsyncFullCooperativeJob;
+    type Stage = StridedStageFamily;
+    type TileKind = Strided;
 
     const SHOULD_CLEAR: bool = true;
 
     fn new_job<EG: Numeric, ES: Numeric>(
+        _runtime_config: RC,
         #[comptime] _line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> AsyncFullCooperativeJob {

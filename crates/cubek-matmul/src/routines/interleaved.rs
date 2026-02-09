@@ -3,14 +3,17 @@ use cubecl::{Runtime, client::ComputeClient};
 use std::fmt::Display;
 use std::marker::PhantomData;
 
-use crate::components::batch::BatchMatmulFamily;
-use crate::components::tile::interleaved::InterleavedMatmul;
 use crate::definition::{
     CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulElems, MatmulLineSizes,
     MatmulProblem, MatmulSetupError, MultiRowStrategy, SmAllocation, TilingBlueprint, TilingScheme,
     adjust_dtypes,
 };
 use crate::routines::{BlueprintStrategy, DeviceSettings, LaunchInfo};
+use crate::{components::batch::BatchMatmulFamily, launch::RuntimeConfig};
+use crate::{
+    components::tile::{interleaved::InterleavedMatmul, io::Strided},
+    routines::ExpandInfo,
+};
 use crate::{
     components::{
         batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
@@ -19,10 +22,7 @@ use crate::{
             read::{FullLoadingStrategy, sync_full_cyclic::SyncFullCyclicLoading},
             single_stage::simple::SimpleMatmulFamily,
         },
-        stage::{
-            ColMajorTilingOrder, FilledStageFamily, PartitionBuffering, PlaneMatmulFamily,
-            RowMajorTilingOrder, StridedStageFamily,
-        },
+        stage::{ColMajorTilingOrder, PartitionBuffering, PlaneMatmulFamily, RowMajorTilingOrder},
         tile::TileMatmulFamily,
     },
     routines::{
@@ -35,9 +35,11 @@ use crate::{
 pub struct InterleavedAlgorithm<
     LL = SyncFullCyclicLoading<ColMajorTilingOrder>,
     RL = SyncFullCyclicLoading<RowMajorTilingOrder>,
+    AL = SyncFullCyclicLoading<RowMajorTilingOrder>,
 > {
     pub _ll: PhantomData<LL>,
     pub _rl: PhantomData<RL>,
+    pub _al: PhantomData<AL>,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -52,34 +54,34 @@ impl Display for InterleavedArgs {
     }
 }
 
-impl<LL, RL> Routine for InterleavedAlgorithm<LL, RL>
+impl<LL, RL, AL, RC> Routine<RC> for InterleavedAlgorithm<LL, RL, AL>
 where
-    LL: FullLoadingStrategy,
-    RL: FullLoadingStrategy<SyncStrategy = LL::SyncStrategy>,
+    RC: RuntimeConfig,
+    LL: FullLoadingStrategy<RC, TileKind = Strided>,
+    RL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
+    AL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
 {
     type Strategy = InterleavedArgs;
     type BatchMatmul = PartitionedBatchMatmulFamily<
+        RC,
         SimpleMatmulFamily<
-            PlaneMatmulFamily<
-                InterleavedMatmul,
-                StridedStageFamily,
-                StridedStageFamily,
-                FilledStageFamily,
-            >,
+            PlaneMatmulFamily<InterleavedMatmul, LL::Stage, RL::Stage, Option<AL::Stage>>,
+            RC,
             LL,
             RL,
+            AL,
             PlaneWriterFamily,
         >,
         RowMajorGlobalPartitionMatmul,
     >;
     type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
 
-    fn prepare<R: Runtime>(
+    fn expand_blueprint<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<Self>,
-    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        strategy: &BlueprintStrategy<RC, Self>,
+    ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
         if InterleavedMatmul::can_cast_stage_element() {
@@ -115,6 +117,16 @@ where
                 }?
             }
         };
+        Ok(ExpandInfo { blueprint, dtypes })
+    }
+
+    fn prepare<R: Runtime>(
+        problem: &MatmulProblem,
+        device_settings: &DeviceSettings<R>,
+        expand_info: ExpandInfo<Self::Blueprint>,
+    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        let ExpandInfo { blueprint, dtypes } = expand_info;
+        let client = &device_settings.client;
 
         Self::validate_blueprint(
             client,

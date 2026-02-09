@@ -113,11 +113,12 @@ pub fn launch_ref<R: Runtime>(
     );
 
     let device_settings = NaiveRoutine::device_settings(client, line_sizes);
-    let launch_info = NaiveRoutine::prepare(
+    let expand_info = NaiveRoutine::expand_blueprint(
         &problem,
         &device_settings,
         &BlueprintStrategy::Inferred(().into()),
     )?;
+    let launch_info = NaiveRoutine::prepare(&problem, &device_settings, expand_info)?;
 
     let input = <InputArg<TensorArgs> as ConcreteInputsFactory<NaiveRoutine>>::create(
         client,
@@ -143,6 +144,7 @@ pub fn launch_ref<R: Runtime>(
         launch_info.cube_count_plan.resolve(),
         input,
         output,
+        (),
         launch_info.cube_count_plan.as_args(),
         launch_info.blueprint,
         dtypes,

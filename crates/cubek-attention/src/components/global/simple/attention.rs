@@ -33,8 +33,8 @@ impl<
     AP: AttentionPrecision,
 > GlobalAttention<AP> for SimpleGlobalAttention<AP, SA>
 {
-    type KeyReader = FullStageGlobalReader<KG<AP>, KS<AP>, AttentionLoadingStrategy>;
-    type ValueReader = FullStageGlobalReader<VG<AP>, VS<AP>, AttentionLoadingStrategy>;
+    type KeyReader = FullStageGlobalReader<KG<AP>, KS<AP>, (), AttentionLoadingStrategy>;
+    type ValueReader = FullStageGlobalReader<VG<AP>, VS<AP>, (), AttentionLoadingStrategy>;
     type MaskReader = MaskReader<AP>;
 
     type Writer = <SA::Partitioner as AttentionPartitioner>::Writer<OS<AP>, OG<AP>>;
@@ -133,7 +133,7 @@ impl<
         let step = config.stage_config.elements_in_partition_seq_kv().runtime();
         let layout =
             AttentionGlobalLayout::new(&key, batch_index, config.key_reader_config.gmem_config);
-        FullStageGlobalReader::new(key.view(layout), step, config.key_reader_config)
+        FullStageGlobalReader::new(key.view(layout), (), step, config.key_reader_config)
     }
 
     fn init_value_reader(
@@ -144,7 +144,7 @@ impl<
         let step = config.stage_config.elements_in_partition_seq_kv().runtime();
         let layout =
             AttentionGlobalLayout::new(&value, batch_index, config.value_reader_config.gmem_config);
-        FullStageGlobalReader::new(value.view(layout), step, config.value_reader_config)
+        FullStageGlobalReader::new(value.view(layout), (), step, config.value_reader_config)
     }
 
     fn init_mask_reader(

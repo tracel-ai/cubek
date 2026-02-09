@@ -1,9 +1,5 @@
 use std::marker::PhantomData;
 
-use crate::components::global::read::{
-    FullLoadingStrategy, async_barrier::AsyncCopy, async_copy::ASYNC_COPY_WIDTH, tiled::TiledLayout,
-};
-use crate::components::global::read::{validate_async_barrier, validate_swizzle_atom_size};
 use crate::components::global::read::{validate_async_copy, validate_async_copy_with_problem};
 use crate::components::global::{GlobalReaderConfig, PlaneFlowPartition};
 use crate::components::global::{
@@ -12,7 +8,18 @@ use crate::components::global::{
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{ContiguousTilingLayout, StridedStageMemory, TilingOrder};
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
+use crate::components::{
+    global::read::{validate_async_barrier, validate_swizzle_atom_size},
+    tile::io::Strided,
+};
 use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem, StageIdent};
+use crate::{
+    components::global::read::{
+        FullLoadingStrategy, async_barrier::AsyncCopy, async_copy::ASYNC_COPY_WIDTH,
+        tiled::TiledLayout,
+    },
+    launch::RuntimeConfig,
+};
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Layout, LayoutExpand};
 use cubecl::{ir::DeviceProperties, prelude::barrier::Barrier};
@@ -92,12 +99,15 @@ impl<TO: TilingOrder> LoadMaxRoundPlaneCount for AsyncFullCyclicLoading<TO> {
 }
 
 #[cube]
-impl<TO: TilingOrder> FullLoadingStrategy for AsyncFullCyclicLoading<TO> {
+impl<TO: TilingOrder, RC: RuntimeConfig> FullLoadingStrategy<RC> for AsyncFullCyclicLoading<TO> {
     type TilingLayout = ContiguousTilingLayout<TO>;
     type SyncStrategy = AsyncCopy;
     type Job<EG: Numeric, ES: Numeric> = AsyncFullCyclicJob;
+    type Stage = StridedStageFamily;
+    type TileKind = Strided;
 
     fn new_job<EG: Numeric, ES: Numeric>(
+        _runtime_config: RC,
         #[comptime] _line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, ES> {

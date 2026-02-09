@@ -1,5 +1,4 @@
 use crate::components::CubeDimResource;
-use crate::components::global::multi_stage::EventLoadingMode;
 use crate::components::global::{
     GlobalReaderConfig, GlobalWriterConfig, PlaneFlowConfig, SharedGlobalMatmulConfig,
 };
@@ -9,43 +8,53 @@ use crate::components::global::{
     memory::{GlobalMemoryConfig, ViewDirection},
     read::AsyncPartialLoadingStrategy,
 };
+use crate::components::global::{multi_stage::EventLoadingMode, read::FullLoadingStrategy};
 use crate::components::stage::StageConfig;
-use crate::components::{global::GlobalMatmulFamily, stage, stage::FilledStageFamily};
-use crate::components::{global::MaxGlobalReaderPlanes, stage::NoTilingLayout};
+use crate::components::{global::GlobalMatmulFamily, stage};
+use crate::components::{global::MaxGlobalReaderPlanes, stage::NumStages};
 use crate::definition::MatmulLineSizes;
 use crate::definition::TilingBlueprint;
 use crate::definition::{MatmulElems, MatmulSetupError};
 use crate::definition::{MatmulPrecision, MatmulProblem};
 use crate::definition::{MatrixLayout, StageIdent};
+use crate::launch::RuntimeConfig;
 use cubecl::{ir::DeviceProperties, prelude::*};
 use std::marker::PhantomData;
 
 /// Double buffering matmul family for any precision
 pub struct SpecializedMatmulFamily<
     SMM: stage::StageMatmulFamily,
-    L: AsyncPartialLoadingStrategy,
+    RC: RuntimeConfig,
+    L: AsyncPartialLoadingStrategy<RC>,
+    AL: FullLoadingStrategy<RC>,
     GW: GlobalWriterFamily,
 > {
     _stage_matmul: PhantomData<SMM>,
+    _rc: PhantomData<RC>,
     _loading: PhantomData<L>,
+    _acc_loading: PhantomData<AL>,
     _writer: PhantomData<GW>,
 }
 
-impl<SMM, L, GW> GlobalMatmulFamily for SpecializedMatmulFamily<SMM, L, GW>
+impl<SMM, RC, L, AL, GW> GlobalMatmulFamily<RC> for SpecializedMatmulFamily<SMM, RC, L, AL, GW>
 where
     SMM: stage::StageMatmulFamily<
             LhsStage = L::Stage,
             RhsStage = L::Stage,
-            AccStage = FilledStageFamily,
+            AccStage = Option<AL::Stage>,
             OutStage = GW::Stage,
         >,
-    L: AsyncPartialLoadingStrategy,
+    RC: RuntimeConfig,
+    L: AsyncPartialLoadingStrategy<RC>,
+    AL: FullLoadingStrategy<RC>,
     GW: GlobalWriterFamily,
 {
     type Matmul<MP: MatmulPrecision> = SpecializedMatmul<
         MP,
-        SMM::Matmul<MP, L::TilingLayout, L::TilingLayout, NoTilingLayout, WriteTiling>,
+        SMM::Matmul<MP, L::TilingLayout, L::TilingLayout, AL::TilingLayout, WriteTiling>,
+        RC,
         L,
+        AL,
         GW::Writer<MP::Acc>,
     >;
     type Config = SharedGlobalMatmulConfig<SMM::Config>;
@@ -64,7 +73,7 @@ where
             device_props,
             blueprint,
             plane_flow_config,
-            (2, 2).into(),
+            Self::num_stages(),
             dtypes,
             line_sizes,
         )?;
@@ -124,6 +133,18 @@ where
             input_load_flow: blueprint.load_flows.rhs,
         };
 
+        let acc_reader_config = GlobalReaderConfig {
+            gmem_config: out_gmem_config,
+            smem_config: stage_config.acc_smem_config(),
+            precompute_job,
+            plane_dim,
+            plane_flow_config,
+            reader_mode,
+            stage_ident: StageIdent::Acc,
+            event_loading_mode,
+            input_load_flow: blueprint.load_flows.rhs,
+        };
+
         let writer_config = GlobalWriterConfig {
             gmem_config: out_gmem_config,
             smem_config: stage_config.out_smem_config(),
@@ -136,9 +157,14 @@ where
             num_planes: plane_flow_config.counts.total_count(),
             lhs_reader_config,
             rhs_reader_config,
+            acc_reader_config,
             writer_config,
             must_sync_plane_after_execution: false,
         })
+    }
+
+    fn num_stages() -> NumStages {
+        (2, 2).into()
     }
 
     fn cubedim_resource(
@@ -178,6 +204,6 @@ where
     ) -> Result<(), MatmulSetupError> {
         L::validate_with_problem(problem, dtypes, StageIdent::Lhs)?;
         L::validate_with_problem(problem, dtypes, StageIdent::Rhs)?;
-        SMM::validate_blueprint(client, blueprint, (2, 2).into(), dtypes, line_sizes)
+        SMM::validate_blueprint(client, blueprint, dtypes, line_sizes)
     }
 }

@@ -60,7 +60,6 @@ pub trait StageMatmulFamily: Send + Sync + 'static {
     fn validate_blueprint<R: Runtime>(
         client: &ComputeClient<R>,
         blueprint: &TilingBlueprint,
-        num_stages: NumStages,
         dtypes: &MatmulElems,
         line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError>;
@@ -172,6 +171,7 @@ pub trait StageConfig:
 
     fn lhs_smem_config(&self) -> StageMemoryConfig;
     fn rhs_smem_config(&self) -> StageMemoryConfig;
+    fn acc_smem_config(&self) -> StageMemoryConfig;
     fn out_smem_config(&self) -> StageMemoryConfig;
 }
 

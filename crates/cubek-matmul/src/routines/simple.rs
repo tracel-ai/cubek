@@ -1,15 +1,10 @@
-use cubecl::features::MmaConfig;
 use cubecl::{Runtime, client::ComputeClient};
+use cubecl::{features::MmaConfig, std::CubeOption};
 use std::fmt::Display;
 use std::marker::PhantomData;
 
-use crate::components::batch::BatchMatmulFamily;
-use crate::definition::{
-    CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulElems, MatmulLineSizes,
-    MatmulProblem, MatmulSetupError, MultiRowStrategy, SmAllocation, TilingBlueprint, TilingScheme,
-    adjust_dtypes,
-};
 use crate::routines::{BlueprintStrategy, DeviceSettings, LaunchInfo};
+use crate::{components::batch::BatchMatmulFamily, launch::RuntimeConfig};
 use crate::{
     components::{
         batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
@@ -21,19 +16,21 @@ use crate::{
             },
             single_stage::simple::SimpleMatmulFamily,
         },
-        stage::{
-            ColMajorTilingOrder, FilledStageFamily, PartitionBuffering, PlaneMatmulFamily,
-            RowMajorTilingOrder, StridedStageFamily,
-        },
-        tile::{
-            TileMatmulFamily,
-            io::{Filled, Strided},
-        },
+        stage::{ColMajorTilingOrder, PartitionBuffering, PlaneMatmulFamily, RowMajorTilingOrder},
+        tile::{TileMatmulFamily, io::Strided},
     },
     routines::{
         Routine,
         selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane},
     },
+};
+use crate::{
+    definition::{
+        CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulElems, MatmulLineSizes,
+        MatmulProblem, MatmulSetupError, MultiRowStrategy, SmAllocation, TilingBlueprint,
+        TilingScheme, adjust_dtypes,
+    },
+    routines::ExpandInfo,
 };
 
 /// Plane accelerated single stage matmul with configurable readers (default to cyclic)
@@ -41,13 +38,20 @@ pub struct SimpleAlgorithm<
     TMM,
     LL = SyncFullCyclicLoading<ColMajorTilingOrder>,
     RL = SyncFullCyclicLoading<RowMajorTilingOrder>,
+    AL = SyncFullCyclicLoading<RowMajorTilingOrder>,
 > {
     pub _tmm: PhantomData<TMM>,
     pub _ll: PhantomData<LL>,
     pub _rl: PhantomData<RL>,
+    pub _al: PhantomData<AL>,
 }
 
-pub type SimpleTmaAlgorithm<TMM> = SimpleAlgorithm<TMM, AsyncFullTmaLoading, AsyncFullTmaLoading>;
+pub type SimpleTmaAlgorithm<TMM> = SimpleAlgorithm<
+    TMM,
+    AsyncFullTmaLoading,
+    AsyncFullTmaLoading,
+    SyncFullCyclicLoading<RowMajorTilingOrder>,
+>;
 pub type SimpleBarrierAlgorithm<TMM, L> = SimpleAlgorithm<TMM, L, L>;
 
 #[derive(Default, Debug, Clone)]
@@ -62,38 +66,47 @@ impl Display for SimpleArgs {
     }
 }
 
-impl<TMM, LL, RL> Routine for SimpleAlgorithm<TMM, LL, RL>
+impl<TMM, RC, LL, RL, AL> Routine<RC> for SimpleAlgorithm<TMM, LL, RL, AL>
 where
-    TMM:
-        TileMatmulFamily<LhsTile = Strided, RhsTile = Strided, AccTile = Filled, OutTile = Strided>,
-    LL: FullLoadingStrategy,
-    RL: FullLoadingStrategy<SyncStrategy = LL::SyncStrategy>,
+    TMM: TileMatmulFamily<
+            LhsTile = Strided,
+            RhsTile = Strided,
+            AccTile = CubeOption<Strided>,
+            OutTile = Strided,
+        >,
+    RC: RuntimeConfig,
+    LL: FullLoadingStrategy<RC, TileKind = Strided>,
+    RL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
+    AL: FullLoadingStrategy<RC, TileKind = Strided>,
 {
     type Strategy = SimpleArgs;
     type BatchMatmul = PartitionedBatchMatmulFamily<
+        RC,
         SimpleMatmulFamily<
-            PlaneMatmulFamily<TMM, StridedStageFamily, StridedStageFamily, FilledStageFamily>,
+            PlaneMatmulFamily<TMM, LL::Stage, RL::Stage, Option<AL::Stage>>,
+            RC,
             LL,
             RL,
+            AL,
             PlaneWriterFamily,
         >,
         RowMajorGlobalPartitionMatmul,
     >;
     type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
 
-    fn prepare<R: Runtime>(
+    fn expand_blueprint<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<Self>,
-    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        strategy: &BlueprintStrategy<RC, Self>,
+    ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+        let client = &device_settings.client;
 
         if TMM::can_cast_stage_element() {
             dtypes.adjust_stage_dtypes();
         }
 
-        let client = &device_settings.client;
         let (blueprint, dtypes) = match strategy {
             BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
             BlueprintStrategy::Inferred(strategy) => {
@@ -122,6 +135,17 @@ where
                 }?
             }
         };
+        Ok(ExpandInfo { blueprint, dtypes })
+    }
+
+    fn prepare<R: Runtime>(
+        problem: &MatmulProblem,
+        device_settings: &DeviceSettings<R>,
+        expand_info: ExpandInfo<Self::Blueprint>,
+    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        let ExpandInfo { blueprint, dtypes } = expand_info;
+
+        let client = &device_settings.client;
 
         Self::validate_blueprint(
             client,

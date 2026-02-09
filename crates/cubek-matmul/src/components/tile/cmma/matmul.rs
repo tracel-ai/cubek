@@ -1,9 +1,7 @@
 use cubecl::prelude::*;
 use std::marker::PhantomData;
 
-use crate::components::tile::{
-    SharedTileConfig, TileMatmul, cmma::reader::CmmaFragmentReader, io::Filled,
-};
+use crate::components::tile::{SharedTileConfig, TileMatmul, cmma::reader::CmmaFragmentReader};
 use crate::components::tile::{
     cmma::reader::CmmaStageReader,
     io::{Strided, TileKind},
@@ -14,7 +12,7 @@ use cubecl::cmma;
 use cubecl::std::CubeOption;
 
 /// Uses one plane to perform a small matmul using accelerated instructions.
-pub struct CmmaMatmul<Acc: TileKind = Filled> {
+pub struct CmmaMatmul<Acc: TileKind = CubeOption<Strided>> {
     _ty: PhantomData<Acc>,
 }
 

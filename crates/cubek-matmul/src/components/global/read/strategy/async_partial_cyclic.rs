@@ -1,7 +1,5 @@
 use std::marker::PhantomData;
 
-use crate::components::global::read::validate_async_barrier;
-use crate::components::global::read::validate_async_copy_with_problem;
 use crate::components::global::read::validate_swizzle_atom_size;
 use crate::components::global::{
     GlobalReaderConfig, PlaneFlowPartition, read::async_copy::ASYNC_COPY_WIDTH,
@@ -17,6 +15,7 @@ use crate::components::stage::StridedStageFamily;
 use crate::components::stage::StridedStageMemory;
 use crate::components::stage::{ContiguousTilingLayout, TilingOrder};
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
+use crate::components::{global::read::validate_async_copy_with_problem, tile::io::Strided};
 use crate::components::{
     global::{
         SharedGlobalMatmulConfig,
@@ -29,6 +28,7 @@ use crate::definition::MatmulElems;
 use crate::definition::MatmulPrecision;
 use crate::definition::MatmulProblem;
 use crate::definition::StageIdent;
+use crate::{components::global::read::validate_async_barrier, launch::RuntimeConfig};
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Layout, LayoutExpand};
 use cubecl::{ir::DeviceProperties, prelude::barrier::Barrier};
@@ -117,14 +117,18 @@ impl<TO: TilingOrder> LoadMaxRoundPlaneCount for AsyncPartialCyclicLoading<TO> {
 }
 
 #[cube]
-impl<TO: TilingOrder> PartialLoadingStrategy for AsyncPartialCyclicLoading<TO> {
+impl<TO: TilingOrder, RC: RuntimeConfig> PartialLoadingStrategy<RC>
+    for AsyncPartialCyclicLoading<TO>
+{
     type TilingLayout = ContiguousTilingLayout<TO>;
     type SyncStrategy = AsyncCopy;
     type Stage = StridedStageFamily;
+    type TileKind = Strided;
 
     type Job<EG: Numeric, ES: Numeric> = AsyncPartialCyclicJob;
 
     fn new_job<EG: Numeric, ES: Numeric>(
+        _runtime_config: RC,
         #[comptime] stage_index: u32,
         #[comptime] _line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
@@ -265,7 +269,9 @@ pub(crate) fn copy_line<EG: Numeric, ES: Numeric, TO: TilingOrder>(
 }
 
 #[cube]
-impl<TO: TilingOrder> AsyncPartialLoadingStrategy for AsyncPartialCyclicLoading<TO> {
+impl<TO: TilingOrder, RC: RuntimeConfig> AsyncPartialLoadingStrategy<RC>
+    for AsyncPartialCyclicLoading<TO>
+{
     fn arrival_count<S: StageConfig>(#[comptime] config: SharedGlobalMatmulConfig<S>) -> u32 {
         let total_load_units = config.plane_flow_config().counts.load_only * config.plane_dim();
         total_load_units.runtime()

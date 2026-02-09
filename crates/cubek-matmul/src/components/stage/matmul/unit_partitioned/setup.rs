@@ -132,6 +132,7 @@ impl<
                     lhs_smem_config,
                     rhs_smem_config,
                     out_smem_config,
+                    out_smem_config,
                 ),
             ),
         ))
@@ -156,7 +157,6 @@ impl<
     fn validate_blueprint<R: Runtime>(
         client: &ComputeClient<R>,
         blueprint: &TilingBlueprint,
-        num_stages: NumStages,
         dtypes: &MatmulElems,
         line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError> {
@@ -178,25 +178,6 @@ impl<
             return Err(MatmulSetupError::InvalidConfig(Box::new(
                 "Error: Tried doing partition double buffering with only one tile to compute.",
             )));
-        }
-
-        let lhs_smem_size = blueprint.tiling_scheme.elements_per_stage_along_m()
-            * blueprint.tiling_scheme.elements_per_stage_along_k()
-            * num_stages.lhs;
-        let rhs_smem_size = blueprint.tiling_scheme.elements_per_stage_along_k()
-            * blueprint.tiling_scheme.elements_per_stage_along_n()
-            * num_stages.rhs;
-        let out_smem_size =
-            blueprint.tiling_scheme.tile_size.m * blueprint.tiling_scheme.tile_size.n * num_units;
-        let smem_total_size = dtypes.lhs_stage.size() as u32 * lhs_smem_size
-            + dtypes.rhs_stage.size() as u32 * rhs_smem_size
-            + dtypes.acc_stage.size() as u32 * out_smem_size;
-
-        let smem_limit = client.properties().hardware.max_shared_memory_size as u32;
-        if smem_total_size > smem_limit {
-            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "This algorithm needs {smem_total_size:?} shared memory bytes but hardware limit is {smem_limit:?}. "
-            ))));
         }
 
         TM::validate_blueprint(client, blueprint, dtypes, line_sizes)

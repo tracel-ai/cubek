@@ -2,31 +2,36 @@ use crate::suite::test_utils::{Sample, TensorRawParts};
 use cubecl::{CubeElement, server::Allocation};
 use cubecl::{TestRuntime, prelude::*};
 use cubek_convolution::{
-    components::{ConvGemmConfig, ConvolutionOperation},
-    forward::args::{ConcreteArgs, ConcreteInputsFactory, ConcreteOutputFactory},
+    algorithm::Algorithm,
+    components::{ConvolutionProblem, global::args::RuntimeArgs},
 };
 use cubek_convolution::{
-    components::{ConvolutionProblem, global::entry_point::ConvolutionLaunch},
-    kernels::forward::algorithm::Algorithm,
+    components::{ConvGemmConfig, ConvSetupError, ConvolutionOperation},
+    forward::args::{ConcreteArgs, ConcreteInputsFactory, ConcreteOutputFactory},
 };
-use cubek_matmul::definition::{MatmulElems, MatmulIdent, TilingBlueprint};
-use cubek_matmul::launch::{InputArg, OutputArg};
-use cubek_matmul::{definition::AvailableLineSizes, launch::MatmulInputHandleRef};
+use cubek_matmul::{
+    definition::{AvailableLineSizes, MatmulSetupError},
+    launch::MatmulInputHandleRef,
+};
+use cubek_matmul::{
+    definition::{MatmulElems, MatmulIdent, TilingBlueprint},
+    routines::Routine,
+};
+use cubek_matmul::{
+    launch::{InputArg, OutputArg},
+    routines::BlueprintStrategy,
+};
 
 use super::test_utils::TestPrecision;
 
 /// Test the correctness of the specified Matmul on the given device,
 /// against a naive CPU implementation over the given problem
-pub fn test_convolution_algorithm<A, P>(
+pub fn test_convolution_algorithm<A: Algorithm, P: TestPrecision>(
     client: ComputeClient<TestRuntime>,
     mut problem: ConvolutionProblem,
-    selection: TilingBlueprint,
+    blueprint: <A::Routine as Routine<RuntimeArgs>>::Blueprint,
 ) where
-    A: Algorithm,
-    P: TestPrecision,
-    InputArg<A::Args>: ConcreteInputsFactory,
-    OutputArg<A::Args>: ConcreteOutputFactory,
-    A::Args: ConcreteArgs,
+    A::Args: ConcreteArgs<A::Routine>,
 {
     let env = std::env::var("CUBEK_TEST_MODE");
 
@@ -38,6 +43,30 @@ pub fn test_convolution_algorithm<A, P>(
         },
         Err(_) => false,
     };
+
+    let result = test_convolution_algorithm_inner::<A, P>(client, problem, blueprint);
+
+    match result {
+        Ok(_) => {}
+        Err(err) => {
+            let msg = format!("Can't launch the test: {err}");
+            if panic_on_launch_err {
+                panic!("{msg}");
+            } else {
+                println!("{msg}");
+            }
+        }
+    }
+}
+
+fn test_convolution_algorithm_inner<A: Algorithm, P: TestPrecision>(
+    client: ComputeClient<TestRuntime>,
+    mut problem: ConvolutionProblem,
+    blueprint: <A::Routine as Routine<RuntimeArgs>>::Blueprint,
+) -> Result<(), MatmulSetupError>
+where
+    A::Args: ConcreteArgs<A::Routine>,
+{
     let lhs = tensor_raw_parts::<P, TestRuntime>(&client, &problem, MatmulIdent::Lhs);
     let rhs = tensor_raw_parts::<P, TestRuntime>(&client, &problem, MatmulIdent::Rhs);
     let out = tensor_raw_parts::<P, TestRuntime>(&client, &problem, MatmulIdent::Out);
@@ -59,37 +88,17 @@ pub fn test_convolution_algorithm<A, P>(
     .unwrap();
 
     let dtypes = MatmulElems::new_deprecated::<((P::EG, P::ES), (P::EG, P::ES), (P::EG, f32))>();
-    let problem = A::Args::adjust_problem(&client, problem, &selection, &dtypes);
 
-    let config = match A::expand_config(
-        client.properties(),
-        &problem,
-        &selection,
-        &line_sizes,
-        &dtypes,
-    ) {
-        Ok(config) => config,
-        Err(err) => {
-            let msg = format!("Can't launch the test: {err}");
-            if panic_on_launch_err {
-                panic!("{msg}");
-            } else {
-                println!("{msg}");
-                return;
-            }
-        }
-    };
+    let device_settings = A::Routine::device_settings(&client, line_sizes);
+    let expand_info = A::Routine::expand_blueprint(
+        &problem.as_matmul_problem(),
+        &device_settings,
+        &BlueprintStrategy::Forced(blueprint),
+    )?;
+    let problem = A::Args::adjust_problem(&client, problem, &expand_info.blueprint, &dtypes);
 
-    let props = &client.properties().hardware;
-    let cube_dim = config.cube_dim();
-    if props.max_cube_dim.0 < cube_dim.x
-        || props.max_cube_dim.1 < cube_dim.y
-        || props.max_cube_dim.2 < cube_dim.z
-        || config.cube_dim().num_elems() > props.max_units_per_cube
-    {
-        println!("Skipping test, too many resources requested");
-        return;
-    }
+    let launch_info =
+        A::Routine::prepare(&problem.as_matmul_problem(), &device_settings, expand_info)?;
 
     let elem_size = size_of::<P::EG>();
     let lhs_handle = unsafe {
@@ -114,46 +123,34 @@ pub fn test_convolution_algorithm<A, P>(
     let rhs_handle =
         MatmulInputHandleRef::new(rhs_handle.as_ref(), P::EG::as_type_native_unchecked());
 
-    let (inputs, runtime_args) = <InputArg<A::Args> as ConcreteInputsFactory>::create(
+    let (inputs, runtime_args) = <InputArg<A::Args> as ConcreteInputsFactory<A::Routine>>::create(
         &client,
         &lhs_handle,
         &rhs_handle,
         None,
-        &selection,
+        &launch_info.blueprint,
         &problem,
-        &config.line_sizes(),
-        config,
+        &line_sizes,
         &dtypes,
     );
-    let output = <OutputArg<A::Args> as ConcreteOutputFactory>::create(
+    let output = <OutputArg<A::Args> as ConcreteOutputFactory<A::Routine>>::create(
         &client,
         &out_handle,
-        &selection,
+        &launch_info.blueprint,
         &problem,
-        &config.line_sizes(),
-        config,
+        &line_sizes,
         &dtypes,
     );
 
     let dtypes = MatmulElems::new_deprecated::<((P::EG, P::ES), (P::EG, P::ES), (P::EG, P::EA))>();
 
-    let result = unsafe {
-        A::GlobalConvolution::launch_unchecked::<A::Args, TestRuntime>(
-            &client,
-            config.cube_dim(),
-            A::cube_count(&selection, &problem),
-            inputs,
-            output,
-            runtime_args,
-            config,
-            &dtypes,
-        )
-    };
-
-    match result {
-        Ok(_) => {}
-        Err(_err) => return,
-    };
+    cubek_matmul::launch::launch_kernel::<A::Args, TestRuntime, A::Routine>(
+        &client,
+        inputs,
+        output,
+        runtime_args,
+        launch_info,
+    )?;
 
     P::assert_result(
         &lhs.original_data.unwrap(),
@@ -164,6 +161,8 @@ pub fn test_convolution_algorithm<A, P>(
         &out.shape,
         &out.strides,
     );
+
+    Ok(())
 }
 
 fn tensor_raw_parts<P: TestPrecision, R: Runtime>(

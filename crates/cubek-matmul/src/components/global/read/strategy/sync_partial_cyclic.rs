@@ -1,14 +1,17 @@
 use std::marker::PhantomData;
 
-use crate::components::global::read::validate_swizzle_atom_size;
-use crate::components::global::read::{PartialLoadingStrategy, tiled::TiledLayout};
 use crate::components::global::{GlobalReaderConfig, PlaneFlowPartition};
 use crate::components::global::{multi_stage::LoadMaxRoundPlaneCount, read::sync::Synchronous};
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::StridedStageMemory;
 use crate::components::stage::{ContiguousTilingLayout, TilingOrder};
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
+use crate::components::{
+    global::read::{PartialLoadingStrategy, tiled::TiledLayout},
+    tile::io::Strided,
+};
 use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem, StageIdent};
+use crate::{components::global::read::validate_swizzle_atom_size, launch::RuntimeConfig};
 use cubecl::std::type_size;
 use cubecl::{ir::DeviceProperties, prelude::*};
 
@@ -80,14 +83,18 @@ impl<TO: TilingOrder> LoadMaxRoundPlaneCount for SyncPartialCyclicLoading<TO> {
 }
 
 #[cube]
-impl<TO: TilingOrder> PartialLoadingStrategy for SyncPartialCyclicLoading<TO> {
+impl<TO: TilingOrder, RC: RuntimeConfig> PartialLoadingStrategy<RC>
+    for SyncPartialCyclicLoading<TO>
+{
     type TilingLayout = ContiguousTilingLayout<TO>;
     type SyncStrategy = Synchronous;
     type Stage = StridedStageFamily;
+    type TileKind = Strided;
 
     type Job<EG: Numeric, ES: Numeric> = SyncPartialCyclicJob;
 
     fn new_job<EG: Numeric, ES: Numeric>(
+        _runtime_config: RC,
         #[comptime] stage_index: u32,
         #[comptime] line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,

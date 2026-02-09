@@ -1,19 +1,23 @@
 use cubecl::{
     prelude::*,
     std::{
-        FastDivmod,
+        FastDivmod, FastDivmodArgs,
         tensor::layout::{CoordsDyn, Layout, LayoutExpand},
     },
 };
 use cubek_matmul::launch::BatchedCoords;
 
-use crate::components::{ConvolutionOperation, ConvolutionParams, global::layout::NhwcCoords};
+use crate::components::{
+    ConvolutionOperation, ConvolutionParams, ConvolutionProblem, global::layout::NhwcCoords,
+};
 
 /// Im2col layout, producing both the position and offset
 #[derive(CubeType, CubeLaunch)]
 pub struct TmaIm2colLayout {
     shape_out: Sequence<FastDivmod<u32>>,
     padded_channels: FastDivmod<u32>,
+    rows: u32,
+    cols: u32,
     #[cube(comptime)]
     params: ConvolutionParams,
     #[cube(comptime)]
@@ -25,6 +29,8 @@ impl TmaIm2colLayout {
     pub fn new(
         shape_out: Sequence<FastDivmod<u32>>,
         padded_channels: FastDivmod<u32>,
+        rows: u32,
+        cols: u32,
         #[comptime] params: ConvolutionParams,
         #[comptime] check_kernel: bool,
     ) -> Self {
@@ -33,6 +39,8 @@ impl TmaIm2colLayout {
             padded_channels,
             params,
             check_kernel,
+            rows,
+            cols,
         }
     }
 }
@@ -115,7 +123,7 @@ impl Layout for TmaIm2colLayout {
     }
 
     fn shape(&self) -> Self::Coordinates {
-        (u32::MAX as usize, u32::MAX, u32::MAX).runtime()
+        (1, self.rows, self.cols)
     }
 
     fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
@@ -140,4 +148,73 @@ pub(crate) fn div_mod_seq(pos: u32, shape: &Sequence<FastDivmod<u32>>) -> (u32, 
     }
 
     (offs, out.rev())
+}
+
+impl<'a, R: Runtime> TmaIm2colLayoutLaunch<'a, R> {
+    pub fn from_args(
+        client: &ComputeClient<R>,
+        problem: &ConvolutionProblem,
+        check_kernel: bool,
+    ) -> Self {
+        let shape_out = problem
+            .out_shape
+            .iter()
+            .map(|it| FastDivmodArgs::<u32>::new(client, *it as u32))
+            .collect();
+
+        let padded_channels = problem.padded_channels as u32;
+        let padded_channels = FastDivmodArgs::<u32>::new(client, padded_channels);
+        let params = ConvolutionParams::from_problem(problem);
+
+        match problem.operation {
+            ConvolutionOperation::Forward
+            | ConvolutionOperation::ForwardTransposed
+            | ConvolutionOperation::BackwardData => {
+                Self::from_args_lhs(problem, shape_out, padded_channels, params, check_kernel)
+            }
+            ConvolutionOperation::BackwardWeight => {
+                Self::from_args_rhs(problem, shape_out, padded_channels, params, check_kernel)
+            }
+        }
+    }
+
+    fn from_args_lhs(
+        problem: &ConvolutionProblem,
+        shape_out: SequenceArg<'a, R, FastDivmod<u32>>,
+        padded_channels: FastDivmodArgs<u32>,
+        params: ConvolutionParams,
+        check_kernel: bool,
+    ) -> Self {
+        let shape_m = ScalarArg::new(problem.m as u32);
+        let shape_k = ScalarArg::new(problem.k as u32);
+
+        TmaIm2colLayoutLaunch::new(
+            shape_out,
+            padded_channels,
+            shape_m,
+            shape_k,
+            params,
+            check_kernel,
+        )
+    }
+
+    fn from_args_rhs(
+        problem: &ConvolutionProblem,
+        shape_out: SequenceArg<'a, R, FastDivmod<u32>>,
+        padded_channels: FastDivmodArgs<u32>,
+        params: ConvolutionParams,
+        check_kernel: bool,
+    ) -> Self {
+        let shape_k = ScalarArg::new(problem.k as u32);
+        let shape_n = ScalarArg::new(problem.n as u32);
+
+        TmaIm2colLayoutLaunch::new(
+            shape_out,
+            padded_channels,
+            shape_k,
+            shape_n,
+            params,
+            check_kernel,
+        )
+    }
 }

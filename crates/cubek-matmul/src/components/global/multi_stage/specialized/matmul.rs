@@ -1,12 +1,15 @@
-use crate::components::global::read::LoaderStage;
-use crate::components::global::read::{PartialStageGlobalReader, StageBuffer, ZeroGlobalReader};
-use crate::components::global::{GlobalConfig, GlobalWriter};
+use crate::components::global::read::{FullStageGlobalReader, PartialLoaderStage};
+use crate::components::global::read::{PartialStageGlobalReader, StageBuffer};
+use crate::components::global::{
+    GlobalConfig, GlobalWriter,
+    read::{FullLoaderStage, FullLoadingStrategy, SyncStrategy},
+};
 use crate::components::global::{GlobalMatmul, SharedGlobalMatmulConfig};
 use crate::components::global::{PlaneFlowPartition, read::AsyncPartialLoadingStrategy};
 use crate::components::stage;
-use crate::components::stage::FilledStage;
 use crate::components::stage::StageConfig as _;
 use crate::definition::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS};
+use crate::launch::RuntimeConfig;
 
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
@@ -24,26 +27,33 @@ use std::marker::PhantomData;
 pub struct SpecializedMatmul<
     MP: MatmulPrecision,
     SMM: stage::StageMatmul<MP>,
-    L: AsyncPartialLoadingStrategy,
+    RC: RuntimeConfig,
+    L: AsyncPartialLoadingStrategy<RC>,
+    AL: FullLoadingStrategy<RC>,
     GW: GlobalWriter<MP::Acc>,
 > {
     _ms: PhantomData<MP>,
     _stage_matmul: PhantomData<SMM>,
+    _rc: PhantomData<RC>,
     _loading: PhantomData<L>,
+    _acc_loading: PhantomData<AL>,
     _writer: PhantomData<GW>,
 }
 
 #[cube]
-impl<MP: MatmulPrecision, SMM, L, GW> GlobalMatmul<MP> for SpecializedMatmul<MP, SMM, L, GW>
+impl<MP: MatmulPrecision, SMM, RC, L, AL, GW> GlobalMatmul<RC, MP>
+    for SpecializedMatmul<MP, SMM, RC, L, AL, GW>
 where
     SMM: stage::StageMatmul<
             MP,
-            LhsStage = LoaderStage<L, LhsS<MP>>,
-            RhsStage = LoaderStage<L, RhsS<MP>>,
-            AccStage = FilledStage<AccS<MP>>,
+            LhsStage = PartialLoaderStage<RC, L, LhsS<MP>>,
+            RhsStage = PartialLoaderStage<RC, L, RhsS<MP>>,
+            AccStage = CubeOption<FullLoaderStage<RC, AL, AccS<MP>>>,
             OutStage = GW::Stage,
         >,
-    L: AsyncPartialLoadingStrategy,
+    RC: RuntimeConfig,
+    L: AsyncPartialLoadingStrategy<RC>,
+    AL: FullLoadingStrategy<RC>,
     GW: GlobalWriter<MP::Acc>,
 {
     type Config = SharedGlobalMatmulConfig<SMM::Config>;
@@ -51,14 +61,23 @@ where
     type LhsGlobalReader = PartialStageGlobalReader<
         <MP::Lhs as MatrixPrecision>::Global,
         <MP::Lhs as MatrixPrecision>::Stage,
+        RC,
         L,
     >;
     type RhsGlobalReader = PartialStageGlobalReader<
         <MP::Rhs as MatrixPrecision>::Global,
         <MP::Rhs as MatrixPrecision>::Stage,
+        RC,
         L,
     >;
-    type AccGlobalReader = ZeroGlobalReader<MP::Acc>;
+    type AccGlobalReader = CubeOption<
+        FullStageGlobalReader<
+            <MP::Acc as MatrixPrecision>::Global,
+            <MP::Acc as MatrixPrecision>::Stage,
+            RC,
+            AL,
+        >,
+    >;
 
     type GlobalWriter = GW;
     type Accumulators = SMM::Accumulators;
@@ -106,6 +125,16 @@ where
         let compute_units = config.plane_flow_config().counts.main_flow * config.plane_dim();
 
         let role_rule = PlaneFlowPartition::new(config.plane_flow_config().partition_rule);
+
+        let mut acc_barrier = AL::SyncStrategy::create_barrier();
+        let acc_stage = match acc_reader {
+            CubeOption::Some(mut reader) => {
+                reader.load_stage(&mut acc_barrier, config.acc_reader_config);
+                sync_cube();
+                CubeOption::new_Some(reader.stage())
+            }
+            CubeOption::None => CubeOption::new_None(),
+        };
 
         // Barrier for writing out
         let barrier_done = Barrier::shared_uninit();
@@ -169,7 +198,7 @@ where
             let (mut lhs_tile, mut rhs_tile) = SMM::init_tile_inputs(config.stage_config());
             let mut acc = SMM::init_accumulators(config.stage_config());
 
-            SMM::load_accumulators(&acc_reader.stage(), &mut acc, config.stage_config());
+            SMM::load_accumulators(&acc_stage, &mut acc, config.stage_config());
 
             for _ in 0..num_loops {
                 barrier_full_a.wait_parity(phase);
@@ -217,6 +246,7 @@ where
 
     fn init_lhs_global_reader(
         lhs: View<Line<LhsG<MP>>, Coords2d>,
+        runtime_config: RC,
         #[comptime] config: Self::Config,
     ) -> Self::LhsGlobalReader {
         // We always advance by 2 * k because stage B shares the same global memory state as stage A,
@@ -225,12 +255,14 @@ where
         PartialStageGlobalReader::<
             <MP::Lhs as MatrixPrecision>::Global,
             <MP::Lhs as MatrixPrecision>::Stage,
+            RC,
             L,
-        >::new(lhs, k_step, config.lhs_reader_config)
+        >::new(lhs, runtime_config, k_step, config.lhs_reader_config)
     }
 
     fn init_rhs_global_reader(
         rhs: View<Line<RhsG<MP>>, Coords2d>,
+        runtime_config: RC,
         #[comptime] config: Self::Config,
     ) -> Self::RhsGlobalReader {
         // We always advance by 2 * k because stage B shares the same global memory state as stage A,
@@ -239,17 +271,24 @@ where
         PartialStageGlobalReader::<
             <MP::Rhs as MatrixPrecision>::Global,
             <MP::Rhs as MatrixPrecision>::Stage,
+            RC,
             L,
-        >::new(rhs, k_step, config.rhs_reader_config)
+        >::new(rhs, runtime_config, k_step, config.rhs_reader_config)
     }
 
     fn init_acc_global_reader(
         acc: CubeOption<View<Line<AccG<MP>>, Coords2d>>,
-        #[comptime] _config: Self::Config,
+        runtime_config: RC,
+        #[comptime] config: Self::Config,
     ) -> Self::AccGlobalReader {
         match acc {
-            CubeOption::None => ZeroGlobalReader::new(),
-            CubeOption::Some(_) => panic!("Accumulator loading is not yet supported"),
+            CubeOption::None => CubeOption::new_None(),
+            CubeOption::Some(view) => CubeOption::new_Some(FullStageGlobalReader::new(
+                view,
+                runtime_config,
+                0,
+                config.acc_reader_config,
+            )),
         }
     }
 

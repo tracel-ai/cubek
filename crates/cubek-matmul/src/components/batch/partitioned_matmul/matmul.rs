@@ -1,7 +1,6 @@
 use cubecl::prelude::*;
 use std::marker::PhantomData;
 
-use crate::components::batch::partitioned_matmul::config::PartitionedBatchConfig;
 use crate::components::batch::partitioned_matmul::partition::{
     GlobalPartitionMatmul, PartitionRangeDim, PartitionRanges,
 };
@@ -13,6 +12,9 @@ use crate::definition::{
     TilingBlueprint,
 };
 use crate::launch::MatmulArgs;
+use crate::{
+    components::batch::partitioned_matmul::config::PartitionedBatchConfig, launch::RuntimeConfig,
+};
 
 #[cube(launch_unchecked)]
 /// Launches the matmul kernel
@@ -27,11 +29,12 @@ pub(crate) fn matmul_entry<
     LhsR: Numeric,
     RhsR: Numeric,
     AccR: Numeric,
-    GMMF: GlobalMatmulFamily,
+    GMMF: GlobalMatmulFamily<Args::Config>,
     GPM: GlobalPartitionMatmul,
 >(
     inputs: &<Args as MatmulArgs>::Input<LhsG, RhsG, AccG>,
     output: &mut <Args as MatmulArgs>::Output<AccG>,
+    config: <Args as MatmulArgs>::Config,
     cube_mapping: CubeMapping,
     #[comptime] blueprint: TilingBlueprint,
     #[define(LhsG, RhsG, AccG)] global: [StorageType; 3],
@@ -41,6 +44,7 @@ pub(crate) fn matmul_entry<
     let mut state = Args::init_state::<LhsG, RhsG, AccG>(
         inputs,
         output,
+        config,
         blueprint.lhs_global_layout_config(),
         blueprint.rhs_global_layout_config(),
         blueprint.out_global_layout_config(),
@@ -56,12 +60,14 @@ pub(crate) fn matmul_entry<
     });
 
     let device_props = comptime::device_properties();
-    let config = comptime!(PartitionedBatchMatmulFamily::<GMMF, GPM>::expand_config(
-        &device_props,
-        &blueprint,
-        &MatmulElems::from_define_arrays(global, stage, register),
-        &line_sizes
-    ));
+    let config = comptime!(
+        PartitionedBatchMatmulFamily::<Args::Config, GMMF, GPM>::expand_config(
+            &device_props,
+            &blueprint,
+            &MatmulElems::from_define_arrays(global, stage, register),
+            &line_sizes
+        )
+    );
 
     if comptime!(config.is_err()) {
         push_validation_error(config.err().unwrap().to_string());
@@ -78,6 +84,7 @@ pub(crate) fn matmul_entry<
     }
 
     PartitionedBatchMatmul::<
+        Args::Config,
         ((LhsG, LhsS, LhsR), (RhsG, RhsS, RhsR), (AccG, AccS, AccR)),
         GMMF::Matmul<((LhsG, LhsS, LhsR), (RhsG, RhsS, RhsR), (AccG, AccS, AccR))>,
         GPM,
@@ -90,22 +97,24 @@ pub(crate) fn matmul_entry<
 /// Each cube performs a number of global matmuls specified by
 /// the global partition size of the tiling scheme
 pub struct PartitionedBatchMatmul<
+    RC: RuntimeConfig,
     MP: MatmulPrecision,
-    GMM: global::GlobalMatmul<MP>,
+    GMM: global::GlobalMatmul<RC, MP>,
     S: GlobalPartitionMatmul,
 > {
+    _rc: PhantomData<RC>,
     _mp: PhantomData<MP>,
     _gmm: PhantomData<GMM>,
     _s: PhantomData<S>,
 }
 
 #[cube]
-impl<MP: MatmulPrecision, GMM: GlobalMatmul<MP>, GPMM: GlobalPartitionMatmul> BatchMatmul<MP>
-    for PartitionedBatchMatmul<MP, GMM, GPMM>
+impl<RC: RuntimeConfig, MP: MatmulPrecision, GMM: GlobalMatmul<RC, MP>, GPMM: GlobalPartitionMatmul>
+    BatchMatmul<RC, MP> for PartitionedBatchMatmul<RC, MP, GMM, GPMM>
 {
     type Config = PartitionedBatchConfig<GMM::Config>;
 
-    fn execute<Args: MatmulArgs>(
+    fn execute<Args: MatmulArgs<Config = RC>>(
         state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
         cube_mapping: CubeMapping,
         #[comptime] config: Self::Config,

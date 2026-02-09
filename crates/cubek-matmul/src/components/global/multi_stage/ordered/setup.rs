@@ -1,5 +1,4 @@
-use crate::components::CubeDimResource;
-use crate::components::global::memory::{GlobalMemoryConfig, ViewDirection};
+use crate::components::global::MaxGlobalReaderPlanes;
 use crate::components::global::multi_stage::EventLoadingMode;
 use crate::components::global::read::LoadingValidation as _;
 use crate::components::global::{
@@ -15,46 +14,59 @@ use crate::components::global::{
 };
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{self, StageConfig};
-use crate::components::{global::GlobalMatmulFamily, stage::FilledStageFamily};
-use crate::components::{global::MaxGlobalReaderPlanes, stage::NoTilingLayout};
+use crate::components::{global::GlobalMatmulFamily, stage::NumStages};
+use crate::components::{
+    global::memory::{GlobalMemoryConfig, ViewDirection},
+    tile::io::Strided,
+};
 use crate::definition::TilingBlueprint;
 use crate::definition::{MatmulElems, MatmulPrecision, MatmulProblem, MatmulSetupError};
 use crate::definition::{MatmulLineSizes, MatrixLayout, StageIdent};
+use crate::{components::CubeDimResource, launch::RuntimeConfig};
 use cubecl::{ir::DeviceProperties, prelude::*};
 use std::marker::PhantomData;
 
 /// Ordered double buffering matmul family for any precision
 pub struct OrderedDoubleBufferingMatmulFamily<
     SMM: stage::StageMatmulFamily,
-    RL: PartialLoadingStrategy,
+    RC: RuntimeConfig,
+    RL: PartialLoadingStrategy<RC>,
+    AL: FullLoadingStrategy<RC>,
     GW: GlobalWriterFamily,
 > {
     _stage_matmul: PhantomData<SMM>,
+    _rc: PhantomData<RC>,
     _rhs_loading: PhantomData<RL>,
+    _acc_loading: PhantomData<AL>,
     _writer: PhantomData<GW>,
 }
 
-impl<SMM, RL, GW> GlobalMatmulFamily for OrderedDoubleBufferingMatmulFamily<SMM, RL, GW>
+impl<SMM, RC, RL, AL, GW> GlobalMatmulFamily<RC>
+    for OrderedDoubleBufferingMatmulFamily<SMM, RC, RL, AL, GW>
 where
     SMM: stage::StageMatmulFamily<
             LhsStage = StridedStageFamily,
-            RhsStage = StridedStageFamily,
-            AccStage = FilledStageFamily,
+            RhsStage = RL::Stage,
+            AccStage = Option<AL::Stage>,
             OutStage = GW::Stage,
         >,
-    RL: PartialLoadingStrategy<Stage = StridedStageFamily, SyncStrategy = Synchronous>,
+    RC: RuntimeConfig,
+    RL: PartialLoadingStrategy<RC, TileKind = Strided, SyncStrategy = Synchronous>,
+    AL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = Synchronous>,
     GW: GlobalWriterFamily,
 {
     type Matmul<MP: MatmulPrecision> = OrderedDoubleBufferingMatmul<
         MP,
         SMM::Matmul<
             MP,
-            <LL as FullLoadingStrategy>::TilingLayout,
+            <LL as FullLoadingStrategy<RC>>::TilingLayout,
             RL::TilingLayout,
-            NoTilingLayout,
+            AL::TilingLayout,
             WriteTiling,
         >,
+        RC,
         RL,
+        AL,
         GW::Writer<MP::Acc>,
     >;
     type Config = SharedGlobalMatmulConfig<SMM::Config>;
@@ -73,7 +85,7 @@ where
             device_props,
             blueprint,
             plane_flow_config,
-            (1, 2).into(),
+            Self::num_stages(),
             dtypes,
             line_sizes,
         )?;
@@ -132,6 +144,18 @@ where
             input_load_flow: blueprint.load_flows.rhs,
         };
 
+        let acc_reader_config = GlobalReaderConfig {
+            gmem_config: out_gmem_config,
+            smem_config: stage_config.acc_smem_config(),
+            precompute_job,
+            plane_dim,
+            plane_flow_config,
+            reader_mode,
+            stage_ident: StageIdent::Acc,
+            event_loading_mode: EventLoadingMode::Relaxed,
+            input_load_flow: blueprint.load_flows.rhs,
+        };
+
         let writer_config = GlobalWriterConfig {
             gmem_config: out_gmem_config,
             smem_config: stage_config.out_smem_config(),
@@ -144,9 +168,14 @@ where
             num_planes: plane_flow_config.counts.total_count(),
             lhs_reader_config,
             rhs_reader_config,
+            acc_reader_config,
             writer_config,
             must_sync_plane_after_execution: true,
         })
+    }
+
+    fn num_stages() -> NumStages {
+        (1, 2).into()
     }
 
     fn cubedim_resource(
@@ -189,6 +218,6 @@ where
             )));
         }
 
-        SMM::validate_blueprint(client, blueprint, (1, 2).into(), dtypes, line_sizes)
+        SMM::validate_blueprint(client, blueprint, dtypes, line_sizes)
     }
 }

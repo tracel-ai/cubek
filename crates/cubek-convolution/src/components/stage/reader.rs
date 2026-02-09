@@ -3,22 +3,22 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
 use cubek_matmul::{
     components::{
-        stage::{
-            StageMemoryConfig, StridedStageMemory, TilingLayout, TilingLayoutEnum, TilingValidation,
-        },
+        stage::{StageMemoryConfig, TilingValidation},
         tile::StridedTile,
     },
     definition::{InvalidConfigError, MatrixLayout},
 };
+
+use crate::components::stage::bias_stage::BiasStageMemory;
 
 #[derive(Clone, Copy)]
 /// Tiling layout specific for bias, which is one-dimensional with stride 0
 pub struct BiasTilingLayout {}
 
 #[cube]
-impl TilingLayout for BiasTilingLayout {
-    fn get_tile<ES: Numeric>(
-        stage: &StridedStageMemory<ES, Self>,
+impl BiasTilingLayout {
+    pub fn get_tile<ES: Numeric>(
+        stage: &BiasStageMemory<ES>,
         tile: Coords2d,
         #[comptime] config: StageMemoryConfig,
     ) -> StridedTile<ES> {
@@ -43,10 +43,6 @@ impl TilingLayout for BiasTilingLayout {
             MatrixLayout::RowMajor,
             stage_line_size,
         )
-    }
-
-    fn to_enum() -> comptime_type!(TilingLayoutEnum) {
-        TilingLayoutEnum::Other
     }
 }
 

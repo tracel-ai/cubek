@@ -1,18 +1,18 @@
 use cubecl::{ir::DeviceProperties, prelude::*};
 
-use crate::components::CubeDimResource;
-use crate::components::global::memory::GlobalMemoryConfig;
 use crate::components::global::multi_stage::EventLoadingMode;
 use crate::components::global::read::ReaderMode;
 use crate::components::global::{
     GlobalWriterConfig, InputLoadFlow, LoadFlows, PlaneFlowConfig, SpecializedLoadingSides,
 };
 use crate::components::stage::{StageConfig, StageMemoryConfig};
+use crate::components::{global::memory::GlobalMemoryConfig, stage::NumStages};
 use crate::definition::StageIdent;
 use crate::definition::TilingBlueprint;
 use crate::definition::{AccG, MatmulSetupError};
 use crate::definition::{LhsG, MatmulElems, MatmulLineSizes, RhsG};
 use crate::definition::{MatmulPrecision, MatmulProblem};
+use crate::{components::CubeDimResource, launch::RuntimeConfig};
 use cubecl::std::{
     CubeOption,
     tensor::{View, layout::Coords2d},
@@ -21,9 +21,9 @@ use std::fmt::Debug;
 use std::hash::Hash;
 
 /// A family of [matmuls](GlobalMatmul) working with any [precision](MatmulPrecision).
-pub trait GlobalMatmulFamily: Send + Sync + 'static {
+pub trait GlobalMatmulFamily<RC: RuntimeConfig>: Send + Sync + 'static {
     /// The specific [GlobalMatmul] implementation associated with this family.
-    type Matmul<MP: MatmulPrecision>: GlobalMatmul<MP, Config = Self::Config>;
+    type Matmul<MP: MatmulPrecision>: GlobalMatmul<RC, MP, Config = Self::Config>;
 
     /// The configuration type associated with this matmul family.
     type Config: GlobalConfig;
@@ -37,6 +37,8 @@ pub trait GlobalMatmulFamily: Send + Sync + 'static {
         dtypes: &MatmulElems,
         line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError>;
+
+    fn num_stages() -> NumStages;
 
     /// Returns the compute resources required to run this matmul.
     fn cubedim_resource(
@@ -73,7 +75,7 @@ pub trait GlobalMatmulFamily: Send + Sync + 'static {
 /// It is not assumed that the matmul's dimensions match its inputs dimensions perfectly.
 /// It is therefore important that Readers and Writers perform checks to avoid out-of-bounds
 /// before reading data.
-pub trait GlobalMatmul<MP: MatmulPrecision>: 'static + Send + Sync {
+pub trait GlobalMatmul<RC: RuntimeConfig, MP: MatmulPrecision>: 'static + Send + Sync {
     type Config: GlobalConfig;
 
     /// Global reader for matrix A (Lhs)
@@ -106,18 +108,21 @@ pub trait GlobalMatmul<MP: MatmulPrecision>: 'static + Send + Sync {
     /// Initialize the global reader for Lhs, starting at row m and column k
     fn init_lhs_global_reader(
         lhs: View<Line<LhsG<MP>>, Coords2d>,
+        runtime_config: RC,
         #[comptime] config: Self::Config,
     ) -> Self::LhsGlobalReader;
 
     /// Initialize the global reader for Rhs, starting at row k and column n
     fn init_rhs_global_reader(
         rhs: View<Line<RhsG<MP>>, Coords2d>,
+        runtime_config: RC,
         #[comptime] config: Self::Config,
     ) -> Self::RhsGlobalReader;
 
     /// Initialize the global reader for Rhs, starting at row k and column n
     fn init_acc_global_reader(
         acc: CubeOption<View<Line<AccG<MP>>, Coords2d>>,
+        runtime_config: RC,
         #[comptime] config: Self::Config,
     ) -> Self::AccGlobalReader;
 
@@ -137,6 +142,7 @@ pub struct SharedGlobalMatmulConfig<S: StageConfig> {
     pub num_planes: u32,
     pub lhs_reader_config: GlobalReaderConfig,
     pub rhs_reader_config: GlobalReaderConfig,
+    pub acc_reader_config: GlobalReaderConfig,
     pub writer_config: GlobalWriterConfig,
     pub must_sync_plane_after_execution: bool,
 }

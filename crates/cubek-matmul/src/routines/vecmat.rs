@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use cubecl::{Runtime, client::ComputeClient};
+use cubecl::{Runtime, client::ComputeClient, std::CubeOption};
 
 use crate::{
     components::{
@@ -15,18 +15,21 @@ use crate::{
             single_stage::simple::SimpleMatmulFamily,
         },
         stage::{
-            ColMajorTilingOrder, FilledStageFamily, PartitionBuffering, PlaneMatmulFamily,
-            RowMajorTilingOrder, StridedStageFamily,
+            ColMajorTilingOrder, PartitionBuffering, PlaneMatmulFamily, RowMajorTilingOrder,
+            StridedStageFamily,
         },
         tile::{
-            TileMatmulFamily, io::Filled, plane_vec_mat_inner_product::PlaneVecMatInnerProduct,
+            TileMatmulFamily,
+            io::{Filled, Strided},
+            plane_vec_mat_inner_product::PlaneVecMatInnerProduct,
         },
     },
     definition::{
         CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulElems, MatmulProblem,
         MatmulSetupError, PartitionSize, SmAllocation, TileSize, TilingBlueprint, TilingScheme,
     },
-    routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, Routine},
+    launch::RuntimeConfig,
+    routines::{BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine},
 };
 
 pub struct SimpleVecMatAlgorithm {}
@@ -46,30 +49,33 @@ impl From<()> for VecMatStrategy {
     }
 }
 
-impl Routine for SimpleVecMatAlgorithm {
+impl<RC: RuntimeConfig> Routine<RC> for SimpleVecMatAlgorithm {
     type Strategy = VecMatStrategy;
     type BatchMatmul = PartitionedBatchMatmulFamily<
+        RC,
         SimpleMatmulFamily<
             PlaneMatmulFamily<
-                PlaneVecMatInnerProduct<Filled>,
+                PlaneVecMatInnerProduct<CubeOption<Strided>>,
                 StridedStageFamily,
                 StridedStageFamily,
-                FilledStageFamily,
+                Option<StridedStageFamily>,
             >,
+            RC,
             SyncFullCyclicLoading<RowMajorTilingOrder>,
+            SyncFullCyclicLoading<ColMajorTilingOrder>,
             SyncFullCyclicLoading<ColMajorTilingOrder>,
             PlaneWriterFamily,
         >,
         RowMajorGlobalPartitionMatmul,
     >;
     type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
 
-    fn prepare<R: Runtime>(
+    fn expand_blueprint<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<Self>,
-    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        strategy: &BlueprintStrategy<RC, Self>,
+    ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
         if PlaneVecMatInnerProduct::<Filled>::can_cast_stage_element() {
@@ -90,8 +96,17 @@ impl Routine for SimpleVecMatAlgorithm {
                 )
             }
         };
+        Ok(ExpandInfo { blueprint, dtypes })
+    }
 
-        Self::validate_blueprint(
+    fn prepare<R: Runtime>(
+        problem: &MatmulProblem,
+        device_settings: &DeviceSettings<R>,
+        expand_info: ExpandInfo<Self::Blueprint>,
+    ) -> Result<LaunchInfo<Self::Blueprint>, MatmulSetupError> {
+        let ExpandInfo { blueprint, dtypes } = expand_info;
+
+        <Self as Routine<RC>>::validate_blueprint(
             &device_settings.client,
             &blueprint,
             problem,
@@ -114,31 +129,34 @@ impl Routine for SimpleVecMatAlgorithm {
 
 pub struct DoubleVecMatAlgorithm {}
 
-impl Routine for DoubleVecMatAlgorithm {
+impl<RC: RuntimeConfig> Routine<RC> for DoubleVecMatAlgorithm {
     type Strategy = VecMatStrategy;
 
     type BatchMatmul = PartitionedBatchMatmulFamily<
+        RC,
         DoubleBufferingMatmulFamily<
             PlaneMatmulFamily<
-                PlaneVecMatInnerProduct<Filled>,
+                PlaneVecMatInnerProduct<CubeOption<Strided>>,
                 StridedStageFamily,
                 StridedStageFamily,
-                FilledStageFamily,
+                Option<StridedStageFamily>,
             >,
+            RC,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
             SyncPartialCyclicLoading<ColMajorTilingOrder>,
+            SyncFullCyclicLoading<ColMajorTilingOrder>,
             PlaneWriterFamily,
         >,
         RowMajorGlobalPartitionMatmul,
     >;
     type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
 
-    fn prepare<R: Runtime>(
+    fn expand_blueprint<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<Self>,
-    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        strategy: &BlueprintStrategy<RC, Self>,
+    ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
         if PlaneVecMatInnerProduct::<Filled>::can_cast_stage_element() {
@@ -159,8 +177,17 @@ impl Routine for DoubleVecMatAlgorithm {
                 )
             }
         };
+        Ok(ExpandInfo { blueprint, dtypes })
+    }
 
-        Self::validate_blueprint(
+    fn prepare<R: Runtime>(
+        problem: &MatmulProblem,
+        device_settings: &DeviceSettings<R>,
+        expand_info: ExpandInfo<Self::Blueprint>,
+    ) -> Result<LaunchInfo<Self::Blueprint>, MatmulSetupError> {
+        let ExpandInfo { blueprint, dtypes } = expand_info;
+
+        <Self as Routine<RC>>::validate_blueprint(
             &device_settings.client,
             &blueprint,
             problem,

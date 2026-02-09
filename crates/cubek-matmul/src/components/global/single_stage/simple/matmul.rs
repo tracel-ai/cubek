@@ -1,12 +1,15 @@
 use crate::components::{
     global::{
         GlobalMatmul, GlobalWriter, SharedGlobalMatmulConfig,
-        read::{FullLoadingStrategy, FullStageGlobalReader, SyncStrategy, ZeroGlobalReader},
+        read::{FullLoaderStage, FullLoadingStrategy, FullStageGlobalReader, SyncStrategy},
     },
-    stage::StridedStageMemory,
-    stage::{FilledStage, StageConfig, StageMatmul},
+    stage::{StageConfig, StageMatmul},
+    tile::io::Strided,
 };
-use crate::definition::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS};
+use crate::{
+    definition::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS},
+    launch::RuntimeConfig,
+};
 use cubecl::prelude::*;
 use cubecl::std::{
     CubeOption, CubeOptionExpand,
@@ -21,39 +24,53 @@ use std::marker::PhantomData;
 pub struct SimpleMatmul<
     MP: MatmulPrecision,
     SMM: StageMatmul<MP>,
-    LL: FullLoadingStrategy,
-    RL: FullLoadingStrategy,
+    RC: RuntimeConfig,
+    LL: FullLoadingStrategy<RC>,
+    RL: FullLoadingStrategy<RC>,
+    AL: FullLoadingStrategy<RC>,
     GW: GlobalWriter<MP::Acc>,
 > {
-    _phantom: PhantomData<(MP, SMM, LL, RL, GW)>,
+    _phantom: PhantomData<(MP, SMM, RC, LL, RL, AL, GW)>,
 }
 
 #[cube]
-impl<MP: MatmulPrecision, SMM, LL, RL, GW> GlobalMatmul<MP> for SimpleMatmul<MP, SMM, LL, RL, GW>
+impl<MP: MatmulPrecision, SMM, RC, LL, RL, AL, GW> GlobalMatmul<RC, MP>
+    for SimpleMatmul<MP, SMM, RC, LL, RL, AL, GW>
 where
     SMM: StageMatmul<
             MP,
-            LhsStage = StridedStageMemory<LhsS<MP>, LL::TilingLayout>,
-            RhsStage = StridedStageMemory<RhsS<MP>, RL::TilingLayout>,
-            AccStage = FilledStage<AccS<MP>>,
+            LhsStage = FullLoaderStage<RC, LL, LhsS<MP>>,
+            RhsStage = FullLoaderStage<RC, RL, RhsS<MP>>,
+            AccStage = CubeOption<FullLoaderStage<RC, AL, AccS<MP>>>,
             OutStage = GW::Stage,
         >,
-    LL: FullLoadingStrategy,
-    RL: FullLoadingStrategy<SyncStrategy = LL::SyncStrategy>,
+    RC: RuntimeConfig,
+    LL: FullLoadingStrategy<RC, TileKind = Strided>,
+    RL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
+    AL: FullLoadingStrategy<RC, TileKind = Strided>,
     GW: GlobalWriter<MP::Acc>,
 {
     type Config = SharedGlobalMatmulConfig<SMM::Config>;
     type LhsGlobalReader = FullStageGlobalReader<
         <MP::Lhs as MatrixPrecision>::Global,
         <MP::Lhs as MatrixPrecision>::Stage,
+        RC,
         LL,
     >;
     type RhsGlobalReader = FullStageGlobalReader<
         <MP::Rhs as MatrixPrecision>::Global,
         <MP::Rhs as MatrixPrecision>::Stage,
+        RC,
         RL,
     >;
-    type AccGlobalReader = ZeroGlobalReader<MP::Acc>;
+    type AccGlobalReader = CubeOption<
+        FullStageGlobalReader<
+            <MP::Acc as MatrixPrecision>::Global,
+            <MP::Acc as MatrixPrecision>::Stage,
+            RC,
+            AL,
+        >,
+    >;
     type GlobalWriter = GW;
     type Accumulators = SMM::Accumulators;
 
@@ -91,23 +108,25 @@ where
         let (mut lhs_tile, mut rhs_tile) = SMM::init_tile_inputs(config.stage_config);
         let partition_scheduler = SMM::init_scheduler(config.stage_config);
 
-        SMM::load_accumulators(&acc_reader.stage(), &mut acc, config.stage_config);
+        let mut barrier = LL::SyncStrategy::create_barrier();
+
+        let acc_stage = match acc_reader {
+            CubeOption::Some(mut reader) => {
+                let mut acc_barrier = AL::SyncStrategy::create_barrier();
+                reader.load_stage(&mut acc_barrier, config.acc_reader_config);
+                AL::SyncStrategy::sync::<MP, _>(&mut acc_barrier, config);
+                CubeOption::new_Some(reader.stage())
+            }
+            CubeOption::None => CubeOption::new_None(),
+        };
+
+        SMM::load_accumulators(&acc_stage, &mut acc, config.stage_config);
 
         let lhs_stage = &lhs_reader.stage();
         let rhs_stage = &rhs_reader.stage();
 
-        let mut barrier = LL::SyncStrategy::create_barrier();
-
-        for i in 0..num_loops {
+        for _ in 0..num_loops {
             sync_cube();
-
-            #[allow(clippy::collapsible_if)]
-            if (LL::SHOULD_CLEAR || RL::SHOULD_CLEAR) && config.check_k_bounds() {
-                if i == num_loops - 1 {
-                    lhs_reader.clear_stage(config.lhs_reader_config);
-                    rhs_reader.clear_stage(config.rhs_reader_config);
-                }
-            }
 
             lhs_reader.load_stage(&mut barrier, config.lhs_reader_config);
             rhs_reader.load_stage(&mut barrier, config.rhs_reader_config);
@@ -152,10 +171,12 @@ where
 
     fn init_lhs_global_reader(
         lhs: View<Line<LhsG<MP>>, Coords2d>,
+        runtime_config: RC,
         #[comptime] config: Self::Config,
     ) -> Self::LhsGlobalReader {
         Self::LhsGlobalReader::new(
             lhs,
+            runtime_config,
             config.stage_config.elements_in_stage_k(),
             config.lhs_reader_config,
         )
@@ -163,10 +184,12 @@ where
 
     fn init_rhs_global_reader(
         rhs: View<Line<RhsG<MP>>, Coords2d>,
+        runtime_config: RC,
         #[comptime] config: Self::Config,
     ) -> Self::RhsGlobalReader {
         Self::RhsGlobalReader::new(
             rhs,
+            runtime_config,
             config.stage_config.elements_in_stage_k(),
             config.rhs_reader_config,
         )
@@ -174,11 +197,17 @@ where
 
     fn init_acc_global_reader(
         acc: CubeOption<View<Line<AccG<MP>>, Coords2d>>,
-        #[comptime] _config: Self::Config,
+        runtime_config: RC,
+        #[comptime] config: Self::Config,
     ) -> Self::AccGlobalReader {
         match acc {
-            CubeOption::None => ZeroGlobalReader::new(),
-            CubeOption::Some(_) => panic!("Accumulator loading is not yet supported"),
+            CubeOption::None => CubeOption::new_None(),
+            CubeOption::Some(view) => CubeOption::new_Some(FullStageGlobalReader::new(
+                view,
+                runtime_config,
+                0,
+                config.acc_reader_config,
+            )),
         }
     }
 

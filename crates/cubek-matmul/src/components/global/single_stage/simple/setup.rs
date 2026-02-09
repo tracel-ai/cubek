@@ -1,8 +1,4 @@
-use crate::components::CubeDimResource;
-use crate::definition::{
-    MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError, MatrixLayout,
-    StageIdent,
-};
+use crate::{components::CubeDimResource, launch::RuntimeConfig};
 use crate::{
     components::{
         global::{
@@ -13,9 +9,16 @@ use crate::{
             read::FullLoadingStrategy,
             single_stage::simple::matmul::SimpleMatmul,
         },
-        stage::{FilledStageFamily, NoTilingLayout, StageConfig, StridedStageFamily},
+        stage::StageConfig,
     },
     definition::TilingBlueprint,
+};
+use crate::{
+    components::{stage::NumStages, tile::io::Strided},
+    definition::{
+        MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError,
+        MatrixLayout, StageIdent,
+    },
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
 use std::marker::PhantomData;
@@ -25,33 +28,41 @@ use crate::components::{global::GlobalMatmulFamily, stage};
 /// Simple matmul family for any precision
 pub struct SimpleMatmulFamily<
     SMM: stage::StageMatmulFamily,
-    LL: FullLoadingStrategy,
-    RL: FullLoadingStrategy,
+    RC: RuntimeConfig,
+    LL: FullLoadingStrategy<RC>,
+    RL: FullLoadingStrategy<RC>,
+    AL: FullLoadingStrategy<RC>,
     GW: GlobalWriterFamily,
 > {
     _stage_matmul: PhantomData<SMM>,
+    _rc: PhantomData<RC>,
     _lhs_loading: PhantomData<LL>,
     _rhs_loading: PhantomData<RL>,
+    _acc_loading: PhantomData<AL>,
     _writer: PhantomData<GW>,
 }
 
-impl<SMM, LL, RL, GW> GlobalMatmulFamily for SimpleMatmulFamily<SMM, LL, RL, GW>
+impl<SMM, RC, LL, RL, AL, GW> GlobalMatmulFamily<RC> for SimpleMatmulFamily<SMM, RC, LL, RL, AL, GW>
 where
     SMM: stage::StageMatmulFamily<
-            LhsStage = StridedStageFamily,
-            RhsStage = StridedStageFamily,
-            AccStage = FilledStageFamily,
+            LhsStage = LL::Stage,
+            RhsStage = RL::Stage,
+            AccStage = Option<AL::Stage>,
             OutStage = GW::Stage,
         >,
-    LL: FullLoadingStrategy,
-    RL: FullLoadingStrategy<SyncStrategy = LL::SyncStrategy>,
+    RC: RuntimeConfig,
+    LL: FullLoadingStrategy<RC, TileKind = Strided>,
+    RL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
+    AL: FullLoadingStrategy<RC, TileKind = Strided>,
     GW: GlobalWriterFamily,
 {
     type Matmul<MP: MatmulPrecision> = SimpleMatmul<
         MP,
-        SMM::Matmul<MP, LL::TilingLayout, RL::TilingLayout, NoTilingLayout, WriteTiling>,
+        SMM::Matmul<MP, LL::TilingLayout, RL::TilingLayout, AL::TilingLayout, WriteTiling>,
+        RC,
         LL,
         RL,
+        AL,
         GW::Writer<MP::Acc>,
     >;
     type Config = SharedGlobalMatmulConfig<SMM::Config>;
@@ -70,7 +81,7 @@ where
             device_props,
             blueprint,
             plane_flow_config,
-            (1, 1).into(),
+            Self::num_stages(),
             dtypes,
             line_sizes,
         )?;
@@ -133,6 +144,18 @@ where
             input_load_flow,
         };
 
+        let acc_reader_config = GlobalReaderConfig {
+            gmem_config: out_gmem_config,
+            smem_config: stage_config.acc_smem_config(),
+            precompute_job,
+            plane_dim,
+            plane_flow_config,
+            reader_mode,
+            stage_ident: StageIdent::Acc,
+            event_loading_mode,
+            input_load_flow,
+        };
+
         let writer_config = GlobalWriterConfig {
             gmem_config: out_gmem_config,
             smem_config: stage_config.out_smem_config(),
@@ -145,9 +168,14 @@ where
             num_planes: plane_flow_config.counts.total_count(),
             lhs_reader_config,
             rhs_reader_config,
+            acc_reader_config,
             writer_config,
             must_sync_plane_after_execution: false,
         })
+    }
+
+    fn num_stages() -> NumStages {
+        (1, 1).into()
     }
 
     fn cubedim_resource(
@@ -175,6 +203,6 @@ where
     ) -> Result<(), MatmulSetupError> {
         LL::validate_with_problem(problem, dtypes, StageIdent::Lhs)?;
         RL::validate_with_problem(problem, dtypes, StageIdent::Rhs)?;
-        SMM::validate_blueprint(client, blueprint, (1, 1).into(), dtypes, line_sizes)
+        SMM::validate_blueprint(client, blueprint, dtypes, line_sizes)
     }
 }

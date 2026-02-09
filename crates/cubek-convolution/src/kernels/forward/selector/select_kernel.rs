@@ -1,24 +1,25 @@
 use crate::{
-    components::{ConvGemmConfig as _, global::args::RuntimeArgsLaunch},
-    forward::args::{ConcreteInputsFactory, ConcreteOutputFactory},
+    components::global::args::RuntimeArgs,
+    forward::args::{ConcreteArgs, ConcreteInputsFactory, ConcreteOutputFactory},
 };
 use cubecl::prelude::TensorHandleRef;
 use cubecl::{Runtime, client::ComputeClient};
-use cubek_matmul::definition::{MatmulElems, MatmulLineSizes, TilingBlueprint};
-use cubek_matmul::launch::{
-    InputArg, InputRuntimeArg, MatmulArgs, MatmulInputHandleRef, OutputArg, OutputRuntimeArg,
+use cubek_matmul::{
+    definition::{MatmulElems, MatmulLineSizes},
+    routines::Routine,
+};
+use cubek_matmul::{
+    launch::{InputArg, MatmulInputHandleRef, OutputArg},
+    routines::BlueprintStrategy,
 };
 
-use crate::{
-    components::{ConvSetupError, ConvolutionProblem, global::entry_point::ConvolutionLaunch},
-    kernels::forward::algorithm::Algorithm,
-};
+use crate::components::{ConvSetupError, ConvolutionProblem};
 
 /// Select which kernel to launch for the given Algorithm.
 ///
 /// Only works for concrete tensor inputs and output.
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
-pub fn launch_kernel_concrete<R: Runtime, A: Algorithm>(
+pub fn launch_kernel_concrete<R: Runtime, Args: ConcreteArgs<A>, A: Routine<RuntimeArgs>>(
     client: &ComputeClient<R>,
     input: &MatmulInputHandleRef<'_, R>,
     weight: &MatmulInputHandleRef<'_, R>,
@@ -26,96 +27,53 @@ pub fn launch_kernel_concrete<R: Runtime, A: Algorithm>(
     out: &TensorHandleRef<'_, R>,
     problem: ConvolutionProblem,
     line_sizes: MatmulLineSizes,
-    selection: TilingBlueprint,
+    blueprint_strategy: &BlueprintStrategy<Args::Config, A>,
     dtypes: &MatmulElems,
-) -> Result<(), ConvSetupError>
-where
-    InputArg<A::Args>: ConcreteInputsFactory,
-    OutputArg<A::Args>: ConcreteOutputFactory,
-{
-    let config = A::expand_config(
-        client.properties(),
-        &problem,
-        &selection,
-        &line_sizes,
-        dtypes,
+) -> Result<(), ConvSetupError> {
+    let mut view_line_sizes = line_sizes;
+
+    if let MatmulInputHandleRef::Quantized { scheme, .. } = input {
+        view_line_sizes.lhs *= scheme.num_quants();
+    }
+    if let MatmulInputHandleRef::Quantized { scheme, .. } = weight {
+        view_line_sizes.rhs *= scheme.num_quants();
+    }
+
+    let device_settings = A::device_settings(client, view_line_sizes);
+    let expand_info = A::expand_blueprint(
+        &problem.as_matmul_problem(),
+        &device_settings,
+        blueprint_strategy,
     )?;
 
-    let (input, runtime_args) = <InputArg<A::Args> as ConcreteInputsFactory>::create(
+    let problem = Args::adjust_problem(client, problem, &expand_info.blueprint, dtypes);
+    let launch_info = A::prepare(&problem.as_matmul_problem(), &device_settings, expand_info)?;
+
+    let (input, runtime_args) = <InputArg<Args> as ConcreteInputsFactory<A>>::create(
         client,
         input,
         weight,
         bias.as_ref(),
-        &selection,
+        &launch_info.blueprint,
         &problem,
         &line_sizes,
-        config,
         dtypes,
     );
-    let output = <OutputArg<A::Args> as ConcreteOutputFactory>::create(
+    let output = <OutputArg<Args> as ConcreteOutputFactory<A>>::create(
         client,
         out,
-        &selection,
+        &launch_info.blueprint,
         &problem,
         &line_sizes,
-        config,
         dtypes,
     );
 
-    let result = unsafe {
-        A::GlobalConvolution::launch_unchecked::<A::Args, R>(
-            client,
-            config.cube_dim(),
-            A::cube_count(&selection, &problem),
-            input,
-            output,
-            runtime_args,
-            config,
-            dtypes,
-        )
-    };
-
-    match result {
-        Ok(_) => Ok(()),
-        Err(err) => Err(ConvSetupError::Launch(err)),
-    }
-}
-
-/// Select which kernel to launch for the given Algorithm.
-#[allow(clippy::too_many_arguments)]
-pub fn launch_kernel_virtual<'a, MA: MatmulArgs, R: Runtime, A: Algorithm>(
-    client: &ComputeClient<R>,
-    input: InputRuntimeArg<'a, MA, R>,
-    output: OutputRuntimeArg<'a, MA, R>,
-    runtime_args: RuntimeArgsLaunch<'a, R>,
-    problem: ConvolutionProblem,
-    line_sizes: MatmulLineSizes,
-    selection: TilingBlueprint,
-    dtypes: &MatmulElems,
-) -> Result<(), ConvSetupError> {
-    let config = A::expand_config(
-        client.properties(),
-        &problem,
-        &selection,
-        &line_sizes,
-        dtypes,
-    )?;
-
-    let result = unsafe {
-        A::GlobalConvolution::launch_unchecked::<MA, R>(
-            client,
-            config.cube_dim(),
-            A::cube_count(&selection, &problem),
-            input,
-            output,
-            runtime_args,
-            config,
-            dtypes,
-        )
-    };
-
-    match result {
-        Ok(_) => Ok(()),
-        Err(err) => Err(ConvSetupError::Launch(err)),
-    }
+    cubek_matmul::launch::launch_kernel::<Args, R, A>(
+        client,
+        input,
+        output,
+        runtime_args,
+        launch_info,
+    )
+    .map_err(ConvSetupError::Matmul)
 }

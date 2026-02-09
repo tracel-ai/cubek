@@ -1,7 +1,7 @@
-use cubecl::prelude::*;
+use cubecl::{prelude::*, std::CubeOption};
 use std::marker::PhantomData;
 
-use crate::components::tile::io::{Filled, Strided, TileKind};
+use crate::components::tile::io::{Strided, TileKind};
 use crate::components::tile::mma::config::MmaMatmulConfig;
 use crate::components::tile::{
     TileMatmul,
@@ -14,7 +14,11 @@ use cubecl::{cmma::MmaDefinition, ir::MatrixIdent};
 /// Uses one plane to perform a small matmul using accelerated instructions, with manual register
 /// management.
 /// Currently requires matrix layout to match the platform's preferred layout.
-pub struct MmaMatmul<Lhs: TileKind = Strided, Rhs: TileKind = Strided, Acc: TileKind = Filled> {
+pub struct MmaMatmul<
+    Lhs: TileKind = Strided,
+    Rhs: TileKind = Strided,
+    Acc: TileKind = CubeOption<Strided>,
+> {
     _ty: PhantomData<(Lhs, Rhs, Acc)>,
 }
 

@@ -1,16 +1,14 @@
-use crate::{AcceleratedTileKind, ReadingStrategy};
+use crate::components::{ConvolutionProblem, Dimensionality};
 use crate::{
-    ConvolutionArgs, Strategy,
-    backward_weight::args::ConcreteArgs,
-    components::{ConvGemmConfig as _, ConvolutionOperation},
-    kernels::forward::simple::*,
+    AcceleratedTileKind, ReadingStrategy, algorithm::Algorithm,
+    components::global::args::RuntimeArgs,
+};
+use crate::{
+    ConvolutionArgs, Strategy, backward_weight::args::ConcreteArgs,
+    components::ConvolutionOperation, kernels::algorithm::simple::*,
 };
 use crate::{
     components::ConvSetupError, kernels::backward_weight::selector::launch_kernel_concrete,
-};
-use crate::{
-    components::{ConvolutionProblem, Dimensionality},
-    kernels::forward::algorithm::Algorithm,
 };
 use cubecl::{
     Runtime,
@@ -18,11 +16,14 @@ use cubecl::{
     prelude::*,
     std::{CubeOption, tensor::TensorHandle},
 };
-use cubek_matmul::definition::{AvailableLineSizes, MatmulElems, MatrixLayout};
 use cubek_matmul::launch::{MatmulInputHandle, MatmulInputHandleRef};
 use cubek_matmul::{
     components::tile::{cmma::CmmaMatmul, io::Strided, mma::MmaMatmul},
     definition,
+};
+use cubek_matmul::{
+    definition::{AvailableLineSizes, MatmulElems, MatrixLayout},
+    routines::BlueprintStrategy,
 };
 use derive_new::new;
 
@@ -111,7 +112,7 @@ struct BackwardsWeight<'a, R: Runtime, const N_SPATIAL: usize> {
 impl<'a, R: Runtime, const N_SPATIAL: usize> BackwardsWeight<'a, R, N_SPATIAL> {
     fn launch<Alg: Algorithm>(self) -> Result<(), ConvSetupError>
     where
-        Alg::Args: ConcreteArgs,
+        Alg::Args: ConcreteArgs<Alg::Routine>,
     {
         let ConvolutionArgs {
             stride,
@@ -149,7 +150,7 @@ fn launch_with_algorithm<R: Runtime, Alg: Algorithm>(
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError>
 where
-    Alg::Args: ConcreteArgs,
+    Alg::Args: ConcreteArgs<Alg::Routine>,
 {
     let rank = input.data().shape.len();
     let dim_c = rank - 1;
@@ -200,7 +201,15 @@ where
         global_dtypes: dtypes.as_global_elems(),
     };
 
-    launch_kernel::<R, Alg>(client, &input, &out_grad, weight_grad, problem, dtypes)
+    launch_kernel::<R, Alg>(
+        client,
+        &input,
+        &out_grad,
+        weight_grad,
+        problem,
+        &BlueprintStrategy::Inferred(Default::default()),
+        dtypes,
+    )
 }
 
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
@@ -210,12 +219,12 @@ pub fn launch_kernel<R: Runtime, Alg: Algorithm>(
     out_grad: &MatmulInputHandleRef<'_, R>,
     weight_grad: &TensorHandleRef<'_, R>,
     problem: ConvolutionProblem,
-    mut dtypes: MatmulElems,
+    blueprint_strategy: &BlueprintStrategy<RuntimeArgs, Alg::Routine>,
+    dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError>
 where
-    Alg::Args: ConcreteArgs,
+    Alg::Args: ConcreteArgs<Alg::Routine>,
 {
-    let plane_dim = client.properties().hardware.plane_size_max;
     // Shape/strides are treated as k-major, with the last dim always being the contiguous one.
     // So for the sake of selecting a line size, the shape/strides are always row-major.
     let line_sizes = AvailableLineSizes::from_type_sizes(
@@ -238,29 +247,14 @@ where
 
     let line_sizes = Alg::filter_line_sizes(line_sizes).pick_max()?;
 
-    let selection = Alg::selection(client, &problem, plane_dim, &line_sizes, &mut dtypes)?;
-    let problem = Alg::Args::adjust_problem(client, problem, &selection, &dtypes);
-
-    Alg::validate_blueprint(client, &selection, &problem, &dtypes, &line_sizes)?;
-
-    let config = Alg::expand_config(
-        client.properties(),
-        &problem,
-        &selection,
-        &line_sizes,
-        &dtypes,
-    )?;
-
-    let line_sizes = config.line_sizes();
-
-    launch_kernel_concrete::<R, Alg>(
+    launch_kernel_concrete::<R, Alg::Args, Alg::Routine>(
         client,
         input,
         out_grad,
         weight_grad,
         problem,
         line_sizes,
-        selection,
+        blueprint_strategy,
         &dtypes,
     )
 }

@@ -1,25 +1,28 @@
 use std::fmt::Display;
 use std::marker::PhantomData;
 
-use cubecl::Runtime;
 use cubecl::client::ComputeClient;
 use cubecl::features::MmaConfig;
+use cubecl::{Runtime, std::CubeOption};
 
-use crate::components::batch::BatchMatmulFamily;
-use crate::components::stage::PlaneMatmulFamily;
-use crate::components::tile;
+use crate::components::global::PlaneWriterFamily;
+use crate::components::tile::TileMatmulFamily;
 use crate::components::{
     batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
-    tile::io::{Filled, Strided},
+    tile::io::Strided,
 };
-use crate::components::{global::PlaneWriterFamily, stage::StageFamily};
-use crate::components::{stage::FilledStageFamily, tile::TileMatmulFamily};
+use crate::components::{global::read::FullLoadingStrategy, tile};
+use crate::components::{
+    global::read::sync_full_strided::SyncFullStridedLoading, stage::PlaneMatmulFamily,
+};
 use crate::definition::{
     CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulLineSizes, MatmulProblem,
     MatmulSetupError, MatrixLayout, SmAllocation, SwizzleModes, TilingBlueprint, adjust_dtypes,
 };
+use crate::launch::RuntimeConfig;
 use crate::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
 use crate::routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, base};
+use crate::{components::batch::BatchMatmulFamily, routines::ExpandInfo};
 use crate::{
     components::global::{
         multi_stage::specialized::SpecializedMatmulFamily,
@@ -36,8 +39,8 @@ use crate::{
 };
 
 /// Plane accelerated specialized matmul with TMA readers
-pub struct SpecializedAlgorithm<TMM, L = AsyncPartialTmaLoading> {
-    pub _phantom: PhantomData<(TMM, L)>,
+pub struct SpecializedAlgorithm<TMM, L = AsyncPartialTmaLoading, AL = SyncFullStridedLoading> {
+    pub _phantom: PhantomData<(TMM, L, AL)>,
 }
 
 #[derive(Default, Clone)]
@@ -55,33 +58,38 @@ impl From<()> for SpecializedStrategy {
     }
 }
 
-impl<TMM, L> base::Routine for SpecializedAlgorithm<TMM, L>
+impl<TMM, RC, L, AL> base::Routine<RC> for SpecializedAlgorithm<TMM, L, AL>
 where
     TMM: tile::TileMatmulFamily<
-            LhsTile = <L::Stage as StageFamily>::TileKind,
-            RhsTile = <L::Stage as StageFamily>::TileKind,
-            AccTile = Filled,
+            LhsTile = L::TileKind,
+            RhsTile = L::TileKind,
+            AccTile = CubeOption<AL::TileKind>,
             OutTile = Strided,
         >,
-    L: AsyncPartialLoadingStrategy,
+    RC: RuntimeConfig,
+    L: AsyncPartialLoadingStrategy<RC>,
+    AL: FullLoadingStrategy<RC>,
 {
     type Strategy = SpecializedStrategy;
     type BatchMatmul = PartitionedBatchMatmulFamily<
+        RC,
         SpecializedMatmulFamily<
-            PlaneMatmulFamily<TMM, L::Stage, L::Stage, FilledStageFamily>,
+            PlaneMatmulFamily<TMM, L::Stage, L::Stage, Option<AL::Stage>>,
+            RC,
             L,
+            AL,
             PlaneWriterFamily,
         >,
         RowMajorGlobalPartitionMatmul,
     >;
     type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily>::Config;
+    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
 
-    fn prepare<R: Runtime>(
+    fn expand_blueprint<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<Self>,
-    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+        strategy: &BlueprintStrategy<RC, Self>,
+    ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
         if TMM::can_cast_stage_element() {
@@ -106,6 +114,15 @@ where
                 },
             )?,
         };
+        Ok(ExpandInfo { blueprint, dtypes })
+    }
+
+    fn prepare<R: Runtime>(
+        problem: &MatmulProblem,
+        device_settings: &DeviceSettings<R>,
+        expand_info: ExpandInfo<Self::Blueprint>,
+    ) -> Result<LaunchInfo<Self::Blueprint>, MatmulSetupError> {
+        let ExpandInfo { blueprint, dtypes } = expand_info;
 
         Self::validate_blueprint(
             &device_settings.client,

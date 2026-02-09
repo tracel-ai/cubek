@@ -2,16 +2,16 @@ use crate::components::resource::CubeDimResource;
 use crate::components::tile::SharedTileConfig;
 use crate::components::tile::interleaved::InterleavedMatmul;
 use crate::components::tile::interleaved::config::InterleavedMatmulConfig;
-use crate::components::tile::{
-    TileMatmulFamily,
-    io::{Filled, Strided},
-};
+use crate::components::tile::{TileMatmulFamily, io::Strided};
 use crate::definition::{InvalidConfigError, MatmulAvailabilityError, MatmulElems};
 use crate::definition::{MatmulLineSizes, MatmulSetupError};
 use crate::definition::{MatrixLayout, TilingBlueprint};
-use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::{features::TypeUsage, ir::DeviceProperties};
+use cubecl::{
+    ir::{ElemType, FloatKind},
+    std::CubeOption,
+};
 
 impl TileMatmulFamily for InterleavedMatmul {
     type Config = InterleavedMatmulConfig;
@@ -19,7 +19,7 @@ impl TileMatmulFamily for InterleavedMatmul {
 
     type LhsTile = Strided;
     type RhsTile = Strided;
-    type AccTile = Filled;
+    type AccTile = CubeOption<Strided>;
     type OutTile = Strided;
 
     fn requires_accelerator() -> bool {
