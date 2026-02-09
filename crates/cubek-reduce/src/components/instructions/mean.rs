@@ -103,8 +103,6 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Mean {
             accumulator,
             shape_axis_reduce,
         );
-        Line::cast_from(
-            sum / Line::empty(accumulator.size()).fill(P::EA::cast_from(shape_axis_reduce)),
-        )
+        Line::cast_from(sum / Line::cast_from(shape_axis_reduce))
     }
 }
