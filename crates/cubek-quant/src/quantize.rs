@@ -3,6 +3,7 @@ use cubecl::features::TypeUsage;
 use cubecl::ir::ElemType;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::linear::LinearView;
+use cubecl::std::tensor::{TensorHandle, into_contiguous_ref, is_contiguous};
 use cubecl::std::tensor::{View, layout::linear::linear_view};
 use cubecl::tensor_line_size_parallel;
 
@@ -285,8 +286,21 @@ fn quantize_packed<R: Runtime>(
 ) -> Result<(), LaunchError> {
     let num_elems: usize = input.shape.iter().product();
 
+    // For larger tensors, copying to contiguous memory should be faster than scalar reads.
+    // 2048 is a conservative floor for the threshold, could be tuned.
+    let input = if !is_contiguous(input.shape, input.strides) && num_elems > 2048 {
+        into_contiguous_ref(client, input, dtype_input.into()).expect("Kernel to never fail")
+    } else {
+        TensorHandle::from_ref(input, dtype_input.into())
+    };
+
     let num_quants = scheme.num_quants();
-    let line_size = num_quants;
+    let line_size = if is_contiguous(&input.shape, &input.strides) {
+        num_quants
+    } else {
+        // Elements to pack are strided, require scalar reads + manual gather
+        1
+    };
 
     let working_units = num_elems.div_ceil(line_size);
     let cube_dim = CubeDim::new(client, working_units);
@@ -306,7 +320,7 @@ fn quantize_packed<R: Runtime>(
                     client,
                     cube_count,
                     cube_dim,
-                    linear_view(client, input, line_size),
+                    linear_view(client, &input.as_ref(), line_size),
                     // scale is computed based on input float dtype, but stored based on qparams precision
                     scales_view(client, output, scale, 1, scheme),
                     InputScalar::new(range_min, dtype_input),
