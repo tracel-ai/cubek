@@ -7,7 +7,7 @@ use cubecl::std::tensor::{
     },
 };
 use cubecl_common::{rand::get_seeded_rng, stub::Mutex};
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 pub(crate) const N_VALUES_PER_THREAD: usize = 128;
 
@@ -73,8 +73,8 @@ fn prng_cube_count(num_elems: usize, cube_dim: CubeDim, n_values_per_thread: usi
 
 pub(crate) fn get_seeds() -> [u32; 4] {
     let mut seed = SEED.lock().unwrap();
-    let mut rng: StdRng = match seed.as_ref() {
-        Some(rng_seeded) => rng_seeded.clone(),
+    let mut rng: StdRng = match seed.take() {
+        Some(rng_seeded) => rng_seeded,
         None => get_seeded_rng(),
     };
     let mut seeds: Vec<u32> = Vec::with_capacity(4);
