@@ -483,18 +483,6 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<(), Blueprint = TilingB
             rhs_strides.insert(0, stride);
         }
 
-        fn swizzle(mode: SwizzleMode) -> TensorMapSwizzle {
-            match mode {
-                SwizzleMode::None => TensorMapSwizzle::None,
-                SwizzleMode::B32 => TensorMapSwizzle::B32,
-                SwizzleMode::B64 => TensorMapSwizzle::B64,
-                SwizzleMode::B128 => TensorMapSwizzle::B128,
-            }
-        }
-
-        let swizzle_lhs = swizzle(blueprint.swizzle_modes.lhs);
-        let swizzle_rhs = swizzle(blueprint.swizzle_modes.rhs);
-
         // f32 gets remapped to tf32 for the tensor map just to ensure CUDA loads them correctly.
         // It shouldn't matter, but it's better to be safe.
         let lhs_elem = if dtypes.lhs_stage == f32::as_type_native_unchecked() {
@@ -517,7 +505,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<(), Blueprint = TilingB
             strides: lhs_strides,
             elem_stride: vec![1, 1, 1],
             interleave: TensorMapInterleave::None,
-            swizzle: swizzle_lhs,
+            swizzle: blueprint.swizzle_modes.lhs.into(),
             prefetch: TensorMapPrefetch::None,
             oob_fill: OobFill::Zero,
             storage_ty: lhs_elem,
@@ -532,7 +520,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<(), Blueprint = TilingB
             strides: rhs_strides,
             elem_stride: vec![1, 1, 1],
             interleave: TensorMapInterleave::None,
-            swizzle: swizzle_rhs,
+            swizzle: blueprint.swizzle_modes.rhs.into(),
             prefetch: TensorMapPrefetch::None,
             oob_fill: OobFill::Zero,
             storage_ty: rhs_elem,

@@ -1,4 +1,10 @@
-use cubecl::{CubeDim, Runtime, client::ComputeClient, flex32, prelude::CubePrimitive, tf32};
+use cubecl::{
+    CubeDim, Runtime,
+    client::ComputeClient,
+    flex32,
+    prelude::{CubePrimitive, TensorMapSwizzle},
+    tf32,
+};
 
 use crate::{
     components::{
@@ -110,6 +116,17 @@ impl SwizzleModes {
             || self.rhs != SwizzleMode::None
             || self.acc != SwizzleMode::None
             || self.out != SwizzleMode::None
+    }
+}
+
+impl From<SwizzleMode> for TensorMapSwizzle {
+    fn from(value: SwizzleMode) -> Self {
+        match value {
+            SwizzleMode::None => TensorMapSwizzle::None,
+            SwizzleMode::B32 => TensorMapSwizzle::B32,
+            SwizzleMode::B64 => TensorMapSwizzle::B64,
+            SwizzleMode::B128 => TensorMapSwizzle::B128,
+        }
     }
 }
 

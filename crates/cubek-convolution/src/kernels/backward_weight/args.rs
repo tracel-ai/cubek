@@ -15,7 +15,10 @@ use cubecl::{
     },
 };
 use cubek_matmul::{
-    components::global::memory::{NoopLayout, NoopLayoutLaunch, Transpose, TransposeLaunch},
+    components::{
+        global::memory::{NoopLayout, NoopLayoutLaunch, Transpose, TransposeLaunch},
+        stage::SwizzleMode,
+    },
     definition::{Blueprint, MatmulElems, MatmulLineSizes, TilingBlueprint},
     launch::{
         MatmulArgs, MatmulInputHandleRef, TensorArgs, TensorInputs, TensorInputsLaunch,
@@ -80,7 +83,10 @@ impl<A: Routine<RuntimeArgs, Blueprint = TilingBlueprint>> ConcreteArgs<A>
         blueprint: &TilingBlueprint,
         _dtypes: &MatmulElems,
     ) -> ConvolutionProblem {
-        let channel_align = blueprint.tiling_scheme.tile_size.n() as usize;
+        let channel_align = match blueprint.swizzle_modes.rhs {
+            SwizzleMode::None => blueprint.tiling_scheme.tile_size.n() as usize,
+            _ => blueprint.tiling_scheme.elements_per_stage_along_n() as usize,
+        };
         let padded_channels = problem.channels.next_multiple_of(channel_align);
         let shape_n = problem.kernel_size.iter().product::<u32>() as usize * padded_channels;
 
@@ -217,7 +223,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
         client: &ComputeClient<R>,
         input: &'a MatmulInputHandleRef<'a, R>,
         out_grad: &'a MatmulInputHandleRef<'a, R>,
-        selection: &TilingBlueprint,
+        blueprint: &TilingBlueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
@@ -225,13 +231,18 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
         type LhsLayout = Transpose<TmaOutGradLayout>;
         type RhsLayout = TmaIm2colLayout;
 
-        let tiling_scheme = selection.tiling_scheme;
+        let tiling_scheme = blueprint.tiling_scheme;
+        let stage_m = tiling_scheme.elements_per_stage_along_m();
+        let stage_n = tiling_scheme.elements_per_stage_along_n();
         let stage_k = tiling_scheme.elements_per_stage_along_k();
         let tile_size_m = tiling_scheme.tile_size.m;
         let tile_size_n = tiling_scheme.tile_size.n;
 
         let dim_c = out_grad.shape().len() - 1;
-        let stage_size_lhs = vec![stage_k, tile_size_m];
+        let stage_size_lhs = match blueprint.swizzle_modes.lhs {
+            SwizzleMode::None => vec![stage_k, tile_size_m],
+            _ => vec![stage_k, stage_m],
+        };
 
         // f32 gets remapped to tf32 for the tensor map just to ensure CUDA loads them correctly.
         // It shouldn't matter, but it's better to be safe.
@@ -267,7 +278,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
             strides: lhs_strides,
             elem_stride: vec![1, 1],
             interleave: TensorMapInterleave::None,
-            swizzle: TensorMapSwizzle::None,
+            swizzle: blueprint.swizzle_modes.lhs.into(),
             prefetch: TensorMapPrefetch::None,
             oob_fill: OobFill::Zero,
             storage_ty: lhs_elem,
@@ -279,6 +290,11 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
             _kind: core::marker::PhantomData,
         };
 
+        let channels_per_pixel = match blueprint.swizzle_modes.rhs {
+            SwizzleMode::None => tile_size_n,
+            _ => stage_n,
+        };
+
         let rhs = TensorMapArg::new(
             Im2colArgs {
                 pixel_box_lower_corner: calculate_lower_corner(&problem.padding),
@@ -287,13 +303,14 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
                     &problem.kernel_size,
                     &problem.dilation,
                 ),
-                channels_per_pixel: tile_size_n,
+                channels_per_pixel,
                 pixels_per_column: stage_k,
             },
             input.data().as_tensor_arg(line_sizes.rhs),
             rhs_elem,
         )
-        .with_elem_stride(elem_stride);
+        .with_elem_stride(elem_stride)
+        .with_swizzle(blueprint.swizzle_modes.rhs.into());
 
         let padded_channels = problem.padded_channels as u32;
         let shape_k = problem.k as u32;
@@ -303,7 +320,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
         // in-bounds but not in-kernel elements. Other TMA layouts are always outside the shape if
         // any matrix dim is out of bounds.
         let stages_rhs = A::num_stages().rhs;
-        let stages_size_n = selection.tiling_scheme.elements_per_stage_along_n() * stages_rhs;
+        let stages_size_n = blueprint.tiling_scheme.elements_per_stage_along_n() * stages_rhs;
 
         let lhs_layout = TmaOutGradLayoutLaunch::from_problem(problem);
         let lhs_layout = TransposeLaunch::new(lhs_layout);

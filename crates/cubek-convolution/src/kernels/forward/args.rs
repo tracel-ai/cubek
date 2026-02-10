@@ -14,7 +14,10 @@ use cubecl::{
     },
 };
 use cubek_matmul::{
-    components::global::memory::{GlobalLayoutConfig, NoopLayout, NoopLayoutLaunch},
+    components::{
+        global::memory::{GlobalLayoutConfig, NoopLayout, NoopLayoutLaunch},
+        stage::SwizzleMode,
+    },
     definition::{Blueprint, MatmulElems, MatmulLineSizes, MatrixLayout, TilingBlueprint},
     launch::{
         MatmulArgs, MatmulInputHandleRef, TensorArgs, TensorInputs, TensorInputsLaunch,
@@ -79,7 +82,10 @@ impl<A: Routine<RuntimeArgs, Blueprint = TilingBlueprint>> ConcreteArgs<A>
         blueprint: &TilingBlueprint,
         _dtypes: &MatmulElems,
     ) -> ConvolutionProblem {
-        let channel_align = blueprint.tiling_scheme.tile_size.k() as usize;
+        let channel_align = match blueprint.swizzle_modes.lhs {
+            SwizzleMode::None => blueprint.tiling_scheme.tile_size.k() as usize,
+            _ => blueprint.tiling_scheme.elements_per_stage_along_k() as usize,
+        };
         let padded_channels = problem.channels.next_multiple_of(channel_align);
         let shape_k = problem.kernel_size.iter().product::<u32>() as usize * padded_channels;
 
@@ -232,7 +238,11 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
         let tiling_scheme = blueprint.tiling_scheme;
         let stage_m = tiling_scheme.elements_per_stage_along_m();
         let stage_n = tiling_scheme.elements_per_stage_along_n();
-        let tile_size_k = tiling_scheme.tile_size.k;
+
+        let tile_size_k = match blueprint.swizzle_modes.lhs {
+            SwizzleMode::None => tiling_scheme.tile_size.k,
+            _ => tiling_scheme.elements_per_stage_along_k(),
+        };
 
         let mut stage_size_rhs = vec![1; problem.dimensionality.num_dims()];
         stage_size_rhs.insert(0, stage_n);
@@ -266,7 +276,8 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
             lhs.data().as_tensor_arg(line_sizes.lhs),
             lhs_elem,
         )
-        .with_elem_stride(elem_stride);
+        .with_elem_stride(elem_stride)
+        .with_swizzle(blueprint.swizzle_modes.lhs.into());
 
         let rhs = TensorMapArg::new(
             TiledArgs {
@@ -274,7 +285,8 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
             },
             rhs.data().as_tensor_arg(1),
             dtypes.rhs_global,
-        );
+        )
+        .with_swizzle(blueprint.swizzle_modes.rhs.into());
 
         let padded_channels = problem.padded_channels as u32;
         let shape_k = problem.k as u32;
