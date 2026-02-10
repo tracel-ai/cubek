@@ -13,7 +13,7 @@ version.workspace = true
 [features]
 default = ["kernels"]
 kernels = ["std"]
-std = ["cubecl/std"]
+std = []
 
 [dependencies]
 cubecl = { workspace = true, features = ["stdlib"] }
