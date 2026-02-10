@@ -3,7 +3,7 @@ use cubecl::features::TypeUsage;
 use cubecl::ir::ElemType;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::linear::LinearView;
-use cubecl::std::tensor::{TensorHandle, into_contiguous_ref, is_contiguous};
+use cubecl::std::tensor::{TensorHandle, into_contiguous_ref};
 use cubecl::std::tensor::{View, layout::linear::linear_view};
 use cubecl::tensor_line_size_parallel;
 
