@@ -68,10 +68,6 @@ impl AttentionDims {
             AttentionIdent::Softmax => unreachable!("Not a materialized tensor"),
         }
     }
-
-    pub fn num_elems(&self, ident: AttentionIdent) -> usize {
-        self.shape(ident).iter().product()
-    }
 }
 
 #[derive(Clone, Debug)]
