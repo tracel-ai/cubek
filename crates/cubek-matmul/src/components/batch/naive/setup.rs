@@ -1,6 +1,9 @@
 use cubecl::{
-    CubeCount, CubeDim, Runtime, client::ComputeClient, ir::DeviceProperties,
-    quant::scheme::QuantLevel, server::LaunchError,
+    CubeCount, CubeDim, Runtime,
+    client::ComputeClient,
+    ir::{AddressType, DeviceProperties},
+    quant::scheme::QuantLevel,
+    server::LaunchError,
 };
 
 use crate::{
@@ -76,6 +79,7 @@ impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
         client: &ComputeClient<R>,
         cube_dim: CubeDim,
         cube_count: CubeCount,
+        address_type: AddressType,
         input: InputRuntimeArg<'a, MA, R>,
         output: OutputRuntimeArg<'a, MA, R>,
         _config: ConfigRuntimeArg<'a, MA, R>,
@@ -88,6 +92,7 @@ impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
                 client,
                 cube_count,
                 cube_dim,
+                address_type,
                 input,
                 output,
                 (),

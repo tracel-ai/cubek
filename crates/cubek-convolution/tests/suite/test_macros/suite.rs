@@ -1,7 +1,7 @@
 use crate::suite::convolution_test_launcher::test_convolution_algorithm;
 use crate::suite::test_utils::TestPrecision;
-use cubecl::frontend::CubePrimitive;
 use cubecl::{Runtime, TestRuntime};
+use cubecl::{frontend::CubePrimitive, ir::AddressType};
 use cubek_convolution::{
     components::{
         ConvolutionOperation, ConvolutionProblem, Dimensionality, global::args::RuntimeArgs,
@@ -103,6 +103,7 @@ pub fn test_algo<
             rhs: elem_type,
             out: elem_type,
         },
+        address_type: AddressType::U32,
     };
 
     let mut blueprint =

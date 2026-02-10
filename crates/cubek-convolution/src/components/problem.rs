@@ -1,3 +1,4 @@
+use cubecl::ir::AddressType;
 use cubek_matmul::definition::{MatmulGlobalElems, MatmulProblem, MatrixLayout};
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -39,6 +40,8 @@ pub struct ConvolutionProblem {
     pub dimensionality: Dimensionality,
 
     pub global_dtypes: MatmulGlobalElems,
+    /// Address type, defined as the max of each handle's `required_address_type`
+    pub address_type: AddressType,
 }
 
 impl ConvolutionProblem {
@@ -86,6 +89,7 @@ impl ConvolutionProblem {
             lhs_scheme: None,
             rhs_scheme: None,
             global_dtypes: self.global_dtypes.clone(),
+            address_type: self.address_type,
         }
     }
 

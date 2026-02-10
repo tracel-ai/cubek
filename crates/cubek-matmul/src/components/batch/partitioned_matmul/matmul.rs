@@ -16,7 +16,7 @@ use crate::{
     components::batch::partitioned_matmul::config::PartitionedBatchConfig, launch::RuntimeConfig,
 };
 
-#[cube(launch_unchecked)]
+#[cube(launch_unchecked, address_type = "dynamic")]
 /// Launches the matmul kernel
 pub(crate) fn matmul_entry<
     Args: MatmulArgs,

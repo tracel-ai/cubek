@@ -12,6 +12,7 @@ pub struct ReduceLineSettings {
 pub struct ReduceLaunchSettings {
     pub cube_dim: CubeDim,
     pub cube_count: CubeCount,
+    pub address_type: AddressType,
     pub line: ReduceLineSettings,
 }
 
@@ -21,6 +22,8 @@ pub struct ReduceProblem {
     pub vector_count: usize,
     pub axis: usize,
     pub dtypes: ReduceDtypes,
+    /// The address type, defined by the max of each handle's `required_address_type`
+    pub address_type: AddressType,
 }
 
 #[derive(Debug, Clone)]

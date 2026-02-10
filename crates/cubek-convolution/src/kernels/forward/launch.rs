@@ -179,6 +179,15 @@ where
     *input.data_mut() = input_data.as_ref();
     *weight.data_mut() = weight_data.as_ref();
 
+    let address_type = input
+        .required_address_type()
+        .max(weight.required_address_type())
+        .max(
+            bias.map(|bias| bias.required_address_type())
+                .unwrap_or_default(),
+        )
+        .max(out.required_address_type());
+
     let problem = ConvolutionProblem {
         m: n * out_shape.iter().product::<usize>(),
         n: out_c,
@@ -203,6 +212,7 @@ where
 
         dimensionality,
         global_dtypes: dtypes.as_global_elems(),
+        address_type,
     };
 
     launch_kernel::<R, Alg>(

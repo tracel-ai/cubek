@@ -1,8 +1,8 @@
 use crate::suite::assert_result;
-use cubecl::frontend::CubePrimitive;
 use cubecl::prelude::TensorHandleRef;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{Runtime, client};
+use cubecl::{frontend::CubePrimitive, ir::AddressType};
 use cubek_matmul::launch::launch_naive;
 
 use crate::suite::layout_to_stride_spec;
@@ -38,6 +38,7 @@ impl MatmulTestCase {
             None,
             None,
             self.elems,
+            AddressType::U32,
         )
     }
 }

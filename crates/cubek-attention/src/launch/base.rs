@@ -115,6 +115,17 @@ pub fn launch_attention<R: Runtime, A: Routine>(
         masked: mask.is_some(),
         global_dtypes: global_dtypes.clone(),
         options: attention_options,
+        address_type: [
+            query.required_address_type(),
+            key.required_address_type(),
+            value.required_address_type(),
+            mask.map(|mask| mask.required_address_type())
+                .unwrap_or_default(),
+            out.required_address_type(),
+        ]
+        .into_iter()
+        .max()
+        .unwrap_or_default(),
     };
 
     let device_settings = DeviceSettings::new(client, &definition);
@@ -125,6 +136,7 @@ pub fn launch_attention<R: Runtime, A: Routine>(
             client,
             launch_info.cube_dim,
             launch_info.cube_count_plan.resolve(),
+            launch_info.address_type,
             TensorInputsLaunch::new(
                 query.as_tensor_arg(device_settings.line_sizes.query),
                 key.as_tensor_arg(device_settings.line_sizes.key),

@@ -100,6 +100,11 @@ pub fn launch_ref<R: Runtime>(
         out: 1,
     };
 
+    let address_type = lhs
+        .required_address_type()
+        .max(rhs.required_address_type())
+        .max(out.required_address_type());
+
     let problem = MatmulProblem::from_shapes_and_strides(
         lhs_shape.to_vec(),
         rhs_shape.to_vec(),
@@ -108,6 +113,7 @@ pub fn launch_ref<R: Runtime>(
         rhs.data().strides.to_vec(),
         out.strides.to_vec(),
         dtypes.as_global_elems(),
+        address_type,
         lhs.scheme(),
         rhs.scheme(),
     );
@@ -142,6 +148,7 @@ pub fn launch_ref<R: Runtime>(
         client,
         launch_info.cube_dim,
         launch_info.cube_count_plan.resolve(),
+        launch_info.address_type,
         input,
         output,
         (),

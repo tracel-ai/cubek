@@ -26,6 +26,7 @@ pub trait Routine<RC: RuntimeConfig>: Sized {
         client: &ComputeClient<R>,
         cube_dim: CubeDim,
         cube_count: CubeCount,
+        address_type: AddressType,
         input: InputRuntimeArg<'a, MA, R>,
         output: OutputRuntimeArg<'a, MA, R>,
         config: ConfigRuntimeArg<'a, MA, R>,
@@ -38,6 +39,7 @@ pub trait Routine<RC: RuntimeConfig>: Sized {
                 client,
                 cube_dim,
                 cube_count,
+                address_type,
                 input,
                 output,
                 config,
@@ -110,6 +112,7 @@ pub struct LaunchInfo<B: Blueprint> {
     pub dtypes: MatmulElems,
     pub cube_dim: CubeDim,
     pub cube_count_plan: CubeCountPlan,
+    pub address_type: AddressType,
 }
 
 impl LaunchInfo<TilingBlueprint> {
@@ -129,6 +132,7 @@ impl LaunchInfo<TilingBlueprint> {
             dtypes,
             cube_dim,
             cube_count_plan,
+            address_type: problem.address_type,
         })
     }
 }

@@ -28,6 +28,7 @@ impl Routine for CubeRoutine {
         settings: ReduceLineSettings,
         strategy: BlueprintStrategy<Self>,
     ) -> Result<(ReduceBlueprint, ReduceLaunchSettings), ReduceError> {
+        let address_type = problem.address_type;
         let (blueprint, cube_dim, num_cubes) = match strategy {
             BlueprintStrategy::Forced(blueprint, cube_dim) => {
                 // One accumulator per plane.
@@ -79,6 +80,7 @@ impl Routine for CubeRoutine {
         let launch = ReduceLaunchSettings {
             cube_dim,
             cube_count: num_cubes,
+            address_type,
             line: settings,
         };
 

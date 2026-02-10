@@ -305,7 +305,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
         let stages_rhs = A::num_stages().rhs;
         let stages_size_n = selection.tiling_scheme.elements_per_stage_along_n() * stages_rhs;
 
-        let lhs_layout = TmaOutGradLayoutLaunch::new();
+        let lhs_layout = TmaOutGradLayoutLaunch::from_problem(problem);
         let lhs_layout = TransposeLaunch::new(lhs_layout);
 
         let check_kernel = !shape_n.is_multiple_of(stages_size_n);

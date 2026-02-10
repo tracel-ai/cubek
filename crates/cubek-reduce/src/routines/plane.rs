@@ -28,6 +28,7 @@ impl Routine for PlaneRoutine {
         settings: ReduceLineSettings,
         strategy: BlueprintStrategy<Self>,
     ) -> Result<(ReduceBlueprint, ReduceLaunchSettings), ReduceError> {
+        let address_type = problem.address_type;
         let (blueprint, cube_dim, cube_count) = match strategy {
             BlueprintStrategy::Forced(blueprint, cube_dim) => {
                 if !support_plane(client) {
@@ -69,6 +70,7 @@ impl Routine for PlaneRoutine {
         let launch = ReduceLaunchSettings {
             cube_dim,
             cube_count,
+            address_type,
             line: settings,
         };
 

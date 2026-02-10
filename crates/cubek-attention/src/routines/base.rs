@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
-use cubecl::client::ComputeClient;
 use cubecl::{CubeDim, Runtime};
+use cubecl::{client::ComputeClient, ir::AddressType};
 
 use crate::components::tile::TileAttentionFamily;
 use crate::components::{
@@ -33,6 +33,7 @@ pub struct LaunchInfo<B> {
     pub dtypes: AttentionElems,
     pub cube_dim: CubeDim,
     pub cube_count_plan: CubeCountPlan,
+    pub address_type: AddressType,
 }
 
 pub struct DeviceSettings {

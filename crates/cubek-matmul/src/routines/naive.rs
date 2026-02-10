@@ -77,6 +77,7 @@ impl Routine<()> for NaiveRoutine {
                 cube_dim.x,
                 cube_dim.y,
             )?,
+            address_type: problem.address_type,
         })
     }
 }

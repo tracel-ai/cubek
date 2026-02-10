@@ -115,7 +115,7 @@ fn unpack_q<F: Float, QS: Int>(
     output
 }
 
-#[cube(launch_unchecked)]
+#[cube(launch_unchecked, address_type = "dynamic")]
 fn dequantize_symmetric_packed_kernel<F: Float, FS: Numeric>(
     input: &LinearView<Line<u32>>,
     scales: &ScalesView<FS>,
@@ -145,7 +145,7 @@ fn dequantize_symmetric_packed_kernel<F: Float, FS: Numeric>(
     }
 }
 
-#[cube(launch_unchecked)]
+#[cube(launch_unchecked, address_type = "dynamic")]
 fn dequantize_symmetric_native_kernel<F: Float, FS: Numeric, Q: Numeric>(
     input: &LinearView<Line<Q>>,
     scale: &ScalesView<FS>,
@@ -254,6 +254,10 @@ fn dequantize_packed<R: Runtime>(
     let num_elems = num_elems_input / line_size_in as usize;
     let cube_dim = CubeDim::new(client, num_elems);
     let cube_count = calculate_cube_count_elemwise(client, num_elems, cube_dim);
+    let address_type = input
+        .required_address_type()
+        .max(scale.required_address_type())
+        .max(output.required_address_type());
 
     match scheme {
         QuantScheme {
@@ -266,6 +270,7 @@ fn dequantize_packed<R: Runtime>(
                 client,
                 cube_count,
                 cube_dim,
+                address_type,
                 linear_view(client, input, line_size_in),
                 scales_view(client, input, scale, 1, &scheme),
                 linear_view(client, output, line_size_out),
@@ -296,6 +301,10 @@ fn dequantize_native<R: Runtime>(
     let working_units = num_elems / line_size as usize;
     let cube_dim = CubeDim::new(client, working_units);
     let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
+    let address_type = input
+        .required_address_type()
+        .max(scale.required_address_type())
+        .max(output.required_address_type());
 
     match scheme {
         QuantScheme {
@@ -318,6 +327,7 @@ fn dequantize_native<R: Runtime>(
                     client,
                     cube_count,
                     cube_dim,
+                    address_type,
                     linear_view(client, input, line_size),
                     scales_view(client, input, scale, 1, &scheme),
                     linear_view(client, output, line_size),

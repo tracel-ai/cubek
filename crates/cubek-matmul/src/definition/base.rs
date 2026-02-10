@@ -51,6 +51,9 @@ pub struct MatmulProblem {
     pub rhs_scheme: Option<QuantScheme>,
 
     pub global_dtypes: MatmulGlobalElems,
+
+    /// Address type, defined by the max of each handle's `required_address_type`
+    pub address_type: AddressType,
 }
 
 impl MatmulProblem {
@@ -63,6 +66,7 @@ impl MatmulProblem {
         rhs_strides: Vec<usize>,
         out_strides: Vec<usize>,
         global_dtypes: MatmulGlobalElems,
+        address_type: AddressType,
         lhs_scheme: Option<&QuantScheme>,
         rhs_scheme: Option<&QuantScheme>,
     ) -> Self {
@@ -90,6 +94,7 @@ impl MatmulProblem {
             lhs_scheme: lhs_scheme.copied(),
             rhs_scheme: rhs_scheme.copied(),
             global_dtypes,
+            address_type,
         }
     }
 
@@ -106,6 +111,7 @@ impl MatmulProblem {
         lhs_scheme: Option<QuantScheme>,
         rhs_scheme: Option<QuantScheme>,
         global_dtypes: MatmulGlobalElems,
+        address_type: AddressType,
     ) -> Self {
         fn broadcast_batches(lhs: &[usize], rhs: &[usize]) -> Option<Vec<usize>> {
             let max_len = max(lhs.len(), rhs.len());
@@ -155,6 +161,7 @@ impl MatmulProblem {
             lhs_scheme,
             rhs_scheme,
             global_dtypes,
+            address_type,
         }
     }
 

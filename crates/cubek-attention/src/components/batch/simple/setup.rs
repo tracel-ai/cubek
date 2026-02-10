@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use cubecl::server::LaunchError;
+use cubecl::{ir::AddressType, server::LaunchError};
 
 use crate::{
     components::{
@@ -31,6 +31,7 @@ impl<GA: GlobalAttentionFamily> BatchAttentionFamily for SimpleBatchAttentionFam
         client: &cubecl::prelude::ComputeClient<R>,
         cube_dim: cubecl::CubeDim,
         cube_count: cubecl::CubeCount,
+        address_type: AddressType,
         input: InputRuntimeArg<'a, AA, R>,
         output: OutputRuntimeArg<'a, AA, R>,
         cube_count_input: CubeCountInputArgs<'a, R>,
@@ -42,6 +43,7 @@ impl<GA: GlobalAttentionFamily> BatchAttentionFamily for SimpleBatchAttentionFam
                 client,
                 cube_count,
                 cube_dim,
+                address_type,
                 input,
                 output,
                 cube_count_input,

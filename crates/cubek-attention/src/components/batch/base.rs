@@ -30,6 +30,7 @@ pub trait BatchAttentionFamily: Send + Sync + 'static {
         client: &ComputeClient<R>,
         cube_dim: CubeDim,
         cube_count: CubeCount,
+        address_type: AddressType,
         input: InputRuntimeArg<'a, AA, R>,
         output: OutputRuntimeArg<'a, AA, R>,
         cube_count_input: CubeCountInputArgs<'a, R>,

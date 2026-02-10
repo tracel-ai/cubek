@@ -1,4 +1,4 @@
-use cubecl::ir::{ElemType, FloatKind, StorageType};
+use cubecl::ir::{AddressType, ElemType, FloatKind, StorageType};
 
 #[derive(Clone, Debug)]
 /// Description of an attention problem to solve, regardless of actual data
@@ -11,6 +11,9 @@ pub struct AttentionProblem {
     pub global_dtypes: AttentionGlobalTypes,
 
     pub options: AttentionOptions,
+
+    /// Address type, defined by the max of all input handles' `required_address_type`
+    pub address_type: AddressType,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -64,6 +67,10 @@ impl AttentionDims {
             AttentionIdent::Out => [self.batch, self.num_heads, self.seq_q, self.val_dim],
             AttentionIdent::Softmax => unreachable!("Not a materialized tensor"),
         }
+    }
+
+    pub fn num_elems(&self, ident: AttentionIdent) -> usize {
+        self.shape(ident).iter().product()
     }
 }
 

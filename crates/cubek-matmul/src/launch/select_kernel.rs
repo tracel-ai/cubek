@@ -95,6 +95,7 @@ pub fn launch_kernel<'a, MA: MatmulArgs, R: Runtime, A: Routine<MA::Config>>(
         client,
         launch_info.cube_dim,
         launch_info.cube_count_plan.resolve(),
+        launch_info.address_type,
         input,
         output,
         config,

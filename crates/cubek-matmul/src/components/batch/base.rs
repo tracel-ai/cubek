@@ -43,6 +43,7 @@ pub trait BatchMatmulFamily<RC: RuntimeConfig>: 'static + Send + Sync {
         client: &ComputeClient<R>,
         cube_dim: CubeDim,
         cube_count: CubeCount,
+        address_type: AddressType,
         input: InputRuntimeArg<'a, MA, R>,
         output: OutputRuntimeArg<'a, MA, R>,
         config: ConfigRuntimeArg<'a, MA, R>,

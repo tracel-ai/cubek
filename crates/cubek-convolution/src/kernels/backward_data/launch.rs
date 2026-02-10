@@ -175,6 +175,11 @@ where
     *out_grad.data_mut() = out_grad_data.as_ref();
     *weights.data_mut() = weights_data.as_ref();
 
+    let address_type = out_grad
+        .required_address_type()
+        .max(weights.required_address_type())
+        .max(in_grad.required_address_type());
+
     let problem = ConvolutionProblem {
         m: n * in_shape.iter().product::<usize>(),
         n: c,
@@ -200,6 +205,7 @@ where
 
         dimensionality,
         global_dtypes: dtypes.as_global_elems(),
+        address_type,
     };
 
     launch_kernel::<R, Alg>(

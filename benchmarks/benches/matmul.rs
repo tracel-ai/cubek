@@ -180,6 +180,7 @@ fn run<R: Runtime, MP: MatmulPrecision>(device: R::Device, strategy: Strategy) {
                     None,
                     None,
                     MatmulElems::new_deprecated::<MP>().as_global_elems(),
+                    AddressType::U32,
                 );
                 let _ = run_one::<R, MP>(device.clone(), strategy.clone(), &problem);
             }
@@ -255,6 +256,7 @@ fn run_grid_search<R: Runtime, MP: MatmulPrecision>() {
         None,
         None,
         MatmulElems::new_deprecated::<MP>().as_global_elems(),
+        AddressType::U32,
     );
 
     for t in [(16, 16, 16)] {

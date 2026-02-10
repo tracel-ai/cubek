@@ -35,11 +35,16 @@ pub(crate) fn launch_reduce<Run: Runtime>(
     dtypes: ReduceDtypes,
     inst: ReduceOperationConfig,
 ) -> Result<(), ReduceError> {
+    let address_type = input
+        .required_address_type()
+        .max(output.required_address_type());
+
     let problem = ReduceProblem {
         vector_size: input.shape[axis],
         vector_count: output.shape.iter().copied().product(),
         axis,
         dtypes,
+        address_type,
     };
     let line_mode = match input.strides[axis] {
         1 => LineMode::Parallel,
@@ -80,6 +85,7 @@ pub(crate) fn launch_reduce<Run: Runtime>(
             client,
             settings.cube_count,
             settings.cube_dim,
+            settings.address_type,
             input.as_tensor_arg(settings.line.line_size_input),
             output.as_tensor_arg(settings.line.line_size_output),
             ScalarArg::new(axis),
@@ -93,7 +99,7 @@ pub(crate) fn launch_reduce<Run: Runtime>(
     }
 }
 
-#[cube(launch_unchecked)]
+#[cube(launch_unchecked, address_type = "dynamic")]
 pub fn reduce_kernel<In: Numeric, Out: Numeric, Acc: Numeric, RA: ReduceArgs>(
     input: &RA::Input<In>,
     output: &mut RA::Output<Out>,

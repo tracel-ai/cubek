@@ -25,6 +25,7 @@ impl Routine for UnitRoutine {
         settings: ReduceLineSettings,
         strategy: BlueprintStrategy<Self>,
     ) -> Result<(ReduceBlueprint, ReduceLaunchSettings), ReduceError> {
+        let address_type = problem.address_type;
         let (blueprint, cube_dim, cube_count) = match strategy {
             BlueprintStrategy::Forced(blueprint, cube_dim) => {
                 let working_units = working_units(&settings, &problem);
@@ -57,6 +58,7 @@ impl Routine for UnitRoutine {
             cube_dim,
             cube_count,
             line: settings,
+            address_type,
         };
 
         Ok((blueprint, launch))

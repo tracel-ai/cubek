@@ -1,7 +1,7 @@
 use cubecl::{
     Runtime,
     client::ComputeClient,
-    ir::StorageType,
+    ir::{AddressType, StorageType},
     prelude::{CubePrimitive, TensorHandleRef},
     quant::scheme::{BlockSize, QuantLevel},
     server::LaunchError,
@@ -268,5 +268,16 @@ impl<'a, R: Runtime> MatmulInputHandleRef<'a, R> {
         };
 
         Ok(val)
+    }
+
+    pub fn required_address_type(&self) -> AddressType {
+        match self {
+            MatmulInputHandleRef::Normal(handle, ..) => handle.required_address_type(),
+            MatmulInputHandleRef::Quantized { data, shape, .. } => {
+                let handle_addr = data.required_address_type();
+                let conceptual_addr = AddressType::from_len(shape.iter().product());
+                handle_addr.max(conceptual_addr)
+            }
+        }
     }
 }

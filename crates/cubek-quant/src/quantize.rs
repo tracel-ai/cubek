@@ -94,7 +94,7 @@ fn write_scale<F: Float, FS: CubePrimitive>(
     scale
 }
 
-#[cube(launch_unchecked)]
+#[cube(launch_unchecked, address_type = "dynamic")]
 fn quantize_symmetric_native_kernel<F: Float, FS: Numeric, Q: Numeric>(
     input: &LinearView<Line<F>>,
     scale: &ScalesView<F>,
@@ -122,7 +122,7 @@ fn quantize_symmetric_native_kernel<F: Float, FS: Numeric, Q: Numeric>(
     sync_cube();
 }
 
-#[cube(launch_unchecked)]
+#[cube(launch_unchecked, address_type = "dynamic")]
 fn quantize_symmetric_packed_kernel<F: Float, FS: Numeric>(
     input: &LinearView<Line<F>>,
     scale: &ScalesView<F>,
@@ -240,6 +240,11 @@ fn quantize_native<R: Runtime>(
     let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
     let (range_min, range_max) = scheme.value.range();
 
+    let address_type = input
+        .required_address_type()
+        .max(scale.required_address_type())
+        .max(output.required_address_type());
+
     match scheme {
         QuantScheme {
             level: QuantLevel::Tensor | QuantLevel::Block(_),
@@ -256,6 +261,7 @@ fn quantize_native<R: Runtime>(
                     client,
                     cube_count,
                     cube_dim,
+                    address_type,
                     linear_view(client, input, line_size),
                     // scale is computed based on input float dtype, but stored based on qparams precision
                     scales_view(client, output, scale, 1, scheme),
@@ -293,6 +299,11 @@ fn quantize_packed<R: Runtime>(
     let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
     let (range_min, range_max) = scheme.value.range();
 
+    let address_type = input
+        .required_address_type()
+        .max(scale.required_address_type())
+        .max(output.required_address_type());
+
     match scheme {
         QuantScheme {
             level: QuantLevel::Tensor | QuantLevel::Block(_),
@@ -306,6 +317,7 @@ fn quantize_packed<R: Runtime>(
                     client,
                     cube_count,
                     cube_dim,
+                    address_type,
                     linear_view(client, input, line_size),
                     // scale is computed based on input float dtype, but stored based on qparams precision
                     scales_view(client, output, scale, 1, scheme),

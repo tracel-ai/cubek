@@ -42,12 +42,14 @@ pub(crate) fn random<F: RandomFamily, R: Runtime>(
     //     output.strides.len() - 1,
     // );
 
+    let address_type = output.required_address_type();
     let output = linear_view(client, &output, output_line_size);
 
     prng_kernel::launch::<F, R>(
         client,
         cube_count,
         cube_dim,
+        address_type,
         output,
         ScalarArg::new(seeds[0]),
         ScalarArg::new(seeds[1]),
@@ -113,7 +115,7 @@ pub(crate) trait PrngRuntime: Send + Sync + 'static + PrngArgs {
 
 type Args<F> = <<F as RandomFamily>::Runtime as PrngArgs>::Args;
 
-#[cube(launch)]
+#[cube(launch, address_type = "dynamic")]
 fn prng_kernel<F: RandomFamily, E: Numeric>(
     output: &mut LinearView<Line<E>, ReadWrite>,
     seed_0: u32,

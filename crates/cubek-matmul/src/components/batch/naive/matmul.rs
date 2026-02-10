@@ -15,7 +15,7 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::View;
 use cubecl::std::tensor::layout::Coords2d;
 
-#[cube(launch_unchecked)]
+#[cube(launch_unchecked, address_type = "dynamic")]
 /// Launches the matmul kernel
 pub(crate) fn matmul_entry<
     Args: MatmulArgs<Config = ()>,

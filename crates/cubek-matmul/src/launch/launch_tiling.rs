@@ -134,6 +134,11 @@ where
     InputArg<MA>: ConcreteInputsFactory<A>,
     OutputArg<MA>: ConcreteOutputFactory<A>,
 {
+    let address_type = lhs
+        .required_address_type()
+        .max(rhs.required_address_type())
+        .max(out.required_address_type());
+
     let problem = MatmulProblem::from_shapes_and_strides(
         lhs.shape().to_vec(),
         rhs.shape().to_vec(),
@@ -142,6 +147,7 @@ where
         rhs.data().strides.to_vec(),
         out.strides.to_vec(),
         dtypes.as_global_elems(),
+        address_type,
         lhs.scheme(),
         rhs.scheme(),
     );

@@ -112,6 +112,9 @@ pub fn shared_sum<R: Runtime>(
     let num_units = cube_count * cube_dim.num_elems();
     let num_lines_per_unit = input_len.div_ceil(num_units as usize * line_size);
     let cube_count = CubeCount::new_1d(cube_count);
+    let address_type = input
+        .required_address_type()
+        .max(output.required_address_type());
 
     // Launch kernel
     let result = unsafe {
@@ -119,6 +122,7 @@ pub fn shared_sum<R: Runtime>(
             client,
             cube_count,
             cube_dim,
+            address_type,
             input_view,
             output.as_tensor_arg(1),
             cube_dim.num_elems() as usize,
@@ -134,7 +138,7 @@ pub fn shared_sum<R: Runtime>(
     }
 }
 
-#[cube(launch_unchecked)]
+#[cube(launch_unchecked, address_type = "dynamic")]
 fn shared_sum_kernel<N: Numeric>(
     input: &LinearView<Line<N>>,
     output: &mut Tensor<Atomic<N>>,
