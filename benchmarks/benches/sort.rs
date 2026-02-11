@@ -67,7 +67,6 @@ where
             &self.client,
             input_ref,
             SortValues::None,
-            self.num_items,
             SortOrder::Ascending,
         )
         .map_err(|e| format!("Sort failed: {:?}", e))?;
@@ -145,7 +144,11 @@ fn main() {
     ];
 
     run::<cubecl::TestRuntime, u32>(&client, &sizes);
-    if client.properties().features.supports_type(ElemType::UInt(UIntKind::U16)) {
+    if client
+        .properties()
+        .features
+        .supports_type(ElemType::UInt(UIntKind::U16))
+    {
         run::<cubecl::TestRuntime, u16>(&client, &sizes);
     }
 }

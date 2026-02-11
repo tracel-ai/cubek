@@ -45,7 +45,7 @@ where
     let input_ref =
         unsafe { TensorHandleRef::from_raw_parts(&input_handle, &strides, &shape, size_of::<T>()) };
 
-    let result = sort::<TestRuntime, T>(&client, input_ref, SortValues::None, num_items, order);
+    let result = sort::<TestRuntime, T>(&client, input_ref, SortValues::None, order);
     let sort_output = result.expect("Sort failed");
 
     let bytes = client.read_one(sort_output.keys);
@@ -382,7 +382,7 @@ fn test_argsort_implicit_indices() {
         TensorHandleRef::from_raw_parts(&input_handle, &strides, &shape, size_of::<u32>())
     };
 
-    let sort_output = sort::<TestRuntime, u32>(&client, input_ref, SortValues::Indices, data.len(), Ascending)
+    let sort_output = sort::<TestRuntime, u32>(&client, input_ref, SortValues::Indices, Ascending)
         .expect("Sort failed");
 
     let keys_bytes = client.read_one(sort_output.keys);
@@ -413,7 +413,7 @@ fn test_argsort_random() {
         TensorHandleRef::from_raw_parts(&input_handle, &strides, &shape, size_of::<u32>())
     };
 
-    let sort_output = sort::<TestRuntime, u32>(&client, input_ref, SortValues::Indices, data.len(), Ascending)
+    let sort_output = sort::<TestRuntime, u32>(&client, input_ref, SortValues::Indices, Ascending)
         .expect("Sort failed");
 
     let keys_bytes = client.read_one(sort_output.keys);
@@ -425,7 +425,11 @@ fn test_argsort_random() {
 
     // Verify keys are sorted
     for i in 1..sorted_keys.len() {
-        assert!(sorted_keys[i - 1] <= sorted_keys[i], "Keys not sorted at {}", i);
+        assert!(
+            sorted_keys[i - 1] <= sorted_keys[i],
+            "Keys not sorted at {}",
+            i
+        );
     }
 
     // Verify indices are a valid permutation and reconstruct original data
@@ -455,7 +459,7 @@ fn test_large_scale_u32() {
         TensorHandleRef::from_raw_parts(&input_handle, &strides, &shape, size_of::<u32>())
     };
 
-    let sort_output = sort::<TestRuntime, u32>(&client, input_ref, SortValues::None, SIZE, Ascending)
+    let sort_output = sort::<TestRuntime, u32>(&client, input_ref, SortValues::None, Ascending)
         .expect("Sort failed");
 
     // Verify sortedness by checking consecutive samples across the entire range

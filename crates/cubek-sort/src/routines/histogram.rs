@@ -4,11 +4,16 @@ use crate::components::key::{Radix, SortKey};
 use cubecl::prelude::*;
 use cubecl_std::tensor::layout::linear::LinearView;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct HistogramBlueprint {
+    pub threads_per_block: u32,
+    pub items_per_thread: u32,
+}
+
 /// Histogram kernel that counts digit occurrences for each block.
 ///
 /// Each block processes `items_per_thread * threads_per_block` keys and produces
-/// a histogram of 256 digit counts. The histograms are stored contiguously in
-/// global memory for subsequent prefix sum computation.
+/// a histogram of 256 digit counts.
 ///
 /// Uses warp-level ballot operations to reduce atomic contention: only the
 /// leader thread (first thread with a given digit) performs the atomic add
@@ -17,16 +22,15 @@ use cubecl_std::tensor::layout::linear::LinearView;
 pub fn histogram_kernel<K: SortKey<Radix = R>, R: Radix>(
     keys: &LinearView<K>,
     histograms: &mut Tensor<u32>,
-    num_items: u32,
     pass: u32,
-    #[comptime] items_per_thread: u32,
+    #[comptime] blueprint: HistogramBlueprint,
 ) {
     let shared_hist = SharedMemory::<Atomic<u32>>::new(NUM_BUCKETS);
 
     let block_id = CUBE_POS_X;
     let thread_id = UNIT_POS_X;
     let lane_id = UNIT_POS_PLANE;
-    let items_per_block = CUBE_DIM * items_per_thread;
+    let items_per_block = CUBE_DIM * blueprint.items_per_thread;
     let block_start = block_id * items_per_block;
 
     // Compute shift amount and digit mask using cast
@@ -45,15 +49,17 @@ pub fn histogram_kernel<K: SortKey<Radix = R>, R: Radix>(
     }
     sync_cube();
 
+    let num_keys = keys.shape() as u32;
+
     // Check if this is a full block (all items valid) - enables bounds check elimination
-    let is_full_block = block_start + items_per_block <= num_items;
+    let is_full_block = block_start + items_per_block <= num_keys;
     let zero_radix = R::cast_from(0u32);
 
     // Use warp-level ballot to reduce atomic contention
     // When is_full_block is true, the compiler can fold `valid` to true and eliminate branches
-    for i in 0..items_per_thread {
+    for i in 0..blueprint.items_per_thread {
         let idx = block_start + thread_id + i * CUBE_DIM;
-        let valid = is_full_block || idx < num_items;
+        let valid = is_full_block || idx < num_keys;
 
         // Clamp index to avoid out-of-bounds read (select doesn't short-circuit on GPU)
         let safe_idx = select(valid, idx, 0u32);

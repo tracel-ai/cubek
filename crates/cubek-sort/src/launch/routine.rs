@@ -1,8 +1,10 @@
 use crate::components::config::{NUM_BUCKETS, SortStrategy};
 use crate::components::key::{Radix, SortKey};
 use crate::error::SortError;
-use crate::kernels::scatter::ValuesMode;
-use crate::kernels::{histogram, scan, scatter};
+use crate::routines::histogram::HistogramBlueprint;
+use crate::routines::scan::ScanBlueprint;
+use crate::routines::scatter::ValuesMode;
+use crate::routines::{histogram, scan, scatter};
 use crate::{SortOrder, SortOutput, SortValues};
 use cubecl::prelude::*;
 use cubecl::server::Handle;
@@ -12,28 +14,21 @@ pub fn sort<'a, R: Runtime, K: SortKey>(
     client: &ComputeClient<R>,
     keys_in: TensorHandleRef<'a, R>,
     values: SortValues<'a, R>,
-    num_items: usize,
     strategy: SortStrategy,
     order: SortOrder,
 ) -> Result<SortOutput, SortError>
 where
     K::Radix: SortKey<Radix = K::Radix>,
 {
-    if num_items == 0 {
-        return Ok(SortOutput {
-            keys: client.empty(0),
-            values: None,
-        });
-    }
-
+    let num_keys = keys_in.shape[0];
     let key_size = core::mem::size_of::<K>();
     let value_size = core::mem::size_of::<u32>();
 
     // Allocate output buffers
-    let keys_out = client.empty(num_items * key_size);
+    let keys_out = client.empty(keys_in.shape[0] * key_size);
     let values_out = match &values {
         SortValues::None => None,
-        SortValues::Tensor(_) | SortValues::Indices => Some(client.empty(num_items * value_size)),
+        SortValues::Tensor(_) | SortValues::Indices => Some(client.empty(num_keys * value_size)),
     };
 
     sort_impl::<R, K>(
@@ -42,7 +37,6 @@ where
         &keys_out,
         &values,
         values_out.as_ref(),
-        num_items,
         strategy,
         order,
     )?;
@@ -60,17 +54,19 @@ fn sort_impl<'a, R: Runtime, K: SortKey>(
     keys_out: &Handle,
     values: &SortValues<'a, R>,
     values_out: Option<&Handle>,
-    num_items: usize,
     strategy: SortStrategy,
     order: SortOrder,
 ) -> Result<(), SortError>
 where
     K::Radix: SortKey<Radix = K::Radix>,
 {
-    let num_blocks = strategy.num_blocks(num_items);
+    let num_keys = keys_in.shape[0];
+    let num_blocks = strategy.num_blocks(num_keys);
     let radix_size = core::mem::size_of::<K::Radix>();
-    let value_size = core::mem::size_of::<u32>();
+
+    // One pass per radix byte.
     let num_passes = core::mem::size_of::<K>() as u32;
+
     let plane_dim = client.properties().hardware.plane_size_min;
     let num_planes = strategy.num_planes(plane_dim);
 
@@ -82,19 +78,21 @@ where
     };
 
     // Temp buffer for radix keys
-    let temp_keys = client.empty(num_items * radix_size);
+    let temp_keys = client.empty(num_keys * radix_size);
     let temp_values = if first_pass_mode != ValuesMode::None {
-        Some(client.empty(num_items * value_size))
+        Some(client.empty(num_keys * radix_size))
     } else {
         None
     };
-    let histogram_size = (num_blocks as usize) * NUM_BUCKETS * value_size;
+
+    let histogram_size = (num_blocks as usize) * NUM_BUCKETS * radix_size;
     let histograms = client.empty(histogram_size);
     let offsets = client.empty(histogram_size);
 
     let last_pass = num_passes - 1;
-    let contiguous_shape = [num_items];
-    let contiguous_strides = [1];
+
+    let cont_shape = [num_keys];
+    let cont_stride = [1];
 
     for pass in 0..num_passes {
         let is_first = pass == 0;
@@ -107,18 +105,8 @@ where
             (keys_in.handle, keys_in.shape, keys_in.strides, &temp_keys)
         } else {
             match pass % 2 == 0 {
-                true => (
-                    keys_out,
-                    &contiguous_shape[..],
-                    &contiguous_strides[..],
-                    &temp_keys,
-                ),
-                false => (
-                    &temp_keys,
-                    &contiguous_shape[..],
-                    &contiguous_strides[..],
-                    keys_out,
-                ),
+                true => (keys_out, &cont_shape[..], &cont_stride[..], &temp_keys),
+                false => (&temp_keys, &cont_shape[..], &cont_stride[..], keys_out),
             }
         };
 
@@ -143,14 +131,14 @@ where
                     match pass % 2 == 0 {
                         true => (
                             v_out,
-                            &contiguous_shape[..],
-                            &contiguous_strides[..],
+                            &cont_shape[..],
+                            &cont_stride[..],
                             temp_values.as_ref().unwrap(),
                         ),
                         false => (
                             temp_values.as_ref().unwrap(),
-                            &contiguous_shape[..],
-                            &contiguous_strides[..],
+                            &cont_shape[..],
+                            &cont_stride[..],
                             v_out,
                         ),
                     }
@@ -160,6 +148,11 @@ where
                 (keys_in.handle, keys_in.shape, keys_in.strides, keys_out)
             };
 
+        let histogram_blueprint = HistogramBlueprint {
+            threads_per_block: strategy.threads_per_block,
+            items_per_thread: strategy.items_per_thread,
+        };
+
         // Histogram phase
         if is_first {
             launch_histogram::<R, K, K::Radix>(
@@ -168,10 +161,9 @@ where
                 k_src_shape,
                 k_src_strides,
                 &histograms,
-                num_items,
                 num_blocks,
                 pass,
-                &strategy,
+                histogram_blueprint,
             )?;
         } else {
             launch_histogram::<R, K::Radix, K::Radix>(
@@ -180,16 +172,15 @@ where
                 k_src_shape,
                 k_src_strides,
                 &histograms,
-                num_items,
                 num_blocks,
                 pass,
-                &strategy,
+                histogram_blueprint,
             )?;
         }
 
-        launch_scan_cooperative::<R>(client, &histograms, &offsets, num_blocks, 256)?;
+        let scan_blueprint = ScanBlueprint { scan_dim: 256 };
+        launch_scan_cooperative::<R>(client, &histograms, &offsets, num_blocks, scan_blueprint)?;
 
-        // Scatter phase
         let reverse_output = order.is_descending() && is_last;
         let values_mode = if is_first {
             first_pass_mode
@@ -209,7 +200,6 @@ where
                 v_src_strides,
                 v_dst,
                 &offsets,
-                num_items,
                 num_blocks,
                 pass,
                 &strategy,
@@ -229,7 +219,6 @@ where
                 v_src_strides,
                 v_dst,
                 &offsets,
-                num_items,
                 num_blocks,
                 pass,
                 &strategy,
@@ -249,7 +238,6 @@ where
                 v_src_strides,
                 v_dst,
                 &offsets,
-                num_items,
                 num_blocks,
                 pass,
                 &strategy,
@@ -269,7 +257,6 @@ where
                 v_src_strides,
                 v_dst,
                 &offsets,
-                num_items,
                 num_blocks,
                 pass,
                 &strategy,
@@ -290,15 +277,14 @@ fn launch_histogram<R: Runtime, K: SortKey<Radix = Rx>, Rx: Radix>(
     keys_shape: &[usize],
     keys_strides: &[usize],
     histograms: &Handle,
-    num_items: usize,
     num_blocks: u32,
     pass: u32,
-    strategy: &SortStrategy,
+    blueprint: HistogramBlueprint,
 ) -> Result<(), SortError> {
     let hist_shape = [num_blocks as usize * NUM_BUCKETS];
     let hist_strides = [1];
 
-    let keys_view = linear_view::<K, R>(client, keys, keys_shape, keys_strides, num_items);
+    let keys_view = linear_view::<K, R>(client, keys, keys_shape, keys_strides);
     let hist_tensor =
         unsafe { TensorArg::from_raw_parts::<u32>(histograms, &hist_shape, &hist_strides, 1) };
 
@@ -306,12 +292,11 @@ fn launch_histogram<R: Runtime, K: SortKey<Radix = Rx>, Rx: Radix>(
         histogram::histogram_kernel::launch_unchecked::<K, Rx, R>(
             client,
             CubeCount::new_1d(num_blocks),
-            CubeDim::new_1d(strategy.threads_per_block),
+            CubeDim::new_1d(blueprint.threads_per_block),
             keys_view,
             hist_tensor,
-            ScalarArg::new(num_items as u32),
             ScalarArg::new(pass),
-            strategy.items_per_thread,
+            blueprint,
         )
         .map_err(SortError::Launch)?;
     }
@@ -323,11 +308,10 @@ fn linear_view<'a, E: CubePrimitive, R: Runtime>(
     handle: &'a Handle,
     shape: &[usize],
     strides: &[usize],
-    num_items: usize,
 ) -> LinearViewLaunch<'a, R> {
     let layout = LinearLayoutArgs::from_shape_strides(client, shape, strides, 1);
     let buffer = unsafe {
-        ArrayArg::from_raw_parts_and_size(handle, num_items, 1, core::mem::size_of::<E>())
+        ArrayArg::from_raw_parts_and_size(handle, shape[0], 1, core::mem::size_of::<E>())
     };
     LinearViewLaunch::new::<LinearLayout>(buffer, layout)
 }
@@ -337,7 +321,7 @@ fn launch_scan_cooperative<R: Runtime>(
     histograms: &Handle,
     offsets: &Handle,
     num_blocks: u32,
-    scan_dim: u32,
+    blueprint: ScanBlueprint,
 ) -> Result<(), SortError> {
     let elem_size = core::mem::size_of::<u32>();
     let hist_shape = [num_blocks as usize * NUM_BUCKETS];
@@ -357,11 +341,11 @@ fn launch_scan_cooperative<R: Runtime>(
         scan::scan_sum_kernel::launch_unchecked::<R>(
             client,
             CubeCount::new_1d(NUM_BUCKETS as u32),
-            CubeDim::new_1d(scan_dim),
+            CubeDim::new_1d(blueprint.scan_dim),
             hist_tensor,
             totals_tensor,
             ScalarArg::new(num_blocks),
-            scan_dim,
+            blueprint,
         )
         .map_err(SortError::Launch)?;
     }
@@ -378,6 +362,7 @@ fn launch_scan_cooperative<R: Runtime>(
             CubeDim::new_1d(NUM_BUCKETS as u32),
             totals_tensor,
             prefixes_tensor,
+            blueprint,
         )
         .map_err(SortError::Launch)?;
     }
@@ -393,12 +378,12 @@ fn launch_scan_cooperative<R: Runtime>(
         scan::scan_offsets::launch_unchecked::<R>(
             client,
             CubeCount::new_1d(NUM_BUCKETS as u32),
-            CubeDim::new_1d(scan_dim),
+            CubeDim::new_1d(blueprint.scan_dim),
             hist_tensor,
             prefixes_tensor,
             offsets_tensor,
             ScalarArg::new(num_blocks),
-            scan_dim,
+            blueprint,
         )
         .map_err(SortError::Launch)?;
     }
@@ -418,7 +403,6 @@ fn launch_scatter<R: Runtime, KIn: SortKey<Radix = Rx>, KOut: SortKey<Radix = Rx
     values_in_strides: &[usize],
     values_out: &Handle,
     offsets: &Handle,
-    num_items: usize,
     num_blocks: u32,
     pass: u32,
     strategy: &SortStrategy,
@@ -426,25 +410,17 @@ fn launch_scatter<R: Runtime, KIn: SortKey<Radix = Rx>, KOut: SortKey<Radix = Rx
     num_planes: u32,
     reverse_output: bool,
 ) -> Result<(), SortError> {
-    let items_shape = [num_items];
-    let items_strides = [1];
     let offsets_shape = [num_blocks as usize * NUM_BUCKETS];
     let offsets_strides = [1];
 
-    let keys_in_view =
-        linear_view::<KIn, R>(client, keys_in, keys_in_shape, keys_in_strides, num_items);
-    let values_in_view = linear_view::<u32, R>(
-        client,
-        values_in,
-        values_in_shape,
-        values_in_strides,
-        num_items,
-    );
+    let keys_in_view = linear_view::<KIn, R>(client, keys_in, keys_in_shape, keys_in_strides);
+    let values_in_view =
+        linear_view::<u32, R>(client, values_in, values_in_shape, values_in_strides);
 
     let keys_out_tensor =
-        unsafe { TensorArg::from_raw_parts::<KOut>(keys_out, &items_shape, &items_strides, 1) };
+        unsafe { TensorArg::from_raw_parts::<KOut>(keys_out, keys_in_shape, keys_in_strides, 1) };
     let values_out_tensor =
-        unsafe { TensorArg::from_raw_parts::<u32>(values_out, &items_shape, &items_strides, 1) };
+        unsafe { TensorArg::from_raw_parts::<u32>(values_out, keys_in_shape, keys_in_strides, 1) };
     let offsets_tensor =
         unsafe { TensorArg::from_raw_parts::<u32>(offsets, &offsets_shape, &offsets_strides, 1) };
 
@@ -458,7 +434,6 @@ fn launch_scatter<R: Runtime, KIn: SortKey<Radix = Rx>, KOut: SortKey<Radix = Rx
             values_in_view,
             values_out_tensor,
             offsets_tensor,
-            ScalarArg::new(num_items as u32),
             ScalarArg::new(pass),
             ScalarArg::new(reverse_output as u32),
             strategy.items_per_thread,

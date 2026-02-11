@@ -20,7 +20,6 @@ pub trait SortKey: CubePrimitive {
     fn from_radix(value: Self::Radix) -> Self;
 }
 
-// 32-bit unsigned integer
 #[cube]
 impl SortKey for u32 {
     type Radix = u32;
@@ -34,7 +33,6 @@ impl SortKey for u32 {
     }
 }
 
-// 32-bit signed integer
 #[cube]
 impl SortKey for i32 {
     type Radix = u32;
@@ -48,7 +46,6 @@ impl SortKey for i32 {
     }
 }
 
-// 32-bit float (IEEE 754 single precision)
 #[cube]
 impl SortKey for f32 {
     type Radix = u32;
@@ -67,7 +64,6 @@ impl SortKey for f32 {
     }
 }
 
-// 8-bit unsigned integer
 #[cube]
 impl SortKey for u8 {
     type Radix = u8;
@@ -81,7 +77,6 @@ impl SortKey for u8 {
     }
 }
 
-// 8-bit signed integer
 #[cube]
 impl SortKey for i8 {
     type Radix = u8;
@@ -96,7 +91,6 @@ impl SortKey for i8 {
     }
 }
 
-// 16-bit unsigned integer
 #[cube]
 impl SortKey for u16 {
     type Radix = u16;
@@ -110,7 +104,6 @@ impl SortKey for u16 {
     }
 }
 
-// 16-bit signed integer
 #[cube]
 impl SortKey for i16 {
     type Radix = u16;
@@ -125,7 +118,6 @@ impl SortKey for i16 {
     }
 }
 
-// 16-bit float (IEEE 754 half precision)
 #[cube]
 impl SortKey for f16 {
     type Radix = u16;
@@ -143,7 +135,6 @@ impl SortKey for f16 {
     }
 }
 
-// 16-bit bfloat
 #[cube]
 impl SortKey for bf16 {
     type Radix = u16;

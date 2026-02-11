@@ -24,7 +24,6 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
     values_in: &LinearView<u32>,
     values_out: &mut Tensor<u32>,
     block_offsets: &Tensor<u32>,
-    num_items: u32,
     pass: u32,
     reverse_output_flag: u32,
     #[comptime] items_per_thread: u32,
@@ -86,8 +85,11 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
     let shift = R::cast_from(shift_u32);
     let digit_mask = R::cast_from(0xFFu32);
 
+    // TODO: Support usize sorting.
+    let num_keys = keys_in.shape() as u32;
+
     // Check if this entire plane is full (all items valid) - enables bounds check elimination
-    let is_full_plane = (sub_part_start + sub_part_size) <= num_items;
+    let is_full_plane = (sub_part_start + sub_part_size) <= num_keys;
 
     // Use max radix value for invalid positions (sorts to end in ascending order)
     let max_radix = R::max_value();
@@ -110,7 +112,7 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
     for i in 0..items_per_thread {
         let local_idx = lane_id + i * PLANE_DIM;
         let global_idx = sub_part_start + local_idx;
-        let valid = is_full_plane || global_idx < num_items;
+        let valid = is_full_plane || global_idx < num_keys;
 
         // Clamp index to avoid out-of-bounds read (select doesn't short-circuit on GPU)
         let safe_idx = select(valid, global_idx, 0u32);
@@ -216,7 +218,7 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
         let local_idx = lane_id + i * PLANE_DIM;
         let global_idx = sub_part_start + local_idx;
 
-        if is_full_plane || global_idx < num_items {
+        if is_full_plane || global_idx < num_keys {
             let key = keys[i as usize];
             let digit_radix = (key >> shift) & digit_mask;
             let digit = u32::cast_from(digit_radix);
@@ -240,8 +242,8 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
 
     // Phase 4: Coalesced read from shared memory and write to global
     // When is_full_block is true, the compiler can fold `valid` to true and eliminate branches
-    let is_full_block = block_start + items_per_block <= num_items;
-    let items_in_block = select(num_items > block_start, num_items - block_start, 0u32);
+    let is_full_block = block_start + items_per_block <= num_keys;
+    let items_in_block = select(num_keys > block_start, num_keys - block_start, 0u32);
 
     for i in 0..items_per_thread {
         let local_idx = thread_id + i * CUBE_DIM;
@@ -253,7 +255,7 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
             let ascending_pos = digit_global[digit as usize] + local_idx;
 
             // For descending sort on the final pass, reverse the output position
-            let global_pos = select(reverse_output, num_items - 1 - ascending_pos, ascending_pos);
+            let global_pos = select(reverse_output, num_keys - 1 - ascending_pos, ascending_pos);
 
             keys_out[global_pos as usize] = KOut::from_radix(key);
 

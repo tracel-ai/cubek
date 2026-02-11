@@ -1,9 +1,16 @@
 use crate::components::config::NUM_BUCKETS;
 use cubecl::prelude::*;
 
-// Maximum warps per block. Must accommodate scan_dim / PLANE_DIM.
-// PLANE_DIM can be as low as 8 on Intel, so with scan_dim=256 we need up to 32 warps.
-const MAX_WARPS: usize = 32;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ScanBlueprint {
+    pub scan_dim: u32,
+}
+
+impl ScanBlueprint {
+    fn max_warps(&self) -> usize {
+        (self.scan_dim / 8) as usize
+    }
+}
 
 /// Phase A: Compute digit totals by summing histogram values across all blocks.
 /// Launches 256 blocks (one per digit), each with SCAN_DIM threads that
@@ -13,10 +20,10 @@ pub fn scan_sum_kernel(
     histograms: &Tensor<u32>,
     digit_totals: &mut Tensor<u32>,
     num_hist_blocks: u32,
-    #[comptime] scan_dim: u32,
+    #[comptime] blueprint: ScanBlueprint,
 ) {
-    let mut shared_sum = SharedMemory::<u32>::new(scan_dim as usize);
-    let mut warp_sums = SharedMemory::<u32>::new(MAX_WARPS);
+    let mut shared_sum = SharedMemory::<u32>::new(blueprint.scan_dim as usize);
+    let mut warp_sums = SharedMemory::<u32>::new(blueprint.max_warps());
 
     let digit = CUBE_POS_X; // Which digit this block handles (0-255)
     let tid = UNIT_POS_X;
@@ -25,7 +32,7 @@ pub fn scan_sum_kernel(
 
     // Initialize shared memory to avoid reading uninitialized values
     // when num_warps > PLANE_DIM (e.g., Intel with PLANE_DIM=8)
-    if tid < MAX_WARPS as u32 {
+    if tid < warp_sums.len() as u32 {
         warp_sums[tid as usize] = 0u32;
         shared_sum[tid as usize] = 0u32;
     }
@@ -34,12 +41,12 @@ pub fn scan_sum_kernel(
     // Each thread sums its strided portion of histogram blocks
     let mut my_sum = 0u32;
     let mut block_idx = tid;
-    for _ in 0..num_hist_blocks.div_ceil(scan_dim) {
+    for _ in 0..num_hist_blocks.div_ceil(blueprint.scan_dim) {
         if block_idx < num_hist_blocks {
             let hist_idx = block_idx * NUM_BUCKETS as u32 + digit;
             my_sum += histograms[hist_idx as usize];
         }
-        block_idx += scan_dim;
+        block_idx += blueprint.scan_dim;
     }
 
     // Reduce within warp
@@ -51,7 +58,7 @@ pub fn scan_sum_kernel(
 
     // Reduce across warps (first warp does this)
     #[allow(clippy::manual_div_ceil)]
-    let num_warps = (scan_dim + PLANE_DIM - 1) / PLANE_DIM;
+    let num_warps = (blueprint.scan_dim + PLANE_DIM - 1) / PLANE_DIM;
     if warp_id == 0 && lane_id < num_warps {
         shared_sum[lane_id as usize] = warp_sums[lane_id as usize];
     }
@@ -70,16 +77,20 @@ pub fn scan_sum_kernel(
 /// Phase B: Compute exclusive prefix sum across digit totals.
 /// Single block with 256 threads.
 #[cube(launch_unchecked)]
-pub fn scan_prefix_totals_kernel(digit_totals: &Tensor<u32>, digit_prefixes: &mut Tensor<u32>) {
+pub fn scan_prefix_totals_kernel(
+    digit_totals: &Tensor<u32>,
+    digit_prefixes: &mut Tensor<u32>,
+    #[comptime] blueprint: ScanBlueprint,
+) {
     let mut shared = SharedMemory::<u32>::new(NUM_BUCKETS);
-    let mut warp_sums = SharedMemory::<u32>::new(MAX_WARPS);
+    let mut warp_sums = SharedMemory::<u32>::new(blueprint.max_warps());
 
     let digit = UNIT_POS_X;
     let lane_id = UNIT_POS_PLANE;
     let warp_id = PLANE_POS;
 
     // Initialize warp_sums to avoid reading uninitialized values
-    if digit < MAX_WARPS as u32 {
+    if digit < warp_sums.len() as u32 {
         warp_sums[digit as usize] = 0u32;
     }
     sync_cube();
@@ -133,10 +144,10 @@ pub fn scan_offsets(
     digit_prefixes: &Tensor<u32>,
     offsets: &mut Tensor<u32>,
     num_hist_blocks: u32,
-    #[comptime] scan_dim: u32,
+    #[comptime] blueprint: ScanBlueprint,
 ) {
-    let mut g_scan = SharedMemory::<u32>::new(scan_dim as usize);
-    let mut warp_sums = SharedMemory::<u32>::new(MAX_WARPS);
+    let mut g_scan = SharedMemory::<u32>::new(blueprint.scan_dim as usize);
+    let mut warp_sums = SharedMemory::<u32>::new(blueprint.max_warps());
 
     let digit = CUBE_POS_X;
     let tid = UNIT_POS_X;
@@ -146,12 +157,12 @@ pub fn scan_offsets(
     // Load base offset for this digit (from cross-digit prefix sum)
     let base_offset = digit_prefixes[digit as usize];
 
-    let full_chunks = num_hist_blocks / scan_dim;
+    let full_chunks = num_hist_blocks / blueprint.scan_dim;
     let mut reduction = 0u32;
 
     // Process full chunks
     for chunk in 0..full_chunks {
-        let block_idx = chunk * scan_dim + tid;
+        let block_idx = chunk * blueprint.scan_dim + tid;
         let hist_idx = block_idx * NUM_BUCKETS as u32 + digit;
         let my_value = histograms[hist_idx as usize];
         g_scan[tid as usize] = my_value;
@@ -169,7 +180,7 @@ pub fn scan_offsets(
 
         // Inter-warp prefix (all threads participate; partial participation is UB)
         #[allow(clippy::manual_div_ceil)]
-        let num_warps = (scan_dim + PLANE_DIM - 1) / PLANE_DIM;
+        let num_warps = (blueprint.scan_dim + PLANE_DIM - 1) / PLANE_DIM;
         let warp_input = if warp_id == 0 && lane_id < num_warps {
             warp_sums[lane_id as usize]
         } else {
@@ -189,11 +200,11 @@ pub fn scan_offsets(
         offsets[out_idx as usize] = base_offset + reduction + final_exclusive;
 
         // Update reduction for next chunk
-        if tid == scan_dim - 1 {
+        if tid == blueprint.scan_dim - 1 {
             reduction += final_exclusive + my_value;
         }
         sync_cube();
-        if tid == scan_dim - 1 {
+        if tid == blueprint.scan_dim - 1 {
             g_scan[0] = reduction;
         }
         sync_cube();
@@ -202,7 +213,7 @@ pub fn scan_offsets(
     }
 
     // Process partial chunk
-    let partial_start = full_chunks * scan_dim;
+    let partial_start = full_chunks * blueprint.scan_dim;
     let remaining = num_hist_blocks - partial_start;
 
     if remaining > 0 {
@@ -227,9 +238,8 @@ pub fn scan_offsets(
         g_scan[tid as usize] = my_exclusive;
         sync_cube();
 
-        // All threads must participate in plane ops (partial participation is UB)
         #[allow(clippy::manual_div_ceil)]
-        let num_warps = (scan_dim + PLANE_DIM - 1) / PLANE_DIM;
+        let num_warps = (blueprint.scan_dim + PLANE_DIM - 1) / PLANE_DIM;
         let warp_input = if warp_id == 0 && lane_id < num_warps {
             warp_sums[lane_id as usize]
         } else {
