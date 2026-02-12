@@ -925,7 +925,7 @@ fn partition_kv1_global3_with_oob() {
 }
 
 #[test]
-fn partition_oob_in_q() {
+fn partition_oob_in_q_with_batches() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes()),
@@ -939,12 +939,11 @@ fn partition_oob_in_q() {
             seq_q: minimal_seq_q_stage(),
         },
     };
-    let seq_q = 1;
     let problem = AttentionProblem {
         dims: AttentionDims {
-            batch: 1,
-            num_heads: 1,
-            seq_q,
+            batch: 2,
+            num_heads: 2,
+            seq_q: 1,
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
@@ -992,7 +991,7 @@ fn partition_kv2_with_oob() {
             batch: 1,
             num_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
-            seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
+            seq_kv: elements_in_partition_seq_kv(&tiling_scheme) - 1,
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
@@ -1855,6 +1854,56 @@ fn huge_problem() {
         global_dtypes: global_dtypes(),
         options: AttentionOptions {
             causal: false,
+            accumulator_precision: AccumulatorPrecision::default(),
+        },
+    };
+    let launch_settings = DeviceSettings::new(&client, &problem);
+    let blueprint = AttentionBlueprint {
+        hypercube_blueprint: HypercubeBlueprint {},
+        tiling_scheme,
+        plane_dim: launch_settings.plane_dim,
+        reuse_key_value: false,
+        two_rows_in_array_tile: false,
+        line_sizes: launch_settings.line_sizes,
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
+    };
+    let strategy = forced_strategy(blueprint);
+    test_launch(client, problem, strategy)
+}
+
+#[test]
+fn causal_several_heads() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let head_val_dim = 32;
+
+    let tile_size = tile_size(&client, global_dtypes());
+    let tiling_scheme = AttentionTilingScheme {
+        tile_size,
+        partition_size: AttentionPartitionSize {
+            seq_q: 2,
+            seq_kv: 2,
+            head_dim: head_val_dim / tile_size.head_dim,
+            val_dim: head_val_dim / tile_size.val_dim,
+        },
+        stage_size: AttentionStageSize {
+            seq_q: minimal_seq_q_stage(),
+        },
+    };
+    let problem = AttentionProblem {
+        dims: AttentionDims {
+            batch: 1,
+            num_heads: 2,
+            seq_q: 16,
+            seq_kv: 16,
+            head_dim: head_val_dim as usize,
+            val_dim: head_val_dim as usize,
+        },
+        masked: false,
+        global_dtypes: global_dtypes(),
+        options: AttentionOptions {
+            causal: true,
             accumulator_precision: AccumulatorPrecision::default(),
         },
     };

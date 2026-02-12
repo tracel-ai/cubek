@@ -18,7 +18,7 @@ pub fn assert_result(
     out: TensorHandle<TestRuntime>,
     elems: AttentionElems,
 ) -> ValidationResult {
-    let epsilon = attention_epsilon(&elems, 0.1);
+    let epsilon = attention_epsilon(&elems, 0.01);
     let expected = flash_attention_v2_reference(query, key, value, mask, problem);
 
     let actual = HostData::from_tensor_handle(client, &out, HostDataType::F32);
@@ -46,6 +46,7 @@ fn attention_epsilon(elems: &AttentionElems, safety_factor: f32) -> f32 {
 
     total_eps as f32 * safety_factor
 }
+
 pub fn flash_attention_v2_reference(
     query: &HostData,
     key: &HostData,
