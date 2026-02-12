@@ -3,6 +3,7 @@ use cubecl::features::TypeUsage;
 use cubecl::ir::ElemType;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::linear::LinearView;
+use cubecl::std::tensor::{TensorHandle, into_contiguous_ref};
 use cubecl::std::tensor::{View, layout::linear::linear_view};
 use cubecl::tensor_line_size_parallel;
 
@@ -291,8 +292,32 @@ fn quantize_packed<R: Runtime>(
 ) -> Result<(), LaunchError> {
     let num_elems: usize = input.shape.iter().product();
 
+    // Determine if we can use vectorized packing
+    let mut can_vectorize = match scheme {
+        QuantScheme {
+            level: QuantLevel::Tensor | QuantLevel::Block(_),
+            mode: QuantMode::Symmetric,
+            store: QuantStore::PackedU32(dim),
+            ..
+        } => {
+            // Check if packing dim is contiguous
+            let ndims = input.shape.len();
+            input.strides[ndims - 1 - *dim] == 1
+        }
+        QuantScheme { .. } => panic!("Unsupported quantization scheme {scheme:?}"),
+    };
+    // For larger tensors, copying to contiguous memory should be faster than scalar reads.
+    // 2048 is a conservative floor for the threshold, could be tuned.
     let num_quants = scheme.num_quants();
-    let line_size = num_quants;
+    let input = if !can_vectorize && num_elems >= 2048 {
+        can_vectorize = true;
+        into_contiguous_ref(client, input, dtype_input.into()).expect("Kernel to never fail")
+    } else {
+        TensorHandle::from_ref(input, dtype_input.into())
+    };
+
+    // Elements to pack are strided, require scalar reads + manual gather
+    let line_size = if can_vectorize { num_quants } else { 1 };
 
     let working_units = num_elems.div_ceil(line_size);
     let cube_dim = CubeDim::new(client, working_units);
@@ -304,33 +329,23 @@ fn quantize_packed<R: Runtime>(
         .max(scale.required_address_type())
         .max(output.required_address_type());
 
-    match scheme {
-        QuantScheme {
-            level: QuantLevel::Tensor | QuantLevel::Block(_),
-            mode: QuantMode::Symmetric,
-            store: QuantStore::PackedU32(_),
-            ..
-        } => {
-            check_block_size_compat(scheme, num_quants); // 32 / 8 = 4
-            unsafe {
-                quantize_symmetric_packed_kernel::launch_unchecked(
-                    client,
-                    cube_count,
-                    cube_dim,
-                    address_type,
-                    linear_view(client, input, line_size),
-                    // scale is computed based on input float dtype, but stored based on qparams precision
-                    scales_view(client, output, scale, 1, scheme),
-                    InputScalar::new(range_min, dtype_input),
-                    InputScalar::new(range_max, dtype_input),
-                    linear_view(client, output, 1),
-                    scales_view(client, output, out_scale, 1, scheme),
-                    scales_layout(client, output, scale, 1, scheme),
-                    *scheme,
-                    [dtype_input.into(), dtype_param.into()],
-                )
-            }
-        }
-        QuantScheme { .. } => panic!("Unsupported quantization scheme {scheme:?}"),
+    check_block_size_compat(scheme, num_quants); // 32 / 8 = 4
+    unsafe {
+        quantize_symmetric_packed_kernel::launch_unchecked(
+            client,
+            cube_count,
+            cube_dim,
+            address_type,
+            linear_view(client, &input.as_ref(), line_size),
+            // scale is computed based on input float dtype, but stored based on qparams precision
+            scales_view(client, output, scale, 1, scheme),
+            InputScalar::new(range_min, dtype_input),
+            InputScalar::new(range_max, dtype_input),
+            linear_view(client, output, 1),
+            scales_view(client, output, out_scale, 1, scheme),
+            scales_layout(client, output, scale, 1, scheme),
+            *scheme,
+            [dtype_input.into(), dtype_param.into()],
+        )
     }
 }
