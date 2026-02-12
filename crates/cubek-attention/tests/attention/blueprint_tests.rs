@@ -1,5 +1,6 @@
 use crate::attention::launcher::test_launch;
 use crate::attention::tiling_scheme_ops::*;
+use cubecl::ir::AddressType;
 use cubecl::{Runtime, TestRuntime};
 use cubek_attention::definition::{
     AccumulatorPrecision, AttentionDims, AttentionOptions, AttentionPartitionSize,
@@ -39,6 +40,7 @@ fn one_tile_simple() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
 
     let launch_settings = DeviceSettings::new(&client, &problem);
@@ -92,6 +94,7 @@ fn one_partition_several_planes() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
 
     let launch_settings = DeviceSettings::new(&client, &problem);
@@ -147,6 +150,7 @@ fn problem_smaller_than_one_tile_seq_q_seq_kv_val_dim() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -195,6 +199,7 @@ fn head_dim_oob() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -242,6 +247,7 @@ fn two_rows_in_array_tile() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -290,6 +296,7 @@ fn one_tile_seqq16() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -338,6 +345,7 @@ fn one_tile_seqq4() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -385,6 +393,7 @@ fn seqq2() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -432,6 +441,7 @@ fn hd2() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -479,6 +489,7 @@ fn kv2() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -526,6 +537,7 @@ fn vd2() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -573,6 +585,7 @@ fn hd2_vd2() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -620,6 +633,7 @@ fn all2() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -668,6 +682,7 @@ fn global_iterations_2() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -716,6 +731,7 @@ fn global_iterations_2_kv2() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -764,6 +780,7 @@ fn partition_kv1_global1_with_oob() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -812,6 +829,7 @@ fn partition_seqq2_global2_kv2_global2() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -859,6 +877,7 @@ fn partition_many_planes() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -907,6 +926,7 @@ fn partition_kv1_global3_with_oob() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -954,6 +974,7 @@ fn partition_oob_in_q_with_batches() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1001,6 +1022,7 @@ fn partition_kv2_with_oob() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1048,6 +1070,7 @@ fn partition_kv2_causal() {
             causal: true,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1095,6 +1118,7 @@ fn partition_kv2_masked() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1142,6 +1166,7 @@ fn stage2() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1189,6 +1214,7 @@ fn stage4() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1238,6 +1264,7 @@ fn stage2_problem4() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1285,6 +1312,7 @@ fn reuse_key_value() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1332,6 +1360,7 @@ fn double_row_wise() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1379,6 +1408,7 @@ fn one_tile_masked() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1426,6 +1456,7 @@ fn one_tile_causal() {
             causal: true,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1473,6 +1504,7 @@ fn one_tile_masked_causal() {
             causal: true,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1521,6 +1553,7 @@ fn masked_oob() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1569,6 +1602,7 @@ fn masked_larger() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1616,6 +1650,7 @@ fn num_heads_2() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1663,6 +1698,7 @@ fn batch_2() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1710,6 +1746,7 @@ fn batch_2_seqq2() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1757,6 +1794,7 @@ fn num_heads_2_batch_2() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1804,6 +1842,7 @@ fn num_heads_2_masked() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1856,6 +1895,7 @@ fn huge_problem() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1906,6 +1946,7 @@ fn causal_several_heads() {
             causal: true,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {

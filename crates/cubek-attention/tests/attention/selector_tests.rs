@@ -17,6 +17,7 @@ fn small_problem_selector() {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
 
     let strategy = inferred_strategy();
