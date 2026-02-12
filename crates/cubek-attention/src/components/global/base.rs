@@ -1,5 +1,5 @@
-use cubecl;
 use cubecl::prelude::*;
+use cubecl::{self, ir::DeviceProperties};
 
 use crate::{
     components::global::simple::AttentionWriter,
@@ -25,6 +25,7 @@ pub trait GlobalAttentionFamily: Send + Sync + 'static {
     ///
     /// This function may return an error if the configuration cannot be supported.
     fn expand_config(
+        device_props: &DeviceProperties,
         blueprint: &AttentionBlueprint,
         dtypes: &AttentionElems,
     ) -> Result<Self::Config, AttentionSetupError>;

@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
 
+use cubecl::ir::DeviceProperties;
 use cubek_matmul::{
     components::{
         global::{
@@ -42,10 +43,11 @@ impl<
     type Config = SimpleGlobalAttentionConfig<SA::Config>;
 
     fn expand_config(
+        device_props: &DeviceProperties,
         blueprint: &AttentionBlueprint,
         dtypes: &AttentionElems,
     ) -> Result<Self::Config, AttentionSetupError> {
-        let stage_config = SA::expand_config(blueprint, dtypes)?;
+        let stage_config = SA::expand_config(device_props, blueprint, dtypes)?;
 
         let precompute_job = LoadingPrecomputeStrategy::Never.into();
         let plane_dim = stage_config.plane_dim();

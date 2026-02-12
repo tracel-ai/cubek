@@ -1,4 +1,5 @@
 use cubecl;
+use cubecl::ir::DeviceProperties;
 use cubecl::prelude::*;
 use cubek_matmul::components::CubeDimResource;
 use cubek_matmul::components::tile::StridedTile;
@@ -8,7 +9,7 @@ use crate::components::tile::{
 };
 use crate::definition::attention_types::{ACC, SM};
 use crate::definition::{
-    AttentionBlueprint, AttentionPrecision, AttentionSetupError, AttentionTileSize,
+    AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError, AttentionTileSize,
     InvalidConfigError,
 };
 
@@ -116,7 +117,11 @@ pub trait TileAttentionFamily: Send + Sync + 'static {
     /// Constructs the configuration based on the algorithm's blueprint.
     ///
     /// This function may return an error if the configuration cannot be supported.
-    fn expand_config(blueprint: &AttentionBlueprint) -> Result<Self::Config, AttentionSetupError>;
+    fn expand_config(
+        device_props: &DeviceProperties,
+        blueprint: &AttentionBlueprint,
+        dtypes: &AttentionElems,
+    ) -> Result<Self::Config, AttentionSetupError>;
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]

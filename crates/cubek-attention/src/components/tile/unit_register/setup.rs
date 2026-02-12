@@ -1,10 +1,11 @@
+use cubecl::ir::DeviceProperties;
 use cubek_matmul::components::CubeDimResource;
 
 use crate::components::tile::TileAttentionFamily;
 use crate::components::tile::unit_register::UnitRegisterTileAttention;
 use crate::components::tile::{SharedTileAttentionConfig, TileAttentionConfig};
 use crate::definition::{
-    AttentionBlueprint, AttentionPrecision, AttentionSetupError, AttentionTileSize,
+    AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError, AttentionTileSize,
     InvalidConfigError,
 };
 
@@ -52,7 +53,11 @@ impl TileAttentionFamily for UnitRegisterTileAttention {
         Ok(CubeDimResource::Units(1))
     }
 
-    fn expand_config(blueprint: &AttentionBlueprint) -> Result<Self::Config, AttentionSetupError> {
+    fn expand_config(
+        _device_props: &DeviceProperties,
+        blueprint: &AttentionBlueprint,
+        _dtypes: &AttentionElems,
+    ) -> Result<Self::Config, AttentionSetupError> {
         Ok(UnitTileAttentionConfig {
             shared: SharedTileAttentionConfig {
                 plane_dim: blueprint.plane_dim,

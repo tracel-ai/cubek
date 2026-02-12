@@ -1,6 +1,9 @@
 use std::marker::PhantomData;
 
-use cubecl::{ir::AddressType, server::LaunchError};
+use cubecl::{
+    ir::{AddressType, DeviceProperties},
+    server::LaunchError,
+};
 
 use crate::{
     components::{
@@ -54,10 +57,11 @@ impl<GA: GlobalAttentionFamily> BatchAttentionFamily for SimpleBatchAttentionFam
     }
 
     fn expand_config(
+        device_props: &DeviceProperties,
         blueprint: AttentionBlueprint,
         dtypes: &AttentionElems,
     ) -> Result<Self::Config, AttentionSetupError> {
-        let global_config = GA::expand_config(&blueprint, dtypes)?;
+        let global_config = GA::expand_config(device_props, &blueprint, dtypes)?;
 
         Ok(SimpleBatchConfig::new(global_config))
     }

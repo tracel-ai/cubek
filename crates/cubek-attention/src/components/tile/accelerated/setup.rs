@@ -1,3 +1,4 @@
+use cubecl::ir::DeviceProperties;
 use cubecl::ir::LineSize;
 use cubek_matmul::components::CubeDimResource;
 
@@ -6,11 +7,14 @@ use crate::components::tile::TileAttentionConfig;
 use crate::components::tile::TileAttentionFamily;
 use crate::components::tile::accelerated::BlackboxAcceleratedTileAttention;
 use crate::components::tile::accelerated::local_tile::InnerLayout;
+use crate::definition::AttentionAvailabilityError;
 use crate::definition::AttentionBlueprint;
+use crate::definition::AttentionElems;
 use crate::definition::AttentionPrecision;
 use crate::definition::AttentionSetupError;
 use crate::definition::AttentionTileSize;
 use crate::definition::InvalidConfigError;
+use cubecl::features::MmaConfig;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct BlackboxAcceleratedAttentionMatmulConfig {
@@ -60,8 +64,13 @@ impl TileAttentionFamily for BlackboxAcceleratedTileAttention {
         Ok(CubeDimResource::Planes(1))
     }
 
-    fn expand_config(blueprint: &AttentionBlueprint) -> Result<Self::Config, AttentionSetupError> {
+    fn expand_config(
+        device_props: &DeviceProperties,
+        blueprint: &AttentionBlueprint,
+        dtypes: &AttentionElems,
+    ) -> Result<Self::Config, AttentionSetupError> {
         validate(
+            device_props,
             BlackboxAcceleratedAttentionMatmulConfig {
                 shared: SharedTileAttentionConfig {
                     plane_dim: blueprint.plane_dim,
@@ -78,15 +87,51 @@ impl TileAttentionFamily for BlackboxAcceleratedTileAttention {
             },
             blueprint.reuse_key_value,
             blueprint.line_sizes.mask,
+            dtypes,
         )
     }
 }
 
 fn validate(
+    device_props: &DeviceProperties,
     config: BlackboxAcceleratedAttentionMatmulConfig,
     reuse_key_value: bool,
     line_sizes_mask: LineSize,
+    dtypes: &AttentionElems,
 ) -> Result<BlackboxAcceleratedAttentionMatmulConfig, AttentionSetupError> {
+    if !device_props.features.cmma.contains(&MmaConfig {
+        a_type: dtypes.query_tile,
+        b_type: dtypes.key_value_tile,
+        cd_type: dtypes.softmax,
+        m: config.attention_tile_size().seq_q,
+        k: config.attention_tile_size().head_dim,
+        n: config.attention_tile_size().seq_kv,
+    }) {
+        return Err(AttentionSetupError::Unavailable(
+            AttentionAvailabilityError::CmmaInstructionUnavailable {
+                lhs: dtypes.query_tile,
+                rhs: dtypes.key_value_tile,
+                output: dtypes.softmax,
+            },
+        ));
+    }
+    if !device_props.features.cmma.contains(&MmaConfig {
+        a_type: dtypes.softmax,
+        b_type: dtypes.key_value_tile,
+        cd_type: dtypes.accumulator,
+        m: config.attention_tile_size().seq_q,
+        k: config.attention_tile_size().seq_kv,
+        n: config.attention_tile_size().val_dim,
+    }) {
+        return Err(AttentionSetupError::Unavailable(
+            AttentionAvailabilityError::CmmaInstructionUnavailable {
+                lhs: dtypes.softmax,
+                rhs: dtypes.key_value_tile,
+                output: dtypes.accumulator,
+            },
+        ));
+    }
+
     if line_sizes_mask > 1 {
         return Err(AttentionSetupError::InvalidConfig(Box::new(
             "Line size mask > 1 not supported yet on accelerated tile attention",

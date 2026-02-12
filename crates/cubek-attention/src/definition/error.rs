@@ -1,4 +1,4 @@
-use cubecl::{CubeCount, CubeDim, LineSizeError, server::LaunchError};
+use cubecl::{CubeCount, CubeDim, LineSizeError, ir::StorageType, server::LaunchError};
 use std::fmt::{Debug, Display};
 
 /// Errors that can occur during the setup phase of an attention operation.
@@ -23,6 +23,13 @@ pub enum AttentionAvailabilityError {
 
     /// The requested cube dimensions are too large for the current runtime or hardware.
     CubeDimTooBig(CubeDim),
+
+    /// The required CMMA instruction is not supported for the given element types and tile size.
+    CmmaInstructionUnavailable {
+        lhs: StorageType,
+        rhs: StorageType,
+        output: StorageType,
+    },
 }
 
 impl From<AttentionAvailabilityError> for AttentionSetupError {
@@ -86,6 +93,12 @@ impl Debug for AttentionAvailabilityError {
             }
             AttentionAvailabilityError::CubeDimTooBig(dim) => {
                 writeln!(f, "Cube dim too big {dim:?}")
+            }
+            AttentionAvailabilityError::CmmaInstructionUnavailable { lhs, rhs, output } => {
+                writeln!(
+                    f,
+                    "Cmma on inputs lhs {lhs:?} rhs {rhs:?} and output {output:?} not supported.",
+                )
             }
         }
     }
