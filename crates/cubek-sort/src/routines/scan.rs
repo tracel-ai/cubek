@@ -1,4 +1,4 @@
-use crate::components::config::NUM_BUCKETS;
+use crate::routines::NUM_BUCKETS;
 use cubecl::prelude::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -13,7 +13,7 @@ impl ScanBlueprint {
 }
 
 /// Phase A: Compute digit totals by summing histogram values across all blocks.
-/// Launches 256 blocks (one per digit), each with SCAN_DIM threads that
+/// Launches 256 cubes (one per digit), each with SCAN_DIM threads that
 /// cooperatively sum all histogram blocks for that digit.
 #[cube(launch_unchecked)]
 pub fn scan_sum_kernel(
@@ -31,7 +31,6 @@ pub fn scan_sum_kernel(
     let warp_id = PLANE_POS;
 
     // Initialize shared memory to avoid reading uninitialized values
-    // when num_warps > PLANE_DIM (e.g., Intel with PLANE_DIM=8)
     if tid < warp_sums.len() as u32 {
         warp_sums[tid as usize] = 0u32;
         shared_sum[tid as usize] = 0u32;

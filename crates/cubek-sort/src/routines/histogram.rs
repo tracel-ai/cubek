@@ -1,6 +1,9 @@
+use crate::{
+    key::{Radix, SortKey},
+    routines::{NUM_BUCKETS, RADIX_BITS},
+};
+
 use super::warp_utils::{compute_peer_mask, count_set_bits, find_first_set_bit};
-use crate::components::config::{NUM_BUCKETS, RADIX_BITS};
-use crate::components::key::{Radix, SortKey};
 use cubecl::prelude::*;
 use cubecl_std::tensor::layout::linear::LinearView;
 
@@ -33,11 +36,6 @@ pub fn histogram_kernel<K: SortKey<Radix = R>, R: Radix>(
     let items_per_block = CUBE_DIM * blueprint.items_per_thread;
     let block_start = block_id * items_per_block;
 
-    // Compute shift amount and digit mask using cast
-    let shift_u32 = pass * RADIX_BITS as u32;
-    let shift = R::cast_from(shift_u32);
-    let digit_mask = R::cast_from(0xFFu32);
-
     // Initialize shared histogram to zero
     #[allow(clippy::manual_div_ceil)]
     let buckets_per_thread = (NUM_BUCKETS + CUBE_DIM as usize - 1) / CUBE_DIM as usize;
@@ -64,7 +62,9 @@ pub fn histogram_kernel<K: SortKey<Radix = R>, R: Radix>(
         // Clamp index to avoid out-of-bounds read (select doesn't short-circuit on GPU)
         let safe_idx = select(valid, idx, 0u32);
         let radix_key = select(valid, K::to_radix(keys[safe_idx as usize]), zero_radix);
-        let digit_radix = (radix_key >> shift) & digit_mask;
+
+        let shift_u32 = pass * RADIX_BITS as u32;
+        let digit_radix = (radix_key >> R::cast_from(shift_u32)) & R::cast_from(0xFFu32);
         let digit = u32::cast_from(digit_radix);
 
         let peer_mask = compute_peer_mask(digit, valid);

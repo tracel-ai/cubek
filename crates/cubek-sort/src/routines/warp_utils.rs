@@ -1,4 +1,4 @@
-use crate::components::config::RADIX_BITS;
+use crate::routines::RADIX_BITS;
 use cubecl::prelude::*;
 
 /// Compute a bitmask of peers in the same warp that have the same digit and are valid.

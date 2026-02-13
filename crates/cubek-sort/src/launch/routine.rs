@@ -1,28 +1,73 @@
-use crate::components::config::{NUM_BUCKETS, SortStrategy};
-use crate::components::key::{Radix, SortKey};
 use crate::error::SortError;
+use crate::key::{Radix, SortKey};
 use crate::routines::histogram::HistogramBlueprint;
 use crate::routines::scan::ScanBlueprint;
 use crate::routines::scatter::ValuesMode;
-use crate::routines::{histogram, scan, scatter};
+use crate::routines::{NUM_BUCKETS, histogram, scan, scatter};
 use crate::{SortOrder, SortOutput, SortValues};
 use cubecl::prelude::*;
 use cubecl::server::Handle;
 use cubecl_std::tensor::layout::linear::{LinearLayout, LinearLayoutArgs, LinearViewLaunch};
 
+#[derive(Clone, Debug)]
+pub struct SortStrategy {
+    pub items_per_thread: u32,
+    pub threads_per_block: u32,
+}
+
+impl Default for SortStrategy {
+    fn default() -> Self {
+        // 512 threads × 16 items = 8192 items per block
+        // Larger blocks reduce scan overhead at the cost of occupancy
+        Self {
+            items_per_thread: 12,
+            threads_per_block: 512,
+        }
+    }
+}
+
+impl SortStrategy {
+    pub fn items_per_block(&self) -> u32 {
+        self.items_per_thread * self.threads_per_block
+    }
+
+    pub fn num_blocks(&self, num_items: usize) -> u32 {
+        num_items.div_ceil(self.items_per_block() as usize) as u32
+    }
+}
+
+/// Convert an element size to a StorageType using unsigned integers.
+/// We use unsigned ints as the "carrier" type since we just need to copy bytes.
+fn value_dtype_from_size(elem_size: usize) -> StorageType {
+    match elem_size {
+        1 => u8::as_type_native().unwrap(),
+        2 => u16::as_type_native().unwrap(),
+        4 => u32::as_type_native().unwrap(),
+        8 => u64::as_type_native().unwrap(),
+        _ => panic!("Unsupported value element size: {elem_size} bytes (supported: 1, 2, 4, 8)"),
+    }
+}
+
 pub fn sort<'a, R: Runtime, K: SortKey>(
     client: &ComputeClient<R>,
     keys_in: TensorHandleRef<'a, R>,
     values: SortValues<'a, R>,
-    strategy: SortStrategy,
     order: SortOrder,
 ) -> Result<SortOutput, SortError>
 where
     K::Radix: SortKey<Radix = K::Radix>,
 {
+    let strategy = SortStrategy::default();
+
     let num_keys = keys_in.shape[0];
     let key_size = core::mem::size_of::<K>();
-    let value_size = core::mem::size_of::<u32>();
+
+    // Get value element size from the tensor, or use u32 size for indices/none
+    let value_size = match &values {
+        SortValues::None => core::mem::size_of::<u32>(),
+        SortValues::Tensor(t) => t.elem_size,
+        SortValues::Indices => core::mem::size_of::<u32>(),
+    };
 
     // Allocate output buffers
     let keys_out = client.empty(keys_in.shape[0] * key_size);
@@ -37,6 +82,7 @@ where
         &keys_out,
         &values,
         values_out.as_ref(),
+        value_size,
         strategy,
         order,
     )?;
@@ -54,6 +100,7 @@ fn sort_impl<'a, R: Runtime, K: SortKey>(
     keys_out: &Handle,
     values: &SortValues<'a, R>,
     values_out: Option<&Handle>,
+    value_size: usize,
     strategy: SortStrategy,
     order: SortOrder,
 ) -> Result<(), SortError>
@@ -68,7 +115,7 @@ where
     let num_passes = core::mem::size_of::<K>() as u32;
 
     let plane_dim = client.properties().hardware.plane_size_min;
-    let num_planes = strategy.num_planes(plane_dim);
+    let num_planes = strategy.threads_per_block.div_ceil(plane_dim);
 
     // Determine values mode for first pass vs subsequent passes
     let (first_pass_mode, later_pass_mode) = match values {
@@ -80,12 +127,12 @@ where
     // Temp buffer for radix keys
     let temp_keys = client.empty(num_keys * radix_size);
     let temp_values = if first_pass_mode != ValuesMode::None {
-        Some(client.empty(num_keys * radix_size))
+        Some(client.empty(num_keys * value_size))
     } else {
         None
     };
 
-    let histogram_size = (num_blocks as usize) * NUM_BUCKETS * radix_size;
+    let histogram_size = (num_blocks as usize) * NUM_BUCKETS * core::mem::size_of::<u32>();
     let histograms = client.empty(histogram_size);
     let offsets = client.empty(histogram_size);
 
@@ -179,7 +226,7 @@ where
         }
 
         let scan_blueprint = ScanBlueprint { scan_dim: 256 };
-        launch_scan_cooperative::<R>(client, &histograms, &offsets, num_blocks, scan_blueprint)?;
+        launch_scan::<R>(client, &histograms, &offsets, num_blocks, scan_blueprint)?;
 
         let reverse_output = order.is_descending() && is_last;
         let values_mode = if is_first {
@@ -206,6 +253,7 @@ where
                 values_mode,
                 num_planes,
                 reverse_output,
+                value_size,
             )?;
         } else if is_first {
             launch_scatter::<R, K, K::Radix, K::Radix>(
@@ -225,6 +273,7 @@ where
                 values_mode,
                 num_planes,
                 reverse_output,
+                value_size,
             )?;
         } else if is_last {
             launch_scatter::<R, K::Radix, K, K::Radix>(
@@ -244,6 +293,7 @@ where
                 values_mode,
                 num_planes,
                 reverse_output,
+                value_size,
             )?;
         } else {
             launch_scatter::<R, K::Radix, K::Radix, K::Radix>(
@@ -263,6 +313,7 @@ where
                 values_mode,
                 num_planes,
                 reverse_output,
+                value_size,
             )?;
         }
     }
@@ -316,7 +367,7 @@ fn linear_view<'a, E: CubePrimitive, R: Runtime>(
     LinearViewLaunch::new::<LinearLayout>(buffer, layout)
 }
 
-fn launch_scan_cooperative<R: Runtime>(
+fn launch_scan<R: Runtime>(
     client: &ComputeClient<R>,
     histograms: &Handle,
     offsets: &Handle,
@@ -409,18 +460,34 @@ fn launch_scatter<R: Runtime, KIn: SortKey<Radix = Rx>, KOut: SortKey<Radix = Rx
     values_mode: ValuesMode,
     num_planes: u32,
     reverse_output: bool,
+    value_size: usize,
 ) -> Result<(), SortError> {
     let offsets_shape = [num_blocks as usize * NUM_BUCKETS];
     let offsets_strides = [1];
 
+    // Convert size to StorageType for kernel dispatch
+    let value_dtype = value_dtype_from_size(value_size);
+
     let keys_in_view = linear_view::<KIn, R>(client, keys_in, keys_in_shape, keys_in_strides);
-    let values_in_view =
-        linear_view::<u32, R>(client, values_in, values_in_shape, values_in_strides);
+    let values_in_view = linear_view_dynamic::<R>(
+        client,
+        values_in,
+        values_in_shape,
+        values_in_strides,
+        value_size,
+    );
 
     let keys_out_tensor =
         unsafe { TensorArg::from_raw_parts::<KOut>(keys_out, keys_in_shape, keys_in_strides, 1) };
-    let values_out_tensor =
-        unsafe { TensorArg::from_raw_parts::<u32>(values_out, keys_in_shape, keys_in_strides, 1) };
+    let values_out_tensor = unsafe {
+        TensorArg::from_raw_parts_and_size(
+            values_out,
+            keys_in_shape,
+            keys_in_strides,
+            1,
+            value_size,
+        )
+    };
     let offsets_tensor =
         unsafe { TensorArg::from_raw_parts::<u32>(offsets, &offsets_shape, &offsets_strides, 1) };
 
@@ -440,8 +507,21 @@ fn launch_scatter<R: Runtime, KIn: SortKey<Radix = Rx>, KOut: SortKey<Radix = Rx
             values_mode,
             num_planes,
             strategy.items_per_block(),
+            value_dtype,
         )
         .map_err(SortError::Launch)?;
     }
     Ok(())
+}
+
+fn linear_view_dynamic<'a, R: Runtime>(
+    client: &ComputeClient<R>,
+    handle: &'a Handle,
+    shape: &[usize],
+    strides: &[usize],
+    elem_size: usize,
+) -> LinearViewLaunch<'a, R> {
+    let layout = LinearLayoutArgs::from_shape_strides(client, shape, strides, 1);
+    let buffer = unsafe { ArrayArg::from_raw_parts_and_size(handle, shape[0], 1, elem_size) };
+    LinearViewLaunch::new::<LinearLayout>(buffer, layout)
 }

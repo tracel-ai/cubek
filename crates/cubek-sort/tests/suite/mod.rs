@@ -1,7 +1,8 @@
 use cubecl::TestRuntime;
 use cubecl::ir::{ElemType, FloatKind, IntKind, UIntKind};
 use cubecl::prelude::*;
-use cubek_sort::{SortKey, SortOrder, SortValues, sort};
+use cubek_sort::key::SortKey;
+use cubek_sort::{SortOrder, SortValues, sort};
 use half::{bf16, f16};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 
@@ -382,6 +383,7 @@ fn test_argsort_implicit_indices() {
         TensorHandleRef::from_raw_parts(&input_handle, &strides, &shape, size_of::<u32>())
     };
 
+    // For indices mode, V should be u32
     let sort_output = sort::<TestRuntime, u32>(&client, input_ref, SortValues::Indices, Ascending)
         .expect("Sort failed");
 
@@ -398,7 +400,6 @@ fn test_argsort_implicit_indices() {
     assert_eq!(indices, vec![1, 2, 0, 4, 3]);
 }
 
-/// Test argsort with larger random data.
 #[test]
 fn test_argsort_random() {
     let client = TestRuntime::client(&Default::default());
@@ -413,6 +414,7 @@ fn test_argsort_random() {
         TensorHandleRef::from_raw_parts(&input_handle, &strides, &shape, size_of::<u32>())
     };
 
+    // For indices mode, V should be u32
     let sort_output = sort::<TestRuntime, u32>(&client, input_ref, SortValues::Indices, Ascending)
         .expect("Sort failed");
 
@@ -442,7 +444,108 @@ fn test_argsort_random() {
     }
 }
 
-/// Test sorting 150M elements to catch out-of-bounds memory access issues.
+#[test]
+fn test_sort_with_f64_values() {
+    let client = TestRuntime::client(&Default::default());
+
+    if !is_supported(&client, &[F64, U64]) {
+        return;
+    }
+
+    let keys: Vec<u32> = vec![30, 10, 20, 50, 40];
+    let values: Vec<f64> = vec![3.0, 1.0, 2.0, 5.0, 4.0];
+
+    let keys_handle = client.create_from_slice(u32::as_bytes(&keys));
+    let values_handle = client.create_from_slice(f64::as_bytes(&values));
+
+    let shape = [keys.len()];
+    let strides = [1];
+
+    let keys_ref = unsafe {
+        TensorHandleRef::from_raw_parts(&keys_handle, &strides, &shape, size_of::<u32>())
+    };
+    let values_ref = unsafe {
+        TensorHandleRef::from_raw_parts(&values_handle, &strides, &shape, size_of::<f64>())
+    };
+
+    // Specify f64 as the value type
+    let sort_output =
+        sort::<TestRuntime, u32>(&client, keys_ref, SortValues::Tensor(values_ref), Ascending)
+            .expect("Sort failed");
+
+    let keys_bytes = client.read_one(sort_output.keys);
+    let sorted_keys = u32::from_bytes(&keys_bytes);
+
+    let values_handle = sort_output.values.expect("Should have values");
+    let values_bytes = client.read_one(values_handle);
+    let sorted_values = f64::from_bytes(&values_bytes);
+
+    // Expected: sorted keys = [10, 20, 30, 40, 50]
+    // Expected: sorted values = [1.0, 2.0, 3.0, 4.0, 5.0] (permuted with keys)
+    assert_eq!(sorted_keys, vec![10, 20, 30, 40, 50]);
+    assert_eq!(sorted_values, vec![1.0, 2.0, 3.0, 4.0, 5.0]);
+}
+
+/// Test key-value sorting with f16 values (2 bytes) to ensure values work with smaller types.
+#[test]
+fn test_sort_with_f16_values() {
+    let client = TestRuntime::client(&Default::default());
+
+    if !is_supported(&client, &[F16, U16]) {
+        return;
+    }
+
+    // Keys to sort
+    let keys: Vec<u32> = vec![30, 10, 20, 50, 40];
+    // Values that should be permuted with keys (f16 = 2 bytes)
+    let values: Vec<f16> = vec![
+        f16::from_f32(3.0),
+        f16::from_f32(1.0),
+        f16::from_f32(2.0),
+        f16::from_f32(5.0),
+        f16::from_f32(4.0),
+    ];
+
+    let keys_handle = client.create_from_slice(u32::as_bytes(&keys));
+    let values_handle = client.create_from_slice(f16::as_bytes(&values));
+
+    let shape = [keys.len()];
+    let strides = [1];
+
+    let keys_ref = unsafe {
+        TensorHandleRef::from_raw_parts(&keys_handle, &strides, &shape, size_of::<u32>())
+    };
+    let values_ref = unsafe {
+        TensorHandleRef::from_raw_parts(&values_handle, &strides, &shape, size_of::<f16>())
+    };
+
+    // Specify f16 as the value type
+    let sort_output =
+        sort::<TestRuntime, u32>(&client, keys_ref, SortValues::Tensor(values_ref), Ascending)
+            .expect("Sort failed");
+
+    let keys_bytes = client.read_one(sort_output.keys);
+    let sorted_keys = u32::from_bytes(&keys_bytes);
+
+    let values_handle = sort_output.values.expect("Should have values");
+    let values_bytes = client.read_one(values_handle);
+    let sorted_values = f16::from_bytes(&values_bytes);
+
+    // Expected: sorted keys = [10, 20, 30, 40, 50]
+    // Expected: sorted values = [1.0, 2.0, 3.0, 4.0, 5.0] (permuted with keys)
+    assert_eq!(sorted_keys, vec![10, 20, 30, 40, 50]);
+    assert_eq!(
+        sorted_values,
+        vec![
+            f16::from_f32(1.0),
+            f16::from_f32(2.0),
+            f16::from_f32(3.0),
+            f16::from_f32(4.0),
+            f16::from_f32(5.0)
+        ]
+    );
+}
+
 #[test]
 fn test_large_scale_u32() {
     const SIZE: usize = 150 * 1024 * 1024;

@@ -1,14 +1,12 @@
-//! CubeK Sort: Hardware-agnostic GPU radix sorting using CubeCL.
-
-pub mod components;
+pub mod key;
 pub mod launch;
 pub mod routines;
 
 mod error;
 
-pub use components::config::SortStrategy;
-pub use components::key::{Radix, SortKey};
 pub use error::SortError;
+
+pub use launch::sort;
 
 use cubecl::prelude::*;
 use cubecl::server::Handle;
@@ -52,30 +50,4 @@ pub struct SortOutput {
     pub keys: Handle,
     /// Sorted values. `None` if `SortValues::None` was used.
     pub values: Option<Handle>,
-}
-
-/// Sort keys with optional values.
-///
-/// Allocates output buffers internally and returns them in `SortOutput`.
-///
-/// # Arguments
-/// * `keys_in` - Input keys to sort
-/// * `values` - How to handle values: `None`, `Tensor`, or `Indices`
-/// * `order` - Ascending or Descending
-pub fn sort<'a, R: Runtime, K: SortKey>(
-    client: &ComputeClient<R>,
-    keys_in: TensorHandleRef<'a, R>,
-    values: SortValues<'a, R>,
-    order: SortOrder,
-) -> Result<SortOutput, SortError>
-where
-    K::Radix: SortKey<Radix = K::Radix>,
-{
-    let has_values = !matches!(values, SortValues::None);
-    let strategy = if has_values {
-        SortStrategy::for_pairs(keys_in.shape[0])
-    } else {
-        SortStrategy::for_keys(keys_in.shape[0])
-    };
-    launch::sort::<R, K>(client, keys_in, values, strategy, order)
 }

@@ -1,6 +1,9 @@
+use crate::{
+    key::{Radix, SortKey},
+    routines::{NUM_BUCKETS, RADIX_BITS},
+};
+
 use super::warp_utils::{compute_peer_mask, count_lower_peers, count_set_bits, find_first_set_bit};
-use crate::components::config::{NUM_BUCKETS, RADIX_BITS};
-use crate::components::key::{Radix, SortKey};
 use cubecl::prelude::*;
 use cubecl_std::tensor::layout::linear::LinearView;
 
@@ -18,11 +21,11 @@ pub enum ValuesMode {
 }
 
 #[cube(launch_unchecked)]
-pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radix>(
+pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radix, V: Numeric>(
     keys_in: &LinearView<KIn>,
     keys_out: &mut Tensor<KOut>,
-    values_in: &LinearView<u32>,
-    values_out: &mut Tensor<u32>,
+    values_in: &LinearView<V>,
+    values_out: &mut Tensor<V>,
     block_offsets: &Tensor<u32>,
     pass: u32,
     reverse_output_flag: u32,
@@ -30,6 +33,7 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
     #[comptime] values_mode: ValuesMode,
     #[comptime] num_planes: u32,
     #[comptime] items_per_block: u32,
+    #[define(V)] _value_dtype: StorageType,
 ) {
     let reverse_output = reverse_output_flag != 0;
     // Plane histograms for warp-level ranking.
@@ -38,7 +42,7 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
     let mut shared_keys = SharedMemory::<R>::new(items_per_block as usize);
     // Shared memory buffer for values.
     let has_values = values_mode != ValuesMode::None;
-    let mut shared_values = SharedMemory::<u32>::new(if has_values {
+    let mut shared_values = SharedMemory::<V>::new(if has_values {
         items_per_block as usize
     } else {
         1
@@ -77,7 +81,7 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
 
     // Register arrays for per-thread data.
     let mut keys = Array::<R>::new(items_per_thread as usize);
-    let mut values = Array::<u32>::new(items_per_thread as usize);
+    let mut values = Array::<V>::new(items_per_thread as usize);
     let mut local_offsets = Array::<u32>::new(items_per_thread as usize);
 
     // Compute shift amount and digit mask using cast
@@ -120,11 +124,12 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
         keys[i as usize] = key;
 
         if values_mode == ValuesMode::Tensor {
-            values[i as usize] = select(valid, values_in[safe_idx as usize], 0u32);
+            values[i as usize] = select(valid, values_in[safe_idx as usize], V::cast_from(0u32));
         } else if values_mode == ValuesMode::Indices {
-            values[i as usize] = select(valid, global_idx, 0u32);
+            values[i as usize] = select(valid, V::cast_from(global_idx), V::cast_from(0u32));
         }
 
+        // TODO: Make into a re-usable function.
         let digit_radix = (key >> shift) & digit_mask;
         let digit = u32::cast_from(digit_radix);
 

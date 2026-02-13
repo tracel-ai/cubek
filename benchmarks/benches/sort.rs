@@ -6,7 +6,7 @@ use cubecl::{
     prelude::*,
     server::Handle,
 };
-use cubek::sort::{SortKey, SortOrder, SortValues, sort};
+use cubek::sort::{SortOrder, SortValues, key::SortKey, sort};
 use std::marker::PhantomData;
 use std::time::Duration;
 
