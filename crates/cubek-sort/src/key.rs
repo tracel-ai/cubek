@@ -1,6 +1,8 @@
 use cubecl::prelude::*;
 use half::{bf16, f16};
 
+use crate::routines::RADIX_BITS;
+
 /// Trait for unsigned integer types that can be used as radix representations.
 pub trait Radix: Int + Numeric + CubePrimitive + Sized + Send + Sync + 'static {}
 
@@ -18,6 +20,14 @@ pub trait SortKey: CubePrimitive {
     type Radix: Radix;
     fn to_radix(value: Self) -> Self::Radix;
     fn from_radix(value: Self::Radix) -> Self;
+}
+
+#[cube]
+pub fn to_digit<R: Radix>(radix: R, pass: u32) -> u32 {
+    let shift_u32 = pass * RADIX_BITS as u32;
+    let shift = R::cast_from(shift_u32);
+    let digit_mask = R::cast_from(0xFFu32);
+    u32::cast_from((radix >> shift) & digit_mask)
 }
 
 #[cube]

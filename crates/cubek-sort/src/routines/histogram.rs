@@ -1,6 +1,6 @@
 use crate::{
-    key::{Radix, SortKey},
-    routines::{NUM_BUCKETS, RADIX_BITS},
+    key::{Radix, SortKey, to_digit},
+    routines::NUM_BUCKETS,
 };
 
 use super::warp_utils::{compute_peer_mask, count_set_bits, find_first_set_bit};
@@ -17,10 +17,6 @@ pub struct HistogramBlueprint {
 ///
 /// Each block processes `items_per_thread * threads_per_block` keys and produces
 /// a histogram of 256 digit counts.
-///
-/// Uses warp-level ballot operations to reduce atomic contention: only the
-/// leader thread (first thread with a given digit) performs the atomic add
-/// for all threads in its warp with the same digit.
 #[cube(launch_unchecked)]
 pub fn histogram_kernel<K: SortKey<Radix = R>, R: Radix>(
     keys: &LinearView<K>,
@@ -63,9 +59,7 @@ pub fn histogram_kernel<K: SortKey<Radix = R>, R: Radix>(
         let safe_idx = select(valid, idx, 0u32);
         let radix_key = select(valid, K::to_radix(keys[safe_idx as usize]), zero_radix);
 
-        let shift_u32 = pass * RADIX_BITS as u32;
-        let digit_radix = (radix_key >> R::cast_from(shift_u32)) & R::cast_from(0xFFu32);
-        let digit = u32::cast_from(digit_radix);
+        let digit = to_digit::<R>(radix_key, pass);
 
         let peer_mask = compute_peer_mask(digit, valid);
         let count = count_set_bits(peer_mask);

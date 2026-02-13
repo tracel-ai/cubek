@@ -22,7 +22,6 @@ pub fn scan_sum_kernel(
     num_hist_blocks: u32,
     #[comptime] blueprint: ScanBlueprint,
 ) {
-    let mut shared_sum = SharedMemory::<u32>::new(blueprint.scan_dim as usize);
     let mut warp_sums = SharedMemory::<u32>::new(blueprint.max_warps());
 
     let digit = CUBE_POS_X; // Which digit this block handles (0-255)
@@ -33,7 +32,6 @@ pub fn scan_sum_kernel(
     // Initialize shared memory to avoid reading uninitialized values
     if tid < warp_sums.len() as u32 {
         warp_sums[tid as usize] = 0u32;
-        shared_sum[tid as usize] = 0u32;
     }
     sync_cube();
 
@@ -55,19 +53,16 @@ pub fn scan_sum_kernel(
     }
     sync_cube();
 
-    // Reduce across warps (first warp does this)
+    // // Reduce across warps (first warp does this)
     #[allow(clippy::manual_div_ceil)]
     let num_warps = (blueprint.scan_dim + PLANE_DIM - 1) / PLANE_DIM;
-    if warp_id == 0 && lane_id < num_warps {
-        shared_sum[lane_id as usize] = warp_sums[lane_id as usize];
-    }
-    sync_cube();
 
     // Thread 0 sums all warp totals and writes result
+    // TODO: Could speed this up with subgroup operations perhaps?
     if tid == 0 {
         let mut total = 0u32;
         for w in 0..num_warps {
-            total += shared_sum[w as usize];
+            total += warp_sums[w as usize];
         }
         digit_totals[digit as usize] = total;
     }
@@ -164,7 +159,6 @@ pub fn scan_offsets(
         let block_idx = chunk * blueprint.scan_dim + tid;
         let hist_idx = block_idx * NUM_BUCKETS as u32 + digit;
         let my_value = histograms[hist_idx as usize];
-        g_scan[tid as usize] = my_value;
 
         // Intra-warp exclusive prefix
         let my_exclusive = plane_exclusive_sum(my_value);
@@ -218,8 +212,8 @@ pub fn scan_offsets(
     if remaining > 0 {
         let block_idx = partial_start + tid;
         let hist_idx = block_idx * NUM_BUCKETS as u32 + digit;
-        // Clamp index to avoid out-of-bounds read (select doesn't short-circuit on GPU)
 
+        // Clamp index to avoid out-of-bounds read.
         let my_value = if tid < remaining {
             histograms[hist_idx as usize]
         } else {

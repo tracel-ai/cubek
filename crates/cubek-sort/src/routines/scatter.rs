@@ -1,6 +1,6 @@
 use crate::{
-    key::{Radix, SortKey},
-    routines::{NUM_BUCKETS, RADIX_BITS},
+    key::{Radix, SortKey, to_digit},
+    routines::NUM_BUCKETS,
 };
 
 use super::warp_utils::{compute_peer_mask, count_lower_peers, count_set_bits, find_first_set_bit};
@@ -73,23 +73,10 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
         }
     }
 
-    // Initialize shared memory (important when PLANE_DIM < num_digit_warps)
-    if thread_id < NUM_BUCKETS_U32 {
-        digit_start[thread_id as usize] = 0u32;
-        digit_global[thread_id as usize] = 0u32;
-    }
-
     // Register arrays for per-thread data.
-    let mut keys = Array::<R>::new(items_per_thread as usize);
+    let mut radix_keys = Array::<R>::new(items_per_thread as usize);
     let mut values = Array::<V>::new(items_per_thread as usize);
     let mut local_offsets = Array::<u32>::new(items_per_thread as usize);
-
-    // Compute shift amount and digit mask using cast
-    let shift_u32 = pass * RADIX_BITS as u32;
-    let shift = R::cast_from(shift_u32);
-    let digit_mask = R::cast_from(0xFFu32);
-
-    // TODO: Support usize sorting.
     let num_keys = keys_in.shape() as u32;
 
     // Check if this entire plane is full (all items valid) - enables bounds check elimination
@@ -120,18 +107,21 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
 
         // Clamp index to avoid out-of-bounds read (select doesn't short-circuit on GPU)
         let safe_idx = select(valid, global_idx, 0u32);
-        let key = select(valid, KIn::to_radix(keys_in[safe_idx as usize]), max_radix);
-        keys[i as usize] = key;
+        let radix_key = select(valid, KIn::to_radix(keys_in[safe_idx as usize]), max_radix);
+        radix_keys[i as usize] = radix_key;
 
-        if values_mode == ValuesMode::Tensor {
-            values[i as usize] = select(valid, values_in[safe_idx as usize], V::cast_from(0u32));
-        } else if values_mode == ValuesMode::Indices {
-            values[i as usize] = select(valid, V::cast_from(global_idx), V::cast_from(0u32));
+        match values_mode {
+            ValuesMode::None => (),
+            ValuesMode::Tensor => {
+                values[i as usize] =
+                    select(valid, values_in[safe_idx as usize], V::cast_from(0u32));
+            }
+            ValuesMode::Indices => {
+                values[i as usize] = select(valid, V::cast_from(global_idx), V::cast_from(0u32));
+            }
         }
 
-        // TODO: Make into a re-usable function.
-        let digit_radix = (key >> shift) & digit_mask;
-        let digit = u32::cast_from(digit_radix);
+        let digit = to_digit::<R>(radix_key, pass);
 
         // Warp-level ranking with validity mask
         let peer_mask = compute_peer_mask(digit, valid);
@@ -143,10 +133,10 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
         if lane_id == leader {
             base = plane_hists[hist_idx].fetch_add(total);
         }
+
         // Clamp leader to valid lane range to avoid UB when peer_mask is empty
         // (find_first_set_bit returns PLANE_DIM when mask is 0)
-        let safe_leader = u32::min(leader, PLANE_DIM - 1);
-        base = plane_shuffle(base, safe_leader);
+        base = plane_shuffle(base, u32::min(leader, PLANE_DIM - 1));
         local_offsets[i as usize] = base + rank;
     }
     sync_cube();
@@ -224,9 +214,9 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
         let global_idx = sub_part_start + local_idx;
 
         if is_full_plane || global_idx < num_keys {
-            let key = keys[i as usize];
-            let digit_radix = (key >> shift) & digit_mask;
-            let digit = u32::cast_from(digit_radix);
+            let radix_key = radix_keys[i as usize];
+            let digit = to_digit::<R>(radix_key, pass);
+
             let offset_in_plane = local_offsets[i as usize];
 
             let hist_idx = plane_id as usize * NUM_BUCKETS + digit as usize;
@@ -236,7 +226,7 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
 
             // Bounds check: only write if position is within block
             if local_pos < items_per_block {
-                shared_keys[local_pos as usize] = key;
+                shared_keys[local_pos as usize] = radix_key;
                 if has_values {
                     shared_values[local_pos as usize] = values[i as usize];
                 }
@@ -254,15 +244,14 @@ pub fn scatter_kernel<KIn: SortKey<Radix = R>, KOut: SortKey<Radix = R>, R: Radi
         let local_idx = thread_id + i * CUBE_DIM;
 
         if is_full_block || local_idx < items_in_block {
-            let key = shared_keys[local_idx as usize];
-            let digit_radix = (key >> shift) & digit_mask;
-            let digit = u32::cast_from(digit_radix);
+            let radix_key = shared_keys[local_idx as usize];
+            let digit = to_digit::<R>(radix_key, pass);
             let ascending_pos = digit_global[digit as usize] + local_idx;
 
             // For descending sort on the final pass, reverse the output position
             let global_pos = select(reverse_output, num_keys - 1 - ascending_pos, ascending_pos);
 
-            keys_out[global_pos as usize] = KOut::from_radix(key);
+            keys_out[global_pos as usize] = KOut::from_radix(radix_key);
 
             if has_values {
                 values_out[global_pos as usize] = shared_values[local_idx as usize];
