@@ -12,7 +12,7 @@ fn small_problem_selector() {
             val_dim: 8,
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),

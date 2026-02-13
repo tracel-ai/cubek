@@ -80,13 +80,16 @@ pub struct AttentionGlobalTypes {
 }
 
 impl AttentionGlobalTypes {
-    pub fn from_single_dtype(dtype: StorageType) -> AttentionGlobalTypes {
+    pub fn from_single_float_dtype(
+        float_dtype: StorageType,
+        mask_dtype: StorageType,
+    ) -> AttentionGlobalTypes {
         Self {
-            query: dtype,
-            key: dtype,
-            value: dtype,
-            mask: StorageType::Scalar(ElemType::UInt(cubecl::ir::UIntKind::U8)),
-            out: dtype,
+            query: float_dtype,
+            key: float_dtype,
+            value: float_dtype,
+            mask: mask_dtype,
+            out: float_dtype,
         }
     }
 }
