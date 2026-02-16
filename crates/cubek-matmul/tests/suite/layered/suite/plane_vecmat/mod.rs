@@ -8,10 +8,11 @@ mod matmul_plane_vecmat {
     #[cfg(all(feature = "matmul_tests_plane", feature = "matmul_tests_vecmat"))]
     mod vecmat {
         use super::*;
-        use cubek_matmul::components::tile::io::Filled;
+        use cubecl::std::CubeOption;
+        use cubek_matmul::components::tile::io::Strided;
         pub type TMM =
             cubek_matmul::components::tile::plane_vec_mat_inner_product::PlaneVecMatInnerProduct<
-                Filled,
+                CubeOption<Strided>,
             >;
 
         include!("algorithm.rs");

@@ -3,6 +3,8 @@ pub(crate) mod launcher;
 mod reference;
 mod utils;
 
+use cubecl::frontend::CubePrimitive;
+use cubecl::{Runtime, client::ComputeClient, ir::StorageType};
 pub(crate) use reference::assert_result;
 pub(crate) use utils::tiling_scheme_ops;
 
@@ -39,12 +41,17 @@ mod unit {
     }
 
     mod f16_ty {
+        use crate::attention::mask_dtype;
+
         use super::*;
         use cubecl::frontend::CubePrimitive;
         use cubek_attention::definition::AttentionGlobalTypes;
 
-        fn global_dtypes() -> AttentionGlobalTypes {
-            AttentionGlobalTypes::from_single_dtype(half::f16::as_type_native_unchecked())
+        fn global_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
+            AttentionGlobalTypes::from_single_float_dtype(
+                half::f16::as_type_native_unchecked(),
+                mask_dtype(client),
+            )
         }
 
         include!("blueprint_tests.rs");
@@ -52,12 +59,17 @@ mod unit {
     }
 
     mod f32_ty {
+        use crate::attention::mask_dtype;
+
         use super::*;
         use cubecl::frontend::CubePrimitive;
         use cubek_attention::definition::AttentionGlobalTypes;
 
-        fn global_dtypes() -> AttentionGlobalTypes {
-            AttentionGlobalTypes::from_single_dtype(f32::as_type_native_unchecked())
+        fn global_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
+            AttentionGlobalTypes::from_single_float_dtype(
+                f32::as_type_native_unchecked(),
+                mask_dtype(client),
+            )
         }
 
         include!("blueprint_tests.rs");
@@ -109,12 +121,17 @@ mod blackbox_accelerated {
     }
 
     mod f16_ty {
+        use crate::attention::mask_dtype;
+
         use super::*;
         use cubecl::frontend::CubePrimitive;
         use cubek_attention::definition::AttentionGlobalTypes;
 
-        fn global_dtypes() -> AttentionGlobalTypes {
-            AttentionGlobalTypes::from_single_dtype(half::f16::as_type_native_unchecked())
+        fn global_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
+            AttentionGlobalTypes::from_single_float_dtype(
+                half::f16::as_type_native_unchecked(),
+                mask_dtype(client),
+            )
         }
 
         include!("blueprint_tests.rs");
@@ -122,15 +139,33 @@ mod blackbox_accelerated {
     }
 
     mod f32_ty {
+        use crate::attention::mask_dtype;
+
         use super::*;
         use cubecl::frontend::CubePrimitive;
         use cubek_attention::definition::AttentionGlobalTypes;
 
-        fn global_dtypes() -> AttentionGlobalTypes {
-            AttentionGlobalTypes::from_single_dtype(f32::as_type_native_unchecked())
+        fn global_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
+            AttentionGlobalTypes::from_single_float_dtype(
+                f32::as_type_native_unchecked(),
+                mask_dtype(client),
+            )
         }
 
         include!("blueprint_tests.rs");
         include!("selector_tests.rs");
+    }
+}
+fn mask_dtype<R: Runtime>(client: &ComputeClient<R>) -> StorageType {
+    let props = client.properties();
+    let u8_ty = u8::as_type_native_unchecked();
+    let u32_ty = u32::as_type_native_unchecked();
+
+    if props.supports_type(u8_ty) {
+        u8_ty
+    } else if props.supports_type(u32_ty) {
+        u32_ty
+    } else {
+        panic!("Client does not support u8 or u32 native types");
     }
 }

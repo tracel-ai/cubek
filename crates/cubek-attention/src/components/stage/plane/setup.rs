@@ -14,7 +14,7 @@ use crate::{
         attention_types::*,
     },
 };
-use cubecl::prelude::ReadWrite;
+use cubecl::{ir::DeviceProperties, prelude::ReadWrite};
 use cubek_matmul::{
     components::{
         stage::{StageFamily, StageMemoryConfig, SwizzleMode},
@@ -56,13 +56,14 @@ impl<
     type Config = PartitionAttentionConfig<TA::Config>;
 
     fn expand_config(
+        device_props: &DeviceProperties,
         blueprint: &AttentionBlueprint,
         dtypes: &AttentionElems,
     ) -> Result<Self::Config, AttentionSetupError> {
         let num_planes = blueprint.tiling_scheme.stage_size.seq_q
             * TA::computation_resources()?.num_planes(blueprint.plane_dim)?;
 
-        let tile_config = TA::expand_config(blueprint)?;
+        let tile_config = TA::expand_config(device_props, blueprint, dtypes)?;
 
         let key_smem_config = StageMemoryConfig {
             num_planes,

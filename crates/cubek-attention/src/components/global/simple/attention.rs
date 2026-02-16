@@ -187,7 +187,7 @@ impl<
         let out = out.view_mut(layout);
 
         Self::Writer::init::<SA::Config>(
-            out.slice_mut_unchecked((stage_q_offset, 0), out.shape()),
+            out.slice_mut((stage_q_offset, 0), out.shape()),
             config.writer_config,
         )
     }

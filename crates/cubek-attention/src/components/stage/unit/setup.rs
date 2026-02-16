@@ -14,7 +14,7 @@ use crate::{
         attention_types::*,
     },
 };
-use cubecl::prelude::ReadWrite;
+use cubecl::{ir::DeviceProperties, prelude::ReadWrite};
 use cubek_matmul::{
     components::{
         CubeDimResource,
@@ -57,10 +57,11 @@ impl<
     type Config = PartitionAttentionConfig<TA::Config>;
 
     fn expand_config(
+        device_props: &DeviceProperties,
         blueprint: &AttentionBlueprint,
         dtypes: &AttentionElems,
     ) -> Result<Self::Config, AttentionSetupError> {
-        let tile_config = TA::expand_config(blueprint)?;
+        let tile_config = TA::expand_config(device_props, blueprint, dtypes)?;
         let compute_resources = match TA::computation_resources()? {
             CubeDimResource::Units(units) => {
                 CubeDimResource::Units(units * blueprint.tiling_scheme.stage_size.seq_q)

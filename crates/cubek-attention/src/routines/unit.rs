@@ -144,9 +144,12 @@ fn validate(
     if blueprint.tiling_scheme.partition_size.head_dim * blueprint.tiling_scheme.tile_size.head_dim
         != problem.dims.head_dim as u32
     {
-        return Err(AttentionSetupError::InvalidConfig(Box::new(
-            "Tiling scheme's total head dim must equal problem's head dim".to_string(),
-        )));
+        return Err(AttentionSetupError::InvalidConfig(Box::new(format!(
+            "Tiling scheme's total head dim ({}) does not match problem's head dim ({})",
+            blueprint.tiling_scheme.partition_size.head_dim
+                * blueprint.tiling_scheme.tile_size.head_dim,
+            problem.dims.head_dim
+        ))));
     }
 
     Ok(blueprint)

@@ -41,7 +41,9 @@ pub(crate) fn attention<
     #[comptime] blueprint: AttentionBlueprint,
     #[define(QG, QT, KG, KS, VG, VS, KVT, SM, ACC, MSK, OG, OS)] elem_types: [StorageType; 12],
 ) {
+    let device_props = comptime::device_properties();
     let config = comptime!(BMMF::expand_config(
+        &device_props,
         blueprint,
         &AttentionElems::from_define_array(elem_types)
     ));

@@ -17,6 +17,7 @@ mod g16x8x16 {
             None,
             None,
             elems(),
+            cubecl::ir::AddressType::default(),
         )
     }
 
@@ -42,6 +43,7 @@ mod g256x256x256 {
             None,
             None,
             elems(),
+            cubecl::ir::AddressType::default(),
         )
     }
 
@@ -68,6 +70,7 @@ mod g100x100x100 {
             None,
             None,
             elems(),
+            cubecl::ir::AddressType::default(),
         )
     }
 
@@ -95,6 +98,7 @@ mod g100x99x100 {
             None,
             None,
             elems(),
+            cubecl::ir::AddressType::default(),
         )
     }
 
@@ -122,6 +126,7 @@ mod g100x100x99 {
             None,
             None,
             elems(),
+            cubecl::ir::AddressType::default(),
         )
     }
 
@@ -149,6 +154,7 @@ mod g23x1x17 {
             None,
             None,
             elems(),
+            cubecl::ir::AddressType::default(),
         )
     }
 
@@ -175,6 +181,7 @@ mod g1x256x256 {
             None,
             None,
             elems(),
+            cubecl::ir::AddressType::default(),
         )
     }
 
@@ -201,6 +208,7 @@ mod batched_vecmat {
             None,
             None,
             elems(),
+            cubecl::ir::AddressType::default(),
         )
     }
 

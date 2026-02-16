@@ -1,4 +1,5 @@
 use cubecl;
+use cubecl::ir::DeviceProperties;
 use cubecl::prelude::*;
 use cubecl::std::{CubeOption, tensor::r#virtual::VirtualTensor};
 
@@ -42,6 +43,7 @@ pub trait BatchAttentionFamily: Send + Sync + 'static {
     ///
     /// This function may return an error if the configuration cannot be supported.
     fn expand_config(
+        device_props: &DeviceProperties,
         blueprint: AttentionBlueprint,
         dtypes: &AttentionElems,
     ) -> Result<Self::Config, AttentionSetupError>;

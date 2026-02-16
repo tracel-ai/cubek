@@ -58,9 +58,9 @@ impl HostData {
                 HostDataVec::F32(data)
             }
             HostDataType::Bool => {
-                let handle = copy_casted(client, tensor_handle, u8::as_type_native_unchecked());
-                let data =
-                    u8::from_bytes(&client.read_one_tensor(handle.as_copy_descriptor())).to_owned();
+                let handle = copy_casted(client, tensor_handle, u32::as_type_native_unchecked());
+                let data = u32::from_bytes(&client.read_one_tensor(handle.as_copy_descriptor()))
+                    .to_owned();
 
                 HostDataVec::Bool(data.iter().map(|&x| x > 0).collect())
             }

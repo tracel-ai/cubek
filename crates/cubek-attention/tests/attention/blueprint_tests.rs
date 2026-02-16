@@ -1,5 +1,6 @@
 use crate::attention::launcher::test_launch;
 use crate::attention::tiling_scheme_ops::*;
+use cubecl::ir::AddressType;
 use cubecl::{Runtime, TestRuntime};
 use cubek_attention::definition::{
     AccumulatorPrecision, AttentionDims, AttentionOptions, AttentionPartitionSize,
@@ -12,7 +13,7 @@ fn one_tile_simple() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -34,11 +35,12 @@ fn one_tile_simple() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
 
     let launch_settings = DeviceSettings::new(&client, &problem);
@@ -65,7 +67,7 @@ fn one_partition_several_planes() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -87,11 +89,12 @@ fn one_partition_several_planes() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
 
     let launch_settings = DeviceSettings::new(&client, &problem);
@@ -117,7 +120,7 @@ fn one_partition_several_planes() {
 fn problem_smaller_than_one_tile_seq_q_seq_kv_val_dim() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -142,11 +145,12 @@ fn problem_smaller_than_one_tile_seq_q_seq_kv_val_dim() {
             val_dim,
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -168,7 +172,7 @@ fn problem_smaller_than_one_tile_seq_q_seq_kv_val_dim() {
 fn head_dim_oob() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -190,11 +194,12 @@ fn head_dim_oob() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -216,7 +221,7 @@ fn head_dim_oob() {
 fn two_rows_in_array_tile() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -237,11 +242,12 @@ fn two_rows_in_array_tile() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -263,7 +269,7 @@ fn two_rows_in_array_tile() {
 fn one_tile_seqq16() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -285,11 +291,12 @@ fn one_tile_seqq16() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -311,7 +318,7 @@ fn one_tile_seqq16() {
 fn one_tile_seqq4() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -333,11 +340,12 @@ fn one_tile_seqq4() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -359,7 +367,7 @@ fn one_tile_seqq4() {
 fn seqq2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 2,
             seq_kv: 1,
@@ -380,11 +388,12 @@ fn seqq2() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -406,7 +415,7 @@ fn seqq2() {
 fn hd2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -427,11 +436,12 @@ fn hd2() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -453,7 +463,7 @@ fn hd2() {
 fn kv2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 2,
@@ -474,11 +484,12 @@ fn kv2() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -500,7 +511,7 @@ fn kv2() {
 fn vd2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -521,11 +532,12 @@ fn vd2() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -547,7 +559,7 @@ fn vd2() {
 fn hd2_vd2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -568,11 +580,12 @@ fn hd2_vd2() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -594,7 +607,7 @@ fn hd2_vd2() {
 fn all2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 2,
             seq_kv: 2,
@@ -615,11 +628,12 @@ fn all2() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -641,7 +655,7 @@ fn all2() {
 fn global_iterations_2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -663,11 +677,12 @@ fn global_iterations_2() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -689,7 +704,7 @@ fn global_iterations_2() {
 fn global_iterations_2_kv2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 2,
@@ -711,11 +726,12 @@ fn global_iterations_2_kv2() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -737,7 +753,7 @@ fn global_iterations_2_kv2() {
 fn partition_kv1_global1_with_oob() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -759,11 +775,12 @@ fn partition_kv1_global1_with_oob() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -785,7 +802,7 @@ fn partition_kv1_global1_with_oob() {
 fn partition_seqq2_global2_kv2_global2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -807,11 +824,12 @@ fn partition_seqq2_global2_kv2_global2() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -833,7 +851,7 @@ fn partition_seqq2_global2_kv2_global2() {
 fn partition_many_planes() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -841,7 +859,7 @@ fn partition_many_planes() {
             val_dim: 1,
         },
         stage_size: AttentionStageSize {
-            seq_q: 15 * minimal_seq_q_stage(),
+            seq_q: 10 * minimal_seq_q_stage(),
         },
     };
     let problem = AttentionProblem {
@@ -854,11 +872,12 @@ fn partition_many_planes() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -880,7 +899,7 @@ fn partition_many_planes() {
 fn partition_kv1_global3_with_oob() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -902,11 +921,12 @@ fn partition_kv1_global3_with_oob() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -925,10 +945,10 @@ fn partition_kv1_global3_with_oob() {
 }
 
 #[test]
-fn partition_oob_in_q() {
+fn partition_oob_in_q_with_batches() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 2,
             seq_kv: 1,
@@ -939,22 +959,22 @@ fn partition_oob_in_q() {
             seq_q: minimal_seq_q_stage(),
         },
     };
-    let seq_q = 1;
     let problem = AttentionProblem {
         dims: AttentionDims {
-            batch: 1,
-            num_heads: 1,
-            seq_q,
+            batch: 2,
+            num_heads: 2,
+            seq_q: 1,
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -976,7 +996,7 @@ fn partition_oob_in_q() {
 fn partition_kv2_with_oob() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 2,
@@ -992,16 +1012,17 @@ fn partition_kv2_with_oob() {
             batch: 1,
             num_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
-            seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
+            seq_kv: elements_in_partition_seq_kv(&tiling_scheme) - 1,
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1023,7 +1044,7 @@ fn partition_kv2_with_oob() {
 fn partition_kv2_causal() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 2,
@@ -1044,11 +1065,12 @@ fn partition_kv2_causal() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: true,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1070,7 +1092,7 @@ fn partition_kv2_causal() {
 fn partition_kv2_masked() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 2,
@@ -1091,11 +1113,12 @@ fn partition_kv2_masked() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: true,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1117,7 +1140,7 @@ fn partition_kv2_masked() {
 fn stage2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1138,11 +1161,12 @@ fn stage2() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1164,7 +1188,7 @@ fn stage2() {
 fn stage4() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1185,11 +1209,12 @@ fn stage4() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1211,7 +1236,7 @@ fn stage4() {
 fn stage2_problem4() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1234,11 +1259,12 @@ fn stage2_problem4() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1260,7 +1286,7 @@ fn stage2_problem4() {
 fn reuse_key_value() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1281,11 +1307,12 @@ fn reuse_key_value() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1307,7 +1334,7 @@ fn reuse_key_value() {
 fn double_row_wise() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1328,11 +1355,12 @@ fn double_row_wise() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1354,7 +1382,7 @@ fn double_row_wise() {
 fn one_tile_masked() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1375,11 +1403,12 @@ fn one_tile_masked() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: true,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1401,7 +1430,7 @@ fn one_tile_masked() {
 fn one_tile_causal() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1422,11 +1451,12 @@ fn one_tile_causal() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: true,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1448,7 +1478,7 @@ fn one_tile_causal() {
 fn one_tile_masked_causal() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1469,11 +1499,12 @@ fn one_tile_masked_causal() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: true,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: true,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1495,7 +1526,7 @@ fn one_tile_masked_causal() {
 fn masked_oob() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1517,11 +1548,12 @@ fn masked_oob() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: true,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1543,7 +1575,7 @@ fn masked_oob() {
 fn masked_larger() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1565,11 +1597,12 @@ fn masked_larger() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: true,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1591,7 +1624,7 @@ fn masked_larger() {
 fn num_heads_2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1612,11 +1645,12 @@ fn num_heads_2() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1638,7 +1672,7 @@ fn num_heads_2() {
 fn batch_2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1659,11 +1693,12 @@ fn batch_2() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1685,7 +1720,7 @@ fn batch_2() {
 fn batch_2_seqq2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 2,
             seq_kv: 1,
@@ -1706,11 +1741,12 @@ fn batch_2_seqq2() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1732,7 +1768,7 @@ fn batch_2_seqq2() {
 fn num_heads_2_batch_2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1753,11 +1789,12 @@ fn num_heads_2_batch_2() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1779,7 +1816,7 @@ fn num_heads_2_batch_2() {
 fn num_heads_2_masked() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1800,11 +1837,12 @@ fn num_heads_2_masked() {
             val_dim: elements_in_partition_val_dim(&tiling_scheme),
         },
         masked: true,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {
@@ -1829,9 +1867,9 @@ fn huge_problem() {
     let seq_kv = 128;
     let head_dim = 64;
     let val_dim = 64;
-    let hd = head_dim as u32 / tile_size(&client, global_dtypes()).head_dim;
+    let hd = head_dim as u32 / tile_size(&client, global_dtypes(&client)).head_dim;
     let tiling_scheme = AttentionTilingScheme {
-        tile_size: tile_size(&client, global_dtypes()),
+        tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
             seq_q: 1,
             seq_kv: 1,
@@ -1852,11 +1890,63 @@ fn huge_problem() {
             val_dim,
         },
         masked: false,
-        global_dtypes: global_dtypes(),
+        global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
             accumulator_precision: AccumulatorPrecision::default(),
         },
+        address_type: AddressType::default(),
+    };
+    let launch_settings = DeviceSettings::new(&client, &problem);
+    let blueprint = AttentionBlueprint {
+        hypercube_blueprint: HypercubeBlueprint {},
+        tiling_scheme,
+        plane_dim: launch_settings.plane_dim,
+        reuse_key_value: false,
+        two_rows_in_array_tile: false,
+        line_sizes: launch_settings.line_sizes,
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
+    };
+    let strategy = forced_strategy(blueprint);
+    test_launch(client, problem, strategy)
+}
+
+#[test]
+fn causal_several_heads() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let head_val_dim = 32;
+
+    let tile_size = tile_size(&client, global_dtypes(&client));
+    let tiling_scheme = AttentionTilingScheme {
+        tile_size,
+        partition_size: AttentionPartitionSize {
+            seq_q: 2,
+            seq_kv: 2,
+            head_dim: head_val_dim / tile_size.head_dim,
+            val_dim: head_val_dim / tile_size.val_dim,
+        },
+        stage_size: AttentionStageSize {
+            seq_q: minimal_seq_q_stage(),
+        },
+    };
+    let problem = AttentionProblem {
+        dims: AttentionDims {
+            batch: 1,
+            num_heads: 2,
+            seq_q: 16,
+            seq_kv: 16,
+            head_dim: head_val_dim as usize,
+            val_dim: head_val_dim as usize,
+        },
+        masked: false,
+        global_dtypes: global_dtypes(&client),
+        options: AttentionOptions {
+            causal: true,
+            accumulator_precision: AccumulatorPrecision::default(),
+        },
+        address_type: AddressType::default(),
     };
     let launch_settings = DeviceSettings::new(&client, &problem);
     let blueprint = AttentionBlueprint {

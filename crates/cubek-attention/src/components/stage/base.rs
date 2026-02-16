@@ -1,5 +1,5 @@
-use cubecl;
 use cubecl::prelude::*;
+use cubecl::{self, ir::DeviceProperties};
 use cubek_matmul::components::{
     global::{WriteEventListener, WriteTiling, read::sync_full_cyclic::SyncFullCyclicLoading},
     stage::{ContiguousTilingLayout, RowMajorTilingOrder, StageFamily, StageMemoryConfig},
@@ -53,6 +53,7 @@ pub trait StageAttentionFamily: Send + Sync + 'static {
     ///
     /// This function may return an error if the configuration cannot be supported.
     fn expand_config(
+        device_props: &DeviceProperties,
         blueprint: &AttentionBlueprint,
         dtypes: &AttentionElems,
     ) -> Result<Self::Config, AttentionSetupError>;
