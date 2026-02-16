@@ -41,7 +41,7 @@ pub fn copy_casted(
     let num_elems: usize = original.shape.iter().product();
 
     let line_size = tensor_line_size_parallel(
-        TestRuntime::supported_line_sizes().iter().copied(),
+        client.io_optimized_line_sizes(target_type.size()),
         &[num_elems],
         &[1],
         0,

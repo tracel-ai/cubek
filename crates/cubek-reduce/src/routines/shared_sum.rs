@@ -80,13 +80,13 @@ pub fn shared_sum<R: Runtime>(
     // Compute the optimal line size.
     let line_size = if contiguous_buffer {
         client
-            .io_optimized_line_sizes_unchecked(input.elem_size)
+            .io_optimized_line_sizes(input.elem_size)
             .filter(|line_size| input_len % *line_size == 0)
             .max()
             .unwrap_or(1)
     } else {
         tensor_line_size_parallel(
-            client.io_optimized_line_sizes_unchecked(input.elem_size),
+            client.io_optimized_line_sizes(input.elem_size),
             input.shape,
             input.strides,
             input.shape.len() - 1,

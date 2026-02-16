@@ -22,21 +22,21 @@ impl AttentionLineSizes {
     ) -> Self {
         AttentionLineSizes {
             query: client
-                .io_optimized_line_sizes_unchecked(global_dtypes.query.size())
+                .io_optimized_line_sizes(global_dtypes.query.size())
                 .max()
                 .unwrap(),
             key: client
-                .io_optimized_line_sizes_unchecked(global_dtypes.key.size())
+                .io_optimized_line_sizes(global_dtypes.key.size())
                 .max()
                 .unwrap(),
             value: client
-                .io_optimized_line_sizes_unchecked(global_dtypes.value.size())
+                .io_optimized_line_sizes(global_dtypes.value.size())
                 .max()
                 .unwrap(),
             // lined mask not always supported at the moment
             mask: 1,
             out: client
-                .io_optimized_line_sizes_unchecked(global_dtypes.out.size())
+                .io_optimized_line_sizes(global_dtypes.out.size())
                 .max()
                 .unwrap(),
         }
@@ -77,7 +77,7 @@ impl AttentionLineSizes {
         shape: &[usize; 4],
         dtype_size: usize,
     ) -> usize {
-        let supported_line_sizes = client.io_optimized_line_sizes_unchecked(dtype_size);
+        let supported_line_sizes = client.io_optimized_line_sizes(dtype_size);
 
         let n = shape.len();
 

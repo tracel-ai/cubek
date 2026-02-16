@@ -32,7 +32,7 @@ impl AvailableLineSizes {
         AvailableLineSizes {
             lhs: vec![1],
             rhs: vec![1],
-            out: client.io_optimized_line_sizes_unchecked(elem_out).collect(),
+            out: client.io_optimized_line_sizes(elem_out).collect(),
         }
     }
 
@@ -43,9 +43,9 @@ impl AvailableLineSizes {
         elem_out: usize,
     ) -> Self {
         AvailableLineSizes {
-            lhs: client.io_optimized_line_sizes_unchecked(elem_lhs).collect(),
-            rhs: client.io_optimized_line_sizes_unchecked(elem_rhs).collect(),
-            out: client.io_optimized_line_sizes_unchecked(elem_out).collect(),
+            lhs: client.io_optimized_line_sizes(elem_lhs).collect(),
+            rhs: client.io_optimized_line_sizes(elem_rhs).collect(),
+            out: client.io_optimized_line_sizes(elem_out).collect(),
         }
     }
 

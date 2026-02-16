@@ -83,13 +83,13 @@ pub fn launch_ref<R: Runtime>(
     let out_shape = out.shape;
 
     let lhs_line_size = tensor_line_size_parallel(
-        client.io_optimized_line_sizes(&dtypes.lhs_global),
+        client.io_optimized_line_sizes(dtypes.lhs_global.size()),
         lhs.data().shape,
         lhs.data().strides,
         rank - 1,
     );
     let rhs_line_size = tensor_line_size_parallel(
-        client.io_optimized_line_sizes(&dtypes.rhs_global),
+        client.io_optimized_line_sizes(dtypes.rhs_global.size()),
         rhs.data().shape,
         rhs.data().strides,
         rank - 2,

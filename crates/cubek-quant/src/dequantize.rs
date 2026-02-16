@@ -238,7 +238,7 @@ fn dequantize_packed<R: Runtime>(
     let num_elems_input: usize = input.shape.iter().product();
 
     let mut line_size_in = tensor_line_size_parallel(
-        client.io_optimized_line_sizes_unchecked(input.elem_size),
+        client.io_optimized_line_sizes(input.elem_size),
         input.shape,
         input.strides,
         input.shape.len() - 1,
@@ -293,7 +293,7 @@ fn dequantize_native<R: Runtime>(
 ) -> Result<(), LaunchError> {
     let num_elems: usize = input.shape.iter().product();
     let line_size = tensor_line_size_parallel(
-        client.io_optimized_line_sizes_unchecked(input_dtype.size()),
+        client.io_optimized_line_sizes(input_dtype.size()),
         input.shape,
         input.strides,
         input.shape.len() - 1,
