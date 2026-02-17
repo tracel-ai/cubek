@@ -4,6 +4,7 @@ use cubecl::{
     future,
     prelude::*,
     std::tensor::TensorHandle,
+    zspace::shape,
 };
 use cubek::{
     matmul::{
@@ -38,8 +39,8 @@ impl<R: Runtime> Benchmark for MatmulBench<R> {
             self.dtypes.lhs_global,
         );
         if self.tl {
-            let len = lhs.shape.len();
-            lhs.strides.swap(len - 2, len - 1);
+            let len = lhs.metadata.rank();
+            lhs.metadata.strides_mut().swap(len - 2, len - 1);
         }
         random_uniform(&client, 0.0, 1.0, lhs.as_ref(), self.dtypes.lhs_global).unwrap();
 
@@ -50,8 +51,8 @@ impl<R: Runtime> Benchmark for MatmulBench<R> {
         );
 
         if self.tr {
-            let len = rhs.shape.len();
-            rhs.strides.swap(len - 2, len - 1);
+            let len = rhs.metadata.rank();
+            rhs.metadata.strides_mut().swap(len - 2, len - 1);
         }
 
         random_uniform(&client, 0.0, 1.1, rhs.as_ref(), self.dtypes.rhs_global).unwrap();
@@ -172,8 +173,8 @@ fn run<R: Runtime, MP: MatmulPrecision>(device: R::Device, strategy: Strategy) {
                     m,
                     n,
                     k,
-                    vec![b],
-                    vec![b],
+                    shape![b],
+                    shape![b],
                     tl,
                     tr,
                     MatrixLayout::RowMajor,
@@ -248,8 +249,8 @@ fn run_grid_search<R: Runtime, MP: MatmulPrecision>() {
         m,
         n,
         k,
-        vec![b],
-        vec![b],
+        shape![b],
+        shape![b],
         tl,
         tr,
         MatrixLayout::RowMajor,

@@ -1,8 +1,8 @@
 use crate::suite::assert_result;
-use cubecl::prelude::TensorHandleRef;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{Runtime, client};
 use cubecl::{frontend::CubePrimitive, ir::AddressType};
+use cubecl::{prelude::TensorHandleRef, zspace::shape};
 use cubek_matmul::launch::launch_naive;
 
 use crate::suite::layout_to_stride_spec;
@@ -30,8 +30,8 @@ impl MatmulTestCase {
             self.m,
             self.n,
             self.k,
-            vec![self.batch],
-            vec![self.batch],
+            shape![self.batch],
+            shape![self.batch],
             self.lhs_layout,
             self.rhs_layout,
             MatrixLayout::RowMajor,
@@ -154,7 +154,7 @@ fn test_naive(case: MatmulTestCase) {
 
     let (lhs, lhs_data) = TestInput::new(
         client.clone(),
-        problem.lhs_shape.clone(),
+        problem.lhs_shape.to_vec(),
         problem.global_dtypes.lhs,
         layout_to_stride_spec(problem.lhs_layout),
         DataKind::Random {
@@ -166,7 +166,7 @@ fn test_naive(case: MatmulTestCase) {
 
     let (rhs, rhs_data) = TestInput::new(
         client.clone(),
-        problem.rhs_shape.clone(),
+        problem.rhs_shape.to_vec(),
         problem.global_dtypes.rhs,
         layout_to_stride_spec(problem.rhs_layout),
         DataKind::Random {
@@ -178,7 +178,7 @@ fn test_naive(case: MatmulTestCase) {
 
     let out = TestInput::new(
         client.clone(),
-        problem.out_shape.clone(),
+        problem.out_shape.to_vec(),
         problem.global_dtypes.out,
         layout_to_stride_spec(MatrixLayout::RowMajor),
         DataKind::Zeros,

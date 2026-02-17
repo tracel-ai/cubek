@@ -64,8 +64,8 @@ fn new_custom_data(
         unsafe {
             TensorArg::from_raw_parts_and_size(
                 &out.handle,
-                &out.strides,
-                &out.shape,
+                out.strides(),
+                out.shape(),
                 line_size,
                 dtype.size(),
             )

@@ -12,6 +12,7 @@ use cubecl::{
             },
         },
     },
+    zspace::{shape, strides},
 };
 use cubek_matmul::{
     components::{
@@ -244,9 +245,9 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
             _ => tiling_scheme.elements_per_stage_along_k(),
         };
 
-        let mut stage_size_rhs = vec![1; problem.dimensionality.num_dims()];
-        stage_size_rhs.insert(0, stage_n);
-        stage_size_rhs.push(tile_size_k);
+        let mut stage_size_rhs = shape![1; problem.dimensionality.num_dims()];
+        stage_size_rhs.insert(0, stage_n as usize);
+        stage_size_rhs.push(tile_size_k as usize);
 
         // f32 gets remapped to tf32 for the tensor map just to ensure CUDA loads them correctly.
         // It shouldn't matter, but it's better to be safe.
@@ -256,7 +257,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
             dtypes.lhs_stage
         };
 
-        let mut elem_stride = vec![1; 2 + problem.stride.len()];
+        let mut elem_stride = strides![1; 2 + problem.stride.len()];
 
         for (i, stride) in problem.stride.iter().enumerate() {
             elem_stride[i + 1] = *stride as usize;

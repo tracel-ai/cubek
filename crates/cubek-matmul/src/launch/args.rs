@@ -1,6 +1,5 @@
 use std::marker::PhantomData;
 
-use cubecl::prelude::*;
 use cubecl::std::{
     CubeOption, CubeOptionArgs, CubeOptionExpand,
     tensor::{
@@ -8,6 +7,10 @@ use cubecl::std::{
         launch::ViewArg,
         layout::{Coords1d, VirtualLayout, VirtualLayoutLaunch},
     },
+};
+use cubecl::{
+    prelude::*,
+    zspace::{metadata::Metadata, shape, strides},
 };
 use cubecl::{server::TensorMapMeta, unexpanded};
 
@@ -396,62 +399,62 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<(), Blueprint = TilingB
         let stage_size_lhs = match blueprint.swizzle_modes.lhs {
             SwizzleMode::None => match problem.lhs_layout {
                 definition::MatrixLayout::RowMajor => {
-                    vec![1, stage_m, tiling_scheme.tile_size.k]
+                    shape![1, stage_m as usize, tiling_scheme.tile_size.k as usize]
                 }
                 definition::MatrixLayout::ColMajor => {
-                    vec![1, stage_k, tiling_scheme.tile_size.m]
+                    shape![1, stage_k as usize, tiling_scheme.tile_size.m as usize]
                 }
             },
             _ => match problem.lhs_layout {
                 definition::MatrixLayout::RowMajor => {
-                    vec![1, stage_m, stage_k]
+                    shape![1, stage_m as usize, stage_k as usize]
                 }
                 definition::MatrixLayout::ColMajor => {
-                    vec![1, stage_k, stage_m]
+                    shape![1, stage_k as usize, stage_m as usize]
                 }
             },
         };
         let stage_size_rhs = match blueprint.swizzle_modes.rhs {
             SwizzleMode::None => match problem.rhs_layout {
                 definition::MatrixLayout::RowMajor => {
-                    vec![1, stage_k, tiling_scheme.tile_size.n]
+                    shape![1, stage_k as usize, tiling_scheme.tile_size.n as usize]
                 }
                 definition::MatrixLayout::ColMajor => {
-                    vec![1, stage_n, tiling_scheme.tile_size.k]
+                    shape![1, stage_n as usize, tiling_scheme.tile_size.k as usize]
                 }
             },
             _ => match problem.rhs_layout {
                 definition::MatrixLayout::RowMajor => {
-                    vec![1, stage_k, stage_n]
+                    shape![1, stage_k as usize, stage_n as usize]
                 }
                 definition::MatrixLayout::ColMajor => {
-                    vec![1, stage_n, stage_k]
+                    shape![1, stage_n as usize, stage_k as usize]
                 }
             },
         };
 
         let lhs_rank = lhs.shape.len();
-        let mut lhs_shape = vec![
+        let mut lhs_shape = shape![
             problem.lhs_batches.iter().product(),
             lhs.shape[lhs_rank - 2],
             lhs.shape[lhs_rank - 1],
         ];
         let mut lhs_strides = if lhs_rank > 2 {
-            lhs.strides[lhs_rank - 3..].to_vec()
+            lhs.strides[lhs_rank - 3..].into()
         } else {
-            vec![lhs.strides[0], lhs.strides[1]]
+            strides![lhs.strides[0], lhs.strides[1]]
         };
 
         let rhs_rank = rhs.shape.len();
-        let mut rhs_shape = vec![
+        let mut rhs_shape = shape![
             problem.rhs_batches.iter().product(),
             rhs.shape[rhs_rank - 2],
             rhs.shape[rhs_rank - 1],
         ];
         let mut rhs_strides = if rhs_rank > 2 {
-            rhs.strides[rhs_rank - 3..].to_vec()
+            rhs.strides[rhs_rank - 3..].into()
         } else {
-            vec![rhs.strides[0], rhs.strides[1]]
+            strides![rhs.strides[0], rhs.strides[1]]
         };
 
         let mut lhs_transposed = false;
@@ -500,10 +503,8 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<(), Blueprint = TilingB
             format: TensorMapFormat::Tiled(TiledArgs {
                 tile_size: stage_size_lhs,
             }),
-            rank: 3,
-            shape: lhs_shape.clone(),
-            strides: lhs_strides,
-            elem_stride: vec![1, 1, 1],
+            metadata: Metadata::new(lhs_shape.clone(), lhs_strides),
+            elem_stride: strides![1, 1, 1],
             interleave: TensorMapInterleave::None,
             swizzle: blueprint.swizzle_modes.lhs.into(),
             prefetch: TensorMapPrefetch::None,
@@ -515,10 +516,8 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<(), Blueprint = TilingB
             format: TensorMapFormat::Tiled(TiledArgs {
                 tile_size: stage_size_rhs,
             }),
-            rank: 3,
-            shape: rhs_shape.clone(),
-            strides: rhs_strides,
-            elem_stride: vec![1, 1, 1],
+            metadata: Metadata::new(rhs_shape.clone(), rhs_strides),
+            elem_stride: strides![1, 1, 1],
             interleave: TensorMapInterleave::None,
             swizzle: blueprint.swizzle_modes.rhs.into(),
             prefetch: TensorMapPrefetch::None,

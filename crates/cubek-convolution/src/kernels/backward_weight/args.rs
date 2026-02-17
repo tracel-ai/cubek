@@ -13,6 +13,7 @@ use cubecl::{
             },
         },
     },
+    zspace::{metadata::Metadata, shape, strides},
 };
 use cubek_matmul::{
     components::{
@@ -240,8 +241,8 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
 
         let dim_c = out_grad.shape().len() - 1;
         let stage_size_lhs = match blueprint.swizzle_modes.lhs {
-            SwizzleMode::None => vec![stage_k, tile_size_m],
-            _ => vec![stage_k, stage_m],
+            SwizzleMode::None => shape![stage_k as usize, tile_size_m as usize],
+            _ => shape![stage_k as usize, stage_m as usize],
         };
 
         // f32 gets remapped to tf32 for the tensor map just to ensure CUDA loads them correctly.
@@ -257,14 +258,14 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
             dtypes.rhs_stage
         };
 
-        let mut elem_stride = vec![1; 2 + problem.stride.len()];
+        let mut elem_stride = strides![1; 2 + problem.stride.len()];
 
         for (i, stride) in problem.stride.iter().enumerate() {
             elem_stride[i + 1] = *stride as usize;
         }
 
-        let lhs_shape = vec![problem.k, problem.m];
-        let lhs_strides = vec![
+        let lhs_shape = shape![problem.k, problem.m];
+        let lhs_strides = strides![
             out_grad.data().strides[dim_c - 1],
             out_grad.data().strides[dim_c],
         ];
@@ -273,10 +274,8 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
             format: TensorMapFormat::Tiled(TiledArgs {
                 tile_size: stage_size_lhs,
             }),
-            rank: 2,
-            shape: lhs_shape,
-            strides: lhs_strides,
-            elem_stride: vec![1, 1],
+            metadata: Metadata::new(lhs_shape, lhs_strides),
+            elem_stride: strides![1, 1],
             interleave: TensorMapInterleave::None,
             swizzle: blueprint.swizzle_modes.lhs.into(),
             prefetch: TensorMapPrefetch::None,

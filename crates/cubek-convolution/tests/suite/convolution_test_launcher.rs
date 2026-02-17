@@ -71,8 +71,8 @@ where
     let rhs = tensor_raw_parts::<P, TestRuntime>(&client, &problem, MatmulIdent::Rhs);
     let out = tensor_raw_parts::<P, TestRuntime>(&client, &problem, MatmulIdent::Out);
 
-    problem.lhs_strides = lhs.strides.clone();
-    problem.rhs_strides = rhs.strides.clone();
+    problem.lhs_strides = lhs.strides.clone().into();
+    problem.rhs_strides = rhs.strides.clone().into();
 
     let line_sizes = AvailableLineSizes {
         lhs: vec![1],
@@ -179,10 +179,10 @@ fn tensor_raw_parts<P: TestPrecision, R: Runtime>(
             let original_data = data.to_owned();
 
             TensorRawParts {
+                shape,
+                strides: handle.strides().to_vec(),
                 handle: handle.handle,
                 scale: None,
-                shape,
-                strides: handle.strides,
                 original_data: Some(original_data),
             }
         }
@@ -196,10 +196,10 @@ fn tensor_raw_parts<P: TestPrecision, R: Runtime>(
             let original_data = data.to_owned();
 
             TensorRawParts {
+                shape,
+                strides: handle.strides().to_vec(),
                 handle: handle.handle,
                 scale: None,
-                shape,
-                strides: handle.strides,
                 original_data: Some(original_data),
             }
         }
@@ -216,7 +216,7 @@ fn tensor_raw_parts<P: TestPrecision, R: Runtime>(
                 handle,
                 scale: None,
                 shape,
-                strides,
+                strides: strides.to_vec(),
                 original_data: None,
             }
         }

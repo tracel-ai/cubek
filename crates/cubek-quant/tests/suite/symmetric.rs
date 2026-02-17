@@ -1,9 +1,9 @@
-use cubecl::TestRuntime;
 use cubecl::ir::ElemType;
 use cubecl::ir::FloatKind;
 use cubecl::server::AllocationDescriptor;
 use cubecl::server::CopyDescriptor;
 use cubecl::std::tensor::TensorHandle;
+use cubecl::{TestRuntime, zspace::shape};
 use cubek_quant::scheme::QuantMode;
 use cubek_quant::scheme::QuantScheme;
 use cubek_quant::scheme::QuantStore;
@@ -24,7 +24,7 @@ fn test_quantization_symmetric_block() {
 fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
     let mode = QuantMode::Symmetric;
     let client = TestRuntime::client(&Default::default());
-    let shape = vec![m, n];
+    let shape = shape![m, n];
 
     let num_elems: usize = m * n;
     let half = num_elems as f32 / 2.0;
@@ -48,7 +48,7 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
     );
     let scale = TensorHandle::new(
         scale_alloc.handle,
-        vec![1],
+        shape![1],
         scale_alloc.strides,
         f32::as_type_native_unchecked(),
     );
@@ -63,7 +63,7 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
         .with_mode(QuantMode::Symmetric);
 
     // The shape is from the POV of packed u32s.
-    let shape_out = vec![m, n / scheme.num_quants()];
+    let shape_out = shape![m, n / scheme.num_quants()];
 
     let [output_alloc, output_scale_alloc] = client
         .empty_tensors(vec![
@@ -88,7 +88,7 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
     );
     let output_scale = TensorHandle::new(
         output_scale_alloc.handle,
-        vec![1],
+        shape![1],
         output_scale_alloc.strides,
         f32::as_type_native_unchecked(),
     );
@@ -117,9 +117,9 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
     .unwrap();
 
     let computed = client.read_one_tensor(CopyDescriptor::new(
-        output_f.handle.binding(),
-        &output_f.shape,
-        &output_f.strides,
+        output_f.handle.clone().binding(),
+        output_f.shape(),
+        output_f.strides(),
         core::mem::size_of::<f32>(),
     ));
     let data_restored = f32::from_bytes(&computed);
@@ -140,7 +140,7 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
 fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, block_size: usize) {
     let mode = QuantMode::Symmetric;
     let client = TestRuntime::client(&Default::default());
-    let shape = vec![m, n];
+    let shape = shape![m, n];
 
     let num_elems: usize = m * n;
     let half = num_elems as f32 / 2.0;
@@ -153,7 +153,7 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
     let (q_min, q_max) = value.range();
 
     let scale_count = data.len() / block_size;
-    let shape_scale = vec![m, n / block_size];
+    let shape_scale = shape![m, n / block_size];
 
     let mut scales = Vec::with_capacity(scale_count);
 
@@ -201,7 +201,7 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
         .with_mode(QuantMode::Symmetric);
 
     // The shape is from the POV of packed u32s.
-    let shape_out = vec![m, n / scheme.num_quants()];
+    let shape_out = shape![m, n / scheme.num_quants()];
 
     let [output_alloc, output_scale_alloc] = client
         .empty_tensors(vec![
@@ -255,9 +255,9 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
     .unwrap();
 
     let computed = client.read_one_tensor(CopyDescriptor::new(
-        output_f.handle.binding(),
-        &output_f.shape,
-        &output_f.strides,
+        output_f.handle.clone().binding(),
+        output_f.shape(),
+        output_f.strides(),
         core::mem::size_of::<f32>(),
     ));
     let data_restored = f32::from_bytes(&computed);

@@ -1,4 +1,7 @@
-use cubecl::ir::AddressType;
+use cubecl::{
+    ir::AddressType,
+    zspace::{Shape, Strides, shape},
+};
 use cubek_matmul::definition::{MatmulGlobalElems, MatmulProblem, MatrixLayout};
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -16,8 +19,8 @@ pub struct ConvolutionProblem {
     pub n: usize,
     pub k: usize,
 
-    pub lhs_strides: Vec<usize>,
-    pub rhs_strides: Vec<usize>,
+    pub lhs_strides: Strides,
+    pub rhs_strides: Strides,
 
     pub lhs_layout: MatrixLayout,
     pub rhs_layout: MatrixLayout,
@@ -30,8 +33,8 @@ pub struct ConvolutionProblem {
     pub batches: usize,
     pub channels: usize,
     pub out_channels: usize,
-    pub in_shape: Vec<usize>,
-    pub out_shape: Vec<usize>,
+    pub in_shape: Shape,
+    pub out_shape: Shape,
 
     /// Channels after applying loader-specific padding
     pub padded_channels: usize,
@@ -56,7 +59,7 @@ impl ConvolutionProblem {
         let lhs_strides = match self.lhs_layout {
             MatrixLayout::RowMajor => self.lhs_strides.clone(),
             MatrixLayout::ColMajor => {
-                let mut lhs_strides = self.lhs_strides[1..rank].to_vec();
+                let mut lhs_strides: Strides = self.lhs_strides[1..rank].into();
                 lhs_strides.push(self.lhs_strides[0]);
                 lhs_strides
             }
@@ -64,7 +67,7 @@ impl ConvolutionProblem {
         let rhs_strides = match self.rhs_layout {
             MatrixLayout::RowMajor => self.rhs_strides.clone(),
             MatrixLayout::ColMajor => {
-                let mut rhs_strides = self.rhs_strides[1..rank].to_vec();
+                let mut rhs_strides: Strides = self.rhs_strides[1..rank].into();
                 rhs_strides.push(self.rhs_strides[0]);
                 rhs_strides
             }
@@ -74,16 +77,16 @@ impl ConvolutionProblem {
             m: self.m,
             n: self.n,
             k: self.k,
-            lhs_batches: vec![],
-            rhs_batches: vec![],
-            out_batches: vec![],
+            lhs_batches: shape![],
+            rhs_batches: shape![],
+            out_batches: shape![],
             lhs_strides,
             rhs_strides,
             lhs_layout: self.lhs_layout,
             rhs_layout: self.rhs_layout,
-            lhs_shape: vec![self.m, self.k],
-            rhs_shape: vec![self.k, self.n],
-            out_shape: vec![self.m, self.n],
+            lhs_shape: shape![self.m, self.k],
+            rhs_shape: shape![self.k, self.n],
+            out_shape: shape![self.m, self.n],
             out_strides: MatrixLayout::RowMajor.to_strides(&[self.m, self.n]),
             out_layout: MatrixLayout::RowMajor,
             lhs_scheme: None,

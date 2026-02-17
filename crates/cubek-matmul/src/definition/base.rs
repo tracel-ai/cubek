@@ -4,7 +4,11 @@ use crate::{
     components::global::memory::ViewDirection,
     definition::{MatmulGlobalElems, MatmulProblemSize},
 };
-use cubecl::{prelude::*, quant::scheme::QuantScheme};
+use cubecl::{
+    prelude::*,
+    quant::scheme::QuantScheme,
+    zspace::{Shape, Strides, strides},
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug)]
@@ -18,25 +22,25 @@ pub struct MatmulProblem {
     pub k: usize,
 
     /// Batch shape for Lhs tensor
-    pub lhs_batches: Vec<usize>,
+    pub lhs_batches: Shape,
     /// Batch shape for Rhs tensor
-    pub rhs_batches: Vec<usize>,
+    pub rhs_batches: Shape,
     /// Batch shape for Out tensor
-    pub out_batches: Vec<usize>,
+    pub out_batches: Shape,
 
     /// Shape of Lhs tensor
-    pub lhs_shape: Vec<usize>,
+    pub lhs_shape: Shape,
     /// Shape of Rhs tensor
-    pub rhs_shape: Vec<usize>,
+    pub rhs_shape: Shape,
     /// Shape of Out tensor
-    pub out_shape: Vec<usize>,
+    pub out_shape: Shape,
 
     /// Strides for the Lhs tensor
-    pub lhs_strides: Vec<usize>,
+    pub lhs_strides: Strides,
     /// Strides for the Rhs tensor
-    pub rhs_strides: Vec<usize>,
+    pub rhs_strides: Strides,
     /// Strides for the Out tensor
-    pub out_strides: Vec<usize>,
+    pub out_strides: Strides,
 
     /// Memory layout of the Lhs matrix.
     pub lhs_layout: MatrixLayout,
@@ -59,12 +63,12 @@ pub struct MatmulProblem {
 impl MatmulProblem {
     #[allow(clippy::too_many_arguments)]
     pub fn from_shapes_and_strides(
-        lhs_shape: Vec<usize>,
-        rhs_shape: Vec<usize>,
-        out_shape: Vec<usize>,
-        lhs_strides: Vec<usize>,
-        rhs_strides: Vec<usize>,
-        out_strides: Vec<usize>,
+        lhs_shape: Shape,
+        rhs_shape: Shape,
+        out_shape: Shape,
+        lhs_strides: Strides,
+        rhs_strides: Strides,
+        out_strides: Strides,
         global_dtypes: MatmulGlobalElems,
         address_type: AddressType,
         lhs_scheme: Option<&QuantScheme>,
@@ -79,9 +83,9 @@ impl MatmulProblem {
             m: lhs_shape[rank - 2],
             n: rhs_shape[rank - 1],
             k: lhs_shape[rank - 1],
-            lhs_batches: lhs_shape[..lhs_shape.len() - 2].to_vec(),
-            rhs_batches: rhs_shape[..rhs_shape.len() - 2].to_vec(),
-            out_batches: out_shape[..out_shape.len() - 2].to_vec(),
+            lhs_batches: lhs_shape[..lhs_shape.len() - 2].into(),
+            rhs_batches: rhs_shape[..rhs_shape.len() - 2].into(),
+            out_batches: out_shape[..out_shape.len() - 2].into(),
             lhs_shape,
             rhs_shape,
             out_shape,
@@ -103,8 +107,8 @@ impl MatmulProblem {
         m: usize,
         n: usize,
         k: usize,
-        lhs_batches: Vec<usize>,
-        rhs_batches: Vec<usize>,
+        lhs_batches: Shape,
+        rhs_batches: Shape,
         lhs_layout: MatrixLayout,
         rhs_layout: MatrixLayout,
         out_layout: MatrixLayout,
@@ -113,7 +117,7 @@ impl MatmulProblem {
         global_dtypes: MatmulGlobalElems,
         address_type: AddressType,
     ) -> Self {
-        fn broadcast_batches(lhs: &[usize], rhs: &[usize]) -> Option<Vec<usize>> {
+        fn broadcast_batches(lhs: &[usize], rhs: &[usize]) -> Option<Shape> {
             let max_len = max(lhs.len(), rhs.len());
             let lhs_padded = std::iter::repeat_n(1, max_len - lhs.len()).chain(lhs.iter().cloned());
 
@@ -131,12 +135,12 @@ impl MatmulProblem {
                 .collect()
         }
 
-        let out_batches: Vec<usize> =
+        let out_batches =
             broadcast_batches(&lhs_batches, &rhs_batches).expect("Batches should match");
 
-        let lhs_shape: Vec<usize> = lhs_batches.iter().cloned().chain(vec![m, k]).collect();
-        let rhs_shape: Vec<usize> = rhs_batches.iter().cloned().chain(vec![k, n]).collect();
-        let out_shape: Vec<usize> = out_batches.iter().cloned().chain(vec![m, n]).collect();
+        let lhs_shape: Shape = lhs_batches.iter().cloned().chain([m, k]).collect();
+        let rhs_shape: Shape = rhs_batches.iter().cloned().chain([k, n]).collect();
+        let out_shape: Shape = out_batches.iter().cloned().chain([m, n]).collect();
 
         let lhs_strides = lhs_layout.to_strides(&lhs_shape);
         let rhs_strides = rhs_layout.to_strides(&rhs_shape);
@@ -312,11 +316,11 @@ impl MatrixLayout {
         );
     }
 
-    pub fn to_strides(&self, shape: &[usize]) -> Vec<usize> {
+    pub fn to_strides(&self, shape: &[usize]) -> Strides {
         assert!(shape.len() >= 2, "Shape must have at least 2 dimensions");
 
         let n = shape.len();
-        let mut strides = vec![0; n];
+        let mut strides = strides![0; n];
 
         // Start with contiguous layout for last two dims
         match self {

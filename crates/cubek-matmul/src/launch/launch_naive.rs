@@ -106,12 +106,12 @@ pub fn launch_ref<R: Runtime>(
         .max(out.required_address_type());
 
     let problem = MatmulProblem::from_shapes_and_strides(
-        lhs_shape.to_vec(),
-        rhs_shape.to_vec(),
-        out_shape.to_vec(),
-        lhs.data().strides.to_vec(),
-        rhs.data().strides.to_vec(),
-        out.strides.to_vec(),
+        lhs_shape.into(),
+        rhs_shape.into(),
+        out_shape.into(),
+        lhs.data().strides.into(),
+        rhs.data().strides.into(),
+        out.strides.into(),
         dtypes.as_global_elems(),
         address_type,
         lhs.scheme(),

@@ -12,8 +12,7 @@ impl<R: Runtime> Benchmark for IntoContiguousBench<R> {
     fn prepare(&self) -> Self::Input {
         let mut handle = TensorHandle::empty(&self.client, self.shape.clone(), self.dtype);
         for (dim0, dim1) in self.dims.iter() {
-            handle.shape.swap(*dim0, *dim1);
-            handle.strides.swap(*dim0, *dim1);
+            handle.metadata.swap(*dim0, *dim1);
         }
 
         handle

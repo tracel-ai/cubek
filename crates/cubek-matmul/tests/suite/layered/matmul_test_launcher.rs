@@ -45,7 +45,7 @@ pub fn test_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
 ) {
     let (lhs, lhs_data) = TestInput::new(
         client.clone(),
-        problem.lhs_shape.clone(),
+        problem.lhs_shape.to_vec(),
         problem.global_dtypes.lhs,
         layout_to_stride_spec(problem.lhs_layout),
         DataKind::Random {
@@ -57,7 +57,7 @@ pub fn test_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
 
     let (rhs, rhs_data) = TestInput::new(
         client.clone(),
-        problem.rhs_shape.clone(),
+        problem.rhs_shape.to_vec(),
         problem.global_dtypes.rhs,
         layout_to_stride_spec(problem.rhs_layout),
         DataKind::Random {
@@ -69,15 +69,15 @@ pub fn test_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
 
     let out = TestInput::new(
         client.clone(),
-        problem.out_shape.clone(),
+        problem.out_shape.to_vec(),
         problem.global_dtypes.out,
         layout_to_stride_spec(MatrixLayout::RowMajor),
         DataKind::Zeros,
     )
     .generate_without_host_data();
 
-    problem.lhs_strides = lhs.strides.clone();
-    problem.rhs_strides = rhs.strides.clone();
+    problem.lhs_strides = lhs.strides().clone();
+    problem.rhs_strides = rhs.strides().clone();
 
     let lhs_handle = MatmulInputHandleRef::Normal(lhs.as_ref(), problem.global_dtypes.lhs);
     let rhs_handle = MatmulInputHandleRef::Normal(rhs.as_ref(), problem.global_dtypes.rhs);

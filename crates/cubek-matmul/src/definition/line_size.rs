@@ -56,11 +56,10 @@ impl AvailableLineSizes {
         shape: &[usize],
         layout: MatrixLayout,
     ) -> Self {
-        let lhs_vec: Vec<usize> = self.lhs.to_vec();
         let rank = strides.len();
 
         let target = tensor_line_size_parallel(
-            lhs_vec.iter().copied(),
+            self.lhs.iter().copied(),
             shape,
             strides,
             match layout {
@@ -79,11 +78,10 @@ impl AvailableLineSizes {
         shape: &[usize],
         layout: MatrixLayout,
     ) -> Self {
-        let rhs_vec: Vec<usize> = self.rhs.to_vec();
         let rank = strides.len();
 
         let target = tensor_line_size_parallel(
-            rhs_vec.iter().copied(),
+            self.rhs.iter().copied(),
             shape,
             strides,
             match layout {
@@ -97,10 +95,9 @@ impl AvailableLineSizes {
 
     /// Filter available line sizes considering tensor shapes and strides for output
     pub fn filter_out_with_tensor(self, strides: &[usize], shape: &[usize]) -> Self {
-        let out_vec: Vec<usize> = self.out.to_vec();
         let rank = strides.len();
 
-        let target = tensor_line_size_parallel(out_vec.iter().copied(), shape, strides, rank - 1);
+        let target = tensor_line_size_parallel(self.out.iter().copied(), shape, strides, rank - 1);
 
         self.filter_out(move |x| *x == target)
     }

@@ -5,6 +5,7 @@ use cubecl::{
     prelude::{CubePrimitive, TensorHandleRef},
     quant::scheme::{BlockSize, QuantLevel},
     server::LaunchError,
+    zspace::Shape,
 };
 use cubecl_common::quant::scheme::{QuantScheme, QuantStore, QuantValue};
 
@@ -15,7 +16,7 @@ pub enum MatmulInputHandle<R: Runtime> {
     Quantized {
         data: TensorHandle<R>,
         scale: TensorHandle<R>,
-        shape: Vec<usize>,
+        shape: Shape,
         scheme: QuantScheme,
     },
 }
@@ -57,7 +58,7 @@ impl<R: Runtime> MatmulInputHandle<R> {
             } => MatmulInputHandle::Quantized {
                 data: TensorHandle::from_ref(data, *data_dtype),
                 scale: TensorHandle::from_ref(scale, *scale_dtype),
-                shape: shape.to_vec(),
+                shape: (*shape).into(),
                 scheme: **scheme,
             },
         }
@@ -73,8 +74,7 @@ impl<R: Runtime> MatmulInputHandle<R> {
     pub fn swap_dims(&mut self, dim0: usize, dim1: usize) {
         match self {
             MatmulInputHandle::Normal(handle) => {
-                handle.shape.swap(dim0, dim1);
-                handle.strides.swap(dim0, dim1);
+                handle.metadata.swap(dim0, dim1);
             }
             MatmulInputHandle::Quantized {
                 data,
@@ -82,15 +82,13 @@ impl<R: Runtime> MatmulInputHandle<R> {
                 shape,
                 scheme,
             } => {
-                let rank = data.shape.len();
+                let rank = data.shape().len();
 
-                data.shape.swap(dim0, dim1);
-                data.strides.swap(dim0, dim1);
+                data.metadata.swap(dim0, dim1);
 
                 // Swap dims for scale and block size if block scaled quant is used
                 if let QuantLevel::Block(block) = &mut scheme.level {
-                    scale.shape.swap(dim0, dim1);
-                    scale.strides.swap(dim0, dim1);
+                    scale.metadata.swap(dim0, dim1);
                     let mut block_size = block.to_dim_vec(rank);
                     block_size.swap(dim0, dim1);
                     *block = BlockSize::new_trim(block_size)
@@ -261,7 +259,7 @@ impl<'a, R: Runtime> MatmulInputHandleRef<'a, R> {
                 MatmulInputHandle::Quantized {
                     data,
                     scale: TensorHandle::from_ref(scale, *scale_dtype),
-                    shape: shape.to_vec(),
+                    shape: (*shape).into(),
                     scheme,
                 }
             }

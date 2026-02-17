@@ -39,7 +39,7 @@ impl<R: Runtime, E: Float> Benchmark for UnaryBench<R, E> {
     }
 
     fn execute(&self, (lhs, rhs, out): Self::Input) -> Result<(), String> {
-        let num_elems: usize = out.shape.iter().product();
+        let num_elems = out.shape().num_elements();
 
         let working_units = num_elems / self.vectorization;
         let cube_dim = CubeDim::new(&self.client, working_units);

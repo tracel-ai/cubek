@@ -1,6 +1,9 @@
 use cubecl::{
-    CubeElement, TestRuntime, client::ComputeClient, prelude::CubePrimitive,
+    CubeElement, TestRuntime,
+    client::ComputeClient,
+    prelude::CubePrimitive,
     std::tensor::TensorHandle,
+    zspace::{Shape, Strides},
 };
 
 use crate::test_tensor::cast::copy_casted;
@@ -8,8 +11,8 @@ use crate::test_tensor::cast::copy_casted;
 #[derive(Debug)]
 pub struct HostData {
     pub data: HostDataVec,
-    pub shape: Vec<usize>,
-    pub strides: Vec<usize>,
+    pub shape: Shape,
+    pub strides: Strides,
 }
 
 #[derive(Eq, PartialEq, PartialOrd)]
@@ -46,8 +49,8 @@ impl HostData {
         tensor_handle: &TensorHandle<TestRuntime>,
         host_data_type: HostDataType,
     ) -> Self {
-        let shape = tensor_handle.shape.clone();
-        let strides = tensor_handle.strides.clone();
+        let shape = tensor_handle.shape().clone();
+        let strides = tensor_handle.strides().clone();
 
         let data = match host_data_type {
             HostDataType::F32 => {

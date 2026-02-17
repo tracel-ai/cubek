@@ -1,6 +1,6 @@
 use crate::suite::convolution_test_launcher::test_convolution_algorithm;
 use crate::suite::test_utils::TestPrecision;
-use cubecl::{Runtime, TestRuntime};
+use cubecl::{Runtime, TestRuntime, zspace::shape};
 use cubecl::{frontend::CubePrimitive, ir::AddressType};
 use cubek_convolution::{
     components::{
@@ -91,11 +91,11 @@ pub fn test_algo<
         padding,
         dilation,
         batches,
-        in_shape: vec![convolution_size.h, convolution_size.w],
+        in_shape: shape![convolution_size.h, convolution_size.w],
         channels: convolution_size.c,
         out_channels: convolution_size.out_c,
         padded_channels: convolution_size.c,
-        out_shape: vec![out_h, out_w],
+        out_shape: shape![out_h, out_w],
         dimensionality: Dimensionality::Dim2,
         operation: ConvolutionOperation::Forward,
         global_dtypes: MatmulGlobalElems {

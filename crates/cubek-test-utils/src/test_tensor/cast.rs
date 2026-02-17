@@ -32,13 +32,13 @@ pub fn copy_casted(
 ) -> TensorHandle<TestRuntime> {
     if target_type == original.dtype {
         return TensorHandle::new_contiguous(
-            original.shape.clone(),
+            original.shape().clone(),
             original.handle.clone(),
             target_type,
         );
     }
 
-    let num_elems: usize = original.shape.iter().product();
+    let num_elems: usize = original.shape().num_elements();
 
     let line_size = tensor_line_size_parallel(
         client.io_optimized_line_sizes(target_type.size()),
@@ -52,7 +52,7 @@ pub fn copy_casted(
     let cube_count = working_units.div_ceil(cube_dim.num_elems());
 
     let out = TensorHandle::new_contiguous(
-        original.shape.clone(),
+        original.shape().clone(),
         client.empty(target_type.size() * num_elems),
         target_type,
     );

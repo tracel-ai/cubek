@@ -140,12 +140,12 @@ where
         .max(out.required_address_type());
 
     let problem = MatmulProblem::from_shapes_and_strides(
-        lhs.shape().to_vec(),
-        rhs.shape().to_vec(),
-        out.shape.to_vec(),
-        lhs.data().strides.to_vec(),
-        rhs.data().strides.to_vec(),
-        out.strides.to_vec(),
+        lhs.shape().into(),
+        rhs.shape().into(),
+        out.shape.into(),
+        lhs.data().strides.into(),
+        rhs.data().strides.into(),
+        out.strides.into(),
         dtypes.as_global_elems(),
         address_type,
         lhs.scheme(),

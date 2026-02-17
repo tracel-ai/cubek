@@ -192,8 +192,8 @@ where
         m: n * out_shape.iter().product::<usize>(),
         n: out_c,
         k: c * kernel_shape.iter().product::<usize>(),
-        lhs_strides: input.data().strides.to_vec(),
-        rhs_strides: weight.data().strides.to_vec(),
+        lhs_strides: input.data().strides.into(),
+        rhs_strides: weight.data().strides.into(),
         lhs_layout: definition::MatrixLayout::RowMajor,
         rhs_layout: definition::MatrixLayout::ColMajor,
         kernel_size: kernel_shape.iter().map(|it| *it as u32).collect(),
@@ -202,8 +202,8 @@ where
         dilation: dilation.iter().map(|it| *it as u32).collect(),
 
         batches: n,
-        in_shape: in_shape.to_vec(),
-        out_shape: out_shape.to_vec(),
+        in_shape: in_shape.into(),
+        out_shape: out_shape.into(),
         channels: c,
         out_channels: out_c,
 
