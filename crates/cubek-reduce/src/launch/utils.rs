@@ -92,10 +92,10 @@ pub fn generate_line_size<R: Runtime>(
                     // On CPU we benefit from bigger line size, which increases the number of
                     // consecutive loads from global memory on perpendicular reduce.
                     // R::supported_line_sizes() was always arbitrary, review this and find alternate
-                    // algorithm
-                    let supported_line_sizes = client
-                        .io_optimized_line_sizes(dtype.size())
-                        .filter(|size| *size <= max_line_size && max_line_size % *size == 0);
+                    // algorithm. For now it replicates existing behaviour.
+                    let supported_line_sizes = client.io_optimized_line_sizes(1).filter(|size| {
+                        *size <= max_line_size && max_line_size.is_multiple_of(*size)
+                    });
 
                     tensor_line_size_perpendicular(
                         supported_line_sizes,
