@@ -81,7 +81,7 @@ pub fn shared_sum<R: Runtime>(
     let line_size = if contiguous_buffer {
         client
             .io_optimized_line_sizes(input.elem_size)
-            .filter(|line_size| input_len % *line_size == 0)
+            .filter(|line_size| input_len.is_multiple_of(*line_size))
             .max()
             .unwrap_or(1)
     } else {
