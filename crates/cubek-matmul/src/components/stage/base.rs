@@ -1,4 +1,4 @@
-use cubecl::std::{CubeOption, CubeOptionExpand, tensor::layout::Coords2d};
+use cubecl::std::tensor::layout::Coords2d;
 use cubecl::{ir::DeviceProperties, prelude::*};
 
 use crate::components::CubeDimResource;
@@ -221,47 +221,38 @@ pub trait LoadStageFamily<IO: SliceVisibility = ReadOnly>: StageFamily {
 }
 
 #[cube]
-impl<ES: Numeric, IO: SliceVisibility, Inner: Stage<ES, IO>> Stage<ES, IO> for CubeOption<Inner> {
-    type TileKind = CubeOption<Inner::TileKind>;
+impl<ES: Numeric, IO: SliceVisibility, Inner: Stage<ES, IO>> Stage<ES, IO> for Option<Inner> {
+    type TileKind = Option<Inner::TileKind>;
 
     fn tile(this: &Self, tile: Coords2d) -> <Self::TileKind as TileKind<IO>>::Tile<ES> {
-        match this {
-            CubeOption::Some(stage) => CubeOption::new_Some(Inner::tile(stage, tile)),
-            CubeOption::None => CubeOption::new_None(),
-        }
+        this.as_ref().map(|stage| Inner::tile(stage, tile))
     }
 }
 
 #[cube]
-impl<IO: SliceVisibility, Inner: LoadStageFamily<IO>> LoadStageFamily<IO> for Option<Inner> {
+impl<IO: SliceVisibility, S: LoadStageFamily<IO>> LoadStageFamily<IO> for Option<S> {
     fn create<ES: Numeric, T: TilingLayout>(
         #[comptime] alignment: usize,
         #[comptime] config: StageMemoryConfig,
     ) -> Self::Stage<ES, T> {
-        CubeOption::new_Some(Inner::create(alignment, config))
+        Option::new_Some(S::create(alignment, config))
     }
 
     fn with_buffer_index<ES: Numeric, T: TilingLayout>(
         stage: &Self::Stage<ES, T>,
-        buffer_index: u32,
+        index: u32,
     ) -> Self::Stage<ES, T> {
-        match stage {
-            CubeOption::Some(inner) => {
-                CubeOption::new_Some(Inner::with_buffer_index(inner, buffer_index))
-            }
-            CubeOption::None => CubeOption::new_None(),
-        }
+        stage.as_ref().map(|s| S::with_buffer_index(s, index))
     }
 
     fn free<ES: Numeric, T: TilingLayout>(stage: &Self::Stage<ES, T>) {
-        match stage {
-            CubeOption::Some(inner) => Inner::free(inner),
-            CubeOption::None => {}
+        if let Some(inner) = stage {
+            S::free(inner)
         }
     }
 }
 
 impl<IO: SliceVisibility, Inner: StageFamily<IO>> StageFamily<IO> for Option<Inner> {
-    type TileKind = CubeOption<Inner::TileKind>;
-    type Stage<ES: Numeric, T: TilingLayout> = CubeOption<Inner::Stage<ES, T>>;
+    type TileKind = Option<Inner::TileKind>;
+    type Stage<ES: Numeric, T: TilingLayout> = Option<Inner::Stage<ES, T>>;
 }

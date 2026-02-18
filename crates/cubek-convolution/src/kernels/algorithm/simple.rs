@@ -1,5 +1,5 @@
 use cubecl::server::LaunchError;
-use cubecl::std::{CubeOption, tensor::TensorHandle};
+use cubecl::std::tensor::TensorHandle;
 use cubecl::{Runtime, client::ComputeClient, ir::StorageType, prelude::TensorHandleRef};
 use cubek_matmul::components::{global::read::FullLoadingStrategy, tile::TileMatmulFamily};
 use cubek_matmul::components::{
@@ -74,7 +74,7 @@ impl<
     TMM: TileMatmulFamily<
             LhsTile = Strided,
             RhsTile = Strided,
-            AccTile = CubeOption<Strided>,
+            AccTile = Option<Strided>,
             OutTile = Strided,
         >,
     LL: FullLoadingStrategy<RuntimeArgs, TileKind = Strided>,
@@ -98,7 +98,7 @@ impl<
     TMM: TileMatmulFamily<
             LhsTile = Strided,
             RhsTile = Strided,
-            AccTile = CubeOption<Strided>,
+            AccTile = Option<Strided>,
             OutTile = Strided,
         >,
 > Algorithm for SimpleAsyncTmaConv<TMM>

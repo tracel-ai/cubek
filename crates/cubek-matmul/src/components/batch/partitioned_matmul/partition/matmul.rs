@@ -9,7 +9,6 @@ use crate::{
     },
     launch::MatmulArgs,
 };
-use cubecl::std::{CubeOption, CubeOptionExpand};
 
 #[derive(CubeType)]
 /// Area of a tensor a cube is responsible of performing matmul
@@ -182,13 +181,10 @@ pub(crate) fn execute_global_matmul<
     let b_batch = Args::batch_rhs(state, nth_batch as usize);
     let b = b.view(SliceIndex::new(b_batch, b.shape()));
     let c_batch = Args::batch_acc(state, nth_batch as usize);
-    let c = match c {
-        CubeOption::Some(c) => {
-            let c = c.view(SliceIndex::new(c_batch, c.shape()));
-            CubeOption::new_Some(c.slice_unchecked((m_offset, n_offset), (stage_m, stage_n)))
-        }
-        CubeOption::None => CubeOption::new_None(),
-    };
+    let c = c.map(|c| {
+        let c = c.view(SliceIndex::new(c_batch, c.shape()));
+        c.slice_unchecked((m_offset, n_offset), (stage_m, stage_n))
+    });
     let out_batch = Args::batch_out(state, nth_batch as usize);
     let out = out.view_mut(SliceIndex::new(out_batch, out.shape()));
 

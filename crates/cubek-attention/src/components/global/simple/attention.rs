@@ -1,7 +1,6 @@
 use cubecl;
 use cubecl::prelude::*;
 use cubecl::std::tensor::r#virtual::VirtualTensor;
-use cubecl::std::{CubeOption, CubeOptionExpand};
 use cubek_matmul::components::global::PartitionedStage;
 use cubek_matmul::components::global::read::FullStageGlobalReader;
 use cubek_matmul::components::stage::StridedStageMemory;
@@ -58,7 +57,7 @@ impl<
         // Init registers that will change inside global loop
         let mut key_value_registers = SA::init_key_value(config.stage_config);
         let mut mask_registers =
-            SA::init_mask(CubeOption::new_Some((seq_q, seq_kv)), config.stage_config);
+            SA::init_mask(Option::new_Some((seq_q, seq_kv)), config.stage_config);
         let mut softmax_registers = SA::init_softmax(config.stage_config);
         let mut accumulator_registers = SA::init_accumulator(config.stage_config);
 
@@ -150,7 +149,7 @@ impl<
     fn init_mask_reader(
         batch_index: u32,
         stage_q_offset: u32,
-        mask: CubeOption<VirtualTensor<MSK<AP>>>,
+        mask: Option<VirtualTensor<MSK<AP>>>,
         seq_kv_shape: u32,
         #[comptime] config: Self::Config,
     ) -> Self::MaskReader {
@@ -159,7 +158,7 @@ impl<
             * config.stage_config.elements_in_partition_seq_q();
 
         match mask {
-            CubeOption::Some(mask) => {
+            Some(mask) => {
                 let layout =
                     AttentionGlobalLayout::new(&mask, batch_index, config.mask_gmem_config);
 
@@ -172,7 +171,7 @@ impl<
                     config.mask_gmem_config,
                 )
             }
-            CubeOption::None => MaskReader::new_logical(stage_q_offset + partition_q_offset, step),
+            None => MaskReader::new_logical(stage_q_offset + partition_q_offset, step),
         }
     }
 

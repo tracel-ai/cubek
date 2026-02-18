@@ -2,8 +2,6 @@ use std::marker::PhantomData;
 
 use cubecl::prelude::*;
 
-use cubecl::std::{CubeOption, CubeOptionExpand};
-
 use crate::components::tile::{
     StridedTile,
     io::{Filled, Strided, Tile, TileKind},
@@ -86,22 +84,20 @@ impl MatrixFragmentReader for MatrixStageReader<Filled> {
 }
 
 #[cube]
-impl<Inner: TileKind> MatrixFragmentReader for MatrixStageReader<CubeOption<Inner>>
+impl<Inner: TileKind> MatrixFragmentReader for MatrixStageReader<Option<Inner>>
 where
     MatrixStageReader<Inner>: MatrixFragmentReader<TileKind = Inner>,
 {
-    type TileKind = CubeOption<Inner>;
+    type TileKind = Option<Inner>;
 
     fn load_fragment<E: Numeric, V: Numeric>(
-        tile: &CubeOption<Inner::Tile<V>>,
+        tile: &Option<Inner::Tile<V>>,
         frag: &mut Sequence<LineContainer<E>>,
         #[comptime] n: u32,
     ) {
         match tile {
-            CubeOption::Some(tile) => MatrixStageReader::<Inner>::load_fragment(tile, frag, n),
-            CubeOption::None => {
-                MatrixStageReader::<Filled>::load_fragment::<E, V>(&V::from_int(0), frag, n)
-            }
+            Some(tile) => MatrixStageReader::<Inner>::load_fragment(tile, frag, n),
+            None => MatrixStageReader::<Filled>::load_fragment::<E, V>(&V::from_int(0), frag, n),
         }
     }
 }

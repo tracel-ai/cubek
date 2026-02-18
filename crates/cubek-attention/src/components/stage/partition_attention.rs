@@ -26,7 +26,6 @@ use crate::{
     },
     definition::attention_types::*,
 };
-use cubecl::std::CubeOption;
 use cubecl::std::tensor::layout::Coords2d;
 
 #[derive(CubeType)]
@@ -260,7 +259,7 @@ impl<
     }
 
     fn init_mask(
-        out_of_bounds: CubeOption<Coords2d>,
+        out_of_bounds: Option<Coords2d>,
         #[comptime] config: Self::Config,
     ) -> MaskPartition<AP, TA> {
         MaskPartition::<AP, TA>::new(out_of_bounds, config)

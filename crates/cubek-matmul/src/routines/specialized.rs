@@ -1,9 +1,9 @@
 use std::fmt::Display;
 use std::marker::PhantomData;
 
+use cubecl::Runtime;
 use cubecl::client::ComputeClient;
 use cubecl::features::MmaConfig;
-use cubecl::{Runtime, std::CubeOption};
 
 use crate::components::global::PlaneWriterFamily;
 use crate::components::tile::TileMatmulFamily;
@@ -63,7 +63,7 @@ where
     TMM: tile::TileMatmulFamily<
             LhsTile = L::TileKind,
             RhsTile = L::TileKind,
-            AccTile = CubeOption<AL::TileKind>,
+            AccTile = Option<AL::TileKind>,
             OutTile = Strided,
         >,
     RC: RuntimeConfig,

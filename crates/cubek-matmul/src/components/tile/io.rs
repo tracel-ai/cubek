@@ -1,7 +1,5 @@
 use cubecl::prelude::*;
 
-use cubecl::std::CubeOption;
-
 use crate::components::tile::StridedTile;
 
 /// Kind (family) of the tiles returned by a stage and ingested by a tile matmul reader
@@ -26,8 +24,8 @@ impl TileKind<ReadOnly> for Filled {
     type Tile<E: Numeric> = E;
 }
 
-impl<Inner: TileKind<IO>, IO: SliceVisibility> TileKind<IO> for CubeOption<Inner> {
-    type Tile<E: Numeric> = CubeOption<Inner::Tile<E>>;
+impl<Inner: TileKind<IO>, IO: SliceVisibility> TileKind<IO> for Option<Inner> {
+    type Tile<E: Numeric> = Option<Inner::Tile<E>>;
 }
 
 pub type Tile<K, E> = <K as TileKind>::Tile<E>;

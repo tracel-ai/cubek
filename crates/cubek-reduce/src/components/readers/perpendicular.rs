@@ -7,13 +7,10 @@ use crate::{
 };
 use cubecl::{
     prelude::*,
-    std::{
-        CubeOption,
-        tensor::{
-            View,
-            layout::{Coords1d, plain::PlainLayout},
-            r#virtual::VirtualTensor,
-        },
+    std::tensor::{
+        View,
+        layout::{Coords1d, plain::PlainLayout},
+        r#virtual::VirtualTensor,
     },
 };
 
@@ -38,7 +35,7 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
         inst: &I,
         reduce_axis: usize,
         reduce_index: usize,
-        idle: CubeOption<bool>,
+        idle: Option<bool>,
         #[comptime] bound_checks: BoundChecks,
     ) -> PerpendicularReader<P> {
         let line_size = input.line_size();

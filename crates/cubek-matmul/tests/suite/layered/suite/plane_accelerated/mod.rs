@@ -8,9 +8,9 @@ mod matmul_plane_accelerated {
     #[cfg(all(feature = "matmul_tests_plane", not(feature = "matmul_tests_mma")))]
     mod cmma {
         use super::*;
-        use cubecl::std::CubeOption;
+        use cubecl::std::Option;
         use cubek_matmul::components::tile::io::Strided;
-        pub type TMM = cubek_matmul::components::tile::cmma::CmmaMatmul<CubeOption<Strided>>;
+        pub type TMM = cubek_matmul::components::tile::cmma::CmmaMatmul<Option<Strided>>;
 
         include!("algorithm.rs");
     }

@@ -1,4 +1,4 @@
-use cubecl::{prelude::*, std::CubeOption};
+use cubecl::prelude::*;
 use std::marker::PhantomData;
 
 use crate::components::tile::io::{Strided, TileKind};
@@ -17,7 +17,7 @@ use cubecl::{cmma::MmaDefinition, ir::MatrixIdent};
 pub struct MmaMatmul<
     Lhs: TileKind = Strided,
     Rhs: TileKind = Strided,
-    Acc: TileKind = CubeOption<Strided>,
+    Acc: TileKind = Option<Strided>,
 > {
     _ty: PhantomData<(Lhs, Rhs, Acc)>,
 }

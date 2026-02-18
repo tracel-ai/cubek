@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use cubecl::{Runtime, client::ComputeClient, std::CubeOption};
+use cubecl::{Runtime, client::ComputeClient};
 
 use crate::{
     components::{
@@ -48,7 +48,7 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleUnitAlgorithm {
         RC,
         DoubleBufferingMatmulFamily<
             UnitMatmulFamily<
-                RegisterMatmul<CubeOption<Strided>>,
+                RegisterMatmul<Option<Strided>>,
                 StridedStageFamily,
                 Option<StridedStageFamily>,
             >,

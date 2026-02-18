@@ -12,10 +12,7 @@ use crate::components::{global::memory::GlobalIterator, stage::LoadStageFamily};
 use crate::components::{global::multi_stage::LoadMaxRoundPlaneCount, tile::io::TileKind};
 use crate::{components::global::GlobalReaderConfig, launch::RuntimeConfig};
 use cubecl::prelude::*;
-use cubecl::std::{
-    CubeOption, CubeOptionExpand,
-    tensor::{View, layout::Coords2d},
-};
+use cubecl::std::tensor::{View, layout::Coords2d};
 
 pub type SyncBarrier<S> = <S as SyncStrategy>::Barrier;
 
@@ -58,7 +55,7 @@ pub struct FullStageGlobalReader<
     global_iter: GlobalIterator<Line<EG>>,
     runtime_config: RC,
     stage: FullLoaderStage<RC, L, ES>,
-    loading_job: CubeOption<L::Job<EG, ES>>,
+    loading_job: Option<L::Job<EG, ES>>,
     #[cube(comptime)]
     _phantom: PhantomData<L>,
 }
@@ -82,12 +79,12 @@ impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: FullLoadingStrategy<RC>>
             GlobalIterator::new(view, k_step, config.gmem_config.view_direction, false);
 
         let loading_job = match config.precompute_job {
-            true => CubeOption::new_Some(L::new_job::<EG, ES>(
+            true => Option::new_Some(L::new_job::<EG, ES>(
                 runtime_config.clone(),
                 view.line_size(),
                 config,
             )),
-            false => CubeOption::new_None(),
+            false => Option::new_None(),
         };
 
         FullStageGlobalReader::<EG, ES, RC, L> {
@@ -120,14 +117,13 @@ impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: FullLoadingStrategy<RC>>
         barrier: &mut SyncBarrier<L::SyncStrategy>,
         #[comptime] config: GlobalReaderConfig,
     ) {
-        let mut loading_job = match self.loading_job.clone() {
-            CubeOption::Some(loading_job) => loading_job,
-            CubeOption::None => L::new_job::<EG, ES>(
+        let mut loading_job = self.loading_job.clone().unwrap_or_else(|| {
+            L::new_job::<EG, ES>(
                 self.runtime_config.clone(),
                 self.global_iter.line_size(),
                 config,
-            ),
-        };
+            )
+        });
 
         let len = L::Job::task_count(&loading_job);
 
@@ -157,12 +153,9 @@ impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: FullLoadingStrategy<RC>>
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::JobIterator {
         let view = this.global_iter.view();
-        let job = match this.loading_job.clone() {
-            CubeOption::Some(loading_job) => loading_job,
-            CubeOption::None => {
-                L::new_job::<EG, ES>(this.runtime_config.clone(), view.line_size(), config)
-            }
-        };
+        let job = this.loading_job.clone().unwrap_or_else(|| {
+            L::new_job::<EG, ES>(this.runtime_config.clone(), view.line_size(), config)
+        });
 
         let num_tasks = L::Job::task_count(&job);
 

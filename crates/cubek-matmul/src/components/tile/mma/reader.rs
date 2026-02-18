@@ -1,7 +1,6 @@
 use std::marker::PhantomData;
 
 use cubecl::prelude::*;
-use cubecl::std::{CubeOption, CubeOptionExpand};
 use cubecl::{cmma::MmaDefinition, ir::MatrixIdent};
 
 use crate::components::tile::{
@@ -246,14 +245,14 @@ impl MmaFragmentReader for MmaStageReader<Filled> {
 }
 
 #[cube]
-impl<Inner: TileKind> MmaFragmentReader for MmaStageReader<CubeOption<Inner>>
+impl<Inner: TileKind> MmaFragmentReader for MmaStageReader<Option<Inner>>
 where
     MmaStageReader<Inner>: MmaFragmentReader<TileKind = Inner>,
 {
-    type TileKind = CubeOption<Inner>;
+    type TileKind = Option<Inner>;
 
     fn load_fragment<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
-        tile: &CubeOption<Inner::Tile<V>>,
+        tile: &Option<Inner::Tile<V>>,
         fragment: &mut Array<Line<E>>,
         def: MmaDefinition<A, B, CD>,
         #[comptime] ident: MatrixIdent,
@@ -261,10 +260,10 @@ where
         #[comptime] config: MmaMatmulConfig,
     ) {
         match tile {
-            CubeOption::Some(tile) => {
+            Some(tile) => {
                 MmaStageReader::<Inner>::load_fragment(tile, fragment, def, ident, layout, config)
             }
-            CubeOption::None => MmaStageReader::<Filled>::load_fragment::<E, V, A, B, CD>(
+            None => MmaStageReader::<Filled>::load_fragment::<E, V, A, B, CD>(
                 &V::from_int(0),
                 fragment,
                 def,

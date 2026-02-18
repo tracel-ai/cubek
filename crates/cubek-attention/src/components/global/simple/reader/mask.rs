@@ -9,7 +9,6 @@ use cubek_matmul::components::global::memory::{GlobalIterator, GlobalMemoryConfi
 use cubek_matmul::components::tile::StridedTile;
 
 use crate::components::stage::{AttentionPartitioner, StageAttentionConfig};
-use cubecl::std::CubeOption;
 
 #[derive(CubeType)]
 pub struct LogicalIterator {
@@ -82,7 +81,7 @@ impl<AP: AttentionPrecision> MaskReader<AP> {
         &self,
         #[comptime] pos_in_partition: Coords2d,
         #[comptime] config: S,
-    ) -> (Coords2d, CubeOption<StridedTile<MSK<AP>>>) {
+    ) -> (Coords2d, Option<StridedTile<MSK<AP>>>) {
         let partition_tile_offset = (
             pos_in_partition.0 * config.elements_in_tile_seq_q(),
             pos_in_partition.1 * config.elements_in_tile_seq_kv(),
@@ -91,13 +90,13 @@ impl<AP: AttentionPrecision> MaskReader<AP> {
         let (origin, tile) = match self {
             MaskReader::Materialized(materialized_mask_reader) => (
                 materialized_mask_reader.logical_iter.read(),
-                CubeOption::new_Some(materialized_mask_reader.read::<P>(
+                Option::new_Some(materialized_mask_reader.read::<P>(
                     partition_tile_offset,
                     config.tile_config().attention_tile_size(),
                     config.elements_in_partition_seq_q(),
                 )),
             ),
-            MaskReader::Logical(logical_iter) => (logical_iter.read(), CubeOption::new_None()),
+            MaskReader::Logical(logical_iter) => (logical_iter.read(), Option::new_None()),
         };
 
         (Coords2d::add(origin, partition_tile_offset.runtime()), tile)

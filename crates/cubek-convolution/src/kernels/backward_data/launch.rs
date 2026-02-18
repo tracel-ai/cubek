@@ -9,12 +9,7 @@ use crate::{
     components::{ConvolutionProblem, Dimensionality},
     kernels::algorithm::Algorithm,
 };
-use cubecl::{
-    Runtime,
-    client::ComputeClient,
-    prelude::*,
-    std::{CubeOption, tensor::TensorHandle},
-};
+use cubecl::{Runtime, client::ComputeClient, prelude::*, std::tensor::TensorHandle};
 use cubek_matmul::{
     components::tile::{cmma::CmmaMatmul, io::Strided, mma::MmaMatmul},
     definition::{AvailableLineSizes, MatmulElems, MatmulSetupError, MatrixLayout},
@@ -27,11 +22,11 @@ macro_rules! with_tile_kind {
     ($kind: expr, $T: ident, $launch: expr) => {
         match $kind {
             AcceleratedTileKind::Cmma => {
-                type $T = CmmaMatmul<CubeOption<Strided>>;
+                type $T = CmmaMatmul<Option<Strided>>;
                 ($launch)()
             }
             AcceleratedTileKind::Mma => {
-                type $T = MmaMatmul<Strided, Strided, CubeOption<Strided>>;
+                type $T = MmaMatmul<Strided, Strided, Option<Strided>>;
                 ($launch)()
             }
         }

@@ -12,7 +12,6 @@ use crate::launch::TensorValue;
 use cubecl;
 use cubecl::prelude::*;
 use cubecl::std::tensor::r#virtual::VirtualTensor;
-use cubecl::std::{CubeOption, CubeOptionExpand};
 
 type Input<Args, QG, KG, VG, MSK> = <Args as AttentionArgs>::Input<QG, KG, VG, MSK>;
 type Output<Args, OG> = <Args as AttentionArgs>::Output<OG>;
@@ -65,14 +64,10 @@ pub(crate) fn attention<
     let value = VirtualTensor::<VG>::new::<TensorValue<QG, KG, VG, MSK, OG, Args>>(&value);
 
     let has_mask = Args::has_mask(&state);
-    let mask: CubeOption<VirtualTensor<MSK>> = match has_mask {
-        CubeOption::Some(_) => {
-            let mask = TensorMask::<QG, KG, VG, MSK, OG, Args>::new(&state);
-            let mask = VirtualTensor::<MSK>::new::<TensorMask<QG, KG, VG, MSK, OG, Args>>(&mask);
-            CubeOption::new_Some(mask)
-        }
-        CubeOption::None => CubeOption::new_None(),
-    };
+    let mask = has_mask.map(|_| {
+        let mask = TensorMask::<QG, KG, VG, MSK, OG, Args>::new(&state);
+        VirtualTensor::<MSK>::new::<TensorMask<QG, KG, VG, MSK, OG, Args>>(&mask)
+    });
 
     let mut out = TensorOutput::<QG, KG, VG, MSK, OG, Args>::new(&mut state);
     let out =

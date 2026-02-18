@@ -1,5 +1,4 @@
 use cubecl::prelude::*;
-use cubecl::std::{CubeOption, CubeOptionExpand};
 use std::marker::PhantomData;
 
 use crate::components::tile::{
@@ -154,23 +153,23 @@ impl RegisterFragmentReader for RegisterStageReader<Filled> {
 }
 
 #[cube]
-impl<Inner: TileKind> RegisterFragmentReader for RegisterStageReader<CubeOption<Inner>>
+impl<Inner: TileKind> RegisterFragmentReader for RegisterStageReader<Option<Inner>>
 where
     RegisterStageReader<Inner>: RegisterFragmentReader<TileKind = Inner>,
 {
-    type TileKind = CubeOption<Inner>;
+    type TileKind = Option<Inner>;
 
     fn load_fragment<E: Numeric, V: Numeric>(
-        tile: &CubeOption<Inner::Tile<V>>,
+        tile: &Option<Inner::Tile<V>>,
         fragment: &mut UnitFragment<E>,
         #[comptime] ident: StageIdent,
         #[comptime] config: RegisterMatmulConfig,
     ) {
         match tile {
-            CubeOption::Some(tile) => {
+            Some(tile) => {
                 RegisterStageReader::<Inner>::load_fragment(tile, fragment, ident, config)
             }
-            CubeOption::None => RegisterStageReader::<Filled>::load_fragment::<E, V>(
+            None => RegisterStageReader::<Filled>::load_fragment::<E, V>(
                 &V::from_int(0),
                 fragment,
                 ident,

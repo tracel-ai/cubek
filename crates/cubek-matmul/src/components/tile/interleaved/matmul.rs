@@ -1,7 +1,4 @@
-use cubecl::{
-    prelude::*,
-    std::{CubeOption, CubeOptionExpand},
-};
+use cubecl::prelude::*;
 
 use crate::components::tile::TileMatmul;
 use crate::components::tile::interleaved::config::InterleavedMatmulConfig;
@@ -76,7 +73,7 @@ impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for InterleavedMatm
 
     type LhsTile = Strided;
     type RhsTile = Strided;
-    type AccTile = CubeOption<Strided>;
+    type AccTile = Option<Strided>;
     type OutTile = Strided;
 
     fn execute(
@@ -162,15 +159,15 @@ impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for InterleavedMatm
     }
 
     fn load_acc<E: Numeric>(
-        tile: &CubeOption<StridedTile<E>>,
+        tile: &Option<StridedTile<E>>,
         acc: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     ) {
         match tile {
-            CubeOption::Some(_) => {
+            Some(_) => {
                 todo!("Not yet implemented")
             }
-            CubeOption::None => {
+            None => {
                 let value = E::from_int(0);
                 InterleavedStageReader::load_accumulator::<A, E>(&value, acc, config);
             }

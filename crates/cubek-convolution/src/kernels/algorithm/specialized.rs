@@ -1,12 +1,8 @@
 use std::marker::PhantomData;
 
 use cubecl::{
-    Runtime,
-    client::ComputeClient,
-    ir::StorageType,
-    prelude::TensorHandleRef,
-    server::LaunchError,
-    std::{CubeOption, tensor::TensorHandle},
+    Runtime, client::ComputeClient, ir::StorageType, prelude::TensorHandleRef, server::LaunchError,
+    std::tensor::TensorHandle,
 };
 use cubek_matmul::{
     components::{
@@ -44,7 +40,7 @@ impl<
     TMM: TileMatmulFamily<
             LhsTile = Strided,
             RhsTile = Strided,
-            AccTile = CubeOption<Strided>,
+            AccTile = Option<Strided>,
             OutTile = Strided,
         >,
     L: AsyncPartialLoadingStrategy<RuntimeArgs, TileKind = Strided>,
@@ -68,7 +64,7 @@ impl<
     TMM: TileMatmulFamily<
             LhsTile = Strided,
             RhsTile = Strided,
-            AccTile = CubeOption<Strided>,
+            AccTile = Option<Strided>,
             OutTile = Strided,
         >,
 > Algorithm for SpecializedTmaConv<TMM>
