@@ -152,8 +152,8 @@ impl<In: Numeric> SharedAccumulator for DynamicAccumulator<In> {
         accumulator.elements[index] = item.elements;
 
         let args = &mut accumulator.args;
-        if let Some(args) = args {
-            args[index] = item.args.unwrap();
+        if let Some((args, item_args)) = args.as_mut().zip(item.args) {
+            args[index] = item_args;
         };
     }
 }
