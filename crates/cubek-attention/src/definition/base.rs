@@ -1,4 +1,9 @@
-use cubecl::ir::{AddressType, ElemType, FloatKind, StorageType};
+use cubecl::{
+    Runtime,
+    client::ComputeClient,
+    frontend::CubePrimitive,
+    ir::{AddressType, ElemType, FloatKind, StorageType},
+};
 
 #[derive(Clone, Debug)]
 /// Description of an attention problem to solve, regardless of actual data
@@ -90,6 +95,20 @@ impl AttentionGlobalTypes {
             value: float_dtype,
             mask: mask_dtype,
             out: float_dtype,
+        }
+    }
+
+    pub fn mask_dtype<R: Runtime>(client: &ComputeClient<R>) -> StorageType {
+        let props = client.properties();
+        let u8_ty = u8::as_type_native_unchecked();
+        let u32_ty = u32::as_type_native_unchecked();
+
+        if props.supports_type(u8_ty) {
+            u8_ty
+        } else if props.supports_type(u32_ty) {
+            u32_ty
+        } else {
+            panic!("Client does not support u8 or u32 native types");
         }
     }
 }

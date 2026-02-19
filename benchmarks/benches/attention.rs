@@ -6,16 +6,21 @@ use cubecl::{
     client::ComputeClient,
     future,
     prelude::*,
+    profile::TimingMethod,
     std::tensor::TensorHandle,
 };
 use cubek::{
-    attention::definition::{
-        AttentionElems, AttentionIdent, AttentionPrecision, AttentionProblem, attention_types::*,
+    attention::{
+        self,
+        definition::{
+            AttentionDims, AttentionElems, AttentionGlobalTypes, AttentionIdent, AttentionOptions,
+            AttentionPrecision, AttentionProblem, attention_types::*,
+        },
+        launch::{BlueprintStrategy, Strategy},
     },
-    attention::launch::Strategy,
     random::random_uniform,
 };
-use std::marker::PhantomData;
+use std::{default, marker::PhantomData};
 
 pub struct AttentionInputs<R: Runtime> {
     query: TensorHandle<R>,
@@ -33,6 +38,15 @@ impl<R: Runtime> Clone for AttentionInputs<R> {
             mask: self.mask.clone(),
         }
     }
+}
+
+#[allow(dead_code)]
+pub struct AttentionBench<R: Runtime, AP> {
+    problem: AttentionProblem,
+    strategy: Strategy,
+    device: R::Device,
+    client: ComputeClient<R>,
+    _phantom: PhantomData<AP>,
 }
 
 impl<R: Runtime, AP: AttentionPrecision> Benchmark for AttentionBench<R, AP> {
@@ -71,27 +85,26 @@ impl<R: Runtime, AP: AttentionPrecision> Benchmark for AttentionBench<R, AP> {
     }
 
     fn execute(&self, input: Self::Input) -> Result<(), String> {
-        todo!();
-        // let client = R::client(&self.device);
-        // let dtypes = AttentionElems::new::<AP>();
+        let client = R::client(&self.device);
 
-        // let out: TensorHandle<R> = TensorHandle::empty(
-        //     &client,
-        //     self.problem.shape(AttentionIdent::Out).to_vec(),
-        //     dtypes.out_global,
-        // )
+        let out: TensorHandle<R> = TensorHandle::empty(
+            &client,
+            self.problem.shape(AttentionIdent::Out).to_vec(),
+            self.problem.global_dtypes.out,
+        );
 
-        // attention::launch_ref(
-        //     &Strategy::BlackboxAccelerated,
-        //     &self.client,
-        //     &input.query.as_ref(),
-        //     &input.key.as_ref(),
-        //     &input.value.as_ref(),
-        //     &None,
-        //     &out.as_ref(),
-        //     &dtypes,
-        // )
-        // .map_err(|it| format!("{it:?}"))
+        attention::launch::launch_ref(
+            self.strategy.clone(),
+            &self.client,
+            &input.query.as_ref(),
+            &input.key.as_ref(),
+            &input.value.as_ref(),
+            &None,
+            &out.as_ref(),
+            &self.problem.global_dtypes,
+            self.problem.options.clone(),
+        )
+        .map_err(|it| format!("{it:?}"))
     }
 
     fn name(&self) -> String {
@@ -121,91 +134,119 @@ impl<R: Runtime, AP: AttentionPrecision> Benchmark for AttentionBench<R, AP> {
 }
 
 #[allow(dead_code)]
-pub struct AttentionBench<R: Runtime, AP> {
-    problem: AttentionProblem,
-    strategy: Strategy,
-    device: R::Device,
-    client: ComputeClient<R>,
-    _phantom: PhantomData<AP>,
-}
-
-#[allow(dead_code)]
 fn run<R: Runtime, AP: AttentionPrecision>(device: R::Device) {
     let client = R::client(&device);
 
-    // let bert = AttentionProblem::new(
-    //     &client,
-    //     AttentionProblemDims {
-    //         batch: 8,
-    //         num_heads: 12,
-    //         seq_q: 128,
-    //         seq_kv: 128,
-    //         head_dim: 64,
-    //         val_dim: 64,
-    //     },
-    // );
-    //         line_sizes: todo!(),
-    //         global_dtypes: todo!(),
-    //         accumulator_precision: todo!(),
-    //         masked: false,
-    //         causal: false,
-    //     };
-    //     let gpt2 = AttentionProblem {
-    //         batch: 4,
-    //         num_heads: 12,
-    //         seq_q: 1024,
-    //         seq_kv: 1024,
-    //         head_dim: 64,
-    //         val_dim: 64,
-    //         masked: true,
-    //         causal: true,
-    //     };
-    //     let llama = AttentionProblem {
-    //         batch: 4,
-    //         num_heads: 32,
-    //         seq_q: 2048,
-    //         seq_kv: 2048,
-    //         head_dim: 128,
-    //         val_dim: 128,
-    //         masked: true,
-    //         causal: true,
-    //     };
-    //     let long_context = AttentionProblem {
-    //         batch: 1,
-    //         num_heads: 16,
-    //         seq_q: 4096,
-    //         seq_kv: 4096,
-    //         head_dim: 128,
-    //         val_dim: 128,
-    //         masked: true,
-    //         causal: true,
-    //     };
-    //     let encoder_decoder = AttentionProblem {
-    //         batch: 2,
-    //         num_heads: 16,
-    //         seq_q: 512,
-    //         seq_kv: 1024,
-    //         head_dim: 128,
-    //         val_dim: 128,
-    //         masked: false,
-    //         causal: false,
-    //     };
-    //
-    //     for problem in [bert, gpt2, llama, long_context, encoder_decoder] {
-    //         for strategy in [Strategy::BlackboxAccelerated, Strategy::Unit] {
-    //             let bench = AttentionBench::<R, AP> {
-    //                 problem: problem.clone(),
-    //                 strategy,
-    //                 client: client.clone(),
-    //                 device: device.clone(),
-    //                 _phantom: PhantomData,
-    //             };
-    //
-    //             println!("problem: {:?}", bench.problem);
-    //             println!("{}", bench.name());
-    //             println!("{}", bench.run(TimingMethod::System).unwrap());
-    //         }
-    //     }
+    let global_dtypes = AttentionGlobalTypes::from_single_float_dtype(
+        <AP::Softmax>::as_type_native_unchecked(),
+        AttentionGlobalTypes::mask_dtype(&client),
+    );
+
+    let bert = AttentionProblem {
+        dims: AttentionDims {
+            batch: 8,
+            num_heads: 12,
+            seq_q: 128,
+            seq_kv: 128,
+            head_dim: 64,
+            val_dim: 64,
+        },
+        global_dtypes: global_dtypes.clone(),
+        masked: false,
+        options: Default::default(),
+        address_type: Default::default(),
+    };
+
+    let gpt2 = AttentionProblem {
+        dims: AttentionDims {
+            batch: 4,
+            num_heads: 12,
+            seq_q: 1024,
+            seq_kv: 1024,
+            head_dim: 64,
+            val_dim: 64,
+        },
+        global_dtypes: global_dtypes.clone(),
+        masked: true,
+        options: AttentionOptions {
+            causal: true,
+            accumulator_precision: Default::default(),
+        },
+        address_type: Default::default(),
+    };
+
+    let llama = AttentionProblem {
+        dims: AttentionDims {
+            batch: 4,
+            num_heads: 32,
+            seq_q: 2048,
+            seq_kv: 2048,
+            head_dim: 128,
+            val_dim: 128,
+        },
+        global_dtypes: global_dtypes.clone(),
+        masked: true,
+        options: AttentionOptions {
+            causal: true,
+            accumulator_precision: Default::default(),
+        },
+        address_type: Default::default(),
+    };
+
+    let long_context = AttentionProblem {
+        dims: AttentionDims {
+            batch: 1,
+            num_heads: 16,
+            seq_q: 4096,
+            seq_kv: 4096,
+            head_dim: 128,
+            val_dim: 128,
+        },
+        global_dtypes: global_dtypes.clone(),
+        masked: true,
+        options: AttentionOptions {
+            causal: true,
+            accumulator_precision: Default::default(),
+        },
+        address_type: Default::default(),
+    };
+
+    let encoder_decoder = AttentionProblem {
+        dims: AttentionDims {
+            batch: 2,
+            num_heads: 16,
+            seq_q: 512,
+            seq_kv: 1024,
+            head_dim: 128,
+            val_dim: 128,
+        },
+        global_dtypes,
+        masked: false,
+        options: AttentionOptions {
+            causal: false,
+            accumulator_precision: Default::default(),
+        },
+        address_type: Default::default(),
+    };
+
+    for problem in [bert, gpt2, llama, long_context, encoder_decoder] {
+        for strategy in [
+            Strategy::BlackboxAccelerated(BlueprintStrategy::Inferred(())),
+            Strategy::Unit(BlueprintStrategy::Inferred(())),
+        ] {
+            let bench = AttentionBench::<R, AP> {
+                problem: problem.clone(),
+                strategy,
+                client: client.clone(),
+                device: device.clone(),
+                _phantom: PhantomData,
+            };
+
+            println!("problem: {:?}", bench.problem);
+            println!("{}", bench.name());
+            println!("{}", bench.run(TimingMethod::System).unwrap());
+        }
+    }
 }
 
 #[allow(unused)]

@@ -50,7 +50,7 @@ mod unit {
         fn global_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
             AttentionGlobalTypes::from_single_float_dtype(
                 half::f16::as_type_native_unchecked(),
-                mask_dtype(client),
+                AttentionGlobalTypes::mask_dtype(client),
             )
         }
 
@@ -68,7 +68,7 @@ mod unit {
         fn global_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
             AttentionGlobalTypes::from_single_float_dtype(
                 f32::as_type_native_unchecked(),
-                mask_dtype(client),
+                AttentionGlobalTypes::mask_dtype(client),
             )
         }
 
@@ -130,7 +130,7 @@ mod blackbox_accelerated {
         fn global_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
             AttentionGlobalTypes::from_single_float_dtype(
                 half::f16::as_type_native_unchecked(),
-                mask_dtype(client),
+                AttentionGlobalTypes::mask_dtype(client),
             )
         }
 
@@ -148,24 +148,11 @@ mod blackbox_accelerated {
         fn global_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
             AttentionGlobalTypes::from_single_float_dtype(
                 f32::as_type_native_unchecked(),
-                mask_dtype(client),
+                AttentionGlobalTypes::mask_dtype(client),
             )
         }
 
         include!("blueprint_tests.rs");
         include!("selector_tests.rs");
-    }
-}
-fn mask_dtype<R: Runtime>(client: &ComputeClient<R>) -> StorageType {
-    let props = client.properties();
-    let u8_ty = u8::as_type_native_unchecked();
-    let u32_ty = u32::as_type_native_unchecked();
-
-    if props.supports_type(u8_ty) {
-        u8_ty
-    } else if props.supports_type(u32_ty) {
-        u32_ty
-    } else {
-        panic!("Client does not support u8 or u32 native types");
     }
 }

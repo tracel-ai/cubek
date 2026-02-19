@@ -286,7 +286,8 @@ impl AttentionElems {
             value_global: global_dtypes.value,
             value_stage: global_dtypes.value,
             key_value_tile: global_dtypes.value,
-            softmax: accumulator,
+            // Because softmax will be in lhs of a tile matmul, we take a type that is guaranteed to be supported as such
+            softmax: global_dtypes.query,
             accumulator,
             mask: global_dtypes.mask,
             out_global: global_dtypes.out,
