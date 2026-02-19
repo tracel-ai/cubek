@@ -327,8 +327,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
     ) {
         destination.elements = source.elements;
         let args = &mut destination.args;
-        if let Some(val) = args {
-            *val = source.args.unwrap()
+        if let Some((val, source_val)) = args.as_mut().zip(source.args) {
+            *val = source_val;
         }
     }
 
