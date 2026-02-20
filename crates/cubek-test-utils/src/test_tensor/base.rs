@@ -1,4 +1,10 @@
-use cubecl::{TestRuntime, client::ComputeClient, ir::StorageType, std::tensor::TensorHandle};
+use cubecl::{
+    TestRuntime,
+    client::ComputeClient,
+    ir::StorageType,
+    std::tensor::TensorHandle,
+    zspace::{Shape, Strides},
+};
 
 use crate::test_tensor::{
     arange::build_arange,
@@ -31,7 +37,7 @@ pub enum DataKind {
 impl TestInput {
     pub fn new(
         client: ComputeClient<TestRuntime>,
-        shape: Vec<usize>,
+        shape: Shape,
         dtype: StorageType,
         stride_spec: StrideSpec,
         data_kind: DataKind,
@@ -95,13 +101,13 @@ impl TestInput {
 
 pub struct BaseInputSpec {
     pub client: ComputeClient<TestRuntime>,
-    pub shape: Vec<usize>,
+    pub shape: Shape,
     pub dtype: StorageType,
     pub stride_spec: StrideSpec,
 }
 
 impl BaseInputSpec {
-    pub(crate) fn strides(&self) -> Vec<usize> {
+    pub(crate) fn strides(&self) -> Strides {
         self.stride_spec.compute_strides(&self.shape)
     }
 }

@@ -1,3 +1,5 @@
+use cubecl::zspace::{Shape, Strides};
+
 #[derive(Debug, PartialEq, Eq, Default)]
 pub enum StrideSpec {
     #[default]
@@ -7,9 +9,8 @@ pub enum StrideSpec {
 }
 
 impl StrideSpec {
-    pub fn compute_strides(&self, shape: &[usize]) -> Vec<usize> {
+    pub fn compute_strides(&self, shape: &Shape) -> Strides {
         let n = shape.len();
-
         match self {
             StrideSpec::RowMajor => {
                 assert!(n >= 2, "RowMajor requires at least 2 dimensions");
@@ -18,7 +19,7 @@ impl StrideSpec {
                 for i in (0..n - 1).rev() {
                     strides[i] = strides[i + 1] * shape[i + 1];
                 }
-                strides
+                Strides::new(&strides)
             }
             StrideSpec::ColMajor => {
                 assert!(n >= 2, "ColMajor requires at least 2 dimensions");
@@ -28,14 +29,14 @@ impl StrideSpec {
                 for i in (0..n - 2).rev() {
                     strides[i] = strides[i + 1] * shape[i + 1];
                 }
-                strides
+                Strides::new(&strides)
             }
             StrideSpec::Custom(strides) => {
                 assert!(
                     strides.len() == n,
                     "Custom strides must have the same rank as the shape"
                 );
-                strides.clone()
+                strides.clone().try_into().unwrap()
             }
         }
     }

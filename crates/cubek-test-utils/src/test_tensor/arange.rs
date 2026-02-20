@@ -1,7 +1,7 @@
 use cubecl::{
     TestRuntime,
     prelude::*,
-    std::tensor::{TensorHandle, ViewOperationsMut, ViewOperationsMutExpand},
+    std::tensor::{TensorHandle, ViewOperationsMut, ViewOperationsMutExpand}, zspace::{Shape, Strides},
 };
 
 use crate::test_tensor::base::BaseInputSpec;
@@ -29,8 +29,8 @@ fn arange_launch<T: Numeric>(tensor: &mut Tensor<T>, #[define(T)] _types: Storag
 
 fn new_arange(
     client: &ComputeClient<TestRuntime>,
-    shape: Vec<usize>,
-    strides: Vec<usize>,
+    shape: Shape,
+    strides: Strides,
     dtype: StorageType,
 ) -> TensorHandle<TestRuntime> {
     let num_elems = shape.iter().product::<usize>();

@@ -1,5 +1,5 @@
 use crate::attention::assert_result;
-use cubecl::TestRuntime;
+use cubecl::{TestRuntime, zspace::Shape};
 use cubek_attention::{
     definition::{AttentionElems, AttentionIdent, AttentionOptions, AttentionProblem},
     launch::{Strategy, launch},
@@ -23,7 +23,7 @@ pub fn test_launch(
 
     let (query_handle, query_data) = TestInput::new(
         client.clone(),
-        query_shape.to_vec(),
+        Shape::new(query_shape),
         problem.global_dtypes.query,
         StrideSpec::RowMajor,
         DataKind::Random {
@@ -35,7 +35,7 @@ pub fn test_launch(
 
     let (key_handle, key_data) = TestInput::new(
         client.clone(),
-        key_shape.to_vec(),
+        Shape::new(key_shape),
         problem.global_dtypes.key,
         StrideSpec::RowMajor,
         DataKind::Random {
@@ -47,7 +47,7 @@ pub fn test_launch(
 
     let (value_handle, value_data) = TestInput::new(
         client.clone(),
-        value_shape.to_vec(),
+        Shape::new(value_shape),
         problem.global_dtypes.value,
         StrideSpec::RowMajor,
         DataKind::Random {
@@ -60,7 +60,7 @@ pub fn test_launch(
     let (mask_handle, mask_data) = if problem.masked {
         let (mask_handle, mask_data) = TestInput::new(
             client.clone(),
-            mask_shape.to_vec(),
+            Shape::new(mask_shape),
             problem.global_dtypes.mask,
             StrideSpec::RowMajor,
             DataKind::Random {
@@ -77,7 +77,7 @@ pub fn test_launch(
 
     let out_handle = TestInput::new(
         client.clone(),
-        out_shape.to_vec(),
+        Shape::new(out_shape),
         problem.global_dtypes.out,
         StrideSpec::RowMajor,
         DataKind::Zeros,
