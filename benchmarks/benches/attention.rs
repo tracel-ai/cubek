@@ -220,7 +220,7 @@ fn run<R: Runtime, AP: AttentionPrecision>(device: R::Device) {
             head_dim: 128,
             val_dim: 128,
         },
-        global_dtypes,
+        global_dtypes: global_dtypes.clone(),
         masked: false,
         options: AttentionOptions {
             causal: false,
@@ -229,10 +229,29 @@ fn run<R: Runtime, AP: AttentionPrecision>(device: R::Device) {
         address_type: Default::default(),
     };
 
-    for problem in [bert, gpt2, llama, long_context, encoder_decoder] {
+    let my_bench = AttentionProblem {
+        dims: AttentionDims {
+            batch: 1,
+            num_heads: 4,
+            seq_q: 2048,
+            seq_kv: 2048,
+            head_dim: 128,
+            val_dim: 128,
+        },
+        global_dtypes: global_dtypes.clone(),
+        masked: true,
+        options: AttentionOptions {
+            causal: true,
+            accumulator_precision: Default::default(),
+        },
+        address_type: Default::default(),
+    };
+
+    // for problem in [bert, gpt2, llama, long_context, encoder_decoder] {
+    for problem in [my_bench] {
         for strategy in [
             Strategy::BlackboxAccelerated(BlueprintStrategy::Inferred(())),
-            Strategy::Unit(BlueprintStrategy::Inferred(())),
+            // Strategy::Unit(BlueprintStrategy::Inferred(())),
         ] {
             let bench = AttentionBench::<R, AP> {
                 problem: problem.clone(),
