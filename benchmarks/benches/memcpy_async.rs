@@ -718,7 +718,7 @@ fn launch_ref<R: Runtime, E: Float>(
                     config,
                 )
             }
-        }.unwrap()
+        };
     }
 }
 

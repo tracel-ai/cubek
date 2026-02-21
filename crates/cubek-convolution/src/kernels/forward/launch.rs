@@ -173,8 +173,8 @@ where
     let input_data = Alg::into_tensor_handle(client, input.data(), dtypes.lhs_global, op)?;
     let weight_data = Alg::into_tensor_handle(client, weight.data(), dtypes.rhs_global, op)?;
 
-    let mut input = *input;
-    let mut weight = *weight;
+    let mut input = input.clone();
+    let mut weight = weight.clone();
 
     *input.data_mut() = input_data.as_ref();
     *weight.data_mut() = weight_data.as_ref();
@@ -183,7 +183,8 @@ where
         .required_address_type()
         .max(weight.required_address_type())
         .max(
-            bias.map(|bias| bias.required_address_type())
+            bias.clone()
+                .map(|bias| bias.required_address_type())
                 .unwrap_or_default(),
         )
         .max(out.required_address_type());
@@ -192,8 +193,8 @@ where
         m: n * out_shape.iter().product::<usize>(),
         n: out_c,
         k: c * kernel_shape.iter().product::<usize>(),
-        lhs_strides: input.data().strides.into(),
-        rhs_strides: weight.data().strides.into(),
+        lhs_strides: input.data().strides.clone(),
+        rhs_strides: weight.data().strides.clone(),
         lhs_layout: definition::MatrixLayout::RowMajor,
         rhs_layout: definition::MatrixLayout::ColMajor,
         kernel_size: kernel_shape.iter().map(|it| *it as u32).collect(),
@@ -250,16 +251,16 @@ where
         out.elem_size,
     )
     .filter_lhs_with_tensor(
-        input.data().strides,
-        input.data().shape,
+        &input.data().strides,
+        &input.data().shape,
         MatrixLayout::RowMajor,
     )
     .filter_rhs_with_tensor(
-        weight.data().strides,
-        weight.data().shape,
+        &weight.data().strides,
+        &weight.data().shape,
         MatrixLayout::RowMajor,
     )
-    .filter_out_with_tensor(out.strides, out.shape);
+    .filter_out_with_tensor(&out.strides, &out.shape);
 
     let mut line_sizes = Alg::filter_line_sizes(line_sizes).pick_max()?;
 

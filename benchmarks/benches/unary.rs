@@ -52,8 +52,8 @@ impl<R: Runtime, E: Float> Benchmark for UnaryBench<R, E> {
             lhs.as_arg(self.vectorization),
             rhs.as_arg(self.vectorization),
             out.as_arg(self.vectorization),
-        )
-        .unwrap();
+        );
+
         Ok(())
     }
 
@@ -75,6 +75,7 @@ impl<R: Runtime, E: Float> Benchmark for UnaryBench<R, E> {
 
     fn profile(&self, args: Self::Input) -> Result<ProfileDuration, String> {
         self.client
+            .clone()
             .profile(|| self.execute(args), "unary-bench")
             .map(|it| it.1)
             .map_err(|it| format!("{it:?}"))
@@ -82,6 +83,7 @@ impl<R: Runtime, E: Float> Benchmark for UnaryBench<R, E> {
 }
 
 #[allow(dead_code)]
+#[derive(Clone)]
 struct UnaryBench<R: Runtime, E> {
     shape: Vec<usize>,
     vectorization: LineSize,
