@@ -57,15 +57,14 @@ fn new_arange(
         unsafe {
             TensorArg::from_raw_parts_and_size(
                 &out.handle,
-                out.strides(),
-                out.shape(),
+                out.strides().clone(),
+                out.shape().clone(),
                 line_size,
                 dtype.size(),
             )
         },
         dtype,
-    )
-    .unwrap();
+    );
 
     out
 }
