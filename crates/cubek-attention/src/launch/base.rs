@@ -119,7 +119,8 @@ pub fn launch_attention<R: Runtime, A: Routine>(
             query.required_address_type(),
             key.required_address_type(),
             value.required_address_type(),
-            mask.map(|mask| mask.required_address_type())
+            mask.clone()
+                .map(|mask| mask.required_address_type())
                 .unwrap_or_default(),
             out.required_address_type(),
         ]

@@ -26,7 +26,7 @@ pub fn launch_ref<R: Runtime, A: Routine<()>>(
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let lhs_owned;
-    let lhs = if matrix_batch_layout(lhs.data().strides, lhs.scheme())
+    let lhs = if matrix_batch_layout(&lhs.data().strides, lhs.scheme())
         == MatrixBatchLayout::HighlyPermuted
     {
         lhs_owned = lhs.into_contiguous(client)?;
@@ -36,7 +36,7 @@ pub fn launch_ref<R: Runtime, A: Routine<()>>(
     };
 
     let rhs_owned;
-    let rhs = if matrix_batch_layout(rhs.data().strides, rhs.scheme())
+    let rhs = if matrix_batch_layout(&rhs.data().strides, rhs.scheme())
         == MatrixBatchLayout::HighlyPermuted
     {
         rhs_owned = rhs.into_contiguous(client)?;
@@ -76,7 +76,7 @@ pub fn launch_ref_tma<R: Runtime, A: Routine<(), Blueprint = TilingBlueprint>>(
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let lhs_owned;
-    let lhs = match matrix_batch_layout(lhs.data().strides, lhs.scheme()) {
+    let lhs = match matrix_batch_layout(&lhs.data().strides, lhs.scheme()) {
         MatrixBatchLayout::Contiguous
         | MatrixBatchLayout::MildlyPermuted {
             transposed: _,
@@ -93,7 +93,7 @@ pub fn launch_ref_tma<R: Runtime, A: Routine<(), Blueprint = TilingBlueprint>>(
     };
 
     let rhs_owned;
-    let rhs = match matrix_batch_layout(rhs.data().strides, rhs.scheme()) {
+    let rhs = match matrix_batch_layout(&rhs.data().strides, rhs.scheme()) {
         MatrixBatchLayout::Contiguous
         | MatrixBatchLayout::MildlyPermuted {
             transposed: _,
@@ -142,10 +142,10 @@ where
     let problem = MatmulProblem::from_shapes_and_strides(
         lhs.shape().into(),
         rhs.shape().into(),
-        out.shape.into(),
-        lhs.data().strides.into(),
-        rhs.data().strides.into(),
-        out.strides.into(),
+        out.shape.clone(),
+        lhs.data().strides.clone(),
+        rhs.data().strides.clone(),
+        out.strides.clone(),
         dtypes.as_global_elems(),
         address_type,
         lhs.scheme(),

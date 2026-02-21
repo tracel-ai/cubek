@@ -14,10 +14,9 @@ fn values_open_interval() {
         CubeDim::new_1d(2),
         unsafe { ArrayArg::from_raw_parts::<u32>(&input, 2, 1) },
         unsafe { ArrayArg::from_raw_parts::<f32>(&output, 2, 1) },
-    )
-    .unwrap();
+    );
 
-    let actual = client.read_one(output);
+    let actual = client.read_one(output).unwrap();
     let actual = f32::from_bytes(&actual);
 
     assert!(
@@ -62,10 +61,9 @@ fn values_closed_open_interval() {
         CubeDim::new_1d(2),
         unsafe { ArrayArg::from_raw_parts::<u32>(&input, 2, 1) },
         unsafe { ArrayArg::from_raw_parts::<f32>(&output, 2, 1) },
-    )
-    .unwrap();
+    );
 
-    let actual = client.read_one(output);
+    let actual = client.read_one(output).unwrap();
     let actual = f32::from_bytes(&actual);
 
     // Previous implementation would map to `[0, 1]` but the interval should be half open `[0, 1)`

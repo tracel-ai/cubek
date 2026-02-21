@@ -59,7 +59,9 @@ pub(crate) fn random<F: RandomFamily, R: Runtime>(
         N_VALUES_PER_THREAD,
         output_line_size,
         dtype,
-    )
+    );
+
+    Ok(())
 }
 
 fn prng_cube_count(num_elems: usize, cube_dim: CubeDim, n_values_per_thread: usize) -> CubeCount {

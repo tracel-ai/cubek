@@ -8,11 +8,14 @@ macro_rules! testgen_reduce {
         axis: $axis:expr,
         strategy: $strategy:expr,
     ) => {
+        use cubecl::zspace::{Shape, Strides, shape, strides};
+
         type TestDType = $dtype;
-        fn test_shape() -> Vec<usize> {
+
+        fn test_shape() -> Shape {
             $shape
         }
-        fn test_strides() -> Vec<usize> {
+        fn test_strides() -> Strides {
             $strides
         }
         fn test_axis() -> Option<usize> {
@@ -36,11 +39,14 @@ macro_rules! testgen_reduce {
         strides: $strides:expr,
     ) => {
         mod reduce_shared {
+            use cubecl::zspace::{Shape, Strides, shape, strides};
+
             type TestDType = $dtype;
-            fn test_shape() -> Vec<usize> {
+
+            fn test_shape() -> Shape {
                 $shape
             }
-            fn test_strides() -> Vec<usize> {
+            fn test_strides() -> Strides {
                 $strides
             }
 
@@ -312,168 +318,168 @@ macro_rules! testgen_reduce {
 mod reduce_dim {
     mod vector_small {
         testgen_reduce!(
-            shape: vec![22],
-            strides: vec![1],
+            shape: shape![22],
+            strides: strides![1],
             axis: Some(0),
         );
     }
 
     mod vector_large {
         testgen_reduce!(
-            shape: vec![1024],
-            strides: vec![1],
+            shape: shape![1024],
+            strides: strides![1],
             axis: Some(0),
         );
     }
 
     mod parallel_matrix_small {
         testgen_reduce!(
-            shape: vec![4, 8],
-            strides: vec![8, 1],
+            shape: shape![4, 8],
+            strides: strides![8, 1],
             axis: Some(1),
         );
     }
 
     mod perpendicular_matrix_small {
         testgen_reduce!(
-            shape: vec![4, 8],
-            strides: vec![8, 1],
+            shape: shape![4, 8],
+            strides: strides![8, 1],
             axis: Some(0),
         );
     }
 
     mod parallel_matrix_large {
         testgen_reduce!(
-            shape: vec![8, 256],
-            strides: vec![256, 1],
+            shape: shape![8, 256],
+            strides: strides![256, 1],
             axis: Some(1),
         );
     }
 
     mod perpendicular_matrix_large {
         testgen_reduce!(
-            shape: vec![8, 256],
-            strides: vec![256, 1],
+            shape: shape![8, 256],
+            strides: strides![256, 1],
             axis: Some(0),
         );
     }
 
     mod parallel_matrix_xlarge {
         testgen_reduce!(
-            shape: vec![64, 1024],
-            strides: vec![1024, 1],
+            shape: shape![64, 1024],
+            strides: strides![1024, 1],
             axis: Some(1),
         );
     }
 
     mod perpendicular_matrix_xlarge {
         testgen_reduce!(
-            shape: vec![64, 1024],
-            strides: vec![1024, 1],
+            shape: shape![64, 1024],
+            strides: strides![1024, 1],
             axis: Some(0),
         );
     }
 
     mod parallel_matrix_xxlarge {
         testgen_reduce!(
-            shape: vec![64*4, 1024*4],
-            strides: vec![1024*4, 1],
+            shape: shape![64*4, 1024*4],
+            strides: strides![1024*4, 1],
             axis: Some(1),
         );
     }
 
     mod perpendicular_matrix_xxlarge {
         testgen_reduce!(
-            shape: vec![64*4, 1024*4],
-            strides: vec![1024*4, 1],
+            shape: shape![64*4, 1024*4],
+            strides: strides![1024*4, 1],
             axis: Some(0),
         );
     }
 
     mod parallel_matrix_large_odd_batch {
         testgen_reduce!(
-            shape: vec![33, 1024],
-            strides: vec![1024, 1],
+            shape: shape![33, 1024],
+            strides: strides![1024, 1],
             axis: Some(1),
         );
     }
 
     mod perpendicular_matrix_large_odd_batch {
         testgen_reduce!(
-            shape: vec![33, 1024],
-            strides: vec![1024, 1],
+            shape: shape![33, 1024],
+            strides: strides![1024, 1],
             axis: Some(0),
         );
     }
 
     mod parallel_rank_three_tensor {
         testgen_reduce!(
-            shape: vec![16, 16, 16],
-            strides: vec![1, 256, 16],
+            shape: shape![16, 16, 16],
+            strides: strides![1, 256, 16],
             axis: Some(0),
         );
     }
 
     mod perpendicular_rank_three_tensor {
         testgen_reduce!(
-            shape: vec![16, 16, 16],
-            strides: vec![1, 256, 16],
+            shape: shape![16, 16, 16],
+            strides: strides![1, 256, 16],
             axis: Some(1),
         );
     }
 
     mod parallel_rank_three_tensor_unexact_shape {
         testgen_reduce!(
-            shape: vec![11, 12, 13],
-            strides: vec![156, 13, 1],
+            shape: shape![11, 12, 13],
+            strides: strides![156, 13, 1],
             axis: Some(2),
         );
     }
 
     mod parallel_rank_four_tensor {
         testgen_reduce!(
-            shape: vec![4, 4, 4, 4],
-            strides: vec![1, 16, 64, 4],
+            shape: shape![4, 4, 4, 4],
+            strides: strides![1, 16, 64, 4],
             axis: Some(0),
         );
     }
 
     mod perpendicular_rank_four_tensor {
         testgen_reduce!(
-            shape: vec![4, 4, 4, 4],
-            strides: vec![1, 16, 64, 4],
+            shape: shape![4, 4, 4, 4],
+            strides: strides![1, 16, 64, 4],
             axis: Some(1),
         );
     }
 
     mod decreasing_rank_four_tensor {
         testgen_reduce!(
-            shape: vec![4, 4, 4, 4],
-            strides: vec![64, 16, 4, 1],
+            shape: shape![4, 4, 4, 4],
+            strides: strides![64, 16, 4, 1],
             axis: Some(3),
         );
     }
 
     mod parallel_matrix_with_jumps {
         testgen_reduce!(
-            shape: vec![256, 256],
-            strides: vec![512, 1],
+            shape: shape![256, 256],
+            strides: strides![512, 1],
             axis: Some(1),
         );
     }
 
     mod perpendicular_matrix_with_jumps {
         testgen_reduce!(
-            shape: vec![256, 256],
-            strides: vec![512, 1],
+            shape: shape![256, 256],
+            strides: strides![512, 1],
             axis: Some(0),
         );
     }
 
     mod broadcast_slice_0 {
         testgen_reduce!(
-            shape: vec![4, 32],
-            strides: vec![0, 1],
+            shape: shape![4, 32],
+            strides: strides![0, 1],
             axis: Some(0),
         );
     }
@@ -482,50 +488,50 @@ mod reduce_dim {
 mod reduce {
     mod vector_small {
         testgen_reduce!(
-            shape: vec![22],
-            strides: vec![1],
+            shape: shape![22],
+            strides: strides![1],
         );
     }
 
     mod vector_large {
         testgen_reduce!(
-            shape: vec![1024],
-            strides: vec![1],
+            shape: shape![1024],
+            strides: strides![1],
         );
     }
 
     mod matrix_small {
         testgen_reduce!(
-            shape: vec![4, 8],
-            strides: vec![8, 1],
+            shape: shape![4, 8],
+            strides: strides![8, 1],
         );
     }
 
     mod matrix_large {
         testgen_reduce!(
-            shape: vec![8, 256],
-            strides: vec![256, 1],
+            shape: shape![8, 256],
+            strides: strides![256, 1],
         );
     }
 
     mod rank_three_tensor {
         testgen_reduce!(
-            shape: vec![16, 16, 16],
-            strides: vec![1, 256, 16],
+            shape: shape![16, 16, 16],
+            strides: strides![1, 256, 16],
         );
     }
 
     mod rank_three_tensor_unexact_shape {
         testgen_reduce!(
-            shape: vec![11, 12, 13],
-            strides: vec![156, 13, 1],
+            shape: shape![11, 12, 13],
+            strides: strides![156, 13, 1],
         );
     }
 
     mod rank_four_tensor {
         testgen_reduce!(
-            shape: vec![4, 4, 4, 4],
-            strides: vec![64, 16, 4, 1],
+            shape: shape![4, 4, 4, 4],
+            strides: strides![64, 16, 4, 1],
         );
     }
 
@@ -539,8 +545,8 @@ mod reduce {
 
     mod broadcast_slice_0 {
         testgen_reduce!(
-            shape: vec![4, 32],
-            strides: vec![0, 1],
+            shape: shape![4, 32],
+            strides: strides![0, 1],
         );
     }
 }

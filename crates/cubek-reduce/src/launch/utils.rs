@@ -37,8 +37,8 @@ pub fn generate_line_size<R: Runtime>(
     let line_size_input = match line_mode {
         LineMode::Parallel => tensor_line_size_parallel(
             client.io_optimized_line_sizes(dtype.size()),
-            input.shape,
-            input.strides,
+            &input.shape,
+            &input.strides,
             axis,
         ),
         LineMode::Perpendicular => {
@@ -99,8 +99,8 @@ pub fn generate_line_size<R: Runtime>(
 
                     tensor_line_size_perpendicular(
                         supported_line_sizes,
-                        input.shape,
-                        input.strides,
+                        &input.shape,
+                        &input.strides,
                         axis,
                     )
                 }
@@ -114,8 +114,8 @@ pub fn generate_line_size<R: Runtime>(
 
                     tensor_line_size_perpendicular(
                         supported_line_sizes,
-                        input.shape,
-                        input.strides,
+                        &input.shape,
+                        &input.strides,
                         axis,
                     )
                 }
@@ -140,7 +140,7 @@ pub fn generate_line_size<R: Runtime>(
     if strategy.parallel_output_vectorization
         && line_mode == LineMode::Parallel
         && line_size_input > 1
-        && is_contiguous(input.shape, input.strides)
+        && is_contiguous(&input.shape, &input.strides)
         && axis == input.shape.len() - 1
     {
         let supported_line_sizes = client.io_optimized_line_sizes(dtype.size());

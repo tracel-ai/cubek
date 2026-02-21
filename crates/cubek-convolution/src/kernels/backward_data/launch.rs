@@ -169,8 +169,8 @@ where
     let out_grad_data = Alg::into_tensor_handle(client, out_grad.data(), dtypes.lhs_global, op)?;
     let weights_data = Alg::into_tensor_handle(client, weights.data(), dtypes.rhs_global, op)?;
 
-    let mut out_grad = *out_grad;
-    let mut weights = *weights;
+    let mut out_grad = out_grad.clone();
+    let mut weights = weights.clone();
 
     *out_grad.data_mut() = out_grad_data.as_ref();
     *weights.data_mut() = weights_data.as_ref();
@@ -185,8 +185,8 @@ where
         n: c,
         k: out_c * kernel_shape.iter().product::<usize>(),
 
-        lhs_strides: out_grad.data().strides.into(),
-        rhs_strides: weights.data().strides.into(),
+        lhs_strides: out_grad.data().strides.clone(),
+        rhs_strides: weights.data().strides.clone(),
         lhs_layout: MatrixLayout::RowMajor,
         rhs_layout: MatrixLayout::RowMajor,
         kernel_size: kernel_shape.iter().map(|it| *it as u32).collect(),
@@ -241,16 +241,16 @@ where
         in_grad.elem_size,
     )
     .filter_lhs_with_tensor(
-        out_grad.data().strides,
-        out_grad.data().shape,
+        &out_grad.data().strides,
+        &out_grad.data().shape,
         MatrixLayout::RowMajor,
     )
     .filter_rhs_with_tensor(
-        weights.data().strides,
-        weights.data().shape,
+        &weights.data().strides,
+        &weights.data().shape,
         MatrixLayout::RowMajor,
     )
-    .filter_out_with_tensor(in_grad.strides, in_grad.shape);
+    .filter_out_with_tensor(&in_grad.strides, &in_grad.shape);
 
     let line_sizes = Alg::filter_line_sizes(line_sizes).pick_max()?;
 

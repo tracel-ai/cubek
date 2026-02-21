@@ -39,7 +39,7 @@ pub(crate) fn into_tensor_handle<R: Runtime>(
     let handle = if has_valid_layout(handle) {
         TensorHandle::from_ref(handle, dtype)
     } else {
-        into_contiguous_pitched_ref(client, handle, dtype)?
+        into_contiguous_pitched_ref(client, handle, dtype)
     };
     Ok(handle)
 }
@@ -61,7 +61,7 @@ pub(crate) fn into_tensor_handle_tma<R: Runtime>(
     let handle = if has_valid_layout_tma(handle, operation) {
         TensorHandle::from_ref(handle, dtype)
     } else {
-        into_contiguous_pitched_ref(client, handle, dtype)?
+        into_contiguous_pitched_ref(client, handle, dtype)
     };
     Ok(handle)
 }
@@ -81,7 +81,7 @@ pub(crate) fn has_valid_layout_tma<R: Runtime>(
     let valid_layout = handle.strides[dim_c] == 1;
 
     let is_valid_wgrad = if operation == ConvolutionOperation::BackwardWeight {
-        is_contiguous_pitched(handle.shape, handle.strides)
+        is_contiguous_pitched(&handle.shape, &handle.strides)
     } else {
         true
     };

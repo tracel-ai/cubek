@@ -87,8 +87,8 @@ pub fn shared_sum<R: Runtime>(
     } else {
         tensor_line_size_parallel(
             client.io_optimized_line_sizes(input.elem_size),
-            input.shape,
-            input.strides,
+            &input.shape,
+            &input.strides,
             input.shape.len() - 1,
         )
     };
@@ -117,7 +117,7 @@ pub fn shared_sum<R: Runtime>(
         .max(output.required_address_type());
 
     // Launch kernel
-    let result = unsafe {
+    unsafe {
         shared_sum_kernel::launch_unchecked(
             client,
             cube_count,
@@ -132,10 +132,7 @@ pub fn shared_sum<R: Runtime>(
         )
     };
 
-    match result {
-        Ok(_) => Ok(()),
-        Err(err) => Err(ReduceError::Launch(err)),
-    }
+    Ok(())
 }
 
 #[cube(launch_unchecked, address_type = "dynamic")]

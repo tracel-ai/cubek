@@ -92,7 +92,7 @@ pub fn reduce<R: Runtime>(
     dtypes: ReduceDtypes,
 ) -> Result<(), ReduceError> {
     validate_axis(input.shape.len(), axis)?;
-    valid_output_shape(input.shape, output.shape, axis)?;
+    valid_output_shape(&input.shape, &output.shape, axis)?;
 
     launch_reduce::<R>(client, input, output, axis, strategy, dtypes, operation)
 }

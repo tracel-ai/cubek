@@ -232,8 +232,8 @@ fn quantize_native<R: Runtime>(
     let num_elems: usize = input.shape.iter().product();
     let line_size = tensor_line_size_parallel(
         client.io_optimized_line_sizes(input.elem_size),
-        input.shape,
-        input.strides,
+        &input.shape,
+        &input.strides,
         input.shape.len() - 1,
     );
     let working_units = num_elems / line_size as usize;
@@ -276,7 +276,9 @@ fn quantize_native<R: Runtime>(
             }
         }
         _ => panic!("Unsupported quantization scheme {scheme:?}"),
-    }
+    };
+
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -311,7 +313,7 @@ fn quantize_packed<R: Runtime>(
     let num_quants = scheme.num_quants();
     let input = if !can_vectorize && num_elems >= 2048 {
         can_vectorize = true;
-        into_contiguous_ref(client, input, dtype_input.into()).expect("Kernel to never fail")
+        into_contiguous_ref(client, input, dtype_input.into())
     } else {
         TensorHandle::from_ref(input, dtype_input.into())
     };
@@ -347,5 +349,7 @@ fn quantize_packed<R: Runtime>(
             *scheme,
             [dtype_input.into(), dtype_param.into()],
         )
-    }
+    };
+
+    Ok(())
 }

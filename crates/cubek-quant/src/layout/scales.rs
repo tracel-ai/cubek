@@ -230,8 +230,8 @@ pub fn scales_layout<'a, R: Runtime>(
     match &scheme.level {
         QuantLevel::Tensor => ScalesLayoutArgs::PerTensor(PerTensorLayoutLaunch::new(values_len)),
         QuantLevel::Block(block_size) => {
-            let tensor_shape = shape_divmod_quant(client, values.shape, scheme.num_quants());
-            let scales_strides = strides_seq(scales.strides);
+            let tensor_shape = shape_divmod_quant(client, &values.shape, scheme.num_quants());
+            let scales_strides = strides_seq(&scales.strides);
             ScalesLayoutArgs::BlockScaled(BlockScaledLayoutLaunch::new(
                 tensor_shape,
                 values_len,

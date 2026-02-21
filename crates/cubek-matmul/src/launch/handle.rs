@@ -37,7 +37,7 @@ impl<R: Runtime> MatmulInputHandle<R> {
                 scale: scale.as_ref(),
                 data_dtype: data.dtype,
                 scale_dtype: scale.dtype,
-                shape,
+                shape: shape.clone(),
                 scheme,
             },
         }
@@ -58,7 +58,7 @@ impl<R: Runtime> MatmulInputHandle<R> {
             } => MatmulInputHandle::Quantized {
                 data: TensorHandle::from_ref(data, *data_dtype),
                 scale: TensorHandle::from_ref(scale, *scale_dtype),
-                shape: (*shape).into(),
+                shape: shape.clone(),
                 scheme: **scheme,
             },
         }
@@ -138,18 +138,33 @@ pub enum MatmulInputHandleRef<'a, R: Runtime> {
         scale: TensorHandleRef<'a, R>,
         scale_dtype: StorageType,
         /// Unpacked shape, excluding padding
-        shape: &'a [usize],
+        shape: Shape,
         scheme: &'a QuantScheme,
     },
 }
 
 impl<'a, R: Runtime> Clone for MatmulInputHandleRef<'a, R> {
     fn clone(&self) -> Self {
-        *self
+        match self {
+            MatmulInputHandleRef::Normal(th, st) => Self::Normal(th.clone(), st.clone()),
+            MatmulInputHandleRef::Quantized {
+                data,
+                data_dtype,
+                scale,
+                scale_dtype,
+                shape,
+                scheme,
+            } => Self::Quantized {
+                data: data.clone(),
+                data_dtype: *data_dtype,
+                scale: scale.clone(),
+                scale_dtype: *scale_dtype,
+                shape: shape.clone(),
+                scheme: &scheme,
+            },
+        }
     }
 }
-
-impl<'a, R: Runtime> Copy for MatmulInputHandleRef<'a, R> {}
 
 impl<'a, R: Runtime> MatmulInputHandleRef<'a, R> {
     pub fn new(data: TensorHandleRef<'a, R>, dtype: StorageType) -> Self {
@@ -159,7 +174,7 @@ impl<'a, R: Runtime> MatmulInputHandleRef<'a, R> {
     pub fn quantized(
         data: TensorHandleRef<'a, R>,
         scale: TensorHandleRef<'a, R>,
-        shape: &'a [usize],
+        shape: Shape,
         scheme: &'a QuantScheme,
         data_dtype: StorageType,
         scale_dtype: StorageType,
@@ -202,9 +217,9 @@ impl<'a, R: Runtime> MatmulInputHandleRef<'a, R> {
         }
     }
 
-    pub fn shape(&self) -> &[usize] {
+    pub fn shape(&self) -> &Shape {
         match self {
-            MatmulInputHandleRef::Normal(handle, ..) => handle.shape,
+            MatmulInputHandleRef::Normal(handle, ..) => &handle.shape,
             MatmulInputHandleRef::Quantized { shape, .. } => shape,
         }
     }
@@ -215,7 +230,7 @@ impl<'a, R: Runtime> MatmulInputHandleRef<'a, R> {
     ) -> Result<MatmulInputHandle<R>, LaunchError> {
         let val = match self {
             MatmulInputHandleRef::Normal(data, dtype) => {
-                MatmulInputHandle::Normal(into_contiguous_pitched_ref(client, data, *dtype)?)
+                MatmulInputHandle::Normal(into_contiguous_pitched_ref(client, data, *dtype))
             }
             MatmulInputHandleRef::Quantized {
                 data,
@@ -236,7 +251,7 @@ impl<'a, R: Runtime> MatmulInputHandleRef<'a, R> {
                             shape,
                             scheme.num_quants(),
                             u8::as_type_native_unchecked(),
-                        )?;
+                        );
                         scheme = scheme.with_store(QuantStore::PackedNative(0));
                         // Unsafely cast to E
                         TensorHandle::from_ref(&data.as_ref(), *data_dtype)
@@ -249,17 +264,17 @@ impl<'a, R: Runtime> MatmulInputHandleRef<'a, R> {
                             shape,
                             scheme.num_quants(),
                             u32::as_type_native_unchecked(),
-                        )?;
+                        );
                         scheme = scheme.with_store(QuantStore::PackedU32(0));
                         // Unsafely cast to E
                         TensorHandle::from_ref(&data.as_ref(), *data_dtype)
                     }
-                    _ => into_contiguous_pitched_ref(client, data, *data_dtype)?,
+                    _ => into_contiguous_pitched_ref(client, data, *data_dtype),
                 };
                 MatmulInputHandle::Quantized {
                     data,
                     scale: TensorHandle::from_ref(scale, *scale_dtype),
-                    shape: (*shape).into(),
+                    shape: shape.clone(),
                     scheme,
                 }
             }

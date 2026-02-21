@@ -23,8 +23,8 @@ fn test_case() -> TestCase {
 
 #[derive(Debug)]
 pub struct TestCase {
-    pub shape: Vec<usize>,
-    pub stride: Vec<usize>,
+    pub shape: cubecl::zspace::Shape,
+    pub stride: cubecl::zspace::Strides,
 }
 
 impl TestCase {
@@ -47,13 +47,18 @@ impl TestCase {
         let input = unsafe {
             TensorHandleRef::from_raw_parts(
                 &input_handle,
-                &self.stride,
-                &self.shape,
+                self.stride.clone(),
+                self.shape.clone(),
                 size_of::<TestDType>(),
             )
         };
         let output = unsafe {
-            TensorHandleRef::from_raw_parts(&output_handle, &[1], &[1], size_of::<TestDType>())
+            TensorHandleRef::from_raw_parts(
+                &output_handle,
+                strides![1],
+                shape![1],
+                size_of::<TestDType>(),
+            )
         };
 
         let cube_count = 3;
@@ -68,7 +73,7 @@ impl TestCase {
         if result.is_err() {
             return; // don't execute the test in that case since atomic adds are not supported.
         }
-        let bytes = client.read_one(output_handle);
+        let bytes = client.read_one(output_handle).unwrap();
         let actual = TestDType::from_bytes(&bytes);
         assert_approx_equal(actual, &[expected]);
     }

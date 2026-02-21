@@ -61,7 +61,7 @@ fn get_random_uniform_data(shape: &[usize], lower_bound: f32, upper_bound: f32) 
     )
     .unwrap();
 
-    let output_data = client.read_one_tensor(output.as_copy_descriptor());
+    let output_data = client.read_one_unchecked_tensor(output.as_copy_descriptor());
     let output_data = TestDType::from_bytes(&output_data);
 
     output_data.to_owned()

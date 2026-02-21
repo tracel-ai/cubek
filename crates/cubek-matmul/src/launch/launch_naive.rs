@@ -38,8 +38,8 @@ pub fn launch_ref<R: Runtime>(
     let dim1 = rank - 1;
     let dim2 = rank - 2;
 
-    let lhs_layout = matrix_batch_layout(lhs.data().strides, lhs.scheme());
-    let rhs_layout = matrix_batch_layout(rhs.data().strides, rhs.scheme());
+    let lhs_layout = matrix_batch_layout(&lhs.data().strides, lhs.scheme());
+    let rhs_layout = matrix_batch_layout(&rhs.data().strides, rhs.scheme());
 
     let lhs = if !matches!(lhs_layout, MatrixBatchLayout::Contiguous) {
         lhs.into_contiguous(client)?
@@ -80,18 +80,18 @@ pub fn launch_ref<R: Runtime>(
 
     let lhs_shape = lhs.shape();
     let rhs_shape = rhs.shape();
-    let out_shape = out.shape;
+    let out_shape = &out.shape;
 
     let lhs_line_size = tensor_line_size_parallel(
         client.io_optimized_line_sizes(dtypes.lhs_global.size()),
-        lhs.data().shape,
-        lhs.data().strides,
+        &lhs.data().shape,
+        &lhs.data().strides,
         rank - 1,
     );
     let rhs_line_size = tensor_line_size_parallel(
         client.io_optimized_line_sizes(dtypes.rhs_global.size()),
-        rhs.data().shape,
-        rhs.data().strides,
+        &rhs.data().shape,
+        &rhs.data().strides,
         rank - 2,
     );
     let line_sizes = MatmulLineSizes {
@@ -109,9 +109,9 @@ pub fn launch_ref<R: Runtime>(
         lhs_shape.into(),
         rhs_shape.into(),
         out_shape.into(),
-        lhs.data().strides.into(),
-        rhs.data().strides.into(),
-        out.strides.into(),
+        lhs.data().strides.clone(),
+        rhs.data().strides.clone(),
+        out.strides.clone(),
         dtypes.as_global_elems(),
         address_type,
         lhs.scheme(),

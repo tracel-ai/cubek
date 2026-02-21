@@ -95,8 +95,9 @@ pub(crate) fn launch_reduce<Run: Runtime>(
             dtypes.output,
             dtypes.accumulation,
         )
-        .map_err(ReduceError::Launch)
-    }
+    };
+
+    Ok(())
 }
 
 #[cube(launch_unchecked, address_type = "dynamic")]

@@ -239,8 +239,8 @@ fn dequantize_packed<R: Runtime>(
 
     let mut line_size_in = tensor_line_size_parallel(
         client.io_optimized_line_sizes(input.elem_size),
-        input.shape,
-        input.strides,
+        &input.shape,
+        &input.strides,
         input.shape.len() - 1,
     );
     let num_quants = scheme.num_quants();
@@ -279,7 +279,9 @@ fn dequantize_packed<R: Runtime>(
             )
         },
         QuantScheme { .. } => panic!("Unsupported quantization scheme {scheme:?}"),
-    }
+    };
+
+    Ok(())
 }
 
 fn dequantize_native<R: Runtime>(
@@ -294,8 +296,8 @@ fn dequantize_native<R: Runtime>(
     let num_elems: usize = input.shape.iter().product();
     let line_size = tensor_line_size_parallel(
         client.io_optimized_line_sizes(input_dtype.size()),
-        input.shape,
-        input.strides,
+        &input.shape,
+        &input.strides,
         input.shape.len() - 1,
     );
     let working_units = num_elems / line_size as usize;
@@ -336,5 +338,7 @@ fn dequantize_native<R: Runtime>(
             }
         }
         QuantScheme { .. } => panic!("Unsupported quantization scheme {scheme:?}"),
-    }
+    };
+
+    Ok(())
 }
