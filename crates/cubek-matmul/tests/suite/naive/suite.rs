@@ -178,7 +178,7 @@ fn test_naive(case: MatmulTestCase) {
 
     let out = TestInput::new(
         client.clone(),
-        problem.out_shape.to_vec(),
+        problem.out_shape.clone(),
         problem.global_dtypes.out,
         layout_to_stride_spec(MatrixLayout::RowMajor),
         DataKind::Zeros,
