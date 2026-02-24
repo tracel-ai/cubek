@@ -1,7 +1,8 @@
 use cubecl::{
     TestRuntime,
     prelude::*,
-    std::tensor::{TensorHandle, ViewOperationsMut, ViewOperationsMutExpand}, zspace::{Shape, Strides},
+    std::tensor::{TensorHandle, ViewOperationsMut, ViewOperationsMutExpand},
+    zspace::{Shape, Strides},
 };
 
 use crate::test_tensor::base::BaseInputSpec;
