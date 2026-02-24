@@ -36,7 +36,7 @@ impl StrideSpec {
                     strides.len() == n,
                     "Custom strides must have the same rank as the shape"
                 );
-                strides.clone().try_into().unwrap()
+                strides.clone().into()
             }
         }
     }
