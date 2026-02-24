@@ -34,8 +34,10 @@ pub trait TileAttention<AP: AttentionPrecision>: Send + Sync + 'static {
 
     type Softmax: FragmentSoftmax<SM<AP>, Layout = Self::FragmentLayout, SoftmaxRowFormat = Self::SoftmaxRow>;
     type SoftmaxRow: RowwiseFormat<SM<AP>, Layout = Self::FragmentLayout>;
+    type SoftmaxShared: CubeType;
 
     type Accumulator: FragmentAccumulator<ACC<AP>>;
+    type AccumulatorShared: CubeType;
     type FragmentLayout: FragmentLayout;
 
     fn softmax_layout(#[comptime] config: Self::Config) -> Self::FragmentLayout;
@@ -61,8 +63,17 @@ pub trait TileAttention<AP: AttentionPrecision>: Send + Sync + 'static {
     fn allocate_value(#[comptime] config: Self::Config) -> Self::KeyValue;
     fn allocate_key_value(#[comptime] config: Self::Config) -> Self::KeyValue;
 
-    fn allocate_softmax(#[comptime] config: Self::Config) -> Self::Softmax;
-    fn allocate_accumulator(#[comptime] config: Self::Config) -> Self::Accumulator;
+    fn allocate_softmax_shared(#[comptime] config: Self::Config) -> Self::SoftmaxShared;
+    fn allocate_accumulator_shared(#[comptime] config: Self::Config) -> Self::AccumulatorShared;
+
+    fn allocate_softmax(
+        shared: &mut Self::SoftmaxShared,
+        #[comptime] config: Self::Config,
+    ) -> Self::Softmax;
+    fn allocate_accumulator(
+        shared: &mut Self::AccumulatorShared,
+        #[comptime] config: Self::Config,
+    ) -> Self::Accumulator;
 
     fn load_query<E: Numeric>(tile: &StridedTile<E>, fragment: &mut Self::Query);
 

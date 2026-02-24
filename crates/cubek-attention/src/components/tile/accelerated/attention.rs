@@ -23,6 +23,8 @@ impl<AP: AttentionPrecision> TileAttention<AP> for BlackboxAcceleratedTileAttent
     type Mask = LocalTile<SM<AP>>;
     type Softmax = HybridFragment<SM<AP>>;
     type SoftmaxRow = LocalTile<SM<AP>>;
+    type SoftmaxShared = SharedMemory<SM<AP>>;
+    type AccumulatorShared = SharedMemory<ACC<AP>>;
     type Accumulator = HybridFragment<ACC<AP>>;
 
     type FragmentLayout = LocalTileLayout;
@@ -114,14 +116,30 @@ impl<AP: AttentionPrecision> TileAttention<AP> for BlackboxAcceleratedTileAttent
         ))
     }
 
-    fn allocate_softmax(#[comptime] config: Self::Config) -> Self::Softmax {
+    fn allocate_softmax_shared(#[comptime] config: Self::Config) -> Self::SoftmaxShared {
         let size = config.attention_tile_size().to_score_matmul_tile_size();
-        HybridFragment::new(size, config)
+        SharedMemory::new((size.m * size.n * config.num_planes()) as usize)
     }
 
-    fn allocate_accumulator(#[comptime] config: Self::Config) -> Self::Accumulator {
+    fn allocate_accumulator_shared(#[comptime] config: Self::Config) -> Self::AccumulatorShared {
         let size = config.attention_tile_size().to_value_matmul_tile_size();
-        HybridFragment::new(size, config)
+        SharedMemory::new((size.m * size.n * config.num_planes()) as usize)
+    }
+
+    fn allocate_softmax(
+        shared: &mut Self::SoftmaxShared,
+        #[comptime] config: Self::Config,
+    ) -> Self::Softmax {
+        let size = config.attention_tile_size().to_score_matmul_tile_size();
+        HybridFragment::new(shared, size, config)
+    }
+
+    fn allocate_accumulator(
+        shared: &mut Self::AccumulatorShared,
+        #[comptime] config: Self::Config,
+    ) -> Self::Accumulator {
+        let size = config.attention_tile_size().to_value_matmul_tile_size();
+        HybridFragment::new(shared, size, config)
     }
 
     fn load_query<E: Numeric>(tile: &StridedTile<E>, fragment: &mut Self::Query) {

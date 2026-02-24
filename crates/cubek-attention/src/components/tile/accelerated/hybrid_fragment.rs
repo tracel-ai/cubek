@@ -2,11 +2,11 @@ use cubecl;
 use cubecl::prelude::*;
 use cubek_matmul::definition::TileSize;
 
+use crate::components::tile::RowWise;
 use crate::components::tile::accelerated::local_tile::{LocalTile, LocalTileLayout};
 use crate::components::tile::accelerated::setup::BlackboxAcceleratedAttentionMatmulConfig;
 use crate::components::tile::{FragmentAccumulator, FragmentAccumulatorExpand};
 use crate::components::tile::{FragmentSoftmax, FragmentSoftmaxExpand};
-use crate::components::tile::{RowWise, TileAttentionConfig as _};
 
 #[derive(CubeType)]
 /// Navigates between cmma fragment (for matmuls) and shared memory (for row wise ops)
@@ -24,6 +24,7 @@ pub struct HybridFragment<E: Float> {
 #[cube]
 impl<E: Float> HybridFragment<E> {
     pub fn new(
+        shared_memory: &mut SharedMemory<E>,
         #[comptime] tile_size: TileSize,
         #[comptime] config: BlackboxAcceleratedAttentionMatmulConfig,
     ) -> Self {
@@ -47,8 +48,6 @@ impl<E: Float> HybridFragment<E> {
 
         let smem_slot_size = tile_size.m * tile_size.n;
         let smem_slice_start = UNIT_POS_Y * smem_slot_size;
-        let mut shared_memory =
-            SharedMemory::new(config.num_planes() as usize * smem_slot_size as usize);
         let smem_slice = shared_memory.slice_mut(
             smem_slice_start as usize,
             (smem_slice_start + smem_slot_size) as usize,
