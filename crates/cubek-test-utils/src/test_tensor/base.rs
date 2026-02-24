@@ -37,14 +37,14 @@ pub enum DataKind {
 impl TestInput {
     pub fn new(
         client: ComputeClient<TestRuntime>,
-        shape: Shape,
+        shape: impl Into<Shape>,
         dtype: StorageType,
         stride_spec: StrideSpec,
         data_kind: DataKind,
     ) -> Self {
         let base_spec = BaseInputSpec {
             client,
-            shape,
+            shape: shape.into(),
             dtype,
             stride_spec,
         };

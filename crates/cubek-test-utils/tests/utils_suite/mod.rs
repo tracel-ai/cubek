@@ -9,7 +9,7 @@ use cubek_test_utils::{
 fn eye_handle_row_major() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
-    let shape = vec![2, 3];
+    let shape = [2, 3];
 
     let handle = TestInput::new(
         client.clone(),
@@ -22,7 +22,7 @@ fn eye_handle_row_major() {
 
     let expected = TestInput::new(
         client.clone(),
-        vec![2, 3],
+        [2, 3],
         f32::as_type_native_unchecked(),
         StrideSpec::RowMajor,
         DataKind::Custom {
@@ -42,7 +42,7 @@ fn eye_handle_row_major() {
 fn eye_handle_col_major() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
-    let shape = vec![2, 3];
+    let shape = [2, 3];
 
     let handle = TestInput::new(
         client.clone(),
@@ -55,7 +55,7 @@ fn eye_handle_col_major() {
 
     let expected = TestInput::new(
         client.clone(),
-        vec![2, 3],
+        [2, 3],
         f32::as_type_native_unchecked(),
         StrideSpec::RowMajor,
         DataKind::Custom {
