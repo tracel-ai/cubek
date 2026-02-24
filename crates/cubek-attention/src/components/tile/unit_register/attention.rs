@@ -282,13 +282,9 @@ impl<AP: AttentionPrecision> TileAttention<AP> for UnitRegisterTileAttention {
         UnitTile::new(<Self as TileAttention<AP>>::softmax_layout(config))
     }
 
-    fn allocate_softmax_shared(#[comptime] _config: Self::Config) -> Self::SoftmaxShared {
-        ()
-    }
+    fn allocate_softmax_shared(#[comptime] _config: Self::Config) -> Self::SoftmaxShared {}
 
-    fn allocate_accumulator_shared(#[comptime] _config: Self::Config) -> Self::AccumulatorShared {
-        ()
-    }
+    fn allocate_accumulator_shared(#[comptime] _config: Self::Config) -> Self::AccumulatorShared {}
 
     fn allocate_softmax(
         _shared: &mut Self::SoftmaxShared,
