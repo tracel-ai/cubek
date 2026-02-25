@@ -103,7 +103,7 @@ impl<AP: AttentionPrecision> TileAttention<AP> for BlackboxAcceleratedTileAttent
                 size.seq_q as usize,
                 size.val_dim as usize,
                 size.seq_kv as usize,
-                cmma::MatrixLayout::ColMajor,
+                cmma::MatrixLayout::RowMajor,
             )
         }
     }
