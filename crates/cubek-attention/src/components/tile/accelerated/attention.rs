@@ -151,20 +151,20 @@ impl<AP: AttentionPrecision> TileAttention<AP> for BlackboxAcceleratedTileAttent
 
     fn load_key_transposed<E: Float>(
         tile: &StridedTile<E>,
-        rhs: &mut Self::KeyValue,
+        fragment: &mut Self::KeyValue,
         #[comptime] _config: Self::Config,
     ) {
         let (slice, stride) = tile.as_unlined();
-        cmma::load(rhs, &slice, stride);
+        cmma::load(fragment, &slice, stride);
     }
 
     fn load_value<E: Float>(
         tile: &StridedTile<E>,
-        rhs: &mut Self::KeyValue,
+        fragment: &mut Self::KeyValue,
         #[comptime] _config: Self::Config,
     ) {
         let (slice, stride) = tile.as_unlined();
-        cmma::load(rhs, &slice, stride);
+        cmma::load(fragment, &slice, stride);
     }
 
     fn load_mask<E: Numeric>(

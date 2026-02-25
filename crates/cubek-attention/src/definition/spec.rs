@@ -290,7 +290,7 @@ impl AttentionElems {
 
         Self {
             query_global: global_dtypes.query,
-            query_tile: global_dtypes.query,
+            query_tile: tile_type,
             key_global: global_dtypes.key,
             key_stage: tile_type,
             value_global: global_dtypes.value,

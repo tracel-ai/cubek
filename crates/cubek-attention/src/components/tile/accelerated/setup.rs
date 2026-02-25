@@ -99,6 +99,12 @@ fn validate(
     line_sizes_mask: LineSize,
     dtypes: &AttentionElems,
 ) -> Result<BlackboxAcceleratedAttentionMatmulConfig, AttentionSetupError> {
+    if dtypes.query_global != dtypes.query_tile {
+        return Err(AttentionSetupError::InvalidConfig(Box::new(
+            "Query global and tile types must be the same because no stage to cast in between",
+        )));
+    }
+
     if !device_props.features.cmma.contains(&MmaConfig {
         a_type: dtypes.query_tile,
         b_type: dtypes.key_value_tile,
