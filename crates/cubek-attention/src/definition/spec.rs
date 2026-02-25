@@ -280,6 +280,7 @@ pub struct AttentionElems {
 impl AttentionElems {
     pub fn from_global_types(
         global_dtypes: &AttentionGlobalTypes,
+        tile_type: StorageType,
         accumulator_precision: &AccumulatorPrecision,
     ) -> AttentionElems {
         let accumulator = match accumulator_precision {
@@ -291,13 +292,12 @@ impl AttentionElems {
             query_global: global_dtypes.query,
             query_tile: global_dtypes.query,
             key_global: global_dtypes.key,
-            key_stage: global_dtypes.key,
+            key_stage: tile_type,
             value_global: global_dtypes.value,
-            value_stage: global_dtypes.value,
-            key_value_tile: global_dtypes.value,
+            value_stage: tile_type,
+            key_value_tile: tile_type,
             softmax_acc: accumulator,
-            // Certain to work as an Lhs
-            softmax_lhs: global_dtypes.query,
+            softmax_lhs: tile_type,
             accumulator,
             mask: global_dtypes.mask,
             out_global: global_dtypes.out,

@@ -1,6 +1,7 @@
 use std::cmp::min;
 
 use cubecl::CubeDim;
+use cubecl::prelude::CubePrimitive as _;
 use cubek_matmul::components::CubeDimResource;
 use cubek_matmul::components::{global::PartitionedStageFamily, stage::StridedStageFamily};
 
@@ -47,6 +48,7 @@ impl Routine for UnitRoutine {
 
         let dtypes = AttentionElems::from_global_types(
             &problem.global_dtypes,
+            half::f16::as_type_native_unchecked(),
             &problem.options.accumulator_precision,
         );
 

@@ -1,4 +1,5 @@
 use cubecl::CubeDim;
+use cubecl::prelude::CubePrimitive;
 use cubek_matmul::components::{global::PartitionedStageFamily, stage::StridedStageFamily};
 
 use crate::components::stage::plane::PlanePartitionStageAttentionFamily;
@@ -43,6 +44,7 @@ impl Routine for BlackboxAcceleratedRoutine {
 
         let dtypes = AttentionElems::from_global_types(
             &problem.global_dtypes,
+            half::f16::as_type_native_unchecked(),
             &problem.options.accumulator_precision,
         );
 
