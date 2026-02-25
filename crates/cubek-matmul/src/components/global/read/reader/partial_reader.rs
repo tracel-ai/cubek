@@ -133,7 +133,8 @@ impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: PartialLoadingStrategy<RC>>
         #[comptime] stage_buffer: StageBuffer,
         #[comptime] config: GlobalReaderConfig,
     ) {
-        let mut loading_job = match self.loading_job.clone() {
+        let mut loading_job = #[comptime]
+        match self.loading_job.clone() {
             Some(job) => match stage_buffer {
                 StageBuffer::A => job.0,
                 StageBuffer::B => job.1,
@@ -174,6 +175,7 @@ impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: PartialLoadingStrategy<RC>>
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::JobIterator {
         let view = this.global_iter.view();
+        #[comptime]
         let job = match this.loading_job.clone() {
             Some(job) => match stage_buffer {
                 StageBuffer::A => job.0,

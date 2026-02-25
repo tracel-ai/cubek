@@ -37,6 +37,7 @@ impl CmmaFragmentReader for CmmaStageReader<Strided> {
         layout: Option<cmma::MatrixLayout>,
     ) {
         let (slice, stride) = tile.as_unlined();
+        #[comptime]
         match layout {
             None => cmma::load(fragment, &slice, stride),
             Some(layout) => cmma::load_with_layout(fragment, &slice, stride, layout),
@@ -69,6 +70,7 @@ where
         fragment: &mut cmma::Matrix<E>,
         layout: Option<cmma::MatrixLayout>,
     ) {
+        #[comptime]
         match tile {
             Some(tile) => CmmaStageReader::<Inner>::load_fragment(tile, fragment, layout),
             None => {

@@ -157,6 +157,7 @@ impl<
         let partition_q_offset = <SA::Partitioner as AttentionPartitioner>::seq_q_index()
             * config.stage_config.elements_in_partition_seq_q();
 
+        #[comptime]
         match mask {
             Some(mask) => {
                 let layout =

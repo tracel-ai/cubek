@@ -323,6 +323,7 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorArgs<Config> {
         state: &Self::State<Lhs, Rhs, EO>,
         batch: usize,
     ) -> usize {
+        #[comptime]
         match state.0.acc_batch {
             Some(layout) => layout.to_source_pos(batch),
             None => batch,
@@ -614,6 +615,7 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorMapArgs<Config> {
         state: &Self::State<Lhs, Rhs, EO>,
         batch: usize,
     ) -> usize {
+        #[comptime]
         match state.0.acc_batch {
             Option::Some(layout) => layout.to_source_pos(batch),
             Option::None => batch,

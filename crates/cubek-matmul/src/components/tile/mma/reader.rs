@@ -259,6 +259,7 @@ where
         #[comptime] layout: MatrixLayout,
         #[comptime] config: MmaMatmulConfig,
     ) {
+        #[comptime]
         match tile {
             Some(tile) => {
                 MmaStageReader::<Inner>::load_fragment(tile, fragment, def, ident, layout, config)

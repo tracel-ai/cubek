@@ -86,6 +86,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMin {
         coordinate: ReduceCoordinate,
         #[comptime] use_planes: bool,
     ) -> Self::AccumulatorItem {
+        #[comptime]
         let coordinate = match coordinate {
             ReduceCoordinate::Required(val) => val,
             ReduceCoordinate::NotRequired => {

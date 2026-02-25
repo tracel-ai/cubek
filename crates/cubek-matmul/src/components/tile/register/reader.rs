@@ -165,6 +165,7 @@ where
         #[comptime] ident: StageIdent,
         #[comptime] config: RegisterMatmulConfig,
     ) {
+        #[comptime]
         match tile {
             Some(tile) => {
                 RegisterStageReader::<Inner>::load_fragment(tile, fragment, ident, config)

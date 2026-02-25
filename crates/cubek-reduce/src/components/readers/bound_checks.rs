@@ -28,6 +28,7 @@ impl<P: ReducePrecision> ReaderBoundChecks<P> {
         #[comptime] line_size: LineSize,
         #[comptime] bound_checks: BoundChecks,
     ) -> ReaderBoundChecks<P> {
+        #[comptime]
         let pos_max = match idle {
             // When idle we set the pos_max to zero so that we always mask values.
             Some(idle) => pos_max * usize::cast_from(!idle),
@@ -56,6 +57,7 @@ impl<P: ReducePrecision> ReaderBoundChecks<P> {
         offset: usize,
         view: &View<Line<P::EI>, Coords1d>,
     ) -> Line<P::EI> {
+        #[comptime]
         match self {
             ReaderBoundChecks::NotRequired => view[offset],
             ReaderBoundChecks::Required(checks) => match checks.bound_checks.comptime() {

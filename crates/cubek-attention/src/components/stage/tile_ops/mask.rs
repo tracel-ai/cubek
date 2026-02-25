@@ -110,6 +110,7 @@ impl<F: FragmentLayout> LogicalTileMask<F> {
 
         let causal_masked = self.causal && pos.0 < pos.1;
 
+        #[comptime]
         let oob_masked = match self.out_of_bounds {
             Some(bounds) => !Coords2d::is_in_bounds(&pos, &bounds),
             None => false,
