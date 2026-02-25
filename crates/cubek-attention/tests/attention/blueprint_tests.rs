@@ -63,13 +63,13 @@ fn one_tile_simple() {
 }
 
 #[test]
-fn one_partition_several_planes() {
+fn one_tile_several_planes() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
-            seq_q: 1,
+            seq_q: 2,
             seq_kv: 1,
             head_dim: 1,
             val_dim: 1,

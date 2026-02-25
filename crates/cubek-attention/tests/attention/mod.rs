@@ -3,8 +3,6 @@ pub(crate) mod launcher;
 mod reference;
 mod utils;
 
-use cubecl::frontend::CubePrimitive;
-use cubecl::{Runtime, client::ComputeClient, ir::StorageType};
 pub(crate) use reference::assert_result;
 pub(crate) use utils::tiling_scheme_ops;
 
@@ -41,8 +39,6 @@ mod unit {
     }
 
     mod f16_ty {
-        use crate::attention::mask_dtype;
-
         use super::*;
         use cubecl::frontend::CubePrimitive;
         use cubek_attention::definition::AttentionGlobalTypes;
@@ -59,8 +55,6 @@ mod unit {
     }
 
     mod f32_ty {
-        use crate::attention::mask_dtype;
-
         use super::*;
         use cubecl::frontend::CubePrimitive;
         use cubek_attention::definition::AttentionGlobalTypes;
@@ -121,8 +115,6 @@ mod blackbox_accelerated {
     }
 
     mod f16_ty {
-        use crate::attention::mask_dtype;
-
         use super::*;
         use cubecl::frontend::CubePrimitive;
         use cubek_attention::definition::AttentionGlobalTypes;
@@ -139,8 +131,6 @@ mod blackbox_accelerated {
     }
 
     mod f32_ty {
-        use crate::attention::mask_dtype;
-
         use super::*;
         use cubecl::frontend::CubePrimitive;
         use cubek_attention::definition::AttentionGlobalTypes;

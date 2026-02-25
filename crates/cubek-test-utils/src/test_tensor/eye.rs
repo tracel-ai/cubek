@@ -2,6 +2,7 @@ use cubecl::{
     TestRuntime,
     prelude::*,
     std::tensor::{TensorHandle, ViewOperationsMut, ViewOperationsMutExpand},
+    zspace::{Shape, Strides},
 };
 
 use crate::BaseInputSpec;
@@ -28,12 +29,12 @@ fn eye_launch<T: Numeric>(tensor: &mut Tensor<Line<T>>, #[define(T)] _types: Sto
 #[allow(unused)]
 fn new_eyed(
     client: &ComputeClient<TestRuntime>,
-    shape: Vec<usize>,
+    shape: Shape,
     rows: usize,
     cols: usize,
     total_batches: usize,
     dtype: StorageType,
-    strides: Vec<usize>,
+    strides: Strides,
 ) -> TensorHandle<TestRuntime> {
     // Performance is not important here and this simplifies greatly the problem
     let line_size = 1;
