@@ -6,13 +6,12 @@ use crate::components::tile::RowWise;
 use crate::components::tile::accelerated::local_tile::{LocalTile, LocalTileLayout};
 use crate::components::tile::accelerated::setup::BlackboxAcceleratedAttentionMatmulConfig;
 use crate::components::tile::{FragmentAccumulator, FragmentAccumulatorExpand};
-use crate::components::tile::{FragmentSoftmax, FragmentSoftmaxExpand};
 
 #[derive(CubeType)]
 /// Navigates between cmma fragment (for matmuls) and shared memory (for row wise ops)
-pub struct HybridFragment<E: Float> {
-    // For matmul
-    pub fragment: cmma::Matrix<E>,
+pub struct AccumulatorHybridFragment<E: Float> {
+    // Accumulator of value matmul
+    pub acc_fragment: cmma::Matrix<E>,
     // A slice because knows only the slot for this plane
     smem_slice: SliceMut<E>,
     // Where to perform operations in register
@@ -22,19 +21,19 @@ pub struct HybridFragment<E: Float> {
 }
 
 #[cube]
-impl<E: Float> HybridFragment<E> {
+impl<E: Float> AccumulatorHybridFragment<E> {
     pub fn new(
         shared_memory: &mut SharedMemory<E>,
         #[comptime] tile_size: TileSize,
         #[comptime] config: BlackboxAcceleratedAttentionMatmulConfig,
     ) -> Self {
-        let fragment = unsafe {
+        let acc_fragment = unsafe {
             cmma::Matrix::<E>::uninitialized(
                 cmma::MatrixIdent::Accumulator,
                 tile_size.m as usize,
                 tile_size.n as usize,
                 tile_size.k as usize,
-                cmma::MatrixLayout::RowMajor,
+                cmma::MatrixLayout::Undefined,
             )
         };
 
@@ -53,8 +52,8 @@ impl<E: Float> HybridFragment<E> {
             (smem_slice_start + smem_slot_size) as usize,
         );
 
-        HybridFragment::<E> {
-            fragment,
+        AccumulatorHybridFragment::<E> {
+            acc_fragment,
             smem_slice,
             local_tile,
             stride: tile_size.n,
@@ -62,21 +61,13 @@ impl<E: Float> HybridFragment<E> {
     }
 
     fn zero(&mut self) {
-        cmma::fill(&self.fragment, E::from_int(0));
+        cmma::fill(&self.acc_fragment, E::from_int(0));
     }
-}
 
-#[cube]
-impl<E: Float> FragmentSoftmax<E> for HybridFragment<E> {
-    type Layout = LocalTileLayout;
-    type SoftmaxScore = cmma::Matrix<E>;
-    type SoftmaxRowFormat = LocalTile<E>;
-    type SoftmaxVal = cmma::Matrix<E>;
-
-    fn rowwise_mut(&mut self) -> &mut Self::SoftmaxRowFormat {
+    fn rowwise_mut(&mut self) -> &mut LocalTile<E> {
         cmma::store(
             &mut self.smem_slice,
-            &self.fragment,
+            &self.acc_fragment,
             self.stride,
             cmma::MatrixLayout::RowMajor,
         );
@@ -96,20 +87,16 @@ impl<E: Float> FragmentSoftmax<E> for HybridFragment<E> {
         sync_cube();
 
         cmma::load_with_layout(
-            &self.fragment,
+            &self.acc_fragment,
             &self.smem_slice.to_slice(),
             self.stride,
             cmma::MatrixLayout::RowMajor,
         )
     }
-
-    fn zero(&mut self) {
-        self.zero();
-    }
 }
 
 #[cube]
-impl<E: Float> FragmentAccumulator<E> for HybridFragment<E> {
+impl<E: Float> FragmentAccumulator<E> for AccumulatorHybridFragment<E> {
     fn rowwise_scale(&mut self, val: &RowWise<E>) {
         let local_tile = self.rowwise_mut();
         local_tile.rowwise_scale(val);

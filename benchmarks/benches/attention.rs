@@ -138,7 +138,7 @@ fn run<R: Runtime, AP: AttentionPrecision>(device: R::Device) {
     let client = R::client(&device);
 
     let global_dtypes = AttentionGlobalTypes::from_single_float_dtype(
-        <AP::Softmax>::as_type_native_unchecked(),
+        half::f16::as_type_native_unchecked(),
         AttentionGlobalTypes::mask_dtype(&client),
     );
 

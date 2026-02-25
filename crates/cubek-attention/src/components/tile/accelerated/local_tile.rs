@@ -80,13 +80,14 @@ impl<E: Numeric> LocalTile<E> {
         }
     }
 
-    pub fn store_to(&self, smem_slice: &mut SliceMut<E>) {
+    pub fn store_to<F: Float>(&self, smem_slice: &mut SliceMut<F>) {
         for r in 0..self.layout.unit_size.0 {
             for c in 0..self.layout.unit_size.1 {
                 let (row, col) = self.layout.absolute_pos((r, c));
                 let index = row * self.layout.total_size.1 + col;
 
-                smem_slice[index as usize] = self.array[(r * self.layout.unit_size.1 + c) as usize];
+                smem_slice[index as usize] =
+                    F::cast_from(self.array[(r * self.layout.unit_size.1 + c) as usize]);
             }
         }
     }

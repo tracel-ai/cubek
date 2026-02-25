@@ -1,6 +1,7 @@
+mod accumulator_fragment;
 mod attention;
-mod hybrid_fragment;
 mod local_tile;
 mod setup;
+mod softmax_fragment;
 
 pub use attention::*;

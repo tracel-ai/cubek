@@ -4,7 +4,7 @@ use cubecl::prelude::*;
 use crate::components::{
     global::simple::PlaneAttentionWriter,
     stage::{
-        BroadcastReducer, partition_attention::PartitionAttention,
+        BroadcastReducer, NaiveReducer, partition_attention::PartitionAttention,
         partitioner::AttentionPartitioner,
     },
 };

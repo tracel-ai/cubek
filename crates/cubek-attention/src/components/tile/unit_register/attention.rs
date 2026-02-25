@@ -184,9 +184,7 @@ impl<E: Float> FragmentAccumulator<E> for UnitTile<E> {
 #[cube]
 impl<E: Float> FragmentSoftmax<E> for UnitTile<E> {
     type Layout = UnitTileLayout;
-    type SoftmaxScore = UnitTile<E>;
     type SoftmaxRowFormat = UnitTile<E>;
-    type SoftmaxVal = UnitTile<E>;
 
     fn rowwise_mut(&mut self) -> &mut UnitTile<E> {
         self

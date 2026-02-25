@@ -102,7 +102,7 @@ fn validate(
     if !device_props.features.cmma.contains(&MmaConfig {
         a_type: dtypes.query_tile,
         b_type: dtypes.key_value_tile,
-        cd_type: dtypes.softmax,
+        cd_type: dtypes.softmax_acc,
         m: config.attention_tile_size().seq_q,
         k: config.attention_tile_size().head_dim,
         n: config.attention_tile_size().seq_kv,
@@ -111,12 +111,12 @@ fn validate(
             AttentionAvailabilityError::CmmaInstructionUnavailable {
                 lhs: dtypes.query_tile,
                 rhs: dtypes.key_value_tile,
-                output: dtypes.softmax,
+                output: dtypes.softmax_acc,
             },
         ));
     }
     if !device_props.features.cmma.contains(&MmaConfig {
-        a_type: dtypes.softmax,
+        a_type: dtypes.softmax_lhs,
         b_type: dtypes.key_value_tile,
         cd_type: dtypes.accumulator,
         m: config.attention_tile_size().seq_q,
@@ -125,7 +125,7 @@ fn validate(
     }) {
         return Err(AttentionSetupError::Unavailable(
             AttentionAvailabilityError::CmmaInstructionUnavailable {
-                lhs: dtypes.softmax,
+                lhs: dtypes.softmax_acc,
                 rhs: dtypes.key_value_tile,
                 output: dtypes.accumulator,
             },
