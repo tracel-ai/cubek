@@ -168,9 +168,9 @@ fn dequantize_symmetric_native_kernel<F: Float, FS: Numeric, Q: Numeric>(
 /// Convert the tensor back to a higher precision data type.
 pub fn launch_ref<R: Runtime>(
     client: &ComputeClient<R>,
-    values: &TensorHandleRef<R>,
-    output: &TensorHandleRef<R>,
-    params: &TensorHandleRef<'_, R>,
+    values: TensorBinding<R>,
+    output: TensorBinding<R>,
+    params: TensorBinding<R>,
     scheme: &QuantScheme,
     input_dtype: StorageType,
 ) -> Result<(), LaunchError> {
@@ -228,10 +228,10 @@ pub fn launch_ref<R: Runtime>(
 
 fn dequantize_packed<R: Runtime>(
     client: &ComputeClient<R>,
-    input: &TensorHandleRef<R>,
+    input: TensorBinding<R>,
     scheme: QuantScheme,
-    scale: &TensorHandleRef<'_, R>,
-    output: &TensorHandleRef<R>,
+    scale: TensorBinding<R>,
+    output: TensorBinding<R>,
     input_dtype: StorageType,
     scale_dtype: StorageType,
 ) -> Result<(), LaunchError> {
@@ -271,7 +271,7 @@ fn dequantize_packed<R: Runtime>(
                 cube_count,
                 cube_dim,
                 address_type,
-                linear_view(client, input, line_size_in),
+                linear_view(client, input.clone(), line_size_in),
                 scales_view(client, input, scale, 1, &scheme),
                 linear_view(client, output, line_size_out),
                 scheme,
@@ -286,10 +286,10 @@ fn dequantize_packed<R: Runtime>(
 
 fn dequantize_native<R: Runtime>(
     client: &ComputeClient<R>,
-    input: &TensorHandleRef<R>,
+    input: TensorBinding<R>,
     scheme: QuantScheme,
-    scale: &TensorHandleRef<'_, R>,
-    output: &TensorHandleRef<R>,
+    scale: TensorBinding<R>,
+    output: TensorBinding<R>,
     input_dtype: StorageType,
     scale_dtype: StorageType,
 ) -> Result<(), LaunchError> {
@@ -330,7 +330,7 @@ fn dequantize_native<R: Runtime>(
                     cube_count,
                     cube_dim,
                     address_type,
-                    linear_view(client, input, line_size),
+                    linear_view(client, input.clone(), line_size),
                     scales_view(client, input, scale, 1, &scheme),
                     linear_view(client, output, line_size),
                     [input_dtype, scale_dtype, quant_dtype.into()],

@@ -23,7 +23,7 @@ pub fn seed(seed: u64) {
 pub(crate) fn random<F: RandomFamily, R: Runtime>(
     client: &ComputeClient<R>,
     prng: F::Runtime,
-    output: TensorHandleRef<'_, R>,
+    output: TensorBinding<R>,
     dtype: StorageType,
 ) -> Result<(), LaunchError> {
     let seeds = get_seeds();
@@ -43,7 +43,7 @@ pub(crate) fn random<F: RandomFamily, R: Runtime>(
     // );
 
     let address_type = output.required_address_type();
-    let output = linear_view(client, &output, output_line_size);
+    let output = linear_view(client, output, output_line_size);
 
     prng_kernel::launch::<F, R>(
         client,

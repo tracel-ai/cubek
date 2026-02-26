@@ -147,7 +147,7 @@ fn run<R: Runtime, MP: MatmulPrecision>(device: R::Device, strategy: Strategy) {
         for tr in [MatrixLayout::ColMajor, MatrixLayout::RowMajor] {
             for (b, m, n, k) in [
                 // entry(8192, 8192, 8192),
-                // entry(6144, 6144, 6144),
+                entry(6144, 6144, 6144),
                 // entry(4096, 4096, 4096),
                 // entry(2048, 2048, 2048),
                 // (2, 1024, 1024, 1024),
@@ -163,7 +163,7 @@ fn run<R: Runtime, MP: MatmulPrecision>(device: R::Device, strategy: Strategy) {
                 // entry(1024, 10, 10),
                 // (16, 1, 2048, 8192),
                 // (16, 1, 4096, 4096),
-                (1, 512, 512, 512),
+                // (1, 512, 512, 512),
                 // (2, 8192, 8192, 1), // Outer
                 // (2, 8192, 1, 8192), // MatVec
                 //(2, 1, 8192, 8192), // VecMat
@@ -453,8 +453,8 @@ fn run_algos_mma<R: Runtime, MP: MatmulPrecision>() {
 #[allow(unused)]
 fn run_benches<R: Runtime, MP: MatmulPrecision>() {
     // run_grid_search::<R, MP>();
-    run_algos_unit::<R, MP>();
-    // run_algos_wmma::<R, MP>();
+    // run_algos_unit::<R, MP>();
+    run_algos_wmma::<R, MP>();
     // run_algos_vecmat::<R, MP>();
     // run_algos_mma::<R, MP>();
 }

@@ -40,13 +40,13 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
         client.create_tensor_from_slice(f32::as_bytes(&data_scale), shape![1], f32::type_size());
 
     let input = TensorHandle::new(
-        input_alloc.handle,
+        input_alloc.memory,
         shape.clone(),
         input_alloc.strides,
         f32::as_type_native_unchecked(),
     );
     let scale = TensorHandle::new(
-        scale_alloc.handle,
+        scale_alloc.memory,
         shape![1],
         scale_alloc.strides,
         f32::as_type_native_unchecked(),
@@ -80,13 +80,13 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
         .try_into()
         .unwrap();
     let output = TensorHandle::new(
-        output_alloc.handle,
+        output_alloc.memory,
         shape_out,
         output_alloc.strides,
         u32::as_type_native_unchecked(),
     );
     let output_scale = TensorHandle::new(
-        output_scale_alloc.handle,
+        output_scale_alloc.memory,
         shape![1],
         output_scale_alloc.strides,
         f32::as_type_native_unchecked(),
@@ -94,10 +94,10 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
 
     cubek_quant::quantize::launch_ref(
         &client,
-        &input.as_ref(),
-        &output.as_ref(),
-        &scale.as_ref(),
-        &output_scale.as_ref(),
+        input.binding(),
+        output.clone().binding(),
+        scale.binding(),
+        output_scale.clone().binding(),
         &scheme,
         ElemType::Float(FloatKind::Flex32),
     )
@@ -106,17 +106,17 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
     cubek_quant::dequantize::launch_ref(
         &client,
         // The input of the dequantize kernel is the output of the quantized one.
-        &output.as_ref(),
+        output.binding(),
         // We use a new buffer to make sure all values are correctly dequantized back.
-        &output_f.as_ref(),
-        &output_scale.as_ref(),
+        output_f.clone().binding(),
+        output_scale.clone().binding(),
         &scheme,
         f32::as_type_native_unchecked(),
     )
     .unwrap();
 
     let computed = client.read_one_unchecked_tensor(CopyDescriptor::new(
-        output_f.handle.clone(),
+        output_f.handle.clone().binding(),
         output_f.shape().clone(),
         output_f.strides().clone(),
         core::mem::size_of::<f32>(),
@@ -174,17 +174,20 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
         scales.push(scale);
     }
 
-    let scale_alloc =
-        client.create_tensor_from_slice(f32::as_bytes(&scales), shape_scale.clone(), f32::type_size());
+    let scale_alloc = client.create_tensor_from_slice(
+        f32::as_bytes(&scales),
+        shape_scale.clone(),
+        f32::type_size(),
+    );
 
     let input = TensorHandle::new(
-        input_alloc.handle,
+        input_alloc.memory,
         shape.clone(),
         input_alloc.strides,
         f32::as_type_native_unchecked(),
     );
     let scale = TensorHandle::new(
-        scale_alloc.handle,
+        scale_alloc.memory,
         shape_scale.clone(),
         scale_alloc.strides,
         f32::as_type_native_unchecked(),
@@ -218,13 +221,13 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
         .try_into()
         .unwrap();
     let output = TensorHandle::new(
-        output_alloc.handle,
+        output_alloc.memory,
         shape_out,
         output_alloc.strides,
         u32::as_type_native_unchecked(),
     );
     let output_scale = TensorHandle::new(
-        output_scale_alloc.handle,
+        output_scale_alloc.memory,
         shape_scale.clone(),
         output_scale_alloc.strides,
         f32::as_type_native_unchecked(),
@@ -232,10 +235,10 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
 
     cubek_quant::quantize::launch_ref(
         &client,
-        &input.as_ref(),
-        &output.as_ref(),
-        &scale.as_ref(),
-        &output_scale.as_ref(),
+        input.binding(),
+        output.clone().binding(),
+        scale.binding(),
+        output_scale.clone().binding(),
         &scheme,
         ElemType::Float(FloatKind::Flex32),
     )
@@ -244,17 +247,17 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
     cubek_quant::dequantize::launch_ref(
         &client,
         // The input of the dequantize kernel is the output of the quantized one.
-        &output.as_ref(),
+        output.binding(),
         // We use a new buffer to make sure all values are correctly dequantized back.
-        &output_f.as_ref(),
-        &output_scale.as_ref(),
+        output_f.clone().binding(),
+        output_scale.binding(),
         &scheme,
         f32::as_type_native_unchecked(),
     )
     .unwrap();
 
     let computed = client.read_one_unchecked_tensor(CopyDescriptor::new(
-        output_f.handle.clone(),
+        output_f.handle.clone().binding(),
         output_f.shape().clone(),
         output_f.strides().clone(),
         core::mem::size_of::<f32>(),

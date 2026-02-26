@@ -85,7 +85,7 @@ pub fn random_uniform<R: Runtime>(
     client: &ComputeClient<R>,
     lower_bound: f32,
     upper_bound: f32,
-    out: TensorHandleRef<R>,
+    out: TensorBinding<R>,
     dtype: StorageType,
 ) -> Result<(), LaunchError> {
     assert_eq!(
