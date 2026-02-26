@@ -178,14 +178,14 @@ pub struct TensorArgs<Config: RuntimeConfig = ()> {
 /// Input representation for [TensorArgs] implementing [MatmulArgs].
 pub struct TensorInputs<Lhs: Numeric, Rhs: Numeric, Acc: Numeric> {
     /// The lhs tensor.
-    lhs: View<Line<Lhs>, BatchedCoords>,
     lhs_batch: VirtualLayout<Coords1d, Coords1d>,
+    lhs: View<Line<Lhs>, BatchedCoords>,
     /// The rhs tensor.
-    rhs: View<Line<Rhs>, BatchedCoords>,
     rhs_batch: VirtualLayout<Coords1d, Coords1d>,
+    rhs: View<Line<Rhs>, BatchedCoords>,
     /// The tensor for loading the accumulator, if present
-    acc: CubeOption<View<Line<Acc>, BatchedCoords>>,
     acc_batch: CubeOption<VirtualLayout<Coords1d, Coords1d>>,
+    acc: CubeOption<View<Line<Acc>, BatchedCoords>>,
 }
 
 impl<Lhs: Numeric, Rhs: Numeric, Acc: Numeric, A: Routine<()>> ConcreteInputsFactory<A>
@@ -203,7 +203,7 @@ impl<Lhs: Numeric, Rhs: Numeric, Acc: Numeric, A: Routine<()>> ConcreteInputsFac
         let view =
             |handle: MatmulInputBinding<R>, config: GlobalLayoutConfig, line_size| match handle {
                 MatmulInputBinding::Normal(handle, _dtype) => {
-                    let layout = GlobalLayoutLaunch::from_handle(handle.clone(), line_size, config);
+                    let layout = GlobalLayoutLaunch::from_handle(&handle, line_size, config);
                     ViewArg::new::<GlobalLayout>(
                         handle.into_tensor_arg(line_size).into_array_arg(),
                         layout,
@@ -217,14 +217,7 @@ impl<Lhs: Numeric, Rhs: Numeric, Acc: Numeric, A: Routine<()>> ConcreteInputsFac
                     ..
                 } => {
                     let (data_layout, scales_layout) = GlobalLayoutLaunch::from_quantized_handle(
-                        client,
-                        data.clone(),
-                        scale.clone(),
-                        shape.clone(),
-                        problem,
-                        scheme,
-                        line_size,
-                        config,
+                        client, &data, &scale, &shape, problem, scheme, line_size, config,
                     );
                     let data_view = ViewArg::new::<GlobalLayout>(
                         data.into_tensor_arg(line_size).into_array_arg(),
@@ -235,9 +228,9 @@ impl<Lhs: Numeric, Rhs: Numeric, Acc: Numeric, A: Routine<()>> ConcreteInputsFac
                     ViewArg::new_quantized(data_view, scales_view, scheme)
                 }
             };
-        let batch_layout = |handle: MatmulInputBinding<R>| match handle {
+        let batch_layout = |handle: &MatmulInputBinding<R>| match handle {
             MatmulInputBinding::Normal(handle, _dtype) => {
-                let layout = BatchLayoutLaunch::from_handle(client, handle, problem);
+                let layout = BatchLayoutLaunch::from_handle(client, &handle, problem);
                 VirtualLayoutLaunch::new::<BatchLayout>(layout)
             }
             MatmulInputBinding::Quantized { .. } => {
@@ -246,10 +239,18 @@ impl<Lhs: Numeric, Rhs: Numeric, Acc: Numeric, A: Routine<()>> ConcreteInputsFac
         };
 
         TensorInputsLaunch::new(
-            view(lhs.clone(), blueprint.lhs_global_layout_config(), line_sizes.lhs),
-            batch_layout(lhs),
-            view(rhs.clone(), blueprint.rhs_global_layout_config(), line_sizes.rhs),
-            batch_layout(rhs),
+            batch_layout(&lhs),
+            view(
+                lhs,
+                blueprint.lhs_global_layout_config(),
+                line_sizes.lhs,
+            ),
+            batch_layout(&rhs),
+            view(
+                rhs,
+                blueprint.rhs_global_layout_config(),
+                line_sizes.rhs,
+            ),
             CubeOptionArgs::None,
             CubeOptionArgs::None,
         )
@@ -272,11 +273,11 @@ impl<EG: Numeric, A: Routine<()>> ConcreteOutputFactory<A> for TensorOutput<EG> 
         _dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<'a, R> {
         let layout = GlobalLayoutLaunch::from_handle(
-            out.clone(),
+            &out,
             line_sizes.out,
             blueprint.out_global_layout_config(),
         );
-        let batch = BatchLayoutLaunch::from_handle(client, out.clone(), problem);
+        let batch = BatchLayoutLaunch::from_handle(client, &out, problem);
         let view = ViewArg::new::<GlobalLayout>(out.as_array_arg(line_sizes.out), layout);
         TensorOutputLaunch::new(view, VirtualLayoutLaunch::new::<BatchLayout>(batch))
     }

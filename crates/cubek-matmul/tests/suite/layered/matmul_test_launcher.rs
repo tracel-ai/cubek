@@ -45,7 +45,7 @@ pub fn test_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
 ) {
     let (lhs, lhs_data) = TestInput::new(
         client.clone(),
-        problem.lhs_shape.to_vec(),
+        problem.lhs_shape.clone(),
         problem.global_dtypes.lhs,
         layout_to_stride_spec(problem.lhs_layout),
         DataKind::Random {
@@ -57,7 +57,7 @@ pub fn test_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
 
     let (rhs, rhs_data) = TestInput::new(
         client.clone(),
-        problem.rhs_shape.to_vec(),
+        problem.rhs_shape.clone(),
         problem.global_dtypes.rhs,
         layout_to_stride_spec(problem.rhs_layout),
         DataKind::Random {
@@ -69,7 +69,7 @@ pub fn test_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
 
     let out = TestInput::new(
         client.clone(),
-        problem.out_shape.to_vec(),
+        problem.out_shape.clone(),
         problem.global_dtypes.out,
         layout_to_stride_spec(MatrixLayout::RowMajor),
         DataKind::Zeros,
@@ -79,9 +79,9 @@ pub fn test_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
     problem.lhs_strides = lhs.strides().clone();
     problem.rhs_strides = rhs.strides().clone();
 
-    let lhs_handle = MatmulInputBinding::Normal(lhs.as_ref(), problem.global_dtypes.lhs);
-    let rhs_handle = MatmulInputBinding::Normal(rhs.as_ref(), problem.global_dtypes.rhs);
-    let out_handle = out.as_ref();
+    let lhs_handle = MatmulInputBinding::Normal(lhs.binding(), problem.global_dtypes.lhs);
+    let rhs_handle = MatmulInputBinding::Normal(rhs.binding(), problem.global_dtypes.rhs);
+    let out_handle = out.clone().binding();
 
     let all_elems = MatmulElems::from_globals(&problem.global_dtypes.clone());
 
@@ -96,8 +96,7 @@ pub fn test_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
         out_handle,
     ) {
         ExecutionOutcome::Executed => {
-            assert_result(&lhs_data, &rhs_data, &problem, &client, &out, all_elems)
-                .as_test_outcome()
+            assert_result(&lhs_data, &rhs_data, &problem, &client, out, all_elems).as_test_outcome()
         }
         ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
     }
@@ -114,7 +113,7 @@ pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
     input_representation: InputRepresentation,
     lhs: MatmulInputBinding<TestRuntime>,
     rhs: MatmulInputBinding<TestRuntime>,
-    out: TensorHandleRef<TestRuntime>,
+    out: TensorBinding<TestRuntime>,
 ) -> ExecutionOutcome {
     let line_sizes = AvailableLineSizes::from_type_sizes(
         client,
@@ -124,9 +123,9 @@ pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
     );
     let line_sizes = match input_representation {
         InputRepresentation::Normal => line_sizes
-            .filter_lhs_with_tensor(lhs.data().strides, lhs.data().shape, problem.lhs_layout)
-            .filter_rhs_with_tensor(rhs.data().strides, rhs.data().shape, problem.rhs_layout)
-            .filter_out_with_tensor(out.strides, out.shape)
+            .filter_lhs_with_tensor(&lhs.data().strides, &lhs.data().shape, problem.lhs_layout)
+            .filter_rhs_with_tensor(&rhs.data().strides, &rhs.data().shape, problem.rhs_layout)
+            .filter_out_with_tensor(&out.strides, &out.shape)
             .pick_max()
             .unwrap(),
         InputRepresentation::Tma => line_sizes
@@ -167,7 +166,7 @@ pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
 
     let output = <TensorOutput<_> as ConcreteOutputFactory<A>>::create(
         client,
-        &out,
+        out,
         &blueprint,
         problem,
         &line_sizes,
@@ -178,8 +177,8 @@ pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
         InputRepresentation::Normal => {
             let inputs = <TensorInputs<_, _, _> as ConcreteInputsFactory<A>>::create(
                 client,
-                &lhs,
-                &rhs,
+                lhs,
+                rhs,
                 &blueprint,
                 problem,
                 &line_sizes,
@@ -204,8 +203,8 @@ pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
         InputRepresentation::Tma => {
             let inputs = <TensorMapInputs<_, _, _> as ConcreteInputsFactory<A>>::create(
                 client,
-                &lhs,
-                &rhs,
+                lhs,
+                rhs,
                 &blueprint,
                 problem,
                 &line_sizes,

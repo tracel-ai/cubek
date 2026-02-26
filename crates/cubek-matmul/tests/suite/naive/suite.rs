@@ -2,7 +2,7 @@ use crate::suite::assert_result;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{Runtime, client};
 use cubecl::{frontend::CubePrimitive, ir::AddressType};
-use cubecl::{prelude::TensorHandleRef, zspace::shape};
+use cubecl::{prelude::TensorBinding, zspace::shape};
 use cubek_matmul::launch::launch_naive;
 
 use crate::suite::layout_to_stride_spec;
@@ -154,7 +154,7 @@ fn test_naive(case: MatmulTestCase) {
 
     let (lhs, lhs_data) = TestInput::new(
         client.clone(),
-        problem.lhs_shape.to_vec(),
+        problem.lhs_shape.clone(),
         problem.global_dtypes.lhs,
         layout_to_stride_spec(problem.lhs_layout),
         DataKind::Random {
@@ -166,7 +166,7 @@ fn test_naive(case: MatmulTestCase) {
 
     let (rhs, rhs_data) = TestInput::new(
         client.clone(),
-        problem.rhs_shape.to_vec(),
+        problem.rhs_shape.clone(),
         problem.global_dtypes.rhs,
         layout_to_stride_spec(problem.rhs_layout),
         DataKind::Random {
@@ -178,20 +178,27 @@ fn test_naive(case: MatmulTestCase) {
 
     let out = TestInput::new(
         client.clone(),
-        problem.out_shape.to_vec(),
+        problem.out_shape.clone(),
         problem.global_dtypes.out,
         layout_to_stride_spec(MatrixLayout::RowMajor),
         DataKind::Zeros,
     )
     .generate_without_host_data();
 
-    let lhs_handle = MatmulInputHandleRef::Normal(lhs.as_ref(), problem.global_dtypes.lhs);
-    let rhs_handle = MatmulInputHandleRef::Normal(rhs.as_ref(), problem.global_dtypes.rhs);
-    let out_handle = out.as_ref();
+    let lhs_handle = MatmulInputBinding::Normal(lhs.binding(), problem.global_dtypes.lhs);
+    let rhs_handle = MatmulInputBinding::Normal(rhs.binding(), problem.global_dtypes.rhs);
+    let out_handle = out.clone().binding();
 
     let all_elems = MatmulElems::from_globals(&problem.global_dtypes.clone());
 
-    launch_naive::launch_ref(&client, &lhs_handle, &rhs_handle, &out_handle, &all_elems).unwrap();
+    launch_naive::launch_ref(
+        &client,
+        lhs_handle,
+        rhs_handle,
+        out_handle,
+        &all_elems,
+    )
+    .unwrap();
 
-    assert_result(&lhs_data, &rhs_data, &problem, &client, &out, all_elems);
+    assert_result(&lhs_data, &rhs_data, &problem, &client, out, all_elems);
 }
