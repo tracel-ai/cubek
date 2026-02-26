@@ -12,7 +12,7 @@ use cubek::{
     },
     matmul::{
         definition::{AccG, AccR, LhsG, LhsS, MatmulElems, MatmulPrecision, RhsG},
-        launch::MatmulInputHandleRef,
+        launch::MatmulInputBinding,
     },
     random::random_uniform,
 };
@@ -90,9 +90,9 @@ impl<R: Runtime, MP: MatmulPrecision> Benchmark for Conv2dBench<R, MP> {
                 tile_kind: AcceleratedTileKind::Cmma,
             },
             &self.client,
-            &MatmulInputHandleRef::Normal(input.as_ref(), elems.lhs_global),
-            &MatmulInputHandleRef::Normal(weight.as_ref(), elems.rhs_global),
-            &Some(MatmulInputHandleRef::Normal(
+            &MatmulInputBinding::Normal(input.as_ref(), elems.lhs_global),
+            &MatmulInputBinding::Normal(weight.as_ref(), elems.rhs_global),
+            &Some(MatmulInputBinding::Normal(
                 bias.as_ref(),
                 elems.acc_global,
             )),

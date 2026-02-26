@@ -18,7 +18,7 @@ use cubek_matmul::{
     components::global::memory::{GlobalLayoutConfig, NoopLayout, NoopLayoutLaunch},
     definition::{Blueprint, MatmulElems, MatmulLineSizes, MatrixLayout, TilingBlueprint},
     launch::{
-        MatmulArgs, MatmulInputHandleRef, TensorArgs, TensorInputs, TensorInputsLaunch,
+        MatmulArgs, MatmulInputBinding, TensorArgs, TensorInputs, TensorInputsLaunch,
         TensorMapArgs, TensorMapInputs, TensorMapInputsLaunch, TensorOutput, TensorOutputLaunch,
     },
     routines::Routine,
@@ -97,8 +97,8 @@ pub trait ConcreteInputsFactory<A: Routine<RuntimeArgs>>: LaunchArg {
     #[allow(clippy::too_many_arguments)]
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
-        out_grad: &'a MatmulInputHandleRef<'a, R>,
-        weights: &'a MatmulInputHandleRef<'a, R>,
+        out_grad: &'a MatmulInputBinding<'a, R>,
+        weights: &'a MatmulInputBinding<'a, R>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
@@ -123,8 +123,8 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs>> ConcreteI
 {
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
-        out_grad: &'a MatmulInputHandleRef<'a, R>,
-        weights: &'a MatmulInputHandleRef<'a, R>,
+        out_grad: &'a MatmulInputBinding<'a, R>,
+        weights: &'a MatmulInputBinding<'a, R>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
@@ -213,8 +213,8 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
 {
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
-        out_grad: &'a MatmulInputHandleRef<'a, R>,
-        weights: &'a MatmulInputHandleRef<'a, R>,
+        out_grad: &'a MatmulInputBinding<'a, R>,
+        weights: &'a MatmulInputBinding<'a, R>,
         blueprint: &TilingBlueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,

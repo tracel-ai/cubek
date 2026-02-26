@@ -9,29 +9,17 @@ use crate::definition::MatmulLineSizes;
 use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError};
 
 use crate::launch::InputArg;
-use crate::launch::handle::{MatmulInputHandle, MatmulInputHandleRef};
+use crate::launch::handle::MatmulInputBinding;
 use crate::launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs};
 use crate::routines::naive::NaiveRoutine;
 use crate::routines::{BlueprintStrategy, Routine as _};
 
-/// Matrix multiplication using memory coalescing algorithm with custom cube dimensions
-#[allow(clippy::result_large_err)]
-pub fn launch<R: Runtime>(
-    client: &ComputeClient<R>,
-    lhs: MatmulInputHandle<R>,
-    rhs: MatmulInputHandle<R>,
-    out: &TensorHandleRef<'_, R>,
-    dtypes: MatmulElems,
-) -> Result<(), MatmulSetupError> {
-    launch_ref(client, &lhs.as_ref(), &rhs.as_ref(), out, &dtypes)
-}
-
 #[allow(clippy::result_large_err)]
 pub fn launch_ref<R: Runtime>(
     client: &ComputeClient<R>,
-    lhs: &MatmulInputHandleRef<'_, R>,
-    rhs: &MatmulInputHandleRef<'_, R>,
-    out: &TensorHandleRef<'_, R>,
+    lhs: MatmulInputBinding<R>,
+    rhs: MatmulInputBinding<R>,
+    out: TensorBinding<R>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let rank = lhs.shape().len();
@@ -44,21 +32,19 @@ pub fn launch_ref<R: Runtime>(
     let lhs = if !matches!(lhs_layout, MatrixBatchLayout::Contiguous) {
         lhs.into_contiguous(client)?
     } else {
-        MatmulInputHandle::from_ref(lhs)
+        lhs
     };
-    let lhs = lhs.as_ref();
-    let rhs = MatmulInputHandle::from_ref(rhs);
 
     // we swap the dimensions to achieve memory-coalescing:
     // consecutive elements of a column in the original rhs tensor will now be stored
     // consecutively in memory, which allows to fetch them with fewer memory instructions
-    let correct_rhs_layout = |mut rhs: MatmulInputHandle<R>| {
+    let correct_rhs_layout = |mut rhs: MatmulInputBinding<R>| {
         rhs.swap_dims(dim1, dim2);
-        let mut rhs = rhs.as_ref().into_contiguous(client)?;
+        let mut rhs = rhs.into_contiguous(client)?;
 
         rhs.swap_dims(dim1, dim2);
 
-        let returned: Result<MatmulInputHandle<R>, LaunchError> = Ok(rhs);
+        let returned: Result<MatmulInputBinding<R>, LaunchError> = Ok(rhs);
         returned
     };
 
@@ -76,7 +62,6 @@ pub fn launch_ref<R: Runtime>(
         }
         MatrixBatchLayout::HighlyPermuted => correct_rhs_layout(rhs)?,
     };
-    let rhs = rhs.as_ref();
 
     let lhs_shape = lhs.shape();
     let rhs_shape = rhs.shape();
@@ -128,8 +113,8 @@ pub fn launch_ref<R: Runtime>(
 
     let input = <InputArg<TensorArgs> as ConcreteInputsFactory<NaiveRoutine>>::create(
         client,
-        &lhs,
-        &rhs,
+        lhs,
+        rhs,
         &launch_info.blueprint,
         &problem,
         &line_sizes,

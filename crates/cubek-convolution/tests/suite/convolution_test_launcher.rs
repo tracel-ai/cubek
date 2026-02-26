@@ -11,7 +11,7 @@ use cubek_convolution::{
 };
 use cubek_matmul::{
     definition::{AvailableLineSizes, MatmulSetupError},
-    launch::MatmulInputHandleRef,
+    launch::MatmulInputBinding,
 };
 use cubek_matmul::{
     definition::{MatmulElems, MatmulIdent, TilingBlueprint},
@@ -117,9 +117,9 @@ where
         A::into_tensor_handle(&client, &rhs_handle, P::EG::as_type_native_unchecked(), op).unwrap();
 
     let lhs_handle =
-        MatmulInputHandleRef::new(lhs_handle.as_ref(), P::EG::as_type_native_unchecked());
+        MatmulInputBinding::new(lhs_handle.as_ref(), P::EG::as_type_native_unchecked());
     let rhs_handle =
-        MatmulInputHandleRef::new(rhs_handle.as_ref(), P::EG::as_type_native_unchecked());
+        MatmulInputBinding::new(rhs_handle.as_ref(), P::EG::as_type_native_unchecked());
 
     let (inputs, runtime_args) = <InputArg<A::Args> as ConcreteInputsFactory<A::Routine>>::create(
         &client,

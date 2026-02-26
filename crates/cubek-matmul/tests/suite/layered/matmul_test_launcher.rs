@@ -11,7 +11,7 @@ use cubek_matmul::components::batch::{BatchConfig, BatchMatmulFamily};
 use cubek_matmul::definition::MatmulElems;
 use cubek_matmul::definition::{MatmulProblem, TilingBlueprint};
 use cubek_matmul::launch::ConcreteInputsFactory;
-use cubek_matmul::launch::MatmulInputHandleRef;
+use cubek_matmul::launch::MatmulInputBinding;
 use cubek_matmul::launch::TensorArgs;
 use cubek_matmul::launch::TensorInputs;
 use cubek_matmul::launch::TensorMapArgs;
@@ -79,8 +79,8 @@ pub fn test_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
     problem.lhs_strides = lhs.strides().clone();
     problem.rhs_strides = rhs.strides().clone();
 
-    let lhs_handle = MatmulInputHandleRef::Normal(lhs.as_ref(), problem.global_dtypes.lhs);
-    let rhs_handle = MatmulInputHandleRef::Normal(rhs.as_ref(), problem.global_dtypes.rhs);
+    let lhs_handle = MatmulInputBinding::Normal(lhs.as_ref(), problem.global_dtypes.lhs);
+    let rhs_handle = MatmulInputBinding::Normal(rhs.as_ref(), problem.global_dtypes.rhs);
     let out_handle = out.as_ref();
 
     let all_elems = MatmulElems::from_globals(&problem.global_dtypes.clone());
@@ -112,8 +112,8 @@ pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
     blueprint: A::Blueprint,
     dtypes: &MatmulElems,
     input_representation: InputRepresentation,
-    lhs: MatmulInputHandleRef<TestRuntime>,
-    rhs: MatmulInputHandleRef<TestRuntime>,
+    lhs: MatmulInputBinding<TestRuntime>,
+    rhs: MatmulInputBinding<TestRuntime>,
     out: TensorHandleRef<TestRuntime>,
 ) -> ExecutionOutcome {
     let line_sizes = AvailableLineSizes::from_type_sizes(

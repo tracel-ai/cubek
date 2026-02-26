@@ -1,7 +1,7 @@
 use crate::definition::MatmulLineSizes;
 use crate::definition::MatmulProblem;
 use crate::definition::MatmulSetupError;
-use crate::launch::handle::MatmulInputHandleRef;
+use crate::launch::handle::MatmulInputBinding;
 use crate::launch::{
     ConcreteInputsFactory, ConcreteOutputFactory, InputArg, InputRuntimeArg, MatmulArgs, OutputArg,
     OutputRuntimeArg,
@@ -9,7 +9,7 @@ use crate::launch::{
 use crate::routines::LaunchInfo;
 use crate::routines::{BlueprintStrategy, Routine};
 use crate::{definition::MatmulElems, launch::ConfigRuntimeArg};
-use cubecl::prelude::TensorHandleRef;
+use cubecl::prelude::TensorBinding;
 use cubecl::{Runtime, client::ComputeClient};
 
 /// Select which kernel to launch for the given Algorithm.
@@ -18,9 +18,9 @@ use cubecl::{Runtime, client::ComputeClient};
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
 pub fn launch_kernel_concrete<MA: MatmulArgs<Config = ()>, R: Runtime, A: Routine<()>>(
     client: &ComputeClient<R>,
-    lhs: &MatmulInputHandleRef<'_, R>,
-    rhs: &MatmulInputHandleRef<'_, R>,
-    out: &TensorHandleRef<'_, R>,
+    lhs: MatmulInputBinding<R>,
+    rhs: MatmulInputBinding<R>,
+    out: TensorBinding<R>,
     problem: MatmulProblem,
     line_sizes: MatmulLineSizes,
     blueprint_strategy: &BlueprintStrategy<(), A>,
@@ -32,10 +32,10 @@ where
 {
     let mut view_line_sizes = line_sizes;
 
-    if let MatmulInputHandleRef::Quantized { scheme, .. } = lhs {
+    if let MatmulInputBinding::Quantized { scheme, .. } = lhs {
         view_line_sizes.lhs *= scheme.num_quants();
     }
-    if let MatmulInputHandleRef::Quantized { scheme, .. } = rhs {
+    if let MatmulInputBinding::Quantized { scheme, .. } = rhs {
         view_line_sizes.rhs *= scheme.num_quants();
     }
 

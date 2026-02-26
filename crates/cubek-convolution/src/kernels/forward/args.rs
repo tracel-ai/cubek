@@ -21,7 +21,7 @@ use cubek_matmul::{
     },
     definition::{Blueprint, MatmulElems, MatmulLineSizes, MatrixLayout, TilingBlueprint},
     launch::{
-        MatmulArgs, MatmulInputHandleRef, TensorArgs, TensorInputs, TensorInputsLaunch,
+        MatmulArgs, MatmulInputBinding, TensorArgs, TensorInputs, TensorInputsLaunch,
         TensorMapArgs, TensorMapInputs, TensorMapInputsLaunch, TensorOutput, TensorOutputLaunch,
     },
     routines::Routine,
@@ -103,9 +103,9 @@ pub trait ConcreteInputsFactory<A: Routine<RuntimeArgs>>: LaunchArg {
     #[allow(clippy::too_many_arguments)]
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
-        lhs: &'a MatmulInputHandleRef<'a, R>,
-        rhs: &'a MatmulInputHandleRef<'a, R>,
-        bias: Option<&'a MatmulInputHandleRef<'a, R>>,
+        lhs: &'a MatmulInputBinding<'a, R>,
+        rhs: &'a MatmulInputBinding<'a, R>,
+        bias: Option<&'a MatmulInputBinding<'a, R>>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
@@ -131,9 +131,9 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs>> ConcreteI
 {
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
-        lhs: &'a MatmulInputHandleRef<'a, R>,
-        rhs: &'a MatmulInputHandleRef<'a, R>,
-        bias: Option<&'a MatmulInputHandleRef<'a, R>>,
+        lhs: &'a MatmulInputBinding<'a, R>,
+        rhs: &'a MatmulInputBinding<'a, R>,
+        bias: Option<&'a MatmulInputBinding<'a, R>>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
@@ -228,9 +228,9 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
 {
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
-        lhs: &'a MatmulInputHandleRef<'a, R>,
-        rhs: &'a MatmulInputHandleRef<'a, R>,
-        bias: Option<&'a MatmulInputHandleRef<'a, R>>,
+        lhs: &'a MatmulInputBinding<'a, R>,
+        rhs: &'a MatmulInputBinding<'a, R>,
+        bias: Option<&'a MatmulInputBinding<'a, R>>,
         blueprint: &TilingBlueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,

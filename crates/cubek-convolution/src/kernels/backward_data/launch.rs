@@ -18,7 +18,7 @@ use cubecl::{
 use cubek_matmul::{
     components::tile::{cmma::CmmaMatmul, io::Strided, mma::MmaMatmul},
     definition::{AvailableLineSizes, MatmulElems, MatmulSetupError, MatrixLayout},
-    launch::{MatmulInputHandle, MatmulInputHandleRef},
+    launch::{MatmulInputHandle, MatmulInputBinding},
     routines::BlueprintStrategy,
 };
 use derive_new::new;
@@ -71,8 +71,8 @@ pub fn launch<R: Runtime, const N_SPATIAL: usize>(
 pub fn launch_ref<R: Runtime, const N_SPATIAL: usize>(
     strategy: &Strategy,
     client: &ComputeClient<R>,
-    out_grad: &MatmulInputHandleRef<'_, R>,
-    weights: &MatmulInputHandleRef<'_, R>,
+    out_grad: &MatmulInputBinding<'_, R>,
+    weights: &MatmulInputBinding<'_, R>,
     in_grad: &TensorHandleRef<'_, R>,
     args: ConvolutionArgs<N_SPATIAL>,
     dtypes: MatmulElems,
@@ -100,8 +100,8 @@ pub fn launch_ref<R: Runtime, const N_SPATIAL: usize>(
 #[derive(new)]
 struct BackwardsData<'a, R: Runtime, const N_SPATIAL: usize> {
     client: &'a ComputeClient<R>,
-    out_grad: &'a MatmulInputHandleRef<'a, R>,
-    weights: &'a MatmulInputHandleRef<'a, R>,
+    out_grad: &'a MatmulInputBinding<'a, R>,
+    weights: &'a MatmulInputBinding<'a, R>,
     in_grad: &'a TensorHandleRef<'a, R>,
     args: ConvolutionArgs<N_SPATIAL>,
     dtypes: MatmulElems,
@@ -141,8 +141,8 @@ impl<'a, R: Runtime, const N_SPATIAL: usize> BackwardsData<'a, R, N_SPATIAL> {
 #[allow(clippy::too_many_arguments)]
 fn launch_with_algorithm<R: Runtime, Alg: Algorithm>(
     client: &ComputeClient<R>,
-    out_grad: &MatmulInputHandleRef<'_, R>,
-    weights: &MatmulInputHandleRef<'_, R>,
+    out_grad: &MatmulInputBinding<'_, R>,
+    weights: &MatmulInputBinding<'_, R>,
     in_grad: &TensorHandleRef<'_, R>,
     (stride, padding, dilation): (&[usize], &[usize], &[usize]),
     dimensionality: Dimensionality,
@@ -222,8 +222,8 @@ where
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
 pub fn launch_kernel<R: Runtime, Alg: Algorithm>(
     client: &ComputeClient<R>,
-    out_grad: &MatmulInputHandleRef<'_, R>,
-    weights: &MatmulInputHandleRef<'_, R>,
+    out_grad: &MatmulInputBinding<'_, R>,
+    weights: &MatmulInputBinding<'_, R>,
     in_grad: &TensorHandleRef<'_, R>,
     problem: ConvolutionProblem,
     blueprint_strategy: &BlueprintStrategy<RuntimeArgs, Alg::Routine>,
