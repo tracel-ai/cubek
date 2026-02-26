@@ -1,8 +1,5 @@
 use cubecl::prelude::*;
-use cubecl::std::{
-    CubeOption, CubeOptionArgs, CubeOptionExpand,
-    tensor::r#virtual::{VirtualTensorOperations, VirtualTensorOperationsExpand},
-};
+use cubecl::std::tensor::r#virtual::{VirtualTensorOperations, VirtualTensorOperationsExpand};
 use cubecl::{self as cubecl};
 
 use crate::definition::{AttentionBlueprint, AttentionLineSizes, AttentionProblem};
@@ -49,11 +46,11 @@ pub trait AttentionArgs: Send + Sync + 'static + Clone {
         output: &mut Self::Output<O>,
     ) -> Self::State<Q, K, V, M, O>;
 
-    /// Whether the mask argument is present. Returns `CubeOption` to allow matching at
+    /// Whether the mask argument is present. Returns `Option` to allow matching at
     /// comptime
     fn has_mask<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> CubeOption<()>;
+    ) -> Option<()>;
 
     /// Read the line of the query tensor using the state at the given coordinate.
     fn read_query<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
@@ -104,19 +101,19 @@ pub trait AttentionArgs: Send + Sync + 'static + Clone {
     /// Reinterpret query as tensor map
     fn as_tensor_map_query<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> CubeOption<TensorMap<Q, Tiled>>;
+    ) -> Option<TensorMap<Q, Tiled>>;
     /// Reinterpret key as tensor map
     fn as_tensor_map_key<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> CubeOption<TensorMap<K, Tiled>>;
+    ) -> Option<TensorMap<K, Tiled>>;
     /// Reinterpret value as tensor map
     fn as_tensor_map_value<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> CubeOption<TensorMap<V, Tiled>>;
+    ) -> Option<TensorMap<V, Tiled>>;
     /// Reinterpret mask as tensor map
     fn as_tensor_map_mask<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> CubeOption<TensorMap<M, Tiled>>;
+    ) -> Option<TensorMap<M, Tiled>>;
 
     /// Write the line to the output at the given coordinate using the state.
     fn write_out<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
@@ -366,8 +363,8 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     fn __expand_as_tensor_map_method(
         &self,
         scope: &mut Scope,
-    ) -> CubeOptionExpand<TensorMap<O, Tiled>> {
-        CubeOption::__expand_new_None(scope)
+    ) -> OptionExpand<TensorMap<O, Tiled>> {
+        Option::__expand_new_None(scope)
     }
 }
 
@@ -443,7 +440,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     fn __expand_as_tensor_map_method(
         &self,
         scope: &mut Scope,
-    ) -> CubeOptionExpand<TensorMap<Q, Tiled>> {
+    ) -> OptionExpand<TensorMap<Q, Tiled>> {
         TensorQueryExpand::__expand_as_tensor_map_method(self.clone(), scope)
     }
 }
@@ -520,7 +517,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     fn __expand_as_tensor_map_method(
         &self,
         scope: &mut Scope,
-    ) -> CubeOptionExpand<TensorMap<K, Tiled>> {
+    ) -> OptionExpand<TensorMap<K, Tiled>> {
         TensorKeyExpand::__expand_as_tensor_map_method(self.clone(), scope)
     }
 }
@@ -597,7 +594,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     fn __expand_as_tensor_map_method(
         &self,
         scope: &mut Scope,
-    ) -> CubeOptionExpand<TensorMap<V, Tiled>> {
+    ) -> OptionExpand<TensorMap<V, Tiled>> {
         TensorValueExpand::__expand_as_tensor_map_method(self.clone(), scope)
     }
 }
@@ -674,7 +671,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     fn __expand_as_tensor_map_method(
         &self,
         scope: &mut Scope,
-    ) -> CubeOptionExpand<TensorMap<M, Tiled>> {
+    ) -> OptionExpand<TensorMap<M, Tiled>> {
         TensorMaskExpand::__expand_as_tensor_map_method(self.clone(), scope)
     }
 }
@@ -775,7 +772,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     }
 
     /// Get the buffer length of the tensor.
-    pub fn as_tensor_map(&self) -> CubeOption<TensorMap<Q, Tiled>> {
+    pub fn as_tensor_map(&self) -> Option<TensorMap<Q, Tiled>> {
         unsafe { MA::as_tensor_map_query(&(*self.state)) }
     }
 
@@ -831,7 +828,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     }
 
     /// Get the buffer length of the tensor.
-    pub fn as_tensor_map(&self) -> CubeOption<TensorMap<K, Tiled>> {
+    pub fn as_tensor_map(&self) -> Option<TensorMap<K, Tiled>> {
         unsafe { MA::as_tensor_map_key(&(*self.state)) }
     }
 
@@ -887,7 +884,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     }
 
     /// Get the buffer length of the tensor.
-    pub fn as_tensor_map(&self) -> CubeOption<TensorMap<V, Tiled>> {
+    pub fn as_tensor_map(&self) -> Option<TensorMap<V, Tiled>> {
         unsafe { MA::as_tensor_map_value(&(*self.state)) }
     }
 
@@ -943,7 +940,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     }
 
     /// Get the buffer length of the tensor.
-    pub fn as_tensor_map(&self) -> CubeOption<TensorMap<M, Tiled>> {
+    pub fn as_tensor_map(&self) -> Option<TensorMap<M, Tiled>> {
         unsafe { MA::as_tensor_map_mask(&(*self.state)) }
     }
 
@@ -1011,7 +1008,7 @@ pub struct TensorInputs<Q: Float, K: Float, V: Float, M: Numeric> {
     pub query: Tensor<Line<Q>>,
     pub key: Tensor<Line<K>>,
     pub value: Tensor<Line<V>>,
-    pub mask: CubeOption<Tensor<Line<M>>>,
+    pub mask: Option<Tensor<Line<M>>>,
 }
 
 impl<Q: Float, K: Float, V: Float, M: Numeric> ConcreteInputsFactory for TensorInputs<Q, K, V, M> {
@@ -1029,8 +1026,8 @@ impl<Q: Float, K: Float, V: Float, M: Numeric> ConcreteInputsFactory for TensorI
             key.as_tensor_arg(line_sizes.key),
             value.as_tensor_arg(line_sizes.value),
             match mask {
-                Some(mask) => CubeOptionArgs::Some(mask.as_tensor_arg(line_sizes.mask)),
-                None => CubeOptionArgs::None,
+                Some(mask) => OptionArgs::Some(mask.as_tensor_arg(line_sizes.mask)),
+                None => OptionArgs::None,
             },
         )
     }
@@ -1052,7 +1049,7 @@ pub struct AttentionState<Q: Float, K: Float, V: Float, M: Numeric, O: Float> {
     pub query: *const Tensor<Line<Q>>,
     pub key: *const Tensor<Line<K>>,
     pub value: *const Tensor<Line<V>>,
-    pub mask: CubeOption<*const Tensor<Line<M>>>,
+    pub mask: Option<*const Tensor<Line<M>>>,
     pub output: *mut Tensor<Line<O>>,
 }
 
@@ -1066,13 +1063,10 @@ impl AttentionArgs for TensorArgs {
         input: &Self::Input<Q, K, V, M>,
         output: &mut Self::Output<O>,
     ) -> Self::State<Q, K, V, M, O> {
-        let mask = match &input.mask {
-            CubeOption::None => CubeOption::new_None(),
-            CubeOption::Some(mask) => {
-                let ptr: *const Tensor<Line<M>> = mask;
-                CubeOption::new_Some(ptr)
-            }
-        };
+        let mask = input.mask.as_ref().map(|mask| {
+            let ptr: *const Tensor<Line<M>> = mask;
+            ptr
+        });
 
         AttentionState::<Q, K, V, M, O> {
             query: &input.query,
@@ -1085,11 +1079,8 @@ impl AttentionArgs for TensorArgs {
 
     fn has_mask<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> CubeOption<()> {
-        match state.mask {
-            CubeOption::None => CubeOption::new_None(),
-            CubeOption::Some(_) => CubeOption::new_Some(()),
-        }
+    ) -> Option<()> {
+        state.mask.as_ref().map(|_| ())
     }
 
     fn read_query<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
@@ -1154,26 +1145,26 @@ impl AttentionArgs for TensorArgs {
 
     fn as_tensor_map_query<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         _state: &Self::State<Q, K, V, M, O>,
-    ) -> CubeOption<TensorMap<Q, Tiled>> {
-        CubeOption::new_None()
+    ) -> Option<TensorMap<Q, Tiled>> {
+        Option::new_None()
     }
 
     fn as_tensor_map_key<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         _state: &Self::State<Q, K, V, M, O>,
-    ) -> CubeOption<TensorMap<K, Tiled>> {
-        CubeOption::new_None()
+    ) -> Option<TensorMap<K, Tiled>> {
+        Option::new_None()
     }
 
     fn as_tensor_map_value<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         _state: &Self::State<Q, K, V, M, O>,
-    ) -> CubeOption<TensorMap<V, Tiled>> {
-        CubeOption::new_None()
+    ) -> Option<TensorMap<V, Tiled>> {
+        Option::new_None()
     }
 
     fn as_tensor_map_mask<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         _state: &Self::State<Q, K, V, M, O>,
-    ) -> CubeOption<TensorMap<M, Tiled>> {
-        CubeOption::new_None()
+    ) -> Option<TensorMap<M, Tiled>> {
+        Option::new_None()
     }
 
     fn shape_query<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(

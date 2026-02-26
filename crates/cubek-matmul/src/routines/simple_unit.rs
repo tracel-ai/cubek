@@ -1,4 +1,4 @@
-use cubecl::{Runtime, client::ComputeClient, std::CubeOption};
+use cubecl::{Runtime, client::ComputeClient};
 
 use std::{fmt::Display, marker::PhantomData};
 
@@ -68,7 +68,7 @@ where
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
         SimpleMatmulFamily<
-            UnitMatmulFamily<RegisterMatmul<CubeOption<Strided>>, LL::Stage, Option<AL::Stage>>,
+            UnitMatmulFamily<RegisterMatmul<Option<Strided>>, LL::Stage, Option<AL::Stage>>,
             RC,
             LL,
             RL,

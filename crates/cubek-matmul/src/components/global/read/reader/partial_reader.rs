@@ -19,10 +19,7 @@ use crate::definition::MatmulPrecision;
 use crate::{components::global::GlobalReaderConfig, launch::RuntimeConfig};
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
-use cubecl::std::{
-    CubeOption, CubeOptionExpand,
-    tensor::{View, layout::Coords2d},
-};
+use cubecl::std::tensor::{View, layout::Coords2d};
 
 #[cube]
 /// A strategy for loading partial stage memory
@@ -80,7 +77,7 @@ pub struct PartialStageGlobalReader<
     global_iter: GlobalIterator<Line<EG>>,
     runtime_config: RC,
     stage_memory: PartialLoaderStage<RC, L, ES>,
-    loading_job: CubeOption<(L::Job<EG, ES>, L::Job<EG, ES>)>,
+    loading_job: Option<(L::Job<EG, ES>, L::Job<EG, ES>)>,
 }
 
 #[cube]
@@ -99,11 +96,11 @@ impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: PartialLoadingStrategy<RC>>
             GlobalIterator::new(tensor, k_step, config.gmem_config.view_direction, false);
 
         let loading_job = match config.precompute_job {
-            true => CubeOption::new_Some((
+            true => Option::new_Some((
                 L::new_job::<EG, ES>(runtime_config.clone(), 0u32, tensor.line_size(), config),
                 L::new_job::<EG, ES>(runtime_config.clone(), 1u32, tensor.line_size(), config),
             )),
-            false => CubeOption::new_None(),
+            false => Option::new_None(),
         };
 
         PartialStageGlobalReader::<EG, ES, RC, L> {
@@ -137,24 +134,16 @@ impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: PartialLoadingStrategy<RC>>
         #[comptime] config: GlobalReaderConfig,
     ) {
         let mut loading_job = match self.loading_job.clone() {
-            CubeOption::Some(job) => match stage_buffer {
+            Some(job) => match stage_buffer {
                 StageBuffer::A => job.0,
                 StageBuffer::B => job.1,
             },
-            CubeOption::None => match stage_buffer {
-                StageBuffer::A => L::new_job::<EG, ES>(
-                    self.runtime_config.clone(),
-                    0u32,
-                    self.global_iter.line_size(),
-                    config,
-                ),
-                StageBuffer::B => L::new_job::<EG, ES>(
-                    self.runtime_config.clone(),
-                    1u32,
-                    self.global_iter.line_size(),
-                    config,
-                ),
-            },
+            None => L::new_job::<EG, ES>(
+                self.runtime_config.clone(),
+                stage_buffer.to_index(),
+                self.global_iter.line_size(),
+                config,
+            ),
         };
 
         let len = L::Job::task_count(&loading_job);
@@ -186,24 +175,16 @@ impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: PartialLoadingStrategy<RC>>
     ) -> Self::JobIterator {
         let view = this.global_iter.view();
         let job = match this.loading_job.clone() {
-            CubeOption::Some(job) => match stage_buffer {
+            Some(job) => match stage_buffer {
                 StageBuffer::A => job.0,
                 StageBuffer::B => job.1,
             },
-            CubeOption::None => match stage_buffer {
-                StageBuffer::A => L::new_job::<EG, ES>(
-                    this.runtime_config.clone(),
-                    0u32,
-                    view.line_size(),
-                    config,
-                ),
-                StageBuffer::B => L::new_job::<EG, ES>(
-                    this.runtime_config.clone(),
-                    1u32,
-                    view.line_size(),
-                    config,
-                ),
-            },
+            None => L::new_job::<EG, ES>(
+                this.runtime_config.clone(),
+                stage_buffer.to_index(),
+                view.line_size(),
+                config,
+            ),
         };
 
         let num_tasks = L::Job::task_count(&job);

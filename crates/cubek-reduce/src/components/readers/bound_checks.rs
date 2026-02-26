@@ -1,10 +1,7 @@
 use crate::{BoundChecks, ReduceInstruction, ReducePrecision};
 use cubecl::{
     prelude::*,
-    std::{
-        CubeOption, CubeOptionExpand,
-        tensor::{View, layout::Coords1d},
-    },
+    std::tensor::{View, layout::Coords1d},
 };
 
 #[derive(CubeType)]
@@ -27,14 +24,14 @@ impl<P: ReducePrecision> ReaderBoundChecks<P> {
     pub fn new<I: ReduceInstruction<P>>(
         inst: &I,
         pos_max: usize,
-        idle: CubeOption<bool>,
+        idle: Option<bool>,
         #[comptime] line_size: LineSize,
         #[comptime] bound_checks: BoundChecks,
     ) -> ReaderBoundChecks<P> {
         let pos_max = match idle {
             // When idle we set the pos_max to zero so that we always mask values.
-            CubeOption::Some(idle) => pos_max * usize::cast_from(!idle),
-            CubeOption::None => pos_max,
+            Some(idle) => pos_max * usize::cast_from(!idle),
+            None => pos_max,
         };
 
         let bound_checks = comptime!(match idle.is_some() {

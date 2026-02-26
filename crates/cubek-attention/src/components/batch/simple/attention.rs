@@ -1,6 +1,6 @@
 use cubecl;
 use cubecl::prelude::*;
-use cubecl::std::{CubeOption, tensor::r#virtual::VirtualTensor};
+use cubecl::std::tensor::r#virtual::VirtualTensor;
 use std::marker::PhantomData;
 
 use crate::components::{
@@ -25,7 +25,7 @@ impl<GA: GlobalAttention<AP>, AP: AttentionPrecision> BatchAttention<AP>
         query: VirtualTensor<QG<AP>>,
         key: VirtualTensor<KG<AP>>,
         value: VirtualTensor<VG<AP>>,
-        mask: CubeOption<VirtualTensor<MSK<AP>>>,
+        mask: Option<VirtualTensor<MSK<AP>>>,
         out: VirtualTensor<OG<AP>, ReadWrite>,
         _cube_count_args: CubeCountInput,
         #[comptime] config: Self::Config,

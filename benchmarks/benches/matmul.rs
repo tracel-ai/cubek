@@ -169,6 +169,7 @@ fn run<R: Runtime, MP: MatmulPrecision>(device: R::Device, strategy: Strategy) {
                 //(2, 1, 8192, 8192), // VecMat
             ] {
                 println!("-------------------");
+
                 let problem = MatmulProblem::from_parameters(
                     m,
                     n,

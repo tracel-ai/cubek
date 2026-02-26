@@ -6,7 +6,6 @@ use crate::{ReduceDtypes, components::precision::ReducePrecision};
 use cubecl::{
     ir::{ElemType, FloatKind, IntKind, UIntKind},
     prelude::*,
-    std::{CubeOption, CubeOptionExpand},
 };
 use serde::{Deserialize, Serialize};
 
@@ -113,13 +112,13 @@ impl ReduceFamily for ReduceOperation {
 #[derive(CubeType)]
 pub struct DynamicAccumulator<N: Numeric> {
     pub elements: SharedMemory<Line<N>>,
-    pub args: CubeOption<SharedMemory<Line<u32>>>,
+    pub args: Option<SharedMemory<Line<u32>>>,
 }
 
 #[derive(CubeType)]
 pub struct DynamicAccumulatorItem<N: Numeric> {
     pub elements: Line<N>,
-    pub args: CubeOption<Line<u32>>,
+    pub args: Option<Line<u32>>,
 }
 
 #[cube]
@@ -134,9 +133,9 @@ impl<In: Numeric> SharedAccumulator for DynamicAccumulator<In> {
         let elements = SharedMemory::new_lined(length, line_size);
         let args = if coordinate {
             let args = SharedMemory::new_lined(length, line_size);
-            CubeOption::new_Some(args)
+            Option::new_Some(args)
         } else {
-            CubeOption::new_None()
+            Option::new_None()
         };
 
         DynamicAccumulator::<In> { elements, args }
@@ -144,10 +143,7 @@ impl<In: Numeric> SharedAccumulator for DynamicAccumulator<In> {
 
     fn read(accumulator: &Self, index: usize) -> Self::Item {
         let elements = accumulator.elements[index];
-        let args = match accumulator.args {
-            CubeOption::Some(args) => CubeOption::new_Some(args[index]),
-            CubeOption::None => CubeOption::new_None(),
-        };
+        let args = accumulator.args.map(|args| args[index]);
 
         DynamicAccumulatorItem::<In> { elements, args }
     }
@@ -156,11 +152,8 @@ impl<In: Numeric> SharedAccumulator for DynamicAccumulator<In> {
         accumulator.elements[index] = item.elements;
 
         let args = &mut accumulator.args;
-        match args {
-            CubeOption::Some(args) => {
-                args[index] = item.args.unwrap();
-            }
-            CubeOption::None => {}
+        if let Some((args, item_args)) = args.as_mut().zip(item.args) {
+            args[index] = item_args;
         };
     }
 }
@@ -228,7 +221,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
 
                 DynamicAccumulatorItem::<P::EA> {
                     elements,
-                    args: CubeOption::new_None(),
+                    args: Option::new_None(),
                 }
             }
             ReduceOperation::Mean(sum) => {
@@ -236,7 +229,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
 
                 DynamicAccumulatorItem::<P::EA> {
                     elements,
-                    args: CubeOption::new_None(),
+                    args: Option::new_None(),
                 }
             }
             ReduceOperation::Prod(sum) => {
@@ -244,7 +237,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
 
                 DynamicAccumulatorItem::<P::EA> {
                     elements,
-                    args: CubeOption::new_None(),
+                    args: Option::new_None(),
                 }
             }
             ReduceOperation::MaxAbs(maxabs) => {
@@ -253,7 +246,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
 
                 DynamicAccumulatorItem::<P::EA> {
                     elements,
-                    args: CubeOption::new_None(),
+                    args: Option::new_None(),
                 }
             }
             ReduceOperation::ArgMax(argmax) => {
@@ -262,7 +255,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
 
                 DynamicAccumulatorItem::<P::EA> {
                     elements,
-                    args: CubeOption::new_Some(args),
+                    args: Option::new_Some(args),
                 }
             }
             ReduceOperation::ArgMin(argmin) => {
@@ -271,7 +264,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
 
                 DynamicAccumulatorItem::<P::EA> {
                     elements,
-                    args: CubeOption::new_Some(args),
+                    args: Option::new_Some(args),
                 }
             }
             ReduceOperation::Max(max) => {
@@ -279,7 +272,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
 
                 DynamicAccumulatorItem::<P::EA> {
                     elements,
-                    args: CubeOption::new_None(),
+                    args: Option::new_None(),
                 }
             }
             ReduceOperation::Min(min) => {
@@ -287,7 +280,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
 
                 DynamicAccumulatorItem::<P::EA> {
                     elements,
-                    args: CubeOption::new_None(),
+                    args: Option::new_None(),
                 }
             }
         }
@@ -334,9 +327,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
     ) {
         destination.elements = source.elements;
         let args = &mut destination.args;
-        match args {
-            CubeOption::Some(val) => *val = source.args.unwrap(),
-            CubeOption::None => {}
+        if let Some((val, source_val)) = args.as_mut().zip(source.args) {
+            *val = source_val;
         }
     }
 
@@ -358,7 +350,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                 );
                 DynamicAccumulatorItem::<P::EA> {
                     elements,
-                    args: CubeOption::new_None(),
+                    args: Option::new_None(),
                 }
             }
             ReduceOperation::Prod(sum) => {
@@ -371,7 +363,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                 );
                 DynamicAccumulatorItem::<P::EA> {
                     elements,
-                    args: CubeOption::new_None(),
+                    args: Option::new_None(),
                 }
             }
             ReduceOperation::Mean(sum) => {
@@ -384,7 +376,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                 );
                 DynamicAccumulatorItem::<P::EA> {
                     elements,
-                    args: CubeOption::new_None(),
+                    args: Option::new_None(),
                 }
             }
             ReduceOperation::MaxAbs(maxabs) => {
@@ -397,7 +389,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                 );
                 DynamicAccumulatorItem::<P::EA> {
                     elements,
-                    args: CubeOption::new_None(),
+                    args: Option::new_None(),
                 }
             }
             ReduceOperation::ArgMax(argmax) => {
@@ -411,7 +403,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
 
                 DynamicAccumulatorItem::<P::EA> {
                     elements,
-                    args: CubeOption::new_Some(args),
+                    args: Option::new_Some(args),
                 }
             }
             ReduceOperation::ArgMin(argmin) => {
@@ -425,7 +417,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
 
                 DynamicAccumulatorItem::<P::EA> {
                     elements,
-                    args: CubeOption::new_Some(args),
+                    args: Option::new_Some(args),
                 }
             }
             ReduceOperation::Max(max) => {
@@ -438,7 +430,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                 );
                 DynamicAccumulatorItem::<P::EA> {
                     elements,
-                    args: CubeOption::new_None(),
+                    args: Option::new_None(),
                 }
             }
             ReduceOperation::Min(min) => {
@@ -451,7 +443,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                 );
                 DynamicAccumulatorItem::<P::EA> {
                     elements,
-                    args: CubeOption::new_None(),
+                    args: Option::new_None(),
                 }
             }
         }
@@ -471,7 +463,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                 );
                 DynamicAccumulatorItem::<P::EA> {
                     elements,
-                    args: CubeOption::new_None(),
+                    args: Option::new_None(),
                 }
             }
             ReduceOperation::Prod(prod) => {
@@ -482,7 +474,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                 );
                 DynamicAccumulatorItem::<P::EA> {
                     elements,
-                    args: CubeOption::new_None(),
+                    args: Option::new_None(),
                 }
             }
             ReduceOperation::Mean(mean) => {
@@ -493,7 +485,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                 );
                 DynamicAccumulatorItem::<P::EA> {
                     elements,
-                    args: CubeOption::new_None(),
+                    args: Option::new_None(),
                 }
             }
             ReduceOperation::MaxAbs(maxabs) => {
@@ -504,7 +496,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                 );
                 DynamicAccumulatorItem::<P::EA> {
                     elements,
-                    args: CubeOption::new_None(),
+                    args: Option::new_None(),
                 }
             }
             ReduceOperation::ArgMax(argmax) => {
@@ -515,7 +507,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                 );
                 DynamicAccumulatorItem::<P::EA> {
                     elements,
-                    args: CubeOption::new_Some(args),
+                    args: Option::new_Some(args),
                 }
             }
             ReduceOperation::ArgMin(argmin) => {
@@ -526,7 +518,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                 );
                 DynamicAccumulatorItem::<P::EA> {
                     elements,
-                    args: CubeOption::new_Some(args),
+                    args: Option::new_Some(args),
                 }
             }
             ReduceOperation::Max(max) => {
@@ -537,7 +529,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                 );
                 DynamicAccumulatorItem::<P::EA> {
                     elements,
-                    args: CubeOption::new_None(),
+                    args: Option::new_None(),
                 }
             }
             ReduceOperation::Min(min) => {
@@ -548,7 +540,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                 );
                 DynamicAccumulatorItem::<P::EA> {
                     elements,
-                    args: CubeOption::new_None(),
+                    args: Option::new_None(),
                 }
             }
         }

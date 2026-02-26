@@ -13,10 +13,7 @@ use crate::definition::{AccG, MatmulSetupError};
 use crate::definition::{LhsG, MatmulElems, MatmulLineSizes, RhsG};
 use crate::definition::{MatmulPrecision, MatmulProblem};
 use crate::{components::CubeDimResource, launch::RuntimeConfig};
-use cubecl::std::{
-    CubeOption,
-    tensor::{View, layout::Coords2d},
-};
+use cubecl::std::tensor::{View, layout::Coords2d};
 use std::fmt::Debug;
 use std::hash::Hash;
 
@@ -121,7 +118,7 @@ pub trait GlobalMatmul<RC: RuntimeConfig, MP: MatmulPrecision>: 'static + Send +
 
     /// Initialize the global reader for Rhs, starting at row k and column n
     fn init_acc_global_reader(
-        acc: CubeOption<View<Line<AccG<MP>>, Coords2d>>,
+        acc: Option<View<Line<AccG<MP>>, Coords2d>>,
         runtime_config: RC,
         #[comptime] config: Self::Config,
     ) -> Self::AccGlobalReader;

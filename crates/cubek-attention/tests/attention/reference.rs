@@ -35,7 +35,7 @@ fn attention_epsilon(elems: &AttentionElems, safety_factor: f32) -> f32 {
         elems.value_global.epsilon(),
         elems.value_stage.epsilon(),
         elems.key_value_tile.epsilon(),
-        elems.softmax.epsilon(),
+        elems.softmax_acc.epsilon(),
         elems.accumulator.epsilon(),
         elems.mask.epsilon(),
         elems.out_global.epsilon(),

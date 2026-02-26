@@ -15,8 +15,11 @@ pub struct AccumulatorTile<AP: AttentionPrecision, TA: TileAttention<AP>> {
 
 #[cube]
 impl<AP: AttentionPrecision, TA: TileAttention<AP>> AccumulatorTile<AP, TA> {
-    pub fn new(#[comptime] config: TA::Config) -> AccumulatorTile<AP, TA> {
-        let mut fragment = TA::allocate_accumulator(config);
+    pub fn new(
+        shared: &mut TA::AccumulatorShared,
+        #[comptime] config: TA::Config,
+    ) -> AccumulatorTile<AP, TA> {
+        let mut fragment = TA::allocate_accumulator(shared, config);
         fragment.zero();
 
         AccumulatorTile::<AP, TA> { fragment }

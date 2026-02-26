@@ -64,12 +64,7 @@ fn new_custom_data(
         cube_dim,
         out.clone().into_arg(line_size),
         unsafe {
-            ArrayArg::from_raw_parts_and_size(
-                contiguous_handle,
-                num_elems,
-                line_size,
-                dtype.size(),
-            )
+            ArrayArg::from_raw_parts_and_size(contiguous_handle, num_elems, line_size, dtype.size())
         },
         dtype,
     );

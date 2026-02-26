@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use cubecl::{Runtime, client::ComputeClient, std::CubeOption};
+use cubecl::{Runtime, client::ComputeClient};
 
 use crate::{
     components::{
@@ -55,7 +55,7 @@ impl<RC: RuntimeConfig> Routine<RC> for SimpleVecMatAlgorithm {
         RC,
         SimpleMatmulFamily<
             PlaneMatmulFamily<
-                PlaneVecMatInnerProduct<CubeOption<Strided>>,
+                PlaneVecMatInnerProduct<Option<Strided>>,
                 StridedStageFamily,
                 StridedStageFamily,
                 Option<StridedStageFamily>,
@@ -136,7 +136,7 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleVecMatAlgorithm {
         RC,
         DoubleBufferingMatmulFamily<
             PlaneMatmulFamily<
-                PlaneVecMatInnerProduct<CubeOption<Strided>>,
+                PlaneVecMatInnerProduct<Option<Strided>>,
                 StridedStageFamily,
                 StridedStageFamily,
                 Option<StridedStageFamily>,

@@ -1,5 +1,5 @@
 use crate::attention::assert_result;
-use cubecl::{TestRuntime, zspace::Shape};
+use cubecl::{TestRuntime, prelude::CubePrimitive as _, zspace::Shape};
 use cubek_attention::{
     definition::{AttentionElems, AttentionIdent, AttentionOptions, AttentionProblem},
     launch::{Strategy, launch},
@@ -111,6 +111,7 @@ pub fn test_launch(
             // TODO this is not necessarily the dtypes selected by the algorithm
             AttentionElems::from_global_types(
                 &problem.global_dtypes,
+                half::f16::as_type_native_unchecked(),
                 &problem.options.accumulator_precision,
             ),
         )

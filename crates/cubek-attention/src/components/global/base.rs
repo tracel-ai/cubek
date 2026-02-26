@@ -8,7 +8,7 @@ use crate::{
         attention_types::*,
     },
 };
-use cubecl::std::{CubeOption, tensor::r#virtual::VirtualTensor};
+use cubecl::std::tensor::r#virtual::VirtualTensor;
 
 use crate::components::{global::simple::QueryReader, stage::StageAttentionConfig};
 use std::{fmt::Debug, hash::Hash};
@@ -79,7 +79,7 @@ pub trait GlobalAttention<AP: AttentionPrecision>: 'static + Send + Sync {
     fn init_mask_reader(
         batch_index: u32,
         stage_q_offset: u32,
-        mask: CubeOption<VirtualTensor<MSK<AP>>>,
+        mask: Option<VirtualTensor<MSK<AP>>>,
         seq_kv_shape: u32,
         #[comptime] config: Self::Config,
     ) -> Self::MaskReader;

@@ -8,10 +8,7 @@ use crate::{
     },
     routines::UnitReduceBlueprint,
 };
-use cubecl::{
-    prelude::*,
-    std::{CubeOption, tensor::r#virtual::VirtualTensor},
-};
+use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
 
 #[derive(CubeType)]
 pub struct GlobalFullUnitReduce;
@@ -65,7 +62,7 @@ impl GlobalFullUnitReduce {
         reduce_axis: usize,
         reduce_index: usize,
         inst: &I,
-        idle: CubeOption<bool>,
+        idle: Option<bool>,
         #[comptime] line_mode: LineMode,
     ) -> I::AccumulatorItem {
         let input_line_size = input.line_size();

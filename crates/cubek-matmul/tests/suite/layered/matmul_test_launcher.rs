@@ -43,6 +43,7 @@ pub fn test_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
     blueprint: A::Blueprint,
     input_representation: InputRepresentation,
 ) {
+    println!("YOYOOOOOOOOOOOOOO");
     let (lhs, lhs_data) = TestInput::new(
         client.clone(),
         problem.lhs_shape.clone(),
@@ -54,6 +55,7 @@ pub fn test_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
         },
     )
     .generate_with_f32_host_data();
+    println!("AAAAAAAA");
 
     let (rhs, rhs_data) = TestInput::new(
         client.clone(),

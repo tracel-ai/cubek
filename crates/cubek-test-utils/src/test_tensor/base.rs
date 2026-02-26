@@ -37,14 +37,14 @@ pub enum DataKind {
 impl TestInput {
     pub fn new(
         client: ComputeClient<TestRuntime>,
-        shape: Shape,
+        shape: impl Into<Shape>,
         dtype: StorageType,
         stride_spec: StrideSpec,
         data_kind: DataKind,
     ) -> Self {
         let base_spec = BaseInputSpec {
             client,
-            shape,
+            shape: shape.into(),
             dtype,
             stride_spec,
         };
@@ -93,6 +93,7 @@ impl TestInput {
         host_data_type: HostDataType,
     ) -> (TensorHandle<TestRuntime>, HostData) {
         let client = self.base_spec.client.clone();
+        println!("ICIT");
         let tensor_handle = self.generate();
         let host_data =
             HostData::from_tensor_handle(&client, tensor_handle.clone(), host_data_type);

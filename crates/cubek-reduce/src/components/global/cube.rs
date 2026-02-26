@@ -8,10 +8,7 @@ use crate::{
     },
     routines::CubeBlueprint,
 };
-use cubecl::{
-    prelude::*,
-    std::{CubeOption, tensor::r#virtual::VirtualTensor},
-};
+use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
 
 #[derive(CubeType)]
 pub struct GlobalFullCubeReduce;
@@ -114,7 +111,7 @@ impl GlobalFullCubeReduce {
         reduce_axis: usize,
         reduce_index: usize,
         inst: &I,
-        idle: CubeOption<bool>,
+        idle: Option<bool>,
         #[comptime] line_mode: LineMode,
         #[comptime] blueprint: CubeBlueprint,
     ) -> I::SharedAccumulator {

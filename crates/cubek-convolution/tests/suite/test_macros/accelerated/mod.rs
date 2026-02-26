@@ -7,9 +7,8 @@ macro_rules! testgen_convolution_accelerated {
     () => {
         mod conv2d_accelerated {
             use super::*;
-            use cubecl::std::CubeOption;
             use cubek_matmul::components::tile::io::Strided;
-            type TMM = cubek_matmul::components::tile::cmma::CmmaMatmul<CubeOption<Strided>>;
+            type TMM = cubek_matmul::components::tile::cmma::CmmaMatmul<Option<Strided>>;
 
             #[cfg(all(feature = "conv_tests_plane", not(feature = "conv_tests_mma")))]
             $crate::testgen_convolution_accelerated_algorithm!();
@@ -17,7 +16,7 @@ macro_rules! testgen_convolution_accelerated {
             #[cfg(all(feature = "conv_tests_plane", feature = "conv_tests_mma"))]
             mod cmma {
                 use super::*;
-                type TMM = cubek_matmul::components::tile::cmma::CmmaMatmul<CubeOption<Strided>>;
+                type TMM = cubek_matmul::components::tile::cmma::CmmaMatmul<Option<Strided>>;
 
                 $crate::testgen_convolution_accelerated_algorithm!();
             }
@@ -28,7 +27,7 @@ macro_rules! testgen_convolution_accelerated {
                 type TMM = cubek_matmul::components::tile::mma::MmaMatmul<
                     Strided,
                     Strided,
-                    CubeOption<Strided>,
+                    Option<Strided>,
                 >;
 
                 $crate::testgen_convolution_accelerated_algorithm!();

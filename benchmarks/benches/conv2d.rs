@@ -92,10 +92,7 @@ impl<R: Runtime, MP: MatmulPrecision> Benchmark for Conv2dBench<R, MP> {
             &self.client,
             &MatmulInputBinding::Normal(input.as_ref(), elems.lhs_global),
             &MatmulInputBinding::Normal(weight.as_ref(), elems.rhs_global),
-            &Some(MatmulInputBinding::Normal(
-                bias.as_ref(),
-                elems.acc_global,
-            )),
+            &Some(MatmulInputBinding::Normal(bias.as_ref(), elems.acc_global)),
             &out.as_ref(),
             self.args.clone(),
             elems,

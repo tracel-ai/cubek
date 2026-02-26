@@ -4,7 +4,7 @@ use cubecl::{
     prelude::*,
     server::TensorMapMeta,
     std::{
-        CubeOptionArgs, FastDivmodArgs,
+        FastDivmodArgs,
         tensor::{
             launch::ViewArg,
             layout::{
@@ -176,8 +176,8 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs>> ConcreteI
             VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new()),
             ViewArg::new::<RhsLayout>(input.data().as_array_arg(line_sizes.rhs), layout_rhs),
             VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new()),
-            CubeOptionArgs::None,
-            CubeOptionArgs::None,
+            OptionArgs::None,
+            OptionArgs::None,
         );
 
         let runtime_args = RuntimeArgsLaunch::new(
@@ -330,8 +330,8 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
         let inputs = TensorMapInputsLaunch::new(
             ViewArg::new_tensor_map_tiled::<LhsLayout>(lhs, lhs_layout),
             ViewArg::new_tensor_map_im2col::<RhsLayout, _, _>(rhs, rhs_layout),
-            CubeOptionArgs::None,
-            CubeOptionArgs::None,
+            OptionArgs::None,
+            OptionArgs::None,
         );
 
         let runtime_args = RuntimeArgsLaunch::new(

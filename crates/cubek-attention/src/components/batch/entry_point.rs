@@ -12,7 +12,6 @@ use crate::launch::TensorValue;
 use cubecl;
 use cubecl::prelude::*;
 use cubecl::std::tensor::r#virtual::VirtualTensor;
-use cubecl::std::{CubeOption, CubeOptionExpand};
 
 type Input<Args, QG, KG, VG, MSK> = <Args as AttentionArgs>::Input<QG, KG, VG, MSK>;
 type Output<Args, OG> = <Args as AttentionArgs>::Output<OG>;
@@ -29,6 +28,7 @@ pub(crate) fn attention<
     VS: Float,
     KVT: Float,
     SM: Float,
+    SML: Float,
     ACC: Float,
     MSK: Numeric,
     OG: Float,
@@ -39,7 +39,7 @@ pub(crate) fn attention<
     output: &mut Output<Args, OG>,
     cube_count_args: CubeCountInput,
     #[comptime] blueprint: AttentionBlueprint,
-    #[define(QG, QT, KG, KS, VG, VS, KVT, SM, ACC, MSK, OG, OS)] elem_types: [StorageType; 12],
+    #[define(QG, QT, KG, KS, VG, VS, KVT, SM, SML, ACC, MSK, OG, OS)] elem_types: [StorageType; 13],
 ) {
     let device_props = comptime::device_properties();
     let config = comptime!(BMMF::expand_config(
@@ -65,20 +65,16 @@ pub(crate) fn attention<
     let value = VirtualTensor::<VG>::new::<TensorValue<QG, KG, VG, MSK, OG, Args>>(&value);
 
     let has_mask = Args::has_mask(&state);
-    let mask: CubeOption<VirtualTensor<MSK>> = match has_mask {
-        CubeOption::Some(_) => {
-            let mask = TensorMask::<QG, KG, VG, MSK, OG, Args>::new(&state);
-            let mask = VirtualTensor::<MSK>::new::<TensorMask<QG, KG, VG, MSK, OG, Args>>(&mask);
-            CubeOption::new_Some(mask)
-        }
-        CubeOption::None => CubeOption::new_None(),
-    };
+    let mask = has_mask.map(|_| {
+        let mask = TensorMask::<QG, KG, VG, MSK, OG, Args>::new(&state);
+        VirtualTensor::<MSK>::new::<TensorMask<QG, KG, VG, MSK, OG, Args>>(&mask)
+    });
 
     let mut out = TensorOutput::<QG, KG, VG, MSK, OG, Args>::new(&mut state);
     let out =
         VirtualTensor::<OG, ReadWrite>::new::<TensorOutput<QG, KG, VG, MSK, OG, Args>>(&mut out);
 
-    BMMF::Attention::<(QG, QT, KG, KS, VG, VS, KVT, SM, ACC, MSK, OG, OS)>::execute(
+    BMMF::Attention::<(QG, QT, KG, KS, VG, VS, KVT, SM, SML, ACC, MSK, OG, OS)>::execute(
         query,
         key,
         value,

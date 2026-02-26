@@ -1,7 +1,7 @@
 use std::fmt::Display;
 use std::marker::PhantomData;
 
-use cubecl::{Runtime, std::CubeOption};
+use cubecl::Runtime;
 
 use crate::components::global::multi_stage::ordered::OrderedDoubleBufferingMatmulFamily;
 use crate::components::stage::{PlaneMatmulFamily, RowMajorTilingOrder};
@@ -57,7 +57,7 @@ where
     TMM: tile::TileMatmulFamily<
             LhsTile = Strided,
             RhsTile = Strided,
-            AccTile = CubeOption<Strided>,
+            AccTile = Option<Strided>,
             OutTile = Strided,
         >,
     RC: RuntimeConfig,

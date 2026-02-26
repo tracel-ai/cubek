@@ -11,10 +11,7 @@ use crate::{
     launch::RuntimeConfig,
 };
 use cubecl::prelude::*;
-use cubecl::std::{
-    CubeOption, CubeOptionExpand,
-    tensor::{View, layout::Coords2d},
-};
+use cubecl::std::tensor::{View, layout::Coords2d};
 use std::marker::PhantomData;
 
 /// Performs matrix multiplication at the global level.
@@ -41,7 +38,7 @@ where
             MP,
             LhsStage = FullLoaderStage<RC, LL, LhsS<MP>>,
             RhsStage = FullLoaderStage<RC, RL, RhsS<MP>>,
-            AccStage = CubeOption<FullLoaderStage<RC, AL, AccS<MP>>>,
+            AccStage = Option<FullLoaderStage<RC, AL, AccS<MP>>>,
             OutStage = GW::Stage,
         >,
     RC: RuntimeConfig,
@@ -63,7 +60,7 @@ where
         RC,
         RL,
     >;
-    type AccGlobalReader = CubeOption<
+    type AccGlobalReader = Option<
         FullStageGlobalReader<
             <MP::Acc as MatrixPrecision>::Global,
             <MP::Acc as MatrixPrecision>::Stage,
@@ -110,16 +107,12 @@ where
 
         let mut barrier = LL::SyncStrategy::create_barrier();
 
-        let acc_stage = match acc_reader {
-            CubeOption::Some(mut reader) => {
-                let mut acc_barrier = AL::SyncStrategy::create_barrier();
-                reader.load_stage(&mut acc_barrier, config.acc_reader_config);
-                AL::SyncStrategy::sync::<MP, _>(&mut acc_barrier, config);
-                CubeOption::new_Some(reader.stage())
-            }
-            CubeOption::None => CubeOption::new_None(),
-        };
-
+        let acc_stage = acc_reader.map(|mut reader| {
+            let mut acc_barrier = AL::SyncStrategy::create_barrier();
+            reader.load_stage(&mut acc_barrier, config.acc_reader_config);
+            AL::SyncStrategy::sync::<MP, _>(&mut acc_barrier, config);
+            reader.stage()
+        });
         SMM::load_accumulators(&acc_stage, &mut acc, config.stage_config);
 
         let lhs_stage = &lhs_reader.stage();
@@ -196,19 +189,13 @@ where
     }
 
     fn init_acc_global_reader(
-        acc: CubeOption<View<Line<AccG<MP>>, Coords2d>>,
+        acc: Option<View<Line<AccG<MP>>, Coords2d>>,
         runtime_config: RC,
         #[comptime] config: Self::Config,
     ) -> Self::AccGlobalReader {
-        match acc {
-            CubeOption::None => CubeOption::new_None(),
-            CubeOption::Some(view) => CubeOption::new_Some(FullStageGlobalReader::new(
-                view,
-                runtime_config,
-                0,
-                config.acc_reader_config,
-            )),
-        }
+        acc.map(|view| {
+            FullStageGlobalReader::new(view, runtime_config, 0, config.acc_reader_config)
+        })
     }
 
     fn init_global_writer(

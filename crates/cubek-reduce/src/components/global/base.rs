@@ -1,8 +1,5 @@
 use crate::{IdleMode, LineMode, ReducePrecision};
-use cubecl::{
-    prelude::*,
-    std::{CubeOption, tensor::r#virtual::VirtualTensor},
-};
+use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
 
 #[cube]
 pub(crate) fn reduce_count(
@@ -23,7 +20,7 @@ pub fn idle_check<P: ReducePrecision, Out: Numeric>(
     reduce_index_start: usize,
     #[comptime] line_mode: LineMode,
     #[comptime] idle_mode: IdleMode,
-) -> CubeOption<bool> {
+) -> Option<bool> {
     if idle_mode.is_enabled() {
         let reduce_count = reduce_count(
             output.len() * output.line_size(),
@@ -32,16 +29,16 @@ pub fn idle_check<P: ReducePrecision, Out: Numeric>(
         );
 
         match idle_mode {
-            IdleMode::None => CubeOption::new_None(),
-            IdleMode::Mask => CubeOption::new_Some(reduce_index_start >= reduce_count),
+            IdleMode::None => Option::new_None(),
+            IdleMode::Mask => Option::new_Some(reduce_index_start >= reduce_count),
             IdleMode::Terminate => {
                 if reduce_index_start >= reduce_count {
                     terminate!();
                 }
-                CubeOption::new_None()
+                Option::new_None()
             }
         }
     } else {
-        CubeOption::new_None()
+        Option::new_None()
     }
 }

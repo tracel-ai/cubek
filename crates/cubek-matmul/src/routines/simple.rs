@@ -1,5 +1,5 @@
+use cubecl::features::MmaConfig;
 use cubecl::{Runtime, client::ComputeClient};
-use cubecl::{features::MmaConfig, std::CubeOption};
 use std::fmt::Display;
 use std::marker::PhantomData;
 
@@ -71,7 +71,7 @@ where
     TMM: TileMatmulFamily<
             LhsTile = Strided,
             RhsTile = Strided,
-            AccTile = CubeOption<Strided>,
+            AccTile = Option<Strided>,
             OutTile = Strided,
         >,
     RC: RuntimeConfig,

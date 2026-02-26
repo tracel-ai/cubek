@@ -5,7 +5,6 @@ use crate::components::stage::StageAttentionConfig;
 use crate::components::stage::{MaskTile, PartitionAttentionConfig};
 use crate::components::tile::TileAttention;
 use crate::definition::AttentionPrecision;
-use cubecl::std::CubeOption;
 use cubecl::std::tensor::layout::Coords2d;
 
 #[derive(CubeType)]
@@ -17,7 +16,7 @@ pub struct MaskPartition<AP: AttentionPrecision, TA: TileAttention<AP>> {
 #[cube]
 impl<AP: AttentionPrecision, TA: TileAttention<AP>> MaskPartition<AP, TA> {
     pub fn new(
-        out_of_bounds: CubeOption<Coords2d>,
+        out_of_bounds: Option<Coords2d>,
         #[comptime] config: PartitionAttentionConfig<TA::Config>,
     ) -> MaskPartition<AP, TA> {
         let mut sequence = Sequence::new();

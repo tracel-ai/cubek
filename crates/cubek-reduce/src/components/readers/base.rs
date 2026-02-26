@@ -5,10 +5,7 @@ use crate::{
         readers::{parallel::ParallelReader, perpendicular::PerpendicularReader},
     },
 };
-use cubecl::{
-    prelude::*,
-    std::{CubeOption, tensor::r#virtual::VirtualTensor},
-};
+use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
 
 #[derive(CubeType)]
 pub enum Reader<P: ReducePrecision> {
@@ -25,7 +22,7 @@ impl<P: ReducePrecision> Reader<P> {
         inst: &I,
         reduce_axis: usize,
         reduce_index: usize,
-        idle: CubeOption<bool>,
+        idle: Option<bool>,
         #[comptime] bound_checks: BoundChecks,
         #[comptime] line_mode: LineMode,
     ) -> Reader<P> {

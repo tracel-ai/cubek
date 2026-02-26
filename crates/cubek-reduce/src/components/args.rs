@@ -1,7 +1,6 @@
 use cubecl::prelude::*;
-use cubecl::std::{
-    CubeOption, CubeOptionExpand,
-    tensor::r#virtual::{VirtualTensor, VirtualTensorOperations, VirtualTensorOperationsExpand},
+use cubecl::std::tensor::r#virtual::{
+    VirtualTensor, VirtualTensorOperations, VirtualTensorOperationsExpand,
 };
 use cubecl::unexpanded;
 use std::marker::PhantomData;
@@ -251,8 +250,8 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::In>
     fn __expand_as_tensor_map_method(
         &self,
         scope: &mut Scope,
-    ) -> CubeOptionExpand<TensorMap<P::In, Tiled>> {
-        CubeOption::__expand_new_None(scope)
+    ) -> OptionExpand<TensorMap<P::In, Tiled>> {
+        Option::__expand_new_None(scope)
     }
 }
 
@@ -323,8 +322,8 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::Out>
     fn __expand_as_tensor_map_method(
         &self,
         scope: &mut Scope,
-    ) -> CubeOptionExpand<TensorMap<P::Out, Tiled>> {
-        CubeOption::__expand_new_None(scope)
+    ) -> OptionExpand<TensorMap<P::Out, Tiled>> {
+        Option::__expand_new_None(scope)
     }
 }
 

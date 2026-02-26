@@ -33,12 +33,8 @@ fn random_tensor_handle(
         }
     }
 
-    TensorHandle::new(
-        tensor_handle.handle,
-        tensor_shape.to_vec(),
-        strides.to_vec(),
-        tensor_handle.dtype,
-    )
+    println!("BBBBBBBB");
+    tensor_handle
 }
 
 pub(crate) fn build_random(
@@ -49,6 +45,7 @@ pub(crate) fn build_random(
     let shape = &base_spec.shape;
     let strides = &base_spec.strides();
 
+    println!("AAAAAAAAAA");
     random_tensor_handle(
         &base_spec.client,
         base_spec.dtype,

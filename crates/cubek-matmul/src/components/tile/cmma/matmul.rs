@@ -9,10 +9,9 @@ use crate::components::tile::{
 use crate::components::tile::{cmma::writer::CmmaStageWriter, tile_data::StridedTile};
 use crate::definition::{MatrixLayout, as_cmma_layout};
 use cubecl::cmma;
-use cubecl::std::CubeOption;
 
 /// Uses one plane to perform a small matmul using accelerated instructions.
-pub struct CmmaMatmul<Acc: TileKind = CubeOption<Strided>> {
+pub struct CmmaMatmul<Acc: TileKind = Option<Strided>> {
     _ty: PhantomData<Acc>,
 }
 
@@ -117,7 +116,7 @@ where
         CmmaStageReader::<Self::LhsTile>::load_fragment(
             tile,
             &mut lhs.fragment,
-            CubeOption::new_None(),
+            Option::new_None(),
         );
     }
 
@@ -129,7 +128,7 @@ where
         CmmaStageReader::<Self::RhsTile>::load_fragment(
             tile,
             &mut rhs.fragment,
-            CubeOption::new_None(),
+            Option::new_None(),
         );
     }
 
@@ -141,7 +140,7 @@ where
         CmmaStageReader::<Self::AccTile>::load_fragment(
             tile,
             &mut acc.fragment,
-            CubeOption::new_Some(as_cmma_layout(acc.layout)),
+            Option::new_Some(as_cmma_layout(acc.layout)),
         );
     }
 

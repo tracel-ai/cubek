@@ -1,4 +1,5 @@
 use cubecl::CubeDim;
+use cubecl::prelude::CubePrimitive;
 use cubek_matmul::components::{global::PartitionedStageFamily, stage::StridedStageFamily};
 
 use crate::components::stage::plane::PlanePartitionStageAttentionFamily;
@@ -43,6 +44,7 @@ impl Routine for BlackboxAcceleratedRoutine {
 
         let dtypes = AttentionElems::from_global_types(
             &problem.global_dtypes,
+            half::f16::as_type_native_unchecked(),
             &problem.options.accumulator_precision,
         );
 
@@ -87,17 +89,16 @@ fn blueprint(
             };
 
             let partition_head_dim = problem.dims.head_dim as u32 / tile_size.head_dim;
-            let partition_val_dim = partition_head_dim;
 
             let tiling_scheme = AttentionTilingScheme {
                 tile_size,
                 partition_size: AttentionPartitionSize {
                     seq_q: 1,
                     head_dim: partition_head_dim,
-                    seq_kv: 1,
-                    val_dim: partition_val_dim,
+                    seq_kv: 2,
+                    val_dim: partition_head_dim,
                 },
-                stage_size: AttentionStageSize { seq_q: 1 },
+                stage_size: AttentionStageSize { seq_q: 4 },
             };
 
             let blueprint = AttentionBlueprint {
