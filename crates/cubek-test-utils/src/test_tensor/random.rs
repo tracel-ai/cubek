@@ -19,12 +19,17 @@ fn random_tensor_handle(
     let tensor_handle = TensorHandle::empty(client, vec![flat_len], dtype);
 
     match distribution {
-        Distribution::Uniform(lower, upper) => {
-            cubek_random::random_uniform(client, lower, upper, tensor_handle.as_ref(), dtype)
-                .unwrap()
-        }
+        Distribution::Uniform(lower, upper) => cubek_random::random_uniform(
+            client,
+            lower,
+            upper,
+            tensor_handle.clone().binding(),
+            dtype,
+        )
+        .unwrap(),
         Distribution::Bernoulli(prob) => {
-            cubek_random::random_bernoulli(client, prob, tensor_handle.as_ref(), dtype).unwrap()
+            cubek_random::random_bernoulli(client, prob, tensor_handle.clone().binding(), dtype)
+                .unwrap()
         }
     }
 

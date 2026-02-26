@@ -62,18 +62,10 @@ fn new_custom_data(
         client,
         cube_count,
         cube_dim,
-        unsafe {
-            TensorArg::from_raw_parts_and_size(
-                &out.handle,
-                out.strides().clone(),
-                out.shape().clone(),
-                line_size,
-                dtype.size(),
-            )
-        },
+        out.clone().into_arg(line_size),
         unsafe {
             ArrayArg::from_raw_parts_and_size(
-                &contiguous_handle,
+                contiguous_handle,
                 num_elems,
                 line_size,
                 dtype.size(),

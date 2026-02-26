@@ -94,7 +94,8 @@ impl TestInput {
     ) -> (TensorHandle<TestRuntime>, HostData) {
         let client = self.base_spec.client.clone();
         let tensor_handle = self.generate();
-        let host_data = HostData::from_tensor_handle(&client, &tensor_handle, host_data_type);
+        let host_data =
+            HostData::from_tensor_handle(&client, tensor_handle.clone(), host_data_type);
         (tensor_handle, host_data)
     }
 }
