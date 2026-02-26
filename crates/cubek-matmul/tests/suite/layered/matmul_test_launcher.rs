@@ -43,7 +43,6 @@ pub fn test_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
     blueprint: A::Blueprint,
     input_representation: InputRepresentation,
 ) {
-    println!("YOYOOOOOOOOOOOOOO");
     let (lhs, lhs_data) = TestInput::new(
         client.clone(),
         problem.lhs_shape.clone(),
@@ -55,7 +54,6 @@ pub fn test_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
         },
     )
     .generate_with_f32_host_data();
-    println!("AAAAAAAA");
 
     let (rhs, rhs_data) = TestInput::new(
         client.clone(),
@@ -161,73 +159,96 @@ pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
         }
     };
 
-    let cube_dim = launch_info.cube_dim;
-    let cube_count_plan = launch_info.cube_count_plan;
-    let blueprint = launch_info.blueprint;
-    let dtypes = &launch_info.dtypes;
+    let client = client.clone();
+    let problem = problem.clone();
+    let client_cloned = client.clone();
+    let launch = client_cloned.exclusive(move || {
+        let cube_dim = launch_info.cube_dim;
+        let cube_count_plan = launch_info.cube_count_plan;
+        let blueprint = launch_info.blueprint;
+        let dtypes = &launch_info.dtypes.clone();
 
-    let output = <TensorOutput<_> as ConcreteOutputFactory<A>>::create(
-        client,
-        out,
-        &blueprint,
-        problem,
-        &line_sizes,
-        dtypes,
-    );
+        let output = <TensorOutput<_> as ConcreteOutputFactory<A>>::create(
+            &client,
+            out,
+            &blueprint,
+            &problem,
+            &line_sizes,
+            dtypes,
+        );
 
-    match input_representation {
-        InputRepresentation::Normal => {
-            let inputs = <TensorInputs<_, _, _> as ConcreteInputsFactory<A>>::create(
-                client,
-                lhs,
-                rhs,
-                &blueprint,
-                problem,
-                &line_sizes,
-                dtypes,
-            );
-
-            unsafe {
-                A::BatchMatmul::launch_unchecked::<TensorArgs, TestRuntime>(
-                    client,
-                    cube_dim,
-                    cube_count_plan.resolve(),
-                    AddressType::U32,
-                    inputs,
-                    output,
-                    (),
-                    cube_count_plan.as_args(),
-                    blueprint,
+        let result = match input_representation {
+            InputRepresentation::Normal => {
+                let inputs = <TensorInputs<_, _, _> as ConcreteInputsFactory<A>>::create(
+                    &client,
+                    lhs,
+                    rhs,
+                    &blueprint,
+                    &problem,
+                    &line_sizes,
                     dtypes,
-                )
+                );
+
+                unsafe {
+                    A::BatchMatmul::launch_unchecked::<TensorArgs, TestRuntime>(
+                        &client,
+                        cube_dim,
+                        cube_count_plan.resolve(),
+                        AddressType::U32,
+                        inputs,
+                        output,
+                        (),
+                        cube_count_plan.as_args(),
+                        blueprint,
+                        dtypes,
+                    )
+                }
+            }
+            InputRepresentation::Tma => {
+                let inputs = <TensorMapInputs<_, _, _> as ConcreteInputsFactory<A>>::create(
+                    &client,
+                    lhs,
+                    rhs,
+                    &blueprint,
+                    &problem,
+                    &line_sizes,
+                    dtypes,
+                );
+
+                unsafe {
+                    A::BatchMatmul::launch_unchecked::<TensorMapArgs, TestRuntime>(
+                        &client,
+                        cube_dim,
+                        cube_count_plan.resolve(),
+                        AddressType::U32,
+                        inputs,
+                        output,
+                        (),
+                        cube_count_plan.as_args(),
+                        blueprint,
+                        dtypes,
+                    )
+                }
             }
         }
-        InputRepresentation::Tma => {
-            let inputs = <TensorMapInputs<_, _, _> as ConcreteInputsFactory<A>>::create(
-                client,
-                lhs,
-                rhs,
-                &blueprint,
-                problem,
-                &line_sizes,
-                dtypes,
-            );
+        .into();
 
-            unsafe {
-                A::BatchMatmul::launch_unchecked::<TensorMapArgs, TestRuntime>(
-                    client,
-                    cube_dim,
-                    cube_count_plan.resolve(),
-                    AddressType::U32,
-                    inputs,
-                    output,
-                    (),
-                    cube_count_plan.as_args(),
-                    blueprint,
-                    dtypes,
-                )
+        let errors = client.flush_errors();
+        (result, errors)
+    });
+    match launch {
+        Ok((result, errors)) => {
+            for error in errors.iter() {
+                match error {
+                    // One launch error is OK.
+                    cubecl::server::ServerError::Launch(launch_error) => {
+                        return ExecutionOutcome::CompileError(format!("{errors:?}"));
+                    }
+                    _ => panic!("{errors:?}"),
+                }
             }
+            return result;
         }
+        Err(err) => return ExecutionOutcome::CompileError(err.to_string()),
     }
-    .into()
 }

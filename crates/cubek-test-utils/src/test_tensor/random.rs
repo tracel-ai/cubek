@@ -33,7 +33,6 @@ fn random_tensor_handle(
         }
     }
 
-    println!("BBBBBBBB");
     tensor_handle
 }
 
@@ -45,7 +44,6 @@ pub(crate) fn build_random(
     let shape = &base_spec.shape;
     let strides = &base_spec.strides();
 
-    println!("AAAAAAAAAA");
     random_tensor_handle(
         &base_spec.client,
         base_spec.dtype,

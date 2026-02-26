@@ -22,6 +22,7 @@ pub fn launch_ref<R: Runtime>(
     out: TensorBinding<R>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
+    std::println!("{:?}", lhs.shape());
     let rank = lhs.shape().len();
     let dim1 = rank - 1;
     let dim2 = rank - 2;
