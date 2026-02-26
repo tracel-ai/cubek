@@ -194,16 +194,16 @@ where
         let output_stride = self.output_stride();
 
         let input = unsafe {
-            TensorHandleRef::from_raw_parts(
-                &input_handle,
+            TensorBinding::from_raw_parts(
+                input_handle,
                 self.stride.clone(),
                 self.shape.clone(),
                 size_of::<P>(),
             )
         };
         let output = unsafe {
-            TensorHandleRef::from_raw_parts(
-                &output_handle,
+            TensorBinding::from_raw_parts(
+                output_handle.clone(),
                 output_stride.clone(),
                 output_shape.clone(),
                 size_of::<O>(),

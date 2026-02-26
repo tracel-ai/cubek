@@ -54,7 +54,7 @@ pub use routines::shared_sum::shared_sum;
 /// // Create input and output handles.
 /// let input_handle = client.create(f32::as_bytes(&[0, 1, 2, 3]));
 /// let input = unsafe {
-///     TensorHandleRef::from_raw_parts(
+///     TensorBinding::from_raw_parts(
 ///         &input_handle,
 ///         &[2, 1],
 ///         &[2, 2],
@@ -64,7 +64,7 @@ pub use routines::shared_sum::shared_sum;
 ///
 /// let output_handle = client.empty(2 * size_f32);
 /// let output = unsafe {
-///     TensorHandleRef::from_raw_parts(
+///     TensorBinding::from_raw_parts(
 ///         &output_handle,
 ///         &output_stride,
 ///         &output_shape,
@@ -84,8 +84,8 @@ pub use routines::shared_sum::shared_sum;
 /// ```
 pub fn reduce<R: Runtime>(
     client: &ComputeClient<R>,
-    input: TensorHandleRef<R>,
-    output: TensorHandleRef<R>,
+    input: TensorBinding<R>,
+    output: TensorBinding<R>,
     axis: usize,
     strategy: ReduceStrategy,
     operation: ReduceOperationConfig,
