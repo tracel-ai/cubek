@@ -2,11 +2,10 @@ use cubecl;
 use cubecl::prelude::*;
 use cubek_matmul::components::tile::StridedTile;
 
-use crate::components::tile::accelerated::accumulator_fragment::AccumulatorHybridFragment;
-use crate::components::tile::accelerated::local_tile::LocalTile;
-use crate::components::tile::accelerated::local_tile::LocalTileLayout;
 use crate::components::tile::accelerated::setup::BlackboxAcceleratedAttentionMatmulConfig;
-use crate::components::tile::accelerated::softmax_fragment::SoftmaxHybridFragment;
+use crate::components::tile::accelerated::{
+    BlackboxAccumulatorPipeline, BlackboxSoftmaxPipeline, LocalTile, LocalTileLayout,
+};
 use crate::components::tile::{TileAttention, TileAttentionConfig as _};
 use crate::definition::AttentionPrecision;
 use crate::definition::attention_types::*;
@@ -22,13 +21,13 @@ impl<AP: AttentionPrecision> TileAttention<AP> for BlackboxAcceleratedTileAttent
     type Query = cmma::Matrix<QT<AP>>;
     type KeyValue = cmma::Matrix<KVT<AP>>;
     type Mask = LocalTile<MSK<AP>>;
-    type Softmax = SoftmaxHybridFragment<SM<AP>, SML<AP>>;
+    type Softmax = BlackboxSoftmaxPipeline<SM<AP>, SML<AP>>;
     type SoftmaxRow = LocalTile<SM<AP>>;
     type SoftmaxShared = (SharedMemory<SM<AP>>, SharedMemory<SML<AP>>);
-    type AccumulatorShared = SharedMemory<ACC<AP>>;
-    type Accumulator = AccumulatorHybridFragment<ACC<AP>>;
+    type SoftmaxLayout = LocalTileLayout;
 
-    type FragmentLayout = LocalTileLayout;
+    type AccumulatorShared = SharedMemory<ACC<AP>>;
+    type Accumulator = BlackboxAccumulatorPipeline<ACC<AP>>;
 
     fn softmax_layout(#[comptime] config: Self::Config) -> LocalTileLayout {
         LocalTileLayout::new(
@@ -133,7 +132,7 @@ impl<AP: AttentionPrecision> TileAttention<AP> for BlackboxAcceleratedTileAttent
         #[comptime] config: Self::Config,
     ) -> Self::Softmax {
         let size = config.attention_tile_size();
-        SoftmaxHybridFragment::new(&mut shared.0, &mut shared.1, size, config)
+        BlackboxSoftmaxPipeline::new(&mut shared.0, &mut shared.1, size, config)
     }
 
     fn allocate_accumulator(
@@ -141,7 +140,7 @@ impl<AP: AttentionPrecision> TileAttention<AP> for BlackboxAcceleratedTileAttent
         #[comptime] config: Self::Config,
     ) -> Self::Accumulator {
         let size = config.attention_tile_size().to_value_matmul_tile_size();
-        AccumulatorHybridFragment::new(shared, size, config)
+        BlackboxAccumulatorPipeline::new(shared, size, config)
     }
 
     fn load_query<E: Numeric>(tile: &StridedTile<E>, fragment: &mut Self::Query) {
