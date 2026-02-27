@@ -121,6 +121,13 @@ impl<R: Runtime> MatmulInputBinding<R> {
         }
     }
 
+    pub fn into_data(&self) -> &TensorBinding<R> {
+        match self {
+            MatmulInputBinding::Normal(handle, ..) => handle,
+            MatmulInputBinding::Quantized { data, .. } => data,
+        }
+    }
+
     pub fn data_mut(&mut self) -> &mut TensorBinding<R> {
         match self {
             MatmulInputBinding::Normal(handle, ..) => handle,

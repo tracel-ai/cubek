@@ -19,9 +19,9 @@ impl<R: Runtime> Benchmark for IntoContiguousBench<R> {
     }
 
     fn execute(&self, input: Self::Input) -> Result<TensorHandle<R>, String> {
-        Ok(cubecl::std::tensor::into_contiguous_ref(
+        Ok(cubecl::std::tensor::into_contiguous(
             &self.client,
-            &input.as_ref(),
+            input.binding(),
             self.dtype,
         ))
     }

@@ -2,7 +2,7 @@ use crate::{
     backward_weight::args::{ConcreteArgs, ConcreteInputsFactory, ConcreteOutputFactory},
     components::global::args::RuntimeArgs,
 };
-use cubecl::prelude::TensorHandleRef;
+use cubecl::prelude::TensorBinding;
 use cubecl::{Runtime, client::ComputeClient};
 use cubek_matmul::{
     definition::{MatmulElems, MatmulLineSizes},
@@ -18,9 +18,9 @@ use crate::components::{ConvSetupError, ConvolutionProblem};
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
 pub fn launch_kernel_concrete<R: Runtime, Args: ConcreteArgs<A>, A: Routine<RuntimeArgs>>(
     client: &ComputeClient<R>,
-    input: &MatmulInputBinding<'_, R>,
-    out_grad: &MatmulInputBinding<'_, R>,
-    weight_grad: &TensorHandleRef<'_, R>,
+    input: MatmulInputBinding<R>,
+    out_grad: MatmulInputBinding<R>,
+    weight_grad: TensorBinding<R>,
     problem: ConvolutionProblem,
     line_sizes: MatmulLineSizes,
     blueprint_strategy: &BlueprintStrategy<RuntimeArgs, A>,

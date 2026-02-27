@@ -10,13 +10,13 @@ use crate::{
     components::{ConvolutionProblem, Dimensionality},
 };
 use crate::{components::ConvSetupError, kernels::forward::selector::launch_kernel_concrete};
-use cubecl::{Runtime, client::ComputeClient, prelude::*, std::tensor::TensorHandle};
+use cubecl::{Runtime, client::ComputeClient, prelude::*};
+use cubek_matmul::routines::BlueprintStrategy;
 use cubek_matmul::{
     components::tile::{cmma::CmmaMatmul, io::Strided, mma::MmaMatmul},
     definition::{AvailableLineSizes, MatmulElems, MatrixLayout},
 };
 use cubek_matmul::{definition, launch::MatmulInputBinding};
-use cubek_matmul::{launch::MatmulInputHandle, routines::BlueprintStrategy};
 use derive_new::new;
 
 macro_rules! with_tile_kind {
@@ -34,29 +34,6 @@ macro_rules! with_tile_kind {
     };
 }
 
-#[allow(clippy::result_large_err, clippy::too_many_arguments)]
-pub fn launch<R: Runtime, const N_SPATIAL: usize>(
-    strategy: &Strategy,
-    client: &ComputeClient<R>,
-    input: MatmulInputHandle<R>,
-    weight: MatmulInputHandle<R>,
-    bias: Option<MatmulInputHandle<R>>,
-    out: TensorHandle<R>,
-    args: ConvolutionArgs<N_SPATIAL>,
-    dtypes: MatmulElems,
-) -> Result<(), ConvSetupError> {
-    launch_ref(
-        strategy,
-        client,
-        &input.as_ref(),
-        &weight.as_ref(),
-        &bias.as_ref().map(|it| it.as_ref()),
-        &out.as_ref(),
-        args,
-        dtypes,
-    )
-}
-
 /// Perform an n-dimensional convolution using the implicit GEMM (im2col) algorithm, using cubecl
 /// tiling matmul components, using the specified algorithm.
 ///
@@ -69,10 +46,10 @@ pub fn launch<R: Runtime, const N_SPATIAL: usize>(
 pub fn launch_ref<R: Runtime, const N_SPATIAL: usize>(
     strategy: &Strategy,
     client: &ComputeClient<R>,
-    input: &MatmulInputBinding<'_, R>,
-    weight: &MatmulInputBinding<'_, R>,
-    bias: &Option<MatmulInputBinding<'_, R>>,
-    out: &TensorHandleRef<'_, R>,
+    input: MatmulInputBinding<R>,
+    weight: MatmulInputBinding<R>,
+    bias: Option<MatmulInputBinding<R>>,
+    out: TensorBinding<R>,
     args: ConvolutionArgs<N_SPATIAL>,
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError> {
@@ -96,10 +73,10 @@ pub fn launch_ref<R: Runtime, const N_SPATIAL: usize>(
 #[derive(new)]
 struct Convolution<'a, R: Runtime, const N_SPATIAL: usize> {
     client: &'a ComputeClient<R>,
-    input: &'a MatmulInputBinding<'a, R>,
-    weight: &'a MatmulInputBinding<'a, R>,
-    bias: &'a Option<MatmulInputBinding<'a, R>>,
-    out: &'a TensorHandleRef<'a, R>,
+    input: MatmulInputBinding<R>,
+    weight: MatmulInputBinding<R>,
+    bias: Option<MatmulInputBinding<R>>,
+    out: TensorBinding<R>,
     args: ConvolutionArgs<N_SPATIAL>,
     dtypes: MatmulElems,
 }
@@ -139,10 +116,10 @@ impl<'a, R: Runtime, const N_SPATIAL: usize> Convolution<'a, R, N_SPATIAL> {
 #[allow(clippy::too_many_arguments)]
 fn launch_with_algorithm<R: Runtime, Alg: Algorithm>(
     client: &ComputeClient<R>,
-    input: &MatmulInputBinding<'_, R>,
-    weight: &MatmulInputBinding<'_, R>,
-    bias: &Option<MatmulInputBinding<'_, R>>,
-    out: &TensorHandleRef<'_, R>,
+    input: MatmulInputBinding<R>,
+    weight: MatmulInputBinding<R>,
+    bias: Option<MatmulInputBinding<R>>,
+    out: TensorBinding<R>,
     (stride, padding, dilation): (&[usize], &[usize], &[usize]),
     dimensionality: Dimensionality,
     blueprint_strategy: &BlueprintStrategy<RuntimeArgs, Alg::Routine>,
@@ -165,14 +142,14 @@ where
 
     let op = ConvolutionOperation::Forward;
 
-    let input_data = Alg::into_tensor_handle(client, input.data(), dtypes.lhs_global, op)?;
-    let weight_data = Alg::into_tensor_handle(client, weight.data(), dtypes.rhs_global, op)?;
+    let input_data = Alg::correct_layout(client, input.data().clone(), dtypes.lhs_global, op)?;
+    let weight_data = Alg::correct_layout(client, weight.data().clone(), dtypes.rhs_global, op)?;
 
     let mut input = input.clone();
     let mut weight = weight.clone();
 
-    *input.data_mut() = input_data.as_ref();
-    *weight.data_mut() = weight_data.as_ref();
+    *input.data_mut() = input_data;
+    *weight.data_mut() = weight_data;
 
     let address_type = input
         .required_address_type()
@@ -213,8 +190,8 @@ where
 
     launch_kernel::<R, Alg>(
         client,
-        &input,
-        &weight,
+        input,
+        weight,
         bias,
         out,
         problem,
@@ -226,10 +203,10 @@ where
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
 pub fn launch_kernel<R: Runtime, Alg: Algorithm>(
     client: &ComputeClient<R>,
-    input: &MatmulInputBinding<'_, R>,
-    weight: &MatmulInputBinding<'_, R>,
-    bias: &Option<MatmulInputBinding<'_, R>>,
-    out: &TensorHandleRef<'_, R>,
+    input: MatmulInputBinding<R>,
+    weight: MatmulInputBinding<R>,
+    bias: Option<MatmulInputBinding<R>>,
+    out: TensorBinding<R>,
     problem: ConvolutionProblem,
     blueprint_strategy: &BlueprintStrategy<RuntimeArgs, Alg::Routine>,
     dtypes: MatmulElems,

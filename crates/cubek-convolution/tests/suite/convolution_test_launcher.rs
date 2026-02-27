@@ -112,9 +112,9 @@ where
     let op = ConvolutionOperation::Forward;
 
     let lhs_handle =
-        A::into_tensor_handle(&client, &lhs_handle, P::EG::as_type_native_unchecked(), op).unwrap();
+        A::correct_layout(&client, &lhs_handle, P::EG::as_type_native_unchecked(), op).unwrap();
     let rhs_handle =
-        A::into_tensor_handle(&client, &rhs_handle, P::EG::as_type_native_unchecked(), op).unwrap();
+        A::correct_layout(&client, &rhs_handle, P::EG::as_type_native_unchecked(), op).unwrap();
 
     let lhs_handle =
         MatmulInputBinding::new(lhs_handle.as_ref(), P::EG::as_type_native_unchecked());

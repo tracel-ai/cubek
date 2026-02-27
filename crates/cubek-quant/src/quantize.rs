@@ -2,7 +2,7 @@ use cubecl::calculate_cube_count_elemwise;
 use cubecl::features::TypeUsage;
 use cubecl::ir::ElemType;
 use cubecl::prelude::*;
-use cubecl::std::tensor::into_contiguous_ref;
+use cubecl::std::tensor::into_contiguous;
 use cubecl::std::tensor::layout::linear::LinearView;
 use cubecl::std::tensor::{View, layout::linear::linear_view};
 use cubecl::tensor_line_size_parallel;
@@ -315,7 +315,7 @@ fn quantize_packed<R: Runtime>(
     let num_quants = scheme.num_quants();
     let input = if !can_vectorize && num_elems >= 2048 {
         can_vectorize = true;
-        into_contiguous_ref(client, input, dtype_input.into()).binding()
+        into_contiguous(client, input, dtype_input.into()).binding()
     } else {
         input
     };

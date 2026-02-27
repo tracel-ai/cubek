@@ -1,8 +1,5 @@
-use std::marker::PhantomData;
-
 use cubecl::{
-    Runtime, client::ComputeClient, ir::StorageType, prelude::TensorHandleRef, server::LaunchError,
-    std::tensor::TensorHandle,
+    Runtime, client::ComputeClient, ir::StorageType, prelude::TensorBinding, server::LaunchError,
 };
 use cubek_matmul::{
     components::{
@@ -13,9 +10,10 @@ use cubek_matmul::{
     launch::{TensorArgs, TensorMapArgs},
     routines::specialized::SpecializedAlgorithm,
 };
+use std::marker::PhantomData;
 
 use crate::{
-    algorithm::{Algorithm, into_tensor_handle, into_tensor_handle_tma},
+    algorithm::{Algorithm, contiguous_pitched_layout, into_tensor_handle_tma},
     components::{
         ConvolutionOperation,
         global::{args::RuntimeArgs, read::strategy::sync_bias::SyncBiasLoading},
@@ -50,13 +48,13 @@ impl<
     type Args = TensorArgs<RuntimeArgs>;
     const IS_SPECIALIZED: bool = true;
 
-    fn into_tensor_handle<R: Runtime>(
+    fn correct_layout<R: Runtime>(
         client: &ComputeClient<R>,
-        handle: &TensorHandleRef<'_, R>,
+        handle: TensorBinding<R>,
         dtype: StorageType,
         _operation: ConvolutionOperation,
-    ) -> Result<TensorHandle<R>, LaunchError> {
-        into_tensor_handle(client, handle, dtype)
+    ) -> Result<TensorBinding<R>, LaunchError> {
+        contiguous_pitched_layout(client, handle, dtype)
     }
 }
 
@@ -73,12 +71,12 @@ impl<
     type Args = TensorMapArgs<RuntimeArgs>;
     const IS_SPECIALIZED: bool = true;
 
-    fn into_tensor_handle<R: Runtime>(
+    fn correct_layout<R: Runtime>(
         client: &ComputeClient<R>,
-        handle: &TensorHandleRef<'_, R>,
+        handle: TensorBinding<R>,
         dtype: StorageType,
         operation: ConvolutionOperation,
-    ) -> Result<TensorHandle<R>, LaunchError> {
+    ) -> Result<TensorBinding<R>, LaunchError> {
         into_tensor_handle_tma(client, handle, dtype, operation)
     }
 

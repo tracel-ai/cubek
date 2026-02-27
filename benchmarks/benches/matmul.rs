@@ -1,4 +1,4 @@
-use crate::matmul::launch::launch;
+use crate::matmul::launch::launch_ref;
 use cubecl::{
     benchmark::{Benchmark, BenchmarkComputations, BenchmarkDurations, TimingMethod},
     future,
@@ -15,7 +15,7 @@ use cubek::{
             MatmulElems, MatmulPrecision, MatmulProblem, MatrixLayout, StageSize, TilingBlueprint,
             TilingScheme,
         },
-        launch::{MatmulInputHandle, Strategy},
+        launch::{MatmulInputBinding, Strategy},
         routines::{
             BlueprintStrategy, TileSizeSelection, double_buffering::DoubleBufferingArgs,
             double_unit::DoubleUnitSelectionArgs, ordered_double_buffering::OrderedSelectionArgs,
@@ -27,7 +27,7 @@ use cubek::{
 use std::collections::BTreeMap;
 
 impl<R: Runtime> Benchmark for MatmulBench<R> {
-    type Input = (MatmulInputHandle<R>, MatmulInputHandle<R>);
+    type Input = (TensorHandle<R>, TensorHandle<R>);
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
@@ -42,7 +42,14 @@ impl<R: Runtime> Benchmark for MatmulBench<R> {
             let len = lhs.metadata.rank();
             lhs.metadata.strides_mut().swap(len - 2, len - 1);
         }
-        random_uniform(&client, 0.0, 1.0, lhs.as_ref(), self.dtypes.lhs_global).unwrap();
+        random_uniform(
+            &client,
+            0.0,
+            1.0,
+            lhs.clone().binding(),
+            self.dtypes.lhs_global,
+        )
+        .unwrap();
 
         let mut rhs = TensorHandle::empty(
             &client,
@@ -55,12 +62,16 @@ impl<R: Runtime> Benchmark for MatmulBench<R> {
             rhs.metadata.strides_mut().swap(len - 2, len - 1);
         }
 
-        random_uniform(&client, 0.0, 1.1, rhs.as_ref(), self.dtypes.rhs_global).unwrap();
-
-        (
-            MatmulInputHandle::Normal(lhs),
-            MatmulInputHandle::Normal(rhs),
+        random_uniform(
+            &client,
+            0.0,
+            1.1,
+            rhs.clone().binding(),
+            self.dtypes.rhs_global,
         )
+        .unwrap();
+
+        (lhs, rhs)
     }
 
     fn execute(&self, (lhs, rhs): Self::Input) -> Result<Self::Output, String> {
@@ -71,13 +82,13 @@ impl<R: Runtime> Benchmark for MatmulBench<R> {
             self.dtypes.acc_global,
         );
 
-        match launch(
+        match launch_ref(
             &self.strategy,
             &self.client,
-            lhs,
-            rhs,
-            out,
-            self.dtypes.clone(),
+            MatmulInputBinding::Normal(lhs.binding(), self.dtypes.lhs_global),
+            MatmulInputBinding::Normal(rhs.binding(), self.dtypes.lhs_global),
+            out.clone().binding(),
+            &mut self.dtypes.clone(),
         ) {
             Ok(_) => Ok(()),
             Err(err) => Err(format!("{err:?}")),

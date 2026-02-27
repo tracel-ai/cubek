@@ -10,11 +10,7 @@ use cubek_test_utils::{
 fn eye_handle_row_major() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
-<<<<<<< HEAD
-    let shape = shape![2, 3];
-=======
     let shape = [2, 3];
->>>>>>> main
 
     let handle = TestInput::new(
         client.clone(),
@@ -27,11 +23,7 @@ fn eye_handle_row_major() {
 
     let expected = TestInput::new(
         client.clone(),
-<<<<<<< HEAD
-        shape![2, 3],
-=======
         [2, 3],
->>>>>>> main
         f32::as_type_native_unchecked(),
         StrideSpec::RowMajor,
         DataKind::Custom {
@@ -40,7 +32,7 @@ fn eye_handle_row_major() {
     )
     .f32_host_data();
 
-    let actual = HostData::from_tensor_handle(&client, &handle, HostDataType::F32);
+    let actual = HostData::from_tensor_handle(&client, handle, HostDataType::F32);
 
     assert_equals_approx(&actual, &expected, 0.001)
         .as_test_outcome()
@@ -51,11 +43,7 @@ fn eye_handle_row_major() {
 fn eye_handle_col_major() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
-<<<<<<< HEAD
-    let shape = shape![2, 3];
-=======
     let shape = [2, 3];
->>>>>>> main
 
     let handle = TestInput::new(
         client.clone(),
@@ -68,11 +56,7 @@ fn eye_handle_col_major() {
 
     let expected = TestInput::new(
         client.clone(),
-<<<<<<< HEAD
-        shape![2, 3],
-=======
         [2, 3],
->>>>>>> main
         f32::as_type_native_unchecked(),
         StrideSpec::RowMajor,
         DataKind::Custom {
@@ -81,7 +65,7 @@ fn eye_handle_col_major() {
     )
     .f32_host_data();
 
-    let actual = HostData::from_tensor_handle(&client, &handle, HostDataType::F32);
+    let actual = HostData::from_tensor_handle(&client, handle, HostDataType::F32);
 
     assert_equals_approx(&actual, &expected, 0.001)
         .as_test_outcome()
@@ -114,7 +98,7 @@ fn arange_handle_row_major() {
     )
     .f32_host_data();
 
-    let actual = HostData::from_tensor_handle(&client, &handle, HostDataType::F32);
+    let actual = HostData::from_tensor_handle(&client, handle, HostDataType::F32);
 
     assert_equals_approx(&actual, &expected, 0.001)
         .as_test_outcome()
@@ -147,7 +131,7 @@ fn arange_handle_col_major() {
     )
     .f32_host_data();
 
-    let actual = HostData::from_tensor_handle(&client, &handle, HostDataType::F32);
+    let actual = HostData::from_tensor_handle(&client, handle, HostDataType::F32);
 
     assert_equals_approx(&actual, &expected, 0.001)
         .as_test_outcome()
