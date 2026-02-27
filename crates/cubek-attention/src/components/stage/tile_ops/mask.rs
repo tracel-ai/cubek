@@ -3,7 +3,7 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
 
 use crate::components::tile::{
-    SoftmaxLayout, SoftmaxLayoutExpand, FragmentMask, FragmentMaskExpand,
+    FragmentMask, FragmentMaskExpand, SoftmaxLayout, SoftmaxLayoutExpand,
 };
 use crate::components::tile::{TileAttention, TileAttentionConfig};
 use crate::definition::AttentionPrecision;
