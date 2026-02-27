@@ -11,6 +11,7 @@ use cubecl::{
 use cubecl_common::quant::scheme::{QuantScheme, QuantStore, QuantValue};
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum MatmulInputBinding<R: Runtime> {
     Normal(TensorBinding<R>, StorageType),
     Quantized {
@@ -27,7 +28,7 @@ pub enum MatmulInputBinding<R: Runtime> {
 impl<R: Runtime> Clone for MatmulInputBinding<R> {
     fn clone(&self) -> Self {
         match self {
-            Self::Normal(arg0, arg1) => Self::Normal(arg0.clone(), arg1.clone()),
+            Self::Normal(arg0, arg1) => Self::Normal(arg0.clone(), *arg1),
             Self::Quantized {
                 data,
                 data_dtype,
@@ -37,11 +38,11 @@ impl<R: Runtime> Clone for MatmulInputBinding<R> {
                 scheme,
             } => Self::Quantized {
                 data: data.clone(),
-                data_dtype: data_dtype.clone(),
+                data_dtype: *data_dtype,
                 scale: scale.clone(),
-                scale_dtype: scale_dtype.clone(),
+                scale_dtype: *scale_dtype,
                 shape: shape.clone(),
-                scheme: scheme.clone(),
+                scheme: *scheme,
             },
         }
     }

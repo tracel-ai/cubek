@@ -227,7 +227,7 @@ impl<Lhs: Numeric, Rhs: Numeric, Acc: Numeric, A: Routine<()>> ConcreteInputsFac
             };
         let batch_layout = |handle: &MatmulInputBinding<R>| match handle {
             MatmulInputBinding::Normal(handle, _dtype) => {
-                let layout = BatchLayoutLaunch::from_handle(client, &handle, problem);
+                let layout = BatchLayoutLaunch::from_handle(client, handle, problem);
                 VirtualLayoutLaunch::new::<BatchLayout>(layout)
             }
             MatmulInputBinding::Quantized { .. } => {
