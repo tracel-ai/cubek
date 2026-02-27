@@ -23,6 +23,7 @@ pub struct AttentionAutotuneKey {
 }
 
 impl AttentionAutotuneKey {
+    #[allow(clippy::too_many_arguments)]
     pub fn generate(
         elem_query: ElemType,
         elem_key: ElemType,
