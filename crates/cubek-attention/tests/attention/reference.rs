@@ -1,6 +1,6 @@
 use core::f32;
 
-use cubecl::{TestRuntime, client::ComputeClient, std::tensor::TensorHandle};
+use cubecl::{TestRuntime, client::ComputeClient, std::tensor::TensorHandle, zspace::Shape};
 
 use cubek_attention::definition::{AttentionElems, AttentionProblem};
 use cubek_test_utils::{
@@ -35,7 +35,7 @@ fn attention_epsilon(elems: &AttentionElems, safety_factor: f32) -> f32 {
         elems.value_global.epsilon(),
         elems.value_stage.epsilon(),
         elems.key_value_tile.epsilon(),
-        elems.softmax.epsilon(),
+        elems.softmax_acc.epsilon(),
         elems.accumulator.epsilon(),
         elems.mask.epsilon(),
         elems.out_global.epsilon(),
@@ -64,8 +64,7 @@ pub fn flash_attention_v2_reference(
     let masked = mask.is_some();
     assert!(problem.masked == masked);
 
-    // Output shape: [batch, num_heads, seq_q, val_dim]
-    let out_shape = vec![batch, num_heads, seq_q, val_dim];
+    let out_shape = Shape::new([batch, num_heads, seq_q, val_dim]);
     let mut out = vec![0.; batch * num_heads * seq_q * val_dim];
 
     let scale = (head_dim as f32).sqrt().recip();

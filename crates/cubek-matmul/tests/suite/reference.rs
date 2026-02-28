@@ -118,6 +118,6 @@ fn matmul_cpu_reference(lhs: &HostData, rhs: &HostData, problem: &MatmulProblem)
     HostData {
         data: HostDataVec::F32(out),
         shape: out_shape,
-        strides: strides.into(),
+        strides,
     }
 }

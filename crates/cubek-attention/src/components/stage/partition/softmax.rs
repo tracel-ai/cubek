@@ -21,9 +21,11 @@ impl<AP: AttentionPrecision, TA: TileAttention<AP>> SoftmaxPartition<AP, TA> {
         let p = config.shared().partition_size;
         let mut sequence = Sequence::new();
 
+        let mut shared = TA::allocate_softmax_shared(config.tile_config());
+
         #[unroll]
         for _ in 0..p.seq_q {
-            sequence.push(TA::allocate_softmax(config.tile_config()));
+            sequence.push(TA::allocate_softmax(&mut shared, config.tile_config()));
         }
 
         SoftmaxPartition::<AP, TA> { sequence }

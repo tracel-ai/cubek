@@ -184,9 +184,7 @@ impl<E: Float> FragmentAccumulator<E> for UnitTile<E> {
 #[cube]
 impl<E: Float> FragmentSoftmax<E> for UnitTile<E> {
     type Layout = UnitTileLayout;
-    type SoftmaxScore = UnitTile<E>;
     type SoftmaxRowFormat = UnitTile<E>;
-    type SoftmaxVal = UnitTile<E>;
 
     fn rowwise_mut(&mut self) -> &mut UnitTile<E> {
         self
@@ -219,7 +217,9 @@ impl<AP: AttentionPrecision> TileAttention<AP> for UnitRegisterTileAttention {
     type Mask = UnitTile<MSK<AP>>;
     type Softmax = UnitTile<SM<AP>>;
     type SoftmaxRow = UnitTile<SM<AP>>;
+    type SoftmaxShared = ();
     type Accumulator = UnitTile<ACC<AP>>;
+    type AccumulatorShared = ();
     type FragmentLayout = UnitTileLayout;
 
     fn softmax_layout(#[comptime] config: Self::Config) -> Self::FragmentLayout {
@@ -280,11 +280,21 @@ impl<AP: AttentionPrecision> TileAttention<AP> for UnitRegisterTileAttention {
         UnitTile::new(<Self as TileAttention<AP>>::softmax_layout(config))
     }
 
-    fn allocate_softmax(#[comptime] config: Self::Config) -> Self::Softmax {
+    fn allocate_softmax_shared(#[comptime] _config: Self::Config) -> Self::SoftmaxShared {}
+
+    fn allocate_accumulator_shared(#[comptime] _config: Self::Config) -> Self::AccumulatorShared {}
+
+    fn allocate_softmax(
+        _shared: &mut Self::SoftmaxShared,
+        #[comptime] config: Self::Config,
+    ) -> Self::Softmax {
         UnitTile::new(<Self as TileAttention<AP>>::softmax_layout(config))
     }
 
-    fn allocate_accumulator(#[comptime] config: Self::Config) -> Self::Accumulator {
+    fn allocate_accumulator(
+        _shared: &mut Self::AccumulatorShared,
+        #[comptime] config: Self::Config,
+    ) -> Self::Accumulator {
         UnitTile::new(UnitTileLayout::new(
             config.shared.attention_tile_size.seq_q,
             config.shared.attention_tile_size.val_dim,

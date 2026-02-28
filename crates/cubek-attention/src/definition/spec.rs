@@ -40,7 +40,8 @@ pub trait AttentionPrecision: Send + Sync + Copy + 'static {
     type Key: StagedMatrixPrecision;
     type Value: StagedMatrixPrecision;
     type KVTile: Float;
-    type Softmax: Float;
+    type SoftmaxAcc: Float;
+    type SoftmaxLhs: Float;
     type Accumulator: Float;
     type Mask: Numeric;
     type Out: StagedMatrixPrecision;
@@ -111,12 +112,13 @@ impl AttentionPrecision for f16 {
     type Key = f16;
     type Value = f16;
     type KVTile = f16;
+    type SoftmaxLhs = f16;
     #[cfg(target_os = "macos")]
-    type Softmax = f16;
+    type SoftmaxAcc = f16;
     #[cfg(target_os = "macos")]
     type Accumulator = f16;
     #[cfg(not(target_os = "macos"))]
-    type Softmax = f32;
+    type SoftmaxAcc = f32;
     #[cfg(not(target_os = "macos"))]
     type Accumulator = f32;
     type Mask = u8;
@@ -128,12 +130,13 @@ impl AttentionPrecision for flex32 {
     type Key = flex32;
     type Value = flex32;
     type KVTile = f16;
+    type SoftmaxLhs = f16;
     #[cfg(target_os = "macos")]
-    type Softmax = f16;
+    type SoftmaxAcc = f16;
     #[cfg(target_os = "macos")]
     type Accumulator = f16;
     #[cfg(not(target_os = "macos"))]
-    type Softmax = f32;
+    type SoftmaxAcc = f32;
     #[cfg(not(target_os = "macos"))]
     type Accumulator = f32;
     type Mask = u8;
@@ -145,12 +148,13 @@ impl AttentionPrecision for bf16 {
     type Key = bf16;
     type Value = bf16;
     type KVTile = bf16;
+    type SoftmaxLhs = bf16;
     #[cfg(target_os = "macos")]
-    type Softmax = bf16;
+    type SoftmaxAcc = bf16;
     #[cfg(target_os = "macos")]
     type Accumulator = bf16;
     #[cfg(not(target_os = "macos"))]
-    type Softmax = f32;
+    type SoftmaxAcc = f32;
     #[cfg(not(target_os = "macos"))]
     type Accumulator = f32;
     type Mask = u8;
@@ -162,7 +166,8 @@ impl AttentionPrecision for f32 {
     type Key = f32;
     type Value = f32;
     type KVTile = f32;
-    type Softmax = f32;
+    type SoftmaxAcc = f32;
+    type SoftmaxLhs = f32;
     type Accumulator = f32;
     type Mask = u8;
     type Out = f32;
@@ -173,7 +178,8 @@ impl AttentionPrecision for f64 {
     type Key = f64;
     type Value = f64;
     type KVTile = f32;
-    type Softmax = f32;
+    type SoftmaxAcc = f32;
+    type SoftmaxLhs = f32;
     type Accumulator = f32;
     type Mask = u8;
     type Out = f64;
@@ -188,34 +194,34 @@ impl<
     VS: Float,
     KVT: Float,
     SM: Float,
+    SML: Float,
     ACC: Float,
     MSK: Numeric,
     OG: Float,
     OS: Float,
-> AttentionPrecision for (QG, QT, KG, KS, VG, VS, KVT, SM, ACC, MSK, OG, OS)
+> AttentionPrecision for (QG, QT, KG, KS, VG, VS, KVT, SM, SML, ACC, MSK, OG, OS)
 {
     type Query = (QG, QT);
     type Key = (KG, KS);
     type Value = (VG, VS);
     type KVTile = KVT;
-    type Softmax = SM;
+    type SoftmaxAcc = SM;
+    type SoftmaxLhs = SML;
     type Accumulator = ACC;
     type Mask = MSK;
     type Out = (OG, OS);
 }
 
-// TODO make sure the numbers are the right ones
-
 /// Input argument
 pub type InputArg<AA> = <AA as AttentionArgs>::Input<
-    NumericExpand<0>,
-    NumericExpand<2>,
-    NumericExpand<4>,
-    NumericExpand<9>,
+    NumericExpand<0>,  // QG
+    NumericExpand<2>,  // KG
+    NumericExpand<4>,  // VG
+    NumericExpand<10>, // MSK
 >;
 
 /// Output argument
-pub type OutputArg<AA> = <AA as AttentionArgs>::Output<NumericExpand<10>>;
+pub type OutputArg<AA> = <AA as AttentionArgs>::Output<NumericExpand<11>>; // OG
 
 /// Input runtime argument
 pub type InputRuntimeArg<'a, AA, R> = <InputArg<AA> as LaunchArg>::RuntimeArg<'a, R>;
@@ -242,7 +248,9 @@ pub mod attention_types {
     <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Value as StagedMatrixPrecision>::Stage;
 
     pub type KVT<AS> = <<AS as AttentionSpec>::Precision as AttentionPrecision>::KVTile;
-    pub type SM<AS> = <<AS as AttentionSpec>::Precision as AttentionPrecision>::Softmax;
+    pub type SM<AS> = <<AS as AttentionSpec>::Precision as AttentionPrecision>::SoftmaxAcc;
+    pub type SML<AS> = <<AS as AttentionSpec>::Precision as AttentionPrecision>::SoftmaxLhs;
+
     pub type ACC<AS> = <<AS as AttentionSpec>::Precision as AttentionPrecision>::Accumulator;
     pub type MSK<AS> = <<AS as AttentionSpec>::Precision as AttentionPrecision>::Mask;
 
@@ -261,7 +269,8 @@ pub struct AttentionElems {
     pub value_global: StorageType,
     pub value_stage: StorageType,
     pub key_value_tile: StorageType,
-    pub softmax: StorageType,
+    pub softmax_acc: StorageType,
+    pub softmax_lhs: StorageType,
     pub accumulator: StorageType,
     pub mask: StorageType,
     pub out_global: StorageType,
@@ -271,6 +280,7 @@ pub struct AttentionElems {
 impl AttentionElems {
     pub fn from_global_types(
         global_dtypes: &AttentionGlobalTypes,
+        tile_type: StorageType,
         accumulator_precision: &AccumulatorPrecision,
     ) -> AttentionElems {
         let accumulator = match accumulator_precision {
@@ -280,14 +290,14 @@ impl AttentionElems {
 
         Self {
             query_global: global_dtypes.query,
-            query_tile: global_dtypes.query,
+            query_tile: tile_type,
             key_global: global_dtypes.key,
-            key_stage: global_dtypes.key,
+            key_stage: tile_type,
             value_global: global_dtypes.value,
-            value_stage: global_dtypes.value,
-            key_value_tile: global_dtypes.value,
-            // Because softmax will be in lhs of a tile matmul, we take a type that is guaranteed to be supported as such
-            softmax: global_dtypes.query,
+            value_stage: tile_type,
+            key_value_tile: tile_type,
+            softmax_acc: accumulator,
+            softmax_lhs: tile_type,
             accumulator,
             mask: global_dtypes.mask,
             out_global: global_dtypes.out,
@@ -295,7 +305,7 @@ impl AttentionElems {
         }
     }
 
-    pub fn from_define_array(elem_types: [StorageType; 12]) -> AttentionElems {
+    pub fn from_define_array(elem_types: [StorageType; 13]) -> AttentionElems {
         AttentionElems {
             query_global: elem_types[0],
             query_tile: elem_types[1],
@@ -304,16 +314,17 @@ impl AttentionElems {
             value_global: elem_types[4],
             value_stage: elem_types[5],
             key_value_tile: elem_types[6],
-            softmax: elem_types[7],
-            accumulator: elem_types[8],
-            mask: elem_types[9],
-            out_global: elem_types[10],
-            out_stage: elem_types[11],
+            softmax_acc: elem_types[7],
+            softmax_lhs: elem_types[8],
+            accumulator: elem_types[9],
+            mask: elem_types[10],
+            out_global: elem_types[11],
+            out_stage: elem_types[12],
         }
     }
 }
 
-impl From<&AttentionElems> for [StorageType; 12] {
+impl From<&AttentionElems> for [StorageType; 13] {
     fn from(elems: &AttentionElems) -> Self {
         [
             elems.query_global,
@@ -323,7 +334,8 @@ impl From<&AttentionElems> for [StorageType; 12] {
             elems.value_global,
             elems.value_stage,
             elems.key_value_tile,
-            elems.softmax,
+            elems.softmax_acc,
+            elems.softmax_lhs,
             elems.accumulator,
             elems.mask,
             elems.out_global,

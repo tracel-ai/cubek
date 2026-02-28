@@ -2,6 +2,7 @@ use cubecl::{
     TestRuntime, calculate_cube_count_elemwise,
     prelude::*,
     std::tensor::{TensorHandle, ViewOperationsMut, ViewOperationsMutExpand},
+    zspace::{Shape, Strides},
 };
 
 use crate::BaseInputSpec;
@@ -33,8 +34,8 @@ fn custom_data_launch<T: Numeric>(
 
 fn new_custom_data(
     client: &ComputeClient<TestRuntime>,
-    shape: Vec<usize>,
-    strides: Vec<usize>,
+    shape: Shape,
+    strides: Strides,
     dtype: StorageType,
     contiguous_data: Vec<f32>,
 ) -> TensorHandle<TestRuntime> {

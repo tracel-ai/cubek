@@ -69,7 +69,7 @@ pub fn test_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
 
     let out = TestInput::new(
         client.clone(),
-        problem.out_shape.to_vec(),
+        problem.out_shape.clone(),
         problem.global_dtypes.out,
         layout_to_stride_spec(MatrixLayout::RowMajor),
         DataKind::Zeros,
