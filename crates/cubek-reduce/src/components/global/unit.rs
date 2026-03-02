@@ -62,7 +62,7 @@ impl GlobalFullUnitReduce {
         reduce_axis: usize,
         reduce_index: usize,
         inst: &I,
-        idle: Option<bool>,
+        idle: ComptimeOption<bool>,
         #[comptime] line_mode: LineMode,
     ) -> I::AccumulatorItem {
         let input_line_size = input.line_size();

@@ -250,8 +250,8 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::In>
     fn __expand_as_tensor_map_method(
         &self,
         scope: &mut Scope,
-    ) -> OptionExpand<TensorMap<P::In, Tiled>> {
-        Option::__expand_new_None(scope)
+    ) -> ComptimeOptionExpand<TensorMap<P::In, Tiled>> {
+        ComptimeOption::__expand_new_None(scope)
     }
 }
 
@@ -322,8 +322,8 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::Out>
     fn __expand_as_tensor_map_method(
         &self,
         scope: &mut Scope,
-    ) -> OptionExpand<TensorMap<P::Out, Tiled>> {
-        Option::__expand_new_None(scope)
+    ) -> ComptimeOptionExpand<TensorMap<P::Out, Tiled>> {
+        ComptimeOption::__expand_new_None(scope)
     }
 }
 

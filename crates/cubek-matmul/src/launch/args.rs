@@ -128,7 +128,7 @@ pub trait MatmulArgs: Send + Sync + 'static + Clone {
     }
     fn view_acc<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         _state: &Self::State<Lhs, Rhs, EO>,
-    ) -> Option<View<Line<EO>, BatchedCoords>> {
+    ) -> ComptimeOption<View<Line<EO>, BatchedCoords>> {
         unexpanded!()
     }
     fn batch_acc<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
@@ -181,8 +181,8 @@ pub struct TensorInputs<Lhs: Numeric, Rhs: Numeric, Acc: Numeric> {
     rhs: View<Line<Rhs>, BatchedCoords>,
     rhs_batch: VirtualLayout<Coords1d, Coords1d>,
     /// The tensor for loading the accumulator, if present
-    acc: Option<View<Line<Acc>, BatchedCoords>>,
-    acc_batch: Option<VirtualLayout<Coords1d, Coords1d>>,
+    acc: ComptimeOption<View<Line<Acc>, BatchedCoords>>,
+    acc_batch: ComptimeOption<VirtualLayout<Coords1d, Coords1d>>,
 }
 
 impl<Lhs: Numeric, Rhs: Numeric, Acc: Numeric, A: Routine<()>> ConcreteInputsFactory<A>
@@ -236,8 +236,8 @@ impl<Lhs: Numeric, Rhs: Numeric, Acc: Numeric, A: Routine<()>> ConcreteInputsFac
             batch_layout(lhs),
             view(rhs, blueprint.rhs_global_layout_config(), line_sizes.rhs),
             batch_layout(rhs),
-            OptionArgs::None,
-            OptionArgs::None,
+            ComptimeOptionArgs::None,
+            ComptimeOptionArgs::None,
         )
     }
 }
@@ -315,7 +315,7 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorArgs<Config> {
 
     fn view_acc<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &Self::State<Lhs, Rhs, EO>,
-    ) -> Option<View<Line<EO>, BatchedCoords>> {
+    ) -> ComptimeOption<View<Line<EO>, BatchedCoords>> {
         state.0.acc
     }
 
@@ -325,8 +325,8 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorArgs<Config> {
     ) -> usize {
         #[comptime]
         match state.0.acc_batch {
-            Some(layout) => layout.to_source_pos(batch),
-            None => batch,
+            ComptimeOption::Some(layout) => layout.to_source_pos(batch),
+            ComptimeOption::None => batch,
         }
     }
 
@@ -366,9 +366,9 @@ pub struct TensorMapInputs<Lhs: Numeric, Rhs: Numeric, EO: Numeric> {
     /// The rhs tensor.
     pub rhs: View<Line<Rhs>, BatchedCoords>,
     /// The accumulator
-    pub acc: Option<View<Line<EO>, BatchedCoords>>,
+    pub acc: ComptimeOption<View<Line<EO>, BatchedCoords>>,
     /// The accumulator batch layout
-    pub acc_batch: Option<VirtualLayout<Coords1d, Coords1d>>,
+    pub acc_batch: ComptimeOption<VirtualLayout<Coords1d, Coords1d>>,
 }
 
 impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<(), Blueprint = TilingBlueprint>>
@@ -554,8 +554,8 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<(), Blueprint = TilingB
         TensorMapInputsLaunch::new(
             view(lhs, &lhs_shape, lhs_transposed),
             view(rhs, &rhs_shape, rhs_transposed),
-            OptionArgs::None,
-            OptionArgs::None,
+            ComptimeOptionArgs::None,
+            ComptimeOptionArgs::None,
         )
     }
 }
@@ -607,7 +607,7 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorMapArgs<Config> {
 
     fn view_acc<Lhs: Numeric, Rhs: Numeric, EO: Numeric>(
         state: &Self::State<Lhs, Rhs, EO>,
-    ) -> Option<View<Line<EO>, BatchedCoords>> {
+    ) -> ComptimeOption<View<Line<EO>, BatchedCoords>> {
         state.0.acc
     }
 
@@ -617,8 +617,8 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorMapArgs<Config> {
     ) -> usize {
         #[comptime]
         match state.0.acc_batch {
-            Option::Some(layout) => layout.to_source_pos(batch),
-            Option::None => batch,
+            ComptimeOption::Some(layout) => layout.to_source_pos(batch),
+            ComptimeOption::None => batch,
         }
     }
 

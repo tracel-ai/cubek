@@ -25,7 +25,7 @@ impl<GA: GlobalAttention<AP>, AP: AttentionPrecision> BatchAttention<AP>
         query: VirtualTensor<QG<AP>>,
         key: VirtualTensor<KG<AP>>,
         value: VirtualTensor<VG<AP>>,
-        mask: Option<VirtualTensor<MSK<AP>>>,
+        mask: ComptimeOption<VirtualTensor<MSK<AP>>>,
         out: VirtualTensor<OG<AP>, ReadWrite>,
         _cube_count_args: CubeCountInput,
         #[comptime] config: Self::Config,

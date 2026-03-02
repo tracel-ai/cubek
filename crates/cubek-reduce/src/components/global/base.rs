@@ -20,7 +20,7 @@ pub fn idle_check<P: ReducePrecision, Out: Numeric>(
     reduce_index_start: usize,
     #[comptime] line_mode: LineMode,
     #[comptime] idle_mode: IdleMode,
-) -> Option<bool> {
+) -> ComptimeOption<bool> {
     if idle_mode.is_enabled() {
         let reduce_count = reduce_count(
             output.len() * output.line_size(),
@@ -29,16 +29,16 @@ pub fn idle_check<P: ReducePrecision, Out: Numeric>(
         );
 
         match idle_mode {
-            IdleMode::None => Option::new_None(),
-            IdleMode::Mask => Option::new_Some(reduce_index_start >= reduce_count),
+            IdleMode::None => ComptimeOption::new_None(),
+            IdleMode::Mask => ComptimeOption::new_Some(reduce_index_start >= reduce_count),
             IdleMode::Terminate => {
                 if reduce_index_start >= reduce_count {
                     terminate!();
                 }
-                Option::new_None()
+                ComptimeOption::new_None()
             }
         }
     } else {
-        Option::new_None()
+        ComptimeOption::new_None()
     }
 }

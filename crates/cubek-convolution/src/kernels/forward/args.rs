@@ -319,7 +319,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
             ViewArg::new_tensor_map_im2col::<TmaIm2colLayout, _, _>(lhs, lhs_layout),
             ViewArg::new_tensor_map_tiled::<WeightLayout>(rhs, rhs_layout),
             bias.into(),
-            OptionArgs::Some(VirtualLayoutLaunch::new::<NoopLayout>(
+            ComptimeOptionArgs::Some(VirtualLayoutLaunch::new::<NoopLayout>(
                 NoopLayoutLaunch::new(),
             )),
         );

@@ -55,7 +55,7 @@ pub struct FullStageGlobalReader<
     global_iter: GlobalIterator<Line<EG>>,
     runtime_config: RC,
     stage: FullLoaderStage<RC, L, ES>,
-    loading_job: Option<L::Job<EG, ES>>,
+    loading_job: ComptimeOption<L::Job<EG, ES>>,
     #[cube(comptime)]
     _phantom: PhantomData<L>,
 }
@@ -79,12 +79,12 @@ impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: FullLoadingStrategy<RC>>
             GlobalIterator::new(view, k_step, config.gmem_config.view_direction, false);
 
         let loading_job = match config.precompute_job {
-            true => Option::new_Some(L::new_job::<EG, ES>(
+            true => ComptimeOption::new_Some(L::new_job::<EG, ES>(
                 runtime_config.clone(),
                 view.line_size(),
                 config,
             )),
-            false => Option::new_None(),
+            false => ComptimeOption::new_None(),
         };
 
         FullStageGlobalReader::<EG, ES, RC, L> {

@@ -25,7 +25,7 @@ impl TileKind<ReadOnly> for Filled {
 }
 
 impl<Inner: TileKind<IO>, IO: SliceVisibility> TileKind<IO> for Option<Inner> {
-    type Tile<E: Numeric> = Option<Inner::Tile<E>>;
+    type Tile<E: Numeric> = ComptimeOption<Inner::Tile<E>>;
 }
 
 pub type Tile<K, E> = <K as TileKind>::Tile<E>;

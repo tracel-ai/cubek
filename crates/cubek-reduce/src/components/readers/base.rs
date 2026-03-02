@@ -22,7 +22,7 @@ impl<P: ReducePrecision> Reader<P> {
         inst: &I,
         reduce_axis: usize,
         reduce_index: usize,
-        idle: Option<bool>,
+        idle: ComptimeOption<bool>,
         #[comptime] bound_checks: BoundChecks,
         #[comptime] line_mode: LineMode,
     ) -> Reader<P> {

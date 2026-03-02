@@ -105,7 +105,7 @@ pub trait StageAttention<AP: AttentionPrecision>: 'static + Send + Sync {
     fn init_query(#[comptime] config: Self::Config) -> Self::QueryRegisters;
     fn init_key_value(#[comptime] config: Self::Config) -> Self::KeyValueRegisters;
     fn init_mask(
-        out_of_bounds: Option<Coords2d>,
+        out_of_bounds: ComptimeOption<Coords2d>,
         #[comptime] config: Self::Config,
     ) -> Self::MaskRegisters;
     fn init_softmax(#[comptime] config: Self::Config) -> Self::SoftmaxRegisters;

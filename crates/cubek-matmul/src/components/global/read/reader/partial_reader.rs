@@ -77,7 +77,7 @@ pub struct PartialStageGlobalReader<
     global_iter: GlobalIterator<Line<EG>>,
     runtime_config: RC,
     stage_memory: PartialLoaderStage<RC, L, ES>,
-    loading_job: Option<(L::Job<EG, ES>, L::Job<EG, ES>)>,
+    loading_job: ComptimeOption<(L::Job<EG, ES>, L::Job<EG, ES>)>,
 }
 
 #[cube]
@@ -96,11 +96,11 @@ impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: PartialLoadingStrategy<RC>>
             GlobalIterator::new(tensor, k_step, config.gmem_config.view_direction, false);
 
         let loading_job = match config.precompute_job {
-            true => Option::new_Some((
+            true => ComptimeOption::new_Some((
                 L::new_job::<EG, ES>(runtime_config.clone(), 0u32, tensor.line_size(), config),
                 L::new_job::<EG, ES>(runtime_config.clone(), 1u32, tensor.line_size(), config),
             )),
-            false => Option::new_None(),
+            false => ComptimeOption::new_None(),
         };
 
         PartialStageGlobalReader::<EG, ES, RC, L> {
@@ -135,11 +135,11 @@ impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: PartialLoadingStrategy<RC>>
     ) {
         #[comptime]
         let mut loading_job = match self.loading_job.clone() {
-            Some(job) => match stage_buffer {
+            ComptimeOption::Some(job) => match stage_buffer {
                 StageBuffer::A => job.0,
                 StageBuffer::B => job.1,
             },
-            None => L::new_job::<EG, ES>(
+            ComptimeOption::None => L::new_job::<EG, ES>(
                 self.runtime_config.clone(),
                 stage_buffer.to_index(),
                 self.global_iter.line_size(),
@@ -177,11 +177,11 @@ impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: PartialLoadingStrategy<RC>>
         let view = this.global_iter.view();
         #[comptime]
         let job = match this.loading_job.clone() {
-            Some(job) => match stage_buffer {
+            ComptimeOption::Some(job) => match stage_buffer {
                 StageBuffer::A => job.0,
                 StageBuffer::B => job.1,
             },
-            None => L::new_job::<EG, ES>(
+            ComptimeOption::None => L::new_job::<EG, ES>(
                 this.runtime_config.clone(),
                 stage_buffer.to_index(),
                 view.line_size(),

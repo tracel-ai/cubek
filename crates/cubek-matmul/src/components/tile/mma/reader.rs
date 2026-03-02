@@ -252,7 +252,7 @@ where
     type TileKind = Option<Inner>;
 
     fn load_fragment<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
-        tile: &Option<Inner::Tile<V>>,
+        tile: &ComptimeOption<Inner::Tile<V>>,
         fragment: &mut Array<Line<E>>,
         def: MmaDefinition<A, B, CD>,
         #[comptime] ident: MatrixIdent,
@@ -261,10 +261,10 @@ where
     ) {
         #[comptime]
         match tile {
-            Some(tile) => {
+            ComptimeOption::Some(tile) => {
                 MmaStageReader::<Inner>::load_fragment(tile, fragment, def, ident, layout, config)
             }
-            None => MmaStageReader::<Filled>::load_fragment::<E, V, A, B, CD>(
+            ComptimeOption::None => MmaStageReader::<Filled>::load_fragment::<E, V, A, B, CD>(
                 &V::from_int(0),
                 fragment,
                 def,

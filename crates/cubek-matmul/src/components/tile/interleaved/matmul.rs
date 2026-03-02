@@ -159,15 +159,15 @@ impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for InterleavedMatm
     }
 
     fn load_acc<E: Numeric>(
-        tile: &Option<StridedTile<E>>,
+        tile: &ComptimeOption<StridedTile<E>>,
         acc: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     ) {
         match tile {
-            Some(_) => {
+            ComptimeOption::Some(_) => {
                 todo!("Not yet implemented")
             }
-            None => {
+            ComptimeOption::None => {
                 let value = E::from_int(0);
                 InterleavedStageReader::load_accumulator::<A, E>(&value, acc, config);
             }

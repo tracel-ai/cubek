@@ -56,8 +56,10 @@ impl<
 
         // Init registers that will change inside global loop
         let mut key_value_registers = SA::init_key_value(config.stage_config);
-        let mut mask_registers =
-            SA::init_mask(Option::new_Some((seq_q, seq_kv)), config.stage_config);
+        let mut mask_registers = SA::init_mask(
+            ComptimeOption::new_Some((seq_q, seq_kv)),
+            config.stage_config,
+        );
         let mut softmax_registers = SA::init_softmax(config.stage_config);
         let mut accumulator_registers = SA::init_accumulator(config.stage_config);
 
@@ -149,7 +151,7 @@ impl<
     fn init_mask_reader(
         batch_index: u32,
         stage_q_offset: u32,
-        mask: Option<VirtualTensor<MSK<AP>>>,
+        mask: ComptimeOption<VirtualTensor<MSK<AP>>>,
         seq_kv_shape: u32,
         #[comptime] config: Self::Config,
     ) -> Self::MaskReader {
@@ -159,7 +161,7 @@ impl<
 
         #[comptime]
         match mask {
-            Some(mask) => {
+            ComptimeOption::Some(mask) => {
                 let layout =
                     AttentionGlobalLayout::new(&mask, batch_index, config.mask_gmem_config);
 
@@ -172,7 +174,9 @@ impl<
                     config.mask_gmem_config,
                 )
             }
-            None => MaskReader::new_logical(stage_q_offset + partition_q_offset, step),
+            ComptimeOption::None => {
+                MaskReader::new_logical(stage_q_offset + partition_q_offset, step)
+            }
         }
     }
 

@@ -50,7 +50,7 @@ pub trait AttentionArgs: Send + Sync + 'static + Clone {
     /// comptime
     fn has_mask<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> Option<()>;
+    ) -> ComptimeOption<()>;
 
     /// Read the line of the query tensor using the state at the given coordinate.
     fn read_query<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
@@ -101,19 +101,19 @@ pub trait AttentionArgs: Send + Sync + 'static + Clone {
     /// Reinterpret query as tensor map
     fn as_tensor_map_query<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> Option<TensorMap<Q, Tiled>>;
+    ) -> ComptimeOption<TensorMap<Q, Tiled>>;
     /// Reinterpret key as tensor map
     fn as_tensor_map_key<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> Option<TensorMap<K, Tiled>>;
+    ) -> ComptimeOption<TensorMap<K, Tiled>>;
     /// Reinterpret value as tensor map
     fn as_tensor_map_value<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> Option<TensorMap<V, Tiled>>;
+    ) -> ComptimeOption<TensorMap<V, Tiled>>;
     /// Reinterpret mask as tensor map
     fn as_tensor_map_mask<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> Option<TensorMap<M, Tiled>>;
+    ) -> ComptimeOption<TensorMap<M, Tiled>>;
 
     /// Write the line to the output at the given coordinate using the state.
     fn write_out<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
@@ -363,8 +363,8 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     fn __expand_as_tensor_map_method(
         &self,
         scope: &mut Scope,
-    ) -> OptionExpand<TensorMap<O, Tiled>> {
-        Option::__expand_new_None(scope)
+    ) -> ComptimeOptionExpand<TensorMap<O, Tiled>> {
+        ComptimeOption::__expand_new_None(scope)
     }
 }
 
@@ -440,7 +440,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     fn __expand_as_tensor_map_method(
         &self,
         scope: &mut Scope,
-    ) -> OptionExpand<TensorMap<Q, Tiled>> {
+    ) -> ComptimeOptionExpand<TensorMap<Q, Tiled>> {
         TensorQueryExpand::__expand_as_tensor_map_method(self.clone(), scope)
     }
 }
@@ -517,7 +517,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     fn __expand_as_tensor_map_method(
         &self,
         scope: &mut Scope,
-    ) -> OptionExpand<TensorMap<K, Tiled>> {
+    ) -> ComptimeOptionExpand<TensorMap<K, Tiled>> {
         TensorKeyExpand::__expand_as_tensor_map_method(self.clone(), scope)
     }
 }
@@ -594,7 +594,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     fn __expand_as_tensor_map_method(
         &self,
         scope: &mut Scope,
-    ) -> OptionExpand<TensorMap<V, Tiled>> {
+    ) -> ComptimeOptionExpand<TensorMap<V, Tiled>> {
         TensorValueExpand::__expand_as_tensor_map_method(self.clone(), scope)
     }
 }
@@ -671,7 +671,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     fn __expand_as_tensor_map_method(
         &self,
         scope: &mut Scope,
-    ) -> OptionExpand<TensorMap<M, Tiled>> {
+    ) -> ComptimeOptionExpand<TensorMap<M, Tiled>> {
         TensorMaskExpand::__expand_as_tensor_map_method(self.clone(), scope)
     }
 }
@@ -772,7 +772,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     }
 
     /// Get the buffer length of the tensor.
-    pub fn as_tensor_map(&self) -> Option<TensorMap<Q, Tiled>> {
+    pub fn as_tensor_map(&self) -> ComptimeOption<TensorMap<Q, Tiled>> {
         unsafe { MA::as_tensor_map_query(&(*self.state)) }
     }
 
@@ -828,7 +828,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     }
 
     /// Get the buffer length of the tensor.
-    pub fn as_tensor_map(&self) -> Option<TensorMap<K, Tiled>> {
+    pub fn as_tensor_map(&self) -> ComptimeOption<TensorMap<K, Tiled>> {
         unsafe { MA::as_tensor_map_key(&(*self.state)) }
     }
 
@@ -884,7 +884,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     }
 
     /// Get the buffer length of the tensor.
-    pub fn as_tensor_map(&self) -> Option<TensorMap<V, Tiled>> {
+    pub fn as_tensor_map(&self) -> ComptimeOption<TensorMap<V, Tiled>> {
         unsafe { MA::as_tensor_map_value(&(*self.state)) }
     }
 
@@ -940,7 +940,7 @@ impl<Q: Float, K: Float, V: Float, M: Numeric, O: Float, MA: AttentionArgs>
     }
 
     /// Get the buffer length of the tensor.
-    pub fn as_tensor_map(&self) -> Option<TensorMap<M, Tiled>> {
+    pub fn as_tensor_map(&self) -> ComptimeOption<TensorMap<M, Tiled>> {
         unsafe { MA::as_tensor_map_mask(&(*self.state)) }
     }
 
@@ -1008,7 +1008,7 @@ pub struct TensorInputs<Q: Float, K: Float, V: Float, M: Numeric> {
     pub query: Tensor<Line<Q>>,
     pub key: Tensor<Line<K>>,
     pub value: Tensor<Line<V>>,
-    pub mask: Option<Tensor<Line<M>>>,
+    pub mask: ComptimeOption<Tensor<Line<M>>>,
 }
 
 impl<Q: Float, K: Float, V: Float, M: Numeric> ConcreteInputsFactory for TensorInputs<Q, K, V, M> {
@@ -1026,8 +1026,8 @@ impl<Q: Float, K: Float, V: Float, M: Numeric> ConcreteInputsFactory for TensorI
             key.as_tensor_arg(line_sizes.key),
             value.as_tensor_arg(line_sizes.value),
             match mask {
-                Some(mask) => OptionArgs::Some(mask.as_tensor_arg(line_sizes.mask)),
-                None => OptionArgs::None,
+                Some(mask) => ComptimeOptionArgs::Some(mask.as_tensor_arg(line_sizes.mask)),
+                None => ComptimeOptionArgs::None,
             },
         )
     }
@@ -1049,7 +1049,7 @@ pub struct AttentionState<Q: Float, K: Float, V: Float, M: Numeric, O: Float> {
     pub query: *const Tensor<Line<Q>>,
     pub key: *const Tensor<Line<K>>,
     pub value: *const Tensor<Line<V>>,
-    pub mask: Option<*const Tensor<Line<M>>>,
+    pub mask: ComptimeOption<*const Tensor<Line<M>>>,
     pub output: *mut Tensor<Line<O>>,
 }
 
@@ -1079,7 +1079,7 @@ impl AttentionArgs for TensorArgs {
 
     fn has_mask<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> Option<()> {
+    ) -> ComptimeOption<()> {
         state.mask.as_ref().map(|_| ())
     }
 
@@ -1145,26 +1145,26 @@ impl AttentionArgs for TensorArgs {
 
     fn as_tensor_map_query<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         _state: &Self::State<Q, K, V, M, O>,
-    ) -> Option<TensorMap<Q, Tiled>> {
-        Option::new_None()
+    ) -> ComptimeOption<TensorMap<Q, Tiled>> {
+        ComptimeOption::new_None()
     }
 
     fn as_tensor_map_key<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         _state: &Self::State<Q, K, V, M, O>,
-    ) -> Option<TensorMap<K, Tiled>> {
-        Option::new_None()
+    ) -> ComptimeOption<TensorMap<K, Tiled>> {
+        ComptimeOption::new_None()
     }
 
     fn as_tensor_map_value<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         _state: &Self::State<Q, K, V, M, O>,
-    ) -> Option<TensorMap<V, Tiled>> {
-        Option::new_None()
+    ) -> ComptimeOption<TensorMap<V, Tiled>> {
+        ComptimeOption::new_None()
     }
 
     fn as_tensor_map_mask<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(
         _state: &Self::State<Q, K, V, M, O>,
-    ) -> Option<TensorMap<M, Tiled>> {
-        Option::new_None()
+    ) -> ComptimeOption<TensorMap<M, Tiled>> {
+        ComptimeOption::new_None()
     }
 
     fn shape_query<Q: Float, K: Float, V: Float, M: Numeric, O: Float>(

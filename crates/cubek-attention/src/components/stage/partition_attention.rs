@@ -259,7 +259,7 @@ impl<
     }
 
     fn init_mask(
-        out_of_bounds: Option<Coords2d>,
+        out_of_bounds: ComptimeOption<Coords2d>,
         #[comptime] config: Self::Config,
     ) -> MaskPartition<AP, TA> {
         MaskPartition::<AP, TA>::new(out_of_bounds, config)

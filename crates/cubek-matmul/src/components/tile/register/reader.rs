@@ -160,17 +160,17 @@ where
     type TileKind = Option<Inner>;
 
     fn load_fragment<E: Numeric, V: Numeric>(
-        tile: &Option<Inner::Tile<V>>,
+        tile: &ComptimeOption<Inner::Tile<V>>,
         fragment: &mut UnitFragment<E>,
         #[comptime] ident: StageIdent,
         #[comptime] config: RegisterMatmulConfig,
     ) {
         #[comptime]
         match tile {
-            Some(tile) => {
+            ComptimeOption::Some(tile) => {
                 RegisterStageReader::<Inner>::load_fragment(tile, fragment, ident, config)
             }
-            None => RegisterStageReader::<Filled>::load_fragment::<E, V>(
+            ComptimeOption::None => RegisterStageReader::<Filled>::load_fragment::<E, V>(
                 &V::from_int(0),
                 fragment,
                 ident,

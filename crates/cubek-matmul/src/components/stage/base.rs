@@ -221,7 +221,9 @@ pub trait LoadStageFamily<IO: SliceVisibility = ReadOnly>: StageFamily {
 }
 
 #[cube]
-impl<ES: Numeric, IO: SliceVisibility, Inner: Stage<ES, IO>> Stage<ES, IO> for Option<Inner> {
+impl<ES: Numeric, IO: SliceVisibility, Inner: Stage<ES, IO>> Stage<ES, IO>
+    for ComptimeOption<Inner>
+{
     type TileKind = Option<Inner::TileKind>;
 
     fn tile(this: &Self, tile: Coords2d) -> <Self::TileKind as TileKind<IO>>::Tile<ES> {
@@ -235,7 +237,7 @@ impl<IO: SliceVisibility, S: LoadStageFamily<IO>> LoadStageFamily<IO> for Option
         #[comptime] alignment: usize,
         #[comptime] config: StageMemoryConfig,
     ) -> Self::Stage<ES, T> {
-        Option::new_Some(S::create(alignment, config))
+        ComptimeOption::new_Some(S::create(alignment, config))
     }
 
     fn with_buffer_index<ES: Numeric, T: TilingLayout>(
@@ -246,7 +248,8 @@ impl<IO: SliceVisibility, S: LoadStageFamily<IO>> LoadStageFamily<IO> for Option
     }
 
     fn free<ES: Numeric, T: TilingLayout>(stage: &Self::Stage<ES, T>) {
-        if let Some(inner) = stage {
+        #[comptime]
+        if let ComptimeOption::Some(inner) = stage {
             S::free(inner)
         }
     }
@@ -254,5 +257,5 @@ impl<IO: SliceVisibility, S: LoadStageFamily<IO>> LoadStageFamily<IO> for Option
 
 impl<IO: SliceVisibility, Inner: StageFamily<IO>> StageFamily<IO> for Option<Inner> {
     type TileKind = Option<Inner::TileKind>;
-    type Stage<ES: Numeric, T: TilingLayout> = Option<Inner::Stage<ES, T>>;
+    type Stage<ES: Numeric, T: TilingLayout> = ComptimeOption<Inner::Stage<ES, T>>;
 }

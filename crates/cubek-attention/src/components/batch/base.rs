@@ -58,7 +58,7 @@ pub trait BatchAttention<AP: AttentionPrecision>: 'static + Send + Sync {
         query: VirtualTensor<QG<AP>>,
         key: VirtualTensor<KG<AP>>,
         value: VirtualTensor<VG<AP>>,
-        mask: Option<VirtualTensor<MSK<AP>>>,
+        mask: ComptimeOption<VirtualTensor<MSK<AP>>>,
         out: VirtualTensor<OG<AP>, ReadWrite>,
         cube_count_args: CubeCountInput,
         #[comptime] config: Self::Config,

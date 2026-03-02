@@ -91,14 +91,16 @@ where
     type TileKind = Option<Inner>;
 
     fn load_fragment<E: Numeric, V: Numeric>(
-        tile: &Option<Inner::Tile<V>>,
+        tile: &ComptimeOption<Inner::Tile<V>>,
         frag: &mut Sequence<LineContainer<E>>,
         #[comptime] n: u32,
     ) {
         #[comptime]
         match tile {
-            Some(tile) => MatrixStageReader::<Inner>::load_fragment(tile, frag, n),
-            None => MatrixStageReader::<Filled>::load_fragment::<E, V>(&V::from_int(0), frag, n),
+            ComptimeOption::Some(tile) => MatrixStageReader::<Inner>::load_fragment(tile, frag, n),
+            ComptimeOption::None => {
+                MatrixStageReader::<Filled>::load_fragment::<E, V>(&V::from_int(0), frag, n)
+            }
         }
     }
 }

@@ -111,7 +111,7 @@ impl GlobalFullCubeReduce {
         reduce_axis: usize,
         reduce_index: usize,
         inst: &I,
-        idle: Option<bool>,
+        idle: ComptimeOption<bool>,
         #[comptime] line_mode: LineMode,
         #[comptime] blueprint: CubeBlueprint,
     ) -> I::SharedAccumulator {

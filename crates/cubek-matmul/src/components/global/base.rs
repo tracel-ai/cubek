@@ -118,7 +118,7 @@ pub trait GlobalMatmul<RC: RuntimeConfig, MP: MatmulPrecision>: 'static + Send +
 
     /// Initialize the global reader for Rhs, starting at row k and column n
     fn init_acc_global_reader(
-        acc: Option<View<Line<AccG<MP>>, Coords2d>>,
+        acc: ComptimeOption<View<Line<AccG<MP>>, Coords2d>>,
         runtime_config: RC,
         #[comptime] config: Self::Config,
     ) -> Self::AccGlobalReader;

@@ -52,7 +52,7 @@ where
             MP,
             LhsStage = PartialLoaderStage<RC, LL, LhsS<MP>>,
             RhsStage = PartialLoaderStage<RC, RL, RhsS<MP>>,
-            AccStage = Option<FullLoaderStage<RC, AL, AccS<MP>>>,
+            AccStage = ComptimeOption<FullLoaderStage<RC, AL, AccS<MP>>>,
             OutStage = GW::Stage,
         >,
     RC: RuntimeConfig,
@@ -75,7 +75,7 @@ where
         RC,
         RL,
     >;
-    type AccGlobalReader = Option<
+    type AccGlobalReader = ComptimeOption<
         FullStageGlobalReader<
             <MP::Acc as MatrixPrecision>::Global,
             <MP::Acc as MatrixPrecision>::Stage,
@@ -281,7 +281,7 @@ where
     }
 
     fn init_acc_global_reader(
-        acc: Option<View<Line<AccG<MP>>, Coords2d>>,
+        acc: ComptimeOption<View<Line<AccG<MP>>, Coords2d>>,
         runtime_config: RC,
         #[comptime] config: Self::Config,
     ) -> Self::AccGlobalReader {

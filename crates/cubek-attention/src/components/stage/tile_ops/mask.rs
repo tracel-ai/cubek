@@ -25,7 +25,7 @@ pub enum MaskTile<AP: AttentionPrecision, TA: TileAttention<AP>> {
 #[cube]
 impl<AP: AttentionPrecision, TA: TileAttention<AP>> MaskTile<AP, TA> {
     pub fn new(
-        out_of_bounds: Option<Coords2d>,
+        out_of_bounds: ComptimeOption<Coords2d>,
         #[comptime] config: TA::Config,
     ) -> MaskTile<AP, TA> {
         let logical_mask = LogicalTileMask::<TA::FragmentLayout> {
@@ -48,7 +48,7 @@ impl<AP: AttentionPrecision, TA: TileAttention<AP>> MaskTile<AP, TA> {
 
     /// Loads the mask data into the fragment, if a tile is given, otherwise only
     /// updates the logical mask
-    pub fn update(&mut self, new_origin: Coords2d, tile: Option<StridedTile<MSK<AP>>>) {
+    pub fn update(&mut self, new_origin: Coords2d, tile: ComptimeOption<StridedTile<MSK<AP>>>) {
         match self {
             MaskTile::Materialized(materialized_tile_mask) => {
                 materialized_tile_mask
@@ -96,7 +96,7 @@ pub struct LogicalTileMask<F: FragmentLayout> {
     // Whether to apply causal mask
     causal: bool,
     // Coordinates over which softmax is out of bounds, corresponds to seq_q, seq_kv of the problem
-    out_of_bounds: Option<Coords2d>,
+    out_of_bounds: ComptimeOption<Coords2d>,
     // Allows mapping local position of a unit to its absolute position
     fragment_layout: F,
 }
@@ -112,8 +112,8 @@ impl<F: FragmentLayout> LogicalTileMask<F> {
 
         #[comptime]
         let oob_masked = match self.out_of_bounds {
-            Some(bounds) => !Coords2d::is_in_bounds(&pos, &bounds),
-            None => false,
+            ComptimeOption::Some(bounds) => !Coords2d::is_in_bounds(&pos, &bounds),
+            ComptimeOption::None => false,
         };
 
         causal_masked || oob_masked

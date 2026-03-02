@@ -35,7 +35,7 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
         inst: &I,
         reduce_axis: usize,
         reduce_index: usize,
-        idle: Option<bool>,
+        idle: ComptimeOption<bool>,
         #[comptime] bound_checks: BoundChecks,
     ) -> PerpendicularReader<P> {
         let line_size = input.line_size();
