@@ -3,7 +3,7 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
 
 use crate::components::tile::{
-    FragmentLayout, FragmentLayoutExpand, FragmentMask, FragmentMaskExpand,
+    FragmentMask, FragmentMaskExpand, SoftmaxLayout, SoftmaxLayoutExpand,
 };
 use crate::components::tile::{TileAttention, TileAttentionConfig};
 use crate::definition::AttentionPrecision;
@@ -19,7 +19,7 @@ pub enum MaskTile<AP: AttentionPrecision, TA: TileAttention<AP>> {
     /// When a mask tensor is supplied. Also contains a logical part
     Materialized(MaterializedTileMask<AP, TA>),
     /// When no mask tensor is supplied. Used for out of bounds and causal mask
-    Logical(LogicalTileMask<TA::FragmentLayout>),
+    Logical(LogicalTileMask<TA::SoftmaxLayout>),
 }
 
 #[cube]
@@ -28,7 +28,7 @@ impl<AP: AttentionPrecision, TA: TileAttention<AP>> MaskTile<AP, TA> {
         out_of_bounds: Option<Coords2d>,
         #[comptime] config: TA::Config,
     ) -> MaskTile<AP, TA> {
-        let logical_mask = LogicalTileMask::<TA::FragmentLayout> {
+        let logical_mask = LogicalTileMask::<TA::SoftmaxLayout> {
             logical_iter_origin: LogicalIterOrigin::init(),
             causal: config.causal_mask(),
             out_of_bounds,
@@ -89,7 +89,7 @@ impl LogicalIterOrigin {
 }
 
 #[derive(CubeType)]
-pub struct LogicalTileMask<F: FragmentLayout> {
+pub struct LogicalTileMask<F: SoftmaxLayout> {
     // Indicates where the logical mask currently starts
     logical_iter_origin: LogicalIterOrigin,
     #[cube(comptime)]
@@ -102,7 +102,7 @@ pub struct LogicalTileMask<F: FragmentLayout> {
 }
 
 #[cube]
-impl<F: FragmentLayout> LogicalTileMask<F> {
+impl<F: SoftmaxLayout> LogicalTileMask<F> {
     pub fn should_mask(&self, local_pos: Coords2d) -> bool {
         let pos_in_tile = self.fragment_layout.absolute_pos(local_pos);
 
@@ -126,7 +126,7 @@ impl<F: FragmentLayout> LogicalTileMask<F> {
 #[derive(CubeType)]
 pub struct MaterializedTileMask<AP: AttentionPrecision, TA: TileAttention<AP>> {
     fragment: TA::Mask,
-    logical_mask: LogicalTileMask<TA::FragmentLayout>,
+    logical_mask: LogicalTileMask<TA::SoftmaxLayout>,
     #[cube(comptime)]
     config: TA::Config,
 }

@@ -8,7 +8,7 @@ use crate::components::tile::RowWise;
 #[cube]
 /// Describes how a fragment is fragmented across units
 /// The layout is independent of the data and data types
-pub trait FragmentLayout: CubeType {
+pub trait SoftmaxLayout: CubeType {
     /// Maps the (row, col) of the registers of a single unit to the position within the whole tile
     ///
     /// Example: for simplicity, if we had a 4 units warp for a 4x4 tile divided as such:
@@ -40,25 +40,25 @@ pub trait FragmentLayout: CubeType {
     fn num_units_per_row(&self) -> comptime_type!(u32);
 }
 
+// #[cube]
+// pub trait FragmentSoftmax<E: Float>: CubeType {
+//     type Layout: SoftmaxLayout;
+//     type SoftmaxRowFormat: RowwiseFormat<E, Layout = Self::Layout>;
+
+//     /// Get the softmax fragment in row format
+//     fn rowwise_mut(&mut self) -> &mut Self::SoftmaxRowFormat;
+
+//     /// Update score/val from rowwise format
+//     fn update_from_rowwise(&mut self);
+
+//     /// Zeroes out the fragment
+//     fn zero(&mut self);
+// }
+
 #[cube]
-pub trait FragmentSoftmax<E: Float>: CubeType {
-    type Layout: FragmentLayout;
-    type SoftmaxRowFormat: RowwiseFormat<E, Layout = Self::Layout>;
-
-    /// Get the softmax fragment in row format
-    fn rowwise_mut(&mut self) -> &mut Self::SoftmaxRowFormat;
-
-    /// Update score/val from rowwise format
-    fn update_from_rowwise(&mut self);
-
-    /// Zeroes out the fragment
-    fn zero(&mut self);
-}
-
-#[cube]
-pub trait RowwiseFormat<E: Float> {
+pub trait SoftmaxRowwise<E: Float> {
     /// How the fragment is fragmented across units
-    type Layout: FragmentLayout;
+    type Layout: SoftmaxLayout;
 
     fn num_units_per_row(&self) -> comptime_type!(u32);
 
@@ -78,19 +78,16 @@ pub trait RowwiseFormat<E: Float> {
 }
 
 #[cube]
-pub trait FragmentAccumulator<E: Float> {
+pub trait AccumulatorRowwise<E: Float> {
     /// Scale each element in a row by a value for this row
-    fn rowwise_scale(&mut self, val: &RowWise<E>);
-
-    /// Zeroes out the fragment
-    fn zero(&mut self);
+    fn rowwise_scale(&mut self, scale: &RowWise<E>);
 }
 
 #[cube]
 /// Describes which elements of a fragment should be masked
 pub trait FragmentMask: CubeType {
     /// How the fragment is fragmented across units
-    type Layout: FragmentLayout;
+    type Layout: SoftmaxLayout;
 
     /// Returns `true` if the element at `local_pos` should be masked
     fn should_mask(&self, local_pos: Coords2d) -> bool;

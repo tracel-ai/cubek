@@ -1,7 +1,6 @@
-mod accumulator_fragment;
 mod attention;
-mod local_tile;
+mod pipeline;
 mod setup;
-mod softmax_fragment;
 
 pub use attention::*;
+pub use pipeline::*;

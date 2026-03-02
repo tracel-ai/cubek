@@ -3,7 +3,7 @@ use cubecl::prelude::*;
 
 use crate::components::stage::{ReduceOp, Reducer};
 use crate::components::tile::{RowWise, TileAttentionConfig};
-use crate::components::tile::{RowwiseFormat, RowwiseFormatExpand};
+use crate::components::tile::{SoftmaxRowwise, SoftmaxRowwiseExpand};
 
 #[derive(CubeType)]
 /// Naive row reducer using shared memory
@@ -11,7 +11,7 @@ pub struct NaiveReducer {}
 
 #[cube]
 impl Reducer for NaiveReducer {
-    fn reduce<E: Float, F: RowwiseFormat<E>, RO: ReduceOp<E>, FC: TileAttentionConfig>(
+    fn reduce<E: Float, F: SoftmaxRowwise<E>, RO: ReduceOp<E>, FC: TileAttentionConfig>(
         vals: &mut RowWise<E>,
         data: &F,
         #[comptime] config: FC,

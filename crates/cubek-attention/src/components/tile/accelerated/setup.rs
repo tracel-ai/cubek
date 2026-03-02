@@ -6,7 +6,7 @@ use crate::components::tile::SharedTileAttentionConfig;
 use crate::components::tile::TileAttentionConfig;
 use crate::components::tile::TileAttentionFamily;
 use crate::components::tile::accelerated::BlackboxAcceleratedTileAttention;
-use crate::components::tile::accelerated::local_tile::InnerLayout;
+use crate::components::tile::accelerated::InnerLayout;
 use crate::definition::AttentionAvailabilityError;
 use crate::definition::AttentionBlueprint;
 use crate::definition::AttentionElems;

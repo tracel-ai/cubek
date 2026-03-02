@@ -10,12 +10,13 @@ use std::marker::PhantomData;
 use crate::components::{
     global::simple::{MaskReader, QueryReader},
     stage::{AccumulatorPartition, MaskPartition, partitioner::AttentionPartitioner},
+    tile::{SoftmaxPipeline, SoftmaxPipelineExpand},
 };
 use crate::components::{
     stage::{
         KeyValuePartition, QueryPartition, RunningState, SoftmaxPartition, StageAttentionConfig,
     },
-    tile::{FragmentSoftmax, FragmentSoftmaxExpand, RowWise, TileAttention},
+    tile::{RowWise, TileAttention},
 };
 use crate::{components::stage::StageAttention, definition::AttentionPrecision};
 use crate::{
@@ -150,7 +151,7 @@ impl<
                 );
 
                 // Make sure the mutations on softmax_rowwise also affect other softmax formats
-                softmax_tile.update_from_rowwise();
+                softmax_tile.finalize_lhs();
 
                 // At this point, the softmax tile is filled with probabilities
 

@@ -3,7 +3,7 @@ use cubecl::prelude::*;
 
 use crate::components::stage::{ReduceOp, Reducer};
 use crate::components::tile::{RowVal, RowWise, TileAttentionConfig};
-use crate::components::tile::{RowwiseFormat, RowwiseFormatExpand};
+use crate::components::tile::{SoftmaxRowwise, SoftmaxRowwiseExpand};
 
 #[derive(CubeType)]
 /// Applies reduction on rows, masking planes that do not participate in the row
@@ -11,7 +11,7 @@ pub struct BroadcastReducer {}
 
 #[cube]
 impl Reducer for BroadcastReducer {
-    fn reduce<E: Float, F: RowwiseFormat<E>, RO: ReduceOp<E>, FC: TileAttentionConfig>(
+    fn reduce<E: Float, F: SoftmaxRowwise<E>, RO: ReduceOp<E>, FC: TileAttentionConfig>(
         vals: &mut RowWise<E>,
         data: &F,
         #[comptime] _config: FC,

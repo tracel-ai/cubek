@@ -4,11 +4,11 @@ use cubecl::std::tensor::layout::Coords2d;
 use cubek_matmul::components::tile::StridedTile;
 
 use crate::components::tile::{
-    FragmentAccumulator, FragmentAccumulatorExpand, FragmentMask, FragmentMaskExpand, LOGIT_MASKED,
-    RowVal, RowWise, RowwiseFormat, RowwiseFormatExpand,
+    AccumulatorRowwise, AccumulatorRowwiseExpand, FragmentMask, FragmentMaskExpand, LOGIT_MASKED,
+    RowVal, RowWise, SoftmaxRowwise, SoftmaxRowwiseExpand,
 };
 
-use crate::components::tile::{FragmentLayout, FragmentLayoutExpand};
+use crate::components::tile::{SoftmaxLayout, SoftmaxLayoutExpand};
 
 #[derive(CubeType)]
 /// Assumes:
@@ -145,7 +145,7 @@ impl LocalTileLayout {
 }
 
 #[cube]
-impl FragmentLayout for LocalTileLayout {
+impl SoftmaxLayout for LocalTileLayout {
     fn absolute_pos(&self, local_pos: Coords2d) -> Coords2d {
         let abs_row_index = {
             let row_0 = UNIT_POS_X / self.num_units_per_row;
@@ -165,7 +165,7 @@ impl FragmentLayout for LocalTileLayout {
 }
 
 #[cube]
-impl<E: Float> RowwiseFormat<E> for LocalTile<E> {
+impl<E: Float> SoftmaxRowwise<E> for LocalTile<E> {
     type Layout = LocalTileLayout;
 
     fn rowwise_max(&self) -> RowWise<E> {
@@ -254,7 +254,7 @@ impl<E: Float> RowwiseFormat<E> for LocalTile<E> {
 }
 
 #[cube]
-impl<E: Float> FragmentAccumulator<E> for LocalTile<E> {
+impl<E: Float> AccumulatorRowwise<E> for LocalTile<E> {
     fn rowwise_scale(&mut self, scale: &RowWise<E>) {
         #[unroll]
         for r in 0..self.layout.unit_size.0 as usize {
@@ -265,10 +265,6 @@ impl<E: Float> FragmentAccumulator<E> for LocalTile<E> {
                 self.array[index as usize] = self.array[index as usize] * scale.index(r);
             }
         }
-    }
-
-    fn zero(&mut self) {
-        self.zero()
     }
 }
 
