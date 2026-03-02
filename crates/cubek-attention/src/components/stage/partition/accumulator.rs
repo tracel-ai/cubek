@@ -21,7 +21,7 @@ impl<AP: AttentionPrecision, TA: TileAttention<AP>> AccumulatorPartition<AP, TA>
         let p = config.shared().partition_size;
         let mut sequence = Sequence::new();
 
-        let mut shared = TA::allocate_accumulator_shared(config.tile_config());
+        let mut shared = TA::allocate_accumulator_transit(config.tile_config());
 
         #[unroll]
         for _ in 0..p.seq_q * p.val_dim {

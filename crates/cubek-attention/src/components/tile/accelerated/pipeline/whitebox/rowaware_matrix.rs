@@ -6,10 +6,16 @@ use crate::components::tile::{
 };
 
 #[derive(CubeType)]
-pub struct MatrixSoftmaxLayout {}
+pub struct RowAwareMatrixLayout {}
+
+#[derive(CubeType)]
+pub struct RowAwareMatrix<E: Float> {
+    pub(crate) fragment: cmma::Matrix<E>,
+    pub(crate) layout: RowAwareMatrixLayout,
+}
 
 #[cube]
-impl SoftmaxLayout for MatrixSoftmaxLayout {
+impl SoftmaxLayout for RowAwareMatrixLayout {
     fn absolute_pos(&self, local_pos: Coords2d) -> Coords2d {
         todo!()
     }
@@ -20,11 +26,11 @@ impl SoftmaxLayout for MatrixSoftmaxLayout {
 }
 
 #[cube]
-impl<E: Float> SoftmaxRowwise<E> for cmma::Matrix<E> {
-    type Layout = MatrixSoftmaxLayout;
+impl<E: Float> SoftmaxRowwise<E> for RowAwareMatrix<E> {
+    type Layout = RowAwareMatrixLayout;
 
     fn num_units_per_row(&self) -> comptime_type!(u32) {
-        todo!()
+        self.layout.num_units_per_row()
     }
 
     fn rowwise_max(&self) -> RowWise<E> {
@@ -45,7 +51,7 @@ impl<E: Float> SoftmaxRowwise<E> for cmma::Matrix<E> {
 }
 
 #[cube]
-impl<E: Float> AccumulatorRowwise<E> for cmma::Matrix<E> {
+impl<E: Float> AccumulatorRowwise<E> for RowAwareMatrix<E> {
     fn rowwise_scale(&mut self, scale: &RowWise<E>) {
         todo!()
     }

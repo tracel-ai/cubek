@@ -1,8 +1,11 @@
 use cubecl;
 use cubecl::prelude::*;
 
+use crate::components::tile::accelerated::pipeline::whitebox::fragment_convert::FragmentConvert;
+use crate::components::tile::accelerated::pipeline::whitebox::rowaware_matrix::{
+    RowAwareMatrix, RowAwareMatrixLayout,
+};
 use crate::components::tile::accelerated::setup::AcceleratedAttentionMatmulConfig;
-use crate::components::tile::accelerated::{LocalTile, LocalTileLayout};
 use crate::components::tile::{SoftmaxPipeline, SoftmaxPipelineExpand, SoftmaxRowwise};
 use crate::definition::AttentionTileSize;
 
@@ -14,26 +17,26 @@ use crate::definition::AttentionTileSize;
 /// - loading it into a known layout ([LocalTile]) for computations,
 /// - storing back to shared memory (with cast if needed),
 /// - loading it in the value LHS format.
-pub struct WhiteboxSoftmaxPipeline<Acc: Float, Lhs: Float> {
+pub struct WhiteboxSoftmaxPipeline<
+    Acc: Float,
+    Lhs: Float,
+    FC: FragmentConvert<Acc = Acc, Lhs = Lhs>,
+> {
     // Accumulator of score matmul
-    pub acc_fragment: cmma::Matrix<Acc>,
+    pub rowaware_acc: RowAwareMatrix<Acc>,
     // Lhs of value matmul
     pub lhs_fragment: cmma::Matrix<Lhs>,
-    acc_smem_slice: SliceMut<Acc>,
-    lhs_smem_slice: SliceMut<Lhs>,
-    // Where to perform operations in register
-    local_tile: LocalTile<Acc>,
-    #[cube(comptime)]
-    stride: u32,
+    pub transit: FC::Transit,
 }
 
 #[cube]
-impl<Acc: Float, Lhs: Float> WhiteboxSoftmaxPipeline<Acc, Lhs> {
+impl<Acc: Float, Lhs: Float, FC: FragmentConvert<Acc = Acc, Lhs = Lhs>>
+    WhiteboxSoftmaxPipeline<Acc, Lhs, FC>
+{
     pub fn new(
-        acc_shared_memory: &mut SharedMemory<Acc>,
-        lhs_shared_memory: &mut SharedMemory<Lhs>,
+        transit: FC::Transit,
         #[comptime] tile_size: AttentionTileSize,
-        #[comptime] config: AcceleratedAttentionMatmulConfig,
+        #[comptime] _config: AcceleratedAttentionMatmulConfig,
     ) -> Self {
         let acc_fragment = unsafe {
             cmma::Matrix::<Acc>::uninitialized(
@@ -43,6 +46,11 @@ impl<Acc: Float, Lhs: Float> WhiteboxSoftmaxPipeline<Acc, Lhs> {
                 tile_size.head_dim as usize,
                 cmma::MatrixLayout::Undefined,
             )
+        };
+
+        let rowaware_acc = RowAwareMatrix::<Acc> {
+            fragment: acc_fragment,
+            layout: RowAwareMatrixLayout {},
         };
 
         let lhs_fragment = unsafe {
@@ -55,48 +63,44 @@ impl<Acc: Float, Lhs: Float> WhiteboxSoftmaxPipeline<Acc, Lhs> {
             )
         };
 
-        let array_tile_layout = LocalTileLayout::new(
-            (tile_size.seq_q, tile_size.seq_kv),
-            config.shared.plane_dim,
-            config.inner_layout,
-        );
-
-        let local_tile = LocalTile::new(array_tile_layout);
-
-        let smem_slot_size = (tile_size.seq_q * tile_size.seq_kv) as usize;
-        let smem_slice_start = UNIT_POS_Y as usize * smem_slot_size;
-        let smem_slice_end = smem_slice_start + smem_slot_size;
-
-        let acc_smem_slice = acc_shared_memory.slice_mut(smem_slice_start, smem_slice_end);
-        let lhs_smem_slice = lhs_shared_memory.slice_mut(smem_slice_start, smem_slice_end);
-
-        WhiteboxSoftmaxPipeline::<Acc, Lhs> {
-            acc_fragment,
+        WhiteboxSoftmaxPipeline::<Acc, Lhs, FC> {
+            rowaware_acc,
             lhs_fragment,
-            acc_smem_slice,
-            lhs_smem_slice,
-            local_tile,
-            stride: tile_size.seq_kv,
+            transit,
         }
     }
 }
 
 #[cube]
-impl<Acc: Float, Lhs: Float> SoftmaxPipeline<Acc> for WhiteboxSoftmaxPipeline<Acc, Lhs> {
+impl<Acc: Float, Lhs: Float, FC: FragmentConvert<Acc = Acc, Lhs = Lhs>> SoftmaxPipeline<Acc>
+    for WhiteboxSoftmaxPipeline<Acc, Lhs, FC>
+{
     type MatmulAccumulator = cmma::Matrix<Acc>;
     type MatmulLhs = cmma::Matrix<Lhs>;
-    type Rowwise = cmma::Matrix<Acc>;
-    type SoftmaxLayout = <Self::Rowwise as SoftmaxRowwise<Acc>>::Layout;
+    type Rowwise = RowAwareMatrix<Acc>;
+    type Layout = <Self::Rowwise as SoftmaxRowwise<Acc>>::Layout;
+    type Transit = FC::Transit;
 
     fn rowwise_mut(&mut self) -> &mut Self::Rowwise {
-        todo!()
+        &mut self.rowaware_acc
     }
 
     fn finalize_lhs(&mut self) {
-        todo!()
+        FC::acc_to_lhs(
+            &self.rowaware_acc.fragment,
+            &mut self.lhs_fragment,
+            &mut self.transit,
+        );
     }
 
     fn zero(&mut self) {
-        todo!()
+        cmma::fill(&self.rowaware_acc.fragment, Acc::from_int(0));
+    }
+
+    fn transit(
+        #[comptime] tile_size: AttentionTileSize,
+        #[comptime] num_planes: usize,
+    ) -> Self::Transit {
+        FC::transit(tile_size, num_planes)
     }
 }
