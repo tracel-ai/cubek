@@ -2,7 +2,7 @@ use cubecl;
 use cubecl::prelude::*;
 use cubek_matmul::components::tile::StridedTile;
 
-use crate::components::tile::accelerated::setup::BlackboxAcceleratedAttentionMatmulConfig;
+use crate::components::tile::accelerated::setup::AcceleratedAttentionMatmulConfig;
 use crate::components::tile::accelerated::{
     BlackboxAccumulatorPipeline, BlackboxSoftmaxPipeline, LocalTile, LocalTileLayout,
 };
@@ -16,7 +16,7 @@ pub struct BlackboxAcceleratedTileAttention;
 
 #[cube]
 impl<AP: AttentionPrecision> TileAttention<AP> for BlackboxAcceleratedTileAttention {
-    type Config = BlackboxAcceleratedAttentionMatmulConfig;
+    type Config = AcceleratedAttentionMatmulConfig;
 
     type Query = cmma::Matrix<QT<AP>>;
     type KeyValue = cmma::Matrix<KVT<AP>>;

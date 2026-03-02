@@ -1,7 +1,7 @@
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::components::tile::accelerated::setup::BlackboxAcceleratedAttentionMatmulConfig;
+use crate::components::tile::accelerated::setup::AcceleratedAttentionMatmulConfig;
 use crate::components::tile::accelerated::{LocalTile, LocalTileLayout};
 use crate::components::tile::{SoftmaxPipeline, SoftmaxPipelineExpand, SoftmaxRowwise};
 use crate::definition::AttentionTileSize;
@@ -14,7 +14,7 @@ use crate::definition::AttentionTileSize;
 /// - loading it into a known layout ([LocalTile]) for computations,
 /// - storing back to shared memory (with cast if needed),
 /// - loading it in the value LHS format.
-pub struct BlackboxSoftmaxPipeline<Acc: Float, Lhs: Float> {
+pub struct WhiteboxSoftmaxPipeline<Acc: Float, Lhs: Float> {
     // Accumulator of score matmul
     pub acc_fragment: cmma::Matrix<Acc>,
     // Lhs of value matmul
@@ -28,12 +28,12 @@ pub struct BlackboxSoftmaxPipeline<Acc: Float, Lhs: Float> {
 }
 
 #[cube]
-impl<Acc: Float, Lhs: Float> BlackboxSoftmaxPipeline<Acc, Lhs> {
+impl<Acc: Float, Lhs: Float> WhiteboxSoftmaxPipeline<Acc, Lhs> {
     pub fn new(
         acc_shared_memory: &mut SharedMemory<Acc>,
         lhs_shared_memory: &mut SharedMemory<Lhs>,
         #[comptime] tile_size: AttentionTileSize,
-        #[comptime] config: BlackboxAcceleratedAttentionMatmulConfig,
+        #[comptime] config: AcceleratedAttentionMatmulConfig,
     ) -> Self {
         let acc_fragment = unsafe {
             cmma::Matrix::<Acc>::uninitialized(
@@ -70,7 +70,7 @@ impl<Acc: Float, Lhs: Float> BlackboxSoftmaxPipeline<Acc, Lhs> {
         let acc_smem_slice = acc_shared_memory.slice_mut(smem_slice_start, smem_slice_end);
         let lhs_smem_slice = lhs_shared_memory.slice_mut(smem_slice_start, smem_slice_end);
 
-        BlackboxSoftmaxPipeline::<Acc, Lhs> {
+        WhiteboxSoftmaxPipeline::<Acc, Lhs> {
             acc_fragment,
             lhs_fragment,
             acc_smem_slice,
@@ -82,43 +82,21 @@ impl<Acc: Float, Lhs: Float> BlackboxSoftmaxPipeline<Acc, Lhs> {
 }
 
 #[cube]
-impl<Acc: Float, Lhs: Float> SoftmaxPipeline<Acc> for BlackboxSoftmaxPipeline<Acc, Lhs> {
-    type MatmulLhs = cmma::Matrix<Lhs>;
+impl<Acc: Float, Lhs: Float> SoftmaxPipeline<Acc> for WhiteboxSoftmaxPipeline<Acc, Lhs> {
     type MatmulAccumulator = cmma::Matrix<Acc>;
-    type Rowwise = LocalTile<Acc>;
+    type MatmulLhs = cmma::Matrix<Lhs>;
+    type Rowwise = cmma::Matrix<Acc>;
     type SoftmaxLayout = <Self::Rowwise as SoftmaxRowwise<Acc>>::Layout;
 
     fn rowwise_mut(&mut self) -> &mut Self::Rowwise {
-        cmma::store(
-            &mut self.acc_smem_slice,
-            &self.acc_fragment,
-            self.stride,
-            cmma::MatrixLayout::RowMajor,
-        );
-
-        sync_cube();
-
-        self.local_tile
-            .load_from_slice(&self.acc_smem_slice.to_slice());
-
-        sync_cube();
-
-        &mut self.local_tile
+        todo!()
     }
 
     fn finalize_lhs(&mut self) {
-        self.local_tile.store_to(&mut self.lhs_smem_slice);
-
-        sync_cube();
-
-        cmma::load(
-            &self.lhs_fragment,
-            &self.lhs_smem_slice.to_slice(),
-            self.stride,
-        );
+        todo!()
     }
 
     fn zero(&mut self) {
-        cmma::fill(&self.acc_fragment, Acc::from_int(0));
+        todo!()
     }
 }

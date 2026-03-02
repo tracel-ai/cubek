@@ -17,12 +17,12 @@ use crate::definition::InvalidConfigError;
 use cubecl::features::MmaConfig;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct BlackboxAcceleratedAttentionMatmulConfig {
+pub struct AcceleratedAttentionMatmulConfig {
     pub shared: SharedTileAttentionConfig,
     pub inner_layout: InnerLayout,
 }
 
-impl TileAttentionConfig for BlackboxAcceleratedAttentionMatmulConfig {
+impl TileAttentionConfig for AcceleratedAttentionMatmulConfig {
     fn plane_dim(&self) -> u32 {
         self.shared.plane_dim
     }
@@ -54,7 +54,7 @@ impl TileAttentionConfig for BlackboxAcceleratedAttentionMatmulConfig {
 impl TileAttentionFamily for BlackboxAcceleratedTileAttention {
     type TileAttention<F: AttentionPrecision> = BlackboxAcceleratedTileAttention;
 
-    type Config = BlackboxAcceleratedAttentionMatmulConfig;
+    type Config = AcceleratedAttentionMatmulConfig;
 
     fn requires_accelerator() -> bool {
         false
@@ -71,7 +71,7 @@ impl TileAttentionFamily for BlackboxAcceleratedTileAttention {
     ) -> Result<Self::Config, AttentionSetupError> {
         validate(
             device_props,
-            BlackboxAcceleratedAttentionMatmulConfig {
+            AcceleratedAttentionMatmulConfig {
                 shared: SharedTileAttentionConfig {
                     plane_dim: blueprint.plane_dim,
                     num_planes: blueprint.tiling_scheme.stage_size.seq_q,
@@ -94,11 +94,11 @@ impl TileAttentionFamily for BlackboxAcceleratedTileAttention {
 
 fn validate(
     device_props: &DeviceProperties,
-    config: BlackboxAcceleratedAttentionMatmulConfig,
+    config: AcceleratedAttentionMatmulConfig,
     reuse_key_value: bool,
     line_sizes_mask: LineSize,
     dtypes: &AttentionElems,
-) -> Result<BlackboxAcceleratedAttentionMatmulConfig, AttentionSetupError> {
+) -> Result<AcceleratedAttentionMatmulConfig, AttentionSetupError> {
     if dtypes.query_global != dtypes.query_tile {
         return Err(AttentionSetupError::InvalidConfig(Box::new(
             "Query global and tile types must be the same because no stage to cast in between",
