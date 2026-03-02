@@ -4,11 +4,11 @@ use cubecl::prelude::*;
 use crate::components::stage::RowMax;
 use crate::components::stage::RowSum;
 use crate::components::tile::RowWise;
-use crate::components::tile::RowwiseFormat;
+use crate::components::tile::SoftmaxRowwise;
 use crate::components::tile::TileAttentionConfig;
 
 use crate::components::stage::{MaskTile, RunningState};
-use crate::components::tile::RowwiseFormatExpand;
+use crate::components::tile::SoftmaxRowwiseExpand;
 
 use crate::components::tile::TileAttention;
 use crate::definition::AttentionPrecision;
@@ -62,7 +62,7 @@ pub fn tile_softmax<AP: AttentionPrecision, TA: TileAttention<AP>, R: Reducer>(
 
 #[cube]
 /// Computes the sum of rows on a fragment, using the Reducer's strategy
-pub fn row_sum<E: Float, F: RowwiseFormat<E>, R: Reducer, TC: TileAttentionConfig>(
+pub fn row_sum<E: Float, F: SoftmaxRowwise<E>, R: Reducer, TC: TileAttentionConfig>(
     vals: &mut RowWise<E>,
     data: &F,
     #[comptime] config: TC,
@@ -74,7 +74,7 @@ pub fn row_sum<E: Float, F: RowwiseFormat<E>, R: Reducer, TC: TileAttentionConfi
 #[cube]
 /// Computes the max of rows on a fragment, using the Reducer's strategy
 /// Starts max at base
-pub fn row_max<E: Float, F: RowwiseFormat<E>, R: Reducer, TC: TileAttentionConfig>(
+pub fn row_max<E: Float, F: SoftmaxRowwise<E>, R: Reducer, TC: TileAttentionConfig>(
     vals: &mut RowWise<E>,
     base: &RowWise<E>,
     data: &F,
@@ -88,7 +88,7 @@ pub fn row_max<E: Float, F: RowwiseFormat<E>, R: Reducer, TC: TileAttentionConfi
 /// Strategy for reducing across units participating in the same row
 pub trait Reducer: CubeType {
     /// Reduction algorithm, applied inplace in vals
-    fn reduce<E: Float, F: RowwiseFormat<E>, RO: ReduceOp<E>, TC: TileAttentionConfig>(
+    fn reduce<E: Float, F: SoftmaxRowwise<E>, RO: ReduceOp<E>, TC: TileAttentionConfig>(
         vals: &mut RowWise<E>,
         data: &F,
         #[comptime] config: TC,
@@ -99,11 +99,11 @@ pub trait Reducer: CubeType {
 /// A reduction operation
 pub trait ReduceOp<E: Float> {
     /// Applies the reduction on the elements of the same row held by the unit
-    fn reduce_local<F: RowwiseFormat<E>>(data: &F) -> RowWise<E>;
+    fn reduce_local<F: SoftmaxRowwise<E>>(data: &F) -> RowWise<E>;
 
     /// Applies the reduction on the elements of the same row held by the unit,
     /// and to the accumulator, and store in the accumulator
-    fn reduce_local_accumulate<F: RowwiseFormat<E>>(data: &F, acc: &mut RowWise<E>);
+    fn reduce_local_accumulate<F: SoftmaxRowwise<E>>(data: &F, acc: &mut RowWise<E>);
 
     /// The basic operation on two single values
     fn reduce_step_scalar(a: E, b: E) -> E;

@@ -116,7 +116,7 @@ pub fn launch_ref<R: Runtime>(
         address_type,
         lhs.scheme(),
         rhs.scheme(),
-    );
+    )?;
 
     let device_settings = NaiveRoutine::device_settings(client, line_sizes);
     let expand_info = NaiveRoutine::expand_blueprint(

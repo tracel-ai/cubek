@@ -4,7 +4,7 @@ use cubecl::prelude::*;
 use crate::components::stage::ReduceOp;
 use crate::components::stage::Reducer;
 use crate::components::tile::RowWise;
-use crate::components::tile::RowwiseFormat;
+use crate::components::tile::SoftmaxRowwise;
 use crate::components::tile::TileAttentionConfig;
 
 #[derive(CubeType)]
@@ -13,7 +13,7 @@ pub struct UnitReducer {}
 
 #[cube]
 impl Reducer for UnitReducer {
-    fn reduce<E: Float, F: RowwiseFormat<E>, RO: ReduceOp<E>, FC: TileAttentionConfig>(
+    fn reduce<E: Float, F: SoftmaxRowwise<E>, RO: ReduceOp<E>, FC: TileAttentionConfig>(
         vals: &mut RowWise<E>,
         data: &F,
         #[comptime] _config: FC,

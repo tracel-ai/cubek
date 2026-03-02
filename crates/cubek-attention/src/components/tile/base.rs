@@ -5,7 +5,7 @@ use cubek_matmul::components::CubeDimResource;
 use cubek_matmul::components::tile::StridedTile;
 
 use crate::components::tile::{
-    FragmentAccumulator, FragmentLayout, FragmentMask, FragmentSoftmax, RowwiseFormat,
+    AccumulatorPipeline, FragmentMask, SoftmaxLayout, SoftmaxPipeline, SoftmaxRowwise,
 };
 use crate::definition::attention_types::{ACC, SM};
 use crate::definition::{
@@ -30,17 +30,18 @@ pub trait TileAttention<AP: AttentionPrecision>: Send + Sync + 'static {
     type Config: TileAttentionConfig;
     type Query: CubeType;
     type KeyValue: CubeType;
-    type Mask: FragmentMask<Layout = Self::FragmentLayout>;
+    type Mask: FragmentMask<Layout = Self::SoftmaxLayout>;
 
-    type Softmax: FragmentSoftmax<SM<AP>, Layout = Self::FragmentLayout, SoftmaxRowFormat = Self::SoftmaxRow>;
-    type SoftmaxRow: RowwiseFormat<SM<AP>, Layout = Self::FragmentLayout>;
+    // type Softmax: FragmentSoftmax<SM<AP>, Layout = Self::SoftmaxLayout, SoftmaxRowFormat = Self::SoftmaxRow>;
+    type Softmax: SoftmaxPipeline<SM<AP>, Rowwise = Self::SoftmaxRow>;
+    type SoftmaxRow: SoftmaxRowwise<SM<AP>, Layout = Self::SoftmaxLayout>;
+    type SoftmaxLayout: SoftmaxLayout;
     type SoftmaxShared: CubeType;
 
-    type Accumulator: FragmentAccumulator<ACC<AP>>;
+    type Accumulator: AccumulatorPipeline<ACC<AP>>;
     type AccumulatorShared: CubeType;
-    type FragmentLayout: FragmentLayout;
 
-    fn softmax_layout(#[comptime] config: Self::Config) -> Self::FragmentLayout;
+    fn softmax_layout(#[comptime] config: Self::Config) -> Self::SoftmaxLayout;
 
     fn score_matmul(
         lhs: &Self::Query,
