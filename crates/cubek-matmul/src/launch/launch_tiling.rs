@@ -150,7 +150,7 @@ where
         address_type,
         lhs.scheme(),
         rhs.scheme(),
-    );
+    )?;
 
     if !client
         .properties()
