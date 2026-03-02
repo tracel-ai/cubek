@@ -120,6 +120,5 @@ impl<Acc: Float, Lhs: Float> SoftmaxPipeline<Acc> for BlackboxSoftmaxPipeline<Ac
 
     fn zero(&mut self) {
         cmma::fill(&self.acc_fragment, Acc::from_int(0));
-        // cmma::fill(&self.lhs_fragment, Lhs::from_int(0));
     }
 }
