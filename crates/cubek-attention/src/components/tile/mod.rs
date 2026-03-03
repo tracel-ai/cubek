@@ -1,4 +1,5 @@
-pub mod accelerated;
+pub mod accelerated_blackbox;
+pub mod accelerated_whitebox;
 pub mod unit_register;
 
 mod base;

@@ -3,7 +3,7 @@ use cubecl::prelude::CubePrimitive;
 use cubek_matmul::components::{global::PartitionedStageFamily, stage::StridedStageFamily};
 
 use crate::components::stage::plane::PlanePartitionStageAttentionFamily;
-use crate::components::tile::accelerated_blackbox::BlackboxAcceleratedTileAttention;
+use crate::components::tile::accelerated_whitebox::WhiteboxAcceleratedTileAttention;
 use crate::definition::AttentionTileSize;
 use crate::definition::{
     AttentionBlueprint, AttentionElems, AttentionPartitionSize, AttentionProblem,
@@ -19,10 +19,10 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub struct BlackboxAcceleratedRoutine {}
+pub struct WhiteboxAcceleratedRoutine {}
 
-impl Routine for BlackboxAcceleratedRoutine {
-    type TileAttention = BlackboxAcceleratedTileAttention;
+impl Routine for WhiteboxAcceleratedRoutine {
+    type TileAttention = WhiteboxAcceleratedTileAttention;
     type StageAttention = PlanePartitionStageAttentionFamily<
         Self::TileAttention,
         StridedStageFamily,
@@ -68,7 +68,7 @@ impl Routine for BlackboxAcceleratedRoutine {
 fn blueprint(
     problem: &AttentionProblem,
     launch_settings: &DeviceSettings,
-    strategy: BlueprintStrategy<BlackboxAcceleratedRoutine>,
+    strategy: BlueprintStrategy<WhiteboxAcceleratedRoutine>,
 ) -> Result<AttentionBlueprint, AttentionSetupError> {
     match strategy {
         BlueprintStrategy::Forced(attention_blueprint) => validate(problem, attention_blueprint),

@@ -2,8 +2,8 @@ use cubecl;
 use cubecl::prelude::*;
 use cubek_matmul::components::tile::StridedTile;
 
-use crate::components::tile::accelerated::setup::AcceleratedAttentionMatmulConfig;
-use crate::components::tile::accelerated::{
+use crate::components::tile::accelerated_blackbox::setup::BlackboxAcceleratedAttentionMatmulConfig;
+use crate::components::tile::accelerated_blackbox::{
     BlackboxAccumulatorPipeline, BlackboxSoftmaxPipeline, LocalTile, LocalTileLayout,
 };
 use crate::components::tile::{
@@ -18,7 +18,7 @@ pub struct BlackboxAcceleratedTileAttention;
 
 #[cube]
 impl<AP: AttentionPrecision> TileAttention<AP> for BlackboxAcceleratedTileAttention {
-    type Config = AcceleratedAttentionMatmulConfig;
+    type Config = BlackboxAcceleratedAttentionMatmulConfig;
 
     type Query = cmma::Matrix<QT<AP>>;
     type KeyValue = cmma::Matrix<KVT<AP>>;
@@ -134,22 +134,22 @@ impl<AP: AttentionPrecision> TileAttention<AP> for BlackboxAcceleratedTileAttent
     }
 
     fn allocate_softmax(
-        shared: &mut Self::SoftmaxTransit,
+        transit: &mut Self::SoftmaxTransit,
         #[comptime] config: Self::Config,
     ) -> Self::Softmax {
         BlackboxSoftmaxPipeline::new(
-            &mut shared.0,
-            &mut shared.1,
+            &mut transit.0,
+            &mut transit.1,
             config.attention_tile_size(),
             config,
         )
     }
 
     fn allocate_accumulator(
-        shared: &mut Self::AccumulatorTransit,
+        transit: &mut Self::AccumulatorTransit,
         #[comptime] config: Self::Config,
     ) -> Self::Accumulator {
-        BlackboxAccumulatorPipeline::new(shared, config.attention_tile_size(), config)
+        BlackboxAccumulatorPipeline::new(transit, config.attention_tile_size(), config)
     }
 
     fn load_query<E: Numeric>(tile: &StridedTile<E>, fragment: &mut Self::Query) {

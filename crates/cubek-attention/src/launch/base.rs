@@ -6,6 +6,7 @@ use crate::definition::AttentionSetupError;
 use crate::definition::{AttentionDims, AttentionGlobalTypes, AttentionOptions, AttentionProblem};
 use crate::launch::args::{TensorArgs, TensorInputsLaunch};
 use crate::routines::DeviceSettings;
+use crate::routines::whitebox_accelerated::WhiteboxAcceleratedRoutine;
 use crate::routines::{
     Routine, blackbox_accelerated::BlackboxAcceleratedRoutine, unit::UnitRoutine,
 };
@@ -23,6 +24,7 @@ pub enum BlueprintStrategy<R: Routine> {
 #[derive(Debug, Clone)]
 pub enum Strategy {
     BlackboxAccelerated(BlueprintStrategy<BlackboxAcceleratedRoutine>),
+    WhiteboxAccelerated(BlueprintStrategy<WhiteboxAcceleratedRoutine>),
     Unit(BlueprintStrategy<UnitRoutine>),
 }
 
@@ -66,6 +68,19 @@ pub fn launch_ref<R: Runtime>(
     match strategy {
         Strategy::BlackboxAccelerated(strategy) => {
             launch_attention::<R, BlackboxAcceleratedRoutine>(
+                client,
+                query,
+                key,
+                value,
+                mask,
+                out,
+                attention_global_types,
+                strategy,
+                attention_options,
+            )
+        }
+        Strategy::WhiteboxAccelerated(strategy) => {
+            launch_attention::<R, WhiteboxAcceleratedRoutine>(
                 client,
                 query,
                 key,

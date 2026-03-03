@@ -5,8 +5,8 @@ use cubek_matmul::components::CubeDimResource;
 use crate::components::tile::SharedTileAttentionConfig;
 use crate::components::tile::TileAttentionConfig;
 use crate::components::tile::TileAttentionFamily;
-use crate::components::tile::accelerated::BlackboxAcceleratedTileAttention;
-use crate::components::tile::accelerated::InnerLayout;
+use crate::components::tile::accelerated_blackbox::BlackboxAcceleratedTileAttention;
+use crate::components::tile::accelerated_blackbox::InnerLayout;
 use crate::definition::AttentionAvailabilityError;
 use crate::definition::AttentionBlueprint;
 use crate::definition::AttentionElems;
@@ -17,12 +17,12 @@ use crate::definition::InvalidConfigError;
 use cubecl::features::MmaConfig;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct AcceleratedAttentionMatmulConfig {
+pub struct BlackboxAcceleratedAttentionMatmulConfig {
     pub shared: SharedTileAttentionConfig,
     pub inner_layout: InnerLayout,
 }
 
-impl TileAttentionConfig for AcceleratedAttentionMatmulConfig {
+impl TileAttentionConfig for BlackboxAcceleratedAttentionMatmulConfig {
     fn plane_dim(&self) -> u32 {
         self.shared.plane_dim
     }
@@ -54,7 +54,7 @@ impl TileAttentionConfig for AcceleratedAttentionMatmulConfig {
 impl TileAttentionFamily for BlackboxAcceleratedTileAttention {
     type TileAttention<F: AttentionPrecision> = BlackboxAcceleratedTileAttention;
 
-    type Config = AcceleratedAttentionMatmulConfig;
+    type Config = BlackboxAcceleratedAttentionMatmulConfig;
 
     fn requires_accelerator() -> bool {
         false
@@ -71,7 +71,7 @@ impl TileAttentionFamily for BlackboxAcceleratedTileAttention {
     ) -> Result<Self::Config, AttentionSetupError> {
         validate(
             device_props,
-            AcceleratedAttentionMatmulConfig {
+            BlackboxAcceleratedAttentionMatmulConfig {
                 shared: SharedTileAttentionConfig {
                     plane_dim: blueprint.plane_dim,
                     num_planes: blueprint.tiling_scheme.stage_size.seq_q,
@@ -94,11 +94,11 @@ impl TileAttentionFamily for BlackboxAcceleratedTileAttention {
 
 fn validate(
     device_props: &DeviceProperties,
-    config: AcceleratedAttentionMatmulConfig,
+    config: BlackboxAcceleratedAttentionMatmulConfig,
     reuse_key_value: bool,
     line_sizes_mask: LineSize,
     dtypes: &AttentionElems,
-) -> Result<AcceleratedAttentionMatmulConfig, AttentionSetupError> {
+) -> Result<BlackboxAcceleratedAttentionMatmulConfig, AttentionSetupError> {
     if dtypes.query_global != dtypes.query_tile {
         return Err(AttentionSetupError::InvalidConfig(Box::new(
             "Query global and tile types must be the same because no stage to cast in between",

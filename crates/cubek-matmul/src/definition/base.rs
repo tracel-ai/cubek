@@ -305,13 +305,13 @@ impl MatrixLayout {
         // for example, with strides of [1, 1]. It is not possible to determine the packing dimension
         // accurately for this problem.
 
-        // Row-major: inner dimension is contiguous or degenerate (size 1, so layout is irrelevant)
-        if (stride_inner == 1 || inner == 1) && stride_outer >= inner {
+        // Row-major: inner dimension is contiguous
+        if (stride_inner == 1) && stride_outer >= inner {
             return Ok(MatrixLayout::RowMajor);
         }
 
-        // Col-major: outer dimension is contiguous or degenerate (size 1, so layout is irrelevant)
-        if (stride_outer == 1 || outer == 1) && stride_inner >= outer {
+        // Col-major: outer dimension is contiguous
+        if (stride_outer == 1) && stride_inner >= outer {
             return Ok(MatrixLayout::ColMajor);
         }
 

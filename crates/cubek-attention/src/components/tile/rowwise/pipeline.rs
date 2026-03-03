@@ -14,10 +14,10 @@ use crate::{
 /// then to the LHS layout required by the value matmul, performing any necessary
 /// type casting between accumulator and LHS fragments.
 pub trait SoftmaxPipeline<Acc: Float> {
-    /// Original accumulator fragment
-    type MatmulAccumulator: CubeType;
-    /// Final output for softmax / LHS
-    type MatmulLhs: CubeType;
+    /// Format for the score matmul accumulator
+    type ScoreAccFormat: CubeType;
+    /// Format for the value matmul LHS
+    type ValueLhsFormat: CubeType;
     /// Rowwise intermediate (fragment or local tile)
     type Rowwise: SoftmaxRowwise<Acc>;
     /// Should equal Self::Rowwise::Layout
@@ -44,8 +44,8 @@ pub trait SoftmaxPipeline<Acc: Float> {
 
 #[cube]
 pub trait AccumulatorPipeline<Acc: Float> {
-    /// Original accumulator fragment
-    type MatmulAccumulator: CubeType;
+    /// Format the value matmul uses for Lhs, Rhs and accumulator
+    type MatmulOperand: CubeType;
     /// Rowwise intermediate (fragment or local tile)
     type Rowwise: AccumulatorRowwise<Acc>;
     /// Memory used temporarily for casting and/or re-layouting

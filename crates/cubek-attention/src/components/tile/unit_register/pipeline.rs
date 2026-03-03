@@ -172,10 +172,10 @@ impl<E: Float> AccumulatorRowwise<E> for UnitTile<E> {
 
 #[cube]
 impl<E: Float> SoftmaxPipeline<E> for UnitTile<E> {
-    type MatmulAccumulator = UnitTile<E>;
+    type ScoreAccFormat = UnitTile<E>;
     type Rowwise = UnitTile<E>;
     type Layout = UnitTileLayout;
-    type MatmulLhs = UnitTile<E>;
+    type ValueLhsFormat = UnitTile<E>;
     type Transit = ();
 
     fn rowwise_mut(&mut self) -> &mut Self::Rowwise {
@@ -200,7 +200,7 @@ impl<E: Float> SoftmaxPipeline<E> for UnitTile<E> {
 
 #[cube]
 impl<E: Float> AccumulatorPipeline<E> for UnitTile<E> {
-    type MatmulAccumulator = UnitTile<E>;
+    type MatmulOperand = UnitTile<E>;
     type Rowwise = UnitTile<E>;
     type Transit = ();
 

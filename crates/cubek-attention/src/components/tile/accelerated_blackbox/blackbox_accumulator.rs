@@ -1,8 +1,8 @@
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::components::tile::accelerated::setup::AcceleratedAttentionMatmulConfig;
-use crate::components::tile::accelerated::{LocalTile, LocalTileLayout};
+use crate::components::tile::accelerated_blackbox::setup::BlackboxAcceleratedAttentionMatmulConfig;
+use crate::components::tile::accelerated_blackbox::{LocalTile, LocalTileLayout};
 use crate::components::tile::{AccumulatorPipeline, AccumulatorPipelineExpand};
 use crate::definition::AttentionTileSize;
 
@@ -24,7 +24,7 @@ impl<E: Float> BlackboxAccumulatorPipeline<E> {
     pub fn new(
         shared_memory: &mut SharedMemory<E>,
         #[comptime] tile_size: AttentionTileSize,
-        #[comptime] config: AcceleratedAttentionMatmulConfig,
+        #[comptime] config: BlackboxAcceleratedAttentionMatmulConfig,
     ) -> Self {
         let acc_fragment = unsafe {
             cmma::Matrix::<E>::uninitialized(
@@ -62,7 +62,7 @@ impl<E: Float> BlackboxAccumulatorPipeline<E> {
 
 #[cube]
 impl<E: Float> AccumulatorPipeline<E> for BlackboxAccumulatorPipeline<E> {
-    type MatmulAccumulator = cmma::Matrix<E>;
+    type MatmulOperand = cmma::Matrix<E>;
     type Rowwise = LocalTile<E>;
     type Transit = SharedMemory<E>;
 

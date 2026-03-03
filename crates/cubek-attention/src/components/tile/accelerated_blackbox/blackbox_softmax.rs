@@ -1,8 +1,8 @@
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::components::tile::accelerated::setup::AcceleratedAttentionMatmulConfig;
-use crate::components::tile::accelerated::{LocalTile, LocalTileLayout};
+use crate::components::tile::accelerated_blackbox::setup::BlackboxAcceleratedAttentionMatmulConfig;
+use crate::components::tile::accelerated_blackbox::{LocalTile, LocalTileLayout};
 use crate::components::tile::{SoftmaxPipeline, SoftmaxPipelineExpand, SoftmaxRowwise};
 use crate::definition::AttentionTileSize;
 
@@ -33,7 +33,7 @@ impl<Acc: Float, Lhs: Float> BlackboxSoftmaxPipeline<Acc, Lhs> {
         acc_shared_memory: &mut SharedMemory<Acc>,
         lhs_shared_memory: &mut SharedMemory<Lhs>,
         #[comptime] tile_size: AttentionTileSize,
-        #[comptime] config: AcceleratedAttentionMatmulConfig,
+        #[comptime] config: BlackboxAcceleratedAttentionMatmulConfig,
     ) -> Self {
         let acc_fragment = unsafe {
             cmma::Matrix::<Acc>::uninitialized(
@@ -83,8 +83,8 @@ impl<Acc: Float, Lhs: Float> BlackboxSoftmaxPipeline<Acc, Lhs> {
 
 #[cube]
 impl<Acc: Float, Lhs: Float> SoftmaxPipeline<Acc> for BlackboxSoftmaxPipeline<Acc, Lhs> {
-    type MatmulLhs = cmma::Matrix<Lhs>;
-    type MatmulAccumulator = cmma::Matrix<Acc>;
+    type ScoreAccFormat = cmma::Matrix<Acc>;
+    type ValueLhsFormat = cmma::Matrix<Lhs>;
     type Rowwise = LocalTile<Acc>;
     type Layout = <Self::Rowwise as SoftmaxRowwise<Acc>>::Layout;
     type Transit = (SharedMemory<Acc>, SharedMemory<Lhs>);

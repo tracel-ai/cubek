@@ -3,6 +3,7 @@ use std::marker::PhantomData;
 use cubecl;
 use cubecl::prelude::*;
 
+use crate::components::tile::accelerated_whitebox::manual_matrix::ManualMatrix;
 use crate::definition::AttentionTileSize;
 
 /// Trait for converting accumulator fragments into LHS fragments,
@@ -11,12 +12,12 @@ use crate::definition::AttentionTileSize;
 pub trait FragmentConvert: CubeType {
     type Acc: Float;
     type Lhs: Float;
-    type Transit: CubeType;
+    type Transit: CubeType + Copy;
 
     /// Convert accumulator into LHS fragment
     fn acc_to_lhs(
-        acc: &cmma::Matrix<Self::Acc>,
-        lhs: &mut cmma::Matrix<Self::Lhs>,
+        acc: &ManualMatrix<Self::Acc>,
+        lhs: &mut ManualMatrix<Self::Lhs>,
         transit: &mut Self::Transit,
     );
 
@@ -48,8 +49,8 @@ impl<Acc: Float, Lhs: Float> FragmentConvert for RegisterFragmentConverter<Acc, 
     type Transit = ();
 
     fn acc_to_lhs(
-        acc: &cmma::Matrix<Self::Acc>,
-        lhs: &mut cmma::Matrix<Self::Lhs>,
+        acc: &ManualMatrix<Self::Acc>,
+        lhs: &mut ManualMatrix<Self::Lhs>,
         _transit: &mut Self::Transit,
     ) {
         // TODO: implement register copy + cast
@@ -86,21 +87,22 @@ impl<Acc: Float, Lhs: Float> FragmentConvert for SmemFragmentConverter<Acc, Lhs>
     type Transit = SmemConvertTransit<Lhs>;
 
     fn acc_to_lhs(
-        acc: &cmma::Matrix<Self::Acc>,
-        lhs: &mut cmma::Matrix<Self::Lhs>,
+        acc: &ManualMatrix<Self::Acc>,
+        lhs: &mut ManualMatrix<Self::Lhs>,
         transit: &mut Self::Transit,
     ) {
-        let cast_fragment = cmma::cast::<Acc, Lhs>(&acc);
-        cmma::store(
-            &mut transit.smem_slice,
-            &cast_fragment,
-            transit.stride,
-            cmma::MatrixLayout::RowMajor,
-        );
+        todo!()
+        // let cast_fragment = cmma::cast::<Acc, Lhs>(&acc);
+        // cmma::store(
+        //     &mut transit.smem_slice,
+        //     &cast_fragment,
+        //     transit.stride,
+        //     cmma::MatrixLayout::RowMajor,
+        // );
 
-        sync_plane();
+        // sync_plane();
 
-        cmma::load(lhs, &transit.smem_slice.to_slice(), transit.stride)
+        // cmma::load(lhs, &transit.smem_slice.to_slice(), transit.stride)
     }
 
     fn transit(
@@ -123,7 +125,7 @@ impl<Acc: Float, Lhs: Float> FragmentConvert for SmemFragmentConverter<Acc, Lhs>
     }
 }
 
-#[derive(CubeType)]
+#[derive(CubeType, Copy, Clone)]
 pub struct SmemConvertTransit<E: Float> {
     smem_slice: SliceMut<E>,
     #[cube(comptime)]
