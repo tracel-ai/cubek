@@ -86,7 +86,8 @@ impl<AP: AttentionPrecision> TileAttention<AP> for UnitRegisterTileAttention {
 
     fn allocate_softmax_transit(#[comptime] _config: Self::Config) -> Self::SoftmaxTransit {}
 
-    fn allocate_accumulator_transit(#[comptime] _config: Self::Config) -> Self::AccumulatorTransit {}
+    fn allocate_accumulator_transit(#[comptime] _config: Self::Config) -> Self::AccumulatorTransit {
+    }
 
     fn allocate_softmax(
         _shared: &mut Self::SoftmaxTransit,

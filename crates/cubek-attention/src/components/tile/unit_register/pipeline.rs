@@ -200,7 +200,7 @@ impl<E: Float> SoftmaxPipeline<E> for UnitTile<E> {
 
 #[cube]
 impl<E: Float> AccumulatorPipeline<E> for UnitTile<E> {
-    type MatmulOperand = UnitTile<E>;
+    type ValueAccFormat = UnitTile<E>;
     type Rowwise = UnitTile<E>;
     type Transit = ();
 

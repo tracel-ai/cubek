@@ -13,7 +13,6 @@ use crate::components::tile::accelerated_whitebox::fragment_convert::{
     RegisterFragmentConverter, SmemFragmentConverter,
 };
 
-pub type WhiteboxRegisterSoftmaxPipeline<Acc, Lhs> =
-    WhiteboxSoftmaxPipeline<Acc, Lhs, RegisterFragmentConverter<Acc, Lhs>>;
-pub type WhiteboxSmemSoftmaxPipeline<Acc, Lhs> =
-    WhiteboxSoftmaxPipeline<Acc, Lhs, SmemFragmentConverter<Acc, Lhs>>;
+pub type WhiteboxRegisterSoftmaxPipeline<AP> =
+    WhiteboxSoftmaxPipeline<AP, RegisterFragmentConverter<AP>>;
+pub type WhiteboxSmemSoftmaxPipeline<AP> = WhiteboxSoftmaxPipeline<AP, SmemFragmentConverter<AP>>;

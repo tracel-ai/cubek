@@ -3,21 +3,20 @@ use std::marker::PhantomData;
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::components::tile::accelerated_whitebox::manual_matrix::ManualMatrix;
-use crate::definition::AttentionTileSize;
+use crate::components::tile::accelerated_whitebox::manual_matrix::{IdentA, IdentCD, ManualMatrix};
+use crate::components::tile::accelerated_whitebox::{ScoreMma, ValueMma};
+use crate::definition::{AttentionPrecision, AttentionTileSize};
 
 /// Trait for converting accumulator fragments into LHS fragments,
 /// possibly using shared memory.
 #[cube]
-pub trait FragmentConvert: CubeType {
-    type Acc: Float;
-    type Lhs: Float;
+pub trait FragmentConvert<AP: AttentionPrecision>: CubeType {
     type Transit: CubeType + Copy;
 
     /// Convert accumulator into LHS fragment
     fn acc_to_lhs(
-        acc: &ManualMatrix<Self::Acc>,
-        lhs: &mut ManualMatrix<Self::Lhs>,
+        acc: &ManualMatrix<IdentCD, ScoreMma<AP>>,
+        lhs: &mut ManualMatrix<IdentA, ValueMma<AP>>,
         transit: &mut Self::Transit,
     );
 
@@ -28,29 +27,27 @@ pub trait FragmentConvert: CubeType {
 }
 
 #[derive(CubeType)]
-pub struct RegisterFragmentConverter<Acc: Float, Lhs: Float> {
+pub struct RegisterFragmentConverter<AP: AttentionPrecision> {
     #[cube(comptime)]
-    _phantom: PhantomData<(Acc, Lhs)>,
+    _phantom: PhantomData<AP>,
 }
 
 #[cube]
-impl<Acc: Float, Lhs: Float> RegisterFragmentConverter<Acc, Lhs> {
+impl<AP: AttentionPrecision> RegisterFragmentConverter<AP> {
     pub fn new(#[comptime] _tile_size: AttentionTileSize) -> Self {
-        RegisterFragmentConverter::<Acc, Lhs> {
+        RegisterFragmentConverter::<AP> {
             _phantom: PhantomData,
         }
     }
 }
 
 #[cube]
-impl<Acc: Float, Lhs: Float> FragmentConvert for RegisterFragmentConverter<Acc, Lhs> {
-    type Acc = Acc;
-    type Lhs = Lhs;
+impl<AP: AttentionPrecision> FragmentConvert<AP> for RegisterFragmentConverter<AP> {
     type Transit = ();
 
     fn acc_to_lhs(
-        acc: &ManualMatrix<Self::Acc>,
-        lhs: &mut ManualMatrix<Self::Lhs>,
+        acc: &ManualMatrix<IdentCD, ScoreMma<AP>>,
+        lhs: &mut ManualMatrix<IdentA, ValueMma<AP>>,
         _transit: &mut Self::Transit,
     ) {
         // TODO: implement register copy + cast
@@ -66,29 +63,26 @@ impl<Acc: Float, Lhs: Float> FragmentConvert for RegisterFragmentConverter<Acc, 
 }
 
 #[derive(CubeType)]
-pub struct SmemFragmentConverter<Acc: Float, Lhs: Float> {
+pub struct SmemFragmentConverter<AP: AttentionPrecision> {
     #[cube(comptime)]
-    _phantom: PhantomData<(Acc, Lhs)>,
+    _phantom: PhantomData<AP>,
 }
 
 #[cube]
-impl<Acc: Float, Lhs: Float> SmemFragmentConverter<Acc, Lhs> {
+impl<AP: AttentionPrecision> SmemFragmentConverter<AP> {
     pub fn new(#[comptime] _tile_size: AttentionTileSize) -> Self {
-        SmemFragmentConverter::<Acc, Lhs> {
+        SmemFragmentConverter::<AP> {
             _phantom: PhantomData,
         }
     }
 }
-
 #[cube]
-impl<Acc: Float, Lhs: Float> FragmentConvert for SmemFragmentConverter<Acc, Lhs> {
-    type Acc = Acc;
-    type Lhs = Lhs;
-    type Transit = SmemConvertTransit<Lhs>;
+impl<AP: AttentionPrecision> FragmentConvert<AP> for SmemFragmentConverter<AP> {
+    type Transit = SmemConvertTransit<AP::SoftmaxLhs>;
 
     fn acc_to_lhs(
-        acc: &ManualMatrix<Self::Acc>,
-        lhs: &mut ManualMatrix<Self::Lhs>,
+        acc: &ManualMatrix<IdentCD, ScoreMma<AP>>,
+        lhs: &mut ManualMatrix<IdentA, ValueMma<AP>>,
         transit: &mut Self::Transit,
     ) {
         todo!()
@@ -118,7 +112,7 @@ impl<Acc: Float, Lhs: Float> FragmentConvert for SmemFragmentConverter<Acc, Lhs>
             (smem_slice_start + smem_slot_size) as usize,
         );
 
-        SmemConvertTransit::<Lhs> {
+        SmemConvertTransit::<AP::SoftmaxLhs> {
             smem_slice,
             stride: tile_size.seq_kv,
         }

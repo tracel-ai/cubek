@@ -1,6 +1,7 @@
+use cubecl;
 use cubecl::prelude::*;
-use cubecl::{self, cmma::MmaDefinition};
 
+use crate::components::tile::accelerated_whitebox::manual_matrix::{IdentCD, MmaTypes};
 use crate::{
     components::tile::{
         AccumulatorPipeline, AccumulatorPipelineExpand,
@@ -11,33 +12,25 @@ use crate::{
 
 #[derive(CubeType)]
 /// Operates directly on cmma accumulator fragment
-pub struct WhiteboxAccumulatorPipeline<E: Float> {
+pub struct WhiteboxAccumulatorPipeline<MT: MmaTypes> {
     // Accumulator of value matmul
-    pub accumulator: ManualMatrix<E>,
+    pub accumulator: ManualMatrix<IdentCD, MT>,
 }
 
 #[cube]
-impl<E: Float> WhiteboxAccumulatorPipeline<E> {
+impl<MT: MmaTypes> WhiteboxAccumulatorPipeline<MT> {
     pub fn new<SM: Float, V: Float>(#[comptime] tile_size: AttentionTileSize) -> Self {
         let matmul_tile_size = tile_size.to_value_matmul_tile_size();
-        let accumulator = ManualMatrix::new(ManualMatrixLayout::new(
-            matmul_tile_size,
-            cmma::MatrixIdent::Accumulator,
-            &MmaDefinition::<SM, V, E>::new(
-                matmul_tile_size.m as usize,
-                matmul_tile_size.n as usize,
-                matmul_tile_size.k as usize,
-            ),
-        ));
-
-        WhiteboxAccumulatorPipeline::<E> { accumulator }
+        let layout = ManualMatrixLayout::new(matmul_tile_size);
+        let accumulator = layout.create_matrix();
+        WhiteboxAccumulatorPipeline::<MT> { accumulator }
     }
 }
 
 #[cube]
-impl<E: Float> AccumulatorPipeline<E> for WhiteboxAccumulatorPipeline<E> {
-    type MatmulOperand = ManualMatrix<E>;
-    type Rowwise = ManualMatrix<E>;
+impl<MT: MmaTypes<CD: Float>> AccumulatorPipeline<MT::CD> for WhiteboxAccumulatorPipeline<MT> {
+    type ValueAccFormat = ManualMatrix<IdentCD, MT>;
+    type Rowwise = ManualMatrix<IdentCD, MT>;
     type Transit = ();
 
     fn rowwise_mut(&mut self) -> &mut Self::Rowwise {

@@ -62,7 +62,7 @@ impl<E: Float> BlackboxAccumulatorPipeline<E> {
 
 #[cube]
 impl<E: Float> AccumulatorPipeline<E> for BlackboxAccumulatorPipeline<E> {
-    type MatmulOperand = cmma::Matrix<E>;
+    type ValueAccFormat = cmma::Matrix<E>;
     type Rowwise = LocalTile<E>;
     type Transit = SharedMemory<E>;
 

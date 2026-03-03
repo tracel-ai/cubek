@@ -6,14 +6,12 @@ use crate::components::tile::SharedTileAttentionConfig;
 use crate::components::tile::TileAttentionConfig;
 use crate::components::tile::TileAttentionFamily;
 use crate::components::tile::accelerated_whitebox::WhiteboxAcceleratedTileAttention;
-use crate::definition::AttentionAvailabilityError;
 use crate::definition::AttentionBlueprint;
 use crate::definition::AttentionElems;
 use crate::definition::AttentionPrecision;
 use crate::definition::AttentionSetupError;
 use crate::definition::AttentionTileSize;
 use crate::definition::InvalidConfigError;
-use cubecl::features::MmaConfig;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct WhiteboxAcceleratedAttentionMatmulConfig {
@@ -169,11 +167,11 @@ fn validate(
     //     )));
     // }
 
-    // if reuse_key_value {
-    //     return Err(AttentionSetupError::InvalidConfig(Box::new(
-    //         "Can't reuse key/value because the fragment is col major for key and row major for value",
-    //     )));
-    // }
+    if reuse_key_value {
+        return Err(AttentionSetupError::InvalidConfig(Box::new(
+            "Can't reuse key/value because unimplemented",
+        )));
+    }
 
     Ok(config)
 }

@@ -44,8 +44,8 @@ pub trait SoftmaxPipeline<Acc: Float> {
 
 #[cube]
 pub trait AccumulatorPipeline<Acc: Float> {
-    /// Format the value matmul uses for Lhs, Rhs and accumulator
-    type MatmulOperand: CubeType;
+    /// Format the value matmul uses for accumulator
+    type ValueAccFormat: CubeType;
     /// Rowwise intermediate (fragment or local tile)
     type Rowwise: AccumulatorRowwise<Acc>;
     /// Memory used temporarily for casting and/or re-layouting
