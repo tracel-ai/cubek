@@ -2,7 +2,7 @@ use std::cmp::max;
 
 use crate::{
     components::global::memory::ViewDirection,
-    definition::{MatmulGlobalElems, MatmulProblemSize},
+    definition::{InvalidConfigError, MatmulGlobalElems, MatmulProblemSize, MatmulSetupError},
 };
 use cubecl::{
     prelude::*,
@@ -73,13 +73,15 @@ impl MatmulProblem {
         address_type: AddressType,
         lhs_scheme: Option<&QuantScheme>,
         rhs_scheme: Option<&QuantScheme>,
-    ) -> Self {
+    ) -> Result<Self, MatmulSetupError> {
         let rank = out_shape.len();
-        let lhs_layout = MatrixLayout::from_shape_and_strides(&lhs_shape, &lhs_strides, lhs_scheme);
-        let rhs_layout = MatrixLayout::from_shape_and_strides(&rhs_shape, &rhs_strides, rhs_scheme);
-        let out_layout = MatrixLayout::from_shape_and_strides(&out_shape, &out_strides, None);
+        let lhs_layout =
+            MatrixLayout::from_shape_and_strides(&lhs_shape, &lhs_strides, lhs_scheme)?;
+        let rhs_layout =
+            MatrixLayout::from_shape_and_strides(&rhs_shape, &rhs_strides, rhs_scheme)?;
+        let out_layout = MatrixLayout::from_shape_and_strides(&out_shape, &out_strides, None)?;
 
-        Self {
+        Ok(Self {
             m: lhs_shape[rank - 2],
             n: rhs_shape[rank - 1],
             k: lhs_shape[rank - 1],
@@ -99,7 +101,7 @@ impl MatmulProblem {
             rhs_scheme: rhs_scheme.copied(),
             global_dtypes,
             address_type,
-        }
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -269,7 +271,7 @@ impl MatrixLayout {
         shape: &[usize],
         strides: &[usize],
         scheme: Option<&QuantScheme>,
-    ) -> Self {
+    ) -> Result<Self, InvalidConfigError> {
         assert!(
             shape.len() >= 2 && shape.len() == strides.len(),
             "Shape/stride mismatch or not a matrix"
@@ -277,12 +279,15 @@ impl MatrixLayout {
 
         if let Some(packing_dim) = scheme.and_then(|s| s.packing_dim()) {
             if packing_dim == 0 {
-                return MatrixLayout::RowMajor;
+                return Ok(MatrixLayout::RowMajor);
             }
             if packing_dim == 1 {
-                return MatrixLayout::ColMajor;
+                return Ok(MatrixLayout::ColMajor);
             }
-            panic!("Invalid or non-contiguous matrix layout: packing_dim={packing_dim:?}");
+
+            return Err(Box::new(format!(
+                "Invalid or non-contiguous matrix layout: packing_dim={packing_dim:?}"
+            )));
         }
 
         let n = shape.len();
@@ -300,20 +305,19 @@ impl MatrixLayout {
         // for example, with strides of [1, 1]. It is not possible to determine the packing dimension
         // accurately for this problem.
 
-        // Row-major: inner dimension is contiguous
-        if stride_inner == 1 && stride_outer >= inner {
-            return MatrixLayout::RowMajor;
+        // Row-major: inner dimension is contiguous or degenerate (size 1, so layout is irrelevant)
+        if (stride_inner == 1 || inner == 1) && stride_outer >= inner {
+            return Ok(MatrixLayout::RowMajor);
         }
 
-        // Col-major: outer dimension is contiguous
-        if stride_outer == 1 && stride_inner >= outer {
-            return MatrixLayout::ColMajor;
+        // Col-major: outer dimension is contiguous or degenerate (size 1, so layout is irrelevant)
+        if (stride_outer == 1 || outer == 1) && stride_inner >= outer {
+            return Ok(MatrixLayout::ColMajor);
         }
 
-        panic!(
-            "Invalid or non-contiguous matrix layout: shape={:?}, strides={:?}",
-            shape, strides
-        );
+        Err(Box::new(format!(
+            "Invalid or non-contiguous matrix layout: shape={shape:?}, strides={strides:?}",
+        )))
     }
 
     pub fn to_strides(&self, shape: &[usize]) -> Strides {
