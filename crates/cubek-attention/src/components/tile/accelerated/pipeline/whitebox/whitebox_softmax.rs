@@ -3,7 +3,7 @@ use cubecl::prelude::*;
 
 use crate::components::tile::accelerated::pipeline::whitebox::fragment_convert::FragmentConvert;
 use crate::components::tile::accelerated::pipeline::whitebox::rowaware_matrix::{
-    RowAwareMatrix, RowAwareMatrixLayout,
+    RowAwareMatrixAccumulator, RowAwareMatrixLayout,
 };
 use crate::components::tile::accelerated::setup::AcceleratedAttentionMatmulConfig;
 use crate::components::tile::{SoftmaxPipeline, SoftmaxPipelineExpand, SoftmaxRowwise};
@@ -23,7 +23,7 @@ pub struct WhiteboxSoftmaxPipeline<
     FC: FragmentConvert<Acc = Acc, Lhs = Lhs>,
 > {
     // Accumulator of score matmul
-    pub rowaware_acc: RowAwareMatrix<Acc>,
+    pub rowaware_acc: RowAwareMatrixAccumulator<Acc>,
     // Lhs of value matmul
     pub lhs_fragment: cmma::Matrix<Lhs>,
     pub transit: FC::Transit,
@@ -48,9 +48,11 @@ impl<Acc: Float, Lhs: Float, FC: FragmentConvert<Acc = Acc, Lhs = Lhs>>
             )
         };
 
-        let rowaware_acc = RowAwareMatrix::<Acc> {
+        let rowaware_acc = RowAwareMatrixAccumulator::<Acc> {
             fragment: acc_fragment,
-            layout: RowAwareMatrixLayout {},
+            layout: RowAwareMatrixLayout {
+                matrix_ident: cmma::MatrixIdent::Accumulator,
+            },
         };
 
         let lhs_fragment = unsafe {
@@ -77,7 +79,7 @@ impl<Acc: Float, Lhs: Float, FC: FragmentConvert<Acc = Acc, Lhs = Lhs>> SoftmaxP
 {
     type MatmulAccumulator = cmma::Matrix<Acc>;
     type MatmulLhs = cmma::Matrix<Lhs>;
-    type Rowwise = RowAwareMatrix<Acc>;
+    type Rowwise = RowAwareMatrixAccumulator<Acc>;
     type Layout = <Self::Rowwise as SoftmaxRowwise<Acc>>::Layout;
     type Transit = FC::Transit;
 

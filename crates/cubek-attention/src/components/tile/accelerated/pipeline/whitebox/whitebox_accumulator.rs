@@ -4,7 +4,9 @@ use cubecl::prelude::*;
 use crate::{
     components::tile::{
         AccumulatorPipeline, AccumulatorPipelineExpand,
-        accelerated::pipeline::whitebox::rowaware_matrix::{RowAwareMatrix, RowAwareMatrixLayout},
+        accelerated::pipeline::whitebox::rowaware_matrix::{
+            RowAwareMatrixAccumulator, RowAwareMatrixLayout,
+        },
     },
     definition::AttentionTileSize,
 };
@@ -13,7 +15,7 @@ use crate::{
 /// Operates directly on cmma accumulator fragment
 pub struct WhiteboxAccumulatorPipeline<E: Float> {
     // Accumulator of value matmul
-    pub rowaware_matrix: RowAwareMatrix<E>,
+    pub rowaware_matrix: RowAwareMatrixAccumulator<E>,
 }
 
 #[cube]
@@ -29,9 +31,11 @@ impl<E: Float> WhiteboxAccumulatorPipeline<E> {
             )
         };
 
-        let rowaware_matrix = RowAwareMatrix::<E> {
+        let rowaware_matrix = RowAwareMatrixAccumulator::<E> {
             fragment,
-            layout: RowAwareMatrixLayout {},
+            layout: RowAwareMatrixLayout {
+                matrix_ident: cmma::MatrixIdent::Accumulator,
+            },
         };
 
         WhiteboxAccumulatorPipeline::<E> { rowaware_matrix }
@@ -40,8 +44,8 @@ impl<E: Float> WhiteboxAccumulatorPipeline<E> {
 
 #[cube]
 impl<E: Float> AccumulatorPipeline<E> for WhiteboxAccumulatorPipeline<E> {
-    type MatmulAccumulator = RowAwareMatrix<E>;
-    type Rowwise = RowAwareMatrix<E>;
+    type MatmulAccumulator = RowAwareMatrixAccumulator<E>;
+    type Rowwise = RowAwareMatrixAccumulator<E>;
     type Transit = ();
 
     fn rowwise_mut(&mut self) -> &mut Self::Rowwise {
