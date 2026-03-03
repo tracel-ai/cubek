@@ -3,7 +3,9 @@ use std::marker::PhantomData;
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::components::tile::accelerated_whitebox::manual_matrix::{IdentA, IdentCD, ManualMatrix};
+use crate::components::tile::accelerated_whitebox::manual_matrix::{
+    IdentA, IdentCD, ManualMatrix, MmaTypes,
+};
 use crate::components::tile::accelerated_whitebox::{ScoreMma, ValueMma};
 use crate::definition::{AttentionPrecision, AttentionTileSize};
 
@@ -50,8 +52,21 @@ impl<AP: AttentionPrecision> FragmentConvert<AP> for RegisterFragmentConverter<A
         lhs: &mut ManualMatrix<IdentA, ValueMma<AP>>,
         _transit: &mut Self::Transit,
     ) {
-        // TODO: implement register copy + cast
-        todo!()
+        assert!(
+            acc.layout.num_rows == lhs.layout.num_rows
+                && acc.layout.num_cols == acc.layout.num_cols
+        );
+
+        #[unroll]
+        for acc_row in 0..acc.layout.num_rows {
+            #[unroll]
+            for acc_col in 0..acc.layout.num_cols {
+                let nth_acc = acc.layout.local_pos_to_nth((acc_row, acc_col).runtime());
+                let val = acc.get_nth(nth_acc);
+                let nth_lhs = lhs.layout.local_pos_to_nth((acc_row, acc_col).runtime());
+                lhs.set_nth::<<ScoreMma<AP> as MmaTypes>::CD>(nth_lhs, val);
+            }
+        }
     }
 
     fn transit(

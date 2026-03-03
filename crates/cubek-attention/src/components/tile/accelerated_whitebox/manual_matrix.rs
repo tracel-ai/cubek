@@ -1,6 +1,11 @@
 use std::marker::PhantomData;
 
-use cubecl::{cmma::MmaDefinition, ir::MatrixIdent, prelude::*, std::tensor::layout::Coords2d};
+use cubecl::{
+    cmma::MmaDefinition,
+    ir::MatrixIdent,
+    prelude::*,
+    std::tensor::layout::{Coords1d, Coords2d},
+};
 use cubek_matmul::{components::tile::StridedTile, definition::TileSize};
 
 use crate::components::tile::{
@@ -22,6 +27,14 @@ pub struct ManualMatrixLayout<MI: MmaIdent<MT>, MT: MmaTypes> {
     pub mma_definition: MmaDefinition<MT::A, MT::B, MT::CD>,
     #[cube(comptime)]
     _phantom: PhantomData<MI>,
+    #[cube(comptime)]
+    lines_per_lane: usize,
+    #[cube(comptime)]
+    line_size: usize,
+    #[cube(comptime)]
+    pub(crate) num_rows: u32,
+    #[cube(comptime)]
+    pub(crate) num_cols: u32,
 }
 
 pub trait MmaTypes {
@@ -64,44 +77,73 @@ pub fn mma_definition<M: MmaTypes>(
 #[cube]
 impl<MI: MmaIdent<MT>, MT: MmaTypes> ManualMatrixLayout<MI, MT> {
     pub fn new(#[comptime] tile_size: TileSize) -> ManualMatrixLayout<MI, MT> {
+        let mma_def = mma_definition::<MT>(tile_size);
+        let lines_per_lane = mma_def.lines_per_lane(MI::IDENT);
+        let line_size = mma_def.line_size(MI::IDENT);
+
+        // Assuming specific layout, TODO generalize
+        let num_rows = 2u32;
+        let num_cols = 4u32;
+
         ManualMatrixLayout::<MI, MT> {
             tile_size,
-            mma_definition: mma_definition::<MT>(tile_size),
+            mma_definition: mma_def,
             _phantom: PhantomData,
+            lines_per_lane,
+            line_size,
+            num_rows,
+            num_cols,
         }
     }
 
-    // TODO get this from cubecl's cmma for generality
-    fn local_index(&self, #[comptime] row: usize, #[comptime] col: usize) -> comptime_type!(usize) {
-        match MI::IDENT {
+    // Assuming specific layout, TODO generalize
+    pub fn local_pos_to_nth(&self, local_pos: Coords2d) -> Coords1d {
+        let (row, col) = local_pos;
+
+        let nth = match MI::IDENT {
             // 0 1 2 3
             // 4 5 6 7
             MatrixIdent::A | MatrixIdent::B => row * 4 + col,
             // 0 1 4 5
             // 2 3 6 7
             MatrixIdent::Accumulator => (row << 1) + (col & 1) + ((col & 2) << 1),
-        }
+        };
+
+        nth as usize
     }
 
-    // TODO equivalent of position_of_nth
-    fn row_col_from_index(index: usize) -> (usize, usize) {
-        let col_high = index / 4;
-        let inner = index % 4;
+    pub fn nth_to_local_pos(&self, nth: Coords1d) -> Coords2d {
+        let (row, col) = match MI::IDENT {
+            MatrixIdent::A | MatrixIdent::B => {
+                let row = nth / 4;
+                let col = nth % 4;
+                (row, col)
+            }
+            MatrixIdent::Accumulator => {
+                let row = nth >> 2;
+                let col_low = nth & 1;
+                let col_high = (nth & 4) >> 1;
+                let col = col_low | col_high;
+                (row, col)
+            }
+        };
 
-        let row = inner / 2;
-        let col_low = inner % 2;
+        (row as u32, col as u32)
+    }
 
-        let col = col_low + 2 * col_high;
+    pub fn absolute_position_of_nth(&self, nth: Coords1d) -> Coords2d {
+        self.mma_definition
+            .position_of_nth(UNIT_POS_PLANE, nth as u32, MI::IDENT)
+    }
 
-        (row, col)
+    pub fn local_to_absolute_pos(&self, local_pos: Coords2d) -> Coords2d {
+        let nth = self.local_pos_to_nth(local_pos);
+        self.absolute_position_of_nth(nth)
     }
 
     pub fn create_matrix(self) -> ManualMatrix<MI, MT> {
         ManualMatrix::<MI, MT> {
-            fragment: Array::lined(
-                self.mma_definition.lines_per_lane(MI::IDENT),
-                self.mma_definition.line_size(MI::IDENT),
-            ),
+            fragment: Array::lined(self.lines_per_lane, self.line_size),
             layout: self,
         }
     }
@@ -110,21 +152,7 @@ impl<MI: MmaIdent<MT>, MT: MmaTypes> ManualMatrixLayout<MI, MT> {
 #[cube]
 impl<MT: MmaTypes> SoftmaxLayout for ManualMatrixLayout<IdentCD, MT> {
     fn absolute_pos(&self, local_pos: Coords2d) -> Coords2d {
-        let unit_id = UNIT_POS_PLANE;
-        (
-            unit_id / 4 + local_pos.0 * 8,
-            4 * (unit_id % 4) + local_pos.1,
-        )
-        // match comptime!(matrix_ident) {
-        //     MatrixIdent::A | MatrixIdent::Accumulator => (
-        //         unit_id / 4 + local_pos.0 * 8,
-        //         4 * (unit_id % 4) + local_pos.1,
-        //     ),
-        //     MatrixIdent::B => (
-        //         2 * (unit_id / 4) + local_pos.0,
-        //         4 * (unit_id % 4) + local_pos.1,
-        //     ),
-        // }
+        self.local_to_absolute_pos(local_pos)
     }
 
     fn num_units_per_row(&self) -> comptime_type!(u32) {
@@ -141,15 +169,14 @@ pub struct ManualMatrix<MI: MmaIdent<MT>, MT: MmaTypes> {
 #[cube]
 impl<MI: MmaIdent<MT>, MT: MmaTypes> ManualMatrix<MI, MT> {
     pub fn zero(&mut self) {
-        todo!()
-        // #[unroll]
-        // for i in 0..self.layout.num_lines {
-        //     let mut reg = self.fragment[i];
-        //     #[unroll]
-        //     for k in 0..self.layout.line_size {
-        //         reg[k] = E::from_int(0);
-        //     }
-        // }
+        #[unroll]
+        for i in 0..self.layout.lines_per_lane {
+            let mut reg = self.fragment[i];
+            #[unroll]
+            for k in 0..self.layout.line_size {
+                reg[k] = MI::Elem::from_int(0);
+            }
+        }
     }
 
     pub fn load_from_strided_tile<E2: Numeric>(&mut self, tile: &StridedTile<E2>) {
@@ -190,6 +217,18 @@ impl<MI: MmaIdent<MT>, MT: MmaTypes> ManualMatrix<MI, MT> {
     }
 
     pub fn store_to_strided_tile<E2: Numeric>(&self, tile: &mut StridedTile<E2, ReadWrite>) {}
+
+    pub fn get_nth(&self, nth: Coords1d) -> MI::Elem {
+        let line = nth / self.layout.line_size;
+        let within_line = nth % self.layout.line_size;
+        self.fragment[line][within_line]
+    }
+
+    pub fn set_nth<E2: Numeric>(&mut self, nth: Coords1d, val: E2) {
+        let line = nth / self.layout.line_size;
+        let within_line = nth % self.layout.line_size;
+        self.fragment[line][within_line] = MI::Elem::cast_from(val);
+    }
 }
 
 #[cube]
@@ -220,14 +259,14 @@ impl<MT: MmaTypes<CD: Float>> SoftmaxRowwise<MT::CD> for ManualMatrix<IdentCD, M
 #[cube]
 impl<MT: MmaTypes<CD: Float>> AccumulatorRowwise<MT::CD> for ManualMatrix<IdentCD, MT> {
     fn rowwise_scale(&mut self, scale: &RowWise<MT::CD>) {
+        // TODO Do whole lines at once if possibe, but not sure
+        // if lines match rows
         #[unroll]
-        for row in 0..2usize {
-            let scale = scale.index(row);
+        for row in 0..self.layout.num_rows {
+            let scale = scale.index(row as usize);
             #[unroll]
-            for col in 0..4usize {
-                let local_index = self.layout.local_index(row, col);
-                // let before = self.fragment.local_read(local_index);
-                // self.fragment.local_write(local_index, before * scale);
+            for col in 0..self.layout.num_cols {
+                let nth = self.layout.local_pos_to_nth((row, col).runtime());
             }
         }
     }
