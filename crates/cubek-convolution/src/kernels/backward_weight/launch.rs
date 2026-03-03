@@ -10,8 +10,8 @@ use crate::{
 use crate::{
     components::ConvSetupError, kernels::backward_weight::selector::launch_kernel_concrete,
 };
-use cubecl::{Runtime, client::ComputeClient, prelude::*, std::tensor::TensorHandle};
-use cubek_matmul::launch::{MatmulInputHandle, MatmulInputHandleRef};
+use cubecl::{Runtime, client::ComputeClient, prelude::*};
+use cubek_matmul::launch::MatmulInputBinding;
 use cubek_matmul::{
     components::tile::{cmma::CmmaMatmul, io::Strided, mma::MmaMatmul},
     definition,
@@ -37,27 +37,6 @@ macro_rules! with_tile_kind {
     };
 }
 
-#[allow(clippy::result_large_err, clippy::too_many_arguments)]
-pub fn launch<R: Runtime, const N_SPATIAL: usize>(
-    strategy: &Strategy,
-    client: &ComputeClient<R>,
-    input: MatmulInputHandle<R>,
-    out_grad: MatmulInputHandle<R>,
-    weight_grad: TensorHandle<R>,
-    args: ConvolutionArgs<N_SPATIAL>,
-    dtypes: MatmulElems,
-) -> Result<(), ConvSetupError> {
-    launch_ref(
-        strategy,
-        client,
-        &input.as_ref(),
-        &out_grad.as_ref(),
-        &weight_grad.as_ref(),
-        args,
-        dtypes,
-    )
-}
-
 /// Perform an n-dimensional convolution using the implicit GEMM (im2col) algorithm, using cubecl
 /// tiling matmul components, using the specified algorithm.
 ///
@@ -70,9 +49,9 @@ pub fn launch<R: Runtime, const N_SPATIAL: usize>(
 pub fn launch_ref<R: Runtime, const N_SPATIAL: usize>(
     strategy: &Strategy,
     client: &ComputeClient<R>,
-    input: &MatmulInputHandleRef<'_, R>,
-    out_grad: &MatmulInputHandleRef<'_, R>,
-    weight_grad: &TensorHandleRef<'_, R>,
+    input: MatmulInputBinding<R>,
+    out_grad: MatmulInputBinding<R>,
+    weight_grad: TensorBinding<R>,
     args: ConvolutionArgs<N_SPATIAL>,
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError> {
@@ -97,9 +76,9 @@ pub fn launch_ref<R: Runtime, const N_SPATIAL: usize>(
 #[derive(new)]
 struct BackwardsWeight<'a, R: Runtime, const N_SPATIAL: usize> {
     client: &'a ComputeClient<R>,
-    input: &'a MatmulInputHandleRef<'a, R>,
-    out_grad: &'a MatmulInputHandleRef<'a, R>,
-    weight_grad: &'a TensorHandleRef<'a, R>,
+    input: MatmulInputBinding<R>,
+    out_grad: MatmulInputBinding<R>,
+    weight_grad: TensorBinding<R>,
     args: ConvolutionArgs<N_SPATIAL>,
     dtypes: MatmulElems,
 }
@@ -137,9 +116,9 @@ impl<'a, R: Runtime, const N_SPATIAL: usize> BackwardsWeight<'a, R, N_SPATIAL> {
 #[allow(clippy::too_many_arguments)]
 fn launch_with_algorithm<R: Runtime, Alg: Algorithm>(
     client: &ComputeClient<R>,
-    input: &MatmulInputHandleRef<'_, R>,
-    out_grad: &MatmulInputHandleRef<'_, R>,
-    weight_grad: &TensorHandleRef<'_, R>,
+    input: MatmulInputBinding<R>,
+    out_grad: MatmulInputBinding<R>,
+    weight_grad: TensorBinding<R>,
     (stride, padding, dilation): (&[usize], &[usize], &[usize]),
     dimensionality: Dimensionality,
     dtypes: MatmulElems,
@@ -161,14 +140,15 @@ where
 
     let op = ConvolutionOperation::BackwardWeight;
 
-    let input_data = Alg::into_tensor_handle(client, input.data(), dtypes.lhs_global, op)?;
-    let out_grad_data = Alg::into_tensor_handle(client, out_grad.data(), dtypes.rhs_global, op)?;
+    let input_data = Alg::correct_layout(client, input.data().clone(), dtypes.lhs_global, op)?;
+    let out_grad_data =
+        Alg::correct_layout(client, out_grad.data().clone(), dtypes.rhs_global, op)?;
 
-    let mut input = *input;
-    let mut out_grad = *out_grad;
+    let mut input = input.clone();
+    let mut out_grad = out_grad.clone();
 
-    *input.data_mut() = input_data.as_ref();
-    *out_grad.data_mut() = out_grad_data.as_ref();
+    *input.data_mut() = input_data;
+    *out_grad.data_mut() = out_grad_data;
 
     let address_type = input
         .required_address_type()
@@ -179,8 +159,8 @@ where
         m: out_c,
         n: c * kernel_shape.iter().product::<usize>(),
         k: n * out_shape.iter().product::<usize>(),
-        lhs_strides: input.data().strides.into(),
-        rhs_strides: out_grad.data().strides.into(),
+        lhs_strides: input.data().strides.clone(),
+        rhs_strides: out_grad.data().strides.clone(),
         lhs_layout: definition::MatrixLayout::ColMajor,
         rhs_layout: definition::MatrixLayout::RowMajor,
         kernel_size: kernel_shape.iter().map(|it| *it as u32).collect(),
@@ -204,8 +184,8 @@ where
 
     launch_kernel::<R, Alg>(
         client,
-        &input,
-        &out_grad,
+        input,
+        out_grad,
         weight_grad,
         problem,
         &BlueprintStrategy::Inferred(Default::default()),
@@ -216,9 +196,9 @@ where
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
 pub fn launch_kernel<R: Runtime, Alg: Algorithm>(
     client: &ComputeClient<R>,
-    input: &MatmulInputHandleRef<'_, R>,
-    out_grad: &MatmulInputHandleRef<'_, R>,
-    weight_grad: &TensorHandleRef<'_, R>,
+    input: MatmulInputBinding<R>,
+    out_grad: MatmulInputBinding<R>,
+    weight_grad: TensorBinding<R>,
     problem: ConvolutionProblem,
     blueprint_strategy: &BlueprintStrategy<RuntimeArgs, Alg::Routine>,
     dtypes: MatmulElems,
@@ -235,16 +215,16 @@ where
         weight_grad.elem_size,
     )
     .filter_lhs_with_tensor(
-        out_grad.data().strides,
-        out_grad.data().shape,
+        &out_grad.data().strides,
+        &out_grad.data().shape,
         MatrixLayout::RowMajor,
     )
     .filter_rhs_with_tensor(
-        input.data().strides,
-        input.data().shape,
+        &input.data().strides,
+        &input.data().shape,
         MatrixLayout::RowMajor,
     )
-    .filter_out_with_tensor(weight_grad.strides, weight_grad.shape);
+    .filter_out_with_tensor(&weight_grad.strides, &weight_grad.shape);
 
     let line_sizes = Alg::filter_line_sizes(line_sizes).pick_max()?;
 

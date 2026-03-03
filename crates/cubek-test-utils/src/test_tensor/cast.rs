@@ -6,6 +6,7 @@ use cubecl::{
         ViewOperationsMutExpand,
     },
     tensor_line_size_parallel,
+    zspace::{shape, strides},
 };
 
 #[cube(launch)]
@@ -27,7 +28,7 @@ fn cast_inner<From: Numeric, To: Numeric>(from: &Tensor<Line<From>>, to: &mut Te
 
 pub fn copy_casted(
     client: &ComputeClient<TestRuntime>,
-    original: &TensorHandle<TestRuntime>,
+    original: TensorHandle<TestRuntime>,
     target_type: StorageType,
 ) -> TensorHandle<TestRuntime> {
     if target_type == original.dtype {
@@ -42,8 +43,8 @@ pub fn copy_casted(
 
     let line_size = tensor_line_size_parallel(
         client.io_optimized_line_sizes(target_type.size()),
-        &[num_elems],
-        &[1],
+        &shape![num_elems],
+        &strides![1],
         0,
     );
 
@@ -57,15 +58,16 @@ pub fn copy_casted(
         target_type,
     );
 
+    let dtype = original.dtype;
+
     cast_launch::launch::<TestRuntime>(
         client,
         CubeCount::Static(cube_count, 1, 1),
         cube_dim,
-        original.as_arg(line_size),
-        out.as_arg(line_size),
-        [original.dtype, target_type],
-    )
-    .unwrap();
+        original.into_arg(line_size),
+        out.clone().into_arg(line_size),
+        [dtype, target_type],
+    );
 
     out
 }

@@ -224,26 +224,26 @@ pub(crate) fn cast_seq<From: CubePrimitive, To: CubePrimitive>(
 
 impl<'a, R: Runtime> NhwcLayoutLaunch<'a, R> {
     pub fn from_handle(
-        handle: &TensorHandleRef<'a, R>,
+        binding: &TensorBinding<R>,
         line_size: LineSize,
         checks: EnumSet<NhwcCheck>,
     ) -> Self {
-        let rank = handle.shape.len();
+        let rank = binding.shape.len();
         let dim_c = rank - 1;
 
-        let stride_batch = ScalarArg::new(handle.strides[0]);
-        let strides_spatial = handle.strides[1..dim_c]
+        let stride_batch = ScalarArg::new(binding.strides[0]);
+        let strides_spatial = binding.strides[1..dim_c]
             .iter()
             .map(|s| ScalarArg::new(*s))
             .collect();
-        let stride_channel = ScalarArg::new(handle.strides[dim_c]);
+        let stride_channel = ScalarArg::new(binding.strides[dim_c]);
 
-        let shape_batch = ScalarArg::new(handle.shape[0] as u32);
-        let shapes_spatial = handle.shape[1..dim_c]
+        let shape_batch = ScalarArg::new(binding.shape[0] as u32);
+        let shapes_spatial = binding.shape[1..dim_c]
             .iter()
             .map(|s| ScalarArg::new(*s as u32))
             .collect();
-        let shape_channel = ScalarArg::new(handle.shape[dim_c] as u32);
+        let shape_channel = ScalarArg::new(binding.shape[dim_c] as u32);
 
         Self::new(
             stride_batch,

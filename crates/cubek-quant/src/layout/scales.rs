@@ -203,26 +203,26 @@ pub type ScalesViewLaunch<'a, R> = TypedViewLaunch<'a, ScalesLayout, R>;
 /// Create a scales view from the values and scales handle, line size and quantization scheme.
 /// `values` should be *the quantized tensor*, and will be adjusted by `num_quants`.
 pub fn scales_view<'a, R: Runtime>(
-    client: &ComputeClient<R>,
-    values: &'a TensorHandleRef<'a, R>,
-    scales: &'a TensorHandleRef<'a, R>,
+    client: &'a ComputeClient<R>,
+    values: TensorBinding<R>,
+    scales: TensorBinding<R>,
     scales_line_size: usize,
-    quant_scheme: &QuantScheme,
+    quant_scheme: &'a QuantScheme,
 ) -> ScalesViewLaunch<'a, R> {
-    let layout = scales_layout(client, values, scales, scales_line_size, quant_scheme);
+    let layout = scales_layout(client, &values, &scales, scales_line_size, quant_scheme);
     let len = scales.shape.iter().product::<usize>();
     let buffer = unsafe {
-        ArrayArg::from_raw_parts_and_size(scales.handle, len, scales_line_size, scales.elem_size)
+        ArrayArg::from_raw_parts_binding(scales.handle, len, scales_line_size, scales.elem_size)
     };
     ScalesViewLaunch::new(buffer, layout)
 }
 
 pub fn scales_layout<'a, R: Runtime>(
-    client: &ComputeClient<R>,
-    values: &'a TensorHandleRef<'a, R>,
-    scales: &'a TensorHandleRef<'a, R>,
+    client: &'a ComputeClient<R>,
+    values: &TensorBinding<R>,
+    scales: &TensorBinding<R>,
     scales_line_size: usize,
-    scheme: &QuantScheme,
+    scheme: &'a QuantScheme,
 ) -> ScalesLayoutArgs<'a, R> {
     let values_len = values.shape.iter().product::<usize>() * scheme.num_quants();
     let values_len = ScalarArg::new(values_len);
@@ -230,8 +230,8 @@ pub fn scales_layout<'a, R: Runtime>(
     match &scheme.level {
         QuantLevel::Tensor => ScalesLayoutArgs::PerTensor(PerTensorLayoutLaunch::new(values_len)),
         QuantLevel::Block(block_size) => {
-            let tensor_shape = shape_divmod_quant(client, values.shape, scheme.num_quants());
-            let scales_strides = strides_seq(scales.strides);
+            let tensor_shape = shape_divmod_quant(client, &values.shape, scheme.num_quants());
+            let scales_strides = strides_seq(client, &scales.strides);
             ScalesLayoutArgs::BlockScaled(BlockScaledLayoutLaunch::new(
                 tensor_shape,
                 values_len,
@@ -244,8 +244,8 @@ pub fn scales_layout<'a, R: Runtime>(
 }
 
 fn shape_divmod_quant<'a, R: Runtime>(
-    client: &ComputeClient<R>,
-    shape: &'a [usize],
+    client: &'a ComputeClient<R>,
+    shape: &[usize],
     num_quants: usize,
 ) -> SequenceArg<'a, R, FastDivmod<usize>> {
     let mut out_seq = SequenceArg::new();
@@ -257,7 +257,10 @@ fn shape_divmod_quant<'a, R: Runtime>(
     out_seq
 }
 
-fn strides_seq<'a, R: Runtime>(strides: &'a [usize]) -> SequenceArg<'a, R, usize> {
+fn strides_seq<'a, R: Runtime>(
+    _client: &'a ComputeClient<R>,
+    strides: &[usize],
+) -> SequenceArg<'a, R, usize> {
     let mut out_seq = SequenceArg::new();
     for s in strides {
         out_seq.push(ScalarArg::new(*s));

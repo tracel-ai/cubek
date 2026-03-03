@@ -564,8 +564,8 @@ enum ComputeTaskEnum {
 fn launch_ref<R: Runtime, E: Float>(
     strategy: CopyStrategyEnum,
     client: &ComputeClient<R>,
-    input: &TensorHandleRef<R>,
-    output: &TensorHandleRef<R>,
+    input: TensorBinding<R>,
+    output: TensorBinding<R>,
     smem_size: usize,
     double_buffering: bool,
 ) {
@@ -588,8 +588,8 @@ fn launch_ref<R: Runtime, E: Float>(
                     client,
                     cube_count,
                     cube_dim,
-                    input.as_tensor_arg(1),
-                    output.as_tensor_arg(1),
+                    input.into_tensor_arg(1),
+                    output.into_tensor_arg(1),
                     config,
                 )
             }
@@ -598,8 +598,8 @@ fn launch_ref<R: Runtime, E: Float>(
                     client,
                     cube_count,
                     cube_dim,
-                    input.as_tensor_arg(1),
-                    output.as_tensor_arg(1),
+                    input.into_tensor_arg(1),
+                    output.into_tensor_arg(1),
                     config,
                 )
             }
@@ -613,8 +613,8 @@ fn launch_ref<R: Runtime, E: Float>(
                     client,
                     cube_count,
                     cube_dim,
-                    input.as_tensor_arg(1),
-                    output.as_tensor_arg(1),
+                    input.into_tensor_arg(1),
+                    output.into_tensor_arg(1),
                     config,
                 )
             }
@@ -623,8 +623,8 @@ fn launch_ref<R: Runtime, E: Float>(
                     client,
                     cube_count,
                     cube_dim,
-                    input.as_tensor_arg(1),
-                    output.as_tensor_arg(1),
+                    input.into_tensor_arg(1),
+                    output.into_tensor_arg(1),
                     config,
                 )
             }
@@ -638,8 +638,8 @@ fn launch_ref<R: Runtime, E: Float>(
                     client,
                     cube_count,
                     cube_dim,
-                    input.as_tensor_arg(1),
-                    output.as_tensor_arg(1),
+                    input.into_tensor_arg(1),
+                    output.into_tensor_arg(1),
                     config,
                 )
             }
@@ -653,8 +653,8 @@ fn launch_ref<R: Runtime, E: Float>(
                     client,
                     cube_count,
                     cube_dim,
-                    input.as_tensor_arg(1),
-                    output.as_tensor_arg(1),
+                    input.into_tensor_arg(1),
+                    output.into_tensor_arg(1),
                     config,
                 )
             }
@@ -663,8 +663,8 @@ fn launch_ref<R: Runtime, E: Float>(
                     client,
                     cube_count,
                     cube_dim,
-                    input.as_tensor_arg(1),
-                    output.as_tensor_arg(1),
+                    input.into_tensor_arg(1),
+                    output.into_tensor_arg(1),
                     config,
                 )
             }
@@ -673,8 +673,8 @@ fn launch_ref<R: Runtime, E: Float>(
                     client,
                     cube_count,
                     cube_dim,
-                    input.as_tensor_arg(1),
-                    output.as_tensor_arg(1),
+                    input.into_tensor_arg(1),
+                    output.into_tensor_arg(1),
                     config,
                 )
             }
@@ -683,8 +683,8 @@ fn launch_ref<R: Runtime, E: Float>(
                     client,
                     cube_count,
                     cube_dim,
-                    input.as_tensor_arg(1),
-                    output.as_tensor_arg(1),
+                    input.into_tensor_arg(1),
+                    output.into_tensor_arg(1),
                     config,
                 )
             }
@@ -698,8 +698,8 @@ fn launch_ref<R: Runtime, E: Float>(
                     client,
                     cube_count,
                     cube_dim,
-                    input.as_tensor_arg(1),
-                    output.as_tensor_arg(1),
+                    input.into_tensor_arg(1),
+                    output.into_tensor_arg(1),
                     config,
                 )
             }
@@ -713,12 +713,12 @@ fn launch_ref<R: Runtime, E: Float>(
                     client,
                     cube_count,
                     cube_dim,
-                    input.as_tensor_arg(1),
-                    output.as_tensor_arg(1),
+                    input.into_tensor_arg(1),
+                    output.into_tensor_arg(1),
                     config,
                 )
             }
-        }.unwrap()
+        };
     }
 }
 
@@ -734,13 +734,27 @@ impl<R: Runtime, E: Float> Benchmark for MemcpyAsyncBench<R, E> {
             vec![self.data_count],
             E::as_type_native_unchecked(),
         );
-        random_uniform(&client, 0., 1., a.as_ref(), E::as_type_native_unchecked()).unwrap();
+        random_uniform(
+            &client,
+            0.,
+            1.,
+            a.clone().binding(),
+            E::as_type_native_unchecked(),
+        )
+        .unwrap();
         let b = TensorHandle::empty(
             &client,
             vec![self.window_size],
             E::as_type_native_unchecked(),
         );
-        random_uniform(&client, 0., 1., b.as_ref(), E::as_type_native_unchecked()).unwrap();
+        random_uniform(
+            &client,
+            0.,
+            1.,
+            b.clone().binding(),
+            E::as_type_native_unchecked(),
+        )
+        .unwrap();
 
         (a, b)
     }
@@ -750,8 +764,8 @@ impl<R: Runtime, E: Float> Benchmark for MemcpyAsyncBench<R, E> {
         launch_ref::<R, E>(
             self.strategy,
             &self.client,
-            &args.0.as_ref(),
-            &args.1.as_ref(),
+            args.0.binding(),
+            args.1.binding(),
             smem_size,
             self.double_buffering,
         );

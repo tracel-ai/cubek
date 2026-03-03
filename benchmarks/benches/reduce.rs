@@ -35,7 +35,7 @@ impl<R: Runtime, E: Float> Benchmark for ReduceBench<R, E> {
         let elem = E::as_type_native_unchecked();
 
         let input = TensorHandle::empty(&client, self.shape.clone(), elem);
-        random_uniform(&client, 0., 1., input.as_ref(), elem).unwrap();
+        random_uniform(&client, 0., 1., input.clone().binding(), elem).unwrap();
         let mut shape_out = self.shape.clone();
         shape_out[self.axis] = 1;
         let out = TensorHandle::empty(&client, shape_out, elem);
@@ -46,8 +46,8 @@ impl<R: Runtime, E: Float> Benchmark for ReduceBench<R, E> {
     fn execute(&self, (input, out): Self::Input) -> Result<(), String> {
         cubek::reduce::reduce::<R>(
             &self.client,
-            input.as_ref(),
-            out.as_ref(),
+            input.binding(),
+            out.binding(),
             self.axis,
             self.strategy.clone(),
             ReduceOperationConfig::Sum,

@@ -37,7 +37,7 @@ use crate::ReduceError;
 /// let input_handle = client.create(f32::as_bytes(&[0, 1, 2, 3]));
 /// let output_handle = client.empty(size_of::<F>());
 /// let input = unsafe {
-///     TensorHandleRef::from_raw_parts(
+///     TensorBinding::from_raw_parts(
 ///         &input_handle,
 ///         &[2, 1],
 ///         &[2, 2],
@@ -45,7 +45,7 @@ use crate::ReduceError;
 ///     )
 /// };
 /// let output = unsafe {
-///     TensorHandleRef::from_raw_parts(&output_handle, &[1], &[1], size_of::<F>())
+///     TensorBinding::from_raw_parts(&output_handle, &[1], &[1], size_of::<F>())
 /// };
 ///
 /// // Here `R` is a `cubecl::Runtime`.
@@ -60,8 +60,8 @@ use crate::ReduceError;
 /// ```
 pub fn shared_sum<R: Runtime>(
     client: &ComputeClient<R>,
-    input: TensorHandleRef<R>,
-    output: TensorHandleRef<R>,
+    input: TensorBinding<R>,
+    output: TensorBinding<R>,
     cube_count: u32,
     input_elem: ElemType,
 ) -> Result<(), ReduceError> {
@@ -87,11 +87,15 @@ pub fn shared_sum<R: Runtime>(
     } else {
         tensor_line_size_parallel(
             client.io_optimized_line_sizes(input.elem_size),
-            input.shape,
-            input.strides,
+            &input.shape,
+            &input.strides,
             input.shape.len() - 1,
         )
     };
+
+    let address_type = input
+        .required_address_type()
+        .max(output.required_address_type());
 
     // Sum is commutative so we don't care about order, but need to care if there are holes since
     // they're not guaranteed to contain `0`.
@@ -100,11 +104,11 @@ pub fn shared_sum<R: Runtime>(
             input_len / line_size,
         )));
         let buffer = unsafe {
-            ArrayArg::from_raw_parts_and_size(input.handle, input_len, line_size, input.elem_size)
+            ArrayArg::from_raw_parts_binding(input.handle, input_len, line_size, input.elem_size)
         };
         LinearViewLaunch::new::<LinearLayout>(buffer, layout)
     } else {
-        linear_view(client, &input, line_size)
+        linear_view(client, input, line_size)
     };
 
     // Compute extra parameters.
@@ -112,19 +116,15 @@ pub fn shared_sum<R: Runtime>(
     let num_units = cube_count * cube_dim.num_elems();
     let num_lines_per_unit = input_len.div_ceil(num_units as usize * line_size);
     let cube_count = CubeCount::new_1d(cube_count);
-    let address_type = input
-        .required_address_type()
-        .max(output.required_address_type());
-
     // Launch kernel
-    let result = unsafe {
+    unsafe {
         shared_sum_kernel::launch_unchecked(
             client,
             cube_count,
             cube_dim,
             address_type,
             input_view,
-            output.as_tensor_arg(1),
+            output.into_tensor_arg(1),
             cube_dim.num_elems() as usize,
             line_size,
             num_lines_per_unit,
@@ -132,10 +132,7 @@ pub fn shared_sum<R: Runtime>(
         )
     };
 
-    match result {
-        Ok(_) => Ok(()),
-        Err(err) => Err(ReduceError::Launch(err)),
-    }
+    Ok(())
 }
 
 #[cube(launch_unchecked, address_type = "dynamic")]

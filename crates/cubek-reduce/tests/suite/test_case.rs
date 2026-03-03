@@ -2,6 +2,8 @@ use std::marker::PhantomData;
 
 use cubecl::TestRuntime;
 use cubecl::prelude::*;
+use cubecl::zspace::Shape;
+use cubecl::zspace::Strides;
 use cubek_reduce::components::instructions::ReduceOperationConfig;
 use cubek_reduce::launch::RoutineStrategy;
 use cubek_reduce::{ReduceDtypes, ReduceError, ReducePrecision, launch::ReduceStrategy, reduce};
@@ -14,8 +16,8 @@ use rand::{
 static PRECISION: i32 = 4;
 
 pub struct TestCase<P> {
-    pub shape: Vec<usize>,
-    pub stride: Vec<usize>,
+    pub shape: Shape,
+    pub stride: Strides,
     pub axis: Option<usize>,
     pub strategy: ReduceStrategy,
     pub elem: PhantomData<P>,
@@ -192,18 +194,18 @@ where
         let output_stride = self.output_stride();
 
         let input = unsafe {
-            TensorHandleRef::from_raw_parts(
-                &input_handle,
-                &self.stride,
-                &self.shape,
+            TensorBinding::from_raw_parts(
+                input_handle,
+                self.stride.clone(),
+                self.shape.clone(),
                 size_of::<P>(),
             )
         };
         let output = unsafe {
-            TensorHandleRef::from_raw_parts(
-                &output_handle,
-                &output_stride,
-                &output_shape,
+            TensorBinding::from_raw_parts(
+                output_handle.clone(),
+                output_stride.clone(),
+                output_shape.clone(),
                 size_of::<O>(),
             )
         };
@@ -243,7 +245,7 @@ where
             }
         }
 
-        let bytes = client.read_one(output_handle);
+        let bytes = client.read_one(output_handle).unwrap();
         let output_values = O::from_bytes(&bytes);
         assert_approx_equal(
             output_values,
@@ -298,20 +300,23 @@ where
             .sum()
     }
 
-    fn output_stride(&self) -> Vec<usize> {
-        self.shape
-            .iter()
-            .enumerate()
-            .scan(1, |stride, (axis, shape)| {
-                if axis == self.axis.unwrap() {
-                    Some(1)
-                } else {
-                    let current = Some(*stride);
-                    *stride *= shape;
-                    current
-                }
-            })
-            .collect()
+    fn output_stride(&self) -> Strides {
+        Strides::new(
+            &self
+                .shape
+                .iter()
+                .enumerate()
+                .scan(1, |stride, (axis, shape)| {
+                    if axis == self.axis.unwrap() {
+                        Some(1)
+                    } else {
+                        let current = Some(*stride);
+                        *stride *= shape;
+                        current
+                    }
+                })
+                .collect::<Vec<_>>(),
+        )
     }
 
     fn random_input_values<F: Float>(&self) -> Vec<F> {

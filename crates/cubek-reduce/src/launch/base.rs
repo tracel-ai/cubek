@@ -28,8 +28,8 @@ pub struct ReduceDtypes {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn launch_reduce<Run: Runtime>(
     client: &ComputeClient<Run>,
-    input: TensorHandleRef<Run>,
-    output: TensorHandleRef<Run>,
+    input: TensorBinding<Run>,
+    output: TensorBinding<Run>,
     axis: usize,
     strategy: ReduceStrategy,
     dtypes: ReduceDtypes,
@@ -86,8 +86,8 @@ pub(crate) fn launch_reduce<Run: Runtime>(
             settings.cube_count,
             settings.cube_dim,
             settings.address_type,
-            input.as_tensor_arg(settings.line.line_size_input),
-            output.as_tensor_arg(settings.line.line_size_output),
+            input.into_tensor_arg(settings.line.line_size_input),
+            output.into_tensor_arg(settings.line.line_size_output),
             ScalarArg::new(axis),
             blueprint,
             inst,
@@ -95,8 +95,9 @@ pub(crate) fn launch_reduce<Run: Runtime>(
             dtypes.output,
             dtypes.accumulation,
         )
-        .map_err(ReduceError::Launch)
-    }
+    };
+
+    Ok(())
 }
 
 #[cube(launch_unchecked, address_type = "dynamic")]

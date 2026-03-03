@@ -18,7 +18,7 @@ use cubek_matmul::{
     components::global::memory::{GlobalLayoutConfig, NoopLayout, NoopLayoutLaunch},
     definition::{Blueprint, MatmulElems, MatmulLineSizes, MatrixLayout, TilingBlueprint},
     launch::{
-        MatmulArgs, MatmulInputHandleRef, TensorArgs, TensorInputs, TensorInputsLaunch,
+        MatmulArgs, MatmulInputBinding, TensorArgs, TensorInputs, TensorInputsLaunch,
         TensorMapArgs, TensorMapInputs, TensorMapInputsLaunch, TensorOutput, TensorOutputLaunch,
     },
     routines::Routine,
@@ -97,8 +97,8 @@ pub trait ConcreteInputsFactory<A: Routine<RuntimeArgs>>: LaunchArg {
     #[allow(clippy::too_many_arguments)]
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
-        out_grad: &'a MatmulInputHandleRef<'a, R>,
-        weights: &'a MatmulInputHandleRef<'a, R>,
+        out_grad: MatmulInputBinding<R>,
+        weights: MatmulInputBinding<R>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
@@ -111,7 +111,7 @@ pub trait ConcreteInputsFactory<A: Routine<RuntimeArgs>>: LaunchArg {
 pub trait ConcreteOutputFactory<A: Routine<RuntimeArgs>>: LaunchArg {
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
-        out: &'a TensorHandleRef<'a, R>,
+        out: TensorBinding<R>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
@@ -123,8 +123,8 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs>> ConcreteI
 {
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
-        out_grad: &'a MatmulInputHandleRef<'a, R>,
-        weights: &'a MatmulInputHandleRef<'a, R>,
+        out_grad: MatmulInputBinding<R>,
+        weights: MatmulInputBinding<R>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
@@ -169,10 +169,24 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs>> ConcreteI
         };
 
         let inputs = TensorInputsLaunch::new(
-            ViewArg::new::<LhsLayout>(out_grad.data().as_array_arg(line_sizes.lhs), layout_lhs),
             VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new()),
-            ViewArg::new::<RhsLayout>(weights.data().as_array_arg(line_sizes.rhs), layout_rhs),
+            ViewArg::new::<LhsLayout>(
+                out_grad
+                    .data()
+                    .clone()
+                    .into_tensor_arg(line_sizes.lhs)
+                    .into_array_arg(),
+                layout_lhs,
+            ),
             VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new()),
+            ViewArg::new::<RhsLayout>(
+                weights
+                    .data()
+                    .clone()
+                    .into_tensor_arg(line_sizes.rhs)
+                    .into_array_arg(),
+                layout_rhs,
+            ),
             ComptimeOptionArgs::None,
             ComptimeOptionArgs::None,
         );
@@ -191,14 +205,14 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs>> ConcreteI
 impl<EG: Numeric, A: Routine<RuntimeArgs>> ConcreteOutputFactory<A> for TensorOutput<EG> {
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
-        out: &'a TensorHandleRef<'a, R>,
+        out: TensorBinding<R>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
     ) -> Self::RuntimeArg<'a, R> {
         type Layout = Chain<NhwcLayout, OutLayout>;
 
-        let global = NhwcLayoutLaunch::from_handle(out, line_sizes.out, EnumSet::empty());
+        let global = NhwcLayoutLaunch::from_handle(&out, line_sizes.out, EnumSet::empty());
         let layout =
             OutLayoutLaunch::from_args(client, problem, blueprint.out_global_layout_config());
         let layout = ChainLaunch::new(global, layout);
@@ -213,8 +227,8 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
 {
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
-        out_grad: &'a MatmulInputHandleRef<'a, R>,
-        weights: &'a MatmulInputHandleRef<'a, R>,
+        out_grad: MatmulInputBinding<R>,
+        weights: MatmulInputBinding<R>,
         blueprint: &TilingBlueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
@@ -254,7 +268,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
                 channels_per_pixel: tile_size_k,
                 pixels_per_column: stage_m,
             },
-            out_grad.data().as_tensor_arg(line_sizes.lhs),
+            out_grad.data().clone().into_tensor_arg(line_sizes.lhs),
             lhs_elem,
         )
         .with_elem_stride(elem_stride);
@@ -263,7 +277,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
             TiledArgs {
                 tile_size: stage_size_rhs,
             },
-            weights.data().as_tensor_arg(line_sizes.rhs),
+            weights.data().clone().into_tensor_arg(line_sizes.rhs),
             dtypes.rhs_global,
         );
 

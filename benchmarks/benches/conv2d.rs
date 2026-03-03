@@ -12,7 +12,7 @@ use cubek::{
     },
     matmul::{
         definition::{AccG, AccR, LhsG, LhsS, MatmulElems, MatmulPrecision, RhsG},
-        launch::MatmulInputHandleRef,
+        launch::MatmulInputBinding,
     },
     random::random_uniform,
 };
@@ -34,7 +34,7 @@ impl<R: Runtime, MP: MatmulPrecision> Benchmark for Conv2dBench<R, MP> {
             &client,
             0.0,
             1.0,
-            input.as_ref(),
+            input.clone().binding(),
             LhsG::<MP>::as_type_native_unchecked(),
         )
         .unwrap();
@@ -47,7 +47,7 @@ impl<R: Runtime, MP: MatmulPrecision> Benchmark for Conv2dBench<R, MP> {
             &client,
             0.0,
             1.0,
-            weight.as_ref(),
+            weight.clone().binding(),
             RhsG::<MP>::as_type_native_unchecked(),
         )
         .unwrap();
@@ -60,7 +60,7 @@ impl<R: Runtime, MP: MatmulPrecision> Benchmark for Conv2dBench<R, MP> {
             &client,
             0.0,
             1.0,
-            bias.as_ref(),
+            bias.clone().binding(),
             AccG::<MP>::as_type_native_unchecked(),
         )
         .unwrap();
@@ -90,13 +90,10 @@ impl<R: Runtime, MP: MatmulPrecision> Benchmark for Conv2dBench<R, MP> {
                 tile_kind: AcceleratedTileKind::Cmma,
             },
             &self.client,
-            &MatmulInputHandleRef::Normal(input.as_ref(), elems.lhs_global),
-            &MatmulInputHandleRef::Normal(weight.as_ref(), elems.rhs_global),
-            &Some(MatmulInputHandleRef::Normal(
-                bias.as_ref(),
-                elems.acc_global,
-            )),
-            &out.as_ref(),
+            MatmulInputBinding::Normal(input.binding(), elems.lhs_global),
+            MatmulInputBinding::Normal(weight.binding(), elems.rhs_global),
+            Some(MatmulInputBinding::Normal(bias.binding(), elems.acc_global)),
+            out.binding(),
             self.args.clone(),
             elems,
         )

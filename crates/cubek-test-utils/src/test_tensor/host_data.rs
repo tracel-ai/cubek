@@ -46,7 +46,7 @@ impl HostDataVec {
 impl HostData {
     pub fn from_tensor_handle(
         client: &ComputeClient<TestRuntime>,
-        tensor_handle: &TensorHandle<TestRuntime>,
+        tensor_handle: TensorHandle<TestRuntime>,
         host_data_type: HostDataType,
     ) -> Self {
         let shape = tensor_handle.shape().clone();
@@ -55,15 +55,19 @@ impl HostData {
         let data = match host_data_type {
             HostDataType::F32 => {
                 let handle = copy_casted(client, tensor_handle, f32::as_type_native_unchecked());
-                let data = f32::from_bytes(&client.read_one_tensor(handle.as_copy_descriptor()))
-                    .to_owned();
+                let data = f32::from_bytes(
+                    &client.read_one_unchecked_tensor(handle.into_copy_descriptor()),
+                )
+                .to_owned();
 
                 HostDataVec::F32(data)
             }
             HostDataType::Bool => {
                 let handle = copy_casted(client, tensor_handle, u32::as_type_native_unchecked());
-                let data = u32::from_bytes(&client.read_one_tensor(handle.as_copy_descriptor()))
-                    .to_owned();
+                let data = u32::from_bytes(
+                    &client.read_one_unchecked_tensor(handle.into_copy_descriptor()),
+                )
+                .to_owned();
 
                 HostDataVec::Bool(data.iter().map(|&x| x > 0).collect())
             }

@@ -84,7 +84,9 @@ impl<RC: RuntimeConfig, GMM: GlobalMatmulFamily<RC>, S: GlobalPartitionMatmul> B
                     dtypes.acc_register,
                 ],
             )
-        }
+        };
+
+        Ok(())
     }
 
     fn cubedim_resource(

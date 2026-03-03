@@ -1,11 +1,8 @@
+use crate::components::{ConvolutionOperation, global::args::RuntimeArgs};
+use cubecl::prelude::*;
+use cubecl::std::tensor::{into_contiguous_pitched, is_contiguous_pitched};
 use cubek_matmul::launch::MatmulArgs;
 use cubek_matmul::{definition::AvailableLineSizes, routines::Routine};
-
-use cubecl::std::tensor::{TensorHandle, into_contiguous_pitched_ref, is_contiguous_pitched};
-
-use cubecl::prelude::*;
-
-use crate::components::{ConvolutionOperation, global::args::RuntimeArgs};
 
 pub mod simple;
 pub mod specialized;
@@ -19,69 +16,69 @@ pub trait Algorithm {
     /// eventually, but this is nice and simple.
     const IS_SPECIALIZED: bool = false;
 
-    fn into_tensor_handle<R: Runtime>(
+    fn correct_layout<R: Runtime>(
         client: &ComputeClient<R>,
-        handle: &TensorHandleRef<'_, R>,
+        handle: TensorBinding<R>,
         dtype: StorageType,
         operation: ConvolutionOperation,
-    ) -> Result<TensorHandle<R>, LaunchError>;
+    ) -> Result<TensorBinding<R>, LaunchError>;
 
     fn filter_line_sizes(line_sizes: AvailableLineSizes) -> AvailableLineSizes {
         line_sizes
     }
 }
 
-pub(crate) fn into_tensor_handle<R: Runtime>(
+pub(crate) fn contiguous_pitched_layout<R: Runtime>(
     client: &ComputeClient<R>,
-    handle: &TensorHandleRef<'_, R>,
+    binding: TensorBinding<R>,
     dtype: StorageType,
-) -> Result<TensorHandle<R>, LaunchError> {
-    let handle = if has_valid_layout(handle) {
-        TensorHandle::from_ref(handle, dtype)
+) -> Result<TensorBinding<R>, LaunchError> {
+    let binding = if has_valid_layout(&binding) {
+        binding
     } else {
-        into_contiguous_pitched_ref(client, handle, dtype)?
+        into_contiguous_pitched(client, binding, dtype).binding()
     };
-    Ok(handle)
+    Ok(binding)
 }
 
-fn has_valid_layout<R: Runtime>(handle: &TensorHandleRef<'_, R>) -> bool {
-    let rank = handle.shape.len();
+fn has_valid_layout<R: Runtime>(binding: &TensorBinding<R>) -> bool {
+    let rank = binding.shape.len();
     let dim_c = rank - 1;
-    handle.strides[dim_c] == 1
+    binding.strides[dim_c] == 1
 }
 
 const TMA_STRIDE_ALIGN: usize = 16;
 
 pub(crate) fn into_tensor_handle_tma<R: Runtime>(
     client: &ComputeClient<R>,
-    handle: &TensorHandleRef<'_, R>,
+    handle: TensorBinding<R>,
     dtype: StorageType,
     operation: ConvolutionOperation,
-) -> Result<TensorHandle<R>, LaunchError> {
-    let handle = if has_valid_layout_tma(handle, operation) {
-        TensorHandle::from_ref(handle, dtype)
+) -> Result<TensorBinding<R>, LaunchError> {
+    let binding = if has_valid_layout_tma(&handle, operation) {
+        handle
     } else {
-        into_contiguous_pitched_ref(client, handle, dtype)?
+        into_contiguous_pitched(client, handle, dtype).binding()
     };
-    Ok(handle)
+    Ok(binding)
 }
 
 pub(crate) fn has_valid_layout_tma<R: Runtime>(
-    handle: &TensorHandleRef<'_, R>,
+    binding: &TensorBinding<R>,
     operation: ConvolutionOperation,
 ) -> bool {
-    let stride_align = TMA_STRIDE_ALIGN / handle.elem_size;
-    let rank = handle.shape.len();
+    let stride_align = TMA_STRIDE_ALIGN / binding.elem_size;
+    let rank = binding.shape.len();
     let dim_c = rank - 1;
 
-    let aligned = handle.strides[..dim_c]
+    let aligned = binding.strides[..dim_c]
         .iter()
         .all(|stride| stride % stride_align == 0);
 
-    let valid_layout = handle.strides[dim_c] == 1;
+    let valid_layout = binding.strides[dim_c] == 1;
 
     let is_valid_wgrad = if operation == ConvolutionOperation::BackwardWeight {
-        is_contiguous_pitched(handle.shape, handle.strides)
+        is_contiguous_pitched(&binding.shape, &binding.strides)
     } else {
         true
     };

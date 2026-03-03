@@ -2,11 +2,11 @@ use crate::{
     backward_weight::args::{ConcreteArgs, ConcreteInputsFactory, ConcreteOutputFactory},
     components::global::args::RuntimeArgs,
 };
-use cubecl::prelude::TensorHandleRef;
+use cubecl::prelude::TensorBinding;
 use cubecl::{Runtime, client::ComputeClient};
 use cubek_matmul::{
     definition::{MatmulElems, MatmulLineSizes},
-    launch::{InputArg, MatmulInputHandleRef, OutputArg},
+    launch::{InputArg, MatmulInputBinding, OutputArg},
     routines::{BlueprintStrategy, Routine},
 };
 
@@ -18,9 +18,9 @@ use crate::components::{ConvSetupError, ConvolutionProblem};
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
 pub fn launch_kernel_concrete<R: Runtime, Args: ConcreteArgs<A>, A: Routine<RuntimeArgs>>(
     client: &ComputeClient<R>,
-    input: &MatmulInputHandleRef<'_, R>,
-    out_grad: &MatmulInputHandleRef<'_, R>,
-    weight_grad: &TensorHandleRef<'_, R>,
+    input: MatmulInputBinding<R>,
+    out_grad: MatmulInputBinding<R>,
+    weight_grad: TensorBinding<R>,
     problem: ConvolutionProblem,
     line_sizes: MatmulLineSizes,
     blueprint_strategy: &BlueprintStrategy<RuntimeArgs, A>,
@@ -28,10 +28,10 @@ pub fn launch_kernel_concrete<R: Runtime, Args: ConcreteArgs<A>, A: Routine<Runt
 ) -> Result<(), ConvSetupError> {
     let mut view_line_sizes = line_sizes;
 
-    if let MatmulInputHandleRef::Quantized { scheme, .. } = input {
+    if let MatmulInputBinding::Quantized { scheme, .. } = input {
         view_line_sizes.lhs *= scheme.num_quants();
     }
-    if let MatmulInputHandleRef::Quantized { scheme, .. } = out_grad {
+    if let MatmulInputBinding::Quantized { scheme, .. } = out_grad {
         view_line_sizes.rhs *= scheme.num_quants();
     }
 
