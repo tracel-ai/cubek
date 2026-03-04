@@ -142,8 +142,9 @@ where
 
     let op = ConvolutionOperation::Forward;
 
-    let input_data = Alg::correct_layout(client, input.data().clone(), dtypes.lhs_global, op)?;
-    let weight_data = Alg::correct_layout(client, weight.data().clone(), dtypes.rhs_global, op)?;
+    let input_data = Alg::correct_layout(client, input.clone().into_data(), dtypes.lhs_global, op)?;
+    let weight_data =
+        Alg::correct_layout(client, weight.clone().into_data(), dtypes.rhs_global, op)?;
 
     let mut input = input.clone();
     let mut weight = weight.clone();

@@ -324,115 +324,157 @@ impl Strategy {
     ) -> Result<(), MatmulSetupError> {
         match self {
             Strategy::SimpleCyclicCmma(selection) => {
+                println!("Execuring SimpleCyclicCmma");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleCyclicMma(selection) => {
+                println!("Execuring SimpleCyclicMma");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleStridedCmma(selection) => {
+                println!("Execuring SimpleStridedCmma");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleStridedMma(selection) => {
+                println!("Execuring SimpleStridedMma");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleTilewiseCmma(selection) => {
+                println!("Execuring SimpleTilewiseCmma");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleTilewiseMma(selection) => {
+                println!("Execuring SimpleTilewiseMma");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleAsyncStridedCmma(selection) => {
+                println!("Execuring SimpleAsyncStridedCmma");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleAsyncStridedMma(selection) => {
+                println!("Execuring SimpleAsyncStridedMma");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleAsyncCyclicCmma(selection) => {
+                println!("Execuring SimpleAsyncCyclicCmma");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleAsyncCyclicMma(selection) => {
+                println!("Execuring SimpleAsyncCyclicMma");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleTmaCmma(selection) => {
+                println!("Execuring SimpleTmaCmma");
                 launch_tiling::launch_ref_tma(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleTmaMma(selection) => {
+                println!("Execuring SimpleTmaMma");
                 launch_tiling::launch_ref_tma(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleCyclicCmma(selection) => {
+                println!("Execuring DoubleCyclicCmma");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleCyclicMma(selection) => {
+                println!("Execuring DoubleCyclicMma");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleTilewiseCmma(selection) => {
+                println!("Execuring DoubleTilewiseCmma");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleTilewiseMma(selection) => {
+                println!("Execuring DoubleTilewiseMma");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleHybridCmma(selection) => {
+                println!("Execuring DoubleHybridCmma");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleHybridMma(selection) => {
+                println!("Execuring DoubleHybridMma");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleAsyncCyclicCmma(selection) => {
+                println!("Execuring DoubleAsyncCyclicCmma");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleAsyncCyclicMma(selection) => {
+                println!("Execuring DoubleAsyncCyclicMma");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleAsyncStridedCmma(selection) => {
+                println!("Execuring DoubleAsyncStridedCmma");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleAsyncStridedMma(selection) => {
+                println!("Execuring DoubleAsyncStridedMma");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleTmaCmma(selection) => {
+                println!("Execuring DoubleTmaCmma");
                 launch_tiling::launch_ref_tma(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleTmaMma(selection) => {
+                println!("Execuring DoubleTmaMma");
                 launch_tiling::launch_ref_tma(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SpecializedCyclicCmma(selection) => {
+                println!("Execuring SpecializedCyclicCmma");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SpecializedCyclicMma(selection) => {
+                println!("Execuring SpecializedCyclicMma");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SpecializedStridedCmma(selection) => {
+                println!("Execuring SpecializedStridedCmma");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SpecializedStridedMma(selection) => {
+                println!("Execuring SpecializedStridedMma");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SpecializedTmaCmma(selection) => {
+                println!("Execuring SpecializedTmaCmma");
                 launch_tiling::launch_ref_tma(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SpecializedTmaMma(selection) => {
+                println!("Execuring SpecializedTmaMma");
                 launch_tiling::launch_ref_tma(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::OrderedDoubleCmma(selection) => {
+                println!("Execuring OrderedDoubleCmma");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::OrderedDoubleMma(selection) => {
+                println!("Execuring OrderedDoubleMma");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleUnit(selection) => {
+                println!("Execuring SimpleUnit");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleUnit(selection) => {
+                println!("Execuring DoubleUnit");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::SimpleVecMat(selection) => {
+                println!("Execuring SimpleVecMat");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
             Strategy::DoubleVecMat(selection) => {
+                println!("Execuring DoubleVecMat");
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
-            Strategy::Naive => launch_naive::launch_ref(client, lhs, rhs, out, dtypes),
-            Strategy::Auto => auto(client, lhs, rhs, out, dtypes),
+            Strategy::Naive => {
+                println!("Execuring Naive");
+                launch_naive::launch_ref(client, lhs, rhs, out, dtypes)
+            }
+            Strategy::Auto => {
+                println!("Execuring Auto");
+                auto(client, lhs, rhs, out, dtypes)
+            }
         }
     }
 }
@@ -448,7 +490,7 @@ fn auto<R: Runtime>(
         client,
         lhs.clone(),
         rhs.clone(),
-        out.clone(),
+        out.try_clone().unwrap(),
         dtypes,
     ) {
         match err {

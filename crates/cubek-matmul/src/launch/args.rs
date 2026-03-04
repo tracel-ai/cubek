@@ -221,7 +221,7 @@ impl<Lhs: Numeric, Rhs: Numeric, Acc: Numeric, A: Routine<()>> ConcreteInputsFac
                         data_layout,
                     );
                     let scales_view =
-                        ViewArg::new::<GlobalScaleLayout>(scale.as_array_arg(1), scales_layout);
+                        ViewArg::new::<GlobalScaleLayout>(scale.into_array_arg(1), scales_layout);
                     ViewArg::new_quantized(data_view, scales_view, scheme)
                 }
             };
@@ -267,7 +267,7 @@ impl<EG: Numeric, A: Routine<()>> ConcreteOutputFactory<A> for TensorOutput<EG> 
             blueprint.out_global_layout_config(),
         );
         let batch = BatchLayoutLaunch::from_handle(client, &out, problem);
-        let view = ViewArg::new::<GlobalLayout>(out.as_array_arg(line_sizes.out), layout);
+        let view = ViewArg::new::<GlobalLayout>(out.into_array_arg(line_sizes.out), layout);
         TensorOutputLaunch::new(view, VirtualLayoutLaunch::new::<BatchLayout>(batch))
     }
 }
@@ -386,8 +386,8 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<(), Blueprint = TilingB
         line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<'a, R> {
-        let lhs = lhs_handle.data();
-        let rhs = rhs_handle.data();
+        let lhs = lhs_handle.into_data();
+        let rhs = rhs_handle.into_data();
 
         let tiling_scheme = blueprint.tiling_scheme;
         let stage_m = tiling_scheme.elements_per_stage_along_m();
@@ -527,12 +527,12 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<(), Blueprint = TilingB
         };
 
         let lhs = TensorMapArg {
-            tensor: lhs.clone().into_tensor_arg(line_sizes.lhs),
+            tensor: lhs.into_tensor_arg(line_sizes.lhs),
             metadata: meta_lhs,
             _kind: PhantomData,
         };
         let rhs = TensorMapArg {
-            tensor: rhs.clone().into_tensor_arg(line_sizes.rhs),
+            tensor: rhs.into_tensor_arg(line_sizes.rhs),
             metadata: meta_rhs,
             _kind: PhantomData,
         };

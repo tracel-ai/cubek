@@ -180,14 +180,17 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs>> ConcreteI
 
         let inputs = TensorInputsLaunch::new(
             VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new()),
-            ViewArg::new::<LhsLayout>(lhs.data().as_array_arg(line_sizes.lhs), layout_lhs),
+            ViewArg::new::<LhsLayout>(lhs.into_data().into_array_arg(line_sizes.lhs), layout_lhs),
             VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new()),
-            ViewArg::new::<RhsLayout>(rhs.data().as_array_arg(line_sizes.rhs), layout_rhs),
+            ViewArg::new::<RhsLayout>(rhs.into_data().into_array_arg(line_sizes.rhs), layout_rhs),
             bias.as_ref()
                 .map(|_| VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new()))
                 .into(),
             bias.map(|bias| {
-                ViewArg::new::<BiasLayout>(bias.data().as_array_arg(line_sizes.out), layout_bias)
+                ViewArg::new::<BiasLayout>(
+                    bias.into_data().into_array_arg(line_sizes.out),
+                    layout_bias,
+                )
             })
             .into(),
         );
@@ -218,7 +221,7 @@ impl<EG: Numeric, A: Routine<RuntimeArgs>> ConcreteOutputFactory<A> for TensorOu
         let layout =
             OutLayoutLaunch::from_args(client, problem, blueprint.out_global_layout_config());
         let layout = ChainLaunch::new(global, layout);
-        let view = ViewArg::new::<Layout>(out.as_array_arg(line_sizes.out), layout);
+        let view = ViewArg::new::<Layout>(out.into_array_arg(line_sizes.out), layout);
         let batch = VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new());
         TensorOutputLaunch::new(view, batch)
     }
@@ -275,7 +278,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
                 channels_per_pixel: tile_size_k,
                 pixels_per_column: stage_m,
             },
-            lhs.data().clone().into_tensor_arg(line_sizes.lhs),
+            lhs.clone().into_data().into_tensor_arg(line_sizes.lhs),
             lhs_elem,
         )
         .with_elem_stride(elem_stride)
@@ -285,7 +288,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
             TiledArgs {
                 tile_size: stage_size_rhs,
             },
-            rhs.data().clone().into_tensor_arg(1),
+            rhs.clone().into_data().into_tensor_arg(1),
             dtypes.rhs_global,
         )
         .with_swizzle(blueprint.swizzle_modes.rhs.into());
@@ -313,7 +316,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
         let bias = bias.map(|bias| {
             let layout =
                 BiasLayoutLaunch::new(ScalarArg::new(problem.n as u32), line_sizes.out as u32);
-            ViewArg::new::<BiasLayout>(bias.data().as_array_arg(line_sizes.out), layout)
+            ViewArg::new::<BiasLayout>(bias.into_data().into_array_arg(line_sizes.out), layout)
         });
 
         let inputs = TensorMapInputsLaunch::new(

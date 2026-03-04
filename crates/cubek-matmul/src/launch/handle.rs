@@ -28,7 +28,7 @@ pub enum MatmulInputBinding<R: Runtime> {
 impl<R: Runtime> Clone for MatmulInputBinding<R> {
     fn clone(&self) -> Self {
         match self {
-            Self::Normal(arg0, arg1) => Self::Normal(arg0.clone(), *arg1),
+            Self::Normal(arg0, arg1) => Self::Normal(arg0.try_clone().unwrap(), *arg1),
             Self::Quantized {
                 data,
                 data_dtype,
@@ -37,9 +37,9 @@ impl<R: Runtime> Clone for MatmulInputBinding<R> {
                 shape,
                 scheme,
             } => Self::Quantized {
-                data: data.clone(),
+                data: data.try_clone().unwrap(),
                 data_dtype: *data_dtype,
-                scale: scale.clone(),
+                scale: scale.try_clone().unwrap(),
                 scale_dtype: *scale_dtype,
                 shape: shape.clone(),
                 scheme: *scheme,
@@ -122,7 +122,7 @@ impl<R: Runtime> MatmulInputBinding<R> {
         }
     }
 
-    pub fn into_data(&self) -> &TensorBinding<R> {
+    pub fn into_data(self) -> TensorBinding<R> {
         match self {
             MatmulInputBinding::Normal(handle, ..) => handle,
             MatmulInputBinding::Quantized { data, .. } => data,
@@ -157,7 +157,21 @@ impl<R: Runtime> MatmulInputBinding<R> {
         }
     }
 
-    pub fn into_contiguous(self, client: &ComputeClient<R>) -> Result<Self, LaunchError> {
+    pub fn into_contiguous(
+        mut self,
+        client: &ComputeClient<R>,
+        ohs: &mut Self,
+    ) -> Result<Self, LaunchError> {
+        if self.data().handle.id == ohs.data().handle.id {
+            let data = self.data_mut();
+            let last_use = data.handle.last_use;
+            data.handle.last_use = false;
+
+            if last_use {
+                ohs.data_mut().handle.last_use = true;
+            }
+        }
+
         let val = match self {
             Self::Normal(data, dtype) => Self::Normal(
                 into_contiguous_pitched(client, data, dtype).binding(),

@@ -17,8 +17,8 @@ use crate::routines::{BlueprintStrategy, Routine as _};
 #[allow(clippy::result_large_err)]
 pub fn launch_ref<R: Runtime>(
     client: &ComputeClient<R>,
-    lhs: MatmulInputBinding<R>,
-    rhs: MatmulInputBinding<R>,
+    mut lhs: MatmulInputBinding<R>,
+    mut rhs: MatmulInputBinding<R>,
     out: TensorBinding<R>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
@@ -29,8 +29,9 @@ pub fn launch_ref<R: Runtime>(
     let lhs_layout = matrix_batch_layout(&lhs.data().strides, lhs.scheme());
     let rhs_layout = matrix_batch_layout(&rhs.data().strides, rhs.scheme());
 
-    let lhs = if !matches!(lhs_layout, MatrixBatchLayout::Contiguous) {
-        lhs.into_contiguous(client)?
+    let mut lhs = if !matches!(lhs_layout, MatrixBatchLayout::Contiguous) {
+        std::println!("Into contiguous lhs");
+        lhs.into_contiguous(client, &mut rhs)?
     } else {
         lhs
     };
@@ -38,9 +39,10 @@ pub fn launch_ref<R: Runtime>(
     // we swap the dimensions to achieve memory-coalescing:
     // consecutive elements of a column in the original rhs tensor will now be stored
     // consecutively in memory, which allows to fetch them with fewer memory instructions
-    let correct_rhs_layout = |mut rhs: MatmulInputBinding<R>| {
+    let correct_rhs_layout = |mut rhs: MatmulInputBinding<R>, lhs: &mut MatmulInputBinding<R>| {
         rhs.swap_dims(dim1, dim2);
-        let mut rhs = rhs.into_contiguous(client)?;
+        std::println!("Into contiguous rhs");
+        let mut rhs = rhs.into_contiguous(client, lhs)?;
 
         rhs.swap_dims(dim1, dim2);
 
@@ -49,7 +51,7 @@ pub fn launch_ref<R: Runtime>(
     };
 
     let rhs = match rhs_layout {
-        MatrixBatchLayout::Contiguous => correct_rhs_layout(rhs)?,
+        MatrixBatchLayout::Contiguous => correct_rhs_layout(rhs, &mut lhs)?,
         MatrixBatchLayout::MildlyPermuted {
             transposed,
             batch_swap,
@@ -57,10 +59,10 @@ pub fn launch_ref<R: Runtime>(
             if transposed && !batch_swap {
                 rhs
             } else {
-                correct_rhs_layout(rhs)?
+                correct_rhs_layout(rhs, &mut lhs)?
             }
         }
-        MatrixBatchLayout::HighlyPermuted => correct_rhs_layout(rhs)?,
+        MatrixBatchLayout::HighlyPermuted => correct_rhs_layout(rhs, &mut lhs)?,
     };
 
     let lhs_shape = lhs.shape();

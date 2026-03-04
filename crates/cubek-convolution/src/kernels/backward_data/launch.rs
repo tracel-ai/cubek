@@ -140,9 +140,12 @@ where
 
     let op = ConvolutionOperation::BackwardData;
 
+    let out_grad_tmp = out_grad.clone();
+    let weights_tmp = weights.clone();
+
     let out_grad_data =
-        Alg::correct_layout(client, out_grad.data().clone(), dtypes.lhs_global, op)?;
-    let weights_data = Alg::correct_layout(client, weights.data().clone(), dtypes.rhs_global, op)?;
+        Alg::correct_layout(client, out_grad_tmp.into_data(), dtypes.lhs_global, op)?;
+    let weights_data = Alg::correct_layout(client, weights_tmp.into_data(), dtypes.rhs_global, op)?;
 
     let mut out_grad = out_grad.clone();
     let mut weights = weights.clone();
