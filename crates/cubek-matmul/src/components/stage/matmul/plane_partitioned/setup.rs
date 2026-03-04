@@ -23,9 +23,9 @@ use crate::{
 };
 use core::marker::PhantomData;
 use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_std::{InvalidConfigError, MatrixLayout};
 use cubek_std::stage::StageMemoryConfig;
 use cubek_std::tile::Strided;
+use cubek_std::{InvalidConfigError, MatrixLayout};
 
 /// Plane Matmul family for any precision
 pub struct PlaneMatmulFamily<
