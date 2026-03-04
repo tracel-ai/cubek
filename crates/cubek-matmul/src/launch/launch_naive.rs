@@ -30,7 +30,6 @@ pub fn launch_ref<R: Runtime>(
     let rhs_layout = matrix_batch_layout(&rhs.data().strides, rhs.scheme());
 
     let mut lhs = if !matches!(lhs_layout, MatrixBatchLayout::Contiguous) {
-        std::println!("Into contiguous lhs");
         lhs.into_contiguous(client, &mut rhs)?
     } else {
         lhs
@@ -41,7 +40,6 @@ pub fn launch_ref<R: Runtime>(
     // consecutively in memory, which allows to fetch them with fewer memory instructions
     let correct_rhs_layout = |mut rhs: MatmulInputBinding<R>, lhs: &mut MatmulInputBinding<R>| {
         rhs.swap_dims(dim1, dim2);
-        std::println!("Into contiguous rhs");
         let mut rhs = rhs.into_contiguous(client, lhs)?;
 
         rhs.swap_dims(dim1, dim2);

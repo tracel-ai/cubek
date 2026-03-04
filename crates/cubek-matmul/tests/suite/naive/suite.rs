@@ -163,7 +163,6 @@ fn test_naive(case: MatmulTestCase) {
         },
     )
     .generate_with_f32_host_data();
-    println!("LHS Shape: {}", lhs.shape());
 
     let (rhs, rhs_data) = TestInput::new(
         client.clone(),
