@@ -50,20 +50,20 @@ pub enum KeyValueMatrix<AP: AttentionPrecision> {
 
 #[cube]
 impl<AP: AttentionPrecision> KeyValueMatrix<AP> {
-    fn key(&self) -> &ManualMatrix<IdentB, ScoreMma<AP>> {
-        match self {
-            KeyValueMatrix::Reuse(manual_matrix) => manual_matrix,
-            KeyValueMatrix::Key(manual_matrix) => manual_matrix,
-            KeyValueMatrix::Value(_) => panic!("Tried to access value on key matrix"),
-        }
-    }
-    fn value(&self) -> &ManualMatrix<IdentB, ValueMma<AP>> {
-        match self {
-            KeyValueMatrix::Reuse(_manual_matrix) => unimplemented!(),
-            KeyValueMatrix::Key(_) => panic!("Tried to access key on value matrix"),
-            KeyValueMatrix::Value(manual_matrix) => manual_matrix,
-        }
-    }
+    // fn key(&self) -> &ManualMatrix<IdentB, ScoreMma<AP>> {
+    //     match self {
+    //         KeyValueMatrix::Reuse(manual_matrix) => manual_matrix,
+    //         KeyValueMatrix::Key(manual_matrix) => manual_matrix,
+    //         KeyValueMatrix::Value(_) => panic!("Tried to access value on key matrix"),
+    //     }
+    // }
+    // fn value(&self) -> &ManualMatrix<IdentB, ValueMma<AP>> {
+    //     match self {
+    //         KeyValueMatrix::Reuse(_manual_matrix) => unimplemented!(),
+    //         KeyValueMatrix::Key(_) => panic!("Tried to access key on value matrix"),
+    //         KeyValueMatrix::Value(manual_matrix) => manual_matrix,
+    //     }
+    // }
 
     fn key_mut(&mut self) -> &mut ManualMatrix<IdentB, ScoreMma<AP>> {
         match self {
@@ -103,29 +103,31 @@ impl<AP: AttentionPrecision> TileAttention<AP> for WhiteboxAcceleratedTileAttent
     }
 
     fn score_matmul(
-        query: &Self::Query,
-        key: &Self::KeyValue,
-        softmax: &mut Self::Softmax,
+        _query: &Self::Query,
+        _key: &Self::KeyValue,
+        _softmax: &mut Self::Softmax,
         #[comptime] _config: Self::Config,
     ) {
-        softmax.softmax_acc.layout.mma_definition.execute_inplace(
-            &query.fragment,
-            &key.key().fragment,
-            &mut softmax.softmax_acc.fragment,
-        );
+        todo!()
+        // softmax.softmax_acc.layout.mma_definition.execute_inplace(
+        //     &query.fragment,
+        //     &key.key().fragment,
+        //     &mut softmax.softmax_acc.fragment,
+        // );
     }
 
     fn value_matmul(
-        softmax: &Self::Softmax,
-        value: &Self::KeyValue,
-        out: &mut Self::Accumulator,
+        _softmax: &Self::Softmax,
+        _value: &Self::KeyValue,
+        _out: &mut Self::Accumulator,
         #[comptime] _config: Self::Config,
     ) {
-        softmax.softmax_lhs.layout.mma_definition.execute_inplace(
-            &softmax.softmax_lhs.fragment,
-            &value.value().fragment,
-            &mut out.accumulator.fragment,
-        );
+        todo!()
+        // softmx.softmax_lhs.layout.mma_definition.execute_inplace(
+        //     &softmax.softmax_lhs.fragment,
+        //     &value.value().fragment,
+        //     &mut out.accumulator.fragment,
+        // );
     }
 
     fn allocate_query(#[comptime] config: Self::Config) -> Self::Query {
