@@ -54,7 +54,7 @@ impl<AP: AttentionPrecision> FragmentConvert<AP> for RegisterFragmentConverter<A
     ) {
         assert!(
             acc.layout.num_rows == lhs.layout.num_rows
-                && acc.layout.num_cols == acc.layout.num_cols
+                && acc.layout.num_cols == lhs.layout.num_cols
         );
 
         #[unroll]

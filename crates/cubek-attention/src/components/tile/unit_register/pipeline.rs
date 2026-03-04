@@ -194,7 +194,7 @@ impl<E: Float> SoftmaxPipeline<E> for UnitTile<E> {
         #[comptime] _tile_size: AttentionTileSize,
         #[comptime] _num_planes: usize,
     ) -> Self::Transit {
-        ()
+        // Nothing to do
     }
 }
 
