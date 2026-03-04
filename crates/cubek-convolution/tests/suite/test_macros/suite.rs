@@ -12,11 +12,10 @@ use cubek_convolution::{forward::args::ConcreteArgs, kernels::algorithm::Algorit
 use cubek_matmul::launch::{InputArg, OutputArg};
 use cubek_matmul::{
     components::global::{InputLoadFlow, LoadFlows},
-    definition::{
-        MatmulElems, MatmulGlobalElems, MatrixLayout, SwizzleModes, TilingBlueprint, TilingScheme,
-    },
+    definition::{MatmulElems, MatmulGlobalElems, SwizzleModes, TilingBlueprint, TilingScheme},
 };
 use cubek_matmul::{components::stage::PartitionBuffering, routines::Routine};
+use cubek_std::MatrixLayout;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct ConvolutionSize {

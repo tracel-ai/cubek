@@ -2,7 +2,6 @@ use crate::components::global;
 use crate::components::global::PlaneFlowPartitionRule;
 use crate::components::stage::Stage;
 use crate::components::stage::StageConfig;
-use crate::components::stage::StageMemoryConfig;
 use crate::components::stage::matmul::partition::SharedPartitionMatmulConfig;
 use crate::components::stage::matmul::partition::{Accumulators, PartitionMatmul, RhsTile};
 use crate::components::stage::matmul::plane_partitioned::PlanePartitionedStageConfig;
@@ -17,6 +16,7 @@ use crate::definition::MatrixPrecision;
 use core::marker::PhantomData;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
+use cubek_std::stage::StageMemoryConfig;
 
 #[cube]
 /// Defines how the stage is partitioned among compute primitives (e.g., units or planes).

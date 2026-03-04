@@ -1,7 +1,7 @@
 #[macro_export]
 macro_rules! testgen_convolution_accelerated_stage {
     ($algorithm: ty, $precision: ty, $tiling_scheme_builder: expr) => {
-        use cubek_matmul::definition::StageSize;
+        use cubek_std::StageSize;
 
         mod s1x1x1 {
             use super::*;

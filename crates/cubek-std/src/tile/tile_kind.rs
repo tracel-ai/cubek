@@ -1,6 +1,6 @@
 use cubecl::prelude::*;
 
-use crate::components::tile::StridedTile;
+use crate::tile::strided_tile::StridedTile;
 
 /// Kind (family) of the tiles returned by a stage and ingested by a tile matmul reader
 pub trait TileKind<IO: SliceVisibility = ReadOnly>: CubeType + Send + Sync + 'static {

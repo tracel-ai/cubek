@@ -2,7 +2,7 @@ use cubecl;
 use cubecl::ir::DeviceProperties;
 use cubecl::prelude::*;
 use cubek_matmul::components::CubeDimResource;
-use cubek_matmul::components::tile::StridedTile;
+use cubek_std::tile::StridedTile;
 
 use crate::components::tile::{
     AccumulatorPipeline, FragmentMask, SoftmaxLayout, SoftmaxPipeline, SoftmaxRowwise,

@@ -16,10 +16,7 @@ use cubecl::{
     zspace::{metadata::Metadata, shape, strides},
 };
 use cubek_matmul::{
-    components::{
-        global::memory::{NoopLayout, NoopLayoutLaunch, Transpose, TransposeLaunch},
-        stage::SwizzleMode,
-    },
+    components::global::memory::{NoopLayout, NoopLayoutLaunch, Transpose, TransposeLaunch},
     definition::{Blueprint, MatmulElems, MatmulLineSizes, TilingBlueprint},
     launch::{
         MatmulArgs, MatmulInputHandleRef, TensorArgs, TensorInputs, TensorInputsLaunch,
@@ -27,6 +24,7 @@ use cubek_matmul::{
     },
     routines::Routine,
 };
+use cubek_std::stage::SwizzleMode;
 use enumset::EnumSet;
 
 use crate::components::{

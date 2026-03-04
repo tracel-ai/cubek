@@ -2,8 +2,10 @@ use std::fmt::Display;
 use std::marker::PhantomData;
 
 use cubecl::Runtime;
+use cubek_std::tile::Strided;
 
 use crate::components::global::multi_stage::ordered::OrderedDoubleBufferingMatmulFamily;
+use crate::components::global::read::sync_partial_cyclic::SyncPartialCyclicLoading;
 use crate::components::stage::{PlaneMatmulFamily, RowMajorTilingOrder};
 use crate::components::tile;
 use crate::components::{
@@ -12,9 +14,6 @@ use crate::components::{
 use crate::components::{
     batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
     stage::StridedStageFamily,
-};
-use crate::components::{
-    global::read::sync_partial_cyclic::SyncPartialCyclicLoading, tile::io::Strided,
 };
 use crate::definition::{
     MatmulElems, MatmulProblem, MatmulSetupError, MultiRowStrategy, TilingBlueprint,

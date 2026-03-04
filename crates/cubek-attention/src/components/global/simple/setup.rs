@@ -12,8 +12,9 @@ use cubek_matmul::{
         },
         stage::StridedStageFamily,
     },
-    definition::{LoadingPrecomputeStrategy, MatrixLayout, StageIdent},
+    definition::{LoadingPrecomputeStrategy, StageIdent},
 };
+use cubek_std::MatrixLayout;
 
 use crate::{
     components::{

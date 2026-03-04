@@ -3,16 +3,15 @@ use std::marker::PhantomData;
 use cubecl::prelude::*;
 use cubecl::{cmma::MmaDefinition, ir::MatrixIdent};
 
-use crate::components::tile::{
-    StridedTile,
-    io::{Filled, Strided, TileKind},
-    mma::config::{LoadMethod, MmaMatmulConfig},
-};
-use crate::definition::{MatrixLayout, as_cmma_layout, from_cmma_layout};
+use crate::TileSize;
+use crate::tile::mma::config::{LoadMethod, MmaIOConfig};
+use crate::tile::strided_tile::StridedTile;
+use crate::tile::tile_kind::{Filled, Strided, TileKind};
+use crate::{MatrixLayout, as_cmma_layout, from_cmma_layout};
 
 /// Generic CMMA reader over any tile type
 #[cube]
-pub(crate) trait MmaFragmentReader {
+pub trait MmaFragmentReader {
     type TileKind: TileKind;
 
     /// Fill a fragment with data, with the implementation depending on the tile kind.
@@ -22,7 +21,8 @@ pub(crate) trait MmaFragmentReader {
         def: MmaDefinition<A, B, CD>,
         #[comptime] ident: MatrixIdent,
         #[comptime] layout: MatrixLayout,
-        #[comptime] config: MmaMatmulConfig,
+        #[comptime] tile_size: TileSize,
+        #[comptime] config: MmaIOConfig,
     );
 }
 
@@ -43,7 +43,8 @@ impl MmaFragmentReader for MmaStageReader<Strided> {
         def: MmaDefinition<A, B, CD>,
         #[comptime] ident: MatrixIdent,
         #[comptime] layout: MatrixLayout,
-        #[comptime] config: MmaMatmulConfig,
+        #[comptime] tile_size: TileSize,
+        #[comptime] config: MmaIOConfig,
     ) {
         let line_layout = def.line_layout(ident);
 
@@ -58,7 +59,7 @@ impl MmaFragmentReader for MmaStageReader<Strided> {
                 }
             }
             LoadMethod::LoadMatrix => {
-                load_ldmatrix(tile, fragment, def, transposed, ident, layout, config);
+                load_ldmatrix(tile, fragment, def, transposed, ident, layout, tile_size);
             }
         }
     }
@@ -146,7 +147,7 @@ fn load_ldmatrix<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     #[comptime] transposed: bool,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: MmaMatmulConfig,
+    #[comptime] tile_size: TileSize,
 ) {
     let stage_line_size = tile.stage.line_size().comptime();
     let (_, stride) = tile.as_unlined();
@@ -155,7 +156,8 @@ fn load_ldmatrix<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     let num_regs = def.lines_per_lane(ident);
     let width = (16 / elem_size / stage_line_size) as u32;
 
-    let start = ldmatrix_offset::<V, A, B, CD>(stride, def, stage_line_size, ident, layout, config);
+    let start =
+        ldmatrix_offset::<V, A, B, CD>(stride, def, stage_line_size, ident, layout, tile_size);
     let start = tile.stage_offset(start);
 
     let row_slice = tile.stage.slice(start as usize, (start + width) as usize);
@@ -176,10 +178,9 @@ pub(crate) fn ldmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     #[comptime] stage_line_size: LineSize,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: MmaMatmulConfig,
+    #[comptime] tile_size: TileSize,
 ) -> u32 {
     let expected_layout = from_cmma_layout(def.line_layout(ident)).comptime();
-    let tiling = config.shared.tile_size;
     let (stride_row, stride_col) = match layout {
         MatrixLayout::RowMajor => (stride, 1),
         MatrixLayout::ColMajor => (1, stride),
@@ -192,9 +193,9 @@ pub(crate) fn ldmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     let height = 8;
 
     let (total_rows, total_cols) = match ident {
-        MatrixIdent::A => (tiling.m(), tiling.k()),
-        MatrixIdent::B => (tiling.k(), tiling.n()),
-        MatrixIdent::Accumulator => (tiling.m(), tiling.n()),
+        MatrixIdent::A => (tile_size.m(), tile_size.k()),
+        MatrixIdent::B => (tile_size.k(), tile_size.n()),
+        MatrixIdent::Accumulator => (tile_size.m(), tile_size.n()),
     };
     // tile is treated as row-major, if col-major the tile shape is just inverted
     let total_cols = match expected_layout {
@@ -232,7 +233,8 @@ impl MmaFragmentReader for MmaStageReader<Filled> {
         def: MmaDefinition<A, B, CD>,
         #[comptime] ident: MatrixIdent,
         #[comptime] _layout: MatrixLayout,
-        #[comptime] _config: MmaMatmulConfig,
+        #[comptime] _tile_size: TileSize,
+        #[comptime] _config: MmaIOConfig,
     ) {
         let num_lines = def.lines_per_lane(ident);
         let value = Line::<E>::cast_from(*value);
@@ -257,18 +259,20 @@ where
         def: MmaDefinition<A, B, CD>,
         #[comptime] ident: MatrixIdent,
         #[comptime] layout: MatrixLayout,
-        #[comptime] config: MmaMatmulConfig,
+        #[comptime] tile_size: TileSize,
+        #[comptime] config: MmaIOConfig,
     ) {
         match tile {
-            Some(tile) => {
-                MmaStageReader::<Inner>::load_fragment(tile, fragment, def, ident, layout, config)
-            }
+            Some(tile) => MmaStageReader::<Inner>::load_fragment(
+                tile, fragment, def, ident, layout, tile_size, config,
+            ),
             None => MmaStageReader::<Filled>::load_fragment::<E, V, A, B, CD>(
                 &V::from_int(0),
                 fragment,
                 def,
                 ident,
                 layout,
+                tile_size,
                 config,
             ),
         }

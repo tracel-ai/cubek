@@ -3,12 +3,13 @@ use crate::{
         global::{
             PlaneFlowPartitionRule, WriteEventListener, WriteTiling, memory::GlobalMemoryConfig,
         },
-        stage::{Stage, StageFamily, StageMemoryConfig},
+        stage::{Stage, StageFamily},
     },
     definition::MatrixPrecision,
 };
 use cubecl::prelude::*;
 use cubecl::std::tensor::{View, layout::Coords2d};
+use cubek_std::stage::StageMemoryConfig;
 
 pub trait GlobalWriterFamily: 'static + Send + Sync {
     type Stage: StageFamily<ReadWrite>;

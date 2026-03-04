@@ -6,7 +6,7 @@ use cubecl::{
     prelude::*,
     std::tensor::layout::{Coords1d, Coords2d},
 };
-use cubek_matmul::{components::tile::StridedTile, definition::TileSize};
+use cubek_std::{TileSize, tile::StridedTile};
 
 use crate::components::tile::{
     AccumulatorRowwise, AccumulatorRowwiseExpand, FragmentMask, FragmentMaskExpand, RowWise,
@@ -179,44 +179,19 @@ impl<MI: MmaIdent<MT>, MT: MmaTypes> ManualMatrix<MI, MT> {
         }
     }
 
-    pub fn load_from_strided_tile<E2: Numeric>(&mut self, tile: &StridedTile<E2>) {
+    pub fn load_from_strided_tile<E2: Numeric>(&mut self, _tile: &StridedTile<E2>) {
         todo!()
-        // #[unroll]
-        // for i in 0..self.layout.num_lines {
-        //     let mut reg = self.fragment[i];
-        //     #[unroll]
-        //     for k in 0..self.layout.line_size {
-        //         let nth_elem = i * self.layout.line_size + k;
-        //         let (row, col) = def.position_of_nth(lane_id, nth_elem as u32, MatrixIdent::A);
-        //         let value = a[(row * size_k as u32 + col) as usize];
-        //         reg[k] = value;
-        //     }
-        // }
-
-        // // Assumes line size == 1
-        // for r in 0..self.layout.unit_size.0 {
-        //     for c in 0..self.layout.unit_size.1 {
-        //         let (row, col) = self.layout.absolute_pos((r, c));
-        //         self.array[(r * self.layout.unit_size.1 + c) as usize] =
-        //             E::cast_from(strided_tile.get_line(row, col))
-        //     }
-        // }
-
-        // #[unroll]
-        // for i in 0..line_count_a {
-        //     let mut reg = Line::<A>::empty(line_size_a);
-        //     #[unroll]
-        //     for k in 0..line_size_a {
-        //         let n_elem = i * line_size_a + k;
-        //         let (row, col) = def.position_of_nth(lane_id, n_elem as u32, MatrixIdent::A);
-        //         let value = a[(row * size_k as u32 + col) as usize];
-        //         reg[k] = value;
-        //     }
-        //     registers_a[i] = reg;
-        // }
+        // MmaStageReader::<Self::LhsTile>::load_fragment(
+        //     tile,
+        //     &mut self.fragment,
+        //     self.layout.mma_definition,
+        //     MI::IDENT,
+        //     MatrixLayout::RowMajor,
+        //     config,
+        // );
     }
 
-    pub fn store_to_strided_tile<E2: Numeric>(&self, tile: &mut StridedTile<E2, ReadWrite>) {}
+    pub fn store_to_strided_tile<E2: Numeric>(&self, _tile: &mut StridedTile<E2, ReadWrite>) {}
 
     pub fn get_nth(&self, nth: Coords1d) -> MI::Elem {
         let line = nth / self.layout.line_size;
@@ -247,11 +222,11 @@ impl<MT: MmaTypes<CD: Float>> SoftmaxRowwise<MT::CD> for ManualMatrix<IdentCD, M
         todo!()
     }
 
-    fn scale_and_mask<M: FragmentMask>(this: &mut Self, scale: MT::CD, mask: &M) {
+    fn scale_and_mask<M: FragmentMask>(_this: &mut Self, _scale: MT::CD, _mask: &M) {
         todo!()
     }
 
-    fn exp_diff(&mut self, m: &RowWise<MT::CD>) {
+    fn exp_diff(&mut self, _m: &RowWise<MT::CD>) {
         todo!()
     }
 }
@@ -263,10 +238,11 @@ impl<MT: MmaTypes<CD: Float>> AccumulatorRowwise<MT::CD> for ManualMatrix<IdentC
         // if lines match rows
         #[unroll]
         for row in 0..self.layout.num_rows {
-            let scale = scale.index(row as usize);
+            let _scale = scale.index(row as usize);
             #[unroll]
             for col in 0..self.layout.num_cols {
-                let nth = self.layout.local_pos_to_nth((row, col).runtime());
+                let _nth = self.layout.local_pos_to_nth((row, col).runtime());
+                todo!()
             }
         }
     }
@@ -276,7 +252,7 @@ impl<MT: MmaTypes<CD: Float>> AccumulatorRowwise<MT::CD> for ManualMatrix<IdentC
 impl<MT: MmaTypes> FragmentMask for ManualMatrix<IdentCD, MT> {
     type Layout = ManualMatrixLayout<IdentCD, MT>;
 
-    fn should_mask(&self, local_pos: Coords2d) -> bool {
+    fn should_mask(&self, _local_pos: Coords2d) -> bool {
         todo!()
     }
 }

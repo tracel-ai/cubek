@@ -1,7 +1,7 @@
 use cubecl;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
-use cubek_matmul::components::tile::StridedTile;
+use cubek_std::tile::StridedTile;
 
 use crate::components::tile::{
     AccumulatorRowwise, AccumulatorRowwiseExpand, FragmentMask, FragmentMaskExpand, LOGIT_MASKED,

@@ -1,7 +1,6 @@
 use cubecl::{CubeCount, CubeDim, LineSizeError, ir::StorageType, server::LaunchError};
+use cubek_std::{InvalidConfigError, MatrixLayout, TileSize};
 use std::fmt::{Debug, Display};
-
-use crate::definition::{MatrixLayout, TileSize};
 
 /// Errors that can occur during the setup phase of a matmul operation.
 pub enum MatmulSetupError {
@@ -191,29 +190,5 @@ impl Debug for MatmulAvailabilityError {
                 writeln!(f, "No tile size is available for the problem.")
             }
         }
-    }
-}
-
-/// Error that arises from invalid configurations
-pub type InvalidConfigError = Box<dyn Display>;
-
-/// Error that arises from invalid configurations
-pub struct FormattedConfigError {
-    func: Box<dyn Fn() -> String>,
-}
-
-impl FormattedConfigError {
-    #[allow(clippy::new_ret_no_self)]
-    pub fn new<F: Fn() -> String + 'static>(func: F) -> Box<dyn Display> {
-        Box::new(Self {
-            func: Box::new(func),
-        })
-    }
-}
-
-impl Display for FormattedConfigError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let string = (self.func)();
-        write!(f, "{string}")
     }
 }

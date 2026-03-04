@@ -2,10 +2,7 @@ use std::marker::PhantomData;
 
 use cubecl::prelude::*;
 
-use crate::components::tile::{
-    StridedTile,
-    io::{Filled, Strided, TileKind},
-};
+use cubek_std::tile::{Filled, Strided, StridedTile, TileKind};
 
 /// Generic CMMA reader over any tile type
 #[cube]

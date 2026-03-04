@@ -2,16 +2,17 @@ use std::marker::PhantomData;
 
 use super::fragments::{Accumulators, RhsTile, RhsTileExpand};
 use crate::components::global::PlaneFlowConfig;
+use crate::components::stage::PartitionSchedulerScheme;
 use crate::components::stage::Stage;
 use crate::components::stage::StageEvent;
 use crate::components::stage::matmul::scheduler::PartitionScheduler;
 use crate::components::stage::{PartitionBuffering, StageEventListener};
-use crate::components::stage::{PartitionSchedulerScheme, StageMemoryConfig};
 use crate::components::tile::{TileConfig, TileMatmul};
-use crate::definition::{
-    AccS, LhsS, MatmulPrecision, MatrixPrecision, PartitionSize, RhsS, StageSize,
-};
+use crate::definition::{AccS, LhsS, MatmulPrecision, MatrixPrecision, RhsS};
 use cubecl::prelude::*;
+use cubek_std::PartitionSize;
+use cubek_std::StageSize;
+use cubek_std::stage::StageMemoryConfig;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct SharedPartitionMatmulConfig<TC: TileConfig> {

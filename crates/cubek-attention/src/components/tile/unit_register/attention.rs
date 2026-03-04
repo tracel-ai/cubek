@@ -1,6 +1,6 @@
 use cubecl;
 use cubecl::prelude::*;
-use cubek_matmul::components::tile::StridedTile;
+use cubek_std::tile::StridedTile;
 
 use crate::components::tile::unit_register::UnitTileLayout;
 use crate::components::tile::unit_register::pipeline::UnitTile;

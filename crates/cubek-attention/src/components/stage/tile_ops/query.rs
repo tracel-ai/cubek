@@ -1,10 +1,10 @@
 use cubecl;
 use cubecl::prelude::*;
+use cubek_std::tile::StridedTile;
 
 use crate::components::tile::TileAttention;
 use crate::definition::AttentionPrecision;
 use crate::definition::attention_types::QG;
-use cubek_matmul::components::tile::StridedTile;
 
 #[derive(CubeType)]
 /// Query input to the Tile Attention

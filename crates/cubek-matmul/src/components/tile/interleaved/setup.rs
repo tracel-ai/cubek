@@ -1,14 +1,17 @@
 use crate::components::resource::CubeDimResource;
 use crate::components::tile::SharedTileConfig;
+use crate::components::tile::TileMatmulFamily;
 use crate::components::tile::interleaved::InterleavedMatmul;
 use crate::components::tile::interleaved::config::InterleavedMatmulConfig;
-use crate::components::tile::{TileMatmulFamily, io::Strided};
-use crate::definition::{InvalidConfigError, MatmulAvailabilityError, MatmulElems};
+use crate::definition::TilingBlueprint;
+use crate::definition::{MatmulAvailabilityError, MatmulElems};
 use crate::definition::{MatmulLineSizes, MatmulSetupError};
-use crate::definition::{MatrixLayout, TilingBlueprint};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::{features::TypeUsage, ir::DeviceProperties};
+use cubek_std::InvalidConfigError;
+use cubek_std::MatrixLayout;
+use cubek_std::tile::Strided;
 
 impl TileMatmulFamily for InterleavedMatmul {
     type Config = InterleavedMatmulConfig;

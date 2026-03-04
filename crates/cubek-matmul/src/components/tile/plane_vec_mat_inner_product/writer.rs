@@ -1,6 +1,7 @@
 use cubecl::prelude::*;
+use cubek_std::tile::StridedTile;
 
-use crate::components::tile::{StridedTile, plane_vec_mat_inner_product::LineContainer};
+use crate::components::tile::plane_vec_mat_inner_product::LineContainer;
 
 /// Writer for the output of the VecMat operation.
 #[derive(CubeType)]

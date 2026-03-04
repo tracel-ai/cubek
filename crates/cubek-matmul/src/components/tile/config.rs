@@ -1,8 +1,6 @@
-use crate::{
-    components::stage::SwizzleMode,
-    definition::SwizzleModes,
-    definition::{StageIdent, TileSize},
-};
+use cubek_std::{TileSize, stage::SwizzleMode};
+
+use crate::{definition::StageIdent, definition::SwizzleModes};
 use std::{fmt::Debug, hash::Hash};
 
 // This serves as interface for higher level matmuls, not for what is used within tile matmul

@@ -1,6 +1,6 @@
 use cubecl;
 use cubecl::prelude::*;
-use cubek_matmul::components::tile::StridedTile;
+use cubek_std::tile::StridedTile;
 
 use crate::components::tile::accelerated_blackbox::setup::BlackboxAcceleratedAttentionMatmulConfig;
 use crate::components::tile::accelerated_blackbox::{

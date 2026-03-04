@@ -11,15 +11,13 @@ use crate::{
     components::ConvSetupError, kernels::backward_weight::selector::launch_kernel_concrete,
 };
 use cubecl::{Runtime, client::ComputeClient, prelude::*, std::tensor::TensorHandle};
+use cubek_matmul::components::tile::{cmma::CmmaMatmul, mma::MmaMatmul};
 use cubek_matmul::launch::{MatmulInputHandle, MatmulInputHandleRef};
 use cubek_matmul::{
-    components::tile::{cmma::CmmaMatmul, io::Strided, mma::MmaMatmul},
-    definition,
-};
-use cubek_matmul::{
-    definition::{AvailableLineSizes, MatmulElems, MatrixLayout},
+    definition::{AvailableLineSizes, MatmulElems},
     routines::BlueprintStrategy,
 };
+use cubek_std::{MatrixLayout, tile::Strided};
 use derive_new::new;
 
 macro_rules! with_tile_kind {
@@ -181,8 +179,8 @@ where
         k: n * out_shape.iter().product::<usize>(),
         lhs_strides: input.data().strides.into(),
         rhs_strides: out_grad.data().strides.into(),
-        lhs_layout: definition::MatrixLayout::ColMajor,
-        rhs_layout: definition::MatrixLayout::RowMajor,
+        lhs_layout: MatrixLayout::ColMajor,
+        rhs_layout: MatrixLayout::RowMajor,
         kernel_size: kernel_shape.iter().map(|it| *it as u32).collect(),
         stride: stride.iter().map(|it| *it as u32).collect(),
         padding: padding.iter().map(|it| *it as i32).collect(),

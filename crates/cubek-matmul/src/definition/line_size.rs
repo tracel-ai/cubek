@@ -1,10 +1,11 @@
 use cubecl::{
     LineSizeError, Runtime, client::ComputeClient, ir::LineSize, tensor_line_size_parallel,
 };
+use cubek_std::MatrixLayout;
 
 use std::fmt::Debug;
 
-use crate::definition::{base::MatrixLayout, error::MatmulSetupError};
+use crate::definition::error::MatmulSetupError;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
 /// Line size used for each tensor in global memory accesses.

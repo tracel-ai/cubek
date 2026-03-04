@@ -2,8 +2,7 @@ use super::*;
 use crate::suite::layered::matmul_test_launcher::test_matmul_algorithm;
 use cubecl::Runtime;
 use cubecl::TestRuntime;
-use cubek_matmul::definition::MatmulElems;
-use cubek_matmul::definition::TilingBlueprint;
+use cubek_matmul::definition::{MatmulElems, TilingBlueprint, TilingScheme};
 
 #[test]
 pub fn test() {

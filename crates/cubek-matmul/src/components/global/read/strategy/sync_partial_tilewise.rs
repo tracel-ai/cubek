@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
 
+use crate::components::global::read::validate_swizzle_atom_size;
 use crate::components::global::read::{PartialLoadingStrategy, sync::Synchronous};
 use crate::components::global::{PlaneFlowPartition, read::tiled::TiledLayout};
 use crate::components::stage::StridedStageFamily;
@@ -10,13 +11,12 @@ use crate::components::{
     stage::{ContiguousTilingLayout, TilingOrder},
 };
 use crate::components::{global::multi_stage::LoadMaxRoundPlaneCount, stage::TilingValidation};
-use crate::components::{global::read::validate_swizzle_atom_size, tile::io::Strided};
-use crate::definition::{
-    FormattedConfigError, InvalidConfigError, MatmulElems, MatmulProblem, StageIdent,
-};
+use crate::definition::{MatmulElems, MatmulProblem, StageIdent};
 use crate::{components::global::GlobalReaderConfig, launch::RuntimeConfig};
 use cubecl::std::{tensor::layout::Coords2d, type_size};
 use cubecl::{ir::DeviceProperties, prelude::*};
+use cubek_std::tile::Strided;
+use cubek_std::{FormattedConfigError, InvalidConfigError};
 
 use super::{LoadingJob, LoadingValidation};
 

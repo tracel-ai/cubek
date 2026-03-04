@@ -1,13 +1,12 @@
 use crate::components::global::memory::GlobalIterator;
 use crate::components::stage::TilingLayout;
-use crate::components::stage::{StageMemoryConfig, SwizzleMode};
 use crate::components::{global::GlobalReaderConfig, stage::StageConfig};
 use crate::components::{global::SharedGlobalMatmulConfig, stage::StageFamily};
-use crate::definition::{
-    InvalidConfigError, MatmulElems, MatmulPrecision, MatmulProblem, MatrixLayout, StageIdent,
-};
+use crate::definition::{MatmulElems, MatmulPrecision, MatmulProblem, StageIdent};
 use cubecl::ir::{BarrierLevel, DeviceProperties, OpaqueType, SemanticType};
 use cubecl::prelude::*;
+use cubek_std::stage::{StageMemoryConfig, SwizzleMode};
+use cubek_std::{InvalidConfigError, MatrixLayout};
 
 #[cube]
 /// A loading job represents a sequence of loading tasks.

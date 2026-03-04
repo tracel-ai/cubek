@@ -15,17 +15,15 @@ use cubecl::{
     zspace::{shape, strides},
 };
 use cubek_matmul::{
-    components::{
-        global::memory::{GlobalLayoutConfig, NoopLayout, NoopLayoutLaunch},
-        stage::SwizzleMode,
-    },
-    definition::{Blueprint, MatmulElems, MatmulLineSizes, MatrixLayout, TilingBlueprint},
+    components::global::memory::{GlobalLayoutConfig, NoopLayout, NoopLayoutLaunch},
+    definition::{Blueprint, MatmulElems, MatmulLineSizes, TilingBlueprint},
     launch::{
         MatmulArgs, MatmulInputHandleRef, TensorArgs, TensorInputs, TensorInputsLaunch,
         TensorMapArgs, TensorMapInputs, TensorMapInputsLaunch, TensorOutput, TensorOutputLaunch,
     },
     routines::Routine,
 };
+use cubek_std::{MatrixLayout, stage::SwizzleMode};
 use enumset::EnumSet;
 
 use crate::components::{

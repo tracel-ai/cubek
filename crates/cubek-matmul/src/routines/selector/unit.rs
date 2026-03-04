@@ -1,11 +1,11 @@
 use std::fmt::Display;
 
 use crate::{
-    components::stage::{PartitionBuffering, SwizzleMode},
+    components::stage::PartitionBuffering,
     definition::{
         CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulElems, MatmulGlobalElems,
-        MatmulKind, MatmulLineSizes, MatmulProblem, MatrixLayout, SmAllocation, SwizzleModes,
-        TilingBlueprint, TilingScheme,
+        MatmulKind, MatmulLineSizes, MatmulProblem, SmAllocation, SwizzleModes, TilingBlueprint,
+        TilingScheme,
     },
 };
 use cubecl::{
@@ -13,6 +13,7 @@ use cubecl::{
     client::ComputeClient,
     ir::{LineSize, StorageType},
 };
+use cubek_std::{MatrixLayout, stage::SwizzleMode};
 
 #[derive(Default, Clone, Copy, Debug)]
 pub enum TileSizeSelection {
@@ -169,7 +170,7 @@ fn general_unit_selector(
     dtypes: &MatmulElems,
     line_sizes: &MatmulLineSizes,
 ) -> TilingBlueprint {
-    use MatrixLayout::*;
+    use cubek_std::MatrixLayout::*;
 
     // Manually tested for good performance on many shapes.
     let (tile_size, mut partition_size) =
@@ -311,7 +312,7 @@ fn scalarvec_unit_selector(
     dtypes: &MatmulElems,
     line_sizes: &MatmulLineSizes,
 ) -> TilingBlueprint {
-    use MatrixLayout::*;
+    use cubek_std::MatrixLayout::*;
     let (tile_size, partition_size) = match (problem.lhs_layout, problem.rhs_layout) {
         (RowMajor, RowMajor) => ((1, tile_size, tile_size), (1, 2, 1)),
         (RowMajor, ColMajor) => ((1, tile_size, tile_size), (1, 2, 1)),
@@ -383,7 +384,7 @@ fn inner_product_unit_selector(
     dtypes: &MatmulElems,
     line_sizes: &MatmulLineSizes,
 ) -> TilingBlueprint {
-    use MatrixLayout::*;
+    use cubek_std::MatrixLayout::*;
     let (tile_size, partition_size) = match (problem.lhs_layout, problem.rhs_layout) {
         (RowMajor, RowMajor) => ((1, 1, tile_size), (1, 1, 1)),
         (RowMajor, ColMajor) => ((1, 1, tile_size), (1, 1, 1)),

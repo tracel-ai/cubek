@@ -1,10 +1,11 @@
 use cubecl::{AutotuneKey, Runtime, quant::scheme::QuantScheme};
 use cubecl::{client::ComputeClient, ir::StorageType};
+use cubek_std::MatmulProblemSize;
 use serde::{Deserialize, Serialize};
 
 use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
 
-use crate::definition::{MatmulKind, MatmulProblemSize};
+use crate::definition::MatmulKind;
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 /// Autotune key representative of matmul versions

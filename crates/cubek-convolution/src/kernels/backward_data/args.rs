@@ -16,13 +16,14 @@ use cubecl::{
 };
 use cubek_matmul::{
     components::global::memory::{GlobalLayoutConfig, NoopLayout, NoopLayoutLaunch},
-    definition::{Blueprint, MatmulElems, MatmulLineSizes, MatrixLayout, TilingBlueprint},
+    definition::{Blueprint, MatmulElems, MatmulLineSizes, TilingBlueprint},
     launch::{
         MatmulArgs, MatmulInputHandleRef, TensorArgs, TensorInputs, TensorInputsLaunch,
         TensorMapArgs, TensorMapInputs, TensorMapInputsLaunch, TensorOutput, TensorOutputLaunch,
     },
     routines::Routine,
 };
+use cubek_std::MatrixLayout;
 use enumset::EnumSet;
 
 use crate::components::{

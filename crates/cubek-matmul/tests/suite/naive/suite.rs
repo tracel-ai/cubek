@@ -6,10 +6,11 @@ use cubecl::{prelude::TensorHandleRef, zspace::shape};
 use cubek_matmul::launch::launch_naive;
 
 use crate::suite::layout_to_stride_spec;
+use cubek_matmul::definition::MatmulGlobalElems;
 use cubek_matmul::definition::{MatmulElems, MatmulIdent, MatmulProblem};
-use cubek_matmul::definition::{MatmulGlobalElems, MatrixLayout};
 use cubek_matmul::launch::MatmulInputHandleRef;
 use cubek_matmul::routines::naive;
+use cubek_std::MatrixLayout;
 use cubek_test_utils::{BaseInputSpec, DataKind, Distribution, TestInput};
 
 type TestRuntime = cubecl::TestRuntime;

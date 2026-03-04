@@ -1,15 +1,15 @@
 use cubecl::prelude::*;
+use cubek_std::{
+    MatrixLayout,
+    tile::{Filled, Strided, StridedTile, TileKind},
+};
 use std::marker::PhantomData;
 
-use crate::components::tile::{
-    StridedTile,
-    io::{Filled, Strided, TileKind},
-    register::{
-        RegisterMatmul, UnitFragment,
-        config::{ProductType, RegisterMatmulConfig},
-    },
+use crate::components::tile::register::{
+    RegisterMatmul, UnitFragment,
+    config::{ProductType, RegisterMatmulConfig},
 };
-use crate::definition::{MatrixLayout, StageIdent};
+use crate::definition::StageIdent;
 
 /// Reader for the register matmul fragments. Implementation depends on the tile kind.
 #[derive(CubeType)]

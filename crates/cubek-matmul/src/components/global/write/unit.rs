@@ -1,5 +1,7 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::{View, layout::Coords2d};
+use cubek_std::stage::StageMemoryConfig;
+use cubek_std::tile::StridedTile;
 
 use crate::components::{
     global::{
@@ -7,8 +9,7 @@ use crate::components::{
         PartitionedStageFamily, WriteEvent, WriteEventExpand, WriteEventListener,
         read::tiled::{TiledCoords, TiledLayout},
     },
-    stage::{StageMemoryConfig, StagePartitioner, UnitPartitioner},
-    tile::StridedTile,
+    stage::{StagePartitioner, UnitPartitioner},
 };
 use crate::definition::{MatrixPrecision, StageIdent};
 

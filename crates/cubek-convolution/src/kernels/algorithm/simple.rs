@@ -9,15 +9,13 @@ use cubek_matmul::components::{
 use cubek_matmul::definition::AvailableLineSizes;
 use cubek_matmul::launch::{TensorArgs, TensorMapArgs};
 use cubek_matmul::{
-    components::{
-        global::read::{
-            async_full_tma::AsyncFullTmaLoading, sync_full_strided::SyncFullStridedLoading,
-            sync_full_tilewise::SyncFullTilewiseLoading,
-        },
-        tile::io::Strided,
+    components::global::read::{
+        async_full_tma::AsyncFullTmaLoading, sync_full_strided::SyncFullStridedLoading,
+        sync_full_tilewise::SyncFullTilewiseLoading,
     },
     routines::simple::SimpleAlgorithm,
 };
+use cubek_std::tile::Strided;
 use std::marker::PhantomData;
 
 use crate::{

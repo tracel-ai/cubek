@@ -1,4 +1,4 @@
-use cubek_matmul::definition::TileSize;
+use cubek_std::TileSize;
 
 use crate::definition::{AttentionDims, AttentionLineSizes, HypercubeBlueprint};
 

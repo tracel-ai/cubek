@@ -1,5 +1,6 @@
 use cubecl::features::MmaConfig;
 use cubecl::{Runtime, client::ComputeClient};
+use cubek_std::tile::Strided;
 use std::fmt::Display;
 use std::marker::PhantomData;
 
@@ -10,10 +11,7 @@ use crate::definition::{
 };
 use crate::routines::{BlueprintStrategy, DeviceSettings, LaunchInfo};
 use crate::{components::batch::BatchMatmulFamily, launch::RuntimeConfig};
-use crate::{
-    components::tile::{interleaved::InterleavedMatmul, io::Strided},
-    routines::ExpandInfo,
-};
+use crate::{components::tile::interleaved::InterleavedMatmul, routines::ExpandInfo};
 use crate::{
     components::{
         batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
@@ -146,6 +144,71 @@ where
             cubedim_resource,
             device_settings,
         )
+    }
+
+    fn launch<'a, MA: crate::launch::MatmulArgs<Config = RC>, R: Runtime>(
+        client: &ComputeClient<R>,
+        cube_dim: cubecl::CubeDim,
+        cube_count: cubecl::CubeCount,
+        address_type: cubecl::prelude::AddressType,
+        input: crate::launch::InputRuntimeArg<'a, MA, R>,
+        output: crate::launch::OutputRuntimeArg<'a, MA, R>,
+        config: crate::launch::ConfigRuntimeArg<'a, MA, R>,
+        cube_count_input: crate::definition::CubeMappingLaunch<'a, R>,
+        blueprint: Self::Blueprint,
+        dtypes: &MatmulElems,
+    ) -> Result<(), MatmulSetupError> {
+        unsafe {
+            Self::BatchMatmul::launch_unchecked::<MA, R>(
+                client,
+                cube_dim,
+                cube_count,
+                address_type,
+                input,
+                output,
+                config,
+                cube_count_input,
+                blueprint,
+                dtypes,
+            )?
+        }
+        Ok(())
+    }
+
+    fn num_stages() -> crate::components::stage::NumStages {
+        Self::BatchMatmul::num_stages()
+    }
+
+    fn device_settings<R: Runtime>(
+        client: &ComputeClient<R>,
+        line_sizes: MatmulLineSizes,
+    ) -> DeviceSettings<R> {
+        // Sometimes the GPU doesn't support plane instructions and doesn't report the
+        // plane size, but we can still execute algorithms that don't use plane instructions.
+        //
+        // In this case, we set a plane size for the selector to work, defaulting to 32 as it
+        // is a common plane size.
+        let plane_dim = match client.properties().hardware.plane_size_max {
+            0 => 32,
+            plane_dim => plane_dim,
+        };
+
+        DeviceSettings {
+            client: client.clone(),
+            plane_dim,
+            line_sizes,
+            max_cube_count: client.properties().hardware.max_cube_count,
+        }
+    }
+
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &Self::Blueprint,
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
+    ) -> Result<(), MatmulSetupError> {
+        Self::BatchMatmul::validate_blueprint(client, blueprint, problem, dtypes, line_sizes)
     }
 }
 

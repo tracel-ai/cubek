@@ -15,9 +15,10 @@ use cubek_matmul::components::{
         },
     },
     stage::{ContiguousTilingLayout, StridedStageFamily, StridedStageMemory, TilingOrder},
-    tile::io::Strided,
 };
-use cubek_matmul::definition::{InvalidConfigError, MatmulElems, MatmulProblem, StageIdent};
+use cubek_matmul::definition::{MatmulElems, MatmulProblem, StageIdent};
+use cubek_std::InvalidConfigError;
+use cubek_std::tile::Strided;
 
 use crate::components::global::{
     args::RuntimeArgs,

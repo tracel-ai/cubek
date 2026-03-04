@@ -7,12 +7,13 @@ use cubecl::{
 use cubek_matmul::{
     components::{
         global::read::{AsyncPartialLoadingStrategy, async_partial_tma::AsyncPartialTmaLoading},
-        tile::{TileMatmulFamily, io::Strided},
+        tile::TileMatmulFamily,
     },
     definition::AvailableLineSizes,
     launch::{TensorArgs, TensorMapArgs},
     routines::specialized::SpecializedAlgorithm,
 };
+use cubek_std::tile::Strided;
 
 use crate::{
     algorithm::{Algorithm, into_tensor_handle, into_tensor_handle_tma},

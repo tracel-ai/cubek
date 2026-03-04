@@ -83,10 +83,10 @@ impl TileAttentionFamily for WhiteboxAcceleratedTileAttention {
 }
 
 fn validate(
-    device_props: &DeviceProperties,
-    config: WhiteboxAcceleratedAttentionMatmulConfig,
-    reuse_key_value: bool,
-    line_sizes_mask: LineSize,
+    _device_props: &DeviceProperties,
+    _config: WhiteboxAcceleratedAttentionMatmulConfig,
+    _reuse_key_value: bool,
+    _line_sizes_mask: LineSize,
     dtypes: &AttentionElems,
 ) -> Result<WhiteboxAcceleratedAttentionMatmulConfig, AttentionSetupError> {
     if dtypes.query_global != dtypes.query_tile {
@@ -95,7 +95,7 @@ fn validate(
         )));
     }
 
-    // todo!();
+    todo!();
     // if !device_props.features.cmma.contains(&MmaConfig {
     //     a_type: dtypes.query_tile,
     //     b_type: dtypes.key_value_tile,
@@ -167,11 +167,11 @@ fn validate(
     //     )));
     // }
 
-    if reuse_key_value {
-        return Err(AttentionSetupError::InvalidConfig(Box::new(
-            "Can't reuse key/value because unimplemented",
-        )));
-    }
+    // if reuse_key_value {
+    //     return Err(AttentionSetupError::InvalidConfig(Box::new(
+    //         "Can't reuse key/value because unimplemented",
+    //     )));
+    // }
 
-    Ok(config)
+    // Ok(config)
 }

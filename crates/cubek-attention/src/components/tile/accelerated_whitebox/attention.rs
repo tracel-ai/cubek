@@ -3,8 +3,8 @@ use std::marker::PhantomData;
 use cubecl;
 use cubecl::prelude::*;
 use cubecl::std::Swizzle;
-use cubek_matmul::components::tile::StridedTile;
-use cubek_matmul::definition::MatrixLayout;
+use cubek_std::MatrixLayout;
+use cubek_std::tile::StridedTile;
 
 use crate::components::tile::accelerated_whitebox::WhiteboxAccumulatorPipeline;
 use crate::components::tile::accelerated_whitebox::WhiteboxSmemSoftmaxPipeline;

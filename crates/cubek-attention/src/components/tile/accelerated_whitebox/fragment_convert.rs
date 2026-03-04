@@ -96,9 +96,9 @@ impl<AP: AttentionPrecision> FragmentConvert<AP> for SmemFragmentConverter<AP> {
     type Transit = SmemConvertTransit<AP::SoftmaxLhs>;
 
     fn acc_to_lhs(
-        acc: &ManualMatrix<IdentCD, ScoreMma<AP>>,
-        lhs: &mut ManualMatrix<IdentA, ValueMma<AP>>,
-        transit: &mut Self::Transit,
+        _acc: &ManualMatrix<IdentCD, ScoreMma<AP>>,
+        _lhs: &mut ManualMatrix<IdentA, ValueMma<AP>>,
+        _transit: &mut Self::Transit,
     ) {
         todo!()
         // let cast_fragment = cmma::cast::<Acc, Lhs>(&acc);
@@ -135,6 +135,7 @@ impl<AP: AttentionPrecision> FragmentConvert<AP> for SmemFragmentConverter<AP> {
 }
 
 #[derive(CubeType, Copy, Clone)]
+#[allow(unused)]
 pub struct SmemConvertTransit<E: Float> {
     smem_slice: SliceMut<E>,
     #[cube(comptime)]

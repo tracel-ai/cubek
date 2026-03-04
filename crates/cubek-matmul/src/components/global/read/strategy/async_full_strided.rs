@@ -1,3 +1,4 @@
+use crate::components::global::read::async_copy::ASYNC_COPY_WIDTH;
 use crate::components::global::read::validate_async_copy_with_problem;
 use crate::components::global::read::{
     FullLoadingStrategy, stage::FullStageLayout, validate_async_barrier,
@@ -8,12 +9,13 @@ use crate::components::global::{multi_stage::LoadMaxRoundPlaneCount, read::valid
 use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{StridedStageMemory, StridedTilingLayout};
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
-use crate::components::{global::read::async_copy::ASYNC_COPY_WIDTH, tile::io::Strided};
-use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem, StageIdent};
+use crate::definition::{MatmulElems, MatmulProblem, StageIdent};
 use crate::{components::global::read::async_barrier::AsyncCopy, launch::RuntimeConfig};
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Layout, LayoutExpand};
 use cubecl::{ir::DeviceProperties, prelude::barrier::Barrier};
+use cubek_std::InvalidConfigError;
+use cubek_std::tile::Strided;
 
 use super::{LoadingJob, LoadingValidation};
 
