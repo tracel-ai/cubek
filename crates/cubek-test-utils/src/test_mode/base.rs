@@ -83,7 +83,8 @@ impl TestMode {
                 Validated(result) => match result {
                     Pass => Accept,
                     Fail(reason) => Reject(reason),
-                    Skipped(reason) => Reject(reason),
+                    Error(reason) => Reject(reason),
+                    Skipped(_) => Accept,
                 },
                 CompileError(_) => Accept,
             },
@@ -91,7 +92,8 @@ impl TestMode {
                 Validated(result) => match result {
                     Pass => Accept,
                     Fail(reason) => Reject(reason),
-                    Skipped(reason) => Reject(reason),
+                    Error(reason) => Reject(reason),
+                    Skipped(_) => Accept,
                 },
                 CompileError(reason) => Reject(reason),
             },
@@ -108,7 +110,8 @@ impl TestMode {
                         }
                     }
                     Fail(reason) => Reject(reason),
-                    Skipped(reason) => Reject(reason),
+                    Error(reason) => Reject(reason),
+                    Skipped(content) => Reject(content),
                 },
 
                 CompileError(reason) => {
@@ -123,6 +126,7 @@ impl TestMode {
                 Validated(result) => match result {
                     Pass => Reject("Actually passed, but FailIfRun mode activated".to_string()),
                     Fail(_) => Accept,
+                    Error(_) => Accept,
                     Skipped(_) => Accept,
                 },
                 CompileError(_) => Accept,

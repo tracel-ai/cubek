@@ -4,12 +4,14 @@ use cubecl::prelude::*;
 use cubecl::{self, Runtime, TestRuntime};
 use cubek_test_utils::{
     DataKind, HostData, HostDataType, StrideSpec, TestInput, TestOutcome, ValidationResult,
+    pretty_print_zip,
 };
 
 #[cube(launch)]
-pub fn reverse_engineer_layout_kernel<AB: Numeric, CD: Numeric>(
+pub fn mma_layout_kernel<AB: Numeric, CD: Numeric>(
     lane_tensor: &mut Tensor<AB>,
-    nth_tensor: &mut Tensor<AB>,
+    line_tensor: &mut Tensor<AB>,
+    within_line_tensor: &mut Tensor<AB>,
     #[comptime] m: usize,
     #[comptime] n: usize,
     #[comptime] k: usize,
@@ -28,14 +30,16 @@ pub fn reverse_engineer_layout_kernel<AB: Numeric, CD: Numeric>(
             let nth = i * line_size + j;
             let (row, col) =
                 def.position_of_nth(lane_id as u32, nth as u32, MatrixIdent::Accumulator);
+
             let absolute_index = row as usize * stride + col as usize;
             lane_tensor[absolute_index] = AB::cast_from(lane_id);
-            nth_tensor[absolute_index] = AB::cast_from(nth);
+            line_tensor[absolute_index] = AB::cast_from(i);
+            within_line_tensor[absolute_index] = AB::cast_from(j);
         }
     }
 }
 
-pub fn reverse_engineer_layout<AB: CubeElement + Numeric, CD: CubeElement + Numeric>(
+pub fn print_mma_layout<AB: CubeElement + Numeric, CD: CubeElement + Numeric>(
     m: usize,
     n: usize,
     k: usize,
@@ -74,7 +78,7 @@ pub fn reverse_engineer_layout<AB: CubeElement + Numeric, CD: CubeElement + Nume
     )
     .generate();
 
-    let nth_tensor = TestInput::new(
+    let line_tensor = TestInput::new(
         client.clone(),
         [rows, cols],
         dtype,
@@ -83,12 +87,22 @@ pub fn reverse_engineer_layout<AB: CubeElement + Numeric, CD: CubeElement + Nume
     )
     .generate();
 
-    reverse_engineer_layout_kernel::launch::<AB, CD, TestRuntime>(
+    let within_line_tensor = TestInput::new(
+        client.clone(),
+        [rows, cols],
+        dtype,
+        StrideSpec::RowMajor,
+        DataKind::Zeros,
+    )
+    .generate();
+
+    mma_layout_kernel::launch::<AB, CD, TestRuntime>(
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_1d(client.properties().hardware.plane_size_max),
         lane_tensor.as_ref().as_tensor_arg(1),
-        nth_tensor.as_ref().as_tensor_arg(1),
+        line_tensor.as_ref().as_tensor_arg(1),
+        within_line_tensor.as_ref().as_tensor_arg(1),
         m,
         n,
         k,
@@ -96,58 +110,59 @@ pub fn reverse_engineer_layout<AB: CubeElement + Numeric, CD: CubeElement + Nume
     )
     .unwrap();
 
-    let lane_tensor = HostData::from_tensor_handle(&client, &lane_tensor, HostDataType::F32);
-    let nth_tensor = HostData::from_tensor_handle(&client, &nth_tensor, HostDataType::F32);
+    let lane_tensor = HostData::from_tensor_handle(&client, &lane_tensor, HostDataType::I32);
+    let line_tensor = HostData::from_tensor_handle(&client, &line_tensor, HostDataType::I32);
+    let within_line_tensor =
+        HostData::from_tensor_handle(&client, &within_line_tensor, HostDataType::I32);
 
-    TestOutcome::Validated(ValidationResult::Fail(format!(
-        "lane_tensor: {:?}, nth_tensor {:?}",
-        lane_tensor, nth_tensor,
-    )))
+    let table = pretty_print_zip(&[&lane_tensor, &line_tensor, &within_line_tensor]);
+
+    TestOutcome::Validated(ValidationResult::Fail(format!("Mma Layout:\n{}", table)))
 }
 
 use half::{bf16, f16};
 
 #[test]
-fn rev_eng_a_f16_f32_m16n8k16() {
-    reverse_engineer_layout::<f16, f32>(16, 8, 16, MatrixIdent::A).enforce();
+fn print_a_f16_f32_m16n8k16() {
+    print_mma_layout::<f16, f32>(16, 8, 16, MatrixIdent::A).enforce();
 }
 
 #[test]
-fn rev_eng_a_bf16_f32_m16n8k16() {
-    reverse_engineer_layout::<bf16, f32>(16, 8, 16, MatrixIdent::A).enforce();
+fn print_a_bf16_f32_m16n8k16() {
+    print_mma_layout::<bf16, f32>(16, 8, 16, MatrixIdent::A).enforce();
 }
 
 #[test]
-fn rev_eng_a_f16_f32_m16n8k8() {
-    reverse_engineer_layout::<f16, f32>(16, 8, 8, MatrixIdent::A).enforce();
+fn print_a_f16_f32_m16n8k8() {
+    print_mma_layout::<f16, f32>(16, 8, 8, MatrixIdent::A).enforce();
 }
 
 #[test]
-fn rev_eng_b_f16_f32_m16n8k16() {
-    reverse_engineer_layout::<f16, f32>(16, 8, 16, MatrixIdent::B).enforce();
+fn print_b_f16_f32_m16n8k16() {
+    print_mma_layout::<f16, f32>(16, 8, 16, MatrixIdent::B).enforce();
 }
 
 #[test]
-fn rev_eng_b_bf16_f32_m16n8k16() {
-    reverse_engineer_layout::<bf16, f32>(16, 8, 16, MatrixIdent::B).enforce();
+fn print_b_bf16_f32_m16n8k16() {
+    print_mma_layout::<bf16, f32>(16, 8, 16, MatrixIdent::B).enforce();
 }
 
 #[test]
-fn rev_eng_b_f16_f32_m16n8k8() {
-    reverse_engineer_layout::<f16, f32>(16, 8, 8, MatrixIdent::B).enforce();
+fn print_b_f16_f32_m16n8k8() {
+    print_mma_layout::<f16, f32>(16, 8, 8, MatrixIdent::B).enforce();
 }
 
 #[test]
-fn rev_eng_acc_f16_f32_m16n8k16() {
-    reverse_engineer_layout::<f16, f32>(16, 8, 16, MatrixIdent::Accumulator).enforce();
+fn print_acc_f16_f32_m16n8k16() {
+    print_mma_layout::<f16, f32>(16, 8, 16, MatrixIdent::Accumulator).enforce();
 }
 
 #[test]
-fn rev_eng_acc_bf16_f32_m16n8k16() {
-    reverse_engineer_layout::<bf16, f32>(16, 8, 16, MatrixIdent::Accumulator).enforce();
+fn print_acc_bf16_f32_m16n8k16() {
+    print_mma_layout::<bf16, f32>(16, 8, 16, MatrixIdent::Accumulator).enforce();
 }
 
 #[test]
-fn rev_eng_acc_f16_f32_m16n8k8() {
-    reverse_engineer_layout::<f16, f32>(16, 8, 8, MatrixIdent::Accumulator).enforce();
+fn print_acc_f16_f32_m16n8k8() {
+    print_mma_layout::<f16, f32>(16, 8, 8, MatrixIdent::Accumulator).enforce();
 }
