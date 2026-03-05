@@ -100,20 +100,19 @@ pub fn print_mma_layout<AB: CubeElement + Numeric, CD: CubeElement + Numeric>(
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_1d(client.properties().hardware.plane_size_max),
-        lane_tensor.as_ref().as_tensor_arg(1),
-        line_tensor.as_ref().as_tensor_arg(1),
-        within_line_tensor.as_ref().as_tensor_arg(1),
+        lane_tensor.clone().binding().into_tensor_arg(1),
+        line_tensor.clone().binding().into_tensor_arg(1),
+        within_line_tensor.clone().binding().into_tensor_arg(1),
         m,
         n,
         k,
         cols,
-    )
-    .unwrap();
+    );
 
-    let lane_tensor = HostData::from_tensor_handle(&client, &lane_tensor, HostDataType::I32);
-    let line_tensor = HostData::from_tensor_handle(&client, &line_tensor, HostDataType::I32);
+    let lane_tensor = HostData::from_tensor_handle(&client, lane_tensor, HostDataType::I32);
+    let line_tensor = HostData::from_tensor_handle(&client, line_tensor, HostDataType::I32);
     let within_line_tensor =
-        HostData::from_tensor_handle(&client, &within_line_tensor, HostDataType::I32);
+        HostData::from_tensor_handle(&client, within_line_tensor, HostDataType::I32);
 
     let table = pretty_print_zip(&[&lane_tensor, &line_tensor, &within_line_tensor]);
 

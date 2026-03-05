@@ -73,8 +73,10 @@ impl HostData {
             }
             HostDataType::I32 => {
                 let handle = copy_casted(client, tensor_handle, i32::as_type_native_unchecked());
-                let data = i32::from_bytes(&client.read_one_tensor(handle.as_copy_descriptor()))
-                    .to_owned();
+                let data = i32::from_bytes(
+                    &client.read_one_unchecked_tensor(handle.into_copy_descriptor()),
+                )
+                .to_owned();
 
                 HostDataVec::I32(data)
             }
