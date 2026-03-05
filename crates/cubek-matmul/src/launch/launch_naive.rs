@@ -17,7 +17,7 @@ use crate::routines::{BlueprintStrategy, Routine as _};
 #[allow(clippy::result_large_err)]
 pub fn launch_ref<R: Runtime>(
     client: &ComputeClient<R>,
-    mut lhs: MatmulInputBinding<R>,
+    lhs: MatmulInputBinding<R>,
     mut rhs: MatmulInputBinding<R>,
     out: TensorBinding<R>,
     dtypes: &MatmulElems,

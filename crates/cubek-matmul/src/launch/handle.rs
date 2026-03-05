@@ -28,7 +28,7 @@ pub enum MatmulInputBinding<R: Runtime> {
 impl<R: Runtime> Clone for MatmulInputBinding<R> {
     fn clone(&self) -> Self {
         match self {
-            Self::Normal(arg0, arg1) => Self::Normal(arg0.try_clone().unwrap(), *arg1),
+            Self::Normal(arg0, arg1) => Self::Normal(arg0.clone_unchecked(), *arg1),
             Self::Quantized {
                 data,
                 data_dtype,
@@ -37,9 +37,9 @@ impl<R: Runtime> Clone for MatmulInputBinding<R> {
                 shape,
                 scheme,
             } => Self::Quantized {
-                data: data.try_clone().unwrap(),
+                data: data.clone_unchecked(),
                 data_dtype: *data_dtype,
-                scale: scale.try_clone().unwrap(),
+                scale: scale.clone_unchecked(),
                 scale_dtype: *scale_dtype,
                 shape: shape.clone(),
                 scheme: *scheme,

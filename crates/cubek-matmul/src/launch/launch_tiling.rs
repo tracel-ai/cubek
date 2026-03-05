@@ -66,7 +66,7 @@ pub fn launch_ref<R: Runtime, A: Routine<()>>(
 #[allow(clippy::result_large_err)]
 pub fn launch_ref_tma<R: Runtime, A: Routine<(), Blueprint = TilingBlueprint>>(
     client: &ComputeClient<R>,
-    mut lhs: MatmulInputBinding<R>,
+    lhs: MatmulInputBinding<R>,
     mut rhs: MatmulInputBinding<R>,
     out: TensorBinding<R>,
     blueprint_strategy: &BlueprintStrategy<(), A>,
