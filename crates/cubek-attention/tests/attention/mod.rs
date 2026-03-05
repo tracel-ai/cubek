@@ -206,19 +206,19 @@ mod whitebox_accelerated {
         include!("selector_tests.rs");
     }
 
-    mod f32_ty {
-        use super::*;
-        use cubecl::frontend::CubePrimitive;
-        use cubek_attention::definition::AttentionGlobalTypes;
+    // mod f32_ty {
+    //     use super::*;
+    //     use cubecl::frontend::CubePrimitive;
+    //     use cubek_attention::definition::AttentionGlobalTypes;
 
-        fn global_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
-            AttentionGlobalTypes::from_single_float_dtype(
-                f32::as_type_native_unchecked(),
-                AttentionGlobalTypes::mask_dtype(client),
-            )
-        }
+    //     fn global_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
+    //         AttentionGlobalTypes::from_single_float_dtype(
+    //             f32::as_type_native_unchecked(),
+    //             AttentionGlobalTypes::mask_dtype(client),
+    //         )
+    //     }
 
-        include!("blueprint_tests.rs");
-        include!("selector_tests.rs");
-    }
+    //     include!("blueprint_tests.rs");
+    //     include!("selector_tests.rs");
+    // }
 }

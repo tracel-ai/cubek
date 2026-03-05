@@ -6,11 +6,18 @@ use cubecl::{
     prelude::*,
     std::tensor::layout::{Coords1d, Coords2d},
 };
-use cubek_std::{TileSize, tile::StridedTile};
+use cubek_std::{
+    MatrixLayout,
+    tile::mma::{MmaFragmentReader, MmaIOConfig, MmaStageWriter},
+};
+use cubek_std::{
+    TileSize,
+    tile::{Strided, StridedTile, mma::MmaStageReader},
+};
 
 use crate::components::tile::{
-    AccumulatorRowwise, AccumulatorRowwiseExpand, FragmentMask, FragmentMaskExpand, RowWise,
-    SoftmaxLayout, SoftmaxLayoutExpand, SoftmaxRowwise, SoftmaxRowwiseExpand,
+    AccumulatorRowwise, AccumulatorRowwiseExpand, FragmentMask, FragmentMaskExpand, LOGIT_MASKED,
+    RowVal, RowWise, SoftmaxLayout, SoftmaxLayoutExpand, SoftmaxRowwise, SoftmaxRowwiseExpand,
 };
 
 #[derive(CubeType)]
@@ -22,9 +29,10 @@ use crate::components::tile::{
 /// - A and Accumulator share the same **plane-level layout** (same lane/unit placement in the 16×16 tile). B differs.
 /// - A and B share the same **unit-level layout** (ordering of elements inside each lane, i.e., local_pos). Accumulator differs.
 pub struct ManualMatrixLayout<MI: MmaIdent<MT>, MT: MmaTypes> {
+    pub mma_definition: MmaDefinition<MT::A, MT::B, MT::CD>,
+
     #[cube(comptime)]
     pub tile_size: TileSize,
-    pub mma_definition: MmaDefinition<MT::A, MT::B, MT::CD>,
     #[cube(comptime)]
     _phantom: PhantomData<MI>,
     #[cube(comptime)]
@@ -35,6 +43,8 @@ pub struct ManualMatrixLayout<MI: MmaIdent<MT>, MT: MmaTypes> {
     pub(crate) num_rows: u32,
     #[cube(comptime)]
     pub(crate) num_cols: u32,
+    #[cube(comptime)]
+    mma_io_config: MmaIOConfig,
 }
 
 pub trait MmaTypes {
@@ -76,7 +86,10 @@ pub fn mma_definition<M: MmaTypes>(
 
 #[cube]
 impl<MI: MmaIdent<MT>, MT: MmaTypes> ManualMatrixLayout<MI, MT> {
-    pub fn new(#[comptime] tile_size: TileSize) -> ManualMatrixLayout<MI, MT> {
+    pub fn new(
+        #[comptime] tile_size: TileSize,
+        #[comptime] mma_io_config: MmaIOConfig,
+    ) -> ManualMatrixLayout<MI, MT> {
         let mma_def = mma_definition::<MT>(tile_size);
         let lines_per_lane = mma_def.lines_per_lane(MI::IDENT);
         let line_size = mma_def.line_size(MI::IDENT);
@@ -93,6 +106,7 @@ impl<MI: MmaIdent<MT>, MT: MmaTypes> ManualMatrixLayout<MI, MT> {
             line_size,
             num_rows,
             num_cols,
+            mma_io_config,
         }
     }
 
@@ -179,19 +193,29 @@ impl<MI: MmaIdent<MT>, MT: MmaTypes> ManualMatrix<MI, MT> {
         }
     }
 
-    pub fn load_from_strided_tile<E2: Numeric>(&mut self, _tile: &StridedTile<E2>) {
-        todo!()
-        // MmaStageReader::<Self::LhsTile>::load_fragment(
-        //     tile,
-        //     &mut self.fragment,
-        //     self.layout.mma_definition,
-        //     MI::IDENT,
-        //     MatrixLayout::RowMajor,
-        //     config,
-        // );
+    pub fn load_from_strided_tile<E2: Numeric>(&mut self, tile: &StridedTile<E2>) {
+        MmaStageReader::<Strided>::load_fragment(
+            tile,
+            &mut self.fragment,
+            self.layout.mma_definition,
+            MI::IDENT,
+            MatrixLayout::RowMajor,
+            self.layout.tile_size,
+            self.layout.mma_io_config,
+        );
     }
 
-    pub fn store_to_strided_tile<E2: Numeric>(&self, _tile: &mut StridedTile<E2, ReadWrite>) {}
+    pub fn store_to_strided_tile<E2: Numeric>(&self, tile: &mut StridedTile<E2, ReadWrite>) {
+        MmaStageWriter::store_fragment(
+            tile,
+            &self.fragment,
+            self.layout.mma_definition,
+            MI::IDENT,
+            MatrixLayout::RowMajor,
+            self.layout.tile_size.m,
+            self.layout.mma_io_config,
+        );
+    }
 
     pub fn get_nth(&self, nth: Coords1d) -> MI::Elem {
         let line = nth / self.layout.line_size;
@@ -215,19 +239,80 @@ impl<MT: MmaTypes<CD: Float>> SoftmaxRowwise<MT::CD> for ManualMatrix<IdentCD, M
     }
 
     fn rowwise_max(&self) -> RowWise<MT::CD> {
-        todo!()
+        let mut vals = Sequence::new();
+
+        #[unroll]
+        for row in 0..self.layout.num_rows {
+            let mut max = MT::CD::min_value();
+            #[unroll]
+            for col in 0..self.layout.num_cols {
+                let nth = self.layout.local_pos_to_nth((row, col).runtime());
+                max = MT::CD::max(max, self.get_nth(nth));
+            }
+
+            vals.push(RowVal::<MT::CD> { val: max });
+        }
+
+        RowWise::<MT::CD> {
+            num_rows: self.layout.num_rows.comptime() as usize,
+            vals,
+        }
     }
 
     fn rowwise_sum(&self) -> RowWise<MT::CD> {
-        todo!()
+        let mut vals = Sequence::new();
+
+        #[unroll]
+        for row in 0..self.layout.num_rows {
+            let mut sum = MT::CD::from_int(0);
+            #[unroll]
+            for col in 0..self.layout.num_cols {
+                let nth = self.layout.local_pos_to_nth((row, col).runtime());
+                sum += self.get_nth(nth);
+            }
+
+            vals.push(RowVal::<MT::CD> { val: sum });
+        }
+
+        RowWise::<MT::CD> {
+            num_rows: self.layout.num_rows.comptime() as usize,
+            vals,
+        }
     }
 
-    fn scale_and_mask<M: FragmentMask>(_this: &mut Self, _scale: MT::CD, _mask: &M) {
-        todo!()
+    fn scale_and_mask<M: FragmentMask>(this: &mut Self, scale: MT::CD, mask: &M) {
+        #[unroll]
+        for row in 0..this.layout.num_rows {
+            #[unroll]
+            for col in 0..this.layout.num_cols {
+                let nth = this.layout.local_pos_to_nth((row, col).runtime());
+                let before = this.get_nth(nth);
+                this.set_nth::<MT::CD>(
+                    nth,
+                    before * scale
+                        + MT::CD::cast_from(mask.should_mask((row, col).runtime()))
+                            * MT::CD::min_value(),
+                );
+            }
+        }
     }
 
-    fn exp_diff(&mut self, _m: &RowWise<MT::CD>) {
-        todo!()
+    fn exp_diff(&mut self, m: &RowWise<MT::CD>) {
+        let threshold = MT::CD::new(LOGIT_MASKED);
+
+        #[unroll]
+        for row in 0..self.layout.num_rows {
+            let m = m.index(row as usize);
+            let safe_m = clamp_min(m, threshold);
+            let not_masked = MT::CD::cast_from(m >= threshold);
+
+            #[unroll]
+            for col in 0..self.layout.num_cols {
+                let nth = self.layout.local_pos_to_nth((row, col).runtime());
+                let before = self.get_nth(nth);
+                self.set_nth::<MT::CD>(nth, not_masked * (before - safe_m).exp());
+            }
+        }
     }
 }
 
@@ -238,11 +323,12 @@ impl<MT: MmaTypes<CD: Float>> AccumulatorRowwise<MT::CD> for ManualMatrix<IdentC
         // if lines match rows
         #[unroll]
         for row in 0..self.layout.num_rows {
-            let _scale = scale.index(row as usize);
+            let scale = scale.index(row as usize);
             #[unroll]
             for col in 0..self.layout.num_cols {
-                let _nth = self.layout.local_pos_to_nth((row, col).runtime());
-                todo!()
+                let nth = self.layout.local_pos_to_nth((row, col).runtime());
+                let before = self.get_nth(nth);
+                self.set_nth::<MT::CD>(nth, before * scale);
             }
         }
     }
@@ -252,7 +338,7 @@ impl<MT: MmaTypes<CD: Float>> AccumulatorRowwise<MT::CD> for ManualMatrix<IdentC
 impl<MT: MmaTypes> FragmentMask for ManualMatrix<IdentCD, MT> {
     type Layout = ManualMatrixLayout<IdentCD, MT>;
 
-    fn should_mask(&self, _local_pos: Coords2d) -> bool {
-        todo!()
+    fn should_mask(&self, local_pos: Coords2d) -> bool {
+        bool::cast_from(self.get_nth(self.layout.local_pos_to_nth(local_pos)))
     }
 }

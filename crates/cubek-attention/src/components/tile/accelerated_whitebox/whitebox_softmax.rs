@@ -30,15 +30,22 @@ pub struct WhiteboxSoftmaxPipeline<AP: AttentionPrecision, FC: FragmentConvert<A
 impl<AP: AttentionPrecision, FC: FragmentConvert<AP>> WhiteboxSoftmaxPipeline<AP, FC> {
     pub fn new<Q: Float, K: Float, V: Float, O: Float>(
         transit: FC::Transit,
-        #[comptime] tile_size: AttentionTileSize,
-        #[comptime] _config: WhiteboxAcceleratedAttentionMatmulConfig,
+        #[comptime] config: WhiteboxAcceleratedAttentionMatmulConfig,
     ) -> Self {
-        let score_matmul_tile_size = tile_size.to_score_matmul_tile_size();
-        let acc_layout = ManualMatrixLayout::new(score_matmul_tile_size);
+        let score_matmul_tile_size = config
+            .shared
+            .attention_tile_size
+            .to_score_matmul_tile_size();
+        let acc_layout =
+            ManualMatrixLayout::new(score_matmul_tile_size, config.score_mma_io_config);
         let softmax_acc = acc_layout.create_matrix();
 
-        let value_matmul_tile_size = tile_size.to_value_matmul_tile_size();
-        let lhs_layout = ManualMatrixLayout::new(value_matmul_tile_size);
+        let value_matmul_tile_size = config
+            .shared
+            .attention_tile_size
+            .to_value_matmul_tile_size();
+        let lhs_layout =
+            ManualMatrixLayout::new(value_matmul_tile_size, config.value_mma_io_config);
         let softmax_lhs = lhs_layout.create_matrix();
 
         WhiteboxSoftmaxPipeline::<AP, FC> {

@@ -6,9 +6,7 @@ use crate::definition::{MatmulAvailabilityError, MatmulElems, MatmulSetupError};
 use crate::definition::{MatmulLineSizes, TilingBlueprint};
 use cubecl::{features::MmaConfig, ir::DeviceProperties};
 use cubecl::{ir::StorageType, prelude::*};
-use cubek_std::tile::mma::{
-    LoadMethod, MmaFragmentReader, MmaIOConfig, MmaStageReader, StoreMethod,
-};
+use cubek_std::tile::mma::{MmaFragmentReader, MmaIOConfig, MmaStageReader};
 use cubek_std::tile::{Strided, TileKind};
 use cubek_std::{InvalidConfigError, TileSize};
 
@@ -51,12 +49,12 @@ where
                 plane_dim: blueprint.plane_dim,
                 swizzle_modes: blueprint.swizzle_modes,
             },
-            mma_io_config: MmaIOConfig {
-                lhs_load_method: load_method(device_props, dtypes.lhs_stage),
-                rhs_load_method: load_method(device_props, dtypes.rhs_stage),
-                acc_load_method: load_method(device_props, dtypes.acc_stage),
-                store_method: store_method(device_props, dtypes.acc_stage),
-            },
+            mma_io_config: MmaIOConfig::new(
+                device_props,
+                dtypes.lhs_stage,
+                dtypes.rhs_stage,
+                dtypes.acc_stage,
+            ),
         })
     }
 
@@ -116,25 +114,5 @@ where
         }
 
         Ok(())
-    }
-}
-
-fn load_method(device_props: &DeviceProperties, dtype: StorageType) -> LoadMethod {
-    if !matches!(dtype, StorageType::Packed(_, _))
-        && device_props.features.ldmatrix.contains(&dtype)
-    {
-        LoadMethod::LoadMatrix
-    } else {
-        LoadMethod::Manual
-    }
-}
-
-fn store_method(device_props: &DeviceProperties, dtype: StorageType) -> StoreMethod {
-    if !matches!(dtype, StorageType::Packed(_, _))
-        && device_props.features.stmatrix.contains(&dtype)
-    {
-        StoreMethod::StoreMatrix
-    } else {
-        StoreMethod::Manual
     }
 }

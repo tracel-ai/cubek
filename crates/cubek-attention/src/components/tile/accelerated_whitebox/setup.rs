@@ -1,6 +1,7 @@
 use cubecl::ir::DeviceProperties;
 use cubecl::ir::LineSize;
 use cubek_matmul::components::CubeDimResource;
+use cubek_std::tile::mma::MmaIOConfig;
 
 use crate::components::tile::SharedTileAttentionConfig;
 use crate::components::tile::TileAttentionConfig;
@@ -17,6 +18,8 @@ use crate::definition::InvalidConfigError;
 pub struct WhiteboxAcceleratedAttentionMatmulConfig {
     pub shared: SharedTileAttentionConfig,
     pub out_smem_line_size: usize,
+    pub score_mma_io_config: MmaIOConfig,
+    pub value_mma_io_config: MmaIOConfig,
 }
 
 impl TileAttentionConfig for WhiteboxAcceleratedAttentionMatmulConfig {
@@ -74,6 +77,18 @@ impl TileAttentionFamily for WhiteboxAcceleratedTileAttention {
                     materialized_mask: blueprint.masked,
                 },
                 out_smem_line_size: blueprint.line_sizes.out,
+                score_mma_io_config: MmaIOConfig::new(
+                    device_props,
+                    dtypes.query_global,
+                    dtypes.key_stage,
+                    dtypes.softmax_acc,
+                ),
+                value_mma_io_config: MmaIOConfig::new(
+                    device_props,
+                    dtypes.softmax_lhs,
+                    dtypes.value_stage,
+                    dtypes.accumulator,
+                ),
             },
             blueprint.reuse_key_value,
             blueprint.line_sizes.mask,
@@ -84,7 +99,7 @@ impl TileAttentionFamily for WhiteboxAcceleratedTileAttention {
 
 fn validate(
     _device_props: &DeviceProperties,
-    _config: WhiteboxAcceleratedAttentionMatmulConfig,
+    config: WhiteboxAcceleratedAttentionMatmulConfig,
     _reuse_key_value: bool,
     _line_sizes_mask: LineSize,
     dtypes: &AttentionElems,
@@ -95,7 +110,7 @@ fn validate(
         )));
     }
 
-    todo!();
+    // todo!();
     // if !device_props.features.cmma.contains(&MmaConfig {
     //     a_type: dtypes.query_tile,
     //     b_type: dtypes.key_value_tile,
@@ -173,5 +188,5 @@ fn validate(
     //     )));
     // }
 
-    // Ok(config)
+    Ok(config)
 }

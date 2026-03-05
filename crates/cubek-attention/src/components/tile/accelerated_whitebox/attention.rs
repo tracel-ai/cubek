@@ -7,7 +7,7 @@ use cubek_std::MatrixLayout;
 use cubek_std::tile::StridedTile;
 
 use crate::components::tile::accelerated_whitebox::WhiteboxAccumulatorPipeline;
-use crate::components::tile::accelerated_whitebox::WhiteboxSmemSoftmaxPipeline;
+use crate::components::tile::accelerated_whitebox::WhiteboxRegisterSoftmaxPipeline;
 use crate::components::tile::accelerated_whitebox::WhiteboxSoftmaxPipeline;
 use crate::components::tile::accelerated_whitebox::manual_matrix::IdentA;
 use crate::components::tile::accelerated_whitebox::manual_matrix::IdentB;
@@ -50,20 +50,20 @@ pub enum KeyValueMatrix<AP: AttentionPrecision> {
 
 #[cube]
 impl<AP: AttentionPrecision> KeyValueMatrix<AP> {
-    // fn key(&self) -> &ManualMatrix<IdentB, ScoreMma<AP>> {
-    //     match self {
-    //         KeyValueMatrix::Reuse(manual_matrix) => manual_matrix,
-    //         KeyValueMatrix::Key(manual_matrix) => manual_matrix,
-    //         KeyValueMatrix::Value(_) => panic!("Tried to access value on key matrix"),
-    //     }
-    // }
-    // fn value(&self) -> &ManualMatrix<IdentB, ValueMma<AP>> {
-    //     match self {
-    //         KeyValueMatrix::Reuse(_manual_matrix) => unimplemented!(),
-    //         KeyValueMatrix::Key(_) => panic!("Tried to access key on value matrix"),
-    //         KeyValueMatrix::Value(manual_matrix) => manual_matrix,
-    //     }
-    // }
+    fn key(&self) -> &ManualMatrix<IdentB, ScoreMma<AP>> {
+        match self {
+            KeyValueMatrix::Reuse(manual_matrix) => manual_matrix,
+            KeyValueMatrix::Key(manual_matrix) => manual_matrix,
+            KeyValueMatrix::Value(_) => panic!("Tried to access value on key matrix"),
+        }
+    }
+    fn value(&self) -> &ManualMatrix<IdentB, ValueMma<AP>> {
+        match self {
+            KeyValueMatrix::Reuse(_manual_matrix) => unimplemented!(),
+            KeyValueMatrix::Key(_) => panic!("Tried to access key on value matrix"),
+            KeyValueMatrix::Value(manual_matrix) => manual_matrix,
+        }
+    }
 
     fn key_mut(&mut self) -> &mut ManualMatrix<IdentB, ScoreMma<AP>> {
         match self {
@@ -89,7 +89,7 @@ impl<AP: AttentionPrecision> TileAttention<AP> for WhiteboxAcceleratedTileAttent
     type KeyValue = KeyValueMatrix<AP>;
     type Mask = ManualMatrix<IdentCD, ScoreMma<AP>>;
 
-    type Softmax = WhiteboxSmemSoftmaxPipeline<AP>;
+    type Softmax = WhiteboxRegisterSoftmaxPipeline<AP>;
     type SoftmaxRow = <Self::Softmax as SoftmaxPipeline<SM<AP>>>::Rowwise;
     type SoftmaxTransit = <Self::Softmax as SoftmaxPipeline<SM<AP>>>::Transit;
     type SoftmaxLayout = <Self::Softmax as SoftmaxPipeline<SM<AP>>>::Layout;
@@ -99,66 +99,87 @@ impl<AP: AttentionPrecision> TileAttention<AP> for WhiteboxAcceleratedTileAttent
 
     fn softmax_layout(#[comptime] config: Self::Config) -> Self::SoftmaxLayout {
         let score_matmul_tile_size = config.attention_tile_size().to_score_matmul_tile_size();
-        ManualMatrixLayout::<IdentCD, ScoreMma<AP>>::new(score_matmul_tile_size)
+        ManualMatrixLayout::<IdentCD, ScoreMma<AP>>::new(
+            score_matmul_tile_size,
+            config.score_mma_io_config,
+        )
     }
 
     fn score_matmul(
-        _query: &Self::Query,
-        _key: &Self::KeyValue,
-        _softmax: &mut Self::Softmax,
+        query: &Self::Query,
+        key: &Self::KeyValue,
+        softmax: &mut Self::Softmax,
         #[comptime] _config: Self::Config,
     ) {
-        todo!()
-        // softmax.softmax_acc.layout.mma_definition.execute_inplace(
-        //     &query.fragment,
-        //     &key.key().fragment,
-        //     &mut softmax.softmax_acc.fragment,
-        // );
+        softmax.softmax_acc.layout.mma_definition.execute_inplace(
+            &query.fragment,
+            &key.key().fragment,
+            &mut softmax.softmax_acc.fragment,
+        );
     }
 
     fn value_matmul(
-        _softmax: &Self::Softmax,
-        _value: &Self::KeyValue,
-        _out: &mut Self::Accumulator,
+        softmax: &Self::Softmax,
+        value: &Self::KeyValue,
+        out: &mut Self::Accumulator,
         #[comptime] _config: Self::Config,
     ) {
-        todo!()
-        // softmx.softmax_lhs.layout.mma_definition.execute_inplace(
-        //     &softmax.softmax_lhs.fragment,
-        //     &value.value().fragment,
-        //     &mut out.accumulator.fragment,
-        // );
+        softmax.softmax_lhs.layout.mma_definition.execute_inplace(
+            &softmax.softmax_lhs.fragment,
+            &value.value().fragment,
+            &mut out.accumulator.fragment,
+        );
     }
 
     fn allocate_query(#[comptime] config: Self::Config) -> Self::Query {
         let score_matmul_tile_size = config.attention_tile_size().to_score_matmul_tile_size();
-        ManualMatrixLayout::<IdentA, ScoreMma<AP>>::new(score_matmul_tile_size).create_matrix()
+        ManualMatrixLayout::<IdentA, ScoreMma<AP>>::new(
+            score_matmul_tile_size,
+            config.score_mma_io_config,
+        )
+        .create_matrix()
     }
 
     fn allocate_key(#[comptime] config: Self::Config) -> Self::KeyValue {
         let score_matmul_tile_size = config.attention_tile_size().to_score_matmul_tile_size();
         KeyValueMatrix::new_Key(
-            ManualMatrixLayout::<IdentB, ScoreMma<AP>>::new(score_matmul_tile_size).create_matrix(),
+            ManualMatrixLayout::<IdentB, ScoreMma<AP>>::new(
+                score_matmul_tile_size,
+                config.score_mma_io_config,
+            )
+            .create_matrix(),
         )
     }
 
     fn allocate_value(#[comptime] config: Self::Config) -> Self::KeyValue {
         let value_matmul_tile_size = config.attention_tile_size().to_value_matmul_tile_size();
         KeyValueMatrix::new_Value(
-            ManualMatrixLayout::<IdentB, ValueMma<AP>>::new(value_matmul_tile_size).create_matrix(),
+            ManualMatrixLayout::<IdentB, ValueMma<AP>>::new(
+                value_matmul_tile_size,
+                config.value_mma_io_config,
+            )
+            .create_matrix(),
         )
     }
 
     fn allocate_key_value(#[comptime] config: Self::Config) -> Self::KeyValue {
         let value_matmul_tile_size = config.attention_tile_size().to_value_matmul_tile_size();
         KeyValueMatrix::new_Reuse(
-            ManualMatrixLayout::<IdentB, ScoreMma<AP>>::new(value_matmul_tile_size).create_matrix(),
+            ManualMatrixLayout::<IdentB, ScoreMma<AP>>::new(
+                value_matmul_tile_size,
+                config.score_mma_io_config,
+            )
+            .create_matrix(),
         )
     }
 
     fn allocate_mask(#[comptime] config: Self::Config) -> Self::Mask {
         let score_matmul_tile_size = config.attention_tile_size().to_score_matmul_tile_size();
-        ManualMatrixLayout::<IdentCD, ScoreMma<AP>>::new(score_matmul_tile_size).create_matrix()
+        ManualMatrixLayout::<IdentCD, ScoreMma<AP>>::new(
+            score_matmul_tile_size,
+            config.score_mma_io_config,
+        )
+        .create_matrix()
     }
 
     fn allocate_softmax_transit(#[comptime] config: Self::Config) -> Self::SoftmaxTransit {
@@ -179,18 +200,14 @@ impl<AP: AttentionPrecision> TileAttention<AP> for WhiteboxAcceleratedTileAttent
         transit: &mut Self::SoftmaxTransit,
         #[comptime] config: Self::Config,
     ) -> Self::Softmax {
-        WhiteboxSoftmaxPipeline::new::<QT<AP>, KVT<AP>, KVT<AP>, ACC<AP>>(
-            *transit,
-            config.attention_tile_size(),
-            config,
-        )
+        WhiteboxSoftmaxPipeline::new::<QT<AP>, KVT<AP>, KVT<AP>, ACC<AP>>(*transit, config)
     }
 
     fn allocate_accumulator(
         _transit: &mut Self::AccumulatorTransit,
         #[comptime] config: Self::Config,
     ) -> Self::Accumulator {
-        WhiteboxAccumulatorPipeline::new::<SM<AP>, KVT<AP>>(config.attention_tile_size())
+        WhiteboxAccumulatorPipeline::new::<SM<AP>, KVT<AP>>(config)
     }
 
     fn load_query<E: Numeric>(tile: &StridedTile<E>, fragment: &mut Self::Query) {

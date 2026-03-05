@@ -2,6 +2,7 @@ use cubecl;
 use cubecl::prelude::*;
 
 use crate::components::tile::accelerated_whitebox::manual_matrix::{IdentCD, MmaTypes};
+use crate::components::tile::accelerated_whitebox::setup::WhiteboxAcceleratedAttentionMatmulConfig;
 use crate::{
     components::tile::{
         AccumulatorPipeline, AccumulatorPipelineExpand,
@@ -19,9 +20,14 @@ pub struct WhiteboxAccumulatorPipeline<MT: MmaTypes> {
 
 #[cube]
 impl<MT: MmaTypes> WhiteboxAccumulatorPipeline<MT> {
-    pub fn new<SM: Float, V: Float>(#[comptime] tile_size: AttentionTileSize) -> Self {
-        let matmul_tile_size = tile_size.to_value_matmul_tile_size();
-        let layout = ManualMatrixLayout::new(matmul_tile_size);
+    pub fn new<SM: Float, V: Float>(
+        #[comptime] config: WhiteboxAcceleratedAttentionMatmulConfig,
+    ) -> Self {
+        let matmul_tile_size = config
+            .shared
+            .attention_tile_size
+            .to_value_matmul_tile_size();
+        let layout = ManualMatrixLayout::new(matmul_tile_size, config.value_mma_io_config);
         let accumulator = layout.create_matrix();
         WhiteboxAccumulatorPipeline::<MT> { accumulator }
     }
