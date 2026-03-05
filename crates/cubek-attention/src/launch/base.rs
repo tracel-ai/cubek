@@ -1,6 +1,4 @@
-use cubecl::{Runtime, client::ComputeClient, prelude::TensorHandleRef};
-
-use cubecl::std::tensor::TensorHandle;
+use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding};
 
 use crate::definition::AttentionSetupError;
 use crate::definition::{AttentionDims, AttentionGlobalTypes, AttentionOptions, AttentionProblem};
@@ -29,39 +27,14 @@ pub enum Strategy {
 }
 
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
-pub fn launch<R: Runtime>(
-    strategy: Strategy,
-    client: &ComputeClient<R>,
-    query: TensorHandle<R>,
-    key: TensorHandle<R>,
-    value: TensorHandle<R>,
-    mask: Option<TensorHandle<R>>,
-    out: TensorHandle<R>,
-    attention_global_types: &AttentionGlobalTypes,
-    attention_options: AttentionOptions,
-) -> Result<(), AttentionSetupError> {
-    launch_ref(
-        strategy,
-        client,
-        &query.as_ref(),
-        &key.as_ref(),
-        &value.as_ref(),
-        &mask.as_ref().map(|m| m.as_ref()),
-        &out.as_ref(),
-        attention_global_types,
-        attention_options,
-    )
-}
-
-#[allow(clippy::result_large_err, clippy::too_many_arguments)]
 pub fn launch_ref<R: Runtime>(
     strategy: Strategy,
     client: &ComputeClient<R>,
-    query: &TensorHandleRef<R>,
-    key: &TensorHandleRef<R>,
-    value: &TensorHandleRef<R>,
-    mask: &Option<TensorHandleRef<R>>,
-    out: &TensorHandleRef<R>,
+    query: TensorBinding<R>,
+    key: TensorBinding<R>,
+    value: TensorBinding<R>,
+    mask: Option<TensorBinding<R>>,
+    out: TensorBinding<R>,
     attention_global_types: &AttentionGlobalTypes,
     attention_options: AttentionOptions,
 ) -> Result<(), AttentionSetupError> {
@@ -109,11 +82,11 @@ pub fn launch_ref<R: Runtime>(
 #[allow(clippy::too_many_arguments)]
 pub fn launch_attention<R: Runtime, A: Routine>(
     client: &ComputeClient<R>,
-    query: &TensorHandleRef<R>,
-    key: &TensorHandleRef<R>,
-    value: &TensorHandleRef<R>,
-    mask: &Option<TensorHandleRef<R>>,
-    out: &TensorHandleRef<R>,
+    query: TensorBinding<R>,
+    key: TensorBinding<R>,
+    value: TensorBinding<R>,
+    mask: Option<TensorBinding<R>>,
+    out: TensorBinding<R>,
     global_dtypes: &AttentionGlobalTypes,
     strategy: BlueprintStrategy<A>,
     attention_options: AttentionOptions,
@@ -134,7 +107,8 @@ pub fn launch_attention<R: Runtime, A: Routine>(
             query.required_address_type(),
             key.required_address_type(),
             value.required_address_type(),
-            mask.map(|mask| mask.required_address_type())
+            mask.as_ref()
+                .map(|mask| mask.required_address_type())
                 .unwrap_or_default(),
             out.required_address_type(),
         ]
@@ -153,14 +127,13 @@ pub fn launch_attention<R: Runtime, A: Routine>(
             launch_info.cube_count_plan.resolve(),
             launch_info.address_type,
             TensorInputsLaunch::new(
-                query.as_tensor_arg(device_settings.line_sizes.query),
-                key.as_tensor_arg(device_settings.line_sizes.key),
-                value.as_tensor_arg(device_settings.line_sizes.value),
-                mask.as_ref()
-                    .map(|it| it.as_tensor_arg(device_settings.line_sizes.mask))
+                query.into_tensor_arg(device_settings.line_sizes.query),
+                key.into_tensor_arg(device_settings.line_sizes.key),
+                value.into_tensor_arg(device_settings.line_sizes.value),
+                mask.map(|it| it.into_tensor_arg(device_settings.line_sizes.mask))
                     .into(),
             ),
-            out.as_tensor_arg(device_settings.line_sizes.out),
+            out.into_tensor_arg(device_settings.line_sizes.out),
             launch_info.cube_count_plan.as_args(),
             &launch_info.dtypes,
             launch_info.blueprint,

@@ -8,10 +8,10 @@ use crate::definition::{AttentionBlueprint, AttentionLineSizes, AttentionProblem
 /// output (not fused).
 pub trait ConcreteInputsFactory: LaunchArg {
     fn create<'a, R: Runtime>(
-        query: &'a TensorHandleRef<'a, R>,
-        key: &'a TensorHandleRef<'a, R>,
-        value: &'a TensorHandleRef<'a, R>,
-        mask: &'a Option<TensorHandleRef<'a, R>>,
+        query: TensorBinding<R>,
+        key: TensorBinding<R>,
+        value: TensorBinding<R>,
+        mask: Option<TensorBinding<R>>,
         selection: &AttentionBlueprint,
         problem: &AttentionProblem,
         line_sizes: &AttentionLineSizes,
@@ -22,7 +22,7 @@ pub trait ConcreteInputsFactory: LaunchArg {
 /// output (not fused).
 pub trait ConcreteOutputFactory: LaunchArg {
     fn create<'a, R: Runtime>(
-        out: &'a TensorHandleRef<'a, R>,
+        out: TensorBinding<R>,
         selection: &AttentionBlueprint,
         problem: &AttentionProblem,
         line_sizes: &AttentionLineSizes,
@@ -1013,20 +1013,20 @@ pub struct TensorInputs<Q: Float, K: Float, V: Float, M: Numeric> {
 
 impl<Q: Float, K: Float, V: Float, M: Numeric> ConcreteInputsFactory for TensorInputs<Q, K, V, M> {
     fn create<'a, R: Runtime>(
-        query: &'a TensorHandleRef<'a, R>,
-        key: &'a TensorHandleRef<'a, R>,
-        value: &'a TensorHandleRef<'a, R>,
-        mask: &'a Option<TensorHandleRef<'a, R>>,
+        query: TensorBinding<R>,
+        key: TensorBinding<R>,
+        value: TensorBinding<R>,
+        mask: Option<TensorBinding<R>>,
         _selection: &AttentionBlueprint,
         _problem: &AttentionProblem,
         line_sizes: &AttentionLineSizes,
     ) -> Self::RuntimeArg<'a, R> {
         TensorInputsLaunch::new(
-            query.as_tensor_arg(line_sizes.query),
-            key.as_tensor_arg(line_sizes.key),
-            value.as_tensor_arg(line_sizes.value),
+            query.into_tensor_arg(line_sizes.query),
+            key.into_tensor_arg(line_sizes.key),
+            value.into_tensor_arg(line_sizes.value),
             match mask {
-                Some(mask) => OptionArgs::Some(mask.as_tensor_arg(line_sizes.mask)),
+                Some(mask) => OptionArgs::Some(mask.into_tensor_arg(line_sizes.mask)),
                 None => OptionArgs::None,
             },
         )
@@ -1035,12 +1035,12 @@ impl<Q: Float, K: Float, V: Float, M: Numeric> ConcreteInputsFactory for TensorI
 
 impl<EG: Numeric> ConcreteOutputFactory for Tensor<Line<EG>> {
     fn create<'a, R: Runtime>(
-        out: &'a TensorHandleRef<'a, R>,
+        out: TensorBinding<R>,
         _selection: &AttentionBlueprint,
         _problem: &AttentionProblem,
         line_sizes: &AttentionLineSizes,
     ) -> Self::RuntimeArg<'a, R> {
-        out.as_tensor_arg(line_sizes.out)
+        out.into_tensor_arg(line_sizes.out)
     }
 }
 

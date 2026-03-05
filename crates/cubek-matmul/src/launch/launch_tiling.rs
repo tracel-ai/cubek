@@ -1,7 +1,7 @@
 use crate::definition::MatmulProblem;
 use crate::definition::{AvailableLineSizes, MatmulElems, TilingBlueprint};
 use crate::definition::{MatmulAvailabilityError, MatmulSetupError};
-use crate::launch::handle::MatmulInputHandleRef;
+use crate::launch::handle::MatmulInputBinding;
 use crate::launch::launch_kernel_concrete;
 use crate::launch::{
     ConcreteInputsFactory, ConcreteOutputFactory, InputArg, MatmulArgs, OutputArg, TensorArgs,
@@ -10,7 +10,7 @@ use crate::launch::{
 use crate::routines::{BlueprintStrategy, Routine};
 use cubecl::features::TypeUsage;
 use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
-use cubecl::{Runtime, client::ComputeClient, frontend::TensorHandleRef};
+use cubecl::{Runtime, client::ComputeClient, frontend::TensorBinding};
 
 /// Launch a matrix multiplication kernel.
 ///
@@ -19,44 +19,41 @@ use cubecl::{Runtime, client::ComputeClient, frontend::TensorHandleRef};
 #[allow(clippy::result_large_err)]
 pub fn launch_ref<R: Runtime, A: Routine<()>>(
     client: &ComputeClient<R>,
-    lhs: &MatmulInputHandleRef<'_, R>,
-    rhs: &MatmulInputHandleRef<'_, R>,
-    out: &TensorHandleRef<'_, R>,
+    lhs: MatmulInputBinding<R>,
+    mut rhs: MatmulInputBinding<R>,
+    out: TensorBinding<R>,
     blueprint_strategy: &BlueprintStrategy<(), A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
-    let lhs_owned;
-    let lhs = if matrix_batch_layout(lhs.data().strides, lhs.scheme())
+    let mut lhs = if matrix_batch_layout(&lhs.data().strides, lhs.scheme())
         == MatrixBatchLayout::HighlyPermuted
     {
-        lhs_owned = lhs.into_contiguous(client)?;
-        &lhs_owned.as_ref()
+        lhs.into_contiguous(client, &mut rhs)?
     } else {
         lhs
     };
 
-    let rhs_owned;
-    let rhs = if matrix_batch_layout(rhs.data().strides, rhs.scheme())
+    let rhs = if matrix_batch_layout(&rhs.data().strides, rhs.scheme())
         == MatrixBatchLayout::HighlyPermuted
     {
-        rhs_owned = rhs.into_contiguous(client)?;
-        &rhs_owned.as_ref()
+        rhs.into_contiguous(client, &mut lhs)?
     } else {
         rhs
     };
 
+    let line_sizes = AvailableLineSizes::from_type_sizes(
+        client,
+        lhs.data().elem_size,
+        rhs.data().elem_size,
+        out.elem_size,
+    );
     launch_inner_ref::<R, TensorArgs, A>(
         client,
         lhs,
         rhs,
         out,
         blueprint_strategy,
-        AvailableLineSizes::from_type_sizes(
-            client,
-            lhs.data().elem_size,
-            rhs.data().elem_size,
-            out.elem_size,
-        ),
+        line_sizes,
         dtypes,
     )
 }
@@ -69,14 +66,13 @@ pub fn launch_ref<R: Runtime, A: Routine<()>>(
 #[allow(clippy::result_large_err)]
 pub fn launch_ref_tma<R: Runtime, A: Routine<(), Blueprint = TilingBlueprint>>(
     client: &ComputeClient<R>,
-    lhs: &MatmulInputHandleRef<'_, R>,
-    rhs: &MatmulInputHandleRef<'_, R>,
-    out: &TensorHandleRef<'_, R>,
+    lhs: MatmulInputBinding<R>,
+    mut rhs: MatmulInputBinding<R>,
+    out: TensorBinding<R>,
     blueprint_strategy: &BlueprintStrategy<(), A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
-    let lhs_owned;
-    let lhs = match matrix_batch_layout(lhs.data().strides, lhs.scheme()) {
+    let mut lhs = match matrix_batch_layout(&lhs.data().strides, lhs.scheme()) {
         MatrixBatchLayout::Contiguous
         | MatrixBatchLayout::MildlyPermuted {
             transposed: _,
@@ -86,14 +82,10 @@ pub fn launch_ref_tma<R: Runtime, A: Routine<(), Blueprint = TilingBlueprint>>(
             transposed: _,
             batch_swap: true,
         }
-        | MatrixBatchLayout::HighlyPermuted => {
-            lhs_owned = lhs.into_contiguous(client)?;
-            &lhs_owned.as_ref()
-        }
+        | MatrixBatchLayout::HighlyPermuted => lhs.into_contiguous(client, &mut rhs)?,
     };
 
-    let rhs_owned;
-    let rhs = match matrix_batch_layout(rhs.data().strides, rhs.scheme()) {
+    let rhs = match matrix_batch_layout(&rhs.data().strides, rhs.scheme()) {
         MatrixBatchLayout::Contiguous
         | MatrixBatchLayout::MildlyPermuted {
             transposed: _,
@@ -103,19 +95,17 @@ pub fn launch_ref_tma<R: Runtime, A: Routine<(), Blueprint = TilingBlueprint>>(
             transposed: _,
             batch_swap: true,
         }
-        | MatrixBatchLayout::HighlyPermuted => {
-            rhs_owned = rhs.into_contiguous(client)?;
-            &rhs_owned.as_ref()
-        }
+        | MatrixBatchLayout::HighlyPermuted => rhs.into_contiguous(client, &mut lhs)?,
     };
 
+    let line_sizes = AvailableLineSizes::from_type_size_tma(client, out.elem_size);
     launch_inner_ref::<R, TensorMapArgs, A>(
         client,
         lhs,
         rhs,
         out,
         blueprint_strategy,
-        AvailableLineSizes::from_type_size_tma(client, out.elem_size),
+        line_sizes,
         dtypes,
     )
 }
@@ -123,9 +113,9 @@ pub fn launch_ref_tma<R: Runtime, A: Routine<(), Blueprint = TilingBlueprint>>(
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
 fn launch_inner_ref<R: Runtime, MA: MatmulArgs<Config = ()>, A: Routine<()>>(
     client: &ComputeClient<R>,
-    lhs: &MatmulInputHandleRef<'_, R>,
-    rhs: &MatmulInputHandleRef<'_, R>,
-    out: &TensorHandleRef<'_, R>,
+    lhs: MatmulInputBinding<R>,
+    rhs: MatmulInputBinding<R>,
+    out: TensorBinding<R>,
     blueprint_strategy: &BlueprintStrategy<(), A>,
     line_sizes: AvailableLineSizes,
     dtypes: &mut MatmulElems,
@@ -142,10 +132,10 @@ where
     let problem = MatmulProblem::from_shapes_and_strides(
         lhs.shape().into(),
         rhs.shape().into(),
-        out.shape.into(),
-        lhs.data().strides.into(),
-        rhs.data().strides.into(),
-        out.strides.into(),
+        out.shape.clone(),
+        lhs.data().strides.clone(),
+        rhs.data().strides.clone(),
+        out.strides.clone(),
         dtypes.as_global_elems(),
         address_type,
         lhs.scheme(),

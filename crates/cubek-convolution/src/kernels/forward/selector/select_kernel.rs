@@ -2,14 +2,14 @@ use crate::{
     components::global::args::RuntimeArgs,
     forward::args::{ConcreteArgs, ConcreteInputsFactory, ConcreteOutputFactory},
 };
-use cubecl::prelude::TensorHandleRef;
+use cubecl::prelude::TensorBinding;
 use cubecl::{Runtime, client::ComputeClient};
 use cubek_matmul::{
     definition::{MatmulElems, MatmulLineSizes},
     routines::Routine,
 };
 use cubek_matmul::{
-    launch::{InputArg, MatmulInputHandleRef, OutputArg},
+    launch::{InputArg, MatmulInputBinding, OutputArg},
     routines::BlueprintStrategy,
 };
 
@@ -21,10 +21,10 @@ use crate::components::{ConvSetupError, ConvolutionProblem};
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
 pub fn launch_kernel_concrete<R: Runtime, Args: ConcreteArgs<A>, A: Routine<RuntimeArgs>>(
     client: &ComputeClient<R>,
-    input: &MatmulInputHandleRef<'_, R>,
-    weight: &MatmulInputHandleRef<'_, R>,
-    bias: &Option<MatmulInputHandleRef<'_, R>>,
-    out: &TensorHandleRef<'_, R>,
+    input: MatmulInputBinding<R>,
+    weight: MatmulInputBinding<R>,
+    bias: Option<MatmulInputBinding<R>>,
+    out: TensorBinding<R>,
     problem: ConvolutionProblem,
     line_sizes: MatmulLineSizes,
     blueprint_strategy: &BlueprintStrategy<Args::Config, A>,
@@ -32,10 +32,10 @@ pub fn launch_kernel_concrete<R: Runtime, Args: ConcreteArgs<A>, A: Routine<Runt
 ) -> Result<(), ConvSetupError> {
     let mut view_line_sizes = line_sizes;
 
-    if let MatmulInputHandleRef::Quantized { scheme, .. } = input {
+    if let MatmulInputBinding::Quantized { scheme, .. } = input {
         view_line_sizes.lhs *= scheme.num_quants();
     }
-    if let MatmulInputHandleRef::Quantized { scheme, .. } = weight {
+    if let MatmulInputBinding::Quantized { scheme, .. } = weight {
         view_line_sizes.rhs *= scheme.num_quants();
     }
 
@@ -53,7 +53,7 @@ pub fn launch_kernel_concrete<R: Runtime, Args: ConcreteArgs<A>, A: Routine<Runt
         client,
         input,
         weight,
-        bias.as_ref(),
+        bias,
         &launch_info.blueprint,
         &problem,
         &line_sizes,

@@ -73,7 +73,7 @@ impl PrngArgs for Bernoulli {
 pub fn random_bernoulli<R: Runtime>(
     client: &ComputeClient<R>,
     probability: f32,
-    out: TensorHandleRef<R>,
+    out: TensorBinding<R>,
     dtype: StorageType,
 ) -> Result<(), LaunchError> {
     assert_eq!(

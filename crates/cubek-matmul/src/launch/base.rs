@@ -1,31 +1,10 @@
-use cubecl::{Runtime, client::ComputeClient, prelude::TensorHandleRef};
+use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding};
 
-use cubecl::std::tensor::TensorHandle;
-
-use crate::launch::handle::{MatmulInputHandle, MatmulInputHandleRef};
+use crate::launch::handle::MatmulInputBinding;
 use crate::{
     definition::{MatmulElems, MatmulSetupError},
     launch::Strategy,
 };
-
-#[allow(clippy::result_large_err)]
-pub fn launch<R: Runtime>(
-    strategy: &Strategy,
-    client: &ComputeClient<R>,
-    lhs: MatmulInputHandle<R>,
-    rhs: MatmulInputHandle<R>,
-    out: TensorHandle<R>,
-    mut dtypes: MatmulElems,
-) -> Result<(), MatmulSetupError> {
-    launch_ref(
-        strategy,
-        client,
-        &lhs.as_ref(),
-        &rhs.as_ref(),
-        &out.as_ref(),
-        &mut dtypes,
-    )
-}
 
 #[allow(clippy::result_large_err)]
 /// Launches a matrix multiplication kernel..
@@ -38,9 +17,9 @@ pub fn launch<R: Runtime>(
 pub fn launch_ref<R: Runtime>(
     strategy: &Strategy,
     client: &ComputeClient<R>,
-    lhs: &MatmulInputHandleRef<R>,
-    rhs: &MatmulInputHandleRef<R>,
-    out: &TensorHandleRef<R>,
+    lhs: MatmulInputBinding<R>,
+    rhs: MatmulInputBinding<R>,
+    out: TensorBinding<R>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     strategy.launch_ref(client, lhs, rhs, out, dtypes)

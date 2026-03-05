@@ -107,7 +107,9 @@ impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
                     dtypes.acc_register,
                 ],
             )
-        }
+        };
+
+        Ok(())
     }
 
     fn cubedim_resource(

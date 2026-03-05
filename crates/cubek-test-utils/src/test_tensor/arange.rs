@@ -54,18 +54,9 @@ fn new_arange(
         client,
         CubeCount::new_1d(cube_count),
         cube_dim,
-        unsafe {
-            TensorArg::from_raw_parts_and_size(
-                &out.handle,
-                out.strides(),
-                out.shape(),
-                line_size,
-                dtype.size(),
-            )
-        },
+        out.clone().into_arg(line_size),
         dtype,
-    )
-    .unwrap();
+    );
 
     out
 }

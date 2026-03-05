@@ -77,7 +77,13 @@ impl TestInput {
     }
 
     pub fn generate(self) -> TensorHandle<TestRuntime> {
-        match self.data_kind {
+        let (shape, strides, dtype) = (
+            self.base_spec.shape.clone(),
+            self.base_spec.strides(),
+            self.base_spec.dtype,
+        );
+
+        let mut handle = match self.data_kind {
             DataKind::Arange => build_arange(self.base_spec),
             DataKind::Eye => build_eye(self.base_spec),
             DataKind::Random { seed, distribution } => {
@@ -85,7 +91,12 @@ impl TestInput {
             }
             DataKind::Zeros => build_zeros(self.base_spec),
             DataKind::Custom { data } => build_custom(self.base_spec, data),
-        }
+        };
+        handle.metadata.shape = shape;
+        handle.metadata.strides = strides;
+        handle.dtype = dtype;
+
+        handle
     }
 
     fn generate_host_data(
@@ -93,8 +104,11 @@ impl TestInput {
         host_data_type: HostDataType,
     ) -> (TensorHandle<TestRuntime>, HostData) {
         let client = self.base_spec.client.clone();
+
         let tensor_handle = self.generate();
-        let host_data = HostData::from_tensor_handle(&client, &tensor_handle, host_data_type);
+        let host_data =
+            HostData::from_tensor_handle(&client, tensor_handle.clone(), host_data_type);
+
         (tensor_handle, host_data)
     }
 }

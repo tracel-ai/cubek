@@ -19,7 +19,7 @@ use cubek_matmul::{
     components::global::memory::{NoopLayout, NoopLayoutLaunch, Transpose, TransposeLaunch},
     definition::{Blueprint, MatmulElems, MatmulLineSizes, TilingBlueprint},
     launch::{
-        MatmulArgs, MatmulInputHandleRef, TensorArgs, TensorInputs, TensorInputsLaunch,
+        MatmulArgs, MatmulInputBinding, TensorArgs, TensorInputs, TensorInputsLaunch,
         TensorMapArgs, TensorMapInputs, TensorMapInputsLaunch, TensorOutput, TensorOutputLaunch,
     },
     routines::Routine,
@@ -102,8 +102,8 @@ pub trait ConcreteInputsFactory<A: Routine<RuntimeArgs>>: LaunchArg {
     #[allow(clippy::too_many_arguments)]
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
-        input: &'a MatmulInputHandleRef<'a, R>,
-        out_grad: &'a MatmulInputHandleRef<'a, R>,
+        input: MatmulInputBinding<R>,
+        out_grad: MatmulInputBinding<R>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
@@ -116,7 +116,7 @@ pub trait ConcreteInputsFactory<A: Routine<RuntimeArgs>>: LaunchArg {
 pub trait ConcreteOutputFactory<A: Routine<RuntimeArgs>>: LaunchArg {
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
-        out: &'a TensorHandleRef<'a, R>,
+        out: TensorBinding<R>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
@@ -128,8 +128,8 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs>> ConcreteI
 {
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
-        input: &'a MatmulInputHandleRef<'a, R>,
-        out_grad: &'a MatmulInputHandleRef<'a, R>,
+        input: MatmulInputBinding<R>,
+        out_grad: MatmulInputBinding<R>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
@@ -170,10 +170,13 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs>> ConcreteI
         };
 
         let inputs = TensorInputsLaunch::new(
-            ViewArg::new::<LhsLayout>(out_grad.data().as_array_arg(line_sizes.lhs), layout_lhs),
             VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new()),
-            ViewArg::new::<RhsLayout>(input.data().as_array_arg(line_sizes.rhs), layout_rhs),
+            ViewArg::new::<LhsLayout>(
+                out_grad.into_data().into_array_arg(line_sizes.lhs),
+                layout_lhs,
+            ),
             VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new()),
+            ViewArg::new::<RhsLayout>(input.into_data().into_array_arg(line_sizes.rhs), layout_rhs),
             OptionArgs::None,
             OptionArgs::None,
         );
@@ -192,7 +195,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs>> ConcreteI
 impl<EG: Numeric, A: Routine<RuntimeArgs>> ConcreteOutputFactory<A> for TensorOutput<EG> {
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
-        out: &'a TensorHandleRef<'a, R>,
+        out: TensorBinding<R>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
@@ -205,11 +208,11 @@ impl<EG: Numeric, A: Routine<RuntimeArgs>> ConcreteOutputFactory<A> for TensorOu
         if problem.should_check_channel() {
             checks.insert(NhwcCheck::Channel);
         }
-        let global = NhwcLayoutLaunch::from_handle(out, line_sizes.out, checks);
+        let global = NhwcLayoutLaunch::from_handle(&out, line_sizes.out, checks);
         let layout =
             WeightLayoutLaunch::from_args(client, problem, blueprint.out_global_layout_config());
         let layout = ChainLaunch::new(global, TransposeLaunch::new(layout));
-        let view = ViewArg::new::<Layout>(out.as_array_arg(line_sizes.out), layout);
+        let view = ViewArg::new::<Layout>(out.into_array_arg(line_sizes.out), layout);
         let batch = VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new());
         TensorOutputLaunch::new(view, batch)
     }
@@ -220,8 +223,8 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
 {
     fn create<'a, R: Runtime>(
         client: &ComputeClient<R>,
-        input: &'a MatmulInputHandleRef<'a, R>,
-        out_grad: &'a MatmulInputHandleRef<'a, R>,
+        input: MatmulInputBinding<R>,
+        out_grad: MatmulInputBinding<R>,
         blueprint: &TilingBlueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
@@ -282,7 +285,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
         };
 
         let lhs = TensorMapArg {
-            tensor: out_grad.data().as_tensor_arg(line_sizes.lhs),
+            tensor: out_grad.clone().into_data().into_tensor_arg(line_sizes.lhs),
             metadata: lhs_meta,
             _kind: core::marker::PhantomData,
         };
@@ -303,7 +306,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
                 channels_per_pixel,
                 pixels_per_column: stage_k,
             },
-            input.data().as_tensor_arg(line_sizes.rhs),
+            input.into_data().into_tensor_arg(line_sizes.rhs),
             rhs_elem,
         )
         .with_elem_stride(elem_stride)

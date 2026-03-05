@@ -1,5 +1,6 @@
 use crate::suite::test_utils::{Sample, TensorRawParts};
-use cubecl::{CubeElement, server::Allocation};
+use cubecl::zspace::{Shape, shape};
+use cubecl::{CubeElement, server::MemoryLayout};
 use cubecl::{TestRuntime, prelude::*};
 use cubek_convolution::{
     algorithm::Algorithm,
@@ -11,7 +12,7 @@ use cubek_convolution::{
 };
 use cubek_matmul::{
     definition::{AvailableLineSizes, MatmulSetupError},
-    launch::MatmulInputHandleRef,
+    launch::MatmulInputBinding,
 };
 use cubek_matmul::{
     definition::{MatmulElems, MatmulIdent, TilingBlueprint},
@@ -99,32 +100,33 @@ where
         A::Routine::prepare(&problem.as_matmul_problem(), &device_settings, expand_info)?;
 
     let elem_size = size_of::<P::EG>();
-    let lhs_handle = unsafe {
-        TensorHandleRef::from_raw_parts(&lhs.handle, &lhs.strides, &lhs.shape, elem_size)
-    };
-    let rhs_handle = unsafe {
-        TensorHandleRef::from_raw_parts(&rhs.handle, &rhs.strides, &rhs.shape, elem_size)
-    };
+    let lhs_handle =
+        unsafe { TensorBinding::from_raw_parts(lhs.handle, lhs.strides, lhs.shape, elem_size) };
+    let rhs_handle =
+        unsafe { TensorBinding::from_raw_parts(rhs.handle, rhs.strides, rhs.shape, elem_size) };
     let out_handle = unsafe {
-        TensorHandleRef::from_raw_parts(&out.handle, &out.strides, &out.shape, elem_size)
+        TensorBinding::from_raw_parts(
+            out.handle.clone(),
+            out.strides.clone(),
+            out.shape.clone(),
+            elem_size,
+        )
     };
 
     let op = ConvolutionOperation::Forward;
 
     let lhs_handle =
-        A::into_tensor_handle(&client, &lhs_handle, P::EG::as_type_native_unchecked(), op).unwrap();
+        A::correct_layout(&client, lhs_handle, P::EG::as_type_native_unchecked(), op).unwrap();
     let rhs_handle =
-        A::into_tensor_handle(&client, &rhs_handle, P::EG::as_type_native_unchecked(), op).unwrap();
+        A::correct_layout(&client, rhs_handle, P::EG::as_type_native_unchecked(), op).unwrap();
 
-    let lhs_handle =
-        MatmulInputHandleRef::new(lhs_handle.as_ref(), P::EG::as_type_native_unchecked());
-    let rhs_handle =
-        MatmulInputHandleRef::new(rhs_handle.as_ref(), P::EG::as_type_native_unchecked());
+    let lhs_handle = MatmulInputBinding::new(lhs_handle, P::EG::as_type_native_unchecked());
+    let rhs_handle = MatmulInputBinding::new(rhs_handle, P::EG::as_type_native_unchecked());
 
     let (inputs, runtime_args) = <InputArg<A::Args> as ConcreteInputsFactory<A::Routine>>::create(
         &client,
-        &lhs_handle,
-        &rhs_handle,
+        lhs_handle,
+        rhs_handle,
         None,
         &launch_info.blueprint,
         &problem,
@@ -133,7 +135,7 @@ where
     );
     let output = <OutputArg<A::Args> as ConcreteOutputFactory<A::Routine>>::create(
         &client,
-        &out_handle,
+        out_handle,
         &launch_info.blueprint,
         &problem,
         &line_sizes,
@@ -156,8 +158,8 @@ where
         &problem,
         &client,
         out.handle,
-        &out.shape,
-        &out.strides,
+        out.shape,
+        out.strides,
     );
 
     Ok(())
@@ -167,21 +169,21 @@ fn tensor_raw_parts<P: TestPrecision, R: Runtime>(
     client: &ComputeClient<R>,
     problem: &ConvolutionProblem,
     ident: MatmulIdent,
-) -> TensorRawParts<P::EG> {
+) -> TensorRawParts<R, P::EG> {
     match ident {
         MatmulIdent::Lhs => {
             let shape = shape(problem, ident);
 
-            let handle = P::EG::sample(client, &shape, 1234);
+            let handle = P::EG::sample(client, shape.clone(), 1234);
 
-            let data = client.read_one_tensor(handle.as_copy_descriptor());
+            let data = client.read_one_unchecked_tensor(handle.clone().into_copy_descriptor());
             let data = P::EG::from_bytes(&data);
             let original_data = data.to_owned();
 
             TensorRawParts {
                 shape,
-                strides: handle.strides().to_vec(),
-                handle: handle.handle,
+                strides: handle.strides().clone(),
+                handle: handle.handle.clone(),
                 scale: None,
                 original_data: Some(original_data),
             }
@@ -189,15 +191,15 @@ fn tensor_raw_parts<P: TestPrecision, R: Runtime>(
         MatmulIdent::Rhs => {
             let shape = shape(problem, ident);
 
-            let handle = P::EG::sample(client, &shape, 1234);
+            let handle = P::EG::sample(client, shape.clone(), 1234);
 
-            let data = client.read_one_tensor(handle.as_copy_descriptor());
+            let data = client.read_one_unchecked_tensor(handle.clone().into_copy_descriptor());
             let data = P::EG::from_bytes(&data);
             let original_data = data.to_owned();
 
             TensorRawParts {
                 shape,
-                strides: handle.strides().to_vec(),
+                strides: handle.strides().clone(),
                 handle: handle.handle,
                 scale: None,
                 original_data: Some(original_data),
@@ -209,14 +211,17 @@ fn tensor_raw_parts<P: TestPrecision, R: Runtime>(
             let data = vec![zero; tensor_size(problem, MatmulIdent::Out)];
 
             let shape = shape(problem, MatmulIdent::Out);
-            let Allocation { handle, strides } =
-                client.create_tensor_from_slice(P::EG::as_bytes(&data), &shape, size_of::<P::EG>());
+            let MemoryLayout { memory, strides } = client.create_tensor_from_slice(
+                P::EG::as_bytes(&data),
+                shape.clone(),
+                size_of::<P::EG>(),
+            );
 
             TensorRawParts {
-                handle,
+                handle: memory,
                 scale: None,
                 shape,
-                strides: strides.to_vec(),
+                strides,
                 original_data: None,
             }
         }
@@ -233,21 +238,21 @@ pub(crate) fn tensor_size(problem: &ConvolutionProblem, ident: MatmulIdent) -> u
 }
 
 /// Returns the shape of the identified tensor, inferred by the problem definition
-pub(crate) fn shape(problem: &ConvolutionProblem, ident: MatmulIdent) -> Vec<usize> {
+pub(crate) fn shape(problem: &ConvolutionProblem, ident: MatmulIdent) -> Shape {
     match ident {
-        MatmulIdent::Lhs => vec![
+        MatmulIdent::Lhs => shape![
             problem.batches,
             problem.in_shape[0],
             problem.in_shape[1],
             problem.channels,
         ],
-        MatmulIdent::Rhs => vec![
+        MatmulIdent::Rhs => shape![
             problem.n,
             problem.kernel_size[0] as usize,
             problem.kernel_size[1] as usize,
             problem.channels,
         ],
-        MatmulIdent::Out => vec![
+        MatmulIdent::Out => shape![
             problem.batches,
             problem.out_shape[0],
             problem.out_shape[1],

@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use cubecl::{Runtime, client::ComputeClient, prelude::TensorHandleRef};
+use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding};
 
 use crate::{
     components::{
@@ -13,7 +13,7 @@ use crate::{
         tile::{cmma::CmmaMatmul, mma::MmaMatmul},
     },
     definition::{MatmulElems, MatmulSetupError},
-    launch::{handle::MatmulInputHandleRef, launch_naive, launch_tiling},
+    launch::{handle::MatmulInputBinding, launch_naive, launch_tiling},
     routines::{
         BlueprintStrategy,
         double_buffering::{
@@ -317,9 +317,9 @@ impl Strategy {
     pub(crate) fn launch_ref<R: Runtime>(
         &self,
         client: &ComputeClient<R>,
-        lhs: &MatmulInputHandleRef<R>,
-        rhs: &MatmulInputHandleRef<R>,
-        out: &TensorHandleRef<R>,
+        lhs: MatmulInputBinding<R>,
+        rhs: MatmulInputBinding<R>,
+        out: TensorBinding<R>,
         dtypes: &mut MatmulElems,
     ) -> Result<(), MatmulSetupError> {
         match self {
@@ -439,14 +439,18 @@ impl Strategy {
 
 fn auto<R: Runtime>(
     client: &ComputeClient<R>,
-    lhs: &MatmulInputHandleRef<'_, R>,
-    rhs: &MatmulInputHandleRef<'_, R>,
-    out: &TensorHandleRef<'_, R>,
+    lhs: MatmulInputBinding<R>,
+    rhs: MatmulInputBinding<R>,
+    out: TensorBinding<R>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
-    if let Err(err) =
-        Strategy::SimpleCyclicCmma(Default::default()).launch_ref(client, lhs, rhs, out, dtypes)
-    {
+    if let Err(err) = Strategy::SimpleCyclicCmma(Default::default()).launch_ref(
+        client,
+        lhs.clone(),
+        rhs.clone(),
+        out.try_clone().unwrap(),
+        dtypes,
+    ) {
         match err {
             MatmulSetupError::Unavailable(_) => {
                 Strategy::SimpleUnit(Default::default())

@@ -1,3 +1,4 @@
+use cubecl::zspace::{Shape, Strides};
 use cubecl::{AutotuneKey, Runtime, quant::scheme::QuantScheme};
 use cubecl::{client::ComputeClient, ir::StorageType};
 use cubek_std::MatmulProblemSize;
@@ -80,10 +81,10 @@ impl MatmulAutotuneKey {
     #[allow(clippy::too_many_arguments)]
     pub fn generate<R: Runtime>(
         _client: &ComputeClient<R>,
-        lhs_shape: &[usize],
-        rhs_shape: &[usize],
-        lhs_strides: &[usize],
-        rhs_strides: &[usize],
+        lhs_shape: &Shape,
+        rhs_shape: &Shape,
+        lhs_strides: &Strides,
+        rhs_strides: &Strides,
         elem_lhs: StorageType,
         elem_rhs: StorageType,
         elem_out: StorageType,

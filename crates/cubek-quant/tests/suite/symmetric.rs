@@ -1,6 +1,5 @@
 use cubecl::ir::ElemType;
 use cubecl::ir::FloatKind;
-use cubecl::server::AllocationDescriptor;
 use cubecl::server::CopyDescriptor;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{TestRuntime, zspace::shape};
@@ -30,7 +29,7 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
     let half = num_elems as f32 / 2.0;
     let data: Vec<_> = (0..num_elems).map(|v| v as f32 - half).collect();
     let input_alloc =
-        client.create_tensor_from_slice(f32::as_bytes(&data), &shape, f32::type_size());
+        client.create_tensor_from_slice(f32::as_bytes(&data), shape.clone(), f32::type_size());
 
     let (q_min, q_max) = value.range();
     // input data range is not affected by quant range symmetry
@@ -38,16 +37,16 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
     let data_scale = vec![scale_f32];
 
     let scale_alloc =
-        client.create_tensor_from_slice(f32::as_bytes(&data_scale), &[1], f32::type_size());
+        client.create_tensor_from_slice(f32::as_bytes(&data_scale), shape![1], f32::type_size());
 
     let input = TensorHandle::new(
-        input_alloc.handle,
+        input_alloc.memory,
         shape.clone(),
         input_alloc.strides,
         f32::as_type_native_unchecked(),
     );
     let scale = TensorHandle::new(
-        scale_alloc.handle,
+        scale_alloc.memory,
         shape![1],
         scale_alloc.strides,
         f32::as_type_native_unchecked(),
@@ -67,27 +66,27 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
 
     let [output_alloc, output_scale_alloc] = client
         .empty_tensors(vec![
-            AllocationDescriptor {
-                kind: cubecl::server::AllocationKind::Contiguous,
-                shape: &shape_out,
+            cubecl::server::MemoryLayoutDescriptor {
+                strategy: cubecl::server::MemoryLayoutStrategy::Contiguous,
+                shape: shape_out.clone(),
                 elem_size: u32::type_size(),
             },
-            AllocationDescriptor {
-                kind: cubecl::server::AllocationKind::Contiguous,
-                shape: &[1],
+            cubecl::server::MemoryLayoutDescriptor {
+                strategy: cubecl::server::MemoryLayoutStrategy::Contiguous,
+                shape: shape![1],
                 elem_size: f32::type_size(),
             },
         ])
         .try_into()
         .unwrap();
     let output = TensorHandle::new(
-        output_alloc.handle,
+        output_alloc.memory,
         shape_out,
         output_alloc.strides,
         u32::as_type_native_unchecked(),
     );
     let output_scale = TensorHandle::new(
-        output_scale_alloc.handle,
+        output_scale_alloc.memory,
         shape![1],
         output_scale_alloc.strides,
         f32::as_type_native_unchecked(),
@@ -95,10 +94,10 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
 
     cubek_quant::quantize::launch_ref(
         &client,
-        &input.as_ref(),
-        &output.as_ref(),
-        &scale.as_ref(),
-        &output_scale.as_ref(),
+        input.binding(),
+        output.clone().binding(),
+        scale.binding(),
+        output_scale.clone().binding(),
         &scheme,
         ElemType::Float(FloatKind::Flex32),
     )
@@ -107,19 +106,19 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
     cubek_quant::dequantize::launch_ref(
         &client,
         // The input of the dequantize kernel is the output of the quantized one.
-        &output.as_ref(),
+        output.binding(),
         // We use a new buffer to make sure all values are correctly dequantized back.
-        &output_f.as_ref(),
-        &output_scale.as_ref(),
+        output_f.clone().binding(),
+        output_scale.clone().binding(),
         &scheme,
         f32::as_type_native_unchecked(),
     )
     .unwrap();
 
-    let computed = client.read_one_tensor(CopyDescriptor::new(
+    let computed = client.read_one_unchecked_tensor(CopyDescriptor::new(
         output_f.handle.clone().binding(),
-        output_f.shape(),
-        output_f.strides(),
+        output_f.shape().clone(),
+        output_f.strides().clone(),
         core::mem::size_of::<f32>(),
     ));
     let data_restored = f32::from_bytes(&computed);
@@ -148,7 +147,7 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
         .map(|v| (v as f32 - half) / num_elems as f32)
         .collect();
     let input_alloc =
-        client.create_tensor_from_slice(f32::as_bytes(&data), &shape, f32::type_size());
+        client.create_tensor_from_slice(f32::as_bytes(&data), shape.clone(), f32::type_size());
 
     let (q_min, q_max) = value.range();
 
@@ -175,17 +174,20 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
         scales.push(scale);
     }
 
-    let scale_alloc =
-        client.create_tensor_from_slice(f32::as_bytes(&scales), &shape_scale, f32::type_size());
+    let scale_alloc = client.create_tensor_from_slice(
+        f32::as_bytes(&scales),
+        shape_scale.clone(),
+        f32::type_size(),
+    );
 
     let input = TensorHandle::new(
-        input_alloc.handle,
+        input_alloc.memory,
         shape.clone(),
         input_alloc.strides,
         f32::as_type_native_unchecked(),
     );
     let scale = TensorHandle::new(
-        scale_alloc.handle,
+        scale_alloc.memory,
         shape_scale.clone(),
         scale_alloc.strides,
         f32::as_type_native_unchecked(),
@@ -205,27 +207,27 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
 
     let [output_alloc, output_scale_alloc] = client
         .empty_tensors(vec![
-            AllocationDescriptor {
-                kind: cubecl::server::AllocationKind::Contiguous,
-                shape: &shape_out,
+            cubecl::server::MemoryLayoutDescriptor {
+                strategy: cubecl::server::MemoryLayoutStrategy::Contiguous,
+                shape: shape_out.clone(),
                 elem_size: u32::type_size(),
             },
-            AllocationDescriptor {
-                kind: cubecl::server::AllocationKind::Contiguous,
-                shape: &shape_scale,
+            cubecl::server::MemoryLayoutDescriptor {
+                strategy: cubecl::server::MemoryLayoutStrategy::Contiguous,
+                shape: shape_scale.clone(),
                 elem_size: f32::type_size(),
             },
         ])
         .try_into()
         .unwrap();
     let output = TensorHandle::new(
-        output_alloc.handle,
+        output_alloc.memory,
         shape_out,
         output_alloc.strides,
         u32::as_type_native_unchecked(),
     );
     let output_scale = TensorHandle::new(
-        output_scale_alloc.handle,
+        output_scale_alloc.memory,
         shape_scale.clone(),
         output_scale_alloc.strides,
         f32::as_type_native_unchecked(),
@@ -233,10 +235,10 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
 
     cubek_quant::quantize::launch_ref(
         &client,
-        &input.as_ref(),
-        &output.as_ref(),
-        &scale.as_ref(),
-        &output_scale.as_ref(),
+        input.binding(),
+        output.clone().binding(),
+        scale.binding(),
+        output_scale.clone().binding(),
         &scheme,
         ElemType::Float(FloatKind::Flex32),
     )
@@ -245,19 +247,19 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
     cubek_quant::dequantize::launch_ref(
         &client,
         // The input of the dequantize kernel is the output of the quantized one.
-        &output.as_ref(),
+        output.binding(),
         // We use a new buffer to make sure all values are correctly dequantized back.
-        &output_f.as_ref(),
-        &output_scale.as_ref(),
+        output_f.clone().binding(),
+        output_scale.binding(),
         &scheme,
         f32::as_type_native_unchecked(),
     )
     .unwrap();
 
-    let computed = client.read_one_tensor(CopyDescriptor::new(
+    let computed = client.read_one_unchecked_tensor(CopyDescriptor::new(
         output_f.handle.clone().binding(),
-        output_f.shape(),
-        output_f.strides(),
+        output_f.shape().clone(),
+        output_f.strides().clone(),
         core::mem::size_of::<f32>(),
     ));
     let data_restored = f32::from_bytes(&computed);

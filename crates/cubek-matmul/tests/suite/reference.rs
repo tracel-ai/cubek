@@ -12,13 +12,11 @@ pub fn assert_result(
     rhs: &HostData,
     problem: &MatmulProblem,
     client: &ComputeClient<TestRuntime>,
-    out: &TensorHandle<TestRuntime>,
+    out: TensorHandle<TestRuntime>,
     dtypes: MatmulElems,
 ) -> ValidationResult {
     let epsilon = matmul_epsilon(&dtypes, 100.);
-
     let expected = matmul_cpu_reference(lhs, rhs, problem);
-
     let actual = HostData::from_tensor_handle(client, out, HostDataType::F32);
 
     assert_equals_approx(&actual, &expected, epsilon)

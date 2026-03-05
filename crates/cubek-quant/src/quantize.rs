@@ -2,8 +2,8 @@ use cubecl::calculate_cube_count_elemwise;
 use cubecl::features::TypeUsage;
 use cubecl::ir::ElemType;
 use cubecl::prelude::*;
+use cubecl::std::tensor::into_contiguous;
 use cubecl::std::tensor::layout::linear::LinearView;
-use cubecl::std::tensor::{TensorHandle, into_contiguous_ref};
 use cubecl::std::tensor::{View, layout::linear::linear_view};
 use cubecl::tensor_line_size_parallel;
 
@@ -171,10 +171,10 @@ fn quantize_symmetric_packed_kernel<F: Float, FS: Numeric>(
 #[allow(clippy::result_large_err)]
 pub fn launch_ref<R: Runtime>(
     client: &ComputeClient<R>,
-    input: &TensorHandleRef<R>,
-    output: &TensorHandleRef<R>,
-    scale: &TensorHandleRef<'_, R>,
-    out_scale: &TensorHandleRef<'_, R>,
+    input: TensorBinding<R>,
+    output: TensorBinding<R>,
+    scale: TensorBinding<R>,
+    out_scale: TensorBinding<R>,
     scheme: &QuantScheme,
     input_elem: ElemType,
 ) -> Result<(), LaunchError> {
@@ -221,19 +221,19 @@ pub fn launch_ref<R: Runtime>(
 #[allow(clippy::too_many_arguments)]
 fn quantize_native<R: Runtime>(
     client: &ComputeClient<R>,
-    input: &TensorHandleRef<R>,
+    input: TensorBinding<R>,
     scheme: &QuantScheme,
-    scale: &TensorHandleRef<'_, R>,
-    out_scale: &TensorHandleRef<'_, R>,
-    output: &TensorHandleRef<R>,
+    scale: TensorBinding<R>,
+    out_scale: TensorBinding<R>,
+    output: TensorBinding<R>,
     input_dtype: ElemType,
     scale_dtype: ElemType,
 ) -> Result<(), LaunchError> {
     let num_elems: usize = input.shape.iter().product();
     let line_size = tensor_line_size_parallel(
         client.io_optimized_line_sizes(input.elem_size),
-        input.shape,
-        input.strides,
+        &input.shape,
+        &input.strides,
         input.shape.len() - 1,
     );
     let working_units = num_elems / line_size as usize;
@@ -257,6 +257,8 @@ fn quantize_native<R: Runtime>(
             check_block_size_compat(scheme, line_size as usize);
             let quant_type = ElemType::from_quant_value(scheme.value);
 
+            let scales_layout = scales_layout(client, &output, &scale, 1, scheme);
+
             unsafe {
                 quantize_symmetric_native_kernel::launch_unchecked(
                     client,
@@ -265,28 +267,30 @@ fn quantize_native<R: Runtime>(
                     address_type,
                     linear_view(client, input, line_size),
                     // scale is computed based on input float dtype, but stored based on qparams precision
-                    scales_view(client, output, scale, 1, scheme),
+                    scales_view(client, output.try_clone().unwrap(), scale, 1, scheme),
                     InputScalar::new(range_min, input_dtype),
                     InputScalar::new(range_max, input_dtype),
-                    linear_view(client, output, line_size),
+                    linear_view(client, output.try_clone().unwrap(), line_size),
                     scales_view(client, output, out_scale, 1, scheme),
-                    scales_layout(client, output, scale, 1, scheme),
+                    scales_layout,
                     [input_dtype.into(), scale_dtype.into(), quant_type.into()],
                 )
             }
         }
         _ => panic!("Unsupported quantization scheme {scheme:?}"),
-    }
+    };
+
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
 fn quantize_packed<R: Runtime>(
     client: &ComputeClient<R>,
-    input: &TensorHandleRef<R>,
+    input: TensorBinding<R>,
     scheme: &QuantScheme,
-    scale: &TensorHandleRef<'_, R>,
-    out_scale: &TensorHandleRef<'_, R>,
-    output: &TensorHandleRef<R>,
+    scale: TensorBinding<R>,
+    out_scale: TensorBinding<R>,
+    output: TensorBinding<R>,
     dtype_input: ElemType,
     dtype_param: ElemType,
 ) -> Result<(), LaunchError> {
@@ -311,9 +315,9 @@ fn quantize_packed<R: Runtime>(
     let num_quants = scheme.num_quants();
     let input = if !can_vectorize && num_elems >= 2048 {
         can_vectorize = true;
-        into_contiguous_ref(client, input, dtype_input.into()).expect("Kernel to never fail")
+        into_contiguous(client, input, dtype_input.into()).binding()
     } else {
-        TensorHandle::from_ref(input, dtype_input.into())
+        input
     };
 
     // Elements to pack are strided, require scalar reads + manual gather
@@ -330,22 +334,27 @@ fn quantize_packed<R: Runtime>(
         .max(output.required_address_type());
 
     check_block_size_compat(scheme, num_quants); // 32 / 8 = 4
+
+    let scales_layout = scales_layout(client, &output, &scale, 1, scheme);
+
     unsafe {
         quantize_symmetric_packed_kernel::launch_unchecked(
             client,
             cube_count,
             cube_dim,
             address_type,
-            linear_view(client, &input.as_ref(), line_size),
+            linear_view(client, input, line_size),
             // scale is computed based on input float dtype, but stored based on qparams precision
-            scales_view(client, output, scale, 1, scheme),
+            scales_view(client, output.try_clone().unwrap(), scale, 1, scheme),
             InputScalar::new(range_min, dtype_input),
             InputScalar::new(range_max, dtype_input),
-            linear_view(client, output, 1),
+            linear_view(client, output.try_clone().unwrap(), 1),
             scales_view(client, output, out_scale, 1, scheme),
-            scales_layout(client, output, scale, 1, scheme),
+            scales_layout,
             *scheme,
             [dtype_input.into(), dtype_param.into()],
         )
-    }
+    };
+
+    Ok(())
 }

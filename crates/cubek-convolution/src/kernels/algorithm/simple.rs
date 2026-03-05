@@ -1,6 +1,5 @@
 use cubecl::server::LaunchError;
-use cubecl::std::tensor::TensorHandle;
-use cubecl::{Runtime, client::ComputeClient, ir::StorageType, prelude::TensorHandleRef};
+use cubecl::{Runtime, client::ComputeClient, ir::StorageType, prelude::TensorBinding};
 use cubek_matmul::components::{global::read::FullLoadingStrategy, tile::TileMatmulFamily};
 use cubek_matmul::components::{
     global::read::sync_full_cyclic::SyncFullCyclicLoading,
@@ -19,7 +18,7 @@ use cubek_std::tile::Strided;
 use std::marker::PhantomData;
 
 use crate::{
-    algorithm::{into_tensor_handle, into_tensor_handle_tma},
+    algorithm::{contiguous_pitched_layout, into_tensor_handle_tma},
     components::{
         ConvolutionOperation,
         global::{
@@ -82,13 +81,13 @@ impl<
     type Routine = SimpleAlgorithm<TMM, LL, LR, SyncBiasLoading>;
     type Args = TensorArgs<RuntimeArgs>;
 
-    fn into_tensor_handle<R: Runtime>(
+    fn correct_layout<R: Runtime>(
         client: &ComputeClient<R>,
-        handle: &TensorHandleRef<'_, R>,
+        handle: TensorBinding<R>,
         dtype: StorageType,
         _operation: ConvolutionOperation,
-    ) -> Result<TensorHandle<R>, LaunchError> {
-        into_tensor_handle(client, handle, dtype)
+    ) -> Result<TensorBinding<R>, LaunchError> {
+        contiguous_pitched_layout(client, handle, dtype)
     }
 }
 
@@ -105,12 +104,12 @@ impl<
 
     type Args = TensorMapArgs<RuntimeArgs>;
 
-    fn into_tensor_handle<R: Runtime>(
+    fn correct_layout<R: Runtime>(
         client: &ComputeClient<R>,
-        handle: &TensorHandleRef<'_, R>,
+        handle: TensorBinding<R>,
         dtype: StorageType,
         operation: ConvolutionOperation,
-    ) -> Result<TensorHandle<R>, LaunchError> {
+    ) -> Result<TensorBinding<R>, LaunchError> {
         into_tensor_handle_tma(client, handle, dtype, operation)
     }
 

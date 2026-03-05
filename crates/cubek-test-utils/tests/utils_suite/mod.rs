@@ -1,4 +1,5 @@
 use cubecl::frontend::CubePrimitive;
+use cubecl::zspace::shape;
 use cubecl::{Runtime, TestRuntime};
 use cubek_test_utils::{
     DataKind, HostData, HostDataType, StrideSpec, TestInput, assert_equals_approx,
@@ -31,7 +32,7 @@ fn eye_handle_row_major() {
     )
     .f32_host_data();
 
-    let actual = HostData::from_tensor_handle(&client, &handle, HostDataType::F32);
+    let actual = HostData::from_tensor_handle(&client, handle, HostDataType::F32);
 
     assert_equals_approx(&actual, &expected, 0.001)
         .as_test_outcome()
@@ -64,7 +65,7 @@ fn eye_handle_col_major() {
     )
     .f32_host_data();
 
-    let actual = HostData::from_tensor_handle(&client, &handle, HostDataType::F32);
+    let actual = HostData::from_tensor_handle(&client, handle, HostDataType::F32);
 
     assert_equals_approx(&actual, &expected, 0.001)
         .as_test_outcome()
@@ -75,7 +76,7 @@ fn eye_handle_col_major() {
 fn arange_handle_row_major() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
-    let shape = vec![2, 3];
+    let shape = shape![2, 3];
 
     let handle = TestInput::new(
         client.clone(),
@@ -88,7 +89,7 @@ fn arange_handle_row_major() {
 
     let expected = TestInput::new(
         client.clone(),
-        vec![2, 3],
+        shape![2, 3],
         f32::as_type_native_unchecked(),
         StrideSpec::RowMajor,
         DataKind::Custom {
@@ -97,7 +98,7 @@ fn arange_handle_row_major() {
     )
     .f32_host_data();
 
-    let actual = HostData::from_tensor_handle(&client, &handle, HostDataType::F32);
+    let actual = HostData::from_tensor_handle(&client, handle, HostDataType::F32);
 
     assert_equals_approx(&actual, &expected, 0.001)
         .as_test_outcome()
@@ -108,7 +109,7 @@ fn arange_handle_row_major() {
 fn arange_handle_col_major() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
-    let shape = vec![2, 3];
+    let shape = shape![2, 3];
 
     let handle = TestInput::new(
         client.clone(),
@@ -121,7 +122,7 @@ fn arange_handle_col_major() {
 
     let expected = TestInput::new(
         client.clone(),
-        vec![2, 3],
+        shape![2, 3],
         f32::as_type_native_unchecked(),
         StrideSpec::RowMajor,
         DataKind::Custom {
@@ -130,7 +131,7 @@ fn arange_handle_col_major() {
     )
     .f32_host_data();
 
-    let actual = HostData::from_tensor_handle(&client, &handle, HostDataType::F32);
+    let actual = HostData::from_tensor_handle(&client, handle, HostDataType::F32);
 
     assert_equals_approx(&actual, &expected, 0.001)
         .as_test_outcome()
@@ -145,7 +146,7 @@ fn custom_handle_row_major_col_major() {
 
     let (_, row_major) = TestInput::new(
         client.clone(),
-        vec![2, 3],
+        shape![2, 3],
         f32::as_type_native_unchecked(),
         StrideSpec::RowMajor,
         DataKind::Custom {
@@ -156,7 +157,7 @@ fn custom_handle_row_major_col_major() {
 
     let (_, col_major) = TestInput::new(
         client.clone(),
-        vec![2, 3],
+        shape![2, 3],
         f32::as_type_native_unchecked(),
         StrideSpec::ColMajor,
         DataKind::Custom {
@@ -174,7 +175,7 @@ fn custom_handle_row_major_col_major() {
 fn arange_handle_row_major_slice() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
-    let shape = vec![2, 3];
+    let shape = shape![2, 3];
 
     // Create an "actual" tensor where the second row differs
     let actual_data = [0., 1., 2., 9., 9., 9.].to_vec(); // last 3 elements differ

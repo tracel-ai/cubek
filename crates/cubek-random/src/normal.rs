@@ -98,7 +98,7 @@ pub fn random_normal<R: Runtime>(
     client: &ComputeClient<R>,
     mean: f32,
     std: f32,
-    out: TensorHandleRef<R>,
+    out: TensorBinding<R>,
     dtype: StorageType,
 ) -> Result<(), LaunchError> {
     assert_eq!(

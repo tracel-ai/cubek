@@ -53,7 +53,9 @@ impl<GA: GlobalAttentionFamily> BatchAttentionFamily for SimpleBatchAttentionFam
                 blueprint,
                 dtypes.into(),
             )
-        }
+        };
+
+        Ok(())
     }
 
     fn expand_config(

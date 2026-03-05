@@ -1,5 +1,9 @@
 use cubecl::{
-    LineSizeError, Runtime, client::ComputeClient, ir::LineSize, tensor_line_size_parallel,
+    LineSizeError, Runtime,
+    client::ComputeClient,
+    ir::LineSize,
+    tensor_line_size_parallel,
+    zspace::{Shape, Strides},
 };
 use cubek_std::MatrixLayout;
 
@@ -53,8 +57,8 @@ impl AvailableLineSizes {
     /// Filter available line sizes considering tensor shapes and strides for Lhs
     pub fn filter_lhs_with_tensor(
         self,
-        strides: &[usize],
-        shape: &[usize],
+        strides: &Strides,
+        shape: &Shape,
         layout: MatrixLayout,
     ) -> Self {
         let rank = strides.len();
@@ -75,8 +79,8 @@ impl AvailableLineSizes {
     /// Filter available line sizes considering tensor shapes and strides for Rhs
     pub fn filter_rhs_with_tensor(
         self,
-        strides: &[usize],
-        shape: &[usize],
+        strides: &Strides,
+        shape: &Shape,
         layout: MatrixLayout,
     ) -> Self {
         let rank = strides.len();
@@ -95,7 +99,7 @@ impl AvailableLineSizes {
     }
 
     /// Filter available line sizes considering tensor shapes and strides for output
-    pub fn filter_out_with_tensor(self, strides: &[usize], shape: &[usize]) -> Self {
+    pub fn filter_out_with_tensor(self, strides: &Strides, shape: &Shape) -> Self {
         let rank = strides.len();
 
         let target = tensor_line_size_parallel(self.out.iter().copied(), shape, strides, rank - 1);

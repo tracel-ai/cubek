@@ -46,12 +46,12 @@ fn get_random_bernoulli_data(shape: &[usize], prob: f32) -> Vec<TestDType> {
     random_bernoulli(
         &client,
         prob,
-        output.as_ref(),
+        output.clone().binding(),
         TestDType::as_type_native_unchecked(),
     )
     .unwrap();
 
-    let output_data = client.read_one_tensor(output.as_copy_descriptor());
+    let output_data = client.read_one_unchecked_tensor(output.into_copy_descriptor());
     let output_data = TestDType::from_bytes(&output_data);
 
     output_data.to_owned()

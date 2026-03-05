@@ -1,6 +1,11 @@
 use std::fmt::Debug;
 
-use cubecl::{Runtime, client::ComputeClient, tensor_line_size_parallel};
+use cubecl::{
+    Runtime,
+    client::ComputeClient,
+    tensor_line_size_parallel,
+    zspace::{Shape, Strides},
+};
 
 use crate::definition::{AttentionGlobalTypes, AttentionIdent, AttentionProblem};
 
@@ -81,15 +86,16 @@ impl AttentionLineSizes {
 
         let n = shape.len();
 
-        let row_major_strides = {
-            let mut strides = vec![0; n];
+        let row_major_strides = Strides::new(&{
+            let mut strides = [0; 4];
             strides[n - 1] = 1;
             for i in (0..n - 1).rev() {
                 strides[i] = strides[i + 1] * shape[i + 1];
             }
             strides
-        };
+        });
+        let shape = Shape::new(*shape);
 
-        tensor_line_size_parallel(supported_line_sizes, shape, &row_major_strides, n - 1)
+        tensor_line_size_parallel(supported_line_sizes, &shape, &row_major_strides, n - 1)
     }
 }
