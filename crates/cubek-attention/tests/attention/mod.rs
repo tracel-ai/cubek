@@ -165,24 +165,13 @@ mod whitebox_accelerated {
         _client: &ComputeClient<R>,
         _global_types: AttentionGlobalTypes,
     ) -> AttentionTileSize {
-        #[cfg(target_os = "macos")]
-        {
-            use cubek_attention::definition::AttentionTileSize;
-
-            AttentionTileSize {
-                seq_q: 8,
-                seq_kv: 8,
-                head_dim: 8,
-                val_dim: 8,
-            }
-        }
-
-        #[cfg(not(target_os = "macos"))]
+        // To work on SM 7.5 we need m16n8k8
+        // TODO: allow other if SM >= 8
         AttentionTileSize {
             seq_q: 16,
-            seq_kv: 16,
-            head_dim: 16,
-            val_dim: 16,
+            seq_kv: 8,
+            head_dim: 8,
+            val_dim: 8,
         }
     }
 

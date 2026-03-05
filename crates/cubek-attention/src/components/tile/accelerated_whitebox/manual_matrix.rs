@@ -185,11 +185,7 @@ impl<MI: MmaIdent<MT>, MT: MmaTypes> ManualMatrix<MI, MT> {
     pub fn zero(&mut self) {
         #[unroll]
         for i in 0..self.layout.lines_per_lane {
-            let mut reg = self.fragment[i];
-            #[unroll]
-            for k in 0..self.layout.line_size {
-                reg[k] = MI::Elem::from_int(0);
-            }
+            self.fragment[i] = Line::cast_from(0);
         }
     }
 
