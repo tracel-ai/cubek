@@ -15,12 +15,12 @@ version = "0.2.0-pre.2"
 
 [workspace.dependencies]
 ### For local development. ###
-cubecl = { path = "../cubecl/crates/cubecl", default-features = false }
-cubecl-common = { path = "../cubecl/crates/cubecl-common", default-features = false }
+# cubecl = { path = "../cubecl/crates/cubecl", default-features = false }
+# cubecl-common = { path = "../cubecl/crates/cubecl-common", default-features = false }
 
 ### For the main cubek branch. ###
-# cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "0400cc7d6c0758f54c9485558d78585ddd22da78", default-features = false }
-# cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "0400cc7d6c0758f54c9485558d78585ddd22da78", default-features = false }
+cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "cb7218b4060308dff3b44d4e03cd8cccabe488c3", default-features = false }
+cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "cb7218b4060308dff3b44d4e03cd8cccabe488c3", default-features = false }
 
 ### For releases ###
 # cubecl = { version = "=0.10.0-pre.2", default-features = false }
