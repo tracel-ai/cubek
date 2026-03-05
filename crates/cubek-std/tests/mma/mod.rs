@@ -8,10 +8,11 @@ use cubek_test_utils::{
 };
 
 #[cube(launch)]
-pub fn mma_layout_kernel<AB: Numeric, CD: Numeric>(
-    lane_tensor: &mut Tensor<AB>,
-    line_tensor: &mut Tensor<AB>,
-    within_line_tensor: &mut Tensor<AB>,
+// F should be either AB or CD to match the ident
+pub fn mma_layout_kernel<AB: Numeric, CD: Numeric, F: Numeric>(
+    lane_tensor: &mut Tensor<F>,
+    line_tensor: &mut Tensor<F>,
+    within_line_tensor: &mut Tensor<F>,
     #[comptime] m: usize,
     #[comptime] n: usize,
     #[comptime] k: usize,
@@ -32,9 +33,10 @@ pub fn mma_layout_kernel<AB: Numeric, CD: Numeric>(
                 def.position_of_nth(lane_id as u32, nth as u32, MatrixIdent::Accumulator);
 
             let absolute_index = row as usize * stride + col as usize;
-            lane_tensor[absolute_index] = AB::cast_from(lane_id);
-            line_tensor[absolute_index] = AB::cast_from(i);
-            within_line_tensor[absolute_index] = AB::cast_from(j);
+
+            lane_tensor[absolute_index] = F::cast_from(lane_id);
+            line_tensor[absolute_index] = F::cast_from(i);
+            within_line_tensor[absolute_index] = F::cast_from(j);
         }
     }
 }
@@ -96,18 +98,36 @@ pub fn print_mma_layout<AB: CubeElement + Numeric, CD: CubeElement + Numeric>(
     )
     .generate();
 
-    mma_layout_kernel::launch::<AB, CD, TestRuntime>(
-        &client,
-        CubeCount::Static(1, 1, 1),
-        CubeDim::new_1d(client.properties().hardware.plane_size_max),
-        lane_tensor.clone().binding().into_tensor_arg(1),
-        line_tensor.clone().binding().into_tensor_arg(1),
-        within_line_tensor.clone().binding().into_tensor_arg(1),
-        m,
-        n,
-        k,
-        cols,
-    );
+    match ident {
+        MatrixIdent::A | MatrixIdent::B => {
+            mma_layout_kernel::launch::<AB, CD, AB, TestRuntime>(
+                &client,
+                CubeCount::Static(1, 1, 1),
+                CubeDim::new_1d(client.properties().hardware.plane_size_max),
+                lane_tensor.clone().binding().into_tensor_arg(1),
+                line_tensor.clone().binding().into_tensor_arg(1),
+                within_line_tensor.clone().binding().into_tensor_arg(1),
+                m,
+                n,
+                k,
+                cols,
+            );
+        }
+        MatrixIdent::Accumulator => {
+            mma_layout_kernel::launch::<AB, CD, CD, TestRuntime>(
+                &client,
+                CubeCount::Static(1, 1, 1),
+                CubeDim::new_1d(client.properties().hardware.plane_size_max),
+                lane_tensor.clone().binding().into_tensor_arg(1),
+                line_tensor.clone().binding().into_tensor_arg(1),
+                within_line_tensor.clone().binding().into_tensor_arg(1),
+                m,
+                n,
+                k,
+                cols,
+            );
+        }
+    }
 
     let lane_tensor = HostData::from_tensor_handle(&client, lane_tensor, HostDataType::I32);
     let line_tensor = HostData::from_tensor_handle(&client, line_tensor, HostDataType::I32);
