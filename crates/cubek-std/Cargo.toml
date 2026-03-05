@@ -12,7 +12,12 @@ version.workspace = true
 [features]
 default = ["cubecl/default"]
 std = ["cubecl/std"]
+tests = []
 
 [dependencies]
-cubecl = { workspace = true, features = ["stdlib", "test-runtime"] }
+cubecl = { workspace = true, features = ["stdlib"] }
 cubecl-common = { workspace = true }
+half = { workspace = true, features = ["bytemuck"] }
+
+[dev-dependencies]
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.2.0-pre.2", default-features = false }
