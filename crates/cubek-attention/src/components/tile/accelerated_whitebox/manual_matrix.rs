@@ -234,7 +234,7 @@ impl<MT: MmaTypes<CD: Float>> SoftmaxRowwise<MT::CD> for ManualMatrix<IdentCD, M
 #[cube]
 impl<MT: MmaTypes<CD: Float>> AccumulatorRowwise<MT::CD> for ManualMatrix<IdentCD, MT> {
     fn rowwise_scale(&mut self, scale: &RowWise<MT::CD>) {
-        // TODO Do whole lines at once if possibe, but not sure
+        // TODO Do whole lines at once if possible, but not sure
         // if lines match rows
         #[unroll]
         for row in 0..self.layout.num_rows {
