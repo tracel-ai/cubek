@@ -1,4 +1,4 @@
-use cubecl::ir::MatrixIdent;
+use cubecl::ir::{DeviceProperties, MatrixIdent, StorageType};
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct MmaIOConfig {
@@ -21,6 +21,20 @@ pub enum StoreMethod {
 }
 
 impl MmaIOConfig {
+    pub fn new(
+        device_props: &DeviceProperties,
+        lhs_stage: StorageType,
+        rhs_stage: StorageType,
+        acc_stage: StorageType,
+    ) -> Self {
+        Self {
+            lhs_load_method: load_method(device_props, lhs_stage),
+            rhs_load_method: load_method(device_props, rhs_stage),
+            acc_load_method: load_method(device_props, acc_stage),
+            store_method: store_method(device_props, acc_stage),
+        }
+    }
+
     pub fn load_method(&self, ident: MatrixIdent) -> LoadMethod {
         match ident {
             MatrixIdent::A => self.lhs_load_method,
@@ -31,5 +45,25 @@ impl MmaIOConfig {
 
     pub fn store_method(&self) -> StoreMethod {
         self.store_method
+    }
+}
+
+fn load_method(device_props: &DeviceProperties, dtype: StorageType) -> LoadMethod {
+    if !matches!(dtype, StorageType::Packed(_, _))
+        && device_props.features.ldmatrix.contains(&dtype)
+    {
+        LoadMethod::LoadMatrix
+    } else {
+        LoadMethod::Manual
+    }
+}
+
+fn store_method(device_props: &DeviceProperties, dtype: StorageType) -> StoreMethod {
+    if !matches!(dtype, StorageType::Packed(_, _))
+        && device_props.features.stmatrix.contains(&dtype)
+    {
+        StoreMethod::StoreMatrix
+    } else {
+        StoreMethod::Manual
     }
 }
