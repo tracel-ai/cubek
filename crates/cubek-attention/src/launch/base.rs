@@ -21,6 +21,7 @@ pub enum BlueprintStrategy<R: Routine> {
 #[derive(Debug, Clone)]
 pub enum Strategy {
     BlackboxAccelerated(BlueprintStrategy<BlackboxAcceleratedRoutine>),
+    // WhiteboxAccelerated(BlueprintStrategy<WhiteboxAcceleratedRoutine>),
     Unit(BlueprintStrategy<UnitRoutine>),
 }
 
@@ -50,6 +51,19 @@ pub fn launch_ref<R: Runtime>(
                 attention_options,
             )
         }
+        // Strategy::WhiteboxAccelerated(strategy) => {
+        //     launch_attention::<R, WhiteboxAcceleratedRoutine>(
+        //         client,
+        //         query,
+        //         key,
+        //         value,
+        //         mask,
+        //         out,
+        //         attention_global_types,
+        //         strategy,
+        //         attention_options,
+        //     )
+        // }
         Strategy::Unit(strategy) => launch_attention::<R, UnitRoutine>(
             client,
             query,

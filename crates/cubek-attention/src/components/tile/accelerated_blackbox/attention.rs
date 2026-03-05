@@ -1,12 +1,14 @@
 use cubecl;
 use cubecl::prelude::*;
-use cubek_matmul::components::tile::StridedTile;
+use cubek_std::tile::StridedTile;
 
-use crate::components::tile::accelerated::setup::BlackboxAcceleratedAttentionMatmulConfig;
-use crate::components::tile::accelerated::{
+use crate::components::tile::accelerated_blackbox::setup::BlackboxAcceleratedAttentionMatmulConfig;
+use crate::components::tile::accelerated_blackbox::{
     BlackboxAccumulatorPipeline, BlackboxSoftmaxPipeline, LocalTile, LocalTileLayout,
 };
-use crate::components::tile::{TileAttention, TileAttentionConfig as _};
+use crate::components::tile::{
+    AccumulatorPipeline, SoftmaxPipeline, TileAttention, TileAttentionConfig as _,
+};
 use crate::definition::AttentionPrecision;
 use crate::definition::attention_types::*;
 
@@ -21,13 +23,14 @@ impl<AP: AttentionPrecision> TileAttention<AP> for BlackboxAcceleratedTileAttent
     type Query = cmma::Matrix<QT<AP>>;
     type KeyValue = cmma::Matrix<KVT<AP>>;
     type Mask = LocalTile<MSK<AP>>;
-    type Softmax = BlackboxSoftmaxPipeline<SM<AP>, SML<AP>>;
-    type SoftmaxRow = LocalTile<SM<AP>>;
-    type SoftmaxShared = (SharedMemory<SM<AP>>, SharedMemory<SML<AP>>);
-    type SoftmaxLayout = LocalTileLayout;
 
-    type AccumulatorShared = SharedMemory<ACC<AP>>;
+    type Softmax = BlackboxSoftmaxPipeline<SM<AP>, SML<AP>>;
+    type SoftmaxRow = <Self::Softmax as SoftmaxPipeline<SM<AP>>>::Rowwise;
+    type SoftmaxTransit = <Self::Softmax as SoftmaxPipeline<SM<AP>>>::Transit;
+    type SoftmaxLayout = <Self::Softmax as SoftmaxPipeline<SM<AP>>>::Layout;
+
     type Accumulator = BlackboxAccumulatorPipeline<ACC<AP>>;
+    type AccumulatorTransit = <Self::Accumulator as AccumulatorPipeline<ACC<AP>>>::Transit;
 
     fn softmax_layout(#[comptime] config: Self::Config) -> LocalTileLayout {
         LocalTileLayout::new(
@@ -116,31 +119,37 @@ impl<AP: AttentionPrecision> TileAttention<AP> for BlackboxAcceleratedTileAttent
         ))
     }
 
-    fn allocate_softmax_shared(#[comptime] config: Self::Config) -> Self::SoftmaxShared {
-        let size = config.attention_tile_size().to_score_matmul_tile_size();
-        let smem_size = (size.m * size.n * config.num_planes()) as usize;
-        (SharedMemory::new(smem_size), SharedMemory::new(smem_size))
+    fn allocate_softmax_transit(#[comptime] config: Self::Config) -> Self::SoftmaxTransit {
+        <Self::Softmax as SoftmaxPipeline<SM<AP>>>::transit(
+            config.attention_tile_size(),
+            config.num_planes() as usize,
+        )
     }
 
-    fn allocate_accumulator_shared(#[comptime] config: Self::Config) -> Self::AccumulatorShared {
-        let size = config.attention_tile_size().to_value_matmul_tile_size();
-        SharedMemory::new((size.m * size.n * config.num_planes()) as usize)
+    fn allocate_accumulator_transit(#[comptime] config: Self::Config) -> Self::AccumulatorTransit {
+        <Self::Accumulator as AccumulatorPipeline<ACC<AP>>>::transit(
+            config.attention_tile_size(),
+            config.num_planes() as usize,
+        )
     }
 
     fn allocate_softmax(
-        shared: &mut Self::SoftmaxShared,
+        transit: &mut Self::SoftmaxTransit,
         #[comptime] config: Self::Config,
     ) -> Self::Softmax {
-        let size = config.attention_tile_size();
-        BlackboxSoftmaxPipeline::new(&mut shared.0, &mut shared.1, size, config)
+        BlackboxSoftmaxPipeline::new(
+            &mut transit.0,
+            &mut transit.1,
+            config.attention_tile_size(),
+            config,
+        )
     }
 
     fn allocate_accumulator(
-        shared: &mut Self::AccumulatorShared,
+        transit: &mut Self::AccumulatorTransit,
         #[comptime] config: Self::Config,
     ) -> Self::Accumulator {
-        let size = config.attention_tile_size().to_value_matmul_tile_size();
-        BlackboxAccumulatorPipeline::new(shared, size, config)
+        BlackboxAccumulatorPipeline::new(transit, config.attention_tile_size(), config)
     }
 
     fn load_query<E: Numeric>(tile: &StridedTile<E>, fragment: &mut Self::Query) {

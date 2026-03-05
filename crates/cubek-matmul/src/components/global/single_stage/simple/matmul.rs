@@ -4,7 +4,6 @@ use crate::components::{
         read::{FullLoaderStage, FullLoadingStrategy, FullStageGlobalReader, SyncStrategy},
     },
     stage::{StageConfig, StageMatmul},
-    tile::io::Strided,
 };
 use crate::{
     definition::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS},
@@ -12,6 +11,7 @@ use crate::{
 };
 use cubecl::prelude::*;
 use cubecl::std::tensor::{View, layout::Coords2d};
+use cubek_std::tile::Strided;
 use std::marker::PhantomData;
 
 /// Performs matrix multiplication at the global level.

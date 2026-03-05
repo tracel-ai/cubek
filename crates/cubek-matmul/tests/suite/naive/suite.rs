@@ -6,10 +6,13 @@ use cubecl::{prelude::TensorBinding, zspace::shape};
 use cubek_matmul::launch::launch_naive;
 
 use crate::suite::layout_to_stride_spec;
+use cubek_matmul::definition::MatmulGlobalElems;
 use cubek_matmul::definition::{MatmulElems, MatmulIdent, MatmulProblem};
 use cubek_matmul::definition::{MatmulGlobalElems, MatrixLayout};
 use cubek_matmul::launch::MatmulInputBinding;
+use cubek_matmul::launch::MatmulInputHandleRef;
 use cubek_matmul::routines::naive;
+use cubek_std::MatrixLayout;
 use cubek_test_utils::{BaseInputSpec, DataKind, Distribution, TestInput};
 
 type TestRuntime = cubecl::TestRuntime;
@@ -191,14 +194,7 @@ fn test_naive(case: MatmulTestCase) {
 
     let all_elems = MatmulElems::from_globals(&problem.global_dtypes.clone());
 
-    launch_naive::launch_ref(
-        &client,
-        lhs_handle,
-        rhs_handle,
-        out_handle,
-        &all_elems,
-    )
-    .unwrap();
+    launch_naive::launch_ref(&client, lhs_handle, rhs_handle, out_handle, &all_elems).unwrap();
 
     assert_result(&lhs_data, &rhs_data, &problem, &client, out, all_elems);
 }

@@ -2,8 +2,9 @@ use cubecl::prelude::*;
 use cubecl::{self, ir::DeviceProperties};
 use cubek_matmul::components::{
     global::{WriteEventListener, WriteTiling, read::sync_full_cyclic::SyncFullCyclicLoading},
-    stage::{ContiguousTilingLayout, RowMajorTilingOrder, StageFamily, StageMemoryConfig},
+    stage::{ContiguousTilingLayout, RowMajorTilingOrder, StageFamily},
 };
+use cubek_std::stage::StageMemoryConfig;
 use std::{fmt::Debug, hash::Hash};
 
 use crate::{

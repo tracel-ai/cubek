@@ -1,7 +1,7 @@
 #[cfg(all(not(feature = "matmul_tests_layouts"),))]
 pub mod default {
     use super::*;
-    use cubek_matmul::definition::MatrixLayout;
+    use cubek_std::MatrixLayout;
 
     pub fn layouts() -> (MatrixLayout, MatrixLayout) {
         (MatrixLayout::ColMajor, MatrixLayout::RowMajor)
@@ -13,7 +13,7 @@ pub mod default {
 #[cfg(feature = "matmul_tests_layouts")]
 mod rr {
     use super::*;
-    use cubek_matmul::definition::MatrixLayout;
+    use cubek_std::MatrixLayout;
 
     pub fn layouts() -> (MatrixLayout, MatrixLayout) {
         (MatrixLayout::RowMajor, MatrixLayout::RowMajor)
@@ -25,7 +25,7 @@ mod rr {
 #[cfg(feature = "matmul_tests_layouts")]
 mod rc {
     use super::*;
-    use cubek_matmul::definition::MatrixLayout;
+    use cubek_std::MatrixLayout;
 
     pub fn layouts() -> (MatrixLayout, MatrixLayout) {
         (MatrixLayout::RowMajor, MatrixLayout::ColMajor)
@@ -37,7 +37,7 @@ mod rc {
 #[cfg(feature = "matmul_tests_layouts")]
 mod cr {
     use super::*;
-    use cubek_matmul::definition::MatrixLayout;
+    use cubek_std::MatrixLayout;
 
     pub fn layouts() -> (MatrixLayout, MatrixLayout) {
         (MatrixLayout::ColMajor, MatrixLayout::RowMajor)
@@ -49,7 +49,7 @@ mod cr {
 #[cfg(feature = "matmul_tests_layouts")]
 mod cc {
     use super::*;
-    use cubek_matmul::definition::MatrixLayout;
+    use cubek_std::MatrixLayout;
 
     pub fn layouts() -> (MatrixLayout, MatrixLayout) {
         (MatrixLayout::ColMajor, MatrixLayout::ColMajor)

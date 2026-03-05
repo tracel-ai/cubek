@@ -1,13 +1,15 @@
 use cubecl::prelude::*;
+use cubek_std::stage::StageMemoryConfig;
+use cubek_std::stage::as_swizzle_object;
+use cubek_std::tile::Strided;
+use cubek_std::tile::StridedTile;
 use std::marker::PhantomData;
 
 use crate::components::global::GlobalReaderConfig;
 use crate::components::global::PlaneFlowPartition;
-use crate::components::stage::SwizzleMode;
-use crate::components::stage::{LoadStageFamily, StageMemoryConfig, TilingLayout};
-use crate::components::tile::StridedTile;
+use crate::components::stage::Stage;
+use crate::components::stage::{LoadStageFamily, TilingLayout};
 use crate::components::{global::read::StageBuffer, stage::StageFamily};
-use crate::components::{stage::Stage, tile::io::Strided};
 use cubecl::std::{Swizzle, tensor::layout::Coords2d, type_size};
 
 pub struct StridedStageFamily;
@@ -239,15 +241,5 @@ impl LoadStageFamily<ReadOnly> for StridedStageFamily {
 
     fn free<ES: Numeric, T: TilingLayout>(stage: &Self::Stage<ES, T>) {
         unsafe { stage.free() };
-    }
-}
-
-#[cube]
-pub fn as_swizzle_object(#[comptime] mode: SwizzleMode) -> Swizzle {
-    match mode {
-        SwizzleMode::None => Swizzle::none(),
-        SwizzleMode::B32 => Swizzle::new(1u32, 4u32, 3),
-        SwizzleMode::B64 => Swizzle::new(2u32, 4u32, 3),
-        SwizzleMode::B128 => Swizzle::new(3u32, 4u32, 3),
     }
 }

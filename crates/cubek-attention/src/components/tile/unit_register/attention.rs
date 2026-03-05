@@ -1,6 +1,6 @@
 use cubecl;
 use cubecl::prelude::*;
-use cubek_matmul::components::tile::StridedTile;
+use cubek_std::tile::StridedTile;
 
 use crate::components::tile::unit_register::UnitTileLayout;
 use crate::components::tile::unit_register::pipeline::UnitTile;
@@ -21,9 +21,9 @@ impl<AP: AttentionPrecision> TileAttention<AP> for UnitRegisterTileAttention {
     type Mask = UnitTile<MSK<AP>>;
     type Softmax = UnitTile<SM<AP>>;
     type SoftmaxRow = UnitTile<SM<AP>>;
-    type SoftmaxShared = ();
+    type SoftmaxTransit = ();
     type Accumulator = UnitTile<ACC<AP>>;
-    type AccumulatorShared = ();
+    type AccumulatorTransit = ();
     type SoftmaxLayout = UnitTileLayout;
 
     fn softmax_layout(#[comptime] config: Self::Config) -> Self::SoftmaxLayout {
@@ -84,19 +84,20 @@ impl<AP: AttentionPrecision> TileAttention<AP> for UnitRegisterTileAttention {
         UnitTile::new(<Self as TileAttention<AP>>::softmax_layout(config))
     }
 
-    fn allocate_softmax_shared(#[comptime] _config: Self::Config) -> Self::SoftmaxShared {}
+    fn allocate_softmax_transit(#[comptime] _config: Self::Config) -> Self::SoftmaxTransit {}
 
-    fn allocate_accumulator_shared(#[comptime] _config: Self::Config) -> Self::AccumulatorShared {}
+    fn allocate_accumulator_transit(#[comptime] _config: Self::Config) -> Self::AccumulatorTransit {
+    }
 
     fn allocate_softmax(
-        _shared: &mut Self::SoftmaxShared,
+        _shared: &mut Self::SoftmaxTransit,
         #[comptime] config: Self::Config,
     ) -> Self::Softmax {
         UnitTile::new(<Self as TileAttention<AP>>::softmax_layout(config))
     }
 
     fn allocate_accumulator(
-        _shared: &mut Self::AccumulatorShared,
+        _shared: &mut Self::AccumulatorTransit,
         #[comptime] config: Self::Config,
     ) -> Self::Accumulator {
         UnitTile::new(UnitTileLayout::new(

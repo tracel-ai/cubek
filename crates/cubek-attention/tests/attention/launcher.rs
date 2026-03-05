@@ -2,7 +2,7 @@ use crate::attention::assert_result;
 use cubecl::{TestRuntime, prelude::CubePrimitive as _, zspace::Shape};
 use cubek_attention::{
     definition::{AttentionElems, AttentionIdent, AttentionOptions, AttentionProblem},
-    launch::{Strategy, launch},
+    launch::{Strategy, launch_ref},
 };
 
 use cubecl::client::ComputeClient;
@@ -84,39 +84,67 @@ pub fn test_launch(
     )
     .generate_without_host_data();
 
-    match launch(
-        strategy,
-        &client,
-        query_handle,
-        key_handle,
-        value_handle,
-        mask_handle,
-        out_handle.clone(),
-        &problem.global_dtypes,
-        AttentionOptions {
-            causal: problem.options.causal,
-            accumulator_precision: problem.options.accumulator_precision,
-        },
-    )
-    .into()
-    {
-        ExecutionOutcome::Executed => assert_result(
-            &query_data,
-            &key_data,
-            &value_data,
-            mask_data.as_ref(),
-            &problem,
+    let client = client.clone();
+    let client_cloned = client.clone();
+    let problem_for_launch = problem.clone();
+    let out_handle_for_launch = out_handle.clone();
+
+    let launch = client_cloned.exclusive(move || {
+        let result = launch_ref(
+            strategy,
             &client,
-            out_handle,
-            // TODO this is not necessarily the dtypes selected by the algorithm
-            AttentionElems::from_global_types(
-                &problem.global_dtypes,
-                half::f16::as_type_native_unchecked(),
-                &problem.options.accumulator_precision,
-            ),
+            query_handle.binding(),
+            key_handle.binding(),
+            value_handle.binding(),
+            mask_handle.map(|m| m.binding()),
+            out_handle_for_launch.binding(),
+            &problem_for_launch.global_dtypes,
+            AttentionOptions {
+                causal: problem_for_launch.options.causal,
+                accumulator_precision: problem_for_launch.options.accumulator_precision,
+            },
         )
-        .as_test_outcome(),
-        ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
+        .into();
+
+        let errors = client.flush_errors();
+        (result, errors)
+    });
+
+    match launch {
+        Ok((ExecutionOutcome::Executed, errors)) => {
+            for error in errors.iter() {
+                match error {
+                    cubecl::server::ServerError::Launch(_) => {
+                        return TestOutcome::CompileError(format!("{errors:?}")).enforce();
+                    }
+                    _ => panic!("{errors:?}"),
+                }
+            }
+
+            assert_result(
+                &query_data,
+                &key_data,
+                &value_data,
+                mask_data.as_ref(),
+                &problem,
+                &client_cloned,
+                out_handle,
+                AttentionElems::from_global_types(
+                    &problem.global_dtypes,
+                    half::f16::as_type_native_unchecked(),
+                    &problem.options.accumulator_precision,
+                ),
+            )
+            .as_test_outcome()
+            .enforce();
+        }
+
+        Ok((ExecutionOutcome::CompileError(e), _)) => {
+            TestOutcome::CompileError(e).enforce();
+        }
+
+        Err(err) => {
+            TestOutcome::CompileError(err.to_string()).enforce();
+        }
     }
-    .enforce();
 }

@@ -1,9 +1,10 @@
+use crate::components::stage::TilingLayout;
 use crate::components::stage::matmul::plane_partitioned::{
     PlaneMatmul, PlanePartitionedStageConfig,
 };
 use crate::definition::{
-    InvalidConfigError, LhsS, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulSetupError,
-    MatrixLayout, MatrixPrecision, RhsS, TilingBlueprint,
+    LhsS, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulSetupError, MatrixPrecision, RhsS,
+    TilingBlueprint,
 };
 use crate::{
     components::{
@@ -11,17 +12,20 @@ use crate::{
         global::{MatmulPlaneCounts, PartitionedStage, PartitionedStageFamily, PlaneFlowConfig},
         stage::{
             NumStages, PartitionBuffering, PartitionSchedulerScheme, StageFamily,
-            StageMatmulFamily, StageMemoryConfig, TilingLayout,
+            StageMatmulFamily,
             matmul::{
                 partition::SharedPartitionMatmulConfig, partitioned_matmul::PartitionMatmulConfig,
             },
         },
-        tile::{TileMatmulFamily, io::Strided},
+        tile::TileMatmulFamily,
     },
     definition::AccS,
 };
 use core::marker::PhantomData;
 use cubecl::{ir::DeviceProperties, prelude::*};
+use cubek_std::stage::StageMemoryConfig;
+use cubek_std::tile::Strided;
+use cubek_std::{InvalidConfigError, MatrixLayout};
 
 /// Plane Matmul family for any precision
 pub struct PlaneMatmulFamily<

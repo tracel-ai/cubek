@@ -15,12 +15,11 @@ use crate::{
     },
 };
 use cubecl::{ir::DeviceProperties, prelude::ReadWrite};
-use cubek_matmul::{
-    components::{
-        stage::{StageFamily, StageMemoryConfig, SwizzleMode},
-        tile::io::Strided,
-    },
-    definition::MatrixLayout,
+use cubek_matmul::components::stage::StageFamily;
+use cubek_std::{
+    MatrixLayout,
+    stage::{StageMemoryConfig, SwizzleMode},
+    tile::Strided,
 };
 
 use crate::components::stage::StageAttentionFamily;

@@ -3,7 +3,7 @@ use cubecl::prelude::*;
 use cubecl::std::Swizzle;
 use cubecl::std::tensor::{View, layout::Coords2d};
 use cubek_matmul::components::global::memory::GlobalMemoryConfig;
-use cubek_matmul::components::tile::StridedTile;
+use cubek_std::tile::StridedTile;
 
 use crate::components::stage::AttentionPartitioner;
 use crate::definition::attention_types::QG;

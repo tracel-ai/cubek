@@ -1,8 +1,7 @@
+use cubek_std::stage::SwizzleMode;
+
 use crate::{
-    components::{
-        stage::SwizzleMode,
-        tile::{SharedTileConfig, TileConfig},
-    },
+    components::tile::{SharedTileConfig, TileConfig},
     definition::StageIdent,
 };
 

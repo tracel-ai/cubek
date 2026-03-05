@@ -1,5 +1,11 @@
 use crate::{components::CubeDimResource, launch::RuntimeConfig};
 use crate::{
+    components::stage::NumStages,
+    definition::{
+        MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError, StageIdent,
+    },
+};
+use crate::{
     components::{
         global::{
             GlobalReaderConfig, GlobalWriterConfig, GlobalWriterFamily, InputLoadFlow,
@@ -13,14 +19,9 @@ use crate::{
     },
     definition::TilingBlueprint,
 };
-use crate::{
-    components::{stage::NumStages, tile::io::Strided},
-    definition::{
-        MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError,
-        MatrixLayout, StageIdent,
-    },
-};
 use cubecl::{ir::DeviceProperties, prelude::*};
+use cubek_std::MatrixLayout;
+use cubek_std::tile::Strided;
 use std::marker::PhantomData;
 
 use crate::components::{global::GlobalMatmulFamily, stage};

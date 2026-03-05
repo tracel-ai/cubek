@@ -1,9 +1,7 @@
 use cubecl::prelude::*;
+use cubek_std::tile::StridedTile;
 
-use crate::components::tile::{
-    StridedTile,
-    register::{UNROLL, UnitFragment, config::RegisterMatmulConfig},
-};
+use crate::components::tile::register::{UNROLL, UnitFragment, config::RegisterMatmulConfig};
 
 /// Writer for the register matmul fragments.
 #[derive(CubeType)]

@@ -1,14 +1,15 @@
 use cubecl::prelude::*;
+use cubek_std::{
+    MatrixLayout,
+    tile::{
+        Strided, StridedTile, TileKind,
+        mma::{MmaFragmentReader, MmaStageReader, MmaStageWriter},
+    },
+};
 use std::marker::PhantomData;
 
-use crate::components::tile::io::{Strided, TileKind};
+use crate::components::tile::TileMatmul;
 use crate::components::tile::mma::config::MmaMatmulConfig;
-use crate::components::tile::{
-    TileMatmul,
-    mma::{reader::MmaStageReader, writer::MmaStageWriter},
-};
-use crate::components::tile::{mma::reader::MmaFragmentReader, tile_data::StridedTile};
-use crate::definition::MatrixLayout;
 use cubecl::{cmma::MmaDefinition, ir::MatrixIdent};
 
 /// Uses one plane to perform a small matmul using accelerated instructions, with manual register
@@ -117,7 +118,8 @@ where
             mma_definition::<L, R, A>(config),
             MatrixIdent::A,
             lhs.layout,
-            config,
+            config.shared.tile_size,
+            config.mma_io_config,
         );
     }
 
@@ -132,7 +134,8 @@ where
             mma_definition::<L, R, A>(config),
             MatrixIdent::B,
             rhs.layout,
-            config,
+            config.shared.tile_size,
+            config.mma_io_config,
         );
     }
 
@@ -147,7 +150,8 @@ where
             mma_definition::<L, R, A>(config),
             MatrixIdent::Accumulator,
             acc.layout,
-            config,
+            config.shared.tile_size,
+            config.mma_io_config,
         );
     }
 
@@ -162,7 +166,8 @@ where
             mma_definition::<L, R, A>(config),
             MatrixIdent::Accumulator,
             tile.layout,
-            config,
+            config.shared.tile_size.m(),
+            config.mma_io_config,
         );
     }
 }

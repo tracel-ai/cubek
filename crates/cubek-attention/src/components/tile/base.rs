@@ -2,7 +2,7 @@ use cubecl;
 use cubecl::ir::DeviceProperties;
 use cubecl::prelude::*;
 use cubek_matmul::components::CubeDimResource;
-use cubek_matmul::components::tile::StridedTile;
+use cubek_std::tile::StridedTile;
 
 use crate::components::tile::{
     AccumulatorPipeline, FragmentMask, SoftmaxLayout, SoftmaxPipeline, SoftmaxRowwise,
@@ -33,13 +33,13 @@ pub trait TileAttention<AP: AttentionPrecision>: Send + Sync + 'static {
     type Mask: FragmentMask<Layout = Self::SoftmaxLayout>;
 
     // type Softmax: FragmentSoftmax<SM<AP>, Layout = Self::SoftmaxLayout, SoftmaxRowFormat = Self::SoftmaxRow>;
-    type Softmax: SoftmaxPipeline<SM<AP>, Rowwise = Self::SoftmaxRow>;
+    type Softmax: SoftmaxPipeline<SM<AP>, Rowwise = Self::SoftmaxRow, Transit = Self::SoftmaxTransit>;
     type SoftmaxRow: SoftmaxRowwise<SM<AP>, Layout = Self::SoftmaxLayout>;
     type SoftmaxLayout: SoftmaxLayout;
-    type SoftmaxShared: CubeType;
+    type SoftmaxTransit: CubeType;
 
-    type Accumulator: AccumulatorPipeline<ACC<AP>>;
-    type AccumulatorShared: CubeType;
+    type Accumulator: AccumulatorPipeline<ACC<AP>, Transit = Self::AccumulatorTransit>;
+    type AccumulatorTransit: CubeType;
 
     fn softmax_layout(#[comptime] config: Self::Config) -> Self::SoftmaxLayout;
 
@@ -64,15 +64,15 @@ pub trait TileAttention<AP: AttentionPrecision>: Send + Sync + 'static {
     fn allocate_value(#[comptime] config: Self::Config) -> Self::KeyValue;
     fn allocate_key_value(#[comptime] config: Self::Config) -> Self::KeyValue;
 
-    fn allocate_softmax_shared(#[comptime] config: Self::Config) -> Self::SoftmaxShared;
-    fn allocate_accumulator_shared(#[comptime] config: Self::Config) -> Self::AccumulatorShared;
+    fn allocate_softmax_transit(#[comptime] config: Self::Config) -> Self::SoftmaxTransit;
+    fn allocate_accumulator_transit(#[comptime] config: Self::Config) -> Self::AccumulatorTransit;
 
     fn allocate_softmax(
-        shared: &mut Self::SoftmaxShared,
+        shared: &mut Self::SoftmaxTransit,
         #[comptime] config: Self::Config,
     ) -> Self::Softmax;
     fn allocate_accumulator(
-        shared: &mut Self::AccumulatorShared,
+        shared: &mut Self::AccumulatorTransit,
         #[comptime] config: Self::Config,
     ) -> Self::Accumulator;
 

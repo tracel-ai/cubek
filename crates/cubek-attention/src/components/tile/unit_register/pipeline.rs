@@ -2,11 +2,14 @@ use cubecl;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
 
-use crate::components::tile::{
-    AccumulatorPipeline, AccumulatorPipelineExpand, AccumulatorRowwise, AccumulatorRowwiseExpand,
-    FragmentMask, FragmentMaskExpand, LOGIT_MASKED, RowVal, RowWise, SoftmaxLayout,
-    SoftmaxLayoutExpand, SoftmaxPipeline, SoftmaxPipelineExpand, SoftmaxRowwise,
-    SoftmaxRowwiseExpand,
+use crate::{
+    components::tile::{
+        AccumulatorPipeline, AccumulatorPipelineExpand, AccumulatorRowwise,
+        AccumulatorRowwiseExpand, FragmentMask, FragmentMaskExpand, LOGIT_MASKED, RowVal, RowWise,
+        SoftmaxLayout, SoftmaxLayoutExpand, SoftmaxPipeline, SoftmaxPipelineExpand, SoftmaxRowwise,
+        SoftmaxRowwiseExpand,
+    },
+    definition::AttentionTileSize,
 };
 
 #[derive(CubeType)]
@@ -169,10 +172,11 @@ impl<E: Float> AccumulatorRowwise<E> for UnitTile<E> {
 
 #[cube]
 impl<E: Float> SoftmaxPipeline<E> for UnitTile<E> {
-    type MatmulAccumulator = UnitTile<E>;
+    type ScoreAccFormat = UnitTile<E>;
     type Rowwise = UnitTile<E>;
-    type SoftmaxLayout = UnitTileLayout;
-    type MatmulLhs = UnitTile<E>;
+    type Layout = UnitTileLayout;
+    type ValueLhsFormat = UnitTile<E>;
+    type Transit = ();
 
     fn rowwise_mut(&mut self) -> &mut Self::Rowwise {
         self
@@ -185,12 +189,20 @@ impl<E: Float> SoftmaxPipeline<E> for UnitTile<E> {
     fn zero(&mut self) {
         self.zero();
     }
+
+    fn transit(
+        #[comptime] _tile_size: AttentionTileSize,
+        #[comptime] _num_planes: usize,
+    ) -> Self::Transit {
+        // Nothing to do
+    }
 }
 
 #[cube]
 impl<E: Float> AccumulatorPipeline<E> for UnitTile<E> {
-    type MatmulAccumulator = UnitTile<E>;
+    type ValueAccFormat = UnitTile<E>;
     type Rowwise = UnitTile<E>;
+    type Transit = ();
 
     fn rowwise_mut(&mut self) -> &mut Self::Rowwise {
         self
@@ -202,6 +214,12 @@ impl<E: Float> AccumulatorPipeline<E> for UnitTile<E> {
 
     fn zero(&mut self) {
         self.zero();
+    }
+
+    fn transit(
+        #[comptime] _tile_size: AttentionTileSize,
+        #[comptime] _num_planes: usize,
+    ) -> Self::Transit {
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::definition::{
-    InvalidConfigError, LhsS, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulSetupError,
-    MatrixLayout, MatrixPrecision, RhsS, TilingBlueprint,
+    LhsS, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulSetupError, MatrixPrecision, RhsS,
+    TilingBlueprint,
 };
 use crate::{
     components::{
@@ -8,19 +8,22 @@ use crate::{
         global::{MatmulPlaneCounts, PartitionedStage, PartitionedStageFamily, PlaneFlowConfig},
         stage::{
             NumStages, PartitionBuffering, PartitionSchedulerScheme, StageFamily,
-            StageMatmulFamily, StageMemoryConfig, TilingLayout,
+            StageMatmulFamily, TilingLayout,
             matmul::{
                 partition::SharedPartitionMatmulConfig,
                 partitioned_matmul::PartitionMatmulConfig,
                 unit_partitioned::{UnitMatmul, UnitPartitionedStageConfig},
             },
         },
-        tile::{TileMatmulFamily, io::Strided},
+        tile::TileMatmulFamily,
     },
     definition::AccS,
 };
 use core::marker::PhantomData;
 use cubecl::{ir::DeviceProperties, prelude::*};
+use cubek_std::stage::StageMemoryConfig;
+use cubek_std::tile::Strided;
+use cubek_std::{InvalidConfigError, MatrixLayout};
 
 /// Unit Matmul family for any precision
 pub struct UnitMatmulFamily<TM: TileMatmulFamily, StageIn: StageFamily, StageAcc: StageFamily> {

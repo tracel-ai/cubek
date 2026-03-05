@@ -1,6 +1,7 @@
 mod p1x1x1 {
     use super::*;
-    use cubek_matmul::definition::{PartitionSize, TilingSchemeBuilder};
+    use cubek_matmul::definition::{TilingSchemeBuilder};
+    use cubek_std::PartitionSize;
 
     fn partition(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
         builder.with_partition_size(PartitionSize { m: 1, n: 1, k: 1 })
@@ -11,7 +12,8 @@ mod p1x1x1 {
 
 mod p1x2x1 {
     use super::*;
-    use cubek_matmul::definition::{PartitionSize, TilingSchemeBuilder};
+    use cubek_matmul::definition::{TilingSchemeBuilder};
+    use cubek_std::PartitionSize;
 
     fn partition(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
         builder.with_partition_size(PartitionSize { m: 1, n: 2, k: 1 })
@@ -22,7 +24,8 @@ mod p1x2x1 {
 
 mod p1x1x2 {
     use super::*;
-    use cubek_matmul::definition::{PartitionSize, TilingSchemeBuilder};
+    use cubek_matmul::definition::{TilingSchemeBuilder};
+    use cubek_std::PartitionSize;
 
     fn partition(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
         builder.with_partition_size(PartitionSize { m: 1, n: 1, k: 2 })

@@ -1,7 +1,8 @@
-use crate::components::tile::{SharedTileConfig, TileConfig};
-use crate::definition::MatrixLayout;
+use cubek_std::MatrixLayout;
+use cubek_std::stage::SwizzleMode;
 
-use crate::components::stage::SwizzleMode;
+use crate::components::tile::{SharedTileConfig, TileConfig};
+
 use crate::definition::StageIdent;
 
 /// Execution mode for the RegisterMatmul

@@ -3,10 +3,11 @@ mod plane;
 mod unit;
 
 pub use base::*;
+use cubek_std::TileSize;
 pub use plane::*;
 pub use unit::*;
 
-use crate::definition::{MatmulProblem, TileSize};
+use crate::definition::MatmulProblem;
 
 /// Returns  true if a [matmul problem](MatmulProblem) is very small.
 ///

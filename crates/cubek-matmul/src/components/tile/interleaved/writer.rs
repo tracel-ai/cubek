@@ -1,8 +1,8 @@
 use cubecl::prelude::*;
+use cubek_std::tile::StridedTile;
 
-use crate::components::tile::{
-    StridedTile,
-    interleaved::{InterleavedAccumulator, config::InterleavedMatmulConfig},
+use crate::components::tile::interleaved::{
+    InterleavedAccumulator, config::InterleavedMatmulConfig,
 };
 
 /// Writer for the interleaved matmul fragments.

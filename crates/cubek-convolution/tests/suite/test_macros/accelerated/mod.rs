@@ -7,7 +7,7 @@ macro_rules! testgen_convolution_accelerated {
     () => {
         mod conv2d_accelerated {
             use super::*;
-            use cubek_matmul::components::tile::io::Strided;
+            use cubek_std::tile::Strided;
             type TMM = cubek_matmul::components::tile::cmma::CmmaMatmul<Option<Strided>>;
 
             #[cfg(all(feature = "conv_tests_plane", not(feature = "conv_tests_mma")))]

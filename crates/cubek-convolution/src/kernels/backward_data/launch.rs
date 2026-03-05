@@ -11,11 +11,12 @@ use crate::{
 };
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_matmul::{
-    components::tile::{cmma::CmmaMatmul, io::Strided, mma::MmaMatmul},
-    definition::{AvailableLineSizes, MatmulElems, MatmulSetupError, MatrixLayout},
+    components::tile::{cmma::CmmaMatmul, mma::MmaMatmul},
+    definition::{AvailableLineSizes, MatmulElems, MatmulSetupError},
     launch::MatmulInputBinding,
     routines::BlueprintStrategy,
 };
+use cubek_std::{MatrixLayout, tile::Strided};
 use derive_new::new;
 
 macro_rules! with_tile_kind {

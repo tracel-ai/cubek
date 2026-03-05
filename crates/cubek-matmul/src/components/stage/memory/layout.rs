@@ -2,12 +2,9 @@ use std::marker::PhantomData;
 
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
-
-use crate::components::stage::StageMemoryConfig;
-use crate::components::stage::SwizzleMode;
-use crate::components::tile::StridedTile;
-use crate::definition::InvalidConfigError;
-use crate::definition::MatrixLayout;
+use cubek_std::stage::{StageMemoryConfig, SwizzleMode};
+use cubek_std::tile::StridedTile;
+use cubek_std::{InvalidConfigError, MatrixLayout};
 
 use super::StridedStageMemory;
 

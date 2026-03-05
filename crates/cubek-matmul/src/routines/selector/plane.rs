@@ -1,15 +1,15 @@
 use cubecl::{Runtime, client::ComputeClient, ir::StorageType};
 use cubecl::{features::MmaConfig, ir::LineSize};
+use cubek_std::stage::SwizzleMode;
+use cubek_std::{MatrixLayout, PartitionSize, StageSize, TileSize};
 
 use crate::components::global::{InputLoadFlow, LoadFlows};
 use crate::components::stage::PartitionBuffering;
-use crate::components::stage::SwizzleMode;
 use crate::components::tile::TileMatmulFamily;
 use crate::definition::{
     CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulAvailabilityError,
-    MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, MatrixLayout, MultiRowStrategy,
-    PartitionSize, SmAllocation, StageSize, SwizzleModes, TileSize, TilingBlueprint, TilingScheme,
-    adjust_dtypes,
+    MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, MultiRowStrategy, SmAllocation,
+    SwizzleModes, TilingBlueprint, TilingScheme, adjust_dtypes,
 };
 use crate::routines::selector::is_tiny;
 

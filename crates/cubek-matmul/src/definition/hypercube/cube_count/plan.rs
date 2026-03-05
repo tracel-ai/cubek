@@ -268,19 +268,21 @@ fn spread_cube_count_plan(
     max_y: u32,
     max_z: u32,
 ) -> CubeCountPlanKind {
-    let total_cubes = m_cubes * n_cubes * batch_cubes;
+    // Use u64 to avoid overflow when multiplying large cube counts.
+    let total_cubes = m_cubes as u64 * n_cubes as u64 * batch_cubes as u64;
 
     let mut best = None;
 
     let mut z = max_z;
     while z >= 1 {
-        let xy_cubes = total_cubes.div_ceil(z);
+        let xy_cubes = total_cubes.div_ceil(z as u64);
 
         let mut y = max_y;
         while y >= 1 {
-            let x = xy_cubes.div_ceil(y);
-            if x <= max_x {
-                let volume = x * y * z;
+            let x64 = xy_cubes.div_ceil(y as u64);
+            if x64 <= max_x as u64 {
+                let x = x64 as u32;
+                let volume = x as u64 * y as u64 * z as u64;
                 let score = (volume, std::cmp::Reverse(z), std::cmp::Reverse(y));
 
                 if best.is_none_or(|(_, _, _, _, best_score)| score < best_score) {

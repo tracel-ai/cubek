@@ -1,6 +1,7 @@
 use std::marker::PhantomData;
 
 use crate::components::global::multi_stage::JobExecutor;
+use crate::components::global::multi_stage::LoadMaxRoundPlaneCount;
 use crate::components::global::read::LoadingJob;
 use crate::components::global::read::LoadingValidation;
 use crate::components::global::read::StageBuffer;
@@ -9,10 +10,10 @@ use crate::components::global::read::TaskCounter;
 use crate::components::global::{multi_stage::JobIterator, read::FullLoaderStage};
 use crate::components::stage::TilingLayout;
 use crate::components::{global::memory::GlobalIterator, stage::LoadStageFamily};
-use crate::components::{global::multi_stage::LoadMaxRoundPlaneCount, tile::io::TileKind};
 use crate::{components::global::GlobalReaderConfig, launch::RuntimeConfig};
 use cubecl::prelude::*;
 use cubecl::std::tensor::{View, layout::Coords2d};
+use cubek_std::tile::TileKind;
 
 pub type SyncBarrier<S> = <S as SyncStrategy>::Barrier;
 

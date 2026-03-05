@@ -1,11 +1,9 @@
 use std::{fmt::Debug, hash::Hash};
 
 use cubecl::ir::{LineSize, StorageType};
+use cubek_std::MatrixLayout;
 
-use crate::{
-    components::global::memory::{GlobalLayoutConfig, ViewDirection},
-    definition::MatrixLayout,
-};
+use crate::components::global::memory::{GlobalLayoutConfig, ViewDirection};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct GlobalMemoryConfig {

@@ -3,7 +3,7 @@ use cubecl::prelude::CubePrimitive;
 use cubek_matmul::components::{global::PartitionedStageFamily, stage::StridedStageFamily};
 
 use crate::components::stage::plane::PlanePartitionStageAttentionFamily;
-use crate::components::tile::accelerated::BlackboxAcceleratedTileAttention;
+use crate::components::tile::accelerated_blackbox::BlackboxAcceleratedTileAttention;
 use crate::definition::AttentionTileSize;
 use crate::definition::{
     AttentionBlueprint, AttentionElems, AttentionPartitionSize, AttentionProblem,

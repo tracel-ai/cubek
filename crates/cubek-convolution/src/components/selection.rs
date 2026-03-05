@@ -3,7 +3,7 @@ use cubecl::{
     client::ComputeClient,
     ir::{LineSize, StorageType},
 };
-use cubek_matmul::components::stage::{PartitionBuffering, SwizzleMode};
+use cubek_matmul::components::stage::PartitionBuffering;
 
 use cubek_matmul::definition::{
     MatmulAvailabilityError, MatmulElems, MatmulLineSizes, SwizzleModes, TilingBlueprint,
@@ -13,6 +13,7 @@ use cubek_matmul::{
     components::tile::TileMatmulFamily,
     routines::{NUM_SM_APPROX, NUM_TENSOR_CORES_APPROX, find_instruction_size},
 };
+use cubek_std::stage::SwizzleMode;
 
 use crate::components::ConvolutionProblem;
 

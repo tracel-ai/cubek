@@ -1,0 +1,18 @@
+[package]
+authors = ["louisfd <louisfd94@gmail.com>"]
+description = "CubeK: Standard Library"
+edition.workspace = true
+license.workspace = true
+name = "cubek-std"
+readme.workspace = true
+rust-version.workspace = true
+repository = "https://github.com/tracel-ai/cubek/tree/main/crates/cubek-std"
+version.workspace = true
+
+[features]
+default = ["cubecl/default"]
+std = ["cubecl/std"]
+
+[dependencies]
+cubecl = { workspace = true, features = ["stdlib", "test-runtime"] }
+cubecl-common = { workspace = true }

@@ -2,7 +2,8 @@ use cubecl::{
     ir::AddressType,
     zspace::{Shape, Strides, shape},
 };
-use cubek_matmul::definition::{MatmulGlobalElems, MatmulProblem, MatrixLayout};
+use cubek_matmul::definition::{MatmulGlobalElems, MatmulProblem};
+use cubek_std::MatrixLayout;
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ConvolutionOperation {

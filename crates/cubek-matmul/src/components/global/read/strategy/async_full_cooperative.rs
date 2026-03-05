@@ -10,15 +10,15 @@ use crate::{
             },
         },
         stage::{StridedStageFamily, StridedStageMemory, StridedTilingLayout, TilingValidation},
-        tile::io::Strided,
     },
-    definition::{InvalidConfigError, MatmulElems, MatmulProblem, MatrixLayout, StageIdent},
+    definition::{MatmulElems, MatmulProblem, StageIdent},
     launch::RuntimeConfig,
 };
 use cubecl::{
     ir::DeviceProperties,
     prelude::{barrier::Barrier, *},
 };
+use cubek_std::{InvalidConfigError, MatrixLayout, tile::Strided};
 
 use super::LoadingValidation;
 
