@@ -200,6 +200,7 @@ impl<AP: AttentionPrecision> TileAttention<AP> for WhiteboxAcceleratedTileAttent
         transit: &mut Self::SoftmaxTransit,
         #[comptime] config: Self::Config,
     ) -> Self::Softmax {
+        #[allow(clippy::unit_arg)] // type SoftmaxTransit = ();
         WhiteboxSoftmaxPipeline::new::<QT<AP>, KVT<AP>, KVT<AP>, ACC<AP>>(*transit, config)
     }
 
