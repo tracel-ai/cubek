@@ -1,6 +1,7 @@
 use std::fmt::Display;
 
 use cubecl::{Runtime, client::ComputeClient};
+use cubek_std::tile::{Filled, Strided};
 
 use crate::{
     components::{
@@ -14,11 +15,7 @@ use crate::{
             },
         },
         stage::{RowMajorTilingOrder, StridedStageFamily, UnitMatmulFamily},
-        tile::{
-            TileMatmulFamily,
-            io::{Filled, Strided},
-            register::RegisterMatmul,
-        },
+        tile::{TileMatmulFamily, register::RegisterMatmul},
     },
     definition::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, TilingBlueprint},
     launch::RuntimeConfig,

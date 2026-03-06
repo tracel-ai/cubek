@@ -1,18 +1,17 @@
 use cubecl::prelude::*;
+use cubek_std::MatrixLayout;
+use cubek_std::tile::Strided;
+use cubek_std::tile::StridedTile;
+use cubek_std::tile::TileKind;
 use std::marker::PhantomData;
 
 use crate::components::tile::plane_vec_mat_inner_product::config::PlaneVecMatInnerProductConfig;
+use crate::components::tile::plane_vec_mat_inner_product::reader::MatrixStageReader;
+use crate::components::tile::plane_vec_mat_inner_product::reader::VectorStageReader;
 use crate::components::tile::{
     TileMatmul,
     plane_vec_mat_inner_product::{reader::MatrixFragmentReader, writer::MatrixStageWriter},
 };
-use crate::components::tile::{
-    io::Strided, plane_vec_mat_inner_product::reader::MatrixStageReader, tile_data::StridedTile,
-};
-use crate::components::tile::{
-    io::TileKind, plane_vec_mat_inner_product::reader::VectorStageReader,
-};
-use crate::definition::MatrixLayout;
 
 /// Uses one unit to perform a small matmul directly in registers
 pub struct PlaneVecMatInnerProduct<Acc: TileKind> {

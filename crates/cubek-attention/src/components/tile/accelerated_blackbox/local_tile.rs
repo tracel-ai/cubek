@@ -1,7 +1,7 @@
 use cubecl;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
-use cubek_matmul::components::tile::StridedTile;
+use cubek_std::tile::StridedTile;
 
 use crate::components::tile::{
     AccumulatorRowwise, AccumulatorRowwiseExpand, FragmentMask, FragmentMaskExpand, LOGIT_MASKED,
@@ -235,13 +235,13 @@ impl<E: Float> SoftmaxRowwise<E> for LocalTile<E> {
             let row_offset = r as u32 * self.layout.unit_size.1;
 
             let val = val.index(r);
+            let safe_val = clamp_min(val, threshold);
+            let not_masked = E::cast_from(val >= threshold);
 
             #[unroll]
             for c in 0..self.layout.unit_size.1 {
                 let index = row_offset + c;
 
-                let safe_val = clamp_min(val, threshold);
-                let not_masked = E::cast_from(val >= threshold);
                 self.array[index as usize] =
                     not_masked * (self.array[index as usize] - safe_val).exp();
             }

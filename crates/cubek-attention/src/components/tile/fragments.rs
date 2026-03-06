@@ -40,21 +40,6 @@ pub trait SoftmaxLayout: CubeType {
     fn num_units_per_row(&self) -> comptime_type!(u32);
 }
 
-// #[cube]
-// pub trait FragmentSoftmax<E: Float>: CubeType {
-//     type Layout: SoftmaxLayout;
-//     type SoftmaxRowFormat: RowwiseFormat<E, Layout = Self::Layout>;
-
-//     /// Get the softmax fragment in row format
-//     fn rowwise_mut(&mut self) -> &mut Self::SoftmaxRowFormat;
-
-//     /// Update score/val from rowwise format
-//     fn update_from_rowwise(&mut self);
-
-//     /// Zeroes out the fragment
-//     fn zero(&mut self);
-// }
-
 #[cube]
 pub trait SoftmaxRowwise<E: Float> {
     /// How the fragment is fragmented across units

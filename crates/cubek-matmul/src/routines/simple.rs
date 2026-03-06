@@ -1,5 +1,6 @@
 use cubecl::features::MmaConfig;
 use cubecl::{Runtime, client::ComputeClient};
+use cubek_std::tile::Strided;
 use std::fmt::Display;
 use std::marker::PhantomData;
 
@@ -17,7 +18,7 @@ use crate::{
             single_stage::simple::SimpleMatmulFamily,
         },
         stage::{ColMajorTilingOrder, PartitionBuffering, PlaneMatmulFamily, RowMajorTilingOrder},
-        tile::{TileMatmulFamily, io::Strided},
+        tile::TileMatmulFamily,
     },
     routines::{
         Routine,

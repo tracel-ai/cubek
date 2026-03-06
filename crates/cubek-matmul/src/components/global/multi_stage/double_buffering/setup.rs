@@ -1,4 +1,5 @@
 use crate::components::global::memory::{GlobalMemoryConfig, ViewDirection};
+use crate::components::global::multi_stage::EventLoadingMode;
 use crate::components::global::{
     GlobalReaderConfig, GlobalWriterConfig, PlaneFlowConfig, SharedGlobalMatmulConfig,
 };
@@ -10,14 +11,14 @@ use crate::components::stage::StageConfig;
 use crate::components::{CubeDimResource, global::read::FullLoadingStrategy};
 use crate::components::{global::GlobalMatmulFamily, stage};
 use crate::components::{global::MaxGlobalReaderPlanes, stage::NumStages};
-use crate::components::{global::multi_stage::EventLoadingMode, tile::io::Strided};
 use crate::definition::TilingBlueprint;
 use crate::definition::{
-    MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError, MatrixLayout,
-    StageIdent,
+    MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError, StageIdent,
 };
 use crate::launch::RuntimeConfig;
 use cubecl::{ir::DeviceProperties, prelude::*};
+use cubek_std::MatrixLayout;
+use cubek_std::tile::Strided;
 use std::marker::PhantomData;
 
 /// Double buffering matmul family for any precision

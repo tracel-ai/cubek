@@ -1,11 +1,9 @@
 use cubecl::prelude::*;
 use cubecl::{cmma::MmaDefinition, ir::MatrixIdent};
 
-use crate::components::tile::{
-    StridedTile,
-    mma::config::{MmaMatmulConfig, StoreMethod},
-};
-use crate::definition::{MatrixLayout, as_cmma_layout};
+use crate::tile::mma::config::{MmaIOConfig, StoreMethod};
+use crate::tile::strided_tile::StridedTile;
+use crate::{MatrixLayout, as_cmma_layout};
 
 /// Writer for storing the output registers.
 #[derive(CubeType)]
@@ -19,7 +17,8 @@ impl MmaStageWriter {
         def: MmaDefinition<A, B, CD>,
         #[comptime] ident: MatrixIdent,
         #[comptime] layout: MatrixLayout,
-        #[comptime] config: MmaMatmulConfig,
+        #[comptime] m: u32,
+        #[comptime] config: MmaIOConfig,
     ) {
         let line_layout = def.line_layout(ident);
         let transposed = comptime![as_cmma_layout(layout) != line_layout];
@@ -33,7 +32,7 @@ impl MmaStageWriter {
                 }
             }
             StoreMethod::StoreMatrix => {
-                store_stmatrix::<E, V, A, B, CD>(tile, fragment, def, transposed, ident, config)
+                store_stmatrix::<E, V, A, B, CD>(tile, fragment, def, transposed, ident, m)
             }
         }
     }
@@ -118,7 +117,7 @@ fn store_stmatrix<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     def: MmaDefinition<A, B, CD>,
     #[comptime] transposed: bool,
     #[comptime] ident: MatrixIdent,
-    #[comptime] config: MmaMatmulConfig,
+    #[comptime] m: u32,
 ) {
     let stage_line_size = tile.stage.line_size().comptime();
     let (_, stride) = tile.as_unlined_mut();
@@ -127,7 +126,7 @@ fn store_stmatrix<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     let num_regs = def.lines_per_lane(ident);
     let width = (16 / elem_size / stage_line_size) as u32;
 
-    let start = stmatrix_offset::<V, A, B, CD>(stride, def, stage_line_size, ident, config);
+    let start = stmatrix_offset::<V, A, B, CD>(stride, def, stage_line_size, ident, m);
     let start = tile.stage_offset(start);
 
     let mut row_slice = tile
@@ -162,9 +161,8 @@ pub(crate) fn stmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     def: MmaDefinition<A, B, CD>,
     #[comptime] stage_line_size: LineSize,
     #[comptime] ident: MatrixIdent,
-    #[comptime] config: MmaMatmulConfig,
+    #[comptime] m: u32,
 ) -> u32 {
-    let tiling = config.shared.tile_size;
     let (stride_row, stride_col) = (stride, 1);
 
     let elem_size = E::type_size().comptime();
@@ -178,7 +176,7 @@ pub(crate) fn stmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     let sub_lane = lane % height;
     let nth_matrix = lane / height % num_regs as u32;
 
-    let tiles_row = tiling.m() / height;
+    let tiles_row = m / height;
 
     // Tiles are arranged in column-major fashion
     let row_offs = (nth_matrix % tiles_row) * 8;

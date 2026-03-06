@@ -16,13 +16,14 @@ use cubecl::{
 };
 use cubek_matmul::{
     components::global::memory::{GlobalLayoutConfig, NoopLayout, NoopLayoutLaunch},
-    definition::{Blueprint, MatmulElems, MatmulLineSizes, MatrixLayout, TilingBlueprint},
+    definition::{Blueprint, MatmulElems, MatmulLineSizes, TilingBlueprint},
     launch::{
         MatmulArgs, MatmulInputBinding, TensorArgs, TensorInputs, TensorInputsLaunch,
         TensorMapArgs, TensorMapInputs, TensorMapInputsLaunch, TensorOutput, TensorOutputLaunch,
     },
     routines::Routine,
 };
+use cubek_std::MatrixLayout;
 use enumset::EnumSet;
 
 use crate::components::{
@@ -172,8 +173,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs>> ConcreteI
             VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new()),
             ViewArg::new::<LhsLayout>(
                 out_grad
-                    .data()
-                    .clone()
+                    .into_data()
                     .into_tensor_arg(line_sizes.lhs)
                     .into_array_arg(),
                 layout_lhs,
@@ -181,8 +181,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs>> ConcreteI
             VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new()),
             ViewArg::new::<RhsLayout>(
                 weights
-                    .data()
-                    .clone()
+                    .into_data()
                     .into_tensor_arg(line_sizes.rhs)
                     .into_array_arg(),
                 layout_rhs,
@@ -216,7 +215,7 @@ impl<EG: Numeric, A: Routine<RuntimeArgs>> ConcreteOutputFactory<A> for TensorOu
         let layout =
             OutLayoutLaunch::from_args(client, problem, blueprint.out_global_layout_config());
         let layout = ChainLaunch::new(global, layout);
-        let view = ViewArg::new::<Layout>(out.as_array_arg(line_sizes.out), layout);
+        let view = ViewArg::new::<Layout>(out.into_array_arg(line_sizes.out), layout);
         let batch = VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new());
         TensorOutputLaunch::new(view, batch)
     }
@@ -268,7 +267,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
                 channels_per_pixel: tile_size_k,
                 pixels_per_column: stage_m,
             },
-            out_grad.data().clone().into_tensor_arg(line_sizes.lhs),
+            out_grad.into_data().into_tensor_arg(line_sizes.lhs),
             lhs_elem,
         )
         .with_elem_stride(elem_stride);
@@ -277,7 +276,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
             TiledArgs {
                 tile_size: stage_size_rhs,
             },
-            weights.data().clone().into_tensor_arg(line_sizes.rhs),
+            weights.into_data().into_tensor_arg(line_sizes.rhs),
             dtypes.rhs_global,
         );
 

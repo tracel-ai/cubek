@@ -1,7 +1,9 @@
+use cubek_std::TileSize;
+use cubek_std::stage::SwizzleMode;
+
 use crate::components::tile::{SharedTileConfig, TileConfig};
 
-use crate::components::stage::SwizzleMode;
-use crate::definition::{StageIdent, TileSize};
+use crate::definition::StageIdent;
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct InterleavedMatmulConfig {

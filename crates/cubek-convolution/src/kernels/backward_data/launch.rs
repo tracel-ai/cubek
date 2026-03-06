@@ -11,11 +11,12 @@ use crate::{
 };
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_matmul::{
-    components::tile::{cmma::CmmaMatmul, io::Strided, mma::MmaMatmul},
-    definition::{AvailableLineSizes, MatmulElems, MatmulSetupError, MatrixLayout},
+    components::tile::{cmma::CmmaMatmul, mma::MmaMatmul},
+    definition::{AvailableLineSizes, MatmulElems, MatmulSetupError},
     launch::MatmulInputBinding,
     routines::BlueprintStrategy,
 };
+use cubek_std::{MatrixLayout, tile::Strided};
 use derive_new::new;
 
 macro_rules! with_tile_kind {
@@ -140,9 +141,12 @@ where
 
     let op = ConvolutionOperation::BackwardData;
 
+    let out_grad_tmp = out_grad.clone();
+    let weights_tmp = weights.clone();
+
     let out_grad_data =
-        Alg::correct_layout(client, out_grad.data().clone(), dtypes.lhs_global, op)?;
-    let weights_data = Alg::correct_layout(client, weights.data().clone(), dtypes.rhs_global, op)?;
+        Alg::correct_layout(client, out_grad_tmp.into_data(), dtypes.lhs_global, op)?;
+    let weights_data = Alg::correct_layout(client, weights_tmp.into_data(), dtypes.rhs_global, op)?;
 
     let mut out_grad = out_grad.clone();
     let mut weights = weights.clone();

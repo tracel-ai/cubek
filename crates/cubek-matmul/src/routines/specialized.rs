@@ -4,20 +4,19 @@ use std::marker::PhantomData;
 use cubecl::Runtime;
 use cubecl::client::ComputeClient;
 use cubecl::features::MmaConfig;
+use cubek_std::MatrixLayout;
+use cubek_std::tile::Strided;
 
+use crate::components::batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul};
 use crate::components::global::PlaneWriterFamily;
 use crate::components::tile::TileMatmulFamily;
-use crate::components::{
-    batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
-    tile::io::Strided,
-};
 use crate::components::{global::read::FullLoadingStrategy, tile};
 use crate::components::{
     global::read::sync_full_strided::SyncFullStridedLoading, stage::PlaneMatmulFamily,
 };
 use crate::definition::{
     CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulLineSizes, MatmulProblem,
-    MatmulSetupError, MatrixLayout, SmAllocation, SwizzleModes, TilingBlueprint, adjust_dtypes,
+    MatmulSetupError, SmAllocation, SwizzleModes, TilingBlueprint, adjust_dtypes,
 };
 use crate::launch::RuntimeConfig;
 use crate::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};

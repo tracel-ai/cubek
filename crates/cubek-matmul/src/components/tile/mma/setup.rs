@@ -1,23 +1,14 @@
+use crate::components::resource::CubeDimResource;
 use crate::components::tile::SharedTileConfig;
-use crate::components::tile::mma::config::StoreMethod;
-use crate::components::tile::mma::config::{LoadMethod, MmaMatmulConfig};
-use crate::components::tile::{
-    TileMatmulFamily,
-    mma::{
-        MmaMatmul,
-        reader::{MmaFragmentReader, MmaStageReader},
-    },
-};
-use crate::components::{
-    resource::CubeDimResource,
-    tile::io::{Strided, TileKind},
-};
-use crate::definition::{
-    InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulSetupError, TileSize,
-};
+use crate::components::tile::mma::config::MmaMatmulConfig;
+use crate::components::tile::{TileMatmulFamily, mma::MmaMatmul};
+use crate::definition::{MatmulAvailabilityError, MatmulElems, MatmulSetupError};
 use crate::definition::{MatmulLineSizes, TilingBlueprint};
 use cubecl::{features::MmaConfig, ir::DeviceProperties};
 use cubecl::{ir::StorageType, prelude::*};
+use cubek_std::tile::mma::{MmaFragmentReader, MmaIOConfig, MmaStageReader};
+use cubek_std::tile::{Strided, TileKind};
+use cubek_std::{InvalidConfigError, TileSize};
 
 impl<LhsTile: TileKind, RhsTile: TileKind, AccTile: TileKind> TileMatmulFamily
     for MmaMatmul<LhsTile, RhsTile, AccTile>
@@ -52,17 +43,19 @@ where
         dtypes: &MatmulElems,
         _line_sizes: &MatmulLineSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
-        Ok(MmaMatmulConfig::from_shared_tile_config(
-            SharedTileConfig {
+        Ok(MmaMatmulConfig {
+            shared: SharedTileConfig {
                 tile_size: blueprint.tiling_scheme.tile_size,
                 plane_dim: blueprint.plane_dim,
                 swizzle_modes: blueprint.swizzle_modes,
             },
-            load_method(device_props, dtypes.lhs_stage),
-            load_method(device_props, dtypes.rhs_stage),
-            load_method(device_props, dtypes.acc_stage),
-            store_method(device_props, dtypes.acc_stage),
-        ))
+            mma_io_config: MmaIOConfig::new(
+                device_props,
+                dtypes.lhs_stage,
+                dtypes.rhs_stage,
+                dtypes.acc_stage,
+            ),
+        })
     }
 
     fn should_swizzle<R: Runtime>(client: &ComputeClient<R>) -> bool {
@@ -121,25 +114,5 @@ where
         }
 
         Ok(())
-    }
-}
-
-fn load_method(device_props: &DeviceProperties, dtype: StorageType) -> LoadMethod {
-    if !matches!(dtype, StorageType::Packed(_, _))
-        && device_props.features.ldmatrix.contains(&dtype)
-    {
-        LoadMethod::LoadMatrix
-    } else {
-        LoadMethod::Manual
-    }
-}
-
-fn store_method(device_props: &DeviceProperties, dtype: StorageType) -> StoreMethod {
-    if !matches!(dtype, StorageType::Packed(_, _))
-        && device_props.features.stmatrix.contains(&dtype)
-    {
-        StoreMethod::StoreMatrix
-    } else {
-        StoreMethod::Manual
     }
 }

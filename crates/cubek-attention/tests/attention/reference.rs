@@ -21,7 +21,7 @@ pub fn assert_result(
     let epsilon = attention_epsilon(&elems, 0.01);
     let expected = flash_attention_v2_reference(query, key, value, mask, problem);
 
-    let actual = HostData::from_tensor_handle(client, &out, HostDataType::F32);
+    let actual = HostData::from_tensor_handle(client, out, HostDataType::F32);
 
     assert_equals_approx(&actual, &expected, epsilon)
 }

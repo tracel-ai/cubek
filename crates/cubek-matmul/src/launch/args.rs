@@ -10,17 +10,15 @@ use cubecl::{
     zspace::{metadata::Metadata, shape, strides},
 };
 use cubecl::{server::TensorMapMeta, unexpanded};
+use cubek_std::{MatrixLayout, stage::SwizzleMode};
 
-use crate::components::{
-    global::memory::{
-        BatchLayout, BatchLayoutLaunch, GlobalLayout, GlobalLayoutConfig, GlobalLayoutLaunch,
-        GlobalScaleLayout, NoopLayout, NoopLayoutLaunch, SimpleTmaGlobalLayout,
-        SimpleTmaGlobalLayoutLaunch,
-    },
-    stage::SwizzleMode,
+use crate::components::global::memory::{
+    BatchLayout, BatchLayoutLaunch, GlobalLayout, GlobalLayoutConfig, GlobalLayoutLaunch,
+    GlobalScaleLayout, NoopLayout, NoopLayoutLaunch, SimpleTmaGlobalLayout,
+    SimpleTmaGlobalLayoutLaunch,
 };
 use crate::definition::{
-    self, Blueprint as _, MatmulElems, MatmulLineSizes, MatmulProblem, TilingBlueprint,
+    Blueprint as _, MatmulElems, MatmulLineSizes, MatmulProblem, TilingBlueprint,
 };
 use crate::launch::handle::MatmulInputBinding;
 use crate::routines::Routine;
@@ -221,7 +219,7 @@ impl<Lhs: Numeric, Rhs: Numeric, Acc: Numeric, A: Routine<()>> ConcreteInputsFac
                         data_layout,
                     );
                     let scales_view =
-                        ViewArg::new::<GlobalScaleLayout>(scale.as_array_arg(1), scales_layout);
+                        ViewArg::new::<GlobalScaleLayout>(scale.into_array_arg(1), scales_layout);
                     ViewArg::new_quantized(data_view, scales_view, scheme)
                 }
             };
@@ -267,7 +265,7 @@ impl<EG: Numeric, A: Routine<()>> ConcreteOutputFactory<A> for TensorOutput<EG> 
             blueprint.out_global_layout_config(),
         );
         let batch = BatchLayoutLaunch::from_handle(client, &out, problem);
-        let view = ViewArg::new::<GlobalLayout>(out.as_array_arg(line_sizes.out), layout);
+        let view = ViewArg::new::<GlobalLayout>(out.into_array_arg(line_sizes.out), layout);
         TensorOutputLaunch::new(view, VirtualLayoutLaunch::new::<BatchLayout>(batch))
     }
 }
@@ -387,8 +385,8 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<(), Blueprint = TilingB
         line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<'a, R> {
-        let lhs = lhs_handle.data();
-        let rhs = rhs_handle.data();
+        let lhs = lhs_handle.into_data();
+        let rhs = rhs_handle.into_data();
 
         let tiling_scheme = blueprint.tiling_scheme;
         let stage_m = tiling_scheme.elements_per_stage_along_m();
@@ -400,36 +398,36 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<(), Blueprint = TilingB
         // For swizzled, bank conflicts aren't an issue so the tile size is the full stage.
         let stage_size_lhs = match blueprint.swizzle_modes.lhs {
             SwizzleMode::None => match problem.lhs_layout {
-                definition::MatrixLayout::RowMajor => {
+                MatrixLayout::RowMajor => {
                     shape![1, stage_m as usize, tiling_scheme.tile_size.k as usize]
                 }
-                definition::MatrixLayout::ColMajor => {
+                MatrixLayout::ColMajor => {
                     shape![1, stage_k as usize, tiling_scheme.tile_size.m as usize]
                 }
             },
             _ => match problem.lhs_layout {
-                definition::MatrixLayout::RowMajor => {
+                MatrixLayout::RowMajor => {
                     shape![1, stage_m as usize, stage_k as usize]
                 }
-                definition::MatrixLayout::ColMajor => {
+                MatrixLayout::ColMajor => {
                     shape![1, stage_k as usize, stage_m as usize]
                 }
             },
         };
         let stage_size_rhs = match blueprint.swizzle_modes.rhs {
             SwizzleMode::None => match problem.rhs_layout {
-                definition::MatrixLayout::RowMajor => {
+                MatrixLayout::RowMajor => {
                     shape![1, stage_k as usize, tiling_scheme.tile_size.n as usize]
                 }
-                definition::MatrixLayout::ColMajor => {
+                MatrixLayout::ColMajor => {
                     shape![1, stage_n as usize, tiling_scheme.tile_size.k as usize]
                 }
             },
             _ => match problem.rhs_layout {
-                definition::MatrixLayout::RowMajor => {
+                MatrixLayout::RowMajor => {
                     shape![1, stage_k as usize, stage_n as usize]
                 }
-                definition::MatrixLayout::ColMajor => {
+                MatrixLayout::ColMajor => {
                     shape![1, stage_n as usize, stage_k as usize]
                 }
             },
@@ -467,12 +465,12 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<(), Blueprint = TilingB
 
         // TMA assumes the last stride is contiguous and won't even take it, so we need to map it
         // with transposed shape and stride. Tensor metadata still has the normal layout.
-        if matches!(problem.lhs_layout, definition::MatrixLayout::ColMajor) {
+        if matches!(problem.lhs_layout, MatrixLayout::ColMajor) {
             lhs_shape.swap(2, 1);
             lhs_strides.swap(lhs_rank - 1, lhs_rank - 2);
             lhs_transposed = true;
         }
-        if matches!(problem.rhs_layout, definition::MatrixLayout::ColMajor) {
+        if matches!(problem.rhs_layout, MatrixLayout::ColMajor) {
             rhs_shape.swap(2, 1);
             rhs_strides.swap(rhs_rank - 1, rhs_rank - 2);
             rhs_transposed = true;
@@ -528,12 +526,12 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<(), Blueprint = TilingB
         };
 
         let lhs = TensorMapArg {
-            tensor: lhs.clone().into_tensor_arg(line_sizes.lhs),
+            tensor: lhs.into_tensor_arg(line_sizes.lhs),
             metadata: meta_lhs,
             _kind: PhantomData,
         };
         let rhs = TensorMapArg {
-            tensor: rhs.clone().into_tensor_arg(line_sizes.rhs),
+            tensor: rhs.into_tensor_arg(line_sizes.rhs),
             metadata: meta_rhs,
             _kind: PhantomData,
         };

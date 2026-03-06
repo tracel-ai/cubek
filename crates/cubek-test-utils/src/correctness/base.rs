@@ -77,7 +77,7 @@ fn assert_equals_approx_inner(
             && !filter.is_empty()
             && filter.len() != shape.len()
         {
-            return ValidationResult::Skipped(format!(
+            return ValidationResult::Error(format!(
                 "Print mode activated with invalid filter rank. Got {:?}, expected {:?}",
                 filter.len(),
                 shape.len()

@@ -41,6 +41,8 @@ pub enum ValidationResult {
     /// The kernel failed the correctness test
     Fail(String),
     /// The correctness test could not determine pass/fail
+    Error(String),
+    /// Validation was skipped. Useful to print stuff instead of actual testing
     Skipped(String),
 }
 

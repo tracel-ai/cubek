@@ -2,7 +2,7 @@ use cubecl::TestRuntime;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{CubeElement, client::ComputeClient};
 use cubek_matmul::definition::MatmulElems;
-use cubek_matmul::definition::{MatmulIdent, MatmulProblem, MatrixLayout};
+use cubek_matmul::definition::{MatmulIdent, MatmulProblem};
 use cubek_test_utils::{
     HostData, HostDataType, HostDataVec, StrideSpec, ValidationResult, assert_equals_approx,
 };

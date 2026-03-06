@@ -1,8 +1,9 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::{Coords2d, Layout, LayoutExpand};
+use cubek_std::MatrixLayout;
+use cubek_std::stage::StageMemoryConfig;
 
-use crate::components::stage::StageMemoryConfig;
-use crate::definition::{MatrixLayout, StageIdent};
+use crate::definition::StageIdent;
 
 pub type TiledCoords = (Coords2d, u32);
 

@@ -12,8 +12,7 @@ use cubek::{
         components::stage::PartitionBuffering,
         definition::{
             CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, LoadingPrecomputeStrategy,
-            MatmulElems, MatmulPrecision, MatmulProblem, MatrixLayout, StageSize, TilingBlueprint,
-            TilingScheme,
+            MatmulElems, MatmulPrecision, MatmulProblem, TilingBlueprint, TilingScheme,
         },
         launch::{MatmulInputBinding, Strategy},
         routines::{
@@ -23,6 +22,7 @@ use cubek::{
         },
     },
     random::random_uniform,
+    std::{MatrixLayout, StageSize},
 };
 use std::collections::BTreeMap;
 

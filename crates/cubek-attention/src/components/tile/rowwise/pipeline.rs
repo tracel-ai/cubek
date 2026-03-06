@@ -1,7 +1,10 @@
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::components::tile::{AccumulatorRowwise, SoftmaxLayout, SoftmaxRowwise};
+use crate::{
+    components::tile::{AccumulatorRowwise, SoftmaxLayout, SoftmaxRowwise},
+    definition::AttentionTileSize,
+};
 
 #[cube]
 /// Handles pipelining between the score accumulator, a rowwise intermediate,
@@ -11,14 +14,17 @@ use crate::components::tile::{AccumulatorRowwise, SoftmaxLayout, SoftmaxRowwise}
 /// then to the LHS layout required by the value matmul, performing any necessary
 /// type casting between accumulator and LHS fragments.
 pub trait SoftmaxPipeline<Acc: Float> {
-    /// Original accumulator fragment
-    type MatmulAccumulator: CubeType;
-    /// Final output for softmax / LHS
-    type MatmulLhs: CubeType;
+    /// Format for the score matmul accumulator
+    type ScoreAccFormat: CubeType;
+    /// Format for the value matmul LHS
+    type ValueLhsFormat: CubeType;
     /// Rowwise intermediate (fragment or local tile)
     type Rowwise: SoftmaxRowwise<Acc>;
     /// Should equal Self::Rowwise::Layout
-    type SoftmaxLayout: SoftmaxLayout;
+    type Layout: SoftmaxLayout;
+    /// Memory used temporarily for casting and/or re-layouting
+    /// Can be shared and/or local
+    type Transit: CubeType;
 
     /// Convert accumulator fragment → rowwise intermediate
     fn rowwise_mut(&mut self) -> &mut Self::Rowwise;
@@ -28,14 +34,23 @@ pub trait SoftmaxPipeline<Acc: Float> {
 
     /// Zero out the accumulator
     fn zero(&mut self);
+
+    /// Create the transit component of the pipeline
+    fn transit(
+        #[comptime] tile_size: AttentionTileSize,
+        #[comptime] num_planes: usize,
+    ) -> Self::Transit;
 }
 
 #[cube]
 pub trait AccumulatorPipeline<Acc: Float> {
-    /// Original accumulator fragment
-    type MatmulAccumulator: CubeType;
+    /// Format the value matmul uses for accumulator
+    type ValueAccFormat: CubeType;
     /// Rowwise intermediate (fragment or local tile)
     type Rowwise: AccumulatorRowwise<Acc>;
+    /// Memory used temporarily for casting and/or re-layouting
+    /// Can be shared and/or local
+    type Transit: CubeType;
 
     /// Convert accumulator fragment → rowwise intermediate
     fn rowwise_mut(&mut self) -> &mut Self::Rowwise;
@@ -47,4 +62,10 @@ pub trait AccumulatorPipeline<Acc: Float> {
 
     /// Zero out the accumulator
     fn zero(&mut self);
+
+    /// Create the transit component of the pipeline
+    fn transit(
+        #[comptime] tile_size: AttentionTileSize,
+        #[comptime] num_planes: usize,
+    ) -> Self::Transit;
 }

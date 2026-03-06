@@ -1,6 +1,10 @@
 use std::fmt::Display;
 
 use cubecl::{Runtime, client::ComputeClient};
+use cubek_std::{
+    PartitionSize, TileSize,
+    tile::{Filled, Strided},
+};
 
 use crate::{
     components::{
@@ -18,15 +22,11 @@ use crate::{
             ColMajorTilingOrder, PartitionBuffering, PlaneMatmulFamily, RowMajorTilingOrder,
             StridedStageFamily,
         },
-        tile::{
-            TileMatmulFamily,
-            io::{Filled, Strided},
-            plane_vec_mat_inner_product::PlaneVecMatInnerProduct,
-        },
+        tile::{TileMatmulFamily, plane_vec_mat_inner_product::PlaneVecMatInnerProduct},
     },
     definition::{
         CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulElems, MatmulProblem,
-        MatmulSetupError, PartitionSize, SmAllocation, TileSize, TilingBlueprint, TilingScheme,
+        MatmulSetupError, SmAllocation, TilingBlueprint, TilingScheme,
     },
     launch::RuntimeConfig,
     routines::{BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine},

@@ -1,3 +1,6 @@
+use crate::components::global::read::{
+    FullStageGlobalReader, PartialLoadingStrategy, PartialStageGlobalReader, StageBuffer,
+};
 use crate::components::global::{
     GlobalMatmul, GlobalWriter, SharedGlobalMatmulConfig,
     read::{FullLoaderStage, PartialLoaderStage},
@@ -11,16 +14,11 @@ use crate::components::global::{
 };
 use crate::components::stage;
 use crate::components::stage::StageConfig;
-use crate::components::{
-    global::read::{
-        FullStageGlobalReader, PartialLoadingStrategy, PartialStageGlobalReader, StageBuffer,
-    },
-    tile::io::Strided,
-};
 use crate::definition::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS};
 use crate::launch::RuntimeConfig;
 use cubecl::prelude::*;
 use cubecl::std::tensor::{View, layout::Coords2d};
+use cubek_std::tile::Strided;
 use std::marker::PhantomData;
 
 /// Performs matrix multiplication at the global level, with planes pipelining their work using two buffers:

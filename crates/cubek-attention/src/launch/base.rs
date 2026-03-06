@@ -4,6 +4,7 @@ use crate::definition::AttentionSetupError;
 use crate::definition::{AttentionDims, AttentionGlobalTypes, AttentionOptions, AttentionProblem};
 use crate::launch::args::{TensorArgs, TensorInputsLaunch};
 use crate::routines::DeviceSettings;
+use crate::routines::whitebox_accelerated::WhiteboxAcceleratedRoutine;
 use crate::routines::{
     Routine, blackbox_accelerated::BlackboxAcceleratedRoutine, unit::UnitRoutine,
 };
@@ -21,6 +22,7 @@ pub enum BlueprintStrategy<R: Routine> {
 #[derive(Debug, Clone)]
 pub enum Strategy {
     BlackboxAccelerated(BlueprintStrategy<BlackboxAcceleratedRoutine>),
+    WhiteboxAccelerated(BlueprintStrategy<WhiteboxAcceleratedRoutine>),
     Unit(BlueprintStrategy<UnitRoutine>),
 }
 
@@ -39,6 +41,19 @@ pub fn launch_ref<R: Runtime>(
     match strategy {
         Strategy::BlackboxAccelerated(strategy) => {
             launch_attention::<R, BlackboxAcceleratedRoutine>(
+                client,
+                query,
+                key,
+                value,
+                mask,
+                out,
+                attention_global_types,
+                strategy,
+                attention_options,
+            )
+        }
+        Strategy::WhiteboxAccelerated(strategy) => {
+            launch_attention::<R, WhiteboxAcceleratedRoutine>(
                 client,
                 query,
                 key,
@@ -92,7 +107,7 @@ pub fn launch_attention<R: Runtime, A: Routine>(
             query.required_address_type(),
             key.required_address_type(),
             value.required_address_type(),
-            mask.clone()
+            mask.as_ref()
                 .map(|mask| mask.required_address_type())
                 .unwrap_or_default(),
             out.required_address_type(),

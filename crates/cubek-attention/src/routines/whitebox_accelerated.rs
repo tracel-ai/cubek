@@ -1,0 +1,143 @@
+use cubecl::CubeDim;
+use cubecl::prelude::CubePrimitive;
+use cubek_matmul::components::{global::PartitionedStageFamily, stage::StridedStageFamily};
+
+use crate::components::stage::plane::PlanePartitionStageAttentionFamily;
+use crate::components::tile::accelerated_whitebox::WhiteboxAcceleratedTileAttention;
+use crate::definition::AttentionTileSize;
+use crate::definition::{
+    AttentionBlueprint, AttentionElems, AttentionPartitionSize, AttentionProblem,
+    AttentionSetupError, AttentionStageSize, AttentionTilingScheme, HypercubeBlueprint,
+};
+use crate::launch::BlueprintStrategy;
+use crate::routines::{DeviceSettings, LaunchInfo};
+use crate::{
+    components::{
+        batch::simple::SimpleBatchAttentionFamily, global::simple::SimpleGlobalAttentionFamily,
+    },
+    routines::Routine,
+};
+
+#[derive(Debug, Clone)]
+pub struct WhiteboxAcceleratedRoutine {}
+
+impl Routine for WhiteboxAcceleratedRoutine {
+    type TileAttention = WhiteboxAcceleratedTileAttention;
+    type StageAttention = PlanePartitionStageAttentionFamily<
+        Self::TileAttention,
+        StridedStageFamily,
+        StridedStageFamily,
+        PartitionedStageFamily,
+    >;
+    type GlobalAttention = SimpleGlobalAttentionFamily<Self::StageAttention>;
+    type BatchAttention = SimpleBatchAttentionFamily<Self::GlobalAttention>;
+
+    type Strategy = ();
+    type Blueprint = AttentionBlueprint;
+
+    fn prepare(
+        problem: &AttentionProblem,
+        device_settings: &DeviceSettings,
+        strategy: BlueprintStrategy<Self>,
+    ) -> Result<LaunchInfo<Self::Blueprint>, AttentionSetupError> {
+        let blueprint = blueprint(problem, device_settings, strategy)?;
+
+        let dtypes = AttentionElems::from_global_types(
+            &problem.global_dtypes,
+            half::f16::as_type_native_unchecked(),
+            &problem.options.accumulator_precision,
+        );
+
+        let num_planes = blueprint.tiling_scheme.stage_size.seq_q;
+        let cube_dim = CubeDim::new_2d(blueprint.plane_dim, num_planes);
+
+        let cube_count_plan = blueprint
+            .hypercube_blueprint
+            .cube_count_plan(&problem.dims, &blueprint);
+
+        Ok(LaunchInfo {
+            blueprint,
+            dtypes,
+            cube_dim,
+            cube_count_plan,
+            address_type: problem.address_type,
+        })
+    }
+}
+
+fn blueprint(
+    problem: &AttentionProblem,
+    launch_settings: &DeviceSettings,
+    strategy: BlueprintStrategy<WhiteboxAcceleratedRoutine>,
+) -> Result<AttentionBlueprint, AttentionSetupError> {
+    match strategy {
+        BlueprintStrategy::Forced(attention_blueprint) => validate(problem, attention_blueprint),
+        BlueprintStrategy::Inferred(_) => {
+            #[cfg(target_os = "macos")]
+            let tile_size = AttentionTileSize {
+                seq_q: 8,
+                head_dim: 8,
+                seq_kv: 8,
+                val_dim: 8,
+            };
+            #[cfg(not(target_os = "macos"))]
+            let tile_size = AttentionTileSize {
+                seq_q: 16,
+                head_dim: 16,
+                seq_kv: 16,
+                val_dim: 16,
+            };
+
+            let partition_head_dim = problem.dims.head_dim as u32 / tile_size.head_dim;
+
+            let tiling_scheme = AttentionTilingScheme {
+                tile_size,
+                partition_size: AttentionPartitionSize {
+                    seq_q: 1,
+                    head_dim: partition_head_dim,
+                    seq_kv: 2,
+                    val_dim: partition_head_dim,
+                },
+                stage_size: AttentionStageSize { seq_q: 4 },
+            };
+
+            let blueprint = AttentionBlueprint {
+                hypercube_blueprint: HypercubeBlueprint {},
+                plane_dim: launch_settings.plane_dim,
+                reuse_key_value: false,
+                two_rows_in_array_tile: false,
+                line_sizes: launch_settings.line_sizes.clone(),
+                masked: problem.masked,
+                causal: problem.options.causal,
+                tiling_scheme,
+                check_bounds: tiling_scheme.check_bounds(&problem.dims),
+            };
+
+            validate(problem, blueprint)
+        }
+    }
+}
+
+fn validate(
+    problem: &AttentionProblem,
+    blueprint: AttentionBlueprint,
+) -> Result<AttentionBlueprint, AttentionSetupError> {
+    if problem.dims.head_dim as u32 % blueprint.tiling_scheme.tile_size.head_dim != 0 {
+        return Err(AttentionSetupError::InvalidConfig(Box::new(
+            "Tile size head dim must divide problem head dim".to_string(),
+        )));
+    }
+
+    if blueprint.tiling_scheme.partition_size.head_dim * blueprint.tiling_scheme.tile_size.head_dim
+        != problem.dims.head_dim as u32
+    {
+        return Err(AttentionSetupError::InvalidConfig(Box::new(format!(
+            "Tiling scheme's total head dim ({}) does not match problem's head dim ({})",
+            blueprint.tiling_scheme.partition_size.head_dim
+                * blueprint.tiling_scheme.tile_size.head_dim,
+            problem.dims.head_dim
+        ))));
+    }
+
+    Ok(blueprint)
+}

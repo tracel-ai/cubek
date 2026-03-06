@@ -1,10 +1,10 @@
 use cubecl;
 use cubecl::prelude::*;
-use cubek_matmul::definition::TileSize;
 
-use crate::components::tile::accelerated::setup::BlackboxAcceleratedAttentionMatmulConfig;
-use crate::components::tile::accelerated::{LocalTile, LocalTileLayout};
+use crate::components::tile::accelerated_blackbox::setup::BlackboxAcceleratedAttentionMatmulConfig;
+use crate::components::tile::accelerated_blackbox::{LocalTile, LocalTileLayout};
 use crate::components::tile::{AccumulatorPipeline, AccumulatorPipelineExpand};
+use crate::definition::AttentionTileSize;
 
 #[derive(CubeType)]
 /// Navigates between cmma fragment (for matmuls) and shared memory (for row wise ops)
@@ -23,28 +23,28 @@ pub struct BlackboxAccumulatorPipeline<E: Float> {
 impl<E: Float> BlackboxAccumulatorPipeline<E> {
     pub fn new(
         shared_memory: &mut SharedMemory<E>,
-        #[comptime] tile_size: TileSize,
+        #[comptime] tile_size: AttentionTileSize,
         #[comptime] config: BlackboxAcceleratedAttentionMatmulConfig,
     ) -> Self {
         let acc_fragment = unsafe {
             cmma::Matrix::<E>::uninitialized(
                 cmma::MatrixIdent::Accumulator,
-                tile_size.m as usize,
-                tile_size.n as usize,
-                tile_size.k as usize,
+                tile_size.seq_q as usize,
+                tile_size.val_dim as usize,
+                tile_size.seq_kv as usize,
                 cmma::MatrixLayout::Undefined,
             )
         };
 
         let array_tile_layout = LocalTileLayout::new(
-            (tile_size.m, tile_size.n),
+            (tile_size.seq_q, tile_size.val_dim),
             config.shared.plane_dim,
             config.inner_layout,
         );
 
         let local_tile = LocalTile::new(array_tile_layout);
 
-        let smem_slot_size = tile_size.m * tile_size.n;
+        let smem_slot_size = tile_size.seq_q * tile_size.val_dim;
         let smem_slice_start = UNIT_POS_Y * smem_slot_size;
         let smem_slice = shared_memory.slice_mut(
             smem_slice_start as usize,
@@ -55,15 +55,16 @@ impl<E: Float> BlackboxAccumulatorPipeline<E> {
             acc_fragment,
             smem_slice,
             local_tile,
-            stride: tile_size.n,
+            stride: tile_size.val_dim,
         }
     }
 }
 
 #[cube]
 impl<E: Float> AccumulatorPipeline<E> for BlackboxAccumulatorPipeline<E> {
-    type MatmulAccumulator = cmma::Matrix<E>;
+    type ValueAccFormat = cmma::Matrix<E>;
     type Rowwise = LocalTile<E>;
+    type Transit = SharedMemory<E>;
 
     fn rowwise_mut(&mut self) -> &mut Self::Rowwise {
         cmma::store(
@@ -97,5 +98,12 @@ impl<E: Float> AccumulatorPipeline<E> for BlackboxAccumulatorPipeline<E> {
 
     fn zero(&mut self) {
         cmma::fill(&self.acc_fragment, E::from_int(0));
+    }
+
+    fn transit(
+        #[comptime] tile_size: AttentionTileSize,
+        #[comptime] num_planes: usize,
+    ) -> Self::Transit {
+        SharedMemory::new(tile_size.seq_kv as usize * tile_size.val_dim as usize * num_planes)
     }
 }

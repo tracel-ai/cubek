@@ -1,6 +1,7 @@
 use cubecl::prelude::*;
+use cubek_std::InvalidConfigError;
 
-use crate::{components::global::PlaneFlowConfig, definition::InvalidConfigError};
+use crate::components::global::PlaneFlowConfig;
 
 #[derive(Debug)]
 /// Number of compute primitives required by some component, specified as either units or planes.

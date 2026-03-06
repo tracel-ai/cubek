@@ -1,15 +1,12 @@
 use crate::components::tile::SharedTileConfig;
-use crate::components::tile::io::TileKind;
+use crate::components::tile::TileMatmulFamily;
 use crate::components::tile::plane_vec_mat_inner_product::config::PlaneVecMatInnerProductConfig;
 use crate::components::tile::plane_vec_mat_inner_product::matmul::PlaneVecMatInnerProduct;
-use crate::components::tile::{TileMatmulFamily, io::Strided};
 use crate::components::{
     resource::CubeDimResource,
     tile::plane_vec_mat_inner_product::reader::{MatrixFragmentReader, MatrixStageReader},
 };
-use crate::definition::{
-    InvalidConfigError, MatmulAvailabilityError, MatmulElems, MatmulSetupError, MatrixLayout,
-};
+use crate::definition::{MatmulAvailabilityError, MatmulElems, MatmulSetupError};
 use crate::definition::{MatmulLineSizes, TilingBlueprint};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
@@ -17,6 +14,9 @@ use cubecl::{
     features::{Plane, TypeUsage},
     ir::DeviceProperties,
 };
+use cubek_std::InvalidConfigError;
+use cubek_std::tile::Strided;
+use cubek_std::tile::TileKind;
 
 impl<Kind: TileKind> TileMatmulFamily for PlaneVecMatInnerProduct<Kind>
 where
@@ -72,13 +72,13 @@ where
     ) -> Result<(), MatmulSetupError> {
         check_availability(client, dtypes)?;
 
-        if blueprint.lhs_layout != MatrixLayout::RowMajor {
+        if blueprint.lhs_layout != cubek_std::MatrixLayout::RowMajor {
             return Err(MatmulSetupError::InvalidConfig(Box::new(
                 "Only Row Major layout is supported for Lhs",
             )));
         }
 
-        if blueprint.rhs_layout != MatrixLayout::ColMajor {
+        if blueprint.rhs_layout != cubek_std::MatrixLayout::ColMajor {
             return Err(MatmulSetupError::InvalidConfig(Box::new(
                 "Only Col Major layout is supported for Rhs",
             )));

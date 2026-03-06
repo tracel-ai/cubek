@@ -4,12 +4,12 @@ use cubecl::std::{
     tensor::{View, layout::Coords2d},
     type_size,
 };
+use cubek_std::MatrixLayout;
 
 use crate::components::{
     global::GlobalReaderConfig,
     stage::{StridedStageMemory, TilingLayout},
 };
-use crate::definition::MatrixLayout;
 
 /// The instruction has a max width of 128 bits, even on Blackwell which supports 256-bit loads
 pub(crate) const ASYNC_COPY_WIDTH: u32 = 128;

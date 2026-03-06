@@ -1,17 +1,17 @@
+use crate::components::global::read::{FullLoadingStrategy, validate_tma_with_problem};
 use crate::components::global::read::{validate_async_barrier, validate_tma};
 use crate::components::global::{PlaneFlowPartition, read::async_tma::AsyncTma};
 use crate::components::stage::StridedStageFamily;
-use crate::components::stage::{StridedStageMemory, SwizzleMode};
+use crate::components::stage::StridedStageMemory;
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
 use crate::components::{global::multi_stage::LoadMaxRoundPlaneCount, stage::TmaTilingLayout};
-use crate::components::{
-    global::read::{FullLoadingStrategy, validate_tma_with_problem},
-    tile::io::Strided,
-};
-use crate::definition::{InvalidConfigError, MatmulElems, MatmulProblem, MatrixLayout, StageIdent};
+use crate::definition::{MatmulElems, MatmulProblem, StageIdent};
 use crate::{components::global::GlobalReaderConfig, launch::RuntimeConfig};
 use cubecl::prelude::*;
 use cubecl::{ir::DeviceProperties, prelude::barrier::Barrier};
+use cubek_std::stage::SwizzleMode;
+use cubek_std::tile::Strided;
+use cubek_std::{InvalidConfigError, MatrixLayout};
 
 use super::{LoadingJob, LoadingValidation};
 

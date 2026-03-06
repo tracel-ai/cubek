@@ -5,14 +5,14 @@ use crate::{
             PartitionedStageFamily, WriteEvent, WriteEventExpand, WriteEventListener,
             read::tiled::{TiledCoords, TiledLayout},
         },
-        stage::{PlanePartitioner, StageMemoryConfig, StagePartitioner},
-        tile::StridedTile,
+        stage::{PlanePartitioner, StagePartitioner},
     },
     definition::{MatrixPrecision, StageIdent},
 };
 use cubecl::prelude::*;
 use cubecl::std::tensor::View;
 use cubecl::std::tensor::layout::Coords2d;
+use cubek_std::{stage::StageMemoryConfig, tile::StridedTile};
 
 #[derive(CubeType)]
 /// Writes tiles from out shared memory to output global memory

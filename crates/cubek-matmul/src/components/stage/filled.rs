@@ -1,10 +1,8 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
+use cubek_std::tile::Filled;
 
-use crate::components::{
-    stage::{Stage, StageFamily, TilingLayout},
-    tile::io::Filled,
-};
+use crate::components::stage::{Stage, StageFamily, TilingLayout};
 
 pub struct FilledStageFamily;
 

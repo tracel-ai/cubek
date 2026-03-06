@@ -11,11 +11,11 @@ use cubek_matmul::{
             },
         },
         stage::{NoTilingLayout, TilingValidation},
-        tile::io::Strided,
     },
-    definition::{InvalidConfigError, MatmulElems, MatmulProblem, StageIdent},
+    definition::{MatmulElems, MatmulProblem, StageIdent},
     launch::RuntimeConfig,
 };
+use cubek_std::{InvalidConfigError, tile::Strided};
 
 use crate::components::stage::{
     bias_stage::{BiasStageFamily, BiasStageMemory},

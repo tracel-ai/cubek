@@ -13,12 +13,13 @@ use crate::components::stage::StageConfig;
 use crate::components::{global::GlobalMatmulFamily, stage};
 use crate::components::{global::MaxGlobalReaderPlanes, stage::NumStages};
 use crate::definition::MatmulLineSizes;
+use crate::definition::StageIdent;
 use crate::definition::TilingBlueprint;
 use crate::definition::{MatmulElems, MatmulSetupError};
 use crate::definition::{MatmulPrecision, MatmulProblem};
-use crate::definition::{MatrixLayout, StageIdent};
 use crate::launch::RuntimeConfig;
 use cubecl::{ir::DeviceProperties, prelude::*};
+use cubek_std::MatrixLayout;
 use std::marker::PhantomData;
 
 /// Double buffering matmul family for any precision

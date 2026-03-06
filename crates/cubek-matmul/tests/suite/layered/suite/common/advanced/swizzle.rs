@@ -1,7 +1,8 @@
 #[cfg(not(feature = "matmul_tests_swizzle"))]
 mod no_swizzle {
     use super::*;
-    use cubek_matmul::{components::stage::SwizzleMode, definition::SwizzleModes};
+    use cubek_matmul::definition::SwizzleModes;
+    use cubek_std::stage::SwizzleMode;
 
     fn swizzle() -> SwizzleModes {
         SwizzleModes {
@@ -17,7 +18,8 @@ mod no_swizzle {
 #[cfg(feature = "matmul_tests_swizzle")]
 mod b32 {
     use super::*;
-    use cubek_matmul::{components::stage::SwizzleMode, definition::SwizzleModes};
+    use cubek_matmul::definition::SwizzleModes;
+    use cubek_std::stage::SwizzleMode;
 
     fn swizzle() -> SwizzleModes {
         SwizzleModes {
@@ -33,7 +35,8 @@ mod b32 {
 #[cfg(feature = "matmul_tests_swizzle")]
 mod b64 {
     use super::*;
-    use cubek_matmul::{components::stage::SwizzleMode, definition::SwizzleModes};
+    use cubek_matmul::definition::SwizzleModes;
+    use cubek_std::stage::SwizzleMode;
 
     fn swizzle() -> SwizzleModes {
         SwizzleModes {
@@ -49,7 +52,8 @@ mod b64 {
 #[cfg(feature = "matmul_tests_swizzle")]
 mod b128 {
     use super::*;
-    use cubek_matmul::{components::stage::SwizzleMode, definition::SwizzleModes};
+    use cubek_matmul::definition::SwizzleModes;
+    use cubek_std::stage::SwizzleMode;
 
     fn swizzle() -> SwizzleModes {
         SwizzleModes {

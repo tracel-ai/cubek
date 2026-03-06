@@ -1,13 +1,12 @@
 use std::marker::PhantomData;
 
 use cubecl::prelude::*;
-
-use crate::components::tile::{
-    StridedTile,
-    io::{Filled, Strided, Tile, TileKind},
-    plane_vec_mat_inner_product::LineContainer,
+use cubek_std::{
+    MatrixLayout,
+    tile::{Filled, Strided, StridedTile, Tile, TileKind},
 };
-use crate::definition::MatrixLayout;
+
+use crate::components::tile::plane_vec_mat_inner_product::LineContainer;
 
 /// Reader for the vector side of the VecMat operation
 #[derive(CubeType)]

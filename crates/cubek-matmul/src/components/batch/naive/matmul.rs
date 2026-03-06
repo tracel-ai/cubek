@@ -3,7 +3,6 @@ use std::marker::PhantomData;
 use crate::components::batch::base::BatchMatmulFamily;
 use crate::components::batch::naive::{NaiveBatchMatmulFamily, NaiveBlueprint};
 use crate::components::batch::{BatchConfig as _, SliceIndex};
-use crate::definition::MatrixLayout;
 
 use crate::{
     components::batch::{BatchMatmul, naive::NaiveMatmulConfig},
@@ -14,6 +13,7 @@ use cubecl::cube;
 use cubecl::prelude::*;
 use cubecl::std::tensor::View;
 use cubecl::std::tensor::layout::Coords2d;
+use cubek_std::MatrixLayout;
 
 #[cube(launch_unchecked, address_type = "dynamic")]
 /// Launches the matmul kernel

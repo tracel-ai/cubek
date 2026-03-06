@@ -3,7 +3,6 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
 use cubek_matmul::definition::AvailableLineSizes;
 use cubek_matmul::definition::MatmulIdent;
-use cubek_matmul::definition::MatrixLayout;
 use cubek_matmul::launch::ConcreteOutputFactory;
 use cubek_matmul::launch::ConcreteOutputFactory as _;
 
@@ -19,6 +18,7 @@ use cubek_matmul::launch::TensorMapInputs;
 use cubek_matmul::launch::TensorOutput;
 use cubek_matmul::routines::BlueprintStrategy;
 use cubek_matmul::routines::Routine;
+use cubek_std::MatrixLayout;
 use cubek_test_utils::DataKind;
 use cubek_test_utils::ExecutionOutcome;
 use cubek_test_utils::HostData;

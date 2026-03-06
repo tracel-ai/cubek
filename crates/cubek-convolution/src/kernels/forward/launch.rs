@@ -11,12 +11,13 @@ use crate::{
 };
 use crate::{components::ConvSetupError, kernels::forward::selector::launch_kernel_concrete};
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
+use cubek_matmul::launch::MatmulInputBinding;
 use cubek_matmul::routines::BlueprintStrategy;
 use cubek_matmul::{
-    components::tile::{cmma::CmmaMatmul, io::Strided, mma::MmaMatmul},
-    definition::{AvailableLineSizes, MatmulElems, MatrixLayout},
+    components::tile::{cmma::CmmaMatmul, mma::MmaMatmul},
+    definition::{AvailableLineSizes, MatmulElems},
 };
-use cubek_matmul::{definition, launch::MatmulInputBinding};
+use cubek_std::{MatrixLayout, tile::Strided};
 use derive_new::new;
 
 macro_rules! with_tile_kind {
@@ -142,8 +143,9 @@ where
 
     let op = ConvolutionOperation::Forward;
 
-    let input_data = Alg::correct_layout(client, input.data().clone(), dtypes.lhs_global, op)?;
-    let weight_data = Alg::correct_layout(client, weight.data().clone(), dtypes.rhs_global, op)?;
+    let input_data = Alg::correct_layout(client, input.clone().into_data(), dtypes.lhs_global, op)?;
+    let weight_data =
+        Alg::correct_layout(client, weight.clone().into_data(), dtypes.rhs_global, op)?;
 
     let mut input = input.clone();
     let mut weight = weight.clone();
@@ -167,8 +169,8 @@ where
         k: c * kernel_shape.iter().product::<usize>(),
         lhs_strides: input.data().strides.clone(),
         rhs_strides: weight.data().strides.clone(),
-        lhs_layout: definition::MatrixLayout::RowMajor,
-        rhs_layout: definition::MatrixLayout::ColMajor,
+        lhs_layout: MatrixLayout::RowMajor,
+        rhs_layout: MatrixLayout::ColMajor,
         kernel_size: kernel_shape.iter().map(|it| *it as u32).collect(),
         stride: stride.iter().map(|it| *it as u32).collect(),
         padding: padding.iter().map(|it| *it as i32).collect(),

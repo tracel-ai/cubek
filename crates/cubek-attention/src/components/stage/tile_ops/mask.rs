@@ -1,6 +1,7 @@
 use cubecl;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
+use cubek_std::tile::StridedTile;
 
 use crate::components::tile::{
     FragmentMask, FragmentMaskExpand, SoftmaxLayout, SoftmaxLayoutExpand,
@@ -8,7 +9,6 @@ use crate::components::tile::{
 use crate::components::tile::{TileAttention, TileAttentionConfig};
 use crate::definition::AttentionPrecision;
 use crate::definition::attention_types::MSK;
-use cubek_matmul::components::tile::StridedTile;
 
 use cubecl::std::tensor::layout::Coordinates;
 
