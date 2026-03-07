@@ -20,15 +20,15 @@ use cubecl::{Runtime, client::ComputeClient, frontend::TensorBinding};
 pub fn launch_ref<R: Runtime, A: Routine<()>>(
     client: &ComputeClient<R>,
     lhs: MatmulInputBinding<R>,
-    mut rhs: MatmulInputBinding<R>,
+    rhs: MatmulInputBinding<R>,
     out: TensorBinding<R>,
     blueprint_strategy: &BlueprintStrategy<(), A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
-    let mut lhs = if matrix_batch_layout(&lhs.data().strides, lhs.scheme())
+    let lhs = if matrix_batch_layout(&lhs.data().strides, lhs.scheme())
         == MatrixBatchLayout::HighlyPermuted
     {
-        lhs.into_contiguous(client, &mut rhs)?
+        lhs.into_contiguous(client)?
     } else {
         lhs
     };
@@ -36,7 +36,7 @@ pub fn launch_ref<R: Runtime, A: Routine<()>>(
     let rhs = if matrix_batch_layout(&rhs.data().strides, rhs.scheme())
         == MatrixBatchLayout::HighlyPermuted
     {
-        rhs.into_contiguous(client, &mut lhs)?
+        rhs.into_contiguous(client)?
     } else {
         rhs
     };
@@ -67,12 +67,12 @@ pub fn launch_ref<R: Runtime, A: Routine<()>>(
 pub fn launch_ref_tma<R: Runtime, A: Routine<(), Blueprint = TilingBlueprint>>(
     client: &ComputeClient<R>,
     lhs: MatmulInputBinding<R>,
-    mut rhs: MatmulInputBinding<R>,
+    rhs: MatmulInputBinding<R>,
     out: TensorBinding<R>,
     blueprint_strategy: &BlueprintStrategy<(), A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
-    let mut lhs = match matrix_batch_layout(&lhs.data().strides, lhs.scheme()) {
+    let lhs = match matrix_batch_layout(&lhs.data().strides, lhs.scheme()) {
         MatrixBatchLayout::Contiguous
         | MatrixBatchLayout::MildlyPermuted {
             transposed: _,
@@ -82,7 +82,7 @@ pub fn launch_ref_tma<R: Runtime, A: Routine<(), Blueprint = TilingBlueprint>>(
             transposed: _,
             batch_swap: true,
         }
-        | MatrixBatchLayout::HighlyPermuted => lhs.into_contiguous(client, &mut rhs)?,
+        | MatrixBatchLayout::HighlyPermuted => lhs.into_contiguous(client)?,
     };
 
     let rhs = match matrix_batch_layout(&rhs.data().strides, rhs.scheme()) {
@@ -95,7 +95,7 @@ pub fn launch_ref_tma<R: Runtime, A: Routine<(), Blueprint = TilingBlueprint>>(
             transposed: _,
             batch_swap: true,
         }
-        | MatrixBatchLayout::HighlyPermuted => rhs.into_contiguous(client, &mut lhs)?,
+        | MatrixBatchLayout::HighlyPermuted => rhs.into_contiguous(client)?,
     };
 
     let line_sizes = AvailableLineSizes::from_type_size_tma(client, out.elem_size);

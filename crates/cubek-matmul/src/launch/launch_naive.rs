@@ -18,7 +18,7 @@ use crate::routines::{BlueprintStrategy, Routine as _};
 pub fn launch_ref<R: Runtime>(
     client: &ComputeClient<R>,
     lhs: MatmulInputBinding<R>,
-    mut rhs: MatmulInputBinding<R>,
+    rhs: MatmulInputBinding<R>,
     out: TensorBinding<R>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
@@ -29,8 +29,8 @@ pub fn launch_ref<R: Runtime>(
     let lhs_layout = matrix_batch_layout(&lhs.data().strides, lhs.scheme());
     let rhs_layout = matrix_batch_layout(&rhs.data().strides, rhs.scheme());
 
-    let mut lhs = if !matches!(lhs_layout, MatrixBatchLayout::Contiguous) {
-        lhs.into_contiguous(client, &mut rhs)?
+    let lhs = if !matches!(lhs_layout, MatrixBatchLayout::Contiguous) {
+        lhs.into_contiguous(client)?
     } else {
         lhs
     };
@@ -38,9 +38,9 @@ pub fn launch_ref<R: Runtime>(
     // we swap the dimensions to achieve memory-coalescing:
     // consecutive elements of a column in the original rhs tensor will now be stored
     // consecutively in memory, which allows to fetch them with fewer memory instructions
-    let correct_rhs_layout = |mut rhs: MatmulInputBinding<R>, lhs: &mut MatmulInputBinding<R>| {
+    let correct_rhs_layout = |mut rhs: MatmulInputBinding<R>| {
         rhs.swap_dims(dim1, dim2);
-        let mut rhs = rhs.into_contiguous(client, lhs)?;
+        let mut rhs = rhs.into_contiguous(client)?;
 
         rhs.swap_dims(dim1, dim2);
 
@@ -49,7 +49,7 @@ pub fn launch_ref<R: Runtime>(
     };
 
     let rhs = match rhs_layout {
-        MatrixBatchLayout::Contiguous => correct_rhs_layout(rhs, &mut lhs)?,
+        MatrixBatchLayout::Contiguous => correct_rhs_layout(rhs)?,
         MatrixBatchLayout::MildlyPermuted {
             transposed,
             batch_swap,
@@ -57,10 +57,10 @@ pub fn launch_ref<R: Runtime>(
             if transposed && !batch_swap {
                 rhs
             } else {
-                correct_rhs_layout(rhs, &mut lhs)?
+                correct_rhs_layout(rhs)?
             }
         }
-        MatrixBatchLayout::HighlyPermuted => correct_rhs_layout(rhs, &mut lhs)?,
+        MatrixBatchLayout::HighlyPermuted => correct_rhs_layout(rhs)?,
     };
 
     let lhs_shape = lhs.shape();
