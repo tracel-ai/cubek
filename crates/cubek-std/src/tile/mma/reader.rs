@@ -15,9 +15,17 @@ pub trait MmaFragmentReader {
     type TileKind: TileKind;
 
     /// Fill a fragment with data, with the implementation depending on the tile kind.
-    fn load_fragment<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
-        tile: &<Self::TileKind as TileKind>::Tile<V>,
-        fragment: &mut Array<Line<E>>,
+    fn load_fragment<
+        E: Numeric,
+        N: Size,
+        V: Numeric,
+        NV: Size,
+        A: Numeric,
+        B: Numeric,
+        CD: Numeric,
+    >(
+        tile: &<Self::TileKind as TileKind>::Tile<V, NV>,
+        fragment: &mut Array<Line<E, N>>,
         def: MmaDefinition<A, B, CD>,
         #[comptime] ident: MatrixIdent,
         #[comptime] layout: MatrixLayout,
@@ -37,9 +45,17 @@ pub struct MmaStageReader<Kind: TileKind> {
 impl MmaFragmentReader for MmaStageReader<Strided> {
     type TileKind = Strided;
 
-    fn load_fragment<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
-        tile: &StridedTile<V>,
-        fragment: &mut Array<Line<E>>,
+    fn load_fragment<
+        E: Numeric,
+        NE: Size,
+        V: Numeric,
+        NV: Size,
+        A: Numeric,
+        B: Numeric,
+        CD: Numeric,
+    >(
+        tile: &StridedTile<V, NV>,
+        fragment: &mut Array<Line<E, NE>>,
         def: MmaDefinition<A, B, CD>,
         #[comptime] ident: MatrixIdent,
         #[comptime] layout: MatrixLayout,
@@ -66,9 +82,17 @@ impl MmaFragmentReader for MmaStageReader<Strided> {
 }
 
 #[cube]
-fn load_manual_transposed<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
-    tile: &StridedTile<V>,
-    fragment: &mut Array<Line<E>>,
+fn load_manual_transposed<
+    E: Numeric,
+    N: Size,
+    V: Numeric,
+    NV: Size,
+    A: Numeric,
+    B: Numeric,
+    CD: Numeric,
+>(
+    tile: &StridedTile<V, NV>,
+    fragment: &mut Array<Line<E, N>>,
     def: MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
@@ -78,7 +102,7 @@ fn load_manual_transposed<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Nu
     let lane_id = UNIT_POS_PLANE;
 
     let (_, stride) = tile.as_unlined();
-    let tile = tile.with_line_size(1usize);
+    let tile = tile.with_line_size::<Const<1>>();
 
     let (stride_row, stride_col) = match layout {
         MatrixLayout::RowMajor => (stride, 1),
@@ -87,7 +111,7 @@ fn load_manual_transposed<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Nu
 
     #[unroll]
     for i in 0..num_lines {
-        let mut line = Line::empty(line_size);
+        let mut line = Line::empty();
         #[unroll]
         for n in 0..line_size {
             let elem_idx = i * line_size + n;
@@ -102,20 +126,28 @@ fn load_manual_transposed<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Nu
 }
 
 #[cube]
-fn load_manual_plain<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
-    tile: &StridedTile<V>,
-    fragment: &mut Array<Line<E>>,
+fn load_manual_plain<
+    E: Numeric,
+    N: Size,
+    V: Numeric,
+    NV: Size,
+    A: Numeric,
+    B: Numeric,
+    CD: Numeric,
+>(
+    tile: &StridedTile<V, NV>,
+    fragment: &mut Array<Line<E, N>>,
     def: MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
 ) {
     let num_lines = def.lines_per_lane(ident);
-    let line_size = def.line_size(ident);
+    let line_size = N::value();
 
     let lane_id = UNIT_POS_PLANE;
     let (_, stride) = tile.as_unlined();
     // Supported on all targets that support manual MMA
-    let tile = tile.with_line_size(line_size);
+    let tile = tile.with_line_size::<N>();
 
     let (stride_row, stride_col) = match layout {
         MatrixLayout::RowMajor => (stride, 1),
@@ -140,9 +172,9 @@ fn load_manual_plain<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeric
 /// packed fp4 isn't supported at all. So these currently fall back to manual loading.
 /// tf32 isn't supported by the instruction at all.
 #[cube]
-fn load_ldmatrix<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
-    tile: &StridedTile<V>,
-    fragment: &mut Array<Line<E>>,
+fn load_ldmatrix<E: Numeric, N: Size, V: Numeric, NV: Size, A: Numeric, B: Numeric, CD: Numeric>(
+    tile: &StridedTile<V, NV>,
+    fragment: &mut Array<Line<E, N>>,
     def: MmaDefinition<A, B, CD>,
     #[comptime] transposed: bool,
     #[comptime] ident: MatrixIdent,
@@ -161,7 +193,7 @@ fn load_ldmatrix<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     let start = tile.stage_offset(start);
 
     let row_slice = tile.stage.slice(start as usize, (start + width) as usize);
-    let regs = def.load_matrix(&row_slice, ident, num_regs, transposed);
+    let regs = def.load_matrix::<_, _, N>(&row_slice, ident, num_regs, transposed);
 
     #[unroll]
     for i in 0..num_regs {
@@ -227,9 +259,17 @@ pub(crate) fn ldmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
 impl MmaFragmentReader for MmaStageReader<Filled> {
     type TileKind = Filled;
 
-    fn load_fragment<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
+    fn load_fragment<
+        E: Numeric,
+        N: Size,
+        V: Numeric,
+        NV: Size,
+        A: Numeric,
+        B: Numeric,
+        CD: Numeric,
+    >(
         value: &V,
-        fragment: &mut Array<Line<E>>,
+        fragment: &mut Array<Line<E, N>>,
         def: MmaDefinition<A, B, CD>,
         #[comptime] ident: MatrixIdent,
         #[comptime] _layout: MatrixLayout,
@@ -237,7 +277,7 @@ impl MmaFragmentReader for MmaStageReader<Filled> {
         #[comptime] _config: MmaIOConfig,
     ) {
         let num_lines = def.lines_per_lane(ident);
-        let value = Line::<E>::cast_from(*value);
+        let value = Line::<E, N>::cast_from(*value);
 
         #[unroll]
         for i in 0..num_lines {
@@ -253,9 +293,17 @@ where
 {
     type TileKind = Option<Inner>;
 
-    fn load_fragment<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
-        tile: &ComptimeOption<Inner::Tile<V>>,
-        fragment: &mut Array<Line<E>>,
+    fn load_fragment<
+        E: Numeric,
+        N: Size,
+        V: Numeric,
+        NV: Size,
+        A: Numeric,
+        B: Numeric,
+        CD: Numeric,
+    >(
+        tile: &ComptimeOption<Inner::Tile<V, NV>>,
+        fragment: &mut Array<Line<E, N>>,
         def: MmaDefinition<A, B, CD>,
         #[comptime] ident: MatrixIdent,
         #[comptime] layout: MatrixLayout,
@@ -267,15 +315,17 @@ where
             ComptimeOption::Some(tile) => MmaStageReader::<Inner>::load_fragment(
                 tile, fragment, def, ident, layout, tile_size, config,
             ),
-            ComptimeOption::None => MmaStageReader::<Filled>::load_fragment::<E, V, A, B, CD>(
-                &V::from_int(0),
-                fragment,
-                def,
-                ident,
-                layout,
-                tile_size,
-                config,
-            ),
+            ComptimeOption::None => {
+                MmaStageReader::<Filled>::load_fragment::<E, N, V, NV, A, B, CD>(
+                    &V::from_int(0),
+                    fragment,
+                    def,
+                    ident,
+                    layout,
+                    tile_size,
+                    config,
+                )
+            }
         }
     }
 }

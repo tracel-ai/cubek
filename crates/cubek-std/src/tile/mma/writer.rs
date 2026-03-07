@@ -11,9 +11,17 @@ pub struct MmaStageWriter {}
 
 #[cube]
 impl MmaStageWriter {
-    pub fn store_fragment<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
-        tile: &mut StridedTile<V, ReadWrite>,
-        fragment: &Array<Line<E>>,
+    pub fn store_fragment<
+        E: Numeric,
+        N: Size,
+        V: Numeric,
+        NV: Size,
+        A: Numeric,
+        B: Numeric,
+        CD: Numeric,
+    >(
+        tile: &mut StridedTile<V, NV, ReadWrite>,
+        fragment: &Array<Line<E, N>>,
         def: MmaDefinition<A, B, CD>,
         #[comptime] ident: MatrixIdent,
         #[comptime] layout: MatrixLayout,
@@ -32,16 +40,24 @@ impl MmaStageWriter {
                 }
             }
             StoreMethod::StoreMatrix => {
-                store_stmatrix::<E, V, A, B, CD>(tile, fragment, def, transposed, ident, m)
+                store_stmatrix::<E, N, V, NV, A, B, CD>(tile, fragment, def, transposed, ident, m)
             }
         }
     }
 }
 
 #[cube]
-fn store_manual_transposed<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
-    tile: &mut StridedTile<V, ReadWrite>,
-    fragment: &Array<Line<E>>,
+fn store_manual_transposed<
+    E: Numeric,
+    N: Size,
+    V: Numeric,
+    NV: Size,
+    A: Numeric,
+    B: Numeric,
+    CD: Numeric,
+>(
+    tile: &mut StridedTile<V, NV, ReadWrite>,
+    fragment: &Array<Line<E, N>>,
     def: MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
@@ -51,7 +67,7 @@ fn store_manual_transposed<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: N
     let lane_id = UNIT_POS_PLANE;
 
     let (_, stride) = tile.as_unlined_mut();
-    let mut tile = tile.with_line_size(1usize);
+    let mut tile = tile.with_line_size::<Const<1>>();
 
     let (stride_row, stride_col) = match layout {
         MatrixLayout::RowMajor => (stride, 1),
@@ -73,9 +89,17 @@ fn store_manual_transposed<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: N
 }
 
 #[cube]
-fn store_manual_plain<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
-    tile: &mut StridedTile<V, ReadWrite>,
-    fragment: &Array<Line<E>>,
+fn store_manual_plain<
+    E: Numeric,
+    N: Size,
+    V: Numeric,
+    NV: Size,
+    A: Numeric,
+    B: Numeric,
+    CD: Numeric,
+>(
+    tile: &mut StridedTile<V, NV, ReadWrite>,
+    fragment: &Array<Line<E, N>>,
     def: MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
@@ -85,7 +109,7 @@ fn store_manual_plain<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeri
     let lane_id = UNIT_POS_PLANE;
     let (_, stride) = tile.as_unlined_mut();
     // Supported on all targets that support manual MMA
-    let mut tile = tile.with_line_size(line_size);
+    let mut tile = tile.with_line_size::<N>();
 
     let (stride_row, stride_col) = match layout {
         MatrixLayout::RowMajor => (stride, 1),
@@ -111,9 +135,17 @@ fn store_manual_plain<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeri
 /// f16, fp8 needs more handling and packed fp4 isn't supported at all. So these currently fall back
 /// to manual loading. tf32 isn't supported by the instruction at all.
 #[cube]
-fn store_stmatrix<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
-    tile: &mut StridedTile<V, ReadWrite>,
-    fragment: &Array<Line<E>>,
+fn store_stmatrix<
+    E: Numeric,
+    N: Size,
+    V: Numeric,
+    NV: Size,
+    A: Numeric,
+    B: Numeric,
+    CD: Numeric,
+>(
+    tile: &mut StridedTile<V, NV, ReadWrite>,
+    fragment: &Array<Line<E, N>>,
     def: MmaDefinition<A, B, CD>,
     #[comptime] transposed: bool,
     #[comptime] ident: MatrixIdent,
@@ -144,7 +176,7 @@ fn store_stmatrix<E: Numeric, V: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
             transposed,
         );
     } else {
-        let mut frag = Array::lined(num_regs, fragment.line_size());
+        let mut frag = Array::lined(num_regs);
         #[unroll]
         for i in 0..num_regs {
             frag[i] = Line::cast_from(fragment[i]);

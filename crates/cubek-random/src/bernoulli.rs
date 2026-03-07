@@ -23,7 +23,7 @@ impl RandomFamily for BernoulliFamily {
 
 #[cube]
 impl PrngRuntime for Bernoulli {
-    fn inner_loop<E: Numeric>(
+    fn inner_loop<E: Numeric, N: Size>(
         args: Bernoulli,
         write_index_base: usize,
         n_invocations: u32,
@@ -33,11 +33,11 @@ impl PrngRuntime for Bernoulli {
         state_1: &mut u32,
         state_2: &mut u32,
         state_3: &mut u32,
-        output: &mut View<Line<E>, usize, ReadWrite>,
+        output: &mut View<Line<E, N>, usize, ReadWrite>,
     ) {
         let prob = args.probability;
 
-        let mut output_line = Line::empty(line_size);
+        let mut output_line = Line::empty();
 
         let num_iterations = n_values_per_thread / line_size;
         #[unroll(num_iterations <=8)]

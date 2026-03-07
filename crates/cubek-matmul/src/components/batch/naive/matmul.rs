@@ -122,14 +122,15 @@ impl<MP: MatmulPrecision> BatchMatmul<(), MP> for NaiveMatmul<MP> {
         }
 
         let line_size = comptime![Ord::max(lhs.line_size(), rhs.line_size())];
-        let mut sum = Line::empty(line_size).fill(<AccG<MP> as Numeric>::from_int(0));
+        let size!(NA) = line_size;
+        let mut sum = Line::empty().fill(<AccG<MP> as Numeric>::from_int(0));
 
         for k in range_stepped(0u32, k, line_size as u32) {
             let lhs = load_unrolled(&lhs, (m, k), MatrixLayout::RowMajor, line_size);
             let rhs = load_unrolled(&rhs, (k, n), MatrixLayout::ColMajor, line_size);
 
             sum += Line::cast_from(
-                Line::<AccR<MP>>::cast_from(lhs) * Line::<AccR<MP>>::cast_from(rhs),
+                Line::<AccR<MP>, NA>::cast_from(lhs) * Line::<AccR<MP>, NA>::cast_from(rhs),
             );
         }
 

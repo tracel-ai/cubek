@@ -18,7 +18,7 @@ impl<P: ReducePrecision> PlaneReader<P> {
         PlaneReader::<P> { reader }
     }
 
-    pub fn read(&self, line_index: usize) -> (Line<P::EI>, ReduceCoordinate) {
+    pub fn read(&self, line_index: usize) -> (Line<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
         match &self.reader {
             Reader::Parallel(reader) => reader.read_plane(line_index),
             Reader::Perpendicular(reader) => reader.read_plane(line_index),

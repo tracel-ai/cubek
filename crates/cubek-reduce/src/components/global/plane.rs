@@ -1,6 +1,7 @@
 use crate::{
     LineMode, ReduceInstruction, ReducePrecision,
     components::{
+        args::NumericLine,
         global::idle_check,
         instructions::reduce_inplace,
         readers::{Reader, plane::PlaneReader},
@@ -15,9 +16,9 @@ pub struct GlobalFullPlaneReduce;
 
 #[cube]
 impl GlobalFullPlaneReduce {
-    pub fn execute<P: ReducePrecision, Out: Numeric, I: ReduceInstruction<P>>(
-        input: &VirtualTensor<P::EI>,
-        output: &mut VirtualTensor<Out, ReadWrite>,
+    pub fn execute<P: ReducePrecision, Out: NumericLine, I: ReduceInstruction<P>>(
+        input: &VirtualTensor<P::EI, P::SI>,
+        output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         reduce_axis: usize,
         inst: &I,
         #[comptime] line_mode: LineMode,
@@ -68,9 +69,9 @@ impl GlobalFullPlaneReduce {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn reduce_single<P: ReducePrecision, Out: Numeric, I: ReduceInstruction<P>>(
-        input: &VirtualTensor<P::EI>,
-        output: &mut VirtualTensor<Out, ReadWrite>,
+    fn reduce_single<P: ReducePrecision, Out: NumericLine, I: ReduceInstruction<P>>(
+        input: &VirtualTensor<P::EI, P::SI>,
+        output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         reduce_axis: usize,
         reduce_index: usize,
         inst: &I,
@@ -92,7 +93,7 @@ impl GlobalFullPlaneReduce {
         );
         let reader = PlaneReader::<P>::new(reader);
 
-        let mut accumulator = I::null_accumulator(inst, input_line_size);
+        let mut accumulator = I::null_accumulator(inst);
 
         for i in 0..reader.length() {
             let (item, coordinate) = reader.read(i);
@@ -108,7 +109,7 @@ impl GlobalFullPlaneReduce {
         match blueprint.independent {
             true => {
                 let (item, coordinate) = I::read_accumulator(inst, &accumulator);
-                let mut result = I::null_accumulator(inst, input_line_size);
+                let mut result = I::null_accumulator(inst);
                 reduce_inplace::<P, I>(inst, &mut result, item, coordinate, true);
                 result
             }

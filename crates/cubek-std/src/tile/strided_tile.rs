@@ -9,9 +9,9 @@ use crate::stage::as_swizzle_object;
 #[derive(CubeType, Clone, Copy)]
 /// Tile with a linear major dimension, and a strided minor dimension.
 /// Basic tile kind supported by all stage matmuls.
-pub struct StridedTile<ES: Numeric, IO: SliceVisibility = ReadOnly> {
+pub struct StridedTile<ES: Numeric, N: Size, IO: SliceVisibility = ReadOnly> {
     /// Slice containing all data for the stage
-    pub stage: Slice<Line<ES>, IO>,
+    pub stage: Slice<Line<ES, N>, IO>,
     /// Offset of the tile in the stage
     pub start: u32,
     /// End of the tile in the stage, may be wrong with swizzle
@@ -23,21 +23,18 @@ pub struct StridedTile<ES: Numeric, IO: SliceVisibility = ReadOnly> {
     #[cube(comptime)]
     /// Layout of the tile (row-major or column-major).
     pub layout: MatrixLayout,
-    #[cube(comptime)]
-    /// Line size of the slice
-    pub line_size: u32,
 }
 
 #[cube]
-impl<ES: Numeric> StridedTile<ES> {
+impl<ES: Numeric, N: Size> StridedTile<ES, N> {
     /// Creates a tile from a contiguous slice of data.
     ///
     /// The slice length must exactly match the tile size.
     pub fn new_contiguous(
-        stage: Slice<Line<ES>>,
+        stage: Slice<Line<ES, N>>,
         start: u32,
         #[comptime] config: StageMemoryConfig,
-    ) -> StridedTile<ES> {
+    ) -> StridedTile<ES, N> {
         let len = config.elements_per_tile() / config.line_size;
         let layout = config.matrix_layout;
         let stride = match layout {
@@ -47,14 +44,13 @@ impl<ES: Numeric> StridedTile<ES> {
 
         let stride = stride / config.line_size;
 
-        StridedTile::<ES> {
+        StridedTile::<ES, N> {
             stage,
             start,
             end: start + len,
             stride,
             swizzle: as_swizzle_object(config.swizzle),
             layout,
-            line_size: config.line_size,
         }
     }
 
@@ -62,10 +58,10 @@ impl<ES: Numeric> StridedTile<ES> {
     ///
     /// The slice length must exactly match the tile size.
     pub fn new_contiguous_mut(
-        stage: Slice<Line<ES>, ReadWrite>,
+        stage: Slice<Line<ES, N>, ReadWrite>,
         start: u32,
         #[comptime] config: StageMemoryConfig,
-    ) -> StridedTile<ES, ReadWrite> {
+    ) -> StridedTile<ES, N, ReadWrite> {
         let len = config.elements_per_tile() / config.line_size;
         let layout = config.matrix_layout;
         let stride = match layout {
@@ -75,14 +71,13 @@ impl<ES: Numeric> StridedTile<ES> {
 
         let stride = stride / config.line_size;
 
-        StridedTile::<ES, ReadWrite> {
+        StridedTile::<ES, N, ReadWrite> {
             stage,
             start,
             end: start + len,
             stride,
             swizzle: as_swizzle_object(config.swizzle),
             layout,
-            line_size: config.line_size,
         }
     }
 
@@ -90,22 +85,20 @@ impl<ES: Numeric> StridedTile<ES> {
     ///
     /// The slice must include all elements of the tile, though it may include unused gaps.
     pub fn new_strided(
-        stage: Slice<Line<ES>>,
+        stage: Slice<Line<ES, N>>,
         start: u32,
         end: u32,
         stride: u32,
         swizzle: Swizzle,
         #[comptime] layout: MatrixLayout,
-        #[comptime] line_size: u32,
-    ) -> StridedTile<ES> {
-        StridedTile::<ES> {
+    ) -> StridedTile<ES, N> {
+        StridedTile::<ES, N> {
             stage,
             start,
             end,
             stride,
             swizzle,
             layout,
-            line_size,
         }
     }
 
@@ -113,28 +106,26 @@ impl<ES: Numeric> StridedTile<ES> {
     ///
     /// The slice must include all elements of the tile, though it may include unused gaps.
     pub fn new_strided_mut(
-        stage: Slice<Line<ES>, ReadWrite>,
+        stage: Slice<Line<ES, N>, ReadWrite>,
         start: u32,
         end: u32,
         stride: u32,
         swizzle: Swizzle,
         #[comptime] layout: MatrixLayout,
-        #[comptime] line_size: u32,
-    ) -> StridedTile<ES, ReadWrite> {
-        StridedTile::<ES, ReadWrite> {
+    ) -> StridedTile<ES, N, ReadWrite> {
+        StridedTile::<ES, N, ReadWrite> {
             stage,
             start,
             end,
             stride,
             swizzle,
             layout,
-            line_size,
         }
     }
 }
 
 #[cube]
-impl<ES: Numeric> StridedTile<ES, ReadOnly> {
+impl<ES: Numeric, N: Size> StridedTile<ES, N, ReadOnly> {
     /// Returns the tile as an unlined (scalar) slice.
     ///
     /// Returns:
@@ -152,7 +143,7 @@ impl<ES: Numeric> StridedTile<ES, ReadOnly> {
 }
 
 #[cube]
-impl<ES: Numeric> StridedTile<ES, ReadWrite> {
+impl<ES: Numeric, N: Size> StridedTile<ES, N, ReadWrite> {
     /// Returns the tile as an unlined (scalar) slice.
     ///
     /// Returns:
@@ -171,7 +162,7 @@ impl<ES: Numeric> StridedTile<ES, ReadWrite> {
 
     /// Returns the tile as an offset slice. Should only be used when swizzling is definitely not
     /// applicable.
-    pub fn as_slice_mut(&self) -> Slice<Line<ES>, ReadWrite> {
+    pub fn as_slice_mut(&self) -> Slice<Line<ES, N>, ReadWrite> {
         self.stage
             .slice(self.start as usize, self.end as usize)
             .as_mut_unchecked()
@@ -179,9 +170,9 @@ impl<ES: Numeric> StridedTile<ES, ReadWrite> {
 }
 
 #[cube]
-impl<ES: Numeric, IO: SliceVisibility> StridedTile<ES, IO> {
+impl<ES: Numeric, N: Size, IO: SliceVisibility> StridedTile<ES, N, IO> {
     /// Returns a specific line from the tile based on coordinates.
-    pub fn get_line(&self, coor_strided: u32, coor_contiguous: u32) -> Line<ES> {
+    pub fn get_line(&self, coor_strided: u32, coor_contiguous: u32) -> Line<ES, N> {
         let offset = coor_strided * self.stride + coor_contiguous;
         let offset_abs = self.start + offset;
         let type_size = type_size::<ES>(self.stage.line_size());
@@ -196,16 +187,18 @@ impl<ES: Numeric, IO: SliceVisibility> StridedTile<ES, IO> {
     }
 
     #[allow(unused_variables)]
-    pub fn with_line_size(&self, #[comptime] line_size: LineSize) -> Self {
+    pub fn with_line_size<N2: Size>(&self) -> StridedTile<ES, N2, IO> {
+        let line_size = N2::value();
         intrinsic!(|scope| {
             let stage_line_size = self.stage.line_size();
 
             if line_size == self.stage.line_size() {
-                return self;
+                return self.__expand_downcast_method(scope);
             }
 
             let current = stage_line_size;
-            let mut out = self.clone();
+            let mut out: StridedTileExpand<ES, N2, IO> =
+                self.clone().__expand_downcast_method(scope);
 
             if current < line_size {
                 let ratio = (line_size / current) as u32;
@@ -226,8 +219,19 @@ impl<ES: Numeric, IO: SliceVisibility> StridedTile<ES, IO> {
                 out.stride = stride;
             }
 
-            out.stage = out.stage.__expand_with_line_size_method(scope, line_size);
+            out.stage = out.stage.__expand_with_line_size_method(scope);
             out
         })
+    }
+
+    fn downcast<ES2: Numeric, N2: Size>(self) -> StridedTile<ES2, N2, IO> {
+        StridedTile::<ES2, N2, IO> {
+            stage: self.stage.downcast(),
+            start: self.start,
+            end: self.end,
+            stride: self.stride,
+            swizzle: self.swizzle,
+            layout: self.layout,
+        }
     }
 }

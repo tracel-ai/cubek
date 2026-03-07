@@ -1,4 +1,4 @@
-use crate::{LineMode, ReduceInstruction, ReducePrecision};
+use crate::{LineMode, ReduceInstruction, ReducePrecision, components::args::NumericLine};
 use cubecl::{
     prelude::*,
     std::tensor::{
@@ -13,16 +13,16 @@ use cubecl::{
 ///
 /// Depending on the problem kind, writes might be buffered to optimize vectorization, only
 /// happening when [Writer::commit()] is called.
-pub enum Writer<Out: Numeric> {
+pub enum Writer<Out: NumericLine> {
     Parallel(ParallelWriter<Out>),
     Perpendicular(PerpendicularWriter<Out>),
 }
 
 #[cube]
-impl<Out: Numeric> Writer<Out> {
+impl<Out: NumericLine> Writer<Out> {
     pub fn new<P: ReducePrecision>(
-        input: &VirtualTensor<P::EI>,
-        output: &mut VirtualTensor<Out, ReadWrite>,
+        input: &VirtualTensor<P::EI, P::SI>,
+        output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         reduce_axis: usize,
         write_index: usize,
         #[comptime] line_mode: LineMode,
@@ -75,24 +75,24 @@ impl<Out: Numeric> Writer<Out> {
 }
 
 #[derive(CubeType)]
-pub struct ParallelWriter<Out: Numeric> {
-    output: View<Line<Out>, Coords1d, ReadWrite>,
-    buffer: Line<Out>,
+pub struct ParallelWriter<Out: NumericLine> {
+    output: View<Line<Out::T, Out::N>, Coords1d, ReadWrite>,
+    buffer: Line<Out::T, Out::N>,
     axis_size: usize,
     write_index: usize,
 }
 
 #[cube]
-impl<Out: Numeric> ParallelWriter<Out> {
+impl<Out: NumericLine> ParallelWriter<Out> {
     pub fn new<P: ReducePrecision>(
-        input: &VirtualTensor<P::EI>,
-        output: &mut VirtualTensor<Out, ReadWrite>,
+        input: &VirtualTensor<P::EI, P::SI>,
+        output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         reduce_axis: usize,
         write_index: usize,
     ) -> ParallelWriter<Out> {
         ParallelWriter::<Out> {
             output: output.view_mut(PlainLayout::new(output.len())),
-            buffer: Line::empty(output.line_size()),
+            buffer: Line::empty(),
             axis_size: input.shape(reduce_axis),
             write_index,
         }
@@ -104,7 +104,7 @@ impl<Out: Numeric> ParallelWriter<Out> {
         accumulator: I::AccumulatorItem,
         inst: &I,
     ) {
-        let line = I::merge_line::<Out>(inst, accumulator, self.axis_size);
+        let line = I::merge_line::<Out::T>(inst, accumulator, self.axis_size);
         self.buffer[local_index] = line;
     }
 
@@ -122,8 +122,8 @@ impl<Out: Numeric> ParallelWriter<Out> {
 }
 
 #[derive(CubeType)]
-pub struct PerpendicularWriter<Out: Numeric> {
-    output: View<Line<Out>, Coords1d, ReadWrite>,
+pub struct PerpendicularWriter<Out: NumericLine> {
+    output: View<Line<Out::T, Out::N>, Coords1d, ReadWrite>,
     axis_size: usize,
     #[cube(comptime)]
     input_line_size: LineSize,
@@ -133,10 +133,10 @@ pub struct PerpendicularWriter<Out: Numeric> {
 }
 
 #[cube]
-impl<Out: Numeric> PerpendicularWriter<Out> {
+impl<Out: NumericLine> PerpendicularWriter<Out> {
     pub fn new<P: ReducePrecision>(
-        input: &VirtualTensor<P::EI>,
-        output: &mut VirtualTensor<Out, ReadWrite>,
+        input: &VirtualTensor<P::EI, P::SI>,
+        output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         reduce_axis: usize,
         write_index: usize,
     ) -> PerpendicularWriter<Out> {
@@ -158,16 +158,16 @@ impl<Out: Numeric> PerpendicularWriter<Out> {
         accumulator: I::AccumulatorItem,
         inst: &I,
     ) {
-        let out = I::to_output_perpendicular(inst, accumulator, self.axis_size);
+        let out = I::to_output_perpendicular::<Out::T>(inst, accumulator, self.axis_size);
 
         if comptime![self.output_line_size == self.input_line_size] {
-            self.output.write(self.write_index, out);
+            self.output.write(self.write_index, Line::cast_from(out));
         } else {
             let num_iters = comptime![self.input_line_size / self.output_line_size];
 
             #[unroll]
             for i in 0..num_iters {
-                let mut tmp = Line::empty(self.output_line_size);
+                let mut tmp = Line::empty();
 
                 #[unroll]
                 for j in 0..self.output_line_size {

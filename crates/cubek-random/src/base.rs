@@ -50,6 +50,7 @@ pub(crate) fn random<F: RandomFamily, R: Runtime>(
         cube_count,
         cube_dim,
         address_type,
+        output_line_size,
         output,
         ScalarArg::new(seeds[0]),
         ScalarArg::new(seeds[1]),
@@ -101,7 +102,7 @@ pub(crate) trait RandomFamily: Send + Sync + 'static + std::fmt::Debug {
 #[cube]
 pub(crate) trait PrngRuntime: Send + Sync + 'static + PrngArgs {
     #[allow(clippy::too_many_arguments)]
-    fn inner_loop<E: Numeric>(
+    fn inner_loop<E: Numeric, N: Size>(
         args: Self::Args,
         write_index_base: usize,
         n_invocations: u32,
@@ -111,15 +112,15 @@ pub(crate) trait PrngRuntime: Send + Sync + 'static + PrngArgs {
         state_1: &mut u32,
         state_2: &mut u32,
         state_3: &mut u32,
-        output: &mut View<Line<E>, Coords1d, ReadWrite>,
+        output: &mut View<Line<E, N>, Coords1d, ReadWrite>,
     );
 }
 
 type Args<F> = <<F as RandomFamily>::Runtime as PrngArgs>::Args;
 
 #[cube(launch, address_type = "dynamic")]
-fn prng_kernel<F: RandomFamily, E: Numeric>(
-    output: &mut LinearView<Line<E>, ReadWrite>,
+fn prng_kernel<F: RandomFamily, E: Numeric, N: Size>(
+    output: &mut LinearView<Line<E, N>, ReadWrite>,
     seed_0: u32,
     seed_1: u32,
     seed_2: u32,

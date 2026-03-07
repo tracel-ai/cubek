@@ -12,8 +12,8 @@ impl ReduceFamily for Prod {
 
 #[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for Prod {
-    type AccumulatorItem = Line<P::EA>;
-    type SharedAccumulator = SharedMemory<Line<P::EA>>;
+    type AccumulatorItem = Line<P::EA, P::SI>;
+    type SharedAccumulator = SharedMemory<Line<P::EA, P::SI>>;
     type Config = ();
 
     fn requirements(_this: &Self) -> ReduceRequirements {
@@ -23,12 +23,12 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Prod {
     fn from_config(_config: Self::Config) -> Self {
         Prod {}
     }
-    fn null_input(_this: &Self, #[comptime] line_size: LineSize) -> Line<P::EI> {
-        Line::empty(line_size).fill(P::EI::from_int(1))
+    fn null_input(_this: &Self) -> Line<P::EI, P::SI> {
+        Line::empty().fill(P::EI::from_int(1))
     }
 
-    fn null_accumulator(_this: &Self, #[comptime] line_size: LineSize) -> Self::AccumulatorItem {
-        Line::empty(line_size).fill(P::EA::from_int(1))
+    fn null_accumulator(_this: &Self) -> Self::AccumulatorItem {
+        Line::empty().fill(P::EA::from_int(1))
     }
 
     fn assign_accumulator(
@@ -41,8 +41,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Prod {
 
     fn read_accumulator(
         _this: &Self,
-        accumulator: &Line<P::EA>,
-    ) -> (Line<P::EI>, ReduceCoordinate) {
+        accumulator: &Line<P::EA, P::SI>,
+    ) -> (Line<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
         (
             Line::cast_from(*accumulator),
             ReduceCoordinate::new_NotRequired(),
@@ -51,8 +51,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Prod {
     fn reduce(
         _this: &Self,
         accumulator: &Self::AccumulatorItem,
-        item: Line<P::EI>,
-        _coordinate: ReduceCoordinate,
+        item: Line<P::EI, P::SI>,
+        _coordinate: ReduceCoordinate<P::SI>,
         #[comptime] use_planes: bool,
     ) -> Self::AccumulatorItem {
         let item = Line::cast_from(item);
@@ -88,7 +88,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Prod {
         _this: &Self,
         accumulator: Self::AccumulatorItem,
         _shape_axis_reduce: usize,
-    ) -> Line<Out> {
+    ) -> Line<Out, P::SI> {
         Line::cast_from(accumulator)
     }
 }

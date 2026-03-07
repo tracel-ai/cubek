@@ -16,7 +16,7 @@ pub struct RequiredReaderBoundChecks<P: ReducePrecision> {
     #[cube(comptime)]
     bound_checks: BoundChecks,
     pos_max: usize,
-    null_input: Line<P::EI>,
+    null_input: Line<P::EI, P::SI>,
 }
 
 #[cube]
@@ -25,7 +25,6 @@ impl<P: ReducePrecision> ReaderBoundChecks<P> {
         inst: &I,
         pos_max: usize,
         idle: ComptimeOption<bool>,
-        #[comptime] line_size: LineSize,
         #[comptime] bound_checks: BoundChecks,
     ) -> ReaderBoundChecks<P> {
         #[comptime]
@@ -46,7 +45,7 @@ impl<P: ReducePrecision> ReaderBoundChecks<P> {
                 ReaderBoundChecks::new_Required(RequiredReaderBoundChecks::<P> {
                     bound_checks,
                     pos_max,
-                    null_input: I::null_input(inst, line_size),
+                    null_input: I::null_input(inst),
                 })
             }
         }
@@ -55,8 +54,8 @@ impl<P: ReducePrecision> ReaderBoundChecks<P> {
         &self,
         pos: usize,
         offset: usize,
-        view: &View<Line<P::EI>, Coords1d>,
-    ) -> Line<P::EI> {
+        view: &View<Line<P::EI, P::SI>, Coords1d>,
+    ) -> Line<P::EI, P::SI> {
         #[comptime]
         match self {
             ReaderBoundChecks::NotRequired => view[offset],

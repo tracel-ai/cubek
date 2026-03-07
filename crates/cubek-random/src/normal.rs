@@ -21,7 +21,7 @@ impl RandomFamily for NormalFamily {
 
 #[cube]
 impl PrngRuntime for Normal {
-    fn inner_loop<E: Numeric>(
+    fn inner_loop<E: Numeric, N: Size>(
         args: Normal,
         write_index_base: usize,
         n_invocations: u32,
@@ -31,13 +31,13 @@ impl PrngRuntime for Normal {
         state_1: &mut u32,
         state_2: &mut u32,
         state_3: &mut u32,
-        output: &mut View<Line<E>, usize, ReadWrite>,
+        output: &mut View<Line<E, N>, usize, ReadWrite>,
     ) {
         let mean = f32::cast_from(args.mean);
         let std = f32::cast_from(args.std);
 
-        let mut output_line_0 = Line::empty(line_size);
-        let mut output_line_1 = Line::empty(line_size);
+        let mut output_line_0 = Line::empty();
+        let mut output_line_1 = Line::empty();
 
         let num_iterations = n_values_per_thread / line_size / 2;
         #[unroll(num_iterations <= 8)]

@@ -14,12 +14,12 @@ impl ArgMax {
     /// Compare two pairs of items and coordinates and return a new pair
     /// where each element in the lines is the maximal item with its coordinate.
     /// In case of equality, the lowest coordinate is selected.
-    pub fn choose_argmax<N: Numeric>(
-        items0: Line<N>,
-        coordinates0: Line<u32>,
-        items1: Line<N>,
-        coordinates1: Line<u32>,
-    ) -> (Line<N>, Line<u32>) {
+    pub fn choose_argmax<T: Numeric, N: Size>(
+        items0: Line<T, N>,
+        coordinates0: Line<u32, N>,
+        items1: Line<T, N>,
+        coordinates1: Line<u32, N>,
+    ) -> (Line<T, N>, Line<u32, N>) {
         let to_keep = select_many(
             items0.equal(items1),
             coordinates0.less_than(coordinates1),
@@ -38,8 +38,8 @@ impl ReduceFamily for ArgMax {
 
 #[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for ArgMax {
-    type AccumulatorItem = (Line<P::EA>, Line<u32>);
-    type SharedAccumulator = ArgAccumulator<P::EA>;
+    type AccumulatorItem = (Line<P::EA, P::SI>, Line<u32, P::SI>);
+    type SharedAccumulator = ArgAccumulator<P::EA, P::SI>;
     type Config = ();
 
     fn requirements(_this: &Self) -> ReduceRequirements {
@@ -50,14 +50,14 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMax {
         ArgMax {}
     }
 
-    fn null_input(_this: &Self, #[comptime] line_size: LineSize) -> Line<P::EI> {
-        Line::empty(line_size).fill(P::EI::min_value())
+    fn null_input(_this: &Self) -> Line<P::EI, P::SI> {
+        Line::empty().fill(P::EI::min_value())
     }
 
-    fn null_accumulator(_this: &Self, #[comptime] line_size: LineSize) -> Self::AccumulatorItem {
+    fn null_accumulator(_this: &Self) -> Self::AccumulatorItem {
         (
-            Line::empty(line_size).fill(P::EA::min_value()),
-            Line::empty(line_size).fill(u32::MAX),
+            Line::empty().fill(P::EA::min_value()),
+            Line::empty().fill(u32::MAX),
         )
     }
 
@@ -73,7 +73,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMax {
     fn read_accumulator(
         _this: &Self,
         accumulator: &Self::AccumulatorItem,
-    ) -> (Line<<P as ReducePrecision>::EI>, ReduceCoordinate) {
+    ) -> (Line<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
         (
             Line::cast_from(accumulator.0),
             ReduceCoordinate::new_Required(accumulator.1),
@@ -83,8 +83,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMax {
     fn reduce(
         _this: &Self,
         accumulator: &Self::AccumulatorItem,
-        item: Line<P::EI>,
-        coordinate: ReduceCoordinate,
+        item: Line<P::EI, P::SI>,
+        coordinate: ReduceCoordinate<P::SI>,
         #[comptime] use_planes: bool,
     ) -> Self::AccumulatorItem {
         #[comptime]
@@ -151,7 +151,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMax {
         _this: &Self,
         accumulator: Self::AccumulatorItem,
         _shape_axis_reduce: usize,
-    ) -> Line<Out> {
+    ) -> Line<Out, P::SI> {
         Line::cast_from(accumulator.1)
     }
 }

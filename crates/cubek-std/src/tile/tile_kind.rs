@@ -5,7 +5,7 @@ use crate::tile::strided_tile::StridedTile;
 /// Kind (family) of the tiles returned by a stage and ingested by a tile matmul reader
 pub trait TileKind<IO: SliceVisibility = ReadOnly>: CubeType + Send + Sync + 'static {
     /// Concrete tile instantiated with the element type
-    type Tile<E: Numeric>: CubeType;
+    type Tile<E: Numeric, N: Size>: CubeType;
 }
 
 /// Tile is a slice of memory with a stride
@@ -17,16 +17,16 @@ pub struct Strided {}
 pub struct Filled {}
 
 impl<IO: SliceVisibility> TileKind<IO> for Strided {
-    type Tile<E: Numeric> = StridedTile<E, IO>;
+    type Tile<E: Numeric, N: Size> = StridedTile<E, N, IO>;
 }
 
 impl TileKind<ReadOnly> for Filled {
-    type Tile<E: Numeric> = E;
+    type Tile<E: Numeric, N: Size> = E;
 }
 
 impl<Inner: TileKind<IO>, IO: SliceVisibility> TileKind<IO> for Option<Inner> {
-    type Tile<E: Numeric> = ComptimeOption<Inner::Tile<E>>;
+    type Tile<E: Numeric, N: Size> = ComptimeOption<Inner::Tile<E, N>>;
 }
 
-pub type Tile<K, E> = <K as TileKind>::Tile<E>;
-pub type TileMut<K, E> = <K as TileKind<ReadWrite>>::Tile<E>;
+pub type Tile<K, E, N> = <K as TileKind>::Tile<E, N>;
+pub type TileMut<K, E, N> = <K as TileKind<ReadWrite>>::Tile<E, N>;

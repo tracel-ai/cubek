@@ -123,10 +123,10 @@ pub fn shared_sum<R: Runtime>(
             cube_count,
             cube_dim,
             address_type,
+            line_size,
             input_view,
             output.into_tensor_arg(1),
             cube_dim.num_elems() as usize,
-            line_size,
             num_lines_per_unit,
             input_elem,
         )
@@ -136,16 +136,15 @@ pub fn shared_sum<R: Runtime>(
 }
 
 #[cube(launch_unchecked, address_type = "dynamic")]
-fn shared_sum_kernel<N: Numeric>(
-    input: &LinearView<Line<N>>,
-    output: &mut Tensor<Atomic<N>>,
+fn shared_sum_kernel<T: Numeric, N: Size>(
+    input: &LinearView<Line<T, N>>,
+    output: &mut Tensor<Atomic<T>>,
     #[comptime] shared_memory_size: usize,
-    #[comptime] line_size: LineSize,
     #[comptime] num_lines_per_unit: usize,
-    #[define(N)] _dtype: ElemType,
+    #[define(T)] _dtype: ElemType,
 ) {
-    let mut shared_memory = SharedMemory::new_lined(shared_memory_size, line_size);
-    shared_memory[UNIT_POS as usize] = Line::empty(line_size).fill(N::from_int(0));
+    let mut shared_memory = SharedMemory::new_lined(shared_memory_size);
+    shared_memory[UNIT_POS as usize] = Line::empty().fill(T::from_int(0));
 
     // Each unit reduce `num_lines_per_unit` lines.
     let start = ABSOLUTE_POS * num_lines_per_unit;
@@ -164,9 +163,9 @@ fn shared_sum_kernel<N: Numeric>(
     let line = sum_shared_memory(&mut shared_memory);
 
     // Sum all the elements within the line.
-    let sum = RuntimeCell::<N>::new(N::from_int(0));
+    let sum = RuntimeCell::<T>::new(T::from_int(0));
     #[unroll]
-    for k in 0..line_size {
+    for k in 0..N::value() {
         let update = line[k] + sum.read();
         sum.store(update);
     }
@@ -181,7 +180,9 @@ fn shared_sum_kernel<N: Numeric>(
 // See the documentation there for details.
 // Here we assume that `CUBE_DIM` is always a power of two.
 #[cube]
-fn sum_shared_memory<N: Numeric>(accumulator: &mut SharedMemory<Line<N>>) -> Line<N> {
+fn sum_shared_memory<T: Numeric, N: Size>(
+    accumulator: &mut SharedMemory<Line<T, N>>,
+) -> Line<T, N> {
     sync_cube();
     let mut num_active_units = CUBE_DIM;
     let mut jump = 1;

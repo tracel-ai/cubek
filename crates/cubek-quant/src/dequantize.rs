@@ -19,7 +19,10 @@ use cubecl::std::tensor::{
 
 /// Dequantize a line of values into floating-point values using the provided scale.
 #[cube]
-pub fn dequantize_symmetric<F: Float, FS: CubePrimitive>(value: Line<F>, scale: FS) -> Line<F> {
+pub fn dequantize_symmetric<F: Float, FS: CubePrimitive, N: Size>(
+    value: Line<F, N>,
+    scale: FS,
+) -> Line<F, N> {
     // x = scale * x_q
     Line::cast_from(scale) * value
 }
@@ -29,13 +32,24 @@ pub fn dequantize_symmetric<F: Float, FS: CubePrimitive>(value: Line<F>, scale: 
 /// Returns a line of floating-point values. The number of values in the line depends on the number of packed
 /// values in the stored quantization type.
 #[cube]
-pub fn dequantize_symmetric_packed_values<F: Float, FS: CubePrimitive, QI: Int>(
+pub fn dequantize_symmetric_packed_values<
+    F: Float,
+    NF: Size,
+    FS: CubePrimitive,
+    QI: Int,
+    NQ: Size,
+>(
     position: usize,
-    values: &View<Line<QI>, usize>,
+    values: &View<Line<QI, NQ>, usize>,
     scales: &View<FS, usize>,
     #[comptime] scheme: QuantScheme,
-) -> Array<Line<F>> {
-    dequantize_symmetric_packed_value_at::<F, FS, QI>(position, values[position], scales, scheme)
+) -> Array<Line<F, NF>> {
+    dequantize_symmetric_packed_value_at::<F, NF, FS, QI, NQ>(
+        position,
+        values[position],
+        scales,
+        scheme,
+    )
 }
 
 /// Dequantize a single value using the scale at the specified position.
@@ -43,13 +57,19 @@ pub fn dequantize_symmetric_packed_values<F: Float, FS: CubePrimitive, QI: Int>(
 /// Returns a line of floating-point values. The number of values in the line depends on the number of packed
 /// values in the stored quantization type.
 #[cube]
-pub fn dequantize_symmetric_packed_value_at<F: Float, FS: CubePrimitive, QI: Int>(
+pub fn dequantize_symmetric_packed_value_at<
+    F: Float,
+    NF: Size,
+    FS: CubePrimitive,
+    QI: Int,
+    NQ: Size,
+>(
     position: usize,
-    values: Line<QI>,
+    values: Line<QI, NQ>,
     scales: &View<FS, usize>,
     #[comptime] scheme: QuantScheme,
-) -> Array<Line<F>> {
-    dequantize_symmetric_packed_value::<F, FS, QI>(values, scales, position, scheme)
+) -> Array<Line<F, NF>> {
+    dequantize_symmetric_packed_value::<F, NF, FS, QI, NQ>(values, scales, position, scheme)
 }
 
 /// Dequantize a single packed value using the scale provided.
@@ -57,21 +77,27 @@ pub fn dequantize_symmetric_packed_value_at<F: Float, FS: CubePrimitive, QI: Int
 /// Returns a line of floating-point values. The number of values in the line depends on the number of packed
 /// values in the stored quantization type.
 #[cube]
-pub fn dequantize_symmetric_packed_value<F: Float, FS: CubePrimitive, QS: Int>(
-    values: Line<QS>,
+pub fn dequantize_symmetric_packed_value<
+    F: Float,
+    NF: Size,
+    FS: CubePrimitive,
+    QS: Int,
+    NQ: Size,
+>(
+    values: Line<QS, NQ>,
     scales: &View<FS, usize>,
     position: usize,
     #[comptime] scheme: QuantScheme,
-) -> Array<Line<F>> {
+) -> Array<Line<F, NF>> {
     let line_size_values = values.line_size();
     let num_quants = scheme.num_quants();
-    let mut tmp = Array::lined(line_size_values, num_quants);
+    let mut tmp = Array::lined(line_size_values);
 
     #[unroll]
     for i in 0..line_size_values {
-        let floats = unpack_q::<F, QS>(values[i], scheme.value, scheme.store);
+        let floats = unpack_q::<F, NF, QS>(values[i], scheme.value, scheme.store);
         let scale = scales[(position * line_size_values) + i * num_quants];
-        let values = dequantize_symmetric::<F, FS>(floats, scale);
+        let values = dequantize_symmetric::<F, FS, NF>(floats, scale);
         tmp[i] = values;
     }
 
@@ -83,16 +109,16 @@ pub fn dequantize_symmetric_packed_value<F: Float, FS: CubePrimitive, QS: Int>(
 /// This handles types where multiple quantized values are packed into a single integer (the stored quantization type).
 #[allow(clippy::explicit_counter_loop)]
 #[cube]
-fn unpack_q<F: Float, QS: Int>(
+fn unpack_q<F: Float, NF: Size, QS: Int>(
     value: QS,
     #[comptime] quant: QuantValue,
     #[comptime] store: QuantStore,
-) -> Line<F> {
+) -> Line<F, NF> {
     let size_quant = quant.size_bits();
     let size_store = store.size_bits(&quant);
     let num_quant = size_store / size_quant;
 
-    let mut output = Line::empty(num_quant);
+    let mut output = Line::empty();
 
     let mask = QS::from_int((1 << size_quant) - 1);
     let sign_bit = QS::from_int(1 << (size_quant - 1));
@@ -116,10 +142,10 @@ fn unpack_q<F: Float, QS: Int>(
 }
 
 #[cube(launch_unchecked, address_type = "dynamic")]
-fn dequantize_symmetric_packed_kernel<F: Float, FS: Numeric>(
-    input: &LinearView<Line<u32>>,
+fn dequantize_symmetric_packed_kernel<F: Float, NF: Size, FS: Numeric, NQ: Size>(
+    input: &LinearView<Line<u32, NQ>>,
     scales: &ScalesView<FS>,
-    output: &mut LinearView<Line<F>, ReadWrite>,
+    output: &mut LinearView<Line<F, NF>, ReadWrite>,
     #[comptime] scheme: QuantScheme,
     #[define(F, FS)] _dtypes: [StorageType; 2],
 ) {
@@ -137,7 +163,8 @@ fn dequantize_symmetric_packed_kernel<F: Float, FS: Numeric>(
     let values = input[ABSOLUTE_POS];
     let packed_pos = ABSOLUTE_POS * scheme.num_quants();
 
-    let out = dequantize_symmetric_packed_value::<F, FS, u32>(values, scales, packed_pos, scheme);
+    let out =
+        dequantize_symmetric_packed_value::<F, NF, FS, u32, NQ>(values, scales, packed_pos, scheme);
 
     #[unroll]
     for i in 0..line_size_in {
@@ -146,10 +173,10 @@ fn dequantize_symmetric_packed_kernel<F: Float, FS: Numeric>(
 }
 
 #[cube(launch_unchecked, address_type = "dynamic")]
-fn dequantize_symmetric_native_kernel<F: Float, FS: Numeric, Q: Numeric>(
-    input: &LinearView<Line<Q>>,
+fn dequantize_symmetric_native_kernel<F: Float, NF: Size, FS: Numeric, Q: Numeric, NQ: Size>(
+    input: &LinearView<Line<Q, NQ>>,
     scale: &ScalesView<FS>,
-    output: &mut LinearView<Line<F>, ReadWrite>,
+    output: &mut LinearView<Line<F, NF>, ReadWrite>,
     #[define(F, FS, Q)] _dtypes: [StorageType; 3],
 ) {
     if !input.is_in_bounds(ABSOLUTE_POS) {
@@ -161,7 +188,7 @@ fn dequantize_symmetric_native_kernel<F: Float, FS: Numeric, Q: Numeric>(
     let scale = scale[ABSOLUTE_POS * input.line_size() * native_packing];
 
     output[ABSOLUTE_POS] =
-        dequantize_symmetric::<F, FS>(Line::cast_from(input[ABSOLUTE_POS]), scale);
+        dequantize_symmetric::<F, FS, NF>(Line::cast_from(input[ABSOLUTE_POS]), scale);
 }
 
 #[allow(clippy::result_large_err)]
@@ -271,6 +298,8 @@ fn dequantize_packed<R: Runtime>(
                 cube_count,
                 cube_dim,
                 address_type,
+                line_size_out,
+                line_size_in,
                 linear_view(client, input.try_clone().unwrap(), line_size_in),
                 scales_view(client, input, scale, 1, &scheme),
                 linear_view(client, output, line_size_out),
@@ -330,6 +359,8 @@ fn dequantize_native<R: Runtime>(
                     cube_count,
                     cube_dim,
                     address_type,
+                    line_size,
+                    line_size,
                     linear_view(client, input.try_clone().unwrap(), line_size),
                     scales_view(client, input, scale, 1, &scheme),
                     linear_view(client, output, line_size),

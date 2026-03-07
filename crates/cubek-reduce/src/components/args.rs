@@ -7,32 +7,55 @@ use std::marker::PhantomData;
 
 pub trait ReduceDType {
     type In: Numeric;
+    type SizeIn: Size;
     type Out: Numeric;
+    type SizeOut: Size;
 }
 
-impl<In: Numeric, Out: Numeric> ReduceDType for (In, Out) {
+impl<In: Numeric, SizeIn: Size, Out: Numeric, SizeOut: Size> ReduceDType
+    for ((In, SizeIn), (Out, SizeOut))
+{
     type In = In;
+    type SizeIn = SizeIn;
     type Out = Out;
+    type SizeOut = SizeOut;
+}
+
+pub trait NumericLine {
+    type T: Numeric;
+    type N: Size;
+}
+
+impl<T: Numeric, N: Size> NumericLine for (T, N) {
+    type T = T;
+    type N = N;
 }
 
 #[cube]
 #[allow(dead_code)]
 pub trait ReduceArgs: Send + Sync + 'static + Clone {
-    type Input<E: Numeric>: LaunchArg + CubeType;
+    type Input<E: Numeric, S: Size>: LaunchArg + CubeType;
 
-    type Output<E: Numeric>: LaunchArg + CubeType;
+    type Output<E: Numeric, S: Size>: LaunchArg + CubeType;
 
     type State<P: ReduceDType>: CubeType;
 
     fn init_state<P: ReduceDType>(
-        input: &Self::Input<P::In>,
-        output: &mut Self::Output<P::Out>,
+        input: &Self::Input<P::In, P::SizeIn>,
+        output: &mut Self::Output<P::Out, P::SizeOut>,
     ) -> Self::State<P>;
 
-    fn read_input<P: ReduceDType>(state: &Self::State<P>, index: usize) -> Line<P::In>;
-    fn read_output<P: ReduceDType>(state: &Self::State<P>, index: usize) -> Line<P::Out>;
+    fn read_input<P: ReduceDType>(state: &Self::State<P>, index: usize) -> Line<P::In, P::SizeIn>;
+    fn read_output<P: ReduceDType>(
+        state: &Self::State<P>,
+        index: usize,
+    ) -> Line<P::Out, P::SizeOut>;
 
-    fn write_output<P: ReduceDType>(state: &mut Self::State<P>, index: usize, value: Line<P::Out>);
+    fn write_output<P: ReduceDType>(
+        state: &mut Self::State<P>,
+        index: usize,
+        value: Line<P::Out, P::SizeOut>,
+    );
 
     fn len_input<P: ReduceDType>(state: &Self::State<P>) -> usize;
     fn len_output<P: ReduceDType>(state: &Self::State<P>) -> usize;
@@ -54,18 +77,24 @@ pub trait ReduceArgs: Send + Sync + 'static + Clone {
 }
 
 #[cube]
-pub fn init_tensors<RA: ReduceArgs, In: Numeric, Out: Numeric>(
-    input: &RA::Input<In>,
-    output: &mut RA::Output<Out>,
-) -> (VirtualTensor<In>, VirtualTensor<Out, ReadWrite>) {
-    let mut state = RA::init_state::<(In, Out)>(input, output);
+pub fn init_tensors<RA: ReduceArgs, In: Numeric, InSize: Size, Out: Numeric, OutSize: Size>(
+    input: &RA::Input<In, InSize>,
+    output: &mut RA::Output<Out, OutSize>,
+) -> (
+    VirtualTensor<In, InSize>,
+    VirtualTensor<Out, OutSize, ReadWrite>,
+) {
+    let mut state = RA::init_state::<((In, InSize), (Out, OutSize))>(input, output);
 
     let input = TensorArg::new_input(&state);
     let mut output = TensorArg::new_output(&mut state);
 
-    let input = VirtualTensor::<In>::new::<TensorArg<(In, Out), RA, Input>>(&input);
-    let output =
-        VirtualTensor::<Out, ReadWrite>::new::<TensorArg<(In, Out), RA, Output>>(&mut output);
+    let input = VirtualTensor::<In, InSize>::new::<
+        TensorArg<((In, InSize), (Out, OutSize)), RA, Input>,
+    >(&input);
+    let output = VirtualTensor::<Out, OutSize, ReadWrite>::new::<
+        TensorArg<((In, InSize), (Out, OutSize)), RA, Output>,
+    >(&mut output);
 
     (input, output)
 }
@@ -75,26 +104,36 @@ pub struct TensorArgs;
 
 #[cube]
 impl ReduceArgs for TensorArgs {
-    type Input<EG: Numeric> = Tensor<Line<EG>>;
-    type Output<EG: Numeric> = Tensor<Line<EG>>;
-    type State<P: ReduceDType> = (*const Tensor<Line<P::In>>, *mut Tensor<Line<P::Out>>);
+    type Input<EG: Numeric, N: Size> = Tensor<Line<EG, N>>;
+    type Output<EG: Numeric, N: Size> = Tensor<Line<EG, N>>;
+    type State<P: ReduceDType> = (
+        *const Tensor<Line<P::In, P::SizeIn>>,
+        *mut Tensor<Line<P::Out, P::SizeOut>>,
+    );
 
     fn init_state<P: ReduceDType>(
-        input: &Self::Input<P::In>,
-        output: &mut Self::Output<P::Out>,
+        input: &Self::Input<P::In, P::SizeIn>,
+        output: &mut Self::Output<P::Out, P::SizeOut>,
     ) -> Self::State<P> {
         (input, output)
     }
 
-    fn read_input<P: ReduceDType>(state: &Self::State<P>, index: usize) -> Line<P::In> {
+    fn read_input<P: ReduceDType>(state: &Self::State<P>, index: usize) -> Line<P::In, P::SizeIn> {
         unsafe { (*state.0)[index] }
     }
 
-    fn read_output<P: ReduceDType>(state: &Self::State<P>, index: usize) -> Line<P::Out> {
+    fn read_output<P: ReduceDType>(
+        state: &Self::State<P>,
+        index: usize,
+    ) -> Line<P::Out, P::SizeOut> {
         unsafe { (*state.1)[index] }
     }
 
-    fn write_output<P: ReduceDType>(state: &mut Self::State<P>, index: usize, value: Line<P::Out>) {
+    fn write_output<P: ReduceDType>(
+        state: &mut Self::State<P>,
+        index: usize,
+        value: Line<P::Out, P::SizeOut>,
+    ) {
         unsafe { (*state.1)[index] = value }
     }
 
@@ -189,17 +228,23 @@ impl<P: ReduceDType, RA: ReduceArgs> TensorArg<P, RA, Output> {
     }
 }
 
-impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperations<P::Out> for TensorArg<P, RA, Output> {}
-impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperations<P::In> for TensorArg<P, RA, Input> {}
+impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperations<P::Out, P::SizeOut>
+    for TensorArg<P, RA, Output>
+{
+}
+impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperations<P::In, P::SizeIn>
+    for TensorArg<P, RA, Input>
+{
+}
 
-impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::In>
+impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::In, P::SizeIn>
     for TensorArgExpand<P, RA, Input>
 {
     fn __expand_read_method(
         &self,
         scope: &mut Scope,
         index: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<Line<P::In>> {
+    ) -> ExpandElementTyped<Line<P::In, P::SizeIn>> {
         RA::__expand_read_input(scope, self.state.clone(), index)
     }
 
@@ -207,7 +252,7 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::In>
         &self,
         _scope: &mut Scope,
         _index: ExpandElementTyped<usize>,
-        _value: ExpandElementTyped<Line<P::In>>,
+        _value: ExpandElementTyped<Line<P::In, P::SizeIn>>,
     ) {
         unreachable!("Can't write to input")
     }
@@ -243,7 +288,7 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::In>
         _context: &mut Scope,
         _start: ExpandElementTyped<usize>,
         _end: ExpandElementTyped<usize>,
-    ) -> SliceExpand<Line<P::In>, ReadOnly> {
+    ) -> SliceExpand<Line<P::In, P::SizeIn>, ReadOnly> {
         panic!("Unsupported")
     }
 
@@ -263,14 +308,14 @@ impl<P: ReduceDType, RA: ReduceArgs> LinedExpand for TensorArgExpand<P, RA, Inpu
     }
 }
 
-impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::Out>
+impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::Out, P::SizeOut>
     for TensorArgExpand<P, RA, Output>
 {
     fn __expand_read_method(
         &self,
         scope: &mut Scope,
         index: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<Line<P::Out>> {
+    ) -> ExpandElementTyped<Line<P::Out, P::SizeOut>> {
         RA::__expand_read_output(scope, self.state.clone(), index)
     }
 
@@ -278,7 +323,7 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::Out>
         &self,
         scope: &mut Scope,
         index: ExpandElementTyped<usize>,
-        value: ExpandElementTyped<Line<P::Out>>,
+        value: ExpandElementTyped<Line<P::Out, P::SizeOut>>,
     ) {
         RA::__expand_write_output(scope, self.state.clone(), index, value)
     }
@@ -315,7 +360,7 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::Out>
         _context: &mut Scope,
         _start: ExpandElementTyped<usize>,
         _end: ExpandElementTyped<usize>,
-    ) -> SliceExpand<Line<P::Out>, ReadOnly> {
+    ) -> SliceExpand<Line<P::Out, P::SizeOut>, ReadOnly> {
         panic!("Unsupported")
     }
 

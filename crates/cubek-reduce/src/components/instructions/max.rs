@@ -14,8 +14,8 @@ impl ReduceFamily for Max {
 
 #[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for Max {
-    type AccumulatorItem = Line<P::EA>;
-    type SharedAccumulator = SharedMemory<Line<P::EA>>;
+    type AccumulatorItem = Line<P::EA, P::SI>;
+    type SharedAccumulator = SharedMemory<Line<P::EA, P::SI>>;
     type Config = ();
 
     fn requirements(_this: &Self) -> ReduceRequirements {
@@ -26,12 +26,12 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
         Max {}
     }
 
-    fn null_input(_this: &Self, #[comptime] line_size: LineSize) -> Line<P::EI> {
-        Line::empty(line_size).fill(P::EI::min_value())
+    fn null_input(_this: &Self) -> Line<P::EI, P::SI> {
+        Line::empty().fill(P::EI::min_value())
     }
 
-    fn null_accumulator(_this: &Self, #[comptime] line_size: LineSize) -> Self::AccumulatorItem {
-        Line::empty(line_size).fill(P::EA::min_value())
+    fn null_accumulator(_this: &Self) -> Self::AccumulatorItem {
+        Line::empty().fill(P::EA::min_value())
     }
 
     fn assign_accumulator(
@@ -44,8 +44,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
 
     fn read_accumulator(
         _this: &Self,
-        accumulator: &Line<P::EA>,
-    ) -> (Line<P::EI>, ReduceCoordinate) {
+        accumulator: &Line<P::EA, P::SI>,
+    ) -> (Line<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
         (
             Line::cast_from(*accumulator),
             ReduceCoordinate::new_NotRequired(),
@@ -55,8 +55,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
     fn reduce(
         _this: &Self,
         accumulator: &Self::AccumulatorItem,
-        item: Line<P::EI>,
-        _coordinate: ReduceCoordinate,
+        item: Line<P::EI, P::SI>,
+        _coordinate: ReduceCoordinate<P::SI>,
         #[comptime] use_planes: bool,
     ) -> Self::AccumulatorItem {
         if use_planes {
@@ -98,7 +98,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
         _this: &Self,
         accumulator: Self::AccumulatorItem,
         _shape_axis_reduce: usize,
-    ) -> Line<Out> {
+    ) -> Line<Out, P::SI> {
         Line::cast_from(accumulator)
     }
 }

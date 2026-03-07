@@ -1,6 +1,7 @@
 use crate::{
     BoundChecks, LineMode, ReduceInstruction, ReducePrecision,
     components::{
+        args::NumericLine,
         global::idle_check,
         instructions::reduce_inplace,
         readers::{Reader, unit::UnitReader},
@@ -15,9 +16,9 @@ pub struct GlobalFullUnitReduce;
 
 #[cube]
 impl GlobalFullUnitReduce {
-    pub fn execute<P: ReducePrecision, Out: Numeric, I: ReduceInstruction<P>>(
-        input: &VirtualTensor<P::EI>,
-        output: &mut VirtualTensor<Out, ReadWrite>,
+    pub fn execute<P: ReducePrecision, Out: NumericLine, I: ReduceInstruction<P>>(
+        input: &VirtualTensor<P::EI, P::SI>,
+        output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         reduce_axis: usize,
         inst: &I,
         #[comptime] line_mode: LineMode,
@@ -56,9 +57,9 @@ impl GlobalFullUnitReduce {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn reduce_single<P: ReducePrecision, Out: Numeric, I: ReduceInstruction<P>>(
-        input: &VirtualTensor<P::EI>,
-        output: &mut VirtualTensor<Out, ReadWrite>,
+    pub fn reduce_single<P: ReducePrecision, Out: NumericLine, I: ReduceInstruction<P>>(
+        input: &VirtualTensor<P::EI, P::SI>,
+        output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         reduce_axis: usize,
         reduce_index: usize,
         inst: &I,
@@ -79,7 +80,7 @@ impl GlobalFullUnitReduce {
         );
         let reader = UnitReader::<P>::new(reader);
 
-        let mut accumulator = I::null_accumulator(inst, input_line_size);
+        let mut accumulator = I::null_accumulator(inst);
 
         for i in 0..reader.length() {
             let (item, coordinate) = reader.read(i);

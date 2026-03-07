@@ -1,4 +1,4 @@
-use crate::{IdleMode, LineMode, ReducePrecision};
+use crate::{IdleMode, LineMode, ReducePrecision, components::args::NumericLine};
 use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
 
 #[cube]
@@ -14,9 +14,9 @@ pub(crate) fn reduce_count(
 }
 
 #[cube]
-pub fn idle_check<P: ReducePrecision, Out: Numeric>(
-    input: &VirtualTensor<P::EI>,
-    output: &mut VirtualTensor<Out, ReadWrite>,
+pub fn idle_check<P: ReducePrecision, Out: NumericLine>(
+    input: &VirtualTensor<P::EI, P::SI>,
+    output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
     reduce_index_start: usize,
     #[comptime] line_mode: LineMode,
     #[comptime] idle_mode: IdleMode,

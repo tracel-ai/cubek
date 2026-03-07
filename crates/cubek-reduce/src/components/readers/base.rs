@@ -1,6 +1,7 @@
 use crate::{
     BoundChecks, LineMode, ReduceInstruction, ReducePrecision,
     components::{
+        args::NumericLine,
         instructions::{ReduceCoordinate, ReduceRequirements},
         readers::{parallel::ParallelReader, perpendicular::PerpendicularReader},
     },
@@ -16,9 +17,9 @@ pub enum Reader<P: ReducePrecision> {
 #[cube]
 impl<P: ReducePrecision> Reader<P> {
     #[allow(clippy::too_many_arguments)]
-    pub fn new<I: ReduceInstruction<P>, Out: Numeric>(
-        input: &VirtualTensor<P::EI>,
-        output: &mut VirtualTensor<Out, ReadWrite>,
+    pub fn new<I: ReduceInstruction<P>, Out: NumericLine>(
+        input: &VirtualTensor<P::EI, P::SI>,
+        output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         inst: &I,
         reduce_axis: usize,
         reduce_index: usize,
@@ -52,22 +53,17 @@ impl<P: ReducePrecision> Reader<P> {
 }
 
 #[cube]
-impl ReduceCoordinate {
+impl<N: Size> ReduceCoordinate<N> {
     pub fn new(
         coordinate: usize,
         requirements: ReduceRequirements,
-        #[comptime] line_size: LineSize,
         #[comptime] line_mode: LineMode,
     ) -> Self {
         if requirements.coordinates.comptime() {
             // TODO: Make this generic to allow 64-bit coordinate output.
             // Can't directly use `usize` for the buffer, since its size isn't defined beyond the
             // kernel boundary.
-            ReduceCoordinate::new_Required(fill_coordinate_line(
-                coordinate as u32,
-                line_size,
-                line_mode,
-            ))
+            ReduceCoordinate::new_Required(fill_coordinate_line(coordinate as u32, line_mode))
         } else {
             ReduceCoordinate::new_NotRequired()
         }
@@ -77,20 +73,19 @@ impl ReduceCoordinate {
 // If line mode is parallel, fill a line with `x, x+1, ... x+ line_size - 1` where `x = first`.
 // If line mode is perpendicular, fill a line with `x, x, ... x` where `x = first`.
 #[cube]
-pub(crate) fn fill_coordinate_line(
+pub(crate) fn fill_coordinate_line<N: Size>(
     first: u32,
-    #[comptime] line_size: LineSize,
     #[comptime] line_mode: LineMode,
-) -> Line<u32> {
+) -> Line<u32, N> {
     match line_mode {
         LineMode::Parallel => {
-            let mut coordinates = Line::empty(line_size);
+            let mut coordinates = Line::empty();
             #[unroll]
-            for j in 0..line_size {
+            for j in 0..N::value() {
                 coordinates[j] = first + j as u32;
             }
             coordinates
         }
-        LineMode::Perpendicular => Line::empty(line_size).fill(first),
+        LineMode::Perpendicular => Line::empty().fill(first),
     }
 }
