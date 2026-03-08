@@ -1,6 +1,6 @@
 use cubecl::prelude::*;
 
-use crate::definition::{AccG, LhsG, MatmulPrecision, RhsG};
+use crate::definition::{AccG, LhsG, MatmulTypes, RhsG};
 use crate::{
     components::{
         batch::SliceIndex,
@@ -30,7 +30,7 @@ pub struct PartitionRangeDim {
 #[cube]
 /// Iterates on several global matmul across a global partition
 pub trait GlobalPartitionMatmul: 'static + Send + Sync {
-    fn execute<Args: MatmulArgs, MP: MatmulPrecision, GMM: global::GlobalMatmul<Args::Config, MP>>(
+    fn execute<Args: MatmulArgs, MP: MatmulTypes, GMM: global::GlobalMatmul<Args::Config, MP>>(
         state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
         partition_ranges: PartitionRanges,
         k_range: (u32, u32),
@@ -78,7 +78,7 @@ impl PartitionRangeDim {
 impl GlobalPartitionMatmul for RowMajorGlobalPartitionMatmul {
     fn execute<
         Args: MatmulArgs,
-        MP: MatmulPrecision,
+        MP: MatmulTypes,
         GMM: global::GlobalMatmul<Args::Config, MP>,
     >(
         state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
@@ -116,7 +116,7 @@ impl GlobalPartitionMatmul for RowMajorGlobalPartitionMatmul {
 impl GlobalPartitionMatmul for ColMajorGlobalPartitionMatmul {
     fn execute<
         Args: MatmulArgs,
-        MP: MatmulPrecision,
+        MP: MatmulTypes,
         GMM: global::GlobalMatmul<Args::Config, MP>,
     >(
         state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
@@ -155,7 +155,7 @@ impl GlobalPartitionMatmul for ColMajorGlobalPartitionMatmul {
 /// m and n offsets are absolute rows and columns
 pub(crate) fn execute_global_matmul<
     Args: MatmulArgs,
-    MP: MatmulPrecision,
+    MP: MatmulTypes,
     GMM: global::GlobalMatmul<Args::Config, MP>,
 >(
     state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,

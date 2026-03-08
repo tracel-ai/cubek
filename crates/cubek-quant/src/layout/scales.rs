@@ -198,32 +198,30 @@ impl BlockScaledLayout {
 /// Useful for elementwise kernels.
 pub type ScalesView<E, IO = ReadOnly> = TypedView<E, ScalesLayout, IO>;
 /// Launch type for LinearTensorView.
-pub type ScalesViewLaunch<'a, R> = TypedViewLaunch<'a, ScalesLayout, R>;
+pub type ScalesViewLaunch<R> = TypedViewLaunch<ScalesLayout, R>;
 
 /// Create a scales view from the values and scales handle, line size and quantization scheme.
 /// `values` should be *the quantized tensor*, and will be adjusted by `num_quants`.
-pub fn scales_view<'a, R: Runtime>(
-    client: &'a ComputeClient<R>,
+pub fn scales_view<R: Runtime>(
+    client: &ComputeClient<R>,
     values: TensorBinding<R>,
     scales: TensorBinding<R>,
     scales_line_size: usize,
-    quant_scheme: &'a QuantScheme,
-) -> ScalesViewLaunch<'a, R> {
+    quant_scheme: &QuantScheme,
+) -> ScalesViewLaunch<R> {
     let layout = scales_layout(client, &values, &scales, scales_line_size, quant_scheme);
     let len = scales.shape.iter().product::<usize>();
-    let buffer = unsafe {
-        ArrayArg::from_raw_parts_binding(scales.handle, len, scales_line_size, scales.elem_size)
-    };
+    let buffer = unsafe { ArrayArg::from_raw_parts_binding(scales.handle, len) };
     ScalesViewLaunch::new(buffer, layout)
 }
 
-pub fn scales_layout<'a, R: Runtime>(
-    client: &'a ComputeClient<R>,
+pub fn scales_layout<R: Runtime>(
+    client: &ComputeClient<R>,
     values: &TensorBinding<R>,
     scales: &TensorBinding<R>,
     scales_line_size: usize,
-    scheme: &'a QuantScheme,
-) -> ScalesLayoutArgs<'a, R> {
+    scheme: &QuantScheme,
+) -> ScalesLayoutArgs<R> {
     let values_len = values.shape.iter().product::<usize>() * scheme.num_quants();
     let values_len = ScalarArg::new(values_len);
 
@@ -243,11 +241,11 @@ pub fn scales_layout<'a, R: Runtime>(
     }
 }
 
-fn shape_divmod_quant<'a, R: Runtime>(
-    client: &'a ComputeClient<R>,
+fn shape_divmod_quant<R: Runtime>(
+    client: &ComputeClient<R>,
     shape: &[usize],
     num_quants: usize,
-) -> SequenceArg<'a, R, FastDivmod<usize>> {
+) -> SequenceArg<R, FastDivmod<usize>> {
     let mut out_seq = SequenceArg::new();
     for s in &shape[..shape.len() - 1] {
         out_seq.push(FastDivmodArgs::<usize>::new(client, *s));
@@ -257,10 +255,7 @@ fn shape_divmod_quant<'a, R: Runtime>(
     out_seq
 }
 
-fn strides_seq<'a, R: Runtime>(
-    _client: &'a ComputeClient<R>,
-    strides: &[usize],
-) -> SequenceArg<'a, R, usize> {
+fn strides_seq<R: Runtime>(_client: &ComputeClient<R>, strides: &[usize]) -> SequenceArg<R, usize> {
     let mut out_seq = SequenceArg::new();
     for s in strides {
         out_seq.push(ScalarArg::new(*s));

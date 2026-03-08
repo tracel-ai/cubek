@@ -12,7 +12,7 @@ use crate::definition::StageIdent;
 use crate::definition::TilingBlueprint;
 use crate::definition::{AccG, MatmulSetupError};
 use crate::definition::{LhsG, MatmulElems, MatmulLineSizes, RhsG};
-use crate::definition::{MatmulPrecision, MatmulProblem};
+use crate::definition::{MatmulTypes, MatmulProblem};
 use crate::{components::CubeDimResource, launch::RuntimeConfig};
 use cubecl::std::tensor::{View, layout::Coords2d};
 use std::fmt::Debug;
@@ -21,7 +21,7 @@ use std::hash::Hash;
 /// A family of [matmuls](GlobalMatmul) working with any [precision](MatmulPrecision).
 pub trait GlobalMatmulFamily<RC: RuntimeConfig>: Send + Sync + 'static {
     /// The specific [GlobalMatmul] implementation associated with this family.
-    type Matmul<MP: MatmulPrecision>: GlobalMatmul<RC, MP, Config = Self::Config>;
+    type Matmul<MP: MatmulTypes>: GlobalMatmul<RC, MP, Config = Self::Config>;
 
     /// The configuration type associated with this matmul family.
     type Config: GlobalConfig;
@@ -73,7 +73,7 @@ pub trait GlobalMatmulFamily<RC: RuntimeConfig>: Send + Sync + 'static {
 /// It is not assumed that the matmul's dimensions match its inputs dimensions perfectly.
 /// It is therefore important that Readers and Writers perform checks to avoid out-of-bounds
 /// before reading data.
-pub trait GlobalMatmul<RC: RuntimeConfig, MP: MatmulPrecision>: 'static + Send + Sync {
+pub trait GlobalMatmul<RC: RuntimeConfig, MP: MatmulTypes>: 'static + Send + Sync {
     type Config: GlobalConfig;
 
     /// Global reader for matrix A (Lhs)
@@ -105,21 +105,21 @@ pub trait GlobalMatmul<RC: RuntimeConfig, MP: MatmulPrecision>: 'static + Send +
 
     /// Initialize the global reader for Lhs, starting at row m and column k
     fn init_lhs_global_reader(
-        lhs: View<Line<LhsG<MP>>, Coords2d>,
+        lhs: View<LhsG<MP>, Coords2d>,
         runtime_config: RC,
         #[comptime] config: Self::Config,
     ) -> Self::LhsGlobalReader;
 
     /// Initialize the global reader for Rhs, starting at row k and column n
     fn init_rhs_global_reader(
-        rhs: View<Line<RhsG<MP>>, Coords2d>,
+        rhs: View<RhsG<MP>, Coords2d>,
         runtime_config: RC,
         #[comptime] config: Self::Config,
     ) -> Self::RhsGlobalReader;
 
     /// Initialize the global reader for Rhs, starting at row k and column n
     fn init_acc_global_reader(
-        acc: ComptimeOption<View<Line<AccG<MP>>, Coords2d>>,
+        acc: ComptimeOption<View<AccG<MP>, Coords2d>>,
         runtime_config: RC,
         #[comptime] config: Self::Config,
     ) -> Self::AccGlobalReader;
@@ -129,7 +129,7 @@ pub trait GlobalMatmul<RC: RuntimeConfig, MP: MatmulPrecision>: 'static + Send +
 
     /// Initialize the global writer at row m and column n
     fn init_global_writer(
-        out: View<Line<AccG<MP>>, Coords2d, ReadWrite>,
+        out: View<AccG<MP>, Coords2d, ReadWrite>,
         #[comptime] config: Self::Config,
     ) -> Self::GlobalWriter;
 }

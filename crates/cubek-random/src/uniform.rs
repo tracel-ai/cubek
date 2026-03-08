@@ -72,7 +72,7 @@ impl PrngRuntime for Uniform {
 impl PrngArgs for Uniform {
     type Args = Self;
 
-    fn args<'a, R: Runtime>(self) -> UniformLaunch<'a, R> {
+    fn args<R: Runtime>(self) -> UniformLaunch<R> {
         UniformLaunch::new(
             ScalarArg::new(self.lower_bound),
             ScalarArg::new(self.upper_bound),
@@ -88,12 +88,6 @@ pub fn random_uniform<R: Runtime>(
     out: TensorBinding<R>,
     dtype: StorageType,
 ) -> Result<(), LaunchError> {
-    assert_eq!(
-        out.elem_size,
-        dtype.size(),
-        "Tensor element type must be the same as type E"
-    );
-
     random::<UniformFamily, R>(
         client,
         Uniform {

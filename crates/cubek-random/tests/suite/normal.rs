@@ -49,7 +49,7 @@ fn get_random_normal_data(shape: &[usize], mean: f32, std: f32) -> Vec<TestDType
         mean,
         std,
         output.clone().binding(),
-        TestDType::as_type_native_unchecked(),
+        TestDType::as_type_native_unchecked().storage_type(),
     )
     .unwrap();
 

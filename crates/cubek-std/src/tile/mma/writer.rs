@@ -176,7 +176,7 @@ fn store_stmatrix<
             transposed,
         );
     } else {
-        let mut frag = Array::lined(num_regs);
+        let mut frag = Array::new(num_regs);
         #[unroll]
         for i in 0..num_regs {
             frag[i] = Line::cast_from(fragment[i]);

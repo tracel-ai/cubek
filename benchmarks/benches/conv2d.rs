@@ -11,14 +11,14 @@ use cubek::{
         self as convolution, AcceleratedTileKind, ConvolutionArgs, ReadingStrategy, Strategy,
     },
     matmul::{
-        definition::{AccG, AccR, LhsG, LhsS, MatmulElems, MatmulPrecision, RhsG},
+        definition::{AccG, AccR, LhsG, LhsS, MatmulElems, MatmulTypes, RhsG},
         launch::MatmulInputBinding,
     },
     random::random_uniform,
 };
 use std::marker::PhantomData;
 
-impl<R: Runtime, MP: MatmulPrecision> Benchmark for Conv2dBench<R, MP> {
+impl<R: Runtime, MP: MatmulTypes> Benchmark for Conv2dBench<R, MP> {
     type Input = (TensorHandle<R>, TensorHandle<R>, TensorHandle<R>);
     type Output = ();
 
@@ -138,7 +138,7 @@ pub struct Conv2dBench<R: Runtime, MP> {
 }
 
 #[allow(dead_code)]
-fn run<R: Runtime, MP: MatmulPrecision>(device: R::Device) {
+fn run<R: Runtime, MP: MatmulTypes>(device: R::Device) {
     let client = R::client(&device);
     let batch_size = 16;
 
@@ -181,7 +181,7 @@ fn run<R: Runtime, MP: MatmulPrecision>(device: R::Device) {
 }
 
 #[allow(unused)]
-fn run_benches<R: Runtime, MP: MatmulPrecision>() {
+fn run_benches<R: Runtime, MP: MatmulTypes>() {
     let client = R::client(&Default::default());
 
     run::<R, MP>(Default::default());

@@ -30,6 +30,7 @@ pub struct TestCase {
 impl TestCase {
     pub fn test_shared_sum(&self) {
         let input_values: Vec<TestDType> = self.random_input_values();
+        println!("input_values: {input_values:?}");
         let mut expected = TestDType::from_int(0);
         for v in input_values.iter() {
             expected += *v;
@@ -45,21 +46,10 @@ impl TestCase {
             client.create_from_slice(TestDType::as_bytes(&[TestDType::from_int(0)]));
 
         let input = unsafe {
-            TensorBinding::from_raw_parts(
-                input_handle,
-                self.stride.clone(),
-                self.shape.clone(),
-                size_of::<TestDType>(),
-            )
+            TensorBinding::from_raw_parts(input_handle, self.stride.clone(), self.shape.clone())
         };
-        let output = unsafe {
-            TensorBinding::from_raw_parts(
-                output_handle.clone(),
-                strides![1],
-                shape![1],
-                size_of::<TestDType>(),
-            )
-        };
+        let output =
+            unsafe { TensorBinding::from_raw_parts(output_handle.clone(), strides![1], shape![1]) };
 
         let cube_count = 3;
         let result = shared_sum(

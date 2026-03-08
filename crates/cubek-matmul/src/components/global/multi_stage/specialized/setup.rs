@@ -16,7 +16,7 @@ use crate::definition::MatmulLineSizes;
 use crate::definition::StageIdent;
 use crate::definition::TilingBlueprint;
 use crate::definition::{MatmulElems, MatmulSetupError};
-use crate::definition::{MatmulPrecision, MatmulProblem};
+use crate::definition::{MatmulTypes, MatmulProblem};
 use crate::launch::RuntimeConfig;
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::MatrixLayout;
@@ -50,7 +50,7 @@ where
     AL: FullLoadingStrategy<RC>,
     GW: GlobalWriterFamily,
 {
-    type Matmul<MP: MatmulPrecision> = SpecializedMatmul<
+    type Matmul<MP: MatmulTypes> = SpecializedMatmul<
         MP,
         SMM::Matmul<MP, L::TilingLayout, L::TilingLayout, AL::TilingLayout, WriteTiling>,
         RC,

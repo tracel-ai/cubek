@@ -88,7 +88,7 @@ impl PrngRuntime for Normal {
 impl PrngArgs for Normal {
     type Args = Self;
 
-    fn args<'a, R: Runtime>(self) -> NormalLaunch<'a, R> {
+    fn args<R: Runtime>(self) -> NormalLaunch<R> {
         NormalLaunch::new(ScalarArg::new(self.mean), ScalarArg::new(self.std))
     }
 }
@@ -101,11 +101,5 @@ pub fn random_normal<R: Runtime>(
     out: TensorBinding<R>,
     dtype: StorageType,
 ) -> Result<(), LaunchError> {
-    assert_eq!(
-        out.elem_size,
-        dtype.size(),
-        "Tensor element type must be the same as type E"
-    );
-
     random::<NormalFamily, R>(client, Normal { mean, std }, out, dtype)
 }

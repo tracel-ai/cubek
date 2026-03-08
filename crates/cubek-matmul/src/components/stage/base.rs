@@ -12,7 +12,7 @@ use crate::components::stage::PartitionScheduler;
 use crate::components::tile::TileConfig;
 use crate::definition::TilingBlueprint;
 use crate::definition::{
-    AccS, LhsS, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulSetupError, RhsS,
+    AccS, LhsS, MatmulElems, MatmulLineSizes, MatmulSetupError, MatmulTypes, RhsS,
 };
 use std::{fmt::Debug, hash::Hash};
 
@@ -21,7 +21,7 @@ use super::{StageEventListener, TilingLayout};
 /// A family of [StageMatmul] implementations that operate with any [precision](MatmulPrecision).
 pub trait StageMatmulFamily: Send + Sync + 'static {
     /// The specific TileMatmul implementation associated with this family.
-    type Matmul<MP: MatmulPrecision, TL: TilingLayout, TR: TilingLayout, TA: TilingLayout, TO: TilingLayout>: StageMatmul<
+    type Matmul<MP: MatmulTypes, TL: TilingLayout, TR: TilingLayout, TA: TilingLayout, TO: TilingLayout>: StageMatmul<
             MP,
             Config = Self::Config,
             LhsStage = <Self::LhsStage as StageFamily>::Stage<LhsS<MP>, TL>,
@@ -83,7 +83,7 @@ pub trait StageMatmulFamily: Send + Sync + 'static {
 ///  - Data given as inputs by stage readers must always be valid. If the actual matrix multiplication
 ///    should be done on smaller sizes than M, N and K, padding with zeros must be done beforehand.
 ///  - Enough planes/units are launched to perform the whole computation
-pub trait StageMatmul<MP: MatmulPrecision>: 'static + Send + Sync {
+pub trait StageMatmul<MP: MatmulTypes>: 'static + Send + Sync {
     /// The configuration type associated with this Matmul.
     type Config: StageConfig;
 
@@ -188,14 +188,14 @@ pub enum PartitionBuffering {
 /// Stage that can be divided into tiles, with the same kind used by the
 /// tile matmul readers.
 #[cube]
-pub trait Stage<ES: Numeric, IO: SliceVisibility = ReadOnly>:
+pub trait Stage<ES: Numeric, NS: Size, IO: SliceVisibility = ReadOnly>:
     CubeType + Clone + Send + Sync + 'static
 {
     /// The kind (or family) of the tiles contained in this stage
     type TileKind: TileKind<IO>;
 
     /// Slices a tile with offset (`row`, `col`) from the stage and returns it
-    fn tile(this: &Self, tile: Coords2d) -> <Self::TileKind as TileKind<IO>>::Tile<ES>;
+    fn tile(this: &Self, tile: Coords2d) -> <Self::TileKind as TileKind<IO>>::Tile<ES, NS>;
 }
 
 /// Stage family for any precision
@@ -203,54 +203,54 @@ pub trait StageFamily<IO: SliceVisibility = ReadOnly>: Send + Sync + 'static {
     /// The tile kind (family) contained in the stage
     type TileKind: TileKind<IO>;
     /// The concrete stage type of this family, instantiated with the type and layout
-    type Stage<ES: Numeric, T: TilingLayout>: Stage<ES, IO, TileKind = Self::TileKind>;
+    type Stage<ES: Numeric, NS: Size, T: TilingLayout>: Stage<ES, IO, TileKind = Self::TileKind>;
 }
 
 /// Stage family that can be used as the target of a loader
 #[cube]
 pub trait LoadStageFamily<IO: SliceVisibility = ReadOnly>: StageFamily {
     /// Create a new stage from the config and alignment
-    fn create<ES: Numeric, T: TilingLayout>(
+    fn create<ES: Numeric, NS: Size, T: TilingLayout>(
         #[comptime] alignment: usize,
         #[comptime] config: StageMemoryConfig,
-    ) -> Self::Stage<ES, T>;
+    ) -> Self::Stage<ES, NS, T>;
     /// Return the same stage with a different buffer index
-    fn with_buffer_index<ES: Numeric, T: TilingLayout>(
-        stage: &Self::Stage<ES, T>,
+    fn with_buffer_index<ES: Numeric, NS: Size, T: TilingLayout>(
+        stage: &Self::Stage<ES, NS, T>,
         buffer_index: u32,
-    ) -> Self::Stage<ES, T>;
+    ) -> Self::Stage<ES, NS, T>;
     /// Free the stage
-    fn free<ES: Numeric, T: TilingLayout>(stage: &Self::Stage<ES, T>);
+    fn free<ES: Numeric, NS: Size, T: TilingLayout>(stage: &Self::Stage<ES, NS, T>);
 }
 
 #[cube]
-impl<ES: Numeric, IO: SliceVisibility, Inner: Stage<ES, IO>> Stage<ES, IO>
+impl<ES: Numeric, NS: Size, IO: SliceVisibility, Inner: Stage<ES, NS, IO>> Stage<ES, NS, IO>
     for ComptimeOption<Inner>
 {
     type TileKind = Option<Inner::TileKind>;
 
-    fn tile(this: &Self, tile: Coords2d) -> <Self::TileKind as TileKind<IO>>::Tile<ES> {
+    fn tile(this: &Self, tile: Coords2d) -> <Self::TileKind as TileKind<IO>>::Tile<ES, NS> {
         this.as_ref().map(|stage| Inner::tile(stage, tile))
     }
 }
 
 #[cube]
 impl<IO: SliceVisibility, S: LoadStageFamily<IO>> LoadStageFamily<IO> for Option<S> {
-    fn create<ES: Numeric, T: TilingLayout>(
+    fn create<ES: Numeric, NS: Size, T: TilingLayout>(
         #[comptime] alignment: usize,
         #[comptime] config: StageMemoryConfig,
-    ) -> Self::Stage<ES, T> {
+    ) -> Self::Stage<ES, NS, T> {
         ComptimeOption::new_Some(S::create(alignment, config))
     }
 
-    fn with_buffer_index<ES: Numeric, T: TilingLayout>(
-        stage: &Self::Stage<ES, T>,
+    fn with_buffer_index<ES: Numeric, NS: Size, T: TilingLayout>(
+        stage: &Self::Stage<ES, NS, T>,
         index: u32,
-    ) -> Self::Stage<ES, T> {
+    ) -> Self::Stage<ES, NS, T> {
         stage.as_ref().map(|s| S::with_buffer_index(s, index))
     }
 
-    fn free<ES: Numeric, T: TilingLayout>(stage: &Self::Stage<ES, T>) {
+    fn free<ES: Numeric, NS: Size, T: TilingLayout>(stage: &Self::Stage<ES, NS, T>) {
         #[comptime]
         if let ComptimeOption::Some(inner) = stage {
             S::free(inner)

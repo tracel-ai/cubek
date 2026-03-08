@@ -30,12 +30,15 @@ pub struct TaskCounter {
     pub counter: u32,
 }
 
-pub type FullLoaderStage<RC, L, IP> = <<L as FullLoadingStrategy<RC>>::Stage as StageFamily>::Stage<
-    IP,
-    <L as FullLoadingStrategy<RC>>::TilingLayout,
->;
-pub type PartialLoaderStage<RC, L, IP> =
+pub type FullLoaderStage<RC, L, E, N> =
+    <<L as FullLoadingStrategy<RC>>::Stage as StageFamily>::Stage<
+        E,
+        N,
+        <L as FullLoadingStrategy<RC>>::TilingLayout,
+    >;
+pub type PartialLoaderStage<RC, L, E, N> =
     <<L as PartialLoadingStrategy<RC>>::Stage as StageFamily>::Stage<
-        IP,
+        E,
+        N,
         <L as PartialLoadingStrategy<RC>>::TilingLayout,
     >;

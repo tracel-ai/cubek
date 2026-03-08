@@ -26,7 +26,6 @@ impl GlobalFullCubeReduce {
     ) {
         let write_index = CUBE_POS;
 
-        let input_line_size = input.line_size();
         let accumulator_size = blueprint.num_shared_accumulators;
         let worker_pos = Self::worker_pos(blueprint);
 

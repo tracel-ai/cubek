@@ -42,7 +42,7 @@ pub(crate) fn random<F: RandomFamily, R: Runtime>(
     //     output.strides.len() - 1,
     // );
 
-    let address_type = output.required_address_type();
+    let address_type = output.required_address_type(dtype.size());
     let output = linear_view(client, output, output_line_size);
 
     prng_kernel::launch::<F, R>(
@@ -92,7 +92,7 @@ pub(crate) fn get_seeds() -> [u32; 4] {
 pub(crate) trait PrngArgs: Send + Sync + 'static {
     type Args: LaunchArg;
 
-    fn args<'a, R: Runtime>(self) -> <Self::Args as LaunchArg>::RuntimeArg<'a, R>;
+    fn args<R: Runtime>(self) -> <Self::Args as LaunchArg>::RuntimeArg<R>;
 }
 
 pub(crate) trait RandomFamily: Send + Sync + 'static + std::fmt::Debug {

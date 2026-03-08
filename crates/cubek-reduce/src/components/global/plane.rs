@@ -79,8 +79,6 @@ impl GlobalFullPlaneReduce {
         #[comptime] line_mode: LineMode,
         #[comptime] blueprint: PlaneReduceBlueprint,
     ) -> I::AccumulatorItem {
-        let input_line_size = input.line_size();
-
         let reader = Reader::<P>::new::<I, Out>(
             input,
             output,

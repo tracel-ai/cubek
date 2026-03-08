@@ -1,5 +1,5 @@
 use crate::definition::{
-    LhsS, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulSetupError, MatrixPrecision, RhsS,
+    LhsS, MatmulElems, MatmulLineSizes, MatmulTypes, MatmulSetupError, MatrixTypes, RhsS,
     TilingBlueprint,
 };
 use crate::{
@@ -47,7 +47,7 @@ impl<
     type OutStage = PartitionedStageFamily;
 
     type Matmul<
-        MP: MatmulPrecision,
+        MP: MatmulTypes,
         TL: TilingLayout,
         TR: TilingLayout,
         TA: TilingLayout,
@@ -55,9 +55,9 @@ impl<
     > = UnitMatmul<
         MP,
         TM::Matmul<
-            <MP::Lhs as MatrixPrecision>::Register,
-            <MP::Rhs as MatrixPrecision>::Register,
-            <MP::Acc as MatrixPrecision>::Register,
+            <MP::Lhs as MatrixTypes>::Register,
+            <MP::Rhs as MatrixTypes>::Register,
+            <MP::Acc as MatrixTypes>::Register,
         >,
         StageIn::Stage<LhsS<MP>, TL>,
         StageIn::Stage<RhsS<MP>, TR>,

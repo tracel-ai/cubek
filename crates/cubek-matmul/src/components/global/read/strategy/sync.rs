@@ -5,7 +5,7 @@ use crate::{
         global::{SharedGlobalMatmulConfig, read::SyncStrategy},
         stage::StageConfig,
     },
-    definition::MatmulPrecision,
+    definition::MatmulTypes,
 };
 
 /// Simple synchronous barrier, using `cube_sync()`
@@ -17,7 +17,7 @@ impl SyncStrategy for Synchronous {
 
     fn create_barrier() -> Self::Barrier {}
 
-    fn sync<MP: MatmulPrecision, S: StageConfig>(
+    fn sync<MP: MatmulTypes, S: StageConfig>(
         _barrier: &mut Self::Barrier,
         #[comptime] _config: SharedGlobalMatmulConfig<S>,
     ) {

@@ -232,7 +232,7 @@ fn quantize_native<R: Runtime>(
 ) -> Result<(), LaunchError> {
     let num_elems: usize = input.shape.iter().product();
     let line_size = tensor_line_size_parallel(
-        client.io_optimized_line_sizes(input.elem_size),
+        client.io_optimized_line_sizes(input_dtype.size()),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,
@@ -241,11 +241,6 @@ fn quantize_native<R: Runtime>(
     let cube_dim = CubeDim::new(client, working_units);
     let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
     let (range_min, range_max) = scheme.value.range();
-
-    let address_type = input
-        .required_address_type()
-        .max(scale.required_address_type())
-        .max(output.required_address_type());
 
     match scheme {
         QuantScheme {
@@ -257,6 +252,11 @@ fn quantize_native<R: Runtime>(
             // We could use line_size = block_size if it's in the supported line sizes.. but let's keep it simple
             check_block_size_compat(scheme, line_size as usize);
             let quant_type = ElemType::from_quant_value(scheme.value);
+
+            let address_type = input
+                .required_address_type(input_dtype.size())
+                .max(scale.required_address_type(scale_dtype.size()))
+                .max(output.required_address_type(quant_type.size()));
 
             let scales_layout = scales_layout(client, &output, &scale, 1, scheme);
 
@@ -331,9 +331,9 @@ fn quantize_packed<R: Runtime>(
     let (range_min, range_max) = scheme.value.range();
 
     let address_type = input
-        .required_address_type()
-        .max(scale.required_address_type())
-        .max(output.required_address_type());
+        .required_address_type(dtype_input.size())
+        .max(scale.required_address_type(dtype_input.size()))
+        .max(output.required_address_type(size_of::<u32>()));
 
     check_block_size_compat(scheme, num_quants); // 32 / 8 = 4
 

@@ -91,7 +91,7 @@ pub fn dequantize_symmetric_packed_value<
 ) -> Array<Line<F, NF>> {
     let line_size_values = values.line_size();
     let num_quants = scheme.num_quants();
-    let mut tmp = Array::lined(line_size_values);
+    let mut tmp = Array::new(line_size_values);
 
     #[unroll]
     for i in 0..line_size_values {
@@ -265,7 +265,7 @@ fn dequantize_packed<R: Runtime>(
     let num_elems_input: usize = input.shape.iter().product();
 
     let mut line_size_in = tensor_line_size_parallel(
-        client.io_optimized_line_sizes(input.elem_size),
+        client.io_optimized_line_sizes(input_dtype.size()),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,
@@ -282,9 +282,9 @@ fn dequantize_packed<R: Runtime>(
     let cube_dim = CubeDim::new(client, num_elems);
     let cube_count = calculate_cube_count_elemwise(client, num_elems, cube_dim);
     let address_type = input
-        .required_address_type()
-        .max(scale.required_address_type())
-        .max(output.required_address_type());
+        .required_address_type(size_of::<u32>())
+        .max(scale.required_address_type(scale_dtype.size()))
+        .max(output.required_address_type(input_dtype.size()));
 
     match scheme {
         QuantScheme {
@@ -332,10 +332,6 @@ fn dequantize_native<R: Runtime>(
     let working_units = num_elems / line_size as usize;
     let cube_dim = CubeDim::new(client, working_units);
     let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
-    let address_type = input
-        .required_address_type()
-        .max(scale.required_address_type())
-        .max(output.required_address_type());
 
     match scheme {
         QuantScheme {
@@ -352,6 +348,11 @@ fn dequantize_native<R: Runtime>(
                 QuantValue::E2M1 => ElemType::Float(FloatKind::E2M1),
                 other => panic!("Unsupported quantization value {other:?}"),
             };
+
+            let address_type = input
+                .required_address_type(quant_dtype.size())
+                .max(scale.required_address_type(scale_dtype.size()))
+                .max(output.required_address_type(input_dtype.size()));
 
             unsafe {
                 dequantize_symmetric_native_kernel::launch_unchecked(

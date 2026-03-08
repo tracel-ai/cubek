@@ -1,6 +1,6 @@
 use crate::{ReducePrecision, components::args::NumericLine, routines::GlobalReduceBlueprint};
 use cubecl::{
-    prelude::{Numeric, ReadWrite, *},
+    prelude::{ReadWrite, *},
     std::tensor::r#virtual::VirtualTensor,
 };
 

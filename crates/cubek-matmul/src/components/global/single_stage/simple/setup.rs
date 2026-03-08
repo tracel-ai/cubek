@@ -2,7 +2,7 @@ use crate::{components::CubeDimResource, launch::RuntimeConfig};
 use crate::{
     components::stage::NumStages,
     definition::{
-        MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError, StageIdent,
+        MatmulElems, MatmulLineSizes, MatmulTypes, MatmulProblem, MatmulSetupError, StageIdent,
     },
 };
 use crate::{
@@ -57,7 +57,7 @@ where
     AL: FullLoadingStrategy<RC, TileKind = Strided>,
     GW: GlobalWriterFamily,
 {
-    type Matmul<MP: MatmulPrecision> = SimpleMatmul<
+    type Matmul<MP: MatmulTypes> = SimpleMatmul<
         MP,
         SMM::Matmul<MP, LL::TilingLayout, RL::TilingLayout, AL::TilingLayout, WriteTiling>,
         RC,

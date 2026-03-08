@@ -1,5 +1,5 @@
 use crate::components::{stage::Stage, tile::TileMatmul};
-use crate::definition::{AccS, MatmulPrecision, MatrixPrecision};
+use crate::definition::{AccS, MatmulTypes, MatrixTypes};
 use cubecl::prelude::*;
 use cubek_std::{MatrixLayout, PartitionSize};
 
@@ -7,11 +7,11 @@ use cubek_std::{MatrixLayout, PartitionSize};
 /// Wrapper over a sequence of Tile Matmul accumulators
 /// Enables indexing at 2d coordinates
 pub struct Accumulators<
-    MP: MatmulPrecision,
+    MP: MatmulTypes,
     TM: TileMatmul<
-            <MP::Lhs as MatrixPrecision>::Register,
-            <MP::Rhs as MatrixPrecision>::Register,
-            <MP::Acc as MatrixPrecision>::Register,
+            <MP::Lhs as MatrixTypes>::Register,
+            <MP::Rhs as MatrixTypes>::Register,
+            <MP::Acc as MatrixTypes>::Register,
         >,
 > {
     sequence: Sequence<TM::AccFragment>,
@@ -19,11 +19,11 @@ pub struct Accumulators<
 
 #[cube]
 impl<
-    MP: MatmulPrecision,
+    MP: MatmulTypes,
     TM: TileMatmul<
-            <MP::Lhs as MatrixPrecision>::Register,
-            <MP::Rhs as MatrixPrecision>::Register,
-            <MP::Acc as MatrixPrecision>::Register,
+            <MP::Lhs as MatrixTypes>::Register,
+            <MP::Rhs as MatrixTypes>::Register,
+            <MP::Acc as MatrixTypes>::Register,
         >,
 > Accumulators<MP, TM>
 {

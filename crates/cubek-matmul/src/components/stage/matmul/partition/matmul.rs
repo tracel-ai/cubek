@@ -8,7 +8,7 @@ use crate::components::stage::StageEvent;
 use crate::components::stage::matmul::scheduler::PartitionScheduler;
 use crate::components::stage::{PartitionBuffering, StageEventListener};
 use crate::components::tile::{TileConfig, TileMatmul};
-use crate::definition::{AccS, LhsS, MatmulPrecision, MatrixPrecision, RhsS};
+use crate::definition::{AccS, LhsS, MatmulTypes, MatrixTypes, RhsS};
 use cubecl::prelude::*;
 use cubek_std::PartitionSize;
 use cubek_std::StageSize;
@@ -63,11 +63,11 @@ impl<TC: TileConfig> SharedPartitionMatmulConfig<TC> {
 /// Matmul for a whole partition, a region of the Stage Matmul
 /// executed by a single compute primitive (unit or plane)
 pub struct PartitionMatmul<
-    MP: MatmulPrecision,
+    MP: MatmulTypes,
     TMM: TileMatmul<
-            <MP::Lhs as MatrixPrecision>::Register,
-            <MP::Rhs as MatrixPrecision>::Register,
-            <MP::Acc as MatrixPrecision>::Register,
+            <MP::Lhs as MatrixTypes>::Register,
+            <MP::Rhs as MatrixTypes>::Register,
+            <MP::Acc as MatrixTypes>::Register,
         >,
     StageLhs: Stage<LhsS<MP>, ReadOnly, TileKind = TMM::LhsTile>,
     StageRhs: Stage<RhsS<MP>, ReadOnly, TileKind = TMM::RhsTile>,
@@ -79,11 +79,11 @@ pub struct PartitionMatmul<
 #[cube]
 impl<MP, TM, StageLhs, StageRhs, StageAcc> PartitionMatmul<MP, TM, StageLhs, StageRhs, StageAcc>
 where
-    MP: MatmulPrecision,
+    MP: MatmulTypes,
     TM: TileMatmul<
-            <MP::Lhs as MatrixPrecision>::Register,
-            <MP::Rhs as MatrixPrecision>::Register,
-            <MP::Acc as MatrixPrecision>::Register,
+            <MP::Lhs as MatrixTypes>::Register,
+            <MP::Rhs as MatrixTypes>::Register,
+            <MP::Acc as MatrixTypes>::Register,
         >,
     StageLhs: Stage<LhsS<MP>, ReadOnly, TileKind = TM::LhsTile>,
     StageRhs: Stage<RhsS<MP>, ReadOnly, TileKind = TM::RhsTile>,

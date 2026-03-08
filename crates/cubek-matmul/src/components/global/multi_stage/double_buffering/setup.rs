@@ -13,7 +13,7 @@ use crate::components::{global::GlobalMatmulFamily, stage};
 use crate::components::{global::MaxGlobalReaderPlanes, stage::NumStages};
 use crate::definition::TilingBlueprint;
 use crate::definition::{
-    MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError, StageIdent,
+    MatmulElems, MatmulLineSizes, MatmulTypes, MatmulProblem, MatmulSetupError, StageIdent,
 };
 use crate::launch::RuntimeConfig;
 use cubecl::{ir::DeviceProperties, prelude::*};
@@ -52,7 +52,7 @@ where
     AL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
     GW: GlobalWriterFamily,
 {
-    type Matmul<MP: MatmulPrecision> = DoubleBufferingMatmul<
+    type Matmul<MP: MatmulTypes> = DoubleBufferingMatmul<
         MP,
         SMM::Matmul<MP, LL::TilingLayout, RL::TilingLayout, AL::TilingLayout, WriteTiling>,
         RC,

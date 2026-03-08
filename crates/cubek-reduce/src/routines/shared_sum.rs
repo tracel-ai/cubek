@@ -75,18 +75,18 @@ pub fn shared_sum<R: Runtime>(
     }
 
     let input_len = input.shape.iter().product::<usize>();
-    let contiguous_buffer = input_len * input.elem_size == input.handle.size() as usize;
+    let contiguous_buffer = input_len * input_elem.size() == input.handle.size() as usize;
 
     // Compute the optimal line size.
     let line_size = if contiguous_buffer {
         client
-            .io_optimized_line_sizes(input.elem_size)
+            .io_optimized_line_sizes(input_elem.size())
             .filter(|line_size| input_len.is_multiple_of(*line_size))
             .max()
             .unwrap_or(1)
     } else {
         tensor_line_size_parallel(
-            client.io_optimized_line_sizes(input.elem_size),
+            client.io_optimized_line_sizes(input_elem.size()),
             &input.shape,
             &input.strides,
             input.shape.len() - 1,
@@ -94,8 +94,8 @@ pub fn shared_sum<R: Runtime>(
     };
 
     let address_type = input
-        .required_address_type()
-        .max(output.required_address_type());
+        .required_address_type(input_elem.size())
+        .max(output.required_address_type(input_elem.size()));
 
     // Sum is commutative so we don't care about order, but need to care if there are holes since
     // they're not guaranteed to contain `0`.
@@ -103,9 +103,7 @@ pub fn shared_sum<R: Runtime>(
         let layout = LinearLayoutArgs::Plain(PlainLayoutLaunch::new(ScalarArg::new(
             input_len / line_size,
         )));
-        let buffer = unsafe {
-            ArrayArg::from_raw_parts_binding(input.handle, input_len, line_size, input.elem_size)
-        };
+        let buffer = unsafe { ArrayArg::from_raw_parts_binding(input.handle, input_len) };
         LinearViewLaunch::new::<LinearLayout>(buffer, layout)
     } else {
         linear_view(client, input, line_size)
@@ -116,6 +114,7 @@ pub fn shared_sum<R: Runtime>(
     let num_units = cube_count * cube_dim.num_elems();
     let num_lines_per_unit = input_len.div_ceil(num_units as usize * line_size);
     let cube_count = CubeCount::new_1d(cube_count);
+
     // Launch kernel
     unsafe {
         shared_sum_kernel::launch_unchecked(
@@ -125,7 +124,7 @@ pub fn shared_sum<R: Runtime>(
             address_type,
             line_size,
             input_view,
-            output.into_tensor_arg(1),
+            output.into_tensor_arg(),
             cube_dim.num_elems() as usize,
             num_lines_per_unit,
             input_elem,
@@ -143,7 +142,7 @@ fn shared_sum_kernel<T: Numeric, N: Size>(
     #[comptime] num_lines_per_unit: usize,
     #[define(T)] _dtype: ElemType,
 ) {
-    let mut shared_memory = SharedMemory::new_lined(shared_memory_size);
+    let mut shared_memory = SharedMemory::new(shared_memory_size);
     shared_memory[UNIT_POS as usize] = Line::empty().fill(T::from_int(0));
 
     // Each unit reduce `num_lines_per_unit` lines.

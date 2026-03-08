@@ -18,8 +18,8 @@ use crate::{
         stage::NumStages,
     },
     definition::{
-        Blueprint, CubeMappingLaunch, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem,
-        MatmulSetupError,
+        Blueprint, CubeMappingLaunch, MatmulElems, MatmulLineSizes, MatmulProblem,
+        MatmulSetupError, MatmulTypes,
     },
     launch::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
 };
@@ -59,7 +59,7 @@ impl Blueprint for NaiveBlueprint {
 }
 
 impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
-    type Matmul<MP: MatmulPrecision> = NaiveMatmul<MP>;
+    type Matmul<MP: MatmulTypes> = NaiveMatmul<MP>;
     type Config = NaiveMatmulConfig;
     type Blueprint = NaiveBlueprint;
 
@@ -81,12 +81,13 @@ impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
         cube_dim: CubeDim,
         cube_count: CubeCount,
         address_type: AddressType,
-        input: InputRuntimeArg<'a, MA, R>,
-        output: OutputRuntimeArg<'a, MA, R>,
-        _config: ConfigRuntimeArg<'a, MA, R>,
-        cube_mapping: CubeMappingLaunch<'a, R>,
+        input: InputRuntimeArg<MA, R>,
+        output: OutputRuntimeArg<MA, R>,
+        _config: ConfigRuntimeArg<MA, R>,
+        cube_mapping: CubeMappingLaunch<R>,
         blueprint: NaiveBlueprint,
         dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<(), LaunchError> {
         unsafe {
             matmul_entry::launch_unchecked::<MA, R>(
@@ -100,12 +101,7 @@ impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
                 cube_mapping,
                 blueprint,
                 [dtypes.lhs_global, dtypes.rhs_global, dtypes.acc_global],
-                [dtypes.lhs_stage, dtypes.rhs_stage, dtypes.acc_stage],
-                [
-                    dtypes.lhs_register,
-                    dtypes.rhs_register,
-                    dtypes.acc_register,
-                ],
+                [line_sizes.lhs, line_sizes.rhs, line_sizes.out],
             )
         };
 

@@ -157,7 +157,7 @@ impl Layout for GlobalLayout {
     }
 }
 
-impl<'a, R: Runtime> GlobalLayoutLaunch<'a, R> {
+impl<R: Runtime> GlobalLayoutLaunch<R> {
     pub fn from_handle(
         handle: &TensorBinding<R>,
         line_size: LineSize,
@@ -210,7 +210,7 @@ impl<'a, R: Runtime> GlobalLayoutLaunch<'a, R> {
 
     #[allow(clippy::too_many_arguments)]
     pub fn from_quantized_handle(
-        client: &'a ComputeClient<R>,
+        client: &ComputeClient<R>,
         values: &TensorBinding<R>,
         scales: &TensorBinding<R>,
         shape: &Shape,
@@ -218,7 +218,7 @@ impl<'a, R: Runtime> GlobalLayoutLaunch<'a, R> {
         scheme: QuantScheme,
         line_size: LineSize,
         config: GlobalLayoutConfig,
-    ) -> (GlobalLayoutLaunch<'a, R>, GlobalScaleLayoutArgs<'a, R>) {
+    ) -> (GlobalLayoutLaunch<R>, GlobalScaleLayoutArgs<R>) {
         let rank = values.shape.len();
         let (rows, cols) = (shape[rank - 2], shape[rank - 1]);
         let values_layout = {
@@ -347,7 +347,7 @@ impl Layout for NoopLayout {
     }
 }
 
-impl<'a, R: Runtime> BatchLayoutLaunch<'a, R> {
+impl<R: Runtime> BatchLayoutLaunch<R> {
     pub fn from_handle(
         client: &ComputeClient<R>,
         handle: &TensorBinding<R>,

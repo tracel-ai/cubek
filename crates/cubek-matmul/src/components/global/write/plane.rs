@@ -7,7 +7,7 @@ use crate::{
         },
         stage::{PlanePartitioner, StagePartitioner},
     },
-    definition::{MatrixPrecision, StageIdent},
+    definition::{MatrixTypes, StageIdent},
 };
 use cubecl::prelude::*;
 use cubecl::std::tensor::View;
@@ -17,7 +17,7 @@ use cubek_std::{stage::StageMemoryConfig, tile::StridedTile};
 #[derive(CubeType)]
 /// Writes tiles from out shared memory to output global memory
 /// using a plane for each tile
-pub struct PlaneWriter<IP: MatrixPrecision> {
+pub struct PlaneWriter<IP: MatrixTypes> {
     global: View<Line<IP::Global>, TiledCoords, ReadWrite>,
     stage: PartitionedStage<IP::Stage>,
 
@@ -28,7 +28,7 @@ pub struct PlaneWriter<IP: MatrixPrecision> {
 }
 
 #[cube]
-impl<IP: MatrixPrecision> PlaneWriter<IP> {
+impl<IP: MatrixTypes> PlaneWriter<IP> {
     pub fn new(
         global: View<Line<IP::Global>, Coords2d, ReadWrite>,
         #[comptime] config: GlobalWriterConfig,
@@ -62,7 +62,7 @@ impl<IP: MatrixPrecision> PlaneWriter<IP> {
 }
 
 #[cube]
-impl<IP: MatrixPrecision> WriteEventListener for PlaneWriter<IP> {
+impl<IP: MatrixTypes> WriteEventListener for PlaneWriter<IP> {
     fn on_event(this: &mut Self, event: super::WriteEvent) {
         #[allow(clippy::single_match)]
         match event {
@@ -75,7 +75,7 @@ impl<IP: MatrixPrecision> WriteEventListener for PlaneWriter<IP> {
 }
 
 #[cube]
-impl<IP: MatrixPrecision> GlobalWriter<IP> for PlaneWriter<IP> {
+impl<IP: MatrixTypes> GlobalWriter<IP> for PlaneWriter<IP> {
     type Stage = PartitionedStage<IP::Stage>;
 
     fn init(
@@ -156,5 +156,5 @@ pub struct PlaneWriterFamily;
 
 impl GlobalWriterFamily for PlaneWriterFamily {
     type Stage = PartitionedStageFamily;
-    type Writer<IP: MatrixPrecision> = PlaneWriter<IP>;
+    type Writer<IP: MatrixTypes> = PlaneWriter<IP>;
 }

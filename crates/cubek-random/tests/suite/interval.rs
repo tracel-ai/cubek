@@ -12,8 +12,8 @@ fn values_open_interval() {
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_1d(2),
-        unsafe { ArrayArg::from_raw_parts::<u32>(input, 2, 1) },
-        unsafe { ArrayArg::from_raw_parts::<f32>(output.clone(), 2, 1) },
+        unsafe { ArrayArg::from_raw_parts(input, 2) },
+        unsafe { ArrayArg::from_raw_parts(output.clone(), 2) },
     );
 
     let actual = client.read_one(output).unwrap();
@@ -59,8 +59,8 @@ fn values_closed_open_interval() {
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_1d(2),
-        unsafe { ArrayArg::from_raw_parts::<u32>(input, 2, 1) },
-        unsafe { ArrayArg::from_raw_parts::<f32>(output.clone(), 2, 1) },
+        unsafe { ArrayArg::from_raw_parts(input, 2) },
+        unsafe { ArrayArg::from_raw_parts(output.clone(), 2) },
     );
 
     let actual = client.read_one(output).unwrap();

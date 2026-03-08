@@ -66,8 +66,6 @@ impl GlobalFullUnitReduce {
         idle: ComptimeOption<bool>,
         #[comptime] line_mode: LineMode,
     ) -> I::AccumulatorItem {
-        let input_line_size = input.line_size();
-
         let reader = Reader::<P>::new::<I, Out>(
             input,
             output,

@@ -1,4 +1,4 @@
-use crate::components::{args::NumericLine, precision::ReducePrecision};
+use crate::components::precision::ReducePrecision;
 use cubecl::prelude::*;
 
 pub trait ReduceFamily: Send + Sync + 'static + std::fmt::Debug {
@@ -116,7 +116,7 @@ impl<In: Numeric, N: Size> SharedAccumulator for SharedMemory<Line<In, N>> {
     type Item = Line<In, N>;
 
     fn allocate(#[comptime] length: usize, #[comptime] _coordinate: bool) -> Self {
-        SharedMemory::new_lined(length)
+        SharedMemory::new(length)
     }
 
     fn read(accumulator: &Self, index: usize) -> Self::Item {
@@ -141,8 +141,8 @@ impl<In: Numeric, N: Size> SharedAccumulator for ArgAccumulator<In, N> {
 
     fn allocate(#[comptime] length: usize, #[comptime] _coordinate: bool) -> Self {
         ArgAccumulator::<In, N> {
-            elements: SharedMemory::new_lined(length),
-            args: SharedMemory::new_lined(length),
+            elements: SharedMemory::new(length),
+            args: SharedMemory::new(length),
         }
     }
 

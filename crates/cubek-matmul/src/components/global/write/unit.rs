@@ -11,12 +11,12 @@ use crate::components::{
     },
     stage::{StagePartitioner, UnitPartitioner},
 };
-use crate::definition::{MatrixPrecision, StageIdent};
+use crate::definition::{MatrixTypes, StageIdent};
 
 #[derive(CubeType)]
 /// Writes tiles from out shared memory to output global memory
 /// using a unit for each tile
-pub struct UnitWriter<IP: MatrixPrecision> {
+pub struct UnitWriter<IP: MatrixTypes> {
     global: View<Line<IP::Global>, TiledCoords, ReadWrite>,
     stage: PartitionedStage<IP::Stage>,
 
@@ -25,7 +25,7 @@ pub struct UnitWriter<IP: MatrixPrecision> {
 }
 
 #[cube]
-impl<IP: MatrixPrecision> UnitWriter<IP> {
+impl<IP: MatrixTypes> UnitWriter<IP> {
     pub fn new(
         global: View<Line<IP::Global>, Coords2d, ReadWrite>,
         #[comptime] config: GlobalWriterConfig,
@@ -79,7 +79,7 @@ pub fn unit_write<ES: Numeric, EG: Numeric>(
 }
 
 #[cube]
-impl<IP: MatrixPrecision> WriteEventListener for UnitWriter<IP> {
+impl<IP: MatrixTypes> WriteEventListener for UnitWriter<IP> {
     fn on_event(this: &mut Self, event: super::WriteEvent) {
         #[allow(clippy::single_match)]
         match event {
@@ -90,7 +90,7 @@ impl<IP: MatrixPrecision> WriteEventListener for UnitWriter<IP> {
 }
 
 #[cube]
-impl<IP: MatrixPrecision> GlobalWriter<IP> for UnitWriter<IP> {
+impl<IP: MatrixTypes> GlobalWriter<IP> for UnitWriter<IP> {
     type Stage = PartitionedStage<IP::Stage>;
 
     fn init(
@@ -109,5 +109,5 @@ pub struct UnitWriterFamily;
 
 impl GlobalWriterFamily for UnitWriterFamily {
     type Stage = PartitionedStageFamily;
-    type Writer<IP: MatrixPrecision> = UnitWriter<IP>;
+    type Writer<IP: MatrixTypes> = UnitWriter<IP>;
 }

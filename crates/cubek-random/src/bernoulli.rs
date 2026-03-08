@@ -64,7 +64,7 @@ impl PrngRuntime for Bernoulli {
 impl PrngArgs for Bernoulli {
     type Args = Self;
 
-    fn args<'a, R: Runtime>(self) -> BernoulliLaunch<'a, R> {
+    fn args<R: Runtime>(self) -> BernoulliLaunch<R> {
         BernoulliLaunch::new(ScalarArg::new(self.probability))
     }
 }
@@ -76,11 +76,5 @@ pub fn random_bernoulli<R: Runtime>(
     out: TensorBinding<R>,
     dtype: StorageType,
 ) -> Result<(), LaunchError> {
-    assert_eq!(
-        out.elem_size,
-        dtype.size(),
-        "Tensor element type must be the same as type E"
-    );
-
     random::<BernoulliFamily, R>(client, Bernoulli { probability }, out, dtype)
 }

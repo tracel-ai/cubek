@@ -17,7 +17,7 @@ use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{self, StageConfig};
 use crate::components::{global::GlobalMatmulFamily, stage::NumStages};
 use crate::definition::TilingBlueprint;
-use crate::definition::{MatmulElems, MatmulPrecision, MatmulProblem, MatmulSetupError};
+use crate::definition::{MatmulElems, MatmulTypes, MatmulProblem, MatmulSetupError};
 use crate::definition::{MatmulLineSizes, StageIdent};
 use crate::{components::CubeDimResource, launch::RuntimeConfig};
 use cubecl::{ir::DeviceProperties, prelude::*};
@@ -54,7 +54,7 @@ where
     AL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = Synchronous>,
     GW: GlobalWriterFamily,
 {
-    type Matmul<MP: MatmulPrecision> = OrderedDoubleBufferingMatmul<
+    type Matmul<MP: MatmulTypes> = OrderedDoubleBufferingMatmul<
         MP,
         SMM::Matmul<
             MP,

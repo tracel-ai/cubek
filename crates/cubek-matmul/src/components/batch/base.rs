@@ -5,7 +5,7 @@ use crate::{
     components::stage::NumStages,
     definition::{
         AccG, Blueprint, CubeMapping, CubeMappingLaunch, LhsG, MatmulElems, MatmulLineSizes,
-        MatmulPrecision, MatmulProblem, MatmulSetupError, RhsG,
+        MatmulProblem, MatmulSetupError, MatmulTypes, RhsG,
     },
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
@@ -14,7 +14,7 @@ use std::{fmt::Debug, hash::Hash};
 /// A family of [matmuls](BatchMatmul) working with any [precision](MatmulPrecision).
 pub trait BatchMatmulFamily<RC: RuntimeConfig>: 'static + Send + Sync {
     /// The specific [BatchMatmul] implementation associated with this family.
-    type Matmul<MP: MatmulPrecision>: BatchMatmul<RC, MP, Config = Self::Config>;
+    type Matmul<MP: MatmulTypes>: BatchMatmul<RC, MP, Config = Self::Config>;
 
     /// The configuration type associated with this matmul family.
     type Config: BatchConfig;
@@ -39,17 +39,18 @@ pub trait BatchMatmulFamily<RC: RuntimeConfig>: 'static + Send + Sync {
     ///
     /// Out-of-bounds can happen
     #[allow(clippy::too_many_arguments)]
-    unsafe fn launch_unchecked<'a, MA: MatmulArgs<Config = RC>, R: Runtime>(
+    unsafe fn launch_unchecked<MA: MatmulArgs<Config = RC>, R: Runtime>(
         client: &ComputeClient<R>,
         cube_dim: CubeDim,
         cube_count: CubeCount,
         address_type: AddressType,
-        input: InputRuntimeArg<'a, MA, R>,
-        output: OutputRuntimeArg<'a, MA, R>,
-        config: ConfigRuntimeArg<'a, MA, R>,
-        cube_mapping: CubeMappingLaunch<'a, R>,
+        input: InputRuntimeArg<MA, R>,
+        output: OutputRuntimeArg<MA, R>,
+        config: ConfigRuntimeArg<MA, R>,
+        cube_mapping: CubeMappingLaunch<R>,
         blueprint: Self::Blueprint,
         dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<(), LaunchError>;
 
     /// Returns the compute resources required to run this matmul.
@@ -86,7 +87,7 @@ pub trait BatchMatmulFamily<RC: RuntimeConfig>: 'static + Send + Sync {
 ///   It is therefore important to use an underlying global matmul that performs check bounds,
 /// - It is accepted to launch more Cube than necessary, providing a CubeCountInput that states
 ///   the max cube position
-pub trait BatchMatmul<RC: RuntimeConfig, MP: MatmulPrecision>: 'static + Send + Sync {
+pub trait BatchMatmul<RC: RuntimeConfig, MP: MatmulTypes>: 'static + Send + Sync {
     type Config: BatchConfig;
 
     /// Performs batchwise matrix multiplication over tensors.

@@ -6,7 +6,7 @@ use crate::components::{
     stage::{StageConfig, StageMatmul},
 };
 use crate::{
-    definition::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS},
+    definition::{AccG, AccS, LhsG, LhsS, MatmulTypes, MatrixTypes, RhsG, RhsS},
     launch::RuntimeConfig,
 };
 use cubecl::prelude::*;
@@ -19,7 +19,7 @@ use std::marker::PhantomData;
 /// Fully loads all stages, synchronizes all planes, performs computation,
 /// synchronizes again, then proceeds to the next set of stages.
 pub struct SimpleMatmul<
-    MP: MatmulPrecision,
+    MP: MatmulTypes,
     SMM: StageMatmul<MP>,
     RC: RuntimeConfig,
     LL: FullLoadingStrategy<RC>,
@@ -31,7 +31,7 @@ pub struct SimpleMatmul<
 }
 
 #[cube]
-impl<MP: MatmulPrecision, SMM, RC, LL, RL, AL, GW> GlobalMatmul<RC, MP>
+impl<MP: MatmulTypes, SMM, RC, LL, RL, AL, GW> GlobalMatmul<RC, MP>
     for SimpleMatmul<MP, SMM, RC, LL, RL, AL, GW>
 where
     SMM: StageMatmul<
@@ -49,21 +49,21 @@ where
 {
     type Config = SharedGlobalMatmulConfig<SMM::Config>;
     type LhsGlobalReader = FullStageGlobalReader<
-        <MP::Lhs as MatrixPrecision>::Global,
-        <MP::Lhs as MatrixPrecision>::Stage,
+        <MP::Lhs as MatrixTypes>::Global,
+        <MP::Lhs as MatrixTypes>::Stage,
         RC,
         LL,
     >;
     type RhsGlobalReader = FullStageGlobalReader<
-        <MP::Rhs as MatrixPrecision>::Global,
-        <MP::Rhs as MatrixPrecision>::Stage,
+        <MP::Rhs as MatrixTypes>::Global,
+        <MP::Rhs as MatrixTypes>::Stage,
         RC,
         RL,
     >;
     type AccGlobalReader = ComptimeOption<
         FullStageGlobalReader<
-            <MP::Acc as MatrixPrecision>::Global,
-            <MP::Acc as MatrixPrecision>::Stage,
+            <MP::Acc as MatrixTypes>::Global,
+            <MP::Acc as MatrixTypes>::Stage,
             RC,
             AL,
         >,

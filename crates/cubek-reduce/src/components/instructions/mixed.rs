@@ -72,7 +72,7 @@ impl ReduceOperationConfig {
                 ReduceDtypes {
                     input: input.into(),
                     output: input.into(),
-                    accumulation: acc,
+                    accumulation: acc.storage_type(),
                 }
             }
             ElemType::Int(kind) => {
@@ -84,7 +84,7 @@ impl ReduceOperationConfig {
                 ReduceDtypes {
                     input: input.into(),
                     output: input.into(),
-                    accumulation: acc,
+                    accumulation: acc.storage_type(),
                 }
             }
             ElemType::UInt(kind) => {
@@ -96,7 +96,7 @@ impl ReduceOperationConfig {
                 ReduceDtypes {
                     input: input.into(),
                     output: input.into(),
-                    accumulation: acc,
+                    accumulation: acc.storage_type(),
                 }
             }
             ElemType::Bool => panic!("Can't reduce on booleans"),
@@ -126,9 +126,9 @@ impl<In: Numeric, N: Size> SharedAccumulator for DynamicAccumulator<In, N> {
     type Item = DynamicAccumulatorItem<In, N>;
 
     fn allocate(#[comptime] length: usize, #[comptime] coordinate: bool) -> Self {
-        let elements = SharedMemory::new_lined(length);
+        let elements = SharedMemory::new(length);
         let args = if coordinate {
-            let args = SharedMemory::new_lined(length);
+            let args = SharedMemory::new(length);
             ComptimeOption::new_Some(args)
         } else {
             ComptimeOption::new_None()

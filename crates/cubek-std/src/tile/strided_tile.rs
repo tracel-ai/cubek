@@ -224,6 +224,7 @@ impl<ES: Numeric, N: Size, IO: SliceVisibility> StridedTile<ES, N, IO> {
         })
     }
 
+    #[allow(unused)]
     fn downcast<ES2: Numeric, N2: Size>(self) -> StridedTile<ES2, N2, IO> {
         StridedTile::<ES2, N2, IO> {
             stage: self.stage.downcast(),

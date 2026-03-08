@@ -14,7 +14,7 @@ use crate::components::{
     },
     stage::StridedTilingLayout,
 };
-use crate::definition::{MatmulElems, MatmulPrecision, MatmulProblem, StageIdent};
+use crate::definition::{MatmulElems, MatmulTypes, MatmulProblem, StageIdent};
 use crate::{
     components::global::read::{validate_async_barrier, validate_async_copy_with_problem},
     launch::RuntimeConfig,
@@ -205,7 +205,7 @@ impl<RC: RuntimeConfig> AsyncPartialLoadingStrategy<RC> for AsyncPartialStridedL
 
     fn barrier_post_init() {}
 
-    fn arrive<MP: MatmulPrecision, S: StageConfig>(
+    fn arrive<MP: MatmulTypes, S: StageConfig>(
         barrier: &mut Barrier,
         #[comptime] _config: SharedGlobalMatmulConfig<S>,
     ) {

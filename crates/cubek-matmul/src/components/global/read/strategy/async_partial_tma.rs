@@ -9,7 +9,7 @@ use crate::components::{
     stage::{StageConfig, StridedStageFamily},
 };
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
-use crate::definition::{LhsS, MatmulElems, MatmulPrecision, MatmulProblem, RhsS, StageIdent};
+use crate::definition::{LhsS, MatmulElems, MatmulTypes, MatmulProblem, RhsS, StageIdent};
 use crate::{
     components::global::read::{AsyncPartialLoadingStrategy, validate_tma_with_problem},
     launch::RuntimeConfig,
@@ -180,7 +180,7 @@ impl<RC: RuntimeConfig> AsyncPartialLoadingStrategy<RC> for AsyncPartialTmaLoadi
         sync_async_proxy_shared();
     }
 
-    fn arrive<MP: MatmulPrecision, S: StageConfig>(
+    fn arrive<MP: MatmulTypes, S: StageConfig>(
         barrier: &mut Barrier,
         #[comptime] config: SharedGlobalMatmulConfig<S>,
     ) {

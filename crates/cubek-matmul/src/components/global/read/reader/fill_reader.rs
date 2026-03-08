@@ -2,17 +2,17 @@ use std::marker::PhantomData;
 
 use cubecl::{CubeType, prelude::*};
 
-use crate::{components::stage::FilledStage, definition::MatrixPrecision};
+use crate::{components::stage::FilledStage, definition::MatrixTypes};
 
 #[derive(CubeType)]
 /// Accumulator reader that zeros the accumulator
-pub struct ZeroGlobalReader<IP: MatrixPrecision> {
+pub struct ZeroGlobalReader<IP: MatrixTypes> {
     #[cube(comptime)]
     _ty: PhantomData<IP>,
 }
 
 #[cube]
-impl<IP: MatrixPrecision> ZeroGlobalReader<IP> {
+impl<IP: MatrixTypes> ZeroGlobalReader<IP> {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         ZeroGlobalReader::<IP> { _ty: PhantomData }

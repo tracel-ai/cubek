@@ -19,26 +19,26 @@ use cubek_std::MatrixLayout;
 /// Launches the matmul kernel
 pub(crate) fn matmul_entry<
     Args: MatmulArgs<Config = ()>,
-    LhsG: Numeric,
-    RhsG: Numeric,
-    AccG: Numeric,
-    LhsS: Numeric,
-    RhsS: Numeric,
-    AccS: Numeric,
-    LhsR: Numeric,
-    RhsR: Numeric,
-    AccR: Numeric,
+    Lhs: Numeric,
+    LhsSize: Size,
+    Rhs: Numeric,
+    RhsSize: Size,
+    Acc: Numeric,
+    AccSize: Size,
 >(
-    inputs: &<Args as MatmulArgs>::Input<LhsG, RhsG, AccG>,
-    output: &mut <Args as MatmulArgs>::Output<AccG>,
+    inputs: &<Args as MatmulArgs>::Input<
+        Line<Lhs, LhsSize>,
+        Line<Rhs, RhsSize>,
+        Line<Acc, AccSize>,
+    >,
+    output: &mut <Args as MatmulArgs>::Output<Line<Acc, AccSize>>,
     runtime_config: (),
     cube_mapping: CubeMapping,
     #[comptime] blueprint: NaiveBlueprint,
-    #[define(LhsG, RhsG, AccG)] global: [StorageType; 3],
-    #[define(LhsS, RhsS, AccS)] stage: [StorageType; 3],
-    #[define(LhsR, RhsR, AccR)] register: [StorageType; 3],
+    #[define(Lhs, Rhs, Acc)] _global: [StorageType; 3],
+    #[define(LhsSize, RhsSize, AccSize)] _sizes: [usize; 3],
 ) {
-    let mut state = Args::init_state::<LhsG, RhsG, AccG>(
+    let mut state = Args::init_state::<Line<Lhs, LhsSize>, Line<Rhs, RhsSize>, Line<Acc, AccSize>>(
         inputs,
         output,
         runtime_config,
@@ -60,7 +60,7 @@ pub(crate) fn matmul_entry<
     let config = comptime!(NaiveBatchMatmulFamily::expand_config(
         &device_props,
         &blueprint,
-        &MatmulElems::from_define_arrays(global, stage, register),
+        &blueprint.dtypes,
         &line_sizes
     ));
 
@@ -70,7 +70,7 @@ pub(crate) fn matmul_entry<
     }
     let config = comptime!(config.unwrap());
 
-    let mut state = Args::init_state::<LhsG, RhsG, AccG>(
+    let mut state = Args::init_state::<Line<Lhs, LhsSize>, Line<Rhs, RhsSize>, Line<Acc, AccSize>>(
         inputs,
         output,
         runtime_config,
@@ -79,19 +79,23 @@ pub(crate) fn matmul_entry<
         config.out_global_layout_config(),
     );
 
-    NaiveMatmul::<((LhsG, LhsS, LhsR), (RhsG, RhsS, RhsR), (AccG, AccS, AccR))>::execute::<Args>(
-        &mut state,
-        cube_mapping,
-        config,
-    );
+    let define!(RegisterLhs) = blueprint.dtypes.lhs_register;
+    let define!(RegisterRhs) = blueprint.dtypes.rhs_register;
+    let define!(RegisterAcc) = blueprint.dtypes.acc_register;
+
+    NaiveMatmul::<(
+        (Lhs, LhsSize, Lhs, LhsSize, RegisterLhs),
+        (Rhs, RhsSize, Rhs, RhsSize, RegisterRhs),
+        (Acc, AccSize, Acc, AccSize, RegisterAcc),
+    )>::execute::<Args>(&mut state, cube_mapping, config);
 }
 
-pub struct NaiveMatmul<MP: MatmulPrecision> {
+pub struct NaiveMatmul<MP: MatmulTypes> {
     _phantom: PhantomData<MP>,
 }
 
 #[cube]
-impl<MP: MatmulPrecision> BatchMatmul<(), MP> for NaiveMatmul<MP> {
+impl<MP: MatmulTypes> BatchMatmul<(), MP> for NaiveMatmul<MP> {
     type Config = NaiveMatmulConfig;
 
     fn execute<Args: MatmulArgs>(
@@ -123,11 +127,11 @@ impl<MP: MatmulPrecision> BatchMatmul<(), MP> for NaiveMatmul<MP> {
 
         let line_size = comptime![Ord::max(lhs.line_size(), rhs.line_size())];
         let size!(NA) = line_size;
-        let mut sum = Line::empty().fill(<AccG<MP> as Numeric>::from_int(0));
+        let mut sum = Line::<AccR<MP>, NA>::cast_from(0);
 
         for k in range_stepped(0u32, k, line_size as u32) {
-            let lhs = load_unrolled(&lhs, (m, k), MatrixLayout::RowMajor, line_size);
-            let rhs = load_unrolled(&rhs, (k, n), MatrixLayout::ColMajor, line_size);
+            let lhs = load_unrolled::<_, _, NA>(&lhs, (m, k), MatrixLayout::RowMajor);
+            let rhs = load_unrolled::<_, _, NA>(&rhs, (k, n), MatrixLayout::ColMajor);
 
             sum += Line::cast_from(
                 Line::<AccR<MP>, NA>::cast_from(lhs) * Line::<AccR<MP>, NA>::cast_from(rhs),
@@ -136,7 +140,7 @@ impl<MP: MatmulPrecision> BatchMatmul<(), MP> for NaiveMatmul<MP> {
 
         let unroll_sum = line_size != 1usize;
         if unroll_sum {
-            let mut accum = <AccG<MP> as Numeric>::from_int(0);
+            let mut accum = AccR::<MP>::cast_from(0);
             // we unroll the loop to sum `vectorization_factor` elements at once, which lets us
             // use SIMD instructions to speed up the computation
             #[unroll]
@@ -144,27 +148,27 @@ impl<MP: MatmulPrecision> BatchMatmul<(), MP> for NaiveMatmul<MP> {
                 accum += sum[v];
             }
 
-            out[(m, n)] = Line::empty(1usize).fill(accum);
+            out[(m, n)] = Line::cast_from(accum);
         } else {
-            out[(m, n)] = Line::empty(1usize).fill(sum[0]);
+            out[(m, n)] = Line::cast_from(sum[0]);
         }
     }
 }
 
 #[cube]
-fn load_unrolled<I: Numeric>(
-    view: &View<Line<I>, Coords2d>,
+fn load_unrolled<I: Numeric, N: Size, N2: Size>(
+    view: &View<Line<I, N>, Coords2d>,
     pos: Coords2d,
     #[comptime] layout: MatrixLayout,
-    #[comptime] line_size: LineSize,
-) -> Line<I> {
+) -> Line<I, N2> {
+    let line_size = N2::value();
     comptime![assert!(line_size >= view.line_size())];
     let view_line_size = view.line_size();
     if view.line_size().comptime() == line_size {
-        view[pos]
+        Line::cast_from(view[pos])
     } else {
         let (row, col) = pos;
-        let mut out = Line::empty(line_size);
+        let mut out = Line::empty();
         #[unroll]
         for i in range_stepped(0, line_size as u32, view_line_size as u32) {
             let pos = match layout {

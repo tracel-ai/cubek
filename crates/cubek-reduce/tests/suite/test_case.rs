@@ -194,19 +194,13 @@ where
         let output_stride = self.output_stride();
 
         let input = unsafe {
-            TensorBinding::from_raw_parts(
-                input_handle,
-                self.stride.clone(),
-                self.shape.clone(),
-                size_of::<P>(),
-            )
+            TensorBinding::from_raw_parts(input_handle, self.stride.clone(), self.shape.clone())
         };
         let output = unsafe {
             TensorBinding::from_raw_parts(
                 output_handle.clone(),
                 output_stride.clone(),
                 output_shape.clone(),
-                size_of::<O>(),
             )
         };
 
@@ -218,9 +212,9 @@ where
             self.strategy.clone(),
             config,
             ReduceDtypes {
-                input: <P as ReducePrecision>::EI::as_type_native_unchecked(),
-                output: O::as_type_native_unchecked(),
-                accumulation: <P as ReducePrecision>::EA::as_type_native_unchecked(),
+                input: <P as ReducePrecision>::EI::as_type_native_unchecked().storage_type(),
+                output: O::as_type_native_unchecked().storage_type(),
+                accumulation: <P as ReducePrecision>::EA::as_type_native_unchecked().storage_type(),
             },
         );
         match result {

@@ -68,13 +68,13 @@ impl LoadMaxRoundPlaneCount for AsyncFullCooperativeLoading {
 impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for AsyncFullCooperativeLoading {
     type TilingLayout = StridedTilingLayout;
     type SyncStrategy = AsyncBarrier;
-    type Job<EG: Numeric, ES: Numeric> = AsyncFullCooperativeJob;
+    type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = AsyncFullCooperativeJob;
     type Stage = StridedStageFamily;
     type TileKind = Strided;
 
     const SHOULD_CLEAR: bool = true;
 
-    fn new_job<EG: Numeric, ES: Numeric>(
+    fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
         #[comptime] _line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
@@ -97,15 +97,15 @@ pub struct AsyncFullCooperativeJob {
 }
 
 #[cube]
-impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, StridedTilingLayout, AsyncBarrier>
-    for AsyncFullCooperativeJob
+impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
+    LoadingJob<EG, NG, ES, NS, StridedTilingLayout, AsyncBarrier> for AsyncFullCooperativeJob
 {
     type Stage = StridedStageFamily;
 
     fn execute_task(
         _this: &mut Self,
         #[comptime] task_id: u32,
-        global_iter: &GlobalIterator<Line<EG>>,
+        global_iter: &GlobalIterator<Line<EG, NG>>,
         stage: &mut StridedStageMemory<ES, StridedTilingLayout>,
         barrier: &mut Shared<Barrier>,
         #[comptime] config: GlobalReaderConfig,
@@ -117,7 +117,7 @@ impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, StridedTilingLayout, AsyncBarr
             config.gmem_config,
         );
 
-        let mut destination: SliceMut<Line<ES>> =
+        let mut destination: SliceMut<Line<ES, NS>> =
             StridedTilingLayout::nth_slice::<ES>(stage, task_id, config.smem_config);
 
         barrier.memcpy_async_cooperative(&window.downcast(), &mut destination);

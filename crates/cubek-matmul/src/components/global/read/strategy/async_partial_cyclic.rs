@@ -24,7 +24,7 @@ use crate::components::{
     stage::StageConfig,
 };
 use crate::definition::MatmulElems;
-use crate::definition::MatmulPrecision;
+use crate::definition::MatmulTypes;
 use crate::definition::MatmulProblem;
 use crate::definition::StageIdent;
 use crate::{components::global::read::validate_async_barrier, launch::RuntimeConfig};
@@ -280,7 +280,7 @@ impl<TO: TilingOrder, RC: RuntimeConfig> AsyncPartialLoadingStrategy<RC>
 
     fn barrier_post_init() {}
 
-    fn arrive<MP: MatmulPrecision, S: StageConfig>(
+    fn arrive<MP: MatmulTypes, S: StageConfig>(
         barrier: &mut Barrier,
         #[comptime] _config: SharedGlobalMatmulConfig<S>,
     ) {

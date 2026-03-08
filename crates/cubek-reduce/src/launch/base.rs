@@ -36,8 +36,8 @@ pub(crate) fn launch_reduce<Run: Runtime>(
     inst: ReduceOperationConfig,
 ) -> Result<(), ReduceError> {
     let address_type = input
-        .required_address_type()
-        .max(output.required_address_type());
+        .required_address_type(dtypes.input.size())
+        .max(output.required_address_type(dtypes.output.size()));
 
     let problem = ReduceProblem {
         vector_size: input.shape[axis],
@@ -88,8 +88,8 @@ pub(crate) fn launch_reduce<Run: Runtime>(
             settings.address_type,
             settings.line.line_size_input,
             settings.line.line_size_output,
-            input.into_tensor_arg(settings.line.line_size_input),
-            output.into_tensor_arg(settings.line.line_size_output),
+            input.into_tensor_arg(),
+            output.into_tensor_arg(),
             ScalarArg::new(axis),
             blueprint,
             inst,

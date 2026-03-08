@@ -8,7 +8,7 @@ use crate::components::batch::{BatchMatmul, BatchMatmulFamily, PartitionedBatchM
 use crate::components::global::{self, GlobalConfig, GlobalMatmul, GlobalMatmulFamily};
 use crate::components::stage::StageConfig as _;
 use crate::definition::{
-    AccG, Blueprint as _, CubeMapping, LhsG, MatmulElems, MatmulLineSizes, MatmulPrecision, RhsG,
+    AccG, Blueprint as _, CubeMapping, LhsG, MatmulElems, MatmulLineSizes, MatmulTypes, RhsG,
     TilingBlueprint,
 };
 use crate::launch::MatmulArgs;
@@ -20,28 +20,29 @@ use crate::{
 /// Launches the matmul kernel
 pub(crate) fn matmul_entry<
     Args: MatmulArgs,
-    LhsG: Numeric,
-    RhsG: Numeric,
-    AccG: Numeric,
-    LhsS: Numeric,
-    RhsS: Numeric,
-    AccS: Numeric,
-    LhsR: Numeric,
-    RhsR: Numeric,
-    AccR: Numeric,
+    Lhs: Numeric,
+    LhsSize: Size,
+    Rhs: Numeric,
+    RhsSize: Size,
+    Acc: Numeric,
+    AccSize: Size,
     GMMF: GlobalMatmulFamily<Args::Config>,
     GPM: GlobalPartitionMatmul,
 >(
-    inputs: &<Args as MatmulArgs>::Input<LhsG, RhsG, AccG>,
-    output: &mut <Args as MatmulArgs>::Output<AccG>,
+    inputs: &<Args as MatmulArgs>::Input<
+        Line<Lhs, LhsSize>,
+        Line<Rhs, RhsSize>,
+        Line<Acc, AccSize>,
+    >,
+    output: &mut <Args as MatmulArgs>::Output<Line<Acc, AccSize>>,
     config: <Args as MatmulArgs>::Config,
     cube_mapping: CubeMapping,
     #[comptime] blueprint: TilingBlueprint,
-    #[define(LhsG, RhsG, AccG)] global: [StorageType; 3],
-    #[define(LhsS, RhsS, AccS)] stage: [StorageType; 3],
-    #[define(LhsR, RhsR, AccR)] register: [StorageType; 3],
+    #[comptime] dtypes: MatmulElems,
+    #[define(Lhs, Rhs, Acc)] _global: [StorageType; 3],
+    #[define(LhsSize, RhsSize, AccSize)] _sizes: [usize; 3],
 ) {
-    let mut state = Args::init_state::<LhsG, RhsG, AccG>(
+    let mut state = Args::init_state::<Line<Lhs, LhsSize>, Line<Rhs, RhsSize>, Line<Acc, AccSize>>(
         inputs,
         output,
         config,
@@ -64,7 +65,7 @@ pub(crate) fn matmul_entry<
         PartitionedBatchMatmulFamily::<Args::Config, GMMF, GPM>::expand_config(
             &device_props,
             &blueprint,
-            &MatmulElems::from_define_arrays(global, stage, register),
+            &dtypes,
             &line_sizes
         )
     );
@@ -83,10 +84,34 @@ pub(crate) fn matmul_entry<
         }
     }
 
+    let stage_lhs = config.global_config.stage_config().lhs_smem_config();
+    let stage_rhs = config.global_config.stage_config().rhs_smem_config();
+    let stage_acc = config.global_config.stage_config().out_smem_config();
+
+    let define!(StageLhs) = stage_lhs.dtype;
+    let size!(StageLhsSize) = comptime![stage_lhs.line_size as usize];
+    let define!(RegisterLhs) = dtypes.lhs_register;
+
+    let define!(StageRhs) = stage_rhs.dtype;
+    let size!(StageRhsSize) = comptime![stage_rhs.line_size as usize];
+    let define!(RegisterRhs) = dtypes.rhs_register;
+
+    let define!(StageAcc) = stage_acc.dtype;
+    let size!(StageAccSize) = comptime![stage_acc.line_size as usize];
+    let define!(RegisterAcc) = dtypes.acc_register;
+
     PartitionedBatchMatmul::<
         Args::Config,
-        ((LhsG, LhsS, LhsR), (RhsG, RhsS, RhsR), (AccG, AccS, AccR)),
-        GMMF::Matmul<((LhsG, LhsS, LhsR), (RhsG, RhsS, RhsR), (AccG, AccS, AccR))>,
+        (
+            (Lhs, LhsSize, Lhs, LhsSize, RegisterLhs),
+            (Rhs, RhsSize, Rhs, RhsSize, RegisterRhs),
+            (Acc, AccSize, Acc, AccSize, RegisterAcc),
+        ),
+        GMMF::Matmul<(
+            (Lhs, LhsSize, Lhs, LhsSize, RegisterLhs),
+            (Rhs, RhsSize, Rhs, RhsSize, RegisterRhs),
+            (Acc, AccSize, Acc, AccSize, RegisterAcc),
+        )>,
         GPM,
     >::execute::<Args>(&mut state, cube_mapping, config);
 }
@@ -98,7 +123,7 @@ pub(crate) fn matmul_entry<
 /// the global partition size of the tiling scheme
 pub struct PartitionedBatchMatmul<
     RC: RuntimeConfig,
-    MP: MatmulPrecision,
+    MP: MatmulTypes,
     GMM: global::GlobalMatmul<RC, MP>,
     S: GlobalPartitionMatmul,
 > {
@@ -109,7 +134,7 @@ pub struct PartitionedBatchMatmul<
 }
 
 #[cube]
-impl<RC: RuntimeConfig, MP: MatmulPrecision, GMM: GlobalMatmul<RC, MP>, GPMM: GlobalPartitionMatmul>
+impl<RC: RuntimeConfig, MP: MatmulTypes, GMM: GlobalMatmul<RC, MP>, GPMM: GlobalPartitionMatmul>
     BatchMatmul<RC, MP> for PartitionedBatchMatmul<RC, MP, GMM, GPMM>
 {
     type Config = PartitionedBatchConfig<GMM::Config>;

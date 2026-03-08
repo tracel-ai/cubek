@@ -15,10 +15,16 @@ use crate::components::{
 pub(crate) const ASYNC_COPY_WIDTH: u32 = 128;
 
 #[cube]
-pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
-    view: View<Line<EG>, Coords2d>,
+pub(crate) fn async_copy_from<
+    EG: CubePrimitive,
+    NG: Size,
+    ES: Numeric,
+    NS: Size,
+    T: TilingLayout,
+>(
+    view: View<Line<EG, NG>, Coords2d>,
     pos: Coords2d,
-    stage: &mut StridedStageMemory<ES, T>,
+    stage: &mut StridedStageMemory<ES, NS, T>,
     stage_offset: u32,
     #[comptime] config: GlobalReaderConfig,
     #[comptime] copy_line_size: u32,

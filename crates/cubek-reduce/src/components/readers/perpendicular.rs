@@ -22,8 +22,6 @@ pub struct PerpendicularReader<P: ReducePrecision> {
     batch_offset: usize,
     vector_offset_stride: usize,
     requirements: ReduceRequirements,
-    #[cube(comptime)]
-    line_size: LineSize,
     bound_checks: ReaderBoundChecks<P>,
     shape: usize,
 }
@@ -60,7 +58,6 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
             batch_offset,
             vector_offset_stride,
             requirements,
-            line_size,
             bound_checks,
             shape,
         }
