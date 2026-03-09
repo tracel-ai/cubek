@@ -22,7 +22,7 @@ pub trait TestPrecision {
         rhs: &[Self::EG],
         problem: &ConvolutionProblem,
         client: &ComputeClient<R>,
-        out: server::Handle<R>,
+        out: server::Handle,
         shape: Shape,
         strides: Strides,
     );
@@ -30,9 +30,9 @@ pub trait TestPrecision {
 
 #[derive(Debug)]
 pub struct TensorRawParts<R: Runtime, N: Numeric + CubeElement> {
-    pub handle: server::Handle<R>,
+    pub handle: server::Handle,
     #[allow(unused)] //TODO: Fix
-    pub scale: Option<server::Handle<R>>,
+    pub scale: Option<server::Handle>,
     pub shape: Shape,
     pub strides: Strides,
     pub original_data: Option<Vec<N>>,
@@ -53,7 +53,7 @@ where
         rhs: &[EG],
         problem: &ConvolutionProblem,
         client: &ComputeClient<R>,
-        out: server::Handle<R>,
+        out: server::Handle,
         shape: Shape,
         strides: Strides,
     ) {
@@ -96,7 +96,7 @@ where
 /// Compares the content of a handle to a given slice of f32.
 pub(crate) fn assert_equals_approx<R: Runtime, F: Float + CubeElement + Display>(
     client: &ComputeClient<R>,
-    output: server::Handle<R>,
+    output: server::Handle,
     shape: Shape,
     strides: Strides,
     expected: &[F],
