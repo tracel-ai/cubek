@@ -4,6 +4,7 @@ use cubecl::{
     tensor_line_size_perpendicular,
 };
 
+/// Calculate the number of planes in a cube.
 pub fn calculate_plane_count_per_cube(
     working_units: usize,
     plane_dim: u32,
