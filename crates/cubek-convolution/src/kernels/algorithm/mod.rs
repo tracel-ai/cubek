@@ -55,7 +55,7 @@ pub(crate) fn into_tensor_handle_tma<R: Runtime>(
     dtype: StorageType,
     operation: ConvolutionOperation,
 ) -> Result<TensorBinding<R>, LaunchError> {
-    let binding = if has_valid_layout_tma(&handle, operation) {
+    let binding = if has_valid_layout_tma(&handle, dtype, operation) {
         handle
     } else {
         into_contiguous_pitched(client, handle, dtype).binding()
@@ -65,9 +65,10 @@ pub(crate) fn into_tensor_handle_tma<R: Runtime>(
 
 pub(crate) fn has_valid_layout_tma<R: Runtime>(
     binding: &TensorBinding<R>,
+    dtype: StorageType,
     operation: ConvolutionOperation,
 ) -> bool {
-    let stride_align = TMA_STRIDE_ALIGN / binding.elem_size;
+    let stride_align = TMA_STRIDE_ALIGN / dtype.size();
     let rank = binding.shape.len();
     let dim_c = rank - 1;
 

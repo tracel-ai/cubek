@@ -1,14 +1,17 @@
 use std::marker::PhantomData;
 
 use super::fragments::{Accumulators, RhsTile, RhsTileExpand};
-use crate::components::global::PlaneFlowConfig;
-use crate::components::stage::PartitionSchedulerScheme;
 use crate::components::stage::Stage;
 use crate::components::stage::StageEvent;
 use crate::components::stage::matmul::scheduler::PartitionScheduler;
 use crate::components::stage::{PartitionBuffering, StageEventListener};
 use crate::components::tile::{TileConfig, TileMatmul};
-use crate::definition::{AccS, LhsS, MatmulTypes, MatrixTypes, RhsS};
+use crate::definition::{MatmulTypes, MatrixTypes};
+use crate::{components::global::PlaneFlowConfig, definition::Lhs};
+use crate::{
+    components::stage::PartitionSchedulerScheme,
+    definition::{Acc, Rhs},
+};
 use cubecl::prelude::*;
 use cubek_std::PartitionSize;
 use cubek_std::StageSize;
@@ -60,6 +63,9 @@ impl<TC: TileConfig> SharedPartitionMatmulConfig<TC> {
     }
 }
 
+type STy<T> = crate::definition::Stage<T>;
+type SSz<T> = crate::definition::StageSize<T>;
+
 /// Matmul for a whole partition, a region of the Stage Matmul
 /// executed by a single compute primitive (unit or plane)
 pub struct PartitionMatmul<
@@ -69,9 +75,9 @@ pub struct PartitionMatmul<
             <MP::Rhs as MatrixTypes>::Register,
             <MP::Acc as MatrixTypes>::Register,
         >,
-    StageLhs: Stage<LhsS<MP>, ReadOnly, TileKind = TMM::LhsTile>,
-    StageRhs: Stage<RhsS<MP>, ReadOnly, TileKind = TMM::RhsTile>,
-    StageAcc: Stage<AccS<MP>, ReadOnly, TileKind = TMM::AccTile>,
+    StageLhs: Stage<STy<Lhs<MP>>, SSz<Lhs<MP>>, ReadOnly, TileKind = TMM::LhsTile>,
+    StageRhs: Stage<STy<Rhs<MP>>, SSz<Rhs<MP>>, ReadOnly, TileKind = TMM::RhsTile>,
+    StageAcc: Stage<STy<Acc<MP>>, SSz<Acc<MP>>, ReadOnly, TileKind = TMM::AccTile>,
 > {
     _phantom: PhantomData<(MP, TMM, StageLhs, StageRhs, StageAcc)>,
 }
@@ -85,9 +91,9 @@ where
             <MP::Rhs as MatrixTypes>::Register,
             <MP::Acc as MatrixTypes>::Register,
         >,
-    StageLhs: Stage<LhsS<MP>, ReadOnly, TileKind = TM::LhsTile>,
-    StageRhs: Stage<RhsS<MP>, ReadOnly, TileKind = TM::RhsTile>,
-    StageAcc: Stage<AccS<MP>, ReadOnly, TileKind = TM::AccTile>,
+    StageLhs: Stage<STy<Lhs<MP>>, SSz<Lhs<MP>>, ReadOnly, TileKind = TM::LhsTile>,
+    StageRhs: Stage<STy<Rhs<MP>>, SSz<Rhs<MP>>, ReadOnly, TileKind = TM::RhsTile>,
+    StageAcc: Stage<STy<Acc<MP>>, SSz<Acc<MP>>, ReadOnly, TileKind = TM::AccTile>,
 {
     #[allow(clippy::too_many_arguments)]
     /// Execute all Tile Matmuls inside the partition

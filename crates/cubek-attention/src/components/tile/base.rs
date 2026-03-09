@@ -76,27 +76,27 @@ pub trait TileAttention<AP: AttentionPrecision>: Send + Sync + 'static {
         #[comptime] config: Self::Config,
     ) -> Self::Accumulator;
 
-    fn load_query<E: Numeric>(tile: &StridedTile<E>, fragment: &mut Self::Query);
+    fn load_query<E: Numeric, N: Size>(tile: &StridedTile<E, N>, fragment: &mut Self::Query);
 
-    fn load_key_transposed<E: Float>(
-        tile: &StridedTile<E>,
+    fn load_key_transposed<E: Float, N: Size>(
+        tile: &StridedTile<E, N>,
         fragment: &mut Self::KeyValue,
         #[comptime] config: Self::Config,
     );
-    fn load_value<E: Float>(
-        tile: &StridedTile<E>,
+    fn load_value<E: Float, N: Size>(
+        tile: &StridedTile<E, N>,
         fragment: &mut Self::KeyValue,
         #[comptime] config: Self::Config,
     );
-    fn load_mask<E: Numeric>(
-        tile: &StridedTile<E>,
+    fn load_mask<E: Numeric, N: Size>(
+        tile: &StridedTile<E, N>,
         fragment: &mut Self::Mask,
         #[comptime] config: Self::Config,
     );
 
-    fn write_results<E: Float>(
+    fn write_results<E: Float, N: Size>(
         out: &Self::Accumulator,
-        slice: &mut SliceMut<Line<E>>,
+        slice: &mut SliceMut<Line<E, N>>,
         #[comptime] config: Self::Config,
     );
 }

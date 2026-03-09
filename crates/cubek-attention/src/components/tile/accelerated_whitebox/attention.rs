@@ -211,37 +211,37 @@ impl<AP: AttentionPrecision> TileAttention<AP> for WhiteboxAcceleratedTileAttent
         WhiteboxAccumulatorPipeline::new::<SM<AP>, KVT<AP>>(config)
     }
 
-    fn load_query<E: Numeric>(tile: &StridedTile<E>, fragment: &mut Self::Query) {
+    fn load_query<E: Numeric, N: Size>(tile: &StridedTile<E, N>, fragment: &mut Self::Query) {
         fragment.load_from_strided_tile(tile);
     }
 
-    fn load_key_transposed<E: Float>(
-        tile: &StridedTile<E>,
+    fn load_key_transposed<E: Float, N: Size>(
+        tile: &StridedTile<E, N>,
         key: &mut Self::KeyValue,
         #[comptime] _config: Self::Config,
     ) {
         key.key_mut().load_from_strided_tile(tile);
     }
 
-    fn load_value<E: Float>(
-        tile: &StridedTile<E>,
+    fn load_value<E: Float, N: Size>(
+        tile: &StridedTile<E, N>,
         value: &mut Self::KeyValue,
         #[comptime] _config: Self::Config,
     ) {
         value.value_mut().load_from_strided_tile(tile);
     }
 
-    fn load_mask<E: Numeric>(
-        tile: &StridedTile<E>,
+    fn load_mask<E: Numeric, N: Size>(
+        tile: &StridedTile<E, N>,
         mask: &mut Self::Mask,
         #[comptime] _config: Self::Config,
     ) {
         mask.load_from_strided_tile(tile)
     }
 
-    fn write_results<E: Float>(
+    fn write_results<E: Float, N: Size>(
         out: &Self::Accumulator,
-        slice: &mut SliceMut<Line<E>>,
+        slice: &mut SliceMut<Line<E, N>>,
         #[comptime] config: Self::Config,
     ) {
         let mut strided_tile = StridedTile::new_strided_mut(
@@ -251,9 +251,8 @@ impl<AP: AttentionPrecision> TileAttention<AP> for WhiteboxAcceleratedTileAttent
             config.attention_tile_size().val_dim,
             Swizzle::none(),
             MatrixLayout::RowMajor,
-            config.out_smem_line_size as u32,
         );
         out.accumulator
-            .store_to_strided_tile::<E>(&mut strided_tile)
+            .store_to_strided_tile::<E, N>(&mut strided_tile)
     }
 }

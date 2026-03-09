@@ -106,8 +106,8 @@ where
         }
     }
 
-    fn load_lhs<E: Numeric>(
-        tile: &StridedTile<E>,
+    fn load_lhs<E: Numeric, N: Size>(
+        tile: &StridedTile<E, N>,
         lhs: &mut Self::LhsFragment,
         #[comptime] _config: Self::Config,
     ) {
@@ -118,8 +118,8 @@ where
         );
     }
 
-    fn load_rhs<E: Numeric>(
-        tile: &StridedTile<E>,
+    fn load_rhs<E: Numeric, N: Size>(
+        tile: &StridedTile<E, N>,
         rhs: &mut Self::RhsFragment,
         #[comptime] _config: Self::Config,
     ) {
@@ -130,8 +130,8 @@ where
         );
     }
 
-    fn load_acc<E: Numeric>(
-        tile: &AccTile::Tile<E>,
+    fn load_acc<E: Numeric, N: Size>(
+        tile: &AccTile::Tile<E, N>,
         acc: &mut Self::AccFragment,
         #[comptime] _config: Self::Config,
     ) {
@@ -142,8 +142,8 @@ where
         );
     }
 
-    fn write_results<E: Numeric>(
-        tile: &mut StridedTile<E, ReadWrite>,
+    fn write_results<E: Numeric, N: Size>(
+        tile: &mut StridedTile<E, N, ReadWrite>,
         out: &mut Self::AccFragment,
         #[comptime] _config: Self::Config,
     ) {

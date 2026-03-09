@@ -131,8 +131,8 @@ pub trait TileMatmul<L: Numeric, R: Numeric, A: Numeric>: 'static + Send + Sync 
     ) -> Self::LhsFragment;
 
     /// Load the container of Lhs from tile data
-    fn load_lhs<E: Numeric>(
-        tile: &Tile<Self::LhsTile, E>,
+    fn load_lhs<E: Numeric, N: Size>(
+        tile: &Tile<Self::LhsTile, E, N>,
         lhs: &mut Self::LhsFragment,
         #[comptime] config: Self::Config,
     );
@@ -149,8 +149,8 @@ pub trait TileMatmul<L: Numeric, R: Numeric, A: Numeric>: 'static + Send + Sync 
     ) -> Self::RhsFragment;
 
     /// Load the container of Rhs from tile data
-    fn load_rhs<E: Numeric>(
-        tile: &Tile<Self::RhsTile, E>,
+    fn load_rhs<E: Numeric, N: Size>(
+        tile: &Tile<Self::RhsTile, E, N>,
         rhs: &mut Self::RhsFragment,
         #[comptime] config: Self::Config,
     );
@@ -168,15 +168,15 @@ pub trait TileMatmul<L: Numeric, R: Numeric, A: Numeric>: 'static + Send + Sync 
     ) -> Self::AccFragment;
 
     /// Load the container of Acc from tile data
-    fn load_acc<E: Numeric>(
-        tile: &Tile<Self::AccTile, E>,
+    fn load_acc<E: Numeric, N: Size>(
+        tile: &Tile<Self::AccTile, E, N>,
         acc: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     );
 
     /// Write the content of the output container to the given slice
-    fn write_results<E: Numeric>(
-        tile: &mut TileMut<Self::OutTile, E>,
+    fn write_results<E: Numeric, N: Size>(
+        tile: &mut TileMut<Self::OutTile, E, N>,
         out: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     );

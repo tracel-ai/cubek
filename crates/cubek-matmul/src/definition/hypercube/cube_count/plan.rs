@@ -146,7 +146,7 @@ impl CubeCountPlan {
         self.kind.resolve()
     }
 
-    pub fn as_args<'a, R: Runtime>(&self) -> CubeMappingLaunch<'a, R> {
+    pub fn as_args<R: Runtime>(&self) -> CubeMappingLaunch<R> {
         CubeMappingLaunch::new(
             self.kind.mapping_strategy(),
             self.kind.can_yield_extra_cubes(),
@@ -211,7 +211,7 @@ impl CubeCountPlanKind {
         }
     }
 
-    fn mapping_strategy<'a, R: Runtime>(&self) -> CubeMappingStrategyArgs<'a, R> {
+    fn mapping_strategy<R: Runtime>(&self) -> CubeMappingStrategyArgs<R> {
         match self {
             CubeCountPlanKind::FromProblem { .. } => CubeMappingStrategyArgs::FromProblem,
 

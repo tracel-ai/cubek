@@ -201,6 +201,7 @@ pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
                         cube_count_plan.as_args(),
                         blueprint,
                         dtypes,
+                        &line_sizes,
                     )
                 }
             }
@@ -227,6 +228,7 @@ pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
                         cube_count_plan.as_args(),
                         blueprint,
                         dtypes,
+                        &line_sizes,
                     )
                 }
             }

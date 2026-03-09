@@ -8,7 +8,10 @@ use cubecl::{
 use crate::BaseInputSpec;
 
 #[cube(launch)]
-fn eye_launch<T: Numeric>(tensor: &mut Tensor<Line<T>>, #[define(T)] _types: StorageType) {
+fn eye_launch<T: Numeric, N: Size>(
+    tensor: &mut Tensor<Line<T, N>>,
+    #[define(T)] _types: StorageType,
+) {
     let batch = CUBE_POS_Z as usize;
     let i = ABSOLUTE_POS_X as usize;
     let j = ABSOLUTE_POS_Y as usize;
@@ -59,7 +62,8 @@ fn new_eyed(
         client,
         cube_count,
         cube_dim,
-        out.clone().into_arg(line_size),
+        line_size,
+        out.clone().into_arg(),
         dtype,
     );
 

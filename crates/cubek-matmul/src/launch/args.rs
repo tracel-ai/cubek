@@ -47,16 +47,6 @@ pub type OutputRuntimeArg<MA, R> = <OutputArg<MA> as LaunchArg>::RuntimeArg<R>;
 
 pub type BatchedCoords = (usize, u32, u32);
 
-pub trait NumericLine: 'static {
-    type T: Numeric;
-    type N: Size;
-}
-
-impl<T: Numeric, N: Size> NumericLine for (T, N) {
-    type T = T;
-    type N = N;
-}
-
 /// Create the input runtime arguments for a matmul kernel that works on concrete inputs and
 /// output (not fused).
 pub trait ConcreteInputsFactory<A: Routine<()>>: LaunchArg {
@@ -185,20 +175,20 @@ pub struct TensorArgs<Config: RuntimeConfig = ()> {
 #[derive(CubeLaunch, CubeType, Clone, Copy)]
 #[launch(skip_bounds)]
 /// Input representation for [TensorArgs] implementing [MatmulArgs].
-pub struct TensorInputs<Lhs: NumericLine, Rhs: NumericLine, Acc: NumericLine> {
+pub struct TensorInputs<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc: CubePrimitive> {
     /// The lhs tensor.
     lhs_batch: VirtualLayout<Coords1d, Coords1d>,
-    lhs: View<Line<Lhs::T, Lhs::N>, BatchedCoords>,
+    lhs: View<Lhs, BatchedCoords>,
     /// The rhs tensor.
     rhs_batch: VirtualLayout<Coords1d, Coords1d>,
-    rhs: View<Line<Rhs::T, Rhs::N>, BatchedCoords>,
+    rhs: View<Rhs, BatchedCoords>,
     /// The tensor for loading the accumulator, if present
     acc_batch: ComptimeOption<VirtualLayout<Coords1d, Coords1d>>,
-    acc: ComptimeOption<View<Line<Acc::T, Acc::N>, BatchedCoords>>,
+    acc: ComptimeOption<View<Acc, BatchedCoords>>,
 }
 
-impl<Lhs: NumericLine, Rhs: NumericLine, Acc: NumericLine, A: Routine<()>> ConcreteInputsFactory<A>
-    for TensorInputs<Lhs, Rhs, Acc>
+impl<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc: CubePrimitive, A: Routine<()>>
+    ConcreteInputsFactory<A> for TensorInputs<Lhs, Rhs, Acc>
 {
     fn create<R: Runtime>(
         client: &ComputeClient<R>,
@@ -226,11 +216,11 @@ impl<Lhs: NumericLine, Rhs: NumericLine, Acc: NumericLine, A: Routine<()>> Concr
                         client, &data, &scale, &shape, problem, scheme, line_size, config,
                     );
                     let data_view = ViewArg::new::<GlobalLayout>(
-                        data.into_tensor_arg(line_size).into_array_arg(),
+                        data.into_tensor_arg().into_array_arg(),
                         data_layout,
                     );
                     let scales_view =
-                        ViewArg::new::<GlobalScaleLayout>(scale.into_array_arg(1), scales_layout);
+                        ViewArg::new::<GlobalScaleLayout>(scale.into_array_arg(), scales_layout);
                     ViewArg::new_quantized(data_view, scales_view, scheme)
                 }
             };
@@ -257,40 +247,41 @@ impl<Lhs: NumericLine, Rhs: NumericLine, Acc: NumericLine, A: Routine<()>> Concr
 
 #[derive(CubeType, CubeLaunch, Clone, Copy)]
 #[launch(skip_bounds)]
-pub struct TensorOutput<EG: NumericLine> {
-    view: View<Line<EG::T, EG::N>, BatchedCoords, ReadWrite>,
+pub struct TensorOutput<EG: CubePrimitive> {
+    view: View<EG, BatchedCoords, ReadWrite>,
     batch: VirtualLayout<Coords1d, Coords1d>,
 }
 
-impl<EG: NumericLine, A: Routine<()>> ConcreteOutputFactory<A> for TensorOutput<EG> {
-    fn create<'a, R: Runtime>(
+impl<EG: CubePrimitive, A: Routine<()>> ConcreteOutputFactory<A> for TensorOutput<EG> {
+    fn create<R: Runtime>(
         client: &ComputeClient<R>,
         out: TensorBinding<R>,
         blueprint: &A::Blueprint,
         problem: &MatmulProblem,
         line_sizes: &MatmulLineSizes,
         _dtypes: &MatmulElems,
-    ) -> Self::RuntimeArg<'a, R> {
+    ) -> Self::RuntimeArg<R> {
         let layout = GlobalLayoutLaunch::from_handle(
             &out,
             line_sizes.out,
             blueprint.out_global_layout_config(),
         );
         let batch = BatchLayoutLaunch::from_handle(client, &out, problem);
-        let view = ViewArg::new::<GlobalLayout>(out.into_array_arg(line_sizes.out), layout);
+        let view = ViewArg::new::<GlobalLayout>(out.into_array_arg(), layout);
         TensorOutputLaunch::new(view, VirtualLayoutLaunch::new::<BatchLayout>(batch))
     }
 }
 
 #[cube]
 impl<Config: RuntimeConfig> MatmulArgs for TensorArgs<Config> {
-    type Output<EO: NumericLine> = TensorOutput<EO>;
-    type Input<Lhs: NumericLine, Rhs: NumericLine, EO: NumericLine> = TensorInputs<Lhs, Rhs, EO>;
+    type Output<EO: CubePrimitive> = TensorOutput<EO>;
+    type Input<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive> =
+        TensorInputs<Lhs, Rhs, EO>;
     type Config = Config;
-    type State<Lhs: NumericLine, Rhs: NumericLine, EO: NumericLine> =
+    type State<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive> =
         (TensorInputs<Lhs, Rhs, EO>, TensorOutput<EO>, Config);
 
-    fn init_state<Lhs: NumericLine, Rhs: NumericLine, EO: NumericLine>(
+    fn init_state<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         input: &Self::Input<Lhs, Rhs, EO>,
         output: &mut Self::Output<EO>,
         config: Self::Config,
@@ -301,39 +292,39 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorArgs<Config> {
         (*input, *output, config)
     }
 
-    fn view_lhs<Lhs: NumericLine, Rhs: NumericLine, EO: NumericLine>(
+    fn view_lhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &Self::State<Lhs, Rhs, EO>,
-    ) -> View<Line<Lhs::T, Lhs::N>, BatchedCoords> {
+    ) -> View<Lhs, BatchedCoords> {
         state.0.lhs
     }
 
-    fn batch_lhs<Lhs: NumericLine, Rhs: NumericLine, EO: NumericLine>(
+    fn batch_lhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &Self::State<Lhs, Rhs, EO>,
         batch: usize,
     ) -> usize {
         state.0.lhs_batch.to_source_pos(batch)
     }
 
-    fn view_rhs<Lhs: NumericLine, Rhs: NumericLine, EO: NumericLine>(
+    fn view_rhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &Self::State<Lhs, Rhs, EO>,
-    ) -> View<Line<Rhs::T, Rhs::N>, BatchedCoords> {
+    ) -> View<Rhs, BatchedCoords> {
         state.0.rhs
     }
 
-    fn batch_rhs<Lhs: NumericLine, Rhs: NumericLine, EO: NumericLine>(
+    fn batch_rhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &Self::State<Lhs, Rhs, EO>,
         batch: usize,
     ) -> usize {
         state.0.rhs_batch.to_source_pos(batch)
     }
 
-    fn view_acc<Lhs: NumericLine, Rhs: NumericLine, EO: NumericLine>(
+    fn view_acc<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &Self::State<Lhs, Rhs, EO>,
-    ) -> ComptimeOption<View<Line<EO::T, EO::N>, BatchedCoords>> {
+    ) -> ComptimeOption<View<EO, BatchedCoords>> {
         state.0.acc
     }
 
-    fn batch_acc<Lhs: NumericLine, Rhs: NumericLine, EO: NumericLine>(
+    fn batch_acc<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &Self::State<Lhs, Rhs, EO>,
         batch: usize,
     ) -> usize {
@@ -344,20 +335,20 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorArgs<Config> {
         }
     }
 
-    fn view_out<Lhs: NumericLine, Rhs: NumericLine, EO: NumericLine>(
+    fn view_out<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &mut Self::State<Lhs, Rhs, EO>,
-    ) -> View<Line<EO::T, EO::N>, BatchedCoords, ReadWrite> {
+    ) -> View<EO, BatchedCoords, ReadWrite> {
         state.1.view
     }
 
-    fn batch_out<Lhs: NumericLine, Rhs: NumericLine, EO: NumericLine>(
+    fn batch_out<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &Self::State<Lhs, Rhs, EO>,
         batch: usize,
     ) -> usize {
         state.1.batch.to_source_pos(batch)
     }
 
-    fn runtime_config<Lhs: NumericLine, Rhs: NumericLine, EO: NumericLine>(
+    fn runtime_config<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &Self::State<Lhs, Rhs, EO>,
     ) -> Self::Config {
         state.2.clone()
@@ -375,33 +366,33 @@ pub struct TensorMapArgs<Config: RuntimeConfig = ()> {
 #[derive(CubeLaunch, CubeType, Clone, Copy)]
 #[launch(skip_bounds)]
 /// Input representation for [TensorArgs] implementing [MatmulArgs].
-pub struct TensorMapInputs<Lhs: NumericLine, Rhs: NumericLine, EO: NumericLine> {
+pub struct TensorMapInputs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive> {
     /// The lhs tensor.
-    pub lhs: View<Line<Lhs::T, Lhs::N>, BatchedCoords>,
+    pub lhs: View<Lhs, BatchedCoords>,
     /// The rhs tensor.
-    pub rhs: View<Line<Rhs::T, Rhs::N>, BatchedCoords>,
+    pub rhs: View<Rhs, BatchedCoords>,
     /// The accumulator
-    pub acc: ComptimeOption<View<Line<EO::T, EO::N>, BatchedCoords>>,
+    pub acc: ComptimeOption<View<EO, BatchedCoords>>,
     /// The accumulator batch layout
     pub acc_batch: ComptimeOption<VirtualLayout<Coords1d, Coords1d>>,
 }
 
 impl<
-    Lhs: NumericLine,
-    Rhs: NumericLine,
-    EO: NumericLine,
+    Lhs: CubePrimitive,
+    Rhs: CubePrimitive,
+    EO: CubePrimitive,
     A: Routine<(), Blueprint = TilingBlueprint>,
 > ConcreteInputsFactory<A> for TensorMapInputs<Lhs, Rhs, EO>
 {
-    fn create<'a, R: Runtime>(
-        _client: &'a ComputeClient<R>,
+    fn create<R: Runtime>(
+        _client: &ComputeClient<R>,
         lhs_handle: MatmulInputBinding<R>,
         rhs_handle: MatmulInputBinding<R>,
         blueprint: &A::Blueprint,
         problem: &MatmulProblem,
-        line_sizes: &MatmulLineSizes,
+        _line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
-    ) -> Self::RuntimeArg<'a, R> {
+    ) -> Self::RuntimeArg<R> {
         let lhs = lhs_handle.into_data();
         let rhs = rhs_handle.into_data();
 
@@ -505,13 +496,13 @@ impl<
 
         // f32 gets remapped to tf32 for the tensor map just to ensure CUDA loads them correctly.
         // It shouldn't matter, but it's better to be safe.
-        let lhs_elem = if dtypes.lhs_stage == f32::as_type_native_unchecked() {
-            tf32::as_type_native_unchecked()
+        let lhs_elem = if dtypes.lhs_stage == f32::as_type_native_unchecked().storage_type() {
+            tf32::as_type_native_unchecked().storage_type()
         } else {
             dtypes.lhs_stage
         };
-        let rhs_elem = if dtypes.rhs_stage == f32::as_type_native_unchecked() {
-            tf32::as_type_native_unchecked()
+        let rhs_elem = if dtypes.rhs_stage == f32::as_type_native_unchecked().storage_type() {
+            tf32::as_type_native_unchecked().storage_type()
         } else {
             dtypes.rhs_stage
         };
@@ -543,12 +534,12 @@ impl<
         };
 
         let lhs = TensorMapArg {
-            tensor: lhs.into_tensor_arg(line_sizes.lhs),
+            tensor: lhs.into_tensor_arg(),
             metadata: meta_lhs,
             _kind: PhantomData,
         };
         let rhs = TensorMapArg {
-            tensor: rhs.into_tensor_arg(line_sizes.rhs),
+            tensor: rhs.into_tensor_arg(),
             metadata: meta_rhs,
             _kind: PhantomData,
         };
@@ -581,13 +572,14 @@ impl<
 
 #[cube]
 impl<Config: RuntimeConfig> MatmulArgs for TensorMapArgs<Config> {
-    type Input<Lhs: NumericLine, Rhs: NumericLine, EO: NumericLine> = TensorMapInputs<Lhs, Rhs, EO>;
-    type Output<EO: NumericLine> = TensorOutput<EO>;
+    type Input<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive> =
+        TensorMapInputs<Lhs, Rhs, EO>;
+    type Output<EO: CubePrimitive> = TensorOutput<EO>;
     type Config = Config;
-    type State<Lhs: NumericLine, Rhs: NumericLine, EO: NumericLine> =
+    type State<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive> =
         (TensorMapInputs<Lhs, Rhs, EO>, TensorOutput<EO>, Config);
 
-    fn init_state<Lhs: NumericLine, Rhs: NumericLine, EO: NumericLine>(
+    fn init_state<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         input: &Self::Input<Lhs, Rhs, EO>,
         output: &mut Self::Output<EO>,
         config: Self::Config,
@@ -598,39 +590,39 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorMapArgs<Config> {
         (*input, *output, config)
     }
 
-    fn view_lhs<Lhs: NumericLine, Rhs: NumericLine, EO: NumericLine>(
+    fn view_lhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &Self::State<Lhs, Rhs, EO>,
-    ) -> View<Line<Lhs::T, Lhs::N>, BatchedCoords> {
+    ) -> View<Lhs, BatchedCoords> {
         state.0.lhs
     }
 
-    fn batch_lhs<Lhs: NumericLine, Rhs: NumericLine, EO: NumericLine>(
+    fn batch_lhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         _state: &Self::State<Lhs, Rhs, EO>,
         batch: usize,
     ) -> usize {
         batch
     }
 
-    fn view_rhs<Lhs: NumericLine, Rhs: NumericLine, EO: NumericLine>(
+    fn view_rhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &Self::State<Lhs, Rhs, EO>,
-    ) -> View<Line<Rhs::T, Rhs::N>, BatchedCoords> {
+    ) -> View<Rhs, BatchedCoords> {
         state.0.rhs
     }
 
-    fn batch_rhs<Lhs: NumericLine, Rhs: NumericLine, EO: NumericLine>(
+    fn batch_rhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         _state: &Self::State<Lhs, Rhs, EO>,
         batch: usize,
     ) -> usize {
         batch
     }
 
-    fn view_acc<Lhs: NumericLine, Rhs: NumericLine, EO: NumericLine>(
+    fn view_acc<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &Self::State<Lhs, Rhs, EO>,
-    ) -> ComptimeOption<View<Line<EO::T, EO::N>, BatchedCoords>> {
+    ) -> ComptimeOption<View<EO, BatchedCoords>> {
         state.0.acc
     }
 
-    fn batch_acc<Lhs: NumericLine, Rhs: NumericLine, EO: NumericLine>(
+    fn batch_acc<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &Self::State<Lhs, Rhs, EO>,
         batch: usize,
     ) -> usize {
@@ -641,20 +633,20 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorMapArgs<Config> {
         }
     }
 
-    fn view_out<Lhs: NumericLine, Rhs: NumericLine, EO: NumericLine>(
+    fn view_out<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &mut Self::State<Lhs, Rhs, EO>,
-    ) -> View<Line<EO::T, EO::N>, BatchedCoords, ReadWrite> {
+    ) -> View<EO, BatchedCoords, ReadWrite> {
         state.1.view
     }
 
-    fn batch_out<Lhs: NumericLine, Rhs: NumericLine, EO: NumericLine>(
+    fn batch_out<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &Self::State<Lhs, Rhs, EO>,
         batch: usize,
     ) -> usize {
         state.1.batch.to_source_pos(batch)
     }
 
-    fn runtime_config<Lhs: NumericLine, Rhs: NumericLine, EO: NumericLine>(
+    fn runtime_config<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &Self::State<Lhs, Rhs, EO>,
     ) -> Self::Config {
         state.2.clone()

@@ -18,8 +18,8 @@ pub(super) trait MatrixFragmentReader {
     type TileKind: TileKind;
 
     /// Fill a fragment with data, with the implementation depending on the tile kind.
-    fn load_fragment<E: Numeric, V: Numeric>(
-        tile: &Tile<Self::TileKind, V>,
+    fn load_fragment<E: Numeric, V: Numeric, N: Size>(
+        tile: &Tile<Self::TileKind, V, N>,
         frag: &mut Sequence<LineContainer<E>>,
         #[comptime] n: u32,
     );
@@ -34,8 +34,8 @@ pub struct MatrixStageReader<Kind: TileKind> {
 
 #[cube]
 impl VectorStageReader {
-    pub fn load_fragment<E: Numeric, V: Numeric>(
-        tile: &StridedTile<V>,
+    pub fn load_fragment<E: Numeric, V: Numeric, N: Size>(
+        tile: &StridedTile<V, N>,
         frag: &mut LineContainer<E>,
     ) {
         comptime!(assert!(tile.layout == MatrixLayout::RowMajor));
@@ -49,8 +49,8 @@ impl VectorStageReader {
 impl MatrixFragmentReader for MatrixStageReader<Strided> {
     type TileKind = Strided;
 
-    fn load_fragment<E: Numeric, V: Numeric>(
-        tile: &StridedTile<V>,
+    fn load_fragment<E: Numeric, V: Numeric, N: Size>(
+        tile: &StridedTile<V, N>,
         frag: &mut Sequence<LineContainer<E>>,
         #[comptime] n: u32,
     ) {
@@ -69,7 +69,7 @@ impl MatrixFragmentReader for MatrixStageReader<Strided> {
 impl MatrixFragmentReader for MatrixStageReader<Filled> {
     type TileKind = Filled;
 
-    fn load_fragment<E: Numeric, V: Numeric>(
+    fn load_fragment<E: Numeric, V: Numeric, N: Size>(
         value: &V,
         frag: &mut Sequence<LineContainer<E>>,
         #[comptime] n: u32,
@@ -89,8 +89,8 @@ where
 {
     type TileKind = Option<Inner>;
 
-    fn load_fragment<E: Numeric, V: Numeric>(
-        tile: &ComptimeOption<Inner::Tile<V>>,
+    fn load_fragment<E: Numeric, V: Numeric, N: Size>(
+        tile: &ComptimeOption<Inner::Tile<V, N>>,
         frag: &mut Sequence<LineContainer<E>>,
         #[comptime] n: u32,
     ) {
@@ -98,7 +98,7 @@ where
         match tile {
             ComptimeOption::Some(tile) => MatrixStageReader::<Inner>::load_fragment(tile, frag, n),
             ComptimeOption::None => {
-                MatrixStageReader::<Filled>::load_fragment::<E, V>(&V::from_int(0), frag, n)
+                MatrixStageReader::<Filled>::load_fragment::<E, V, N>(&V::from_int(0), frag, n)
             }
         }
     }

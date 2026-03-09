@@ -25,18 +25,21 @@ pub struct SimpleGlobalAttention<AP: AttentionPrecision, SA: StageAttention<AP>>
 impl<
     SA: StageAttention<
             AP,
-            KeyStage = StridedStageMemory<KS<AP>, AttentionTilingLayout>,
-            ValueStage = StridedStageMemory<VS<AP>, AttentionTilingLayout>,
-            OutStage = PartitionedStage<OS<AP>>,
+            KeyStage = StridedStageMemory<KS<AP>, KSS<AP>, AttentionTilingLayout>,
+            ValueStage = StridedStageMemory<VS<AP>, VSS<AP>, AttentionTilingLayout>,
+            OutStage = PartitionedStage<OS<AP>, OSS<AP>>,
         >,
     AP: AttentionPrecision,
 > GlobalAttention<AP> for SimpleGlobalAttention<AP, SA>
 {
-    type KeyReader = FullStageGlobalReader<KG<AP>, KS<AP>, (), AttentionLoadingStrategy>;
-    type ValueReader = FullStageGlobalReader<VG<AP>, VS<AP>, (), AttentionLoadingStrategy>;
+    type KeyReader =
+        FullStageGlobalReader<KG<AP>, KGS<AP>, KS<AP>, KSS<AP>, (), AttentionLoadingStrategy>;
+    type ValueReader =
+        FullStageGlobalReader<VG<AP>, VGS<AP>, VS<AP>, VSS<AP>, (), AttentionLoadingStrategy>;
     type MaskReader = MaskReader<AP>;
 
-    type Writer = <SA::Partitioner as AttentionPartitioner>::Writer<OS<AP>, OG<AP>>;
+    type Writer =
+        <SA::Partitioner as AttentionPartitioner>::Writer<OS<AP>, OSS<AP>, OG<AP>, OGS<AP>>;
 
     type Config = SimpleGlobalAttentionConfig<SA::Config>;
 
@@ -118,7 +121,7 @@ impl<
     fn init_query_reader(
         batch_index: u32,
         stage_q_offset: u32,
-        query: VirtualTensor<QG<AP>>,
+        query: VirtualTensor<QG<AP>, QGS<AP>>,
         #[comptime] config: Self::Config,
     ) -> QueryReader<AP> {
         let layout = AttentionGlobalLayout::new(&query, batch_index, config.query_gmem_config);
@@ -128,7 +131,7 @@ impl<
 
     fn init_key_reader(
         batch_index: u32,
-        key: VirtualTensor<KG<AP>>,
+        key: VirtualTensor<KG<AP>, KGS<AP>>,
         #[comptime] config: Self::Config,
     ) -> Self::KeyReader {
         let step = config.stage_config.elements_in_partition_seq_kv().runtime();
@@ -139,7 +142,7 @@ impl<
 
     fn init_value_reader(
         batch_index: u32,
-        value: VirtualTensor<VG<AP>>,
+        value: VirtualTensor<VG<AP>, VGS<AP>>,
         #[comptime] config: Self::Config,
     ) -> Self::ValueReader {
         let step = config.stage_config.elements_in_partition_seq_kv().runtime();
@@ -151,7 +154,7 @@ impl<
     fn init_mask_reader(
         batch_index: u32,
         stage_q_offset: u32,
-        mask: ComptimeOption<VirtualTensor<MSK<AP>>>,
+        mask: ComptimeOption<VirtualTensor<MSK<AP>, MSKS<AP>>>,
         seq_kv_shape: u32,
         #[comptime] config: Self::Config,
     ) -> Self::MaskReader {
@@ -183,7 +186,7 @@ impl<
     fn init_writer(
         batch_index: u32,
         stage_q_offset: u32,
-        out: VirtualTensor<OG<AP>, ReadWrite>,
+        out: VirtualTensor<OG<AP>, OGS<AP>, ReadWrite>,
         #[comptime] config: Self::Config,
     ) -> Self::Writer {
         let layout =

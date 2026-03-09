@@ -107,7 +107,7 @@ impl Layout for WeightLayout {
     }
 }
 
-impl<'a, R: Runtime> WeightLayoutLaunch<'a, R> {
+impl<R: Runtime> WeightLayoutLaunch<R> {
     pub fn from_args(
         client: &ComputeClient<R>,
         problem: &ConvolutionProblem,

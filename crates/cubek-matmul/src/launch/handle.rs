@@ -28,7 +28,7 @@ pub enum MatmulInputBinding<R: Runtime> {
 impl<R: Runtime> Clone for MatmulInputBinding<R> {
     fn clone(&self) -> Self {
         match self {
-            Self::Normal(arg0, arg1) => Self::Normal(arg0.clone_unchecked(), *arg1),
+            Self::Normal(arg0, arg1) => Self::Normal(arg0.clone(), *arg1),
             Self::Quantized {
                 data,
                 data_dtype,
@@ -37,9 +37,9 @@ impl<R: Runtime> Clone for MatmulInputBinding<R> {
                 shape,
                 scheme,
             } => Self::Quantized {
-                data: data.clone_unchecked(),
+                data: data.clone(),
                 data_dtype: *data_dtype,
-                scale: scale.clone_unchecked(),
+                scale: scale.clone(),
                 scale_dtype: *scale_dtype,
                 shape: shape.clone(),
                 scheme: *scheme,
@@ -122,6 +122,13 @@ impl<R: Runtime> MatmulInputBinding<R> {
         }
     }
 
+    pub fn data_elem_size(&self) -> usize {
+        match self {
+            MatmulInputBinding::Normal(_, ty) => ty.size(),
+            MatmulInputBinding::Quantized { data_dtype, .. } => data_dtype.size(),
+        }
+    }
+
     pub fn into_data(self) -> TensorBinding<R> {
         match self {
             MatmulInputBinding::Normal(handle, ..) => handle,
@@ -157,21 +164,7 @@ impl<R: Runtime> MatmulInputBinding<R> {
         }
     }
 
-    pub fn into_contiguous(
-        mut self,
-        client: &ComputeClient<R>,
-        ohs: &mut Self,
-    ) -> Result<Self, LaunchError> {
-        if self.data().handle.id == ohs.data().handle.id {
-            let data = self.data_mut();
-            let last_use = data.handle.last_use;
-            data.handle.last_use = false;
-
-            if last_use {
-                ohs.data_mut().handle.last_use = true;
-            }
-        }
-
+    pub fn into_contiguous(self, client: &ComputeClient<R>) -> Result<Self, LaunchError> {
         let val = match self {
             Self::Normal(data, dtype) => Self::Normal(
                 into_contiguous_pitched(client, data, dtype).binding(),
@@ -195,7 +188,7 @@ impl<R: Runtime> MatmulInputBinding<R> {
                             packed_dim,
                             &shape,
                             scheme.num_quants(),
-                            u8::as_type_native_unchecked(),
+                            u8::as_type_native_unchecked().storage_type(),
                         );
                         scheme = scheme.with_store(QuantStore::PackedNative(0));
                         data.dtype = data_dtype;
@@ -208,7 +201,7 @@ impl<R: Runtime> MatmulInputBinding<R> {
                             packed_dim,
                             &shape,
                             scheme.num_quants(),
-                            u32::as_type_native_unchecked(),
+                            u32::as_type_native_unchecked().storage_type(),
                         );
                         data.dtype = data_dtype;
                         scheme = scheme.with_store(QuantStore::PackedU32(0));
@@ -233,9 +226,14 @@ impl<R: Runtime> MatmulInputBinding<R> {
 
     pub fn required_address_type(&self) -> AddressType {
         match self {
-            MatmulInputBinding::Normal(handle, ..) => handle.required_address_type(),
-            MatmulInputBinding::Quantized { data, shape, .. } => {
-                let handle_addr = data.required_address_type();
+            MatmulInputBinding::Normal(handle, ty) => handle.required_address_type(ty.size()),
+            MatmulInputBinding::Quantized {
+                data,
+                shape,
+                scheme,
+                ..
+            } => {
+                let handle_addr = data.required_address_type(scheme.size_bits_stored() / 8);
                 let conceptual_addr = AddressType::from_len(shape.iter().product());
                 handle_addr.max(conceptual_addr)
             }

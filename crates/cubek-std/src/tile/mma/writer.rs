@@ -66,7 +66,7 @@ fn store_manual_transposed<
     let line_size = def.line_size(ident);
     let lane_id = UNIT_POS_PLANE;
 
-    let (_, stride) = tile.as_unlined_mut();
+    let stride = tile.unlined_stride();
     let mut tile = tile.with_line_size::<Const<1>>();
 
     let (stride_row, stride_col) = match layout {
@@ -107,7 +107,7 @@ fn store_manual_plain<
     let num_lines = def.lines_per_lane(ident);
     let line_size = def.line_size(ident);
     let lane_id = UNIT_POS_PLANE;
-    let (_, stride) = tile.as_unlined_mut();
+    let stride = tile.unlined_stride();
     // Supported on all targets that support manual MMA
     let mut tile = tile.with_line_size::<N>();
 
@@ -152,7 +152,7 @@ fn store_stmatrix<
     #[comptime] m: u32,
 ) {
     let stage_line_size = tile.stage.line_size().comptime();
-    let (_, stride) = tile.as_unlined_mut();
+    let stride = tile.unlined_stride();
 
     let elem_size = E::type_size().comptime();
     let num_regs = def.lines_per_lane(ident);
@@ -168,7 +168,7 @@ fn store_stmatrix<
     let stage_ty = type_of::<V>().comptime();
     let frag_ty = type_of::<E>().comptime();
     if stage_ty == frag_ty {
-        def.store_matrix(
+        def.store_matrix::<Line<E, NV>, N>(
             &mut row_slice.downcast(),
             fragment,
             ident,
@@ -181,7 +181,7 @@ fn store_stmatrix<
         for i in 0..num_regs {
             frag[i] = Line::cast_from(fragment[i]);
         }
-        def.store_matrix(&mut row_slice, &frag, ident, num_regs, transposed);
+        def.store_matrix::<_, N>(&mut row_slice, &frag, ident, num_regs, transposed);
     }
 }
 

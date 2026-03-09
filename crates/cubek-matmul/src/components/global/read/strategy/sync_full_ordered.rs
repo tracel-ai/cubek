@@ -103,21 +103,22 @@ impl LoadMaxRoundPlaneCount for SyncFullOrderedLoading {
 impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncFullOrderedLoading {
     type TilingLayout = ContiguousTilingLayout<OrderedTilingOrder>;
     type SyncStrategy = Synchronous;
-    type Job<EG: Numeric, ES: Numeric> = sync_full_tilewise::SyncFullTilewiseJob;
+    type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> =
+        sync_full_tilewise::SyncFullTilewiseJob;
     type Stage = StridedStageFamily;
     type TileKind = Strided;
 
-    fn new_job<EG: Numeric, ES: Numeric>(
+    fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
-        #[comptime] line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
-    ) -> Self::Job<EG, ES> {
+    ) -> Self::Job<EG, NG, ES, NS> {
+        let line_size = NG::value().comptime() as u32;
         let num_planes = config.loading_planes_count();
         let num_tiles = config.smem_config.tiles_per_stage();
         let plane_dim = config.plane_dim;
 
         let num_tiles_per_plane = num_tiles / num_planes;
-        let num_lines_per_tile = config.smem_config.elements_per_tile() / line_size as u32;
+        let num_lines_per_tile = config.smem_config.elements_per_tile() / line_size;
         let num_lines_per_plane = num_lines_per_tile * num_tiles_per_plane;
         let num_lines_per_unit = num_lines_per_plane / plane_dim;
 
@@ -133,7 +134,6 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncFullOrderedLoading {
             num_lines_per_tile,
             num_lines_per_unit,
             plane_dim,
-            line_size,
         }
     }
 }

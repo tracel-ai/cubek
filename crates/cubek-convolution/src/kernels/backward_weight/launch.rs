@@ -151,7 +151,7 @@ where
     let address_type = input
         .required_address_type()
         .max(out_grad.required_address_type())
-        .max(weight_grad.required_address_type());
+        .max(weight_grad.required_address_type(dtypes.acc_global.size()));
 
     let problem = ConvolutionProblem {
         m: out_c,
@@ -208,9 +208,9 @@ where
     // So for the sake of selecting a line size, the shape/strides are always row-major.
     let line_sizes = AvailableLineSizes::from_type_sizes(
         client,
-        input.data().elem_size,
-        out_grad.data().elem_size,
-        weight_grad.elem_size,
+        input.data_elem_size(),
+        out_grad.data_elem_size(),
+        dtypes.acc_global.size(),
     )
     .filter_lhs_with_tensor(
         &out_grad.data().strides,

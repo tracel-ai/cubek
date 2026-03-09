@@ -142,24 +142,24 @@ impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for InterleavedMatm
         }
     }
 
-    fn load_lhs<E: Numeric>(
-        tile: &StridedTile<E>,
+    fn load_lhs<E: Numeric, N: Size>(
+        tile: &StridedTile<E, N>,
         lhs: &mut Self::LhsFragment,
         #[comptime] config: Self::Config,
     ) {
         InterleavedStageReader::load_fragment(tile, lhs, StageIdent::Lhs, config);
     }
 
-    fn load_rhs<E: Numeric>(
-        tile: &StridedTile<E>,
+    fn load_rhs<E: Numeric, N: Size>(
+        tile: &StridedTile<E, N>,
         rhs: &mut Self::RhsFragment,
         #[comptime] config: Self::Config,
     ) {
         InterleavedStageReader::load_fragment(tile, rhs, StageIdent::Rhs, config);
     }
 
-    fn load_acc<E: Numeric>(
-        tile: &ComptimeOption<StridedTile<E>>,
+    fn load_acc<E: Numeric, N: Size>(
+        tile: &ComptimeOption<StridedTile<E, N>>,
         acc: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     ) {
@@ -174,8 +174,8 @@ impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for InterleavedMatm
         }
     }
 
-    fn write_results<E: Numeric>(
-        tile: &mut StridedTile<E, ReadWrite>,
+    fn write_results<E: Numeric, N: Size>(
+        tile: &mut StridedTile<E, N, ReadWrite>,
         acc: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     ) {

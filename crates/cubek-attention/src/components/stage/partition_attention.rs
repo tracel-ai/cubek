@@ -45,9 +45,9 @@ pub struct PartitionAttention<
 #[cube]
 impl<
     AP: AttentionPrecision,
-    SK: Stage<KS<AP>, ReadOnly, TileKind = Strided>,
-    SV: Stage<VS<AP>, ReadOnly, TileKind = Strided>,
-    SO: Stage<OS<AP>, ReadWrite, TileKind = Strided>,
+    SK: Stage<KS<AP>, KSS<AP>, ReadOnly, TileKind = Strided>,
+    SV: Stage<VS<AP>, VSS<AP>, ReadOnly, TileKind = Strided>,
+    SO: Stage<OS<AP>, OSS<AP>, ReadWrite, TileKind = Strided>,
     TA: TileAttention<AP>,
     P: AttentionPartitioner,
 > StageAttention<AP> for PartitionAttention<AP, SK, SV, SO, TA, P>

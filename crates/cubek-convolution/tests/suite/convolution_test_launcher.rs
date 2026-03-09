@@ -100,28 +100,33 @@ where
         A::Routine::prepare(&problem.as_matmul_problem(), &device_settings, expand_info)?;
 
     let elem_size = size_of::<P::EG>();
-    let lhs_handle =
-        unsafe { TensorBinding::from_raw_parts(lhs.handle, lhs.strides, lhs.shape, elem_size) };
-    let rhs_handle =
-        unsafe { TensorBinding::from_raw_parts(rhs.handle, rhs.strides, rhs.shape, elem_size) };
+    let lhs_handle = unsafe { TensorBinding::from_raw_parts(lhs.handle, lhs.strides, lhs.shape) };
+    let rhs_handle = unsafe { TensorBinding::from_raw_parts(rhs.handle, rhs.strides, rhs.shape) };
     let out_handle = unsafe {
-        TensorBinding::from_raw_parts(
-            out.handle.clone(),
-            out.strides.clone(),
-            out.shape.clone(),
-            elem_size,
-        )
+        TensorBinding::from_raw_parts(out.handle.clone(), out.strides.clone(), out.shape.clone())
     };
 
     let op = ConvolutionOperation::Forward;
 
-    let lhs_handle =
-        A::correct_layout(&client, lhs_handle, P::EG::as_type_native_unchecked(), op).unwrap();
-    let rhs_handle =
-        A::correct_layout(&client, rhs_handle, P::EG::as_type_native_unchecked(), op).unwrap();
+    let lhs_handle = A::correct_layout(
+        &client,
+        lhs_handle,
+        P::EG::as_type_native_unchecked().storage_type(),
+        op,
+    )
+    .unwrap();
+    let rhs_handle = A::correct_layout(
+        &client,
+        rhs_handle,
+        P::EG::as_type_native_unchecked().storage_type(),
+        op,
+    )
+    .unwrap();
 
-    let lhs_handle = MatmulInputBinding::new(lhs_handle, P::EG::as_type_native_unchecked());
-    let rhs_handle = MatmulInputBinding::new(rhs_handle, P::EG::as_type_native_unchecked());
+    let lhs_handle =
+        MatmulInputBinding::new(lhs_handle, P::EG::as_type_native_unchecked().storage_type());
+    let rhs_handle =
+        MatmulInputBinding::new(rhs_handle, P::EG::as_type_native_unchecked().storage_type());
 
     let (inputs, runtime_args) = <InputArg<A::Args> as ConcreteInputsFactory<A::Routine>>::create(
         &client,
@@ -169,7 +174,7 @@ fn tensor_raw_parts<P: TestPrecision, R: Runtime>(
     client: &ComputeClient<R>,
     problem: &ConvolutionProblem,
     ident: MatmulIdent,
-) -> TensorRawParts<R, P::EG> {
+) -> TensorRawParts<P::EG> {
     match ident {
         MatmulIdent::Lhs => {
             let shape = shape(problem, ident);

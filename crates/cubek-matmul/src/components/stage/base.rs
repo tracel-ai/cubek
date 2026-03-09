@@ -4,19 +4,20 @@ use cubek_std::InvalidConfigError;
 use cubek_std::stage::StageMemoryConfig;
 use cubek_std::tile::TileKind;
 
-use crate::components::CubeDimResource;
-use crate::components::global::PlaneFlowConfig;
-use crate::components::global::WriteEventListener;
 use crate::components::stage::NumStages;
 use crate::components::stage::PartitionScheduler;
 use crate::components::tile::TileConfig;
 use crate::definition::TilingBlueprint;
-use crate::definition::{
-    AccS, LhsS, MatmulElems, MatmulLineSizes, MatmulSetupError, MatmulTypes, RhsS,
-};
+use crate::definition::{MatmulElems, MatmulLineSizes, MatmulSetupError, MatmulTypes};
+use crate::{components::CubeDimResource, definition::Lhs};
+use crate::{components::global::PlaneFlowConfig, definition::Acc};
+use crate::{components::global::WriteEventListener, definition::Rhs};
 use std::{fmt::Debug, hash::Hash};
 
 use super::{StageEventListener, TilingLayout};
+
+type Ty<T> = crate::definition::Stage<T>;
+type Sz<T> = crate::definition::StageSize<T>;
 
 /// A family of [StageMatmul] implementations that operate with any [precision](MatmulPrecision).
 pub trait StageMatmulFamily: Send + Sync + 'static {
@@ -24,10 +25,10 @@ pub trait StageMatmulFamily: Send + Sync + 'static {
     type Matmul<MP: MatmulTypes, TL: TilingLayout, TR: TilingLayout, TA: TilingLayout, TO: TilingLayout>: StageMatmul<
             MP,
             Config = Self::Config,
-            LhsStage = <Self::LhsStage as StageFamily>::Stage<LhsS<MP>, TL>,
-            RhsStage = <Self::RhsStage as StageFamily>::Stage<RhsS<MP>, TR>,
-            AccStage = <Self::AccStage as StageFamily>::Stage<AccS<MP>, TA>,
-            OutStage = <Self::OutStage as StageFamily<ReadWrite>>::Stage<AccS<MP>, TO>,
+            LhsStage = <Self::LhsStage as StageFamily>::Stage<Ty<Lhs<MP>>, Sz<Lhs<MP>>, TL>,
+            RhsStage = <Self::RhsStage as StageFamily>::Stage<Ty<Rhs<MP>>, Sz<Rhs<MP>>, TR>,
+            AccStage = <Self::AccStage as StageFamily>::Stage<Ty<Acc<MP>>, Sz<Acc<MP>>, TA>,
+            OutStage = <Self::OutStage as StageFamily<ReadWrite>>::Stage<Ty<Acc<MP>>, Sz<Acc<MP>>, TO>,
         >;
 
     /// Stage family for Lhs
@@ -203,7 +204,7 @@ pub trait StageFamily<IO: SliceVisibility = ReadOnly>: Send + Sync + 'static {
     /// The tile kind (family) contained in the stage
     type TileKind: TileKind<IO>;
     /// The concrete stage type of this family, instantiated with the type and layout
-    type Stage<ES: Numeric, NS: Size, T: TilingLayout>: Stage<ES, IO, TileKind = Self::TileKind>;
+    type Stage<ES: Numeric, NS: Size, T: TilingLayout>: Stage<ES, NS, IO, TileKind = Self::TileKind>;
 }
 
 /// Stage family that can be used as the target of a loader
@@ -260,5 +261,5 @@ impl<IO: SliceVisibility, S: LoadStageFamily<IO>> LoadStageFamily<IO> for Option
 
 impl<IO: SliceVisibility, Inner: StageFamily<IO>> StageFamily<IO> for Option<Inner> {
     type TileKind = Option<Inner::TileKind>;
-    type Stage<ES: Numeric, T: TilingLayout> = ComptimeOption<Inner::Stage<ES, T>>;
+    type Stage<ES: Numeric, NS: Size, T: TilingLayout> = ComptimeOption<Inner::Stage<ES, NS, T>>;
 }

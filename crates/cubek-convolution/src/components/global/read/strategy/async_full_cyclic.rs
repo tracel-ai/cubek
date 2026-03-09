@@ -72,15 +72,14 @@ impl<TO: TilingOrder> LoadMaxRoundPlaneCount for AsyncFullCyclicLoading<TO> {
 impl<TO: TilingOrder> FullLoadingStrategy<RuntimeArgs> for AsyncFullCyclicLoading<TO> {
     type TilingLayout = ContiguousTilingLayout<TO>;
     type SyncStrategy = AsyncCopy;
-    type Job<EG: Numeric, ES: Numeric> = AsyncFullCyclicJob;
+    type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = AsyncFullCyclicJob;
     type Stage = StridedStageFamily;
     type TileKind = Strided;
 
-    fn new_job<EG: Numeric, ES: Numeric>(
+    fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         runtime_args: RuntimeArgs,
-        #[comptime] _line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
-    ) -> Self::Job<EG, ES> {
+    ) -> Self::Job<EG, NG, ES, NS> {
         let type_size = ES::type_size_bits().comptime();
         let line_size = ASYNC_COPY_WIDTH / type_size as u32;
         let tile_num_elements = config.smem_config.elements_per_tile();
@@ -134,16 +133,16 @@ pub struct AsyncFullCyclicJob {
 }
 
 #[cube]
-impl<EG: Numeric, ES: Numeric, TO: TilingOrder>
-    LoadingJob<EG, ES, ContiguousTilingLayout<TO>, AsyncCopy> for AsyncFullCyclicJob
+impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
+    LoadingJob<EG, NG, ES, NS, ContiguousTilingLayout<TO>, AsyncCopy> for AsyncFullCyclicJob
 {
     type Stage = StridedStageFamily;
 
     fn execute_task(
         this: &mut Self,
         #[comptime] task_id: u32,
-        global_iter: &GlobalIterator<Line<EG>>,
-        stage: &mut StridedStageMemory<ES, ContiguousTilingLayout<TO>>,
+        global_iter: &GlobalIterator<Line<EG, NG>>,
+        stage: &mut StridedStageMemory<ES, NS, ContiguousTilingLayout<TO>>,
         _barrier: &mut Shared<Barrier>,
         #[comptime] config: GlobalReaderConfig,
     ) {
@@ -151,7 +150,7 @@ impl<EG: Numeric, ES: Numeric, TO: TilingOrder>
 
         #[allow(clippy::collapsible_else_if)]
         if comptime!(this.reader_mode == ReaderMode::Strict || this.balanced_workload) {
-            copy_line::<EG, ES, TO>(
+            copy_line::<EG, NG, ES, NS, TO>(
                 this,
                 unit_position,
                 global_iter,
@@ -161,7 +160,7 @@ impl<EG: Numeric, ES: Numeric, TO: TilingOrder>
             );
         } else {
             if unit_position < this.num_stage_elements {
-                copy_line::<EG, ES, TO>(
+                copy_line::<EG, NG, ES, NS, TO>(
                     this,
                     unit_position,
                     global_iter,
@@ -179,11 +178,11 @@ impl<EG: Numeric, ES: Numeric, TO: TilingOrder>
 }
 
 #[cube]
-pub(crate) fn copy_line<EG: Numeric, ES: Numeric, TO: TilingOrder>(
+pub(crate) fn copy_line<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>(
     job: &AsyncFullCyclicJob,
     unit_position: u32,
-    global_iter: &GlobalIterator<Line<EG>>,
-    stage: &mut StridedStageMemory<ES, ContiguousTilingLayout<TO>>,
+    global_iter: &GlobalIterator<Line<EG, NG>>,
+    stage: &mut StridedStageMemory<ES, NS, ContiguousTilingLayout<TO>>,
     runtime_args: &RuntimeArgs,
     #[comptime] config: GlobalReaderConfig,
 ) {

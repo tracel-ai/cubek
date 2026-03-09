@@ -2,7 +2,9 @@ use std::marker::PhantomData;
 
 use cubecl::{
     cmma::MmaDefinition,
+    define_size,
     ir::MatrixIdent,
+    num_traits::Zero,
     prelude::*,
     std::tensor::layout::{Coords1d, Coords2d},
 };
@@ -54,22 +56,30 @@ pub trait MmaTypes {
 }
 pub trait MmaIdent<M: MmaTypes> {
     type Elem: Numeric;
+    type Size: Size;
     const IDENT: MatrixIdent;
 }
+
+define_size!(AS);
+define_size!(BS);
+define_size!(CDS);
 
 pub struct IdentA;
 impl<M: MmaTypes> MmaIdent<M> for IdentA {
     type Elem = M::A;
+    type Size = AS;
     const IDENT: MatrixIdent = MatrixIdent::A;
 }
 pub struct IdentB;
 impl<M: MmaTypes> MmaIdent<M> for IdentB {
     type Elem = M::B;
+    type Size = BS;
     const IDENT: MatrixIdent = MatrixIdent::B;
 }
 pub struct IdentCD;
 impl<M: MmaTypes> MmaIdent<M> for IdentCD {
     type Elem = M::CD;
+    type Size = CDS;
     const IDENT: MatrixIdent = MatrixIdent::Accumulator;
 }
 
@@ -85,6 +95,14 @@ pub fn mma_definition<M: MmaTypes>(
 }
 
 #[cube]
+#[allow(unused_variables, clippy::extra_unused_type_parameters)]
+fn register_line_size<T: Size>(#[comptime] line_size: LineSize) {
+    intrinsic!(|scope| {
+        scope.register_size::<T>(line_size);
+    });
+}
+
+#[cube]
 impl<MI: MmaIdent<MT>, MT: MmaTypes> ManualMatrixLayout<MI, MT> {
     pub fn new(
         #[comptime] tile_size: TileSize,
@@ -93,6 +111,7 @@ impl<MI: MmaIdent<MT>, MT: MmaTypes> ManualMatrixLayout<MI, MT> {
         let mma_def = mma_definition::<MT>(tile_size);
         let lines_per_lane = mma_def.lines_per_lane(MI::IDENT);
         let line_size = mma_def.line_size(MI::IDENT);
+        register_line_size::<MI::Size>(line_size);
 
         // Assuming specific layout, TODO generalize
         let num_rows = 2u32;
@@ -157,7 +176,7 @@ impl<MI: MmaIdent<MT>, MT: MmaTypes> ManualMatrixLayout<MI, MT> {
 
     pub fn create_matrix(self) -> ManualMatrix<MI, MT> {
         ManualMatrix::<MI, MT> {
-            fragment: Array::lined(self.lines_per_lane, self.line_size),
+            fragment: Array::new(self.lines_per_lane),
             layout: self,
         }
     }
@@ -176,7 +195,7 @@ impl<MT: MmaTypes> SoftmaxLayout for ManualMatrixLayout<IdentCD, MT> {
 
 #[derive(CubeType)]
 pub struct ManualMatrix<MI: MmaIdent<MT>, MT: MmaTypes> {
-    pub fragment: Array<Line<MI::Elem>>,
+    pub fragment: Array<Line<MI::Elem, MI::Size>>,
     pub layout: ManualMatrixLayout<MI, MT>,
 }
 
@@ -185,11 +204,11 @@ impl<MI: MmaIdent<MT>, MT: MmaTypes> ManualMatrix<MI, MT> {
     pub fn zero(&mut self) {
         #[unroll]
         for i in 0..self.layout.lines_per_lane {
-            self.fragment[i] = Line::cast_from(0);
+            self.fragment[i] = Line::zero();
         }
     }
 
-    pub fn load_from_strided_tile<E2: Numeric>(&mut self, tile: &StridedTile<E2>) {
+    pub fn load_from_strided_tile<E2: Numeric, N: Size>(&mut self, tile: &StridedTile<E2, N>) {
         MmaStageReader::<Strided>::load_fragment(
             tile,
             &mut self.fragment,
@@ -201,7 +220,10 @@ impl<MI: MmaIdent<MT>, MT: MmaTypes> ManualMatrix<MI, MT> {
         );
     }
 
-    pub fn store_to_strided_tile<E2: Numeric>(&self, tile: &mut StridedTile<E2, ReadWrite>) {
+    pub fn store_to_strided_tile<E2: Numeric, N: Size>(
+        &self,
+        tile: &mut StridedTile<E2, N, ReadWrite>,
+    ) {
         MmaStageWriter::store_fragment(
             tile,
             &self.fragment,

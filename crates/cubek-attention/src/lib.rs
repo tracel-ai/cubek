@@ -1,5 +1,4 @@
-#![allow(clippy::explicit_counter_loop)]
-#![allow(clippy::manual_is_multiple_of)]
+#![allow(clippy::explicit_counter_loop, clippy::type_complexity)]
 
 /// Components for matrix multiplication
 pub mod components;

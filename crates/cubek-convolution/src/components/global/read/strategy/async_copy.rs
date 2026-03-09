@@ -1,9 +1,6 @@
 use cubecl::prelude::barrier::copy_async_checked;
 use cubecl::prelude::*;
-use cubecl::std::{
-    tensor::{View, layout::Coords2d},
-    type_size,
-};
+use cubecl::std::tensor::{View, layout::Coords2d};
 use cubek_matmul::components::{
     global::GlobalReaderConfig,
     stage::{StridedStageMemory, TilingLayout},
@@ -19,10 +16,10 @@ pub(crate) const ASYNC_COPY_WIDTH: u32 = 128;
 /// Custom version of async copy to clamp slice on channels, not `k` as a whole.
 #[cube]
 #[expect(clippy::overly_complex_bool_expr, reason = "override")]
-pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
-    view: View<Line<EG>, Coords2d>,
+pub(crate) fn async_copy_from<EG: Scalar, EGS: Size, ES: Numeric, ESS: Size, T: TilingLayout>(
+    view: View<Line<EG, EGS>, Coords2d>,
     pos: Coords2d,
-    stage: &mut StridedStageMemory<ES, T>,
+    stage: &mut StridedStageMemory<ES, ESS, T>,
     stage_offset: u32,
     runtime_args: &RuntimeArgs,
     k_offset: u32,
@@ -32,7 +29,7 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
     let operation = runtime_args.operation.comptime();
     let channels = runtime_args.channels;
 
-    let mut stage_slice = stage.as_slice_mut(stage.smem.line_size());
+    let mut stage_slice = stage.as_slice_mut::<ESS>();
     let slice_size = match config.smem_config.matrix_layout {
         MatrixLayout::RowMajor => (1u32, copy_line_size),
         MatrixLayout::ColMajor => (copy_line_size, 1u32),
@@ -117,7 +114,7 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
 
     let global_slice = view.slice_unchecked(pos, slice_size).to_linear_slice();
 
-    let type_size = type_size::<ES>(stage_slice.line_size());
+    let type_size = Line::<ES, ESS>::type_size();
     let offset = stage.swizzle.apply(stage_offset, type_size);
 
     let stage_slice = stage_slice.slice_mut(offset as usize, (offset + slice_len_stage) as usize);

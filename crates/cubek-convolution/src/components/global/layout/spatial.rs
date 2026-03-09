@@ -116,8 +116,8 @@ pub struct NhwcLayout {
 
 #[cube]
 impl NhwcLayout {
-    pub fn new<E: Numeric, IO: Clone>(
-        tensor: VirtualTensor<E, IO>,
+    pub fn new<E: Numeric, N: Size, IO: Clone>(
+        tensor: VirtualTensor<E, N, IO>,
         #[comptime] dim: Dimensionality,
         #[comptime] checks: EnumSet<NhwcCheck>,
     ) -> Self {
@@ -222,7 +222,7 @@ pub(crate) fn cast_seq<From: CubePrimitive, To: CubePrimitive>(
     out_seq
 }
 
-impl<'a, R: Runtime> NhwcLayoutLaunch<'a, R> {
+impl<R: Runtime> NhwcLayoutLaunch<R> {
     pub fn from_handle(
         binding: &TensorBinding<R>,
         line_size: LineSize,

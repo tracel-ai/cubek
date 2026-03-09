@@ -76,7 +76,6 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for AsyncFullCooperativeLoading 
 
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
-        #[comptime] _line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> AsyncFullCooperativeJob {
         let matrix_layout = config.gmem_config.matrix_layout;
@@ -106,7 +105,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
         _this: &mut Self,
         #[comptime] task_id: u32,
         global_iter: &GlobalIterator<Line<EG, NG>>,
-        stage: &mut StridedStageMemory<ES, StridedTilingLayout>,
+        stage: &mut StridedStageMemory<ES, NS, StridedTilingLayout>,
         barrier: &mut Shared<Barrier>,
         #[comptime] config: GlobalReaderConfig,
     ) {
@@ -118,7 +117,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
         );
 
         let mut destination: SliceMut<Line<ES, NS>> =
-            StridedTilingLayout::nth_slice::<ES>(stage, task_id, config.smem_config);
+            StridedTilingLayout::nth_slice::<ES, NS>(stage, task_id, config.smem_config);
 
         barrier.memcpy_async_cooperative(&window.downcast(), &mut destination);
     }

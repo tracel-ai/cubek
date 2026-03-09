@@ -17,6 +17,7 @@ use crate::{
 };
 
 #[cube(launch_unchecked, address_type = "dynamic")]
+#[allow(clippy::type_complexity)]
 /// Launches the matmul kernel
 pub(crate) fn matmul_entry<
     Args: MatmulArgs,

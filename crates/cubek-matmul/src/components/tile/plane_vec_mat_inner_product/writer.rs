@@ -9,8 +9,8 @@ pub struct MatrixStageWriter {}
 
 #[cube]
 impl MatrixStageWriter {
-    pub fn store_fragment<A: Numeric, S: Numeric>(
-        tile: &mut StridedTile<S, ReadWrite>,
+    pub fn store_fragment<A: Numeric, S: Numeric, N: Size>(
+        tile: &mut StridedTile<S, N, ReadWrite>,
         acc: &Sequence<LineContainer<A>>,
         #[comptime] n: u32,
         #[comptime] reduce_line_size: LineSize,
@@ -20,7 +20,7 @@ impl MatrixStageWriter {
             let total_out_lines = n as usize / out_line_size;
             #[unroll]
             for out_line_iter in 0..total_out_lines {
-                let mut out_line = Line::<S>::empty(out_line_size);
+                let mut out_line = Line::<S, N>::empty();
 
                 #[unroll]
                 for within_line in 0..out_line_size {

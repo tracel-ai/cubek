@@ -51,7 +51,7 @@ pub fn load_window_in_tile<EG: Numeric>(
 /// If the slice would be partly out-of-bounds, it will simply be shorter.
 /// The caller must do the padding if necessary.
 #[cube]
-pub fn load_window_in_stage<EG: Numeric>(
+pub fn load_window_in_stage<EG: CubePrimitive>(
     view: &View<EG, Coords2d>,
     nth_window: u32,
     #[comptime] smem_config: StageMemoryConfig,
@@ -66,7 +66,7 @@ pub fn load_window_in_stage<EG: Numeric>(
 }
 
 #[cube]
-fn load_window<EG: Numeric>(
+fn load_window<EG: CubePrimitive>(
     view: &View<EG, Coords2d>,
     nth_window: u32,
     size: Coords2d,

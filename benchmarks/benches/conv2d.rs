@@ -11,14 +11,20 @@ use cubek::{
         self as convolution, AcceleratedTileKind, ConvolutionArgs, ReadingStrategy, Strategy,
     },
     matmul::{
-        definition::{AccG, AccR, LhsG, LhsS, MatmulElems, MatmulTypes, RhsG},
+        definition::{MatmulElems, MatmulPrecision, MatrixPrecision},
         launch::MatmulInputBinding,
     },
     random::random_uniform,
 };
 use std::marker::PhantomData;
 
-impl<R: Runtime, MP: MatmulTypes> Benchmark for Conv2dBench<R, MP> {
+type LhsG<MP> = <<MP as MatmulPrecision>::Lhs as MatrixPrecision>::Global;
+type LhsS<MP> = <<MP as MatmulPrecision>::Lhs as MatrixPrecision>::Stage;
+type RhsG<MP> = <<MP as MatmulPrecision>::Rhs as MatrixPrecision>::Global;
+type AccG<MP> = <<MP as MatmulPrecision>::Acc as MatrixPrecision>::Global;
+type AccR<MP> = <<MP as MatmulPrecision>::Acc as MatrixPrecision>::Register;
+
+impl<R: Runtime, MP: MatmulPrecision> Benchmark for Conv2dBench<R, MP> {
     type Input = (TensorHandle<R>, TensorHandle<R>, TensorHandle<R>);
     type Output = ();
 
@@ -35,7 +41,7 @@ impl<R: Runtime, MP: MatmulTypes> Benchmark for Conv2dBench<R, MP> {
             0.0,
             1.0,
             input.clone().binding(),
-            LhsG::<MP>::as_type_native_unchecked(),
+            LhsG::<MP>::as_type_native_unchecked().storage_type(),
         )
         .unwrap();
         let weight = TensorHandle::empty(
@@ -48,7 +54,7 @@ impl<R: Runtime, MP: MatmulTypes> Benchmark for Conv2dBench<R, MP> {
             0.0,
             1.0,
             weight.clone().binding(),
-            RhsG::<MP>::as_type_native_unchecked(),
+            RhsG::<MP>::as_type_native_unchecked().storage_type(),
         )
         .unwrap();
         let bias = TensorHandle::empty(
@@ -61,7 +67,7 @@ impl<R: Runtime, MP: MatmulTypes> Benchmark for Conv2dBench<R, MP> {
             0.0,
             1.0,
             bias.clone().binding(),
-            AccG::<MP>::as_type_native_unchecked(),
+            AccG::<MP>::as_type_native_unchecked().storage_type(),
         )
         .unwrap();
 
@@ -138,7 +144,7 @@ pub struct Conv2dBench<R: Runtime, MP> {
 }
 
 #[allow(dead_code)]
-fn run<R: Runtime, MP: MatmulTypes>(device: R::Device) {
+fn run<R: Runtime, MP: MatmulPrecision>(device: R::Device) {
     let client = R::client(&device);
     let batch_size = 16;
 
@@ -181,7 +187,7 @@ fn run<R: Runtime, MP: MatmulTypes>(device: R::Device) {
 }
 
 #[allow(unused)]
-fn run_benches<R: Runtime, MP: MatmulTypes>() {
+fn run_benches<R: Runtime, MP: MatmulPrecision>() {
     let client = R::client(&Default::default());
 
     run::<R, MP>(Default::default());

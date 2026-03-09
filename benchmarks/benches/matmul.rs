@@ -12,7 +12,7 @@ use cubek::{
         components::stage::PartitionBuffering,
         definition::{
             CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, LoadingPrecomputeStrategy,
-            MatmulElems, MatmulTypes, MatmulProblem, TilingBlueprint, TilingScheme,
+            MatmulElems, MatmulPrecision, MatmulProblem, TilingBlueprint, TilingScheme,
         },
         launch::{MatmulInputBinding, Strategy},
         routines::{
@@ -153,7 +153,7 @@ fn entry(m: usize, n: usize, k: usize) -> (usize, usize, usize, usize) {
 }
 
 #[allow(dead_code, clippy::single_element_loop)]
-fn run<R: Runtime, MP: MatmulTypes>(device: R::Device, strategy: Strategy) {
+fn run<R: Runtime, MP: MatmulPrecision>(device: R::Device, strategy: Strategy) {
     for tl in [MatrixLayout::ColMajor, MatrixLayout::RowMajor] {
         for tr in [MatrixLayout::ColMajor, MatrixLayout::RowMajor] {
             for (b, m, n, k) in [
@@ -202,7 +202,7 @@ fn run<R: Runtime, MP: MatmulTypes>(device: R::Device, strategy: Strategy) {
 }
 
 #[allow(dead_code)]
-fn run_one<R: Runtime, MP: MatmulTypes>(
+fn run_one<R: Runtime, MP: MatmulPrecision>(
     device: R::Device,
     strategy: Strategy,
     problem: &MatmulProblem,
@@ -249,7 +249,7 @@ fn run_one<R: Runtime, MP: MatmulTypes>(
 #[allow(unused, clippy::single_element_loop)]
 // This function should be customized to help build a proper selector that reduces the number of
 // possibilities.
-fn run_grid_search<R: Runtime, MP: MatmulTypes>() {
+fn run_grid_search<R: Runtime, MP: MatmulPrecision>() {
     let client = R::client(&Default::default());
 
     let mut algos = BTreeMap::<u64, (BenchmarkDurations, TilingBlueprint, f64)>::new();
@@ -317,7 +317,7 @@ fn run_grid_search<R: Runtime, MP: MatmulTypes>() {
 }
 
 #[allow(unused)]
-fn run_algos_vecmat<R: Runtime, MP: MatmulTypes>() {
+fn run_algos_vecmat<R: Runtime, MP: MatmulPrecision>() {
     let client = R::client(&Default::default());
 
     println!("Simple VecMat");
@@ -350,7 +350,7 @@ fn run_algos_vecmat<R: Runtime, MP: MatmulTypes>() {
 }
 
 #[allow(unused)]
-fn run_algos_unit<R: Runtime, MP: MatmulTypes>() {
+fn run_algos_unit<R: Runtime, MP: MatmulPrecision>() {
     let client = R::client(&Default::default());
 
     println!("Simple Unit Min");
@@ -387,7 +387,7 @@ fn run_algos_unit<R: Runtime, MP: MatmulTypes>() {
 }
 
 #[allow(unused)]
-fn run_algos_wmma<R: Runtime, MP: MatmulTypes>() {
+fn run_algos_wmma<R: Runtime, MP: MatmulPrecision>() {
     let client = R::client(&Default::default());
 
     println!("Simple");
@@ -432,7 +432,7 @@ fn run_algos_wmma<R: Runtime, MP: MatmulTypes>() {
 }
 
 #[allow(unused)]
-fn run_algos_mma<R: Runtime, MP: MatmulTypes>() {
+fn run_algos_mma<R: Runtime, MP: MatmulPrecision>() {
     let client = R::client(&Default::default());
 
     // println!("Specialized TMA");
@@ -463,7 +463,7 @@ fn run_algos_mma<R: Runtime, MP: MatmulTypes>() {
 }
 
 #[allow(unused)]
-fn run_benches<R: Runtime, MP: MatmulTypes>() {
+fn run_benches<R: Runtime, MP: MatmulPrecision>() {
     // run_grid_search::<R, MP>();
     // run_algos_unit::<R, MP>();
     run_algos_wmma::<R, MP>();

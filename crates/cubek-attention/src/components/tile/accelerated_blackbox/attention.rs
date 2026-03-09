@@ -152,40 +152,43 @@ impl<AP: AttentionPrecision> TileAttention<AP> for BlackboxAcceleratedTileAttent
         BlackboxAccumulatorPipeline::new(transit, config.attention_tile_size(), config)
     }
 
-    fn load_query<E: Numeric>(tile: &StridedTile<E>, fragment: &mut Self::Query) {
-        let (slice, stride) = tile.as_unlined();
+    fn load_query<E: Numeric, N: Size>(tile: &StridedTile<E, N>, fragment: &mut Self::Query) {
+        let stride = tile.unlined_stride();
+        let slice = tile.as_slice();
         cmma::load(fragment, &slice, stride);
     }
 
-    fn load_key_transposed<E: Float>(
-        tile: &StridedTile<E>,
+    fn load_key_transposed<E: Float, N: Size>(
+        tile: &StridedTile<E, N>,
         fragment: &mut Self::KeyValue,
         #[comptime] _config: Self::Config,
     ) {
-        let (slice, stride) = tile.as_unlined();
+        let stride = tile.unlined_stride();
+        let slice = tile.as_slice();
         cmma::load(fragment, &slice, stride);
     }
 
-    fn load_value<E: Float>(
-        tile: &StridedTile<E>,
+    fn load_value<E: Float, N: Size>(
+        tile: &StridedTile<E, N>,
         fragment: &mut Self::KeyValue,
         #[comptime] _config: Self::Config,
     ) {
-        let (slice, stride) = tile.as_unlined();
+        let stride = tile.unlined_stride();
+        let slice = tile.as_slice();
         cmma::load(fragment, &slice, stride);
     }
 
-    fn load_mask<E: Numeric>(
-        tile: &StridedTile<E>,
+    fn load_mask<E: Numeric, N: Size>(
+        tile: &StridedTile<E, N>,
         mask: &mut Self::Mask,
         #[comptime] _config: Self::Config,
     ) {
         mask.load_from_strided_tile(tile)
     }
 
-    fn write_results<E: Float>(
+    fn write_results<E: Float, N: Size>(
         out: &Self::Accumulator,
-        slice: &mut SliceMut<Line<E>>,
+        slice: &mut SliceMut<Line<E, N>>,
         #[comptime] config: Self::Config,
     ) {
         let acc = cmma::cast::<ACC<AP>, E>(&out.acc_fragment);

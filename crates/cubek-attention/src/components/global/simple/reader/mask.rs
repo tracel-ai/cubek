@@ -1,5 +1,5 @@
 use crate::components::tile::TileAttentionConfig;
-use crate::definition::attention_types::MSK;
+use crate::definition::attention_types::{MSK, MSKS};
 use crate::definition::{AttentionPrecision, AttentionTileSize};
 use cubecl;
 use cubecl::prelude::*;
@@ -37,8 +37,8 @@ impl LogicalIterator {
 }
 
 #[derive(CubeType)]
-pub struct MaterializedMaskReader<M: Numeric> {
-    global_iter: GlobalIterator<Line<M>>,
+pub struct MaterializedMaskReader<M: Numeric, N: Size> {
+    global_iter: GlobalIterator<Line<M, N>>,
     logical_iter: LogicalIterator,
     // TODO not sure if mandatory, but i need for the stride when reading in global memory
     seq_kv_shape: u32,
@@ -48,7 +48,7 @@ pub struct MaterializedMaskReader<M: Numeric> {
 
 #[derive(CubeType)]
 pub enum MaskReader<AP: AttentionPrecision> {
-    Materialized(MaterializedMaskReader<MSK<AP>>),
+    Materialized(MaterializedMaskReader<MSK<AP>, MSKS<AP>>),
     Logical(LogicalIterator),
 }
 
@@ -61,7 +61,7 @@ impl<AP: AttentionPrecision> MaskReader<AP> {
     pub fn new_materialized(
         stage_q_offset: u32,
         partition_q_offset: u32,
-        mask: View<Line<MSK<AP>>, Coords2d>,
+        mask: View<Line<MSK<AP>, MSKS<AP>>, Coords2d>,
         step: u32,
         seq_kv_shape: u32,
         #[comptime] gmem_config: GlobalMemoryConfig,
@@ -81,7 +81,7 @@ impl<AP: AttentionPrecision> MaskReader<AP> {
         &self,
         #[comptime] pos_in_partition: Coords2d,
         #[comptime] config: S,
-    ) -> (Coords2d, ComptimeOption<StridedTile<MSK<AP>>>) {
+    ) -> (Coords2d, ComptimeOption<StridedTile<MSK<AP>, MSKS<AP>>>) {
         let partition_tile_offset = (
             pos_in_partition.0 * config.elements_in_tile_seq_q(),
             pos_in_partition.1 * config.elements_in_tile_seq_kv(),
@@ -113,14 +113,14 @@ impl<AP: AttentionPrecision> MaskReader<AP> {
 }
 
 #[cube]
-impl<M: Numeric> MaterializedMaskReader<M> {
+impl<M: Numeric, N: Size> MaterializedMaskReader<M, N> {
     fn new(
-        global_iter: GlobalIterator<Line<M>>,
+        global_iter: GlobalIterator<Line<M, N>>,
         logical_iter: LogicalIterator,
         seq_kv_shape: u32,
         #[comptime] gmem_config: GlobalMemoryConfig,
     ) -> Self {
-        MaterializedMaskReader::<M> {
+        MaterializedMaskReader::<M, N> {
             global_iter,
             logical_iter,
             seq_kv_shape,
@@ -133,7 +133,7 @@ impl<M: Numeric> MaterializedMaskReader<M> {
         #[comptime] partition_tile_offset: Coords2d,
         #[comptime] attention_tile_size: AttentionTileSize,
         #[comptime] elements_in_partition_seq_q: u32,
-    ) -> StridedTile<M> {
+    ) -> StridedTile<M, N> {
         let (row_offset, col) = partition_tile_offset;
 
         let row = row_offset + P::seq_q_index() * elements_in_partition_seq_q;
@@ -153,14 +153,13 @@ impl<M: Numeric> MaterializedMaskReader<M> {
         let end = start + length;
         let stride = self.seq_kv_shape / line_size;
 
-        StridedTile::<M>::new_strided(
+        StridedTile::<M, N>::new_strided(
             slice,
             start,
             end,
             stride,
             Swizzle::none(),
             self.gmem_config.matrix_layout,
-            line_size,
         )
     }
 

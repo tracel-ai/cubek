@@ -10,8 +10,8 @@ pub struct InterleavedStageReader {}
 
 #[cube]
 impl InterleavedStageReader {
-    pub fn load_fragment<E: Numeric, V: Numeric>(
-        tile: &StridedTile<V>,
+    pub fn load_fragment<E: Numeric, V: Numeric, N: Size>(
+        tile: &StridedTile<V, N>,
         fragment: &mut InterleavedFragment<E>,
         #[comptime] ident: StageIdent,
         #[comptime] config: InterleavedMatmulConfig,
@@ -22,7 +22,7 @@ impl InterleavedStageReader {
             config.elements_per_unit_k(),
         );
         let layout = comptime!(tile.layout);
-        let line_size = comptime!(tile.line_size as usize);
+        let line_size = N::value();
 
         let unit_id = UNIT_POS_X as usize;
         let k_offset = k_local * unit_id;
@@ -50,7 +50,7 @@ impl InterleavedStageReader {
 
         for i in 0..strided_dim_count {
             for j in 0..line_count_in_dim {
-                let line = Line::cast_from(tile.get_line(
+                let line = Line::<E, N>::cast_from(tile.get_line(
                     (i + strided_dim_offset) as u32,
                     (j + contiguous_dim_offset) as u32,
                 ));

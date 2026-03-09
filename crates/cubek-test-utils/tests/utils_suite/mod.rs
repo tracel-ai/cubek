@@ -15,7 +15,7 @@ fn eye_handle_row_major() {
     let handle = TestInput::new(
         client.clone(),
         shape,
-        f32::as_type_native_unchecked(),
+        f32::as_type_native_unchecked().storage_type(),
         StrideSpec::RowMajor,
         DataKind::Eye,
     )
@@ -24,7 +24,7 @@ fn eye_handle_row_major() {
     let expected = TestInput::new(
         client.clone(),
         [2, 3],
-        f32::as_type_native_unchecked(),
+        f32::as_type_native_unchecked().storage_type(),
         StrideSpec::RowMajor,
         DataKind::Custom {
             data: [1., 0., 0., 0., 1., 0.].to_vec(),
@@ -48,7 +48,7 @@ fn eye_handle_col_major() {
     let handle = TestInput::new(
         client.clone(),
         shape,
-        f32::as_type_native_unchecked(),
+        f32::as_type_native_unchecked().storage_type(),
         StrideSpec::ColMajor,
         DataKind::Eye,
     )
@@ -57,7 +57,7 @@ fn eye_handle_col_major() {
     let expected = TestInput::new(
         client.clone(),
         [2, 3],
-        f32::as_type_native_unchecked(),
+        f32::as_type_native_unchecked().storage_type(),
         StrideSpec::RowMajor,
         DataKind::Custom {
             data: [1., 0., 0., 0., 1., 0.].to_vec(),
@@ -81,7 +81,7 @@ fn arange_handle_row_major() {
     let handle = TestInput::new(
         client.clone(),
         shape,
-        f32::as_type_native_unchecked(),
+        f32::as_type_native_unchecked().storage_type(),
         StrideSpec::RowMajor,
         DataKind::Arange,
     )
@@ -90,7 +90,7 @@ fn arange_handle_row_major() {
     let expected = TestInput::new(
         client.clone(),
         shape![2, 3],
-        f32::as_type_native_unchecked(),
+        f32::as_type_native_unchecked().storage_type(),
         StrideSpec::RowMajor,
         DataKind::Custom {
             data: [0., 1., 2., 3., 4., 5.].to_vec(),
@@ -114,7 +114,7 @@ fn arange_handle_col_major() {
     let handle = TestInput::new(
         client.clone(),
         shape,
-        f32::as_type_native_unchecked(),
+        f32::as_type_native_unchecked().storage_type(),
         StrideSpec::ColMajor,
         DataKind::Arange,
     )
@@ -123,7 +123,7 @@ fn arange_handle_col_major() {
     let expected = TestInput::new(
         client.clone(),
         shape![2, 3],
-        f32::as_type_native_unchecked(),
+        f32::as_type_native_unchecked().storage_type(),
         StrideSpec::RowMajor,
         DataKind::Custom {
             data: [0., 1., 2., 3., 4., 5.].to_vec(),
@@ -147,7 +147,7 @@ fn custom_handle_row_major_col_major() {
     let (_, row_major) = TestInput::new(
         client.clone(),
         shape![2, 3],
-        f32::as_type_native_unchecked(),
+        f32::as_type_native_unchecked().storage_type(),
         StrideSpec::RowMajor,
         DataKind::Custom {
             data: contiguous_data.clone(),
@@ -158,7 +158,7 @@ fn custom_handle_row_major_col_major() {
     let (_, col_major) = TestInput::new(
         client.clone(),
         shape![2, 3],
-        f32::as_type_native_unchecked(),
+        f32::as_type_native_unchecked().storage_type(),
         StrideSpec::ColMajor,
         DataKind::Custom {
             data: contiguous_data,
@@ -182,7 +182,7 @@ fn arange_handle_row_major_slice() {
     let actual = TestInput::new(
         client.clone(),
         shape.clone(),
-        f32::as_type_native_unchecked(),
+        f32::as_type_native_unchecked().storage_type(),
         StrideSpec::RowMajor,
         DataKind::Custom { data: actual_data },
     )
@@ -193,7 +193,7 @@ fn arange_handle_row_major_slice() {
     let expected = TestInput::new(
         client.clone(),
         shape,
-        f32::as_type_native_unchecked(),
+        f32::as_type_native_unchecked().storage_type(),
         StrideSpec::RowMajor,
         DataKind::Custom {
             data: expected_data,

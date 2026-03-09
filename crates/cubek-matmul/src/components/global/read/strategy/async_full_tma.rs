@@ -60,15 +60,14 @@ impl LoadMaxRoundPlaneCount for AsyncFullTmaLoading {
 impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for AsyncFullTmaLoading {
     type TilingLayout = TmaTilingLayout;
     type SyncStrategy = AsyncTma;
-    type Job<EG: Numeric, ES: Numeric> = AsyncFullTmaJob;
+    type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = AsyncFullTmaJob;
     type Stage = StridedStageFamily;
     type TileKind = Strided;
 
-    fn new_job<EG: Numeric, ES: Numeric>(
+    fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
-        #[comptime] _line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
-    ) -> Self::Job<EG, ES> {
+    ) -> Self::Job<EG, NG, ES, NS> {
         let role_rule_config = config.plane_flow_config.partition_rule;
         let config = config.smem_config;
         let tile_count_col = match config.matrix_layout {
@@ -100,14 +99,16 @@ pub struct AsyncFullTmaJob {
 }
 
 #[cube]
-impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, TmaTilingLayout, AsyncTma> for AsyncFullTmaJob {
+impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
+    LoadingJob<EG, NG, ES, NS, TmaTilingLayout, AsyncTma> for AsyncFullTmaJob
+{
     type Stage = StridedStageFamily;
 
     fn execute_task(
         this: &mut Self,
         #[comptime] task_id: u32,
-        global_iter: &GlobalIterator<Line<EG>>,
-        stage: &mut StridedStageMemory<ES, TmaTilingLayout>,
+        global_iter: &GlobalIterator<Line<EG, NG>>,
+        stage: &mut StridedStageMemory<ES, NS, TmaTilingLayout>,
         barrier: &mut Shared<Barrier>,
         #[comptime] config: GlobalReaderConfig,
     ) {
@@ -124,7 +125,7 @@ impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, TmaTilingLayout, AsyncTma> for
             };
 
             let global_view = global_iter.view();
-            let mut stage = stage.as_slice_mut(stage.smem.line_size());
+            let mut stage = stage.as_slice_mut::<NS>();
             let slice_size = size_row * size_col / stage.line_size() as u32;
 
             let slice_start = task_id * slice_size;

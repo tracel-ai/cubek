@@ -99,3 +99,9 @@ impl AttentionLineSizes {
         tensor_line_size_parallel(supported_line_sizes, &shape, &row_major_strides, n - 1)
     }
 }
+
+impl From<&AttentionLineSizes> for [usize; 5] {
+    fn from(value: &AttentionLineSizes) -> Self {
+        [value.query, value.key, value.value, value.mask, value.out]
+    }
+}

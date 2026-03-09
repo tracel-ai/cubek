@@ -75,7 +75,7 @@ impl Layout for OutLayout {
     }
 }
 
-impl<'a, R: Runtime> OutLayoutLaunch<'a, R> {
+impl<R: Runtime> OutLayoutLaunch<R> {
     pub fn from_args(
         client: &ComputeClient<R>,
         problem: &ConvolutionProblem,

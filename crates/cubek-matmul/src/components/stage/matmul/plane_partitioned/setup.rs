@@ -1,31 +1,32 @@
-use crate::components::stage::TilingLayout;
 use crate::components::stage::matmul::plane_partitioned::{
     PlaneMatmul, PlanePartitionedStageConfig,
 };
+use crate::components::{
+    CubeDimResource,
+    global::{MatmulPlaneCounts, PartitionedStage, PartitionedStageFamily, PlaneFlowConfig},
+    stage::{
+        NumStages, PartitionBuffering, PartitionSchedulerScheme, StageFamily, StageMatmulFamily,
+        matmul::{
+            partition::SharedPartitionMatmulConfig, partitioned_matmul::PartitionMatmulConfig,
+        },
+    },
+    tile::TileMatmulFamily,
+};
 use crate::definition::{
-    LhsS, MatmulElems, MatmulLineSizes, MatmulTypes, MatmulSetupError, MatrixTypes, RhsS,
-    TilingBlueprint,
+    MatmulElems, MatmulLineSizes, MatmulSetupError, MatmulTypes, MatrixTypes, TilingBlueprint,
 };
 use crate::{
-    components::{
-        CubeDimResource,
-        global::{MatmulPlaneCounts, PartitionedStage, PartitionedStageFamily, PlaneFlowConfig},
-        stage::{
-            NumStages, PartitionBuffering, PartitionSchedulerScheme, StageFamily,
-            StageMatmulFamily,
-            matmul::{
-                partition::SharedPartitionMatmulConfig, partitioned_matmul::PartitionMatmulConfig,
-            },
-        },
-        tile::TileMatmulFamily,
-    },
-    definition::AccS,
+    components::stage::TilingLayout,
+    definition::{Acc, Lhs, Rhs},
 };
 use core::marker::PhantomData;
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::stage::StageMemoryConfig;
 use cubek_std::tile::Strided;
 use cubek_std::{InvalidConfigError, MatrixLayout};
+
+type STy<T> = crate::definition::Stage<T>;
+type SSz<T> = crate::definition::StageSize<T>;
 
 /// Plane Matmul family for any precision
 pub struct PlaneMatmulFamily<
@@ -62,10 +63,10 @@ impl<
             <MP::Rhs as MatrixTypes>::Register,
             <MP::Acc as MatrixTypes>::Register,
         >,
-        StageLhs::Stage<LhsS<MP>, TL>,
-        StageRhs::Stage<RhsS<MP>, TR>,
-        StageAcc::Stage<AccS<MP>, TA>,
-        PartitionedStage<AccS<MP>>,
+        StageLhs::Stage<STy<Lhs<MP>>, SSz<Lhs<MP>>, TL>,
+        StageRhs::Stage<STy<Rhs<MP>>, SSz<Rhs<MP>>, TR>,
+        StageAcc::Stage<STy<Acc<MP>>, SSz<Acc<MP>>, TA>,
+        PartitionedStage<STy<Acc<MP>>, SSz<Acc<MP>>>,
     >;
 
     type Config = PartitionMatmulConfig<TM::Config>;

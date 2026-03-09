@@ -120,21 +120,25 @@ pub struct PartitionedStageMatmul<
         >,
     StageLhs: Stage<
             <<MP as MatmulTypes>::Lhs as MatrixTypes>::Stage,
+            <<MP as MatmulTypes>::Lhs as MatrixTypes>::StageSize,
             ReadOnly,
             TileKind = TM::LhsTile,
         >,
     StageRhs: Stage<
             <<MP as MatmulTypes>::Rhs as MatrixTypes>::Stage,
+            <<MP as MatmulTypes>::Rhs as MatrixTypes>::StageSize,
             ReadOnly,
             TileKind = TM::RhsTile,
         >,
     StageAcc: Stage<
             <<MP as MatmulTypes>::Acc as MatrixTypes>::Stage,
+            <<MP as MatmulTypes>::Acc as MatrixTypes>::StageSize,
             ReadOnly,
             TileKind = TM::AccTile,
         >,
     StageOut: Stage<
             <<MP as MatmulTypes>::Acc as MatrixTypes>::Stage,
+            <<MP as MatmulTypes>::Acc as MatrixTypes>::StageSize,
             ReadWrite,
             TileKind = TM::OutTile,
         >,
@@ -156,21 +160,25 @@ where
         >,
     StageLhs: Stage<
             <<MP as MatmulTypes>::Lhs as MatrixTypes>::Stage,
+            <<MP as MatmulTypes>::Lhs as MatrixTypes>::StageSize,
             ReadOnly,
             TileKind = TM::LhsTile,
         >,
     StageRhs: Stage<
             <<MP as MatmulTypes>::Rhs as MatrixTypes>::Stage,
+            <<MP as MatmulTypes>::Rhs as MatrixTypes>::StageSize,
             ReadOnly,
             TileKind = TM::RhsTile,
         >,
     StageAcc: Stage<
             <<MP as MatmulTypes>::Acc as MatrixTypes>::Stage,
+            <<MP as MatmulTypes>::Acc as MatrixTypes>::StageSize,
             ReadOnly,
             TileKind = TM::AccTile,
         >,
     StageOut: Stage<
             <<MP as MatmulTypes>::Acc as MatrixTypes>::Stage,
+            <<MP as MatmulTypes>::Acc as MatrixTypes>::StageSize,
             ReadWrite,
             TileKind = TM::OutTile,
         >,

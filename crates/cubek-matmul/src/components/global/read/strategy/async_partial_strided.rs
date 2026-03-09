@@ -14,7 +14,7 @@ use crate::components::{
     },
     stage::StridedTilingLayout,
 };
-use crate::definition::{MatmulElems, MatmulTypes, MatmulProblem, StageIdent};
+use crate::definition::{MatmulElems, MatmulProblem, MatmulTypes, StageIdent};
 use crate::{
     components::global::read::{validate_async_barrier, validate_async_copy_with_problem},
     launch::RuntimeConfig,
@@ -98,16 +98,15 @@ impl LoadMaxRoundPlaneCount for AsyncPartialStridedLoading {
 impl<RC: RuntimeConfig> PartialLoadingStrategy<RC> for AsyncPartialStridedLoading {
     type TilingLayout = StridedTilingLayout;
     type SyncStrategy = AsyncCopy;
-    type Job<EG: Numeric, ES: Numeric> = AsyncPartialStridedJob;
+    type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = AsyncPartialStridedJob;
     type Stage = StridedStageFamily;
     type TileKind = Strided;
 
-    fn new_job<EG: Numeric, ES: Numeric>(
+    fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
         #[comptime] stage_index: u32,
-        #[comptime] _line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
-    ) -> Self::Job<EG, ES> {
+    ) -> Self::Job<EG, NG, ES, NS> {
         let type_size = ES::type_size_bits().comptime();
         let line_size = ASYNC_COPY_WIDTH / type_size as u32;
 
@@ -145,16 +144,16 @@ pub struct AsyncPartialStridedJob {
 }
 
 #[cube]
-impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, StridedTilingLayout, AsyncCopy>
-    for AsyncPartialStridedJob
+impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
+    LoadingJob<EG, NG, ES, NS, StridedTilingLayout, AsyncCopy> for AsyncPartialStridedJob
 {
     type Stage = StridedStageFamily;
 
     fn execute_task(
         this: &mut Self,
         #[comptime] task_id: u32,
-        global_iter: &GlobalIterator<Line<EG>>,
-        stage: &mut StridedStageMemory<ES, StridedTilingLayout>,
+        global_iter: &GlobalIterator<Line<EG, NG>>,
+        stage: &mut StridedStageMemory<ES, NS, StridedTilingLayout>,
         _barrier: &mut Shared<Barrier>,
         #[comptime] config: GlobalReaderConfig,
     ) {

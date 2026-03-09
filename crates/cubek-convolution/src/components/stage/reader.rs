@@ -14,11 +14,11 @@ pub struct BiasTilingLayout {}
 
 #[cube]
 impl BiasTilingLayout {
-    pub fn get_tile<ES: Numeric>(
-        stage: &BiasStageMemory<ES>,
+    pub fn get_tile<ES: Numeric, NS: Size>(
+        stage: &BiasStageMemory<ES, NS>,
         tile: Coords2d,
         #[comptime] config: StageMemoryConfig,
-    ) -> StridedTile<ES> {
+    ) -> StridedTile<ES, NS> {
         if config.num_stages > 1 {
             unimplemented!()
         }
@@ -32,13 +32,12 @@ impl BiasTilingLayout {
         let start = col * tile_size_col;
 
         StridedTile::new_strided(
-            stage.as_slice(stage_line_size as usize),
+            stage.as_slice(),
             start,
             start + length,
             0,
             stage.swizzle,
             MatrixLayout::RowMajor,
-            stage_line_size,
         )
     }
 }

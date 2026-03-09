@@ -107,7 +107,6 @@ impl<TO: TilingOrder, RC: RuntimeConfig> FullLoadingStrategy<RC> for AsyncFullCy
 
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
-        #[comptime] _line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, NG, ES, NS> {
         let type_size = ES::type_size_bits().comptime();
@@ -170,7 +169,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
         this: &mut Self,
         #[comptime] task_id: u32,
         global_iter: &GlobalIterator<Line<EG, NG>>,
-        stage: &mut StridedStageMemory<ES, ContiguousTilingLayout<TO>>,
+        stage: &mut StridedStageMemory<ES, NS, ContiguousTilingLayout<TO>>,
         _barrier: &mut Shared<Barrier>,
         #[comptime] config: GlobalReaderConfig,
     ) {
@@ -178,10 +177,10 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
 
         #[allow(clippy::collapsible_else_if)]
         if comptime!(this.reader_mode == ReaderMode::Strict || this.balanced_workload) {
-            copy_line::<EG, ES, TO>(this, unit_position, global_iter, stage, config);
+            copy_line::<EG, NG, ES, NS, TO>(this, unit_position, global_iter, stage, config);
         } else {
             if unit_position < this.num_stage_elements {
-                copy_line::<EG, ES, TO>(this, unit_position, global_iter, stage, config);
+                copy_line::<EG, NG, ES, NS, TO>(this, unit_position, global_iter, stage, config);
             }
         }
     }

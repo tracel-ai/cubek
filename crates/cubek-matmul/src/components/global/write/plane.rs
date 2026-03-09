@@ -18,8 +18,8 @@ use cubek_std::{stage::StageMemoryConfig, tile::StridedTile};
 /// Writes tiles from out shared memory to output global memory
 /// using a plane for each tile
 pub struct PlaneWriter<IP: MatrixTypes> {
-    global: View<Line<IP::Global>, TiledCoords, ReadWrite>,
-    stage: PartitionedStage<IP::Stage>,
+    global: View<Line<IP::Global, IP::GlobalSize>, TiledCoords, ReadWrite>,
+    stage: PartitionedStage<IP::Stage, IP::StageSize>,
 
     #[cube(comptime)]
     plane_dim: u32,
@@ -30,7 +30,7 @@ pub struct PlaneWriter<IP: MatrixTypes> {
 #[cube]
 impl<IP: MatrixTypes> PlaneWriter<IP> {
     pub fn new(
-        global: View<Line<IP::Global>, Coords2d, ReadWrite>,
+        global: View<Line<IP::Global, IP::GlobalSize>, Coords2d, ReadWrite>,
         #[comptime] config: GlobalWriterConfig,
     ) -> Self {
         let stage = PartitionedStage::new(
@@ -51,7 +51,7 @@ impl<IP: MatrixTypes> PlaneWriter<IP> {
     }
 
     fn write(&mut self, tile_pos: Coords2d) {
-        plane_write::<IP::Stage, IP::Global>(
+        plane_write::<IP::Stage, IP::StageSize, IP::Global, IP::GlobalSize>(
             &mut self.global,
             &self.stage.unit_tile,
             tile_pos,
@@ -76,10 +76,10 @@ impl<IP: MatrixTypes> WriteEventListener for PlaneWriter<IP> {
 
 #[cube]
 impl<IP: MatrixTypes> GlobalWriter<IP> for PlaneWriter<IP> {
-    type Stage = PartitionedStage<IP::Stage>;
+    type Stage = PartitionedStage<IP::Stage, IP::StageSize>;
 
     fn init(
-        tensor: View<Line<IP::Global>, Coords2d, ReadWrite>,
+        tensor: View<Line<IP::Global, IP::GlobalSize>, Coords2d, ReadWrite>,
         #[comptime] config: GlobalWriterConfig,
     ) -> Self {
         Self::new(tensor, config)
@@ -91,9 +91,9 @@ impl<IP: MatrixTypes> GlobalWriter<IP> for PlaneWriter<IP> {
 }
 
 #[cube]
-pub fn plane_write<ES: Numeric, EG: Numeric>(
-    global: &mut View<Line<EG>, TiledCoords, ReadWrite>,
-    smem_tile: &StridedTile<ES, ReadWrite>,
+pub fn plane_write<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
+    global: &mut View<Line<EG, NG>, TiledCoords, ReadWrite>,
+    smem_tile: &StridedTile<ES, NS, ReadWrite>,
     tile_pos: Coords2d,
     #[comptime] plane_dim: u32,
     #[comptime] elements_in_tile: u32,
@@ -120,9 +120,9 @@ pub fn plane_write<ES: Numeric, EG: Numeric>(
 }
 
 #[cube]
-fn write_line<ES: Numeric, EG: Numeric>(
-    view: &mut View<Line<EG>, TiledCoords, ReadWrite>,
-    out_smem_tile: &StridedTile<ES, ReadWrite>,
+fn write_line<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
+    view: &mut View<Line<EG, NG>, TiledCoords, ReadWrite>,
+    out_smem_tile: &StridedTile<ES, NS, ReadWrite>,
     unit_write: u32,
     tile: Coords2d,
 ) {
@@ -135,7 +135,7 @@ fn write_line<ES: Numeric, EG: Numeric>(
     } else if out_smem_line_size < output_line_size
         && output_line_size.is_multiple_of(out_smem_line_size)
     {
-        let mut value = Line::empty(output_line_size);
+        let mut value = Line::empty();
         #[unroll]
         for i in 0..output_line_size / out_smem_line_size {
             let offs = out_smem_tile.stage_offset(unit_write + i as u32);

@@ -37,9 +37,21 @@ pub trait StageAttentionFamily: Send + Sync + 'static {
     type Attention<AP: AttentionPrecision>: StageAttention<
             AP,
             Config = Self::Config,
-            KeyStage = <Self::KeyStage as StageFamily>::Stage<KS<AP>, AttentionTilingLayout>,
-            ValueStage = <Self::ValueStage as StageFamily>::Stage<VS<AP>, AttentionTilingLayout>,
-            OutStage = <Self::OutStage as StageFamily<ReadWrite>>::Stage<OS<AP>, WriteTiling>,
+            KeyStage = <Self::KeyStage as StageFamily>::Stage<
+                KS<AP>,
+                KSS<AP>,
+                AttentionTilingLayout,
+            >,
+            ValueStage = <Self::ValueStage as StageFamily>::Stage<
+                VS<AP>,
+                VSS<AP>,
+                AttentionTilingLayout,
+            >,
+            OutStage = <Self::OutStage as StageFamily<ReadWrite>>::Stage<
+                OS<AP>,
+                OSS<AP>,
+                WriteTiling,
+            >,
         >;
 
     /// The configuration type associated with this Attention family.

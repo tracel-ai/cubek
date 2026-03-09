@@ -149,6 +149,14 @@ impl MatmulPrecision for i64 {
     type Acc = (i64, i64);
 }
 
+impl<Lhs: MatrixPrecision, Rhs: MatrixPrecision, Acc: MatrixPrecision> MatmulPrecision
+    for (Lhs, Rhs, Acc)
+{
+    type Lhs = Lhs;
+    type Rhs = Rhs;
+    type Acc = Acc;
+}
+
 impl<Lhs: MatrixTypes, Rhs: MatrixTypes, Acc: MatrixTypes> MatmulTypes for (Lhs, Rhs, Acc) {
     type Lhs = Lhs;
     type Rhs = Rhs;
@@ -243,7 +251,8 @@ impl MatmulElems {
         }
     }
 
-    pub fn from_single_dtype(dtype: StorageType) -> Self {
+    pub fn from_single_dtype(dtype: Type) -> Self {
+        let dtype = dtype.storage_type();
         Self {
             lhs_global: dtype,
             rhs_global: dtype,

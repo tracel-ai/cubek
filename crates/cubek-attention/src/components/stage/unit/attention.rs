@@ -23,7 +23,7 @@ pub struct UnitPartitioner {}
 #[cube]
 impl AttentionPartitioner for UnitPartitioner {
     type Reducer = UnitReducer;
-    type Writer<ES: Float, EG: Float> = UnitAttentionWriter<ES, EG>;
+    type Writer<ES: Float, ESS: Size, EG: Float, EGS: Size> = UnitAttentionWriter<ES, ESS, EG, EGS>;
 
     fn seq_q_index() -> u32 {
         UNIT_POS

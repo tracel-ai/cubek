@@ -6,12 +6,12 @@ use cubek_matmul::components::global::memory::GlobalMemoryConfig;
 use cubek_std::tile::StridedTile;
 
 use crate::components::stage::AttentionPartitioner;
-use crate::definition::attention_types::QG;
+use crate::definition::attention_types::{QG, QGS};
 use crate::definition::{AttentionPrecision, AttentionTileSize};
 
 #[derive(CubeType)]
 pub struct QueryReader<AP: AttentionPrecision> {
-    query: View<Line<QG<AP>>, Coords2d>,
+    query: View<Line<QG<AP>, QGS<AP>>, Coords2d>,
     #[cube(comptime)]
     gmem_config: GlobalMemoryConfig,
 }
@@ -20,7 +20,7 @@ pub struct QueryReader<AP: AttentionPrecision> {
 impl<AP: AttentionPrecision> QueryReader<AP> {
     pub fn new(
         stage_q_offset: u32,
-        query: View<Line<QG<AP>>, Coords2d>,
+        query: View<Line<QG<AP>, QGS<AP>>, Coords2d>,
         #[comptime] gmem_config: GlobalMemoryConfig,
     ) -> Self {
         let query = query.slice((stage_q_offset, 0), query.shape());
@@ -34,7 +34,7 @@ impl<AP: AttentionPrecision> QueryReader<AP> {
         #[comptime] attention_tile_size: AttentionTileSize,
         #[comptime] partition_seq_q: u32,
         #[comptime] partition_head_dim: u32,
-    ) -> StridedTile<QG<AP>> {
+    ) -> StridedTile<QG<AP>, QGS<AP>> {
         let (row_in_partition, col) = tile;
 
         let row = row_in_partition + P::seq_q_index() * partition_seq_q;
@@ -56,14 +56,13 @@ impl<AP: AttentionPrecision> QueryReader<AP> {
         let end = start + length;
         let stride = partition_head_dim * tile_head_dim / line_size;
 
-        StridedTile::<QG<AP>>::new_strided(
+        StridedTile::<QG<AP>, QGS<AP>>::new_strided(
             slice,
             start,
             end,
             stride,
             Swizzle::none(),
             self.gmem_config.matrix_layout,
-            line_size,
         )
     }
 }

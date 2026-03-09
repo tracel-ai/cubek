@@ -22,17 +22,18 @@ pub trait Routine<RC: RuntimeConfig>: Sized {
     type BatchMatmul: BatchMatmulFamily<RC, Blueprint = Self::Blueprint, Config = Self::Config>;
 
     #[allow(clippy::too_many_arguments, clippy::result_large_err)]
-    fn launch<'a, MA: MatmulArgs<Config = RC>, R: Runtime>(
+    fn launch<MA: MatmulArgs<Config = RC>, R: Runtime>(
         client: &ComputeClient<R>,
         cube_dim: CubeDim,
         cube_count: CubeCount,
         address_type: AddressType,
-        input: InputRuntimeArg<'a, MA, R>,
-        output: OutputRuntimeArg<'a, MA, R>,
-        config: ConfigRuntimeArg<'a, MA, R>,
-        cube_count_input: CubeMappingLaunch<'a, R>,
+        input: InputRuntimeArg<MA, R>,
+        output: OutputRuntimeArg<MA, R>,
+        config: ConfigRuntimeArg<MA, R>,
+        cube_count_input: CubeMappingLaunch<R>,
         blueprint: Self::Blueprint,
         dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError> {
         unsafe {
             Self::BatchMatmul::launch_unchecked::<MA, R>(
@@ -46,6 +47,7 @@ pub trait Routine<RC: RuntimeConfig>: Sized {
                 cube_count_input,
                 blueprint,
                 dtypes,
+                line_sizes,
             )?
         }
         Ok(())
@@ -110,6 +112,7 @@ pub struct ExpandInfo<B: Blueprint> {
 pub struct LaunchInfo<B: Blueprint> {
     pub blueprint: B,
     pub dtypes: MatmulElems,
+    pub line_sizes: MatmulLineSizes,
     pub cube_dim: CubeDim,
     pub cube_count_plan: CubeCountPlan,
     pub address_type: AddressType,
@@ -133,6 +136,7 @@ impl LaunchInfo<TilingBlueprint> {
             cube_dim,
             cube_count_plan,
             address_type: problem.address_type,
+            line_sizes: device_settings.line_sizes,
         })
     }
 }

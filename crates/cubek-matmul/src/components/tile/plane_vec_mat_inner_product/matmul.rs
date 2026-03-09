@@ -1,4 +1,4 @@
-use cubecl::prelude::*;
+use cubecl::{define_size, prelude::*};
 use cubek_std::MatrixLayout;
 use cubek_std::tile::Strided;
 use cubek_std::tile::StridedTile;
@@ -18,16 +18,18 @@ pub struct PlaneVecMatInnerProduct<Acc: TileKind> {
     _ty: PhantomData<Acc>,
 }
 
+define_size!(NR);
+
 #[derive(CubeType)]
 pub struct LineContainer<E: Numeric> {
-    pub line: Line<E>,
+    pub line: Line<E, NR>,
 }
 
 #[cube]
 impl<E: Numeric> LineContainer<E> {
-    fn new(#[comptime] size: LineSize) -> LineContainer<E> {
+    fn new() -> LineContainer<E> {
         LineContainer::<E> {
-            line: Line::empty(size),
+            line: Line::empty(),
         }
     }
 }
@@ -62,8 +64,8 @@ where
         #[unroll]
         #[allow(clippy::explicit_counter_loop)]
         for n in 0..config.shared.tile_size.n() as usize {
-            let lhs: Line<A> = Line::cast_from(lhs.line);
-            let rhs: Line<A> = Line::cast_from(rhs[n].line);
+            let lhs: Line<A, NR> = Line::cast_from(lhs.line);
+            let rhs: Line<A, NR> = Line::cast_from(rhs[n].line);
 
             plane_sum_lined(
                 lhs * rhs,
@@ -77,17 +79,19 @@ where
         #[comptime] _layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Self::LhsFragment {
-        LineContainer::<L>::new(config.reduce_line_size as usize)
+        register_line_size(config.reduce_line_size);
+        LineContainer::<L>::new()
     }
 
     fn allocate_rhs(
         #[comptime] _layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Self::RhsFragment {
+        register_line_size(config.reduce_line_size);
         let mut rhs = Sequence::new();
         #[unroll]
         for _ in 0..config.shared.tile_size.n() {
-            rhs.push(LineContainer::new(config.reduce_line_size as usize))
+            rhs.push(LineContainer::new())
         }
         rhs
     }
@@ -96,40 +100,41 @@ where
         #[comptime] _layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Self::AccFragment {
+        register_line_size(config.reduce_line_size);
         let mut acc = Sequence::new();
         #[unroll]
         for _ in 0..config.shared.tile_size.n() {
-            acc.push(LineContainer::new(config.reduce_line_size as usize))
+            acc.push(LineContainer::new())
         }
         acc
     }
 
-    fn load_lhs<E: Numeric>(
-        tile: &StridedTile<E>,
+    fn load_lhs<E: Numeric, N: Size>(
+        tile: &StridedTile<E, N>,
         lhs: &mut Self::LhsFragment,
         #[comptime] _config: Self::Config,
     ) {
         VectorStageReader::load_fragment(tile, lhs)
     }
 
-    fn load_rhs<E: Numeric>(
-        tile: &StridedTile<E>,
+    fn load_rhs<E: Numeric, N: Size>(
+        tile: &StridedTile<E, N>,
         rhs: &mut Self::RhsFragment,
         #[comptime] config: Self::Config,
     ) {
         MatrixStageReader::<Strided>::load_fragment(tile, rhs, config.shared.tile_size.n())
     }
 
-    fn load_acc<E: Numeric>(
-        tile: &AccTile::Tile<E>,
+    fn load_acc<E: Numeric, N: Size>(
+        tile: &AccTile::Tile<E, N>,
         acc: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     ) {
         MatrixStageReader::<AccTile>::load_fragment(tile, acc, config.shared.tile_size.n());
     }
 
-    fn write_results<E: Numeric>(
-        tile: &mut StridedTile<E, ReadWrite>,
+    fn write_results<E: Numeric, N: Size>(
+        tile: &mut StridedTile<E, N, ReadWrite>,
         acc: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     ) {
@@ -143,8 +148,8 @@ where
 }
 
 #[cube]
-fn plane_sum_lined<E: Numeric>(
-    line_to_sum: Line<E>,
+fn plane_sum_lined<E: Numeric, N: Size>(
+    line_to_sum: Line<E, N>,
     line_accumulator: &mut LineContainer<E>,
     #[comptime] line_size: LineSize,
 ) {
@@ -153,4 +158,12 @@ fn plane_sum_lined<E: Numeric>(
     for line_iterator in 0..line_size {
         line_accumulator.line[line_iterator] += plane_sum(line_to_sum[line_iterator]);
     }
+}
+
+#[cube]
+#[allow(unused)]
+fn register_line_size(#[comptime] line_size: u32) {
+    intrinsic!(|scope| {
+        scope.register_size::<NR>(line_size as usize);
+    })
 }

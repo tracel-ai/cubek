@@ -448,7 +448,7 @@ fn auto<R: Runtime>(
         client,
         lhs.clone(),
         rhs.clone(),
-        out.try_clone().unwrap(),
+        out.clone(),
         dtypes,
     ) {
         match err {

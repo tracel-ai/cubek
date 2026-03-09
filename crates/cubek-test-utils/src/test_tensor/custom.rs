@@ -62,10 +62,8 @@ fn new_custom_data(
         client,
         cube_count,
         cube_dim,
-        out.clone().into_arg(line_size),
-        unsafe {
-            ArrayArg::from_raw_parts_and_size(contiguous_handle, num_elems, line_size, dtype.size())
-        },
+        out.clone().into_arg(),
+        unsafe { ArrayArg::from_raw_parts(contiguous_handle, num_elems) },
         dtype,
     );
 

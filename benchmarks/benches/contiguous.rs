@@ -49,7 +49,8 @@ struct IntoContiguousBench<R: Runtime> {
 }
 
 #[allow(dead_code)]
-fn run<R: Runtime>(device: R::Device, dtype: StorageType) {
+fn run<R: Runtime>(device: R::Device, dtype: impl Into<Type>) {
+    let dtype = dtype.into().storage_type();
     #[allow(clippy::single_element_loop)]
     for shape in [vec![16, 16, 512, 512]] {
         // for shape in [vec![32, 512, 2048], vec![16, 16, 512, 512]] {

@@ -1,6 +1,6 @@
 use cubecl::intrinsic;
 use cubecl::prelude::*;
-use cubecl::std::{Swizzle, type_size};
+use cubecl::std::Swizzle;
 
 use crate::MatrixLayout;
 use crate::stage::StageMemoryConfig;
@@ -125,41 +125,24 @@ impl<ES: Numeric, N: Size> StridedTile<ES, N> {
 }
 
 #[cube]
-impl<ES: Numeric, N: Size> StridedTile<ES, N, ReadOnly> {
-    /// Returns the tile as an unlined (scalar) slice.
-    ///
-    /// Returns:
-    /// - The unlined slice
-    /// - The updated stride to account for line width removal
-    pub fn as_unlined(&self) -> (Slice<ES, ReadOnly>, u32) {
+impl<ES: Numeric, N: Size, IO: SliceVisibility> StridedTile<ES, N, IO> {
+    pub fn unlined_stride(&self) -> u32 {
         let stage_line_size = self.stage.line_size();
-        (
-            self.stage
-                .slice(self.start as usize, self.end as usize)
-                .downcast(),
-            self.stride * stage_line_size as u32,
-        )
+        self.stride * stage_line_size as u32
+    }
+}
+
+#[cube]
+impl<ES: Numeric, N: Size> StridedTile<ES, N, ReadOnly> {
+    /// Returns the tile as an offset slice. Should only be used when swizzling is definitely not
+    /// applicable.
+    pub fn as_slice(&self) -> Slice<Line<ES, N>, ReadOnly> {
+        self.stage.slice(self.start as usize, self.end as usize)
     }
 }
 
 #[cube]
 impl<ES: Numeric, N: Size> StridedTile<ES, N, ReadWrite> {
-    /// Returns the tile as an unlined (scalar) slice.
-    ///
-    /// Returns:
-    /// - The unlined slice
-    /// - The updated stride to account for line width removal
-    pub fn as_unlined_mut(&self) -> (Slice<ES, ReadWrite>, u32) {
-        let stage_line_size = self.stage.line_size();
-        (
-            self.stage
-                .slice(self.start as usize, self.end as usize)
-                .as_mut_unchecked()
-                .downcast(),
-            self.stride * stage_line_size as u32,
-        )
-    }
-
     /// Returns the tile as an offset slice. Should only be used when swizzling is definitely not
     /// applicable.
     pub fn as_slice_mut(&self) -> Slice<Line<ES, N>, ReadWrite> {
@@ -175,14 +158,14 @@ impl<ES: Numeric, N: Size, IO: SliceVisibility> StridedTile<ES, N, IO> {
     pub fn get_line(&self, coor_strided: u32, coor_contiguous: u32) -> Line<ES, N> {
         let offset = coor_strided * self.stride + coor_contiguous;
         let offset_abs = self.start + offset;
-        let type_size = type_size::<ES>(self.stage.line_size());
+        let type_size = Line::<ES, N>::type_size();
         let offset_swizzled = self.swizzle.apply(offset_abs, type_size);
         self.stage[offset_swizzled as usize]
     }
 
     pub fn stage_offset(&self, relative_offset: u32) -> u32 {
         let offset = self.start + relative_offset;
-        let type_size = type_size::<ES>(self.stage.line_size());
+        let type_size = Line::<ES, N>::type_size();
         self.swizzle.apply(offset, type_size)
     }
 

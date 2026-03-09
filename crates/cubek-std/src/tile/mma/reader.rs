@@ -101,7 +101,7 @@ fn load_manual_transposed<
     let line_size = def.line_size(ident);
     let lane_id = UNIT_POS_PLANE;
 
-    let (_, stride) = tile.as_unlined();
+    let stride = tile.unlined_stride();
     let tile = tile.with_line_size::<Const<1>>();
 
     let (stride_row, stride_col) = match layout {
@@ -145,7 +145,7 @@ fn load_manual_plain<
     let line_size = N::value();
 
     let lane_id = UNIT_POS_PLANE;
-    let (_, stride) = tile.as_unlined();
+    let stride = tile.unlined_stride();
     // Supported on all targets that support manual MMA
     let tile = tile.with_line_size::<N>();
 
@@ -182,7 +182,7 @@ fn load_ldmatrix<E: Numeric, N: Size, V: Numeric, NV: Size, A: Numeric, B: Numer
     #[comptime] tile_size: TileSize,
 ) {
     let stage_line_size = tile.stage.line_size().comptime();
-    let (_, stride) = tile.as_unlined();
+    let stride = tile.unlined_stride();
 
     let elem_size = E::type_size().comptime();
     let num_regs = def.lines_per_lane(ident);
@@ -193,7 +193,7 @@ fn load_ldmatrix<E: Numeric, N: Size, V: Numeric, NV: Size, A: Numeric, B: Numer
     let start = tile.stage_offset(start);
 
     let row_slice = tile.stage.slice(start as usize, (start + width) as usize);
-    let regs = def.load_matrix::<_, _, N>(&row_slice, ident, num_regs, transposed);
+    let regs = def.load_matrix::<_, N>(&row_slice, ident, num_regs, transposed);
 
     #[unroll]
     for i in 0..num_regs {

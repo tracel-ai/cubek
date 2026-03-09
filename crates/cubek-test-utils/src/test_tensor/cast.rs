@@ -10,16 +10,19 @@ use cubecl::{
 };
 
 #[cube(launch)]
-fn cast_launch<From: Numeric, To: Numeric>(
-    from: &Tensor<Line<From>>,
-    to: &mut Tensor<Line<To>>,
+fn cast_launch<From: Numeric, To: Numeric, N: Size>(
+    from: &Tensor<Line<From, N>>,
+    to: &mut Tensor<Line<To, N>>,
     #[define(From, To)] _types: [StorageType; 2],
 ) {
-    cast_inner::<From, To>(from, to);
+    cast_inner::<From, To, N>(from, to);
 }
 
 #[cube]
-fn cast_inner<From: Numeric, To: Numeric>(from: &Tensor<Line<From>>, to: &mut Tensor<Line<To>>) {
+fn cast_inner<From: Numeric, To: Numeric, N: Size>(
+    from: &Tensor<Line<From, N>>,
+    to: &mut Tensor<Line<To, N>>,
+) {
     to.write_checked(
         ABSOLUTE_POS,
         Line::cast_from(from.read_checked(ABSOLUTE_POS)),
@@ -64,8 +67,9 @@ pub fn copy_casted(
         client,
         CubeCount::Static(cube_count, 1, 1),
         cube_dim,
-        original.into_arg(line_size),
-        out.clone().into_arg(line_size),
+        line_size,
+        original.into_arg(),
+        out.clone().into_arg(),
         [dtype, target_type],
     );
 

@@ -66,11 +66,11 @@ where
 
 /// Select which kernel to launch for the given Algorithm.
 #[allow(clippy::too_many_arguments)]
-pub fn launch_kernel_virtual<'a, MA: MatmulArgs, R: Runtime, A: Routine<MA::Config>>(
+pub fn launch_kernel_virtual<MA: MatmulArgs, R: Runtime, A: Routine<MA::Config>>(
     client: &ComputeClient<R>,
-    input: InputRuntimeArg<'a, MA, R>,
-    output: OutputRuntimeArg<'a, MA, R>,
-    config: ConfigRuntimeArg<'a, MA, R>,
+    input: InputRuntimeArg<MA, R>,
+    output: OutputRuntimeArg<MA, R>,
+    config: ConfigRuntimeArg<MA, R>,
     problem: MatmulProblem,
     view_line_sizes: MatmulLineSizes,
     blueprint_strategy: &BlueprintStrategy<MA::Config, A>,
@@ -84,11 +84,11 @@ pub fn launch_kernel_virtual<'a, MA: MatmulArgs, R: Runtime, A: Routine<MA::Conf
 
 /// Select which kernel to launch for the given Algorithm.
 #[allow(clippy::too_many_arguments)]
-pub fn launch_kernel<'a, MA: MatmulArgs, R: Runtime, A: Routine<MA::Config>>(
+pub fn launch_kernel<MA: MatmulArgs, R: Runtime, A: Routine<MA::Config>>(
     client: &ComputeClient<R>,
-    input: InputRuntimeArg<'a, MA, R>,
-    output: OutputRuntimeArg<'a, MA, R>,
-    config: ConfigRuntimeArg<'a, MA, R>,
+    input: InputRuntimeArg<MA, R>,
+    output: OutputRuntimeArg<MA, R>,
+    config: ConfigRuntimeArg<MA, R>,
     launch_info: LaunchInfo<A::Blueprint>,
 ) -> Result<(), MatmulSetupError> {
     A::launch::<MA, R>(
@@ -102,5 +102,6 @@ pub fn launch_kernel<'a, MA: MatmulArgs, R: Runtime, A: Routine<MA::Config>>(
         launch_info.cube_count_plan.as_args(),
         launch_info.blueprint,
         &launch_info.dtypes,
+        &launch_info.line_sizes,
     )
 }

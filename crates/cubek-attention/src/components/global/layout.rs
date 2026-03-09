@@ -21,8 +21,8 @@ pub struct AttentionGlobalLayout {
 #[cube]
 impl AttentionGlobalLayout {
     /// Creates a new 2D layout starting at `batch_index`.
-    pub fn new<T: Numeric, IO: Clone>(
-        tensor: &VirtualTensor<T, IO>,
+    pub fn new<T: Numeric, N: Size, IO: Clone>(
+        tensor: &VirtualTensor<T, N, IO>,
         batch_index: u32,
         #[comptime] config: GlobalMemoryConfig,
     ) -> Self {

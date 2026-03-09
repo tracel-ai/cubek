@@ -42,9 +42,9 @@ impl<
 {
     type Attention<AP: AttentionPrecision> = UnitPartitionAttention<
         AP,
-        SK::Stage<KS<AP>, AttentionTilingLayout>,
-        SV::Stage<VS<AP>, AttentionTilingLayout>,
-        SO::Stage<OS<AP>, AttentionTilingLayout>,
+        SK::Stage<KS<AP>, KSS<AP>, AttentionTilingLayout>,
+        SV::Stage<VS<AP>, VSS<AP>, AttentionTilingLayout>,
+        SO::Stage<OS<AP>, OSS<AP>, AttentionTilingLayout>,
         TA::TileAttention<AP>,
     >;
 

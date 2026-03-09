@@ -113,37 +113,37 @@ impl<AP: AttentionPrecision> TileAttention<AP> for UnitRegisterTileAttention {
         ))
     }
 
-    fn load_query<E: Numeric>(tile: &StridedTile<E>, fragment: &mut Self::Query) {
+    fn load_query<E: Numeric, N: Size>(tile: &StridedTile<E, N>, fragment: &mut Self::Query) {
         strided_tile_to_unit_tile(tile, fragment);
     }
 
-    fn load_key_transposed<E: Float>(
-        tile: &StridedTile<E>,
+    fn load_key_transposed<E: Float, N: Size>(
+        tile: &StridedTile<E, N>,
         fragment: &mut Self::KeyValue,
         #[comptime] _config: Self::Config,
     ) {
         strided_tile_to_transposed_unit_tile(tile, fragment);
     }
 
-    fn load_value<E: Float>(
-        tile: &StridedTile<E>,
+    fn load_value<E: Float, N: Size>(
+        tile: &StridedTile<E, N>,
         fragment: &mut Self::KeyValue,
         #[comptime] _config: Self::Config,
     ) {
         strided_tile_to_unit_tile(tile, fragment);
     }
 
-    fn load_mask<E: Numeric>(
-        tile: &StridedTile<E>,
+    fn load_mask<E: Numeric, N: Size>(
+        tile: &StridedTile<E, N>,
         fragment: &mut Self::Mask,
         #[comptime] _config: Self::Config,
     ) {
         strided_tile_to_unit_tile(tile, fragment);
     }
 
-    fn write_results<E: Float>(
+    fn write_results<E: Float, N: Size>(
         out: &Self::Accumulator,
-        slice: &mut SliceMut<Line<E>>,
+        slice: &mut SliceMut<Line<E, N>>,
         #[comptime] _config: Self::Config,
     ) {
         unit_tile_to_slice(out, slice)
@@ -151,12 +151,12 @@ impl<AP: AttentionPrecision> TileAttention<AP> for UnitRegisterTileAttention {
 }
 
 #[cube]
-fn strided_tile_to_unit_tile<E: Numeric, E2: Numeric>(
-    strided_tile: &StridedTile<E>,
+fn strided_tile_to_unit_tile<E: Numeric, N: Size, E2: Numeric>(
+    strided_tile: &StridedTile<E, N>,
     unit_tile: &mut UnitTile<E2>,
 ) {
-    let line_size = strided_tile.line_size;
-    assert!(unit_tile.layout.num_cols % line_size == 0);
+    let line_size = N::value().comptime() as u32;
+    assert!(unit_tile.layout.num_cols.is_multiple_of(line_size));
 
     let col_iterations = comptime!(unit_tile.layout.num_cols / line_size);
 
@@ -173,12 +173,12 @@ fn strided_tile_to_unit_tile<E: Numeric, E2: Numeric>(
 }
 
 #[cube]
-fn strided_tile_to_transposed_unit_tile<E: Numeric, E2: Numeric>(
-    strided_tile: &StridedTile<E>,
+fn strided_tile_to_transposed_unit_tile<E: Numeric, N: Size, E2: Numeric>(
+    strided_tile: &StridedTile<E, N>,
     unit_tile: &mut UnitTile<E2>,
 ) {
-    let line_size = strided_tile.line_size;
-    assert!(unit_tile.layout.num_cols % line_size == 0);
+    let line_size = N::value().comptime() as u32;
+    assert!(unit_tile.layout.num_cols.is_multiple_of(line_size));
 
     let input_num_rows = unit_tile.layout.num_cols.comptime();
     let input_num_cols = unit_tile.layout.num_rows.comptime();
@@ -198,18 +198,18 @@ fn strided_tile_to_transposed_unit_tile<E: Numeric, E2: Numeric>(
 }
 
 #[cube]
-fn unit_tile_to_slice<E: Numeric, E2: Numeric>(
+fn unit_tile_to_slice<E: Numeric, N: Size, E2: Numeric>(
     unit_tile: &UnitTile<E>,
-    slice: &mut SliceMut<Line<E2>>,
+    slice: &mut SliceMut<Line<E2, N>>,
 ) {
-    let line_size = slice.line_size().comptime() as u32;
-    assert!(unit_tile.layout.num_cols % line_size == 0);
+    let line_size = N::value().comptime() as u32;
+    assert!(unit_tile.layout.num_cols.is_multiple_of(line_size));
 
     let col_iterations = comptime!(unit_tile.layout.num_cols / line_size);
 
     for row in 0..unit_tile.layout.num_rows {
         for col in 0..col_iterations {
-            let mut out_line = Line::empty(line_size as usize);
+            let mut out_line = Line::empty();
 
             #[unroll]
             for i in 0..line_size {

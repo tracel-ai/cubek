@@ -3,12 +3,13 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
 use cubek_std::tile::StridedTile;
 
-use crate::components::tile::{
-    FragmentMask, FragmentMaskExpand, SoftmaxLayout, SoftmaxLayoutExpand,
-};
 use crate::components::tile::{TileAttention, TileAttentionConfig};
 use crate::definition::AttentionPrecision;
 use crate::definition::attention_types::MSK;
+use crate::{
+    components::tile::{FragmentMask, FragmentMaskExpand, SoftmaxLayout, SoftmaxLayoutExpand},
+    definition::attention_types::MSKS,
+};
 
 use cubecl::std::tensor::layout::Coordinates;
 
@@ -48,7 +49,11 @@ impl<AP: AttentionPrecision, TA: TileAttention<AP>> MaskTile<AP, TA> {
 
     /// Loads the mask data into the fragment, if a tile is given, otherwise only
     /// updates the logical mask
-    pub fn update(&mut self, new_origin: Coords2d, tile: ComptimeOption<StridedTile<MSK<AP>>>) {
+    pub fn update(
+        &mut self,
+        new_origin: Coords2d,
+        tile: ComptimeOption<StridedTile<MSK<AP>, MSKS<AP>>>,
+    ) {
         match self {
             MaskTile::Materialized(materialized_tile_mask) => {
                 materialized_tile_mask
@@ -141,7 +146,7 @@ impl<AP: AttentionPrecision, TA: TileAttention<AP>> MaterializedTileMask<AP, TA>
         logical_masked || materialized_masked
     }
 
-    pub fn update_tile(&mut self, tile: StridedTile<MSK<AP>>) {
+    pub fn update_tile(&mut self, tile: StridedTile<MSK<AP>, MSKS<AP>>) {
         TA::load_mask(&tile, &mut self.fragment, self.config);
     }
 }

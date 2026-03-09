@@ -146,17 +146,18 @@ where
         )
     }
 
-    fn launch<'a, MA: crate::launch::MatmulArgs<Config = RC>, R: Runtime>(
+    fn launch<MA: crate::launch::MatmulArgs<Config = RC>, R: Runtime>(
         client: &ComputeClient<R>,
         cube_dim: cubecl::CubeDim,
         cube_count: cubecl::CubeCount,
         address_type: cubecl::prelude::AddressType,
-        input: crate::launch::InputRuntimeArg<'a, MA, R>,
-        output: crate::launch::OutputRuntimeArg<'a, MA, R>,
-        config: crate::launch::ConfigRuntimeArg<'a, MA, R>,
-        cube_count_input: crate::definition::CubeMappingLaunch<'a, R>,
+        input: crate::launch::InputRuntimeArg<MA, R>,
+        output: crate::launch::OutputRuntimeArg<MA, R>,
+        config: crate::launch::ConfigRuntimeArg<MA, R>,
+        cube_count_input: crate::definition::CubeMappingLaunch<R>,
         blueprint: Self::Blueprint,
         dtypes: &MatmulElems,
+        line_sizes: &MatmulLineSizes,
     ) -> Result<(), MatmulSetupError> {
         unsafe {
             Self::BatchMatmul::launch_unchecked::<MA, R>(
@@ -170,6 +171,7 @@ where
                 cube_count_input,
                 blueprint,
                 dtypes,
+                line_sizes,
             )?
         }
         Ok(())

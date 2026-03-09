@@ -54,7 +54,7 @@ fn new_arange(
         client,
         CubeCount::new_1d(cube_count),
         cube_dim,
-        out.clone().into_arg(line_size),
+        out.clone().into_arg(),
         dtype,
     );
 

@@ -9,7 +9,7 @@ use crate::components::{global::memory::GlobalIterator, stage::ContiguousTilingL
 use crate::components::{global::multi_stage::LoadMaxRoundPlaneCount, stage::TilingValidation};
 use crate::definition::{MatmulElems, MatmulProblem, StageIdent};
 use crate::{components::global::GlobalReaderConfig, launch::RuntimeConfig};
-use cubecl::std::{tensor::layout::Coords2d, type_size};
+use cubecl::std::tensor::layout::Coords2d;
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::tile::Strided;
 use cubek_std::{FormattedConfigError, InvalidConfigError};
@@ -91,20 +91,20 @@ impl<T: TilingOrder> LoadingValidation for SyncFullTilewiseLoading<T> {
 impl<TO: TilingOrder, RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncFullTilewiseLoading<TO> {
     type TilingLayout = ContiguousTilingLayout<TO>;
     type SyncStrategy = Synchronous;
-    type Job<EG: Numeric, ES: Numeric> = SyncFullTilewiseJob;
+    type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = SyncFullTilewiseJob;
     type Stage = StridedStageFamily;
     type TileKind = Strided;
 
-    fn new_job<EG: Numeric, ES: Numeric>(
+    fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
-        #[comptime] line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
-    ) -> Self::Job<EG, ES> {
+    ) -> Self::Job<EG, NG, ES, NS> {
+        let line_size = NG::value().comptime() as u32;
         let num_planes = config.loading_planes_count();
         let num_tiles = config.smem_config.tiles_per_stage();
 
         let num_tiles_per_plane = num_tiles / num_planes;
-        let num_lines_per_tile = config.smem_config.elements_per_tile() / line_size as u32;
+        let num_lines_per_tile = config.smem_config.elements_per_tile() / line_size;
         let num_lines_per_plane = num_lines_per_tile * num_tiles_per_plane;
         let num_lines_per_unit = num_lines_per_plane / config.plane_dim;
 
@@ -119,7 +119,6 @@ impl<TO: TilingOrder, RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncFullTil
             num_lines_per_tile,
             num_lines_per_unit,
             plane_dim: config.plane_dim,
-            line_size,
         }
     }
 }
@@ -135,21 +134,19 @@ pub struct SyncFullTilewiseJob {
     pub num_lines_per_unit: u32,
     #[cube(comptime)]
     pub plane_dim: u32,
-    #[cube(comptime)]
-    pub line_size: LineSize,
 }
 
 #[cube]
-impl<EG: Numeric, ES: Numeric, TO: TilingOrder>
-    LoadingJob<EG, ES, ContiguousTilingLayout<TO>, Synchronous> for SyncFullTilewiseJob
+impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
+    LoadingJob<EG, NG, ES, NS, ContiguousTilingLayout<TO>, Synchronous> for SyncFullTilewiseJob
 {
     type Stage = StridedStageFamily;
 
     fn execute_task(
         this: &mut Self,
         #[comptime] task_id: u32,
-        global_iter: &GlobalIterator<Line<EG>>,
-        stage: &mut StridedStageMemory<ES, ContiguousTilingLayout<TO>>,
+        global_iter: &GlobalIterator<Line<EG, NG>>,
+        stage: &mut StridedStageMemory<ES, NS, ContiguousTilingLayout<TO>>,
         _barrier: &mut (),
         #[comptime] config: GlobalReaderConfig,
     ) {
@@ -160,7 +157,7 @@ impl<EG: Numeric, ES: Numeric, TO: TilingOrder>
         let nth_tile_global = nth_tile_for_this_plane + this.num_tiles_to_skip;
         let tile = ContiguousTilingLayout::<TO>::to_x_y(nth_tile_global, config.smem_config);
 
-        SyncFullTilewiseJob::load_and_store_line::<EG, ES, TO>(
+        SyncFullTilewiseJob::load_and_store_line::<EG, NG, ES, NS, TO>(
             this,
             tile,
             line_index_within_tile,
@@ -179,24 +176,25 @@ impl<EG: Numeric, ES: Numeric, TO: TilingOrder>
 #[cube]
 impl SyncFullTilewiseJob {
     #[allow(clippy::too_many_arguments)]
-    fn load_and_store_line<EG: Numeric, ES: Numeric, TO: TilingOrder>(
+    fn load_and_store_line<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>(
         this: &Self,
         tile: Coords2d,
         line_index_within_tile: u32,
         num_lines_to_skip_local: u32,
-        global_iter: &GlobalIterator<Line<EG>>,
-        stage: &mut StridedStageMemory<ES, ContiguousTilingLayout<TO>>,
+        global_iter: &GlobalIterator<Line<EG, NG>>,
+        stage: &mut StridedStageMemory<ES, NS, ContiguousTilingLayout<TO>>,
         #[comptime] config: GlobalReaderConfig,
     ) {
+        let line_size = NG::value().comptime() as u32;
         let layout = TiledLayout::new(config.stage_ident, config.smem_config);
         let view = global_iter.view().view(layout);
 
-        let line_read = view.read_checked((tile, line_index_within_tile * this.line_size as u32));
+        let line_read = view.read_checked((tile, line_index_within_tile * line_size));
 
         let offset = this.num_lines_to_skip + line_index_within_tile + num_lines_to_skip_local;
-        let type_size = type_size::<ES>(this.line_size);
+        let type_size = Line::<ES, NS>::type_size();
         let offset = stage.swizzle.apply(offset, type_size);
 
-        stage.as_slice_mut(this.line_size)[offset as usize] = Line::cast_from(line_read);
+        stage.as_slice_mut::<NS>()[offset as usize] = Line::cast_from(line_read);
     }
 }

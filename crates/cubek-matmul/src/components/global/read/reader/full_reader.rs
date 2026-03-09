@@ -37,7 +37,6 @@ pub trait FullLoadingStrategy<RC: RuntimeConfig>:
     /// Returns the job with preliminary calculations done.
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         config: RC,
-        #[comptime] line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, NG, ES, NS>;
 }
@@ -84,7 +83,6 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: FullLoa
         let loading_job = match config.precompute_job {
             true => ComptimeOption::new_Some(L::new_job::<EG, NG, ES, NS>(
                 runtime_config.clone(),
-                view.line_size(),
                 config,
             )),
             false => ComptimeOption::new_None(),
@@ -120,13 +118,10 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: FullLoa
         barrier: &mut SyncBarrier<L::SyncStrategy>,
         #[comptime] config: GlobalReaderConfig,
     ) {
-        let mut loading_job = self.loading_job.clone().unwrap_or_else(|| {
-            L::new_job::<EG, NG, ES, NS>(
-                self.runtime_config.clone(),
-                self.global_iter.line_size(),
-                config,
-            )
-        });
+        let mut loading_job = self
+            .loading_job
+            .clone()
+            .unwrap_or_else(|| L::new_job::<EG, NG, ES, NS>(self.runtime_config.clone(), config));
 
         let len = L::Job::task_count(&loading_job);
 
@@ -155,10 +150,10 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: FullLoa
         #[comptime] _stage_buffer: StageBuffer,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::JobIterator {
-        let view = this.global_iter.view();
-        let job = this.loading_job.clone().unwrap_or_else(|| {
-            L::new_job::<EG, NG, ES, NS>(this.runtime_config.clone(), view.line_size(), config)
-        });
+        let job = this
+            .loading_job
+            .clone()
+            .unwrap_or_else(|| L::new_job::<EG, NG, ES, NS>(this.runtime_config.clone(), config));
 
         let num_tasks = L::Job::task_count(&job);
 

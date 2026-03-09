@@ -67,15 +67,14 @@ impl LoadMaxRoundPlaneCount for AsyncFullStridedLoading {
 impl FullLoadingStrategy<RuntimeArgs> for AsyncFullStridedLoading {
     type TilingLayout = StridedTilingLayout;
     type SyncStrategy = AsyncCopy;
-    type Job<EG: Numeric, ES: Numeric> = AsyncFullStridedJob;
+    type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = AsyncFullStridedJob;
     type Stage = StridedStageFamily;
     type TileKind = Strided;
 
-    fn new_job<EG: Numeric, ES: Numeric>(
+    fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         runtime_args: RuntimeArgs,
-        #[comptime] _line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
-    ) -> Self::Job<EG, ES> {
+    ) -> Self::Job<EG, NG, ES, NS> {
         let type_size = ES::type_size_bits().comptime();
         let line_size = ASYNC_COPY_WIDTH / type_size as u32;
         let num_stage_lines = config.smem_config.elements_per_stage() / line_size;
@@ -111,16 +110,16 @@ pub struct AsyncFullStridedJob {
 }
 
 #[cube]
-impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, StridedTilingLayout, AsyncCopy>
-    for AsyncFullStridedJob
+impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
+    LoadingJob<EG, NG, ES, NS, StridedTilingLayout, AsyncCopy> for AsyncFullStridedJob
 {
     type Stage = StridedStageFamily;
 
     fn execute_task(
         this: &mut Self,
         #[comptime] task_id: u32,
-        global_iter: &GlobalIterator<Line<EG>>,
-        stage: &mut StridedStageMemory<ES, StridedTilingLayout>,
+        global_iter: &GlobalIterator<Line<EG, NG>>,
+        stage: &mut StridedStageMemory<ES, NS, StridedTilingLayout>,
         _barrier: &mut Shared<Barrier>,
         #[comptime] config: GlobalReaderConfig,
     ) {

@@ -40,8 +40,8 @@ use crate::components::{
 
 pub trait ConcreteArgs<A: Routine<RuntimeArgs>>:
     MatmulArgs<
-        Input<NumericExpand<0>, NumericExpand<1>, NumericExpand<2>>: ConcreteInputsFactory<A>,
-        Output<NumericExpand<2>>: ConcreteOutputFactory<A>,
+        Input<Line<NumericExpand<0>, SizeExpand<1>>, Line<NumericExpand<2>, SizeExpand<3>>, Line<NumericExpand<4>, SizeExpand<5>>>: ConcreteInputsFactory<A>,
+        Output<Line<NumericExpand<4>, SizeExpand<5>>>: ConcreteOutputFactory<A>,
         Config = RuntimeArgs,
     >
 {
@@ -99,7 +99,7 @@ impl<A: Routine<RuntimeArgs, Blueprint = TilingBlueprint>> ConcreteArgs<A>
 /// output (not fused).
 pub trait ConcreteInputsFactory<A: Routine<RuntimeArgs>>: LaunchArg {
     #[allow(clippy::too_many_arguments)]
-    fn create<'a, R: Runtime>(
+    fn create<R: Runtime>(
         client: &ComputeClient<R>,
         lhs: MatmulInputBinding<R>,
         rhs: MatmulInputBinding<R>,
@@ -108,26 +108,26 @@ pub trait ConcreteInputsFactory<A: Routine<RuntimeArgs>>: LaunchArg {
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
-    ) -> (Self::RuntimeArg<'a, R>, RuntimeArgsLaunch<'a, R>);
+    ) -> (Self::RuntimeArg<R>, RuntimeArgsLaunch<R>);
 }
 
 /// Create the output runtime arguments for a matmul kernel that works on concrete inputs and
 /// output (not fused).
 pub trait ConcreteOutputFactory<A: Routine<RuntimeArgs>>: LaunchArg {
-    fn create<'a, R: Runtime>(
+    fn create<R: Runtime>(
         client: &ComputeClient<R>,
         out: TensorBinding<R>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
-    ) -> Self::RuntimeArg<'a, R>;
+    ) -> Self::RuntimeArg<R>;
 }
 
-impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs>> ConcreteInputsFactory<A>
-    for TensorInputs<Lhs, Rhs, EO>
+impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<RuntimeArgs>>
+    ConcreteInputsFactory<A> for TensorInputs<Lhs, Rhs, EO>
 {
-    fn create<'a, R: Runtime>(
+    fn create<R: Runtime>(
         client: &ComputeClient<R>,
         lhs: MatmulInputBinding<R>,
         rhs: MatmulInputBinding<R>,
@@ -136,7 +136,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs>> ConcreteI
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
         _dtypes: &MatmulElems,
-    ) -> (Self::RuntimeArg<'a, R>, RuntimeArgsLaunch<'a, R>) {
+    ) -> (Self::RuntimeArg<R>, RuntimeArgsLaunch<R>) {
         type LhsLayout = Chain<NhwcLayout, Im2colLayout>;
         type RhsLayout = Chain<NhwcLayout, WeightLayout>;
 
@@ -178,17 +178,14 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs>> ConcreteI
 
         let inputs = TensorInputsLaunch::new(
             VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new()),
-            ViewArg::new::<LhsLayout>(lhs.into_data().into_array_arg(line_sizes.lhs), layout_lhs),
+            ViewArg::new::<LhsLayout>(lhs.into_data().into_array_arg(), layout_lhs),
             VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new()),
-            ViewArg::new::<RhsLayout>(rhs.into_data().into_array_arg(line_sizes.rhs), layout_rhs),
+            ViewArg::new::<RhsLayout>(rhs.into_data().into_array_arg(), layout_rhs),
             bias.as_ref()
                 .map(|_| VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new()))
                 .into(),
             bias.map(|bias| {
-                ViewArg::new::<BiasLayout>(
-                    bias.into_data().into_array_arg(line_sizes.out),
-                    layout_bias,
-                )
+                ViewArg::new::<BiasLayout>(bias.into_data().into_array_arg(), layout_bias)
             })
             .into(),
         );
@@ -204,31 +201,35 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs>> ConcreteI
     }
 }
 
-impl<EG: Numeric, A: Routine<RuntimeArgs>> ConcreteOutputFactory<A> for TensorOutput<EG> {
-    fn create<'a, R: Runtime>(
+impl<EG: CubePrimitive, A: Routine<RuntimeArgs>> ConcreteOutputFactory<A> for TensorOutput<EG> {
+    fn create<R: Runtime>(
         client: &ComputeClient<R>,
         out: TensorBinding<R>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
         _dtypes: &MatmulElems,
-    ) -> Self::RuntimeArg<'a, R> {
+    ) -> Self::RuntimeArg<R> {
         type Layout = Chain<NhwcLayout, OutLayout>;
 
         let global = NhwcLayoutLaunch::from_handle(&out, line_sizes.out, EnumSet::empty());
         let layout =
             OutLayoutLaunch::from_args(client, problem, blueprint.out_global_layout_config());
         let layout = ChainLaunch::new(global, layout);
-        let view = ViewArg::new::<Layout>(out.into_array_arg(line_sizes.out), layout);
+        let view = ViewArg::new::<Layout>(out.into_array_arg(), layout);
         let batch = VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new());
         TensorOutputLaunch::new(view, batch)
     }
 }
 
-impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint = TilingBlueprint>>
-    ConcreteInputsFactory<A> for TensorMapInputs<Lhs, Rhs, EO>
+impl<
+    Lhs: CubePrimitive,
+    Rhs: CubePrimitive,
+    EO: CubePrimitive,
+    A: Routine<RuntimeArgs, Blueprint = TilingBlueprint>,
+> ConcreteInputsFactory<A> for TensorMapInputs<Lhs, Rhs, EO>
 {
-    fn create<'a, R: Runtime>(
+    fn create<R: Runtime>(
         client: &ComputeClient<R>,
         lhs: MatmulInputBinding<R>,
         rhs: MatmulInputBinding<R>,
@@ -237,7 +238,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
         problem: &ConvolutionProblem,
         line_sizes: &MatmulLineSizes,
         dtypes: &MatmulElems,
-    ) -> (Self::RuntimeArg<'a, R>, RuntimeArgsLaunch<'a, R>) {
+    ) -> (Self::RuntimeArg<R>, RuntimeArgsLaunch<R>) {
         let tiling_scheme = blueprint.tiling_scheme;
         let stage_m = tiling_scheme.elements_per_stage_along_m();
         let stage_n = tiling_scheme.elements_per_stage_along_n();
@@ -253,8 +254,8 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
 
         // f32 gets remapped to tf32 for the tensor map just to ensure CUDA loads them correctly.
         // It shouldn't matter, but it's better to be safe.
-        let lhs_elem = if dtypes.lhs_stage == f32::as_type_native_unchecked() {
-            tf32::as_type_native_unchecked()
+        let lhs_elem = if dtypes.lhs_stage == f32::as_type_native_unchecked().storage_type() {
+            tf32::as_type_native_unchecked().storage_type()
         } else {
             dtypes.lhs_stage
         };
@@ -276,7 +277,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
                 channels_per_pixel: tile_size_k,
                 pixels_per_column: stage_m,
             },
-            lhs.clone().into_data().into_tensor_arg(line_sizes.lhs),
+            lhs.clone().into_data().into_tensor_arg(),
             lhs_elem,
         )
         .with_elem_stride(elem_stride)
@@ -286,7 +287,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
             TiledArgs {
                 tile_size: stage_size_rhs,
             },
-            rhs.clone().into_data().into_tensor_arg(1),
+            rhs.clone().into_data().into_tensor_arg(),
             dtypes.rhs_global,
         )
         .with_swizzle(blueprint.swizzle_modes.rhs.into());
@@ -314,7 +315,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
         let bias = bias.map(|bias| {
             let layout =
                 BiasLayoutLaunch::new(ScalarArg::new(problem.n as u32), line_sizes.out as u32);
-            ViewArg::new::<BiasLayout>(bias.into_data().into_array_arg(line_sizes.out), layout)
+            ViewArg::new::<BiasLayout>(bias.into_data().into_array_arg(), layout)
         });
 
         let inputs = TensorMapInputsLaunch::new(

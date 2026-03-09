@@ -9,13 +9,14 @@ use crate::{
     definition::*,
     launch::MatmulArgs,
 };
-use cubecl::cube;
 use cubecl::prelude::*;
 use cubecl::std::tensor::View;
 use cubecl::std::tensor::layout::Coords2d;
+use cubecl::{cube, num_traits::Zero};
 use cubek_std::MatrixLayout;
 
 #[cube(launch_unchecked, address_type = "dynamic")]
+#[allow(clippy::type_complexity)]
 /// Launches the matmul kernel
 pub(crate) fn matmul_entry<
     Args: MatmulArgs<Config = ()>,
@@ -127,7 +128,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for NaiveMatmul<MP> {
 
         let line_size = comptime![Ord::max(lhs.line_size(), rhs.line_size())];
         let size!(NA) = line_size;
-        let mut sum = Line::<AccR<MP>, NA>::cast_from(0);
+        let mut sum = Line::<AccR<MP>, NA>::zero();
 
         for k in range_stepped(0u32, k, line_size as u32) {
             let lhs = load_unrolled::<_, _, NA>(&lhs, (m, k), MatrixLayout::RowMajor);
@@ -140,7 +141,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for NaiveMatmul<MP> {
 
         let unroll_sum = line_size != 1usize;
         if unroll_sum {
-            let mut accum = AccR::<MP>::cast_from(0);
+            let mut accum = AccR::<MP>::zero();
             // we unroll the loop to sum `vectorization_factor` elements at once, which lets us
             // use SIMD instructions to speed up the computation
             #[unroll]

@@ -2,7 +2,7 @@ use cubecl::{
     Runtime,
     client::ComputeClient,
     frontend::CubePrimitive,
-    ir::{AddressType, ElemType, FloatKind, StorageType},
+    ir::{AddressType, ElemType, FloatKind, StorageType, Type},
 };
 
 #[derive(Clone, Debug)]
@@ -86,9 +86,10 @@ pub struct AttentionGlobalTypes {
 
 impl AttentionGlobalTypes {
     pub fn from_single_float_dtype(
-        float_dtype: StorageType,
+        float_dtype: Type,
         mask_dtype: StorageType,
     ) -> AttentionGlobalTypes {
+        let float_dtype = float_dtype.storage_type();
         Self {
             query: float_dtype,
             key: float_dtype,
@@ -100,8 +101,8 @@ impl AttentionGlobalTypes {
 
     pub fn mask_dtype<R: Runtime>(client: &ComputeClient<R>) -> StorageType {
         let props = client.properties();
-        let u8_ty = u8::as_type_native_unchecked();
-        let u32_ty = u32::as_type_native_unchecked();
+        let u8_ty = u8::as_type_native_unchecked().storage_type();
+        let u32_ty = u32::as_type_native_unchecked().storage_type();
 
         if props.supports_type(u8_ty) {
             u8_ty

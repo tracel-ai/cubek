@@ -35,7 +35,14 @@ impl<R: Runtime, E: Float> Benchmark for ReduceBench<R, E> {
         let elem = E::as_type_native_unchecked();
 
         let input = TensorHandle::empty(&client, self.shape.clone(), elem);
-        random_uniform(&client, 0., 1., input.clone().binding(), elem).unwrap();
+        random_uniform(
+            &client,
+            0.,
+            1.,
+            input.clone().binding(),
+            elem.storage_type(),
+        )
+        .unwrap();
         let mut shape_out = self.shape.clone();
         shape_out[self.axis] = 1;
         let out = TensorHandle::empty(&client, shape_out, elem);
@@ -52,9 +59,9 @@ impl<R: Runtime, E: Float> Benchmark for ReduceBench<R, E> {
             self.strategy.clone(),
             ReduceOperationConfig::Sum,
             cubek::reduce::ReduceDtypes {
-                input: E::as_type_native_unchecked(),
-                output: E::as_type_native_unchecked(),
-                accumulation: f32::as_type_native_unchecked(),
+                input: E::as_type_native_unchecked().storage_type(),
+                output: E::as_type_native_unchecked().storage_type(),
+                accumulation: f32::as_type_native_unchecked().storage_type(),
             },
         )
         .map_err(|err| format!("{err}"))?;

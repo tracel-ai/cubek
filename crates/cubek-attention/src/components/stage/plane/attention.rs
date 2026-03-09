@@ -24,7 +24,8 @@ pub struct PlanePartitioner {}
 #[cube]
 impl AttentionPartitioner for PlanePartitioner {
     type Reducer = BroadcastReducer;
-    type Writer<ES: Float, EG: Float> = PlaneAttentionWriter<ES, EG>;
+    type Writer<ES: Float, ESS: Size, EG: Float, EGS: Size> =
+        PlaneAttentionWriter<ES, ESS, EG, EGS>;
 
     fn seq_q_index() -> u32 {
         UNIT_POS_Y

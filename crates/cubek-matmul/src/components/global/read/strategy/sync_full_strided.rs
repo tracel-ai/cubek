@@ -6,7 +6,6 @@ use crate::components::stage::{StridedStageMemory, StridedTilingLayout};
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
 use crate::definition::{MatmulElems, MatmulProblem, StageIdent};
 use crate::{components::global::read::validate_swizzle_atom_size, launch::RuntimeConfig};
-use cubecl::std::type_size;
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::InvalidConfigError;
 use cubek_std::tile::Strided;
@@ -68,16 +67,16 @@ impl LoadMaxRoundPlaneCount for SyncFullStridedLoading {
 impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncFullStridedLoading {
     type TilingLayout = StridedTilingLayout;
     type SyncStrategy = Synchronous;
-    type Job<EG: Numeric, ES: Numeric> = SyncFullStridedJob;
+    type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = SyncFullStridedJob;
     type Stage = StridedStageFamily;
     type TileKind = Strided;
 
-    fn new_job<EG: Numeric, ES: Numeric>(
+    fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
-        #[comptime] line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
-    ) -> Self::Job<EG, ES> {
-        let num_stage_lines = config.smem_config.elements_per_stage() / line_size as u32;
+    ) -> Self::Job<EG, NG, ES, NS> {
+        let line_size = NG::value().comptime() as u32;
+        let num_stage_lines = config.smem_config.elements_per_stage() / line_size;
         let unit_count = config.loading_planes_count() * config.plane_dim;
         let num_tasks_per_unit = num_stage_lines / unit_count;
 
@@ -90,7 +89,6 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncFullStridedLoading {
             unit_position_base,
             num_tasks_per_unit,
             unit_count,
-            line_size,
         }
     }
 }
@@ -103,21 +101,19 @@ pub struct SyncFullStridedJob {
     num_tasks_per_unit: u32,
     #[cube(comptime)]
     unit_count: u32,
-    #[cube(comptime)]
-    line_size: LineSize,
 }
 
 #[cube]
-impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, StridedTilingLayout, Synchronous>
-    for SyncFullStridedJob
+impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
+    LoadingJob<EG, NG, ES, NS, StridedTilingLayout, Synchronous> for SyncFullStridedJob
 {
     type Stage = StridedStageFamily;
 
     fn execute_task(
         this: &mut Self,
         #[comptime] task_id: u32,
-        global_iter: &GlobalIterator<Line<EG>>,
-        stage: &mut StridedStageMemory<ES, StridedTilingLayout>,
+        global_iter: &GlobalIterator<Line<EG, NG>>,
+        stage: &mut StridedStageMemory<ES, NS, StridedTilingLayout>,
         _barrier: &mut (),
         #[comptime] config: GlobalReaderConfig,
     ) {
@@ -126,11 +122,11 @@ impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, StridedTilingLayout, Synchrono
         let layout = FullStageLayout::new(config.smem_config);
         let view = global_iter.view().view(layout);
 
-        let line_read = view.read_checked(unit_position * this.line_size as u32);
-        let type_size = type_size::<ES>(this.line_size);
+        let line_read = view.read_checked(unit_position * NG::value() as u32);
+        let type_size = Line::<ES, NS>::type_size();
         let stage_offs = stage.swizzle.apply(unit_position, type_size);
 
-        stage.as_slice_mut(this.line_size)[stage_offs as usize] = Line::cast_from(line_read);
+        stage.as_slice_mut::<NS>()[stage_offs as usize] = Line::cast_from(line_read);
     }
 
     fn task_count(this: &Self) -> comptime_type!(u32) {

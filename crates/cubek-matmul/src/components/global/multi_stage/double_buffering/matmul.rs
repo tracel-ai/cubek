@@ -1,13 +1,10 @@
+use crate::components::global::read::{
+    FullStageGlobalReader, PartialLoadingStrategy, PartialStageGlobalReader, StageBuffer,
+};
 use crate::components::stage;
 use crate::components::stage::StageConfig;
-use crate::definition::{AccG, AccS, LhsG, LhsS, MatmulTypes, MatrixTypes, RhsG, RhsS};
+use crate::definition::{AccG, LhsG, MatmulTypes, MatrixTypes, RhsG};
 use crate::launch::RuntimeConfig;
-use crate::{
-    components::global::read::{
-        FullStageGlobalReader, PartialLoadingStrategy, PartialStageGlobalReader, StageBuffer,
-    },
-    definition::Global,
-};
 use crate::{
     components::global::{
         GlobalMatmul, GlobalWriter, SharedGlobalMatmulConfig,

@@ -1,5 +1,8 @@
-use crate::components::{stage::Stage, tile::TileMatmul};
-use crate::definition::{AccS, MatmulTypes, MatrixTypes};
+use crate::definition::{MatmulTypes, MatrixTypes};
+use crate::{
+    components::{stage::Stage, tile::TileMatmul},
+    definition::{Acc, StageSize},
+};
 use cubecl::prelude::*;
 use cubek_std::{MatrixLayout, PartitionSize};
 
@@ -16,6 +19,8 @@ pub struct Accumulators<
 > {
     sequence: Sequence<TM::AccFragment>,
 }
+
+type StageTy<T> = crate::definition::Stage<T>;
 
 #[cube]
 impl<
@@ -46,7 +51,9 @@ impl<
     }
 
     /// Load all accumulators from the specified stage
-    pub fn load<R: Stage<AccS<MP>, ReadOnly, TileKind = TM::AccTile>>(
+    pub fn load<
+        R: Stage<StageTy<Acc<MP>>, StageSize<Acc<MP>>, ReadOnly, TileKind = TM::AccTile>,
+    >(
         &mut self,
         stage: &R,
         #[comptime] tiles_in_stage_partition_m: usize,

@@ -13,8 +13,8 @@ pub struct InterleavedStageWriter {}
 
 #[cube]
 impl InterleavedStageWriter {
-    pub fn store_fragment<A: Numeric, E: Numeric>(
-        tile: &mut StridedTile<E, ReadWrite>,
+    pub fn store_fragment<A: Numeric, E: Numeric, N: Size>(
+        tile: &mut StridedTile<E, N, ReadWrite>,
         acc: &InterleavedAccumulator<A>,
         #[comptime] config: InterleavedMatmulConfig,
     ) {
@@ -24,7 +24,7 @@ impl InterleavedStageWriter {
             #[unroll]
             for i in 0..config.shared.tile_size.mn() / out_line_size {
                 let offs = tile.stage_offset(i);
-                let mut line = Line::empty(out_line_size as usize);
+                let mut line = Line::<A, N>::empty();
                 #[unroll]
                 for j in 0..out_line_size {
                     line[j as usize] = acc.array[(i * out_line_size + j) as usize];

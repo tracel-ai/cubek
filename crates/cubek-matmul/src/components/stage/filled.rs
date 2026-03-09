@@ -9,7 +9,7 @@ pub struct FilledStageFamily;
 impl StageFamily for FilledStageFamily {
     type TileKind = Filled;
 
-    type Stage<ES: Numeric, T: TilingLayout> = FilledStage<ES>;
+    type Stage<ES: Numeric, NS: Size, T: TilingLayout> = FilledStage<ES>;
 }
 
 #[derive(CubeType, Clone)]
@@ -25,7 +25,7 @@ impl<ES: Numeric> FilledStage<ES> {
 }
 
 #[cube]
-impl<ES: Numeric> Stage<ES, ReadOnly> for FilledStage<ES> {
+impl<ES: Numeric, NS: Size> Stage<ES, NS, ReadOnly> for FilledStage<ES> {
     type TileKind = Filled;
 
     fn tile(this: &Self, _tile: Coords2d) -> ES {

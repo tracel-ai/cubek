@@ -31,7 +31,7 @@ fn quantize_symmetric<F: Float, N: Size, FS: CubePrimitive>(
 }
 
 #[cube]
-fn quantize_symmetric_q<F: Float, N: Size, FS: CubePrimitive, Q: CubePrimitive>(
+fn quantize_symmetric_q<F: Float, N: Size, FS: CubePrimitive, Q: Scalar>(
     value: Line<F, N>,
     scale: FS,
     range_min: F,
@@ -269,10 +269,10 @@ fn quantize_native<R: Runtime>(
                     line_size,
                     linear_view(client, input, line_size),
                     // scale is computed based on input float dtype, but stored based on qparams precision
-                    scales_view(client, output.try_clone().unwrap(), scale, 1, scheme),
+                    scales_view(client, output.clone(), scale, 1, scheme),
                     InputScalar::new(range_min, input_dtype),
                     InputScalar::new(range_max, input_dtype),
-                    linear_view(client, output.try_clone().unwrap(), line_size),
+                    linear_view(client, output.clone(), line_size),
                     scales_view(client, output, out_scale, 1, scheme),
                     scales_layout,
                     [input_dtype.into(), scale_dtype.into(), quant_type.into()],
@@ -348,10 +348,10 @@ fn quantize_packed<R: Runtime>(
             line_size,
             linear_view(client, input, line_size),
             // scale is computed based on input float dtype, but stored based on qparams precision
-            scales_view(client, output.try_clone().unwrap(), scale, 1, scheme),
+            scales_view(client, output.clone(), scale, 1, scheme),
             InputScalar::new(range_min, dtype_input),
             InputScalar::new(range_max, dtype_input),
-            linear_view(client, output.try_clone().unwrap(), 1),
+            linear_view(client, output.clone(), 1),
             scales_view(client, output, out_scale, 1, scheme),
             scales_layout,
             *scheme,

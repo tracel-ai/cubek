@@ -148,7 +148,7 @@ fn validate(
     let softmax_num_cols = config.shared.attention_tile_size.seq_kv;
     let softmax_total = softmax_num_rows * softmax_num_cols;
 
-    if softmax_total % config.shared.plane_dim != 0 {
+    if !softmax_total.is_multiple_of(config.shared.plane_dim) {
         return Err(AttentionSetupError::InvalidConfig(Box::new(
             "Softmax size should be divisible by plane dim",
         )));
@@ -162,7 +162,7 @@ fn validate(
     }
 
     if config.inner_layout == InnerLayout::SplitRows
-        && softmax_total % (2 * config.shared.plane_dim) != 0
+        && !softmax_total.is_multiple_of(2 * config.shared.plane_dim)
     {
         return Err(AttentionSetupError::InvalidConfig(Box::new(
             "With split rows, units must have two elements each",

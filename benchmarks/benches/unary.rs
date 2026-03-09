@@ -29,11 +29,11 @@ impl<R: Runtime, E: Float> Benchmark for UnaryBench<R, E> {
         let elem = E::as_type_native_unchecked();
 
         let lhs = TensorHandle::empty(&client, self.shape.clone(), elem);
-        random_uniform(&client, 0., 1., lhs.clone().binding(), elem).unwrap();
+        random_uniform(&client, 0., 1., lhs.clone().binding(), elem.storage_type()).unwrap();
         let rhs = TensorHandle::empty(&client, self.shape.clone(), elem);
-        random_uniform(&client, 0., 1., rhs.clone().binding(), elem).unwrap();
+        random_uniform(&client, 0., 1., rhs.clone().binding(), elem.storage_type()).unwrap();
         let out = TensorHandle::empty(&client, self.shape.clone(), elem);
-        random_uniform(&client, 0., 1., out.clone().binding(), elem).unwrap();
+        random_uniform(&client, 0., 1., out.clone().binding(), elem.storage_type()).unwrap();
 
         (lhs, rhs, out)
     }
@@ -49,9 +49,9 @@ impl<R: Runtime, E: Float> Benchmark for UnaryBench<R, E> {
             &self.client,
             cube_count,
             cube_dim,
-            lhs.into_arg(self.vectorization),
-            rhs.into_arg(self.vectorization),
-            out.into_arg(self.vectorization),
+            lhs.into_arg(),
+            rhs.into_arg(),
+            out.into_arg(),
         );
 
         Ok(())

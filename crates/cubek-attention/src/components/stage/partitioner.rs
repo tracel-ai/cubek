@@ -9,7 +9,7 @@ use crate::components::stage::Reducer;
 /// Controls global writeback and and compute indexing.
 pub trait AttentionPartitioner: Send + Sync + 'static {
     type Reducer: Reducer;
-    type Writer<ES: Float, EG: Float>: AttentionWriter<ES, EG>;
+    type Writer<ES: Float, ESS: Size, EG: Float, EGS: Size>: AttentionWriter<ES, ESS, EG, EGS>;
 
     fn seq_q_index() -> u32;
 }

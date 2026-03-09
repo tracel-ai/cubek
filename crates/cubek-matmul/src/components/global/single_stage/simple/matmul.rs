@@ -1,13 +1,13 @@
-use crate::components::{
-    global::{
-        GlobalMatmul, GlobalWriter, SharedGlobalMatmulConfig,
-        read::{FullLoaderStage, FullLoadingStrategy, FullStageGlobalReader, SyncStrategy},
-    },
-    stage::{StageConfig, StageMatmul},
-};
+use crate::launch::RuntimeConfig;
 use crate::{
-    definition::{AccG, AccS, LhsG, LhsS, MatmulTypes, MatrixTypes, RhsG, RhsS},
-    launch::RuntimeConfig,
+    components::{
+        global::{
+            GlobalMatmul, GlobalWriter, SharedGlobalMatmulConfig,
+            read::{FullLoaderStage, FullLoadingStrategy, FullStageGlobalReader, SyncStrategy},
+        },
+        stage::{StageConfig, StageMatmul},
+    },
+    definition::*,
 };
 use cubecl::prelude::*;
 use cubecl::std::tensor::{View, layout::Coords2d};
@@ -36,9 +36,9 @@ impl<MP: MatmulTypes, SMM, RC, LL, RL, AL, GW> GlobalMatmul<RC, MP>
 where
     SMM: StageMatmul<
             MP,
-            LhsStage = FullLoaderStage<RC, LL, LhsS<MP>>,
-            RhsStage = FullLoaderStage<RC, RL, RhsS<MP>>,
-            AccStage = ComptimeOption<FullLoaderStage<RC, AL, AccS<MP>>>,
+            LhsStage = FullLoaderStage<RC, LL, Stage<Lhs<MP>>, StageSize<Lhs<MP>>>,
+            RhsStage = FullLoaderStage<RC, RL, Stage<Rhs<MP>>, StageSize<Rhs<MP>>>,
+            AccStage = ComptimeOption<FullLoaderStage<RC, AL, Stage<Acc<MP>>, StageSize<Acc<MP>>>>,
             OutStage = GW::Stage,
         >,
     RC: RuntimeConfig,
@@ -50,20 +50,26 @@ where
     type Config = SharedGlobalMatmulConfig<SMM::Config>;
     type LhsGlobalReader = FullStageGlobalReader<
         <MP::Lhs as MatrixTypes>::Global,
+        <MP::Lhs as MatrixTypes>::GlobalSize,
         <MP::Lhs as MatrixTypes>::Stage,
+        <MP::Lhs as MatrixTypes>::StageSize,
         RC,
         LL,
     >;
     type RhsGlobalReader = FullStageGlobalReader<
         <MP::Rhs as MatrixTypes>::Global,
+        <MP::Rhs as MatrixTypes>::GlobalSize,
         <MP::Rhs as MatrixTypes>::Stage,
+        <MP::Rhs as MatrixTypes>::StageSize,
         RC,
         RL,
     >;
     type AccGlobalReader = ComptimeOption<
         FullStageGlobalReader<
             <MP::Acc as MatrixTypes>::Global,
+            <MP::Acc as MatrixTypes>::GlobalSize,
             <MP::Acc as MatrixTypes>::Stage,
+            <MP::Acc as MatrixTypes>::StageSize,
             RC,
             AL,
         >,
@@ -163,7 +169,7 @@ where
     }
 
     fn init_lhs_global_reader(
-        lhs: View<Line<LhsG<MP>>, Coords2d>,
+        lhs: View<LhsG<MP>, Coords2d>,
         runtime_config: RC,
         #[comptime] config: Self::Config,
     ) -> Self::LhsGlobalReader {
@@ -176,7 +182,7 @@ where
     }
 
     fn init_rhs_global_reader(
-        rhs: View<Line<RhsG<MP>>, Coords2d>,
+        rhs: View<RhsG<MP>, Coords2d>,
         runtime_config: RC,
         #[comptime] config: Self::Config,
     ) -> Self::RhsGlobalReader {
@@ -189,7 +195,7 @@ where
     }
 
     fn init_acc_global_reader(
-        acc: ComptimeOption<View<Line<AccG<MP>>, Coords2d>>,
+        acc: ComptimeOption<View<AccG<MP>, Coords2d>>,
         runtime_config: RC,
         #[comptime] config: Self::Config,
     ) -> Self::AccGlobalReader {
@@ -199,7 +205,7 @@ where
     }
 
     fn init_global_writer(
-        out: View<Line<AccG<MP>>, Coords2d, ReadWrite>,
+        out: View<AccG<MP>, Coords2d, ReadWrite>,
         #[comptime] config: Self::Config,
     ) -> Self::GlobalWriter {
         Self::GlobalWriter::init(out, config.writer_config)
