@@ -1,16 +1,15 @@
 use crate::{LineMode, launch::LineSizeStrategy};
 use cubecl::{
-    prelude::*, std::tensor::is_contiguous, tensor_line_size_parallel,
+    ir::HardwareProperties, prelude::*, std::tensor::is_contiguous, tensor_line_size_parallel,
     tensor_line_size_perpendicular,
 };
 
-/// Calculate the number of planes in a cube.
 pub fn calculate_plane_count_per_cube(
     working_units: usize,
     plane_dim: u32,
-    num_cpu_cores: Option<u32>,
+    properties: &HardwareProperties,
 ) -> u32 {
-    match num_cpu_cores {
+    let plane_count = match properties.num_cpu_cores {
         Some(num_cores) => core::cmp::min(num_cores, working_units as u32),
         None => {
             let plane_count_max = core::cmp::max(1, working_units / plane_dim as usize);
@@ -22,7 +21,10 @@ pub fn calculate_plane_count_per_cube(
                 core::cmp::min(NUM_PLANE_MAX_LOG2, usize::ilog2(plane_count_max));
             2u32.pow(plane_count_max_log2)
         }
-    }
+    };
+
+    let max_plane_per_cube = properties.max_units_per_cube / plane_dim;
+    plane_count.min(max_plane_per_cube)
 }
 
 pub fn generate_line_size<R: Runtime>(

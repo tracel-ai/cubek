@@ -102,8 +102,7 @@ fn generate_blueprint<R: Runtime>(
     let plane_size = properties.plane_size_max;
     let working_cubes = working_cubes(settings, &problem);
     let working_units = working_cubes * problem.vector_size.div_ceil(settings.line_size_input);
-    let plane_count =
-        calculate_plane_count_per_cube(working_units, plane_size, properties.num_cpu_cores);
+    let plane_count = calculate_plane_count_per_cube(working_units, plane_size, properties);
     let cube_dim = CubeDim::new_2d(plane_size, plane_count);
     let cube_size = cube_dim.num_elems();
 
