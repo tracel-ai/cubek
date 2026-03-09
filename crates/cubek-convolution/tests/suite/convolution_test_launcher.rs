@@ -169,7 +169,7 @@ fn tensor_raw_parts<P: TestPrecision, R: Runtime>(
     client: &ComputeClient<R>,
     problem: &ConvolutionProblem,
     ident: MatmulIdent,
-) -> TensorRawParts<R, P::EG> {
+) -> TensorRawParts<P::EG> {
     match ident {
         MatmulIdent::Lhs => {
             let shape = shape(problem, ident);

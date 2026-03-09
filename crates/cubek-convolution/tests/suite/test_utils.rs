@@ -29,7 +29,7 @@ pub trait TestPrecision {
 }
 
 #[derive(Debug)]
-pub struct TensorRawParts<R: Runtime, N: Numeric + CubeElement> {
+pub struct TensorRawParts<N: Numeric + CubeElement> {
     pub handle: server::Handle,
     #[allow(unused)] //TODO: Fix
     pub scale: Option<server::Handle>,
