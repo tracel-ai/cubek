@@ -131,7 +131,7 @@ pub fn test_launch(
                 out_handle,
                 AttentionElems::from_global_types(
                     &problem.global_dtypes,
-                    half::f16::as_type_native_unchecked(),
+                    half::f16::as_type_native_unchecked().storage_type(),
                     &problem.options.accumulator_precision,
                 ),
             )

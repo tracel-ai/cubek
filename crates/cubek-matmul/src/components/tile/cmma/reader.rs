@@ -71,6 +71,7 @@ where
         layout: ComptimeOption<cmma::MatrixLayout>,
     ) {
         #[comptime]
+        #[comptime]
         match tile {
             ComptimeOption::Some(tile) => {
                 CmmaStageReader::<Inner>::load_fragment(tile, fragment, layout)

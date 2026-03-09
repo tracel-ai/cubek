@@ -12,7 +12,7 @@ use crate::definition::StageIdent;
 use crate::definition::TilingBlueprint;
 use crate::definition::{AccG, MatmulSetupError};
 use crate::definition::{LhsG, MatmulElems, MatmulLineSizes, RhsG};
-use crate::definition::{MatmulTypes, MatmulProblem};
+use crate::definition::{MatmulProblem, MatmulTypes};
 use crate::{components::CubeDimResource, launch::RuntimeConfig};
 use cubecl::std::tensor::{View, layout::Coords2d};
 use std::fmt::Debug;

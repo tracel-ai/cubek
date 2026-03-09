@@ -311,6 +311,7 @@ where
         #[comptime] config: MmaIOConfig,
     ) {
         #[comptime]
+        #[comptime]
         match tile {
             ComptimeOption::Some(tile) => MmaStageReader::<Inner>::load_fragment(
                 tile, fragment, def, ident, layout, tile_size, config,

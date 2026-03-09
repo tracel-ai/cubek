@@ -95,6 +95,7 @@ where
         #[comptime] n: u32,
     ) {
         #[comptime]
+        #[comptime]
         match tile {
             ComptimeOption::Some(tile) => MatrixStageReader::<Inner>::load_fragment(tile, frag, n),
             ComptimeOption::None => {

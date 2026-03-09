@@ -139,6 +139,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: Partial
         #[comptime] config: GlobalReaderConfig,
     ) {
         #[comptime]
+        #[comptime]
         let mut loading_job = match self.loading_job.clone() {
             ComptimeOption::Some(job) => match stage_buffer {
                 StageBuffer::A => job.0,

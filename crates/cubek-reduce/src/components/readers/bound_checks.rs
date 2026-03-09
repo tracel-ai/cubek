@@ -28,6 +28,7 @@ impl<P: ReducePrecision> ReaderBoundChecks<P> {
         #[comptime] bound_checks: BoundChecks,
     ) -> ReaderBoundChecks<P> {
         #[comptime]
+        #[comptime]
         let pos_max = match idle {
             // When idle we set the pos_max to zero so that we always mask values.
             ComptimeOption::Some(idle) => pos_max * usize::cast_from(!idle),

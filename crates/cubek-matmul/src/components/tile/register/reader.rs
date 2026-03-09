@@ -166,6 +166,7 @@ where
         #[comptime] config: RegisterMatmulConfig,
     ) {
         #[comptime]
+        #[comptime]
         match tile {
             ComptimeOption::Some(tile) => {
                 RegisterStageReader::<Inner>::load_fragment(tile, fragment, ident, config)

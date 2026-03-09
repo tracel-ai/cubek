@@ -305,6 +305,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
     }
 
     #[allow(unused_mut)]
+    #[allow(unused_mut)]
     fn assign_accumulator(
         _this: &Self,
         destination: &mut Self::AccumulatorItem,
