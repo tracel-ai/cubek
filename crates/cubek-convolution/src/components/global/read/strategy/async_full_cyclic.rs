@@ -54,7 +54,7 @@ impl<TO: TilingOrder> LoadMaxRoundPlaneCount for AsyncFullCyclicLoading<TO> {
     fn max_round_plane_count(
         elements_per_tile: u32,
         tiles_per_stage: u32,
-        line_size: LineSize,
+        line_size: VectorSize,
         plane_dim: u32,
         dtype: StorageType,
     ) -> u32 {
@@ -141,7 +141,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
     fn execute_task(
         this: &mut Self,
         #[comptime] task_id: u32,
-        global_iter: &GlobalIterator<Line<EG, NG>>,
+        global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut StridedStageMemory<ES, NS, ContiguousTilingLayout<TO>>,
         _barrier: &mut Shared<Barrier>,
         #[comptime] config: GlobalReaderConfig,
@@ -181,7 +181,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
 pub(crate) fn copy_line<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>(
     job: &AsyncFullCyclicJob,
     unit_position: u32,
-    global_iter: &GlobalIterator<Line<EG, NG>>,
+    global_iter: &GlobalIterator<Vector<EG, NG>>,
     stage: &mut StridedStageMemory<ES, NS, ContiguousTilingLayout<TO>>,
     runtime_args: &RuntimeArgs,
     #[comptime] config: GlobalReaderConfig,
@@ -195,7 +195,7 @@ pub(crate) fn copy_line<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: Tiling
     let tile = ContiguousTilingLayout::<TO>::to_x_y(nth_tile, config.smem_config);
 
     let pos = layout.to_source_pos((tile, pos_within_tile));
-    let stage_offset = unit_position / stage.smem.line_size() as u32;
+    let stage_offset = unit_position / stage.smem.vector_size() as u32;
 
     async_copy_from(
         view,

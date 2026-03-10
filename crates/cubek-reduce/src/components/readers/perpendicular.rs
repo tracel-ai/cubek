@@ -17,7 +17,7 @@ use cubecl::{
 
 #[derive(CubeType)]
 pub struct PerpendicularReader<P: ReducePrecision> {
-    view: View<Line<P::EI, P::SI>, Coords1d>,
+    view: View<Vector<P::EI, P::SI>, Coords1d>,
     /// The global offset that points where the vector to reduce is located in global memory.
     batch_offset: usize,
     vector_offset_stride: usize,
@@ -37,7 +37,7 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
         idle: ComptimeOption<bool>,
         #[comptime] bound_checks: BoundChecks,
     ) -> PerpendicularReader<P> {
-        let line_size = input.line_size();
+        let line_size = input.vector_size();
         let output_index = reduce_index * line_size;
 
         let mut batch_offset = 0;
@@ -75,7 +75,7 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
         self.shape.div_ceil(CUBE_DIM as usize)
     }
 
-    pub fn read_cube(&self, line_index: usize) -> (Line<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
+    pub fn read_cube(&self, line_index: usize) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
         let plane_pos = line_index * CUBE_DIM as usize;
         let unit_pos = UNIT_POS as usize;
         let pos = plane_pos + unit_pos;
@@ -94,7 +94,7 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
         (item, coordinate)
     }
 
-    pub fn read_plane(&self, line_index: usize) -> (Line<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
+    pub fn read_plane(&self, line_index: usize) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
         let plane_pos = line_index * CUBE_DIM_X as usize;
         let unit_pos = UNIT_POS_X as usize;
         let pos = plane_pos + unit_pos;
@@ -113,7 +113,7 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
         (item, coordinate)
     }
 
-    pub fn read_unit(&self, line_index: usize) -> (Line<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
+    pub fn read_unit(&self, line_index: usize) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
         let offset = self.batch_offset + line_index * self.vector_offset_stride;
         let item = self.view[offset];
 

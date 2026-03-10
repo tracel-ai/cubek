@@ -54,7 +54,7 @@ pub struct FullStageGlobalReader<
     RC: RuntimeConfig,
     L: FullLoadingStrategy<RC>,
 > {
-    global_iter: GlobalIterator<Line<EG, NG>>,
+    global_iter: GlobalIterator<Vector<EG, NG>>,
     runtime_config: RC,
     stage: FullLoaderStage<RC, L, ES, NS>,
     loading_job: ComptimeOption<L::Job<EG, NG, ES, NS>>,
@@ -68,7 +68,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: FullLoa
 {
     /// Create a new SyncFullStageGlobalReader
     pub fn new(
-        view: View<Line<EG, NG>, Coords2d>,
+        view: View<Vector<EG, NG>, Coords2d>,
         runtime_config: RC,
         k_step: u32,
         #[comptime] config: GlobalReaderConfig,

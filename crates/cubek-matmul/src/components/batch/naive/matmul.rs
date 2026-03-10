@@ -28,29 +28,30 @@ pub(crate) fn matmul_entry<
     AccSize: Size,
 >(
     inputs: &<Args as MatmulArgs>::Input<
-        Line<Lhs, LhsSize>,
-        Line<Rhs, RhsSize>,
-        Line<Acc, AccSize>,
+        Vector<Lhs, LhsSize>,
+        Vector<Rhs, RhsSize>,
+        Vector<Acc, AccSize>,
     >,
-    output: &mut <Args as MatmulArgs>::Output<Line<Acc, AccSize>>,
+    output: &mut <Args as MatmulArgs>::Output<Vector<Acc, AccSize>>,
     runtime_config: (),
     cube_mapping: CubeMapping,
     #[comptime] blueprint: NaiveBlueprint,
     #[define(Lhs, Rhs, Acc)] _global: [StorageType; 3],
     #[define(LhsSize, RhsSize, AccSize)] _sizes: [usize; 3],
 ) {
-    let mut state = Args::init_state::<Line<Lhs, LhsSize>, Line<Rhs, RhsSize>, Line<Acc, AccSize>>(
-        inputs,
-        output,
-        runtime_config,
-        blueprint.lhs_global_layout_config(),
-        blueprint.rhs_global_layout_config(),
-        blueprint.out_global_layout_config(),
-    );
+    let mut state =
+        Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
+            inputs,
+            output,
+            runtime_config,
+            blueprint.lhs_global_layout_config(),
+            blueprint.rhs_global_layout_config(),
+            blueprint.out_global_layout_config(),
+        );
 
-    let line_size_lhs = Args::view_lhs(&state).line_size();
-    let line_size_rhs = Args::view_rhs(&state).line_size();
-    let line_size_out = Args::view_out(&mut state).line_size();
+    let line_size_lhs = Args::view_lhs(&state).vector_size();
+    let line_size_rhs = Args::view_rhs(&state).vector_size();
+    let line_size_out = Args::view_out(&mut state).vector_size();
     let line_sizes = comptime!(MatmulLineSizes {
         lhs: line_size_lhs,
         rhs: line_size_rhs,
@@ -71,14 +72,15 @@ pub(crate) fn matmul_entry<
     }
     let config = comptime!(config.unwrap());
 
-    let mut state = Args::init_state::<Line<Lhs, LhsSize>, Line<Rhs, RhsSize>, Line<Acc, AccSize>>(
-        inputs,
-        output,
-        runtime_config,
-        config.lhs_global_layout_config(),
-        config.rhs_global_layout_config(),
-        config.out_global_layout_config(),
-    );
+    let mut state =
+        Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
+            inputs,
+            output,
+            runtime_config,
+            config.lhs_global_layout_config(),
+            config.rhs_global_layout_config(),
+            config.out_global_layout_config(),
+        );
 
     let define!(RegisterLhs) = blueprint.dtypes.lhs_register;
     let define!(RegisterRhs) = blueprint.dtypes.rhs_register;
@@ -126,16 +128,16 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for NaiveMatmul<MP> {
             terminate!();
         }
 
-        let line_size = comptime![Ord::max(lhs.line_size(), rhs.line_size())];
+        let line_size = comptime![Ord::max(lhs.vector_size(), rhs.vector_size())];
         let size!(NA) = line_size;
-        let mut sum = Line::<AccR<MP>, NA>::zero();
+        let mut sum = Vector::<AccR<MP>, NA>::zero();
 
         for k in range_stepped(0u32, k, line_size as u32) {
             let lhs = load_unrolled::<_, _, NA>(&lhs, (m, k), MatrixLayout::RowMajor);
             let rhs = load_unrolled::<_, _, NA>(&rhs, (k, n), MatrixLayout::ColMajor);
 
-            sum += Line::cast_from(
-                Line::<AccR<MP>, NA>::cast_from(lhs) * Line::<AccR<MP>, NA>::cast_from(rhs),
+            sum += Vector::cast_from(
+                Vector::<AccR<MP>, NA>::cast_from(lhs) * Vector::<AccR<MP>, NA>::cast_from(rhs),
             );
         }
 
@@ -149,27 +151,27 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for NaiveMatmul<MP> {
                 accum += sum[v];
             }
 
-            out[(m, n)] = Line::cast_from(accum);
+            out[(m, n)] = Vector::cast_from(accum);
         } else {
-            out[(m, n)] = Line::cast_from(sum[0]);
+            out[(m, n)] = Vector::cast_from(sum[0]);
         }
     }
 }
 
 #[cube]
 fn load_unrolled<I: Numeric, N: Size, N2: Size>(
-    view: &View<Line<I, N>, Coords2d>,
+    view: &View<Vector<I, N>, Coords2d>,
     pos: Coords2d,
     #[comptime] layout: MatrixLayout,
-) -> Line<I, N2> {
+) -> Vector<I, N2> {
     let line_size = N2::value();
-    comptime![assert!(line_size >= view.line_size())];
-    let view_line_size = view.line_size();
-    if view.line_size().comptime() == line_size {
-        Line::cast_from(view[pos])
+    comptime![assert!(line_size >= view.vector_size())];
+    let view_line_size = view.vector_size();
+    if view.vector_size().comptime() == line_size {
+        Vector::cast_from(view[pos])
     } else {
         let (row, col) = pos;
-        let mut out = Line::empty();
+        let mut out = Vector::empty();
         #[unroll]
         for i in range_stepped(0, line_size as u32, view_line_size as u32) {
             let pos = match layout {

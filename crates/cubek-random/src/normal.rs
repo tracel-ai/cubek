@@ -26,18 +26,18 @@ impl PrngRuntime for Normal {
         write_index_base: usize,
         n_invocations: u32,
         #[comptime] n_values_per_thread: usize,
-        #[comptime] line_size: LineSize,
+        #[comptime] line_size: VectorSize,
         state_0: &mut u32,
         state_1: &mut u32,
         state_2: &mut u32,
         state_3: &mut u32,
-        output: &mut View<Line<E, N>, usize, ReadWrite>,
+        output: &mut View<Vector<E, N>, usize, ReadWrite>,
     ) {
         let mean = f32::cast_from(args.mean);
         let std = f32::cast_from(args.std);
 
-        let mut output_line_0 = Line::empty();
-        let mut output_line_1 = Line::empty();
+        let mut output_line_0 = Vector::empty();
+        let mut output_line_1 = Vector::empty();
 
         let num_iterations = n_values_per_thread / line_size / 2;
         #[unroll(num_iterations <= 8)]

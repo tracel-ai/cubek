@@ -1,5 +1,5 @@
 use cubecl::ir::DeviceProperties;
-use cubecl::ir::LineSize;
+use cubecl::ir::VectorSize;
 use cubek_matmul::components::CubeDimResource;
 
 use crate::components::tile::SharedTileAttentionConfig;
@@ -96,7 +96,7 @@ fn validate(
     device_props: &DeviceProperties,
     config: BlackboxAcceleratedAttentionMatmulConfig,
     reuse_key_value: bool,
-    line_sizes_mask: LineSize,
+    line_sizes_mask: VectorSize,
     dtypes: &AttentionElems,
 ) -> Result<BlackboxAcceleratedAttentionMatmulConfig, AttentionSetupError> {
     if dtypes.query_global != dtypes.query_tile {
@@ -140,7 +140,7 @@ fn validate(
 
     if line_sizes_mask > 1 {
         return Err(AttentionSetupError::InvalidConfig(Box::new(
-            "Line size mask > 1 not supported yet on accelerated tile attention",
+            "Vector size mask > 1 not supported yet on accelerated tile attention",
         )));
     }
 

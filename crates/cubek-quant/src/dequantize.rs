@@ -20,11 +20,11 @@ use cubecl::std::tensor::{
 /// Dequantize a line of values into floating-point values using the provided scale.
 #[cube]
 pub fn dequantize_symmetric<F: Float, FS: CubePrimitive, N: Size>(
-    value: Line<F, N>,
+    value: Vector<F, N>,
     scale: FS,
-) -> Line<F, N> {
+) -> Vector<F, N> {
     // x = scale * x_q
-    Line::cast_from(scale) * value
+    Vector::cast_from(scale) * value
 }
 
 /// Dequantize the value at a specified position using the provided quantization scheme.
@@ -40,10 +40,10 @@ pub fn dequantize_symmetric_packed_values<
     NQ: Size,
 >(
     position: usize,
-    values: &View<Line<QI, NQ>, usize>,
+    values: &View<Vector<QI, NQ>, usize>,
     scales: &View<FS, usize>,
     #[comptime] scheme: QuantScheme,
-) -> Array<Line<F, NF>> {
+) -> Array<Vector<F, NF>> {
     dequantize_symmetric_packed_value_at::<F, NF, FS, QI, NQ>(
         position,
         values[position],
@@ -65,10 +65,10 @@ pub fn dequantize_symmetric_packed_value_at<
     NQ: Size,
 >(
     position: usize,
-    values: Line<QI, NQ>,
+    values: Vector<QI, NQ>,
     scales: &View<FS, usize>,
     #[comptime] scheme: QuantScheme,
-) -> Array<Line<F, NF>> {
+) -> Array<Vector<F, NF>> {
     dequantize_symmetric_packed_value::<F, NF, FS, QI, NQ>(values, scales, position, scheme)
 }
 
@@ -84,11 +84,11 @@ pub fn dequantize_symmetric_packed_value<
     QS: Int,
     NQ: Size,
 >(
-    values: Line<QS, NQ>,
+    values: Vector<QS, NQ>,
     scales: &View<FS, usize>,
     position: usize,
     #[comptime] scheme: QuantScheme,
-) -> Array<Line<F, NF>> {
+) -> Array<Vector<F, NF>> {
     let line_size_values = values.line_size();
     let num_quants = scheme.num_quants();
     let mut tmp = Array::new(line_size_values);
@@ -113,12 +113,12 @@ fn unpack_q<F: Float, NF: Size, QS: Int>(
     value: QS,
     #[comptime] quant: QuantValue,
     #[comptime] store: QuantStore,
-) -> Line<F, NF> {
+) -> Vector<F, NF> {
     let size_quant = quant.size_bits();
     let size_store = store.size_bits(&quant);
     let num_quant = size_store / size_quant;
 
-    let mut output = Line::empty();
+    let mut output = Vector::empty();
 
     let mask = QS::from_int((1 << size_quant) - 1);
     let sign_bit = QS::from_int(1 << (size_quant - 1));
@@ -143,9 +143,9 @@ fn unpack_q<F: Float, NF: Size, QS: Int>(
 
 #[cube(launch_unchecked, address_type = "dynamic")]
 fn dequantize_symmetric_packed_kernel<F: Float, NF: Size, FS: Numeric, NQ: Size>(
-    input: &LinearView<Line<u32, NQ>>,
+    input: &LinearView<Vector<u32, NQ>>,
     scales: &ScalesView<FS>,
-    output: &mut LinearView<Line<F, NF>, ReadWrite>,
+    output: &mut LinearView<Vector<F, NF>, ReadWrite>,
     #[comptime] scheme: QuantScheme,
     #[define(F, FS)] _dtypes: [StorageType; 2],
 ) {
@@ -153,8 +153,8 @@ fn dequantize_symmetric_packed_kernel<F: Float, NF: Size, FS: Numeric, NQ: Size>
         terminate!();
     }
 
-    let line_size_in = input.line_size();
-    let line_size_out = output.line_size();
+    let line_size_in = input.vector_size();
+    let line_size_out = output.vector_size();
 
     comptime! {
         assert_eq!(line_size_out, scheme.num_quants());
@@ -174,9 +174,9 @@ fn dequantize_symmetric_packed_kernel<F: Float, NF: Size, FS: Numeric, NQ: Size>
 
 #[cube(launch_unchecked, address_type = "dynamic")]
 fn dequantize_symmetric_native_kernel<F: Float, NF: Size, FS: Numeric, Q: Numeric, NQ: Size>(
-    input: &LinearView<Line<Q, NQ>>,
+    input: &LinearView<Vector<Q, NQ>>,
     scale: &ScalesView<FS>,
-    output: &mut LinearView<Line<F, NF>, ReadWrite>,
+    output: &mut LinearView<Vector<F, NF>, ReadWrite>,
     #[define(F, FS, Q)] _dtypes: [StorageType; 3],
 ) {
     if !input.is_in_bounds(ABSOLUTE_POS) {
@@ -185,10 +185,10 @@ fn dequantize_symmetric_native_kernel<F: Float, NF: Size, FS: Numeric, Q: Numeri
 
     let native_packing = Q::packing_factor();
     // Absolute pos represents the logical block (scale) used to dequantize, not layout
-    let scale = scale[ABSOLUTE_POS * input.line_size() * native_packing];
+    let scale = scale[ABSOLUTE_POS * input.vector_size() * native_packing];
 
     output[ABSOLUTE_POS] =
-        dequantize_symmetric::<F, FS, NF>(Line::cast_from(input[ABSOLUTE_POS]), scale);
+        dequantize_symmetric::<F, FS, NF>(Vector::cast_from(input[ABSOLUTE_POS]), scale);
 }
 
 #[allow(clippy::result_large_err)]

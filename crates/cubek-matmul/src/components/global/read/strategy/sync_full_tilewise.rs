@@ -34,7 +34,7 @@ impl<TO: TilingOrder> LoadMaxRoundPlaneCount for SyncFullTilewiseLoading<TO> {
     fn max_round_plane_count(
         _elements_per_tile: u32,
         tiles_per_stage: u32,
-        _line_size: LineSize,
+        _line_size: VectorSize,
         _plane_dim: u32,
         _dtype: StorageType,
     ) -> u32 {
@@ -145,7 +145,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
     fn execute_task(
         this: &mut Self,
         #[comptime] task_id: u32,
-        global_iter: &GlobalIterator<Line<EG, NG>>,
+        global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut StridedStageMemory<ES, NS, ContiguousTilingLayout<TO>>,
         _barrier: &mut (),
         #[comptime] config: GlobalReaderConfig,
@@ -181,7 +181,7 @@ impl SyncFullTilewiseJob {
         tile: Coords2d,
         line_index_within_tile: u32,
         num_lines_to_skip_local: u32,
-        global_iter: &GlobalIterator<Line<EG, NG>>,
+        global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut StridedStageMemory<ES, NS, ContiguousTilingLayout<TO>>,
         #[comptime] config: GlobalReaderConfig,
     ) {
@@ -192,9 +192,9 @@ impl SyncFullTilewiseJob {
         let line_read = view.read_checked((tile, line_index_within_tile * line_size));
 
         let offset = this.num_lines_to_skip + line_index_within_tile + num_lines_to_skip_local;
-        let type_size = Line::<ES, NS>::type_size();
+        let type_size = Vector::<ES, NS>::type_size();
         let offset = stage.swizzle.apply(offset, type_size);
 
-        stage.as_slice_mut::<NS>()[offset as usize] = Line::cast_from(line_read);
+        stage.as_slice_mut::<NS>()[offset as usize] = Vector::cast_from(line_read);
     }
 }

@@ -53,7 +53,7 @@ impl LoadMaxRoundPlaneCount for SyncFullStridedLoading {
     fn max_round_plane_count(
         elements_per_tile: u32,
         tiles_per_stage: u32,
-        line_size: LineSize,
+        line_size: VectorSize,
         plane_dim: u32,
         _dtype: StorageType,
     ) -> u32 {
@@ -112,7 +112,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
     fn execute_task(
         this: &mut Self,
         #[comptime] task_id: u32,
-        global_iter: &GlobalIterator<Line<EG, NG>>,
+        global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut StridedStageMemory<ES, NS, StridedTilingLayout>,
         _barrier: &mut (),
         #[comptime] config: GlobalReaderConfig,
@@ -123,10 +123,10 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
         let view = global_iter.view().view(layout);
 
         let line_read = view.read_checked(unit_position * NG::value() as u32);
-        let type_size = Line::<ES, NS>::type_size();
+        let type_size = Vector::<ES, NS>::type_size();
         let stage_offs = stage.swizzle.apply(unit_position, type_size);
 
-        stage.as_slice_mut::<NS>()[stage_offs as usize] = Line::cast_from(line_read);
+        stage.as_slice_mut::<NS>()[stage_offs as usize] = Vector::cast_from(line_read);
     }
 
     fn task_count(this: &Self) -> comptime_type!(u32) {

@@ -27,19 +27,19 @@ impl PrngRuntime for Uniform {
         write_index_base: usize,
         n_invocations: u32,
         #[comptime] n_values_per_thread: usize,
-        #[comptime] line_size: LineSize,
+        #[comptime] line_size: VectorSize,
         state_0: &mut u32,
         state_1: &mut u32,
         state_2: &mut u32,
         state_3: &mut u32,
-        output: &mut View<Line<E, N>, usize, ReadWrite>,
+        output: &mut View<Vector<E, N>, usize, ReadWrite>,
     ) {
         let lower_bound = args.lower_bound;
         let upper_bound = args.upper_bound;
 
         let scale = upper_bound - lower_bound;
 
-        let mut output_line = Line::empty();
+        let mut output_line = Vector::empty();
 
         let num_iterations = n_values_per_thread / line_size;
         #[unroll(num_iterations <= 8)]

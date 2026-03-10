@@ -173,16 +173,16 @@ pub type GlobalSize<MP> = <MP as MatrixTypes>::GlobalSize;
 pub type Stage<MP> = <MP as MatrixTypes>::Stage;
 pub type StageSize<MP> = <MP as MatrixTypes>::StageSize;
 
-pub type LhsG<MP> = Line<Global<Lhs<MP>>, GlobalSize<Lhs<MP>>>;
-pub type LhsS<MP> = Line<Stage<Lhs<MP>>, StageSize<Lhs<MP>>>;
+pub type LhsG<MP> = Vector<Global<Lhs<MP>>, GlobalSize<Lhs<MP>>>;
+pub type LhsS<MP> = Vector<Stage<Lhs<MP>>, StageSize<Lhs<MP>>>;
 pub type LhsR<MP> = <<MP as MatmulTypes>::Lhs as MatrixTypes>::Register;
 
-pub type RhsG<MP> = Line<Global<Rhs<MP>>, GlobalSize<Rhs<MP>>>;
-pub type RhsS<MP> = Line<Stage<Rhs<MP>>, StageSize<Rhs<MP>>>;
+pub type RhsG<MP> = Vector<Global<Rhs<MP>>, GlobalSize<Rhs<MP>>>;
+pub type RhsS<MP> = Vector<Stage<Rhs<MP>>, StageSize<Rhs<MP>>>;
 pub type RhsR<MP> = <<MP as MatmulTypes>::Rhs as MatrixTypes>::Register;
 
-pub type AccG<MP> = Line<Global<Acc<MP>>, GlobalSize<Acc<MP>>>;
-pub type AccS<MP> = Line<Stage<Acc<MP>>, StageSize<Acc<MP>>>;
+pub type AccG<MP> = Vector<Global<Acc<MP>>, GlobalSize<Acc<MP>>>;
+pub type AccS<MP> = Vector<Stage<Acc<MP>>, StageSize<Acc<MP>>>;
 pub type AccR<MP> = <<MP as MatmulTypes>::Acc as MatrixTypes>::Register;
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]

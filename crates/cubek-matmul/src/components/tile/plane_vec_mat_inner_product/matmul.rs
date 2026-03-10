@@ -22,14 +22,14 @@ define_size!(NR);
 
 #[derive(CubeType)]
 pub struct LineContainer<E: Numeric> {
-    pub line: Line<E, NR>,
+    pub line: Vector<E, NR>,
 }
 
 #[cube]
 impl<E: Numeric> LineContainer<E> {
     fn new() -> LineContainer<E> {
         LineContainer::<E> {
-            line: Line::empty(),
+            line: Vector::empty(),
         }
     }
 }
@@ -64,8 +64,8 @@ where
         #[unroll]
         #[allow(clippy::explicit_counter_loop)]
         for n in 0..config.shared.tile_size.n() as usize {
-            let lhs: Line<A, NR> = Line::cast_from(lhs.line);
-            let rhs: Line<A, NR> = Line::cast_from(rhs[n].line);
+            let lhs: Vector<A, NR> = Vector::cast_from(lhs.line);
+            let rhs: Vector<A, NR> = Vector::cast_from(rhs[n].line);
 
             plane_sum_lined(
                 lhs * rhs,
@@ -149,9 +149,9 @@ where
 
 #[cube]
 fn plane_sum_lined<E: Numeric, N: Size>(
-    line_to_sum: Line<E, N>,
+    line_to_sum: Vector<E, N>,
     line_accumulator: &mut LineContainer<E>,
-    #[comptime] line_size: LineSize,
+    #[comptime] line_size: VectorSize,
 ) {
     #[unroll]
     #[allow(clippy::explicit_counter_loop)]

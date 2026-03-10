@@ -21,7 +21,7 @@ impl MmaStageWriter {
         CD: Numeric,
     >(
         tile: &mut StridedTile<V, NV, ReadWrite>,
-        fragment: &Array<Line<E, N>>,
+        fragment: &Array<Vector<E, N>>,
         def: MmaDefinition<A, B, CD>,
         #[comptime] ident: MatrixIdent,
         #[comptime] layout: MatrixLayout,
@@ -57,7 +57,7 @@ fn store_manual_transposed<
     CD: Numeric,
 >(
     tile: &mut StridedTile<V, NV, ReadWrite>,
-    fragment: &Array<Line<E, N>>,
+    fragment: &Array<Vector<E, N>>,
     def: MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
@@ -83,7 +83,7 @@ fn store_manual_transposed<
             let offset = row * stride_row + col * stride_col;
             let offset = tile.stage_offset(offset);
 
-            tile.stage[offset as usize] = Line::cast_from(fragment[i][n]);
+            tile.stage[offset as usize] = Vector::cast_from(fragment[i][n]);
         }
     }
 }
@@ -99,7 +99,7 @@ fn store_manual_plain<
     CD: Numeric,
 >(
     tile: &mut StridedTile<V, NV, ReadWrite>,
-    fragment: &Array<Line<E, N>>,
+    fragment: &Array<Vector<E, N>>,
     def: MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
@@ -124,7 +124,7 @@ fn store_manual_plain<
         let offset = row * stride_row + col * stride_col;
         let offset = tile.stage_offset(offset / line_size as u32);
 
-        tile.stage[offset as usize] = Line::cast_from(value);
+        tile.stage[offset as usize] = Vector::cast_from(value);
     }
 }
 
@@ -145,13 +145,13 @@ fn store_stmatrix<
     CD: Numeric,
 >(
     tile: &mut StridedTile<V, NV, ReadWrite>,
-    fragment: &Array<Line<E, N>>,
+    fragment: &Array<Vector<E, N>>,
     def: MmaDefinition<A, B, CD>,
     #[comptime] transposed: bool,
     #[comptime] ident: MatrixIdent,
     #[comptime] m: u32,
 ) {
-    let stage_line_size = tile.stage.line_size().comptime();
+    let stage_line_size = tile.stage.vector_size().comptime();
     let stride = tile.unlined_stride();
 
     let elem_size = E::type_size().comptime();
@@ -168,7 +168,7 @@ fn store_stmatrix<
     let stage_ty = type_of::<V>().comptime();
     let frag_ty = type_of::<E>().comptime();
     if stage_ty == frag_ty {
-        def.store_matrix::<Line<E, NV>, N>(
+        def.store_matrix::<Vector<E, NV>, N>(
             &mut row_slice.downcast(),
             fragment,
             ident,
@@ -179,7 +179,7 @@ fn store_stmatrix<
         let mut frag = Array::new(num_regs);
         #[unroll]
         for i in 0..num_regs {
-            frag[i] = Line::cast_from(fragment[i]);
+            frag[i] = Vector::cast_from(fragment[i]);
         }
         def.store_matrix::<_, N>(&mut row_slice, &frag, ident, num_regs, transposed);
     }
@@ -191,7 +191,7 @@ fn store_stmatrix<
 pub(crate) fn stmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     stride: u32,
     def: MmaDefinition<A, B, CD>,
-    #[comptime] stage_line_size: LineSize,
+    #[comptime] stage_line_size: VectorSize,
     #[comptime] ident: MatrixIdent,
     #[comptime] m: u32,
 ) -> u32 {

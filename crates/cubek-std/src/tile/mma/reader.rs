@@ -25,7 +25,7 @@ pub trait MmaFragmentReader {
         CD: Numeric,
     >(
         tile: &<Self::TileKind as TileKind>::Tile<V, NV>,
-        fragment: &mut Array<Line<E, N>>,
+        fragment: &mut Array<Vector<E, N>>,
         def: MmaDefinition<A, B, CD>,
         #[comptime] ident: MatrixIdent,
         #[comptime] layout: MatrixLayout,
@@ -55,7 +55,7 @@ impl MmaFragmentReader for MmaStageReader<Strided> {
         CD: Numeric,
     >(
         tile: &StridedTile<V, NV>,
-        fragment: &mut Array<Line<E, NE>>,
+        fragment: &mut Array<Vector<E, NE>>,
         def: MmaDefinition<A, B, CD>,
         #[comptime] ident: MatrixIdent,
         #[comptime] layout: MatrixLayout,
@@ -92,7 +92,7 @@ fn load_manual_transposed<
     CD: Numeric,
 >(
     tile: &StridedTile<V, NV>,
-    fragment: &mut Array<Line<E, N>>,
+    fragment: &mut Array<Vector<E, N>>,
     def: MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
@@ -111,7 +111,7 @@ fn load_manual_transposed<
 
     #[unroll]
     for i in 0..num_lines {
-        let mut line = Line::empty();
+        let mut line = Vector::empty();
         #[unroll]
         for n in 0..line_size {
             let elem_idx = i * line_size + n;
@@ -136,7 +136,7 @@ fn load_manual_plain<
     CD: Numeric,
 >(
     tile: &StridedTile<V, NV>,
-    fragment: &mut Array<Line<E, N>>,
+    fragment: &mut Array<Vector<E, N>>,
     def: MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
@@ -161,7 +161,7 @@ fn load_manual_plain<
         let offset = row * stride_row + col * stride_col;
         let stage_offset = tile.stage_offset(offset / line_size as u32);
 
-        fragment[i] = Line::cast_from(tile.stage[stage_offset as usize]);
+        fragment[i] = Vector::cast_from(tile.stage[stage_offset as usize]);
     }
 }
 
@@ -174,14 +174,14 @@ fn load_manual_plain<
 #[cube]
 fn load_ldmatrix<E: Numeric, N: Size, V: Numeric, NV: Size, A: Numeric, B: Numeric, CD: Numeric>(
     tile: &StridedTile<V, NV>,
-    fragment: &mut Array<Line<E, N>>,
+    fragment: &mut Array<Vector<E, N>>,
     def: MmaDefinition<A, B, CD>,
     #[comptime] transposed: bool,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_size: TileSize,
 ) {
-    let stage_line_size = tile.stage.line_size().comptime();
+    let stage_line_size = tile.stage.vector_size().comptime();
     let stride = tile.unlined_stride();
 
     let elem_size = E::type_size().comptime();
@@ -197,7 +197,7 @@ fn load_ldmatrix<E: Numeric, N: Size, V: Numeric, NV: Size, A: Numeric, B: Numer
 
     #[unroll]
     for i in 0..num_regs {
-        fragment[i] = Line::cast_from(regs[i]);
+        fragment[i] = Vector::cast_from(regs[i]);
     }
 }
 
@@ -207,7 +207,7 @@ fn load_ldmatrix<E: Numeric, N: Size, V: Numeric, NV: Size, A: Numeric, B: Numer
 pub(crate) fn ldmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     stride: u32,
     def: MmaDefinition<A, B, CD>,
-    #[comptime] stage_line_size: LineSize,
+    #[comptime] stage_line_size: VectorSize,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_size: TileSize,
@@ -269,7 +269,7 @@ impl MmaFragmentReader for MmaStageReader<Filled> {
         CD: Numeric,
     >(
         value: &V,
-        fragment: &mut Array<Line<E, N>>,
+        fragment: &mut Array<Vector<E, N>>,
         def: MmaDefinition<A, B, CD>,
         #[comptime] ident: MatrixIdent,
         #[comptime] _layout: MatrixLayout,
@@ -277,7 +277,7 @@ impl MmaFragmentReader for MmaStageReader<Filled> {
         #[comptime] _config: MmaIOConfig,
     ) {
         let num_lines = def.lines_per_lane(ident);
-        let value = Line::<E, N>::cast_from(*value);
+        let value = Vector::<E, N>::cast_from(*value);
 
         #[unroll]
         for i in 0..num_lines {
@@ -303,7 +303,7 @@ where
         CD: Numeric,
     >(
         tile: &ComptimeOption<Inner::Tile<V, NV>>,
-        fragment: &mut Array<Line<E, N>>,
+        fragment: &mut Array<Vector<E, N>>,
         def: MmaDefinition<A, B, CD>,
         #[comptime] ident: MatrixIdent,
         #[comptime] layout: MatrixLayout,

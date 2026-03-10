@@ -4,8 +4,8 @@ use cubecl::prelude::*;
 #[derive(Debug)]
 pub struct ReduceLineSettings {
     pub line_mode: LineMode,
-    pub line_size_input: LineSize,
-    pub line_size_output: LineSize,
+    pub line_size_input: VectorSize,
+    pub line_size_output: VectorSize,
 }
 
 #[derive(Debug)]

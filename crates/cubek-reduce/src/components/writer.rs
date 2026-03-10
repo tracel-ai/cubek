@@ -66,7 +66,7 @@ impl<Out: NumericLine> Writer<Out> {
         }
     }
 
-    pub fn write_count(&self) -> comptime_type!(LineSize) {
+    pub fn write_count(&self) -> comptime_type!(VectorSize) {
         match self {
             Writer::Parallel(writer) => writer.write_count(),
             Writer::Perpendicular(writer) => writer.write_count(),
@@ -76,8 +76,8 @@ impl<Out: NumericLine> Writer<Out> {
 
 #[derive(CubeType)]
 pub struct ParallelWriter<Out: NumericLine> {
-    output: View<Line<Out::T, Out::N>, Coords1d, ReadWrite>,
-    buffer: Line<Out::T, Out::N>,
+    output: View<Vector<Out::T, Out::N>, Coords1d, ReadWrite>,
+    buffer: Vector<Out::T, Out::N>,
     axis_size: usize,
     write_index: usize,
 }
@@ -92,7 +92,7 @@ impl<Out: NumericLine> ParallelWriter<Out> {
     ) -> ParallelWriter<Out> {
         ParallelWriter::<Out> {
             output: output.view_mut(PlainLayout::new(output.len())),
-            buffer: Line::empty(),
+            buffer: Vector::empty(),
             axis_size: input.shape(reduce_axis),
             write_index,
         }
@@ -112,7 +112,7 @@ impl<Out: NumericLine> ParallelWriter<Out> {
         self.output.write(self.write_index, self.buffer)
     }
 
-    pub fn write_count(&self) -> comptime_type!(LineSize) {
+    pub fn write_count(&self) -> comptime_type!(VectorSize) {
         self.buffer.line_size()
     }
 
@@ -123,12 +123,12 @@ impl<Out: NumericLine> ParallelWriter<Out> {
 
 #[derive(CubeType)]
 pub struct PerpendicularWriter<Out: NumericLine> {
-    output: View<Line<Out::T, Out::N>, Coords1d, ReadWrite>,
+    output: View<Vector<Out::T, Out::N>, Coords1d, ReadWrite>,
     axis_size: usize,
     #[cube(comptime)]
-    input_line_size: LineSize,
+    input_line_size: VectorSize,
     #[cube(comptime)]
-    output_line_size: LineSize,
+    output_line_size: VectorSize,
     write_index: usize,
 }
 
@@ -140,8 +140,8 @@ impl<Out: NumericLine> PerpendicularWriter<Out> {
         reduce_axis: usize,
         write_index: usize,
     ) -> PerpendicularWriter<Out> {
-        let input_line_size = input.line_size();
-        let output_line_size = output.line_size();
+        let input_line_size = input.vector_size();
+        let output_line_size = output.vector_size();
 
         PerpendicularWriter::<Out> {
             output: output.view_mut(PlainLayout::new(output.len())),
@@ -161,13 +161,13 @@ impl<Out: NumericLine> PerpendicularWriter<Out> {
         let out = I::to_output_perpendicular::<Out::T>(inst, accumulator, self.axis_size);
 
         if comptime![self.output_line_size == self.input_line_size] {
-            self.output.write(self.write_index, Line::cast_from(out));
+            self.output.write(self.write_index, Vector::cast_from(out));
         } else {
             let num_iters = comptime![self.input_line_size / self.output_line_size];
 
             #[unroll]
             for i in 0..num_iters {
-                let mut tmp = Line::empty();
+                let mut tmp = Vector::empty();
 
                 #[unroll]
                 for j in 0..self.output_line_size {
@@ -184,7 +184,7 @@ impl<Out: NumericLine> PerpendicularWriter<Out> {
         // Nothing to do.
     }
 
-    pub fn write_count(&self) -> comptime_type!(LineSize) {
+    pub fn write_count(&self) -> comptime_type!(VectorSize) {
         1
     }
 

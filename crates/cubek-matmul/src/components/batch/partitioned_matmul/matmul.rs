@@ -31,11 +31,11 @@ pub(crate) fn matmul_entry<
     GPM: GlobalPartitionMatmul,
 >(
     inputs: &<Args as MatmulArgs>::Input<
-        Line<Lhs, LhsSize>,
-        Line<Rhs, RhsSize>,
-        Line<Acc, AccSize>,
+        Vector<Lhs, LhsSize>,
+        Vector<Rhs, RhsSize>,
+        Vector<Acc, AccSize>,
     >,
-    output: &mut <Args as MatmulArgs>::Output<Line<Acc, AccSize>>,
+    output: &mut <Args as MatmulArgs>::Output<Vector<Acc, AccSize>>,
     config: <Args as MatmulArgs>::Config,
     cube_mapping: CubeMapping,
     #[comptime] blueprint: TilingBlueprint,
@@ -43,18 +43,19 @@ pub(crate) fn matmul_entry<
     #[define(Lhs, Rhs, Acc)] _global: [StorageType; 3],
     #[define(LhsSize, RhsSize, AccSize)] _sizes: [usize; 3],
 ) {
-    let mut state = Args::init_state::<Line<Lhs, LhsSize>, Line<Rhs, RhsSize>, Line<Acc, AccSize>>(
-        inputs,
-        output,
-        config,
-        blueprint.lhs_global_layout_config(),
-        blueprint.rhs_global_layout_config(),
-        blueprint.out_global_layout_config(),
-    );
+    let mut state =
+        Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
+            inputs,
+            output,
+            config,
+            blueprint.lhs_global_layout_config(),
+            blueprint.rhs_global_layout_config(),
+            blueprint.out_global_layout_config(),
+        );
 
-    let line_size_lhs = Args::view_lhs(&state).line_size();
-    let line_size_rhs = Args::view_rhs(&state).line_size();
-    let line_size_out = Args::view_out(&mut state).line_size();
+    let line_size_lhs = Args::view_lhs(&state).vector_size();
+    let line_size_rhs = Args::view_rhs(&state).vector_size();
+    let line_size_out = Args::view_out(&mut state).vector_size();
     let line_sizes = comptime!(MatmulLineSizes {
         lhs: line_size_lhs,
         rhs: line_size_rhs,
@@ -87,7 +88,7 @@ pub(crate) fn matmul_entry<
 
     let stage_lhs = config.global_config.stage_config().lhs_smem_config();
     let stage_rhs = config.global_config.stage_config().rhs_smem_config();
-    let stage_acc = config.global_config.stage_config().out_smem_config();
+    let stage_acc = config.global_config.stage_config().acc_smem_config();
 
     let define!(StageLhs) = stage_lhs.dtype;
     let size!(StageLhsSize) = comptime![stage_lhs.line_size as usize];
@@ -104,14 +105,14 @@ pub(crate) fn matmul_entry<
     PartitionedBatchMatmul::<
         Args::Config,
         (
-            (Lhs, LhsSize, Lhs, LhsSize, RegisterLhs),
-            (Rhs, RhsSize, Rhs, RhsSize, RegisterRhs),
-            (Acc, AccSize, Acc, AccSize, RegisterAcc),
+            (Lhs, LhsSize, StageLhs, StageLhsSize, RegisterLhs),
+            (Rhs, RhsSize, StageRhs, StageRhsSize, RegisterRhs),
+            (Acc, AccSize, StageAcc, StageAccSize, RegisterAcc),
         ),
         GMMF::Matmul<(
-            (Lhs, LhsSize, Lhs, LhsSize, RegisterLhs),
-            (Rhs, RhsSize, Rhs, RhsSize, RegisterRhs),
-            (Acc, AccSize, Acc, AccSize, RegisterAcc),
+            (Lhs, LhsSize, StageLhs, StageLhsSize, RegisterLhs),
+            (Rhs, RhsSize, StageRhs, StageRhsSize, RegisterRhs),
+            (Acc, AccSize, StageAcc, StageAccSize, RegisterAcc),
         )>,
         GPM,
     >::execute::<Args>(&mut state, cube_mapping, config);

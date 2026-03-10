@@ -66,7 +66,7 @@ pub trait GlobalMatmulFamily<RC: RuntimeConfig>: Send + Sync + 'static {
 ///    M and N should match the underlying Stage matmul's M and N.
 ///
 /// # Assumptions
-/// - Line sizes of the inputs evenly divide the dimension they are aligned with.
+/// - Vector sizes of the inputs evenly divide the dimension they are aligned with.
 ///
 /// # Safety
 ///

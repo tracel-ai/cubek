@@ -79,7 +79,7 @@ pub trait BatchMatmulFamily<RC: RuntimeConfig>: 'static + Send + Sync {
 ///    as well as the number of batches.
 ///
 /// # Assumptions
-/// - Line sizes of the inputs evenly divide the dimension they are aligned with.
+/// - Vector sizes of the inputs evenly divide the dimension they are aligned with.
 ///
 /// # Safety
 ///

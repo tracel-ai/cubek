@@ -15,7 +15,7 @@ use crate::components::{
 
 #[derive(CubeType)]
 pub struct UnitAttentionWriter<ES: Numeric, ESS: Size, EG: Numeric, EGS: Size> {
-    global: View<Line<EG, EGS>, TiledCoords, ReadWrite>,
+    global: View<Vector<EG, EGS>, TiledCoords, ReadWrite>,
     stage: PartitionedStage<ES, ESS>,
 
     #[cube(comptime)]
@@ -45,7 +45,7 @@ impl<ES: Numeric, ESS: Size, EG: Numeric, EGS: Size> AttentionWriter<ES, ESS, EG
     for UnitAttentionWriter<ES, ESS, EG, EGS>
 {
     fn init<S: StageAttentionConfig>(
-        global: View<Line<EG, EGS>, Coords2d, ReadWrite>,
+        global: View<Vector<EG, EGS>, Coords2d, ReadWrite>,
         #[comptime] config: GlobalWriterConfig,
     ) -> Self {
         let stage =

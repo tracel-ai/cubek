@@ -25,7 +25,7 @@ impl StageFamily for StridedStageFamily {
 /// abstracting its layout
 pub struct StridedStageMemory<ES: Numeric, NS: Size, T: TilingLayout> {
     /// Underlying shared memory
-    pub smem: SharedMemory<Line<ES, NS>>,
+    pub smem: SharedMemory<Vector<ES, NS>>,
     /// Swizzling of the shared memory, if any
     pub swizzle: Swizzle,
     buffer_index: u32,
@@ -43,7 +43,7 @@ pub struct StridedStageMemory<ES: Numeric, NS: Size, T: TilingLayout> {
 impl<ES: Numeric, NS: Size, T: TilingLayout> StridedStageMemory<ES, NS, T> {
     /// Instantiate a new stage memory for the given identifier
     pub fn new(#[comptime] config: StageMemoryConfig) -> StridedStageMemory<ES, NS, T> {
-        Self::new_aligned(Line::<ES, NS>::type_size(), config)
+        Self::new_aligned(Vector::<ES, NS>::type_size(), config)
     }
 
     /// Instantiate a new stage memory for the given identifier, with shared memory alignment
@@ -55,7 +55,7 @@ impl<ES: Numeric, NS: Size, T: TilingLayout> StridedStageMemory<ES, NS, T> {
         let swizzle = as_swizzle_object(config.swizzle);
         let swizzle_align = swizzle.repeats_after();
         let align = comptime![Ord::max(alignment, swizzle_align as usize)];
-        let type_size = Line::<ES, NS>::type_size().comptime();
+        let type_size = Vector::<ES, NS>::type_size().comptime();
 
         let stage_size_bytes = config.elements_per_stage() as usize * type_size;
         // Ensure all stages are aligned properly
@@ -116,7 +116,7 @@ impl<ES: Numeric, NS: Size, T: TilingLayout> StridedStageMemory<ES, NS, T> {
     }
 
     /// Return the whole stage as a slice, for reading
-    pub fn as_slice<N: Size>(&self) -> Slice<Line<ES, N>> {
+    pub fn as_slice<N: Size>(&self) -> Slice<Vector<ES, N>> {
         let stage_offset = (self.buffer_index * self.stage_size) as usize;
         self.smem
             .slice(stage_offset, stage_offset + self.stage_size as usize)
@@ -124,7 +124,7 @@ impl<ES: Numeric, NS: Size, T: TilingLayout> StridedStageMemory<ES, NS, T> {
     }
 
     /// Return the whole stage as a mutable slice, for loading
-    pub fn as_slice_mut<N: Size>(&mut self) -> SliceMut<Line<ES, N>> {
+    pub fn as_slice_mut<N: Size>(&mut self) -> SliceMut<Vector<ES, N>> {
         let stage_offset = (self.buffer_index * self.stage_size) as usize;
         self.smem
             .slice_mut(stage_offset, stage_offset + self.stage_size as usize)
@@ -150,10 +150,10 @@ impl<ES: Numeric, NS: Size, T: TilingLayout> StridedStageMemory<ES, NS, T> {
 
             #[allow(clippy::collapsible_else_if)]
             if smem_length % unit_count == 0 {
-                self.smem[offset as usize] = Line::zeroed();
+                self.smem[offset as usize] = Vector::zeroed();
             } else {
                 if offset < smem_length {
-                    self.smem[offset as usize] = Line::zeroed();
+                    self.smem[offset as usize] = Vector::zeroed();
                 }
             }
         }
@@ -183,10 +183,10 @@ impl<ES: Numeric, NS: Size, T: TilingLayout> StridedStageMemory<ES, NS, T> {
 
             #[allow(clippy::collapsible_else_if)]
             if this.stage_size.comptime().is_multiple_of(unit_count) {
-                stage[unit_position as usize] = Line::zeroed();
+                stage[unit_position as usize] = Vector::zeroed();
             } else {
                 if unit_position < this.stage_size {
-                    stage[unit_position as usize] = Line::zeroed();
+                    stage[unit_position as usize] = Vector::zeroed();
                 }
             }
         }

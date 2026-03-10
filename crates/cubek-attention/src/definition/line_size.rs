@@ -10,7 +10,7 @@ use cubecl::{
 use crate::definition::{AttentionGlobalTypes, AttentionIdent, AttentionProblem};
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-/// Line size used for each tensor in global memory accesses.
+/// Vector size used for each tensor in global memory accesses.
 /// Represents the number of elements processed per SIMD load/store.
 pub struct AttentionLineSizes {
     pub query: usize,

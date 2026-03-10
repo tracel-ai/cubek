@@ -143,7 +143,7 @@ impl<AP: AttentionPrecision> TileAttention<AP> for UnitRegisterTileAttention {
 
     fn write_results<E: Float, N: Size>(
         out: &Self::Accumulator,
-        slice: &mut SliceMut<Line<E, N>>,
+        slice: &mut SliceMut<Vector<E, N>>,
         #[comptime] _config: Self::Config,
     ) {
         unit_tile_to_slice(out, slice)
@@ -200,7 +200,7 @@ fn strided_tile_to_transposed_unit_tile<E: Numeric, N: Size, E2: Numeric>(
 #[cube]
 fn unit_tile_to_slice<E: Numeric, N: Size, E2: Numeric>(
     unit_tile: &UnitTile<E>,
-    slice: &mut SliceMut<Line<E2, N>>,
+    slice: &mut SliceMut<Vector<E2, N>>,
 ) {
     let line_size = N::value().comptime() as u32;
     assert!(unit_tile.layout.num_cols.is_multiple_of(line_size));
@@ -209,7 +209,7 @@ fn unit_tile_to_slice<E: Numeric, N: Size, E2: Numeric>(
 
     for row in 0..unit_tile.layout.num_rows {
         for col in 0..col_iterations {
-            let mut out_line = Line::empty();
+            let mut out_line = Vector::empty();
 
             #[unroll]
             for i in 0..line_size {

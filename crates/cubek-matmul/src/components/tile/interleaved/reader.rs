@@ -50,7 +50,7 @@ impl InterleavedStageReader {
 
         for i in 0..strided_dim_count {
             for j in 0..line_count_in_dim {
-                let line = Line::<E, N>::cast_from(tile.get_line(
+                let line = Vector::<E, N>::cast_from(tile.get_line(
                     (i + strided_dim_offset) as u32,
                     (j + contiguous_dim_offset) as u32,
                 ));

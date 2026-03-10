@@ -83,7 +83,7 @@ pub struct GlobalLayout {
     stride_col: usize,
 
     #[cube(comptime)]
-    line_size: LineSize,
+    line_size: VectorSize,
     #[cube(comptime)]
     packing: u32,
     #[cube(comptime)]
@@ -100,7 +100,7 @@ impl GlobalLayout {
         shape_col: u32,
         stride_row: usize,
         stride_col: usize,
-        #[comptime] line_size: LineSize,
+        #[comptime] line_size: VectorSize,
         #[comptime] packing: u32,
         #[comptime] config: GlobalLayoutConfig,
     ) -> Self {
@@ -160,7 +160,7 @@ impl Layout for GlobalLayout {
 impl<R: Runtime> GlobalLayoutLaunch<R> {
     pub fn from_handle(
         handle: &TensorBinding<R>,
-        line_size: LineSize,
+        line_size: VectorSize,
         config: GlobalLayoutConfig,
     ) -> Self {
         let rank = handle.shape.len();
@@ -185,7 +185,7 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
         client: &ComputeClient<R>,
         handle: &TensorBinding<R>,
         problem: &MatmulProblem,
-        line_size: LineSize,
+        line_size: VectorSize,
         config: GlobalLayoutConfig,
     ) -> Self {
         let rank = handle.shape.len();
@@ -216,7 +216,7 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
         shape: &Shape,
         problem: &MatmulProblem,
         scheme: QuantScheme,
-        line_size: LineSize,
+        line_size: VectorSize,
         config: GlobalLayoutConfig,
     ) -> (GlobalLayoutLaunch<R>, GlobalScaleLayoutArgs<R>) {
         let rank = values.shape.len();

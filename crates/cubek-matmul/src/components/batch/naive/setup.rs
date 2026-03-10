@@ -126,7 +126,7 @@ impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
     ) -> Result<(), MatmulSetupError> {
         if blueprint.line_size_out > 1 {
             return Err(MatmulSetupError::InvalidConfig(Box::new(
-                "Line size on output not supported",
+                "Vector size on output not supported",
             )));
         }
 

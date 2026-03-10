@@ -76,16 +76,16 @@ impl<N: Size> ReduceCoordinate<N> {
 pub(crate) fn fill_coordinate_line<N: Size>(
     first: u32,
     #[comptime] line_mode: LineMode,
-) -> Line<u32, N> {
+) -> Vector<u32, N> {
     match line_mode {
         LineMode::Parallel => {
-            let mut coordinates = Line::empty();
+            let mut coordinates = Vector::empty();
             #[unroll]
             for j in 0..N::value() {
                 coordinates[j] = first + j as u32;
             }
             coordinates
         }
-        LineMode::Perpendicular => Line::empty().fill(first),
+        LineMode::Perpendicular => Vector::empty().fill(first),
     }
 }

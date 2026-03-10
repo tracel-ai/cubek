@@ -22,7 +22,7 @@ impl StageFamily for BiasStageFamily {
 /// abstracting its layout
 pub struct BiasStageMemory<ES: Numeric, NS: Size> {
     /// Underlying shared memory
-    pub smem: SharedMemory<Line<ES, NS>>,
+    pub smem: SharedMemory<Vector<ES, NS>>,
     /// Swizzling of the shared memory, if any
     pub swizzle: Swizzle,
     buffer_index: u32,
@@ -37,7 +37,7 @@ pub struct BiasStageMemory<ES: Numeric, NS: Size> {
 impl<ES: Numeric, NS: Size> BiasStageMemory<ES, NS> {
     /// Instantiate a new stage memory for the given identifier
     pub fn new(#[comptime] config: StageMemoryConfig) -> BiasStageMemory<ES, NS> {
-        Self::new_aligned(Line::<ES, NS>::type_size(), config)
+        Self::new_aligned(Vector::<ES, NS>::type_size(), config)
     }
 
     /// Instantiate a new stage memory for the given identifier, with shared memory alignment
@@ -49,7 +49,7 @@ impl<ES: Numeric, NS: Size> BiasStageMemory<ES, NS> {
         let swizzle = as_swizzle_object(config.swizzle);
         let swizzle_align = swizzle.repeats_after();
         let align = comptime![Ord::max(alignment, swizzle_align as usize)];
-        let type_size = Line::<ES, NS>::type_size().comptime();
+        let type_size = Vector::<ES, NS>::type_size().comptime();
 
         let stage_size_bytes =
             config.elements_per_stage_along_contiguous_dim() as usize * type_size;
@@ -96,7 +96,7 @@ impl<ES: Numeric, NS: Size> BiasStageMemory<ES, NS> {
     }
 
     /// Return the whole stage as a slice, for reading
-    pub fn as_slice(&self) -> Slice<Line<ES, NS>> {
+    pub fn as_slice(&self) -> Slice<Vector<ES, NS>> {
         let stage_offset = (self.buffer_index * self.stage_size) as usize;
         self.smem
             .slice(stage_offset, stage_offset + self.stage_size as usize)
@@ -104,7 +104,7 @@ impl<ES: Numeric, NS: Size> BiasStageMemory<ES, NS> {
     }
 
     /// Return the whole stage as a mutable slice, for loading
-    pub fn as_slice_mut(&mut self) -> SliceMut<Line<ES, NS>> {
+    pub fn as_slice_mut(&mut self) -> SliceMut<Vector<ES, NS>> {
         let stage_offset = (self.buffer_index * self.stage_size) as usize;
         self.smem
             .slice_mut(stage_offset, stage_offset + self.stage_size as usize)

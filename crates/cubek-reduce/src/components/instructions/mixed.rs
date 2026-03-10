@@ -111,14 +111,14 @@ impl ReduceFamily for ReduceOperation {
 
 #[derive(CubeType)]
 pub struct DynamicAccumulator<T: Numeric, N: Size> {
-    pub elements: SharedMemory<Line<T, N>>,
-    pub args: ComptimeOption<SharedMemory<Line<u32, N>>>,
+    pub elements: SharedMemory<Vector<T, N>>,
+    pub args: ComptimeOption<SharedMemory<Vector<u32, N>>>,
 }
 
 #[derive(CubeType)]
 pub struct DynamicAccumulatorItem<T: Numeric, N: Size> {
-    pub elements: Line<T, N>,
-    pub args: ComptimeOption<Line<u32, N>>,
+    pub elements: Vector<T, N>,
+    pub args: ComptimeOption<Vector<u32, N>>,
 }
 
 #[cube]
@@ -188,7 +188,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
         }
     }
 
-    fn null_input(this: &Self) -> Line<P::EI, P::SI> {
+    fn null_input(this: &Self) -> Vector<P::EI, P::SI> {
         match this {
             ReduceOperation::Sum(sum) => <Sum as ReduceInstruction<P>>::null_input(sum),
             ReduceOperation::Prod(prod) => <Prod as ReduceInstruction<P>>::null_input(prod),
@@ -273,7 +273,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
     fn read_accumulator(
         this: &Self,
         accumulator: &Self::AccumulatorItem,
-    ) -> (Line<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
+    ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
         match this {
             ReduceOperation::Sum(sum) => {
                 <Sum as ReduceInstruction<P>>::read_accumulator(sum, &accumulator.elements)
@@ -322,7 +322,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
     fn reduce(
         this: &Self,
         accumulator: &Self::AccumulatorItem,
-        item: Line<P::EI, P::SI>,
+        item: Vector<P::EI, P::SI>,
         coordinate: ReduceCoordinate<P::SI>,
         #[comptime] use_planes: bool,
     ) -> Self::AccumulatorItem {
@@ -588,7 +588,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
         this: &Self,
         accumulator: Self::AccumulatorItem,
         shape_axis_reduce: usize,
-    ) -> Line<Out, P::SI> {
+    ) -> Vector<Out, P::SI> {
         match this {
             ReduceOperation::Sum(sum) => <Sum as ReduceInstruction<P>>::to_output_perpendicular::<
                 Out,

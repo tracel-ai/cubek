@@ -1,5 +1,5 @@
 use cubecl::{Runtime, client::ComputeClient, ir::StorageType};
-use cubecl::{features::MmaConfig, ir::LineSize};
+use cubecl::{features::MmaConfig, ir::VectorSize};
 use cubek_std::stage::SwizzleMode;
 use cubek_std::{MatrixLayout, PartitionSize, StageSize, TileSize};
 
@@ -193,8 +193,8 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
 /// All modes currently use atom size 16
 const SWIZZLE_ATOM: usize = 16;
 
-pub fn select_swizzle(swizzle_dim: usize, elem: StorageType, line_size: LineSize) -> SwizzleMode {
-    // Line size exceeds swizzle atom
+pub fn select_swizzle(swizzle_dim: usize, elem: StorageType, line_size: VectorSize) -> SwizzleMode {
+    // Vector size exceeds swizzle atom
     if elem.size() * line_size > SWIZZLE_ATOM {
         return SwizzleMode::None;
     }

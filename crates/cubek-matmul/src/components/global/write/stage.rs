@@ -23,7 +23,7 @@ impl StageFamily<ReadWrite> for PartitionedStageFamily {
 /// Layoutless stage for current writers. Tile only depends on the unit index, not the out tile.
 pub struct PartitionedStage<ES: Numeric, NS: Size> {
     /// Underlying shared memory
-    _smem: SharedMemory<Line<ES, NS>>,
+    _smem: SharedMemory<Vector<ES, NS>>,
     pub unit_tile: StridedTile<ES, NS, ReadWrite>,
 }
 

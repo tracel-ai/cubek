@@ -34,7 +34,7 @@ pub trait GlobalWriter<IP: MatrixTypes>:
 
     /// Init this writer from a global tensor and config
     fn init(
-        tensor: View<Line<IP::Global, IP::GlobalSize>, Coords2d, ReadWrite>,
+        tensor: View<Vector<IP::Global, IP::GlobalSize>, Coords2d, ReadWrite>,
         #[comptime] config: GlobalWriterConfig,
     ) -> Self;
 

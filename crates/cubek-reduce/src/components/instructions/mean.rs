@@ -13,14 +13,14 @@ impl ReduceFamily for Mean {
 }
 
 #[cube]
-fn null_input<P: ReducePrecision, SI: ReduceInstruction<P>>(sum: &SI) -> Line<P::EI, P::SI> {
+fn null_input<P: ReducePrecision, SI: ReduceInstruction<P>>(sum: &SI) -> Vector<P::EI, P::SI> {
     SI::null_input(sum)
 }
 
 #[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for Mean {
-    type AccumulatorItem = Line<P::EA, P::SI>;
-    type SharedAccumulator = SharedMemory<Line<P::EA, P::SI>>;
+    type AccumulatorItem = Vector<P::EA, P::SI>;
+    type SharedAccumulator = SharedMemory<Vector<P::EA, P::SI>>;
     type Config = ();
 
     fn requirements(_this: &Self) -> ReduceRequirements {
@@ -30,7 +30,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Mean {
         Mean { sum: Sum {} }
     }
 
-    fn null_input(this: &Self) -> Line<P::EI, P::SI> {
+    fn null_input(this: &Self) -> Vector<P::EI, P::SI> {
         <Sum as ReduceInstruction<P>>::null_input(&this.sum)
     }
 
@@ -48,10 +48,10 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Mean {
 
     fn read_accumulator(
         _this: &Self,
-        accumulator: &Line<P::EA, P::SI>,
-    ) -> (Line<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
+        accumulator: &Vector<P::EA, P::SI>,
+    ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
         (
-            Line::cast_from(*accumulator),
+            Vector::cast_from(*accumulator),
             ReduceCoordinate::new_NotRequired(),
         )
     }
@@ -59,7 +59,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Mean {
     fn reduce(
         this: &Self,
         accumulator: &Self::AccumulatorItem,
-        item: Line<P::EI, P::SI>,
+        item: Vector<P::EI, P::SI>,
         _coordinate: ReduceCoordinate<P::SI>,
         #[comptime] use_planes: bool,
     ) -> Self::AccumulatorItem {
@@ -79,7 +79,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Mean {
     fn merge_line<Out: Numeric>(
         this: &Self,
         accumulator: Self::AccumulatorItem,
-        shape_axis_reduce: LineSize,
+        shape_axis_reduce: VectorSize,
     ) -> Out {
         let sum = <Sum as ReduceInstruction<P>>::merge_line::<P::EA>(
             &this.sum,
@@ -93,13 +93,13 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Mean {
     fn to_output_perpendicular<Out: Numeric>(
         this: &Self,
         accumulator: Self::AccumulatorItem,
-        shape_axis_reduce: LineSize,
-    ) -> Line<Out, P::SI> {
+        shape_axis_reduce: VectorSize,
+    ) -> Vector<Out, P::SI> {
         let sum = <Sum as ReduceInstruction<P>>::to_output_perpendicular::<P::EA>(
             &this.sum,
             accumulator,
             shape_axis_reduce,
         );
-        Line::cast_from(sum / Line::cast_from(shape_axis_reduce))
+        Vector::cast_from(sum / Vector::cast_from(shape_axis_reduce))
     }
 }

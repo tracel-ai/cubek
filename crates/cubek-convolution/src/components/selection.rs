@@ -1,7 +1,7 @@
 use cubecl::{
     Runtime,
     client::ComputeClient,
-    ir::{LineSize, StorageType},
+    ir::{StorageType, VectorSize},
 };
 use cubek_matmul::components::stage::PartitionBuffering;
 
@@ -143,8 +143,8 @@ pub fn convolution_matmul_selection<TMM: TileMatmulFamily, R: Runtime>(
 /// All modes currently use atom size 16
 const SWIZZLE_ATOM: usize = 16;
 
-fn select_swizzle(swizzle_dim: usize, elem: StorageType, line_size: LineSize) -> SwizzleMode {
-    // Line size exceeds swizzle atom
+fn select_swizzle(swizzle_dim: usize, elem: StorageType, line_size: VectorSize) -> SwizzleMode {
+    // Vector size exceeds swizzle atom
     if elem.size() * line_size > SWIZZLE_ATOM {
         return SwizzleMode::None;
     }

@@ -188,7 +188,7 @@ impl<AP: AttentionPrecision> TileAttention<AP> for BlackboxAcceleratedTileAttent
 
     fn write_results<E: Float, N: Size>(
         out: &Self::Accumulator,
-        slice: &mut SliceMut<Line<E, N>>,
+        slice: &mut SliceMut<Vector<E, N>>,
         #[comptime] config: Self::Config,
     ) {
         let acc = cmma::cast::<ACC<AP>, E>(&out.acc_fragment);

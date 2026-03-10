@@ -53,7 +53,7 @@ impl LoadMaxRoundPlaneCount for AsyncPartialTmaLoading {
     fn max_round_plane_count(
         _elements_per_tile: u32,
         _tiles_per_stage: u32,
-        _line_size: LineSize,
+        _line_size: VectorSize,
         _plane_dim: u32,
         _dtype: StorageType,
     ) -> u32 {
@@ -117,7 +117,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
     fn execute_task(
         this: &mut Self,
         #[comptime] task_id: u32,
-        global_iter: &GlobalIterator<Line<EG, NG>>,
+        global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut StridedStageMemory<ES, NS, TmaTilingLayout>,
         barrier: &mut Shared<Barrier>,
         #[comptime] config: GlobalReaderConfig,

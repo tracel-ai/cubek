@@ -40,8 +40,8 @@ use crate::components::{
 
 pub trait ConcreteArgs<A: Routine<RuntimeArgs>>:
     MatmulArgs<
-        Input<Line<NumericExpand<0>, SizeExpand<1>>, Line<NumericExpand<2>, SizeExpand<3>>, Line<NumericExpand<4>, SizeExpand<5>>>: ConcreteInputsFactory<A>,
-        Output<Line<NumericExpand<4>, SizeExpand<5>>>: ConcreteOutputFactory<A>,
+        Input<Vector<NumericExpand<0>, SizeExpand<1>>, Vector<NumericExpand<2>, SizeExpand<3>>, Vector<NumericExpand<4>, SizeExpand<5>>>: ConcreteInputsFactory<A>,
+        Output<Vector<NumericExpand<4>, SizeExpand<5>>>: ConcreteOutputFactory<A>,
         Config = RuntimeArgs,
     >
 {

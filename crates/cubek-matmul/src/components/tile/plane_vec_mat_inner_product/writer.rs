@@ -13,14 +13,14 @@ impl MatrixStageWriter {
         tile: &mut StridedTile<S, N, ReadWrite>,
         acc: &Sequence<LineContainer<A>>,
         #[comptime] n: u32,
-        #[comptime] reduce_line_size: LineSize,
+        #[comptime] reduce_line_size: VectorSize,
     ) {
         if UNIT_POS_X == 0 {
-            let out_line_size = tile.stage.line_size().comptime();
+            let out_line_size = tile.stage.vector_size().comptime();
             let total_out_lines = n as usize / out_line_size;
             #[unroll]
             for out_line_iter in 0..total_out_lines {
-                let mut out_line = Line::<S, N>::empty();
+                let mut out_line = Vector::<S, N>::empty();
 
                 #[unroll]
                 for within_line in 0..out_line_size {

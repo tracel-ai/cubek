@@ -31,7 +31,7 @@ This includes:
 
 Information that is already captured by the kernel signature or runtime arguments:
 
-- **Vectorization (Line Size)**: The vectorization factor is reflected in the tensor input types.
+- **Vectorization (Vector Size)**: The vectorization factor is reflected in the tensor input types.
   Including it in the blueprint would duplicate data already present in the JIT key.
 - **Cube Dimensions**: The `CubeDim` is already part of the compilation key.
 - **Hardware Properties**: Hardware properties can be accessed directly within the kernel, no need to pass them in the blueprint.
@@ -60,8 +60,8 @@ This process acts as "uncompressing" the minimal blueprint, combined with implic
 ```rust
 #[cube(launch_unchecked)]
 pub fn my_kernel<F: Float>(
-    input: &Tensor<Line<F>>,
-    output: &mut Tensor<Line<F>>,
+    input: &Tensor<Vector<F>>,
+    output: &mut Tensor<Vector<F>>,
     #[comptime] blueprint: MyBlueprint,
 ) {
     let line_size = input.line_size();

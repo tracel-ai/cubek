@@ -11,8 +11,8 @@ use cubecl::{
 
 #[cube(launch)]
 fn cast_launch<From: Numeric, To: Numeric, N: Size>(
-    from: &Tensor<Line<From, N>>,
-    to: &mut Tensor<Line<To, N>>,
+    from: &Tensor<Vector<From, N>>,
+    to: &mut Tensor<Vector<To, N>>,
     #[define(From, To)] _types: [StorageType; 2],
 ) {
     cast_inner::<From, To, N>(from, to);
@@ -20,12 +20,12 @@ fn cast_launch<From: Numeric, To: Numeric, N: Size>(
 
 #[cube]
 fn cast_inner<From: Numeric, To: Numeric, N: Size>(
-    from: &Tensor<Line<From, N>>,
-    to: &mut Tensor<Line<To, N>>,
+    from: &Tensor<Vector<From, N>>,
+    to: &mut Tensor<Vector<To, N>>,
 ) {
     to.write_checked(
         ABSOLUTE_POS,
-        Line::cast_from(from.read_checked(ABSOLUTE_POS)),
+        Vector::cast_from(from.read_checked(ABSOLUTE_POS)),
     )
 }
 

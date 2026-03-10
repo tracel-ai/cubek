@@ -86,14 +86,14 @@ impl<R: Runtime, E: Float> Benchmark for UnaryBench<R, E> {
 #[derive(Clone)]
 struct UnaryBench<R: Runtime, E> {
     shape: Vec<usize>,
-    vectorization: LineSize,
+    vectorization: VectorSize,
     device: R::Device,
     client: ComputeClient<R>,
     _e: PhantomData<E>,
 }
 
 #[allow(dead_code)]
-fn run<R: Runtime, E: frontend::Float>(device: R::Device, vectorization: LineSize) {
+fn run<R: Runtime, E: frontend::Float>(device: R::Device, vectorization: VectorSize) {
     let client = R::client(&device);
     let bench = UnaryBench::<R, E> {
         shape: vec![32, 512, 2048],

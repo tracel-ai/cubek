@@ -106,7 +106,7 @@ impl<TO: TilingOrder> LoadMaxRoundPlaneCount for AsyncPartialCyclicLoading<TO> {
     fn max_round_plane_count(
         elements_per_tile: u32,
         tiles_per_stage: u32,
-        _line_size: LineSize,
+        _line_size: VectorSize,
         plane_dim: u32,
         dtype: StorageType,
     ) -> u32 {
@@ -200,7 +200,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
     fn execute_task(
         this: &mut Self,
         #[comptime] task_id: u32,
-        global_iter: &GlobalIterator<Line<EG, NG>>,
+        global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut StridedStageMemory<ES, NS, ContiguousTilingLayout<TO>>,
         _barrier: &mut Shared<Barrier>,
         #[comptime] config: GlobalReaderConfig,
@@ -233,7 +233,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
 pub(crate) fn copy_line<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>(
     job: &AsyncPartialCyclicJob,
     unit_position: u32,
-    global_iter: &GlobalIterator<Line<EG, NG>>,
+    global_iter: &GlobalIterator<Vector<EG, NG>>,
     stage: &mut StridedStageMemory<ES, NS, ContiguousTilingLayout<TO>>,
     #[comptime] config: GlobalReaderConfig,
 ) {
@@ -269,7 +269,7 @@ pub(crate) fn copy_line<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: Tiling
     let pos = layout.to_source_pos((tile, pos_within_tile));
 
     let tile_start = tile_index * job.num_lines_per_tile * job.copy_line_size;
-    let stage_offset = (tile_start + pos_within_tile) / stage.smem.line_size() as u32;
+    let stage_offset = (tile_start + pos_within_tile) / stage.smem.vector_size() as u32;
 
     async_copy_from(view, pos, stage, stage_offset, config, job.copy_line_size);
 }

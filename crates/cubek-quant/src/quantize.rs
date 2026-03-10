@@ -18,33 +18,33 @@ use crate::{
 
 #[cube]
 fn quantize_symmetric<F: Float, N: Size, FS: CubePrimitive>(
-    value: Line<F, N>,
+    value: Vector<F, N>,
     scale: FS,
     range_min: F,
     range_max: F,
-) -> Line<F, N> {
+) -> Vector<F, N> {
     clamp(
-        Line::round(value / Line::cast_from(scale)),
-        Line::new(range_min),
-        Line::new(range_max),
+        Vector::round(value / Vector::cast_from(scale)),
+        Vector::new(range_min),
+        Vector::new(range_max),
     )
 }
 
 #[cube]
 fn quantize_symmetric_q<F: Float, N: Size, FS: CubePrimitive, Q: Scalar>(
-    value: Line<F, N>,
+    value: Vector<F, N>,
     scale: FS,
     range_min: F,
     range_max: F,
-) -> Line<Q, N> {
-    Line::cast_from(quantize_symmetric::<F, N, FS>(
+) -> Vector<Q, N> {
+    Vector::cast_from(quantize_symmetric::<F, N, FS>(
         value, scale, range_min, range_max,
     ))
 }
 
 #[cube]
 fn quantize_packed_value<F: Float, N: Size, FS: CubePrimitive, QS: Int>(
-    value: Line<F, N>,
+    value: Vector<F, N>,
     scale: FS,
     range_min: F,
     range_max: F,
@@ -58,7 +58,7 @@ fn quantize_packed_value<F: Float, N: Size, FS: CubePrimitive, QS: Int>(
 /// according to the specified quantization input type.
 #[allow(clippy::explicit_counter_loop)]
 #[cube]
-fn pack_q<F: Float, N: Size, QS: Int>(value: Line<F, N>, #[comptime] quant: QuantValue) -> QS {
+fn pack_q<F: Float, N: Size, QS: Int>(value: Vector<F, N>, #[comptime] quant: QuantValue) -> QS {
     let size_quant = quant.size_bits();
 
     let size_store = QS::type_size_bits().comptime();
@@ -97,11 +97,11 @@ fn write_scale<F: Float, FS: CubePrimitive>(
 
 #[cube(launch_unchecked, address_type = "dynamic")]
 fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
-    input: &LinearView<Line<F, N>>,
+    input: &LinearView<Vector<F, N>>,
     scale: &ScalesView<F>,
     range_min: InputScalar,
     range_max: InputScalar,
-    output: &mut LinearView<Line<Q, N>, ReadWrite>,
+    output: &mut LinearView<Vector<Q, N>, ReadWrite>,
     out_scale: &mut ScalesView<FS, ReadWrite>,
     scales_layout: ScalesLayout,
     #[define(F, FS, Q)] _dtypes: [StorageType; 3],
@@ -111,7 +111,7 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
     }
 
     let native_packing = Q::packing_factor();
-    let in_pos = ABSOLUTE_POS * input.line_size() * native_packing;
+    let in_pos = ABSOLUTE_POS * input.vector_size() * native_packing;
     let scale = write_scale(in_pos, scale, out_scale, scales_layout);
 
     output[ABSOLUTE_POS] = quantize_symmetric_q::<F, N, FS, Q>(
@@ -125,7 +125,7 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
 
 #[cube(launch_unchecked, address_type = "dynamic")]
 fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric>(
-    input: &LinearView<Line<F, N>>,
+    input: &LinearView<Vector<F, N>>,
     scale: &ScalesView<F>,
     range_min: InputScalar,
     range_max: InputScalar,
@@ -143,7 +143,7 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric>(
     let packed_pos = ABSOLUTE_POS * num_quants;
     let scale = write_scale(packed_pos, scale, out_scale, scales_layout);
 
-    if input.line_size().comptime() == num_quants {
+    if input.vector_size().comptime() == num_quants {
         output[ABSOLUTE_POS] = quantize_packed_value::<F, N, FS, u32>(
             input[ABSOLUTE_POS],
             scale,
@@ -154,7 +154,7 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric>(
     } else {
         // Input line size = 1
         let size!(NQ) = num_quants;
-        let mut values = Line::<F, NQ>::empty();
+        let mut values = Vector::<F, NQ>::empty();
         #[unroll]
         for i in 0..num_quants {
             values[i] = input[packed_pos + i][0];

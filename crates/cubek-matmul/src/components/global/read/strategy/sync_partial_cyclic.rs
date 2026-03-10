@@ -70,7 +70,7 @@ impl<TO: TilingOrder> LoadMaxRoundPlaneCount for SyncPartialCyclicLoading<TO> {
     fn max_round_plane_count(
         elements_per_tile: u32,
         tiles_per_stage: u32,
-        line_size: LineSize,
+        line_size: VectorSize,
         plane_dim: u32,
         _dtype: StorageType,
     ) -> u32 {
@@ -159,7 +159,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
     fn execute_task(
         this: &mut Self,
         #[comptime] task_id: u32,
-        global_iter: &GlobalIterator<Line<EG, NG>>,
+        global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut StridedStageMemory<ES, NS, ContiguousTilingLayout<TO>>,
         _barrier: &mut (),
         #[comptime] config: GlobalReaderConfig,
@@ -198,7 +198,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
 pub(crate) fn load_and_store_line<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>(
     job: &SyncPartialCyclicJob,
     unit_position: u32,
-    global_iter: &GlobalIterator<Line<EG, NG>>,
+    global_iter: &GlobalIterator<Vector<EG, NG>>,
     stage: &mut StridedStageMemory<ES, NS, ContiguousTilingLayout<TO>>,
     #[comptime] config: GlobalReaderConfig,
 ) {
@@ -208,7 +208,7 @@ pub(crate) fn load_and_store_line<EG: Numeric, NG: Size, ES: Numeric, NS: Size, 
     let tile_size = config.smem_config.elements_per_tile();
     let tile_count_row = config.smem_config.tiles_per_stage_along_row();
     let tile_count_col = config.smem_config.tiles_per_stage_along_col();
-    let line_size = view.line_size();
+    let line_size = view.vector_size();
 
     let tile_index = unit_position / tile_size;
     let pos_within_tile = unit_position % tile_size;
@@ -237,8 +237,8 @@ pub(crate) fn load_and_store_line<EG: Numeric, NG: Size, ES: Numeric, NS: Size, 
     let tile_start = tile_index * job.num_lines_per_tile;
     let mut tile_slice = stage.as_slice_mut::<NS>();
     let offset = tile_start + pos_within_tile / line_size as u32;
-    let type_size = Line::<ES, NS>::type_size();
+    let type_size = Vector::<ES, NS>::type_size();
     let offset = stage.swizzle.apply(offset, type_size);
 
-    tile_slice[offset as usize] = Line::cast_from(line_read);
+    tile_slice[offset as usize] = Vector::cast_from(line_read);
 }

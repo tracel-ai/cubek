@@ -17,12 +17,12 @@ use cubecl::{
 
 #[derive(CubeType)]
 pub struct ParallelReader<P: ReducePrecision> {
-    view: View<Line<P::EI, P::SI>, Coords1d>,
+    view: View<Vector<P::EI, P::SI>, Coords1d>,
     /// The global offset that points where the vector to reduce is located in global memory.
     batch_offset: usize,
     requirements: ReduceRequirements,
     #[cube(comptime)]
-    line_size: LineSize,
+    line_size: VectorSize,
     bound_checks: ReaderBoundChecks<P>,
     num_chunks: usize,
 }
@@ -38,7 +38,7 @@ impl<P: ReducePrecision> ParallelReader<P> {
         idle: ComptimeOption<bool>,
         #[comptime] bound_checks: BoundChecks,
     ) -> ParallelReader<P> {
-        let line_size = input.line_size();
+        let line_size = input.vector_size();
 
         let mut batch_offset = 0;
         for axis in 0..input.rank() {
@@ -76,7 +76,7 @@ impl<P: ReducePrecision> ParallelReader<P> {
         self.num_chunks.div_ceil(CUBE_DIM as usize)
     }
 
-    pub fn read_cube(&self, line_index: usize) -> (Line<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
+    pub fn read_cube(&self, line_index: usize) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
         let plane_pos = line_index * CUBE_DIM as usize;
         let unit_pos = UNIT_POS as usize;
         let pos = plane_pos + unit_pos;
@@ -93,7 +93,7 @@ impl<P: ReducePrecision> ParallelReader<P> {
         (item, coordinate)
     }
 
-    pub fn read_plane(&self, line_index: usize) -> (Line<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
+    pub fn read_plane(&self, line_index: usize) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
         let plane_pos = line_index * CUBE_DIM_X as usize;
         let unit_pos = UNIT_POS_X as usize;
         let pos = plane_pos + unit_pos;
@@ -110,7 +110,7 @@ impl<P: ReducePrecision> ParallelReader<P> {
         (item, coordinate)
     }
 
-    pub fn read_unit(&self, line_index: usize) -> (Line<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
+    pub fn read_unit(&self, line_index: usize) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
         let offset = line_index + self.batch_offset;
         let item = self.view[offset];
 

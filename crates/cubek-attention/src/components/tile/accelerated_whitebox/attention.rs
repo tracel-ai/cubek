@@ -241,7 +241,7 @@ impl<AP: AttentionPrecision> TileAttention<AP> for WhiteboxAcceleratedTileAttent
 
     fn write_results<E: Float, N: Size>(
         out: &Self::Accumulator,
-        slice: &mut SliceMut<Line<E, N>>,
+        slice: &mut SliceMut<Vector<E, N>>,
         #[comptime] config: Self::Config,
     ) {
         let mut strided_tile = StridedTile::new_strided_mut(

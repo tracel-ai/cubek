@@ -29,7 +29,7 @@ define_size!(NA);
 
 #[derive(CubeType)]
 pub struct MmaFragment<E: Numeric, N: Size> {
-    fragment: Array<Line<E, N>>,
+    fragment: Array<Vector<E, N>>,
     #[cube(comptime)]
     layout: MatrixLayout,
 }

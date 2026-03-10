@@ -18,7 +18,7 @@ use cubek_std::{stage::StageMemoryConfig, tile::StridedTile};
 /// Writes tiles from out shared memory to output global memory
 /// using a plane for each tile
 pub struct PlaneWriter<IP: MatrixTypes> {
-    global: View<Line<IP::Global, IP::GlobalSize>, TiledCoords, ReadWrite>,
+    global: View<Vector<IP::Global, IP::GlobalSize>, TiledCoords, ReadWrite>,
     stage: PartitionedStage<IP::Stage, IP::StageSize>,
 
     #[cube(comptime)]
@@ -30,7 +30,7 @@ pub struct PlaneWriter<IP: MatrixTypes> {
 #[cube]
 impl<IP: MatrixTypes> PlaneWriter<IP> {
     pub fn new(
-        global: View<Line<IP::Global, IP::GlobalSize>, Coords2d, ReadWrite>,
+        global: View<Vector<IP::Global, IP::GlobalSize>, Coords2d, ReadWrite>,
         #[comptime] config: GlobalWriterConfig,
     ) -> Self {
         let stage = PartitionedStage::new(
@@ -79,7 +79,7 @@ impl<IP: MatrixTypes> GlobalWriter<IP> for PlaneWriter<IP> {
     type Stage = PartitionedStage<IP::Stage, IP::StageSize>;
 
     fn init(
-        tensor: View<Line<IP::Global, IP::GlobalSize>, Coords2d, ReadWrite>,
+        tensor: View<Vector<IP::Global, IP::GlobalSize>, Coords2d, ReadWrite>,
         #[comptime] config: GlobalWriterConfig,
     ) -> Self {
         Self::new(tensor, config)
@@ -92,13 +92,13 @@ impl<IP: MatrixTypes> GlobalWriter<IP> for PlaneWriter<IP> {
 
 #[cube]
 pub fn plane_write<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
-    global: &mut View<Line<EG, NG>, TiledCoords, ReadWrite>,
+    global: &mut View<Vector<EG, NG>, TiledCoords, ReadWrite>,
     smem_tile: &StridedTile<ES, NS, ReadWrite>,
     tile_pos: Coords2d,
     #[comptime] plane_dim: u32,
     #[comptime] elements_in_tile: u32,
 ) {
-    let output_line_size = global.line_size().comptime();
+    let output_line_size = global.vector_size().comptime();
 
     let unit_step = plane_dim * output_line_size as u32;
     let num_unit_writes = elements_in_tile.div_ceil(unit_step);
@@ -121,13 +121,13 @@ pub fn plane_write<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
 
 #[cube]
 fn write_line<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
-    view: &mut View<Line<EG, NG>, TiledCoords, ReadWrite>,
+    view: &mut View<Vector<EG, NG>, TiledCoords, ReadWrite>,
     out_smem_tile: &StridedTile<ES, NS, ReadWrite>,
     unit_write: u32,
     tile: Coords2d,
 ) {
-    let output_line_size = view.line_size().comptime();
-    let out_smem_line_size = out_smem_tile.stage.line_size().comptime();
+    let output_line_size = view.vector_size().comptime();
+    let out_smem_line_size = out_smem_tile.stage.vector_size().comptime();
 
     let value = if output_line_size == out_smem_line_size {
         let offs = out_smem_tile.stage_offset(unit_write / output_line_size as u32);
@@ -135,7 +135,7 @@ fn write_line<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
     } else if out_smem_line_size < output_line_size
         && output_line_size.is_multiple_of(out_smem_line_size)
     {
-        let mut value = Line::empty();
+        let mut value = Vector::empty();
         #[unroll]
         for i in 0..output_line_size / out_smem_line_size {
             let offs = out_smem_tile.stage_offset(unit_write + i as u32);
@@ -149,7 +149,7 @@ fn write_line<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
         unimplemented!()
     };
 
-    view.write_checked((tile, unit_write), Line::cast_from(value));
+    view.write_checked((tile, unit_write), Vector::cast_from(value));
 }
 
 pub struct PlaneWriterFamily;

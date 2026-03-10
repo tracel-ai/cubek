@@ -76,7 +76,7 @@ pub struct PartialStageGlobalReader<
     RC: RuntimeConfig,
     L: PartialLoadingStrategy<RC>,
 > {
-    global_iter: GlobalIterator<Line<EG, NG>>,
+    global_iter: GlobalIterator<Vector<EG, NG>>,
     runtime_config: RC,
     stage_memory: PartialLoaderStage<RC, L, ES, NS>,
     loading_job: ComptimeOption<(L::Job<EG, NG, ES, NS>, L::Job<EG, NG, ES, NS>)>,
@@ -88,7 +88,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: Partial
 {
     /// Create a new SyncPartialStageGlobalReader
     pub fn new(
-        tensor: View<Line<EG, NG>, Coords2d>,
+        tensor: View<Vector<EG, NG>, Coords2d>,
         runtime_config: RC,
         k_step: u32,
         #[comptime] config: GlobalReaderConfig,

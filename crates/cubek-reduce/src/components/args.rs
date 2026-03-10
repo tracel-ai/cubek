@@ -45,16 +45,16 @@ pub trait ReduceArgs: Send + Sync + 'static + Clone {
         output: &mut Self::Output<P::Out, P::SizeOut>,
     ) -> Self::State<P>;
 
-    fn read_input<P: ReduceDType>(state: &Self::State<P>, index: usize) -> Line<P::In, P::SizeIn>;
+    fn read_input<P: ReduceDType>(state: &Self::State<P>, index: usize) -> Vector<P::In, P::SizeIn>;
     fn read_output<P: ReduceDType>(
         state: &Self::State<P>,
         index: usize,
-    ) -> Line<P::Out, P::SizeOut>;
+    ) -> Vector<P::Out, P::SizeOut>;
 
     fn write_output<P: ReduceDType>(
         state: &mut Self::State<P>,
         index: usize,
-        value: Line<P::Out, P::SizeOut>,
+        value: Vector<P::Out, P::SizeOut>,
     );
 
     fn len_input<P: ReduceDType>(state: &Self::State<P>) -> usize;
@@ -72,8 +72,8 @@ pub trait ReduceArgs: Send + Sync + 'static + Clone {
     fn stride_input<P: ReduceDType>(state: &Self::State<P>, dim: usize) -> usize;
     fn stride_output<P: ReduceDType>(state: &Self::State<P>, dim: usize) -> usize;
 
-    fn line_size_input<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(LineSize);
-    fn line_size_output<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(LineSize);
+    fn line_size_input<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(VectorSize);
+    fn line_size_output<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(VectorSize);
 }
 
 #[cube]
@@ -104,11 +104,11 @@ pub struct TensorArgs;
 
 #[cube]
 impl ReduceArgs for TensorArgs {
-    type Input<EG: Numeric, N: Size> = Tensor<Line<EG, N>>;
-    type Output<EG: Numeric, N: Size> = Tensor<Line<EG, N>>;
+    type Input<EG: Numeric, N: Size> = Tensor<Vector<EG, N>>;
+    type Output<EG: Numeric, N: Size> = Tensor<Vector<EG, N>>;
     type State<P: ReduceDType> = (
-        *const Tensor<Line<P::In, P::SizeIn>>,
-        *mut Tensor<Line<P::Out, P::SizeOut>>,
+        *const Tensor<Vector<P::In, P::SizeIn>>,
+        *mut Tensor<Vector<P::Out, P::SizeOut>>,
     );
 
     fn init_state<P: ReduceDType>(
@@ -118,21 +118,21 @@ impl ReduceArgs for TensorArgs {
         (input, output)
     }
 
-    fn read_input<P: ReduceDType>(state: &Self::State<P>, index: usize) -> Line<P::In, P::SizeIn> {
+    fn read_input<P: ReduceDType>(state: &Self::State<P>, index: usize) -> Vector<P::In, P::SizeIn> {
         unsafe { (*state.0)[index] }
     }
 
     fn read_output<P: ReduceDType>(
         state: &Self::State<P>,
         index: usize,
-    ) -> Line<P::Out, P::SizeOut> {
+    ) -> Vector<P::Out, P::SizeOut> {
         unsafe { (*state.1)[index] }
     }
 
     fn write_output<P: ReduceDType>(
         state: &mut Self::State<P>,
         index: usize,
-        value: Line<P::Out, P::SizeOut>,
+        value: Vector<P::Out, P::SizeOut>,
     ) {
         unsafe { (*state.1)[index] = value }
     }
@@ -176,12 +176,12 @@ impl ReduceArgs for TensorArgs {
         unsafe { (*state.1).stride(dim) }
     }
 
-    fn line_size_input<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(LineSize) {
-        unsafe { (*state.0).line_size() }
+    fn line_size_input<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(VectorSize) {
+        unsafe { (*state.0).vector_size() }
     }
 
-    fn line_size_output<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(LineSize) {
-        unsafe { (*state.1).line_size() }
+    fn line_size_output<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(VectorSize) {
+        unsafe { (*state.1).vector_size() }
     }
 }
 
@@ -244,7 +244,7 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::In, P::Siz
         &self,
         scope: &mut Scope,
         index: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<Line<P::In, P::SizeIn>> {
+    ) -> ExpandElementTyped<Vector<P::In, P::SizeIn>> {
         RA::__expand_read_input(scope, self.state.clone(), index)
     }
 
@@ -252,7 +252,7 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::In, P::Siz
         &self,
         _scope: &mut Scope,
         _index: ExpandElementTyped<usize>,
-        _value: ExpandElementTyped<Line<P::In, P::SizeIn>>,
+        _value: ExpandElementTyped<Vector<P::In, P::SizeIn>>,
     ) {
         unreachable!("Can't write to input")
     }
@@ -288,7 +288,7 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::In, P::Siz
         _context: &mut Scope,
         _start: ExpandElementTyped<usize>,
         _end: ExpandElementTyped<usize>,
-    ) -> SliceExpand<Line<P::In, P::SizeIn>, ReadOnly> {
+    ) -> SliceExpand<Vector<P::In, P::SizeIn>, ReadOnly> {
         panic!("Unsupported")
     }
 
@@ -300,9 +300,9 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::In, P::Siz
     }
 }
 
-impl<P: ReduceDType, RA: ReduceArgs> Lined for TensorArg<P, RA, Input> {}
-impl<P: ReduceDType, RA: ReduceArgs> LinedExpand for TensorArgExpand<P, RA, Input> {
-    fn line_size(&self) -> usize {
+impl<P: ReduceDType, RA: ReduceArgs> Vectorized for TensorArg<P, RA, Input> {}
+impl<P: ReduceDType, RA: ReduceArgs> VectorizedExpand for TensorArgExpand<P, RA, Input> {
+    fn vector_size(&self) -> usize {
         let mut scope = Scope::root(false);
         RA::__expand_line_size_input(&mut scope, self.state.clone())
     }
@@ -315,7 +315,7 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::Out, P::Si
         &self,
         scope: &mut Scope,
         index: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<Line<P::Out, P::SizeOut>> {
+    ) -> ExpandElementTyped<Vector<P::Out, P::SizeOut>> {
         RA::__expand_read_output(scope, self.state.clone(), index)
     }
 
@@ -323,7 +323,7 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::Out, P::Si
         &self,
         scope: &mut Scope,
         index: ExpandElementTyped<usize>,
-        value: ExpandElementTyped<Line<P::Out, P::SizeOut>>,
+        value: ExpandElementTyped<Vector<P::Out, P::SizeOut>>,
     ) {
         RA::__expand_write_output(scope, self.state.clone(), index, value)
     }
@@ -360,7 +360,7 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::Out, P::Si
         _context: &mut Scope,
         _start: ExpandElementTyped<usize>,
         _end: ExpandElementTyped<usize>,
-    ) -> SliceExpand<Line<P::Out, P::SizeOut>, ReadOnly> {
+    ) -> SliceExpand<Vector<P::Out, P::SizeOut>, ReadOnly> {
         panic!("Unsupported")
     }
 
@@ -372,9 +372,9 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::Out, P::Si
     }
 }
 
-impl<P: ReduceDType, RA: ReduceArgs> Lined for TensorArg<P, RA, Output> {}
-impl<P: ReduceDType, RA: ReduceArgs> LinedExpand for TensorArgExpand<P, RA, Output> {
-    fn line_size(&self) -> usize {
+impl<P: ReduceDType, RA: ReduceArgs> Vectorized for TensorArg<P, RA, Output> {}
+impl<P: ReduceDType, RA: ReduceArgs> VectorizedExpand for TensorArgExpand<P, RA, Output> {
+    fn vector_size(&self) -> usize {
         let mut scope = Scope::root(false);
         RA::__expand_line_size_output(&mut scope, self.state.clone())
     }

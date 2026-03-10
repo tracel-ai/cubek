@@ -1,13 +1,13 @@
 use std::{fmt::Debug, hash::Hash};
 
-use cubecl::ir::{LineSize, StorageType};
+use cubecl::ir::{VectorSize, StorageType};
 use cubek_std::MatrixLayout;
 
 use crate::components::global::memory::{GlobalLayoutConfig, ViewDirection};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct GlobalMemoryConfig {
-    pub line_size: LineSize,
+    pub line_size: VectorSize,
     pub check_row_bounds: bool,
     pub check_col_bounds: bool,
     pub matrix_layout: MatrixLayout,
@@ -18,7 +18,7 @@ pub struct GlobalMemoryConfig {
 impl GlobalMemoryConfig {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        line_size: LineSize,
+        line_size: VectorSize,
         check_row_bounds: bool,
         check_col_bounds: bool,
         matrix_layout: MatrixLayout,

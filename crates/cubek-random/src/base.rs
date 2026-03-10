@@ -112,7 +112,7 @@ pub(crate) trait PrngRuntime: Send + Sync + 'static + PrngArgs {
         state_1: &mut u32,
         state_2: &mut u32,
         state_3: &mut u32,
-        output: &mut View<Line<E, N>, Coords1d, ReadWrite>,
+        output: &mut View<Vector<E, N>, Coords1d, ReadWrite>,
     );
 }
 
@@ -120,7 +120,7 @@ type Args<F> = <<F as RandomFamily>::Runtime as PrngArgs>::Args;
 
 #[cube(launch, address_type = "dynamic")]
 fn prng_kernel<F: RandomFamily, E: Numeric, N: Size>(
-    output: &mut LinearView<Line<E, N>, ReadWrite>,
+    output: &mut LinearView<Vector<E, N>, ReadWrite>,
     seed_0: u32,
     seed_1: u32,
     seed_2: u32,

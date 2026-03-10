@@ -91,7 +91,7 @@ impl LoadMaxRoundPlaneCount for SyncFullOrderedLoading {
     fn max_round_plane_count(
         _elements_per_tile: u32,
         tiles_per_stage: u32,
-        _line_size: LineSize,
+        _line_size: VectorSize,
         _plane_dim: u32,
         _dtype: StorageType,
     ) -> u32 {

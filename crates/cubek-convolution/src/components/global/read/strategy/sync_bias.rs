@@ -51,7 +51,7 @@ impl LoadMaxRoundPlaneCount for SyncBiasLoading {
     fn max_round_plane_count(
         elements_per_tile: u32,
         tiles_per_stage: u32,
-        line_size: LineSize,
+        line_size: VectorSize,
         plane_dim: u32,
         _dtype: StorageType,
     ) -> u32 {
@@ -121,7 +121,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
     fn execute_task(
         this: &mut Self,
         #[comptime] task_id: u32,
-        global_iter: &GlobalIterator<Line<EG, NG>>,
+        global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut BiasStageMemory<ES, NS>,
         _barrier: &mut (),
         #[comptime] _config: GlobalReaderConfig,
@@ -146,16 +146,16 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
 #[cube]
 pub(crate) fn load_and_store_line<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
     unit_position: u32,
-    global_iter: &GlobalIterator<Line<EG, NG>>,
+    global_iter: &GlobalIterator<Vector<EG, NG>>,
     stage: &mut BiasStageMemory<ES, NS>,
 ) {
     let view = global_iter.view();
 
     let mut slice = stage.as_slice_mut();
 
-    let type_size = Line::<ES, NS>::type_size();
+    let type_size = Vector::<ES, NS>::type_size();
     let line_read = view.read_checked((0, unit_position));
     let stage_offs = stage.swizzle.apply(unit_position, type_size);
 
-    slice[stage_offs as usize / NS::value()] = Line::cast_from(line_read);
+    slice[stage_offs as usize / NS::value()] = Vector::cast_from(line_read);
 }

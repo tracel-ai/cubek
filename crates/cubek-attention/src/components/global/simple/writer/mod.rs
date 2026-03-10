@@ -17,7 +17,7 @@ pub trait AttentionWriter<ES: Numeric, ESS: Size, EG: Numeric, EGS: Size>:
     WriteEventListener
 {
     fn init<S: StageAttentionConfig>(
-        global: View<Line<EG, EGS>, Coords2d, ReadWrite>,
+        global: View<Vector<EG, EGS>, Coords2d, ReadWrite>,
         #[comptime] config: GlobalWriterConfig,
     ) -> Self;
 

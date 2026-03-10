@@ -11,7 +11,7 @@ use crate::{
 use cubecl::{
     Runtime,
     client::ComputeClient,
-    ir::{LineSize, StorageType},
+    ir::{VectorSize, StorageType},
 };
 use cubek_std::{MatrixLayout, stage::SwizzleMode};
 
@@ -566,7 +566,7 @@ fn selection(
 /// All modes currently use atom size 16
 const SWIZZLE_ATOM: usize = 16;
 
-fn select_swizzle(swizzle_dim: usize, elem: StorageType, line_size: LineSize) -> SwizzleMode {
+fn select_swizzle(swizzle_dim: usize, elem: StorageType, line_size: VectorSize) -> SwizzleMode {
     // Can't swizzle if line size > swizzle atom
     if elem.size() * line_size > SWIZZLE_ATOM {
         return SwizzleMode::None;

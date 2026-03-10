@@ -136,14 +136,14 @@ pub fn shared_sum<R: Runtime>(
 
 #[cube(launch_unchecked, address_type = "dynamic")]
 fn shared_sum_kernel<T: Numeric, N: Size>(
-    input: &LinearView<Line<T, N>>,
+    input: &LinearView<Vector<T, N>>,
     output: &mut Tensor<Atomic<T>>,
     #[comptime] shared_memory_size: usize,
     #[comptime] num_lines_per_unit: usize,
     #[define(T)] _dtype: ElemType,
 ) {
     let mut shared_memory = SharedMemory::new(shared_memory_size);
-    shared_memory[UNIT_POS as usize] = Line::empty().fill(T::from_int(0));
+    shared_memory[UNIT_POS as usize] = Vector::empty().fill(T::from_int(0));
 
     // Each unit reduce `num_lines_per_unit` lines.
     let start = ABSOLUTE_POS * num_lines_per_unit;
@@ -180,8 +180,8 @@ fn shared_sum_kernel<T: Numeric, N: Size>(
 // Here we assume that `CUBE_DIM` is always a power of two.
 #[cube]
 fn sum_shared_memory<T: Numeric, N: Size>(
-    accumulator: &mut SharedMemory<Line<T, N>>,
-) -> Line<T, N> {
+    accumulator: &mut SharedMemory<Vector<T, N>>,
+) -> Vector<T, N> {
     sync_cube();
     let mut num_active_units = CUBE_DIM;
     let mut jump = 1;

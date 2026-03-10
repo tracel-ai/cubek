@@ -83,7 +83,7 @@ impl LoadMaxRoundPlaneCount for AsyncPartialStridedLoading {
     fn max_round_plane_count(
         elements_per_tile: u32,
         tiles_per_stage: u32,
-        _line_size: LineSize,
+        _line_size: VectorSize,
         plane_dim: u32,
         dtype: StorageType,
     ) -> u32 {
@@ -152,7 +152,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
     fn execute_task(
         this: &mut Self,
         #[comptime] task_id: u32,
-        global_iter: &GlobalIterator<Line<EG, NG>>,
+        global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut StridedStageMemory<ES, NS, StridedTilingLayout>,
         _barrier: &mut Shared<Barrier>,
         #[comptime] config: GlobalReaderConfig,
@@ -178,7 +178,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
             _ => pos,
         };
 
-        let stage_offset = unit_position_abs / stage.smem.line_size() as u32;
+        let stage_offset = unit_position_abs / stage.smem.vector_size() as u32;
 
         async_copy_from(
             view,

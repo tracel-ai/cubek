@@ -5,7 +5,7 @@ use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
 pub(crate) fn reduce_count(
     output_size: usize,
     #[comptime] line_mode: LineMode,
-    #[comptime] input_line_size: LineSize,
+    #[comptime] input_line_size: VectorSize,
 ) -> usize {
     match line_mode {
         LineMode::Parallel => output_size,
@@ -23,9 +23,9 @@ pub fn idle_check<P: ReducePrecision, Out: NumericLine>(
 ) -> ComptimeOption<bool> {
     if idle_mode.is_enabled() {
         let reduce_count = reduce_count(
-            output.len() * output.line_size(),
+            output.len() * output.vector_size(),
             line_mode,
-            input.line_size(),
+            input.vector_size(),
         );
 
         match idle_mode {

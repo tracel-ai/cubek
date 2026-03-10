@@ -29,7 +29,7 @@ pub trait LoadingJob<
     fn execute_task(
         this: &mut Self,
         #[comptime] task_id: u32,
-        global_iter: &GlobalIterator<Line<EG, NG>>,
+        global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut <Self::Stage as StageFamily>::Stage<ES, NS, TL>,
         barrier: &mut S::Barrier,
         #[comptime] config: GlobalReaderConfig,

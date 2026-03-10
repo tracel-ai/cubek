@@ -9,7 +9,7 @@ use crate::BaseInputSpec;
 
 #[cube(launch)]
 fn eye_launch<T: Numeric, N: Size>(
-    tensor: &mut Tensor<Line<T, N>>,
+    tensor: &mut Tensor<Vector<T, N>>,
     #[define(T)] _types: StorageType,
 ) {
     let batch = CUBE_POS_Z as usize;
@@ -26,7 +26,7 @@ fn eye_launch<T: Numeric, N: Size>(
     let idx =
         batch * tensor.stride(rank - 3) + i * tensor.stride(rank - 2) + j * tensor.stride(rank - 1);
 
-    tensor.write_checked(idx, Line::cast_from(i == j));
+    tensor.write_checked(idx, Vector::cast_from(i == j));
 }
 
 #[allow(unused)]

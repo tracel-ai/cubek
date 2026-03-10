@@ -60,7 +60,7 @@ impl<TO: TilingOrder> LoadMaxRoundPlaneCount for SyncFullCyclicLoading<TO> {
     fn max_round_plane_count(
         elements_per_tile: u32,
         tiles_per_stage: u32,
-        line_size: LineSize,
+        line_size: VectorSize,
         plane_dim: u32,
         _dtype: StorageType,
     ) -> u32 {
@@ -137,7 +137,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
     fn execute_task(
         this: &mut Self,
         #[comptime] task_id: u32,
-        global_iter: &GlobalIterator<Line<EG, NG>>,
+        global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut StridedStageMemory<ES, NS, ContiguousTilingLayout<TO>>,
         _barrier: &mut (),
         #[comptime] config: GlobalReaderConfig,
@@ -175,7 +175,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
 pub(crate) fn load_and_store_line<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>(
     job: &SyncFullCyclicJob,
     unit_position: u32,
-    global_iter: &GlobalIterator<Line<EG, NG>>,
+    global_iter: &GlobalIterator<Vector<EG, NG>>,
     stage: &mut StridedStageMemory<ES, NS, ContiguousTilingLayout<TO>>,
     #[comptime] config: GlobalReaderConfig,
 ) {
@@ -192,5 +192,5 @@ pub(crate) fn load_and_store_line<EG: Numeric, NG: Size, ES: Numeric, NS: Size, 
     let line_read = view.read_checked((tile, pos_within_tile));
     let stage_offs = stage.swizzle.apply(unit_position, ES::type_size());
 
-    slice[stage_offs as usize / NS::value()] = Line::cast_from(line_read);
+    slice[stage_offs as usize / NS::value()] = Vector::cast_from(line_read);
 }

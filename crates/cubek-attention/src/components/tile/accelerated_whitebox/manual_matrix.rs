@@ -96,7 +96,7 @@ pub fn mma_definition<M: MmaTypes>(
 
 #[cube]
 #[allow(unused_variables, clippy::extra_unused_type_parameters)]
-fn register_line_size<T: Size>(#[comptime] line_size: LineSize) {
+fn register_line_size<T: Size>(#[comptime] line_size: VectorSize) {
     intrinsic!(|scope| {
         scope.register_size::<T>(line_size);
     });
@@ -195,7 +195,7 @@ impl<MT: MmaTypes> SoftmaxLayout for ManualMatrixLayout<IdentCD, MT> {
 
 #[derive(CubeType)]
 pub struct ManualMatrix<MI: MmaIdent<MT>, MT: MmaTypes> {
-    pub fragment: Array<Line<MI::Elem, MI::Size>>,
+    pub fragment: Array<Vector<MI::Elem, MI::Size>>,
     pub layout: ManualMatrixLayout<MI, MT>,
 }
 
@@ -204,7 +204,7 @@ impl<MI: MmaIdent<MT>, MT: MmaTypes> ManualMatrix<MI, MT> {
     pub fn zero(&mut self) {
         #[unroll]
         for i in 0..self.layout.lines_per_lane {
-            self.fragment[i] = Line::zero();
+            self.fragment[i] = Vector::zero();
         }
     }
 

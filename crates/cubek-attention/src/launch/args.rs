@@ -74,47 +74,47 @@ pub trait AttentionArgs: Send + Sync + 'static + Clone {
     fn read_query<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
         coordinate: usize,
-    ) -> Line<Q::T, Q::N>;
+    ) -> Vector<Q::T, Q::N>;
     /// Read the line of the key tensor using the state at the given coordinate.
     fn read_key<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
         coordinate: usize,
-    ) -> Line<K::T, K::N>;
+    ) -> Vector<K::T, K::N>;
     /// Read the line of the value tensor using the state at the given coordinate.
     fn read_value<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
         coordinate: usize,
-    ) -> Line<V::T, V::N>;
+    ) -> Vector<V::T, V::N>;
     /// Read the line of the mask tensor using the state at the given coordinate.
     fn read_mask<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
         coordinate: usize,
-    ) -> Line<M::T, M::N>;
+    ) -> Vector<M::T, M::N>;
 
     /// Read the line of the query tensor using the state at the given coordinate.
     fn read_window_query<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
         start: usize,
         end: usize,
-    ) -> Slice<Line<Q::T, Q::N>>;
+    ) -> Slice<Vector<Q::T, Q::N>>;
     /// Read the line of the key tensor using the state at the given coordinate.
     fn read_window_key<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
         start: usize,
         end: usize,
-    ) -> Slice<Line<K::T, K::N>>;
+    ) -> Slice<Vector<K::T, K::N>>;
     /// Read the line of the value tensor using the state at the given coordinate.
     fn read_window_value<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
         start: usize,
         end: usize,
-    ) -> Slice<Line<V::T, V::N>>;
+    ) -> Slice<Vector<V::T, V::N>>;
     /// Read the line of the mask tensor using the state at the given coordinate.
     fn read_window_mask<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
         start: usize,
         end: usize,
-    ) -> Slice<Line<M::T, M::N>>;
+    ) -> Slice<Vector<M::T, M::N>>;
 
     /// Reinterpret query as tensor map
     fn as_tensor_map_query<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
@@ -137,7 +137,7 @@ pub trait AttentionArgs: Send + Sync + 'static + Clone {
     fn write_out<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &mut Self::State<Q, K, V, M, O>,
         coordinate: usize,
-        val: Line<O::T, O::N>,
+        val: Vector<O::T, O::N>,
     );
 
     /// Get the rank of the query tensor using the state.
@@ -258,23 +258,23 @@ pub trait AttentionArgs: Send + Sync + 'static + Clone {
     /// Get the line size of the query tensor using the state.
     fn line_size_query<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> comptime_type!(LineSize);
+    ) -> comptime_type!(VectorSize);
     /// Get the line size of the key tensor using the state.
     fn line_size_key<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> comptime_type!(LineSize);
+    ) -> comptime_type!(VectorSize);
     /// Get the line size of the value tensor using the state.
     fn line_size_value<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> comptime_type!(LineSize);
+    ) -> comptime_type!(VectorSize);
     /// Get the line size of the mask tensor using the state.
     fn line_size_mask<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> comptime_type!(LineSize);
+    ) -> comptime_type!(VectorSize);
     /// Get the line size of the out tensor using the state.
     fn line_size_out<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
-    ) -> comptime_type!(LineSize);
+    ) -> comptime_type!(VectorSize);
 }
 
 /// Tensor input representation.
@@ -356,7 +356,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
         &self,
         _scope: &mut Scope,
         _index: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<Line<O::T, O::N>> {
+    ) -> ExpandElementTyped<Vector<O::T, O::N>> {
         panic!("Can't read output tensor");
     }
 
@@ -365,7 +365,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
         _context: &mut Scope,
         _start: ExpandElementTyped<usize>,
         _end: ExpandElementTyped<usize>,
-    ) -> SliceExpand<Line<O::T, O::N>, ReadOnly> {
+    ) -> SliceExpand<Vector<O::T, O::N>, ReadOnly> {
         panic!("Can't read output tensor");
     }
 
@@ -373,7 +373,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
         &self,
         scope: &mut Scope,
         index: ExpandElementTyped<usize>,
-        val: ExpandElementTyped<Line<O::T, O::N>>,
+        val: ExpandElementTyped<Vector<O::T, O::N>>,
     ) {
         TensorOutputExpand::__expand_write_method(self.clone(), scope, index, val)
     }
@@ -415,13 +415,13 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
 }
 
 impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA: AttentionArgs>
-    Lined for TensorOutput<Q, K, V, M, O, MA>
+    Vectorized for TensorOutput<Q, K, V, M, O, MA>
 {
 }
 impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA: AttentionArgs>
-    LinedExpand for TensorOutputExpand<Q, K, V, M, O, MA>
+    VectorizedExpand for TensorOutputExpand<Q, K, V, M, O, MA>
 {
-    fn line_size(&self) -> LineSize {
+    fn vector_size(&self) -> VectorSize {
         let mut scope = Scope::root(false);
         TensorOutputExpand::__expand_line_size_method(self.clone(), &mut scope)
     }
@@ -434,7 +434,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
         &self,
         scope: &mut Scope,
         index: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<Line<Q::T, Q::N>> {
+    ) -> ExpandElementTyped<Vector<Q::T, Q::N>> {
         TensorQueryExpand::__expand_read_method(self.clone(), scope, index)
     }
     fn __expand_read_window_method(
@@ -442,7 +442,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
         context: &mut Scope,
         start: ExpandElementTyped<usize>,
         end: ExpandElementTyped<usize>,
-    ) -> SliceExpand<Line<Q::T, Q::N>, ReadOnly> {
+    ) -> SliceExpand<Vector<Q::T, Q::N>, ReadOnly> {
         TensorQueryExpand::__expand_read_window_method(self.clone(), context, start, end)
     }
 
@@ -450,7 +450,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
         &self,
         _scope: &mut Scope,
         _index: ExpandElementTyped<usize>,
-        _val: ExpandElementTyped<Line<Q::T, Q::N>>,
+        _val: ExpandElementTyped<Vector<Q::T, Q::N>>,
     ) {
         panic!("Can't write to input tensor");
     }
@@ -492,13 +492,13 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
 }
 
 impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA: AttentionArgs>
-    Lined for TensorQuery<Q, K, V, M, O, MA>
+    Vectorized for TensorQuery<Q, K, V, M, O, MA>
 {
 }
 impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA: AttentionArgs>
-    LinedExpand for TensorQueryExpand<Q, K, V, M, O, MA>
+    VectorizedExpand for TensorQueryExpand<Q, K, V, M, O, MA>
 {
-    fn line_size(&self) -> LineSize {
+    fn vector_size(&self) -> VectorSize {
         let mut scope = Scope::root(false);
         TensorQueryExpand::__expand_line_size_method(self.clone(), &mut scope)
     }
@@ -511,7 +511,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
         &self,
         scope: &mut Scope,
         index: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<Line<K::T, K::N>> {
+    ) -> ExpandElementTyped<Vector<K::T, K::N>> {
         TensorKeyExpand::__expand_read_method(self.clone(), scope, index)
     }
     fn __expand_read_window_method(
@@ -519,7 +519,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
         context: &mut Scope,
         start: ExpandElementTyped<usize>,
         end: ExpandElementTyped<usize>,
-    ) -> SliceExpand<Line<K::T, K::N>, ReadOnly> {
+    ) -> SliceExpand<Vector<K::T, K::N>, ReadOnly> {
         TensorKeyExpand::__expand_read_window_method(self.clone(), context, start, end)
     }
 
@@ -527,7 +527,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
         &self,
         _scope: &mut Scope,
         _index: ExpandElementTyped<usize>,
-        _val: ExpandElementTyped<Line<K::T, K::N>>,
+        _val: ExpandElementTyped<Vector<K::T, K::N>>,
     ) {
         panic!("Can't write to input tensor");
     }
@@ -569,13 +569,13 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
 }
 
 impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA: AttentionArgs>
-    Lined for TensorKey<Q, K, V, M, O, MA>
+    Vectorized for TensorKey<Q, K, V, M, O, MA>
 {
 }
 impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA: AttentionArgs>
-    LinedExpand for TensorKeyExpand<Q, K, V, M, O, MA>
+    VectorizedExpand for TensorKeyExpand<Q, K, V, M, O, MA>
 {
-    fn line_size(&self) -> LineSize {
+    fn vector_size(&self) -> VectorSize {
         let mut scope = Scope::root(false);
         TensorKeyExpand::__expand_line_size_method(self.clone(), &mut scope)
     }
@@ -588,7 +588,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
         &self,
         scope: &mut Scope,
         index: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<Line<V::T, V::N>> {
+    ) -> ExpandElementTyped<Vector<V::T, V::N>> {
         TensorValueExpand::__expand_read_method(self.clone(), scope, index)
     }
     fn __expand_read_window_method(
@@ -596,7 +596,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
         context: &mut Scope,
         start: ExpandElementTyped<usize>,
         end: ExpandElementTyped<usize>,
-    ) -> SliceExpand<Line<V::T, V::N>, ReadOnly> {
+    ) -> SliceExpand<Vector<V::T, V::N>, ReadOnly> {
         TensorValueExpand::__expand_read_window_method(self.clone(), context, start, end)
     }
 
@@ -604,7 +604,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
         &self,
         _scope: &mut Scope,
         _index: ExpandElementTyped<usize>,
-        _val: ExpandElementTyped<Line<V::T, V::N>>,
+        _val: ExpandElementTyped<Vector<V::T, V::N>>,
     ) {
         panic!("Can't write to input tensor");
     }
@@ -646,13 +646,13 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
 }
 
 impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA: AttentionArgs>
-    Lined for TensorValue<Q, K, V, M, O, MA>
+    Vectorized for TensorValue<Q, K, V, M, O, MA>
 {
 }
 impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA: AttentionArgs>
-    LinedExpand for TensorValueExpand<Q, K, V, M, O, MA>
+    VectorizedExpand for TensorValueExpand<Q, K, V, M, O, MA>
 {
-    fn line_size(&self) -> LineSize {
+    fn vector_size(&self) -> VectorSize {
         let mut scope = Scope::root(false);
         TensorValueExpand::__expand_line_size_method(self.clone(), &mut scope)
     }
@@ -665,7 +665,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
         &self,
         scope: &mut Scope,
         index: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<Line<M::T, M::N>> {
+    ) -> ExpandElementTyped<Vector<M::T, M::N>> {
         TensorMaskExpand::__expand_read_method(self.clone(), scope, index)
     }
     fn __expand_read_window_method(
@@ -673,7 +673,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
         context: &mut Scope,
         start: ExpandElementTyped<usize>,
         end: ExpandElementTyped<usize>,
-    ) -> SliceExpand<Line<M::T, M::N>, ReadOnly> {
+    ) -> SliceExpand<Vector<M::T, M::N>, ReadOnly> {
         TensorMaskExpand::__expand_read_window_method(self.clone(), context, start, end)
     }
 
@@ -681,7 +681,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
         &self,
         _scope: &mut Scope,
         _index: ExpandElementTyped<usize>,
-        _val: ExpandElementTyped<Line<M::T, M::N>>,
+        _val: ExpandElementTyped<Vector<M::T, M::N>>,
     ) {
         panic!("Can't write to input tensor");
     }
@@ -723,13 +723,13 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
 }
 
 impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA: AttentionArgs>
-    Lined for TensorMask<Q, K, V, M, O, MA>
+    Vectorized for TensorMask<Q, K, V, M, O, MA>
 {
 }
 impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA: AttentionArgs>
-    LinedExpand for TensorMaskExpand<Q, K, V, M, O, MA>
+    VectorizedExpand for TensorMaskExpand<Q, K, V, M, O, MA>
 {
-    fn line_size(&self) -> LineSize {
+    fn vector_size(&self) -> VectorSize {
         let mut scope = Scope::root(false);
         TensorMaskExpand::__expand_line_size_method(self.clone(), &mut scope)
     }
@@ -821,12 +821,12 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     }
 
     //// Read the tensor at the given coordinate.
-    pub fn read_window(&self, start: usize, end: usize) -> Slice<Line<Q::T, Q::N>> {
+    pub fn read_window(&self, start: usize, end: usize) -> Slice<Vector<Q::T, Q::N>> {
         unsafe { MA::read_window_query(&(*self.state), start, end) }
     }
 
     /// Read the tensor at the given coordinate.
-    pub fn read(&self, coordinate: usize) -> Line<Q::T, Q::N> {
+    pub fn read(&self, coordinate: usize) -> Vector<Q::T, Q::N> {
         unsafe { MA::read_query(&(*self.state), coordinate) }
     }
 
@@ -862,7 +862,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     }
 
     /// Get the line size of the tensor.
-    pub fn line_size(&self) -> comptime_type!(LineSize) {
+    pub fn line_size(&self) -> comptime_type!(VectorSize) {
         unsafe { MA::line_size_query(&(*self.state)) }
     }
 }
@@ -877,12 +877,12 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     }
 
     //// Read the tensor at the given coordinate.
-    pub fn read_window(&self, start: usize, end: usize) -> Slice<Line<K::T, K::N>> {
+    pub fn read_window(&self, start: usize, end: usize) -> Slice<Vector<K::T, K::N>> {
         unsafe { MA::read_window_key(&(*self.state), start, end) }
     }
 
     /// Read the tensor at the given coordinate.
-    pub fn read(&self, coordinate: usize) -> Line<K::T, K::N> {
+    pub fn read(&self, coordinate: usize) -> Vector<K::T, K::N> {
         unsafe { MA::read_key(&(*self.state), coordinate) }
     }
 
@@ -918,7 +918,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     }
 
     /// Get the line size of the tensor.
-    pub fn line_size(&self) -> comptime_type!(LineSize) {
+    pub fn line_size(&self) -> comptime_type!(VectorSize) {
         unsafe { MA::line_size_key(&(*self.state)) }
     }
 }
@@ -933,12 +933,12 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     }
 
     //// Read the tensor at the given coordinate.
-    pub fn read_window(&self, start: usize, end: usize) -> Slice<Line<V::T, V::N>> {
+    pub fn read_window(&self, start: usize, end: usize) -> Slice<Vector<V::T, V::N>> {
         unsafe { MA::read_window_value(&(*self.state), start, end) }
     }
 
     /// Read the tensor at the given coordinate.
-    pub fn read(&self, coordinate: usize) -> Line<V::T, V::N> {
+    pub fn read(&self, coordinate: usize) -> Vector<V::T, V::N> {
         unsafe { MA::read_value(&(*self.state), coordinate) }
     }
 
@@ -974,7 +974,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     }
 
     /// Get the line size of the tensor.
-    pub fn line_size(&self) -> comptime_type!(LineSize) {
+    pub fn line_size(&self) -> comptime_type!(VectorSize) {
         unsafe { MA::line_size_value(&(*self.state)) }
     }
 }
@@ -989,12 +989,12 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     }
 
     //// Read the tensor at the given coordinate.
-    pub fn read_window(&self, start: usize, end: usize) -> Slice<Line<M::T, M::N>> {
+    pub fn read_window(&self, start: usize, end: usize) -> Slice<Vector<M::T, M::N>> {
         unsafe { MA::read_window_mask(&(*self.state), start, end) }
     }
 
     /// Read the tensor at the given coordinate.
-    pub fn read(&self, coordinate: usize) -> Line<M::T, M::N> {
+    pub fn read(&self, coordinate: usize) -> Vector<M::T, M::N> {
         unsafe { MA::read_mask(&(*self.state), coordinate) }
     }
 
@@ -1030,7 +1030,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     }
 
     /// Get the line size of the tensor.
-    pub fn line_size(&self) -> comptime_type!(LineSize) {
+    pub fn line_size(&self) -> comptime_type!(VectorSize) {
         unsafe { MA::line_size_mask(&(*self.state)) }
     }
 }
@@ -1045,7 +1045,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA:
     }
 
     /// Write the val to tensor at the given coordinate.
-    pub fn write(&self, coordinate: usize, val: Line<O::T, O::N>) {
+    pub fn write(&self, coordinate: usize, val: Vector<O::T, O::N>) {
         unsafe { GA::write_out(&mut (*self.state), coordinate, val) }
     }
 
@@ -1076,7 +1076,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA:
     }
 
     /// Get the line size of the tensor.
-    pub fn line_size(&self) -> comptime_type!(LineSize) {
+    pub fn line_size(&self) -> comptime_type!(VectorSize) {
         unsafe { GA::line_size_out(&(*self.state)) }
     }
 }
@@ -1091,10 +1091,10 @@ pub struct TensorArgs;
 #[launch(skip_bounds)]
 /// Input representation for [TensorArgs] implementing [AttentionArgs].
 pub struct TensorInputs<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine> {
-    pub query: Tensor<Line<Q::T, Q::N>>,
-    pub key: Tensor<Line<K::T, K::N>>,
-    pub value: Tensor<Line<V::T, V::N>>,
-    pub mask: ComptimeOption<Tensor<Line<M::T, M::N>>>,
+    pub query: Tensor<Vector<Q::T, Q::N>>,
+    pub key: Tensor<Vector<K::T, K::N>>,
+    pub value: Tensor<Vector<V::T, V::N>>,
+    pub mask: ComptimeOption<Tensor<Vector<M::T, M::N>>>,
 }
 
 impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine> ConcreteInputsFactory
@@ -1120,7 +1120,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine> ConcreteInputsFac
     }
 }
 
-impl<EG: Numeric, EGS: Size> ConcreteOutputFactory for Tensor<Line<EG, EGS>> {
+impl<EG: Numeric, EGS: Size> ConcreteOutputFactory for Tensor<Vector<EG, EGS>> {
     fn create<'a, R: Runtime>(
         out: TensorBinding<R>,
         _selection: &AttentionBlueprint,
@@ -1132,17 +1132,17 @@ impl<EG: Numeric, EGS: Size> ConcreteOutputFactory for Tensor<Line<EG, EGS>> {
 
 #[derive(CubeType)]
 pub struct AttentionState<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine> {
-    pub query: *const Tensor<Line<Q::T, Q::N>>,
-    pub key: *const Tensor<Line<K::T, K::N>>,
-    pub value: *const Tensor<Line<V::T, V::N>>,
-    pub mask: ComptimeOption<*const Tensor<Line<M::T, M::N>>>,
-    pub output: *mut Tensor<Line<O::T, O::N>>,
+    pub query: *const Tensor<Vector<Q::T, Q::N>>,
+    pub key: *const Tensor<Vector<K::T, K::N>>,
+    pub value: *const Tensor<Vector<V::T, V::N>>,
+    pub mask: ComptimeOption<*const Tensor<Vector<M::T, M::N>>>,
+    pub output: *mut Tensor<Vector<O::T, O::N>>,
 }
 
 #[cube]
 impl AttentionArgs for TensorArgs {
     type Input<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine> = TensorInputs<Q, K, V, M>;
-    type Output<O: FloatLine> = Tensor<Line<O::T, O::N>>;
+    type Output<O: FloatLine> = Tensor<Vector<O::T, O::N>>;
     type State<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine> =
         AttentionState<Q, K, V, M, O>;
 
@@ -1151,7 +1151,7 @@ impl AttentionArgs for TensorArgs {
         output: &mut Self::Output<O>,
     ) -> Self::State<Q, K, V, M, O> {
         let mask = input.mask.as_ref().map(|mask| {
-            let ptr: *const Tensor<Line<M::T, M::N>> = mask;
+            let ptr: *const Tensor<Vector<M::T, M::N>> = mask;
             ptr
         });
 
@@ -1173,28 +1173,28 @@ impl AttentionArgs for TensorArgs {
     fn read_query<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
         coordinate: usize,
-    ) -> Line<Q::T, Q::N> {
+    ) -> Vector<Q::T, Q::N> {
         unsafe { (*state.query)[coordinate] }
     }
 
     fn read_key<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
         coordinate: usize,
-    ) -> Line<K::T, K::N> {
+    ) -> Vector<K::T, K::N> {
         unsafe { (*state.key)[coordinate] }
     }
 
     fn read_value<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
         coordinate: usize,
-    ) -> Line<V::T, V::N> {
+    ) -> Vector<V::T, V::N> {
         unsafe { (*state.value)[coordinate] }
     }
 
     fn read_mask<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
         coordinate: usize,
-    ) -> Line<M::T, M::N> {
+    ) -> Vector<M::T, M::N> {
         unsafe { (*state.mask.unwrap())[coordinate] }
     }
 
@@ -1202,7 +1202,7 @@ impl AttentionArgs for TensorArgs {
         state: &Self::State<Q, K, V, M, O>,
         start: usize,
         end: usize,
-    ) -> Slice<Line<Q::T, Q::N>> {
+    ) -> Slice<Vector<Q::T, Q::N>> {
         unsafe { (*state.query).slice(start, end) }
     }
 
@@ -1210,7 +1210,7 @@ impl AttentionArgs for TensorArgs {
         state: &Self::State<Q, K, V, M, O>,
         start: usize,
         end: usize,
-    ) -> Slice<Line<K::T, K::N>> {
+    ) -> Slice<Vector<K::T, K::N>> {
         unsafe { (*state.key).slice(start, end) }
     }
 
@@ -1218,7 +1218,7 @@ impl AttentionArgs for TensorArgs {
         state: &Self::State<Q, K, V, M, O>,
         start: usize,
         end: usize,
-    ) -> Slice<Line<V::T, V::N>> {
+    ) -> Slice<Vector<V::T, V::N>> {
         unsafe { (*state.value).slice(start, end) }
     }
 
@@ -1226,7 +1226,7 @@ impl AttentionArgs for TensorArgs {
         state: &Self::State<Q, K, V, M, O>,
         start: usize,
         end: usize,
-    ) -> Slice<Line<M::T, M::N>> {
+    ) -> Slice<Vector<M::T, M::N>> {
         unsafe { (*state.mask.unwrap()).slice(start, end) }
     }
 
@@ -1345,7 +1345,7 @@ impl AttentionArgs for TensorArgs {
     fn write_out<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &mut Self::State<Q, K, V, M, O>,
         coordinate: usize,
-        val: Line<O::T, O::N>,
+        val: Vector<O::T, O::N>,
     ) {
         unsafe { (*state.output)[coordinate] = val }
     }
@@ -1443,31 +1443,31 @@ impl AttentionArgs for TensorArgs {
     fn line_size_query<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
     ) -> comptime_type!(usize) {
-        unsafe { (*state.query).line_size() }
+        unsafe { (*state.query).vector_size() }
     }
 
     fn line_size_key<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
     ) -> comptime_type!(usize) {
-        unsafe { (*state.key).line_size() }
+        unsafe { (*state.key).vector_size() }
     }
 
     fn line_size_value<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
     ) -> comptime_type!(usize) {
-        unsafe { (*state.value).line_size() }
+        unsafe { (*state.value).vector_size() }
     }
 
     fn line_size_mask<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
     ) -> comptime_type!(usize) {
-        unsafe { (*state.mask.unwrap()).line_size() }
+        unsafe { (*state.mask.unwrap()).vector_size() }
     }
 
     fn line_size_out<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
     ) -> comptime_type!(usize) {
-        unsafe { (*state.output).line_size() }
+        unsafe { (*state.output).vector_size() }
     }
 }
 
