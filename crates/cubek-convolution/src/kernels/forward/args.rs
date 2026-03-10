@@ -154,7 +154,7 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<Runti
         let layout_rhs =
             WeightLayoutLaunch::from_args(client, problem, blueprint.rhs_global_layout_config());
         let layout_bias =
-            BiasLayoutLaunch::new(ScalarArg::new(problem.n as u32), line_sizes.out as u32);
+            BiasLayoutLaunch::new(problem.n as u32, line_sizes.out as u32);
 
         let layout_lhs = {
             let mut checks = EnumSet::empty();
@@ -191,8 +191,8 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<Runti
         );
 
         let runtime_args = RuntimeArgsLaunch::new(
-            ScalarArg::new(problem.k as u32),
-            ScalarArg::new(problem.channels as u32),
+            problem.k as u32,
+            problem.channels as u32,
             FastDivmodArgs::<u32>::new(client, padded_channels),
             conv_params.operation,
         );
@@ -314,7 +314,7 @@ impl<
 
         let bias = bias.map(|bias| {
             let layout =
-                BiasLayoutLaunch::new(ScalarArg::new(problem.n as u32), line_sizes.out as u32);
+                BiasLayoutLaunch::new(problem.n as u32, line_sizes.out as u32);
             ViewArg::new::<BiasLayout>(bias.into_data().into_array_arg(), layout)
         });
 
@@ -328,8 +328,8 @@ impl<
         );
 
         let runtime_args = RuntimeArgsLaunch::new(
-            ScalarArg::new(shape_k),
-            ScalarArg::new(problem.channels as u32),
+            shape_k,
+            problem.channels as u32,
             FastDivmodArgs::<u32>::new(client, padded_channels),
             problem.operation,
         );

@@ -185,8 +185,8 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<Runti
         );
 
         let runtime_args = RuntimeArgsLaunch::new(
-            ScalarArg::new(problem.k as u32),
-            ScalarArg::new(problem.out_channels as u32),
+            problem.k as u32,
+            problem.out_channels as u32,
             FastDivmodArgs::<u32>::new(client, padded_channels),
             problem.operation,
         );
@@ -306,8 +306,8 @@ impl<
         );
 
         let runtime_args = RuntimeArgsLaunch::new(
-            ScalarArg::new(shape_k),
-            ScalarArg::new(problem.out_channels as u32),
+            shape_k,
+            problem.out_channels as u32,
             FastDivmodArgs::<u32>::new(client, padded_channels),
             problem.operation,
         );

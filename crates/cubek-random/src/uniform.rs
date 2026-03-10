@@ -74,8 +74,8 @@ impl PrngArgs for Uniform {
 
     fn args<R: Runtime>(self) -> UniformLaunch<R> {
         UniformLaunch::new(
-            ScalarArg::new(self.lower_bound),
-            ScalarArg::new(self.upper_bound),
+            self.lower_bound,
+            self.upper_bound,
         )
     }
 }

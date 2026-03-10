@@ -231,19 +231,13 @@ impl<R: Runtime> NhwcLayoutLaunch<R> {
         let rank = binding.shape.len();
         let dim_c = rank - 1;
 
-        let stride_batch = ScalarArg::new(binding.strides[0]);
-        let strides_spatial = binding.strides[1..dim_c]
-            .iter()
-            .map(|s| ScalarArg::new(*s))
-            .collect();
-        let stride_channel = ScalarArg::new(binding.strides[dim_c]);
+        let stride_batch = binding.strides[0];
+        let strides_spatial = binding.strides[1..dim_c].iter().copied().collect();
+        let stride_channel = binding.strides[dim_c];
 
-        let shape_batch = ScalarArg::new(binding.shape[0] as u32);
-        let shapes_spatial = binding.shape[1..dim_c]
-            .iter()
-            .map(|s| ScalarArg::new(*s as u32))
-            .collect();
-        let shape_channel = ScalarArg::new(binding.shape[dim_c] as u32);
+        let shape_batch = binding.shape[0] as u32;
+        let shapes_spatial = binding.shape[1..dim_c].iter().map(|s| *s as u32).collect();
+        let shape_channel = binding.shape[dim_c] as u32;
 
         Self::new(
             stride_batch,

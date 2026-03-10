@@ -1,4 +1,4 @@
-use cubecl::{CubeCount, Runtime, prelude::ScalarArg};
+use cubecl::{CubeCount, Runtime};
 
 use crate::definition::{
     GlobalOrder, MatmulProblem, SmAllocation, TilingScheme,
@@ -224,15 +224,15 @@ impl CubeCountPlanKind {
             } => {
                 if *cubes_first {
                     CubeMappingStrategyArgs::CubeFirst {
-                        m_cubes: ScalarArg::new(*m_cubes),
-                        n_cubes: ScalarArg::new(*n_cubes),
-                        batch_cubes: ScalarArg::new(*batch_cubes),
+                        m_cubes: *m_cubes,
+                        n_cubes: *n_cubes,
+                        batch_cubes: *batch_cubes,
                     }
                 } else {
                     CubeMappingStrategyArgs::SmFirst {
-                        m_cubes: ScalarArg::new(*m_cubes),
-                        n_cubes: ScalarArg::new(*n_cubes),
-                        batch_cubes: ScalarArg::new(*batch_cubes),
+                        m_cubes: *m_cubes,
+                        n_cubes: *n_cubes,
+                        batch_cubes: *batch_cubes,
                     }
                 }
             }
@@ -240,8 +240,8 @@ impl CubeCountPlanKind {
             CubeCountPlanKind::Flattened {
                 m_cubes, n_cubes, ..
             } => CubeMappingStrategyArgs::Flattened {
-                m_cubes: ScalarArg::new(*m_cubes),
-                n_cubes: ScalarArg::new(*n_cubes),
+                m_cubes: *m_cubes,
+                n_cubes: *n_cubes,
             },
 
             CubeCountPlanKind::Spread {
@@ -250,9 +250,9 @@ impl CubeCountPlanKind {
                 batch_cubes,
                 ..
             } => CubeMappingStrategyArgs::Spread {
-                m_cubes: ScalarArg::new(*m_cubes),
-                n_cubes: ScalarArg::new(*n_cubes),
-                batch_cubes: ScalarArg::new(*batch_cubes),
+                m_cubes: *m_cubes,
+                n_cubes: *n_cubes,
+                batch_cubes: *batch_cubes,
             },
         }
     }

@@ -185,8 +185,8 @@ impl<R: Runtime> TmaIm2colLayoutLaunch<R> {
         params: ConvolutionParams,
         check_kernel: bool,
     ) -> Self {
-        let shape_m = ScalarArg::new(problem.m as u32);
-        let shape_k = ScalarArg::new(problem.k as u32);
+        let shape_m = problem.m as u32;
+        let shape_k = problem.k as u32;
 
         TmaIm2colLayoutLaunch::new(
             shape_out,
@@ -205,8 +205,8 @@ impl<R: Runtime> TmaIm2colLayoutLaunch<R> {
         params: ConvolutionParams,
         check_kernel: bool,
     ) -> Self {
-        let shape_k = ScalarArg::new(problem.k as u32);
-        let shape_n = ScalarArg::new(problem.n as u32);
+        let shape_k = problem.k as u32;
+        let shape_n = problem.n as u32;
 
         TmaIm2colLayoutLaunch::new(
             shape_out,

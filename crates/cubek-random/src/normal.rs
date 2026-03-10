@@ -89,7 +89,7 @@ impl PrngArgs for Normal {
     type Args = Self;
 
     fn args<R: Runtime>(self) -> NormalLaunch<R> {
-        NormalLaunch::new(ScalarArg::new(self.mean), ScalarArg::new(self.std))
+        NormalLaunch::new(self.mean, self.std)
     }
 }
 

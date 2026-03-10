@@ -171,10 +171,10 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
 
         GlobalLayoutLaunch::new(
             VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new()),
-            ScalarArg::new(rows as u32),
-            ScalarArg::new(cols as u32),
-            ScalarArg::new(stride_row),
-            ScalarArg::new(stride_col),
+            rows as u32,
+            cols as u32,
+            stride_row,
+            stride_col,
             line_size,
             1,
             config,
@@ -198,10 +198,10 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
 
         GlobalLayoutLaunch::new(
             VirtualLayoutLaunch::new::<BatchLayout>(batch_layout),
-            ScalarArg::new(rows as u32),
-            ScalarArg::new(cols as u32),
-            ScalarArg::new(stride_row),
-            ScalarArg::new(stride_col),
+            rows as u32,
+            cols as u32,
+            stride_row,
+            stride_col,
             line_size,
             1,
             config,
@@ -228,10 +228,10 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
 
             GlobalLayoutLaunch::new(
                 VirtualLayoutLaunch::new::<BatchLayout>(batch_layout),
-                ScalarArg::new(rows as u32),
-                ScalarArg::new(cols as u32),
-                ScalarArg::new(stride_row),
-                ScalarArg::new(stride_col),
+                rows as u32,
+                cols as u32,
+                stride_row,
+                stride_col,
                 line_size,
                 scheme.num_quants() as u32,
                 config,
@@ -239,7 +239,7 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
         };
 
         let scales_layout = {
-            let shape = (ScalarArg::new(rows as u32), ScalarArg::new(cols as u32));
+            let shape = (rows as u32, cols as u32);
 
             match scheme.level {
                 QuantLevel::Tensor => GlobalScaleLayoutArgs::PerTensor { shape },
@@ -363,7 +363,6 @@ impl<R: Runtime> BatchLayoutLaunch<R> {
             .iter()
             .zip(&handle.shape[..rank - 2])
             .map(|(stride, shape)| if *shape == 1 { 0 } else { *stride })
-            .map(ScalarArg::new)
             .collect();
         BatchLayoutLaunch::new(batch_shape, batch_strides)
     }

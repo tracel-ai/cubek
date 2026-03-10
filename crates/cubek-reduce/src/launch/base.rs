@@ -90,7 +90,7 @@ pub(crate) fn launch_reduce<Run: Runtime>(
             settings.line.line_size_output,
             input.into_tensor_arg(),
             output.into_tensor_arg(),
-            ScalarArg::new(axis),
+            axis,
             blueprint,
             inst,
             dtypes.input,

@@ -65,7 +65,7 @@ impl PrngArgs for Bernoulli {
     type Args = Self;
 
     fn args<R: Runtime>(self) -> BernoulliLaunch<R> {
-        BernoulliLaunch::new(ScalarArg::new(self.probability))
+        BernoulliLaunch::new(self.probability)
     }
 }
 

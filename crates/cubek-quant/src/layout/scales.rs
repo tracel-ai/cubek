@@ -223,7 +223,6 @@ pub fn scales_layout<R: Runtime>(
     scheme: &QuantScheme,
 ) -> ScalesLayoutArgs<R> {
     let values_len = values.shape.iter().product::<usize>() * scheme.num_quants();
-    let values_len = ScalarArg::new(values_len);
 
     match &scheme.level {
         QuantLevel::Tensor => ScalesLayoutArgs::PerTensor(PerTensorLayoutLaunch::new(values_len)),
@@ -258,7 +257,7 @@ fn shape_divmod_quant<R: Runtime>(
 fn strides_seq<R: Runtime>(_client: &ComputeClient<R>, strides: &[usize]) -> SequenceArg<R, usize> {
     let mut out_seq = SequenceArg::new();
     for s in strides {
-        out_seq.push(ScalarArg::new(*s));
+        out_seq.push(*s);
     }
     out_seq
 }

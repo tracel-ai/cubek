@@ -546,16 +546,10 @@ impl<
         };
 
         let view = |buffer, shape: &[usize], transposed| {
-            let batches = ScalarArg::new(shape[0]);
+            let batches = shape[0];
             let (rows, cols) = match transposed {
-                true => (
-                    ScalarArg::new(shape[2] as u32),
-                    ScalarArg::new(shape[1] as u32),
-                ),
-                false => (
-                    ScalarArg::new(shape[1] as u32),
-                    ScalarArg::new(shape[2] as u32),
-                ),
+                true => (shape[2] as u32, shape[1] as u32),
+                false => (shape[1] as u32, shape[2] as u32),
             };
             let shape = (batches, rows, cols);
             let layout = SimpleTmaGlobalLayoutLaunch::new(transposed, shape);

@@ -100,9 +100,7 @@ pub fn shared_sum<R: Runtime>(
     // Sum is commutative so we don't care about order, but need to care if there are holes since
     // they're not guaranteed to contain `0`.
     let input_view = if contiguous_buffer {
-        let layout = LinearLayoutArgs::Plain(PlainLayoutLaunch::new(ScalarArg::new(
-            input_len / line_size,
-        )));
+        let layout = LinearLayoutArgs::Plain(PlainLayoutLaunch::new(input_len / line_size));
         let buffer = unsafe { ArrayArg::from_raw_parts_binding(input.handle, input_len) };
         LinearViewLaunch::new::<LinearLayout>(buffer, layout)
     } else {
