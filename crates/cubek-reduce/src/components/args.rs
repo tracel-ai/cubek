@@ -45,7 +45,8 @@ pub trait ReduceArgs: Send + Sync + 'static + Clone {
         output: &mut Self::Output<P::Out, P::SizeOut>,
     ) -> Self::State<P>;
 
-    fn read_input<P: ReduceDType>(state: &Self::State<P>, index: usize) -> Vector<P::In, P::SizeIn>;
+    fn read_input<P: ReduceDType>(state: &Self::State<P>, index: usize)
+    -> Vector<P::In, P::SizeIn>;
     fn read_output<P: ReduceDType>(
         state: &Self::State<P>,
         index: usize,
@@ -118,7 +119,10 @@ impl ReduceArgs for TensorArgs {
         (input, output)
     }
 
-    fn read_input<P: ReduceDType>(state: &Self::State<P>, index: usize) -> Vector<P::In, P::SizeIn> {
+    fn read_input<P: ReduceDType>(
+        state: &Self::State<P>,
+        index: usize,
+    ) -> Vector<P::In, P::SizeIn> {
         unsafe { (*state.0)[index] }
     }
 

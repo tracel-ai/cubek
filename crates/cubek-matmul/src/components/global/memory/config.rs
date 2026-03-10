@@ -1,6 +1,6 @@
 use std::{fmt::Debug, hash::Hash};
 
-use cubecl::ir::{VectorSize, StorageType};
+use cubecl::ir::{StorageType, VectorSize};
 use cubek_std::MatrixLayout;
 
 use crate::components::global::memory::{GlobalLayoutConfig, ViewDirection};

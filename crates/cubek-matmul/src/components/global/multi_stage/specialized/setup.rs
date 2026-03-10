@@ -16,7 +16,7 @@ use crate::definition::MatmulLineSizes;
 use crate::definition::StageIdent;
 use crate::definition::TilingBlueprint;
 use crate::definition::{MatmulElems, MatmulSetupError};
-use crate::definition::{MatmulTypes, MatmulProblem};
+use crate::definition::{MatmulProblem, MatmulTypes};
 use crate::launch::RuntimeConfig;
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::MatrixLayout;

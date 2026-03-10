@@ -11,7 +11,7 @@ use crate::{
 use cubecl::{
     Runtime,
     client::ComputeClient,
-    ir::{VectorSize, StorageType},
+    ir::{StorageType, VectorSize},
 };
 use cubek_std::{MatrixLayout, stage::SwizzleMode};
 

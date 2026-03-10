@@ -17,7 +17,7 @@ use crate::components::stage::StridedStageFamily;
 use crate::components::stage::{self, StageConfig};
 use crate::components::{global::GlobalMatmulFamily, stage::NumStages};
 use crate::definition::TilingBlueprint;
-use crate::definition::{MatmulElems, MatmulTypes, MatmulProblem, MatmulSetupError};
+use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes};
 use crate::definition::{MatmulLineSizes, StageIdent};
 use crate::{components::CubeDimResource, launch::RuntimeConfig};
 use cubecl::{ir::DeviceProperties, prelude::*};

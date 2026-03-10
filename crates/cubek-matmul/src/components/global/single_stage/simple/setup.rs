@@ -2,7 +2,7 @@ use crate::{components::CubeDimResource, launch::RuntimeConfig};
 use crate::{
     components::stage::NumStages,
     definition::{
-        MatmulElems, MatmulLineSizes, MatmulTypes, MatmulProblem, MatmulSetupError, StageIdent,
+        MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, MatmulTypes, StageIdent,
     },
 };
 use crate::{

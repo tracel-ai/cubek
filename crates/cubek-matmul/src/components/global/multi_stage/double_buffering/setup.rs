@@ -13,7 +13,7 @@ use crate::components::{global::GlobalMatmulFamily, stage};
 use crate::components::{global::MaxGlobalReaderPlanes, stage::NumStages};
 use crate::definition::TilingBlueprint;
 use crate::definition::{
-    MatmulElems, MatmulLineSizes, MatmulTypes, MatmulProblem, MatmulSetupError, StageIdent,
+    MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, MatmulTypes, StageIdent,
 };
 use crate::launch::RuntimeConfig;
 use cubecl::{ir::DeviceProperties, prelude::*};

@@ -177,7 +177,7 @@ pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
             dtypes,
         );
 
-        let result = match input_representation {
+        match input_representation {
             InputRepresentation::Normal => {
                 let inputs = <TensorInputs<_, _, _> as ConcreteInputsFactory<A>>::create(
                     &client,
@@ -233,25 +233,10 @@ pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
                 }
             }
         }
-        .into();
-
-        let errors = client.flush_errors();
-        (result, errors)
+        .into()
     });
     match launch {
-        Ok((result, errors)) => {
-            #[allow(clippy::never_loop)]
-            for error in errors.iter() {
-                match error {
-                    // One launch error is OK.
-                    cubecl::server::ServerError::Launch(launch_error) => {
-                        return ExecutionOutcome::CompileError(format!("{errors:?}"));
-                    }
-                    _ => panic!("{errors:?}"),
-                }
-            }
-            result
-        }
+        Ok(result) => result,
         Err(err) => ExecutionOutcome::CompileError(err.to_string()),
     }
 }

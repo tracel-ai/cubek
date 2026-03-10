@@ -76,11 +76,7 @@ impl PartitionRangeDim {
 
 #[cube]
 impl GlobalPartitionMatmul for RowMajorGlobalPartitionMatmul {
-    fn execute<
-        Args: MatmulArgs,
-        MP: MatmulTypes,
-        GMM: global::GlobalMatmul<Args::Config, MP>,
-    >(
+    fn execute<Args: MatmulArgs, MP: MatmulTypes, GMM: global::GlobalMatmul<Args::Config, MP>>(
         state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
         ranges: PartitionRanges,
         k_range: (u32, u32),
@@ -114,11 +110,7 @@ impl GlobalPartitionMatmul for RowMajorGlobalPartitionMatmul {
 
 #[cube]
 impl GlobalPartitionMatmul for ColMajorGlobalPartitionMatmul {
-    fn execute<
-        Args: MatmulArgs,
-        MP: MatmulTypes,
-        GMM: global::GlobalMatmul<Args::Config, MP>,
-    >(
+    fn execute<Args: MatmulArgs, MP: MatmulTypes, GMM: global::GlobalMatmul<Args::Config, MP>>(
         state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
         ranges: PartitionRanges,
         k_range: (u32, u32),
