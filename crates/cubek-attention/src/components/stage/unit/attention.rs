@@ -3,12 +3,12 @@ use cubecl::prelude::*;
 
 use crate::components::{
     global::simple::UnitAttentionWriter,
-    stage::{
-        UnitReducer, partition_attention::PartitionAttention, partitioner::AttentionPartitioner,
-    },
+    softmax::UnitReducer,
+    stage::{partition_attention::PartitionAttention, partitioner::AttentionPartitioner},
+    tile::TileAttentionConfig,
 };
 
-use crate::components::{stage::SharedPartitionAttentionConfig, tile::TileAttentionConfig};
+use crate::components::stage::SharedPartitionAttentionConfig;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct UnitPartitionStageConfig<TC: TileAttentionConfig> {

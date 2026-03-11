@@ -2,7 +2,7 @@ use cubecl;
 use cubecl::prelude::*;
 
 use crate::components::global::simple::AttentionWriter;
-use crate::components::stage::Reducer;
+use crate::components::softmax::Reducer;
 
 #[cube]
 /// Defines how the stage is partitioned among compute primitives (e.g., units or planes).

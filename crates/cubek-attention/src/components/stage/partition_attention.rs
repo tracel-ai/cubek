@@ -9,22 +9,19 @@ use std::marker::PhantomData;
 
 use crate::components::{
     global::simple::{MaskReader, QueryReader},
+    softmax::Softmax,
     stage::{AccumulatorPartition, MaskPartition, partitioner::AttentionPartitioner},
-    tile::{SoftmaxPipeline, SoftmaxPipelineExpand},
 };
+use crate::components::{softmax::Accumulator, stage::KeyPartition};
+use crate::components::{softmax::InnerMatmul, stage::ValuePartition};
+use crate::components::{softmax::TileAttention, stage::base::StageAttentionConfig};
 use crate::components::{
-    stage::{
-        KeyValuePartition, QueryPartition, RunningState, SoftmaxPartition, StageAttentionConfig,
-    },
-    tile::{RowWise, TileAttention},
+    stage::{QueryPartition, SoftmaxPartition},
+    tile::TileAttentionConfig as _,
 };
 use crate::{components::stage::StageAttention, definition::AttentionPrecision};
 use crate::{
-    components::{
-        global::GlobalAttentionConfig,
-        stage::{PartitionAttentionConfig, tile_softmax},
-        tile::TileAttentionConfig as _,
-    },
+    components::{global::GlobalAttentionConfig, stage::PartitionAttentionConfig},
     definition::attention_types::*,
 };
 use cubecl::std::tensor::layout::Coords2d;
@@ -59,11 +56,13 @@ impl<
     type Config = PartitionAttentionConfig<TA::Config>;
     type Partitioner = P;
 
-    type QueryRegisters = QueryPartition<AP, TA>;
-    type KeyValueRegisters = KeyValuePartition<AP, TA>;
-    type SoftmaxRegisters = SoftmaxPartition<AP, TA>;
-    type AccumulatorRegisters = AccumulatorPartition<AP, TA>;
-    type MaskRegisters = MaskPartition<AP, TA>;
+    type QueryPartition = QueryPartition<TA::ScoreMatmul>;
+    type KeyPartition = KeyPartition<TA::ScoreMatmul>;
+    type ValuePartition = ValuePartition<TA::ValueMatmul>;
+    type SoftmaxPartition = SoftmaxPartition<SM<AP>, TA::Softmax>;
+    type AccumulatorPartition = AccumulatorPartition<TA::Accumulator>;
+    type MaskPartition = MaskPartition<SM<AP>, TA::Softmax>;
+    type RunningState = <TA::Softmax as Softmax<SM<AP>>>::RunningState;
 
     /// Executes the attention computation over one query–key/value partition.
     ///
@@ -73,23 +72,25 @@ impl<
     /// 3. Uses these probabilities to partially accumulate the corresponding value tiles
     ///    into the output accumulators.
     fn execute(
-        query_partition: &QueryPartition<AP, TA>,
+        query_partition: &Self::QueryPartition,
         key_stage: &SK,
         value_stage: &SV,
-        key_value_partition: &mut KeyValuePartition<AP, TA>,
+        key_partition: &mut KeyPartition<TA::ScoreMatmul>,
+        value_partition: &mut ValuePartition<TA::ValueMatmul>,
         mask_reader: &MaskReader<AP>,
-        mask_partition: &mut MaskPartition<AP, TA>,
-        softmax_partition: &mut SoftmaxPartition<AP, TA>,
-        accumulator_partition: &mut AccumulatorPartition<AP, TA>,
-        state: &mut Sequence<RunningState<SM<AP>>>,
+        mask_partition: &mut MaskPartition<SM<AP>, TA::Softmax>,
+        softmax_partition: &mut SoftmaxPartition<SM<AP>, TA::Softmax>,
+        accumulator_partition: &mut AccumulatorPartition<TA::Accumulator>,
+        state: &mut Sequence<Self::RunningState>,
         #[comptime] config: Self::Config,
     ) {
         let p = config.shared().partition_size;
-        let num_rows_per_unit = config.shared().tile_config.num_rows_per_unit() as usize;
 
-        // Small working memory in registers
-        let mut max_placeholder = RowWise::new_min_value(num_rows_per_unit);
-        let mut sum_placeholder = RowWise::new_zero(num_rows_per_unit);
+        let softmax_config = config.tile_config().softmax_config();
+        let mut workspace = TA::Softmax::init_workspace(softmax_config);
+
+        let head_dim_factor =
+            SM::<AP>::new(1.0 / ((p.head_dim * config.tile_size().head_dim) as f32).sqrt());
 
         // The problem is independent on each (q, kv) tile pair
         #[unroll]
@@ -97,8 +98,7 @@ impl<
             #[unroll]
             for q in 0..p.seq_q as usize {
                 // Get the q-th softmax tile and zero it
-                let softmax_tile = softmax_partition.get_at_mut(q);
-                softmax_tile.zero();
+                let softmax_tiles = softmax_partition.get_tiles_mut(q);
 
                 // Get the only mask tile and fill it with q,kv-th data
                 let mask_tile = mask_partition.get_mut();
@@ -111,19 +111,20 @@ impl<
                 // Contrary to loop for value matmul, all iterations are accumulated into the same tile
                 for hd in 0..p.head_dim as usize {
                     // Get the q,hd-th query which is always in registers
-                    let query_tile = query_partition.get_at(q, hd, config);
+                    let query_tile =
+                        query_partition.get(q, hd, config.tile_size().head_dim as usize);
 
                     // Get the only key-value tile and fill it with hd,kv-th key data
-                    let key_tile = key_value_partition.get_key_mut();
+                    let key_tile = key_partition.get_mut();
                     let key_data = SK::tile(key_stage, (kv, hd as u32).runtime());
-                    TA::load_key_transposed(&key_data, key_tile.key_mut(), config.tile_config());
+                    TA::ScoreMatmul::load_rhs_transposed(&key_data, &mut key_tile.fragment);
 
                     // Perform score matmul on query and key, and accumulate in softmax tile
-                    TA::score_matmul(
+                    TA::ScoreMatmul::execute(
                         &query_tile.fragment,
-                        key_tile.key(),
-                        softmax_tile,
-                        config.tile_config(),
+                        &key_tile.fragment,
+                        &mut softmax_tiles.score_tile,
+                        config.tile_size().to_score_matmul_tile_size(),
                     );
                 }
 
@@ -132,26 +133,15 @@ impl<
                 // Get the q-th running state, i.e. the one associated with rows from q
                 let state_q = state.index_mut(q);
 
-                // Make sure the softmax is in a row-aware layout
-                // If the layout is always row-aware, it's a no-op.
-                // Otherwise it may go through shared memory
-                let softmax_rowwise = softmax_tile.rowwise_mut();
-
-                // Perform the softmax calculation on the (row-format) softmax tile, including masking
-                // This mutates the (row-format) softmax tile and the state
-                // Also outputs a value needed to scale accumulator later
-                let scale = tile_softmax::<AP, TA, P::Reducer>(
-                    softmax_rowwise,
+                let scale = TA::Softmax::softmax(
+                    &softmax_tiles.score_tile,
                     mask_partition.get(),
+                    &mut softmax_tiles.softmaxed_tile,
                     state_q,
-                    &mut max_placeholder,
-                    &mut sum_placeholder,
-                    p.head_dim * config.tile_config().attention_tile_size().head_dim,
-                    config.tile_config(),
+                    &mut workspace,
+                    head_dim_factor,
+                    softmax_config,
                 );
-
-                // Make sure the mutations on softmax_rowwise also affect other softmax formats
-                softmax_tile.finalize_lhs();
 
                 // At this point, the softmax tile is filled with probabilities
 
@@ -162,19 +152,23 @@ impl<
                 for vd in 0..p.val_dim as usize {
                     // Get the only key-value tile and fill it with hd,kv-th key data
                     let value_data = SV::tile(value_stage, (kv, vd as u32).runtime());
-                    let value_tile = key_value_partition.get_value_mut();
-                    TA::load_value(&value_data, value_tile.value_mut(), config.tile_config());
+                    let value_tile = value_partition.get_mut();
+                    TA::ValueMatmul::load_rhs_plain(&value_data, &mut value_tile.fragment);
 
                     // Get the q,vd-th accumulator and scale it with previously obtained scale
-                    let accumulator = accumulator_partition.get_at_mut(q, vd, config);
-                    accumulator.scale_mul(&scale);
+                    let mut accumulator = accumulator_partition.get_at_mut(
+                        q,
+                        vd,
+                        config.shared().partition_size.val_dim as usize,
+                    );
+                    TA::Accumulator::scale_mul(accumulator, &scale);
 
                     // Perform value matmul on probabilities and values, and accumulate in accumulators
-                    TA::value_matmul(
-                        softmax_tile,
-                        key_value_partition.get_value().value(),
-                        &mut accumulator.fragment,
-                        config.tile_config(),
+                    TA::ValueMatmul::execute(
+                        &softmax_tiles.softmaxed_tile,
+                        &value_partition.get().fragment,
+                        &mut accumulator,
+                        config.tile_size().to_value_matmul_tile_size(),
                     );
                 }
             }
@@ -182,31 +176,39 @@ impl<
     }
 
     fn rescale(
-        acc: &mut AccumulatorPartition<AP, TA>,
-        state: Sequence<RunningState<SM<AP>>>,
+        acc: &mut AccumulatorPartition<TA::Accumulator>,
+        state: Sequence<Self::RunningState>,
         #[comptime] config: Self::Config,
     ) {
         let p = config.shared().partition_size;
 
         #[unroll]
         for q in 0..p.seq_q as usize {
-            let scale = state[q].l();
+            let running_state = state.index(q);
 
             #[unroll]
             for vd in 0..p.val_dim as usize {
-                AccumulatorPartition::<AP, TA>::get_at_mut(acc, q, vd, config).scale_div(scale);
+                TA::Accumulator::scale_div(
+                    AccumulatorPartition::<TA::Accumulator>::get_at_mut(
+                        acc,
+                        q,
+                        vd,
+                        config.shared().partition_size.val_dim as usize,
+                    ),
+                    &running_state,
+                );
             }
         }
     }
 
-    fn init_state(#[comptime] config: Self::Config) -> Sequence<RunningState<SM<AP>>> {
+    fn init_state(#[comptime] config: Self::Config) -> Sequence<Self::RunningState> {
         let partition_seq_q = config.shared().partition_size.seq_q;
         let mut sequence = Sequence::new();
 
         #[unroll]
         for _ in 0..partition_seq_q {
-            sequence.push(RunningState::<SM<AP>>::init(
-                config.shared().tile_config.num_rows_per_unit() as usize,
+            sequence.push(TA::Softmax::init_state(
+                config.tile_config().softmax_config(),
             ));
         }
 
@@ -214,7 +216,7 @@ impl<
     }
 
     fn write<W: WriteEventListener, G: GlobalAttentionConfig>(
-        acc: &AccumulatorPartition<AP, TA>,
+        acc: &AccumulatorPartition<TA::Accumulator>,
         stage: &mut SO,
         writer: &mut W,
         #[comptime] config: Self::Config,
@@ -230,10 +232,15 @@ impl<
                 let tile_pos = (q as u32 + P::seq_q_index() * p.seq_q, vd.runtime() as u32);
                 let tile = SO::tile(stage, tile_pos);
 
-                TA::write_results(
-                    &AccumulatorPartition::<AP, TA>::get_at(acc, q, vd, config).fragment,
+                TA::Accumulator::write_results(
+                    &AccumulatorPartition::get_at(
+                        acc,
+                        q,
+                        vd,
+                        config.shared().partition_size.val_dim as usize,
+                    ),
                     &mut tile.as_slice_mut(),
-                    config.tile_config(),
+                    config.tile_config().accumulator_config(),
                 );
 
                 W::on_event(writer, WriteEvent::new_TileStored(tile_pos));
@@ -243,43 +250,59 @@ impl<
         W::on_event(writer, WriteEvent::new_Finish());
     }
 
-    fn init_query(#[comptime] config: Self::Config) -> QueryPartition<AP, TA> {
-        QueryPartition::<AP, TA>::new(config)
+    fn init_query(#[comptime] config: Self::Config) -> QueryPartition<TA::ScoreMatmul> {
+        QueryPartition::<TA::ScoreMatmul>::new(
+            config.shared().partition_size,
+            config.tile_config().score_matmul_config(),
+        )
     }
 
-    fn init_key_value(#[comptime] config: Self::Config) -> KeyValuePartition<AP, TA> {
-        KeyValuePartition::<AP, TA>::new(config)
+    fn init_key(#[comptime] config: Self::Config) -> KeyPartition<TA::ScoreMatmul> {
+        KeyPartition::<TA::ScoreMatmul>::new(config.tile_config().score_matmul_config())
     }
 
-    fn init_softmax(#[comptime] config: Self::Config) -> SoftmaxPartition<AP, TA> {
-        SoftmaxPartition::<AP, TA>::new(config)
+    fn init_value(#[comptime] config: Self::Config) -> ValuePartition<TA::ValueMatmul> {
+        ValuePartition::<TA::ValueMatmul>::new(config.tile_config().value_matmul_config())
     }
 
-    fn init_accumulator(#[comptime] config: Self::Config) -> AccumulatorPartition<AP, TA> {
-        AccumulatorPartition::<AP, TA>::new(config)
+    fn init_softmax(#[comptime] config: Self::Config) -> SoftmaxPartition<SM<AP>, TA::Softmax> {
+        SoftmaxPartition::<SM<AP>, TA::Softmax>::new(
+            config.shared().partition_size,
+            config.tile_config().softmax_config(),
+        )
+    }
+
+    fn init_accumulator(#[comptime] config: Self::Config) -> AccumulatorPartition<TA::Accumulator> {
+        AccumulatorPartition::<TA::Accumulator>::new(
+            config.shared().partition_size,
+            config.tile_config().accumulator_config(),
+        )
     }
 
     fn init_mask(
         out_of_bounds: ComptimeOption<Coords2d>,
         #[comptime] config: Self::Config,
-    ) -> MaskPartition<AP, TA> {
-        MaskPartition::<AP, TA>::new(out_of_bounds, config)
+    ) -> MaskPartition<SM<AP>, TA::Softmax> {
+        MaskPartition::<SM<AP>, TA::Softmax>::new(
+            out_of_bounds,
+            config.tile_config().softmax_config(),
+        )
     }
 
     fn read_query(
         reader: &QueryReader<AP>,
-        registers: &mut QueryPartition<AP, TA>,
+        registers: &mut QueryPartition<TA::ScoreMatmul>,
         #[comptime] config: Self::Config,
     ) {
         let partition_seq_q = config.shared().partition_size.seq_q;
         let partition_head_dim = config.shared().partition_size.head_dim;
-        let attention_tile_size = config.shared().tile_config.attention_tile_size();
+        let attention_tile_size = config.tile_size();
 
         #[unroll]
         for q in 0..partition_seq_q as usize {
             #[unroll]
             for hd in 0..partition_head_dim as usize {
-                let tile_to_write = registers.get_at_mut(q, hd, config);
+                let tile_to_write = registers.get_mut(q, hd, partition_head_dim as usize);
                 let tile_read = reader.get_tile::<P>(
                     (q as u32, hd as u32).runtime(),
                     attention_tile_size,

@@ -2,26 +2,24 @@ use cubecl;
 use cubecl::prelude::*;
 use cubek_std::tile::StridedTile;
 
-use crate::components::tile::TileAttention;
-use crate::definition::AttentionPrecision;
-use crate::definition::attention_types::QG;
+use crate::components::softmax::InnerMatmul;
 
 #[derive(CubeType)]
 /// Query input to the Tile Attention
-pub struct QueryTile<AP: AttentionPrecision, TA: TileAttention<AP>> {
-    pub fragment: TA::Query,
+pub struct QueryTile<SMM: InnerMatmul> {
+    pub fragment: SMM::Lhs,
 }
 
 #[cube]
-impl<AP: AttentionPrecision, TA: TileAttention<AP>> QueryTile<AP, TA> {
-    pub fn new(#[comptime] config: TA::Config) -> QueryTile<AP, TA> {
-        QueryTile::<AP, TA> {
-            fragment: TA::allocate_query(config),
+impl<SMM: InnerMatmul> QueryTile<SMM> {
+    pub fn new(#[comptime] config: SMM::Config) -> QueryTile<SMM> {
+        QueryTile::<SMM> {
+            fragment: SMM::allocate_lhs(config),
         }
     }
 
     /// Loads the query data into the fragment
-    pub fn update(&mut self, tile: &StridedTile<QG<AP>>) {
-        TA::load_query(tile, &mut self.fragment)
+    pub fn update<E: Numeric>(&mut self, tile: &StridedTile<E>) {
+        SMM::load_lhs(tile, &mut self.fragment)
     }
 }

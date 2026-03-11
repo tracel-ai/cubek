@@ -112,7 +112,6 @@ impl<
 
         validate(PartitionAttentionConfig::Plane(PlanePartitionStageConfig {
             shared: SharedPartitionAttentionConfig {
-                tile_config,
                 partition_size: blueprint.tiling_scheme.partition_size,
                 stage_size: blueprint.tiling_scheme.stage_size,
                 reuse_key_value: blueprint.reuse_key_value,
@@ -120,6 +119,7 @@ impl<
                 key_smem_config,
                 value_smem_config,
                 out_smem_config,
+                tile_config,
             },
         }))
     }

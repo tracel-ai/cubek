@@ -1,23 +1,25 @@
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::components::stage::{ReduceOp, Reducer};
-use crate::components::tile::{RowWise, TileAttentionConfig};
+use crate::components::softmax::base::SoftmaxConfig;
+use crate::components::softmax::{ReduceOp, Reducer};
+use crate::components::tile::RowWise;
 use crate::components::tile::{SoftmaxRowwise, SoftmaxRowwiseExpand};
 
 #[derive(CubeType)]
 /// Naive row reducer using shared memory
+#[allow(unused)]
 pub struct NaiveReducer {}
 
 #[cube]
 impl Reducer for NaiveReducer {
-    fn reduce<E: Float, F: SoftmaxRowwise<E>, RO: ReduceOp<E>, FC: TileAttentionConfig>(
+    fn reduce<E: Float, F: SoftmaxRowwise<E>, RO: ReduceOp<E>>(
         vals: &mut RowWise<E>,
         data: &F,
-        #[comptime] config: FC,
+        #[comptime] config: SoftmaxConfig,
     ) {
-        let num_vals_in_plane = config.num_rows_per_unit() * config.plane_dim();
-        let mut smem = SharedMemory::<E>::new((num_vals_in_plane * config.num_planes()) as usize);
+        let num_vals_in_plane = config.num_rows_per_unit * config.plane_dim;
+        let mut smem = SharedMemory::<E>::new((num_vals_in_plane * config.num_planes) as usize);
 
         let local_vals = RO::reduce_local::<F>(data);
 
@@ -25,8 +27,8 @@ impl Reducer for NaiveReducer {
         let unit_offset = UNIT_POS_X;
 
         #[unroll]
-        for r in 0..config.num_rows_per_unit() as usize {
-            let row_offset = r as u32 * config.plane_dim();
+        for r in 0..config.num_rows_per_unit as usize {
+            let row_offset = r as u32 * config.plane_dim;
             let offset = plane_offset + row_offset + unit_offset;
 
             smem[offset as usize] = local_vals.index(r);
@@ -37,10 +39,10 @@ impl Reducer for NaiveReducer {
         let num_units_per_row = data.num_units_per_row();
 
         #[unroll]
-        for r in 0..config.num_rows_per_unit() as usize {
+        for r in 0..config.num_rows_per_unit as usize {
             let mut val = vals.index(r);
 
-            let row_offset = r as u32 * config.plane_dim();
+            let row_offset = r as u32 * config.plane_dim;
 
             for c in 0..num_units_per_row {
                 let unit_offset = (UNIT_POS_X / num_units_per_row) * num_units_per_row;

@@ -1,6 +1,7 @@
 use cubecl::ir::DeviceProperties;
 use cubecl::ir::LineSize;
 use cubek_matmul::components::CubeDimResource;
+use cubek_std::InvalidConfigError;
 use cubek_std::tile::mma::MmaIOConfig;
 
 use crate::components::tile::SharedTileAttentionConfig;
@@ -12,7 +13,6 @@ use crate::definition::AttentionElems;
 use crate::definition::AttentionPrecision;
 use crate::definition::AttentionSetupError;
 use crate::definition::AttentionTileSize;
-use crate::definition::InvalidConfigError;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct WhiteboxAcceleratedAttentionMatmulConfig {
@@ -31,7 +31,7 @@ impl TileAttentionConfig for WhiteboxAcceleratedAttentionMatmulConfig {
         self.shared.num_planes
     }
 
-    fn attention_tile_size(&self) -> AttentionTileSize {
+    fn tile_size(&self) -> AttentionTileSize {
         self.shared.attention_tile_size
     }
 

@@ -3,41 +3,39 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
 use cubek_std::tile::StridedTile;
 
+use crate::components::softmax::Softmax;
 use crate::components::tile::{
     FragmentMask, FragmentMaskExpand, SoftmaxLayout, SoftmaxLayoutExpand,
 };
-use crate::components::tile::{TileAttention, TileAttentionConfig};
-use crate::definition::AttentionPrecision;
-use crate::definition::attention_types::MSK;
 
 use cubecl::std::tensor::layout::Coordinates;
 
 #[derive(CubeType)]
 /// Mask tile for Tile Attention
 /// It is an additive mask, which means the result of apply should be added, not multiplied
-pub enum MaskTile<AP: AttentionPrecision, TA: TileAttention<AP>> {
+pub enum MaskTile<F: Float, SMX: Softmax<F>> {
     /// When a mask tensor is supplied. Also contains a logical part
-    Materialized(MaterializedTileMask<AP, TA>),
+    Materialized(MaterializedTileMask<F, SMX>),
     /// When no mask tensor is supplied. Used for out of bounds and causal mask
-    Logical(LogicalTileMask<TA::SoftmaxLayout>),
+    Logical(LogicalTileMask<SMX::ScoreLayout>),
 }
 
 #[cube]
-impl<AP: AttentionPrecision, TA: TileAttention<AP>> MaskTile<AP, TA> {
+impl<F: Float, SMX: Softmax<F>> MaskTile<F, SMX> {
     pub fn new(
         out_of_bounds: ComptimeOption<Coords2d>,
-        #[comptime] config: TA::Config,
-    ) -> MaskTile<AP, TA> {
-        let logical_mask = LogicalTileMask::<TA::SoftmaxLayout> {
+        #[comptime] config: SMX::Config,
+    ) -> MaskTile<F, SMX> {
+        let logical_mask = LogicalTileMask::<SMX::ScoreLayout> {
             logical_iter_origin: LogicalIterOrigin::init(),
             causal: config.causal_mask(),
             out_of_bounds,
-            fragment_layout: TA::softmax_layout(config),
+            fragment_layout: SMX::layout(config),
         };
 
         if config.materialized_mask() {
-            MaskTile::new_Materialized(MaterializedTileMask::<AP, TA> {
-                fragment: TA::allocate_mask(config),
+            MaskTile::new_Materialized(MaterializedTileMask::<F, SMX> {
+                fragment: SMX::allocate_mask(config),
                 logical_mask,
                 config,
             })
@@ -48,7 +46,11 @@ impl<AP: AttentionPrecision, TA: TileAttention<AP>> MaskTile<AP, TA> {
 
     /// Loads the mask data into the fragment, if a tile is given, otherwise only
     /// updates the logical mask
-    pub fn update(&mut self, new_origin: Coords2d, tile: ComptimeOption<StridedTile<MSK<AP>>>) {
+    pub fn update<E: Numeric>(
+        &mut self,
+        new_origin: Coords2d,
+        tile: ComptimeOption<StridedTile<E>>,
+    ) {
         match self {
             MaskTile::Materialized(materialized_tile_mask) => {
                 materialized_tile_mask
@@ -125,15 +127,15 @@ impl<F: SoftmaxLayout> LogicalTileMask<F> {
 }
 
 #[derive(CubeType)]
-pub struct MaterializedTileMask<AP: AttentionPrecision, TA: TileAttention<AP>> {
-    fragment: TA::Mask,
-    logical_mask: LogicalTileMask<TA::SoftmaxLayout>,
+pub struct MaterializedTileMask<F: Float, SMX: Softmax<F>> {
+    fragment: SMX::Mask,
+    logical_mask: LogicalTileMask<SMX::ScoreLayout>,
     #[cube(comptime)]
-    config: TA::Config,
+    config: SMX::Config,
 }
 
 #[cube]
-impl<AP: AttentionPrecision, TA: TileAttention<AP>> MaterializedTileMask<AP, TA> {
+impl<F: Float, SMX: Softmax<F>> MaterializedTileMask<F, SMX> {
     pub fn should_mask(&self, local_pos: Coords2d) -> bool {
         let logical_masked = self.logical_mask.should_mask(local_pos);
         let materialized_masked = self.fragment.should_mask(local_pos);
@@ -141,14 +143,14 @@ impl<AP: AttentionPrecision, TA: TileAttention<AP>> MaterializedTileMask<AP, TA>
         logical_masked || materialized_masked
     }
 
-    pub fn update_tile(&mut self, tile: StridedTile<MSK<AP>>) {
-        TA::load_mask(&tile, &mut self.fragment, self.config);
+    pub fn update_tile<MSK: Numeric>(&mut self, tile: StridedTile<MSK>) {
+        SMX::load_mask(&tile, &mut self.fragment, self.config);
     }
 }
 
 #[cube]
-impl<AP: AttentionPrecision, TA: TileAttention<AP>> FragmentMask for MaskTile<AP, TA> {
-    type Layout = <TA::Mask as FragmentMask>::Layout;
+impl<F: Float, SMX: Softmax<F>> FragmentMask for MaskTile<F, SMX> {
+    type Layout = SMX::ScoreLayout;
 
     fn should_mask(&self, local_pos: (u32, u32)) -> bool {
         match self {

@@ -1,49 +1,47 @@
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::components::stage::StageAttentionConfig;
-use crate::components::stage::{PartitionAttentionConfig, QueryTile};
-use crate::components::tile::TileAttention;
-use crate::definition::AttentionPrecision;
+use crate::components::softmax::InnerMatmul;
+use crate::components::stage::QueryTile;
+use crate::definition::AttentionPartitionSize;
 
 #[derive(CubeType)]
 /// Contains all seq_q·head_dim materialized tiles at once because they are reused extensively
-pub struct QueryPartition<AP: AttentionPrecision, TA: TileAttention<AP>> {
-    sequence: Sequence<QueryTile<AP, TA>>,
+pub struct QueryPartition<IM: InnerMatmul> {
+    sequence: Sequence<QueryTile<IM>>,
 }
 
 #[cube]
-impl<AP: AttentionPrecision, TA: TileAttention<AP>> QueryPartition<AP, TA> {
-    pub fn new(#[comptime] config: PartitionAttentionConfig<TA::Config>) -> QueryPartition<AP, TA> {
-        let p = config.shared().partition_size;
-
+impl<IM: InnerMatmul> QueryPartition<IM> {
+    pub fn new(
+        #[comptime] partition_size: AttentionPartitionSize,
+        #[comptime] config: IM::Config,
+    ) -> QueryPartition<IM> {
         let mut sequence = Sequence::new();
 
         #[unroll]
-        for _ in 0..p.seq_q * p.head_dim {
-            sequence.push(QueryTile::<AP, TA>::new(config.tile_config()));
+        for _ in 0..partition_size.seq_q * partition_size.head_dim {
+            sequence.push(QueryTile::<IM>::new(config));
         }
 
-        QueryPartition::<AP, TA> { sequence }
+        QueryPartition::<IM> { sequence }
     }
 
-    pub fn get_at(
+    pub fn get(
         &self,
         #[comptime] q: usize,
         #[comptime] hd: usize,
-        #[comptime] config: PartitionAttentionConfig<TA::Config>,
-    ) -> &QueryTile<AP, TA> {
-        let partition_head_dim = config.shared().partition_size.head_dim as usize;
+        #[comptime] partition_head_dim: usize,
+    ) -> &QueryTile<IM> {
         &self.sequence[q * partition_head_dim + hd]
     }
 
-    pub fn get_at_mut(
+    pub fn get_mut(
         &mut self,
         #[comptime] q: usize,
         #[comptime] hd: usize,
-        #[comptime] config: PartitionAttentionConfig<TA::Config>,
-    ) -> &mut QueryTile<AP, TA> {
-        let partition_head_dim = config.shared().partition_size.head_dim as usize;
+        #[comptime] partition_head_dim: usize,
+    ) -> &mut QueryTile<IM> {
         self.sequence.index_mut(q * partition_head_dim + hd)
     }
 }

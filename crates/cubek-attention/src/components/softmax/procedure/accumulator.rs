@@ -1,8 +1,8 @@
 use cubecl;
 use cubecl::prelude::*;
 
+use crate::components::softmax::TileAttention;
 use crate::components::tile::RowWise;
-use crate::components::tile::TileAttention;
 use crate::components::tile::{AccumulatorPipeline, AccumulatorPipelineExpand};
 use crate::components::tile::{AccumulatorRowwise, AccumulatorRowwiseExpand};
 use crate::definition::AttentionPrecision;

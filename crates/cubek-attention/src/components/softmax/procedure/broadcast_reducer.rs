@@ -1,8 +1,9 @@
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::components::stage::{ReduceOp, Reducer};
-use crate::components::tile::{RowVal, RowWise, TileAttentionConfig};
+use crate::components::softmax::base::SoftmaxConfig;
+use crate::components::softmax::{ReduceOp, Reducer};
+use crate::components::tile::{RowVal, RowWise};
 use crate::components::tile::{SoftmaxRowwise, SoftmaxRowwiseExpand};
 
 #[derive(CubeType)]
@@ -11,10 +12,10 @@ pub struct BroadcastReducer {}
 
 #[cube]
 impl Reducer for BroadcastReducer {
-    fn reduce<E: Float, F: SoftmaxRowwise<E>, RO: ReduceOp<E>, FC: TileAttentionConfig>(
+    fn reduce<E: Float, F: SoftmaxRowwise<E>, RO: ReduceOp<E>>(
         vals: &mut RowWise<E>,
         data: &F,
-        #[comptime] _config: FC,
+        #[comptime] _config: SoftmaxConfig,
     ) {
         let num_units_per_row = data.num_units_per_row().comptime();
         let num_shares_within_plane = num_units_per_row.next_power_of_two().ilog2();

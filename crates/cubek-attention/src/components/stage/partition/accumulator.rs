@@ -1,43 +1,41 @@
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::components::tile::TileAttention;
+use crate::components::softmax::Accumulator;
+use crate::components::softmax::AccumulatorConfig;
 
-use crate::components::stage::StageAttentionConfig;
-use crate::components::stage::{AccumulatorTile, PartitionAttentionConfig};
-use crate::definition::AttentionPrecision;
+use crate::definition::AttentionPartitionSize;
 
 #[derive(CubeType)]
 /// Contains all seq_q·val_dim materialized tiles at once because they're accumulators
-pub struct AccumulatorPartition<AP: AttentionPrecision, TA: TileAttention<AP>> {
-    sequence: Sequence<AccumulatorTile<AP, TA>>,
+pub struct AccumulatorPartition<AC: Accumulator> {
+    sequence: Sequence<AC::Tile>,
 }
 
 #[cube]
-impl<AP: AttentionPrecision, TA: TileAttention<AP>> AccumulatorPartition<AP, TA> {
+impl<AC: Accumulator> AccumulatorPartition<AC> {
     pub fn new(
-        #[comptime] config: PartitionAttentionConfig<TA::Config>,
-    ) -> AccumulatorPartition<AP, TA> {
-        let p = config.shared().partition_size;
+        #[comptime] partition_size: AttentionPartitionSize,
+        #[comptime] config: AccumulatorConfig,
+    ) -> AccumulatorPartition<AC> {
         let mut sequence = Sequence::new();
 
-        let mut shared = TA::allocate_accumulator_transit(config.tile_config());
+        let mut workspace = AC::init_workspace(config);
 
         #[unroll]
-        for _ in 0..p.seq_q * p.val_dim {
-            sequence.push(AccumulatorTile::new(&mut shared, config.tile_config()));
+        for _ in 0..partition_size.seq_q * partition_size.val_dim {
+            sequence.push(AC::init_tile(&mut workspace, config));
         }
 
-        AccumulatorPartition::<AP, TA> { sequence }
+        AccumulatorPartition::<AC> { sequence }
     }
 
     pub fn get_at(
         &self,
         #[comptime] i: usize,
         #[comptime] j: usize,
-        #[comptime] config: PartitionAttentionConfig<TA::Config>,
-    ) -> &AccumulatorTile<AP, TA> {
-        let partition_val_dim = config.shared().partition_size.val_dim as usize;
+        #[comptime] partition_val_dim: usize,
+    ) -> &AC::Tile {
         &self.sequence[i * partition_val_dim + j]
     }
 
@@ -45,9 +43,8 @@ impl<AP: AttentionPrecision, TA: TileAttention<AP>> AccumulatorPartition<AP, TA>
         &mut self,
         #[comptime] i: usize,
         #[comptime] j: usize,
-        #[comptime] config: PartitionAttentionConfig<TA::Config>,
-    ) -> &mut AccumulatorTile<AP, TA> {
-        let partition_val_dim = config.shared().partition_size.val_dim as usize;
+        #[comptime] partition_val_dim: usize,
+    ) -> &mut AC::Tile {
         self.sequence.index_mut(i * partition_val_dim + j)
     }
 }

@@ -1,41 +1,45 @@
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::components::stage::PartitionAttentionConfig;
-use crate::components::stage::StageAttentionConfig;
-use crate::components::tile::TileAttention;
-use crate::definition::AttentionPrecision;
+use crate::components::softmax::Softmax;
+use crate::components::softmax::SoftmaxConfig;
+use crate::definition::AttentionPartitionSize;
 
 #[derive(CubeType)]
 /// Because at each hd we will perform matmul with all of seq_q, we keep seq_q softmax tiles at a time.
 /// Each of the seq_kv column can be done sequentially reusing those tiles.
-pub struct SoftmaxPartition<AP: AttentionPrecision, TA: TileAttention<AP>> {
-    sequence: Sequence<TA::Softmax>,
+pub struct SoftmaxPartition<F: Float, SMX: Softmax<F>> {
+    tiles: Sequence<SoftmaxTiles<F, SMX>>,
+}
+
+#[derive(CubeType)]
+pub struct SoftmaxTiles<F: Float, SMX: Softmax<F>> {
+    pub score_tile: SMX::ScoreTile,
+    pub softmaxed_tile: SMX::SoftmaxedTile,
 }
 
 #[cube]
-impl<AP: AttentionPrecision, TA: TileAttention<AP>> SoftmaxPartition<AP, TA> {
+impl<F: Float, SMX: Softmax<F>> SoftmaxPartition<F, SMX> {
     pub fn new(
-        #[comptime] config: PartitionAttentionConfig<TA::Config>,
-    ) -> SoftmaxPartition<AP, TA> {
-        let p = config.shared().partition_size;
-        let mut sequence = Sequence::new();
+        #[comptime] partition_size: AttentionPartitionSize,
+        #[comptime] config: SMX::Config,
+    ) -> SoftmaxPartition<F, SMX> {
+        let mut tiles = Sequence::new();
 
-        let mut shared = TA::allocate_softmax_transit(config.tile_config());
+        let mut workspace = SMX::init_workspace(config);
 
         #[unroll]
-        for _ in 0..p.seq_q {
-            sequence.push(TA::allocate_softmax(&mut shared, config.tile_config()));
+        for _ in 0..partition_size.seq_q {
+            tiles.push(SoftmaxTiles::<F, SMX> {
+                score_tile: SMX::init_score_tile(&mut workspace, config),
+                softmaxed_tile: SMX::init_softmax_tile(&mut workspace, config),
+            });
         }
 
-        SoftmaxPartition::<AP, TA> { sequence }
+        SoftmaxPartition::<F, SMX> { tiles }
     }
 
-    pub fn get_at(&self, #[comptime] q: usize) -> &TA::Softmax {
-        &self.sequence[q]
-    }
-
-    pub fn get_at_mut(&mut self, #[comptime] q: usize) -> &mut TA::Softmax {
-        self.sequence.index_mut(q)
+    pub fn get_tiles_mut(&mut self, #[comptime] q: usize) -> &mut SoftmaxTiles<F, SMX> {
+        self.tiles.index_mut(q)
     }
 }

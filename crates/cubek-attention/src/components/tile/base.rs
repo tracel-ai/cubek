@@ -1,20 +1,29 @@
-use cubecl;
-use cubecl::ir::DeviceProperties;
-use cubecl::prelude::*;
-use cubek_matmul::components::CubeDimResource;
-use cubek_std::tile::StridedTile;
+// use cubecl;
+// use cubecl::ir::DeviceProperties;
+// use cubecl::prelude::*;
+// use cubek_matmul::components::CubeDimResource;
+// use cubek_std::tile::StridedTile;
 
-use crate::components::tile::{
-    AccumulatorPipeline, FragmentMask, SoftmaxLayout, SoftmaxPipeline, SoftmaxRowwise,
-};
-use crate::definition::attention_types::{ACC, SM};
-use crate::definition::{
-    AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError, AttentionTileSize,
-    InvalidConfigError,
-};
+// use crate::components::tile::{
+//     AccumulatorPipeline, FragmentMask, SoftmaxLayout, SoftmaxPipeline, SoftmaxRowwise,
+// };
+// use crate::definition::attention_types::{ACC, SM};
+// use crate::definition::{
+//     AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError, AttentionTileSize,
+//     InvalidConfigError,
+// };
 
 use std::fmt::Debug;
 use std::hash::Hash;
+
+use cubecl::ir::DeviceProperties;
+use cubek_matmul::components::CubeDimResource;
+use cubek_std::InvalidConfigError;
+
+use crate::components::softmax::TileAttention;
+use crate::definition::{
+    AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError, AttentionTileSize,
+};
 
 /// Logits below this are considered masked (effectively -inf)
 /// Value chosen to fit within f16 range (~-65,504 max)
@@ -25,92 +34,101 @@ pub(crate) const LOGIT_MASKED: f32 = -6e4;
 /// Value chosen to be above f16 smallest normal (~6.1e-5)
 pub(crate) const FULLY_MASKED_ROW_THRESHOLD: f32 = 1e-4;
 
-#[cube]
-pub trait TileAttention<AP: AttentionPrecision>: Send + Sync + 'static {
-    type Config: TileAttentionConfig;
-    type Query: CubeType;
-    type KeyValue: CubeType;
-    type Mask: FragmentMask<Layout = Self::SoftmaxLayout>;
+// #[cube]
+// pub trait TileAttentionDeprecated<AP: AttentionPrecision>: Send + Sync + 'static {
+//     type Config: TileAttentionConfig;
+//     type Query: CubeType;
+//     type KeyValue: CubeType;
+//     type Mask: FragmentMask<Layout = Self::SoftmaxLayout>;
 
-    // type Softmax: FragmentSoftmax<SM<AP>, Layout = Self::SoftmaxLayout, SoftmaxRowFormat = Self::SoftmaxRow>;
-    type Softmax: SoftmaxPipeline<SM<AP>, Rowwise = Self::SoftmaxRow, Transit = Self::SoftmaxTransit>;
-    type SoftmaxRow: SoftmaxRowwise<SM<AP>, Layout = Self::SoftmaxLayout>;
-    type SoftmaxLayout: SoftmaxLayout;
-    type SoftmaxTransit: CubeType;
+//     // type Softmax: FragmentSoftmax<SM<AP>, Layout = Self::SoftmaxLayout, SoftmaxRowFormat = Self::SoftmaxRow>;
+//     type Softmax: SoftmaxPipeline<SM<AP>, Rowwise = Self::SoftmaxRow, Transit = Self::SoftmaxTransit>;
+//     type SoftmaxRow: SoftmaxRowwise<SM<AP>, Layout = Self::SoftmaxLayout>;
+//     type SoftmaxLayout: SoftmaxLayout;
+//     type SoftmaxTransit: CubeType;
 
-    type Accumulator: AccumulatorPipeline<ACC<AP>, Transit = Self::AccumulatorTransit>;
-    type AccumulatorTransit: CubeType;
+//     type Accumulator: AccumulatorPipeline<ACC<AP>, Transit = Self::AccumulatorTransit>;
+//     type AccumulatorTransit: CubeType;
 
-    fn softmax_layout(#[comptime] config: Self::Config) -> Self::SoftmaxLayout;
+//     fn score_matmul(
+//         lhs: &Self::Query,
+//         rhs: &Self::KeyValue,
+//         out: &mut Self::Softmax,
+//         #[comptime] config: Self::Config,
+//     );
 
-    fn score_matmul(
-        lhs: &Self::Query,
-        rhs: &Self::KeyValue,
-        out: &mut Self::Softmax,
-        #[comptime] config: Self::Config,
-    );
+//     fn value_matmul(
+//         lhs: &Self::Softmax,
+//         rhs: &Self::KeyValue,
+//         out: &mut Self::Accumulator,
+//         #[comptime] config: Self::Config,
+//     );
 
-    fn value_matmul(
-        lhs: &Self::Softmax,
-        rhs: &Self::KeyValue,
-        out: &mut Self::Accumulator,
-        #[comptime] config: Self::Config,
-    );
+//     fn allocate_query(#[comptime] config: Self::Config) -> Self::Query;
+//     fn allocate_mask(#[comptime] config: Self::Config) -> Self::Mask;
 
-    fn allocate_query(#[comptime] config: Self::Config) -> Self::Query;
-    fn allocate_mask(#[comptime] config: Self::Config) -> Self::Mask;
+//     fn load_query<E: Numeric>(tile: &StridedTile<E>, fragment: &mut Self::Query);
+//     fn allocate_key(#[comptime] config: Self::Config) -> Self::KeyValue;
+//     fn allocate_value(#[comptime] config: Self::Config) -> Self::KeyValue;
+//     fn allocate_key_value(#[comptime] config: Self::Config) -> Self::KeyValue;
 
-    fn allocate_key(#[comptime] config: Self::Config) -> Self::KeyValue;
-    fn allocate_value(#[comptime] config: Self::Config) -> Self::KeyValue;
-    fn allocate_key_value(#[comptime] config: Self::Config) -> Self::KeyValue;
+//     fn allocate_softmax_transit(#[comptime] config: Self::Config) -> Self::SoftmaxTransit;
+//     fn allocate_accumulator_transit(#[comptime] config: Self::Config) -> Self::AccumulatorTransit;
 
-    fn allocate_softmax_transit(#[comptime] config: Self::Config) -> Self::SoftmaxTransit;
-    fn allocate_accumulator_transit(#[comptime] config: Self::Config) -> Self::AccumulatorTransit;
+//     fn allocate_softmax(
+//         shared: &mut Self::SoftmaxTransit,
+//         #[comptime] config: Self::Config,
+//     ) -> Self::Softmax;
+//     fn allocate_accumulator(
+//         shared: &mut Self::AccumulatorTransit,
+//         #[comptime] config: Self::Config,
+//     ) -> Self::Accumulator;
 
-    fn allocate_softmax(
-        shared: &mut Self::SoftmaxTransit,
-        #[comptime] config: Self::Config,
-    ) -> Self::Softmax;
-    fn allocate_accumulator(
-        shared: &mut Self::AccumulatorTransit,
-        #[comptime] config: Self::Config,
-    ) -> Self::Accumulator;
+//     fn load_query<E: Numeric>(tile: &StridedTile<E>, fragment: &mut Self::Query);
 
-    fn load_query<E: Numeric>(tile: &StridedTile<E>, fragment: &mut Self::Query);
+//     fn load_key_transposed<E: Float>(
+//         tile: &StridedTile<E>,
+//         fragment: &mut Self::KeyValue,
+//         #[comptime] config: Self::Config,
+//     );
+//     fn load_value<E: Float>(
+//         tile: &StridedTile<E>,
+//         fragment: &mut Self::KeyValue,
+//         #[comptime] config: Self::Config,
+//     );
+//     fn load_mask<E: Numeric>(
+//         tile: &StridedTile<E>,
+//         fragment: &mut Self::Mask,
+//         #[comptime] config: Self::Config,
+//     );
 
-    fn load_key_transposed<E: Float>(
-        tile: &StridedTile<E>,
-        fragment: &mut Self::KeyValue,
-        #[comptime] config: Self::Config,
-    );
-    fn load_value<E: Float>(
-        tile: &StridedTile<E>,
-        fragment: &mut Self::KeyValue,
-        #[comptime] config: Self::Config,
-    );
-    fn load_mask<E: Numeric>(
-        tile: &StridedTile<E>,
-        fragment: &mut Self::Mask,
-        #[comptime] config: Self::Config,
-    );
-
-    fn write_results<E: Float>(
-        out: &Self::Accumulator,
-        slice: &mut SliceMut<Line<E>>,
-        #[comptime] config: Self::Config,
-    );
-}
+//     fn write_results<E: Float>(
+//         out: &Self::Accumulator,
+//         slice: &mut SliceMut<Line<E>>,
+//         #[comptime] config: Self::Config,
+//     );
+// }
 
 /// Configuration for the Tile Attention level
 pub trait TileAttentionConfig:
     Copy + Clone + Eq + PartialEq + Hash + Debug + Send + Sync + 'static
 {
+    type ScoreMatmulConfig: Copy + Clone;
+    type SoftmaxConfig: Copy + Clone;
+    type ValueMatmulConfig: Copy + Clone;
+    type AccumulatorConfig: Copy + Clone;
+
     fn plane_dim(&self) -> u32;
     fn num_planes(&self) -> u32;
-    fn attention_tile_size(&self) -> AttentionTileSize;
+    fn tile_size(&self) -> AttentionTileSize;
     fn num_rows_per_unit(&self) -> u32;
     fn causal_mask(&self) -> bool;
     fn materialized_mask(&self) -> bool;
+
+    fn score_matmul_config(&self) -> Self::ScoreMatmulConfig;
+    fn softmax_config(&self) -> Self::SoftmaxConfig;
+    fn value_matmul_config(&self) -> Self::ValueMatmulConfig;
+    fn accumulator_config(&self) -> Self::AccumulatorConfig;
 }
 
 pub trait TileAttentionFamily: Send + Sync + 'static {

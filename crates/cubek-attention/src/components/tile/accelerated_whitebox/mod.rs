@@ -9,10 +9,10 @@ pub use attention::*;
 pub use whitebox_accumulator::*;
 pub use whitebox_softmax::*;
 
-use crate::components::tile::accelerated_whitebox::fragment_convert::{
-    RegisterFragmentConverter, SmemFragmentConverter,
-};
+// use crate::components::tile::accelerated_whitebox::fragment_convert::{
+//     RegisterFragmentConverter, SmemFragmentConverter,
+// };
 
-pub type WhiteboxRegisterSoftmaxPipeline<AP> =
-    WhiteboxSoftmaxPipeline<AP, RegisterFragmentConverter<AP>>;
-pub type WhiteboxSmemSoftmaxPipeline<AP> = WhiteboxSoftmaxPipeline<AP, SmemFragmentConverter<AP>>;
+// pub type WhiteboxRegisterSoftmaxPipeline<AP> =
+//     WhiteboxSoftmaxPipeline<AP, RegisterFragmentConverter<AP>>;
+// pub type WhiteboxSmemSoftmaxPipeline<AP> = WhiteboxSoftmaxPipeline<AP, SmemFragmentConverter<AP>>;

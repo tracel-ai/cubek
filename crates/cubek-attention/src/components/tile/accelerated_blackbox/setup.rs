@@ -1,6 +1,7 @@
 use cubecl::ir::DeviceProperties;
 use cubecl::ir::LineSize;
 use cubek_matmul::components::CubeDimResource;
+use cubek_std::InvalidConfigError;
 
 use crate::components::tile::SharedTileAttentionConfig;
 use crate::components::tile::TileAttentionConfig;
@@ -13,7 +14,6 @@ use crate::definition::AttentionElems;
 use crate::definition::AttentionPrecision;
 use crate::definition::AttentionSetupError;
 use crate::definition::AttentionTileSize;
-use crate::definition::InvalidConfigError;
 use cubecl::features::MmaConfig;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -31,7 +31,7 @@ impl TileAttentionConfig for BlackboxAcceleratedAttentionMatmulConfig {
         self.shared.num_planes
     }
 
-    fn attention_tile_size(&self) -> AttentionTileSize {
+    fn tile_size(&self) -> AttentionTileSize {
         self.shared.attention_tile_size
     }
 
@@ -109,9 +109,9 @@ fn validate(
         a_type: dtypes.query_tile,
         b_type: dtypes.key_value_tile,
         cd_type: dtypes.softmax_acc,
-        m: config.attention_tile_size().seq_q,
-        k: config.attention_tile_size().head_dim,
-        n: config.attention_tile_size().seq_kv,
+        m: config.tile_size().seq_q,
+        k: config.tile_size().head_dim,
+        n: config.tile_size().seq_kv,
     }) {
         return Err(AttentionSetupError::Unavailable(
             AttentionAvailabilityError::CmmaInstructionUnavailable {
@@ -125,9 +125,9 @@ fn validate(
         a_type: dtypes.softmax_lhs,
         b_type: dtypes.key_value_tile,
         cd_type: dtypes.accumulator,
-        m: config.attention_tile_size().seq_q,
-        k: config.attention_tile_size().seq_kv,
-        n: config.attention_tile_size().val_dim,
+        m: config.tile_size().seq_q,
+        k: config.tile_size().seq_kv,
+        n: config.tile_size().val_dim,
     }) {
         return Err(AttentionSetupError::Unavailable(
             AttentionAvailabilityError::CmmaInstructionUnavailable {

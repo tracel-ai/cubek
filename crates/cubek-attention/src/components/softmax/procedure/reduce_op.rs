@@ -2,7 +2,7 @@ use cubecl;
 use cubecl::prelude::*;
 
 use crate::components::{
-    stage::ReduceOp,
+    softmax::ReduceOp,
     tile::{RowWise, SoftmaxRowwise, SoftmaxRowwiseExpand},
 };
 

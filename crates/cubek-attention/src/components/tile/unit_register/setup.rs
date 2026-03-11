@@ -1,12 +1,13 @@
 use cubecl::ir::DeviceProperties;
 use cubek_matmul::components::CubeDimResource;
+use cubek_std::InvalidConfigError;
 
-use crate::components::tile::TileAttentionFamily;
 use crate::components::tile::unit_register::UnitRegisterTileAttention;
-use crate::components::tile::{SharedTileAttentionConfig, TileAttentionConfig};
+use crate::components::tile::{
+    SharedTileAttentionConfig, TileAttentionConfig, TileAttentionFamily,
+};
 use crate::definition::{
     AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError, AttentionTileSize,
-    InvalidConfigError,
 };
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -23,7 +24,7 @@ impl TileAttentionConfig for UnitTileAttentionConfig {
         self.shared.num_planes
     }
 
-    fn attention_tile_size(&self) -> AttentionTileSize {
+    fn tile_size(&self) -> AttentionTileSize {
         self.shared.attention_tile_size
     }
 

@@ -55,7 +55,8 @@ impl<
         SA::read_query(&query_reader, &mut query_registers, config.stage_config);
 
         // Init registers that will change inside global loop
-        let mut key_value_registers = SA::init_key_value(config.stage_config);
+        let mut key_registers = SA::init_key(config.stage_config);
+        let mut value_registers = SA::init_value(config.stage_config);
         let mut mask_registers = SA::init_mask(
             ComptimeOption::new_Some((seq_q, seq_kv)),
             config.stage_config,
@@ -85,7 +86,8 @@ impl<
                 &query_registers,
                 &key_reader.stage(),
                 &value_reader.stage(),
-                &mut key_value_registers,
+                &mut key_registers,
+                &mut value_registers,
                 &mask_reader,
                 &mut mask_registers,
                 &mut softmax_registers,

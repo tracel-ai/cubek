@@ -13,7 +13,7 @@ use crate::{
 /// Converts the score accumulator to a rowwise layout suitable for computations,
 /// then to the LHS layout required by the value matmul, performing any necessary
 /// type casting between accumulator and LHS fragments.
-pub trait SoftmaxPipeline<Acc: Float> {
+pub trait SoftmaxPipeline<Acc: Float>: CubeType {
     /// Format for the score matmul accumulator
     type ScoreAccFormat: CubeType;
     /// Format for the value matmul LHS
