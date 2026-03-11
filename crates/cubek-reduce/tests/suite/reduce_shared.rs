@@ -30,7 +30,6 @@ pub struct TestCase {
 impl TestCase {
     pub fn test_shared_sum(&self) {
         let input_values: Vec<TestDType> = self.random_input_values();
-        println!("input_values: {input_values:?}");
         let mut expected = TestDType::from_int(0);
         for v in input_values.iter() {
             expected += *v;

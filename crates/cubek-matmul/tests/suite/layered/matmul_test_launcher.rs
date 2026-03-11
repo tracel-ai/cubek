@@ -242,7 +242,7 @@ pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
             #[allow(clippy::never_loop)]
             for error in errors.iter() {
                 match error {
-                    cubecl::server::ServerError::Launch(_) => {
+                    cubecl::server::ServerError::Launch(LaunchError::TooManyResources(_)) => {
                         return ExecutionOutcome::CompileError(format!("{errors:?}"));
                     }
                     _ => panic!("{errors:?}"),
