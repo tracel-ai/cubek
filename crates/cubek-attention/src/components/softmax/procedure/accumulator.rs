@@ -10,25 +10,25 @@ use crate::definition::attention_types::SM;
 
 #[derive(CubeType)]
 /// Accumulator tile for Tile Attention
-pub struct AccumulatorTile<AP: AttentionPrecision, TA: TileAttention<AP>> {
+pub struct AccumulatorProcedure<AP: AttentionPrecision, TA: TileAttention<AP>> {
     pub fragment: TA::Accumulator,
 }
 
 #[cube]
-impl<AP: AttentionPrecision, TA: TileAttention<AP>> AccumulatorTile<AP, TA> {
+impl<AP: AttentionPrecision, TA: TileAttention<AP>> AccumulatorProcedure<AP, TA> {
     pub fn new(
         shared: &mut TA::AccumulatorTransit,
         #[comptime] config: TA::Config,
-    ) -> AccumulatorTile<AP, TA> {
+    ) -> AccumulatorProcedure<AP, TA> {
         let mut fragment = TA::allocate_accumulator(shared, config);
         fragment.zero();
 
-        AccumulatorTile::<AP, TA> { fragment }
+        AccumulatorProcedure::<AP, TA> { fragment }
     }
 }
 
 #[cube]
-impl<AP: AttentionPrecision, TA: TileAttention<AP>> AccumulatorTile<AP, TA> {
+impl<AP: AttentionPrecision, TA: TileAttention<AP>> AccumulatorProcedure<AP, TA> {
     /// Multiplies each row by a scale
     pub fn scale_mul(&mut self, scale: &RowWise<SM<AP>>) {
         self.fragment

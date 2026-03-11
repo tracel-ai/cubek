@@ -12,11 +12,7 @@ pub struct BroadcastReducer {}
 
 #[cube]
 impl Reducer for BroadcastReducer {
-    fn reduce<E: Float, F: SoftmaxRowwise<E>, RO: ReduceOp<E>>(
-        vals: &mut RowWise<E>,
-        data: &F,
-        #[comptime] _config: SoftmaxConfig,
-    ) {
+    fn reduce<E: Float, F: SoftmaxRowwise<E>, RO: ReduceOp<E>>(vals: &mut RowWise<E>, data: &F) {
         let num_units_per_row = data.num_units_per_row().comptime();
         let num_shares_within_plane = num_units_per_row.next_power_of_two().ilog2();
 

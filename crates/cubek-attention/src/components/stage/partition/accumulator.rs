@@ -16,7 +16,7 @@ pub struct AccumulatorPartition<AC: Accumulator> {
 impl<AC: Accumulator> AccumulatorPartition<AC> {
     pub fn new(
         #[comptime] partition_size: AttentionPartitionSize,
-        #[comptime] config: AccumulatorConfig,
+        #[comptime] config: AC::Config,
     ) -> AccumulatorPartition<AC> {
         let mut sequence = Sequence::new();
 

@@ -3,7 +3,7 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
 use cubek_std::tile::StridedTile;
 
-use crate::components::softmax::Softmax;
+use crate::components::softmax::{Softmax, SoftmaxConfig as _};
 use crate::components::tile::{
     FragmentMask, FragmentMaskExpand, SoftmaxLayout, SoftmaxLayoutExpand,
 };

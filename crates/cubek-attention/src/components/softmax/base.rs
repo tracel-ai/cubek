@@ -4,6 +4,7 @@ use cubek_std::TileSize;
 use cubek_std::tile::StridedTile;
 
 use crate::components::stage::MaskTile;
+use crate::components::tile::accelerated_blackbox::InnerLayout;
 use crate::components::tile::{FragmentMask, SoftmaxLayout, TileAttentionConfig};
 use crate::definition::attention_types::SM;
 use crate::definition::{AttentionPrecision, AttentionTileSize};
@@ -38,7 +39,8 @@ pub trait Softmax<F: Float>: Send + Sync + 'static + Sized {
 
     type RunningState: CubeType;
 
-    /// The input tile containing raw attention scores (typically higher precision).
+    /// The input tile containing raw attention scores (typically higher precision),
+    /// from which softmax calculations take their inputs
     type ScoreTile: CubeType;
 
     /// The output tile containing normalized probabilities,
@@ -51,7 +53,7 @@ pub trait Softmax<F: Float>: Send + Sync + 'static + Sized {
 
     type Mask: FragmentMask<Layout = Self::ScoreLayout>;
     type ScoreLayout: SoftmaxLayout;
-    type Config: Copy + Clone;
+    type Config: SoftmaxConfig;
 
     /// Executes the online softmax update and layout transformation.
     ///
@@ -108,17 +110,14 @@ pub trait Accumulator: Send + Sync + 'static + Sized {
     fn scale_mul(tile: &mut Self::Tile, column: &Self::ScaleColumn);
     fn scale_div(tile: &mut Self::Tile, running_state: &Self::RunningState);
 
-    fn init_workspace(#[comptime] config: AccumulatorConfig) -> Self::Workspace;
+    fn init_workspace(#[comptime] config: Self::Config) -> Self::Workspace;
 
-    fn init_tile(
-        workspace: &mut Self::Workspace,
-        #[comptime] config: AccumulatorConfig,
-    ) -> Self::Tile;
+    fn init_tile(workspace: &mut Self::Workspace, #[comptime] config: Self::Config) -> Self::Tile;
 
     fn write_results<E: Float>(
         tile: &Self::Tile,
         slice: &mut SliceMut<Line<E>>,
-        #[comptime] config: AccumulatorConfig,
+        #[comptime] config: Self::Config,
     );
 }
 
@@ -142,14 +141,34 @@ pub trait TileAttention<AP: AttentionPrecision>: Send + Sync + 'static {
     type Accumulator: Accumulator<Tile = <Self::ValueMatmul as InnerMatmul>::Acc>;
 }
 
+pub trait SoftmaxConfig: Copy + Clone {
+    // pub num_rows_per_unit: u32,
+    // pub plane_dim: u32,
+    // pub num_planes: u32,
+    // pub tile_size: AttentionTileSize,
+    // pub causal_mask: bool,
+    // pub materialized_mask: bool,
+
+    fn causal_mask(&self) -> bool;
+    fn materialized_mask(&self) -> bool;
+}
+
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct SoftmaxConfig {
-    pub num_rows_per_unit: u32,
-    pub plane_dim: u32,
-    pub num_planes: u32,
+pub struct SoftmaxProcedureConfig {
+    pub num_rows_per_unit: usize,
     pub tile_size: AttentionTileSize,
-    pub causal_mask: bool,
-    pub materialized_mask: bool,
+    pub plane_dim: u32,
+    pub inner_layout: InnerLayout,
+}
+
+impl SoftmaxConfig for SoftmaxProcedureConfig {
+    fn causal_mask(&self) -> bool {
+        todo!()
+    }
+
+    fn materialized_mask(&self) -> bool {
+        todo!()
+    }
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]

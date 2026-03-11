@@ -1,7 +1,7 @@
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::components::softmax::{Softmax, SoftmaxConfig};
+use crate::components::softmax::Softmax;
 use crate::components::stage::MaskTile;
 use cubecl::std::tensor::layout::Coords2d;
 
@@ -15,7 +15,7 @@ pub struct MaskPartition<F: Float, SMX: Softmax<F>> {
 impl<F: Float, SMX: Softmax<F>> MaskPartition<F, SMX> {
     pub fn new(
         out_of_bounds: ComptimeOption<Coords2d>,
-        #[comptime] config: SoftmaxConfig,
+        #[comptime] config: SMX::Config,
     ) -> MaskPartition<F, SMX> {
         let mut sequence = Sequence::new();
 

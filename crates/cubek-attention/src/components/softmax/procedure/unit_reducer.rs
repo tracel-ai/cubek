@@ -13,11 +13,7 @@ pub struct UnitReducer {}
 
 #[cube]
 impl Reducer for UnitReducer {
-    fn reduce<E: Float, F: SoftmaxRowwise<E>, RO: ReduceOp<E>>(
-        vals: &mut RowWise<E>,
-        data: &F,
-        #[comptime] _config: SoftmaxConfig,
-    ) {
+    fn reduce<E: Float, F: SoftmaxRowwise<E>, RO: ReduceOp<E>>(vals: &mut RowWise<E>, data: &F) {
         RO::reduce_local_accumulate::<F>(data, vals);
     }
 }
