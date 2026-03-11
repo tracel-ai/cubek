@@ -75,7 +75,7 @@ pub fn shared_sum<R: Runtime>(
     }
 
     let input_len = input.shape.iter().product::<usize>();
-    let contiguous_buffer = input_len * input_elem.size() == input.handle.size() as usize;
+    let contiguous_buffer = input_len * input_elem.size() == input.handle.size_in_used() as usize;
 
     // Compute the optimal vector size.
     let vector_size = if contiguous_buffer {
