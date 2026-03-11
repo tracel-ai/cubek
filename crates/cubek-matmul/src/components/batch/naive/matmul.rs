@@ -49,13 +49,13 @@ pub(crate) fn matmul_entry<
             blueprint.out_global_layout_config(),
         );
 
-    let line_size_lhs = Args::view_lhs(&state).vector_size();
-    let line_size_rhs = Args::view_rhs(&state).vector_size();
-    let line_size_out = Args::view_out(&mut state).vector_size();
-    let line_sizes = comptime!(MatmulLineSizes {
-        lhs: line_size_lhs,
-        rhs: line_size_rhs,
-        out: line_size_out,
+    let vector_size_lhs = Args::view_lhs(&state).vector_size();
+    let vector_size_rhs = Args::view_rhs(&state).vector_size();
+    let vector_size_out = Args::view_out(&mut state).vector_size();
+    let vector_sizes = comptime!(MatmulVectorSizes {
+        lhs: vector_size_lhs,
+        rhs: vector_size_rhs,
+        out: vector_size_out,
     });
 
     let device_props = comptime::device_properties();
@@ -63,7 +63,7 @@ pub(crate) fn matmul_entry<
         &device_props,
         &blueprint,
         &blueprint.dtypes,
-        &line_sizes
+        &vector_sizes
     ));
 
     if comptime!(config.is_err()) {
@@ -128,11 +128,11 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for NaiveMatmul<MP> {
             terminate!();
         }
 
-        let line_size = comptime![Ord::max(lhs.vector_size(), rhs.vector_size())];
-        let size!(NA) = line_size;
+        let vector_size = comptime![Ord::max(lhs.vector_size(), rhs.vector_size())];
+        let size!(NA) = vector_size;
         let mut sum = Vector::<AccR<MP>, NA>::zero();
 
-        for k in range_stepped(0u32, k, line_size as u32) {
+        for k in range_stepped(0u32, k, vector_size as u32) {
             let lhs = load_unrolled::<_, _, NA>(&lhs, (m, k), MatrixLayout::RowMajor);
             let rhs = load_unrolled::<_, _, NA>(&rhs, (k, n), MatrixLayout::ColMajor);
 
@@ -141,13 +141,13 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for NaiveMatmul<MP> {
             );
         }
 
-        let unroll_sum = line_size != 1usize;
+        let unroll_sum = vector_size != 1usize;
         if unroll_sum {
             let mut accum = AccR::<MP>::zero();
             // we unroll the loop to sum `vectorization_factor` elements at once, which lets us
             // use SIMD instructions to speed up the computation
             #[unroll]
-            for v in 0..line_size {
+            for v in 0..vector_size {
                 accum += sum[v];
             }
 
@@ -164,23 +164,23 @@ fn load_unrolled<I: Numeric, N: Size, N2: Size>(
     pos: Coords2d,
     #[comptime] layout: MatrixLayout,
 ) -> Vector<I, N2> {
-    let line_size = N2::value();
-    comptime![assert!(line_size >= view.vector_size())];
-    let view_line_size = view.vector_size();
-    if view.vector_size().comptime() == line_size {
+    let vector_size = N2::value();
+    comptime![assert!(vector_size >= view.vector_size())];
+    let view_vector_size = view.vector_size();
+    if view.vector_size().comptime() == vector_size {
         Vector::cast_from(view[pos])
     } else {
         let (row, col) = pos;
         let mut out = Vector::empty();
         #[unroll]
-        for i in range_stepped(0, line_size as u32, view_line_size as u32) {
+        for i in range_stepped(0, vector_size as u32, view_vector_size as u32) {
             let pos = match layout {
                 MatrixLayout::RowMajor => (row, col + i),
                 MatrixLayout::ColMajor => (row + i, col),
             };
             let value = view[pos];
             #[unroll]
-            for n in 0..view_line_size {
+            for n in 0..view_vector_size {
                 out[i as usize + n] = value[n];
             }
         }

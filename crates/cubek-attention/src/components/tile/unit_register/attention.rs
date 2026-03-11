@@ -155,18 +155,19 @@ fn strided_tile_to_unit_tile<E: Numeric, N: Size, E2: Numeric>(
     strided_tile: &StridedTile<E, N>,
     unit_tile: &mut UnitTile<E2>,
 ) {
-    let line_size = N::value().comptime() as u32;
-    assert!(unit_tile.layout.num_cols.is_multiple_of(line_size));
+    let vector_size = N::value().comptime() as u32;
+    assert!(unit_tile.layout.num_cols.is_multiple_of(vector_size));
 
-    let col_iterations = comptime!(unit_tile.layout.num_cols / line_size);
+    let col_iterations = comptime!(unit_tile.layout.num_cols / vector_size);
 
     for row in 0..unit_tile.layout.num_rows {
         for col in 0..col_iterations {
-            let line_read = strided_tile.get_line(row, col);
+            let vector_read = strided_tile.get_vector(row, col);
             #[unroll]
-            for i in 0..line_size {
-                unit_tile.data[(row * unit_tile.layout.num_cols + col * line_size + i) as usize] =
-                    E2::cast_from(line_read[i as usize]);
+            for i in 0..vector_size {
+                unit_tile.data
+                    [(row * unit_tile.layout.num_cols + col * vector_size + i) as usize] =
+                    E2::cast_from(vector_read[i as usize]);
             }
         }
     }
@@ -177,21 +178,21 @@ fn strided_tile_to_transposed_unit_tile<E: Numeric, N: Size, E2: Numeric>(
     strided_tile: &StridedTile<E, N>,
     unit_tile: &mut UnitTile<E2>,
 ) {
-    let line_size = N::value().comptime() as u32;
-    assert!(unit_tile.layout.num_cols.is_multiple_of(line_size));
+    let vector_size = N::value().comptime() as u32;
+    assert!(unit_tile.layout.num_cols.is_multiple_of(vector_size));
 
     let input_num_rows = unit_tile.layout.num_cols.comptime();
     let input_num_cols = unit_tile.layout.num_rows.comptime();
-    let line_iterations = input_num_cols / line_size;
+    let vector_iterations = input_num_cols / vector_size;
 
     for input_row in 0..input_num_rows {
-        for input_col_line in 0..line_iterations {
-            let line_read = strided_tile.get_line(input_row, input_col_line);
+        for input_col_vector in 0..vector_iterations {
+            let vector_read = strided_tile.get_vector(input_row, input_col_vector);
 
             #[unroll]
-            for i in 0..line_size {
-                unit_tile.data[((input_col_line + i) * input_num_rows + input_row) as usize] =
-                    E2::cast_from(line_read[i as usize]);
+            for i in 0..vector_size {
+                unit_tile.data[((input_col_vector + i) * input_num_rows + input_row) as usize] =
+                    E2::cast_from(vector_read[i as usize]);
             }
         }
     }
@@ -202,23 +203,23 @@ fn unit_tile_to_slice<E: Numeric, N: Size, E2: Numeric>(
     unit_tile: &UnitTile<E>,
     slice: &mut SliceMut<Vector<E2, N>>,
 ) {
-    let line_size = N::value().comptime() as u32;
-    assert!(unit_tile.layout.num_cols.is_multiple_of(line_size));
+    let vector_size = N::value().comptime() as u32;
+    assert!(unit_tile.layout.num_cols.is_multiple_of(vector_size));
 
-    let col_iterations = comptime!(unit_tile.layout.num_cols / line_size);
+    let col_iterations = comptime!(unit_tile.layout.num_cols / vector_size);
 
     for row in 0..unit_tile.layout.num_rows {
         for col in 0..col_iterations {
-            let mut out_line = Vector::empty();
+            let mut out_vector = Vector::empty();
 
             #[unroll]
-            for i in 0..line_size {
-                let index = row * unit_tile.layout.num_cols + col * line_size + i;
-                out_line[i as usize] = E2::cast_from(unit_tile.data[index as usize]);
+            for i in 0..vector_size {
+                let index = row * unit_tile.layout.num_cols + col * vector_size + i;
+                out_vector[i as usize] = E2::cast_from(unit_tile.data[index as usize]);
             }
 
-            let line_index = row * col_iterations + col;
-            slice[line_index as usize] = out_line;
+            let vector_index = row * col_iterations + col;
+            slice[vector_index as usize] = out_vector;
         }
     }
 }

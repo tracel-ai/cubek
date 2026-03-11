@@ -1,5 +1,5 @@
 use crate::{
-    LineMode, ReduceInstruction, ReducePrecision,
+    ReduceInstruction, ReducePrecision, VectorizationMode,
     components::{
         args::NumericLine,
         global::idle_check,
@@ -21,7 +21,7 @@ impl GlobalFullCubeReduce {
         output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         reduce_axis: usize,
         inst: &I,
-        #[comptime] line_mode: LineMode,
+        #[comptime] vectorization_mode: VectorizationMode,
         #[comptime] blueprint: CubeBlueprint,
     ) {
         let write_index = CUBE_POS;
@@ -30,7 +30,7 @@ impl GlobalFullCubeReduce {
         let worker_pos = Self::worker_pos(blueprint);
 
         let mut writer =
-            Writer::<Out>::new::<P>(input, output, reduce_axis, write_index, line_mode);
+            Writer::<Out>::new::<P>(input, output, reduce_axis, write_index, vectorization_mode);
 
         let write_count = writer.write_count();
 
@@ -40,7 +40,7 @@ impl GlobalFullCubeReduce {
             input,
             output,
             reduce_index_start,
-            line_mode,
+            vectorization_mode,
             blueprint.cube_idle,
         );
 
@@ -54,7 +54,7 @@ impl GlobalFullCubeReduce {
                 reduce_index,
                 inst,
                 idle,
-                line_mode,
+                vectorization_mode,
                 blueprint,
             );
 
@@ -112,7 +112,7 @@ impl GlobalFullCubeReduce {
         reduce_index: usize,
         inst: &I,
         idle: ComptimeOption<bool>,
-        #[comptime] line_mode: LineMode,
+        #[comptime] vectorization_mode: VectorizationMode,
         #[comptime] blueprint: CubeBlueprint,
     ) -> I::SharedAccumulator {
         let reader = Reader::<P>::new::<I, Out>(
@@ -123,7 +123,7 @@ impl GlobalFullCubeReduce {
             reduce_index,
             idle,
             blueprint.bound_checks,
-            line_mode,
+            vectorization_mode,
         );
         let reader = CubeReader::<P>::new(reader);
         let mut accumulator = I::null_accumulator(inst);

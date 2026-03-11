@@ -86,7 +86,7 @@ impl TileAttentionFamily for BlackboxAcceleratedTileAttention {
                 },
             },
             blueprint.reuse_key_value,
-            blueprint.line_sizes.mask,
+            blueprint.vector_sizes.mask,
             dtypes,
         )
     }
@@ -96,7 +96,7 @@ fn validate(
     device_props: &DeviceProperties,
     config: BlackboxAcceleratedAttentionMatmulConfig,
     reuse_key_value: bool,
-    line_sizes_mask: VectorSize,
+    vector_sizes_mask: VectorSize,
     dtypes: &AttentionElems,
 ) -> Result<BlackboxAcceleratedAttentionMatmulConfig, AttentionSetupError> {
     if dtypes.query_global != dtypes.query_tile {
@@ -138,7 +138,7 @@ fn validate(
         ));
     }
 
-    if line_sizes_mask > 1 {
+    if vector_sizes_mask > 1 {
         return Err(AttentionSetupError::InvalidConfig(Box::new(
             "Vector size mask > 1 not supported yet on accelerated tile attention",
         )));

@@ -9,8 +9,8 @@ pub enum AttentionSetupError {
     /// The provided configuration is invalid or rejected by a component.
     InvalidConfig(InvalidConfigError),
 
-    /// No compatible line size could be found for the given constraints.
-    LineSize(VectorizationError),
+    /// No compatible vector size could be found for the given constraints.
+    Vectorization(VectorizationError),
 
     /// An error that happened during execution.
     Execution(LaunchError),
@@ -46,7 +46,7 @@ impl From<InvalidConfigError> for AttentionSetupError {
 
 impl From<VectorizationError> for AttentionSetupError {
     fn from(value: VectorizationError) -> Self {
-        Self::LineSize(value)
+        Self::Vectorization(value)
     }
 }
 
@@ -72,10 +72,10 @@ impl Debug for AttentionSetupError {
                     err.to_string()
                 )
             }
-            AttentionSetupError::LineSize(err) => {
+            AttentionSetupError::Vectorization(err) => {
                 writeln!(
                     f,
-                    "Unable to launch attention because could not find supported line size: {err:?}"
+                    "Unable to launch attention because could not find supported vectorization: {err:?}"
                 )
             }
             AttentionSetupError::Execution(error) => {

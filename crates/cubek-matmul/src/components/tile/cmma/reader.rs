@@ -33,7 +33,7 @@ impl CmmaFragmentReader for CmmaStageReader<Strided> {
         fragment: &mut cmma::Matrix<E>,
         layout: ComptimeOption<cmma::MatrixLayout>,
     ) {
-        let stride = tile.unlined_stride();
+        let stride = tile.unvectorized_stride();
         let slice = tile.as_slice();
         #[comptime]
         match layout {

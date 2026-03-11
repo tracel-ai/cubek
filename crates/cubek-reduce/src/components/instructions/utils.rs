@@ -1,6 +1,6 @@
 use cubecl::prelude::*;
 
-// Using plane operations, return the lowest coordinate for each line element
+// Using plane operations, return the lowest coordinate for each vector element
 // for which the item equal the target.
 #[cube]
 pub(crate) fn lowest_coordinate_matching<E: Scalar, N: Size>(

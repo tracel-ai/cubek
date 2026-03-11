@@ -96,9 +96,9 @@ pub fn mma_definition<M: MmaTypes>(
 
 #[cube]
 #[allow(unused_variables, clippy::extra_unused_type_parameters)]
-fn register_line_size<T: Size>(#[comptime] line_size: VectorSize) {
+fn register_vector_size<T: Size>(#[comptime] vector_size: VectorSize) {
     intrinsic!(|scope| {
-        scope.register_size::<T>(line_size);
+        scope.register_size::<T>(vector_size);
     });
 }
 
@@ -111,7 +111,7 @@ impl<MI: MmaIdent<MT>, MT: MmaTypes> ManualMatrixLayout<MI, MT> {
         let mma_def = mma_definition::<MT>(tile_size);
         let vectors_per_lane = mma_def.vectors_per_lane(MI::IDENT);
         let vector_size = mma_def.vector_size(MI::IDENT);
-        register_line_size::<MI::Size>(vector_size);
+        register_vector_size::<MI::Size>(vector_size);
 
         // Assuming specific layout, TODO generalize
         let num_rows = 2u32;
@@ -236,15 +236,15 @@ impl<MI: MmaIdent<MT>, MT: MmaTypes> ManualMatrix<MI, MT> {
     }
 
     pub fn get_nth(&self, nth: Coords1d) -> MI::Elem {
-        let line = nth / self.layout.vector_size;
-        let within_line = nth % self.layout.vector_size;
-        self.fragment[line][within_line]
+        let vector = nth / self.layout.vector_size;
+        let within_vector = nth % self.layout.vector_size;
+        self.fragment[vector][within_vector]
     }
 
     pub fn set_nth<E2: Numeric>(&mut self, nth: Coords1d, val: E2) {
-        let line = nth / self.layout.vector_size;
-        let within_line = nth % self.layout.vector_size;
-        self.fragment[line][within_line] = MI::Elem::cast_from(val);
+        let vector = nth / self.layout.vector_size;
+        let within_vector = nth % self.layout.vector_size;
+        self.fragment[vector][within_vector] = MI::Elem::cast_from(val);
     }
 }
 
@@ -337,8 +337,8 @@ impl<MT: MmaTypes<CD: Float>> SoftmaxRowwise<MT::CD> for ManualMatrix<IdentCD, M
 #[cube]
 impl<MT: MmaTypes<CD: Float>> AccumulatorRowwise<MT::CD> for ManualMatrix<IdentCD, MT> {
     fn rowwise_scale(&mut self, scale: &RowWise<MT::CD>) {
-        // TODO Do whole lines at once if possible, but not sure
-        // if lines match rows
+        // TODO Do whole vectors at once if possible, but not sure
+        // if vectors match rows
         #[unroll]
         for row in 0..self.layout.num_rows {
             let scale = scale.index(row as usize);

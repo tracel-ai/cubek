@@ -1,5 +1,5 @@
 use crate::{
-    LineMode, ReduceError, ReducePrecision,
+    ReduceError, ReducePrecision, VectorizationMode,
     components::{
         args::{NumericLine, ReduceArgs, TensorArgs, init_tensors},
         global::{
@@ -7,9 +7,9 @@ use crate::{
         },
         instructions::*,
     },
-    launch::{ReduceStrategy, RoutineStrategy, generate_line_size},
+    launch::{ReduceStrategy, RoutineStrategy, generate_vector_size},
     routines::{
-        GlobalReduceBlueprint, ReduceBlueprint, ReduceLineSettings, ReduceProblem, Routine,
+        GlobalReduceBlueprint, ReduceBlueprint, ReduceProblem, ReduceVectorSettings, Routine,
         cube::CubeRoutine, plane::PlaneRoutine, unit::UnitRoutine,
     },
 };
@@ -46,23 +46,23 @@ pub(crate) fn launch_reduce<Run: Runtime>(
         dtypes,
         address_type,
     };
-    let line_mode = match input.strides[axis] {
-        1 => LineMode::Parallel,
-        _ => LineMode::Perpendicular,
+    let vectorization_mode = match input.strides[axis] {
+        1 => VectorizationMode::Parallel,
+        _ => VectorizationMode::Perpendicular,
     };
-    let (line_size_input, line_size_output) = generate_line_size::<Run>(
+    let (vector_size_input, vector_size_output) = generate_vector_size::<Run>(
         client,
         &input,
         &output,
         axis,
         problem.dtypes.input,
-        line_mode,
-        &strategy.line_size,
+        vectorization_mode,
+        &strategy.vectorization,
     );
-    let settings = ReduceLineSettings {
-        line_mode,
-        line_size_input,
-        line_size_output,
+    let settings = ReduceVectorSettings {
+        vectorization_mode,
+        vector_size_input,
+        vector_size_output,
     };
 
     let (blueprint, settings) = match strategy.routine {
@@ -86,8 +86,8 @@ pub(crate) fn launch_reduce<Run: Runtime>(
             settings.cube_count,
             settings.cube_dim,
             settings.address_type,
-            settings.line.line_size_input,
-            settings.line.line_size_output,
+            settings.vector.vector_size_input,
+            settings.vector.vector_size_output,
             input.into_tensor_arg(),
             output.into_tensor_arg(),
             axis,
@@ -170,7 +170,7 @@ fn reduce_kernel_inner<P: ReducePrecision, Out: NumericLine, R: ReduceFamily>(
                 output,
                 axis_reduce,
                 inst,
-                blueprint.line_mode,
+                blueprint.vectorization_mode,
                 cube,
             )
         }
@@ -180,7 +180,7 @@ fn reduce_kernel_inner<P: ReducePrecision, Out: NumericLine, R: ReduceFamily>(
                 output,
                 axis_reduce,
                 inst,
-                blueprint.line_mode,
+                blueprint.vectorization_mode,
                 plane,
             )
         }
@@ -190,7 +190,7 @@ fn reduce_kernel_inner<P: ReducePrecision, Out: NumericLine, R: ReduceFamily>(
                 output,
                 axis_reduce,
                 inst,
-                blueprint.line_mode,
+                blueprint.vectorization_mode,
                 unit,
             )
         }

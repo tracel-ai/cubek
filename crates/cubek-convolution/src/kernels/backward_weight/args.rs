@@ -17,7 +17,7 @@ use cubecl::{
 };
 use cubek_matmul::{
     components::global::memory::{NoopLayout, NoopLayoutLaunch, Transpose, TransposeLaunch},
-    definition::{Blueprint, MatmulElems, MatmulLineSizes, TilingBlueprint},
+    definition::{Blueprint, MatmulElems, MatmulVectorSizes, TilingBlueprint},
     launch::{
         MatmulArgs, MatmulInputBinding, TensorArgs, TensorInputs, TensorInputsLaunch,
         TensorMapArgs, TensorMapInputs, TensorMapInputsLaunch, TensorOutput, TensorOutputLaunch,
@@ -106,7 +106,7 @@ pub trait ConcreteInputsFactory<A: Routine<RuntimeArgs>>: LaunchArg {
         out_grad: MatmulInputBinding<R>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
         dtypes: &MatmulElems,
     ) -> (Self::RuntimeArg<R>, RuntimeArgsLaunch<R>);
 }
@@ -119,7 +119,7 @@ pub trait ConcreteOutputFactory<A: Routine<RuntimeArgs>>: LaunchArg {
         out: TensorBinding<R>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Self::RuntimeArg<R>;
 }
 
@@ -132,7 +132,7 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<Runti
         out_grad: MatmulInputBinding<R>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
         _dtypes: &MatmulElems,
     ) -> (Self::RuntimeArg<R>, RuntimeArgsLaunch<R>) {
         type LhsLayout = Chain<NhwcLayout, Transpose<OutLayout>>;
@@ -141,8 +141,9 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<Runti
         let padded_channels = problem.padded_channels as u32;
         let params = ConvolutionParams::from_problem(problem);
 
-        let layout_nhwc =
-            |handle, line_size, checks| NhwcLayoutLaunch::from_handle(handle, line_size, checks);
+        let layout_nhwc = |handle, vector_size, checks| {
+            NhwcLayoutLaunch::from_handle(handle, vector_size, checks)
+        };
 
         let layout_lhs =
             OutLayoutLaunch::from_args(client, problem, blueprint.lhs_global_layout_config());
@@ -154,7 +155,7 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<Runti
         );
 
         let layout_lhs = {
-            let global = layout_nhwc(out_grad.data(), line_sizes.lhs, EnumSet::empty());
+            let global = layout_nhwc(out_grad.data(), vector_sizes.lhs, EnumSet::empty());
             ChainLaunch::new(global, TransposeLaunch::new(layout_lhs))
         };
         let layout_rhs = {
@@ -165,7 +166,7 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<Runti
             if problem.should_check_channel() {
                 checks.insert(NhwcCheck::Channel);
             }
-            let global = layout_nhwc(input.data(), line_sizes.rhs, checks);
+            let global = layout_nhwc(input.data(), vector_sizes.rhs, checks);
             ChainLaunch::new(global, layout_rhs)
         };
 
@@ -195,7 +196,7 @@ impl<EG: CubePrimitive, A: Routine<RuntimeArgs>> ConcreteOutputFactory<A> for Te
         out: TensorBinding<R>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Self::RuntimeArg<R> {
         // Weight layout assumes col-major so it's technically "transposed" when it's row-major.
         // Should look into maybe inverting this and using `Transpose` for forward instead.
@@ -205,7 +206,7 @@ impl<EG: CubePrimitive, A: Routine<RuntimeArgs>> ConcreteOutputFactory<A> for Te
         if problem.should_check_channel() {
             checks.insert(NhwcCheck::Channel);
         }
-        let global = NhwcLayoutLaunch::from_handle(&out, line_sizes.out, checks);
+        let global = NhwcLayoutLaunch::from_handle(&out, vector_sizes.out, checks);
         let layout =
             WeightLayoutLaunch::from_args(client, problem, blueprint.out_global_layout_config());
         let layout = ChainLaunch::new(global, TransposeLaunch::new(layout));
@@ -228,7 +229,7 @@ impl<
         out_grad: MatmulInputBinding<R>,
         blueprint: &TilingBlueprint,
         problem: &ConvolutionProblem,
-        _line_sizes: &MatmulLineSizes,
+        _vector_sizes: &MatmulVectorSizes,
         dtypes: &MatmulElems,
     ) -> (Self::RuntimeArg<R>, RuntimeArgsLaunch<R>) {
         type LhsLayout = Transpose<TmaOutGradLayout>;

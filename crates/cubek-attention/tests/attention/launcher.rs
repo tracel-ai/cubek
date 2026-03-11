@@ -106,7 +106,6 @@ pub fn test_launch(
         )
         .into();
 
-        let errors = client.flush_errors();
         (result, errors)
     });
 

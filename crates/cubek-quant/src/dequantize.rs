@@ -16,7 +16,7 @@ use cubecl::std::tensor::{
     layout::linear::{LinearView, linear_view},
 };
 
-/// Dequantize a line of values into floating-point values using the provided scale.
+/// Dequantize a vector of values into floating-point values using the provided scale.
 #[cube]
 pub fn dequantize_symmetric<F: Float, FS: CubePrimitive, N: Size>(
     value: Vector<F, N>,
@@ -28,7 +28,7 @@ pub fn dequantize_symmetric<F: Float, FS: CubePrimitive, N: Size>(
 
 /// Dequantize the value at a specified position using the provided quantization scheme.
 ///
-/// Returns a line of floating-point values. The number of values in the line depends on the number of packed
+/// Returns a vector of floating-point values. The number of values in the vector depends on the number of packed
 /// values in the stored quantization type.
 #[cube]
 pub fn dequantize_symmetric_packed_values<
@@ -53,7 +53,7 @@ pub fn dequantize_symmetric_packed_values<
 
 /// Dequantize a single value using the scale at the specified position.
 ///
-/// Returns a line of floating-point values. The number of values in the line depends on the number of packed
+/// Returns a vector of floating-point values. The number of values in the vector depends on the number of packed
 /// values in the stored quantization type.
 #[cube]
 pub fn dequantize_symmetric_packed_value_at<
@@ -73,7 +73,7 @@ pub fn dequantize_symmetric_packed_value_at<
 
 /// Dequantize a single packed value using the scale provided.
 ///
-/// Returns a line of floating-point values. The number of values in the line depends on the number of packed
+/// Returns a vector of floating-point values. The number of values in the vector depends on the number of packed
 /// values in the stored quantization type.
 #[cube]
 pub fn dequantize_symmetric_packed_value<
@@ -88,14 +88,14 @@ pub fn dequantize_symmetric_packed_value<
     position: usize,
     #[comptime] scheme: QuantScheme,
 ) -> Array<Vector<F, NF>> {
-    let line_size_values = values.vector_size();
+    let vector_size_values = values.vector_size();
     let num_quants = scheme.num_quants();
-    let mut tmp = Array::new(line_size_values);
+    let mut tmp = Array::new(vector_size_values);
 
     #[unroll]
-    for i in 0..line_size_values {
+    for i in 0..vector_size_values {
         let floats = unpack_q::<F, NF, QS>(values[i], scheme.value, scheme.store);
-        let scale = scales[(position * line_size_values) + i * num_quants];
+        let scale = scales[(position * vector_size_values) + i * num_quants];
         let values = dequantize_symmetric::<F, FS, NF>(floats, scale);
         tmp[i] = values;
     }
@@ -103,7 +103,7 @@ pub fn dequantize_symmetric_packed_value<
     tmp
 }
 
-/// Unpack a quantized integer into a line of floating-point values, according to the specified quantization input type.
+/// Unpack a quantized integer into a vector of floating-point values, according to the specified quantization input type.
 ///
 /// This handles types where multiple quantized values are packed into a single integer (the stored quantization type).
 #[allow(clippy::explicit_counter_loop)]
@@ -152,11 +152,11 @@ fn dequantize_symmetric_packed_kernel<F: Float, NF: Size, FS: Numeric, NQ: Size>
         terminate!();
     }
 
-    let line_size_in = input.vector_size();
-    let line_size_out = output.vector_size();
+    let vector_size_in = input.vector_size();
+    let vector_size_out = output.vector_size();
 
     comptime! {
-        assert_eq!(line_size_out, scheme.num_quants());
+        assert_eq!(vector_size_out, scheme.num_quants());
     }
 
     let values = input[ABSOLUTE_POS];
@@ -166,8 +166,8 @@ fn dequantize_symmetric_packed_kernel<F: Float, NF: Size, FS: Numeric, NQ: Size>
         dequantize_symmetric_packed_value::<F, NF, FS, u32, NQ>(values, scales, packed_pos, scheme);
 
     #[unroll]
-    for i in 0..line_size_in {
-        output[ABSOLUTE_POS * line_size_in + i] = out[i];
+    for i in 0..vector_size_in {
+        output[ABSOLUTE_POS * vector_size_in + i] = out[i];
     }
 }
 
@@ -263,21 +263,21 @@ fn dequantize_packed<R: Runtime>(
 ) -> Result<(), LaunchError> {
     let num_elems_input: usize = input.shape.iter().product();
 
-    let mut line_size_in = tensor_vector_size_parallel(
+    let mut vector_size_in = tensor_vector_size_parallel(
         client.io_optimized_vector_sizes(input_dtype.size()),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,
     );
     let num_quants = scheme.num_quants();
-    let line_size_out = num_quants;
+    let vector_size_out = num_quants;
     let rank = output.shape.len();
 
-    if !output.shape[rank - 1].is_multiple_of(line_size_out) {
-        line_size_in = 1;
+    if !output.shape[rank - 1].is_multiple_of(vector_size_out) {
+        vector_size_in = 1;
     }
 
-    let num_elems = num_elems_input / line_size_in as usize;
+    let num_elems = num_elems_input / vector_size_in as usize;
     let cube_dim = CubeDim::new(client, num_elems);
     let cube_count = calculate_cube_count_elemwise(client, num_elems, cube_dim);
     let address_type = input
@@ -297,11 +297,11 @@ fn dequantize_packed<R: Runtime>(
                 cube_count,
                 cube_dim,
                 address_type,
-                line_size_out,
-                line_size_in,
-                linear_view(client, input.clone(), line_size_in),
+                vector_size_out,
+                vector_size_in,
+                linear_view(client, input.clone(), vector_size_in),
                 scales_view(client, input, scale, 1, &scheme),
-                linear_view(client, output, line_size_out),
+                linear_view(client, output, vector_size_out),
                 scheme,
                 [input_dtype, scale_dtype],
             )
@@ -322,13 +322,13 @@ fn dequantize_native<R: Runtime>(
     scale_dtype: StorageType,
 ) -> Result<(), LaunchError> {
     let num_elems: usize = input.shape.iter().product();
-    let line_size = tensor_vector_size_parallel(
+    let vector_size = tensor_vector_size_parallel(
         client.io_optimized_vector_sizes(input_dtype.size()),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,
     );
-    let working_units = num_elems / line_size as usize;
+    let working_units = num_elems / vector_size as usize;
     let cube_dim = CubeDim::new(client, working_units);
     let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
 
@@ -359,11 +359,11 @@ fn dequantize_native<R: Runtime>(
                     cube_count,
                     cube_dim,
                     address_type,
-                    line_size,
-                    line_size,
-                    linear_view(client, input.clone(), line_size),
+                    vector_size,
+                    vector_size,
+                    linear_view(client, input.clone(), vector_size),
                     scales_view(client, input, scale, 1, &scheme),
-                    linear_view(client, output, line_size),
+                    linear_view(client, output, vector_size),
                     [input_dtype, scale_dtype, quant_dtype.into()],
                 )
             }

@@ -1,5 +1,5 @@
 use crate::{
-    BoundChecks, LineMode, ReduceInstruction, ReducePrecision,
+    BoundChecks, ReduceInstruction, ReducePrecision, VectorizationMode,
     components::{
         args::NumericLine,
         instructions::{ReduceCoordinate, ReduceRequirements},
@@ -25,19 +25,21 @@ impl<P: ReducePrecision> Reader<P> {
         reduce_index: usize,
         idle: ComptimeOption<bool>,
         #[comptime] bound_checks: BoundChecks,
-        #[comptime] line_mode: LineMode,
+        #[comptime] vectorization_mode: VectorizationMode,
     ) -> Reader<P> {
-        match line_mode {
-            LineMode::Parallel => Reader::<P>::new_Parallel(ParallelReader::<P>::new::<I, Out>(
-                input,
-                output,
-                inst,
-                reduce_axis,
-                reduce_index,
-                idle,
-                bound_checks,
-            )),
-            LineMode::Perpendicular => {
+        match vectorization_mode {
+            VectorizationMode::Parallel => {
+                Reader::<P>::new_Parallel(ParallelReader::<P>::new::<I, Out>(
+                    input,
+                    output,
+                    inst,
+                    reduce_axis,
+                    reduce_index,
+                    idle,
+                    bound_checks,
+                ))
+            }
+            VectorizationMode::Perpendicular => {
                 Reader::<P>::new_Perpendicular(PerpendicularReader::<P>::new::<I, Out>(
                     input,
                     output,
@@ -57,28 +59,31 @@ impl<N: Size> ReduceCoordinate<N> {
     pub fn new(
         coordinate: usize,
         requirements: ReduceRequirements,
-        #[comptime] line_mode: LineMode,
+        #[comptime] vectorization_mode: VectorizationMode,
     ) -> Self {
         if requirements.coordinates.comptime() {
             // TODO: Make this generic to allow 64-bit coordinate output.
             // Can't directly use `usize` for the buffer, since its size isn't defined beyond the
             // kernel boundary.
-            ReduceCoordinate::new_Required(fill_coordinate_line(coordinate as u32, line_mode))
+            ReduceCoordinate::new_Required(fill_coordinate_vector(
+                coordinate as u32,
+                vectorization_mode,
+            ))
         } else {
             ReduceCoordinate::new_NotRequired()
         }
     }
 }
 
-// If line mode is parallel, fill a line with `x, x+1, ... x+ line_size - 1` where `x = first`.
-// If line mode is perpendicular, fill a line with `x, x, ... x` where `x = first`.
+// If vectorization mode is parallel, fill a vector with `x, x+1, ... x+ vector_size - 1` where `x = first`.
+// If vectorization mode is perpendicular, fill a vector with `x, x, ... x` where `x = first`.
 #[cube]
-pub(crate) fn fill_coordinate_line<N: Size>(
+pub(crate) fn fill_coordinate_vector<N: Size>(
     first: u32,
-    #[comptime] line_mode: LineMode,
+    #[comptime] vectorization_mode: VectorizationMode,
 ) -> Vector<u32, N> {
-    match line_mode {
-        LineMode::Parallel => {
+    match vectorization_mode {
+        VectorizationMode::Parallel => {
             let mut coordinates = Vector::empty();
             #[unroll]
             for j in 0..N::value() {
@@ -86,6 +91,6 @@ pub(crate) fn fill_coordinate_line<N: Size>(
             }
             coordinates
         }
-        LineMode::Perpendicular => Vector::empty().fill(first),
+        VectorizationMode::Perpendicular => Vector::empty().fill(first),
     }
 }

@@ -21,15 +21,15 @@ pub struct PlaneVecMatInnerProduct<Acc: TileKind> {
 define_size!(NR);
 
 #[derive(CubeType)]
-pub struct LineContainer<E: Numeric> {
-    pub line: Vector<E, NR>,
+pub struct VectorContainer<E: Numeric> {
+    pub vector: Vector<E, NR>,
 }
 
 #[cube]
-impl<E: Numeric> LineContainer<E> {
-    fn new() -> LineContainer<E> {
-        LineContainer::<E> {
-            line: Vector::empty(),
+impl<E: Numeric> VectorContainer<E> {
+    fn new() -> VectorContainer<E> {
+        VectorContainer::<E> {
+            vector: Vector::empty(),
         }
     }
 }
@@ -42,13 +42,13 @@ where
 {
     type Config = PlaneVecMatInnerProductConfig;
 
-    // One line per unit in the plane
-    type LhsFragment = LineContainer<L>;
-    // For each n: one line per unit in the plane
-    type RhsFragment = Sequence<LineContainer<R>>;
+    // One vector per unit in the plane
+    type LhsFragment = VectorContainer<L>;
+    // For each n: one vector per unit in the plane
+    type RhsFragment = Sequence<VectorContainer<R>>;
 
-    // For each n: one line stored at unit pos 0, that will be reduced to a scalar only when writing at the end
-    type AccFragment = Sequence<LineContainer<A>>;
+    // For each n: one vector stored at unit pos 0, that will be reduced to a scalar only when writing at the end
+    type AccFragment = Sequence<VectorContainer<A>>;
 
     type LhsTile = Strided;
     type RhsTile = Strided;
@@ -64,14 +64,10 @@ where
         #[unroll]
         #[allow(clippy::explicit_counter_loop)]
         for n in 0..config.shared.tile_size.n() as usize {
-            let lhs: Vector<A, NR> = Vector::cast_from(lhs.line);
-            let rhs: Vector<A, NR> = Vector::cast_from(rhs[n].line);
+            let lhs: Vector<A, NR> = Vector::cast_from(lhs.vector);
+            let rhs: Vector<A, NR> = Vector::cast_from(rhs[n].vector);
 
-            plane_sum_lined(
-                lhs * rhs,
-                acc.index_mut(n),
-                config.reduce_line_size as usize,
-            );
+            plane_sum_vectorized(lhs * rhs, acc.index_mut(n));
         }
     }
 
@@ -79,19 +75,19 @@ where
         #[comptime] _layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Self::LhsFragment {
-        register_line_size(config.reduce_line_size);
-        LineContainer::<L>::new()
+        register_vector_size(config.reduce_vector_size);
+        VectorContainer::<L>::new()
     }
 
     fn allocate_rhs(
         #[comptime] _layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Self::RhsFragment {
-        register_line_size(config.reduce_line_size);
+        register_vector_size(config.reduce_vector_size);
         let mut rhs = Sequence::new();
         #[unroll]
         for _ in 0..config.shared.tile_size.n() {
-            rhs.push(LineContainer::new())
+            rhs.push(VectorContainer::new())
         }
         rhs
     }
@@ -100,11 +96,11 @@ where
         #[comptime] _layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Self::AccFragment {
-        register_line_size(config.reduce_line_size);
+        register_vector_size(config.reduce_vector_size);
         let mut acc = Sequence::new();
         #[unroll]
         for _ in 0..config.shared.tile_size.n() {
-            acc.push(LineContainer::new())
+            acc.push(VectorContainer::new())
         }
         acc
     }
@@ -142,28 +138,27 @@ where
             tile,
             acc,
             config.shared.tile_size.n(),
-            config.reduce_line_size as usize,
+            config.reduce_vector_size as usize,
         )
     }
 }
 
 #[cube]
-fn plane_sum_lined<E: Numeric, N: Size>(
-    line_to_sum: Vector<E, N>,
-    line_accumulator: &mut LineContainer<E>,
-    #[comptime] line_size: VectorSize,
+fn plane_sum_vectorized<E: Numeric, N: Size>(
+    vector_to_sum: Vector<E, N>,
+    vector_accumulator: &mut VectorContainer<E>,
 ) {
     #[unroll]
     #[allow(clippy::explicit_counter_loop)]
-    for line_iterator in 0..line_size {
-        line_accumulator.line[line_iterator] += plane_sum(line_to_sum[line_iterator]);
+    for vector_iterator in 0..N::value() {
+        vector_accumulator.vector[vector_iterator] += plane_sum(vector_to_sum[vector_iterator]);
     }
 }
 
 #[cube]
 #[allow(unused)]
-fn register_line_size(#[comptime] line_size: u32) {
+fn register_vector_size(#[comptime] vector_size: u32) {
     intrinsic!(|scope| {
-        scope.register_size::<NR>(line_size as usize);
+        scope.register_size::<NR>(vector_size as usize);
     })
 }

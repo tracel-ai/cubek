@@ -4,8 +4,8 @@ use crate::{components::global::memory::GlobalLayoutConfig, launch::ConfigRuntim
 use crate::{
     components::stage::NumStages,
     definition::{
-        AccG, Blueprint, CubeMapping, CubeMappingLaunch, LhsG, MatmulElems, MatmulLineSizes,
-        MatmulProblem, MatmulSetupError, MatmulTypes, RhsG,
+        AccG, Blueprint, CubeMapping, CubeMappingLaunch, LhsG, MatmulElems, MatmulProblem,
+        MatmulSetupError, MatmulTypes, MatmulVectorSizes, RhsG,
     },
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
@@ -21,14 +21,14 @@ pub trait BatchMatmulFamily<RC: RuntimeConfig>: 'static + Send + Sync {
 
     type Blueprint: Blueprint;
 
-    /// Constructs the configuration based on the matmul problem, selection, and line sizes.
+    /// Constructs the configuration based on the matmul problem, selection, and vector sizes.
     ///
     /// This function may return an error if the configuration cannot be supported on the current runtime.
     fn expand_config(
         device_props: &DeviceProperties,
         blueprint: &Self::Blueprint,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError>;
 
     fn num_stages() -> NumStages;
@@ -50,14 +50,14 @@ pub trait BatchMatmulFamily<RC: RuntimeConfig>: 'static + Send + Sync {
         cube_mapping: CubeMappingLaunch<R>,
         blueprint: Self::Blueprint,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), LaunchError>;
 
     /// Returns the compute resources required to run this matmul.
     fn cubedim_resource(
         blueprint: &Self::Blueprint,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<CubeDimResource, MatmulSetupError>;
 
     fn validate_blueprint<R: Runtime>(
@@ -65,7 +65,7 @@ pub trait BatchMatmulFamily<RC: RuntimeConfig>: 'static + Send + Sync {
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError>;
 }
 

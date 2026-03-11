@@ -10,7 +10,7 @@ mod unit {
     use cubecl::{Runtime, client::ComputeClient};
     use cubek_attention::{
         definition::{
-            AttentionBlueprint, AttentionGlobalTypes, AttentionLineSizes, AttentionTileSize,
+            AttentionBlueprint, AttentionGlobalTypes, AttentionTileSize, AttentionVectorSizes,
         },
         launch::{BlueprintStrategy, Strategy},
     };
@@ -29,12 +29,12 @@ mod unit {
         client: &ComputeClient<R>,
         global_types: AttentionGlobalTypes,
     ) -> AttentionTileSize {
-        let line_sizes = AttentionLineSizes::new_max(client, &global_types);
+        let vector_size = AttentionVectorSizes::new_max(client, &global_types);
         AttentionTileSize {
-            seq_q: line_sizes.query as u32,
-            seq_kv: line_sizes.key as u32,
-            head_dim: line_sizes.query as u32,
-            val_dim: line_sizes.value as u32,
+            seq_q: vector_size.query as u32,
+            seq_kv: vector_size.key as u32,
+            head_dim: vector_size.query as u32,
+            val_dim: vector_size.value as u32,
         }
     }
 

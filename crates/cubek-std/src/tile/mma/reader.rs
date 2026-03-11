@@ -97,12 +97,12 @@ fn load_manual_transposed<
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
 ) {
-    let num_lines = def.vectors_per_lane(ident);
-    let line_size = def.vector_size(ident);
+    let num_vectors = def.vectors_per_lane(ident);
+    let vector_size = def.vector_size(ident);
     let lane_id = UNIT_POS_PLANE;
 
-    let stride = tile.unlined_stride();
-    let tile = tile.with_line_size::<Const<1>>();
+    let stride = tile.unvectorized_stride();
+    let tile = tile.with_vector_size::<Const<1>>();
 
     let (stride_row, stride_col) = match layout {
         MatrixLayout::RowMajor => (stride, 1),
@@ -110,18 +110,18 @@ fn load_manual_transposed<
     };
 
     #[unroll]
-    for i in 0..num_lines {
-        let mut line = Vector::empty();
+    for i in 0..num_vectors {
+        let mut vector = Vector::empty();
         #[unroll]
-        for n in 0..line_size {
-            let elem_idx = i * line_size + n;
+        for n in 0..vector_size {
+            let elem_idx = i * vector_size + n;
             let (row, col) = def.position_of_nth(lane_id, elem_idx as u32, ident);
             let offset = row * stride_row + col * stride_col;
             let offset = tile.stage_offset(offset);
 
-            line[n] = E::cast_from(tile.stage[offset as usize]);
+            vector[n] = E::cast_from(tile.stage[offset as usize]);
         }
-        fragment[i] = line;
+        fragment[i] = vector;
     }
 }
 
@@ -141,13 +141,13 @@ fn load_manual_plain<
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
 ) {
-    let num_lines = def.vectors_per_lane(ident);
-    let line_size = N::value();
+    let num_vectors = def.vectors_per_lane(ident);
+    let vector_size = N::value();
 
     let lane_id = UNIT_POS_PLANE;
-    let stride = tile.unlined_stride();
+    let stride = tile.unvectorized_stride();
     // Supported on all targets that support manual MMA
-    let tile = tile.with_line_size::<N>();
+    let tile = tile.with_vector_size::<N>();
 
     let (stride_row, stride_col) = match layout {
         MatrixLayout::RowMajor => (stride, 1),
@@ -155,11 +155,11 @@ fn load_manual_plain<
     };
 
     #[unroll]
-    for i in 0..num_lines {
-        let elem_idx = i * line_size;
+    for i in 0..num_vectors {
+        let elem_idx = i * vector_size;
         let (row, col) = def.position_of_nth(lane_id, elem_idx as u32, ident);
         let offset = row * stride_row + col * stride_col;
-        let stage_offset = tile.stage_offset(offset / line_size as u32);
+        let stage_offset = tile.stage_offset(offset / vector_size as u32);
 
         fragment[i] = Vector::cast_from(tile.stage[stage_offset as usize]);
     }
@@ -181,15 +181,15 @@ fn load_ldmatrix<E: Numeric, N: Size, V: Numeric, NV: Size, A: Numeric, B: Numer
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_size: TileSize,
 ) {
-    let stage_line_size = tile.stage.vector_size().comptime();
-    let stride = tile.unlined_stride();
+    let stage_vector_size = tile.stage.vector_size().comptime();
+    let stride = tile.unvectorized_stride();
 
     let elem_size = E::type_size().comptime();
     let num_regs = def.vectors_per_lane(ident);
-    let width = (16 / elem_size / stage_line_size) as u32;
+    let width = (16 / elem_size / stage_vector_size) as u32;
 
     let start =
-        ldmatrix_offset::<V, A, B, CD>(stride, def, stage_line_size, ident, layout, tile_size);
+        ldmatrix_offset::<V, A, B, CD>(stride, def, stage_vector_size, ident, layout, tile_size);
     let start = tile.stage_offset(start);
 
     let row_slice = tile.stage.slice(start as usize, (start + width) as usize);
@@ -207,7 +207,7 @@ fn load_ldmatrix<E: Numeric, N: Size, V: Numeric, NV: Size, A: Numeric, B: Numer
 pub(crate) fn ldmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     stride: u32,
     def: MmaDefinition<A, B, CD>,
-    #[comptime] stage_line_size: VectorSize,
+    #[comptime] stage_vector_size: VectorSize,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_size: TileSize,
@@ -252,7 +252,7 @@ pub(crate) fn ldmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     };
 
     let start = row * stride_row + col * stride_col;
-    start / stage_line_size as u32
+    start / stage_vector_size as u32
 }
 
 #[cube]
@@ -276,11 +276,11 @@ impl MmaFragmentReader for MmaStageReader<Filled> {
         #[comptime] _tile_size: TileSize,
         #[comptime] _config: MmaIOConfig,
     ) {
-        let num_lines = def.vectors_per_lane(ident);
+        let num_vectors = def.vectors_per_lane(ident);
         let value = Vector::<E, N>::cast_from(*value);
 
         #[unroll]
-        for i in 0..num_lines {
+        for i in 0..num_vectors {
             fragment[i] = value;
         }
     }

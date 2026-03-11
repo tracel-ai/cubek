@@ -16,7 +16,7 @@ use cubecl::{
 };
 use cubek_matmul::{
     components::global::memory::{GlobalLayoutConfig, NoopLayout, NoopLayoutLaunch},
-    definition::{Blueprint, MatmulElems, MatmulLineSizes, TilingBlueprint},
+    definition::{Blueprint, MatmulElems, MatmulVectorSizes, TilingBlueprint},
     launch::{
         MatmulArgs, MatmulInputBinding, TensorArgs, TensorInputs, TensorInputsLaunch,
         TensorMapArgs, TensorMapInputs, TensorMapInputsLaunch, TensorOutput, TensorOutputLaunch,
@@ -102,7 +102,7 @@ pub trait ConcreteInputsFactory<A: Routine<RuntimeArgs>>: LaunchArg {
         weights: MatmulInputBinding<R>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
         dtypes: &MatmulElems,
     ) -> (Self::RuntimeArg<R>, RuntimeArgsLaunch<R>);
 }
@@ -115,7 +115,7 @@ pub trait ConcreteOutputFactory<A: Routine<RuntimeArgs>>: LaunchArg {
         out: TensorBinding<R>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Self::RuntimeArg<R>;
 }
 
@@ -128,7 +128,7 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<Runti
         weights: MatmulInputBinding<R>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
         _dtypes: &MatmulElems,
     ) -> (Self::RuntimeArg<R>, RuntimeArgsLaunch<R>) {
         type LhsLayout = Chain<NhwcLayout, Im2colLayout>;
@@ -137,8 +137,9 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<Runti
         let padded_channels = problem.padded_channels as u32;
         let params = ConvolutionParams::from_problem(problem);
 
-        let layout_nhwc =
-            |handle, line_size, checks| NhwcLayoutLaunch::from_handle(handle, line_size, checks);
+        let layout_nhwc = |handle, vector_size, checks| {
+            NhwcLayoutLaunch::from_handle(handle, vector_size, checks)
+        };
 
         let layout_lhs = Im2colLayoutLaunch::from_args(
             client,
@@ -157,7 +158,7 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<Runti
             if problem.should_check_channel() {
                 checks.insert(NhwcCheck::Channel);
             }
-            let global = layout_nhwc(out_grad.data(), line_sizes.lhs, checks);
+            let global = layout_nhwc(out_grad.data(), vector_sizes.lhs, checks);
             ChainLaunch::new(global, layout_lhs)
         };
         let layout_rhs = {
@@ -165,7 +166,7 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<Runti
             if problem.should_check_channel() {
                 checks.insert(NhwcCheck::Batch);
             }
-            let global = layout_nhwc(weights.data(), line_sizes.rhs, checks);
+            let global = layout_nhwc(weights.data(), vector_sizes.rhs, checks);
             ChainLaunch::new(global, layout_rhs)
         };
 
@@ -201,11 +202,11 @@ impl<EG: CubePrimitive, A: Routine<RuntimeArgs>> ConcreteOutputFactory<A> for Te
         out: TensorBinding<R>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Self::RuntimeArg<R> {
         type Layout = Chain<NhwcLayout, OutLayout>;
 
-        let global = NhwcLayoutLaunch::from_handle(&out, line_sizes.out, EnumSet::empty());
+        let global = NhwcLayoutLaunch::from_handle(&out, vector_sizes.out, EnumSet::empty());
         let layout =
             OutLayoutLaunch::from_args(client, problem, blueprint.out_global_layout_config());
         let layout = ChainLaunch::new(global, layout);
@@ -228,7 +229,7 @@ impl<
         weights: MatmulInputBinding<R>,
         blueprint: &TilingBlueprint,
         problem: &ConvolutionProblem,
-        _line_sizes: &MatmulLineSizes,
+        _vector_sizes: &MatmulVectorSizes,
         dtypes: &MatmulElems,
     ) -> (Self::RuntimeArg<R>, RuntimeArgsLaunch<R>) {
         type LhsLayout = TmaIm2colLayout;

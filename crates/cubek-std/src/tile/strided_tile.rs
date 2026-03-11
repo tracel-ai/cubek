@@ -35,14 +35,14 @@ impl<ES: Numeric, N: Size> StridedTile<ES, N> {
         start: u32,
         #[comptime] config: StageMemoryConfig,
     ) -> StridedTile<ES, N> {
-        let len = config.elements_per_tile() / config.line_size;
+        let len = config.elements_per_tile() / config.vector_size;
         let layout = config.matrix_layout;
         let stride = match layout {
             MatrixLayout::RowMajor => config.elements_per_tile_along_col,
             MatrixLayout::ColMajor => config.elements_per_tile_along_row,
         };
 
-        let stride = stride / config.line_size;
+        let stride = stride / config.vector_size;
 
         StridedTile::<ES, N> {
             stage,
@@ -62,14 +62,14 @@ impl<ES: Numeric, N: Size> StridedTile<ES, N> {
         start: u32,
         #[comptime] config: StageMemoryConfig,
     ) -> StridedTile<ES, N, ReadWrite> {
-        let len = config.elements_per_tile() / config.line_size;
+        let len = config.elements_per_tile() / config.vector_size;
         let layout = config.matrix_layout;
         let stride = match layout {
             MatrixLayout::RowMajor => config.elements_per_tile_along_col,
             MatrixLayout::ColMajor => config.elements_per_tile_along_row,
         };
 
-        let stride = stride / config.line_size;
+        let stride = stride / config.vector_size;
 
         StridedTile::<ES, N, ReadWrite> {
             stage,
@@ -126,9 +126,9 @@ impl<ES: Numeric, N: Size> StridedTile<ES, N> {
 
 #[cube]
 impl<ES: Numeric, N: Size, IO: SliceVisibility> StridedTile<ES, N, IO> {
-    pub fn unlined_stride(&self) -> u32 {
-        let stage_line_size = self.stage.vector_size();
-        self.stride * stage_line_size as u32
+    pub fn unvectorized_stride(&self) -> u32 {
+        let stage_vector_size = self.stage.vector_size();
+        self.stride * stage_vector_size as u32
     }
 }
 
@@ -154,8 +154,8 @@ impl<ES: Numeric, N: Size> StridedTile<ES, N, ReadWrite> {
 
 #[cube]
 impl<ES: Numeric, N: Size, IO: SliceVisibility> StridedTile<ES, N, IO> {
-    /// Returns a specific line from the tile based on coordinates.
-    pub fn get_line(&self, coor_strided: u32, coor_contiguous: u32) -> Vector<ES, N> {
+    /// Returns a specific vector from the tile based on coordinates.
+    pub fn get_vector(&self, coor_strided: u32, coor_contiguous: u32) -> Vector<ES, N> {
         let offset = coor_strided * self.stride + coor_contiguous;
         let offset_abs = self.start + offset;
         let type_size = Vector::<ES, N>::type_size();
@@ -170,21 +170,21 @@ impl<ES: Numeric, N: Size, IO: SliceVisibility> StridedTile<ES, N, IO> {
     }
 
     #[allow(unused_variables)]
-    pub fn with_line_size<N2: Size>(&self) -> StridedTile<ES, N2, IO> {
-        let line_size = N2::value();
+    pub fn with_vector_size<N2: Size>(&self) -> StridedTile<ES, N2, IO> {
+        let vector_size = N2::value();
         intrinsic!(|scope| {
-            let stage_line_size = self.stage.vector_size();
+            let stage_vector_size = self.stage.vector_size();
 
-            if line_size == self.stage.vector_size() {
+            if vector_size == self.stage.vector_size() {
                 return self.__expand_with_stage_vector_size_method(scope);
             }
 
-            let current = stage_line_size;
+            let current = stage_vector_size;
             let mut out: StridedTileExpand<ES, N2, IO> =
                 self.clone().__expand_with_stage_vector_size_method(scope);
 
-            if current < line_size {
-                let ratio = (line_size / current) as u32;
+            if current < vector_size {
+                let ratio = (vector_size / current) as u32;
                 let end = cubecl::frontend::div::expand(scope, self.end, ratio.into());
                 let start = cubecl::frontend::div::expand(scope, self.start, ratio.into());
                 let stride =
@@ -193,7 +193,7 @@ impl<ES: Numeric, N: Size, IO: SliceVisibility> StridedTile<ES, N, IO> {
                 out.end = end;
                 out.stride = stride;
             } else {
-                let ratio = (current / line_size) as u32;
+                let ratio = (current / vector_size) as u32;
                 let start = cubecl::frontend::mul::expand(scope, self.start, ratio.into());
                 let end = cubecl::frontend::mul::expand(scope, self.end, ratio.into());
                 let stride = cubecl::frontend::mul::expand(scope, self.stride, ratio.into());
@@ -206,7 +206,7 @@ impl<ES: Numeric, N: Size, IO: SliceVisibility> StridedTile<ES, N, IO> {
         })
     }
 
-    /// Cast only the stage line size. This leaves the tile in an invalid state - start, end and
+    /// Cast only the stage vector size. This leaves the tile in an invalid state - start, end and
     /// stride must be adjusted accordingly.
     /// # Safety
     /// Must not be used without further metadata adjustments

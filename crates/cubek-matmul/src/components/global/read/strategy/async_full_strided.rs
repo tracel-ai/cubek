@@ -29,24 +29,24 @@ impl LoadingValidation for AsyncFullStridedLoading {
         device_props: &DeviceProperties,
         config: &GlobalReaderConfig,
     ) -> Result<(), InvalidConfigError> {
-        let line_size = ASYNC_COPY_WIDTH / config.smem_config.dtype.size_bits() as u32;
+        let vector_size = ASYNC_COPY_WIDTH / config.smem_config.dtype.size_bits() as u32;
 
-        // Needs separate check because copy size may be larger than global line size
+        // Needs separate check because copy size may be larger than global vector size
         if !config
             .smem_config
             .elements_per_stage_along_contiguous_dim()
-            .is_multiple_of(line_size)
+            .is_multiple_of(vector_size)
         {
-            return Err(Box::new("Stage size isn't divisible by copy line size"));
+            return Err(Box::new("Stage size isn't divisible by copy vector size"));
         }
 
-        let num_stage_lines = config.smem_config.elements_per_stage() / line_size;
+        let num_stage_vectors = config.smem_config.elements_per_stage() / vector_size;
         let total_units = config.loading_units_count();
 
-        if !num_stage_lines.is_multiple_of(total_units) {
+        if !num_stage_vectors.is_multiple_of(total_units) {
             return Err(Box::new(format!(
                 "Too many data will be loaded, resulting in out of bounds.
-        Try setting line size and number of planes so that total unit count {total_units:?} divides number of lines in stage.",
+        Try setting vector size and number of planes so that total unit count {total_units:?} divides number of vectors in stage.",
             )));
         }
 
@@ -75,14 +75,14 @@ impl LoadMaxRoundPlaneCount for AsyncFullStridedLoading {
     fn max_round_plane_count(
         elements_per_tile: u32,
         tiles_per_stage: u32,
-        _line_size: VectorSize,
+        _vector_size: VectorSize,
         plane_dim: u32,
         dtype: StorageType,
     ) -> u32 {
-        let line_size = ASYNC_COPY_WIDTH / dtype.size_bits() as u32;
+        let vector_size = ASYNC_COPY_WIDTH / dtype.size_bits() as u32;
         let elements_per_stage = elements_per_tile * tiles_per_stage;
-        let num_lines = elements_per_stage / line_size;
-        num_lines.div_ceil(plane_dim)
+        let num_vectors = elements_per_stage / vector_size;
+        num_vectors.div_ceil(plane_dim)
     }
 }
 
@@ -99,10 +99,10 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for AsyncFullStridedLoading {
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, NG, ES, NS> {
         let type_size = ES::type_size_bits().comptime();
-        let line_size = ASYNC_COPY_WIDTH / type_size as u32;
-        let num_stage_lines = config.smem_config.elements_per_stage() / line_size;
+        let vector_size = ASYNC_COPY_WIDTH / type_size as u32;
+        let num_stage_vectors = config.smem_config.elements_per_stage() / vector_size;
         let unit_count = config.loading_planes_count() * config.plane_dim;
-        let num_tasks_per_unit = num_stage_lines / unit_count;
+        let num_tasks_per_unit = num_stage_vectors / unit_count;
 
         let unit_position_base = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
             .load_index(config.input_load_flow)
@@ -113,7 +113,7 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for AsyncFullStridedLoading {
             unit_position_base,
             num_tasks_per_unit,
             unit_count,
-            copy_line_size: line_size,
+            copy_vector_size: vector_size,
         }
     }
 }
@@ -127,7 +127,7 @@ pub struct AsyncFullStridedJob {
     #[cube(comptime)]
     unit_count: u32,
     #[cube(comptime)]
-    copy_line_size: u32,
+    copy_vector_size: u32,
 }
 
 #[cube]
@@ -145,7 +145,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
         #[comptime] config: GlobalReaderConfig,
     ) {
         let unit_position = this.unit_position_base + task_id * this.unit_count;
-        let unit_position_abs = unit_position * this.copy_line_size;
+        let unit_position_abs = unit_position * this.copy_vector_size;
 
         let layout = FullStageLayout::new(config.smem_config);
         let view = global_iter.view();
@@ -153,7 +153,14 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
         let pos = layout.to_source_pos(unit_position_abs);
         let stage_offset = unit_position_abs / stage.smem.vector_size() as u32;
 
-        async_copy_from(view, pos, stage, stage_offset, config, this.copy_line_size);
+        async_copy_from(
+            view,
+            pos,
+            stage,
+            stage_offset,
+            config,
+            this.copy_vector_size,
+        );
     }
 
     fn task_count(this: &Self) -> comptime_type!(u32) {

@@ -44,7 +44,7 @@ Routines should not make hard decisions about hardware specifics, instead they s
 **The Adaptation Workflow**
 The launch logic determines the optimal constraints like vectorization based on the hardware and input shape/strides.
 The routine then receives these settings and calculates how to map the algorithm to them.
-For example, if the launch logic mandates a line size of 32, the routine does not decide this.
+For example, if the launch logic mandates a vector size of 32, the routine does not decide this.
 Instead, it calculates the necessary `cube_dim` and `cube_count` to fully solve the problem.
 This results in the generation of a `Blueprint` for the compiler and `LaunchSettings` for the runtime.
 
@@ -53,7 +53,7 @@ This results in the generation of a `Blueprint` for the compiler and `LaunchSett
 The kernel entry point should rely on the blueprint for structural logic.
 You can derive a comprehensive configuration type inside the kernel using a `comptime` block.
 
-This process acts as "uncompressing" the minimal blueprint, combined with implicit information like line size and hardware properties, into an easy-to-use structure.
+This process acts as "uncompressing" the minimal blueprint, combined with implicit information like vector size and hardware properties, into an easy-to-use structure.
 
 ### Example Kernel Signature
 
@@ -64,12 +64,12 @@ pub fn my_kernel<F: Float>(
     output: &mut Tensor<Vector<F>>,
     #[comptime] blueprint: MyBlueprint,
 ) {
-    let line_size = input.line_size();
+    let vector_size = input.vector_size();
     let device_properties = comptime::device_properties();
 
     let config = comptime! {
         // Create a derived configuration struct for internal use
-        MyKernelConfig::new(blueprint, line_size, device_properties)
+        MyKernelConfig::new(blueprint, vector_size, device_properties)
     };
 
     // 1. Comptime Validation

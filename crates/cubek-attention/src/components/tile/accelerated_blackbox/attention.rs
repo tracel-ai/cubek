@@ -153,7 +153,7 @@ impl<AP: AttentionPrecision> TileAttention<AP> for BlackboxAcceleratedTileAttent
     }
 
     fn load_query<E: Numeric, N: Size>(tile: &StridedTile<E, N>, fragment: &mut Self::Query) {
-        let stride = tile.unlined_stride();
+        let stride = tile.unvectorized_stride();
         let slice = tile.as_slice();
         cmma::load(fragment, &slice, stride);
     }
@@ -163,7 +163,7 @@ impl<AP: AttentionPrecision> TileAttention<AP> for BlackboxAcceleratedTileAttent
         fragment: &mut Self::KeyValue,
         #[comptime] _config: Self::Config,
     ) {
-        let stride = tile.unlined_stride();
+        let stride = tile.unvectorized_stride();
         let slice = tile.as_slice();
         cmma::load(fragment, &slice, stride);
     }
@@ -173,7 +173,7 @@ impl<AP: AttentionPrecision> TileAttention<AP> for BlackboxAcceleratedTileAttent
         fragment: &mut Self::KeyValue,
         #[comptime] _config: Self::Config,
     ) {
-        let stride = tile.unlined_stride();
+        let stride = tile.unvectorized_stride();
         let slice = tile.as_slice();
         cmma::load(fragment, &slice, stride);
     }

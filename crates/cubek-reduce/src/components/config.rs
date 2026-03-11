@@ -1,5 +1,5 @@
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-pub enum LineMode {
+pub enum VectorizationMode {
     Parallel,
     Perpendicular,
 }

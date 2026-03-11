@@ -9,7 +9,7 @@ use crate::definition::{
 };
 use crate::definition::{CubeCountInputArgs, attention_types::*};
 use crate::launch::AttentionArgs;
-use crate::{components::global::GlobalAttentionConfig, definition::AttentionLineSizes};
+use crate::{components::global::GlobalAttentionConfig, definition::AttentionVectorSizes};
 use std::{fmt::Debug, hash::Hash};
 
 /// A family of [BatchAttention] implementations that operate with any [precision](AttentionPrecision).
@@ -36,7 +36,7 @@ pub trait BatchAttentionFamily: Send + Sync + 'static {
         output: OutputRuntimeArg<AA, R>,
         cube_count_input: CubeCountInputArgs<R>,
         dtypes: &AttentionElems,
-        line_sizes: &AttentionLineSizes,
+        vector_sizes: &AttentionVectorSizes,
         attention_blueprint: Self::Blueprint,
     ) -> Result<(), LaunchError>;
 

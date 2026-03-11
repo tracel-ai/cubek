@@ -147,11 +147,11 @@ impl<M: Numeric, N: Size> MaterializedMaskReader<M, N> {
             )
             .to_linear_slice();
 
-        let line_size = self.gmem_config.line_size.comptime() as u32;
+        let vector_size = self.gmem_config.vector_size.comptime() as u32;
         let start = 0;
-        let length = attention_tile_size.seq_q * attention_tile_size.seq_kv / line_size;
+        let length = attention_tile_size.seq_q * attention_tile_size.seq_kv / vector_size;
         let end = start + length;
-        let stride = self.seq_kv_shape / line_size;
+        let stride = self.seq_kv_shape / vector_size;
 
         StridedTile::<M, N>::new_strided(
             slice,

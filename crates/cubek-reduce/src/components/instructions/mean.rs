@@ -76,12 +76,12 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Mean {
 
     // TODO Remove shape_axis_reduce when fusion-on-write is well supported for reduce instructions.
     //      Then, an instruction like Mean can be implemented by fusing a <Sum as ReduceInstruction<P>> reduction and a element-wise division.
-    fn merge_line<Out: Numeric>(
+    fn merge_vector<Out: Numeric>(
         this: &Self,
         accumulator: Self::AccumulatorItem,
         shape_axis_reduce: VectorSize,
     ) -> Out {
-        let sum = <Sum as ReduceInstruction<P>>::merge_line::<P::EA>(
+        let sum = <Sum as ReduceInstruction<P>>::merge_vector::<P::EA>(
             &this.sum,
             accumulator,
             shape_axis_reduce,

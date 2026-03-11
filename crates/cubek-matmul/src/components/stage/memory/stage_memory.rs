@@ -51,7 +51,7 @@ impl<ES: Numeric, NS: Size, T: TilingLayout> StridedStageMemory<ES, NS, T> {
         #[comptime] alignment: usize,
         #[comptime] config: StageMemoryConfig,
     ) -> StridedStageMemory<ES, NS, T> {
-        let line_size = config.line_size as usize;
+        let vector_size = config.vector_size as usize;
         let swizzle = as_swizzle_object(config.swizzle);
         let swizzle_align = swizzle.repeats_after();
         let align = comptime![Ord::max(alignment, swizzle_align as usize)];
@@ -59,7 +59,7 @@ impl<ES: Numeric, NS: Size, T: TilingLayout> StridedStageMemory<ES, NS, T> {
 
         let stage_size_bytes = config.elements_per_stage() as usize * type_size;
         // Ensure all stages are aligned properly
-        let stage_size = stage_size_bytes.next_multiple_of(align) / type_size / line_size;
+        let stage_size = stage_size_bytes.next_multiple_of(align) / type_size / vector_size;
 
         let smem = SharedMemory::new_aligned(config.num_stages as usize * stage_size, align);
 

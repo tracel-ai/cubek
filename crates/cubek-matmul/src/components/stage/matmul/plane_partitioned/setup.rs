@@ -13,7 +13,7 @@ use crate::components::{
     tile::TileMatmulFamily,
 };
 use crate::definition::{
-    MatmulElems, MatmulLineSizes, MatmulSetupError, MatmulTypes, MatrixTypes, TilingBlueprint,
+    MatmulElems, MatmulSetupError, MatmulTypes, MatmulVectorSizes, MatrixTypes, TilingBlueprint,
 };
 use crate::{
     components::stage::TilingLayout,
@@ -77,7 +77,7 @@ impl<
         plane_flow_config: PlaneFlowConfig,
         num_stages: NumStages,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
         let plane_counts = MatmulPlaneCounts::new(blueprint.load_flows, plane_flow_config.counts);
 
@@ -89,7 +89,7 @@ impl<
             tiles_per_partition_along_col: blueprint.tiling_scheme.partition_size.k as u32,
             partitions_per_stage_along_row: blueprint.tiling_scheme.stage_size.m as u32,
             partitions_per_stage_along_col: blueprint.tiling_scheme.stage_size.k as u32,
-            line_size: line_sizes.lhs as u32,
+            vector_size: vector_sizes.lhs as u32,
             matrix_layout: blueprint.lhs_layout,
             swizzle: blueprint.swizzle_modes.lhs,
             num_stages: num_stages.lhs,
@@ -104,7 +104,7 @@ impl<
             tiles_per_partition_along_col: blueprint.tiling_scheme.partition_size.n as u32,
             partitions_per_stage_along_row: blueprint.tiling_scheme.stage_size.k as u32,
             partitions_per_stage_along_col: blueprint.tiling_scheme.stage_size.n as u32,
-            line_size: line_sizes.rhs as u32,
+            vector_size: vector_sizes.rhs as u32,
             matrix_layout: blueprint.rhs_layout,
             swizzle: blueprint.swizzle_modes.rhs,
             num_stages: num_stages.rhs,
@@ -119,7 +119,7 @@ impl<
             tiles_per_partition_along_col: blueprint.tiling_scheme.partition_size.n as u32,
             partitions_per_stage_along_row: blueprint.tiling_scheme.stage_size.m as u32,
             partitions_per_stage_along_col: blueprint.tiling_scheme.stage_size.n as u32,
-            line_size: line_sizes.out as u32,
+            vector_size: vector_sizes.out as u32,
             matrix_layout: MatrixLayout::RowMajor,
             swizzle: blueprint.swizzle_modes.out,
             num_stages: 1,
@@ -129,7 +129,7 @@ impl<
         Ok(PartitionMatmulConfig::Plane(
             PlanePartitionedStageConfig::from_shared_partition_config(
                 SharedPartitionMatmulConfig::new(
-                    TM::expand_config(device_props, blueprint, dtypes, line_sizes)?,
+                    TM::expand_config(device_props, blueprint, dtypes, vector_sizes)?,
                     blueprint.tiling_scheme.partition_size,
                     blueprint.partition_buffering,
                     plane_flow_config,
@@ -165,7 +165,7 @@ impl<
         client: &ComputeClient<R>,
         blueprint: &TilingBlueprint,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
         let num_planes_needed = blueprint.tiling_scheme.partitions_per_stage_along_m()
             * blueprint.tiling_scheme.partitions_per_stage_along_n();
@@ -186,6 +186,6 @@ impl<
             )));
         }
 
-        TM::validate_blueprint(client, blueprint, dtypes, line_sizes)
+        TM::validate_blueprint(client, blueprint, dtypes, vector_sizes)
     }
 }

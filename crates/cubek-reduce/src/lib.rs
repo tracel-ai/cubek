@@ -12,7 +12,7 @@
 
 #![allow(
     clippy::type_complexity,
-    reason = "Too sensitive, triggers on tuple of lines."
+    reason = "Too sensitive, triggers on tuple of vector."
 )]
 
 pub mod components;

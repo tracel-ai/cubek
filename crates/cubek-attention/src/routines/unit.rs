@@ -90,13 +90,13 @@ fn blueprint(
             let tile_size = AttentionTileSize {
                 seq_q: 8,
                 head_dim: min(
-                    launch_settings.line_sizes.query,
-                    launch_settings.line_sizes.key,
+                    launch_settings.vector_sizes.query,
+                    launch_settings.vector_sizes.key,
                 ) as u32,
                 seq_kv: 8,
                 val_dim: min(
-                    launch_settings.line_sizes.out,
-                    launch_settings.line_sizes.value,
+                    launch_settings.vector_sizes.out,
+                    launch_settings.vector_sizes.value,
                 ) as u32,
             };
 
@@ -122,7 +122,7 @@ fn blueprint(
                 plane_dim,
                 reuse_key_value: false,
                 two_rows_in_array_tile: false,
-                line_sizes: launch_settings.line_sizes.clone(),
+                vector_sizes: launch_settings.vector_sizes.clone(),
                 masked: problem.masked,
                 causal: problem.options.causal,
                 check_bounds: tiling_scheme.check_bounds(&problem.dims),

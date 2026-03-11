@@ -18,7 +18,7 @@ use crate::components::global::memory::{
     SimpleTmaGlobalLayoutLaunch,
 };
 use crate::definition::{
-    Blueprint as _, MatmulElems, MatmulLineSizes, MatmulProblem, TilingBlueprint,
+    Blueprint as _, MatmulElems, MatmulProblem, MatmulVectorSizes, TilingBlueprint,
 };
 use crate::launch::handle::MatmulInputBinding;
 use crate::routines::Routine;
@@ -57,7 +57,7 @@ pub trait ConcreteInputsFactory<A: Routine<()>>: LaunchArg {
         rhs: MatmulInputBinding<R>,
         blueprint: &A::Blueprint,
         problem: &MatmulProblem,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
         dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<R>;
 }
@@ -71,7 +71,7 @@ pub trait ConcreteOutputFactory<A: Routine<()>>: LaunchArg {
         out: TensorBinding<R>,
         blueprint: &A::Blueprint,
         problem: &MatmulProblem,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
         dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<R>;
 }
@@ -196,13 +196,13 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc: CubePrimitive, A: Routine<()>>
         rhs: MatmulInputBinding<R>,
         blueprint: &A::Blueprint,
         problem: &MatmulProblem,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
         _dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<R> {
         let view =
-            |handle: MatmulInputBinding<R>, config: GlobalLayoutConfig, line_size| match handle {
+            |handle: MatmulInputBinding<R>, config: GlobalLayoutConfig, vector_size| match handle {
                 MatmulInputBinding::Normal(handle, _dtype) => {
-                    let layout = GlobalLayoutLaunch::from_handle(&handle, line_size, config);
+                    let layout = GlobalLayoutLaunch::from_handle(&handle, vector_size, config);
                     ViewArg::new::<GlobalLayout>(handle.into_tensor_arg().into_array_arg(), layout)
                 }
                 MatmulInputBinding::Quantized {
@@ -213,7 +213,14 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc: CubePrimitive, A: Routine<()>>
                     ..
                 } => {
                     let (data_layout, scales_layout) = GlobalLayoutLaunch::from_quantized_handle(
-                        client, &data, &scale, &shape, problem, scheme, line_size, config,
+                        client,
+                        &data,
+                        &scale,
+                        &shape,
+                        problem,
+                        scheme,
+                        vector_size,
+                        config,
                     );
                     let data_view = ViewArg::new::<GlobalLayout>(
                         data.into_tensor_arg().into_array_arg(),
@@ -236,9 +243,9 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc: CubePrimitive, A: Routine<()>>
 
         TensorInputsLaunch::new(
             batch_layout(&lhs),
-            view(lhs, blueprint.lhs_global_layout_config(), line_sizes.lhs),
+            view(lhs, blueprint.lhs_global_layout_config(), vector_sizes.lhs),
             batch_layout(&rhs),
-            view(rhs, blueprint.rhs_global_layout_config(), line_sizes.rhs),
+            view(rhs, blueprint.rhs_global_layout_config(), vector_sizes.rhs),
             ComptimeOptionArgs::None,
             ComptimeOptionArgs::None,
         )
@@ -258,12 +265,12 @@ impl<EG: CubePrimitive, A: Routine<()>> ConcreteOutputFactory<A> for TensorOutpu
         out: TensorBinding<R>,
         blueprint: &A::Blueprint,
         problem: &MatmulProblem,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
         _dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<R> {
         let layout = GlobalLayoutLaunch::from_handle(
             &out,
-            line_sizes.out,
+            vector_sizes.out,
             blueprint.out_global_layout_config(),
         );
         let batch = BatchLayoutLaunch::from_handle(client, &out, problem);
@@ -391,7 +398,7 @@ impl<
         rhs_handle: MatmulInputBinding<R>,
         blueprint: &A::Blueprint,
         problem: &MatmulProblem,
-        _line_sizes: &MatmulLineSizes,
+        _vector_sizes: &MatmulVectorSizes,
         dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<R> {
         let lhs = lhs_handle.into_data();

@@ -333,7 +333,7 @@ impl<TO: TilingOrder> TilingLayout for ContiguousTilingLayout<TO> {
                 config.tiles_per_stage_along_col(),
                 config,
             );
-        let start = start / config.line_size;
+        let start = start / config.vector_size;
 
         StridedTile::new_contiguous(stage_memory.as_slice::<NS>(), start, config)
     }
@@ -346,10 +346,10 @@ impl<TO: TilingOrder> TilingLayout for ContiguousTilingLayout<TO> {
 impl<TO: TilingOrder> TilingValidation for ContiguousTilingLayout<TO> {
     fn check(config: StageMemoryConfig) -> Result<(), InvalidConfigError> {
         let tile_width = config.elements_per_tile_along_contiguous_dim();
-        if config.line_size > tile_width {
+        if config.vector_size > tile_width {
             return Err(Box::new(format!(
-                "Invalid line size. Got {:?} which should not be >{:?}",
-                config.line_size, tile_width,
+                "Invalid vector size. Got {:?} which should not be >{:?}",
+                config.vector_size, tile_width,
             )));
         }
         Ok(())
@@ -364,12 +364,12 @@ impl StridedTilingLayout {
         nth: u32,
         #[comptime] config: StageMemoryConfig,
     ) -> SliceMut<Vector<ES, NS>> {
-        let stage_line_size = config.line_size;
+        let stage_vector_size = config.vector_size;
 
         let slice_length = match config.matrix_layout {
             MatrixLayout::RowMajor => config.elements_per_stage_along_col(),
             MatrixLayout::ColMajor => config.elements_per_stage_along_row(),
-        } / stage_line_size;
+        } / stage_vector_size;
 
         let start = slice_length * nth;
         stage
@@ -387,7 +387,7 @@ impl TilingLayout for StridedTilingLayout {
     ) -> StridedTile<ES, NS> {
         let (x, y) = tile;
 
-        let stage_line_size = config.line_size;
+        let stage_vector_size = config.vector_size;
         let matrix_layout = config.matrix_layout;
 
         let tile_count_x = config.tiles_per_stage_along_row();
@@ -396,7 +396,7 @@ impl TilingLayout for StridedTilingLayout {
         match matrix_layout {
             MatrixLayout::RowMajor => {
                 let tile_size_x = config.elements_per_tile_along_row;
-                let tile_size_y = config.elements_per_tile_along_col / stage_line_size;
+                let tile_size_y = config.elements_per_tile_along_col / stage_vector_size;
 
                 let stride = tile_count_y * tile_size_y;
                 let length = (tile_size_x - 1) * stride + tile_size_y;
@@ -412,7 +412,7 @@ impl TilingLayout for StridedTilingLayout {
                 )
             }
             MatrixLayout::ColMajor => {
-                let tile_size_x = config.elements_per_tile_along_row / stage_line_size;
+                let tile_size_x = config.elements_per_tile_along_row / stage_vector_size;
                 let tile_size_y = config.elements_per_tile_along_col;
 
                 let stride = tile_count_x * tile_size_x;
@@ -439,10 +439,10 @@ impl TilingLayout for StridedTilingLayout {
 impl TilingValidation for StridedTilingLayout {
     fn check(config: StageMemoryConfig) -> Result<(), InvalidConfigError> {
         let stage_width = config.elements_per_stage_along_contiguous_dim();
-        if config.line_size > stage_width {
+        if config.vector_size > stage_width {
             return Err(Box::new(format!(
-                "Invalid line size. Got {:?} which should not be >{:?}",
-                config.line_size, stage_width,
+                "Invalid vector size. Got {:?} which should not be >{:?}",
+                config.vector_size, stage_width,
             )));
         }
         Ok(())

@@ -6,7 +6,7 @@ use cubek_std::{InvalidConfigError, MatrixLayout, TileSize};
 use crate::components::resource::CubeDimResource;
 use crate::components::tile::TileConfig;
 use crate::definition::{MatmulElems, TilingBlueprint};
-use crate::definition::{MatmulLineSizes, MatmulSetupError};
+use crate::definition::{MatmulSetupError, MatmulVectorSizes};
 
 /// A family of [TileMatmul] implementations that operate with any precision.
 pub trait TileMatmulFamily: Send + Sync + 'static {
@@ -47,14 +47,14 @@ pub trait TileMatmulFamily: Send + Sync + 'static {
     /// Returns the compute resources required to run this matmul.
     fn cubedim_resource() -> Result<CubeDimResource, InvalidConfigError>;
 
-    /// Constructs the configuration based on the matmul problem, selection, and line sizes.
+    /// Constructs the configuration based on the matmul problem, selection, and vector sizes.
     ///
     /// This function may return an error if the configuration cannot be supported on the current runtime.
     fn expand_config(
         device_props: &DeviceProperties,
         blueprint: &TilingBlueprint,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError>;
 
     /// Returns whether a tile configuration is supported
@@ -76,7 +76,7 @@ pub trait TileMatmulFamily: Send + Sync + 'static {
         client: &ComputeClient<R>,
         blueprint: &TilingBlueprint,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError>;
 }
 

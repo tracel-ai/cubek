@@ -135,7 +135,7 @@ pub fn launch_attention<R: Runtime, A: Routine>(
             out.into_tensor_arg(),
             launch_info.cube_count_plan.as_args(),
             &launch_info.dtypes,
-            &device_settings.line_sizes,
+            &device_settings.vector_sizes,
             launch_info.blueprint,
         )
     };

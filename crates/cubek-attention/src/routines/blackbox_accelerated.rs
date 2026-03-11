@@ -106,7 +106,7 @@ fn blueprint(
                 plane_dim: launch_settings.plane_dim,
                 reuse_key_value: false,
                 two_rows_in_array_tile: false,
-                line_sizes: launch_settings.line_sizes.clone(),
+                vector_sizes: launch_settings.vector_sizes.clone(),
                 masked: problem.masked,
                 causal: problem.options.causal,
                 tiling_scheme,

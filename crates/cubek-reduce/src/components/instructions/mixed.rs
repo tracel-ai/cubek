@@ -535,48 +535,54 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
 
     // TODO Remove shape_axis_reduce when fusion-on-write is well supported for reduce instructions.
     //      Then, an instruction like Dynamic can be implemented by fusing a Sum reduction and a element-wise division.
-    fn merge_line<Out: Numeric>(
+    fn merge_vector<Out: Numeric>(
         this: &Self,
         accumulator: Self::AccumulatorItem,
         shape_axis_reduce: usize,
     ) -> Out {
         match this {
-            ReduceOperation::Sum(sum) => <Sum as ReduceInstruction<P>>::merge_line::<Out>(
+            ReduceOperation::Sum(sum) => <Sum as ReduceInstruction<P>>::merge_vector::<Out>(
                 sum,
                 accumulator.elements,
                 shape_axis_reduce,
             ),
-            ReduceOperation::Prod(prod) => <Prod as ReduceInstruction<P>>::merge_line::<Out>(
+            ReduceOperation::Prod(prod) => <Prod as ReduceInstruction<P>>::merge_vector::<Out>(
                 prod,
                 accumulator.elements,
                 shape_axis_reduce,
             ),
-            ReduceOperation::Mean(mean) => <Mean as ReduceInstruction<P>>::merge_line::<Out>(
+            ReduceOperation::Mean(mean) => <Mean as ReduceInstruction<P>>::merge_vector::<Out>(
                 mean,
                 accumulator.elements,
                 shape_axis_reduce,
             ),
-            ReduceOperation::MaxAbs(maxabs) => <MaxAbs as ReduceInstruction<P>>::merge_line::<Out>(
-                maxabs,
-                accumulator.elements,
-                shape_axis_reduce,
-            ),
-            ReduceOperation::ArgMax(argmax) => <ArgMax as ReduceInstruction<P>>::merge_line::<Out>(
-                argmax,
-                (accumulator.elements, accumulator.args.unwrap()),
-                shape_axis_reduce,
-            ),
-            ReduceOperation::ArgMin(argmin) => <ArgMin as ReduceInstruction<P>>::merge_line::<Out>(
-                argmin,
-                (accumulator.elements, accumulator.args.unwrap()),
-                shape_axis_reduce,
-            ),
-            ReduceOperation::Max(max) => <Max as ReduceInstruction<P>>::merge_line::<Out>(
+            ReduceOperation::MaxAbs(maxabs) => {
+                <MaxAbs as ReduceInstruction<P>>::merge_vector::<Out>(
+                    maxabs,
+                    accumulator.elements,
+                    shape_axis_reduce,
+                )
+            }
+            ReduceOperation::ArgMax(argmax) => {
+                <ArgMax as ReduceInstruction<P>>::merge_vector::<Out>(
+                    argmax,
+                    (accumulator.elements, accumulator.args.unwrap()),
+                    shape_axis_reduce,
+                )
+            }
+            ReduceOperation::ArgMin(argmin) => {
+                <ArgMin as ReduceInstruction<P>>::merge_vector::<Out>(
+                    argmin,
+                    (accumulator.elements, accumulator.args.unwrap()),
+                    shape_axis_reduce,
+                )
+            }
+            ReduceOperation::Max(max) => <Max as ReduceInstruction<P>>::merge_vector::<Out>(
                 max,
                 accumulator.elements,
                 shape_axis_reduce,
             ),
-            ReduceOperation::Min(min) => <Min as ReduceInstruction<P>>::merge_line::<Out>(
+            ReduceOperation::Min(min) => <Min as ReduceInstruction<P>>::merge_vector::<Out>(
                 min,
                 accumulator.elements,
                 shape_axis_reduce,

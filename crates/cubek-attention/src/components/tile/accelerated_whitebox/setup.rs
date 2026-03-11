@@ -17,7 +17,7 @@ use crate::definition::InvalidConfigError;
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct WhiteboxAcceleratedAttentionMatmulConfig {
     pub shared: SharedTileAttentionConfig,
-    pub out_smem_line_size: usize,
+    pub out_smem_vector_size: usize,
     pub score_mma_io_config: MmaIOConfig,
     pub value_mma_io_config: MmaIOConfig,
 }
@@ -76,7 +76,7 @@ impl TileAttentionFamily for WhiteboxAcceleratedTileAttention {
                     causal_mask: blueprint.causal,
                     materialized_mask: blueprint.masked,
                 },
-                out_smem_line_size: blueprint.line_sizes.out,
+                out_smem_vector_size: blueprint.vector_sizes.out,
                 score_mma_io_config: MmaIOConfig::new(
                     device_props,
                     dtypes.query_global,
@@ -91,7 +91,7 @@ impl TileAttentionFamily for WhiteboxAcceleratedTileAttention {
                 ),
             },
             blueprint.reuse_key_value,
-            blueprint.line_sizes.mask,
+            blueprint.vector_sizes.mask,
             dtypes,
         )
     }
@@ -101,7 +101,7 @@ fn validate(
     _device_props: &DeviceProperties,
     config: WhiteboxAcceleratedAttentionMatmulConfig,
     _reuse_key_value: bool,
-    _line_sizes_mask: VectorSize,
+    _vector_sizes_mask: VectorSize,
     dtypes: &AttentionElems,
 ) -> Result<WhiteboxAcceleratedAttentionMatmulConfig, AttentionSetupError> {
     if dtypes.query_global != dtypes.query_tile {
@@ -145,7 +145,7 @@ fn validate(
     // }
 
     // todo!();
-    // if line_sizes_mask > 1 {
+    // if vector_sizes_mask > 1 {
     //     return Err(AttentionSetupError::InvalidConfig(Box::new(
     //         "Vector size mask > 1 not supported yet on accelerated tile attention",
     //     )));

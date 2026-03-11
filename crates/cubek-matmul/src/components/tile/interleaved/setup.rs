@@ -5,7 +5,7 @@ use crate::components::tile::interleaved::InterleavedMatmul;
 use crate::components::tile::interleaved::config::InterleavedMatmulConfig;
 use crate::definition::TilingBlueprint;
 use crate::definition::{MatmulAvailabilityError, MatmulElems};
-use crate::definition::{MatmulLineSizes, MatmulSetupError};
+use crate::definition::{MatmulSetupError, MatmulVectorSizes};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::{features::TypeUsage, ir::DeviceProperties};
@@ -38,7 +38,7 @@ impl TileMatmulFamily for InterleavedMatmul {
         _device_props: &DeviceProperties,
         blueprint: &TilingBlueprint,
         _dtypes: &MatmulElems,
-        _line_sizes: &MatmulLineSizes,
+        _vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
         Ok(InterleavedMatmulConfig::from_shared_tile_config(
             SharedTileConfig::new(
@@ -60,7 +60,7 @@ impl TileMatmulFamily for InterleavedMatmul {
         client: &ComputeClient<R>,
         blueprint: &TilingBlueprint,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
         check_availability(client, dtypes)?;
 
@@ -78,22 +78,22 @@ impl TileMatmulFamily for InterleavedMatmul {
 
         let k_local = k / plane_dim;
 
-        let lhs = line_sizes.lhs as u32;
-        let rhs = line_sizes.rhs as u32;
-        let out = line_sizes.out as u32;
+        let lhs = vector_sizes.lhs as u32;
+        let rhs = vector_sizes.rhs as u32;
+        let out = vector_sizes.out as u32;
 
         match blueprint.lhs_layout {
             MatrixLayout::RowMajor => {
                 if !k_local.is_multiple_of(lhs) {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                        "Local shape in lined axis k ({k_local:?}) should be divisible by line size lhs ({lhs:?})"
+                        "Local shape in vectorized axis k ({k_local:?}) should be divisible by vector size lhs ({lhs:?})"
                     ))));
                 }
             }
             MatrixLayout::ColMajor => {
                 if !m.is_multiple_of(lhs) {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                        "Tile shape in lined axis m ({m:?}) should be divisible by line size lhs ({lhs:?})"
+                        "Tile shape in vectorized axis m ({m:?}) should be divisible by vector size lhs ({lhs:?})"
                     ))));
                 }
             }
@@ -102,14 +102,14 @@ impl TileMatmulFamily for InterleavedMatmul {
             MatrixLayout::RowMajor => {
                 if !n.is_multiple_of(rhs) {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                        "Tile shape in lined axis n ({n:?}) should be divisible by line size rhs ({rhs:?})"
+                        "Tile shape in vectorized axis n ({n:?}) should be divisible by vector size rhs ({rhs:?})"
                     ))));
                 }
             }
             MatrixLayout::ColMajor => {
                 if !k_local.is_multiple_of(rhs) {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                        "Local shape in lined axis k ({k_local:?}) should be divisible by line size rhs ({rhs:?})"
+                        "Local shape in vectorized axis k ({k_local:?}) should be divisible by vector size rhs ({rhs:?})"
                     ))));
                 }
             }
@@ -117,7 +117,7 @@ impl TileMatmulFamily for InterleavedMatmul {
 
         if !n.is_multiple_of(out) {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "Tile shape in lined axis n ({n:?}) should be divisible by line size out ({out:?})"
+                "Tile shape in vectorized axis n ({n:?}) should be divisible by vector size out ({out:?})"
             ))));
         }
 

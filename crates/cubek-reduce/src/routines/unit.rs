@@ -1,8 +1,8 @@
 use super::{
-    GlobalReduceBlueprint, ReduceBlueprint, ReduceLaunchSettings, ReduceLineSettings, ReduceProblem,
+    GlobalReduceBlueprint, ReduceBlueprint, ReduceLaunchSettings, ReduceVectorSettings, ReduceProblem,
 };
 use crate::{
-    IdleMode, LineMode, ReduceError,
+    IdleMode, ReduceError, VectorizationMode,
     launch::calculate_plane_count_per_cube,
     routines::{BlueprintStrategy, Routine, UnitReduceBlueprint, cube_count_safe},
 };
@@ -22,7 +22,7 @@ impl Routine for UnitRoutine {
         &self,
         client: &cubecl::prelude::ComputeClient<R>,
         problem: ReduceProblem,
-        settings: ReduceLineSettings,
+        settings: ReduceVectorSettings,
         strategy: BlueprintStrategy<Self>,
     ) -> Result<(ReduceBlueprint, ReduceLaunchSettings), ReduceError> {
         let address_type = problem.address_type;
@@ -41,7 +41,7 @@ impl Routine for UnitRoutine {
                 }
 
                 let blueprint = ReduceBlueprint {
-                    line_mode: settings.line_mode,
+                    vectorization_mode: settings.vectorization_mode,
                     global: GlobalReduceBlueprint::Unit(blueprint),
                 };
 
@@ -57,7 +57,7 @@ impl Routine for UnitRoutine {
         let launch = ReduceLaunchSettings {
             cube_dim,
             cube_count,
-            line: settings,
+            vector: settings,
             address_type,
         };
 
@@ -68,7 +68,7 @@ impl Routine for UnitRoutine {
 fn generate_blueprint<R: Runtime>(
     client: &ComputeClient<R>,
     problem: ReduceProblem,
-    settings: &ReduceLineSettings,
+    settings: &ReduceVectorSettings,
 ) -> Result<(ReduceBlueprint, CubeDim, CubeCount), ReduceError> {
     let properties = &client.properties().hardware;
     let plane_size = properties.plane_size_max;
@@ -89,16 +89,16 @@ fn generate_blueprint<R: Runtime>(
         false => IdleMode::None,
     };
     let blueprint = ReduceBlueprint {
-        line_mode: settings.line_mode,
+        vectorization_mode: settings.vectorization_mode,
         global: GlobalReduceBlueprint::Unit(UnitReduceBlueprint { unit_idle }),
     };
 
     Ok((blueprint, cube_dim, cube_count))
 }
 
-fn working_units(settings: &ReduceLineSettings, problem: &ReduceProblem) -> usize {
-    match settings.line_mode {
-        LineMode::Parallel => problem.vector_count / settings.line_size_output,
-        LineMode::Perpendicular => problem.vector_count / settings.line_size_input,
+fn working_units(settings: &ReduceVectorSettings, problem: &ReduceProblem) -> usize {
+    match settings.vectorization_mode {
+        VectorizationMode::Parallel => problem.vector_count / settings.vector_size_output,
+        VectorizationMode::Perpendicular => problem.vector_count / settings.vector_size_input,
     }
 }

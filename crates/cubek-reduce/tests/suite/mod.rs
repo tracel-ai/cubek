@@ -61,28 +61,28 @@ macro_rules! testgen_reduce {
         axis: $axis:expr,
     ) => {
         mod parallel_vectorization_enabled {
-            use cubek_reduce::launch::LineSizeStrategy;
+            use cubek_reduce::launch::VectorizationStrategy;
 
             testgen_reduce!(
                 dtype: $dtype,
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                line_size_strategy: LineSizeStrategy {
+                vectorization_strategy: VectorizationStrategy {
                     parallel_output_vectorization: true,
                 },
             );
         }
 
         mod parallel_vectorization_disabled {
-            use cubek_reduce::launch::LineSizeStrategy;
+            use cubek_reduce::launch::VectorizationStrategy;
 
             testgen_reduce!(
                 dtype: $dtype,
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                line_size_strategy: LineSizeStrategy {
+                vectorization_strategy: VectorizationStrategy {
                     parallel_output_vectorization: false,
                 },
             );
@@ -94,7 +94,7 @@ macro_rules! testgen_reduce {
         shape: $shape:expr,
         strides: $strides:expr,
         axis: $axis:expr,
-        line_size_strategy: $line_size_strategy:expr,
+        vectorization_strategy: $vectorization_strategy:expr,
     ) => {
         use cubek_reduce::{ReduceStrategy, routines::BlueprintStrategy, launch::RoutineStrategy};
 
@@ -108,7 +108,7 @@ macro_rules! testgen_reduce {
                 strides: $strides,
                 axis: $axis,
                 strategy: ReduceStrategy {
-                    line_size: $line_size_strategy,
+                    vectorization: $vectorization_strategy,
                     routine: RoutineStrategy::Cube(
                         BlueprintStrategy::Inferred(CubeStrategy{ use_planes: false })
                     ),
@@ -126,7 +126,7 @@ macro_rules! testgen_reduce {
                 strides: $strides,
                 axis: $axis,
                 strategy: ReduceStrategy {
-                    line_size: $line_size_strategy,
+                    vectorization: $vectorization_strategy,
                     routine: RoutineStrategy::Cube(
                         BlueprintStrategy::Inferred(CubeStrategy{ use_planes: true })
                     ),
@@ -151,7 +151,7 @@ macro_rules! testgen_reduce {
                 strides: $strides,
                 axis: $axis,
                 strategy: ReduceStrategy {
-                    line_size: $line_size_strategy,
+                    vectorization: $vectorization_strategy,
                     routine: RoutineStrategy::Cube(
                         BlueprintStrategy::Forced(
                             CubeBlueprint {
@@ -184,7 +184,7 @@ macro_rules! testgen_reduce {
                     strides: $strides,
                     axis: $axis,
                     strategy: ReduceStrategy {
-                        line_size: $line_size_strategy,
+                        vectorization: $vectorization_strategy,
                         routine: RoutineStrategy::Plane(
                             BlueprintStrategy::Forced(
                                 PlaneReduceBlueprint {
@@ -208,7 +208,7 @@ macro_rules! testgen_reduce {
                     strides: $strides,
                     axis: $axis,
                     strategy: ReduceStrategy {
-                        line_size: $line_size_strategy,
+                        vectorization: $vectorization_strategy,
                         routine: RoutineStrategy::Plane(
                             BlueprintStrategy::Forced(
                                 PlaneReduceBlueprint {
@@ -234,7 +234,7 @@ macro_rules! testgen_reduce {
                 strides: $strides,
                 axis: $axis,
                 strategy: ReduceStrategy {
-                    line_size: $line_size_strategy,
+                    vectorization: $vectorization_strategy,
                     routine: RoutineStrategy::Plane(
                         BlueprintStrategy::Inferred(PlaneStrategy{ independent: false })
                     ),
@@ -252,7 +252,7 @@ macro_rules! testgen_reduce {
                 strides: $strides,
                 axis: $axis,
                 strategy: ReduceStrategy {
-                    line_size: $line_size_strategy,
+                    vectorization: $vectorization_strategy,
                     routine: RoutineStrategy::Plane(
                         BlueprintStrategy::Inferred(PlaneStrategy{ independent: true })
                     ),
@@ -270,7 +270,7 @@ macro_rules! testgen_reduce {
                 strides: $strides,
                 axis: $axis,
                 strategy: ReduceStrategy {
-                    line_size: $line_size_strategy,
+                    vectorization: $vectorization_strategy,
                     routine: RoutineStrategy::Unit(
                         BlueprintStrategy::Inferred(UnitStrategy)
                     ),

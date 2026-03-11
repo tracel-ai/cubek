@@ -32,7 +32,7 @@ pub(crate) fn random<F: RandomFamily, R: Runtime>(
     let cube_dim = CubeDim::new(client, output.size().div_ceil(N_VALUES_PER_THREAD));
     let cube_count = prng_cube_count(output.size(), cube_dim, N_VALUES_PER_THREAD);
 
-    let output_line_size = 1;
+    let output_vector_size = 1;
     // TODO: Higher vectorization can add some correlation locally.
     //
     // let output_line_size = tensor_vector_size_parallel(
@@ -43,14 +43,14 @@ pub(crate) fn random<F: RandomFamily, R: Runtime>(
     // );
 
     let address_type = output.required_address_type(dtype.size());
-    let output = linear_view(client, output, output_line_size);
+    let output = linear_view(client, output, output_vector_size);
 
     prng_kernel::launch::<F, R>(
         client,
         cube_count,
         cube_dim,
         address_type,
-        output_line_size,
+        output_vector_size,
         output,
         seeds[0],
         seeds[1],
@@ -58,7 +58,6 @@ pub(crate) fn random<F: RandomFamily, R: Runtime>(
         seeds[3],
         args,
         N_VALUES_PER_THREAD,
-        output_line_size,
         dtype,
     );
 
@@ -107,7 +106,6 @@ pub(crate) trait PrngRuntime: Send + Sync + 'static + PrngArgs {
         write_index_base: usize,
         n_invocations: u32,
         #[comptime] n_values_per_thread: usize,
-        #[comptime] line_size: usize,
         state_0: &mut u32,
         state_1: &mut u32,
         state_2: &mut u32,
@@ -127,12 +125,11 @@ fn prng_kernel<F: RandomFamily, E: Numeric, N: Size>(
     seed_3: u32,
     args: Args<F>,
     #[comptime] n_values_per_thread: usize,
-    #[comptime] line_size: usize,
     #[define(E)] _dtype: StorageType,
 ) {
     let cube_offset = CUBE_POS * CUBE_DIM as usize;
 
-    let write_index_base = cube_offset * n_values_per_thread / line_size + UNIT_POS as usize;
+    let write_index_base = cube_offset * n_values_per_thread / N::value() + UNIT_POS as usize;
 
     // Truncating position should be fine here, it's no issue if the seed repeats
     #[allow(arithmetic_overflow)]
@@ -149,7 +146,6 @@ fn prng_kernel<F: RandomFamily, E: Numeric, N: Size>(
         write_index_base,
         CUBE_DIM,
         n_values_per_thread,
-        line_size,
         &mut state_0,
         &mut state_1,
         &mut state_2,

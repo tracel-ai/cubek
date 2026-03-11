@@ -26,7 +26,6 @@ impl PrngRuntime for Normal {
         write_index_base: usize,
         n_invocations: u32,
         #[comptime] n_values_per_thread: usize,
-        #[comptime] line_size: VectorSize,
         state_0: &mut u32,
         state_1: &mut u32,
         state_2: &mut u32,
@@ -36,15 +35,15 @@ impl PrngRuntime for Normal {
         let mean = f32::cast_from(args.mean);
         let std = f32::cast_from(args.std);
 
-        let mut output_line_0 = Vector::empty();
-        let mut output_line_1 = Vector::empty();
+        let mut output_vector_0 = Vector::empty();
+        let mut output_vector_1 = Vector::empty();
 
-        let num_iterations = n_values_per_thread / line_size / 2;
+        let num_iterations = n_values_per_thread / N::value() / 2;
         #[unroll(num_iterations <= 8)]
-        for line_index in 0..num_iterations {
+        for vector_index in 0..num_iterations {
             // vectorization
             #[unroll]
-            for i in 0..line_size {
+            for i in 0..N::value() {
                 // First random uniform integer
                 *state_0 = taus_step_0(*state_0);
                 *state_1 = taus_step_1(*state_1);
@@ -71,16 +70,16 @@ impl PrngRuntime for Normal {
                 let normal_0 = f32::cos(trigo_arg) * coeff + mean;
                 let normal_1 = f32::sin(trigo_arg) * coeff + mean;
 
-                output_line_0[i] = E::cast_from(normal_0);
-                output_line_1[i] = E::cast_from(normal_1);
+                output_vector_0[i] = E::cast_from(normal_0);
+                output_vector_1[i] = E::cast_from(normal_1);
             }
 
-            let iteration_offset = line_index * n_invocations as usize * 2;
+            let iteration_offset = vector_index * n_invocations as usize * 2;
             let write_index_0 = write_index_base + iteration_offset;
             let write_index_1 = write_index_0 + n_invocations as usize;
 
-            output[write_index_0] = output_line_0;
-            output[write_index_1] = output_line_1;
+            output[write_index_0] = output_vector_0;
+            output[write_index_1] = output_vector_1;
         }
     }
 }

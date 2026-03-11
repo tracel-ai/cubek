@@ -1,5 +1,5 @@
 use crate::{
-    LineMode, ReduceInstruction, ReducePrecision,
+    ReduceInstruction, ReducePrecision, VectorizationMode,
     components::{
         args::NumericLine,
         global::idle_check,
@@ -21,13 +21,13 @@ impl GlobalFullPlaneReduce {
         output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         reduce_axis: usize,
         inst: &I,
-        #[comptime] line_mode: LineMode,
+        #[comptime] vectorization_mode: VectorizationMode,
         #[comptime] blueprint: PlaneReduceBlueprint,
     ) {
         let write_index = CUBE_POS * CUBE_DIM_Y as usize + UNIT_POS_Y as usize;
 
         let mut writer =
-            Writer::<Out>::new::<P>(input, output, reduce_axis, write_index, line_mode);
+            Writer::<Out>::new::<P>(input, output, reduce_axis, write_index, vectorization_mode);
 
         let write_count = writer.write_count();
         let reduce_index_start = write_index * write_count;
@@ -36,7 +36,7 @@ impl GlobalFullPlaneReduce {
             input,
             output,
             reduce_index_start,
-            line_mode,
+            vectorization_mode,
             blueprint.plane_idle,
         );
 
@@ -49,7 +49,7 @@ impl GlobalFullPlaneReduce {
                 reduce_index,
                 inst,
                 idle,
-                line_mode,
+                vectorization_mode,
                 blueprint,
             );
 
@@ -76,7 +76,7 @@ impl GlobalFullPlaneReduce {
         reduce_index: usize,
         inst: &I,
         idle: ComptimeOption<bool>,
-        #[comptime] line_mode: LineMode,
+        #[comptime] vectorization_mode: VectorizationMode,
         #[comptime] blueprint: PlaneReduceBlueprint,
     ) -> I::AccumulatorItem {
         let reader = Reader::<P>::new::<I, Out>(
@@ -87,7 +87,7 @@ impl GlobalFullPlaneReduce {
             reduce_index,
             idle,
             blueprint.bound_checks,
-            line_mode,
+            vectorization_mode,
         );
         let reader = PlaneReader::<P>::new(reader);
 

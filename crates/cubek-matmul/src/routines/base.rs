@@ -1,7 +1,7 @@
 use crate::components::{global::cube_dim_validation, stage::NumStages};
 use crate::definition::{
-    Blueprint, CubeCountPlan, CubeMappingLaunch, MatmulElems, MatmulLineSizes, MatmulProblem,
-    MatmulSetupError, TilingBlueprint,
+    Blueprint, CubeCountPlan, CubeMappingLaunch, MatmulElems, MatmulProblem, MatmulSetupError,
+    MatmulVectorSizes, TilingBlueprint,
 };
 use crate::launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
 use crate::routines::BlueprintStrategy;
@@ -33,7 +33,7 @@ pub trait Routine<RC: RuntimeConfig>: Sized {
         cube_count_input: CubeMappingLaunch<R>,
         blueprint: Self::Blueprint,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
         unsafe {
             Self::BatchMatmul::launch_unchecked::<MA, R>(
@@ -47,7 +47,7 @@ pub trait Routine<RC: RuntimeConfig>: Sized {
                 cube_count_input,
                 blueprint,
                 dtypes,
-                line_sizes,
+                vector_sizes,
             )?
         }
         Ok(())
@@ -71,7 +71,7 @@ pub trait Routine<RC: RuntimeConfig>: Sized {
 
     fn device_settings<R: Runtime>(
         client: &ComputeClient<R>,
-        line_sizes: MatmulLineSizes,
+        vector_sizes: MatmulVectorSizes,
     ) -> DeviceSettings<R> {
         // Sometimes the GPU doesn't support plane instructions and doesn't report the
         // plane size, but we can still execute algorithms that don't use plane instructions.
@@ -86,7 +86,7 @@ pub trait Routine<RC: RuntimeConfig>: Sized {
         DeviceSettings {
             client: client.clone(),
             plane_dim,
-            line_sizes,
+            vector_sizes,
             max_cube_count: client.properties().hardware.max_cube_count,
         }
     }
@@ -96,9 +96,9 @@ pub trait Routine<RC: RuntimeConfig>: Sized {
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
-        Self::BatchMatmul::validate_blueprint(client, blueprint, problem, dtypes, line_sizes)
+        Self::BatchMatmul::validate_blueprint(client, blueprint, problem, dtypes, vector_sizes)
     }
 }
 
@@ -112,7 +112,7 @@ pub struct ExpandInfo<B: Blueprint> {
 pub struct LaunchInfo<B: Blueprint> {
     pub blueprint: B,
     pub dtypes: MatmulElems,
-    pub line_sizes: MatmulLineSizes,
+    pub vector_sizes: MatmulVectorSizes,
     pub cube_dim: CubeDim,
     pub cube_count_plan: CubeCountPlan,
     pub address_type: AddressType,
@@ -136,7 +136,7 @@ impl LaunchInfo<TilingBlueprint> {
             cube_dim,
             cube_count_plan,
             address_type: problem.address_type,
-            line_sizes: device_settings.line_sizes,
+            vector_sizes: device_settings.vector_sizes,
         })
     }
 }
@@ -144,6 +144,6 @@ impl LaunchInfo<TilingBlueprint> {
 pub struct DeviceSettings<R: Runtime> {
     pub client: ComputeClient<R>,
     pub plane_dim: u32,
-    pub line_sizes: MatmulLineSizes,
+    pub vector_sizes: MatmulVectorSizes,
     pub max_cube_count: (u32, u32, u32),
 }

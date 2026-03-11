@@ -8,7 +8,7 @@ use cubek::{
     random::random_uniform,
     reduce::{
         components::instructions::ReduceOperationConfig,
-        launch::{LineSizeStrategy, ReduceStrategy, RoutineStrategy},
+        launch::{ReduceStrategy, RoutineStrategy, VectorizationStrategy},
         routines::{
             BlueprintStrategy, cube::CubeStrategy, plane::PlaneStrategy, unit::UnitStrategy,
         },
@@ -94,42 +94,42 @@ fn run<R: Runtime, E: frontend::Float>(device: R::Device) {
         // vec![4096, 512, 32],
         // vec![512, 512],
     ] {
-        for line_size in [
-            LineSizeStrategy {
+        for vectorization in [
+            VectorizationStrategy {
                 parallel_output_vectorization: false,
             },
-            LineSizeStrategy {
+            VectorizationStrategy {
                 parallel_output_vectorization: true,
             },
         ] {
             for strategy in [
                 ReduceStrategy {
                     routine: RoutineStrategy::Unit(BlueprintStrategy::Inferred(UnitStrategy)),
-                    line_size,
+                    vectorization,
                 },
                 ReduceStrategy {
                     routine: RoutineStrategy::Plane(BlueprintStrategy::Inferred(PlaneStrategy {
                         independent: true,
                     })),
-                    line_size,
+                    vectorization,
                 },
                 // ReduceStrategy {
                 //     routine: RoutineStrategy::Plane(BlueprintStrategy::Inferred(PlaneStrategy {
                 //         independent: false,
                 //     })),
-                //     line_size,
+                //     vectorization,
                 // },
                 ReduceStrategy {
                     routine: RoutineStrategy::Cube(BlueprintStrategy::Inferred(CubeStrategy {
                         use_planes: true,
                     })),
-                    line_size,
+                    vectorization,
                 },
                 // ReduceStrategy {
                 //     routine: RoutineStrategy::Cube(BlueprintStrategy::Inferred(CubeStrategy {
                 //         use_planes: false,
                 //     })),
-                //     line_size,
+                //     vectorization,
                 // },
             ] {
                 for axis in 2..shape.len() {

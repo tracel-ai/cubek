@@ -49,14 +49,14 @@ impl LoadMaxRoundPlaneCount for AsyncFullStridedLoading {
     fn max_round_plane_count(
         elements_per_tile: u32,
         tiles_per_stage: u32,
-        line_size: VectorSize,
+        vector_size: VectorSize,
         plane_dim: u32,
         dtype: StorageType,
     ) -> u32 {
         MatmulStridedLoading::max_round_plane_count(
             elements_per_tile,
             tiles_per_stage,
-            line_size,
+            vector_size,
             plane_dim,
             dtype,
         )
@@ -76,10 +76,10 @@ impl FullLoadingStrategy<RuntimeArgs> for AsyncFullStridedLoading {
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, NG, ES, NS> {
         let type_size = ES::type_size_bits().comptime();
-        let line_size = ASYNC_COPY_WIDTH / type_size as u32;
-        let num_stage_lines = config.smem_config.elements_per_stage() / line_size;
+        let vector_size = ASYNC_COPY_WIDTH / type_size as u32;
+        let num_stage_vectors = config.smem_config.elements_per_stage() / vector_size;
         let unit_count = config.loading_planes_count() * config.plane_dim;
-        let num_tasks_per_unit = num_stage_lines / unit_count;
+        let num_tasks_per_unit = num_stage_vectors / unit_count;
 
         let unit_position_base = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
             .load_index(config.input_load_flow)
@@ -91,7 +91,7 @@ impl FullLoadingStrategy<RuntimeArgs> for AsyncFullStridedLoading {
             runtime_args,
             num_tasks_per_unit,
             unit_count,
-            copy_line_size: line_size,
+            copy_vector_size: vector_size,
         }
     }
 }
@@ -106,7 +106,7 @@ pub struct AsyncFullStridedJob {
     #[cube(comptime)]
     unit_count: u32,
     #[cube(comptime)]
-    copy_line_size: u32,
+    copy_vector_size: u32,
 }
 
 #[cube]
@@ -124,7 +124,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
         #[comptime] config: GlobalReaderConfig,
     ) {
         let unit_position = this.unit_position_base + task_id * this.unit_count;
-        let unit_position_abs = unit_position * this.copy_line_size;
+        let unit_position_abs = unit_position * this.copy_vector_size;
 
         let layout = FullStageLayout::new(config.smem_config);
         let view = global_iter.view();
@@ -140,7 +140,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
             &this.runtime_args,
             global_iter.offset(),
             config,
-            this.copy_line_size,
+            this.copy_vector_size,
         );
     }
 

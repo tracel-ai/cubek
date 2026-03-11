@@ -1,5 +1,5 @@
 use crate::{
-    BoundChecks, LineMode, ReduceInstruction, ReducePrecision,
+    BoundChecks, ReduceInstruction, ReducePrecision, VectorizationMode,
     components::{
         args::NumericLine,
         instructions::{ReduceCoordinate, ReduceRequirements},
@@ -22,7 +22,7 @@ pub struct ParallelReader<P: ReducePrecision> {
     batch_offset: usize,
     requirements: ReduceRequirements,
     #[cube(comptime)]
-    line_size: VectorSize,
+    vector_size: VectorSize,
     bound_checks: ReaderBoundChecks<P>,
     num_chunks: usize,
 }
@@ -38,27 +38,27 @@ impl<P: ReducePrecision> ParallelReader<P> {
         idle: ComptimeOption<bool>,
         #[comptime] bound_checks: BoundChecks,
     ) -> ParallelReader<P> {
-        let line_size = input.vector_size();
+        let vector_size = input.vector_size();
 
         let mut batch_offset = 0;
         for axis in 0..input.rank() {
             let coordinate = output.coordinate(reduce_index, axis);
             batch_offset += coordinate * input.stride(axis);
         }
-        batch_offset /= line_size;
+        batch_offset /= vector_size;
 
         let requirements = I::requirements(inst);
 
         let shape = input.shape(reduce_axis);
 
-        let num_chunks = shape / line_size;
+        let num_chunks = shape / vector_size;
         let bound_checks = ReaderBoundChecks::new::<I>(inst, num_chunks, idle, bound_checks);
 
         ParallelReader::<P> {
             view: input.view(PlainLayout::new(input.len())),
             batch_offset,
             requirements,
-            line_size,
+            vector_size,
             bound_checks,
             num_chunks,
         }
@@ -76,8 +76,11 @@ impl<P: ReducePrecision> ParallelReader<P> {
         self.num_chunks.div_ceil(CUBE_DIM as usize)
     }
 
-    pub fn read_cube(&self, line_index: usize) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
-        let plane_pos = line_index * CUBE_DIM as usize;
+    pub fn read_cube(
+        &self,
+        vector_index: usize,
+    ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
+        let plane_pos = vector_index * CUBE_DIM as usize;
         let unit_pos = UNIT_POS as usize;
         let pos = plane_pos + unit_pos;
         let offset = pos + self.batch_offset;
@@ -85,16 +88,19 @@ impl<P: ReducePrecision> ParallelReader<P> {
         let item = self.bound_checks.read(pos, offset, &self.view);
 
         let coordinate = ReduceCoordinate::new(
-            (plane_pos * self.line_size) + unit_pos * self.line_size,
+            (plane_pos * self.vector_size) + unit_pos * self.vector_size,
             self.requirements,
-            LineMode::Parallel,
+            VectorizationMode::Parallel,
         );
 
         (item, coordinate)
     }
 
-    pub fn read_plane(&self, line_index: usize) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
-        let plane_pos = line_index * CUBE_DIM_X as usize;
+    pub fn read_plane(
+        &self,
+        vector_index: usize,
+    ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
+        let plane_pos = vector_index * CUBE_DIM_X as usize;
         let unit_pos = UNIT_POS_X as usize;
         let pos = plane_pos + unit_pos;
         let offset = pos + self.batch_offset;
@@ -102,22 +108,25 @@ impl<P: ReducePrecision> ParallelReader<P> {
         let item = self.bound_checks.read(pos, offset, &self.view);
 
         let coordinate = ReduceCoordinate::new(
-            (plane_pos * self.line_size) + unit_pos * self.line_size,
+            (plane_pos * self.vector_size) + unit_pos * self.vector_size,
             self.requirements,
-            LineMode::Parallel,
+            VectorizationMode::Parallel,
         );
 
         (item, coordinate)
     }
 
-    pub fn read_unit(&self, line_index: usize) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
-        let offset = line_index + self.batch_offset;
+    pub fn read_unit(
+        &self,
+        vector_index: usize,
+    ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
+        let offset = vector_index + self.batch_offset;
         let item = self.view[offset];
 
         let coordinate = ReduceCoordinate::new(
-            line_index * self.line_size,
+            vector_index * self.vector_size,
             self.requirements,
-            LineMode::Parallel,
+            VectorizationMode::Parallel,
         );
 
         (item, coordinate)

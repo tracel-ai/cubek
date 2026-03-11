@@ -5,7 +5,7 @@ use cubek_matmul::components::{
     global::read::sync_full_cyclic::SyncFullCyclicLoading,
     stage::{ColMajorTilingOrder, RowMajorTilingOrder},
 };
-use cubek_matmul::definition::AvailableLineSizes;
+use cubek_matmul::definition::AvailableVectorSizes;
 use cubek_matmul::launch::{TensorArgs, TensorMapArgs};
 use cubek_matmul::{
     components::global::read::{
@@ -113,11 +113,11 @@ impl<
         into_tensor_handle_tma(client, handle, dtype, operation)
     }
 
-    fn filter_line_sizes(line_sizes: AvailableLineSizes) -> AvailableLineSizes {
-        AvailableLineSizes {
+    fn filter_vector_sizes(vector_sizes: AvailableVectorSizes) -> AvailableVectorSizes {
+        AvailableVectorSizes {
             lhs: vec![1],
             rhs: vec![1],
-            out: line_sizes.out,
+            out: vector_sizes.out,
         }
     }
 }

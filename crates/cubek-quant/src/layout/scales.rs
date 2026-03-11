@@ -114,7 +114,7 @@ pub struct BlockScaledLayout {
     #[cube(comptime)]
     block_size: Vec<u8>,
     #[cube(comptime)]
-    scales_line_size: usize,
+    scales_vector_size: usize,
 }
 
 #[cube]
@@ -124,14 +124,14 @@ impl BlockScaledLayout {
         tensor_len: usize,
         scales_strides: Sequence<usize>,
         #[comptime] block_size: Vec<u8>,
-        #[comptime] scales_line_size: usize,
+        #[comptime] scales_vector_size: usize,
     ) -> Self {
         BlockScaledLayout {
             tensor_shape,
             tensor_len,
             scales_strides,
             block_size,
-            scales_line_size,
+            scales_vector_size,
         }
     }
 }
@@ -156,7 +156,7 @@ impl Layout for BlockScaledLayout {
             scale_offs += (offs_local / block_size_local) * self.scales_strides[dim];
         }
 
-        scale_offs / self.scales_line_size
+        scale_offs / self.scales_vector_size
     }
 
     fn shape(&self) -> Self::Coordinates {
@@ -200,16 +200,16 @@ pub type ScalesView<E, IO = ReadOnly> = TypedView<E, ScalesLayout, IO>;
 /// Launch type for LinearTensorView.
 pub type ScalesViewLaunch<R> = TypedViewLaunch<ScalesLayout, R>;
 
-/// Create a scales view from the values and scales handle, line size and quantization scheme.
+/// Create a scales view from the values and scales handle, vector size and quantization scheme.
 /// `values` should be *the quantized tensor*, and will be adjusted by `num_quants`.
 pub fn scales_view<R: Runtime>(
     client: &ComputeClient<R>,
     values: TensorBinding<R>,
     scales: TensorBinding<R>,
-    scales_line_size: usize,
+    scales_vector_size: usize,
     quant_scheme: &QuantScheme,
 ) -> ScalesViewLaunch<R> {
-    let layout = scales_layout(client, &values, &scales, scales_line_size, quant_scheme);
+    let layout = scales_layout(client, &values, &scales, scales_vector_size, quant_scheme);
     let len = scales.shape.iter().product::<usize>();
     let buffer = unsafe { ArrayArg::from_raw_parts_binding(scales.handle, len) };
     ScalesViewLaunch::new(buffer, layout)
@@ -219,7 +219,7 @@ pub fn scales_layout<R: Runtime>(
     client: &ComputeClient<R>,
     values: &TensorBinding<R>,
     scales: &TensorBinding<R>,
-    scales_line_size: usize,
+    scales_vector_size: usize,
     scheme: &QuantScheme,
 ) -> ScalesLayoutArgs<R> {
     let values_len = values.shape.iter().product::<usize>() * scheme.num_quants();
@@ -234,7 +234,7 @@ pub fn scales_layout<R: Runtime>(
                 values_len,
                 scales_strides,
                 block_size.to_dim_vec(values.shape.len()),
-                scales_line_size,
+                scales_vector_size,
             ))
         }
     }

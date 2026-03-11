@@ -61,10 +61,10 @@ where
     ) {
         let def = mma_definition(config);
         let out_arr = def.execute(&lhs.fragment, &rhs.fragment, &out.fragment);
-        let num_lines = def.vectors_per_lane(MatrixIdent::Accumulator);
+        let num_vectors = def.vectors_per_lane(MatrixIdent::Accumulator);
 
         #[unroll]
-        for i in 0..num_lines {
+        for i in 0..num_vectors {
             out.fragment[i] = out_arr[i];
         }
     }
@@ -74,11 +74,11 @@ where
         #[comptime] config: Self::Config,
     ) -> Self::LhsFragment {
         let def = mma_definition::<L, R, A>(config);
-        register_line_sizes(def);
-        let line_count = def.vectors_per_lane(MatrixIdent::A);
+        register_vector_sizes(def);
+        let vector_count = def.vectors_per_lane(MatrixIdent::A);
 
         MmaFragment::<L, NL> {
-            fragment: Array::new(line_count),
+            fragment: Array::new(vector_count),
             layout,
         }
     }
@@ -88,11 +88,11 @@ where
         #[comptime] config: Self::Config,
     ) -> Self::RhsFragment {
         let def = mma_definition::<L, R, A>(config);
-        register_line_sizes(def);
-        let line_count = def.vectors_per_lane(MatrixIdent::B);
+        register_vector_sizes(def);
+        let vector_count = def.vectors_per_lane(MatrixIdent::B);
 
         MmaFragment::<R, NR> {
-            fragment: Array::new(line_count),
+            fragment: Array::new(vector_count),
             layout,
         }
     }
@@ -102,11 +102,11 @@ where
         #[comptime] config: Self::Config,
     ) -> Self::AccFragment {
         let def = mma_definition::<L, R, A>(config);
-        register_line_sizes(def);
-        let line_count = def.vectors_per_lane(MatrixIdent::Accumulator);
+        register_vector_sizes(def);
+        let vector_count = def.vectors_per_lane(MatrixIdent::Accumulator);
 
         MmaFragment::<A, NA> {
-            fragment: Array::new(line_count),
+            fragment: Array::new(vector_count),
             layout,
         }
     }
@@ -186,7 +186,9 @@ pub(super) fn mma_definition<L: Numeric, R: Numeric, A: Numeric>(
 
 #[cube]
 #[allow(unused_variables)]
-pub(super) fn register_line_sizes<L: Numeric, R: Numeric, A: Numeric>(def: MmaDefinition<L, R, A>) {
+pub(super) fn register_vector_sizes<L: Numeric, R: Numeric, A: Numeric>(
+    def: MmaDefinition<L, R, A>,
+) {
     let vector_size_a = def.vector_size(MatrixIdent::A);
     let vector_size_b = def.vector_size(MatrixIdent::B);
     let vector_size_acc = def.vector_size(MatrixIdent::Accumulator);

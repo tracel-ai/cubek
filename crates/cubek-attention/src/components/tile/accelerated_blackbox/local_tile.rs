@@ -73,12 +73,12 @@ impl<E: Numeric> LocalTile<E> {
         &mut self,
         strided_tile: &StridedTile<E2, N>,
     ) {
-        // Assumes line size == 1
+        // Assumes vector size == 1
         for r in 0..self.layout.unit_size.0 {
             for c in 0..self.layout.unit_size.1 {
                 let (row, col) = self.layout.absolute_pos((r, c));
                 self.array[(r * self.layout.unit_size.1 + c) as usize] =
-                    E::cast_from(strided_tile.get_line(row, col))
+                    E::cast_from(strided_tile.get_vector(row, col))
             }
         }
     }

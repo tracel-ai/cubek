@@ -40,7 +40,7 @@ fn new_eyed(
     strides: Strides,
 ) -> TensorHandle<TestRuntime> {
     // Performance is not important here and this simplifies greatly the problem
-    let line_size = 1;
+    let vector_size = 1;
 
     let dim_x = 32;
     let dim_y = 32;
@@ -62,7 +62,7 @@ fn new_eyed(
         client,
         cube_count,
         cube_dim,
-        line_size,
+        vector_size,
         out.clone().into_arg(),
         dtype,
     );

@@ -6,7 +6,7 @@ use cubek_matmul::launch::BatchedCoords;
 pub struct BiasLayout {
     shape: u32,
     #[cube(comptime)]
-    line_size: u32,
+    vector_size: u32,
 }
 
 #[cube]
@@ -16,7 +16,7 @@ impl Layout for BiasLayout {
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
         let (_, _, n) = pos;
-        (n / self.line_size) as usize
+        (n / self.vector_size) as usize
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {

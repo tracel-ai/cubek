@@ -58,7 +58,7 @@ impl<
         let plane_flow_config = PlaneFlowConfig::new_unspecialized(stage_config.num_planes());
 
         let query_gmem_config = GlobalMemoryConfig {
-            line_size: blueprint.line_sizes.query,
+            vector_size: blueprint.vector_sizes.query,
             check_row_bounds: blueprint.check_bounds.seq_q,
             check_col_bounds: blueprint.check_bounds.head_dim,
             matrix_layout: MatrixLayout::RowMajor,
@@ -67,7 +67,7 @@ impl<
         };
 
         let mask_gmem_config = GlobalMemoryConfig {
-            line_size: blueprint.line_sizes.mask,
+            vector_size: blueprint.vector_sizes.mask,
             check_row_bounds: blueprint.check_bounds.seq_q,
             check_col_bounds: blueprint.check_bounds.seq_kv,
             matrix_layout: MatrixLayout::RowMajor,
@@ -76,7 +76,7 @@ impl<
         };
 
         let key_gmem_config = GlobalMemoryConfig {
-            line_size: blueprint.line_sizes.key,
+            vector_size: blueprint.vector_sizes.key,
             check_row_bounds: blueprint.check_bounds.seq_kv,
             check_col_bounds: blueprint.check_bounds.head_dim,
             matrix_layout: MatrixLayout::RowMajor,
@@ -85,7 +85,7 @@ impl<
         };
 
         let value_gmem_config = GlobalMemoryConfig {
-            line_size: blueprint.line_sizes.value,
+            vector_size: blueprint.vector_sizes.value,
             check_row_bounds: blueprint.check_bounds.seq_kv,
             check_col_bounds: blueprint.check_bounds.val_dim,
             matrix_layout: MatrixLayout::RowMajor,
@@ -94,7 +94,7 @@ impl<
         };
 
         let out_gmem_config = GlobalMemoryConfig {
-            line_size: blueprint.line_sizes.out,
+            vector_size: blueprint.vector_sizes.out,
             check_row_bounds: blueprint.check_bounds.seq_q,
             check_col_bounds: blueprint.check_bounds.val_dim,
             matrix_layout: MatrixLayout::RowMajor,

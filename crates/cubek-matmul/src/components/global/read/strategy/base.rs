@@ -119,15 +119,15 @@ pub fn validate_noswizzle(config: StageMemoryConfig) -> Result<(), InvalidConfig
     Ok(())
 }
 
-/// Validates if swizzling is valid with the line size, for sync readers that read in terms of full
-/// lines
+/// Validates if swizzling is valid with the vector size, for sync readers that read in terms of full
+/// vectors
 pub fn validate_swizzle_atom_size(config: StageMemoryConfig) -> Result<(), InvalidConfigError> {
     if config.swizzle == SwizzleMode::None {
         return Ok(());
     }
 
-    let line_bytes = config.dtype.size() * config.line_size as usize;
-    if line_bytes > config.swizzle.atom_size() {
+    let vector_bytes = config.dtype.size() * config.vector_size as usize;
+    if vector_bytes > config.swizzle.atom_size() {
         return Err(Box::new("Load atom can't be larger than swizzle atom"));
     }
 
@@ -283,7 +283,7 @@ impl LoadingValidation for NoLoadingValidation {
 /// at each global matmul iteration.
 pub enum ReaderMode {
     /// Enforces compile-time validation of balanced workloads across units.
-    /// Restricts valid combinations of tile shape, count, and line size.
+    /// Restricts valid combinations of tile shape, count, and vector size.
     Strict,
     /// Inserts runtime checks only when an out-of-bounds access will occur.
     /// May reduce performance if workloads are imbalanced.

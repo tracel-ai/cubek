@@ -2,7 +2,7 @@ use crate::components::{ConvolutionOperation, global::args::RuntimeArgs};
 use cubecl::prelude::*;
 use cubecl::std::tensor::{into_contiguous_pitched, is_contiguous_pitched};
 use cubek_matmul::launch::MatmulArgs;
-use cubek_matmul::{definition::AvailableLineSizes, routines::Routine};
+use cubek_matmul::{definition::AvailableVectorSizes, routines::Routine};
 
 pub mod simple;
 pub mod specialized;
@@ -23,8 +23,8 @@ pub trait Algorithm {
         operation: ConvolutionOperation,
     ) -> Result<TensorBinding<R>, LaunchError>;
 
-    fn filter_line_sizes(line_sizes: AvailableLineSizes) -> AvailableLineSizes {
-        line_sizes
+    fn filter_vector_sizes(vector_sizes: AvailableVectorSizes) -> AvailableVectorSizes {
+        vector_sizes
     }
 }
 

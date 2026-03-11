@@ -96,15 +96,15 @@ pub(crate) fn attention<
 
     let define!(QT) = dtypes.query_tile;
     let define!(KS) = key_stage.dtype;
-    let size!(KSS) = key_stage.line_size as usize;
+    let size!(KSS) = key_stage.vector_size as usize;
     let define!(VS) = value_stage.dtype;
-    let size!(VSS) = value_stage.line_size as usize;
+    let size!(VSS) = value_stage.vector_size as usize;
     let define!(KVT) = dtypes.key_value_tile;
     let define!(SM) = dtypes.softmax_acc;
     let define!(SML) = dtypes.softmax_lhs;
     let define!(ACC) = dtypes.accumulator;
     let define!(OS) = out_stage.dtype;
-    let size!(OSS) = out_stage.line_size as usize;
+    let size!(OSS) = out_stage.vector_size as usize;
 
     BMMF::Attention::<(
         (QG, QGS, QT),

@@ -8,7 +8,7 @@ use crate::components::stage::NumStages;
 use crate::components::stage::PartitionScheduler;
 use crate::components::tile::TileConfig;
 use crate::definition::TilingBlueprint;
-use crate::definition::{MatmulElems, MatmulLineSizes, MatmulSetupError, MatmulTypes};
+use crate::definition::{MatmulElems, MatmulSetupError, MatmulTypes, MatmulVectorSizes};
 use crate::{components::CubeDimResource, definition::Lhs};
 use crate::{components::global::PlaneFlowConfig, definition::Acc};
 use crate::{components::global::WriteEventListener, definition::Rhs};
@@ -43,7 +43,7 @@ pub trait StageMatmulFamily: Send + Sync + 'static {
     /// The configuration type associated with this matmul family.
     type Config: StageConfig;
 
-    /// Constructs the configuration based on the matmul problem, selection, line sizes,
+    /// Constructs the configuration based on the matmul problem, selection, vector sizes,
     /// number of stages, maximum of tasks per plane, and whether the algorithm is an ordered variant
     ///
     /// This function may return an error if the configuration cannot be supported on the current runtime.
@@ -54,7 +54,7 @@ pub trait StageMatmulFamily: Send + Sync + 'static {
         plane_flow_config: PlaneFlowConfig,
         num_stages: NumStages,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError>;
 
     /// Returns the compute resources required to run this matmul.
@@ -65,7 +65,7 @@ pub trait StageMatmulFamily: Send + Sync + 'static {
         client: &ComputeClient<R>,
         blueprint: &TilingBlueprint,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError>;
 }
 

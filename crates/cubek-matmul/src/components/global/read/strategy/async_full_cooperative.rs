@@ -54,7 +54,7 @@ impl LoadMaxRoundPlaneCount for AsyncFullCooperativeLoading {
     fn max_round_plane_count(
         _elements_per_tile: u32,
         _tiles_per_stage: u32,
-        _line_size: VectorSize,
+        _vector_size: VectorSize,
         _plane_dim: u32,
         _dtype: StorageType,
     ) -> u32 {

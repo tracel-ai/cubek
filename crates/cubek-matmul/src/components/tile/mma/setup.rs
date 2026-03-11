@@ -3,7 +3,7 @@ use crate::components::tile::SharedTileConfig;
 use crate::components::tile::mma::config::MmaMatmulConfig;
 use crate::components::tile::{TileMatmulFamily, mma::MmaMatmul};
 use crate::definition::{MatmulAvailabilityError, MatmulElems, MatmulSetupError};
-use crate::definition::{MatmulLineSizes, TilingBlueprint};
+use crate::definition::{MatmulVectorSizes, TilingBlueprint};
 use cubecl::{features::MmaConfig, ir::DeviceProperties};
 use cubecl::{ir::StorageType, prelude::*};
 use cubek_std::tile::mma::{MmaFragmentReader, MmaIOConfig, MmaStageReader};
@@ -41,7 +41,7 @@ where
         device_props: &DeviceProperties,
         blueprint: &TilingBlueprint,
         dtypes: &MatmulElems,
-        _line_sizes: &MatmulLineSizes,
+        _vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
         Ok(MmaMatmulConfig {
             shared: SharedTileConfig {
@@ -88,7 +88,7 @@ where
         client: &ComputeClient<R>,
         blueprint: &TilingBlueprint,
         dtypes: &MatmulElems,
-        _line_sizes: &MatmulLineSizes,
+        _vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
         let lhs = dtypes.lhs_register;
         let rhs = dtypes.rhs_register;

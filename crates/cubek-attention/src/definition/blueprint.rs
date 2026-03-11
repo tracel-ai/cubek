@@ -1,6 +1,6 @@
 use cubek_std::TileSize;
 
-use crate::definition::{AttentionDims, AttentionLineSizes, HypercubeBlueprint};
+use crate::definition::{AttentionDims, AttentionVectorSizes, HypercubeBlueprint};
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct AttentionBlueprint {
@@ -12,7 +12,7 @@ pub struct AttentionBlueprint {
     pub reuse_key_value: bool,
     pub two_rows_in_array_tile: bool,
 
-    pub line_sizes: AttentionLineSizes,
+    pub vector_sizes: AttentionVectorSizes,
 
     pub masked: bool,
     pub causal: bool,

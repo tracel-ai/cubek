@@ -22,15 +22,15 @@ impl LoadingValidation for SyncFullStridedLoading {
         _device_props: &DeviceProperties,
         config: &GlobalReaderConfig,
     ) -> Result<(), InvalidConfigError> {
-        let line_size = config.gmem_config.line_size;
+        let vector_size = config.gmem_config.vector_size;
 
-        let num_stage_lines = config.smem_config.elements_per_stage() / line_size as u32;
+        let num_stage_vectors = config.smem_config.elements_per_stage() / vector_size as u32;
         let total_units = config.loading_units_count();
 
-        if !num_stage_lines.is_multiple_of(total_units) {
+        if !num_stage_vectors.is_multiple_of(total_units) {
             return Err(Box::new(format!(
                 "Too many data will be loaded, resulting in out of bounds.
-        Try setting line size and number of planes so that total unit count {total_units:?} divides number of lines in stage.",
+        Try setting vector size and number of planes so that total unit count {total_units:?} divides number of vectors in stage.",
             )));
         }
 
@@ -53,13 +53,13 @@ impl LoadMaxRoundPlaneCount for SyncFullStridedLoading {
     fn max_round_plane_count(
         elements_per_tile: u32,
         tiles_per_stage: u32,
-        line_size: VectorSize,
+        vector_size: VectorSize,
         plane_dim: u32,
         _dtype: StorageType,
     ) -> u32 {
         let elements_per_stage = elements_per_tile * tiles_per_stage;
-        let num_lines = elements_per_stage / line_size as u32;
-        num_lines.div_ceil(plane_dim)
+        let num_vectors = elements_per_stage / vector_size as u32;
+        num_vectors.div_ceil(plane_dim)
     }
 }
 
@@ -75,10 +75,10 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncFullStridedLoading {
         _runtime_config: RC,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, NG, ES, NS> {
-        let line_size = NG::value().comptime() as u32;
-        let num_stage_lines = config.smem_config.elements_per_stage() / line_size;
+        let vector_size = NG::value().comptime() as u32;
+        let num_stage_vectors = config.smem_config.elements_per_stage() / vector_size;
         let unit_count = config.loading_planes_count() * config.plane_dim;
-        let num_tasks_per_unit = num_stage_lines / unit_count;
+        let num_tasks_per_unit = num_stage_vectors / unit_count;
 
         let unit_position_base = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
             .load_index(config.input_load_flow)
@@ -122,11 +122,11 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
         let layout = FullStageLayout::new(config.smem_config);
         let view = global_iter.view().view(layout);
 
-        let line_read = view.read_checked(unit_position * NG::value() as u32);
+        let vector_read = view.read_checked(unit_position * NG::value() as u32);
         let type_size = Vector::<ES, NS>::type_size();
         let stage_offs = stage.swizzle.apply(unit_position, type_size);
 
-        stage.as_slice_mut::<NS>()[stage_offs as usize] = Vector::cast_from(line_read);
+        stage.as_slice_mut::<NS>()[stage_offs as usize] = Vector::cast_from(vector_read);
     }
 
     fn task_count(this: &Self) -> comptime_type!(u32) {

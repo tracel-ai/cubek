@@ -11,7 +11,7 @@ use cubek_convolution::{
     forward::args::{ConcreteArgs, ConcreteInputsFactory, ConcreteOutputFactory},
 };
 use cubek_matmul::{
-    definition::{AvailableLineSizes, MatmulSetupError},
+    definition::{AvailableVectorSizes, MatmulSetupError},
     launch::MatmulInputBinding,
 };
 use cubek_matmul::{
@@ -75,10 +75,12 @@ where
     problem.lhs_strides = lhs.strides.clone();
     problem.rhs_strides = rhs.strides.clone();
 
-    let line_sizes = AvailableLineSizes {
+    let vector_sizes = AvailableVectorSizes {
         lhs: vec![1],
         rhs: vec![1],
-        out: client.io_optimized_vector_sizes(size_of::<P::EG>()).collect(),
+        out: client
+            .io_optimized_vector_sizes(size_of::<P::EG>())
+            .collect(),
     }
     .filter_lhs_with_tensor(&lhs.strides, &lhs.shape, problem.lhs_layout)
     .filter_rhs_with_tensor(&rhs.strides, &rhs.shape, problem.rhs_layout)
@@ -88,7 +90,7 @@ where
 
     let dtypes = MatmulElems::new_deprecated::<((P::EG, P::ES), (P::EG, P::ES), (P::EG, f32))>();
 
-    let device_settings = A::Routine::device_settings(&client, line_sizes);
+    let device_settings = A::Routine::device_settings(&client, vector_sizes);
     let expand_info = A::Routine::expand_blueprint(
         &problem.as_matmul_problem(),
         &device_settings,
@@ -135,7 +137,7 @@ where
         None,
         &launch_info.blueprint,
         &problem,
-        &line_sizes,
+        &vector_sizes,
         &dtypes,
     );
     let output = <OutputArg<A::Args> as ConcreteOutputFactory<A::Routine>>::create(
@@ -143,7 +145,7 @@ where
         out_handle,
         &launch_info.blueprint,
         &problem,
-        &line_sizes,
+        &vector_sizes,
         &dtypes,
     );
 

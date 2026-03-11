@@ -28,7 +28,6 @@ impl PrngRuntime for Bernoulli {
         write_index_base: usize,
         n_invocations: u32,
         #[comptime] n_values_per_thread: usize,
-        #[comptime] line_size: VectorSize,
         state_0: &mut u32,
         state_1: &mut u32,
         state_2: &mut u32,
@@ -37,14 +36,14 @@ impl PrngRuntime for Bernoulli {
     ) {
         let prob = args.probability;
 
-        let mut output_line = Vector::empty();
+        let mut output_vector = Vector::empty();
 
-        let num_iterations = n_values_per_thread / line_size;
+        let num_iterations = n_values_per_thread / N::value();
         #[unroll(num_iterations <=8)]
-        for line_index in 0..num_iterations {
+        for vector_index in 0..num_iterations {
             // vectorization
             #[unroll]
-            for i in 0..line_size {
+            for i in 0..N::value() {
                 *state_0 = taus_step_0(*state_0);
                 *state_1 = taus_step_1(*state_1);
                 *state_2 = taus_step_2(*state_2);
@@ -52,11 +51,11 @@ impl PrngRuntime for Bernoulli {
 
                 let int_random = *state_0 ^ *state_1 ^ *state_2 ^ *state_3;
                 let float_random = to_unit_interval_closed_open(int_random);
-                output_line[i] = E::cast_from(float_random < prob);
+                output_vector[i] = E::cast_from(float_random < prob);
             }
-            let write_index = line_index * n_invocations as usize + write_index_base;
+            let write_index = vector_index * n_invocations as usize + write_index_base;
 
-            output[write_index] = output_line;
+            output[write_index] = output_vector;
         }
     }
 }

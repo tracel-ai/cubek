@@ -1,7 +1,7 @@
 use cubecl::TestRuntime;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
-use cubek_matmul::definition::AvailableLineSizes;
+use cubek_matmul::definition::AvailableVectorSizes;
 use cubek_matmul::definition::MatmulIdent;
 use cubek_matmul::launch::ConcreteOutputFactory;
 use cubek_matmul::launch::ConcreteOutputFactory as _;
@@ -115,27 +115,27 @@ pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
     rhs: MatmulInputBinding<TestRuntime>,
     out: TensorBinding<TestRuntime>,
 ) -> ExecutionOutcome {
-    let line_sizes = AvailableLineSizes::from_type_sizes(
+    let vector_sizes = AvailableVectorSizes::from_type_sizes(
         client,
         dtypes.lhs_global.size(),
         dtypes.rhs_global.size(),
         dtypes.acc_global.size(),
     );
-    let line_sizes = match input_representation {
-        InputRepresentation::Normal => line_sizes
+    let vector_sizes = match input_representation {
+        InputRepresentation::Normal => vector_sizes
             .filter_lhs_with_tensor(&lhs.data().strides, &lhs.data().shape, problem.lhs_layout)
             .filter_rhs_with_tensor(&rhs.data().strides, &rhs.data().shape, problem.rhs_layout)
             .filter_out_with_tensor(&out.strides, &out.shape)
             .pick_max()
             .unwrap(),
-        InputRepresentation::Tma => line_sizes
+        InputRepresentation::Tma => vector_sizes
             .filter_lhs(|ls| *ls == 1)
             .filter_rhs(|ls| *ls == 1)
             .pick_max()
             .unwrap(),
     };
 
-    let device_settings = A::device_settings(client, line_sizes);
+    let device_settings = A::device_settings(client, vector_sizes);
 
     let expand_info = match A::expand_blueprint(
         problem,
@@ -150,7 +150,7 @@ pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
 
     let launch_info = match A::prepare(
         problem,
-        &A::device_settings(client, line_sizes),
+        &A::device_settings(client, vector_sizes),
         expand_info,
     ) {
         Ok(launch_info) => launch_info,
@@ -173,7 +173,7 @@ pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
             out,
             &blueprint,
             &problem,
-            &line_sizes,
+            &vector_sizes,
             dtypes,
         );
 
@@ -185,7 +185,7 @@ pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
                     rhs,
                     &blueprint,
                     &problem,
-                    &line_sizes,
+                    &vector_sizes,
                     dtypes,
                 );
 
@@ -201,7 +201,7 @@ pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
                         cube_count_plan.as_args(),
                         blueprint,
                         dtypes,
-                        &line_sizes,
+                        &vector_sizes,
                     )
                 }
             }
@@ -212,7 +212,7 @@ pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
                     rhs,
                     &blueprint,
                     &problem,
-                    &line_sizes,
+                    &vector_sizes,
                     dtypes,
                 );
 
@@ -228,7 +228,7 @@ pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
                         cube_count_plan.as_args(),
                         blueprint,
                         dtypes,
-                        &line_sizes,
+                        &vector_sizes,
                     )
                 }
             }

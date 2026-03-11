@@ -73,8 +73,8 @@ pub trait ReduceArgs: Send + Sync + 'static + Clone {
     fn stride_input<P: ReduceDType>(state: &Self::State<P>, dim: usize) -> usize;
     fn stride_output<P: ReduceDType>(state: &Self::State<P>, dim: usize) -> usize;
 
-    fn line_size_input<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(VectorSize);
-    fn line_size_output<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(VectorSize);
+    fn vector_size_input<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(VectorSize);
+    fn vector_size_output<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(VectorSize);
 }
 
 #[cube]
@@ -180,11 +180,11 @@ impl ReduceArgs for TensorArgs {
         unsafe { (*state.1).stride(dim) }
     }
 
-    fn line_size_input<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(VectorSize) {
+    fn vector_size_input<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(VectorSize) {
         unsafe { (*state.0).vector_size() }
     }
 
-    fn line_size_output<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(VectorSize) {
+    fn vector_size_output<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(VectorSize) {
         unsafe { (*state.1).vector_size() }
     }
 }
@@ -308,7 +308,7 @@ impl<P: ReduceDType, RA: ReduceArgs> Vectorized for TensorArg<P, RA, Input> {}
 impl<P: ReduceDType, RA: ReduceArgs> VectorizedExpand for TensorArgExpand<P, RA, Input> {
     fn vector_size(&self) -> usize {
         let mut scope = Scope::root(false);
-        RA::__expand_line_size_input(&mut scope, self.state.clone())
+        RA::__expand_vector_size_input(&mut scope, self.state.clone())
     }
 }
 
@@ -380,7 +380,7 @@ impl<P: ReduceDType, RA: ReduceArgs> Vectorized for TensorArg<P, RA, Output> {}
 impl<P: ReduceDType, RA: ReduceArgs> VectorizedExpand for TensorArgExpand<P, RA, Output> {
     fn vector_size(&self) -> usize {
         let mut scope = Scope::root(false);
-        RA::__expand_line_size_output(&mut scope, self.state.clone())
+        RA::__expand_vector_size_output(&mut scope, self.state.clone())
     }
 }
 

@@ -125,7 +125,7 @@ where
                 problem,
                 device_settings.plane_dim,
                 dtypes,
-                &device_settings.line_sizes,
+                &device_settings.vector_sizes,
                 PlaneTilingBlueprintOptions {
                     specialized: strategy.specialized,
                     multi_row_strategy: MultiRowStrategy::Adaptive {
@@ -151,11 +151,11 @@ where
             &blueprint,
             problem,
             &dtypes,
-            &device_settings.line_sizes,
+            &device_settings.vector_sizes,
         )?;
 
         let cubedim_resource =
-            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
+            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.vector_sizes)?;
 
         LaunchInfo::new(
             blueprint,
@@ -216,7 +216,7 @@ where
                 problem,
                 device_settings.plane_dim,
                 dtypes,
-                &device_settings.line_sizes,
+                &device_settings.vector_sizes,
                 PlaneTilingBlueprintOptions {
                     specialized: strategy.specialized,
                     multi_row_strategy: MultiRowStrategy::Adaptive {
@@ -242,11 +242,11 @@ where
             &blueprint,
             problem,
             &dtypes,
-            &device_settings.line_sizes,
+            &device_settings.vector_sizes,
         )?;
 
         let cubedim_resource =
-            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
+            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.vector_sizes)?;
 
         LaunchInfo::new(
             blueprint,
@@ -309,7 +309,7 @@ where
                 problem,
                 device_settings.plane_dim,
                 dtypes,
-                &device_settings.line_sizes,
+                &device_settings.vector_sizes,
                 PlaneTilingBlueprintOptions {
                     specialized: strategy.specialized,
                     multi_row_strategy: MultiRowStrategy::Adaptive {
@@ -335,11 +335,11 @@ where
             &blueprint,
             problem,
             &dtypes,
-            &device_settings.line_sizes,
+            &device_settings.vector_sizes,
         )?;
 
         let cubedim_resource =
-            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
+            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.vector_sizes)?;
 
         LaunchInfo::new(
             blueprint,
@@ -401,7 +401,7 @@ where
                 problem,
                 device_settings.plane_dim,
                 dtypes,
-                &device_settings.line_sizes,
+                &device_settings.vector_sizes,
                 PlaneTilingBlueprintOptions {
                     specialized: strategy.specialized,
                     multi_row_strategy: MultiRowStrategy::Adaptive {
@@ -427,11 +427,11 @@ where
             &blueprint,
             problem,
             &dtypes,
-            &device_settings.line_sizes,
+            &device_settings.vector_sizes,
         )?;
 
         let cubedim_resource =
-            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
+            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.vector_sizes)?;
 
         LaunchInfo::new(
             blueprint,
@@ -492,7 +492,7 @@ where
                 problem,
                 device_settings.plane_dim,
                 dtypes,
-                &device_settings.line_sizes,
+                &device_settings.vector_sizes,
                 PlaneTilingBlueprintOptions {
                     specialized: strategy.specialized,
                     multi_row_strategy: MultiRowStrategy::Adaptive {
@@ -518,11 +518,11 @@ where
             &blueprint,
             problem,
             &dtypes,
-            &device_settings.line_sizes,
+            &device_settings.vector_sizes,
         )?;
 
         let cubedim_resource =
-            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
+            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.vector_sizes)?;
 
         LaunchInfo::new(
             blueprint,
@@ -583,7 +583,7 @@ where
                 problem,
                 device_settings.plane_dim,
                 dtypes,
-                &device_settings.line_sizes,
+                &device_settings.vector_sizes,
                 PlaneTilingBlueprintOptions {
                     specialized: strategy.specialized,
                     multi_row_strategy: MultiRowStrategy::Adaptive {
@@ -609,11 +609,11 @@ where
             &blueprint,
             problem,
             &dtypes,
-            &device_settings.line_sizes,
+            &device_settings.vector_sizes,
         )?;
 
         let cubedim_resource =
-            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
+            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.vector_sizes)?;
 
         LaunchInfo::new(
             blueprint,

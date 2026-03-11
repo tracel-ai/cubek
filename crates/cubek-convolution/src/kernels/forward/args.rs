@@ -16,7 +16,7 @@ use cubecl::{
 };
 use cubek_matmul::{
     components::global::memory::{GlobalLayoutConfig, NoopLayout, NoopLayoutLaunch},
-    definition::{Blueprint, MatmulElems, MatmulLineSizes, TilingBlueprint},
+    definition::{Blueprint, MatmulElems, MatmulVectorSizes, TilingBlueprint},
     launch::{
         MatmulArgs, MatmulInputBinding, TensorArgs, TensorInputs, TensorInputsLaunch,
         TensorMapArgs, TensorMapInputs, TensorMapInputsLaunch, TensorOutput, TensorOutputLaunch,
@@ -106,7 +106,7 @@ pub trait ConcreteInputsFactory<A: Routine<RuntimeArgs>>: LaunchArg {
         bias: Option<MatmulInputBinding<R>>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
         dtypes: &MatmulElems,
     ) -> (Self::RuntimeArg<R>, RuntimeArgsLaunch<R>);
 }
@@ -119,7 +119,7 @@ pub trait ConcreteOutputFactory<A: Routine<RuntimeArgs>>: LaunchArg {
         out: TensorBinding<R>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
         dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<R>;
 }
@@ -134,7 +134,7 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<Runti
         bias: Option<MatmulInputBinding<R>>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
         _dtypes: &MatmulElems,
     ) -> (Self::RuntimeArg<R>, RuntimeArgsLaunch<R>) {
         type LhsLayout = Chain<NhwcLayout, Im2colLayout>;
@@ -143,8 +143,9 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<Runti
         let padded_channels = problem.padded_channels as u32;
         let conv_params = ConvolutionParams::from_problem(problem);
 
-        let layout_nhwc =
-            |handle, line_size, checks| NhwcLayoutLaunch::from_handle(handle, line_size, checks);
+        let layout_nhwc = |handle, vector_size, checks| {
+            NhwcLayoutLaunch::from_handle(handle, vector_size, checks)
+        };
         let layout_lhs = Im2colLayoutLaunch::from_args(
             client,
             problem,
@@ -153,8 +154,7 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<Runti
         );
         let layout_rhs =
             WeightLayoutLaunch::from_args(client, problem, blueprint.rhs_global_layout_config());
-        let layout_bias =
-            BiasLayoutLaunch::new(problem.n as u32, line_sizes.out as u32);
+        let layout_bias = BiasLayoutLaunch::new(problem.n as u32, vector_sizes.out as u32);
 
         let layout_lhs = {
             let mut checks = EnumSet::empty();
@@ -164,7 +164,7 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<Runti
             if problem.should_check_channel() {
                 checks.insert(NhwcCheck::Channel);
             }
-            let global = layout_nhwc(lhs.data(), line_sizes.lhs, checks);
+            let global = layout_nhwc(lhs.data(), vector_sizes.lhs, checks);
             ChainLaunch::new(global, layout_lhs)
         };
         let layout_rhs = {
@@ -172,7 +172,7 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<Runti
             if problem.should_check_channel() {
                 checks.insert(NhwcCheck::Channel);
             }
-            let global = layout_nhwc(rhs.data(), line_sizes.rhs, checks);
+            let global = layout_nhwc(rhs.data(), vector_sizes.rhs, checks);
             ChainLaunch::new(global, layout_rhs)
         };
 
@@ -207,12 +207,12 @@ impl<EG: CubePrimitive, A: Routine<RuntimeArgs>> ConcreteOutputFactory<A> for Te
         out: TensorBinding<R>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
         _dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<R> {
         type Layout = Chain<NhwcLayout, OutLayout>;
 
-        let global = NhwcLayoutLaunch::from_handle(&out, line_sizes.out, EnumSet::empty());
+        let global = NhwcLayoutLaunch::from_handle(&out, vector_sizes.out, EnumSet::empty());
         let layout =
             OutLayoutLaunch::from_args(client, problem, blueprint.out_global_layout_config());
         let layout = ChainLaunch::new(global, layout);
@@ -236,7 +236,7 @@ impl<
         bias: Option<MatmulInputBinding<R>>,
         blueprint: &TilingBlueprint,
         problem: &ConvolutionProblem,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
         dtypes: &MatmulElems,
     ) -> (Self::RuntimeArg<R>, RuntimeArgsLaunch<R>) {
         let tiling_scheme = blueprint.tiling_scheme;
@@ -313,8 +313,7 @@ impl<
         );
 
         let bias = bias.map(|bias| {
-            let layout =
-                BiasLayoutLaunch::new(problem.n as u32, line_sizes.out as u32);
+            let layout = BiasLayoutLaunch::new(problem.n as u32, vector_sizes.out as u32);
             ViewArg::new::<BiasLayout>(bias.into_data().into_array_arg(), layout)
         });
 

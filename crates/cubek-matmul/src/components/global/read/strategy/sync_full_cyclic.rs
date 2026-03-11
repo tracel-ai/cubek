@@ -16,7 +16,7 @@ use super::{LoadingJob, LoadingValidation, ReaderMode};
 
 #[derive(CubeType, Clone, Copy)]
 /// Loads the content of all tiles in the stage using all planes.
-/// Unit with pos X loads lines with indices X, X + NUM_UNITS, X + 2 * NUM_UNITS, ...
+/// Unit with pos X loads vectors with indices X, X + NUM_UNITS, X + 2 * NUM_UNITS, ...
 pub struct SyncFullCyclicLoading<T: TilingOrder> {
     #[cube(comptime)]
     _t: PhantomData<T>,
@@ -28,15 +28,15 @@ impl<TO: TilingOrder> LoadingValidation for SyncFullCyclicLoading<TO> {
         config: &GlobalReaderConfig,
     ) -> Result<(), InvalidConfigError> {
         if let ReaderMode::Strict = config.reader_mode {
-            let line_size = config.gmem_config.line_size;
+            let vector_size = config.gmem_config.vector_size;
 
-            let num_stage_lines = config.smem_config.elements_per_stage() / line_size as u32;
+            let num_stage_vectors = config.smem_config.elements_per_stage() / vector_size as u32;
             let total_units = config.loading_units_count();
 
-            if !num_stage_lines.is_multiple_of(total_units) {
+            if !num_stage_vectors.is_multiple_of(total_units) {
                 return Err(Box::new(format!(
                 "Too many data will be loaded, resulting in out of bounds.
-        Try setting line size and number of planes so that total unit count {total_units:?} divides number of lines in stage.",
+        Try setting vector size and number of planes so that total unit count {total_units:?} divides number of vectors in stage.",
             )));
             }
         }
@@ -60,13 +60,13 @@ impl<TO: TilingOrder> LoadMaxRoundPlaneCount for SyncFullCyclicLoading<TO> {
     fn max_round_plane_count(
         elements_per_tile: u32,
         tiles_per_stage: u32,
-        line_size: VectorSize,
+        vector_size: VectorSize,
         plane_dim: u32,
         _dtype: StorageType,
     ) -> u32 {
         let elements_per_stage = elements_per_tile * tiles_per_stage;
-        let num_lines = elements_per_stage / line_size as u32;
-        num_lines.div_ceil(plane_dim)
+        let num_vectors = elements_per_stage / vector_size as u32;
+        num_vectors.div_ceil(plane_dim)
     }
 }
 
@@ -82,21 +82,21 @@ impl<TO: TilingOrder, RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncFullCyc
         _runtime_config: RC,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, NG, ES, NS> {
-        let line_size = NG::value().comptime() as u32;
+        let vector_size = NG::value().comptime() as u32;
         let tile_num_elements = config.smem_config.elements_per_tile();
         let num_stage_elements = config.smem_config.elements_per_stage();
 
-        let num_stage_lines = num_stage_elements.div_ceil(line_size);
+        let num_stage_vectors = num_stage_elements.div_ceil(vector_size);
         let total_units = config.loading_units_count();
-        let num_tasks_per_unit = num_stage_lines.div_ceil(total_units);
-        let balanced_workload = num_stage_lines.is_multiple_of(total_units);
-        let jump_length = total_units * line_size;
+        let num_tasks_per_unit = num_stage_vectors.div_ceil(total_units);
+        let balanced_workload = num_stage_vectors.is_multiple_of(total_units);
+        let jump_length = total_units * vector_size;
 
         let unit_id = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
             .load_index(config.input_load_flow)
             * config.plane_dim
             + UNIT_POS_X;
-        let unit_position_base = unit_id * line_size;
+        let unit_position_base = unit_id * vector_size;
 
         SyncFullCyclicJob {
             unit_position_base,
@@ -146,7 +146,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
 
         #[allow(clippy::collapsible_else_if)]
         if comptime!(this.reader_mode == ReaderMode::Strict || this.balanced_workload) {
-            load_and_store_line::<EG, NG, ES, NS, TO>(
+            load_and_store_vector::<EG, NG, ES, NS, TO>(
                 this,
                 unit_position,
                 global_iter,
@@ -155,7 +155,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
             );
         } else {
             if unit_position < this.num_stage_elements {
-                load_and_store_line::<EG, NG, ES, NS, TO>(
+                load_and_store_vector::<EG, NG, ES, NS, TO>(
                     this,
                     unit_position,
                     global_iter,
@@ -172,7 +172,13 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
 }
 
 #[cube]
-pub(crate) fn load_and_store_line<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>(
+pub(crate) fn load_and_store_vector<
+    EG: Numeric,
+    NG: Size,
+    ES: Numeric,
+    NS: Size,
+    TO: TilingOrder,
+>(
     job: &SyncFullCyclicJob,
     unit_position: u32,
     global_iter: &GlobalIterator<Vector<EG, NG>>,
@@ -189,8 +195,8 @@ pub(crate) fn load_and_store_line<EG: Numeric, NG: Size, ES: Numeric, NS: Size, 
 
     let mut slice = stage.as_slice_mut::<NS>();
 
-    let line_read = view.read_checked((tile, pos_within_tile));
+    let vector_read = view.read_checked((tile, pos_within_tile));
     let stage_offs = stage.swizzle.apply(unit_position, ES::type_size());
 
-    slice[stage_offs as usize / NS::value()] = Vector::cast_from(line_read);
+    slice[stage_offs as usize / NS::value()] = Vector::cast_from(vector_read);
 }

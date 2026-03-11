@@ -109,7 +109,7 @@ pub struct NhwcLayout {
     pub shape_channel: u32,
 
     #[cube(comptime)]
-    pub line_size: VectorSize,
+    pub vector_size: VectorSize,
     #[cube(comptime)]
     pub checks: EnumSet<NhwcCheck>,
 }
@@ -144,7 +144,7 @@ impl NhwcLayout {
             shape_batch,
             shapes_spatial,
             shape_channel,
-            line_size: tensor.vector_size(),
+            vector_size: tensor.vector_size(),
             checks,
         }
     }
@@ -171,7 +171,7 @@ impl Layout for NhwcLayout {
             read_pos += spatial[i] as usize * self.strides_spatial[i];
         }
 
-        read_pos / self.line_size
+        read_pos / self.vector_size
     }
 
     fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
@@ -225,7 +225,7 @@ pub(crate) fn cast_seq<From: CubePrimitive, To: CubePrimitive>(
 impl<R: Runtime> NhwcLayoutLaunch<R> {
     pub fn from_handle(
         binding: &TensorBinding<R>,
-        line_size: VectorSize,
+        vector_size: VectorSize,
         checks: EnumSet<NhwcCheck>,
     ) -> Self {
         let rank = binding.shape.len();
@@ -246,7 +246,7 @@ impl<R: Runtime> NhwcLayoutLaunch<R> {
             shape_batch,
             shapes_spatial,
             shape_channel,
-            line_size,
+            vector_size,
             checks,
         )
     }

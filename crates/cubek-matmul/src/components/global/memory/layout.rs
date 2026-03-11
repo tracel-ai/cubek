@@ -83,7 +83,7 @@ pub struct GlobalLayout {
     stride_col: usize,
 
     #[cube(comptime)]
-    line_size: VectorSize,
+    vector_size: VectorSize,
     #[cube(comptime)]
     packing: u32,
     #[cube(comptime)]
@@ -100,7 +100,7 @@ impl GlobalLayout {
         shape_col: u32,
         stride_row: usize,
         stride_col: usize,
-        #[comptime] line_size: VectorSize,
+        #[comptime] vector_size: VectorSize,
         #[comptime] packing: u32,
         #[comptime] config: GlobalLayoutConfig,
     ) -> Self {
@@ -110,7 +110,7 @@ impl GlobalLayout {
             cols: shape_col,
             stride_row,
             stride_col,
-            line_size,
+            vector_size,
             packing,
             config,
         }
@@ -133,7 +133,7 @@ impl Layout for GlobalLayout {
 
         let idx = batch_offs + row as usize * self.stride_row + col as usize * self.stride_col;
 
-        idx / self.line_size
+        idx / self.vector_size
     }
 
     fn to_source_pos_checked(&self, coords: Self::Coordinates) -> (usize, bool) {
@@ -160,7 +160,7 @@ impl Layout for GlobalLayout {
 impl<R: Runtime> GlobalLayoutLaunch<R> {
     pub fn from_handle(
         handle: &TensorBinding<R>,
-        line_size: VectorSize,
+        vector_size: VectorSize,
         config: GlobalLayoutConfig,
     ) -> Self {
         let rank = handle.shape.len();
@@ -175,7 +175,7 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
             cols as u32,
             stride_row,
             stride_col,
-            line_size,
+            vector_size,
             1,
             config,
         )
@@ -185,7 +185,7 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
         client: &ComputeClient<R>,
         handle: &TensorBinding<R>,
         problem: &MatmulProblem,
-        line_size: VectorSize,
+        vector_size: VectorSize,
         config: GlobalLayoutConfig,
     ) -> Self {
         let rank = handle.shape.len();
@@ -202,7 +202,7 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
             cols as u32,
             stride_row,
             stride_col,
-            line_size,
+            vector_size,
             1,
             config,
         )
@@ -216,7 +216,7 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
         shape: &Shape,
         problem: &MatmulProblem,
         scheme: QuantScheme,
-        line_size: VectorSize,
+        vector_size: VectorSize,
         config: GlobalLayoutConfig,
     ) -> (GlobalLayoutLaunch<R>, GlobalScaleLayoutArgs<R>) {
         let rank = values.shape.len();
@@ -232,7 +232,7 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
                 cols as u32,
                 stride_row,
                 stride_col,
-                line_size,
+                vector_size,
                 scheme.num_quants() as u32,
                 config,
             )
@@ -245,7 +245,7 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
                 QuantLevel::Tensor => GlobalScaleLayoutArgs::PerTensor { shape },
                 QuantLevel::Block(block_size) => {
                     let [block_row, block_col] = block_size.as_dim();
-                    // Scales are never vectorized because we require that `block_size >= line_size * num_quants`.
+                    // Scales are never vectorized because we require that `block_size >= vector_size * num_quants`.
                     let scales_layout =
                         GlobalLayoutLaunch::from_handle_batched(client, scales, problem, 1, config);
                     GlobalScaleLayoutArgs::BlockScaled(BlockScaledLayoutLaunch::new(

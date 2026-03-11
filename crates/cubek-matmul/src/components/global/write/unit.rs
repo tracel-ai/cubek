@@ -64,15 +64,15 @@ pub fn unit_write<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
     tile_pos: Coords2d,
     #[comptime] elements_in_tile: u32,
 ) {
-    let output_line_size = global.vector_size();
+    let output_vector_size = global.vector_size();
     let out_smem_stage = smem_tile.stage.with_vector_size::<NG>();
 
-    let num_lines = elements_in_tile / output_line_size as u32;
+    let num_vectors = elements_in_tile / output_vector_size as u32;
 
-    for i in 0..num_lines {
+    for i in 0..num_vectors {
         let value = out_smem_stage[smem_tile.stage_offset(i) as usize];
         global.write_checked(
-            (tile_pos, i * output_line_size as u32),
+            (tile_pos, i * output_vector_size as u32),
             Vector::cast_from(value),
         );
     }

@@ -79,7 +79,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
         select_many(lhs.less_than(rhs), lhs, rhs)
     }
 
-    fn merge_line<Out: Numeric>(
+    fn merge_vector<Out: Numeric>(
         _this: &Self,
         accumulator: Self::AccumulatorItem,
         _shape_axis_reduce: usize,

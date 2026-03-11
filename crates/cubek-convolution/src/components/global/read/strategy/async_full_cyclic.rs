@@ -27,7 +27,7 @@ use crate::components::global::{
 
 #[derive(CubeType, Clone, Copy)]
 /// Loads the content of all tiles in the stage using all planes.
-/// Unit with pos X loads lines with indices X, X + NUM_UNITS, X + 2 * NUM_UNITS, ...
+/// Unit with pos X loads vectors with indices X, X + NUM_UNITS, X + 2 * NUM_UNITS, ...
 pub struct AsyncFullCyclicLoading<T: TilingOrder> {
     #[cube(comptime)]
     _t: PhantomData<T>,
@@ -54,14 +54,14 @@ impl<TO: TilingOrder> LoadMaxRoundPlaneCount for AsyncFullCyclicLoading<TO> {
     fn max_round_plane_count(
         elements_per_tile: u32,
         tiles_per_stage: u32,
-        line_size: VectorSize,
+        vector_size: VectorSize,
         plane_dim: u32,
         dtype: StorageType,
     ) -> u32 {
         MatmulCyclicLoading::<TO>::max_round_plane_count(
             elements_per_tile,
             tiles_per_stage,
-            line_size,
+            vector_size,
             plane_dim,
             dtype,
         )
@@ -81,21 +81,21 @@ impl<TO: TilingOrder> FullLoadingStrategy<RuntimeArgs> for AsyncFullCyclicLoadin
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, NG, ES, NS> {
         let type_size = ES::type_size_bits().comptime();
-        let line_size = ASYNC_COPY_WIDTH / type_size as u32;
+        let vector_size = ASYNC_COPY_WIDTH / type_size as u32;
         let tile_num_elements = config.smem_config.elements_per_tile();
         let num_stage_elements = config.smem_config.elements_per_stage();
 
-        let num_stage_lines = num_stage_elements.div_ceil(line_size);
+        let num_stage_vectors = num_stage_elements.div_ceil(vector_size);
         let total_units = config.loading_units_count();
-        let num_tasks_per_unit = num_stage_lines.div_ceil(total_units);
-        let balanced_workload = num_stage_lines.is_multiple_of(total_units);
-        let jump_length = total_units * line_size;
+        let num_tasks_per_unit = num_stage_vectors.div_ceil(total_units);
+        let balanced_workload = num_stage_vectors.is_multiple_of(total_units);
+        let jump_length = total_units * vector_size;
 
         let unit_id = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
             .load_index(config.input_load_flow)
             * config.plane_dim
             + UNIT_POS_X;
-        let unit_position_base = unit_id * line_size;
+        let unit_position_base = unit_id * vector_size;
 
         AsyncFullCyclicJob {
             unit_position_base,
@@ -103,7 +103,7 @@ impl<TO: TilingOrder> FullLoadingStrategy<RuntimeArgs> for AsyncFullCyclicLoadin
             num_tasks_per_unit,
             tile_num_elements,
             jump_length,
-            copy_line_size: line_size,
+            copy_vector_size: vector_size,
             balanced_workload,
             num_stage_elements,
             reader_mode: config.reader_mode,
@@ -123,7 +123,7 @@ pub struct AsyncFullCyclicJob {
     #[cube(comptime)]
     jump_length: u32,
     #[cube(comptime)]
-    copy_line_size: u32,
+    copy_vector_size: u32,
     #[cube(comptime)]
     balanced_workload: bool,
     #[cube(comptime)]
@@ -150,7 +150,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
 
         #[allow(clippy::collapsible_else_if)]
         if comptime!(this.reader_mode == ReaderMode::Strict || this.balanced_workload) {
-            copy_line::<EG, NG, ES, NS, TO>(
+            copy_vector::<EG, NG, ES, NS, TO>(
                 this,
                 unit_position,
                 global_iter,
@@ -160,7 +160,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
             );
         } else {
             if unit_position < this.num_stage_elements {
-                copy_line::<EG, NG, ES, NS, TO>(
+                copy_vector::<EG, NG, ES, NS, TO>(
                     this,
                     unit_position,
                     global_iter,
@@ -178,7 +178,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
 }
 
 #[cube]
-pub(crate) fn copy_line<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>(
+pub(crate) fn copy_vector<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>(
     job: &AsyncFullCyclicJob,
     unit_position: u32,
     global_iter: &GlobalIterator<Vector<EG, NG>>,
@@ -205,6 +205,6 @@ pub(crate) fn copy_line<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: Tiling
         runtime_args,
         global_iter.offset(),
         config,
-        job.copy_line_size,
+        job.copy_vector_size,
     );
 }

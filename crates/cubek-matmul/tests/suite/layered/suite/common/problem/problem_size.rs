@@ -80,7 +80,7 @@ mod g100x100x100 {
     include!("../launch.rs");
 }
 
-// line_size_lhs != line_size_rhs
+// vector_size_lhs != vector_size_rhs
 #[cfg(feature = "matmul_tests_alt_shapes")]
 mod g100x99x100 {
     use super::*;
@@ -108,7 +108,7 @@ mod g100x99x100 {
     include!("../launch.rs");
 }
 
-// line_size_lhs != line_size_rhs
+// vector_size_lhs != vector_size_rhs
 #[cfg(feature = "matmul_tests_alt_shapes")]
 mod g100x100x99 {
     use super::*;
@@ -137,7 +137,7 @@ mod g100x100x99 {
     include!("../launch.rs");
 }
 
-// line_size_lhs != line_size_rhs
+// vector_size_lhs != vector_size_rhs
 #[cfg(feature = "matmul_tests_alt_shapes")]
 mod g23x1x17 {
     use super::*;

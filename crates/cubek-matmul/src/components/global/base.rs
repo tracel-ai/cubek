@@ -11,7 +11,7 @@ use crate::components::{global::memory::GlobalMemoryConfig, stage::NumStages};
 use crate::definition::StageIdent;
 use crate::definition::TilingBlueprint;
 use crate::definition::{AccG, MatmulSetupError};
-use crate::definition::{LhsG, MatmulElems, MatmulLineSizes, RhsG};
+use crate::definition::{LhsG, MatmulElems, MatmulVectorSizes, RhsG};
 use crate::definition::{MatmulProblem, MatmulTypes};
 use crate::{components::CubeDimResource, launch::RuntimeConfig};
 use cubecl::std::tensor::{View, layout::Coords2d};
@@ -26,14 +26,14 @@ pub trait GlobalMatmulFamily<RC: RuntimeConfig>: Send + Sync + 'static {
     /// The configuration type associated with this matmul family.
     type Config: GlobalConfig;
 
-    /// Constructs the configuration based on the matmul problem, selection, and line sizes.
+    /// Constructs the configuration based on the matmul problem, selection, and vector sizes.
     ///
     /// This function may return an error if the configuration cannot be supported on the current runtime.
     fn expand_config(
         device_props: &DeviceProperties,
         blueprint: &TilingBlueprint,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError>;
 
     fn num_stages() -> NumStages;
@@ -42,7 +42,7 @@ pub trait GlobalMatmulFamily<RC: RuntimeConfig>: Send + Sync + 'static {
     fn cubedim_resource(
         blueprint: &TilingBlueprint,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<CubeDimResource, MatmulSetupError>;
 
     fn validate_blueprint<R: Runtime>(
@@ -50,7 +50,7 @@ pub trait GlobalMatmulFamily<RC: RuntimeConfig>: Send + Sync + 'static {
         blueprint: &TilingBlueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError>;
 }
 
@@ -189,11 +189,11 @@ impl<S: StageConfig> GlobalConfig for SharedGlobalMatmulConfig<S> {
         CubeDim::new_2d(self.plane_dim(), self.num_planes)
     }
 
-    fn global_line_sizes(&self) -> MatmulLineSizes {
-        MatmulLineSizes {
-            lhs: self.lhs_reader_config.gmem_config.line_size,
-            rhs: self.rhs_reader_config.gmem_config.line_size,
-            out: self.writer_config.gmem_config.line_size,
+    fn global_vector_sizes(&self) -> MatmulVectorSizes {
+        MatmulVectorSizes {
+            lhs: self.lhs_reader_config.gmem_config.vector_size,
+            rhs: self.rhs_reader_config.gmem_config.vector_size,
+            out: self.writer_config.gmem_config.vector_size,
         }
     }
 
@@ -218,7 +218,7 @@ pub trait GlobalConfig:
     fn rhs_reader_config(&self) -> GlobalReaderConfig;
     fn writer_config(&self) -> GlobalWriterConfig;
     fn cube_dim(&self) -> CubeDim;
-    fn global_line_sizes(&self) -> MatmulLineSizes;
+    fn global_vector_sizes(&self) -> MatmulVectorSizes;
     fn must_sync_plane_after_execution(&self) -> bool;
 }
 

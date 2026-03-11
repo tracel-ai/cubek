@@ -15,8 +15,8 @@ use crate::components::{
     global::read::sync_full_strided::SyncFullStridedLoading, stage::PlaneMatmulFamily,
 };
 use crate::definition::{
-    CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulLineSizes, MatmulProblem,
-    MatmulSetupError, SmAllocation, SwizzleModes, TilingBlueprint, adjust_dtypes,
+    CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulProblem, MatmulSetupError,
+    MatmulVectorSizes, SmAllocation, SwizzleModes, TilingBlueprint, adjust_dtypes,
 };
 use crate::launch::RuntimeConfig;
 use crate::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
@@ -102,7 +102,7 @@ where
                 problem,
                 device_settings.plane_dim,
                 dtypes,
-                &device_settings.line_sizes,
+                &device_settings.vector_sizes,
                 PlaneTilingBlueprintOptions {
                     specialized: true,
                     multi_row_strategy: MultiRowStrategy::Adaptive {
@@ -128,11 +128,14 @@ where
             &blueprint,
             problem,
             &dtypes,
-            &device_settings.line_sizes,
+            &device_settings.vector_sizes,
         )?;
 
-        let cubedim_resource =
-            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
+        let cubedim_resource = Self::BatchMatmul::cubedim_resource(
+            &blueprint,
+            &dtypes,
+            &device_settings.vector_sizes,
+        )?;
 
         LaunchInfo::new(
             blueprint,
@@ -151,7 +154,7 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
     plane_dim: u32,
     swizzle: bool,
     mut dtypes: MatmulElems,
-    line_sizes: &MatmulLineSizes,
+    vector_sizes: &MatmulVectorSizes,
 ) -> Result<(TilingBlueprint, MatmulElems), MatmulSetupError> {
     adjust_dtypes(client, &mut dtypes, TMM::requires_accelerator());
 
@@ -197,7 +200,7 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
             problem,
             plane_dim,
             dtypes,
-            line_sizes,
+            vector_sizes,
             PlaneTilingBlueprintOptions {
                 partition_buffering: Some(PartitionBuffering::Single),
                 multi_row_strategy: MultiRowStrategy::Always(2),
@@ -233,8 +236,8 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
             MatrixLayout::ColMajor => tiling_scheme.elements_per_stage_along_k() as usize,
         };
 
-        let lhs = select_swizzle(lhs_swizzle_dim, dtypes.lhs_stage, line_sizes.lhs);
-        let rhs = select_swizzle(rhs_swizzle_dim, dtypes.rhs_stage, line_sizes.rhs);
+        let lhs = select_swizzle(lhs_swizzle_dim, dtypes.lhs_stage, vector_sizes.lhs);
+        let rhs = select_swizzle(rhs_swizzle_dim, dtypes.rhs_stage, vector_sizes.rhs);
         builder = builder.shared_swizzle(SwizzleModes {
             lhs,
             rhs,

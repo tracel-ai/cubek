@@ -8,8 +8,8 @@ use crate::components::{
     batch::partitioned_matmul::config::PartitionedBatchConfig, stage::NumStages,
 };
 use crate::definition::CubeMappingLaunch;
-use crate::definition::MatmulLineSizes;
 use crate::definition::MatmulProblem;
+use crate::definition::MatmulVectorSizes;
 use crate::definition::TilingBlueprint;
 use crate::definition::{MatmulElems, MatmulSetupError, MatmulTypes};
 use crate::launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
@@ -39,9 +39,9 @@ impl<RC: RuntimeConfig, GMM: GlobalMatmulFamily<RC>, S: GlobalPartitionMatmul> B
         device_props: &DeviceProperties,
         blueprint: &Self::Blueprint,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
-        let global_config = GMM::expand_config(device_props, blueprint, dtypes, line_sizes)?;
+        let global_config = GMM::expand_config(device_props, blueprint, dtypes, vector_sizes)?;
 
         Ok(PartitionedBatchConfig::new(
             global_config,
@@ -64,7 +64,7 @@ impl<RC: RuntimeConfig, GMM: GlobalMatmulFamily<RC>, S: GlobalPartitionMatmul> B
         cube_count_input: CubeMappingLaunch<R>,
         blueprint: Self::Blueprint,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), LaunchError> {
         unsafe {
             matmul_entry::launch_unchecked::<MA, GMM, S, R>(
@@ -79,7 +79,7 @@ impl<RC: RuntimeConfig, GMM: GlobalMatmulFamily<RC>, S: GlobalPartitionMatmul> B
                 blueprint,
                 dtypes.clone(),
                 [dtypes.lhs_global, dtypes.rhs_global, dtypes.acc_global],
-                [line_sizes.lhs, line_sizes.rhs, line_sizes.out],
+                [vector_sizes.lhs, vector_sizes.rhs, vector_sizes.out],
             )
         };
 
@@ -89,9 +89,9 @@ impl<RC: RuntimeConfig, GMM: GlobalMatmulFamily<RC>, S: GlobalPartitionMatmul> B
     fn cubedim_resource(
         blueprint: &Self::Blueprint,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<CubeDimResource, MatmulSetupError> {
-        GMM::cubedim_resource(blueprint, dtypes, line_sizes)
+        GMM::cubedim_resource(blueprint, dtypes, vector_sizes)
     }
 
     fn validate_blueprint<R: Runtime>(
@@ -99,8 +99,8 @@ impl<RC: RuntimeConfig, GMM: GlobalMatmulFamily<RC>, S: GlobalPartitionMatmul> B
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
-        GMM::validate_blueprint(client, blueprint, problem, dtypes, line_sizes)
+        GMM::validate_blueprint(client, blueprint, problem, dtypes, vector_sizes)
     }
 }

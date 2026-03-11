@@ -1,8 +1,8 @@
 use super::{
-    GlobalReduceBlueprint, ReduceBlueprint, ReduceLaunchSettings, ReduceLineSettings, ReduceProblem,
+    GlobalReduceBlueprint, ReduceBlueprint, ReduceLaunchSettings, ReduceVectorSettings, ReduceProblem,
 };
 use crate::{
-    BoundChecks, IdleMode, LineMode, ReduceError,
+    BoundChecks, IdleMode, ReduceError, VectorizationMode,
     launch::{calculate_plane_count_per_cube, support_plane},
     routines::{BlueprintStrategy, PlaneReduceBlueprint, Routine, cube_count_safe},
 };
@@ -25,7 +25,7 @@ impl Routine for PlaneRoutine {
         &self,
         client: &ComputeClient<R>,
         problem: ReduceProblem,
-        settings: ReduceLineSettings,
+        settings: ReduceVectorSettings,
         strategy: BlueprintStrategy<Self>,
     ) -> Result<(ReduceBlueprint, ReduceLaunchSettings), ReduceError> {
         let address_type = problem.address_type;
@@ -54,7 +54,7 @@ impl Routine for PlaneRoutine {
                 }
 
                 let blueprint = ReduceBlueprint {
-                    line_mode: settings.line_mode,
+                    vectorization_mode: settings.vectorization_mode,
                     global: GlobalReduceBlueprint::Plane(blueprint),
                 };
 
@@ -71,7 +71,7 @@ impl Routine for PlaneRoutine {
             cube_dim,
             cube_count,
             address_type,
-            line: settings,
+            vector: settings,
         };
 
         Ok((blueprint, launch))
@@ -81,7 +81,7 @@ impl Routine for PlaneRoutine {
 fn generate_blueprint<R: Runtime>(
     client: &ComputeClient<R>,
     problem: ReduceProblem,
-    settings: &ReduceLineSettings,
+    settings: &ReduceVectorSettings,
     strategy: PlaneStrategy,
 ) -> Result<(ReduceBlueprint, CubeDim, CubeCount), ReduceError> {
     if !support_plane(client) {
@@ -100,9 +100,9 @@ fn generate_blueprint<R: Runtime>(
     let (cube_count, cube_launched) = cube_count_safe(client, working_cubes);
 
     let plane_idle = cube_launched * cube_dim.num_elems() as usize != working_units;
-    let work_size = match settings.line_mode {
-        LineMode::Parallel => problem.vector_size / settings.line_size_input,
-        LineMode::Perpendicular => problem.vector_size,
+    let work_size = match settings.vectorization_mode {
+        VectorizationMode::Parallel => problem.vector_size / settings.vector_size_input,
+        VectorizationMode::Perpendicular => problem.vector_size,
     };
     let bound_checks = match work_size.is_multiple_of(plane_size as usize) {
         true => BoundChecks::None,
@@ -123,7 +123,7 @@ fn generate_blueprint<R: Runtime>(
     };
 
     let blueprint = ReduceBlueprint {
-        line_mode: settings.line_mode,
+        vectorization_mode: settings.vectorization_mode,
         global: GlobalReduceBlueprint::Plane(PlaneReduceBlueprint {
             plane_idle,
             bound_checks,
@@ -134,9 +134,9 @@ fn generate_blueprint<R: Runtime>(
     Ok((blueprint, cube_dim, cube_count))
 }
 
-fn working_planes(settings: &ReduceLineSettings, problem: &ReduceProblem) -> usize {
-    match settings.line_mode {
-        LineMode::Parallel => problem.vector_count / settings.line_size_output,
-        LineMode::Perpendicular => problem.vector_count / settings.line_size_input,
+fn working_planes(settings: &ReduceVectorSettings, problem: &ReduceProblem) -> usize {
+    match settings.vectorization_mode {
+        VectorizationMode::Parallel => problem.vector_count / settings.vector_size_output,
+        VectorizationMode::Perpendicular => problem.vector_count / settings.vector_size_input,
     }
 }

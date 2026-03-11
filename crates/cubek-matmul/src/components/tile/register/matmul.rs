@@ -180,19 +180,20 @@ impl<Acc: TileKind> RegisterMatmul<Acc> {
         #[comptime] num_segments: u32,
         #[comptime] segment_size: u32,
     ) {
-        let line_size = NS::value().comptime() as u32;
-        let num_lines_per_segment = segment_size / line_size;
+        let vector_size = NS::value().comptime() as u32;
+        let num_vectors_per_segment = segment_size / vector_size;
 
         #[unroll(UNROLL)]
         for segment in 0..num_segments {
             #[unroll(UNROLL)]
-            for line_within_segment in 0..num_lines_per_segment {
-                let line = tile.get_line(segment, line_within_segment);
+            for vector_within_segment in 0..num_vectors_per_segment {
+                let vector = tile.get_vector(segment, vector_within_segment);
                 #[unroll]
-                for pos_within_line in 0..line_size {
-                    let offs =
-                        segment * segment_size + line_within_segment * line_size + pos_within_line;
-                    array[offs as usize] = ER::cast_from(line[pos_within_line as usize]);
+                for pos_within_vector in 0..vector_size {
+                    let offs = segment * segment_size
+                        + vector_within_segment * vector_size
+                        + pos_within_vector;
+                    array[offs as usize] = ER::cast_from(vector[pos_within_vector as usize]);
                 }
             }
         }
@@ -204,19 +205,20 @@ impl<Acc: TileKind> RegisterMatmul<Acc> {
         #[comptime] num_segments: u32,
         #[comptime] segment_size: u32,
     ) {
-        let line_size = NS::value().comptime() as u32;
-        let num_lines_per_segment = segment_size / line_size;
+        let vector_size = NS::value().comptime() as u32;
+        let num_vectors_per_segment = segment_size / vector_size;
 
         #[unroll(UNROLL)]
         for segment in 0..num_segments {
             #[unroll(UNROLL)]
-            for line_within_segment in 0..num_lines_per_segment {
-                let line = tile.get_line(segment, line_within_segment);
+            for vector_within_segment in 0..num_vectors_per_segment {
+                let vector = tile.get_vector(segment, vector_within_segment);
                 #[unroll]
-                for pos_within_line in 0..line_size {
-                    let offs = (line_within_segment * line_size + pos_within_line) * num_segments
+                for pos_within_vector in 0..vector_size {
+                    let offs = (vector_within_segment * vector_size + pos_within_vector)
+                        * num_segments
                         + segment;
-                    array[offs as usize] = ER::cast_from(line[pos_within_line as usize]);
+                    array[offs as usize] = ER::cast_from(vector[pos_within_vector as usize]);
                 }
             }
         }

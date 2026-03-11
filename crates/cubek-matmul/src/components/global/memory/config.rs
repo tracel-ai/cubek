@@ -7,7 +7,7 @@ use crate::components::global::memory::{GlobalLayoutConfig, ViewDirection};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct GlobalMemoryConfig {
-    pub line_size: VectorSize,
+    pub vector_size: VectorSize,
     pub check_row_bounds: bool,
     pub check_col_bounds: bool,
     pub matrix_layout: MatrixLayout,
@@ -18,7 +18,7 @@ pub struct GlobalMemoryConfig {
 impl GlobalMemoryConfig {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        line_size: VectorSize,
+        vector_size: VectorSize,
         check_row_bounds: bool,
         check_col_bounds: bool,
         matrix_layout: MatrixLayout,
@@ -26,7 +26,7 @@ impl GlobalMemoryConfig {
         dtype: StorageType,
     ) -> Self {
         GlobalMemoryConfig {
-            line_size,
+            vector_size,
             check_row_bounds,
             check_col_bounds,
             matrix_layout,

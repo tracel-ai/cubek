@@ -29,7 +29,7 @@ use super::{LoadingJob, LoadingValidation};
 
 #[derive(CubeType, Clone, Copy)]
 /// Loads the content of all tiles in the stage using all planes.
-/// Unit with pos X loads lines with indices X, X + NUM_UNITS, X + 2 * NUM_UNITS, ...
+/// Unit with pos X loads vectors with indices X, X + NUM_UNITS, X + 2 * NUM_UNITS, ...
 pub struct AsyncPartialStridedLoading {}
 
 impl LoadingValidation for AsyncPartialStridedLoading {
@@ -37,24 +37,24 @@ impl LoadingValidation for AsyncPartialStridedLoading {
         device_props: &DeviceProperties,
         config: &GlobalReaderConfig,
     ) -> Result<(), InvalidConfigError> {
-        let line_size = ASYNC_COPY_WIDTH / config.smem_config.dtype.size_bits() as u32;
+        let vector_size = ASYNC_COPY_WIDTH / config.smem_config.dtype.size_bits() as u32;
 
-        // Needs separate check because copy size may be larger than global line size
+        // Needs separate check because copy size may be larger than global vector size
         if !config
             .smem_config
             .elements_per_stage_along_contiguous_dim()
-            .is_multiple_of(line_size)
+            .is_multiple_of(vector_size)
         {
-            return Err(Box::new("Stage size isn't divisible by copy line size"));
+            return Err(Box::new("Stage size isn't divisible by copy vector size"));
         }
 
-        let num_stage_lines = config.smem_config.elements_per_stage() / line_size;
+        let num_stage_vectors = config.smem_config.elements_per_stage() / vector_size;
         let total_units = config.loading_units_count();
 
-        if !num_stage_lines.is_multiple_of(total_units) {
+        if !num_stage_vectors.is_multiple_of(total_units) {
             return Err(Box::new(format!(
                 "Too many data will be loaded, resulting in out of bounds.
-        Try setting line size and number of planes so that total unit count {total_units:?} divides number of lines in stage.",
+        Try setting vector size and number of planes so that total unit count {total_units:?} divides number of vectors in stage.",
             )));
         }
 
@@ -83,14 +83,14 @@ impl LoadMaxRoundPlaneCount for AsyncPartialStridedLoading {
     fn max_round_plane_count(
         elements_per_tile: u32,
         tiles_per_stage: u32,
-        _line_size: VectorSize,
+        _vector_size: VectorSize,
         plane_dim: u32,
         dtype: StorageType,
     ) -> u32 {
-        let line_size = ASYNC_COPY_WIDTH / dtype.size_bits() as u32;
-        let num_lines_per_tile = elements_per_tile / line_size;
-        let total_num_lines = tiles_per_stage * num_lines_per_tile;
-        total_num_lines.div_ceil(plane_dim)
+        let vector_size = ASYNC_COPY_WIDTH / dtype.size_bits() as u32;
+        let num_vectors_per_tile = elements_per_tile / vector_size;
+        let total_num_vectors = tiles_per_stage * num_vectors_per_tile;
+        total_num_vectors.div_ceil(plane_dim)
     }
 }
 
@@ -108,11 +108,11 @@ impl<RC: RuntimeConfig> PartialLoadingStrategy<RC> for AsyncPartialStridedLoadin
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, NG, ES, NS> {
         let type_size = ES::type_size_bits().comptime();
-        let line_size = ASYNC_COPY_WIDTH / type_size as u32;
+        let vector_size = ASYNC_COPY_WIDTH / type_size as u32;
 
-        let num_stage_lines = config.smem_config.elements_per_stage() / line_size;
+        let num_stage_vectors = config.smem_config.elements_per_stage() / vector_size;
         let unit_count = config.loading_planes_count() * config.plane_dim;
-        let num_tasks_per_unit = num_stage_lines / unit_count;
+        let num_tasks_per_unit = num_stage_vectors / unit_count;
 
         let unit_position_base = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
             .load_index(config.input_load_flow)
@@ -124,7 +124,7 @@ impl<RC: RuntimeConfig> PartialLoadingStrategy<RC> for AsyncPartialStridedLoadin
             unit_position_base,
             num_tasks_per_unit,
             unit_count,
-            copy_line_size: line_size,
+            copy_vector_size: vector_size,
         }
     }
 }
@@ -140,7 +140,7 @@ pub struct AsyncPartialStridedJob {
     #[cube(comptime)]
     unit_count: u32,
     #[cube(comptime)]
-    copy_line_size: u32,
+    copy_vector_size: u32,
 }
 
 #[cube]
@@ -160,7 +160,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
         let mut stage = stage.with_buffer_index(this.stage_index);
 
         let unit_position = this.unit_position_base + task_id * this.unit_count;
-        let unit_position_abs = unit_position * this.copy_line_size;
+        let unit_position_abs = unit_position * this.copy_vector_size;
 
         let layout = FullStageLayout::new(config.smem_config);
         let view = global_iter.view();
@@ -186,7 +186,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
             &mut stage,
             stage_offset,
             config,
-            this.copy_line_size,
+            this.copy_vector_size,
         );
     }
 

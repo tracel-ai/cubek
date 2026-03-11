@@ -8,7 +8,7 @@ use crate::components::batch::{BatchMatmul, BatchMatmulFamily, PartitionedBatchM
 use crate::components::global::{self, GlobalConfig, GlobalMatmul, GlobalMatmulFamily};
 use crate::components::stage::StageConfig as _;
 use crate::definition::{
-    AccG, Blueprint as _, CubeMapping, LhsG, MatmulElems, MatmulLineSizes, MatmulTypes, RhsG,
+    AccG, Blueprint as _, CubeMapping, LhsG, MatmulElems, MatmulTypes, MatmulVectorSizes, RhsG,
     TilingBlueprint,
 };
 use crate::launch::MatmulArgs;
@@ -53,13 +53,13 @@ pub(crate) fn matmul_entry<
             blueprint.out_global_layout_config(),
         );
 
-    let line_size_lhs = Args::view_lhs(&state).vector_size();
-    let line_size_rhs = Args::view_rhs(&state).vector_size();
-    let line_size_out = Args::view_out(&mut state).vector_size();
-    let line_sizes = comptime!(MatmulLineSizes {
-        lhs: line_size_lhs,
-        rhs: line_size_rhs,
-        out: line_size_out,
+    let vector_size_lhs = Args::view_lhs(&state).vector_size();
+    let vector_size_rhs = Args::view_rhs(&state).vector_size();
+    let vector_size_out = Args::view_out(&mut state).vector_size();
+    let vector_sizes = comptime!(MatmulVectorSizes {
+        lhs: vector_size_lhs,
+        rhs: vector_size_rhs,
+        out: vector_size_out,
     });
 
     let device_props = comptime::device_properties();
@@ -68,7 +68,7 @@ pub(crate) fn matmul_entry<
             &device_props,
             &blueprint,
             &dtypes,
-            &line_sizes
+            &vector_sizes
         )
     );
 
@@ -91,15 +91,15 @@ pub(crate) fn matmul_entry<
     let stage_acc = config.global_config.stage_config().acc_smem_config();
 
     let define!(StageLhs) = stage_lhs.dtype;
-    let size!(StageLhsSize) = comptime![stage_lhs.line_size as usize];
+    let size!(StageLhsSize) = comptime![stage_lhs.vector_size as usize];
     let define!(RegisterLhs) = dtypes.lhs_register;
 
     let define!(StageRhs) = stage_rhs.dtype;
-    let size!(StageRhsSize) = comptime![stage_rhs.line_size as usize];
+    let size!(StageRhsSize) = comptime![stage_rhs.vector_size as usize];
     let define!(RegisterRhs) = dtypes.rhs_register;
 
     let define!(StageAcc) = stage_acc.dtype;
-    let size!(StageAccSize) = comptime![stage_acc.line_size as usize];
+    let size!(StageAccSize) = comptime![stage_acc.vector_size as usize];
     let define!(RegisterAcc) = dtypes.acc_register;
 
     PartitionedBatchMatmul::<

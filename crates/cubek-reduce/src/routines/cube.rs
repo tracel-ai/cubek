@@ -1,8 +1,9 @@
 use super::{
-    GlobalReduceBlueprint, ReduceBlueprint, ReduceLaunchSettings, ReduceLineSettings, ReduceProblem,
+    GlobalReduceBlueprint, ReduceBlueprint, ReduceLaunchSettings, ReduceProblem,
+    ReduceVectorSettings,
 };
 use crate::{
-    BoundChecks, IdleMode, LineMode, ReduceError,
+    BoundChecks, IdleMode, ReduceError, VectorizationMode,
     launch::{calculate_plane_count_per_cube, support_plane},
     routines::{BlueprintStrategy, CubeBlueprint, Routine, cube_count_safe},
 };
@@ -25,7 +26,7 @@ impl Routine for CubeRoutine {
         &self,
         client: &ComputeClient<R>,
         problem: ReduceProblem,
-        settings: ReduceLineSettings,
+        settings: ReduceVectorSettings,
         strategy: BlueprintStrategy<Self>,
     ) -> Result<(ReduceBlueprint, ReduceLaunchSettings), ReduceError> {
         let address_type = problem.address_type;
@@ -64,7 +65,7 @@ impl Routine for CubeRoutine {
                 }
 
                 let blueprint = ReduceBlueprint {
-                    line_mode: settings.line_mode,
+                    vectorization_mode: settings.vectorization_mode,
                     global: GlobalReduceBlueprint::Cube(blueprint),
                 };
 
@@ -81,7 +82,7 @@ impl Routine for CubeRoutine {
             cube_dim,
             cube_count: num_cubes,
             address_type,
-            line: settings,
+            vector: settings,
         };
 
         Ok((blueprint, launch))
@@ -91,7 +92,7 @@ impl Routine for CubeRoutine {
 fn generate_blueprint<R: Runtime>(
     client: &ComputeClient<R>,
     problem: ReduceProblem,
-    settings: &ReduceLineSettings,
+    settings: &ReduceVectorSettings,
     strategy: CubeStrategy,
 ) -> Result<(ReduceBlueprint, CubeDim, CubeCount), ReduceError> {
     if strategy.use_planes && !support_plane(client) {
@@ -101,15 +102,15 @@ fn generate_blueprint<R: Runtime>(
     let properties = &client.properties().hardware;
     let plane_size = properties.plane_size_max;
     let working_cubes = working_cubes(settings, &problem);
-    let working_units = working_cubes * problem.vector_size.div_ceil(settings.line_size_input);
+    let working_units = working_cubes * problem.vector_size.div_ceil(settings.vector_size_input);
     let plane_count =
         calculate_plane_count_per_cube(working_units, plane_size, properties.num_cpu_cores);
     let cube_dim = CubeDim::new_2d(plane_size, plane_count);
     let cube_size = cube_dim.num_elems();
 
-    let work_size = match settings.line_mode {
-        LineMode::Parallel => problem.vector_size / settings.line_size_input,
-        LineMode::Perpendicular => problem.vector_size,
+    let work_size = match settings.vectorization_mode {
+        VectorizationMode::Parallel => problem.vector_size / settings.vector_size_input,
+        VectorizationMode::Perpendicular => problem.vector_size,
     };
     let bound_checks = match work_size.is_multiple_of(cube_size as usize) {
         true => BoundChecks::None,
@@ -137,7 +138,7 @@ fn generate_blueprint<R: Runtime>(
         false => IdleMode::None,
     };
     let blueprint = ReduceBlueprint {
-        line_mode: settings.line_mode,
+        vectorization_mode: settings.vectorization_mode,
         global: GlobalReduceBlueprint::Cube(CubeBlueprint {
             cube_idle,
             bound_checks,
@@ -149,9 +150,9 @@ fn generate_blueprint<R: Runtime>(
     Ok((blueprint, cube_dim, cube_count))
 }
 
-fn working_cubes(settings: &ReduceLineSettings, problem: &ReduceProblem) -> usize {
-    match settings.line_mode {
-        LineMode::Parallel => problem.vector_count / settings.line_size_output,
-        LineMode::Perpendicular => problem.vector_count / settings.line_size_input,
+fn working_cubes(settings: &ReduceVectorSettings, problem: &ReduceProblem) -> usize {
+    match settings.vectorization_mode {
+        VectorizationMode::Parallel => problem.vector_count / settings.vector_size_output,
+        VectorizationMode::Perpendicular => problem.vector_count / settings.vector_size_input,
     }
 }

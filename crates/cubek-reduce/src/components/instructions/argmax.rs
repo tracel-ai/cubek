@@ -12,7 +12,7 @@ pub struct ArgMax {}
 #[cube]
 impl ArgMax {
     /// Compare two pairs of items and coordinates and return a new pair
-    /// where each element in the lines is the maximal item with its coordinate.
+    /// where each element in the vectors is the maximal item with its coordinate.
     /// In case of equality, the lowest coordinate is selected.
     pub fn choose_argmax<T: Numeric, N: Size>(
         items0: Vector<T, N>,
@@ -51,14 +51,11 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMax {
     }
 
     fn null_input(_this: &Self) -> Vector<P::EI, P::SI> {
-        Vector::empty().fill(P::EI::min_value())
+        Vector::new(P::EI::min_value())
     }
 
     fn null_accumulator(_this: &Self) -> Self::AccumulatorItem {
-        (
-            Vector::empty().fill(P::EA::min_value()),
-            Vector::empty().fill(u32::MAX),
-        )
+        (Vector::new(P::EA::min_value()), Vector::new(u32::MAX))
     }
 
     fn assign_accumulator(
@@ -121,17 +118,17 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMax {
         Self::choose_argmax(lhs.0, lhs.1, rhs.0, rhs.1)
     }
 
-    fn merge_line<Out: Numeric>(
+    fn merge_vector<Out: Numeric>(
         _this: &Self,
         accumulator: Self::AccumulatorItem,
         _shape_axis_reduce: usize,
     ) -> Out {
-        let line_size = accumulator.0.size().comptime();
-        if line_size > 1 {
+        let vector_size = accumulator.0.size().comptime();
+        if vector_size > 1 {
             let mut max = P::EA::min_value();
             let mut coordinate = u32::MAX.runtime();
             #[unroll]
-            for k in 0..line_size {
+            for k in 0..vector_size {
                 let acc_element = accumulator.0[k];
                 let acc_coordinate = accumulator.1[k];
                 if acc_element == max && acc_coordinate < coordinate {

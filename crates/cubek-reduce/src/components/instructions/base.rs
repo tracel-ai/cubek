@@ -30,12 +30,12 @@ pub trait ReduceInstruction<P: ReducePrecision>:
     fn requirements(this: &Self) -> ReduceRequirements;
 
     /// The intermediate state into which we accumulate new input elements.
-    /// This is most likely a `Vector<T>` or a struct or tuple of lines.
+    /// This is most likely a `Vector<T>` or a struct or tuple of vectors.
     type AccumulatorItem: CubeType;
 
     /// When multiple agents are collaborating to reduce a single slice,
     /// we need a share accumulator to store multiple `AccumulatorItem`.
-    /// This is most likely a `SharedMemory<Vector<T>>` or a struct or tuple of lined shared memories.
+    /// This is most likely a `SharedMemory<Vector<T>>` or a struct or tuple of vectorized shared memories.
     type SharedAccumulator: SharedAccumulator<Item = Self::AccumulatorItem>;
 
     fn from_config(#[comptime] config: Self::Config) -> Self;
@@ -79,7 +79,7 @@ pub trait ReduceInstruction<P: ReducePrecision>:
     ) -> Self::AccumulatorItem;
 
     /// Reduce all elements of the accumulator into a single output element of type `Out`.
-    fn merge_line<Out: Numeric>(
+    fn merge_vector<Out: Numeric>(
         this: &Self,
         accumulator: Self::AccumulatorItem,
         shape_axis_reduce: usize,

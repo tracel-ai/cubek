@@ -8,7 +8,7 @@ use crate::components::{
 };
 use crate::definition::TilingBlueprint;
 use crate::definition::{MatmulAvailabilityError, MatmulElems};
-use crate::definition::{MatmulLineSizes, MatmulSetupError};
+use crate::definition::{MatmulSetupError, MatmulVectorSizes};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::{features::TypeUsage, ir::DeviceProperties};
@@ -45,7 +45,7 @@ where
         _device_props: &DeviceProperties,
         blueprint: &TilingBlueprint,
         _dtypes: &MatmulElems,
-        _line_sizes: &MatmulLineSizes,
+        _vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
         Ok(RegisterMatmulConfig::from_shared_tile_config(
             blueprint.lhs_layout,
@@ -69,7 +69,7 @@ where
         client: &ComputeClient<R>,
         blueprint: &TilingBlueprint,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
         check_availability(client, dtypes)?;
 
@@ -77,22 +77,22 @@ where
         let n = blueprint.tiling_scheme.tile_size.n();
         let k = blueprint.tiling_scheme.tile_size.k();
 
-        let lhs = line_sizes.lhs as u32;
-        let rhs = line_sizes.rhs as u32;
-        let out = line_sizes.out as u32;
+        let lhs = vector_sizes.lhs as u32;
+        let rhs = vector_sizes.rhs as u32;
+        let out = vector_sizes.out as u32;
 
         match blueprint.lhs_layout {
             MatrixLayout::RowMajor => {
                 if !k.is_multiple_of(lhs) {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                        "Tile shape in lined axis k({k:?}) should be divisible by line size lhs({lhs:?})"
+                        "Tile shape in vectorized axis k({k:?}) should be divisible by vector size lhs({lhs:?})"
                     ))));
                 }
             }
             MatrixLayout::ColMajor => {
                 if !m.is_multiple_of(lhs) {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                        "Tile shape in lined axis m({m:?}) should be divisible by line size lhs({lhs:?})"
+                        "Tile shape in vectorized axis m({m:?}) should be divisible by vector size lhs({lhs:?})"
                     ))));
                 }
             }
@@ -101,14 +101,14 @@ where
             MatrixLayout::RowMajor => {
                 if !n.is_multiple_of(rhs) {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                        "Tile shape in lined axis n({n:?}) should be divisible by line size rhs({rhs:?})"
+                        "Tile shape in vectorized axis n({n:?}) should be divisible by vector size rhs({rhs:?})"
                     ))));
                 }
             }
             MatrixLayout::ColMajor => {
                 if !k.is_multiple_of(rhs) {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                        "Tile shape in lined axis k({k:?}) should be divisible by line size rhs({rhs:?})"
+                        "Tile shape in vectorized axis k({k:?}) should be divisible by vector size rhs({rhs:?})"
                     ))));
                 }
             }
@@ -116,7 +116,7 @@ where
 
         if !n.is_multiple_of(out) {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "Tile shape in lined axis n({n:?}) should be divisible by line size out({out:?})"
+                "Tile shape in vectorized axis n({n:?}) should be divisible by vector size out({out:?})"
             ))));
         }
 

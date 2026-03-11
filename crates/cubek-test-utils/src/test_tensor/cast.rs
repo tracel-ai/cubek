@@ -44,14 +44,14 @@ pub fn copy_casted(
 
     let num_elems: usize = original.shape().num_elements();
 
-    let line_size = tensor_vector_size_parallel(
+    let vector_size = tensor_vector_size_parallel(
         client.io_optimized_vector_sizes(target_type.size()),
         &shape![num_elems],
         &strides![1],
         0,
     );
 
-    let working_units: u32 = num_elems as u32 / line_size as u32;
+    let working_units: u32 = num_elems as u32 / vector_size as u32;
     let cube_dim = CubeDim::new(client, working_units as usize);
     let cube_count = working_units.div_ceil(cube_dim.num_elems());
 
@@ -67,7 +67,7 @@ pub fn copy_casted(
         client,
         CubeCount::Static(cube_count, 1, 1),
         cube_dim,
-        line_size,
+        vector_size,
         original.into_arg(),
         out.clone().into_arg(),
         [dtype, target_type],

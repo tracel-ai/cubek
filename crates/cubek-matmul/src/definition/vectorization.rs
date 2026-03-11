@@ -14,27 +14,27 @@ use crate::definition::error::MatmulSetupError;
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
 /// Vector size used for each tensor in global memory accesses.
 /// Represents the number of elements processed per SIMD load/store.
-pub struct MatmulLineSizes {
+pub struct MatmulVectorSizes {
     pub lhs: VectorSize,
     pub rhs: VectorSize,
     pub out: VectorSize,
 }
 
 #[derive(Clone, Debug)]
-/// Candidate line sizes supported for each tensor.
+/// Candidate vector sizes supported for each tensor.
 ///
 /// These lists begin with compiler-supported sizes and are progressively
 /// filtered based on problem shape divisibility and hardware constraints.
-pub struct AvailableLineSizes {
+pub struct AvailableVectorSizes {
     pub lhs: Vec<VectorSize>,
     pub rhs: Vec<VectorSize>,
     pub out: Vec<VectorSize>,
 }
 
-impl AvailableLineSizes {
+impl AvailableVectorSizes {
     pub fn from_type_size_tma<R: Runtime>(client: &ComputeClient<R>, elem_out: usize) -> Self {
-        // TMA requires line size 1 for inputs
-        AvailableLineSizes {
+        // TMA requires vector size 1 for inputs
+        AvailableVectorSizes {
             lhs: vec![1],
             rhs: vec![1],
             out: client.io_optimized_vector_sizes(elem_out).collect(),
@@ -47,14 +47,14 @@ impl AvailableLineSizes {
         elem_rhs: usize,
         elem_out: usize,
     ) -> Self {
-        AvailableLineSizes {
+        AvailableVectorSizes {
             lhs: client.io_optimized_vector_sizes(elem_lhs).collect(),
             rhs: client.io_optimized_vector_sizes(elem_rhs).collect(),
             out: client.io_optimized_vector_sizes(elem_out).collect(),
         }
     }
 
-    /// Filter available line sizes considering tensor shapes and strides for Lhs
+    /// Filter available vector sizes considering tensor shapes and strides for Lhs
     pub fn filter_lhs_with_tensor(
         self,
         strides: &Strides,
@@ -76,7 +76,7 @@ impl AvailableLineSizes {
         self.filter_lhs(move |x| *x == target)
     }
 
-    /// Filter available line sizes considering tensor shapes and strides for Rhs
+    /// Filter available vector sizes considering tensor shapes and strides for Rhs
     pub fn filter_rhs_with_tensor(
         self,
         strides: &Strides,
@@ -98,7 +98,7 @@ impl AvailableLineSizes {
         self.filter_rhs(move |x| *x == target)
     }
 
-    /// Filter available line sizes considering tensor shapes and strides for output
+    /// Filter available vector sizes considering tensor shapes and strides for output
     pub fn filter_out_with_tensor(self, strides: &Strides, shape: &Shape) -> Self {
         let rank = strides.len();
 
@@ -108,7 +108,7 @@ impl AvailableLineSizes {
         self.filter_out(move |x| *x == target)
     }
 
-    /// Filter available line sizes for Lhs
+    /// Filter available vector sizes for Lhs
     pub fn filter_lhs<F>(self, pred: F) -> Self
     where
         F: FnMut(&usize) -> bool,
@@ -120,7 +120,7 @@ impl AvailableLineSizes {
         }
     }
 
-    /// Filter available line sizes for Rhs
+    /// Filter available vector sizes for Rhs
     pub fn filter_rhs<F>(self, pred: F) -> Self
     where
         F: FnMut(&usize) -> bool,
@@ -132,7 +132,7 @@ impl AvailableLineSizes {
         }
     }
 
-    /// Filter available line sizes for output
+    /// Filter available vector sizes for output
     pub fn filter_out<F>(self, pred: F) -> Self
     where
         F: FnMut(&usize) -> bool,
@@ -144,15 +144,15 @@ impl AvailableLineSizes {
         }
     }
 
-    /// Pick the largest remaining line size for each tensor
-    pub fn pick_max(self) -> Result<MatmulLineSizes, MatmulSetupError> {
+    /// Pick the largest remaining vector size for each tensor
+    pub fn pick_max(self) -> Result<MatmulVectorSizes, MatmulSetupError> {
         let pick = |v: Vec<usize>| {
-            v.into_iter().max().ok_or(MatmulSetupError::LineSize(
+            v.into_iter().max().ok_or(MatmulSetupError::Vectorization(
                 VectorizationError::NoValidVectorization,
             ))
         };
 
-        Ok(MatmulLineSizes {
+        Ok(MatmulVectorSizes {
             lhs: pick(self.lhs)?,
             rhs: pick(self.rhs)?,
             out: pick(self.out)?,

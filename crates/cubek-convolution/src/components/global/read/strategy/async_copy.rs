@@ -24,20 +24,20 @@ pub(crate) fn async_copy_from<EG: Scalar, EGS: Size, ES: Numeric, ESS: Size, T: 
     runtime_args: &RuntimeArgs,
     k_offset: u32,
     #[comptime] config: GlobalReaderConfig,
-    #[comptime] copy_line_size: u32,
+    #[comptime] copy_vector_size: u32,
 ) {
     let operation = runtime_args.operation.comptime();
     let channels = runtime_args.channels;
 
     let mut stage_slice = stage.as_slice_mut::<ESS>();
     let slice_size = match config.smem_config.matrix_layout {
-        MatrixLayout::RowMajor => (1u32, copy_line_size),
-        MatrixLayout::ColMajor => (copy_line_size, 1u32),
+        MatrixLayout::RowMajor => (1u32, copy_vector_size),
+        MatrixLayout::ColMajor => (copy_vector_size, 1u32),
     }
     .runtime();
 
-    let mut slice_len_global = copy_line_size.runtime();
-    let slice_len_stage = copy_line_size / stage_slice.vector_size() as u32;
+    let mut slice_len_global = copy_vector_size.runtime();
+    let slice_len_stage = copy_vector_size / stage_slice.vector_size() as u32;
 
     match (config.stage_ident, operation) {
         (StageIdent::Lhs, ConvolutionOperation::Forward)
@@ -122,6 +122,6 @@ pub(crate) fn async_copy_from<EG: Scalar, EGS: Size, ES: Numeric, ESS: Size, T: 
     copy_async_checked(
         &global_slice.slice(0, slice_len_global as usize),
         &mut stage_slice.downcast(),
-        copy_line_size,
+        copy_vector_size,
     );
 }

@@ -6,7 +6,7 @@ use cubecl::{features::Plane, prelude::*};
 #[derive(Debug, Clone)]
 pub struct ReduceStrategy {
     pub routine: RoutineStrategy,
-    pub line_size: LineSizeStrategy,
+    pub vectorization: VectorizationStrategy,
 }
 
 #[derive(Debug, Clone)]
@@ -20,9 +20,9 @@ pub enum RoutineStrategy {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct LineSizeStrategy {
+pub struct VectorizationStrategy {
     /// When the vectorization is parallel, enable vectorization of the output so that each
-    /// unit can perform N reductions, where N is the output `line_size`.
+    /// unit can perform N reductions, where N is the output `vector_size`.
     pub parallel_output_vectorization: bool,
 }
 

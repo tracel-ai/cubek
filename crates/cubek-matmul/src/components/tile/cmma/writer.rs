@@ -12,7 +12,7 @@ impl CmmaStageWriter {
         fragment: &cmma::Matrix<E>,
     ) {
         let layout = as_cmma_layout(tile.layout);
-        let stride = tile.unlined_stride();
+        let stride = tile.unvectorized_stride();
         let mut slice = tile.as_slice_mut();
         cmma::store(&mut slice, fragment, stride, layout);
     }

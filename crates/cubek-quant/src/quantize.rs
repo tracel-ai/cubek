@@ -54,7 +54,7 @@ fn quantize_packed_value<F: Float, N: Size, FS: CubePrimitive, QS: Int>(
     pack_q::<F, N, QS>(value, scheme.value)
 }
 
-/// Pack a line of quantized floating-point values into a single integer (the stored quantization type),
+/// Pack a vector of quantized floating-point values into a single integer (the stored quantization type),
 /// according to the specified quantization input type.
 #[allow(clippy::explicit_counter_loop)]
 #[cube]
@@ -152,7 +152,7 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric>(
             scheme,
         );
     } else {
-        // Input line size = 1
+        // Input vector size = 1
         let size!(NQ) = num_quants;
         let mut values = Vector::<F, NQ>::empty();
         #[unroll]
@@ -231,13 +231,13 @@ fn quantize_native<R: Runtime>(
     scale_dtype: ElemType,
 ) -> Result<(), LaunchError> {
     let num_elems: usize = input.shape.iter().product();
-    let line_size = tensor_vector_size_parallel(
+    let vector_size = tensor_vector_size_parallel(
         client.io_optimized_vector_sizes(input_dtype.size()),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,
     );
-    let working_units = num_elems / line_size as usize;
+    let working_units = num_elems / vector_size as usize;
     let cube_dim = CubeDim::new(client, working_units);
     let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
     let (range_min, range_max) = scheme.value.range();
@@ -249,8 +249,8 @@ fn quantize_native<R: Runtime>(
             store: QuantStore::Native,
             ..
         } => {
-            // We could use line_size = block_size if it's in the supported line sizes.. but let's keep it simple
-            check_block_size_compat(scheme, line_size as usize);
+            // We could use vector_size = block_size if it's in the supported vector sizes.. but let's keep it simple
+            check_block_size_compat(scheme, vector_size as usize);
             let quant_type = ElemType::from_quant_value(scheme.value);
 
             let address_type = input
@@ -266,13 +266,13 @@ fn quantize_native<R: Runtime>(
                     cube_count,
                     cube_dim,
                     address_type,
-                    line_size,
-                    linear_view(client, input, line_size),
+                    vector_size,
+                    linear_view(client, input, vector_size),
                     // scale is computed based on input float dtype, but stored based on qparams precision
                     scales_view(client, output.clone(), scale, 1, scheme),
                     InputScalar::new(range_min, input_dtype),
                     InputScalar::new(range_max, input_dtype),
-                    linear_view(client, output.clone(), line_size),
+                    linear_view(client, output.clone(), vector_size),
                     scales_view(client, output, out_scale, 1, scheme),
                     scales_layout,
                     [input_dtype.into(), scale_dtype.into(), quant_type.into()],
@@ -323,9 +323,9 @@ fn quantize_packed<R: Runtime>(
     };
 
     // Elements to pack are strided, require scalar reads + manual gather
-    let line_size = if can_vectorize { num_quants } else { 1 };
+    let vector_size = if can_vectorize { num_quants } else { 1 };
 
-    let working_units = num_elems.div_ceil(line_size);
+    let working_units = num_elems.div_ceil(vector_size);
     let cube_dim = CubeDim::new(client, working_units);
     let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
     let (range_min, range_max) = scheme.value.range();
@@ -345,8 +345,8 @@ fn quantize_packed<R: Runtime>(
             cube_count,
             cube_dim,
             address_type,
-            line_size,
-            linear_view(client, input, line_size),
+            vector_size,
+            linear_view(client, input, vector_size),
             // scale is computed based on input float dtype, but stored based on qparams precision
             scales_view(client, output.clone(), scale, 1, scheme),
             InputScalar::new(range_min, dtype_input),

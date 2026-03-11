@@ -15,8 +15,8 @@ use crate::{
         global::GlobalAttentionFamily,
     },
     definition::{
-        AttentionBlueprint, AttentionElems, AttentionLineSizes, AttentionPrecision,
-        AttentionSetupError, CubeCountInputArgs, InputRuntimeArg, OutputRuntimeArg,
+        AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError,
+        AttentionVectorSizes, CubeCountInputArgs, InputRuntimeArg, OutputRuntimeArg,
     },
     launch::AttentionArgs,
 };
@@ -39,7 +39,7 @@ impl<GA: GlobalAttentionFamily> BatchAttentionFamily for SimpleBatchAttentionFam
         output: OutputRuntimeArg<AA, R>,
         cube_count_input: CubeCountInputArgs<R>,
         dtypes: &AttentionElems,
-        line_sizes: &AttentionLineSizes,
+        vector_sizes: &AttentionVectorSizes,
         blueprint: AttentionBlueprint,
     ) -> Result<(), LaunchError> {
         unsafe {
@@ -54,7 +54,7 @@ impl<GA: GlobalAttentionFamily> BatchAttentionFamily for SimpleBatchAttentionFam
                 blueprint,
                 dtypes.clone(),
                 dtypes.into(),
-                line_sizes.into(),
+                vector_sizes.into(),
             )
         };
 

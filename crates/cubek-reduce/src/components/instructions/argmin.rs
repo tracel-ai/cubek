@@ -17,7 +17,7 @@ impl ReduceFamily for ArgMin {
 #[cube]
 impl ArgMin {
     /// Compare two pairs of items and coordinates and return a new pair
-    /// where each element in the lines is the minimal item with its coordinate.
+    /// where each element in the vectors is the minimal item with its coordinate.
     /// In case of equality, the lowest coordinate is selected.
     pub fn choose_argmin<T: Numeric, N: Size>(
         items0: Vector<T, N>,
@@ -120,18 +120,18 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMin {
         Self::choose_argmin(lhs.0, lhs.1, rhs.0, rhs.1)
     }
 
-    fn merge_line<Out: Numeric>(
+    fn merge_vector<Out: Numeric>(
         _this: &Self,
         accumulator: Self::AccumulatorItem,
         _shape_axis_reduce: usize,
     ) -> Out {
-        let line_size = accumulator.0.size().comptime();
-        if line_size > 1 {
+        let vector_size = accumulator.0.size().comptime();
+        if vector_size > 1 {
             let mut min = P::EA::max_value();
             let mut coordinate = u32::MAX.runtime();
 
             #[unroll]
-            for k in 0..line_size {
+            for k in 0..vector_size {
                 let acc_element = accumulator.0[k];
                 let acc_coordinate = accumulator.1[k];
                 // TODO replace with select
