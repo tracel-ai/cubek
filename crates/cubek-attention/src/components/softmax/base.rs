@@ -107,8 +107,18 @@ pub trait Accumulator: Send + Sync + 'static + Sized {
     type Tile: CubeType;
     type Workspace: CubeType;
 
-    fn scale_mul(tile: &mut Self::Tile, column: &Self::ScaleColumn);
-    fn scale_div(tile: &mut Self::Tile, running_state: &Self::RunningState);
+    fn scale_mul(
+        tile: &mut Self::Tile,
+        column: &Self::ScaleColumn,
+        workspace: &mut Self::Workspace,
+        #[comptime] config: Self::Config,
+    );
+    fn scale_div(
+        tile: &mut Self::Tile,
+        running_state: &Self::RunningState,
+        workspace: &mut Self::Workspace,
+        #[comptime] config: Self::Config,
+    );
 
     fn init_workspace(#[comptime] config: Self::Config) -> Self::Workspace;
 
@@ -172,6 +182,6 @@ impl SoftmaxConfig for SoftmaxProcedureConfig {
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct AccumulatorConfig {}
-
-impl AccumulatorConfig {}
+pub struct AccumulatorProcedureConfig {
+    pub tile_size: AttentionTileSize,
+}

@@ -2,7 +2,7 @@ use cubecl;
 use cubecl::prelude::*;
 
 use crate::components::softmax::Accumulator;
-use crate::components::softmax::AccumulatorConfig;
+use crate::components::softmax::AccumulatorProcedureConfig;
 
 use crate::definition::AttentionPartitionSize;
 

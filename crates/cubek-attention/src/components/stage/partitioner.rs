@@ -6,7 +6,7 @@ use crate::components::softmax::Reducer;
 
 #[cube]
 /// Defines how the stage is partitioned among compute primitives (e.g., units or planes).
-/// Controls global writeback and and compute indexing.
+/// Controls global writeback and compute indexing.
 pub trait AttentionPartitioner: Send + Sync + 'static {
     type Reducer: Reducer;
     type Writer<ES: Float, EG: Float>: AttentionWriter<ES, EG>;

@@ -7,21 +7,15 @@ use cubek_std::tile::StridedTile;
 use crate::components::softmax::RowMax;
 use crate::components::softmax::RowSum;
 use crate::components::softmax::SoftmaxProcedureConfig;
-use crate::components::softmax::TileAttention;
 use crate::components::softmax::base::Softmax;
 use crate::components::stage::AttentionPartitioner;
 use crate::components::tile::RowWise;
 use crate::components::tile::SoftmaxRowwise;
 use crate::components::tile::accelerated_blackbox::LocalTile;
 use crate::components::tile::accelerated_blackbox::LocalTileLayout;
-use crate::components::tile::{SoftmaxPipeline, SoftmaxPipelineExpand};
 
 use crate::components::stage::MaskTile;
 use crate::components::tile::SoftmaxRowwiseExpand;
-
-use crate::definition::AttentionPrecision;
-use crate::definition::attention_types::SM;
-use crate::definition::attention_types::SML;
 
 #[derive(CubeType)]
 pub struct SoftmaxProcedure<P: AttentionPartitioner, Lhs: Float> {
