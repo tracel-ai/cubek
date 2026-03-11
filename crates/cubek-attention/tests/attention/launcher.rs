@@ -88,7 +88,7 @@ pub fn test_launch(
     let problem_for_launch = problem.clone();
     let out_handle_for_launch = out_handle.clone();
 
-    let result = launch_ref(
+    launch_ref(
         strategy,
         &client,
         query_handle.binding(),
@@ -128,7 +128,7 @@ pub fn test_launch(
         out_handle,
         AttentionElems::from_global_types(
             &problem.global_dtypes,
-            half::f16::as_type_native_unchecked(),
+            half::f16::as_type_native_unchecked().storage_type(),
             &problem.options.accumulator_precision,
         ),
     )

@@ -66,9 +66,9 @@ pub fn print_mma_layout<AB: CubeElement + Numeric, CD: CubeElement + Numeric>(
     }
 
     let (rows, cols, dtype) = match ident {
-        MatrixIdent::A => (m, k, AB::as_type_native_unchecked()),
-        MatrixIdent::B => (k, n, AB::as_type_native_unchecked()),
-        MatrixIdent::Accumulator => (m, n, CD::as_type_native_unchecked()),
+        MatrixIdent::A => (m, k, AB::as_type_native_unchecked().storage_type()),
+        MatrixIdent::B => (k, n, AB::as_type_native_unchecked().storage_type()),
+        MatrixIdent::Accumulator => (m, n, CD::as_type_native_unchecked().storage_type()),
     };
 
     let lane_tensor = TestInput::new(
@@ -104,9 +104,9 @@ pub fn print_mma_layout<AB: CubeElement + Numeric, CD: CubeElement + Numeric>(
                 &client,
                 CubeCount::Static(1, 1, 1),
                 CubeDim::new_1d(client.properties().hardware.plane_size_max),
-                lane_tensor.clone().binding().into_tensor_arg(1),
-                vector_tensor.clone().binding().into_tensor_arg(1),
-                within_vector_tensor.clone().binding().into_tensor_arg(1),
+                lane_tensor.clone().binding().into_tensor_arg(),
+                vector_tensor.clone().binding().into_tensor_arg(),
+                within_vector_tensor.clone().binding().into_tensor_arg(),
                 m,
                 n,
                 k,
@@ -118,9 +118,9 @@ pub fn print_mma_layout<AB: CubeElement + Numeric, CD: CubeElement + Numeric>(
                 &client,
                 CubeCount::Static(1, 1, 1),
                 CubeDim::new_1d(client.properties().hardware.plane_size_max),
-                lane_tensor.clone().binding().into_tensor_arg(1),
-                vector_tensor.clone().binding().into_tensor_arg(1),
-                within_vector_tensor.clone().binding().into_tensor_arg(1),
+                lane_tensor.clone().binding().into_tensor_arg(),
+                vector_tensor.clone().binding().into_tensor_arg(),
+                within_vector_tensor.clone().binding().into_tensor_arg(),
                 m,
                 n,
                 k,
