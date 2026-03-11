@@ -1,8 +1,8 @@
 use cubecl::{
-    LineSizeError, Runtime,
+    Runtime, VectorizationError,
     client::ComputeClient,
     ir::VectorSize,
-    tensor_line_size_parallel,
+    tensor_vector_size_parallel,
     zspace::{Shape, Strides},
 };
 use cubek_std::MatrixLayout;
@@ -37,7 +37,7 @@ impl AvailableLineSizes {
         AvailableLineSizes {
             lhs: vec![1],
             rhs: vec![1],
-            out: client.io_optimized_line_sizes(elem_out).collect(),
+            out: client.io_optimized_vector_sizes(elem_out).collect(),
         }
     }
 
@@ -48,9 +48,9 @@ impl AvailableLineSizes {
         elem_out: usize,
     ) -> Self {
         AvailableLineSizes {
-            lhs: client.io_optimized_line_sizes(elem_lhs).collect(),
-            rhs: client.io_optimized_line_sizes(elem_rhs).collect(),
-            out: client.io_optimized_line_sizes(elem_out).collect(),
+            lhs: client.io_optimized_vector_sizes(elem_lhs).collect(),
+            rhs: client.io_optimized_vector_sizes(elem_rhs).collect(),
+            out: client.io_optimized_vector_sizes(elem_out).collect(),
         }
     }
 
@@ -63,7 +63,7 @@ impl AvailableLineSizes {
     ) -> Self {
         let rank = strides.len();
 
-        let target = tensor_line_size_parallel(
+        let target = tensor_vector_size_parallel(
             self.lhs.iter().copied(),
             shape,
             strides,
@@ -85,7 +85,7 @@ impl AvailableLineSizes {
     ) -> Self {
         let rank = strides.len();
 
-        let target = tensor_line_size_parallel(
+        let target = tensor_vector_size_parallel(
             self.rhs.iter().copied(),
             shape,
             strides,
@@ -102,7 +102,8 @@ impl AvailableLineSizes {
     pub fn filter_out_with_tensor(self, strides: &Strides, shape: &Shape) -> Self {
         let rank = strides.len();
 
-        let target = tensor_line_size_parallel(self.out.iter().copied(), shape, strides, rank - 1);
+        let target =
+            tensor_vector_size_parallel(self.out.iter().copied(), shape, strides, rank - 1);
 
         self.filter_out(move |x| *x == target)
     }
@@ -146,9 +147,9 @@ impl AvailableLineSizes {
     /// Pick the largest remaining line size for each tensor
     pub fn pick_max(self) -> Result<MatmulLineSizes, MatmulSetupError> {
         let pick = |v: Vec<usize>| {
-            v.into_iter()
-                .max()
-                .ok_or(MatmulSetupError::LineSize(LineSizeError::NoValidLineSize))
+            v.into_iter().max().ok_or(MatmulSetupError::LineSize(
+                VectorizationError::NoValidVectorization,
+            ))
         };
 
         Ok(MatmulLineSizes {

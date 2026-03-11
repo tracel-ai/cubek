@@ -5,7 +5,7 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::into_contiguous;
 use cubecl::std::tensor::layout::linear::LinearView;
 use cubecl::std::tensor::{View, layout::linear::linear_view};
-use cubecl::tensor_line_size_parallel;
+use cubecl::tensor_vector_size_parallel;
 
 use crate::{
     layout::{ScalesLayout, scales_view},
@@ -231,8 +231,8 @@ fn quantize_native<R: Runtime>(
     scale_dtype: ElemType,
 ) -> Result<(), LaunchError> {
     let num_elems: usize = input.shape.iter().product();
-    let line_size = tensor_line_size_parallel(
-        client.io_optimized_line_sizes(input_dtype.size()),
+    let line_size = tensor_vector_size_parallel(
+        client.io_optimized_vector_sizes(input_dtype.size()),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,

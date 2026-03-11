@@ -38,9 +38,9 @@ pub struct ManualMatrixLayout<MI: MmaIdent<MT>, MT: MmaTypes> {
     #[cube(comptime)]
     _phantom: PhantomData<MI>,
     #[cube(comptime)]
-    lines_per_lane: usize,
+    vectors_per_lane: usize,
     #[cube(comptime)]
-    line_size: usize,
+    vector_size: usize,
     #[cube(comptime)]
     pub(crate) num_rows: u32,
     #[cube(comptime)]
@@ -109,9 +109,9 @@ impl<MI: MmaIdent<MT>, MT: MmaTypes> ManualMatrixLayout<MI, MT> {
         #[comptime] mma_io_config: MmaIOConfig,
     ) -> ManualMatrixLayout<MI, MT> {
         let mma_def = mma_definition::<MT>(tile_size);
-        let lines_per_lane = mma_def.lines_per_lane(MI::IDENT);
-        let line_size = mma_def.line_size(MI::IDENT);
-        register_line_size::<MI::Size>(line_size);
+        let vectors_per_lane = mma_def.vectors_per_lane(MI::IDENT);
+        let vector_size = mma_def.vector_size(MI::IDENT);
+        register_line_size::<MI::Size>(vector_size);
 
         // Assuming specific layout, TODO generalize
         let num_rows = 2u32;
@@ -121,8 +121,8 @@ impl<MI: MmaIdent<MT>, MT: MmaTypes> ManualMatrixLayout<MI, MT> {
             tile_size,
             mma_definition: mma_def,
             _phantom: PhantomData,
-            lines_per_lane,
-            line_size,
+            vectors_per_lane,
+            vector_size,
             num_rows,
             num_cols,
             mma_io_config,
@@ -176,7 +176,7 @@ impl<MI: MmaIdent<MT>, MT: MmaTypes> ManualMatrixLayout<MI, MT> {
 
     pub fn create_matrix(self) -> ManualMatrix<MI, MT> {
         ManualMatrix::<MI, MT> {
-            fragment: Array::new(self.lines_per_lane),
+            fragment: Array::new(self.vectors_per_lane),
             layout: self,
         }
     }
@@ -203,7 +203,7 @@ pub struct ManualMatrix<MI: MmaIdent<MT>, MT: MmaTypes> {
 impl<MI: MmaIdent<MT>, MT: MmaTypes> ManualMatrix<MI, MT> {
     pub fn zero(&mut self) {
         #[unroll]
-        for i in 0..self.layout.lines_per_lane {
+        for i in 0..self.layout.vectors_per_lane {
             self.fragment[i] = Vector::zero();
         }
     }
@@ -236,14 +236,14 @@ impl<MI: MmaIdent<MT>, MT: MmaTypes> ManualMatrix<MI, MT> {
     }
 
     pub fn get_nth(&self, nth: Coords1d) -> MI::Elem {
-        let line = nth / self.layout.line_size;
-        let within_line = nth % self.layout.line_size;
+        let line = nth / self.layout.vector_size;
+        let within_line = nth % self.layout.vector_size;
         self.fragment[line][within_line]
     }
 
     pub fn set_nth<E2: Numeric>(&mut self, nth: Coords1d, val: E2) {
-        let line = nth / self.layout.line_size;
-        let within_line = nth % self.layout.line_size;
+        let line = nth / self.layout.vector_size;
+        let within_line = nth % self.layout.vector_size;
         self.fragment[line][within_line] = MI::Elem::cast_from(val);
     }
 }

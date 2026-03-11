@@ -113,7 +113,7 @@ impl<Out: NumericLine> ParallelWriter<Out> {
     }
 
     pub fn write_count(&self) -> comptime_type!(VectorSize) {
-        self.buffer.line_size()
+        self.buffer.vector_size()
     }
 
     pub fn commit_required(&self) -> comptime_type!(bool) {

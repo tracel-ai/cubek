@@ -176,12 +176,12 @@ impl<ES: Numeric, N: Size, IO: SliceVisibility> StridedTile<ES, N, IO> {
             let stage_line_size = self.stage.vector_size();
 
             if line_size == self.stage.vector_size() {
-                return self.__expand_with_stage_line_size_method(scope);
+                return self.__expand_with_stage_vector_size_method(scope);
             }
 
             let current = stage_line_size;
             let mut out: StridedTileExpand<ES, N2, IO> =
-                self.clone().__expand_with_stage_line_size_method(scope);
+                self.clone().__expand_with_stage_vector_size_method(scope);
 
             if current < line_size {
                 let ratio = (line_size / current) as u32;
@@ -211,9 +211,9 @@ impl<ES: Numeric, N: Size, IO: SliceVisibility> StridedTile<ES, N, IO> {
     /// # Safety
     /// Must not be used without further metadata adjustments
     #[allow(unused)]
-    unsafe fn with_stage_line_size<N2: Size>(self) -> StridedTile<ES, N2, IO> {
+    unsafe fn with_stage_vector_size<N2: Size>(self) -> StridedTile<ES, N2, IO> {
         StridedTile::<ES, N2, IO> {
-            stage: self.stage.with_line_size::<N2>(),
+            stage: self.stage.with_vector_size::<N2>(),
             start: self.start,
             end: self.end,
             stride: self.stride,

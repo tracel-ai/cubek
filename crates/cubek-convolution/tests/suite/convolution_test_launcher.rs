@@ -78,7 +78,7 @@ where
     let line_sizes = AvailableLineSizes {
         lhs: vec![1],
         rhs: vec![1],
-        out: client.io_optimized_line_sizes(size_of::<P::EG>()).collect(),
+        out: client.io_optimized_vector_sizes(size_of::<P::EG>()).collect(),
     }
     .filter_lhs_with_tensor(&lhs.strides, &lhs.shape, problem.lhs_layout)
     .filter_rhs_with_tensor(&rhs.strides, &rhs.shape, problem.rhs_layout)

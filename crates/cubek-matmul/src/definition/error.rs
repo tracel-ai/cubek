@@ -1,4 +1,4 @@
-use cubecl::{CubeCount, CubeDim, LineSizeError, ir::StorageType, server::LaunchError};
+use cubecl::{CubeCount, CubeDim, VectorizationError, ir::StorageType, server::LaunchError};
 use cubek_std::{InvalidConfigError, MatrixLayout, TileSize};
 use std::fmt::{Debug, Display};
 
@@ -11,7 +11,7 @@ pub enum MatmulSetupError {
     InvalidConfig(InvalidConfigError),
 
     /// No compatible line size could be found for the given constraints.
-    LineSize(LineSizeError),
+    LineSize(VectorizationError),
 
     /// An error happened during launch.
     Launch(LaunchError),
@@ -82,8 +82,8 @@ impl From<InvalidConfigError> for MatmulSetupError {
     }
 }
 
-impl From<LineSizeError> for MatmulSetupError {
-    fn from(value: LineSizeError) -> Self {
+impl From<VectorizationError> for MatmulSetupError {
+    fn from(value: VectorizationError) -> Self {
         Self::LineSize(value)
     }
 }

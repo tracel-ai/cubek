@@ -61,7 +61,7 @@ where
     ) {
         let def = mma_definition(config);
         let out_arr = def.execute(&lhs.fragment, &rhs.fragment, &out.fragment);
-        let num_lines = def.lines_per_lane(MatrixIdent::Accumulator);
+        let num_lines = def.vectors_per_lane(MatrixIdent::Accumulator);
 
         #[unroll]
         for i in 0..num_lines {
@@ -75,7 +75,7 @@ where
     ) -> Self::LhsFragment {
         let def = mma_definition::<L, R, A>(config);
         register_line_sizes(def);
-        let line_count = def.lines_per_lane(MatrixIdent::A);
+        let line_count = def.vectors_per_lane(MatrixIdent::A);
 
         MmaFragment::<L, NL> {
             fragment: Array::new(line_count),
@@ -89,7 +89,7 @@ where
     ) -> Self::RhsFragment {
         let def = mma_definition::<L, R, A>(config);
         register_line_sizes(def);
-        let line_count = def.lines_per_lane(MatrixIdent::B);
+        let line_count = def.vectors_per_lane(MatrixIdent::B);
 
         MmaFragment::<R, NR> {
             fragment: Array::new(line_count),
@@ -103,7 +103,7 @@ where
     ) -> Self::AccFragment {
         let def = mma_definition::<L, R, A>(config);
         register_line_sizes(def);
-        let line_count = def.lines_per_lane(MatrixIdent::Accumulator);
+        let line_count = def.vectors_per_lane(MatrixIdent::Accumulator);
 
         MmaFragment::<A, NA> {
             fragment: Array::new(line_count),
@@ -187,12 +187,12 @@ pub(super) fn mma_definition<L: Numeric, R: Numeric, A: Numeric>(
 #[cube]
 #[allow(unused_variables)]
 pub(super) fn register_line_sizes<L: Numeric, R: Numeric, A: Numeric>(def: MmaDefinition<L, R, A>) {
-    let line_size_a = def.line_size(MatrixIdent::A);
-    let line_size_b = def.line_size(MatrixIdent::B);
-    let line_size_acc = def.line_size(MatrixIdent::Accumulator);
+    let vector_size_a = def.vector_size(MatrixIdent::A);
+    let vector_size_b = def.vector_size(MatrixIdent::B);
+    let vector_size_acc = def.vector_size(MatrixIdent::Accumulator);
     intrinsic!(|scope| {
-        scope.register_size::<NL>(line_size_a);
-        scope.register_size::<NR>(line_size_b);
-        scope.register_size::<NA>(line_size_acc);
+        scope.register_size::<NL>(vector_size_a);
+        scope.register_size::<NR>(vector_size_b);
+        scope.register_size::<NA>(vector_size_acc);
     });
 }

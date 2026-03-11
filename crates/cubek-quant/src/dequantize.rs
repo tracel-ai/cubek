@@ -1,12 +1,11 @@
 #![allow(missing_docs)] // pub cube modules
 
-use cubecl::features::TypeUsage;
 use cubecl::prelude::*;
 use cubecl::{
     calculate_cube_count_elemwise,
     ir::{ElemType, FloatKind, IntKind},
-    tensor_line_size_parallel,
 };
+use cubecl::{features::TypeUsage, tensor_vector_size_parallel};
 
 use crate::{
     layout::{ScalesView, scales_view},
@@ -89,7 +88,7 @@ pub fn dequantize_symmetric_packed_value<
     position: usize,
     #[comptime] scheme: QuantScheme,
 ) -> Array<Vector<F, NF>> {
-    let line_size_values = values.line_size();
+    let line_size_values = values.vector_size();
     let num_quants = scheme.num_quants();
     let mut tmp = Array::new(line_size_values);
 
@@ -264,8 +263,8 @@ fn dequantize_packed<R: Runtime>(
 ) -> Result<(), LaunchError> {
     let num_elems_input: usize = input.shape.iter().product();
 
-    let mut line_size_in = tensor_line_size_parallel(
-        client.io_optimized_line_sizes(input_dtype.size()),
+    let mut line_size_in = tensor_vector_size_parallel(
+        client.io_optimized_vector_sizes(input_dtype.size()),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,
@@ -323,8 +322,8 @@ fn dequantize_native<R: Runtime>(
     scale_dtype: StorageType,
 ) -> Result<(), LaunchError> {
     let num_elems: usize = input.shape.iter().product();
-    let line_size = tensor_line_size_parallel(
-        client.io_optimized_line_sizes(input_dtype.size()),
+    let line_size = tensor_vector_size_parallel(
+        client.io_optimized_vector_sizes(input_dtype.size()),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,

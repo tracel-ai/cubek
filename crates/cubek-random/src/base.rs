@@ -35,7 +35,7 @@ pub(crate) fn random<F: RandomFamily, R: Runtime>(
     let output_line_size = 1;
     // TODO: Higher vectorization can add some correlation locally.
     //
-    // let output_line_size = tensor_line_size_parallel(
+    // let output_line_size = tensor_vector_size_parallel(
     //     R::line_size_elem(&E::as_elem_native_unchecked()),
     //     output.shape,
     //     output.strides,

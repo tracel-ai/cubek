@@ -6,7 +6,7 @@ use cubecl::{
     },
 };
 use cubecl::{ir::ElemType, std::tensor::layout::linear::linear_view};
-use cubecl::{prelude::*, tensor_line_size_parallel};
+use cubecl::{prelude::*, tensor_vector_size_parallel};
 
 use crate::ReduceError;
 
@@ -80,13 +80,13 @@ pub fn shared_sum<R: Runtime>(
     // Compute the optimal line size.
     let line_size = if contiguous_buffer {
         client
-            .io_optimized_line_sizes(input_elem.size())
+            .io_optimized_vector_sizes(input_elem.size())
             .filter(|line_size| input_len.is_multiple_of(*line_size))
             .max()
             .unwrap_or(1)
     } else {
-        tensor_line_size_parallel(
-            client.io_optimized_line_sizes(input_elem.size()),
+        tensor_vector_size_parallel(
+            client.io_optimized_vector_sizes(input_elem.size()),
             &input.shape,
             &input.strides,
             input.shape.len() - 1,

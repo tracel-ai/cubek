@@ -3,7 +3,7 @@
 //! Each local unit will compute a single element of the output matrix.
 use cubecl::prelude::*;
 use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
-use cubecl::tensor_line_size_parallel;
+use cubecl::tensor_vector_size_parallel;
 
 use crate::definition::MatmulLineSizes;
 use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError};
@@ -67,14 +67,14 @@ pub fn launch_ref<R: Runtime>(
     let rhs_shape = rhs.shape();
     let out_shape = &out.shape;
 
-    let lhs_line_size = tensor_line_size_parallel(
-        client.io_optimized_line_sizes(dtypes.lhs_global.size()),
+    let lhs_line_size = tensor_vector_size_parallel(
+        client.io_optimized_vector_sizes(dtypes.lhs_global.size()),
         &lhs.data().shape,
         &lhs.data().strides,
         rank - 1,
     );
-    let rhs_line_size = tensor_line_size_parallel(
-        client.io_optimized_line_sizes(dtypes.rhs_global.size()),
+    let rhs_line_size = tensor_vector_size_parallel(
+        client.io_optimized_vector_sizes(dtypes.rhs_global.size()),
         &rhs.data().shape,
         &rhs.data().strides,
         rank - 2,

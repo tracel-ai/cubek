@@ -1,7 +1,7 @@
 use crate::{LineMode, launch::LineSizeStrategy};
 use cubecl::{
-    prelude::*, std::tensor::is_contiguous, tensor_line_size_parallel,
-    tensor_line_size_perpendicular,
+    prelude::*, std::tensor::is_contiguous, tensor_vector_size_parallel,
+    tensor_vector_size_perpendicular,
 };
 
 /// Calculate the number of planes in a cube.
@@ -35,8 +35,8 @@ pub fn generate_line_size<R: Runtime>(
     strategy: &LineSizeStrategy,
 ) -> (usize, usize) {
     let line_size_input = match line_mode {
-        LineMode::Parallel => tensor_line_size_parallel(
-            client.io_optimized_line_sizes(dtype.size()),
+        LineMode::Parallel => tensor_vector_size_parallel(
+            client.io_optimized_vector_sizes(dtype.size()),
             &input.shape,
             &input.strides,
             axis,
@@ -93,11 +93,11 @@ pub fn generate_line_size<R: Runtime>(
                     // consecutive loads from global memory on perpendicular reduce.
                     // R::supported_line_sizes() was always arbitrary, review this and find alternate
                     // algorithm. For now it replicates existing behaviour.
-                    let supported_line_sizes = client.io_optimized_line_sizes(1).filter(|size| {
+                    let supported_line_sizes = client.io_optimized_vector_sizes(1).filter(|size| {
                         *size <= max_line_size && max_line_size.is_multiple_of(*size)
                     });
 
-                    tensor_line_size_perpendicular(
+                    tensor_vector_size_perpendicular(
                         supported_line_sizes,
                         &input.shape,
                         &input.strides,
@@ -105,14 +105,13 @@ pub fn generate_line_size<R: Runtime>(
                     )
                 }
                 false => {
-                    let supported_line_sizes =
-                        client
-                            .io_optimized_line_sizes(dtype.size())
-                            .filter(|&size| {
-                                size <= max_line_size && max_line_size.is_multiple_of(size)
-                            });
+                    let supported_line_sizes = client
+                        .io_optimized_vector_sizes(dtype.size())
+                        .filter(|&size| {
+                            size <= max_line_size && max_line_size.is_multiple_of(size)
+                        });
 
-                    tensor_line_size_perpendicular(
+                    tensor_vector_size_perpendicular(
                         supported_line_sizes,
                         &input.shape,
                         &input.strides,
@@ -143,7 +142,7 @@ pub fn generate_line_size<R: Runtime>(
         && is_contiguous(&input.shape, &input.strides)
         && axis == input.shape.len() - 1
     {
-        let supported_line_sizes = client.io_optimized_line_sizes(dtype.size());
+        let supported_line_sizes = client.io_optimized_vector_sizes(dtype.size());
         let num_reduce = output.shape.iter().copied().product::<usize>();
         line_size_output = supported_line_sizes
             .filter(|&line_size| num_reduce % line_size == 0)

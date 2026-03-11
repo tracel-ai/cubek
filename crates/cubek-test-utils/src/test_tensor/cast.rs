@@ -5,7 +5,7 @@ use cubecl::{
         TensorHandle, ViewOperations, ViewOperationsExpand, ViewOperationsMut,
         ViewOperationsMutExpand,
     },
-    tensor_line_size_parallel,
+    tensor_vector_size_parallel,
     zspace::{shape, strides},
 };
 
@@ -44,8 +44,8 @@ pub fn copy_casted(
 
     let num_elems: usize = original.shape().num_elements();
 
-    let line_size = tensor_line_size_parallel(
-        client.io_optimized_line_sizes(target_type.size()),
+    let line_size = tensor_vector_size_parallel(
+        client.io_optimized_vector_sizes(target_type.size()),
         &shape![num_elems],
         &strides![1],
         0,

@@ -1,4 +1,4 @@
-use cubecl::{CubeCount, CubeDim, LineSizeError, ir::StorageType, server::LaunchError};
+use cubecl::{CubeCount, CubeDim, VectorizationError, ir::StorageType, server::LaunchError};
 use std::fmt::{Debug, Display};
 
 /// Errors that can occur during the setup phase of an attention operation.
@@ -10,7 +10,7 @@ pub enum AttentionSetupError {
     InvalidConfig(InvalidConfigError),
 
     /// No compatible line size could be found for the given constraints.
-    LineSize(LineSizeError),
+    LineSize(VectorizationError),
 
     /// An error that happened during execution.
     Execution(LaunchError),
@@ -44,8 +44,8 @@ impl From<InvalidConfigError> for AttentionSetupError {
     }
 }
 
-impl From<LineSizeError> for AttentionSetupError {
-    fn from(value: LineSizeError) -> Self {
+impl From<VectorizationError> for AttentionSetupError {
+    fn from(value: VectorizationError) -> Self {
         Self::LineSize(value)
     }
 }

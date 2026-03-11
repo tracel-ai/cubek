@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use cubecl::{
     Runtime,
     client::ComputeClient,
-    tensor_line_size_parallel,
+    tensor_vector_size_parallel,
     zspace::{Shape, Strides},
 };
 
@@ -27,21 +27,21 @@ impl AttentionLineSizes {
     ) -> Self {
         AttentionLineSizes {
             query: client
-                .io_optimized_line_sizes(global_dtypes.query.size())
+                .io_optimized_vector_sizes(global_dtypes.query.size())
                 .max()
                 .unwrap(),
             key: client
-                .io_optimized_line_sizes(global_dtypes.key.size())
+                .io_optimized_vector_sizes(global_dtypes.key.size())
                 .max()
                 .unwrap(),
             value: client
-                .io_optimized_line_sizes(global_dtypes.value.size())
+                .io_optimized_vector_sizes(global_dtypes.value.size())
                 .max()
                 .unwrap(),
             // lined mask not always supported at the moment
             mask: 1,
             out: client
-                .io_optimized_line_sizes(global_dtypes.out.size())
+                .io_optimized_vector_sizes(global_dtypes.out.size())
                 .max()
                 .unwrap(),
         }
@@ -82,7 +82,7 @@ impl AttentionLineSizes {
         shape: &[usize; 4],
         dtype_size: usize,
     ) -> usize {
-        let supported_line_sizes = client.io_optimized_line_sizes(dtype_size);
+        let supported_line_sizes = client.io_optimized_vector_sizes(dtype_size);
 
         let n = shape.len();
 
@@ -96,7 +96,7 @@ impl AttentionLineSizes {
         });
         let shape = Shape::new(*shape);
 
-        tensor_line_size_parallel(supported_line_sizes, &shape, &row_major_strides, n - 1)
+        tensor_vector_size_parallel(supported_line_sizes, &shape, &row_major_strides, n - 1)
     }
 }
 

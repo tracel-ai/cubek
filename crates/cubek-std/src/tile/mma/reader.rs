@@ -62,9 +62,9 @@ impl MmaFragmentReader for MmaStageReader<Strided> {
         #[comptime] tile_size: TileSize,
         #[comptime] config: MmaIOConfig,
     ) {
-        let line_layout = def.line_layout(ident);
+        let vector_layout = def.vector_layout(ident);
 
-        let transposed = comptime![as_cmma_layout(layout) != line_layout];
+        let transposed = comptime![as_cmma_layout(layout) != vector_layout];
 
         match config.load_method(ident) {
             LoadMethod::Manual => {
@@ -97,8 +97,8 @@ fn load_manual_transposed<
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
 ) {
-    let num_lines = def.lines_per_lane(ident);
-    let line_size = def.line_size(ident);
+    let num_lines = def.vectors_per_lane(ident);
+    let line_size = def.vector_size(ident);
     let lane_id = UNIT_POS_PLANE;
 
     let stride = tile.unlined_stride();
@@ -141,7 +141,7 @@ fn load_manual_plain<
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
 ) {
-    let num_lines = def.lines_per_lane(ident);
+    let num_lines = def.vectors_per_lane(ident);
     let line_size = N::value();
 
     let lane_id = UNIT_POS_PLANE;
@@ -185,7 +185,7 @@ fn load_ldmatrix<E: Numeric, N: Size, V: Numeric, NV: Size, A: Numeric, B: Numer
     let stride = tile.unlined_stride();
 
     let elem_size = E::type_size().comptime();
-    let num_regs = def.lines_per_lane(ident);
+    let num_regs = def.vectors_per_lane(ident);
     let width = (16 / elem_size / stage_line_size) as u32;
 
     let start =
@@ -212,14 +212,14 @@ pub(crate) fn ldmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_size: TileSize,
 ) -> u32 {
-    let expected_layout = from_cmma_layout(def.line_layout(ident)).comptime();
+    let expected_layout = from_cmma_layout(def.vector_layout(ident)).comptime();
     let (stride_row, stride_col) = match layout {
         MatrixLayout::RowMajor => (stride, 1),
         MatrixLayout::ColMajor => (1, stride),
     };
 
     let elem_size = E::type_size().comptime();
-    let num_regs = def.lines_per_lane(ident).comptime() as u32;
+    let num_regs = def.vectors_per_lane(ident).comptime() as u32;
     let width = 16 / elem_size as u32;
     // Height is always 8, and lanes are divided into blocks of 8.
     let height = 8;
@@ -276,7 +276,7 @@ impl MmaFragmentReader for MmaStageReader<Filled> {
         #[comptime] _tile_size: TileSize,
         #[comptime] _config: MmaIOConfig,
     ) {
-        let num_lines = def.lines_per_lane(ident);
+        let num_lines = def.vectors_per_lane(ident);
         let value = Vector::<E, N>::cast_from(*value);
 
         #[unroll]

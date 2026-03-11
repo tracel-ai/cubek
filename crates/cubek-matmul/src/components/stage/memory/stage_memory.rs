@@ -120,7 +120,7 @@ impl<ES: Numeric, NS: Size, T: TilingLayout> StridedStageMemory<ES, NS, T> {
         let stage_offset = (self.buffer_index * self.stage_size) as usize;
         self.smem
             .slice(stage_offset, stage_offset + self.stage_size as usize)
-            .with_line_size()
+            .with_vector_size()
     }
 
     /// Return the whole stage as a mutable slice, for loading
@@ -128,7 +128,7 @@ impl<ES: Numeric, NS: Size, T: TilingLayout> StridedStageMemory<ES, NS, T> {
         let stage_offset = (self.buffer_index * self.stage_size) as usize;
         self.smem
             .slice_mut(stage_offset, stage_offset + self.stage_size as usize)
-            .with_line_size()
+            .with_vector_size()
     }
 
     /// Zero out the shared memory

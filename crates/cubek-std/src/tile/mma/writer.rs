@@ -28,7 +28,7 @@ impl MmaStageWriter {
         #[comptime] m: u32,
         #[comptime] config: MmaIOConfig,
     ) {
-        let line_layout = def.line_layout(ident);
+        let line_layout = def.vector_layout(ident);
         let transposed = comptime![as_cmma_layout(layout) != line_layout];
 
         match config.store_method() {
@@ -62,8 +62,8 @@ fn store_manual_transposed<
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
 ) {
-    let num_lines = def.lines_per_lane(ident);
-    let line_size = def.line_size(ident);
+    let num_vectors = def.vectors_per_lane(ident);
+    let vector_size = def.vector_size(ident);
     let lane_id = UNIT_POS_PLANE;
 
     let stride = tile.unlined_stride();
@@ -75,10 +75,10 @@ fn store_manual_transposed<
     };
 
     #[unroll]
-    for i in 0..num_lines {
+    for i in 0..num_vectors {
         #[unroll]
-        for n in 0..line_size {
-            let elem_idx = i * line_size + n;
+        for n in 0..vector_size {
+            let elem_idx = i * vector_size + n;
             let (row, col) = def.position_of_nth(lane_id, elem_idx as u32, ident);
             let offset = row * stride_row + col * stride_col;
             let offset = tile.stage_offset(offset);
@@ -104,8 +104,8 @@ fn store_manual_plain<
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
 ) {
-    let num_lines = def.lines_per_lane(ident);
-    let line_size = def.line_size(ident);
+    let num_lines = def.vectors_per_lane(ident);
+    let vector_size = def.vector_size(ident);
     let lane_id = UNIT_POS_PLANE;
     let stride = tile.unlined_stride();
     // Supported on all targets that support manual MMA
@@ -119,10 +119,10 @@ fn store_manual_plain<
     #[unroll]
     for i in 0..num_lines {
         let value = fragment[i];
-        let elem_idx = i * line_size;
+        let elem_idx = i * vector_size;
         let (row, col) = def.position_of_nth(lane_id, elem_idx as u32, ident);
         let offset = row * stride_row + col * stride_col;
-        let offset = tile.stage_offset(offset / line_size as u32);
+        let offset = tile.stage_offset(offset / vector_size as u32);
 
         tile.stage[offset as usize] = Vector::cast_from(value);
     }
@@ -155,7 +155,7 @@ fn store_stmatrix<
     let stride = tile.unlined_stride();
 
     let elem_size = E::type_size().comptime();
-    let num_regs = def.lines_per_lane(ident);
+    let num_regs = def.vectors_per_lane(ident);
     let width = (16 / elem_size / stage_line_size) as u32;
 
     let start = stmatrix_offset::<V, A, B, CD>(stride, def, stage_line_size, ident, m);
@@ -198,7 +198,7 @@ pub(crate) fn stmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     let (stride_row, stride_col) = (stride, 1);
 
     let elem_size = E::type_size().comptime();
-    let num_regs = def.lines_per_lane(ident);
+    let num_regs = def.vectors_per_lane(ident);
     let width = (16 / elem_size) as u32;
     // Height is always 8, and lanes are divided into blocks of 8.
     let height = 8;

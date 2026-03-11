@@ -65,7 +65,7 @@ pub fn unit_write<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
     #[comptime] elements_in_tile: u32,
 ) {
     let output_line_size = global.vector_size();
-    let out_smem_stage = smem_tile.stage.with_line_size::<NG>();
+    let out_smem_stage = smem_tile.stage.with_vector_size::<NG>();
 
     let num_lines = elements_in_tile / output_line_size as u32;
 
