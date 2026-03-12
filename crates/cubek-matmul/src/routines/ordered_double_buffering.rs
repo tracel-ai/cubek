@@ -132,8 +132,11 @@ where
             &device_settings.vector_sizes,
         )?;
 
-        let cubedim_resource =
-            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.vector_sizes)?;
+        let cubedim_resource = Self::BatchMatmul::cubedim_resource(
+            &blueprint,
+            &dtypes,
+            &device_settings.vector_sizes,
+        )?;
 
         LaunchInfo::new(
             blueprint,

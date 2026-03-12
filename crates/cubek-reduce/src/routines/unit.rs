@@ -1,5 +1,6 @@
 use super::{
-    GlobalReduceBlueprint, ReduceBlueprint, ReduceLaunchSettings, ReduceVectorSettings, ReduceProblem,
+    GlobalReduceBlueprint, ReduceBlueprint, ReduceLaunchSettings, ReduceProblem,
+    ReduceVectorSettings,
 };
 use crate::{
     IdleMode, ReduceError, VectorizationMode,
