@@ -1,0 +1,175 @@
+use std::marker::PhantomData;
+
+use cubecl;
+use cubecl::prelude::*;
+use cubek_std::tile::StridedTile;
+
+use crate::components::tile::MaskTile;
+use crate::components::tile::pipeline::{LocalTile, LocalTileLayout, RowWise};
+use crate::components::tile::softmax::{BroadcastReducer, Reducer};
+use crate::components::tile::softmax::{Softmax, blackbox::BlackboxSoftmaxConfig};
+
+#[derive(CubeType)]
+pub struct BlackboxSoftmax<Lhs: Float> {
+    #[cube(comptime)]
+    _phantom: PhantomData<Lhs>,
+}
+
+#[derive(CubeType)]
+pub struct BlackboxSoftmaxWorkspace<Acc: Float, Lhs: Float> {
+    max: RowWise<Acc>,
+    sum: RowWise<Acc>,
+    acc_smem_slice: SliceMut<Acc>,
+    lhs_smem_slice: SliceMut<Lhs>,
+    local_tile: LocalTile<Acc>,
+}
+
+#[cube]
+impl<Acc: Float, Lhs: Float> BlackboxSoftmaxWorkspace<Acc, Lhs> {
+    pub fn new(#[comptime] config: BlackboxSoftmaxConfig) -> Self {
+        BlackboxSoftmaxWorkspace::<Acc, Lhs> {
+            max: RowWise::new_min_value(config.num_rows_per_unit as usize),
+            sum: RowWise::new_zero(config.num_rows_per_unit as usize),
+            // Create smem and slice for this plane
+            acc_smem_slice: todo!(),
+            // Create smem and slice for this plane
+            lhs_smem_slice: todo!(),
+            local_tile: LocalTile::new(LocalTileLayout::new(
+                (config.tile_size.seq_q, config.tile_size.seq_kv),
+                config.plane_dim,
+                config.inner_layout,
+            )),
+        }
+    }
+}
+
+#[cube]
+impl<Acc: Float, Lhs: Float> Softmax<Acc> for BlackboxSoftmax<Lhs> {
+    type Config = BlackboxSoftmaxConfig;
+    type ScaleColumn = RowWise<Acc>;
+    type RunningState = (RowWise<Acc>, RowWise<Acc>);
+    type ScoreTile = cmma::Matrix<Acc>;
+    type SoftmaxedTile = cmma::Matrix<Lhs>;
+    type Workspace = BlackboxSoftmaxWorkspace<Acc, Lhs>;
+    type Mask = LocalTile<Acc>;
+    type ScoreLayout = LocalTileLayout;
+
+    fn softmax(
+        score_matmul_accumulator: &mut Self::ScoreTile,
+        mask: &MaskTile<Acc, Self>,
+        value_matmul_lhs: &mut Self::SoftmaxedTile,
+        state: &mut Self::RunningState,
+        workspace: &mut Self::Workspace,
+        head_dim_factor: Acc,
+        #[comptime] config: Self::Config,
+    ) -> Self::ScaleColumn {
+        // Make sure the softmax is in a row-aware layout
+        // If the layout is always row-aware, it's a no-op.
+        // Otherwise it may go through shared memory
+        // let softmax_rowwise = value_matmul_lhs.rowwise_mut();
+        cmma::store(
+            &mut workspace.acc_smem_slice,
+            &score_matmul_accumulator,
+            config.tile_size.seq_kv,
+            cmma::MatrixLayout::RowMajor,
+        );
+
+        sync_cube();
+
+        workspace
+            .local_tile
+            .load_from_slice(&workspace.acc_smem_slice.to_slice());
+
+        sync_cube();
+
+        workspace
+            .local_tile
+            .scale_and_mask::<MaskTile<Acc, Self>>(head_dim_factor, mask);
+
+        BroadcastReducer::row_max(&mut workspace.max, &mut state.0, &mut workspace.local_tile);
+
+        workspace.local_tile.exp_diff(&mut workspace.max);
+
+        BroadcastReducer::row_sum(&mut workspace.sum, &mut workspace.local_tile);
+
+        let exp_m_diff = state.0.exp_diff(&mut workspace.max);
+
+        let new_l = exp_m_diff.mul(&mut state.1).add(&mut workspace.sum);
+
+        RowWise::copy_from(&mut state.0, &mut workspace.max);
+        RowWise::copy_from(&mut state.1, &new_l);
+
+        // Make sure the mutations on softmax_rowwise also affect other softmax formats
+        workspace.local_tile.store_to(&mut workspace.lhs_smem_slice);
+
+        sync_cube();
+
+        cmma::load(
+            &value_matmul_lhs,
+            &workspace.lhs_smem_slice.to_slice(),
+            config.tile_size.seq_kv,
+        );
+
+        exp_m_diff
+    }
+
+    fn init_workspace(#[comptime] config: Self::Config) -> Self::Workspace {
+        Self::Workspace::new(config)
+    }
+
+    fn init_state(#[comptime] config: Self::Config) -> Self::RunningState {
+        (
+            RowWise::<Acc>::new_min_value(config.num_rows_per_unit as usize),
+            RowWise::<Acc>::new_zero(config.num_rows_per_unit as usize),
+        )
+    }
+
+    fn init_score_tile(
+        workspace: &mut Self::Workspace,
+        #[comptime] config: Self::Config,
+    ) -> Self::ScoreTile {
+        unsafe {
+            cmma::Matrix::<Acc>::uninitialized(
+                cmma::MatrixIdent::Accumulator,
+                config.tile_size.seq_q as usize,
+                config.tile_size.seq_kv as usize,
+                config.tile_size.head_dim as usize,
+                cmma::MatrixLayout::Undefined,
+            )
+        }
+    }
+
+    fn zero_score_tile(score_tile: &mut Self::ScoreTile) {
+        todo!()
+    }
+
+    fn init_softmax_tile(
+        workspace: &mut Self::Workspace,
+        #[comptime] config: Self::Config,
+    ) -> Self::SoftmaxedTile {
+        unsafe {
+            cmma::Matrix::<Lhs>::uninitialized(
+                cmma::MatrixIdent::A,
+                config.tile_size.seq_q as usize,
+                config.tile_size.seq_kv as usize,
+                config.tile_size.head_dim as usize,
+                cmma::MatrixLayout::Undefined,
+            )
+        }
+    }
+
+    fn allocate_mask(#[comptime] config: Self::Config) -> Self::Mask {
+        todo!()
+    }
+    fn load_mask<E: Numeric>(
+        tile: &StridedTile<E>,
+        fragment: &mut Self::Mask,
+        #[comptime] config: Self::Config,
+    ) {
+        todo!()
+    }
+
+    fn layout(#[comptime] config: Self::Config) -> Self::ScoreLayout {
+        todo!()
+    }
+}

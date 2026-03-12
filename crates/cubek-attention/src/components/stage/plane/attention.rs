@@ -3,7 +3,6 @@ use cubecl::prelude::*;
 
 use crate::components::{
     global::simple::PlaneAttentionWriter,
-    softmax::BroadcastReducer,
     stage::{partition_attention::PartitionAttention, partitioner::AttentionPartitioner},
     tile::TileAttentionConfig,
 };
@@ -22,7 +21,6 @@ pub struct PlanePartitioner {}
 
 #[cube]
 impl AttentionPartitioner for PlanePartitioner {
-    type Reducer = BroadcastReducer;
     type Writer<ES: Float, EG: Float> = PlaneAttentionWriter<ES, EG>;
 
     fn seq_q_index() -> u32 {

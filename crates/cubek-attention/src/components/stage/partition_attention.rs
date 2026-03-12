@@ -7,18 +7,16 @@ use cubek_matmul::components::{
 use cubek_std::tile::Strided;
 use std::marker::PhantomData;
 
+use crate::components::stage::{QueryPartition, SoftmaxPartition};
+use crate::components::tile::matmul::InnerMatmul;
+use crate::components::tile::output::AttentionOutput;
 use crate::components::{
     global::simple::{MaskReader, QueryReader},
-    softmax::Softmax,
-    stage::{AccumulatorPartition, MaskPartition, partitioner::AttentionPartitioner},
+    stage::{MaskPartition, OutputPartition, partitioner::AttentionPartitioner},
 };
-use crate::components::{softmax::Accumulator, stage::KeyPartition};
-use crate::components::{softmax::InnerMatmul, stage::ValuePartition};
-use crate::components::{softmax::TileAttention, stage::base::StageAttentionConfig};
-use crate::components::{
-    stage::{QueryPartition, SoftmaxPartition},
-    tile::TileAttentionConfig as _,
-};
+use crate::components::{stage::KeyPartition, tile::TileAttention};
+use crate::components::{stage::ValuePartition, tile::softmax::Softmax};
+use crate::components::{stage::base::StageAttentionConfig, tile::TileAttentionConfig as _};
 use crate::{components::stage::StageAttention, definition::AttentionPrecision};
 use crate::{
     components::{global::GlobalAttentionConfig, stage::PartitionAttentionConfig},
@@ -60,7 +58,7 @@ impl<
     type KeyPartition = KeyPartition<TA::ScoreMatmul>;
     type ValuePartition = ValuePartition<TA::ValueMatmul>;
     type SoftmaxPartition = SoftmaxPartition<SM<AP>, TA::Softmax>;
-    type AccumulatorPartition = AccumulatorPartition<TA::Accumulator>;
+    type AccumulatorPartition = OutputPartition<TA::Output>;
     type MaskPartition = MaskPartition<SM<AP>, TA::Softmax>;
     type RunningState = <TA::Softmax as Softmax<SM<AP>>>::RunningState;
 
@@ -80,7 +78,7 @@ impl<
         mask_reader: &MaskReader<AP>,
         mask_partition: &mut MaskPartition<SM<AP>, TA::Softmax>,
         softmax_partition: &mut SoftmaxPartition<SM<AP>, TA::Softmax>,
-        accumulator_partition: &mut AccumulatorPartition<TA::Accumulator>,
+        accumulator_partition: &mut OutputPartition<TA::Output>,
         state: &mut Sequence<Self::RunningState>,
         #[comptime] config: Self::Config,
     ) {
@@ -134,7 +132,7 @@ impl<
                 let state_q = state.index_mut(q);
 
                 let scale = TA::Softmax::softmax(
-                    &softmax_tiles.score_tile,
+                    &mut softmax_tiles.score_tile,
                     mask_partition.get(),
                     &mut softmax_tiles.softmaxed_tile,
                     state_q,
@@ -155,19 +153,21 @@ impl<
                     let value_tile = value_partition.get_mut();
                     TA::ValueMatmul::load_rhs_plain(&value_data, &mut value_tile.fragment);
 
-                    // Get the q,vd-th accumulator and scale it with previously obtained scale
-                    let mut accumulator = accumulator_partition.get_at_mut(
+                    // Scale the q,vd-th accumulator and scale it with previously obtained scale
+                    let partition_val_dim = config.shared().partition_size.val_dim as usize;
+                    accumulator_partition.scale_mul_at(
+                        &scale,
                         q,
                         vd,
-                        config.shared().partition_size.val_dim as usize,
+                        partition_val_dim,
+                        config.tile_config().accumulator_config(),
                     );
-                    TA::Accumulator::scale_mul(accumulator, &scale);
 
                     // Perform value matmul on probabilities and values, and accumulate in accumulators
                     TA::ValueMatmul::execute(
                         &softmax_tiles.softmaxed_tile,
                         &value_partition.get().fragment,
-                        &mut accumulator,
+                        &mut accumulator_partition.get_at_mut(q, vd, partition_val_dim),
                         config.tile_size().to_value_matmul_tile_size(),
                     );
                 }
@@ -176,7 +176,7 @@ impl<
     }
 
     fn rescale(
-        acc: &mut AccumulatorPartition<TA::Accumulator>,
+        acc: &mut OutputPartition<TA::Output>,
         state: Sequence<Self::RunningState>,
         #[comptime] config: Self::Config,
     ) {
@@ -188,14 +188,12 @@ impl<
 
             #[unroll]
             for vd in 0..p.val_dim as usize {
-                TA::Accumulator::scale_div(
-                    AccumulatorPartition::<TA::Accumulator>::get_at_mut(
-                        acc,
-                        q,
-                        vd,
-                        config.shared().partition_size.val_dim as usize,
-                    ),
-                    &running_state,
+                acc.scale_div_at(
+                    running_state,
+                    q,
+                    vd,
+                    config.shared().partition_size.val_dim as usize,
+                    config.tile_config().accumulator_config(),
                 );
             }
         }
@@ -216,7 +214,7 @@ impl<
     }
 
     fn write<W: WriteEventListener, G: GlobalAttentionConfig>(
-        acc: &AccumulatorPartition<TA::Accumulator>,
+        acc: &OutputPartition<TA::Output>,
         stage: &mut SO,
         writer: &mut W,
         #[comptime] config: Self::Config,
@@ -232,8 +230,8 @@ impl<
                 let tile_pos = (q as u32 + P::seq_q_index() * p.seq_q, vd.runtime() as u32);
                 let tile = SO::tile(stage, tile_pos);
 
-                TA::Accumulator::write_results(
-                    &AccumulatorPartition::get_at(
+                TA::Output::write_results(
+                    &OutputPartition::get_at(
                         acc,
                         q,
                         vd,
@@ -272,8 +270,8 @@ impl<
         )
     }
 
-    fn init_accumulator(#[comptime] config: Self::Config) -> AccumulatorPartition<TA::Accumulator> {
-        AccumulatorPartition::<TA::Accumulator>::new(
+    fn init_accumulator(#[comptime] config: Self::Config) -> OutputPartition<TA::Output> {
+        OutputPartition::<TA::Output>::new(
             config.shared().partition_size,
             config.tile_config().accumulator_config(),
         )

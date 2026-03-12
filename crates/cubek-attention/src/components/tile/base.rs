@@ -1,28 +1,16 @@
-// use cubecl;
-// use cubecl::ir::DeviceProperties;
-// use cubecl::prelude::*;
-// use cubek_matmul::components::CubeDimResource;
-// use cubek_std::tile::StridedTile;
-
-// use crate::components::tile::{
-//     AccumulatorPipeline, FragmentMask, SoftmaxLayout, SoftmaxPipeline, SoftmaxRowwise,
-// };
-// use crate::definition::attention_types::{ACC, SM};
-// use crate::definition::{
-//     AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError, AttentionTileSize,
-//     InvalidConfigError,
-// };
-
-use std::fmt::Debug;
-use std::hash::Hash;
-
+use cubecl;
 use cubecl::ir::DeviceProperties;
+use cubecl::prelude::*;
 use cubek_matmul::components::CubeDimResource;
 use cubek_std::InvalidConfigError;
 
-use crate::components::softmax::TileAttention;
+use crate::components::tile::TileAttentionConfig;
+use crate::components::tile::matmul::InnerMatmul;
+use crate::components::tile::output::AttentionOutput;
+use crate::components::tile::softmax::Softmax;
+use crate::definition::attention_types::SM;
 use crate::definition::{
-    AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError, AttentionTileSize,
+    AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError,
 };
 
 /// Logits below this are considered masked (effectively -inf)
@@ -34,101 +22,24 @@ pub(crate) const LOGIT_MASKED: f32 = -6e4;
 /// Value chosen to be above f16 smallest normal (~6.1e-5)
 pub(crate) const FULLY_MASKED_ROW_THRESHOLD: f32 = 1e-4;
 
-// #[cube]
-// pub trait TileAttentionDeprecated<AP: AttentionPrecision>: Send + Sync + 'static {
-//     type Config: TileAttentionConfig;
-//     type Query: CubeType;
-//     type KeyValue: CubeType;
-//     type Mask: FragmentMask<Layout = Self::SoftmaxLayout>;
-
-//     // type Softmax: FragmentSoftmax<SM<AP>, Layout = Self::SoftmaxLayout, SoftmaxRowFormat = Self::SoftmaxRow>;
-//     type Softmax: SoftmaxPipeline<SM<AP>, Rowwise = Self::SoftmaxRow, Transit = Self::SoftmaxTransit>;
-//     type SoftmaxRow: SoftmaxRowwise<SM<AP>, Layout = Self::SoftmaxLayout>;
-//     type SoftmaxLayout: SoftmaxLayout;
-//     type SoftmaxTransit: CubeType;
-
-//     type Accumulator: AccumulatorPipeline<ACC<AP>, Transit = Self::AccumulatorTransit>;
-//     type AccumulatorTransit: CubeType;
-
-//     fn score_matmul(
-//         lhs: &Self::Query,
-//         rhs: &Self::KeyValue,
-//         out: &mut Self::Softmax,
-//         #[comptime] config: Self::Config,
-//     );
-
-//     fn value_matmul(
-//         lhs: &Self::Softmax,
-//         rhs: &Self::KeyValue,
-//         out: &mut Self::Accumulator,
-//         #[comptime] config: Self::Config,
-//     );
-
-//     fn allocate_query(#[comptime] config: Self::Config) -> Self::Query;
-//     fn allocate_mask(#[comptime] config: Self::Config) -> Self::Mask;
-
-//     fn load_query<E: Numeric>(tile: &StridedTile<E>, fragment: &mut Self::Query);
-//     fn allocate_key(#[comptime] config: Self::Config) -> Self::KeyValue;
-//     fn allocate_value(#[comptime] config: Self::Config) -> Self::KeyValue;
-//     fn allocate_key_value(#[comptime] config: Self::Config) -> Self::KeyValue;
-
-//     fn allocate_softmax_transit(#[comptime] config: Self::Config) -> Self::SoftmaxTransit;
-//     fn allocate_accumulator_transit(#[comptime] config: Self::Config) -> Self::AccumulatorTransit;
-
-//     fn allocate_softmax(
-//         shared: &mut Self::SoftmaxTransit,
-//         #[comptime] config: Self::Config,
-//     ) -> Self::Softmax;
-//     fn allocate_accumulator(
-//         shared: &mut Self::AccumulatorTransit,
-//         #[comptime] config: Self::Config,
-//     ) -> Self::Accumulator;
-
-//     fn load_query<E: Numeric>(tile: &StridedTile<E>, fragment: &mut Self::Query);
-
-//     fn load_key_transposed<E: Float>(
-//         tile: &StridedTile<E>,
-//         fragment: &mut Self::KeyValue,
-//         #[comptime] config: Self::Config,
-//     );
-//     fn load_value<E: Float>(
-//         tile: &StridedTile<E>,
-//         fragment: &mut Self::KeyValue,
-//         #[comptime] config: Self::Config,
-//     );
-//     fn load_mask<E: Numeric>(
-//         tile: &StridedTile<E>,
-//         fragment: &mut Self::Mask,
-//         #[comptime] config: Self::Config,
-//     );
-
-//     fn write_results<E: Float>(
-//         out: &Self::Accumulator,
-//         slice: &mut SliceMut<Line<E>>,
-//         #[comptime] config: Self::Config,
-//     );
-// }
-
-/// Configuration for the Tile Attention level
-pub trait TileAttentionConfig:
-    Copy + Clone + Eq + PartialEq + Hash + Debug + Send + Sync + 'static
-{
-    type ScoreMatmulConfig: Copy + Clone;
-    type SoftmaxConfig: Copy + Clone;
-    type ValueMatmulConfig: Copy + Clone;
-    type AccumulatorConfig: Copy + Clone;
-
-    fn plane_dim(&self) -> u32;
-    fn num_planes(&self) -> u32;
-    fn tile_size(&self) -> AttentionTileSize;
-    fn num_rows_per_unit(&self) -> u32;
-    fn causal_mask(&self) -> bool;
-    fn materialized_mask(&self) -> bool;
-
-    fn score_matmul_config(&self) -> Self::ScoreMatmulConfig;
-    fn softmax_config(&self) -> Self::SoftmaxConfig;
-    fn value_matmul_config(&self) -> Self::ValueMatmulConfig;
-    fn accumulator_config(&self) -> Self::AccumulatorConfig;
+#[cube]
+pub trait TileAttention<AP: AttentionPrecision>: Send + Sync + 'static {
+    type Config: TileAttentionConfig<
+            ScoreMatmulConfig = <Self::ScoreMatmul as InnerMatmul>::Config,
+            ValueMatmulConfig = <Self::ValueMatmul as InnerMatmul>::Config,
+            AccumulatorConfig = <Self::Output as AttentionOutput>::Config,
+        >;
+    type ScoreMatmul: InnerMatmul;
+    type Softmax: Softmax<
+            SM<AP>,
+            ScoreTile = <Self::ScoreMatmul as InnerMatmul>::Acc,
+            SoftmaxedTile = <Self::ValueMatmul as InnerMatmul>::Lhs,
+            ScaleColumn = <Self::Output as AttentionOutput>::ScaleColumn,
+            RunningState = <Self::Output as AttentionOutput>::RunningState,
+            Config = <Self::Config as TileAttentionConfig>::SoftmaxConfig,
+        >;
+    type ValueMatmul: InnerMatmul;
+    type Output: AttentionOutput<Tile = <Self::ValueMatmul as InnerMatmul>::Acc>;
 }
 
 pub trait TileAttentionFamily: Send + Sync + 'static {
@@ -152,13 +63,4 @@ pub trait TileAttentionFamily: Send + Sync + 'static {
         blueprint: &AttentionBlueprint,
         dtypes: &AttentionElems,
     ) -> Result<Self::Config, AttentionSetupError>;
-}
-
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct SharedTileAttentionConfig {
-    pub plane_dim: u32,
-    pub num_planes: u32,
-    pub attention_tile_size: AttentionTileSize,
-    pub causal_mask: bool,
-    pub materialized_mask: bool,
 }

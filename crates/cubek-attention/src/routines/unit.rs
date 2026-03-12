@@ -7,7 +7,7 @@ use cubek_matmul::components::{global::PartitionedStageFamily, stage::StridedSta
 
 use crate::components::stage::unit::UnitPartitionStageAttentionFamily;
 use crate::components::tile::TileAttentionFamily;
-use crate::components::tile::unit_register::UnitRegisterTileAttention;
+use crate::components::tile::attention::unit::UnitTileAttention;
 use crate::definition::{
     AttentionBlueprint, AttentionElems, AttentionPartitionSize, AttentionProblem,
     AttentionSetupError, AttentionStageSize, AttentionTileSize, AttentionTilingScheme,
@@ -26,7 +26,7 @@ use crate::{
 pub struct UnitRoutine {}
 
 impl Routine for UnitRoutine {
-    type TileAttention = UnitRegisterTileAttention;
+    type TileAttention = UnitTileAttention;
     type StageAttention = UnitPartitionStageAttentionFamily<
         Self::TileAttention,
         StridedStageFamily,

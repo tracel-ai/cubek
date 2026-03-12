@@ -1,7 +1,7 @@
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::components::softmax::Softmax;
+use crate::components::tile::softmax::Softmax;
 use crate::definition::AttentionPartitionSize;
 
 #[derive(CubeType)]
