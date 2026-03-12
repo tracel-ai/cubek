@@ -1,5 +1,8 @@
-use crate::components::{stage::Stage, tile::TileMatmul};
-use crate::definition::{AccS, MatmulPrecision, MatrixPrecision};
+use crate::definition::{MatmulTypes, MatrixTypes};
+use crate::{
+    components::{stage::Stage, tile::TileMatmul},
+    definition::{Acc, StageSize},
+};
 use cubecl::prelude::*;
 use cubek_std::{MatrixLayout, PartitionSize};
 
@@ -7,23 +10,25 @@ use cubek_std::{MatrixLayout, PartitionSize};
 /// Wrapper over a sequence of Tile Matmul accumulators
 /// Enables indexing at 2d coordinates
 pub struct Accumulators<
-    MP: MatmulPrecision,
+    MP: MatmulTypes,
     TM: TileMatmul<
-            <MP::Lhs as MatrixPrecision>::Register,
-            <MP::Rhs as MatrixPrecision>::Register,
-            <MP::Acc as MatrixPrecision>::Register,
+            <MP::Lhs as MatrixTypes>::Register,
+            <MP::Rhs as MatrixTypes>::Register,
+            <MP::Acc as MatrixTypes>::Register,
         >,
 > {
     sequence: Sequence<TM::AccFragment>,
 }
 
+type StageTy<T> = crate::definition::Stage<T>;
+
 #[cube]
 impl<
-    MP: MatmulPrecision,
+    MP: MatmulTypes,
     TM: TileMatmul<
-            <MP::Lhs as MatrixPrecision>::Register,
-            <MP::Rhs as MatrixPrecision>::Register,
-            <MP::Acc as MatrixPrecision>::Register,
+            <MP::Lhs as MatrixTypes>::Register,
+            <MP::Rhs as MatrixTypes>::Register,
+            <MP::Acc as MatrixTypes>::Register,
         >,
 > Accumulators<MP, TM>
 {
@@ -46,7 +51,9 @@ impl<
     }
 
     /// Load all accumulators from the specified stage
-    pub fn load<R: Stage<AccS<MP>, ReadOnly, TileKind = TM::AccTile>>(
+    pub fn load<
+        R: Stage<StageTy<Acc<MP>>, StageSize<Acc<MP>>, ReadOnly, TileKind = TM::AccTile>,
+    >(
         &mut self,
         stage: &R,
         #[comptime] tiles_in_stage_partition_m: usize,

@@ -14,7 +14,7 @@ pub struct StageMemoryConfig {
     pub tiles_per_partition_along_col: u32,
     pub partitions_per_stage_along_row: u32,
     pub partitions_per_stage_along_col: u32,
-    pub line_size: u32,
+    pub vector_size: u32,
     pub matrix_layout: MatrixLayout,
     pub swizzle: SwizzleMode,
     pub num_stages: u32,

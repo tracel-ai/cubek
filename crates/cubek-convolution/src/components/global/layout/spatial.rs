@@ -109,15 +109,15 @@ pub struct NhwcLayout {
     pub shape_channel: u32,
 
     #[cube(comptime)]
-    pub line_size: LineSize,
+    pub vector_size: VectorSize,
     #[cube(comptime)]
     pub checks: EnumSet<NhwcCheck>,
 }
 
 #[cube]
 impl NhwcLayout {
-    pub fn new<E: Numeric, IO: Clone>(
-        tensor: VirtualTensor<E, IO>,
+    pub fn new<E: Numeric, N: Size, IO: Clone>(
+        tensor: VirtualTensor<E, N, IO>,
         #[comptime] dim: Dimensionality,
         #[comptime] checks: EnumSet<NhwcCheck>,
     ) -> Self {
@@ -144,7 +144,7 @@ impl NhwcLayout {
             shape_batch,
             shapes_spatial,
             shape_channel,
-            line_size: tensor.line_size(),
+            vector_size: tensor.vector_size(),
             checks,
         }
     }
@@ -171,7 +171,7 @@ impl Layout for NhwcLayout {
             read_pos += spatial[i] as usize * self.strides_spatial[i];
         }
 
-        read_pos / self.line_size
+        read_pos / self.vector_size
     }
 
     fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
@@ -222,28 +222,22 @@ pub(crate) fn cast_seq<From: CubePrimitive, To: CubePrimitive>(
     out_seq
 }
 
-impl<'a, R: Runtime> NhwcLayoutLaunch<'a, R> {
+impl<R: Runtime> NhwcLayoutLaunch<R> {
     pub fn from_handle(
         binding: &TensorBinding<R>,
-        line_size: LineSize,
+        vector_size: VectorSize,
         checks: EnumSet<NhwcCheck>,
     ) -> Self {
         let rank = binding.shape.len();
         let dim_c = rank - 1;
 
-        let stride_batch = ScalarArg::new(binding.strides[0]);
-        let strides_spatial = binding.strides[1..dim_c]
-            .iter()
-            .map(|s| ScalarArg::new(*s))
-            .collect();
-        let stride_channel = ScalarArg::new(binding.strides[dim_c]);
+        let stride_batch = binding.strides[0];
+        let strides_spatial = binding.strides[1..dim_c].iter().copied().collect();
+        let stride_channel = binding.strides[dim_c];
 
-        let shape_batch = ScalarArg::new(binding.shape[0] as u32);
-        let shapes_spatial = binding.shape[1..dim_c]
-            .iter()
-            .map(|s| ScalarArg::new(*s as u32))
-            .collect();
-        let shape_channel = ScalarArg::new(binding.shape[dim_c] as u32);
+        let shape_batch = binding.shape[0] as u32;
+        let shapes_spatial = binding.shape[1..dim_c].iter().map(|s| *s as u32).collect();
+        let shape_channel = binding.shape[dim_c] as u32;
 
         Self::new(
             stride_batch,
@@ -252,7 +246,7 @@ impl<'a, R: Runtime> NhwcLayoutLaunch<'a, R> {
             shape_batch,
             shapes_spatial,
             shape_channel,
-            line_size,
+            vector_size,
             checks,
         )
     }

@@ -95,32 +95,32 @@ where
         }
     }
 
-    fn load_lhs<E: Numeric>(
-        tile: &StridedTile<E>,
+    fn load_lhs<E: Numeric, N: Size>(
+        tile: &StridedTile<E, N>,
         lhs: &mut Self::LhsFragment,
         #[comptime] config: Self::Config,
     ) {
         RegisterStageReader::<Strided>::load_fragment(tile, lhs, StageIdent::Lhs, config)
     }
 
-    fn load_rhs<E: Numeric>(
-        tile: &StridedTile<E>,
+    fn load_rhs<E: Numeric, N: Size>(
+        tile: &StridedTile<E, N>,
         rhs: &mut Self::RhsFragment,
         #[comptime] config: Self::Config,
     ) {
         RegisterStageReader::<Strided>::load_fragment(tile, rhs, StageIdent::Rhs, config)
     }
 
-    fn load_acc<E: Numeric>(
-        tile: &AccTile::Tile<E>,
+    fn load_acc<E: Numeric, N: Size>(
+        tile: &AccTile::Tile<E, N>,
         acc: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     ) {
         RegisterStageReader::<AccTile>::load_fragment(tile, acc, StageIdent::Acc, config);
     }
 
-    fn write_results<E: Numeric>(
-        tile: &mut StridedTile<E, ReadWrite>,
+    fn write_results<E: Numeric, N: Size>(
+        tile: &mut StridedTile<E, N, ReadWrite>,
         acc: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     ) {
@@ -174,49 +174,51 @@ impl<Acc: TileKind> RegisterMatmul<Acc> {
         }
     }
 
-    pub fn load_plain<ES: Numeric, ER: Numeric>(
-        tile: &StridedTile<ES>,
+    pub fn load_plain<ES: Numeric, NS: Size, ER: Numeric>(
+        tile: &StridedTile<ES, NS>,
         array: &mut Array<ER>,
         #[comptime] num_segments: u32,
         #[comptime] segment_size: u32,
-        #[comptime] line_size: u32,
     ) {
-        let num_lines_per_segment = segment_size / line_size;
+        let vector_size = NS::value().comptime() as u32;
+        let num_vectors_per_segment = segment_size / vector_size;
 
         #[unroll(UNROLL)]
         for segment in 0..num_segments {
             #[unroll(UNROLL)]
-            for line_within_segment in 0..num_lines_per_segment {
-                let line = tile.get_line(segment, line_within_segment);
+            for vector_within_segment in 0..num_vectors_per_segment {
+                let vector = tile.get_vector(segment, vector_within_segment);
                 #[unroll]
-                for pos_within_line in 0..line_size {
-                    let offs =
-                        segment * segment_size + line_within_segment * line_size + pos_within_line;
-                    array[offs as usize] = ER::cast_from(line[pos_within_line as usize]);
+                for pos_within_vector in 0..vector_size {
+                    let offs = segment * segment_size
+                        + vector_within_segment * vector_size
+                        + pos_within_vector;
+                    array[offs as usize] = ER::cast_from(vector[pos_within_vector as usize]);
                 }
             }
         }
     }
 
-    pub fn load_transposed<ES: Numeric, ER: Numeric>(
-        tile: &StridedTile<ES>,
+    pub fn load_transposed<ES: Numeric, NS: Size, ER: Numeric>(
+        tile: &StridedTile<ES, NS>,
         array: &mut Array<ER>,
         #[comptime] num_segments: u32,
         #[comptime] segment_size: u32,
-        #[comptime] line_size: u32,
     ) {
-        let num_lines_per_segment = segment_size / line_size;
+        let vector_size = NS::value().comptime() as u32;
+        let num_vectors_per_segment = segment_size / vector_size;
 
         #[unroll(UNROLL)]
         for segment in 0..num_segments {
             #[unroll(UNROLL)]
-            for line_within_segment in 0..num_lines_per_segment {
-                let line = tile.get_line(segment, line_within_segment);
+            for vector_within_segment in 0..num_vectors_per_segment {
+                let vector = tile.get_vector(segment, vector_within_segment);
                 #[unroll]
-                for pos_within_line in 0..line_size {
-                    let offs = (line_within_segment * line_size + pos_within_line) * num_segments
+                for pos_within_vector in 0..vector_size {
+                    let offs = (vector_within_segment * vector_size + pos_within_vector)
+                        * num_segments
                         + segment;
-                    array[offs as usize] = ER::cast_from(line[pos_within_line as usize]);
+                    array[offs as usize] = ER::cast_from(vector[pos_within_vector as usize]);
                 }
             }
         }

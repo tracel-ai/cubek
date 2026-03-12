@@ -1,7 +1,7 @@
 use cubecl::prelude::*;
 use cubek_matmul::components::stage::{LoadStageFamily, Stage, StageFamily, TilingLayout};
 
-use cubecl::std::{Swizzle, tensor::layout::Coords2d, type_size};
+use cubecl::std::{Swizzle, tensor::layout::Coords2d};
 use cubek_std::{
     stage::{StageMemoryConfig, as_swizzle_object},
     tile::{Strided, StridedTile},
@@ -14,15 +14,15 @@ pub struct BiasStageFamily;
 impl StageFamily for BiasStageFamily {
     type TileKind = Strided;
 
-    type Stage<ES: Numeric, T: TilingLayout> = BiasStageMemory<ES>;
+    type Stage<ES: Numeric, NS: Size, T: TilingLayout> = BiasStageMemory<ES, NS>;
 }
 
 #[derive(CubeType, Clone, Copy)]
 /// Wrapper over the shared memory used for staging,
 /// abstracting its layout
-pub struct BiasStageMemory<ES: Numeric> {
+pub struct BiasStageMemory<ES: Numeric, NS: Size> {
     /// Underlying shared memory
-    pub smem: SharedMemory<Line<ES>>,
+    pub smem: SharedMemory<Vector<ES, NS>>,
     /// Swizzling of the shared memory, if any
     pub swizzle: Swizzle,
     buffer_index: u32,
@@ -34,32 +34,31 @@ pub struct BiasStageMemory<ES: Numeric> {
 }
 
 #[cube]
-impl<ES: Numeric> BiasStageMemory<ES> {
+impl<ES: Numeric, NS: Size> BiasStageMemory<ES, NS> {
     /// Instantiate a new stage memory for the given identifier
-    pub fn new(#[comptime] config: StageMemoryConfig) -> BiasStageMemory<ES> {
-        Self::new_aligned(type_size::<ES>(config.line_size as usize), config)
+    pub fn new(#[comptime] config: StageMemoryConfig) -> BiasStageMemory<ES, NS> {
+        Self::new_aligned(Vector::<ES, NS>::type_size(), config)
     }
 
     /// Instantiate a new stage memory for the given identifier, with shared memory alignment
     pub fn new_aligned(
         #[comptime] alignment: usize,
         #[comptime] config: StageMemoryConfig,
-    ) -> BiasStageMemory<ES> {
-        let line_size = config.line_size as usize;
+    ) -> BiasStageMemory<ES, NS> {
+        let vector_size = config.vector_size as usize;
         let swizzle = as_swizzle_object(config.swizzle);
         let swizzle_align = swizzle.repeats_after();
         let align = comptime![Ord::max(alignment, swizzle_align as usize)];
-        let type_size = type_size::<ES>(line_size).comptime();
+        let type_size = Vector::<ES, NS>::type_size().comptime();
 
         let stage_size_bytes =
             config.elements_per_stage_along_contiguous_dim() as usize * type_size;
         // Ensure all stages are aligned properly
-        let stage_size = stage_size_bytes.next_multiple_of(align) / type_size / line_size;
+        let stage_size = stage_size_bytes.next_multiple_of(align) / type_size / vector_size;
 
-        let smem =
-            SharedMemory::new_aligned(config.num_stages as usize * stage_size, line_size, align);
+        let smem = SharedMemory::new_aligned(config.num_stages as usize * stage_size, align);
 
-        BiasStageMemory::<ES> {
+        BiasStageMemory::<ES, NS> {
             smem,
             swizzle,
             stage_size: stage_size as u32,
@@ -69,7 +68,7 @@ impl<ES: Numeric> BiasStageMemory<ES> {
     }
 
     pub fn with_buffer_index(&self, buffer_idx: u32) -> Self {
-        BiasStageMemory::<ES> {
+        BiasStageMemory::<ES, NS> {
             smem: self.smem,
             swizzle: self.swizzle,
             stage_size: self.stage_size,
@@ -79,38 +78,37 @@ impl<ES: Numeric> BiasStageMemory<ES> {
     }
 
     /// Get the tile at position (row, col)
-    pub fn get_tile(&self, tile: Coords2d) -> StridedTile<ES> {
-        BiasTilingLayout::get_tile::<ES>(self, tile, self.config)
+    pub fn get_tile(&self, tile: Coords2d) -> StridedTile<ES, NS> {
+        BiasTilingLayout::get_tile::<ES, NS>(self, tile, self.config)
     }
 
     /// Get the tile at position (row, col)
-    pub fn get_tile_mut(&self, tile: Coords2d) -> StridedTile<ES, ReadWrite> {
+    pub fn get_tile_mut(&self, tile: Coords2d) -> StridedTile<ES, NS, ReadWrite> {
         let tile = self.get_tile(tile);
-        StridedTile::<ES, ReadWrite> {
+        StridedTile::<ES, NS, ReadWrite> {
             stage: tile.stage.as_mut_unchecked(),
             start: tile.start,
             end: tile.end,
             stride: tile.stride,
             swizzle: tile.swizzle,
             layout: tile.layout,
-            line_size: tile.line_size,
         }
     }
 
     /// Return the whole stage as a slice, for reading
-    pub fn as_slice(&self, #[comptime] line_size: LineSize) -> Slice<Line<ES>> {
+    pub fn as_slice(&self) -> Slice<Vector<ES, NS>> {
         let stage_offset = (self.buffer_index * self.stage_size) as usize;
         self.smem
             .slice(stage_offset, stage_offset + self.stage_size as usize)
-            .with_line_size(line_size)
+            .with_vector_size()
     }
 
     /// Return the whole stage as a mutable slice, for loading
-    pub fn as_slice_mut(&mut self, #[comptime] line_size: LineSize) -> SliceMut<Line<ES>> {
+    pub fn as_slice_mut(&mut self) -> SliceMut<Vector<ES, NS>> {
         let stage_offset = (self.buffer_index * self.stage_size) as usize;
         self.smem
             .slice_mut(stage_offset, stage_offset + self.stage_size as usize)
-            .with_line_size(line_size)
+            .with_vector_size()
     }
 
     /// Frees the shared memory for reuse, if possible on the target runtime.
@@ -124,31 +122,31 @@ impl<ES: Numeric> BiasStageMemory<ES> {
 }
 
 #[cube]
-impl<ES: Numeric> Stage<ES, ReadOnly> for BiasStageMemory<ES> {
+impl<ES: Numeric, NS: Size> Stage<ES, NS, ReadOnly> for BiasStageMemory<ES, NS> {
     type TileKind = Strided;
 
-    fn tile(this: &Self, tile: Coords2d) -> StridedTile<ES> {
+    fn tile(this: &Self, tile: Coords2d) -> StridedTile<ES, NS> {
         this.get_tile(tile)
     }
 }
 
 #[cube]
 impl LoadStageFamily<ReadOnly> for BiasStageFamily {
-    fn create<ES: Numeric, T: TilingLayout>(
+    fn create<ES: Numeric, NS: Size, T: TilingLayout>(
         #[comptime] alignment: usize,
         #[comptime] config: StageMemoryConfig,
-    ) -> Self::Stage<ES, T> {
+    ) -> Self::Stage<ES, NS, T> {
         BiasStageMemory::new_aligned(alignment, config)
     }
 
-    fn with_buffer_index<ES: Numeric, T: TilingLayout>(
-        stage: &Self::Stage<ES, T>,
+    fn with_buffer_index<ES: Numeric, NS: Size, T: TilingLayout>(
+        stage: &Self::Stage<ES, NS, T>,
         buffer_index: u32,
-    ) -> Self::Stage<ES, T> {
+    ) -> Self::Stage<ES, NS, T> {
         stage.with_buffer_index(buffer_index)
     }
 
-    fn free<ES: Numeric, T: TilingLayout>(stage: &Self::Stage<ES, T>) {
+    fn free<ES: Numeric, NS: Size, T: TilingLayout>(stage: &Self::Stage<ES, NS, T>) {
         unsafe { stage.free() };
     }
 }

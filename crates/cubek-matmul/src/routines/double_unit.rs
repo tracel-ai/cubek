@@ -17,7 +17,9 @@ use crate::{
         stage::{RowMajorTilingOrder, StridedStageFamily, UnitMatmulFamily},
         tile::{TileMatmulFamily, register::RegisterMatmul},
     },
-    definition::{MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, TilingBlueprint},
+    definition::{
+        MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes, TilingBlueprint,
+    },
     launch::RuntimeConfig,
     routines::{
         BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine,
@@ -78,7 +80,7 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleUnitAlgorithm {
                 problem,
                 device_settings.plane_dim,
                 true,
-                &device_settings.line_sizes,
+                &device_settings.vector_sizes,
                 UnitTilingBlueprintOptions {
                     tile: strategy.tile_size,
                     ..Default::default()
@@ -101,11 +103,14 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleUnitAlgorithm {
             &blueprint,
             problem,
             &dtypes,
-            &device_settings.line_sizes,
+            &device_settings.vector_sizes,
         )?;
 
-        let cubedim_resource =
-            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
+        let cubedim_resource = Self::BatchMatmul::cubedim_resource(
+            &blueprint,
+            &dtypes,
+            &device_settings.vector_sizes,
+        )?;
 
         LaunchInfo::new(
             blueprint,
@@ -118,7 +123,7 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleUnitAlgorithm {
 
     fn device_settings<R: Runtime>(
         client: &ComputeClient<R>,
-        line_sizes: MatmulLineSizes,
+        vector_sizes: MatmulVectorSizes,
     ) -> DeviceSettings<R> {
         let plane_dim = match client.properties().hardware.plane_size_min {
             0 => 32,
@@ -128,7 +133,7 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleUnitAlgorithm {
         DeviceSettings {
             client: client.clone(),
             plane_dim,
-            line_sizes,
+            vector_sizes,
             max_cube_count: client.properties().hardware.max_cube_count,
         }
     }

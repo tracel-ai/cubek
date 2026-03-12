@@ -8,7 +8,10 @@ use cubecl::{
 use crate::BaseInputSpec;
 
 #[cube(launch)]
-fn eye_launch<T: Numeric>(tensor: &mut Tensor<Line<T>>, #[define(T)] _types: StorageType) {
+fn eye_launch<T: Numeric, N: Size>(
+    tensor: &mut Tensor<Vector<T, N>>,
+    #[define(T)] _types: StorageType,
+) {
     let batch = CUBE_POS_Z as usize;
     let i = ABSOLUTE_POS_X as usize;
     let j = ABSOLUTE_POS_Y as usize;
@@ -23,7 +26,7 @@ fn eye_launch<T: Numeric>(tensor: &mut Tensor<Line<T>>, #[define(T)] _types: Sto
     let idx =
         batch * tensor.stride(rank - 3) + i * tensor.stride(rank - 2) + j * tensor.stride(rank - 1);
 
-    tensor.write_checked(idx, Line::cast_from(i == j));
+    tensor.write_checked(idx, Vector::cast_from(i == j));
 }
 
 #[allow(unused)]
@@ -37,7 +40,7 @@ fn new_eyed(
     strides: Strides,
 ) -> TensorHandle<TestRuntime> {
     // Performance is not important here and this simplifies greatly the problem
-    let line_size = 1;
+    let vector_size = 1;
 
     let dim_x = 32;
     let dim_y = 32;
@@ -59,7 +62,8 @@ fn new_eyed(
         client,
         cube_count,
         cube_dim,
-        out.clone().into_arg(line_size),
+        vector_size,
+        out.clone().into_arg(),
         dtype,
     );
 

@@ -8,7 +8,7 @@ use crate::components::{
     batch::BatchAttentionFamily, global::GlobalAttentionFamily, stage::StageAttentionFamily,
 };
 use crate::definition::{
-    AttentionElems, AttentionLineSizes, AttentionProblem, AttentionSetupError, CubeCountPlan,
+    AttentionElems, AttentionProblem, AttentionSetupError, AttentionVectorSizes, CubeCountPlan,
 };
 use crate::launch::BlueprintStrategy;
 
@@ -38,14 +38,14 @@ pub struct LaunchInfo<B> {
 
 pub struct DeviceSettings {
     pub plane_dim: u32,
-    pub line_sizes: AttentionLineSizes,
+    pub vector_sizes: AttentionVectorSizes,
 }
 
 impl DeviceSettings {
     pub fn new<R: Runtime>(client: &ComputeClient<R>, problem: &AttentionProblem) -> Self {
         DeviceSettings {
             plane_dim: client.properties().hardware.plane_size_max,
-            line_sizes: AttentionLineSizes::new_max_for_problem(client, problem),
+            vector_sizes: AttentionVectorSizes::new_max_for_problem(client, problem),
         }
     }
 }

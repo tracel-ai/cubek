@@ -36,7 +36,7 @@ impl LoadingValidation for SyncFullOrderedLoading {
             }));
         }
 
-        let line_size = config.gmem_config.line_size;
+        let vector_size = config.gmem_config.vector_size;
         let num_planes = config.loading_planes_count();
         let num_tiles = config.smem_config.tiles_per_stage();
 
@@ -49,16 +49,16 @@ impl LoadingValidation for SyncFullOrderedLoading {
         }
 
         let num_tiles_per_plane = num_tiles / num_planes;
-        let num_lines_per_tile = config.smem_config.elements_per_tile() / line_size as u32;
-        let num_lines_per_plane = num_lines_per_tile * num_tiles_per_plane;
+        let num_vectors_per_tile = config.smem_config.elements_per_tile() / vector_size as u32;
+        let num_vectors_per_plane = num_vectors_per_tile * num_tiles_per_plane;
         let num_planes = config.loading_planes_count();
         let plane_dim = config.plane_dim;
         let rows_per_plane = config.smem_config.tiles_per_stage_along_row() / num_planes;
 
-        if !num_lines_per_plane.is_multiple_of(plane_dim) {
+        if !num_vectors_per_plane.is_multiple_of(plane_dim) {
             return Err(FormattedConfigError::new(move || {
                 format!(
-                    "Plane dimension {plane_dim:?} must divide number of lines per plane {num_lines_per_plane:?} for ordered loading.",
+                    "Plane dimension {plane_dim:?} must divide number of vectors per plane {num_vectors_per_plane:?} for ordered loading.",
                 )
             }));
         }
@@ -91,7 +91,7 @@ impl LoadMaxRoundPlaneCount for SyncFullOrderedLoading {
     fn max_round_plane_count(
         _elements_per_tile: u32,
         tiles_per_stage: u32,
-        _line_size: LineSize,
+        _vector_size: VectorSize,
         _plane_dim: u32,
         _dtype: StorageType,
     ) -> u32 {
@@ -103,37 +103,37 @@ impl LoadMaxRoundPlaneCount for SyncFullOrderedLoading {
 impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncFullOrderedLoading {
     type TilingLayout = ContiguousTilingLayout<OrderedTilingOrder>;
     type SyncStrategy = Synchronous;
-    type Job<EG: Numeric, ES: Numeric> = sync_full_tilewise::SyncFullTilewiseJob;
+    type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> =
+        sync_full_tilewise::SyncFullTilewiseJob;
     type Stage = StridedStageFamily;
     type TileKind = Strided;
 
-    fn new_job<EG: Numeric, ES: Numeric>(
+    fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
-        #[comptime] line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
-    ) -> Self::Job<EG, ES> {
+    ) -> Self::Job<EG, NG, ES, NS> {
+        let vector_size = NG::value().comptime() as u32;
         let num_planes = config.loading_planes_count();
         let num_tiles = config.smem_config.tiles_per_stage();
         let plane_dim = config.plane_dim;
 
         let num_tiles_per_plane = num_tiles / num_planes;
-        let num_lines_per_tile = config.smem_config.elements_per_tile() / line_size as u32;
-        let num_lines_per_plane = num_lines_per_tile * num_tiles_per_plane;
-        let num_lines_per_unit = num_lines_per_plane / plane_dim;
+        let num_vectors_per_tile = config.smem_config.elements_per_tile() / vector_size;
+        let num_vectors_per_plane = num_vectors_per_tile * num_tiles_per_plane;
+        let num_vectors_per_unit = num_vectors_per_plane / plane_dim;
 
         let num_tiles_to_skip = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
             .load_index(config.input_load_flow)
             * num_tiles_per_plane;
-        let num_lines_to_skip = num_tiles_to_skip * num_lines_per_tile;
+        let num_vectors_to_skip = num_tiles_to_skip * num_vectors_per_tile;
 
         // Ordered is just a tilewise reader using the ordered tiling order
         sync_full_tilewise::SyncFullTilewiseJob {
             num_tiles_to_skip,
-            num_lines_to_skip,
-            num_lines_per_tile,
-            num_lines_per_unit,
+            num_vectors_to_skip,
+            num_vectors_per_tile,
+            num_vectors_per_unit,
             plane_dim,
-            line_size,
         }
     }
 }

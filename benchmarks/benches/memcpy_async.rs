@@ -10,15 +10,15 @@ use std::marker::PhantomData;
 
 #[cube]
 trait ComputeTask: Send + Sync + 'static {
-    fn compute<E: Float>(
-        input: &Slice<Line<E>>,
-        acc: &mut Array<Line<E>>,
+    fn compute<E: Float, N: Size>(
+        input: &Slice<Vector<E, N>>,
+        acc: &mut Array<Vector<E, N>>,
         #[comptime] config: Config,
     );
 
-    fn to_output<E: Float>(
-        acc: &mut Array<Line<E>>,
-        output: &mut SliceMut<Line<E>>,
+    fn to_output<E: Float, N: Size>(
+        acc: &mut Array<Vector<E, N>>,
+        output: &mut SliceMut<Vector<E, N>>,
         #[comptime] config: Config,
     );
 }
@@ -27,9 +27,9 @@ trait ComputeTask: Send + Sync + 'static {
 struct DummyCompute {}
 #[cube]
 impl ComputeTask for DummyCompute {
-    fn compute<E: Float>(
-        input: &Slice<Line<E>>,
-        acc: &mut Array<Line<E>>,
+    fn compute<E: Float, N: Size>(
+        input: &Slice<Vector<E, N>>,
+        acc: &mut Array<Vector<E, N>>,
         #[comptime] config: Config,
     ) {
         // An offset to make sure units need the data loaded by other units
@@ -41,9 +41,9 @@ impl ComputeTask for DummyCompute {
         }
     }
 
-    fn to_output<E: Float>(
-        acc: &mut Array<Line<E>>,
-        output: &mut SliceMut<Line<E>>,
+    fn to_output<E: Float, N: Size>(
+        acc: &mut Array<Vector<E, N>>,
+        output: &mut SliceMut<Vector<E, N>>,
         #[comptime] config: Config,
     ) {
         let position = UNIT_POS as usize * config.acc_len;
@@ -59,9 +59,9 @@ trait CopyStrategy: Send + Sync + 'static {
 
     fn barrier() -> Self::Barrier;
 
-    fn memcpy<E: Float>(
-        source: &Slice<Line<E>>,
-        destination: &mut SliceMut<Line<E>>,
+    fn memcpy<E: Float, N: Size>(
+        source: &Slice<Vector<E, N>>,
+        destination: &mut SliceMut<Vector<E, N>>,
         barrier: Self::Barrier,
         #[comptime] config: Config,
     );
@@ -79,9 +79,9 @@ impl CopyStrategy for DummyCopy {
 
     fn barrier() -> Self::Barrier {}
 
-    fn memcpy<E: Float>(
-        source: &Slice<Line<E>>,
-        destination: &mut SliceMut<Line<E>>,
+    fn memcpy<E: Float, N: Size>(
+        source: &Slice<Vector<E, N>>,
+        destination: &mut SliceMut<Vector<E, N>>,
         _barrier: Self::Barrier,
         #[comptime] _config: Config,
     ) {
@@ -105,9 +105,9 @@ impl CopyStrategy for CoalescedCopy {
 
     fn barrier() -> Self::Barrier {}
 
-    fn memcpy<E: Float>(
-        source: &Slice<Line<E>>,
-        destination: &mut SliceMut<Line<E>>,
+    fn memcpy<E: Float, N: Size>(
+        source: &Slice<Vector<E, N>>,
+        destination: &mut SliceMut<Vector<E, N>>,
         _barrier: Self::Barrier,
         #[comptime] config: Config,
     ) {
@@ -138,9 +138,9 @@ impl CopyStrategy for MemcpyAsyncSingleSliceDuplicatedAll {
         Barrier::shared(CUBE_DIM, UNIT_POS == 0u32)
     }
 
-    fn memcpy<E: Float>(
-        source: &Slice<Line<E>>,
-        destination: &mut SliceMut<Line<E>>,
+    fn memcpy<E: Float, N: Size>(
+        source: &Slice<Vector<E, N>>,
+        destination: &mut SliceMut<Vector<E, N>>,
         barrier: Self::Barrier,
         #[comptime] _config: Config,
     ) {
@@ -166,9 +166,9 @@ impl CopyStrategy for MemcpyAsyncSingleSliceElected {
         Barrier::shared(CUBE_DIM, UNIT_POS == 0u32)
     }
 
-    fn memcpy<E: Float>(
-        source: &Slice<Line<E>>,
-        destination: &mut SliceMut<Line<E>>,
+    fn memcpy<E: Float, N: Size>(
+        source: &Slice<Vector<E, N>>,
+        destination: &mut SliceMut<Vector<E, N>>,
         barrier: Self::Barrier,
         #[comptime] _config: Config,
     ) {
@@ -196,9 +196,9 @@ impl CopyStrategy for MemcpyAsyncSingleSliceElectedCooperative {
         Barrier::shared(CUBE_DIM, UNIT_POS == 0u32)
     }
 
-    fn memcpy<E: Float>(
-        source: &Slice<Line<E>>,
-        destination: &mut SliceMut<Line<E>>,
+    fn memcpy<E: Float, N: Size>(
+        source: &Slice<Vector<E, N>>,
+        destination: &mut SliceMut<Vector<E, N>>,
         barrier: Self::Barrier,
         #[comptime] _config: Config,
     ) {
@@ -225,9 +225,9 @@ impl CopyStrategy for MemcpyAsyncSplitPlaneDuplicatedUnit {
         Barrier::shared(CUBE_DIM, UNIT_POS == 0u32)
     }
 
-    fn memcpy<E: Float>(
-        source: &Slice<Line<E>>,
-        destination: &mut SliceMut<Line<E>>,
+    fn memcpy<E: Float, N: Size>(
+        source: &Slice<Vector<E, N>>,
+        destination: &mut SliceMut<Vector<E, N>>,
         barrier: Self::Barrier,
         #[comptime] config: Config,
     ) {
@@ -259,9 +259,9 @@ impl CopyStrategy for MemcpyAsyncSplitPlaneElectedUnit {
         Barrier::shared(CUBE_DIM, UNIT_POS == 0u32)
     }
 
-    fn memcpy<E: Float>(
-        source: &Slice<Line<E>>,
-        destination: &mut SliceMut<Line<E>>,
+    fn memcpy<E: Float, N: Size>(
+        source: &Slice<Vector<E, N>>,
+        destination: &mut SliceMut<Vector<E, N>>,
         barrier: Self::Barrier,
         #[comptime] config: Config,
     ) {
@@ -296,9 +296,9 @@ impl CopyStrategy for MemcpyAsyncSplitDuplicatedAll {
         Barrier::shared(CUBE_DIM, UNIT_POS == 0u32)
     }
 
-    fn memcpy<E: Float>(
-        source: &Slice<Line<E>>,
-        destination: &mut SliceMut<Line<E>>,
+    fn memcpy<E: Float, N: Size>(
+        source: &Slice<Vector<E, N>>,
+        destination: &mut SliceMut<Vector<E, N>>,
         barrier: Self::Barrier,
         #[comptime] config: Config,
     ) {
@@ -331,9 +331,9 @@ impl CopyStrategy for MemcpyAsyncSplitLargeUnitWithIdle {
         Barrier::shared(CUBE_DIM, UNIT_POS == 0u32)
     }
 
-    fn memcpy<E: Float>(
-        source: &Slice<Line<E>>,
-        destination: &mut SliceMut<Line<E>>,
+    fn memcpy<E: Float, N: Size>(
+        source: &Slice<Vector<E, N>>,
+        destination: &mut SliceMut<Vector<E, N>>,
         barrier: Self::Barrier,
         #[comptime] config: Config,
     ) {
@@ -368,9 +368,9 @@ impl CopyStrategy for MemcpyAsyncSplitSmallUnitCoalescedLoop {
         Barrier::shared(CUBE_DIM, UNIT_POS == 0u32)
     }
 
-    fn memcpy<E: Float>(
-        source: &Slice<Line<E>>,
-        destination: &mut SliceMut<Line<E>>,
+    fn memcpy<E: Float, N: Size>(
+        source: &Slice<Vector<E, N>>,
+        destination: &mut SliceMut<Vector<E, N>>,
         barrier: Self::Barrier,
         #[comptime] config: Config,
     ) {
@@ -407,9 +407,9 @@ impl CopyStrategy for MemcpyAsyncSplitMediumUnitCoalescedOnce {
         Barrier::shared(CUBE_DIM, UNIT_POS == 0u32)
     }
 
-    fn memcpy<E: Float>(
-        source: &Slice<Line<E>>,
-        destination: &mut SliceMut<Line<E>>,
+    fn memcpy<E: Float, N: Size>(
+        source: &Slice<Vector<E, N>>,
+        destination: &mut SliceMut<Vector<E, N>>,
         barrier: Self::Barrier,
         #[comptime] config: Config,
     ) {
@@ -439,29 +439,29 @@ struct Config {
 }
 
 #[cube(launch_unchecked)]
-fn memcpy_test<E: Float, Cpy: CopyStrategy, Cpt: ComputeTask>(
-    input: &Tensor<Line<E>>,
-    output: &mut Tensor<Line<E>>,
+fn memcpy_test<E: Float, N: Size, Cpy: CopyStrategy, Cpt: ComputeTask>(
+    input: &Tensor<Vector<E, N>>,
+    output: &mut Tensor<Vector<E, N>>,
     #[comptime] config: Config,
 ) {
     if config.double_buffering {
-        memcpy_test_single_buffer::<E, Cpy, Cpt>(input, output, config);
+        memcpy_test_single_buffer::<E, N, Cpy, Cpt>(input, output, config);
     } else {
-        memcpy_test_double_buffer::<E, Cpy, Cpt>(input, output, config);
+        memcpy_test_double_buffer::<E, N, Cpy, Cpt>(input, output, config);
     }
 }
 
 #[cube]
-fn memcpy_test_single_buffer<E: Float, Cpy: CopyStrategy, Cpt: ComputeTask>(
-    input: &Tensor<Line<E>>,
-    output: &mut Tensor<Line<E>>,
+fn memcpy_test_single_buffer<E: Float, N: Size, Cpy: CopyStrategy, Cpt: ComputeTask>(
+    input: &Tensor<Vector<E, N>>,
+    output: &mut Tensor<Vector<E, N>>,
     #[comptime] config: Config,
 ) {
     let data_count = input.shape(0);
-    let mut acc = Array::<Line<E>>::new(config.acc_len);
+    let mut acc = Array::<Vector<E, N>>::new(config.acc_len);
     let num_iterations = data_count.div_ceil(config.smem_size);
 
-    let mut smem = SharedMemory::<E>::new_lined(config.smem_size, 1usize);
+    let mut smem = SharedMemory::<Vector<E, N>>::new(config.smem_size);
     let barrier = Cpy::barrier();
 
     for i in 0..num_iterations {
@@ -486,15 +486,15 @@ fn memcpy_test_single_buffer<E: Float, Cpy: CopyStrategy, Cpt: ComputeTask>(
 }
 
 #[cube]
-fn memcpy_test_double_buffer<E: Float, Cpy: CopyStrategy, Cpt: ComputeTask>(
-    input: &Tensor<Line<E>>,
-    output: &mut Tensor<Line<E>>,
+fn memcpy_test_double_buffer<E: Float, N: Size, Cpy: CopyStrategy, Cpt: ComputeTask>(
+    input: &Tensor<Vector<E, N>>,
+    output: &mut Tensor<Vector<E, N>>,
     #[comptime] config: Config,
 ) {
     let data_count = input.shape(0);
-    let mut smem1 = SharedMemory::<E>::new_lined(config.smem_size, 1usize);
-    let mut smem2 = SharedMemory::<E>::new_lined(config.smem_size, 1usize);
-    let mut acc = Array::<Line<E>>::new(config.acc_len);
+    let mut smem1 = SharedMemory::<Vector<E, N>>::new(config.smem_size);
+    let mut smem2 = SharedMemory::<Vector<E, N>>::new(config.smem_size);
+    let mut acc = Array::<Vector<E, N>>::new(config.acc_len);
     let num_iterations = data_count.div_ceil(config.smem_size);
 
     let barrier1 = Cpy::barrier();
@@ -588,8 +588,9 @@ fn launch_ref<R: Runtime, E: Float>(
                     client,
                     cube_count,
                     cube_dim,
-                    input.into_tensor_arg(1),
-                    output.into_tensor_arg(1),
+                    1,
+                    input.into_tensor_arg(),
+                    output.into_tensor_arg(),
                     config,
                 )
             }
@@ -598,8 +599,9 @@ fn launch_ref<R: Runtime, E: Float>(
                     client,
                     cube_count,
                     cube_dim,
-                    input.into_tensor_arg(1),
-                    output.into_tensor_arg(1),
+                    1,
+                    input.into_tensor_arg(),
+                    output.into_tensor_arg(),
                     config,
                 )
             }
@@ -613,8 +615,9 @@ fn launch_ref<R: Runtime, E: Float>(
                     client,
                     cube_count,
                     cube_dim,
-                    input.into_tensor_arg(1),
-                    output.into_tensor_arg(1),
+                    1,
+                    input.into_tensor_arg(),
+                    output.into_tensor_arg(),
                     config,
                 )
             }
@@ -623,8 +626,9 @@ fn launch_ref<R: Runtime, E: Float>(
                     client,
                     cube_count,
                     cube_dim,
-                    input.into_tensor_arg(1),
-                    output.into_tensor_arg(1),
+                    1,
+                    input.into_tensor_arg(),
+                    output.into_tensor_arg(),
                     config,
                 )
             }
@@ -638,8 +642,9 @@ fn launch_ref<R: Runtime, E: Float>(
                     client,
                     cube_count,
                     cube_dim,
-                    input.into_tensor_arg(1),
-                    output.into_tensor_arg(1),
+                    1,
+                    input.into_tensor_arg(),
+                    output.into_tensor_arg(),
                     config,
                 )
             }
@@ -653,8 +658,9 @@ fn launch_ref<R: Runtime, E: Float>(
                     client,
                     cube_count,
                     cube_dim,
-                    input.into_tensor_arg(1),
-                    output.into_tensor_arg(1),
+                    1,
+                    input.into_tensor_arg(),
+                    output.into_tensor_arg(),
                     config,
                 )
             }
@@ -663,8 +669,9 @@ fn launch_ref<R: Runtime, E: Float>(
                     client,
                     cube_count,
                     cube_dim,
-                    input.into_tensor_arg(1),
-                    output.into_tensor_arg(1),
+                    1,
+                    input.into_tensor_arg(),
+                    output.into_tensor_arg(),
                     config,
                 )
             }
@@ -673,8 +680,9 @@ fn launch_ref<R: Runtime, E: Float>(
                     client,
                     cube_count,
                     cube_dim,
-                    input.into_tensor_arg(1),
-                    output.into_tensor_arg(1),
+                    1,
+                    input.into_tensor_arg(),
+                    output.into_tensor_arg(),
                     config,
                 )
             }
@@ -683,8 +691,9 @@ fn launch_ref<R: Runtime, E: Float>(
                     client,
                     cube_count,
                     cube_dim,
-                    input.into_tensor_arg(1),
-                    output.into_tensor_arg(1),
+                    1,
+                    input.into_tensor_arg(),
+                    output.into_tensor_arg(),
                     config,
                 )
             }
@@ -698,8 +707,9 @@ fn launch_ref<R: Runtime, E: Float>(
                     client,
                     cube_count,
                     cube_dim,
-                    input.into_tensor_arg(1),
-                    output.into_tensor_arg(1),
+                    1,
+                    input.into_tensor_arg(),
+                    output.into_tensor_arg(),
                     config,
                 )
             }
@@ -713,8 +723,9 @@ fn launch_ref<R: Runtime, E: Float>(
                     client,
                     cube_count,
                     cube_dim,
-                    input.into_tensor_arg(1),
-                    output.into_tensor_arg(1),
+                    1,
+                    input.into_tensor_arg(),
+                    output.into_tensor_arg(),
                     config,
                 )
             }
@@ -739,7 +750,7 @@ impl<R: Runtime, E: Float> Benchmark for MemcpyAsyncBench<R, E> {
             0.,
             1.,
             a.clone().binding(),
-            E::as_type_native_unchecked(),
+            E::as_type_native_unchecked().storage_type(),
         )
         .unwrap();
         let b = TensorHandle::empty(
@@ -752,7 +763,7 @@ impl<R: Runtime, E: Float> Benchmark for MemcpyAsyncBench<R, E> {
             0.,
             1.,
             b.clone().binding(),
-            E::as_type_native_unchecked(),
+            E::as_type_native_unchecked().storage_type(),
         )
         .unwrap();
 

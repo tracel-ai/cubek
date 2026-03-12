@@ -10,6 +10,11 @@
 //! It also provides implementation of the [`ReduceInstruction`] trait for common operations in the [`instructions`] module.
 //! Finally, it provides many reusable primitives to perform different general reduction algorithms in the [`primitives`] module.
 
+#![allow(
+    clippy::type_complexity,
+    reason = "Too sensitive, triggers on tuple of vector."
+)]
+
 pub mod components;
 pub mod launch;
 pub mod routines;

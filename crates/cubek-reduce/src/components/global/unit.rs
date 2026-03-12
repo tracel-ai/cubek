@@ -1,6 +1,7 @@
 use crate::{
-    BoundChecks, LineMode, ReduceInstruction, ReducePrecision,
+    BoundChecks, ReduceInstruction, ReducePrecision, VectorizationMode,
     components::{
+        args::NumericLine,
         global::idle_check,
         instructions::reduce_inplace,
         readers::{Reader, unit::UnitReader},
@@ -15,17 +16,17 @@ pub struct GlobalFullUnitReduce;
 
 #[cube]
 impl GlobalFullUnitReduce {
-    pub fn execute<P: ReducePrecision, Out: Numeric, I: ReduceInstruction<P>>(
-        input: &VirtualTensor<P::EI>,
-        output: &mut VirtualTensor<Out, ReadWrite>,
+    pub fn execute<P: ReducePrecision, Out: NumericLine, I: ReduceInstruction<P>>(
+        input: &VirtualTensor<P::EI, P::SI>,
+        output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         reduce_axis: usize,
         inst: &I,
-        #[comptime] line_mode: LineMode,
+        #[comptime] vectorization_mode: VectorizationMode,
         #[comptime] blueprint: UnitReduceBlueprint,
     ) {
         let write_index = ABSOLUTE_POS;
         let mut writer =
-            Writer::<Out>::new::<P>(input, output, reduce_axis, write_index, line_mode);
+            Writer::<Out>::new::<P>(input, output, reduce_axis, write_index, vectorization_mode);
 
         let write_count = writer.write_count();
         let reduce_index_start = write_index * write_count;
@@ -34,7 +35,7 @@ impl GlobalFullUnitReduce {
             input,
             output,
             reduce_index_start,
-            line_mode,
+            vectorization_mode,
             blueprint.unit_idle,
         );
 
@@ -47,7 +48,7 @@ impl GlobalFullUnitReduce {
                 reduce_index,
                 inst,
                 idle,
-                line_mode,
+                vectorization_mode,
             );
             writer.write::<P, I>(b, accumulator, inst);
         }
@@ -56,17 +57,15 @@ impl GlobalFullUnitReduce {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn reduce_single<P: ReducePrecision, Out: Numeric, I: ReduceInstruction<P>>(
-        input: &VirtualTensor<P::EI>,
-        output: &mut VirtualTensor<Out, ReadWrite>,
+    pub fn reduce_single<P: ReducePrecision, Out: NumericLine, I: ReduceInstruction<P>>(
+        input: &VirtualTensor<P::EI, P::SI>,
+        output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         reduce_axis: usize,
         reduce_index: usize,
         inst: &I,
         idle: ComptimeOption<bool>,
-        #[comptime] line_mode: LineMode,
+        #[comptime] vectorization_mode: VectorizationMode,
     ) -> I::AccumulatorItem {
-        let input_line_size = input.line_size();
-
         let reader = Reader::<P>::new::<I, Out>(
             input,
             output,
@@ -75,11 +74,11 @@ impl GlobalFullUnitReduce {
             reduce_index,
             idle,
             comptime!(BoundChecks::None),
-            line_mode,
+            vectorization_mode,
         );
         let reader = UnitReader::<P>::new(reader);
 
-        let mut accumulator = I::null_accumulator(inst, input_line_size);
+        let mut accumulator = I::null_accumulator(inst);
 
         for i in 0..reader.length() {
             let (item, coordinate) = reader.read(i);

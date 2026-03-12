@@ -44,7 +44,7 @@ impl Routine for BlackboxAcceleratedRoutine {
 
         let dtypes = AttentionElems::from_global_types(
             &problem.global_dtypes,
-            half::f16::as_type_native_unchecked(),
+            half::f16::as_type_native_unchecked().storage_type(),
             &problem.options.accumulator_precision,
         );
 
@@ -104,9 +104,8 @@ fn blueprint(
             let blueprint = AttentionBlueprint {
                 hypercube_blueprint: HypercubeBlueprint {},
                 plane_dim: launch_settings.plane_dim,
-                reuse_key_value: false,
                 two_rows_in_array_tile: false,
-                line_sizes: launch_settings.line_sizes.clone(),
+                vector_sizes: launch_settings.vector_sizes.clone(),
                 masked: problem.masked,
                 causal: problem.options.causal,
                 tiling_scheme,
@@ -122,7 +121,7 @@ fn validate(
     problem: &AttentionProblem,
     blueprint: AttentionBlueprint,
 ) -> Result<AttentionBlueprint, AttentionSetupError> {
-    if problem.dims.head_dim as u32 % blueprint.tiling_scheme.tile_size.head_dim != 0 {
+    if !(problem.dims.head_dim as u32).is_multiple_of(blueprint.tiling_scheme.tile_size.head_dim) {
         return Err(AttentionSetupError::InvalidConfig(Box::new(
             "Tile size head dim must divide problem head dim".to_string(),
         )));

@@ -8,14 +8,14 @@ use crate::{
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct PlaneVecMatInnerProductConfig {
     pub shared: SharedTileConfig,
-    pub reduce_line_size: u32,
+    pub reduce_vector_size: u32,
 }
 
 impl PlaneVecMatInnerProductConfig {
-    pub fn new(shared: SharedTileConfig, reduce_line_size: u32) -> Self {
+    pub fn new(shared: SharedTileConfig, reduce_vector_size: u32) -> Self {
         Self {
             shared,
-            reduce_line_size,
+            reduce_vector_size,
         }
     }
 }

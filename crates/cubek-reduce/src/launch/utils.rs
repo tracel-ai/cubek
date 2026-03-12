@@ -1,16 +1,16 @@
-use crate::{LineMode, launch::LineSizeStrategy};
+use crate::{VectorizationMode, launch::VectorizationStrategy};
 use cubecl::{
-    prelude::*, std::tensor::is_contiguous, tensor_line_size_parallel,
-    tensor_line_size_perpendicular,
+    ir::HardwareProperties, prelude::*, std::tensor::is_contiguous, tensor_vector_size_parallel,
+    tensor_vector_size_perpendicular,
 };
 
 /// Calculate the number of planes in a cube.
 pub fn calculate_plane_count_per_cube(
     working_units: usize,
     plane_dim: u32,
-    num_cpu_cores: Option<u32>,
+    properties: &HardwareProperties,
 ) -> u32 {
-    match num_cpu_cores {
+    let plane_count = match properties.num_cpu_cores {
         Some(num_cores) => core::cmp::min(num_cores, working_units as u32),
         None => {
             let plane_count_max = core::cmp::max(1, working_units / plane_dim as usize);
@@ -22,27 +22,30 @@ pub fn calculate_plane_count_per_cube(
                 core::cmp::min(NUM_PLANE_MAX_LOG2, usize::ilog2(plane_count_max));
             2u32.pow(plane_count_max_log2)
         }
-    }
+    };
+
+    let max_plane_per_cube = properties.max_units_per_cube / plane_dim;
+    plane_count.min(max_plane_per_cube)
 }
 
-pub fn generate_line_size<R: Runtime>(
+pub fn generate_vector_size<R: Runtime>(
     client: &ComputeClient<R>,
     input: &TensorBinding<R>,
     output: &TensorBinding<R>,
     axis: usize,
     dtype: StorageType,
-    line_mode: LineMode,
-    strategy: &LineSizeStrategy,
+    vectorization_mode: VectorizationMode,
+    strategy: &VectorizationStrategy,
 ) -> (usize, usize) {
-    let line_size_input = match line_mode {
-        LineMode::Parallel => tensor_line_size_parallel(
-            client.io_optimized_line_sizes(dtype.size()),
+    let vector_size_input = match vectorization_mode {
+        VectorizationMode::Parallel => tensor_vector_size_parallel(
+            client.io_optimized_vector_sizes(dtype.size()),
             &input.shape,
             &input.strides,
             axis,
         ),
-        LineMode::Perpendicular => {
-            // To compute the maximum line size we can used,
+        VectorizationMode::Perpendicular => {
+            // To compute the maximum vector size we can used,
             // we first sort both the input and output axes by increasing strides.
             // As example, consider
             //    input shape = [2, 4, 6, 8]
@@ -59,15 +62,15 @@ pub fn generate_line_size<R: Runtime>(
             // That is [0, 3] in the example.
             // In the output, we remove the target axis leading to [0, 2, 3] in the example.
             //
-            // In order to use perpendicular line, we are limited by the number of entries that are both
+            // In order to use perpendicular vector, we are limited by the number of entries that are both
             // contiguous in the input and output. This is obtained by taking the head of each list until they are different.
             // In the above example, only the 0 axis is contiguous in both tensor, but it output sorted axis were [0, 1, 3, 2] instead,
             // both the 0 and 3 axes would be contiguous in the two tensors.
             // The corresponding number of entries is the product of the shape for the contiguous axes.
             // In the example, it is simply 2.
             //
-            // This gives us an upper bound on the line size we can used.
-            // Then, we use the regular method to find the best line size that match the device capacities.
+            // This gives us an upper bound on the vector size we can used.
+            // Then, we use the regular method to find the best vector size that match the device capacities.
 
             let mut input_axis_and_strides = input.strides.iter().enumerate().collect::<Vec<_>>();
             input_axis_and_strides.sort_by_key(|(_, stride)| *stride);
@@ -82,38 +85,38 @@ pub fn generate_line_size<R: Runtime>(
                 .into_iter()
                 .filter_map(|(a, _)| (a != axis).then_some(a));
 
-            let max_line_size = input_sorted_axis
+            let max_vector_size = input_sorted_axis
                 .zip(output_sorted_axis)
                 .filter_map(|(i, o)| (i == o).then_some(output.shape[i]))
                 .product();
 
             match client.properties().hardware.num_cpu_cores.is_some() {
                 true => {
-                    // On CPU we benefit from bigger line size, which increases the number of
+                    // On CPU we benefit from bigger vector size, which increases the number of
                     // consecutive loads from global memory on perpendicular reduce.
-                    // R::supported_line_sizes() was always arbitrary, review this and find alternate
+                    // R::supported_vector_sizes() was always arbitrary, review this and find alternate
                     // algorithm. For now it replicates existing behaviour.
-                    let supported_line_sizes = client.io_optimized_line_sizes(1).filter(|size| {
-                        *size <= max_line_size && max_line_size.is_multiple_of(*size)
-                    });
+                    let supported_vector_sizes =
+                        client.io_optimized_vector_sizes(1).filter(|size| {
+                            *size <= max_vector_size && max_vector_size.is_multiple_of(*size)
+                        });
 
-                    tensor_line_size_perpendicular(
-                        supported_line_sizes,
+                    tensor_vector_size_perpendicular(
+                        supported_vector_sizes,
                         &input.shape,
                         &input.strides,
                         axis,
                     )
                 }
                 false => {
-                    let supported_line_sizes =
-                        client
-                            .io_optimized_line_sizes(dtype.size())
-                            .filter(|&size| {
-                                size <= max_line_size && max_line_size.is_multiple_of(size)
-                            });
+                    let supported_vector_sizes = client
+                        .io_optimized_vector_sizes(dtype.size())
+                        .filter(|&size| {
+                            size <= max_vector_size && max_vector_size.is_multiple_of(size)
+                        });
 
-                    tensor_line_size_perpendicular(
-                        supported_line_sizes,
+                    tensor_vector_size_perpendicular(
+                        supported_vector_sizes,
                         &input.shape,
                         &input.strides,
                         axis,
@@ -123,33 +126,33 @@ pub fn generate_line_size<R: Runtime>(
         }
     };
 
-    let mut line_size_output = 1;
+    let mut vector_size_output = 1;
 
-    if line_size_input > 1 && line_mode == LineMode::Perpendicular {
+    if vector_size_input > 1 && vectorization_mode == VectorizationMode::Perpendicular {
         // TODO that this can be improved
         let rank = output.strides.len();
         let is_contiguous = is_contiguous(&output.shape[axis..rank], &output.strides[axis..rank])
             && output.strides[rank - 1] == 1;
         let shape = output.shape.get(axis + 1).copied().unwrap_or(1);
 
-        if is_contiguous && shape.is_multiple_of(line_size_input) {
-            line_size_output = line_size_input;
+        if is_contiguous && shape.is_multiple_of(vector_size_input) {
+            vector_size_output = vector_size_input;
         }
     }
 
     if strategy.parallel_output_vectorization
-        && line_mode == LineMode::Parallel
-        && line_size_input > 1
+        && vectorization_mode == VectorizationMode::Parallel
+        && vector_size_input > 1
         && is_contiguous(&input.shape, &input.strides)
         && axis == input.shape.len() - 1
     {
-        let supported_line_sizes = client.io_optimized_line_sizes(dtype.size());
+        let supported_vector_sizes = client.io_optimized_vector_sizes(dtype.size());
         let num_reduce = output.shape.iter().copied().product::<usize>();
-        line_size_output = supported_line_sizes
-            .filter(|&line_size| num_reduce % line_size == 0)
+        vector_size_output = supported_vector_sizes
+            .filter(|&vector_size| num_reduce % vector_size == 0)
             .max()
             .unwrap_or(1);
     }
 
-    (line_size_input, line_size_output)
+    (vector_size_input, vector_size_output)
 }

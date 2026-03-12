@@ -42,9 +42,9 @@ impl<
 {
     type Attention<AP: AttentionPrecision> = UnitPartitionAttention<
         AP,
-        SK::Stage<KS<AP>, AttentionTilingLayout>,
-        SV::Stage<VS<AP>, AttentionTilingLayout>,
-        SO::Stage<OS<AP>, AttentionTilingLayout>,
+        SK::Stage<KS<AP>, KSS<AP>, AttentionTilingLayout>,
+        SV::Stage<VS<AP>, VSS<AP>, AttentionTilingLayout>,
+        SO::Stage<OS<AP>, OSS<AP>, AttentionTilingLayout>,
         TA::TileAttention<AP>,
     >;
 
@@ -80,7 +80,7 @@ impl<
             tiles_per_partition_along_col: blueprint.tiling_scheme.partition_size.head_dim,
             partitions_per_stage_along_row: 1,
             partitions_per_stage_along_col: 1,
-            line_size: blueprint.line_sizes.key as u32,
+            vector_size: blueprint.vector_sizes.key as u32,
             matrix_layout: MatrixLayout::RowMajor,
             swizzle: SwizzleMode::None,
             num_stages: 1,
@@ -95,7 +95,7 @@ impl<
             tiles_per_partition_along_col: blueprint.tiling_scheme.partition_size.val_dim,
             partitions_per_stage_along_row: 1,
             partitions_per_stage_along_col: 1,
-            line_size: blueprint.line_sizes.value as u32,
+            vector_size: blueprint.vector_sizes.value as u32,
             matrix_layout: MatrixLayout::RowMajor,
             swizzle: SwizzleMode::None,
             num_stages: 1,
@@ -111,7 +111,7 @@ impl<
             // Each unit has its slot in row direction
             partitions_per_stage_along_row: num_planes * blueprint.plane_dim,
             partitions_per_stage_along_col: 1,
-            line_size: blueprint.line_sizes.out as u32,
+            vector_size: blueprint.vector_sizes.out as u32,
             matrix_layout: MatrixLayout::RowMajor,
             swizzle: SwizzleMode::None,
             num_stages: 1,
@@ -122,7 +122,6 @@ impl<
             shared: SharedPartitionAttentionConfig {
                 partition_size: blueprint.tiling_scheme.partition_size,
                 stage_size: blueprint.tiling_scheme.stage_size,
-                reuse_key_value: blueprint.reuse_key_value,
                 num_planes,
                 key_smem_config,
                 value_smem_config,

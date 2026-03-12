@@ -276,11 +276,11 @@ impl TilingOrder for TmaTilingOrder {
 /// Describes how tiles are arranged in shared memory.
 pub trait TilingLayout: 'static + Send + Sync + Clone + Copy + TilingValidation {
     /// Returns the tile at shared memory coordinates
-    fn get_tile<ES: Numeric>(
-        stage: &StridedStageMemory<ES, Self>,
+    fn get_tile<ES: Numeric, NS: Size>(
+        stage: &StridedStageMemory<ES, NS, Self>,
         tile: Coords2d,
         #[comptime] config: StageMemoryConfig,
-    ) -> StridedTile<ES>;
+    ) -> StridedTile<ES, NS>;
 
     /// Return the trait value as enum
     fn to_enum() -> comptime_type!(TilingLayoutEnum);
@@ -319,14 +319,12 @@ impl<T: TilingOrder> ContiguousTilingLayout<T> {
 
 #[cube]
 impl<TO: TilingOrder> TilingLayout for ContiguousTilingLayout<TO> {
-    fn get_tile<ES: Numeric>(
-        stage_memory: &StridedStageMemory<ES, Self>,
+    fn get_tile<ES: Numeric, NS: Size>(
+        stage_memory: &StridedStageMemory<ES, NS, Self>,
         tile: Coords2d,
         #[comptime] config: StageMemoryConfig,
-    ) -> StridedTile<ES> {
+    ) -> StridedTile<ES, NS> {
         let (row, col) = tile;
-
-        let stage_line_size = config.line_size;
 
         let start = config.elements_per_tile()
             * TO::to_nth_tile(
@@ -335,13 +333,9 @@ impl<TO: TilingOrder> TilingLayout for ContiguousTilingLayout<TO> {
                 config.tiles_per_stage_along_col(),
                 config,
             );
-        let start = start / config.line_size;
+        let start = start / config.vector_size;
 
-        StridedTile::new_contiguous(
-            stage_memory.as_slice(stage_line_size as usize),
-            start,
-            config,
-        )
+        StridedTile::new_contiguous(stage_memory.as_slice::<NS>(), start, config)
     }
 
     fn to_enum() -> comptime_type!(TilingLayoutEnum) {
@@ -352,10 +346,10 @@ impl<TO: TilingOrder> TilingLayout for ContiguousTilingLayout<TO> {
 impl<TO: TilingOrder> TilingValidation for ContiguousTilingLayout<TO> {
     fn check(config: StageMemoryConfig) -> Result<(), InvalidConfigError> {
         let tile_width = config.elements_per_tile_along_contiguous_dim();
-        if config.line_size > tile_width {
+        if config.vector_size > tile_width {
             return Err(Box::new(format!(
-                "Invalid line size. Got {:?} which should not be >{:?}",
-                config.line_size, tile_width,
+                "Invalid vector size. Got {:?} which should not be >{:?}",
+                config.vector_size, tile_width,
             )));
         }
         Ok(())
@@ -365,35 +359,35 @@ impl<TO: TilingOrder> TilingValidation for ContiguousTilingLayout<TO> {
 #[cube]
 impl StridedTilingLayout {
     /// Returns the nth slice of the stage
-    pub fn nth_slice<ES: Numeric>(
-        stage: &mut StridedStageMemory<ES, Self>,
+    pub fn nth_slice<ES: Numeric, NS: Size>(
+        stage: &mut StridedStageMemory<ES, NS, Self>,
         nth: u32,
         #[comptime] config: StageMemoryConfig,
-    ) -> SliceMut<Line<ES>> {
-        let stage_line_size = config.line_size;
+    ) -> SliceMut<Vector<ES, NS>> {
+        let stage_vector_size = config.vector_size;
 
         let slice_length = match config.matrix_layout {
             MatrixLayout::RowMajor => config.elements_per_stage_along_col(),
             MatrixLayout::ColMajor => config.elements_per_stage_along_row(),
-        } / stage_line_size;
+        } / stage_vector_size;
 
         let start = slice_length * nth;
         stage
-            .as_slice_mut(stage_line_size as usize)
+            .as_slice_mut()
             .slice_mut(start as usize, (start + slice_length) as usize)
     }
 }
 
 #[cube]
 impl TilingLayout for StridedTilingLayout {
-    fn get_tile<ES: Numeric>(
-        stage: &StridedStageMemory<ES, Self>,
+    fn get_tile<ES: Numeric, NS: Size>(
+        stage: &StridedStageMemory<ES, NS, Self>,
         tile: Coords2d,
         #[comptime] config: StageMemoryConfig,
-    ) -> StridedTile<ES> {
+    ) -> StridedTile<ES, NS> {
         let (x, y) = tile;
 
-        let stage_line_size = config.line_size;
+        let stage_vector_size = config.vector_size;
         let matrix_layout = config.matrix_layout;
 
         let tile_count_x = config.tiles_per_stage_along_row();
@@ -402,24 +396,23 @@ impl TilingLayout for StridedTilingLayout {
         match matrix_layout {
             MatrixLayout::RowMajor => {
                 let tile_size_x = config.elements_per_tile_along_row;
-                let tile_size_y = config.elements_per_tile_along_col / stage_line_size;
+                let tile_size_y = config.elements_per_tile_along_col / stage_vector_size;
 
                 let stride = tile_count_y * tile_size_y;
                 let length = (tile_size_x - 1) * stride + tile_size_y;
                 let start = x * tile_size_x * stride + y * tile_size_y;
 
                 StridedTile::new_strided(
-                    stage.as_slice(stage_line_size as usize),
+                    stage.as_slice(),
                     start,
                     start + length,
                     stride,
                     stage.swizzle,
                     matrix_layout,
-                    stage_line_size,
                 )
             }
             MatrixLayout::ColMajor => {
-                let tile_size_x = config.elements_per_tile_along_row / stage_line_size;
+                let tile_size_x = config.elements_per_tile_along_row / stage_vector_size;
                 let tile_size_y = config.elements_per_tile_along_col;
 
                 let stride = tile_count_x * tile_size_x;
@@ -427,13 +420,12 @@ impl TilingLayout for StridedTilingLayout {
                 let start = x * tile_size_x + y * tile_size_y * stride;
 
                 StridedTile::new_strided(
-                    stage.as_slice(stage_line_size as usize),
+                    stage.as_slice(),
                     start,
                     start + length,
                     stride,
                     stage.swizzle,
                     matrix_layout,
-                    stage_line_size,
                 )
             }
         }
@@ -447,10 +439,10 @@ impl TilingLayout for StridedTilingLayout {
 impl TilingValidation for StridedTilingLayout {
     fn check(config: StageMemoryConfig) -> Result<(), InvalidConfigError> {
         let stage_width = config.elements_per_stage_along_contiguous_dim();
-        if config.line_size > stage_width {
+        if config.vector_size > stage_width {
             return Err(Box::new(format!(
-                "Invalid line size. Got {:?} which should not be >{:?}",
-                config.line_size, stage_width,
+                "Invalid vector size. Got {:?} which should not be >{:?}",
+                config.vector_size, stage_width,
             )));
         }
         Ok(())
@@ -459,11 +451,11 @@ impl TilingValidation for StridedTilingLayout {
 
 #[cube]
 impl TilingLayout for TmaTilingLayout {
-    fn get_tile<ES: Numeric>(
-        stage: &StridedStageMemory<ES, Self>,
+    fn get_tile<ES: Numeric, NS: Size>(
+        stage: &StridedStageMemory<ES, NS, Self>,
         tile: Coords2d,
         #[comptime] config: StageMemoryConfig,
-    ) -> StridedTile<ES> {
+    ) -> StridedTile<ES, NS> {
         match config.swizzle {
             SwizzleMode::None => ContiguousTilingLayout::<TmaTilingOrder>::get_tile(
                 &stage.with_layout(),
@@ -496,11 +488,11 @@ pub struct NoTilingLayout {}
 
 #[cube]
 impl TilingLayout for NoTilingLayout {
-    fn get_tile<ES: Numeric>(
-        _stage: &StridedStageMemory<ES, Self>,
+    fn get_tile<ES: Numeric, NS: Size>(
+        _stage: &StridedStageMemory<ES, NS, Self>,
         _tile: Coords2d,
         #[comptime] _config: StageMemoryConfig,
-    ) -> StridedTile<ES> {
+    ) -> StridedTile<ES, NS> {
         panic!("Can't get tile of layoutless tiling!")
     }
 

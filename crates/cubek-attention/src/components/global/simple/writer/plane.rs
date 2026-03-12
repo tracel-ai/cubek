@@ -14,23 +14,25 @@ use crate::components::{
 };
 
 #[derive(CubeType)]
-pub struct PlaneAttentionWriter<ES: Numeric, EO: Numeric> {
-    global: View<Line<EO>, TiledCoords, ReadWrite>,
-    stage: PartitionedStage<ES>,
+pub struct PlaneAttentionWriter<ES: Numeric, ESS: Size, EO: Numeric, EOS: Size> {
+    global: View<Vector<EO, EOS>, TiledCoords, ReadWrite>,
+    stage: PartitionedStage<ES, ESS>,
 
     #[cube(comptime)]
     config: GlobalWriterConfig,
 }
 
 #[cube]
-impl<ES: Numeric, EG: Numeric> PlaneAttentionWriter<ES, EG> {}
+impl<ES: Numeric, ESS: Size, EG: Numeric, EGS: Size> PlaneAttentionWriter<ES, ESS, EG, EGS> {}
 
 #[cube]
-impl<ES: Numeric, EG: Numeric> WriteEventListener for PlaneAttentionWriter<ES, EG> {
+impl<ES: Numeric, ESS: Size, EG: Numeric, EGS: Size> WriteEventListener
+    for PlaneAttentionWriter<ES, ESS, EG, EGS>
+{
     fn on_event(this: &mut Self, event: WriteEvent) {
         #[allow(clippy::single_match)]
         match event {
-            WriteEvent::TileStored { tile } => plane_write::<ES, EG>(
+            WriteEvent::TileStored { tile } => plane_write::<ES, ESS, EG, EGS>(
                 &mut this.global,
                 &this.stage.unit_tile,
                 tile,
@@ -43,22 +45,24 @@ impl<ES: Numeric, EG: Numeric> WriteEventListener for PlaneAttentionWriter<ES, E
 }
 
 #[cube]
-impl<ES: Numeric, EG: Numeric> AttentionWriter<ES, EG> for PlaneAttentionWriter<ES, EG> {
+impl<ES: Numeric, ESS: Size, EG: Numeric, EGS: Size> AttentionWriter<ES, ESS, EG, EGS>
+    for PlaneAttentionWriter<ES, ESS, EG, EGS>
+{
     fn init<S: StageAttentionConfig>(
-        global: View<Line<EG>, Coords2d, ReadWrite>,
+        global: View<Vector<EG, EGS>, Coords2d, ReadWrite>,
         #[comptime] config: GlobalWriterConfig,
     ) -> Self {
         let stage =
             PartitionedStage::new((PlanePartitioner::seq_q_index(), 0u32), config.smem_config);
 
-        PlaneAttentionWriter::<ES, EG> {
+        PlaneAttentionWriter::<ES, ESS, EG, EGS> {
             global: global.view_mut(TiledLayout::new(StageIdent::Out, config.smem_config)),
             stage,
             config,
         }
     }
 
-    fn stage(&mut self) -> PartitionedStage<ES> {
+    fn stage(&mut self) -> PartitionedStage<ES, ESS> {
         self.stage
     }
 }

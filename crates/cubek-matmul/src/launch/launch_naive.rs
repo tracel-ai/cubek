@@ -3,9 +3,9 @@
 //! Each local unit will compute a single element of the output matrix.
 use cubecl::prelude::*;
 use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
-use cubecl::tensor_line_size_parallel;
+use cubecl::tensor_vector_size_parallel;
 
-use crate::definition::MatmulLineSizes;
+use crate::definition::MatmulVectorSizes;
 use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError};
 
 use crate::launch::InputArg;
@@ -67,28 +67,28 @@ pub fn launch_ref<R: Runtime>(
     let rhs_shape = rhs.shape();
     let out_shape = &out.shape;
 
-    let lhs_line_size = tensor_line_size_parallel(
-        client.io_optimized_line_sizes(dtypes.lhs_global.size()),
+    let lhs_vector_size = tensor_vector_size_parallel(
+        client.io_optimized_vector_sizes(dtypes.lhs_global.size()),
         &lhs.data().shape,
         &lhs.data().strides,
         rank - 1,
     );
-    let rhs_line_size = tensor_line_size_parallel(
-        client.io_optimized_line_sizes(dtypes.rhs_global.size()),
+    let rhs_vector_size = tensor_vector_size_parallel(
+        client.io_optimized_vector_sizes(dtypes.rhs_global.size()),
         &rhs.data().shape,
         &rhs.data().strides,
         rank - 2,
     );
-    let line_sizes = MatmulLineSizes {
-        lhs: lhs_line_size,
-        rhs: rhs_line_size,
+    let vector_sizes = MatmulVectorSizes {
+        lhs: lhs_vector_size,
+        rhs: rhs_vector_size,
         out: 1,
     };
 
     let address_type = lhs
         .required_address_type()
         .max(rhs.required_address_type())
-        .max(out.required_address_type());
+        .max(out.required_address_type(dtypes.acc_global.size()));
 
     let problem = MatmulProblem::from_shapes_and_strides(
         lhs_shape.into(),
@@ -103,7 +103,7 @@ pub fn launch_ref<R: Runtime>(
         rhs.scheme(),
     )?;
 
-    let device_settings = NaiveRoutine::device_settings(client, line_sizes);
+    let device_settings = NaiveRoutine::device_settings(client, vector_sizes);
     let expand_info = NaiveRoutine::expand_blueprint(
         &problem,
         &device_settings,
@@ -117,7 +117,7 @@ pub fn launch_ref<R: Runtime>(
         rhs,
         &launch_info.blueprint,
         &problem,
-        &line_sizes,
+        &vector_sizes,
         dtypes,
     );
     let output = <OutputArg<TensorArgs> as ConcreteOutputFactory<NaiveRoutine>>::create(
@@ -125,7 +125,7 @@ pub fn launch_ref<R: Runtime>(
         out,
         &launch_info.blueprint,
         &problem,
-        &line_sizes,
+        &vector_sizes,
         dtypes,
     );
 
@@ -140,5 +140,6 @@ pub fn launch_ref<R: Runtime>(
         launch_info.cube_count_plan.as_args(),
         launch_info.blueprint,
         dtypes,
+        &vector_sizes,
     )
 }

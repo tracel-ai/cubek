@@ -6,7 +6,7 @@ use crate::{
         global::{SharedGlobalMatmulConfig, read::SyncStrategy},
         stage::StageConfig,
     },
-    definition::MatmulPrecision,
+    definition::MatmulTypes,
 };
 
 /// Asynchronous barrier for `async_memcpy`
@@ -20,7 +20,7 @@ impl SyncStrategy for AsyncBarrier {
         Barrier::shared(CUBE_DIM, UNIT_POS == 0)
     }
 
-    fn sync<MP: MatmulPrecision, S: StageConfig>(
+    fn sync<MP: MatmulTypes, S: StageConfig>(
         barrier: &mut Self::Barrier,
         #[comptime] _config: SharedGlobalMatmulConfig<S>,
     ) {
@@ -39,7 +39,7 @@ impl SyncStrategy for AsyncCopy {
         Barrier::shared(CUBE_DIM, UNIT_POS == 0)
     }
 
-    fn sync<MP: MatmulPrecision, S: StageConfig>(
+    fn sync<MP: MatmulTypes, S: StageConfig>(
         barrier: &mut Self::Barrier,
         #[comptime] _config: SharedGlobalMatmulConfig<S>,
     ) {

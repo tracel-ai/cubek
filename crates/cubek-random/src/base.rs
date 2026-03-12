@@ -32,32 +32,32 @@ pub(crate) fn random<F: RandomFamily, R: Runtime>(
     let cube_dim = CubeDim::new(client, output.size().div_ceil(N_VALUES_PER_THREAD));
     let cube_count = prng_cube_count(output.size(), cube_dim, N_VALUES_PER_THREAD);
 
-    let output_line_size = 1;
+    let output_vector_size = 1;
     // TODO: Higher vectorization can add some correlation locally.
     //
-    // let output_line_size = tensor_line_size_parallel(
+    // let output_line_size = tensor_vector_size_parallel(
     //     R::line_size_elem(&E::as_elem_native_unchecked()),
     //     output.shape,
     //     output.strides,
     //     output.strides.len() - 1,
     // );
 
-    let address_type = output.required_address_type();
-    let output = linear_view(client, output, output_line_size);
+    let address_type = output.required_address_type(dtype.size());
+    let output = linear_view(client, output, output_vector_size);
 
     prng_kernel::launch::<F, R>(
         client,
         cube_count,
         cube_dim,
         address_type,
+        output_vector_size,
         output,
-        ScalarArg::new(seeds[0]),
-        ScalarArg::new(seeds[1]),
-        ScalarArg::new(seeds[2]),
-        ScalarArg::new(seeds[3]),
+        seeds[0],
+        seeds[1],
+        seeds[2],
+        seeds[3],
         args,
         N_VALUES_PER_THREAD,
-        output_line_size,
         dtype,
     );
 
@@ -91,7 +91,7 @@ pub(crate) fn get_seeds() -> [u32; 4] {
 pub(crate) trait PrngArgs: Send + Sync + 'static {
     type Args: LaunchArg;
 
-    fn args<'a, R: Runtime>(self) -> <Self::Args as LaunchArg>::RuntimeArg<'a, R>;
+    fn args<R: Runtime>(self) -> <Self::Args as LaunchArg>::RuntimeArg<R>;
 }
 
 pub(crate) trait RandomFamily: Send + Sync + 'static + std::fmt::Debug {
@@ -101,37 +101,35 @@ pub(crate) trait RandomFamily: Send + Sync + 'static + std::fmt::Debug {
 #[cube]
 pub(crate) trait PrngRuntime: Send + Sync + 'static + PrngArgs {
     #[allow(clippy::too_many_arguments)]
-    fn inner_loop<E: Numeric>(
+    fn inner_loop<E: Numeric, N: Size>(
         args: Self::Args,
         write_index_base: usize,
         n_invocations: u32,
         #[comptime] n_values_per_thread: usize,
-        #[comptime] line_size: usize,
         state_0: &mut u32,
         state_1: &mut u32,
         state_2: &mut u32,
         state_3: &mut u32,
-        output: &mut View<Line<E>, Coords1d, ReadWrite>,
+        output: &mut View<Vector<E, N>, Coords1d, ReadWrite>,
     );
 }
 
 type Args<F> = <<F as RandomFamily>::Runtime as PrngArgs>::Args;
 
 #[cube(launch, address_type = "dynamic")]
-fn prng_kernel<F: RandomFamily, E: Numeric>(
-    output: &mut LinearView<Line<E>, ReadWrite>,
+fn prng_kernel<F: RandomFamily, E: Numeric, N: Size>(
+    output: &mut LinearView<Vector<E, N>, ReadWrite>,
     seed_0: u32,
     seed_1: u32,
     seed_2: u32,
     seed_3: u32,
     args: Args<F>,
     #[comptime] n_values_per_thread: usize,
-    #[comptime] line_size: usize,
     #[define(E)] _dtype: StorageType,
 ) {
     let cube_offset = CUBE_POS * CUBE_DIM as usize;
 
-    let write_index_base = cube_offset * n_values_per_thread / line_size + UNIT_POS as usize;
+    let write_index_base = cube_offset * n_values_per_thread / N::value() + UNIT_POS as usize;
 
     // Truncating position should be fine here, it's no issue if the seed repeats
     #[allow(arithmetic_overflow)]
@@ -148,7 +146,6 @@ fn prng_kernel<F: RandomFamily, E: Numeric>(
         write_index_base,
         CUBE_DIM,
         n_values_per_thread,
-        line_size,
         &mut state_0,
         &mut state_1,
         &mut state_2,

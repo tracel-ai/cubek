@@ -1,5 +1,5 @@
 use crate::definition::MatmulProblem;
-use crate::definition::{AvailableLineSizes, MatmulElems, TilingBlueprint};
+use crate::definition::{AvailableVectorSizes, MatmulElems, TilingBlueprint};
 use crate::definition::{MatmulAvailabilityError, MatmulSetupError};
 use crate::launch::handle::MatmulInputBinding;
 use crate::launch::launch_kernel_concrete;
@@ -41,11 +41,11 @@ pub fn launch_ref<R: Runtime, A: Routine<()>>(
         rhs
     };
 
-    let line_sizes = AvailableLineSizes::from_type_sizes(
+    let vector_sizes = AvailableVectorSizes::from_type_sizes(
         client,
-        lhs.data().elem_size,
-        rhs.data().elem_size,
-        out.elem_size,
+        lhs.data_elem_size(),
+        rhs.data_elem_size(),
+        dtypes.acc_global.size(),
     );
     launch_inner_ref::<R, TensorArgs, A>(
         client,
@@ -53,7 +53,7 @@ pub fn launch_ref<R: Runtime, A: Routine<()>>(
         rhs,
         out,
         blueprint_strategy,
-        line_sizes,
+        vector_sizes,
         dtypes,
     )
 }
@@ -98,14 +98,14 @@ pub fn launch_ref_tma<R: Runtime, A: Routine<(), Blueprint = TilingBlueprint>>(
         | MatrixBatchLayout::HighlyPermuted => rhs.into_contiguous(client)?,
     };
 
-    let line_sizes = AvailableLineSizes::from_type_size_tma(client, out.elem_size);
+    let vector_sizes = AvailableVectorSizes::from_type_size_tma(client, dtypes.acc_global.size());
     launch_inner_ref::<R, TensorMapArgs, A>(
         client,
         lhs,
         rhs,
         out,
         blueprint_strategy,
-        line_sizes,
+        vector_sizes,
         dtypes,
     )
 }
@@ -117,7 +117,7 @@ fn launch_inner_ref<R: Runtime, MA: MatmulArgs<Config = ()>, A: Routine<()>>(
     rhs: MatmulInputBinding<R>,
     out: TensorBinding<R>,
     blueprint_strategy: &BlueprintStrategy<(), A>,
-    line_sizes: AvailableLineSizes,
+    vector_sizes: AvailableVectorSizes,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError>
 where
@@ -127,7 +127,7 @@ where
     let address_type = lhs
         .required_address_type()
         .max(rhs.required_address_type())
-        .max(out.required_address_type());
+        .max(out.required_address_type(dtypes.acc_global.size()));
 
     let problem = MatmulProblem::from_shapes_and_strides(
         lhs.shape().into(),
@@ -167,19 +167,19 @@ where
         ));
     }
 
-    let mut line_sizes = line_sizes
+    let mut vector_sizes = vector_sizes
         .filter_lhs_with_tensor(&problem.lhs_strides, &problem.lhs_shape, problem.lhs_layout)
         .filter_rhs_with_tensor(&problem.rhs_strides, &problem.rhs_shape, problem.rhs_layout)
         .filter_out_with_tensor(&problem.out_strides, &problem.out_shape)
         .pick_max()?;
 
-    // The large line size resulting from dequantizing ends up slower due to restrictions on
+    // The large vector size resulting from dequantizing ends up slower due to restrictions on
     // algorithms. Use this as a quick and dirty fix.
     if lhs.scale().is_some() {
-        line_sizes.lhs = 1;
+        vector_sizes.lhs = 1;
     }
     if rhs.scale().is_some() {
-        line_sizes.rhs = 1;
+        vector_sizes.rhs = 1;
     }
 
     launch_kernel_concrete::<MA, R, A>(
@@ -188,7 +188,7 @@ where
         rhs,
         out,
         problem,
-        line_sizes,
+        vector_sizes,
         blueprint_strategy,
         dtypes,
     )

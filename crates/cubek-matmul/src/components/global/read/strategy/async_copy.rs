@@ -1,9 +1,6 @@
 use cubecl::prelude::barrier::{copy_async, copy_async_checked};
 use cubecl::prelude::*;
-use cubecl::std::{
-    tensor::{View, layout::Coords2d},
-    type_size,
-};
+use cubecl::std::tensor::{View, layout::Coords2d};
 use cubek_std::MatrixLayout;
 
 use crate::components::{
@@ -15,23 +12,23 @@ use crate::components::{
 pub(crate) const ASYNC_COPY_WIDTH: u32 = 128;
 
 #[cube]
-pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
-    view: View<Line<EG>, Coords2d>,
+pub(crate) fn async_copy_from<EG: Scalar, NG: Size, ES: Numeric, NS: Size, T: TilingLayout>(
+    view: View<Vector<EG, NG>, Coords2d>,
     pos: Coords2d,
-    stage: &mut StridedStageMemory<ES, T>,
+    stage: &mut StridedStageMemory<ES, NS, T>,
     stage_offset: u32,
     #[comptime] config: GlobalReaderConfig,
-    #[comptime] copy_line_size: u32,
+    #[comptime] copy_vector_size: u32,
 ) {
-    let mut stage_slice = stage.as_slice_mut(stage.smem.line_size());
+    let mut stage_slice = stage.as_slice_mut::<NS>();
     let slice_size = match config.smem_config.matrix_layout {
-        MatrixLayout::RowMajor => (1u32, copy_line_size),
-        MatrixLayout::ColMajor => (copy_line_size, 1u32),
+        MatrixLayout::RowMajor => (1u32, copy_vector_size),
+        MatrixLayout::ColMajor => (copy_vector_size, 1u32),
     }
     .runtime();
 
-    let mut slice_len_global = copy_line_size.runtime();
-    let slice_len_stage = copy_line_size / stage_slice.line_size() as u32;
+    let mut slice_len_global = copy_vector_size.runtime();
+    let slice_len_stage = copy_vector_size / stage_slice.vector_size() as u32;
 
     if config.gmem_config.check_row_bounds {
         let pos = pos.0;
@@ -59,11 +56,11 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
         }
     }
 
-    slice_len_global /= view.line_size() as u32;
+    slice_len_global /= view.vector_size() as u32;
 
     let global_slice = view.slice_unchecked(pos, slice_size).to_linear_slice();
 
-    let type_size = type_size::<ES>(stage_slice.line_size());
+    let type_size = Vector::<ES, NS>::type_size();
     let offset = stage.swizzle.apply(stage_offset, type_size);
 
     let stage_slice = stage_slice.slice_mut(offset as usize, (offset + slice_len_stage) as usize);
@@ -72,9 +69,9 @@ pub(crate) fn async_copy_from<EG: CubePrimitive, ES: Numeric, T: TilingLayout>(
         copy_async_checked(
             &global_slice.slice(0, slice_len_global as usize),
             &mut stage_slice.downcast(),
-            copy_line_size,
+            copy_vector_size,
         );
     } else {
-        copy_async(&global_slice, &mut stage_slice.downcast(), copy_line_size);
+        copy_async(&global_slice, &mut stage_slice.downcast(), copy_vector_size);
     }
 }

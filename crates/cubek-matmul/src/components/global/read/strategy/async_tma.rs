@@ -5,7 +5,7 @@ use crate::components::{
     global::{GlobalConfig, SharedGlobalMatmulConfig, read::SyncStrategy},
     stage::StageConfig,
 };
-use crate::definition::{LhsS, MatmulPrecision, RhsS};
+use crate::definition::{LhsS, MatmulTypes, RhsS};
 
 /// Asynchronous barrier for TMA loads
 pub struct AsyncTma {}
@@ -20,7 +20,7 @@ impl SyncStrategy for AsyncTma {
         bar
     }
 
-    fn sync<MP: MatmulPrecision, S: StageConfig>(
+    fn sync<MP: MatmulTypes, S: StageConfig>(
         barrier: &mut Self::Barrier,
         #[comptime] config: SharedGlobalMatmulConfig<S>,
     ) {

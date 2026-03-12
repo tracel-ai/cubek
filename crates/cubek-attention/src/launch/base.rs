@@ -104,13 +104,13 @@ pub fn launch_attention<R: Runtime, A: Routine>(
         global_dtypes: global_dtypes.clone(),
         options: attention_options,
         address_type: [
-            query.required_address_type(),
-            key.required_address_type(),
-            value.required_address_type(),
+            query.required_address_type(global_dtypes.query.size()),
+            key.required_address_type(global_dtypes.key.size()),
+            value.required_address_type(global_dtypes.value.size()),
             mask.as_ref()
-                .map(|mask| mask.required_address_type())
+                .map(|mask| mask.required_address_type(global_dtypes.mask.size()))
                 .unwrap_or_default(),
-            out.required_address_type(),
+            out.required_address_type(global_dtypes.out.size()),
         ]
         .into_iter()
         .max()
@@ -127,15 +127,15 @@ pub fn launch_attention<R: Runtime, A: Routine>(
             launch_info.cube_count_plan.resolve(),
             launch_info.address_type,
             TensorInputsLaunch::new(
-                query.into_tensor_arg(device_settings.line_sizes.query),
-                key.into_tensor_arg(device_settings.line_sizes.key),
-                value.into_tensor_arg(device_settings.line_sizes.value),
-                mask.map(|it| it.into_tensor_arg(device_settings.line_sizes.mask))
-                    .into(),
+                query.into_tensor_arg(),
+                key.into_tensor_arg(),
+                value.into_tensor_arg(),
+                mask.map(|it| it.into_tensor_arg()).into(),
             ),
-            out.into_tensor_arg(device_settings.line_sizes.out),
+            out.into_tensor_arg(),
             launch_info.cube_count_plan.as_args(),
             &launch_info.dtypes,
+            &device_settings.vector_sizes,
             launch_info.blueprint,
         )
     };

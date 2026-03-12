@@ -5,7 +5,7 @@ use crate::{
 use cubecl::prelude::TensorBinding;
 use cubecl::{Runtime, client::ComputeClient};
 use cubek_matmul::{
-    definition::{MatmulElems, MatmulLineSizes},
+    definition::{MatmulElems, MatmulVectorSizes},
     launch::{InputArg, MatmulInputBinding, OutputArg},
     routines::{BlueprintStrategy, Routine},
 };
@@ -22,20 +22,20 @@ pub fn launch_kernel_concrete<R: Runtime, Args: ConcreteArgs<A>, A: Routine<Runt
     weights: MatmulInputBinding<R>,
     in_grad: TensorBinding<R>,
     problem: ConvolutionProblem,
-    line_sizes: MatmulLineSizes,
+    vector_sizes: MatmulVectorSizes,
     blueprint_strategy: &BlueprintStrategy<RuntimeArgs, A>,
     dtypes: &MatmulElems,
 ) -> Result<(), ConvSetupError> {
-    let mut view_line_sizes = line_sizes;
+    let mut view_vector_sizes = vector_sizes;
 
     if let MatmulInputBinding::Quantized { scheme, .. } = out_grad {
-        view_line_sizes.lhs *= scheme.num_quants();
+        view_vector_sizes.lhs *= scheme.num_quants();
     }
     if let MatmulInputBinding::Quantized { scheme, .. } = weights {
-        view_line_sizes.rhs *= scheme.num_quants();
+        view_vector_sizes.rhs *= scheme.num_quants();
     }
 
-    let device_settings = A::device_settings(client, view_line_sizes);
+    let device_settings = A::device_settings(client, view_vector_sizes);
     let expand_info = A::expand_blueprint(
         &problem.as_matmul_problem(),
         &device_settings,
@@ -51,7 +51,7 @@ pub fn launch_kernel_concrete<R: Runtime, Args: ConcreteArgs<A>, A: Routine<Runt
         weights,
         &launch_info.blueprint,
         &problem,
-        &line_sizes,
+        &vector_sizes,
         dtypes,
     );
     let output = <OutputArg<Args> as ConcreteOutputFactory<A>>::create(
@@ -59,7 +59,7 @@ pub fn launch_kernel_concrete<R: Runtime, Args: ConcreteArgs<A>, A: Routine<Runt
         in_grad,
         &launch_info.blueprint,
         &problem,
-        &line_sizes,
+        &vector_sizes,
     );
 
     let result = cubek_matmul::launch::launch_kernel::<Args, R, A>(

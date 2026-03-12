@@ -75,7 +75,7 @@ impl Layout for OutLayout {
     }
 }
 
-impl<'a, R: Runtime> OutLayoutLaunch<'a, R> {
+impl<R: Runtime> OutLayoutLaunch<R> {
     pub fn from_args(
         client: &ComputeClient<R>,
         problem: &ConvolutionProblem,
@@ -100,8 +100,8 @@ impl<'a, R: Runtime> OutLayoutLaunch<'a, R> {
             .iter()
             .map(|s| FastDivmodArgs::<u32>::new(client, *s as u32))
             .collect();
-        let shape_m = ScalarArg::new(problem.m as u32);
-        let shape_n = ScalarArg::new(problem.n as u32);
+        let shape_m = problem.m as u32;
+        let shape_n = problem.n as u32;
 
         Self::new(shape_out, shape_m, shape_n, config)
     }
@@ -116,8 +116,8 @@ impl<'a, R: Runtime> OutLayoutLaunch<'a, R> {
             .iter()
             .map(|s| FastDivmodArgs::<u32>::new(client, *s as u32))
             .collect();
-        let shape_m = ScalarArg::new(problem.m as u32);
-        let shape_n = ScalarArg::new(problem.n as u32);
+        let shape_m = problem.m as u32;
+        let shape_n = problem.n as u32;
 
         Self::new(shape, shape_m, shape_n, config)
     }
@@ -132,8 +132,8 @@ impl<'a, R: Runtime> OutLayoutLaunch<'a, R> {
             .iter()
             .map(|s| FastDivmodArgs::<u32>::new(client, *s as u32))
             .collect();
-        let shape_m = ScalarArg::new(problem.m as u32);
-        let shape_k = ScalarArg::new(problem.k as u32);
+        let shape_m = problem.m as u32;
+        let shape_k = problem.k as u32;
 
         Self::new(shape_out, shape_k, shape_m, config)
     }

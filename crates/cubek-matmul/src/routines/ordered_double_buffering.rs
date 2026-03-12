@@ -99,7 +99,7 @@ where
                 problem,
                 device_settings.plane_dim,
                 dtypes,
-                &device_settings.line_sizes,
+                &device_settings.vector_sizes,
                 PlaneTilingBlueprintOptions {
                     partition_k: strategy.partition_k,
                     row_count: strategy.row_count,
@@ -129,11 +129,14 @@ where
             &blueprint,
             problem,
             &dtypes,
-            &device_settings.line_sizes,
+            &device_settings.vector_sizes,
         )?;
 
-        let cubedim_resource =
-            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
+        let cubedim_resource = Self::BatchMatmul::cubedim_resource(
+            &blueprint,
+            &dtypes,
+            &device_settings.vector_sizes,
+        )?;
 
         LaunchInfo::new(
             blueprint,

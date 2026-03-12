@@ -1,6 +1,6 @@
 use cubek_std::TileSize;
 
-use crate::definition::{AttentionDims, AttentionLineSizes, HypercubeBlueprint};
+use crate::definition::{AttentionDims, AttentionVectorSizes, HypercubeBlueprint};
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct AttentionBlueprint {
@@ -9,10 +9,9 @@ pub struct AttentionBlueprint {
     pub tiling_scheme: AttentionTilingScheme,
     pub plane_dim: u32,
 
-    pub reuse_key_value: bool,
     pub two_rows_in_array_tile: bool,
 
-    pub line_sizes: AttentionLineSizes,
+    pub vector_sizes: AttentionVectorSizes,
 
     pub masked: bool,
     pub causal: bool,
@@ -58,10 +57,18 @@ impl AttentionTilingScheme {
 
     pub fn check_bounds(&self, problem: &AttentionDims) -> AttentionCheckBounds {
         AttentionCheckBounds {
-            seq_q: self.elements_in_stage_seq_q() % problem.seq_q as u32 != 0,
-            seq_kv: self.elements_in_partition_seq_kv() % problem.seq_kv as u32 != 0,
-            head_dim: self.elements_in_partition_head_dim() % problem.head_dim as u32 != 0,
-            val_dim: self.elements_in_partition_val_dim() % problem.val_dim as u32 != 0,
+            seq_q: !self
+                .elements_in_stage_seq_q()
+                .is_multiple_of(problem.seq_q as u32),
+            seq_kv: !self
+                .elements_in_partition_seq_kv()
+                .is_multiple_of(problem.seq_kv as u32),
+            head_dim: !self
+                .elements_in_partition_head_dim()
+                .is_multiple_of(problem.head_dim as u32),
+            val_dim: !self
+                .elements_in_partition_val_dim()
+                .is_multiple_of(problem.val_dim as u32),
         }
     }
 }

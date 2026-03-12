@@ -4,14 +4,14 @@ use crate::{
     components::stage::PartitionBuffering,
     definition::{
         CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulElems, MatmulGlobalElems,
-        MatmulKind, MatmulLineSizes, MatmulProblem, SmAllocation, SwizzleModes, TilingBlueprint,
+        MatmulKind, MatmulProblem, MatmulVectorSizes, SmAllocation, SwizzleModes, TilingBlueprint,
         TilingScheme,
     },
 };
 use cubecl::{
     Runtime,
     client::ComputeClient,
-    ir::{LineSize, StorageType},
+    ir::{StorageType, VectorSize},
 };
 use cubek_std::{MatrixLayout, stage::SwizzleMode};
 
@@ -61,14 +61,14 @@ pub fn infer_blueprint_unit<R: Runtime>(
     problem: &MatmulProblem,
     plane_dim: u32,
     double_buffering: bool,
-    line_sizes: &MatmulLineSizes,
+    vector_sizes: &MatmulVectorSizes,
     options: UnitTilingBlueprintOptions,
     global_elems: &MatmulGlobalElems,
 ) -> (TilingBlueprint, MatmulElems) {
     let kind: MatmulKind = problem.into();
     let num_sms = client.properties().hardware.num_streaming_multiprocessors;
-    let min_tile_size = usize::max(line_sizes.lhs, line_sizes.rhs);
-    let min_tile_size = usize::max(line_sizes.out, min_tile_size) as u32;
+    let min_tile_size = usize::max(vector_sizes.lhs, vector_sizes.rhs);
+    let min_tile_size = usize::max(vector_sizes.out, min_tile_size) as u32;
     let tile_size = u32::max(min_tile_size, 4);
     let dtypes = MatmulElems::from_globals(global_elems);
 
@@ -81,7 +81,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
             num_sms,
             options,
             &dtypes,
-            line_sizes,
+            vector_sizes,
         ),
         MatmulKind::MatVec => matvec_unit_selector(
             problem,
@@ -91,7 +91,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
             num_sms,
             options,
             &dtypes,
-            line_sizes,
+            vector_sizes,
         ),
         MatmulKind::VecMat => vecmat_unit_selector(
             problem,
@@ -101,7 +101,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
             num_sms,
             options,
             &dtypes,
-            line_sizes,
+            vector_sizes,
         ),
         MatmulKind::ScalarVec => scalarvec_unit_selector(
             problem,
@@ -111,7 +111,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
             num_sms,
             options,
             &dtypes,
-            line_sizes,
+            vector_sizes,
         ),
         MatmulKind::VecScalar => vecscalar_unit_selector(
             problem,
@@ -121,7 +121,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
             num_sms,
             options,
             &dtypes,
-            line_sizes,
+            vector_sizes,
         ),
         MatmulKind::InnerProduct => inner_product_unit_selector(
             problem,
@@ -131,7 +131,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
             num_sms,
             options,
             &dtypes,
-            line_sizes,
+            vector_sizes,
         ),
         MatmulKind::OuterProduct => outer_product_unit_selector(
             problem,
@@ -141,7 +141,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
             num_sms,
             options,
             &dtypes,
-            line_sizes,
+            vector_sizes,
         ),
         MatmulKind::ScalarProduct => scalar_product_unit_selector(
             problem,
@@ -151,7 +151,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
             num_sms,
             options,
             &dtypes,
-            line_sizes,
+            vector_sizes,
         ),
     };
 
@@ -168,7 +168,7 @@ fn general_unit_selector(
     num_sms: Option<u32>,
     options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
-    line_sizes: &MatmulLineSizes,
+    vector_sizes: &MatmulVectorSizes,
 ) -> TilingBlueprint {
     use cubek_std::MatrixLayout::*;
 
@@ -227,7 +227,7 @@ fn general_unit_selector(
         options.swizzle,
         problem,
         dtypes,
-        line_sizes,
+        vector_sizes,
     )
 }
 
@@ -241,7 +241,7 @@ fn matvec_unit_selector(
     num_sms: Option<u32>,
     options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
-    line_sizes: &MatmulLineSizes,
+    vector_sizes: &MatmulVectorSizes,
 ) -> TilingBlueprint {
     let (tile_size, partition_size) = match (problem.lhs_layout, problem.rhs_layout) {
         (MatrixLayout::RowMajor, _) => ((1, 1, tile_size), (1, 1, tile_size * 2)),
@@ -263,7 +263,7 @@ fn matvec_unit_selector(
         options.swizzle,
         problem,
         dtypes,
-        line_sizes,
+        vector_sizes,
     )
 }
 
@@ -277,7 +277,7 @@ fn vecmat_unit_selector(
     num_sms: Option<u32>,
     options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
-    line_sizes: &MatmulLineSizes,
+    vector_sizes: &MatmulVectorSizes,
 ) -> TilingBlueprint {
     let (tile_size, partition_size) = ((1, tile_size, tile_size), (1, 1, 1));
 
@@ -296,7 +296,7 @@ fn vecmat_unit_selector(
         options.swizzle,
         problem,
         dtypes,
-        line_sizes,
+        vector_sizes,
     )
 }
 
@@ -310,7 +310,7 @@ fn scalarvec_unit_selector(
     num_sms: Option<u32>,
     options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
-    line_sizes: &MatmulLineSizes,
+    vector_sizes: &MatmulVectorSizes,
 ) -> TilingBlueprint {
     use cubek_std::MatrixLayout::*;
     let (tile_size, partition_size) = match (problem.lhs_layout, problem.rhs_layout) {
@@ -335,7 +335,7 @@ fn scalarvec_unit_selector(
         options.swizzle,
         problem,
         dtypes,
-        line_sizes,
+        vector_sizes,
     )
 }
 
@@ -349,7 +349,7 @@ fn vecscalar_unit_selector(
     num_sms: Option<u32>,
     options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
-    line_sizes: &MatmulLineSizes,
+    vector_sizes: &MatmulVectorSizes,
 ) -> TilingBlueprint {
     let (tile_size, partition_size) = ((tile_size, 1, 1), (1, 1, 1));
 
@@ -368,7 +368,7 @@ fn vecscalar_unit_selector(
         options.swizzle,
         problem,
         dtypes,
-        line_sizes,
+        vector_sizes,
     )
 }
 
@@ -382,7 +382,7 @@ fn inner_product_unit_selector(
     num_sms: Option<u32>,
     options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
-    line_sizes: &MatmulLineSizes,
+    vector_sizes: &MatmulVectorSizes,
 ) -> TilingBlueprint {
     use cubek_std::MatrixLayout::*;
     let (tile_size, partition_size) = match (problem.lhs_layout, problem.rhs_layout) {
@@ -404,7 +404,7 @@ fn inner_product_unit_selector(
         options.swizzle,
         problem,
         dtypes,
-        line_sizes,
+        vector_sizes,
     )
 }
 
@@ -418,7 +418,7 @@ fn outer_product_unit_selector(
     num_sms: Option<u32>,
     options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
-    line_sizes: &MatmulLineSizes,
+    vector_sizes: &MatmulVectorSizes,
 ) -> TilingBlueprint {
     let (tile_size, partition_size) = ((tile_size, tile_size, 1), (1, 1, 1));
 
@@ -434,7 +434,7 @@ fn outer_product_unit_selector(
         options.swizzle,
         problem,
         dtypes,
-        line_sizes,
+        vector_sizes,
     )
 }
 
@@ -448,7 +448,7 @@ fn scalar_product_unit_selector(
     num_sms: Option<u32>,
     options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
-    line_sizes: &MatmulLineSizes,
+    vector_sizes: &MatmulVectorSizes,
 ) -> TilingBlueprint {
     let (tile_size, partition_size) = ((1, 1, 1), (1, 1, 1));
 
@@ -467,7 +467,7 @@ fn scalar_product_unit_selector(
         options.swizzle,
         problem,
         dtypes,
-        line_sizes,
+        vector_sizes,
     )
 }
 
@@ -504,7 +504,7 @@ fn selection(
     swizzle: bool,
     problem: &MatmulProblem,
     dtypes: &MatmulElems,
-    line_sizes: &MatmulLineSizes,
+    vector_sizes: &MatmulVectorSizes,
 ) -> TilingBlueprint {
     let (stage_size_m, stage_size_n) = stage.into_stages();
 
@@ -554,8 +554,8 @@ fn selection(
         };
 
         builder = builder.shared_swizzle(SwizzleModes {
-            lhs: select_swizzle(lhs_swizzle_dim, dtypes.lhs_stage, line_sizes.lhs),
-            rhs: select_swizzle(rhs_swizzle_dim, dtypes.rhs_stage, line_sizes.rhs),
+            lhs: select_swizzle(lhs_swizzle_dim, dtypes.lhs_stage, vector_sizes.lhs),
+            rhs: select_swizzle(rhs_swizzle_dim, dtypes.rhs_stage, vector_sizes.rhs),
             ..Default::default()
         })
     }
@@ -566,9 +566,9 @@ fn selection(
 /// All modes currently use atom size 16
 const SWIZZLE_ATOM: usize = 16;
 
-fn select_swizzle(swizzle_dim: usize, elem: StorageType, line_size: LineSize) -> SwizzleMode {
-    // Can't swizzle if line size > swizzle atom
-    if elem.size() * line_size > SWIZZLE_ATOM {
+fn select_swizzle(swizzle_dim: usize, elem: StorageType, vector_size: VectorSize) -> SwizzleMode {
+    // Can't swizzle if vector size > swizzle atom
+    if elem.size() * vector_size > SWIZZLE_ATOM {
         return SwizzleMode::None;
     }
     let swizzle_dim_bytes = swizzle_dim * elem.size();

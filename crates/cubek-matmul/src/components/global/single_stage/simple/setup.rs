@@ -2,7 +2,7 @@ use crate::{components::CubeDimResource, launch::RuntimeConfig};
 use crate::{
     components::stage::NumStages,
     definition::{
-        MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem, MatmulSetupError, StageIdent,
+        MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes, MatmulVectorSizes, StageIdent,
     },
 };
 use crate::{
@@ -57,7 +57,7 @@ where
     AL: FullLoadingStrategy<RC, TileKind = Strided>,
     GW: GlobalWriterFamily,
 {
-    type Matmul<MP: MatmulPrecision> = SimpleMatmul<
+    type Matmul<MP: MatmulTypes> = SimpleMatmul<
         MP,
         SMM::Matmul<MP, LL::TilingLayout, RL::TilingLayout, AL::TilingLayout, WriteTiling>,
         RC,
@@ -72,10 +72,10 @@ where
         device_props: &DeviceProperties,
         blueprint: &TilingBlueprint,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
         let plane_dim = blueprint.plane_dim;
-        let plane_flow_config = Self::cubedim_resource(blueprint, dtypes, line_sizes)?
+        let plane_flow_config = Self::cubedim_resource(blueprint, dtypes, vector_sizes)?
             .as_plane_flow_config(plane_dim)?;
 
         let stage_config = SMM::expand_config(
@@ -84,7 +84,7 @@ where
             plane_flow_config,
             Self::num_stages(),
             dtypes,
-            line_sizes,
+            vector_sizes,
         )?;
 
         let precompute_job = blueprint.loading_precompute_strategy.into();
@@ -95,7 +95,7 @@ where
         let event_loading_mode = EventLoadingMode::Relaxed;
 
         let lhs_gmem_config = GlobalMemoryConfig {
-            line_size: line_sizes.lhs,
+            vector_size: vector_sizes.lhs,
             check_row_bounds: blueprint.check_m_bounds,
             check_col_bounds: blueprint.check_k_bounds,
             matrix_layout: blueprint.lhs_layout,
@@ -104,7 +104,7 @@ where
         };
 
         let rhs_gmem_config = GlobalMemoryConfig {
-            line_size: line_sizes.rhs,
+            vector_size: vector_sizes.rhs,
             check_row_bounds: blueprint.check_k_bounds,
             check_col_bounds: blueprint.check_n_bounds,
             matrix_layout: blueprint.rhs_layout,
@@ -113,7 +113,7 @@ where
         };
 
         let out_gmem_config = GlobalMemoryConfig {
-            line_size: line_sizes.out,
+            vector_size: vector_sizes.out,
             matrix_layout: MatrixLayout::RowMajor,
             check_row_bounds: blueprint.check_m_bounds,
             check_col_bounds: blueprint.check_n_bounds,
@@ -182,7 +182,7 @@ where
     fn cubedim_resource(
         blueprint: &TilingBlueprint,
         _dtypes: &MatmulElems,
-        _line_sizes: &MatmulLineSizes,
+        _vector_sizes: &MatmulVectorSizes,
     ) -> Result<CubeDimResource, MatmulSetupError> {
         let resources = if !blueprint.load_flows.has_specialization() {
             SMM::cubedim_resource(blueprint)
@@ -200,10 +200,10 @@ where
         blueprint: &TilingBlueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
         LL::validate_with_problem(problem, dtypes, StageIdent::Lhs)?;
         RL::validate_with_problem(problem, dtypes, StageIdent::Rhs)?;
-        SMM::validate_blueprint(client, blueprint, dtypes, line_sizes)
+        SMM::validate_blueprint(client, blueprint, dtypes, vector_sizes)
     }
 }

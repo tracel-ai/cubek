@@ -5,7 +5,7 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::into_contiguous;
 use cubecl::std::tensor::layout::linear::LinearView;
 use cubecl::std::tensor::{View, layout::linear::linear_view};
-use cubecl::tensor_line_size_parallel;
+use cubecl::tensor_vector_size_parallel;
 
 use crate::{
     layout::{ScalesLayout, scales_view},
@@ -17,48 +17,48 @@ use crate::{
 };
 
 #[cube]
-fn quantize_symmetric<F: Float, FS: CubePrimitive>(
-    value: Line<F>,
+fn quantize_symmetric<F: Float, N: Size, FS: CubePrimitive>(
+    value: Vector<F, N>,
     scale: FS,
     range_min: F,
     range_max: F,
-) -> Line<F> {
+) -> Vector<F, N> {
     clamp(
-        Line::round(value / Line::cast_from(scale)),
-        Line::new(range_min),
-        Line::new(range_max),
+        Vector::round(value / Vector::cast_from(scale)),
+        Vector::new(range_min),
+        Vector::new(range_max),
     )
 }
 
 #[cube]
-fn quantize_symmetric_q<F: Float, FS: CubePrimitive, Q: CubePrimitive>(
-    value: Line<F>,
+fn quantize_symmetric_q<F: Float, N: Size, FS: CubePrimitive, Q: Scalar>(
+    value: Vector<F, N>,
     scale: FS,
     range_min: F,
     range_max: F,
-) -> Line<Q> {
-    Line::cast_from(quantize_symmetric::<F, FS>(
+) -> Vector<Q, N> {
+    Vector::cast_from(quantize_symmetric::<F, N, FS>(
         value, scale, range_min, range_max,
     ))
 }
 
 #[cube]
-fn quantize_packed_value<F: Float, FS: CubePrimitive, QS: Int>(
-    value: Line<F>,
+fn quantize_packed_value<F: Float, N: Size, FS: CubePrimitive, QS: Int>(
+    value: Vector<F, N>,
     scale: FS,
     range_min: F,
     range_max: F,
     #[comptime] scheme: QuantScheme,
 ) -> QS {
-    let value = quantize_symmetric::<F, FS>(value, scale, range_min, range_max);
-    pack_q::<F, QS>(value, scheme.value)
+    let value = quantize_symmetric::<F, N, FS>(value, scale, range_min, range_max);
+    pack_q::<F, N, QS>(value, scheme.value)
 }
 
-/// Pack a line of quantized floating-point values into a single integer (the stored quantization type),
+/// Pack a vector of quantized floating-point values into a single integer (the stored quantization type),
 /// according to the specified quantization input type.
 #[allow(clippy::explicit_counter_loop)]
 #[cube]
-fn pack_q<F: Float, QS: Int>(value: Line<F>, #[comptime] quant: QuantValue) -> QS {
+fn pack_q<F: Float, N: Size, QS: Int>(value: Vector<F, N>, #[comptime] quant: QuantValue) -> QS {
     let size_quant = quant.size_bits();
 
     let size_store = QS::type_size_bits().comptime();
@@ -96,12 +96,12 @@ fn write_scale<F: Float, FS: CubePrimitive>(
 }
 
 #[cube(launch_unchecked, address_type = "dynamic")]
-fn quantize_symmetric_native_kernel<F: Float, FS: Numeric, Q: Numeric>(
-    input: &LinearView<Line<F>>,
+fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
+    input: &LinearView<Vector<F, N>>,
     scale: &ScalesView<F>,
     range_min: InputScalar,
     range_max: InputScalar,
-    output: &mut LinearView<Line<Q>, ReadWrite>,
+    output: &mut LinearView<Vector<Q, N>, ReadWrite>,
     out_scale: &mut ScalesView<FS, ReadWrite>,
     scales_layout: ScalesLayout,
     #[define(F, FS, Q)] _dtypes: [StorageType; 3],
@@ -111,10 +111,10 @@ fn quantize_symmetric_native_kernel<F: Float, FS: Numeric, Q: Numeric>(
     }
 
     let native_packing = Q::packing_factor();
-    let in_pos = ABSOLUTE_POS * input.line_size() * native_packing;
+    let in_pos = ABSOLUTE_POS * input.vector_size() * native_packing;
     let scale = write_scale(in_pos, scale, out_scale, scales_layout);
 
-    output[ABSOLUTE_POS] = quantize_symmetric_q::<F, FS, Q>(
+    output[ABSOLUTE_POS] = quantize_symmetric_q::<F, N, FS, Q>(
         input[ABSOLUTE_POS],
         scale,
         range_min.get::<F>(),
@@ -124,12 +124,12 @@ fn quantize_symmetric_native_kernel<F: Float, FS: Numeric, Q: Numeric>(
 }
 
 #[cube(launch_unchecked, address_type = "dynamic")]
-fn quantize_symmetric_packed_kernel<F: Float, FS: Numeric>(
-    input: &LinearView<Line<F>>,
+fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric>(
+    input: &LinearView<Vector<F, N>>,
     scale: &ScalesView<F>,
     range_min: InputScalar,
     range_max: InputScalar,
-    output: &mut LinearView<Line<u32>, ReadWrite>,
+    output: &mut LinearView<u32, ReadWrite>,
     out_scale: &mut ScalesView<FS, ReadWrite>,
     scales_layout: ScalesLayout,
     #[comptime] scheme: QuantScheme,
@@ -143,28 +143,29 @@ fn quantize_symmetric_packed_kernel<F: Float, FS: Numeric>(
     let packed_pos = ABSOLUTE_POS * num_quants;
     let scale = write_scale(packed_pos, scale, out_scale, scales_layout);
 
-    if input.line_size().comptime() == num_quants {
-        output[ABSOLUTE_POS] = Line::cast_from(quantize_packed_value::<F, FS, u32>(
+    if input.vector_size().comptime() == num_quants {
+        output[ABSOLUTE_POS] = quantize_packed_value::<F, N, FS, u32>(
             input[ABSOLUTE_POS],
             scale,
             range_min.get::<F>(),
             range_max.get::<F>(),
             scheme,
-        ));
+        );
     } else {
-        // Input line size = 1
-        let mut values = Line::<F>::empty(num_quants);
+        // Input vector size = 1
+        let size!(NQ) = num_quants;
+        let mut values = Vector::<F, NQ>::empty();
         #[unroll]
         for i in 0..num_quants {
             values[i] = input[packed_pos + i][0];
         }
-        output[ABSOLUTE_POS] = Line::cast_from(quantize_packed_value::<F, FS, u32>(
+        output[ABSOLUTE_POS] = quantize_packed_value::<F, NQ, FS, u32>(
             values,
             scale,
             range_min.get::<F>(),
             range_max.get::<F>(),
             scheme,
-        ));
+        );
     }
 }
 
@@ -230,21 +231,16 @@ fn quantize_native<R: Runtime>(
     scale_dtype: ElemType,
 ) -> Result<(), LaunchError> {
     let num_elems: usize = input.shape.iter().product();
-    let line_size = tensor_line_size_parallel(
-        client.io_optimized_line_sizes(input.elem_size),
+    let vector_size = tensor_vector_size_parallel(
+        client.io_optimized_vector_sizes(input_dtype.size()),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,
     );
-    let working_units = num_elems / line_size as usize;
+    let working_units = num_elems / vector_size as usize;
     let cube_dim = CubeDim::new(client, working_units);
     let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
     let (range_min, range_max) = scheme.value.range();
-
-    let address_type = input
-        .required_address_type()
-        .max(scale.required_address_type())
-        .max(output.required_address_type());
 
     match scheme {
         QuantScheme {
@@ -253,9 +249,14 @@ fn quantize_native<R: Runtime>(
             store: QuantStore::Native,
             ..
         } => {
-            // We could use line_size = block_size if it's in the supported line sizes.. but let's keep it simple
-            check_block_size_compat(scheme, line_size as usize);
+            // We could use vector_size = block_size if it's in the supported vector sizes.. but let's keep it simple
+            check_block_size_compat(scheme, vector_size as usize);
             let quant_type = ElemType::from_quant_value(scheme.value);
+
+            let address_type = input
+                .required_address_type(input_dtype.size())
+                .max(scale.required_address_type(scale_dtype.size()))
+                .max(output.required_address_type(quant_type.size()));
 
             let scales_layout = scales_layout(client, &output, &scale, 1, scheme);
 
@@ -265,12 +266,13 @@ fn quantize_native<R: Runtime>(
                     cube_count,
                     cube_dim,
                     address_type,
-                    linear_view(client, input, line_size),
+                    vector_size,
+                    linear_view(client, input, vector_size),
                     // scale is computed based on input float dtype, but stored based on qparams precision
                     scales_view(client, output.clone(), scale, 1, scheme),
                     InputScalar::new(range_min, input_dtype),
                     InputScalar::new(range_max, input_dtype),
-                    linear_view(client, output.clone(), line_size),
+                    linear_view(client, output.clone(), vector_size),
                     scales_view(client, output, out_scale, 1, scheme),
                     scales_layout,
                     [input_dtype.into(), scale_dtype.into(), quant_type.into()],
@@ -321,17 +323,17 @@ fn quantize_packed<R: Runtime>(
     };
 
     // Elements to pack are strided, require scalar reads + manual gather
-    let line_size = if can_vectorize { num_quants } else { 1 };
+    let vector_size = if can_vectorize { num_quants } else { 1 };
 
-    let working_units = num_elems.div_ceil(line_size);
+    let working_units = num_elems.div_ceil(vector_size);
     let cube_dim = CubeDim::new(client, working_units);
     let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
     let (range_min, range_max) = scheme.value.range();
 
     let address_type = input
-        .required_address_type()
-        .max(scale.required_address_type())
-        .max(output.required_address_type());
+        .required_address_type(dtype_input.size())
+        .max(scale.required_address_type(dtype_input.size()))
+        .max(output.required_address_type(size_of::<u32>()));
 
     check_block_size_compat(scheme, num_quants); // 32 / 8 = 4
 
@@ -343,7 +345,8 @@ fn quantize_packed<R: Runtime>(
             cube_count,
             cube_dim,
             address_type,
-            linear_view(client, input, line_size),
+            vector_size,
+            linear_view(client, input, vector_size),
             // scale is computed based on input float dtype, but stored based on qparams precision
             scales_view(client, output.clone(), scale, 1, scheme),
             InputScalar::new(range_min, dtype_input),

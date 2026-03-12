@@ -24,8 +24,8 @@ use crate::components::{
     stage::StageConfig,
 };
 use crate::definition::MatmulElems;
-use crate::definition::MatmulPrecision;
 use crate::definition::MatmulProblem;
+use crate::definition::MatmulTypes;
 use crate::definition::StageIdent;
 use crate::{components::global::read::validate_async_barrier, launch::RuntimeConfig};
 use cubecl::prelude::*;
@@ -38,7 +38,7 @@ use super::{LoadingJob, LoadingValidation, ReaderMode};
 
 #[derive(CubeType, Clone, Copy)]
 /// Loads the content of all tiles in the stage using all planes.
-/// Unit with pos X loads lines with indices X, X + NUM_UNITS, X + 2 * NUM_UNITS, ...
+/// Unit with pos X loads vectors with indices X, X + NUM_UNITS, X + 2 * NUM_UNITS, ...
 pub struct AsyncPartialCyclicLoading<T: TilingOrder> {
     #[cube(comptime)]
     _phantom: PhantomData<T>,
@@ -49,19 +49,19 @@ impl<TO: TilingOrder> LoadingValidation for AsyncPartialCyclicLoading<TO> {
         device_props: &DeviceProperties,
         config: &GlobalReaderConfig,
     ) -> Result<(), InvalidConfigError> {
-        let line_size = ASYNC_COPY_WIDTH / config.smem_config.dtype.size_bits() as u32;
+        let vector_size = ASYNC_COPY_WIDTH / config.smem_config.dtype.size_bits() as u32;
         if let ReaderMode::Strict = config.reader_mode {
-            let num_lines_per_tile = config.smem_config.elements_per_tile() / line_size;
+            let num_vectors_per_tile = config.smem_config.elements_per_tile() / vector_size;
             let num_tiles_in_stage = config.smem_config.tiles_per_stage();
-            let total_num_lines = num_tiles_in_stage * num_lines_per_tile;
+            let total_num_vectors = num_tiles_in_stage * num_vectors_per_tile;
 
             let total_units = config.loading_units_count();
-            let jump_length = total_units * line_size;
-            let num_tasks_per_unit = total_num_lines.div_ceil(total_units);
+            let jump_length = total_units * vector_size;
+            let num_tasks_per_unit = total_num_vectors.div_ceil(total_units);
 
             let max_id = total_units - 1;
             let max_task_id = num_tasks_per_unit - 1;
-            let max_position_base = max_id * line_size;
+            let max_position_base = max_id * vector_size;
             let max_position = max_position_base + max_task_id * jump_length;
             let num_stage_elements = config.smem_config.elements_per_stage();
 
@@ -72,13 +72,13 @@ impl<TO: TilingOrder> LoadingValidation for AsyncPartialCyclicLoading<TO> {
             }
         }
 
-        // Needs separate check because copy size may be larger than global line size
+        // Needs separate check because copy size may be larger than global vector size
         if !config
             .smem_config
             .elements_per_tile_along_contiguous_dim()
-            .is_multiple_of(line_size)
+            .is_multiple_of(vector_size)
         {
-            return Err(Box::new("Tile size isn't divisible by copy line size"));
+            return Err(Box::new("Tile size isn't divisible by copy vector size"));
         }
 
         validate_swizzle_atom_size(config.smem_config)?;
@@ -106,14 +106,14 @@ impl<TO: TilingOrder> LoadMaxRoundPlaneCount for AsyncPartialCyclicLoading<TO> {
     fn max_round_plane_count(
         elements_per_tile: u32,
         tiles_per_stage: u32,
-        _line_size: LineSize,
+        _vector_size: VectorSize,
         plane_dim: u32,
         dtype: StorageType,
     ) -> u32 {
-        let line_size = ASYNC_COPY_WIDTH / dtype.size_bits() as u32;
-        let num_lines_per_tile = elements_per_tile / line_size;
-        let total_num_lines = tiles_per_stage * num_lines_per_tile;
-        total_num_lines.div_ceil(plane_dim)
+        let vector_size = ASYNC_COPY_WIDTH / dtype.size_bits() as u32;
+        let num_vectors_per_tile = elements_per_tile / vector_size;
+        let total_num_vectors = tiles_per_stage * num_vectors_per_tile;
+        total_num_vectors.div_ceil(plane_dim)
     }
 }
 
@@ -126,45 +126,44 @@ impl<TO: TilingOrder, RC: RuntimeConfig> PartialLoadingStrategy<RC>
     type Stage = StridedStageFamily;
     type TileKind = Strided;
 
-    type Job<EG: Numeric, ES: Numeric> = AsyncPartialCyclicJob;
+    type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = AsyncPartialCyclicJob;
 
-    fn new_job<EG: Numeric, ES: Numeric>(
+    fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
         #[comptime] stage_index: u32,
-        #[comptime] _line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> AsyncPartialCyclicJob {
         let type_size = ES::type_size_bits().comptime();
-        let line_size = ASYNC_COPY_WIDTH / type_size as u32;
+        let vector_size = ASYNC_COPY_WIDTH / type_size as u32;
         let num_stage_elements = config.smem_config.elements_per_stage();
 
         let tile_size = config.smem_config.elements_per_tile();
         let tile_count_row = config.smem_config.tiles_per_stage_along_row();
         let tile_count_col = config.smem_config.tiles_per_stage_along_col();
 
-        let num_lines_per_tile = tile_size / line_size;
+        let num_vectors_per_tile = tile_size / vector_size;
         let total_units = config.loading_units_count();
 
         let num_tiles_in_stage = tile_count_row * tile_count_col;
-        let total_num_lines = num_tiles_in_stage * num_lines_per_tile;
-        let balanced_workload = total_num_lines.is_multiple_of(total_units);
-        let num_tasks_per_unit = total_num_lines.div_ceil(total_units);
-        let jump_length = total_units * line_size;
+        let total_num_vectors = num_tiles_in_stage * num_vectors_per_tile;
+        let balanced_workload = total_num_vectors.is_multiple_of(total_units);
+        let num_tasks_per_unit = total_num_vectors.div_ceil(total_units);
+        let jump_length = total_units * vector_size;
 
         let plane_id = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
             .load_index(config.input_load_flow);
         let unit_id = plane_id * config.plane_dim + UNIT_POS_X;
-        let unit_position_base = unit_id * line_size;
+        let unit_position_base = unit_id * vector_size;
 
         AsyncPartialCyclicJob {
             unit_position_base,
             num_tasks_per_unit,
             stage_index,
             jump_length,
-            num_lines_per_tile,
+            num_vectors_per_tile,
             balanced_workload,
             num_stage_elements,
-            copy_line_size: line_size,
+            copy_vector_size: vector_size,
             reader_mode: config.reader_mode,
         }
     }
@@ -181,7 +180,7 @@ pub struct AsyncPartialCyclicJob {
     #[cube(comptime)]
     jump_length: u32,
     #[cube(comptime)]
-    num_lines_per_tile: u32,
+    num_vectors_per_tile: u32,
     #[cube(comptime)]
     balanced_workload: bool,
     #[cube(comptime)]
@@ -189,20 +188,20 @@ pub struct AsyncPartialCyclicJob {
     #[cube(comptime)]
     reader_mode: ReaderMode,
     #[cube(comptime)]
-    copy_line_size: u32,
+    copy_vector_size: u32,
 }
 
 #[cube]
-impl<EG: Numeric, ES: Numeric, TO: TilingOrder>
-    LoadingJob<EG, ES, ContiguousTilingLayout<TO>, AsyncCopy> for AsyncPartialCyclicJob
+impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
+    LoadingJob<EG, NG, ES, NS, ContiguousTilingLayout<TO>, AsyncCopy> for AsyncPartialCyclicJob
 {
     type Stage = StridedStageFamily;
 
     fn execute_task(
         this: &mut Self,
         #[comptime] task_id: u32,
-        global_iter: &GlobalIterator<Line<EG>>,
-        stage: &mut StridedStageMemory<ES, ContiguousTilingLayout<TO>>,
+        global_iter: &GlobalIterator<Vector<EG, NG>>,
+        stage: &mut StridedStageMemory<ES, NS, ContiguousTilingLayout<TO>>,
         _barrier: &mut Shared<Barrier>,
         #[comptime] config: GlobalReaderConfig,
     ) {
@@ -211,10 +210,16 @@ impl<EG: Numeric, ES: Numeric, TO: TilingOrder>
 
         #[allow(clippy::collapsible_else_if)]
         if comptime!(this.reader_mode == ReaderMode::Strict || this.balanced_workload) {
-            copy_line::<EG, ES, TO>(this, unit_position, global_iter, &mut stage, config);
+            copy_vector::<EG, NG, ES, NS, TO>(this, unit_position, global_iter, &mut stage, config);
         } else {
             if unit_position < this.num_stage_elements {
-                copy_line::<EG, ES, TO>(this, unit_position, global_iter, &mut stage, config);
+                copy_vector::<EG, NG, ES, NS, TO>(
+                    this,
+                    unit_position,
+                    global_iter,
+                    &mut stage,
+                    config,
+                );
             }
         }
     }
@@ -225,11 +230,11 @@ impl<EG: Numeric, ES: Numeric, TO: TilingOrder>
 }
 
 #[cube]
-pub(crate) fn copy_line<EG: Numeric, ES: Numeric, TO: TilingOrder>(
+pub(crate) fn copy_vector<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>(
     job: &AsyncPartialCyclicJob,
     unit_position: u32,
-    global_iter: &GlobalIterator<Line<EG>>,
-    stage: &mut StridedStageMemory<ES, ContiguousTilingLayout<TO>>,
+    global_iter: &GlobalIterator<Vector<EG, NG>>,
+    stage: &mut StridedStageMemory<ES, NS, ContiguousTilingLayout<TO>>,
     #[comptime] config: GlobalReaderConfig,
 ) {
     let layout = TiledLayout::new(config.stage_ident, config.smem_config);
@@ -263,10 +268,10 @@ pub(crate) fn copy_line<EG: Numeric, ES: Numeric, TO: TilingOrder>(
 
     let pos = layout.to_source_pos((tile, pos_within_tile));
 
-    let tile_start = tile_index * job.num_lines_per_tile * job.copy_line_size;
-    let stage_offset = (tile_start + pos_within_tile) / stage.smem.line_size() as u32;
+    let tile_start = tile_index * job.num_vectors_per_tile * job.copy_vector_size;
+    let stage_offset = (tile_start + pos_within_tile) / stage.smem.vector_size() as u32;
 
-    async_copy_from(view, pos, stage, stage_offset, config, job.copy_line_size);
+    async_copy_from(view, pos, stage, stage_offset, config, job.copy_vector_size);
 }
 
 #[cube]
@@ -280,7 +285,7 @@ impl<TO: TilingOrder, RC: RuntimeConfig> AsyncPartialLoadingStrategy<RC>
 
     fn barrier_post_init() {}
 
-    fn arrive<MP: MatmulPrecision, S: StageConfig>(
+    fn arrive<MP: MatmulTypes, S: StageConfig>(
         barrier: &mut Barrier,
         #[comptime] _config: SharedGlobalMatmulConfig<S>,
     ) {

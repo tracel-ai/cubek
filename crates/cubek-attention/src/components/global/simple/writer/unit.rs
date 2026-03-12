@@ -14,20 +14,22 @@ use crate::components::{
 };
 
 #[derive(CubeType)]
-pub struct UnitAttentionWriter<ES: Numeric, EG: Numeric> {
-    global: View<Line<EG>, TiledCoords, ReadWrite>,
-    stage: PartitionedStage<ES>,
+pub struct UnitAttentionWriter<ES: Numeric, ESS: Size, EG: Numeric, EGS: Size> {
+    global: View<Vector<EG, EGS>, TiledCoords, ReadWrite>,
+    stage: PartitionedStage<ES, ESS>,
 
     #[cube(comptime)]
     config: GlobalWriterConfig,
 }
 
 #[cube]
-impl<ES: Numeric, EG: Numeric> WriteEventListener for UnitAttentionWriter<ES, EG> {
+impl<ES: Numeric, ESS: Size, EG: Numeric, EGS: Size> WriteEventListener
+    for UnitAttentionWriter<ES, ESS, EG, EGS>
+{
     fn on_event(this: &mut Self, event: WriteEvent) {
         #[allow(clippy::single_match)]
         match event {
-            WriteEvent::TileStored { tile } => unit_write::<ES, EG>(
+            WriteEvent::TileStored { tile } => unit_write::<ES, ESS, EG, EGS>(
                 &mut this.global,
                 &this.stage.unit_tile,
                 tile,
@@ -39,22 +41,24 @@ impl<ES: Numeric, EG: Numeric> WriteEventListener for UnitAttentionWriter<ES, EG
 }
 
 #[cube]
-impl<ES: Numeric, EG: Numeric> AttentionWriter<ES, EG> for UnitAttentionWriter<ES, EG> {
+impl<ES: Numeric, ESS: Size, EG: Numeric, EGS: Size> AttentionWriter<ES, ESS, EG, EGS>
+    for UnitAttentionWriter<ES, ESS, EG, EGS>
+{
     fn init<S: StageAttentionConfig>(
-        global: View<Line<EG>, Coords2d, ReadWrite>,
+        global: View<Vector<EG, EGS>, Coords2d, ReadWrite>,
         #[comptime] config: GlobalWriterConfig,
     ) -> Self {
         let stage =
             PartitionedStage::new((UnitPartitioner::seq_q_index(), 0u32), config.smem_config);
 
-        UnitAttentionWriter::<ES, EG> {
+        UnitAttentionWriter::<ES, ESS, EG, EGS> {
             global: global.view_mut(TiledLayout::new(StageIdent::Out, config.smem_config)),
             stage,
             config,
         }
     }
 
-    fn stage(&mut self) -> PartitionedStage<ES> {
+    fn stage(&mut self) -> PartitionedStage<ES, ESS> {
         self.stage
     }
 }

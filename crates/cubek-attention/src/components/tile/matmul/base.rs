@@ -11,11 +11,11 @@ pub trait InnerMatmul {
     type Config: Copy + Clone;
 
     fn allocate_lhs(#[comptime] config: Self::Config) -> Self::Lhs;
-    fn load_lhs<E: Numeric>(tile: &StridedTile<E>, fragment: &mut Self::Lhs);
+    fn load_lhs<E: Numeric, ES: Size>(tile: &StridedTile<E, ES>, fragment: &mut Self::Lhs);
 
     fn allocate_rhs(#[comptime] config: Self::Config) -> Self::Rhs;
-    fn load_rhs_plain<E: Float>(tile: &StridedTile<E>, fragment: &mut Self::Rhs);
-    fn load_rhs_transposed<E: Float>(tile: &StridedTile<E>, fragment: &mut Self::Rhs);
+    fn load_rhs_plain<E: Float, ES: Size>(tile: &StridedTile<E, ES>, fragment: &mut Self::Rhs);
+    fn load_rhs_transposed<E: Float, ES: Size>(tile: &StridedTile<E, ES>, fragment: &mut Self::Rhs);
 
     fn execute(
         lhs: &Self::Lhs,

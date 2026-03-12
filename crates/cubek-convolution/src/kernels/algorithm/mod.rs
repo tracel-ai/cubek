@@ -2,7 +2,7 @@ use crate::components::{ConvolutionOperation, global::args::RuntimeArgs};
 use cubecl::prelude::*;
 use cubecl::std::tensor::{into_contiguous_pitched, is_contiguous_pitched};
 use cubek_matmul::launch::MatmulArgs;
-use cubek_matmul::{definition::AvailableLineSizes, routines::Routine};
+use cubek_matmul::{definition::AvailableVectorSizes, routines::Routine};
 
 pub mod simple;
 pub mod specialized;
@@ -23,8 +23,8 @@ pub trait Algorithm {
         operation: ConvolutionOperation,
     ) -> Result<TensorBinding<R>, LaunchError>;
 
-    fn filter_line_sizes(line_sizes: AvailableLineSizes) -> AvailableLineSizes {
-        line_sizes
+    fn filter_vector_sizes(vector_sizes: AvailableVectorSizes) -> AvailableVectorSizes {
+        vector_sizes
     }
 }
 
@@ -55,7 +55,7 @@ pub(crate) fn into_tensor_handle_tma<R: Runtime>(
     dtype: StorageType,
     operation: ConvolutionOperation,
 ) -> Result<TensorBinding<R>, LaunchError> {
-    let binding = if has_valid_layout_tma(&handle, operation) {
+    let binding = if has_valid_layout_tma(&handle, dtype, operation) {
         handle
     } else {
         into_contiguous_pitched(client, handle, dtype).binding()
@@ -65,9 +65,10 @@ pub(crate) fn into_tensor_handle_tma<R: Runtime>(
 
 pub(crate) fn has_valid_layout_tma<R: Runtime>(
     binding: &TensorBinding<R>,
+    dtype: StorageType,
     operation: ConvolutionOperation,
 ) -> bool {
-    let stride_align = TMA_STRIDE_ALIGN / binding.elem_size;
+    let stride_align = TMA_STRIDE_ALIGN / dtype.size();
     let rank = binding.shape.len();
     let dim_c = rank - 1;
 

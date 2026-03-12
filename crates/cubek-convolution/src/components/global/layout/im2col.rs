@@ -122,7 +122,7 @@ impl Layout for Im2colLayout {
     }
 }
 
-impl<'a, R: Runtime> Im2colLayoutLaunch<'a, R> {
+impl<R: Runtime> Im2colLayoutLaunch<R> {
     pub fn from_args(
         client: &ComputeClient<R>,
         problem: &ConvolutionProblem,
@@ -155,8 +155,8 @@ impl<'a, R: Runtime> Im2colLayoutLaunch<'a, R> {
         let padded_channels = problem.padded_channels as u32;
         let padded_channels = FastDivmodArgs::<u32>::new(client, padded_channels);
 
-        let shape_m = ScalarArg::new(problem.m as u32);
-        let shape_k = ScalarArg::new(problem.k as u32);
+        let shape_m = problem.m as u32;
+        let shape_k = problem.k as u32;
 
         Im2colLayoutLaunch::new(shape_out, padded_channels, shape_m, shape_k, params, config)
     }
@@ -176,8 +176,8 @@ impl<'a, R: Runtime> Im2colLayoutLaunch<'a, R> {
         let padded_channels = problem.padded_channels as u32;
         let padded_channels = FastDivmodArgs::<u32>::new(client, padded_channels);
 
-        let shape_m = ScalarArg::new(problem.m as u32);
-        let shape_k = ScalarArg::new(problem.k as u32);
+        let shape_m = problem.m as u32;
+        let shape_k = problem.k as u32;
 
         Im2colLayoutLaunch::new(shape, padded_channels, shape_m, shape_k, params, config)
     }
@@ -197,8 +197,8 @@ impl<'a, R: Runtime> Im2colLayoutLaunch<'a, R> {
         let padded_channels = problem.padded_channels as u32;
         let padded_channels = FastDivmodArgs::<u32>::new(client, padded_channels);
 
-        let shape_k = ScalarArg::new(problem.k as u32);
-        let shape_n = ScalarArg::new(problem.n as u32);
+        let shape_k = problem.k as u32;
+        let shape_n = problem.n as u32;
 
         Im2colLayoutLaunch::new(shape_out, padded_channels, shape_k, shape_n, params, config)
     }

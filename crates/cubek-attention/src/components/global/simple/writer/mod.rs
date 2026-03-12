@@ -13,11 +13,13 @@ pub use unit::*;
 use crate::components::stage::StageAttentionConfig;
 
 #[cube]
-pub trait AttentionWriter<ES: Numeric, EG: Numeric>: WriteEventListener {
+pub trait AttentionWriter<ES: Numeric, ESS: Size, EG: Numeric, EGS: Size>:
+    WriteEventListener
+{
     fn init<S: StageAttentionConfig>(
-        global: View<Line<EG>, Coords2d, ReadWrite>,
+        global: View<Vector<EG, EGS>, Coords2d, ReadWrite>,
         #[comptime] config: GlobalWriterConfig,
     ) -> Self;
 
-    fn stage(&mut self) -> PartitionedStage<ES>;
+    fn stage(&mut self) -> PartitionedStage<ES, ESS>;
 }

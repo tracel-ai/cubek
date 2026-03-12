@@ -29,11 +29,11 @@ impl<R: Runtime, E: Float> Benchmark for UnaryBench<R, E> {
         let elem = E::as_type_native_unchecked();
 
         let lhs = TensorHandle::empty(&client, self.shape.clone(), elem);
-        random_uniform(&client, 0., 1., lhs.clone().binding(), elem).unwrap();
+        random_uniform(&client, 0., 1., lhs.clone().binding(), elem.storage_type()).unwrap();
         let rhs = TensorHandle::empty(&client, self.shape.clone(), elem);
-        random_uniform(&client, 0., 1., rhs.clone().binding(), elem).unwrap();
+        random_uniform(&client, 0., 1., rhs.clone().binding(), elem.storage_type()).unwrap();
         let out = TensorHandle::empty(&client, self.shape.clone(), elem);
-        random_uniform(&client, 0., 1., out.clone().binding(), elem).unwrap();
+        random_uniform(&client, 0., 1., out.clone().binding(), elem.storage_type()).unwrap();
 
         (lhs, rhs, out)
     }
@@ -49,9 +49,9 @@ impl<R: Runtime, E: Float> Benchmark for UnaryBench<R, E> {
             &self.client,
             cube_count,
             cube_dim,
-            lhs.into_arg(self.vectorization),
-            rhs.into_arg(self.vectorization),
-            out.into_arg(self.vectorization),
+            lhs.into_arg(),
+            rhs.into_arg(),
+            out.into_arg(),
         );
 
         Ok(())
@@ -86,14 +86,14 @@ impl<R: Runtime, E: Float> Benchmark for UnaryBench<R, E> {
 #[derive(Clone)]
 struct UnaryBench<R: Runtime, E> {
     shape: Vec<usize>,
-    vectorization: LineSize,
+    vectorization: VectorSize,
     device: R::Device,
     client: ComputeClient<R>,
     _e: PhantomData<E>,
 }
 
 #[allow(dead_code)]
-fn run<R: Runtime, E: frontend::Float>(device: R::Device, vectorization: LineSize) {
+fn run<R: Runtime, E: frontend::Float>(device: R::Device, vectorization: VectorSize) {
     let client = R::client(&device);
     let bench = UnaryBench::<R, E> {
         shape: vec![32, 512, 2048],

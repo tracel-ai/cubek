@@ -4,8 +4,8 @@ use crate::{components::global::memory::GlobalLayoutConfig, launch::ConfigRuntim
 use crate::{
     components::stage::NumStages,
     definition::{
-        AccG, Blueprint, CubeMapping, CubeMappingLaunch, LhsG, MatmulElems, MatmulLineSizes,
-        MatmulPrecision, MatmulProblem, MatmulSetupError, RhsG,
+        AccG, Blueprint, CubeMapping, CubeMappingLaunch, LhsG, MatmulElems, MatmulProblem,
+        MatmulSetupError, MatmulTypes, MatmulVectorSizes, RhsG,
     },
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
@@ -14,21 +14,21 @@ use std::{fmt::Debug, hash::Hash};
 /// A family of [matmuls](BatchMatmul) working with any [precision](MatmulPrecision).
 pub trait BatchMatmulFamily<RC: RuntimeConfig>: 'static + Send + Sync {
     /// The specific [BatchMatmul] implementation associated with this family.
-    type Matmul<MP: MatmulPrecision>: BatchMatmul<RC, MP, Config = Self::Config>;
+    type Matmul<MP: MatmulTypes>: BatchMatmul<RC, MP, Config = Self::Config>;
 
     /// The configuration type associated with this matmul family.
     type Config: BatchConfig;
 
     type Blueprint: Blueprint;
 
-    /// Constructs the configuration based on the matmul problem, selection, and line sizes.
+    /// Constructs the configuration based on the matmul problem, selection, and vector sizes.
     ///
     /// This function may return an error if the configuration cannot be supported on the current runtime.
     fn expand_config(
         device_props: &DeviceProperties,
         blueprint: &Self::Blueprint,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError>;
 
     fn num_stages() -> NumStages;
@@ -39,24 +39,25 @@ pub trait BatchMatmulFamily<RC: RuntimeConfig>: 'static + Send + Sync {
     ///
     /// Out-of-bounds can happen
     #[allow(clippy::too_many_arguments)]
-    unsafe fn launch_unchecked<'a, MA: MatmulArgs<Config = RC>, R: Runtime>(
+    unsafe fn launch_unchecked<MA: MatmulArgs<Config = RC>, R: Runtime>(
         client: &ComputeClient<R>,
         cube_dim: CubeDim,
         cube_count: CubeCount,
         address_type: AddressType,
-        input: InputRuntimeArg<'a, MA, R>,
-        output: OutputRuntimeArg<'a, MA, R>,
-        config: ConfigRuntimeArg<'a, MA, R>,
-        cube_mapping: CubeMappingLaunch<'a, R>,
+        input: InputRuntimeArg<MA, R>,
+        output: OutputRuntimeArg<MA, R>,
+        config: ConfigRuntimeArg<MA, R>,
+        cube_mapping: CubeMappingLaunch<R>,
         blueprint: Self::Blueprint,
         dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), LaunchError>;
 
     /// Returns the compute resources required to run this matmul.
     fn cubedim_resource(
         blueprint: &Self::Blueprint,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<CubeDimResource, MatmulSetupError>;
 
     fn validate_blueprint<R: Runtime>(
@@ -64,7 +65,7 @@ pub trait BatchMatmulFamily<RC: RuntimeConfig>: 'static + Send + Sync {
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError>;
 }
 
@@ -78,7 +79,7 @@ pub trait BatchMatmulFamily<RC: RuntimeConfig>: 'static + Send + Sync {
 ///    as well as the number of batches.
 ///
 /// # Assumptions
-/// - Line sizes of the inputs evenly divide the dimension they are aligned with.
+/// - Vector sizes of the inputs evenly divide the dimension they are aligned with.
 ///
 /// # Safety
 ///
@@ -86,7 +87,7 @@ pub trait BatchMatmulFamily<RC: RuntimeConfig>: 'static + Send + Sync {
 ///   It is therefore important to use an underlying global matmul that performs check bounds,
 /// - It is accepted to launch more Cube than necessary, providing a CubeCountInput that states
 ///   the max cube position
-pub trait BatchMatmul<RC: RuntimeConfig, MP: MatmulPrecision>: 'static + Send + Sync {
+pub trait BatchMatmul<RC: RuntimeConfig, MP: MatmulTypes>: 'static + Send + Sync {
     type Config: BatchConfig;
 
     /// Performs batchwise matrix multiplication over tensors.

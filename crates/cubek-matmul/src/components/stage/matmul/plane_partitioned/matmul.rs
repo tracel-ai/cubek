@@ -3,8 +3,8 @@ use crate::components::global::PlaneFlowPartitionRule;
 use crate::components::stage::matmul::partitioned_matmul::PartitionedStageMatmul;
 use crate::components::stage::matmul::partitioned_matmul::StagePartitioner;
 use crate::components::tile::TileMatmul;
-use crate::definition::MatmulPrecision;
-use crate::definition::MatrixPrecision;
+use crate::definition::MatmulTypes;
+use crate::definition::MatrixTypes;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
 
@@ -25,11 +25,11 @@ impl<TC: TileConfig> PlanePartitionedStageConfig<TC> {
 #[allow(type_alias_bounds)]
 /// [PartitionedStageMatmul] partitioned across units
 pub type PlaneMatmul<
-    MP: MatmulPrecision,
+    MP: MatmulTypes,
     TM: TileMatmul<
-            <MP::Lhs as MatrixPrecision>::Register,
-            <MP::Rhs as MatrixPrecision>::Register,
-            <MP::Acc as MatrixPrecision>::Register,
+            <MP::Lhs as MatrixTypes>::Register,
+            <MP::Rhs as MatrixTypes>::Register,
+            <MP::Acc as MatrixTypes>::Register,
         >,
     StageLhs,
     StageRhs,

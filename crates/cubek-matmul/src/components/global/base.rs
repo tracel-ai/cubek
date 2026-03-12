@@ -11,8 +11,8 @@ use crate::components::{global::memory::GlobalMemoryConfig, stage::NumStages};
 use crate::definition::StageIdent;
 use crate::definition::TilingBlueprint;
 use crate::definition::{AccG, MatmulSetupError};
-use crate::definition::{LhsG, MatmulElems, MatmulLineSizes, RhsG};
-use crate::definition::{MatmulPrecision, MatmulProblem};
+use crate::definition::{LhsG, MatmulElems, MatmulVectorSizes, RhsG};
+use crate::definition::{MatmulProblem, MatmulTypes};
 use crate::{components::CubeDimResource, launch::RuntimeConfig};
 use cubecl::std::tensor::{View, layout::Coords2d};
 use std::fmt::Debug;
@@ -21,19 +21,19 @@ use std::hash::Hash;
 /// A family of [matmuls](GlobalMatmul) working with any [precision](MatmulPrecision).
 pub trait GlobalMatmulFamily<RC: RuntimeConfig>: Send + Sync + 'static {
     /// The specific [GlobalMatmul] implementation associated with this family.
-    type Matmul<MP: MatmulPrecision>: GlobalMatmul<RC, MP, Config = Self::Config>;
+    type Matmul<MP: MatmulTypes>: GlobalMatmul<RC, MP, Config = Self::Config>;
 
     /// The configuration type associated with this matmul family.
     type Config: GlobalConfig;
 
-    /// Constructs the configuration based on the matmul problem, selection, and line sizes.
+    /// Constructs the configuration based on the matmul problem, selection, and vector sizes.
     ///
     /// This function may return an error if the configuration cannot be supported on the current runtime.
     fn expand_config(
         device_props: &DeviceProperties,
         blueprint: &TilingBlueprint,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError>;
 
     fn num_stages() -> NumStages;
@@ -42,7 +42,7 @@ pub trait GlobalMatmulFamily<RC: RuntimeConfig>: Send + Sync + 'static {
     fn cubedim_resource(
         blueprint: &TilingBlueprint,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<CubeDimResource, MatmulSetupError>;
 
     fn validate_blueprint<R: Runtime>(
@@ -50,7 +50,7 @@ pub trait GlobalMatmulFamily<RC: RuntimeConfig>: Send + Sync + 'static {
         blueprint: &TilingBlueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError>;
 }
 
@@ -66,14 +66,14 @@ pub trait GlobalMatmulFamily<RC: RuntimeConfig>: Send + Sync + 'static {
 ///    M and N should match the underlying Stage matmul's M and N.
 ///
 /// # Assumptions
-/// - Line sizes of the inputs evenly divide the dimension they are aligned with.
+/// - Vector sizes of the inputs evenly divide the dimension they are aligned with.
 ///
 /// # Safety
 ///
 /// It is not assumed that the matmul's dimensions match its inputs dimensions perfectly.
 /// It is therefore important that Readers and Writers perform checks to avoid out-of-bounds
 /// before reading data.
-pub trait GlobalMatmul<RC: RuntimeConfig, MP: MatmulPrecision>: 'static + Send + Sync {
+pub trait GlobalMatmul<RC: RuntimeConfig, MP: MatmulTypes>: 'static + Send + Sync {
     type Config: GlobalConfig;
 
     /// Global reader for matrix A (Lhs)
@@ -105,21 +105,21 @@ pub trait GlobalMatmul<RC: RuntimeConfig, MP: MatmulPrecision>: 'static + Send +
 
     /// Initialize the global reader for Lhs, starting at row m and column k
     fn init_lhs_global_reader(
-        lhs: View<Line<LhsG<MP>>, Coords2d>,
+        lhs: View<LhsG<MP>, Coords2d>,
         runtime_config: RC,
         #[comptime] config: Self::Config,
     ) -> Self::LhsGlobalReader;
 
     /// Initialize the global reader for Rhs, starting at row k and column n
     fn init_rhs_global_reader(
-        rhs: View<Line<RhsG<MP>>, Coords2d>,
+        rhs: View<RhsG<MP>, Coords2d>,
         runtime_config: RC,
         #[comptime] config: Self::Config,
     ) -> Self::RhsGlobalReader;
 
     /// Initialize the global reader for Rhs, starting at row k and column n
     fn init_acc_global_reader(
-        acc: ComptimeOption<View<Line<AccG<MP>>, Coords2d>>,
+        acc: ComptimeOption<View<AccG<MP>, Coords2d>>,
         runtime_config: RC,
         #[comptime] config: Self::Config,
     ) -> Self::AccGlobalReader;
@@ -129,7 +129,7 @@ pub trait GlobalMatmul<RC: RuntimeConfig, MP: MatmulPrecision>: 'static + Send +
 
     /// Initialize the global writer at row m and column n
     fn init_global_writer(
-        out: View<Line<AccG<MP>>, Coords2d, ReadWrite>,
+        out: View<AccG<MP>, Coords2d, ReadWrite>,
         #[comptime] config: Self::Config,
     ) -> Self::GlobalWriter;
 }
@@ -189,11 +189,11 @@ impl<S: StageConfig> GlobalConfig for SharedGlobalMatmulConfig<S> {
         CubeDim::new_2d(self.plane_dim(), self.num_planes)
     }
 
-    fn global_line_sizes(&self) -> MatmulLineSizes {
-        MatmulLineSizes {
-            lhs: self.lhs_reader_config.gmem_config.line_size,
-            rhs: self.rhs_reader_config.gmem_config.line_size,
-            out: self.writer_config.gmem_config.line_size,
+    fn global_vector_sizes(&self) -> MatmulVectorSizes {
+        MatmulVectorSizes {
+            lhs: self.lhs_reader_config.gmem_config.vector_size,
+            rhs: self.rhs_reader_config.gmem_config.vector_size,
+            out: self.writer_config.gmem_config.vector_size,
         }
     }
 
@@ -218,7 +218,7 @@ pub trait GlobalConfig:
     fn rhs_reader_config(&self) -> GlobalReaderConfig;
     fn writer_config(&self) -> GlobalWriterConfig;
     fn cube_dim(&self) -> CubeDim;
-    fn global_line_sizes(&self) -> MatmulLineSizes;
+    fn global_vector_sizes(&self) -> MatmulVectorSizes;
     fn must_sync_plane_after_execution(&self) -> bool;
 }
 

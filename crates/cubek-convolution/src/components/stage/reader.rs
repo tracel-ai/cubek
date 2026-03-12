@@ -14,31 +14,30 @@ pub struct BiasTilingLayout {}
 
 #[cube]
 impl BiasTilingLayout {
-    pub fn get_tile<ES: Numeric>(
-        stage: &BiasStageMemory<ES>,
+    pub fn get_tile<ES: Numeric, NS: Size>(
+        stage: &BiasStageMemory<ES, NS>,
         tile: Coords2d,
         #[comptime] config: StageMemoryConfig,
-    ) -> StridedTile<ES> {
+    ) -> StridedTile<ES, NS> {
         if config.num_stages > 1 {
             unimplemented!()
         }
 
         let (_, col) = tile;
 
-        let stage_line_size = config.line_size;
-        let tile_size_col = config.elements_per_tile_along_col / stage_line_size;
+        let stage_vector_size = config.vector_size;
+        let tile_size_col = config.elements_per_tile_along_col / stage_vector_size;
 
         let length = tile_size_col;
         let start = col * tile_size_col;
 
         StridedTile::new_strided(
-            stage.as_slice(stage_line_size as usize),
+            stage.as_slice(),
             start,
             start + length,
             0,
             stage.swizzle,
             MatrixLayout::RowMajor,
-            stage_line_size,
         )
     }
 }
@@ -46,10 +45,10 @@ impl BiasTilingLayout {
 impl TilingValidation for BiasTilingLayout {
     fn check(config: StageMemoryConfig) -> Result<(), InvalidConfigError> {
         let stage_width = config.elements_per_stage_along_col();
-        if config.line_size > stage_width {
+        if config.vector_size > stage_width {
             return Err(Box::new(format!(
-                "Invalid line size. Got {:?} which should not be >{:?}",
-                config.line_size, stage_width,
+                "Invalid vector size. Got {:?} which should not be >{:?}",
+                config.vector_size, stage_width,
             )));
         }
         Ok(())

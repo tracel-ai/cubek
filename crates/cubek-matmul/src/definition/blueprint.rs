@@ -71,10 +71,10 @@ pub fn adjust_dtypes<R: Runtime>(
     dtypes: &mut MatmulElems,
     requires_accelerator: bool,
 ) {
-    let f32_dtype = f32::as_type_native_unchecked();
-    let flex_dtype = flex32::as_type_native_unchecked();
-    let tf32_dtype = tf32::as_type_native_unchecked();
-    let f16_dtype = half::f16::as_type_native_unchecked();
+    let f32_dtype = f32::as_type_native_unchecked().storage_type();
+    let flex_dtype = flex32::as_type_native_unchecked().storage_type();
+    let tf32_dtype = tf32::as_type_native_unchecked().storage_type();
+    let f16_dtype = half::f16::as_type_native_unchecked().storage_type();
 
     if requires_accelerator {
         if dtypes.lhs_global == f32_dtype

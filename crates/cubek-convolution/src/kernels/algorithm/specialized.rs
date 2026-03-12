@@ -6,7 +6,7 @@ use cubek_matmul::{
         global::read::{AsyncPartialLoadingStrategy, async_partial_tma::AsyncPartialTmaLoading},
         tile::TileMatmulFamily,
     },
-    definition::AvailableLineSizes,
+    definition::AvailableVectorSizes,
     launch::{TensorArgs, TensorMapArgs},
     routines::specialized::SpecializedAlgorithm,
 };
@@ -81,11 +81,11 @@ impl<
         into_tensor_handle_tma(client, handle, dtype, operation)
     }
 
-    fn filter_line_sizes(line_sizes: AvailableLineSizes) -> AvailableLineSizes {
-        AvailableLineSizes {
+    fn filter_vector_sizes(vector_sizes: AvailableVectorSizes) -> AvailableVectorSizes {
+        AvailableVectorSizes {
             lhs: vec![1],
             rhs: vec![1],
-            out: line_sizes.out,
+            out: vector_sizes.out,
         }
     }
 }

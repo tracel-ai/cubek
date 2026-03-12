@@ -6,7 +6,7 @@ use cubek_std::{InvalidConfigError, MatrixLayout, TileSize};
 use crate::components::resource::CubeDimResource;
 use crate::components::tile::TileConfig;
 use crate::definition::{MatmulElems, TilingBlueprint};
-use crate::definition::{MatmulLineSizes, MatmulSetupError};
+use crate::definition::{MatmulSetupError, MatmulVectorSizes};
 
 /// A family of [TileMatmul] implementations that operate with any precision.
 pub trait TileMatmulFamily: Send + Sync + 'static {
@@ -47,14 +47,14 @@ pub trait TileMatmulFamily: Send + Sync + 'static {
     /// Returns the compute resources required to run this matmul.
     fn cubedim_resource() -> Result<CubeDimResource, InvalidConfigError>;
 
-    /// Constructs the configuration based on the matmul problem, selection, and line sizes.
+    /// Constructs the configuration based on the matmul problem, selection, and vector sizes.
     ///
     /// This function may return an error if the configuration cannot be supported on the current runtime.
     fn expand_config(
         device_props: &DeviceProperties,
         blueprint: &TilingBlueprint,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError>;
 
     /// Returns whether a tile configuration is supported
@@ -76,7 +76,7 @@ pub trait TileMatmulFamily: Send + Sync + 'static {
         client: &ComputeClient<R>,
         blueprint: &TilingBlueprint,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError>;
 }
 
@@ -131,8 +131,8 @@ pub trait TileMatmul<L: Numeric, R: Numeric, A: Numeric>: 'static + Send + Sync 
     ) -> Self::LhsFragment;
 
     /// Load the container of Lhs from tile data
-    fn load_lhs<E: Numeric>(
-        tile: &Tile<Self::LhsTile, E>,
+    fn load_lhs<E: Numeric, N: Size>(
+        tile: &Tile<Self::LhsTile, E, N>,
         lhs: &mut Self::LhsFragment,
         #[comptime] config: Self::Config,
     );
@@ -149,8 +149,8 @@ pub trait TileMatmul<L: Numeric, R: Numeric, A: Numeric>: 'static + Send + Sync 
     ) -> Self::RhsFragment;
 
     /// Load the container of Rhs from tile data
-    fn load_rhs<E: Numeric>(
-        tile: &Tile<Self::RhsTile, E>,
+    fn load_rhs<E: Numeric, N: Size>(
+        tile: &Tile<Self::RhsTile, E, N>,
         rhs: &mut Self::RhsFragment,
         #[comptime] config: Self::Config,
     );
@@ -168,15 +168,15 @@ pub trait TileMatmul<L: Numeric, R: Numeric, A: Numeric>: 'static + Send + Sync 
     ) -> Self::AccFragment;
 
     /// Load the container of Acc from tile data
-    fn load_acc<E: Numeric>(
-        tile: &Tile<Self::AccTile, E>,
+    fn load_acc<E: Numeric, N: Size>(
+        tile: &Tile<Self::AccTile, E, N>,
         acc: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     );
 
     /// Write the content of the output container to the given slice
-    fn write_results<E: Numeric>(
-        tile: &mut TileMut<Self::OutTile, E>,
+    fn write_results<E: Numeric, N: Size>(
+        tile: &mut TileMut<Self::OutTile, E, N>,
         out: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     );

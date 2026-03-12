@@ -11,8 +11,8 @@ use crate::components::stage::{NoEvent, StageEventListener};
 use crate::components::tile::TileConfig;
 use crate::components::tile::TileMatmul;
 use crate::components::{global::WriteEventListener, stage::StageMatmul};
-use crate::definition::MatmulPrecision;
-use crate::definition::MatrixPrecision;
+use crate::definition::MatmulTypes;
+use crate::definition::MatrixTypes;
 use core::marker::PhantomData;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
@@ -112,29 +112,33 @@ impl<TC: TileConfig> StageConfig for PartitionMatmulConfig<TC> {
 ///
 /// Its results are written in a temporary shared memory to correct the layout before storing to global memory.
 pub struct PartitionedStageMatmul<
-    MP: MatmulPrecision,
+    MP: MatmulTypes,
     TM: TileMatmul<
-            <MP::Lhs as MatrixPrecision>::Register,
-            <MP::Rhs as MatrixPrecision>::Register,
-            <MP::Acc as MatrixPrecision>::Register,
+            <MP::Lhs as MatrixTypes>::Register,
+            <MP::Rhs as MatrixTypes>::Register,
+            <MP::Acc as MatrixTypes>::Register,
         >,
     StageLhs: Stage<
-            <<MP as MatmulPrecision>::Lhs as MatrixPrecision>::Stage,
+            <<MP as MatmulTypes>::Lhs as MatrixTypes>::Stage,
+            <<MP as MatmulTypes>::Lhs as MatrixTypes>::StageSize,
             ReadOnly,
             TileKind = TM::LhsTile,
         >,
     StageRhs: Stage<
-            <<MP as MatmulPrecision>::Rhs as MatrixPrecision>::Stage,
+            <<MP as MatmulTypes>::Rhs as MatrixTypes>::Stage,
+            <<MP as MatmulTypes>::Rhs as MatrixTypes>::StageSize,
             ReadOnly,
             TileKind = TM::RhsTile,
         >,
     StageAcc: Stage<
-            <<MP as MatmulPrecision>::Acc as MatrixPrecision>::Stage,
+            <<MP as MatmulTypes>::Acc as MatrixTypes>::Stage,
+            <<MP as MatmulTypes>::Acc as MatrixTypes>::StageSize,
             ReadOnly,
             TileKind = TM::AccTile,
         >,
     StageOut: Stage<
-            <<MP as MatmulPrecision>::Acc as MatrixPrecision>::Stage,
+            <<MP as MatmulTypes>::Acc as MatrixTypes>::Stage,
+            <<MP as MatmulTypes>::Acc as MatrixTypes>::StageSize,
             ReadWrite,
             TileKind = TM::OutTile,
         >,
@@ -148,29 +152,33 @@ pub struct PartitionedStageMatmul<
 impl<MP, TM, StageLhs, StageRhs, StageAcc, StageOut, SP> StageMatmul<MP>
     for PartitionedStageMatmul<MP, TM, StageLhs, StageRhs, StageAcc, StageOut, SP>
 where
-    MP: MatmulPrecision,
+    MP: MatmulTypes,
     TM: TileMatmul<
-            <MP::Lhs as MatrixPrecision>::Register,
-            <MP::Rhs as MatrixPrecision>::Register,
-            <MP::Acc as MatrixPrecision>::Register,
+            <MP::Lhs as MatrixTypes>::Register,
+            <MP::Rhs as MatrixTypes>::Register,
+            <MP::Acc as MatrixTypes>::Register,
         >,
     StageLhs: Stage<
-            <<MP as MatmulPrecision>::Lhs as MatrixPrecision>::Stage,
+            <<MP as MatmulTypes>::Lhs as MatrixTypes>::Stage,
+            <<MP as MatmulTypes>::Lhs as MatrixTypes>::StageSize,
             ReadOnly,
             TileKind = TM::LhsTile,
         >,
     StageRhs: Stage<
-            <<MP as MatmulPrecision>::Rhs as MatrixPrecision>::Stage,
+            <<MP as MatmulTypes>::Rhs as MatrixTypes>::Stage,
+            <<MP as MatmulTypes>::Rhs as MatrixTypes>::StageSize,
             ReadOnly,
             TileKind = TM::RhsTile,
         >,
     StageAcc: Stage<
-            <<MP as MatmulPrecision>::Acc as MatrixPrecision>::Stage,
+            <<MP as MatmulTypes>::Acc as MatrixTypes>::Stage,
+            <<MP as MatmulTypes>::Acc as MatrixTypes>::StageSize,
             ReadOnly,
             TileKind = TM::AccTile,
         >,
     StageOut: Stage<
-            <<MP as MatmulPrecision>::Acc as MatrixPrecision>::Stage,
+            <<MP as MatmulTypes>::Acc as MatrixTypes>::Stage,
+            <<MP as MatmulTypes>::Acc as MatrixTypes>::StageSize,
             ReadWrite,
             TileKind = TM::OutTile,
         >,

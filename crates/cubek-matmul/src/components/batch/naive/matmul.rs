@@ -9,59 +9,61 @@ use crate::{
     definition::*,
     launch::MatmulArgs,
 };
-use cubecl::cube;
 use cubecl::prelude::*;
 use cubecl::std::tensor::View;
 use cubecl::std::tensor::layout::Coords2d;
+use cubecl::{cube, num_traits::Zero};
 use cubek_std::MatrixLayout;
 
 #[cube(launch_unchecked, address_type = "dynamic")]
+#[allow(clippy::type_complexity)]
 /// Launches the matmul kernel
 pub(crate) fn matmul_entry<
     Args: MatmulArgs<Config = ()>,
-    LhsG: Numeric,
-    RhsG: Numeric,
-    AccG: Numeric,
-    LhsS: Numeric,
-    RhsS: Numeric,
-    AccS: Numeric,
-    LhsR: Numeric,
-    RhsR: Numeric,
-    AccR: Numeric,
+    Lhs: Numeric,
+    LhsSize: Size,
+    Rhs: Numeric,
+    RhsSize: Size,
+    Acc: Numeric,
+    AccSize: Size,
 >(
-    inputs: &<Args as MatmulArgs>::Input<LhsG, RhsG, AccG>,
-    output: &mut <Args as MatmulArgs>::Output<AccG>,
+    inputs: &<Args as MatmulArgs>::Input<
+        Vector<Lhs, LhsSize>,
+        Vector<Rhs, RhsSize>,
+        Vector<Acc, AccSize>,
+    >,
+    output: &mut <Args as MatmulArgs>::Output<Vector<Acc, AccSize>>,
     runtime_config: (),
     cube_mapping: CubeMapping,
     #[comptime] blueprint: NaiveBlueprint,
-    #[define(LhsG, RhsG, AccG)] global: [StorageType; 3],
-    #[define(LhsS, RhsS, AccS)] stage: [StorageType; 3],
-    #[define(LhsR, RhsR, AccR)] register: [StorageType; 3],
+    #[define(Lhs, Rhs, Acc)] _global: [StorageType; 3],
+    #[define(LhsSize, RhsSize, AccSize)] _sizes: [usize; 3],
 ) {
-    let mut state = Args::init_state::<LhsG, RhsG, AccG>(
-        inputs,
-        output,
-        runtime_config,
-        blueprint.lhs_global_layout_config(),
-        blueprint.rhs_global_layout_config(),
-        blueprint.out_global_layout_config(),
-    );
+    let mut state =
+        Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
+            inputs,
+            output,
+            runtime_config,
+            blueprint.lhs_global_layout_config(),
+            blueprint.rhs_global_layout_config(),
+            blueprint.out_global_layout_config(),
+        );
 
-    let line_size_lhs = Args::view_lhs(&state).line_size();
-    let line_size_rhs = Args::view_rhs(&state).line_size();
-    let line_size_out = Args::view_out(&mut state).line_size();
-    let line_sizes = comptime!(MatmulLineSizes {
-        lhs: line_size_lhs,
-        rhs: line_size_rhs,
-        out: line_size_out,
+    let vector_size_lhs = Args::view_lhs(&state).vector_size();
+    let vector_size_rhs = Args::view_rhs(&state).vector_size();
+    let vector_size_out = Args::view_out(&mut state).vector_size();
+    let vector_sizes = comptime!(MatmulVectorSizes {
+        lhs: vector_size_lhs,
+        rhs: vector_size_rhs,
+        out: vector_size_out,
     });
 
     let device_props = comptime::device_properties();
     let config = comptime!(NaiveBatchMatmulFamily::expand_config(
         &device_props,
         &blueprint,
-        &MatmulElems::from_define_arrays(global, stage, register),
-        &line_sizes
+        &blueprint.dtypes,
+        &vector_sizes
     ));
 
     if comptime!(config.is_err()) {
@@ -70,28 +72,33 @@ pub(crate) fn matmul_entry<
     }
     let config = comptime!(config.unwrap());
 
-    let mut state = Args::init_state::<LhsG, RhsG, AccG>(
-        inputs,
-        output,
-        runtime_config,
-        config.lhs_global_layout_config(),
-        config.rhs_global_layout_config(),
-        config.out_global_layout_config(),
-    );
+    let mut state =
+        Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
+            inputs,
+            output,
+            runtime_config,
+            config.lhs_global_layout_config(),
+            config.rhs_global_layout_config(),
+            config.out_global_layout_config(),
+        );
 
-    NaiveMatmul::<((LhsG, LhsS, LhsR), (RhsG, RhsS, RhsR), (AccG, AccS, AccR))>::execute::<Args>(
-        &mut state,
-        cube_mapping,
-        config,
-    );
+    let define!(RegisterLhs) = blueprint.dtypes.lhs_register;
+    let define!(RegisterRhs) = blueprint.dtypes.rhs_register;
+    let define!(RegisterAcc) = blueprint.dtypes.acc_register;
+
+    NaiveMatmul::<(
+        (Lhs, LhsSize, Lhs, LhsSize, RegisterLhs),
+        (Rhs, RhsSize, Rhs, RhsSize, RegisterRhs),
+        (Acc, AccSize, Acc, AccSize, RegisterAcc),
+    )>::execute::<Args>(&mut state, cube_mapping, config);
 }
 
-pub struct NaiveMatmul<MP: MatmulPrecision> {
+pub struct NaiveMatmul<MP: MatmulTypes> {
     _phantom: PhantomData<MP>,
 }
 
 #[cube]
-impl<MP: MatmulPrecision> BatchMatmul<(), MP> for NaiveMatmul<MP> {
+impl<MP: MatmulTypes> BatchMatmul<(), MP> for NaiveMatmul<MP> {
     type Config = NaiveMatmulConfig;
 
     fn execute<Args: MatmulArgs>(
@@ -121,58 +128,59 @@ impl<MP: MatmulPrecision> BatchMatmul<(), MP> for NaiveMatmul<MP> {
             terminate!();
         }
 
-        let line_size = comptime![Ord::max(lhs.line_size(), rhs.line_size())];
-        let mut sum = Line::empty(line_size).fill(<AccG<MP> as Numeric>::from_int(0));
+        let vector_size = comptime![Ord::max(lhs.vector_size(), rhs.vector_size())];
+        let size!(NA) = vector_size;
+        let mut sum = Vector::<AccR<MP>, NA>::zero();
 
-        for k in range_stepped(0u32, k, line_size as u32) {
-            let lhs = load_unrolled(&lhs, (m, k), MatrixLayout::RowMajor, line_size);
-            let rhs = load_unrolled(&rhs, (k, n), MatrixLayout::ColMajor, line_size);
+        for k in range_stepped(0u32, k, vector_size as u32) {
+            let lhs = load_unrolled::<_, _, NA>(&lhs, (m, k), MatrixLayout::RowMajor);
+            let rhs = load_unrolled::<_, _, NA>(&rhs, (k, n), MatrixLayout::ColMajor);
 
-            sum += Line::cast_from(
-                Line::<AccR<MP>>::cast_from(lhs) * Line::<AccR<MP>>::cast_from(rhs),
+            sum += Vector::cast_from(
+                Vector::<AccR<MP>, NA>::cast_from(lhs) * Vector::<AccR<MP>, NA>::cast_from(rhs),
             );
         }
 
-        let unroll_sum = line_size != 1usize;
+        let unroll_sum = vector_size != 1usize;
         if unroll_sum {
-            let mut accum = <AccG<MP> as Numeric>::from_int(0);
+            let mut accum = AccR::<MP>::zero();
             // we unroll the loop to sum `vectorization_factor` elements at once, which lets us
             // use SIMD instructions to speed up the computation
             #[unroll]
-            for v in 0..line_size {
+            for v in 0..vector_size {
                 accum += sum[v];
             }
 
-            out[(m, n)] = Line::empty(1usize).fill(accum);
+            out[(m, n)] = Vector::cast_from(accum);
         } else {
-            out[(m, n)] = Line::empty(1usize).fill(sum[0]);
+            out[(m, n)] = Vector::cast_from(sum[0]);
         }
     }
 }
 
 #[cube]
-fn load_unrolled<I: Numeric>(
-    view: &View<Line<I>, Coords2d>,
+fn load_unrolled<I: Numeric, N: Size, N2: Size>(
+    view: &View<Vector<I, N>, Coords2d>,
     pos: Coords2d,
     #[comptime] layout: MatrixLayout,
-    #[comptime] line_size: LineSize,
-) -> Line<I> {
-    comptime![assert!(line_size >= view.line_size())];
-    let view_line_size = view.line_size();
-    if view.line_size().comptime() == line_size {
-        view[pos]
+) -> Vector<I, N2> {
+    let vector_size = N2::value();
+    comptime![assert!(vector_size >= view.vector_size())];
+    let view_vector_size = view.vector_size();
+    if view.vector_size().comptime() == vector_size {
+        Vector::cast_from(view[pos])
     } else {
         let (row, col) = pos;
-        let mut out = Line::empty(line_size);
+        let mut out = Vector::empty();
         #[unroll]
-        for i in range_stepped(0, line_size as u32, view_line_size as u32) {
+        for i in range_stepped(0, vector_size as u32, view_vector_size as u32) {
             let pos = match layout {
                 MatrixLayout::RowMajor => (row, col + i),
                 MatrixLayout::ColMajor => (row + i, col),
             };
             let value = view[pos];
             #[unroll]
-            for n in 0..view_line_size {
+            for n in 0..view_vector_size {
                 out[i as usize + n] = value[n];
             }
         }

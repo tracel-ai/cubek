@@ -54,9 +54,9 @@ impl<SM: Float, Acc: Float> AttentionOutput for UnitAttentionOutput<SM, Acc> {
         todo!()
     }
 
-    fn write_results<E: Float>(
+    fn write_results<E: Float, ES: Size>(
         tile: &Self::Tile,
-        slice: &mut SliceMut<Line<E>>,
+        slice: &mut SliceMut<Vector<E, ES>>,
         #[comptime] config: Self::Config,
     ) {
         todo!()

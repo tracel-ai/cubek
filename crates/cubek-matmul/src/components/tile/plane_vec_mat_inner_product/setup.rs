@@ -7,7 +7,7 @@ use crate::components::{
     tile::plane_vec_mat_inner_product::reader::{MatrixFragmentReader, MatrixStageReader},
 };
 use crate::definition::{MatmulAvailabilityError, MatmulElems, MatmulSetupError};
-use crate::definition::{MatmulLineSizes, TilingBlueprint};
+use crate::definition::{MatmulVectorSizes, TilingBlueprint};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::{
@@ -46,7 +46,7 @@ where
         _device_props: &DeviceProperties,
         blueprint: &TilingBlueprint,
         _dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<PlaneVecMatInnerProductConfig, MatmulSetupError> {
         Ok(PlaneVecMatInnerProductConfig::new(
             SharedTileConfig::new(
@@ -54,7 +54,7 @@ where
                 blueprint.plane_dim,
                 blueprint.swizzle_modes,
             ),
-            line_sizes.lhs as u32,
+            vector_sizes.lhs as u32,
         ))
     }
 
@@ -68,7 +68,7 @@ where
         client: &ComputeClient<R>,
         blueprint: &TilingBlueprint,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
         check_availability(client, dtypes)?;
 
@@ -88,9 +88,9 @@ where
         let n = blueprint.tiling_scheme.tile_size.n();
         let k = blueprint.tiling_scheme.tile_size.k();
 
-        let lhs_line = line_sizes.lhs as u32;
-        let rhs_line = line_sizes.rhs as u32;
-        let out_line = line_sizes.out as u32;
+        let lhs_vector = vector_sizes.lhs as u32;
+        let rhs_vector = vector_sizes.rhs as u32;
+        let out_vector = vector_sizes.out as u32;
 
         if m != 1 {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
@@ -98,22 +98,22 @@ where
             ))));
         }
 
-        if lhs_line != rhs_line {
+        if lhs_vector != rhs_vector {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "Lhs and Rhs must have same line size, got lhs={lhs_line:?} and rhs={rhs_line:?}",
+                "Lhs and Rhs must have same vector size, got lhs={lhs_vector:?} and rhs={rhs_vector:?}",
             ))));
         }
 
-        if k != blueprint.plane_dim * lhs_line {
+        if k != blueprint.plane_dim * lhs_vector {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "k must be equal to plane_dim times line size (of both lhs and rhs), got k={:?}, plane_dim={:?} line_size={:?}",
-                k, blueprint.plane_dim, lhs_line
+                "k must be equal to plane_dim times vector size (of both lhs and rhs), got k={:?}, plane_dim={:?} vector_size={:?}",
+                k, blueprint.plane_dim, lhs_vector
             ))));
         }
 
-        if !n.is_multiple_of(out_line) {
+        if !n.is_multiple_of(out_vector) {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "n must be divisible by out line size, got n={n:?}, out_line_size={out_line:?}",
+                "n must be divisible by out vector size, got n={n:?}, out_vector_size={out_vector:?}",
             ))));
         }
 

@@ -15,7 +15,7 @@ use crate::components::{
     global::{SharedGlobalMatmulConfig, multi_stage::JobExecutor},
     stage::StageConfig,
 };
-use crate::definition::MatmulPrecision;
+use crate::definition::MatmulTypes;
 use crate::{components::global::GlobalReaderConfig, launch::RuntimeConfig};
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
@@ -34,15 +34,14 @@ pub trait PartialLoadingStrategy<RC: RuntimeConfig>:
     type TileKind: TileKind;
 
     /// The [LoadingJob] for this strategy.
-    type Job<EG: Numeric, ES: Numeric>: LoadingJob<EG, ES, Self::TilingLayout, Self::SyncStrategy, Stage = Self::Stage>;
+    type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>: LoadingJob<EG, NG, ES, NS, Self::TilingLayout, Self::SyncStrategy, Stage = Self::Stage>;
 
     /// Returns the job with preliminary calculations done.
-    fn new_job<EG: Numeric, ES: Numeric>(
+    fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         runtime_config: RC,
         #[comptime] stage_index: u32,
-        #[comptime] line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
-    ) -> Self::Job<EG, ES>;
+    ) -> Self::Job<EG, NG, ES, NS>;
 }
 
 #[cube]
@@ -55,7 +54,7 @@ pub trait AsyncPartialLoadingStrategy<RC: RuntimeConfig>:
     /// Extra synchronization after initializing the barrier, if needed
     fn barrier_post_init();
     /// Arrive at the barrier using the correct completion mechanism, without waiting
-    fn arrive<MP: MatmulPrecision, S: StageConfig>(
+    fn arrive<MP: MatmulTypes, S: StageConfig>(
         barrier: &mut Barrier,
         #[comptime] config: SharedGlobalMatmulConfig<S>,
     );
@@ -71,23 +70,25 @@ pub trait AsyncPartialLoadingStrategy<RC: RuntimeConfig>:
 /// each Task represents a single data transfer for a specific unit
 pub struct PartialStageGlobalReader<
     EG: Numeric,
+    NG: Size,
     ES: Numeric,
+    NS: Size,
     RC: RuntimeConfig,
     L: PartialLoadingStrategy<RC>,
 > {
-    global_iter: GlobalIterator<Line<EG>>,
+    global_iter: GlobalIterator<Vector<EG, NG>>,
     runtime_config: RC,
-    stage_memory: PartialLoaderStage<RC, L, ES>,
-    loading_job: ComptimeOption<(L::Job<EG, ES>, L::Job<EG, ES>)>,
+    stage_memory: PartialLoaderStage<RC, L, ES, NS>,
+    loading_job: ComptimeOption<(L::Job<EG, NG, ES, NS>, L::Job<EG, NG, ES, NS>)>,
 }
 
 #[cube]
-impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: PartialLoadingStrategy<RC>>
-    PartialStageGlobalReader<EG, ES, RC, L>
+impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: PartialLoadingStrategy<RC>>
+    PartialStageGlobalReader<EG, NG, ES, NS, RC, L>
 {
     /// Create a new SyncPartialStageGlobalReader
     pub fn new(
-        tensor: View<Line<EG>, Coords2d>,
+        tensor: View<Vector<EG, NG>, Coords2d>,
         runtime_config: RC,
         k_step: u32,
         #[comptime] config: GlobalReaderConfig,
@@ -98,13 +99,13 @@ impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: PartialLoadingStrategy<RC>>
 
         let loading_job = match config.precompute_job {
             true => ComptimeOption::new_Some((
-                L::new_job::<EG, ES>(runtime_config.clone(), 0u32, tensor.line_size(), config),
-                L::new_job::<EG, ES>(runtime_config.clone(), 1u32, tensor.line_size(), config),
+                L::new_job::<EG, NG, ES, NS>(runtime_config.clone(), 0u32, config),
+                L::new_job::<EG, NG, ES, NS>(runtime_config.clone(), 1u32, config),
             )),
             false => ComptimeOption::new_None(),
         };
 
-        PartialStageGlobalReader::<EG, ES, RC, L> {
+        PartialStageGlobalReader::<EG, NG, ES, NS, RC, L> {
             global_iter,
             runtime_config,
             stage_memory,
@@ -113,7 +114,10 @@ impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: PartialLoadingStrategy<RC>>
     }
 
     /// Give a reader to the loaded stage memory.
-    pub fn stage(&self, #[comptime] stage_buffer: StageBuffer) -> PartialLoaderStage<RC, L, ES> {
+    pub fn stage(
+        &self,
+        #[comptime] stage_buffer: StageBuffer,
+    ) -> PartialLoaderStage<RC, L, ES, NS> {
         L::Stage::with_buffer_index(&self.stage_memory, stage_buffer.to_index())
     }
 
@@ -135,15 +139,15 @@ impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: PartialLoadingStrategy<RC>>
         #[comptime] config: GlobalReaderConfig,
     ) {
         #[comptime]
+        #[comptime]
         let mut loading_job = match self.loading_job.clone() {
             ComptimeOption::Some(job) => match stage_buffer {
                 StageBuffer::A => job.0,
                 StageBuffer::B => job.1,
             },
-            ComptimeOption::None => L::new_job::<EG, ES>(
+            ComptimeOption::None => L::new_job::<EG, NG, ES, NS>(
                 self.runtime_config.clone(),
                 stage_buffer.to_index(),
-                self.global_iter.line_size(),
                 config,
             ),
         };
@@ -152,7 +156,7 @@ impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: PartialLoadingStrategy<RC>>
 
         #[unroll]
         for task_id in 0..len {
-            L::Job::<EG, ES>::execute_task(
+            L::Job::<EG, NG, ES, NS>::execute_task(
                 &mut loading_job,
                 task_id,
                 &self.global_iter,
@@ -165,34 +169,32 @@ impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: PartialLoadingStrategy<RC>>
 }
 
 #[cube]
-impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: PartialLoadingStrategy<RC>>
-    JobExecutor<L::SyncStrategy> for PartialStageGlobalReader<EG, ES, RC, L>
+impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: PartialLoadingStrategy<RC>>
+    JobExecutor<L::SyncStrategy> for PartialStageGlobalReader<EG, NG, ES, NS, RC, L>
 {
-    type JobIterator = PartialJobIterator<EG, ES, RC, L>;
+    type JobIterator = PartialJobIterator<EG, NG, ES, NS, RC, L>;
 
     fn create_job_iterator(
         this: &Self,
         #[comptime] stage_buffer: StageBuffer,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::JobIterator {
-        let view = this.global_iter.view();
         #[comptime]
         let job = match this.loading_job.clone() {
             ComptimeOption::Some(job) => match stage_buffer {
                 StageBuffer::A => job.0,
                 StageBuffer::B => job.1,
             },
-            ComptimeOption::None => L::new_job::<EG, ES>(
+            ComptimeOption::None => L::new_job::<EG, NG, ES, NS>(
                 this.runtime_config.clone(),
                 stage_buffer.to_index(),
-                view.line_size(),
                 config,
             ),
         };
 
         let num_tasks = L::Job::task_count(&job);
 
-        PartialJobIterator::<EG, ES, RC, L> {
+        PartialJobIterator::<EG, NG, ES, NS, RC, L> {
             job,
             num_tasks,
             current: ComptimeCell::new(TaskCounter { counter: 0u32 }),
@@ -202,13 +204,13 @@ impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: PartialLoadingStrategy<RC>>
 
     fn execute_task(
         this: &mut Self,
-        job_iterator: &mut PartialJobIterator<EG, ES, RC, L>,
+        job_iterator: &mut PartialJobIterator<EG, NG, ES, NS, RC, L>,
         barrier: &mut SyncBarrier<L::SyncStrategy>,
         #[comptime] config: GlobalReaderConfig,
     ) {
         let task_id = job_iterator.current.read().counter.comptime();
 
-        L::Job::<EG, ES>::execute_task(
+        L::Job::<EG, NG, ES, NS>::execute_task(
             &mut job_iterator.job,
             task_id,
             &this.global_iter,
@@ -232,7 +234,7 @@ impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: PartialLoadingStrategy<RC>>
 
         #[unroll]
         for task_id in task_counter..job_iterator.num_tasks {
-            L::Job::<EG, ES>::execute_task(
+            L::Job::<EG, NG, ES, NS>::execute_task(
                 &mut job_iterator.job,
                 task_id,
                 &this.global_iter,
@@ -266,11 +268,13 @@ impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: PartialLoadingStrategy<RC>>
 /// Accomplish the entire job of filling the stage
 pub struct PartialJobIterator<
     EG: Numeric,
+    NG: Size,
     ES: Numeric,
+    NS: Size,
     RC: RuntimeConfig,
     L: PartialLoadingStrategy<RC>,
 > {
-    job: L::Job<EG, ES>,
+    job: L::Job<EG, NG, ES, NS>,
     #[cube(comptime)]
     pub num_tasks: u32,
     pub current: ComptimeCell<TaskCounter>,
@@ -279,8 +283,8 @@ pub struct PartialJobIterator<
 }
 
 #[cube]
-impl<EG: Numeric, ES: Numeric, RC: RuntimeConfig, L: PartialLoadingStrategy<RC>> JobIterator
-    for PartialJobIterator<EG, ES, RC, L>
+impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: PartialLoadingStrategy<RC>>
+    JobIterator for PartialJobIterator<EG, NG, ES, NS, RC, L>
 {
     fn current(this: &Self) -> comptime_type!(u32) {
         this.current.read().counter

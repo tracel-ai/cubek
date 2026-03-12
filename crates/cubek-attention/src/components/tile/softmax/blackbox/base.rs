@@ -161,8 +161,8 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for BlackboxSoftmax<Lhs> {
     fn allocate_mask(#[comptime] config: Self::Config) -> Self::Mask {
         todo!()
     }
-    fn load_mask<E: Numeric>(
-        tile: &StridedTile<E>,
+    fn load_mask<E: Numeric, ES: Size>(
+        tile: &StridedTile<E, ES>,
         fragment: &mut Self::Mask,
         #[comptime] config: Self::Config,
     ) {

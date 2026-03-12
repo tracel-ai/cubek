@@ -1,4 +1,3 @@
-use crate::components::global::read::{FullStageGlobalReader, PartialLoaderStage};
 use crate::components::global::read::{PartialStageGlobalReader, StageBuffer};
 use crate::components::global::{
     GlobalConfig, GlobalWriter,
@@ -8,8 +7,12 @@ use crate::components::global::{GlobalMatmul, SharedGlobalMatmulConfig};
 use crate::components::global::{PlaneFlowPartition, read::AsyncPartialLoadingStrategy};
 use crate::components::stage;
 use crate::components::stage::StageConfig as _;
-use crate::definition::{AccG, AccS, LhsG, LhsS, MatmulPrecision, MatrixPrecision, RhsG, RhsS};
+use crate::definition::*;
 use crate::launch::RuntimeConfig;
+use crate::{
+    components::global::read::{FullStageGlobalReader, PartialLoaderStage},
+    definition::Stage,
+};
 
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
@@ -22,7 +25,7 @@ use std::marker::PhantomData;
 /// Specializes planes to either read or compute planes.
 /// Hardcoded for TMA right now
 pub struct SpecializedMatmul<
-    MP: MatmulPrecision,
+    MP: MatmulTypes,
     SMM: stage::StageMatmul<MP>,
     RC: RuntimeConfig,
     L: AsyncPartialLoadingStrategy<RC>,
@@ -38,14 +41,14 @@ pub struct SpecializedMatmul<
 }
 
 #[cube]
-impl<MP: MatmulPrecision, SMM, RC, L, AL, GW> GlobalMatmul<RC, MP>
+impl<MP: MatmulTypes, SMM, RC, L, AL, GW> GlobalMatmul<RC, MP>
     for SpecializedMatmul<MP, SMM, RC, L, AL, GW>
 where
     SMM: stage::StageMatmul<
             MP,
-            LhsStage = PartialLoaderStage<RC, L, LhsS<MP>>,
-            RhsStage = PartialLoaderStage<RC, L, RhsS<MP>>,
-            AccStage = ComptimeOption<FullLoaderStage<RC, AL, AccS<MP>>>,
+            LhsStage = PartialLoaderStage<RC, L, Stage<Lhs<MP>>, StageSize<Lhs<MP>>>,
+            RhsStage = PartialLoaderStage<RC, L, Stage<Rhs<MP>>, StageSize<Rhs<MP>>>,
+            AccStage = ComptimeOption<FullLoaderStage<RC, AL, Stage<Acc<MP>>, StageSize<Acc<MP>>>>,
             OutStage = GW::Stage,
         >,
     RC: RuntimeConfig,
@@ -56,21 +59,27 @@ where
     type Config = SharedGlobalMatmulConfig<SMM::Config>;
 
     type LhsGlobalReader = PartialStageGlobalReader<
-        <MP::Lhs as MatrixPrecision>::Global,
-        <MP::Lhs as MatrixPrecision>::Stage,
+        <MP::Lhs as MatrixTypes>::Global,
+        <MP::Lhs as MatrixTypes>::GlobalSize,
+        <MP::Lhs as MatrixTypes>::Stage,
+        <MP::Lhs as MatrixTypes>::StageSize,
         RC,
         L,
     >;
     type RhsGlobalReader = PartialStageGlobalReader<
-        <MP::Rhs as MatrixPrecision>::Global,
-        <MP::Rhs as MatrixPrecision>::Stage,
+        <MP::Rhs as MatrixTypes>::Global,
+        <MP::Rhs as MatrixTypes>::GlobalSize,
+        <MP::Rhs as MatrixTypes>::Stage,
+        <MP::Rhs as MatrixTypes>::StageSize,
         RC,
         L,
     >;
     type AccGlobalReader = ComptimeOption<
         FullStageGlobalReader<
-            <MP::Acc as MatrixPrecision>::Global,
-            <MP::Acc as MatrixPrecision>::Stage,
+            <MP::Acc as MatrixTypes>::Global,
+            <MP::Acc as MatrixTypes>::GlobalSize,
+            <MP::Acc as MatrixTypes>::Stage,
+            <MP::Acc as MatrixTypes>::StageSize,
             RC,
             AL,
         >,
@@ -239,39 +248,29 @@ where
     }
 
     fn init_lhs_global_reader(
-        lhs: View<Line<LhsG<MP>>, Coords2d>,
+        lhs: View<LhsG<MP>, Coords2d>,
         runtime_config: RC,
         #[comptime] config: Self::Config,
     ) -> Self::LhsGlobalReader {
         // We always advance by 2 * k because stage B shares the same global memory state as stage A,
         // but it is implicitly offset by one stage's worth (k elements) when reading.
         let k_step = config.stage_config.elements_in_stage_k() * 2;
-        PartialStageGlobalReader::<
-            <MP::Lhs as MatrixPrecision>::Global,
-            <MP::Lhs as MatrixPrecision>::Stage,
-            RC,
-            L,
-        >::new(lhs, runtime_config, k_step, config.lhs_reader_config)
+        PartialStageGlobalReader::new(lhs, runtime_config, k_step, config.lhs_reader_config)
     }
 
     fn init_rhs_global_reader(
-        rhs: View<Line<RhsG<MP>>, Coords2d>,
+        rhs: View<RhsG<MP>, Coords2d>,
         runtime_config: RC,
         #[comptime] config: Self::Config,
     ) -> Self::RhsGlobalReader {
         // We always advance by 2 * k because stage B shares the same global memory state as stage A,
         // but it is implicitly offset by one stage's worth (k elements) when reading.
         let k_step = config.stage_config.elements_in_stage_k() * 2;
-        PartialStageGlobalReader::<
-            <MP::Rhs as MatrixPrecision>::Global,
-            <MP::Rhs as MatrixPrecision>::Stage,
-            RC,
-            L,
-        >::new(rhs, runtime_config, k_step, config.rhs_reader_config)
+        PartialStageGlobalReader::new(rhs, runtime_config, k_step, config.rhs_reader_config)
     }
 
     fn init_acc_global_reader(
-        acc: ComptimeOption<View<Line<AccG<MP>>, Coords2d>>,
+        acc: ComptimeOption<View<AccG<MP>, Coords2d>>,
         runtime_config: RC,
         #[comptime] config: Self::Config,
     ) -> Self::AccGlobalReader {
@@ -281,7 +280,7 @@ where
     }
 
     fn init_global_writer(
-        out: View<Line<AccG<MP>>, Coords2d, ReadWrite>,
+        out: View<AccG<MP>, Coords2d, ReadWrite>,
         #[comptime] config: Self::Config,
     ) -> Self::GlobalWriter {
         Self::GlobalWriter::init(out, config.writer_config)

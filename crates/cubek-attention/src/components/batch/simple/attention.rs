@@ -22,11 +22,11 @@ impl<GA: GlobalAttention<AP>, AP: AttentionPrecision> BatchAttention<AP>
     type Config = SimpleBatchConfig<GA::Config>;
 
     fn execute(
-        query: VirtualTensor<QG<AP>>,
-        key: VirtualTensor<KG<AP>>,
-        value: VirtualTensor<VG<AP>>,
-        mask: ComptimeOption<VirtualTensor<MSK<AP>>>,
-        out: VirtualTensor<OG<AP>, ReadWrite>,
+        query: VirtualTensor<QG<AP>, QGS<AP>>,
+        key: VirtualTensor<KG<AP>, KGS<AP>>,
+        value: VirtualTensor<VG<AP>, VGS<AP>>,
+        mask: ComptimeOption<VirtualTensor<MSK<AP>, MSKS<AP>>>,
+        out: VirtualTensor<OG<AP>, OGS<AP>, ReadWrite>,
         _cube_count_args: CubeCountInput,
         #[comptime] config: Self::Config,
     ) {

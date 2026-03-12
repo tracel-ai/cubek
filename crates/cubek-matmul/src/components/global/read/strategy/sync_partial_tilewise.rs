@@ -13,7 +13,7 @@ use crate::components::{
 use crate::components::{global::multi_stage::LoadMaxRoundPlaneCount, stage::TilingValidation};
 use crate::definition::{MatmulElems, MatmulProblem, StageIdent};
 use crate::{components::global::GlobalReaderConfig, launch::RuntimeConfig};
-use cubecl::std::{tensor::layout::Coords2d, type_size};
+use cubecl::std::tensor::layout::Coords2d;
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::tile::Strided;
 use cubek_std::{FormattedConfigError, InvalidConfigError};
@@ -37,7 +37,7 @@ impl<TO: TilingOrder> LoadMaxRoundPlaneCount for SyncPartialTilewiseLoading<TO> 
     fn max_round_plane_count(
         _elements_per_tile: u32,
         tiles_per_stage: u32,
-        _line_size: LineSize,
+        _vector_size: VectorSize,
         _plane_dim: u32,
         _dtype: StorageType,
     ) -> u32 {
@@ -50,7 +50,7 @@ impl<T: TilingOrder> LoadingValidation for SyncPartialTilewiseLoading<T> {
         _device_props: &DeviceProperties,
         config: &GlobalReaderConfig,
     ) -> Result<(), InvalidConfigError> {
-        let line_size = config.gmem_config.line_size;
+        let vector_size = config.gmem_config.vector_size;
         let num_planes = config.loading_planes_count();
         let num_tiles = config.smem_config.tiles_per_stage();
 
@@ -61,13 +61,15 @@ impl<T: TilingOrder> LoadingValidation for SyncPartialTilewiseLoading<T> {
         }
 
         let num_tiles_per_plane = num_tiles / num_planes;
-        let num_lines_per_tile = config.smem_config.elements_per_tile() / line_size as u32;
-        let num_lines_per_plane = num_lines_per_tile * num_tiles_per_plane;
+        let num_vectors_per_tile = config.smem_config.elements_per_tile() / vector_size as u32;
+        let num_vectors_per_plane = num_vectors_per_tile * num_tiles_per_plane;
         let num_planes = config.plane_dim;
 
-        if !num_lines_per_plane.is_multiple_of(num_planes) {
+        if !num_vectors_per_plane.is_multiple_of(num_planes) {
             return Err(FormattedConfigError::new(move || {
-                "Number of planes {num_planes:?} must divide number of lines per plane {num_lines_per_plane:?} for tilewise loading.".to_string()
+                format!(
+                    "Number of planes {num_planes:?} must divide number of vectors per plane {num_vectors_per_plane:?} for tilewise loading."
+                )
             }));
         }
 
@@ -115,22 +117,22 @@ impl<TO: TilingOrder, RC: RuntimeConfig> PartialLoadingStrategy<RC>
     type Stage = StridedStageFamily;
     type TileKind = Strided;
 
-    type Job<EG: Numeric, ES: Numeric> = SyncPartialTilewiseJob;
+    type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = SyncPartialTilewiseJob;
 
-    fn new_job<EG: Numeric, ES: Numeric>(
+    fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
         #[comptime] stage_index: u32,
-        #[comptime] line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
     ) -> SyncPartialTilewiseJob {
+        let vector_size = NG::value().comptime() as u32;
         let num_planes = config.loading_planes_count();
         let num_tiles = config.smem_config.tiles_per_stage();
         let plane_dim = config.plane_dim;
 
         let num_tiles_per_plane = num_tiles / num_planes;
-        let num_lines_per_tile = config.smem_config.elements_per_tile() / line_size as u32;
-        let num_lines_per_plane = num_lines_per_tile * num_tiles_per_plane;
-        let num_lines_per_unit = num_lines_per_plane / plane_dim;
+        let num_vectors_per_tile = config.smem_config.elements_per_tile() / vector_size;
+        let num_vectors_per_plane = num_vectors_per_tile * num_tiles_per_plane;
+        let num_vectors_per_unit = num_vectors_per_plane / plane_dim;
 
         let stage_width = match config.stage_ident {
             StageIdent::Lhs => config.smem_config.tiles_per_stage_along_col(),
@@ -146,10 +148,9 @@ impl<TO: TilingOrder, RC: RuntimeConfig> PartialLoadingStrategy<RC>
             stage_index,
             num_tiles_to_skip,
             stage_width,
-            num_lines_per_tile,
-            num_lines_per_unit,
+            num_vectors_per_tile,
+            num_vectors_per_unit,
             plane_dim,
-            line_size,
         }
     }
 }
@@ -162,33 +163,31 @@ pub struct SyncPartialTilewiseJob {
     #[cube(comptime)]
     stage_width: u32,
     #[cube(comptime)]
-    num_lines_per_tile: u32,
+    num_vectors_per_tile: u32,
     #[cube(comptime)]
-    num_lines_per_unit: u32,
+    num_vectors_per_unit: u32,
     #[cube(comptime)]
     plane_dim: u32,
-    #[cube(comptime)]
-    line_size: LineSize,
 }
 
 #[cube]
-impl<EG: Numeric, ES: Numeric, TO: TilingOrder>
-    LoadingJob<EG, ES, ContiguousTilingLayout<TO>, Synchronous> for SyncPartialTilewiseJob
+impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
+    LoadingJob<EG, NG, ES, NS, ContiguousTilingLayout<TO>, Synchronous> for SyncPartialTilewiseJob
 {
     type Stage = StridedStageFamily;
 
     fn execute_task(
         this: &mut Self,
         #[comptime] task_id: u32,
-        global_iter: &GlobalIterator<Line<EG>>,
-        stage: &mut StridedStageMemory<ES, ContiguousTilingLayout<TO>>,
+        global_iter: &GlobalIterator<Vector<EG, NG>>,
+        stage: &mut StridedStageMemory<ES, NS, ContiguousTilingLayout<TO>>,
         _barrier: &mut (),
         #[comptime] config: GlobalReaderConfig,
     ) {
         let mut stage = stage.with_buffer_index(this.stage_index);
         let pos_across_tiles = task_id * this.plane_dim + UNIT_POS_X;
-        let nth_tile_for_this_plane = pos_across_tiles / this.num_lines_per_tile;
-        let line_index_within_tile = pos_across_tiles % this.num_lines_per_tile;
+        let nth_tile_for_this_plane = pos_across_tiles / this.num_vectors_per_tile;
+        let vector_index_within_tile = pos_across_tiles % this.num_vectors_per_tile;
 
         let nth_tile_global = this.num_tiles_to_skip + nth_tile_for_this_plane;
 
@@ -205,13 +204,12 @@ impl<EG: Numeric, ES: Numeric, TO: TilingOrder>
             _ => tile,
         };
 
-        let num_lines_to_skip_global = nth_tile_global * this.num_lines_per_tile;
+        let num_vectors_to_skip_global = nth_tile_global * this.num_vectors_per_tile;
 
-        SyncPartialTilewiseJob::load_and_store_line::<EG, ES, TO>(
-            this,
+        SyncPartialTilewiseJob::load_and_store_vector::<EG, NG, ES, NS, TO>(
             tile,
-            line_index_within_tile,
-            num_lines_to_skip_global,
+            vector_index_within_tile,
+            num_vectors_to_skip_global,
             global_iter,
             &mut stage,
             config,
@@ -219,31 +217,30 @@ impl<EG: Numeric, ES: Numeric, TO: TilingOrder>
     }
 
     fn task_count(this: &Self) -> comptime_type!(u32) {
-        this.num_lines_per_unit
+        this.num_vectors_per_unit
     }
 }
 
 #[cube]
 impl SyncPartialTilewiseJob {
     #[allow(clippy::too_many_arguments)]
-    fn load_and_store_line<EG: Numeric, ES: Numeric, TO: TilingOrder>(
-        this: &Self,
+    fn load_and_store_vector<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>(
         tile: Coords2d,
-        line_index_within_tile: u32,
-        num_lines_to_skip_global: u32,
-        global_iter: &GlobalIterator<Line<EG>>,
-        stage: &mut StridedStageMemory<ES, ContiguousTilingLayout<TO>>,
+        vector_index_within_tile: u32,
+        num_vectors_to_skip_global: u32,
+        global_iter: &GlobalIterator<Vector<EG, NG>>,
+        stage: &mut StridedStageMemory<ES, NS, ContiguousTilingLayout<TO>>,
         #[comptime] config: GlobalReaderConfig,
     ) {
         let layout = TiledLayout::new(config.stage_ident, config.smem_config);
         let view = global_iter.view().view(layout);
 
-        let line_read = view.read_checked((tile, line_index_within_tile * this.line_size as u32));
+        let vector_read = view.read_checked((tile, vector_index_within_tile * NG::value() as u32));
 
-        let offset = line_index_within_tile + num_lines_to_skip_global;
-        let type_size = type_size::<ES>(this.line_size);
+        let offset = vector_index_within_tile + num_vectors_to_skip_global;
+        let type_size = Vector::<ES, NS>::type_size();
         let offset = stage.swizzle.apply(offset, type_size);
 
-        stage.as_slice_mut(this.line_size)[offset as usize] = Line::cast_from(line_read);
+        stage.as_slice_mut::<NS>()[offset as usize] = Vector::cast_from(vector_read);
     }
 }

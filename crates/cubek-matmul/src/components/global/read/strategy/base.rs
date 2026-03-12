@@ -2,7 +2,7 @@ use crate::components::global::memory::GlobalIterator;
 use crate::components::stage::TilingLayout;
 use crate::components::{global::GlobalReaderConfig, stage::StageConfig};
 use crate::components::{global::SharedGlobalMatmulConfig, stage::StageFamily};
-use crate::definition::{MatmulElems, MatmulPrecision, MatmulProblem, StageIdent};
+use crate::definition::{MatmulElems, MatmulProblem, MatmulTypes, StageIdent};
 use cubecl::ir::{BarrierLevel, DeviceProperties, OpaqueType, SemanticType};
 use cubecl::prelude::*;
 use cubek_std::stage::{StageMemoryConfig, SwizzleMode};
@@ -14,8 +14,14 @@ use cubek_std::{InvalidConfigError, MatrixLayout};
 /// one unit at one iteration, operating at a specific point within a read view.
 /// The job holds shared information reused across read views and iterations.
 /// By calling execute_task at strategic moments, one can hope to speed up the matmul.
-pub trait LoadingJob<EG: Numeric, ES: Numeric, TL: TilingLayout, S: SyncStrategy>:
-    CubeType + Clone
+pub trait LoadingJob<
+    EG: Numeric,
+    NG: Size,
+    ES: Numeric,
+    NS: Size,
+    TL: TilingLayout,
+    S: SyncStrategy,
+>: CubeType + Clone
 {
     type Stage: StageFamily;
 
@@ -23,8 +29,8 @@ pub trait LoadingJob<EG: Numeric, ES: Numeric, TL: TilingLayout, S: SyncStrategy
     fn execute_task(
         this: &mut Self,
         #[comptime] task_id: u32,
-        global_iter: &GlobalIterator<Line<EG>>,
-        stage: &mut <Self::Stage as StageFamily>::Stage<ES, TL>,
+        global_iter: &GlobalIterator<Vector<EG, NG>>,
+        stage: &mut <Self::Stage as StageFamily>::Stage<ES, NS, TL>,
         barrier: &mut S::Barrier,
         #[comptime] config: GlobalReaderConfig,
     );
@@ -40,7 +46,7 @@ pub trait LoadingJob<EG: Numeric, ES: Numeric, TL: TilingLayout, S: SyncStrategy
 pub trait SyncStrategy {
     type Barrier: CubeType + Clone;
     fn create_barrier() -> Self::Barrier;
-    fn sync<MP: MatmulPrecision, S: StageConfig>(
+    fn sync<MP: MatmulTypes, S: StageConfig>(
         barrier: &mut Self::Barrier,
         #[comptime] config: SharedGlobalMatmulConfig<S>,
     );
@@ -113,15 +119,15 @@ pub fn validate_noswizzle(config: StageMemoryConfig) -> Result<(), InvalidConfig
     Ok(())
 }
 
-/// Validates if swizzling is valid with the line size, for sync readers that read in terms of full
-/// lines
+/// Validates if swizzling is valid with the vector size, for sync readers that read in terms of full
+/// vectors
 pub fn validate_swizzle_atom_size(config: StageMemoryConfig) -> Result<(), InvalidConfigError> {
     if config.swizzle == SwizzleMode::None {
         return Ok(());
     }
 
-    let line_bytes = config.dtype.size() * config.line_size as usize;
-    if line_bytes > config.swizzle.atom_size() {
+    let vector_bytes = config.dtype.size() * config.vector_size as usize;
+    if vector_bytes > config.swizzle.atom_size() {
         return Err(Box::new("Load atom can't be larger than swizzle atom"));
     }
 
@@ -277,7 +283,7 @@ impl LoadingValidation for NoLoadingValidation {
 /// at each global matmul iteration.
 pub enum ReaderMode {
     /// Enforces compile-time validation of balanced workloads across units.
-    /// Restricts valid combinations of tile shape, count, and line size.
+    /// Restricts valid combinations of tile shape, count, and vector size.
     Strict,
     /// Inserts runtime checks only when an out-of-bounds access will occur.
     /// May reduce performance if workloads are imbalanced.

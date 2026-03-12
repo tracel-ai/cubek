@@ -5,7 +5,7 @@ use crate::components::tile::{
     TileMatmulFamily,
     cmma::reader::{CmmaFragmentReader, CmmaStageReader},
 };
-use crate::definition::{MatmulAvailabilityError, MatmulLineSizes, MatmulSetupError};
+use crate::definition::{MatmulAvailabilityError, MatmulSetupError, MatmulVectorSizes};
 use crate::definition::{MatmulElems, TilingBlueprint};
 use cubecl::{features::MmaConfig, ir::DeviceProperties};
 use cubecl::{ir::StorageType, prelude::*};
@@ -39,7 +39,7 @@ where
         _device_props: &DeviceProperties,
         blueprint: &TilingBlueprint,
         _dtypes: &MatmulElems,
-        _line_sizes: &MatmulLineSizes,
+        _vector_sizes: &MatmulVectorSizes,
     ) -> Result<SharedTileConfig, MatmulSetupError> {
         Ok(SharedTileConfig::new(
             blueprint.tiling_scheme.tile_size,
@@ -77,7 +77,7 @@ where
         client: &ComputeClient<R>,
         blueprint: &TilingBlueprint,
         dtypes: &MatmulElems,
-        _line_sizes: &MatmulLineSizes,
+        _vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
         let lhs = dtypes.lhs_register;
         let rhs = dtypes.rhs_register;

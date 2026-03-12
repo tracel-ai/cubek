@@ -1,15 +1,15 @@
 use crate::{
-    LineMode, ReduceError, ReducePrecision,
+    ReduceError, ReducePrecision, VectorizationMode,
     components::{
-        args::{ReduceArgs, TensorArgs, init_tensors},
+        args::{NumericLine, ReduceArgs, TensorArgs, init_tensors},
         global::{
             cube::GlobalFullCubeReduce, plane::GlobalFullPlaneReduce, unit::GlobalFullUnitReduce,
         },
         instructions::*,
     },
-    launch::{ReduceStrategy, RoutineStrategy, generate_line_size},
+    launch::{ReduceStrategy, RoutineStrategy, generate_vector_size},
     routines::{
-        GlobalReduceBlueprint, ReduceBlueprint, ReduceLineSettings, ReduceProblem, Routine,
+        GlobalReduceBlueprint, ReduceBlueprint, ReduceProblem, ReduceVectorSettings, Routine,
         cube::CubeRoutine, plane::PlaneRoutine, unit::UnitRoutine,
     },
 };
@@ -36,8 +36,8 @@ pub(crate) fn launch_reduce<Run: Runtime>(
     inst: ReduceOperationConfig,
 ) -> Result<(), ReduceError> {
     let address_type = input
-        .required_address_type()
-        .max(output.required_address_type());
+        .required_address_type(dtypes.input.size())
+        .max(output.required_address_type(dtypes.output.size()));
 
     let problem = ReduceProblem {
         vector_size: input.shape[axis],
@@ -46,23 +46,23 @@ pub(crate) fn launch_reduce<Run: Runtime>(
         dtypes,
         address_type,
     };
-    let line_mode = match input.strides[axis] {
-        1 => LineMode::Parallel,
-        _ => LineMode::Perpendicular,
+    let vectorization_mode = match input.strides[axis] {
+        1 => VectorizationMode::Parallel,
+        _ => VectorizationMode::Perpendicular,
     };
-    let (line_size_input, line_size_output) = generate_line_size::<Run>(
+    let (vector_size_input, vector_size_output) = generate_vector_size::<Run>(
         client,
         &input,
         &output,
         axis,
         problem.dtypes.input,
-        line_mode,
-        &strategy.line_size,
+        vectorization_mode,
+        &strategy.vectorization,
     );
-    let settings = ReduceLineSettings {
-        line_mode,
-        line_size_input,
-        line_size_output,
+    let settings = ReduceVectorSettings {
+        vectorization_mode,
+        vector_size_input,
+        vector_size_output,
     };
 
     let (blueprint, settings) = match strategy.routine {
@@ -86,9 +86,11 @@ pub(crate) fn launch_reduce<Run: Runtime>(
             settings.cube_count,
             settings.cube_dim,
             settings.address_type,
-            input.into_tensor_arg(settings.line.line_size_input),
-            output.into_tensor_arg(settings.line.line_size_output),
-            ScalarArg::new(axis),
+            settings.vector.vector_size_input,
+            settings.vector.vector_size_output,
+            input.into_tensor_arg(),
+            output.into_tensor_arg(),
+            axis,
             blueprint,
             inst,
             dtypes.input,
@@ -101,9 +103,16 @@ pub(crate) fn launch_reduce<Run: Runtime>(
 }
 
 #[cube(launch_unchecked, address_type = "dynamic")]
-pub fn reduce_kernel<In: Numeric, Out: Numeric, Acc: Numeric, RA: ReduceArgs>(
-    input: &RA::Input<In>,
-    output: &mut RA::Output<Out>,
+pub fn reduce_kernel<
+    In: Numeric,
+    InSize: Size,
+    Out: Numeric,
+    OutSize: Size,
+    Acc: Numeric,
+    RA: ReduceArgs,
+>(
+    input: &RA::Input<In, InSize>,
+    output: &mut RA::Output<Out, OutSize>,
     axis_reduce: usize,
     #[comptime] blueprint: ReduceBlueprint,
     #[comptime] config: ReduceOperationConfig,
@@ -111,19 +120,31 @@ pub fn reduce_kernel<In: Numeric, Out: Numeric, Acc: Numeric, RA: ReduceArgs>(
     #[define(Out)] _output_dtype: StorageType,
     #[define(Acc)] _acc_dtype: StorageType,
 ) {
-    let (input, mut output) = init_tensors::<RA, In, Out>(input, output);
-    reduce_kernel_virtual::<In, Out, Acc>(&input, &mut output, axis_reduce, blueprint, config);
+    let (input, mut output) = init_tensors::<RA, In, InSize, Out, OutSize>(input, output);
+    reduce_kernel_virtual::<In, InSize, Out, OutSize, Acc>(
+        &input,
+        &mut output,
+        axis_reduce,
+        blueprint,
+        config,
+    );
 }
 
 #[cube]
-pub fn reduce_kernel_virtual<In: Numeric, Out: Numeric, Acc: Numeric>(
-    input: &VirtualTensor<In>,
-    output: &mut VirtualTensor<Out, ReadWrite>,
+pub fn reduce_kernel_virtual<
+    In: Numeric,
+    InSize: Size,
+    Out: Numeric,
+    OutSize: Size,
+    Acc: Numeric,
+>(
+    input: &VirtualTensor<In, InSize>,
+    output: &mut VirtualTensor<Out, OutSize, ReadWrite>,
     axis_reduce: usize,
     #[comptime] blueprint: ReduceBlueprint,
     #[comptime] config: ReduceOperationConfig,
 ) {
-    reduce_kernel_inner::<(In, Acc), Out, ReduceOperation>(
+    reduce_kernel_inner::<(In, InSize, Acc), (Out, OutSize), ReduceOperation>(
         input,
         output,
         axis_reduce,
@@ -133,9 +154,9 @@ pub fn reduce_kernel_virtual<In: Numeric, Out: Numeric, Acc: Numeric>(
 }
 
 #[cube]
-fn reduce_kernel_inner<P: ReducePrecision, Out: Numeric, R: ReduceFamily>(
-    input: &VirtualTensor<P::EI>,
-    output: &mut VirtualTensor<Out, ReadWrite>,
+fn reduce_kernel_inner<P: ReducePrecision, Out: NumericLine, R: ReduceFamily>(
+    input: &VirtualTensor<P::EI, P::SI>,
+    output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
     axis_reduce: usize,
     #[comptime] blueprint: ReduceBlueprint,
     #[comptime] config: R::Config,
@@ -149,7 +170,7 @@ fn reduce_kernel_inner<P: ReducePrecision, Out: Numeric, R: ReduceFamily>(
                 output,
                 axis_reduce,
                 inst,
-                blueprint.line_mode,
+                blueprint.vectorization_mode,
                 cube,
             )
         }
@@ -159,7 +180,7 @@ fn reduce_kernel_inner<P: ReducePrecision, Out: Numeric, R: ReduceFamily>(
                 output,
                 axis_reduce,
                 inst,
-                blueprint.line_mode,
+                blueprint.vectorization_mode,
                 plane,
             )
         }
@@ -169,7 +190,7 @@ fn reduce_kernel_inner<P: ReducePrecision, Out: Numeric, R: ReduceFamily>(
                 output,
                 axis_reduce,
                 inst,
-                blueprint.line_mode,
+                blueprint.vectorization_mode,
                 unit,
             )
         }

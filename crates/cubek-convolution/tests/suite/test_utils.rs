@@ -58,17 +58,17 @@ where
         strides: Strides,
     ) {
         let maybe_f16 = client.properties().features.cmma.contains(&MmaConfig {
-            a_type: ES::as_type_native().expect("To be a native type"),
-            b_type: ES::as_type_native().expect("To be a native type"),
-            cd_type: EG::as_type_native().expect("To be a native type"),
+            a_type: ES::as_type_native_unchecked().storage_type(),
+            b_type: ES::as_type_native_unchecked().storage_type(),
+            cd_type: EG::as_type_native_unchecked().storage_type(),
             m: 16,
             k: 16,
             n: 16,
         });
         let maybe_tf32 = client.properties().features.cmma.contains(&MmaConfig {
-            a_type: ES::as_type_native().expect("To be a native type"),
-            b_type: ES::as_type_native().expect("To be a native type"),
-            cd_type: EG::as_type_native().expect("To be a native type"),
+            a_type: ES::as_type_native_unchecked().storage_type(),
+            b_type: ES::as_type_native_unchecked().storage_type(),
+            cd_type: EG::as_type_native_unchecked().storage_type(),
             m: 16,
             k: 8,
             n: 16,
@@ -338,7 +338,7 @@ macro_rules! sample_float {
             {
                 fn sample<R: Runtime>(client: &ComputeClient<R>, shape: Shape, seed: u64) -> TensorHandle<R> {
                     cubek_random::seed(seed);
-                    let dtype = Self::as_type_native_unchecked();
+                    let dtype = Self::as_type_native_unchecked().storage_type();
                     let output = TensorHandle::empty(client, shape, dtype);
 
                     cubek_random::random_uniform(&client, f32::from_int(-1), f32::from_int(1), output.clone().binding(), dtype).unwrap();
@@ -359,7 +359,7 @@ sample_float!(u8);
 impl Sample for flex32 {
     fn sample<R: Runtime>(client: &ComputeClient<R>, shape: Shape, seed: u64) -> TensorHandle<R> {
         cubek_random::seed(seed);
-        let dtype = f32::as_type_native_unchecked();
+        let dtype = f32::as_type_native_unchecked().storage_type();
         let output = TensorHandle::empty(client, shape.to_vec(), dtype);
 
         cubek_random::random_uniform(
@@ -378,7 +378,7 @@ impl Sample for flex32 {
 impl Sample for tf32 {
     fn sample<R: Runtime>(client: &ComputeClient<R>, shape: Shape, seed: u64) -> TensorHandle<R> {
         cubek_random::seed(seed);
-        let dtype = f32::as_type_native_unchecked();
+        let dtype = f32::as_type_native_unchecked().storage_type();
         let output = TensorHandle::empty(client, shape, dtype);
 
         cubek_random::random_uniform(

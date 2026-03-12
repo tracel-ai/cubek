@@ -62,7 +62,7 @@ pub fn test_algo<
         convolution_size.w,
     );
 
-    let elem_type = P::EG::as_type_native_unchecked();
+    let elem_type = P::EG::as_type_native_unchecked().storage_type();
 
     let lhs_layout = MatrixLayout::RowMajor;
     let rhs_layout = MatrixLayout::ColMajor;

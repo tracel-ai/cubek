@@ -5,7 +5,7 @@ use std::{fmt::Debug, hash::Hash};
 
 // This serves as interface for higher level matmuls, not for what is used within tile matmul
 pub trait TileConfig: Copy + Clone + Eq + PartialEq + Hash + Debug + Send + Sync + 'static {
-    /// Returns the line size for the given ident
+    /// Returns the vector size for the given ident
     fn plane_dim(&self) -> u32;
 
     fn elements_in_tile_m(&self) -> u32;

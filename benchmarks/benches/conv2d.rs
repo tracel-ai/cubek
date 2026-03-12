@@ -11,12 +11,18 @@ use cubek::{
         self as convolution, AcceleratedTileKind, ConvolutionArgs, ReadingStrategy, Strategy,
     },
     matmul::{
-        definition::{AccG, AccR, LhsG, LhsS, MatmulElems, MatmulPrecision, RhsG},
+        definition::{MatmulElems, MatmulPrecision, MatrixPrecision},
         launch::MatmulInputBinding,
     },
     random::random_uniform,
 };
 use std::marker::PhantomData;
+
+type LhsG<MP> = <<MP as MatmulPrecision>::Lhs as MatrixPrecision>::Global;
+type LhsS<MP> = <<MP as MatmulPrecision>::Lhs as MatrixPrecision>::Stage;
+type RhsG<MP> = <<MP as MatmulPrecision>::Rhs as MatrixPrecision>::Global;
+type AccG<MP> = <<MP as MatmulPrecision>::Acc as MatrixPrecision>::Global;
+type AccR<MP> = <<MP as MatmulPrecision>::Acc as MatrixPrecision>::Register;
 
 impl<R: Runtime, MP: MatmulPrecision> Benchmark for Conv2dBench<R, MP> {
     type Input = (TensorHandle<R>, TensorHandle<R>, TensorHandle<R>);
@@ -35,7 +41,7 @@ impl<R: Runtime, MP: MatmulPrecision> Benchmark for Conv2dBench<R, MP> {
             0.0,
             1.0,
             input.clone().binding(),
-            LhsG::<MP>::as_type_native_unchecked(),
+            LhsG::<MP>::as_type_native_unchecked().storage_type(),
         )
         .unwrap();
         let weight = TensorHandle::empty(
@@ -48,7 +54,7 @@ impl<R: Runtime, MP: MatmulPrecision> Benchmark for Conv2dBench<R, MP> {
             0.0,
             1.0,
             weight.clone().binding(),
-            RhsG::<MP>::as_type_native_unchecked(),
+            RhsG::<MP>::as_type_native_unchecked().storage_type(),
         )
         .unwrap();
         let bias = TensorHandle::empty(
@@ -61,7 +67,7 @@ impl<R: Runtime, MP: MatmulPrecision> Benchmark for Conv2dBench<R, MP> {
             0.0,
             1.0,
             bias.clone().binding(),
-            AccG::<MP>::as_type_native_unchecked(),
+            AccG::<MP>::as_type_native_unchecked().storage_type(),
         )
         .unwrap();
 

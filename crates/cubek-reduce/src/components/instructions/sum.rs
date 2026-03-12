@@ -12,8 +12,8 @@ impl ReduceFamily for Sum {
 
 #[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
-    type AccumulatorItem = Line<P::EA>;
-    type SharedAccumulator = SharedMemory<Line<P::EA>>;
+    type AccumulatorItem = Vector<P::EA, P::SI>;
+    type SharedAccumulator = SharedMemory<Vector<P::EA, P::SI>>;
     type Config = ();
 
     fn requirements(_this: &Self) -> ReduceRequirements {
@@ -23,12 +23,12 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
     fn from_config(_config: Self::Config) -> Self {
         Sum {}
     }
-    fn null_input(_this: &Self, #[comptime] line_size: LineSize) -> Line<P::EI> {
-        Line::empty(line_size).fill(P::EI::from_int(0))
+    fn null_input(_this: &Self) -> Vector<P::EI, P::SI> {
+        Vector::empty().fill(P::EI::from_int(0))
     }
 
-    fn null_accumulator(_this: &Self, #[comptime] line_size: LineSize) -> Self::AccumulatorItem {
-        Line::empty(line_size).fill(P::EA::from_int(0))
+    fn null_accumulator(_this: &Self) -> Self::AccumulatorItem {
+        Vector::empty().fill(P::EA::from_int(0))
     }
 
     fn assign_accumulator(
@@ -41,10 +41,10 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
 
     fn read_accumulator(
         _this: &Self,
-        accumulator: &Line<P::EA>,
-    ) -> (Line<P::EI>, ReduceCoordinate) {
+        accumulator: &Vector<P::EA, P::SI>,
+    ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
         (
-            Line::cast_from(*accumulator),
+            Vector::cast_from(*accumulator),
             ReduceCoordinate::new_NotRequired(),
         )
     }
@@ -52,14 +52,14 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
     fn reduce(
         _this: &Self,
         accumulator: &Self::AccumulatorItem,
-        item: Line<P::EI>,
-        _coordinate: ReduceCoordinate,
+        item: Vector<P::EI, P::SI>,
+        _coordinate: ReduceCoordinate<P::SI>,
         #[comptime] use_planes: bool,
     ) -> Self::AccumulatorItem {
         if use_planes {
-            *accumulator + plane_sum(Line::cast_from(item))
+            *accumulator + plane_sum(Vector::cast_from(item))
         } else {
-            *accumulator + Line::cast_from(item)
+            *accumulator + Vector::cast_from(item)
         }
     }
 
@@ -71,7 +71,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
         lhs + rhs
     }
 
-    fn merge_line<Out: Numeric>(
+    fn merge_vector<Out: Numeric>(
         _this: &Self,
         accumulator: Self::AccumulatorItem,
         _shape_axis_reduce: usize,
@@ -88,7 +88,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
         _this: &Self,
         accumulator: Self::AccumulatorItem,
         _shape_axis_reduce: usize,
-    ) -> Line<Out> {
-        Line::cast_from(accumulator)
+    ) -> Vector<Out, P::SI> {
+        Vector::cast_from(accumulator)
     }
 }

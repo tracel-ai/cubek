@@ -15,7 +15,7 @@ use cubek_matmul::launch::MatmulInputBinding;
 use cubek_matmul::routines::BlueprintStrategy;
 use cubek_matmul::{
     components::tile::{cmma::CmmaMatmul, mma::MmaMatmul},
-    definition::{AvailableLineSizes, MatmulElems},
+    definition::{AvailableVectorSizes, MatmulElems},
 };
 use cubek_std::{MatrixLayout, tile::Strided};
 use derive_new::new;
@@ -161,7 +161,7 @@ where
                 .map(|bias| bias.required_address_type())
                 .unwrap_or_default(),
         )
-        .max(out.required_address_type());
+        .max(out.required_address_type(dtypes.acc_global.size()));
 
     let problem = ConvolutionProblem {
         m: n * out_shape.iter().product::<usize>(),
@@ -217,12 +217,12 @@ where
     Alg::Args: ConcreteArgs<Alg::Routine>,
 {
     // Shape/strides are treated as k-major, with the last dim always being the contiguous one.
-    // So for the sake of selecting a line size, the shape/strides are always row-major.
-    let line_sizes = AvailableLineSizes::from_type_sizes(
+    // So for the sake of selecting a vector size, the shape/strides are always row-major.
+    let vector_sizes = AvailableVectorSizes::from_type_sizes(
         client,
-        input.data().elem_size,
-        weight.data().elem_size,
-        out.elem_size,
+        input.data_elem_size(),
+        weight.data_elem_size(),
+        dtypes.acc_global.size(),
     )
     .filter_lhs_with_tensor(
         &input.data().strides,
@@ -236,15 +236,15 @@ where
     )
     .filter_out_with_tensor(&out.strides, &out.shape);
 
-    let mut line_sizes = Alg::filter_line_sizes(line_sizes).pick_max()?;
+    let mut vector_sizes = Alg::filter_vector_sizes(vector_sizes).pick_max()?;
 
-    // The large line size resulting from dequantizing ends up slower due to restrictions on
+    // The large vector size resulting from dequantizing ends up slower due to restrictions on
     // algorithms. Use this as a quick and dirty fix.
     if input.scale().is_some() {
-        line_sizes.lhs = 1;
+        vector_sizes.lhs = 1;
     }
     if weight.scale().is_some() {
-        line_sizes.rhs = 1;
+        vector_sizes.rhs = 1;
     }
 
     launch_kernel_concrete::<R, Alg::Args, Alg::Routine>(
@@ -254,7 +254,7 @@ where
         bias,
         out,
         problem,
-        line_sizes,
+        vector_sizes,
         blueprint_strategy,
         &dtypes,
     )

@@ -5,9 +5,9 @@ use std::fmt::Display;
 use std::marker::PhantomData;
 
 use crate::definition::{
-    CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulElems, MatmulLineSizes,
-    MatmulProblem, MatmulSetupError, MultiRowStrategy, SmAllocation, TilingBlueprint, TilingScheme,
-    adjust_dtypes,
+    CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulElems, MatmulProblem,
+    MatmulSetupError, MatmulVectorSizes, MultiRowStrategy, SmAllocation, TilingBlueprint,
+    TilingScheme, adjust_dtypes,
 };
 use crate::routines::{BlueprintStrategy, DeviceSettings, LaunchInfo};
 use crate::{components::batch::BatchMatmulFamily, launch::RuntimeConfig};
@@ -96,7 +96,7 @@ where
                         problem,
                         device_settings.plane_dim,
                         dtypes,
-                        &device_settings.line_sizes,
+                        &device_settings.vector_sizes,
                     )
                 } else {
                     infer_blueprint_plane::<InterleavedMatmul, R>(
@@ -104,7 +104,7 @@ where
                         problem,
                         device_settings.plane_dim,
                         dtypes,
-                        &device_settings.line_sizes,
+                        &device_settings.vector_sizes,
                         PlaneTilingBlueprintOptions {
                             partition_buffering: Some(PartitionBuffering::Single),
                             tiny_selection_enabled: true,
@@ -131,11 +131,14 @@ where
             &blueprint,
             problem,
             &dtypes,
-            &device_settings.line_sizes,
+            &device_settings.vector_sizes,
         )?;
 
-        let cubedim_resource =
-            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
+        let cubedim_resource = Self::BatchMatmul::cubedim_resource(
+            &blueprint,
+            &dtypes,
+            &device_settings.vector_sizes,
+        )?;
 
         LaunchInfo::new(
             blueprint,
@@ -146,17 +149,18 @@ where
         )
     }
 
-    fn launch<'a, MA: crate::launch::MatmulArgs<Config = RC>, R: Runtime>(
+    fn launch<MA: crate::launch::MatmulArgs<Config = RC>, R: Runtime>(
         client: &ComputeClient<R>,
         cube_dim: cubecl::CubeDim,
         cube_count: cubecl::CubeCount,
         address_type: cubecl::prelude::AddressType,
-        input: crate::launch::InputRuntimeArg<'a, MA, R>,
-        output: crate::launch::OutputRuntimeArg<'a, MA, R>,
-        config: crate::launch::ConfigRuntimeArg<'a, MA, R>,
-        cube_count_input: crate::definition::CubeMappingLaunch<'a, R>,
+        input: crate::launch::InputRuntimeArg<MA, R>,
+        output: crate::launch::OutputRuntimeArg<MA, R>,
+        config: crate::launch::ConfigRuntimeArg<MA, R>,
+        cube_count_input: crate::definition::CubeMappingLaunch<R>,
         blueprint: Self::Blueprint,
         dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
         unsafe {
             Self::BatchMatmul::launch_unchecked::<MA, R>(
@@ -170,6 +174,7 @@ where
                 cube_count_input,
                 blueprint,
                 dtypes,
+                vector_sizes,
             )?
         }
         Ok(())
@@ -181,7 +186,7 @@ where
 
     fn device_settings<R: Runtime>(
         client: &ComputeClient<R>,
-        line_sizes: MatmulLineSizes,
+        vector_sizes: MatmulVectorSizes,
     ) -> DeviceSettings<R> {
         // Sometimes the GPU doesn't support plane instructions and doesn't report the
         // plane size, but we can still execute algorithms that don't use plane instructions.
@@ -196,7 +201,7 @@ where
         DeviceSettings {
             client: client.clone(),
             plane_dim,
-            line_sizes,
+            vector_sizes,
             max_cube_count: client.properties().hardware.max_cube_count,
         }
     }
@@ -206,9 +211,9 @@ where
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
-        Self::BatchMatmul::validate_blueprint(client, blueprint, problem, dtypes, line_sizes)
+        Self::BatchMatmul::validate_blueprint(client, blueprint, problem, dtypes, vector_sizes)
     }
 }
 
@@ -217,7 +222,7 @@ fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
     problem: &MatmulProblem,
     plane_dim: u32,
     mut dtypes: MatmulElems,
-    line_sizes: &MatmulLineSizes,
+    vector_sizes: &MatmulVectorSizes,
 ) -> Result<(TilingBlueprint, MatmulElems), MatmulSetupError> {
     adjust_dtypes(client, &mut dtypes, TMM::requires_accelerator());
 
@@ -296,7 +301,7 @@ fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
             problem,
             plane_dim,
             dtypes,
-            line_sizes,
+            vector_sizes,
             PlaneTilingBlueprintOptions {
                 partition_buffering: Some(PartitionBuffering::Single),
                 multi_row_strategy: MultiRowStrategy::Always(2),

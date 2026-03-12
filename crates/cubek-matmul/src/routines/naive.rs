@@ -41,7 +41,7 @@ impl Routine<()> for NaiveRoutine {
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let dtypes = MatmulElems::from_globals(&problem.global_dtypes);
         let blueprint = NaiveBlueprint {
-            line_size_out: device_settings.line_sizes.out as u32,
+            vector_size_out: device_settings.vector_sizes.out as u32,
             dtypes: dtypes.clone(),
         };
         Ok(ExpandInfo { blueprint, dtypes })
@@ -59,12 +59,15 @@ impl Routine<()> for NaiveRoutine {
             &blueprint,
             problem,
             &dtypes,
-            &device_settings.line_sizes,
+            &device_settings.vector_sizes,
         )?;
 
-        let cube_dim =
-            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?
-                .to_cube_dim(device_settings.plane_dim)?;
+        let cube_dim = Self::BatchMatmul::cubedim_resource(
+            &blueprint,
+            &dtypes,
+            &device_settings.vector_sizes,
+        )?
+        .to_cube_dim(device_settings.plane_dim)?;
 
         Ok(LaunchInfo {
             blueprint,
@@ -78,6 +81,7 @@ impl Routine<()> for NaiveRoutine {
                 cube_dim.y,
             )?,
             address_type: problem.address_type,
+            vector_sizes: device_settings.vector_sizes,
         })
     }
 }

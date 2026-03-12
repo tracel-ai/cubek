@@ -1,11 +1,11 @@
-use crate::{LineMode, ReduceDtypes, ReduceError, routines::ReduceBlueprint};
+use crate::{ReduceDtypes, ReduceError, VectorizationMode, routines::ReduceBlueprint};
 use cubecl::prelude::*;
 
 #[derive(Debug)]
-pub struct ReduceLineSettings {
-    pub line_mode: LineMode,
-    pub line_size_input: LineSize,
-    pub line_size_output: LineSize,
+pub struct ReduceVectorSettings {
+    pub vectorization_mode: VectorizationMode,
+    pub vector_size_input: VectorSize,
+    pub vector_size_output: VectorSize,
 }
 
 #[derive(Debug)]
@@ -13,7 +13,7 @@ pub struct ReduceLaunchSettings {
     pub cube_dim: CubeDim,
     pub cube_count: CubeCount,
     pub address_type: AddressType,
-    pub line: ReduceLineSettings,
+    pub vector: ReduceVectorSettings,
 }
 
 #[derive(Debug)]
@@ -40,7 +40,7 @@ pub trait Routine: core::fmt::Debug + Clone + Sized {
         &self,
         client: &ComputeClient<R>,
         problem: ReduceProblem,
-        settings: ReduceLineSettings,
+        settings: ReduceVectorSettings,
         strategy: BlueprintStrategy<Self>,
     ) -> Result<(ReduceBlueprint, ReduceLaunchSettings), ReduceError>;
 }

@@ -27,8 +27,8 @@ use crate::{
 };
 use crate::{
     definition::{
-        CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulElems, MatmulLineSizes,
-        MatmulProblem, MatmulSetupError, MultiRowStrategy, SmAllocation, TilingBlueprint,
+        CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulElems, MatmulProblem,
+        MatmulSetupError, MatmulVectorSizes, MultiRowStrategy, SmAllocation, TilingBlueprint,
         TilingScheme, adjust_dtypes,
     },
     routines::ExpandInfo,
@@ -117,7 +117,7 @@ where
                         problem,
                         device_settings.plane_dim,
                         dtypes,
-                        &device_settings.line_sizes,
+                        &device_settings.vector_sizes,
                     )
                 } else {
                     infer_blueprint_plane::<TMM, R>(
@@ -125,7 +125,7 @@ where
                         problem,
                         device_settings.plane_dim,
                         dtypes,
-                        &device_settings.line_sizes,
+                        &device_settings.vector_sizes,
                         PlaneTilingBlueprintOptions {
                             partition_buffering: Some(PartitionBuffering::Single),
                             tiny_selection_enabled: true,
@@ -153,11 +153,14 @@ where
             &blueprint,
             problem,
             &dtypes,
-            &device_settings.line_sizes,
+            &device_settings.vector_sizes,
         )?;
 
-        let cubedim_resource =
-            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
+        let cubedim_resource = Self::BatchMatmul::cubedim_resource(
+            &blueprint,
+            &dtypes,
+            &device_settings.vector_sizes,
+        )?;
 
         LaunchInfo::new(
             blueprint,
@@ -174,7 +177,7 @@ fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
     problem: &MatmulProblem,
     plane_dim: u32,
     mut dtypes: MatmulElems,
-    line_sizes: &MatmulLineSizes,
+    vector_sizes: &MatmulVectorSizes,
 ) -> Result<(TilingBlueprint, MatmulElems), MatmulSetupError> {
     adjust_dtypes(client, &mut dtypes, TMM::requires_accelerator());
 
@@ -253,7 +256,7 @@ fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
             problem,
             plane_dim,
             dtypes,
-            line_sizes,
+            vector_sizes,
             PlaneTilingBlueprintOptions {
                 partition_buffering: Some(PartitionBuffering::Single),
                 multi_row_strategy: MultiRowStrategy::Always(2),

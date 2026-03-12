@@ -3,16 +3,16 @@ use std::fmt::Debug;
 use cubecl::{
     Runtime,
     client::ComputeClient,
-    tensor_line_size_parallel,
+    tensor_vector_size_parallel,
     zspace::{Shape, Strides},
 };
 
 use crate::definition::{AttentionGlobalTypes, AttentionIdent, AttentionProblem};
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-/// Line size used for each tensor in global memory accesses.
+/// Vector size used for each tensor in global memory accesses.
 /// Represents the number of elements processed per SIMD load/store.
-pub struct AttentionLineSizes {
+pub struct AttentionVectorSizes {
     pub query: usize,
     pub key: usize,
     pub value: usize,
@@ -20,28 +20,28 @@ pub struct AttentionLineSizes {
     pub out: usize,
 }
 
-impl AttentionLineSizes {
+impl AttentionVectorSizes {
     pub fn new_max<R: Runtime>(
         client: &ComputeClient<R>,
         global_dtypes: &AttentionGlobalTypes,
     ) -> Self {
-        AttentionLineSizes {
+        AttentionVectorSizes {
             query: client
-                .io_optimized_line_sizes(global_dtypes.query.size())
+                .io_optimized_vector_sizes(global_dtypes.query.size())
                 .max()
                 .unwrap(),
             key: client
-                .io_optimized_line_sizes(global_dtypes.key.size())
+                .io_optimized_vector_sizes(global_dtypes.key.size())
                 .max()
                 .unwrap(),
             value: client
-                .io_optimized_line_sizes(global_dtypes.value.size())
+                .io_optimized_vector_sizes(global_dtypes.value.size())
                 .max()
                 .unwrap(),
-            // lined mask not always supported at the moment
+            // vectorized mask not always supported at the moment
             mask: 1,
             out: client
-                .io_optimized_line_sizes(global_dtypes.out.size())
+                .io_optimized_vector_sizes(global_dtypes.out.size())
                 .max()
                 .unwrap(),
         }
@@ -50,26 +50,26 @@ impl AttentionLineSizes {
     pub(crate) fn new_max_for_problem<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &AttentionProblem,
-    ) -> AttentionLineSizes {
-        AttentionLineSizes {
-            query: AttentionLineSizes::find_line_size(
+    ) -> AttentionVectorSizes {
+        AttentionVectorSizes {
+            query: AttentionVectorSizes::find_vector_size(
                 client,
                 &problem.dims.shape(AttentionIdent::Query),
                 problem.global_dtypes.query.size(),
             ),
-            key: AttentionLineSizes::find_line_size(
+            key: AttentionVectorSizes::find_vector_size(
                 client,
                 &problem.dims.shape(AttentionIdent::Key),
                 problem.global_dtypes.key.size(),
             ),
-            value: AttentionLineSizes::find_line_size(
+            value: AttentionVectorSizes::find_vector_size(
                 client,
                 &problem.dims.shape(AttentionIdent::Value),
                 problem.global_dtypes.value.size(),
             ),
-            // lined mask not always supported at the moment
+            // vectorized mask not always supported at the moment
             mask: 1,
-            out: AttentionLineSizes::find_line_size(
+            out: AttentionVectorSizes::find_vector_size(
                 client,
                 &problem.dims.shape(AttentionIdent::Out),
                 problem.global_dtypes.out.size(),
@@ -77,12 +77,12 @@ impl AttentionLineSizes {
         }
     }
 
-    fn find_line_size<R: Runtime>(
+    fn find_vector_size<R: Runtime>(
         client: &ComputeClient<R>,
         shape: &[usize; 4],
         dtype_size: usize,
     ) -> usize {
-        let supported_line_sizes = client.io_optimized_line_sizes(dtype_size);
+        let supported_vector_sizes = client.io_optimized_vector_sizes(dtype_size);
 
         let n = shape.len();
 
@@ -96,6 +96,12 @@ impl AttentionLineSizes {
         });
         let shape = Shape::new(*shape);
 
-        tensor_line_size_parallel(supported_line_sizes, &shape, &row_major_strides, n - 1)
+        tensor_vector_size_parallel(supported_vector_sizes, &shape, &row_major_strides, n - 1)
+    }
+}
+
+impl From<&AttentionVectorSizes> for [usize; 5] {
+    fn from(value: &AttentionVectorSizes) -> Self {
+        [value.query, value.key, value.value, value.mask, value.out]
     }
 }

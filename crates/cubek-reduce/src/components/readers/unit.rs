@@ -19,10 +19,10 @@ impl<P: ReducePrecision> UnitReader<P> {
         UnitReader::<P> { reader }
     }
 
-    pub fn read(&self, line_index: usize) -> (Line<P::EI>, ReduceCoordinate) {
+    pub fn read(&self, vector_index: usize) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
         match &self.reader {
-            Reader::Parallel(reader) => reader.read_unit(line_index),
-            Reader::Perpendicular(reader) => reader.read_unit(line_index),
+            Reader::Parallel(reader) => reader.read_unit(vector_index),
+            Reader::Perpendicular(reader) => reader.read_unit(vector_index),
         }
     }
 

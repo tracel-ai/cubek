@@ -1,4 +1,4 @@
-use cubecl::{CubeCount, CubeDim, LineSizeError, ir::StorageType, server::LaunchError};
+use cubecl::{CubeCount, CubeDim, VectorizationError, ir::StorageType, server::LaunchError};
 use cubek_std::{InvalidConfigError, MatrixLayout, TileSize};
 use std::fmt::{Debug, Display};
 
@@ -10,8 +10,8 @@ pub enum MatmulSetupError {
     /// The provided configuration is invalid or rejected by a component.
     InvalidConfig(InvalidConfigError),
 
-    /// No compatible line size could be found for the given constraints.
-    LineSize(LineSizeError),
+    /// No compatible vector size could be found for the given constraints.
+    Vectorization(VectorizationError),
 
     /// An error happened during launch.
     Launch(LaunchError),
@@ -64,8 +64,8 @@ pub enum MatmulAvailabilityError {
     /// TMA (Tensor Memory Access) is not available in the runtime.
     TmaUnavailable,
 
-    /// Dynamic selection of line size is unsupported in the current runtime.
-    DynamicLineSizeUnavailable,
+    /// Reinterpreting memory is unsupported in the current runtime.
+    ReinterpretMemoryUnavailable,
 
     /// Plane operations like plane_sum are unavailable
     PlaneOpsUnavailable,
@@ -82,9 +82,9 @@ impl From<InvalidConfigError> for MatmulSetupError {
     }
 }
 
-impl From<LineSizeError> for MatmulSetupError {
-    fn from(value: LineSizeError) -> Self {
-        Self::LineSize(value)
+impl From<VectorizationError> for MatmulSetupError {
+    fn from(value: VectorizationError) -> Self {
+        Self::Vectorization(value)
     }
 }
 
@@ -110,10 +110,10 @@ impl Debug for MatmulSetupError {
                     err.to_string()
                 )
             }
-            MatmulSetupError::LineSize(err) => {
+            MatmulSetupError::Vectorization(err) => {
                 writeln!(
                     f,
-                    "Unable to launch matmul because could not find supported line size: {err:?}"
+                    "Unable to launch matmul because could not find supported vector size: {err:?}"
                 )
             }
             MatmulSetupError::Launch(err) => {
@@ -180,8 +180,8 @@ impl Debug for MatmulAvailabilityError {
             MatmulAvailabilityError::TmaUnavailable => {
                 writeln!(f, "TMA is not available.")
             }
-            MatmulAvailabilityError::DynamicLineSizeUnavailable => {
-                writeln!(f, "Dynamic line size is not available.")
+            MatmulAvailabilityError::ReinterpretMemoryUnavailable => {
+                writeln!(f, "Memory reinterpretation is not available.")
             }
             MatmulAvailabilityError::PlaneOpsUnavailable => {
                 writeln!(f, "Plane-wide operations like plane_sum are not available.")

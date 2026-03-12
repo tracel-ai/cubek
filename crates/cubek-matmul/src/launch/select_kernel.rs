@@ -1,6 +1,6 @@
-use crate::definition::MatmulLineSizes;
 use crate::definition::MatmulProblem;
 use crate::definition::MatmulSetupError;
+use crate::definition::MatmulVectorSizes;
 use crate::launch::handle::MatmulInputBinding;
 use crate::launch::{
     ConcreteInputsFactory, ConcreteOutputFactory, InputArg, InputRuntimeArg, MatmulArgs, OutputArg,
@@ -22,7 +22,7 @@ pub fn launch_kernel_concrete<MA: MatmulArgs<Config = ()>, R: Runtime, A: Routin
     rhs: MatmulInputBinding<R>,
     out: TensorBinding<R>,
     problem: MatmulProblem,
-    line_sizes: MatmulLineSizes,
+    vector_sizes: MatmulVectorSizes,
     blueprint_strategy: &BlueprintStrategy<(), A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError>
@@ -30,16 +30,16 @@ where
     InputArg<MA>: ConcreteInputsFactory<A>,
     OutputArg<MA>: ConcreteOutputFactory<A>,
 {
-    let mut view_line_sizes = line_sizes;
+    let mut view_vector_sizes = vector_sizes;
 
     if let MatmulInputBinding::Quantized { scheme, .. } = lhs {
-        view_line_sizes.lhs *= scheme.num_quants();
+        view_vector_sizes.lhs *= scheme.num_quants();
     }
     if let MatmulInputBinding::Quantized { scheme, .. } = rhs {
-        view_line_sizes.rhs *= scheme.num_quants();
+        view_vector_sizes.rhs *= scheme.num_quants();
     }
 
-    let device_settings = A::device_settings(client, view_line_sizes);
+    let device_settings = A::device_settings(client, view_vector_sizes);
     let expand_info = A::expand_blueprint(&problem, &device_settings, blueprint_strategy)?;
     let launch_info = A::prepare(&problem, &device_settings, expand_info)?;
 
@@ -49,7 +49,7 @@ where
         rhs,
         &launch_info.blueprint,
         &problem,
-        &line_sizes,
+        &vector_sizes,
         dtypes,
     );
     let output = <OutputArg<MA> as ConcreteOutputFactory<A>>::create(
@@ -57,7 +57,7 @@ where
         out,
         &launch_info.blueprint,
         &problem,
-        &line_sizes,
+        &vector_sizes,
         dtypes,
     );
 
@@ -66,16 +66,16 @@ where
 
 /// Select which kernel to launch for the given Algorithm.
 #[allow(clippy::too_many_arguments)]
-pub fn launch_kernel_virtual<'a, MA: MatmulArgs, R: Runtime, A: Routine<MA::Config>>(
+pub fn launch_kernel_virtual<MA: MatmulArgs, R: Runtime, A: Routine<MA::Config>>(
     client: &ComputeClient<R>,
-    input: InputRuntimeArg<'a, MA, R>,
-    output: OutputRuntimeArg<'a, MA, R>,
-    config: ConfigRuntimeArg<'a, MA, R>,
+    input: InputRuntimeArg<MA, R>,
+    output: OutputRuntimeArg<MA, R>,
+    config: ConfigRuntimeArg<MA, R>,
     problem: MatmulProblem,
-    view_line_sizes: MatmulLineSizes,
+    view_vector_sizes: MatmulVectorSizes,
     blueprint_strategy: &BlueprintStrategy<MA::Config, A>,
 ) -> Result<(), MatmulSetupError> {
-    let device_settings = A::device_settings(client, view_line_sizes);
+    let device_settings = A::device_settings(client, view_vector_sizes);
     let expand_info = A::expand_blueprint(&problem, &device_settings, blueprint_strategy)?;
     let launch_info = A::prepare(&problem, &device_settings, expand_info)?;
 
@@ -84,11 +84,11 @@ pub fn launch_kernel_virtual<'a, MA: MatmulArgs, R: Runtime, A: Routine<MA::Conf
 
 /// Select which kernel to launch for the given Algorithm.
 #[allow(clippy::too_many_arguments)]
-pub fn launch_kernel<'a, MA: MatmulArgs, R: Runtime, A: Routine<MA::Config>>(
+pub fn launch_kernel<MA: MatmulArgs, R: Runtime, A: Routine<MA::Config>>(
     client: &ComputeClient<R>,
-    input: InputRuntimeArg<'a, MA, R>,
-    output: OutputRuntimeArg<'a, MA, R>,
-    config: ConfigRuntimeArg<'a, MA, R>,
+    input: InputRuntimeArg<MA, R>,
+    output: OutputRuntimeArg<MA, R>,
+    config: ConfigRuntimeArg<MA, R>,
     launch_info: LaunchInfo<A::Blueprint>,
 ) -> Result<(), MatmulSetupError> {
     A::launch::<MA, R>(
@@ -102,5 +102,6 @@ pub fn launch_kernel<'a, MA: MatmulArgs, R: Runtime, A: Routine<MA::Config>>(
         launch_info.cube_count_plan.as_args(),
         launch_info.blueprint,
         &launch_info.dtypes,
+        &launch_info.vector_sizes,
     )
 }

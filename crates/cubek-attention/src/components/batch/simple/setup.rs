@@ -16,7 +16,7 @@ use crate::{
     },
     definition::{
         AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError,
-        CubeCountInputArgs, InputRuntimeArg, OutputRuntimeArg,
+        AttentionVectorSizes, CubeCountInputArgs, InputRuntimeArg, OutputRuntimeArg,
     },
     launch::AttentionArgs,
 };
@@ -35,10 +35,11 @@ impl<GA: GlobalAttentionFamily> BatchAttentionFamily for SimpleBatchAttentionFam
         cube_dim: cubecl::CubeDim,
         cube_count: cubecl::CubeCount,
         address_type: AddressType,
-        input: InputRuntimeArg<'a, AA, R>,
-        output: OutputRuntimeArg<'a, AA, R>,
-        cube_count_input: CubeCountInputArgs<'a, R>,
+        input: InputRuntimeArg<AA, R>,
+        output: OutputRuntimeArg<AA, R>,
+        cube_count_input: CubeCountInputArgs<R>,
         dtypes: &AttentionElems,
+        vector_sizes: &AttentionVectorSizes,
         blueprint: AttentionBlueprint,
     ) -> Result<(), LaunchError> {
         unsafe {
@@ -51,7 +52,9 @@ impl<GA: GlobalAttentionFamily> BatchAttentionFamily for SimpleBatchAttentionFam
                 output,
                 cube_count_input,
                 blueprint,
+                dtypes.clone(),
                 dtypes.into(),
+                vector_sizes.into(),
             )
         };
 

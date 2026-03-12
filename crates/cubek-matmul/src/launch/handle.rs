@@ -122,6 +122,13 @@ impl<R: Runtime> MatmulInputBinding<R> {
         }
     }
 
+    pub fn data_elem_size(&self) -> usize {
+        match self {
+            MatmulInputBinding::Normal(_, ty) => ty.size(),
+            MatmulInputBinding::Quantized { data_dtype, .. } => data_dtype.size(),
+        }
+    }
+
     pub fn into_data(self) -> TensorBinding<R> {
         match self {
             MatmulInputBinding::Normal(handle, ..) => handle,
@@ -181,7 +188,7 @@ impl<R: Runtime> MatmulInputBinding<R> {
                             packed_dim,
                             &shape,
                             scheme.num_quants(),
-                            u8::as_type_native_unchecked(),
+                            u8::as_type_native_unchecked().storage_type(),
                         );
                         scheme = scheme.with_store(QuantStore::PackedNative(0));
                         data.dtype = data_dtype;
@@ -194,7 +201,7 @@ impl<R: Runtime> MatmulInputBinding<R> {
                             packed_dim,
                             &shape,
                             scheme.num_quants(),
-                            u32::as_type_native_unchecked(),
+                            u32::as_type_native_unchecked().storage_type(),
                         );
                         data.dtype = data_dtype;
                         scheme = scheme.with_store(QuantStore::PackedU32(0));
@@ -219,9 +226,14 @@ impl<R: Runtime> MatmulInputBinding<R> {
 
     pub fn required_address_type(&self) -> AddressType {
         match self {
-            MatmulInputBinding::Normal(handle, ..) => handle.required_address_type(),
-            MatmulInputBinding::Quantized { data, shape, .. } => {
-                let handle_addr = data.required_address_type();
+            MatmulInputBinding::Normal(handle, ty) => handle.required_address_type(ty.size()),
+            MatmulInputBinding::Quantized {
+                data,
+                shape,
+                scheme,
+                ..
+            } => {
+                let handle_addr = data.required_address_type(scheme.size_bits_stored() / 8);
                 let conceptual_addr = AddressType::from_len(shape.iter().product());
                 handle_addr.max(conceptual_addr)
             }

@@ -8,7 +8,7 @@ use cubek::{
     random::random_uniform,
     reduce::{
         components::instructions::ReduceOperationConfig,
-        launch::{LineSizeStrategy, ReduceStrategy, RoutineStrategy},
+        launch::{ReduceStrategy, RoutineStrategy, VectorizationStrategy},
         routines::{
             BlueprintStrategy, cube::CubeStrategy, plane::PlaneStrategy, unit::UnitStrategy,
         },
@@ -35,7 +35,14 @@ impl<R: Runtime, E: Float> Benchmark for ReduceBench<R, E> {
         let elem = E::as_type_native_unchecked();
 
         let input = TensorHandle::empty(&client, self.shape.clone(), elem);
-        random_uniform(&client, 0., 1., input.clone().binding(), elem).unwrap();
+        random_uniform(
+            &client,
+            0.,
+            1.,
+            input.clone().binding(),
+            elem.storage_type(),
+        )
+        .unwrap();
         let mut shape_out = self.shape.clone();
         shape_out[self.axis] = 1;
         let out = TensorHandle::empty(&client, shape_out, elem);
@@ -52,9 +59,9 @@ impl<R: Runtime, E: Float> Benchmark for ReduceBench<R, E> {
             self.strategy.clone(),
             ReduceOperationConfig::Sum,
             cubek::reduce::ReduceDtypes {
-                input: E::as_type_native_unchecked(),
-                output: E::as_type_native_unchecked(),
-                accumulation: f32::as_type_native_unchecked(),
+                input: E::as_type_native_unchecked().storage_type(),
+                output: E::as_type_native_unchecked().storage_type(),
+                accumulation: f32::as_type_native_unchecked().storage_type(),
             },
         )
         .map_err(|err| format!("{err}"))?;
@@ -87,42 +94,42 @@ fn run<R: Runtime, E: frontend::Float>(device: R::Device) {
         // vec![4096, 512, 32],
         // vec![512, 512],
     ] {
-        for line_size in [
-            LineSizeStrategy {
+        for vectorization in [
+            VectorizationStrategy {
                 parallel_output_vectorization: false,
             },
-            LineSizeStrategy {
+            VectorizationStrategy {
                 parallel_output_vectorization: true,
             },
         ] {
             for strategy in [
                 ReduceStrategy {
                     routine: RoutineStrategy::Unit(BlueprintStrategy::Inferred(UnitStrategy)),
-                    line_size,
+                    vectorization,
                 },
                 ReduceStrategy {
                     routine: RoutineStrategy::Plane(BlueprintStrategy::Inferred(PlaneStrategy {
                         independent: true,
                     })),
-                    line_size,
+                    vectorization,
                 },
                 // ReduceStrategy {
                 //     routine: RoutineStrategy::Plane(BlueprintStrategy::Inferred(PlaneStrategy {
                 //         independent: false,
                 //     })),
-                //     line_size,
+                //     vectorization,
                 // },
                 ReduceStrategy {
                     routine: RoutineStrategy::Cube(BlueprintStrategy::Inferred(CubeStrategy {
                         use_planes: true,
                     })),
-                    line_size,
+                    vectorization,
                 },
                 // ReduceStrategy {
                 //     routine: RoutineStrategy::Cube(BlueprintStrategy::Inferred(CubeStrategy {
                 //         use_planes: false,
                 //     })),
-                //     line_size,
+                //     vectorization,
                 // },
             ] {
                 for axis in 2..shape.len() {

@@ -12,7 +12,7 @@ pub struct ReduceRequirements {
     pub coordinates: bool,
 }
 
-/// An instruction for a reduce algorithm that works with [`Line`].
+/// An instruction for a reduce algorithm that works with [`Vector`].
 ///
 /// See a provided implementation, such as [`Sum`](super::Sum) or [`ArgMax`](super::ArgMax) for an example how to implement
 /// this trait for a custom instruction.
@@ -30,22 +30,22 @@ pub trait ReduceInstruction<P: ReducePrecision>:
     fn requirements(this: &Self) -> ReduceRequirements;
 
     /// The intermediate state into which we accumulate new input elements.
-    /// This is most likely a `Line<T>` or a struct or tuple of lines.
+    /// This is most likely a `Vector<T>` or a struct or tuple of vectors.
     type AccumulatorItem: CubeType;
 
     /// When multiple agents are collaborating to reduce a single slice,
     /// we need a share accumulator to store multiple `AccumulatorItem`.
-    /// This is most likely a `SharedMemory<Line<T>>` or a struct or tuple of lined shared memories.
+    /// This is most likely a `SharedMemory<Vector<T>>` or a struct or tuple of vectorized shared memories.
     type SharedAccumulator: SharedAccumulator<Item = Self::AccumulatorItem>;
 
     fn from_config(#[comptime] config: Self::Config) -> Self;
     /// A input such that `Self::reduce(accumulator, Self::null_input(), coordinate, use_planes)`
     /// is guaranteed to return `accumulator` unchanged for any choice of `coordinate`.
-    fn null_input(this: &Self, #[comptime] line_size: LineSize) -> Line<P::EI>;
+    fn null_input(this: &Self) -> Vector<P::EI, P::SI>;
 
     /// A accumulator such that `Self::fuse_accumulators(accumulator, Self::null_accumulator()` always returns
     /// is guaranteed to return `accumulator` unchanged.
-    fn null_accumulator(this: &Self, #[comptime] line_size: LineSize) -> Self::AccumulatorItem;
+    fn null_accumulator(this: &Self) -> Self::AccumulatorItem;
 
     /// Assign the value of `source` into `destination`.
     /// In spirit, this is equivalent to `destination = source;`,
@@ -59,15 +59,15 @@ pub trait ReduceInstruction<P: ReducePrecision>:
     fn read_accumulator(
         this: &Self,
         accumulator: &Self::AccumulatorItem,
-    ) -> (Line<P::EI>, ReduceCoordinate);
+    ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>);
 
     /// If `use_planes` is `true`, reduce all the `item` and `coordinate` within the `accumulator`.
     /// Else, reduce the given `item` and `coordinate` into the accumulator.
     fn reduce(
         this: &Self,
         accumulator: &Self::AccumulatorItem,
-        item: Line<P::EI>,
-        coordinate: ReduceCoordinate,
+        item: Vector<P::EI, P::SI>,
+        coordinate: ReduceCoordinate<P::SI>,
         #[comptime] use_planes: bool,
     ) -> Self::AccumulatorItem;
 
@@ -79,7 +79,7 @@ pub trait ReduceInstruction<P: ReducePrecision>:
     ) -> Self::AccumulatorItem;
 
     /// Reduce all elements of the accumulator into a single output element of type `Out`.
-    fn merge_line<Out: Numeric>(
+    fn merge_vector<Out: Numeric>(
         this: &Self,
         accumulator: Self::AccumulatorItem,
         shape_axis_reduce: usize,
@@ -90,12 +90,12 @@ pub trait ReduceInstruction<P: ReducePrecision>:
         this: &Self,
         accumulator: Self::AccumulatorItem,
         shape_axis_reduce: usize,
-    ) -> Line<Out>;
+    ) -> Vector<Out, P::SI>;
 }
 
 #[derive(CubeType)]
-pub enum ReduceCoordinate {
-    Required(Line<u32>),
+pub enum ReduceCoordinate<N: Size> {
+    Required(Vector<u32, N>),
     NotRequired,
 }
 
@@ -104,11 +104,7 @@ pub enum ReduceCoordinate {
 pub trait SharedAccumulator: CubeType + Send + Sync + 'static {
     type Item: CubeType;
 
-    fn allocate(
-        #[comptime] length: usize,
-        #[comptime] line_size: LineSize,
-        #[comptime] _coordinate: bool,
-    ) -> Self;
+    fn allocate(#[comptime] length: usize, #[comptime] _coordinate: bool) -> Self;
 
     fn read(accumulator: &Self, index: usize) -> Self::Item;
 
@@ -116,15 +112,11 @@ pub trait SharedAccumulator: CubeType + Send + Sync + 'static {
 }
 
 #[cube]
-impl<In: Numeric> SharedAccumulator for SharedMemory<Line<In>> {
-    type Item = Line<In>;
+impl<In: Numeric, N: Size> SharedAccumulator for SharedMemory<Vector<In, N>> {
+    type Item = Vector<In, N>;
 
-    fn allocate(
-        #[comptime] length: usize,
-        #[comptime] line_size: LineSize,
-        #[comptime] _coordinate: bool,
-    ) -> Self {
-        SharedMemory::new_lined(length, line_size)
+    fn allocate(#[comptime] length: usize, #[comptime] _coordinate: bool) -> Self {
+        SharedMemory::new(length)
     }
 
     fn read(accumulator: &Self, index: usize) -> Self::Item {
@@ -138,23 +130,19 @@ impl<In: Numeric> SharedAccumulator for SharedMemory<Line<In>> {
 
 /// A pair of shared memory used for [`ArgMax`](super::ArgMax) and [`ArgMin`](super::ArgMin).
 #[derive(CubeType)]
-pub struct ArgAccumulator<N: Numeric> {
-    pub elements: SharedMemory<Line<N>>,
-    pub args: SharedMemory<Line<u32>>,
+pub struct ArgAccumulator<T: Numeric, N: Size> {
+    pub elements: SharedMemory<Vector<T, N>>,
+    pub args: SharedMemory<Vector<u32, N>>,
 }
 
 #[cube]
-impl<In: Numeric> SharedAccumulator for ArgAccumulator<In> {
-    type Item = (Line<In>, Line<u32>);
+impl<In: Numeric, N: Size> SharedAccumulator for ArgAccumulator<In, N> {
+    type Item = (Vector<In, N>, Vector<u32, N>);
 
-    fn allocate(
-        #[comptime] length: usize,
-        #[comptime] line_size: LineSize,
-        #[comptime] _coordinate: bool,
-    ) -> Self {
-        ArgAccumulator::<In> {
-            elements: SharedMemory::new_lined(length, line_size),
-            args: SharedMemory::new_lined(length, line_size),
+    fn allocate(#[comptime] length: usize, #[comptime] _coordinate: bool) -> Self {
+        ArgAccumulator::<In, N> {
+            elements: SharedMemory::new(length),
+            args: SharedMemory::new(length),
         }
     }
 
@@ -172,8 +160,8 @@ impl<In: Numeric> SharedAccumulator for ArgAccumulator<In> {
 pub fn reduce_inplace<P: ReducePrecision, R: ReduceInstruction<P>>(
     inst: &R,
     accumulator: &mut R::AccumulatorItem,
-    item: Line<P::EI>,
-    coordinate: ReduceCoordinate,
+    item: Vector<P::EI, P::SI>,
+    coordinate: ReduceCoordinate<P::SI>,
     #[comptime] use_planes: bool,
 ) {
     let reduction = &R::reduce(inst, accumulator, item, coordinate, use_planes);
@@ -185,8 +173,8 @@ pub fn reduce_shared_inplace<P: ReducePrecision, R: ReduceInstruction<P>>(
     inst: &R,
     accumulator: &mut R::SharedAccumulator,
     index: usize,
-    item: Line<P::EI>,
-    coordinate: ReduceCoordinate,
+    item: Vector<P::EI, P::SI>,
+    coordinate: ReduceCoordinate<P::SI>,
     #[comptime] use_planes: bool,
 ) {
     let acc_item = R::SharedAccumulator::read(accumulator, index);

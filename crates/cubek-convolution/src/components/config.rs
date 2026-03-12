@@ -3,7 +3,7 @@ use std::ops::Deref;
 use cubecl::CubeDim;
 use cubek_matmul::{
     components::global::{GlobalConfig, memory::GlobalMemoryConfig},
-    definition::{MatmulLineSizes, MatmulSetupError},
+    definition::{MatmulSetupError, MatmulVectorSizes},
 };
 use std::fmt::Debug;
 use std::hash::Hash;
@@ -21,7 +21,7 @@ pub trait ConvGemmConfig:
     /// The size of the convolution kernel at `dim`
     fn params(&self) -> ConvolutionParams;
     fn operation(&self) -> ConvolutionOperation;
-    fn line_sizes(&self) -> MatmulLineSizes;
+    fn vector_sizes(&self) -> MatmulVectorSizes;
     fn check_spatial_bounds(&self) -> bool;
     fn cube_dim(&self) -> CubeDim;
     fn lhs_global_memory_config(&self) -> GlobalMemoryConfig;
@@ -80,8 +80,8 @@ impl<M: GlobalConfig> ConvGemmConfig for ConvolutionConfig<M> {
         self.matmul
     }
 
-    fn line_sizes(&self) -> MatmulLineSizes {
-        self.matmul.global_line_sizes()
+    fn vector_sizes(&self) -> MatmulVectorSizes {
+        self.matmul.global_vector_sizes()
     }
 
     fn cube_dim(&self) -> CubeDim {

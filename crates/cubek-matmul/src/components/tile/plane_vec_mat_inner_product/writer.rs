@@ -1,7 +1,7 @@
 use cubecl::prelude::*;
 use cubek_std::tile::StridedTile;
 
-use crate::components::tile::plane_vec_mat_inner_product::LineContainer;
+use crate::components::tile::plane_vec_mat_inner_product::VectorContainer;
 
 /// Writer for the output of the VecMat operation.
 #[derive(CubeType)]
@@ -9,35 +9,35 @@ pub struct MatrixStageWriter {}
 
 #[cube]
 impl MatrixStageWriter {
-    pub fn store_fragment<A: Numeric, S: Numeric>(
-        tile: &mut StridedTile<S, ReadWrite>,
-        acc: &Sequence<LineContainer<A>>,
+    pub fn store_fragment<A: Numeric, S: Numeric, N: Size>(
+        tile: &mut StridedTile<S, N, ReadWrite>,
+        acc: &Sequence<VectorContainer<A>>,
         #[comptime] n: u32,
-        #[comptime] reduce_line_size: LineSize,
+        #[comptime] reduce_vector_size: VectorSize,
     ) {
         if UNIT_POS_X == 0 {
-            let out_line_size = tile.stage.line_size().comptime();
-            let total_out_lines = n as usize / out_line_size;
+            let out_vector_size = tile.stage.vector_size().comptime();
+            let total_out_vectors = n as usize / out_vector_size;
             #[unroll]
-            for out_line_iter in 0..total_out_lines {
-                let mut out_line = Line::<S>::empty(out_line_size);
+            for out_vector_iter in 0..total_out_vectors {
+                let mut out_vector = Vector::<S, N>::empty();
 
                 #[unroll]
-                for within_line in 0..out_line_size {
-                    let n = out_line_iter * out_line_size + within_line;
+                for within_vector in 0..out_vector_size {
+                    let n = out_vector_iter * out_vector_size + within_vector;
 
-                    let line_container = &acc[n];
+                    let vector_container = &acc[n];
                     let mut sum = A::from_int(0);
-                    for i in 0..reduce_line_size {
-                        sum += line_container.line[i];
+                    for i in 0..reduce_vector_size {
+                        sum += vector_container.vector[i];
                     }
 
-                    out_line[within_line] = S::cast_from(sum);
+                    out_vector[within_vector] = S::cast_from(sum);
                 }
 
-                let offset = tile.stage_offset(out_line_iter as u32);
+                let offset = tile.stage_offset(out_vector_iter as u32);
 
-                tile.stage[offset as usize] = out_line;
+                tile.stage[offset as usize] = out_vector;
             }
         }
     }

@@ -45,10 +45,10 @@ impl<F: Float, SMX: Softmax<F>> MaskTile<F, SMX> {
 
     /// Loads the mask data into the fragment, if a tile is given, otherwise only
     /// updates the logical mask
-    pub fn update<E: Numeric>(
+    pub fn update<E: Numeric, ES: Size>(
         &mut self,
         new_origin: Coords2d,
-        tile: ComptimeOption<StridedTile<E>>,
+        tile: ComptimeOption<StridedTile<E, ES>>,
     ) {
         match self {
             MaskTile::Materialized(materialized_tile_mask) => {
@@ -142,7 +142,7 @@ impl<F: Float, SMX: Softmax<F>> MaterializedTileMask<F, SMX> {
         logical_masked || materialized_masked
     }
 
-    pub fn update_tile<MSK: Numeric>(&mut self, tile: StridedTile<MSK>) {
+    pub fn update_tile<MSK: Numeric, MSKS: Size>(&mut self, tile: StridedTile<MSK, MSKS>) {
         SMX::load_mask(&tile, &mut self.fragment, self.config);
     }
 }

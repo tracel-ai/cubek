@@ -1,9 +1,9 @@
-use crate::{BoundChecks, IdleMode, LineMode};
+use crate::{BoundChecks, IdleMode, VectorizationMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ReduceBlueprint {
     /// How vectorization was applied.
-    pub line_mode: LineMode,
+    pub vectorization_mode: VectorizationMode,
     /// The global blueprint for the kernel.
     pub global: GlobalReduceBlueprint,
 }

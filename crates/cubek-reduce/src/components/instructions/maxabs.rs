@@ -14,8 +14,8 @@ impl ReduceFamily for MaxAbs {
 
 #[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
-    type AccumulatorItem = Line<P::EA>;
-    type SharedAccumulator = SharedMemory<Line<P::EA>>;
+    type AccumulatorItem = Vector<P::EA, P::SI>;
+    type SharedAccumulator = SharedMemory<Vector<P::EA, P::SI>>;
     type Config = ();
 
     fn requirements(_this: &Self) -> ReduceRequirements {
@@ -26,12 +26,12 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
         MaxAbs {}
     }
 
-    fn null_input(_this: &Self, #[comptime] line_size: LineSize) -> Line<P::EI> {
-        Line::empty(line_size).fill(P::EI::from_int(0))
+    fn null_input(_this: &Self) -> Vector<P::EI, P::SI> {
+        Vector::empty().fill(P::EI::from_int(0))
     }
 
-    fn null_accumulator(_this: &Self, #[comptime] line_size: LineSize) -> Self::AccumulatorItem {
-        Line::empty(line_size).fill(P::EA::from_int(0))
+    fn null_accumulator(_this: &Self) -> Self::AccumulatorItem {
+        Vector::empty().fill(P::EA::from_int(0))
     }
 
     fn assign_accumulator(
@@ -45,29 +45,29 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
     fn reduce(
         _this: &Self,
         accumulator: &Self::AccumulatorItem,
-        item: Line<P::EI>,
-        _coordinate: ReduceCoordinate,
+        item: Vector<P::EI, P::SI>,
+        _coordinate: ReduceCoordinate<P::SI>,
         #[comptime] use_planes: bool,
     ) -> Self::AccumulatorItem {
         if use_planes {
-            let candidate_item = Line::cast_from(plane_max(Line::abs(item)));
+            let candidate_item = Vector::cast_from(plane_max(Vector::abs(item)));
             select_many(
                 accumulator.greater_than(candidate_item),
                 *accumulator,
                 candidate_item,
             )
         } else {
-            let item_abs = Line::cast_from(Line::abs(item));
+            let item_abs = Vector::cast_from(Vector::abs(item));
             select_many(accumulator.greater_than(item_abs), *accumulator, item_abs)
         }
     }
 
     fn read_accumulator(
         _this: &Self,
-        accumulator: &Line<P::EA>,
-    ) -> (Line<P::EI>, ReduceCoordinate) {
+        accumulator: &Vector<P::EA, P::SI>,
+    ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
         (
-            Line::cast_from(*accumulator),
+            Vector::cast_from(*accumulator),
             ReduceCoordinate::new_NotRequired(),
         )
     }
@@ -80,7 +80,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
         select_many(lhs.greater_than(rhs), lhs, rhs)
     }
 
-    fn merge_line<Out: Numeric>(
+    fn merge_vector<Out: Numeric>(
         _this: &Self,
         accumulator: Self::AccumulatorItem,
         _shape_axis_reduce: usize,
@@ -98,7 +98,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
         _this: &Self,
         accumulator: Self::AccumulatorItem,
         _shape_axis_reduce: usize,
-    ) -> Line<Out> {
-        Line::cast_from(accumulator)
+    ) -> Vector<Out, P::SI> {
+        Vector::cast_from(accumulator)
     }
 }

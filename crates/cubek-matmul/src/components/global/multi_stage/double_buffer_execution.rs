@@ -9,7 +9,7 @@ use crate::components::global::{GlobalConfig, GlobalWriter};
 use crate::components::global::{LoadingSides, read::SyncStrategy};
 use crate::components::stage;
 use crate::components::stage::PartitionScheduler;
-use crate::definition::MatmulPrecision;
+use crate::definition::MatmulTypes;
 use cubecl::prelude::*;
 
 #[cube]
@@ -60,7 +60,7 @@ pub fn read_first<S: SyncStrategy, LJ: JobExecutor<S>, RJ: JobExecutor<S>>(
 ///
 /// If there is specialization, will add a runtime if to determine the role of the plane
 pub fn execute_current_and_read_next<
-    MP: MatmulPrecision,
+    MP: MatmulTypes,
     SMM: stage::StageMatmul<MP>,
     S: SyncStrategy,
     LJ: JobExecutor<S>,
@@ -151,7 +151,7 @@ pub fn execute_current_and_read_next<
 ///
 /// If there is specialization, will add a runtime if to determine the role of the plane
 pub fn execute_last_and_write_results<
-    MP: MatmulPrecision,
+    MP: MatmulTypes,
     GW: GlobalWriter<MP::Acc>,
     SMM: stage::StageMatmul<MP, OutStage = GW::Stage>,
     G: GlobalConfig<StageConfig = SMM::Config>,

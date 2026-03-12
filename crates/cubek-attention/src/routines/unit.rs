@@ -48,7 +48,7 @@ impl Routine for UnitRoutine {
 
         let dtypes = AttentionElems::from_global_types(
             &problem.global_dtypes,
-            half::f16::as_type_native_unchecked(),
+            half::f16::as_type_native_unchecked().storage_type(),
             &problem.options.accumulator_precision,
         );
 
@@ -90,13 +90,13 @@ fn blueprint(
             let tile_size = AttentionTileSize {
                 seq_q: 8,
                 head_dim: min(
-                    launch_settings.line_sizes.query,
-                    launch_settings.line_sizes.key,
+                    launch_settings.vector_sizes.query,
+                    launch_settings.vector_sizes.key,
                 ) as u32,
                 seq_kv: 8,
                 val_dim: min(
-                    launch_settings.line_sizes.out,
-                    launch_settings.line_sizes.value,
+                    launch_settings.vector_sizes.out,
+                    launch_settings.vector_sizes.value,
                 ) as u32,
             };
 
@@ -120,9 +120,8 @@ fn blueprint(
                 hypercube_blueprint: HypercubeBlueprint {},
                 tiling_scheme,
                 plane_dim,
-                reuse_key_value: false,
                 two_rows_in_array_tile: false,
-                line_sizes: launch_settings.line_sizes.clone(),
+                vector_sizes: launch_settings.vector_sizes.clone(),
                 masked: problem.masked,
                 causal: problem.options.causal,
                 check_bounds: tiling_scheme.check_bounds(&problem.dims),
@@ -137,7 +136,7 @@ fn validate(
     problem: &AttentionProblem,
     blueprint: AttentionBlueprint,
 ) -> Result<AttentionBlueprint, AttentionSetupError> {
-    if problem.dims.head_dim as u32 % blueprint.tiling_scheme.tile_size.head_dim != 0 {
+    if !(problem.dims.head_dim as u32).is_multiple_of(blueprint.tiling_scheme.tile_size.head_dim) {
         return Err(AttentionSetupError::InvalidConfig(Box::new(
             "Tile size head dim must divide problem head dim".to_string(),
         )));

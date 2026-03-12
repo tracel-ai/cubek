@@ -27,12 +27,15 @@ impl<AP: AttentionPrecision> AttentionSpec for AP {
 
 pub trait QueryPrecision: Send + Sync + Copy + 'static {
     type Global: Float;
+    type GlobalSize: Size;
     type Tile: Float;
 }
 
 pub trait StagedMatrixPrecision: Send + Sync + Copy + 'static {
     type Global: Float;
+    type GlobalSize: Size;
     type Stage: Float;
+    type StageSize: Size;
 }
 
 pub trait AttentionPrecision: Send + Sync + Copy + 'static {
@@ -44,67 +47,86 @@ pub trait AttentionPrecision: Send + Sync + Copy + 'static {
     type SoftmaxLhs: Float;
     type Accumulator: Float;
     type Mask: Numeric;
+    type MaskSize: Size;
     type Out: StagedMatrixPrecision;
 }
 
 impl QueryPrecision for f16 {
     type Global = f16;
+    type GlobalSize = Const<0>;
     type Tile = f16;
 }
 
 impl QueryPrecision for bf16 {
     type Global = bf16;
+    type GlobalSize = Const<0>;
     type Tile = bf16;
 }
 
 impl QueryPrecision for flex32 {
     type Global = f32;
+    type GlobalSize = Const<0>;
     type Tile = f16;
 }
 
 impl QueryPrecision for f32 {
     type Global = f32;
+    type GlobalSize = Const<0>;
     type Tile = f32;
 }
 
 impl QueryPrecision for f64 {
     type Global = f64;
+    type GlobalSize = Const<0>;
     type Tile = f32;
 }
 
-impl<G: Float, T: Float> QueryPrecision for (G, T) {
+impl<G: Float, GS: Size, T: Float> QueryPrecision for (G, GS, T) {
     type Global = G;
+    type GlobalSize = GS;
     type Tile = T;
 }
 
 impl StagedMatrixPrecision for f16 {
     type Global = f16;
+    type GlobalSize = Const<0>;
     type Stage = f16;
+    type StageSize = Const<0>;
 }
 
 impl StagedMatrixPrecision for bf16 {
     type Global = bf16;
+    type GlobalSize = Const<0>;
     type Stage = bf16;
+    type StageSize = Const<0>;
 }
 
 impl StagedMatrixPrecision for flex32 {
     type Global = f32;
+    type GlobalSize = Const<0>;
     type Stage = f16;
+    type StageSize = Const<0>;
 }
 
 impl StagedMatrixPrecision for f32 {
     type Global = f32;
+    type GlobalSize = Const<0>;
     type Stage = f32;
+    type StageSize = Const<0>;
 }
 
 impl StagedMatrixPrecision for f64 {
     type Global = f64;
+    type GlobalSize = Const<0>;
     type Stage = f32;
+    type StageSize = Const<0>;
 }
 
-impl<G: Float, S: Float> StagedMatrixPrecision for (G, S) {
+impl<G: Float, GS: Size, S: Float, SS: Size> StagedMatrixPrecision for (G, GS, S, SS) {
     type Global = G;
+    type GlobalSize = GS;
     type Stage = S;
+    type StageSize = SS;
 }
 
 impl AttentionPrecision for f16 {
@@ -122,6 +144,7 @@ impl AttentionPrecision for f16 {
     #[cfg(not(target_os = "macos"))]
     type Accumulator = f32;
     type Mask = u8;
+    type MaskSize = Const<0>;
     type Out = f16;
 }
 
@@ -140,6 +163,7 @@ impl AttentionPrecision for flex32 {
     #[cfg(not(target_os = "macos"))]
     type Accumulator = f32;
     type Mask = u8;
+    type MaskSize = Const<0>;
     type Out = f32;
 }
 
@@ -158,6 +182,7 @@ impl AttentionPrecision for bf16 {
     #[cfg(not(target_os = "macos"))]
     type Accumulator = f32;
     type Mask = u8;
+    type MaskSize = Const<0>;
     type Out = bf16;
 }
 
@@ -170,6 +195,7 @@ impl AttentionPrecision for f32 {
     type SoftmaxLhs = f32;
     type Accumulator = f32;
     type Mask = u8;
+    type MaskSize = Const<0>;
     type Out = f32;
 }
 
@@ -182,52 +208,86 @@ impl AttentionPrecision for f64 {
     type SoftmaxLhs = f32;
     type Accumulator = f32;
     type Mask = u8;
+    type MaskSize = Const<0>;
     type Out = f64;
 }
 
 impl<
     QG: Float,
+    QGS: Size,
     QT: Float,
     KG: Float,
+    KGS: Size,
     KS: Float,
+    KSS: Size,
     VG: Float,
+    VGS: Size,
     VS: Float,
+    VSS: Size,
     KVT: Float,
     SM: Float,
     SML: Float,
     ACC: Float,
     MSK: Numeric,
+    MSKS: Size,
     OG: Float,
+    OGS: Size,
     OS: Float,
-> AttentionPrecision for (QG, QT, KG, KS, VG, VS, KVT, SM, SML, ACC, MSK, OG, OS)
+    OSS: Size,
+> AttentionPrecision
+    for (
+        (QG, QGS, QT),
+        (KG, KGS, KS, KSS),
+        (VG, VGS, VS, VSS),
+        KVT,
+        SM,
+        SML,
+        ACC,
+        MSK,
+        MSKS,
+        (OG, OGS, OS, OSS),
+    )
 {
-    type Query = (QG, QT);
-    type Key = (KG, KS);
-    type Value = (VG, VS);
+    type Query = (QG, QGS, QT);
+    type Key = (KG, KGS, KS, KSS);
+    type Value = (VG, VGS, VS, VSS);
     type KVTile = KVT;
     type SoftmaxAcc = SM;
     type SoftmaxLhs = SML;
     type Accumulator = ACC;
     type Mask = MSK;
-    type Out = (OG, OS);
+    type MaskSize = MSKS;
+    type Out = (OG, OGS, OS, OSS);
 }
 
 /// Input argument
 pub type InputArg<AA> = <AA as AttentionArgs>::Input<
-    NumericExpand<0>,  // QG
-    NumericExpand<2>,  // KG
-    NumericExpand<4>,  // VG
-    NumericExpand<10>, // MSK
+    (
+        NumericExpand<0>, // QG
+        SizeExpand<1>,    // QGS
+    ),
+    (
+        NumericExpand<2>, // KG
+        SizeExpand<3>,    // KGS
+    ),
+    (
+        NumericExpand<4>, // VG
+        SizeExpand<5>,    // VGS
+    ),
+    (
+        NumericExpand<6>, // MSK
+        SizeExpand<7>,    // MSKS
+    ),
 >;
 
 /// Output argument
-pub type OutputArg<AA> = <AA as AttentionArgs>::Output<NumericExpand<11>>; // OG
+pub type OutputArg<AA> = <AA as AttentionArgs>::Output<(NumericExpand<8>, SizeExpand<9>)>; // OG, OGS
 
 /// Input runtime argument
-pub type InputRuntimeArg<'a, AA, R> = <InputArg<AA> as LaunchArg>::RuntimeArg<'a, R>;
+pub type InputRuntimeArg<AA, R> = <InputArg<AA> as LaunchArg>::RuntimeArg<R>;
 
 /// Output runtime argument
-pub type OutputRuntimeArg<'a, AA, R> = <OutputArg<AA> as LaunchArg>::RuntimeArg<'a, R>;
+pub type OutputRuntimeArg<AA, R> = <OutputArg<AA> as LaunchArg>::RuntimeArg<R>;
 
 pub mod attention_types {
     use crate::definition::{
@@ -236,16 +296,26 @@ pub mod attention_types {
 
     pub type QG<AS> =
         <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Query as QueryPrecision>::Global;
+    pub type QGS<AS> =
+        <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Query as QueryPrecision>::GlobalSize;
     pub type QT<AS> =
         <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Query as QueryPrecision>::Tile;
     pub type KG<AS> =
     <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Key as StagedMatrixPrecision>::Global;
+    pub type KGS<AS> =
+    <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Key as StagedMatrixPrecision>::GlobalSize;
     pub type KS<AS> =
         <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Key as StagedMatrixPrecision>::Stage;
+    pub type KSS<AS> =
+        <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Key as StagedMatrixPrecision>::StageSize;
     pub type VG<AS> =
     <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Value as StagedMatrixPrecision>::Global;
+    pub type VGS<AS> =
+    <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Value as StagedMatrixPrecision>::GlobalSize;
     pub type VS<AS> =
     <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Value as StagedMatrixPrecision>::Stage;
+    pub type VSS<AS> =
+    <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Value as StagedMatrixPrecision>::StageSize;
 
     pub type KVT<AS> = <<AS as AttentionSpec>::Precision as AttentionPrecision>::KVTile;
     pub type SM<AS> = <<AS as AttentionSpec>::Precision as AttentionPrecision>::SoftmaxAcc;
@@ -253,9 +323,12 @@ pub mod attention_types {
 
     pub type ACC<AS> = <<AS as AttentionSpec>::Precision as AttentionPrecision>::Accumulator;
     pub type MSK<AS> = <<AS as AttentionSpec>::Precision as AttentionPrecision>::Mask;
+    pub type MSKS<AS> = <<AS as AttentionSpec>::Precision as AttentionPrecision>::MaskSize;
 
     pub type OG<AS> = <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Out as StagedMatrixPrecision>::Global;
+    pub type OGS<AS> = <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Out as StagedMatrixPrecision>::GlobalSize;
     pub type OS<AS> = <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Out as StagedMatrixPrecision>::Stage;
+    pub type OSS<AS> = <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Out as StagedMatrixPrecision>::StageSize;
 }
 
 pub type Args<MS> = <MS as AttentionSpec>::Args;
@@ -304,42 +377,16 @@ impl AttentionElems {
             out_stage: global_dtypes.out,
         }
     }
-
-    pub fn from_define_array(elem_types: [StorageType; 13]) -> AttentionElems {
-        AttentionElems {
-            query_global: elem_types[0],
-            query_tile: elem_types[1],
-            key_global: elem_types[2],
-            key_stage: elem_types[3],
-            value_global: elem_types[4],
-            value_stage: elem_types[5],
-            key_value_tile: elem_types[6],
-            softmax_acc: elem_types[7],
-            softmax_lhs: elem_types[8],
-            accumulator: elem_types[9],
-            mask: elem_types[10],
-            out_global: elem_types[11],
-            out_stage: elem_types[12],
-        }
-    }
 }
 
-impl From<&AttentionElems> for [StorageType; 13] {
+impl From<&AttentionElems> for [StorageType; 5] {
     fn from(elems: &AttentionElems) -> Self {
         [
             elems.query_global,
-            elems.query_tile,
             elems.key_global,
-            elems.key_stage,
             elems.value_global,
-            elems.value_stage,
-            elems.key_value_tile,
-            elems.softmax_acc,
-            elems.softmax_lhs,
-            elems.accumulator,
             elems.mask,
             elems.out_global,
-            elems.out_stage,
         ]
     }
 }

@@ -11,8 +11,8 @@ use cubek_test_utils::{
 // F should be either AB or CD to match the ident
 pub fn mma_layout_kernel<AB: Numeric, CD: Numeric, F: Numeric>(
     lane_tensor: &mut Tensor<F>,
-    line_tensor: &mut Tensor<F>,
-    within_line_tensor: &mut Tensor<F>,
+    vector_tensor: &mut Tensor<F>,
+    within_vector_tensor: &mut Tensor<F>,
     #[comptime] m: usize,
     #[comptime] n: usize,
     #[comptime] k: usize,
@@ -21,22 +21,22 @@ pub fn mma_layout_kernel<AB: Numeric, CD: Numeric, F: Numeric>(
     let def = cmma::MmaDefinition::<AB, AB, CD>::new(m, n, k);
     let lane_id = UNIT_POS_PLANE as usize;
 
-    let line_count = def.lines_per_lane(MatrixIdent::A);
-    let line_size = def.line_size(MatrixIdent::A);
+    let vector_count = def.vectors_per_lane(MatrixIdent::A);
+    let vector_size = def.vector_size(MatrixIdent::A);
 
     #[unroll]
-    for i in 0..line_count {
+    for i in 0..vector_count {
         #[unroll]
-        for j in 0..line_size {
-            let nth = i * line_size + j;
+        for j in 0..vector_size {
+            let nth = i * vector_size + j;
             let (row, col) =
                 def.position_of_nth(lane_id as u32, nth as u32, MatrixIdent::Accumulator);
 
             let absolute_index = row as usize * stride + col as usize;
 
             lane_tensor[absolute_index] = F::cast_from(lane_id);
-            line_tensor[absolute_index] = F::cast_from(i);
-            within_line_tensor[absolute_index] = F::cast_from(j);
+            vector_tensor[absolute_index] = F::cast_from(i);
+            within_vector_tensor[absolute_index] = F::cast_from(j);
         }
     }
 }
@@ -66,9 +66,9 @@ pub fn print_mma_layout<AB: CubeElement + Numeric, CD: CubeElement + Numeric>(
     }
 
     let (rows, cols, dtype) = match ident {
-        MatrixIdent::A => (m, k, AB::as_type_native_unchecked()),
-        MatrixIdent::B => (k, n, AB::as_type_native_unchecked()),
-        MatrixIdent::Accumulator => (m, n, CD::as_type_native_unchecked()),
+        MatrixIdent::A => (m, k, AB::as_type_native_unchecked().storage_type()),
+        MatrixIdent::B => (k, n, AB::as_type_native_unchecked().storage_type()),
+        MatrixIdent::Accumulator => (m, n, CD::as_type_native_unchecked().storage_type()),
     };
 
     let lane_tensor = TestInput::new(
@@ -80,7 +80,7 @@ pub fn print_mma_layout<AB: CubeElement + Numeric, CD: CubeElement + Numeric>(
     )
     .generate();
 
-    let line_tensor = TestInput::new(
+    let vector_tensor = TestInput::new(
         client.clone(),
         [rows, cols],
         dtype,
@@ -89,7 +89,7 @@ pub fn print_mma_layout<AB: CubeElement + Numeric, CD: CubeElement + Numeric>(
     )
     .generate();
 
-    let within_line_tensor = TestInput::new(
+    let within_vector_tensor = TestInput::new(
         client.clone(),
         [rows, cols],
         dtype,
@@ -104,9 +104,9 @@ pub fn print_mma_layout<AB: CubeElement + Numeric, CD: CubeElement + Numeric>(
                 &client,
                 CubeCount::Static(1, 1, 1),
                 CubeDim::new_1d(client.properties().hardware.plane_size_max),
-                lane_tensor.clone().binding().into_tensor_arg(1),
-                line_tensor.clone().binding().into_tensor_arg(1),
-                within_line_tensor.clone().binding().into_tensor_arg(1),
+                lane_tensor.clone().binding().into_tensor_arg(),
+                vector_tensor.clone().binding().into_tensor_arg(),
+                within_vector_tensor.clone().binding().into_tensor_arg(),
                 m,
                 n,
                 k,
@@ -118,9 +118,9 @@ pub fn print_mma_layout<AB: CubeElement + Numeric, CD: CubeElement + Numeric>(
                 &client,
                 CubeCount::Static(1, 1, 1),
                 CubeDim::new_1d(client.properties().hardware.plane_size_max),
-                lane_tensor.clone().binding().into_tensor_arg(1),
-                line_tensor.clone().binding().into_tensor_arg(1),
-                within_line_tensor.clone().binding().into_tensor_arg(1),
+                lane_tensor.clone().binding().into_tensor_arg(),
+                vector_tensor.clone().binding().into_tensor_arg(),
+                within_vector_tensor.clone().binding().into_tensor_arg(),
                 m,
                 n,
                 k,
@@ -130,11 +130,11 @@ pub fn print_mma_layout<AB: CubeElement + Numeric, CD: CubeElement + Numeric>(
     }
 
     let lane_tensor = HostData::from_tensor_handle(&client, lane_tensor, HostDataType::I32);
-    let line_tensor = HostData::from_tensor_handle(&client, line_tensor, HostDataType::I32);
-    let within_line_tensor =
-        HostData::from_tensor_handle(&client, within_line_tensor, HostDataType::I32);
+    let vector_tensor = HostData::from_tensor_handle(&client, vector_tensor, HostDataType::I32);
+    let within_vector_tensor =
+        HostData::from_tensor_handle(&client, within_vector_tensor, HostDataType::I32);
 
-    let table = pretty_print_zip(&[&lane_tensor, &line_tensor, &within_line_tensor]);
+    let table = pretty_print_zip(&[&lane_tensor, &vector_tensor, &within_vector_tensor]);
 
     TestOutcome::Validated(ValidationResult::Fail(format!("Mma Layout:\n{}", table)))
 }

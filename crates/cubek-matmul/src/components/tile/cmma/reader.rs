@@ -10,8 +10,8 @@ pub(crate) trait CmmaFragmentReader {
     type TileKind: TileKind;
 
     /// Fill a fragment with data, with the implementation depending on the tile kind.
-    fn load_fragment<E: Numeric, V: Numeric>(
-        tile: &<Self::TileKind as TileKind>::Tile<V>,
+    fn load_fragment<E: Numeric, V: Numeric, N: Size>(
+        tile: &<Self::TileKind as TileKind>::Tile<V, N>,
         fragment: &mut cmma::Matrix<E>,
         layout: ComptimeOption<cmma::MatrixLayout>,
     );
@@ -28,12 +28,13 @@ pub struct CmmaStageReader<Kind: TileKind> {
 impl CmmaFragmentReader for CmmaStageReader<Strided> {
     type TileKind = Strided;
 
-    fn load_fragment<E: Numeric, V: Numeric>(
-        tile: &StridedTile<V>,
+    fn load_fragment<E: Numeric, V: Numeric, N: Size>(
+        tile: &StridedTile<V, N>,
         fragment: &mut cmma::Matrix<E>,
         layout: ComptimeOption<cmma::MatrixLayout>,
     ) {
-        let (slice, stride) = tile.as_unlined();
+        let stride = tile.unvectorized_stride();
+        let slice = tile.as_slice();
         #[comptime]
         match layout {
             ComptimeOption::None => cmma::load(fragment, &slice, stride),
@@ -48,7 +49,7 @@ impl CmmaFragmentReader for CmmaStageReader<Strided> {
 impl CmmaFragmentReader for CmmaStageReader<Filled> {
     type TileKind = Filled;
 
-    fn load_fragment<E: Numeric, V: Numeric>(
+    fn load_fragment<E: Numeric, V: Numeric, N: Size>(
         value: &V,
         fragment: &mut cmma::Matrix<E>,
         _layout: ComptimeOption<cmma::MatrixLayout>,
@@ -64,19 +65,22 @@ where
 {
     type TileKind = Option<Inner>;
 
-    fn load_fragment<E: Numeric, V: Numeric>(
-        tile: &ComptimeOption<Inner::Tile<V>>,
+    fn load_fragment<E: Numeric, V: Numeric, N: Size>(
+        tile: &ComptimeOption<Inner::Tile<V, N>>,
         fragment: &mut cmma::Matrix<E>,
         layout: ComptimeOption<cmma::MatrixLayout>,
     ) {
+        #[comptime]
         #[comptime]
         match tile {
             ComptimeOption::Some(tile) => {
                 CmmaStageReader::<Inner>::load_fragment(tile, fragment, layout)
             }
-            ComptimeOption::None => {
-                CmmaStageReader::<Filled>::load_fragment::<E, V>(&V::from_int(0), fragment, layout)
-            }
+            ComptimeOption::None => CmmaStageReader::<Filled>::load_fragment::<E, V, N>(
+                &V::from_int(0),
+                fragment,
+                layout,
+            ),
         }
     }
 }

@@ -1,4 +1,4 @@
-use crate::{LineMode, ReduceInstruction, ReducePrecision};
+use crate::{ReduceInstruction, ReducePrecision, VectorizationMode, components::args::NumericLine};
 use cubecl::{
     prelude::*,
     std::tensor::{
@@ -13,28 +13,25 @@ use cubecl::{
 ///
 /// Depending on the problem kind, writes might be buffered to optimize vectorization, only
 /// happening when [Writer::commit()] is called.
-pub enum Writer<Out: Numeric> {
+pub enum Writer<Out: NumericLine> {
     Parallel(ParallelWriter<Out>),
     Perpendicular(PerpendicularWriter<Out>),
 }
 
 #[cube]
-impl<Out: Numeric> Writer<Out> {
+impl<Out: NumericLine> Writer<Out> {
     pub fn new<P: ReducePrecision>(
-        input: &VirtualTensor<P::EI>,
-        output: &mut VirtualTensor<Out, ReadWrite>,
+        input: &VirtualTensor<P::EI, P::SI>,
+        output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         reduce_axis: usize,
         write_index: usize,
-        #[comptime] line_mode: LineMode,
+        #[comptime] vectorization_mode: VectorizationMode,
     ) -> Writer<Out> {
-        match line_mode {
-            LineMode::Parallel => Writer::<Out>::new_Parallel(ParallelWriter::<Out>::new::<P>(
-                input,
-                output,
-                reduce_axis,
-                write_index,
-            )),
-            LineMode::Perpendicular => Writer::<Out>::new_Perpendicular(
+        match vectorization_mode {
+            VectorizationMode::Parallel => Writer::<Out>::new_Parallel(
+                ParallelWriter::<Out>::new::<P>(input, output, reduce_axis, write_index),
+            ),
+            VectorizationMode::Perpendicular => Writer::<Out>::new_Perpendicular(
                 PerpendicularWriter::<Out>::new::<P>(input, output, reduce_axis, write_index),
             ),
         }
@@ -66,7 +63,7 @@ impl<Out: Numeric> Writer<Out> {
         }
     }
 
-    pub fn write_count(&self) -> comptime_type!(LineSize) {
+    pub fn write_count(&self) -> comptime_type!(VectorSize) {
         match self {
             Writer::Parallel(writer) => writer.write_count(),
             Writer::Perpendicular(writer) => writer.write_count(),
@@ -75,24 +72,24 @@ impl<Out: Numeric> Writer<Out> {
 }
 
 #[derive(CubeType)]
-pub struct ParallelWriter<Out: Numeric> {
-    output: View<Line<Out>, Coords1d, ReadWrite>,
-    buffer: Line<Out>,
+pub struct ParallelWriter<Out: NumericLine> {
+    output: View<Vector<Out::T, Out::N>, Coords1d, ReadWrite>,
+    buffer: Vector<Out::T, Out::N>,
     axis_size: usize,
     write_index: usize,
 }
 
 #[cube]
-impl<Out: Numeric> ParallelWriter<Out> {
+impl<Out: NumericLine> ParallelWriter<Out> {
     pub fn new<P: ReducePrecision>(
-        input: &VirtualTensor<P::EI>,
-        output: &mut VirtualTensor<Out, ReadWrite>,
+        input: &VirtualTensor<P::EI, P::SI>,
+        output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         reduce_axis: usize,
         write_index: usize,
     ) -> ParallelWriter<Out> {
         ParallelWriter::<Out> {
             output: output.view_mut(PlainLayout::new(output.len())),
-            buffer: Line::empty(output.line_size()),
+            buffer: Vector::empty(),
             axis_size: input.shape(reduce_axis),
             write_index,
         }
@@ -104,16 +101,16 @@ impl<Out: Numeric> ParallelWriter<Out> {
         accumulator: I::AccumulatorItem,
         inst: &I,
     ) {
-        let line = I::merge_line::<Out>(inst, accumulator, self.axis_size);
-        self.buffer[local_index] = line;
+        let vector = I::merge_vector::<Out::T>(inst, accumulator, self.axis_size);
+        self.buffer[local_index] = vector;
     }
 
     pub fn commit(&mut self) {
         self.output.write(self.write_index, self.buffer)
     }
 
-    pub fn write_count(&self) -> comptime_type!(LineSize) {
-        self.buffer.line_size()
+    pub fn write_count(&self) -> comptime_type!(VectorSize) {
+        self.buffer.vector_size()
     }
 
     pub fn commit_required(&self) -> comptime_type!(bool) {
@@ -122,33 +119,33 @@ impl<Out: Numeric> ParallelWriter<Out> {
 }
 
 #[derive(CubeType)]
-pub struct PerpendicularWriter<Out: Numeric> {
-    output: View<Line<Out>, Coords1d, ReadWrite>,
+pub struct PerpendicularWriter<Out: NumericLine> {
+    output: View<Vector<Out::T, Out::N>, Coords1d, ReadWrite>,
     axis_size: usize,
     #[cube(comptime)]
-    input_line_size: LineSize,
+    input_vector_size: VectorSize,
     #[cube(comptime)]
-    output_line_size: LineSize,
+    output_vector_size: VectorSize,
     write_index: usize,
 }
 
 #[cube]
-impl<Out: Numeric> PerpendicularWriter<Out> {
+impl<Out: NumericLine> PerpendicularWriter<Out> {
     pub fn new<P: ReducePrecision>(
-        input: &VirtualTensor<P::EI>,
-        output: &mut VirtualTensor<Out, ReadWrite>,
+        input: &VirtualTensor<P::EI, P::SI>,
+        output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         reduce_axis: usize,
         write_index: usize,
     ) -> PerpendicularWriter<Out> {
-        let input_line_size = input.line_size();
-        let output_line_size = output.line_size();
+        let input_vector_size = input.vector_size();
+        let output_vector_size = output.vector_size();
 
         PerpendicularWriter::<Out> {
             output: output.view_mut(PlainLayout::new(output.len())),
             axis_size: input.shape(reduce_axis),
             write_index,
-            input_line_size,
-            output_line_size,
+            input_vector_size,
+            output_vector_size,
         }
     }
 
@@ -158,20 +155,20 @@ impl<Out: Numeric> PerpendicularWriter<Out> {
         accumulator: I::AccumulatorItem,
         inst: &I,
     ) {
-        let out = I::to_output_perpendicular(inst, accumulator, self.axis_size);
+        let out = I::to_output_perpendicular::<Out::T>(inst, accumulator, self.axis_size);
 
-        if comptime![self.output_line_size == self.input_line_size] {
-            self.output.write(self.write_index, out);
+        if comptime![self.output_vector_size == self.input_vector_size] {
+            self.output.write(self.write_index, Vector::cast_from(out));
         } else {
-            let num_iters = comptime![self.input_line_size / self.output_line_size];
+            let num_iters = comptime![self.input_vector_size / self.output_vector_size];
 
             #[unroll]
             for i in 0..num_iters {
-                let mut tmp = Line::empty(self.output_line_size);
+                let mut tmp = Vector::empty();
 
                 #[unroll]
-                for j in 0..self.output_line_size {
-                    tmp[j] = out[i * self.output_line_size + j];
+                for j in 0..self.output_vector_size {
+                    tmp[j] = out[i * self.output_vector_size + j];
                 }
 
                 let index = self.write_index * num_iters + i;
@@ -184,7 +181,7 @@ impl<Out: Numeric> PerpendicularWriter<Out> {
         // Nothing to do.
     }
 
-    pub fn write_count(&self) -> comptime_type!(LineSize) {
+    pub fn write_count(&self) -> comptime_type!(VectorSize) {
         1
     }
 

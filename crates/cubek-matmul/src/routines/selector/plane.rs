@@ -1,5 +1,5 @@
 use cubecl::{Runtime, client::ComputeClient, ir::StorageType};
-use cubecl::{features::MmaConfig, ir::LineSize};
+use cubecl::{features::MmaConfig, ir::VectorSize};
 use cubek_std::stage::SwizzleMode;
 use cubek_std::{MatrixLayout, PartitionSize, StageSize, TileSize};
 
@@ -8,8 +8,8 @@ use crate::components::stage::PartitionBuffering;
 use crate::components::tile::TileMatmulFamily;
 use crate::definition::{
     CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulAvailabilityError,
-    MatmulElems, MatmulLineSizes, MatmulProblem, MatmulSetupError, MultiRowStrategy, SmAllocation,
-    SwizzleModes, TilingBlueprint, TilingScheme, adjust_dtypes,
+    MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes, MultiRowStrategy,
+    SmAllocation, SwizzleModes, TilingBlueprint, TilingScheme, adjust_dtypes,
 };
 use crate::routines::selector::is_tiny;
 
@@ -34,7 +34,7 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
     problem: &MatmulProblem,
     plane_dim: u32,
     mut dtypes: MatmulElems,
-    line_sizes: &MatmulLineSizes,
+    vector_sizes: &MatmulVectorSizes,
     options: PlaneTilingBlueprintOptions,
 ) -> Result<(TilingBlueprint, MatmulElems), MatmulSetupError> {
     adjust_dtypes(client, &mut dtypes, TMM::requires_accelerator());
@@ -178,8 +178,8 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
             MatrixLayout::ColMajor => tiling_scheme.elements_per_stage_along_k() as usize,
         };
 
-        let lhs = select_swizzle(lhs_swizzle_dim, dtypes.lhs_stage, line_sizes.lhs);
-        let rhs = select_swizzle(rhs_swizzle_dim, dtypes.rhs_stage, line_sizes.rhs);
+        let lhs = select_swizzle(lhs_swizzle_dim, dtypes.lhs_stage, vector_sizes.lhs);
+        let rhs = select_swizzle(rhs_swizzle_dim, dtypes.rhs_stage, vector_sizes.rhs);
         builder = builder.shared_swizzle(SwizzleModes {
             lhs,
             rhs,
@@ -193,9 +193,13 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
 /// All modes currently use atom size 16
 const SWIZZLE_ATOM: usize = 16;
 
-pub fn select_swizzle(swizzle_dim: usize, elem: StorageType, line_size: LineSize) -> SwizzleMode {
-    // Line size exceeds swizzle atom
-    if elem.size() * line_size > SWIZZLE_ATOM {
+pub fn select_swizzle(
+    swizzle_dim: usize,
+    elem: StorageType,
+    vector_size: VectorSize,
+) -> SwizzleMode {
+    // Vector size exceeds swizzle atom
+    if elem.size() * vector_size > SWIZZLE_ATOM {
         return SwizzleMode::None;
     }
     let swizzle_dim_bytes = swizzle_dim * elem.size();

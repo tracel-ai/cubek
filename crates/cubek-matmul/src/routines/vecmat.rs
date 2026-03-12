@@ -85,13 +85,18 @@ impl<RC: RuntimeConfig> Routine<RC> for SimpleVecMatAlgorithm {
         let blueprint = match strategy {
             BlueprintStrategy::Forced(blueprint) => blueprint.clone(),
             BlueprintStrategy::Inferred(_) => {
-                let line_sizes = device_settings.line_sizes;
+                let vector_sizes = device_settings.vector_sizes;
                 let plane_dim = device_settings.plane_dim;
 
                 infer_blueprint_vecmat(
                     &device_settings.client,
                     problem,
-                    (1, line_sizes.out as u32, plane_dim * line_sizes.lhs as u32).into(),
+                    (
+                        1,
+                        vector_sizes.out as u32,
+                        plane_dim * vector_sizes.lhs as u32,
+                    )
+                        .into(),
                     plane_dim,
                 )
             }
@@ -111,11 +116,14 @@ impl<RC: RuntimeConfig> Routine<RC> for SimpleVecMatAlgorithm {
             &blueprint,
             problem,
             &dtypes,
-            &device_settings.line_sizes,
+            &device_settings.vector_sizes,
         )?;
 
-        let cubedim_resource =
-            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
+        let cubedim_resource = Self::BatchMatmul::cubedim_resource(
+            &blueprint,
+            &dtypes,
+            &device_settings.vector_sizes,
+        )?;
 
         LaunchInfo::new(
             blueprint,
@@ -166,13 +174,18 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleVecMatAlgorithm {
         let blueprint = match strategy {
             BlueprintStrategy::Forced(blueprint) => blueprint.clone(),
             BlueprintStrategy::Inferred(_) => {
-                let line_sizes = device_settings.line_sizes;
+                let vector_sizes = device_settings.vector_sizes;
                 let plane_dim = device_settings.plane_dim;
 
                 infer_blueprint_vecmat(
                     &device_settings.client,
                     problem,
-                    (1, line_sizes.out as u32, plane_dim * line_sizes.lhs as u32).into(),
+                    (
+                        1,
+                        vector_sizes.out as u32,
+                        plane_dim * vector_sizes.lhs as u32,
+                    )
+                        .into(),
                     plane_dim,
                 )
             }
@@ -192,11 +205,14 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleVecMatAlgorithm {
             &blueprint,
             problem,
             &dtypes,
-            &device_settings.line_sizes,
+            &device_settings.vector_sizes,
         )?;
 
-        let cubedim_resource =
-            Self::BatchMatmul::cubedim_resource(&blueprint, &dtypes, &device_settings.line_sizes)?;
+        let cubedim_resource = Self::BatchMatmul::cubedim_resource(
+            &blueprint,
+            &dtypes,
+            &device_settings.vector_sizes,
+        )?;
 
         LaunchInfo::new(
             blueprint,

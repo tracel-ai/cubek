@@ -1,6 +1,7 @@
 use crate::{
-    LineMode, ReduceInstruction, ReducePrecision,
+    ReduceInstruction, ReducePrecision, VectorizationMode,
     components::{
+        args::NumericLine,
         global::idle_check,
         instructions::reduce_inplace,
         readers::{Reader, plane::PlaneReader},
@@ -15,18 +16,18 @@ pub struct GlobalFullPlaneReduce;
 
 #[cube]
 impl GlobalFullPlaneReduce {
-    pub fn execute<P: ReducePrecision, Out: Numeric, I: ReduceInstruction<P>>(
-        input: &VirtualTensor<P::EI>,
-        output: &mut VirtualTensor<Out, ReadWrite>,
+    pub fn execute<P: ReducePrecision, Out: NumericLine, I: ReduceInstruction<P>>(
+        input: &VirtualTensor<P::EI, P::SI>,
+        output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         reduce_axis: usize,
         inst: &I,
-        #[comptime] line_mode: LineMode,
+        #[comptime] vectorization_mode: VectorizationMode,
         #[comptime] blueprint: PlaneReduceBlueprint,
     ) {
         let write_index = CUBE_POS * CUBE_DIM_Y as usize + UNIT_POS_Y as usize;
 
         let mut writer =
-            Writer::<Out>::new::<P>(input, output, reduce_axis, write_index, line_mode);
+            Writer::<Out>::new::<P>(input, output, reduce_axis, write_index, vectorization_mode);
 
         let write_count = writer.write_count();
         let reduce_index_start = write_index * write_count;
@@ -35,7 +36,7 @@ impl GlobalFullPlaneReduce {
             input,
             output,
             reduce_index_start,
-            line_mode,
+            vectorization_mode,
             blueprint.plane_idle,
         );
 
@@ -48,7 +49,7 @@ impl GlobalFullPlaneReduce {
                 reduce_index,
                 inst,
                 idle,
-                line_mode,
+                vectorization_mode,
                 blueprint,
             );
 
@@ -68,18 +69,16 @@ impl GlobalFullPlaneReduce {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn reduce_single<P: ReducePrecision, Out: Numeric, I: ReduceInstruction<P>>(
-        input: &VirtualTensor<P::EI>,
-        output: &mut VirtualTensor<Out, ReadWrite>,
+    fn reduce_single<P: ReducePrecision, Out: NumericLine, I: ReduceInstruction<P>>(
+        input: &VirtualTensor<P::EI, P::SI>,
+        output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         reduce_axis: usize,
         reduce_index: usize,
         inst: &I,
         idle: ComptimeOption<bool>,
-        #[comptime] line_mode: LineMode,
+        #[comptime] vectorization_mode: VectorizationMode,
         #[comptime] blueprint: PlaneReduceBlueprint,
     ) -> I::AccumulatorItem {
-        let input_line_size = input.line_size();
-
         let reader = Reader::<P>::new::<I, Out>(
             input,
             output,
@@ -88,11 +87,11 @@ impl GlobalFullPlaneReduce {
             reduce_index,
             idle,
             blueprint.bound_checks,
-            line_mode,
+            vectorization_mode,
         );
         let reader = PlaneReader::<P>::new(reader);
 
-        let mut accumulator = I::null_accumulator(inst, input_line_size);
+        let mut accumulator = I::null_accumulator(inst);
 
         for i in 0..reader.length() {
             let (item, coordinate) = reader.read(i);
@@ -108,7 +107,7 @@ impl GlobalFullPlaneReduce {
         match blueprint.independent {
             true => {
                 let (item, coordinate) = I::read_accumulator(inst, &accumulator);
-                let mut result = I::null_accumulator(inst, input_line_size);
+                let mut result = I::null_accumulator(inst);
                 reduce_inplace::<P, I>(inst, &mut result, item, coordinate, true);
                 result
             }

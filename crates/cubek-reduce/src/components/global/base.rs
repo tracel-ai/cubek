@@ -1,31 +1,31 @@
-use crate::{IdleMode, LineMode, ReducePrecision};
+use crate::{IdleMode, ReducePrecision, VectorizationMode, components::args::NumericLine};
 use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
 
 #[cube]
 pub(crate) fn reduce_count(
     output_size: usize,
-    #[comptime] line_mode: LineMode,
-    #[comptime] input_line_size: LineSize,
+    #[comptime] vectorization_mode: VectorizationMode,
+    #[comptime] input_vector_size: VectorSize,
 ) -> usize {
-    match line_mode {
-        LineMode::Parallel => output_size,
-        LineMode::Perpendicular => output_size / input_line_size,
+    match vectorization_mode {
+        VectorizationMode::Parallel => output_size,
+        VectorizationMode::Perpendicular => output_size / input_vector_size,
     }
 }
 
 #[cube]
-pub fn idle_check<P: ReducePrecision, Out: Numeric>(
-    input: &VirtualTensor<P::EI>,
-    output: &mut VirtualTensor<Out, ReadWrite>,
+pub fn idle_check<P: ReducePrecision, Out: NumericLine>(
+    input: &VirtualTensor<P::EI, P::SI>,
+    output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
     reduce_index_start: usize,
-    #[comptime] line_mode: LineMode,
+    #[comptime] vectorization_mode: VectorizationMode,
     #[comptime] idle_mode: IdleMode,
 ) -> ComptimeOption<bool> {
     if idle_mode.is_enabled() {
         let reduce_count = reduce_count(
-            output.len() * output.line_size(),
-            line_mode,
-            input.line_size(),
+            output.len() * output.vector_size(),
+            vectorization_mode,
+            input.vector_size(),
         );
 
         match idle_mode {

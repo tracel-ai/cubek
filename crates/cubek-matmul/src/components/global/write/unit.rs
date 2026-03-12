@@ -11,23 +11,23 @@ use crate::components::{
     },
     stage::{StagePartitioner, UnitPartitioner},
 };
-use crate::definition::{MatrixPrecision, StageIdent};
+use crate::definition::{MatrixTypes, StageIdent};
 
 #[derive(CubeType)]
 /// Writes tiles from out shared memory to output global memory
 /// using a unit for each tile
-pub struct UnitWriter<IP: MatrixPrecision> {
-    global: View<Line<IP::Global>, TiledCoords, ReadWrite>,
-    stage: PartitionedStage<IP::Stage>,
+pub struct UnitWriter<IP: MatrixTypes> {
+    global: View<Vector<IP::Global, IP::GlobalSize>, TiledCoords, ReadWrite>,
+    stage: PartitionedStage<IP::Stage, IP::StageSize>,
 
     #[cube(comptime)]
     smem_config: StageMemoryConfig,
 }
 
 #[cube]
-impl<IP: MatrixPrecision> UnitWriter<IP> {
+impl<IP: MatrixTypes> UnitWriter<IP> {
     pub fn new(
-        global: View<Line<IP::Global>, Coords2d, ReadWrite>,
+        global: View<Vector<IP::Global, IP::GlobalSize>, Coords2d, ReadWrite>,
         #[comptime] config: GlobalWriterConfig,
     ) -> Self {
         let smem_config = config.smem_config;
@@ -58,28 +58,28 @@ impl<IP: MatrixPrecision> UnitWriter<IP> {
 }
 
 #[cube]
-pub fn unit_write<ES: Numeric, EG: Numeric>(
-    global: &mut View<Line<EG>, TiledCoords, ReadWrite>,
-    smem_tile: &StridedTile<ES, ReadWrite>,
+pub fn unit_write<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
+    global: &mut View<Vector<EG, NG>, TiledCoords, ReadWrite>,
+    smem_tile: &StridedTile<ES, NS, ReadWrite>,
     tile_pos: Coords2d,
     #[comptime] elements_in_tile: u32,
 ) {
-    let output_line_size = global.line_size();
-    let out_smem_stage = smem_tile.stage.with_line_size(output_line_size);
+    let output_vector_size = global.vector_size();
+    let out_smem_stage = smem_tile.stage.with_vector_size::<NG>();
 
-    let num_lines = elements_in_tile / output_line_size as u32;
+    let num_vectors = elements_in_tile / output_vector_size as u32;
 
-    for i in 0..num_lines {
+    for i in 0..num_vectors {
         let value = out_smem_stage[smem_tile.stage_offset(i) as usize];
         global.write_checked(
-            (tile_pos, i * output_line_size as u32),
-            Line::cast_from(value),
+            (tile_pos, i * output_vector_size as u32),
+            Vector::cast_from(value),
         );
     }
 }
 
 #[cube]
-impl<IP: MatrixPrecision> WriteEventListener for UnitWriter<IP> {
+impl<IP: MatrixTypes> WriteEventListener for UnitWriter<IP> {
     fn on_event(this: &mut Self, event: super::WriteEvent) {
         #[allow(clippy::single_match)]
         match event {
@@ -90,11 +90,11 @@ impl<IP: MatrixPrecision> WriteEventListener for UnitWriter<IP> {
 }
 
 #[cube]
-impl<IP: MatrixPrecision> GlobalWriter<IP> for UnitWriter<IP> {
-    type Stage = PartitionedStage<IP::Stage>;
+impl<IP: MatrixTypes> GlobalWriter<IP> for UnitWriter<IP> {
+    type Stage = PartitionedStage<IP::Stage, IP::StageSize>;
 
     fn init(
-        tensor: View<Line<IP::Global>, Coords2d, ReadWrite>,
+        tensor: View<Vector<IP::Global, IP::GlobalSize>, Coords2d, ReadWrite>,
         #[comptime] config: GlobalWriterConfig,
     ) -> Self {
         Self::new(tensor, config)
@@ -109,5 +109,5 @@ pub struct UnitWriterFamily;
 
 impl GlobalWriterFamily for UnitWriterFamily {
     type Stage = PartitionedStageFamily;
-    type Writer<IP: MatrixPrecision> = UnitWriter<IP>;
+    type Writer<IP: MatrixTypes> = UnitWriter<IP>;
 }

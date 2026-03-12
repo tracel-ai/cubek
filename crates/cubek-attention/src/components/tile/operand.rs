@@ -20,7 +20,7 @@ impl<IM: InnerMatmul> Query<IM> {
     }
 
     /// Loads the query data into the fragment
-    pub fn update<E: Numeric>(&mut self, tile: &StridedTile<E>) {
+    pub fn update<E: Numeric, ES: Size>(&mut self, tile: &StridedTile<E, ES>) {
         IM::load_lhs(tile, &mut self.fragment)
     }
 }

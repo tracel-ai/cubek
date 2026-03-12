@@ -1,12 +1,12 @@
 use cubecl::{
     Runtime,
     client::ComputeClient,
-    ir::{LineSize, StorageType},
+    ir::{StorageType, VectorSize},
 };
 use cubek_matmul::components::stage::PartitionBuffering;
 
 use cubek_matmul::definition::{
-    MatmulAvailabilityError, MatmulElems, MatmulLineSizes, SwizzleModes, TilingBlueprint,
+    MatmulAvailabilityError, MatmulElems, MatmulVectorSizes, SwizzleModes, TilingBlueprint,
     TilingScheme, adjust_dtypes,
 };
 use cubek_matmul::{
@@ -87,7 +87,7 @@ pub fn convolution_matmul_selection<TMM: TileMatmulFamily, R: Runtime>(
     problem: &ConvolutionProblem,
     plane_dim: u32,
     swizzle: bool,
-    line_sizes: &MatmulLineSizes,
+    vector_sizes: &MatmulVectorSizes,
     dtypes: &mut MatmulElems,
 ) -> Result<TilingBlueprint, MatmulAvailabilityError> {
     adjust_dtypes(client, dtypes, TMM::requires_accelerator());
@@ -128,8 +128,8 @@ pub fn convolution_matmul_selection<TMM: TileMatmulFamily, R: Runtime>(
     if swizzle {
         let swizzle_dim = tiling_scheme.elements_per_stage_along_k() as usize;
 
-        let lhs = select_swizzle(swizzle_dim, dtypes.lhs_stage, line_sizes.lhs);
-        let rhs = select_swizzle(swizzle_dim, dtypes.rhs_stage, line_sizes.rhs);
+        let lhs = select_swizzle(swizzle_dim, dtypes.lhs_stage, vector_sizes.lhs);
+        let rhs = select_swizzle(swizzle_dim, dtypes.rhs_stage, vector_sizes.rhs);
         builder = builder.shared_swizzle(SwizzleModes {
             lhs,
             rhs,
@@ -143,9 +143,9 @@ pub fn convolution_matmul_selection<TMM: TileMatmulFamily, R: Runtime>(
 /// All modes currently use atom size 16
 const SWIZZLE_ATOM: usize = 16;
 
-fn select_swizzle(swizzle_dim: usize, elem: StorageType, line_size: LineSize) -> SwizzleMode {
-    // Line size exceeds swizzle atom
-    if elem.size() * line_size > SWIZZLE_ATOM {
+fn select_swizzle(swizzle_dim: usize, elem: StorageType, vector_size: VectorSize) -> SwizzleMode {
+    // Vector size exceeds swizzle atom
+    if elem.size() * vector_size > SWIZZLE_ATOM {
         return SwizzleMode::None;
     }
     let swizzle_dim_bytes = swizzle_dim * elem.size();

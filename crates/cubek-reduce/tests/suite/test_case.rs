@@ -1,9 +1,9 @@
 use std::marker::PhantomData;
 
-use cubecl::TestRuntime;
 use cubecl::prelude::*;
 use cubecl::zspace::Shape;
 use cubecl::zspace::Strides;
+use cubecl::{TestRuntime, server::ServerError};
 use cubek_reduce::components::instructions::ReduceOperationConfig;
 use cubek_reduce::launch::RoutineStrategy;
 use cubek_reduce::{ReduceDtypes, ReduceError, ReducePrecision, launch::ReduceStrategy, reduce};
@@ -194,19 +194,13 @@ where
         let output_stride = self.output_stride();
 
         let input = unsafe {
-            TensorBinding::from_raw_parts(
-                input_handle,
-                self.stride.clone(),
-                self.shape.clone(),
-                size_of::<P>(),
-            )
+            TensorBinding::from_raw_parts(input_handle, self.stride.clone(), self.shape.clone())
         };
         let output = unsafe {
             TensorBinding::from_raw_parts(
                 output_handle.clone(),
                 output_stride.clone(),
                 output_shape.clone(),
-                size_of::<O>(),
             )
         };
 
@@ -218,11 +212,27 @@ where
             self.strategy.clone(),
             config,
             ReduceDtypes {
-                input: <P as ReducePrecision>::EI::as_type_native_unchecked(),
-                output: O::as_type_native_unchecked(),
-                accumulation: <P as ReducePrecision>::EA::as_type_native_unchecked(),
+                input: <P as ReducePrecision>::EI::as_type_native_unchecked().storage_type(),
+                output: O::as_type_native_unchecked().storage_type(),
+                accumulation: <P as ReducePrecision>::EA::as_type_native_unchecked().storage_type(),
             },
         );
+
+        match client.flush() {
+            Ok(_) => {}
+            Err(ServerError::ServerUnhealthy { errors, .. }) =>
+            {
+                #[allow(clippy::never_loop)]
+                for error in errors.iter() {
+                    match error {
+                        cubecl::server::ServerError::Launch(LaunchError::TooManyResources(_)) => {}
+                        _ => panic!("{errors:?}"),
+                    }
+                }
+            }
+            Err(err) => panic!("{err:?}"),
+        }
+
         match result {
             Ok(_) => {}
             Err(e) => {

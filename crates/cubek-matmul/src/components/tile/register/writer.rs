@@ -9,22 +9,22 @@ pub struct RegisterStageWriter {}
 
 #[cube]
 impl RegisterStageWriter {
-    pub fn store_fragment<A: Numeric, E: Numeric>(
-        tile: &mut StridedTile<E, ReadWrite>,
+    pub fn store_fragment<A: Numeric, E: Numeric, N: Size>(
+        tile: &mut StridedTile<E, N, ReadWrite>,
         acc: &UnitFragment<A>,
         #[comptime] config: RegisterMatmulConfig,
     ) {
-        let out_line_size = tile.stage.line_size().comptime() as u32;
+        let out_vector_size = tile.stage.vector_size().comptime() as u32;
 
         #[unroll(UNROLL)]
-        for i in 0..config.shared.tile_size.mn() / out_line_size {
+        for i in 0..config.shared.tile_size.mn() / out_vector_size {
             let offs = tile.stage_offset(i);
-            let mut line = Line::empty(out_line_size as usize);
+            let mut vector = Vector::<A, N>::empty();
             #[unroll]
-            for j in 0..out_line_size {
-                line[j as usize] = acc.array[(i * out_line_size + j) as usize];
+            for j in 0..out_vector_size {
+                vector[j as usize] = acc.array[(i * out_vector_size + j) as usize];
             }
-            tile.stage[offs as usize] = Line::cast_from(line);
+            tile.stage[offs as usize] = Vector::cast_from(vector);
         }
     }
 }

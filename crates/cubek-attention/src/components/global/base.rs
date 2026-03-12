@@ -34,7 +34,7 @@ pub trait GlobalAttentionFamily: Send + Sync + 'static {
 #[cube]
 pub trait GlobalAttention<AP: AttentionPrecision>: 'static + Send + Sync {
     /// Writes to Out at the same offset it loaded Query
-    type Writer: AttentionWriter<OS<AP>, OG<AP>>;
+    type Writer: AttentionWriter<OS<AP>, OSS<AP>, OG<AP>, OGS<AP>>;
 
     /// Loads to SMEM as is (transposed later)
     type KeyReader: CubeType;
@@ -60,26 +60,26 @@ pub trait GlobalAttention<AP: AttentionPrecision>: 'static + Send + Sync {
     fn init_query_reader(
         batch_index: u32,
         stage_q_offset: u32,
-        query: VirtualTensor<QG<AP>>,
+        query: VirtualTensor<QG<AP>, QGS<AP>>,
         #[comptime] config: Self::Config,
     ) -> QueryReader<AP>;
 
     fn init_key_reader(
         batch_index: u32,
-        key: VirtualTensor<KG<AP>>,
+        key: VirtualTensor<KG<AP>, KGS<AP>>,
         #[comptime] config: Self::Config,
     ) -> Self::KeyReader;
 
     fn init_value_reader(
         batch_index: u32,
-        value: VirtualTensor<VG<AP>>,
+        value: VirtualTensor<VG<AP>, VGS<AP>>,
         #[comptime] config: Self::Config,
     ) -> Self::ValueReader;
 
     fn init_mask_reader(
         batch_index: u32,
         stage_q_offset: u32,
-        mask: ComptimeOption<VirtualTensor<MSK<AP>>>,
+        mask: ComptimeOption<VirtualTensor<MSK<AP>, MSKS<AP>>>,
         seq_kv_shape: u32,
         #[comptime] config: Self::Config,
     ) -> Self::MaskReader;
@@ -87,7 +87,7 @@ pub trait GlobalAttention<AP: AttentionPrecision>: 'static + Send + Sync {
     fn init_writer(
         batch_index: u32,
         stage_q_offset: u32,
-        out: VirtualTensor<OG<AP>, ReadWrite>,
+        out: VirtualTensor<OG<AP>, OGS<AP>, ReadWrite>,
         #[comptime] config: Self::Config,
     ) -> Self::Writer;
 }

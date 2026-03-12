@@ -1,4 +1,4 @@
-use cubecl::prelude::*;
+use cubecl::{define_size, prelude::*};
 use cubek_std::MatrixLayout;
 use cubek_std::tile::Strided;
 use cubek_std::tile::StridedTile;
@@ -18,16 +18,18 @@ pub struct PlaneVecMatInnerProduct<Acc: TileKind> {
     _ty: PhantomData<Acc>,
 }
 
+define_size!(NR);
+
 #[derive(CubeType)]
-pub struct LineContainer<E: Numeric> {
-    pub line: Line<E>,
+pub struct VectorContainer<E: Numeric> {
+    pub vector: Vector<E, NR>,
 }
 
 #[cube]
-impl<E: Numeric> LineContainer<E> {
-    fn new(#[comptime] size: LineSize) -> LineContainer<E> {
-        LineContainer::<E> {
-            line: Line::empty(size),
+impl<E: Numeric> VectorContainer<E> {
+    fn new() -> VectorContainer<E> {
+        VectorContainer::<E> {
+            vector: Vector::empty(),
         }
     }
 }
@@ -40,13 +42,13 @@ where
 {
     type Config = PlaneVecMatInnerProductConfig;
 
-    // One line per unit in the plane
-    type LhsFragment = LineContainer<L>;
-    // For each n: one line per unit in the plane
-    type RhsFragment = Sequence<LineContainer<R>>;
+    // One vector per unit in the plane
+    type LhsFragment = VectorContainer<L>;
+    // For each n: one vector per unit in the plane
+    type RhsFragment = Sequence<VectorContainer<R>>;
 
-    // For each n: one line stored at unit pos 0, that will be reduced to a scalar only when writing at the end
-    type AccFragment = Sequence<LineContainer<A>>;
+    // For each n: one vector stored at unit pos 0, that will be reduced to a scalar only when writing at the end
+    type AccFragment = Sequence<VectorContainer<A>>;
 
     type LhsTile = Strided;
     type RhsTile = Strided;
@@ -62,14 +64,10 @@ where
         #[unroll]
         #[allow(clippy::explicit_counter_loop)]
         for n in 0..config.shared.tile_size.n() as usize {
-            let lhs: Line<A> = Line::cast_from(lhs.line);
-            let rhs: Line<A> = Line::cast_from(rhs[n].line);
+            let lhs: Vector<A, NR> = Vector::cast_from(lhs.vector);
+            let rhs: Vector<A, NR> = Vector::cast_from(rhs[n].vector);
 
-            plane_sum_lined(
-                lhs * rhs,
-                acc.index_mut(n),
-                config.reduce_line_size as usize,
-            );
+            plane_sum_vectorized(lhs * rhs, acc.index_mut(n));
         }
     }
 
@@ -77,17 +75,19 @@ where
         #[comptime] _layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Self::LhsFragment {
-        LineContainer::<L>::new(config.reduce_line_size as usize)
+        register_vector_size(config.reduce_vector_size);
+        VectorContainer::<L>::new()
     }
 
     fn allocate_rhs(
         #[comptime] _layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Self::RhsFragment {
+        register_vector_size(config.reduce_vector_size);
         let mut rhs = Sequence::new();
         #[unroll]
         for _ in 0..config.shared.tile_size.n() {
-            rhs.push(LineContainer::new(config.reduce_line_size as usize))
+            rhs.push(VectorContainer::new())
         }
         rhs
     }
@@ -96,40 +96,41 @@ where
         #[comptime] _layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Self::AccFragment {
+        register_vector_size(config.reduce_vector_size);
         let mut acc = Sequence::new();
         #[unroll]
         for _ in 0..config.shared.tile_size.n() {
-            acc.push(LineContainer::new(config.reduce_line_size as usize))
+            acc.push(VectorContainer::new())
         }
         acc
     }
 
-    fn load_lhs<E: Numeric>(
-        tile: &StridedTile<E>,
+    fn load_lhs<E: Numeric, N: Size>(
+        tile: &StridedTile<E, N>,
         lhs: &mut Self::LhsFragment,
         #[comptime] _config: Self::Config,
     ) {
         VectorStageReader::load_fragment(tile, lhs)
     }
 
-    fn load_rhs<E: Numeric>(
-        tile: &StridedTile<E>,
+    fn load_rhs<E: Numeric, N: Size>(
+        tile: &StridedTile<E, N>,
         rhs: &mut Self::RhsFragment,
         #[comptime] config: Self::Config,
     ) {
         MatrixStageReader::<Strided>::load_fragment(tile, rhs, config.shared.tile_size.n())
     }
 
-    fn load_acc<E: Numeric>(
-        tile: &AccTile::Tile<E>,
+    fn load_acc<E: Numeric, N: Size>(
+        tile: &AccTile::Tile<E, N>,
         acc: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     ) {
         MatrixStageReader::<AccTile>::load_fragment(tile, acc, config.shared.tile_size.n());
     }
 
-    fn write_results<E: Numeric>(
-        tile: &mut StridedTile<E, ReadWrite>,
+    fn write_results<E: Numeric, N: Size>(
+        tile: &mut StridedTile<E, N, ReadWrite>,
         acc: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     ) {
@@ -137,20 +138,27 @@ where
             tile,
             acc,
             config.shared.tile_size.n(),
-            config.reduce_line_size as usize,
+            config.reduce_vector_size as usize,
         )
     }
 }
 
 #[cube]
-fn plane_sum_lined<E: Numeric>(
-    line_to_sum: Line<E>,
-    line_accumulator: &mut LineContainer<E>,
-    #[comptime] line_size: LineSize,
+fn plane_sum_vectorized<E: Numeric, N: Size>(
+    vector_to_sum: Vector<E, N>,
+    vector_accumulator: &mut VectorContainer<E>,
 ) {
     #[unroll]
     #[allow(clippy::explicit_counter_loop)]
-    for line_iterator in 0..line_size {
-        line_accumulator.line[line_iterator] += plane_sum(line_to_sum[line_iterator]);
+    for vector_iterator in 0..N::value() {
+        vector_accumulator.vector[vector_iterator] += plane_sum(vector_to_sum[vector_iterator]);
     }
+}
+
+#[cube]
+#[allow(unused)]
+fn register_vector_size(#[comptime] vector_size: u32) {
+    intrinsic!(|scope| {
+        scope.register_size::<NR>(vector_size as usize);
+    })
 }

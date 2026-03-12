@@ -111,7 +111,7 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
         output_f.clone().binding(),
         output_scale.clone().binding(),
         &scheme,
-        f32::as_type_native_unchecked(),
+        f32::as_type_native_unchecked().storage_type(),
     )
     .unwrap();
 
@@ -252,7 +252,7 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
         output_f.clone().binding(),
         output_scale.binding(),
         &scheme,
-        f32::as_type_native_unchecked(),
+        f32::as_type_native_unchecked().storage_type(),
     )
     .unwrap();
 

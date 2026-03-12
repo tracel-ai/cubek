@@ -47,7 +47,7 @@ fn get_random_bernoulli_data(shape: &[usize], prob: f32) -> Vec<TestDType> {
         &client,
         prob,
         output.clone().binding(),
-        TestDType::as_type_native_unchecked(),
+        TestDType::as_type_native_unchecked().storage_type(),
     )
     .unwrap();
 

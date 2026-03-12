@@ -35,9 +35,21 @@ pub trait StageAttentionFamily: Send + Sync + 'static {
     type Attention<AP: AttentionPrecision>: StageAttention<
             AP,
             Config = Self::Config,
-            KeyStage = <Self::KeyStage as StageFamily>::Stage<KS<AP>, AttentionTilingLayout>,
-            ValueStage = <Self::ValueStage as StageFamily>::Stage<VS<AP>, AttentionTilingLayout>,
-            OutStage = <Self::OutStage as StageFamily<ReadWrite>>::Stage<OS<AP>, WriteTiling>,
+            KeyStage = <Self::KeyStage as StageFamily>::Stage<
+                KS<AP>,
+                KSS<AP>,
+                AttentionTilingLayout,
+            >,
+            ValueStage = <Self::ValueStage as StageFamily>::Stage<
+                VS<AP>,
+                VSS<AP>,
+                AttentionTilingLayout,
+            >,
+            OutStage = <Self::OutStage as StageFamily<ReadWrite>>::Stage<
+                OS<AP>,
+                OSS<AP>,
+                WriteTiling,
+            >,
         >;
 
     /// The configuration type associated with this Attention family.
@@ -153,7 +165,6 @@ pub struct SharedPartitionAttentionConfig<TC: TileAttentionConfig> {
     pub tile_config: TC,
     pub partition_size: AttentionPartitionSize,
     pub stage_size: AttentionStageSize,
-    pub reuse_key_value: bool,
     pub num_planes: u32,
     pub key_smem_config: StageMemoryConfig,
     pub value_smem_config: StageMemoryConfig,
@@ -186,15 +197,6 @@ pub fn validate<TC: TileAttentionConfig>(
         return Err(AttentionSetupError::InvalidConfig(Box::new(
             "Differing head dim and val dim is not yet supported".to_string(),
         )));
-    }
-
-    // This check is stricter than the previous one, but the other may be removed
-    // eventually while this one will always remain true.
-    if config.shared().reuse_key_value && head_val_different {
-        return Err(AttentionSetupError::InvalidConfig(Box::new(
-        "When reusing key/value, head_dim must equal val_dim in both tile_size and partition_size."
-            .to_string(),
-    )));
     }
 
     Ok(config)

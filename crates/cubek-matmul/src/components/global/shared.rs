@@ -2,7 +2,7 @@ use cubecl::CubeDim;
 
 use crate::{
     components::global::multi_stage::LoadMaxRoundPlaneCount,
-    definition::{MatmulElems, MatmulLineSizes, MatmulSetupError, TilingScheme},
+    definition::{MatmulElems, MatmulSetupError, MatmulVectorSizes, TilingScheme},
 };
 
 #[allow(unused_variables)]
@@ -31,7 +31,7 @@ impl MaxGlobalReaderPlanes {
     /// Create a MaxGlobalReaderPlanes
     pub fn new<LL: LoadMaxRoundPlaneCount, RL: LoadMaxRoundPlaneCount>(
         tiling_scheme: &TilingScheme,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
         plane_dim: u32,
         dtypes: &MatmulElems,
     ) -> Self {
@@ -42,7 +42,7 @@ impl MaxGlobalReaderPlanes {
                     * tiling_scheme.stage_size.m
                     * tiling_scheme.partition_size.k
                     * tiling_scheme.stage_size.k) as u32,
-                line_sizes.lhs,
+                vector_sizes.lhs,
                 plane_dim,
                 dtypes.lhs_global,
             ),
@@ -52,7 +52,7 @@ impl MaxGlobalReaderPlanes {
                     * tiling_scheme.stage_size.k
                     * tiling_scheme.partition_size.n
                     * tiling_scheme.stage_size.n) as u32,
-                line_sizes.rhs,
+                vector_sizes.rhs,
                 plane_dim,
                 dtypes.rhs_global,
             ),

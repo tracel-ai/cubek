@@ -6,12 +6,12 @@ use cubek_matmul::components::global::memory::GlobalMemoryConfig;
 use cubek_std::tile::StridedTile;
 
 use crate::components::stage::AttentionPartitioner;
-use crate::definition::attention_types::QG;
+use crate::definition::attention_types::{QG, QGS};
 use crate::definition::{AttentionPrecision, AttentionTileSize};
 
 #[derive(CubeType)]
 pub struct QueryReader<AP: AttentionPrecision> {
-    query: View<Line<QG<AP>>, Coords2d>,
+    query: View<Vector<QG<AP>, QGS<AP>>, Coords2d>,
     #[cube(comptime)]
     gmem_config: GlobalMemoryConfig,
 }
@@ -20,7 +20,7 @@ pub struct QueryReader<AP: AttentionPrecision> {
 impl<AP: AttentionPrecision> QueryReader<AP> {
     pub fn new(
         stage_q_offset: u32,
-        query: View<Line<QG<AP>>, Coords2d>,
+        query: View<Vector<QG<AP>, QGS<AP>>, Coords2d>,
         #[comptime] gmem_config: GlobalMemoryConfig,
     ) -> Self {
         let query = query.slice((stage_q_offset, 0), query.shape());
@@ -34,12 +34,12 @@ impl<AP: AttentionPrecision> QueryReader<AP> {
         #[comptime] attention_tile_size: AttentionTileSize,
         #[comptime] partition_seq_q: u32,
         #[comptime] partition_head_dim: u32,
-    ) -> StridedTile<QG<AP>> {
+    ) -> StridedTile<QG<AP>, QGS<AP>> {
         let (row_in_partition, col) = tile;
 
         let row = row_in_partition + P::seq_q_index() * partition_seq_q;
 
-        let line_size = self.gmem_config.line_size.comptime() as u32;
+        let vector_size = self.gmem_config.vector_size.comptime() as u32;
 
         let tile_head_dim = attention_tile_size.head_dim;
 
@@ -52,18 +52,17 @@ impl<AP: AttentionPrecision> QueryReader<AP> {
             .to_linear_slice();
 
         let start = 0;
-        let length = attention_tile_size.seq_q * tile_head_dim / line_size;
+        let length = attention_tile_size.seq_q * tile_head_dim / vector_size;
         let end = start + length;
-        let stride = partition_head_dim * tile_head_dim / line_size;
+        let stride = partition_head_dim * tile_head_dim / vector_size;
 
-        StridedTile::<QG<AP>>::new_strided(
+        StridedTile::<QG<AP>, QGS<AP>>::new_strided(
             slice,
             start,
             end,
             stride,
             Swizzle::none(),
             self.gmem_config.matrix_layout,
-            line_size,
         )
     }
 }

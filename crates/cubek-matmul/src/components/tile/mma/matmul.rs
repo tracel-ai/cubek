@@ -1,4 +1,4 @@
-use cubecl::prelude::*;
+use cubecl::{define_size, prelude::*};
 use cubek_std::{
     MatrixLayout,
     tile::{
@@ -23,9 +23,13 @@ pub struct MmaMatmul<
     _ty: PhantomData<(Lhs, Rhs, Acc)>,
 }
 
+define_size!(NL);
+define_size!(NR);
+define_size!(NA);
+
 #[derive(CubeType)]
-pub struct MmaFragment<E: Numeric> {
-    fragment: Array<Line<E>>,
+pub struct MmaFragment<E: Numeric, N: Size> {
+    fragment: Array<Vector<E, N>>,
     #[cube(comptime)]
     layout: MatrixLayout,
 }
@@ -40,9 +44,9 @@ where
 {
     type Config = MmaMatmulConfig;
 
-    type LhsFragment = MmaFragment<L>;
-    type RhsFragment = MmaFragment<R>;
-    type AccFragment = MmaFragment<A>;
+    type LhsFragment = MmaFragment<L, NL>;
+    type RhsFragment = MmaFragment<R, NR>;
+    type AccFragment = MmaFragment<A, NA>;
 
     type LhsTile = LhsTile;
     type RhsTile = RhsTile;
@@ -57,10 +61,10 @@ where
     ) {
         let def = mma_definition(config);
         let out_arr = def.execute(&lhs.fragment, &rhs.fragment, &out.fragment);
-        let num_lines = def.lines_per_lane(MatrixIdent::Accumulator);
+        let num_vectors = def.vectors_per_lane(MatrixIdent::Accumulator);
 
         #[unroll]
-        for i in 0..num_lines {
+        for i in 0..num_vectors {
             out.fragment[i] = out_arr[i];
         }
     }
@@ -70,11 +74,11 @@ where
         #[comptime] config: Self::Config,
     ) -> Self::LhsFragment {
         let def = mma_definition::<L, R, A>(config);
-        let line_size = def.line_size(MatrixIdent::A);
-        let line_count = def.lines_per_lane(MatrixIdent::A);
+        register_vector_sizes(def);
+        let vector_count = def.vectors_per_lane(MatrixIdent::A);
 
-        MmaFragment::<L> {
-            fragment: Array::lined(line_count, line_size),
+        MmaFragment::<L, NL> {
+            fragment: Array::new(vector_count),
             layout,
         }
     }
@@ -84,11 +88,11 @@ where
         #[comptime] config: Self::Config,
     ) -> Self::RhsFragment {
         let def = mma_definition::<L, R, A>(config);
-        let line_size = def.line_size(MatrixIdent::B);
-        let line_count = def.lines_per_lane(MatrixIdent::B);
+        register_vector_sizes(def);
+        let vector_count = def.vectors_per_lane(MatrixIdent::B);
 
-        MmaFragment::<R> {
-            fragment: Array::lined(line_count, line_size),
+        MmaFragment::<R, NR> {
+            fragment: Array::new(vector_count),
             layout,
         }
     }
@@ -98,17 +102,17 @@ where
         #[comptime] config: Self::Config,
     ) -> Self::AccFragment {
         let def = mma_definition::<L, R, A>(config);
-        let line_size = def.line_size(MatrixIdent::Accumulator);
-        let line_count = def.lines_per_lane(MatrixIdent::Accumulator);
+        register_vector_sizes(def);
+        let vector_count = def.vectors_per_lane(MatrixIdent::Accumulator);
 
-        MmaFragment::<A> {
-            fragment: Array::lined(line_count, line_size),
+        MmaFragment::<A, NA> {
+            fragment: Array::new(vector_count),
             layout,
         }
     }
 
-    fn load_lhs<E: Numeric>(
-        tile: &LhsTile::Tile<E>,
+    fn load_lhs<E: Numeric, N: Size>(
+        tile: &LhsTile::Tile<E, N>,
         lhs: &mut Self::LhsFragment,
         #[comptime] config: Self::Config,
     ) {
@@ -123,8 +127,8 @@ where
         );
     }
 
-    fn load_rhs<E: Numeric>(
-        tile: &RhsTile::Tile<E>,
+    fn load_rhs<E: Numeric, N: Size>(
+        tile: &RhsTile::Tile<E, N>,
         rhs: &mut Self::RhsFragment,
         #[comptime] config: Self::Config,
     ) {
@@ -139,8 +143,8 @@ where
         );
     }
 
-    fn load_acc<E: Numeric>(
-        tile: &AccTile::Tile<E>,
+    fn load_acc<E: Numeric, N: Size>(
+        tile: &AccTile::Tile<E, N>,
         acc: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     ) {
@@ -155,8 +159,8 @@ where
         );
     }
 
-    fn write_results<E: Numeric>(
-        tile: &mut StridedTile<E, ReadWrite>,
+    fn write_results<E: Numeric, N: Size>(
+        tile: &mut StridedTile<E, N, ReadWrite>,
         out: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     ) {
@@ -178,4 +182,19 @@ pub(super) fn mma_definition<L: Numeric, R: Numeric, A: Numeric>(
 ) -> MmaDefinition<L, R, A> {
     let size = config.shared.tile_size;
     MmaDefinition::new(size.m() as usize, size.n() as usize, size.k() as usize)
+}
+
+#[cube]
+#[allow(unused_variables)]
+pub(super) fn register_vector_sizes<L: Numeric, R: Numeric, A: Numeric>(
+    def: MmaDefinition<L, R, A>,
+) {
+    let vector_size_a = def.vector_size(MatrixIdent::A);
+    let vector_size_b = def.vector_size(MatrixIdent::B);
+    let vector_size_acc = def.vector_size(MatrixIdent::Accumulator);
+    intrinsic!(|scope| {
+        scope.register_size::<NL>(vector_size_a);
+        scope.register_size::<NR>(vector_size_b);
+        scope.register_size::<NA>(vector_size_acc);
+    });
 }

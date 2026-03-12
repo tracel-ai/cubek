@@ -12,7 +12,7 @@ use crate::{
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_matmul::{
     components::tile::{cmma::CmmaMatmul, mma::MmaMatmul},
-    definition::{AvailableLineSizes, MatmulElems, MatmulSetupError},
+    definition::{AvailableVectorSizes, MatmulElems, MatmulSetupError},
     launch::MatmulInputBinding,
     routines::BlueprintStrategy,
 };
@@ -157,7 +157,7 @@ where
     let address_type = out_grad
         .required_address_type()
         .max(weights.required_address_type())
-        .max(in_grad.required_address_type());
+        .max(in_grad.required_address_type(dtypes.acc_global.size()));
 
     let problem = ConvolutionProblem {
         m: n * in_shape.iter().product::<usize>(),
@@ -212,12 +212,12 @@ where
     Alg::Args: ConcreteArgs<Alg::Routine>,
 {
     // Shape/strides are treated as k-major, with the last dim always being the contiguous one.
-    // So for the sake of selecting a line size, the shape/strides are always row-major.
-    let line_sizes = AvailableLineSizes::from_type_sizes(
+    // So for the sake of selecting a vector size, the shape/strides are always row-major.
+    let vector_sizes = AvailableVectorSizes::from_type_sizes(
         client,
-        out_grad.data().elem_size,
-        weights.data().elem_size,
-        in_grad.elem_size,
+        out_grad.data_elem_size(),
+        weights.data_elem_size(),
+        dtypes.acc_global.size(),
     )
     .filter_lhs_with_tensor(
         &out_grad.data().strides,
@@ -231,7 +231,7 @@ where
     )
     .filter_out_with_tensor(&in_grad.strides, &in_grad.shape);
 
-    let line_sizes = Alg::filter_line_sizes(line_sizes).pick_max()?;
+    let vector_sizes = Alg::filter_vector_sizes(vector_sizes).pick_max()?;
 
     launch_kernel_concrete::<R, Alg::Args, Alg::Routine>(
         client,
@@ -239,7 +239,7 @@ where
         weights,
         in_grad,
         problem,
-        line_sizes,
+        vector_sizes,
         blueprint_strategy,
         &dtypes,
     )

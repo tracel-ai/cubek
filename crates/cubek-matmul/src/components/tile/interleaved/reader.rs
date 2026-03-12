@@ -10,8 +10,8 @@ pub struct InterleavedStageReader {}
 
 #[cube]
 impl InterleavedStageReader {
-    pub fn load_fragment<E: Numeric, V: Numeric>(
-        tile: &StridedTile<V>,
+    pub fn load_fragment<E: Numeric, V: Numeric, N: Size>(
+        tile: &StridedTile<V, N>,
         fragment: &mut InterleavedFragment<E>,
         #[comptime] ident: StageIdent,
         #[comptime] config: InterleavedMatmulConfig,
@@ -22,7 +22,7 @@ impl InterleavedStageReader {
             config.elements_per_unit_k(),
         );
         let layout = comptime!(tile.layout);
-        let line_size = comptime!(tile.line_size as usize);
+        let vector_size = N::value();
 
         let unit_id = UNIT_POS_X as usize;
         let k_offset = k_local * unit_id;
@@ -38,26 +38,26 @@ impl InterleavedStageReader {
         let (strided_dim_offset, contiguous_dim_offset) = match (layout, ident) {
             // k is contiguous dim
             (MatrixLayout::RowMajor, StageIdent::Lhs)
-            | (MatrixLayout::ColMajor, StageIdent::Rhs) => (0, k_offset / line_size),
+            | (MatrixLayout::ColMajor, StageIdent::Rhs) => (0, k_offset / vector_size),
             // k is not contiguous dim
             (MatrixLayout::RowMajor, StageIdent::Rhs)
             | (MatrixLayout::ColMajor, StageIdent::Lhs) => (k_offset, 0),
             _ => unreachable!(),
         };
 
-        assert!(contiguous_dim_count % line_size == 0);
-        let line_count_in_dim = contiguous_dim_count / line_size;
+        assert!(contiguous_dim_count % vector_size == 0);
+        let vector_count_in_dim = contiguous_dim_count / vector_size;
 
         for i in 0..strided_dim_count {
-            for j in 0..line_count_in_dim {
-                let line = Line::cast_from(tile.get_line(
+            for j in 0..vector_count_in_dim {
+                let vector = Vector::<E, N>::cast_from(tile.get_vector(
                     (i + strided_dim_offset) as u32,
                     (j + contiguous_dim_offset) as u32,
                 ));
 
-                let line_start = i * contiguous_dim_count + j * line_size;
-                for l in 0..line_size {
-                    fragment.array[line_start + l] = line[l];
+                let vector_start = i * contiguous_dim_count + j * vector_size;
+                for l in 0..vector_size {
+                    fragment.array[vector_start + l] = vector[l];
                 }
             }
         }

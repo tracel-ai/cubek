@@ -29,7 +29,7 @@ impl<A: Numeric, B: Numeric, CD: Numeric> InnerMatmul for UnitMatmul<A, B, CD> {
         todo!()
     }
 
-    fn load_lhs<E: Numeric>(tile: &StridedTile<E>, fragment: &mut Self::Lhs) {
+    fn load_lhs<E: Numeric, ES: Size>(tile: &StridedTile<E, ES>, fragment: &mut Self::Lhs) {
         todo!()
     }
 
@@ -37,11 +37,11 @@ impl<A: Numeric, B: Numeric, CD: Numeric> InnerMatmul for UnitMatmul<A, B, CD> {
         todo!()
     }
 
-    fn load_rhs_plain<E: Float>(tile: &StridedTile<E>, fragment: &mut Self::Rhs) {
+    fn load_rhs_plain<E: Float, ES: Size>(tile: &StridedTile<E, ES>, fragment: &mut Self::Rhs) {
         todo!()
     }
 
-    fn load_rhs_transposed<E: Float>(tile: &StridedTile<E>, fragment: &mut Self::Rhs) {
+    fn load_rhs_transposed<E: Float, ES: Size>(tile: &StridedTile<E, ES>, fragment: &mut Self::Rhs) {
         todo!()
     }
 

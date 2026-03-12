@@ -45,21 +45,10 @@ impl TestCase {
             client.create_from_slice(TestDType::as_bytes(&[TestDType::from_int(0)]));
 
         let input = unsafe {
-            TensorBinding::from_raw_parts(
-                input_handle,
-                self.stride.clone(),
-                self.shape.clone(),
-                size_of::<TestDType>(),
-            )
+            TensorBinding::from_raw_parts(input_handle, self.stride.clone(), self.shape.clone())
         };
-        let output = unsafe {
-            TensorBinding::from_raw_parts(
-                output_handle.clone(),
-                strides![1],
-                shape![1],
-                size_of::<TestDType>(),
-            )
-        };
+        let output =
+            unsafe { TensorBinding::from_raw_parts(output_handle.clone(), strides![1], shape![1]) };
 
         let cube_count = 3;
         let result = shared_sum(

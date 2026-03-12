@@ -9,7 +9,7 @@ use crate::components::{
     stage::{StageConfig, StridedStageFamily},
 };
 use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
-use crate::definition::{LhsS, MatmulElems, MatmulPrecision, MatmulProblem, RhsS, StageIdent};
+use crate::definition::{LhsS, MatmulElems, MatmulProblem, MatmulTypes, RhsS, StageIdent};
 use crate::{
     components::global::read::{AsyncPartialLoadingStrategy, validate_tma_with_problem},
     launch::RuntimeConfig,
@@ -53,7 +53,7 @@ impl LoadMaxRoundPlaneCount for AsyncPartialTmaLoading {
     fn max_round_plane_count(
         _elements_per_tile: u32,
         _tiles_per_stage: u32,
-        _line_size: LineSize,
+        _vector_size: VectorSize,
         _plane_dim: u32,
         _dtype: StorageType,
     ) -> u32 {
@@ -68,14 +68,13 @@ impl<RC: RuntimeConfig> PartialLoadingStrategy<RC> for AsyncPartialTmaLoading {
     type Stage = StridedStageFamily;
     type TileKind = Strided;
 
-    type Job<EG: Numeric, ES: Numeric> = AsyncPartialTmaJob;
+    type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = AsyncPartialTmaJob;
 
-    fn new_job<EG: Numeric, ES: Numeric>(
+    fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
         #[comptime] stage_index: u32,
-        #[comptime] _line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
-    ) -> Self::Job<EG, ES> {
+    ) -> Self::Job<EG, NG, ES, NS> {
         let role_rule_config = config.plane_flow_config.partition_rule;
         let config = config.smem_config;
         let tile_count_col = match config.matrix_layout {
@@ -110,16 +109,16 @@ pub struct AsyncPartialTmaJob {
 }
 
 #[cube]
-impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, TmaTilingLayout, AsyncTma>
-    for AsyncPartialTmaJob
+impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
+    LoadingJob<EG, NG, ES, NS, TmaTilingLayout, AsyncTma> for AsyncPartialTmaJob
 {
     type Stage = StridedStageFamily;
 
     fn execute_task(
         this: &mut Self,
         #[comptime] task_id: u32,
-        global_iter: &GlobalIterator<Line<EG>>,
-        stage: &mut StridedStageMemory<ES, TmaTilingLayout>,
+        global_iter: &GlobalIterator<Vector<EG, NG>>,
+        stage: &mut StridedStageMemory<ES, NS, TmaTilingLayout>,
         barrier: &mut Shared<Barrier>,
         #[comptime] config: GlobalReaderConfig,
     ) {
@@ -148,7 +147,7 @@ impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, TmaTilingLayout, AsyncTma>
             .runtime();
 
             let global_view = global_iter.view();
-            let mut stage = stage.as_slice_mut(1usize);
+            let mut stage = stage.as_slice_mut::<Const<1>>();
             let slice_size = size_row * size_col;
 
             let slice_start = task_id * slice_size;
@@ -180,7 +179,7 @@ impl<RC: RuntimeConfig> AsyncPartialLoadingStrategy<RC> for AsyncPartialTmaLoadi
         sync_async_proxy_shared();
     }
 
-    fn arrive<MP: MatmulPrecision, S: StageConfig>(
+    fn arrive<MP: MatmulTypes, S: StageConfig>(
         barrier: &mut Barrier,
         #[comptime] config: SharedGlobalMatmulConfig<S>,
     ) {

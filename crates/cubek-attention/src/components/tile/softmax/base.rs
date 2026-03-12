@@ -65,8 +65,8 @@ pub trait Softmax<F: Float>: Send + Sync + 'static + Sized {
     ) -> Self::SoftmaxedTile;
 
     fn allocate_mask(#[comptime] config: Self::Config) -> Self::Mask;
-    fn load_mask<E: Numeric>(
-        tile: &StridedTile<E>,
+    fn load_mask<E: Numeric, ES: Size>(
+        tile: &StridedTile<E, ES>,
         fragment: &mut Self::Mask,
         #[comptime] config: Self::Config,
     );

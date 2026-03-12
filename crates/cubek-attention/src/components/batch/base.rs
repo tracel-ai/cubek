@@ -3,13 +3,13 @@ use cubecl::ir::DeviceProperties;
 use cubecl::prelude::*;
 use cubecl::std::tensor::r#virtual::VirtualTensor;
 
-use crate::components::global::GlobalAttentionConfig;
 use crate::definition::{
     AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError, CubeCountInput,
     InputRuntimeArg, OutputRuntimeArg,
 };
 use crate::definition::{CubeCountInputArgs, attention_types::*};
 use crate::launch::AttentionArgs;
+use crate::{components::global::GlobalAttentionConfig, definition::AttentionVectorSizes};
 use std::{fmt::Debug, hash::Hash};
 
 /// A family of [BatchAttention] implementations that operate with any [precision](AttentionPrecision).
@@ -27,15 +27,16 @@ pub trait BatchAttentionFamily: Send + Sync + 'static {
     ///
     /// Out-of-bounds can happen
     #[allow(clippy::too_many_arguments)]
-    unsafe fn launch_unchecked<'a, AA: AttentionArgs, R: Runtime>(
+    unsafe fn launch_unchecked<AA: AttentionArgs, R: Runtime>(
         client: &ComputeClient<R>,
         cube_dim: CubeDim,
         cube_count: CubeCount,
         address_type: AddressType,
-        input: InputRuntimeArg<'a, AA, R>,
-        output: OutputRuntimeArg<'a, AA, R>,
-        cube_count_input: CubeCountInputArgs<'a, R>,
+        input: InputRuntimeArg<AA, R>,
+        output: OutputRuntimeArg<AA, R>,
+        cube_count_input: CubeCountInputArgs<R>,
         dtypes: &AttentionElems,
+        vector_sizes: &AttentionVectorSizes,
         attention_blueprint: Self::Blueprint,
     ) -> Result<(), LaunchError>;
 
@@ -55,11 +56,11 @@ pub trait BatchAttention<AP: AttentionPrecision>: 'static + Send + Sync {
     type Config: BatchAttentionConfig;
 
     fn execute(
-        query: VirtualTensor<QG<AP>>,
-        key: VirtualTensor<KG<AP>>,
-        value: VirtualTensor<VG<AP>>,
-        mask: ComptimeOption<VirtualTensor<MSK<AP>>>,
-        out: VirtualTensor<OG<AP>, ReadWrite>,
+        query: VirtualTensor<QG<AP>, QGS<AP>>,
+        key: VirtualTensor<KG<AP>, KGS<AP>>,
+        value: VirtualTensor<VG<AP>, VGS<AP>>,
+        mask: ComptimeOption<VirtualTensor<MSK<AP>, MSKS<AP>>>,
+        out: VirtualTensor<OG<AP>, OGS<AP>, ReadWrite>,
         cube_count_args: CubeCountInput,
         #[comptime] config: Self::Config,
     );

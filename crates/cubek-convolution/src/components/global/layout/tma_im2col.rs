@@ -150,7 +150,7 @@ pub(crate) fn div_mod_seq(pos: u32, shape: &Sequence<FastDivmod<u32>>) -> (u32, 
     (offs, out.rev())
 }
 
-impl<'a, R: Runtime> TmaIm2colLayoutLaunch<'a, R> {
+impl<R: Runtime> TmaIm2colLayoutLaunch<R> {
     pub fn from_args(
         client: &ComputeClient<R>,
         problem: &ConvolutionProblem,
@@ -180,13 +180,13 @@ impl<'a, R: Runtime> TmaIm2colLayoutLaunch<'a, R> {
 
     fn from_args_lhs(
         problem: &ConvolutionProblem,
-        shape_out: SequenceArg<'a, R, FastDivmod<u32>>,
+        shape_out: SequenceArg<R, FastDivmod<u32>>,
         padded_channels: FastDivmodArgs<u32>,
         params: ConvolutionParams,
         check_kernel: bool,
     ) -> Self {
-        let shape_m = ScalarArg::new(problem.m as u32);
-        let shape_k = ScalarArg::new(problem.k as u32);
+        let shape_m = problem.m as u32;
+        let shape_k = problem.k as u32;
 
         TmaIm2colLayoutLaunch::new(
             shape_out,
@@ -200,13 +200,13 @@ impl<'a, R: Runtime> TmaIm2colLayoutLaunch<'a, R> {
 
     fn from_args_rhs(
         problem: &ConvolutionProblem,
-        shape_out: SequenceArg<'a, R, FastDivmod<u32>>,
+        shape_out: SequenceArg<R, FastDivmod<u32>>,
         padded_channels: FastDivmodArgs<u32>,
         params: ConvolutionParams,
         check_kernel: bool,
     ) -> Self {
-        let shape_k = ScalarArg::new(problem.k as u32);
-        let shape_n = ScalarArg::new(problem.n as u32);
+        let shape_k = problem.k as u32;
+        let shape_n = problem.n as u32;
 
         TmaIm2colLayoutLaunch::new(
             shape_out,

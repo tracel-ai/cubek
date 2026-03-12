@@ -16,12 +16,12 @@ use crate::components::global::memory::GlobalMemoryConfig;
 /// The caller must do the padding if necessary.
 #[cube]
 pub fn load_window_in_tile<EG: Numeric>(
-    view: &View<Line<EG>, Coords2d>,
+    view: &View<EG, Coords2d>,
     tile: Coords2d,
     nth_window: u32,
     #[comptime] smem_config: StageMemoryConfig,
     #[comptime] gmem_config: GlobalMemoryConfig,
-) -> Slice<Line<EG>> {
+) -> Slice<EG> {
     let (tile_row, tile_col) = tile;
     let tile_size_row = smem_config.elements_per_tile_along_row;
     let tile_size_col = smem_config.elements_per_tile_along_col;
@@ -51,12 +51,12 @@ pub fn load_window_in_tile<EG: Numeric>(
 /// If the slice would be partly out-of-bounds, it will simply be shorter.
 /// The caller must do the padding if necessary.
 #[cube]
-pub fn load_window_in_stage<EG: Numeric>(
-    view: &View<Line<EG>, Coords2d>,
+pub fn load_window_in_stage<EG: CubePrimitive>(
+    view: &View<EG, Coords2d>,
     nth_window: u32,
     #[comptime] smem_config: StageMemoryConfig,
     #[comptime] gmem_config: GlobalMemoryConfig,
-) -> Slice<Line<EG>> {
+) -> Slice<EG> {
     let size = match smem_config.matrix_layout {
         MatrixLayout::RowMajor => (1u32, smem_config.elements_per_stage_along_col()).runtime(),
         MatrixLayout::ColMajor => (smem_config.elements_per_stage_along_row(), 1u32).runtime(),
@@ -66,12 +66,12 @@ pub fn load_window_in_stage<EG: Numeric>(
 }
 
 #[cube]
-fn load_window<EG: Numeric>(
-    view: &View<Line<EG>, Coords2d>,
+fn load_window<EG: CubePrimitive>(
+    view: &View<EG, Coords2d>,
     nth_window: u32,
     size: Coords2d,
     #[comptime] gmem_config: GlobalMemoryConfig,
-) -> Slice<Line<EG>> {
+) -> Slice<EG> {
     let offset = match gmem_config.matrix_layout {
         MatrixLayout::RowMajor => (nth_window, 0),
         MatrixLayout::ColMajor => (0, nth_window),

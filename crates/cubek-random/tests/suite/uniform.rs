@@ -57,7 +57,7 @@ fn get_random_uniform_data(shape: &[usize], lower_bound: f32, upper_bound: f32) 
         lower_bound,
         upper_bound,
         output.clone().binding(),
-        TestDType::as_type_native_unchecked(),
+        TestDType::as_type_native_unchecked().storage_type(),
     )
     .unwrap();
 

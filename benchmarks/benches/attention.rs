@@ -66,7 +66,14 @@ impl<R: Runtime, AP: AttentionPrecision> Benchmark for AttentionBench<R, AP> {
         ) -> TensorHandle<R> {
             let dtype = T::as_type_native_unchecked();
             let tensor = TensorHandle::empty(client, shape, dtype);
-            random_uniform(client, 0., 1., tensor.clone().binding(), dtype).unwrap();
+            random_uniform(
+                client,
+                0.,
+                1.,
+                tensor.clone().binding(),
+                dtype.storage_type(),
+            )
+            .unwrap();
             tensor
         }
 

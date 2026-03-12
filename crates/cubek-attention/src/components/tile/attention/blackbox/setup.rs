@@ -1,5 +1,5 @@
 use cubecl::ir::DeviceProperties;
-use cubecl::ir::LineSize;
+use cubecl::ir::VectorSize;
 use cubek_matmul::components::CubeDimResource;
 use cubek_std::InvalidConfigError;
 
@@ -109,8 +109,7 @@ impl TileAttentionFamily for BlackboxAcceleratedTileAttention {
                     InnerLayout::Contiguous
                 },
             },
-            blueprint.reuse_key_value,
-            blueprint.line_sizes.mask,
+            blueprint.vector_sizes.mask,
             dtypes,
         )
     }
@@ -119,8 +118,7 @@ impl TileAttentionFamily for BlackboxAcceleratedTileAttention {
 fn validate(
     device_props: &DeviceProperties,
     config: BlackboxAcceleratedAttentionConfig,
-    reuse_key_value: bool,
-    line_sizes_mask: LineSize,
+    line_sizes_mask: VectorSize,
     dtypes: &AttentionElems,
 ) -> Result<BlackboxAcceleratedAttentionConfig, AttentionSetupError> {
     if dtypes.query_global != dtypes.query_tile {
@@ -196,12 +194,6 @@ fn validate(
     if config.shared.attention_tile_size.head_dim < config.shared.attention_tile_size.val_dim {
         return Err(AttentionSetupError::InvalidConfig(Box::new(
             "Can't have tile head_dim < tile val dim (not sure why)",
-        )));
-    }
-
-    if reuse_key_value {
-        return Err(AttentionSetupError::InvalidConfig(Box::new(
-            "Can't reuse key/value because the fragment is col major for key and row major for value",
         )));
     }
 

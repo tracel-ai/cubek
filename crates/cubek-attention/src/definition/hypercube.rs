@@ -34,10 +34,8 @@ impl CubeCountPlan {
     }
 
     /// Make a CubeCountInput from CubeCountPlan
-    pub fn as_args<'a, R: Runtime>(&self) -> CubeCountInputArgs<'a, R> {
-        CubeCountInputArgs::Tmp {
-            dummy: ScalarArg::new(0),
-        }
+    pub fn as_args<R: Runtime>(&self) -> CubeCountInputArgs<R> {
+        CubeCountInputArgs::Tmp { dummy: 0 }
     }
 }
 

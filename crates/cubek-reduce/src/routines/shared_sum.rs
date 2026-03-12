@@ -6,7 +6,7 @@ use cubecl::{
     },
 };
 use cubecl::{ir::ElemType, std::tensor::layout::linear::linear_view};
-use cubecl::{prelude::*, tensor_line_size_parallel};
+use cubecl::{prelude::*, tensor_vector_size_parallel};
 
 use crate::ReduceError;
 
@@ -75,18 +75,18 @@ pub fn shared_sum<R: Runtime>(
     }
 
     let input_len = input.shape.iter().product::<usize>();
-    let contiguous_buffer = input_len * input.elem_size == input.handle.size() as usize;
+    let contiguous_buffer = input_len * input_elem.size() == input.handle.size_in_used() as usize;
 
-    // Compute the optimal line size.
-    let line_size = if contiguous_buffer {
+    // Compute the optimal vector size.
+    let vector_size = if contiguous_buffer {
         client
-            .io_optimized_line_sizes(input.elem_size)
-            .filter(|line_size| input_len.is_multiple_of(*line_size))
+            .io_optimized_vector_sizes(input_elem.size())
+            .filter(|vector_size| input_len.is_multiple_of(*vector_size))
             .max()
             .unwrap_or(1)
     } else {
-        tensor_line_size_parallel(
-            client.io_optimized_line_sizes(input.elem_size),
+        tensor_vector_size_parallel(
+            client.io_optimized_vector_sizes(input_elem.size()),
             &input.shape,
             &input.strides,
             input.shape.len() - 1,
@@ -94,28 +94,25 @@ pub fn shared_sum<R: Runtime>(
     };
 
     let address_type = input
-        .required_address_type()
-        .max(output.required_address_type());
+        .required_address_type(input_elem.size())
+        .max(output.required_address_type(input_elem.size()));
 
     // Sum is commutative so we don't care about order, but need to care if there are holes since
     // they're not guaranteed to contain `0`.
     let input_view = if contiguous_buffer {
-        let layout = LinearLayoutArgs::Plain(PlainLayoutLaunch::new(ScalarArg::new(
-            input_len / line_size,
-        )));
-        let buffer = unsafe {
-            ArrayArg::from_raw_parts_binding(input.handle, input_len, line_size, input.elem_size)
-        };
+        let layout = LinearLayoutArgs::Plain(PlainLayoutLaunch::new(input_len / vector_size));
+        let buffer = unsafe { ArrayArg::from_raw_parts_binding(input.handle, input_len) };
         LinearViewLaunch::new::<LinearLayout>(buffer, layout)
     } else {
-        linear_view(client, input, line_size)
+        linear_view(client, input, vector_size)
     };
 
     // Compute extra parameters.
     let cube_dim = CubeDim::new_2d(32, 8); // NOTE: If you change that, keep the unit count a power of 2.
     let num_units = cube_count * cube_dim.num_elems();
-    let num_lines_per_unit = input_len.div_ceil(num_units as usize * line_size);
+    let num_vectors_per_unit = input_len.div_ceil(num_units as usize * vector_size);
     let cube_count = CubeCount::new_1d(cube_count);
+
     // Launch kernel
     unsafe {
         shared_sum_kernel::launch_unchecked(
@@ -123,11 +120,11 @@ pub fn shared_sum<R: Runtime>(
             cube_count,
             cube_dim,
             address_type,
+            vector_size,
             input_view,
-            output.into_tensor_arg(1),
+            output.into_tensor_arg(),
             cube_dim.num_elems() as usize,
-            line_size,
-            num_lines_per_unit,
+            num_vectors_per_unit,
             input_elem,
         )
     };
@@ -136,38 +133,37 @@ pub fn shared_sum<R: Runtime>(
 }
 
 #[cube(launch_unchecked, address_type = "dynamic")]
-fn shared_sum_kernel<N: Numeric>(
-    input: &LinearView<Line<N>>,
-    output: &mut Tensor<Atomic<N>>,
+fn shared_sum_kernel<T: Numeric, N: Size>(
+    input: &LinearView<Vector<T, N>>,
+    output: &mut Tensor<Atomic<T>>,
     #[comptime] shared_memory_size: usize,
-    #[comptime] line_size: LineSize,
-    #[comptime] num_lines_per_unit: usize,
-    #[define(N)] _dtype: ElemType,
+    #[comptime] num_vectors_per_unit: usize,
+    #[define(T)] _dtype: ElemType,
 ) {
-    let mut shared_memory = SharedMemory::new_lined(shared_memory_size, line_size);
-    shared_memory[UNIT_POS as usize] = Line::empty(line_size).fill(N::from_int(0));
+    let mut shared_memory = SharedMemory::new(shared_memory_size);
+    shared_memory[UNIT_POS as usize] = Vector::empty().fill(T::from_int(0));
 
-    // Each unit reduce `num_lines_per_unit` lines.
-    let start = ABSOLUTE_POS * num_lines_per_unit;
-    let end = start + num_lines_per_unit;
+    // Each unit reduce `num_vectors_per_unit` vectors.
+    let start = ABSOLUTE_POS * num_vectors_per_unit;
+    let end = start + num_vectors_per_unit;
 
     // Prevent out-of-bound access
     let start = select(start < input.shape(), start, input.shape());
     let end = select(end < input.shape(), end, input.shape());
 
-    // Each unit sum its lines.
+    // Each unit sum its vectors.
     for k in start..end {
         shared_memory[UNIT_POS as usize] += input[k];
     }
 
-    // Sum all lines within the shared_memory to a single line.
-    let line = sum_shared_memory(&mut shared_memory);
+    // Sum all vectors within the shared_memory to a single vector.
+    let vector = sum_shared_memory(&mut shared_memory);
 
-    // Sum all the elements within the line.
-    let sum = RuntimeCell::<N>::new(N::from_int(0));
+    // Sum all the elements within the vector.
+    let sum = RuntimeCell::<T>::new(T::from_int(0));
     #[unroll]
-    for k in 0..line_size {
-        let update = line[k] + sum.read();
+    for k in 0..N::value() {
+        let update = vector[k] + sum.read();
         sum.store(update);
     }
 
@@ -181,7 +177,9 @@ fn shared_sum_kernel<N: Numeric>(
 // See the documentation there for details.
 // Here we assume that `CUBE_DIM` is always a power of two.
 #[cube]
-fn sum_shared_memory<N: Numeric>(accumulator: &mut SharedMemory<Line<N>>) -> Line<N> {
+fn sum_shared_memory<T: Numeric, N: Size>(
+    accumulator: &mut SharedMemory<Vector<T, N>>,
+) -> Vector<T, N> {
     sync_cube();
     let mut num_active_units = CUBE_DIM;
     let mut jump = 1;

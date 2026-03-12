@@ -63,7 +63,11 @@ impl HostData {
 
         let data = match host_data_type {
             HostDataType::F32 => {
-                let handle = copy_casted(client, tensor_handle, f32::as_type_native_unchecked());
+                let handle = copy_casted(
+                    client,
+                    tensor_handle,
+                    f32::as_type_native_unchecked().storage_type(),
+                );
                 let data = f32::from_bytes(
                     &client.read_one_unchecked_tensor(handle.into_copy_descriptor()),
                 )
@@ -72,7 +76,11 @@ impl HostData {
                 HostDataVec::F32(data)
             }
             HostDataType::I32 => {
-                let handle = copy_casted(client, tensor_handle, i32::as_type_native_unchecked());
+                let handle = copy_casted(
+                    client,
+                    tensor_handle,
+                    i32::as_type_native_unchecked().storage_type(),
+                );
                 let data = i32::from_bytes(
                     &client.read_one_unchecked_tensor(handle.into_copy_descriptor()),
                 )
@@ -81,7 +89,11 @@ impl HostData {
                 HostDataVec::I32(data)
             }
             HostDataType::Bool => {
-                let handle = copy_casted(client, tensor_handle, u32::as_type_native_unchecked());
+                let handle = copy_casted(
+                    client,
+                    tensor_handle,
+                    u32::as_type_native_unchecked().storage_type(),
+                );
                 let data = u32::from_bytes(
                     &client.read_one_unchecked_tensor(handle.into_copy_descriptor()),
                 )

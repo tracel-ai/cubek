@@ -354,7 +354,7 @@ pub trait LoadMaxRoundPlaneCount {
     fn max_round_plane_count(
         elements_per_tile: u32,
         tiles_per_stage: u32,
-        line_size: LineSize,
+        vector_size: VectorSize,
         plane_dim: u32,
         dtype: StorageType,
     ) -> u32;

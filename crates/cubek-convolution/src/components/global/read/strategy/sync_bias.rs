@@ -24,7 +24,7 @@ use crate::components::stage::{
 
 #[derive(CubeType, Clone, Copy)]
 /// Loads the content of all tiles in the stage using all planes.
-/// Unit with pos X loads lines with indices X, X + NUM_UNITS, X + 2 * NUM_UNITS, ...
+/// Unit with pos X loads vectors with indices X, X + NUM_UNITS, X + 2 * NUM_UNITS, ...
 pub struct SyncBiasLoading {}
 
 impl LoadingValidation for SyncBiasLoading {
@@ -51,13 +51,13 @@ impl LoadMaxRoundPlaneCount for SyncBiasLoading {
     fn max_round_plane_count(
         elements_per_tile: u32,
         tiles_per_stage: u32,
-        line_size: LineSize,
+        vector_size: VectorSize,
         plane_dim: u32,
         _dtype: StorageType,
     ) -> u32 {
         let elements_per_stage = elements_per_tile * tiles_per_stage;
-        let num_lines = elements_per_stage / line_size as u32;
-        num_lines.div_ceil(plane_dim)
+        let num_vectors = elements_per_stage / vector_size as u32;
+        num_vectors.div_ceil(plane_dim)
     }
 }
 
@@ -65,34 +65,33 @@ impl LoadMaxRoundPlaneCount for SyncBiasLoading {
 impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncBiasLoading {
     type TilingLayout = NoTilingLayout;
     type SyncStrategy = Synchronous;
-    type Job<EG: Numeric, ES: Numeric> = SyncBiasJob;
+    type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = SyncBiasJob;
     type Stage = BiasStageFamily;
     type TileKind = Strided;
 
-    fn new_job<EG: Numeric, ES: Numeric>(
+    fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
-        #[comptime] line_size: LineSize,
         #[comptime] config: GlobalReaderConfig,
-    ) -> Self::Job<EG, ES> {
+    ) -> Self::Job<EG, NG, ES, NS> {
+        let vector_size = NG::value().comptime() as u32;
         let num_stage_elements = config.smem_config.elements_per_stage_along_contiguous_dim();
 
-        let num_stage_lines = num_stage_elements.div_ceil(line_size as u32);
+        let num_stage_vectors = num_stage_elements.div_ceil(vector_size);
         let total_units = config.loading_units_count();
-        let num_tasks_per_unit = num_stage_lines.div_ceil(total_units);
-        let balanced_workload = num_stage_lines.is_multiple_of(total_units);
-        let jump_length = total_units * line_size as u32;
+        let num_tasks_per_unit = num_stage_vectors.div_ceil(total_units);
+        let balanced_workload = num_stage_vectors.is_multiple_of(total_units);
+        let jump_length = total_units * vector_size;
 
         let unit_id = PlaneFlowPartition::new(config.plane_flow_config.partition_rule)
             .load_index(config.input_load_flow)
             * config.plane_dim
             + UNIT_POS_X;
-        let unit_position_base = unit_id * line_size as u32;
+        let unit_position_base = unit_id * vector_size;
 
         SyncBiasJob {
             unit_position_base,
             num_tasks_per_unit,
             jump_length,
-            line_size,
             balanced_workload,
             num_stage_elements,
         }
@@ -108,22 +107,22 @@ pub struct SyncBiasJob {
     #[cube(comptime)]
     jump_length: u32,
     #[cube(comptime)]
-    line_size: LineSize,
-    #[cube(comptime)]
     balanced_workload: bool,
     #[cube(comptime)]
     num_stage_elements: u32,
 }
 
 #[cube]
-impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, NoTilingLayout, Synchronous> for SyncBiasJob {
+impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
+    LoadingJob<EG, NG, ES, NS, NoTilingLayout, Synchronous> for SyncBiasJob
+{
     type Stage = BiasStageFamily;
 
     fn execute_task(
         this: &mut Self,
         #[comptime] task_id: u32,
-        global_iter: &GlobalIterator<Line<EG>>,
-        stage: &mut BiasStageMemory<ES>,
+        global_iter: &GlobalIterator<Vector<EG, NG>>,
+        stage: &mut BiasStageMemory<ES, NS>,
         _barrier: &mut (),
         #[comptime] _config: GlobalReaderConfig,
     ) {
@@ -131,10 +130,10 @@ impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, NoTilingLayout, Synchronous> f
 
         #[allow(clippy::collapsible_else_if)]
         if comptime!(this.balanced_workload) {
-            load_and_store_line::<EG, ES>(this, unit_position, global_iter, stage);
+            load_and_store_vector::<EG, NG, ES, NS>(unit_position, global_iter, stage);
         } else {
             if unit_position < this.num_stage_elements {
-                load_and_store_line::<EG, ES>(this, unit_position, global_iter, stage);
+                load_and_store_vector::<EG, NG, ES, NS>(unit_position, global_iter, stage);
             }
         }
     }
@@ -145,20 +144,18 @@ impl<EG: Numeric, ES: Numeric> LoadingJob<EG, ES, NoTilingLayout, Synchronous> f
 }
 
 #[cube]
-pub(crate) fn load_and_store_line<EG: Numeric, ES: Numeric>(
-    job: &SyncBiasJob,
+pub(crate) fn load_and_store_vector<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
     unit_position: u32,
-    global_iter: &GlobalIterator<Line<EG>>,
-    stage: &mut BiasStageMemory<ES>,
+    global_iter: &GlobalIterator<Vector<EG, NG>>,
+    stage: &mut BiasStageMemory<ES, NS>,
 ) {
-    let line_size = job.line_size;
-
     let view = global_iter.view();
 
-    let mut slice = stage.as_slice_mut(line_size);
+    let mut slice = stage.as_slice_mut();
 
-    let line_read = view.read_checked((0, unit_position));
-    let stage_offs = stage.swizzle.apply(unit_position, ES::type_size());
+    let type_size = Vector::<ES, NS>::type_size();
+    let vector_read = view.read_checked((0, unit_position));
+    let stage_offs = stage.swizzle.apply(unit_position, type_size);
 
-    slice[stage_offs as usize / job.line_size] = Line::cast_from(line_read);
+    slice[stage_offs as usize / NS::value()] = Vector::cast_from(vector_read);
 }

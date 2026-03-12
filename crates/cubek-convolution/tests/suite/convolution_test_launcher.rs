@@ -11,7 +11,7 @@ use cubek_convolution::{
     forward::args::{ConcreteArgs, ConcreteInputsFactory, ConcreteOutputFactory},
 };
 use cubek_matmul::{
-    definition::{AvailableLineSizes, MatmulSetupError},
+    definition::{AvailableVectorSizes, MatmulSetupError},
     launch::MatmulInputBinding,
 };
 use cubek_matmul::{
@@ -75,10 +75,12 @@ where
     problem.lhs_strides = lhs.strides.clone();
     problem.rhs_strides = rhs.strides.clone();
 
-    let line_sizes = AvailableLineSizes {
+    let vector_sizes = AvailableVectorSizes {
         lhs: vec![1],
         rhs: vec![1],
-        out: client.io_optimized_line_sizes(size_of::<P::EG>()).collect(),
+        out: client
+            .io_optimized_vector_sizes(size_of::<P::EG>())
+            .collect(),
     }
     .filter_lhs_with_tensor(&lhs.strides, &lhs.shape, problem.lhs_layout)
     .filter_rhs_with_tensor(&rhs.strides, &rhs.shape, problem.rhs_layout)
@@ -88,7 +90,7 @@ where
 
     let dtypes = MatmulElems::new_deprecated::<((P::EG, P::ES), (P::EG, P::ES), (P::EG, f32))>();
 
-    let device_settings = A::Routine::device_settings(&client, line_sizes);
+    let device_settings = A::Routine::device_settings(&client, vector_sizes);
     let expand_info = A::Routine::expand_blueprint(
         &problem.as_matmul_problem(),
         &device_settings,
@@ -100,28 +102,33 @@ where
         A::Routine::prepare(&problem.as_matmul_problem(), &device_settings, expand_info)?;
 
     let elem_size = size_of::<P::EG>();
-    let lhs_handle =
-        unsafe { TensorBinding::from_raw_parts(lhs.handle, lhs.strides, lhs.shape, elem_size) };
-    let rhs_handle =
-        unsafe { TensorBinding::from_raw_parts(rhs.handle, rhs.strides, rhs.shape, elem_size) };
+    let lhs_handle = unsafe { TensorBinding::from_raw_parts(lhs.handle, lhs.strides, lhs.shape) };
+    let rhs_handle = unsafe { TensorBinding::from_raw_parts(rhs.handle, rhs.strides, rhs.shape) };
     let out_handle = unsafe {
-        TensorBinding::from_raw_parts(
-            out.handle.clone(),
-            out.strides.clone(),
-            out.shape.clone(),
-            elem_size,
-        )
+        TensorBinding::from_raw_parts(out.handle.clone(), out.strides.clone(), out.shape.clone())
     };
 
     let op = ConvolutionOperation::Forward;
 
-    let lhs_handle =
-        A::correct_layout(&client, lhs_handle, P::EG::as_type_native_unchecked(), op).unwrap();
-    let rhs_handle =
-        A::correct_layout(&client, rhs_handle, P::EG::as_type_native_unchecked(), op).unwrap();
+    let lhs_handle = A::correct_layout(
+        &client,
+        lhs_handle,
+        P::EG::as_type_native_unchecked().storage_type(),
+        op,
+    )
+    .unwrap();
+    let rhs_handle = A::correct_layout(
+        &client,
+        rhs_handle,
+        P::EG::as_type_native_unchecked().storage_type(),
+        op,
+    )
+    .unwrap();
 
-    let lhs_handle = MatmulInputBinding::new(lhs_handle, P::EG::as_type_native_unchecked());
-    let rhs_handle = MatmulInputBinding::new(rhs_handle, P::EG::as_type_native_unchecked());
+    let lhs_handle =
+        MatmulInputBinding::new(lhs_handle, P::EG::as_type_native_unchecked().storage_type());
+    let rhs_handle =
+        MatmulInputBinding::new(rhs_handle, P::EG::as_type_native_unchecked().storage_type());
 
     let (inputs, runtime_args) = <InputArg<A::Args> as ConcreteInputsFactory<A::Routine>>::create(
         &client,
@@ -130,7 +137,7 @@ where
         None,
         &launch_info.blueprint,
         &problem,
-        &line_sizes,
+        &vector_sizes,
         &dtypes,
     );
     let output = <OutputArg<A::Args> as ConcreteOutputFactory<A::Routine>>::create(
@@ -138,7 +145,7 @@ where
         out_handle,
         &launch_info.blueprint,
         &problem,
-        &line_sizes,
+        &vector_sizes,
         &dtypes,
     );
 

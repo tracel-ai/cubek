@@ -17,7 +17,7 @@ use cubecl::{
 };
 use cubek_matmul::{
     components::global::memory::{NoopLayout, NoopLayoutLaunch, Transpose, TransposeLaunch},
-    definition::{Blueprint, MatmulElems, MatmulLineSizes, TilingBlueprint},
+    definition::{Blueprint, MatmulElems, MatmulVectorSizes, TilingBlueprint},
     launch::{
         MatmulArgs, MatmulInputBinding, TensorArgs, TensorInputs, TensorInputsLaunch,
         TensorMapArgs, TensorMapInputs, TensorMapInputsLaunch, TensorOutput, TensorOutputLaunch,
@@ -41,8 +41,8 @@ use crate::components::{
 
 pub trait ConcreteArgs<A: Routine<RuntimeArgs>>:
     MatmulArgs<
-        Input<NumericExpand<0>, NumericExpand<1>, NumericExpand<2>>: ConcreteInputsFactory<A>,
-        Output<NumericExpand<2>>: ConcreteOutputFactory<A>,
+        Input<Vector<NumericExpand<0>, SizeExpand<1>>, Vector<NumericExpand<2>, SizeExpand<3>>, Vector<NumericExpand<4>, SizeExpand<5>>>: ConcreteInputsFactory<A>,
+        Output<Vector<NumericExpand<4>, SizeExpand<5>>>: ConcreteOutputFactory<A>,
         Config = RuntimeArgs,
     >
 {
@@ -100,49 +100,50 @@ impl<A: Routine<RuntimeArgs, Blueprint = TilingBlueprint>> ConcreteArgs<A>
 /// output (not fused).
 pub trait ConcreteInputsFactory<A: Routine<RuntimeArgs>>: LaunchArg {
     #[allow(clippy::too_many_arguments)]
-    fn create<'a, R: Runtime>(
+    fn create<R: Runtime>(
         client: &ComputeClient<R>,
         input: MatmulInputBinding<R>,
         out_grad: MatmulInputBinding<R>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
         dtypes: &MatmulElems,
-    ) -> (Self::RuntimeArg<'a, R>, RuntimeArgsLaunch<'a, R>);
+    ) -> (Self::RuntimeArg<R>, RuntimeArgsLaunch<R>);
 }
 
 /// Create the output runtime arguments for a matmul kernel that works on concrete inputs and
 /// output (not fused).
 pub trait ConcreteOutputFactory<A: Routine<RuntimeArgs>>: LaunchArg {
-    fn create<'a, R: Runtime>(
+    fn create<R: Runtime>(
         client: &ComputeClient<R>,
         out: TensorBinding<R>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
-        line_sizes: &MatmulLineSizes,
-    ) -> Self::RuntimeArg<'a, R>;
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Self::RuntimeArg<R>;
 }
 
-impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs>> ConcreteInputsFactory<A>
-    for TensorInputs<Lhs, Rhs, EO>
+impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<RuntimeArgs>>
+    ConcreteInputsFactory<A> for TensorInputs<Lhs, Rhs, EO>
 {
-    fn create<'a, R: Runtime>(
+    fn create<R: Runtime>(
         client: &ComputeClient<R>,
         input: MatmulInputBinding<R>,
         out_grad: MatmulInputBinding<R>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
         _dtypes: &MatmulElems,
-    ) -> (Self::RuntimeArg<'a, R>, RuntimeArgsLaunch<'a, R>) {
+    ) -> (Self::RuntimeArg<R>, RuntimeArgsLaunch<R>) {
         type LhsLayout = Chain<NhwcLayout, Transpose<OutLayout>>;
         type RhsLayout = Chain<NhwcLayout, Im2colLayout>;
 
         let padded_channels = problem.padded_channels as u32;
         let params = ConvolutionParams::from_problem(problem);
 
-        let layout_nhwc =
-            |handle, line_size, checks| NhwcLayoutLaunch::from_handle(handle, line_size, checks);
+        let layout_nhwc = |handle, vector_size, checks| {
+            NhwcLayoutLaunch::from_handle(handle, vector_size, checks)
+        };
 
         let layout_lhs =
             OutLayoutLaunch::from_args(client, problem, blueprint.lhs_global_layout_config());
@@ -154,7 +155,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs>> ConcreteI
         );
 
         let layout_lhs = {
-            let global = layout_nhwc(out_grad.data(), line_sizes.lhs, EnumSet::empty());
+            let global = layout_nhwc(out_grad.data(), vector_sizes.lhs, EnumSet::empty());
             ChainLaunch::new(global, TransposeLaunch::new(layout_lhs))
         };
         let layout_rhs = {
@@ -165,25 +166,22 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs>> ConcreteI
             if problem.should_check_channel() {
                 checks.insert(NhwcCheck::Channel);
             }
-            let global = layout_nhwc(input.data(), line_sizes.rhs, checks);
+            let global = layout_nhwc(input.data(), vector_sizes.rhs, checks);
             ChainLaunch::new(global, layout_rhs)
         };
 
         let inputs = TensorInputsLaunch::new(
             VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new()),
-            ViewArg::new::<LhsLayout>(
-                out_grad.into_data().into_array_arg(line_sizes.lhs),
-                layout_lhs,
-            ),
+            ViewArg::new::<LhsLayout>(out_grad.into_data().into_array_arg(), layout_lhs),
             VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new()),
-            ViewArg::new::<RhsLayout>(input.into_data().into_array_arg(line_sizes.rhs), layout_rhs),
+            ViewArg::new::<RhsLayout>(input.into_data().into_array_arg(), layout_rhs),
             ComptimeOptionArgs::None,
             ComptimeOptionArgs::None,
         );
 
         let runtime_args = RuntimeArgsLaunch::new(
-            ScalarArg::new(problem.k as u32),
-            ScalarArg::new(problem.channels as u32),
+            problem.k as u32,
+            problem.channels as u32,
             FastDivmodArgs::<u32>::new(client, padded_channels),
             problem.operation,
         );
@@ -192,14 +190,14 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs>> ConcreteI
     }
 }
 
-impl<EG: Numeric, A: Routine<RuntimeArgs>> ConcreteOutputFactory<A> for TensorOutput<EG> {
-    fn create<'a, R: Runtime>(
+impl<EG: CubePrimitive, A: Routine<RuntimeArgs>> ConcreteOutputFactory<A> for TensorOutput<EG> {
+    fn create<R: Runtime>(
         client: &ComputeClient<R>,
         out: TensorBinding<R>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
-        line_sizes: &MatmulLineSizes,
-    ) -> Self::RuntimeArg<'a, R> {
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Self::RuntimeArg<R> {
         // Weight layout assumes col-major so it's technically "transposed" when it's row-major.
         // Should look into maybe inverting this and using `Transpose` for forward instead.
         type Layout = Chain<NhwcLayout, Transpose<WeightLayout>>;
@@ -208,28 +206,32 @@ impl<EG: Numeric, A: Routine<RuntimeArgs>> ConcreteOutputFactory<A> for TensorOu
         if problem.should_check_channel() {
             checks.insert(NhwcCheck::Channel);
         }
-        let global = NhwcLayoutLaunch::from_handle(&out, line_sizes.out, checks);
+        let global = NhwcLayoutLaunch::from_handle(&out, vector_sizes.out, checks);
         let layout =
             WeightLayoutLaunch::from_args(client, problem, blueprint.out_global_layout_config());
         let layout = ChainLaunch::new(global, TransposeLaunch::new(layout));
-        let view = ViewArg::new::<Layout>(out.into_array_arg(line_sizes.out), layout);
+        let view = ViewArg::new::<Layout>(out.into_array_arg(), layout);
         let batch = VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new());
         TensorOutputLaunch::new(view, batch)
     }
 }
 
-impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint = TilingBlueprint>>
-    ConcreteInputsFactory<A> for TensorMapInputs<Lhs, Rhs, EO>
+impl<
+    Lhs: CubePrimitive,
+    Rhs: CubePrimitive,
+    EO: CubePrimitive,
+    A: Routine<RuntimeArgs, Blueprint = TilingBlueprint>,
+> ConcreteInputsFactory<A> for TensorMapInputs<Lhs, Rhs, EO>
 {
-    fn create<'a, R: Runtime>(
+    fn create<R: Runtime>(
         client: &ComputeClient<R>,
         input: MatmulInputBinding<R>,
         out_grad: MatmulInputBinding<R>,
         blueprint: &TilingBlueprint,
         problem: &ConvolutionProblem,
-        line_sizes: &MatmulLineSizes,
+        _vector_sizes: &MatmulVectorSizes,
         dtypes: &MatmulElems,
-    ) -> (Self::RuntimeArg<'a, R>, RuntimeArgsLaunch<'a, R>) {
+    ) -> (Self::RuntimeArg<R>, RuntimeArgsLaunch<R>) {
         type LhsLayout = Transpose<TmaOutGradLayout>;
         type RhsLayout = TmaIm2colLayout;
 
@@ -248,13 +250,13 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
 
         // f32 gets remapped to tf32 for the tensor map just to ensure CUDA loads them correctly.
         // It shouldn't matter, but it's better to be safe.
-        let lhs_elem = if dtypes.lhs_stage == f32::as_type_native_unchecked() {
-            tf32::as_type_native_unchecked()
+        let lhs_elem = if dtypes.lhs_stage == f32::as_type_native_unchecked().storage_type() {
+            tf32::as_type_native_unchecked().storage_type()
         } else {
             dtypes.lhs_stage
         };
-        let rhs_elem = if dtypes.rhs_stage == f32::as_type_native_unchecked() {
-            tf32::as_type_native_unchecked()
+        let rhs_elem = if dtypes.rhs_stage == f32::as_type_native_unchecked().storage_type() {
+            tf32::as_type_native_unchecked().storage_type()
         } else {
             dtypes.rhs_stage
         };
@@ -285,7 +287,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
         };
 
         let lhs = TensorMapArg {
-            tensor: out_grad.clone().into_data().into_tensor_arg(line_sizes.lhs),
+            tensor: out_grad.clone().into_data().into_tensor_arg(),
             metadata: lhs_meta,
             _kind: core::marker::PhantomData,
         };
@@ -306,7 +308,7 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
                 channels_per_pixel,
                 pixels_per_column: stage_k,
             },
-            input.into_data().into_tensor_arg(line_sizes.rhs),
+            input.into_data().into_tensor_arg(),
             rhs_elem,
         )
         .with_elem_stride(elem_stride)
@@ -336,8 +338,8 @@ impl<Lhs: Numeric, Rhs: Numeric, EO: Numeric, A: Routine<RuntimeArgs, Blueprint 
         );
 
         let runtime_args = RuntimeArgsLaunch::new(
-            ScalarArg::new(shape_k),
-            ScalarArg::new(problem.channels as u32),
+            shape_k,
+            problem.channels as u32,
             FastDivmodArgs::<u32>::new(client, padded_channels),
             problem.operation,
         );

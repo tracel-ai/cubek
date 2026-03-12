@@ -21,8 +21,8 @@ pub struct AttentionGlobalLayout {
 #[cube]
 impl AttentionGlobalLayout {
     /// Creates a new 2D layout starting at `batch_index`.
-    pub fn new<T: Numeric, IO: Clone>(
-        tensor: &VirtualTensor<T, IO>,
+    pub fn new<T: Numeric, N: Size, IO: Clone>(
+        tensor: &VirtualTensor<T, N, IO>,
         batch_index: u32,
         #[comptime] config: GlobalMemoryConfig,
     ) -> Self {
@@ -44,12 +44,12 @@ impl Layout for AttentionGlobalLayout {
     type SourceCoordinates = Coords1d;
 
     fn to_source_pos(&self, coords: Self::Coordinates) -> usize {
-        let line_size = self.config.line_size.comptime();
+        let vector_size = self.config.vector_size.comptime();
         let (row, col) = coords;
         let idx =
             self.batch_offset + row as usize * self.stride_row + col as usize * self.stride_col;
 
-        idx / line_size
+        idx / vector_size
     }
 
     fn to_source_pos_checked(&self, coords: Self::Coordinates) -> (usize, bool) {

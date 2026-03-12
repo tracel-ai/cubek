@@ -22,31 +22,30 @@ impl RandomFamily for UniformFamily {
 
 #[cube]
 impl PrngRuntime for Uniform {
-    fn inner_loop<E: Numeric>(
+    fn inner_loop<E: Numeric, N: Size>(
         args: Uniform,
         write_index_base: usize,
         n_invocations: u32,
         #[comptime] n_values_per_thread: usize,
-        #[comptime] line_size: LineSize,
         state_0: &mut u32,
         state_1: &mut u32,
         state_2: &mut u32,
         state_3: &mut u32,
-        output: &mut View<Line<E>, usize, ReadWrite>,
+        output: &mut View<Vector<E, N>, usize, ReadWrite>,
     ) {
         let lower_bound = args.lower_bound;
         let upper_bound = args.upper_bound;
 
         let scale = upper_bound - lower_bound;
 
-        let mut output_line = Line::empty(line_size);
+        let mut output_vector = Vector::empty();
 
-        let num_iterations = n_values_per_thread / line_size;
+        let num_iterations = n_values_per_thread / N::value();
         #[unroll(num_iterations <= 8)]
-        for line_index in 0..num_iterations {
+        for vector_index in 0..num_iterations {
             // vectorization
             #[unroll]
-            for i in 0..line_size {
+            for i in 0..N::value() {
                 *state_0 = taus_step_0(*state_0);
                 *state_1 = taus_step_1(*state_1);
                 *state_2 = taus_step_2(*state_2);
@@ -59,12 +58,12 @@ impl PrngRuntime for Uniform {
 
                 let uniform = E::cast_from(f32_uniform);
 
-                output_line[i] = uniform;
+                output_vector[i] = uniform;
             }
 
-            let write_index = line_index * n_invocations as usize + write_index_base;
+            let write_index = vector_index * n_invocations as usize + write_index_base;
 
-            output[write_index] = output_line;
+            output[write_index] = output_vector;
         }
     }
 }
@@ -72,11 +71,8 @@ impl PrngRuntime for Uniform {
 impl PrngArgs for Uniform {
     type Args = Self;
 
-    fn args<'a, R: Runtime>(self) -> UniformLaunch<'a, R> {
-        UniformLaunch::new(
-            ScalarArg::new(self.lower_bound),
-            ScalarArg::new(self.upper_bound),
-        )
+    fn args<R: Runtime>(self) -> UniformLaunch<R> {
+        UniformLaunch::new(self.lower_bound, self.upper_bound)
     }
 }
 
@@ -88,12 +84,6 @@ pub fn random_uniform<R: Runtime>(
     out: TensorBinding<R>,
     dtype: StorageType,
 ) -> Result<(), LaunchError> {
-    assert_eq!(
-        out.elem_size,
-        dtype.size(),
-        "Tensor element type must be the same as type E"
-    );
-
     random::<UniformFamily, R>(
         client,
         Uniform {

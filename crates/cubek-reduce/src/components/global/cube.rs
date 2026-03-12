@@ -1,6 +1,7 @@
 use crate::{
-    LineMode, ReduceInstruction, ReducePrecision,
+    ReduceInstruction, ReducePrecision, VectorizationMode,
     components::{
+        args::NumericLine,
         global::idle_check,
         instructions::{SharedAccumulator, fuse_accumulator_inplace, reduce_inplace},
         readers::{Reader, cube::CubeReader},
@@ -15,22 +16,21 @@ pub struct GlobalFullCubeReduce;
 
 #[cube]
 impl GlobalFullCubeReduce {
-    pub fn execute<P: ReducePrecision, Out: Numeric, I: ReduceInstruction<P>>(
-        input: &VirtualTensor<P::EI>,
-        output: &mut VirtualTensor<Out, ReadWrite>,
+    pub fn execute<P: ReducePrecision, Out: NumericLine, I: ReduceInstruction<P>>(
+        input: &VirtualTensor<P::EI, P::SI>,
+        output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         reduce_axis: usize,
         inst: &I,
-        #[comptime] line_mode: LineMode,
+        #[comptime] vectorization_mode: VectorizationMode,
         #[comptime] blueprint: CubeBlueprint,
     ) {
         let write_index = CUBE_POS;
 
-        let input_line_size = input.line_size();
         let accumulator_size = blueprint.num_shared_accumulators;
         let worker_pos = Self::worker_pos(blueprint);
 
         let mut writer =
-            Writer::<Out>::new::<P>(input, output, reduce_axis, write_index, line_mode);
+            Writer::<Out>::new::<P>(input, output, reduce_axis, write_index, vectorization_mode);
 
         let write_count = writer.write_count();
 
@@ -40,7 +40,7 @@ impl GlobalFullCubeReduce {
             input,
             output,
             reduce_index_start,
-            line_mode,
+            vectorization_mode,
             blueprint.cube_idle,
         );
 
@@ -54,11 +54,11 @@ impl GlobalFullCubeReduce {
                 reduce_index,
                 inst,
                 idle,
-                line_mode,
+                vectorization_mode,
                 blueprint,
             );
 
-            let mut accumulator_final = I::null_accumulator(inst, input_line_size);
+            let mut accumulator_final = I::null_accumulator(inst);
 
             match blueprint.use_planes {
                 true => {
@@ -105,18 +105,16 @@ impl GlobalFullCubeReduce {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn reduce_shared<P: ReducePrecision, Out: Numeric, I: ReduceInstruction<P>>(
-        input: &VirtualTensor<P::EI>,
-        output: &mut VirtualTensor<Out, ReadWrite>,
+    fn reduce_shared<P: ReducePrecision, Out: NumericLine, I: ReduceInstruction<P>>(
+        input: &VirtualTensor<P::EI, P::SI>,
+        output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         reduce_axis: usize,
         reduce_index: usize,
         inst: &I,
         idle: ComptimeOption<bool>,
-        #[comptime] line_mode: LineMode,
+        #[comptime] vectorization_mode: VectorizationMode,
         #[comptime] blueprint: CubeBlueprint,
     ) -> I::SharedAccumulator {
-        let input_line_size = input.line_size();
-
         let reader = Reader::<P>::new::<I, Out>(
             input,
             output,
@@ -125,10 +123,10 @@ impl GlobalFullCubeReduce {
             reduce_index,
             idle,
             blueprint.bound_checks,
-            line_mode,
+            vectorization_mode,
         );
         let reader = CubeReader::<P>::new(reader);
-        let mut accumulator = I::null_accumulator(inst, input_line_size);
+        let mut accumulator = I::null_accumulator(inst);
 
         for i in 0..reader.length() {
             let (item, coordinate) = reader.read(i);
@@ -141,7 +139,7 @@ impl GlobalFullCubeReduce {
             true => {
                 // Sync at the plane level.
                 let (item, coordinate) = I::read_accumulator(inst, &accumulator);
-                let mut accumulator_plane = I::null_accumulator(inst, input_line_size);
+                let mut accumulator_plane = I::null_accumulator(inst);
                 reduce_inplace::<P, I>(inst, &mut accumulator_plane, item, coordinate, true);
                 accumulator_plane
             }
@@ -151,11 +149,8 @@ impl GlobalFullCubeReduce {
         // Sync at the cube level.
         let accumulator_size = blueprint.num_shared_accumulators;
         let requirements = I::requirements(inst);
-        let mut accumulator_shared = I::SharedAccumulator::allocate(
-            accumulator_size,
-            input_line_size,
-            requirements.coordinates,
-        );
+        let mut accumulator_shared =
+            I::SharedAccumulator::allocate(accumulator_size, requirements.coordinates);
 
         I::SharedAccumulator::write(&mut accumulator_shared, worker_pos, accumulator_plane);
 

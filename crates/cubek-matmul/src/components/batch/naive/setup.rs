@@ -18,8 +18,8 @@ use crate::{
         stage::NumStages,
     },
     definition::{
-        Blueprint, CubeMappingLaunch, MatmulElems, MatmulLineSizes, MatmulPrecision, MatmulProblem,
-        MatmulSetupError,
+        Blueprint, CubeMappingLaunch, MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes,
+        MatmulVectorSizes,
     },
     launch::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
 };
@@ -28,7 +28,7 @@ use crate::{
 pub struct NaiveBatchMatmulFamily {}
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct NaiveBlueprint {
-    pub line_size_out: u32,
+    pub vector_size_out: u32,
     pub dtypes: MatmulElems,
 }
 
@@ -59,7 +59,7 @@ impl Blueprint for NaiveBlueprint {
 }
 
 impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
-    type Matmul<MP: MatmulPrecision> = NaiveMatmul<MP>;
+    type Matmul<MP: MatmulTypes> = NaiveMatmul<MP>;
     type Config = NaiveMatmulConfig;
     type Blueprint = NaiveBlueprint;
 
@@ -67,7 +67,7 @@ impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
         _device_props: &DeviceProperties,
         _blueprint: &Self::Blueprint,
         _dtypes: &MatmulElems,
-        _line_sizes: &MatmulLineSizes,
+        _vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
         Ok(NaiveMatmulConfig {})
     }
@@ -81,12 +81,13 @@ impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
         cube_dim: CubeDim,
         cube_count: CubeCount,
         address_type: AddressType,
-        input: InputRuntimeArg<'a, MA, R>,
-        output: OutputRuntimeArg<'a, MA, R>,
-        _config: ConfigRuntimeArg<'a, MA, R>,
-        cube_mapping: CubeMappingLaunch<'a, R>,
+        input: InputRuntimeArg<MA, R>,
+        output: OutputRuntimeArg<MA, R>,
+        _config: ConfigRuntimeArg<MA, R>,
+        cube_mapping: CubeMappingLaunch<R>,
         blueprint: NaiveBlueprint,
         dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), LaunchError> {
         unsafe {
             matmul_entry::launch_unchecked::<MA, R>(
@@ -100,12 +101,7 @@ impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
                 cube_mapping,
                 blueprint,
                 [dtypes.lhs_global, dtypes.rhs_global, dtypes.acc_global],
-                [dtypes.lhs_stage, dtypes.rhs_stage, dtypes.acc_stage],
-                [
-                    dtypes.lhs_register,
-                    dtypes.rhs_register,
-                    dtypes.acc_register,
-                ],
+                [vector_sizes.lhs, vector_sizes.rhs, vector_sizes.out],
             )
         };
 
@@ -115,7 +111,7 @@ impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
     fn cubedim_resource(
         _blueprint: &Self::Blueprint,
         _dtypes: &MatmulElems,
-        _line_sizes: &MatmulLineSizes,
+        _vector_sizes: &MatmulVectorSizes,
     ) -> Result<CubeDimResource, MatmulSetupError> {
         // Could be moved to blueprint to be less hard coded
         Ok(CubeDimResource::Planes(8))
@@ -126,21 +122,21 @@ impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
         _dtypes: &MatmulElems,
-        line_sizes: &MatmulLineSizes,
+        vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
-        if blueprint.line_size_out > 1 {
+        if blueprint.vector_size_out > 1 {
             return Err(MatmulSetupError::InvalidConfig(Box::new(
-                "Line size on output not supported",
+                "Vector size on output not supported",
             )));
         }
 
         if let Some(scheme) = problem.lhs_scheme
             && let QuantLevel::Block(block_size) = scheme.level
         {
-            let line_size = line_sizes.lhs * scheme.num_quants();
+            let vector_size = vector_sizes.lhs * scheme.num_quants();
             let block_size = block_size.to_dim_vec(2.max(block_size.len()));
             let block_width = block_size[block_size.len() - 1] as usize;
-            if !block_width.is_multiple_of(line_size) {
+            if !block_width.is_multiple_of(vector_size) {
                 return Err(MatmulSetupError::InvalidConfig(Box::new(
                     "Block size isn't a multiple of load size on lhs",
                 )));
@@ -150,10 +146,10 @@ impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
         if let Some(scheme) = problem.rhs_scheme
             && let QuantLevel::Block(block_size) = scheme.level
         {
-            let line_size = line_sizes.rhs * scheme.num_quants();
+            let vector_size = vector_sizes.rhs * scheme.num_quants();
             let block_size = block_size.to_dim_vec(2.max(block_size.len()));
             let block_width = block_size[block_size.len() - 2] as usize;
-            if !block_width.is_multiple_of(line_size) {
+            if !block_width.is_multiple_of(vector_size) {
                 return Err(MatmulSetupError::InvalidConfig(Box::new(
                     "Block size isn't a multiple of load size on rhs",
                 )));
