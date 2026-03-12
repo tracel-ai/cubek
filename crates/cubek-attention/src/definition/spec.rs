@@ -263,25 +263,26 @@ impl<
 /// Input argument
 pub type InputArg<AA> = <AA as AttentionArgs>::Input<
     (
-        NumericExpand<0>, // QG
-        SizeExpand<1>,    // QGS
+        NumericExpand<Const<0>>, // QG
+        SizeExpand<Const<1>>,    // QGS
     ),
     (
-        NumericExpand<2>, // KG
-        SizeExpand<3>,    // KGS
+        NumericExpand<Const<2>>, // KG
+        SizeExpand<Const<3>>,    // KGS
     ),
     (
-        NumericExpand<4>, // VG
-        SizeExpand<5>,    // VGS
+        NumericExpand<Const<4>>, // VG
+        SizeExpand<Const<5>>,    // VGS
     ),
     (
-        NumericExpand<6>, // MSK
-        SizeExpand<7>,    // MSKS
+        NumericExpand<Const<6>>, // MSK
+        SizeExpand<Const<7>>,    // MSKS
     ),
 >;
 
 /// Output argument
-pub type OutputArg<AA> = <AA as AttentionArgs>::Output<(NumericExpand<8>, SizeExpand<9>)>; // OG, OGS
+pub type OutputArg<AA> =
+    <AA as AttentionArgs>::Output<(NumericExpand<Const<8>>, SizeExpand<Const<9>>)>; // OG, OGS
 
 /// Input runtime argument
 pub type InputRuntimeArg<AA, R> = <InputArg<AA> as LaunchArg>::RuntimeArg<R>;
