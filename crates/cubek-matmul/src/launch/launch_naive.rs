@@ -85,6 +85,15 @@ pub fn launch_ref<R: Runtime>(
         out: 1,
     };
 
+    let mut view_vector_sizes = vector_sizes;
+
+    if let MatmulInputBinding::Quantized { scheme, .. } = lhs {
+        view_vector_sizes.lhs *= scheme.num_quants();
+    }
+    if let MatmulInputBinding::Quantized { scheme, .. } = rhs {
+        view_vector_sizes.rhs *= scheme.num_quants();
+    }
+
     let address_type = lhs
         .required_address_type()
         .max(rhs.required_address_type())
@@ -103,7 +112,7 @@ pub fn launch_ref<R: Runtime>(
         rhs.scheme(),
     )?;
 
-    let device_settings = NaiveRoutine::device_settings(client, vector_sizes);
+    let device_settings = NaiveRoutine::device_settings(client, view_vector_sizes);
     let expand_info = NaiveRoutine::expand_blueprint(
         &problem,
         &device_settings,
@@ -140,6 +149,6 @@ pub fn launch_ref<R: Runtime>(
         launch_info.cube_count_plan.as_args(),
         launch_info.blueprint,
         dtypes,
-        &vector_sizes,
+        &launch_info.vector_sizes,
     )
 }
