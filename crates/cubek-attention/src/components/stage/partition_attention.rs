@@ -109,8 +109,7 @@ impl<
                 // Contrary to loop for value matmul, all iterations are accumulated into the same tile
                 for hd in 0..p.head_dim as usize {
                     // Get the q,hd-th query which is always in registers
-                    let query_tile =
-                        query_partition.get(q, hd, config.tile_size().head_dim as usize);
+                    let query_tile = query_partition.get(q, hd, p.head_dim as usize);
 
                     // Get the only key-value tile and fill it with hd,kv-th key data
                     let key_tile = key_partition.get_mut();
@@ -152,7 +151,7 @@ impl<
                     TA::ValueMatmul::load_rhs(&value_data, &mut value_tile.fragment);
 
                     // Scale the q,vd-th accumulator and scale it with previously obtained scale
-                    let partition_val_dim = config.shared().partition_size.val_dim as usize;
+                    let partition_val_dim = p.val_dim as usize;
                     output_partition.scale_mul_at(
                         &scale,
                         q,
