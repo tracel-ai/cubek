@@ -1,10 +1,9 @@
 use cubecl::{
-    flex32,
-    prelude::{Numeric, Size, SizeExpand},
+    define_size, flex32,
+    prelude::{Numeric, Size},
 };
 
-pub struct _S;
-type S = SizeExpand<_S>;
+define_size!(S);
 
 /// Precision used for the reduction.
 pub trait ReducePrecision {
