@@ -16,7 +16,7 @@ use crate::{
     components::batch::partitioned_matmul::config::PartitionedBatchConfig, launch::RuntimeConfig,
 };
 
-#[cube(launch_unchecked, address_type = "dynamic")]
+#[cube(launch_unchecked, explicit_define, address_type = "dynamic")]
 #[allow(clippy::type_complexity)]
 /// Launches the matmul kernel
 pub(crate) fn matmul_entry<

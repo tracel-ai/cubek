@@ -12,7 +12,7 @@ use crate::definition::MatmulProblem;
 use crate::definition::MatmulVectorSizes;
 use crate::definition::TilingBlueprint;
 use crate::definition::{MatmulElems, MatmulSetupError, MatmulTypes};
-use crate::launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
+use crate::launch::*;
 use crate::{components::CubeDimResource, launch::RuntimeConfig};
 use crate::{components::batch::BatchMatmulFamily, launch::ConfigRuntimeArg};
 use cubecl::{ir::DeviceProperties, prelude::*};
@@ -67,7 +67,7 @@ impl<RC: RuntimeConfig, GMM: GlobalMatmulFamily<RC>, S: GlobalPartitionMatmul> B
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), LaunchError> {
         unsafe {
-            matmul_entry::launch_unchecked::<MA, GMM, S, R>(
+            matmul_entry::launch_unchecked::<MA, Lhs, LhsSize, Rhs, RhsSize, Acc, AccSize, GMM, S, R>(
                 client,
                 cube_count,
                 cube_dim,

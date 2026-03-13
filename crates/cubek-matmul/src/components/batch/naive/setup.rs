@@ -21,7 +21,7 @@ use crate::{
         Blueprint, CubeMappingLaunch, MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes,
         MatmulVectorSizes,
     },
-    launch::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
+    launch::*,
 };
 
 /// Simple partitioned batch matmul family for any precision
@@ -90,7 +90,7 @@ impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), LaunchError> {
         unsafe {
-            matmul_entry::launch_unchecked::<MA, R>(
+            matmul_entry::launch_unchecked::<MA, Lhs, LhsSize, Rhs, RhsSize, Acc, AccSize, R>(
                 client,
                 cube_count,
                 cube_dim,

@@ -23,16 +23,20 @@ use crate::definition::{
 use crate::launch::handle::MatmulInputBinding;
 use crate::routines::Routine;
 
+define_scalar!(pub Lhs);
+define_scalar!(pub Rhs);
+define_scalar!(pub Acc);
+
+define_size!(pub LhsSize);
+define_size!(pub RhsSize);
+define_size!(pub AccSize);
+
 /// Input argument
-pub type InputArg<MA> = <MA as MatmulArgs>::Input<
-    Vector<DynamicScalar<Const<0>>, DynamicSize<Const<1>>>,
-    Vector<DynamicScalar<Const<2>>, DynamicSize<Const<3>>>,
-    Vector<DynamicScalar<Const<4>>, DynamicSize<Const<5>>>,
->;
+pub type InputArg<MA> =
+    <MA as MatmulArgs>::Input<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>;
 
 /// Output argument
-pub type OutputArg<MA> =
-    <MA as MatmulArgs>::Output<Vector<DynamicScalar<Const<4>>, DynamicSize<Const<5>>>>;
+pub type OutputArg<MA> = <MA as MatmulArgs>::Output<Vector<Acc, AccSize>>;
 
 /// Config argument
 pub type ConfigArg<MA> = <MA as MatmulArgs>::Config;

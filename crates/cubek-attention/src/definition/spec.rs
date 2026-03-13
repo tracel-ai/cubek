@@ -260,29 +260,30 @@ impl<
     type Out = (OG, OGS, OS, OSS);
 }
 
-/// Input argument
-pub type InputArg<AA> = <AA as AttentionArgs>::Input<
-    (
-        DynamicScalar<Const<0>>, // QG
-        DynamicSize<Const<1>>,   // QGS
-    ),
-    (
-        DynamicScalar<Const<2>>, // KG
-        DynamicSize<Const<3>>,   // KGS
-    ),
-    (
-        DynamicScalar<Const<4>>, // VG
-        DynamicSize<Const<5>>,   // VGS
-    ),
-    (
-        DynamicScalar<Const<6>>, // MSK
-        DynamicSize<Const<7>>,   // MSKS
-    ),
->;
+pub mod launch_types {
+    use super::*;
 
-/// Output argument
-pub type OutputArg<AA> =
-    <AA as AttentionArgs>::Output<(DynamicScalar<Const<8>>, DynamicSize<Const<9>>)>; // OG, OGS
+    define_scalar!(pub QG);
+    define_scalar!(pub KG);
+    define_scalar!(pub VG);
+    define_scalar!(pub MSK);
+    define_scalar!(pub OG);
+
+    define_size!(pub QGS);
+    define_size!(pub KGS);
+    define_size!(pub VGS);
+    define_size!(pub MSKS);
+    define_size!(pub OGS);
+
+    /// Input argument
+    pub type InputArg<AA> =
+        <AA as AttentionArgs>::Input<(QG, QGS), (KG, KGS), (VG, VGS), (MSK, MSKS)>;
+
+    /// Output argument
+    pub type OutputArg<AA> = <AA as AttentionArgs>::Output<(OG, OGS)>;
+}
+
+pub use launch_types::{InputArg, OutputArg};
 
 /// Input runtime argument
 pub type InputRuntimeArg<AA, R> = <InputArg<AA> as LaunchArg>::RuntimeArg<R>;

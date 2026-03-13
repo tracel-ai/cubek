@@ -15,7 +15,7 @@ use cubecl::std::tensor::layout::Coords2d;
 use cubecl::{cube, num_traits::Zero};
 use cubek_std::MatrixLayout;
 
-#[cube(launch_unchecked, address_type = "dynamic")]
+#[cube(launch_unchecked, explicit_define, address_type = "dynamic")]
 #[allow(clippy::type_complexity)]
 /// Launches the matmul kernel
 pub(crate) fn matmul_entry<
