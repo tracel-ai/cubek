@@ -58,10 +58,7 @@ impl<A: Numeric, B: Numeric, CD: Numeric> InnerMatmul for UnitMatmul<A, B, CD> {
     }
 
     fn load_rhs<E: Float, ES: Size>(tile: &StridedTile<E, ES>, fragment: &mut Self::Rhs) {
-        match comptime!(fragment.layout.matrix_layout) {
-            MatrixLayout::RowMajor => strided_tile_to_unit_tile(tile, fragment),
-            MatrixLayout::ColMajor => strided_tile_to_transposed_unit_tile(tile, fragment),
-        }
+        strided_tile_to_unit_tile(tile, fragment)
     }
 
     fn execute(

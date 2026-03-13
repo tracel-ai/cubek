@@ -1,9 +1,9 @@
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::components::tile::accelerated_blackbox::setup::BlackboxAcceleratedAttentionMatmulConfig;
-use crate::components::tile::accelerated_blackbox::{LocalTile, LocalTileLayout};
-use crate::components::tile::{SoftmaxPipeline, SoftmaxPipelineExpand, SoftmaxRowwise};
+use crate::components::tile_old::accelerated_blackbox::setup::BlackboxAcceleratedAttentionMatmulConfig;
+use crate::components::tile_old::accelerated_blackbox::{LocalTile, LocalTileLayout};
+use crate::components::tile_old::{SoftmaxPipeline, SoftmaxPipelineExpand, SoftmaxRowwise};
 use crate::definition::AttentionTileSize;
 
 #[derive(CubeType)]
