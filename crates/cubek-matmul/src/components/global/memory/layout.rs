@@ -17,7 +17,6 @@ use crate::{components::global::memory::GlobalMemoryConfig, launch::BatchedCoord
 pub struct SimpleTmaGlobalLayout {
     #[cube(comptime)]
     transposed: bool,
-    batch_stride: usize,
     shape: BatchedCoords,
 }
 
@@ -26,12 +25,7 @@ impl SimpleTmaGlobalLayout {
     /// Creates a new 2D layout with the batch set to `nth_batch`.
     pub fn new(shape: BatchedCoords, #[comptime] layout: MatrixLayout) -> Self {
         let transposed = comptime![matches!(layout, MatrixLayout::ColMajor)];
-        let batch_stride = select(shape.0 == 1, 0, 1);
-        SimpleTmaGlobalLayout {
-            shape,
-            transposed,
-            batch_stride,
-        }
+        SimpleTmaGlobalLayout { shape, transposed }
     }
 }
 
@@ -42,7 +36,8 @@ impl Layout for SimpleTmaGlobalLayout {
 
     fn to_source_pos(&self, coords: Self::Coordinates) -> BatchedCoords {
         let (batch, row, col) = coords;
-        let batch = batch * self.batch_stride;
+        // Don't care if it's actually broadcast, setting batch to 0 is fine either way
+        let batch = select(self.shape.0 == 1, 0, batch);
         // Tensor maps are required to have a stride of 1 on the last dim, so their shape is
         // transposed for col-major matrices. Need to compensate by swapping the coordinates.
         if self.transposed.comptime() {
