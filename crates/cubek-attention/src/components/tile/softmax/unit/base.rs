@@ -2,12 +2,15 @@ use std::marker::PhantomData;
 
 use cubecl;
 use cubecl::prelude::*;
+use cubek_std::MatrixLayout;
 use cubek_std::tile::StridedTile;
 
 use crate::components::tile::MaskTile;
-use crate::components::tile::pipeline::{LocalTileLayout, RowWise, UnitTile, UnitTileLayout};
+use crate::components::tile::pipeline::{
+    RowWise, UnitTile, UnitTileLayout, strided_tile_to_unit_tile,
+};
 use crate::components::tile::softmax::unit::UnitSoftmaxConfig;
-use crate::components::tile::softmax::{Reducer, Softmax, UnitReducer};
+use crate::components::tile::softmax::{Reducer, Softmax, SoftmaxConfig, UnitReducer};
 
 #[derive(CubeType)]
 pub struct UnitSoftmax<Lhs: Float> {
@@ -27,8 +30,8 @@ pub struct UnitSoftmaxWorkspace<Acc: Float, Lhs: Float> {
 impl<Acc: Float, Lhs: Float> UnitSoftmaxWorkspace<Acc, Lhs> {
     pub fn new(#[comptime] config: UnitSoftmaxConfig) -> Self {
         UnitSoftmaxWorkspace::<Acc, Lhs> {
-            max: RowWise::new_min_value(config.num_rows_per_unit as usize),
-            sum: RowWise::new_zero(config.num_rows_per_unit as usize),
+            max: RowWise::new_min_value(config.num_rows_per_unit() as usize),
+            sum: RowWise::new_zero(config.num_rows_per_unit() as usize),
             _phantom: PhantomData,
         }
     }
@@ -78,8 +81,8 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
 
     fn init_state(#[comptime] config: Self::Config) -> Self::RunningState {
         (
-            RowWise::<Acc>::new_min_value(config.num_rows_per_unit as usize),
-            RowWise::<Acc>::new_zero(config.num_rows_per_unit as usize),
+            RowWise::<Acc>::new_min_value(config.num_rows_per_unit()),
+            RowWise::<Acc>::new_zero(config.num_rows_per_unit()),
         )
     }
 
@@ -88,13 +91,14 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
         #[comptime] config: Self::Config,
     ) -> Self::ScoreTile {
         UnitTile::new(UnitTileLayout::new(
-            config.tile_size.seq_q,
-            config.tile_size.seq_kv,
+            config.tile_size().seq_q,
+            config.tile_size().seq_kv,
+            MatrixLayout::RowMajor,
         ))
     }
 
     fn zero_score_tile(score_tile: &mut Self::ScoreTile) {
-        todo!()
+        score_tile.zero();
     }
 
     fn init_softmax_tile(
@@ -103,22 +107,29 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
     ) -> Self::SoftmaxedTile {
         // TODO if Acc==Lhs this creates a new one uselessly
         UnitTile::new(UnitTileLayout::new(
-            config.tile_size.seq_q,
-            config.tile_size.seq_kv,
+            config.tile_size().seq_q,
+            config.tile_size().seq_kv,
+            MatrixLayout::RowMajor,
         ))
     }
 
     fn allocate_mask(#[comptime] config: Self::Config) -> Self::Mask {
-        todo!()
+        UnitTile::new(<Self as Softmax<Acc>>::layout(config))
     }
+
     fn load_mask<E: Numeric, ES: Size>(
         tile: &StridedTile<E, ES>,
         fragment: &mut Self::Mask,
         #[comptime] config: Self::Config,
     ) {
-        todo!()
+        strided_tile_to_unit_tile(tile, fragment);
     }
+
     fn layout(#[comptime] config: Self::Config) -> Self::ScoreLayout {
-        todo!()
+        UnitTileLayout {
+            num_rows: config.tile_size.seq_q,
+            num_cols: config.tile_size.seq_kv,
+            matrix_layout: MatrixLayout::RowMajor,
+        }
     }
 }

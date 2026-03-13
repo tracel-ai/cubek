@@ -14,8 +14,8 @@ pub trait InnerMatmul {
     fn load_lhs<E: Numeric, ES: Size>(tile: &StridedTile<E, ES>, fragment: &mut Self::Lhs);
 
     fn allocate_rhs(#[comptime] config: Self::Config) -> Self::Rhs;
-    fn load_rhs_plain<E: Float, ES: Size>(tile: &StridedTile<E, ES>, fragment: &mut Self::Rhs);
-    fn load_rhs_transposed<E: Float, ES: Size>(tile: &StridedTile<E, ES>, fragment: &mut Self::Rhs);
+    fn allocate_rhs_transposed(#[comptime] config: Self::Config) -> Self::Rhs;
+    fn load_rhs<E: Float, ES: Size>(tile: &StridedTile<E, ES>, fragment: &mut Self::Rhs);
 
     fn execute(
         lhs: &Self::Lhs,

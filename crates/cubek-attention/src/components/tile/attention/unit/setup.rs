@@ -6,7 +6,7 @@ use crate::{
     components::tile::{
         SharedTileAttentionConfig, TileAttentionConfig, TileAttentionFamily,
         attention::unit::attention::UnitTileAttention, matmul::UnitMatmulConfig,
-        output::unit::UnitOutputConfig, softmax::unit::UnitSoftmaxConfig,
+        output::unit::UnitOutputConfig, pipeline::InnerLayout, softmax::unit::UnitSoftmaxConfig,
     },
     definition::{
         AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError,
@@ -17,28 +17,32 @@ use crate::{
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct UnitTileAttentionConfig {
     pub shared: SharedTileAttentionConfig,
+    pub score_matmul_config: UnitMatmulConfig,
+    pub softmax_config: UnitSoftmaxConfig,
+    pub value_matmul_config: UnitMatmulConfig,
+    pub output_config: UnitOutputConfig,
 }
 
 impl TileAttentionConfig for UnitTileAttentionConfig {
     type ScoreMatmulConfig = UnitMatmulConfig;
     type SoftmaxConfig = UnitSoftmaxConfig;
     type ValueMatmulConfig = UnitMatmulConfig;
-    type AccumulatorConfig = UnitOutputConfig;
+    type AttentionOutputConfig = UnitOutputConfig;
 
     fn score_matmul_config(&self) -> Self::ScoreMatmulConfig {
-        todo!()
+        self.score_matmul_config
     }
 
     fn softmax_config(&self) -> Self::SoftmaxConfig {
-        todo!()
+        self.softmax_config
     }
 
     fn value_matmul_config(&self) -> Self::ValueMatmulConfig {
-        todo!()
+        self.value_matmul_config
     }
 
-    fn accumulator_config(&self) -> Self::AccumulatorConfig {
-        todo!()
+    fn output_config(&self) -> Self::AttentionOutputConfig {
+        self.output_config
     }
 
     fn plane_dim(&self) -> u32 {
@@ -51,18 +55,6 @@ impl TileAttentionConfig for UnitTileAttentionConfig {
 
     fn tile_size(&self) -> AttentionTileSize {
         self.shared.attention_tile_size
-    }
-
-    fn num_rows_per_unit(&self) -> u32 {
-        self.shared.attention_tile_size.seq_q
-    }
-
-    fn causal_mask(&self) -> bool {
-        self.shared.causal_mask
-    }
-
-    fn materialized_mask(&self) -> bool {
-        self.shared.materialized_mask
     }
 }
 
@@ -84,13 +76,42 @@ impl TileAttentionFamily for UnitTileAttention {
         blueprint: &AttentionBlueprint,
         _dtypes: &AttentionElems,
     ) -> Result<Self::Config, AttentionSetupError> {
+        let plane_dim = blueprint.plane_dim;
+        let attention_tile_size = blueprint.tiling_scheme.tile_size;
+        let num_planes = blueprint.tiling_scheme.stage_size.seq_q;
+        let inner_layout = if blueprint.two_rows_in_array_tile {
+            InnerLayout::SplitRows
+        } else {
+            InnerLayout::Contiguous
+        };
         Ok(UnitTileAttentionConfig {
             shared: SharedTileAttentionConfig {
-                plane_dim: blueprint.plane_dim,
-                attention_tile_size: blueprint.tiling_scheme.tile_size,
-                num_planes: blueprint.tiling_scheme.stage_size.seq_q,
+                plane_dim,
+                attention_tile_size,
+                num_planes,
+            },
+            score_matmul_config: UnitMatmulConfig {
+                tile_size: blueprint
+                    .tiling_scheme
+                    .tile_size
+                    .to_score_matmul_tile_size(),
+            },
+            softmax_config: UnitSoftmaxConfig {
+                tile_size: attention_tile_size,
+                plane_dim,
+                num_planes,
+                inner_layout,
                 causal_mask: blueprint.causal,
                 materialized_mask: blueprint.masked,
+            },
+            value_matmul_config: UnitMatmulConfig {
+                tile_size: blueprint
+                    .tiling_scheme
+                    .tile_size
+                    .to_value_matmul_tile_size(),
+            },
+            output_config: UnitOutputConfig {
+                tile_size: blueprint.tiling_scheme.tile_size,
             },
         })
     }

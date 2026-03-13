@@ -15,7 +15,9 @@ pub struct CmmaMatmul<A: Numeric, B: Numeric, CD: Numeric> {
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct CmmaMatmulConfig {}
+pub struct CmmaMatmulConfig {
+    pub tile_size: TileSize,
+}
 
 #[cube]
 impl<A: Numeric, B: Numeric, CD: Numeric> InnerMatmul for CmmaMatmul<A, B, CD> {
@@ -25,34 +27,63 @@ impl<A: Numeric, B: Numeric, CD: Numeric> InnerMatmul for CmmaMatmul<A, B, CD> {
     type Config = CmmaMatmulConfig;
 
     fn allocate_lhs(#[comptime] config: Self::Config) -> Self::Lhs {
-        todo!()
-    }
+        let size = config.tile_size;
 
-    fn load_lhs<E: Numeric, ES: Size>(tile: &StridedTile<E, ES>, fragment: &mut Self::Lhs) {
-        todo!()
+        unsafe {
+            cmma::Matrix::<A>::uninitialized(
+                cmma::MatrixIdent::A,
+                size.m() as usize,
+                size.n() as usize,
+                size.k() as usize,
+                cmma::MatrixLayout::RowMajor,
+            )
+        }
     }
 
     fn allocate_rhs(#[comptime] config: Self::Config) -> Self::Rhs {
-        todo!()
+        let size = config.tile_size;
+        unsafe {
+            cmma::Matrix::<B>::uninitialized(
+                cmma::MatrixIdent::B,
+                size.m() as usize,
+                size.n() as usize,
+                size.k() as usize,
+                cmma::MatrixLayout::RowMajor,
+            )
+        }
     }
 
-    fn load_rhs_plain<E: Float, ES: Size>(tile: &StridedTile<E, ES>, fragment: &mut Self::Rhs) {
-        todo!()
+    fn allocate_rhs_transposed(#[comptime] config: Self::Config) -> Self::Rhs {
+        let size = config.tile_size;
+        unsafe {
+            cmma::Matrix::<B>::uninitialized(
+                cmma::MatrixIdent::B,
+                size.m() as usize,
+                size.n() as usize,
+                size.k() as usize,
+                cmma::MatrixLayout::ColMajor,
+            )
+        }
     }
 
-    fn load_rhs_transposed<E: Float, ES: Size>(
-        tile: &StridedTile<E, ES>,
-        fragment: &mut Self::Rhs,
-    ) {
-        todo!()
+    fn load_lhs<E: Numeric, ES: Size>(tile: &StridedTile<E, ES>, fragment: &mut Self::Lhs) {
+        let stride = tile.unvectorized_stride();
+        let slice = tile.as_slice();
+        cmma::load(fragment, &slice, stride);
+    }
+
+    fn load_rhs<E: Float, ES: Size>(tile: &StridedTile<E, ES>, fragment: &mut Self::Rhs) {
+        let stride = tile.unvectorized_stride();
+        let slice = tile.as_slice();
+        cmma::load(fragment, &slice, stride);
     }
 
     fn execute(
         lhs: &Self::Lhs,
         rhs: &Self::Rhs,
         out: &mut Self::Acc,
-        #[comptime] tile_size: TileSize,
+        #[comptime] _tile_size: TileSize,
     ) {
-        todo!()
+        cmma::execute::<A, B, CD, CD>(lhs, rhs, out, out);
     }
 }

@@ -27,7 +27,7 @@ pub trait TileAttention<AP: AttentionPrecision>: Send + Sync + 'static {
     type Config: TileAttentionConfig<
             ScoreMatmulConfig = <Self::ScoreMatmul as InnerMatmul>::Config,
             ValueMatmulConfig = <Self::ValueMatmul as InnerMatmul>::Config,
-            AccumulatorConfig = <Self::Output as AttentionOutput>::Config,
+            AttentionOutputConfig = <Self::Output as AttentionOutput>::Config,
         >;
     type ScoreMatmul: InnerMatmul;
     type Softmax: Softmax<

@@ -1,4 +1,3 @@
-use crate::components::tile::TileAttentionConfig;
 use crate::definition::attention_types::{MSK, MSKS};
 use crate::definition::{AttentionPrecision, AttentionTileSize};
 use cubecl;

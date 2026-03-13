@@ -115,7 +115,7 @@ impl<
                     // Get the only key-value tile and fill it with hd,kv-th key data
                     let key_tile = key_partition.get_mut();
                     let key_data = SK::tile(key_stage, (kv, hd as u32).runtime());
-                    TA::ScoreMatmul::load_rhs_transposed(&key_data, &mut key_tile.fragment);
+                    TA::ScoreMatmul::load_rhs(&key_data, &mut key_tile.fragment);
 
                     // Perform score matmul on query and key, and accumulate in softmax tile
                     TA::ScoreMatmul::execute(
@@ -151,7 +151,7 @@ impl<
                     // Get the only key-value tile and fill it with hd,kv-th key data
                     let value_data = SV::tile(value_stage, (kv, vd as u32).runtime());
                     let value_tile = value_partition.get_mut();
-                    TA::ValueMatmul::load_rhs_plain(&value_data, &mut value_tile.fragment);
+                    TA::ValueMatmul::load_rhs(&value_data, &mut value_tile.fragment);
 
                     // Scale the q,vd-th accumulator and scale it with previously obtained scale
                     let partition_val_dim = config.shared().partition_size.val_dim as usize;
@@ -160,7 +160,7 @@ impl<
                         q,
                         vd,
                         partition_val_dim,
-                        config.tile_config().accumulator_config(),
+                        config.tile_config().output_config(),
                     );
 
                     // Perform value matmul on probabilities and values, and accumulate in accumulators
@@ -193,7 +193,7 @@ impl<
                     q,
                     vd,
                     config.shared().partition_size.val_dim as usize,
-                    config.tile_config().accumulator_config(),
+                    config.tile_config().output_config(),
                 );
             }
         }
@@ -238,7 +238,7 @@ impl<
                         config.shared().partition_size.val_dim as usize,
                     ),
                     &mut tile.as_slice_mut(),
-                    config.tile_config().accumulator_config(),
+                    config.tile_config().output_config(),
                 );
 
                 W::on_event(writer, WriteEvent::new_TileStored(tile_pos));
@@ -273,7 +273,7 @@ impl<
     fn init_accumulator(#[comptime] config: Self::Config) -> OutputPartition<TA::Output> {
         OutputPartition::<TA::Output>::new(
             config.shared().partition_size,
-            config.tile_config().accumulator_config(),
+            config.tile_config().output_config(),
         )
     }
 

@@ -34,7 +34,7 @@ pub struct Key<IM: InnerMatmul> {
 impl<IM: InnerMatmul> Key<IM> {
     pub fn new(#[comptime] config: IM::Config) -> Self {
         Key::<IM> {
-            fragment: IM::allocate_rhs(config),
+            fragment: IM::allocate_rhs_transposed(config),
         }
     }
 }

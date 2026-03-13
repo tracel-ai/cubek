@@ -6,7 +6,7 @@ use cubek_std::tile::StridedTile;
 
 use crate::components::tile::MaskTile;
 use crate::components::tile::pipeline::{LocalTile, LocalTileLayout, RowWise};
-use crate::components::tile::softmax::{BroadcastReducer, Reducer};
+use crate::components::tile::softmax::{BroadcastReducer, Reducer, SoftmaxConfig as _};
 use crate::components::tile::softmax::{Softmax, blackbox::BlackboxSoftmaxConfig};
 
 #[derive(CubeType)]
@@ -19,26 +19,40 @@ pub struct BlackboxSoftmax<Lhs: Float> {
 pub struct BlackboxSoftmaxWorkspace<Acc: Float, Lhs: Float> {
     max: RowWise<Acc>,
     sum: RowWise<Acc>,
-    acc_smem_slice: SliceMut<Acc>,
-    lhs_smem_slice: SliceMut<Lhs>,
+    score_smem: SliceMut<Acc>,
+    softmaxed_smem: SliceMut<Lhs>,
     local_tile: LocalTile<Acc>,
 }
 
 #[cube]
 impl<Acc: Float, Lhs: Float> BlackboxSoftmaxWorkspace<Acc, Lhs> {
     pub fn new(#[comptime] config: BlackboxSoftmaxConfig) -> Self {
+        // Create accumulators for rowwise max and sum
+        let max = RowWise::new_min_value(config.num_rows_per_unit());
+        let sum = RowWise::new_zero(config.num_rows_per_unit());
+
+        // Create one shared memory for between score fragment and local tile and one for
+        //  between local tile and softmaxed fragment, and slice both for current plane
+        let total_tile_size = (config.tile_size.seq_q * config.tile_size.seq_kv) as usize;
+        let smem_size = total_tile_size * config.num_planes as usize;
+        let start = UNIT_POS_Y as usize * total_tile_size;
+        let end = start + total_tile_size;
+        let score_smem = SharedMemory::new(smem_size).slice_mut(start, end);
+        let softmaxed_smem = SharedMemory::new(smem_size).slice_mut(start, end);
+
+        // Create a local tile for softmax computations
+        let local_tile = LocalTile::new(LocalTileLayout::new(
+            (config.tile_size.seq_q, config.tile_size.seq_kv),
+            config.plane_dim,
+            config.inner_layout,
+        ));
+
         BlackboxSoftmaxWorkspace::<Acc, Lhs> {
-            max: RowWise::new_min_value(config.num_rows_per_unit as usize),
-            sum: RowWise::new_zero(config.num_rows_per_unit as usize),
-            // Create smem and slice for this plane
-            acc_smem_slice: todo!(),
-            // Create smem and slice for this plane
-            lhs_smem_slice: todo!(),
-            local_tile: LocalTile::new(LocalTileLayout::new(
-                (config.tile_size.seq_q, config.tile_size.seq_kv),
-                config.plane_dim,
-                config.inner_layout,
-            )),
+            max,
+            sum,
+            score_smem,
+            softmaxed_smem,
+            local_tile,
         }
     }
 }
@@ -68,7 +82,7 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for BlackboxSoftmax<Lhs> {
         // Otherwise it may go through shared memory
         // let softmax_rowwise = value_matmul_lhs.rowwise_mut();
         cmma::store(
-            &mut workspace.acc_smem_slice,
+            &mut workspace.score_smem,
             &score_matmul_accumulator,
             config.tile_size.seq_kv,
             cmma::MatrixLayout::RowMajor,
@@ -78,7 +92,7 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for BlackboxSoftmax<Lhs> {
 
         workspace
             .local_tile
-            .load_from_slice(&workspace.acc_smem_slice.to_slice());
+            .load_from_slice(&workspace.score_smem.to_slice());
 
         sync_cube();
 
@@ -100,13 +114,13 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for BlackboxSoftmax<Lhs> {
         RowWise::copy_from(&mut state.1, &new_l);
 
         // Make sure the mutations on softmax_rowwise also affect other softmax formats
-        workspace.local_tile.store_to(&mut workspace.lhs_smem_slice);
+        workspace.local_tile.store_to(&mut workspace.softmaxed_smem);
 
         sync_cube();
 
         cmma::load(
             &value_matmul_lhs,
-            &workspace.lhs_smem_slice.to_slice(),
+            &workspace.softmaxed_smem.to_slice(),
             config.tile_size.seq_kv,
         );
 
@@ -119,13 +133,13 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for BlackboxSoftmax<Lhs> {
 
     fn init_state(#[comptime] config: Self::Config) -> Self::RunningState {
         (
-            RowWise::<Acc>::new_min_value(config.num_rows_per_unit as usize),
-            RowWise::<Acc>::new_zero(config.num_rows_per_unit as usize),
+            RowWise::<Acc>::new_min_value(config.num_rows_per_unit()),
+            RowWise::<Acc>::new_zero(config.num_rows_per_unit()),
         )
     }
 
     fn init_score_tile(
-        workspace: &mut Self::Workspace,
+        _workspace: &mut Self::Workspace,
         #[comptime] config: Self::Config,
     ) -> Self::ScoreTile {
         unsafe {
@@ -140,11 +154,11 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for BlackboxSoftmax<Lhs> {
     }
 
     fn zero_score_tile(score_tile: &mut Self::ScoreTile) {
-        todo!()
+        cmma::fill(&score_tile, Acc::from_int(0));
     }
 
     fn init_softmax_tile(
-        workspace: &mut Self::Workspace,
+        _workspace: &mut Self::Workspace,
         #[comptime] config: Self::Config,
     ) -> Self::SoftmaxedTile {
         unsafe {
@@ -153,23 +167,28 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for BlackboxSoftmax<Lhs> {
                 config.tile_size.seq_q as usize,
                 config.tile_size.seq_kv as usize,
                 config.tile_size.head_dim as usize,
-                cmma::MatrixLayout::Undefined,
+                cmma::MatrixLayout::RowMajor,
             )
         }
     }
 
     fn allocate_mask(#[comptime] config: Self::Config) -> Self::Mask {
-        todo!()
+        LocalTile::new(<Self as Softmax<Acc>>::layout(config))
     }
+
     fn load_mask<E: Numeric, ES: Size>(
         tile: &StridedTile<E, ES>,
         fragment: &mut Self::Mask,
-        #[comptime] config: Self::Config,
+        #[comptime] _config: Self::Config,
     ) {
-        todo!()
+        fragment.load_from_strided_tile(tile);
     }
 
     fn layout(#[comptime] config: Self::Config) -> Self::ScoreLayout {
-        todo!()
+        LocalTileLayout::new(
+            (config.tile_size.seq_q, config.tile_size.seq_kv),
+            config.plane_dim,
+            config.inner_layout,
+        )
     }
 }

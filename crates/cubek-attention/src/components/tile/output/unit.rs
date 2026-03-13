@@ -2,9 +2,10 @@ use std::marker::PhantomData;
 
 use cubecl;
 use cubecl::prelude::*;
+use cubek_std::MatrixLayout;
 
 use crate::components::tile::output::AttentionOutput;
-use crate::components::tile::pipeline::{RowWise, UnitTile};
+use crate::components::tile::pipeline::{RowWise, UnitTile, UnitTileLayout, unit_tile_to_slice};
 use crate::definition::AttentionTileSize;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -51,7 +52,11 @@ impl<SM: Float, Acc: Float> AttentionOutput for UnitAttentionOutput<SM, Acc> {
     fn init_workspace(#[comptime] config: Self::Config) -> Self::Workspace {}
 
     fn init_tile(#[comptime] config: Self::Config) -> Self::Tile {
-        todo!()
+        UnitTile::new(UnitTileLayout::new(
+            config.tile_size.seq_q,
+            config.tile_size.val_dim,
+            MatrixLayout::RowMajor,
+        ))
     }
 
     fn write_results<E: Float, ES: Size>(
@@ -59,6 +64,6 @@ impl<SM: Float, Acc: Float> AttentionOutput for UnitAttentionOutput<SM, Acc> {
         slice: &mut SliceMut<Vector<E, ES>>,
         #[comptime] config: Self::Config,
     ) {
-        todo!()
+        unit_tile_to_slice(tile, slice)
     }
 }

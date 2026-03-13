@@ -4,6 +4,7 @@ use cubecl::std::tensor::layout::Coords2d;
 use cubek_std::tile::StridedTile;
 
 use crate::components::tile::MaskTile;
+use crate::definition::AttentionTileSize;
 
 #[cube]
 pub trait Softmax<F: Float>: Send + Sync + 'static + Sized {
@@ -83,6 +84,8 @@ pub trait SoftmaxConfig: Copy + Clone {
 
     fn causal_mask(&self) -> bool;
     fn materialized_mask(&self) -> bool;
+    fn num_rows_per_unit(&self) -> usize;
+    fn tile_size(&self) -> AttentionTileSize;
 }
 
 #[cube]

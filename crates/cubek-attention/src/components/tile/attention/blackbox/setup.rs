@@ -23,28 +23,32 @@ use cubecl::features::MmaConfig;
 pub struct BlackboxAcceleratedAttentionConfig {
     pub shared: SharedTileAttentionConfig,
     pub inner_layout: InnerLayout,
+    pub score_matmul_config: CmmaMatmulConfig,
+    pub softmax_config: BlackboxSoftmaxConfig,
+    pub value_matmul_config: CmmaMatmulConfig,
+    pub output_config: BlackboxOutputConfig,
 }
 
 impl TileAttentionConfig for BlackboxAcceleratedAttentionConfig {
     type ScoreMatmulConfig = CmmaMatmulConfig;
     type SoftmaxConfig = BlackboxSoftmaxConfig;
     type ValueMatmulConfig = CmmaMatmulConfig;
-    type AccumulatorConfig = BlackboxOutputConfig;
+    type AttentionOutputConfig = BlackboxOutputConfig;
 
     fn score_matmul_config(&self) -> Self::ScoreMatmulConfig {
-        todo!()
+        self.score_matmul_config
     }
 
     fn softmax_config(&self) -> Self::SoftmaxConfig {
-        todo!()
+        self.softmax_config
     }
 
     fn value_matmul_config(&self) -> Self::ValueMatmulConfig {
-        todo!()
+        self.value_matmul_config
     }
 
-    fn accumulator_config(&self) -> Self::AccumulatorConfig {
-        todo!()
+    fn output_config(&self) -> Self::AttentionOutputConfig {
+        self.output_config
     }
 
     fn plane_dim(&self) -> u32 {
@@ -57,21 +61,6 @@ impl TileAttentionConfig for BlackboxAcceleratedAttentionConfig {
 
     fn tile_size(&self) -> AttentionTileSize {
         self.shared.attention_tile_size
-    }
-
-    fn num_rows_per_unit(&self) -> u32 {
-        match self.inner_layout {
-            InnerLayout::Contiguous => 1u32,
-            InnerLayout::SplitRows => 2u32,
-        }
-    }
-
-    fn causal_mask(&self) -> bool {
-        self.shared.causal_mask
-    }
-
-    fn materialized_mask(&self) -> bool {
-        self.shared.materialized_mask
     }
 }
 
@@ -93,20 +82,48 @@ impl TileAttentionFamily for BlackboxAcceleratedTileAttention {
         blueprint: &AttentionBlueprint,
         dtypes: &AttentionElems,
     ) -> Result<Self::Config, AttentionSetupError> {
+        let inner_layout = if blueprint.two_rows_in_array_tile {
+            InnerLayout::SplitRows
+        } else {
+            InnerLayout::Contiguous
+        };
+        let num_planes = blueprint.tiling_scheme.stage_size.seq_q;
+        let plane_dim = blueprint.plane_dim;
+        let tile_size = blueprint.tiling_scheme.tile_size;
         validate(
             device_props,
             BlackboxAcceleratedAttentionConfig {
                 shared: SharedTileAttentionConfig {
-                    plane_dim: blueprint.plane_dim,
-                    num_planes: blueprint.tiling_scheme.stage_size.seq_q,
-                    attention_tile_size: blueprint.tiling_scheme.tile_size,
+                    plane_dim,
+                    num_planes,
+                    attention_tile_size: tile_size,
+                },
+                inner_layout,
+                score_matmul_config: CmmaMatmulConfig {
+                    tile_size: blueprint
+                        .tiling_scheme
+                        .tile_size
+                        .to_score_matmul_tile_size(),
+                },
+                softmax_config: BlackboxSoftmaxConfig {
+                    tile_size,
+                    plane_dim,
+                    inner_layout,
                     causal_mask: blueprint.causal,
                     materialized_mask: blueprint.masked,
+                    num_planes: blueprint.tiling_scheme.stage_size.seq_q,
                 },
-                inner_layout: if blueprint.two_rows_in_array_tile {
-                    InnerLayout::SplitRows
-                } else {
-                    InnerLayout::Contiguous
+                value_matmul_config: CmmaMatmulConfig {
+                    tile_size: blueprint
+                        .tiling_scheme
+                        .tile_size
+                        .to_value_matmul_tile_size(),
+                },
+                output_config: BlackboxOutputConfig {
+                    tile_size,
+                    num_planes,
+                    plane_dim,
+                    inner_layout,
                 },
             },
             blueprint.vector_sizes.mask,

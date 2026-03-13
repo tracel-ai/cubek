@@ -4,10 +4,12 @@ use cubecl;
 use cubecl::prelude::*;
 
 use crate::components::tile::matmul::InnerMatmul;
-use crate::components::tile::pipeline::UnitTile;
+use crate::components::tile::pipeline::{
+    UnitTile, UnitTileLayout, strided_tile_to_transposed_unit_tile, strided_tile_to_unit_tile,
+};
 
-use cubek_std::TileSize;
 use cubek_std::tile::StridedTile;
+use cubek_std::{MatrixLayout, TileSize};
 
 #[derive(CubeType)]
 pub struct UnitMatmul<A: Numeric, B: Numeric, CD: Numeric> {
@@ -16,7 +18,9 @@ pub struct UnitMatmul<A: Numeric, B: Numeric, CD: Numeric> {
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct UnitMatmulConfig {}
+pub struct UnitMatmulConfig {
+    pub tile_size: TileSize,
+}
 
 #[cube]
 impl<A: Numeric, B: Numeric, CD: Numeric> InnerMatmul for UnitMatmul<A, B, CD> {
@@ -26,23 +30,38 @@ impl<A: Numeric, B: Numeric, CD: Numeric> InnerMatmul for UnitMatmul<A, B, CD> {
     type Config = UnitMatmulConfig;
 
     fn allocate_lhs(#[comptime] config: Self::Config) -> Self::Lhs {
-        todo!()
-    }
-
-    fn load_lhs<E: Numeric, ES: Size>(tile: &StridedTile<E, ES>, fragment: &mut Self::Lhs) {
-        todo!()
+        UnitTile::new(UnitTileLayout::new(
+            config.tile_size.m,
+            config.tile_size.k,
+            MatrixLayout::RowMajor,
+        ))
     }
 
     fn allocate_rhs(#[comptime] config: Self::Config) -> Self::Rhs {
-        todo!()
+        UnitTile::new(UnitTileLayout::new(
+            config.tile_size.k,
+            config.tile_size.n,
+            MatrixLayout::RowMajor,
+        ))
     }
 
-    fn load_rhs_plain<E: Float, ES: Size>(tile: &StridedTile<E, ES>, fragment: &mut Self::Rhs) {
-        todo!()
+    fn allocate_rhs_transposed(#[comptime] config: Self::Config) -> Self::Rhs {
+        UnitTile::new(UnitTileLayout::new(
+            config.tile_size.k,
+            config.tile_size.n,
+            MatrixLayout::ColMajor,
+        ))
     }
 
-    fn load_rhs_transposed<E: Float, ES: Size>(tile: &StridedTile<E, ES>, fragment: &mut Self::Rhs) {
-        todo!()
+    fn load_lhs<E: Numeric, ES: Size>(tile: &StridedTile<E, ES>, fragment: &mut Self::Lhs) {
+        strided_tile_to_unit_tile(tile, fragment);
+    }
+
+    fn load_rhs<E: Float, ES: Size>(tile: &StridedTile<E, ES>, fragment: &mut Self::Rhs) {
+        match comptime!(fragment.layout.matrix_layout) {
+            MatrixLayout::RowMajor => strided_tile_to_unit_tile(tile, fragment),
+            MatrixLayout::ColMajor => strided_tile_to_transposed_unit_tile(tile, fragment),
+        }
     }
 
     fn execute(
@@ -51,6 +70,17 @@ impl<A: Numeric, B: Numeric, CD: Numeric> InnerMatmul for UnitMatmul<A, B, CD> {
         out: &mut Self::Acc,
         #[comptime] tile_size: TileSize,
     ) {
-        todo!()
+        let (m, n, k) = comptime! {let (m, n, k): (u32, u32, u32) = tile_size.into(); (m, n, k)};
+        for m_ in 0..m {
+            for n_ in 0..n {
+                let mut sum = CD::from_int(0);
+                for k_ in 0..k {
+                    let lhs_val = lhs.get(m_, k_);
+                    let rhs_val = rhs.get(k_, n_);
+                    sum += CD::cast_from(lhs_val) * CD::cast_from(rhs_val);
+                }
+                out.accumulate(m_, n_, sum);
+            }
+        }
     }
 }
