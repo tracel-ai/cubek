@@ -54,6 +54,7 @@ pub trait Softmax<F: Float>: Send + Sync + 'static + Sized {
     fn init_state(#[comptime] softmax_config: Self::Config) -> Self::RunningState;
 
     fn init_score_tile(#[comptime] config: Self::Config) -> Self::ScoreTile;
+    fn zero_score_tile(score_tile: &mut Self::ScoreTile);
 
     fn init_softmax_tile(#[comptime] config: Self::Config) -> Self::SoftmaxedTile;
 

@@ -44,6 +44,10 @@ impl<F: Float, SMX: Softmax<F>> SoftmaxPartition<F, SMX> {
         }
     }
 
+    pub fn zero_score_at(&mut self, #[comptime] q: usize) {
+        SMX::zero_score_tile(self.get_score_mut(q));
+    }
+
     pub fn get_score_mut(&mut self, #[comptime] q: usize) -> &mut SMX::ScoreTile {
         self.score_tiles.index_mut(q)
     }

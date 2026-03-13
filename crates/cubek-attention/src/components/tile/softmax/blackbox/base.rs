@@ -139,7 +139,7 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for BlackboxSoftmax<Lhs> {
     }
 
     fn init_score_tile(#[comptime] config: Self::Config) -> Self::ScoreTile {
-        let tile = unsafe {
+        let mut tile = unsafe {
             cmma::Matrix::<Acc>::uninitialized(
                 cmma::MatrixIdent::Accumulator,
                 config.tile_size.seq_q as usize,
@@ -148,8 +148,12 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for BlackboxSoftmax<Lhs> {
                 cmma::MatrixLayout::Undefined,
             )
         };
-        cmma::fill(&tile, Acc::from_int(0));
+        Self::zero_score_tile(&mut tile);
         tile
+    }
+
+    fn zero_score_tile(score_tile: &mut Self::ScoreTile) {
+        cmma::fill(&score_tile, Acc::from_int(0));
     }
 
     fn init_softmax_tile(#[comptime] config: Self::Config) -> Self::SoftmaxedTile {

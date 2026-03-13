@@ -96,7 +96,7 @@ impl<
             #[unroll]
             for q in 0..p.seq_q as usize {
                 // Get the q-th softmax tile and zero it
-                // let softmax_tiles = softmax_partition.get_tiles_mut(q);
+                softmax_partition.zero_score_at(q);
 
                 // Get the only mask tile and fill it with q,kv-th data
                 let mask_tile = mask_partition.get_mut();

@@ -95,8 +95,12 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
             config.tile_size().seq_kv,
             MatrixLayout::RowMajor,
         ));
-        tile.zero();
+        Self::zero_score_tile(&mut tile);
         tile
+    }
+
+    fn zero_score_tile(score_tile: &mut Self::ScoreTile) {
+        score_tile.zero()
     }
 
     fn init_softmax_tile(#[comptime] config: Self::Config) -> Self::SoftmaxedTile {
