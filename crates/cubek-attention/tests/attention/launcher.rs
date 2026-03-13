@@ -88,7 +88,7 @@ pub fn test_launch(
     let problem_for_launch = problem.clone();
     let out_handle_for_launch = out_handle.clone();
 
-    launch_ref(
+    let _ = launch_ref(
         strategy,
         &client,
         query_handle.binding(),

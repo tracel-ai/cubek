@@ -1,6 +1,6 @@
-use cubecl;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
+use cubecl::{self};
 use cubek_std::{MatrixLayout, tile::StridedTile};
 
 use crate::components::tile::{
@@ -128,6 +128,23 @@ impl<E: Numeric> UnitTile<E> {
                 let index = row_offset + c;
                 self.data[index as usize] = self.data[index as usize] * scale
                     + E::cast_from(mask.should_mask((r, c).runtime())) * E::min_value();
+            }
+        }
+    }
+
+    // TODO find a way to have this not necessary if E == E2
+    // TODO even if E != E2 it could be written as output to UnitTile::exp_diff rather than exp_diff being inplace
+    pub fn copy_from<E2: Numeric>(&mut self, other: &UnitTile<E2>) {
+        assert!(self.layout.matrix_layout == MatrixLayout::RowMajor);
+        // Assume layouts are the same
+
+        #[unroll]
+        for r in 0..self.layout.num_rows as usize {
+            let row_offset = r as u32 * self.layout.num_cols;
+            #[unroll]
+            for c in 0..self.layout.num_cols {
+                let index = row_offset + c;
+                self.data[index as usize] = E::cast_from(other.data[index as usize]);
             }
         }
     }

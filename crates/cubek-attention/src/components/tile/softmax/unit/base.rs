@@ -69,6 +69,9 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
 
         let new_l = exp_m_diff.mul(&state.1).add(&workspace.sum);
 
+        // TODO don't make this necessary, see comment at copy_from
+        value_matmul_lhs.copy_from(&score_matmul_accumulator);
+
         RowWise::copy_from(&mut state.0, &workspace.max);
         RowWise::copy_from(&mut state.1, &new_l);
 
