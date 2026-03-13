@@ -138,10 +138,7 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for BlackboxSoftmax<Lhs> {
         )
     }
 
-    fn init_score_tile(
-        _workspace: &mut Self::Workspace,
-        #[comptime] config: Self::Config,
-    ) -> Self::ScoreTile {
+    fn init_score_tile(#[comptime] config: Self::Config) -> Self::ScoreTile {
         let tile = unsafe {
             cmma::Matrix::<Acc>::uninitialized(
                 cmma::MatrixIdent::Accumulator,
@@ -155,10 +152,7 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for BlackboxSoftmax<Lhs> {
         tile
     }
 
-    fn init_softmax_tile(
-        _workspace: &mut Self::Workspace,
-        #[comptime] config: Self::Config,
-    ) -> Self::SoftmaxedTile {
+    fn init_softmax_tile(#[comptime] config: Self::Config) -> Self::SoftmaxedTile {
         unsafe {
             cmma::Matrix::<Lhs>::uninitialized(
                 cmma::MatrixIdent::A,

@@ -54,18 +54,24 @@ impl<
         #[comptime] config: Self::Config,
     ) {
         // Load queries which stay alive in registers for all the kernel
+        comment!("global - init and load query");
         let mut query_registers = SA::init_query(config.stage_config);
         SA::read_query(&query_reader, &mut query_registers, config.stage_config);
 
         // Init registers that will change inside global loop
+        comment!("global - init key");
         let mut key_registers = SA::init_key(config.stage_config);
+        comment!("global - init value");
         let mut value_registers = SA::init_value(config.stage_config);
+        comment!("global - init mask");
         let mut mask_registers = SA::init_mask(
             ComptimeOption::new_Some((seq_q, seq_kv)),
             config.stage_config,
         );
+        comment!("global - init softmax");
         let mut softmax_registers = SA::init_softmax(config.stage_config);
-        let mut accumulator_registers = SA::init_accumulator(config.stage_config);
+        comment!("global - init output");
+        let mut output_registers = SA::init_output(config.stage_config);
 
         // Init running state
         let mut stage_state = SA::init_state(config.stage_config);
@@ -94,7 +100,7 @@ impl<
                 &mask_reader,
                 &mut mask_registers,
                 &mut softmax_registers,
-                &mut accumulator_registers,
+                &mut output_registers,
                 &mut stage_state,
                 config.stage_config,
             );
@@ -108,12 +114,12 @@ impl<
         }
 
         // Accumulators must be rescaled using running state
-        SA::rescale(&mut accumulator_registers, stage_state, config.stage_config);
+        SA::rescale(&mut output_registers, stage_state, config.stage_config);
 
         // Write accumulators to output
         let mut out_stage = writer.stage();
         SA::write::<Self::Writer, Self::Config>(
-            &accumulator_registers,
+            &output_registers,
             &mut out_stage,
             &mut writer,
             config.stage_config,

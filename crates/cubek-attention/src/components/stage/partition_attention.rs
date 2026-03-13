@@ -58,7 +58,7 @@ impl<
     type KeyPartition = KeyPartition<TA::ScoreMatmul>;
     type ValuePartition = ValuePartition<TA::ValueMatmul>;
     type SoftmaxPartition = SoftmaxPartition<SM<AP>, TA::Softmax>;
-    type AccumulatorPartition = OutputPartition<TA::Output>;
+    type OutputPartition = OutputPartition<TA::Output>;
     type MaskPartition = MaskPartition<SM<AP>, TA::Softmax>;
     type RunningState = <TA::Softmax as Softmax<SM<AP>>>::RunningState;
 
@@ -78,14 +78,14 @@ impl<
         mask_reader: &MaskReader<AP>,
         mask_partition: &mut MaskPartition<SM<AP>, TA::Softmax>,
         softmax_partition: &mut SoftmaxPartition<SM<AP>, TA::Softmax>,
-        accumulator_partition: &mut OutputPartition<TA::Output>,
+        output_partition: &mut OutputPartition<TA::Output>,
         state: &mut Sequence<Self::RunningState>,
         #[comptime] config: Self::Config,
     ) {
+        comment!("stage - execute");
         let p = config.shared().partition_size;
 
         let softmax_config = config.tile_config().softmax_config();
-        let mut workspace = TA::Softmax::init_workspace(softmax_config);
 
         let head_dim_factor =
             SM::<AP>::new(1.0 / ((p.head_dim * config.tile_size().head_dim) as f32).sqrt());
@@ -96,7 +96,7 @@ impl<
             #[unroll]
             for q in 0..p.seq_q as usize {
                 // Get the q-th softmax tile and zero it
-                let softmax_tiles = softmax_partition.get_tiles_mut(q);
+                // let softmax_tiles = softmax_partition.get_tiles_mut(q);
 
                 // Get the only mask tile and fill it with q,kv-th data
                 let mask_tile = mask_partition.get_mut();
@@ -121,7 +121,7 @@ impl<
                     TA::ScoreMatmul::execute(
                         &query_tile.fragment,
                         &key_tile.fragment,
-                        &mut softmax_tiles.score_tile,
+                        &mut softmax_partition.get_score_mut(q),
                         config.tile_size().to_score_matmul_tile_size(),
                     );
                 }
@@ -131,13 +131,11 @@ impl<
                 // Get the q-th running state, i.e. the one associated with rows from q
                 let state_q = state.index_mut(q);
 
-                let scale = TA::Softmax::softmax(
-                    &mut softmax_tiles.score_tile,
-                    mask_partition.get(),
-                    &mut softmax_tiles.softmaxed_tile,
+                let scale = softmax_partition.softmax_at(
                     state_q,
-                    &mut workspace,
+                    mask_partition.get(),
                     head_dim_factor,
+                    q,
                     softmax_config,
                 );
 
@@ -155,7 +153,7 @@ impl<
 
                     // Scale the q,vd-th accumulator and scale it with previously obtained scale
                     let partition_val_dim = config.shared().partition_size.val_dim as usize;
-                    accumulator_partition.scale_mul_at(
+                    output_partition.scale_mul_at(
                         &scale,
                         q,
                         vd,
@@ -165,9 +163,10 @@ impl<
 
                     // Perform value matmul on probabilities and values, and accumulate in accumulators
                     TA::ValueMatmul::execute(
-                        &softmax_tiles.softmaxed_tile,
+                        // &softmax_tiles.softmaxed_tile,
+                        &mut softmax_partition.get_softmaxed_mut(q),
                         &value_partition.get().fragment,
-                        &mut accumulator_partition.get_at_mut(q, vd, partition_val_dim),
+                        &mut output_partition.get_at_mut(q, vd, partition_val_dim),
                         config.tile_size().to_value_matmul_tile_size(),
                     );
                 }
@@ -200,6 +199,7 @@ impl<
     }
 
     fn init_state(#[comptime] config: Self::Config) -> Sequence<Self::RunningState> {
+        comment!("stage - init state");
         let partition_seq_q = config.shared().partition_size.seq_q;
         let mut sequence = Sequence::new();
 
@@ -270,7 +270,7 @@ impl<
         )
     }
 
-    fn init_accumulator(#[comptime] config: Self::Config) -> OutputPartition<TA::Output> {
+    fn init_output(#[comptime] config: Self::Config) -> OutputPartition<TA::Output> {
         OutputPartition::<TA::Output>::new(
             config.shared().partition_size,
             config.tile_config().output_config(),

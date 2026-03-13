@@ -89,10 +89,7 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
         )
     }
 
-    fn init_score_tile(
-        workspace: &mut Self::Workspace,
-        #[comptime] config: Self::Config,
-    ) -> Self::ScoreTile {
+    fn init_score_tile(#[comptime] config: Self::Config) -> Self::ScoreTile {
         let mut tile = UnitTile::new(UnitTileLayout::new(
             config.tile_size().seq_q,
             config.tile_size().seq_kv,
@@ -102,10 +99,7 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
         tile
     }
 
-    fn init_softmax_tile(
-        workspace: &mut Self::Workspace,
-        #[comptime] config: Self::Config,
-    ) -> Self::SoftmaxedTile {
+    fn init_softmax_tile(#[comptime] config: Self::Config) -> Self::SoftmaxedTile {
         // TODO if Acc==Lhs this creates a new one uselessly
         UnitTile::new(UnitTileLayout::new(
             config.tile_size().seq_q,

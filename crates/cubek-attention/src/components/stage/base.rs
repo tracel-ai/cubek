@@ -83,7 +83,7 @@ pub trait StageAttention<AP: AttentionPrecision>: 'static + Send + Sync {
     type KeyPartition: CubeType;
     type ValuePartition: CubeType;
     type SoftmaxPartition: CubeType;
-    type AccumulatorPartition: CubeType;
+    type OutputPartition: CubeType;
     type MaskPartition: CubeType;
     type RunningState: CubeType;
 
@@ -98,19 +98,19 @@ pub trait StageAttention<AP: AttentionPrecision>: 'static + Send + Sync {
         mask_reader: &MaskReader<AP>,
         mask_partition: &mut Self::MaskPartition,
         softmax_partition: &mut Self::SoftmaxPartition,
-        accumulator: &mut Self::AccumulatorPartition,
+        output: &mut Self::OutputPartition,
         prev_state: &mut Sequence<Self::RunningState>,
         #[comptime] config: Self::Config,
     );
 
     fn rescale(
-        acc: &mut Self::AccumulatorPartition,
+        acc: &mut Self::OutputPartition,
         state: Sequence<Self::RunningState>,
         #[comptime] config: Self::Config,
     );
 
     fn write<W: WriteEventListener, G: GlobalAttentionConfig>(
-        acc: &Self::AccumulatorPartition,
+        acc: &Self::OutputPartition,
         stage: &mut Self::OutStage,
         writer: &mut W,
         #[comptime] config: Self::Config,
@@ -124,7 +124,7 @@ pub trait StageAttention<AP: AttentionPrecision>: 'static + Send + Sync {
         #[comptime] config: Self::Config,
     ) -> Self::MaskPartition;
     fn init_softmax(#[comptime] config: Self::Config) -> Self::SoftmaxPartition;
-    fn init_accumulator(#[comptime] config: Self::Config) -> Self::AccumulatorPartition;
+    fn init_output(#[comptime] config: Self::Config) -> Self::OutputPartition;
 
     fn read_query(
         reader: &QueryReader<AP>,
