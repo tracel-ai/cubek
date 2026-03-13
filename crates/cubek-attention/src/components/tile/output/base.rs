@@ -15,6 +15,7 @@ pub trait AttentionOutput: Send + Sync + 'static + Sized {
         workspace: &mut Self::Workspace,
         #[comptime] config: Self::Config,
     );
+
     fn scale_div(
         tile: &mut Self::Tile,
         running_state: &Self::RunningState,

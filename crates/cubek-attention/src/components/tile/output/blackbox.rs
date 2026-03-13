@@ -136,7 +136,7 @@ impl<SM: Float, Acc: Float> AttentionOutput for BlackboxAttentionOutput<SM, Acc>
     }
 
     fn init_tile(#[comptime] config: Self::Config) -> Self::Tile {
-        unsafe {
+        let tile = unsafe {
             cmma::Matrix::<Acc>::uninitialized(
                 cmma::MatrixIdent::Accumulator,
                 config.tile_size.seq_q as usize,
@@ -144,7 +144,9 @@ impl<SM: Float, Acc: Float> AttentionOutput for BlackboxAttentionOutput<SM, Acc>
                 config.tile_size.seq_kv as usize,
                 cmma::MatrixLayout::Undefined,
             )
-        }
+        };
+        cmma::fill(&tile, Acc::from_int(0));
+        tile
     }
 
     fn write_results<E: Float, ES: Size>(

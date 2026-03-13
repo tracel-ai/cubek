@@ -93,15 +93,13 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
         workspace: &mut Self::Workspace,
         #[comptime] config: Self::Config,
     ) -> Self::ScoreTile {
-        UnitTile::new(UnitTileLayout::new(
+        let mut tile = UnitTile::new(UnitTileLayout::new(
             config.tile_size().seq_q,
             config.tile_size().seq_kv,
             MatrixLayout::RowMajor,
-        ))
-    }
-
-    fn zero_score_tile(score_tile: &mut Self::ScoreTile) {
-        score_tile.zero();
+        ));
+        tile.zero();
+        tile
     }
 
     fn init_softmax_tile(

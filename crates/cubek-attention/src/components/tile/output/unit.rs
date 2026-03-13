@@ -52,11 +52,13 @@ impl<SM: Float, Acc: Float> AttentionOutput for UnitAttentionOutput<SM, Acc> {
     fn init_workspace(#[comptime] config: Self::Config) -> Self::Workspace {}
 
     fn init_tile(#[comptime] config: Self::Config) -> Self::Tile {
-        UnitTile::new(UnitTileLayout::new(
+        let mut tile = UnitTile::new(UnitTileLayout::new(
             config.tile_size.seq_q,
             config.tile_size.val_dim,
             MatrixLayout::RowMajor,
-        ))
+        ));
+        tile.zero();
+        tile
     }
 
     fn write_results<E: Float, ES: Size>(
