@@ -559,14 +559,12 @@ impl<
 
         let view = |buffer, shape: &[usize], transposed| {
             let batches = shape[0];
-            // Don't care if it's actually broadcast, setting batch to 0 is fine either way
-            let batch_stride = if batches == 1 { 0 } else { 1 };
             let (rows, cols) = match transposed {
                 true => (shape[2] as u32, shape[1] as u32),
                 false => (shape[1] as u32, shape[2] as u32),
             };
             let shape = (batches, rows, cols);
-            let layout = SimpleTmaGlobalLayoutLaunch::new(transposed, batch_stride, shape);
+            let layout = SimpleTmaGlobalLayoutLaunch::new(transposed, shape);
             ViewArg::new_tensor_map_tiled::<SimpleTmaGlobalLayout>(buffer, layout)
         };
 
