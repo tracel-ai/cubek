@@ -88,7 +88,7 @@ pub fn test_launch(
     let problem_for_launch = problem.clone();
     let out_handle_for_launch = out_handle.clone();
 
-    launch_ref(
+    match launch_ref(
         strategy,
         &client,
         query_handle.binding(),
@@ -101,7 +101,12 @@ pub fn test_launch(
             causal: problem_for_launch.options.causal,
             accumulator_precision: problem_for_launch.options.accumulator_precision,
         },
-    );
+    ) {
+        Ok(_) => {}
+        Err(e) => {
+            return TestOutcome::CompileError(e.to_string()).enforce();
+        }
+    }
 
     match client.flush() {
         Ok(_) => {}
@@ -111,11 +116,11 @@ pub fn test_launch(
                     cubecl::server::ServerError::Launch(_) => {
                         return TestOutcome::CompileError(format!("{errors:?}")).enforce();
                     }
-                    _ => panic!("{errors:?}"),
+                    _ => panic!("Got unexpected error: {errors:?}"),
                 }
             }
         }
-        Err(err) => panic!("{err:?}"),
+        Err(err) => panic!("Got unexpected error: {err:?}"),
     }
 
     assert_result(

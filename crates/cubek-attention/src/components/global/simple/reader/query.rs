@@ -31,7 +31,7 @@ impl<AP: AttentionPrecision> QueryReader<AP> {
     pub fn get_tile<P: AttentionPartitioner>(
         &self,
         tile: Coords2d,
-        #[comptime] attention_tile_size: AttentionTileSize,
+        #[comptime] tile_size: AttentionTileSize,
         #[comptime] partition_seq_q: u32,
         #[comptime] partition_head_dim: u32,
     ) -> StridedTile<QG<AP>, QGS<AP>> {
@@ -41,18 +41,18 @@ impl<AP: AttentionPrecision> QueryReader<AP> {
 
         let vector_size = self.gmem_config.vector_size.comptime() as u32;
 
-        let tile_head_dim = attention_tile_size.head_dim;
+        let tile_head_dim = tile_size.head_dim;
 
         let slice = self
             .query
             .slice(
-                (row * attention_tile_size.seq_q, col * tile_head_dim),
-                (attention_tile_size.seq_q, tile_head_dim).runtime(),
+                (row * tile_size.seq_q, col * tile_head_dim),
+                (tile_size.seq_q, tile_head_dim).runtime(),
             )
             .to_linear_slice();
 
         let start = 0;
-        let length = attention_tile_size.seq_q * tile_head_dim / vector_size;
+        let length = tile_size.seq_q * tile_head_dim / vector_size;
         let end = start + length;
         let stride = partition_head_dim * tile_head_dim / vector_size;
 
