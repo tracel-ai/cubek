@@ -42,11 +42,11 @@ use crate::components::{
 pub trait ConcreteArgs<A: Routine<RuntimeArgs>>:
     MatmulArgs<
         Input<
-            Vector<NumericExpand<Const<0>>, SizeExpand<Const<1>>>,
-            Vector<NumericExpand<Const<2>>, SizeExpand<Const<3>>>,
-            Vector<NumericExpand<Const<4>>, SizeExpand<Const<5>>>
+            Vector<DynamicScalar<Const<0>>, DynamicSize<Const<1>>>,
+            Vector<DynamicScalar<Const<2>>, DynamicSize<Const<3>>>,
+            Vector<DynamicScalar<Const<4>>, DynamicSize<Const<5>>>
             >: ConcreteInputsFactory<A>,
-        Output<Vector<NumericExpand<Const<4>>, SizeExpand<Const<5>>>>: ConcreteOutputFactory<A>,
+        Output<Vector<DynamicScalar<Const<4>>, DynamicSize<Const<5>>>>: ConcreteOutputFactory<A>,
         Config = RuntimeArgs,
     >
 {

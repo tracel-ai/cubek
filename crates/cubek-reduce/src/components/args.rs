@@ -247,16 +247,16 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::In, P::Siz
     fn __expand_read_method(
         &self,
         scope: &mut Scope,
-        index: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<Vector<P::In, P::SizeIn>> {
+        index: NativeExpand<usize>,
+    ) -> NativeExpand<Vector<P::In, P::SizeIn>> {
         RA::__expand_read_input(scope, self.state.clone(), index)
     }
 
     fn __expand_write_method(
         &self,
         _scope: &mut Scope,
-        _index: ExpandElementTyped<usize>,
-        _value: ExpandElementTyped<Vector<P::In, P::SizeIn>>,
+        _index: NativeExpand<usize>,
+        _value: NativeExpand<Vector<P::In, P::SizeIn>>,
     ) {
         unreachable!("Can't write to input")
     }
@@ -264,34 +264,34 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::In, P::Siz
     fn __expand_shape_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<usize> {
+        axis: NativeExpand<usize>,
+    ) -> NativeExpand<usize> {
         RA::__expand_shape_input(scope, self.state.clone(), axis)
     }
 
     fn __expand_stride_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<usize> {
+        axis: NativeExpand<usize>,
+    ) -> NativeExpand<usize> {
         RA::__expand_stride_input(scope, self.state.clone(), axis)
     }
 
-    fn __expand_rank_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
+    fn __expand_rank_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
         RA::__expand_rank_input(scope, self.state.clone())
     }
-    fn __expand_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
+    fn __expand_len_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
         RA::__expand_len_input(scope, self.state.clone())
     }
-    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
+    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
         RA::__expand_buffer_len_input(scope, self.state.clone())
     }
 
     fn __expand_read_window_method(
         &self,
         _context: &mut Scope,
-        _start: ExpandElementTyped<usize>,
-        _end: ExpandElementTyped<usize>,
+        _start: NativeExpand<usize>,
+        _end: NativeExpand<usize>,
     ) -> SliceExpand<Vector<P::In, P::SizeIn>, ReadOnly> {
         panic!("Unsupported")
     }
@@ -318,16 +318,16 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::Out, P::Si
     fn __expand_read_method(
         &self,
         scope: &mut Scope,
-        index: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<Vector<P::Out, P::SizeOut>> {
+        index: NativeExpand<usize>,
+    ) -> NativeExpand<Vector<P::Out, P::SizeOut>> {
         RA::__expand_read_output(scope, self.state.clone(), index)
     }
 
     fn __expand_write_method(
         &self,
         scope: &mut Scope,
-        index: ExpandElementTyped<usize>,
-        value: ExpandElementTyped<Vector<P::Out, P::SizeOut>>,
+        index: NativeExpand<usize>,
+        value: NativeExpand<Vector<P::Out, P::SizeOut>>,
     ) {
         RA::__expand_write_output(scope, self.state.clone(), index, value)
     }
@@ -335,35 +335,35 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::Out, P::Si
     fn __expand_shape_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<usize> {
+        axis: NativeExpand<usize>,
+    ) -> NativeExpand<usize> {
         RA::__expand_shape_output(scope, self.state.clone(), axis)
     }
 
     fn __expand_stride_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<usize> {
+        axis: NativeExpand<usize>,
+    ) -> NativeExpand<usize> {
         RA::__expand_stride_output(scope, self.state.clone(), axis)
     }
 
-    fn __expand_rank_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
+    fn __expand_rank_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
         RA::__expand_rank_output(scope, self.state.clone())
     }
 
-    fn __expand_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
+    fn __expand_len_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
         RA::__expand_len_output(scope, self.state.clone())
     }
-    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
+    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
         RA::__expand_buffer_len_output(scope, self.state.clone())
     }
 
     fn __expand_read_window_method(
         &self,
         _context: &mut Scope,
-        _start: ExpandElementTyped<usize>,
-        _end: ExpandElementTyped<usize>,
+        _start: NativeExpand<usize>,
+        _end: NativeExpand<usize>,
     ) -> SliceExpand<Vector<P::Out, P::SizeOut>, ReadOnly> {
         panic!("Unsupported")
     }

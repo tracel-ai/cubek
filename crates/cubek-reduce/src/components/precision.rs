@@ -3,7 +3,7 @@ use cubecl::{
     prelude::{Numeric, Size},
 };
 
-define_size!(S);
+define_size!(pub S);
 
 /// Precision used for the reduction.
 pub trait ReducePrecision {

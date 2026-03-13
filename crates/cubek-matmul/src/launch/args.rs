@@ -25,14 +25,14 @@ use crate::routines::Routine;
 
 /// Input argument
 pub type InputArg<MA> = <MA as MatmulArgs>::Input<
-    Vector<NumericExpand<Const<0>>, SizeExpand<Const<1>>>,
-    Vector<NumericExpand<Const<2>>, SizeExpand<Const<3>>>,
-    Vector<NumericExpand<Const<4>>, SizeExpand<Const<5>>>,
+    Vector<DynamicScalar<Const<0>>, DynamicSize<Const<1>>>,
+    Vector<DynamicScalar<Const<2>>, DynamicSize<Const<3>>>,
+    Vector<DynamicScalar<Const<4>>, DynamicSize<Const<5>>>,
 >;
 
 /// Output argument
 pub type OutputArg<MA> =
-    <MA as MatmulArgs>::Output<Vector<NumericExpand<Const<4>>, SizeExpand<Const<5>>>>;
+    <MA as MatmulArgs>::Output<Vector<DynamicScalar<Const<4>>, DynamicSize<Const<5>>>>;
 
 /// Config argument
 pub type ConfigArg<MA> = <MA as MatmulArgs>::Config;

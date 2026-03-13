@@ -60,9 +60,9 @@ pub trait MmaIdent<M: MmaTypes> {
     const IDENT: MatrixIdent;
 }
 
-define_size!(AS);
-define_size!(BS);
-define_size!(CDS);
+define_size!(pub AS);
+define_size!(pub BS);
+define_size!(pub CDS);
 
 pub struct IdentA;
 impl<M: MmaTypes> MmaIdent<M> for IdentA {
