@@ -1088,7 +1088,6 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA:
 pub struct TensorArgs;
 
 #[derive(CubeLaunch, CubeType)]
-#[launch(skip_bounds)]
 /// Input representation for [TensorArgs] implementing [AttentionArgs].
 pub struct TensorInputs<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine> {
     pub query: Tensor<Vector<Q::T, Q::N>>,

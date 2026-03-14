@@ -178,7 +178,6 @@ pub struct TensorArgs<Config: RuntimeConfig = ()> {
 }
 
 #[derive(CubeLaunch, CubeType, Clone, Copy)]
-#[launch(skip_bounds)]
 /// Input representation for [TensorArgs] implementing [MatmulArgs].
 pub struct TensorInputs<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc: CubePrimitive> {
     /// The lhs tensor.
@@ -258,7 +257,6 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc: CubePrimitive, A: Routine<()>>
 }
 
 #[derive(CubeType, CubeLaunch, Clone, Copy)]
-#[launch(skip_bounds)]
 pub struct TensorOutput<EG: CubePrimitive> {
     view: View<EG, BatchedCoords, ReadWrite>,
     batch: VirtualLayout<Coords1d, Coords1d>,
@@ -377,7 +375,6 @@ pub struct TensorMapArgs<Config: RuntimeConfig = ()> {
 }
 
 #[derive(CubeLaunch, CubeType, Clone, Copy)]
-#[launch(skip_bounds)]
 /// Input representation for [TensorArgs] implementing [MatmulArgs].
 pub struct TensorMapInputs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive> {
     /// The lhs tensor.
