@@ -169,7 +169,6 @@ pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
     let dtypes = &launch_info.dtypes.clone();
 
     let output = <TensorOutput<_> as ConcreteOutputFactory<A>>::create(
-        &client,
         out,
         &blueprint,
         &problem,
@@ -180,7 +179,6 @@ pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
     let result = match input_representation {
         InputRepresentation::Normal => {
             let inputs = <TensorInputs<_, _, _> as ConcreteInputsFactory<A>>::create(
-                &client,
                 lhs,
                 rhs,
                 &blueprint,
@@ -207,7 +205,6 @@ pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
         }
         InputRepresentation::Tma => {
             let inputs = <TensorMapInputs<_, _, _> as ConcreteInputsFactory<A>>::create(
-                &client,
                 lhs,
                 rhs,
                 &blueprint,

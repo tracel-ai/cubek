@@ -299,9 +299,9 @@ fn dequantize_packed<R: Runtime>(
                 address_type,
                 vector_size_out,
                 vector_size_in,
-                linear_view(client, input.clone(), vector_size_in),
-                scales_view(client, input, scale, 1, &scheme),
-                linear_view(client, output, vector_size_out),
+                linear_view(input.clone()),
+                scales_view(input, scale, 1, &scheme),
+                linear_view(output),
                 scheme,
                 [input_dtype, scale_dtype],
             )
@@ -361,9 +361,9 @@ fn dequantize_native<R: Runtime>(
                     address_type,
                     vector_size,
                     vector_size,
-                    linear_view(client, input.clone(), vector_size),
-                    scales_view(client, input, scale, 1, &scheme),
-                    linear_view(client, output, vector_size),
+                    linear_view(input.clone()),
+                    scales_view(input, scale, 1, &scheme),
+                    linear_view(output),
                     [input_dtype, scale_dtype, quant_dtype.into()],
                 )
             }

@@ -1,6 +1,6 @@
 mod t16x16x16 {
     use super::*;
-    use cubek_matmul::components::TilingSchemeBuilder;
+    use cubek_matmul::definition::TilingSchemeBuilder;
     use cubek_std::TileSize;
 
     fn tile_size(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
@@ -17,7 +17,7 @@ mod t16x16x16 {
 #[cfg(feature = "matmul_tests_mma")]
 mod t16x8x16 {
     use super::*;
-    use cubek_matmul::components::TilingSchemeBuilder;
+    use cubek_matmul::definition::TilingSchemeBuilder;
     use cubek_std::TileSize;
 
     fn tile_size(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {

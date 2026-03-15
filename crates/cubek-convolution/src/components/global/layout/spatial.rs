@@ -1,10 +1,13 @@
-use cubecl::prelude::*;
 use cubecl::std::tensor::{
     layout::{
         Coordinates, Coords1d, Layout, LayoutExpand,
         as_dyn::{IntoDyn, IntoDynExpand},
     },
     r#virtual::VirtualTensor,
+};
+use cubecl::{
+    prelude::*,
+    std::tensor::launch::{BufferArg, ViewLayoutLaunchArg},
 };
 use enumset::{EnumSet, EnumSetType};
 
@@ -92,7 +95,7 @@ pub enum NhwcCheck {
 
 /// Layout for a spatial (i.e. NHWC) tensor. Bounds check only applies to spatial dimensions, not
 /// channel or batch (because these are implicitly checked in the layouts used with spatial tensors).
-#[derive(CubeType, CubeLaunch, Clone)]
+#[derive(CubeType, Clone)]
 pub struct NhwcLayout {
     /// Stride for N
     pub stride_batch: usize,
@@ -222,32 +225,83 @@ pub(crate) fn cast_seq<From: CubePrimitive, To: CubePrimitive>(
     out_seq
 }
 
-impl<R: Runtime> NhwcLayoutLaunch<R> {
-    pub fn from_handle(
-        binding: &TensorBinding<R>,
-        vector_size: VectorSize,
-        checks: EnumSet<NhwcCheck>,
-    ) -> Self {
-        let rank = binding.shape.len();
+pub struct NhwcLayoutLaunch {
+    checks: EnumSet<NhwcCheck>,
+}
+
+impl NhwcLayoutLaunch {
+    pub fn checked(checks: EnumSet<NhwcCheck>) -> Self {
+        Self { checks }
+    }
+
+    pub fn unchecked() -> Self {
+        Self {
+            checks: EnumSet::empty(),
+        }
+    }
+}
+
+#[derive_cube_comptime]
+pub struct NhwcLayoutCompilationArg {
+    pub spatial_rank: usize,
+    pub checks: EnumSet<NhwcCheck>,
+}
+
+impl ViewLayoutLaunchArg for NhwcLayout {
+    type RuntimeArg<R: Runtime> = NhwcLayoutLaunch;
+    type CompilationArg = NhwcLayoutCompilationArg;
+    fn compilation_arg<R: Runtime, B: BufferArg>(
+        runtime_arg: &Self::RuntimeArg<R>,
+        buffer: &B,
+    ) -> Self::CompilationArg {
+        NhwcLayoutCompilationArg {
+            spatial_rank: buffer.shape().len() - 2,
+            checks: runtime_arg.checks,
+        }
+    }
+    fn register<R: Runtime, B: BufferArg>(
+        _: Self::RuntimeArg<R>,
+        buffer: &B,
+        _: Type,
+        launcher: &mut KernelLauncher<R>,
+    ) {
+        let shape = buffer.shape();
+        let strides = buffer.strides();
+
+        let rank = shape.len();
         let dim_c = rank - 1;
 
-        let stride_batch = binding.strides[0];
-        let strides_spatial = binding.strides[1..dim_c].iter().copied().collect();
-        let stride_channel = binding.strides[dim_c];
+        let stride_batch = strides[0];
+        let strides_spatial = strides[1..dim_c].iter().copied().collect();
+        let stride_channel = strides[dim_c];
 
-        let shape_batch = binding.shape[0] as u32;
-        let shapes_spatial = binding.shape[1..dim_c].iter().map(|s| *s as u32).collect();
-        let shape_channel = binding.shape[dim_c] as u32;
+        let shape_batch = shape[0] as u32;
+        let shapes_spatial = shape[1..dim_c].iter().map(|s| *s as u32).collect();
+        let shape_channel = shape[dim_c] as u32;
 
-        Self::new(
-            stride_batch,
-            strides_spatial,
-            stride_channel,
-            shape_batch,
-            shapes_spatial,
-            shape_channel,
-            vector_size,
-            checks,
-        )
+        <usize as LaunchArg>::register(stride_batch, launcher);
+        <Sequence<usize> as LaunchArg>::register(strides_spatial, launcher);
+        <usize as LaunchArg>::register(stride_channel, launcher);
+        <u32 as LaunchArg>::register(shape_batch, launcher);
+        <Sequence<u32> as LaunchArg>::register(shapes_spatial, launcher);
+        <u32 as LaunchArg>::register(shape_channel, launcher);
+    }
+    fn expand(
+        arg: &Self::CompilationArg,
+        ty: Type,
+        builder: &mut KernelBuilder,
+    ) -> <Self as CubeType>::ExpandType {
+        let strides_comp_arg = (0..arg.spatial_rank).map(|_| ()).collect();
+        let shape_comp_arg = (0..arg.spatial_rank).map(|_| ()).collect();
+        NhwcLayoutExpand {
+            stride_batch: <usize as LaunchArg>::expand(&(), builder),
+            strides_spatial: <Sequence<usize> as LaunchArg>::expand(&strides_comp_arg, builder),
+            stride_channel: <usize as LaunchArg>::expand(&(), builder),
+            shape_batch: <u32 as LaunchArg>::expand(&(), builder),
+            shapes_spatial: <Sequence<u32> as LaunchArg>::expand(&shape_comp_arg, builder),
+            shape_channel: <u32 as LaunchArg>::expand(&(), builder),
+            vector_size: ty.vector_size(),
+            checks: arg.checks,
+        }
     }
 }
