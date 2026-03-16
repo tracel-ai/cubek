@@ -84,6 +84,50 @@ pub struct AttentionTileSize {
 }
 
 impl AttentionTileSize {
+    pub fn from_max_vector_sizes(vector_sizes: &AttentionVectorSizes) -> Self {
+        // Constraints:
+        // - head_dim must be a multiple of vector_sizes.query
+        // - head_dim must be a multiple of vector_sizes.key
+        // - seq_kv must be a multiple of vector_sizes.key
+        // - seq_kv must be a multiple of vector_sizes.mask
+        // - val_dim must be a multiple of vector_sizes.value
+        // - val_dim must be a multiple of vector_sizes.out
+        // - head_dim must equal val_dim
+
+        // Helper for LCM
+        fn lcm(a: usize, b: usize) -> usize {
+            a / gcd(a, b) * b
+        }
+
+        // Helper for GCD
+        fn gcd(mut a: usize, mut b: usize) -> usize {
+            while b != 0 {
+                let tmp = b;
+                b = a % b;
+                a = tmp;
+            }
+            a
+        }
+
+        let head_dim = lcm(
+            lcm(vector_sizes.query, vector_sizes.key),
+            lcm(vector_sizes.value, vector_sizes.out),
+        );
+        let val_dim = head_dim;
+
+        let seq_kv = lcm(vector_sizes.key, vector_sizes.mask);
+
+        // Independent from vectorization
+        let seq_q = 8;
+
+        AttentionTileSize {
+            seq_q,
+            head_dim: head_dim as u32,
+            seq_kv: seq_kv as u32,
+            val_dim: val_dim as u32,
+        }
+    }
+
     pub fn to_score_matmul_tile_size(&self) -> TileSize {
         TileSize {
             m: self.seq_q,

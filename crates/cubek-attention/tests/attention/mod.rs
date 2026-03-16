@@ -7,8 +7,6 @@ pub(crate) use reference::assert_result;
 pub(crate) use utils::tiling_scheme_ops;
 
 mod unit {
-    use std::cmp::min;
-
     use cubecl::{Runtime, client::ComputeClient};
     use cubek_attention::{
         definition::{
@@ -31,13 +29,10 @@ mod unit {
         client: &ComputeClient<R>,
         global_types: AttentionGlobalTypes,
     ) -> AttentionTileSize {
-        let vector_sizes = AttentionVectorSizes::new_max(client, &global_types);
-        AttentionTileSize {
-            seq_q: 8,
-            head_dim: 8, //min(vector_sizes.query, vector_sizes.key) as u32,
-            seq_kv: 8,
-            val_dim: 8, //,min(vector_sizes.out, vector_sizes.value) as u32,
-        }
+        AttentionTileSize::from_max_vector_sizes(&AttentionVectorSizes::new_max(
+            client,
+            &global_types,
+        ))
     }
 
     mod f16_ty {
