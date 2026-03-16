@@ -4,12 +4,10 @@ use cubecl;
 use cubecl::prelude::*;
 
 use crate::components::tile::matmul::InnerMatmul;
-use crate::components::tile::pipeline::{
-    UnitTile, UnitTileLayout, strided_tile_to_transposed_unit_tile, strided_tile_to_unit_tile,
-};
+use crate::components::tile::pipeline::{UnitTile, UnitTileLayout};
 
+use cubek_std::TileSize;
 use cubek_std::tile::StridedTile;
-use cubek_std::{MatrixLayout, TileSize};
 
 #[derive(CubeType)]
 pub struct UnitMatmul<A: Numeric, B: Numeric, CD: Numeric> {
@@ -33,7 +31,7 @@ impl<A: Numeric, B: Numeric, CD: Numeric> InnerMatmul for UnitMatmul<A, B, CD> {
         UnitTile::new(UnitTileLayout::new(
             config.tile_size.m,
             config.tile_size.k,
-            MatrixLayout::RowMajor,
+            false,
         ))
     }
 
@@ -41,7 +39,7 @@ impl<A: Numeric, B: Numeric, CD: Numeric> InnerMatmul for UnitMatmul<A, B, CD> {
         UnitTile::new(UnitTileLayout::new(
             config.tile_size.k,
             config.tile_size.n,
-            MatrixLayout::RowMajor,
+            false,
         ))
     }
 
@@ -49,16 +47,16 @@ impl<A: Numeric, B: Numeric, CD: Numeric> InnerMatmul for UnitMatmul<A, B, CD> {
         UnitTile::new(UnitTileLayout::new(
             config.tile_size.k,
             config.tile_size.n,
-            MatrixLayout::ColMajor,
+            true,
         ))
     }
 
     fn load_lhs<E: Numeric, ES: Size>(tile: &StridedTile<E, ES>, fragment: &mut Self::Lhs) {
-        strided_tile_to_unit_tile(tile, fragment);
+        fragment.load_from_strided_tile(tile);
     }
 
     fn load_rhs<E: Float, ES: Size>(tile: &StridedTile<E, ES>, fragment: &mut Self::Rhs) {
-        strided_tile_to_unit_tile(tile, fragment)
+        fragment.load_from_strided_tile(tile);
     }
 
     fn execute(

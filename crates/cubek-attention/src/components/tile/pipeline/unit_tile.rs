@@ -1,7 +1,7 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
 use cubecl::{self};
-use cubek_std::{MatrixLayout, tile::StridedTile};
+use cubek_std::tile::StridedTile;
 
 use crate::components::tile::{
     LOGIT_MASKED,
@@ -16,13 +16,14 @@ pub struct UnitTile<E: Numeric> {
 }
 
 #[derive(CubeType, Copy, Clone)]
+// Assumes row-major. If loading from a col-major source, use transposed_load=true
 pub struct UnitTileLayout {
     #[cube(comptime)]
     pub num_rows: u32,
     #[cube(comptime)]
     pub num_cols: u32,
     #[cube(comptime)]
-    pub matrix_layout: MatrixLayout,
+    pub transposed_load: bool,
 }
 
 #[cube]
@@ -38,24 +39,15 @@ impl<E: Numeric> UnitTile<E> {
         }
     }
 
-    fn index(&self, row: u32, col: u32) -> usize {
-        (match comptime!(self.layout.matrix_layout) {
-            MatrixLayout::RowMajor => row * self.layout.num_cols + col,
-            MatrixLayout::ColMajor => col * self.layout.num_rows + row,
-        }) as usize
-    }
-
     pub fn get(&self, row: u32, col: u32) -> E {
-        self.data[self.index(row, col)]
+        self.data[(row * self.layout.num_cols + col) as usize]
     }
 
     pub fn accumulate(&mut self, row: u32, col: u32, val: E) {
-        self.data[self.index(row, col)] += val;
+        self.data[(row * self.layout.num_cols + col) as usize] += val;
     }
 
     pub fn rowwise_scale(&mut self, scale: &RowWise<E>) {
-        assert!(self.layout.matrix_layout == MatrixLayout::RowMajor);
-
         #[unroll]
         for r in 0..self.layout.num_rows as usize {
             let row_offset = r as u32 * self.layout.num_cols;
@@ -68,8 +60,6 @@ impl<E: Numeric> UnitTile<E> {
     }
 
     pub fn rowwise_max(&self) -> RowWise<E> {
-        assert!(self.layout.matrix_layout == MatrixLayout::RowMajor);
-
         let mut vals = Sequence::new();
 
         #[unroll]
@@ -93,8 +83,6 @@ impl<E: Numeric> UnitTile<E> {
     }
 
     pub fn rowwise_sum(&self) -> RowWise<E> {
-        assert!(self.layout.matrix_layout == MatrixLayout::RowMajor);
-
         let mut vals = Sequence::new();
 
         #[unroll]
@@ -118,8 +106,6 @@ impl<E: Numeric> UnitTile<E> {
     }
 
     pub fn scale_and_mask<M: FragmentMask>(&mut self, scale: E, mask: &M) {
-        assert!(self.layout.matrix_layout == MatrixLayout::RowMajor);
-
         #[unroll]
         for r in 0..self.layout.num_rows {
             let row_offset = r * self.layout.num_cols;
@@ -135,7 +121,6 @@ impl<E: Numeric> UnitTile<E> {
     // TODO find a way to have this not necessary if E == E2
     // TODO even if E != E2 it could be written as output to UnitTile::exp_diff rather than exp_diff being inplace
     pub fn copy_from<E2: Numeric>(&mut self, other: &UnitTile<E2>) {
-        assert!(self.layout.matrix_layout == MatrixLayout::RowMajor);
         // Assume layouts are the same
 
         #[unroll]
@@ -148,12 +133,19 @@ impl<E: Numeric> UnitTile<E> {
             }
         }
     }
+
+    pub fn load_from_strided_tile<E2: Numeric, ES: Size>(&mut self, tile: &StridedTile<E2, ES>) {
+        if comptime!(self.layout.transposed_load) {
+            strided_tile_to_transposed_unit_tile(tile, self)
+        } else {
+            strided_tile_to_unit_tile(tile, self)
+        }
+    }
 }
 
 #[cube]
 impl<E: Float> UnitTile<E> {
     pub fn exp_diff(&mut self, vals: &RowWise<E>) {
-        assert!(self.layout.matrix_layout == MatrixLayout::RowMajor);
         let threshold = E::new(LOGIT_MASKED);
 
         #[unroll]
@@ -180,12 +172,12 @@ impl UnitTileLayout {
     pub fn new(
         #[comptime] num_rows: u32,
         #[comptime] num_cols: u32,
-        #[comptime] matrix_layout: MatrixLayout,
+        #[comptime] transposed_load: bool,
     ) -> UnitTileLayout {
         UnitTileLayout {
             num_rows,
             num_cols,
-            matrix_layout,
+            transposed_load,
         }
     }
 }
@@ -206,13 +198,12 @@ impl<E: Numeric> FragmentMask for UnitTile<E> {
     type Layout = UnitTileLayout;
 
     fn should_mask(&self, local_pos: Coords2d) -> bool {
-        assert!(self.layout.matrix_layout == MatrixLayout::RowMajor);
         bool::cast_from(self.data[(local_pos.0 * self.layout.num_cols + local_pos.1) as usize])
     }
 }
 
 #[cube]
-pub(crate) fn strided_tile_to_unit_tile<E: Numeric, N: Size, E2: Numeric>(
+fn strided_tile_to_unit_tile<E: Numeric, N: Size, E2: Numeric>(
     strided_tile: &StridedTile<E, N>,
     unit_tile: &mut UnitTile<E2>,
 ) {
@@ -235,7 +226,7 @@ pub(crate) fn strided_tile_to_unit_tile<E: Numeric, N: Size, E2: Numeric>(
 }
 
 #[cube]
-pub(crate) fn strided_tile_to_transposed_unit_tile<E: Numeric, N: Size, E2: Numeric>(
+fn strided_tile_to_transposed_unit_tile<E: Numeric, N: Size, E2: Numeric>(
     strided_tile: &StridedTile<E, N>,
     unit_tile: &mut UnitTile<E2>,
 ) {

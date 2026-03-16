@@ -55,7 +55,7 @@ impl<SM: Float, Acc: Float> AttentionOutput for UnitAttentionOutput<SM, Acc> {
         let mut tile = UnitTile::new(UnitTileLayout::new(
             config.tile_size.seq_q,
             config.tile_size.val_dim,
-            MatrixLayout::RowMajor,
+            false,
         ));
         tile.zero();
         tile

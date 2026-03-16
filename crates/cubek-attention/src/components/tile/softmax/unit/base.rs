@@ -2,13 +2,10 @@ use std::marker::PhantomData;
 
 use cubecl;
 use cubecl::prelude::*;
-use cubek_std::MatrixLayout;
 use cubek_std::tile::StridedTile;
 
 use crate::components::tile::MaskTile;
-use crate::components::tile::pipeline::{
-    RowWise, UnitTile, UnitTileLayout, strided_tile_to_unit_tile,
-};
+use crate::components::tile::pipeline::{RowWise, UnitTile, UnitTileLayout};
 use crate::components::tile::softmax::unit::UnitSoftmaxConfig;
 use crate::components::tile::softmax::{Reducer, Softmax, SoftmaxConfig, UnitReducer};
 
@@ -93,7 +90,7 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
         let mut tile = UnitTile::new(UnitTileLayout::new(
             config.tile_size().seq_q,
             config.tile_size().seq_kv,
-            MatrixLayout::RowMajor,
+            false,
         ));
         Self::zero_score_tile(&mut tile);
         tile
@@ -108,7 +105,7 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
         UnitTile::new(UnitTileLayout::new(
             config.tile_size().seq_q,
             config.tile_size().seq_kv,
-            MatrixLayout::RowMajor,
+            false,
         ))
     }
 
@@ -121,14 +118,14 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
         fragment: &mut Self::Mask,
         #[comptime] config: Self::Config,
     ) {
-        strided_tile_to_unit_tile(tile, fragment);
+        fragment.load_from_strided_tile(tile);
     }
 
     fn layout(#[comptime] config: Self::Config) -> Self::ScoreLayout {
         UnitTileLayout {
             num_rows: config.tile_size.seq_q,
             num_cols: config.tile_size.seq_kv,
-            matrix_layout: MatrixLayout::RowMajor,
+            transposed_load: false,
         }
     }
 }
