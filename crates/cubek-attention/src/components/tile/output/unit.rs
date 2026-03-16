@@ -2,7 +2,6 @@ use std::marker::PhantomData;
 
 use cubecl;
 use cubecl::prelude::*;
-use cubek_std::MatrixLayout;
 
 use crate::components::tile::output::AttentionOutput;
 use crate::components::tile::pipeline::{RowWise, UnitTile, UnitTileLayout, unit_tile_to_slice};
@@ -31,8 +30,8 @@ impl<SM: Float, Acc: Float> AttentionOutput for UnitAttentionOutput<SM, Acc> {
     fn scale_mul(
         tile: &mut Self::Tile,
         scale: &Self::ScaleColumn,
-        workspace: &mut Self::Workspace,
-        #[comptime] config: Self::Config,
+        _workspace: &mut Self::Workspace,
+        #[comptime] _config: Self::Config,
     ) {
         tile.rowwise_scale(&RowWise::<SM>::cast_from(&scale));
     }
@@ -40,8 +39,8 @@ impl<SM: Float, Acc: Float> AttentionOutput for UnitAttentionOutput<SM, Acc> {
     fn scale_div(
         tile: &mut Self::Tile,
         running_state: &Self::RunningState,
-        workspace: &mut Self::Workspace,
-        #[comptime] config: Self::Config,
+        _workspace: &mut Self::Workspace,
+        #[comptime] _config: Self::Config,
     ) {
         let mut scale = RowWise::<SM>::cast_from(&running_state.1);
         scale.recip_inplace();
@@ -49,7 +48,7 @@ impl<SM: Float, Acc: Float> AttentionOutput for UnitAttentionOutput<SM, Acc> {
         tile.rowwise_scale(&scale);
     }
 
-    fn init_workspace(#[comptime] config: Self::Config) -> Self::Workspace {}
+    fn init_workspace(#[comptime] _config: Self::Config) -> Self::Workspace {}
 
     fn init_tile(#[comptime] config: Self::Config) -> Self::Tile {
         let mut tile = UnitTile::new(UnitTileLayout::new(
@@ -64,7 +63,7 @@ impl<SM: Float, Acc: Float> AttentionOutput for UnitAttentionOutput<SM, Acc> {
     fn write_results<E: Float, ES: Size>(
         tile: &Self::Tile,
         slice: &mut SliceMut<Vector<E, ES>>,
-        #[comptime] config: Self::Config,
+        #[comptime] _config: Self::Config,
     ) {
         unit_tile_to_slice(tile, slice)
     }

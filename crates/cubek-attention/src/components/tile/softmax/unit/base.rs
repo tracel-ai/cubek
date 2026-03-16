@@ -52,7 +52,7 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
         state: &mut Self::RunningState,
         workspace: &mut Self::Workspace,
         head_dim_factor: Acc,
-        #[comptime] config: Self::Config,
+        #[comptime] _config: Self::Config,
     ) -> Self::ScaleColumn {
         score_matmul_accumulator.scale_and_mask::<MaskTile<Acc, Self>>(head_dim_factor, mask);
 
@@ -116,7 +116,7 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
     fn load_mask<E: Numeric, ES: Size>(
         tile: &StridedTile<E, ES>,
         fragment: &mut Self::Mask,
-        #[comptime] config: Self::Config,
+        #[comptime] _config: Self::Config,
     ) {
         fragment.load_from_strided_tile(tile);
     }
