@@ -4,8 +4,8 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::r#virtual::VirtualTensor;
 
 use crate::definition::{
-    AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError, CubeCountInput,
-    InputRuntimeArg, OutputRuntimeArg,
+    AttentionElems, AttentionPrecision, AttentionSetupError, CubeCountInput, InputRuntimeArg,
+    OutputRuntimeArg,
 };
 use crate::definition::{CubeCountInputArgs, attention_types::*};
 use crate::launch::AttentionArgs;
@@ -45,7 +45,7 @@ pub trait BatchAttentionFamily: Send + Sync + 'static {
     /// This function may return an error if the configuration cannot be supported.
     fn expand_config(
         device_props: &DeviceProperties,
-        blueprint: AttentionBlueprint,
+        blueprint: Self::Blueprint,
         dtypes: &AttentionElems,
     ) -> Result<Self::Config, AttentionSetupError>;
 }

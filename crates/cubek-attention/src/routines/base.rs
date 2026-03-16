@@ -19,7 +19,7 @@ pub trait Routine: Debug + Clone {
     type BatchAttention: BatchAttentionFamily<Blueprint = Self::Blueprint>;
 
     type Strategy;
-    type Blueprint;
+    type Blueprint: Clone;
 
     fn prepare(
         problem: &AttentionProblem,
