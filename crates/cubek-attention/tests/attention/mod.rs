@@ -34,9 +34,9 @@ mod unit {
         let vector_sizes = AttentionVectorSizes::new_max(client, &global_types);
         AttentionTileSize {
             seq_q: 8,
-            head_dim: min(vector_sizes.query, vector_sizes.key) as u32,
+            head_dim: 8, //min(vector_sizes.query, vector_sizes.key) as u32,
             seq_kv: 8,
-            val_dim: min(vector_sizes.out, vector_sizes.value) as u32,
+            val_dim: 8, //,min(vector_sizes.out, vector_sizes.value) as u32,
         }
     }
 

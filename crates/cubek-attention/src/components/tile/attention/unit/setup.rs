@@ -10,7 +10,7 @@ use crate::{
     },
     definition::{
         AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError,
-        AttentionTileSize,
+        AttentionTileSize, AttentionVectorSizes,
     },
 };
 
@@ -84,35 +84,79 @@ impl TileAttentionFamily for UnitTileAttention {
         } else {
             InnerLayout::Contiguous
         };
-        Ok(UnitTileAttentionConfig {
-            shared: SharedTileAttentionConfig {
-                plane_dim,
-                attention_tile_size,
-                num_planes,
+        validate(
+            UnitTileAttentionConfig {
+                shared: SharedTileAttentionConfig {
+                    plane_dim,
+                    attention_tile_size,
+                    num_planes,
+                },
+                score_matmul_config: UnitMatmulConfig {
+                    tile_size: blueprint
+                        .tiling_scheme
+                        .tile_size
+                        .to_score_matmul_tile_size(),
+                },
+                softmax_config: UnitSoftmaxConfig {
+                    tile_size: attention_tile_size,
+                    plane_dim,
+                    num_planes,
+                    inner_layout,
+                    causal_mask: blueprint.causal,
+                    materialized_mask: blueprint.masked,
+                },
+                value_matmul_config: UnitMatmulConfig {
+                    tile_size: blueprint
+                        .tiling_scheme
+                        .tile_size
+                        .to_value_matmul_tile_size(),
+                },
+                output_config: UnitOutputConfig {
+                    tile_size: blueprint.tiling_scheme.tile_size,
+                },
             },
-            score_matmul_config: UnitMatmulConfig {
-                tile_size: blueprint
-                    .tiling_scheme
-                    .tile_size
-                    .to_score_matmul_tile_size(),
-            },
-            softmax_config: UnitSoftmaxConfig {
-                tile_size: attention_tile_size,
-                plane_dim,
-                num_planes,
-                inner_layout,
-                causal_mask: blueprint.causal,
-                materialized_mask: blueprint.masked,
-            },
-            value_matmul_config: UnitMatmulConfig {
-                tile_size: blueprint
-                    .tiling_scheme
-                    .tile_size
-                    .to_value_matmul_tile_size(),
-            },
-            output_config: UnitOutputConfig {
-                tile_size: blueprint.tiling_scheme.tile_size,
-            },
-        })
+            &blueprint.vector_sizes,
+        )
     }
+}
+
+fn validate(
+    config: UnitTileAttentionConfig,
+    vector_sizes: &AttentionVectorSizes,
+) -> Result<UnitTileAttentionConfig, AttentionSetupError> {
+    let tile_size = config.softmax_config.tile_size;
+    let check_divisible =
+        |dim: u32, vec_size: u32, name: &str, vec_name: &str| -> Result<(), AttentionSetupError> {
+            if !dim.is_multiple_of(vec_size) {
+                return Err(AttentionSetupError::InvalidConfig(Box::new(format!(
+                    "Tile's {} ({:?}) must be divisible by {} vector size ({:?})",
+                    name, dim, vec_name, vec_size
+                ))));
+            }
+            Ok(())
+        };
+
+    check_divisible(
+        tile_size.head_dim,
+        vector_sizes.query as u32,
+        "head_dim",
+        "query",
+    )?;
+    check_divisible(tile_size.seq_kv, vector_sizes.key as u32, "seq_kv", "key")?;
+    check_divisible(
+        tile_size.head_dim,
+        vector_sizes.key as u32,
+        "head_dim",
+        "key",
+    )?;
+    check_divisible(tile_size.seq_kv, vector_sizes.mask as u32, "seq_kv", "mask")?;
+    check_divisible(tile_size.val_dim, vector_sizes.out as u32, "val_dim", "out")?;
+    check_divisible(
+        tile_size.val_dim,
+        vector_sizes.value as u32,
+        "val_dim",
+        "value",
+    )?;
+
+    Ok(config)
 }
