@@ -106,7 +106,7 @@ pub fn launch_attention<R: Runtime, A: Routine>(
 
     let launch_info = A::prepare(&definition, &device_settings, strategy)?;
 
-    // This allows an expand_config error to be catched by the client rather than the server.
+    // This allows an expand_config error to be caught by the client rather than the server.
     // Then the server can re-run expand config assuming a valid blueprint
     <A as Routine>::BatchAttention::expand_config(
         client.properties(),
