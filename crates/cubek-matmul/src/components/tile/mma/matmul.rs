@@ -23,9 +23,9 @@ pub struct MmaMatmul<
     _ty: PhantomData<(Lhs, Rhs, Acc)>,
 }
 
-define_size!(NL);
-define_size!(NR);
-define_size!(NA);
+define_size!(pub NL);
+define_size!(pub NR);
+define_size!(pub NA);
 
 #[derive(CubeType)]
 pub struct MmaFragment<E: Numeric, N: Size> {

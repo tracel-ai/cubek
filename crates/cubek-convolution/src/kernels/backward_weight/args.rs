@@ -18,10 +18,7 @@ use cubecl::{
 use cubek_matmul::{
     components::global::memory::{NoopLayout, NoopLayoutLaunch, Transpose, TransposeLaunch},
     definition::{Blueprint, MatmulElems, MatmulVectorSizes, TilingBlueprint},
-    launch::{
-        MatmulArgs, MatmulInputBinding, TensorArgs, TensorInputs, TensorInputsLaunch,
-        TensorMapArgs, TensorMapInputs, TensorMapInputsLaunch, TensorOutput, TensorOutputLaunch,
-    },
+    launch::*,
     routines::Routine,
 };
 use cubek_std::stage::SwizzleMode;
@@ -41,8 +38,8 @@ use crate::components::{
 
 pub trait ConcreteArgs<A: Routine<RuntimeArgs>>:
     MatmulArgs<
-        Input<Vector<NumericExpand<0>, SizeExpand<1>>, Vector<NumericExpand<2>, SizeExpand<3>>, Vector<NumericExpand<4>, SizeExpand<5>>>: ConcreteInputsFactory<A>,
-        Output<Vector<NumericExpand<4>, SizeExpand<5>>>: ConcreteOutputFactory<A>,
+        Input<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>: ConcreteInputsFactory<A>,
+        Output<Vector<Acc, AccSize>>: ConcreteOutputFactory<A>,
         Config = RuntimeArgs,
     >
 {

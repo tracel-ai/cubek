@@ -23,15 +23,20 @@ use crate::definition::{
 use crate::launch::handle::MatmulInputBinding;
 use crate::routines::Routine;
 
+define_scalar!(pub Lhs);
+define_scalar!(pub Rhs);
+define_scalar!(pub Acc);
+
+define_size!(pub LhsSize);
+define_size!(pub RhsSize);
+define_size!(pub AccSize);
+
 /// Input argument
-pub type InputArg<MA> = <MA as MatmulArgs>::Input<
-    Vector<NumericExpand<0>, SizeExpand<1>>,
-    Vector<NumericExpand<2>, SizeExpand<3>>,
-    Vector<NumericExpand<4>, SizeExpand<5>>,
->;
+pub type InputArg<MA> =
+    <MA as MatmulArgs>::Input<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>;
 
 /// Output argument
-pub type OutputArg<MA> = <MA as MatmulArgs>::Output<Vector<NumericExpand<4>, SizeExpand<5>>>;
+pub type OutputArg<MA> = <MA as MatmulArgs>::Output<Vector<Acc, AccSize>>;
 
 /// Config argument
 pub type ConfigArg<MA> = <MA as MatmulArgs>::Config;
@@ -173,7 +178,6 @@ pub struct TensorArgs<Config: RuntimeConfig = ()> {
 }
 
 #[derive(CubeLaunch, CubeType, Clone, Copy)]
-#[launch(skip_bounds)]
 /// Input representation for [TensorArgs] implementing [MatmulArgs].
 pub struct TensorInputs<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc: CubePrimitive> {
     /// The lhs tensor.
@@ -253,7 +257,6 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc: CubePrimitive, A: Routine<()>>
 }
 
 #[derive(CubeType, CubeLaunch, Clone, Copy)]
-#[launch(skip_bounds)]
 pub struct TensorOutput<EG: CubePrimitive> {
     view: View<EG, BatchedCoords, ReadWrite>,
     batch: VirtualLayout<Coords1d, Coords1d>,
@@ -372,7 +375,6 @@ pub struct TensorMapArgs<Config: RuntimeConfig = ()> {
 }
 
 #[derive(CubeLaunch, CubeType, Clone, Copy)]
-#[launch(skip_bounds)]
 /// Input representation for [TensorArgs] implementing [MatmulArgs].
 pub struct TensorMapInputs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive> {
     /// The lhs tensor.
