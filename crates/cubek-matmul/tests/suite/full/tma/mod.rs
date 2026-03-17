@@ -1,5 +1,5 @@
 mod matmul_tma {
-    use crate::suite::layered::matmul_test_launcher::InputRepresentation;
+    use crate::suite::launcher::InputRepresentation;
 
     fn input_representation() -> InputRepresentation {
         InputRepresentation::Tma
