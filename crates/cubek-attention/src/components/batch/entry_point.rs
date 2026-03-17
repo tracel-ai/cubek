@@ -33,7 +33,7 @@ pub(crate) fn attention<
     MSKS: Size,
     OG: Float,
     OGS: Size,
-    BMMF: BatchAttentionFamily,
+    BMMF: BatchAttentionFamily<Blueprint = AttentionBlueprint>,
 >(
     inputs: &Input<Args, (QG, QGS), (KG, KGS), (VG, VGS), (MSK, MSKS)>,
     output: &mut Output<Args, (OG, OGS)>,

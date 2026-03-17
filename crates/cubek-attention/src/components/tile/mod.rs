@@ -1,11 +1,15 @@
-pub mod accelerated_blackbox;
-pub mod accelerated_whitebox;
-pub mod unit_register;
+pub mod attention;
+pub mod matmul;
+pub mod output;
+pub mod pipeline;
+pub mod softmax;
 
 mod base;
-mod fragments;
-mod rowwise;
+mod config;
+mod mask;
+mod operand;
 
 pub use base::*;
-pub use fragments::*;
-pub use rowwise::*;
+pub use config::*;
+pub use mask::*;
+pub use operand::*;

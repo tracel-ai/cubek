@@ -3,7 +3,7 @@ use cubecl::prelude::CubePrimitive;
 use cubek_matmul::components::{global::PartitionedStageFamily, stage::StridedStageFamily};
 
 use crate::components::stage::plane::PlanePartitionStageAttentionFamily;
-use crate::components::tile::accelerated_blackbox::BlackboxAcceleratedTileAttention;
+use crate::components::tile::attention::blackbox::BlackboxAcceleratedTileAttention;
 use crate::definition::AttentionTileSize;
 use crate::definition::{
     AttentionBlueprint, AttentionElems, AttentionPartitionSize, AttentionProblem,
@@ -104,7 +104,6 @@ fn blueprint(
             let blueprint = AttentionBlueprint {
                 hypercube_blueprint: HypercubeBlueprint {},
                 plane_dim: launch_settings.plane_dim,
-                reuse_key_value: false,
                 two_rows_in_array_tile: false,
                 vector_sizes: launch_settings.vector_sizes.clone(),
                 masked: problem.masked,

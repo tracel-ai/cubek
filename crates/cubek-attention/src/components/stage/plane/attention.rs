@@ -3,13 +3,11 @@ use cubecl::prelude::*;
 
 use crate::components::{
     global::simple::PlaneAttentionWriter,
-    stage::{
-        BroadcastReducer, partition_attention::PartitionAttention,
-        partitioner::AttentionPartitioner,
-    },
+    stage::{partition_attention::PartitionAttention, partitioner::AttentionPartitioner},
+    tile::TileAttentionConfig,
 };
 
-use crate::components::{stage::SharedPartitionAttentionConfig, tile::TileAttentionConfig};
+use crate::components::stage::SharedPartitionAttentionConfig;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct PlanePartitionStageConfig<TC: TileAttentionConfig> {
@@ -23,7 +21,6 @@ pub struct PlanePartitioner {}
 
 #[cube]
 impl AttentionPartitioner for PlanePartitioner {
-    type Reducer = BroadcastReducer;
     type Writer<ES: Float, ESS: Size, EG: Float, EGS: Size> =
         PlaneAttentionWriter<ES, ESS, EG, EGS>;
 

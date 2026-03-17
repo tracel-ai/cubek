@@ -1,5 +1,3 @@
-use std::cmp::min;
-
 use cubecl::CubeDim;
 use cubecl::prelude::CubePrimitive as _;
 use cubek_matmul::components::CubeDimResource;
@@ -7,7 +5,7 @@ use cubek_matmul::components::{global::PartitionedStageFamily, stage::StridedSta
 
 use crate::components::stage::unit::UnitPartitionStageAttentionFamily;
 use crate::components::tile::TileAttentionFamily;
-use crate::components::tile::unit_register::UnitRegisterTileAttention;
+use crate::components::tile::attention::unit::UnitTileAttention;
 use crate::definition::{
     AttentionBlueprint, AttentionElems, AttentionPartitionSize, AttentionProblem,
     AttentionSetupError, AttentionStageSize, AttentionTileSize, AttentionTilingScheme,
@@ -26,7 +24,7 @@ use crate::{
 pub struct UnitRoutine {}
 
 impl Routine for UnitRoutine {
-    type TileAttention = UnitRegisterTileAttention;
+    type TileAttention = UnitTileAttention;
     type StageAttention = UnitPartitionStageAttentionFamily<
         Self::TileAttention,
         StridedStageFamily,
@@ -87,18 +85,7 @@ fn blueprint(
     match strategy {
         BlueprintStrategy::Forced(attention_blueprint) => validate(problem, attention_blueprint),
         BlueprintStrategy::Inferred(_) => {
-            let tile_size = AttentionTileSize {
-                seq_q: 8,
-                head_dim: min(
-                    launch_settings.vector_sizes.query,
-                    launch_settings.vector_sizes.key,
-                ) as u32,
-                seq_kv: 8,
-                val_dim: min(
-                    launch_settings.vector_sizes.out,
-                    launch_settings.vector_sizes.value,
-                ) as u32,
-            };
+            let tile_size = AttentionTileSize::from_max_vector_sizes(&launch_settings.vector_sizes);
 
             let partition_head_dim = problem.dims.head_dim as u32 / tile_size.head_dim;
             let partition_val_dim = partition_head_dim;
@@ -120,7 +107,6 @@ fn blueprint(
                 hypercube_blueprint: HypercubeBlueprint {},
                 tiling_scheme,
                 plane_dim,
-                reuse_key_value: false,
                 two_rows_in_array_tile: false,
                 vector_sizes: launch_settings.vector_sizes.clone(),
                 masked: problem.masked,

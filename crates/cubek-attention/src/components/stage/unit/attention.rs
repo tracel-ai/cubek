@@ -3,12 +3,11 @@ use cubecl::prelude::*;
 
 use crate::components::{
     global::simple::UnitAttentionWriter,
-    stage::{
-        UnitReducer, partition_attention::PartitionAttention, partitioner::AttentionPartitioner,
-    },
+    stage::{partition_attention::PartitionAttention, partitioner::AttentionPartitioner},
+    tile::TileAttentionConfig,
 };
 
-use crate::components::{stage::SharedPartitionAttentionConfig, tile::TileAttentionConfig};
+use crate::components::stage::SharedPartitionAttentionConfig;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct UnitPartitionStageConfig<TC: TileAttentionConfig> {
@@ -22,7 +21,6 @@ pub struct UnitPartitioner {}
 
 #[cube]
 impl AttentionPartitioner for UnitPartitioner {
-    type Reducer = UnitReducer;
     type Writer<ES: Float, ESS: Size, EG: Float, EGS: Size> = UnitAttentionWriter<ES, ESS, EG, EGS>;
 
     fn seq_q_index() -> u32 {

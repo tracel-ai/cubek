@@ -7,14 +7,12 @@ use cubek_matmul::components::{
 use cubek_std::stage::StageMemoryConfig;
 use std::{fmt::Debug, hash::Hash};
 
-use crate::{
-    components::tile::TileAttentionConfig,
-    definition::{AttentionElems, AttentionPartitionSize, AttentionPrecision, AttentionStageSize},
+use crate::components::tile::TileAttentionConfig;
+use crate::definition::{
+    AttentionElems, AttentionPartitionSize, AttentionPrecision, AttentionStageSize,
+    AttentionTileSize,
 };
-use crate::{
-    components::{global::GlobalAttentionConfig, stage::RunningState},
-    definition::attention_types::*,
-};
+use crate::{components::global::GlobalAttentionConfig, definition::attention_types::*};
 use crate::{
     components::{global::simple::MaskReader, stage::AttentionPartitioner},
     definition::AttentionSetupError,
@@ -81,52 +79,56 @@ pub trait StageAttention<AP: AttentionPrecision>: 'static + Send + Sync {
     type Config: StageAttentionConfig;
     type Partitioner: AttentionPartitioner;
 
-    type QueryRegisters: CubeType;
-    type KeyValueRegisters: CubeType;
-    type SoftmaxRegisters: CubeType;
-    type AccumulatorRegisters: CubeType;
-    type MaskRegisters: CubeType;
+    type QueryPartition: CubeType;
+    type KeyPartition: CubeType;
+    type ValuePartition: CubeType;
+    type SoftmaxPartition: CubeType;
+    type OutputPartition: CubeType;
+    type MaskPartition: CubeType;
+    type RunningState: CubeType;
 
-    fn init_state(#[comptime] config: Self::Config) -> Sequence<RunningState<SM<AP>>>;
+    fn init_state(#[comptime] config: Self::Config) -> Sequence<Self::RunningState>;
 
     fn execute(
-        query: &Self::QueryRegisters,
+        query: &Self::QueryPartition,
         key_stage: &Self::KeyStage,
         value_stage: &Self::ValueStage,
-        key_value: &mut Self::KeyValueRegisters,
+        key_partition: &mut Self::KeyPartition,
+        value_partition: &mut Self::ValuePartition,
         mask_reader: &MaskReader<AP>,
-        mask_partition: &mut Self::MaskRegisters,
-        score: &mut Self::SoftmaxRegisters,
-        accumulator: &mut Self::AccumulatorRegisters,
-        prev_state: &mut Sequence<RunningState<SM<AP>>>,
+        mask_partition: &mut Self::MaskPartition,
+        softmax_partition: &mut Self::SoftmaxPartition,
+        output: &mut Self::OutputPartition,
+        prev_state: &mut Sequence<Self::RunningState>,
         #[comptime] config: Self::Config,
     );
 
     fn rescale(
-        acc: &mut Self::AccumulatorRegisters,
-        state: Sequence<RunningState<SM<AP>>>,
+        acc: &mut Self::OutputPartition,
+        state: Sequence<Self::RunningState>,
         #[comptime] config: Self::Config,
     );
 
     fn write<W: WriteEventListener, G: GlobalAttentionConfig>(
-        acc: &Self::AccumulatorRegisters,
+        acc: &Self::OutputPartition,
         stage: &mut Self::OutStage,
         writer: &mut W,
         #[comptime] config: Self::Config,
     );
 
-    fn init_query(#[comptime] config: Self::Config) -> Self::QueryRegisters;
-    fn init_key_value(#[comptime] config: Self::Config) -> Self::KeyValueRegisters;
+    fn init_query(#[comptime] config: Self::Config) -> Self::QueryPartition;
+    fn init_key(#[comptime] config: Self::Config) -> Self::KeyPartition;
+    fn init_value(#[comptime] config: Self::Config) -> Self::ValuePartition;
     fn init_mask(
         out_of_bounds: ComptimeOption<Coords2d>,
         #[comptime] config: Self::Config,
-    ) -> Self::MaskRegisters;
-    fn init_softmax(#[comptime] config: Self::Config) -> Self::SoftmaxRegisters;
-    fn init_accumulator(#[comptime] config: Self::Config) -> Self::AccumulatorRegisters;
+    ) -> Self::MaskPartition;
+    fn init_softmax(#[comptime] config: Self::Config) -> Self::SoftmaxPartition;
+    fn init_output(#[comptime] config: Self::Config) -> Self::OutputPartition;
 
     fn read_query(
         reader: &QueryReader<AP>,
-        registers: &mut Self::QueryRegisters,
+        registers: &mut Self::QueryPartition,
         #[comptime] config: Self::Config,
     );
 }
@@ -135,12 +137,10 @@ pub trait StageAttention<AP: AttentionPrecision>: 'static + Send + Sync {
 pub trait StageAttentionConfig:
     Copy + Clone + Eq + PartialEq + Hash + Debug + Send + Sync + 'static
 {
-    type TileAttentionConfig: TileAttentionConfig;
+    type TileConfig: TileAttentionConfig;
 
-    fn tile_config(&self) -> Self::TileAttentionConfig;
-
-    fn elements_in_tile_seq_q(&self) -> u32;
-    fn elements_in_tile_seq_kv(&self) -> u32;
+    fn tile_config(&self) -> Self::TileConfig;
+    fn tile_size(&self) -> AttentionTileSize;
 
     fn elements_in_partition_seq_q(&self) -> u32;
     fn elements_in_partition_seq_kv(&self) -> u32;
@@ -165,7 +165,6 @@ pub struct SharedPartitionAttentionConfig<TC: TileAttentionConfig> {
     pub tile_config: TC,
     pub partition_size: AttentionPartitionSize,
     pub stage_size: AttentionStageSize,
-    pub reuse_key_value: bool,
     pub num_planes: u32,
     pub key_smem_config: StageMemoryConfig,
     pub value_smem_config: StageMemoryConfig,
@@ -188,7 +187,7 @@ impl<TC: TileAttentionConfig> PartitionAttentionConfig<TC> {
 pub fn validate<TC: TileAttentionConfig>(
     config: PartitionAttentionConfig<TC>,
 ) -> Result<PartitionAttentionConfig<TC>, AttentionSetupError> {
-    let tile_size = config.shared().tile_config.attention_tile_size();
+    let tile_size = config.tile_size();
     let partition_size = config.shared().partition_size;
 
     let head_val_different = tile_size.head_dim != tile_size.val_dim
@@ -200,22 +199,13 @@ pub fn validate<TC: TileAttentionConfig>(
         )));
     }
 
-    // This check is stricter than the previous one, but the other may be removed
-    // eventually while this one will always remain true.
-    if config.shared().reuse_key_value && head_val_different {
-        return Err(AttentionSetupError::InvalidConfig(Box::new(
-        "When reusing key/value, head_dim must equal val_dim in both tile_size and partition_size."
-            .to_string(),
-    )));
-    }
-
     Ok(config)
 }
 
 impl<TC: TileAttentionConfig> StageAttentionConfig for PartitionAttentionConfig<TC> {
-    type TileAttentionConfig = TC;
+    type TileConfig = TC;
 
-    fn tile_config(&self) -> Self::TileAttentionConfig {
+    fn tile_config(&self) -> Self::TileConfig {
         self.shared().tile_config
     }
 
@@ -224,7 +214,7 @@ impl<TC: TileAttentionConfig> StageAttentionConfig for PartitionAttentionConfig<
     }
 
     fn plane_dim(&self) -> u32 {
-        self.shared().tile_config.plane_dim()
+        self.tile_config().plane_dim()
     }
 
     fn key_smem_config(&self) -> StageMemoryConfig {
@@ -239,20 +229,16 @@ impl<TC: TileAttentionConfig> StageAttentionConfig for PartitionAttentionConfig<
         self.shared().out_smem_config
     }
 
-    fn elements_in_tile_seq_q(&self) -> u32 {
-        self.tile_config().attention_tile_size().seq_q
-    }
-
-    fn elements_in_tile_seq_kv(&self) -> u32 {
-        self.tile_config().attention_tile_size().seq_kv
+    fn tile_size(&self) -> AttentionTileSize {
+        self.tile_config().tile_size()
     }
 
     fn elements_in_partition_seq_q(&self) -> u32 {
-        self.shared().partition_size.seq_q * self.elements_in_tile_seq_kv()
+        self.shared().partition_size.seq_q * self.tile_size().seq_q
     }
 
     fn elements_in_partition_seq_kv(&self) -> u32 {
-        self.shared().partition_size.seq_kv * self.elements_in_tile_seq_kv()
+        self.shared().partition_size.seq_kv * self.tile_size().seq_kv
     }
 
     fn elements_in_stage_seq_q(&self) -> u32 {

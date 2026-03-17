@@ -19,7 +19,7 @@ pub trait Routine: Debug + Clone {
     type BatchAttention: BatchAttentionFamily<Blueprint = Self::Blueprint>;
 
     type Strategy;
-    type Blueprint;
+    type Blueprint: Clone;
 
     fn prepare(
         problem: &AttentionProblem,
@@ -36,6 +36,7 @@ pub struct LaunchInfo<B> {
     pub address_type: AddressType,
 }
 
+#[derive(Debug)]
 pub struct DeviceSettings {
     pub plane_dim: u32,
     pub vector_sizes: AttentionVectorSizes,

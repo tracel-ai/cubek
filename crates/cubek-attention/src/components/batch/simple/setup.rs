@@ -41,7 +41,7 @@ impl<GA: GlobalAttentionFamily> BatchAttentionFamily for SimpleBatchAttentionFam
         cube_count_input: CubeCountInputArgs<R>,
         dtypes: &AttentionElems,
         vector_sizes: &AttentionVectorSizes,
-        blueprint: AttentionBlueprint,
+        blueprint: Self::Blueprint,
     ) -> Result<(), LaunchError> {
         unsafe {
             attention::launch_unchecked::<AA, QG, QGS, KG, KGS, VG, VGS, MSK, MSKS, OG, OGS, Self, R>(
@@ -64,7 +64,7 @@ impl<GA: GlobalAttentionFamily> BatchAttentionFamily for SimpleBatchAttentionFam
 
     fn expand_config(
         device_props: &DeviceProperties,
-        blueprint: AttentionBlueprint,
+        blueprint: Self::Blueprint,
         dtypes: &AttentionElems,
     ) -> Result<Self::Config, AttentionSetupError> {
         let global_config = GA::expand_config(device_props, &blueprint, dtypes)?;

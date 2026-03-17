@@ -1,4 +1,3 @@
-use crate::components::tile::TileAttentionConfig;
 use crate::definition::attention_types::{MSK, MSKS};
 use crate::definition::{AttentionPrecision, AttentionTileSize};
 use cubecl;
@@ -82,9 +81,11 @@ impl<AP: AttentionPrecision> MaskReader<AP> {
         #[comptime] pos_in_partition: Coords2d,
         #[comptime] config: S,
     ) -> (Coords2d, ComptimeOption<StridedTile<MSK<AP>, MSKS<AP>>>) {
+        let tile_size = config.tile_size();
+
         let partition_tile_offset = (
-            pos_in_partition.0 * config.elements_in_tile_seq_q(),
-            pos_in_partition.1 * config.elements_in_tile_seq_kv(),
+            pos_in_partition.0 * tile_size.seq_q,
+            pos_in_partition.1 * tile_size.seq_kv,
         );
 
         let (origin, tile) = match self {
@@ -92,7 +93,7 @@ impl<AP: AttentionPrecision> MaskReader<AP> {
                 materialized_mask_reader.logical_iter.read(),
                 ComptimeOption::new_Some(materialized_mask_reader.read::<P>(
                     partition_tile_offset,
-                    config.tile_config().attention_tile_size(),
+                    config.tile_size(),
                     config.elements_in_partition_seq_q(),
                 )),
             ),

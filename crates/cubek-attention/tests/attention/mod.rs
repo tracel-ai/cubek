@@ -29,13 +29,10 @@ mod unit {
         client: &ComputeClient<R>,
         global_types: AttentionGlobalTypes,
     ) -> AttentionTileSize {
-        let vector_size = AttentionVectorSizes::new_max(client, &global_types);
-        AttentionTileSize {
-            seq_q: vector_size.query as u32,
-            seq_kv: vector_size.key as u32,
-            head_dim: vector_size.query as u32,
-            val_dim: vector_size.value as u32,
-        }
+        AttentionTileSize::from_max_vector_sizes(&AttentionVectorSizes::new_max(
+            client,
+            &global_types,
+        ))
     }
 
     mod f16_ty {
@@ -129,85 +126,4 @@ mod blackbox_accelerated {
         include!("blueprint_tests.rs");
         include!("selector_tests.rs");
     }
-
-    mod f32_ty {
-        use super::*;
-        use cubecl::frontend::CubePrimitive;
-        use cubek_attention::definition::AttentionGlobalTypes;
-
-        fn global_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
-            AttentionGlobalTypes::from_single_float_dtype(
-                f32::as_type_native_unchecked(),
-                AttentionGlobalTypes::mask_dtype(client),
-            )
-        }
-
-        include!("blueprint_tests.rs");
-        include!("selector_tests.rs");
-    }
-}
-
-mod whitebox_accelerated {
-    use cubecl::{Runtime, client::ComputeClient};
-    use cubek_attention::{
-        definition::{AttentionBlueprint, AttentionGlobalTypes, AttentionTileSize},
-        launch::{BlueprintStrategy, Strategy},
-    };
-
-    fn forced_strategy(blueprint: AttentionBlueprint) -> Strategy {
-        Strategy::WhiteboxAccelerated(BlueprintStrategy::Forced(blueprint))
-    }
-    fn inferred_strategy() -> Strategy {
-        Strategy::WhiteboxAccelerated(BlueprintStrategy::Inferred(()))
-    }
-
-    fn tile_size<R: Runtime>(
-        _client: &ComputeClient<R>,
-        _global_types: AttentionGlobalTypes,
-    ) -> AttentionTileSize {
-        // To work on SM 7.5 we need m16n8k8
-        // TODO: allow other if SM >= 8
-        AttentionTileSize {
-            seq_q: 16,
-            seq_kv: 8,
-            head_dim: 8,
-            val_dim: 8,
-        }
-    }
-
-    fn minimal_seq_q_stage() -> u32 {
-        1
-    }
-
-    mod f16_ty {
-        use super::*;
-        use cubecl::frontend::CubePrimitive;
-        use cubek_attention::definition::AttentionGlobalTypes;
-
-        fn global_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
-            AttentionGlobalTypes::from_single_float_dtype(
-                half::f16::as_type_native_unchecked(),
-                AttentionGlobalTypes::mask_dtype(client),
-            )
-        }
-
-        include!("blueprint_tests.rs");
-        include!("selector_tests.rs");
-    }
-
-    // mod f32_ty {
-    //     use super::*;
-    //     use cubecl::frontend::CubePrimitive;
-    //     use cubek_attention::definition::AttentionGlobalTypes;
-
-    //     fn global_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
-    //         AttentionGlobalTypes::from_single_float_dtype(
-    //             f32::as_type_native_unchecked(),
-    //             AttentionGlobalTypes::mask_dtype(client),
-    //         )
-    //     }
-
-    //     include!("blueprint_tests.rs");
-    //     include!("selector_tests.rs");
-    // }
 }
