@@ -18,7 +18,7 @@ pub struct PlaneVecMatInnerProduct<Acc: TileKind> {
     _ty: PhantomData<Acc>,
 }
 
-define_size!(NR);
+define_size!(pub NR);
 
 #[derive(CubeType)]
 pub struct VectorContainer<E: Numeric> {

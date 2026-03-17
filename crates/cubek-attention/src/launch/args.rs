@@ -355,16 +355,16 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     fn __expand_read_method(
         &self,
         _scope: &mut Scope,
-        _index: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<Vector<O::T, O::N>> {
+        _index: NativeExpand<usize>,
+    ) -> NativeExpand<Vector<O::T, O::N>> {
         panic!("Can't read output tensor");
     }
 
     fn __expand_read_window_method(
         &self,
         _context: &mut Scope,
-        _start: ExpandElementTyped<usize>,
-        _end: ExpandElementTyped<usize>,
+        _start: NativeExpand<usize>,
+        _end: NativeExpand<usize>,
     ) -> SliceExpand<Vector<O::T, O::N>, ReadOnly> {
         panic!("Can't read output tensor");
     }
@@ -372,8 +372,8 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     fn __expand_write_method(
         &self,
         scope: &mut Scope,
-        index: ExpandElementTyped<usize>,
-        val: ExpandElementTyped<Vector<O::T, O::N>>,
+        index: NativeExpand<usize>,
+        val: NativeExpand<Vector<O::T, O::N>>,
     ) {
         TensorOutputExpand::__expand_write_method(self.clone(), scope, index, val)
     }
@@ -381,28 +381,28 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     fn __expand_shape_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<usize> {
+        axis: NativeExpand<usize>,
+    ) -> NativeExpand<usize> {
         TensorOutputExpand::__expand_shape_method(self.clone(), scope, axis)
     }
 
     fn __expand_stride_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<usize> {
+        axis: NativeExpand<usize>,
+    ) -> NativeExpand<usize> {
         TensorOutputExpand::__expand_stride_method(self.clone(), scope, axis)
     }
 
-    fn __expand_rank_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
+    fn __expand_rank_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
         TensorOutputExpand::__expand_rank_method(self.clone(), scope)
     }
 
-    fn __expand_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
+    fn __expand_len_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
         TensorOutputExpand::__expand_len_method(self.clone(), scope)
     }
 
-    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
+    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
         TensorOutputExpand::__expand_buffer_len_method(self.clone(), scope)
     }
 
@@ -433,15 +433,15 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     fn __expand_read_method(
         &self,
         scope: &mut Scope,
-        index: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<Vector<Q::T, Q::N>> {
+        index: NativeExpand<usize>,
+    ) -> NativeExpand<Vector<Q::T, Q::N>> {
         TensorQueryExpand::__expand_read_method(self.clone(), scope, index)
     }
     fn __expand_read_window_method(
         &self,
         context: &mut Scope,
-        start: ExpandElementTyped<usize>,
-        end: ExpandElementTyped<usize>,
+        start: NativeExpand<usize>,
+        end: NativeExpand<usize>,
     ) -> SliceExpand<Vector<Q::T, Q::N>, ReadOnly> {
         TensorQueryExpand::__expand_read_window_method(self.clone(), context, start, end)
     }
@@ -449,8 +449,8 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     fn __expand_write_method(
         &self,
         _scope: &mut Scope,
-        _index: ExpandElementTyped<usize>,
-        _val: ExpandElementTyped<Vector<Q::T, Q::N>>,
+        _index: NativeExpand<usize>,
+        _val: NativeExpand<Vector<Q::T, Q::N>>,
     ) {
         panic!("Can't write to input tensor");
     }
@@ -458,28 +458,28 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     fn __expand_shape_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<usize> {
+        axis: NativeExpand<usize>,
+    ) -> NativeExpand<usize> {
         TensorQueryExpand::__expand_shape_method(self.clone(), scope, axis)
     }
 
     fn __expand_stride_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<usize> {
+        axis: NativeExpand<usize>,
+    ) -> NativeExpand<usize> {
         TensorQueryExpand::__expand_stride_method(self.clone(), scope, axis)
     }
 
-    fn __expand_rank_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
+    fn __expand_rank_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
         TensorQueryExpand::__expand_rank_method(self.clone(), scope)
     }
 
-    fn __expand_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
+    fn __expand_len_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
         TensorQueryExpand::__expand_len_method(self.clone(), scope)
     }
 
-    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
+    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
         TensorQueryExpand::__expand_buffer_len_method(self.clone(), scope)
     }
 
@@ -510,15 +510,15 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     fn __expand_read_method(
         &self,
         scope: &mut Scope,
-        index: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<Vector<K::T, K::N>> {
+        index: NativeExpand<usize>,
+    ) -> NativeExpand<Vector<K::T, K::N>> {
         TensorKeyExpand::__expand_read_method(self.clone(), scope, index)
     }
     fn __expand_read_window_method(
         &self,
         context: &mut Scope,
-        start: ExpandElementTyped<usize>,
-        end: ExpandElementTyped<usize>,
+        start: NativeExpand<usize>,
+        end: NativeExpand<usize>,
     ) -> SliceExpand<Vector<K::T, K::N>, ReadOnly> {
         TensorKeyExpand::__expand_read_window_method(self.clone(), context, start, end)
     }
@@ -526,8 +526,8 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     fn __expand_write_method(
         &self,
         _scope: &mut Scope,
-        _index: ExpandElementTyped<usize>,
-        _val: ExpandElementTyped<Vector<K::T, K::N>>,
+        _index: NativeExpand<usize>,
+        _val: NativeExpand<Vector<K::T, K::N>>,
     ) {
         panic!("Can't write to input tensor");
     }
@@ -535,28 +535,28 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     fn __expand_shape_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<usize> {
+        axis: NativeExpand<usize>,
+    ) -> NativeExpand<usize> {
         TensorKeyExpand::__expand_shape_method(self.clone(), scope, axis)
     }
 
     fn __expand_stride_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<usize> {
+        axis: NativeExpand<usize>,
+    ) -> NativeExpand<usize> {
         TensorKeyExpand::__expand_stride_method(self.clone(), scope, axis)
     }
 
-    fn __expand_rank_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
+    fn __expand_rank_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
         TensorKeyExpand::__expand_rank_method(self.clone(), scope)
     }
 
-    fn __expand_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
+    fn __expand_len_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
         TensorKeyExpand::__expand_len_method(self.clone(), scope)
     }
 
-    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
+    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
         TensorKeyExpand::__expand_buffer_len_method(self.clone(), scope)
     }
 
@@ -587,15 +587,15 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     fn __expand_read_method(
         &self,
         scope: &mut Scope,
-        index: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<Vector<V::T, V::N>> {
+        index: NativeExpand<usize>,
+    ) -> NativeExpand<Vector<V::T, V::N>> {
         TensorValueExpand::__expand_read_method(self.clone(), scope, index)
     }
     fn __expand_read_window_method(
         &self,
         context: &mut Scope,
-        start: ExpandElementTyped<usize>,
-        end: ExpandElementTyped<usize>,
+        start: NativeExpand<usize>,
+        end: NativeExpand<usize>,
     ) -> SliceExpand<Vector<V::T, V::N>, ReadOnly> {
         TensorValueExpand::__expand_read_window_method(self.clone(), context, start, end)
     }
@@ -603,8 +603,8 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     fn __expand_write_method(
         &self,
         _scope: &mut Scope,
-        _index: ExpandElementTyped<usize>,
-        _val: ExpandElementTyped<Vector<V::T, V::N>>,
+        _index: NativeExpand<usize>,
+        _val: NativeExpand<Vector<V::T, V::N>>,
     ) {
         panic!("Can't write to input tensor");
     }
@@ -612,28 +612,28 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     fn __expand_shape_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<usize> {
+        axis: NativeExpand<usize>,
+    ) -> NativeExpand<usize> {
         TensorValueExpand::__expand_shape_method(self.clone(), scope, axis)
     }
 
     fn __expand_stride_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<usize> {
+        axis: NativeExpand<usize>,
+    ) -> NativeExpand<usize> {
         TensorValueExpand::__expand_stride_method(self.clone(), scope, axis)
     }
 
-    fn __expand_rank_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
+    fn __expand_rank_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
         TensorValueExpand::__expand_rank_method(self.clone(), scope)
     }
 
-    fn __expand_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
+    fn __expand_len_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
         TensorValueExpand::__expand_len_method(self.clone(), scope)
     }
 
-    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
+    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
         TensorValueExpand::__expand_buffer_len_method(self.clone(), scope)
     }
 
@@ -664,15 +664,15 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     fn __expand_read_method(
         &self,
         scope: &mut Scope,
-        index: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<Vector<M::T, M::N>> {
+        index: NativeExpand<usize>,
+    ) -> NativeExpand<Vector<M::T, M::N>> {
         TensorMaskExpand::__expand_read_method(self.clone(), scope, index)
     }
     fn __expand_read_window_method(
         &self,
         context: &mut Scope,
-        start: ExpandElementTyped<usize>,
-        end: ExpandElementTyped<usize>,
+        start: NativeExpand<usize>,
+        end: NativeExpand<usize>,
     ) -> SliceExpand<Vector<M::T, M::N>, ReadOnly> {
         TensorMaskExpand::__expand_read_window_method(self.clone(), context, start, end)
     }
@@ -680,8 +680,8 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     fn __expand_write_method(
         &self,
         _scope: &mut Scope,
-        _index: ExpandElementTyped<usize>,
-        _val: ExpandElementTyped<Vector<M::T, M::N>>,
+        _index: NativeExpand<usize>,
+        _val: NativeExpand<Vector<M::T, M::N>>,
     ) {
         panic!("Can't write to input tensor");
     }
@@ -689,28 +689,28 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     fn __expand_shape_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<usize> {
+        axis: NativeExpand<usize>,
+    ) -> NativeExpand<usize> {
         TensorMaskExpand::__expand_shape_method(self.clone(), scope, axis)
     }
 
     fn __expand_stride_method(
         &self,
         scope: &mut Scope,
-        axis: ExpandElementTyped<usize>,
-    ) -> ExpandElementTyped<usize> {
+        axis: NativeExpand<usize>,
+    ) -> NativeExpand<usize> {
         TensorMaskExpand::__expand_stride_method(self.clone(), scope, axis)
     }
 
-    fn __expand_rank_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
+    fn __expand_rank_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
         TensorMaskExpand::__expand_rank_method(self.clone(), scope)
     }
 
-    fn __expand_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
+    fn __expand_len_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
         TensorMaskExpand::__expand_len_method(self.clone(), scope)
     }
 
-    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> ExpandElementTyped<usize> {
+    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
         TensorMaskExpand::__expand_buffer_len_method(self.clone(), scope)
     }
 
@@ -1088,7 +1088,6 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA:
 pub struct TensorArgs;
 
 #[derive(CubeLaunch, CubeType)]
-#[launch(skip_bounds)]
 /// Input representation for [TensorArgs] implementing [AttentionArgs].
 pub struct TensorInputs<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine> {
     pub query: Tensor<Vector<Q::T, Q::N>>,

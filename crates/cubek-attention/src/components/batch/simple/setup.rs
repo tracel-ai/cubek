@@ -17,6 +17,7 @@ use crate::{
     definition::{
         AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError,
         AttentionVectorSizes, CubeCountInputArgs, InputRuntimeArg, OutputRuntimeArg,
+        launch_types::*,
     },
     launch::AttentionArgs,
 };
@@ -43,7 +44,7 @@ impl<GA: GlobalAttentionFamily> BatchAttentionFamily for SimpleBatchAttentionFam
         blueprint: AttentionBlueprint,
     ) -> Result<(), LaunchError> {
         unsafe {
-            attention::launch_unchecked::<AA, Self, R>(
+            attention::launch_unchecked::<AA, QG, QGS, KG, KGS, VG, VGS, MSK, MSKS, OG, OGS, Self, R>(
                 client,
                 cube_count,
                 cube_dim,

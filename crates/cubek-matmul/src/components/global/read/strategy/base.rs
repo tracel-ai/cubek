@@ -237,6 +237,15 @@ pub fn validate_tma_with_problem(
         return Err(Box::new("TMA requires strides to be aligned to 16 bytes"));
     }
 
+    if problem.lhs_batches != problem.rhs_batches
+        && problem.lhs_batches.iter().product::<usize>() != 1
+        && problem.rhs_batches.iter().product::<usize>() != 1
+    {
+        return Err(Box::new(
+            "TMA doesn't support mixing broadcast and non-broadcast dims",
+        ));
+    }
+
     Ok(())
 }
 
