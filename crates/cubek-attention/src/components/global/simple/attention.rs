@@ -54,23 +54,17 @@ impl<
         #[comptime] config: Self::Config,
     ) {
         // Load queries which stay alive in registers for all the kernel
-        comment!("global - init and load query");
         let mut query_registers = SA::init_query(config.stage_config);
         SA::read_query(&query_reader, &mut query_registers, config.stage_config);
 
         // Init registers that will change inside global loop
-        comment!("global - init key");
         let mut key_registers = SA::init_key(config.stage_config);
-        comment!("global - init value");
         let mut value_registers = SA::init_value(config.stage_config);
-        comment!("global - init mask");
         let mut mask_registers = SA::init_mask(
             ComptimeOption::new_Some((seq_q, seq_kv)),
             config.stage_config,
         );
-        comment!("global - init softmax");
         let mut softmax_registers = SA::init_softmax(config.stage_config);
-        comment!("global - init output");
         let mut output_registers = SA::init_output(config.stage_config);
 
         // Init running state

@@ -82,7 +82,6 @@ impl<
         state: &mut Sequence<Self::RunningState>,
         #[comptime] config: Self::Config,
     ) {
-        comment!("stage - execute");
         let p = config.shared().partition_size;
 
         let softmax_config = config.tile_config().softmax_config();
@@ -162,7 +161,6 @@ impl<
 
                     // Perform value matmul on probabilities and values, and accumulate in accumulators
                     TA::ValueMatmul::execute(
-                        // &softmax_tiles.softmaxed_tile,
                         &mut softmax_partition.get_softmaxed_mut(q),
                         &value_partition.get().fragment,
                         &mut output_partition.get_at_mut(q, vd, partition_val_dim),
@@ -198,7 +196,6 @@ impl<
     }
 
     fn init_state(#[comptime] config: Self::Config) -> Sequence<Self::RunningState> {
-        comment!("stage - init state");
         let partition_seq_q = config.shared().partition_size.seq_q;
         let mut sequence = Sequence::new();
 

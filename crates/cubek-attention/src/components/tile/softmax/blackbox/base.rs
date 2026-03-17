@@ -77,10 +77,6 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for BlackboxSoftmax<Lhs> {
         head_dim_factor: Acc,
         #[comptime] config: Self::Config,
     ) -> Self::ScaleColumn {
-        // Make sure the softmax is in a row-aware layout
-        // If the layout is always row-aware, it's a no-op.
-        // Otherwise it may go through shared memory
-        // let softmax_rowwise = value_matmul_lhs.rowwise_mut();
         cmma::store(
             &mut workspace.score_smem,
             &score_matmul_accumulator,
