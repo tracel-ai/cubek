@@ -13,9 +13,8 @@ repository = "https://github.com/tracel-ai/cubek/tree/main/crates/cubek-test-uti
 version.workspace = true
 
 [features]
-default = ["cubecl/default", "tests"]
+default = ["cubecl/default"]
 std = ["cubecl/std"]
-tests = []
 
 [dependencies]
 cubek-random = { path = "../cubek-random", version = "=0.2.0-pre.2", default-features = false }

@@ -1,2 +1,9 @@
 [alias]
 xtask = "run --target-dir target/xtask --color always --package xtask --bin xtask --"
+
+test-cpu = "test --release --no-default-features --features cubecl/cpu,std"
+test-cuda = "test --release --no-default-features --features cubecl/cuda,std"
+test-rocm = "test --release --no-default-features --features cubecl/rocm,std"
+test-wgpu = "test --release --no-default-features --features cubecl/wgpu,std"
+test-vulkan = "test --release --no-default-features --features cubecl/vulkan,std"
+test-metal = "test --release --no-default-features --features cubecl/metal,std"
