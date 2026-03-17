@@ -108,13 +108,11 @@ pub fn launch_attention<R: Runtime, A: Routine>(
 
     // This allows an expand_config error to be catched by the client rather than the server.
     // Then the server can re-run expand config assuming a valid blueprint
-    if let Err(e) = <A as Routine>::BatchAttention::expand_config(
+    <A as Routine>::BatchAttention::expand_config(
         client.properties(),
         launch_info.blueprint.clone(),
         &launch_info.dtypes,
-    ) {
-        return Err(e);
-    }
+    )?;
 
     let result = unsafe {
         <A as Routine>::BatchAttention::launch_unchecked::<TensorArgs, R>(

@@ -119,7 +119,7 @@ impl<
                     TA::ScoreMatmul::execute(
                         &query_tile.fragment,
                         &key_tile.fragment,
-                        &mut softmax_partition.get_score_mut(q),
+                        softmax_partition.get_score_mut(q),
                         config.tile_size().to_score_matmul_tile_size(),
                     );
                 }
@@ -161,9 +161,9 @@ impl<
 
                     // Perform value matmul on probabilities and values, and accumulate in accumulators
                     TA::ValueMatmul::execute(
-                        &mut softmax_partition.get_softmaxed_mut(q),
+                        softmax_partition.get_softmaxed_mut(q),
                         &value_partition.get().fragment,
-                        &mut output_partition.get_at_mut(q, vd, partition_val_dim),
+                        output_partition.get_at_mut(q, vd, partition_val_dim),
                         config.tile_size().to_value_matmul_tile_size(),
                     );
                 }
@@ -227,7 +227,7 @@ impl<
                 let tile = SO::tile(stage, tile_pos);
 
                 TA::Output::write_results(
-                    &OutputPartition::get_at(
+                    OutputPartition::get_at(
                         acc,
                         q,
                         vd,

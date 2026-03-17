@@ -60,7 +60,7 @@ impl<AC: AttentionOutput> OutputPartition<AC> {
     ) {
         AC::scale_mul(
             self.sequence.index_mut(i * partition_val_dim + j),
-            &scale,
+            scale,
             &mut self.workspace,
             config,
         );
@@ -76,7 +76,7 @@ impl<AC: AttentionOutput> OutputPartition<AC> {
     ) {
         AC::scale_div(
             self.sequence.index_mut(i * partition_val_dim + j),
-            &running_state,
+            running_state,
             &mut self.workspace,
             config,
         );

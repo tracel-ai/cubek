@@ -65,9 +65,9 @@ impl<F: Float, SMX: Softmax<F>> SoftmaxPartition<F, SMX> {
         #[comptime] softmax_config: SMX::Config,
     ) -> SMX::ScaleColumn {
         SMX::softmax(
-            &mut self.score_tiles.index_mut(q),
+            self.score_tiles.index_mut(q),
             mask_tile,
-            &mut self.softmaxed_tiles.index_mut(q),
+            self.softmaxed_tiles.index_mut(q),
             state_q,
             &mut self.workspace,
             head_dim_factor,

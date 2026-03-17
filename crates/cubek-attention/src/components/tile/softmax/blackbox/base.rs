@@ -79,7 +79,7 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for BlackboxSoftmax<Lhs> {
     ) -> Self::ScaleColumn {
         cmma::store(
             &mut workspace.score_smem,
-            &score_matmul_accumulator,
+            score_matmul_accumulator,
             config.tile_size.seq_kv,
             cmma::MatrixLayout::RowMajor,
         );
@@ -96,17 +96,17 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for BlackboxSoftmax<Lhs> {
             .local_tile
             .scale_and_mask::<MaskTile<Acc, Self>>(head_dim_factor, mask);
 
-        BroadcastReducer::row_max(&mut workspace.max, &mut state.0, &mut workspace.local_tile);
+        BroadcastReducer::row_max(&mut workspace.max, &state.0, &workspace.local_tile);
 
-        workspace.local_tile.exp_diff(&mut workspace.max);
+        workspace.local_tile.exp_diff(&workspace.max);
 
-        BroadcastReducer::row_sum(&mut workspace.sum, &mut workspace.local_tile);
+        BroadcastReducer::row_sum(&mut workspace.sum, &workspace.local_tile);
 
-        let exp_m_diff = state.0.exp_diff(&mut workspace.max);
+        let exp_m_diff = state.0.exp_diff(&workspace.max);
 
-        let new_l = exp_m_diff.mul(&mut state.1).add(&mut workspace.sum);
+        let new_l = exp_m_diff.mul(&state.1).add(&workspace.sum);
 
-        RowWise::copy_from(&mut state.0, &mut workspace.max);
+        RowWise::copy_from(&mut state.0, &workspace.max);
         RowWise::copy_from(&mut state.1, &new_l);
 
         // Make sure the mutations on softmax_rowwise also affect other softmax formats
@@ -115,7 +115,7 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for BlackboxSoftmax<Lhs> {
         sync_cube();
 
         cmma::load(
-            &value_matmul_lhs,
+            value_matmul_lhs,
             &workspace.softmaxed_smem.to_slice(),
             config.tile_size.seq_kv,
         );
@@ -149,7 +149,7 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for BlackboxSoftmax<Lhs> {
     }
 
     fn zero_score_tile(score_tile: &mut Self::ScoreTile) {
-        cmma::fill(&score_tile, Acc::from_int(0));
+        cmma::fill(score_tile, Acc::from_int(0));
     }
 
     fn init_softmax_tile(#[comptime] config: Self::Config) -> Self::SoftmaxedTile {

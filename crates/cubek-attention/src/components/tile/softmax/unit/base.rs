@@ -27,8 +27,8 @@ pub struct UnitSoftmaxWorkspace<Acc: Float, Lhs: Float> {
 impl<Acc: Float, Lhs: Float> UnitSoftmaxWorkspace<Acc, Lhs> {
     pub fn new(#[comptime] config: UnitSoftmaxConfig) -> Self {
         UnitSoftmaxWorkspace::<Acc, Lhs> {
-            max: RowWise::new_min_value(config.num_rows_per_unit() as usize),
-            sum: RowWise::new_zero(config.num_rows_per_unit() as usize),
+            max: RowWise::new_min_value(config.num_rows_per_unit()),
+            sum: RowWise::new_zero(config.num_rows_per_unit()),
             _phantom: PhantomData,
         }
     }
@@ -67,7 +67,7 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
         let new_l = exp_m_diff.mul(&state.1).add(&workspace.sum);
 
         // TODO don't make this necessary, see comment at copy_from
-        value_matmul_lhs.copy_from(&score_matmul_accumulator);
+        value_matmul_lhs.copy_from(score_matmul_accumulator);
 
         RowWise::copy_from(&mut state.0, &workspace.max);
         RowWise::copy_from(&mut state.1, &new_l);

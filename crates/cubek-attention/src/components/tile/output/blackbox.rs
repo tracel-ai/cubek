@@ -64,7 +64,7 @@ impl<SM: Float, Acc: Float> AttentionOutput for BlackboxAttentionOutput<SM, Acc>
     ) {
         cmma::store(
             &mut workspace.smem,
-            &tile,
+            tile,
             config.tile_size.val_dim,
             cmma::MatrixLayout::RowMajor,
         );
@@ -79,14 +79,14 @@ impl<SM: Float, Acc: Float> AttentionOutput for BlackboxAttentionOutput<SM, Acc>
 
         workspace
             .local_tile
-            .rowwise_scale(&RowWise::<SM>::cast_from(&scale));
+            .rowwise_scale(&RowWise::<SM>::cast_from(scale));
 
         workspace.local_tile.store_to(&mut workspace.smem);
 
         sync_cube();
 
         cmma::load_with_layout(
-            &tile,
+            tile,
             &workspace.smem.to_slice(),
             config.tile_size.val_dim,
             cmma::MatrixLayout::RowMajor,
@@ -104,7 +104,7 @@ impl<SM: Float, Acc: Float> AttentionOutput for BlackboxAttentionOutput<SM, Acc>
 
         cmma::store(
             &mut workspace.smem,
-            &tile,
+            tile,
             config.tile_size.val_dim,
             cmma::MatrixLayout::RowMajor,
         );
@@ -124,7 +124,7 @@ impl<SM: Float, Acc: Float> AttentionOutput for BlackboxAttentionOutput<SM, Acc>
         sync_cube();
 
         cmma::load_with_layout(
-            &tile,
+            tile,
             &workspace.smem.to_slice(),
             config.tile_size.val_dim,
             cmma::MatrixLayout::RowMajor,

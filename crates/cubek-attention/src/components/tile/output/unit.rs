@@ -33,7 +33,7 @@ impl<SM: Float, Acc: Float> AttentionOutput for UnitAttentionOutput<SM, Acc> {
         _workspace: &mut Self::Workspace,
         #[comptime] _config: Self::Config,
     ) {
-        tile.rowwise_scale(&RowWise::<SM>::cast_from(&scale));
+        tile.rowwise_scale(&RowWise::<SM>::cast_from(scale));
     }
 
     fn scale_div(
