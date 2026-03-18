@@ -261,12 +261,13 @@ fn run<R: Runtime, AP: AttentionPrecision>(device: R::Device) {
 
     // for problem in [bert, gpt2, llama, long_context, encoder_decoder] {
     for problem in [my_bench] {
-        for strategy in [
-            Strategy::BlackboxAccelerated(BlueprintStrategy::Inferred(
-                BlackboxAcceleratedStrategy { num_planes: 2 },
-            )),
-            // Strategy::Unit(BlueprintStrategy::Inferred(())),
-        ] {
+        for strategy in [Strategy::BlackboxAccelerated(BlueprintStrategy::Inferred(
+            BlackboxAcceleratedStrategy {
+                num_planes: 2,
+                seq_q: 1,
+                seq_kv: 1,
+            },
+        ))] {
             let bench = AttentionBench::<R, AP> {
                 problem: problem.clone(),
                 strategy,

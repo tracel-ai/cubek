@@ -25,6 +25,8 @@ pub struct BlackboxAcceleratedRoutine {}
 #[derive(Debug, Clone)]
 pub struct BlackboxAcceleratedStrategy {
     pub num_planes: u8,
+    pub seq_q: u8,
+    pub seq_kv: u8,
 }
 
 impl Routine for BlackboxAcceleratedRoutine {
@@ -104,7 +106,7 @@ fn blueprint<R: Runtime>(
                     dtypes.key_value_tile,
                     dtypes.accumulator,
                 ),
-                problem.dims.seq_q,
+                tile_size_score_matmul.m as usize,
                 problem.dims.val_dim,
                 |client, mma| client.properties().features.cmma.contains(&mma),
                 // TODO: Implement fallback
@@ -138,9 +140,9 @@ fn blueprint<R: Runtime>(
             let tiling_scheme = AttentionTilingScheme {
                 tile_size,
                 partition_size: AttentionPartitionSize {
-                    seq_q: 1,
+                    seq_q: strategy.seq_q as u32,
                     head_dim: partition_head_dim,
-                    seq_kv: 1,
+                    seq_kv: strategy.seq_kv as u32,
                     val_dim: partition_head_dim,
                 },
                 stage_size: AttentionStageSize {
