@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use cubecl;
 use cubecl::prelude::*;
 
@@ -30,83 +32,68 @@ use crate::components::tile::FULLY_MASKED_ROW_THRESHOLD;
 ///  8,  9, 10, 11, 12, 13, 14, 15,
 /// 16, 17, 18, 19, 20, 21, 22, 23,
 /// 24, 25, 26, 27, 28, 29, 30, 31,
-pub struct RowWise<E: Numeric> {
+pub struct RowWise<E: Numeric, N: Size> {
+    pub vals: Array<E>,
     #[cube(comptime)]
-    pub num_rows: usize,
-    pub vals: Sequence<RowVal<E>>,
-}
-
-#[derive(CubeType)]
-/// Wrapper over a value to enable mutating it
-pub struct RowVal<E: Numeric> {
-    pub val: E,
+    _phantom: PhantomData<N>,
 }
 
 #[cube]
-impl<E: Numeric> RowWise<E> {
+impl<E: Numeric, N: Size> RowWise<E, N> {
     /// Create a RowWise with the provided value at every row
-    pub fn new_filled(#[comptime] num_rows: usize, val: E) -> RowWise<E> {
-        let mut vals = Sequence::new();
+    pub fn new_filled(val: E) -> RowWise<E, N> {
+        let mut vals = Array::new(N::value());
         #[unroll]
-        for _ in 0..num_rows {
-            vals.push(RowVal::<E> { val });
+        for i in 0..N::value() {
+            vals[i] = val;
         }
-        RowWise::<E> { num_rows, vals }
+        RowWise::<E, N> {
+            vals,
+            _phantom: PhantomData,
+        }
     }
 
     /// Fill the existing RowWise with the provided value at every row
     pub fn fill(&mut self, val: E) {
         #[unroll]
-        for i in 0..self.num_rows {
-            let row_val = self.vals.index_mut(i);
-            row_val.val = val;
+        for i in 0..N::value() {
+            self.vals[i] = val;
         }
     }
 
     /// Create a RowWise with -infinity at every row
-    pub fn new_min_value(#[comptime] num_rows: usize) -> RowWise<E> {
-        Self::new_filled(num_rows, E::min_value())
+    pub fn new_min_value() -> RowWise<E, N> {
+        Self::new_filled(E::min_value())
     }
 
     /// Create a RowWise with zero at every row
-    pub fn new_zero(#[comptime] num_rows: usize) -> RowWise<E> {
-        Self::new_filled(num_rows, E::from_int(0))
+    pub fn new_zero() -> RowWise<E, N> {
+        Self::new_filled(E::from_int(0))
     }
 
     /// Fill the current RowWise with the value of other at each row
-    pub fn copy_from(&mut self, other: &RowWise<E>) {
-        #[unroll]
-        for i in 0..self.num_rows {
-            let row_val = self.vals.index_mut(i);
-            row_val.val = other.index(i);
+    pub fn copy_from(&mut self, other: &RowWise<E, N>) {
+        for i in 0..N::value() {
+            self.vals[i] = other.vals[i]
         }
     }
 
     /// Return the value at row i
     pub fn index(&self, i: usize) -> E {
-        self.vals[i].val
+        self.vals[i]
     }
 
     /// For each row, add the the current and other, and outputs a new RowWise
-    pub fn add(&self, other: &RowWise<E>) -> RowWise<E> {
-        let mut vals = Sequence::new();
-
-        #[unroll]
-        for i in 0..self.num_rows {
-            let val = self.index(i) + other.index(i);
-            vals.push(RowVal::<E> { val });
-        }
-
-        RowWise::<E> {
-            num_rows: self.num_rows,
-            vals,
+    pub fn add(&self, other: &RowWise<E, N>, result: &mut RowWise<E, N>) {
+        for i in 0..N::value() {
+            result[i] = self.vals[i] + other.vals[i];
         }
     }
 
     /// For each row, add the other value to the current RowWise
-    pub fn add_inplace(&mut self, other: &RowWise<E>) {
+    pub fn add_inplace(&mut self, other: &RowWise<E, N>) {
         #[unroll]
-        for i in 0..self.num_rows {
+        for i in 0..N::value() {
             let row_val = self.vals.index_mut(i);
             row_val.val += other.index(i);
         }
