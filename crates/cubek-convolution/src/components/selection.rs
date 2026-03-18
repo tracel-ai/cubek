@@ -103,8 +103,8 @@ pub fn convolution_matmul_selection<TMM: TileMatmulFamily, R: Runtime>(
             dtypes.rhs_register,
             dtypes.acc_register,
         ),
-        problem.m,
-        problem.n,
+        (problem.m, problem.n, problem.k).into(),
+        (None, None, None),
         TMM::is_supported,
         TMM::supported_sizes,
     )?;
