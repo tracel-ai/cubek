@@ -1,8 +1,8 @@
-use cubecl::prelude::*;
-use cubecl::std::tensor::layout::*;
+use cubecl::std::tensor::{launch::BufferArg, layout::*};
+use cubecl::{prelude::*, std::tensor::launch::ViewLayoutLaunchArg};
 use cubek_matmul::launch::BatchedCoords;
 
-#[derive(CubeType, CubeLaunch)]
+#[derive(CubeType)]
 pub struct BiasLayout {
     shape: u32,
     #[cube(comptime)]
@@ -30,5 +30,34 @@ impl Layout for BiasLayout {
 
     fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
         (self.to_source_pos(pos), self.is_in_bounds(pos))
+    }
+}
+
+impl ViewLayoutLaunchArg for BiasLayout {
+    type RuntimeArg<R: Runtime> = ();
+    type CompilationArg = ();
+    fn compilation_arg<R: Runtime, B: BufferArg>(
+        _: &Self::RuntimeArg<R>,
+        _: &B,
+    ) -> Self::CompilationArg {
+    }
+    fn register<R: Runtime, B: BufferArg>(
+        _: Self::RuntimeArg<R>,
+        buffer: &B,
+        _: Type,
+        launcher: &mut KernelLauncher<R>,
+    ) {
+        let shape = buffer.len();
+        <u32 as LaunchArg>::register(shape as u32, launcher);
+    }
+    fn expand(
+        _: &Self::CompilationArg,
+        ty: Type,
+        builder: &mut KernelBuilder,
+    ) -> <Self as CubeType>::ExpandType {
+        BiasLayoutExpand {
+            shape: <u32 as LaunchArg>::expand(&(), builder),
+            vector_size: ty.vector_size() as u32,
+        }
     }
 }

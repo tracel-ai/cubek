@@ -1,6 +1,6 @@
 use cubecl::prelude::*;
 use cubecl::std::{
-    FastDivmod, FastDivmodArgs,
+    FastDivmod,
     tensor::layout::{Layout, LayoutExpand},
 };
 use cubek_matmul::{
@@ -124,36 +124,27 @@ impl Layout for Im2colLayout {
 
 impl<R: Runtime> Im2colLayoutLaunch<R> {
     pub fn from_args(
-        client: &ComputeClient<R>,
         problem: &ConvolutionProblem,
         params: ConvolutionParams,
         config: GlobalLayoutConfig,
     ) -> Self {
         match problem.operation {
-            ConvolutionOperation::Forward => Self::from_args_fprop(client, problem, params, config),
+            ConvolutionOperation::Forward => Self::from_args_fprop(problem, params, config),
             ConvolutionOperation::ForwardTransposed | ConvolutionOperation::BackwardData => {
-                Self::from_args_dgrad(client, problem, params, config)
+                Self::from_args_dgrad(problem, params, config)
             }
-            ConvolutionOperation::BackwardWeight => {
-                Self::from_args_wgrad(client, problem, params, config)
-            }
+            ConvolutionOperation::BackwardWeight => Self::from_args_wgrad(problem, params, config),
         }
     }
 
     fn from_args_fprop(
-        client: &ComputeClient<R>,
         problem: &ConvolutionProblem,
         params: ConvolutionParams,
         config: GlobalLayoutConfig,
     ) -> Self {
-        let shape_out = problem
-            .out_shape
-            .iter()
-            .map(|s| FastDivmodArgs::<u32>::new(client, *s as u32))
-            .collect();
+        let shape_out = problem.out_shape.iter().map(|s| *s as u32).collect();
 
         let padded_channels = problem.padded_channels as u32;
-        let padded_channels = FastDivmodArgs::<u32>::new(client, padded_channels);
 
         let shape_m = problem.m as u32;
         let shape_k = problem.k as u32;
@@ -162,19 +153,13 @@ impl<R: Runtime> Im2colLayoutLaunch<R> {
     }
 
     fn from_args_dgrad(
-        client: &ComputeClient<R>,
         problem: &ConvolutionProblem,
         params: ConvolutionParams,
         config: GlobalLayoutConfig,
     ) -> Self {
-        let shape = problem
-            .in_shape
-            .iter()
-            .map(|s| FastDivmodArgs::<u32>::new(client, *s as u32))
-            .collect();
+        let shape = problem.in_shape.iter().map(|s| *s as u32).collect();
 
         let padded_channels = problem.padded_channels as u32;
-        let padded_channels = FastDivmodArgs::<u32>::new(client, padded_channels);
 
         let shape_m = problem.m as u32;
         let shape_k = problem.k as u32;
@@ -183,19 +168,13 @@ impl<R: Runtime> Im2colLayoutLaunch<R> {
     }
 
     fn from_args_wgrad(
-        client: &ComputeClient<R>,
         problem: &ConvolutionProblem,
         params: ConvolutionParams,
         config: GlobalLayoutConfig,
     ) -> Self {
-        let shape_out = problem
-            .out_shape
-            .iter()
-            .map(|s| FastDivmodArgs::<u32>::new(client, *s as u32))
-            .collect();
+        let shape_out = problem.out_shape.iter().map(|s| *s as u32).collect();
 
         let padded_channels = problem.padded_channels as u32;
-        let padded_channels = FastDivmodArgs::<u32>::new(client, padded_channels);
 
         let shape_k = problem.k as u32;
         let shape_n = problem.n as u32;

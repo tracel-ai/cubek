@@ -44,7 +44,6 @@ where
     let launch_info = A::prepare(&problem, &device_settings, expand_info)?;
 
     let input = <InputArg<MA> as ConcreteInputsFactory<A>>::create(
-        client,
         lhs,
         rhs,
         &launch_info.blueprint,
@@ -53,7 +52,6 @@ where
         dtypes,
     );
     let output = <OutputArg<MA> as ConcreteOutputFactory<A>>::create(
-        client,
         out,
         &launch_info.blueprint,
         &problem,

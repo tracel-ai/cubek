@@ -121,7 +121,6 @@ pub fn launch_ref<R: Runtime>(
     let launch_info = NaiveRoutine::prepare(&problem, &device_settings, expand_info)?;
 
     let input = <InputArg<TensorArgs> as ConcreteInputsFactory<NaiveRoutine>>::create(
-        client,
         lhs,
         rhs,
         &launch_info.blueprint,
@@ -130,7 +129,6 @@ pub fn launch_ref<R: Runtime>(
         dtypes,
     );
     let output = <OutputArg<TensorArgs> as ConcreteOutputFactory<NaiveRoutine>>::create(
-        client,
         out,
         &launch_info.blueprint,
         &problem,

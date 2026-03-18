@@ -258,7 +258,7 @@ fn quantize_native<R: Runtime>(
                 .max(scale.required_address_type(scale_dtype.size()))
                 .max(output.required_address_type(quant_type.size()));
 
-            let scales_layout = scales_layout(client, &output, &scale, 1, scheme);
+            let scales_layout = scales_layout(&output, &scale, 1, scheme);
 
             unsafe {
                 quantize_symmetric_native_kernel::launch_unchecked(
@@ -267,13 +267,13 @@ fn quantize_native<R: Runtime>(
                     cube_dim,
                     address_type,
                     vector_size,
-                    linear_view(client, input, vector_size),
+                    linear_view(input),
                     // scale is computed based on input float dtype, but stored based on qparams precision
-                    scales_view(client, output.clone(), scale, 1, scheme),
+                    scales_view(output.clone(), scale, 1, scheme),
                     InputScalar::new(range_min, input_dtype),
                     InputScalar::new(range_max, input_dtype),
-                    linear_view(client, output.clone(), vector_size),
-                    scales_view(client, output, out_scale, 1, scheme),
+                    linear_view(output.clone()),
+                    scales_view(output, out_scale, 1, scheme),
                     scales_layout,
                     [input_dtype.into(), scale_dtype.into(), quant_type.into()],
                 )
@@ -337,7 +337,7 @@ fn quantize_packed<R: Runtime>(
 
     check_block_size_compat(scheme, num_quants); // 32 / 8 = 4
 
-    let scales_layout = scales_layout(client, &output, &scale, 1, scheme);
+    let scales_layout = scales_layout(&output, &scale, 1, scheme);
 
     unsafe {
         quantize_symmetric_packed_kernel::launch_unchecked(
@@ -346,13 +346,13 @@ fn quantize_packed<R: Runtime>(
             cube_dim,
             address_type,
             vector_size,
-            linear_view(client, input, vector_size),
+            linear_view(input),
             // scale is computed based on input float dtype, but stored based on qparams precision
-            scales_view(client, output.clone(), scale, 1, scheme),
+            scales_view(output.clone(), scale, 1, scheme),
             InputScalar::new(range_min, dtype_input),
             InputScalar::new(range_max, dtype_input),
-            linear_view(client, output.clone(), 1),
-            scales_view(client, output, out_scale, 1, scheme),
+            linear_view(output.clone()),
+            scales_view(output, out_scale, 1, scheme),
             scales_layout,
             *scheme,
             [dtype_input.into(), dtype_param.into()],

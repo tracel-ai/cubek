@@ -46,20 +46,16 @@ pub fn launch_kernel_concrete<R: Runtime, Args: ConcreteArgs<A>, A: Routine<Runt
     let launch_info = A::prepare(&problem.as_matmul_problem(), &device_settings, expand_info)?;
 
     let (input, runtime_args) = <InputArg<Args> as ConcreteInputsFactory<A>>::create(
-        client,
         input,
         out_grad,
         &launch_info.blueprint,
         &problem,
-        &vector_sizes,
         dtypes,
     );
     let output = <OutputArg<Args> as ConcreteOutputFactory<A>>::create(
-        client,
         weight_grad,
         &launch_info.blueprint,
         &problem,
-        &vector_sizes,
     );
 
     cubek_matmul::launch::launch_kernel::<Args, R, A>(

@@ -1,6 +1,6 @@
 use cubecl::prelude::*;
 use cubecl::std::{
-    FastDivmod, FastDivmodArgs,
+    FastDivmod,
     tensor::layout::{Layout, LayoutExpand},
 };
 use cubek_matmul::{
@@ -108,26 +108,17 @@ impl Layout for WeightLayout {
 }
 
 impl<R: Runtime> WeightLayoutLaunch<R> {
-    pub fn from_args(
-        client: &ComputeClient<R>,
-        problem: &ConvolutionProblem,
-        config: GlobalLayoutConfig,
-    ) -> Self {
+    pub fn from_args(problem: &ConvolutionProblem, config: GlobalLayoutConfig) -> Self {
         match problem.operation {
             ConvolutionOperation::Forward
             | ConvolutionOperation::ForwardTransposed
-            | ConvolutionOperation::BackwardData => Self::from_args_rhs(client, problem, config),
-            ConvolutionOperation::BackwardWeight => Self::from_args_out(client, problem, config),
+            | ConvolutionOperation::BackwardData => Self::from_args_rhs(problem, config),
+            ConvolutionOperation::BackwardWeight => Self::from_args_out(problem, config),
         }
     }
 
-    fn from_args_rhs(
-        client: &ComputeClient<R>,
-        problem: &ConvolutionProblem,
-        config: GlobalLayoutConfig,
-    ) -> Self {
+    fn from_args_rhs(problem: &ConvolutionProblem, config: GlobalLayoutConfig) -> Self {
         let padded_channels = problem.padded_channels as u32;
-        let padded_channels = FastDivmodArgs::<u32>::new(client, padded_channels);
         let shape_k = problem.k as u32;
         let shape_n = problem.n as u32;
 
@@ -136,13 +127,8 @@ impl<R: Runtime> WeightLayoutLaunch<R> {
         WeightLayoutLaunch::new(padded_channels, shape_k, shape_n, params, config)
     }
 
-    fn from_args_out(
-        client: &ComputeClient<R>,
-        problem: &ConvolutionProblem,
-        config: GlobalLayoutConfig,
-    ) -> Self {
+    fn from_args_out(problem: &ConvolutionProblem, config: GlobalLayoutConfig) -> Self {
         let padded_channels = problem.padded_channels as u32;
-        let padded_channels = FastDivmodArgs::<u32>::new(client, padded_channels);
         let shape_m = problem.m as u32;
         let shape_n = problem.n as u32;
 
