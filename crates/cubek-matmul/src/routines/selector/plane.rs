@@ -280,7 +280,7 @@ where
     };
 
     let matches_forced = |m: u32, n: u32, k: u32| {
-        tm.map_or(true, |v| m == v) && tn.map_or(true, |v| n == v) && tk.map_or(true, |v| k == v)
+        tm.is_none_or(|v| m == v) && tn.is_none_or(|v| n == v) && tk.is_none_or(|v| k == v)
     };
 
     let is_valid = |m: u32, n: u32, k: u32| supported(m, n, k) && matches_forced(m, n, k);
@@ -295,16 +295,16 @@ where
 
     let (m, n) = (problem_size.m, problem_size.n);
 
-    if m >= 4 * n {
-        if let Some(ts) = try_candidate(32, 8, 16) {
-            return Ok(ts);
-        }
+    if m >= 4 * n
+        && let Some(ts) = try_candidate(32, 8, 16)
+    {
+        return Ok(ts);
     }
 
-    if n >= 4 * m {
-        if let Some(ts) = try_candidate(8, 32, 16) {
-            return Ok(ts);
-        }
+    if n >= 4 * m
+        && let Some(ts) = try_candidate(8, 32, 16)
+    {
+        return Ok(ts);
     }
 
     if let Some(ts) = try_candidate(16, 16, 16) {
@@ -315,7 +315,6 @@ where
         return Ok(ts);
     }
 
-    // ---- General fallback ----
     let val = supported_sizes(client, lhs, rhs, acc)
         .into_iter()
         .find(|ts| matches_forced(ts.m, ts.n, ts.k))
