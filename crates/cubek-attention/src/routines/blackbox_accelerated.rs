@@ -95,7 +95,7 @@ fn blueprint(
                 partition_size: AttentionPartitionSize {
                     seq_q: 1,
                     head_dim: partition_head_dim,
-                    seq_kv: 2,
+                    seq_kv: 1,
                     val_dim: partition_head_dim,
                 },
                 stage_size: AttentionStageSize { seq_q: 4 },

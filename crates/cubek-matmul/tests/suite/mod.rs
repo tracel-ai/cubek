@@ -2,7 +2,6 @@
 
 pub mod full;
 pub mod launcher;
-pub mod smoke;
 
 mod reference;
 
