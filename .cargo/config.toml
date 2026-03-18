@@ -1,2 +1,9 @@
 [alias]
 xtask = "run --target-dir target/xtask --color always --package xtask --bin xtask --"
+
+test-cpu = "test --release --features cubecl/cpu"
+test-cuda = "test --release --features cubecl/cuda"
+test-rocm = "test --release --features cubecl/rocm"
+test-wgpu = "test --release --features cubecl/wgpu"
+test-vulkan = "test --release --features cubecl/vulkan"
+test-metal = "test --release --features cubecl/metal"
