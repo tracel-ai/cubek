@@ -1,6 +1,6 @@
 mod s1x1x1 {
     use super::*;
-    use cubek_matmul::components::TilingSchemeBuilder;
+    use cubek_matmul::definition::TilingSchemeBuilder;
     use cubek_std::StageSize;
 
     fn stage(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
@@ -12,7 +12,7 @@ mod s1x1x1 {
 
 mod s2x2x1 {
     use super::*;
-    use cubek_matmul::components::TilingSchemeBuilder;
+    use cubek_matmul::definition::TilingSchemeBuilder;
     use cubek_std::StageSize;
 
     fn stage(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
@@ -24,7 +24,7 @@ mod s2x2x1 {
 
 mod s4x4x1 {
     use super::*;
-    use cubek_matmul::components::TilingSchemeBuilder;
+    use cubek_matmul::definition::TilingSchemeBuilder;
     use cubek_std::StageSize;
 
     fn stage(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
@@ -36,7 +36,7 @@ mod s4x4x1 {
 
 mod s8x4x1 {
     use super::*;
-    use cubek_matmul::components::TilingSchemeBuilder;
+    use cubek_matmul::definition::TilingSchemeBuilder;
     use cubek_std::StageSize;
 
     fn stage(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
@@ -48,7 +48,7 @@ mod s8x4x1 {
 
 mod s8x8x1 {
     use super::*;
-    use cubek_matmul::components::TilingSchemeBuilder;
+    use cubek_matmul::definition::TilingSchemeBuilder;
     use cubek_std::StageSize;
 
     fn stage(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {

@@ -131,21 +131,17 @@ where
         MatmulInputBinding::new(rhs_handle, P::EG::as_type_native_unchecked().storage_type());
 
     let (inputs, runtime_args) = <InputArg<A::Args> as ConcreteInputsFactory<A::Routine>>::create(
-        &client,
         lhs_handle,
         rhs_handle,
         None,
         &launch_info.blueprint,
         &problem,
-        &vector_sizes,
         &dtypes,
     );
     let output = <OutputArg<A::Args> as ConcreteOutputFactory<A::Routine>>::create(
-        &client,
         out_handle,
         &launch_info.blueprint,
         &problem,
-        &vector_sizes,
         &dtypes,
     );
 

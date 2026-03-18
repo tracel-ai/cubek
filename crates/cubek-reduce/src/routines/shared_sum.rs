@@ -1,8 +1,7 @@
 use cubecl::{
     features::TypeUsage,
-    std::tensor::layout::{
-        linear::{LinearLayout, LinearLayoutArgs, LinearView, LinearViewLaunch},
-        plain::PlainLayoutLaunch,
+    std::tensor::layout::linear::{
+        LinearView, LinearViewLaunch, LinearViewLayout, LinearViewLayoutLaunch,
     },
 };
 use cubecl::{ir::ElemType, std::tensor::layout::linear::linear_view};
@@ -100,11 +99,11 @@ pub fn shared_sum<R: Runtime>(
     // Sum is commutative so we don't care about order, but need to care if there are holes since
     // they're not guaranteed to contain `0`.
     let input_view = if contiguous_buffer {
-        let layout = LinearLayoutArgs::Plain(PlainLayoutLaunch::new(input_len / vector_size));
+        let layout = LinearViewLayoutLaunch::new();
         let buffer = unsafe { ArrayArg::from_raw_parts_binding(input.handle, input_len) };
-        LinearViewLaunch::new::<LinearLayout>(buffer, layout)
+        LinearViewLaunch::new_array::<LinearViewLayout>(buffer, layout)
     } else {
-        linear_view(client, input, vector_size)
+        linear_view(input)
     };
 
     // Compute extra parameters.

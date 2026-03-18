@@ -57,7 +57,6 @@ pub type BatchedCoords = (usize, u32, u32);
 pub trait ConcreteInputsFactory<A: Routine<()>>: LaunchArg {
     #[allow(clippy::too_many_arguments)]
     fn create<R: Runtime>(
-        client: &ComputeClient<R>,
         lhs: MatmulInputBinding<R>,
         rhs: MatmulInputBinding<R>,
         blueprint: &A::Blueprint,
@@ -72,7 +71,6 @@ pub trait ConcreteInputsFactory<A: Routine<()>>: LaunchArg {
 pub trait ConcreteOutputFactory<A: Routine<()>>: LaunchArg {
     #[allow(clippy::too_many_arguments)]
     fn create<R: Runtime>(
-        client: &ComputeClient<R>,
         out: TensorBinding<R>,
         blueprint: &A::Blueprint,
         problem: &MatmulProblem,
@@ -195,7 +193,6 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc: CubePrimitive, A: Routine<()>>
     ConcreteInputsFactory<A> for TensorInputs<Lhs, Rhs, Acc>
 {
     fn create<R: Runtime>(
-        client: &ComputeClient<R>,
         lhs: MatmulInputBinding<R>,
         rhs: MatmulInputBinding<R>,
         blueprint: &A::Blueprint,
@@ -207,7 +204,7 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc: CubePrimitive, A: Routine<()>>
             |handle: MatmulInputBinding<R>, config: GlobalLayoutConfig, vector_size| match handle {
                 MatmulInputBinding::Normal(handle, _dtype) => {
                     let layout = GlobalLayoutLaunch::from_handle(&handle, vector_size, config);
-                    ViewArg::new::<GlobalLayout>(handle.into_tensor_arg().into_array_arg(), layout)
+                    ViewArg::new_tensor::<GlobalLayout>(handle.into_tensor_arg(), layout)
                 }
                 MatmulInputBinding::Quantized {
                     data,
@@ -217,7 +214,6 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc: CubePrimitive, A: Routine<()>>
                     ..
                 } => {
                     let (data_layout, scales_layout) = GlobalLayoutLaunch::from_quantized_handle(
-                        client,
                         &data,
                         &scale,
                         &shape,
@@ -226,18 +222,18 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc: CubePrimitive, A: Routine<()>>
                         vector_size,
                         config,
                     );
-                    let data_view = ViewArg::new::<GlobalLayout>(
-                        data.into_tensor_arg().into_array_arg(),
-                        data_layout,
+                    let data_view =
+                        ViewArg::new_tensor::<GlobalLayout>(data.into_tensor_arg(), data_layout);
+                    let scales_view = ViewArg::new_tensor::<GlobalScaleLayout>(
+                        scale.into_tensor_arg(),
+                        scales_layout,
                     );
-                    let scales_view =
-                        ViewArg::new::<GlobalScaleLayout>(scale.into_array_arg(), scales_layout);
                     ViewArg::new_quantized(data_view, scales_view, scheme)
                 }
             };
         let batch_layout = |handle: &MatmulInputBinding<R>| match handle {
             MatmulInputBinding::Normal(handle, _dtype) => {
-                let layout = BatchLayoutLaunch::from_handle(client, handle, problem);
+                let layout = BatchLayoutLaunch::from_handle(handle, problem);
                 VirtualLayoutLaunch::new::<BatchLayout>(layout)
             }
             MatmulInputBinding::Quantized { .. } => {
@@ -264,7 +260,6 @@ pub struct TensorOutput<EG: CubePrimitive> {
 
 impl<EG: CubePrimitive, A: Routine<()>> ConcreteOutputFactory<A> for TensorOutput<EG> {
     fn create<R: Runtime>(
-        client: &ComputeClient<R>,
         out: TensorBinding<R>,
         blueprint: &A::Blueprint,
         problem: &MatmulProblem,
@@ -276,8 +271,8 @@ impl<EG: CubePrimitive, A: Routine<()>> ConcreteOutputFactory<A> for TensorOutpu
             vector_sizes.out,
             blueprint.out_global_layout_config(),
         );
-        let batch = BatchLayoutLaunch::from_handle(client, &out, problem);
-        let view = ViewArg::new::<GlobalLayout>(out.into_array_arg(), layout);
+        let batch = BatchLayoutLaunch::from_handle(&out, problem);
+        let view = ViewArg::new_tensor::<GlobalLayout>(out.into_tensor_arg(), layout);
         TensorOutputLaunch::new(view, VirtualLayoutLaunch::new::<BatchLayout>(batch))
     }
 }
@@ -395,7 +390,6 @@ impl<
 > ConcreteInputsFactory<A> for TensorMapInputs<Lhs, Rhs, EO>
 {
     fn create<R: Runtime>(
-        _client: &ComputeClient<R>,
         lhs_handle: MatmulInputBinding<R>,
         rhs_handle: MatmulInputBinding<R>,
         blueprint: &A::Blueprint,

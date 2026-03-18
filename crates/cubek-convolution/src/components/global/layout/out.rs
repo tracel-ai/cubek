@@ -1,6 +1,6 @@
 use cubecl::prelude::*;
 use cubecl::std::{
-    FastDivmod, FastDivmodArgs,
+    FastDivmod,
     tensor::layout::{Layout, LayoutExpand},
 };
 use cubek_matmul::{components::global::memory::GlobalLayoutConfig, launch::BatchedCoords};
@@ -76,62 +76,34 @@ impl Layout for OutLayout {
 }
 
 impl<R: Runtime> OutLayoutLaunch<R> {
-    pub fn from_args(
-        client: &ComputeClient<R>,
-        problem: &ConvolutionProblem,
-        config: GlobalLayoutConfig,
-    ) -> Self {
+    pub fn from_args(problem: &ConvolutionProblem, config: GlobalLayoutConfig) -> Self {
         match problem.operation {
-            ConvolutionOperation::Forward => Self::from_args_fprop(client, problem, config),
+            ConvolutionOperation::Forward => Self::from_args_fprop(problem, config),
             ConvolutionOperation::ForwardTransposed | ConvolutionOperation::BackwardData => {
-                Self::from_args_dgrad(client, problem, config)
+                Self::from_args_dgrad(problem, config)
             }
-            ConvolutionOperation::BackwardWeight => Self::from_args_wgrad(client, problem, config),
+            ConvolutionOperation::BackwardWeight => Self::from_args_wgrad(problem, config),
         }
     }
 
-    fn from_args_fprop(
-        client: &ComputeClient<R>,
-        problem: &ConvolutionProblem,
-        config: GlobalLayoutConfig,
-    ) -> Self {
-        let shape_out = problem
-            .out_shape
-            .iter()
-            .map(|s| FastDivmodArgs::<u32>::new(client, *s as u32))
-            .collect();
+    fn from_args_fprop(problem: &ConvolutionProblem, config: GlobalLayoutConfig) -> Self {
+        let shape_out = problem.out_shape.iter().map(|s| *s as u32).collect();
         let shape_m = problem.m as u32;
         let shape_n = problem.n as u32;
 
         Self::new(shape_out, shape_m, shape_n, config)
     }
 
-    fn from_args_dgrad(
-        client: &ComputeClient<R>,
-        problem: &ConvolutionProblem,
-        config: GlobalLayoutConfig,
-    ) -> Self {
-        let shape = problem
-            .in_shape
-            .iter()
-            .map(|s| FastDivmodArgs::<u32>::new(client, *s as u32))
-            .collect();
+    fn from_args_dgrad(problem: &ConvolutionProblem, config: GlobalLayoutConfig) -> Self {
+        let shape = problem.in_shape.iter().map(|s| *s as u32).collect();
         let shape_m = problem.m as u32;
         let shape_n = problem.n as u32;
 
         Self::new(shape, shape_m, shape_n, config)
     }
 
-    fn from_args_wgrad(
-        client: &ComputeClient<R>,
-        problem: &ConvolutionProblem,
-        config: GlobalLayoutConfig,
-    ) -> Self {
-        let shape_out = problem
-            .out_shape
-            .iter()
-            .map(|s| FastDivmodArgs::<u32>::new(client, *s as u32))
-            .collect();
+    fn from_args_wgrad(problem: &ConvolutionProblem, config: GlobalLayoutConfig) -> Self {
+        let shape_out = problem.out_shape.iter().map(|s| *s as u32).collect();
         let shape_m = problem.m as u32;
         let shape_k = problem.k as u32;
 

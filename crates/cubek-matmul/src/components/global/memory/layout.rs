@@ -1,6 +1,6 @@
 use cubecl::prelude::*;
 use cubecl::std::{
-    FastDivmod, FastDivmodArgs,
+    FastDivmod,
     tensor::layout::{
         Coords1d, Coords2d, Layout, LayoutExpand, VirtualLayout, VirtualLayoutLaunch,
     },
@@ -184,7 +184,6 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
     }
 
     pub fn from_handle_batched(
-        client: &ComputeClient<R>,
         handle: &TensorBinding<R>,
         problem: &MatmulProblem,
         vector_size: VectorSize,
@@ -196,7 +195,7 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
         let stride_row = handle.strides[rank - 2];
         let stride_col = handle.strides[rank - 1];
 
-        let batch_layout = BatchLayoutLaunch::from_handle(client, handle, problem);
+        let batch_layout = BatchLayoutLaunch::from_handle(handle, problem);
 
         GlobalLayoutLaunch::new(
             VirtualLayoutLaunch::new::<BatchLayout>(batch_layout),
@@ -212,7 +211,6 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
 
     #[allow(clippy::too_many_arguments)]
     pub fn from_quantized_handle(
-        client: &ComputeClient<R>,
         values: &TensorBinding<R>,
         scales: &TensorBinding<R>,
         shape: &Shape,
@@ -226,7 +224,7 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
         let values_layout = {
             let (stride_row, stride_col) = (values.strides[rank - 2], values.strides[rank - 1]);
 
-            let batch_layout = BatchLayoutLaunch::from_handle(client, values, problem);
+            let batch_layout = BatchLayoutLaunch::from_handle(values, problem);
 
             GlobalLayoutLaunch::new(
                 VirtualLayoutLaunch::new::<BatchLayout>(batch_layout),
@@ -249,7 +247,7 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
                     let [block_row, block_col] = block_size.as_dim();
                     // Scales are never vectorized because we require that `block_size >= vector_size * num_quants`.
                     let scales_layout =
-                        GlobalLayoutLaunch::from_handle_batched(client, scales, problem, 1, config);
+                        GlobalLayoutLaunch::from_handle_batched(scales, problem, 1, config);
                     GlobalScaleLayoutArgs::BlockScaled(BlockScaledLayoutLaunch::new(
                         shape,
                         scales_layout,
@@ -350,16 +348,12 @@ impl Layout for NoopLayout {
 }
 
 impl<R: Runtime> BatchLayoutLaunch<R> {
-    pub fn from_handle(
-        client: &ComputeClient<R>,
-        handle: &TensorBinding<R>,
-        problem: &MatmulProblem,
-    ) -> Self {
+    pub fn from_handle(handle: &TensorBinding<R>, problem: &MatmulProblem) -> Self {
         let rank = handle.shape.len();
         let batch_shape = problem
             .out_batches
             .iter()
-            .map(|shape| FastDivmodArgs::<u32>::new(client, *shape as u32))
+            .map(|shape| *shape as u32)
             .collect();
         let batch_strides = handle.strides[..rank - 2]
             .iter()

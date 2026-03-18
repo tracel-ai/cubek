@@ -1,6 +1,6 @@
 mod p1x1x1 {
     use super::*;
-    use cubek_matmul::components::TilingSchemeBuilder;
+    use cubek_matmul::definition::TilingSchemeBuilder;
     use cubek_std::PartitionSize;
 
     fn partition(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
@@ -12,7 +12,7 @@ mod p1x1x1 {
 
 mod p1x1x4 {
     use super::*;
-    use cubek_matmul::components::TilingSchemeBuilder;
+    use cubek_matmul::definition::TilingSchemeBuilder;
     use cubek_std::PartitionSize;
 
     fn partition(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {

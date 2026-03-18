@@ -1,7 +1,7 @@
 use cubecl::{
     prelude::*,
     std::{
-        FastDivmod, FastDivmodArgs,
+        FastDivmod,
         tensor::layout::{CoordsDyn, Layout, LayoutExpand},
     },
 };
@@ -151,19 +151,10 @@ pub(crate) fn div_mod_seq(pos: u32, shape: &Sequence<FastDivmod<u32>>) -> (u32, 
 }
 
 impl<R: Runtime> TmaIm2colLayoutLaunch<R> {
-    pub fn from_args(
-        client: &ComputeClient<R>,
-        problem: &ConvolutionProblem,
-        check_kernel: bool,
-    ) -> Self {
-        let shape_out = problem
-            .out_shape
-            .iter()
-            .map(|it| FastDivmodArgs::<u32>::new(client, *it as u32))
-            .collect();
+    pub fn from_args(problem: &ConvolutionProblem, check_kernel: bool) -> Self {
+        let shape_out = problem.out_shape.iter().map(|it| *it as u32).collect();
 
         let padded_channels = problem.padded_channels as u32;
-        let padded_channels = FastDivmodArgs::<u32>::new(client, padded_channels);
         let params = ConvolutionParams::from_problem(problem);
 
         match problem.operation {
@@ -181,7 +172,7 @@ impl<R: Runtime> TmaIm2colLayoutLaunch<R> {
     fn from_args_lhs(
         problem: &ConvolutionProblem,
         shape_out: SequenceArg<R, FastDivmod<u32>>,
-        padded_channels: FastDivmodArgs<u32>,
+        padded_channels: u32,
         params: ConvolutionParams,
         check_kernel: bool,
     ) -> Self {
@@ -201,7 +192,7 @@ impl<R: Runtime> TmaIm2colLayoutLaunch<R> {
     fn from_args_rhs(
         problem: &ConvolutionProblem,
         shape_out: SequenceArg<R, FastDivmod<u32>>,
-        padded_channels: FastDivmodArgs<u32>,
+        padded_channels: u32,
         params: ConvolutionParams,
         check_kernel: bool,
     ) -> Self {

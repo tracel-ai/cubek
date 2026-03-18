@@ -43,7 +43,7 @@ pub(crate) fn random<F: RandomFamily, R: Runtime>(
     // );
 
     let address_type = output.required_address_type(dtype.size());
-    let output = linear_view(client, output, output_vector_size);
+    let output = linear_view(output);
 
     prng_kernel::launch::<F, R>(
         client,
