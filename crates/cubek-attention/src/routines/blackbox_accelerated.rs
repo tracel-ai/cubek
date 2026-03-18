@@ -136,8 +136,7 @@ fn blueprint<R: Runtime>(
                     Some(tile_size_score_matmul.m),
                     None,
                     Some(tile_size_score_matmul.n),
-                )
-                    .into(),
+                ),
                 is_supported,
                 supported_sizes,
             )
