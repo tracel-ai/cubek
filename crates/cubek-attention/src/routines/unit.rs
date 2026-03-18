@@ -1,5 +1,5 @@
-use cubecl::CubeDim;
 use cubecl::prelude::CubePrimitive as _;
+use cubecl::{CubeDim, Runtime};
 use cubek_matmul::components::CubeDimResource;
 use cubek_matmul::components::{global::PartitionedStageFamily, stage::StridedStageFamily};
 
@@ -37,9 +37,9 @@ impl Routine for UnitRoutine {
     type Strategy = ();
     type Blueprint = AttentionBlueprint;
 
-    fn prepare(
+    fn prepare<R: Runtime>(
         problem: &AttentionProblem,
-        device_settings: &DeviceSettings,
+        device_settings: &DeviceSettings<R>,
         strategy: BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<Self::Blueprint>, AttentionSetupError> {
         let blueprint = blueprint(problem, device_settings, strategy)?;
@@ -77,9 +77,9 @@ impl Routine for UnitRoutine {
     }
 }
 
-fn blueprint(
+fn blueprint<R: Runtime>(
     problem: &AttentionProblem,
-    launch_settings: &DeviceSettings,
+    launch_settings: &DeviceSettings<R>,
     strategy: BlueprintStrategy<UnitRoutine>,
 ) -> Result<AttentionBlueprint, AttentionSetupError> {
     match strategy {

@@ -21,9 +21,9 @@ pub trait Routine: Debug + Clone {
     type Strategy;
     type Blueprint: Clone;
 
-    fn prepare(
+    fn prepare<R: Runtime>(
         problem: &AttentionProblem,
-        device_settings: &DeviceSettings,
+        device_settings: &DeviceSettings<R>,
         strategy: BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<Self::Blueprint>, AttentionSetupError>;
 }
@@ -36,17 +36,27 @@ pub struct LaunchInfo<B> {
     pub address_type: AddressType,
 }
 
-#[derive(Debug)]
-pub struct DeviceSettings {
+pub struct DeviceSettings<R: Runtime> {
     pub plane_dim: u32,
     pub vector_sizes: AttentionVectorSizes,
+    pub client: ComputeClient<R>,
 }
 
-impl DeviceSettings {
-    pub fn new<R: Runtime>(client: &ComputeClient<R>, problem: &AttentionProblem) -> Self {
+impl<R: Runtime> core::fmt::Debug for DeviceSettings<R> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeviceSettings")
+            .field("plane_dim", &self.plane_dim)
+            .field("vector_sizes", &self.vector_sizes)
+            .finish()
+    }
+}
+
+impl<R: Runtime> DeviceSettings<R> {
+    pub fn new(client: &ComputeClient<R>, problem: &AttentionProblem) -> Self {
         DeviceSettings {
             plane_dim: client.properties().hardware.plane_size_max,
             vector_sizes: AttentionVectorSizes::new_max_for_problem(client, problem),
+            client: client.clone(),
         }
     }
 }

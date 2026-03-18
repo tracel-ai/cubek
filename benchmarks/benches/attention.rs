@@ -21,6 +21,7 @@ use cubek::{
             AttentionPrecision, AttentionProblem, attention_types::*,
         },
         launch::{BlueprintStrategy, Strategy},
+        routines::blackbox_accelerated::BlackboxAcceleratedStrategy,
     },
     random::random_uniform,
 };
@@ -261,7 +262,9 @@ fn run<R: Runtime, AP: AttentionPrecision>(device: R::Device) {
     // for problem in [bert, gpt2, llama, long_context, encoder_decoder] {
     for problem in [my_bench] {
         for strategy in [
-            Strategy::BlackboxAccelerated(BlueprintStrategy::Inferred(())),
+            Strategy::BlackboxAccelerated(BlueprintStrategy::Inferred(
+                BlackboxAcceleratedStrategy { num_planes: 2 },
+            )),
             // Strategy::Unit(BlueprintStrategy::Inferred(())),
         ] {
             let bench = AttentionBench::<R, AP> {

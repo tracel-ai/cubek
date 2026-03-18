@@ -1,6 +1,7 @@
-use cubecl::CubeDim;
 use cubecl::prelude::CubePrimitive;
+use cubecl::{CubeDim, Runtime};
 use cubek_matmul::components::{global::PartitionedStageFamily, stage::StridedStageFamily};
+use cubek_matmul::routines::find_instruction_size;
 
 use crate::components::stage::plane::PlanePartitionStageAttentionFamily;
 use crate::components::tile::attention::blackbox::BlackboxAcceleratedTileAttention;
@@ -21,6 +22,11 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct BlackboxAcceleratedRoutine {}
 
+#[derive(Debug, Clone)]
+pub struct BlackboxAcceleratedStrategy {
+    pub num_planes: u8,
+}
+
 impl Routine for BlackboxAcceleratedRoutine {
     type TileAttention = BlackboxAcceleratedTileAttention;
     type StageAttention = PlanePartitionStageAttentionFamily<
@@ -32,21 +38,21 @@ impl Routine for BlackboxAcceleratedRoutine {
     type GlobalAttention = SimpleGlobalAttentionFamily<Self::StageAttention>;
     type BatchAttention = SimpleBatchAttentionFamily<Self::GlobalAttention>;
 
-    type Strategy = ();
+    type Strategy = BlackboxAcceleratedStrategy;
     type Blueprint = AttentionBlueprint;
 
-    fn prepare(
+    fn prepare<R: Runtime>(
         problem: &AttentionProblem,
-        device_settings: &DeviceSettings,
+        device_settings: &DeviceSettings<R>,
         strategy: BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<Self::Blueprint>, AttentionSetupError> {
-        let blueprint = blueprint(problem, device_settings, strategy)?;
-
         let dtypes = AttentionElems::from_global_types(
             &problem.global_dtypes,
             half::f16::as_type_native_unchecked().storage_type(),
             &problem.options.accumulator_precision,
         );
+
+        let blueprint = blueprint(problem, device_settings, &dtypes, strategy)?;
 
         let num_planes = blueprint.tiling_scheme.stage_size.seq_q;
         let cube_dim = CubeDim::new_2d(blueprint.plane_dim, num_planes);
@@ -65,27 +71,66 @@ impl Routine for BlackboxAcceleratedRoutine {
     }
 }
 
-fn blueprint(
+fn blueprint<R: Runtime>(
     problem: &AttentionProblem,
-    launch_settings: &DeviceSettings,
+    device: &DeviceSettings<R>,
+    dtypes: &AttentionElems,
     strategy: BlueprintStrategy<BlackboxAcceleratedRoutine>,
 ) -> Result<AttentionBlueprint, AttentionSetupError> {
     match strategy {
         BlueprintStrategy::Forced(attention_blueprint) => validate(problem, attention_blueprint),
-        BlueprintStrategy::Inferred(_) => {
-            #[cfg(target_os = "macos")]
+        BlueprintStrategy::Inferred(strategy) => {
+            let tile_size_score_matmul = find_instruction_size::<R, _, _>(
+                &device.client,
+                (dtypes.query_tile, dtypes.key_value_tile, dtypes.softmax_acc),
+                problem.dims.seq_q,
+                problem.dims.seq_kv,
+                |client, mma| client.properties().features.cmma.contains(&mma),
+                // TODO: Implement fallback
+                |_, _, _, _| Vec::new(),
+            )
+            .map_err(|err| {
+                AttentionSetupError::Unavailable(
+                    crate::definition::AttentionAvailabilityError::MatmulInstructionUnavailable(
+                        err,
+                    ),
+                )
+            })?;
+
+            let values_matmul = find_instruction_size::<R, _, _>(
+                &device.client,
+                (
+                    dtypes.softmax_lhs,
+                    dtypes.key_value_tile,
+                    dtypes.accumulator,
+                ),
+                problem.dims.seq_q,
+                problem.dims.val_dim,
+                |client, mma| client.properties().features.cmma.contains(&mma),
+                // TODO: Implement fallback
+                |_, _, _, _| Vec::new(),
+            )
+            .map_err(|err| {
+                AttentionSetupError::Unavailable(
+                    crate::definition::AttentionAvailabilityError::MatmulInstructionUnavailable(
+                        err,
+                    ),
+                )
+            })?;
+
+            if tile_size_score_matmul.m != values_matmul.m {
+                return Err(AttentionSetupError::InvalidConfig(Box::new("")));
+            }
+
+            if tile_size_score_matmul.n != values_matmul.k {
+                return Err(AttentionSetupError::InvalidConfig(Box::new("")));
+            }
+
             let tile_size = AttentionTileSize {
-                seq_q: 8,
-                head_dim: 8,
-                seq_kv: 8,
-                val_dim: 8,
-            };
-            #[cfg(not(target_os = "macos"))]
-            let tile_size = AttentionTileSize {
-                seq_q: 16,
-                head_dim: 16,
-                seq_kv: 16,
-                val_dim: 16,
+                seq_q: tile_size_score_matmul.m,
+                head_dim: tile_size_score_matmul.k,
+                seq_kv: tile_size_score_matmul.n,
+                val_dim: values_matmul.n,
             };
 
             let partition_head_dim = problem.dims.head_dim as u32 / tile_size.head_dim;
@@ -98,14 +143,16 @@ fn blueprint(
                     seq_kv: 1,
                     val_dim: partition_head_dim,
                 },
-                stage_size: AttentionStageSize { seq_q: 4 },
+                stage_size: AttentionStageSize {
+                    seq_q: strategy.num_planes as u32,
+                },
             };
 
             let blueprint = AttentionBlueprint {
                 hypercube_blueprint: HypercubeBlueprint {},
-                plane_dim: launch_settings.plane_dim,
+                plane_dim: device.plane_dim,
                 two_rows_in_array_tile: false,
-                vector_sizes: launch_settings.vector_sizes.clone(),
+                vector_sizes: device.vector_sizes.clone(),
                 masked: problem.masked,
                 causal: problem.options.causal,
                 tiling_scheme,

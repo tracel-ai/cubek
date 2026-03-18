@@ -45,7 +45,18 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
         ));
     }
 
-    let tile_size = find_instruction_size::<R, TMM>(client, &dtypes, problem.m, problem.n)?;
+    let tile_size = find_instruction_size::<R, _, _>(
+        client,
+        (
+            dtypes.lhs_register,
+            dtypes.rhs_register,
+            dtypes.acc_register,
+        ),
+        problem.m,
+        problem.n,
+        TMM::is_supported,
+        TMM::supported_sizes,
+    )?;
 
     if options.tiny_selection_enabled && is_tiny(problem, &tile_size) {
         return Ok((
@@ -241,19 +252,26 @@ fn select_size(
 ///
 /// Will use 16x16 for balanced matrices, and 32x8 or 8x32 for degenerated ones.
 #[allow(clippy::type_complexity)]
-pub fn find_instruction_size<R: Runtime, TMM: TileMatmulFamily>(
+pub fn find_instruction_size<R, IsSupported, SupportedSizes>(
     client: &ComputeClient<R>,
-    elems: &MatmulElems,
+    (lhs, rhs, acc): (StorageType, StorageType, StorageType),
     m: usize,
     n: usize,
-) -> Result<TileSize, MatmulAvailabilityError> {
+    is_supported: IsSupported,
+    supported_sizes: SupportedSizes,
+) -> Result<TileSize, MatmulAvailabilityError>
+where
+    R: Runtime,
+    IsSupported: Fn(&ComputeClient<R>, MmaConfig) -> bool,
+    SupportedSizes: Fn(&ComputeClient<R>, StorageType, StorageType, StorageType) -> Vec<TileSize>,
+{
     let supported = |m: u32, n: u32, k: u32| {
-        TMM::is_supported(
+        is_supported(
             client,
             MmaConfig {
-                a_type: elems.lhs_register,
-                b_type: elems.rhs_register,
-                cd_type: elems.acc_register,
+                a_type: lhs,
+                b_type: rhs,
+                cd_type: acc,
                 m,
                 n,
                 k,
@@ -270,15 +288,7 @@ pub fn find_instruction_size<R: Runtime, TMM: TileMatmulFamily>(
     } else if supported(8, 8, 8) {
         (8, 8, 8).into()
     } else {
-        match TMM::supported_sizes(
-            client,
-            elems.lhs_register,
-            elems.rhs_register,
-            elems.acc_register,
-        )
-        .first()
-        .copied()
-        {
+        match supported_sizes(client, lhs, rhs, acc).first().copied() {
             Some(val) => val,
             None => return Err(MatmulAvailabilityError::TileSizeNotFound),
         }

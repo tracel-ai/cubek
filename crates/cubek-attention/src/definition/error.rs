@@ -1,4 +1,5 @@
 use cubecl::{CubeCount, CubeDim, VectorizationError, ir::StorageType, server::LaunchError};
+use cubek_matmul::definition::MatmulAvailabilityError;
 use cubek_std::InvalidConfigError;
 use std::fmt::{Debug, Display};
 
@@ -31,6 +32,9 @@ pub enum AttentionAvailabilityError {
         rhs: StorageType,
         output: StorageType,
     },
+
+    /// The required matmul instruction is not supported for the given element types and tile size.
+    MatmulInstructionUnavailable(MatmulAvailabilityError),
 }
 
 impl From<AttentionAvailabilityError> for AttentionSetupError {
@@ -100,6 +104,9 @@ impl Debug for AttentionAvailabilityError {
                     f,
                     "Cmma on inputs lhs {lhs:?} rhs {rhs:?} and output {output:?} not supported.",
                 )
+            }
+            AttentionAvailabilityError::MatmulInstructionUnavailable(error) => {
+                writeln!(f, "Matmul is not supported: {error:?}",)
             }
         }
     }
