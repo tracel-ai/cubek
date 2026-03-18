@@ -1,6 +1,6 @@
 use cubecl::prelude::*;
 use cubecl::std::{
-    FastDivmod, FastDivmodArgs,
+    FastDivmod,
     tensor::layout::{Layout, LayoutExpand},
 };
 use cubek_matmul::{
@@ -149,11 +149,10 @@ impl<R: Runtime> Im2colLayoutLaunch<R> {
         let shape_out = problem
             .out_shape
             .iter()
-            .map(|s| FastDivmodArgs::<u32>::new(client, *s as u32))
+            .map(|s| *s as u32)
             .collect();
 
         let padded_channels = problem.padded_channels as u32;
-        let padded_channels = FastDivmodArgs::<u32>::new(client, padded_channels);
 
         let shape_m = problem.m as u32;
         let shape_k = problem.k as u32;
@@ -170,11 +169,10 @@ impl<R: Runtime> Im2colLayoutLaunch<R> {
         let shape = problem
             .in_shape
             .iter()
-            .map(|s| FastDivmodArgs::<u32>::new(client, *s as u32))
+            .map(|s| *s as u32)
             .collect();
 
         let padded_channels = problem.padded_channels as u32;
-        let padded_channels = FastDivmodArgs::<u32>::new(client, padded_channels);
 
         let shape_m = problem.m as u32;
         let shape_k = problem.k as u32;
@@ -191,11 +189,10 @@ impl<R: Runtime> Im2colLayoutLaunch<R> {
         let shape_out = problem
             .out_shape
             .iter()
-            .map(|s| FastDivmodArgs::<u32>::new(client, *s as u32))
+            .map(|s| *s as u32)
             .collect();
 
         let padded_channels = problem.padded_channels as u32;
-        let padded_channels = FastDivmodArgs::<u32>::new(client, padded_channels);
 
         let shape_k = problem.k as u32;
         let shape_n = problem.n as u32;

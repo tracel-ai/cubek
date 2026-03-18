@@ -1,6 +1,6 @@
 use cubecl::prelude::*;
 use cubecl::std::{
-    FastDivmod, FastDivmodArgs,
+    FastDivmod,
     tensor::layout::{
         Coords1d, Coords2d, Layout, LayoutExpand, VirtualLayout, VirtualLayoutLaunch,
     },
@@ -359,7 +359,7 @@ impl<R: Runtime> BatchLayoutLaunch<R> {
         let batch_shape = problem
             .out_batches
             .iter()
-            .map(|shape| FastDivmodArgs::<u32>::new(client, *shape as u32))
+            .map(|shape| *shape as u32)
             .collect();
         let batch_strides = handle.strides[..rank - 2]
             .iter()

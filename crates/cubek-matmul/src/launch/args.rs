@@ -207,7 +207,7 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc: CubePrimitive, A: Routine<()>>
             |handle: MatmulInputBinding<R>, config: GlobalLayoutConfig, vector_size| match handle {
                 MatmulInputBinding::Normal(handle, _dtype) => {
                     let layout = GlobalLayoutLaunch::from_handle(&handle, vector_size, config);
-                    ViewArg::new::<GlobalLayout>(handle.into_tensor_arg().into_array_arg(), layout)
+                    ViewArg::new_array::<GlobalLayout>(handle.into_tensor_arg().into_array_arg(), layout)
                 }
                 MatmulInputBinding::Quantized {
                     data,
@@ -226,12 +226,12 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc: CubePrimitive, A: Routine<()>>
                         vector_size,
                         config,
                     );
-                    let data_view = ViewArg::new::<GlobalLayout>(
+                    let data_view = ViewArg::new_array::<GlobalLayout>(
                         data.into_tensor_arg().into_array_arg(),
                         data_layout,
                     );
                     let scales_view =
-                        ViewArg::new::<GlobalScaleLayout>(scale.into_array_arg(), scales_layout);
+                        ViewArg::new_array::<GlobalScaleLayout>(scale.into_array_arg(), scales_layout);
                     ViewArg::new_quantized(data_view, scales_view, scheme)
                 }
             };
@@ -277,7 +277,7 @@ impl<EG: CubePrimitive, A: Routine<()>> ConcreteOutputFactory<A> for TensorOutpu
             blueprint.out_global_layout_config(),
         );
         let batch = BatchLayoutLaunch::from_handle(client, &out, problem);
-        let view = ViewArg::new::<GlobalLayout>(out.into_array_arg(), layout);
+        let view = ViewArg::new_array::<GlobalLayout>(out.into_array_arg(), layout);
         TensorOutputLaunch::new(view, VirtualLayoutLaunch::new::<BatchLayout>(batch))
     }
 }

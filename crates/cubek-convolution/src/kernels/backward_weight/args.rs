@@ -4,7 +4,6 @@ use cubecl::{
     prelude::*,
     server::TensorMapMeta,
     std::{
-        FastDivmodArgs,
         tensor::{
             launch::ViewArg,
             layout::{
@@ -169,9 +168,9 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<Runti
 
         let inputs = TensorInputsLaunch::new(
             VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new()),
-            ViewArg::new::<LhsLayout>(out_grad.into_data().into_array_arg(), layout_lhs),
+            ViewArg::new_array::<LhsLayout>(out_grad.into_data().into_array_arg(), layout_lhs),
             VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new()),
-            ViewArg::new::<RhsLayout>(input.into_data().into_array_arg(), layout_rhs),
+            ViewArg::new_array::<RhsLayout>(input.into_data().into_array_arg(), layout_rhs),
             ComptimeOptionArgs::None,
             ComptimeOptionArgs::None,
         );
@@ -179,7 +178,7 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<Runti
         let runtime_args = RuntimeArgsLaunch::new(
             problem.k as u32,
             problem.channels as u32,
-            FastDivmodArgs::<u32>::new(client, padded_channels),
+            padded_channels,
             problem.operation,
         );
 
@@ -207,7 +206,7 @@ impl<EG: CubePrimitive, A: Routine<RuntimeArgs>> ConcreteOutputFactory<A> for Te
         let layout =
             WeightLayoutLaunch::from_args(client, problem, blueprint.out_global_layout_config());
         let layout = ChainLaunch::new(global, TransposeLaunch::new(layout));
-        let view = ViewArg::new::<Layout>(out.into_array_arg(), layout);
+        let view = ViewArg::new_array::<Layout>(out.into_array_arg(), layout);
         let batch = VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new());
         TensorOutputLaunch::new(view, batch)
     }
@@ -337,7 +336,7 @@ impl<
         let runtime_args = RuntimeArgsLaunch::new(
             shape_k,
             problem.channels as u32,
-            FastDivmodArgs::<u32>::new(client, padded_channels),
+            padded_channels,
             problem.operation,
         );
 

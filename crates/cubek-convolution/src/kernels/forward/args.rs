@@ -3,7 +3,6 @@ use cubecl::{
     client::ComputeClient,
     prelude::*,
     std::{
-        FastDivmodArgs,
         tensor::{
             launch::ViewArg,
             layout::{
@@ -175,14 +174,14 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<Runti
 
         let inputs = TensorInputsLaunch::new(
             VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new()),
-            ViewArg::new::<LhsLayout>(lhs.into_data().into_array_arg(), layout_lhs),
+            ViewArg::new_array::<LhsLayout>(lhs.into_data().into_array_arg(), layout_lhs),
             VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new()),
-            ViewArg::new::<RhsLayout>(rhs.into_data().into_array_arg(), layout_rhs),
+            ViewArg::new_array::<RhsLayout>(rhs.into_data().into_array_arg(), layout_rhs),
             bias.as_ref()
                 .map(|_| VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new()))
                 .into(),
             bias.map(|bias| {
-                ViewArg::new::<BiasLayout>(bias.into_data().into_array_arg(), layout_bias)
+                ViewArg::new_array::<BiasLayout>(bias.into_data().into_array_arg(), layout_bias)
             })
             .into(),
         );
@@ -190,7 +189,7 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<Runti
         let runtime_args = RuntimeArgsLaunch::new(
             problem.k as u32,
             problem.channels as u32,
-            FastDivmodArgs::<u32>::new(client, padded_channels),
+            padded_channels,
             conv_params.operation,
         );
 
@@ -213,7 +212,7 @@ impl<EG: CubePrimitive, A: Routine<RuntimeArgs>> ConcreteOutputFactory<A> for Te
         let layout =
             OutLayoutLaunch::from_args(client, problem, blueprint.out_global_layout_config());
         let layout = ChainLaunch::new(global, layout);
-        let view = ViewArg::new::<Layout>(out.into_array_arg(), layout);
+        let view = ViewArg::new_array::<Layout>(out.into_array_arg(), layout);
         let batch = VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new());
         TensorOutputLaunch::new(view, batch)
     }
@@ -311,7 +310,7 @@ impl<
 
         let bias = bias.map(|bias| {
             let layout = BiasLayoutLaunch::new(problem.n as u32, vector_sizes.out as u32);
-            ViewArg::new::<BiasLayout>(bias.into_data().into_array_arg(), layout)
+            ViewArg::new_array::<BiasLayout>(bias.into_data().into_array_arg(), layout)
         });
 
         let inputs = TensorMapInputsLaunch::new(
@@ -326,7 +325,7 @@ impl<
         let runtime_args = RuntimeArgsLaunch::new(
             shape_k,
             problem.channels as u32,
-            FastDivmodArgs::<u32>::new(client, padded_channels),
+            padded_channels,
             problem.operation,
         );
 

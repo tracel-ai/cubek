@@ -1,6 +1,6 @@
 use cubecl::prelude::*;
 use cubecl::std::{
-    FastDivmod, FastDivmodArgs,
+    FastDivmod,
     tensor::layout::{Layout, LayoutExpand},
 };
 use cubek_matmul::{
@@ -127,7 +127,6 @@ impl<R: Runtime> WeightLayoutLaunch<R> {
         config: GlobalLayoutConfig,
     ) -> Self {
         let padded_channels = problem.padded_channels as u32;
-        let padded_channels = FastDivmodArgs::<u32>::new(client, padded_channels);
         let shape_k = problem.k as u32;
         let shape_n = problem.n as u32;
 
@@ -142,7 +141,6 @@ impl<R: Runtime> WeightLayoutLaunch<R> {
         config: GlobalLayoutConfig,
     ) -> Self {
         let padded_channels = problem.padded_channels as u32;
-        let padded_channels = FastDivmodArgs::<u32>::new(client, padded_channels);
         let shape_m = problem.m as u32;
         let shape_n = problem.n as u32;
 

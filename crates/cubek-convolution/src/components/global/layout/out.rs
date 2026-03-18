@@ -1,6 +1,6 @@
 use cubecl::prelude::*;
 use cubecl::std::{
-    FastDivmod, FastDivmodArgs,
+    FastDivmod,
     tensor::layout::{Layout, LayoutExpand},
 };
 use cubek_matmul::{components::global::memory::GlobalLayoutConfig, launch::BatchedCoords};
@@ -98,7 +98,7 @@ impl<R: Runtime> OutLayoutLaunch<R> {
         let shape_out = problem
             .out_shape
             .iter()
-            .map(|s| FastDivmodArgs::<u32>::new(client, *s as u32))
+            .map(|s| *s as u32)
             .collect();
         let shape_m = problem.m as u32;
         let shape_n = problem.n as u32;
@@ -114,7 +114,7 @@ impl<R: Runtime> OutLayoutLaunch<R> {
         let shape = problem
             .in_shape
             .iter()
-            .map(|s| FastDivmodArgs::<u32>::new(client, *s as u32))
+            .map(|s| *s as u32)
             .collect();
         let shape_m = problem.m as u32;
         let shape_n = problem.n as u32;
@@ -130,7 +130,7 @@ impl<R: Runtime> OutLayoutLaunch<R> {
         let shape_out = problem
             .out_shape
             .iter()
-            .map(|s| FastDivmodArgs::<u32>::new(client, *s as u32))
+            .map(|s| *s as u32)
             .collect();
         let shape_m = problem.m as u32;
         let shape_k = problem.k as u32;
