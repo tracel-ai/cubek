@@ -85,6 +85,8 @@ pub struct AttentionTileSize {
 
 impl AttentionTileSize {
     pub fn from_max_vector_sizes(vector_sizes: &AttentionVectorSizes) -> Self {
+        // TODO decouple head_dim = val_dim
+
         // Constraints:
         // - head_dim = val_dim
         // - head_dim must be a multiple of vector_sizes.query & vector_sizes.key

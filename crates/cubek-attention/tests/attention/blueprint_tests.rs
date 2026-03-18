@@ -62,6 +62,117 @@ fn one_tile_simple() {
 }
 
 #[test]
+fn one_tile_hd_neq_vd() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+
+    let tiling_scheme = AttentionTilingScheme {
+        tile_size: AttentionTileSize {
+            seq_q: 8,
+            seq_kv: 8,
+            head_dim: 4,
+            val_dim: 8,
+        },
+        partition_size: AttentionPartitionSize {
+            seq_q: 1,
+            seq_kv: 1,
+            head_dim: 1,
+            val_dim: 1,
+        },
+        stage_size: AttentionStageSize {
+            seq_q: minimal_seq_q_stage(),
+        },
+    };
+
+    let problem = AttentionProblem {
+        dims: AttentionDims {
+            batch: 1,
+            num_heads: 1,
+            seq_q: elements_in_stage_seq_q(&tiling_scheme),
+            seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
+            head_dim: elements_in_partition_head_dim(&tiling_scheme),
+            val_dim: elements_in_partition_val_dim(&tiling_scheme),
+        },
+        masked: false,
+        global_dtypes: global_dtypes(&client),
+        options: AttentionOptions {
+            causal: false,
+            accumulator_precision: AccumulatorPrecision::default(),
+        },
+        address_type: AddressType::default(),
+    };
+
+    let launch_settings = DeviceSettings::new(&client, &problem);
+
+    let blueprint = AttentionBlueprint {
+        hypercube_blueprint: HypercubeBlueprint {},
+        tiling_scheme,
+        plane_dim: launch_settings.plane_dim,
+        two_rows_in_array_tile: false,
+        vector_sizes: launch_settings.vector_sizes,
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
+    };
+
+    let strategy = forced_strategy(blueprint);
+
+    test_launch(client, problem, strategy)
+}
+
+#[test]
+fn partition_hd_neq_vd() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+
+    let tiling_scheme = AttentionTilingScheme {
+        tile_size: tile_size(&client, global_dtypes(&client)),
+        partition_size: AttentionPartitionSize {
+            seq_q: 1,
+            seq_kv: 1,
+            head_dim: 2,
+            val_dim: 1,
+        },
+        stage_size: AttentionStageSize {
+            seq_q: minimal_seq_q_stage(),
+        },
+    };
+
+    let problem = AttentionProblem {
+        dims: AttentionDims {
+            batch: 1,
+            num_heads: 1,
+            seq_q: elements_in_stage_seq_q(&tiling_scheme),
+            seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
+            head_dim: elements_in_partition_head_dim(&tiling_scheme),
+            val_dim: elements_in_partition_val_dim(&tiling_scheme),
+        },
+        masked: false,
+        global_dtypes: global_dtypes(&client),
+        options: AttentionOptions {
+            causal: false,
+            accumulator_precision: AccumulatorPrecision::default(),
+        },
+        address_type: AddressType::default(),
+    };
+
+    let launch_settings = DeviceSettings::new(&client, &problem);
+
+    let blueprint = AttentionBlueprint {
+        hypercube_blueprint: HypercubeBlueprint {},
+        tiling_scheme,
+        plane_dim: launch_settings.plane_dim,
+        two_rows_in_array_tile: false,
+        vector_sizes: launch_settings.vector_sizes,
+        masked: problem.masked,
+        causal: problem.options.causal,
+        check_bounds: tiling_scheme.check_bounds(&problem.dims),
+    };
+
+    let strategy = forced_strategy(blueprint);
+
+    test_launch(client, problem, strategy)
+}
+
+#[test]
 fn one_tile_several_planes() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
