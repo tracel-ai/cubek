@@ -48,10 +48,10 @@ impl<E: Numeric> UnitTile<E> {
     }
 
     pub fn rowwise_scale(&mut self, scale: &RowWise<E>) {
-        // #[unroll]
+        #[unroll]
         for r in 0..self.layout.num_rows as usize {
             let row_offset = r as u32 * self.layout.num_cols;
-            // #[unroll]
+            #[unroll]
             for c in 0..self.layout.num_cols {
                 let index = row_offset + c;
                 self.data[index as usize] = self.data[index as usize] * scale.index(r);
@@ -148,7 +148,7 @@ impl<E: Float> UnitTile<E> {
     pub fn exp_diff(&mut self, vals: &RowWise<E>) {
         let threshold = E::new(LOGIT_MASKED);
 
-        // #[unroll]
+        #[unroll]
         for r in 0..self.layout.num_rows as usize {
             let row_offset = r as u32 * self.layout.num_cols;
 

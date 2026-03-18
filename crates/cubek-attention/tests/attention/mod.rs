@@ -73,13 +73,18 @@ mod blackbox_accelerated {
     use cubek_attention::{
         definition::{AttentionBlueprint, AttentionGlobalTypes, AttentionTileSize},
         launch::{BlueprintStrategy, Strategy},
+        routines::blackbox_accelerated::BlackboxAcceleratedStrategy,
     };
 
     fn forced_strategy(blueprint: AttentionBlueprint) -> Strategy {
         Strategy::BlackboxAccelerated(BlueprintStrategy::Forced(blueprint))
     }
     fn inferred_strategy() -> Strategy {
-        Strategy::BlackboxAccelerated(BlueprintStrategy::Inferred(()))
+        Strategy::BlackboxAccelerated(BlueprintStrategy::Inferred(BlackboxAcceleratedStrategy {
+            num_planes: 1,
+            seq_q: 1,
+            seq_kv: 1,
+        }))
     }
 
     fn tile_size<R: Runtime>(
