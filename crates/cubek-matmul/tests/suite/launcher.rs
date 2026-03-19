@@ -38,10 +38,10 @@ pub enum InputRepresentation {
 #[allow(unused)]
 /// Test the correctness of the specified Matmul on the given device,
 /// against a naive CPU implementation over the given problem
-pub fn test_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
+pub fn test_matmul_algorithm<A: Routine<()>>(
     client: ComputeClient<TestRuntime>,
     mut problem: MatmulProblem,
-    blueprint: A::Blueprint,
+    blueprint_strategy: BlueprintStrategy<(), A>,
     input_representation: InputRepresentation,
 ) {
     let (lhs, lhs_data) = TestInput::new(
@@ -89,7 +89,7 @@ pub fn test_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
     match launch_matmul_algorithm::<A>(
         &client,
         &problem,
-        blueprint,
+        blueprint_strategy,
         &all_elems,
         input_representation,
         lhs_handle,
@@ -106,10 +106,10 @@ pub fn test_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
 
 /// Returns whether execution succeeded
 #[allow(clippy::too_many_arguments)]
-pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
+pub fn launch_matmul_algorithm<A: Routine<()>>(
     client: &ComputeClient<TestRuntime>,
     problem: &MatmulProblem,
-    blueprint: A::Blueprint,
+    blueprint_strategy: BlueprintStrategy<(), A>,
     dtypes: &MatmulElems,
     input_representation: InputRepresentation,
     lhs: MatmulInputBinding<TestRuntime>,
@@ -138,11 +138,7 @@ pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
 
     let device_settings = A::device_settings(client, vector_sizes);
 
-    let expand_info = match A::expand_blueprint(
-        problem,
-        &device_settings,
-        &BlueprintStrategy::Forced(blueprint),
-    ) {
+    let expand_info = match A::expand_blueprint(problem, &device_settings, &blueprint_strategy) {
         Ok(launch_info) => launch_info,
         Err(err) => {
             return ExecutionOutcome::CompileError(format!("Can't launch the test: {err}"));
@@ -204,30 +200,32 @@ pub fn launch_matmul_algorithm<A: Routine<(), Blueprint = TilingBlueprint>>(
             }
         }
         InputRepresentation::Tma => {
-            let inputs = <TensorMapInputs<_, _, _> as ConcreteInputsFactory<A>>::create(
-                lhs,
-                rhs,
-                &blueprint,
-                &problem,
-                &vector_sizes,
-                dtypes,
-            );
+            // Bring back but TensorMapInputs needs A::Blueprint to be TilingBlueprint
+            todo!()
+            // let inputs = <TensorMapInputs<_, _, _> as ConcreteInputsFactory<A>>::create(
+            //     lhs,
+            //     rhs,
+            //     &blueprint,
+            //     &problem,
+            //     &vector_sizes,
+            //     dtypes,
+            // );
 
-            unsafe {
-                A::BatchMatmul::launch_unchecked::<TensorMapArgs, TestRuntime>(
-                    &client,
-                    cube_dim,
-                    cube_count_plan.resolve(),
-                    AddressType::U32,
-                    inputs,
-                    output,
-                    (),
-                    cube_count_plan.as_args(),
-                    blueprint,
-                    dtypes,
-                    &vector_sizes,
-                )
-            }
+            // unsafe {
+            //     A::BatchMatmul::launch_unchecked::<TensorMapArgs, TestRuntime>(
+            //         &client,
+            //         cube_dim,
+            //         cube_count_plan.resolve(),
+            //         AddressType::U32,
+            //         inputs,
+            //         output,
+            //         (),
+            //         cube_count_plan.as_args(),
+            //         blueprint,
+            //         dtypes,
+            //         &vector_sizes,
+            //     )
+            // }
         }
     }
     .into();
