@@ -110,7 +110,9 @@ pub fn test_launch(
 
     match client.flush() {
         Ok(_) => {}
-        Err(ServerError::ServerUnhealthy { errors, .. }) => {
+        Err(ServerError::ServerUnhealthy { errors, .. }) =>
+        {
+            #[allow(clippy::never_loop)]
             for error in errors.iter() {
                 match error {
                     cubecl::server::ServerError::Launch(_) => {
