@@ -2,7 +2,7 @@ use cubecl;
 use cubecl::prelude::*;
 
 use crate::components::tile::{
-    pipeline::{LocalTile, RowVal, RowWise},
+    pipeline::{LocalTile, RowWise},
     softmax::Reducer,
 };
 
@@ -52,18 +52,15 @@ fn reduce<E: Float, RO: ReduceOp<E>>(vals: &mut RowWise<E>, data: &LocalTile<E>)
 }
 
 #[cube]
-fn rowwise_plane_broadcast<E: Float>(val: &RowWise<E>, source_unit: u32) -> RowWise<E> {
-    let mut result = Sequence::new();
+fn rowwise_plane_broadcast<E: Float>(rowwise: &RowWise<E>, source_unit: u32) -> RowWise<E> {
+    let mut result = Array::new(rowwise.num_rows);
 
-    #[unroll]
-    for row in 0..val.num_rows {
-        result.push(RowVal::<E> {
-            val: plane_shuffle(val.index(row), source_unit),
-        });
+    for r in 0..rowwise.num_rows {
+        result[r] = plane_shuffle(rowwise.vals[r], source_unit);
     }
 
     RowWise::<E> {
-        num_rows: val.num_rows,
+        num_rows: rowwise.num_rows,
         vals: result,
     }
 }

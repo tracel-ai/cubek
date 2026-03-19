@@ -1,6 +1,7 @@
 use cubecl::ir::DeviceProperties;
 use cubecl::ir::VectorSize;
 use cubek_matmul::components::CubeDimResource;
+use cubek_matmul::definition::MatmulAvailabilityError;
 use cubek_std::InvalidConfigError;
 
 use crate::components::tile::SharedTileAttentionConfig;
@@ -153,11 +154,14 @@ fn validate(
         n: config.tile_size().seq_kv,
     }) {
         return Err(AttentionSetupError::Unavailable(
-            AttentionAvailabilityError::CmmaInstructionUnavailable {
-                lhs: dtypes.query_tile,
-                rhs: dtypes.key_value_tile,
-                output: dtypes.softmax_acc,
-            },
+            AttentionAvailabilityError::MatmulInstructionUnavailable(
+                MatmulAvailabilityError::CmmaInstructionUnavailable {
+                    lhs: dtypes.query_tile,
+                    rhs: dtypes.key_value_tile,
+                    output: dtypes.softmax_acc,
+                    size: Some(config.tile_size().to_score_matmul_tile_size()),
+                },
+            ),
         ));
     }
     if !device_props.features.cmma.contains(&MmaConfig {
@@ -169,11 +173,14 @@ fn validate(
         n: config.tile_size().val_dim,
     }) {
         return Err(AttentionSetupError::Unavailable(
-            AttentionAvailabilityError::CmmaInstructionUnavailable {
-                lhs: dtypes.softmax_acc,
-                rhs: dtypes.key_value_tile,
-                output: dtypes.accumulator,
-            },
+            AttentionAvailabilityError::MatmulInstructionUnavailable(
+                MatmulAvailabilityError::CmmaInstructionUnavailable {
+                    lhs: dtypes.softmax_lhs,
+                    rhs: dtypes.key_value_tile,
+                    output: dtypes.accumulator,
+                    size: Some(config.tile_size().to_value_matmul_tile_size()),
+                },
+            ),
         ));
     }
 

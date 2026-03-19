@@ -85,12 +85,6 @@ pub struct AttentionTileSize {
 
 impl AttentionTileSize {
     pub fn from_max_vector_sizes(vector_sizes: &AttentionVectorSizes) -> Self {
-        // Constraints:
-        // - head_dim = val_dim
-        // - head_dim must be a multiple of vector_sizes.query & vector_sizes.key
-        // - val_dim must be a multiple of vector_sizes.value & vector_sizes.out
-        // - seq_kv must be a multiple of vector_sizes.key & vector_sizes.mask
-
         fn lcm(a: usize, b: usize) -> usize {
             a / gcd(a, b) * b
         }
@@ -104,12 +98,8 @@ impl AttentionTileSize {
             a
         }
 
-        let head_dim = lcm(
-            lcm(vector_sizes.query, vector_sizes.key),
-            lcm(vector_sizes.value, vector_sizes.out),
-        );
-        let val_dim = head_dim;
-
+        let head_dim = lcm(vector_sizes.query, vector_sizes.key);
+        let val_dim = lcm(vector_sizes.value, vector_sizes.out);
         let seq_kv = lcm(vector_sizes.key, vector_sizes.mask);
 
         // Independent from vectorization

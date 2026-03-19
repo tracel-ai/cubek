@@ -16,6 +16,9 @@ version.workspace = true
 default = ["cubecl/default"]
 std = ["cubecl/std"]
 
+full = ["extended"]
+extended = []
+
 [dependencies]
 cubek-random = { path = "../cubek-random", version = "=0.2.0-pre.2", default-features = false }
 

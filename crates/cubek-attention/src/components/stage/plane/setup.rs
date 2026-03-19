@@ -5,7 +5,6 @@ use crate::{
         stage::{
             AttentionTilingLayout, PartitionAttentionConfig, SharedPartitionAttentionConfig,
             plane::{PlanePartitionAttention, PlanePartitionStageConfig},
-            validate,
         },
         tile::TileAttentionFamily,
     },
@@ -110,7 +109,7 @@ impl<
             dtype: dtypes.out_stage,
         };
 
-        validate(PartitionAttentionConfig::Plane(PlanePartitionStageConfig {
+        Ok(PartitionAttentionConfig::Plane(PlanePartitionStageConfig {
             shared: SharedPartitionAttentionConfig {
                 partition_size: blueprint.tiling_scheme.partition_size,
                 stage_size: blueprint.tiling_scheme.stage_size,
