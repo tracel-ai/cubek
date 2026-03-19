@@ -184,24 +184,6 @@ impl<TC: TileAttentionConfig> PartitionAttentionConfig<TC> {
     }
 }
 
-pub fn validate<TC: TileAttentionConfig>(
-    config: PartitionAttentionConfig<TC>,
-) -> Result<PartitionAttentionConfig<TC>, AttentionSetupError> {
-    let tile_size = config.tile_size();
-    let partition_size = config.shared().partition_size;
-
-    let head_val_different = tile_size.head_dim != tile_size.val_dim
-        || partition_size.head_dim != partition_size.val_dim;
-
-    if head_val_different {
-        return Err(AttentionSetupError::InvalidConfig(Box::new(
-            "Differing head dim and val dim is not yet supported".to_string(),
-        )));
-    }
-
-    Ok(config)
-}
-
 impl<TC: TileAttentionConfig> StageAttentionConfig for PartitionAttentionConfig<TC> {
     type TileConfig = TC;
 

@@ -88,7 +88,7 @@ fn blueprint<R: Runtime>(
             let tile_size = AttentionTileSize::from_max_vector_sizes(&launch_settings.vector_sizes);
 
             let partition_head_dim = problem.dims.head_dim as u32 / tile_size.head_dim;
-            let partition_val_dim = partition_head_dim;
+            let partition_val_dim = problem.dims.val_dim as u32 / tile_size.val_dim;
 
             let plane_dim = launch_settings.plane_dim;
 
