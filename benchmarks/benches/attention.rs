@@ -247,8 +247,8 @@ fn run<R: Runtime, AP: AttentionPrecision>(device: R::Device) {
             num_heads: 4,
             seq_q: 2048,
             seq_kv: 2048,
-            head_dim: 128,
-            val_dim: 128,
+            head_dim: 64,
+            val_dim: 64,
         },
         global_dtypes: global_dtypes.clone(),
         masked: true,
@@ -261,13 +261,7 @@ fn run<R: Runtime, AP: AttentionPrecision>(device: R::Device) {
 
     // for problem in [bert, gpt2, llama, long_context, encoder_decoder] {
     for problem in [my_bench] {
-        for strategy in [Strategy::BlackboxAccelerated(BlueprintStrategy::Inferred(
-            BlackboxAcceleratedStrategy {
-                num_planes: 2,
-                seq_q: 1,
-                seq_kv: 1,
-            },
-        ))] {
+        for strategy in [Strategy::Unit(BlueprintStrategy::Inferred(()))] {
             let bench = AttentionBench::<R, AP> {
                 problem: problem.clone(),
                 strategy,
