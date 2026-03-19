@@ -245,8 +245,8 @@ fn run<R: Runtime, AP: AttentionPrecision>(device: R::Device) {
         dims: AttentionDims {
             batch: 1,
             num_heads: 4,
-            seq_q: 2048,
-            seq_kv: 2048,
+            seq_q: 4096,
+            seq_kv: 4096,
             head_dim: 64,
             val_dim: 64,
         },
