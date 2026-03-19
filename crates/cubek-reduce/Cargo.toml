@@ -18,6 +18,9 @@ version.workspace = true
 default = ["std", "cubecl/default"]
 std = ["cubecl/std", "thiserror/std"]
 
+full = ["extended"]
+extended = []
+
 [dependencies]
 cubecl = { workspace = true }
 

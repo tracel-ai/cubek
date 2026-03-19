@@ -31,35 +31,26 @@ use crate::components::tile::FULLY_MASKED_ROW_THRESHOLD;
 /// 16, 17, 18, 19, 20, 21, 22, 23,
 /// 24, 25, 26, 27, 28, 29, 30, 31,
 pub struct RowWise<E: Numeric> {
+    pub vals: Array<E>,
     #[cube(comptime)]
     pub num_rows: usize,
-    pub vals: Sequence<RowVal<E>>,
-}
-
-#[derive(CubeType)]
-/// Wrapper over a value to enable mutating it
-pub struct RowVal<E: Numeric> {
-    pub val: E,
 }
 
 #[cube]
 impl<E: Numeric> RowWise<E> {
     /// Create a RowWise with the provided value at every row
     pub fn new_filled(#[comptime] num_rows: usize, val: E) -> RowWise<E> {
-        let mut vals = Sequence::new();
-        #[unroll]
-        for _ in 0..num_rows {
-            vals.push(RowVal::<E> { val });
+        let mut vals = Array::new(num_rows);
+        for i in 0..num_rows {
+            vals[i] = val;
         }
-        RowWise::<E> { num_rows, vals }
+        RowWise::<E> { vals, num_rows }
     }
 
     /// Fill the existing RowWise with the provided value at every row
     pub fn fill(&mut self, val: E) {
-        #[unroll]
         for i in 0..self.num_rows {
-            let row_val = self.vals.index_mut(i);
-            row_val.val = val;
+            self.vals[i] = val;
         }
     }
 
@@ -75,97 +66,71 @@ impl<E: Numeric> RowWise<E> {
 
     /// Fill the current RowWise with the value of other at each row
     pub fn copy_from(&mut self, other: &RowWise<E>) {
-        #[unroll]
         for i in 0..self.num_rows {
-            let row_val = self.vals.index_mut(i);
-            row_val.val = other.index(i);
+            self.vals[i] = other.vals[i]
         }
-    }
-
-    /// Return the value at row i
-    pub fn index(&self, i: usize) -> E {
-        self.vals[i].val
     }
 
     /// For each row, add the the current and other, and outputs a new RowWise
     pub fn add(&self, other: &RowWise<E>) -> RowWise<E> {
-        let mut vals = Sequence::new();
-
-        #[unroll]
+        let mut result = Array::new(self.num_rows);
         for i in 0..self.num_rows {
-            let val = self.index(i) + other.index(i);
-            vals.push(RowVal::<E> { val });
+            result[i] = self.vals[i] + other.vals[i];
         }
-
         RowWise::<E> {
+            vals: result,
             num_rows: self.num_rows,
-            vals,
         }
     }
 
     /// For each row, add the other value to the current RowWise
     pub fn add_inplace(&mut self, other: &RowWise<E>) {
-        #[unroll]
         for i in 0..self.num_rows {
-            let row_val = self.vals.index_mut(i);
-            row_val.val += other.index(i);
+            self.vals[i] += other.vals[i];
         }
     }
 
     /// For each row, multiplies the the current and other, and outputs a new RowWise
     pub fn mul(&self, other: &RowWise<E>) -> RowWise<E> {
-        let mut vals = Sequence::new();
-
-        #[unroll]
+        let mut result = Array::new(self.num_rows);
         for i in 0..self.num_rows {
-            let val = self.index(i) * other.index(i);
-            vals.push(RowVal::<E> { val });
+            result[i] = self.vals[i] * other.vals[i];
         }
-
         RowWise::<E> {
+            vals: result,
             num_rows: self.num_rows,
-            vals,
         }
     }
 
     /// For each row, multiplies the other value to the current RowWise
     pub fn mul_inplace(&mut self, other: &RowWise<E>) {
-        #[unroll]
         for i in 0..self.num_rows {
-            let row_val = self.vals.index_mut(i);
-            row_val.val *= other.index(i);
+            self.vals[i] *= other.vals[i];
         }
     }
 
     /// For each row, maxes the other value to the current RowWise
     pub fn max_inplace(&mut self, other: &RowWise<E>) {
-        #[unroll]
         for i in 0..self.num_rows {
-            let row_val = self.vals.index_mut(i);
-            row_val.val = max(row_val.val, other.index(i));
+            self.vals[i] = max(self.vals[i], other.vals[i]);
         }
     }
 
     /// Changes the value at index i
-    pub fn replace_at(&mut self, #[comptime] i: usize, new_val: E) {
-        let row_val = self.vals.index_mut(i);
-        row_val.val = new_val;
+    pub fn replace_at(&mut self, i: usize, new_val: E) {
+        self.vals[i] = new_val;
     }
 
     /// Return a copy of self, cast into E2
     pub fn cast_from<E2: Float>(row_wise: &RowWise<E>) -> RowWise<E2> {
-        let mut vals = Sequence::new();
+        let num_rows = row_wise.num_rows;
+        let mut vals = Array::new(num_rows);
 
-        #[unroll]
-        for i in 0..row_wise.num_rows {
-            let val = E2::cast_from(row_wise.index(i));
-            vals.push(RowVal::<E2> { val });
+        for i in 0..num_rows {
+            vals[i] = E2::cast_from(row_wise.vals[i]);
         }
 
-        RowWise::<E2> {
-            num_rows: row_wise.num_rows,
-            vals,
-        }
+        RowWise::<E2> { vals, num_rows }
     }
 }
 
@@ -173,17 +138,15 @@ impl<E: Numeric> RowWise<E> {
 impl<E: Float> RowWise<E> {
     /// Computes e^(self.val - other.val) for every row, and outputs a new RowWise
     pub fn exp_diff(&self, other: &RowWise<E>) -> RowWise<E> {
-        let mut vals = Sequence::new();
+        let mut vals = Array::new(self.num_rows);
 
-        #[unroll]
         for i in 0..self.num_rows {
-            let val = (self.index(i) - other.index(i)).exp();
-            vals.push(RowVal::<E> { val });
+            vals[i] = (self.vals[i] - other.vals[i]).exp();
         }
 
         RowWise::<E> {
-            num_rows: self.num_rows,
             vals,
+            num_rows: self.num_rows,
         }
     }
 
@@ -193,15 +156,14 @@ impl<E: Float> RowWise<E> {
     /// This occurs when the entire row is masked, meaning it should
     /// contribute no information, and ensures numerical stability.
     pub fn recip_inplace(&mut self) {
-        #[unroll]
         for i in 0..self.num_rows {
-            let row_val = self.vals.index_mut(i);
+            let row_val = self.vals[i];
 
             let epsilon = E::new(FULLY_MASKED_ROW_THRESHOLD);
-            let not_masked = E::cast_from(row_val.val >= epsilon);
-            let safe_val = clamp_min(row_val.val, epsilon);
+            let not_masked = E::cast_from(row_val >= epsilon);
+            let safe_val = clamp_min(row_val, epsilon);
             let recip = safe_val.recip();
-            row_val.val = not_masked * recip;
+            self.vals[i] = not_masked * recip;
         }
     }
 }

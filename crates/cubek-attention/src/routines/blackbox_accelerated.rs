@@ -162,6 +162,7 @@ fn blueprint<R: Runtime>(
             };
 
             let partition_head_dim = problem.dims.head_dim as u32 / tile_size.head_dim;
+            let partition_val_dim = problem.dims.val_dim as u32 / tile_size.val_dim;
 
             let tiling_scheme = AttentionTilingScheme {
                 tile_size,
@@ -169,7 +170,7 @@ fn blueprint<R: Runtime>(
                     seq_q: strategy.seq_q as u32,
                     head_dim: partition_head_dim,
                     seq_kv: strategy.seq_kv as u32,
-                    val_dim: partition_head_dim,
+                    val_dim: partition_val_dim,
                 },
                 stage_size: AttentionStageSize {
                     seq_q: strategy.num_planes as u32,

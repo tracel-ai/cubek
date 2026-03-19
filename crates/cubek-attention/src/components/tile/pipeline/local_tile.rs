@@ -5,7 +5,7 @@ use cubek_std::tile::StridedTile;
 
 use crate::components::tile::{
     LOGIT_MASKED,
-    pipeline::{RowVal, RowWise},
+    pipeline::RowWise,
     softmax::{FragmentMask, FragmentMaskExpand, SoftmaxLayout, SoftmaxLayoutExpand},
 };
 
@@ -95,72 +95,62 @@ impl<E: Numeric> LocalTile<E> {
     }
 
     pub fn rowwise_scale(&mut self, scale: &RowWise<E>) {
-        #[unroll]
         for r in 0..self.layout.unit_size.0 as usize {
             let row_offset = r as u32 * self.layout.unit_size.1;
-            #[unroll]
             for c in 0..self.layout.unit_size.1 {
                 let index = row_offset + c;
-                self.array[index as usize] = self.array[index as usize] * scale.index(r);
+                self.array[index as usize] = self.array[index as usize] * scale.vals[r];
             }
         }
     }
 
     pub fn rowwise_max(&self) -> RowWise<E> {
-        let mut vals = Sequence::new();
+        let num_rows = self.layout.unit_size.0.comptime() as usize;
+        let num_cols = self.layout.unit_size.1.comptime() as usize;
+        let mut vals = Array::new(num_rows);
 
-        #[unroll]
-        for r in 0..self.layout.unit_size.0 {
-            let row_offset = r * self.layout.unit_size.1;
+        for r in 0..num_rows {
+            let row_offset = r * num_cols;
             let mut val = E::min_value();
 
-            #[unroll]
-            for c in 0..self.layout.unit_size.1 {
+            for c in 0..num_cols {
                 let index = row_offset + c;
-                val = max(val, self.array[index as usize]);
+                val = max(val, self.array[index]);
             }
 
-            vals.push(RowVal::<E> { val });
+            vals[r] = val;
         }
 
-        RowWise::<E> {
-            num_rows: self.layout.unit_size.0.comptime() as usize,
-            vals,
-        }
+        RowWise::<E> { num_rows, vals }
     }
 
     pub fn rowwise_sum(&self) -> RowWise<E> {
-        let mut vals = Sequence::new();
+        let num_rows = self.layout.unit_size.0.comptime() as usize;
+        let num_cols = self.layout.unit_size.1.comptime() as usize;
+        let mut vals = Array::new(num_rows);
 
-        #[unroll]
-        for r in 0..self.layout.unit_size.0 {
-            let row_offset = r * self.layout.unit_size.1;
+        for r in 0..num_rows {
+            let row_offset = r * num_cols;
             let mut val = E::from_int(0);
 
-            #[unroll]
-            for c in 0..self.layout.unit_size.1 {
+            for c in 0..num_cols {
                 let index = row_offset + c;
-                val += self.array[index as usize];
+                val += self.array[index];
             }
 
-            vals.push(RowVal::<E> { val });
+            vals[r] = val;
         }
 
-        RowWise::<E> {
-            num_rows: self.layout.unit_size.0.comptime() as usize,
-            vals,
-        }
+        RowWise::<E> { num_rows, vals }
     }
 
     pub fn scale_and_mask<M: FragmentMask>(&mut self, scale: E, mask: &M) {
-        #[unroll]
         for r in 0..self.layout.unit_size.0 {
             let row_offset = r * self.layout.unit_size.1;
-            #[unroll]
             for c in 0..self.layout.unit_size.1 {
                 let index = row_offset + c;
                 self.array[index as usize] = self.array[index as usize] * scale
-                    + E::cast_from(mask.should_mask((r, c).runtime())) * E::min_value();
+                    + E::cast_from(mask.should_mask((r, c))) * E::min_value();
             }
         }
     }
@@ -172,23 +162,22 @@ impl<E: Numeric> LocalTile<E> {
 
 #[cube]
 impl<E: Float> LocalTile<E> {
-    pub fn exp_diff(&mut self, val: &RowWise<E>) {
+    pub fn exp_diff(&mut self, rowwise: &RowWise<E>) {
+        let num_rows = self.layout.unit_size.0.comptime() as usize;
+        let num_cols = self.layout.unit_size.1.comptime() as usize;
         let threshold = E::new(LOGIT_MASKED);
 
-        #[unroll]
-        for r in 0..self.layout.unit_size.0 as usize {
-            let row_offset = r as u32 * self.layout.unit_size.1;
+        for r in 0..num_rows {
+            let row_offset = r * num_cols;
 
-            let val = val.index(r);
+            let val = rowwise.vals[r];
             let safe_val = clamp_min(val, threshold);
             let not_masked = E::cast_from(val >= threshold);
 
-            #[unroll]
-            for c in 0..self.layout.unit_size.1 {
+            for c in 0..num_cols {
                 let index = row_offset + c;
 
-                self.array[index as usize] =
-                    not_masked * (self.array[index as usize] - safe_val).exp();
+                self.array[index] = not_masked * (self.array[index] - safe_val).exp();
             }
         }
     }
