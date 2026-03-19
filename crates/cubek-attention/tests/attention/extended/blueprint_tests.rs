@@ -1,5 +1,5 @@
+use crate::attention::extended::utils::tiling_scheme_ops::*;
 use crate::attention::launcher::test_launch;
-use crate::attention::tiling_scheme_ops::*;
 use cubecl::ir::AddressType;
 use cubecl::{Runtime, TestRuntime};
 use cubek_attention::definition::{

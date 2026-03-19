@@ -1,6 +1,7 @@
 #![allow(missing_docs)]
 
-pub mod full;
+#[cfg(feature = "extended")]
+pub mod extended;
 pub mod launcher;
 
 mod reference;

@@ -15,6 +15,9 @@ default = ["kernels"]
 kernels = ["std"]
 std = []
 
+full = ["extended"]
+extended = []
+
 [dependencies]
 cubecl = { workspace = true, features = ["stdlib"] }
 cubecl-common = { workspace = true, features = ["fp8"] }

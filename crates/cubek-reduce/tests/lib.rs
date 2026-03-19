@@ -1,1 +1,2 @@
-pub mod suite;
+#[cfg(feature = "extended")]
+pub mod extended;
