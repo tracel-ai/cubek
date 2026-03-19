@@ -32,25 +32,25 @@ use crate::{
     routines::{BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine},
 };
 
-pub struct SimpleVecMatAlgorithm {}
+pub struct VecMatInnerProductAlgorithm {}
 
 #[derive(Default, Clone)]
-pub struct VecMatStrategy {}
+pub struct VecMatInnerProductStrategy {}
 
-impl Display for VecMatStrategy {
+impl Display for VecMatInnerProductStrategy {
     fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         Ok(())
     }
 }
 
-impl From<()> for VecMatStrategy {
+impl From<()> for VecMatInnerProductStrategy {
     fn from(_value: ()) -> Self {
         Self {}
     }
 }
 
-impl<RC: RuntimeConfig> Routine<RC> for SimpleVecMatAlgorithm {
-    type Strategy = VecMatStrategy;
+impl<RC: RuntimeConfig> Routine<RC> for VecMatInnerProductAlgorithm {
+    type Strategy = VecMatInnerProductStrategy;
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
         SimpleMatmulFamily<
@@ -135,10 +135,10 @@ impl<RC: RuntimeConfig> Routine<RC> for SimpleVecMatAlgorithm {
     }
 }
 
-pub struct DoubleVecMatAlgorithm {}
+pub struct DoubleVecMatInnerProductAlgorithm {}
 
-impl<RC: RuntimeConfig> Routine<RC> for DoubleVecMatAlgorithm {
-    type Strategy = VecMatStrategy;
+impl<RC: RuntimeConfig> Routine<RC> for DoubleVecMatInnerProductAlgorithm {
+    type Strategy = VecMatInnerProductStrategy;
 
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,

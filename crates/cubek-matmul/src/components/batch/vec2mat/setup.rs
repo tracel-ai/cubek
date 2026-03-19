@@ -28,7 +28,6 @@ use crate::{
 pub struct Vec2MatFamily {}
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct Vec2MatBlueprint {
-    pub vector_size_out: u32,
     pub dtypes: MatmulElems,
 }
 
@@ -124,12 +123,6 @@ impl BatchMatmulFamily<()> for Vec2MatFamily {
         _dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
-        if blueprint.vector_size_out > 1 {
-            return Err(MatmulSetupError::InvalidConfig(Box::new(
-                "Vector size on output not supported",
-            )));
-        }
-
         if let Some(scheme) = problem.lhs_scheme
             && let QuantLevel::Block(block_size) = scheme.level
         {

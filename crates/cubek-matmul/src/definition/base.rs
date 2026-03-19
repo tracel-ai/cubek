@@ -115,8 +115,8 @@ impl MatmulProblem {
         lhs_layout: MatrixLayout,
         rhs_layout: MatrixLayout,
         out_layout: MatrixLayout,
-        lhs_scheme: Option<QuantScheme>,
-        rhs_scheme: Option<QuantScheme>,
+        lhs_scheme: Option<&QuantScheme>,
+        rhs_scheme: Option<&QuantScheme>,
         global_dtypes: MatmulGlobalElems,
         address_type: AddressType,
     ) -> Self {
@@ -165,8 +165,8 @@ impl MatmulProblem {
             lhs_layout,
             rhs_layout,
             out_layout,
-            lhs_scheme,
-            rhs_scheme,
+            lhs_scheme: lhs_scheme.copied(),
+            rhs_scheme: rhs_scheme.copied(),
             global_dtypes,
             address_type,
         }

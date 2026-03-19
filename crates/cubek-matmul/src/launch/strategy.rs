@@ -26,7 +26,7 @@ use crate::{
         simple::{SimpleAlgorithm, SimpleTmaAlgorithm},
         simple_unit::SimpleUnitAlgorithm,
         specialized::SpecializedAlgorithm,
-        vecmat::{DoubleVecMatAlgorithm, SimpleVecMatAlgorithm},
+        vecmat_innerproduct::{DoubleVecMatInnerProductAlgorithm, VecMatInnerProductAlgorithm},
     },
 };
 
@@ -160,8 +160,8 @@ pub enum Strategy {
     OrderedDoubleMma(BlueprintStrategy<(), OrderedDoubleBufferingAlgorithm<Mma>>),
     SimpleUnit(BlueprintStrategy<(), SimpleUnitAlgorithm>),
     DoubleUnit(BlueprintStrategy<(), DoubleUnitAlgorithm>),
-    SimpleVecMat(BlueprintStrategy<(), SimpleVecMatAlgorithm>),
-    DoubleVecMat(BlueprintStrategy<(), DoubleVecMatAlgorithm>),
+    SimpleVecMat(BlueprintStrategy<(), VecMatInnerProductAlgorithm>),
+    DoubleVecMat(BlueprintStrategy<(), DoubleVecMatInnerProductAlgorithm>),
     Naive,
     #[default]
     Auto,

@@ -3,7 +3,7 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::{Runtime, client};
 use cubecl::{frontend::CubePrimitive, ir::AddressType};
 use cubecl::{prelude::TensorBinding, zspace::shape};
-use cubek_matmul::launch::launch_naive;
+use cubek_matmul::launch::launch_vec2mat;
 
 use crate::suite::layout_to_stride_spec;
 use cubek_matmul::definition::MatmulGlobalElems;
@@ -15,25 +15,22 @@ use cubek_test_utils::{BaseInputSpec, DataKind, Distribution, TestInput};
 
 type TestRuntime = cubecl::TestRuntime;
 
-struct MatmulTestCase {
-    pub m: usize,
+struct Vec2MatTestCase {
     pub n: usize,
     pub k: usize,
-    pub batch: usize,
-    pub lhs_layout: MatrixLayout,
     pub rhs_layout: MatrixLayout,
     pub elems: MatmulGlobalElems,
 }
 
-impl MatmulTestCase {
+impl Vec2MatTestCase {
     fn into_problem(self) -> MatmulProblem {
         MatmulProblem::from_parameters(
-            self.m,
+            1,
             self.n,
             self.k,
-            shape![self.batch],
-            shape![self.batch],
-            self.lhs_layout,
+            shape![1],
+            shape![1],
+            MatrixLayout::RowMajor,
             self.rhs_layout,
             MatrixLayout::RowMajor,
             None,
@@ -46,12 +43,9 @@ impl MatmulTestCase {
 
 #[test]
 pub fn test_very_small() {
-    let case = MatmulTestCase {
-        m: 4,
+    let case = Vec2MatTestCase {
         n: 4,
         k: 4,
-        batch: 1,
-        lhs_layout: MatrixLayout::RowMajor,
         rhs_layout: MatrixLayout::RowMajor,
         elems: elems(),
     };
@@ -61,12 +55,9 @@ pub fn test_very_small() {
 
 #[test]
 pub fn test_very_small_col_major() {
-    let case = MatmulTestCase {
-        m: 4,
+    let case = Vec2MatTestCase {
         n: 4,
         k: 4,
-        batch: 1,
-        lhs_layout: MatrixLayout::RowMajor,
         rhs_layout: MatrixLayout::ColMajor,
         elems: elems(),
     };
@@ -76,12 +67,9 @@ pub fn test_very_small_col_major() {
 
 #[test]
 pub fn test_small() {
-    let case = MatmulTestCase {
-        m: 64,
+    let case = Vec2MatTestCase {
         n: 64,
         k: 64,
-        batch: 1,
-        lhs_layout: MatrixLayout::RowMajor,
         rhs_layout: MatrixLayout::RowMajor,
         elems: elems(),
     };
@@ -91,12 +79,9 @@ pub fn test_small() {
 
 #[test]
 pub fn test_odd() {
-    let case = MatmulTestCase {
-        m: 1,
+    let case = Vec2MatTestCase {
         n: 255,
         k: 101,
-        batch: 1,
-        lhs_layout: MatrixLayout::RowMajor,
         rhs_layout: MatrixLayout::RowMajor,
         elems: elems(),
     };
@@ -106,12 +91,9 @@ pub fn test_odd() {
 
 #[test]
 pub fn test_large() {
-    let case = MatmulTestCase {
-        m: 256,
+    let case = Vec2MatTestCase {
         n: 256,
         k: 256,
-        batch: 1,
-        lhs_layout: MatrixLayout::RowMajor,
         rhs_layout: MatrixLayout::RowMajor,
         elems: elems(),
     };
@@ -121,12 +103,9 @@ pub fn test_large() {
 
 #[test]
 pub fn test_with_check_bounds() {
-    let case = MatmulTestCase {
-        m: 60,
+    let case = Vec2MatTestCase {
         n: 60,
         k: 60,
-        batch: 1,
-        lhs_layout: MatrixLayout::RowMajor,
         rhs_layout: MatrixLayout::RowMajor,
         elems: elems(),
     };
@@ -136,12 +115,9 @@ pub fn test_with_check_bounds() {
 
 #[test]
 pub fn test_with_batches() {
-    let case = MatmulTestCase {
-        m: 64,
+    let case = Vec2MatTestCase {
         n: 64,
         k: 64,
-        batch: 3,
-        lhs_layout: MatrixLayout::RowMajor,
         rhs_layout: MatrixLayout::RowMajor,
         elems: elems(),
     };
@@ -149,7 +125,7 @@ pub fn test_with_batches() {
     test_naive(case);
 }
 
-fn test_naive(case: MatmulTestCase) {
+fn test_naive(case: Vec2MatTestCase) {
     let client = TestRuntime::client(&Default::default());
     let problem = case.into_problem();
 
@@ -192,7 +168,7 @@ fn test_naive(case: MatmulTestCase) {
 
     let all_elems = MatmulElems::from_globals(&problem.global_dtypes.clone());
 
-    launch_naive::launch_ref(&client, lhs_handle, rhs_handle, out_handle, &all_elems).unwrap();
+    launch_vec2mat::launch_ref(&client, lhs_handle, rhs_handle, out_handle, &all_elems).unwrap();
 
     assert_result(&lhs_data, &rhs_data, &problem, &client, out, all_elems);
 }
