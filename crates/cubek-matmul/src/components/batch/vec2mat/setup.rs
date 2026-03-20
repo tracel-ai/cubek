@@ -5,7 +5,7 @@ use cubecl::{
     quant::scheme::QuantLevel,
     server::LaunchError,
 };
-use cubek_std::{MatrixLayout, cube_count::CubeMappingLaunch};
+use cubek_std::{MatrixLayout, cube_count::HypercubeBlueprint};
 
 use crate::{
     components::{
@@ -18,8 +18,8 @@ use crate::{
         stage::NumStages,
     },
     definition::{
-        Blueprint, MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes, MatmulVectorSizes,
-        SwizzleModes, TilingScheme,
+        Blueprint, CubeMappingLaunch, MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes,
+        MatmulVectorSizes, SwizzleModes, TilingScheme,
     },
     launch::*,
 };
@@ -32,8 +32,7 @@ pub struct Vec2MatBlueprint {
     pub num_planes: usize,
     // Should equal plane_dim * vector_size
     pub tile_dim: usize,
-    // If true, the kernel will accept to launch with planes working out of bounds
-    pub plane_idle: bool,
+    pub hypercube_blueprint: HypercubeBlueprint,
 }
 
 impl Blueprint for Vec2MatBlueprint {
@@ -77,12 +76,13 @@ impl BatchMatmulFamily<()> for Vec2MatFamily {
 
     fn expand_config(
         device_props: &DeviceProperties,
-        _blueprint: &Self::Blueprint,
+        blueprint: &Self::Blueprint,
         _dtypes: &MatmulElems,
         _vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
         Ok(Vec2MatMatmulConfig {
             plane_dim: device_props.hardware.plane_size_max,
+            num_planes: blueprint.num_planes as u32,
         })
     }
 

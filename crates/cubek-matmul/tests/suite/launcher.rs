@@ -4,6 +4,7 @@ use cubecl::server::ServerError;
 use cubecl::std::tensor::TensorHandle;
 use cubek_matmul::definition::AvailableVectorSizes;
 use cubek_matmul::definition::MatmulIdent;
+use cubek_matmul::definition::cube_mapping_launch;
 use cubek_matmul::launch::ConcreteOutputFactory;
 use cubek_matmul::launch::ConcreteOutputFactory as _;
 
@@ -62,7 +63,7 @@ pub fn test_matmul_algorithm<A: Routine<()>>(
         problem.global_dtypes.rhs,
         layout_to_stride_spec(problem.rhs_layout),
         DataKind::Random {
-            seed: 1234,
+            seed: 5678,
             distribution: Distribution::Uniform(-1., 1.),
         },
     )
@@ -197,7 +198,7 @@ pub fn launch_matmul_algorithm<A: Routine<()>>(
                     inputs,
                     output,
                     (),
-                    cube_count_plan.as_args(),
+                    cube_mapping_launch(&cube_count_plan),
                     blueprint,
                     dtypes,
                     &vector_sizes,
@@ -223,7 +224,7 @@ pub fn launch_matmul_algorithm<A: Routine<()>>(
                     inputs,
                     output,
                     (),
-                    cube_count_plan.as_args(),
+                    cube_mapping_launch(&cube_count_plan),
                     blueprint,
                     dtypes,
                     &vector_sizes,

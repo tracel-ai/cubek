@@ -4,10 +4,10 @@
 //! - The CubeCount
 //! - The [CubeMapping] which maps a Cube to where it will work
 
-mod mapping;
+// mod mapping;
 mod plan;
 mod strategy;
 
-pub use mapping::{CubeMapping, CubeMappingLaunch};
-pub use plan::{CubeCountPlan, Count3d};
+// pub use mapping::{CubeMapping, CubeMappingLaunch};
+pub use plan::{Count3d, CubeCountPlan, CubeCountPlanKind};
 pub use strategy::CubeCountStrategy;

@@ -1,6 +1,5 @@
 use cubecl::prelude::*;
-
-use crate::cube_count::{GlobalOrder, hypercube::global_order::swizzle};
+use cubek_std::cube_count::{CubeCountPlan, CubeCountPlanKind, GlobalOrder, swizzle};
 
 #[derive(CubeType, CubeLaunch)]
 pub struct CubeMapping {
@@ -139,5 +138,52 @@ impl CubeMappingStrategy {
         };
 
         (m_pos, n_pos, batch_pos as u32)
+    }
+}
+
+pub fn cube_mapping_launch<R: Runtime>(cube_count_plan: &CubeCountPlan) -> CubeMappingLaunch<R> {
+    CubeMappingLaunch::new(
+        mapping_strategy(&cube_count_plan.kind),
+        cube_count_plan.kind.can_yield_extra_cubes(),
+        cube_count_plan.global_order,
+    )
+}
+
+fn mapping_strategy<R: Runtime>(
+    cube_count_plan_kind: &CubeCountPlanKind,
+) -> CubeMappingStrategyArgs<R> {
+    match cube_count_plan_kind {
+        CubeCountPlanKind::FromProblem { .. } => CubeMappingStrategyArgs::FromProblem,
+
+        CubeCountPlanKind::Sm {
+            cubes_first,
+            problem_count,
+            ..
+        } => {
+            if *cubes_first {
+                CubeMappingStrategyArgs::CubeFirst {
+                    m_cubes: problem_count.x,
+                    n_cubes: problem_count.y,
+                    batch_cubes: problem_count.z,
+                }
+            } else {
+                CubeMappingStrategyArgs::SmFirst {
+                    m_cubes: problem_count.x,
+                    n_cubes: problem_count.y,
+                    batch_cubes: problem_count.z,
+                }
+            }
+        }
+
+        CubeCountPlanKind::Flattened { problem_count, .. } => CubeMappingStrategyArgs::Flattened {
+            m_cubes: problem_count.x,
+            n_cubes: problem_count.y,
+        },
+
+        CubeCountPlanKind::Spread { problem_count, .. } => CubeMappingStrategyArgs::Spread {
+            m_cubes: problem_count.x,
+            n_cubes: problem_count.y,
+            batch_cubes: problem_count.z,
+        },
     }
 }

@@ -46,8 +46,8 @@ impl Vec2MatTestCase {
 #[test]
 pub fn test_very_small_row_major() {
     let case = Vec2MatTestCase {
-        n: 16,
-        k: 16,
+        n: 32 * 4,
+        k: 32 * 4,
         rhs_layout: MatrixLayout::RowMajor,
         elems: elems(),
     };
@@ -63,8 +63,7 @@ fn test_vec2mat(case: Vec2MatTestCase) {
         client,
         problem,
         BlueprintStrategy::Inferred(Vec2MatStrategy {
-            target_num_planes: todo!(),
-            plane_idle: todo!(),
+            target_num_planes: 8,
         }),
         InputRepresentation::Normal,
     );

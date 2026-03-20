@@ -1,3 +1,4 @@
+use crate::definition::{CubeMapping, CubeMappingLaunch};
 use crate::launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
 use crate::{components::CubeDimResource, launch::RuntimeConfig};
 use crate::{components::global::memory::GlobalLayoutConfig, launch::ConfigRuntimeArg};
@@ -9,7 +10,6 @@ use crate::{
     },
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_std::cube_count::{CubeMapping, CubeMappingLaunch};
 use std::{fmt::Debug, hash::Hash};
 
 /// A family of [matmuls](BatchMatmul) working with any [precision](MatmulPrecision).

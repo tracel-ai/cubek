@@ -1,15 +1,15 @@
 use cubecl::features::MmaConfig;
 use cubecl::{Runtime, client::ComputeClient};
 use cubek_std::cube_count::{
-    CubeCountStrategy, CubeMappingLaunch, GlobalOrderStrategy, HypercubeBlueprint, SmAllocation,
+    CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, SmAllocation,
 };
 use cubek_std::tile::Strided;
 use std::fmt::Display;
 use std::marker::PhantomData;
 
 use crate::definition::{
-    MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes, MultiRowStrategy,
-    TilingBlueprint, TilingScheme, adjust_dtypes,
+    CubeMappingLaunch, MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes,
+    MultiRowStrategy, TilingBlueprint, TilingScheme, adjust_dtypes,
 };
 use crate::routines::{BlueprintStrategy, DeviceSettings, LaunchInfo};
 use crate::{components::batch::BatchMatmulFamily, launch::RuntimeConfig};
@@ -261,7 +261,7 @@ fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
             .unwrap();
 
         let hypercube = HypercubeBlueprint::builder()
-             .global_order(
+            .global_order(
                 GlobalOrderStrategy::SwizzleRow { w: 4 },
                 problem.m as u32 / tiling_scheme.elements_per_global_partition_along_m(),
                 problem.n as u32 / tiling_scheme.elements_per_global_partition_along_n(),

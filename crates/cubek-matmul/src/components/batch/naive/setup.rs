@@ -5,7 +5,7 @@ use cubecl::{
     quant::scheme::QuantLevel,
     server::LaunchError,
 };
-use cubek_std::{MatrixLayout, cube_count::CubeMappingLaunch};
+use cubek_std::MatrixLayout;
 
 use crate::{
     components::{
@@ -18,8 +18,8 @@ use crate::{
         stage::NumStages,
     },
     definition::{
-        Blueprint, MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes, MatmulVectorSizes,
-        SwizzleModes, TilingScheme,
+        Blueprint, CubeMappingLaunch, MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes,
+        MatmulVectorSizes, SwizzleModes, TilingScheme,
     },
     launch::*,
 };

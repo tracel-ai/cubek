@@ -26,8 +26,8 @@ impl HypercubeBlueprintBuilder {
     }
 
     /// Set the [CubeCountStrategy]
-    pub fn cube_count_strategy(mut self, cube_count_plan_blueprint: CubeCountStrategy) -> Self {
-        self.cube_count_strategy = Some(cube_count_plan_blueprint);
+    pub fn cube_count_strategy(mut self, cube_count_strategy: CubeCountStrategy) -> Self {
+        self.cube_count_strategy = Some(cube_count_strategy);
         self
     }
 

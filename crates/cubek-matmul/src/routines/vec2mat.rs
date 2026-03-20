@@ -1,6 +1,11 @@
-use std::{cmp::min, fmt::Display};
+use std::{
+    cmp::{max, min},
+    fmt::Display,
+};
 
-use cubek_std::cube_count::cube_count_spread_with_total;
+use cubek_std::cube_count::{
+    CubeCountPlan, CubeCountStrategy, GlobalOrder, GlobalOrderStrategy, HypercubeBlueprint,
+};
 
 use crate::{
     components::batch::{
@@ -16,7 +21,6 @@ pub struct Vec2MatRoutine {}
 #[derive(Default, Clone)]
 pub struct Vec2MatStrategy {
     pub target_num_planes: usize,
-    pub plane_idle: bool,
 }
 
 impl Display for Vec2MatStrategy {
@@ -47,13 +51,20 @@ impl Routine<()> for Vec2MatRoutine {
                 let tile_dim =
                     device_settings.plane_dim as usize * device_settings.vector_sizes.rhs;
                 let max_planes_for_swizzle = problem.k / tile_dim;
-                let num_planes = min(strategy.target_num_planes, max_planes_for_swizzle);
+                let num_planes = max(1, min(strategy.target_num_planes, max_planes_for_swizzle));
 
                 let blueprint = Vec2MatBlueprint {
                     dtypes: dtypes.clone(),
                     num_planes,
                     tile_dim,
-                    plane_idle: strategy.plane_idle,
+                    hypercube_blueprint: HypercubeBlueprint::builder()
+                        .cube_count_strategy(CubeCountStrategy::Flattened)
+                        .global_order(
+                            GlobalOrderStrategy::Fixed(GlobalOrder::RowMajor),
+                            1,
+                            (problem.n / (tile_dim * num_planes)) as u32,
+                        )
+                        .build(),
                 };
 
                 Ok(ExpandInfo { blueprint, dtypes })
@@ -85,21 +96,19 @@ impl Routine<()> for Vec2MatRoutine {
 
         let working_planes = problem.n.div_ceil(blueprint.tile_dim);
         let working_cubes = working_planes.div_ceil(blueprint.num_planes);
-        let (cube_count, launched_cubes) =
-            cube_count_spread_with_total(&device_settings.client, working_cubes);
-        let plane_idle = launched_cubes * cube_dim.y as usize != working_planes;
 
-        if plane_idle && !blueprint.plane_idle {
-            return Err(MatmulSetupError::InvalidConfig(Box::new(
-                "Too many planes launched for the problem causing OOD, but `plane_idle` is off.",
-            )));
-        }
+        let cube_count_plan = CubeCountPlan::from_blueprint(
+            &blueprint.hypercube_blueprint,
+            (1, working_cubes as u32, problem.num_batches() as u32).into(),
+            &device_settings.max_cube_count,
+        );
+        println!("{:?}", device_settings.vector_sizes);
 
         Ok(LaunchInfo {
             blueprint,
             dtypes,
             cube_dim,
-            cube_count_plan: todo!(),
+            cube_count_plan,
             address_type: problem.address_type,
             vector_sizes: device_settings.vector_sizes,
         })

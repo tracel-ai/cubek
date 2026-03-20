@@ -1,6 +1,7 @@
 use crate::definition::MatmulProblem;
 use crate::definition::MatmulSetupError;
 use crate::definition::MatmulVectorSizes;
+use crate::definition::cube_mapping_launch;
 use crate::launch::handle::MatmulInputBinding;
 use crate::launch::{
     ConcreteInputsFactory, ConcreteOutputFactory, InputArg, InputRuntimeArg, MatmulArgs, OutputArg,
@@ -97,7 +98,7 @@ pub fn launch_kernel<MA: MatmulArgs, R: Runtime, A: Routine<MA::Config>>(
         input,
         output,
         config,
-        launch_info.cube_count_plan.as_args(),
+        cube_mapping_launch(&launch_info.cube_count_plan),
         launch_info.blueprint,
         &launch_info.dtypes,
         &launch_info.vector_sizes,

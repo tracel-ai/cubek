@@ -5,8 +5,8 @@ use cubecl::zspace::shape;
 use cubecl::{VectorizationError, prelude::*};
 use cubek_std::MatrixLayout;
 
-use crate::definition::MatmulVectorSizes;
 use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError};
+use crate::definition::{MatmulVectorSizes, cube_mapping_launch};
 
 use crate::launch::InputArg;
 use crate::launch::handle::MatmulInputBinding;
@@ -44,18 +44,21 @@ pub fn launch_ref<R: Runtime>(
     let rhs_shape = rhs.shape();
     let out_shape = &out.shape;
 
-    let mut lhs_vector_size = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(dtypes.lhs_global.size()),
-        &lhs.data().shape,
-        &lhs.data().strides,
-        rank - 1,
-    );
-    let mut rhs_vector_size = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(dtypes.rhs_global.size()),
-        &rhs.data().shape,
-        &rhs.data().strides,
-        rank - 1,
-    );
+    // Assumes row-major
+    let lhs_supported_vector_sizes = client.io_optimized_vector_sizes(dtypes.lhs_global.size());
+    let divisible =
+        *lhs.data().shape.last().unwrap() / client.properties().hardware.plane_size_max as usize;
+    let mut lhs_vector_size = lhs_supported_vector_sizes
+        .filter(|&vector_size| divisible % vector_size == 0)
+        .max()
+        .ok_or(VectorizationError::NoValidVectorization)?;
+    let rhs_supported_vector_sizes = client.io_optimized_vector_sizes(dtypes.rhs_global.size());
+    let divisible =
+        *rhs.data().shape.last().unwrap() / client.properties().hardware.plane_size_max as usize;
+    let mut rhs_vector_size = rhs_supported_vector_sizes
+        .filter(|&vector_size| divisible % vector_size == 0)
+        .max()
+        .ok_or(VectorizationError::NoValidVectorization)?;
 
     if let MatmulInputBinding::Quantized { scheme, .. } = lhs {
         lhs_vector_size *= scheme.num_quants();
@@ -103,7 +106,6 @@ pub fn launch_ref<R: Runtime>(
         &device_settings,
         &BlueprintStrategy::Inferred(Vec2MatStrategy {
             target_num_planes: 8,
-            plane_idle: todo!(),
         }),
     )?;
     let launch_info = Vec2MatRoutine::prepare(&problem, &device_settings, expand_info)?;
@@ -132,7 +134,7 @@ pub fn launch_ref<R: Runtime>(
         input,
         output,
         (),
-        launch_info.cube_count_plan.as_args(),
+        cube_mapping_launch(&launch_info.cube_count_plan),
         launch_info.blueprint,
         dtypes,
         &launch_info.vector_sizes,

@@ -7,7 +7,6 @@ use crate::components::batch::{BatchConfig as _, SliceIndex};
 use crate::{components::batch::BatchMatmul, definition::*, launch::MatmulArgs};
 use cubecl::prelude::*;
 use cubecl::{cube, num_traits::Zero};
-use cubek_std::cube_count::CubeMapping;
 
 #[cube(launch_unchecked, explicit_define, address_type = "dynamic")]
 #[allow(clippy::type_complexity)]
@@ -97,10 +96,15 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Vec2Mat<MP> {
 
     fn execute<Args: MatmulArgs>(
         state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
-        _cube_mapping: CubeMapping,
+        cube_mapping: CubeMapping,
         #[comptime] config: Self::Config,
     ) {
+        let num_planes = config.num_planes;
         let plane_dim = config.plane_dim;
+        let (m_index, n_index, batch_index) = cube_mapping.cube_pos_to_tensor_pos();
+        // m_index should be 1
+        // batch_index: not supported yet
+
         let plane_id = UNIT_POS_Y;
         let unit_id = UNIT_POS_X;
 
@@ -118,10 +122,11 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Vec2Mat<MP> {
 
         let size!(NA) = comptime![Ord::max(lhs.vector_size(), rhs.vector_size())];
 
-        let plane_offset = plane_id * plane_dim;
-        let n_pos = plane_offset + unit_id;
-
         let tile_size = plane_dim * NA::value() as u32;
+        let cube_offset = n_index * num_planes * tile_size;
+        let plane_offset = plane_id * tile_size;
+        let n_pos = cube_offset + plane_offset + unit_id;
+
         let num_tiles = k / tile_size;
 
         let mut acc = Vector::<AccR<MP>, NA>::zero();

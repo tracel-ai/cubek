@@ -5,6 +5,7 @@ use crate::components::{batch::BatchConfig, global::memory::GlobalLayoutConfig};
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Vec2MatMatmulConfig {
     pub(crate) plane_dim: u32,
+    pub(crate) num_planes: u32,
 }
 
 impl BatchConfig for Vec2MatMatmulConfig {

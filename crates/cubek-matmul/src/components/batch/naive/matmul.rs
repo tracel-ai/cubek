@@ -14,7 +14,6 @@ use cubecl::std::tensor::View;
 use cubecl::std::tensor::layout::Coords2d;
 use cubecl::{cube, num_traits::Zero};
 use cubek_std::MatrixLayout;
-use cubek_std::cube_count::CubeMapping;
 
 #[cube(launch_unchecked, explicit_define, address_type = "dynamic")]
 #[allow(clippy::type_complexity)]

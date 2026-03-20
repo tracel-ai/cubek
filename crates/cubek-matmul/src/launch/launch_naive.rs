@@ -5,8 +5,8 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
 use cubecl::tensor_vector_size_parallel;
 
-use crate::definition::MatmulVectorSizes;
 use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError};
+use crate::definition::{MatmulVectorSizes, cube_mapping_launch};
 
 use crate::launch::InputArg;
 use crate::launch::handle::MatmulInputBinding;
@@ -144,7 +144,7 @@ pub fn launch_ref<R: Runtime>(
         input,
         output,
         (),
-        launch_info.cube_count_plan.as_args(),
+        cube_mapping_launch(&launch_info.cube_count_plan),
         launch_info.blueprint,
         dtypes,
         &launch_info.vector_sizes,
