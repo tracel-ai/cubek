@@ -8,7 +8,8 @@ use crate::components::batch::{BatchMatmul, BatchMatmulFamily, PartitionedBatchM
 use crate::components::global::{self, GlobalConfig, GlobalMatmul, GlobalMatmulFamily};
 use crate::components::stage::StageConfig as _;
 use crate::definition::{
-    AccG, Blueprint as _, CubeMapping, LhsG, MatmulElems, MatmulTypes, MatmulVectorSizes, RhsG, TilingBlueprint
+    AccG, Blueprint as _, CubeMapping, LhsG, MatmulElems, MatmulTypes, MatmulVectorSizes, RhsG,
+    TilingBlueprint,
 };
 use crate::launch::MatmulArgs;
 use crate::{
