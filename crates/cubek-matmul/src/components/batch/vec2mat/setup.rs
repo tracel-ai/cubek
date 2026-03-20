@@ -5,7 +5,7 @@ use cubecl::{
     quant::scheme::QuantLevel,
     server::LaunchError,
 };
-use cubek_std::MatrixLayout;
+use cubek_std::{MatrixLayout, cube_count::CubeMappingLaunch};
 
 use crate::{
     components::{
@@ -18,7 +18,8 @@ use crate::{
         stage::NumStages,
     },
     definition::{
-        Blueprint, CubeMappingLaunch, MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes, MatmulVectorSizes, SwizzleModes, TilingScheme
+        Blueprint, MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes, MatmulVectorSizes,
+        SwizzleModes, TilingScheme,
     },
     launch::*,
 };
@@ -28,6 +29,11 @@ pub struct Vec2MatFamily {}
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct Vec2MatBlueprint {
     pub dtypes: MatmulElems,
+    pub num_planes: usize,
+    // Should equal plane_dim * vector_size
+    pub tile_dim: usize,
+    // If true, the kernel will accept to launch with planes working out of bounds
+    pub plane_idle: bool,
 }
 
 impl Blueprint for Vec2MatBlueprint {
@@ -70,12 +76,14 @@ impl BatchMatmulFamily<()> for Vec2MatFamily {
     type Blueprint = Vec2MatBlueprint;
 
     fn expand_config(
-        _device_props: &DeviceProperties,
+        device_props: &DeviceProperties,
         _blueprint: &Self::Blueprint,
         _dtypes: &MatmulElems,
         _vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
-        Ok(Vec2MatMatmulConfig {})
+        Ok(Vec2MatMatmulConfig {
+            plane_dim: device_props.hardware.plane_size_max,
+        })
     }
 
     fn num_stages() -> NumStages {
@@ -115,12 +123,11 @@ impl BatchMatmulFamily<()> for Vec2MatFamily {
     }
 
     fn cubedim_resource(
-        _blueprint: &Self::Blueprint,
+        blueprint: &Self::Blueprint,
         _dtypes: &MatmulElems,
         _vector_sizes: &MatmulVectorSizes,
     ) -> Result<CubeDimResource, MatmulSetupError> {
-        // Could be moved to blueprint to be less hard coded
-        Ok(CubeDimResource::Planes(8))
+        Ok(CubeDimResource::Planes(blueprint.num_planes as u32))
     }
 
     fn validate_blueprint<R: Runtime>(

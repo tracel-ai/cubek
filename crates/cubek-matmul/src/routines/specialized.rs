@@ -5,6 +5,9 @@ use cubecl::Runtime;
 use cubecl::client::ComputeClient;
 use cubecl::features::MmaConfig;
 use cubek_std::MatrixLayout;
+use cubek_std::cube_count::{
+    CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, SmAllocation,
+};
 use cubek_std::tile::Strided;
 
 use crate::components::batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul};
@@ -15,8 +18,8 @@ use crate::components::{
     global::read::sync_full_strided::SyncFullStridedLoading, stage::PlaneMatmulFamily,
 };
 use crate::definition::{
-    CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulProblem, MatmulSetupError,
-    MatmulVectorSizes, SmAllocation, SwizzleModes, TilingBlueprint, adjust_dtypes,
+    MatmulProblem, MatmulSetupError, MatmulVectorSizes, SwizzleModes, TilingBlueprint,
+    adjust_dtypes,
 };
 use crate::launch::RuntimeConfig;
 use crate::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
@@ -210,11 +213,12 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
         );
     };
 
-    let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
-        .global_order_strategy(GlobalOrderStrategy::SwizzleRow {
-            m: problem.m as u32,
-            w: 4,
-        })
+    let hypercube = HypercubeBlueprint::builder()
+        .global_order(
+            GlobalOrderStrategy::SwizzleRow { w: 4 },
+            problem.m as u32 / tiling_scheme.elements_per_global_partition_along_m(),
+            problem.n as u32 / tiling_scheme.elements_per_global_partition_along_n(),
+        )
         .cube_count_strategy(cube_count_strategy)
         .build();
 

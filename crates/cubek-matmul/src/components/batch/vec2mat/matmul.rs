@@ -7,6 +7,7 @@ use crate::components::batch::{BatchConfig as _, SliceIndex};
 use crate::{components::batch::BatchMatmul, definition::*, launch::MatmulArgs};
 use cubecl::prelude::*;
 use cubecl::{cube, num_traits::Zero};
+use cubek_std::cube_count::CubeMapping;
 
 #[cube(launch_unchecked, explicit_define, address_type = "dynamic")]
 #[allow(clippy::type_complexity)]
@@ -99,8 +100,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Vec2Mat<MP> {
         _cube_mapping: CubeMapping,
         #[comptime] config: Self::Config,
     ) {
-        // TODO: from config
-        let plane_dim = 32u32;
+        let plane_dim = config.plane_dim;
         let plane_id = UNIT_POS_Y;
         let unit_id = UNIT_POS_X;
 
@@ -115,26 +115,40 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Vec2Mat<MP> {
         let lhs = lhs.view(SliceIndex::new(0, lhs.shape()));
         let rhs = rhs.view(SliceIndex::new(0, rhs.shape()));
         let out = out.view_mut(SliceIndex::new(0, out.shape()));
+
         let size!(NA) = comptime![Ord::max(lhs.vector_size(), rhs.vector_size())];
 
         let plane_offset = plane_id * plane_dim;
         let n_pos = plane_offset + unit_id;
-        let num_tiles = k / plane_dim;
-        let mut sum = Vector::<AccR<MP>, NA>::zero();
+
+        let tile_size = plane_dim * NA::value() as u32;
+        let num_tiles = k / tile_size;
+
+        let mut acc = Vector::<AccR<MP>, NA>::zero();
 
         for tile_index in 0..num_tiles {
             let swizzled_tile_index = (tile_index + plane_id) % num_tiles;
             let k_base = swizzled_tile_index * plane_dim;
-            let local_vec_val = lhs.read((0, k_base + unit_id));
+
+            // Load the whole lhs tile
+            let local_lhs_vec = lhs.read((0, k_base + unit_id));
 
             #[unroll]
-            for unit_iter in 0..plane_dim {
-                let vec_val = plane_broadcast(local_vec_val, unit_iter);
-                let mat_val = rhs.read((k_base + unit_iter, n_pos));
-                sum += Vector::cast_from(vec_val) * Vector::cast_from(mat_val);
+            for plane_iter in 0..plane_dim as u32 {
+                let lhs_vec = if comptime!(plane_dim > 1) {
+                    plane_broadcast(local_lhs_vec, plane_iter)
+                } else {
+                    local_lhs_vec
+                };
+
+                for vec_iter in 0..NA::value() as u32 {
+                    let lhs_scalar = lhs_vec[vec_iter as usize];
+                    let rhs_vec = rhs.read((k_base + plane_iter + vec_iter, n_pos));
+                    acc += Vector::cast_from(lhs_scalar) * Vector::cast_from(rhs_vec);
+                }
             }
         }
 
-        out.write((0, n_pos), Vector::cast_from(sum));
+        out.write((0, n_pos), Vector::cast_from(acc));
     }
 }

@@ -12,7 +12,7 @@ use crate::launch::InputArg;
 use crate::launch::handle::MatmulInputBinding;
 use crate::launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs};
 use crate::routines::naive::NaiveRoutine;
-use crate::routines::vec2mat::Vec2MatRoutine;
+use crate::routines::vec2mat::{Vec2MatRoutine, Vec2MatStrategy};
 use crate::routines::{BlueprintStrategy, Routine as _};
 
 #[allow(clippy::result_large_err)]
@@ -101,7 +101,10 @@ pub fn launch_ref<R: Runtime>(
     let expand_info = Vec2MatRoutine::expand_blueprint(
         &problem,
         &device_settings,
-        &BlueprintStrategy::Inferred(().into()),
+        &BlueprintStrategy::Inferred(Vec2MatStrategy {
+            target_num_planes: 8,
+            plane_idle: todo!(),
+        }),
     )?;
     let launch_info = Vec2MatRoutine::prepare(&problem, &device_settings, expand_info)?;
 

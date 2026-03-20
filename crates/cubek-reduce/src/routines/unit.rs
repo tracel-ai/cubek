@@ -5,9 +5,10 @@ use super::{
 use crate::{
     IdleMode, ReduceError, VectorizationMode,
     launch::calculate_plane_count_per_cube,
-    routines::{BlueprintStrategy, Routine, UnitReduceBlueprint, cube_count_safe},
+    routines::{BlueprintStrategy, Routine, UnitReduceBlueprint},
 };
 use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient};
+use cubek_std::cube_count::cube_count_spread_with_total;
 
 #[derive(Debug, Clone)]
 pub struct UnitRoutine;
@@ -33,7 +34,8 @@ impl Routine for UnitRoutine {
                 let num_units_in_cube = cube_dim.num_elems();
                 let working_cubes = working_units.div_ceil(num_units_in_cube as usize);
 
-                let (cube_count, launched_cubes) = cube_count_safe(client, working_cubes);
+                let (cube_count, launched_cubes) =
+                    cube_count_spread_with_total(client, working_cubes);
 
                 if working_cubes != launched_cubes && blueprint.unit_idle.is_enabled() {
                     return Err(ReduceError::Validation {
@@ -80,7 +82,7 @@ fn generate_blueprint<R: Runtime>(
     let num_units_in_cube = cube_dim.num_elems();
 
     let working_cubes = working_units.div_ceil(num_units_in_cube as usize);
-    let (cube_count, cube_launched) = cube_count_safe(client, working_cubes);
+    let (cube_count, cube_launched) = cube_count_spread_with_total(client, working_cubes);
     let unit_idle =
         !working_units.is_multiple_of(num_units_in_cube as usize) || cube_launched != working_cubes;
 

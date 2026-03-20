@@ -5,9 +5,10 @@ use super::{
 use crate::{
     BoundChecks, IdleMode, ReduceError, VectorizationMode,
     launch::{calculate_plane_count_per_cube, support_plane},
-    routines::{BlueprintStrategy, CubeBlueprint, Routine, cube_count_safe},
+    routines::{BlueprintStrategy, CubeBlueprint, Routine},
 };
 use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, features::Plane};
+use cubek_std::cube_count::cube_count_spread_with_total;
 
 #[derive(Debug, Clone)]
 pub struct CubeRoutine;
@@ -56,7 +57,8 @@ impl Routine for CubeRoutine {
                 }
 
                 let working_cubes = working_cubes(&settings, &problem);
-                let (cube_count, launched_cubes) = cube_count_safe(client, working_cubes);
+                let (cube_count, launched_cubes) =
+                    cube_count_spread_with_total(client, working_cubes);
 
                 if working_cubes != launched_cubes && !blueprint.cube_idle.is_enabled() {
                     return Err(ReduceError::Validation {
@@ -121,7 +123,7 @@ fn generate_blueprint<R: Runtime>(
         false => cube_size as usize,
     };
 
-    let (cube_count, launched_cubes) = cube_count_safe(client, working_cubes);
+    let (cube_count, launched_cubes) = cube_count_spread_with_total(client, working_cubes);
 
     let cube_idle = match working_cubes != launched_cubes {
         true => match strategy.use_planes

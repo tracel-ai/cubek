@@ -1,3 +1,4 @@
+pub mod cube_count;
 pub mod stage;
 pub mod tile;
 

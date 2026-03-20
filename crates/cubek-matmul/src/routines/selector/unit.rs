@@ -3,9 +3,8 @@ use std::fmt::Display;
 use crate::{
     components::stage::PartitionBuffering,
     definition::{
-        CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulElems, MatmulGlobalElems,
-        MatmulKind, MatmulProblem, MatmulVectorSizes, SmAllocation, SwizzleModes, TilingBlueprint,
-        TilingScheme,
+        MatmulElems, MatmulGlobalElems, MatmulKind, MatmulProblem, MatmulVectorSizes, SwizzleModes,
+        TilingBlueprint, TilingScheme,
     },
 };
 use cubecl::{
@@ -13,7 +12,11 @@ use cubecl::{
     client::ComputeClient,
     ir::{StorageType, VectorSize},
 };
-use cubek_std::{MatrixLayout, stage::SwizzleMode};
+use cubek_std::{
+    MatrixLayout,
+    cube_count::{CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, SmAllocation},
+    stage::SwizzleMode,
+};
 
 #[derive(Default, Clone, Copy, Debug)]
 pub enum TileSizeSelection {
@@ -219,10 +222,7 @@ fn general_unit_selector(
             num_plane,
         },
         num_sms,
-        GlobalOrderStrategy::SwizzleRow {
-            m: problem.m as u32,
-            w: 4,
-        },
+        GlobalOrderStrategy::SwizzleRow { w: 4 },
         options.stage,
         options.swizzle,
         problem,
@@ -499,7 +499,7 @@ fn selection(
     plane_dim: u32,
     stage: StageSelection,
     num_sms: Option<u32>,
-    global_order_config: GlobalOrderStrategy,
+    global_order_strategy: GlobalOrderStrategy,
     stage_scaling: StageScaling,
     swizzle: bool,
     problem: &MatmulProblem,
@@ -534,8 +534,12 @@ fn selection(
         None => CubeCountStrategy::Flattened,
     };
 
-    let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
-        .global_order_strategy(global_order_config)
+    let hypercube = HypercubeBlueprint::builder()
+        .global_order(
+            global_order_strategy,
+            problem.m as u32 / tiling_scheme.elements_per_global_partition_along_m(),
+            problem.n as u32 / tiling_scheme.elements_per_global_partition_along_n(),
+        )
         .cube_count_strategy(cube_count_strategy)
         .build();
 

@@ -4,11 +4,12 @@ use crate::{components::global::memory::GlobalLayoutConfig, launch::ConfigRuntim
 use crate::{
     components::stage::NumStages,
     definition::{
-        AccG, Blueprint, CubeMapping, CubeMappingLaunch, LhsG, MatmulElems, MatmulProblem,
-        MatmulSetupError, MatmulTypes, MatmulVectorSizes, RhsG,
+        AccG, Blueprint, LhsG, MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes,
+        MatmulVectorSizes, RhsG,
     },
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
+use cubek_std::cube_count::{CubeMapping, CubeMappingLaunch};
 use std::{fmt::Debug, hash::Hash};
 
 /// A family of [matmuls](BatchMatmul) working with any [precision](MatmulPrecision).

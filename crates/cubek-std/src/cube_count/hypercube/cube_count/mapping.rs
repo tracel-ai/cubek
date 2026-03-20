@@ -1,6 +1,6 @@
 use cubecl::prelude::*;
 
-use crate::definition::hypercube::{GlobalOrder, global_order::swizzle};
+use crate::cube_count::{GlobalOrder, hypercube::global_order::swizzle};
 
 #[derive(CubeType, CubeLaunch)]
 pub struct CubeMapping {

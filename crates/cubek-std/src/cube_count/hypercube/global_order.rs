@@ -1,8 +1,6 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
 
-use crate::definition::TilingScheme;
-
 #[derive(Default, Copy, Clone, Debug, Hash, PartialEq, Eq)]
 /// Describes the global traversal order as flattened cube position increases.
 ///
@@ -46,37 +44,27 @@ pub enum GlobalOrderStrategy {
     /// Set a global order.
     Fixed(GlobalOrder),
     /// Creates swizzle row global order if possible.
-    /// Registers problem's `m` until it can be converted
-    /// into a global order, i.e. when cube span known
-    ///
     /// Fallbacks to row global order if not possible.
-    SwizzleRow { m: u32, w: u32 },
+    SwizzleRow { w: u32 },
     /// Creates swizzle col global order if possible.
-    /// Registers problem's `n` until it can be converted
-    /// into a global order, i.e. when cube span known
-    ///
     /// Fallbacks to col global order if not possible.
-    SwizzleCol { n: u32, w: u32 },
+    SwizzleCol { w: u32 },
 }
 
 impl GlobalOrderStrategy {
-    pub fn into_order(self, tiling_scheme: &TilingScheme) -> GlobalOrder {
+    pub fn into_order(self, x_cubes: u32, y_cubes: u32) -> GlobalOrder {
         match self {
             GlobalOrderStrategy::Default => GlobalOrder::default(),
             GlobalOrderStrategy::Fixed(order) => order,
-            GlobalOrderStrategy::SwizzleRow { m, w } => {
-                let m_cubes = m.div_ceil(tiling_scheme.elements_per_global_partition_along_m());
-
-                if m_cubes % w != 0 {
+            GlobalOrderStrategy::SwizzleRow { w } => {
+                if x_cubes % w != 0 {
                     GlobalOrder::RowMajor
                 } else {
                     GlobalOrder::SwizzleRowMajor(w)
                 }
             }
-            GlobalOrderStrategy::SwizzleCol { n, w } => {
-                let n_cubes = n.div_ceil(tiling_scheme.elements_per_global_partition_along_n());
-
-                if n_cubes % w != 0 {
+            GlobalOrderStrategy::SwizzleCol { w } => {
+                if y_cubes % w != 0 {
                     GlobalOrder::ColMajor
                 } else {
                     GlobalOrder::SwizzleColMajor(w)

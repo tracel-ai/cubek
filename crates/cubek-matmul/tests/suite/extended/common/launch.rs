@@ -17,7 +17,7 @@ pub fn test() {
     let blueprint_builder = TilingBlueprint::builder(tiling_scheme, plane_dim, &problem);
     let blueprint = blueprint_builder
         .shared_swizzle(swizzle())
-        .hypercube_blueprint(hypercube_blueprint(&tiling_scheme))
+        .hypercube_blueprint(hypercube_blueprint(&tiling_scheme, &problem))
         .partition_buffering(partition_buffering())
         .load_specialization_config(specialization())
         .build();

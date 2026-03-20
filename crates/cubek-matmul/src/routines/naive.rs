@@ -1,13 +1,13 @@
 use std::fmt::Display;
 
+use cubek_std::cube_count::CubeCountPlan;
+
 use crate::{
     components::batch::{
         BatchMatmulFamily,
         naive::{NaiveBatchMatmulFamily, NaiveBlueprint},
     },
-    definition::{
-        CubeCountPlan, MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError,
-    },
+    definition::{MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError},
     routines::{BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine},
 };
 
@@ -107,7 +107,7 @@ fn simple_cube_count(
         batch_cubes *= output_shape[i] as u32;
     }
 
-    let cube_count_plan = CubeCountPlan::new_from_problem(m_cubes, n_cubes, batch_cubes);
+    let cube_count_plan = CubeCountPlan::new_from_problem((m_cubes, n_cubes, batch_cubes).into());
     let max_cube_count = u16::MAX as u32;
 
     if m_cubes > max_cube_count || n_cubes > max_cube_count || batch_cubes > max_cube_count {

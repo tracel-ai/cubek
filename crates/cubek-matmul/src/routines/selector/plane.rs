@@ -1,5 +1,8 @@
 use cubecl::{Runtime, client::ComputeClient, ir::StorageType};
 use cubecl::{features::MmaConfig, ir::VectorSize};
+use cubek_std::cube_count::{
+    CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, SmAllocation,
+};
 use cubek_std::stage::SwizzleMode;
 use cubek_std::{MatrixLayout, PartitionSize, StageSize, TileSize};
 
@@ -7,9 +10,8 @@ use crate::components::global::{InputLoadFlow, LoadFlows};
 use crate::components::stage::PartitionBuffering;
 use crate::components::tile::TileMatmulFamily;
 use crate::definition::{
-    CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulAvailabilityError,
-    MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes, MultiRowStrategy,
-    SmAllocation, SwizzleModes, TilingBlueprint, TilingScheme, adjust_dtypes,
+    MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes,
+    MultiRowStrategy, SwizzleModes, TilingBlueprint, TilingScheme, adjust_dtypes,
 };
 use crate::routines::selector::is_tiny;
 
@@ -160,11 +162,12 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
         None => CubeCountStrategy::FromProblem,
     };
 
-    let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
-        .global_order_strategy(GlobalOrderStrategy::SwizzleRow {
-            m: problem.m as u32,
-            w: 4,
-        })
+    let hypercube = HypercubeBlueprint::builder()
+        .global_order(
+            GlobalOrderStrategy::SwizzleRow { w: 4 },
+            problem.m as u32 / tiling_scheme.elements_per_global_partition_along_m(),
+            problem.n as u32 / tiling_scheme.elements_per_global_partition_along_n(),
+        )
         .cube_count_strategy(cube_count_strategy)
         .build();
 
@@ -322,11 +325,12 @@ fn selection_tiny<R: Runtime>(
         None => CubeCountStrategy::FromProblem,
     };
 
-    let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
-        .global_order_strategy(GlobalOrderStrategy::SwizzleRow {
-            m: problem.m as u32,
-            w: 2,
-        })
+    let hypercube = HypercubeBlueprint::builder()
+        .global_order(
+            GlobalOrderStrategy::SwizzleRow { w: 2 },
+            problem.m as u32 / tiling_scheme.elements_per_global_partition_along_m(),
+            problem.n as u32 / tiling_scheme.elements_per_global_partition_along_n(),
+        )
         .cube_count_strategy(cube_count_strategy)
         .build();
 

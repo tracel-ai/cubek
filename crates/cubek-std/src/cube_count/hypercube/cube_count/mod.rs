@@ -9,5 +9,5 @@ mod plan;
 mod strategy;
 
 pub use mapping::{CubeMapping, CubeMappingLaunch};
-pub use plan::CubeCountPlan;
+pub use plan::{CubeCountPlan, Count3d};
 pub use strategy::CubeCountStrategy;

@@ -1,6 +1,5 @@
-use crate::definition::{
-    GlobalOrder, TilingScheme,
-    hypercube::{builder::HypercubeBlueprintBuilder, cube_count::CubeCountStrategy},
+use crate::cube_count::{
+    CubeCountStrategy, GlobalOrder, hypercube::builder::HypercubeBlueprintBuilder,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -13,7 +12,7 @@ pub struct HypercubeBlueprint {
 
 impl HypercubeBlueprint {
     /// Create a builder for HypercubeBlueprint
-    pub fn builder<'a>(tiling_scheme: &'a TilingScheme) -> HypercubeBlueprintBuilder<'a> {
-        HypercubeBlueprintBuilder::new(tiling_scheme)
+    pub fn builder() -> HypercubeBlueprintBuilder {
+        HypercubeBlueprintBuilder::new()
     }
 }

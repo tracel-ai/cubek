@@ -7,7 +7,6 @@ use crate::components::global::GlobalMatmulFamily;
 use crate::components::{
     batch::partitioned_matmul::config::PartitionedBatchConfig, stage::NumStages,
 };
-use crate::definition::CubeMappingLaunch;
 use crate::definition::MatmulProblem;
 use crate::definition::MatmulVectorSizes;
 use crate::definition::TilingBlueprint;
@@ -16,6 +15,7 @@ use crate::launch::*;
 use crate::{components::CubeDimResource, launch::RuntimeConfig};
 use crate::{components::batch::BatchMatmulFamily, launch::ConfigRuntimeArg};
 use cubecl::{ir::DeviceProperties, prelude::*};
+use cubek_std::cube_count::CubeMappingLaunch;
 
 /// Simple partitioned batch matmul family for any precision
 pub struct PartitionedBatchMatmulFamily<

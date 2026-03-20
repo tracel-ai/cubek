@@ -1,14 +1,8 @@
 use cubecl::{CubeCount, Runtime};
 
-use crate::definition::{
-    GlobalOrder, MatmulProblem, SmAllocation, TilingScheme,
-    hypercube::{
-        blueprint::HypercubeBlueprint,
-        cube_count::{
-            CubeCountStrategy,
-            mapping::{CubeMappingLaunch, CubeMappingStrategyArgs},
-        },
-    },
+use crate::cube_count::{
+    CubeCountStrategy, CubeMappingLaunch, GlobalOrder, HypercubeBlueprint, SmAllocation,
+    hypercube::cube_count::mapping::CubeMappingStrategyArgs,
 };
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -18,34 +12,48 @@ pub struct CubeCountPlan {
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+pub struct Count3d {
+    pub x: u32,
+    pub y: u32,
+    pub z: u32,
+}
+
+impl From<(u32, u32, u32)> for Count3d {
+    fn from(value: (u32, u32, u32)) -> Self {
+        Count3d {
+            x: value.0,
+            y: value.1,
+            z: value.2,
+        }
+    }
+}
+
+impl Count3d {
+    // Use u64 to avoid overflow when multiplying large cube counts.
+    pub(crate) fn total(&self) -> u64 {
+        self.x as u64 * self.y as u64 * self.z as u64
+    }
+}
+
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum CubeCountPlanKind {
     FromProblem {
-        m_cubes: u32,
-        n_cubes: u32,
-        batch_cubes: u32,
+        problem_count: Count3d,
     },
     Sm {
         cubes_first: bool,
         num_sms_used: u32,
         cubes_per_sm: u32,
-        m_cubes: u32,
-        n_cubes: u32,
-        batch_cubes: u32,
+        problem_count: Count3d,
         num_sms: u32,
         sm_usage: SmAllocation,
     },
     Flattened {
-        m_cubes: u32,
-        n_cubes: u32,
-        batch_cubes: u32,
+        problem_count: Count3d,
     },
     Spread {
-        m_cubes: u32,
-        n_cubes: u32,
-        batch_cubes: u32,
-        x: u32,
-        y: u32,
-        z: u32,
+        problem_count: Count3d,
+        spread_count: Count3d,
     },
 }
 
@@ -53,28 +61,18 @@ impl CubeCountPlan {
     // Will check if the wanted cube count plan is possible, otherwise will fallback to spread
     pub fn from_blueprint(
         blueprint: &HypercubeBlueprint,
-        tiling_scheme: &TilingScheme,
-        problem: &MatmulProblem,
+        target_count: Count3d,
         max_cube_count: &(u32, u32, u32),
     ) -> CubeCountPlan {
         let (max_x, max_y, max_z) = *max_cube_count;
 
-        let m_cubes =
-            (problem.m as u32).div_ceil(tiling_scheme.elements_per_global_partition_along_m());
-        let n_cubes =
-            (problem.n as u32).div_ceil(tiling_scheme.elements_per_global_partition_along_n());
-        let batch_cubes =
-            (problem.num_batches() as u32).div_ceil(tiling_scheme.global_partition_size.batches);
-
         let plan_kind = match blueprint.cube_count_strategy {
             CubeCountStrategy::FromProblem => {
-                if m_cubes > max_x || n_cubes > max_y || batch_cubes > max_z {
+                if target_count.x > max_x || target_count.y > max_y || target_count.z > max_z {
                     None
                 } else {
                     Some(CubeCountPlanKind::FromProblem {
-                        m_cubes,
-                        n_cubes,
-                        batch_cubes,
+                        problem_count: target_count,
                     })
                 }
             }
@@ -83,10 +81,8 @@ impl CubeCountPlan {
                 num_sms,
                 sm_usage,
             } => {
-                let (num_sms_used, cubes_per_sm) = sm_usage.allocate(
-                    num_sms,
-                    m_cubes as usize * n_cubes as usize * batch_cubes as usize,
-                );
+                let (num_sms_used, cubes_per_sm) =
+                    sm_usage.allocate(num_sms, target_count.total() as usize);
 
                 if (cubes_per_sm >= if cubes_first { max_x } else { max_y })
                     || (num_sms_used >= if cubes_first { max_y } else { max_x })
@@ -97,22 +93,18 @@ impl CubeCountPlan {
                         cubes_first,
                         num_sms_used,
                         cubes_per_sm,
-                        m_cubes,
-                        n_cubes,
-                        batch_cubes,
+                        problem_count: target_count,
                         num_sms,
                         sm_usage,
                     })
                 }
             }
             CubeCountStrategy::Flattened => {
-                if m_cubes * n_cubes * batch_cubes >= max_x {
+                if target_count.total() >= max_x as u64 {
                     None
                 } else {
                     Some(CubeCountPlanKind::Flattened {
-                        m_cubes,
-                        n_cubes,
-                        batch_cubes,
+                        problem_count: target_count,
                     })
                 }
             }
@@ -121,19 +113,16 @@ impl CubeCountPlan {
 
         CubeCountPlan {
             global_order: blueprint.global_order,
-            kind: plan_kind.unwrap_or_else(|| {
-                spread_cube_count_plan(m_cubes, n_cubes, batch_cubes, max_x, max_y, max_z)
-            }),
+            kind: plan_kind
+                .unwrap_or_else(|| spread_cube_count_plan(target_count, max_x, max_y, max_z)),
         }
     }
 
-    pub fn new_from_problem(m_cubes: u32, n_cubes: u32, batch_cubes: u32) -> Self {
+    pub fn new_from_problem(target_count: Count3d) -> Self {
         Self {
             global_order: Default::default(),
             kind: CubeCountPlanKind::FromProblem {
-                m_cubes,
-                n_cubes,
-                batch_cubes,
+                problem_count: target_count,
             },
         }
     }
@@ -163,30 +152,22 @@ impl CubeCountPlanKind {
             CubeCountPlanKind::Sm {
                 num_sms_used,
                 cubes_per_sm,
-                m_cubes,
-                n_cubes,
-                batch_cubes,
+                problem_count,
                 ..
-            } => num_sms_used * cubes_per_sm != m_cubes * n_cubes * batch_cubes,
+            } => (num_sms_used * cubes_per_sm) as u64 != problem_count.total(),
 
             CubeCountPlanKind::Spread {
-                m_cubes,
-                n_cubes,
-                batch_cubes,
-                x,
-                y,
-                z,
-            } => m_cubes * n_cubes * batch_cubes != x * y * z,
+                problem_count,
+                spread_count,
+            } => problem_count.total() != spread_count.total(),
         }
     }
 
     fn resolve(&self) -> CubeCount {
         match self {
-            CubeCountPlanKind::FromProblem {
-                m_cubes,
-                n_cubes,
-                batch_cubes,
-            } => CubeCount::Static(*m_cubes, *n_cubes, *batch_cubes),
+            CubeCountPlanKind::FromProblem { problem_count } => {
+                CubeCount::Static(problem_count.x, problem_count.y, problem_count.z)
+            }
 
             CubeCountPlanKind::Sm {
                 cubes_first,
@@ -201,13 +182,13 @@ impl CubeCountPlanKind {
                 }
             }
 
-            CubeCountPlanKind::Flattened {
-                m_cubes,
-                n_cubes,
-                batch_cubes,
-            } => CubeCount::Static(m_cubes * n_cubes * batch_cubes, 1, 1),
+            CubeCountPlanKind::Flattened { problem_count } => {
+                CubeCount::Static(problem_count.total() as u32, 1, 1)
+            }
 
-            CubeCountPlanKind::Spread { x, y, z, .. } => CubeCount::Static(*x, *y, *z),
+            CubeCountPlanKind::Spread { spread_count, .. } => {
+                CubeCount::Static(spread_count.x, spread_count.y, spread_count.z)
+            }
         }
     }
 
@@ -217,42 +198,35 @@ impl CubeCountPlanKind {
 
             CubeCountPlanKind::Sm {
                 cubes_first,
-                m_cubes,
-                n_cubes,
-                batch_cubes,
+                problem_count,
                 ..
             } => {
                 if *cubes_first {
                     CubeMappingStrategyArgs::CubeFirst {
-                        m_cubes: *m_cubes,
-                        n_cubes: *n_cubes,
-                        batch_cubes: *batch_cubes,
+                        m_cubes: problem_count.x,
+                        n_cubes: problem_count.y,
+                        batch_cubes: problem_count.z,
                     }
                 } else {
                     CubeMappingStrategyArgs::SmFirst {
-                        m_cubes: *m_cubes,
-                        n_cubes: *n_cubes,
-                        batch_cubes: *batch_cubes,
+                        m_cubes: problem_count.x,
+                        n_cubes: problem_count.y,
+                        batch_cubes: problem_count.z,
                     }
                 }
             }
 
-            CubeCountPlanKind::Flattened {
-                m_cubes, n_cubes, ..
-            } => CubeMappingStrategyArgs::Flattened {
-                m_cubes: *m_cubes,
-                n_cubes: *n_cubes,
-            },
+            CubeCountPlanKind::Flattened { problem_count, .. } => {
+                CubeMappingStrategyArgs::Flattened {
+                    m_cubes: problem_count.x,
+                    n_cubes: problem_count.y,
+                }
+            }
 
-            CubeCountPlanKind::Spread {
-                m_cubes,
-                n_cubes,
-                batch_cubes,
-                ..
-            } => CubeMappingStrategyArgs::Spread {
-                m_cubes: *m_cubes,
-                n_cubes: *n_cubes,
-                batch_cubes: *batch_cubes,
+            CubeCountPlanKind::Spread { problem_count, .. } => CubeMappingStrategyArgs::Spread {
+                m_cubes: problem_count.x,
+                n_cubes: problem_count.y,
+                batch_cubes: problem_count.z,
             },
         }
     }
@@ -261,21 +235,16 @@ impl CubeCountPlanKind {
 /// Heuristic algorithm to factor the total number of cubes into (x, y, z) dimensions
 /// such that no dimension surpasses its maximum.
 fn spread_cube_count_plan(
-    m_cubes: u32,
-    n_cubes: u32,
-    batch_cubes: u32,
+    problem_count: Count3d,
     max_x: u32,
     max_y: u32,
     max_z: u32,
 ) -> CubeCountPlanKind {
-    // Use u64 to avoid overflow when multiplying large cube counts.
-    let total_cubes = m_cubes as u64 * n_cubes as u64 * batch_cubes as u64;
-
     let mut best = None;
 
     let mut z = max_z;
     while z >= 1 {
-        let xy_cubes = total_cubes.div_ceil(z as u64);
+        let xy_cubes = problem_count.total().div_ceil(z as u64);
 
         let mut y = max_y;
         while y >= 1 {
@@ -304,12 +273,8 @@ fn spread_cube_count_plan(
 
     if let Some((x, y, z, _, _)) = best {
         CubeCountPlanKind::Spread {
-            m_cubes,
-            n_cubes,
-            batch_cubes,
-            x,
-            y,
-            z,
+            problem_count,
+            spread_count: Count3d { x, y, z },
         }
     } else {
         panic!("No valid cube spread plan")

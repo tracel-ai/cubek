@@ -1,4 +1,4 @@
-use crate::definition::SmAllocation;
+use crate::cube_count::SmAllocation;
 
 #[derive(Default, Copy, Clone, Debug, Hash, PartialEq, Eq)]
 /// Front-facing configuration when crafting a TilingBlueprint

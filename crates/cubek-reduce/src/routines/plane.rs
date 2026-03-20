@@ -5,9 +5,10 @@ use super::{
 use crate::{
     BoundChecks, IdleMode, ReduceError, VectorizationMode,
     launch::{calculate_plane_count_per_cube, support_plane},
-    routines::{BlueprintStrategy, PlaneReduceBlueprint, Routine, cube_count_safe},
+    routines::{BlueprintStrategy, PlaneReduceBlueprint, Routine},
 };
 use cubecl::{CubeCount, CubeDim, Runtime, features::Plane, prelude::ComputeClient};
+use cubek_std::cube_count::cube_count_spread_with_total;
 
 #[derive(Debug, Clone)]
 pub struct PlaneRoutine;
@@ -45,7 +46,8 @@ impl Routine for PlaneRoutine {
                 let working_planes = working_planes(&settings, &problem);
 
                 let working_cubes = working_planes.div_ceil(cube_dim.y as usize);
-                let (cube_count, launched_cubes) = cube_count_safe(client, working_cubes);
+                let (cube_count, launched_cubes) =
+                    cube_count_spread_with_total(client, working_cubes);
                 let plane_idle = launched_cubes * cube_dim.y as usize != working_planes;
 
                 if plane_idle && !blueprint.plane_idle.is_enabled() {
@@ -97,7 +99,7 @@ fn generate_blueprint<R: Runtime>(
     let working_cubes = working_planes.div_ceil(plane_count as usize);
 
     let cube_dim = CubeDim::new_2d(plane_size, plane_count);
-    let (cube_count, cube_launched) = cube_count_safe(client, working_cubes);
+    let (cube_count, cube_launched) = cube_count_spread_with_total(client, working_cubes);
 
     let plane_idle = cube_launched * cube_dim.num_elems() as usize != working_units;
     let work_size = match settings.vectorization_mode {

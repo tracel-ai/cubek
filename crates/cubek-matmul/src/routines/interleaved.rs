@@ -1,13 +1,15 @@
 use cubecl::features::MmaConfig;
 use cubecl::{Runtime, client::ComputeClient};
+use cubek_std::cube_count::{
+    CubeCountStrategy, CubeMappingLaunch, GlobalOrderStrategy, HypercubeBlueprint, SmAllocation,
+};
 use cubek_std::tile::Strided;
 use std::fmt::Display;
 use std::marker::PhantomData;
 
 use crate::definition::{
-    CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, MatmulElems, MatmulProblem,
-    MatmulSetupError, MatmulVectorSizes, MultiRowStrategy, SmAllocation, TilingBlueprint,
-    TilingScheme, adjust_dtypes,
+    MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes, MultiRowStrategy,
+    TilingBlueprint, TilingScheme, adjust_dtypes,
 };
 use crate::routines::{BlueprintStrategy, DeviceSettings, LaunchInfo};
 use crate::{components::batch::BatchMatmulFamily, launch::RuntimeConfig};
@@ -157,7 +159,7 @@ where
         input: crate::launch::InputRuntimeArg<MA, R>,
         output: crate::launch::OutputRuntimeArg<MA, R>,
         config: crate::launch::ConfigRuntimeArg<MA, R>,
-        cube_count_input: crate::definition::CubeMappingLaunch<R>,
+        cube_count_input: CubeMappingLaunch<R>,
         blueprint: Self::Blueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
@@ -258,11 +260,12 @@ fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
             .build()
             .unwrap();
 
-        let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
-            .global_order_strategy(GlobalOrderStrategy::SwizzleRow {
-                m: problem.m as u32,
-                w: 4,
-            })
+        let hypercube = HypercubeBlueprint::builder()
+             .global_order(
+                GlobalOrderStrategy::SwizzleRow { w: 4 },
+                problem.m as u32 / tiling_scheme.elements_per_global_partition_along_m(),
+                problem.n as u32 / tiling_scheme.elements_per_global_partition_along_n(),
+            )
             .cube_count_strategy(cube_count_strategy)
             .build();
 
@@ -280,11 +283,12 @@ fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
             .with_stage_size((4, 1, 1).into())
             .build()
             .unwrap();
-        let hypercube = HypercubeBlueprint::builder(&tiling_scheme)
-            .global_order_strategy(GlobalOrderStrategy::SwizzleRow {
-                m: problem.m as u32,
-                w: 4,
-            })
+        let hypercube = HypercubeBlueprint::builder()
+            .global_order(
+                GlobalOrderStrategy::SwizzleRow { w: 4 },
+                problem.m as u32 / tiling_scheme.elements_per_global_partition_along_m(),
+                problem.n as u32 / tiling_scheme.elements_per_global_partition_along_n(),
+            )
             .cube_count_strategy(cube_count_strategy)
             .build();
 

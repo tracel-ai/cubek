@@ -23,6 +23,7 @@ extended = []
 
 [dependencies]
 cubecl = { workspace = true }
+cubek-std = { path = "../cubek-std", default-features = false }
 
 num-traits = "0.2.19"
 pretty_assertions = { workspace = true, optional = true }

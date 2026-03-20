@@ -1,5 +1,9 @@
 use cubecl::{CubeDim, Runtime, client::ComputeClient, flex32, prelude::CubePrimitive, tf32};
-use cubek_std::{MatrixLayout, stage::SwizzleMode};
+use cubek_std::{
+    MatrixLayout,
+    cube_count::{Count3d, CubeCountPlan, HypercubeBlueprint},
+    stage::SwizzleMode,
+};
 
 use crate::{
     components::{
@@ -7,10 +11,7 @@ use crate::{
         global::{LoadFlows, memory::GlobalLayoutConfig, read::ReaderMode},
         stage::PartitionBuffering,
     },
-    definition::{
-        CubeCountPlan, HypercubeBlueprint, MatmulElems, MatmulProblem, MatmulSetupError,
-        TilingScheme,
-    },
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError, TilingScheme},
     routines::DeviceSettings,
 };
 use std::{fmt::Debug, hash::Hash};
@@ -133,7 +134,7 @@ impl TilingBlueprint {
         plane_dim: u32,
         problem: &MatmulProblem,
     ) -> TilingBlueprintBuilder {
-        let hypercube_blueprint = HypercubeBlueprint::builder(&tiling_scheme).build();
+        let hypercube_blueprint = HypercubeBlueprint::builder().build();
 
         let check_m_bounds =
             !(problem.m as u32).is_multiple_of(tiling_scheme.elements_per_stage_along_m());
@@ -167,10 +168,18 @@ impl TilingBlueprint {
     ) -> Result<(CubeDim, CubeCountPlan), MatmulSetupError> {
         let plane_dim = device_settings.plane_dim;
         let cube_dim = cubedim_resource.to_cube_dim(plane_dim)?;
+
+        let target_cube_count = Count3d {
+            x: (problem.m as u32)
+                .div_ceil(self.tiling_scheme.elements_per_global_partition_along_m()),
+            y: (problem.n as u32)
+                .div_ceil(self.tiling_scheme.elements_per_global_partition_along_n()),
+            z: (problem.num_batches() as u32)
+                .div_ceil(self.tiling_scheme.global_partition_size.batches),
+        };
         let cube_count_plan = CubeCountPlan::from_blueprint(
             &self.hypercube_blueprint,
-            &self.tiling_scheme,
-            problem,
+            target_cube_count,
             &device_settings.max_cube_count,
         );
 
