@@ -19,6 +19,11 @@ pub trait Blueprint: Debug + Clone + Eq + PartialEq + Hash {
     fn lhs_global_layout_config(&self) -> GlobalLayoutConfig;
     fn rhs_global_layout_config(&self) -> GlobalLayoutConfig;
     fn out_global_layout_config(&self) -> GlobalLayoutConfig;
+
+    // TODO Would be better to ot have these methods but
+    // otherwise it's hard to launch either as TMA or not
+    fn tiling_scheme(&self) -> TilingScheme;
+    fn swizzle_modes(&self) -> SwizzleModes;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -62,6 +67,14 @@ impl Blueprint for TilingBlueprint {
             check_row_bounds: self.check_m_bounds,
             check_col_bounds: self.check_n_bounds,
         }
+    }
+
+    fn tiling_scheme(&self) -> TilingScheme {
+        self.tiling_scheme
+    }
+
+    fn swizzle_modes(&self) -> SwizzleModes {
+        self.swizzle_modes
     }
 }
 

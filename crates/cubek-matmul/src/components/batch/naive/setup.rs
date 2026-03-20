@@ -19,7 +19,7 @@ use crate::{
     },
     definition::{
         Blueprint, CubeMappingLaunch, MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes,
-        MatmulVectorSizes,
+        MatmulVectorSizes, SwizzleModes, TilingScheme,
     },
     launch::*,
 };
@@ -55,6 +55,14 @@ impl Blueprint for NaiveBlueprint {
             check_row_bounds: false,
             check_col_bounds: false,
         }
+    }
+
+    fn tiling_scheme(&self) -> TilingScheme {
+        panic!("Naive Blueprint doesn't have a TilingScheme")
+    }
+
+    fn swizzle_modes(&self) -> SwizzleModes {
+        panic!("Naive Blueprint doesn't have Swizzle Modes")
     }
 }
 

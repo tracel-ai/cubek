@@ -382,12 +382,8 @@ pub struct TensorMapInputs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimi
     pub acc_batch: ComptimeOption<VirtualLayout<Coords1d, Coords1d>>,
 }
 
-impl<
-    Lhs: CubePrimitive,
-    Rhs: CubePrimitive,
-    EO: CubePrimitive,
-    A: Routine<(), Blueprint = TilingBlueprint>,
-> ConcreteInputsFactory<A> for TensorMapInputs<Lhs, Rhs, EO>
+impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<()>>
+    ConcreteInputsFactory<A> for TensorMapInputs<Lhs, Rhs, EO>
 {
     fn create<R: Runtime>(
         lhs_handle: MatmulInputBinding<R>,
@@ -400,7 +396,7 @@ impl<
         let lhs = lhs_handle.into_data();
         let rhs = rhs_handle.into_data();
 
-        let tiling_scheme = blueprint.tiling_scheme;
+        let tiling_scheme = blueprint.tiling_scheme();
         let stage_m = tiling_scheme.elements_per_stage_along_m();
         let stage_n = tiling_scheme.elements_per_stage_along_n();
         let stage_k = tiling_scheme.elements_per_stage_along_k();
@@ -408,7 +404,7 @@ impl<
         // Loaders use dynamic layout based on swizzle setting. For no swizzle, contiguous tiles are
         // loaded and TMA loads single tile wide columns.
         // For swizzled, bank conflicts aren't an issue so the tile size is the full stage.
-        let stage_size_lhs = match blueprint.swizzle_modes.lhs {
+        let stage_size_lhs = match blueprint.swizzle_modes().lhs {
             SwizzleMode::None => match problem.lhs_layout {
                 MatrixLayout::RowMajor => {
                     shape![1, stage_m as usize, tiling_scheme.tile_size.k as usize]
@@ -426,7 +422,7 @@ impl<
                 }
             },
         };
-        let stage_size_rhs = match blueprint.swizzle_modes.rhs {
+        let stage_size_rhs = match blueprint.swizzle_modes().rhs {
             SwizzleMode::None => match problem.rhs_layout {
                 MatrixLayout::RowMajor => {
                     shape![1, stage_k as usize, tiling_scheme.tile_size.n as usize]
@@ -518,7 +514,7 @@ impl<
             metadata: Metadata::new(lhs_shape.clone(), lhs_strides),
             elem_stride: strides![1, 1, 1],
             interleave: TensorMapInterleave::None,
-            swizzle: blueprint.swizzle_modes.lhs.into(),
+            swizzle: blueprint.swizzle_modes().lhs.into(),
             prefetch: TensorMapPrefetch::None,
             oob_fill: OobFill::Zero,
             storage_ty: lhs_elem,
@@ -531,7 +527,7 @@ impl<
             metadata: Metadata::new(rhs_shape.clone(), rhs_strides),
             elem_stride: strides![1, 1, 1],
             interleave: TensorMapInterleave::None,
-            swizzle: blueprint.swizzle_modes.rhs.into(),
+            swizzle: blueprint.swizzle_modes().rhs.into(),
             prefetch: TensorMapPrefetch::None,
             oob_fill: OobFill::Zero,
             storage_ty: rhs_elem,

@@ -200,32 +200,30 @@ pub fn launch_matmul_algorithm<A: Routine<()>>(
             }
         }
         InputRepresentation::Tma => {
-            // Bring back but TensorMapInputs needs A::Blueprint to be TilingBlueprint
-            todo!()
-            // let inputs = <TensorMapInputs<_, _, _> as ConcreteInputsFactory<A>>::create(
-            //     lhs,
-            //     rhs,
-            //     &blueprint,
-            //     &problem,
-            //     &vector_sizes,
-            //     dtypes,
-            // );
+            let inputs = <TensorMapInputs<_, _, _> as ConcreteInputsFactory<A>>::create(
+                lhs,
+                rhs,
+                &blueprint,
+                &problem,
+                &vector_sizes,
+                dtypes,
+            );
 
-            // unsafe {
-            //     A::BatchMatmul::launch_unchecked::<TensorMapArgs, TestRuntime>(
-            //         &client,
-            //         cube_dim,
-            //         cube_count_plan.resolve(),
-            //         AddressType::U32,
-            //         inputs,
-            //         output,
-            //         (),
-            //         cube_count_plan.as_args(),
-            //         blueprint,
-            //         dtypes,
-            //         &vector_sizes,
-            //     )
-            // }
+            unsafe {
+                A::BatchMatmul::launch_unchecked::<TensorMapArgs, TestRuntime>(
+                    &client,
+                    cube_dim,
+                    cube_count_plan.resolve(),
+                    AddressType::U32,
+                    inputs,
+                    output,
+                    (),
+                    cube_count_plan.as_args(),
+                    blueprint,
+                    dtypes,
+                    &vector_sizes,
+                )
+            }
         }
     }
     .into();

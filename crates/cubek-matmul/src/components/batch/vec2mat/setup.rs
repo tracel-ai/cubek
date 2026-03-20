@@ -18,8 +18,7 @@ use crate::{
         stage::NumStages,
     },
     definition::{
-        Blueprint, CubeMappingLaunch, MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes,
-        MatmulVectorSizes,
+        Blueprint, CubeMappingLaunch, MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes, MatmulVectorSizes, SwizzleModes, TilingScheme
     },
     launch::*,
 };
@@ -54,6 +53,14 @@ impl Blueprint for Vec2MatBlueprint {
             check_row_bounds: false,
             check_col_bounds: false,
         }
+    }
+
+    fn tiling_scheme(&self) -> TilingScheme {
+        panic!("Vec2Mat Blueprint doesn't have a TilingScheme")
+    }
+
+    fn swizzle_modes(&self) -> SwizzleModes {
+        panic!("Vec2Mat Blueprint doesn't have Swizzle Modes")
     }
 }
 
