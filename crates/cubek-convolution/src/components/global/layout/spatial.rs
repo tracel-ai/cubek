@@ -250,21 +250,13 @@ pub struct NhwcLayoutCompilationArg {
 impl ViewLayoutLaunchArg for NhwcLayout {
     type RuntimeArg<R: Runtime> = NhwcLayoutLaunch;
     type CompilationArg = NhwcLayoutCompilationArg;
-    fn compilation_arg<R: Runtime, B: BufferArg>(
-        runtime_arg: &Self::RuntimeArg<R>,
-        buffer: &B,
-    ) -> Self::CompilationArg {
-        NhwcLayoutCompilationArg {
-            spatial_rank: buffer.shape().len() - 2,
-            checks: runtime_arg.checks,
-        }
-    }
+
     fn register<R: Runtime, B: BufferArg>(
-        _: Self::RuntimeArg<R>,
+        arg: Self::RuntimeArg<R>,
         buffer: &B,
         _: Type,
         launcher: &mut KernelLauncher<R>,
-    ) {
+    ) -> Self::CompilationArg {
         let shape = buffer.shape();
         let strides = buffer.strides();
 
@@ -285,7 +277,13 @@ impl ViewLayoutLaunchArg for NhwcLayout {
         <u32 as LaunchArg>::register(shape_batch, launcher);
         <Sequence<u32> as LaunchArg>::register(shapes_spatial, launcher);
         <u32 as LaunchArg>::register(shape_channel, launcher);
+
+        NhwcLayoutCompilationArg {
+            spatial_rank: buffer.shape().len() - 2,
+            checks: arg.checks,
+        }
     }
+
     fn expand(
         arg: &Self::CompilationArg,
         ty: Type,
