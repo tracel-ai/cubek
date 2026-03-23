@@ -139,7 +139,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Vec2Mat<MP> {
             let local_lhs_vec = lhs.read((0, k_base + unit_id));
 
             #[unroll]
-            for plane_iter in 0..plane_dim as u32 {
+            for plane_iter in 0..plane_dim {
                 let lhs_vec = if comptime!(plane_dim > 1) {
                     plane_broadcast(local_lhs_vec, plane_iter)
                 } else {

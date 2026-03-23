@@ -47,14 +47,14 @@ pub fn launch_ref<R: Runtime>(
     let divisible =
         *lhs.data().shape.last().unwrap() / client.properties().hardware.plane_size_max as usize;
     let mut lhs_vector_size = lhs_supported_vector_sizes
-        .filter(|&vector_size| divisible % vector_size == 0)
+        .filter(|&vector_size| divisible.is_multiple_of(vector_size))
         .max()
         .ok_or(VectorizationError::NoValidVectorization)?;
     let rhs_supported_vector_sizes = client.io_optimized_vector_sizes(dtypes.rhs_global.size());
     let divisible =
         *rhs.data().shape.last().unwrap() / client.properties().hardware.plane_size_max as usize;
     let mut rhs_vector_size = rhs_supported_vector_sizes
-        .filter(|&vector_size| divisible % vector_size == 0)
+        .filter(|&vector_size| divisible.is_multiple_of(vector_size))
         .max()
         .ok_or(VectorizationError::NoValidVectorization)?;
 
@@ -90,7 +90,7 @@ pub fn launch_ref<R: Runtime>(
         shape![1],
         shape![1],
         MatrixLayout::RowMajor,
-        MatrixLayout::from_shape_and_strides(&rhs_shape, &rhs.data().strides, rhs.scheme())?,
+        MatrixLayout::from_shape_and_strides(rhs_shape, &rhs.data().strides, rhs.scheme())?,
         MatrixLayout::RowMajor,
         lhs.scheme(),
         rhs.scheme(),
