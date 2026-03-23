@@ -44,10 +44,11 @@ impl Vec2MatTestCase {
 }
 
 #[test]
-pub fn test_very_small_row_major() {
+pub fn test_one_tile_row_major() {
+    let tile_size = 32;
     let case = Vec2MatTestCase {
-        n: 32 * 4,
-        k: 32 * 4,
+        n: tile_size,
+        k: tile_size,
         rhs_layout: MatrixLayout::RowMajor,
         elems: elems(),
     };

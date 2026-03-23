@@ -4,6 +4,7 @@ use cubecl::server::ServerError;
 use cubecl::std::tensor::TensorHandle;
 use cubek_matmul::definition::AvailableVectorSizes;
 use cubek_matmul::definition::MatmulIdent;
+use cubek_matmul::definition::MatmulVectorSizes;
 use cubek_matmul::definition::cube_mapping_launch;
 use cubek_matmul::launch::ConcreteOutputFactory;
 use cubek_matmul::launch::ConcreteOutputFactory as _;
@@ -50,6 +51,7 @@ pub fn test_matmul_algorithm<A: Routine<()>>(
         problem.lhs_shape.clone(),
         problem.global_dtypes.lhs,
         layout_to_stride_spec(problem.lhs_layout),
+        // DataKind::Arange { scale: Some(0.001) },
         DataKind::Random {
             seed: 1234,
             distribution: Distribution::Uniform(-1., 1.),
@@ -62,6 +64,7 @@ pub fn test_matmul_algorithm<A: Routine<()>>(
         problem.rhs_shape.clone(),
         problem.global_dtypes.rhs,
         layout_to_stride_spec(problem.rhs_layout),
+        // DataKind::Arange { scale: Some(0.001) },
         DataKind::Random {
             seed: 5678,
             distribution: Distribution::Uniform(-1., 1.),
@@ -125,18 +128,23 @@ pub fn launch_matmul_algorithm<A: Routine<()>>(
         dtypes.rhs_global.size(),
         dtypes.acc_global.size(),
     );
-    let vector_sizes = match input_representation {
-        InputRepresentation::Normal => vector_sizes
-            .filter_lhs_with_tensor(&lhs.data().strides, &lhs.data().shape, problem.lhs_layout)
-            .filter_rhs_with_tensor(&rhs.data().strides, &rhs.data().shape, problem.rhs_layout)
-            .filter_out_with_tensor(&out.strides, &out.shape)
-            .pick_max()
-            .unwrap(),
-        InputRepresentation::Tma => vector_sizes
-            .filter_lhs(|ls| *ls == 1)
-            .filter_rhs(|ls| *ls == 1)
-            .pick_max()
-            .unwrap(),
+    // let vector_sizes = match input_representation {
+    //     InputRepresentation::Normal => vector_sizes
+    //         .filter_lhs_with_tensor(&lhs.data().strides, &lhs.data().shape, problem.lhs_layout)
+    //         .filter_rhs_with_tensor(&rhs.data().strides, &rhs.data().shape, problem.rhs_layout)
+    //         .filter_out_with_tensor(&out.strides, &out.shape)
+    //         .pick_max()
+    //         .unwrap(),
+    //     InputRepresentation::Tma => vector_sizes
+    //         .filter_lhs(|ls| *ls == 1)
+    //         .filter_rhs(|ls| *ls == 1)
+    //         .pick_max()
+    //         .unwrap(),
+    // };
+    let vector_sizes = MatmulVectorSizes {
+        lhs: 1,
+        rhs: 1,
+        out: 1,
     };
 
     let device_settings = A::device_settings(client, vector_sizes);

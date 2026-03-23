@@ -22,7 +22,9 @@ pub struct TestInput {
 }
 
 pub enum DataKind {
-    Arange,
+    Arange {
+        scale: Option<f32>,
+    },
     Eye,
     Zeros,
     Random {
@@ -84,7 +86,7 @@ impl TestInput {
         );
 
         let mut handle = match self.data_kind {
-            DataKind::Arange => build_arange(self.base_spec),
+            DataKind::Arange { scale } => build_arange(self.base_spec, scale),
             DataKind::Eye => build_eye(self.base_spec),
             DataKind::Random { seed, distribution } => {
                 build_random(self.base_spec, seed, distribution)

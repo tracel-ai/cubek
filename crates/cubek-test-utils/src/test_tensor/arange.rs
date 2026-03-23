@@ -8,7 +8,11 @@ use cubecl::{
 use crate::test_tensor::base::BaseInputSpec;
 
 #[cube(launch)]
-fn arange_launch<T: Numeric>(tensor: &mut Tensor<T>, #[define(T)] _types: StorageType) {
+fn arange_launch<T: Numeric>(
+    tensor: &mut Tensor<T>,
+    scale: InputScalar,
+    #[define(T)] _types: StorageType,
+) {
     let linear = ABSOLUTE_POS;
 
     if linear >= tensor.len() {
@@ -25,7 +29,7 @@ fn arange_launch<T: Numeric>(tensor: &mut Tensor<T>, #[define(T)] _types: Storag
         offset += idx * tensor.stride(tensor.rank() - 1 - d);
     }
 
-    tensor.write_checked(offset, T::cast_from(linear));
+    tensor.write_checked(offset, T::cast_from(linear) * scale.get::<T>());
 }
 
 fn new_arange(
@@ -33,6 +37,7 @@ fn new_arange(
     shape: Shape,
     strides: Strides,
     dtype: StorageType,
+    scale: f32,
 ) -> TensorHandle<TestRuntime> {
     let num_elems = shape.iter().product::<usize>();
 
@@ -55,12 +60,19 @@ fn new_arange(
         CubeCount::new_1d(cube_count),
         cube_dim,
         out.clone().into_arg(),
+        InputScalar::new(scale, dtype),
         dtype,
     );
 
     out
 }
 
-pub(crate) fn build_arange(spec: BaseInputSpec) -> TensorHandle<TestRuntime> {
-    new_arange(&spec.client, spec.shape.clone(), spec.strides(), spec.dtype)
+pub(crate) fn build_arange(spec: BaseInputSpec, scale: Option<f32>) -> TensorHandle<TestRuntime> {
+    new_arange(
+        &spec.client,
+        spec.shape.clone(),
+        spec.strides(),
+        spec.dtype,
+        scale.unwrap_or(1.),
+    )
 }

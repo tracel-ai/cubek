@@ -101,12 +101,22 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Vec2Mat<MP> {
     ) {
         let num_planes = config.num_planes;
         let plane_dim = config.plane_dim;
-        let (_, n_index, _) = cube_mapping.cube_pos_to_tensor_pos();
+        let (_, n_cube_id, _) = cube_mapping.cube_pos_to_tensor_pos();
         // m_index should be 1
         // batch_index: not supported yet
 
         let plane_id = UNIT_POS_Y;
         let unit_id = UNIT_POS_X;
+
+        if n_cube_id > 0 {
+            terminate!()
+        }
+        if plane_id > 0 {
+            terminate!()
+        }
+        // if unit_id > 0 {
+        //     terminate!()
+        // }
 
         let lhs = Args::view_lhs(state);
         let rhs = Args::view_rhs(state);
@@ -123,7 +133,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Vec2Mat<MP> {
         let size!(NA) = comptime![Ord::max(lhs.vector_size(), rhs.vector_size())];
 
         let tile_size = plane_dim * NA::value() as u32;
-        let cube_offset = n_index * num_planes * tile_size;
+        let cube_offset = n_cube_id * num_planes * tile_size;
         let plane_offset = plane_id * tile_size;
         let n_pos = cube_offset + plane_offset + unit_id;
 
