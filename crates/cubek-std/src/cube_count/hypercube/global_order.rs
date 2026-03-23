@@ -57,14 +57,14 @@ impl GlobalOrderStrategy {
             GlobalOrderStrategy::Default => GlobalOrder::default(),
             GlobalOrderStrategy::Fixed(order) => order,
             GlobalOrderStrategy::SwizzleRow { w } => {
-                if x_cubes % w != 0 {
+                if !x_cubes.is_multiple_of(w) {
                     GlobalOrder::RowMajor
                 } else {
                     GlobalOrder::SwizzleRowMajor(w)
                 }
             }
             GlobalOrderStrategy::SwizzleCol { w } => {
-                if y_cubes % w != 0 {
+                if !y_cubes.is_multiple_of(w) {
                     GlobalOrder::ColMajor
                 } else {
                     GlobalOrder::SwizzleColMajor(w)
