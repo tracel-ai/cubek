@@ -21,7 +21,7 @@ pub trait Blueprint: Debug + Clone + Eq + PartialEq + Hash {
     fn rhs_global_layout_config(&self) -> GlobalLayoutConfig;
     fn out_global_layout_config(&self) -> GlobalLayoutConfig;
 
-    // TODO Would be better to ot have these methods but
+    // TODO Would be better to not have these methods but
     // otherwise it's hard to launch either as TMA or not
     fn tiling_scheme(&self) -> TilingScheme;
     fn swizzle_modes(&self) -> SwizzleModes;
