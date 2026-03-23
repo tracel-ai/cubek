@@ -132,7 +132,7 @@ impl BatchMatmulFamily<()> for Vec2MatFamily {
 
     fn validate_blueprint<R: Runtime>(
         _client: &ComputeClient<R>,
-        blueprint: &Self::Blueprint,
+        _blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
         _dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,

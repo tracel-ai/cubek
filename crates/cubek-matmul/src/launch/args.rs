@@ -17,9 +17,7 @@ use crate::components::global::memory::{
     GlobalScaleLayout, NoopLayout, NoopLayoutLaunch, SimpleTmaGlobalLayout,
     SimpleTmaGlobalLayoutLaunch,
 };
-use crate::definition::{
-    Blueprint as _, MatmulElems, MatmulProblem, MatmulVectorSizes, TilingBlueprint,
-};
+use crate::definition::{Blueprint as _, MatmulElems, MatmulProblem, MatmulVectorSizes};
 use crate::launch::handle::MatmulInputBinding;
 use crate::routines::Routine;
 

@@ -101,7 +101,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Vec2Mat<MP> {
     ) {
         let num_planes = config.num_planes;
         let plane_dim = config.plane_dim;
-        let (m_index, n_index, batch_index) = cube_mapping.cube_pos_to_tensor_pos();
+        let (_, n_index, _) = cube_mapping.cube_pos_to_tensor_pos();
         // m_index should be 1
         // batch_index: not supported yet
 
@@ -113,7 +113,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Vec2Mat<MP> {
         let out = Args::view_out(state);
 
         // m=1
-        let (_, _, n) = out.shape();
+        // let (_, _, n) = out.shape();
         let (_, _, k) = lhs.shape();
 
         let lhs = lhs.view(SliceIndex::new(0, lhs.shape()));

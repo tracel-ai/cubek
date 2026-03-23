@@ -1,6 +1,5 @@
 //! Vec2Mat matmul kernel implementation
 use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
-use cubecl::tensor_vector_size_parallel;
 use cubecl::zspace::shape;
 use cubecl::{VectorizationError, prelude::*};
 use cubek_std::MatrixLayout;
@@ -11,7 +10,6 @@ use crate::definition::{MatmulVectorSizes, cube_mapping_launch};
 use crate::launch::InputArg;
 use crate::launch::handle::MatmulInputBinding;
 use crate::launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs};
-use crate::routines::naive::NaiveRoutine;
 use crate::routines::vec2mat::{Vec2MatRoutine, Vec2MatStrategy};
 use crate::routines::{BlueprintStrategy, Routine as _};
 
@@ -42,7 +40,7 @@ pub fn launch_ref<R: Runtime>(
     }
 
     let rhs_shape = rhs.shape();
-    let out_shape = &out.shape;
+    // let out_shape = &out.shape;
 
     // Assumes row-major
     let lhs_supported_vector_sizes = client.io_optimized_vector_sizes(dtypes.lhs_global.size());
