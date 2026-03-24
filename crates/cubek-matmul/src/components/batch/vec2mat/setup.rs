@@ -156,7 +156,7 @@ impl BatchMatmulFamily<()> for Vec2MatFamily {
             || !problem.n.is_multiple_of(blueprint.tile_dim)
         {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "Problem dimensions n={:?} and k={:?} must be divisible by tile dim ({:?}) until out-of-bounds are supported",
+                "Problem dimensions n={:?} and k={:?} must be divisible by tile dim ({:?})",
                 problem.k, problem.n, blueprint.tile_dim,
             ))));
         }

@@ -108,16 +108,6 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Vec2Mat<MP> {
         let plane_id = UNIT_POS_Y;
         let unit_id = UNIT_POS_X;
 
-        // if n_cube_id > 0 {
-        //     terminate!()
-        // }
-        // if plane_id == 0 {
-        //     terminate!()
-        // }
-        // if unit_id > 0 {
-        //     terminate!()
-        // }
-
         let lhs = Args::view_lhs(state);
         let rhs = Args::view_rhs(state);
         let out = Args::view_out(state);
@@ -132,10 +122,12 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Vec2Mat<MP> {
 
         let size!(NA) = comptime![Ord::max(lhs.vector_size(), rhs.vector_size())];
 
-        let tile_size = plane_dim * NA::value() as u32;
-        let cube_offset = n_cube_id * num_planes * tile_size;
-        let plane_offset = plane_id * tile_size;
-        let n_pos = cube_offset + plane_offset + unit_id;
+        let vector_size = NA::value() as u32;
+        let tile_size = plane_dim * vector_size;
+        let cube_offset = n_cube_id * num_planes * plane_dim;
+        let plane_offset = plane_id * plane_dim;
+        let unit_offset = unit_id;
+        let n_pos = (cube_offset + plane_offset + unit_offset) * vector_size;
 
         let num_tiles = k / tile_size;
 
@@ -145,8 +137,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Vec2Mat<MP> {
             let swizzled_tile_index = (tile_index + plane_id) % num_tiles;
             let k_base = swizzled_tile_index * plane_dim;
 
-            // Load the whole lhs tile
-            let local_lhs_vec = lhs.read((0, k_base + unit_id));
+            let local_lhs_vec = lhs.read((0, (k_base + unit_id) * vector_size));
 
             #[unroll]
             for plane_iter in 0..plane_dim {
@@ -158,7 +149,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Vec2Mat<MP> {
 
                 for vec_iter in 0..NA::value() as u32 {
                     let lhs_scalar = lhs_vec[vec_iter as usize];
-                    let rhs_vec = rhs.read((k_base + plane_iter + vec_iter, n_pos));
+                    let rhs_vec = rhs.read((k_base + plane_iter * vector_size + vec_iter, n_pos));
                     acc += Vector::cast_from(lhs_scalar) * Vector::cast_from(rhs_vec);
                 }
             }

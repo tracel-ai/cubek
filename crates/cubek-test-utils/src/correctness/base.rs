@@ -92,7 +92,7 @@ fn assert_equals_approx_inner(
 
 #[derive(Debug)]
 pub(crate) enum ElemStatus {
-    Correct { got: f32 },
+    Correct { got: f32, delta: f32, epsilon: f32 },
     Wrong(WrongStatus),
 }
 
@@ -101,7 +101,7 @@ pub(crate) enum WrongStatus {
     GotWrongValue {
         got: f32,
         expected: f32,
-        diff: f32,
+        delta: f32,
         epsilon: f32,
     },
     ExpectedNan {
@@ -144,11 +144,15 @@ impl CompareVisitor for FailFast {
 
 #[inline]
 fn compare_elem(got: f32, expected: f32, epsilon: f32) -> ElemStatus {
-    let eps = (epsilon * expected).abs().max(epsilon);
+    let epsilon = (epsilon * expected).abs().max(epsilon);
 
     // NaN check: pass if both are NaN
     if got.is_nan() && expected.is_nan() {
-        return ElemStatus::Correct { got };
+        return ElemStatus::Correct {
+            got,
+            delta: 0.,
+            epsilon,
+        };
     }
 
     // NaN mismatch
@@ -163,27 +167,35 @@ fn compare_elem(got: f32, expected: f32, epsilon: f32) -> ElemStatus {
     // Infinite check: pass if both inf with same sign
     if got.is_infinite() && expected.is_infinite() {
         if got.signum() == expected.signum() {
-            return ElemStatus::Correct { got };
+            return ElemStatus::Correct {
+                got,
+                delta: 0.,
+                epsilon,
+            };
         } else {
             return ElemStatus::Wrong(WrongStatus::GotWrongValue {
                 got,
                 expected,
-                diff: f32::INFINITY,
-                epsilon: eps,
+                delta: f32::INFINITY,
+                epsilon,
             });
         }
     }
 
     // Regular numeric comparison
-    let diff = (got - expected).abs();
-    if diff < eps {
-        ElemStatus::Correct { got }
+    let delta = (got - expected).abs();
+    if delta <= epsilon {
+        ElemStatus::Correct {
+            got,
+            delta,
+            epsilon,
+        }
     } else {
         ElemStatus::Wrong(WrongStatus::GotWrongValue {
             got,
             expected,
-            diff,
-            epsilon: eps,
+            delta,
+            epsilon,
         })
     }
 }

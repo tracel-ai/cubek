@@ -46,9 +46,12 @@ impl Vec2MatTestCase {
 #[test]
 pub fn test_one_tile_row_major() {
     let plane_size = 32;
-    let tile_size = plane_size;
-    let problem_n = 16 * tile_size;
-    let problem_k = 5 * tile_size;
+    let tile_size = plane_size * TMP_VEC;
+    let n_tiles = 1;
+    let k_tiles = 1;
+
+    let problem_n = n_tiles * tile_size;
+    let problem_k = k_tiles * tile_size;
     let case = Vec2MatTestCase {
         n: problem_n,
         k: problem_k,

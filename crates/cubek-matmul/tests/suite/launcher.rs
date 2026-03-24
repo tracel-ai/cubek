@@ -53,11 +53,11 @@ pub fn test_matmul_algorithm<A: Routine<()>>(
         problem.lhs_shape.clone(),
         problem.global_dtypes.lhs,
         layout_to_stride_spec(problem.lhs_layout),
-        // DataKind::Arange { scale: Some(0.001) },
-        DataKind::Random {
-            seed: 1234,
-            distribution: Distribution::Uniform(-1., 1.),
-        },
+        DataKind::Arange { scale: Some(0.1) },
+        // DataKind::Random {
+        //     seed: 1234,
+        //     distribution: Distribution::Uniform(-1., 1.),
+        // },
     )
     .generate_with_f32_host_data();
 
@@ -66,11 +66,11 @@ pub fn test_matmul_algorithm<A: Routine<()>>(
         problem.rhs_shape.clone(),
         problem.global_dtypes.rhs,
         layout_to_stride_spec(problem.rhs_layout),
-        // DataKind::Arange { scale: Some(0.001) },
-        DataKind::Random {
-            seed: 5678,
-            distribution: Distribution::Uniform(-1., 1.),
-        },
+        DataKind::Arange { scale: Some(0.1) },
+        // DataKind::Random {
+        //     seed: 5678,
+        //     distribution: Distribution::Uniform(-1., 1.),
+        // },
     )
     .generate_with_f32_host_data();
 

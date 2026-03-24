@@ -35,13 +35,19 @@ impl CompareVisitor for ColorPrinter {
         );
 
         match status {
-            ElemStatus::Correct { got } => {
+            ElemStatus::Correct {
+                got,
+                delta,
+                epsilon,
+            } => {
                 println!(
-                    "{}{}: {}{}{}",
+                    "{}{}: {}{}, Δ={}<={}=ε{}",
                     " ".repeat(self.indent),
                     idx,
                     GREEN,
                     got,
+                    delta,
+                    epsilon,
                     RESET
                 );
             }
@@ -49,17 +55,17 @@ impl CompareVisitor for ColorPrinter {
                 WrongStatus::GotWrongValue {
                     got,
                     expected,
-                    diff,
+                    delta,
                     epsilon,
                 } => {
                     println!(
-                        "{}{}: {}Got {}, expected {}, diff={}>{}{}",
+                        "{}{}: {}Got {}, expected {}, Δ={}>{}=ε{}",
                         " ".repeat(self.indent),
                         idx,
                         RED,
                         got,
                         expected,
-                        diff,
+                        delta,
                         epsilon,
                         RESET
                     );
