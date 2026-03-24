@@ -37,8 +37,6 @@ pub enum InputRepresentation {
     Tma,
 }
 
-pub const TMP_VEC: usize = 2;
-
 #[allow(unused)]
 /// Test the correctness of the specified Matmul on the given device,
 /// against a naive CPU implementation over the given problem
@@ -53,11 +51,10 @@ pub fn test_matmul_algorithm<A: Routine<()>>(
         problem.lhs_shape.clone(),
         problem.global_dtypes.lhs,
         layout_to_stride_spec(problem.lhs_layout),
-        DataKind::Arange { scale: Some(0.1) },
-        // DataKind::Random {
-        //     seed: 1234,
-        //     distribution: Distribution::Uniform(-1., 1.),
-        // },
+        DataKind::Random {
+            seed: 1234,
+            distribution: Distribution::Uniform(-1., 1.),
+        },
     )
     .generate_with_f32_host_data();
 
@@ -66,11 +63,10 @@ pub fn test_matmul_algorithm<A: Routine<()>>(
         problem.rhs_shape.clone(),
         problem.global_dtypes.rhs,
         layout_to_stride_spec(problem.rhs_layout),
-        DataKind::Arange { scale: Some(0.1) },
-        // DataKind::Random {
-        //     seed: 5678,
-        //     distribution: Distribution::Uniform(-1., 1.),
-        // },
+        DataKind::Random {
+            seed: 5678,
+            distribution: Distribution::Uniform(-1., 1.),
+        },
     )
     .generate_with_f32_host_data();
 
@@ -89,8 +85,6 @@ pub fn test_matmul_algorithm<A: Routine<()>>(
     let lhs_handle = MatmulInputBinding::Normal(lhs.binding(), problem.global_dtypes.lhs);
     let rhs_handle = MatmulInputBinding::Normal(rhs.binding(), problem.global_dtypes.rhs);
     let out_handle = out.clone().binding();
-
-    println!("{:?}", problem);
 
     let all_elems = MatmulElems::from_globals(&problem.global_dtypes.clone());
 
@@ -130,23 +124,18 @@ pub fn launch_matmul_algorithm<A: Routine<()>>(
         dtypes.rhs_global.size(),
         dtypes.acc_global.size(),
     );
-    // let vector_sizes = match input_representation {
-    //     InputRepresentation::Normal => vector_sizes
-    //         .filter_lhs_with_tensor(&lhs.data().strides, &lhs.data().shape, problem.lhs_layout)
-    //         .filter_rhs_with_tensor(&rhs.data().strides, &rhs.data().shape, problem.rhs_layout)
-    //         .filter_out_with_tensor(&out.strides, &out.shape)
-    //         .pick_max()
-    //         .unwrap(),
-    //     InputRepresentation::Tma => vector_sizes
-    //         .filter_lhs(|ls| *ls == 1)
-    //         .filter_rhs(|ls| *ls == 1)
-    //         .pick_max()
-    //         .unwrap(),
-    // };
-    let vector_sizes = MatmulVectorSizes {
-        lhs: TMP_VEC,
-        rhs: TMP_VEC,
-        out: TMP_VEC,
+    let vector_sizes = match input_representation {
+        InputRepresentation::Normal => vector_sizes
+            .filter_lhs_with_tensor(&lhs.data().strides, &lhs.data().shape, problem.lhs_layout)
+            .filter_rhs_with_tensor(&rhs.data().strides, &rhs.data().shape, problem.rhs_layout)
+            .filter_out_with_tensor(&out.strides, &out.shape)
+            .pick_max()
+            .unwrap(),
+        InputRepresentation::Tma => vector_sizes
+            .filter_lhs(|ls| *ls == 1)
+            .filter_rhs(|ls| *ls == 1)
+            .pick_max()
+            .unwrap(),
     };
 
     let device_settings = A::device_settings(client, vector_sizes);
@@ -176,9 +165,6 @@ pub fn launch_matmul_algorithm<A: Routine<()>>(
     let cube_count_plan = launch_info.cube_count_plan;
     let blueprint = launch_info.blueprint;
     let dtypes = &launch_info.dtypes.clone();
-
-    println!("{:?}", cube_dim);
-    println!("{:?}", cube_count_plan.resolve());
 
     let output = <TensorOutput<_> as ConcreteOutputFactory<A>>::create(
         out,

@@ -149,7 +149,10 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Vec2Mat<MP> {
 
                 for vec_iter in 0..NA::value() as u32 {
                     let lhs_scalar = lhs_vec[vec_iter as usize];
-                    let rhs_vec = rhs.read((k_base + plane_iter * vector_size + vec_iter, n_pos));
+                    let rhs_vec = rhs.read((
+                        k_base * vector_size + plane_iter * vector_size + vec_iter,
+                        n_pos,
+                    ));
                     acc += Vector::cast_from(lhs_scalar) * Vector::cast_from(rhs_vec);
                 }
             }

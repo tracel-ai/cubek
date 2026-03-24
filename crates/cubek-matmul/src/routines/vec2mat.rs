@@ -102,7 +102,6 @@ impl Routine<()> for Vec2MatRoutine {
             (1, working_cubes as u32, problem.num_batches() as u32).into(),
             &device_settings.max_cube_count,
         );
-        println!("{:?}", device_settings.vector_sizes);
 
         Ok(LaunchInfo {
             blueprint,

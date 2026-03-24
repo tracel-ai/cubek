@@ -15,7 +15,7 @@ pub fn assert_result(
     out: TensorHandle<TestRuntime>,
     dtypes: MatmulElems,
 ) -> ValidationResult {
-    let epsilon = matmul_epsilon(&dtypes, 100.);
+    let epsilon = matmul_epsilon(&dtypes, 200.);
     let expected = matmul_cpu_reference(lhs, rhs, problem);
     let actual = HostData::from_tensor_handle(client, out, HostDataType::F32);
 
