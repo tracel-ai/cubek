@@ -97,44 +97,15 @@ pub fn assert_rfft_result(
 #[test]
 fn stereo_100ms() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-
-    //let signal_spec = SignalSpec {
-    //    signal_duration: 0.1,
-    //    channels: 2,
-    //    sample_rate: 44100,
-    //    window_length: 2048,
-    //    hop_length: 1024,
-    //};
-
-    //let signal_shape = signal_spec.signal_shape().to_vec();
-    //let spectrum_shape = signal_spec.spectrum_shape().to_vec();
-
-    //Panic signal: [5, 2, 2048] spectrum: [5, 2, 1025]
     let signal_shape = [5, 2, 2048].to_vec();
     let spectrum_shape = [5, 2, 1025].to_vec();
-    //panic!("Panic signal: {signal_shape:?} spectrum: {spectrum_shape:?}");
     test_launch(client, signal_shape, spectrum_shape);
 }
 
 #[test]
 fn mono_500ms() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-
-    //let signal_spec = SignalSpec {
-    //    signal_duration: 0.5,
-    //    channels: 1,
-    //    sample_rate: 44100,
-    //    window_length: 2048,
-    //    hop_length: 1024,
-    //};
-
-    //Panic signal: [22, 1, 2048] spectrum: [22, 1, 1025]
-    //let signal_shape = signal_spec.signal_shape().to_vec();
     let signal_shape = [22, 1, 2048].to_vec();
     let spectrum_shape = [22, 1, 1025].to_vec();
-    //let spectrum_shape = signal_spec.spectrum_shape().to_vec();
-
-    //panic!("Panic signal: {signal_shape:?} spectrum: {spectrum_shape:?}");
-
     test_launch(client, signal_shape, spectrum_shape);
 }
