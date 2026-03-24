@@ -21,6 +21,8 @@ struct Vec2MatTestCase {
     pub target_vec: usize,
     pub n_tiles: usize,
     pub k_tiles: usize,
+    pub lhs_batch: usize,
+    pub rhs_batch: usize,
     pub rhs_layout: MatrixLayout,
     pub elems: MatmulGlobalElems,
 }
@@ -32,8 +34,8 @@ impl Vec2MatTestCase {
             1,
             self.n_tiles * tile_dim,
             self.k_tiles * tile_dim,
-            shape![1],
-            shape![2],
+            shape![self.lhs_batch],
+            shape![self.rhs_batch],
             MatrixLayout::RowMajor,
             self.rhs_layout,
             MatrixLayout::RowMajor,
@@ -51,6 +53,8 @@ pub fn test_very_small_square_rhs_row_major() {
         target_vec: 4,
         n_tiles: 1,
         k_tiles: 1,
+        lhs_batch: 1,
+        rhs_batch: 1,
         rhs_layout: MatrixLayout::RowMajor,
         elems: elems(),
     };
@@ -64,6 +68,8 @@ pub fn test_k_larger_than_n() {
         target_vec: 4,
         n_tiles: 1,
         k_tiles: 2,
+        lhs_batch: 1,
+        rhs_batch: 1,
         rhs_layout: MatrixLayout::RowMajor,
         elems: elems(),
     };
@@ -77,6 +83,8 @@ pub fn test_k_smaller_than_n() {
         target_vec: 4,
         n_tiles: 2,
         k_tiles: 1,
+        lhs_batch: 1,
+        rhs_batch: 1,
         rhs_layout: MatrixLayout::RowMajor,
         elems: elems(),
     };
@@ -90,6 +98,8 @@ pub fn test_small_square_rhs_row_major() {
         target_vec: 4,
         n_tiles: 2,
         k_tiles: 2,
+        lhs_batch: 1,
+        rhs_batch: 1,
         rhs_layout: MatrixLayout::RowMajor,
         elems: elems(),
     };
@@ -103,6 +113,53 @@ pub fn test_large() {
         target_vec: 4,
         n_tiles: 10,
         k_tiles: 10,
+        lhs_batch: 1,
+        rhs_batch: 1,
+        rhs_layout: MatrixLayout::RowMajor,
+        elems: elems(),
+    };
+
+    test_vec2mat(case);
+}
+
+#[test]
+pub fn test_large_broadcast_lhs() {
+    let case = Vec2MatTestCase {
+        target_vec: 4,
+        n_tiles: 10,
+        k_tiles: 10,
+        lhs_batch: 1,
+        rhs_batch: 2,
+        rhs_layout: MatrixLayout::RowMajor,
+        elems: elems(),
+    };
+
+    test_vec2mat(case);
+}
+
+#[test]
+pub fn test_large_broadcast_rhs() {
+    let case = Vec2MatTestCase {
+        target_vec: 4,
+        n_tiles: 10,
+        k_tiles: 10,
+        lhs_batch: 2,
+        rhs_batch: 1,
+        rhs_layout: MatrixLayout::RowMajor,
+        elems: elems(),
+    };
+
+    test_vec2mat(case);
+}
+
+#[test]
+pub fn test_large_broadcast_batched() {
+    let case = Vec2MatTestCase {
+        target_vec: 4,
+        n_tiles: 10,
+        k_tiles: 10,
+        lhs_batch: 2,
+        rhs_batch: 2,
         rhs_layout: MatrixLayout::RowMajor,
         elems: elems(),
     };
