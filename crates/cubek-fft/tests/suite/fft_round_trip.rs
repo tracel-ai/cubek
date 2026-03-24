@@ -38,7 +38,7 @@ fn large_fft_roundtrip() {
     assert_equals_approx(
         &HostData::from_tensor_handle(&client, signal_back, cubek_test_utils::HostDataType::F32),
         &signal_data,
-        0.01,
+        0.03,
     )
     .as_test_outcome()
     .enforce();

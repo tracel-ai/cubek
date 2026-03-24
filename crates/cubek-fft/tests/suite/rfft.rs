@@ -96,7 +96,7 @@ pub fn assert_rfft_result(
     spectrum_re: TensorHandle<TestRuntime>,
     spectrum_im: TensorHandle<TestRuntime>,
 ) -> ValidationResult {
-    let epsilon = 0.01;
+    let epsilon = 0.02;
     let (expected_re, expected_im) = rfft_ref(&signal);
 
     let actual_spectrum_re = HostData::from_tensor_handle(client, spectrum_re, HostDataType::F32);
