@@ -19,4 +19,7 @@ pub use cubek_attention as attention;
 #[cfg(feature = "stdlib")]
 pub use cubek_std as std;
 
+#[cfg(feature = "fft")]
+pub use cubek_fft as fft;
+
 pub use cubecl;

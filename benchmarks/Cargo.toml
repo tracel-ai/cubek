@@ -24,6 +24,7 @@ cubek = { path = "../crates/cubek", version = "=0.2.0-pre.2", default-features =
     "matmul",
     "convolution",
     "attention",
+    "fft",
 ] }
 half = { workspace = true }
 
@@ -54,3 +55,7 @@ name = "attention"
 [[bench]]
 harness = false
 name = "contiguous"
+
+[[bench]]
+harness = false
+name = "fft"
