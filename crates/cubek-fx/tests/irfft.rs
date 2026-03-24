@@ -1,22 +1,15 @@
-//#[path = "reference/mod.rs"]
-//mod reference;
-
 use cubecl::client::ComputeClient;
 use cubecl::frontend::CubePrimitive;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{Runtime, TestRuntime};
 use cubek_fx::irfft_launch;
-//use cubek_fx::SignalSpec;
 use cubek_test_utils::{
     self, DataKind, Distribution, ExecutionOutcome, HostData, HostDataType, StrideSpec, TestInput,
     TestOutcome, ValidationResult, assert_equals_approx,
 };
 
-//use reference::irfft_ref;
+mod reference;
 use crate::reference::irfft_ref;
-
-//use crate::engine::cube::fft::irfft_launch;
-//use crate::engine::cube::tests::reference::irfft_ref;
 
 pub struct SignalSpec {
     pub signal_duration: f32,

@@ -1,15 +1,11 @@
 use cubecl::{prelude::*, std::tensor::TensorHandle};
 
-//use crate::{FftMode, layout::BatchSignalLayout};
-
 use cubecl::std::tensor::{
     AsView as _, AsViewExpand, AsViewMut as _, AsViewMutExpand, layout::plain::PlainLayout,
 };
 
 use crate::fft::{FftMode, fft_inner_compute};
 use crate::layout::BatchSignalLayout;
-
-//use crate::engine::cube::{BatchSignalLayout, fft::fft_inner_compute};
 
 /// Real-valued Fast Fourier Transform kernel.
 ///
@@ -155,5 +151,3 @@ pub(crate) fn rfft_kernel_one_window<F: Float, N: Size>(
         spectrums_im_view.write(i, Vector::cast_from(spectrum_im[i]));
     }
 }
-
-

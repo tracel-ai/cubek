@@ -7,8 +7,6 @@ use cubecl::std::tensor::{
 use crate::fft::{FftMode, fft_inner_compute};
 use crate::layout::BatchSignalLayout;
 
-//use crate::engine::cube::{BatchSignalLayout, FftMode, fft_inner_compute};
-
 /// Inverse Real-valued Fast Fourier Transform kernel.
 ///
 /// Creates signal tensor

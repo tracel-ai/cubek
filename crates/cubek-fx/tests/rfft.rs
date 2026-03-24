@@ -1,4 +1,3 @@
-
 use cubecl::client::ComputeClient;
 use cubecl::frontend::CubePrimitive;
 use cubecl::std::tensor::TensorHandle;
@@ -9,16 +8,8 @@ use cubek_test_utils::{
     TestOutcome, ValidationResult, assert_equals_approx,
 };
 
-use crate::rfft_ref;
-
-//use crate::reference::rfft_ref;
-
-//use crate::rfft::reference::rfft_ref;
-
-//use crate::engine::SignalSpec;
-//use crate::engine::cube::fft::rfft_launch;
-//use crate::engine::cube::tests::reference::rfft_ref;
-//use crate:: 
+mod reference;
+use crate::reference::rfft_ref;
 
 pub struct SignalSpec {
     pub signal_duration: f32,

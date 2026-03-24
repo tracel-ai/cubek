@@ -4,12 +4,9 @@ use cubecl::zspace::Shape;
 use cubek_test_utils::{HostData, HostDataVec, StrideSpec};
 use num_complex::Complex;
 
-//use fft::FftMode;
-//use crate::inn
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-/// Whether doing RFFT or IRFFT. 
-pub enum FftMode {
+/// Whether doing RFFT or IRFFT.
+enum FftMode {
     Forward,
     Inverse,
 }
