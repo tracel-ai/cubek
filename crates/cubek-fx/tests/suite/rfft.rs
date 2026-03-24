@@ -2,14 +2,13 @@ use cubecl::client::ComputeClient;
 use cubecl::frontend::CubePrimitive;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{Runtime, TestRuntime};
-use cubek_fx::irfft_launch;
+use cubek_fx::rfft_launch;
 use cubek_test_utils::{
     self, DataKind, Distribution, ExecutionOutcome, HostData, HostDataType, StrideSpec, TestInput,
     TestOutcome, ValidationResult, assert_equals_approx,
 };
 
-mod reference;
-use crate::reference::irfft_ref;
+use crate::suite::reference::rfft_ref;
 
 pub struct SignalSpec {
     pub signal_duration: f32,
@@ -40,53 +39,50 @@ fn test_launch(client: ComputeClient<TestRuntime>, signal_spec: SignalSpec) {
 
     let dtype = f32::as_type_native_unchecked().storage_type();
 
-    let (random_spectrum_re_handle, random_spectrum_re_data) = TestInput::new(
-        client.clone(),
-        spectrum_shape.to_vec(),
-        dtype,
-        StrideSpec::RowMajor,
-        DataKind::Random {
-            seed: 43,
-            distribution: Distribution::Uniform(-1., 1.),
-        },
-    )
-    .generate_with_f32_host_data();
-
-    let (random_spectrum_im_handle, random_spectrum_im_data) = TestInput::new(
-        client.clone(),
-        spectrum_shape.to_vec(),
-        dtype,
-        StrideSpec::RowMajor,
-        DataKind::Random {
-            seed: 44,
-            distribution: Distribution::Uniform(-1., 1.),
-        },
-    )
-    .generate_with_f32_host_data();
-
-    let signal_handle = TestInput::new(
+    let (white_noise_handle, white_noise_data) = TestInput::new(
         client.clone(),
         signal_shape.to_vec(),
+        dtype,
+        StrideSpec::RowMajor,
+        DataKind::Random {
+            seed: 42,
+            distribution: Distribution::Uniform(-1., 1.),
+        },
+    )
+    .generate_with_f32_host_data();
+
+    let spectrum_re_handle = TestInput::new(
+        client.clone(),
+        spectrum_shape.to_vec(),
         dtype,
         StrideSpec::RowMajor,
         DataKind::Zeros,
     )
     .generate_without_host_data();
 
-    match irfft_launch::<TestRuntime>(
+    let spectrum_im_handle = TestInput::new(
+        client.clone(),
+        spectrum_shape.to_vec(),
+        dtype,
+        StrideSpec::RowMajor,
+        DataKind::Zeros,
+    )
+    .generate_without_host_data();
+
+    match rfft_launch::<TestRuntime>(
         &client,
-        random_spectrum_re_handle.binding(),
-        random_spectrum_im_handle.binding(),
-        signal_handle.clone().binding(),
+        white_noise_handle.binding(),
+        spectrum_re_handle.clone().binding(),
+        spectrum_im_handle.clone().binding(),
         dtype,
     )
     .into()
     {
-        ExecutionOutcome::Executed => assert_irfft_result(
+        ExecutionOutcome::Executed => assert_rfft_result(
             &client,
-            random_spectrum_re_data,
-            random_spectrum_im_data,
-            signal_handle,
+            white_noise_data,
+            spectrum_re_handle,
+            spectrum_im_handle,
         )
         .as_test_outcome(),
         ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
@@ -94,17 +90,29 @@ fn test_launch(client: ComputeClient<TestRuntime>, signal_spec: SignalSpec) {
     .enforce();
 }
 
-fn assert_irfft_result(
+pub fn assert_rfft_result(
     client: &ComputeClient<TestRuntime>,
-    spectrum_re: HostData,
-    spectrum_im: HostData,
-    signal: TensorHandle<TestRuntime>,
+    signal: HostData,
+    spectrum_re: TensorHandle<TestRuntime>,
+    spectrum_im: TensorHandle<TestRuntime>,
 ) -> ValidationResult {
     let epsilon = 0.01;
-    let expected_signal = irfft_ref(&spectrum_re, &spectrum_im);
-    let actual_signal = HostData::from_tensor_handle(client, signal, HostDataType::F32);
+    let (expected_re, expected_im) = rfft_ref(&signal);
 
-    assert_equals_approx(&actual_signal, &expected_signal, epsilon)
+    let actual_spectrum_re = HostData::from_tensor_handle(client, spectrum_re, HostDataType::F32);
+    let actual_spectrum_im = HostData::from_tensor_handle(client, spectrum_im, HostDataType::F32);
+
+    let result_spectrum_re = assert_equals_approx(&actual_spectrum_re, &expected_re, epsilon);
+    let result_spectrum_im = assert_equals_approx(&actual_spectrum_im, &expected_im, epsilon);
+
+    use ValidationResult::*;
+    match (result_spectrum_re, result_spectrum_im) {
+        (Fail(e), _) | (_, Fail(e)) => Fail(e.clone()),
+        (Skipped(r1), Skipped(r2)) => Skipped(format!("{}, {}", r1, r2)),
+        (Skipped(r), Pass) | (Pass, Skipped(r)) => Skipped(r.clone()),
+        (Pass, Pass) => Pass,
+        _ => panic!("unreachable"),
+    }
 }
 
 #[test]
