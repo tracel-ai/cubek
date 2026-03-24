@@ -1,0 +1,62 @@
+# [workspace]
+# members = ["cubefx-engine", "cubefx-eval"]
+# resolver = "3"
+#
+# [workspace.package]
+# version = "0.1.0"
+# edition = "2024"
+#
+# [workspace.dependencies]
+# cubefx = { version = "0.1.0", path = "cubefx" }
+# cubecl = { version = "0.10.0-pre.1", features = ["test-runtime"] }
+# cubecl-common = { version = "0.10.0-pre.1" }
+
+[package]
+authors = [
+    "nathanielsimard <nathaniel.simard.42@gmail.com>",
+    "louisfd <louisfd94@gmail.com>",
+    "maxtremblay <t.maxime@pm.me>",
+]
+categories = ["science", "mathematics", "algorithms"]
+description = "CubeK: Reduce Kernels"
+edition.workspace = true
+keywords = []
+license.workspace = true
+name = "cubek-fx"
+readme.workspace = true
+repository = "https://github.com/tracel-ai/cubek/tree/main/crates/cubek-fx"
+version.workspace = true
+
+# [lib]
+# path = "./cubefx-eval/src/main.rs"
+# [[bin]]
+# name = "cubefx-eval"
+# path = "cubefx-eval/src/main.rs"
+
+[features]
+default = ["std", "cubecl/default"]
+std = ["cubecl/std", "thiserror/std"]
+
+full = ["extended"]
+extended = []
+
+[dependencies]
+cubecl = { workspace = true }
+
+num-traits = "0.2.19"
+pretty_assertions = { workspace = true, optional = true }
+serde = { workspace = true }
+half = { workspace = true }
+thiserror = { workspace = true }
+cubek-test-utils = { path = "./../cubek-test-utils/" } 
+# cubek-test-utils = { version = "0.2.0-pre.1" }
+
+[dev-dependencies]
+# cubefx = { version = "0.1.0", path = "cubefx" }
+num-complex = { version = "*" }
+cubecl = { workspace = true, features = ["test-runtime"] }
+cubecl-common = { workspace = true }
+rand = { workspace = true }
+
+
+
