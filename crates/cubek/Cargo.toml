@@ -35,6 +35,7 @@ std = [
     "cubek-matmul?/std",
     "cubek-convolution?/std",
     "cubek-attention?/std",
+    "cubek-fft?/std",
 ]
 
 attention = ["cubek-attention"]
@@ -44,6 +45,8 @@ quantization = ["cubek-quant/kernels"]
 random = ["cubek-random"]
 reduce = ["cubek-reduce"]
 stdlib = ["cubek-std"]
+fft = ["cubek-fft"]
+
 
 [dependencies]
 cubecl = { workspace = true }
