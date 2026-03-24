@@ -29,7 +29,6 @@ pub(crate) fn fft_inner_compute<F: Float>(
     spectrum_im: &mut View<F, Coords1d, ReadWrite>,
     #[comptime] fft_mode: FftMode,
 ) {
-    // Could be comptime
     let num_samples = spectrum_re.shape();
 
     bit_reverse_permutation(spectrum_re, spectrum_im, num_samples);
