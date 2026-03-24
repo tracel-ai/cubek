@@ -1,5 +1,5 @@
 use cubecl::{Runtime, TestRuntime, prelude::CubePrimitive};
-use cubek_fx::{irfft, rfft};
+use cubek_fft::{irfft, rfft};
 //use cubefx_engine::{SignalSpec, phase_shift_effect};
 use cubek_test_utils::{
     DataKind, Distribution, HostData, StrideSpec, TestInput, assert_equals_approx,
