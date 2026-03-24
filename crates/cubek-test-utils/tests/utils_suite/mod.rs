@@ -83,7 +83,7 @@ fn arange_handle_row_major() {
         shape,
         f32::as_type_native_unchecked().storage_type(),
         StrideSpec::RowMajor,
-        DataKind::Arange,
+        DataKind::Arange { scale: None },
     )
     .generate();
 
@@ -116,7 +116,7 @@ fn arange_handle_col_major() {
         shape,
         f32::as_type_native_unchecked().storage_type(),
         StrideSpec::ColMajor,
-        DataKind::Arange,
+        DataKind::Arange { scale: None },
     )
     .generate();
 

@@ -74,7 +74,7 @@ pub fn flash_attention_v2_reference(
     let mut k_index: [usize; 4];
     let mut v_index: [usize; 4];
     let mut m_index: [usize; 4];
-    let mut out_index = vec![0usize; 4];
+    let mut out_index = [0usize; 4];
 
     for b in 0..batch {
         for h in 0..num_heads {

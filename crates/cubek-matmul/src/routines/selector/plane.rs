@@ -4,7 +4,7 @@ use cubek_std::cube_count::{
     CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, SmAllocation,
 };
 use cubek_std::stage::SwizzleMode;
-use cubek_std::{MatrixLayout, PartitionSize, StageSize, TileSize};
+use cubek_std::{MatmulProblemSize, MatrixLayout, PartitionSize, StageSize, TileSize};
 
 use crate::components::global::{InputLoadFlow, LoadFlows};
 use crate::components::stage::PartitionBuffering;
@@ -54,8 +54,8 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
             dtypes.rhs_register,
             dtypes.acc_register,
         ),
-        problem.m,
-        problem.n,
+        (problem.m, problem.n, problem.k).into(),
+        (None, None, None),
         TMM::is_supported,
         TMM::supported_sizes,
     )?;
@@ -258,8 +258,8 @@ fn select_size(
 pub fn find_instruction_size<R, IsSupported, SupportedSizes>(
     client: &ComputeClient<R>,
     (lhs, rhs, acc): (StorageType, StorageType, StorageType),
-    m: usize,
-    n: usize,
+    problem_size: MatmulProblemSize,
+    (tm, tn, tk): (Option<u32>, Option<u32>, Option<u32>),
     is_supported: IsSupported,
     supported_sizes: SupportedSizes,
 ) -> Result<TileSize, MatmulAvailabilityError>
@@ -282,20 +282,46 @@ where
         )
     };
 
-    let val = if m >= 4 * n && supported(32, 8, 16) {
-        (32, 8, 16).into()
-    } else if n >= 4 * n && supported(8, 32, 16) {
-        (8, 32, 16).into()
-    } else if supported(16, 16, 16) {
-        (16, 16, 16).into()
-    } else if supported(8, 8, 8) {
-        (8, 8, 8).into()
-    } else {
-        match supported_sizes(client, lhs, rhs, acc).first().copied() {
-            Some(val) => val,
-            None => return Err(MatmulAvailabilityError::TileSizeNotFound),
+    let matches_forced = |m: u32, n: u32, k: u32| {
+        tm.is_none_or(|v| m == v) && tn.is_none_or(|v| n == v) && tk.is_none_or(|v| k == v)
+    };
+
+    let is_valid = |m: u32, n: u32, k: u32| supported(m, n, k) && matches_forced(m, n, k);
+
+    let try_candidate = |m: u32, n: u32, k: u32| {
+        if is_valid(m, n, k) {
+            Some(TileSize::from((m, n, k)))
+        } else {
+            None
         }
     };
+
+    let (m, n) = (problem_size.m, problem_size.n);
+
+    if m >= 4 * n
+        && let Some(ts) = try_candidate(32, 8, 16)
+    {
+        return Ok(ts);
+    }
+
+    if n >= 4 * m
+        && let Some(ts) = try_candidate(8, 32, 16)
+    {
+        return Ok(ts);
+    }
+
+    if let Some(ts) = try_candidate(16, 16, 16) {
+        return Ok(ts);
+    }
+
+    if let Some(ts) = try_candidate(8, 8, 8) {
+        return Ok(ts);
+    }
+
+    let val = supported_sizes(client, lhs, rhs, acc)
+        .into_iter()
+        .find(|ts| matches_forced(ts.m, ts.n, ts.k))
+        .ok_or(MatmulAvailabilityError::TileSizeNotFound)?;
 
     Ok(val)
 }

@@ -1,3 +1,4 @@
+use cubecl::client::ComputeClient;
 use cubecl::prelude::CubePrimitive;
 use cubecl::{CubeDim, Runtime};
 use cubek_matmul::components::{global::PartitionedStageFamily, stage::StridedStageFamily};
@@ -82,22 +83,41 @@ fn blueprint<R: Runtime>(
     match strategy {
         BlueprintStrategy::Forced(attention_blueprint) => validate(problem, attention_blueprint),
         BlueprintStrategy::Inferred(strategy) => {
-            let tile_size_score_matmul = find_instruction_size::<R, _, _>(
-                &device.client,
-                (dtypes.query_tile, dtypes.key_value_tile, dtypes.softmax_acc),
-                problem.dims.seq_q,
-                problem.dims.seq_kv,
-                |client, mma| client.properties().features.cmma.contains(&mma),
-                // TODO: Implement fallback
-                |_, _, _, _| Vec::new(),
-            )
-            .map_err(|err| {
+            let is_supported =
+                |client: &ComputeClient<R>, mma| client.properties().features.cmma.contains(&mma);
+
+            let supported_sizes = |client: &ComputeClient<R>, lhs_ty, rhs_ty, acc_ty| {
+                client
+                    .properties()
+                    .features
+                    .cmma
+                    .iter()
+                    .filter(|it| it.a_type == lhs_ty && it.b_type == rhs_ty && it.cd_type == acc_ty)
+                    .map(|it| (it.m, it.n, it.k).into())
+                    .collect::<Vec<_>>()
+            };
+            let map_err = |err| {
                 AttentionSetupError::Unavailable(
                     crate::definition::AttentionAvailabilityError::MatmulInstructionUnavailable(
                         err,
                     ),
                 )
-            })?;
+            };
+
+            let tile_size_score_matmul = find_instruction_size::<R, _, _>(
+                &device.client,
+                (dtypes.query_tile, dtypes.key_value_tile, dtypes.softmax_acc),
+                (
+                    problem.dims.seq_q,
+                    problem.dims.seq_kv,
+                    problem.dims.head_dim,
+                )
+                    .into(),
+                (None, None, None),
+                is_supported,
+                supported_sizes,
+            )
+            .map_err(map_err)?;
 
             let values_matmul = find_instruction_size::<R, _, _>(
                 &device.client,
@@ -106,26 +126,32 @@ fn blueprint<R: Runtime>(
                     dtypes.key_value_tile,
                     dtypes.accumulator,
                 ),
-                tile_size_score_matmul.m as usize,
-                problem.dims.val_dim,
-                |client, mma| client.properties().features.cmma.contains(&mma),
-                // TODO: Implement fallback
-                |_, _, _, _| Vec::new(),
-            )
-            .map_err(|err| {
-                AttentionSetupError::Unavailable(
-                    crate::definition::AttentionAvailabilityError::MatmulInstructionUnavailable(
-                        err,
-                    ),
+                (
+                    problem.dims.seq_q,
+                    problem.dims.val_dim,
+                    problem.dims.seq_kv,
                 )
-            })?;
+                    .into(),
+                (
+                    Some(tile_size_score_matmul.m),
+                    None,
+                    Some(tile_size_score_matmul.n),
+                ),
+                is_supported,
+                supported_sizes,
+            )
+            .map_err(map_err)?;
 
             if tile_size_score_matmul.m != values_matmul.m {
-                return Err(AttentionSetupError::InvalidConfig(Box::new("")));
+                return Err(AttentionSetupError::InvalidConfig(Box::new(
+                    "Seq_q mismatch: `m` of score_matmul does not match `m` of values_matmul. ",
+                )));
             }
 
             if tile_size_score_matmul.n != values_matmul.k {
-                return Err(AttentionSetupError::InvalidConfig(Box::new("")));
+                return Err(AttentionSetupError::InvalidConfig(Box::new(
+                    "Seq_kv mismatch: `n` of score_matmul does not match `k` of values_matmul. ",
+                )));
             }
 
             let tile_size = AttentionTileSize {

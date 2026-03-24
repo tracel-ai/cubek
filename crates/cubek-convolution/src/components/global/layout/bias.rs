@@ -36,11 +36,7 @@ impl Layout for BiasLayout {
 impl ViewLayoutLaunchArg for BiasLayout {
     type RuntimeArg<R: Runtime> = ();
     type CompilationArg = ();
-    fn compilation_arg<R: Runtime, B: BufferArg>(
-        _: &Self::RuntimeArg<R>,
-        _: &B,
-    ) -> Self::CompilationArg {
-    }
+
     fn register<R: Runtime, B: BufferArg>(
         _: Self::RuntimeArg<R>,
         buffer: &B,
@@ -50,6 +46,7 @@ impl ViewLayoutLaunchArg for BiasLayout {
         let shape = buffer.len();
         <u32 as LaunchArg>::register(shape as u32, launcher);
     }
+
     fn expand(
         _: &Self::CompilationArg,
         ty: Type,
