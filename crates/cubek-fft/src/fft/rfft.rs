@@ -127,7 +127,7 @@ pub(crate) fn rfft_kernel_one_window<F: Float, N: Size>(
     let spectrums_re_view = spectrums_re.view_mut(spectrums_re_layout);
     let spectrums_im_view = spectrums_im.view_mut(spectrums_im_layout);
 
-    // The shared memories are not vectorized because the inner FFT compute will need to work independantly on each element
+    // The shared memories are not vectorized because the inner FFT compute will need to work independently on each element
     let mut spectrum_re =
         SharedMemory::<F>::new(num_samples).view_mut(PlainLayout::new(num_samples));
     let mut spectrum_im =

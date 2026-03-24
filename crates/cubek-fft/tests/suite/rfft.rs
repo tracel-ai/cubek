@@ -74,7 +74,7 @@ pub fn assert_rfft_result(
     spectrum_re: TensorHandle<TestRuntime>,
     spectrum_im: TensorHandle<TestRuntime>,
 ) -> ValidationResult {
-    // big epsilon because with wgpu, calculs are less precise
+    // big epsilon because with wgpu, compute is less precise
     let epsilon = 0.4;
     let (expected_re, expected_im) = rfft_ref(&signal);
 

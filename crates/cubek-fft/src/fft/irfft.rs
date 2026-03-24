@@ -119,7 +119,7 @@ pub(crate) fn irfft_kernel_one_batch<F: Float, N: Size>(
 
     let num_freq_bins = spectrums_re_view.shape();
 
-    // The shared memories are not vectorized because the inner FFT compute will need to work independantly on each element
+    // The shared memories are not vectorized because the inner FFT compute will need to work independently on each element
     let mut spectrum_re =
         SharedMemory::<F>::new(num_samples).view_mut(PlainLayout::new(num_samples));
     let mut spectrum_im =
