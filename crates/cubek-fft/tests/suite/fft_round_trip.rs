@@ -10,15 +10,7 @@ fn large_fft_roundtrip() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let dtype = f32::as_type_native_unchecked().storage_type();
 
-    let signal_duration = 10.;
-    let channels = 2;
-    let sample_rate = 44100;
-    let window_length = 2048;
-    let hop_length = 1024;
-
-    let total_samples = (signal_duration * sample_rate as f32).ceil() as usize;
-    let num_windows = total_samples.div_ceil(hop_length);
-    let shape = [num_windows, channels, window_length];
+    let shape = [431, 2, 2048];
 
     let (original_signal, signal_data) = TestInput::new(
         client.clone(),
