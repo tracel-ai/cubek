@@ -64,7 +64,7 @@ pub fn rfft_launch<R: Runtime>(
 
     let shape = *signal.shape.last().unwrap();
     rfft_kernel::launch::<R>(
-        &client,
+        client,
         cube_count,
         cube_dim,
         signal.into_tensor_arg(),

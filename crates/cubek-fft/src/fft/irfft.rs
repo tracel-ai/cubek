@@ -59,7 +59,7 @@ pub fn irfft_launch<R: Runtime>(
 
     let shape = *signal.shape.last().unwrap();
     irfft_kernel::launch::<R>(
-        &client,
+        client,
         cube_count,
         cube_dim,
         spectrum_re.into_tensor_arg(),
