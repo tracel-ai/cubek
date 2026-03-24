@@ -102,7 +102,6 @@ pub fn irfft_ref(re: &HostData, im: &HostData) -> HostData {
 
 /// Reference RFFT: input real slice, output first n/2 + 1 complex numbers
 pub fn rfft_ref(signal: &HostData) -> (HostData, HostData) {
-    // let (num_samples, batch_dims) = signal.shape.split_last().unwrap();
     let [num_windows, num_channels, sample_window] = signal
         .shape
         .as_slice()

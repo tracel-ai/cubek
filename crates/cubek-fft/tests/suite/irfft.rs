@@ -10,38 +10,16 @@ use cubek_test_utils::{
 
 use crate::suite::reference::irfft_ref;
 
-pub struct SignalSpec {
-    pub signal_duration: f32,
-    pub channels: usize,
-    pub sample_rate: usize,
-    pub window_length: usize,
-    pub hop_length: usize,
-}
-
-impl SignalSpec {
-    pub fn signal_shape(&self) -> [usize; 3] {
-        let total_samples = (self.signal_duration * self.sample_rate as f32).ceil() as usize;
-        let num_windows = total_samples.div_ceil(self.hop_length);
-        [num_windows, self.channels, self.window_length]
-    }
-
-    pub fn spectrum_shape(&self) -> [usize; 3] {
-        let total_samples = (self.signal_duration * self.sample_rate as f32).ceil() as usize;
-        let num_windows = total_samples.div_ceil(self.hop_length);
-        let num_frequency_bins = self.window_length / 2 + 1;
-        [num_windows, self.channels, num_frequency_bins]
-    }
-}
-
-fn test_launch(client: ComputeClient<TestRuntime>, signal_spec: SignalSpec) {
-    let signal_shape = signal_spec.signal_shape();
-    let spectrum_shape = signal_spec.spectrum_shape();
-
+fn test_launch(
+    client: ComputeClient<TestRuntime>,
+    signal_shape: Vec<usize>,
+    spectrum_shape: Vec<usize>,
+) {
     let dtype = f32::as_type_native_unchecked().storage_type();
 
     let (random_spectrum_re_handle, random_spectrum_re_data) = TestInput::new(
         client.clone(),
-        spectrum_shape.to_vec(),
+        spectrum_shape.clone(),
         dtype,
         StrideSpec::RowMajor,
         DataKind::Random {
@@ -53,7 +31,7 @@ fn test_launch(client: ComputeClient<TestRuntime>, signal_spec: SignalSpec) {
 
     let (random_spectrum_im_handle, random_spectrum_im_data) = TestInput::new(
         client.clone(),
-        spectrum_shape.to_vec(),
+        spectrum_shape,
         dtype,
         StrideSpec::RowMajor,
         DataKind::Random {
@@ -65,7 +43,7 @@ fn test_launch(client: ComputeClient<TestRuntime>, signal_spec: SignalSpec) {
 
     let signal_handle = TestInput::new(
         client.clone(),
-        signal_shape.to_vec(),
+        signal_shape,
         dtype,
         StrideSpec::RowMajor,
         DataKind::Zeros,
@@ -109,29 +87,15 @@ fn assert_irfft_result(
 #[test]
 fn stereo_100ms() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-
-    let signal_spec = SignalSpec {
-        signal_duration: 0.1,
-        channels: 2,
-        sample_rate: 44100,
-        window_length: 2048,
-        hop_length: 1024,
-    };
-
-    test_launch(client, signal_spec);
+    let signal_shape = [5, 2, 2048].to_vec();
+    let spectrum_shape = [5, 2, 1025].to_vec();
+    test_launch(client, signal_shape, spectrum_shape);
 }
 
 #[test]
 fn mono_500ms() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-
-    let signal_spec = SignalSpec {
-        signal_duration: 0.5,
-        channels: 1,
-        sample_rate: 44100,
-        window_length: 2048,
-        hop_length: 1024,
-    };
-
-    test_launch(client, signal_spec);
+    let signal_shape = [22, 1, 2048].to_vec();
+    let spectrum_shape = [22, 1, 1025].to_vec();
+    test_launch(client, signal_shape, spectrum_shape);
 }
