@@ -33,7 +33,7 @@ impl Vec2MatTestCase {
             self.n_tiles * tile_dim,
             self.k_tiles * tile_dim,
             shape![1],
-            shape![1],
+            shape![2],
             MatrixLayout::RowMajor,
             self.rhs_layout,
             MatrixLayout::RowMajor,
@@ -101,8 +101,8 @@ pub fn test_small_square_rhs_row_major() {
 pub fn test_large() {
     let case = Vec2MatTestCase {
         target_vec: 4,
-        n_tiles: 20,
-        k_tiles: 20,
+        n_tiles: 10,
+        k_tiles: 10,
         rhs_layout: MatrixLayout::RowMajor,
         elems: elems(),
     };

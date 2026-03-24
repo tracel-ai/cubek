@@ -101,28 +101,26 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Vec2Mat<MP> {
     ) {
         let num_planes = config.num_planes;
         let plane_dim = config.plane_dim;
-        let (_, n_cube_id, _) = cube_mapping.cube_pos_to_tensor_pos();
-        // m_index should be 1
-        // batch_index: not supported yet
-
-        let plane_id = UNIT_POS_Y;
-        let unit_id = UNIT_POS_X;
 
         let lhs = Args::view_lhs(state);
         let rhs = Args::view_rhs(state);
         let out = Args::view_out(state);
 
-        // m=1
-        // let (_, _, n) = out.shape();
         let (_, _, k) = lhs.shape();
+        let (_, n_cube_id, batch_cube_id) = cube_mapping.cube_pos_to_tensor_pos();
+        let plane_id = UNIT_POS_Y;
+        let unit_id = UNIT_POS_X;
 
-        let lhs = lhs.view(SliceIndex::new(0, lhs.shape()));
-        let rhs = rhs.view(SliceIndex::new(0, rhs.shape()));
-        let out = out.view_mut(SliceIndex::new(0, out.shape()));
+        let lhs_batch = Args::batch_lhs(state, batch_cube_id as usize);
+        let rhs_batch = Args::batch_rhs(state, batch_cube_id as usize);
+        let out_batch = Args::batch_out(state, batch_cube_id as usize);
+        let lhs = lhs.view(SliceIndex::new(lhs_batch, lhs.shape()));
+        let rhs = rhs.view(SliceIndex::new(rhs_batch, rhs.shape()));
+        let out = out.view_mut(SliceIndex::new(out_batch, out.shape()));
 
         let size!(NA) = comptime![Ord::max(lhs.vector_size(), rhs.vector_size())];
-
         let vector_size = NA::value() as u32;
+
         let tile_size = plane_dim * vector_size;
         let cube_offset = n_cube_id * num_planes * plane_dim;
         let plane_offset = plane_id * plane_dim;
