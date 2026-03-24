@@ -37,6 +37,8 @@ pub enum InputRepresentation {
     Tma,
 }
 
+pub const TMP_VEC: usize = 2;
+
 #[allow(unused)]
 /// Test the correctness of the specified Matmul on the given device,
 /// against a naive CPU implementation over the given problem
@@ -142,9 +144,9 @@ pub fn launch_matmul_algorithm<A: Routine<()>>(
     //         .unwrap(),
     // };
     let vector_sizes = MatmulVectorSizes {
-        lhs: 1,
-        rhs: 1,
-        out: 1,
+        lhs: TMP_VEC,
+        rhs: TMP_VEC,
+        out: TMP_VEC,
     };
 
     let device_settings = A::device_settings(client, vector_sizes);

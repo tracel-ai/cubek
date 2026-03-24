@@ -7,7 +7,7 @@ use cubek_matmul::launch::launch_vec2mat;
 use cubek_matmul::routines::BlueprintStrategy;
 use cubek_matmul::routines::vec2mat::{Vec2MatRoutine, Vec2MatStrategy};
 
-use crate::suite::launcher::{InputRepresentation, test_matmul_algorithm};
+use crate::suite::launcher::{InputRepresentation, TMP_VEC, test_matmul_algorithm};
 use crate::suite::layout_to_stride_spec;
 use cubek_matmul::definition::MatmulGlobalElems;
 use cubek_matmul::definition::{MatmulElems, MatmulIdent, MatmulProblem};
@@ -45,10 +45,13 @@ impl Vec2MatTestCase {
 
 #[test]
 pub fn test_one_tile_row_major() {
-    let tile_size = 32;
+    let plane_size = 32;
+    let tile_size = plane_size;
+    let problem_n = 16 * tile_size;
+    let problem_k = 5 * tile_size;
     let case = Vec2MatTestCase {
-        n: tile_size,
-        k: tile_size,
+        n: problem_n,
+        k: problem_k,
         rhs_layout: MatrixLayout::RowMajor,
         elems: elems(),
     };

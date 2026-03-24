@@ -108,12 +108,12 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Vec2Mat<MP> {
         let plane_id = UNIT_POS_Y;
         let unit_id = UNIT_POS_X;
 
-        if n_cube_id > 0 {
-            terminate!()
-        }
-        if plane_id > 0 {
-            terminate!()
-        }
+        // if n_cube_id > 0 {
+        //     terminate!()
+        // }
+        // if plane_id == 0 {
+        //     terminate!()
+        // }
         // if unit_id > 0 {
         //     terminate!()
         // }

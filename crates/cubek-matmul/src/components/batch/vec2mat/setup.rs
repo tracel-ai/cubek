@@ -2,7 +2,6 @@ use cubecl::{
     CubeCount, CubeDim, Runtime,
     client::ComputeClient,
     ir::{AddressType, DeviceProperties},
-    quant::scheme::QuantLevel,
     server::LaunchError,
 };
 use cubek_std::{MatrixLayout, cube_count::HypercubeBlueprint};
@@ -131,36 +130,35 @@ impl BatchMatmulFamily<()> for Vec2MatFamily {
     }
 
     fn validate_blueprint<R: Runtime>(
-        _client: &ComputeClient<R>,
-        _blueprint: &Self::Blueprint,
+        client: &ComputeClient<R>,
+        blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
         _dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
-        if let Some(scheme) = problem.lhs_scheme
-            && let QuantLevel::Block(block_size) = scheme.level
-        {
-            let vector_size = vector_sizes.lhs * scheme.num_quants();
-            let block_size = block_size.to_dim_vec(2.max(block_size.len()));
-            let block_width = block_size[block_size.len() - 1] as usize;
-            if !block_width.is_multiple_of(vector_size) {
-                return Err(MatmulSetupError::InvalidConfig(Box::new(
-                    "Block size isn't a multiple of load size on lhs",
-                )));
-            }
+        let vector_size = vector_sizes.lhs;
+        if !(vector_size == vector_sizes.rhs && vector_size == vector_sizes.out) {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "All vector sizes must be equal, got lhs:{:?}, rhs:{:?}, out:{:?}",
+                vector_size, vector_sizes.rhs, vector_sizes.out
+            ))));
         }
 
-        if let Some(scheme) = problem.rhs_scheme
-            && let QuantLevel::Block(block_size) = scheme.level
+        let plane_dim = client.properties().hardware.plane_size_max as usize;
+        if blueprint.tile_dim != plane_dim * vector_size {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "Tile dim must equal plane_dim * vector_size, got {:?} != {:?} * {:?}",
+                blueprint.tile_dim, plane_dim, vector_size,
+            ))));
+        }
+
+        if !problem.k.is_multiple_of(blueprint.tile_dim)
+            || !problem.n.is_multiple_of(blueprint.tile_dim)
         {
-            let vector_size = vector_sizes.rhs * scheme.num_quants();
-            let block_size = block_size.to_dim_vec(2.max(block_size.len()));
-            let block_width = block_size[block_size.len() - 2] as usize;
-            if !block_width.is_multiple_of(vector_size) {
-                return Err(MatmulSetupError::InvalidConfig(Box::new(
-                    "Block size isn't a multiple of load size on rhs",
-                )));
-            }
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "Problem dimensions n={:?} and k={:?} must be divisible by tile dim ({:?}) until out-of-bounds are supported",
+                problem.k, problem.n, blueprint.tile_dim,
+            ))));
         }
 
         Ok(())
