@@ -1,27 +1,22 @@
-use crate::cube_count::{CubeCountStrategy, GlobalOrder, GlobalOrderStrategy, HypercubeBlueprint};
+use crate::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint};
 
 /// Builder for creating a [HypercubeBlueprint]
 pub struct HypercubeBlueprintBuilder {
-    global_order: GlobalOrder,
+    global_order: Option<GlobalOrder>,
     cube_count_strategy: Option<CubeCountStrategy>,
 }
 
 impl HypercubeBlueprintBuilder {
     pub(crate) fn new() -> Self {
         Self {
-            global_order: GlobalOrder::default(),
+            global_order: None,
             cube_count_strategy: None,
         }
     }
 
     /// Set the [GlobalOrder]
-    pub fn global_order(
-        mut self,
-        global_order_strategy: GlobalOrderStrategy,
-        x_cubes: u32,
-        y_cubes: u32,
-    ) -> Self {
-        self.global_order = global_order_strategy.into_order(x_cubes, y_cubes);
+    pub fn global_order(mut self, global_order: GlobalOrder) -> Self {
+        self.global_order = Some(global_order);
         self
     }
 
@@ -34,7 +29,7 @@ impl HypercubeBlueprintBuilder {
     /// Build the HypercubeBlueprint
     pub fn build(self) -> HypercubeBlueprint {
         HypercubeBlueprint {
-            global_order: self.global_order,
+            global_order: self.global_order.unwrap_or_default(),
             cube_count_strategy: self.cube_count_strategy.unwrap_or_default(),
         }
     }

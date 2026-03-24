@@ -14,7 +14,7 @@ use cubecl::{
 };
 use cubek_std::{
     MatrixLayout,
-    cube_count::{CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, SmAllocation},
+    cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation},
     stage::SwizzleMode,
 };
 
@@ -222,7 +222,7 @@ fn general_unit_selector(
             num_plane,
         },
         num_sms,
-        GlobalOrderStrategy::SwizzleRow { w: 4 },
+        GlobalOrder::SwizzleRow(4),
         options.stage,
         options.swizzle,
         problem,
@@ -258,7 +258,7 @@ fn matvec_unit_selector(
             n: 2,
         },
         num_sms,
-        GlobalOrderStrategy::Default,
+        GlobalOrder::default(),
         StageScaling::Disabled,
         options.swizzle,
         problem,
@@ -291,7 +291,7 @@ fn vecmat_unit_selector(
             n: (plane_dim / 2).max(1),
         },
         num_sms,
-        GlobalOrderStrategy::Default,
+        GlobalOrder::default(),
         StageScaling::Disabled,
         options.swizzle,
         problem,
@@ -330,7 +330,7 @@ fn scalarvec_unit_selector(
             n: (plane_dim / 2).max(1),
         },
         num_sms,
-        GlobalOrderStrategy::Default,
+        GlobalOrder::default(),
         StageScaling::Disabled,
         options.swizzle,
         problem,
@@ -363,7 +363,7 @@ fn vecscalar_unit_selector(
             n: 2,
         },
         num_sms,
-        GlobalOrderStrategy::Default,
+        GlobalOrder::default(),
         StageScaling::Disabled,
         options.swizzle,
         problem,
@@ -399,7 +399,7 @@ fn inner_product_unit_selector(
         plane_dim,
         StageSelection::Fixed { m: plane_dim, n: 1 }, // TODO: most planes does nothing.
         num_sms,
-        GlobalOrderStrategy::Default,
+        GlobalOrder::default(),
         StageScaling::Disabled,
         options.swizzle,
         problem,
@@ -429,7 +429,7 @@ fn outer_product_unit_selector(
         plane_dim,
         StageSelection::Fixed { m: 8, n: 8 },
         num_sms,
-        GlobalOrderStrategy::Default,
+        GlobalOrder::default(),
         StageScaling::Disabled,
         options.swizzle,
         problem,
@@ -462,7 +462,7 @@ fn scalar_product_unit_selector(
             num_plane: 1,
         },
         num_sms,
-        GlobalOrderStrategy::Default,
+        GlobalOrder::default(),
         StageScaling::Disabled,
         options.swizzle,
         problem,
@@ -499,7 +499,7 @@ fn selection(
     plane_dim: u32,
     stage: StageSelection,
     num_sms: Option<u32>,
-    global_order_strategy: GlobalOrderStrategy,
+    global_order: GlobalOrder,
     stage_scaling: StageScaling,
     swizzle: bool,
     problem: &MatmulProblem,
@@ -535,11 +535,7 @@ fn selection(
     };
 
     let hypercube = HypercubeBlueprint::builder()
-        .global_order(
-            global_order_strategy,
-            problem.m as u32 / tiling_scheme.elements_per_global_partition_along_m(),
-            problem.n as u32 / tiling_scheme.elements_per_global_partition_along_n(),
-        )
+        .global_order(global_order)
         .cube_count_strategy(cube_count_strategy)
         .build();
 

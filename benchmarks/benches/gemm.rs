@@ -11,8 +11,8 @@ use cubek::{
         self as matmul,
         components::stage::PartitionBuffering,
         definition::{
-            CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, LoadingPrecomputeStrategy,
-            MatmulElems, MatmulPrecision, MatmulProblem, TilingBlueprint, TilingScheme,
+            LoadingPrecomputeStrategy, MatmulElems, MatmulPrecision, MatmulProblem,
+            TilingBlueprint, TilingScheme,
         },
         launch::{MatmulInputBinding, Strategy},
         routines::{
@@ -22,11 +22,14 @@ use cubek::{
         },
     },
     random::random_uniform,
-    std::{MatrixLayout, StageSize},
+    std::{
+        MatrixLayout, StageSize,
+        cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint},
+    },
 };
 use std::collections::BTreeMap;
 
-impl<R: Runtime> Benchmark for MatmulBench<R> {
+impl<R: Runtime> Benchmark for GemmBench<R> {
     type Input = (TensorHandle<R>, TensorHandle<R>);
     type Output = ();
 
@@ -127,7 +130,7 @@ impl<R: Runtime> Benchmark for MatmulBench<R> {
 }
 
 #[allow(dead_code)]
-struct MatmulBench<R: Runtime> {
+struct GemmBench<R: Runtime> {
     b: usize,
     m: usize,
     k: usize,
@@ -157,27 +160,27 @@ fn run<R: Runtime, MP: MatmulPrecision>(device: R::Device, strategy: Strategy) {
     for tl in [MatrixLayout::ColMajor, MatrixLayout::RowMajor] {
         for tr in [MatrixLayout::ColMajor, MatrixLayout::RowMajor] {
             for (b, m, n, k) in [
-                // entry(8192, 8192, 8192),
-                entry(6144, 6144, 6144),
-                // entry(4096, 4096, 4096),
-                // entry(2048, 2048, 2048),
-                // (2, 1024, 1024, 1024),
-                // entry(512, 512, 512),
-                // entry(64, 1024, 64),
-                // entry(32, 1024, 32),
-                // entry(10, 1024, 10),
-                // entry(64, 64, 1024),
-                // entry(32, 32, 1024),
-                // entry(10, 10, 1024),
-                // entry(1024, 64, 64),
-                // entry(1024, 32, 32),
-                // entry(1024, 10, 10),
-                // (16, 1, 2048, 8192),
-                // (16, 1, 4096, 4096),
-                // (1, 512, 512, 512),
-                // (2, 8192, 8192, 1), // Outer
-                // (2, 8192, 1, 8192), // MatVec
-                //(2, 1, 8192, 8192), // VecMat
+                (2, 1, 4096, 4096), // entry(8192, 8192, 8192),
+                                    // entry(6144, 6144, 6144),
+                                    // entry(4096, 4096, 4096),
+                                    // entry(2048, 2048, 2048),
+                                    // (2, 1024, 1024, 1024),
+                                    // entry(512, 512, 512),
+                                    // entry(64, 1024, 64),
+                                    // entry(32, 1024, 32),
+                                    // entry(10, 1024, 10),
+                                    // entry(64, 64, 1024),
+                                    // entry(32, 32, 1024),
+                                    // entry(10, 10, 1024),
+                                    // entry(1024, 64, 64),
+                                    // entry(1024, 32, 32),
+                                    // entry(1024, 10, 10),
+                                    // (16, 1, 2048, 8192),
+                                    // (16, 1, 4096, 4096),
+                                    // (1, 512, 512, 512),
+                                    // (2, 8192, 8192, 1), // Outer
+                                    // (2, 8192, 1, 8192), // MatVec
+                                    //(2, 1, 8192, 8192), // VecMat
             ] {
                 println!("-------------------");
 
@@ -215,7 +218,7 @@ fn run_one<R: Runtime, MP: MatmulPrecision>(
     let tl = matches!(problem.lhs_layout, MatrixLayout::ColMajor);
     let tr = matches!(problem.rhs_layout, MatrixLayout::ColMajor);
 
-    let bench = MatmulBench {
+    let bench = GemmBench {
         b,
         m,
         k,
@@ -286,8 +289,8 @@ fn run_grid_search<R: Runtime, MP: MatmulPrecision>() {
                     })
                     .build()
                     .unwrap();
-                let hypercube = HypercubeBlueprint::builder(&tiling)
-                    .global_order_strategy(GlobalOrderStrategy::Default)
+                let hypercube = HypercubeBlueprint::builder()
+                    .global_order(GlobalOrder::default())
                     .cube_count_strategy(CubeCountStrategy::Flattened)
                     .build();
                 let blueprint = TilingBlueprint::builder(tiling, plane_dim, &problem)
@@ -466,11 +469,12 @@ fn run_algos_mma<R: Runtime, MP: MatmulPrecision>() {
 fn run_benches<R: Runtime, MP: MatmulPrecision>() {
     // run_grid_search::<R, MP>();
     // run_algos_unit::<R, MP>();
-    run_algos_wmma::<R, MP>();
-    // run_algos_vecmat::<R, MP>();
+    // run_algos_wmma::<R, MP>();
+    run_algos_vecmat::<R, MP>();
     // run_algos_mma::<R, MP>();
 }
 
 fn main() {
-    run_benches::<cubecl::TestRuntime, half::f16>();
+    // run_benches::<cubecl::TestRuntime, half::f16>();
+    run_benches::<cubecl::TestRuntime, f32>();
 }

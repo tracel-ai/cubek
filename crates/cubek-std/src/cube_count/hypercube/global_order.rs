@@ -6,19 +6,21 @@ use cubecl::std::tensor::layout::Coords2d;
 ///
 /// - `RowMajor`: standard row-first traversal
 /// - `ColMajor`: standard column-first traversal
-/// - `SwizzleColMajor(w)`: zigzag pattern down columns, with `w`-wide steps
-/// - `SwizzleRowMajor(w)`: zigzag pattern across rows, with `w`-wide steps
+/// - `SwizzleCol(w)`: zigzag pattern down columns, with `w`-wide steps
+/// - `SwizzleRow(w)`: zigzag pattern across rows, with `w`-wide steps
 ///
 /// Special cases:
-/// - `SwizzleColMajor(1)` is equivalent to `ColMajor`
-/// - `SwizzleRowMajor(1)` is equivalent to `RowMajor`
+/// - `SwizzleCol(1)` is equivalent to `ColMajor`
+/// - `SwizzleRow(1)` is equivalent to `RowMajor`
+///
+/// Swizzle modes may fail if their `w` does not divide the problem well.
 #[allow(clippy::enum_variant_names)]
 pub enum GlobalOrder {
     #[default]
     RowMajor,
     ColMajor,
-    SwizzleRowMajor(u32),
-    SwizzleColMajor(u32),
+    SwizzleRow(u32),
+    SwizzleCol(u32),
 }
 
 impl GlobalOrder {
@@ -27,51 +29,10 @@ impl GlobalOrder {
     /// - `SwizzleRowMajor(1)` becomes `RowMajor`
     pub fn canonicalize(self) -> Self {
         match self {
-            GlobalOrder::SwizzleColMajor(1) => GlobalOrder::ColMajor,
-            GlobalOrder::SwizzleRowMajor(1) => GlobalOrder::RowMajor,
+            GlobalOrder::SwizzleCol(1) => GlobalOrder::ColMajor,
+            GlobalOrder::SwizzleRow(1) => GlobalOrder::RowMajor,
             _ => self,
         }
-    }
-}
-
-#[derive(Default)]
-/// Used to create [GlobalOrder]
-#[allow(unused)]
-pub enum GlobalOrderStrategy {
-    /// It creates the default global order.
-    #[default]
-    Default,
-    /// Set a global order.
-    Fixed(GlobalOrder),
-    /// Creates swizzle row global order if possible.
-    /// Fallbacks to row global order if not possible.
-    SwizzleRow { w: u32 },
-    /// Creates swizzle col global order if possible.
-    /// Fallbacks to col global order if not possible.
-    SwizzleCol { w: u32 },
-}
-
-impl GlobalOrderStrategy {
-    pub fn into_order(self, x_cubes: u32, y_cubes: u32) -> GlobalOrder {
-        match self {
-            GlobalOrderStrategy::Default => GlobalOrder::default(),
-            GlobalOrderStrategy::Fixed(order) => order,
-            GlobalOrderStrategy::SwizzleRow { w } => {
-                if !x_cubes.is_multiple_of(w) {
-                    GlobalOrder::RowMajor
-                } else {
-                    GlobalOrder::SwizzleRowMajor(w)
-                }
-            }
-            GlobalOrderStrategy::SwizzleCol { w } => {
-                if !y_cubes.is_multiple_of(w) {
-                    GlobalOrder::ColMajor
-                } else {
-                    GlobalOrder::SwizzleColMajor(w)
-                }
-            }
-        }
-        .canonicalize()
     }
 }
 

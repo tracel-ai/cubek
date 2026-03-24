@@ -1,8 +1,6 @@
 use cubecl::{Runtime, client::ComputeClient, ir::StorageType};
 use cubecl::{features::MmaConfig, ir::VectorSize};
-use cubek_std::cube_count::{
-    CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, SmAllocation,
-};
+use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation};
 use cubek_std::stage::SwizzleMode;
 use cubek_std::{MatmulProblemSize, MatrixLayout, PartitionSize, StageSize, TileSize};
 
@@ -163,11 +161,7 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
     };
 
     let hypercube = HypercubeBlueprint::builder()
-        .global_order(
-            GlobalOrderStrategy::SwizzleRow { w: 4 },
-            problem.m as u32 / tiling_scheme.elements_per_global_partition_along_m(),
-            problem.n as u32 / tiling_scheme.elements_per_global_partition_along_n(),
-        )
+        .global_order(GlobalOrder::SwizzleRow(4))
         .cube_count_strategy(cube_count_strategy)
         .build();
 
@@ -352,11 +346,7 @@ fn selection_tiny<R: Runtime>(
     };
 
     let hypercube = HypercubeBlueprint::builder()
-        .global_order(
-            GlobalOrderStrategy::SwizzleRow { w: 2 },
-            problem.m as u32 / tiling_scheme.elements_per_global_partition_along_m(),
-            problem.n as u32 / tiling_scheme.elements_per_global_partition_along_n(),
-        )
+        .global_order(GlobalOrder::SwizzleRow(2))
         .cube_count_strategy(cube_count_strategy)
         .build();
 

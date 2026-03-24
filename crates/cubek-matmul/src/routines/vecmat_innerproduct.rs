@@ -3,7 +3,7 @@ use std::fmt::Display;
 use cubecl::{Runtime, client::ComputeClient};
 use cubek_std::{
     PartitionSize, TileSize,
-    cube_count::{CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, SmAllocation},
+    cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation},
     tile::{Filled, Strided},
 };
 
@@ -244,11 +244,7 @@ fn infer_blueprint_vecmat<R: Runtime>(
     };
 
     let hypercube = HypercubeBlueprint::builder()
-        .global_order(
-            GlobalOrderStrategy::SwizzleRow { w: 2 },
-            problem.m as u32 / tiling_scheme.elements_per_global_partition_along_m(),
-            problem.n as u32 / tiling_scheme.elements_per_global_partition_along_n(),
-        )
+        .global_order(GlobalOrder::SwizzleRow(2))
         .cube_count_strategy(cube_count_strategy)
         .build();
 

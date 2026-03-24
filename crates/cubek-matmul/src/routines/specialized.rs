@@ -5,9 +5,7 @@ use cubecl::Runtime;
 use cubecl::client::ComputeClient;
 use cubecl::features::MmaConfig;
 use cubek_std::MatrixLayout;
-use cubek_std::cube_count::{
-    CubeCountStrategy, GlobalOrderStrategy, HypercubeBlueprint, SmAllocation,
-};
+use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation};
 use cubek_std::tile::Strided;
 
 use crate::components::batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul};
@@ -214,11 +212,7 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
     };
 
     let hypercube = HypercubeBlueprint::builder()
-        .global_order(
-            GlobalOrderStrategy::SwizzleRow { w: 4 },
-            problem.m as u32 / tiling_scheme.elements_per_global_partition_along_m(),
-            problem.n as u32 / tiling_scheme.elements_per_global_partition_along_n(),
-        )
+        .global_order(GlobalOrder::SwizzleRow(4))
         .cube_count_strategy(cube_count_strategy)
         .build();
 

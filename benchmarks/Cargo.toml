@@ -29,7 +29,11 @@ half = { workspace = true }
 
 [[bench]]
 harness = false
-name = "matmul"
+name = "gemm"
+
+[[bench]]
+harness = false
+name = "vec2mat"
 
 [[bench]]
 harness = false

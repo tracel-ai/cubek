@@ -130,11 +130,11 @@ impl CubeMappingStrategy {
                 matrix_pos as u32 % m_cubes,
                 (matrix_pos / m_cubes as usize) as u32,
             ),
-            GlobalOrder::SwizzleRowMajor(w) => {
+            GlobalOrder::SwizzleRow(w) => {
                 let (x, y) = swizzle(matrix_pos, n_cubes as usize, w);
                 (y, x)
             }
-            GlobalOrder::SwizzleColMajor(w) => swizzle(matrix_pos, m_cubes as usize, w),
+            GlobalOrder::SwizzleCol(w) => swizzle(matrix_pos, m_cubes as usize, w),
         };
 
         (m_pos, n_pos, batch_pos as u32)
