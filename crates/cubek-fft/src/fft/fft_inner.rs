@@ -6,7 +6,7 @@ use cubecl::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-/// Whether doing RFFT or IRFFT. 
+/// Whether doing RFFT or IRFFT.
 pub enum FftMode {
     Forward,
     Inverse,
