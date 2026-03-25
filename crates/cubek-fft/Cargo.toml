@@ -1,0 +1,27 @@
+[package]
+authors = ["Sublime12", "louisfd"]
+categories = ["fft", "fourier-transform","mathematics", "algorithms"]
+description = "CubeK: Fast Fourier Transform"
+edition.workspace = true
+keywords = []
+license.workspace = true
+name = "cubek-fft"
+readme.workspace = true
+repository = "https://github.com/tracel-ai/cubek/tree/main/crates/cubek-fft"
+version.workspace = true
+
+[features]
+default = ["std", "cubecl/default"]
+std = ["cubecl/std"] 
+
+full = ["extended"]
+extended = []
+
+[dependencies]
+cubecl = { workspace = true }
+cubek-test-utils = { path = "./../cubek-test-utils/" }
+
+[dev-dependencies]
+num-complex = { version = "*" }
+cubecl = { workspace = true, features = ["test-runtime"] }
+cubecl-common = { workspace = true }
