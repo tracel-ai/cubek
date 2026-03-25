@@ -107,7 +107,13 @@ impl<R: Runtime, E: Float> Benchmark for FftBench<R, E> {
     }
 
     fn name(&self) -> String {
-        format!("fft{:?}-{:?}", E::as_type_native_unchecked(), self.shape,).to_lowercase()
+        format!(
+            "fft{:?}-{:?}-{:?}",
+            E::as_type_native_unchecked(),
+            self.shape,
+            self.fft_mode,
+        )
+        .to_lowercase()
     }
 
     fn sync(&self) {
@@ -130,7 +136,8 @@ fn run<R: Runtime, E: frontend::Float>(device: R::Device) {
         };
         match bench.run(TimingMethod::System) {
             Ok(val) => {
-                println!("{val}");
+                print!("Name: {}", bench.name());
+                println!("{val}\n");
             }
             Err(err) => println!("Can't run the benchmark: {err}"),
         }
