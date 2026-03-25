@@ -320,39 +320,6 @@ fn run_grid_search<R: Runtime, MP: MatmulPrecision>() {
 }
 
 #[allow(unused)]
-fn run_algos_vecmat<R: Runtime, MP: MatmulPrecision>() {
-    let client = R::client(&Default::default());
-
-    println!("Simple VecMat");
-    run::<R, MP>(
-        Default::default(),
-        Strategy::SimpleVecMat(BlueprintStrategy::Inferred(().into())),
-    );
-
-    println!("Double VecMat");
-    run::<R, MP>(
-        Default::default(),
-        Strategy::DoubleVecMat(BlueprintStrategy::Inferred(().into())),
-    );
-
-    println!("Simple Unit Min");
-    run::<R, MP>(
-        Default::default(),
-        Strategy::SimpleUnit(BlueprintStrategy::Inferred(SimpleUnitSelectionArgs {
-            tile_size: TileSizeSelection::MinTileSize,
-        })),
-    );
-
-    println!("Simple Unit Max");
-    run::<R, MP>(
-        Default::default(),
-        Strategy::SimpleUnit(BlueprintStrategy::Inferred(SimpleUnitSelectionArgs {
-            tile_size: TileSizeSelection::MaxTileSize,
-        })),
-    );
-}
-
-#[allow(unused)]
 fn run_algos_unit<R: Runtime, MP: MatmulPrecision>() {
     let client = R::client(&Default::default());
 
@@ -469,8 +436,7 @@ fn run_algos_mma<R: Runtime, MP: MatmulPrecision>() {
 fn run_benches<R: Runtime, MP: MatmulPrecision>() {
     // run_grid_search::<R, MP>();
     // run_algos_unit::<R, MP>();
-    // run_algos_wmma::<R, MP>();
-    run_algos_vecmat::<R, MP>();
+    run_algos_wmma::<R, MP>();
     // run_algos_mma::<R, MP>();
 }
 

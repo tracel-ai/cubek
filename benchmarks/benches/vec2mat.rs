@@ -7,7 +7,11 @@ use cubecl::{
 use cubek::{
     matmul::{
         definition::MatmulElems,
-        launch::{MatmulInputBinding, launch_vec2mat},
+        launch::{MatmulInputBinding, Strategy, launch_ref},
+        routines::{
+            BlueprintStrategy, TileSizeSelection, simple_unit::SimpleUnitSelectionArgs,
+            vec2mat::Vec2MatStrategy,
+        },
     },
     random::random_uniform,
 };
@@ -20,6 +24,7 @@ struct Vec2MatBench<R: Runtime> {
     device: R::Device,
     client: ComputeClient<R>,
     dtypes: MatmulElems,
+    strategy: Strategy,
 }
 
 #[derive(Clone)]
@@ -52,12 +57,13 @@ impl<R: Runtime> Benchmark for Vec2MatBench<R> {
     }
 
     fn execute(&self, inputs: Self::Input) -> Result<(), String> {
-        launch_vec2mat::launch_ref(
+        launch_ref(
+            &self.strategy,
             &self.client,
             MatmulInputBinding::Normal(inputs.lhs.binding(), self.dtypes.lhs_global),
             MatmulInputBinding::Normal(inputs.rhs.binding(), self.dtypes.rhs_global),
             inputs.out.clone().binding(),
-            &self.dtypes,
+            &mut self.dtypes.clone(),
         )
         .map_err(|err| format!("{err}"))
     }
@@ -72,7 +78,7 @@ impl<R: Runtime> Benchmark for Vec2MatBench<R> {
 }
 
 #[allow(dead_code)]
-fn run<R: Runtime, E: frontend::Float>(device: R::Device) {
+fn run<R: Runtime, E: frontend::Float>(device: &R::Device, strategy: Strategy) {
     let client = R::client(&device);
 
     let bench = Vec2MatBench::<R> {
@@ -82,6 +88,7 @@ fn run<R: Runtime, E: frontend::Float>(device: R::Device) {
         k: 8192,
         device: device.clone(),
         dtypes: MatmulElems::from_single_dtype(E::as_type_native_unchecked()),
+        strategy,
     };
     match bench.run(TimingMethod::System) {
         Ok(val) => {
@@ -91,6 +98,45 @@ fn run<R: Runtime, E: frontend::Float>(device: R::Device) {
     }
 }
 
+#[allow(unused)]
+fn run_algos_vecmat<R: Runtime, E: frontend::Float>(device: &R::Device) {
+    println!("Vec2Mat");
+    run::<R, E>(
+        device,
+        Strategy::Vec2Mat(BlueprintStrategy::Inferred(Vec2MatStrategy {
+            target_num_planes: 8,
+        })),
+    );
+
+    println!("Simple VecMat");
+    run::<R, E>(
+        device,
+        Strategy::SimpleVecMat(BlueprintStrategy::Inferred(().into())),
+    );
+
+    println!("Double VecMat");
+    run::<R, E>(
+        device,
+        Strategy::DoubleVecMat(BlueprintStrategy::Inferred(().into())),
+    );
+
+    println!("Simple Unit Min");
+    run::<R, E>(
+        device,
+        Strategy::SimpleUnit(BlueprintStrategy::Inferred(SimpleUnitSelectionArgs {
+            tile_size: TileSizeSelection::MinTileSize,
+        })),
+    );
+
+    println!("Simple Unit Max");
+    run::<R, E>(
+        device,
+        Strategy::SimpleUnit(BlueprintStrategy::Inferred(SimpleUnitSelectionArgs {
+            tile_size: TileSizeSelection::MaxTileSize,
+        })),
+    );
+}
+
 fn main() {
-    run::<cubecl::TestRuntime, f32>(Default::default());
+    run_algos_vecmat::<cubecl::TestRuntime, f32>(&Default::default());
 }
