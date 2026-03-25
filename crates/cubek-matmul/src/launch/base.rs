@@ -1,6 +1,6 @@
 use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding};
+use cubek_std::InputBinding;
 
-use crate::launch::handle::MatmulInputBinding;
 use crate::{
     definition::{MatmulElems, MatmulSetupError},
     launch::Strategy,
@@ -17,8 +17,8 @@ use crate::{
 pub fn launch_ref<R: Runtime>(
     strategy: &Strategy,
     client: &ComputeClient<R>,
-    lhs: MatmulInputBinding<R>,
-    rhs: MatmulInputBinding<R>,
+    lhs: InputBinding<R>,
+    rhs: InputBinding<R>,
     out: TensorBinding<R>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {

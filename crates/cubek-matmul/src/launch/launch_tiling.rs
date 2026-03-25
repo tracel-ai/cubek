@@ -1,7 +1,6 @@
 use crate::definition::MatmulProblem;
 use crate::definition::{AvailableVectorSizes, MatmulElems, TilingBlueprint};
 use crate::definition::{MatmulAvailabilityError, MatmulSetupError};
-use crate::launch::handle::MatmulInputBinding;
 use crate::launch::launch_kernel_concrete;
 use crate::launch::{
     ConcreteInputsFactory, ConcreteOutputFactory, InputArg, MatmulArgs, OutputArg, TensorArgs,
@@ -11,6 +10,7 @@ use crate::routines::{BlueprintStrategy, Routine};
 use cubecl::features::TypeUsage;
 use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
 use cubecl::{Runtime, client::ComputeClient, frontend::TensorBinding};
+use cubek_std::InputBinding;
 
 /// Launch a matrix multiplication kernel.
 ///
@@ -19,8 +19,8 @@ use cubecl::{Runtime, client::ComputeClient, frontend::TensorBinding};
 #[allow(clippy::result_large_err)]
 pub fn launch_ref<R: Runtime, A: Routine<()>>(
     client: &ComputeClient<R>,
-    lhs: MatmulInputBinding<R>,
-    rhs: MatmulInputBinding<R>,
+    lhs: InputBinding<R>,
+    rhs: InputBinding<R>,
     out: TensorBinding<R>,
     blueprint_strategy: &BlueprintStrategy<(), A>,
     dtypes: &mut MatmulElems,
@@ -66,8 +66,8 @@ pub fn launch_ref<R: Runtime, A: Routine<()>>(
 #[allow(clippy::result_large_err)]
 pub fn launch_ref_tma<R: Runtime, A: Routine<(), Blueprint = TilingBlueprint>>(
     client: &ComputeClient<R>,
-    lhs: MatmulInputBinding<R>,
-    rhs: MatmulInputBinding<R>,
+    lhs: InputBinding<R>,
+    rhs: InputBinding<R>,
     out: TensorBinding<R>,
     blueprint_strategy: &BlueprintStrategy<(), A>,
     dtypes: &mut MatmulElems,
@@ -113,8 +113,8 @@ pub fn launch_ref_tma<R: Runtime, A: Routine<(), Blueprint = TilingBlueprint>>(
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
 fn launch_inner_ref<R: Runtime, MA: MatmulArgs<Config = ()>, A: Routine<()>>(
     client: &ComputeClient<R>,
-    lhs: MatmulInputBinding<R>,
-    rhs: MatmulInputBinding<R>,
+    lhs: InputBinding<R>,
+    rhs: InputBinding<R>,
     out: TensorBinding<R>,
     blueprint_strategy: &BlueprintStrategy<(), A>,
     vector_sizes: AvailableVectorSizes,

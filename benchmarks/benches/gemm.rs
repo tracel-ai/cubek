@@ -14,7 +14,7 @@ use cubek::{
             LoadingPrecomputeStrategy, MatmulElems, MatmulPrecision, MatmulProblem,
             TilingBlueprint, TilingScheme,
         },
-        launch::{MatmulInputBinding, Strategy},
+        launch::{InputBinding, Strategy},
         routines::{
             BlueprintStrategy, TileSizeSelection, double_buffering::DoubleBufferingArgs,
             double_unit::DoubleUnitSelectionArgs, ordered_double_buffering::OrderedSelectionArgs,
@@ -88,8 +88,8 @@ impl<R: Runtime> Benchmark for GemmBench<R> {
         match launch_ref(
             &self.strategy,
             &self.client,
-            MatmulInputBinding::Normal(lhs.binding(), self.dtypes.lhs_global),
-            MatmulInputBinding::Normal(rhs.binding(), self.dtypes.lhs_global),
+            InputBinding::Normal(lhs.binding(), self.dtypes.lhs_global),
+            InputBinding::Normal(rhs.binding(), self.dtypes.lhs_global),
             out.clone().binding(),
             &mut self.dtypes.clone(),
         ) {

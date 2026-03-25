@@ -13,10 +13,9 @@ use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_matmul::{
     components::tile::{cmma::CmmaMatmul, mma::MmaMatmul},
     definition::{AvailableVectorSizes, MatmulElems, MatmulSetupError},
-    launch::MatmulInputBinding,
     routines::BlueprintStrategy,
 };
-use cubek_std::{MatrixLayout, tile::Strided};
+use cubek_std::{InputBinding, MatrixLayout, tile::Strided};
 use derive_new::new;
 
 macro_rules! with_tile_kind {
@@ -46,8 +45,8 @@ macro_rules! with_tile_kind {
 pub fn launch_ref<R: Runtime, const N_SPATIAL: usize>(
     strategy: &Strategy,
     client: &ComputeClient<R>,
-    out_grad: MatmulInputBinding<R>,
-    weights: MatmulInputBinding<R>,
+    out_grad: InputBinding<R>,
+    weights: InputBinding<R>,
     in_grad: TensorBinding<R>,
     args: ConvolutionArgs<N_SPATIAL>,
     dtypes: MatmulElems,
@@ -75,8 +74,8 @@ pub fn launch_ref<R: Runtime, const N_SPATIAL: usize>(
 #[derive(new)]
 struct BackwardsData<'a, R: Runtime, const N_SPATIAL: usize> {
     client: &'a ComputeClient<R>,
-    out_grad: MatmulInputBinding<R>,
-    weights: MatmulInputBinding<R>,
+    out_grad: InputBinding<R>,
+    weights: InputBinding<R>,
     in_grad: TensorBinding<R>,
     args: ConvolutionArgs<N_SPATIAL>,
     dtypes: MatmulElems,
@@ -116,8 +115,8 @@ impl<'a, R: Runtime, const N_SPATIAL: usize> BackwardsData<'a, R, N_SPATIAL> {
 #[allow(clippy::too_many_arguments)]
 fn launch_with_algorithm<R: Runtime, Alg: Algorithm>(
     client: &ComputeClient<R>,
-    out_grad: MatmulInputBinding<R>,
-    weights: MatmulInputBinding<R>,
+    out_grad: InputBinding<R>,
+    weights: InputBinding<R>,
     in_grad: TensorBinding<R>,
     (stride, padding, dilation): (&[usize], &[usize], &[usize]),
     dimensionality: Dimensionality,
@@ -201,8 +200,8 @@ where
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
 pub fn launch_kernel<R: Runtime, Alg: Algorithm>(
     client: &ComputeClient<R>,
-    out_grad: MatmulInputBinding<R>,
-    weights: MatmulInputBinding<R>,
+    out_grad: InputBinding<R>,
+    weights: InputBinding<R>,
     in_grad: TensorBinding<R>,
     problem: ConvolutionProblem,
     blueprint_strategy: &BlueprintStrategy<RuntimeArgs, Alg::Routine>,

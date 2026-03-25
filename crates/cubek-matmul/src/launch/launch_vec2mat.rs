@@ -2,13 +2,12 @@
 use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
 use cubecl::zspace::shape;
 use cubecl::{VectorizationError, prelude::*};
-use cubek_std::MatrixLayout;
+use cubek_std::{InputBinding, MatrixLayout};
 
 use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError};
 use crate::definition::{MatmulVectorSizes, cube_mapping_launch};
 
 use crate::launch::InputArg;
-use crate::launch::handle::MatmulInputBinding;
 use crate::launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs};
 use crate::routines::vec2mat::{Vec2MatRoutine, Vec2MatStrategy};
 use crate::routines::{BlueprintStrategy, Routine as _};
@@ -16,8 +15,8 @@ use crate::routines::{BlueprintStrategy, Routine as _};
 #[allow(clippy::result_large_err)]
 pub fn launch_ref<R: Runtime>(
     client: &ComputeClient<R>,
-    lhs: MatmulInputBinding<R>,
-    rhs: MatmulInputBinding<R>,
+    lhs: InputBinding<R>,
+    rhs: InputBinding<R>,
     out: TensorBinding<R>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
@@ -58,10 +57,10 @@ pub fn launch_ref<R: Runtime>(
         .max()
         .ok_or(VectorizationError::NoValidVectorization)?;
 
-    if let MatmulInputBinding::Quantized { scheme, .. } = lhs {
+    if let InputBinding::Quantized { scheme, .. } = lhs {
         lhs_vector_size *= scheme.num_quants();
     }
-    if let MatmulInputBinding::Quantized { scheme, .. } = rhs {
+    if let InputBinding::Quantized { scheme, .. } = rhs {
         rhs_vector_size *= scheme.num_quants();
     }
 

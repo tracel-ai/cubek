@@ -12,7 +12,7 @@ use cubek_convolution::{
 };
 use cubek_matmul::{
     definition::{AvailableVectorSizes, MatmulSetupError},
-    launch::MatmulInputBinding,
+    launch::InputBinding,
 };
 use cubek_matmul::{
     definition::{MatmulElems, MatmulIdent, TilingBlueprint},
@@ -126,9 +126,9 @@ where
     .unwrap();
 
     let lhs_handle =
-        MatmulInputBinding::new(lhs_handle, P::EG::as_type_native_unchecked().storage_type());
+        InputBinding::new(lhs_handle, P::EG::as_type_native_unchecked().storage_type());
     let rhs_handle =
-        MatmulInputBinding::new(rhs_handle, P::EG::as_type_native_unchecked().storage_type());
+        InputBinding::new(rhs_handle, P::EG::as_type_native_unchecked().storage_type());
 
     let (inputs, runtime_args) = <InputArg<A::Args> as ConcreteInputsFactory<A::Routine>>::create(
         lhs_handle,

@@ -12,7 +12,7 @@ use cubecl_common::quant::scheme::{QuantScheme, QuantStore, QuantValue};
 
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
-pub enum MatmulInputBinding<R: Runtime> {
+pub enum InputBinding<R: Runtime> {
     Normal(TensorBinding<R>, StorageType),
     Quantized {
         data: TensorBinding<R>,
@@ -25,7 +25,7 @@ pub enum MatmulInputBinding<R: Runtime> {
     },
 }
 
-impl<R: Runtime> Clone for MatmulInputBinding<R> {
+impl<R: Runtime> Clone for InputBinding<R> {
     fn clone(&self) -> Self {
         match self {
             Self::Normal(arg0, arg1) => Self::Normal(arg0.clone(), *arg1),
@@ -48,7 +48,7 @@ impl<R: Runtime> Clone for MatmulInputBinding<R> {
     }
 }
 
-impl<R: Runtime> MatmulInputBinding<R> {
+impl<R: Runtime> InputBinding<R> {
     pub fn new(data: TensorBinding<R>, dtype: StorageType) -> Self {
         Self::Normal(data, dtype)
     }
@@ -117,50 +117,50 @@ impl<R: Runtime> MatmulInputBinding<R> {
 
     pub fn data(&self) -> &TensorBinding<R> {
         match self {
-            MatmulInputBinding::Normal(handle, ..) => handle,
-            MatmulInputBinding::Quantized { data, .. } => data,
+            InputBinding::Normal(handle, ..) => handle,
+            InputBinding::Quantized { data, .. } => data,
         }
     }
 
     pub fn data_elem_size(&self) -> usize {
         match self {
-            MatmulInputBinding::Normal(_, ty) => ty.size(),
-            MatmulInputBinding::Quantized { data_dtype, .. } => data_dtype.size(),
+            InputBinding::Normal(_, ty) => ty.size(),
+            InputBinding::Quantized { data_dtype, .. } => data_dtype.size(),
         }
     }
 
     pub fn into_data(self) -> TensorBinding<R> {
         match self {
-            MatmulInputBinding::Normal(handle, ..) => handle,
-            MatmulInputBinding::Quantized { data, .. } => data,
+            InputBinding::Normal(handle, ..) => handle,
+            InputBinding::Quantized { data, .. } => data,
         }
     }
 
     pub fn data_mut(&mut self) -> &mut TensorBinding<R> {
         match self {
-            MatmulInputBinding::Normal(handle, ..) => handle,
-            MatmulInputBinding::Quantized { data, .. } => data,
+            InputBinding::Normal(handle, ..) => handle,
+            InputBinding::Quantized { data, .. } => data,
         }
     }
 
     pub fn scale(&self) -> Option<&TensorBinding<R>> {
         match self {
-            MatmulInputBinding::Normal(..) => None,
-            MatmulInputBinding::Quantized { scale, .. } => Some(scale),
+            InputBinding::Normal(..) => None,
+            InputBinding::Quantized { scale, .. } => Some(scale),
         }
     }
 
     pub fn scheme(&self) -> Option<&QuantScheme> {
         match self {
-            MatmulInputBinding::Normal(..) => None,
-            MatmulInputBinding::Quantized { scheme, .. } => Some(scheme),
+            InputBinding::Normal(..) => None,
+            InputBinding::Quantized { scheme, .. } => Some(scheme),
         }
     }
 
     pub fn shape(&self) -> &Shape {
         match self {
-            MatmulInputBinding::Normal(handle, ..) => &handle.shape,
-            MatmulInputBinding::Quantized { shape, .. } => shape,
+            InputBinding::Normal(handle, ..) => &handle.shape,
+            InputBinding::Quantized { shape, .. } => shape,
         }
     }
 
@@ -226,8 +226,8 @@ impl<R: Runtime> MatmulInputBinding<R> {
 
     pub fn required_address_type(&self) -> AddressType {
         match self {
-            MatmulInputBinding::Normal(handle, ty) => handle.required_address_type(ty.size()),
-            MatmulInputBinding::Quantized {
+            InputBinding::Normal(handle, ty) => handle.required_address_type(ty.size()),
+            InputBinding::Quantized {
                 data,
                 shape,
                 scheme,

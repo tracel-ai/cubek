@@ -17,7 +17,7 @@ use cubek_matmul::{
     launch::*,
     routines::Routine,
 };
-use cubek_std::{MatrixLayout, stage::SwizzleMode};
+use cubek_std::{InputBinding, MatrixLayout, stage::SwizzleMode};
 use enumset::EnumSet;
 
 use crate::components::{
@@ -94,9 +94,9 @@ impl<A: Routine<RuntimeArgs, Blueprint = TilingBlueprint>> ConcreteArgs<A>
 pub trait ConcreteInputsFactory<A: Routine<RuntimeArgs>>: LaunchArg {
     #[allow(clippy::too_many_arguments)]
     fn create<R: Runtime>(
-        lhs: MatmulInputBinding<R>,
-        rhs: MatmulInputBinding<R>,
-        bias: Option<MatmulInputBinding<R>>,
+        lhs: InputBinding<R>,
+        rhs: InputBinding<R>,
+        bias: Option<InputBinding<R>>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
         dtypes: &MatmulElems,
@@ -118,9 +118,9 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<Runti
     ConcreteInputsFactory<A> for TensorInputs<Lhs, Rhs, EO>
 {
     fn create<R: Runtime>(
-        lhs: MatmulInputBinding<R>,
-        rhs: MatmulInputBinding<R>,
-        bias: Option<MatmulInputBinding<R>>,
+        lhs: InputBinding<R>,
+        rhs: InputBinding<R>,
+        bias: Option<InputBinding<R>>,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
         _dtypes: &MatmulElems,
@@ -210,9 +210,9 @@ impl<
 > ConcreteInputsFactory<A> for TensorMapInputs<Lhs, Rhs, EO>
 {
     fn create<R: Runtime>(
-        lhs: MatmulInputBinding<R>,
-        rhs: MatmulInputBinding<R>,
-        bias: Option<MatmulInputBinding<R>>,
+        lhs: InputBinding<R>,
+        rhs: InputBinding<R>,
+        bias: Option<InputBinding<R>>,
         blueprint: &TilingBlueprint,
         problem: &ConvolutionProblem,
         dtypes: &MatmulElems,

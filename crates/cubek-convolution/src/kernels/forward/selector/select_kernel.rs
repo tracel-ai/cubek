@@ -9,9 +9,10 @@ use cubek_matmul::{
     routines::Routine,
 };
 use cubek_matmul::{
-    launch::{InputArg, MatmulInputBinding, OutputArg},
+    launch::{InputArg, OutputArg},
     routines::BlueprintStrategy,
 };
+use cubek_std::InputBinding;
 
 use crate::components::{ConvSetupError, ConvolutionProblem};
 
@@ -21,9 +22,9 @@ use crate::components::{ConvSetupError, ConvolutionProblem};
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
 pub fn launch_kernel_concrete<R: Runtime, Args: ConcreteArgs<A>, A: Routine<RuntimeArgs>>(
     client: &ComputeClient<R>,
-    input: MatmulInputBinding<R>,
-    weight: MatmulInputBinding<R>,
-    bias: Option<MatmulInputBinding<R>>,
+    input: InputBinding<R>,
+    weight: InputBinding<R>,
+    bias: Option<InputBinding<R>>,
     out: TensorBinding<R>,
     problem: ConvolutionProblem,
     vector_sizes: MatmulVectorSizes,
@@ -32,10 +33,10 @@ pub fn launch_kernel_concrete<R: Runtime, Args: ConcreteArgs<A>, A: Routine<Runt
 ) -> Result<(), ConvSetupError> {
     let mut view_vector_sizes = vector_sizes;
 
-    if let MatmulInputBinding::Quantized { scheme, .. } = input {
+    if let InputBinding::Quantized { scheme, .. } = input {
         view_vector_sizes.lhs *= scheme.num_quants();
     }
-    if let MatmulInputBinding::Quantized { scheme, .. } = weight {
+    if let InputBinding::Quantized { scheme, .. } = weight {
         view_vector_sizes.rhs *= scheme.num_quants();
     }
 

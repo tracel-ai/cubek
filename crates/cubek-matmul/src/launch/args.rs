@@ -10,7 +10,7 @@ use cubecl::{
     zspace::{metadata::Metadata, shape, strides},
 };
 use cubecl::{server::TensorMapMeta, unexpanded};
-use cubek_std::{MatrixLayout, stage::SwizzleMode};
+use cubek_std::{InputBinding, MatrixLayout, stage::SwizzleMode};
 
 use crate::components::global::memory::{
     BatchLayout, BatchLayoutLaunch, GlobalLayout, GlobalLayoutConfig, GlobalLayoutLaunch,
@@ -18,7 +18,6 @@ use crate::components::global::memory::{
     SimpleTmaGlobalLayoutLaunch,
 };
 use crate::definition::{Blueprint as _, MatmulElems, MatmulProblem, MatmulVectorSizes};
-use crate::launch::handle::MatmulInputBinding;
 use crate::routines::Routine;
 
 define_scalar!(pub Lhs);
@@ -55,8 +54,8 @@ pub type BatchedCoords = (usize, u32, u32);
 pub trait ConcreteInputsFactory<A: Routine<()>>: LaunchArg {
     #[allow(clippy::too_many_arguments)]
     fn create<R: Runtime>(
-        lhs: MatmulInputBinding<R>,
-        rhs: MatmulInputBinding<R>,
+        lhs: InputBinding<R>,
+        rhs: InputBinding<R>,
         blueprint: &A::Blueprint,
         problem: &MatmulProblem,
         vector_sizes: &MatmulVectorSizes,
@@ -191,50 +190,49 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc: CubePrimitive, A: Routine<()>>
     ConcreteInputsFactory<A> for TensorInputs<Lhs, Rhs, Acc>
 {
     fn create<R: Runtime>(
-        lhs: MatmulInputBinding<R>,
-        rhs: MatmulInputBinding<R>,
+        lhs: InputBinding<R>,
+        rhs: InputBinding<R>,
         blueprint: &A::Blueprint,
         problem: &MatmulProblem,
         vector_sizes: &MatmulVectorSizes,
         _dtypes: &MatmulElems,
     ) -> Self::RuntimeArg<R> {
-        let view =
-            |handle: MatmulInputBinding<R>, config: GlobalLayoutConfig, vector_size| match handle {
-                MatmulInputBinding::Normal(handle, _dtype) => {
-                    let layout = GlobalLayoutLaunch::from_handle(&handle, vector_size, config);
-                    ViewArg::new_tensor::<GlobalLayout>(handle.into_tensor_arg(), layout)
-                }
-                MatmulInputBinding::Quantized {
-                    data,
-                    scale,
-                    shape,
+        let view = |handle: InputBinding<R>, config: GlobalLayoutConfig, vector_size| match handle {
+            InputBinding::Normal(handle, _dtype) => {
+                let layout = GlobalLayoutLaunch::from_handle(&handle, vector_size, config);
+                ViewArg::new_tensor::<GlobalLayout>(handle.into_tensor_arg(), layout)
+            }
+            InputBinding::Quantized {
+                data,
+                scale,
+                shape,
+                scheme,
+                ..
+            } => {
+                let (data_layout, scales_layout) = GlobalLayoutLaunch::from_quantized_handle(
+                    &data,
+                    &scale,
+                    &shape,
+                    problem,
                     scheme,
-                    ..
-                } => {
-                    let (data_layout, scales_layout) = GlobalLayoutLaunch::from_quantized_handle(
-                        &data,
-                        &scale,
-                        &shape,
-                        problem,
-                        scheme,
-                        vector_size,
-                        config,
-                    );
-                    let data_view =
-                        ViewArg::new_tensor::<GlobalLayout>(data.into_tensor_arg(), data_layout);
-                    let scales_view = ViewArg::new_tensor::<GlobalScaleLayout>(
-                        scale.into_tensor_arg(),
-                        scales_layout,
-                    );
-                    ViewArg::new_quantized(data_view, scales_view, scheme)
-                }
-            };
-        let batch_layout = |handle: &MatmulInputBinding<R>| match handle {
-            MatmulInputBinding::Normal(handle, _dtype) => {
+                    vector_size,
+                    config,
+                );
+                let data_view =
+                    ViewArg::new_tensor::<GlobalLayout>(data.into_tensor_arg(), data_layout);
+                let scales_view = ViewArg::new_tensor::<GlobalScaleLayout>(
+                    scale.into_tensor_arg(),
+                    scales_layout,
+                );
+                ViewArg::new_quantized(data_view, scales_view, scheme)
+            }
+        };
+        let batch_layout = |handle: &InputBinding<R>| match handle {
+            InputBinding::Normal(handle, _dtype) => {
                 let layout = BatchLayoutLaunch::from_handle(handle, problem);
                 VirtualLayoutLaunch::new::<BatchLayout>(layout)
             }
-            MatmulInputBinding::Quantized { .. } => {
+            InputBinding::Quantized { .. } => {
                 VirtualLayoutLaunch::new::<NoopLayout>(NoopLayoutLaunch::new())
             }
         };
@@ -384,8 +382,8 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<()>>
     ConcreteInputsFactory<A> for TensorMapInputs<Lhs, Rhs, EO>
 {
     fn create<R: Runtime>(
-        lhs_handle: MatmulInputBinding<R>,
-        rhs_handle: MatmulInputBinding<R>,
+        lhs_handle: InputBinding<R>,
+        rhs_handle: InputBinding<R>,
         blueprint: &A::Blueprint,
         problem: &MatmulProblem,
         _vector_sizes: &MatmulVectorSizes,

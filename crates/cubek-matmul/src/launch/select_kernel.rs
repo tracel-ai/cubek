@@ -2,7 +2,6 @@ use crate::definition::MatmulProblem;
 use crate::definition::MatmulSetupError;
 use crate::definition::MatmulVectorSizes;
 use crate::definition::cube_mapping_launch;
-use crate::launch::handle::MatmulInputBinding;
 use crate::launch::{
     ConcreteInputsFactory, ConcreteOutputFactory, InputArg, InputRuntimeArg, MatmulArgs, OutputArg,
     OutputRuntimeArg,
@@ -12,6 +11,7 @@ use crate::routines::{BlueprintStrategy, Routine};
 use crate::{definition::MatmulElems, launch::ConfigRuntimeArg};
 use cubecl::prelude::TensorBinding;
 use cubecl::{Runtime, client::ComputeClient};
+use cubek_std::InputBinding;
 
 /// Select which kernel to launch for the given Algorithm.
 ///
@@ -19,8 +19,8 @@ use cubecl::{Runtime, client::ComputeClient};
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
 pub fn launch_kernel_concrete<MA: MatmulArgs<Config = ()>, R: Runtime, A: Routine<()>>(
     client: &ComputeClient<R>,
-    lhs: MatmulInputBinding<R>,
-    rhs: MatmulInputBinding<R>,
+    lhs: InputBinding<R>,
+    rhs: InputBinding<R>,
     out: TensorBinding<R>,
     problem: MatmulProblem,
     vector_sizes: MatmulVectorSizes,
@@ -33,10 +33,10 @@ where
 {
     let mut view_vector_sizes = vector_sizes;
 
-    if let MatmulInputBinding::Quantized { scheme, .. } = lhs {
+    if let InputBinding::Quantized { scheme, .. } = lhs {
         view_vector_sizes.lhs *= scheme.num_quants();
     }
-    if let MatmulInputBinding::Quantized { scheme, .. } = rhs {
+    if let InputBinding::Quantized { scheme, .. } = rhs {
         view_vector_sizes.rhs *= scheme.num_quants();
     }
 

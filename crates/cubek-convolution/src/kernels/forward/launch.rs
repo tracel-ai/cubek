@@ -11,12 +11,12 @@ use crate::{
 };
 use crate::{components::ConvSetupError, kernels::forward::selector::launch_kernel_concrete};
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
-use cubek_matmul::launch::MatmulInputBinding;
 use cubek_matmul::routines::BlueprintStrategy;
 use cubek_matmul::{
     components::tile::{cmma::CmmaMatmul, mma::MmaMatmul},
     definition::{AvailableVectorSizes, MatmulElems},
 };
+use cubek_std::InputBinding;
 use cubek_std::{MatrixLayout, tile::Strided};
 use derive_new::new;
 
@@ -47,9 +47,9 @@ macro_rules! with_tile_kind {
 pub fn launch_ref<R: Runtime, const N_SPATIAL: usize>(
     strategy: &Strategy,
     client: &ComputeClient<R>,
-    input: MatmulInputBinding<R>,
-    weight: MatmulInputBinding<R>,
-    bias: Option<MatmulInputBinding<R>>,
+    input: InputBinding<R>,
+    weight: InputBinding<R>,
+    bias: Option<InputBinding<R>>,
     out: TensorBinding<R>,
     args: ConvolutionArgs<N_SPATIAL>,
     dtypes: MatmulElems,
@@ -74,9 +74,9 @@ pub fn launch_ref<R: Runtime, const N_SPATIAL: usize>(
 #[derive(new)]
 struct Convolution<'a, R: Runtime, const N_SPATIAL: usize> {
     client: &'a ComputeClient<R>,
-    input: MatmulInputBinding<R>,
-    weight: MatmulInputBinding<R>,
-    bias: Option<MatmulInputBinding<R>>,
+    input: InputBinding<R>,
+    weight: InputBinding<R>,
+    bias: Option<InputBinding<R>>,
     out: TensorBinding<R>,
     args: ConvolutionArgs<N_SPATIAL>,
     dtypes: MatmulElems,
@@ -117,9 +117,9 @@ impl<'a, R: Runtime, const N_SPATIAL: usize> Convolution<'a, R, N_SPATIAL> {
 #[allow(clippy::too_many_arguments)]
 fn launch_with_algorithm<R: Runtime, Alg: Algorithm>(
     client: &ComputeClient<R>,
-    input: MatmulInputBinding<R>,
-    weight: MatmulInputBinding<R>,
-    bias: Option<MatmulInputBinding<R>>,
+    input: InputBinding<R>,
+    weight: InputBinding<R>,
+    bias: Option<InputBinding<R>>,
     out: TensorBinding<R>,
     (stride, padding, dilation): (&[usize], &[usize], &[usize]),
     dimensionality: Dimensionality,
@@ -205,9 +205,9 @@ where
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
 pub fn launch_kernel<R: Runtime, Alg: Algorithm>(
     client: &ComputeClient<R>,
-    input: MatmulInputBinding<R>,
-    weight: MatmulInputBinding<R>,
-    bias: Option<MatmulInputBinding<R>>,
+    input: InputBinding<R>,
+    weight: InputBinding<R>,
+    bias: Option<InputBinding<R>>,
     out: TensorBinding<R>,
     problem: ConvolutionProblem,
     blueprint_strategy: &BlueprintStrategy<RuntimeArgs, Alg::Routine>,

@@ -8,7 +8,7 @@ use cubek_matmul::launch::launch_naive;
 use crate::suite::layout_to_stride_spec;
 use cubek_matmul::definition::MatmulGlobalElems;
 use cubek_matmul::definition::{MatmulElems, MatmulIdent, MatmulProblem};
-use cubek_matmul::launch::MatmulInputBinding;
+use cubek_std::InputBinding;
 use cubek_matmul::routines::naive;
 use cubek_std::MatrixLayout;
 use cubek_test_utils::{BaseInputSpec, DataKind, Distribution, TestInput};
@@ -186,8 +186,8 @@ fn test_naive(case: MatmulTestCase) {
     )
     .generate_without_host_data();
 
-    let lhs_handle = MatmulInputBinding::Normal(lhs.binding(), problem.global_dtypes.lhs);
-    let rhs_handle = MatmulInputBinding::Normal(rhs.binding(), problem.global_dtypes.rhs);
+    let lhs_handle = InputBinding::Normal(lhs.binding(), problem.global_dtypes.lhs);
+    let rhs_handle = InputBinding::Normal(rhs.binding(), problem.global_dtypes.rhs);
     let out_handle = out.clone().binding();
 
     let all_elems = MatmulElems::from_globals(&problem.global_dtypes.clone());

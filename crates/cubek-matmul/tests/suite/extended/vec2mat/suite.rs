@@ -11,7 +11,7 @@ use crate::suite::launcher::{InputRepresentation, test_matmul_algorithm};
 use crate::suite::layout_to_stride_spec;
 use cubek_matmul::definition::MatmulGlobalElems;
 use cubek_matmul::definition::{MatmulElems, MatmulIdent, MatmulProblem};
-use cubek_matmul::launch::MatmulInputBinding;
+use cubek_std::InputBinding;
 use cubek_std::MatrixLayout;
 use cubek_test_utils::{BaseInputSpec, DataKind, Distribution, TestInput};
 

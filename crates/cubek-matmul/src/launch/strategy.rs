@@ -1,6 +1,7 @@
 use std::fmt::Display;
 
 use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding};
+use cubek_std::InputBinding;
 
 use crate::{
     components::{
@@ -13,7 +14,7 @@ use crate::{
         tile::{cmma::CmmaMatmul, mma::MmaMatmul},
     },
     definition::{MatmulElems, MatmulSetupError},
-    launch::{handle::MatmulInputBinding, launch_naive, launch_tiling, launch_vec2mat},
+    launch::{launch_naive, launch_tiling, launch_vec2mat},
     routines::{
         BlueprintStrategy,
         double_buffering::{
@@ -322,8 +323,8 @@ impl Strategy {
     pub(crate) fn launch_ref<R: Runtime>(
         &self,
         client: &ComputeClient<R>,
-        lhs: MatmulInputBinding<R>,
-        rhs: MatmulInputBinding<R>,
+        lhs: InputBinding<R>,
+        rhs: InputBinding<R>,
         out: TensorBinding<R>,
         dtypes: &mut MatmulElems,
     ) -> Result<(), MatmulSetupError> {
@@ -447,8 +448,8 @@ impl Strategy {
 
 fn auto<R: Runtime>(
     client: &ComputeClient<R>,
-    lhs: MatmulInputBinding<R>,
-    rhs: MatmulInputBinding<R>,
+    lhs: InputBinding<R>,
+    rhs: InputBinding<R>,
     out: TensorBinding<R>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {

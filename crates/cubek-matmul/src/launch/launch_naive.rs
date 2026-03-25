@@ -4,12 +4,12 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
 use cubecl::tensor_vector_size_parallel;
+use cubek_std::InputBinding;
 
 use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError};
 use crate::definition::{MatmulVectorSizes, cube_mapping_launch};
 
 use crate::launch::InputArg;
-use crate::launch::handle::MatmulInputBinding;
 use crate::launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs};
 use crate::routines::naive::NaiveRoutine;
 use crate::routines::{BlueprintStrategy, Routine as _};
@@ -17,8 +17,8 @@ use crate::routines::{BlueprintStrategy, Routine as _};
 #[allow(clippy::result_large_err)]
 pub fn launch_ref<R: Runtime>(
     client: &ComputeClient<R>,
-    lhs: MatmulInputBinding<R>,
-    rhs: MatmulInputBinding<R>,
+    lhs: InputBinding<R>,
+    rhs: InputBinding<R>,
     out: TensorBinding<R>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
@@ -38,13 +38,13 @@ pub fn launch_ref<R: Runtime>(
     // we swap the dimensions to achieve memory-coalescing:
     // consecutive elements of a column in the original rhs tensor will now be stored
     // consecutively in memory, which allows to fetch them with fewer memory instructions
-    let correct_rhs_layout = |mut rhs: MatmulInputBinding<R>| {
+    let correct_rhs_layout = |mut rhs: InputBinding<R>| {
         rhs.swap_dims(dim1, dim2);
         let mut rhs = rhs.into_contiguous(client)?;
 
         rhs.swap_dims(dim1, dim2);
 
-        let returned: Result<MatmulInputBinding<R>, LaunchError> = Ok(rhs);
+        let returned: Result<InputBinding<R>, LaunchError> = Ok(rhs);
         returned
     };
 
@@ -87,10 +87,10 @@ pub fn launch_ref<R: Runtime>(
 
     let mut view_vector_sizes = vector_sizes;
 
-    if let MatmulInputBinding::Quantized { scheme, .. } = lhs {
+    if let InputBinding::Quantized { scheme, .. } = lhs {
         view_vector_sizes.lhs *= scheme.num_quants();
     }
-    if let MatmulInputBinding::Quantized { scheme, .. } = rhs {
+    if let InputBinding::Quantized { scheme, .. } = rhs {
         view_vector_sizes.rhs *= scheme.num_quants();
     }
 

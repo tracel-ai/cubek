@@ -7,7 +7,7 @@ use cubecl::{
 use cubek::{
     matmul::{
         definition::MatmulElems,
-        launch::{MatmulInputBinding, Strategy, launch_ref},
+        launch::{InputBinding, Strategy, launch_ref},
         routines::{
             BlueprintStrategy, TileSizeSelection, simple_unit::SimpleUnitSelectionArgs,
             vec2mat::Vec2MatStrategy,
@@ -60,8 +60,8 @@ impl<R: Runtime> Benchmark for Vec2MatBench<R> {
         launch_ref(
             &self.strategy,
             &self.client,
-            MatmulInputBinding::Normal(inputs.lhs.binding(), self.dtypes.lhs_global),
-            MatmulInputBinding::Normal(inputs.rhs.binding(), self.dtypes.rhs_global),
+            InputBinding::Normal(inputs.lhs.binding(), self.dtypes.lhs_global),
+            InputBinding::Normal(inputs.rhs.binding(), self.dtypes.rhs_global),
             inputs.out.clone().binding(),
             &mut self.dtypes.clone(),
         )
