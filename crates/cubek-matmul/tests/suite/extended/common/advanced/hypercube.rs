@@ -2,20 +2,14 @@
 pub mod row_fp {
     use super::*;
     use cubek_matmul::definition::{MatmulProblem, TilingScheme};
-    use cubek_std::cube_count::{
-        CubeCountStrategy, GlobalOrder, GlobalOrderStrategy, HypercubeBlueprint,
-    };
+    use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint};
 
     fn hypercube_blueprint(
         tiling_scheme: &TilingScheme,
         problem: &MatmulProblem,
     ) -> HypercubeBlueprint {
         HypercubeBlueprint::builder()
-            .global_order(
-                GlobalOrderStrategy::Fixed(GlobalOrder::RowMajor),
-                problem.m as u32 / tiling_scheme.elements_per_global_partition_along_m(),
-                problem.n as u32 / tiling_scheme.elements_per_global_partition_along_n(),
-            )
+            .global_order(GlobalOrder::RowMajor)
             .cube_count_strategy(CubeCountStrategy::FromProblem)
             .build()
     }
@@ -27,20 +21,14 @@ pub mod row_fp {
 mod swizzlecol_fp {
     use super::*;
     use cubek_matmul::definition::TilingScheme;
-    use cubek_std::cube_count::{
-        CubeCountStrategy, GlobalOrder, GlobalOrderStrategy, HypercubeBlueprint,
-    };
+    use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint};
 
     fn hypercube_blueprint(
         tiling_scheme: &TilingScheme,
         problem: &MatmulProblem,
     ) -> HypercubeBlueprint {
         HypercubeBlueprint::builder()
-            .global_order(
-                GlobalOrderBlueprint::Fixed(GlobalOrder::SwizzleColMajor(2)),
-                problem.m as u32 / tiling_scheme.elements_per_global_partition_along_m(),
-                problem.n as u32 / tiling_scheme.elements_per_global_partition_along_n(),
-            )
+            .global_order(GlobalOrder::SwizzleCol(2))
             .cube_count_strategy(CubeCountStrategy::FromProblem)
             .build()
     }
@@ -52,16 +40,14 @@ mod swizzlecol_fp {
 mod col_fl {
     use super::*;
     use cubek_matmul::definition::TilingScheme;
-    use cubek_std::cube_count::{
-        CubeCountStrategy, GlobalOrder, GlobalOrderStrategy, HypercubeBlueprint,
-    };
+    use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint};
 
     fn hypercube_blueprint(
         tiling_scheme: &TilingScheme,
         problem: &MatmulProblem,
     ) -> HypercubeBlueprint {
         HypercubeBlueprint::builder()
-            .global_order_strategy(GlobalOrderBlueprint::Fixed(GlobalOrder::ColMajor))
+            .global_order(GlobalOrder::ColMajor)
             .cube_count_strategy(CubeCountStrategy::Flattened)
             .build()
     }
@@ -73,20 +59,14 @@ mod col_fl {
 mod swizzlerow_fl {
     use super::*;
     use cubek_matmul::definition::TilingScheme;
-    use cubek_std::cube_count::{
-        CubeCountStrategy, GlobalOrder, GlobalOrderStrategy, HypercubeBlueprint,
-    };
+    use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint};
 
     fn hypercube_blueprint(
         tiling_scheme: &TilingScheme,
         problem: &MatmulProblem,
     ) -> HypercubeBlueprint {
         HypercubeBlueprint::builder()
-            .global_order(
-                GlobalOrderBlueprint::Fixed(GlobalOrder::SwizzleRowMajor(2)),
-                problem.m as u32 / tiling_scheme.elements_per_global_partition_along_m(),
-                problem.n as u32 / tiling_scheme.elements_per_global_partition_along_n(),
-            )
+            .global_order(GlobalOrder::SwizzleRow(2))
             .cube_count_strategy(CubeCountStrategy::Flattened)
             .build()
     }
@@ -98,20 +78,14 @@ mod swizzlerow_fl {
 mod row_sm_exact {
     use super::*;
     use cubek_matmul::definition::TilingScheme;
-    use cubek_std::cube_count::{
-        CubeCountStrategy, GlobalOrder, GlobalOrderStrategy, HypercubeBlueprint,
-    };
+    use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint};
 
     fn hypercube_blueprint(
         tiling_scheme: &TilingScheme,
         problem: &MatmulProblem,
     ) -> HypercubeBlueprint {
         HypercubeBlueprint::builder()
-            .global_order(
-                GlobalOrderBlueprint::Fixed(GlobalOrder::RowMajor),
-                problem.m as u32 / tiling_scheme.elements_per_global_partition_along_m(),
-                problem.n as u32 / tiling_scheme.elements_per_global_partition_along_n(),
-            )
+            .global_order(GlobalOrder::RowMajor)
             .cube_count_strategy(CubeCountStrategy::Sm {
                 num_sms: 4,
                 sm_usage: SmAllocation::Exact,
@@ -127,20 +101,14 @@ mod row_sm_exact {
 mod swizzlecol_sm_exact {
     use super::*;
     use cubek_matmul::definition::TilingScheme;
-    use cubek_std::cube_count::{
-        CubeCountStrategy, GlobalOrder, GlobalOrderStrategy, HypercubeBlueprint,
-    };
+    use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint};
 
     fn hypercube_blueprint(
         tiling_scheme: &TilingScheme,
         problem: &MatmulProblem,
     ) -> HypercubeBlueprint {
         HypercubeBlueprint::builder()
-            .global_order(
-                GlobalOrderBlueprint::Fixed(GlobalOrder::SwizzleColMajor(2)),
-                problem.m as u32 / tiling_scheme.elements_per_global_partition_along_m(),
-                problem.n as u32 / tiling_scheme.elements_per_global_partition_along_n(),
-            )
+            .global_order(GlobalOrderBlueprint::Fixed(GlobalOrder::SwizzleColMajor(2)))
             .global_order_strategy()
             .cube_count_strategy(CubeCountStrategy::Sm {
                 num_sms: 4,
@@ -157,20 +125,14 @@ mod swizzlecol_sm_exact {
 mod row_sm_full {
     use super::*;
     use cubek_matmul::definition::TilingScheme;
-    use cubek_std::cube_count::{
-        CubeCountStrategy, GlobalOrder, GlobalOrderStrategy, HypercubeBlueprint,
-    };
+    use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint};
 
     fn hypercube_blueprint(
         tiling_scheme: &TilingScheme,
         problem: &MatmulProblem,
     ) -> HypercubeBlueprint {
         HypercubeBlueprint::builder()
-            .global_order(
-                GlobalOrderBlueprint::Fixed(GlobalOrder::RowMajor),
-                problem.m as u32 / tiling_scheme.elements_per_global_partition_along_m(),
-                problem.n as u32 / tiling_scheme.elements_per_global_partition_along_n(),
-            )
+            .global_order(GlobalOrder::RowMajor)
             .cube_count_strategy(CubeCountStrategy::Sm {
                 num_sms: 4,
                 sm_usage: SmAllocation::Full,
@@ -186,20 +148,14 @@ mod row_sm_full {
 mod swizzlerow_cube_full {
     use super::*;
     use cubek_matmul::definition::TilingScheme;
-    use cubek_std::cube_count::{
-        CubeCountStrategy, GlobalOrder, GlobalOrderStrategy, HypercubeBlueprint,
-    };
+    use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint};
 
     fn hypercube_blueprint(
         tiling_scheme: &TilingScheme,
         problem: &MatmulProblem,
     ) -> HypercubeBlueprint {
         HypercubeBlueprint::builder()
-            .global_order(
-                GlobalOrderBlueprint::Fixed(GlobalOrder::SwizzleRowMajor(2)),
-                problem.m as u32 / tiling_scheme.elements_per_global_partition_along_m(),
-                problem.n as u32 / tiling_scheme.elements_per_global_partition_along_n(),
-            )
+            .global_order(GlobalOrder::SwizzleRow(2))
             .cube_count_strategy(CubeCountStrategy::Sm {
                 num_sms: 4,
                 sm_usage: SmAllocation::Full,
@@ -215,20 +171,14 @@ mod swizzlerow_cube_full {
 mod swizzlerow_spread {
     use super::*;
     use cubek_matmul::definition::TilingScheme;
-    use cubek_std::cube_count::{
-        CubeCountStrategy, GlobalOrder, GlobalOrderStrategy, HypercubeBlueprint,
-    };
+    use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint};
 
     fn hypercube_blueprint(
         tiling_scheme: &TilingScheme,
         problem: &MatmulProblem,
     ) -> HypercubeBlueprint {
         HypercubeBlueprint::builder()
-            .global_order(
-                GlobalOrderBlueprint::Fixed(GlobalOrder::SwizzleRowMajor(2)),
-                problem.m as u32 / tiling_scheme.elements_per_global_partition_along_m(),
-                problem.n as u32 / tiling_scheme.elements_per_global_partition_along_n(),
-            )
+            .global_order(GlobalOrder::SwizzleRow(2))
             .cube_count_strategy(CubeCountStrategy::Spread)
             .build()
     }
