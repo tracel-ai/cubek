@@ -53,7 +53,10 @@ pub fn irfft_launch<R: Runtime>(
     signal: TensorBinding<R>,
     dtype: StorageType,
 ) -> Result<(), LaunchError> {
-    let cube_count = CubeCount::new_single();
+    // - signal has shape: [windows, channels, num_samples]
+    let windows = spectrum_re.shape.as_slice()[0];
+    let channels = spectrum_re.shape.as_slice()[1];
+    let cube_count = CubeCount::new_2d(windows as u32, channels as u32);
     let cube_dim = CubeDim::new_single();
     let vectorization = 1;
 
@@ -88,11 +91,8 @@ pub(crate) fn irfft_kernel<F: Float, N: Size>(
     // - signal has shape: [windows, channels, num_samples]
     //      with num_samples a power of 2 larger than 8
 
-    let windows = signal.shape(0);
-    let channels = signal.shape(1);
-    for batch_index in 0..windows * channels {
-        irfft_kernel_one_batch(spectrums_re, spectrums_im, signal, batch_index, num_samples);
-    }
+    let batch_index = CUBE_POS;
+    irfft_kernel_one_batch(spectrums_re, spectrums_im, signal, batch_index, num_samples);
 }
 
 #[cube]

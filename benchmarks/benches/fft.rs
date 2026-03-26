@@ -107,7 +107,13 @@ impl<R: Runtime, E: Float> Benchmark for FftBench<R, E> {
     }
 
     fn name(&self) -> String {
-        format!("fft{:?}-{:?}", E::as_type_native_unchecked(), self.shape,).to_lowercase()
+        format!(
+            "fft{:?}-{:?}-{:?}",
+            E::as_type_native_unchecked(),
+            self.shape,
+            self.fft_mode,
+        )
+        .to_lowercase()
     }
 
     fn sync(&self) {
@@ -119,18 +125,22 @@ impl<R: Runtime, E: Float> Benchmark for FftBench<R, E> {
 fn run<R: Runtime, E: frontend::Float>(device: R::Device) {
     let client = R::client(&device);
 
-    let bench = FftBench {
-        shape: [5, 2, 2048].to_vec(),
-        device,
-        fft_mode: FftMode::Inverse,
-        client,
-        _e: PhantomData::<E>,
-    };
-    match bench.run(TimingMethod::System) {
-        Ok(val) => {
-            println!("{val}");
+    let modes = [FftMode::Forward, FftMode::Inverse];
+    for fft_mode in modes {
+        let bench = FftBench {
+            shape: [5, 2, 2048].to_vec(),
+            device: device.clone(),
+            fft_mode,
+            client: client.clone(),
+            _e: PhantomData::<E>,
+        };
+        match bench.run(TimingMethod::System) {
+            Ok(val) => {
+                print!("Name: {}", bench.name());
+                println!("{val}\n");
+            }
+            Err(err) => println!("Can't run the benchmark: {err}"),
         }
-        Err(err) => println!("Can't run the benchmark: {err}"),
     }
 }
 
