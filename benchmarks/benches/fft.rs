@@ -91,6 +91,7 @@ impl<R: Runtime, E: Float> Benchmark for FftBench<R, E> {
                 signal.binding(),
                 spectrum_re.binding(),
                 spectrum_im.binding(),
+                self.shape.len() - 1,
                 E::as_type_native_unchecked().storage_type(),
             )
             .map_err(|err| format!("{err}"))?,
