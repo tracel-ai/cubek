@@ -2,9 +2,14 @@
 
 #[cfg(feature = "extended")]
 pub mod extended;
-pub mod launcher;
 
+mod launcher_routine;
+mod launcher_strategy;
 mod reference;
+
+#[allow(deprecated)]
+pub(crate) use launcher_routine::{InputRepresentation, test_matmul_routine};
+pub(crate) use launcher_strategy::test_matmul_strategy;
 
 pub(crate) use reference::assert_result;
 

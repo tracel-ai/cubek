@@ -1,5 +1,5 @@
 mod matmul_plane_accelerated {
-    use crate::suite::launcher::InputRepresentation;
+    use crate::suite::InputRepresentation;
 
     fn input_representation() -> InputRepresentation {
         InputRepresentation::Normal

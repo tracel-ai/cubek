@@ -1,4 +1,5 @@
 use crate::suite::assert_result;
+use crate::suite::launcher_strategy::test_matmul_strategy;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{Runtime, client};
 use cubecl::{frontend::CubePrimitive, ir::AddressType};
@@ -7,7 +8,7 @@ use cubek_matmul::launch::{Strategy, launch_vec2mat};
 use cubek_matmul::routines::BlueprintStrategy;
 use cubek_matmul::routines::vec2mat::{Vec2MatRoutine, Vec2MatStrategy};
 
-use crate::suite::launcher::{InputRepresentation, test_matmul_algorithm};
+use crate::suite::launcher_routine::{InputRepresentation, test_matmul_routine};
 use crate::suite::layout_to_stride_spec;
 use cubek_matmul::definition::MatmulGlobalElems;
 use cubek_matmul::definition::{MatmulElems, MatmulIdent, MatmulProblem};
@@ -251,7 +252,7 @@ fn test_vec2mat(case: Vec2MatTestCase) {
     let plane_size = client.properties().hardware.plane_size_max as usize;
     let problem = case.into_problem(plane_size);
 
-    test_matmul_algorithm(
+    test_matmul_strategy(
         client,
         problem,
         Strategy::Vec2Mat(BlueprintStrategy::Inferred(Vec2MatStrategy {

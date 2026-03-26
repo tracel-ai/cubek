@@ -1,5 +1,5 @@
 use super::*;
-use crate::suite::launcher::test_matmul_algorithm;
+use crate::suite::test_matmul_routine;
 use cubecl::Runtime;
 use cubecl::TestRuntime;
 use cubek_matmul::definition::{MatmulElems, TilingBlueprint, TilingScheme};
@@ -22,7 +22,11 @@ pub fn test() {
         .load_specialization_config(specialization())
         .build();
 
-        // BlueprintStrategy::Forced(blueprint)
-
-    test_matmul_algorithm::<Algorithm>(client, problem, Strategy);
+    #[allow(deprecated)]
+    test_matmul_routine::<Algorithm>(
+        client,
+        problem,
+        BlueprintStrategy::Forced(blueprint),
+        input_representation(),
+    );
 }
