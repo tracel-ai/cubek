@@ -14,9 +14,9 @@ use crate::layout::BatchSignalLayout;
 pub fn irfft<R: Runtime>(
     spectrum_re: TensorHandle<R>,
     spectrum_im: TensorHandle<R>,
+    dim: usize,
     dtype: StorageType,
 ) -> TensorHandle<R> {
-    let dim = spectrum_re.shape().len() - 1;
     assert!(
         spectrum_re.shape() == spectrum_im.shape(),
         "Spectrum's real and imaginary parts should be the same shape, got {:?} and {:?}",
@@ -40,7 +40,7 @@ pub fn irfft<R: Runtime>(
         spectrum_re.binding(),
         spectrum_im.binding(),
         signal.clone().binding(),
-        signal_shape.len() - 1,
+        dim,
         dtype,
     )
     .unwrap();
