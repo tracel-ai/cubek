@@ -13,10 +13,15 @@ use crate::layout::BatchSignalLayout;
 /// then launches the RFFT kernel to fill them with the right values
 pub fn rfft<R: Runtime>(
     signal: TensorHandle<R>,
+    dim: usize,
     dtype: StorageType,
 ) -> (TensorHandle<R>, TensorHandle<R>) {
     // Assumes fft always done on last dim
-    let dim = signal.shape().len() - 1;
+    assert!(
+        dim < signal.shape().len(),
+        "dim must be between 0 and {}",
+        signal.shape().len()
+    );
     assert!(
         signal.shape()[dim].is_power_of_two(),
         "RFFT requires power-of-2 length"
@@ -43,6 +48,7 @@ pub fn rfft<R: Runtime>(
         signal.binding(),
         spectrum_re.clone().binding(),
         spectrum_im.clone().binding(),
+        dim,
         dtype,
     )
     .unwrap();
@@ -56,11 +62,18 @@ pub fn rfft_launch<R: Runtime>(
     signal: TensorBinding<R>,
     spectrum_re: TensorBinding<R>,
     spectrum_im: TensorBinding<R>,
+    dim: usize,
     dtype: StorageType,
 ) -> Result<(), LaunchError> {
-    let windows = signal.shape.as_slice()[0];
-    let channels = signal.shape.as_slice()[1];
-    let cube_count = CubeCount::new_2d(windows as u32, channels as u32);
+    let count: usize = signal
+        .shape
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != dim)
+        .map(|(_, e)| *e)
+        .product();
+
+    let cube_count = CubeCount::new_1d(count as u32);
     let cube_dim = CubeDim::new_single();
     let vectorization = 1;
     let shape = *signal.shape.last().unwrap();

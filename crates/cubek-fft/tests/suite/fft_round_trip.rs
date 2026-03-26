@@ -24,7 +24,7 @@ fn large_fft_roundtrip() {
     )
     .generate_with_f32_host_data();
 
-    let (spectrum_re, spectrum_im) = rfft(original_signal, dtype);
+    let (spectrum_re, spectrum_im) = rfft(original_signal, shape.len() - 1, dtype);
     let signal_back = irfft(spectrum_re, spectrum_im, dtype);
 
     assert_equals_approx(

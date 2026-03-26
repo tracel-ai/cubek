@@ -19,7 +19,7 @@ fn test_launch(
 
     let (white_noise_handle, white_noise_data) = TestInput::new(
         client.clone(),
-        signal_shape,
+        signal_shape.clone(),
         dtype,
         StrideSpec::RowMajor,
         DataKind::Random {
@@ -52,6 +52,7 @@ fn test_launch(
         white_noise_handle.binding(),
         spectrum_re_handle.clone().binding(),
         spectrum_im_handle.clone().binding(),
+        signal_shape.len() - 1,
         dtype,
     )
     .into()
