@@ -3,7 +3,7 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::{Runtime, client};
 use cubecl::{frontend::CubePrimitive, ir::AddressType};
 use cubecl::{prelude::TensorBinding, zspace::shape};
-use cubek_matmul::launch::launch_vec2mat;
+use cubek_matmul::launch::{Strategy, launch_vec2mat};
 use cubek_matmul::routines::BlueprintStrategy;
 use cubek_matmul::routines::vec2mat::{Vec2MatRoutine, Vec2MatStrategy};
 
@@ -223,8 +223,8 @@ pub fn test_2d_no_batch_via_launch_ref() {
     let rhs_strides = rhs.strides().clone();
     let out_strides = out.strides().clone();
 
-    let lhs_handle = MatmulInputBinding::Normal(lhs.binding(), global_elems.lhs);
-    let rhs_handle = MatmulInputBinding::Normal(rhs.binding(), global_elems.rhs);
+    let lhs_handle = InputBinding::Normal(lhs.binding(), global_elems.lhs);
+    let rhs_handle = InputBinding::Normal(rhs.binding(), global_elems.rhs);
     let out_handle = out.clone().binding();
 
     launch_vec2mat::launch_ref(&client, lhs_handle, rhs_handle, out_handle, &all_elems).unwrap();
@@ -251,12 +251,11 @@ fn test_vec2mat(case: Vec2MatTestCase) {
     let plane_size = client.properties().hardware.plane_size_max as usize;
     let problem = case.into_problem(plane_size);
 
-    test_matmul_algorithm::<Vec2MatRoutine>(
+    test_matmul_algorithm(
         client,
         problem,
-        BlueprintStrategy::Inferred(Vec2MatStrategy {
+        Strategy::Vec2Mat(BlueprintStrategy::Inferred(Vec2MatStrategy {
             target_num_planes: 8,
-        }),
-        InputRepresentation::Normal,
+        })),
     );
 }

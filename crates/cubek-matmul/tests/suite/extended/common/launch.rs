@@ -22,10 +22,7 @@ pub fn test() {
         .load_specialization_config(specialization())
         .build();
 
-    test_matmul_algorithm::<Algorithm>(
-        client,
-        problem,
-        BlueprintStrategy::Forced(blueprint),
-        input_representation(),
-    );
+        // BlueprintStrategy::Forced(blueprint)
+
+    test_matmul_algorithm::<Algorithm>(client, problem, Strategy);
 }
