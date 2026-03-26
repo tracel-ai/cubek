@@ -9,7 +9,7 @@ use crate::definition::{MatmulVectorSizes, cube_mapping_launch};
 
 use crate::launch::InputArg;
 use crate::launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs};
-use crate::routines::nostage_vecmat::{NoStageVecMatRoutine, NoStageVecMatStrategy};
+use crate::routines::nostage_vecmat::NoStageVecMatRoutine;
 use crate::routines::{BlueprintStrategy, Routine as _};
 
 #[allow(clippy::result_large_err)]
@@ -18,6 +18,7 @@ pub fn launch_ref<R: Runtime>(
     lhs: InputBinding<R>,
     rhs: InputBinding<R>,
     out: TensorBinding<R>,
+    strategy: &BlueprintStrategy<(), NoStageVecMatRoutine>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let rank = rhs.shape().len();
@@ -35,46 +36,62 @@ pub fn launch_ref<R: Runtime>(
     let k = lhs.shape().to_vec()[rank - 1];
 
     if m != 1 {
-        return Err(MatmulSetupError::InvalidConfig(Box::new("m must equal 1")));
+        return Err(MatmulSetupError::InvalidConfig(Box::new(
+            "m must equal 1 to qualify as a vecmat problem",
+        )));
     }
 
     let rhs_shape = rhs.shape();
-    // let out_shape = &out.shape;
 
-    // Assumes row-major
-    let lhs_supported_vector_sizes = client.io_optimized_vector_sizes(dtypes.lhs_global.size());
-    let divisible =
-        *lhs.data().shape.last().unwrap() / client.properties().hardware.plane_size_max as usize;
-    let mut lhs_vector_size = lhs_supported_vector_sizes
-        .filter(|&vector_size| divisible.is_multiple_of(vector_size))
-        .max()
-        .ok_or(VectorizationError::NoValidVectorization)?;
-    let rhs_supported_vector_sizes = client.io_optimized_vector_sizes(dtypes.rhs_global.size());
-    let divisible =
-        *rhs.data().shape.last().unwrap() / client.properties().hardware.plane_size_max as usize;
-    let mut rhs_vector_size = rhs_supported_vector_sizes
-        .filter(|&vector_size| divisible.is_multiple_of(vector_size))
-        .max()
-        .ok_or(VectorizationError::NoValidVectorization)?;
+    let plane_size = client.properties().hardware.plane_size_max as usize;
 
-    if let InputBinding::Quantized { scheme, .. } = lhs {
-        lhs_vector_size *= scheme.num_quants();
-    }
-    if let InputBinding::Quantized { scheme, .. } = rhs {
-        rhs_vector_size *= scheme.num_quants();
-    }
-
-    if lhs_vector_size != rhs_vector_size {
+    if !k.is_multiple_of(plane_size) {
         return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-            "Lhs vector size {:?} must equal rhs vector size {:?}",
-            lhs_vector_size, rhs_vector_size
+            "Lhs dimension k={} must be a multiple of plane size {}",
+            k, plane_size
         ))));
     }
 
+    if !n.is_multiple_of(plane_size) {
+        return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+            "Rhs dimension n={} must be a multiple of plane size {}",
+            n, plane_size
+        ))));
+    }
+
+    let lhs_vector_size = client
+        .io_optimized_vector_sizes(dtypes.lhs_global.size())
+        .map(|v| {
+            if let InputBinding::Quantized { scheme, .. } = lhs {
+                v * scheme.num_quants()
+            } else {
+                v
+            }
+        })
+        .filter(|&v| k.is_multiple_of(plane_size * v))
+        .max()
+        .ok_or(VectorizationError::NoValidVectorization)?;
+
+    // Assumes rhs is row major
+    let rhs_vector_size = client
+        .io_optimized_vector_sizes(dtypes.rhs_global.size())
+        .map(|v| {
+            if let InputBinding::Quantized { scheme, .. } = rhs {
+                v * scheme.num_quants()
+            } else {
+                v
+            }
+        })
+        .filter(|&v| n.is_multiple_of(plane_size * v))
+        .max()
+        .ok_or(VectorizationError::NoValidVectorization)?;
+
+    let shared_vector_size = lhs_vector_size.min(rhs_vector_size);
+
     let vector_sizes = MatmulVectorSizes {
-        lhs: rhs_vector_size,
-        rhs: rhs_vector_size,
-        out: rhs_vector_size,
+        lhs: shared_vector_size,
+        rhs: shared_vector_size,
+        out: shared_vector_size,
     };
 
     let address_type = lhs
@@ -101,13 +118,8 @@ pub fn launch_ref<R: Runtime>(
     );
 
     let device_settings = NoStageVecMatRoutine::device_settings(client, vector_sizes);
-    let expand_info = NoStageVecMatRoutine::expand_blueprint(
-        &problem,
-        &device_settings,
-        &BlueprintStrategy::Inferred(NoStageVecMatStrategy {
-            target_num_planes: 8,
-        }),
-    )?;
+    let expand_info =
+        NoStageVecMatRoutine::expand_blueprint(&problem, &device_settings, &strategy)?;
     let launch_info = NoStageVecMatRoutine::prepare(&problem, &device_settings, expand_info)?;
 
     let input = <InputArg<TensorArgs> as ConcreteInputsFactory<NoStageVecMatRoutine>>::create(

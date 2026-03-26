@@ -439,8 +439,8 @@ impl Strategy {
             }
             Strategy::Naive => launch_naive::launch_ref(client, lhs, rhs, out, dtypes),
             Strategy::Auto => auto(client, lhs, rhs, out, dtypes),
-            Strategy::NoStageVecMat(_blueprint_strategy) => {
-                launch_nostage_vecmat::launch_ref(client, lhs, rhs, out, dtypes)
+            Strategy::NoStageVecMat(blueprint_strategy) => {
+                launch_nostage_vecmat::launch_ref(client, lhs, rhs, out, blueprint_strategy, dtypes)
             }
         }
     }

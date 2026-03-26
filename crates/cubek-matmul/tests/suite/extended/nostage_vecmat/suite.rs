@@ -18,9 +18,8 @@ use cubek_test_utils::{BaseInputSpec, DataKind, Distribution, TestInput};
 type TestRuntime = cubecl::TestRuntime;
 
 struct NoStageVecMatTestCase {
-    pub target_vec: usize,
-    pub n_tiles: usize,
-    pub k_tiles: usize,
+    pub n: usize,
+    pub k: usize,
     pub lhs_batch: usize,
     pub rhs_batch: usize,
     pub rhs_layout: MatrixLayout,
@@ -28,12 +27,11 @@ struct NoStageVecMatTestCase {
 }
 
 impl NoStageVecMatTestCase {
-    fn into_problem(self, plane_size: usize) -> MatmulProblem {
-        let tile_dim = plane_size * self.target_vec;
+    fn into_problem(self) -> MatmulProblem {
         MatmulProblem::from_parameters(
             1,
-            self.n_tiles * tile_dim,
-            self.k_tiles * tile_dim,
+            self.n,
+            self.k,
             shape![self.lhs_batch],
             shape![self.rhs_batch],
             MatrixLayout::RowMajor,
@@ -50,9 +48,8 @@ impl NoStageVecMatTestCase {
 #[test]
 pub fn test_very_small_square_rhs_row_major() {
     let case = NoStageVecMatTestCase {
-        target_vec: 4,
-        n_tiles: 1,
-        k_tiles: 1,
+        n: 128,
+        k: 128,
         lhs_batch: 1,
         rhs_batch: 1,
         rhs_layout: MatrixLayout::RowMajor,
@@ -65,9 +62,8 @@ pub fn test_very_small_square_rhs_row_major() {
 #[test]
 pub fn test_k_larger_than_n() {
     let case = NoStageVecMatTestCase {
-        target_vec: 4,
-        n_tiles: 1,
-        k_tiles: 2,
+        n: 128,
+        k: 256,
         lhs_batch: 1,
         rhs_batch: 1,
         rhs_layout: MatrixLayout::RowMajor,
@@ -80,9 +76,8 @@ pub fn test_k_larger_than_n() {
 #[test]
 pub fn test_k_smaller_than_n() {
     let case = NoStageVecMatTestCase {
-        target_vec: 4,
-        n_tiles: 2,
-        k_tiles: 1,
+        n: 256,
+        k: 128,
         lhs_batch: 1,
         rhs_batch: 1,
         rhs_layout: MatrixLayout::RowMajor,
@@ -95,9 +90,8 @@ pub fn test_k_smaller_than_n() {
 #[test]
 pub fn test_small_square_rhs_row_major() {
     let case = NoStageVecMatTestCase {
-        target_vec: 4,
-        n_tiles: 2,
-        k_tiles: 2,
+        n: 256,
+        k: 256,
         lhs_batch: 1,
         rhs_batch: 1,
         rhs_layout: MatrixLayout::RowMajor,
@@ -110,9 +104,8 @@ pub fn test_small_square_rhs_row_major() {
 #[test]
 pub fn test_large() {
     let case = NoStageVecMatTestCase {
-        target_vec: 4,
-        n_tiles: 10,
-        k_tiles: 10,
+        n: 1280,
+        k: 1280,
         lhs_batch: 1,
         rhs_batch: 1,
         rhs_layout: MatrixLayout::RowMajor,
@@ -125,9 +118,8 @@ pub fn test_large() {
 #[test]
 pub fn test_large_broadcast_lhs() {
     let case = NoStageVecMatTestCase {
-        target_vec: 4,
-        n_tiles: 10,
-        k_tiles: 10,
+        n: 1280,
+        k: 1280,
         lhs_batch: 1,
         rhs_batch: 2,
         rhs_layout: MatrixLayout::RowMajor,
@@ -140,9 +132,8 @@ pub fn test_large_broadcast_lhs() {
 #[test]
 pub fn test_large_broadcast_rhs() {
     let case = NoStageVecMatTestCase {
-        target_vec: 4,
-        n_tiles: 10,
-        k_tiles: 10,
+        n: 1280,
+        k: 1280,
         lhs_batch: 2,
         rhs_batch: 1,
         rhs_layout: MatrixLayout::RowMajor,
@@ -155,11 +146,38 @@ pub fn test_large_broadcast_rhs() {
 #[test]
 pub fn test_large_broadcast_batched() {
     let case = NoStageVecMatTestCase {
-        target_vec: 4,
-        n_tiles: 10,
-        k_tiles: 10,
+        n: 1280,
+        k: 1280,
         lhs_batch: 2,
         rhs_batch: 2,
+        rhs_layout: MatrixLayout::RowMajor,
+        elems: elems(),
+    };
+
+    test_nostage_vecmat(case);
+}
+
+#[test]
+pub fn test_uneven_shape() {
+    let case = NoStageVecMatTestCase {
+        n: 32,
+        k: 29,
+        lhs_batch: 1,
+        rhs_batch: 1,
+        rhs_layout: MatrixLayout::RowMajor,
+        elems: elems(),
+    };
+
+    test_nostage_vecmat(case);
+}
+
+#[test]
+pub fn test_not_same_vectorization() {
+    let case = NoStageVecMatTestCase {
+        n: 128,
+        k: 32,
+        lhs_batch: 1,
+        rhs_batch: 1,
         rhs_layout: MatrixLayout::RowMajor,
         elems: elems(),
     };
@@ -170,7 +188,7 @@ pub fn test_large_broadcast_batched() {
 fn test_nostage_vecmat(case: NoStageVecMatTestCase) {
     let client = TestRuntime::client(&Default::default());
     let plane_size = client.properties().hardware.plane_size_max as usize;
-    let problem = case.into_problem(plane_size);
+    let problem = case.into_problem();
 
     test_matmul_strategy(
         client,

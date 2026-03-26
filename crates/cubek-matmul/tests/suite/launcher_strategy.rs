@@ -84,12 +84,41 @@ pub fn test_matmul_strategy(
 
     let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes.clone());
 
-    launch_ref(
-        &strategy,
-        &client,
-        lhs_handle,
-        rhs_handle,
-        out_handle,
-        &mut dtypes,
-    );
+    match get_server_error(&client).unwrap_or(
+        launch_ref(
+            &strategy,
+            &client,
+            lhs_handle,
+            rhs_handle,
+            out_handle,
+            &mut dtypes,
+        )
+        .into(),
+    ) {
+        ExecutionOutcome::Executed => {
+            assert_result(&lhs_data, &rhs_data, &problem, &client, out, dtypes).as_test_outcome()
+        }
+        ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
+    }
+    .enforce()
+}
+
+fn get_server_error(client: &ComputeClient<TestRuntime>) -> Option<ExecutionOutcome> {
+    match client.flush() {
+        Ok(_) => None,
+        Err(ServerError::ServerUnhealthy { errors, .. }) => {
+            #[allow(clippy::never_loop)]
+            for error in errors.iter() {
+                match error {
+                    cubecl::server::ServerError::Launch(LaunchError::TooManyResources(_)) => {
+                        return Some(ExecutionOutcome::CompileError(format!("{errors:?}")));
+                    }
+                    _ => panic!("Unexpected error: {errors:?}"),
+                }
+            }
+
+            None
+        }
+        Err(err) => panic!("Unexpected error: {err:?}"),
+    }
 }
