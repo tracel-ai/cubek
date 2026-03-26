@@ -16,7 +16,6 @@ pub fn irfft<R: Runtime>(
     spectrum_im: TensorHandle<R>,
     dtype: StorageType,
 ) -> TensorHandle<R> {
-    // Assumes fft always done on last dim
     let dim = spectrum_re.shape().len() - 1;
     assert!(
         spectrum_re.shape() == spectrum_im.shape(),
@@ -92,12 +91,6 @@ pub(crate) fn irfft_kernel<F: Float, N: Size>(
     #[define(F)] _dtype: StorageType,
     #[define(N)] _vector_size: usize,
 ) {
-    // Shapes:
-    // - spectrums have shape: [windows, channels, num_freq_bins]
-    //      with num_freq_bins = num_samples / 2 + 1
-    // - signal has shape: [windows, channels, num_samples]
-    //      with num_samples a power of 2 larger than 8
-
     let batch_index = CUBE_POS;
     irfft_kernel_one_batch(spectrums_re, spectrums_im, signal, batch_index, num_samples);
 }

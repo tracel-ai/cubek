@@ -16,7 +16,6 @@ pub fn rfft<R: Runtime>(
     dim: usize,
     dtype: StorageType,
 ) -> (TensorHandle<R>, TensorHandle<R>) {
-    // Assumes fft always done on last dim
     assert!(
         dim < signal.shape().len(),
         "dim must be between 0 and {}",
@@ -102,12 +101,6 @@ pub(crate) fn rfft_kernel<F: Float, N: Size>(
     #[define(F)] _dtype: StorageType,
     #[define(N)] _vector_size: usize,
 ) {
-    // Shapes:
-    // - signal has shape: [windows, channels, num_samples]
-    //      with num_samples is a power of 2 larger than 8
-    // - spectrums have shape [windows, channels, num_freq_bins]
-    //      with num_freq_bins = num_samples / 2 + 1
-
     let window_index = CUBE_POS;
     rfft_kernel_one_window(
         signal,
@@ -129,9 +122,6 @@ pub(crate) fn rfft_kernel_one_window<F: Float, N: Size>(
     window_index: usize,
     #[comptime] num_samples: usize,
 ) {
-    // The following code allow to ignore the batch index and assume only one window
-    // - signal has shape: [num_samples]
-    // - spectrums have shape [num_freq_bins]
     let signal_layout = BatchSignalLayout::new(signal, window_index);
     let spectrums_re_layout = BatchSignalLayout::new(spectrums_re, window_index);
     let spectrums_im_layout = BatchSignalLayout::new(spectrums_im, window_index);
