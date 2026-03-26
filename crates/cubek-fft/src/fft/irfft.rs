@@ -31,13 +31,14 @@ pub fn irfft<R: Runtime>(
     signal_shape[dim] = (spectrum_re.shape()[dim] - 1) * 2;
     let num_elems = signal_shape.iter().product::<usize>();
     let signal =
-        TensorHandle::new_contiguous(signal_shape, client.empty(num_elems * dtype.size()), dtype);
+        TensorHandle::new_contiguous(signal_shape.clone(), client.empty(num_elems * dtype.size()), dtype);
 
     irfft_launch::<R>(
         &client,
         spectrum_re.binding(),
         spectrum_im.binding(),
         signal.clone().binding(),
+        signal_shape.len() - 1,
         dtype,
     )
     .unwrap();
@@ -51,12 +52,18 @@ pub fn irfft_launch<R: Runtime>(
     spectrum_re: TensorBinding<R>,
     spectrum_im: TensorBinding<R>,
     signal: TensorBinding<R>,
+    dim: usize,
     dtype: StorageType,
 ) -> Result<(), LaunchError> {
-    // - signal has shape: [windows, channels, num_samples]
-    let windows = spectrum_re.shape.as_slice()[0];
-    let channels = spectrum_re.shape.as_slice()[1];
-    let cube_count = CubeCount::new_2d(windows as u32, channels as u32);
+    let count: usize = signal
+        .shape
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != dim)
+        .map(|(_, e)| *e)
+        .product();
+
+    let cube_count = CubeCount::new_1d(count as u32);
     let cube_dim = CubeDim::new_single();
     let vectorization = 1;
 

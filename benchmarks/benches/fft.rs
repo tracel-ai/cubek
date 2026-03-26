@@ -85,13 +85,14 @@ impl<R: Runtime, E: Float> Benchmark for FftBench<R, E> {
         let signal = fft_input.signal;
         let spectrum_re = fft_input.spectrum_re;
         let spectrum_im = fft_input.spectrum_im;
+        let dim = self.shape.len() - 1;
         match self.fft_mode {
             FftMode::Forward => rfft_launch(
                 &self.client,
                 signal.binding(),
                 spectrum_re.binding(),
                 spectrum_im.binding(),
-                self.shape.len() - 1,
+                dim,
                 E::as_type_native_unchecked().storage_type(),
             )
             .map_err(|err| format!("{err}"))?,
@@ -100,6 +101,7 @@ impl<R: Runtime, E: Float> Benchmark for FftBench<R, E> {
                 spectrum_re.binding(),
                 spectrum_im.binding(),
                 signal.binding(),
+                dim,
                 E::as_type_native_unchecked().storage_type(),
             )
             .map_err(|err| format!("{err}"))?,
