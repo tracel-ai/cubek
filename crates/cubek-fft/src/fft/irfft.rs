@@ -29,8 +29,11 @@ pub fn irfft<R: Runtime>(
     let mut signal_shape = spectrum_re.shape().clone();
     signal_shape[dim] = (spectrum_re.shape()[dim] - 1) * 2;
     let num_elems = signal_shape.iter().product::<usize>();
-    let signal =
-        TensorHandle::new_contiguous(signal_shape.clone(), client.empty(num_elems * dtype.size()), dtype);
+    let signal = TensorHandle::new_contiguous(
+        signal_shape.clone(),
+        client.empty(num_elems * dtype.size()),
+        dtype,
+    );
 
     irfft_launch::<R>(
         &client,
