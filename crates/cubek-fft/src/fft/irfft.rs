@@ -54,7 +54,6 @@ pub fn irfft_launch<R: Runtime>(
     dtype: StorageType,
 ) -> Result<(), LaunchError> {
     // - signal has shape: [windows, channels, num_samples]
-    //let cube_count = CubeCount::new_single();
     let windows = spectrum_re.shape.as_slice()[0];
     let channels = spectrum_re.shape.as_slice()[1];
     let cube_count = CubeCount::new_2d(windows as u32, channels as u32);

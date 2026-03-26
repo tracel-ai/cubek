@@ -58,15 +58,13 @@ pub fn rfft_launch<R: Runtime>(
     spectrum_im: TensorBinding<R>,
     dtype: StorageType,
 ) -> Result<(), LaunchError> {
-    //let cube_count = CubeCount::new_single();
-    //
     let windows = signal.shape.as_slice()[0];
     let channels = signal.shape.as_slice()[1];
     let cube_count = CubeCount::new_2d(windows as u32, channels as u32);
     let cube_dim = CubeDim::new_single();
     let vectorization = 1;
-
     let shape = *signal.shape.last().unwrap();
+
     rfft_kernel::launch::<R>(
         client,
         cube_count,
