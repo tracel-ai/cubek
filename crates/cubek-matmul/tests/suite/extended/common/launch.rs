@@ -1,4 +1,5 @@
 use super::*;
+#[allow(deprecated)]
 use crate::suite::test_matmul_routine;
 use cubecl::Runtime;
 use cubecl::TestRuntime;

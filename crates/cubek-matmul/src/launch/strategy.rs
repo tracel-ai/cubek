@@ -320,7 +320,7 @@ impl Display for Strategy {
 
 #[allow(clippy::result_large_err)]
 impl Strategy {
-    pub fn launch_ref<R: Runtime>(
+    pub(crate) fn launch_ref<R: Runtime>(
         &self,
         client: &ComputeClient<R>,
         lhs: InputBinding<R>,
