@@ -1,7 +1,9 @@
 use std::marker::PhantomData;
 
 use crate::components::batch::base::BatchMatmulFamily;
-use crate::components::batch::no_stage_vecmat::{NoStageVecMatBlueprint, NoStageVecMatFamily, NoStageVecMatConfig};
+use crate::components::batch::no_stage_vecmat::{
+    NoStageVecMatBlueprint, NoStageVecMatConfig, NoStageVecMatFamily,
+};
 use crate::components::batch::{BatchConfig as _, SliceIndex};
 
 use crate::{components::batch::BatchMatmul, definition::*, launch::MatmulArgs};

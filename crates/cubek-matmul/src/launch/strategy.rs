@@ -14,7 +14,7 @@ use crate::{
         tile::{cmma::CmmaMatmul, mma::MmaMatmul},
     },
     definition::{MatmulElems, MatmulSetupError},
-    launch::{launch_naive, launch_tiling, launch_nostage_vecmat},
+    launch::{launch_naive, launch_nostage_vecmat, launch_tiling},
     routines::{
         BlueprintStrategy,
         double_buffering::{
@@ -23,11 +23,11 @@ use crate::{
             TilewiseDoubleBufferingAlgorithm, TmaDoubleBufferingAlgorithm,
         },
         double_unit::DoubleUnitAlgorithm,
+        nostage_vecmat::NoStageVecMatRoutine,
         ordered_double_buffering::OrderedDoubleBufferingAlgorithm,
         simple::{SimpleAlgorithm, SimpleTmaAlgorithm},
         simple_unit::SimpleUnitAlgorithm,
         specialized::SpecializedAlgorithm,
-        nostage_vecmat::NoStageVecMatRoutine,
         vecmat_innerproduct::{DoubleVecMatInnerProductAlgorithm, VecMatInnerProductAlgorithm},
     },
 };

@@ -9,8 +9,8 @@ use cubek::{
         definition::MatmulElems,
         launch::{InputBinding, Strategy, launch_ref},
         routines::{
-            BlueprintStrategy, TileSizeSelection, simple_unit::SimpleUnitSelectionArgs,
-            nostage_vecmat::NoStageVecMatStrategy,
+            BlueprintStrategy, TileSizeSelection, nostage_vecmat::NoStageVecMatStrategy,
+            simple_unit::SimpleUnitSelectionArgs,
         },
     },
     random::random_uniform,
