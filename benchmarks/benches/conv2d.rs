@@ -10,11 +10,8 @@ use cubek::{
     convolution::{
         self as convolution, AcceleratedTileKind, ConvolutionArgs, ReadingStrategy, Strategy,
     },
-    matmul::{
-        definition::{MatmulElems, MatmulPrecision, MatrixPrecision},
-        launch::InputBinding,
-    },
-    random::random_uniform,
+    matmul::definition::{MatmulElems, MatmulPrecision, MatrixPrecision},
+    random::random_uniform, std::InputBinding,
 };
 use std::marker::PhantomData;
 
