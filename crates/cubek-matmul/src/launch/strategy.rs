@@ -14,7 +14,7 @@ use crate::{
         tile::{cmma::CmmaMatmul, mma::MmaMatmul},
     },
     definition::{MatmulElems, MatmulSetupError},
-    launch::{launch_naive, launch_tiling, launch_vec2mat},
+    launch::{launch_naive, launch_tiling, launch_nostage_vecmat},
     routines::{
         BlueprintStrategy,
         double_buffering::{
@@ -27,7 +27,7 @@ use crate::{
         simple::{SimpleAlgorithm, SimpleTmaAlgorithm},
         simple_unit::SimpleUnitAlgorithm,
         specialized::SpecializedAlgorithm,
-        vec2mat::Vec2MatRoutine,
+        nostage_vecmat::NoStageVecMatRoutine,
         vecmat_innerproduct::{DoubleVecMatInnerProductAlgorithm, VecMatInnerProductAlgorithm},
     },
 };
@@ -164,7 +164,7 @@ pub enum Strategy {
     DoubleUnit(BlueprintStrategy<(), DoubleUnitAlgorithm>),
     SimpleVecMat(BlueprintStrategy<(), VecMatInnerProductAlgorithm>),
     DoubleVecMat(BlueprintStrategy<(), DoubleVecMatInnerProductAlgorithm>),
-    Vec2Mat(BlueprintStrategy<(), Vec2MatRoutine>),
+    NoStageVecMat(BlueprintStrategy<(), NoStageVecMatRoutine>),
     Naive,
     #[default]
     Auto,
@@ -311,8 +311,8 @@ impl Display for Strategy {
             }
             Strategy::Naive => f.write_str("matmul_naive"),
             Strategy::Auto => f.write_str("matmul_auto"),
-            Strategy::Vec2Mat(blueprint_strategy) => {
-                f.write_fmt(format_args!("vec2mat{}", blueprint_strategy))
+            Strategy::NoStageVecMat(blueprint_strategy) => {
+                f.write_fmt(format_args!("nostage_vecmat{}", blueprint_strategy))
             }
         }
     }
@@ -439,8 +439,8 @@ impl Strategy {
             }
             Strategy::Naive => launch_naive::launch_ref(client, lhs, rhs, out, dtypes),
             Strategy::Auto => auto(client, lhs, rhs, out, dtypes),
-            Strategy::Vec2Mat(_blueprint_strategy) => {
-                launch_vec2mat::launch_ref(client, lhs, rhs, out, dtypes)
+            Strategy::NoStageVecMat(_blueprint_strategy) => {
+                launch_nostage_vecmat::launch_ref(client, lhs, rhs, out, dtypes)
             }
         }
     }

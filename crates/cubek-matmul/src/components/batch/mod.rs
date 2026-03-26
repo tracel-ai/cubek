@@ -1,7 +1,7 @@
 //! Executes multiple independent global matmuls with optional broadcasting.
 
 pub mod naive;
-pub mod vec2mat;
+pub mod no_stage_vecmat;
 
 mod base;
 mod layout;

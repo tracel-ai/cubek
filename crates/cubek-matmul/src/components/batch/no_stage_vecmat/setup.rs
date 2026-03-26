@@ -11,7 +11,7 @@ use crate::{
         CubeDimResource,
         batch::{
             BatchMatmulFamily,
-            vec2mat::{Vec2Mat, Vec2MatMatmulConfig, matmul_entry},
+            no_stage_vecmat::{NoStageVecMat, NoStageVecMatConfig, matmul_entry},
         },
         global::memory::GlobalLayoutConfig,
         stage::NumStages,
@@ -24,9 +24,9 @@ use crate::{
 };
 
 /// Simple partitioned batch matmul family for any precision
-pub struct Vec2MatFamily {}
+pub struct NoStageVecMatFamily {}
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct Vec2MatBlueprint {
+pub struct NoStageVecMatBlueprint {
     pub dtypes: MatmulElems,
     pub num_planes: usize,
     // Should equal plane_dim * vector_size
@@ -34,7 +34,7 @@ pub struct Vec2MatBlueprint {
     pub hypercube_blueprint: HypercubeBlueprint,
 }
 
-impl Blueprint for Vec2MatBlueprint {
+impl Blueprint for NoStageVecMatBlueprint {
     fn lhs_global_layout_config(&self) -> GlobalLayoutConfig {
         GlobalLayoutConfig {
             matrix_layout: MatrixLayout::RowMajor,
@@ -60,18 +60,18 @@ impl Blueprint for Vec2MatBlueprint {
     }
 
     fn tiling_scheme(&self) -> TilingScheme {
-        panic!("Vec2Mat Blueprint doesn't have a TilingScheme")
+        panic!("NoStageVecMat Blueprint doesn't have a TilingScheme")
     }
 
     fn swizzle_modes(&self) -> SwizzleModes {
-        panic!("Vec2Mat Blueprint doesn't have Swizzle Modes")
+        panic!("NoStageVecMat Blueprint doesn't have Swizzle Modes")
     }
 }
 
-impl BatchMatmulFamily<()> for Vec2MatFamily {
-    type Matmul<MP: MatmulTypes> = Vec2Mat<MP>;
-    type Config = Vec2MatMatmulConfig;
-    type Blueprint = Vec2MatBlueprint;
+impl BatchMatmulFamily<()> for NoStageVecMatFamily {
+    type Matmul<MP: MatmulTypes> = NoStageVecMat<MP>;
+    type Config = NoStageVecMatConfig;
+    type Blueprint = NoStageVecMatBlueprint;
 
     fn expand_config(
         device_props: &DeviceProperties,
@@ -79,7 +79,7 @@ impl BatchMatmulFamily<()> for Vec2MatFamily {
         _dtypes: &MatmulElems,
         _vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
-        Ok(Vec2MatMatmulConfig {
+        Ok(NoStageVecMatConfig {
             plane_dim: device_props.hardware.plane_size_max,
             num_planes: blueprint.num_planes as u32,
         })
@@ -98,7 +98,7 @@ impl BatchMatmulFamily<()> for Vec2MatFamily {
         output: OutputRuntimeArg<MA, R>,
         _config: ConfigRuntimeArg<MA, R>,
         cube_mapping: CubeMappingLaunch<R>,
-        blueprint: Vec2MatBlueprint,
+        blueprint: NoStageVecMatBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), LaunchError> {

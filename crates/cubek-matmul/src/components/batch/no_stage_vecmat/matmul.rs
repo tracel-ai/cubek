@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use crate::components::batch::base::BatchMatmulFamily;
-use crate::components::batch::vec2mat::{Vec2MatBlueprint, Vec2MatFamily, Vec2MatMatmulConfig};
+use crate::components::batch::no_stage_vecmat::{NoStageVecMatBlueprint, NoStageVecMatFamily, NoStageVecMatConfig};
 use crate::components::batch::{BatchConfig as _, SliceIndex};
 
 use crate::{components::batch::BatchMatmul, definition::*, launch::MatmulArgs};
@@ -28,7 +28,7 @@ pub(crate) fn matmul_entry<
     output: &mut <Args as MatmulArgs>::Output<Vector<Acc, AccSize>>,
     runtime_config: (),
     cube_mapping: CubeMapping,
-    #[comptime] blueprint: Vec2MatBlueprint,
+    #[comptime] blueprint: NoStageVecMatBlueprint,
     #[define(Lhs, Rhs, Acc)] _global: [StorageType; 3],
     #[define(LhsSize, RhsSize, AccSize)] _sizes: [usize; 3],
 ) {
@@ -52,7 +52,7 @@ pub(crate) fn matmul_entry<
     });
 
     let device_props = comptime::device_properties();
-    let config = comptime!(Vec2MatFamily::expand_config(
+    let config = comptime!(NoStageVecMatFamily::expand_config(
         &device_props,
         &blueprint,
         &blueprint.dtypes,
@@ -79,20 +79,20 @@ pub(crate) fn matmul_entry<
     let define!(RegisterRhs) = blueprint.dtypes.rhs_register;
     let define!(RegisterAcc) = blueprint.dtypes.acc_register;
 
-    Vec2Mat::<(
+    NoStageVecMat::<(
         (Lhs, LhsSize, Lhs, LhsSize, RegisterLhs),
         (Rhs, RhsSize, Rhs, RhsSize, RegisterRhs),
         (Acc, AccSize, Acc, AccSize, RegisterAcc),
     )>::execute::<Args>(&mut state, cube_mapping, config);
 }
 
-pub struct Vec2Mat<MP: MatmulTypes> {
+pub struct NoStageVecMat<MP: MatmulTypes> {
     _phantom: PhantomData<MP>,
 }
 
 #[cube]
-impl<MP: MatmulTypes> BatchMatmul<(), MP> for Vec2Mat<MP> {
-    type Config = Vec2MatMatmulConfig;
+impl<MP: MatmulTypes> BatchMatmul<(), MP> for NoStageVecMat<MP> {
+    type Config = NoStageVecMatConfig;
 
     fn execute<Args: MatmulArgs>(
         state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,

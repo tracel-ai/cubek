@@ -1,6 +1,6 @@
 pub mod launch_naive;
+pub mod launch_nostage_vecmat;
 pub mod launch_tiling;
-pub mod launch_vec2mat;
 
 mod args;
 mod base;

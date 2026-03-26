@@ -8,28 +8,28 @@ use cubek_std::cube_count::{CubeCountPlan, CubeCountStrategy, GlobalOrder, Hyper
 use crate::{
     components::batch::{
         BatchMatmulFamily,
-        vec2mat::{Vec2MatBlueprint, Vec2MatFamily},
+        no_stage_vecmat::{NoStageVecMatBlueprint, NoStageVecMatFamily},
     },
     definition::{MatmulElems, MatmulProblem, MatmulSetupError},
     routines::{BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine},
 };
 
-pub struct Vec2MatRoutine {}
+pub struct NoStageVecMatRoutine {}
 
 #[derive(Default, Clone)]
-pub struct Vec2MatStrategy {
+pub struct NoStageVecMatStrategy {
     pub target_num_planes: usize,
 }
 
-impl Display for Vec2MatStrategy {
+impl Display for NoStageVecMatStrategy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "_{}", self.target_num_planes)
     }
 }
 
-impl Routine<()> for Vec2MatRoutine {
-    type Strategy = Vec2MatStrategy;
-    type BatchMatmul = Vec2MatFamily;
+impl Routine<()> for NoStageVecMatRoutine {
+    type Strategy = NoStageVecMatStrategy;
+    type BatchMatmul = NoStageVecMatFamily;
     type Blueprint = <Self::BatchMatmul as BatchMatmulFamily<()>>::Blueprint;
     type Config = <Self::BatchMatmul as BatchMatmulFamily<()>>::Config;
 
@@ -51,7 +51,7 @@ impl Routine<()> for Vec2MatRoutine {
                 let max_planes_for_swizzle = problem.k / tile_dim;
                 let num_planes = max(1, min(strategy.target_num_planes, max_planes_for_swizzle));
 
-                let blueprint = Vec2MatBlueprint {
+                let blueprint = NoStageVecMatBlueprint {
                     dtypes: dtypes.clone(),
                     num_planes,
                     tile_dim,

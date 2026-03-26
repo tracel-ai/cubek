@@ -1,4 +1,4 @@
-//! Vec2Mat matmul kernel implementation
+//! No Stage VecMat matmul kernel implementation
 use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
 use cubecl::zspace::Shape;
 use cubecl::{VectorizationError, prelude::*};
@@ -9,7 +9,7 @@ use crate::definition::{MatmulVectorSizes, cube_mapping_launch};
 
 use crate::launch::InputArg;
 use crate::launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs};
-use crate::routines::vec2mat::{Vec2MatRoutine, Vec2MatStrategy};
+use crate::routines::nostage_vecmat::{NoStageVecMatRoutine, NoStageVecMatStrategy};
 use crate::routines::{BlueprintStrategy, Routine as _};
 
 #[allow(clippy::result_large_err)]
@@ -100,17 +100,17 @@ pub fn launch_ref<R: Runtime>(
         address_type,
     );
 
-    let device_settings = Vec2MatRoutine::device_settings(client, vector_sizes);
-    let expand_info = Vec2MatRoutine::expand_blueprint(
+    let device_settings = NoStageVecMatRoutine::device_settings(client, vector_sizes);
+    let expand_info = NoStageVecMatRoutine::expand_blueprint(
         &problem,
         &device_settings,
-        &BlueprintStrategy::Inferred(Vec2MatStrategy {
+        &BlueprintStrategy::Inferred(NoStageVecMatStrategy {
             target_num_planes: 8,
         }),
     )?;
-    let launch_info = Vec2MatRoutine::prepare(&problem, &device_settings, expand_info)?;
+    let launch_info = NoStageVecMatRoutine::prepare(&problem, &device_settings, expand_info)?;
 
-    let input = <InputArg<TensorArgs> as ConcreteInputsFactory<Vec2MatRoutine>>::create(
+    let input = <InputArg<TensorArgs> as ConcreteInputsFactory<NoStageVecMatRoutine>>::create(
         lhs,
         rhs,
         &launch_info.blueprint,
@@ -118,7 +118,7 @@ pub fn launch_ref<R: Runtime>(
         &vector_sizes,
         dtypes,
     );
-    let output = <OutputArg<TensorArgs> as ConcreteOutputFactory<Vec2MatRoutine>>::create(
+    let output = <OutputArg<TensorArgs> as ConcreteOutputFactory<NoStageVecMatRoutine>>::create(
         out,
         &launch_info.blueprint,
         &problem,
@@ -126,7 +126,7 @@ pub fn launch_ref<R: Runtime>(
         dtypes,
     );
 
-    Vec2MatRoutine::launch::<TensorArgs, R>(
+    NoStageVecMatRoutine::launch::<TensorArgs, R>(
         client,
         launch_info.cube_dim,
         launch_info.cube_count_plan.resolve(),
