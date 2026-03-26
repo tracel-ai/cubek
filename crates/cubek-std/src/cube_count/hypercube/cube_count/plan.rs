@@ -104,8 +104,18 @@ impl CubeCountPlan {
             CubeCountStrategy::Spread => None,
         };
 
+        // Validate swizzle: fall back to non-swizzled order when the swizzle width
+        // does not evenly divide the problem dimension (m_cubes for Row, n_cubes for Col).
+        // Without this check, the swizzle produces incorrect cube-to-tile mappings.
+        let global_order = match blueprint.global_order {
+            GlobalOrder::SwizzleRow(w) if problem_count.x % w != 0 => GlobalOrder::RowMajor,
+            GlobalOrder::SwizzleCol(w) if problem_count.y % w != 0 => GlobalOrder::ColMajor,
+            other => other,
+        }
+        .canonicalize();
+
         CubeCountPlan {
-            global_order: blueprint.global_order,
+            global_order,
             kind: plan_kind
                 .unwrap_or_else(|| spread_cube_count_plan(problem_count, max_x, max_y, max_z)),
         }
@@ -224,5 +234,52 @@ fn spread_cube_count_plan(
         }
     } else {
         panic!("No valid cube spread plan")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MAX_CUBE_COUNT: (u32, u32, u32) = (65535, 65535, 65535);
+
+    #[test]
+    fn swizzle_row_falls_back_when_m_cubes_not_divisible_by_w() {
+        // m_cubes=3 is not divisible by w=4, must fall back to RowMajor
+        let blueprint = HypercubeBlueprint::builder()
+            .global_order(GlobalOrder::SwizzleRow(4))
+            .build();
+        let plan = CubeCountPlan::from_blueprint(
+            &blueprint,
+            Count3d { x: 3, y: 5, z: 1 },
+            &MAX_CUBE_COUNT,
+        );
+        assert_eq!(plan.global_order, GlobalOrder::RowMajor);
+    }
+
+    #[test]
+    fn swizzle_row_kept_when_m_cubes_divisible_by_w() {
+        let blueprint = HypercubeBlueprint::builder()
+            .global_order(GlobalOrder::SwizzleRow(4))
+            .build();
+        let plan = CubeCountPlan::from_blueprint(
+            &blueprint,
+            Count3d { x: 8, y: 5, z: 1 },
+            &MAX_CUBE_COUNT,
+        );
+        assert_eq!(plan.global_order, GlobalOrder::SwizzleRow(4));
+    }
+
+    #[test]
+    fn swizzle_col_falls_back_when_n_cubes_not_divisible_by_w() {
+        let blueprint = HypercubeBlueprint::builder()
+            .global_order(GlobalOrder::SwizzleCol(4))
+            .build();
+        let plan = CubeCountPlan::from_blueprint(
+            &blueprint,
+            Count3d { x: 8, y: 3, z: 1 },
+            &MAX_CUBE_COUNT,
+        );
+        assert_eq!(plan.global_order, GlobalOrder::ColMajor);
     }
 }
