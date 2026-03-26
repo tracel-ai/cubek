@@ -108,8 +108,12 @@ impl CubeCountPlan {
         // does not evenly divide the problem dimension (m_cubes for Row, n_cubes for Col).
         // Without this check, the swizzle produces incorrect cube-to-tile mappings.
         let global_order = match blueprint.global_order {
-            GlobalOrder::SwizzleRow(w) if problem_count.x % w != 0 => GlobalOrder::RowMajor,
-            GlobalOrder::SwizzleCol(w) if problem_count.y % w != 0 => GlobalOrder::ColMajor,
+            GlobalOrder::SwizzleRow(w) if !problem_count.x.is_multiple_of(w) => {
+                GlobalOrder::RowMajor
+            }
+            GlobalOrder::SwizzleCol(w) if !problem_count.y.is_multiple_of(w) => {
+                GlobalOrder::ColMajor
+            }
             other => other,
         }
         .canonicalize();
