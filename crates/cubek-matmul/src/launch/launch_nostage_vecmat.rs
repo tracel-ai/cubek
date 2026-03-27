@@ -118,8 +118,7 @@ pub fn launch_ref<R: Runtime>(
     );
 
     let device_settings = NoStageVecMatRoutine::device_settings(client, vector_sizes);
-    let expand_info =
-        NoStageVecMatRoutine::expand_blueprint(&problem, &device_settings, &strategy)?;
+    let expand_info = NoStageVecMatRoutine::expand_blueprint(&problem, &device_settings, strategy)?;
     let launch_info = NoStageVecMatRoutine::prepare(&problem, &device_settings, expand_info)?;
 
     let input = <InputArg<TensorArgs> as ConcreteInputsFactory<NoStageVecMatRoutine>>::create(
