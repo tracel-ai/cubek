@@ -78,6 +78,7 @@ pub fn irfft_launch<R: Runtime>(
         spectrum_im.into_tensor_arg(),
         signal.into_tensor_arg(),
         shape,
+        dim,
         dtype,
         vectorization,
     );
@@ -91,11 +92,19 @@ pub(crate) fn irfft_kernel<F: Float, N: Size>(
     spectrums_im: &Tensor<Vector<F, N>>,
     signal: &mut Tensor<Vector<F, N>>,
     #[comptime] num_samples: usize,
+    #[comptime] dim: usize,
     #[define(F)] _dtype: StorageType,
     #[define(N)] _vector_size: usize,
 ) {
     let batch_index = CUBE_POS;
-    irfft_kernel_one_batch(spectrums_re, spectrums_im, signal, batch_index, num_samples);
+    irfft_kernel_one_batch(
+        spectrums_re,
+        spectrums_im,
+        signal,
+        batch_index,
+        num_samples,
+        dim,
+    );
 }
 
 #[cube]
@@ -109,13 +118,15 @@ pub(crate) fn irfft_kernel_one_batch<F: Float, N: Size>(
     signal: &mut Tensor<Vector<F, N>>,
     window_index: usize,
     #[comptime] num_samples: usize,
+    #[comptime] dim: usize,
 ) {
     // The following code allow to ignore the batch index and assume only one window
     // - spectrums have shape: [num_freq_bins]
     // - signal has shape: [num_samples]
-    let spectrums_re_layout = BatchSignalLayout::new(spectrums_re, window_index);
-    let spectrums_im_layout = BatchSignalLayout::new(spectrums_im, window_index);
-    let signal_layout = BatchSignalLayout::new(signal, window_index);
+    let spectrums_re_layout = BatchSignalLayout::new(spectrums_re, window_index, dim);
+    let spectrums_im_layout = BatchSignalLayout::new(spectrums_im, window_index, dim);
+
+    let signal_layout = BatchSignalLayout::new(signal, window_index, dim);
     let spectrums_re_view = spectrums_re.view(spectrums_re_layout);
     let spectrums_im_view = spectrums_im.view(spectrums_im_layout);
     let signal_view = signal.view_mut(signal_layout);

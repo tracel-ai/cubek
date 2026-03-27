@@ -17,12 +17,30 @@ pub struct BatchSignalLayout {
 
 #[cube]
 impl BatchSignalLayout {
-    pub fn new<F: Float, N: Size>(tensor: &Tensor<Vector<F, N>>, batch_index: usize) -> Self {
+    pub fn new<F: Float, N: Size>(
+        tensor: &Tensor<Vector<F, N>>,
+        batch_index: usize,
+        #[comptime] dim: usize,
+    ) -> Self {
         let rank = tensor.rank();
+        let mut batch_offset = 0;
+        let mut temp_idx = batch_index;
+
+        for i in 0..rank {
+            if i != dim {
+                let size = tensor.shape(i);
+                let stride = tensor.stride(i);
+
+                let coord = temp_idx % size;
+                batch_offset += coord * stride;
+                temp_idx /= size;
+            }
+        }
+
         BatchSignalLayout {
-            num_samples: tensor.shape(rank - 1),
-            stride_samples: tensor.stride(rank - 1),
-            batch_offset: batch_index * tensor.stride(rank - 2),
+            num_samples: tensor.shape(dim),
+            stride_samples: tensor.stride(dim),
+            batch_offset,
             vector_size: tensor.vector_size(),
         }
     }

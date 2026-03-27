@@ -75,7 +75,8 @@ pub fn rfft_launch<R: Runtime>(
     let cube_count = CubeCount::new_1d(count as u32);
     let cube_dim = CubeDim::new_single();
     let vectorization = 1;
-    let shape = *signal.shape.last().unwrap();
+    //let shape = *signal.shape.last().unwrap();
+    let shape = signal.shape.as_slice()[dim];
 
     rfft_kernel::launch::<R>(
         client,
@@ -85,6 +86,7 @@ pub fn rfft_launch<R: Runtime>(
         spectrum_re.into_tensor_arg(),
         spectrum_im.into_tensor_arg(),
         shape,
+        dim,
         dtype,
         vectorization,
     );
@@ -98,6 +100,7 @@ pub(crate) fn rfft_kernel<F: Float, N: Size>(
     spectrums_re: &mut Tensor<Vector<F, N>>,
     spectrums_im: &mut Tensor<Vector<F, N>>,
     #[comptime] num_samples: usize,
+    #[comptime] dim: usize,
     #[define(F)] _dtype: StorageType,
     #[define(N)] _vector_size: usize,
 ) {
@@ -108,6 +111,7 @@ pub(crate) fn rfft_kernel<F: Float, N: Size>(
         spectrums_im,
         window_index,
         num_samples,
+        dim,
     );
 }
 
@@ -121,10 +125,11 @@ pub(crate) fn rfft_kernel_one_window<F: Float, N: Size>(
     spectrums_im: &mut Tensor<Vector<F, N>>,
     window_index: usize,
     #[comptime] num_samples: usize,
+    #[comptime] dim: usize,
 ) {
-    let signal_layout = BatchSignalLayout::new(signal, window_index);
-    let spectrums_re_layout = BatchSignalLayout::new(spectrums_re, window_index);
-    let spectrums_im_layout = BatchSignalLayout::new(spectrums_im, window_index);
+    let signal_layout = BatchSignalLayout::new(signal, window_index, dim);
+    let spectrums_re_layout = BatchSignalLayout::new(spectrums_re, window_index, dim);
+    let spectrums_im_layout = BatchSignalLayout::new(spectrums_im, window_index, dim);
     let signal_view = signal.view(signal_layout);
     let spectrums_re_view = spectrums_re.view_mut(spectrums_re_layout);
     let spectrums_im_view = spectrums_im.view_mut(spectrums_im_layout);

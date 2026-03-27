@@ -1,6 +1,6 @@
 use std::f32::consts::PI;
 
-use cubecl::zspace::Shape;
+use cubecl::zspace::{Shape, Strides};
 use cubek_test_utils::{HostData, HostDataVec, StrideSpec};
 use num_complex::Complex;
 
@@ -134,14 +134,8 @@ pub fn rfft_ref(signal: &HostData, dim: usize) -> (HostData, HostData) {
     let num_lanes = signal.shape.num_elements() / sample_window;
     let out_strides = StrideSpec::RowMajor.compute_strides(&out_shape);
 
-    let windows_capacity: usize = out_shape
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| *i != dim)
-        .map(|(_, e)| *e)
-        .product();
-
-    let mut spectrums = Vec::with_capacity(windows_capacity);
+    let mut re_data = vec![0.0; out_shape.num_elements()];
+    let mut im_data = vec![0.0; out_shape.num_elements()];
     for l in 0..num_lanes {
         let mut coords = get_coords(l, in_shape, dim);
         let mut spectrum = Vec::with_capacity(sample_window);
@@ -153,23 +147,44 @@ pub fn rfft_ref(signal: &HostData, dim: usize) -> (HostData, HostData) {
         }
 
         fft_recursive(&mut spectrum, FftMode::Forward);
-        spectrums.push(spectrum[..num_freq_bins].to_vec());
+        //spectrums.push(spectrum[..num_freq_bins].to_vec());
+
+        for k in 0..num_freq_bins {
+            coords[dim] = k;
+            let flat_idx = compute_index(&out_strides, coords.as_slice());
+            re_data[flat_idx] = spectrum[k].re;
+            im_data[flat_idx] = spectrum[k].im;
+        }
     }
 
-    let batched_spectrums: Vec<Complex<f32>> = spectrums.into_iter().flatten().collect();
-    let (re, im): (Vec<f32>, Vec<f32>) =
-        batched_spectrums.into_iter().map(|c| (c.re, c.im)).unzip();
+    //let batched_spectrums: Vec<Complex<f32>> = spectrums.into_iter().flatten().collect();
+    //let (re, im): (Vec<f32>, Vec<f32>) =
+    //    batched_spectrums.into_iter().map(|c| (c.re, c.im)).unzip();
 
     (
         HostData {
-            data: HostDataVec::F32(re),
+            data: HostDataVec::F32(re_data),
             shape: out_shape.clone(),
             strides: out_strides.clone(),
         },
         HostData {
-            data: HostDataVec::F32(im),
+            data: HostDataVec::F32(im_data),
             shape: out_shape,
             strides: out_strides,
         },
     )
+}
+
+pub fn compute_index(strides: &Strides, coords: &[usize]) -> usize {
+    assert_eq!(
+        coords.len(),
+        strides.rank(),
+        "Coordinate rank must match stride rank",
+    );
+
+    coords
+        .iter()
+        .zip(strides.iter())
+        .map(|(&c, &s)| c * s)
+        .sum()
 }

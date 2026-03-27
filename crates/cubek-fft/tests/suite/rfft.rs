@@ -108,6 +108,33 @@ fn rfft_small_size() {
 }
 
 #[test]
+fn rfft_in_dim_1() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let signal_shape = [5, 64, 1000].to_vec();
+    let spectrum_shape = [5, 33, 1000].to_vec();
+    let dim = 1;
+    test_launch(client, signal_shape, spectrum_shape, dim);
+}
+
+#[test]
+fn rfft_in_dim_0() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let signal_shape = [128, 6, 1000].to_vec();
+    let spectrum_shape = [65, 6, 1000].to_vec();
+    let dim = 0;
+    test_launch(client, signal_shape, spectrum_shape, dim);
+}
+
+#[test]
+fn rfft_in_dim_4() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let signal_shape = [5, 256, 6, 42].to_vec();
+    let spectrum_shape = [5, 129, 6, 42].to_vec();
+    let dim = 1;
+    test_launch(client, signal_shape, spectrum_shape, dim);
+}
+
+#[test]
 fn rfft_medium_size() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let signal_shape = [22, 1, 2048].to_vec();
