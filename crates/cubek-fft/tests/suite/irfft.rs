@@ -13,10 +13,11 @@ use crate::suite::reference::irfft_ref;
 fn test_launch(
     client: ComputeClient<TestRuntime>,
     signal_shape: Vec<usize>,
-    spectrum_shape: Vec<usize>,
     dim: usize,
 ) {
     let dtype = f32::as_type_native_unchecked().storage_type();
+    let mut spectrum_shape = signal_shape.clone();
+    spectrum_shape[dim] = signal_shape[dim] / 2 + 1; 
 
     let (random_spectrum_re_handle, random_spectrum_re_data) = TestInput::new(
         client.clone(),
@@ -92,42 +93,37 @@ fn assert_irfft_result(
 fn irfft_small_size() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let signal_shape = [5, 2, 2048].to_vec();
-    let spectrum_shape = [5, 2, 1025].to_vec();
     let dim = signal_shape.len() - 1;
-    test_launch(client, signal_shape, spectrum_shape, dim);
+    test_launch(client, signal_shape, dim);
 }
 
 #[test]
 fn irfft_on_dim_0() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let signal_shape = [64, 2, 1024].to_vec();
-    let spectrum_shape = [33, 2, 1024].to_vec();
     let dim = 0;
-    test_launch(client, signal_shape, spectrum_shape, dim);
+    test_launch(client, signal_shape, dim);
 }
 #[test]
 fn irfft_on_dim_1() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let signal_shape = [33, 8, 1024].to_vec();
-    let spectrum_shape = [33, 5, 1024].to_vec();
     let dim = 1;
-    test_launch(client, signal_shape, spectrum_shape, dim);
+    test_launch(client, signal_shape, dim);
 }
 
 #[test]
 fn irfft_on_dim_2_shape_rank_4() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let signal_shape = [12, 8, 1024, 4].to_vec();
-    let spectrum_shape = [12, 8, 513, 4].to_vec();
     let dim = 2;
-    test_launch(client, signal_shape, spectrum_shape, dim);
+    test_launch(client, signal_shape, dim);
 }
 
 #[test]
 fn irfft_medium_size() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let signal_shape = [22, 1, 2048].to_vec();
-    let spectrum_shape = [22, 1, 1025].to_vec();
     let dim = signal_shape.len() - 1;
-    test_launch(client, signal_shape, spectrum_shape, dim);
+    test_launch(client, signal_shape, dim);
 }
