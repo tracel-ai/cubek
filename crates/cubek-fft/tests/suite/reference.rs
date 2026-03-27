@@ -20,19 +20,6 @@ impl FftMode {
     }
 }
 
-fn get_coords(lane_idx: usize, shape: &[usize], dim: usize) -> Vec<usize> {
-    let mut coords = vec![0; shape.len()];
-    let mut temp = lane_idx;
-    for i in (0..shape.len()).rev() {
-        if i == dim {
-            continue;
-        }
-        coords[i] = temp % shape[i];
-        temp /= shape[i];
-    }
-    coords
-}
-
 /// Recursive Cooley-Tukey IFFT for complex inputs (length must be power of 2)
 fn fft_recursive(x: &mut [Complex<f32>], fft_mode: FftMode) {
     let n = x.len();
@@ -68,14 +55,7 @@ pub fn irfft_ref(re: &HostData, im: &HostData, dim: usize) -> HostData {
     let num_lanes = re.shape.num_elements() / num_freq_bins;
     let out_strides = StrideSpec::RowMajor.compute_strides(&out_shape);
 
-    let windows_capacity: usize = out_shape
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| *i != dim)
-        .map(|(_, e)| *e)
-        .product();
-
-    let mut windows: Vec<Vec<Complex<f32>>> = Vec::with_capacity(windows_capacity);
+    let mut flattened = vec![0.0; out_shape.num_elements()];
 
     for l in 0..num_lanes {
         // Reconstruct full complex spectrum
@@ -97,19 +77,14 @@ pub fn irfft_ref(re: &HostData, im: &HostData, dim: usize) -> HostData {
         // Inverse FFT
         fft_recursive(&mut spectrum, FftMode::Inverse);
 
-        // normalize amplitude
-        for v in spectrum.iter_mut() {
-            *v /= sample_window as f32;
+        for i in 0..sample_window {
+            coords[dim] = i;
+            let flat_idx = compute_index(&out_strides, coords.as_slice());
+
+            // normalize amplitude
+            flattened[flat_idx] = spectrum[i].re / sample_window as f32;
         }
-
-        windows.push(spectrum);
     }
-
-    // Flatten all windows
-    let flattened: Vec<f32> = windows
-        .into_iter()
-        .flat_map(|v| v.into_iter().map(|c| c.re))
-        .collect();
 
     HostData {
         data: HostDataVec::F32(flattened),
@@ -157,10 +132,6 @@ pub fn rfft_ref(signal: &HostData, dim: usize) -> (HostData, HostData) {
         }
     }
 
-    //let batched_spectrums: Vec<Complex<f32>> = spectrums.into_iter().flatten().collect();
-    //let (re, im): (Vec<f32>, Vec<f32>) =
-    //    batched_spectrums.into_iter().map(|c| (c.re, c.im)).unzip();
-
     (
         HostData {
             data: HostDataVec::F32(re_data),
@@ -173,6 +144,19 @@ pub fn rfft_ref(signal: &HostData, dim: usize) -> (HostData, HostData) {
             strides: out_strides,
         },
     )
+}
+
+fn get_coords(lane_idx: usize, shape: &[usize], dim: usize) -> Vec<usize> {
+    let mut coords = vec![0; shape.len()];
+    let mut temp = lane_idx;
+    for i in (0..shape.len()).rev() {
+        if i == dim {
+            continue;
+        }
+        coords[i] = temp % shape[i];
+        temp /= shape[i];
+    }
+    coords
 }
 
 pub fn compute_index(strides: &Strides, coords: &[usize]) -> usize {

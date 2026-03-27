@@ -98,6 +98,33 @@ fn irfft_small_size() {
 }
 
 #[test]
+fn irfft_on_dim_0() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let signal_shape = [64, 2, 1024].to_vec();
+    let spectrum_shape = [33, 2, 1024].to_vec();
+    let dim = 0;
+    test_launch(client, signal_shape, spectrum_shape, dim);
+}
+#[test]
+fn irfft_on_dim_1() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let signal_shape = [33, 8, 1024].to_vec();
+    let spectrum_shape = [33, 5, 1024].to_vec();
+    let dim = 1;
+    test_launch(client, signal_shape, spectrum_shape, dim);
+}
+
+
+#[test]
+fn irfft_on_dim_2_shape_rank_4() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let signal_shape = [12, 8, 1024, 4].to_vec();
+    let spectrum_shape = [12, 8, 513, 4].to_vec();
+    let dim = 2;
+    test_launch(client, signal_shape, spectrum_shape, dim);
+}
+
+#[test]
 fn irfft_medium_size() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let signal_shape = [22, 1, 2048].to_vec();
