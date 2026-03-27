@@ -114,7 +114,6 @@ fn irfft_on_dim_1() {
     test_launch(client, signal_shape, spectrum_shape, dim);
 }
 
-
 #[test]
 fn irfft_on_dim_2_shape_rank_4() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
