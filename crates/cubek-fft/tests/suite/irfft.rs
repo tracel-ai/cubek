@@ -90,7 +90,7 @@ fn assert_irfft_result(
 }
 
 #[test]
-fn irfft_small_size() {
+fn irfft_3d_last_axis() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let signal_shape = [5, 2, 2048].to_vec();
     let dim = signal_shape.len() - 1;
@@ -98,14 +98,15 @@ fn irfft_small_size() {
 }
 
 #[test]
-fn irfft_on_dim_0() {
+fn irfft_3d_axis_0() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let signal_shape = [64, 2, 1024].to_vec();
     let dim = 0;
     test_launch(client, signal_shape, dim);
 }
+
 #[test]
-fn irfft_on_dim_1() {
+fn irfft_3d_axis_1() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let signal_shape = [33, 8, 1024].to_vec();
     let dim = 1;
@@ -113,7 +114,7 @@ fn irfft_on_dim_1() {
 }
 
 #[test]
-fn irfft_on_dim_2_shape_rank_4() {
+fn irfft_4d_axis_2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let signal_shape = [12, 8, 1024, 4].to_vec();
     let dim = 2;
@@ -121,7 +122,7 @@ fn irfft_on_dim_2_shape_rank_4() {
 }
 
 #[test]
-fn irfft_medium_size() {
+fn irfft_3d_batch_singleton_dim() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let signal_shape = [22, 1, 2048].to_vec();
     let dim = signal_shape.len() - 1;
