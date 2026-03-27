@@ -100,7 +100,7 @@ pub fn assert_rfft_result(
 }
 
 #[test]
-fn rfft_in_last_dimension() {
+fn rfft_3d_axis_last() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let signal_shape = [5, 2, 2048].to_vec();
     let dim = signal_shape.len() - 1;
@@ -108,7 +108,7 @@ fn rfft_in_last_dimension() {
 }
 
 #[test]
-fn rfft_in_dim_1() {
+fn rfft_3d_axis_1_strided() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let signal_shape = [5, 64, 1000].to_vec();
     let dim = 1;
@@ -116,7 +116,7 @@ fn rfft_in_dim_1() {
 }
 
 #[test]
-fn rfft_in_dim_0() {
+fn rfft_3d_axis_0_strided() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let signal_shape = [128, 6, 1000].to_vec();
     let dim = 0;
@@ -124,7 +124,7 @@ fn rfft_in_dim_0() {
 }
 
 #[test]
-fn rfft_in_dim_4() {
+fn rfft_4d_axis_1_strided() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let signal_shape = [5, 256, 6, 42].to_vec();
     let dim = 1;
@@ -132,7 +132,7 @@ fn rfft_in_dim_4() {
 }
 
 #[test]
-fn rfft_medium_size() {
+fn rfft_3d_batch_singleton_dim() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let signal_shape = [22, 1, 2048].to_vec();
     let dim = signal_shape.len() - 1;
