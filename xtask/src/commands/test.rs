@@ -25,6 +25,7 @@ pub(crate) fn handle_command(
                 "cubek-attention",
                 "cubek-random",
                 "cubek-reduce",
+                "cubek-fft",
             ],
             vec!["--features", backend],
             None,
