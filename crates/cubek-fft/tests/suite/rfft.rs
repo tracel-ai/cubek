@@ -99,7 +99,7 @@ pub fn assert_rfft_result(
 }
 
 #[test]
-fn stereo_100ms() {
+fn rfft_small_size() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let signal_shape = [5, 2, 2048].to_vec();
     let spectrum_shape = [5, 2, 1025].to_vec();
@@ -108,7 +108,7 @@ fn stereo_100ms() {
 }
 
 #[test]
-fn mono_500ms() {
+fn rfft_medium_size() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let signal_shape = [22, 1, 2048].to_vec();
     let spectrum_shape = [22, 1, 1025].to_vec();
