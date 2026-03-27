@@ -75,7 +75,6 @@ pub fn rfft_launch<R: Runtime>(
     let cube_count = CubeCount::new_1d(count as u32);
     let cube_dim = CubeDim::new_single();
     let vectorization = 1;
-    //let shape = *signal.shape.last().unwrap();
     let shape = signal.shape.as_slice()[dim];
 
     rfft_kernel::launch::<R>(
