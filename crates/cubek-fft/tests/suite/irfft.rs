@@ -10,14 +10,10 @@ use cubek_test_utils::{
 
 use crate::suite::reference::irfft_ref;
 
-fn test_launch(
-    client: ComputeClient<TestRuntime>,
-    signal_shape: Vec<usize>,
-    dim: usize,
-) {
+fn test_launch(client: ComputeClient<TestRuntime>, signal_shape: Vec<usize>, dim: usize) {
     let dtype = f32::as_type_native_unchecked().storage_type();
     let mut spectrum_shape = signal_shape.clone();
-    spectrum_shape[dim] = signal_shape[dim] / 2 + 1; 
+    spectrum_shape[dim] = signal_shape[dim] / 2 + 1;
 
     let (random_spectrum_re_handle, random_spectrum_re_data) = TestInput::new(
         client.clone(),
