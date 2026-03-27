@@ -146,15 +146,10 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for NoStageVecMat<MP> {
 
             let local_lhs_vec = lhs.read_checked((0, (k_base + unit_id) * vector_size));
 
-            #[unroll]
             for plane_iter in 0..plane_dim {
-                let lhs_vec = if comptime!(plane_dim > 1) {
-                    plane_broadcast(local_lhs_vec, plane_iter)
-                } else {
-                    local_lhs_vec
-                };
-
+                let lhs_vec = shuffle(local_lhs_vec, plane_iter, plane_dim);
                 let rhs_k_vec_base = (k_base + plane_iter) * vector_size;
+
                 for vec_iter in 0..NA::value() as u32 {
                     let lhs_scalar = lhs_vec[vec_iter as usize];
                     let rhs_vec = rhs.read_checked((rhs_k_vec_base + vec_iter, vectorized_pos_n));
@@ -164,5 +159,18 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for NoStageVecMat<MP> {
         }
 
         out.write_checked((0, vectorized_pos_n), Vector::cast_from(acc));
+    }
+}
+
+#[cube]
+fn shuffle<E: Numeric, N: Size>(
+    shared_value: Vector<E, N>,
+    unit: u32,
+    #[comptime] plane_dim: u32,
+) -> Vector<E, N> {
+    if comptime!(plane_dim > 1) {
+        plane_shuffle(shared_value, unit)
+    } else {
+        shared_value
     }
 }
