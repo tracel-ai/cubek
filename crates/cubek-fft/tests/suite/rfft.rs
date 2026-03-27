@@ -63,6 +63,7 @@ fn test_launch(
             white_noise_data,
             spectrum_re_handle,
             spectrum_im_handle,
+            dim,
         )
         .as_test_outcome(),
         ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
@@ -75,10 +76,11 @@ pub fn assert_rfft_result(
     signal: HostData,
     spectrum_re: TensorHandle<TestRuntime>,
     spectrum_im: TensorHandle<TestRuntime>,
+    dim: usize,
 ) -> ValidationResult {
     // big epsilon because with wgpu, compute is less precise
     let epsilon = 0.4;
-    let (expected_re, expected_im) = rfft_ref(&signal);
+    let (expected_re, expected_im) = rfft_ref(&signal, dim);
 
     let actual_spectrum_re = HostData::from_tensor_handle(client, spectrum_re, HostDataType::F32);
     let actual_spectrum_im = HostData::from_tensor_handle(client, spectrum_im, HostDataType::F32);
