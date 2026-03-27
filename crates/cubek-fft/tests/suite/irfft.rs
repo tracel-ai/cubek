@@ -66,6 +66,7 @@ fn test_launch(
             random_spectrum_re_data,
             random_spectrum_im_data,
             signal_handle,
+            dim,
         )
         .as_test_outcome(),
         ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
@@ -78,9 +79,10 @@ fn assert_irfft_result(
     spectrum_re: HostData,
     spectrum_im: HostData,
     signal: TensorHandle<TestRuntime>,
+    dim: usize,
 ) -> ValidationResult {
     let epsilon = 0.01;
-    let expected_signal = irfft_ref(&spectrum_re, &spectrum_im);
+    let expected_signal = irfft_ref(&spectrum_re, &spectrum_im, dim);
     let actual_signal = HostData::from_tensor_handle(client, signal, HostDataType::F32);
 
     assert_equals_approx(&actual_signal, &expected_signal, epsilon)
