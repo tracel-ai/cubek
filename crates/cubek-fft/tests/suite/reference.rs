@@ -52,12 +52,12 @@ pub fn irfft_ref(re: &HostData, im: &HostData, dim: usize) -> HostData {
     let mut out_shape_vec = in_shape.to_vec();
     out_shape_vec[dim] = sample_window;
     let out_shape = Shape::from(out_shape_vec);
-    let num_lanes = re.shape.num_elements() / num_freq_bins;
+    let num_windows = re.shape.num_elements() / num_freq_bins;
     let out_strides = StrideSpec::RowMajor.compute_strides(&out_shape);
 
     let mut flattened = vec![0.0; out_shape.num_elements()];
 
-    for l in 0..num_lanes {
+    for l in 0..num_windows {
         // Reconstruct full complex spectrum
         let mut coords = get_coords(l, in_shape, dim);
         let mut spectrum = vec![Complex::new(0.0, 0.0); sample_window];
@@ -106,12 +106,12 @@ pub fn rfft_ref(signal: &HostData, dim: usize) -> (HostData, HostData) {
     let mut out_shape_vec = in_shape.to_vec();
     out_shape_vec[dim] = num_freq_bins;
     let out_shape = Shape::from(out_shape_vec);
-    let num_lanes = signal.shape.num_elements() / sample_window;
+    let num_windows = signal.shape.num_elements() / sample_window;
     let out_strides = StrideSpec::RowMajor.compute_strides(&out_shape);
 
     let mut re_data = vec![0.0; out_shape.num_elements()];
     let mut im_data = vec![0.0; out_shape.num_elements()];
-    for l in 0..num_lanes {
+    for l in 0..num_windows {
         let mut coords = get_coords(l, in_shape, dim);
         let mut spectrum = Vec::with_capacity(sample_window);
         for i in 0..sample_window {
@@ -122,8 +122,6 @@ pub fn rfft_ref(signal: &HostData, dim: usize) -> (HostData, HostData) {
         }
 
         fft_recursive(&mut spectrum, FftMode::Forward);
-        //spectrums.push(spectrum[..num_freq_bins].to_vec());
-
         for k in 0..num_freq_bins {
             coords[dim] = k;
             let flat_idx = compute_index(&out_strides, coords.as_slice());
