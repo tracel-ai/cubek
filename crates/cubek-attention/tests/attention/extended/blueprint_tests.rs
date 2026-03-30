@@ -811,7 +811,7 @@ fn partition_many_planes() {
             val_dim: 1,
         },
         stage_size: AttentionStageSize {
-            seq_q: 10 * minimal_seq_q_stage(),
+            seq_q: 5 * minimal_seq_q_stage(),
         },
     };
     let problem = AttentionProblem {

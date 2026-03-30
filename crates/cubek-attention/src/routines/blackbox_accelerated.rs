@@ -197,6 +197,14 @@ fn validate(
     problem: &AttentionProblem,
     blueprint: AttentionBlueprint,
 ) -> Result<AttentionBlueprint, AttentionSetupError> {
+    if !(problem.dims.seq_q as u32)
+        .is_multiple_of(blueprint.tiling_scheme.elements_in_stage_seq_q())
+    {
+        return Err(AttentionSetupError::InvalidConfig(Box::new(
+            "Stage seq_q must divide problem seq_q".to_string(),
+        )));
+    }
+
     if !(problem.dims.head_dim as u32).is_multiple_of(blueprint.tiling_scheme.tile_size.head_dim) {
         return Err(AttentionSetupError::InvalidConfig(Box::new(
             "Tile size head dim must divide problem head dim".to_string(),
