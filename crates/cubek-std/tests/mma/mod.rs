@@ -49,14 +49,20 @@ pub fn print_mma_layout<AB: CubeElement + Numeric, CD: CubeElement + Numeric>(
 ) -> TestOutcome {
     let client = TestRuntime::client(&Default::default());
 
-    if !client.properties().features.mma.contains(&MmaConfig {
-        a_type: AB::cube_type(),
-        b_type: AB::cube_type(),
-        cd_type: CD::cube_type(),
-        m: m as u32,
-        n: n as u32,
-        k: k as u32,
-    }) {
+    if !client
+        .properties()
+        .features
+        .matmul
+        .mma
+        .contains(&MmaConfig {
+            a_type: AB::cube_type(),
+            b_type: AB::cube_type(),
+            cd_type: CD::cube_type(),
+            m: m as u32,
+            n: n as u32,
+            k: k as u32,
+        })
+    {
         return TestOutcome::CompileError(format!(
             "MmaConfig not available for a: {:?} b: {:?}, cd: {:?}, m: {m}, n: {n}, k: {k}",
             AB::cube_type(),

@@ -14,7 +14,7 @@ use cubek::{
             LoadingPrecomputeStrategy, MatmulElems, MatmulPrecision, MatmulProblem,
             TilingBlueprint, TilingScheme,
         },
-        launch::{InputBinding, Strategy},
+        launch::Strategy,
         routines::{
             BlueprintStrategy, TileSizeSelection, double_buffering::DoubleBufferingArgs,
             double_unit::DoubleUnitSelectionArgs, ordered_double_buffering::OrderedSelectionArgs,
@@ -23,7 +23,7 @@ use cubek::{
     },
     random::random_uniform,
     std::{
-        MatrixLayout, StageSize,
+        InputBinding, MatrixLayout, StageSize,
         cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint},
     },
 };

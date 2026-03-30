@@ -145,7 +145,7 @@ fn validate(
         )));
     }
 
-    if !device_props.features.cmma.contains(&MmaConfig {
+    if !device_props.features.matmul.cmma.contains(&MmaConfig {
         a_type: dtypes.query_tile,
         b_type: dtypes.key_value_tile,
         cd_type: dtypes.softmax_acc,
@@ -164,7 +164,7 @@ fn validate(
             ),
         ));
     }
-    if !device_props.features.cmma.contains(&MmaConfig {
+    if !device_props.features.matmul.cmma.contains(&MmaConfig {
         a_type: dtypes.softmax_lhs,
         b_type: dtypes.key_value_tile,
         cd_type: dtypes.accumulator,

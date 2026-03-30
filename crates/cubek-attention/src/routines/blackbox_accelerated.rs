@@ -83,13 +83,15 @@ fn blueprint<R: Runtime>(
     match strategy {
         BlueprintStrategy::Forced(attention_blueprint) => validate(problem, attention_blueprint),
         BlueprintStrategy::Inferred(strategy) => {
-            let is_supported =
-                |client: &ComputeClient<R>, mma| client.properties().features.cmma.contains(&mma);
+            let is_supported = |client: &ComputeClient<R>, mma| {
+                client.properties().features.matmul.cmma.contains(&mma)
+            };
 
             let supported_sizes = |client: &ComputeClient<R>, lhs_ty, rhs_ty, acc_ty| {
                 client
                     .properties()
                     .features
+                    .matmul
                     .cmma
                     .iter()
                     .filter(|it| it.a_type == lhs_ty && it.b_type == rhs_ty && it.cd_type == acc_ty)

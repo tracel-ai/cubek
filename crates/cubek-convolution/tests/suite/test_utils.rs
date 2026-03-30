@@ -57,22 +57,32 @@ where
         shape: Shape,
         strides: Strides,
     ) {
-        let maybe_f16 = client.properties().features.cmma.contains(&MmaConfig {
-            a_type: ES::as_type_native_unchecked().storage_type(),
-            b_type: ES::as_type_native_unchecked().storage_type(),
-            cd_type: EG::as_type_native_unchecked().storage_type(),
-            m: 16,
-            k: 16,
-            n: 16,
-        });
-        let maybe_tf32 = client.properties().features.cmma.contains(&MmaConfig {
-            a_type: ES::as_type_native_unchecked().storage_type(),
-            b_type: ES::as_type_native_unchecked().storage_type(),
-            cd_type: EG::as_type_native_unchecked().storage_type(),
-            m: 16,
-            k: 8,
-            n: 16,
-        });
+        let maybe_f16 = client
+            .properties()
+            .features
+            .matmul
+            .cmma
+            .contains(&MmaConfig {
+                a_type: ES::as_type_native_unchecked().storage_type(),
+                b_type: ES::as_type_native_unchecked().storage_type(),
+                cd_type: EG::as_type_native_unchecked().storage_type(),
+                m: 16,
+                k: 16,
+                n: 16,
+            });
+        let maybe_tf32 = client
+            .properties()
+            .features
+            .matmul
+            .cmma
+            .contains(&MmaConfig {
+                a_type: ES::as_type_native_unchecked().storage_type(),
+                b_type: ES::as_type_native_unchecked().storage_type(),
+                cd_type: EG::as_type_native_unchecked().storage_type(),
+                m: 16,
+                k: 8,
+                n: 16,
+            });
 
         // Need to compensate for the temporary conversion to f16/tf32
         let epsilon = match maybe_f16 || maybe_tf32 {

@@ -1,3 +1,5 @@
+#![allow(clippy::needless_range_loop)]
+
 use std::f32::consts::PI;
 
 use cubecl::zspace::{Shape, Strides};

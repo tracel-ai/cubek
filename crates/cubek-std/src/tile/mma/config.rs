@@ -50,7 +50,7 @@ impl MmaIOConfig {
 
 fn load_method(device_props: &DeviceProperties, dtype: StorageType) -> LoadMethod {
     if !matches!(dtype, StorageType::Packed(_, _))
-        && device_props.features.ldmatrix.contains(&dtype)
+        && device_props.features.matmul.ldmatrix.contains(&dtype)
     {
         LoadMethod::LoadMatrix
     } else {
@@ -60,7 +60,7 @@ fn load_method(device_props: &DeviceProperties, dtype: StorageType) -> LoadMetho
 
 fn store_method(device_props: &DeviceProperties, dtype: StorageType) -> StoreMethod {
     if !matches!(dtype, StorageType::Packed(_, _))
-        && device_props.features.stmatrix.contains(&dtype)
+        && device_props.features.matmul.stmatrix.contains(&dtype)
     {
         StoreMethod::StoreMatrix
     } else {

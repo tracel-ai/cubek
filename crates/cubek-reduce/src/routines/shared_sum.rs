@@ -1,5 +1,5 @@
 use cubecl::{
-    features::TypeUsage,
+    features::AtomicUsage,
     std::tensor::layout::linear::{
         LinearView, LinearViewLaunch, LinearViewLayout, LinearViewLayoutLaunch,
     },
@@ -67,8 +67,8 @@ pub fn shared_sum<R: Runtime>(
     // Check that the client supports atomic addition.
     if !client
         .properties()
-        .type_usage(StorageType::Atomic(input_elem))
-        .contains(TypeUsage::AtomicAdd)
+        .atomic_type_usage(Type::new(StorageType::Atomic(input_elem)))
+        .contains(AtomicUsage::Add)
     {
         return Err(ReduceError::MissingAtomicAdd(input_elem.into()));
     }

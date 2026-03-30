@@ -54,7 +54,7 @@ where
     }
 
     fn is_supported<R: Runtime>(client: &ComputeClient<R>, config: MmaConfig) -> bool {
-        client.properties().features.cmma.contains(&config)
+        client.properties().features.matmul.cmma.contains(&config)
     }
 
     fn supported_sizes<R: Runtime>(
@@ -66,6 +66,7 @@ where
         client
             .properties()
             .features
+            .matmul
             .cmma
             .iter()
             .filter(|it| it.a_type == lhs_ty && it.b_type == rhs_ty && it.cd_type == acc_ty)
@@ -84,14 +85,20 @@ where
         let acc = dtypes.acc_register;
 
         let size = blueprint.tiling_scheme.tile_size;
-        if !client.properties().features.cmma.contains(&MmaConfig {
-            a_type: lhs,
-            b_type: rhs,
-            cd_type: acc,
-            m: size.m(),
-            k: size.k(),
-            n: size.n(),
-        }) {
+        if !client
+            .properties()
+            .features
+            .matmul
+            .cmma
+            .contains(&MmaConfig {
+                a_type: lhs,
+                b_type: rhs,
+                cd_type: acc,
+                m: size.m(),
+                k: size.k(),
+                n: size.n(),
+            })
+        {
             return Err(MatmulSetupError::Unavailable(
                 MatmulAvailabilityError::CmmaInstructionUnavailable {
                     lhs,
