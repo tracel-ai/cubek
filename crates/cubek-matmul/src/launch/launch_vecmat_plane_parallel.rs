@@ -100,7 +100,11 @@ pub fn launch_ref<R: Runtime>(
         address_type,
     );
 
-    assert!(problem.rhs_layout == MatrixLayout::ColMajor);
+    if problem.rhs_layout != MatrixLayout::ColMajor {
+        return Err(MatmulSetupError::InvalidConfig(Box::new(
+            "Vecmat plane parallel only supports col major rhs for now",
+        )));
+    }
 
     let device_settings = VecMatPlaneParallelRoutine::device_settings(client, vector_sizes);
     let expand_info =

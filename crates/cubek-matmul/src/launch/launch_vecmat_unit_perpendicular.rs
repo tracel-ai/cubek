@@ -116,6 +116,12 @@ pub fn launch_ref<R: Runtime>(
         address_type,
     );
 
+    if problem.rhs_layout != MatrixLayout::RowMajor {
+        return Err(MatmulSetupError::InvalidConfig(Box::new(
+            "Vecmat unit perpendicular only supports row major rhs for now",
+        )));
+    }
+
     let device_settings = VecMatUnitPerpendicularRoutine::device_settings(client, vector_sizes);
     let expand_info =
         VecMatUnitPerpendicularRoutine::expand_blueprint(&problem, &device_settings, strategy)?;
