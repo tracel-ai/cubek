@@ -9,8 +9,9 @@ use cubek::{
         definition::MatmulElems,
         launch::{Strategy, launch_ref},
         routines::{
-            BlueprintStrategy, TileSizeSelection, vecmat_unit_perpendicular::VecMatUnitPerpendicularStrategy,
-            simple_unit::SimpleUnitSelectionArgs,
+            BlueprintStrategy, TileSizeSelection, simple_unit::SimpleUnitSelectionArgs,
+            vecmat_plane_parallel::VecMatPlaneParallelStrategy,
+            vecmat_unit_perpendicular::VecMatUnitPerpendicularStrategy,
         },
     },
     random::random_uniform,
@@ -101,10 +102,20 @@ fn run<R: Runtime, E: frontend::Float>(device: &R::Device, strategy: Strategy) {
 
 #[allow(unused)]
 fn run_algos_vecmat<R: Runtime, E: frontend::Float>(device: &R::Device) {
-    println!("No Stage VecMat");
+    println!("VecMat Unit Perpendicular");
     run::<R, E>(
         device,
-        Strategy::VecMatUnitPerpendicular(BlueprintStrategy::Inferred(VecMatUnitPerpendicularStrategy {
+        Strategy::VecMatUnitPerpendicular(BlueprintStrategy::Inferred(
+            VecMatUnitPerpendicularStrategy {
+                target_num_planes: 8,
+            },
+        )),
+    );
+
+    println!("VecMat Plane Parallel");
+    run::<R, E>(
+        device,
+        Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(VecMatPlaneParallelStrategy {
             target_num_planes: 8,
         })),
     );

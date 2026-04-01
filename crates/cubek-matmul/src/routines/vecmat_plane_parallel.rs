@@ -88,7 +88,7 @@ impl Routine<()> for VecMatPlaneParallelRoutine {
         )?
         .to_cube_dim(device_settings.plane_dim)?;
 
-        let working_planes = problem.n.div_ceil(blueprint.tile_dim);
+        let working_planes = problem.n;
         let working_cubes = working_planes.div_ceil(blueprint.num_planes);
 
         let cube_count_plan = CubeCountPlan::from_blueprint(

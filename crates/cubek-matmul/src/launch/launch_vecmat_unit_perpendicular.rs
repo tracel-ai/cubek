@@ -1,4 +1,3 @@
-//! No Stage VecMat matmul kernel implementation
 use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
 use cubecl::zspace::Shape;
 use cubecl::{VectorizationError, prelude::*};
@@ -118,24 +117,28 @@ pub fn launch_ref<R: Runtime>(
     );
 
     let device_settings = VecMatUnitPerpendicularRoutine::device_settings(client, vector_sizes);
-    let expand_info = VecMatUnitPerpendicularRoutine::expand_blueprint(&problem, &device_settings, strategy)?;
-    let launch_info = VecMatUnitPerpendicularRoutine::prepare(&problem, &device_settings, expand_info)?;
+    let expand_info =
+        VecMatUnitPerpendicularRoutine::expand_blueprint(&problem, &device_settings, strategy)?;
+    let launch_info =
+        VecMatUnitPerpendicularRoutine::prepare(&problem, &device_settings, expand_info)?;
 
-    let input = <InputArg<TensorArgs> as ConcreteInputsFactory<VecMatUnitPerpendicularRoutine>>::create(
-        lhs,
-        rhs,
-        &launch_info.blueprint,
-        &problem,
-        &vector_sizes,
-        dtypes,
-    );
-    let output = <OutputArg<TensorArgs> as ConcreteOutputFactory<VecMatUnitPerpendicularRoutine>>::create(
-        out,
-        &launch_info.blueprint,
-        &problem,
-        &vector_sizes,
-        dtypes,
-    );
+    let input =
+        <InputArg<TensorArgs> as ConcreteInputsFactory<VecMatUnitPerpendicularRoutine>>::create(
+            lhs,
+            rhs,
+            &launch_info.blueprint,
+            &problem,
+            &vector_sizes,
+            dtypes,
+        );
+    let output =
+        <OutputArg<TensorArgs> as ConcreteOutputFactory<VecMatUnitPerpendicularRoutine>>::create(
+            out,
+            &launch_info.blueprint,
+            &problem,
+            &vector_sizes,
+            dtypes,
+        );
 
     VecMatUnitPerpendicularRoutine::launch::<TensorArgs, R>(
         client,

@@ -1,5 +1,3 @@
-//! No Stage VecMat matmul kernel implementation
-use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
 use cubecl::zspace::Shape;
 use cubecl::{VectorizationError, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
@@ -21,16 +19,7 @@ pub fn launch_ref<R: Runtime>(
     strategy: &BlueprintStrategy<(), VecMatPlaneParallelRoutine>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
-    panic!();
     let rank = rhs.shape().len();
-
-    // Rhs is assumed row major for now
-    let rhs_layout = matrix_batch_layout(&rhs.data().strides, rhs.scheme());
-    let rhs = if !matches!(rhs_layout, MatrixBatchLayout::Contiguous) {
-        rhs.into_contiguous(client)?
-    } else {
-        rhs
-    };
 
     let m = lhs.shape().to_vec()[rank - 2];
     let n = rhs.shape().to_vec()[rank - 1];
@@ -53,13 +42,6 @@ pub fn launch_ref<R: Runtime>(
         ))));
     }
 
-    if !n.is_multiple_of(plane_size) {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-            "Rhs dimension n={} must be a multiple of plane size {}",
-            n, plane_size
-        ))));
-    }
-
     let lhs_vector_size = client
         .io_optimized_vector_sizes(dtypes.lhs_global.size())
         .map(|v| {
@@ -73,7 +55,7 @@ pub fn launch_ref<R: Runtime>(
         .max()
         .ok_or(VectorizationError::NoValidVectorization)?;
 
-    // Assumes rhs is row major
+    // Assumes rhs is col major
     let rhs_vector_size = client
         .io_optimized_vector_sizes(dtypes.rhs_global.size())
         .map(|v| {
@@ -92,7 +74,7 @@ pub fn launch_ref<R: Runtime>(
     let vector_sizes = MatmulVectorSizes {
         lhs: shared_vector_size,
         rhs: shared_vector_size,
-        out: shared_vector_size,
+        out: 1,
     };
 
     let address_type = lhs
@@ -117,6 +99,8 @@ pub fn launch_ref<R: Runtime>(
         dtypes.as_global_elems(),
         address_type,
     );
+
+    assert!(problem.rhs_layout == MatrixLayout::ColMajor);
 
     let device_settings = VecMatPlaneParallelRoutine::device_settings(client, vector_sizes);
     let expand_info =

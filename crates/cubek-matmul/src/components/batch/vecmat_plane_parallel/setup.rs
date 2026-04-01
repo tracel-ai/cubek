@@ -136,28 +136,32 @@ impl BatchMatmulFamily<()> for VecMatPlaneParallelFamily {
         _dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
-        let vector_size = vector_sizes.lhs;
-        if !(vector_size == vector_sizes.rhs && vector_size == vector_sizes.out) {
+        if vector_sizes.lhs != vector_sizes.rhs {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "All vector sizes must be equal, got lhs:{:?}, rhs:{:?}, out:{:?}",
-                vector_size, vector_sizes.rhs, vector_sizes.out
+                "Lhs and Rhs vector sizes must be equal, got lhs:{:?}, rhs:{:?}",
+                vector_sizes.lhs, vector_sizes.rhs
+            ))));
+        }
+
+        if vector_sizes.out != 1 {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "Out vector size must be 1, got {:?}",
+                vector_sizes.out,
             ))));
         }
 
         let plane_dim = client.properties().hardware.plane_size_max as usize;
-        if blueprint.tile_dim != plane_dim * vector_size {
+        if blueprint.tile_dim != plane_dim * vector_sizes.lhs {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
                 "Tile dim must equal plane_dim * vector_size, got {:?} != {:?} * {:?}",
-                blueprint.tile_dim, plane_dim, vector_size,
+                blueprint.tile_dim, plane_dim, vector_sizes.lhs,
             ))));
         }
 
-        if !problem.k.is_multiple_of(blueprint.tile_dim)
-            || !problem.n.is_multiple_of(blueprint.tile_dim)
-        {
+        if !problem.k.is_multiple_of(blueprint.tile_dim) {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "Problem dimensions n={:?} and k={:?} must be divisible by tile dim ({:?})",
-                problem.n, problem.k, blueprint.tile_dim,
+                "Problem dimensions k={:?} must be divisible by tile dim ({:?})",
+                problem.k, blueprint.tile_dim,
             ))));
         }
 
