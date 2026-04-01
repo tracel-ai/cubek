@@ -9,7 +9,7 @@ use crate::definition::{MatmulVectorSizes, cube_mapping_launch};
 
 use crate::launch::InputArg;
 use crate::launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs};
-use crate::routines::nostage_vecmat::NoStageVecMatRoutine;
+use crate::routines::vecmat_plane_perpendicular::VecMatPlanePerpendicularRoutine;
 use crate::routines::{BlueprintStrategy, Routine as _};
 
 #[allow(clippy::result_large_err)]
@@ -18,7 +18,7 @@ pub fn launch_ref<R: Runtime>(
     lhs: InputBinding<R>,
     rhs: InputBinding<R>,
     out: TensorBinding<R>,
-    strategy: &BlueprintStrategy<(), NoStageVecMatRoutine>,
+    strategy: &BlueprintStrategy<(), VecMatPlanePerpendicularRoutine>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let rank = rhs.shape().len();
@@ -117,11 +117,11 @@ pub fn launch_ref<R: Runtime>(
         address_type,
     );
 
-    let device_settings = NoStageVecMatRoutine::device_settings(client, vector_sizes);
-    let expand_info = NoStageVecMatRoutine::expand_blueprint(&problem, &device_settings, strategy)?;
-    let launch_info = NoStageVecMatRoutine::prepare(&problem, &device_settings, expand_info)?;
+    let device_settings = VecMatPlanePerpendicularRoutine::device_settings(client, vector_sizes);
+    let expand_info = VecMatPlanePerpendicularRoutine::expand_blueprint(&problem, &device_settings, strategy)?;
+    let launch_info = VecMatPlanePerpendicularRoutine::prepare(&problem, &device_settings, expand_info)?;
 
-    let input = <InputArg<TensorArgs> as ConcreteInputsFactory<NoStageVecMatRoutine>>::create(
+    let input = <InputArg<TensorArgs> as ConcreteInputsFactory<VecMatPlanePerpendicularRoutine>>::create(
         lhs,
         rhs,
         &launch_info.blueprint,
@@ -129,7 +129,7 @@ pub fn launch_ref<R: Runtime>(
         &vector_sizes,
         dtypes,
     );
-    let output = <OutputArg<TensorArgs> as ConcreteOutputFactory<NoStageVecMatRoutine>>::create(
+    let output = <OutputArg<TensorArgs> as ConcreteOutputFactory<VecMatPlanePerpendicularRoutine>>::create(
         out,
         &launch_info.blueprint,
         &problem,
@@ -137,7 +137,7 @@ pub fn launch_ref<R: Runtime>(
         dtypes,
     );
 
-    NoStageVecMatRoutine::launch::<TensorArgs, R>(
+    VecMatPlanePerpendicularRoutine::launch::<TensorArgs, R>(
         client,
         launch_info.cube_dim,
         launch_info.cube_count_plan.resolve(),

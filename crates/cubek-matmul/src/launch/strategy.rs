@@ -14,7 +14,7 @@ use crate::{
         tile::{cmma::CmmaMatmul, mma::MmaMatmul},
     },
     definition::{MatmulElems, MatmulSetupError},
-    launch::{launch_naive, launch_nostage_vecmat, launch_tiling},
+    launch::{launch_naive, launch_tiling, launch_vecmat},
     routines::{
         BlueprintStrategy,
         double_buffering::{
@@ -23,12 +23,12 @@ use crate::{
             TilewiseDoubleBufferingAlgorithm, TmaDoubleBufferingAlgorithm,
         },
         double_unit::DoubleUnitAlgorithm,
-        nostage_vecmat::NoStageVecMatRoutine,
         ordered_double_buffering::OrderedDoubleBufferingAlgorithm,
         simple::{SimpleAlgorithm, SimpleTmaAlgorithm},
         simple_unit::SimpleUnitAlgorithm,
         specialized::SpecializedAlgorithm,
         vecmat_innerproduct::{DoubleVecMatInnerProductAlgorithm, VecMatInnerProductAlgorithm},
+        vecmat_plane_perpendicular::VecMatPlanePerpendicularRoutine,
     },
 };
 
@@ -164,7 +164,7 @@ pub enum Strategy {
     DoubleUnit(BlueprintStrategy<(), DoubleUnitAlgorithm>),
     SimpleVecMat(BlueprintStrategy<(), VecMatInnerProductAlgorithm>),
     DoubleVecMat(BlueprintStrategy<(), DoubleVecMatInnerProductAlgorithm>),
-    NoStageVecMat(BlueprintStrategy<(), NoStageVecMatRoutine>),
+    VecMatPlanePerpendicular(BlueprintStrategy<(), VecMatPlanePerpendicularRoutine>),
     Naive,
     #[default]
     Auto,
@@ -311,9 +311,10 @@ impl Display for Strategy {
             }
             Strategy::Naive => f.write_str("matmul_naive"),
             Strategy::Auto => f.write_str("matmul_auto"),
-            Strategy::NoStageVecMat(blueprint_strategy) => {
-                f.write_fmt(format_args!("nostage_vecmat{}", blueprint_strategy))
-            }
+            Strategy::VecMatPlanePerpendicular(blueprint_strategy) => f.write_fmt(format_args!(
+                "vecmat_plane_perpendicular{}",
+                blueprint_strategy
+            )),
         }
     }
 }
@@ -439,8 +440,8 @@ impl Strategy {
             }
             Strategy::Naive => launch_naive::launch_ref(client, lhs, rhs, out, dtypes),
             Strategy::Auto => auto(client, lhs, rhs, out, dtypes),
-            Strategy::NoStageVecMat(blueprint_strategy) => {
-                launch_nostage_vecmat::launch_ref(client, lhs, rhs, out, blueprint_strategy, dtypes)
+            Strategy::VecMatPlanePerpendicular(blueprint_strategy) => {
+                launch_vecmat::launch_ref(client, lhs, rhs, out, blueprint_strategy, dtypes)
             }
         }
     }
