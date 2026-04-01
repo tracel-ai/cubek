@@ -14,7 +14,9 @@ use crate::{
         tile::{cmma::CmmaMatmul, mma::MmaMatmul},
     },
     definition::{MatmulElems, MatmulSetupError},
-    launch::{launch_naive, launch_tiling, launch_vecmat},
+    launch::{
+        launch_naive, launch_tiling, launch_vecmat_plane_parallel, launch_vecmat_unit_perpendicular,
+    },
     routines::{
         BlueprintStrategy,
         double_buffering::{
@@ -28,6 +30,7 @@ use crate::{
         simple_unit::SimpleUnitAlgorithm,
         specialized::SpecializedAlgorithm,
         vecmat_innerproduct::{DoubleVecMatInnerProductAlgorithm, VecMatInnerProductAlgorithm},
+        vecmat_plane_parallel::VecMatPlaneParallelRoutine,
         vecmat_unit_perpendicular::VecMatUnitPerpendicularRoutine,
     },
 };
@@ -165,6 +168,7 @@ pub enum Strategy {
     SimpleVecMat(BlueprintStrategy<(), VecMatInnerProductAlgorithm>),
     DoubleVecMat(BlueprintStrategy<(), DoubleVecMatInnerProductAlgorithm>),
     VecMatUnitPerpendicular(BlueprintStrategy<(), VecMatUnitPerpendicularRoutine>),
+    VecMatPlaneParallel(BlueprintStrategy<(), VecMatPlaneParallelRoutine>),
     Naive,
     #[default]
     Auto,
@@ -315,6 +319,9 @@ impl Display for Strategy {
                 "vecmat_unit_perpendicular{}",
                 blueprint_strategy
             )),
+            Strategy::VecMatPlaneParallel(blueprint_strategy) => {
+                f.write_fmt(format_args!("vecmat_plane_parallel{}", blueprint_strategy))
+            }
         }
     }
 }
@@ -441,7 +448,24 @@ impl Strategy {
             Strategy::Naive => launch_naive::launch_ref(client, lhs, rhs, out, dtypes),
             Strategy::Auto => auto(client, lhs, rhs, out, dtypes),
             Strategy::VecMatUnitPerpendicular(blueprint_strategy) => {
-                launch_vecmat::launch_ref(client, lhs, rhs, out, blueprint_strategy, dtypes)
+                launch_vecmat_unit_perpendicular::launch_ref(
+                    client,
+                    lhs,
+                    rhs,
+                    out,
+                    blueprint_strategy,
+                    dtypes,
+                )
+            }
+            Strategy::VecMatPlaneParallel(blueprint_strategy) => {
+                launch_vecmat_plane_parallel::launch_ref(
+                    client,
+                    lhs,
+                    rhs,
+                    out,
+                    blueprint_strategy,
+                    dtypes,
+                )
             }
         }
     }

@@ -1,6 +1,7 @@
 pub mod launch_naive;
 pub mod launch_tiling;
-pub mod launch_vecmat;
+pub mod launch_vecmat_plane_parallel;
+pub mod launch_vecmat_unit_perpendicular;
 
 mod args;
 mod base;

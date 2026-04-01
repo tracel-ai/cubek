@@ -1,6 +1,7 @@
 //! Executes multiple independent global matmuls with optional broadcasting.
 
 pub mod naive;
+pub mod vecmat_plane_parallel;
 pub mod vecmat_unit_perpendicular;
 
 mod base;

@@ -1,6 +1,7 @@
 /// Naive non-cooperative matmul without tiling that can be very fast on small matrices.
 pub mod naive;
 
+pub mod vecmat_plane_parallel;
 pub mod vecmat_unit_perpendicular;
 
 pub mod double_buffering;
