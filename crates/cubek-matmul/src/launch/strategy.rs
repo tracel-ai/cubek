@@ -28,7 +28,7 @@ use crate::{
         simple_unit::SimpleUnitAlgorithm,
         specialized::SpecializedAlgorithm,
         vecmat_innerproduct::{DoubleVecMatInnerProductAlgorithm, VecMatInnerProductAlgorithm},
-        vecmat_plane_perpendicular::VecMatPlanePerpendicularRoutine,
+        vecmat_unit_perpendicular::VecMatUnitPerpendicularRoutine,
     },
 };
 
@@ -164,7 +164,7 @@ pub enum Strategy {
     DoubleUnit(BlueprintStrategy<(), DoubleUnitAlgorithm>),
     SimpleVecMat(BlueprintStrategy<(), VecMatInnerProductAlgorithm>),
     DoubleVecMat(BlueprintStrategy<(), DoubleVecMatInnerProductAlgorithm>),
-    VecMatPlanePerpendicular(BlueprintStrategy<(), VecMatPlanePerpendicularRoutine>),
+    VecMatUnitPerpendicular(BlueprintStrategy<(), VecMatUnitPerpendicularRoutine>),
     Naive,
     #[default]
     Auto,
@@ -311,8 +311,8 @@ impl Display for Strategy {
             }
             Strategy::Naive => f.write_str("matmul_naive"),
             Strategy::Auto => f.write_str("matmul_auto"),
-            Strategy::VecMatPlanePerpendicular(blueprint_strategy) => f.write_fmt(format_args!(
-                "vecmat_plane_perpendicular{}",
+            Strategy::VecMatUnitPerpendicular(blueprint_strategy) => f.write_fmt(format_args!(
+                "vecmat_unit_perpendicular{}",
                 blueprint_strategy
             )),
         }
@@ -440,7 +440,7 @@ impl Strategy {
             }
             Strategy::Naive => launch_naive::launch_ref(client, lhs, rhs, out, dtypes),
             Strategy::Auto => auto(client, lhs, rhs, out, dtypes),
-            Strategy::VecMatPlanePerpendicular(blueprint_strategy) => {
+            Strategy::VecMatUnitPerpendicular(blueprint_strategy) => {
                 launch_vecmat::launch_ref(client, lhs, rhs, out, blueprint_strategy, dtypes)
             }
         }

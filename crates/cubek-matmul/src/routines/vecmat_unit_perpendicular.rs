@@ -8,30 +8,30 @@ use cubek_std::cube_count::{CubeCountPlan, CubeCountStrategy, GlobalOrder, Hyper
 use crate::{
     components::batch::{
         BatchMatmulFamily,
-        vecmat_plane_perpendicular::{
-            VecMatPlanePerpendicularBlueprint, VecMatPlanePerpendicularFamily,
+        vecmat_unit_perpendicular::{
+            VecMatUnitPerpendicularBlueprint, VecMatUnitPerpendicularFamily,
         },
     },
     definition::{MatmulElems, MatmulProblem, MatmulSetupError},
     routines::{BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine},
 };
 
-pub struct VecMatPlanePerpendicularRoutine {}
+pub struct VecMatUnitPerpendicularRoutine {}
 
 #[derive(Default, Clone)]
-pub struct VecMatPlanePerpendicularStrategy {
+pub struct VecMatUnitPerpendicularStrategy {
     pub target_num_planes: usize,
 }
 
-impl Display for VecMatPlanePerpendicularStrategy {
+impl Display for VecMatUnitPerpendicularStrategy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "_{}", self.target_num_planes)
     }
 }
 
-impl Routine<()> for VecMatPlanePerpendicularRoutine {
-    type Strategy = VecMatPlanePerpendicularStrategy;
-    type BatchMatmul = VecMatPlanePerpendicularFamily;
+impl Routine<()> for VecMatUnitPerpendicularRoutine {
+    type Strategy = VecMatUnitPerpendicularStrategy;
+    type BatchMatmul = VecMatUnitPerpendicularFamily;
     type Blueprint = <Self::BatchMatmul as BatchMatmulFamily<()>>::Blueprint;
     type Config = <Self::BatchMatmul as BatchMatmulFamily<()>>::Config;
 
@@ -53,7 +53,7 @@ impl Routine<()> for VecMatPlanePerpendicularRoutine {
                 let max_planes_for_swizzle = problem.k / tile_dim;
                 let num_planes = max(1, min(strategy.target_num_planes, max_planes_for_swizzle));
 
-                let blueprint = VecMatPlanePerpendicularBlueprint {
+                let blueprint = VecMatUnitPerpendicularBlueprint {
                     dtypes: dtypes.clone(),
                     num_planes,
                     tile_dim,

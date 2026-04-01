@@ -11,8 +11,8 @@ use crate::{
         CubeDimResource,
         batch::{
             BatchMatmulFamily,
-            vecmat_plane_perpendicular::{
-                VecMatPlanePerpendicular, VecMatPlanePerpendicularConfig, matmul_entry,
+            vecmat_unit_perpendicular::{
+                VecMatUnitPerpendicular, VecMatUnitPerpendicularConfig, matmul_entry,
             },
         },
         global::memory::GlobalLayoutConfig,
@@ -26,9 +26,9 @@ use crate::{
 };
 
 /// Simple partitioned batch matmul family for any precision
-pub struct VecMatPlanePerpendicularFamily {}
+pub struct VecMatUnitPerpendicularFamily {}
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct VecMatPlanePerpendicularBlueprint {
+pub struct VecMatUnitPerpendicularBlueprint {
     pub dtypes: MatmulElems,
     pub num_planes: usize,
     // Should equal plane_dim * vector_size
@@ -36,7 +36,7 @@ pub struct VecMatPlanePerpendicularBlueprint {
     pub hypercube_blueprint: HypercubeBlueprint,
 }
 
-impl Blueprint for VecMatPlanePerpendicularBlueprint {
+impl Blueprint for VecMatUnitPerpendicularBlueprint {
     fn lhs_global_layout_config(&self) -> GlobalLayoutConfig {
         GlobalLayoutConfig {
             matrix_layout: MatrixLayout::RowMajor,
@@ -62,18 +62,18 @@ impl Blueprint for VecMatPlanePerpendicularBlueprint {
     }
 
     fn tiling_scheme(&self) -> TilingScheme {
-        panic!("VecMatPlanePerpendicular Blueprint doesn't have a TilingScheme")
+        panic!("VecMatUnitPerpendicular Blueprint doesn't have a TilingScheme")
     }
 
     fn swizzle_modes(&self) -> SwizzleModes {
-        panic!("VecMatPlanePerpendicular Blueprint doesn't have Swizzle Modes")
+        panic!("VecMatUnitPerpendicular Blueprint doesn't have Swizzle Modes")
     }
 }
 
-impl BatchMatmulFamily<()> for VecMatPlanePerpendicularFamily {
-    type Matmul<MP: MatmulTypes> = VecMatPlanePerpendicular<MP>;
-    type Config = VecMatPlanePerpendicularConfig;
-    type Blueprint = VecMatPlanePerpendicularBlueprint;
+impl BatchMatmulFamily<()> for VecMatUnitPerpendicularFamily {
+    type Matmul<MP: MatmulTypes> = VecMatUnitPerpendicular<MP>;
+    type Config = VecMatUnitPerpendicularConfig;
+    type Blueprint = VecMatUnitPerpendicularBlueprint;
 
     fn expand_config(
         device_props: &DeviceProperties,
@@ -81,7 +81,7 @@ impl BatchMatmulFamily<()> for VecMatPlanePerpendicularFamily {
         _dtypes: &MatmulElems,
         _vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
-        Ok(VecMatPlanePerpendicularConfig {
+        Ok(VecMatUnitPerpendicularConfig {
             plane_dim: device_props.hardware.plane_size_max,
             num_planes: blueprint.num_planes as u32,
         })
@@ -100,7 +100,7 @@ impl BatchMatmulFamily<()> for VecMatPlanePerpendicularFamily {
         output: OutputRuntimeArg<MA, R>,
         _config: ConfigRuntimeArg<MA, R>,
         cube_mapping: CubeMappingLaunch<R>,
-        blueprint: VecMatPlanePerpendicularBlueprint,
+        blueprint: VecMatUnitPerpendicularBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), LaunchError> {

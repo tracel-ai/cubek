@@ -6,7 +6,7 @@ use cubecl::{frontend::CubePrimitive, ir::AddressType};
 use cubecl::{prelude::TensorBinding, zspace::shape};
 use cubek_matmul::launch::Strategy;
 use cubek_matmul::routines::BlueprintStrategy;
-use cubek_matmul::routines::vecmat_plane_perpendicular::VecMatPlanePerpendicularStrategy;
+use cubek_matmul::routines::vecmat_unit_perpendicular::VecMatUnitPerpendicularStrategy;
 
 use crate::suite::layout_to_stride_spec;
 use cubek_matmul::definition::MatmulGlobalElems;
@@ -47,7 +47,7 @@ impl VecMatTestCase {
 }
 
 #[test]
-pub fn test_plane_perpendicular_very_small_square_rhs_row_major() {
+pub fn test_unit_perpendicular_very_small_square_rhs_row_major() {
     let case = VecMatTestCase {
         n: 128,
         k: 128,
@@ -55,8 +55,8 @@ pub fn test_plane_perpendicular_very_small_square_rhs_row_major() {
         rhs_batch: 1,
         rhs_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlanePerpendicular(BlueprintStrategy::Inferred(
-            VecMatPlanePerpendicularStrategy {
+        strategy: Strategy::VecMatUnitPerpendicular(BlueprintStrategy::Inferred(
+            VecMatUnitPerpendicularStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -66,7 +66,7 @@ pub fn test_plane_perpendicular_very_small_square_rhs_row_major() {
 }
 
 #[test]
-pub fn test_plane_perpendicular_k_larger_than_n() {
+pub fn test_unit_perpendicular_k_larger_than_n() {
     let case = VecMatTestCase {
         n: 128,
         k: 256,
@@ -74,8 +74,8 @@ pub fn test_plane_perpendicular_k_larger_than_n() {
         rhs_batch: 1,
         rhs_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlanePerpendicular(BlueprintStrategy::Inferred(
-            VecMatPlanePerpendicularStrategy {
+        strategy: Strategy::VecMatUnitPerpendicular(BlueprintStrategy::Inferred(
+            VecMatUnitPerpendicularStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -85,7 +85,7 @@ pub fn test_plane_perpendicular_k_larger_than_n() {
 }
 
 #[test]
-pub fn test_plane_perpendicular_k_smaller_than_n() {
+pub fn test_unit_perpendicular_k_smaller_than_n() {
     let case = VecMatTestCase {
         n: 256,
         k: 128,
@@ -93,8 +93,8 @@ pub fn test_plane_perpendicular_k_smaller_than_n() {
         rhs_batch: 1,
         rhs_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlanePerpendicular(BlueprintStrategy::Inferred(
-            VecMatPlanePerpendicularStrategy {
+        strategy: Strategy::VecMatUnitPerpendicular(BlueprintStrategy::Inferred(
+            VecMatUnitPerpendicularStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -104,7 +104,7 @@ pub fn test_plane_perpendicular_k_smaller_than_n() {
 }
 
 #[test]
-pub fn test_plane_perpendicular_small_square_rhs_row_major() {
+pub fn test_unit_perpendicular_small_square_rhs_row_major() {
     let case = VecMatTestCase {
         n: 256,
         k: 256,
@@ -112,8 +112,8 @@ pub fn test_plane_perpendicular_small_square_rhs_row_major() {
         rhs_batch: 1,
         rhs_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlanePerpendicular(BlueprintStrategy::Inferred(
-            VecMatPlanePerpendicularStrategy {
+        strategy: Strategy::VecMatUnitPerpendicular(BlueprintStrategy::Inferred(
+            VecMatUnitPerpendicularStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -123,7 +123,7 @@ pub fn test_plane_perpendicular_small_square_rhs_row_major() {
 }
 
 #[test]
-pub fn test_plane_perpendicular_large() {
+pub fn test_unit_perpendicular_large() {
     let case = VecMatTestCase {
         n: 1280,
         k: 1280,
@@ -131,8 +131,8 @@ pub fn test_plane_perpendicular_large() {
         rhs_batch: 1,
         rhs_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlanePerpendicular(BlueprintStrategy::Inferred(
-            VecMatPlanePerpendicularStrategy {
+        strategy: Strategy::VecMatUnitPerpendicular(BlueprintStrategy::Inferred(
+            VecMatUnitPerpendicularStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -142,7 +142,7 @@ pub fn test_plane_perpendicular_large() {
 }
 
 #[test]
-pub fn test_plane_perpendicular_large_broadcast_lhs() {
+pub fn test_unit_perpendicular_large_broadcast_lhs() {
     let case = VecMatTestCase {
         n: 1280,
         k: 1280,
@@ -150,8 +150,8 @@ pub fn test_plane_perpendicular_large_broadcast_lhs() {
         rhs_batch: 2,
         rhs_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlanePerpendicular(BlueprintStrategy::Inferred(
-            VecMatPlanePerpendicularStrategy {
+        strategy: Strategy::VecMatUnitPerpendicular(BlueprintStrategy::Inferred(
+            VecMatUnitPerpendicularStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -161,7 +161,7 @@ pub fn test_plane_perpendicular_large_broadcast_lhs() {
 }
 
 #[test]
-pub fn test_plane_perpendicular_large_broadcast_rhs() {
+pub fn test_unit_perpendicular_large_broadcast_rhs() {
     let case = VecMatTestCase {
         n: 1280,
         k: 1280,
@@ -169,8 +169,8 @@ pub fn test_plane_perpendicular_large_broadcast_rhs() {
         rhs_batch: 1,
         rhs_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlanePerpendicular(BlueprintStrategy::Inferred(
-            VecMatPlanePerpendicularStrategy {
+        strategy: Strategy::VecMatUnitPerpendicular(BlueprintStrategy::Inferred(
+            VecMatUnitPerpendicularStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -180,7 +180,7 @@ pub fn test_plane_perpendicular_large_broadcast_rhs() {
 }
 
 #[test]
-pub fn test_plane_perpendicular_large_broadcast_batched() {
+pub fn test_unit_perpendicular_large_broadcast_batched() {
     let case = VecMatTestCase {
         n: 1280,
         k: 1280,
@@ -188,8 +188,8 @@ pub fn test_plane_perpendicular_large_broadcast_batched() {
         rhs_batch: 2,
         rhs_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlanePerpendicular(BlueprintStrategy::Inferred(
-            VecMatPlanePerpendicularStrategy {
+        strategy: Strategy::VecMatUnitPerpendicular(BlueprintStrategy::Inferred(
+            VecMatUnitPerpendicularStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -199,7 +199,7 @@ pub fn test_plane_perpendicular_large_broadcast_batched() {
 }
 
 #[test]
-pub fn test_plane_perpendicular_uneven_shape() {
+pub fn test_unit_perpendicular_uneven_shape() {
     let case = VecMatTestCase {
         n: 32,
         k: 29,
@@ -207,8 +207,8 @@ pub fn test_plane_perpendicular_uneven_shape() {
         rhs_batch: 1,
         rhs_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlanePerpendicular(BlueprintStrategy::Inferred(
-            VecMatPlanePerpendicularStrategy {
+        strategy: Strategy::VecMatUnitPerpendicular(BlueprintStrategy::Inferred(
+            VecMatUnitPerpendicularStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -218,7 +218,7 @@ pub fn test_plane_perpendicular_uneven_shape() {
 }
 
 #[test]
-pub fn test_plane_perpendicular_not_same_vectorization() {
+pub fn test_unit_perpendicular_not_same_vectorization() {
     let case = VecMatTestCase {
         n: 128,
         k: 32,
@@ -226,8 +226,8 @@ pub fn test_plane_perpendicular_not_same_vectorization() {
         rhs_batch: 1,
         rhs_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlanePerpendicular(BlueprintStrategy::Inferred(
-            VecMatPlanePerpendicularStrategy {
+        strategy: Strategy::VecMatUnitPerpendicular(BlueprintStrategy::Inferred(
+            VecMatUnitPerpendicularStrategy {
                 target_num_planes: 8,
             },
         )),

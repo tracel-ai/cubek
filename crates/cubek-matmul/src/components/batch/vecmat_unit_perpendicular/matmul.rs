@@ -1,9 +1,8 @@
 use std::marker::PhantomData;
 
 use crate::components::batch::base::BatchMatmulFamily;
-use crate::components::batch::vecmat_plane_perpendicular::{
-    VecMatPlanePerpendicularBlueprint, VecMatPlanePerpendicularConfig,
-    VecMatPlanePerpendicularFamily,
+use crate::components::batch::vecmat_unit_perpendicular::{
+    VecMatUnitPerpendicularBlueprint, VecMatUnitPerpendicularConfig, VecMatUnitPerpendicularFamily,
 };
 use crate::components::batch::{BatchConfig as _, SliceIndex};
 
@@ -31,7 +30,7 @@ pub(crate) fn matmul_entry<
     output: &mut <Args as MatmulArgs>::Output<Vector<Acc, AccSize>>,
     runtime_config: (),
     cube_mapping: CubeMapping,
-    #[comptime] blueprint: VecMatPlanePerpendicularBlueprint,
+    #[comptime] blueprint: VecMatUnitPerpendicularBlueprint,
     #[define(Lhs, Rhs, Acc)] _global: [StorageType; 3],
     #[define(LhsSize, RhsSize, AccSize)] _sizes: [usize; 3],
 ) {
@@ -55,7 +54,7 @@ pub(crate) fn matmul_entry<
     });
 
     let device_props = comptime::device_properties();
-    let config = comptime!(VecMatPlanePerpendicularFamily::expand_config(
+    let config = comptime!(VecMatUnitPerpendicularFamily::expand_config(
         &device_props,
         &blueprint,
         &blueprint.dtypes,
@@ -82,20 +81,20 @@ pub(crate) fn matmul_entry<
     let define!(RegisterRhs) = blueprint.dtypes.rhs_register;
     let define!(RegisterAcc) = blueprint.dtypes.acc_register;
 
-    VecMatPlanePerpendicular::<(
+    VecMatUnitPerpendicular::<(
         (Lhs, LhsSize, Lhs, LhsSize, RegisterLhs),
         (Rhs, RhsSize, Rhs, RhsSize, RegisterRhs),
         (Acc, AccSize, Acc, AccSize, RegisterAcc),
     )>::execute::<Args>(&mut state, cube_mapping, config);
 }
 
-pub struct VecMatPlanePerpendicular<MP: MatmulTypes> {
+pub struct VecMatUnitPerpendicular<MP: MatmulTypes> {
     _phantom: PhantomData<MP>,
 }
 
 #[cube]
-impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatPlanePerpendicular<MP> {
-    type Config = VecMatPlanePerpendicularConfig;
+impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatUnitPerpendicular<MP> {
+    type Config = VecMatUnitPerpendicularConfig;
 
     fn execute<Args: MatmulArgs>(
         state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,

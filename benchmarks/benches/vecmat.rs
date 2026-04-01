@@ -9,7 +9,7 @@ use cubek::{
         definition::MatmulElems,
         launch::{Strategy, launch_ref},
         routines::{
-            BlueprintStrategy, TileSizeSelection, vecmat_plane_perpendicular::VecMatPlanePerpendicularStrategy,
+            BlueprintStrategy, TileSizeSelection, vecmat_unit_perpendicular::VecMatUnitPerpendicularStrategy,
             simple_unit::SimpleUnitSelectionArgs,
         },
     },
@@ -104,7 +104,7 @@ fn run_algos_vecmat<R: Runtime, E: frontend::Float>(device: &R::Device) {
     println!("No Stage VecMat");
     run::<R, E>(
         device,
-        Strategy::VecMatPlanePerpendicular(BlueprintStrategy::Inferred(VecMatPlanePerpendicularStrategy {
+        Strategy::VecMatUnitPerpendicular(BlueprintStrategy::Inferred(VecMatUnitPerpendicularStrategy {
             target_num_planes: 8,
         })),
     );
