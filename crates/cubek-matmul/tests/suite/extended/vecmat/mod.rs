@@ -18,11 +18,11 @@ use cubek_test_utils::{BaseInputSpec, DataKind, Distribution, TestInput};
 type TestRuntime = cubecl::TestRuntime;
 
 struct VecMatTestCase {
-    pub n: usize,
-    pub k: usize,
-    pub lhs_batch: usize,
-    pub rhs_batch: usize,
-    pub rhs_layout: MatrixLayout,
+    pub out_dim: usize,
+    pub k_dim: usize,
+    pub vec_batch: usize,
+    pub mat_batch: usize,
+    pub mat_layout: MatrixLayout,
     pub elems: MatmulGlobalElems,
     pub strategy: Strategy,
 }
@@ -31,12 +31,12 @@ impl VecMatTestCase {
     fn to_problem(&self) -> MatmulProblem {
         MatmulProblem::from_parameters(
             1,
-            self.n,
-            self.k,
-            shape![self.lhs_batch],
-            shape![self.rhs_batch],
+            self.out_dim,
+            self.k_dim,
+            shape![self.vec_batch],
+            shape![self.mat_batch],
             MatrixLayout::RowMajor,
-            self.rhs_layout,
+            self.mat_layout,
             MatrixLayout::RowMajor,
             None,
             None,

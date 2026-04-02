@@ -1,13 +1,13 @@
 use cubek_matmul::routines::vecmat_plane_parallel::VecMatPlaneParallelStrategy;
 
 #[test]
-pub fn test_plane_parallel_very_small_square_rhs_row_major() {
+pub fn test_plane_parallel_very_small_square_rhs() {
     let case = VecMatTestCase {
-        n: 128,
-        k: 128,
-        lhs_batch: 1,
-        rhs_batch: 1,
-        rhs_layout: MatrixLayout::ColMajor,
+        out_dim: 128,
+        k_dim: 128,
+        vec_batch: 1,
+        mat_batch: 1,
+        mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
         strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
             VecMatPlaneParallelStrategy {
@@ -22,11 +22,11 @@ pub fn test_plane_parallel_very_small_square_rhs_row_major() {
 #[test]
 pub fn test_plane_parallel_k_larger_than_n() {
     let case = VecMatTestCase {
-        n: 128,
-        k: 256,
-        lhs_batch: 1,
-        rhs_batch: 1,
-        rhs_layout: MatrixLayout::ColMajor,
+        out_dim: 128,
+        k_dim: 256,
+        vec_batch: 1,
+        mat_batch: 1,
+        mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
         strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
             VecMatPlaneParallelStrategy {
@@ -41,11 +41,11 @@ pub fn test_plane_parallel_k_larger_than_n() {
 #[test]
 pub fn test_plane_parallel_k_smaller_than_n() {
     let case = VecMatTestCase {
-        n: 256,
-        k: 128,
-        lhs_batch: 1,
-        rhs_batch: 1,
-        rhs_layout: MatrixLayout::ColMajor,
+        out_dim: 256,
+        k_dim: 128,
+        vec_batch: 1,
+        mat_batch: 1,
+        mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
         strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
             VecMatPlaneParallelStrategy {
@@ -60,11 +60,11 @@ pub fn test_plane_parallel_k_smaller_than_n() {
 #[test]
 pub fn test_plane_parallel_small_square_rhs_row_major() {
     let case = VecMatTestCase {
-        n: 256,
-        k: 256,
-        lhs_batch: 1,
-        rhs_batch: 1,
-        rhs_layout: MatrixLayout::ColMajor,
+        out_dim: 256,
+        k_dim: 256,
+        vec_batch: 1,
+        mat_batch: 1,
+        mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
         strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
             VecMatPlaneParallelStrategy {
@@ -79,11 +79,11 @@ pub fn test_plane_parallel_small_square_rhs_row_major() {
 #[test]
 pub fn test_plane_parallel_large() {
     let case = VecMatTestCase {
-        n: 1280,
-        k: 1280,
-        lhs_batch: 1,
-        rhs_batch: 1,
-        rhs_layout: MatrixLayout::ColMajor,
+        out_dim: 1280,
+        k_dim: 1280,
+        vec_batch: 1,
+        mat_batch: 1,
+        mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
         strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
             VecMatPlaneParallelStrategy {
@@ -98,11 +98,11 @@ pub fn test_plane_parallel_large() {
 #[test]
 pub fn test_plane_parallel_large_broadcast_lhs() {
     let case = VecMatTestCase {
-        n: 1280,
-        k: 1280,
-        lhs_batch: 1,
-        rhs_batch: 2,
-        rhs_layout: MatrixLayout::ColMajor,
+        out_dim: 1280,
+        k_dim: 1280,
+        vec_batch: 1,
+        mat_batch: 2,
+        mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
         strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
             VecMatPlaneParallelStrategy {
@@ -117,11 +117,11 @@ pub fn test_plane_parallel_large_broadcast_lhs() {
 #[test]
 pub fn test_plane_parallel_large_broadcast_rhs() {
     let case = VecMatTestCase {
-        n: 1280,
-        k: 1280,
-        lhs_batch: 2,
-        rhs_batch: 1,
-        rhs_layout: MatrixLayout::ColMajor,
+        out_dim: 1280,
+        k_dim: 1280,
+        vec_batch: 2,
+        mat_batch: 1,
+        mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
         strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
             VecMatPlaneParallelStrategy {
@@ -136,11 +136,11 @@ pub fn test_plane_parallel_large_broadcast_rhs() {
 #[test]
 pub fn test_plane_parallel_large_broadcast_batched() {
     let case = VecMatTestCase {
-        n: 1280,
-        k: 1280,
-        lhs_batch: 2,
-        rhs_batch: 2,
-        rhs_layout: MatrixLayout::ColMajor,
+        out_dim: 1280,
+        k_dim: 1280,
+        vec_batch: 2,
+        mat_batch: 2,
+        mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
         strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
             VecMatPlaneParallelStrategy {
@@ -155,11 +155,11 @@ pub fn test_plane_parallel_large_broadcast_batched() {
 #[test]
 pub fn test_plane_parallel_uneven_shape() {
     let case = VecMatTestCase {
-        n: 32,
-        k: 29,
-        lhs_batch: 1,
-        rhs_batch: 1,
-        rhs_layout: MatrixLayout::ColMajor,
+        out_dim: 32,
+        k_dim: 29,
+        vec_batch: 1,
+        mat_batch: 1,
+        mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
         strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
             VecMatPlaneParallelStrategy {
@@ -174,11 +174,201 @@ pub fn test_plane_parallel_uneven_shape() {
 #[test]
 pub fn test_plane_parallel_not_same_vectorization() {
     let case = VecMatTestCase {
-        n: 128,
-        k: 32,
-        lhs_batch: 1,
-        rhs_batch: 1,
-        rhs_layout: MatrixLayout::ColMajor,
+        out_dim: 128,
+        k_dim: 32,
+        vec_batch: 1,
+        mat_batch: 1,
+        mat_layout: MatrixLayout::ColMajor,
+        elems: elems(),
+        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
+            VecMatPlaneParallelStrategy {
+                target_num_planes: 8,
+            },
+        )),
+    };
+
+    test_vecmat(case);
+}
+
+#[test]
+pub fn test_plane_parallel_very_small_square_rhs_row_major() {
+    let case = VecMatTestCase {
+        out_dim: 128,
+        k_dim: 128,
+        vec_batch: 1,
+        mat_batch: 1,
+        mat_layout: MatrixLayout::RowMajor,
+        elems: elems(),
+        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
+            VecMatPlaneParallelStrategy {
+                target_num_planes: 8,
+            },
+        )),
+    };
+
+    test_vecmat(case);
+}
+
+#[test]
+pub fn test_plane_parallel_k_larger_than_n_row_major() {
+    let case = VecMatTestCase {
+        out_dim: 128,
+        k_dim: 256,
+        vec_batch: 1,
+        mat_batch: 1,
+        mat_layout: MatrixLayout::RowMajor,
+        elems: elems(),
+        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
+            VecMatPlaneParallelStrategy {
+                target_num_planes: 8,
+            },
+        )),
+    };
+
+    test_vecmat(case);
+}
+
+#[test]
+pub fn test_plane_parallel_k_smaller_than_n_row_major() {
+    let case = VecMatTestCase {
+        out_dim: 256,
+        k_dim: 128,
+        vec_batch: 1,
+        mat_batch: 1,
+        mat_layout: MatrixLayout::RowMajor,
+        elems: elems(),
+        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
+            VecMatPlaneParallelStrategy {
+                target_num_planes: 8,
+            },
+        )),
+    };
+
+    test_vecmat(case);
+}
+
+#[test]
+pub fn test_plane_parallel_small_square_rhs_row_major_row_major() {
+    let case = VecMatTestCase {
+        out_dim: 256,
+        k_dim: 256,
+        vec_batch: 1,
+        mat_batch: 1,
+        mat_layout: MatrixLayout::RowMajor,
+        elems: elems(),
+        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
+            VecMatPlaneParallelStrategy {
+                target_num_planes: 8,
+            },
+        )),
+    };
+
+    test_vecmat(case);
+}
+
+#[test]
+pub fn test_plane_parallel_large_row_major() {
+    let case = VecMatTestCase {
+        out_dim: 1280,
+        k_dim: 1280,
+        vec_batch: 1,
+        mat_batch: 1,
+        mat_layout: MatrixLayout::RowMajor,
+        elems: elems(),
+        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
+            VecMatPlaneParallelStrategy {
+                target_num_planes: 8,
+            },
+        )),
+    };
+
+    test_vecmat(case);
+}
+
+#[test]
+pub fn test_plane_parallel_large_broadcast_lhs_row_major() {
+    let case = VecMatTestCase {
+        out_dim: 1280,
+        k_dim: 1280,
+        vec_batch: 1,
+        mat_batch: 2,
+        mat_layout: MatrixLayout::RowMajor,
+        elems: elems(),
+        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
+            VecMatPlaneParallelStrategy {
+                target_num_planes: 8,
+            },
+        )),
+    };
+
+    test_vecmat(case);
+}
+
+#[test]
+pub fn test_plane_parallel_large_broadcast_rhs_row_major() {
+    let case = VecMatTestCase {
+        out_dim: 1280,
+        k_dim: 1280,
+        vec_batch: 2,
+        mat_batch: 1,
+        mat_layout: MatrixLayout::RowMajor,
+        elems: elems(),
+        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
+            VecMatPlaneParallelStrategy {
+                target_num_planes: 8,
+            },
+        )),
+    };
+
+    test_vecmat(case);
+}
+
+#[test]
+pub fn test_plane_parallel_large_broadcast_batched_row_major() {
+    let case = VecMatTestCase {
+        out_dim: 1280,
+        k_dim: 1280,
+        vec_batch: 2,
+        mat_batch: 2,
+        mat_layout: MatrixLayout::RowMajor,
+        elems: elems(),
+        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
+            VecMatPlaneParallelStrategy {
+                target_num_planes: 8,
+            },
+        )),
+    };
+
+    test_vecmat(case);
+}
+
+#[test]
+pub fn test_plane_parallel_uneven_shape_row_major() {
+    let case = VecMatTestCase {
+        out_dim: 32,
+        k_dim: 29,
+        vec_batch: 1,
+        mat_batch: 1,
+        mat_layout: MatrixLayout::RowMajor,
+        elems: elems(),
+        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
+            VecMatPlaneParallelStrategy {
+                target_num_planes: 8,
+            },
+        )),
+    };
+
+    test_vecmat(case);
+}
+
+#[test]
+pub fn test_plane_parallel_not_same_vectorization_row_major() {
+    let case = VecMatTestCase {
+        out_dim: 128,
+        k_dim: 32,
+        vec_batch: 1,
+        mat_batch: 1,
+        mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
         strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
             VecMatPlaneParallelStrategy {
