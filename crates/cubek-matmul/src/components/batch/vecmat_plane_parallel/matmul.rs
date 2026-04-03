@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use crate::components::batch::{
-    BatchConfig as _, BatchMatmul, BatchMatmulFamily, SliceIndex,
+    BatchConfig as _, BatchMatmul, BatchMatmulFamily,
     vecmat_plane_parallel::{
         GemvPlan, VecMatPlaneParallelBlueprint, VecMatPlaneParallelConfig,
         VecMatPlaneParallelFamily,
@@ -16,6 +16,7 @@ use cubecl::{
     std::tensor::layout::{Coords1d, Coords2d},
 };
 use cubecl::{prelude::*, std::tensor::View};
+use cubek_std::MatrixLayout;
 
 #[cube(launch_unchecked, explicit_define, address_type = "dynamic")]
 #[allow(clippy::type_complexity)]
@@ -114,18 +115,18 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatPlaneParallel<MP> {
 
         let (_, m, k) = lhs.shape();
         let (_, _, n) = rhs.shape();
-        let (m_cube, n_cube, batch_cube) = cube_mapping.cube_pos_to_tensor_pos();
+        let (_, matrix_cube, batch_cube) = cube_mapping.cube_pos_to_tensor_pos();
 
         let lhs_batch = Args::batch_lhs(state, batch_cube as usize);
         let rhs_batch = Args::batch_rhs(state, batch_cube as usize);
         let out_batch = Args::batch_out(state, batch_cube as usize);
 
         match config.plan {
-            GemvPlan::VecMatDirect => execute_vecmat::<LhsG<MP>, RhsG<MP>, AccG<MP>, AccR<MP>>(
+            GemvPlan::VecMatDirect => execute_gemv::<LhsG<MP>, RhsG<MP>, AccG<MP>, AccR<MP>>(
                 lhs.view(VecLayout::new(lhs_batch, k as usize)),
-                rhs.view(MatLayout::new(rhs_batch, (k, n))),
+                rhs.view(MatLayout::new(rhs_batch, (k, n), MatrixLayout::ColMajor)),
                 out.view_mut(VecLayout::new(out_batch, n as usize)),
-                n_cube,
+                matrix_cube,
                 k,
                 config.num_planes,
                 config.plane_dim,
@@ -133,7 +134,15 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatPlaneParallel<MP> {
             GemvPlan::VecMatTransposeSwap => {
                 todo!()
             }
-            GemvPlan::MatVecDirect => todo!(),
+            GemvPlan::MatVecDirect => execute_gemv::<RhsG<MP>, LhsG<MP>, AccG<MP>, AccR<MP>>(
+                rhs.view(VecLayout::new(rhs_batch, k as usize)),
+                lhs.view(MatLayout::new(lhs_batch, (m, k), MatrixLayout::RowMajor)),
+                out.view_mut(VecLayout::new(out_batch, m as usize)),
+                matrix_cube,
+                k,
+                config.num_planes,
+                config.plane_dim,
+            ),
             GemvPlan::MatVecTransposeSwap => {
                 todo!()
             }
@@ -142,7 +151,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatPlaneParallel<MP> {
 }
 
 #[cube]
-fn execute_vecmat<V: CubePrimitive, M: CubePrimitive, O: CubePrimitive, AccR: Numeric>(
+fn execute_gemv<V: CubePrimitive, M: CubePrimitive, O: CubePrimitive, AccR: Numeric>(
     vec: View<V, Coords1d>,
     mat: View<M, Coords2d>,
     out: View<O, Coords1d, ReadWrite>,
@@ -154,9 +163,8 @@ fn execute_vecmat<V: CubePrimitive, M: CubePrimitive, O: CubePrimitive, AccR: Nu
     let plane_id = UNIT_POS_Y;
     let unit_id = UNIT_POS_X;
 
-    let column = cube_id * num_planes + plane_id;
+    let ordinal = cube_id * num_planes + plane_id;
 
-    // Tile = 1d vector of plane_dim * vector_size
     let size!(N) = comptime![Ord::max(vec.vector_size(), mat.vector_size())];
     let vector_size = N::value() as u32;
     let tile_size = plane_dim * vector_size;
@@ -170,7 +178,7 @@ fn execute_vecmat<V: CubePrimitive, M: CubePrimitive, O: CubePrimitive, AccR: Nu
 
         let vector_pos = (k_base + unit_id) * vector_size;
         let vec_val = vec.read_checked(vector_pos as usize);
-        let mat_val = mat.read_checked((vector_pos, column));
+        let mat_val = mat.read_checked((ordinal, vector_pos));
 
         acc += Vector::cast_from(vec_val) * Vector::cast_from(mat_val);
     }
@@ -189,76 +197,6 @@ fn execute_vecmat<V: CubePrimitive, M: CubePrimitive, O: CubePrimitive, AccR: Nu
     };
 
     if unit_id == 0 {
-        out.write_checked(column as usize, O::cast_from(sum));
-    }
-}
-
-#[cube]
-fn execute_matvec<MP: MatmulTypes, Args: MatmulArgs>(
-    state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
-    cube_mapping: CubeMapping,
-    #[comptime] config: VecMatPlaneParallelConfig,
-) {
-    // Lhs: row-major matrix
-    // Rhs: vector
-
-    let num_planes = config.num_planes;
-    let plane_dim = config.plane_dim;
-
-    let lhs = Args::view_lhs(state);
-    let rhs = Args::view_rhs(state);
-    let out = Args::view_out(state);
-
-    let (_, _, k) = lhs.shape();
-    let (m_cube_id, _, batch_cube_id) = cube_mapping.cube_pos_to_tensor_pos();
-
-    let lhs_batch = Args::batch_lhs(state, batch_cube_id as usize);
-    let rhs_batch = Args::batch_rhs(state, batch_cube_id as usize);
-    let out_batch = Args::batch_out(state, batch_cube_id as usize);
-
-    let lhs = lhs.view(SliceIndex::new(lhs_batch, lhs.shape()));
-    let rhs = rhs.view(SliceIndex::new(rhs_batch, rhs.shape()));
-    let out = out.view_mut(SliceIndex::new(out_batch, out.shape()));
-
-    let size!(NA) = comptime![Ord::max(lhs.vector_size(), rhs.vector_size())];
-    let vector_size = NA::value() as u32;
-
-    let plane_id = UNIT_POS_Y;
-    let unit_id = UNIT_POS_X;
-
-    let row = m_cube_id * num_planes + plane_id;
-
-    // Tile = 1d vector of plane_dim * vector_size
-    let tile_size = plane_dim * vector_size;
-    let num_tiles = k / tile_size;
-
-    let mut acc = Vector::<AccR<MP>, NA>::zero();
-
-    for tile_index in 0..num_tiles {
-        let swizzled_tile_index = (tile_index + plane_id) % num_tiles;
-        let k_base = swizzled_tile_index * plane_dim;
-
-        let vector_pos = (k_base + unit_id) * vector_size;
-        let lhs_vec = lhs.read_checked((row, vector_pos));
-        let rhs_vec = rhs.read_checked((vector_pos, 0));
-
-        acc += Vector::cast_from(lhs_vec) * Vector::cast_from(rhs_vec);
-    }
-
-    let mut sum = AccR::<MP>::zero();
-
-    #[unroll]
-    for i in 0..NA::value() {
-        sum += acc[i];
-    }
-
-    let sum = if comptime!(plane_dim > 1) {
-        plane_sum(sum)
-    } else {
-        sum
-    };
-
-    if unit_id == 0 {
-        out.write_checked((row, 0), Vector::cast_from(sum));
+        out.write_checked(ordinal as usize, O::cast_from(sum));
     }
 }

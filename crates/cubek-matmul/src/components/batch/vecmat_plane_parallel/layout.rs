@@ -1,5 +1,6 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::*;
+use cubek_std::MatrixLayout;
 
 #[derive(CubeType, Clone, Copy)]
 pub struct VecLayout {
@@ -41,12 +42,18 @@ impl Layout for VecLayout {
 pub struct MatLayout {
     batch: usize,
     shape: Coords2d,
+    #[cube(comptime)]
+    matrix_layout: MatrixLayout,
 }
 
 #[cube]
 impl MatLayout {
-    pub fn new(batch: usize, shape: Coords2d) -> Self {
-        MatLayout { batch, shape }
+    pub fn new(batch: usize, shape: Coords2d, #[comptime] matrix_layout: MatrixLayout) -> Self {
+        MatLayout {
+            batch,
+            shape,
+            matrix_layout,
+        }
     }
 }
 
@@ -56,8 +63,18 @@ impl Layout for MatLayout {
     type SourceCoordinates = (usize, u32, u32);
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
-        let (row, col) = pos;
-        (self.batch, row, col)
+        let (ordinal, vector_pos) = pos;
+
+        match comptime!(self.matrix_layout) {
+            MatrixLayout::RowMajor => {
+                // matvec style: row = ordinal, col = vector_pos
+                (self.batch, ordinal, vector_pos)
+            }
+            MatrixLayout::ColMajor => {
+                // vecmat style: row = vector_pos, col = ordinal
+                (self.batch, vector_pos, ordinal)
+            }
+        }
     }
 
     fn is_in_bounds(&self, _pos: Self::Coordinates) -> bool {

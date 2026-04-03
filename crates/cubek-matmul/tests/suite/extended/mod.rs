@@ -17,9 +17,9 @@ use cubek_test_utils::StrideSpec;
 use cubek_test_utils::TestInput;
 use cubek_test_utils::current_test_mode;
 
+pub mod gemv;
 pub mod naive;
 pub mod plane_accelerated;
 pub mod plane_vecmat;
 pub mod tma;
 pub mod unit;
-pub mod vecmat;
