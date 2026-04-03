@@ -21,23 +21,18 @@ pub fn launch_ref<R: Runtime>(
 ) -> Result<(), MatmulSetupError> {
     let rank = rhs.shape().len();
 
-    let m = lhs.shape().to_vec()[rank - 2];
-    let n = rhs.shape().to_vec()[rank - 1];
-    let k = lhs.shape().to_vec()[rank - 1];
-
-    if m != 1 {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(
-            "m must equal 1 to qualify as a vecmat problem",
-        )));
-    }
-
+    let lhs_shape = lhs.shape();
     let rhs_shape = rhs.shape();
+
+    let m = lhs_shape.to_vec()[rank - 2];
+    let n = rhs_shape.to_vec()[rank - 1];
+    let k = lhs_shape.to_vec()[rank - 1];
 
     let plane_size = client.properties().hardware.plane_size_max as usize;
 
     if !k.is_multiple_of(plane_size) {
         return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-            "Lhs dimension k={} must be a multiple of plane size {}",
+            "Dimension k={} must be a multiple of plane size {}",
             k, plane_size
         ))));
     }
@@ -65,7 +60,7 @@ pub fn launch_ref<R: Runtime>(
                 v
             }
         })
-        .filter(|&v| n.is_multiple_of(plane_size * v))
+        .filter(|&v| k.is_multiple_of(plane_size * v))
         .max()
         .ok_or(VectorizationError::NoValidVectorization)?;
 
@@ -86,12 +81,12 @@ pub fn launch_ref<R: Runtime>(
     let rhs_batches: Shape = rhs.shape().to_vec()[..rank - 2].into();
 
     let problem = MatmulProblem::from_parameters(
-        1,
+        m,
         n,
         k,
         lhs_batches,
         rhs_batches,
-        MatrixLayout::RowMajor,
+        MatrixLayout::from_shape_and_strides(lhs_shape, &lhs.data().strides, lhs.scheme())?,
         MatrixLayout::from_shape_and_strides(rhs_shape, &rhs.data().strides, rhs.scheme())?,
         MatrixLayout::RowMajor,
         lhs.scheme(),
@@ -99,12 +94,6 @@ pub fn launch_ref<R: Runtime>(
         dtypes.as_global_elems(),
         address_type,
     );
-
-    if problem.rhs_layout != MatrixLayout::ColMajor {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(
-            "Vecmat plane parallel only supports col major rhs for now",
-        )));
-    }
 
     let device_settings = VecMatPlaneParallelRoutine::device_settings(client, vector_sizes);
     let expand_info =

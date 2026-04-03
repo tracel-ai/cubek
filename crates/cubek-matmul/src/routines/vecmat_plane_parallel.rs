@@ -8,7 +8,9 @@ use cubek_std::cube_count::{CubeCountPlan, CubeCountStrategy, GlobalOrder, Hyper
 use crate::{
     components::batch::{
         BatchMatmulFamily,
-        vecmat_plane_parallel::{VecMatPlaneParallelBlueprint, VecMatPlaneParallelFamily},
+        vecmat_plane_parallel::{
+            GemvPlan, VecMatPlaneParallelBlueprint, VecMatPlaneParallelFamily,
+        },
     },
     definition::{MatmulElems, MatmulProblem, MatmulSetupError},
     routines::{BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine},
@@ -59,6 +61,7 @@ impl Routine<()> for VecMatPlaneParallelRoutine {
                         .cube_count_strategy(CubeCountStrategy::Flattened)
                         .global_order(GlobalOrder::RowMajor)
                         .build(),
+                    plan: GemvPlan::from_problem(problem)?,
                 };
 
                 Ok(ExpandInfo { blueprint, dtypes })
@@ -88,7 +91,11 @@ impl Routine<()> for VecMatPlaneParallelRoutine {
         )?
         .to_cube_dim(device_settings.plane_dim)?;
 
-        let working_planes = problem.n;
+        let working_planes = match blueprint.plan {
+            GemvPlan::VecMatDirect | GemvPlan::VecMatTransposeSwap => problem.n,
+            GemvPlan::MatVecDirect | GemvPlan::MatVecTransposeSwap => problem.m,
+        };
+
         let working_cubes = working_planes.div_ceil(blueprint.num_planes);
 
         let cube_count_plan = CubeCountPlan::from_blueprint(

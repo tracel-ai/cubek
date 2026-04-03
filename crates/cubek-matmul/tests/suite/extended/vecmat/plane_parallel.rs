@@ -134,7 +134,7 @@ pub fn test_plane_parallel_large_broadcast_rhs() {
 }
 
 #[test]
-pub fn test_plane_parallel_large_broadcast_batched() {
+pub fn test_plane_parallel_large_batched() {
     let case = VecMatTestCase {
         out_dim: 1280,
         k_dim: 1280,
@@ -324,7 +324,7 @@ pub fn test_plane_parallel_large_broadcast_rhs_row_major() {
 }
 
 #[test]
-pub fn test_plane_parallel_large_broadcast_batched_row_major() {
+pub fn test_plane_parallel_large_batched_row_major() {
     let case = VecMatTestCase {
         out_dim: 1280,
         k_dim: 1280,

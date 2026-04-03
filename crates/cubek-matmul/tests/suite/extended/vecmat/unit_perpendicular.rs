@@ -134,7 +134,7 @@ pub fn test_unit_perpendicular_large_broadcast_rhs() {
 }
 
 #[test]
-pub fn test_unit_perpendicular_large_broadcast_batched() {
+pub fn test_unit_perpendicular_large_batched() {
     let case = VecMatTestCase {
         out_dim: 1280,
         k_dim: 1280,

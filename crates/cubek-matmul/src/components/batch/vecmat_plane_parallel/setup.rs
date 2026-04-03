@@ -11,7 +11,9 @@ use crate::{
         CubeDimResource,
         batch::{
             BatchMatmulFamily,
-            vecmat_plane_parallel::{VecMatPlaneParallel, VecMatPlaneParallelConfig, matmul_entry},
+            vecmat_plane_parallel::{
+                GemvPlan, VecMatPlaneParallel, VecMatPlaneParallelConfig, matmul_entry,
+            },
         },
         global::memory::GlobalLayoutConfig,
         stage::NumStages,
@@ -32,6 +34,7 @@ pub struct VecMatPlaneParallelBlueprint {
     // Should equal plane_dim * vector_size
     pub tile_dim: usize,
     pub hypercube_blueprint: HypercubeBlueprint,
+    pub plan: GemvPlan,
 }
 
 impl Blueprint for VecMatPlaneParallelBlueprint {
@@ -82,6 +85,7 @@ impl BatchMatmulFamily<()> for VecMatPlaneParallelFamily {
         Ok(VecMatPlaneParallelConfig {
             plane_dim: device_props.hardware.plane_size_max,
             num_planes: blueprint.num_planes as u32,
+            plan: blueprint.plan,
         })
     }
 

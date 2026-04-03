@@ -1,4 +1,5 @@
 mod config;
+mod layout;
 mod matmul;
 mod setup;
 
