@@ -171,7 +171,7 @@ impl BatchMatmulFamily<()> for GemvPlaneParallelFamily {
 
         match blueprint.kind {
             GemvKind::VecMatRowMajor => {
-                if problem.n % blueprint.tile_dim != 0 {
+                if !problem.n.is_multiple_of(blueprint.tile_dim) {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
                         "For VecMatTransposeSwap, problem.n ({:?}) must be divisible by tile_dim ({:?})",
                         problem.n, blueprint.tile_dim,
@@ -195,7 +195,7 @@ impl BatchMatmulFamily<()> for GemvPlaneParallelFamily {
                 }
             }
             GemvKind::MatVecColMajor => {
-                if problem.m % blueprint.tile_dim != 0 {
+                if !problem.m.is_multiple_of(blueprint.tile_dim) {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
                         "For MatVecTransposeSwap, problem.m ({:?}) must be divisible by tile_dim ({:?})",
                         problem.m, blueprint.tile_dim,
