@@ -7,8 +7,8 @@ pub fn test_plane_parallel_vecmat_very_small_square_rhs_col_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
-            VecMatPlaneParallelStrategy {
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
+            GemvPlaneParallelStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -26,8 +26,8 @@ pub fn test_plane_parallel_vecmat_k_larger_than_n_col_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
-            VecMatPlaneParallelStrategy {
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
+            GemvPlaneParallelStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -45,8 +45,8 @@ pub fn test_plane_parallel_vecmat_k_smaller_than_n_col_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
-            VecMatPlaneParallelStrategy {
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
+            GemvPlaneParallelStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -64,8 +64,8 @@ pub fn test_plane_parallel_vecmat_small_square_rhs_col_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
-            VecMatPlaneParallelStrategy {
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
+            GemvPlaneParallelStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -83,8 +83,8 @@ pub fn test_plane_parallel_vecmat_large_col_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
-            VecMatPlaneParallelStrategy {
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
+            GemvPlaneParallelStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -102,8 +102,8 @@ pub fn test_plane_parallel_vecmat_large_broadcast_lhs_col_major() {
         mat_batch: 2,
         mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
-            VecMatPlaneParallelStrategy {
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
+            GemvPlaneParallelStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -121,8 +121,8 @@ pub fn test_plane_parallel_vecmat_large_broadcast_rhs_col_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
-            VecMatPlaneParallelStrategy {
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
+            GemvPlaneParallelStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -140,8 +140,8 @@ pub fn test_plane_parallel_vecmat_large_batched_col_major() {
         mat_batch: 2,
         mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
-            VecMatPlaneParallelStrategy {
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
+            GemvPlaneParallelStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -159,8 +159,8 @@ pub fn test_plane_parallel_vecmat_uneven_shape_col_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
-            VecMatPlaneParallelStrategy {
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
+            GemvPlaneParallelStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -178,8 +178,8 @@ pub fn test_plane_parallel_vecmat_not_same_vectorization_col_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
-            VecMatPlaneParallelStrategy {
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
+            GemvPlaneParallelStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -197,8 +197,8 @@ pub fn test_plane_parallel_vecmat_very_small_square_rhs_row_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
-            VecMatPlaneParallelStrategy {
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
+            GemvPlaneParallelStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -216,8 +216,8 @@ pub fn test_plane_parallel_vecmat_k_larger_than_n_row_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
-            VecMatPlaneParallelStrategy {
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
+            GemvPlaneParallelStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -235,8 +235,8 @@ pub fn test_plane_parallel_vecmat_k_smaller_than_n_row_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
-            VecMatPlaneParallelStrategy {
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
+            GemvPlaneParallelStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -254,8 +254,8 @@ pub fn test_plane_parallel_vecmat_small_square_rhs_row_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
-            VecMatPlaneParallelStrategy {
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
+            GemvPlaneParallelStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -273,8 +273,8 @@ pub fn test_plane_parallel_vecmat_large_row_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
-            VecMatPlaneParallelStrategy {
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
+            GemvPlaneParallelStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -292,8 +292,8 @@ pub fn test_plane_parallel_vecmat_large_broadcast_lhs_row_major() {
         mat_batch: 2,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
-            VecMatPlaneParallelStrategy {
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
+            GemvPlaneParallelStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -311,8 +311,8 @@ pub fn test_plane_parallel_vecmat_large_broadcast_rhs_row_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
-            VecMatPlaneParallelStrategy {
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
+            GemvPlaneParallelStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -330,8 +330,8 @@ pub fn test_plane_parallel_vecmat_large_batched_row_major() {
         mat_batch: 2,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
-            VecMatPlaneParallelStrategy {
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
+            GemvPlaneParallelStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -349,8 +349,8 @@ pub fn test_plane_parallel_vecmat_uneven_shape_row_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
-            VecMatPlaneParallelStrategy {
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
+            GemvPlaneParallelStrategy {
                 target_num_planes: 8,
             },
         )),
@@ -368,8 +368,8 @@ pub fn test_plane_parallel_vecmat_not_same_vectorization_row_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(
-            VecMatPlaneParallelStrategy {
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
+            GemvPlaneParallelStrategy {
                 target_num_planes: 8,
             },
         )),

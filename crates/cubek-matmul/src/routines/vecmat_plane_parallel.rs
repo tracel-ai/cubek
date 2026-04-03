@@ -8,30 +8,30 @@ use cubek_std::cube_count::{CubeCountPlan, CubeCountStrategy, GlobalOrder, Hyper
 use crate::{
     components::batch::{
         BatchMatmulFamily,
-        vecmat_plane_parallel::{
-            GemvPlan, VecMatPlaneParallelBlueprint, VecMatPlaneParallelFamily,
+        gemv_plane_parallel::{
+            GemvPlan, GemvPlaneParallelBlueprint, GemvPlaneParallelFamily,
         },
     },
     definition::{MatmulElems, MatmulProblem, MatmulSetupError},
     routines::{BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine},
 };
 
-pub struct VecMatPlaneParallelRoutine {}
+pub struct GemvPlaneParallelRoutine {}
 
 #[derive(Default, Clone)]
-pub struct VecMatPlaneParallelStrategy {
+pub struct GemvPlaneParallelStrategy {
     pub target_num_planes: usize,
 }
 
-impl Display for VecMatPlaneParallelStrategy {
+impl Display for GemvPlaneParallelStrategy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "_{}", self.target_num_planes)
     }
 }
 
-impl Routine<()> for VecMatPlaneParallelRoutine {
-    type Strategy = VecMatPlaneParallelStrategy;
-    type BatchMatmul = VecMatPlaneParallelFamily;
+impl Routine<()> for GemvPlaneParallelRoutine {
+    type Strategy = GemvPlaneParallelStrategy;
+    type BatchMatmul = GemvPlaneParallelFamily;
     type Blueprint = <Self::BatchMatmul as BatchMatmulFamily<()>>::Blueprint;
     type Config = <Self::BatchMatmul as BatchMatmulFamily<()>>::Config;
 
@@ -53,7 +53,7 @@ impl Routine<()> for VecMatPlaneParallelRoutine {
                 let max_planes_for_swizzle = problem.k / tile_dim;
                 let num_planes = max(1, min(strategy.target_num_planes, max_planes_for_swizzle));
 
-                let blueprint = VecMatPlaneParallelBlueprint {
+                let blueprint = GemvPlaneParallelBlueprint {
                     dtypes: dtypes.clone(),
                     num_planes,
                     tile_dim,

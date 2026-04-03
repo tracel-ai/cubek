@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use crate::components::batch::base::BatchMatmulFamily;
-use crate::components::batch::vecmat_unit_perpendicular::{
+use crate::components::batch::gemv_unit_perpendicular::{
     VecMatUnitPerpendicularBlueprint, VecMatUnitPerpendicularConfig, VecMatUnitPerpendicularFamily,
 };
 use crate::components::batch::{BatchConfig as _, SliceIndex};

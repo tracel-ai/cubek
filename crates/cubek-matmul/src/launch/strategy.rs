@@ -30,8 +30,8 @@ use crate::{
         simple_unit::SimpleUnitAlgorithm,
         specialized::SpecializedAlgorithm,
         vecmat_innerproduct::{DoubleVecMatInnerProductAlgorithm, VecMatInnerProductAlgorithm},
-        vecmat_plane_parallel::VecMatPlaneParallelRoutine,
-        vecmat_unit_perpendicular::VecMatUnitPerpendicularRoutine,
+        vecmat_plane_parallel::GemvPlaneParallelRoutine,
+        vecmat_unit_perpendicular::GemvUnitPerpendicularRoutine,
     },
 };
 
@@ -167,8 +167,8 @@ pub enum Strategy {
     DoubleUnit(BlueprintStrategy<(), DoubleUnitAlgorithm>),
     SimpleVecMat(BlueprintStrategy<(), VecMatInnerProductAlgorithm>),
     DoubleVecMat(BlueprintStrategy<(), DoubleVecMatInnerProductAlgorithm>),
-    VecMatUnitPerpendicular(BlueprintStrategy<(), VecMatUnitPerpendicularRoutine>),
-    VecMatPlaneParallel(BlueprintStrategy<(), VecMatPlaneParallelRoutine>),
+    GemvUnitPerpendicular(BlueprintStrategy<(), GemvUnitPerpendicularRoutine>),
+    GemvPlaneParallel(BlueprintStrategy<(), GemvPlaneParallelRoutine>),
     Naive,
     #[default]
     Auto,
@@ -315,11 +315,11 @@ impl Display for Strategy {
             }
             Strategy::Naive => f.write_str("matmul_naive"),
             Strategy::Auto => f.write_str("matmul_auto"),
-            Strategy::VecMatUnitPerpendicular(blueprint_strategy) => f.write_fmt(format_args!(
+            Strategy::GemvUnitPerpendicular(blueprint_strategy) => f.write_fmt(format_args!(
                 "vecmat_unit_perpendicular{}",
                 blueprint_strategy
             )),
-            Strategy::VecMatPlaneParallel(blueprint_strategy) => {
+            Strategy::GemvPlaneParallel(blueprint_strategy) => {
                 f.write_fmt(format_args!("vecmat_plane_parallel{}", blueprint_strategy))
             }
         }
@@ -447,7 +447,7 @@ impl Strategy {
             }
             Strategy::Naive => launch_naive::launch_ref(client, lhs, rhs, out, dtypes),
             Strategy::Auto => auto(client, lhs, rhs, out, dtypes),
-            Strategy::VecMatUnitPerpendicular(blueprint_strategy) => {
+            Strategy::GemvUnitPerpendicular(blueprint_strategy) => {
                 launch_vecmat_unit_perpendicular::launch_ref(
                     client,
                     lhs,
@@ -457,7 +457,7 @@ impl Strategy {
                     dtypes,
                 )
             }
-            Strategy::VecMatPlaneParallel(blueprint_strategy) => {
+            Strategy::GemvPlaneParallel(blueprint_strategy) => {
                 launch_vecmat_plane_parallel::launch_ref(
                     client,
                     lhs,

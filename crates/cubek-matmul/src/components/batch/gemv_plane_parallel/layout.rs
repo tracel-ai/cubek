@@ -24,9 +24,8 @@ impl Layout for VecLayout {
         (self.batch, 0, pos as u32)
     }
 
-    fn is_in_bounds(&self, _pos: Self::Coordinates) -> bool {
-        // we don't check batch
-        true.runtime()
+    fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
+        pos < self.shape
     }
 
     fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
@@ -63,23 +62,21 @@ impl Layout for MatLayout {
     type SourceCoordinates = (usize, u32, u32);
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
-        let (ordinal, vector_pos) = pos;
+        let (mn_pos, k_pos) = pos;
 
         match comptime!(self.matrix_layout) {
-            MatrixLayout::RowMajor => {
-                // matvec style: row = ordinal, col = vector_pos
-                (self.batch, ordinal, vector_pos)
-            }
-            MatrixLayout::ColMajor => {
-                // vecmat style: row = vector_pos, col = ordinal
-                (self.batch, vector_pos, ordinal)
-            }
+            MatrixLayout::RowMajor => (self.batch, mn_pos, k_pos),
+            MatrixLayout::ColMajor => (self.batch, k_pos, mn_pos),
         }
     }
 
-    fn is_in_bounds(&self, _pos: Self::Coordinates) -> bool {
-        // we don't check batch
-        true.runtime()
+    fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
+        let (mn_bound, k_bound) = match comptime!(self.matrix_layout) {
+            MatrixLayout::RowMajor => (self.shape.0, self.shape.1),
+            MatrixLayout::ColMajor => (self.shape.1, self.shape.0),
+        };
+
+        pos.0 < mn_bound && pos.1 < k_bound
     }
 
     fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {

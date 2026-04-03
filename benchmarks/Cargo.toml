@@ -34,7 +34,7 @@ name = "gemm"
 
 [[bench]]
 harness = false
-name = "vecmat"
+name = "gemv"
 
 [[bench]]
 harness = false

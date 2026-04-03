@@ -7,7 +7,7 @@ use crate::definition::{MatmulVectorSizes, cube_mapping_launch};
 
 use crate::launch::InputArg;
 use crate::launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs};
-use crate::routines::vecmat_plane_parallel::VecMatPlaneParallelRoutine;
+use crate::routines::vecmat_plane_parallel::GemvPlaneParallelRoutine;
 use crate::routines::{BlueprintStrategy, Routine as _};
 
 #[allow(clippy::result_large_err)]
@@ -16,7 +16,7 @@ pub fn launch_ref<R: Runtime>(
     lhs: InputBinding<R>,
     rhs: InputBinding<R>,
     out: TensorBinding<R>,
-    strategy: &BlueprintStrategy<(), VecMatPlaneParallelRoutine>,
+    strategy: &BlueprintStrategy<(), GemvPlaneParallelRoutine>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let rank = rhs.shape().len();
@@ -50,7 +50,6 @@ pub fn launch_ref<R: Runtime>(
         .max()
         .ok_or(VectorizationError::NoValidVectorization)?;
 
-    // Assumes rhs is col major
     let rhs_vector_size = client
         .io_optimized_vector_sizes(dtypes.rhs_global.size())
         .map(|v| {
@@ -95,12 +94,12 @@ pub fn launch_ref<R: Runtime>(
         address_type,
     );
 
-    let device_settings = VecMatPlaneParallelRoutine::device_settings(client, vector_sizes);
+    let device_settings = GemvPlaneParallelRoutine::device_settings(client, vector_sizes);
     let expand_info =
-        VecMatPlaneParallelRoutine::expand_blueprint(&problem, &device_settings, strategy)?;
-    let launch_info = VecMatPlaneParallelRoutine::prepare(&problem, &device_settings, expand_info)?;
+        GemvPlaneParallelRoutine::expand_blueprint(&problem, &device_settings, strategy)?;
+    let launch_info = GemvPlaneParallelRoutine::prepare(&problem, &device_settings, expand_info)?;
 
-    let input = <InputArg<TensorArgs> as ConcreteInputsFactory<VecMatPlaneParallelRoutine>>::create(
+    let input = <InputArg<TensorArgs> as ConcreteInputsFactory<GemvPlaneParallelRoutine>>::create(
         lhs,
         rhs,
         &launch_info.blueprint,
@@ -109,7 +108,7 @@ pub fn launch_ref<R: Runtime>(
         dtypes,
     );
     let output =
-        <OutputArg<TensorArgs> as ConcreteOutputFactory<VecMatPlaneParallelRoutine>>::create(
+        <OutputArg<TensorArgs> as ConcreteOutputFactory<GemvPlaneParallelRoutine>>::create(
             out,
             &launch_info.blueprint,
             &problem,
@@ -117,7 +116,7 @@ pub fn launch_ref<R: Runtime>(
             dtypes,
         );
 
-    VecMatPlaneParallelRoutine::launch::<TensorArgs, R>(
+    GemvPlaneParallelRoutine::launch::<TensorArgs, R>(
         client,
         launch_info.cube_dim,
         launch_info.cube_count_plan.resolve(),

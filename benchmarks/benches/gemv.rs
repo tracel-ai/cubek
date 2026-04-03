@@ -11,8 +11,8 @@ use cubek::{
         launch::{Strategy, launch_ref},
         routines::{
             BlueprintStrategy, TileSizeSelection, simple_unit::SimpleUnitSelectionArgs,
-            vecmat_plane_parallel::VecMatPlaneParallelStrategy,
-            vecmat_unit_perpendicular::VecMatUnitPerpendicularStrategy,
+            vecmat_plane_parallel::GemvPlaneParallelStrategy,
+            vecmat_unit_perpendicular::GemvUnitPerpendicularStrategy,
         },
     },
     random::random_uniform,
@@ -20,7 +20,7 @@ use cubek::{
 };
 
 #[allow(dead_code)]
-struct VecMatBench<R: Runtime> {
+struct GemvBench<R: Runtime> {
     batches: usize,
     n: usize,
     k: usize,
@@ -32,14 +32,14 @@ struct VecMatBench<R: Runtime> {
 }
 
 #[derive(Clone)]
-struct VecMatInputs<R: Runtime> {
+struct GemvInputs<R: Runtime> {
     lhs: TensorHandle<R>,
     rhs: TensorHandle<R>,
     out: TensorHandle<R>,
 }
 
-impl<R: Runtime> Benchmark for VecMatBench<R> {
-    type Input = VecMatInputs<R>;
+impl<R: Runtime> Benchmark for GemvBench<R> {
+    type Input = GemvInputs<R>;
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
@@ -74,7 +74,7 @@ impl<R: Runtime> Benchmark for VecMatBench<R> {
 
         let out = TensorHandle::empty(&client, [self.batches, 1, self.n], self.dtypes.acc_global);
 
-        VecMatInputs { lhs, rhs, out }
+        GemvInputs { lhs, rhs, out }
     }
 
     fn execute(&self, inputs: Self::Input) -> Result<(), String> {
@@ -90,7 +90,7 @@ impl<R: Runtime> Benchmark for VecMatBench<R> {
     }
 
     fn name(&self) -> String {
-        format!("vecmat-b:{}-n:{}-k:{}", self.batches, self.n, self.k,).to_lowercase()
+        format!("gemv-b:{}-n:{}-k:{}", self.batches, self.n, self.k,).to_lowercase()
     }
 
     fn sync(&self) {
@@ -105,7 +105,7 @@ fn run<R: Runtime, E: frontend::Float>(device: &R::Device, strategy: Strategy) {
     for rhs_layout in [MatrixLayout::RowMajor, MatrixLayout::ColMajor] {
         println!("{:?}: ", rhs_layout);
 
-        let bench = VecMatBench::<R> {
+        let bench = GemvBench::<R> {
             client: client.clone(),
             batches: 2,
             n: 4096,
@@ -125,21 +125,21 @@ fn run<R: Runtime, E: frontend::Float>(device: &R::Device, strategy: Strategy) {
 }
 
 #[allow(unused)]
-fn run_algos_vecmat<R: Runtime, E: frontend::Float>(device: &R::Device) {
-    println!("VecMat Unit Perpendicular");
+fn run_algos_gemv<R: Runtime, E: frontend::Float>(device: &R::Device) {
+    println!("Gemv Unit Perpendicular");
     run::<R, E>(
         device,
-        Strategy::VecMatUnitPerpendicular(BlueprintStrategy::Inferred(
-            VecMatUnitPerpendicularStrategy {
+        Strategy::GemvUnitPerpendicular(BlueprintStrategy::Inferred(
+            GemvUnitPerpendicularStrategy {
                 target_num_planes: 8,
             },
         )),
     );
 
-    println!("VecMat Plane Parallel");
+    println!("Gemv Plane Parallel");
     run::<R, E>(
         device,
-        Strategy::VecMatPlaneParallel(BlueprintStrategy::Inferred(VecMatPlaneParallelStrategy {
+        Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(GemvPlaneParallelStrategy {
             target_num_planes: 8,
         })),
     );
@@ -174,5 +174,5 @@ fn run_algos_vecmat<R: Runtime, E: frontend::Float>(device: &R::Device) {
 }
 
 fn main() {
-    run_algos_vecmat::<cubecl::TestRuntime, f32>(&Default::default());
+    run_algos_gemv::<cubecl::TestRuntime, f32>(&Default::default());
 }

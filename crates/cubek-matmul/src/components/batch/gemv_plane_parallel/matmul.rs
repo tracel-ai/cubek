@@ -2,9 +2,9 @@ use std::marker::PhantomData;
 
 use crate::components::batch::{
     BatchConfig as _, BatchMatmul, BatchMatmulFamily,
-    vecmat_plane_parallel::{
-        GemvPlan, VecMatPlaneParallelBlueprint, VecMatPlaneParallelConfig,
-        VecMatPlaneParallelFamily,
+    gemv_plane_parallel::{
+        GemvPlan, GemvPlaneParallelBlueprint, VecMatPlaneParallelConfig,
+        GemvPlaneParallelFamily,
         layout::{MatLayout, VecLayout},
     },
 };
@@ -38,7 +38,7 @@ pub(crate) fn matmul_entry<
     output: &mut <Args as MatmulArgs>::Output<Vector<Acc, AccSize>>,
     runtime_config: (),
     cube_mapping: CubeMapping,
-    #[comptime] blueprint: VecMatPlaneParallelBlueprint,
+    #[comptime] blueprint: GemvPlaneParallelBlueprint,
     #[define(Lhs, Rhs, Acc)] _global: [StorageType; 3],
     #[define(LhsSize, RhsSize, AccSize)] _sizes: [usize; 3],
 ) {
@@ -62,7 +62,7 @@ pub(crate) fn matmul_entry<
     });
 
     let device_props = comptime::device_properties();
-    let config = comptime!(VecMatPlaneParallelFamily::expand_config(
+    let config = comptime!(GemvPlaneParallelFamily::expand_config(
         &device_props,
         &blueprint,
         &blueprint.dtypes,
@@ -132,7 +132,15 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatPlaneParallel<MP> {
                 config.plane_dim,
             ),
             GemvPlan::VecMatTransposeSwap => {
-                todo!()
+                execute_gemv::<LhsG<MP>, RhsG<MP>, AccG<MP>, AccR<MP>>(
+                    lhs.view(VecLayout::new(lhs_batch, k as usize)),
+                    rhs.view(MatLayout::new(rhs_batch, (k, n), MatrixLayout::RowMajor)),
+                    out.view_mut(VecLayout::new(out_batch, n as usize)),
+                    matrix_cube,
+                    k,
+                    config.num_planes,
+                    config.plane_dim,
+                )
             }
             GemvPlan::MatVecDirect => execute_gemv::<RhsG<MP>, LhsG<MP>, AccG<MP>, AccR<MP>>(
                 rhs.view(VecLayout::new(rhs_batch, k as usize)),
@@ -144,7 +152,15 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatPlaneParallel<MP> {
                 config.plane_dim,
             ),
             GemvPlan::MatVecTransposeSwap => {
-                todo!()
+                execute_gemv::<RhsG<MP>, LhsG<MP>, AccG<MP>, AccR<MP>>(
+                    rhs.view(VecLayout::new(rhs_batch, k as usize)),
+                    lhs.view(MatLayout::new(lhs_batch, (m, k), MatrixLayout::ColMajor)),
+                    out.view_mut(VecLayout::new(out_batch, m as usize)),
+                    matrix_cube,
+                    k,
+                    config.num_planes,
+                    config.plane_dim,
+                )
             }
         }
     }
@@ -163,7 +179,7 @@ fn execute_gemv<V: CubePrimitive, M: CubePrimitive, O: CubePrimitive, AccR: Nume
     let plane_id = UNIT_POS_Y;
     let unit_id = UNIT_POS_X;
 
-    let ordinal = cube_id * num_planes + plane_id;
+    let mn_pos = cube_id * num_planes + plane_id;
 
     let size!(N) = comptime![Ord::max(vec.vector_size(), mat.vector_size())];
     let vector_size = N::value() as u32;
@@ -176,9 +192,9 @@ fn execute_gemv<V: CubePrimitive, M: CubePrimitive, O: CubePrimitive, AccR: Nume
         let swizzled_tile_index = (tile_index + plane_id) % num_tiles;
         let k_base = swizzled_tile_index * plane_dim;
 
-        let vector_pos = (k_base + unit_id) * vector_size;
-        let vec_val = vec.read_checked(vector_pos as usize);
-        let mat_val = mat.read_checked((ordinal, vector_pos));
+        let k_pos = (k_base + unit_id) * vector_size;
+        let vec_val = vec.read_checked(k_pos as usize);
+        let mat_val = mat.read_checked((mn_pos, k_pos));
 
         acc += Vector::cast_from(vec_val) * Vector::cast_from(mat_val);
     }
@@ -197,6 +213,6 @@ fn execute_gemv<V: CubePrimitive, M: CubePrimitive, O: CubePrimitive, AccR: Nume
     };
 
     if unit_id == 0 {
-        out.write_checked(ordinal as usize, O::cast_from(sum));
+        out.write_checked(mn_pos as usize, O::cast_from(sum));
     }
 }
