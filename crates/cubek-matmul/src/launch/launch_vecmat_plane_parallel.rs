@@ -2,6 +2,7 @@ use cubecl::zspace::Shape;
 use cubecl::{VectorizationError, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
 
+use crate::components::batch::gemv_plane_parallel::GemvKind;
 use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError};
 use crate::definition::{MatmulVectorSizes, cube_mapping_launch};
 
@@ -97,6 +98,17 @@ pub fn launch_ref<R: Runtime>(
     let device_settings = GemvPlaneParallelRoutine::device_settings(client, vector_sizes);
     let expand_info =
         GemvPlaneParallelRoutine::expand_blueprint(&problem, &device_settings, strategy)?;
+
+    if matches!(expand_info.blueprint.kind, GemvKind::MatVecColMajor) {
+        return Err(MatmulSetupError::InvalidConfig(Box::new(
+            "MatVec plane parallel only supports col major lhs for now",
+        )));
+    } else if matches!(expand_info.blueprint.kind, GemvKind::VecMatRowMajor) {
+        return Err(MatmulSetupError::InvalidConfig(Box::new(
+            "Vecmat plane parallel only supports col major rhs for now",
+        )));
+    }
+
     let launch_info = GemvPlaneParallelRoutine::prepare(&problem, &device_settings, expand_info)?;
 
     let input = <InputArg<TensorArgs> as ConcreteInputsFactory<GemvPlaneParallelRoutine>>::create(
@@ -107,14 +119,13 @@ pub fn launch_ref<R: Runtime>(
         &vector_sizes,
         dtypes,
     );
-    let output =
-        <OutputArg<TensorArgs> as ConcreteOutputFactory<GemvPlaneParallelRoutine>>::create(
-            out,
-            &launch_info.blueprint,
-            &problem,
-            &vector_sizes,
-            dtypes,
-        );
+    let output = <OutputArg<TensorArgs> as ConcreteOutputFactory<GemvPlaneParallelRoutine>>::create(
+        out,
+        &launch_info.blueprint,
+        &problem,
+        &vector_sizes,
+        dtypes,
+    );
 
     GemvPlaneParallelRoutine::launch::<TensorArgs, R>(
         client,

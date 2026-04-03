@@ -59,7 +59,6 @@ impl Layout for MatLayout {
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
-        let (mn_bound, k_bound) = self.shape;
         pos.0 < self.shape.0 && pos.1 < self.shape.1
     }
 

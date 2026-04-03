@@ -34,7 +34,7 @@ pub struct GemvPlaneParallelBlueprint {
     // Should equal plane_dim * vector_size
     pub tile_dim: usize,
     pub hypercube_blueprint: HypercubeBlueprint,
-    pub plan: GemvKind,
+    pub kind: GemvKind,
 }
 
 impl Blueprint for GemvPlaneParallelBlueprint {
@@ -85,7 +85,7 @@ impl BatchMatmulFamily<()> for GemvPlaneParallelFamily {
         Ok(VecMatPlaneParallelConfig {
             plane_dim: device_props.hardware.plane_size_max,
             num_planes: blueprint.num_planes as u32,
-            plan: blueprint.plan,
+            plan: blueprint.kind,
         })
     }
 
@@ -137,7 +137,7 @@ impl BatchMatmulFamily<()> for GemvPlaneParallelFamily {
         client: &ComputeClient<R>,
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
-        _dtypes: &MatmulElems,
+        dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
         if vector_sizes.lhs != vector_sizes.rhs {
@@ -169,15 +169,28 @@ impl BatchMatmulFamily<()> for GemvPlaneParallelFamily {
             ))));
         }
 
-        match blueprint.plan {
-            GemvKind::VecMatColMajor | GemvKind::MatVecRowMajor => {
-                // nothing to check for the direct plans
-            }
+        match blueprint.kind {
             GemvKind::VecMatRowMajor => {
                 if problem.n % blueprint.tile_dim != 0 {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
                         "For VecMatTransposeSwap, problem.n ({:?}) must be divisible by tile_dim ({:?})",
                         problem.n, blueprint.tile_dim,
+                    ))));
+                }
+
+                if blueprint.tile_dim
+                    * blueprint.tile_dim
+                    * dtypes.rhs_global.size()
+                    * vector_sizes.rhs
+                    > client.properties().hardware.max_shared_memory_size
+                {
+                    return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                        "Requesting too much shared memory, requested {:?}, max {:?}",
+                        blueprint.tile_dim
+                            * blueprint.tile_dim
+                            * dtypes.rhs_global.size()
+                            * vector_sizes.rhs,
+                        client.properties().hardware.max_shared_memory_size
                     ))));
                 }
             }
@@ -188,7 +201,24 @@ impl BatchMatmulFamily<()> for GemvPlaneParallelFamily {
                         problem.m, blueprint.tile_dim,
                     ))));
                 }
+
+                if blueprint.tile_dim
+                    * blueprint.tile_dim
+                    * dtypes.lhs_global.size()
+                    * vector_sizes.lhs
+                    > client.properties().hardware.max_shared_memory_size
+                {
+                    return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                        "Requesting too much shared memory, requested {:?}, max {:?}",
+                        blueprint.tile_dim
+                            * blueprint.tile_dim
+                            * dtypes.lhs_global.size()
+                            * vector_sizes.lhs,
+                        client.properties().hardware.max_shared_memory_size
+                    ))));
+                }
             }
+            _ => {}
         }
         Ok(())
     }

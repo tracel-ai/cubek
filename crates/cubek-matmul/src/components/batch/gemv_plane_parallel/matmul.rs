@@ -265,52 +265,32 @@ fn execute_gemv_transposed<
     #[comptime] vector_size: u32,
     #[comptime] matrix_layout: MatrixLayout,
 ) {
-    // if cube_id == 0 {
-    //     terminate!();
-    // }
-
-    // 0..4
     let plane_id = UNIT_POS_Y;
-    // 0
     let unit_id = UNIT_POS_X;
 
-    // 4
     let segment_size = comptime!(plane_dim * vector_size);
-    // 1 * 4 = 4
     let cube_offset = cube_id * segment_size;
-    // 4 / 4 = 1
     let num_segments_k = k_dim / segment_size;
 
-    // 4 / 4 = 1
     let segments_per_plane = segment_size / num_planes;
 
-    // 1 acc
     let mut accs: Array<Vector<AccR, VS>> = Array::new(segments_per_plane as usize);
-    // 0..1
     for segment_iter in 0..segments_per_plane {
         accs[segment_iter as usize] = Vector::zero();
     }
 
-    // 4 * 4 = 16
     let mut smem = SharedMemory::<SM>::new((segment_size * segment_size) as usize);
 
-    // 0..1 -> 0
     for segment_index in 0..num_segments_k {
-        // 0
         let k_base = segment_index * plane_dim;
 
-        // 0
         let local_k_pos = unit_id * vector_size;
-        // 0
         let global_k_pos = k_base * vector_size + local_k_pos;
-        // 0 -> [0,1,2,3]
         let vec_val = vec.read_checked(global_k_pos as usize);
 
         assert!(segment_size.is_multiple_of(num_planes));
 
-        // 0..1 -> 0
         for segment_iter in 0..segments_per_plane {
-            // 0 * 4 + 0..4 = 0..4
             let local_segment = segment_iter * num_planes + plane_id;
 
             let vector = match matrix_layout {
@@ -329,7 +309,6 @@ fn execute_gemv_transposed<
             for i in 0..vector_size {
                 let row = local_segment;
                 let col = local_k_pos + i;
-                // Map to smem: [row][col]
                 smem[(row * segment_size + col) as usize] = SM::cast_from(vector[i as usize]);
             }
         }
@@ -344,12 +323,10 @@ fn execute_gemv_transposed<
                 let row = local_segment;
                 let col = local_k_pos + i;
 
-                // Transpose: Read from [col][row] instead of [row][col]
                 let transposed_index = col * segment_size + row;
                 mat_val[i as usize] = smem[transposed_index as usize];
             }
 
-            // accs[segment_iter as usize] += Vector::cast_from(vec_val) * Vector::cast_from(mat_val);
             accs[segment_iter as usize] += Vector::cast_from(vec_val) * Vector::cast_from(mat_val);
         }
 

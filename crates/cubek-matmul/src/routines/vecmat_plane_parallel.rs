@@ -48,7 +48,6 @@ impl Routine<()> for GemvPlaneParallelRoutine {
             BlueprintStrategy::Inferred(strategy) => {
                 let tile_dim =
                     device_settings.plane_dim as usize * device_settings.vector_sizes.rhs;
-                println!("{:?}", device_settings.vector_sizes);
                 let plan = GemvKind::from_problem(problem)?;
                 let num_planes = match plan {
                     GemvKind::MatVecRowMajor | GemvKind::VecMatColMajor => {
@@ -69,7 +68,7 @@ impl Routine<()> for GemvPlaneParallelRoutine {
                         .cube_count_strategy(CubeCountStrategy::Flattened)
                         .global_order(GlobalOrder::RowMajor)
                         .build(),
-                    plan,
+                    kind: plan,
                 };
 
                 Ok(ExpandInfo { blueprint, dtypes })
@@ -98,32 +97,26 @@ impl Routine<()> for GemvPlaneParallelRoutine {
             &device_settings.vector_sizes,
         )?
         .to_cube_dim(device_settings.plane_dim)?;
-        println!("{:?}", cube_dim);
 
-        let num_parallel_problems = match blueprint.plan {
+        let num_parallel_problems = match blueprint.kind {
             GemvKind::VecMatColMajor => problem.n,
             GemvKind::VecMatRowMajor => problem.n / blueprint.tile_dim,
             GemvKind::MatVecRowMajor => problem.m,
             GemvKind::MatVecColMajor => problem.m / blueprint.tile_dim,
         };
 
-        let working_cubes = match blueprint.plan {
+        let working_cubes = match blueprint.kind {
             GemvKind::VecMatColMajor => num_parallel_problems.div_ceil(blueprint.num_planes),
             GemvKind::VecMatRowMajor => num_parallel_problems,
             GemvKind::MatVecRowMajor => num_parallel_problems.div_ceil(blueprint.num_planes),
             GemvKind::MatVecColMajor => num_parallel_problems,
         };
 
-        println!("{:?}", num_parallel_problems);
-        println!("{:?}", working_cubes);
-
         let cube_count_plan = CubeCountPlan::from_blueprint(
             &blueprint.hypercube_blueprint,
             (1, working_cubes as u32, problem.num_batches() as u32).into(),
             &device_settings.max_cube_count,
         );
-
-        println!("{:?}", cube_count_plan);
 
         Ok(LaunchInfo {
             blueprint,

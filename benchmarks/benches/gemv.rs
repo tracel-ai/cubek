@@ -10,8 +10,8 @@ use cubek::{
         definition::MatmulElems,
         launch::{Strategy, launch_ref},
         routines::{
-            BlueprintStrategy, TileSizeSelection, simple_unit::SimpleUnitSelectionArgs,
-            vecmat_plane_parallel::GemvPlaneParallelStrategy,
+            BlueprintStrategy, TileSizeSelection, simple::SimpleArgs,
+            simple_unit::SimpleUnitSelectionArgs, vecmat_plane_parallel::GemvPlaneParallelStrategy,
             vecmat_unit_perpendicular::GemvUnitPerpendicularStrategy,
         },
     },
@@ -19,16 +19,24 @@ use cubek::{
     std::InputBinding,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProblemKind {
+    VecMat, // [b, 1, k] x [b, k, n] -> [b, 1, n]
+    MatVec, // [b, m, k] x [b, k, 1] -> [b, m, 1]
+}
+
 #[allow(dead_code)]
 struct GemvBench<R: Runtime> {
     batches: usize,
-    n: usize,
-    k: usize,
+    out_dim: usize,
+    k_dim: usize,
     device: R::Device,
     client: ComputeClient<R>,
     dtypes: MatmulElems,
     strategy: Strategy,
+    lhs_layout: MatrixLayout,
     rhs_layout: MatrixLayout,
+    kind: ProblemKind,
 }
 
 #[derive(Clone)]
@@ -38,6 +46,33 @@ struct GemvInputs<R: Runtime> {
     out: TensorHandle<R>,
 }
 
+fn make_tensor_with_layout<R: Runtime>(
+    client: &ComputeClient<R>,
+    row_major_shape: [usize; 3],
+    layout: MatrixLayout,
+    dtype: StorageType,
+) -> TensorHandle<R> {
+    match layout {
+        MatrixLayout::RowMajor => {
+            let t = TensorHandle::empty(client, row_major_shape, dtype);
+            random_uniform(client, 0., 1., t.clone().binding(), t.dtype).unwrap();
+            t
+        }
+        MatrixLayout::ColMajor => {
+            let mut col_major_shape = row_major_shape;
+            let rank = col_major_shape.len();
+            col_major_shape.swap(rank - 2, rank - 1);
+            let mut t = TensorHandle::empty(client, col_major_shape, dtype);
+            random_uniform(client, 0., 1., t.clone().binding(), t.dtype).unwrap();
+            let len = t.metadata.rank();
+            t.metadata.strides_mut().swap(len - 2, len - 1);
+            t.metadata.shape_mut().swap(len - 2, len - 1);
+            t
+        }
+        MatrixLayout::Undefined => panic!(),
+    }
+}
+
 impl<R: Runtime> Benchmark for GemvBench<R> {
     type Input = GemvInputs<R>;
     type Output = ();
@@ -45,34 +80,34 @@ impl<R: Runtime> Benchmark for GemvBench<R> {
     fn prepare(&self) -> Self::Input {
         let client = R::client(&self.device);
 
-        let lhs = TensorHandle::empty(&client, [self.batches, 1, self.k], self.dtypes.lhs_global);
-        random_uniform(&client, 0., 1., lhs.clone().binding(), lhs.dtype).unwrap();
-
-        let rhs = match self.rhs_layout {
-            MatrixLayout::RowMajor => {
-                let rhs = TensorHandle::empty(
-                    &client,
-                    [self.batches, self.k, self.n],
-                    self.dtypes.rhs_global,
-                );
-                random_uniform(&client, 0., 1., rhs.clone().binding(), rhs.dtype).unwrap();
-                rhs
-            }
-            MatrixLayout::ColMajor => {
-                let mut rhs = TensorHandle::empty(
-                    &client,
-                    [self.batches, self.n, self.k],
-                    self.dtypes.rhs_global,
-                );
-                let len = rhs.metadata.rank();
-                rhs.metadata.strides_mut().swap(len - 2, len - 1);
-                rhs.metadata.shape_mut().swap(len - 2, len - 1);
-                rhs
-            }
-            MatrixLayout::Undefined => panic!(),
+        let (lhs_row_major_shape, rhs_row_major_shape, out_shape) = match self.kind {
+            ProblemKind::VecMat => (
+                [self.batches, 1, self.k_dim],
+                [self.batches, self.k_dim, self.out_dim],
+                [self.batches, 1, self.out_dim],
+            ),
+            ProblemKind::MatVec => (
+                [self.batches, self.out_dim, self.k_dim],
+                [self.batches, self.k_dim, 1],
+                [self.batches, self.out_dim, 1],
+            ),
         };
 
-        let out = TensorHandle::empty(&client, [self.batches, 1, self.n], self.dtypes.acc_global);
+        let lhs = make_tensor_with_layout(
+            &client,
+            lhs_row_major_shape,
+            self.lhs_layout,
+            self.dtypes.lhs_global,
+        );
+
+        let rhs = make_tensor_with_layout(
+            &client,
+            rhs_row_major_shape,
+            self.rhs_layout,
+            self.dtypes.rhs_global,
+        );
+
+        let out = TensorHandle::empty(&client, out_shape, self.dtypes.acc_global);
 
         GemvInputs { lhs, rhs, out }
     }
@@ -90,7 +125,12 @@ impl<R: Runtime> Benchmark for GemvBench<R> {
     }
 
     fn name(&self) -> String {
-        format!("gemv-b:{}-n:{}-k:{}", self.batches, self.n, self.k,).to_lowercase()
+        format!(
+            "{:?}-b:{}-out:{}-k:{}-lhs:{:?}-rhs:{:?}",
+            self.kind, self.batches, self.out_dim, self.k_dim, self.lhs_layout, self.rhs_layout
+        )
+        .to_lowercase()
+        .to_lowercase()
     }
 
     fn sync(&self) {
@@ -102,24 +142,31 @@ impl<R: Runtime> Benchmark for GemvBench<R> {
 fn run<R: Runtime, E: frontend::Float>(device: &R::Device, strategy: Strategy) {
     let client = R::client(device);
 
-    for rhs_layout in [MatrixLayout::RowMajor, MatrixLayout::ColMajor] {
-        println!("{:?}: ", rhs_layout);
+    for kind in [ProblemKind::VecMat, ProblemKind::MatVec] {
+        println!("{:?}:", kind);
+        for layout in [MatrixLayout::RowMajor, MatrixLayout::ColMajor] {
+            let (lhs_layout, rhs_layout) = match kind {
+                ProblemKind::VecMat => (MatrixLayout::RowMajor, layout), // matrix is rhs
+                ProblemKind::MatVec => (layout, MatrixLayout::RowMajor), // matrix is lhs
+            };
+            println!("  matrix layout={:?}:", layout);
 
-        let bench = GemvBench::<R> {
-            client: client.clone(),
-            batches: 2,
-            n: 4096,
-            k: 8192,
-            device: device.clone(),
-            dtypes: MatmulElems::from_single_dtype(E::as_type_native_unchecked()),
-            strategy: strategy.clone(),
-            rhs_layout,
-        };
-        match bench.run(TimingMethod::System) {
-            Ok(val) => {
-                println!("{val}");
+            let bench = GemvBench::<R> {
+                client: client.clone(),
+                batches: 2,
+                out_dim: 4096,
+                k_dim: 8192,
+                device: device.clone(),
+                dtypes: MatmulElems::from_single_dtype(E::as_type_native_unchecked()),
+                strategy: strategy.clone(),
+                lhs_layout,
+                rhs_layout,
+                kind,
+            };
+            match bench.run(TimingMethod::System) {
+                Ok(val) => println!("{val}"),
+                Err(err) => println!("Can't run the benchmark: {err}"),
             }
-            Err(err) => println!("Can't run the benchmark: {err}"),
         }
     }
 }
@@ -136,6 +183,7 @@ fn run_algos_gemv<R: Runtime, E: frontend::Float>(device: &R::Device) {
         )),
     );
 
+    println!("===================\n");
     println!("Gemv Plane Parallel");
     run::<R, E>(
         device,
@@ -144,18 +192,21 @@ fn run_algos_gemv<R: Runtime, E: frontend::Float>(device: &R::Device) {
         })),
     );
 
+    println!("===================\n");
     println!("Simple VecMat");
     run::<R, E>(
         device,
         Strategy::SimpleVecMat(BlueprintStrategy::Inferred(().into())),
     );
 
+    println!("===================\n");
     println!("Double VecMat");
     run::<R, E>(
         device,
         Strategy::DoubleVecMat(BlueprintStrategy::Inferred(().into())),
     );
 
+    println!("===================\n");
     println!("Simple Unit Min");
     run::<R, E>(
         device,
@@ -164,11 +215,21 @@ fn run_algos_gemv<R: Runtime, E: frontend::Float>(device: &R::Device) {
         })),
     );
 
+    println!("===================\n");
     println!("Simple Unit Max");
     run::<R, E>(
         device,
         Strategy::SimpleUnit(BlueprintStrategy::Inferred(SimpleUnitSelectionArgs {
             tile_size: TileSizeSelection::MaxTileSize,
+        })),
+    );
+
+    println!("===================\n");
+    println!("CMMA");
+    run::<R, E>(
+        device,
+        Strategy::SimpleCyclicCmma(BlueprintStrategy::Inferred(SimpleArgs {
+            multi_rows: false,
         })),
     );
 }
