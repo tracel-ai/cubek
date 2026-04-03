@@ -1,5 +1,5 @@
 #[test]
-pub fn test_plane_parallel_matvec_very_small_square_rhs_col_major() {
+pub fn test_plane_parallel_matvec_very_small_square_col_major() {
     let case = GemvTestCase {
         out_dim: 128,
         k_dim: 128,
@@ -56,7 +56,7 @@ pub fn test_plane_parallel_matvec_k_smaller_than_n_col_major() {
 }
 
 #[test]
-pub fn test_plane_parallel_matvec_small_square_rhs_col_major() {
+pub fn test_plane_parallel_matvec_small_square_col_major() {
     let case = GemvTestCase {
         out_dim: 256,
         k_dim: 256,
@@ -113,7 +113,7 @@ pub fn test_plane_parallel_matvec_large_broadcast_lhs_col_major() {
 }
 
 #[test]
-pub fn test_plane_parallel_matvec_large_broadcast_rhs_col_major() {
+pub fn test_plane_parallel_matvec_large_broadcast_col_major() {
     let case = GemvTestCase {
         out_dim: 1280,
         k_dim: 1280,
@@ -189,7 +189,7 @@ pub fn test_plane_parallel_matvec_not_same_vectorization_col_major() {
 }
 
 #[test]
-pub fn test_plane_parallel_matvec_very_small_square_rhs_row_major() {
+pub fn test_plane_parallel_matvec_very_small_square_row_major() {
     let case = GemvTestCase {
         out_dim: 128,
         k_dim: 128,
@@ -246,7 +246,7 @@ pub fn test_plane_parallel_matvec_k_smaller_than_n_row_major() {
 }
 
 #[test]
-pub fn test_plane_parallel_matvec_small_square_rhs_row_major() {
+pub fn test_plane_parallel_matvec_small_square_row_major() {
     let case = GemvTestCase {
         out_dim: 256,
         k_dim: 256,
@@ -303,7 +303,7 @@ pub fn test_plane_parallel_matvec_large_broadcast_lhs_row_major() {
 }
 
 #[test]
-pub fn test_plane_parallel_matvec_large_broadcast_rhs_row_major() {
+pub fn test_plane_parallel_matvec_large_broadcast_row_major() {
     let case = GemvTestCase {
         out_dim: 1280,
         k_dim: 1280,

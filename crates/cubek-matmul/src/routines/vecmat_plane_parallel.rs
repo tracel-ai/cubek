@@ -8,9 +8,7 @@ use cubek_std::cube_count::{CubeCountPlan, CubeCountStrategy, GlobalOrder, Hyper
 use crate::{
     components::batch::{
         BatchMatmulFamily,
-        gemv_plane_parallel::{
-            GemvPlan, GemvPlaneParallelBlueprint, GemvPlaneParallelFamily,
-        },
+        gemv_plane_parallel::{GemvKind, GemvPlaneParallelBlueprint, GemvPlaneParallelFamily},
     },
     definition::{MatmulElems, MatmulProblem, MatmulSetupError},
     routines::{BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine},
@@ -50,8 +48,18 @@ impl Routine<()> for GemvPlaneParallelRoutine {
             BlueprintStrategy::Inferred(strategy) => {
                 let tile_dim =
                     device_settings.plane_dim as usize * device_settings.vector_sizes.rhs;
-                let max_planes_for_swizzle = problem.k / tile_dim;
-                let num_planes = max(1, min(strategy.target_num_planes, max_planes_for_swizzle));
+                println!("{:?}", device_settings.vector_sizes);
+                let plan = GemvKind::from_problem(problem)?;
+                let num_planes = match plan {
+                    GemvKind::MatVecRowMajor | GemvKind::VecMatColMajor => {
+                        // For tile swizzle
+                        max(1, min(strategy.target_num_planes, problem.k / tile_dim))
+                    }
+                    GemvKind::VecMatRowMajor | GemvKind::MatVecColMajor => {
+                        // For within tile
+                        max(1, min(strategy.target_num_planes, tile_dim))
+                    }
+                };
 
                 let blueprint = GemvPlaneParallelBlueprint {
                     dtypes: dtypes.clone(),
@@ -61,7 +69,7 @@ impl Routine<()> for GemvPlaneParallelRoutine {
                         .cube_count_strategy(CubeCountStrategy::Flattened)
                         .global_order(GlobalOrder::RowMajor)
                         .build(),
-                    plan: GemvPlan::from_problem(problem)?,
+                    plan,
                 };
 
                 Ok(ExpandInfo { blueprint, dtypes })
@@ -90,19 +98,32 @@ impl Routine<()> for GemvPlaneParallelRoutine {
             &device_settings.vector_sizes,
         )?
         .to_cube_dim(device_settings.plane_dim)?;
+        println!("{:?}", cube_dim);
 
-        let working_planes = match blueprint.plan {
-            GemvPlan::VecMatDirect | GemvPlan::VecMatTransposeSwap => problem.n,
-            GemvPlan::MatVecDirect | GemvPlan::MatVecTransposeSwap => problem.m,
+        let num_parallel_problems = match blueprint.plan {
+            GemvKind::VecMatColMajor => problem.n,
+            GemvKind::VecMatRowMajor => problem.n / blueprint.tile_dim,
+            GemvKind::MatVecRowMajor => problem.m,
+            GemvKind::MatVecColMajor => problem.m / blueprint.tile_dim,
         };
 
-        let working_cubes = working_planes.div_ceil(blueprint.num_planes);
+        let working_cubes = match blueprint.plan {
+            GemvKind::VecMatColMajor => num_parallel_problems.div_ceil(blueprint.num_planes),
+            GemvKind::VecMatRowMajor => num_parallel_problems,
+            GemvKind::MatVecRowMajor => num_parallel_problems.div_ceil(blueprint.num_planes),
+            GemvKind::MatVecColMajor => num_parallel_problems,
+        };
+
+        println!("{:?}", num_parallel_problems);
+        println!("{:?}", working_cubes);
 
         let cube_count_plan = CubeCountPlan::from_blueprint(
             &blueprint.hypercube_blueprint,
             (1, working_cubes as u32, problem.num_batches() as u32).into(),
             &device_settings.max_cube_count,
         );
+
+        println!("{:?}", cube_count_plan);
 
         Ok(LaunchInfo {
             blueprint,

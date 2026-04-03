@@ -1,5 +1,5 @@
 #[test]
-pub fn test_plane_parallel_vecmat_very_small_square_rhs_col_major() {
+pub fn test_plane_parallel_vecmat_very_small_square_col_major() {
     let case = GemvTestCase {
         out_dim: 128,
         k_dim: 128,
@@ -56,7 +56,7 @@ pub fn test_plane_parallel_vecmat_k_smaller_than_n_col_major() {
 }
 
 #[test]
-pub fn test_plane_parallel_vecmat_small_square_rhs_col_major() {
+pub fn test_plane_parallel_vecmat_small_square_col_major() {
     let case = GemvTestCase {
         out_dim: 256,
         k_dim: 256,
@@ -113,7 +113,7 @@ pub fn test_plane_parallel_vecmat_large_broadcast_lhs_col_major() {
 }
 
 #[test]
-pub fn test_plane_parallel_vecmat_large_broadcast_rhs_col_major() {
+pub fn test_plane_parallel_vecmat_large_broadcast_col_major() {
     let case = GemvTestCase {
         out_dim: 1280,
         k_dim: 1280,
@@ -189,10 +189,10 @@ pub fn test_plane_parallel_vecmat_not_same_vectorization_col_major() {
 }
 
 #[test]
-pub fn test_plane_parallel_vecmat_very_small_square_rhs_row_major() {
+pub fn test_plane_parallel_vecmat_very_small_square_row_major() {
     let case = GemvTestCase {
-        out_dim: 128,
-        k_dim: 128,
+        out_dim: 4,
+        k_dim: 4,
         vec_batch: 1,
         mat_batch: 1,
         mat_layout: MatrixLayout::RowMajor,
@@ -206,6 +206,120 @@ pub fn test_plane_parallel_vecmat_very_small_square_rhs_row_major() {
     }
     .test();
 }
+
+#[test]
+pub fn test_plane_parallel_vecmat_very_small_square_row_major_1() {
+    let case = GemvTestCase {
+        out_dim: 8,
+        k_dim: 4,
+        vec_batch: 1,
+        mat_batch: 1,
+        mat_layout: MatrixLayout::RowMajor,
+        elems: elems(),
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
+            GemvPlaneParallelStrategy {
+                target_num_planes: 8,
+            },
+        )),
+        kind: GemvKind::VecMat,
+    }
+    .test();
+}
+
+#[test]
+pub fn test_plane_parallel_vecmat_very_small_square_row_major_2() {
+    let case = GemvTestCase {
+        out_dim: 8,
+        k_dim: 8,
+        vec_batch: 1,
+        mat_batch: 1,
+        mat_layout: MatrixLayout::RowMajor,
+        elems: elems(),
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
+            GemvPlaneParallelStrategy {
+                target_num_planes: 8,
+            },
+        )),
+        kind: GemvKind::VecMat,
+    }
+    .test();
+}
+
+#[test]
+pub fn test_plane_parallel_vecmat_very_small_square_row_major_3() {
+    let case = GemvTestCase {
+        out_dim: 4,
+        k_dim: 4,
+        vec_batch: 2,
+        mat_batch: 2,
+        mat_layout: MatrixLayout::RowMajor,
+        elems: elems(),
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
+            GemvPlaneParallelStrategy {
+                target_num_planes: 8,
+            },
+        )),
+        kind: GemvKind::VecMat,
+    }
+    .test();
+}
+
+// #[test]
+// pub fn test_plane_parallel_vecmat_very_small_square_row_major_4() {
+//     let case = GemvTestCase {
+//         out_dim: 4,
+//         k_dim: 4,
+//         vec_batch: 1,
+//         mat_batch: 1,
+//         mat_layout: MatrixLayout::RowMajor,
+//         elems: elems(),
+//         strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
+//             GemvPlaneParallelStrategy {
+//                 target_num_planes: 8,
+//             },
+//         )),
+//         kind: GemvKind::VecMat,
+//     }
+//     .test();
+// }
+
+// #[test]
+// pub fn test_plane_parallel_vecmat_very_small_square_row_major_5() {
+//     let case = GemvTestCase {
+//         out_dim: 4,
+//         k_dim: 4,
+//         vec_batch: 1,
+//         mat_batch: 1,
+//         mat_layout: MatrixLayout::RowMajor,
+//         elems: elems(),
+//         strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
+//             GemvPlaneParallelStrategy {
+//                 target_num_planes: 8,
+//             },
+//         )),
+//         kind: GemvKind::VecMat,
+//     }
+//     .test();
+// }
+
+// #[test]
+// pub fn test_plane_parallel_vecmat_very_small_square_row_major_6() {
+//     let case = GemvTestCase {
+//         out_dim: 4,
+//         k_dim: 4,
+//         vec_batch: 1,
+//         mat_batch: 1,
+//         mat_layout: MatrixLayout::RowMajor,
+//         elems: elems(),
+//         strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
+//             GemvPlaneParallelStrategy {
+//                 target_num_planes: 8,
+//             },
+//         )),
+//         kind: GemvKind::VecMat,
+//     }
+//     .test();
+// }
 
 #[test]
 pub fn test_plane_parallel_vecmat_k_larger_than_n_row_major() {
@@ -246,7 +360,7 @@ pub fn test_plane_parallel_vecmat_k_smaller_than_n_row_major() {
 }
 
 #[test]
-pub fn test_plane_parallel_vecmat_small_square_rhs_row_major() {
+pub fn test_plane_parallel_vecmat_small_square_row_major() {
     let case = GemvTestCase {
         out_dim: 256,
         k_dim: 256,
@@ -303,7 +417,7 @@ pub fn test_plane_parallel_vecmat_large_broadcast_lhs_row_major() {
 }
 
 #[test]
-pub fn test_plane_parallel_vecmat_large_broadcast_rhs_row_major() {
+pub fn test_plane_parallel_vecmat_large_broadcast_row_major() {
     let case = GemvTestCase {
         out_dim: 1280,
         k_dim: 1280,

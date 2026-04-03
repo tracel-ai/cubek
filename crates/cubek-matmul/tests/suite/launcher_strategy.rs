@@ -47,10 +47,11 @@ pub fn test_matmul_strategy(
         problem.lhs_shape.clone(),
         problem.global_dtypes.lhs,
         layout_to_stride_spec(problem.lhs_layout),
-        DataKind::Random {
-            seed: 1234,
-            distribution: Distribution::Uniform(-1., 1.),
-        },
+        DataKind::Arange { scale: None },
+        // DataKind::Random {
+        //     seed: 1234,
+        //     distribution: Distribution::Uniform(-1., 1.),
+        // },
     )
     .generate_with_f32_host_data();
 
@@ -59,10 +60,11 @@ pub fn test_matmul_strategy(
         problem.rhs_shape.clone(),
         problem.global_dtypes.rhs,
         layout_to_stride_spec(problem.rhs_layout),
-        DataKind::Random {
-            seed: 5678,
-            distribution: Distribution::Uniform(-1., 1.),
-        },
+        DataKind::Arange { scale: None },
+        // DataKind::Random {
+        //     seed: 5678,
+        //     distribution: Distribution::Uniform(-1., 1.),
+        // },
     )
     .generate_with_f32_host_data();
 

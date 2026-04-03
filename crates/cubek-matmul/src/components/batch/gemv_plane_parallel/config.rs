@@ -6,27 +6,27 @@ use crate::{
 };
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub enum GemvPlan {
+pub enum GemvKind {
     // Conceptually VecMat
-    VecMatDirect,        // execute VecMat as-is
-    VecMatTransposeSwap, // execute via transpose-swap (as MatVec)
+    VecMatColMajor, // execute VecMat as-is
+    VecMatRowMajor, // execute via transpose-swap (as MatVec)
 
     // Conceptually MatVec
-    MatVecDirect,        // execute MatVec as-is
-    MatVecTransposeSwap, // execute via transpose-swap (as VecMat)
+    MatVecRowMajor, // execute MatVec as-is
+    MatVecColMajor, // execute via transpose-swap (as VecMat)
 }
 
-impl GemvPlan {
-    pub(crate) fn from_problem(problem: &MatmulProblem) -> Result<GemvPlan, MatmulSetupError> {
+impl GemvKind {
+    pub(crate) fn from_problem(problem: &MatmulProblem) -> Result<GemvKind, MatmulSetupError> {
         if problem.m == 1 {
             Ok(match problem.rhs_layout {
-                MatrixLayout::ColMajor => GemvPlan::VecMatDirect,
-                MatrixLayout::RowMajor => GemvPlan::VecMatTransposeSwap,
+                MatrixLayout::ColMajor => GemvKind::VecMatColMajor,
+                MatrixLayout::RowMajor => GemvKind::VecMatRowMajor,
             })
         } else if problem.n == 1 {
             Ok(match problem.lhs_layout {
-                MatrixLayout::ColMajor => GemvPlan::MatVecTransposeSwap,
-                MatrixLayout::RowMajor => GemvPlan::MatVecDirect,
+                MatrixLayout::ColMajor => GemvKind::MatVecColMajor,
+                MatrixLayout::RowMajor => GemvKind::MatVecRowMajor,
             })
         } else {
             Err(MatmulSetupError::InvalidConfig(Box::new(format!(
@@ -41,7 +41,7 @@ impl GemvPlan {
 pub struct VecMatPlaneParallelConfig {
     pub(crate) plane_dim: u32,
     pub(crate) num_planes: u32,
-    pub(crate) plan: GemvPlan,
+    pub(crate) plan: GemvKind,
 }
 
 impl BatchConfig for VecMatPlaneParallelConfig {

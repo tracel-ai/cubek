@@ -12,7 +12,7 @@ use crate::{
         batch::{
             BatchMatmulFamily,
             gemv_plane_parallel::{
-                GemvPlan, VecMatPlaneParallel, VecMatPlaneParallelConfig, matmul_entry,
+                GemvKind, VecMatPlaneParallel, VecMatPlaneParallelConfig, matmul_entry,
             },
         },
         global::memory::GlobalLayoutConfig,
@@ -34,7 +34,7 @@ pub struct GemvPlaneParallelBlueprint {
     // Should equal plane_dim * vector_size
     pub tile_dim: usize,
     pub hypercube_blueprint: HypercubeBlueprint,
-    pub plan: GemvPlan,
+    pub plan: GemvKind,
 }
 
 impl Blueprint for GemvPlaneParallelBlueprint {
@@ -169,6 +169,27 @@ impl BatchMatmulFamily<()> for GemvPlaneParallelFamily {
             ))));
         }
 
+        match blueprint.plan {
+            GemvKind::VecMatColMajor | GemvKind::MatVecRowMajor => {
+                // nothing to check for the direct plans
+            }
+            GemvKind::VecMatRowMajor => {
+                if problem.n % blueprint.tile_dim != 0 {
+                    return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                        "For VecMatTransposeSwap, problem.n ({:?}) must be divisible by tile_dim ({:?})",
+                        problem.n, blueprint.tile_dim,
+                    ))));
+                }
+            }
+            GemvKind::MatVecColMajor => {
+                if problem.m % blueprint.tile_dim != 0 {
+                    return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                        "For MatVecTransposeSwap, problem.m ({:?}) must be divisible by tile_dim ({:?})",
+                        problem.m, blueprint.tile_dim,
+                    ))));
+                }
+            }
+        }
         Ok(())
     }
 }
