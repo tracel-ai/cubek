@@ -1,5 +1,4 @@
-use cubecl::prelude::*;
-use cubecl::std::tensor::View;
+use cubecl::{prelude::*, std::tensor::View};
 
 use crate::{
     RandomFamily, lcg_step, taus_step_0, taus_step_1, taus_step_2, to_unit_interval_closed_open,

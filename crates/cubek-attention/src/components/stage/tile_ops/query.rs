@@ -2,9 +2,11 @@ use cubecl;
 use cubecl::prelude::*;
 use cubek_std::tile::StridedTile;
 
-use crate::definition::AttentionPrecision;
-use crate::definition::attention_types::QG;
-use crate::{components::tile::TileAttention, definition::attention_types::QGS};
+use crate::{
+    definition::AttentionPrecision,
+    definition::attention_types::QG,
+    {components::tile::TileAttention, definition::attention_types::QGS},
+};
 
 #[derive(CubeType)]
 /// Query input to the Tile Attention

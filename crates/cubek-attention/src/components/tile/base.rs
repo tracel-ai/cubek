@@ -1,14 +1,15 @@
 use cubecl;
-use cubecl::ir::DeviceProperties;
-use cubecl::prelude::*;
+use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_matmul::components::CubeDimResource;
 use cubek_std::InvalidConfigError;
 
-use crate::components::tile::TileAttentionConfig;
-use crate::components::tile::matmul::InnerMatmul;
-use crate::components::tile::output::AttentionOutput;
-use crate::components::tile::softmax::Softmax;
-use crate::definition::attention_types::SM;
+use crate::{
+    components::tile::TileAttentionConfig,
+    components::tile::matmul::InnerMatmul,
+    components::tile::output::AttentionOutput,
+    components::tile::softmax::Softmax,
+    definition::attention_types::SM,
+};
 use crate::definition::{
     AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError,
 };

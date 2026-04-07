@@ -1,6 +1,4 @@
-use cubecl::prelude::*;
-use cubecl::std::tensor::{View, layout::Coords2d};
-use cubecl::{self as cubecl};
+use cubecl::{prelude::*, std::tensor::{View, layout::Coords2d}, {self as cubecl}};
 use cubek_matmul::components::global::{
     GlobalWriterConfig, PartitionedStage, WriteEvent, WriteEventExpand, WriteEventListener,
     plane_write,

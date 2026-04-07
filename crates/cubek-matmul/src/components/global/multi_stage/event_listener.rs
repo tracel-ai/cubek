@@ -1,8 +1,10 @@
 use cubecl::prelude::*;
 
-use crate::components::global::read::{StageBuffer, SyncStrategy};
-use crate::components::global::{GlobalConfig, GlobalReaderConfig, LoadingSides};
-use crate::components::stage::{StageConfig, StageEvent, StageEventListener};
+use crate::{
+    components::global::read::{StageBuffer, SyncStrategy},
+    components::global::{GlobalConfig, GlobalReaderConfig, LoadingSides},
+    components::stage::{StageConfig, StageEvent, StageEventListener},
+};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 /// For a tensor, whether it is constrained to be loaded respecting order

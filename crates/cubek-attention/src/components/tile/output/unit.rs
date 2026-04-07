@@ -3,9 +3,11 @@ use std::marker::PhantomData;
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::components::tile::output::AttentionOutput;
-use crate::components::tile::pipeline::{RowWise, UnitTile, UnitTileLayout, unit_tile_to_slice};
-use crate::definition::AttentionTileSize;
+use crate::{
+    components::tile::output::AttentionOutput,
+    components::tile::pipeline::{RowWise, UnitTile, UnitTileLayout, unit_tile_to_slice},
+    definition::AttentionTileSize,
+};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct UnitOutputConfig {

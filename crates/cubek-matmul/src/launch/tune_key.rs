@@ -1,6 +1,8 @@
-use cubecl::zspace::{Shape, Strides};
-use cubecl::{AutotuneKey, Runtime, quant::scheme::QuantScheme};
-use cubecl::{client::ComputeClient, ir::StorageType};
+use cubecl::{
+    zspace::{Shape, Strides},
+    {AutotuneKey, Runtime, quant::scheme::QuantScheme},
+    {client::ComputeClient, ir::StorageType},
+};
 use cubek_std::MatmulProblemSize;
 use serde::{Deserialize, Serialize};
 

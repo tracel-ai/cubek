@@ -1,6 +1,4 @@
-use cubecl::prelude::*;
-use cubecl::std::tensor::View;
-use cubecl::{CubeType, Runtime};
+use cubecl::{prelude::*, std::tensor::View, {CubeType, Runtime}};
 
 use crate::RandomFamily;
 

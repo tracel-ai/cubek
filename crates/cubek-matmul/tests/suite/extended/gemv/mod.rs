@@ -1,20 +1,21 @@
-use crate::suite::assert_result;
-use crate::suite::test_matmul_strategy;
-use cubecl::frontend::CubePrimitive;
-use cubecl::ir::AddressType;
-use cubecl::std::tensor::TensorHandle;
-use cubecl::{Runtime, client};
-use cubecl::{prelude::TensorBinding, zspace::shape};
-use cubek_matmul::launch::Strategy;
-use cubek_matmul::routines::BlueprintStrategy;
+use crate::{suite::assert_result, suite::test_matmul_strategy};
+use cubecl::{
+    frontend::CubePrimitive,
+    ir::AddressType,
+    std::tensor::TensorHandle,
+    {Runtime, client},
+    {prelude::TensorBinding, zspace::shape},
+};
+use cubek_matmul::{launch::Strategy, routines::BlueprintStrategy};
 
 use crate::suite::layout_to_stride_spec;
-use cubek_matmul::definition::MatmulGlobalElems;
-use cubek_matmul::definition::{MatmulElems, MatmulIdent, MatmulProblem};
-use cubek_matmul::routines::vecmat_plane_parallel::GemvPlaneParallelStrategy;
-use cubek_matmul::routines::vecmat_unit_perpendicular::GemvUnitPerpendicularStrategy;
-use cubek_std::InputBinding;
-use cubek_std::MatrixLayout;
+use cubek_matmul::{
+    definition::MatmulGlobalElems,
+    definition::{MatmulElems, MatmulIdent, MatmulProblem},
+    routines::vecmat_plane_parallel::GemvPlaneParallelStrategy,
+    routines::vecmat_unit_perpendicular::GemvUnitPerpendicularStrategy,
+};
+use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{BaseInputSpec, DataKind, Distribution, TestInput};
 
 type TestRuntime = cubecl::TestRuntime;

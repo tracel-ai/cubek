@@ -20,8 +20,7 @@ use crate::{
     definition::TilingBlueprint,
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_std::MatrixLayout;
-use cubek_std::tile::Strided;
+use cubek_std::{MatrixLayout, tile::Strided};
 use std::marker::PhantomData;
 
 use crate::components::{global::GlobalMatmulFamily, stage};

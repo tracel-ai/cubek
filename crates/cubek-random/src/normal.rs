@@ -1,5 +1,4 @@
-use cubecl::prelude::*;
-use cubecl::std::tensor::View;
+use cubecl::{prelude::*, std::tensor::View};
 use std::f32::consts::PI;
 
 use super::{PrngArgs, PrngRuntime, random};

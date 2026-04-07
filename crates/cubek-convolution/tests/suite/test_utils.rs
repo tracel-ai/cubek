@@ -1,7 +1,9 @@
-use cubecl::features::MmaConfig;
-use cubecl::prelude::CubePrimitive;
-use cubecl::std::tensor::TensorHandle;
-use cubecl::zspace::{Shape, Strides};
+use cubecl::{
+    features::MmaConfig,
+    prelude::CubePrimitive,
+    std::tensor::TensorHandle,
+    zspace::{Shape, Strides},
+};
 use cubecl::{
     CubeElement, Runtime,
     client::ComputeClient,

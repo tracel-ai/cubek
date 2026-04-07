@@ -4,8 +4,10 @@ use cubecl::{
         LinearView, LinearViewLaunch, LinearViewLayout, LinearViewLayoutLaunch,
     },
 };
-use cubecl::{ir::ElemType, std::tensor::layout::linear::linear_view};
-use cubecl::{prelude::*, tensor_vector_size_parallel};
+use cubecl::{
+    {ir::ElemType, std::tensor::layout::linear::linear_view},
+    {prelude::*, tensor_vector_size_parallel},
+};
 
 use crate::ReduceError;
 

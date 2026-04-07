@@ -1,7 +1,9 @@
 use crate::suite::test_utils::{Sample, TensorRawParts};
-use cubecl::zspace::{Shape, shape};
-use cubecl::{CubeElement, server::MemoryLayout};
-use cubecl::{TestRuntime, prelude::*};
+use cubecl::{
+    zspace::{Shape, shape},
+    {CubeElement, server::MemoryLayout},
+    {TestRuntime, prelude::*},
+};
 use cubek_convolution::{
     algorithm::Algorithm,
     components::{ConvolutionProblem, global::args::RuntimeArgs},

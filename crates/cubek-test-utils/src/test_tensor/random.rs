@@ -1,6 +1,4 @@
-use cubecl::client::ComputeClient;
-use cubecl::std::tensor::TensorHandle;
-use cubecl::{TestRuntime, prelude::*};
+use cubecl::{client::ComputeClient, std::tensor::TensorHandle, {TestRuntime, prelude::*}};
 
 use crate::{BaseInputSpec, Distribution};
 

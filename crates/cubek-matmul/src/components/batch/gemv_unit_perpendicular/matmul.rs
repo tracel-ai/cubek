@@ -7,8 +7,7 @@ use crate::components::batch::gemv_unit_perpendicular::{
 use crate::components::batch::{BatchConfig as _, SliceIndex};
 
 use crate::{components::batch::BatchMatmul, definition::*, launch::MatmulArgs};
-use cubecl::prelude::*;
-use cubecl::{cube, num_traits::Zero};
+use cubecl::{prelude::*, {cube, num_traits::Zero}};
 
 #[cube(launch_unchecked, explicit_define, address_type = "dynamic")]
 #[allow(clippy::type_complexity)]

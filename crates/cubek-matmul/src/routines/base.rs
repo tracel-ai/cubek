@@ -3,9 +3,11 @@ use crate::definition::{
     Blueprint, CubeMappingLaunch, MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes,
     TilingBlueprint,
 };
-use crate::launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
-use crate::routines::BlueprintStrategy;
-use crate::{components::CubeDimResource, launch::RuntimeConfig};
+use crate::{
+    launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
+    routines::BlueprintStrategy,
+    {components::CubeDimResource, launch::RuntimeConfig},
+};
 use crate::{
     components::batch::{BatchConfig, BatchMatmulFamily},
     launch::ConfigRuntimeArg,

@@ -4,9 +4,11 @@ use std::marker::PhantomData;
 use crate::components::batch::partitioned_matmul::partition::{
     GlobalPartitionMatmul, PartitionRangeDim, PartitionRanges,
 };
-use crate::components::batch::{BatchMatmul, BatchMatmulFamily, PartitionedBatchMatmulFamily};
-use crate::components::global::{self, GlobalConfig, GlobalMatmul, GlobalMatmulFamily};
-use crate::components::stage::StageConfig as _;
+use crate::{
+    components::batch::{BatchMatmul, BatchMatmulFamily, PartitionedBatchMatmulFamily},
+    components::global::{self, GlobalConfig, GlobalMatmul, GlobalMatmulFamily},
+    components::stage::StageConfig as _,
+};
 use crate::definition::{
     AccG, Blueprint as _, CubeMapping, LhsG, MatmulElems, MatmulTypes, MatmulVectorSizes, RhsG,
     TilingBlueprint,

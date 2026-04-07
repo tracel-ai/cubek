@@ -1,9 +1,10 @@
-use crate::components::tile::interleaved::config::InterleavedMatmulConfig;
-use crate::components::tile::interleaved::{InterleavedAccumulator, InterleavedFragment};
-use crate::definition::StageIdent;
+use crate::{
+    components::tile::interleaved::config::InterleavedMatmulConfig,
+    components::tile::interleaved::{InterleavedAccumulator, InterleavedFragment},
+    definition::StageIdent,
+};
 use cubecl::prelude::*;
-use cubek_std::MatrixLayout;
-use cubek_std::tile::StridedTile;
+use cubek_std::{MatrixLayout, tile::StridedTile};
 
 #[derive(CubeType)]
 pub struct InterleavedStageReader {}

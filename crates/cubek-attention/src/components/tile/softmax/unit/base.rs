@@ -4,10 +4,12 @@ use cubecl;
 use cubecl::prelude::*;
 use cubek_std::tile::StridedTile;
 
-use crate::components::tile::MaskTile;
-use crate::components::tile::pipeline::{RowWise, UnitTile, UnitTileLayout};
-use crate::components::tile::softmax::unit::UnitSoftmaxConfig;
-use crate::components::tile::softmax::{Reducer, Softmax, SoftmaxConfig, UnitReducer};
+use crate::{
+    components::tile::MaskTile,
+    components::tile::pipeline::{RowWise, UnitTile, UnitTileLayout},
+    components::tile::softmax::unit::UnitSoftmaxConfig,
+    components::tile::softmax::{Reducer, Softmax, SoftmaxConfig, UnitReducer},
+};
 
 #[derive(CubeType)]
 pub struct UnitSoftmax<Lhs: Float> {

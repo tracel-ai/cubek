@@ -1,17 +1,18 @@
 use std::marker::PhantomData;
 
-use crate::components::global::read::{PartialLoadingStrategy, tiled::TiledLayout};
-use crate::components::global::{GlobalReaderConfig, PlaneFlowPartition};
-use crate::components::global::{multi_stage::LoadMaxRoundPlaneCount, read::sync::Synchronous};
-use crate::components::stage::StridedStageFamily;
-use crate::components::stage::StridedStageMemory;
-use crate::components::stage::{ContiguousTilingLayout, TilingOrder};
-use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
-use crate::definition::{MatmulElems, MatmulProblem, StageIdent};
-use crate::{components::global::read::validate_swizzle_atom_size, launch::RuntimeConfig};
+use crate::{
+    components::global::read::{PartialLoadingStrategy, tiled::TiledLayout},
+    components::global::{GlobalReaderConfig, PlaneFlowPartition},
+    components::global::{multi_stage::LoadMaxRoundPlaneCount, read::sync::Synchronous},
+    components::stage::StridedStageFamily,
+    components::stage::StridedStageMemory,
+    components::stage::{ContiguousTilingLayout, TilingOrder},
+    components::{global::memory::GlobalIterator, stage::TilingValidation},
+    definition::{MatmulElems, MatmulProblem, StageIdent},
+    {components::global::read::validate_swizzle_atom_size, launch::RuntimeConfig},
+};
 use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_std::InvalidConfigError;
-use cubek_std::tile::Strided;
+use cubek_std::{InvalidConfigError, tile::Strided};
 
 use super::{LoadingJob, LoadingValidation, ReaderMode};
 

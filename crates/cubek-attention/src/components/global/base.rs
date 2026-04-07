@@ -1,5 +1,4 @@
-use cubecl::prelude::*;
-use cubecl::{self, ir::DeviceProperties};
+use cubecl::{prelude::*, {self, ir::DeviceProperties}};
 
 use crate::{
     components::global::simple::AttentionWriter,

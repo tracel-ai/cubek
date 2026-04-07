@@ -3,11 +3,12 @@ use std::marker::PhantomData;
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::components::tile::matmul::InnerMatmul;
-use crate::components::tile::pipeline::{UnitTile, UnitTileLayout};
+use crate::{
+    components::tile::matmul::InnerMatmul,
+    components::tile::pipeline::{UnitTile, UnitTileLayout},
+};
 
-use cubek_std::TileSize;
-use cubek_std::tile::StridedTile;
+use cubek_std::{TileSize, tile::StridedTile};
 
 #[derive(CubeType)]
 pub struct UnitMatmul<A: Numeric, B: Numeric, CD: Numeric> {

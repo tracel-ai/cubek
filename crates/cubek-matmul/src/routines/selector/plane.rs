@@ -1,12 +1,18 @@
-use cubecl::{Runtime, client::ComputeClient, ir::StorageType};
-use cubecl::{features::MmaConfig, ir::VectorSize};
-use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation};
-use cubek_std::stage::SwizzleMode;
-use cubek_std::{MatmulProblemSize, MatrixLayout, PartitionSize, StageSize, TileSize};
+use cubecl::{
+    {Runtime, client::ComputeClient, ir::StorageType},
+    {features::MmaConfig, ir::VectorSize},
+};
+use cubek_std::{
+    cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation},
+    stage::SwizzleMode,
+    {MatmulProblemSize, MatrixLayout, PartitionSize, StageSize, TileSize},
+};
 
-use crate::components::global::{InputLoadFlow, LoadFlows};
-use crate::components::stage::PartitionBuffering;
-use crate::components::tile::TileMatmulFamily;
+use crate::{
+    components::global::{InputLoadFlow, LoadFlows},
+    components::stage::PartitionBuffering,
+    components::tile::TileMatmulFamily,
+};
 use crate::definition::{
     MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes,
     MultiRowStrategy, SwizzleModes, TilingBlueprint, TilingScheme, adjust_dtypes,

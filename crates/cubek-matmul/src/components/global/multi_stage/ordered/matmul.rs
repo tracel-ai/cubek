@@ -1,5 +1,7 @@
-use crate::components::global::{Specializer, read::sync::Synchronous};
-use crate::components::stage::StageConfig as _;
+use crate::{
+    components::global::{Specializer, read::sync::Synchronous},
+    components::stage::StageConfig as _,
+};
 use crate::components::{
     global::multi_stage::double_buffer_execution::{
         execute_current_and_read_next, execute_last_and_write_results, read_first,
@@ -18,8 +20,7 @@ use crate::{
     components::global::{self, GlobalWriter, SharedGlobalMatmulConfig},
     definition::*,
 };
-use cubecl::prelude::*;
-use cubecl::std::tensor::{View, layout::Coords2d};
+use cubecl::{prelude::*, std::tensor::{View, layout::Coords2d}};
 use cubek_std::tile::Strided;
 use std::marker::PhantomData;
 

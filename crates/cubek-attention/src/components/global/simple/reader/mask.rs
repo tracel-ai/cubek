@@ -1,9 +1,13 @@
-use crate::definition::attention_types::{MSK, MSKS};
-use crate::definition::{AttentionPrecision, AttentionTileSize};
+use crate::{
+    definition::attention_types::{MSK, MSKS},
+    definition::{AttentionPrecision, AttentionTileSize},
+};
 use cubecl;
-use cubecl::prelude::*;
-use cubecl::std::tensor::{View, layout::Coords2d};
-use cubecl::std::{Swizzle, tensor::layout::Coordinates};
+use cubecl::{
+    prelude::*,
+    std::tensor::{View, layout::Coords2d},
+    std::{Swizzle, tensor::layout::Coordinates},
+};
 use cubek_matmul::components::global::memory::{GlobalIterator, GlobalMemoryConfig};
 use cubek_std::tile::StridedTile;
 

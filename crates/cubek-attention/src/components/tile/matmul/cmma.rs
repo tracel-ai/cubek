@@ -5,8 +5,7 @@ use cubecl::prelude::*;
 
 use crate::components::tile::matmul::InnerMatmul;
 
-use cubek_std::TileSize;
-use cubek_std::tile::StridedTile;
+use cubek_std::{TileSize, tile::StridedTile};
 
 #[derive(CubeType)]
 pub struct CmmaMatmul<A: Numeric, B: Numeric, CD: Numeric> {

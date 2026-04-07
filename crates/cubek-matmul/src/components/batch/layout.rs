@@ -1,5 +1,4 @@
-use cubecl::prelude::*;
-use cubecl::std::tensor::layout::*;
+use cubecl::{prelude::*, std::tensor::layout::*};
 
 use crate::launch::BatchedCoords;
 

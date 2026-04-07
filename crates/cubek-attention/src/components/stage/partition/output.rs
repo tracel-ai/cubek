@@ -1,8 +1,7 @@
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::components::tile::output::AttentionOutput;
-use crate::definition::AttentionPartitionSize;
+use crate::{components::tile::output::AttentionOutput, definition::AttentionPartitionSize};
 
 #[derive(CubeType)]
 /// Contains all seq_q·val_dim materialized tiles at once because they're accumulators

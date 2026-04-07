@@ -1,15 +1,17 @@
-use crate::components::global::GlobalReaderConfig;
-use crate::components::global::PlaneFlowPartition;
-use crate::components::global::Specializer;
-use crate::components::global::SpecializerKind;
-use crate::components::global::multi_stage::DoubleBufferingEventListener;
-use crate::components::global::multi_stage::JobExecutor;
-use crate::components::global::read::StageBuffer;
-use crate::components::global::{GlobalConfig, GlobalWriter};
-use crate::components::global::{LoadingSides, read::SyncStrategy};
-use crate::components::stage;
-use crate::components::stage::PartitionScheduler;
-use crate::definition::MatmulTypes;
+use crate::{
+    components::global::GlobalReaderConfig,
+    components::global::PlaneFlowPartition,
+    components::global::Specializer,
+    components::global::SpecializerKind,
+    components::global::multi_stage::DoubleBufferingEventListener,
+    components::global::multi_stage::JobExecutor,
+    components::global::read::StageBuffer,
+    components::global::{GlobalConfig, GlobalWriter},
+    components::global::{LoadingSides, read::SyncStrategy},
+    components::stage,
+    components::stage::PartitionScheduler,
+    definition::MatmulTypes,
+};
 use cubecl::prelude::*;
 
 #[cube]

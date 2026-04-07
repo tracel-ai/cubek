@@ -1,10 +1,8 @@
 use cubecl;
-use cubecl::prelude::*;
-use cubecl::std::tensor::layout::Coords2d;
+use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 use cubek_std::tile::StridedTile;
 
-use crate::components::tile::MaskTile;
-use crate::definition::AttentionTileSize;
+use crate::{components::tile::MaskTile, definition::AttentionTileSize};
 
 #[cube]
 pub trait Softmax<F: Float>: Send + Sync + 'static + Sized {

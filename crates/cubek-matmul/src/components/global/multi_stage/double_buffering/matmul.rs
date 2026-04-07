@@ -1,10 +1,12 @@
 use crate::components::global::read::{
     FullStageGlobalReader, PartialLoadingStrategy, PartialStageGlobalReader, StageBuffer,
 };
-use crate::components::stage;
-use crate::components::stage::StageConfig;
-use crate::definition::{AccG, LhsG, MatmulTypes, MatrixTypes, RhsG};
-use crate::launch::RuntimeConfig;
+use crate::{
+    components::stage,
+    components::stage::StageConfig,
+    definition::{AccG, LhsG, MatmulTypes, MatrixTypes, RhsG},
+    launch::RuntimeConfig,
+};
 use crate::{
     components::global::{
         GlobalMatmul, GlobalWriter, SharedGlobalMatmulConfig,
@@ -25,8 +27,7 @@ use crate::{
     },
     definition::Acc,
 };
-use cubecl::prelude::*;
-use cubecl::std::tensor::{View, layout::Coords2d};
+use cubecl::{prelude::*, std::tensor::{View, layout::Coords2d}};
 use cubek_std::tile::Strided;
 use std::marker::PhantomData;
 

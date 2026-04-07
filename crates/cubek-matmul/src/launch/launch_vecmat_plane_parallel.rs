@@ -1,15 +1,18 @@
-use cubecl::zspace::Shape;
-use cubecl::{VectorizationError, prelude::*};
+use cubecl::{zspace::Shape, {VectorizationError, prelude::*}};
 use cubek_std::{InputBinding, MatrixLayout};
 
-use crate::components::batch::gemv_plane_parallel::GemvKind;
-use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError};
-use crate::definition::{MatmulVectorSizes, cube_mapping_launch};
+use crate::{
+    components::batch::gemv_plane_parallel::GemvKind,
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError},
+    definition::{MatmulVectorSizes, cube_mapping_launch},
+};
 
-use crate::launch::InputArg;
-use crate::launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs};
-use crate::routines::vecmat_plane_parallel::GemvPlaneParallelRoutine;
-use crate::routines::{BlueprintStrategy, Routine as _};
+use crate::{
+    launch::InputArg,
+    launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs},
+    routines::vecmat_plane_parallel::GemvPlaneParallelRoutine,
+    routines::{BlueprintStrategy, Routine as _},
+};
 
 #[allow(clippy::result_large_err)]
 pub fn launch_ref<R: Runtime>(

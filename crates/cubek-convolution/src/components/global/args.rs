@@ -1,5 +1,4 @@
-use cubecl::prelude::*;
-use cubecl::std::FastDivmod;
+use cubecl::{prelude::*, std::FastDivmod};
 
 use crate::components::ConvolutionOperation;
 

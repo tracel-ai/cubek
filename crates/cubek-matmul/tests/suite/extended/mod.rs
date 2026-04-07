@@ -1,21 +1,16 @@
-use cubecl::Runtime;
-use cubecl::TestRuntime;
-use cubecl::frontend::CubePrimitive;
-use cubecl::std::tensor::TensorHandle;
-use cubek_matmul::components::stage::PartitionBuffering;
-use cubek_matmul::definition::MatmulElems;
-use cubek_matmul::definition::MatmulIdent;
-use cubek_matmul::definition::MatmulProblem;
-use cubek_matmul::definition::SwizzleModes;
-use cubek_matmul::definition::TilingBlueprint;
-use cubek_matmul::definition::TilingScheme;
-use cubek_matmul::routines::simple::SimpleAlgorithm;
-use cubek_matmul::routines::simple_unit::SimpleUnitAlgorithm;
-use cubek_test_utils::HostData;
-use cubek_test_utils::HostDataType;
-use cubek_test_utils::StrideSpec;
-use cubek_test_utils::TestInput;
-use cubek_test_utils::current_test_mode;
+use cubecl::{Runtime, TestRuntime, frontend::CubePrimitive, std::tensor::TensorHandle};
+use cubek_matmul::{
+    components::stage::PartitionBuffering,
+    definition::MatmulElems,
+    definition::MatmulIdent,
+    definition::MatmulProblem,
+    definition::SwizzleModes,
+    definition::TilingBlueprint,
+    definition::TilingScheme,
+    routines::simple::SimpleAlgorithm,
+    routines::simple_unit::SimpleUnitAlgorithm,
+};
+use cubek_test_utils::{HostData, HostDataType, StrideSpec, TestInput, current_test_mode};
 
 pub mod gemv;
 pub mod naive;

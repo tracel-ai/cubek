@@ -1,6 +1,8 @@
-use cubecl::prelude::*;
-use cubecl::std::tensor::r#virtual::{VirtualTensorOperations, VirtualTensorOperationsExpand};
-use cubecl::{self as cubecl};
+use cubecl::{
+    prelude::*,
+    std::tensor::r#virtual::{VirtualTensorOperations, VirtualTensorOperationsExpand},
+    {self as cubecl},
+};
 
 use crate::definition::{AttentionBlueprint, AttentionProblem};
 

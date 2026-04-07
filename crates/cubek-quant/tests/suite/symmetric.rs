@@ -1,12 +1,11 @@
-use cubecl::ir::ElemType;
-use cubecl::ir::FloatKind;
-use cubecl::server::CopyDescriptor;
-use cubecl::std::tensor::TensorHandle;
-use cubecl::{TestRuntime, zspace::shape};
-use cubek_quant::scheme::QuantMode;
-use cubek_quant::scheme::QuantScheme;
-use cubek_quant::scheme::QuantStore;
-use cubek_quant::scheme::QuantValue;
+use cubecl::{
+    ir::ElemType,
+    ir::FloatKind,
+    server::CopyDescriptor,
+    std::tensor::TensorHandle,
+    {TestRuntime, zspace::shape},
+};
+use cubek_quant::{scheme::QuantMode, scheme::QuantScheme, scheme::QuantStore, scheme::QuantValue};
 
 #[test]
 fn test_quantization_symmetric_tensor() {

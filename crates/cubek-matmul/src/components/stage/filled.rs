@@ -1,5 +1,4 @@
-use cubecl::prelude::*;
-use cubecl::std::tensor::layout::Coords2d;
+use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 use cubek_std::tile::Filled;
 
 use crate::components::stage::{Stage, StageFamily, TilingLayout};

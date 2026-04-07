@@ -3,8 +3,7 @@ use cubecl::prelude::*;
 
 use cubecl::std::tensor::layout::Coords2d;
 
-use crate::components::tile::MaskTile;
-use crate::components::tile::softmax::Softmax;
+use crate::{components::tile::MaskTile, components::tile::softmax::Softmax};
 
 #[derive(CubeType)]
 /// We can keep only one mask tile at a time because it is directly applied to softmax tile

@@ -1,7 +1,6 @@
 use cubecl;
 use cubecl::prelude::*;
-use cubek_std::TileSize;
-use cubek_std::tile::StridedTile;
+use cubek_std::{TileSize, tile::StridedTile};
 
 #[cube]
 pub trait InnerMatmul {

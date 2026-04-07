@@ -1,5 +1,4 @@
-use cubecl::Runtime;
-use cubecl::prelude::*;
+use cubecl::{Runtime, prelude::*};
 use cubek_quant::scheme::{QuantLevel, QuantParam};
 
 #[macro_export]

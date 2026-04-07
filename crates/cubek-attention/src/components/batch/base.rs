@@ -1,15 +1,15 @@
 use cubecl;
-use cubecl::ir::DeviceProperties;
-use cubecl::prelude::*;
-use cubecl::std::tensor::r#virtual::VirtualTensor;
+use cubecl::{ir::DeviceProperties, prelude::*, std::tensor::r#virtual::VirtualTensor};
 
 use crate::definition::{
     AttentionElems, AttentionPrecision, AttentionSetupError, CubeCountInput, InputRuntimeArg,
     OutputRuntimeArg,
 };
-use crate::definition::{CubeCountInputArgs, attention_types::*};
-use crate::launch::AttentionArgs;
-use crate::{components::global::GlobalAttentionConfig, definition::AttentionVectorSizes};
+use crate::{
+    definition::{CubeCountInputArgs, attention_types::*},
+    launch::AttentionArgs,
+    {components::global::GlobalAttentionConfig, definition::AttentionVectorSizes},
+};
 use std::{fmt::Debug, hash::Hash};
 
 /// A family of [BatchAttention] implementations that operate with any [precision](AttentionPrecision).

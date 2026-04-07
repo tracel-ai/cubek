@@ -1,5 +1,4 @@
-use cubecl::TestRuntime;
-use cubecl::prelude::*;
+use cubecl::{TestRuntime, prelude::*};
 use cubek_reduce::shared_sum;
 use rand::{
     SeedableRng,

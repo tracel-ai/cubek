@@ -1,13 +1,12 @@
-use crate::components::stage::RowMajorTilingOrder;
-use crate::components::stage::Stage;
-use crate::components::stage::StridedStageMemory;
-use crate::components::stage::TilingLayout;
-use crate::components::stage::{ContiguousTilingLayout, StageFamily};
-use cubecl::prelude::*;
-use cubecl::std::tensor::layout::Coords2d;
-use cubek_std::stage::StageMemoryConfig;
-use cubek_std::tile::Strided;
-use cubek_std::tile::StridedTile;
+use crate::{
+    components::stage::RowMajorTilingOrder,
+    components::stage::Stage,
+    components::stage::StridedStageMemory,
+    components::stage::TilingLayout,
+    components::stage::{ContiguousTilingLayout, StageFamily},
+};
+use cubecl::{prelude::*, std::tensor::layout::Coords2d};
+use cubek_std::{stage::StageMemoryConfig, tile::Strided, tile::StridedTile};
 
 pub type WriteTiling = ContiguousTilingLayout<RowMajorTilingOrder>;
 

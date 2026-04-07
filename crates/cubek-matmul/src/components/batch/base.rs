@@ -1,7 +1,9 @@
-use crate::definition::{CubeMapping, CubeMappingLaunch};
-use crate::launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
-use crate::{components::CubeDimResource, launch::RuntimeConfig};
-use crate::{components::global::memory::GlobalLayoutConfig, launch::ConfigRuntimeArg};
+use crate::{
+    definition::{CubeMapping, CubeMappingLaunch},
+    launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
+    {components::CubeDimResource, launch::RuntimeConfig},
+    {components::global::memory::GlobalLayoutConfig, launch::ConfigRuntimeArg},
+};
 use crate::{
     components::stage::NumStages,
     definition::{

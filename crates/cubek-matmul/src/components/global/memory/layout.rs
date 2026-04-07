@@ -9,8 +9,10 @@ use cubecl::zspace::Shape;
 use cubecl_common::quant::scheme::{QuantLevel, QuantScheme};
 use cubek_std::MatrixLayout;
 
-use crate::definition::MatmulProblem;
-use crate::{components::global::memory::GlobalMemoryConfig, launch::BatchedCoords};
+use crate::{
+    definition::MatmulProblem,
+    {components::global::memory::GlobalMemoryConfig, launch::BatchedCoords},
+};
 
 /// Global layout that uses the last two dimensions and ignores all others.
 #[derive(CubeType, CubeLaunch, Clone, Copy)]

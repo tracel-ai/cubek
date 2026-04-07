@@ -1,8 +1,10 @@
 use std::ops::Range;
 
-use crate::correctness::color_printer::ColorPrinter;
-use crate::test_mode::{TestMode, current_test_mode};
-use crate::{HostData, ValidationResult};
+use crate::{
+    correctness::color_printer::ColorPrinter,
+    test_mode::{TestMode, current_test_mode},
+    {HostData, ValidationResult},
+};
 
 /// Check if two tensors are approximately equal
 pub fn assert_equals_approx(

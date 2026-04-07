@@ -1,15 +1,21 @@
-use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
-use cubecl::zspace::Shape;
-use cubecl::{VectorizationError, prelude::*};
+use cubecl::{
+    std::tensor::{MatrixBatchLayout, matrix_batch_layout},
+    zspace::Shape,
+    {VectorizationError, prelude::*},
+};
 use cubek_std::{InputBinding, MatrixLayout};
 
-use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError};
-use crate::definition::{MatmulVectorSizes, cube_mapping_launch};
+use crate::{
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError},
+    definition::{MatmulVectorSizes, cube_mapping_launch},
+};
 
-use crate::launch::InputArg;
-use crate::launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs};
-use crate::routines::vecmat_unit_perpendicular::GemvUnitPerpendicularRoutine;
-use crate::routines::{BlueprintStrategy, Routine as _};
+use crate::{
+    launch::InputArg,
+    launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs},
+    routines::vecmat_unit_perpendicular::GemvUnitPerpendicularRoutine,
+    routines::{BlueprintStrategy, Routine as _},
+};
 
 #[allow(clippy::result_large_err)]
 pub fn launch_ref<R: Runtime>(

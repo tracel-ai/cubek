@@ -1,5 +1,4 @@
-use cubecl::prelude::*;
-use cubecl::std::Swizzle;
+use cubecl::{prelude::*, std::Swizzle};
 
 /// Swizzling mode of the shared memory. Default `None`.
 /// Matches the base TMA functionality, alternative chunk sizes or more complex patterns don't really
