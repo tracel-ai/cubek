@@ -7,12 +7,6 @@ use cubek_std::{
     tile::Strided,
 };
 
-use crate::{
-    components::batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
-    components::global::PlaneWriterFamily,
-    components::tile::TileMatmulFamily,
-    components::{global::read::FullLoadingStrategy, tile},
-};
 use crate::components::{
     global::read::sync_full_strided::SyncFullStridedLoading, stage::PlaneMatmulFamily,
 };
@@ -21,10 +15,10 @@ use crate::definition::{
     adjust_dtypes,
 };
 use crate::{
-    launch::RuntimeConfig,
-    routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane},
-    routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, base},
-    {components::batch::BatchMatmulFamily, routines::ExpandInfo},
+    components::batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
+    components::global::PlaneWriterFamily,
+    components::tile::TileMatmulFamily,
+    components::{global::read::FullLoadingStrategy, tile},
 };
 use crate::{
     components::global::{
@@ -39,6 +33,12 @@ use crate::{
         stage::PartitionBuffering,
     },
     routines::selector::select_swizzle,
+};
+use crate::{
+    launch::RuntimeConfig,
+    routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane},
+    routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, base},
+    {components::batch::BatchMatmulFamily, routines::ExpandInfo},
 };
 
 /// Plane accelerated specialized matmul with TMA readers

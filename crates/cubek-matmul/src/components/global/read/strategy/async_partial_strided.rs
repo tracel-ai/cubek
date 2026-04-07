@@ -3,12 +3,6 @@ use crate::components::global::{
     SharedGlobalMatmulConfig,
     read::{AsyncPartialLoadingStrategy, PartialLoadingStrategy, async_copy::ASYNC_COPY_WIDTH},
 };
-use crate::{
-    components::{global::memory::GlobalIterator, stage::TilingValidation},
-    components::{global::read::async_copy::async_copy_from, stage::StridedStageMemory},
-    components::{global::read::stage::FullStageLayout, stage::StridedStageFamily},
-    components::{global::read::validate_swizzle_atom_size, stage::StageConfig},
-};
 use crate::components::{
     global::{
         multi_stage::LoadMaxRoundPlaneCount,
@@ -20,6 +14,12 @@ use crate::definition::{MatmulElems, MatmulProblem, MatmulTypes, StageIdent};
 use crate::{
     components::global::read::{validate_async_barrier, validate_async_copy_with_problem},
     launch::RuntimeConfig,
+};
+use crate::{
+    components::{global::memory::GlobalIterator, stage::TilingValidation},
+    components::{global::read::async_copy::async_copy_from, stage::StridedStageMemory},
+    components::{global::read::stage::FullStageLayout, stage::StridedStageFamily},
+    components::{global::read::validate_swizzle_atom_size, stage::StageConfig},
 };
 use cubecl::{
     prelude::*,

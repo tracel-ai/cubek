@@ -1,9 +1,6 @@
 use cubecl::prelude::*;
 use cubek_std::{
-    stage::StageMemoryConfig,
-    stage::as_swizzle_object,
-    tile::Strided,
-    tile::StridedTile,
+    stage::StageMemoryConfig, stage::as_swizzle_object, tile::Strided, tile::StridedTile,
 };
 use std::marker::PhantomData;
 

@@ -1,4 +1,7 @@
-use cubecl::{prelude::*, std::tensor::layout::{Coords2d, Layout, LayoutExpand}};
+use cubecl::{
+    prelude::*,
+    std::tensor::layout::{Coords2d, Layout, LayoutExpand},
+};
 use cubek_std::{MatrixLayout, stage::StageMemoryConfig};
 
 use crate::definition::StageIdent;

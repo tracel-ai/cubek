@@ -1,19 +1,20 @@
-use crate::{
-    definition::MatmulProblem,
-    definition::MatmulSetupError,
-    definition::MatmulVectorSizes,
-    definition::cube_mapping_launch,
-};
 use crate::launch::{
     ConcreteInputsFactory, ConcreteOutputFactory, InputArg, InputRuntimeArg, MatmulArgs, OutputArg,
     OutputRuntimeArg,
+};
+use crate::{
+    definition::MatmulProblem, definition::MatmulSetupError, definition::MatmulVectorSizes,
+    definition::cube_mapping_launch,
 };
 use crate::{
     routines::LaunchInfo,
     routines::{BlueprintStrategy, Routine},
     {definition::MatmulElems, launch::ConfigRuntimeArg},
 };
-use cubecl::{prelude::TensorBinding, {Runtime, client::ComputeClient}};
+use cubecl::{
+    prelude::TensorBinding,
+    {Runtime, client::ComputeClient},
+};
 use cubek_std::InputBinding;
 
 /// Select which kernel to launch for the given Algorithm.

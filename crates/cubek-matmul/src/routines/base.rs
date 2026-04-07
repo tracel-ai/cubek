@@ -4,13 +4,13 @@ use crate::definition::{
     TilingBlueprint,
 };
 use crate::{
+    components::batch::{BatchConfig, BatchMatmulFamily},
+    launch::ConfigRuntimeArg,
+};
+use crate::{
     launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
     routines::BlueprintStrategy,
     {components::CubeDimResource, launch::RuntimeConfig},
-};
-use crate::{
-    components::batch::{BatchConfig, BatchMatmulFamily},
-    launch::ConfigRuntimeArg,
 };
 use cubecl::prelude::*;
 use cubek_std::cube_count::CubeCountPlan;

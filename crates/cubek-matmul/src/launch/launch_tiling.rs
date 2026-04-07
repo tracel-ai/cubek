@@ -1,14 +1,14 @@
+use crate::launch::{
+    ConcreteInputsFactory, ConcreteOutputFactory, InputArg, MatmulArgs, OutputArg, TensorArgs,
+    TensorMapArgs,
+};
+use crate::routines::{BlueprintStrategy, Routine};
 use crate::{
     definition::MatmulProblem,
     definition::{AvailableVectorSizes, MatmulElems, TilingBlueprint},
     definition::{MatmulAvailabilityError, MatmulSetupError},
     launch::launch_kernel_concrete,
 };
-use crate::launch::{
-    ConcreteInputsFactory, ConcreteOutputFactory, InputArg, MatmulArgs, OutputArg, TensorArgs,
-    TensorMapArgs,
-};
-use crate::routines::{BlueprintStrategy, Routine};
 use cubecl::{
     features::TypeUsage,
     std::tensor::{MatrixBatchLayout, matrix_batch_layout},

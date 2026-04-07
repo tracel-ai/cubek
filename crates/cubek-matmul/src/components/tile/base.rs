@@ -1,5 +1,11 @@
-use cubecl::{{features::MmaConfig, ir::DeviceProperties}, {ir::StorageType, prelude::*}};
-use cubek_std::{tile::{Tile, TileKind, TileMut}, {InvalidConfigError, MatrixLayout, TileSize}};
+use cubecl::{
+    {features::MmaConfig, ir::DeviceProperties},
+    {ir::StorageType, prelude::*},
+};
+use cubek_std::{
+    tile::{Tile, TileKind, TileMut},
+    {InvalidConfigError, MatrixLayout, TileSize},
+};
 
 use crate::{
     components::resource::CubeDimResource,

@@ -1,21 +1,20 @@
 use cubecl;
 use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
 use cubek_matmul::{
-    components::global::PartitionedStage,
-    components::global::read::FullStageGlobalReader,
+    components::global::PartitionedStage, components::global::read::FullStageGlobalReader,
     components::stage::StridedStageMemory,
 };
 use std::marker::PhantomData;
 
+use crate::components::stage::{
+    AttentionLoadingStrategy, AttentionPartitioner, AttentionTilingLayout, StageAttention,
+    StageAttentionConfig as _,
+};
 use crate::{
     components::global::AttentionGlobalLayout,
     components::global::simple::QueryReader,
     components::global::simple::{AttentionWriter, AttentionWriterExpand, MaskReader},
     components::global::{GlobalAttention, simple::config::SimpleGlobalAttentionConfig},
-};
-use crate::components::stage::{
-    AttentionLoadingStrategy, AttentionPartitioner, AttentionTilingLayout, StageAttention,
-    StageAttentionConfig as _,
 };
 use crate::{definition::AttentionPrecision, definition::attention_types::*};
 

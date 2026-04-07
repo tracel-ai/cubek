@@ -7,13 +7,16 @@ use cubek_matmul::components::{
     global::read::sync_full_cyclic::SyncFullCyclicLoading,
     stage::{ColMajorTilingOrder, RowMajorTilingOrder},
 };
-use cubek_matmul::{definition::AvailableVectorSizes, launch::{TensorArgs, TensorMapArgs}};
 use cubek_matmul::{
     components::global::read::{
         async_full_tma::AsyncFullTmaLoading, sync_full_strided::SyncFullStridedLoading,
         sync_full_tilewise::SyncFullTilewiseLoading,
     },
     routines::simple::SimpleAlgorithm,
+};
+use cubek_matmul::{
+    definition::AvailableVectorSizes,
+    launch::{TensorArgs, TensorMapArgs},
 };
 use cubek_std::tile::Strided;
 use std::marker::PhantomData;

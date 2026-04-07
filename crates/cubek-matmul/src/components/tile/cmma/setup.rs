@@ -1,18 +1,23 @@
-use crate::{
-    components::resource::CubeDimResource,
-    components::tile::SharedTileConfig,
-    components::tile::cmma::matmul::CmmaMatmul,
-};
 use crate::components::tile::{
     TileMatmulFamily,
     cmma::reader::{CmmaFragmentReader, CmmaStageReader},
 };
 use crate::{
+    components::resource::CubeDimResource, components::tile::SharedTileConfig,
+    components::tile::cmma::matmul::CmmaMatmul,
+};
+use crate::{
     definition::{MatmulAvailabilityError, MatmulSetupError, MatmulVectorSizes},
     definition::{MatmulElems, TilingBlueprint},
 };
-use cubecl::{{features::MmaConfig, ir::DeviceProperties}, {ir::StorageType, prelude::*}};
-use cubek_std::{tile::{Strided, TileKind}, {InvalidConfigError, TileSize}};
+use cubecl::{
+    {features::MmaConfig, ir::DeviceProperties},
+    {ir::StorageType, prelude::*},
+};
+use cubek_std::{
+    tile::{Strided, TileKind},
+    {InvalidConfigError, TileSize},
+};
 
 impl<Tile: TileKind> TileMatmulFamily for CmmaMatmul<Tile>
 where

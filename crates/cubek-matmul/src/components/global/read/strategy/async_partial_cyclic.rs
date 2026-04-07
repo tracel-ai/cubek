@@ -1,9 +1,5 @@
 use std::marker::PhantomData;
 
-use crate::{
-    components::global::read::validate_async_copy_with_problem,
-    components::global::read::validate_swizzle_atom_size,
-};
 use crate::components::global::{
     GlobalReaderConfig, PlaneFlowPartition, read::async_copy::ASYNC_COPY_WIDTH,
 };
@@ -14,18 +10,22 @@ use crate::components::global::{
         validate_async_copy,
     },
 };
-use crate::{
-    components::stage::StridedStageFamily,
-    components::stage::StridedStageMemory,
-    components::stage::{ContiguousTilingLayout, TilingOrder},
-    components::{global::memory::GlobalIterator, stage::TilingValidation},
-};
 use crate::components::{
     global::{
         SharedGlobalMatmulConfig,
         read::{PartialLoadingStrategy, tiled::TiledLayout},
     },
     stage::StageConfig,
+};
+use crate::{
+    components::global::read::validate_async_copy_with_problem,
+    components::global::read::validate_swizzle_atom_size,
+};
+use crate::{
+    components::stage::StridedStageFamily,
+    components::stage::StridedStageMemory,
+    components::stage::{ContiguousTilingLayout, TilingOrder},
+    components::{global::memory::GlobalIterator, stage::TilingValidation},
 };
 use crate::{
     definition::MatmulElems,

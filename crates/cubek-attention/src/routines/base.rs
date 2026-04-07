@@ -1,6 +1,9 @@
 use std::fmt::Debug;
 
-use cubecl::{{CubeDim, Runtime}, {client::ComputeClient, ir::AddressType}};
+use cubecl::{
+    {CubeDim, Runtime},
+    {client::ComputeClient, ir::AddressType},
+};
 
 use crate::components::tile::TileAttentionFamily;
 use crate::components::{

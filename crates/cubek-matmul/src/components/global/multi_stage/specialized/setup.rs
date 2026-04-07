@@ -2,13 +2,13 @@ use crate::components::CubeDimResource;
 use crate::components::global::{
     GlobalReaderConfig, GlobalWriterConfig, PlaneFlowConfig, SharedGlobalMatmulConfig,
 };
-use crate::{
-    components::global::{GlobalWriterFamily, multi_stage::specialized::SpecializedMatmul},
-    components::global::{InputLoadFlow, LoadFlows, WriteTiling},
-};
 use crate::components::global::{
     memory::{GlobalMemoryConfig, ViewDirection},
     read::AsyncPartialLoadingStrategy,
+};
+use crate::{
+    components::global::{GlobalWriterFamily, multi_stage::specialized::SpecializedMatmul},
+    components::global::{InputLoadFlow, LoadFlows, WriteTiling},
 };
 use crate::{
     components::global::{multi_stage::EventLoadingMode, read::FullLoadingStrategy},

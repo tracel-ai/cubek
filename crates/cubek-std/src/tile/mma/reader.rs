@@ -1,6 +1,9 @@
 use std::marker::PhantomData;
 
-use cubecl::{prelude::*, {cmma::MmaDefinition, ir::MatrixIdent}};
+use cubecl::{
+    prelude::*,
+    {cmma::MmaDefinition, ir::MatrixIdent},
+};
 
 use crate::{
     TileSize,

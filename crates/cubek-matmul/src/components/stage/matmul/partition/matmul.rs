@@ -2,6 +2,10 @@ use std::marker::PhantomData;
 
 use super::fragments::{Accumulators, RhsTile, RhsTileExpand};
 use crate::{
+    components::stage::PartitionSchedulerScheme,
+    definition::{Acc, Rhs},
+};
+use crate::{
     components::stage::Stage,
     components::stage::StageEvent,
     components::stage::matmul::scheduler::PartitionScheduler,
@@ -9,10 +13,6 @@ use crate::{
     components::tile::{TileConfig, TileMatmul},
     definition::{MatmulTypes, MatrixTypes},
     {components::global::PlaneFlowConfig, definition::Lhs},
-};
-use crate::{
-    components::stage::PartitionSchedulerScheme,
-    definition::{Acc, Rhs},
 };
 use cubecl::prelude::*;
 use cubek_std::{PartitionSize, StageSize, stage::StageMemoryConfig};

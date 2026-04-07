@@ -1,9 +1,9 @@
+use crate::components::global::read::{
+    FullLoadingStrategy, stage::FullStageLayout, validate_async_barrier,
+};
 use crate::{
     components::global::read::async_copy::ASYNC_COPY_WIDTH,
     components::global::read::validate_async_copy_with_problem,
-};
-use crate::components::global::read::{
-    FullLoadingStrategy, stage::FullStageLayout, validate_async_barrier,
 };
 use crate::{
     components::global::read::{async_copy::async_copy_from, validate_swizzle_atom_size},

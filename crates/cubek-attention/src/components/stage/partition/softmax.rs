@@ -2,8 +2,7 @@ use cubecl;
 use cubecl::prelude::*;
 
 use crate::{
-    components::tile::MaskTile,
-    components::tile::softmax::Softmax,
+    components::tile::MaskTile, components::tile::softmax::Softmax,
     definition::AttentionPartitionSize,
 };
 

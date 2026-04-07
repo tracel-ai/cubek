@@ -1,9 +1,3 @@
-use crate::{
-    components::global::MaxGlobalReaderPlanes,
-    components::global::memory::{GlobalMemoryConfig, ViewDirection},
-    components::global::multi_stage::EventLoadingMode,
-    components::global::read::LoadingValidation as _,
-};
 use crate::components::global::{
     GlobalReaderConfig, GlobalWriterConfig, PlaneFlowConfig, SharedGlobalMatmulConfig,
 };
@@ -14,6 +8,12 @@ use crate::components::global::{
 use crate::components::global::{
     WriteTiling,
     multi_stage::ordered::{LL, OrderedDoubleBufferingMatmul},
+};
+use crate::{
+    components::global::MaxGlobalReaderPlanes,
+    components::global::memory::{GlobalMemoryConfig, ViewDirection},
+    components::global::multi_stage::EventLoadingMode,
+    components::global::read::LoadingValidation as _,
 };
 use crate::{
     components::stage::StridedStageFamily,

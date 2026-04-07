@@ -13,7 +13,10 @@ use crate::{
     components::{global::memory::GlobalIterator, stage::LoadStageFamily},
     {components::global::GlobalReaderConfig, launch::RuntimeConfig},
 };
-use cubecl::{prelude::*, std::tensor::{View, layout::Coords2d}};
+use cubecl::{
+    prelude::*,
+    std::tensor::{View, layout::Coords2d},
+};
 use cubek_std::tile::TileKind;
 
 pub type SyncBarrier<S> = <S as SyncStrategy>::Barrier;

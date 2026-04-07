@@ -1,18 +1,7 @@
 use std::marker::PhantomData;
 
-use crate::{
-    components::global::read::{validate_async_barrier, validate_swizzle_atom_size},
-    components::global::read::{validate_async_copy, validate_async_copy_with_problem},
-    components::global::{GlobalReaderConfig, PlaneFlowPartition},
-};
 use crate::components::global::{
     multi_stage::LoadMaxRoundPlaneCount, read::async_copy::async_copy_from,
-};
-use crate::{
-    components::stage::StridedStageFamily,
-    components::stage::{ContiguousTilingLayout, StridedStageMemory, TilingOrder},
-    components::{global::memory::GlobalIterator, stage::TilingValidation},
-    definition::{MatmulElems, MatmulProblem, StageIdent},
 };
 use crate::{
     components::global::read::{
@@ -20,6 +9,17 @@ use crate::{
         tiled::TiledLayout,
     },
     launch::RuntimeConfig,
+};
+use crate::{
+    components::global::read::{validate_async_barrier, validate_swizzle_atom_size},
+    components::global::read::{validate_async_copy, validate_async_copy_with_problem},
+    components::global::{GlobalReaderConfig, PlaneFlowPartition},
+};
+use crate::{
+    components::stage::StridedStageFamily,
+    components::stage::{ContiguousTilingLayout, StridedStageMemory, TilingOrder},
+    components::{global::memory::GlobalIterator, stage::TilingValidation},
+    definition::{MatmulElems, MatmulProblem, StageIdent},
 };
 use cubecl::{
     prelude::*,

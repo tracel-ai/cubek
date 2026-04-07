@@ -7,7 +7,10 @@ use crate::components::{
     global::{GlobalAttention, GlobalAttentionConfig as _},
     stage::StageAttentionConfig as _,
 };
-use crate::{definition::attention_types::*, definition::{AttentionPrecision, CubeCountInput}};
+use crate::{
+    definition::attention_types::*,
+    definition::{AttentionPrecision, CubeCountInput},
+};
 
 pub struct SimpleBatchAttention<AP: AttentionPrecision, GA: GlobalAttention<AP>> {
     _phantom: PhantomData<(AP, GA)>,

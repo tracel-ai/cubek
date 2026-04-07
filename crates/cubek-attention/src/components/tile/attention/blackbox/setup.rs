@@ -3,19 +3,15 @@ use cubek_matmul::{components::CubeDimResource, definition::MatmulAvailabilityEr
 use cubek_std::InvalidConfigError;
 
 use crate::{
-    components::tile::SharedTileAttentionConfig,
-    components::tile::TileAttentionConfig,
+    components::tile::SharedTileAttentionConfig, components::tile::TileAttentionConfig,
     components::tile::TileAttentionFamily,
     components::tile::attention::blackbox::attention::BlackboxAcceleratedTileAttention,
     components::tile::matmul::CmmaMatmulConfig,
     components::tile::output::blackbox::BlackboxOutputConfig,
     components::tile::pipeline::InnerLayout,
     components::tile::softmax::blackbox::BlackboxSoftmaxConfig,
-    definition::AttentionAvailabilityError,
-    definition::AttentionBlueprint,
-    definition::AttentionElems,
-    definition::AttentionPrecision,
-    definition::AttentionSetupError,
+    definition::AttentionAvailabilityError, definition::AttentionBlueprint,
+    definition::AttentionElems, definition::AttentionPrecision, definition::AttentionSetupError,
     definition::AttentionTileSize,
 };
 use cubecl::features::MmaConfig;

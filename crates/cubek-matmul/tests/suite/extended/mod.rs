@@ -1,13 +1,8 @@
 use cubecl::{Runtime, TestRuntime, frontend::CubePrimitive, std::tensor::TensorHandle};
 use cubek_matmul::{
-    components::stage::PartitionBuffering,
-    definition::MatmulElems,
-    definition::MatmulIdent,
-    definition::MatmulProblem,
-    definition::SwizzleModes,
-    definition::TilingBlueprint,
-    definition::TilingScheme,
-    routines::simple::SimpleAlgorithm,
+    components::stage::PartitionBuffering, definition::MatmulElems, definition::MatmulIdent,
+    definition::MatmulProblem, definition::SwizzleModes, definition::TilingBlueprint,
+    definition::TilingScheme, routines::simple::SimpleAlgorithm,
     routines::simple_unit::SimpleUnitAlgorithm,
 };
 use cubek_test_utils::{HostData, HostDataType, StrideSpec, TestInput, current_test_mode};

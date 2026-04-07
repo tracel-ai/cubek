@@ -3,15 +3,13 @@ use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_matmul::components::CubeDimResource;
 use cubek_std::InvalidConfigError;
 
-use crate::{
-    components::tile::TileAttentionConfig,
-    components::tile::matmul::InnerMatmul,
-    components::tile::output::AttentionOutput,
-    components::tile::softmax::Softmax,
-    definition::attention_types::SM,
-};
 use crate::definition::{
     AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError,
+};
+use crate::{
+    components::tile::TileAttentionConfig, components::tile::matmul::InnerMatmul,
+    components::tile::output::AttentionOutput, components::tile::softmax::Softmax,
+    definition::attention_types::SM,
 };
 
 /// Logits below this are considered masked (effectively -inf)

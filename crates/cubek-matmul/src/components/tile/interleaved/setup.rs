@@ -8,7 +8,11 @@ use crate::{
     definition::{MatmulAvailabilityError, MatmulElems},
     definition::{MatmulSetupError, MatmulVectorSizes},
 };
-use cubecl::{ir::{ElemType, FloatKind}, prelude::*, {features::TypeUsage, ir::DeviceProperties}};
+use cubecl::{
+    ir::{ElemType, FloatKind},
+    prelude::*,
+    {features::TypeUsage, ir::DeviceProperties},
+};
 use cubek_std::{InvalidConfigError, MatrixLayout, tile::Strided};
 
 impl TileMatmulFamily for InterleavedMatmul {

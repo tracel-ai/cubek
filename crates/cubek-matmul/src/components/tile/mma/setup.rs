@@ -6,7 +6,10 @@ use crate::{
     definition::{MatmulAvailabilityError, MatmulElems, MatmulSetupError},
     definition::{MatmulVectorSizes, TilingBlueprint},
 };
-use cubecl::{{features::MmaConfig, ir::DeviceProperties}, {ir::StorageType, prelude::*}};
+use cubecl::{
+    {features::MmaConfig, ir::DeviceProperties},
+    {ir::StorageType, prelude::*},
+};
 use cubek_std::{
     tile::mma::{MmaFragmentReader, MmaIOConfig, MmaStageReader},
     tile::{Strided, TileKind},

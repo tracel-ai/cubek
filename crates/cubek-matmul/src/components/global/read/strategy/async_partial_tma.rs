@@ -1,3 +1,11 @@
+use crate::components::{
+    global::SharedGlobalMatmulConfig,
+    stage::{StageConfig, StridedStageFamily},
+};
+use crate::{
+    components::global::read::{AsyncPartialLoadingStrategy, validate_tma_with_problem},
+    launch::RuntimeConfig,
+};
 use crate::{
     components::global::read::{PartialLoadingStrategy, async_tma::AsyncTma},
     components::global::read::{validate_async_barrier, validate_tma},
@@ -6,20 +14,19 @@ use crate::{
     components::stage::StridedStageMemory,
     components::stage::TmaTilingLayout,
 };
-use crate::components::{
-    global::SharedGlobalMatmulConfig,
-    stage::{StageConfig, StridedStageFamily},
-};
 use crate::{
     components::{global::memory::GlobalIterator, stage::TilingValidation},
     definition::{LhsS, MatmulElems, MatmulProblem, MatmulTypes, RhsS, StageIdent},
 };
-use crate::{
-    components::global::read::{AsyncPartialLoadingStrategy, validate_tma_with_problem},
-    launch::RuntimeConfig,
+use cubecl::{
+    prelude::*,
+    {ir::DeviceProperties, prelude::barrier::Barrier},
 };
-use cubecl::{prelude::*, {ir::DeviceProperties, prelude::barrier::Barrier}};
-use cubek_std::{stage::SwizzleMode, tile::Strided, {InvalidConfigError, MatrixLayout}};
+use cubek_std::{
+    stage::SwizzleMode,
+    tile::Strided,
+    {InvalidConfigError, MatrixLayout},
+};
 
 use super::{LoadingJob, LoadingValidation};
 

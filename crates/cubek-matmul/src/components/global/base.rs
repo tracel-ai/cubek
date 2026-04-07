@@ -1,12 +1,11 @@
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::stage::StageMemoryConfig;
 
-use crate::{
-    components::global::multi_stage::EventLoadingMode,
-    components::global::read::ReaderMode,
-};
 use crate::components::global::{
     GlobalWriterConfig, InputLoadFlow, LoadFlows, PlaneFlowConfig, SpecializedLoadingSides,
+};
+use crate::{
+    components::global::multi_stage::EventLoadingMode, components::global::read::ReaderMode,
 };
 use crate::{
     components::stage::StageConfig,

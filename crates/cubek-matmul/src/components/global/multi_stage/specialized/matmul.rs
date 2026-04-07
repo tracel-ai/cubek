@@ -4,6 +4,10 @@ use crate::components::global::{
     read::{FullLoaderStage, FullLoadingStrategy, SyncStrategy},
 };
 use crate::{
+    components::global::read::{FullStageGlobalReader, PartialLoaderStage},
+    definition::Stage,
+};
+use crate::{
     components::global::{GlobalMatmul, SharedGlobalMatmulConfig},
     components::global::{PlaneFlowPartition, read::AsyncPartialLoadingStrategy},
     components::stage,
@@ -11,12 +15,12 @@ use crate::{
     definition::*,
     launch::RuntimeConfig,
 };
-use crate::{
-    components::global::read::{FullStageGlobalReader, PartialLoaderStage},
-    definition::Stage,
-};
 
-use cubecl::{prelude::barrier::Barrier, prelude::*, std::tensor::{View, layout::Coords2d}};
+use cubecl::{
+    prelude::barrier::Barrier,
+    prelude::*,
+    std::tensor::{View, layout::Coords2d},
+};
 use std::marker::PhantomData;
 
 /// Performs matrix multiplication at the global level, with planes pipelining their work using two buffers:

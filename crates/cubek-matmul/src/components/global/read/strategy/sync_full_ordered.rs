@@ -11,7 +11,10 @@ use crate::{
     {components::global::GlobalReaderConfig, launch::RuntimeConfig},
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_std::{tile::Strided, {FormattedConfigError, InvalidConfigError}};
+use cubek_std::{
+    tile::Strided,
+    {FormattedConfigError, InvalidConfigError},
+};
 
 use super::{LoadingValidation, sync_full_tilewise};
 

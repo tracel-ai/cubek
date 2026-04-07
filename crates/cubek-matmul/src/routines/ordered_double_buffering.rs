@@ -3,12 +3,6 @@ use std::{fmt::Display, marker::PhantomData};
 use cubecl::Runtime;
 use cubek_std::tile::Strided;
 
-use crate::{
-    components::global::multi_stage::ordered::OrderedDoubleBufferingMatmulFamily,
-    components::global::read::sync_partial_cyclic::SyncPartialCyclicLoading,
-    components::stage::{PlaneMatmulFamily, RowMajorTilingOrder},
-    components::tile,
-};
 use crate::components::{
     batch::BatchMatmulFamily, global::read::sync_full_cyclic::SyncFullCyclicLoading,
 };
@@ -18,6 +12,12 @@ use crate::components::{
 };
 use crate::definition::{
     MatmulElems, MatmulProblem, MatmulSetupError, MultiRowStrategy, TilingBlueprint,
+};
+use crate::{
+    components::global::multi_stage::ordered::OrderedDoubleBufferingMatmulFamily,
+    components::global::read::sync_partial_cyclic::SyncPartialCyclicLoading,
+    components::stage::{PlaneMatmulFamily, RowMajorTilingOrder},
+    components::tile,
 };
 use crate::{
     launch::RuntimeConfig,

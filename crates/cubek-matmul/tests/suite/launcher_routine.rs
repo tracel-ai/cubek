@@ -1,10 +1,7 @@
 use cubecl::{TestRuntime, prelude::*, server::ServerError, std::tensor::TensorHandle};
 use cubek_matmul::{
-    definition::AvailableVectorSizes,
-    definition::MatmulIdent,
-    definition::MatmulVectorSizes,
-    definition::cube_mapping_launch,
-    launch::ConcreteOutputFactory,
+    definition::AvailableVectorSizes, definition::MatmulIdent, definition::MatmulVectorSizes,
+    definition::cube_mapping_launch, launch::ConcreteOutputFactory,
     launch::ConcreteOutputFactory as _,
 };
 
@@ -23,11 +20,7 @@ use cubek_matmul::{
 };
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{
-    DataKind,
-    ExecutionOutcome,
-    HostData,
-    TestOutcome,
-    current_test_mode,
+    DataKind, ExecutionOutcome, HostData, TestOutcome, current_test_mode,
     {BaseInputSpec, Distribution, RandomInputSpec, TestInput},
 };
 

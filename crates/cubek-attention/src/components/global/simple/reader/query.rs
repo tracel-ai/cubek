@@ -1,5 +1,9 @@
 use cubecl;
-use cubecl::{prelude::*, std::Swizzle, std::tensor::{View, layout::Coords2d}};
+use cubecl::{
+    prelude::*,
+    std::Swizzle,
+    std::tensor::{View, layout::Coords2d},
+};
 use cubek_matmul::components::global::memory::GlobalMemoryConfig;
 use cubek_std::tile::StridedTile;
 

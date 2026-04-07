@@ -1,6 +1,11 @@
 use std::marker::PhantomData;
 
-use cubecl::{prelude::*, zspace::Shape, zspace::Strides, {TestRuntime, server::ServerError}};
+use cubecl::{
+    prelude::*,
+    zspace::Shape,
+    zspace::Strides,
+    {TestRuntime, server::ServerError},
+};
 use cubek_reduce::{
     components::instructions::ReduceOperationConfig,
     launch::RoutineStrategy,

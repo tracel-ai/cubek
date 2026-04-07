@@ -9,8 +9,15 @@ use crate::{
     definition::{MatmulElems, MatmulProblem, StageIdent},
     {components::global::GlobalReaderConfig, launch::RuntimeConfig},
 };
-use cubecl::{prelude::*, {ir::DeviceProperties, prelude::barrier::Barrier}};
-use cubek_std::{stage::SwizzleMode, tile::Strided, {InvalidConfigError, MatrixLayout}};
+use cubecl::{
+    prelude::*,
+    {ir::DeviceProperties, prelude::barrier::Barrier},
+};
+use cubek_std::{
+    stage::SwizzleMode,
+    tile::Strided,
+    {InvalidConfigError, MatrixLayout},
+};
 
 use super::{LoadingJob, LoadingValidation};
 

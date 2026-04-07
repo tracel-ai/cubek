@@ -5,8 +5,14 @@ use crate::{
     components::{global::SharedGlobalMatmulConfig, stage::StageFamily},
     definition::{MatmulElems, MatmulProblem, MatmulTypes, StageIdent},
 };
-use cubecl::{ir::{BarrierLevel, DeviceProperties, OpaqueType, SemanticType}, prelude::*};
-use cubek_std::{stage::{StageMemoryConfig, SwizzleMode}, {InvalidConfigError, MatrixLayout}};
+use cubecl::{
+    ir::{BarrierLevel, DeviceProperties, OpaqueType, SemanticType},
+    prelude::*,
+};
+use cubek_std::{
+    stage::{StageMemoryConfig, SwizzleMode},
+    {InvalidConfigError, MatrixLayout},
+};
 
 #[cube]
 /// A loading job represents a sequence of loading tasks.

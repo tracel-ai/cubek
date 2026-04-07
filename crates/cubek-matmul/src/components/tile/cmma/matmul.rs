@@ -1,5 +1,8 @@
 use cubecl::prelude::*;
-use cubek_std::{tile::{Strided, StridedTile, TileKind}, {MatrixLayout, as_cmma_layout}};
+use cubek_std::{
+    tile::{Strided, StridedTile, TileKind},
+    {MatrixLayout, as_cmma_layout},
+};
 use std::marker::PhantomData;
 
 use crate::{

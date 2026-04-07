@@ -7,24 +7,24 @@ use cubek_matmul::components::{
 use cubek_std::tile::Strided;
 use std::marker::PhantomData;
 
+use crate::components::{
+    global::simple::{MaskReader, QueryReader},
+    stage::{MaskPartition, OutputPartition, partitioner::AttentionPartitioner},
+};
 use crate::{
     components::stage::{QueryPartition, SoftmaxPartition},
     components::tile::matmul::InnerMatmul,
     components::tile::output::AttentionOutput,
 };
-use crate::components::{
-    global::simple::{MaskReader, QueryReader},
-    stage::{MaskPartition, OutputPartition, partitioner::AttentionPartitioner},
+use crate::{
+    components::{global::GlobalAttentionConfig, stage::PartitionAttentionConfig},
+    definition::attention_types::*,
 };
 use crate::{
     components::{stage::KeyPartition, tile::TileAttention},
     components::{stage::ValuePartition, tile::softmax::Softmax},
     components::{stage::base::StageAttentionConfig, tile::TileAttentionConfig as _},
     {components::stage::StageAttention, definition::AttentionPrecision},
-};
-use crate::{
-    components::{global::GlobalAttentionConfig, stage::PartitionAttentionConfig},
-    definition::attention_types::*,
 };
 use cubecl::std::tensor::layout::Coords2d;
 

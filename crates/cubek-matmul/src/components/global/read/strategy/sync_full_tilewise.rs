@@ -11,8 +11,14 @@ use crate::{
     definition::{MatmulElems, MatmulProblem, StageIdent},
     {components::global::GlobalReaderConfig, launch::RuntimeConfig},
 };
-use cubecl::{std::tensor::layout::Coords2d, {ir::DeviceProperties, prelude::*}};
-use cubek_std::{tile::Strided, {FormattedConfigError, InvalidConfigError}};
+use cubecl::{
+    std::tensor::layout::Coords2d,
+    {ir::DeviceProperties, prelude::*},
+};
+use cubek_std::{
+    tile::Strided,
+    {FormattedConfigError, InvalidConfigError},
+};
 
 use super::{LoadingJob, LoadingValidation};
 

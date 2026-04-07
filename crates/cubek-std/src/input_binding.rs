@@ -1,14 +1,14 @@
 use cubecl::{
-    quant::scheme::{BlockSize, QuantLevel},
-    std::tensor::{into_contiguous_packed, into_contiguous_pitched},
-};
-use cubecl::{
     Runtime,
     client::ComputeClient,
     ir::{AddressType, StorageType},
     prelude::{CubePrimitive, TensorBinding},
     server::LaunchError,
     zspace::Shape,
+};
+use cubecl::{
+    quant::scheme::{BlockSize, QuantLevel},
+    std::tensor::{into_contiguous_packed, into_contiguous_pitched},
 };
 use cubecl_common::quant::scheme::{QuantScheme, QuantStore, QuantValue};
 

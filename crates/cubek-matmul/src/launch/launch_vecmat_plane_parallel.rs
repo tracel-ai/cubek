@@ -1,4 +1,7 @@
-use cubecl::{zspace::Shape, {VectorizationError, prelude::*}};
+use cubecl::{
+    zspace::Shape,
+    {VectorizationError, prelude::*},
+};
 use cubek_std::{InputBinding, MatrixLayout};
 
 use crate::{

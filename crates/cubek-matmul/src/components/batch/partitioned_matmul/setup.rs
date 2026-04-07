@@ -1,13 +1,13 @@
 use std::marker::PhantomData;
 
+use crate::components::{
+    batch::partitioned_matmul::config::PartitionedBatchConfig, stage::NumStages,
+};
 use crate::{
     components::batch::partitioned_matmul::matmul::PartitionedBatchMatmul,
     components::batch::partitioned_matmul::matmul::matmul_entry,
     components::batch::partitioned_matmul::partition::GlobalPartitionMatmul,
     components::global::GlobalMatmulFamily,
-};
-use crate::components::{
-    batch::partitioned_matmul::config::PartitionedBatchConfig, stage::NumStages,
 };
 use crate::{
     definition::CubeMappingLaunch,

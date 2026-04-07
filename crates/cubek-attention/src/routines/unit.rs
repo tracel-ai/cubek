@@ -1,25 +1,30 @@
-use cubecl::{prelude::CubePrimitive as _, {CubeDim, Runtime}};
+use cubecl::{
+    prelude::CubePrimitive as _,
+    {CubeDim, Runtime},
+};
 use cubek_matmul::{
     components::CubeDimResource,
     components::{global::PartitionedStageFamily, stage::StridedStageFamily},
 };
 
-use crate::{
-    components::stage::unit::UnitPartitionStageAttentionFamily,
-    components::tile::TileAttentionFamily,
-    components::tile::attention::unit::UnitTileAttention,
-};
 use crate::definition::{
     AttentionBlueprint, AttentionElems, AttentionPartitionSize, AttentionProblem,
     AttentionSetupError, AttentionStageSize, AttentionTileSize, AttentionTilingScheme,
     HypercubeBlueprint,
 };
-use crate::{launch::BlueprintStrategy, routines::{DeviceSettings, LaunchInfo}};
+use crate::{
+    components::stage::unit::UnitPartitionStageAttentionFamily,
+    components::tile::TileAttentionFamily, components::tile::attention::unit::UnitTileAttention,
+};
 use crate::{
     components::{
         batch::simple::SimpleBatchAttentionFamily, global::simple::SimpleGlobalAttentionFamily,
     },
     routines::Routine,
+};
+use crate::{
+    launch::BlueprintStrategy,
+    routines::{DeviceSettings, LaunchInfo},
 };
 
 #[derive(Debug, Clone)]

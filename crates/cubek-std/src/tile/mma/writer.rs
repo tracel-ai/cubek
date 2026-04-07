@@ -1,4 +1,7 @@
-use cubecl::{prelude::*, {cmma::MmaDefinition, ir::MatrixIdent}};
+use cubecl::{
+    prelude::*,
+    {cmma::MmaDefinition, ir::MatrixIdent},
+};
 
 use crate::{
     tile::mma::config::{MmaIOConfig, StoreMethod},

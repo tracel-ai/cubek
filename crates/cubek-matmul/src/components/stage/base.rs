@@ -1,4 +1,7 @@
-use cubecl::{std::tensor::layout::Coords2d, {ir::DeviceProperties, prelude::*}};
+use cubecl::{
+    std::tensor::layout::Coords2d,
+    {ir::DeviceProperties, prelude::*},
+};
 use cubek_std::{InvalidConfigError, stage::StageMemoryConfig, tile::TileKind};
 
 use crate::{

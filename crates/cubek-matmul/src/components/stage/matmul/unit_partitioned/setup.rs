@@ -18,7 +18,11 @@ use crate::definition::{
 };
 use core::marker::PhantomData;
 use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_std::{stage::StageMemoryConfig, tile::Strided, {InvalidConfigError, MatrixLayout}};
+use cubek_std::{
+    stage::StageMemoryConfig,
+    tile::Strided,
+    {InvalidConfigError, MatrixLayout},
+};
 
 /// Unit Matmul family for any precision
 pub struct UnitMatmulFamily<TM: TileMatmulFamily, StageIn: StageFamily, StageAcc: StageFamily> {

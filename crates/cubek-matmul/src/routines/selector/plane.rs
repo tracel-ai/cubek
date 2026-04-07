@@ -8,16 +8,16 @@ use cubek_std::{
     {MatmulProblemSize, MatrixLayout, PartitionSize, StageSize, TileSize},
 };
 
-use crate::{
-    components::global::{InputLoadFlow, LoadFlows},
-    components::stage::PartitionBuffering,
-    components::tile::TileMatmulFamily,
-};
 use crate::definition::{
     MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes,
     MultiRowStrategy, SwizzleModes, TilingBlueprint, TilingScheme, adjust_dtypes,
 };
 use crate::routines::selector::is_tiny;
+use crate::{
+    components::global::{InputLoadFlow, LoadFlows},
+    components::stage::PartitionBuffering,
+    components::tile::TileMatmulFamily,
+};
 
 pub const NUM_SM_APPROX: u32 = 50;
 pub const NUM_TENSOR_CORES_APPROX: u32 = 4;

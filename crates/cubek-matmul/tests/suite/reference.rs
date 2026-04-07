@@ -1,5 +1,12 @@
-use cubecl::{TestRuntime, std::tensor::TensorHandle, {CubeElement, client::ComputeClient}};
-use cubek_matmul::{definition::MatmulElems, definition::{MatmulIdent, MatmulProblem}};
+use cubecl::{
+    TestRuntime,
+    std::tensor::TensorHandle,
+    {CubeElement, client::ComputeClient},
+};
+use cubek_matmul::{
+    definition::MatmulElems,
+    definition::{MatmulIdent, MatmulProblem},
+};
 use cubek_test_utils::{
     HostData, HostDataType, HostDataVec, StrideSpec, ValidationResult, assert_equals_approx,
 };
