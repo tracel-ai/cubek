@@ -276,20 +276,26 @@ fn execute_gemv_transposed<
         let vec_val = vec.read_checked(global_k_pos as usize);
 
         for segment_iter in 0..vector_size {
-            write_tile_vector(
-                mat,
-                &mut tile,
-                global_k_pos,
-                mn_pos,
-                segment_iter,
-                vector_size,
-                matrix_layout,
-            );
+            let vector = match matrix_layout {
+                // Rhs
+                MatrixLayout::RowMajor => mat.read_checked((global_k_pos + segment_iter, mn_pos)),
+                // Lhs
+                MatrixLayout::ColMajor => mat.read_checked((mn_pos, global_k_pos + segment_iter)),
+            };
+
+            #[unroll]
+            for i in 0..vector_size {
+                tile[(segment_iter * vector_size + i) as usize] = SM::cast_from(vector[i as usize]);
+            }
         }
 
         for segment_iter in 0..vector_size {
-            let mat_val =
-                read_tile_vector::<SM, VS>(&tile, segment_iter, vector_size, matrix_layout);
+            let mut mat_val: Vector<SM, VS> = Vector::empty();
+
+            #[unroll]
+            for i in 0..vector_size {
+                mat_val[i as usize] = tile[(i * vector_size + segment_iter) as usize];
+            }
 
             accs[segment_iter as usize] += Vector::cast_from(vec_val) * Vector::cast_from(mat_val);
         }
@@ -307,56 +313,4 @@ fn execute_gemv_transposed<
 
         out.write_checked((mn_pos + segment_iter) as usize, O::cast_from(sum));
     }
-}
-
-#[cube]
-fn write_tile_vector<M: Scalar, SM: Scalar, MS: Size>(
-    mat: View<Vector<M, MS>, Coords2d>,
-    tile: &mut Array<SM>,
-    global_k_pos: u32,
-    mn_pos: u32,
-    segment_iter: u32,
-    #[comptime] vector_size: u32,
-    #[comptime] matrix_layout: MatrixLayout,
-) {
-    match matrix_layout {
-        // If row major, it's rhs, we read a row but store it as a column
-        // Then at consume we re-read a row but it now represents a column
-        MatrixLayout::RowMajor => {
-            let vector = mat.read_checked((global_k_pos + segment_iter, mn_pos));
-            #[unroll]
-            for i in 0..vector_size {
-                tile[(i * vector_size + segment_iter) as usize] = SM::cast_from(vector[i as usize]);
-            }
-        }
-        // If col major, it's lhs, we read a column but store it as a row
-        // Then at consume we re-read a column but it now represents a row
-        MatrixLayout::ColMajor => {
-            let vector = mat.read_checked((mn_pos, global_k_pos + segment_iter));
-            #[unroll]
-            for i in 0..vector_size {
-                tile[(segment_iter * vector_size + i) as usize] = SM::cast_from(vector[i as usize]);
-            }
-        }
-    }
-}
-
-#[cube]
-fn read_tile_vector<SM: Scalar, VS: Size>(
-    tile: &Array<SM>,
-    segment_iter: u32,
-    #[comptime] vector_size: u32,
-    #[comptime] matrix_layout: MatrixLayout,
-) -> Vector<SM, VS> {
-    let mut out: Vector<SM, VS> = Vector::empty();
-
-    #[unroll]
-    for i in 0..vector_size {
-        out[i as usize] = match matrix_layout {
-            MatrixLayout::RowMajor => tile[(segment_iter * vector_size + i) as usize],
-            MatrixLayout::ColMajor => tile[(i * vector_size + segment_iter) as usize],
-        };
-    }
-
-    out
 }
