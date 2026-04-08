@@ -105,12 +105,7 @@ impl Routine<()> for GemvPlaneParallelRoutine {
             GemvKind::MatVecColMajor => problem.m / blueprint.tile_dim,
         };
 
-        let working_cubes = match blueprint.kind {
-            GemvKind::VecMatColMajor => num_parallel_problems.div_ceil(blueprint.num_planes),
-            GemvKind::VecMatRowMajor => num_parallel_problems,
-            GemvKind::MatVecRowMajor => num_parallel_problems.div_ceil(blueprint.num_planes),
-            GemvKind::MatVecColMajor => num_parallel_problems,
-        };
+        let working_cubes = num_parallel_problems.div_ceil(blueprint.num_planes);
 
         let cube_count_plan = CubeCountPlan::from_blueprint(
             &blueprint.hypercube_blueprint,
