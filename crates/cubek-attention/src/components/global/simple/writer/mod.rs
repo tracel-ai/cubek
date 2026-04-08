@@ -1,5 +1,7 @@
-use cubecl::prelude::*;
-use cubecl::{self as cubecl};
+use cubecl::{
+    prelude::*,
+    {self as cubecl},
+};
 
 use cubek_matmul::components::global::{GlobalWriterConfig, PartitionedStage, WriteEventListener};
 

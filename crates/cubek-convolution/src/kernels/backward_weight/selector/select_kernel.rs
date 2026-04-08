@@ -2,8 +2,10 @@ use crate::{
     backward_weight::args::{ConcreteArgs, ConcreteInputsFactory, ConcreteOutputFactory},
     components::global::args::RuntimeArgs,
 };
-use cubecl::prelude::TensorBinding;
-use cubecl::{Runtime, client::ComputeClient};
+use cubecl::{
+    prelude::TensorBinding,
+    {Runtime, client::ComputeClient},
+};
 use cubek_matmul::{
     definition::{MatmulElems, MatmulVectorSizes},
     launch::{InputArg, OutputArg},

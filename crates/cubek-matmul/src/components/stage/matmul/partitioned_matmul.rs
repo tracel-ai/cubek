@@ -1,21 +1,22 @@
-use crate::components::global;
-use crate::components::global::PlaneFlowPartitionRule;
-use crate::components::stage::Stage;
-use crate::components::stage::StageConfig;
-use crate::components::stage::matmul::partition::SharedPartitionMatmulConfig;
-use crate::components::stage::matmul::partition::{Accumulators, PartitionMatmul, RhsTile};
-use crate::components::stage::matmul::plane_partitioned::PlanePartitionedStageConfig;
-use crate::components::stage::matmul::scheduler::PartitionScheduler;
-use crate::components::stage::matmul::unit_partitioned::UnitPartitionedStageConfig;
-use crate::components::stage::{NoEvent, StageEventListener};
-use crate::components::tile::TileConfig;
-use crate::components::tile::TileMatmul;
-use crate::components::{global::WriteEventListener, stage::StageMatmul};
-use crate::definition::MatmulTypes;
-use crate::definition::MatrixTypes;
+use crate::{
+    components::global,
+    components::global::PlaneFlowPartitionRule,
+    components::stage::Stage,
+    components::stage::StageConfig,
+    components::stage::matmul::partition::SharedPartitionMatmulConfig,
+    components::stage::matmul::partition::{Accumulators, PartitionMatmul, RhsTile},
+    components::stage::matmul::plane_partitioned::PlanePartitionedStageConfig,
+    components::stage::matmul::scheduler::PartitionScheduler,
+    components::stage::matmul::unit_partitioned::UnitPartitionedStageConfig,
+    components::stage::{NoEvent, StageEventListener},
+    components::tile::TileConfig,
+    components::tile::TileMatmul,
+    components::{global::WriteEventListener, stage::StageMatmul},
+    definition::MatmulTypes,
+    definition::MatrixTypes,
+};
 use core::marker::PhantomData;
-use cubecl::prelude::*;
-use cubecl::std::tensor::layout::Coords2d;
+use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 use cubek_std::stage::StageMemoryConfig;
 
 #[cube]

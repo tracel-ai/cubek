@@ -1,6 +1,4 @@
-use cubecl::TestRuntime;
-use cubecl::prelude::*;
-use cubecl::std::tensor::TensorHandle;
+use cubecl::{TestRuntime, prelude::*, std::tensor::TensorHandle};
 use cubek_random::*;
 
 #[test]

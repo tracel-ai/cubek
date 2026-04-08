@@ -1,18 +1,24 @@
 //! Naive matmul kernel implementation
 //!
 //! Each local unit will compute a single element of the output matrix.
-use cubecl::prelude::*;
-use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
-use cubecl::tensor_vector_size_parallel;
+use cubecl::{
+    prelude::*,
+    std::tensor::{MatrixBatchLayout, matrix_batch_layout},
+    tensor_vector_size_parallel,
+};
 use cubek_std::InputBinding;
 
-use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError};
-use crate::definition::{MatmulVectorSizes, cube_mapping_launch};
+use crate::{
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError},
+    definition::{MatmulVectorSizes, cube_mapping_launch},
+};
 
-use crate::launch::InputArg;
-use crate::launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs};
-use crate::routines::naive::NaiveRoutine;
-use crate::routines::{BlueprintStrategy, Routine as _};
+use crate::{
+    launch::InputArg,
+    launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs},
+    routines::naive::NaiveRoutine,
+    routines::{BlueprintStrategy, Routine as _},
+};
 
 #[allow(clippy::result_large_err)]
 pub fn launch_ref<R: Runtime>(

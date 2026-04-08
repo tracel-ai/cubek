@@ -1,5 +1,7 @@
-use cubecl::prelude::*;
-use cubecl::std::tensor::{View, layout::Coords2d};
+use cubecl::{
+    prelude::*,
+    std::tensor::{View, layout::Coords2d},
+};
 
 #[derive(Clone, CubeType)]
 /// An iterator over global memory, advancing along k.

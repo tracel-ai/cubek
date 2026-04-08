@@ -1,24 +1,32 @@
-use crate::components::global::read::{PartialLoadingStrategy, async_tma::AsyncTma};
-use crate::components::global::read::{validate_async_barrier, validate_tma};
-use crate::components::global::{GlobalConfig, GlobalReaderConfig};
-use crate::components::global::{PlaneFlowPartition, multi_stage::LoadMaxRoundPlaneCount};
-use crate::components::stage::StridedStageMemory;
-use crate::components::stage::TmaTilingLayout;
 use crate::components::{
     global::SharedGlobalMatmulConfig,
     stage::{StageConfig, StridedStageFamily},
 };
-use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
-use crate::definition::{LhsS, MatmulElems, MatmulProblem, MatmulTypes, RhsS, StageIdent};
 use crate::{
     components::global::read::{AsyncPartialLoadingStrategy, validate_tma_with_problem},
     launch::RuntimeConfig,
 };
-use cubecl::prelude::*;
-use cubecl::{ir::DeviceProperties, prelude::barrier::Barrier};
-use cubek_std::stage::SwizzleMode;
-use cubek_std::tile::Strided;
-use cubek_std::{InvalidConfigError, MatrixLayout};
+use crate::{
+    components::global::read::{PartialLoadingStrategy, async_tma::AsyncTma},
+    components::global::read::{validate_async_barrier, validate_tma},
+    components::global::{GlobalConfig, GlobalReaderConfig},
+    components::global::{PlaneFlowPartition, multi_stage::LoadMaxRoundPlaneCount},
+    components::stage::StridedStageMemory,
+    components::stage::TmaTilingLayout,
+};
+use crate::{
+    components::{global::memory::GlobalIterator, stage::TilingValidation},
+    definition::{LhsS, MatmulElems, MatmulProblem, MatmulTypes, RhsS, StageIdent},
+};
+use cubecl::{
+    prelude::*,
+    {ir::DeviceProperties, prelude::barrier::Barrier},
+};
+use cubek_std::{
+    stage::SwizzleMode,
+    tile::Strided,
+    {InvalidConfigError, MatrixLayout},
+};
 
 use super::{LoadingJob, LoadingValidation};
 

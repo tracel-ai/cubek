@@ -1,8 +1,10 @@
 use std::marker::PhantomData;
 
-use cubecl::prelude::*;
-use cubecl::std::tensor::layout::{Layout, LayoutExpand};
-use cubecl::{ir::DeviceProperties, prelude::barrier::Barrier};
+use cubecl::{
+    prelude::*,
+    std::tensor::layout::{Layout, LayoutExpand},
+    {ir::DeviceProperties, prelude::barrier::Barrier},
+};
 use cubek_matmul::components::{
     global::{
         GlobalReaderConfig, PlaneFlowPartition,
@@ -17,8 +19,7 @@ use cubek_matmul::components::{
     stage::{ContiguousTilingLayout, StridedStageFamily, StridedStageMemory, TilingOrder},
 };
 use cubek_matmul::definition::{MatmulElems, MatmulProblem, StageIdent};
-use cubek_std::InvalidConfigError;
-use cubek_std::tile::Strided;
+use cubek_std::{InvalidConfigError, tile::Strided};
 
 use crate::components::global::{
     args::RuntimeArgs,

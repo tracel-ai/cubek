@@ -1,5 +1,7 @@
-use cubecl::prelude::barrier::{Barrier, BarrierToken};
-use cubecl::prelude::*;
+use cubecl::{
+    prelude::barrier::{Barrier, BarrierToken},
+    prelude::*,
+};
 
 use crate::components::{
     global::{GlobalConfig, SharedGlobalMatmulConfig, read::SyncStrategy},

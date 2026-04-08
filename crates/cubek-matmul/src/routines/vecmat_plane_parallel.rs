@@ -8,28 +8,28 @@ use cubek_std::cube_count::{CubeCountPlan, CubeCountStrategy, GlobalOrder, Hyper
 use crate::{
     components::batch::{
         BatchMatmulFamily,
-        vecmat_plane_parallel::{VecMatPlaneParallelBlueprint, VecMatPlaneParallelFamily},
+        gemv_plane_parallel::{GemvKind, GemvPlaneParallelBlueprint, GemvPlaneParallelFamily},
     },
     definition::{MatmulElems, MatmulProblem, MatmulSetupError},
     routines::{BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine},
 };
 
-pub struct VecMatPlaneParallelRoutine {}
+pub struct GemvPlaneParallelRoutine {}
 
 #[derive(Default, Clone)]
-pub struct VecMatPlaneParallelStrategy {
+pub struct GemvPlaneParallelStrategy {
     pub target_num_planes: usize,
 }
 
-impl Display for VecMatPlaneParallelStrategy {
+impl Display for GemvPlaneParallelStrategy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "_{}", self.target_num_planes)
     }
 }
 
-impl Routine<()> for VecMatPlaneParallelRoutine {
-    type Strategy = VecMatPlaneParallelStrategy;
-    type BatchMatmul = VecMatPlaneParallelFamily;
+impl Routine<()> for GemvPlaneParallelRoutine {
+    type Strategy = GemvPlaneParallelStrategy;
+    type BatchMatmul = GemvPlaneParallelFamily;
     type Blueprint = <Self::BatchMatmul as BatchMatmulFamily<()>>::Blueprint;
     type Config = <Self::BatchMatmul as BatchMatmulFamily<()>>::Config;
 
@@ -48,10 +48,19 @@ impl Routine<()> for VecMatPlaneParallelRoutine {
             BlueprintStrategy::Inferred(strategy) => {
                 let tile_dim =
                     device_settings.plane_dim as usize * device_settings.vector_sizes.rhs;
-                let max_planes_for_swizzle = problem.k / tile_dim;
-                let num_planes = max(1, min(strategy.target_num_planes, max_planes_for_swizzle));
+                let plan = GemvKind::from_problem(problem)?;
+                let num_planes = match plan {
+                    GemvKind::MatVecRowMajor | GemvKind::VecMatColMajor => {
+                        // For tile swizzle
+                        max(1, min(strategy.target_num_planes, problem.k / tile_dim))
+                    }
+                    GemvKind::VecMatRowMajor | GemvKind::MatVecColMajor => {
+                        // For within tile
+                        max(1, min(strategy.target_num_planes, tile_dim))
+                    }
+                };
 
-                let blueprint = VecMatPlaneParallelBlueprint {
+                let blueprint = GemvPlaneParallelBlueprint {
                     dtypes: dtypes.clone(),
                     num_planes,
                     tile_dim,
@@ -59,6 +68,7 @@ impl Routine<()> for VecMatPlaneParallelRoutine {
                         .cube_count_strategy(CubeCountStrategy::Flattened)
                         .global_order(GlobalOrder::RowMajor)
                         .build(),
+                    kind: plan,
                 };
 
                 Ok(ExpandInfo { blueprint, dtypes })
@@ -88,8 +98,19 @@ impl Routine<()> for VecMatPlaneParallelRoutine {
         )?
         .to_cube_dim(device_settings.plane_dim)?;
 
-        let working_planes = problem.n;
-        let working_cubes = working_planes.div_ceil(blueprint.num_planes);
+        let num_parallel_problems = match blueprint.kind {
+            GemvKind::VecMatColMajor => problem.n,
+            GemvKind::VecMatRowMajor => problem.n / blueprint.tile_dim,
+            GemvKind::MatVecRowMajor => problem.m,
+            GemvKind::MatVecColMajor => problem.m / blueprint.tile_dim,
+        };
+
+        let working_cubes = match blueprint.kind {
+            GemvKind::VecMatColMajor => num_parallel_problems.div_ceil(blueprint.num_planes),
+            GemvKind::VecMatRowMajor => num_parallel_problems,
+            GemvKind::MatVecRowMajor => num_parallel_problems.div_ceil(blueprint.num_planes),
+            GemvKind::MatVecColMajor => num_parallel_problems,
+        };
 
         let cube_count_plan = CubeCountPlan::from_blueprint(
             &blueprint.hypercube_blueprint,

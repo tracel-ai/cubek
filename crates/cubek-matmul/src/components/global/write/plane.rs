@@ -9,9 +9,7 @@ use crate::{
     },
     definition::{MatrixTypes, StageIdent},
 };
-use cubecl::prelude::*;
-use cubecl::std::tensor::View;
-use cubecl::std::tensor::layout::Coords2d;
+use cubecl::{prelude::*, std::tensor::View, std::tensor::layout::Coords2d};
 use cubek_std::{stage::StageMemoryConfig, tile::StridedTile};
 
 #[derive(CubeType)]

@@ -1,16 +1,20 @@
-use crate::components::global::read::validate_swizzle_atom_size;
-use crate::components::global::{multi_stage::LoadMaxRoundPlaneCount, read::sync::Synchronous};
-use crate::components::stage::ContiguousTilingLayout;
-use crate::components::stage::OrderedTilingOrder;
-use crate::components::{global::PlaneFlowPartition, stage::TilingValidation};
-use crate::components::{global::read::FullLoadingStrategy, stage::StridedStageFamily};
-use crate::definition::MatmulElems;
-use crate::definition::MatmulProblem;
-use crate::definition::StageIdent;
-use crate::{components::global::GlobalReaderConfig, launch::RuntimeConfig};
+use crate::{
+    components::global::read::validate_swizzle_atom_size,
+    components::global::{multi_stage::LoadMaxRoundPlaneCount, read::sync::Synchronous},
+    components::stage::ContiguousTilingLayout,
+    components::stage::OrderedTilingOrder,
+    components::{global::PlaneFlowPartition, stage::TilingValidation},
+    components::{global::read::FullLoadingStrategy, stage::StridedStageFamily},
+    definition::MatmulElems,
+    definition::MatmulProblem,
+    definition::StageIdent,
+    {components::global::GlobalReaderConfig, launch::RuntimeConfig},
+};
 use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_std::tile::Strided;
-use cubek_std::{FormattedConfigError, InvalidConfigError};
+use cubek_std::{
+    tile::Strided,
+    {FormattedConfigError, InvalidConfigError},
+};
 
 use super::{LoadingValidation, sync_full_tilewise};
 

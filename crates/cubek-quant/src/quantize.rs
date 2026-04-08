@@ -1,11 +1,13 @@
-use cubecl::calculate_cube_count_elemwise;
-use cubecl::features::TypeUsage;
-use cubecl::ir::ElemType;
-use cubecl::prelude::*;
-use cubecl::std::tensor::into_contiguous;
-use cubecl::std::tensor::layout::linear::LinearView;
-use cubecl::std::tensor::{View, layout::linear::linear_view};
-use cubecl::tensor_vector_size_parallel;
+use cubecl::{
+    calculate_cube_count_elemwise,
+    features::TypeUsage,
+    ir::ElemType,
+    prelude::*,
+    std::tensor::into_contiguous,
+    std::tensor::layout::linear::LinearView,
+    std::tensor::{View, layout::linear::linear_view},
+    tensor_vector_size_parallel,
+};
 
 use crate::{
     layout::{ScalesLayout, scales_view},

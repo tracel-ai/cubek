@@ -1,7 +1,6 @@
 use crate::definition::AttentionTileSize;
 
-use std::fmt::Debug;
-use std::hash::Hash;
+use std::{fmt::Debug, hash::Hash};
 
 /// Configuration for the Tile Attention level
 pub trait TileAttentionConfig:

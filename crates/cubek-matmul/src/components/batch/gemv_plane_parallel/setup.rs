@@ -11,8 +11,8 @@ use crate::{
         CubeDimResource,
         batch::{
             BatchMatmulFamily,
-            vecmat_unit_perpendicular::{
-                VecMatUnitPerpendicular, VecMatUnitPerpendicularConfig, matmul_entry,
+            gemv_plane_parallel::{
+                GemvKind, VecMatPlaneParallel, VecMatPlaneParallelConfig, matmul_entry,
             },
         },
         global::memory::GlobalLayoutConfig,
@@ -26,17 +26,18 @@ use crate::{
 };
 
 /// Simple partitioned batch matmul family for any precision
-pub struct VecMatUnitPerpendicularFamily {}
+pub struct GemvPlaneParallelFamily {}
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct VecMatUnitPerpendicularBlueprint {
+pub struct GemvPlaneParallelBlueprint {
     pub dtypes: MatmulElems,
     pub num_planes: usize,
     // Should equal plane_dim * vector_size
     pub tile_dim: usize,
     pub hypercube_blueprint: HypercubeBlueprint,
+    pub kind: GemvKind,
 }
 
-impl Blueprint for VecMatUnitPerpendicularBlueprint {
+impl Blueprint for GemvPlaneParallelBlueprint {
     fn lhs_global_layout_config(&self) -> GlobalLayoutConfig {
         GlobalLayoutConfig {
             matrix_layout: MatrixLayout::RowMajor,
@@ -62,18 +63,18 @@ impl Blueprint for VecMatUnitPerpendicularBlueprint {
     }
 
     fn tiling_scheme(&self) -> TilingScheme {
-        panic!("VecMatUnitPerpendicular Blueprint doesn't have a TilingScheme")
+        panic!("VecMatPlaneParallel Blueprint doesn't have a TilingScheme")
     }
 
     fn swizzle_modes(&self) -> SwizzleModes {
-        panic!("VecMatUnitPerpendicular Blueprint doesn't have Swizzle Modes")
+        panic!("VecMatPlaneParallel Blueprint doesn't have Swizzle Modes")
     }
 }
 
-impl BatchMatmulFamily<()> for VecMatUnitPerpendicularFamily {
-    type Matmul<MP: MatmulTypes> = VecMatUnitPerpendicular<MP>;
-    type Config = VecMatUnitPerpendicularConfig;
-    type Blueprint = VecMatUnitPerpendicularBlueprint;
+impl BatchMatmulFamily<()> for GemvPlaneParallelFamily {
+    type Matmul<MP: MatmulTypes> = VecMatPlaneParallel<MP>;
+    type Config = VecMatPlaneParallelConfig;
+    type Blueprint = GemvPlaneParallelBlueprint;
 
     fn expand_config(
         device_props: &DeviceProperties,
@@ -81,9 +82,10 @@ impl BatchMatmulFamily<()> for VecMatUnitPerpendicularFamily {
         _dtypes: &MatmulElems,
         _vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
-        Ok(VecMatUnitPerpendicularConfig {
+        Ok(VecMatPlaneParallelConfig {
             plane_dim: device_props.hardware.plane_size_max,
             num_planes: blueprint.num_planes as u32,
+            plan: blueprint.kind,
         })
     }
 
@@ -100,7 +102,7 @@ impl BatchMatmulFamily<()> for VecMatUnitPerpendicularFamily {
         output: OutputRuntimeArg<MA, R>,
         _config: ConfigRuntimeArg<MA, R>,
         cube_mapping: CubeMappingLaunch<R>,
-        blueprint: VecMatUnitPerpendicularBlueprint,
+        blueprint: GemvPlaneParallelBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), LaunchError> {
@@ -135,34 +137,89 @@ impl BatchMatmulFamily<()> for VecMatUnitPerpendicularFamily {
         client: &ComputeClient<R>,
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
-        _dtypes: &MatmulElems,
+        dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
-        let vector_size = vector_sizes.lhs;
-        if !(vector_size == vector_sizes.rhs && vector_size == vector_sizes.out) {
+        if vector_sizes.lhs != vector_sizes.rhs {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "All vector sizes must be equal, got lhs:{:?}, rhs:{:?}, out:{:?}",
-                vector_size, vector_sizes.rhs, vector_sizes.out
+                "Lhs and Rhs vector sizes must be equal, got lhs:{:?}, rhs:{:?}",
+                vector_sizes.lhs, vector_sizes.rhs
+            ))));
+        }
+
+        if vector_sizes.out != 1 {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "Out vector size must be 1, got {:?}",
+                vector_sizes.out,
             ))));
         }
 
         let plane_dim = client.properties().hardware.plane_size_max as usize;
-        if blueprint.tile_dim != plane_dim * vector_size {
+        if blueprint.tile_dim != plane_dim * vector_sizes.lhs {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
                 "Tile dim must equal plane_dim * vector_size, got {:?} != {:?} * {:?}",
-                blueprint.tile_dim, plane_dim, vector_size,
+                blueprint.tile_dim, plane_dim, vector_sizes.lhs,
             ))));
         }
 
-        if !problem.k.is_multiple_of(blueprint.tile_dim)
-            || !problem.n.is_multiple_of(blueprint.tile_dim)
-        {
+        if !problem.k.is_multiple_of(blueprint.tile_dim) {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "Problem dimensions n={:?} and k={:?} must be divisible by tile dim ({:?})",
-                problem.n, problem.k, blueprint.tile_dim,
+                "Problem dimensions k={:?} must be divisible by tile dim ({:?})",
+                problem.k, blueprint.tile_dim,
             ))));
         }
 
+        match blueprint.kind {
+            GemvKind::VecMatRowMajor => {
+                if !problem.n.is_multiple_of(blueprint.tile_dim) {
+                    return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                        "For VecMatTransposeSwap, problem.n ({:?}) must be divisible by tile_dim ({:?})",
+                        problem.n, blueprint.tile_dim,
+                    ))));
+                }
+
+                if blueprint.tile_dim
+                    * blueprint.tile_dim
+                    * dtypes.rhs_global.size()
+                    * vector_sizes.rhs
+                    > client.properties().hardware.max_shared_memory_size
+                {
+                    return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                        "Requesting too much shared memory, requested {:?}, max {:?}",
+                        blueprint.tile_dim
+                            * blueprint.tile_dim
+                            * dtypes.rhs_global.size()
+                            * vector_sizes.rhs,
+                        client.properties().hardware.max_shared_memory_size
+                    ))));
+                }
+            }
+            GemvKind::MatVecColMajor => {
+                if !problem.m.is_multiple_of(blueprint.tile_dim) {
+                    return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                        "For MatVecTransposeSwap, problem.m ({:?}) must be divisible by tile_dim ({:?})",
+                        problem.m, blueprint.tile_dim,
+                    ))));
+                }
+
+                if blueprint.tile_dim
+                    * blueprint.tile_dim
+                    * dtypes.lhs_global.size()
+                    * vector_sizes.lhs
+                    > client.properties().hardware.max_shared_memory_size
+                {
+                    return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                        "Requesting too much shared memory, requested {:?}, max {:?}",
+                        blueprint.tile_dim
+                            * blueprint.tile_dim
+                            * dtypes.lhs_global.size()
+                            * vector_sizes.lhs,
+                        client.properties().hardware.max_shared_memory_size
+                    ))));
+                }
+            }
+            _ => {}
+        }
         Ok(())
     }
 }

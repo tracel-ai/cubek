@@ -1,9 +1,10 @@
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::components::tile::MaskTile;
-use crate::components::tile::softmax::Softmax;
-use crate::definition::AttentionPartitionSize;
+use crate::{
+    components::tile::MaskTile, components::tile::softmax::Softmax,
+    definition::AttentionPartitionSize,
+};
 
 #[derive(CubeType)]
 /// Because at each hd we will perform matmul with all of seq_q, we keep seq_q softmax tiles at a time.

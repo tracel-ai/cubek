@@ -1,7 +1,9 @@
-use cubecl::client::ComputeClient;
-use cubecl::frontend::CubePrimitive;
-use cubecl::std::tensor::TensorHandle;
-use cubecl::{Runtime, TestRuntime};
+use cubecl::{
+    client::ComputeClient,
+    frontend::CubePrimitive,
+    std::tensor::TensorHandle,
+    {Runtime, TestRuntime},
+};
 use cubek_fft::irfft_launch;
 use cubek_test_utils::{
     self, DataKind, Distribution, ExecutionOutcome, HostData, HostDataType, StrideSpec, TestInput,

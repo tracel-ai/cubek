@@ -7,8 +7,10 @@ use crate::{
     },
     definition::MatrixTypes,
 };
-use cubecl::prelude::*;
-use cubecl::std::tensor::{View, layout::Coords2d};
+use cubecl::{
+    prelude::*,
+    std::tensor::{View, layout::Coords2d},
+};
 use cubek_std::stage::StageMemoryConfig;
 
 pub trait GlobalWriterFamily: 'static + Send + Sync {

@@ -1,6 +1,8 @@
-use cubecl::frontend::CubePrimitive;
-use cubecl::zspace::shape;
-use cubecl::{Runtime, TestRuntime};
+use cubecl::{
+    frontend::CubePrimitive,
+    zspace::shape,
+    {Runtime, TestRuntime},
+};
 use cubek_test_utils::{
     DataKind, HostData, HostDataType, StrideSpec, TestInput, assert_equals_approx,
     assert_equals_approx_in_slice,

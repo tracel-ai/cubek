@@ -4,10 +4,12 @@ use cubecl;
 use cubecl::prelude::*;
 use cubek_std::tile::StridedTile;
 
-use crate::components::tile::MaskTile;
-use crate::components::tile::pipeline::{LocalTile, LocalTileLayout, RowWise};
-use crate::components::tile::softmax::{BroadcastReducer, Reducer, SoftmaxConfig as _};
-use crate::components::tile::softmax::{Softmax, blackbox::BlackboxSoftmaxConfig};
+use crate::{
+    components::tile::MaskTile,
+    components::tile::pipeline::{LocalTile, LocalTileLayout, RowWise},
+    components::tile::softmax::{BroadcastReducer, Reducer, SoftmaxConfig as _},
+    components::tile::softmax::{Softmax, blackbox::BlackboxSoftmaxConfig},
+};
 
 #[derive(CubeType)]
 pub struct BlackboxSoftmax<Lhs: Float> {

@@ -1,12 +1,10 @@
-use crate::components::global::PlaneFlowPartition;
-use crate::components::global::PlaneFlowPartitionRule;
-use crate::components::stage::matmul::partitioned_matmul::PartitionedStageMatmul;
-use crate::components::stage::matmul::partitioned_matmul::StagePartitioner;
-use crate::components::tile::TileMatmul;
-use crate::definition::MatmulTypes;
-use crate::definition::MatrixTypes;
-use cubecl::prelude::*;
-use cubecl::std::tensor::layout::Coords2d;
+use crate::{
+    components::global::PlaneFlowPartition, components::global::PlaneFlowPartitionRule,
+    components::stage::matmul::partitioned_matmul::PartitionedStageMatmul,
+    components::stage::matmul::partitioned_matmul::StagePartitioner, components::tile::TileMatmul,
+    definition::MatmulTypes, definition::MatrixTypes,
+};
+use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 
 use crate::components::{stage::matmul::partition::SharedPartitionMatmulConfig, tile::TileConfig};
 

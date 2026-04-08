@@ -1,7 +1,8 @@
-use cubecl::prelude::*;
-use cubecl::std::tensor::{View, layout::Coords2d};
-use cubek_std::stage::StageMemoryConfig;
-use cubek_std::tile::StridedTile;
+use cubecl::{
+    prelude::*,
+    std::tensor::{View, layout::Coords2d},
+};
+use cubek_std::{stage::StageMemoryConfig, tile::StridedTile};
 
 use crate::components::{
     global::{

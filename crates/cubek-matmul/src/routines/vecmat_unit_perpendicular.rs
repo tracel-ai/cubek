@@ -8,7 +8,7 @@ use cubek_std::cube_count::{CubeCountPlan, CubeCountStrategy, GlobalOrder, Hyper
 use crate::{
     components::batch::{
         BatchMatmulFamily,
-        vecmat_unit_perpendicular::{
+        gemv_unit_perpendicular::{
             VecMatUnitPerpendicularBlueprint, VecMatUnitPerpendicularFamily,
         },
     },
@@ -16,21 +16,21 @@ use crate::{
     routines::{BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine},
 };
 
-pub struct VecMatUnitPerpendicularRoutine {}
+pub struct GemvUnitPerpendicularRoutine {}
 
 #[derive(Default, Clone)]
-pub struct VecMatUnitPerpendicularStrategy {
+pub struct GemvUnitPerpendicularStrategy {
     pub target_num_planes: usize,
 }
 
-impl Display for VecMatUnitPerpendicularStrategy {
+impl Display for GemvUnitPerpendicularStrategy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "_{}", self.target_num_planes)
     }
 }
 
-impl Routine<()> for VecMatUnitPerpendicularRoutine {
-    type Strategy = VecMatUnitPerpendicularStrategy;
+impl Routine<()> for GemvUnitPerpendicularRoutine {
+    type Strategy = GemvUnitPerpendicularStrategy;
     type BatchMatmul = VecMatUnitPerpendicularFamily;
     type Blueprint = <Self::BatchMatmul as BatchMatmulFamily<()>>::Blueprint;
     type Config = <Self::BatchMatmul as BatchMatmulFamily<()>>::Config;

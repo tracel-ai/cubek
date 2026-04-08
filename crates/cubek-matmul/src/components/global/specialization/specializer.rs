@@ -1,8 +1,10 @@
 use cubecl::prelude::*;
 
-use crate::components::global::specialization::config::LoadingSides;
-use crate::components::global::specialization::roles::PlaneFlowPartitionRule;
-use crate::components::global::{PlaneFlowConfig, SpecializedLoadingSides};
+use crate::{
+    components::global::specialization::config::LoadingSides,
+    components::global::specialization::roles::PlaneFlowPartitionRule,
+    components::global::{PlaneFlowConfig, SpecializedLoadingSides},
+};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 /// Comptime information of specializer

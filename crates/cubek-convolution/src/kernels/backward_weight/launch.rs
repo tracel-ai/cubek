@@ -16,8 +16,10 @@ use cubek_matmul::{
     definition::{AvailableVectorSizes, MatmulElems},
     routines::BlueprintStrategy,
 };
-use cubek_std::InputBinding;
-use cubek_std::{MatrixLayout, tile::Strided};
+use cubek_std::{
+    InputBinding,
+    {MatrixLayout, tile::Strided},
+};
 use derive_new::new;
 
 macro_rules! with_tile_kind {

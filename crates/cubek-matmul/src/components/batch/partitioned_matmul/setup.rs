@@ -1,20 +1,24 @@
 use std::marker::PhantomData;
 
-use crate::components::batch::partitioned_matmul::matmul::PartitionedBatchMatmul;
-use crate::components::batch::partitioned_matmul::matmul::matmul_entry;
-use crate::components::batch::partitioned_matmul::partition::GlobalPartitionMatmul;
-use crate::components::global::GlobalMatmulFamily;
 use crate::components::{
     batch::partitioned_matmul::config::PartitionedBatchConfig, stage::NumStages,
 };
-use crate::definition::CubeMappingLaunch;
-use crate::definition::MatmulProblem;
-use crate::definition::MatmulVectorSizes;
-use crate::definition::TilingBlueprint;
-use crate::definition::{MatmulElems, MatmulSetupError, MatmulTypes};
-use crate::launch::*;
-use crate::{components::CubeDimResource, launch::RuntimeConfig};
-use crate::{components::batch::BatchMatmulFamily, launch::ConfigRuntimeArg};
+use crate::{
+    components::batch::partitioned_matmul::matmul::PartitionedBatchMatmul,
+    components::batch::partitioned_matmul::matmul::matmul_entry,
+    components::batch::partitioned_matmul::partition::GlobalPartitionMatmul,
+    components::global::GlobalMatmulFamily,
+};
+use crate::{
+    definition::CubeMappingLaunch,
+    definition::MatmulProblem,
+    definition::MatmulVectorSizes,
+    definition::TilingBlueprint,
+    definition::{MatmulElems, MatmulSetupError, MatmulTypes},
+    launch::*,
+    {components::CubeDimResource, launch::RuntimeConfig},
+    {components::batch::BatchMatmulFamily, launch::ConfigRuntimeArg},
+};
 use cubecl::{ir::DeviceProperties, prelude::*};
 
 /// Simple partitioned batch matmul family for any precision

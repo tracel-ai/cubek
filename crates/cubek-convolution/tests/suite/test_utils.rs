@@ -1,13 +1,15 @@
-use cubecl::features::MmaConfig;
-use cubecl::prelude::CubePrimitive;
-use cubecl::std::tensor::TensorHandle;
-use cubecl::zspace::{Shape, Strides};
 use cubecl::{
     CubeElement, Runtime,
     client::ComputeClient,
     prelude::*,
     prelude::{Float, Numeric},
     server::{self},
+};
+use cubecl::{
+    features::MmaConfig,
+    prelude::CubePrimitive,
+    std::tensor::TensorHandle,
+    zspace::{Shape, Strides},
 };
 use cubek_convolution::components::ConvolutionProblem;
 use std::fmt::Display;

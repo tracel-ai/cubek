@@ -1,22 +1,24 @@
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::stage::StageMemoryConfig;
 
-use crate::components::global::multi_stage::EventLoadingMode;
-use crate::components::global::read::ReaderMode;
 use crate::components::global::{
     GlobalWriterConfig, InputLoadFlow, LoadFlows, PlaneFlowConfig, SpecializedLoadingSides,
 };
-use crate::components::stage::StageConfig;
-use crate::components::{global::memory::GlobalMemoryConfig, stage::NumStages};
-use crate::definition::StageIdent;
-use crate::definition::TilingBlueprint;
-use crate::definition::{AccG, MatmulSetupError};
-use crate::definition::{LhsG, MatmulElems, MatmulVectorSizes, RhsG};
-use crate::definition::{MatmulProblem, MatmulTypes};
-use crate::{components::CubeDimResource, launch::RuntimeConfig};
+use crate::{
+    components::global::multi_stage::EventLoadingMode, components::global::read::ReaderMode,
+};
+use crate::{
+    components::stage::StageConfig,
+    components::{global::memory::GlobalMemoryConfig, stage::NumStages},
+    definition::StageIdent,
+    definition::TilingBlueprint,
+    definition::{AccG, MatmulSetupError},
+    definition::{LhsG, MatmulElems, MatmulVectorSizes, RhsG},
+    definition::{MatmulProblem, MatmulTypes},
+    {components::CubeDimResource, launch::RuntimeConfig},
+};
 use cubecl::std::tensor::{View, layout::Coords2d};
-use std::fmt::Debug;
-use std::hash::Hash;
+use std::{fmt::Debug, hash::Hash};
 
 /// A family of [matmuls](GlobalMatmul) working with any [precision](MatmulPrecision).
 pub trait GlobalMatmulFamily<RC: RuntimeConfig>: Send + Sync + 'static {

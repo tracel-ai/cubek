@@ -1,22 +1,25 @@
-use crate::components::tile::SharedTileConfig;
-use crate::components::tile::TileMatmulFamily;
-use crate::components::tile::plane_vec_mat_inner_product::config::PlaneVecMatInnerProductConfig;
-use crate::components::tile::plane_vec_mat_inner_product::matmul::PlaneVecMatInnerProduct;
 use crate::components::{
     resource::CubeDimResource,
     tile::plane_vec_mat_inner_product::reader::{MatrixFragmentReader, MatrixStageReader},
 };
-use crate::definition::{MatmulAvailabilityError, MatmulElems, MatmulSetupError};
-use crate::definition::{MatmulVectorSizes, TilingBlueprint};
-use cubecl::ir::{ElemType, FloatKind};
-use cubecl::prelude::*;
+use crate::{
+    components::tile::SharedTileConfig, components::tile::TileMatmulFamily,
+    components::tile::plane_vec_mat_inner_product::config::PlaneVecMatInnerProductConfig,
+    components::tile::plane_vec_mat_inner_product::matmul::PlaneVecMatInnerProduct,
+};
+use crate::{
+    definition::{MatmulAvailabilityError, MatmulElems, MatmulSetupError},
+    definition::{MatmulVectorSizes, TilingBlueprint},
+};
 use cubecl::{
     features::{Plane, TypeUsage},
     ir::DeviceProperties,
 };
-use cubek_std::InvalidConfigError;
-use cubek_std::tile::Strided;
-use cubek_std::tile::TileKind;
+use cubecl::{
+    ir::{ElemType, FloatKind},
+    prelude::*,
+};
+use cubek_std::{InvalidConfigError, tile::Strided, tile::TileKind};
 
 impl<Kind: TileKind> TileMatmulFamily for PlaneVecMatInnerProduct<Kind>
 where

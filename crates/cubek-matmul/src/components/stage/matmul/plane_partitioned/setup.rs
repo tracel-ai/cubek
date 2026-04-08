@@ -21,9 +21,11 @@ use crate::{
 };
 use core::marker::PhantomData;
 use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_std::stage::StageMemoryConfig;
-use cubek_std::tile::Strided;
-use cubek_std::{InvalidConfigError, MatrixLayout};
+use cubek_std::{
+    stage::StageMemoryConfig,
+    tile::Strided,
+    {InvalidConfigError, MatrixLayout},
+};
 
 type STy<T> = crate::definition::Stage<T>;
 type SSz<T> = crate::definition::StageSize<T>;

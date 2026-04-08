@@ -1,8 +1,8 @@
 //! Executes multiple independent global matmuls with optional broadcasting.
 
+pub mod gemv_plane_parallel;
+pub mod gemv_unit_perpendicular;
 pub mod naive;
-pub mod vecmat_plane_parallel;
-pub mod vecmat_unit_perpendicular;
 
 mod base;
 mod layout;

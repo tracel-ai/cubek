@@ -1,11 +1,15 @@
 use cubecl::prelude::*;
-use cubek_std::tile::{Strided, StridedTile, TileKind};
-use cubek_std::{MatrixLayout, as_cmma_layout};
+use cubek_std::{
+    tile::{Strided, StridedTile, TileKind},
+    {MatrixLayout, as_cmma_layout},
+};
 use std::marker::PhantomData;
 
-use crate::components::tile::cmma::reader::CmmaStageReader;
-use crate::components::tile::cmma::writer::CmmaStageWriter;
-use crate::components::tile::{SharedTileConfig, TileMatmul, cmma::reader::CmmaFragmentReader};
+use crate::{
+    components::tile::cmma::reader::CmmaStageReader,
+    components::tile::cmma::writer::CmmaStageWriter,
+    components::tile::{SharedTileConfig, TileMatmul, cmma::reader::CmmaFragmentReader},
+};
 use cubecl::cmma;
 
 /// Uses one plane to perform a small matmul using accelerated instructions.

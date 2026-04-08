@@ -1,13 +1,17 @@
 use crate::suite::assert_result;
-use cubecl::std::tensor::TensorHandle;
-use cubecl::{Runtime, client};
-use cubecl::{frontend::CubePrimitive, ir::AddressType};
-use cubecl::{prelude::TensorBinding, zspace::shape};
+use cubecl::{
+    std::tensor::TensorHandle,
+    {Runtime, client},
+    {frontend::CubePrimitive, ir::AddressType},
+    {prelude::TensorBinding, zspace::shape},
+};
 use cubek_matmul::launch::launch_naive;
 
 use crate::suite::layout_to_stride_spec;
-use cubek_matmul::definition::MatmulGlobalElems;
-use cubek_matmul::definition::{MatmulElems, MatmulIdent, MatmulProblem};
+use cubek_matmul::{
+    definition::MatmulGlobalElems,
+    definition::{MatmulElems, MatmulIdent, MatmulProblem},
+};
 use cubek_std::InputBinding;
 use cubek_matmul::routines::naive;
 use cubek_std::MatrixLayout;

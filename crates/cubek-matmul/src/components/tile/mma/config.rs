@@ -1,5 +1,4 @@
-use cubek_std::stage::SwizzleMode;
-use cubek_std::tile::mma::MmaIOConfig;
+use cubek_std::{stage::SwizzleMode, tile::mma::MmaIOConfig};
 
 use crate::components::tile::{SharedTileConfig, TileConfig};
 

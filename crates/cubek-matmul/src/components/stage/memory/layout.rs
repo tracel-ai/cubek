@@ -1,10 +1,11 @@
 use std::marker::PhantomData;
 
-use cubecl::prelude::*;
-use cubecl::std::tensor::layout::Coords2d;
-use cubek_std::stage::{StageMemoryConfig, SwizzleMode};
-use cubek_std::tile::StridedTile;
-use cubek_std::{InvalidConfigError, MatrixLayout};
+use cubecl::{prelude::*, std::tensor::layout::Coords2d};
+use cubek_std::{
+    stage::{StageMemoryConfig, SwizzleMode},
+    tile::StridedTile,
+    {InvalidConfigError, MatrixLayout},
+};
 
 use super::StridedStageMemory;
 

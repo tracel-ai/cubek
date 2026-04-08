@@ -1,15 +1,21 @@
-use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
-use cubecl::zspace::Shape;
-use cubecl::{VectorizationError, prelude::*};
+use cubecl::{
+    std::tensor::{MatrixBatchLayout, matrix_batch_layout},
+    zspace::Shape,
+    {VectorizationError, prelude::*},
+};
 use cubek_std::{InputBinding, MatrixLayout};
 
-use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError};
-use crate::definition::{MatmulVectorSizes, cube_mapping_launch};
+use crate::{
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError},
+    definition::{MatmulVectorSizes, cube_mapping_launch},
+};
 
-use crate::launch::InputArg;
-use crate::launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs};
-use crate::routines::vecmat_unit_perpendicular::VecMatUnitPerpendicularRoutine;
-use crate::routines::{BlueprintStrategy, Routine as _};
+use crate::{
+    launch::InputArg,
+    launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs},
+    routines::vecmat_unit_perpendicular::GemvUnitPerpendicularRoutine,
+    routines::{BlueprintStrategy, Routine as _},
+};
 
 #[allow(clippy::result_large_err)]
 pub fn launch_ref<R: Runtime>(
@@ -17,7 +23,7 @@ pub fn launch_ref<R: Runtime>(
     lhs: InputBinding<R>,
     rhs: InputBinding<R>,
     out: TensorBinding<R>,
-    strategy: &BlueprintStrategy<(), VecMatUnitPerpendicularRoutine>,
+    strategy: &BlueprintStrategy<(), GemvUnitPerpendicularRoutine>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let rank = rhs.shape().len();
@@ -122,14 +128,14 @@ pub fn launch_ref<R: Runtime>(
         )));
     }
 
-    let device_settings = VecMatUnitPerpendicularRoutine::device_settings(client, vector_sizes);
+    let device_settings = GemvUnitPerpendicularRoutine::device_settings(client, vector_sizes);
     let expand_info =
-        VecMatUnitPerpendicularRoutine::expand_blueprint(&problem, &device_settings, strategy)?;
+        GemvUnitPerpendicularRoutine::expand_blueprint(&problem, &device_settings, strategy)?;
     let launch_info =
-        VecMatUnitPerpendicularRoutine::prepare(&problem, &device_settings, expand_info)?;
+        GemvUnitPerpendicularRoutine::prepare(&problem, &device_settings, expand_info)?;
 
     let input =
-        <InputArg<TensorArgs> as ConcreteInputsFactory<VecMatUnitPerpendicularRoutine>>::create(
+        <InputArg<TensorArgs> as ConcreteInputsFactory<GemvUnitPerpendicularRoutine>>::create(
             lhs,
             rhs,
             &launch_info.blueprint,
@@ -138,7 +144,7 @@ pub fn launch_ref<R: Runtime>(
             dtypes,
         );
     let output =
-        <OutputArg<TensorArgs> as ConcreteOutputFactory<VecMatUnitPerpendicularRoutine>>::create(
+        <OutputArg<TensorArgs> as ConcreteOutputFactory<GemvUnitPerpendicularRoutine>>::create(
             out,
             &launch_info.blueprint,
             &problem,
@@ -146,7 +152,7 @@ pub fn launch_ref<R: Runtime>(
             dtypes,
         );
 
-    VecMatUnitPerpendicularRoutine::launch::<TensorArgs, R>(
+    GemvUnitPerpendicularRoutine::launch::<TensorArgs, R>(
         client,
         launch_info.cube_dim,
         launch_info.cube_count_plan.resolve(),

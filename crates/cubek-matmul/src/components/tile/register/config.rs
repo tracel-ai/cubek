@@ -1,5 +1,4 @@
-use cubek_std::MatrixLayout;
-use cubek_std::stage::SwizzleMode;
+use cubek_std::{MatrixLayout, stage::SwizzleMode};
 
 use crate::components::tile::{SharedTileConfig, TileConfig};
 

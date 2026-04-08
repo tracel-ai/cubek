@@ -1,13 +1,17 @@
 use std::marker::PhantomData;
 
-use cubecl::prelude::*;
-use cubecl::{cmma::MmaDefinition, ir::MatrixIdent};
+use cubecl::{
+    prelude::*,
+    {cmma::MmaDefinition, ir::MatrixIdent},
+};
 
-use crate::TileSize;
-use crate::tile::mma::config::{LoadMethod, MmaIOConfig};
-use crate::tile::strided_tile::StridedTile;
-use crate::tile::tile_kind::{Filled, Strided, TileKind};
-use crate::{MatrixLayout, as_cmma_layout, from_cmma_layout};
+use crate::{
+    TileSize,
+    tile::mma::config::{LoadMethod, MmaIOConfig},
+    tile::strided_tile::StridedTile,
+    tile::tile_kind::{Filled, Strided, TileKind},
+    {MatrixLayout, as_cmma_layout, from_cmma_layout},
+};
 
 /// Generic CMMA reader over any tile type
 #[cube]

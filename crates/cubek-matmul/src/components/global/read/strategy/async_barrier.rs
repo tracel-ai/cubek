@@ -1,5 +1,4 @@
-use cubecl::prelude::barrier::Barrier;
-use cubecl::prelude::*;
+use cubecl::{prelude::barrier::Barrier, prelude::*};
 
 use crate::{
     components::{

@@ -1,18 +1,22 @@
 use std::marker::PhantomData;
 
-use crate::components::batch::base::BatchMatmulFamily;
-use crate::components::batch::naive::{NaiveBatchMatmulFamily, NaiveBlueprint};
-use crate::components::batch::{BatchConfig as _, SliceIndex};
+use crate::{
+    components::batch::base::BatchMatmulFamily,
+    components::batch::naive::{NaiveBatchMatmulFamily, NaiveBlueprint},
+    components::batch::{BatchConfig as _, SliceIndex},
+};
 
 use crate::{
     components::batch::{BatchMatmul, naive::NaiveMatmulConfig},
     definition::*,
     launch::MatmulArgs,
 };
-use cubecl::prelude::*;
-use cubecl::std::tensor::View;
-use cubecl::std::tensor::layout::Coords2d;
-use cubecl::{cube, num_traits::Zero};
+use cubecl::{
+    prelude::*,
+    std::tensor::View,
+    std::tensor::layout::Coords2d,
+    {cube, num_traits::Zero},
+};
 use cubek_std::MatrixLayout;
 
 #[cube(launch_unchecked, explicit_define, address_type = "dynamic")]

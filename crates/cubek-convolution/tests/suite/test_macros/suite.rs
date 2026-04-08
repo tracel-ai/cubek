@@ -1,7 +1,10 @@
-use crate::suite::convolution_test_launcher::test_convolution_algorithm;
-use crate::suite::test_utils::TestPrecision;
-use cubecl::{Runtime, TestRuntime, zspace::shape};
-use cubecl::{frontend::CubePrimitive, ir::AddressType};
+use crate::{
+    suite::convolution_test_launcher::test_convolution_algorithm, suite::test_utils::TestPrecision,
+};
+use cubecl::{
+    {Runtime, TestRuntime, zspace::shape},
+    {frontend::CubePrimitive, ir::AddressType},
+};
 use cubek_convolution::{
     components::{
         ConvolutionOperation, ConvolutionProblem, Dimensionality, global::args::RuntimeArgs,

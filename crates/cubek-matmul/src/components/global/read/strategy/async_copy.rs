@@ -1,6 +1,8 @@
-use cubecl::prelude::barrier::{copy_async, copy_async_checked};
-use cubecl::prelude::*;
-use cubecl::std::tensor::{View, layout::Coords2d};
+use cubecl::{
+    prelude::barrier::{copy_async, copy_async_checked},
+    prelude::*,
+    std::tensor::{View, layout::Coords2d},
+};
 use cubek_std::MatrixLayout;
 
 use crate::components::{

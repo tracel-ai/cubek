@@ -1,14 +1,20 @@
-use crate::components::resource::CubeDimResource;
-use crate::components::tile::SharedTileConfig;
-use crate::components::tile::mma::config::MmaMatmulConfig;
-use crate::components::tile::{TileMatmulFamily, mma::MmaMatmul};
-use crate::definition::{MatmulAvailabilityError, MatmulElems, MatmulSetupError};
-use crate::definition::{MatmulVectorSizes, TilingBlueprint};
-use cubecl::{features::MmaConfig, ir::DeviceProperties};
-use cubecl::{ir::StorageType, prelude::*};
-use cubek_std::tile::mma::{MmaFragmentReader, MmaIOConfig, MmaStageReader};
-use cubek_std::tile::{Strided, TileKind};
-use cubek_std::{InvalidConfigError, TileSize};
+use crate::{
+    components::resource::CubeDimResource,
+    components::tile::SharedTileConfig,
+    components::tile::mma::config::MmaMatmulConfig,
+    components::tile::{TileMatmulFamily, mma::MmaMatmul},
+    definition::{MatmulAvailabilityError, MatmulElems, MatmulSetupError},
+    definition::{MatmulVectorSizes, TilingBlueprint},
+};
+use cubecl::{
+    {features::MmaConfig, ir::DeviceProperties},
+    {ir::StorageType, prelude::*},
+};
+use cubek_std::{
+    tile::mma::{MmaFragmentReader, MmaIOConfig, MmaStageReader},
+    tile::{Strided, TileKind},
+    {InvalidConfigError, TileSize},
+};
 
 impl<LhsTile: TileKind, RhsTile: TileKind, AccTile: TileKind> TileMatmulFamily
     for MmaMatmul<LhsTile, RhsTile, AccTile>

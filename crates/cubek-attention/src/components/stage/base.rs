@@ -1,5 +1,7 @@
-use cubecl::prelude::*;
-use cubecl::{self, ir::DeviceProperties};
+use cubecl::{
+    prelude::*,
+    {self, ir::DeviceProperties},
+};
 use cubek_matmul::components::{
     global::{WriteEventListener, WriteTiling, read::sync_full_cyclic::SyncFullCyclicLoading},
     stage::{ContiguousTilingLayout, RowMajorTilingOrder, StageFamily},

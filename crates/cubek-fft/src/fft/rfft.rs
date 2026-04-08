@@ -4,8 +4,10 @@ use cubecl::std::tensor::{
     AsView as _, AsViewExpand, AsViewMut as _, AsViewMutExpand, layout::plain::PlainLayout,
 };
 
-use crate::fft::{FftMode, fft_inner_compute};
-use crate::layout::BatchSignalLayout;
+use crate::{
+    fft::{FftMode, fft_inner_compute},
+    layout::BatchSignalLayout,
+};
 
 /// Real-valued Fast Fourier Transform kernel.
 ///

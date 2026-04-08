@@ -1,6 +1,8 @@
 use crate::attention::assert_result;
-use cubecl::server::ServerError;
-use cubecl::{TestRuntime, prelude::CubePrimitive as _, zspace::Shape};
+use cubecl::{
+    server::ServerError,
+    {TestRuntime, prelude::CubePrimitive as _, zspace::Shape},
+};
 use cubek_attention::{
     definition::{AttentionElems, AttentionIdent, AttentionOptions, AttentionProblem},
     launch::{Strategy, launch_ref},

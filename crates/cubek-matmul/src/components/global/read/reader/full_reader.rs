@@ -1,18 +1,22 @@
 use std::marker::PhantomData;
 
-use crate::components::global::multi_stage::JobExecutor;
-use crate::components::global::multi_stage::LoadMaxRoundPlaneCount;
-use crate::components::global::read::LoadingJob;
-use crate::components::global::read::LoadingValidation;
-use crate::components::global::read::StageBuffer;
-use crate::components::global::read::SyncStrategy;
-use crate::components::global::read::TaskCounter;
-use crate::components::global::{multi_stage::JobIterator, read::FullLoaderStage};
-use crate::components::stage::TilingLayout;
-use crate::components::{global::memory::GlobalIterator, stage::LoadStageFamily};
-use crate::{components::global::GlobalReaderConfig, launch::RuntimeConfig};
-use cubecl::prelude::*;
-use cubecl::std::tensor::{View, layout::Coords2d};
+use crate::{
+    components::global::multi_stage::JobExecutor,
+    components::global::multi_stage::LoadMaxRoundPlaneCount,
+    components::global::read::LoadingJob,
+    components::global::read::LoadingValidation,
+    components::global::read::StageBuffer,
+    components::global::read::SyncStrategy,
+    components::global::read::TaskCounter,
+    components::global::{multi_stage::JobIterator, read::FullLoaderStage},
+    components::stage::TilingLayout,
+    components::{global::memory::GlobalIterator, stage::LoadStageFamily},
+    {components::global::GlobalReaderConfig, launch::RuntimeConfig},
+};
+use cubecl::{
+    prelude::*,
+    std::tensor::{View, layout::Coords2d},
+};
 use cubek_std::tile::TileKind;
 
 pub type SyncBarrier<S> = <S as SyncStrategy>::Barrier;

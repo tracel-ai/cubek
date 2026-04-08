@@ -3,18 +3,13 @@ use crate::components::{
     batch::{BatchAttentionConfig, BatchAttentionFamily},
     stage::StageAttentionConfig,
 };
-use crate::definition::AttentionBlueprint;
-use crate::definition::AttentionElems;
-use crate::definition::CubeCountInput;
-use crate::launch::AttentionArgs;
-use crate::launch::TensorKey;
-use crate::launch::TensorMask;
-use crate::launch::TensorOutput;
-use crate::launch::TensorQuery;
-use crate::launch::TensorValue;
+use crate::{
+    definition::AttentionBlueprint, definition::AttentionElems, definition::CubeCountInput,
+    launch::AttentionArgs, launch::TensorKey, launch::TensorMask, launch::TensorOutput,
+    launch::TensorQuery, launch::TensorValue,
+};
 use cubecl;
-use cubecl::prelude::*;
-use cubecl::std::tensor::r#virtual::VirtualTensor;
+use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
 
 type Input<Args, QG, KG, VG, MSK> = <Args as AttentionArgs>::Input<QG, KG, VG, MSK>;
 type Output<Args, OG> = <Args as AttentionArgs>::Output<OG>;

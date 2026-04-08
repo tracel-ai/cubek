@@ -141,8 +141,7 @@ macro_rules! testgen_reduce {
         /// plane_size`.
         mod full_cube_single_plane {
             use super::*;
-            use cubek_reduce::routines::CubeBlueprint;
-            use cubek_reduce::{BoundChecks, IdleMode};
+            use cubek_reduce::{routines::CubeBlueprint, {BoundChecks, IdleMode}};
             use cubecl::prelude::CubeDim;
 
             testgen_reduce!(
@@ -171,8 +170,7 @@ macro_rules! testgen_reduce {
         /// arithmetic.
         mod full_plane_single_plane {
             use super::*;
-            use cubek_reduce::routines::PlaneReduceBlueprint;
-            use cubek_reduce::{BoundChecks, IdleMode};
+            use cubek_reduce::{routines::PlaneReduceBlueprint, {BoundChecks, IdleMode}};
             use cubecl::prelude::CubeDim;
 
             mod plane_size_32 {

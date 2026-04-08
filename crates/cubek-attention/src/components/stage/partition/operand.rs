@@ -1,10 +1,12 @@
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::components::tile::Query;
-use crate::components::tile::matmul::InnerMatmul;
-use crate::components::tile::{Key, Value};
-use crate::definition::AttentionPartitionSize;
+use crate::{
+    components::tile::Query,
+    components::tile::matmul::InnerMatmul,
+    components::tile::{Key, Value},
+    definition::AttentionPartitionSize,
+};
 
 #[derive(CubeType)]
 /// Contains all seq_q·head_dim materialized tiles at once because they are reused extensively

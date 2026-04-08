@@ -1,12 +1,14 @@
 use cubecl::prelude::*;
-use cubek_std::MatrixLayout;
-use cubek_std::tile::{Strided, StridedTile};
+use cubek_std::{
+    MatrixLayout,
+    tile::{Strided, StridedTile},
+};
 
-use crate::components::tile::TileMatmul;
-use crate::components::tile::interleaved::config::InterleavedMatmulConfig;
-use crate::components::tile::interleaved::reader::InterleavedStageReader;
-use crate::components::tile::interleaved::writer::InterleavedStageWriter;
-use crate::definition::StageIdent;
+use crate::{
+    components::tile::TileMatmul, components::tile::interleaved::config::InterleavedMatmulConfig,
+    components::tile::interleaved::reader::InterleavedStageReader,
+    components::tile::interleaved::writer::InterleavedStageWriter, definition::StageIdent,
+};
 
 /// Computes a tile matmul where each unit of the plane accumulates an interleaved (by plane_dim)
 /// partial dot-product over K.

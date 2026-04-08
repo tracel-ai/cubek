@@ -1,15 +1,16 @@
 use cubecl::prelude::*;
-use cubek_std::stage::StageMemoryConfig;
-use cubek_std::stage::as_swizzle_object;
-use cubek_std::tile::Strided;
-use cubek_std::tile::StridedTile;
+use cubek_std::{
+    stage::StageMemoryConfig, stage::as_swizzle_object, tile::Strided, tile::StridedTile,
+};
 use std::marker::PhantomData;
 
-use crate::components::global::GlobalReaderConfig;
-use crate::components::global::PlaneFlowPartition;
-use crate::components::stage::Stage;
-use crate::components::stage::{LoadStageFamily, TilingLayout};
-use crate::components::{global::read::StageBuffer, stage::StageFamily};
+use crate::{
+    components::global::GlobalReaderConfig,
+    components::global::PlaneFlowPartition,
+    components::stage::Stage,
+    components::stage::{LoadStageFamily, TilingLayout},
+    components::{global::read::StageBuffer, stage::StageFamily},
+};
 use cubecl::std::{Swizzle, tensor::layout::Coords2d};
 
 pub struct StridedStageFamily;

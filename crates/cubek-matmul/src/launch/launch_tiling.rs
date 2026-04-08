@@ -1,15 +1,19 @@
-use crate::definition::MatmulProblem;
-use crate::definition::{AvailableVectorSizes, MatmulElems, TilingBlueprint};
-use crate::definition::{MatmulAvailabilityError, MatmulSetupError};
-use crate::launch::launch_kernel_concrete;
 use crate::launch::{
     ConcreteInputsFactory, ConcreteOutputFactory, InputArg, MatmulArgs, OutputArg, TensorArgs,
     TensorMapArgs,
 };
 use crate::routines::{BlueprintStrategy, Routine};
-use cubecl::features::TypeUsage;
-use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
-use cubecl::{Runtime, client::ComputeClient, frontend::TensorBinding};
+use crate::{
+    definition::MatmulProblem,
+    definition::{AvailableVectorSizes, MatmulElems, TilingBlueprint},
+    definition::{MatmulAvailabilityError, MatmulSetupError},
+    launch::launch_kernel_concrete,
+};
+use cubecl::{
+    features::TypeUsage,
+    std::tensor::{MatrixBatchLayout, matrix_batch_layout},
+    {Runtime, client::ComputeClient, frontend::TensorBinding},
+};
 use cubek_std::InputBinding;
 
 /// Launch a matrix multiplication kernel.

@@ -1,7 +1,5 @@
 use std::marker::PhantomData;
 
-use crate::components::global::read::validate_async_copy_with_problem;
-use crate::components::global::read::validate_swizzle_atom_size;
 use crate::components::global::{
     GlobalReaderConfig, PlaneFlowPartition, read::async_copy::ASYNC_COPY_WIDTH,
 };
@@ -12,10 +10,6 @@ use crate::components::global::{
         validate_async_copy,
     },
 };
-use crate::components::stage::StridedStageFamily;
-use crate::components::stage::StridedStageMemory;
-use crate::components::stage::{ContiguousTilingLayout, TilingOrder};
-use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
 use crate::components::{
     global::{
         SharedGlobalMatmulConfig,
@@ -23,16 +17,29 @@ use crate::components::{
     },
     stage::StageConfig,
 };
-use crate::definition::MatmulElems;
-use crate::definition::MatmulProblem;
-use crate::definition::MatmulTypes;
-use crate::definition::StageIdent;
-use crate::{components::global::read::validate_async_barrier, launch::RuntimeConfig};
-use cubecl::prelude::*;
-use cubecl::std::tensor::layout::{Layout, LayoutExpand};
-use cubecl::{ir::DeviceProperties, prelude::barrier::Barrier};
-use cubek_std::InvalidConfigError;
-use cubek_std::tile::Strided;
+use crate::{
+    components::global::read::validate_async_copy_with_problem,
+    components::global::read::validate_swizzle_atom_size,
+};
+use crate::{
+    components::stage::StridedStageFamily,
+    components::stage::StridedStageMemory,
+    components::stage::{ContiguousTilingLayout, TilingOrder},
+    components::{global::memory::GlobalIterator, stage::TilingValidation},
+};
+use crate::{
+    definition::MatmulElems,
+    definition::MatmulProblem,
+    definition::MatmulTypes,
+    definition::StageIdent,
+    {components::global::read::validate_async_barrier, launch::RuntimeConfig},
+};
+use cubecl::{
+    prelude::*,
+    std::tensor::layout::{Layout, LayoutExpand},
+    {ir::DeviceProperties, prelude::barrier::Barrier},
+};
+use cubek_std::{InvalidConfigError, tile::Strided};
 
 use super::{LoadingJob, LoadingValidation, ReaderMode};
 

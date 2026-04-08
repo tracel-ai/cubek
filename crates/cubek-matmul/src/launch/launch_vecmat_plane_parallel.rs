@@ -1,14 +1,21 @@
-use cubecl::zspace::Shape;
-use cubecl::{VectorizationError, prelude::*};
+use cubecl::{
+    zspace::Shape,
+    {VectorizationError, prelude::*},
+};
 use cubek_std::{InputBinding, MatrixLayout};
 
-use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError};
-use crate::definition::{MatmulVectorSizes, cube_mapping_launch};
+use crate::{
+    components::batch::gemv_plane_parallel::GemvKind,
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError},
+    definition::{MatmulVectorSizes, cube_mapping_launch},
+};
 
-use crate::launch::InputArg;
-use crate::launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs};
-use crate::routines::vecmat_plane_parallel::VecMatPlaneParallelRoutine;
-use crate::routines::{BlueprintStrategy, Routine as _};
+use crate::{
+    launch::InputArg,
+    launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs},
+    routines::vecmat_plane_parallel::GemvPlaneParallelRoutine,
+    routines::{BlueprintStrategy, Routine as _},
+};
 
 #[allow(clippy::result_large_err)]
 pub fn launch_ref<R: Runtime>(
@@ -16,28 +23,23 @@ pub fn launch_ref<R: Runtime>(
     lhs: InputBinding<R>,
     rhs: InputBinding<R>,
     out: TensorBinding<R>,
-    strategy: &BlueprintStrategy<(), VecMatPlaneParallelRoutine>,
+    strategy: &BlueprintStrategy<(), GemvPlaneParallelRoutine>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let rank = rhs.shape().len();
 
-    let m = lhs.shape().to_vec()[rank - 2];
-    let n = rhs.shape().to_vec()[rank - 1];
-    let k = lhs.shape().to_vec()[rank - 1];
-
-    if m != 1 {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(
-            "m must equal 1 to qualify as a vecmat problem",
-        )));
-    }
-
+    let lhs_shape = lhs.shape();
     let rhs_shape = rhs.shape();
+
+    let m = lhs_shape.to_vec()[rank - 2];
+    let n = rhs_shape.to_vec()[rank - 1];
+    let k = lhs_shape.to_vec()[rank - 1];
 
     let plane_size = client.properties().hardware.plane_size_max as usize;
 
     if !k.is_multiple_of(plane_size) {
         return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-            "Lhs dimension k={} must be a multiple of plane size {}",
+            "Dimension k={} must be a multiple of plane size {}",
             k, plane_size
         ))));
     }
@@ -55,7 +57,6 @@ pub fn launch_ref<R: Runtime>(
         .max()
         .ok_or(VectorizationError::NoValidVectorization)?;
 
-    // Assumes rhs is col major
     let rhs_vector_size = client
         .io_optimized_vector_sizes(dtypes.rhs_global.size())
         .map(|v| {
@@ -65,7 +66,7 @@ pub fn launch_ref<R: Runtime>(
                 v
             }
         })
-        .filter(|&v| n.is_multiple_of(plane_size * v))
+        .filter(|&v| k.is_multiple_of(plane_size * v))
         .max()
         .ok_or(VectorizationError::NoValidVectorization)?;
 
@@ -86,12 +87,12 @@ pub fn launch_ref<R: Runtime>(
     let rhs_batches: Shape = rhs.shape().to_vec()[..rank - 2].into();
 
     let problem = MatmulProblem::from_parameters(
-        1,
+        m,
         n,
         k,
         lhs_batches,
         rhs_batches,
-        MatrixLayout::RowMajor,
+        MatrixLayout::from_shape_and_strides(lhs_shape, &lhs.data().strides, lhs.scheme())?,
         MatrixLayout::from_shape_and_strides(rhs_shape, &rhs.data().strides, rhs.scheme())?,
         MatrixLayout::RowMajor,
         lhs.scheme(),
@@ -100,18 +101,23 @@ pub fn launch_ref<R: Runtime>(
         address_type,
     );
 
-    if problem.rhs_layout != MatrixLayout::ColMajor {
+    let device_settings = GemvPlaneParallelRoutine::device_settings(client, vector_sizes);
+    let expand_info =
+        GemvPlaneParallelRoutine::expand_blueprint(&problem, &device_settings, strategy)?;
+
+    if matches!(expand_info.blueprint.kind, GemvKind::MatVecColMajor) {
+        return Err(MatmulSetupError::InvalidConfig(Box::new(
+            "MatVec plane parallel only supports col major lhs for now",
+        )));
+    } else if matches!(expand_info.blueprint.kind, GemvKind::VecMatRowMajor) {
         return Err(MatmulSetupError::InvalidConfig(Box::new(
             "Vecmat plane parallel only supports col major rhs for now",
         )));
     }
 
-    let device_settings = VecMatPlaneParallelRoutine::device_settings(client, vector_sizes);
-    let expand_info =
-        VecMatPlaneParallelRoutine::expand_blueprint(&problem, &device_settings, strategy)?;
-    let launch_info = VecMatPlaneParallelRoutine::prepare(&problem, &device_settings, expand_info)?;
+    let launch_info = GemvPlaneParallelRoutine::prepare(&problem, &device_settings, expand_info)?;
 
-    let input = <InputArg<TensorArgs> as ConcreteInputsFactory<VecMatPlaneParallelRoutine>>::create(
+    let input = <InputArg<TensorArgs> as ConcreteInputsFactory<GemvPlaneParallelRoutine>>::create(
         lhs,
         rhs,
         &launch_info.blueprint,
@@ -119,16 +125,15 @@ pub fn launch_ref<R: Runtime>(
         &vector_sizes,
         dtypes,
     );
-    let output =
-        <OutputArg<TensorArgs> as ConcreteOutputFactory<VecMatPlaneParallelRoutine>>::create(
-            out,
-            &launch_info.blueprint,
-            &problem,
-            &vector_sizes,
-            dtypes,
-        );
+    let output = <OutputArg<TensorArgs> as ConcreteOutputFactory<GemvPlaneParallelRoutine>>::create(
+        out,
+        &launch_info.blueprint,
+        &problem,
+        &vector_sizes,
+        dtypes,
+    );
 
-    VecMatPlaneParallelRoutine::launch::<TensorArgs, R>(
+    GemvPlaneParallelRoutine::launch::<TensorArgs, R>(
         client,
         launch_info.cube_dim,
         launch_info.cube_count_plan.resolve(),

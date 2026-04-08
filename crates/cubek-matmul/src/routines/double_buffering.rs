@@ -1,5 +1,4 @@
-use std::fmt::Display;
-use std::marker::PhantomData;
+use std::{fmt::Display, marker::PhantomData};
 
 use cubecl::Runtime;
 use cubek_std::tile::Strided;
@@ -8,8 +7,6 @@ use crate::components::batch::{PartitionedBatchMatmulFamily, RowMajorGlobalParti
 use crate::components::global::{
     PlaneWriterFamily, read::sync_partial_tilewise::SyncPartialTilewiseLoading,
 };
-use crate::components::stage::{ColMajorTilingOrder, PlaneMatmulFamily, RowMajorTilingOrder};
-use crate::components::tile;
 use crate::components::{
     batch::BatchMatmulFamily, global::read::sync_full_cyclic::SyncFullCyclicLoading,
 };
@@ -19,10 +16,6 @@ use crate::components::{
 use crate::definition::{
     MatmulElems, MatmulProblem, MatmulSetupError, MultiRowStrategy, TilingBlueprint,
 };
-use crate::launch::RuntimeConfig;
-use crate::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
-use crate::routines::{BlueprintStrategy, LaunchInfo, base};
-use crate::routines::{DeviceSettings, Routine};
 use crate::{
     components::global::read::{
         async_full_cyclic::AsyncFullCyclicLoading, async_full_strided::AsyncFullStridedLoading,
@@ -32,6 +25,16 @@ use crate::{
         sync_partial_cyclic::SyncPartialCyclicLoading,
     },
     routines::ExpandInfo,
+};
+use crate::{
+    components::stage::{ColMajorTilingOrder, PlaneMatmulFamily, RowMajorTilingOrder},
+    components::tile,
+};
+use crate::{
+    launch::RuntimeConfig,
+    routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane},
+    routines::{BlueprintStrategy, LaunchInfo, base},
+    routines::{DeviceSettings, Routine},
 };
 
 /// Plane accelerated double buffered matmul with cyclic readers

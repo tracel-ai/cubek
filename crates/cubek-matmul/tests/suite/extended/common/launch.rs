@@ -1,10 +1,11 @@
 use super::*;
 #[allow(deprecated)]
 use crate::suite::test_matmul_routine;
-use cubecl::Runtime;
-use cubecl::TestRuntime;
-use cubek_matmul::definition::{MatmulElems, TilingBlueprint, TilingScheme};
-use cubek_matmul::routines::BlueprintStrategy;
+use cubecl::{Runtime, TestRuntime};
+use cubek_matmul::{
+    definition::{MatmulElems, TilingBlueprint, TilingScheme},
+    routines::BlueprintStrategy,
+};
 
 #[test]
 pub fn test() {

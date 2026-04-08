@@ -1,21 +1,22 @@
 use cubecl;
-use cubecl::prelude::*;
-use cubecl::std::tensor::r#virtual::VirtualTensor;
-use cubek_matmul::components::global::PartitionedStage;
-use cubek_matmul::components::global::read::FullStageGlobalReader;
-use cubek_matmul::components::stage::StridedStageMemory;
+use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
+use cubek_matmul::{
+    components::global::PartitionedStage, components::global::read::FullStageGlobalReader,
+    components::stage::StridedStageMemory,
+};
 use std::marker::PhantomData;
 
-use crate::components::global::AttentionGlobalLayout;
-use crate::components::global::simple::QueryReader;
-use crate::components::global::simple::{AttentionWriter, AttentionWriterExpand, MaskReader};
-use crate::components::global::{GlobalAttention, simple::config::SimpleGlobalAttentionConfig};
 use crate::components::stage::{
     AttentionLoadingStrategy, AttentionPartitioner, AttentionTilingLayout, StageAttention,
     StageAttentionConfig as _,
 };
-use crate::definition::AttentionPrecision;
-use crate::definition::attention_types::*;
+use crate::{
+    components::global::AttentionGlobalLayout,
+    components::global::simple::QueryReader,
+    components::global::simple::{AttentionWriter, AttentionWriterExpand, MaskReader},
+    components::global::{GlobalAttention, simple::config::SimpleGlobalAttentionConfig},
+};
+use crate::{definition::AttentionPrecision, definition::attention_types::*};
 
 pub struct SimpleGlobalAttention<AP: AttentionPrecision, SA: StageAttention<AP>> {
     _phantom: PhantomData<(AP, SA)>,

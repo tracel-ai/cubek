@@ -1,11 +1,13 @@
 use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding};
 
-use crate::definition::AttentionSetupError;
-use crate::definition::{AttentionDims, AttentionGlobalTypes, AttentionOptions, AttentionProblem};
-use crate::launch::args::{TensorArgs, TensorInputsLaunch};
-use crate::routines::DeviceSettings;
 use crate::routines::{
     Routine, blackbox_accelerated::BlackboxAcceleratedRoutine, unit::UnitRoutine,
+};
+use crate::{
+    definition::AttentionSetupError,
+    definition::{AttentionDims, AttentionGlobalTypes, AttentionOptions, AttentionProblem},
+    launch::args::{TensorArgs, TensorInputsLaunch},
+    routines::DeviceSettings,
 };
 
 use crate::components::batch::BatchAttentionFamily;

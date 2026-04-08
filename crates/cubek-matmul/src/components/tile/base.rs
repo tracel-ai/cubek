@@ -8,8 +8,12 @@ use cubek_std::{
     tile::{Tile, TileKind, TileMut},
 };
 
-use crate::components::{resource::CubeDimResource, tile::TileConfig};
-use crate::definition::{MatmulElems, MatmulSetupError, MatmulVectorSizes, TilingBlueprint};
+use crate::{
+    components::resource::CubeDimResource,
+    components::tile::TileConfig,
+    definition::{MatmulElems, TilingBlueprint},
+    definition::{MatmulSetupError, MatmulVectorSizes},
+};
 
 /// A family of [TileMatmul] implementations that operate with any precision.
 pub trait TileMatmulFamily: Send + Sync + 'static {

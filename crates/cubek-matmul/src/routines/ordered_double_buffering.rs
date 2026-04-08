@@ -1,13 +1,8 @@
-use std::fmt::Display;
-use std::marker::PhantomData;
+use std::{fmt::Display, marker::PhantomData};
 
 use cubecl::Runtime;
 use cubek_std::tile::Strided;
 
-use crate::components::global::multi_stage::ordered::OrderedDoubleBufferingMatmulFamily;
-use crate::components::global::read::sync_partial_cyclic::SyncPartialCyclicLoading;
-use crate::components::stage::{PlaneMatmulFamily, RowMajorTilingOrder};
-use crate::components::tile;
 use crate::components::{
     batch::BatchMatmulFamily, global::read::sync_full_cyclic::SyncFullCyclicLoading,
 };
@@ -18,10 +13,18 @@ use crate::components::{
 use crate::definition::{
     MatmulElems, MatmulProblem, MatmulSetupError, MultiRowStrategy, TilingBlueprint,
 };
-use crate::launch::RuntimeConfig;
-use crate::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
-use crate::routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, Routine};
-use crate::{components::global::PlaneWriterFamily, routines::ExpandInfo};
+use crate::{
+    components::global::multi_stage::ordered::OrderedDoubleBufferingMatmulFamily,
+    components::global::read::sync_partial_cyclic::SyncPartialCyclicLoading,
+    components::stage::{PlaneMatmulFamily, RowMajorTilingOrder},
+    components::tile,
+};
+use crate::{
+    launch::RuntimeConfig,
+    routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane},
+    routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, Routine},
+    {components::global::PlaneWriterFamily, routines::ExpandInfo},
+};
 
 /// Plane accelerated double buffered matmul ordered on Lhs with cyclic reader on Rhs
 pub struct OrderedDoubleBufferingAlgorithm<TMM> {

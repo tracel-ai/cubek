@@ -1,5 +1,4 @@
-use cubecl::prelude::*;
-use cubecl::std::tensor::layout::Coords2d;
+use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 
 #[derive(Default, Copy, Clone, Debug, Hash, PartialEq, Eq)]
 /// Describes the global traversal order as flattened cube position increases.

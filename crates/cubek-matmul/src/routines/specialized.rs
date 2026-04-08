@@ -1,17 +1,12 @@
-use std::fmt::Display;
-use std::marker::PhantomData;
+use std::{fmt::Display, marker::PhantomData};
 
-use cubecl::Runtime;
-use cubecl::client::ComputeClient;
-use cubecl::features::MmaConfig;
-use cubek_std::MatrixLayout;
-use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation};
-use cubek_std::tile::Strided;
+use cubecl::{Runtime, client::ComputeClient, features::MmaConfig};
+use cubek_std::{
+    MatrixLayout,
+    cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation},
+    tile::Strided,
+};
 
-use crate::components::batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul};
-use crate::components::global::PlaneWriterFamily;
-use crate::components::tile::TileMatmulFamily;
-use crate::components::{global::read::FullLoadingStrategy, tile};
 use crate::components::{
     global::read::sync_full_strided::SyncFullStridedLoading, stage::PlaneMatmulFamily,
 };
@@ -19,10 +14,12 @@ use crate::definition::{
     MatmulProblem, MatmulSetupError, MatmulVectorSizes, SwizzleModes, TilingBlueprint,
     adjust_dtypes,
 };
-use crate::launch::RuntimeConfig;
-use crate::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
-use crate::routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, base};
-use crate::{components::batch::BatchMatmulFamily, routines::ExpandInfo};
+use crate::{
+    components::batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
+    components::global::PlaneWriterFamily,
+    components::tile::TileMatmulFamily,
+    components::{global::read::FullLoadingStrategy, tile},
+};
 use crate::{
     components::global::{
         multi_stage::specialized::SpecializedMatmulFamily,
@@ -36,6 +33,12 @@ use crate::{
         stage::PartitionBuffering,
     },
     routines::selector::select_swizzle,
+};
+use crate::{
+    launch::RuntimeConfig,
+    routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane},
+    routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, base},
+    {components::batch::BatchMatmulFamily, routines::ExpandInfo},
 };
 
 /// Plane accelerated specialized matmul with TMA readers

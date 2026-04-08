@@ -1,21 +1,21 @@
 use std::marker::PhantomData;
 
 use super::fragments::{Accumulators, RhsTile, RhsTileExpand};
-use crate::components::stage::Stage;
-use crate::components::stage::StageEvent;
-use crate::components::stage::matmul::scheduler::PartitionScheduler;
-use crate::components::stage::{PartitionBuffering, StageEventListener};
-use crate::components::tile::{TileConfig, TileMatmul};
-use crate::definition::{MatmulTypes, MatrixTypes};
-use crate::{components::global::PlaneFlowConfig, definition::Lhs};
 use crate::{
     components::stage::PartitionSchedulerScheme,
     definition::{Acc, Rhs},
 };
+use crate::{
+    components::stage::Stage,
+    components::stage::StageEvent,
+    components::stage::matmul::scheduler::PartitionScheduler,
+    components::stage::{PartitionBuffering, StageEventListener},
+    components::tile::{TileConfig, TileMatmul},
+    definition::{MatmulTypes, MatrixTypes},
+    {components::global::PlaneFlowConfig, definition::Lhs},
+};
 use cubecl::prelude::*;
-use cubek_std::PartitionSize;
-use cubek_std::StageSize;
-use cubek_std::stage::StageMemoryConfig;
+use cubek_std::{PartitionSize, StageSize, stage::StageMemoryConfig};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct SharedPartitionMatmulConfig<TC: TileConfig> {

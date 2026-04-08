@@ -1,21 +1,23 @@
-use crate::components::tile::SharedTileConfig;
-use crate::components::tile::TileMatmulFamily;
-use crate::components::tile::register::config::RegisterMatmulConfig;
-use crate::components::tile::register::matmul::RegisterMatmul;
 use crate::components::{
     resource::CubeDimResource,
     tile::register::reader::{RegisterFragmentReader, RegisterStageReader},
 };
-use crate::definition::TilingBlueprint;
-use crate::definition::{MatmulAvailabilityError, MatmulElems};
-use crate::definition::{MatmulSetupError, MatmulVectorSizes};
-use cubecl::ir::{ElemType, FloatKind};
-use cubecl::prelude::*;
-use cubecl::{features::TypeUsage, ir::DeviceProperties};
-use cubek_std::InvalidConfigError;
-use cubek_std::MatrixLayout;
-use cubek_std::tile::Strided;
-use cubek_std::tile::TileKind;
+use crate::{
+    components::tile::SharedTileConfig, components::tile::TileMatmulFamily,
+    components::tile::register::config::RegisterMatmulConfig,
+    components::tile::register::matmul::RegisterMatmul,
+};
+use crate::{
+    definition::TilingBlueprint,
+    definition::{MatmulAvailabilityError, MatmulElems},
+    definition::{MatmulSetupError, MatmulVectorSizes},
+};
+use cubecl::{
+    ir::{ElemType, FloatKind},
+    prelude::*,
+    {features::TypeUsage, ir::DeviceProperties},
+};
+use cubek_std::{InvalidConfigError, MatrixLayout, tile::Strided, tile::TileKind};
 
 impl<AccTile: TileKind> TileMatmulFamily for RegisterMatmul<AccTile>
 where

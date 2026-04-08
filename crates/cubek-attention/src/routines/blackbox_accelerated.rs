@@ -1,23 +1,31 @@
-use cubecl::client::ComputeClient;
-use cubecl::prelude::CubePrimitive;
-use cubecl::{CubeDim, Runtime};
-use cubek_matmul::components::{global::PartitionedStageFamily, stage::StridedStageFamily};
-use cubek_matmul::routines::find_instruction_size;
+use cubecl::{
+    client::ComputeClient,
+    prelude::CubePrimitive,
+    {CubeDim, Runtime},
+};
+use cubek_matmul::{
+    components::{global::PartitionedStageFamily, stage::StridedStageFamily},
+    routines::find_instruction_size,
+};
 
-use crate::components::stage::plane::PlanePartitionStageAttentionFamily;
-use crate::components::tile::attention::blackbox::BlackboxAcceleratedTileAttention;
-use crate::definition::AttentionTileSize;
 use crate::definition::{
     AttentionBlueprint, AttentionElems, AttentionPartitionSize, AttentionProblem,
     AttentionSetupError, AttentionStageSize, AttentionTilingScheme, HypercubeBlueprint,
 };
-use crate::launch::BlueprintStrategy;
-use crate::routines::{DeviceSettings, LaunchInfo};
+use crate::{
+    components::stage::plane::PlanePartitionStageAttentionFamily,
+    components::tile::attention::blackbox::BlackboxAcceleratedTileAttention,
+    definition::AttentionTileSize,
+};
 use crate::{
     components::{
         batch::simple::SimpleBatchAttentionFamily, global::simple::SimpleGlobalAttentionFamily,
     },
     routines::Routine,
+};
+use crate::{
+    launch::BlueprintStrategy,
+    routines::{DeviceSettings, LaunchInfo},
 };
 
 #[derive(Debug, Clone)]

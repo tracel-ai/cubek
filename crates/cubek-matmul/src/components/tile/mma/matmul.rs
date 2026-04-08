@@ -8,8 +8,7 @@ use cubek_std::{
 };
 use std::marker::PhantomData;
 
-use crate::components::tile::TileMatmul;
-use crate::components::tile::mma::config::MmaMatmulConfig;
+use crate::{components::tile::TileMatmul, components::tile::mma::config::MmaMatmulConfig};
 use cubecl::{cmma::MmaDefinition, ir::MatrixIdent};
 
 /// Uses one plane to perform a small matmul using accelerated instructions, with manual register

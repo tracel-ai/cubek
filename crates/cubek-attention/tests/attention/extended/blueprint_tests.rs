@@ -1,7 +1,5 @@
-use crate::attention::extended::utils::tiling_scheme_ops::*;
-use crate::attention::launcher::test_launch;
-use cubecl::ir::AddressType;
-use cubecl::{Runtime, TestRuntime};
+use crate::{attention::extended::utils::tiling_scheme_ops::*, attention::launcher::test_launch};
+use cubecl::{ir::AddressType, {Runtime, TestRuntime}};
 use cubek_attention::definition::{
     AccumulatorPrecision, AttentionDims, AttentionOptions, AttentionPartitionSize,
     AttentionProblem, AttentionStageSize, AttentionTilingScheme, HypercubeBlueprint,

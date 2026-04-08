@@ -1,17 +1,19 @@
-use cubecl::std::tensor::layout::Coords2d;
-use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_std::InvalidConfigError;
-use cubek_std::stage::StageMemoryConfig;
-use cubek_std::tile::TileKind;
+use cubecl::{
+    std::tensor::layout::Coords2d,
+    {ir::DeviceProperties, prelude::*},
+};
+use cubek_std::{InvalidConfigError, stage::StageMemoryConfig, tile::TileKind};
 
-use crate::components::stage::NumStages;
-use crate::components::stage::PartitionScheduler;
-use crate::components::tile::TileConfig;
-use crate::definition::TilingBlueprint;
-use crate::definition::{MatmulElems, MatmulSetupError, MatmulTypes, MatmulVectorSizes};
-use crate::{components::CubeDimResource, definition::Lhs};
-use crate::{components::global::PlaneFlowConfig, definition::Acc};
-use crate::{components::global::WriteEventListener, definition::Rhs};
+use crate::{
+    components::stage::NumStages,
+    components::stage::PartitionScheduler,
+    components::tile::TileConfig,
+    definition::TilingBlueprint,
+    definition::{MatmulElems, MatmulSetupError, MatmulTypes, MatmulVectorSizes},
+    {components::CubeDimResource, definition::Lhs},
+    {components::global::PlaneFlowConfig, definition::Acc},
+    {components::global::WriteEventListener, definition::Rhs},
+};
 use std::{fmt::Debug, hash::Hash};
 
 use super::{StageEventListener, TilingLayout};

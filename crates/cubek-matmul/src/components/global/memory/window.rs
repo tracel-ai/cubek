@@ -1,7 +1,8 @@
-use cubecl::prelude::*;
-use cubecl::std::tensor::{View, layout::Coords2d};
-use cubek_std::MatrixLayout;
-use cubek_std::stage::StageMemoryConfig;
+use cubecl::{
+    prelude::*,
+    std::tensor::{View, layout::Coords2d},
+};
+use cubek_std::{MatrixLayout, stage::StageMemoryConfig};
 
 use crate::components::global::memory::GlobalMemoryConfig;
 

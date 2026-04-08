@@ -1,23 +1,19 @@
-use cubecl::ir::DeviceProperties;
-use cubecl::ir::VectorSize;
-use cubek_matmul::components::CubeDimResource;
-use cubek_matmul::definition::MatmulAvailabilityError;
+use cubecl::{ir::DeviceProperties, ir::VectorSize};
+use cubek_matmul::{components::CubeDimResource, definition::MatmulAvailabilityError};
 use cubek_std::InvalidConfigError;
 
-use crate::components::tile::SharedTileAttentionConfig;
-use crate::components::tile::TileAttentionConfig;
-use crate::components::tile::TileAttentionFamily;
-use crate::components::tile::attention::blackbox::attention::BlackboxAcceleratedTileAttention;
-use crate::components::tile::matmul::CmmaMatmulConfig;
-use crate::components::tile::output::blackbox::BlackboxOutputConfig;
-use crate::components::tile::pipeline::InnerLayout;
-use crate::components::tile::softmax::blackbox::BlackboxSoftmaxConfig;
-use crate::definition::AttentionAvailabilityError;
-use crate::definition::AttentionBlueprint;
-use crate::definition::AttentionElems;
-use crate::definition::AttentionPrecision;
-use crate::definition::AttentionSetupError;
-use crate::definition::AttentionTileSize;
+use crate::{
+    components::tile::SharedTileAttentionConfig, components::tile::TileAttentionConfig,
+    components::tile::TileAttentionFamily,
+    components::tile::attention::blackbox::attention::BlackboxAcceleratedTileAttention,
+    components::tile::matmul::CmmaMatmulConfig,
+    components::tile::output::blackbox::BlackboxOutputConfig,
+    components::tile::pipeline::InnerLayout,
+    components::tile::softmax::blackbox::BlackboxSoftmaxConfig,
+    definition::AttentionAvailabilityError, definition::AttentionBlueprint,
+    definition::AttentionElems, definition::AttentionPrecision, definition::AttentionSetupError,
+    definition::AttentionTileSize,
+};
 use cubecl::features::MmaConfig;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]

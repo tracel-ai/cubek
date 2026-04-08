@@ -3,10 +3,6 @@ use crate::components::global::{
     SharedGlobalMatmulConfig,
     read::{AsyncPartialLoadingStrategy, PartialLoadingStrategy, async_copy::ASYNC_COPY_WIDTH},
 };
-use crate::components::{global::memory::GlobalIterator, stage::TilingValidation};
-use crate::components::{global::read::async_copy::async_copy_from, stage::StridedStageMemory};
-use crate::components::{global::read::stage::FullStageLayout, stage::StridedStageFamily};
-use crate::components::{global::read::validate_swizzle_atom_size, stage::StageConfig};
 use crate::components::{
     global::{
         multi_stage::LoadMaxRoundPlaneCount,
@@ -19,11 +15,18 @@ use crate::{
     components::global::read::{validate_async_barrier, validate_async_copy_with_problem},
     launch::RuntimeConfig,
 };
-use cubecl::prelude::*;
-use cubecl::std::tensor::layout::{Layout, LayoutExpand};
-use cubecl::{ir::DeviceProperties, prelude::barrier::Barrier};
-use cubek_std::InvalidConfigError;
-use cubek_std::tile::Strided;
+use crate::{
+    components::{global::memory::GlobalIterator, stage::TilingValidation},
+    components::{global::read::async_copy::async_copy_from, stage::StridedStageMemory},
+    components::{global::read::stage::FullStageLayout, stage::StridedStageFamily},
+    components::{global::read::validate_swizzle_atom_size, stage::StageConfig},
+};
+use cubecl::{
+    prelude::*,
+    std::tensor::layout::{Layout, LayoutExpand},
+    {ir::DeviceProperties, prelude::barrier::Barrier},
+};
+use cubek_std::{InvalidConfigError, tile::Strided};
 
 use super::{LoadingJob, LoadingValidation};
 

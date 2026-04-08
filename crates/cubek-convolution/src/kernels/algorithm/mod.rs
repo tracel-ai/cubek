@@ -1,8 +1,12 @@
 use crate::components::{ConvolutionOperation, global::args::RuntimeArgs};
-use cubecl::prelude::*;
-use cubecl::std::tensor::{into_contiguous_pitched, is_contiguous_pitched};
-use cubek_matmul::launch::MatmulArgs;
-use cubek_matmul::{definition::AvailableVectorSizes, routines::Routine};
+use cubecl::{
+    prelude::*,
+    std::tensor::{into_contiguous_pitched, is_contiguous_pitched},
+};
+use cubek_matmul::{
+    launch::MatmulArgs,
+    {definition::AvailableVectorSizes, routines::Routine},
+};
 
 pub mod simple;
 pub mod specialized;

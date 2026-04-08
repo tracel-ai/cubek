@@ -1,5 +1,7 @@
-use cubecl::std::tensor::{launch::BufferArg, layout::*};
-use cubecl::{prelude::*, std::tensor::launch::ViewLayoutLaunchArg};
+use cubecl::{
+    std::tensor::{launch::BufferArg, layout::*},
+    {prelude::*, std::tensor::launch::ViewLayoutLaunchArg},
+};
 use cubek_matmul::launch::BatchedCoords;
 
 #[derive(CubeType)]

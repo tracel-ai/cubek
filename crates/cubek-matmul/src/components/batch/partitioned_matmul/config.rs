@@ -1,7 +1,9 @@
 use cubek_std::GlobalPartitionSize;
 
-use crate::components::global::memory::GlobalLayoutConfig;
-use crate::components::{batch::BatchConfig, global::GlobalConfig};
+use crate::{
+    components::global::memory::GlobalLayoutConfig,
+    components::{batch::BatchConfig, global::GlobalConfig},
+};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 /// Configuration for partitioned batch matmul

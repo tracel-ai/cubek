@@ -1,7 +1,9 @@
-use cubecl::features::MmaConfig;
-use cubecl::ir::MatrixIdent;
-use cubecl::prelude::*;
-use cubecl::{self, Runtime, TestRuntime};
+use cubecl::{
+    features::MmaConfig,
+    ir::MatrixIdent,
+    prelude::*,
+    {self, Runtime, TestRuntime},
+};
 use cubek_test_utils::{
     DataKind, HostData, HostDataType, StrideSpec, TestInput, TestOutcome, ValidationResult,
     pretty_print_zip,

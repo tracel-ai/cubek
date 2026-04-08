@@ -17,8 +17,10 @@ use crate::components::global::memory::{
     GlobalScaleLayout, NoopLayout, NoopLayoutLaunch, SimpleTmaGlobalLayout,
     SimpleTmaGlobalLayoutLaunch,
 };
-use crate::definition::{Blueprint as _, MatmulElems, MatmulProblem, MatmulVectorSizes};
-use crate::routines::Routine;
+use crate::{
+    definition::{Blueprint as _, MatmulElems, MatmulProblem, MatmulVectorSizes},
+    routines::Routine,
+};
 
 define_scalar!(pub Lhs);
 define_scalar!(pub Rhs);

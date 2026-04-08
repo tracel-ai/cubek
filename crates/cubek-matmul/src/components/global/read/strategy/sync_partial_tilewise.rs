@@ -1,22 +1,30 @@
 use std::marker::PhantomData;
 
-use crate::components::global::read::validate_swizzle_atom_size;
-use crate::components::global::read::{PartialLoadingStrategy, sync::Synchronous};
-use crate::components::global::{PlaneFlowPartition, read::tiled::TiledLayout};
-use crate::components::stage::StridedStageFamily;
-use crate::components::stage::StridedStageMemory;
-use crate::components::stage::TilingOrderEnum;
 use crate::components::{
     global::memory::GlobalIterator,
     stage::{ContiguousTilingLayout, TilingOrder},
 };
-use crate::components::{global::multi_stage::LoadMaxRoundPlaneCount, stage::TilingValidation};
-use crate::definition::{MatmulElems, MatmulProblem, StageIdent};
-use crate::{components::global::GlobalReaderConfig, launch::RuntimeConfig};
-use cubecl::std::tensor::layout::Coords2d;
-use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_std::tile::Strided;
-use cubek_std::{FormattedConfigError, InvalidConfigError};
+use crate::{
+    components::global::read::validate_swizzle_atom_size,
+    components::global::read::{PartialLoadingStrategy, sync::Synchronous},
+    components::global::{PlaneFlowPartition, read::tiled::TiledLayout},
+    components::stage::StridedStageFamily,
+    components::stage::StridedStageMemory,
+    components::stage::TilingOrderEnum,
+};
+use crate::{
+    components::{global::multi_stage::LoadMaxRoundPlaneCount, stage::TilingValidation},
+    definition::{MatmulElems, MatmulProblem, StageIdent},
+    {components::global::GlobalReaderConfig, launch::RuntimeConfig},
+};
+use cubecl::{
+    std::tensor::layout::Coords2d,
+    {ir::DeviceProperties, prelude::*},
+};
+use cubek_std::{
+    tile::Strided,
+    {FormattedConfigError, InvalidConfigError},
+};
 
 use super::{LoadingJob, LoadingValidation};
 

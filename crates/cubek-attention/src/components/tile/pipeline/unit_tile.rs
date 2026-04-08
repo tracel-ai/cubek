@@ -1,6 +1,8 @@
-use cubecl::prelude::*;
-use cubecl::std::tensor::layout::Coords2d;
-use cubecl::{self};
+use cubecl::{
+    prelude::*,
+    std::tensor::layout::Coords2d,
+    {self},
+};
 use cubek_std::tile::StridedTile;
 
 use crate::components::tile::{

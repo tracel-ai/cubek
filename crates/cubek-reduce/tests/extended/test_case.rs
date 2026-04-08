@@ -1,12 +1,16 @@
 use std::marker::PhantomData;
 
-use cubecl::prelude::*;
-use cubecl::zspace::Shape;
-use cubecl::zspace::Strides;
-use cubecl::{TestRuntime, server::ServerError};
-use cubek_reduce::components::instructions::ReduceOperationConfig;
-use cubek_reduce::launch::RoutineStrategy;
-use cubek_reduce::{ReduceDtypes, ReduceError, ReducePrecision, launch::ReduceStrategy, reduce};
+use cubecl::{
+    prelude::*,
+    zspace::Shape,
+    zspace::Strides,
+    {TestRuntime, server::ServerError},
+};
+use cubek_reduce::{
+    components::instructions::ReduceOperationConfig,
+    launch::RoutineStrategy,
+    {ReduceDtypes, ReduceError, ReducePrecision, launch::ReduceStrategy, reduce},
+};
 use rand::{
     SeedableRng,
     distr::{Distribution, Uniform},

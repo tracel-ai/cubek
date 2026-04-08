@@ -1,10 +1,6 @@
-use cubecl::intrinsic;
-use cubecl::prelude::*;
-use cubecl::std::Swizzle;
+use cubecl::{intrinsic, prelude::*, std::Swizzle};
 
-use crate::MatrixLayout;
-use crate::stage::StageMemoryConfig;
-use crate::stage::as_swizzle_object;
+use crate::{MatrixLayout, stage::StageMemoryConfig, stage::as_swizzle_object};
 
 #[derive(CubeType, Clone, Copy)]
 /// Tile with a linear major dimension, and a strided minor dimension.

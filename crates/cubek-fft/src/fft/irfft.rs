@@ -1,11 +1,12 @@
-use cubecl::prelude::*;
-use cubecl::std::tensor::layout::plain::PlainLayout;
 use cubecl::std::tensor::{
     AsView as _, AsViewExpand, AsViewMut as _, AsViewMutExpand, TensorHandle,
 };
+use cubecl::{prelude::*, std::tensor::layout::plain::PlainLayout};
 
-use crate::fft::{FftMode, fft_inner_compute};
-use crate::layout::BatchSignalLayout;
+use crate::{
+    fft::{FftMode, fft_inner_compute},
+    layout::BatchSignalLayout,
+};
 
 /// Inverse Real-valued Fast Fourier Transform kernel.
 ///

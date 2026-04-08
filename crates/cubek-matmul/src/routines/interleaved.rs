@@ -1,17 +1,17 @@
-use cubecl::features::MmaConfig;
-use cubecl::{Runtime, client::ComputeClient};
-use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation};
-use cubek_std::tile::Strided;
-use std::fmt::Display;
-use std::marker::PhantomData;
+use cubecl::{
+    features::MmaConfig,
+    {Runtime, client::ComputeClient},
+};
+use cubek_std::{
+    cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation},
+    tile::Strided,
+};
+use std::{fmt::Display, marker::PhantomData};
 
 use crate::definition::{
     CubeMappingLaunch, MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes,
     MultiRowStrategy, TilingBlueprint, TilingScheme, adjust_dtypes,
 };
-use crate::routines::{BlueprintStrategy, DeviceSettings, LaunchInfo};
-use crate::{components::batch::BatchMatmulFamily, launch::RuntimeConfig};
-use crate::{components::tile::interleaved::InterleavedMatmul, routines::ExpandInfo};
 use crate::{
     components::{
         batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
@@ -27,6 +27,11 @@ use crate::{
         Routine,
         selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane},
     },
+};
+use crate::{
+    routines::{BlueprintStrategy, DeviceSettings, LaunchInfo},
+    {components::batch::BatchMatmulFamily, launch::RuntimeConfig},
+    {components::tile::interleaved::InterleavedMatmul, routines::ExpandInfo},
 };
 
 /// Plane accelerated single stage matmul with configurable readers (default to cyclic)

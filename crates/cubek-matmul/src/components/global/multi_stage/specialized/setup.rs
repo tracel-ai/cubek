@@ -2,22 +2,26 @@ use crate::components::CubeDimResource;
 use crate::components::global::{
     GlobalReaderConfig, GlobalWriterConfig, PlaneFlowConfig, SharedGlobalMatmulConfig,
 };
-use crate::components::global::{GlobalWriterFamily, multi_stage::specialized::SpecializedMatmul};
-use crate::components::global::{InputLoadFlow, LoadFlows, WriteTiling};
 use crate::components::global::{
     memory::{GlobalMemoryConfig, ViewDirection},
     read::AsyncPartialLoadingStrategy,
 };
-use crate::components::global::{multi_stage::EventLoadingMode, read::FullLoadingStrategy};
-use crate::components::stage::StageConfig;
-use crate::components::{global::GlobalMatmulFamily, stage};
-use crate::components::{global::MaxGlobalReaderPlanes, stage::NumStages};
-use crate::definition::MatmulVectorSizes;
-use crate::definition::StageIdent;
-use crate::definition::TilingBlueprint;
-use crate::definition::{MatmulElems, MatmulSetupError};
-use crate::definition::{MatmulProblem, MatmulTypes};
-use crate::launch::RuntimeConfig;
+use crate::{
+    components::global::{GlobalWriterFamily, multi_stage::specialized::SpecializedMatmul},
+    components::global::{InputLoadFlow, LoadFlows, WriteTiling},
+};
+use crate::{
+    components::global::{multi_stage::EventLoadingMode, read::FullLoadingStrategy},
+    components::stage::StageConfig,
+    components::{global::GlobalMatmulFamily, stage},
+    components::{global::MaxGlobalReaderPlanes, stage::NumStages},
+    definition::MatmulVectorSizes,
+    definition::StageIdent,
+    definition::TilingBlueprint,
+    definition::{MatmulElems, MatmulSetupError},
+    definition::{MatmulProblem, MatmulTypes},
+    launch::RuntimeConfig,
+};
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::MatrixLayout;
 use std::marker::PhantomData;
