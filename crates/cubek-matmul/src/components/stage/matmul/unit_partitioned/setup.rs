@@ -10,7 +10,7 @@ use crate::components::{
             unit_partitioned::{UnitMatmul, UnitPartitionedStageConfig},
         },
     },
-    tile::TileMatmulFamily,
+    tile::{TileIO, TileMatmulFamily},
 };
 use crate::definition::{
     Acc, Lhs, MatmulElems, MatmulSetupError, MatmulTypes, MatmulVectorSizes, MatrixTypes, Rhs,
@@ -20,7 +20,6 @@ use core::marker::PhantomData;
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::{
     stage::StageMemoryConfig,
-    tile::Strided,
     {InvalidConfigError, MatrixLayout},
 };
 
@@ -33,14 +32,9 @@ type STy<T> = crate::definition::Stage<T>;
 type SSz<T> = crate::definition::StageSize<T>;
 
 impl<
-    TM: TileMatmulFamily<
-            LhsTile = StageIn::TileKind,
-            RhsTile = StageIn::TileKind,
-            AccTile = StageAcc::TileKind,
-            OutTile = Strided,
-        >,
-    StageIn: StageFamily,
-    StageAcc: StageFamily,
+    TM: TileMatmulFamily,
+    StageIn: StageFamily<TileKind = <<TM as TileMatmulFamily>::TileIO as TileIO>::In>,
+    StageAcc: StageFamily<TileKind = <<TM as TileMatmulFamily>::TileIO as TileIO>::Acc>,
 > StageMatmulFamily for UnitMatmulFamily<TM, StageIn, StageAcc>
 {
     type LhsStage = StageIn;
@@ -61,9 +55,24 @@ impl<
             <MP::Rhs as MatrixTypes>::Register,
             <MP::Acc as MatrixTypes>::Register,
         >,
-        StageIn::Stage<STy<Lhs<MP>>, SSz<Lhs<MP>>, TL>,
-        StageIn::Stage<STy<Rhs<MP>>, SSz<Rhs<MP>>, TR>,
-        StageAcc::Stage<STy<Acc<MP>>, SSz<Acc<MP>>, TA>,
+        StageIn::Stage<
+            STy<Lhs<MP>>,
+            SSz<Lhs<MP>>,
+            TL,
+            <<TM as TileMatmulFamily>::TileIO as TileIO>::In,
+        >,
+        StageIn::Stage<
+            STy<Rhs<MP>>,
+            SSz<Rhs<MP>>,
+            TR,
+            <<TM as TileMatmulFamily>::TileIO as TileIO>::In,
+        >,
+        StageAcc::Stage<
+            STy<Acc<MP>>,
+            SSz<Acc<MP>>,
+            TA,
+            <<TM as TileMatmulFamily>::TileIO as TileIO>::Acc,
+        >,
         PartitionedStage<STy<Acc<MP>>, SSz<Acc<MP>>>,
     >;
 

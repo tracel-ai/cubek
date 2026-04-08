@@ -1,6 +1,9 @@
 use crate::components::{
     resource::CubeDimResource,
-    tile::plane_vec_mat_inner_product::reader::{MatrixFragmentReader, MatrixStageReader},
+    tile::{
+        StandardTileIO,
+        plane_vec_mat_inner_product::reader::{MatrixFragmentReader, MatrixStageReader},
+    },
 };
 use crate::{
     components::tile::SharedTileConfig, components::tile::TileMatmulFamily,
@@ -19,19 +22,16 @@ use cubecl::{
     ir::{ElemType, FloatKind},
     prelude::*,
 };
-use cubek_std::{InvalidConfigError, tile::Strided, tile::TileKind};
+use cubek_std::{InvalidConfigError, tile::Strided};
 
-impl<Kind: TileKind> TileMatmulFamily for PlaneVecMatInnerProduct<Kind>
+impl TileMatmulFamily for PlaneVecMatInnerProduct
 where
-    MatrixStageReader<Kind>: MatrixFragmentReader<TileKind = Kind>,
+    MatrixStageReader<Option<Strided>>: MatrixFragmentReader,
 {
     type Config = PlaneVecMatInnerProductConfig;
-    type Matmul<L: Numeric, R: Numeric, A: Numeric> = PlaneVecMatInnerProduct<Kind>;
+    type Matmul<L: Numeric, R: Numeric, A: Numeric> = PlaneVecMatInnerProduct;
 
-    type LhsTile = Strided;
-    type RhsTile = Strided;
-    type AccTile = Kind;
-    type OutTile = Strided;
+    type TileIO = StandardTileIO;
 
     fn requires_accelerator() -> bool {
         false

@@ -4,7 +4,6 @@ use cubecl::{Runtime, client::ComputeClient};
 use cubek_std::{
     PartitionSize, TileSize,
     cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation},
-    tile::{Filled, Strided},
 };
 
 use crate::{
@@ -53,7 +52,7 @@ impl<RC: RuntimeConfig> Routine<RC> for VecMatInnerProductAlgorithm {
         RC,
         SimpleMatmulFamily<
             PlaneMatmulFamily<
-                PlaneVecMatInnerProduct<Option<Strided>>,
+                PlaneVecMatInnerProduct,
                 StridedStageFamily,
                 StridedStageFamily,
                 Option<StridedStageFamily>,
@@ -76,7 +75,7 @@ impl<RC: RuntimeConfig> Routine<RC> for VecMatInnerProductAlgorithm {
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
-        if PlaneVecMatInnerProduct::<Filled>::can_cast_stage_element() {
+        if PlaneVecMatInnerProduct::can_cast_stage_element() {
             dtypes.adjust_stage_dtypes();
         }
 
@@ -142,7 +141,7 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleVecMatInnerProductAlgorithm {
         RC,
         DoubleBufferingMatmulFamily<
             PlaneMatmulFamily<
-                PlaneVecMatInnerProduct<Option<Strided>>,
+                PlaneVecMatInnerProduct,
                 StridedStageFamily,
                 StridedStageFamily,
                 Option<StridedStageFamily>,
@@ -165,7 +164,7 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleVecMatInnerProductAlgorithm {
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
-        if PlaneVecMatInnerProduct::<Filled>::can_cast_stage_element() {
+        if PlaneVecMatInnerProduct::can_cast_stage_element() {
             dtypes.adjust_stage_dtypes();
         }
 

@@ -1,7 +1,6 @@
 use std::{fmt::Display, marker::PhantomData};
 
 use cubecl::Runtime;
-use cubek_std::tile::Strided;
 
 use crate::components::batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul};
 use crate::components::global::{
@@ -80,12 +79,7 @@ impl Display for DoubleBufferingArgs {
 
 impl<TMM, RC> base::Routine<RC> for CyclicDoubleBufferingAlgorithm<TMM>
 where
-    TMM: tile::TileMatmulFamily<
-            LhsTile = Strided,
-            RhsTile = Strided,
-            AccTile = Option<Strided>,
-            OutTile = Strided,
-        >,
+    TMM: tile::TileMatmulFamily,
     RC: RuntimeConfig,
 {
     type Strategy = DoubleBufferingArgs;
@@ -175,12 +169,7 @@ where
 
 impl<TMM, RC> base::Routine<RC> for AsyncCyclicDoubleBufferingAlgorithm<TMM>
 where
-    TMM: tile::TileMatmulFamily<
-            LhsTile = Strided,
-            RhsTile = Strided,
-            AccTile = Option<Strided>,
-            OutTile = Strided,
-        >,
+    TMM: tile::TileMatmulFamily,
     RC: RuntimeConfig,
 {
     type Strategy = DoubleBufferingArgs;
@@ -269,12 +258,7 @@ where
 
 impl<TMM, RC> Routine<RC> for TilewiseDoubleBufferingAlgorithm<TMM>
 where
-    TMM: tile::TileMatmulFamily<
-            LhsTile = Strided,
-            RhsTile = Strided,
-            AccTile = Option<Strided>,
-            OutTile = Strided,
-        >,
+    TMM: tile::TileMatmulFamily,
     RC: RuntimeConfig,
 {
     type Strategy = DoubleBufferingArgs;
@@ -365,12 +349,7 @@ where
 
 impl<TMM, RC> base::Routine<RC> for HybridDoubleBufferingAlgorithm<TMM>
 where
-    TMM: tile::TileMatmulFamily<
-            LhsTile = Strided,
-            RhsTile = Strided,
-            AccTile = Option<Strided>,
-            OutTile = Strided,
-        >,
+    TMM: tile::TileMatmulFamily,
     RC: RuntimeConfig,
 {
     type Strategy = DoubleBufferingArgs;
@@ -460,12 +439,7 @@ where
 
 impl<TMM, RC> base::Routine<RC> for TmaDoubleBufferingAlgorithm<TMM>
 where
-    TMM: tile::TileMatmulFamily<
-            LhsTile = Strided,
-            RhsTile = Strided,
-            AccTile = Option<Strided>,
-            OutTile = Strided,
-        >,
+    TMM: tile::TileMatmulFamily,
     RC: RuntimeConfig,
 {
     type Strategy = DoubleBufferingArgs;
@@ -554,12 +528,7 @@ where
 
 impl<TMM, RC> base::Routine<RC> for AsyncStridedDoubleBufferingAlgorithm<TMM>
 where
-    TMM: tile::TileMatmulFamily<
-            LhsTile = Strided,
-            RhsTile = Strided,
-            AccTile = Option<Strided>,
-            OutTile = Strided,
-        >,
+    TMM: tile::TileMatmulFamily,
     RC: RuntimeConfig,
 {
     type Strategy = DoubleBufferingArgs;

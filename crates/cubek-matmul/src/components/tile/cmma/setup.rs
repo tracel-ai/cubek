@@ -1,7 +1,4 @@
-use crate::components::tile::{
-    TileMatmulFamily,
-    cmma::reader::{CmmaFragmentReader, CmmaStageReader},
-};
+use crate::components::tile::{StandardTileIO, TileMatmulFamily};
 use crate::{
     components::resource::CubeDimResource, components::tile::SharedTileConfig,
     components::tile::cmma::matmul::CmmaMatmul,
@@ -14,21 +11,15 @@ use cubecl::{
     {features::MmaConfig, ir::DeviceProperties},
     {ir::StorageType, prelude::*},
 };
-use cubek_std::{
-    tile::{Strided, TileKind},
-    {InvalidConfigError, TileSize},
-};
+use cubek_std::{InvalidConfigError, TileSize};
 
-impl<Tile: TileKind> TileMatmulFamily for CmmaMatmul<Tile>
-where
-    CmmaStageReader<Tile>: CmmaFragmentReader<TileKind = Tile>,
+impl TileMatmulFamily for CmmaMatmul
+// where
+//     CmmaStageReader<Tile>: CmmaFragmentReader<TileKind = Tile>,
 {
     type Config = SharedTileConfig;
-    type Matmul<L: Numeric, R: Numeric, A: Numeric> = CmmaMatmul<Tile>;
-    type LhsTile = Strided;
-    type RhsTile = Strided;
-    type AccTile = Tile;
-    type OutTile = Strided;
+    type Matmul<L: Numeric, R: Numeric, A: Numeric> = CmmaMatmul;
+    type TileIO = StandardTileIO;
 
     fn requires_accelerator() -> bool {
         true

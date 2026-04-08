@@ -4,7 +4,6 @@ use cubecl::{Runtime, client::ComputeClient, features::MmaConfig};
 use cubek_std::{
     MatrixLayout,
     cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation},
-    tile::Strided,
 };
 
 use crate::components::{
@@ -63,12 +62,7 @@ impl From<()> for SpecializedStrategy {
 
 impl<TMM, RC, L, AL> base::Routine<RC> for SpecializedAlgorithm<TMM, L, AL>
 where
-    TMM: tile::TileMatmulFamily<
-            LhsTile = L::TileKind,
-            RhsTile = L::TileKind,
-            AccTile = Option<AL::TileKind>,
-            OutTile = Strided,
-        >,
+    TMM: tile::TileMatmulFamily,
     RC: RuntimeConfig,
     L: AsyncPartialLoadingStrategy<RC>,
     AL: FullLoadingStrategy<RC>,
