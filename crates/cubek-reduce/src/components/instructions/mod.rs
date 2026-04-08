@@ -1,5 +1,6 @@
 mod argmax;
 mod argmin;
+mod argtopk;
 mod base;
 mod max;
 mod maxabs;
@@ -12,6 +13,7 @@ mod utils;
 
 pub use argmax::*;
 pub use argmin::*;
+pub use argtopk::*;
 pub use base::*;
 pub use max::*;
 pub use maxabs::*;

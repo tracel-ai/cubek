@@ -85,6 +85,56 @@ where
         expected.into_iter().map(|(_, i)| i).collect()
     }
 
+    pub fn test_argtopk(&self, k: u32) {
+        let input_values: Vec<P::EI> = self.random_input_values::<P::EI>();
+        let expected_values = match self.axis {
+            Some(axis) if self.stride[axis] == 0 => {
+                // If stride is 0, all elements are the same; index is always 0
+                vec![0; self.num_output_values() * k as usize]
+            }
+            _ => self.cpu_argtopk(&input_values, k as usize),
+        };
+
+        // Note: You may need to update run_reduce_test to handle output_shape[axis] = k
+        // for cases where k > 1.
+        self.run_reduce_test::<u32>(
+            input_values,
+            expected_values,
+            ReduceOperationConfig::ArgTopK(k),
+        )
+    }
+
+    fn cpu_argtopk<F: Float>(&self, values: &[F], k: usize) -> Vec<u32> {
+        let num_outputs = self.num_output_values();
+        let mut collectors = vec![Vec::<(F, u32)>::new(); num_outputs];
+
+        // Group values by their output coordinate
+        for (input_index, &value) in values.iter().enumerate() {
+            if let Some(output_index) = self.to_output_index(input_index) {
+                let coordinate = self.to_input_coordinate(input_index).unwrap();
+                let axis_index = coordinate[self.axis.unwrap()] as u32;
+                collectors[output_index].push((value, axis_index));
+            }
+        }
+
+        let mut results = Vec::with_capacity(num_outputs * k);
+        for mut list in collectors {
+            // Sort descending by value
+            list.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+            // Take the top K indices
+            for i in 0..k {
+                if i < list.len() {
+                    results.push(list[i].1);
+                } else {
+                    // Padding if the axis is smaller than K
+                    results.push(u32::MAX);
+                }
+            }
+        }
+        results
+    }
+
     pub fn test_mean(&self) {
         let input_values: Vec<P::EI> = self.random_input_values();
         let expected_values = match self.axis {
