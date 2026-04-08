@@ -49,7 +49,7 @@ conv_tests_tma = []
 [dependencies]
 cubecl = { workspace = true, features = ["stdlib"] }
 cubecl-common = { workspace = true }
-cubek-matmul = { path = "../cubek-matmul", default-features = false, version = "=0.2.0-pre.2" }
+cubek-matmul = { path = "../cubek-matmul", default-features = false, version = "=0.2.0-pre.3" }
 cubek-std = { path = "../cubek-std", default-features = false }
 derive-new = { workspace = true }
 
@@ -60,6 +60,6 @@ serde = { workspace = true }
 
 [dev-dependencies]
 cubecl = { workspace = true, features = ["test-runtime"] }
-cubek-random = { path = "../cubek-random", default-features = false, version = "=0.2.0-pre.2" }
+cubek-random = { path = "../cubek-random", default-features = false, version = "=0.2.0-pre.3" }
 pretty_assertions = { workspace = true }
 trybuild = "1"
