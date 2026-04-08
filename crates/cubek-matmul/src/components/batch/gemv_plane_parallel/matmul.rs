@@ -147,10 +147,8 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatPlaneParallel<MP> {
                 lhs.view(VecLayout::new(lhs_batch, k as usize)),
                 rhs.view(MatLayout::new(rhs_batch, (k, n))),
                 out.view_mut(VecLayout::new(out_batch, n as usize)),
-                matrix_cube,
+                matrix_cube * config.num_planes + UNIT_POS_Y,
                 k,
-                config.num_planes,
-                config.plane_dim,
                 vector_size as u32,
                 MatrixLayout::RowMajor,
             ),
@@ -177,10 +175,8 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatPlaneParallel<MP> {
                 rhs.view(VecLayout::new(rhs_batch, k as usize)),
                 lhs.view(MatLayout::new(lhs_batch, (m, k))),
                 out.view_mut(VecLayout::new(out_batch, m as usize)),
-                matrix_cube,
+                matrix_cube * config.num_planes + UNIT_POS_Y,
                 k,
-                config.num_planes,
-                config.plane_dim,
                 vector_size as u32,
                 MatrixLayout::ColMajor,
             ),
@@ -258,82 +254,55 @@ fn execute_gemv_transposed<
     vec: View<Vector<V, VS>, Coords1d>,
     mat: View<Vector<M, MS>, Coords2d>,
     out: View<O, Coords1d, ReadWrite>,
-    cube_id: u32,
+    mn_id: u32,
     k_dim: u32,
-    #[comptime] num_planes: u32,
-    #[comptime] plane_dim: u32,
     #[comptime] vector_size: u32,
     #[comptime] matrix_layout: MatrixLayout,
 ) {
-    let plane_id = UNIT_POS_Y;
-    let unit_id = UNIT_POS_X;
+    let mn_pos = mn_id * vector_size;
+    let num_tiles_k = k_dim / vector_size;
 
-    let segment_size = comptime!(plane_dim * vector_size);
-    let cube_offset = cube_id * segment_size;
-    let num_segments_k = k_dim / segment_size;
-
-    let segments_per_plane = segment_size / num_planes;
-
-    let mut accs: Array<Vector<AccR, VS>> = Array::new(segments_per_plane as usize);
-    for segment_iter in 0..segments_per_plane {
+    let mut accs: Array<Vector<AccR, VS>> = Array::new(vector_size as usize);
+    for segment_iter in 0..vector_size {
         accs[segment_iter as usize] = Vector::zero();
     }
 
-    let mut smem = SharedMemory::<SM>::new((segment_size * segment_size) as usize);
+    // VS x VS tile
+    let mut tile = Array::<SM>::new((vector_size * vector_size) as usize);
 
-    for segment_index in 0..num_segments_k {
-        let k_base = segment_index * plane_dim;
+    for tile_index in 0..num_tiles_k {
+        let global_k_pos = tile_index * vector_size;
 
-        let local_k_pos = unit_id * vector_size;
-        let global_k_pos = k_base * vector_size + local_k_pos;
         let vec_val = vec.read_checked(global_k_pos as usize);
 
-        assert!(segment_size.is_multiple_of(num_planes));
-
-        for segment_iter in 0..segments_per_plane {
-            let local_segment = segment_iter * num_planes + plane_id;
-
+        for segment_iter in 0..vector_size {
             let vector = match matrix_layout {
-                // mat=rhs
-                MatrixLayout::RowMajor => {
-                    mat.read_checked((global_k_pos + local_segment, cube_offset))
-                }
-                // mat=lhs
-                MatrixLayout::ColMajor => {
-                    mat.read_checked((cube_offset, global_k_pos + local_segment))
-                }
+                // Rhs
+                MatrixLayout::RowMajor => mat.read_checked((global_k_pos + segment_iter, mn_pos)),
+                // Lhs
+                MatrixLayout::ColMajor => mat.read_checked((mn_pos, global_k_pos + segment_iter)),
             };
 
-            // TODO swizzle
             #[unroll]
             for i in 0..vector_size {
-                let row = local_segment;
-                let col = local_k_pos + i;
-                smem[(row * segment_size + col) as usize] = SM::cast_from(vector[i as usize]);
+                tile[(segment_iter * vector_size + i) as usize] = SM::cast_from(vector[i as usize]);
             }
         }
 
-        sync_cube();
-
-        for segment_iter in 0..segments_per_plane {
-            let local_segment = segment_iter * num_planes + plane_id;
+        for segment_iter in 0..vector_size {
             let mut mat_val: Vector<SM, VS> = Vector::empty();
+
             #[unroll]
             for i in 0..vector_size {
-                let row = local_segment;
-                let col = local_k_pos + i;
-
-                let transposed_index = col * segment_size + row;
-                mat_val[i as usize] = smem[transposed_index as usize];
+                mat_val[i as usize] = tile[(i * vector_size + segment_iter) as usize];
             }
 
             accs[segment_iter as usize] += Vector::cast_from(vec_val) * Vector::cast_from(mat_val);
         }
-
-        sync_cube();
     }
 
-    for segment_iter in 0..segments_per_plane {
+    // Write back
+    for segment_iter in 0..vector_size {
         let mut sum = AccR::zero();
         let acc = accs[segment_iter as usize];
 
@@ -342,17 +311,6 @@ fn execute_gemv_transposed<
             sum += acc[i as usize];
         }
 
-        let sum = if comptime!(plane_dim > 1) {
-            plane_sum(sum)
-        } else {
-            sum
-        };
-
-        if unit_id == 0 {
-            out.write_checked(
-                (cube_offset + segment_iter * num_planes + plane_id) as usize,
-                O::cast_from(sum),
-            );
-        }
+        out.write_checked((mn_pos + segment_iter) as usize, O::cast_from(sum));
     }
 }

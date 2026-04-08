@@ -72,7 +72,7 @@ full = [
 
 
 [dependencies]
-cubek-std = { path = "../cubek-std", default-features = false }
+cubek-std = { path = "../cubek-std", version = "=0.2.0-pre.3", default-features = false }
 
 bytemuck = { workspace = true }
 cubecl = { workspace = true, features = ["stdlib"] }
@@ -82,6 +82,6 @@ serde = { workspace = true }
 
 [dev-dependencies]
 cubecl = { workspace = true, features = ["test-runtime"] }
-cubek-test-utils = { path = "../cubek-test-utils", version = "=0.2.0-pre.2", default-features = false }
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.2.0-pre.3", default-features = false }
 pretty_assertions = { workspace = true }
 trybuild = "1"

@@ -105,14 +105,16 @@ pub fn launch_ref<R: Runtime>(
     let expand_info =
         GemvPlaneParallelRoutine::expand_blueprint(&problem, &device_settings, strategy)?;
 
-    if matches!(expand_info.blueprint.kind, GemvKind::MatVecColMajor) {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(
-            "MatVec plane parallel only supports col major lhs for now",
-        )));
-    } else if matches!(expand_info.blueprint.kind, GemvKind::VecMatRowMajor) {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(
-            "Vecmat plane parallel only supports col major rhs for now",
-        )));
+    if device_settings.plane_dim > 1 {
+        if matches!(expand_info.blueprint.kind, GemvKind::MatVecColMajor) {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(
+                "On GPU, MatVec plane parallel only supports row major lhs for now",
+            )));
+        } else if matches!(expand_info.blueprint.kind, GemvKind::VecMatRowMajor) {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(
+                "On GPU, Vecmat plane parallel only supports col major rhs for now",
+            )));
+        }
     }
 
     let launch_info = GemvPlaneParallelRoutine::prepare(&problem, &device_settings, expand_info)?;
