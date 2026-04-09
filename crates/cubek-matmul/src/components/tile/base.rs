@@ -115,7 +115,7 @@ pub trait TileMatmul<L: Numeric, R: Numeric, A: Numeric>: 'static + Send + Sync 
     type Config: TileConfig;
 
     /// Contains Lhs data for computation
-    type LhsContainer: CubeType;
+    type LhsFragment: CubeType;
     /// Contains Rhs data for computation
     type RhsFragment: CubeType;
     /// Contains and accumulates results of the Tile Matmul execution
@@ -125,7 +125,7 @@ pub trait TileMatmul<L: Numeric, R: Numeric, A: Numeric>: 'static + Send + Sync 
 
     /// Executes the matrix multiplication of Lhs and Rhs, adding the result to the accumulator
     fn execute(
-        lhs: &Self::LhsContainer,
+        lhs: &Self::LhsFragment,
         rhs: &Self::RhsFragment,
         out: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
@@ -140,12 +140,12 @@ pub trait TileMatmul<L: Numeric, R: Numeric, A: Numeric>: 'static + Send + Sync 
     fn allocate_lhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Self::LhsContainer;
+    ) -> Self::LhsFragment;
 
     /// Load the container of Lhs from tile data
     fn load_lhs<E: Numeric, N: Size>(
         tile: &Tile<<Self::TileIO as TileIO>::In, E, N>,
-        lhs: &mut Self::LhsContainer,
+        lhs: &mut Self::LhsFragment,
         #[comptime] config: Self::Config,
     );
 

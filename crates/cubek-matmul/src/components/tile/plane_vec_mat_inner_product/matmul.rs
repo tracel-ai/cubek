@@ -38,7 +38,7 @@ where
     type Config = PlaneVecMatInnerProductConfig;
 
     // One vector per unit in the plane
-    type LhsContainer = VectorContainer<L>;
+    type LhsFragment = VectorContainer<L>;
     // For each n: one vector per unit in the plane
     type RhsFragment = Sequence<VectorContainer<R>>;
 
@@ -48,7 +48,7 @@ where
     type TileIO = StandardTileIO;
 
     fn execute(
-        lhs: &Self::LhsContainer,
+        lhs: &Self::LhsFragment,
         rhs: &Self::RhsFragment,
         acc: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
@@ -66,7 +66,7 @@ where
     fn allocate_lhs(
         #[comptime] _layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Self::LhsContainer {
+    ) -> Self::LhsFragment {
         register_vector_size(config.reduce_vector_size);
         VectorContainer::<L>::new()
     }
@@ -99,7 +99,7 @@ where
 
     fn load_lhs<E: Numeric, N: Size>(
         tile: &StridedTile<E, N>,
-        lhs: &mut Self::LhsContainer,
+        lhs: &mut Self::LhsFragment,
         #[comptime] _config: Self::Config,
     ) {
         VectorStageReader::load_fragment(tile, lhs)

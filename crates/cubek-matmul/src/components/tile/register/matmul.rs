@@ -38,14 +38,14 @@ where
 {
     type Config = RegisterMatmulConfig;
 
-    type LhsContainer = UnitFragment<L>;
+    type LhsFragment = UnitFragment<L>;
     type RhsFragment = UnitFragment<R>;
     type AccFragment = UnitFragment<A>;
 
     type TileIO = StandardTileIO;
 
     fn execute(
-        lhs: &Self::LhsContainer,
+        lhs: &Self::LhsFragment,
         rhs: &Self::RhsFragment,
         acc: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
@@ -69,7 +69,7 @@ where
     fn allocate_lhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Self::LhsContainer {
+    ) -> Self::LhsFragment {
         UnitFragment::<L> {
             array: Array::new(config.shared.tile_size.mk() as usize),
             layout,
@@ -98,7 +98,7 @@ where
 
     fn load_lhs<E: Numeric, N: Size>(
         tile: &StridedTile<E, N>,
-        lhs: &mut Self::LhsContainer,
+        lhs: &mut Self::LhsFragment,
         #[comptime] config: Self::Config,
     ) {
         RegisterStageReader::<Strided>::load_fragment(tile, lhs, StageIdent::Lhs, config)

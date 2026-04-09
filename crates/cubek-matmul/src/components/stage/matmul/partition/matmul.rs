@@ -101,7 +101,7 @@ where
     pub fn execute_with_listener<SEL: StageEventListener>(
         lhs_stage: &StageLhs,
         rhs_stage: &StageRhs,
-        lhs_fragment: &mut Sequence<TM::LhsContainer>,
+        lhs_fragment: &mut Sequence<TM::LhsFragment>,
         rhs_fragments: &mut RhsTile<TM::RhsFragment>,
         acc: &mut Accumulators<MP, TM>,
         #[comptime] shared_config: SharedPartitionMatmulConfig<TM::Config>,
@@ -140,7 +140,7 @@ where
     /// Make sure to load inputs before execution.
     pub fn init_tile_inputs(
         #[comptime] shared_config: SharedPartitionMatmulConfig<TM::Config>,
-    ) -> (Sequence<TM::LhsContainer>, RhsTile<TM::RhsFragment>) {
+    ) -> (Sequence<TM::LhsFragment>, RhsTile<TM::RhsFragment>) {
         let mut lhs = Sequence::new();
 
         #[unroll]
@@ -208,7 +208,7 @@ where
     fn execute_single_buffer<SEL: StageEventListener>(
         lhs_stage: &StageLhs,
         rhs_stage: &StageRhs,
-        lhs_fragment: &mut Sequence<TM::LhsContainer>,
+        lhs_fragment: &mut Sequence<TM::LhsFragment>,
         rhs_fragment: &mut TM::RhsFragment,
         acc: &mut Accumulators<MP, TM>,
         #[comptime] shared_config: SharedPartitionMatmulConfig<TM::Config>,
@@ -302,7 +302,7 @@ where
     fn execute_double_buffer<SEL: StageEventListener>(
         lhs_stage: &StageLhs,
         rhs_stage: &StageRhs,
-        lhs_fragment: &mut Sequence<TM::LhsContainer>,
+        lhs_fragment: &mut Sequence<TM::LhsFragment>,
         rhs_fragments: &mut (TM::RhsFragment, TM::RhsFragment),
         acc: &mut Accumulators<MP, TM>,
         #[comptime] shared_config: SharedPartitionMatmulConfig<TM::Config>,

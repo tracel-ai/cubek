@@ -192,7 +192,7 @@ where
     type OutStage = StageOut;
 
     type Accumulators = Accumulators<MP, TM>;
-    type LhsTile = Sequence<TM::LhsContainer>;
+    type LhsTile = Sequence<TM::LhsFragment>;
     type RhsTile = RhsTile<TM::RhsFragment>;
 
     fn execute(

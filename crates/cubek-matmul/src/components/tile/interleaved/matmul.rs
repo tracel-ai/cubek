@@ -69,7 +69,7 @@ impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for InterleavedMatm
     type Config = InterleavedMatmulConfig;
 
     // Size m * k_local
-    type LhsContainer = InterleavedFragment<L>;
+    type LhsFragment = InterleavedFragment<L>;
     // Size k_local * n
     type RhsFragment = InterleavedFragment<R>;
     // Size m * n
@@ -78,7 +78,7 @@ impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for InterleavedMatm
     type TileIO = StandardTileIO;
 
     fn execute(
-        lhs: &Self::LhsContainer,
+        lhs: &Self::LhsFragment,
         rhs: &Self::RhsFragment,
         acc: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
@@ -104,7 +104,7 @@ impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for InterleavedMatm
     fn allocate_lhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Self::LhsContainer {
+    ) -> Self::LhsFragment {
         let row_count = config.elements_per_unit_m();
         let col_count = config.elements_per_unit_k();
         InterleavedFragment::<L> {
@@ -145,7 +145,7 @@ impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for InterleavedMatm
 
     fn load_lhs<E: Numeric, N: Size>(
         tile: &StridedTile<E, N>,
-        lhs: &mut Self::LhsContainer,
+        lhs: &mut Self::LhsFragment,
         #[comptime] config: Self::Config,
     ) {
         InterleavedStageReader::load_fragment(tile, lhs, StageIdent::Lhs, config);
