@@ -59,7 +59,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
         _coordinate: ReduceCoordinate<P::SI>,
         #[comptime] _use_planes: bool,
     ) -> Self::AccumulatorItem {
-        todo!("reduce Not implemnted")
+        todo!("reduce Not implemented")
     }
 
     fn fuse_accumulators(
@@ -67,7 +67,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
         _lhs: Self::AccumulatorItem,
         _rhs: Self::AccumulatorItem,
     ) -> Self::AccumulatorItem {
-        todo!("fuse_accumulator Not implemnted")
+        todo!("fuse_accumulator Not implemented")
     }
 
     fn merge_vector<Out: Numeric>(
@@ -75,7 +75,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
         _accumulator: Self::AccumulatorItem,
         _shape_axis_reduce: usize,
     ) -> Out {
-        todo!("merge_vector Not implemnted")
+        todo!("merge_vector Not implemented")
     }
 
     fn to_output_perpendicular<Out: Numeric>(
@@ -83,6 +83,6 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
         _accumulator: Self::AccumulatorItem,
         _shape_axis_reduce: usize,
     ) -> Vector<Out, P::SI> {
-        todo!("to_output_perpendicular Not implemnted")
+        todo!("to_output_perpendicular Not implemented")
     }
 }
