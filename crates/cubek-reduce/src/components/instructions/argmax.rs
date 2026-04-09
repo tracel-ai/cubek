@@ -2,7 +2,10 @@ use super::{
     ArgAccumulator, ReduceCoordinate, ReduceCoordinateExpand, ReduceFamily, ReduceInstruction,
     lowest_coordinate_matching,
 };
-use crate::{components::instructions::ReduceRequirements, components::precision::ReducePrecision};
+use crate::components::{
+    instructions::{PlaneReduceMode, ReduceRequirements},
+    precision::ReducePrecision,
+};
 use cubecl::prelude::*;
 
 /// Compute the coordinate of the maximum item returning the smallest coordinate in case of equality.
@@ -82,7 +85,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMax {
         accumulator: &Self::AccumulatorItem,
         item: Vector<P::EI, P::SI>,
         coordinate: ReduceCoordinate<P::SI>,
-        #[comptime] use_planes: bool,
+        #[comptime] plane_reduce: PlaneReduceMode,
     ) -> Self::AccumulatorItem {
         #[comptime]
         let coordinate = match coordinate {
@@ -94,13 +97,15 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMax {
             }
         };
 
-        let (candidate_item, candidate_coordinate) = if use_planes {
+        // match on plane_reduce_mode
+        let (candidate_item, candidate_coordinate) = if let PlaneReduceMode::Single = plane_reduce {
             let candidate_item = plane_max(item);
             let candidate_coordinate = lowest_coordinate_matching(candidate_item, item, coordinate);
             (candidate_item, candidate_coordinate)
         } else {
             (item, coordinate)
         };
+        // _ multi
 
         Self::choose_argmax(
             Vector::cast_from(candidate_item),

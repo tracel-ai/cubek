@@ -36,6 +36,18 @@ pub struct CubeBlueprint {
     pub use_planes: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PlaneMergeStrategy {
+    ///  All units in a plane work independently during the reduction
+    ///  but merge their accumulators at the end
+    Lazy,
+    ///  There is a plane reduction at each iteration
+    Eager,
+    /// Like Independent but runtime plane dimension maybe not equal CUBE_DIM_X
+    /// so we add a step to the final reduce
+    MultiplaneLazy,
+}
+
 /// A single plane reduces a full vector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneReduceBlueprint {
@@ -43,13 +55,7 @@ pub struct PlaneReduceBlueprint {
     pub plane_idle: IdleMode,
     // There are too many units in a plane causing out-of-bound.
     pub bound_checks: BoundChecks,
-    // Whether all units in a plane work independently during the reduction.
-    //
-    // # Notes
-    //
-    // When this setting is turned on, there is an extra step at the end to merge accumulators
-    // within the plane using plane instructions.
-    pub independent: bool,
+    pub plane_merge_strategy: PlaneMergeStrategy,
 }
 
 /// A single unit reduces a full vector.

@@ -7,8 +7,10 @@ use crate::{
         readers::{Reader, plane::PlaneReader},
         writer::Writer,
     },
-    routines::PlaneReduceBlueprint,
+    routines::{PlaneMergeStrategy, PlaneReduceBlueprint},
 };
+
+use crate::components::instructions::PlaneReduceMode;
 use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
 
 #[derive(CubeType)]
@@ -93,6 +95,12 @@ impl GlobalFullPlaneReduce {
 
         let mut accumulator = I::null_accumulator(inst);
 
+        let iteration_plane_reduce_mode = match blueprint.plane_merge_strategy {
+            PlaneMergeStrategy::Eager => PlaneReduceMode::Single,
+            PlaneMergeStrategy::Lazy => PlaneReduceMode::None,
+            PlaneMergeStrategy::MultiplaneLazy => PlaneReduceMode::None,
+        };
+        //let unit_independent = blueprint.plane_merge_strategy == PlaneMergeStrategy::Lazy;
         for i in 0..reader.length() {
             let (item, coordinate) = reader.read(i);
             reduce_inplace::<P, I>(
@@ -100,18 +108,30 @@ impl GlobalFullPlaneReduce {
                 &mut accumulator,
                 item,
                 coordinate,
-                !blueprint.independent,
+                iteration_plane_reduce_mode.clone(),
             );
         }
 
-        match blueprint.independent {
-            true => {
+        match blueprint.plane_merge_strategy {
+            PlaneMergeStrategy::Lazy => {
                 let (item, coordinate) = I::read_accumulator(inst, &accumulator);
                 let mut result = I::null_accumulator(inst);
-                reduce_inplace::<P, I>(inst, &mut result, item, coordinate, true);
+                reduce_inplace::<P, I>(
+                    inst,
+                    &mut result,
+                    item,
+                    coordinate,
+                    PlaneReduceMode::Single,
+                );
                 result
             }
-            false => accumulator,
+            PlaneMergeStrategy::Eager => accumulator,
+            PlaneMergeStrategy::MultiplaneLazy => {
+                let (item, coordinate) = I::read_accumulator(inst, &accumulator);
+                let mut result = I::null_accumulator(inst);
+                reduce_inplace::<P, I>(inst, &mut result, item, coordinate, PlaneReduceMode::Multi);
+                result
+            }
         }
     }
 }

@@ -1,5 +1,8 @@
 use super::{ReduceCoordinate, ReduceFamily, ReduceInstruction};
-use crate::{components::instructions::ReduceRequirements, components::precision::ReducePrecision};
+use crate::components::{
+    instructions::{PlaneReduceMode, ReduceRequirements},
+    precision::ReducePrecision,
+};
 use cubecl::prelude::*;
 
 #[derive(Debug, CubeType, Clone)]
@@ -53,10 +56,10 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Prod {
         accumulator: &Self::AccumulatorItem,
         item: Vector<P::EI, P::SI>,
         _coordinate: ReduceCoordinate<P::SI>,
-        #[comptime] use_planes: bool,
+        #[comptime] use_planes: PlaneReduceMode,
     ) -> Self::AccumulatorItem {
         let item = Vector::cast_from(item);
-        if use_planes {
+        if let PlaneReduceMode::Single = use_planes {
             *accumulator * plane_prod(item)
         } else {
             *accumulator * item

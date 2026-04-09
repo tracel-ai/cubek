@@ -5,7 +5,7 @@ use super::{
 use crate::{
     BoundChecks, IdleMode, ReduceError, VectorizationMode,
     launch::{calculate_plane_count_per_cube, support_plane},
-    routines::{BlueprintStrategy, PlaneReduceBlueprint, Routine},
+    routines::{BlueprintStrategy, PlaneMergeStrategy, PlaneReduceBlueprint, Routine},
 };
 use cubecl::{CubeCount, CubeDim, Runtime, features::Plane, prelude::ComputeClient};
 use cubek_std::cube_count::cube_count_spread_with_total;
@@ -124,12 +124,31 @@ fn generate_blueprint<R: Runtime>(
         false => IdleMode::None,
     };
 
+    let properties = &client.properties().hardware;
+    let plane_size_min = properties.plane_size_min;
+    let plane_size_max = properties.plane_size_max;
+    let cube_dim_x = plane_size_max;
+
+    let strategy_enum = if !strategy.independent {
+        // TODO: Refactor before commiting
+        // If independent is false, it means we ARE using plane instructions
+        // We need to decide WHICH type of plane reduction strategy to use
+        if plane_size_min == plane_size_max && plane_size_max >= cube_dim_x {
+            PlaneMergeStrategy::Eager
+        } else {
+            // taken by intel GPU
+            PlaneMergeStrategy::MultiplaneLazy
+        }
+    } else {
+        // Independent is true: units don't cooperate
+        PlaneMergeStrategy::Lazy
+    };
     let blueprint = ReduceBlueprint {
         vectorization_mode: settings.vectorization_mode,
         global: GlobalReduceBlueprint::Plane(PlaneReduceBlueprint {
             plane_idle,
             bound_checks,
-            independent: strategy.independent,
+            plane_merge_strategy: strategy_enum,
         }),
     };
 

@@ -68,7 +68,7 @@ pub trait ReduceInstruction<P: ReducePrecision>:
         accumulator: &Self::AccumulatorItem,
         item: Vector<P::EI, P::SI>,
         coordinate: ReduceCoordinate<P::SI>,
-        #[comptime] use_planes: bool,
+        #[comptime] plane_reduce: PlaneReduceMode,
     ) -> Self::AccumulatorItem;
 
     /// Reduce two accumulators into a single accumulator.
@@ -135,6 +135,17 @@ pub struct ArgAccumulator<T: Numeric, N: Size> {
     pub args: SharedMemory<Vector<u32, N>>,
 }
 
+/// For a single reduce step whether we need to do plane reduction
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PlaneReduceMode {
+    /// No plane reduction
+    None,
+    /// We reduce across the plane which equals CUBE_DIM_X
+    Single,
+    /// We reduce across multiple planes until we reach CUBE_DIM_X
+    Multi,
+}
+
 #[cube]
 impl<In: Numeric, N: Size> SharedAccumulator for ArgAccumulator<In, N> {
     type Item = (Vector<In, N>, Vector<u32, N>);
@@ -162,9 +173,9 @@ pub fn reduce_inplace<P: ReducePrecision, R: ReduceInstruction<P>>(
     accumulator: &mut R::AccumulatorItem,
     item: Vector<P::EI, P::SI>,
     coordinate: ReduceCoordinate<P::SI>,
-    #[comptime] use_planes: bool,
+    #[comptime] plane_reduce: PlaneReduceMode,
 ) {
-    let reduction = &R::reduce(inst, accumulator, item, coordinate, use_planes);
+    let reduction = &R::reduce(inst, accumulator, item, coordinate, plane_reduce);
     R::assign_accumulator(inst, accumulator, reduction);
 }
 
@@ -175,7 +186,7 @@ pub fn reduce_shared_inplace<P: ReducePrecision, R: ReduceInstruction<P>>(
     index: usize,
     item: Vector<P::EI, P::SI>,
     coordinate: ReduceCoordinate<P::SI>,
-    #[comptime] use_planes: bool,
+    #[comptime] use_planes: PlaneReduceMode,
 ) {
     let acc_item = R::SharedAccumulator::read(accumulator, index);
     let reduction = R::reduce(inst, &acc_item, item, coordinate, use_planes);

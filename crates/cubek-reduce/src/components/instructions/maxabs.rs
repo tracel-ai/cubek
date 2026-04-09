@@ -1,5 +1,8 @@
 use super::{ReduceCoordinate, ReduceFamily, ReduceInstruction};
-use crate::{components::instructions::ReduceRequirements, components::precision::ReducePrecision};
+use crate::components::{
+    instructions::{PlaneReduceMode, ReduceRequirements},
+    precision::ReducePrecision,
+};
 use cubecl::prelude::*;
 
 // TODO Add to test framework.
@@ -47,9 +50,9 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
         accumulator: &Self::AccumulatorItem,
         item: Vector<P::EI, P::SI>,
         _coordinate: ReduceCoordinate<P::SI>,
-        #[comptime] use_planes: bool,
+        #[comptime] use_planes: PlaneReduceMode,
     ) -> Self::AccumulatorItem {
-        if use_planes {
+        if let PlaneReduceMode::Single = use_planes {
             let candidate_item = Vector::cast_from(plane_max(Vector::abs(item)));
             select_many(
                 accumulator.greater_than(candidate_item),

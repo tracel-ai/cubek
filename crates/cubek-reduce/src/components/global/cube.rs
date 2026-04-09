@@ -3,7 +3,9 @@ use crate::{
     components::{
         args::NumericLine,
         global::idle_check,
-        instructions::{SharedAccumulator, fuse_accumulator_inplace, reduce_inplace},
+        instructions::{
+            PlaneReduceMode, SharedAccumulator, fuse_accumulator_inplace, reduce_inplace,
+        },
         readers::{Reader, cube::CubeReader},
         writer::Writer,
     },
@@ -130,7 +132,13 @@ impl GlobalFullCubeReduce {
 
         for i in 0..reader.length() {
             let (item, coordinate) = reader.read(i);
-            reduce_inplace::<P, I>(inst, &mut accumulator, item, coordinate, false);
+            reduce_inplace::<P, I>(
+                inst,
+                &mut accumulator,
+                item,
+                coordinate,
+                PlaneReduceMode::None,
+            );
         }
 
         let worker_pos = Self::worker_pos(blueprint);
@@ -140,7 +148,13 @@ impl GlobalFullCubeReduce {
                 // Sync at the plane level.
                 let (item, coordinate) = I::read_accumulator(inst, &accumulator);
                 let mut accumulator_plane = I::null_accumulator(inst);
-                reduce_inplace::<P, I>(inst, &mut accumulator_plane, item, coordinate, true);
+                reduce_inplace::<P, I>(
+                    inst,
+                    &mut accumulator_plane,
+                    item,
+                    coordinate,
+                    PlaneReduceMode::Single,
+                );
                 accumulator_plane
             }
             false => accumulator,
@@ -170,7 +184,7 @@ fn reduce_scan<P: ReducePrecision, I: ReduceInstruction<P>>(
     for i in 0..size {
         let item = I::SharedAccumulator::read(accumulator, i);
         let (item, coordinate) = I::read_accumulator(inst, &item);
-        reduce_inplace::<P, I>(inst, result, item, coordinate, false);
+        reduce_inplace::<P, I>(inst, result, item, coordinate, PlaneReduceMode::None);
     }
 }
 
@@ -237,5 +251,5 @@ fn reduce_tree<P: ReducePrecision, I: ReduceInstruction<P>>(
 
     let tmp = I::SharedAccumulator::read(accumulator, 0);
     let (item, coordinate) = I::read_accumulator(inst, &tmp);
-    reduce_inplace::<P, I>(inst, result, item, coordinate, false);
+    reduce_inplace::<P, I>(inst, result, item, coordinate, PlaneReduceMode::None);
 }
