@@ -16,21 +16,18 @@ use cubek_matmul::{
     components::tile::{cmma::CmmaMatmul, mma::MmaMatmul},
     definition::{AvailableVectorSizes, MatmulElems},
 };
-use cubek_std::{
-    InputBinding,
-    {MatrixLayout, tile::Strided},
-};
+use cubek_std::{InputBinding, MatrixLayout};
 use derive_new::new;
 
 macro_rules! with_tile_kind {
     ($kind: expr, $T: ident, $launch: expr) => {
         match $kind {
             AcceleratedTileKind::Cmma => {
-                type $T = CmmaMatmul<Option<Strided>>;
+                type $T = CmmaMatmul;
                 ($launch)()
             }
             AcceleratedTileKind::Mma => {
-                type $T = MmaMatmul<Strided, Strided, Option<Strided>>;
+                type $T = MmaMatmul;
                 ($launch)()
             }
         }

@@ -42,7 +42,7 @@ pub struct PlaneMatmulFamily<
 }
 
 impl<
-    TM: TileMatmulFamily<OutTile = Strided>,
+    TM: TileMatmulFamily<TileIO: TileIO<Out = Strided>>,
     StageLhs: StageFamily<TileKind = <TM::TileIO as TileIO>::In>,
     StageRhs: StageFamily<TileKind = <TM::TileIO as TileIO>::In>,
     StageAcc: StageFamily<TileKind = <TM::TileIO as TileIO>::Acc>,

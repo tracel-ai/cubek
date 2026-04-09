@@ -2,6 +2,7 @@ use std::{fmt::Display, marker::PhantomData};
 
 use cubecl::Runtime;
 
+use crate::components::tile::StandardTileIO;
 use crate::components::{
     batch::BatchMatmulFamily, global::read::sync_full_cyclic::SyncFullCyclicLoading,
 };
@@ -55,7 +56,7 @@ impl Display for OrderedSelectionArgs {
 
 impl<TMM, RC> Routine<RC> for OrderedDoubleBufferingAlgorithm<TMM>
 where
-    TMM: tile::TileMatmulFamily,
+    TMM: tile::TileMatmulFamily<TileIO = StandardTileIO>,
     RC: RuntimeConfig,
 {
     type Strategy = OrderedSelectionArgs;

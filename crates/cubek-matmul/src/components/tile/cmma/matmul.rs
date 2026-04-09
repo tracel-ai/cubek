@@ -25,8 +25,8 @@ pub struct Fragment<E: Numeric> {
 
 #[cube]
 impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for CmmaMatmul
-// where
-//     CmmaStageReader<AccTile>: CmmaFragmentReader,
+where
+    CmmaStageReader<Option<Strided>>: CmmaFragmentReader,
 {
     type Config = SharedTileConfig;
 
