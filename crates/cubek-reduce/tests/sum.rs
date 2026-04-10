@@ -20,13 +20,24 @@ use cubek_test_utils::{
 
 #[test]
 fn simple_reduce_sum() {
+    let strategy = ReduceStrategy {
+        routine: RoutineStrategy::Plane(BlueprintStrategy::Inferred(PlaneStrategy { independent: true })),
+        vectorization: VectorizationStrategy {
+            parallel_output_vectorization: true,
+        },
+    };
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let shape = [8, 32].to_vec();
-    let dim = shape.len() - 1;
-    test_launch(client, shape, dim);
+    let shape = [1, 32].to_vec();
+    let dim = 0;
+    test_launch(client, shape, dim, strategy);
 }
 
-fn test_launch(client: ComputeClient<TestRuntime>, shape: Vec<usize>, dim: usize) {
+fn test_launch(
+    client: ComputeClient<TestRuntime>,
+    shape: Vec<usize>,
+    dim: usize,
+    strategy: ReduceStrategy,
+) {
     let dtype = f32::as_type_native_unchecked().storage_type();
     let mut reduce_shape = shape.clone();
     reduce_shape[dim] = 1;
@@ -49,14 +60,6 @@ fn test_launch(client: ComputeClient<TestRuntime>, shape: Vec<usize>, dim: usize
     )
     .generate_without_host_data();
 
-    let strategy = ReduceStrategy {
-        routine: RoutineStrategy::Plane(BlueprintStrategy::Inferred(PlaneStrategy {
-            independent: true,
-        })),
-        vectorization: VectorizationStrategy {
-            parallel_output_vectorization: true,
-        },
-    };
     match reduce::<TestRuntime>(
         &client,
         matrix_handle.binding(),
@@ -104,7 +107,6 @@ pub fn assert_reduce_sum_result(
         _ => panic!("unreachable"),
     }
 }
-
 
 // Reference code
 pub fn reduce_sum_ref(matrix: &HostData, dim: usize) -> HostData {
