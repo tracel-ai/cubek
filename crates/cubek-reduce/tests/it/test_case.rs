@@ -311,6 +311,9 @@ where
 
         let bytes = client.read_one(output_handle).unwrap();
         let output_values = O::from_bytes(&bytes);
+
+        println!("output values: {:?}", output_values);
+        println!("expected values: {:?}", expected_values);
         assert_approx_equal(
             output_values,
             &expected_values,

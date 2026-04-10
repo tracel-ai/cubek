@@ -21,6 +21,7 @@ std = ["cubecl/std", "thiserror/std"]
 [dependencies]
 cubecl = { workspace = true }
 cubek-std = { path = "../cubek-std", version = "=0.2.0-pre.3", default-features = false }
+cubek-test-utils = { path = "./../cubek-test-utils/", version = "=0.2.0-pre.3" }
 
 num-traits = "0.2.19"
 pretty_assertions = { workspace = true, optional = true }

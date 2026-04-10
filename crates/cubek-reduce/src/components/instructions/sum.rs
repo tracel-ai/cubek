@@ -1,6 +1,7 @@
 use super::{ReduceCoordinate, ReduceFamily, ReduceInstruction, ReduceRequirements};
 use crate::components::{instructions::PlaneReduceMode, precision::ReducePrecision};
 use cubecl::prelude::*;
+use num_traits::Zero;
 
 #[derive(Debug, CubeType, Clone)]
 pub struct Sum {}
@@ -56,10 +57,26 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
         _coordinate: ReduceCoordinate<P::SI>,
         #[comptime] plane_reduce: PlaneReduceMode,
     ) -> Self::AccumulatorItem {
-        if let PlaneReduceMode::Single = plane_reduce {
-            *accumulator + plane_sum(Vector::cast_from(item))
-        } else {
-            *accumulator + Vector::cast_from(item)
+        match plane_reduce {
+            PlaneReduceMode::Single => *accumulator + plane_sum(Vector::cast_from(item)),
+            PlaneReduceMode::None => *accumulator + Vector::cast_from(item),
+            PlaneReduceMode::Multi => {
+                //panic!("Multiplane: ");
+                //let mut sum = Vector::zero();
+                //// assume cube_dim_x is divisible by runtime plane_dim
+                //let num_plane_reductions = CUBE_DIM_X / PLANE_DIM;
+
+                let shuffle_sum = plane_sum(Vector::cast_from(item));
+                //for i in 0..num_plane_reductions {
+                //    sum += plane_shuffle(shuffle_sum, (UNIT_POS_X + i * PLANE_DIM) % CUBE_DIM_X);
+                //}
+                //Vector::cast_from(PLANE_DIM)
+                if UNIT_POS_Y == 0 {
+                    *accumulator + shuffle_sum
+                } else {
+                    Vector::zero()
+                }
+            }
         }
     }
 

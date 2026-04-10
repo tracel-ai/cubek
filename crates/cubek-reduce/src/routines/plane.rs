@@ -127,22 +127,18 @@ fn generate_blueprint<R: Runtime>(
     let properties = &client.properties().hardware;
     let plane_size_min = properties.plane_size_min;
     let plane_size_max = properties.plane_size_max;
-    let cube_dim_x = plane_size_max;
 
-    let strategy_enum = if !strategy.independent {
-        // TODO: Refactor before commiting
-        // If independent is false, it means we ARE using plane instructions
-        // We need to decide WHICH type of plane reduction strategy to use
-        if plane_size_min == plane_size_max && plane_size_max >= cube_dim_x {
-            PlaneMergeStrategy::Eager
-        } else {
-            // taken by intel GPU
-            PlaneMergeStrategy::MultiplaneLazy
-        }
-    } else {
-        // Independent is true: units don't cooperate
+    let strategy_enum = if plane_size_min != plane_size_max {
+        // We have no guarranty the runtime plane_size will be equal to cube_dim_x
+        // therefore we must use MultiplaneLazy
+        PlaneMergeStrategy::MultiplaneLazy
+    } else if strategy.independent {
         PlaneMergeStrategy::Lazy
+    } else {
+        PlaneMergeStrategy::Eager
     };
+
+    //panic!("Strategy: {:?}", strategy_enum);
     let blueprint = ReduceBlueprint {
         vectorization_mode: settings.vectorization_mode,
         global: GlobalReduceBlueprint::Plane(PlaneReduceBlueprint {
