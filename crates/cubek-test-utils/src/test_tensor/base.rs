@@ -63,6 +63,7 @@ impl TestTensor {
 pub struct TestInput {
     base_spec: BaseInputSpec,
     data_kind: DataKind,
+    quantization: Option<QuantScheme>,
 }
 
 pub enum DataKind {
@@ -87,6 +88,7 @@ impl TestInput {
         dtype: StorageType,
         stride_spec: StrideSpec,
         data_kind: DataKind,
+        quantization: Option<QuantScheme>,
     ) -> Self {
         let base_spec = BaseInputSpec {
             client,
@@ -98,6 +100,7 @@ impl TestInput {
         Self {
             base_spec,
             data_kind,
+            quantization,
         }
     }
 
@@ -110,12 +113,95 @@ impl TestInput {
     }
 
     pub fn generate_test_tensor(self) -> TestTensor {
+        let quantization = self.quantization;
+        let client = self.base_spec.client.clone();
         let (handle, host) = self.generate_with_f32_host_data();
-        TestTensor {
+
+        let mut tensor = TestTensor {
             handle,
             host,
             quantization: None,
+        };
+
+        if let Some(scheme) = quantization {
+            let original_shape = tensor.handle.shape().clone();
+
+            // Actually quantize the data on device.
+            // Scale for symmetric tensor-wise is 1x1.
+            // We use a dummy scale for this integration test (1.0 / 127.0).
+            let scale_handle = TestInput::new(
+                client.clone(),
+                [1, 1],
+                f32::as_type_native_unchecked().storage_type(),
+                StrideSpec::RowMajor,
+                DataKind::Custom {
+                    data: vec![1.0 / 127.0],
+                },
+                None,
+            )
+            .generate();
+
+            let quant_dtype = if matches!(
+                scheme.store,
+                cubecl_common::quant::scheme::QuantStore::PackedU32(_)
+            ) {
+                cubecl::ir::ElemType::UInt(cubecl::ir::UIntKind::U32).into()
+            } else {
+                cubecl::ir::ElemType::from_quant_value(scheme.value).into()
+            };
+
+            let mut quant_shape = original_shape.clone();
+            let num_quants = scheme.num_quants();
+            if num_quants > 1 {
+                let last_dim = quant_shape.len() - 1;
+                quant_shape[last_dim] /= num_quants;
+            }
+
+            let output_handle = TestInput::new(
+                client.clone(),
+                quant_shape,
+                quant_dtype,
+                StrideSpec::RowMajor,
+                DataKind::Zeros,
+                None,
+            )
+            .generate();
+
+            let out_scale_handle = TestInput::new(
+                client.clone(),
+                [1, 1],
+                f32::as_type_native_unchecked().storage_type(),
+                StrideSpec::RowMajor,
+                DataKind::Zeros,
+                None,
+            )
+            .generate();
+
+            let input_elem = match tensor.handle.dtype {
+                StorageType::Scalar(elem) => elem,
+                _ => panic!("Unsupported storage type {:?}", tensor.handle.dtype),
+            };
+
+            cubek_quant::quantize::launch_ref(
+                &client,
+                tensor.handle.binding(),
+                output_handle.clone().binding(),
+                scale_handle.binding(),
+                out_scale_handle.clone().binding(),
+                &scheme,
+                input_elem,
+            )
+            .expect("Quantization failed");
+
+            tensor.handle = output_handle;
+            tensor.quantization = Some(QuantizationInfo {
+                scheme,
+                scale: out_scale_handle,
+                shape: original_shape,
+            });
         }
+
+        tensor
     }
 
     pub fn f32_host_data(self) -> HostData {

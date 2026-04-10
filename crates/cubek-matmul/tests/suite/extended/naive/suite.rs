@@ -166,6 +166,7 @@ fn test_naive(case: MatmulTestCase) {
             seed: 1234,
             distribution: Distribution::Uniform(-1., 1.),
         },
+        None,
     )
     .generate_with_f32_host_data();
 
@@ -178,6 +179,7 @@ fn test_naive(case: MatmulTestCase) {
             seed: 5678,
             distribution: Distribution::Uniform(-1., 1.),
         },
+        None,
     )
     .generate_with_f32_host_data();
 
@@ -187,6 +189,7 @@ fn test_naive(case: MatmulTestCase) {
         problem.global_dtypes.out,
         layout_to_stride_spec(MatrixLayout::RowMajor),
         DataKind::Zeros,
+        None,
     )
     .generate_without_host_data();
 

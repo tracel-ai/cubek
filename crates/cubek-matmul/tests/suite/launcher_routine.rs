@@ -52,6 +52,7 @@ pub fn test_matmul_routine<A: Routine<()>>(
             seed: 1234,
             distribution: Distribution::Uniform(-1., 1.),
         },
+        None,
     )
     .generate_with_f32_host_data();
 
@@ -64,6 +65,7 @@ pub fn test_matmul_routine<A: Routine<()>>(
             seed: 5678,
             distribution: Distribution::Uniform(-1., 1.),
         },
+        None,
     )
     .generate_with_f32_host_data();
 
@@ -73,6 +75,7 @@ pub fn test_matmul_routine<A: Routine<()>>(
         problem.global_dtypes.out,
         layout_to_stride_spec(MatrixLayout::RowMajor),
         DataKind::Zeros,
+        None,
     )
     .generate_without_host_data();
 

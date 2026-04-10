@@ -21,6 +21,7 @@ fn large_fft_roundtrip() {
             seed: 42,
             distribution: Distribution::Uniform(-1., 1.),
         },
+        None,
     )
     .generate_with_f32_host_data();
 

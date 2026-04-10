@@ -85,6 +85,7 @@ pub fn print_mma_layout<AB: CubeElement + Numeric, CD: CubeElement + Numeric>(
         dtype,
         StrideSpec::RowMajor,
         DataKind::Zeros,
+        None,
     )
     .generate();
 
@@ -94,6 +95,7 @@ pub fn print_mma_layout<AB: CubeElement + Numeric, CD: CubeElement + Numeric>(
         dtype,
         StrideSpec::RowMajor,
         DataKind::Zeros,
+        None,
     )
     .generate();
 
@@ -103,6 +105,7 @@ pub fn print_mma_layout<AB: CubeElement + Numeric, CD: CubeElement + Numeric>(
         dtype,
         StrideSpec::RowMajor,
         DataKind::Zeros,
+        None,
     )
     .generate();
 

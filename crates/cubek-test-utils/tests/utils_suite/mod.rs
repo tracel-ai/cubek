@@ -20,6 +20,7 @@ fn eye_handle_row_major() {
         f32::as_type_native_unchecked().storage_type(),
         StrideSpec::RowMajor,
         DataKind::Eye,
+        None,
     )
     .generate();
 
@@ -31,6 +32,7 @@ fn eye_handle_row_major() {
         DataKind::Custom {
             data: [1., 0., 0., 0., 1., 0.].to_vec(),
         },
+        None,
     )
     .f32_host_data();
 
@@ -53,6 +55,7 @@ fn eye_handle_col_major() {
         f32::as_type_native_unchecked().storage_type(),
         StrideSpec::ColMajor,
         DataKind::Eye,
+        None,
     )
     .generate();
 
@@ -64,6 +67,7 @@ fn eye_handle_col_major() {
         DataKind::Custom {
             data: [1., 0., 0., 0., 1., 0.].to_vec(),
         },
+        None,
     )
     .f32_host_data();
 
@@ -86,6 +90,7 @@ fn arange_handle_row_major() {
         f32::as_type_native_unchecked().storage_type(),
         StrideSpec::RowMajor,
         DataKind::Arange { scale: None },
+        None,
     )
     .generate();
 
@@ -97,6 +102,7 @@ fn arange_handle_row_major() {
         DataKind::Custom {
             data: [0., 1., 2., 3., 4., 5.].to_vec(),
         },
+        None,
     )
     .f32_host_data();
 
@@ -119,6 +125,7 @@ fn arange_handle_col_major() {
         f32::as_type_native_unchecked().storage_type(),
         StrideSpec::ColMajor,
         DataKind::Arange { scale: None },
+        None,
     )
     .generate();
 
@@ -130,6 +137,7 @@ fn arange_handle_col_major() {
         DataKind::Custom {
             data: [0., 1., 2., 3., 4., 5.].to_vec(),
         },
+        None,
     )
     .f32_host_data();
 
@@ -154,6 +162,7 @@ fn custom_handle_row_major_col_major() {
         DataKind::Custom {
             data: contiguous_data.clone(),
         },
+        None,
     )
     .generate_with_f32_host_data();
 
@@ -165,6 +174,7 @@ fn custom_handle_row_major_col_major() {
         DataKind::Custom {
             data: contiguous_data,
         },
+        None,
     )
     .generate_with_f32_host_data();
 
@@ -187,6 +197,7 @@ fn arange_handle_row_major_slice() {
         f32::as_type_native_unchecked().storage_type(),
         StrideSpec::RowMajor,
         DataKind::Custom { data: actual_data },
+        None,
     )
     .f32_host_data();
 
@@ -200,6 +211,7 @@ fn arange_handle_row_major_slice() {
         DataKind::Custom {
             data: expected_data,
         },
+        None,
     )
     .f32_host_data();
 
