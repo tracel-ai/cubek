@@ -53,14 +53,14 @@ where
         rhs,
         &launch_info.blueprint,
         &problem,
-        &vector_sizes,
+        &launch_info.vector_sizes,
         dtypes,
     );
     let output = <OutputArg<MA> as ConcreteOutputFactory<A>>::create(
         out,
         &launch_info.blueprint,
         &problem,
-        &vector_sizes,
+        &launch_info.vector_sizes,
         dtypes,
     );
 

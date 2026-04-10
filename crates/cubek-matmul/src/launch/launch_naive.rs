@@ -131,14 +131,14 @@ pub fn launch_ref<R: Runtime>(
         rhs,
         &launch_info.blueprint,
         &problem,
-        &vector_sizes,
+        &launch_info.vector_sizes,
         dtypes,
     );
     let output = <OutputArg<TensorArgs> as ConcreteOutputFactory<NaiveRoutine>>::create(
         out,
         &launch_info.blueprint,
         &problem,
-        &vector_sizes,
+        &launch_info.vector_sizes,
         dtypes,
     );
 

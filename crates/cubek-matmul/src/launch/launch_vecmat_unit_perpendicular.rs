@@ -140,7 +140,7 @@ pub fn launch_ref<R: Runtime>(
             rhs,
             &launch_info.blueprint,
             &problem,
-            &vector_sizes,
+            &launch_info.vector_sizes,
             dtypes,
         );
     let output =
@@ -148,7 +148,7 @@ pub fn launch_ref<R: Runtime>(
             out,
             &launch_info.blueprint,
             &problem,
-            &vector_sizes,
+            &launch_info.vector_sizes,
             dtypes,
         );
 
