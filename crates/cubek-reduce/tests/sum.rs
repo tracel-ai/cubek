@@ -21,7 +21,9 @@ use cubek_test_utils::{
 #[test]
 fn simple_reduce_sum() {
     let strategy = ReduceStrategy {
-        routine: RoutineStrategy::Plane(BlueprintStrategy::Inferred(PlaneStrategy { independent: true })),
+        routine: RoutineStrategy::Plane(BlueprintStrategy::Inferred(PlaneStrategy {
+            independent: true,
+        })),
         vectorization: VectorizationStrategy {
             parallel_output_vectorization: true,
         },
