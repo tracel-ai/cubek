@@ -71,11 +71,11 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
                 //    sum += plane_shuffle(shuffle_sum, (UNIT_POS_X + i * PLANE_DIM) % CUBE_DIM_X);
                 //}
                 //Vector::cast_from(PLANE_DIM)
-                if UNIT_POS_Y == 0 {
+                //if UNIT_POS_Y == 0 {
                     *accumulator + shuffle_sum
-                } else {
-                    Vector::zero()
-                }
+                //} else {
+                //    Vector::zero()
+                //}
             }
         }
     }

@@ -25,12 +25,12 @@ fn simple_reduce_sum() {
             independent: true,
         })),
         vectorization: VectorizationStrategy {
-            parallel_output_vectorization: true,
+            parallel_output_vectorization: false,
         },
     };
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let shape = [1, 32].to_vec();
-    let dim = 0;
+    let shape = [1, 256].to_vec();
+    let dim = 1;
     test_launch(client, shape, dim, strategy);
 }
 
