@@ -2,9 +2,11 @@ use cubecl::{
     TestRuntime,
     client::ComputeClient,
     ir::StorageType,
+    prelude::CubePrimitive,
     std::tensor::TensorHandle,
     zspace::{Shape, Strides},
 };
+use cubecl_common::quant::scheme::QuantScheme;
 
 use crate::test_tensor::{
     arange::build_arange,
@@ -15,6 +17,48 @@ use crate::test_tensor::{
     strides::StrideSpec,
     zeros::build_zeros,
 };
+
+#[derive(Clone)]
+/// Information about a quantized tensor in tests.
+/// This allows marking a tensor as quantized for the kernel dispatcher
+/// while keeping the original unquantized data on the host for reference.
+pub struct QuantizationInfo {
+    /// The scale tensor on the device.
+    pub scale: TensorHandle<TestRuntime>,
+    /// The quantization scheme (e.g., Symmetric, Tensor-wise, etc.)
+    pub scheme: QuantScheme,
+    /// The original unquantized shape of the tensor.
+    pub shape: Shape,
+}
+
+#[derive(Clone)]
+/// A test tensor which might be marked as quantized.
+///
+/// This structure couples the device handle, the host reference data,
+/// and optional quantization metadata. If `quantization` is `Some`,
+/// the handle on the device is expected to contain quantized data
+/// (unless it's a dummy quantization for testing purposes).
+pub struct TestTensor {
+    /// The device handle.
+    pub handle: TensorHandle<TestRuntime>,
+    /// The host data, usually stored in f32 for easy reference comparison.
+    pub host: HostData,
+    /// Optional quantization info.
+    pub quantization: Option<QuantizationInfo>,
+}
+
+impl TestTensor {
+    /// Mark the handle as quantized.
+    /// This only updates the metadata in the test tensor.
+    pub fn mark_quantized(mut self, scheme: QuantScheme, scale: TensorHandle<TestRuntime>) -> Self {
+        self.quantization = Some(QuantizationInfo {
+            scheme,
+            scale,
+            shape: self.handle.shape().clone(),
+        });
+        self
+    }
+}
 
 pub struct TestInput {
     base_spec: BaseInputSpec,
@@ -63,6 +107,15 @@ impl TestInput {
 
     pub fn generate_with_bool_host_data(self) -> (TensorHandle<TestRuntime>, HostData) {
         self.generate_host_data(HostDataType::Bool)
+    }
+
+    pub fn generate_test_tensor(self) -> TestTensor {
+        let (handle, host) = self.generate_with_f32_host_data();
+        TestTensor {
+            handle,
+            host,
+            quantization: None,
+        }
     }
 
     pub fn f32_host_data(self) -> HostData {
