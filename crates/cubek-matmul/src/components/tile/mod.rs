@@ -9,6 +9,8 @@ pub mod register;
 
 mod base;
 mod config;
+mod tilex;
 
 pub use base::*;
 pub use config::*;
+pub use tilex::*;

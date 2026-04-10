@@ -9,10 +9,11 @@ use cubek_std::{
 };
 
 use crate::{
-    components::resource::CubeDimResource,
-    components::tile::TileConfig,
-    definition::{MatmulElems, TilingBlueprint},
-    definition::{MatmulSetupError, MatmulVectorSizes},
+    components::{
+        resource::CubeDimResource,
+        tile::{TileConfig, TileScalar, Tilex},
+    },
+    definition::{MatmulElems, MatmulSetupError, MatmulVectorSizes, TilingBlueprint},
 };
 
 /// A family of [TileMatmul] implementations that operate with any precision.
@@ -135,8 +136,8 @@ pub trait TileMatmul<L: Numeric, R: Numeric, A: Numeric>: 'static + Send + Sync 
 
     /// Load the container of Lhs from tile data
     fn load_lhs<E: Numeric, N: Size>(
-        tile: &Tile<<Self::TileIO as TileIO>::In, E, N>,
-        lhs: &mut <Self::Operands as Operands>::Lhs,
+        tile: &Tilex<E, N>,
+        lhs: &mut TileScalar<L>,
         #[comptime] config: Self::Config,
     );
 
