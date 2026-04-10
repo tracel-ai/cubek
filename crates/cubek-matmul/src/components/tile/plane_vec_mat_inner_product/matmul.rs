@@ -1,8 +1,10 @@
+use std::marker::PhantomData;
+
 use cubecl::{define_size, prelude::*};
 use cubek_std::{MatrixLayout, tile::Strided, tile::StridedTile};
 
 use crate::components::tile::{
-    StandardTileIO, TileMatmul,
+    Operands, StandardTileIO, TileMatmul,
     plane_vec_mat_inner_product::{reader::MatrixFragmentReader, writer::MatrixStageWriter},
 };
 use crate::{
@@ -30,27 +32,31 @@ impl<E: Numeric> VectorContainer<E> {
     }
 }
 
+#[derive(CubeType)]
+pub struct VectorOperands<L: Numeric, R: Numeric, A: Numeric> {
+    #[cube(comptime)]
+    _phantom: PhantomData<(L, R, A)>,
+}
+
+impl<L: Numeric, R: Numeric, A: Numeric> Operands for VectorOperands<L, R, A> {
+    type Lhs = VectorContainer<L>;
+    type Rhs = Sequence<VectorContainer<R>>;
+    type Acc = Sequence<VectorContainer<A>>;
+}
+
 #[cube]
 impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for PlaneVecMatInnerProduct
 where
     MatrixStageReader<Option<Strided>>: MatrixFragmentReader<TileKind = Option<Strided>>,
 {
     type Config = PlaneVecMatInnerProductConfig;
-
-    // One vector per unit in the plane
-    type LhsFragment = VectorContainer<L>;
-    // For each n: one vector per unit in the plane
-    type RhsFragment = Sequence<VectorContainer<R>>;
-
-    // For each n: one vector stored at unit pos 0, that will be reduced to a scalar only when writing at the end
-    type AccFragment = Sequence<VectorContainer<A>>;
-
+    type Operands = VectorOperands<L, R, A>;
     type TileIO = StandardTileIO;
 
     fn execute(
-        lhs: &Self::LhsFragment,
-        rhs: &Self::RhsFragment,
-        acc: &mut Self::AccFragment,
+        lhs: &VectorContainer<L>,
+        rhs: &Sequence<VectorContainer<R>>,
+        acc: &mut Sequence<VectorContainer<A>>,
         #[comptime] config: Self::Config,
     ) {
         #[unroll]
@@ -66,7 +72,7 @@ where
     fn allocate_lhs(
         #[comptime] _layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Self::LhsFragment {
+    ) -> VectorContainer<L> {
         register_vector_size(config.reduce_vector_size);
         VectorContainer::<L>::new()
     }
@@ -74,7 +80,7 @@ where
     fn allocate_rhs(
         #[comptime] _layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Self::RhsFragment {
+    ) -> Sequence<VectorContainer<R>> {
         register_vector_size(config.reduce_vector_size);
         let mut rhs = Sequence::new();
         #[unroll]
@@ -87,7 +93,7 @@ where
     fn allocate_acc(
         #[comptime] _layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Self::AccFragment {
+    ) -> Sequence<VectorContainer<A>> {
         register_vector_size(config.reduce_vector_size);
         let mut acc = Sequence::new();
         #[unroll]
@@ -99,7 +105,7 @@ where
 
     fn load_lhs<E: Numeric, N: Size>(
         tile: &StridedTile<E, N>,
-        lhs: &mut Self::LhsFragment,
+        lhs: &mut VectorContainer<L>,
         #[comptime] _config: Self::Config,
     ) {
         VectorStageReader::load_fragment(tile, lhs)
@@ -107,7 +113,7 @@ where
 
     fn load_rhs<E: Numeric, N: Size>(
         tile: &StridedTile<E, N>,
-        rhs: &mut Self::RhsFragment,
+        rhs: &mut Sequence<VectorContainer<R>>,
         #[comptime] config: Self::Config,
     ) {
         MatrixStageReader::<Strided>::load_fragment(tile, rhs, config.shared.tile_size.n())
@@ -115,7 +121,7 @@ where
 
     fn load_acc<E: Numeric, N: Size>(
         tile: &ComptimeOption<StridedTile<E, N>>,
-        acc: &mut Self::AccFragment,
+        acc: &mut Sequence<VectorContainer<A>>,
         #[comptime] config: Self::Config,
     ) {
         MatrixStageReader::<Option<Strided>>::load_fragment(tile, acc, config.shared.tile_size.n());
@@ -123,7 +129,7 @@ where
 
     fn write_results<E: Numeric, N: Size>(
         tile: &mut StridedTile<E, N, ReadWrite>,
-        acc: &mut Self::AccFragment,
+        acc: &mut Sequence<VectorContainer<A>>,
         #[comptime] config: Self::Config,
     ) {
         MatrixStageWriter::store_fragment(

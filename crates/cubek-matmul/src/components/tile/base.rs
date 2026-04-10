@@ -5,7 +5,7 @@ use cubecl::{
 };
 use cubek_std::{
     InvalidConfigError, MatrixLayout, TileSize,
-    tile::{Filled, Strided, Tile, TileKind, TileMut},
+    tile::{Strided, Tile, TileKind, TileMut},
 };
 
 use crate::{
@@ -90,13 +90,10 @@ impl TileIO for StandardTileIO {
     type Out = Strided;
 }
 
-#[derive(CubeType)]
-pub struct FilledTileIO {}
-
-impl TileIO for FilledTileIO {
-    type In = Strided;
-    type Acc = Filled;
-    type Out = Strided;
+pub trait Operands: CubeType + Send + Sync + 'static {
+    type Lhs: CubeType;
+    type Rhs: CubeType;
+    type Acc: CubeType;
 }
 
 /// Provides matrix multiplication operations at the tile level.
@@ -114,20 +111,14 @@ pub trait TileMatmul<L: Numeric, R: Numeric, A: Numeric>: 'static + Send + Sync 
     /// Config for this matmul
     type Config: TileConfig;
 
-    /// Contains Lhs data for computation
-    type LhsFragment: CubeType;
-    /// Contains Rhs data for computation
-    type RhsFragment: CubeType;
-    /// Contains and accumulates results of the Tile Matmul execution
-    type AccFragment: CubeType;
-
+    type Operands: Operands;
     type TileIO: TileIO;
 
     /// Executes the matrix multiplication of Lhs and Rhs, adding the result to the accumulator
     fn execute(
-        lhs: &Self::LhsFragment,
-        rhs: &Self::RhsFragment,
-        out: &mut Self::AccFragment,
+        lhs: &<Self::Operands as Operands>::Lhs,
+        rhs: &<Self::Operands as Operands>::Rhs,
+        acc: &mut <Self::Operands as Operands>::Acc,
         #[comptime] config: Self::Config,
     );
 
@@ -140,12 +131,12 @@ pub trait TileMatmul<L: Numeric, R: Numeric, A: Numeric>: 'static + Send + Sync 
     fn allocate_lhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Self::LhsFragment;
+    ) -> <Self::Operands as Operands>::Lhs;
 
     /// Load the container of Lhs from tile data
     fn load_lhs<E: Numeric, N: Size>(
         tile: &Tile<<Self::TileIO as TileIO>::In, E, N>,
-        lhs: &mut Self::LhsFragment,
+        lhs: &mut <Self::Operands as Operands>::Lhs,
         #[comptime] config: Self::Config,
     );
 
@@ -158,12 +149,12 @@ pub trait TileMatmul<L: Numeric, R: Numeric, A: Numeric>: 'static + Send + Sync 
     fn allocate_rhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Self::RhsFragment;
+    ) -> <Self::Operands as Operands>::Rhs;
 
     /// Load the container of Rhs from tile data
     fn load_rhs<E: Numeric, N: Size>(
         tile: &Tile<<Self::TileIO as TileIO>::In, E, N>,
-        rhs: &mut Self::RhsFragment,
+        rhs: &mut <Self::Operands as Operands>::Rhs,
         #[comptime] config: Self::Config,
     );
 
@@ -177,19 +168,19 @@ pub trait TileMatmul<L: Numeric, R: Numeric, A: Numeric>: 'static + Send + Sync 
     fn allocate_acc(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Self::AccFragment;
+    ) -> <Self::Operands as Operands>::Acc;
 
     /// Load the container of Acc from tile data
     fn load_acc<E: Numeric, N: Size>(
         tile: &Tile<<Self::TileIO as TileIO>::Acc, E, N>,
-        acc: &mut Self::AccFragment,
+        acc: &mut <Self::Operands as Operands>::Acc,
         #[comptime] config: Self::Config,
     );
 
     /// Write the content of the output container to the given slice
     fn write_results<E: Numeric, N: Size>(
         tile: &mut TileMut<<Self::TileIO as TileIO>::Out, E, N>,
-        out: &mut Self::AccFragment,
+        out: &mut <Self::Operands as Operands>::Acc,
         #[comptime] config: Self::Config,
     );
 }

@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use cubecl::{define_size, prelude::*};
 use cubek_std::{
     MatrixLayout,
@@ -7,7 +9,7 @@ use cubek_std::{
     },
 };
 
-use crate::components::tile::{StandardTileIO, TileMatmul, mma::config::MmaMatmulConfig};
+use crate::components::tile::{Operands, StandardTileIO, TileMatmul, mma::config::MmaMatmulConfig};
 use cubecl::{cmma::MmaDefinition, ir::MatrixIdent};
 
 /// Uses one plane to perform a small matmul using accelerated instructions, with manual register
@@ -26,6 +28,18 @@ pub struct MmaFragment<E: Numeric, N: Size> {
     layout: MatrixLayout,
 }
 
+#[derive(CubeType)]
+pub struct MmaOperands<L: Numeric, R: Numeric, A: Numeric> {
+    #[cube(comptime)]
+    _phantom: PhantomData<(L, R, A)>,
+}
+
+impl<L: Numeric, R: Numeric, A: Numeric> Operands for MmaOperands<L, R, A> {
+    type Lhs = MmaFragment<L, NL>;
+    type Rhs = MmaFragment<R, NR>;
+    type Acc = MmaFragment<A, NA>;
+}
+
 #[cube]
 impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for MmaMatmul
 where
@@ -34,33 +48,29 @@ where
     MmaStageReader<Option<Strided>>: MmaFragmentReader<TileKind = Option<Strided>>,
 {
     type Config = MmaMatmulConfig;
-
-    type LhsFragment = MmaFragment<L, NL>;
-    type RhsFragment = MmaFragment<R, NR>;
-    type AccFragment = MmaFragment<A, NA>;
-
+    type Operands = MmaOperands<L, R, A>;
     type TileIO = StandardTileIO;
 
     fn execute(
-        lhs: &Self::LhsFragment,
-        rhs: &Self::RhsFragment,
-        out: &mut Self::AccFragment,
+        lhs: &MmaFragment<L, NL>,
+        rhs: &MmaFragment<R, NR>,
+        acc: &mut MmaFragment<A, NA>,
         #[comptime] config: Self::Config,
     ) {
         let def = mma_definition(config);
-        let out_arr = def.execute(&lhs.fragment, &rhs.fragment, &out.fragment);
+        let out_arr = def.execute(&lhs.fragment, &rhs.fragment, &acc.fragment);
         let num_vectors = def.vectors_per_lane(MatrixIdent::Accumulator);
 
         #[unroll]
         for i in 0..num_vectors {
-            out.fragment[i] = out_arr[i];
+            acc.fragment[i] = out_arr[i];
         }
     }
 
     fn allocate_lhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Self::LhsFragment {
+    ) -> MmaFragment<L, NL> {
         let def = mma_definition::<L, R, A>(config);
         register_vector_sizes(def);
         let vector_count = def.vectors_per_lane(MatrixIdent::A);
@@ -74,7 +84,7 @@ where
     fn allocate_rhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Self::RhsFragment {
+    ) -> MmaFragment<R, NR> {
         let def = mma_definition::<L, R, A>(config);
         register_vector_sizes(def);
         let vector_count = def.vectors_per_lane(MatrixIdent::B);
@@ -88,7 +98,7 @@ where
     fn allocate_acc(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Self::AccFragment {
+    ) -> MmaFragment<A, NA> {
         let def = mma_definition::<L, R, A>(config);
         register_vector_sizes(def);
         let vector_count = def.vectors_per_lane(MatrixIdent::Accumulator);
@@ -101,7 +111,7 @@ where
 
     fn load_lhs<E: Numeric, N: Size>(
         tile: &StridedTile<E, N>,
-        lhs: &mut Self::LhsFragment,
+        lhs: &mut MmaFragment<L, NL>,
         #[comptime] config: Self::Config,
     ) {
         MmaStageReader::<Strided>::load_fragment(
@@ -117,7 +127,7 @@ where
 
     fn load_rhs<E: Numeric, N: Size>(
         tile: &StridedTile<E, N>,
-        rhs: &mut Self::RhsFragment,
+        rhs: &mut MmaFragment<R, NR>,
         #[comptime] config: Self::Config,
     ) {
         MmaStageReader::<Strided>::load_fragment(
@@ -133,7 +143,7 @@ where
 
     fn load_acc<E: Numeric, N: Size>(
         tile: &ComptimeOption<StridedTile<E, N>>,
-        acc: &mut Self::AccFragment,
+        acc: &mut MmaFragment<A, NA>,
         #[comptime] config: Self::Config,
     ) {
         MmaStageReader::<Option<Strided>>::load_fragment(
@@ -149,7 +159,7 @@ where
 
     fn write_results<E: Numeric, N: Size>(
         tile: &mut StridedTile<E, N, ReadWrite>,
-        out: &mut Self::AccFragment,
+        out: &mut MmaFragment<A, NA>,
         #[comptime] config: Self::Config,
     ) {
         MmaStageWriter::store_fragment(

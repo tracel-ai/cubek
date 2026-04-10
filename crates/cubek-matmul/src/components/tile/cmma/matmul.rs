@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use cubecl::prelude::*;
 use cubek_std::{
     tile::{Strided, StridedTile},
@@ -5,7 +7,7 @@ use cubek_std::{
 };
 
 use crate::components::tile::{
-    SharedTileConfig, StandardTileIO, TileMatmul,
+    Operands, SharedTileConfig, StandardTileIO, TileMatmul,
     cmma::{
         reader::{CmmaFragmentReader, CmmaStageReader},
         writer::CmmaStageWriter,
@@ -23,32 +25,40 @@ pub struct Fragment<E: Numeric> {
     layout: MatrixLayout,
 }
 
+#[derive(CubeType)]
+pub struct FragmentOperands<L: Numeric, R: Numeric, A: Numeric> {
+    #[cube(comptime)]
+    _phantom: PhantomData<(L, R, A)>,
+}
+
+impl<L: Numeric, R: Numeric, A: Numeric> Operands for FragmentOperands<L, R, A> {
+    type Lhs = Fragment<L>;
+    type Rhs = Fragment<R>;
+    type Acc = Fragment<A>;
+}
+
 #[cube]
 impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for CmmaMatmul
 where
     CmmaStageReader<Option<Strided>>: CmmaFragmentReader,
 {
     type Config = SharedTileConfig;
-
-    type LhsFragment = Fragment<L>;
-    type RhsFragment = Fragment<R>;
-    type AccFragment = Fragment<A>;
-
+    type Operands = FragmentOperands<L, R, A>;
     type TileIO = StandardTileIO;
 
     fn execute(
-        lhs: &Self::LhsFragment,
-        rhs: &Self::RhsFragment,
-        out: &mut Self::AccFragment,
+        lhs: &Fragment<L>,
+        rhs: &Fragment<R>,
+        acc: &mut Fragment<A>,
         #[comptime] _config: Self::Config,
     ) {
-        cmma::execute::<L, R, A, A>(&lhs.fragment, &rhs.fragment, &out.fragment, &out.fragment);
+        cmma::execute::<L, R, A, A>(&lhs.fragment, &rhs.fragment, &acc.fragment, &acc.fragment);
     }
 
     fn allocate_lhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Self::LhsFragment {
+    ) -> Fragment<L> {
         let size = config.tile_size;
 
         Fragment::<L> {
@@ -68,7 +78,7 @@ where
     fn allocate_rhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Self::RhsFragment {
+    ) -> Fragment<R> {
         let size = config.tile_size;
 
         Fragment::<R> {
@@ -88,7 +98,7 @@ where
     fn allocate_acc(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Self::AccFragment {
+    ) -> Fragment<A> {
         let size = config.tile_size;
 
         Fragment::<A> {
@@ -107,7 +117,7 @@ where
 
     fn load_lhs<E: Numeric, N: Size>(
         tile: &StridedTile<E, N>,
-        lhs: &mut Self::LhsFragment,
+        lhs: &mut Fragment<L>,
         #[comptime] _config: Self::Config,
     ) {
         CmmaStageReader::<Strided>::load_fragment(
@@ -119,7 +129,7 @@ where
 
     fn load_rhs<E: Numeric, N: Size>(
         tile: &StridedTile<E, N>,
-        rhs: &mut Self::RhsFragment,
+        rhs: &mut Fragment<R>,
         #[comptime] _config: Self::Config,
     ) {
         CmmaStageReader::<Strided>::load_fragment(
@@ -131,7 +141,7 @@ where
 
     fn load_acc<E: Numeric, N: Size>(
         tile: &ComptimeOption<StridedTile<E, N>>,
-        acc: &mut Self::AccFragment,
+        acc: &mut Fragment<A>,
         #[comptime] _config: Self::Config,
     ) {
         CmmaStageReader::<Option<Strided>>::load_fragment(
@@ -143,7 +153,7 @@ where
 
     fn write_results<E: Numeric, N: Size>(
         tile: &mut StridedTile<E, N, ReadWrite>,
-        out: &mut Self::AccFragment,
+        out: &mut Fragment<A>,
         #[comptime] _config: Self::Config,
     ) {
         let out = cmma::cast::<A, E>(&out.fragment);

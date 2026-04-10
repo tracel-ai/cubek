@@ -1,9 +1,11 @@
+use std::marker::PhantomData;
+
 use cubecl::prelude::*;
 use cubek_std::{MatrixLayout, tile::StridedTile};
 
 use crate::{
     components::tile::{
-        StandardTileIO, TileMatmul,
+        Operands, StandardTileIO, TileMatmul,
         interleaved::{
             config::InterleavedMatmulConfig, reader::InterleavedStageReader,
             writer::InterleavedStageWriter,
@@ -64,23 +66,31 @@ impl<E: Numeric> InterleavedAccumulator<E> {
     }
 }
 
+#[derive(CubeType)]
+pub struct InterleavedOperands<L: Numeric, R: Numeric, A: Numeric> {
+    #[cube(comptime)]
+    _phantom: PhantomData<(L, R, A)>,
+}
+
+impl<L: Numeric, R: Numeric, A: Numeric> Operands for InterleavedOperands<L, R, A> {
+    // Size m * k_local
+    type Lhs = InterleavedFragment<L>;
+    // Size k_local * n
+    type Rhs = InterleavedFragment<R>;
+    // Size m * n
+    type Acc = InterleavedAccumulator<A>;
+}
+
 #[cube]
 impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for InterleavedMatmul {
     type Config = InterleavedMatmulConfig;
-
-    // Size m * k_local
-    type LhsFragment = InterleavedFragment<L>;
-    // Size k_local * n
-    type RhsFragment = InterleavedFragment<R>;
-    // Size m * n
-    type AccFragment = InterleavedAccumulator<A>;
-
+    type Operands = InterleavedOperands<L, R, A>;
     type TileIO = StandardTileIO;
 
     fn execute(
-        lhs: &Self::LhsFragment,
-        rhs: &Self::RhsFragment,
-        acc: &mut Self::AccFragment,
+        lhs: &InterleavedFragment<L>,
+        rhs: &InterleavedFragment<R>,
+        acc: &mut InterleavedAccumulator<A>,
         #[comptime] config: Self::Config,
     ) {
         let m = config.elements_per_unit_m();
@@ -104,7 +114,7 @@ impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for InterleavedMatm
     fn allocate_lhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Self::LhsFragment {
+    ) -> InterleavedFragment<L> {
         let row_count = config.elements_per_unit_m();
         let col_count = config.elements_per_unit_k();
         InterleavedFragment::<L> {
@@ -118,7 +128,7 @@ impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for InterleavedMatm
     fn allocate_rhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Self::RhsFragment {
+    ) -> InterleavedFragment<R> {
         let row_count = config.elements_per_unit_k();
         let col_count = config.elements_per_unit_n();
         InterleavedFragment::<R> {
@@ -132,7 +142,7 @@ impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for InterleavedMatm
     fn allocate_acc(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Self::AccFragment {
+    ) -> InterleavedAccumulator<A> {
         let m = config.elements_per_unit_m();
         let n = config.elements_per_unit_n();
         InterleavedAccumulator::<A> {
@@ -145,7 +155,7 @@ impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for InterleavedMatm
 
     fn load_lhs<E: Numeric, N: Size>(
         tile: &StridedTile<E, N>,
-        lhs: &mut Self::LhsFragment,
+        lhs: &mut InterleavedFragment<L>,
         #[comptime] config: Self::Config,
     ) {
         InterleavedStageReader::load_fragment(tile, lhs, StageIdent::Lhs, config);
@@ -153,7 +163,7 @@ impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for InterleavedMatm
 
     fn load_rhs<E: Numeric, N: Size>(
         tile: &StridedTile<E, N>,
-        rhs: &mut Self::RhsFragment,
+        rhs: &mut InterleavedFragment<R>,
         #[comptime] config: Self::Config,
     ) {
         InterleavedStageReader::load_fragment(tile, rhs, StageIdent::Rhs, config);
@@ -161,7 +171,7 @@ impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for InterleavedMatm
 
     fn load_acc<E: Numeric, N: Size>(
         tile: &ComptimeOption<StridedTile<E, N>>,
-        acc: &mut Self::AccFragment,
+        acc: &mut InterleavedAccumulator<A>,
         #[comptime] config: Self::Config,
     ) {
         match tile {
@@ -177,7 +187,7 @@ impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for InterleavedMatm
 
     fn write_results<E: Numeric, N: Size>(
         tile: &mut StridedTile<E, N, ReadWrite>,
-        acc: &mut Self::AccFragment,
+        acc: &mut InterleavedAccumulator<A>,
         #[comptime] config: Self::Config,
     ) {
         acc.consolidate();

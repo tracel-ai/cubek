@@ -2,13 +2,15 @@ use std::marker::PhantomData;
 
 use super::fragments::{Accumulators, RhsTile, RhsTileExpand};
 use crate::{
-    components::stage::Stage,
-    components::stage::StageEvent,
-    components::stage::matmul::scheduler::PartitionScheduler,
-    components::stage::{PartitionBuffering, StageEventListener},
-    components::tile::{TileConfig, TileMatmul},
-    definition::{MatmulTypes, MatrixTypes},
-    {components::global::PlaneFlowConfig, definition::Lhs},
+    components::{
+        global::PlaneFlowConfig,
+        stage::{
+            PartitionBuffering, Stage, StageEvent, StageEventListener,
+            matmul::scheduler::PartitionScheduler,
+        },
+        tile::{Operands, TileConfig, TileMatmul},
+    },
+    definition::{Lhs, MatmulTypes, MatrixTypes},
 };
 use crate::{
     components::{stage::PartitionSchedulerScheme, tile::TileIO},
@@ -101,8 +103,8 @@ where
     pub fn execute_with_listener<SEL: StageEventListener>(
         lhs_stage: &StageLhs,
         rhs_stage: &StageRhs,
-        lhs_fragment: &mut Sequence<TM::LhsFragment>,
-        rhs_fragments: &mut RhsTile<TM::RhsFragment>,
+        lhs_fragment: &mut Sequence<<TM::Operands as Operands>::Lhs>,
+        rhs_fragments: &mut RhsTile<<TM::Operands as Operands>::Rhs>,
         acc: &mut Accumulators<MP, TM>,
         #[comptime] shared_config: SharedPartitionMatmulConfig<TM::Config>,
         listener: SEL,
@@ -140,7 +142,10 @@ where
     /// Make sure to load inputs before execution.
     pub fn init_tile_inputs(
         #[comptime] shared_config: SharedPartitionMatmulConfig<TM::Config>,
-    ) -> (Sequence<TM::LhsFragment>, RhsTile<TM::RhsFragment>) {
+    ) -> (
+        Sequence<<TM::Operands as Operands>::Lhs>,
+        RhsTile<<TM::Operands as Operands>::Rhs>,
+    ) {
         let mut lhs = Sequence::new();
 
         #[unroll]
@@ -208,8 +213,8 @@ where
     fn execute_single_buffer<SEL: StageEventListener>(
         lhs_stage: &StageLhs,
         rhs_stage: &StageRhs,
-        lhs_fragment: &mut Sequence<TM::LhsFragment>,
-        rhs_fragment: &mut TM::RhsFragment,
+        lhs_fragment: &mut Sequence<<TM::Operands as Operands>::Lhs>,
+        rhs_fragment: &mut <TM::Operands as Operands>::Rhs,
         acc: &mut Accumulators<MP, TM>,
         #[comptime] shared_config: SharedPartitionMatmulConfig<TM::Config>,
         mut listener: SEL,
@@ -302,8 +307,11 @@ where
     fn execute_double_buffer<SEL: StageEventListener>(
         lhs_stage: &StageLhs,
         rhs_stage: &StageRhs,
-        lhs_fragment: &mut Sequence<TM::LhsFragment>,
-        rhs_fragments: &mut (TM::RhsFragment, TM::RhsFragment),
+        lhs_fragment: &mut Sequence<<TM::Operands as Operands>::Lhs>,
+        rhs_fragments: &mut (
+            <TM::Operands as Operands>::Rhs,
+            <TM::Operands as Operands>::Rhs,
+        ),
         acc: &mut Accumulators<MP, TM>,
         #[comptime] shared_config: SharedPartitionMatmulConfig<TM::Config>,
         mut listener: SEL,

@@ -1,3 +1,4 @@
+use crate::components::tile::Operands;
 use crate::definition::{MatmulTypes, MatrixTypes};
 use crate::{
     components::tile::TileIO,
@@ -18,7 +19,7 @@ pub struct Accumulators<
             <MP::Acc as MatrixTypes>::Register,
         >,
 > {
-    sequence: Sequence<TM::AccFragment>,
+    sequence: Sequence<<TM::Operands as Operands>::Acc>,
 }
 
 type StageTy<T> = crate::definition::Stage<T>;
@@ -83,7 +84,7 @@ impl<
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] tiles_in_stage_partition_n: usize,
-    ) -> &TM::AccFragment {
+    ) -> &<TM::Operands as Operands>::Acc {
         &self.sequence[m * tiles_in_stage_partition_n + n]
     }
 
@@ -93,7 +94,7 @@ impl<
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] tiles_in_stage_partition_n: usize,
-    ) -> &mut TM::AccFragment {
+    ) -> &mut <TM::Operands as Operands>::Acc {
         self.sequence.index_mut(m * tiles_in_stage_partition_n + n)
     }
 }

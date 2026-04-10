@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use cubecl::prelude::*;
 use cubek_std::{
     tile::{Filled, Strided, StridedTile},
@@ -6,7 +8,7 @@ use cubek_std::{
 
 use crate::{
     components::tile::{
-        StandardTileIO, TileMatmul,
+        Operands, StandardTileIO, TileMatmul,
         register::{
             config::{ProductType, RegisterMatmulConfig},
             reader::{RegisterFragmentReader, RegisterStageReader},
@@ -31,23 +33,31 @@ pub struct UnitFragment<E: Numeric> {
     pub layout: MatrixLayout,
 }
 
+#[derive(CubeType)]
+pub struct UnitOperands<L: Numeric, R: Numeric, A: Numeric> {
+    #[cube(comptime)]
+    _phantom: PhantomData<(L, R, A)>,
+}
+
+impl<L: Numeric, R: Numeric, A: Numeric> Operands for UnitOperands<L, R, A> {
+    type Lhs = UnitFragment<L>;
+    type Rhs = UnitFragment<R>;
+    type Acc = UnitFragment<A>;
+}
+
 #[cube]
 impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for RegisterMatmul
 where
     RegisterStageReader<Filled>: RegisterFragmentReader<TileKind = Filled>,
 {
     type Config = RegisterMatmulConfig;
-
-    type LhsFragment = UnitFragment<L>;
-    type RhsFragment = UnitFragment<R>;
-    type AccFragment = UnitFragment<A>;
-
+    type Operands = UnitOperands<L, R, A>;
     type TileIO = StandardTileIO;
 
     fn execute(
-        lhs: &Self::LhsFragment,
-        rhs: &Self::RhsFragment,
-        acc: &mut Self::AccFragment,
+        lhs: &UnitFragment<L>,
+        rhs: &UnitFragment<R>,
+        acc: &mut UnitFragment<A>,
         #[comptime] config: Self::Config,
     ) {
         match config.product_type {
@@ -69,7 +79,7 @@ where
     fn allocate_lhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Self::LhsFragment {
+    ) -> UnitFragment<L> {
         UnitFragment::<L> {
             array: Array::new(config.shared.tile_size.mk() as usize),
             layout,
@@ -79,7 +89,7 @@ where
     fn allocate_rhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Self::RhsFragment {
+    ) -> UnitFragment<R> {
         UnitFragment::<R> {
             array: Array::new(config.shared.tile_size.nk() as usize),
             layout,
@@ -89,7 +99,7 @@ where
     fn allocate_acc(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Self::AccFragment {
+    ) -> UnitFragment<A> {
         UnitFragment::<A> {
             array: Array::new(config.shared.tile_size.mn() as usize),
             layout,
@@ -98,7 +108,7 @@ where
 
     fn load_lhs<E: Numeric, N: Size>(
         tile: &StridedTile<E, N>,
-        lhs: &mut Self::LhsFragment,
+        lhs: &mut UnitFragment<L>,
         #[comptime] config: Self::Config,
     ) {
         RegisterStageReader::<Strided>::load_fragment(tile, lhs, StageIdent::Lhs, config)
@@ -106,7 +116,7 @@ where
 
     fn load_rhs<E: Numeric, N: Size>(
         tile: &StridedTile<E, N>,
-        rhs: &mut Self::RhsFragment,
+        rhs: &mut UnitFragment<R>,
         #[comptime] config: Self::Config,
     ) {
         RegisterStageReader::<Strided>::load_fragment(tile, rhs, StageIdent::Rhs, config)
@@ -114,7 +124,7 @@ where
 
     fn load_acc<E: Numeric, N: Size>(
         tile: &ComptimeOption<StridedTile<E, N>>,
-        acc: &mut Self::AccFragment,
+        acc: &mut UnitFragment<A>,
         #[comptime] config: Self::Config,
     ) {
         RegisterStageReader::<Option<Strided>>::load_fragment(tile, acc, StageIdent::Acc, config);
@@ -122,7 +132,7 @@ where
 
     fn write_results<E: Numeric, N: Size>(
         tile: &mut StridedTile<E, N, ReadWrite>,
-        acc: &mut Self::AccFragment,
+        acc: &mut UnitFragment<A>,
         #[comptime] config: Self::Config,
     ) {
         RegisterStageWriter::store_fragment(tile, acc, config)
