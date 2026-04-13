@@ -11,7 +11,9 @@ use crate::{
         gemv_plane_parallel::{GemvKind, GemvPlaneParallelBlueprint, GemvPlaneParallelFamily},
     },
     definition::{MatmulElems, MatmulProblem, MatmulSetupError},
-    routines::{BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine},
+    routines::{
+        BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine, num_concurrent_planes,
+    },
 };
 
 pub struct GemvPlaneParallelRoutine {}
@@ -49,16 +51,7 @@ impl Routine<()> for GemvPlaneParallelRoutine {
             BlueprintStrategy::Inferred(strategy) => {
                 let target_num_planes = match strategy.target_num_planes {
                     Some(num_planes) => num_planes,
-                    None => {
-                        match properties.hardware.num_cpu_cores {
-                            Some(num_cores) => num_cores as usize,
-                            // We use the number of conccurrent planes that can work per SM at the same time on GPUs.
-                            //
-                            // This is typically the number of warp scheduler on Nvidia or the number of SIMD units
-                            // per CU on AMD.
-                            None => 4,
-                        }
-                    }
+                    None => num_concurrent_planes(&properties.hardware),
                 };
 
                 let kind = GemvKind::from_problem(problem)?;

@@ -13,19 +13,21 @@ use crate::{
         },
     },
     definition::{MatmulElems, MatmulProblem, MatmulSetupError},
-    routines::{BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine},
+    routines::{
+        BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine, num_concurrent_planes,
+    },
 };
 
 pub struct GemvUnitPerpendicularRoutine {}
 
 #[derive(Default, Clone)]
 pub struct GemvUnitPerpendicularStrategy {
-    pub target_num_planes: usize,
+    pub target_num_planes: Option<usize>,
 }
 
 impl Display for GemvUnitPerpendicularStrategy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "_{}", self.target_num_planes)
+        write!(f, "_{:?}", self.target_num_planes)
     }
 }
 
@@ -41,6 +43,7 @@ impl Routine<()> for GemvUnitPerpendicularRoutine {
         strategy: &BlueprintStrategy<(), Self>,
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+        let properties = device_settings.client.properties();
 
         match strategy {
             BlueprintStrategy::Forced(blueprint) => Ok(ExpandInfo {
@@ -50,8 +53,13 @@ impl Routine<()> for GemvUnitPerpendicularRoutine {
             BlueprintStrategy::Inferred(strategy) => {
                 let tile_dim =
                     device_settings.plane_dim as usize * device_settings.vector_sizes.rhs;
+                let target_num_planes = match strategy.target_num_planes {
+                    Some(num_planes) => num_planes,
+                    None => num_concurrent_planes(&properties.hardware),
+                };
+
                 let max_planes_for_swizzle = problem.k / tile_dim;
-                let num_planes = max(1, min(strategy.target_num_planes, max_planes_for_swizzle));
+                let num_planes = max(1, min(target_num_planes, max_planes_for_swizzle));
 
                 let blueprint = VecMatUnitPerpendicularBlueprint {
                     dtypes: dtypes.clone(),
