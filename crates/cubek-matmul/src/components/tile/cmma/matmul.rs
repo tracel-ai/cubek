@@ -1,21 +1,20 @@
 use cubecl::prelude::*;
 use cubek_std::{
-    tile::{Strided, StridedTile, TileKind},
+    tile::{Strided, StridedTile},
     {MatrixLayout, as_cmma_layout},
 };
-use std::marker::PhantomData;
 
-use crate::{
-    components::tile::cmma::reader::CmmaStageReader,
-    components::tile::cmma::writer::CmmaStageWriter,
-    components::tile::{SharedTileConfig, TileMatmul, cmma::reader::CmmaFragmentReader},
+use crate::components::tile::{
+    SharedTileConfig, StandardTileIO, TileMatmul,
+    cmma::{
+        reader::{CmmaFragmentReader, CmmaStageReader},
+        writer::CmmaStageWriter,
+    },
 };
 use cubecl::cmma;
 
 /// Uses one plane to perform a small matmul using accelerated instructions.
-pub struct CmmaMatmul<Acc: TileKind = Option<Strided>> {
-    _ty: PhantomData<Acc>,
-}
+pub struct CmmaMatmul {}
 
 #[derive(CubeType)]
 pub struct Fragment<E: Numeric> {
@@ -25,10 +24,9 @@ pub struct Fragment<E: Numeric> {
 }
 
 #[cube]
-impl<L: Numeric, R: Numeric, A: Numeric, AccTile: TileKind> TileMatmul<L, R, A>
-    for CmmaMatmul<AccTile>
+impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for CmmaMatmul
 where
-    CmmaStageReader<AccTile>: CmmaFragmentReader<TileKind = AccTile>,
+    CmmaStageReader<Option<Strided>>: CmmaFragmentReader,
 {
     type Config = SharedTileConfig;
 
@@ -36,10 +34,7 @@ where
     type RhsFragment = Fragment<R>;
     type AccFragment = Fragment<A>;
 
-    type LhsTile = Strided;
-    type RhsTile = Strided;
-    type AccTile = AccTile;
-    type OutTile = Strided;
+    type TileIO = StandardTileIO;
 
     fn execute(
         lhs: &Self::LhsFragment,
@@ -115,7 +110,7 @@ where
         lhs: &mut Self::LhsFragment,
         #[comptime] _config: Self::Config,
     ) {
-        CmmaStageReader::<Self::LhsTile>::load_fragment(
+        CmmaStageReader::<Strided>::load_fragment(
             tile,
             &mut lhs.fragment,
             ComptimeOption::new_None(),
@@ -127,7 +122,7 @@ where
         rhs: &mut Self::RhsFragment,
         #[comptime] _config: Self::Config,
     ) {
-        CmmaStageReader::<Self::RhsTile>::load_fragment(
+        CmmaStageReader::<Strided>::load_fragment(
             tile,
             &mut rhs.fragment,
             ComptimeOption::new_None(),
@@ -135,11 +130,11 @@ where
     }
 
     fn load_acc<E: Numeric, N: Size>(
-        tile: &AccTile::Tile<E, N>,
+        tile: &ComptimeOption<StridedTile<E, N>>,
         acc: &mut Self::AccFragment,
         #[comptime] _config: Self::Config,
     ) {
-        CmmaStageReader::<Self::AccTile>::load_fragment(
+        CmmaStageReader::<Option<Strided>>::load_fragment(
             tile,
             &mut acc.fragment,
             ComptimeOption::new_Some(as_cmma_layout(acc.layout)),

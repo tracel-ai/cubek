@@ -87,7 +87,7 @@ fn store_manual_transposed<
             let offset = row * stride_row + col * stride_col;
             let offset = tile.stage_offset(offset);
 
-            tile.stage[offset as usize] = Vector::cast_from(fragment[i][n]);
+            tile.container[offset as usize] = Vector::cast_from(fragment[i][n]);
         }
     }
 }
@@ -128,7 +128,7 @@ fn store_manual_plain<
         let offset = row * stride_row + col * stride_col;
         let offset = tile.stage_offset(offset / vector_size as u32);
 
-        tile.stage[offset as usize] = Vector::cast_from(value);
+        tile.container[offset as usize] = Vector::cast_from(value);
     }
 }
 
@@ -155,7 +155,7 @@ fn store_stmatrix<
     #[comptime] ident: MatrixIdent,
     #[comptime] m: u32,
 ) {
-    let stage_vector_size = tile.stage.vector_size().comptime();
+    let stage_vector_size = tile.container.vector_size().comptime();
     let stride = tile.unvectorized_stride();
 
     let elem_size = E::type_size().comptime();
@@ -166,7 +166,7 @@ fn store_stmatrix<
     let start = tile.stage_offset(start);
 
     let mut row_slice = tile
-        .stage
+        .container
         .slice_mut(start as usize, (start + width) as usize);
 
     let stage_ty = type_of::<V>().comptime();

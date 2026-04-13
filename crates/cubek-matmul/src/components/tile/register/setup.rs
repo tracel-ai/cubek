@@ -1,7 +1,4 @@
-use crate::components::{
-    resource::CubeDimResource,
-    tile::register::reader::{RegisterFragmentReader, RegisterStageReader},
-};
+use crate::components::{resource::CubeDimResource, tile::StandardTileIO};
 use crate::{
     components::tile::SharedTileConfig, components::tile::TileMatmulFamily,
     components::tile::register::config::RegisterMatmulConfig,
@@ -17,19 +14,13 @@ use cubecl::{
     prelude::*,
     {features::TypeUsage, ir::DeviceProperties},
 };
-use cubek_std::{InvalidConfigError, MatrixLayout, tile::Strided, tile::TileKind};
+use cubek_std::{InvalidConfigError, MatrixLayout};
 
-impl<AccTile: TileKind> TileMatmulFamily for RegisterMatmul<AccTile>
-where
-    RegisterStageReader<AccTile>: RegisterFragmentReader<TileKind = AccTile>,
-{
+impl TileMatmulFamily for RegisterMatmul {
     type Config = RegisterMatmulConfig;
-    type Matmul<L: Numeric, R: Numeric, A: Numeric> = RegisterMatmul<AccTile>;
+    type Matmul<L: Numeric, R: Numeric, A: Numeric> = RegisterMatmul;
 
-    type LhsTile = Strided;
-    type RhsTile = Strided;
-    type AccTile = AccTile;
-    type OutTile = Strided;
+    type TileIO = StandardTileIO;
 
     fn requires_accelerator() -> bool {
         false

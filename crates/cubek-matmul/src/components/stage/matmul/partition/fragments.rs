@@ -1,5 +1,6 @@
 use crate::definition::{MatmulTypes, MatrixTypes};
 use crate::{
+    components::tile::TileIO,
     components::{stage::Stage, tile::TileMatmul},
     definition::{Acc, StageSize},
 };
@@ -52,7 +53,12 @@ impl<
 
     /// Load all accumulators from the specified stage
     pub fn load<
-        R: Stage<StageTy<Acc<MP>>, StageSize<Acc<MP>>, ReadOnly, TileKind = TM::AccTile>,
+        R: Stage<
+                StageTy<Acc<MP>>,
+                StageSize<Acc<MP>>,
+                ReadOnly,
+                TileKind = <TM::TileIO as TileIO>::Acc,
+            >,
     >(
         &mut self,
         stage: &R,

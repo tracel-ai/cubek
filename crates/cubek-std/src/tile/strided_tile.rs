@@ -7,7 +7,7 @@ use crate::{MatrixLayout, stage::StageMemoryConfig, stage::as_swizzle_object};
 /// Basic tile kind supported by all stage matmuls.
 pub struct StridedTile<ES: Numeric, N: Size, IO: SliceVisibility = ReadOnly> {
     /// Slice containing all data for the stage
-    pub stage: Slice<Vector<ES, N>, IO>,
+    pub container: Slice<Vector<ES, N>, IO>,
     /// Offset of the tile in the stage
     pub start: u32,
     /// End of the tile in the stage, may be wrong with swizzle
@@ -27,7 +27,7 @@ impl<ES: Numeric, N: Size> StridedTile<ES, N> {
     ///
     /// The slice length must exactly match the tile size.
     pub fn new_contiguous(
-        stage: Slice<Vector<ES, N>>,
+        container: Slice<Vector<ES, N>>,
         start: u32,
         #[comptime] config: StageMemoryConfig,
     ) -> StridedTile<ES, N> {
@@ -41,7 +41,7 @@ impl<ES: Numeric, N: Size> StridedTile<ES, N> {
         let stride = stride / config.vector_size;
 
         StridedTile::<ES, N> {
-            stage,
+            container,
             start,
             end: start + len,
             stride,
@@ -54,7 +54,7 @@ impl<ES: Numeric, N: Size> StridedTile<ES, N> {
     ///
     /// The slice length must exactly match the tile size.
     pub fn new_contiguous_mut(
-        stage: Slice<Vector<ES, N>, ReadWrite>,
+        container: Slice<Vector<ES, N>, ReadWrite>,
         start: u32,
         #[comptime] config: StageMemoryConfig,
     ) -> StridedTile<ES, N, ReadWrite> {
@@ -68,7 +68,7 @@ impl<ES: Numeric, N: Size> StridedTile<ES, N> {
         let stride = stride / config.vector_size;
 
         StridedTile::<ES, N, ReadWrite> {
-            stage,
+            container,
             start,
             end: start + len,
             stride,
@@ -81,7 +81,7 @@ impl<ES: Numeric, N: Size> StridedTile<ES, N> {
     ///
     /// The slice must include all elements of the tile, though it may include unused gaps.
     pub fn new_strided(
-        stage: Slice<Vector<ES, N>>,
+        container: Slice<Vector<ES, N>>,
         start: u32,
         end: u32,
         stride: u32,
@@ -89,7 +89,7 @@ impl<ES: Numeric, N: Size> StridedTile<ES, N> {
         #[comptime] layout: MatrixLayout,
     ) -> StridedTile<ES, N> {
         StridedTile::<ES, N> {
-            stage,
+            container,
             start,
             end,
             stride,
@@ -102,7 +102,7 @@ impl<ES: Numeric, N: Size> StridedTile<ES, N> {
     ///
     /// The slice must include all elements of the tile, though it may include unused gaps.
     pub fn new_strided_mut(
-        stage: Slice<Vector<ES, N>, ReadWrite>,
+        container: Slice<Vector<ES, N>, ReadWrite>,
         start: u32,
         end: u32,
         stride: u32,
@@ -110,7 +110,7 @@ impl<ES: Numeric, N: Size> StridedTile<ES, N> {
         #[comptime] layout: MatrixLayout,
     ) -> StridedTile<ES, N, ReadWrite> {
         StridedTile::<ES, N, ReadWrite> {
-            stage,
+            container,
             start,
             end,
             stride,
@@ -123,7 +123,7 @@ impl<ES: Numeric, N: Size> StridedTile<ES, N> {
 #[cube]
 impl<ES: Numeric, N: Size, IO: SliceVisibility> StridedTile<ES, N, IO> {
     pub fn unvectorized_stride(&self) -> u32 {
-        let stage_vector_size = self.stage.vector_size();
+        let stage_vector_size = self.container.vector_size();
         self.stride * stage_vector_size as u32
     }
 }
@@ -133,7 +133,7 @@ impl<ES: Numeric, N: Size> StridedTile<ES, N, ReadOnly> {
     /// Returns the tile as an offset slice. Should only be used when swizzling is definitely not
     /// applicable.
     pub fn as_slice(&self) -> Slice<Vector<ES, N>, ReadOnly> {
-        self.stage.slice(self.start as usize, self.end as usize)
+        self.container.slice(self.start as usize, self.end as usize)
     }
 }
 
@@ -142,7 +142,7 @@ impl<ES: Numeric, N: Size> StridedTile<ES, N, ReadWrite> {
     /// Returns the tile as an offset slice. Should only be used when swizzling is definitely not
     /// applicable.
     pub fn as_slice_mut(&self) -> Slice<Vector<ES, N>, ReadWrite> {
-        self.stage
+        self.container
             .slice(self.start as usize, self.end as usize)
             .as_mut_unchecked()
     }
@@ -156,7 +156,7 @@ impl<ES: Numeric, N: Size, IO: SliceVisibility> StridedTile<ES, N, IO> {
         let offset_abs = self.start + offset;
         let type_size = Vector::<ES, N>::type_size();
         let offset_swizzled = self.swizzle.apply(offset_abs, type_size);
-        self.stage[offset_swizzled as usize]
+        self.container[offset_swizzled as usize]
     }
 
     pub fn stage_offset(&self, relative_offset: u32) -> u32 {
@@ -169,9 +169,9 @@ impl<ES: Numeric, N: Size, IO: SliceVisibility> StridedTile<ES, N, IO> {
     pub fn with_vector_size<N2: Size>(&self) -> StridedTile<ES, N2, IO> {
         let vector_size = N2::value();
         intrinsic!(|scope| {
-            let stage_vector_size = self.stage.vector_size();
+            let stage_vector_size = self.container.vector_size();
 
-            if vector_size == self.stage.vector_size() {
+            if vector_size == self.container.vector_size() {
                 return self.__expand_with_stage_vector_size_method(scope);
             }
 
@@ -209,7 +209,7 @@ impl<ES: Numeric, N: Size, IO: SliceVisibility> StridedTile<ES, N, IO> {
     #[allow(unused)]
     unsafe fn with_stage_vector_size<N2: Size>(self) -> StridedTile<ES, N2, IO> {
         StridedTile::<ES, N2, IO> {
-            stage: self.stage.with_vector_size::<N2>(),
+            container: self.container.with_vector_size::<N2>(),
             start: self.start,
             end: self.end,
             stride: self.stride,

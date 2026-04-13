@@ -19,7 +19,7 @@ impl InterleavedStageWriter {
         #[comptime] config: InterleavedMatmulConfig,
     ) {
         if UNIT_POS_X == 0 {
-            let out_vector_size = tile.stage.vector_size().comptime() as u32;
+            let out_vector_size = tile.container.vector_size().comptime() as u32;
 
             #[unroll]
             for i in 0..config.shared.tile_size.mn() / out_vector_size {
@@ -29,7 +29,7 @@ impl InterleavedStageWriter {
                 for j in 0..out_vector_size {
                     vector[j as usize] = acc.array[(i * out_vector_size + j) as usize];
                 }
-                tile.stage[offs as usize] = Vector::cast_from(vector);
+                tile.container[offs as usize] = Vector::cast_from(vector);
             }
         }
     }

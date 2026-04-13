@@ -86,7 +86,7 @@ impl<ES: Numeric, NS: Size> BiasStageMemory<ES, NS> {
     pub fn get_tile_mut(&self, tile: Coords2d) -> StridedTile<ES, NS, ReadWrite> {
         let tile = self.get_tile(tile);
         StridedTile::<ES, NS, ReadWrite> {
-            stage: tile.stage.as_mut_unchecked(),
+            container: tile.container.as_mut_unchecked(),
             start: tile.start,
             end: tile.end,
             stride: tile.stride,

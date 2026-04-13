@@ -1,22 +1,23 @@
 use cubecl::prelude::*;
 use cubek_std::{
-    tile::{Filled, Strided, StridedTile, TileKind},
+    tile::{Filled, Strided, StridedTile},
     {MatrixLayout, TileSize},
 };
-use std::marker::PhantomData;
 
 use crate::{
-    components::tile::register::config::{ProductType, RegisterMatmulConfig},
-    components::tile::register::reader::RegisterStageReader,
-    components::tile::register::writer::RegisterStageWriter,
-    components::tile::{TileMatmul, register::reader::RegisterFragmentReader},
+    components::tile::{
+        StandardTileIO, TileMatmul,
+        register::{
+            config::{ProductType, RegisterMatmulConfig},
+            reader::{RegisterFragmentReader, RegisterStageReader},
+            writer::RegisterStageWriter,
+        },
+    },
     definition::StageIdent,
 };
 
 /// Uses one unit to perform a small matmul directly in registers
-pub struct RegisterMatmul<Acc: TileKind = Filled> {
-    _ty: PhantomData<Acc>,
-}
+pub struct RegisterMatmul {}
 
 /// Doesn't impact performance much, but may increase kernel size too much when true (often ~6X).
 ///
@@ -31,10 +32,9 @@ pub struct UnitFragment<E: Numeric> {
 }
 
 #[cube]
-impl<L: Numeric, R: Numeric, A: Numeric, AccTile: TileKind> TileMatmul<L, R, A>
-    for RegisterMatmul<AccTile>
+impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for RegisterMatmul
 where
-    RegisterStageReader<AccTile>: RegisterFragmentReader<TileKind = AccTile>,
+    RegisterStageReader<Filled>: RegisterFragmentReader<TileKind = Filled>,
 {
     type Config = RegisterMatmulConfig;
 
@@ -42,10 +42,7 @@ where
     type RhsFragment = UnitFragment<R>;
     type AccFragment = UnitFragment<A>;
 
-    type LhsTile = Strided;
-    type RhsTile = Strided;
-    type AccTile = AccTile;
-    type OutTile = Strided;
+    type TileIO = StandardTileIO;
 
     fn execute(
         lhs: &Self::LhsFragment,
@@ -116,11 +113,11 @@ where
     }
 
     fn load_acc<E: Numeric, N: Size>(
-        tile: &AccTile::Tile<E, N>,
+        tile: &ComptimeOption<StridedTile<E, N>>,
         acc: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     ) {
-        RegisterStageReader::<AccTile>::load_fragment(tile, acc, StageIdent::Acc, config);
+        RegisterStageReader::<Option<Strided>>::load_fragment(tile, acc, StageIdent::Acc, config);
     }
 
     fn write_results<E: Numeric, N: Size>(
@@ -133,7 +130,7 @@ where
 }
 
 #[cube]
-impl<Acc: TileKind> RegisterMatmul<Acc> {
+impl RegisterMatmul {
     pub fn inner_product<Lhs: Numeric, Rhs: Numeric, EA: Numeric>(
         lhs: &Array<Lhs>,
         rhs: &Array<Rhs>,

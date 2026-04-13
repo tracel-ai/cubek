@@ -1,9 +1,8 @@
 use cubecl::{define_size, prelude::*};
-use cubek_std::{MatrixLayout, tile::Strided, tile::StridedTile, tile::TileKind};
-use std::marker::PhantomData;
+use cubek_std::{MatrixLayout, tile::Strided, tile::StridedTile};
 
 use crate::components::tile::{
-    TileMatmul,
+    StandardTileIO, TileMatmul,
     plane_vec_mat_inner_product::{reader::MatrixFragmentReader, writer::MatrixStageWriter},
 };
 use crate::{
@@ -13,9 +12,7 @@ use crate::{
 };
 
 /// Uses one unit to perform a small matmul directly in registers
-pub struct PlaneVecMatInnerProduct<Acc: TileKind> {
-    _ty: PhantomData<Acc>,
-}
+pub struct PlaneVecMatInnerProduct {}
 
 define_size!(pub NR);
 
@@ -34,10 +31,9 @@ impl<E: Numeric> VectorContainer<E> {
 }
 
 #[cube]
-impl<L: Numeric, R: Numeric, A: Numeric, AccTile: TileKind> TileMatmul<L, R, A>
-    for PlaneVecMatInnerProduct<AccTile>
+impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for PlaneVecMatInnerProduct
 where
-    MatrixStageReader<AccTile>: MatrixFragmentReader<TileKind = AccTile>,
+    MatrixStageReader<Option<Strided>>: MatrixFragmentReader<TileKind = Option<Strided>>,
 {
     type Config = PlaneVecMatInnerProductConfig;
 
@@ -49,10 +45,7 @@ where
     // For each n: one vector stored at unit pos 0, that will be reduced to a scalar only when writing at the end
     type AccFragment = Sequence<VectorContainer<A>>;
 
-    type LhsTile = Strided;
-    type RhsTile = Strided;
-    type AccTile = AccTile;
-    type OutTile = Strided;
+    type TileIO = StandardTileIO;
 
     fn execute(
         lhs: &Self::LhsFragment,
@@ -121,11 +114,11 @@ where
     }
 
     fn load_acc<E: Numeric, N: Size>(
-        tile: &AccTile::Tile<E, N>,
+        tile: &ComptimeOption<StridedTile<E, N>>,
         acc: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     ) {
-        MatrixStageReader::<AccTile>::load_fragment(tile, acc, config.shared.tile_size.n());
+        MatrixStageReader::<Option<Strided>>::load_fragment(tile, acc, config.shared.tile_size.n());
     }
 
     fn write_results<E: Numeric, N: Size>(

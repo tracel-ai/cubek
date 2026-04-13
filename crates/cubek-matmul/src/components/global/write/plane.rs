@@ -125,11 +125,11 @@ fn write_vector<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
     tile: Coords2d,
 ) {
     let output_vector_size = view.vector_size().comptime();
-    let out_smem_vector_size = out_smem_tile.stage.vector_size().comptime();
+    let out_smem_vector_size = out_smem_tile.container.vector_size().comptime();
 
     let value = if output_vector_size == out_smem_vector_size {
         let offs = out_smem_tile.stage_offset(unit_write / output_vector_size as u32);
-        out_smem_tile.stage[offs as usize]
+        out_smem_tile.container[offs as usize]
     } else if out_smem_vector_size < output_vector_size
         && output_vector_size.is_multiple_of(out_smem_vector_size)
     {
@@ -139,7 +139,7 @@ fn write_vector<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
             let offs = out_smem_tile.stage_offset(unit_write + i as u32);
             #[unroll]
             for j in 0..out_smem_vector_size {
-                value[i * out_smem_vector_size + j] = out_smem_tile.stage[offs as usize][j];
+                value[i * out_smem_vector_size + j] = out_smem_tile.container[offs as usize][j];
             }
         }
         value

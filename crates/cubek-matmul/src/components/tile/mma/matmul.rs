@@ -2,25 +2,18 @@ use cubecl::{define_size, prelude::*};
 use cubek_std::{
     MatrixLayout,
     tile::{
-        Strided, StridedTile, TileKind,
+        Strided, StridedTile,
         mma::{MmaFragmentReader, MmaStageReader, MmaStageWriter},
     },
 };
-use std::marker::PhantomData;
 
-use crate::{components::tile::TileMatmul, components::tile::mma::config::MmaMatmulConfig};
+use crate::components::tile::{StandardTileIO, TileMatmul, mma::config::MmaMatmulConfig};
 use cubecl::{cmma::MmaDefinition, ir::MatrixIdent};
 
 /// Uses one plane to perform a small matmul using accelerated instructions, with manual register
 /// management.
 /// Currently requires matrix layout to match the platform's preferred layout.
-pub struct MmaMatmul<
-    Lhs: TileKind = Strided,
-    Rhs: TileKind = Strided,
-    Acc: TileKind = Option<Strided>,
-> {
-    _ty: PhantomData<(Lhs, Rhs, Acc)>,
-}
+pub struct MmaMatmul {}
 
 define_size!(pub NL);
 define_size!(pub NR);
@@ -34,12 +27,11 @@ pub struct MmaFragment<E: Numeric, N: Size> {
 }
 
 #[cube]
-impl<L: Numeric, R: Numeric, A: Numeric, LhsTile: TileKind, RhsTile: TileKind, AccTile: TileKind>
-    TileMatmul<L, R, A> for MmaMatmul<LhsTile, RhsTile, AccTile>
+impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for MmaMatmul
 where
-    MmaStageReader<LhsTile>: MmaFragmentReader<TileKind = LhsTile>,
-    MmaStageReader<RhsTile>: MmaFragmentReader<TileKind = RhsTile>,
-    MmaStageReader<AccTile>: MmaFragmentReader<TileKind = AccTile>,
+    MmaStageReader<Strided>: MmaFragmentReader<TileKind = Strided>,
+    MmaStageReader<Strided>: MmaFragmentReader<TileKind = Strided>,
+    MmaStageReader<Option<Strided>>: MmaFragmentReader<TileKind = Option<Strided>>,
 {
     type Config = MmaMatmulConfig;
 
@@ -47,10 +39,7 @@ where
     type RhsFragment = MmaFragment<R, NR>;
     type AccFragment = MmaFragment<A, NA>;
 
-    type LhsTile = LhsTile;
-    type RhsTile = RhsTile;
-    type AccTile = AccTile;
-    type OutTile = Strided;
+    type TileIO = StandardTileIO;
 
     fn execute(
         lhs: &Self::LhsFragment,
@@ -111,11 +100,11 @@ where
     }
 
     fn load_lhs<E: Numeric, N: Size>(
-        tile: &LhsTile::Tile<E, N>,
+        tile: &StridedTile<E, N>,
         lhs: &mut Self::LhsFragment,
         #[comptime] config: Self::Config,
     ) {
-        MmaStageReader::<Self::LhsTile>::load_fragment(
+        MmaStageReader::<Strided>::load_fragment(
             tile,
             &mut lhs.fragment,
             mma_definition::<L, R, A>(config),
@@ -127,11 +116,11 @@ where
     }
 
     fn load_rhs<E: Numeric, N: Size>(
-        tile: &RhsTile::Tile<E, N>,
+        tile: &StridedTile<E, N>,
         rhs: &mut Self::RhsFragment,
         #[comptime] config: Self::Config,
     ) {
-        MmaStageReader::<Self::RhsTile>::load_fragment(
+        MmaStageReader::<Strided>::load_fragment(
             tile,
             &mut rhs.fragment,
             mma_definition::<L, R, A>(config),
@@ -143,11 +132,11 @@ where
     }
 
     fn load_acc<E: Numeric, N: Size>(
-        tile: &AccTile::Tile<E, N>,
+        tile: &ComptimeOption<StridedTile<E, N>>,
         acc: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     ) {
-        MmaStageReader::<Self::AccTile>::load_fragment(
+        MmaStageReader::<Option<Strided>>::load_fragment(
             tile,
             &mut acc.fragment,
             mma_definition::<L, R, A>(config),

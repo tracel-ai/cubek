@@ -1,13 +1,15 @@
 use cubecl::prelude::*;
-use cubek_std::{
-    MatrixLayout,
-    tile::{Strided, StridedTile},
-};
+use cubek_std::{MatrixLayout, tile::StridedTile};
 
 use crate::{
-    components::tile::TileMatmul, components::tile::interleaved::config::InterleavedMatmulConfig,
-    components::tile::interleaved::reader::InterleavedStageReader,
-    components::tile::interleaved::writer::InterleavedStageWriter, definition::StageIdent,
+    components::tile::{
+        StandardTileIO, TileMatmul,
+        interleaved::{
+            config::InterleavedMatmulConfig, reader::InterleavedStageReader,
+            writer::InterleavedStageWriter,
+        },
+    },
+    definition::StageIdent,
 };
 
 /// Computes a tile matmul where each unit of the plane accumulates an interleaved (by plane_dim)
@@ -73,10 +75,7 @@ impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for InterleavedMatm
     // Size m * n
     type AccFragment = InterleavedAccumulator<A>;
 
-    type LhsTile = Strided;
-    type RhsTile = Strided;
-    type AccTile = Option<Strided>;
-    type OutTile = Strided;
+    type TileIO = StandardTileIO;
 
     fn execute(
         lhs: &Self::LhsFragment,

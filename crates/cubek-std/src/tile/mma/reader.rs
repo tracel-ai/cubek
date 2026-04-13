@@ -123,7 +123,7 @@ fn load_manual_transposed<
             let offset = row * stride_row + col * stride_col;
             let offset = tile.stage_offset(offset);
 
-            vector[n] = E::cast_from(tile.stage[offset as usize]);
+            vector[n] = E::cast_from(tile.container[offset as usize]);
         }
         fragment[i] = vector;
     }
@@ -165,7 +165,7 @@ fn load_manual_plain<
         let offset = row * stride_row + col * stride_col;
         let stage_offset = tile.stage_offset(offset / vector_size as u32);
 
-        fragment[i] = Vector::cast_from(tile.stage[stage_offset as usize]);
+        fragment[i] = Vector::cast_from(tile.container[stage_offset as usize]);
     }
 }
 
@@ -185,7 +185,7 @@ fn load_ldmatrix<E: Numeric, N: Size, V: Numeric, NV: Size, A: Numeric, B: Numer
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_size: TileSize,
 ) {
-    let stage_vector_size = tile.stage.vector_size().comptime();
+    let stage_vector_size = tile.container.vector_size().comptime();
     let stride = tile.unvectorized_stride();
 
     let elem_size = E::type_size().comptime();
@@ -196,7 +196,9 @@ fn load_ldmatrix<E: Numeric, N: Size, V: Numeric, NV: Size, A: Numeric, B: Numer
         ldmatrix_offset::<V, A, B, CD>(stride, def, stage_vector_size, ident, layout, tile_size);
     let start = tile.stage_offset(start);
 
-    let row_slice = tile.stage.slice(start as usize, (start + width) as usize);
+    let row_slice = tile
+        .container
+        .slice(start as usize, (start + width) as usize);
     let regs = def.load_matrix::<_, N>(&row_slice, ident, num_regs, transposed);
 
     #[unroll]

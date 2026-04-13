@@ -16,7 +16,7 @@ impl MatrixStageWriter {
         #[comptime] reduce_vector_size: VectorSize,
     ) {
         if UNIT_POS_X == 0 {
-            let out_vector_size = tile.stage.vector_size().comptime();
+            let out_vector_size = tile.container.vector_size().comptime();
             let total_out_vectors = n as usize / out_vector_size;
             #[unroll]
             for out_vector_iter in 0..total_out_vectors {
@@ -37,7 +37,7 @@ impl MatrixStageWriter {
 
                 let offset = tile.stage_offset(out_vector_iter as u32);
 
-                tile.stage[offset as usize] = out_vector;
+                tile.container[offset as usize] = out_vector;
             }
         }
     }

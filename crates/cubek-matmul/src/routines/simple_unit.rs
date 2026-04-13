@@ -1,5 +1,5 @@
 use cubecl::{Runtime, client::ComputeClient};
-use cubek_std::tile::{Filled, Strided};
+use cubek_std::tile::Strided;
 
 use std::{fmt::Display, marker::PhantomData};
 
@@ -67,7 +67,7 @@ where
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
         SimpleMatmulFamily<
-            UnitMatmulFamily<RegisterMatmul<Option<Strided>>, LL::Stage, Option<AL::Stage>>,
+            UnitMatmulFamily<RegisterMatmul, LL::Stage, Option<AL::Stage>>,
             RC,
             LL,
             RL,
@@ -86,7 +86,7 @@ where
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
-        if RegisterMatmul::<Filled>::can_cast_stage_element() {
+        if RegisterMatmul::can_cast_stage_element() {
             dtypes.adjust_stage_dtypes();
         }
 

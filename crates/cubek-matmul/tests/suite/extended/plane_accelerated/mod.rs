@@ -9,7 +9,7 @@ mod matmul_plane_accelerated {
     mod cmma {
         use super::*;
         use cubek_std::tile::Strided;
-        pub type TMM = cubek_matmul::components::tile::cmma::CmmaMatmul<Option<Strided>>;
+        pub type TMM = cubek_matmul::components::tile::cmma::CmmaMatmul;
 
         include!("algorithm.rs");
     }

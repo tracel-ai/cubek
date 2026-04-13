@@ -1,10 +1,11 @@
 use cubecl::{
-    {features::MmaConfig, ir::DeviceProperties},
-    {ir::StorageType, prelude::*},
+    features::MmaConfig,
+    ir::{DeviceProperties, StorageType},
+    prelude::*,
 };
 use cubek_std::{
-    tile::{Tile, TileKind, TileMut},
-    {InvalidConfigError, MatrixLayout, TileSize},
+    InvalidConfigError, MatrixLayout, TileSize,
+    tile::{Filled, Strided, Tile, TileKind, TileMut},
 };
 
 use crate::{
@@ -20,25 +21,10 @@ pub trait TileMatmulFamily: Send + Sync + 'static {
     type Config: TileConfig;
 
     /// The specific [TileMatmul] implementation associated with this family.
-    type Matmul<L: Numeric, R: Numeric, A: Numeric>: TileMatmul<
-            L,
-            R,
-            A,
-            LhsTile = Self::LhsTile,
-            RhsTile = Self::RhsTile,
-            AccTile = Self::AccTile,
-            OutTile = Self::OutTile,
-            Config = Self::Config,
-        >;
+    type Matmul<L: Numeric, R: Numeric, A: Numeric>: TileMatmul<L, R, A, TileIO = Self::TileIO, Config = Self::Config>;
 
-    /// Tile kind for Lhs
-    type LhsTile: TileKind;
-    /// Tile kind for Rhs
-    type RhsTile: TileKind;
-    /// Tile kind for Acc
-    type AccTile: TileKind;
-    /// Tile kind for Out
-    type OutTile: TileKind<ReadWrite>;
+    /// Where the tile matmul reads and writes its inputs
+    type TileIO: TileIO;
 
     /// Returns whether this tile matmul requires specialized hardware accelerators (e.g., tensor cores).
     fn requires_accelerator() -> bool;
@@ -86,6 +72,33 @@ pub trait TileMatmulFamily: Send + Sync + 'static {
     ) -> Result<(), MatmulSetupError>;
 }
 
+pub trait TileIO: CubeType + Send + Sync + 'static {
+    /// Tile for the lhs and rhs data
+    type In: TileKind;
+    /// Tile for the accumulator data
+    type Acc: TileKind;
+    /// Tile for the output data
+    type Out: TileKind<ReadWrite>;
+}
+
+#[derive(CubeType)]
+pub struct StandardTileIO {}
+
+impl TileIO for StandardTileIO {
+    type In = Strided;
+    type Acc = Option<Strided>;
+    type Out = Strided;
+}
+
+#[derive(CubeType)]
+pub struct FilledTileIO {}
+
+impl TileIO for FilledTileIO {
+    type In = Strided;
+    type Acc = Filled;
+    type Out = Strided;
+}
+
 /// Provides matrix multiplication operations at the tile level.
 ///
 /// At the tile level,
@@ -108,14 +121,7 @@ pub trait TileMatmul<L: Numeric, R: Numeric, A: Numeric>: 'static + Send + Sync 
     /// Contains and accumulates results of the Tile Matmul execution
     type AccFragment: CubeType;
 
-    /// Tile for the lhs data
-    type LhsTile: TileKind;
-    /// Tile for the rhs data
-    type RhsTile: TileKind;
-    /// Tile for the accumulator data
-    type AccTile: TileKind;
-    /// Tile for the output data
-    type OutTile: TileKind<ReadWrite>;
+    type TileIO: TileIO;
 
     /// Executes the matrix multiplication of Lhs and Rhs, adding the result to the accumulator
     fn execute(
@@ -138,7 +144,7 @@ pub trait TileMatmul<L: Numeric, R: Numeric, A: Numeric>: 'static + Send + Sync 
 
     /// Load the container of Lhs from tile data
     fn load_lhs<E: Numeric, N: Size>(
-        tile: &Tile<Self::LhsTile, E, N>,
+        tile: &Tile<<Self::TileIO as TileIO>::In, E, N>,
         lhs: &mut Self::LhsFragment,
         #[comptime] config: Self::Config,
     );
@@ -156,7 +162,7 @@ pub trait TileMatmul<L: Numeric, R: Numeric, A: Numeric>: 'static + Send + Sync 
 
     /// Load the container of Rhs from tile data
     fn load_rhs<E: Numeric, N: Size>(
-        tile: &Tile<Self::RhsTile, E, N>,
+        tile: &Tile<<Self::TileIO as TileIO>::In, E, N>,
         rhs: &mut Self::RhsFragment,
         #[comptime] config: Self::Config,
     );
@@ -175,14 +181,14 @@ pub trait TileMatmul<L: Numeric, R: Numeric, A: Numeric>: 'static + Send + Sync 
 
     /// Load the container of Acc from tile data
     fn load_acc<E: Numeric, N: Size>(
-        tile: &Tile<Self::AccTile, E, N>,
+        tile: &Tile<<Self::TileIO as TileIO>::Acc, E, N>,
         acc: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     );
 
     /// Write the content of the output container to the given slice
     fn write_results<E: Numeric, N: Size>(
-        tile: &mut TileMut<Self::OutTile, E, N>,
+        tile: &mut TileMut<<Self::TileIO as TileIO>::Out, E, N>,
         out: &mut Self::AccFragment,
         #[comptime] config: Self::Config,
     );

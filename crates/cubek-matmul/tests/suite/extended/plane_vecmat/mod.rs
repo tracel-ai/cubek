@@ -10,9 +10,7 @@ mod matmul_plane_vecmat {
         use super::*;
         use cubek_std::tile::Strided;
         pub type TMM =
-            cubek_matmul::components::tile::plane_vec_mat_inner_product::PlaneVecMatInnerProduct<
-                Option<Strided>,
-            >;
+            cubek_matmul::components::tile::plane_vec_mat_inner_product::PlaneVecMatInnerProduct;
 
         include!("algorithm.rs");
     }

@@ -10,7 +10,7 @@ use crate::components::{
             unit_partitioned::{UnitMatmul, UnitPartitionedStageConfig},
         },
     },
-    tile::TileMatmulFamily,
+    tile::{TileIO, TileMatmulFamily},
 };
 use crate::definition::{
     Acc, Lhs, MatmulElems, MatmulSetupError, MatmulTypes, MatmulVectorSizes, MatrixTypes, Rhs,
@@ -18,11 +18,7 @@ use crate::definition::{
 };
 use core::marker::PhantomData;
 use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_std::{
-    stage::StageMemoryConfig,
-    tile::Strided,
-    {InvalidConfigError, MatrixLayout},
-};
+use cubek_std::{InvalidConfigError, MatrixLayout, stage::StageMemoryConfig, tile::Strided};
 
 /// Unit Matmul family for any precision
 pub struct UnitMatmulFamily<TM: TileMatmulFamily, StageIn: StageFamily, StageAcc: StageFamily> {
@@ -33,14 +29,9 @@ type STy<T> = crate::definition::Stage<T>;
 type SSz<T> = crate::definition::StageSize<T>;
 
 impl<
-    TM: TileMatmulFamily<
-            LhsTile = StageIn::TileKind,
-            RhsTile = StageIn::TileKind,
-            AccTile = StageAcc::TileKind,
-            OutTile = Strided,
-        >,
-    StageIn: StageFamily,
-    StageAcc: StageFamily,
+    TM: TileMatmulFamily<TileIO: TileIO<Out = Strided>>,
+    StageIn: StageFamily<TileKind = <<TM as TileMatmulFamily>::TileIO as TileIO>::In>,
+    StageAcc: StageFamily<TileKind = <<TM as TileMatmulFamily>::TileIO as TileIO>::Acc>,
 > StageMatmulFamily for UnitMatmulFamily<TM, StageIn, StageAcc>
 {
     type LhsStage = StageIn;

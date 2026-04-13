@@ -52,8 +52,6 @@ impl RegisterFragmentReader for RegisterStageReader<Strided> {
     }
 }
 
-type MM = RegisterMatmul<Strided>;
-
 #[cube]
 fn load_lhs<E: Numeric, V: Numeric, N: Size>(
     tile: &StridedTile<V, N>,
@@ -65,18 +63,18 @@ fn load_lhs<E: Numeric, V: Numeric, N: Size>(
     match config.product_type {
         ProductType::Inner => match frag.layout.comptime() {
             MatrixLayout::RowMajor => {
-                MM::load_plain(tile, &mut frag.array, size.m(), size.k());
+                RegisterMatmul::load_plain(tile, &mut frag.array, size.m(), size.k());
             }
             MatrixLayout::ColMajor => {
-                MM::load_transposed(tile, &mut frag.array, size.k(), size.m());
+                RegisterMatmul::load_transposed(tile, &mut frag.array, size.k(), size.m());
             }
         },
         ProductType::Outer => match frag.layout.comptime() {
             MatrixLayout::RowMajor => {
-                MM::load_transposed(tile, &mut frag.array, size.m(), size.k());
+                RegisterMatmul::load_transposed(tile, &mut frag.array, size.m(), size.k());
             }
             MatrixLayout::ColMajor => {
-                MM::load_plain(tile, &mut frag.array, size.k(), size.m());
+                RegisterMatmul::load_plain(tile, &mut frag.array, size.k(), size.m());
             }
         },
     }
@@ -93,18 +91,18 @@ fn load_rhs<E: Numeric, V: Numeric, N: Size>(
     match config.product_type {
         ProductType::Inner => match frag.layout.comptime() {
             MatrixLayout::RowMajor => {
-                MM::load_transposed(tile, &mut frag.array, size.k(), size.n());
+                RegisterMatmul::load_transposed(tile, &mut frag.array, size.k(), size.n());
             }
             MatrixLayout::ColMajor => {
-                MM::load_plain(tile, &mut frag.array, size.n(), size.k());
+                RegisterMatmul::load_plain(tile, &mut frag.array, size.n(), size.k());
             }
         },
         ProductType::Outer => match frag.layout.comptime() {
             MatrixLayout::RowMajor => {
-                MM::load_plain(tile, &mut frag.array, size.k(), size.n());
+                RegisterMatmul::load_plain(tile, &mut frag.array, size.k(), size.n());
             }
             MatrixLayout::ColMajor => {
-                MM::load_transposed(tile, &mut frag.array, size.n(), size.k());
+                RegisterMatmul::load_transposed(tile, &mut frag.array, size.n(), size.k());
             }
         },
     }
@@ -120,10 +118,10 @@ fn load_acc<E: Numeric, V: Numeric, N: Size>(
 
     match frag.layout.comptime() {
         MatrixLayout::RowMajor => {
-            MM::load_plain(tile, &mut frag.array, size.m(), size.n());
+            RegisterMatmul::load_plain(tile, &mut frag.array, size.m(), size.n());
         }
         MatrixLayout::ColMajor => {
-            MM::load_transposed(tile, &mut frag.array, size.n(), size.m());
+            RegisterMatmul::load_transposed(tile, &mut frag.array, size.n(), size.m());
         }
     }
 }

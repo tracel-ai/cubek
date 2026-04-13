@@ -1,6 +1,7 @@
 use crate::components::stage::matmul::plane_partitioned::{
     PlaneMatmul, PlanePartitionedStageConfig,
 };
+use crate::components::tile::TileIO;
 use crate::components::{
     CubeDimResource,
     global::{MatmulPlaneCounts, PartitionedStage, PartitionedStageFamily, PlaneFlowConfig},
@@ -41,10 +42,10 @@ pub struct PlaneMatmulFamily<
 }
 
 impl<
-    TM: TileMatmulFamily<OutTile = Strided>,
-    StageLhs: StageFamily<TileKind = TM::LhsTile>,
-    StageRhs: StageFamily<TileKind = TM::RhsTile>,
-    StageAcc: StageFamily<TileKind = TM::AccTile>,
+    TM: TileMatmulFamily<TileIO: TileIO<Out = Strided>>,
+    StageLhs: StageFamily<TileKind = <TM::TileIO as TileIO>::In>,
+    StageRhs: StageFamily<TileKind = <TM::TileIO as TileIO>::In>,
+    StageAcc: StageFamily<TileKind = <TM::TileIO as TileIO>::Acc>,
 > StageMatmulFamily for PlaneMatmulFamily<TM, StageLhs, StageRhs, StageAcc>
 {
     type LhsStage = StageLhs;

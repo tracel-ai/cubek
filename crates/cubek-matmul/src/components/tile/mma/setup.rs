@@ -1,35 +1,37 @@
 use crate::{
-    components::resource::CubeDimResource,
-    components::tile::SharedTileConfig,
-    components::tile::mma::config::MmaMatmulConfig,
-    components::tile::{TileMatmulFamily, mma::MmaMatmul},
-    definition::{MatmulAvailabilityError, MatmulElems, MatmulSetupError},
-    definition::{MatmulVectorSizes, TilingBlueprint},
+    components::{
+        resource::CubeDimResource,
+        tile::{
+            SharedTileConfig, StandardTileIO, TileMatmulFamily,
+            mma::{MmaMatmul, config::MmaMatmulConfig},
+        },
+    },
+    definition::{
+        MatmulAvailabilityError, MatmulElems, MatmulSetupError, MatmulVectorSizes, TilingBlueprint,
+    },
 };
 use cubecl::{
     {features::MmaConfig, ir::DeviceProperties},
     {ir::StorageType, prelude::*},
 };
 use cubek_std::{
-    tile::mma::{MmaFragmentReader, MmaIOConfig, MmaStageReader},
-    tile::{Strided, TileKind},
-    {InvalidConfigError, TileSize},
+    InvalidConfigError, TileSize,
+    tile::{
+        Strided,
+        mma::{MmaFragmentReader, MmaIOConfig, MmaStageReader},
+    },
 };
 
-impl<LhsTile: TileKind, RhsTile: TileKind, AccTile: TileKind> TileMatmulFamily
-    for MmaMatmul<LhsTile, RhsTile, AccTile>
+impl TileMatmulFamily for MmaMatmul
 where
-    MmaStageReader<LhsTile>: MmaFragmentReader<TileKind = LhsTile>,
-    MmaStageReader<RhsTile>: MmaFragmentReader<TileKind = RhsTile>,
-    MmaStageReader<AccTile>: MmaFragmentReader<TileKind = AccTile>,
+    MmaStageReader<Strided>: MmaFragmentReader<TileKind = Strided>,
+    MmaStageReader<Strided>: MmaFragmentReader<TileKind = Strided>,
+    MmaStageReader<Option<Strided>>: MmaFragmentReader<TileKind = Option<Strided>>,
 {
     type Config = MmaMatmulConfig;
 
-    type Matmul<L: Numeric, R: Numeric, A: Numeric> = MmaMatmul<LhsTile, RhsTile, AccTile>;
-    type LhsTile = LhsTile;
-    type RhsTile = RhsTile;
-    type AccTile = AccTile;
-    type OutTile = Strided;
+    type Matmul<L: Numeric, R: Numeric, A: Numeric> = MmaMatmul;
+    type TileIO = StandardTileIO;
 
     fn requires_accelerator() -> bool {
         true

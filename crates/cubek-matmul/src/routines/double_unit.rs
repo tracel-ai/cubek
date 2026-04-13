@@ -1,7 +1,6 @@
 use std::fmt::Display;
 
 use cubecl::{Runtime, client::ComputeClient};
-use cubek_std::tile::{Filled, Strided};
 
 use crate::{
     components::{
@@ -46,11 +45,7 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleUnitAlgorithm {
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
         DoubleBufferingMatmulFamily<
-            UnitMatmulFamily<
-                RegisterMatmul<Option<Strided>>,
-                StridedStageFamily,
-                Option<StridedStageFamily>,
-            >,
+            UnitMatmulFamily<RegisterMatmul, StridedStageFamily, Option<StridedStageFamily>>,
             RC,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
@@ -69,7 +64,7 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleUnitAlgorithm {
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
-        if RegisterMatmul::<Filled>::can_cast_stage_element() {
+        if RegisterMatmul::can_cast_stage_element() {
             dtypes.adjust_stage_dtypes();
         }
 

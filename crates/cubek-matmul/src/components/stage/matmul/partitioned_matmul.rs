@@ -1,19 +1,18 @@
 use crate::{
-    components::global,
-    components::global::PlaneFlowPartitionRule,
-    components::stage::Stage,
-    components::stage::StageConfig,
-    components::stage::matmul::partition::SharedPartitionMatmulConfig,
-    components::stage::matmul::partition::{Accumulators, PartitionMatmul, RhsTile},
-    components::stage::matmul::plane_partitioned::PlanePartitionedStageConfig,
-    components::stage::matmul::scheduler::PartitionScheduler,
-    components::stage::matmul::unit_partitioned::UnitPartitionedStageConfig,
-    components::stage::{NoEvent, StageEventListener},
-    components::tile::TileConfig,
-    components::tile::TileMatmul,
-    components::{global::WriteEventListener, stage::StageMatmul},
-    definition::MatmulTypes,
-    definition::MatrixTypes,
+    components::{
+        global::{self, PlaneFlowPartitionRule, WriteEventListener},
+        stage::{
+            NoEvent, Stage, StageConfig, StageEventListener, StageMatmul,
+            matmul::{
+                partition::{Accumulators, PartitionMatmul, RhsTile, SharedPartitionMatmulConfig},
+                plane_partitioned::PlanePartitionedStageConfig,
+                scheduler::PartitionScheduler,
+                unit_partitioned::UnitPartitionedStageConfig,
+            },
+        },
+        tile::{TileConfig, TileIO, TileMatmul},
+    },
+    definition::{MatmulTypes, MatrixTypes},
 };
 use core::marker::PhantomData;
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
@@ -123,25 +122,25 @@ pub struct PartitionedStageMatmul<
             <<MP as MatmulTypes>::Lhs as MatrixTypes>::Stage,
             <<MP as MatmulTypes>::Lhs as MatrixTypes>::StageSize,
             ReadOnly,
-            TileKind = TM::LhsTile,
+            TileKind = <TM::TileIO as TileIO>::In,
         >,
     StageRhs: Stage<
             <<MP as MatmulTypes>::Rhs as MatrixTypes>::Stage,
             <<MP as MatmulTypes>::Rhs as MatrixTypes>::StageSize,
             ReadOnly,
-            TileKind = TM::RhsTile,
+            TileKind = <TM::TileIO as TileIO>::In,
         >,
     StageAcc: Stage<
             <<MP as MatmulTypes>::Acc as MatrixTypes>::Stage,
             <<MP as MatmulTypes>::Acc as MatrixTypes>::StageSize,
             ReadOnly,
-            TileKind = TM::AccTile,
+            TileKind = <TM::TileIO as TileIO>::Acc,
         >,
     StageOut: Stage<
             <<MP as MatmulTypes>::Acc as MatrixTypes>::Stage,
             <<MP as MatmulTypes>::Acc as MatrixTypes>::StageSize,
             ReadWrite,
-            TileKind = TM::OutTile,
+            TileKind = <TM::TileIO as TileIO>::Out,
         >,
     SP: StagePartitioner,
 > {
@@ -163,25 +162,25 @@ where
             <<MP as MatmulTypes>::Lhs as MatrixTypes>::Stage,
             <<MP as MatmulTypes>::Lhs as MatrixTypes>::StageSize,
             ReadOnly,
-            TileKind = TM::LhsTile,
+            TileKind = <TM::TileIO as TileIO>::In,
         >,
     StageRhs: Stage<
             <<MP as MatmulTypes>::Rhs as MatrixTypes>::Stage,
             <<MP as MatmulTypes>::Rhs as MatrixTypes>::StageSize,
             ReadOnly,
-            TileKind = TM::RhsTile,
+            TileKind = <TM::TileIO as TileIO>::In,
         >,
     StageAcc: Stage<
             <<MP as MatmulTypes>::Acc as MatrixTypes>::Stage,
             <<MP as MatmulTypes>::Acc as MatrixTypes>::StageSize,
             ReadOnly,
-            TileKind = TM::AccTile,
+            TileKind = <TM::TileIO as TileIO>::Acc,
         >,
     StageOut: Stage<
             <<MP as MatmulTypes>::Acc as MatrixTypes>::Stage,
             <<MP as MatmulTypes>::Acc as MatrixTypes>::StageSize,
             ReadWrite,
-            TileKind = TM::OutTile,
+            TileKind = <TM::TileIO as TileIO>::Out,
         >,
     SP: StagePartitioner,
 {
