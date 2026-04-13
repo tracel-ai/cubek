@@ -173,22 +173,22 @@ fn run<R: Runtime, E: frontend::Float>(device: &R::Device, strategy: Strategy) {
 
 #[allow(unused)]
 fn run_algos_gemv<R: Runtime, E: frontend::Float>(device: &R::Device) {
-    println!("Gemv Unit Perpendicular");
-    run::<R, E>(
-        device,
-        Strategy::GemvUnitPerpendicular(BlueprintStrategy::Inferred(
-            GemvUnitPerpendicularStrategy {
-                target_num_planes: 8,
-            },
-        )),
-    );
+    // println!("Gemv Unit Perpendicular");
+    // run::<R, E>(
+    //     device,
+    //     Strategy::GemvUnitPerpendicular(BlueprintStrategy::Inferred(
+    //         GemvUnitPerpendicularStrategy {
+    //             target_num_planes: 8,
+    //         },
+    //     )),
+    // );
 
     println!("===================\n");
     println!("Gemv Plane Parallel");
     run::<R, E>(
         device,
         Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(GemvPlaneParallelStrategy {
-            target_num_planes: 8,
+            target_num_planes: None,
         })),
     );
 

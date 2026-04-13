@@ -18,12 +18,12 @@ pub struct GemvPlaneParallelRoutine {}
 
 #[derive(Default, Clone)]
 pub struct GemvPlaneParallelStrategy {
-    pub target_num_planes: usize,
+    pub target_num_planes: Option<usize>,
 }
 
 impl Display for GemvPlaneParallelStrategy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "_{}", self.target_num_planes)
+        write!(f, "_{:?}", self.target_num_planes)
     }
 }
 
@@ -39,6 +39,7 @@ impl Routine<()> for GemvPlaneParallelRoutine {
         strategy: &BlueprintStrategy<(), Self>,
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+        let properties = device_settings.client.properties();
 
         match strategy {
             BlueprintStrategy::Forced(blueprint) => Ok(ExpandInfo {
@@ -46,17 +47,31 @@ impl Routine<()> for GemvPlaneParallelRoutine {
                 dtypes,
             }),
             BlueprintStrategy::Inferred(strategy) => {
+                let target_num_planes = match strategy.target_num_planes {
+                    Some(num_planes) => num_planes,
+                    None => {
+                        match properties.hardware.num_cpu_cores {
+                            Some(num_cores) => num_cores as usize,
+                            // We use the number of conccurrent planes that can work per SM at the same time on GPUs.
+                            //
+                            // This is typically the number of warp scheduler on Nvidia or the number of SIMD units
+                            // per CU on AMD.
+                            None => 4,
+                        }
+                    }
+                };
+
+                let kind = GemvKind::from_problem(problem)?;
                 let tile_dim =
                     device_settings.plane_dim as usize * device_settings.vector_sizes.rhs;
-                let plan = GemvKind::from_problem(problem)?;
-                let num_planes = match plan {
+                let num_planes = match kind {
                     GemvKind::MatVecRowMajor | GemvKind::VecMatColMajor => {
                         // For tile swizzle
-                        max(1, min(strategy.target_num_planes, problem.k / tile_dim))
+                        max(1, min(target_num_planes, problem.k / tile_dim))
                     }
                     GemvKind::VecMatRowMajor | GemvKind::MatVecColMajor => {
                         // For within tile
-                        max(1, min(strategy.target_num_planes, tile_dim))
+                        max(1, min(target_num_planes, tile_dim))
                     }
                 };
 
@@ -68,7 +83,7 @@ impl Routine<()> for GemvPlaneParallelRoutine {
                         .cube_count_strategy(CubeCountStrategy::Flattened)
                         .global_order(GlobalOrder::RowMajor)
                         .build(),
-                    kind: plan,
+                    kind,
                 };
 
                 Ok(ExpandInfo { blueprint, dtypes })
