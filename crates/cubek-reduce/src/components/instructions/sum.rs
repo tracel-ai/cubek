@@ -76,11 +76,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
         accumulator: Self::AccumulatorItem,
         _shape_axis_reduce: usize,
     ) -> Out {
-        let mut sum = P::EA::from_int(0);
-        #[unroll]
-        for k in 0..accumulator.size() {
-            sum += accumulator[k];
-        }
+        let sum = Vector::vector_sum(accumulator);
+
         Out::cast_from(sum)
     }
 
