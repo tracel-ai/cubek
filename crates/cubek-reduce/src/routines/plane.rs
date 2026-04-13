@@ -92,10 +92,19 @@ fn generate_blueprint<R: Runtime>(
     }
 
     let properties = &client.properties().hardware;
-    let plane_size = properties.plane_size_max;
+
+    let plane_size = if properties.plane_size_min != properties.plane_size_max {
+        properties.plane_size_min
+    } else {
+        properties.plane_size_max
+    };
     let working_planes = working_planes(settings, &problem);
     let working_units = working_planes * plane_size as usize;
-    let plane_count = calculate_plane_count_per_cube(working_units, plane_size, properties);
+    let plane_count = if properties.plane_size_min != properties.plane_size_max {
+        1
+    } else {
+        calculate_plane_count_per_cube(working_units, plane_size, properties)
+    };
     let working_cubes = working_planes.div_ceil(plane_count as usize);
 
     let cube_dim = CubeDim::new_2d(plane_size, plane_count);
@@ -129,8 +138,6 @@ fn generate_blueprint<R: Runtime>(
     let plane_size_max = properties.plane_size_max;
 
     let strategy_enum = if plane_size_min != plane_size_max {
-        // We have no guarranty the runtime plane_size will be equal to cube_dim_x
-        // therefore we must use MultiplaneLazy
         PlaneMergeStrategy::MultiplaneLazy
     } else if strategy.independent {
         PlaneMergeStrategy::Lazy
@@ -138,7 +145,6 @@ fn generate_blueprint<R: Runtime>(
         PlaneMergeStrategy::Eager
     };
 
-    //panic!("Strategy: {:?}", strategy_enum);
     let blueprint = ReduceBlueprint {
         vectorization_mode: settings.vectorization_mode,
         global: GlobalReduceBlueprint::Plane(PlaneReduceBlueprint {

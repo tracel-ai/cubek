@@ -22,14 +22,14 @@ use cubek_test_utils::{
 fn simple_reduce_sum() {
     let strategy = ReduceStrategy {
         routine: RoutineStrategy::Plane(BlueprintStrategy::Inferred(PlaneStrategy {
-            independent: true,
+            independent: false,
         })),
         vectorization: VectorizationStrategy {
             parallel_output_vectorization: false,
         },
     };
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let shape = [1, 256].to_vec();
+    let shape = [4, 128].to_vec();
     let dim = 1;
     test_launch(client, shape, dim, strategy);
 }

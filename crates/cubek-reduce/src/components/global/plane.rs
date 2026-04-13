@@ -130,7 +130,13 @@ impl GlobalFullPlaneReduce {
             PlaneMergeStrategy::MultiplaneLazy => {
                 let (item, coordinate) = I::read_accumulator(inst, &accumulator);
                 let mut result = I::null_accumulator(inst);
-                reduce_inplace::<P, I>(inst, &mut result, item, coordinate, PlaneReduceMode::Multi);
+                reduce_inplace::<P, I>(
+                    inst,
+                    &mut result,
+                    item,
+                    coordinate,
+                    PlaneReduceMode::Single,
+                );
                 result
             }
         }
