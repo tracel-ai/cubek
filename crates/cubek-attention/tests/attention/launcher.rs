@@ -31,7 +31,6 @@ pub fn test_launch(
             seed: 12,
             distribution: Distribution::Uniform(-1., 1.),
         },
-        None,
     )
     .generate_with_f32_host_data();
 
@@ -44,7 +43,6 @@ pub fn test_launch(
             seed: 34,
             distribution: Distribution::Uniform(-1., 1.),
         },
-        None,
     )
     .generate_with_f32_host_data();
 
@@ -57,7 +55,6 @@ pub fn test_launch(
             seed: 56,
             distribution: Distribution::Uniform(-1., 1.),
         },
-        None,
     )
     .generate_with_f32_host_data();
 
@@ -71,7 +68,6 @@ pub fn test_launch(
                 seed: 78,
                 distribution: Distribution::Bernoulli(0.1),
             },
-            None,
         )
         .generate_with_bool_host_data();
 
@@ -86,7 +82,6 @@ pub fn test_launch(
         problem.global_dtypes.out,
         StrideSpec::RowMajor,
         DataKind::Zeros,
-        None,
     )
     .generate_without_host_data();
 

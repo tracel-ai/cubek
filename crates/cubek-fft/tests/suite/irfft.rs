@@ -26,7 +26,6 @@ fn test_launch(client: ComputeClient<TestRuntime>, spectrum_shape: Vec<usize>, d
             seed: 43,
             distribution: Distribution::Uniform(-1., 1.),
         },
-        None,
     )
     .generate_with_f32_host_data();
 
@@ -39,7 +38,6 @@ fn test_launch(client: ComputeClient<TestRuntime>, spectrum_shape: Vec<usize>, d
             seed: 44,
             distribution: Distribution::Uniform(-1., 1.),
         },
-        None,
     )
     .generate_with_f32_host_data();
 
@@ -49,7 +47,6 @@ fn test_launch(client: ComputeClient<TestRuntime>, spectrum_shape: Vec<usize>, d
         dtype,
         StrideSpec::RowMajor,
         DataKind::Zeros,
-        None,
     )
     .generate_without_host_data();
 

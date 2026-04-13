@@ -1,14 +1,15 @@
-use cubecl::{TestRuntime, prelude::*, ir::ElemType, ir::StorageType, ir::FloatKind, ir::IntKind, ir::UIntKind};
+use cubecl::{
+    TestRuntime, ir::ElemType, ir::FloatKind, ir::StorageType,
+    prelude::*,
+};
 use cubek_matmul::{
-    definition::{MatmulProblem, MatmulElems, MatmulGlobalElems},
+    definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
     launch::Strategy,
     launch::launch_ref,
 };
+use cubek_quant::scheme::{QuantLevel, QuantMode, QuantParam, QuantScheme, QuantStore, QuantValue};
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_test_utils::{
-    DataKind, TestInput, TestTensor, ExecutionOutcome, TestOutcome,
-};
-use cubek_quant::scheme::{QuantScheme, QuantMode, QuantLevel, QuantValue, QuantStore, QuantParam};
+use cubek_test_utils::{DataKind, ExecutionOutcome, TestInput, TestOutcome, TestTensor, InputDataType};
 
 use crate::{suite::assert_result, suite::layout_to_stride_spec};
 
@@ -19,23 +20,9 @@ use crate::{suite::assert_result, suite::layout_to_stride_spec};
 #[test]
 pub fn test_matmul_quantized_lhs() {
     let client = TestRuntime::client(&Default::default());
-    // Small problem to ensure vector_size=1
-    let m = 16;
-    let n = 16;
-    let k = 16;
-    
-    let problem = MatmulProblem::from_parameters(
-        m, n, k,
-        vec![1].into(), vec![1].into(),
-        MatrixLayout::RowMajor, MatrixLayout::RowMajor, MatrixLayout::RowMajor,
-        None, None,
-        MatmulGlobalElems {
-            lhs: f32::as_type_native_unchecked().storage_type(),
-            rhs: f32::as_type_native_unchecked().storage_type(),
-            out: f32::as_type_native_unchecked().storage_type(),
-        },
-        cubecl::ir::AddressType::U32,
-    );
+    let m = 64;
+    let n = 64;
+    let k = 64;
 
     // Quantization scheme: Symmetric, Tensor-wise, Q8S (i8), PackedU32 storage
     let scheme = QuantScheme::default()
@@ -45,17 +32,39 @@ pub fn test_matmul_quantized_lhs() {
         .with_store(QuantStore::PackedU32(0))
         .with_param(QuantParam::F32);
 
+    let lhs_dtype = InputDataType::Quantized(scheme);
+    let rhs_dtype = InputDataType::from(ElemType::Float(FloatKind::F32));
+    let out_dtype = InputDataType::from(ElemType::Float(FloatKind::F32));
+
+    let problem = MatmulProblem::from_parameters(
+        m,
+        n,
+        k,
+        vec![1].into(),
+        vec![1].into(),
+        MatrixLayout::RowMajor,
+        MatrixLayout::RowMajor,
+        MatrixLayout::RowMajor,
+        lhs_dtype.scheme().as_ref(),
+        None,
+        MatmulGlobalElems {
+            lhs: lhs_dtype.storage_type(),
+            rhs: rhs_dtype.storage_type(),
+            out: out_dtype.storage_type(),
+        },
+        cubecl::ir::AddressType::U32,
+    );
+
     // Generate LHS (f32)
     let lhs = TestInput::new(
         client.clone(),
         problem.lhs_shape.clone(),
-        problem.global_dtypes.lhs,
+        lhs_dtype,
         layout_to_stride_spec(problem.lhs_layout),
         DataKind::Random {
             seed: 1234,
             distribution: cubek_test_utils::Distribution::Uniform(-1., 1.),
         },
-        Some(scheme),
     )
     .generate_test_tensor();
 
@@ -63,23 +72,21 @@ pub fn test_matmul_quantized_lhs() {
     let rhs = TestInput::new(
         client.clone(),
         problem.rhs_shape.clone(),
-        problem.global_dtypes.rhs,
+        rhs_dtype,
         layout_to_stride_spec(problem.rhs_layout),
         DataKind::Random {
             seed: 5678,
             distribution: cubek_test_utils::Distribution::Uniform(-1., 1.),
         },
-        None,
     )
     .generate_test_tensor();
 
     let out = TestInput::new(
         client.clone(),
         problem.out_shape.clone(),
-        problem.global_dtypes.out,
+        out_dtype,
         layout_to_stride_spec(MatrixLayout::RowMajor),
         DataKind::Zeros,
-        None,
     )
     .generate_without_host_data();
 
@@ -95,14 +102,14 @@ pub fn test_matmul_quantized_lhs() {
 
     let strategy = Strategy::Naive;
     let outcome: ExecutionOutcome = launch_ref(
-            &strategy,
-            &client,
-            lhs_binding,
-            rhs_binding,
-            out_binding,
-            &mut dtypes,
-        )
-        .into();
+        &strategy,
+        &client,
+        lhs_binding,
+        rhs_binding,
+        out_binding,
+        &mut dtypes,
+    )
+    .into();
 
     match outcome {
         ExecutionOutcome::Executed => {

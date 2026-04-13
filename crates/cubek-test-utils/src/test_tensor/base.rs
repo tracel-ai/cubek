@@ -60,10 +60,54 @@ impl TestTensor {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum InputDataType {
+    Standard(StorageType),
+    Quantized(QuantScheme),
+}
+
+impl From<StorageType> for InputDataType {
+    fn from(dtype: StorageType) -> Self {
+        InputDataType::Standard(dtype)
+    }
+}
+
+impl From<cubecl::ir::ElemType> for InputDataType {
+    fn from(elem: cubecl::ir::ElemType) -> Self {
+        InputDataType::Standard(StorageType::Scalar(elem))
+    }
+}
+
+impl InputDataType {
+    pub fn storage_type(&self) -> StorageType {
+        match self {
+            InputDataType::Standard(dtype) => *dtype,
+            InputDataType::Quantized(scheme) => {
+                if matches!(scheme.store, cubecl_common::quant::scheme::QuantStore::PackedU32(_)) {
+                    cubecl::ir::ElemType::UInt(cubecl::ir::UIntKind::U32).into()
+                } else {
+                    cubecl::ir::ElemType::from_quant_value(scheme.value).into()
+                }
+            }
+        }
+    }
+
+    pub fn is_quantized(&self) -> bool {
+        matches!(self, InputDataType::Quantized(_))
+    }
+
+    pub fn scheme(&self) -> Option<QuantScheme> {
+        match self {
+            InputDataType::Quantized(scheme) => Some(*scheme),
+            _ => None,
+        }
+    }
+}
+
 pub struct TestInput {
     base_spec: BaseInputSpec,
     data_kind: DataKind,
-    quantization: Option<QuantScheme>,
+    input_dtype: InputDataType,
 }
 
 pub enum DataKind {
@@ -85,22 +129,31 @@ impl TestInput {
     pub fn new(
         client: ComputeClient<TestRuntime>,
         shape: impl Into<Shape>,
-        dtype: StorageType,
+        dtype: impl Into<InputDataType>,
         stride_spec: StrideSpec,
         data_kind: DataKind,
-        quantization: Option<QuantScheme>,
     ) -> Self {
+        let dtype = dtype.into();
+        let storage_type = match &dtype {
+            InputDataType::Standard(dtype) => *dtype,
+            InputDataType::Quantized(_scheme) => {
+                // For quantized input, the initial data is generated as f32 (Standard)
+                // then it will be quantized in generate_test_tensor.
+                f32::as_type_native_unchecked().storage_type()
+            }
+        };
+
         let base_spec = BaseInputSpec {
             client,
             shape: shape.into(),
-            dtype,
+            dtype: storage_type,
             stride_spec,
         };
 
         Self {
             base_spec,
             data_kind,
-            quantization,
+            input_dtype: dtype,
         }
     }
 
@@ -113,7 +166,7 @@ impl TestInput {
     }
 
     pub fn generate_test_tensor(self) -> TestTensor {
-        let quantization = self.quantization;
+        let input_dtype = self.input_dtype.clone();
         let client = self.base_spec.client.clone();
         let (handle, host) = self.generate_with_f32_host_data();
 
@@ -123,7 +176,7 @@ impl TestInput {
             quantization: None,
         };
 
-        if let Some(scheme) = quantization {
+        if let InputDataType::Quantized(scheme) = input_dtype {
             let original_shape = tensor.handle.shape().clone();
 
             // Actually quantize the data on device.
@@ -132,23 +185,15 @@ impl TestInput {
             let scale_handle = TestInput::new(
                 client.clone(),
                 [1, 1],
-                f32::as_type_native_unchecked().storage_type(),
+                InputDataType::Standard(f32::as_type_native_unchecked().storage_type()),
                 StrideSpec::RowMajor,
                 DataKind::Custom {
                     data: vec![1.0 / 127.0],
                 },
-                None,
             )
             .generate();
 
-            let quant_dtype = if matches!(
-                scheme.store,
-                cubecl_common::quant::scheme::QuantStore::PackedU32(_)
-            ) {
-                cubecl::ir::ElemType::UInt(cubecl::ir::UIntKind::U32).into()
-            } else {
-                cubecl::ir::ElemType::from_quant_value(scheme.value).into()
-            };
+            let quant_dtype = input_dtype.storage_type();
 
             let mut quant_shape = original_shape.clone();
             let num_quants = scheme.num_quants();
@@ -160,20 +205,18 @@ impl TestInput {
             let output_handle = TestInput::new(
                 client.clone(),
                 quant_shape,
-                quant_dtype,
+                InputDataType::Standard(quant_dtype),
                 StrideSpec::RowMajor,
                 DataKind::Zeros,
-                None,
             )
             .generate();
 
             let out_scale_handle = TestInput::new(
                 client.clone(),
                 [1, 1],
-                f32::as_type_native_unchecked().storage_type(),
+                InputDataType::Standard(f32::as_type_native_unchecked().storage_type()),
                 StrideSpec::RowMajor,
                 DataKind::Zeros,
-                None,
             )
             .generate();
 
