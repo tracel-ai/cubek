@@ -223,12 +223,7 @@ fn execute_gemv<V: CubePrimitive, M: CubePrimitive, O: CubePrimitive, AccR: Nume
         acc += Vector::cast_from(vec_val) * Vector::cast_from(mat_val);
     }
 
-    let mut sum = AccR::zero();
-
-    #[unroll]
-    for i in 0..N::value() {
-        sum += acc[i];
-    }
+    let sum = Vector::vector_sum(acc);
 
     let sum = if comptime!(plane_dim > 1) {
         plane_sum(sum)
@@ -303,13 +298,8 @@ fn execute_gemv_transposed<
 
     // Write back
     for segment_iter in 0..vector_size {
-        let mut sum = AccR::zero();
         let acc = accs[segment_iter as usize];
-
-        #[unroll]
-        for i in 0..vector_size {
-            sum += acc[i as usize];
-        }
+        let sum = Vector::vector_sum(acc);
 
         out.write_checked((mn_pos + segment_iter) as usize, O::cast_from(sum));
     }

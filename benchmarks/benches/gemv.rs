@@ -192,46 +192,46 @@ fn run_algos_gemv<R: Runtime, E: frontend::Float>(device: &R::Device) {
         })),
     );
 
-    println!("===================\n");
-    println!("Simple VecMat");
-    run::<R, E>(
-        device,
-        Strategy::SimpleVecMat(BlueprintStrategy::Inferred(().into())),
-    );
+    // println!("===================\n");
+    // println!("Simple VecMat");
+    // run::<R, E>(
+    //     device,
+    //     Strategy::SimpleVecMat(BlueprintStrategy::Inferred(().into())),
+    // );
 
-    println!("===================\n");
-    println!("Double VecMat");
-    run::<R, E>(
-        device,
-        Strategy::DoubleVecMat(BlueprintStrategy::Inferred(().into())),
-    );
+    // println!("===================\n");
+    // println!("Double VecMat");
+    // run::<R, E>(
+    //     device,
+    //     Strategy::DoubleVecMat(BlueprintStrategy::Inferred(().into())),
+    // );
 
-    println!("===================\n");
-    println!("Simple Unit Min");
-    run::<R, E>(
-        device,
-        Strategy::SimpleUnit(BlueprintStrategy::Inferred(SimpleUnitSelectionArgs {
-            tile_size: TileSizeSelection::MinTileSize,
-        })),
-    );
+    // println!("===================\n");
+    // println!("Simple Unit Min");
+    // run::<R, E>(
+    //     device,
+    //     Strategy::SimpleUnit(BlueprintStrategy::Inferred(SimpleUnitSelectionArgs {
+    //         tile_size: TileSizeSelection::MinTileSize,
+    //     })),
+    // );
 
-    println!("===================\n");
-    println!("Simple Unit Max");
-    run::<R, E>(
-        device,
-        Strategy::SimpleUnit(BlueprintStrategy::Inferred(SimpleUnitSelectionArgs {
-            tile_size: TileSizeSelection::MaxTileSize,
-        })),
-    );
+    // println!("===================\n");
+    // println!("Simple Unit Max");
+    // run::<R, E>(
+    //     device,
+    //     Strategy::SimpleUnit(BlueprintStrategy::Inferred(SimpleUnitSelectionArgs {
+    //         tile_size: TileSizeSelection::MaxTileSize,
+    //     })),
+    // );
 
-    println!("===================\n");
-    println!("CMMA");
-    run::<R, E>(
-        device,
-        Strategy::SimpleCyclicCmma(BlueprintStrategy::Inferred(SimpleArgs {
-            multi_rows: false,
-        })),
-    );
+    // println!("===================\n");
+    // println!("CMMA");
+    // run::<R, E>(
+    //     device,
+    //     Strategy::SimpleCyclicCmma(BlueprintStrategy::Inferred(SimpleArgs {
+    //         multi_rows: false,
+    //     })),
+    // );
 }
 
 fn main() {
