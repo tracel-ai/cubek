@@ -7,13 +7,13 @@ use cubek_std::{
 };
 
 use crate::components::tile::{
-    Operands, SharedTileConfig, StandardTileIO, Tilex, TileLayout, TileMatmul, TileScalar,
-    TileStorage,
+    NumericVector, Operands, SharedTileConfig, StandardTileIO, TileLayout, TileMatmul, TileStorage,
+    Tilex,
     cmma::{
         reader::{CmmaFragmentReader, CmmaStageReader},
         writer::CmmaStageWriter,
     },
-    tile_matmul,
+    tile_copy, tile_matmul,
 };
 use cubecl::cmma;
 
@@ -21,19 +21,19 @@ use cubecl::cmma;
 pub struct CmmaMatmul {}
 
 #[derive(CubeType)]
-pub struct FragmentOperands<L: Numeric, R: Numeric, A: Numeric> {
+pub struct FragmentOperands<L: NumericVector, R: NumericVector, A: NumericVector> {
     #[cube(comptime)]
     _phantom: PhantomData<(L, R, A)>,
 }
 
-impl<L: Numeric, R: Numeric, A: Numeric> Operands for FragmentOperands<L, R, A> {
-    type Lhs = TileScalar<L>;
-    type Rhs = TileScalar<R>;
-    type Acc = TileScalar<A>;
+impl<L: NumericVector, R: NumericVector, A: NumericVector> Operands for FragmentOperands<L, R, A> {
+    type Lhs = Tilex<L>;
+    type Rhs = Tilex<R>;
+    type Acc = Tilex<A>;
 }
 
 #[cube]
-impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for CmmaMatmul
+impl<L: NumericVector, R: NumericVector, A: NumericVector> TileMatmul<L, R, A> for CmmaMatmul
 where
     CmmaStageReader<Option<Strided>>: CmmaFragmentReader,
 {
@@ -42,9 +42,9 @@ where
     type TileIO = StandardTileIO;
 
     fn execute(
-        lhs: &TileScalar<L>,
-        rhs: &TileScalar<R>,
-        acc: &mut TileScalar<A>,
+        lhs: &Tilex<L>,
+        rhs: &Tilex<R>,
+        acc: &mut Tilex<A>,
         #[comptime] _config: Self::Config,
     ) {
         tile_matmul(lhs, rhs, acc);
@@ -53,12 +53,12 @@ where
     fn allocate_lhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> TileScalar<L> {
+    ) -> Tilex<L> {
         let size = config.tile_size;
 
-        TileScalar::<L> {
+        Tilex::<L> {
             storage: TileStorage::new_Cmma(unsafe {
-                cmma::Matrix::<L>::uninitialized(
+                cmma::Matrix::<L::Elem>::uninitialized(
                     cmma::MatrixIdent::A,
                     size.m() as usize,
                     size.n() as usize,
@@ -73,12 +73,12 @@ where
     fn allocate_rhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> TileScalar<R> {
+    ) -> Tilex<R> {
         let size = config.tile_size;
 
-        TileScalar::<R> {
+        Tilex::<R> {
             storage: TileStorage::new_Cmma(unsafe {
-                cmma::Matrix::<R>::uninitialized(
+                cmma::Matrix::<R::Elem>::uninitialized(
                     cmma::MatrixIdent::B,
                     size.m() as usize,
                     size.n() as usize,
@@ -93,12 +93,12 @@ where
     fn allocate_acc(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> TileScalar<A> {
+    ) -> Tilex<A> {
         let size = config.tile_size;
 
-        TileScalar::<A> {
+        Tilex::<A> {
             storage: TileStorage::new_Cmma(unsafe {
-                cmma::Matrix::<A>::uninitialized(
+                cmma::Matrix::<A::Elem>::uninitialized(
                     cmma::MatrixIdent::Accumulator,
                     size.m() as usize,
                     size.n() as usize,
@@ -110,48 +110,37 @@ where
         }
     }
 
-    fn load_lhs<E: Numeric, N: Size>(
-        tile: &Tilex<E, N>,
-        lhs: &mut TileScalar<L>,
+    fn load_lhs<N: NumericVector>(
+        tile: &Tilex<N>,
+        lhs: &mut Tilex<L, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        CmmaStageReader::<Strided>::load_fragment(
-            tile,
-            &mut lhs.fragment,
-            ComptimeOption::new_None(),
-        );
+        tile_copy(tile, lhs);
     }
 
-    fn load_rhs<E: Numeric, N: Size>(
-        tile: &Tilex<E, N>,
-        rhs: &mut TileScalar<R>,
+    fn load_rhs<N: NumericVector>(
+        tile: &Tilex<N>,
+        rhs: &mut Tilex<R, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        CmmaStageReader::<Strided>::load_fragment(
-            tile,
-            &mut rhs.fragment,
-            ComptimeOption::new_None(),
-        );
+        tile_copy(tile, rhs);
     }
 
-    fn load_acc<E: Numeric, N: Size>(
-        tile: &Tilex<E, N>,
-        acc: &mut TileScalar<A>,
+    fn load_acc<N: NumericVector>(
+        tile: &Tilex<N>,
+        acc: &mut Tilex<A, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        CmmaStageReader::<Option<Strided>>::load_fragment(
-            tile,
-            &mut acc.fragment,
-            ComptimeOption::new_Some(as_cmma_layout(acc.layout)),
-        );
+        tile_copy(tile, acc);
     }
 
-    fn write_results<E: Numeric, N: Size>(
-        tile: &mut StridedTile<E, N, ReadWrite>,
-        out: &mut TileScalar<A>,
+    fn write_results<N: NumericVector>(
+        tile: &mut Tilex<N, ReadWrite>,
+        out: &mut Tilex<A>,
         #[comptime] _config: Self::Config,
     ) {
-        let out = cmma::cast::<A, E>(&out.fragment);
-        CmmaStageWriter::store_fragment(tile, &out);
+        let out = out.cast();
+        tile_copy(&out, tile)
+        // CmmaStageWriter::store_fragment(tile, &out);
     }
 }

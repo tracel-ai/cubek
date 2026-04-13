@@ -4,3 +4,5 @@ mod setup;
 mod writer;
 
 pub use matmul::*;
+
+pub use reader::*;

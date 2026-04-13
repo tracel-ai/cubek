@@ -5,16 +5,24 @@ use cubecl::{
 };
 use cubek_std::{
     InvalidConfigError, MatrixLayout, TileSize,
-    tile::{Strided, Tile, TileKind, TileMut},
+    tile::{Strided, TileKind, TileMut},
 };
 
 use crate::{
     components::{
         resource::CubeDimResource,
-        tile::{TileConfig, TileScalar, Tilex},
+        tile::{TileConfig, Tilex},
     },
     definition::{MatmulElems, MatmulSetupError, MatmulVectorSizes, TilingBlueprint},
 };
+
+// TODO exists in cubek-reduce too, migrate to std
+pub trait NumericVector: Send + Sync + 'static {
+    type Elem: Numeric;
+    type Size: Size;
+}
+
+pub type VectorOf<N> = Vector<<N as NumericVector>::Elem, <N as NumericVector>::Size>;
 
 /// A family of [TileMatmul] implementations that operate with any precision.
 pub trait TileMatmulFamily: Send + Sync + 'static {
@@ -22,7 +30,7 @@ pub trait TileMatmulFamily: Send + Sync + 'static {
     type Config: TileConfig;
 
     /// The specific [TileMatmul] implementation associated with this family.
-    type Matmul<L: Numeric, R: Numeric, A: Numeric>: TileMatmul<L, R, A, TileIO = Self::TileIO, Config = Self::Config>;
+    type Matmul<L: NumericVector, R: NumericVector, A: NumericVector>: TileMatmul<L, R, A, TileIO = Self::TileIO, Config = Self::Config>;
 
     /// Where the tile matmul reads and writes its inputs
     type TileIO: TileIO;
@@ -108,7 +116,9 @@ pub trait Operands: CubeType + Send + Sync + 'static {
 ///    should be done on smaller sizes than M, N and K, padding with zeros must be done beforehand.
 ///  - Enough units are present to perform the whole computation
 #[cube]
-pub trait TileMatmul<L: Numeric, R: Numeric, A: Numeric>: 'static + Send + Sync {
+pub trait TileMatmul<L: NumericVector, R: NumericVector, A: NumericVector>:
+    'static + Send + Sync
+{
     /// Config for this matmul
     type Config: TileConfig;
 
@@ -135,9 +145,9 @@ pub trait TileMatmul<L: Numeric, R: Numeric, A: Numeric>: 'static + Send + Sync 
     ) -> <Self::Operands as Operands>::Lhs;
 
     /// Load the container of Lhs from tile data
-    fn load_lhs<E: Numeric, N: Size>(
-        tile: &Tilex<E, N>,
-        lhs: &mut TileScalar<L>,
+    fn load_lhs<E: NumericVector>(
+        tile: &Tilex<E>,
+        lhs: &mut Tilex<L, ReadWrite>,
         #[comptime] config: Self::Config,
     );
 
@@ -153,9 +163,9 @@ pub trait TileMatmul<L: Numeric, R: Numeric, A: Numeric>: 'static + Send + Sync 
     ) -> <Self::Operands as Operands>::Rhs;
 
     /// Load the container of Rhs from tile data
-    fn load_rhs<E: Numeric, N: Size>(
-        tile: &Tile<<Self::TileIO as TileIO>::In, E, N>,
-        rhs: &mut <Self::Operands as Operands>::Rhs,
+    fn load_rhs<E: NumericVector>(
+        tile: &Tilex<E>,
+        rhs: &mut Tilex<R, ReadWrite>,
         #[comptime] config: Self::Config,
     );
 
@@ -172,16 +182,16 @@ pub trait TileMatmul<L: Numeric, R: Numeric, A: Numeric>: 'static + Send + Sync 
     ) -> <Self::Operands as Operands>::Acc;
 
     /// Load the container of Acc from tile data
-    fn load_acc<E: Numeric, N: Size>(
-        tile: &Tile<<Self::TileIO as TileIO>::Acc, E, N>,
-        acc: &mut <Self::Operands as Operands>::Acc,
+    fn load_acc<E: NumericVector>(
+        tile: &Tilex<E>,
+        rhs: &mut Tilex<A, ReadWrite>,
         #[comptime] config: Self::Config,
     );
 
     /// Write the content of the output container to the given slice
-    fn write_results<E: Numeric, N: Size>(
-        tile: &mut TileMut<<Self::TileIO as TileIO>::Out, E, N>,
-        out: &mut <Self::Operands as Operands>::Acc,
+    fn write_results<N: NumericVector>(
+        tile: &mut Tilex<N, ReadWrite>,
+        out: &mut Tilex<A>,
         #[comptime] config: Self::Config,
     );
 }
