@@ -37,9 +37,10 @@ impl Routine for PlaneRoutine {
                     return Err(ReduceError::PlanesUnavailable);
                 }
 
-                if cube_dim.x != client.properties().hardware.plane_size_max {
+                let properties = &client.properties().hardware;
+                if cube_dim.x != properties.plane_size_min {
                     return Err(ReduceError::Validation {
-                        details: "`cube_dim.x` must match `plane_size_max`",
+                        details: "`cube_dim.x` must match `plane_size_min`",
                     });
                 }
 
