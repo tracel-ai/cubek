@@ -1,4 +1,4 @@
-use crate::extended::test_case::TestCase;
+use crate::it::test_case::TestCase;
 
 #[test]
 pub fn test_argmax() {
