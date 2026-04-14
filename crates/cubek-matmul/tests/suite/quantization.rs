@@ -1,7 +1,4 @@
-use cubecl::{
-    TestRuntime, ir::ElemType, ir::FloatKind, ir::StorageType,
-    prelude::*,
-};
+use cubecl::{TestRuntime, ir::ElemType, ir::FloatKind, ir::StorageType, prelude::*};
 use cubek_matmul::{
     definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
     launch::Strategy,
@@ -9,13 +6,13 @@ use cubek_matmul::{
 };
 use cubek_quant::scheme::{QuantLevel, QuantMode, QuantParam, QuantScheme, QuantStore, QuantValue};
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_test_utils::{DataKind, ExecutionOutcome, TestInput, TestOutcome, TestTensor, InputDataType};
+use cubek_test_utils::{
+    DataKind, ExecutionOutcome, InputDataType, TestInput, TestOutcome, TestTensor,
+};
 
 use crate::{suite::assert_result, suite::layout_to_stride_spec};
 
 /// Test for matrix multiplication with a quantized LHS.
-/// This test demonstrates how to use `TestTensor` to mark a handle as quantized
-/// and pass it to the matmul kernel via `InputBinding::Quantized`.
 /// Note: This test might require a runtime that supports the chosen quantization scheme.
 #[test]
 pub fn test_matmul_quantized_lhs() {
@@ -48,14 +45,17 @@ pub fn test_matmul_quantized_lhs() {
         lhs_dtype.scheme().as_ref(),
         None,
         MatmulGlobalElems {
-            lhs: lhs_dtype.storage_type(),
+            // The quantized view dequantizes to float, so the kernel sees the
+            // output float type, not the packed storage type.
+            lhs: out_dtype.storage_type(),
             rhs: rhs_dtype.storage_type(),
             out: out_dtype.storage_type(),
         },
         cubecl::ir::AddressType::U32,
     );
 
-    // Generate LHS (f32)
+    // Generate LHS
+    // Handle is quantized but
     let lhs = TestInput::new(
         client.clone(),
         problem.lhs_shape.clone(),
@@ -91,7 +91,9 @@ pub fn test_matmul_quantized_lhs() {
     .generate_without_host_data();
 
     let mut problem = problem;
-    problem.lhs_strides = lhs.handle.strides().clone();
+    // Don't override lhs_strides: for quantized tensors, the handle carries packed
+    // strides (e.g. for [1,64,16]) but the problem needs the original float strides
+    // which from_parameters already computed correctly.
     problem.rhs_strides = rhs.handle.strides().clone();
 
     let lhs_binding = test_tensor_to_binding(lhs.clone());

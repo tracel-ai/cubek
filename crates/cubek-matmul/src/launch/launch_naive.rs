@@ -100,6 +100,12 @@ pub fn launch_ref<R: Runtime>(
         view_vector_sizes.rhs *= scheme.num_quants();
     }
 
+    eprintln!("DEBUG launch_naive: lhs_vector_size={}, rhs_vector_size={}", lhs_vector_size, rhs_vector_size);
+    eprintln!("DEBUG launch_naive: view_vector_sizes lhs={}, rhs={}, out={}", view_vector_sizes.lhs, view_vector_sizes.rhs, view_vector_sizes.out);
+    eprintln!("DEBUG launch_naive: lhs data shape={:?}, strides={:?}", lhs.data().shape, lhs.data().strides);
+    eprintln!("DEBUG launch_naive: rhs data shape={:?}, strides={:?}", rhs.data().shape, rhs.data().strides);
+    eprintln!("DEBUG launch_naive: dtypes lhs_global={:?}, rhs_global={:?}", dtypes.lhs_global, dtypes.rhs_global);
+
     let address_type = lhs
         .required_address_type()
         .max(rhs.required_address_type())

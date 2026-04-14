@@ -1,12 +1,13 @@
 use cubecl::{
     TestRuntime,
     client::ComputeClient,
-    ir::StorageType,
+    ir::{ElemType, StorageType},
     prelude::CubePrimitive,
     std::tensor::TensorHandle,
     zspace::{Shape, Strides},
 };
 use cubecl_common::quant::scheme::QuantScheme;
+use cubek_quant::scheme::QuantStore;
 
 use crate::test_tensor::{
     arange::build_arange,
@@ -83,10 +84,20 @@ impl InputDataType {
         match self {
             InputDataType::Standard(dtype) => *dtype,
             InputDataType::Quantized(scheme) => {
-                if matches!(scheme.store, cubecl_common::quant::scheme::QuantStore::PackedU32(_)) {
-                    cubecl::ir::ElemType::UInt(cubecl::ir::UIntKind::U32).into()
-                } else {
-                    cubecl::ir::ElemType::from_quant_value(scheme.value).into()
+                let elem = ElemType::from_quant_value(scheme.value);
+
+                match scheme.store {
+                    QuantStore::Native => StorageType::Scalar(elem),
+                    QuantStore::PackedNative(_) => {
+                        // Uses the format's inherent packing factor (e.g., E2M1x2)
+                        StorageType::Packed(elem, scheme.native_packing())
+                    }
+                    QuantStore::PackedU32(_) => {
+                        // Usually represents multiple small quants in a 32-bit register
+                        // factor would be 4 for 8-bit, 8 for 4-bit, etc.
+                        let factor = scheme.num_quants();
+                        StorageType::Packed(elem, factor)
+                    }
                 }
             }
         }
@@ -179,9 +190,6 @@ impl TestInput {
         if let InputDataType::Quantized(scheme) = input_dtype {
             let original_shape = tensor.handle.shape().clone();
 
-            // Actually quantize the data on device.
-            // Scale for symmetric tensor-wise is 1x1.
-            // We use a dummy scale for this integration test (1.0 / 127.0).
             let scale_handle = TestInput::new(
                 client.clone(),
                 [1, 1],
@@ -193,19 +201,34 @@ impl TestInput {
             )
             .generate();
 
-            let quant_dtype = input_dtype.storage_type();
+            // Determine the correct storage type for the quantized output buffer
+            let output_storage_type = match &scheme.store {
+                QuantStore::PackedU32(_) => {
+                    // Output is packed u32 — NOT Packed(I8, 4)
+                    StorageType::Scalar(ElemType::UInt(cubecl::ir::UIntKind::U32))
+                }
+                QuantStore::PackedNative(_) | QuantStore::Native => {
+                    StorageType::Scalar(ElemType::from_quant_value(scheme.value))
+                }
+            };
 
             let mut quant_shape = original_shape.clone();
             let num_quants = scheme.num_quants();
-            if num_quants > 1 {
-                let last_dim = quant_shape.len() - 1;
-                quant_shape[last_dim] /= num_quants;
+            // Only divide last dim for PackedU32/PackedNative; Native stores 1:1
+            match &scheme.store {
+                QuantStore::PackedU32(_) | QuantStore::PackedNative(_) => {
+                    if num_quants > 1 {
+                        let last_dim = quant_shape.len() - 1;
+                        quant_shape[last_dim] /= num_quants;
+                    }
+                }
+                QuantStore::Native => {}
             }
 
             let output_handle = TestInput::new(
                 client.clone(),
                 quant_shape,
-                InputDataType::Standard(quant_dtype),
+                InputDataType::Standard(output_storage_type),
                 StrideSpec::RowMajor,
                 DataKind::Zeros,
             )
@@ -236,6 +259,10 @@ impl TestInput {
             )
             .expect("Quantization failed");
 
+            // Keep the packed shape on the handle (e.g. [1, 64, 16] for Q8S PackedU32).
+            // The original float shape is stored in QuantizationInfo.shape, matching
+            // how burn's quantized_handles() separates packed data shape from the
+            // logical float shape passed to InputBinding::Quantized { shape }.
             tensor.handle = output_handle;
             tensor.quantization = Some(QuantizationInfo {
                 scheme,
