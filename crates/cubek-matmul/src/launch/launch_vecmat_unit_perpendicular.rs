@@ -17,6 +17,25 @@ use crate::{
     routines::{BlueprintStrategy, Routine as _},
 };
 
+fn vector_size_for<R: Runtime>(
+    client: &ComputeClient<R>,
+    binding: &InputBinding<R>,
+    default_size: usize,
+    plane_size: usize,
+    dim: usize,
+) -> Result<usize, VectorizationError> {
+    let (size, num_quants) = if let InputBinding::Quantized { scheme, .. } = binding {
+        (scheme.size_bits_stored() / 8, scheme.num_quants())
+    } else {
+        (default_size, 1)
+    };
+    client
+        .io_optimized_vector_sizes(size)
+        .filter(|&v| dim.is_multiple_of(plane_size * v * num_quants))
+        .max()
+        .ok_or(VectorizationError::NoValidVectorization)
+}
+
 #[allow(clippy::result_large_err)]
 pub fn launch_ref<R: Runtime>(
     client: &ComputeClient<R>,
@@ -27,13 +46,10 @@ pub fn launch_ref<R: Runtime>(
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let rank = rhs.shape().len();
-    println!("Lhs Scheme {:?}", lhs.scheme());
-    println!("Rhs Scheme {:?}", rhs.scheme());
 
     // Rhs is assumed row major for now
     let rhs_layout = matrix_batch_layout(&rhs.data().strides, rhs.scheme());
     let rhs = if !matches!(rhs_layout, MatrixBatchLayout::Contiguous) {
-        println!("Into contiguous");
         rhs.into_contiguous(client)?
     } else {
         rhs
@@ -67,47 +83,9 @@ pub fn launch_ref<R: Runtime>(
         ))));
     }
 
-    let lhs_vector_size = client
-        .io_optimized_vector_sizes(dtypes.lhs_global.size())
-        .map(|v| {
-            if let InputBinding::Quantized { scheme, .. } = lhs {
-                v * scheme.num_quants()
-            } else {
-                v
-            }
-        })
-        .filter(|&v| k.is_multiple_of(plane_size * v))
-        .max()
-        .ok_or(VectorizationError::NoValidVectorization)?;
-
-    println!("RHS global {:?}", dtypes.rhs_global);
-    println!("RHS size {}", dtypes.rhs_global.size());
-    println!(
-        "RHS packed size {}",
-        dtypes.rhs_global.size() * dtypes.rhs_global.packing_factor()
-    );
-
-    let mut num_quants = 1;
-    let size = if let InputBinding::Quantized { scheme, .. } = rhs {
-        let packed_size = match scheme.store {
-            cubecl::quant::scheme::QuantStore::Native => dtypes.rhs_global.size(),
-            cubecl::quant::scheme::QuantStore::PackedNative(_) => dtypes.rhs_global.size(),
-            cubecl::quant::scheme::QuantStore::PackedU32(_) => size_of::<u32>(),
-        };
-        num_quants = scheme.num_quants();
-        packed_size
-    } else {
-        dtypes.rhs_global.size()
-    };
-    println!("RHS size adapted {}", size);
-
+    let lhs_vector_size = vector_size_for(client, &lhs, dtypes.lhs_global.size(), plane_size, k)?;
     // Assumes rhs is row major
-    let rhs_vector_size = client
-        .io_optimized_vector_sizes(size)
-        .filter(|&v| n.is_multiple_of(plane_size * v * num_quants))
-        .max()
-        .ok_or(VectorizationError::NoValidVectorization)?;
-    println!("RHS vectorization {rhs_vector_size}");
+    let rhs_vector_size = vector_size_for(client, &rhs, dtypes.rhs_global.size(), plane_size, n)?;
 
     let shared_vector_size = lhs_vector_size.min(rhs_vector_size);
 
