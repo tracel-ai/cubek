@@ -30,8 +30,8 @@ type SSz<T> = crate::definition::StageSize<T>;
 
 impl<
     TM: TileMatmulFamily<TileIO: TileIO<Out = Strided>>,
-    StageIn: StageFamily<TileKind = <<TM as TileMatmulFamily>::TileIO as TileIO>::In>,
-    StageAcc: StageFamily<TileKind = <<TM as TileMatmulFamily>::TileIO as TileIO>::Acc>,
+    StageIn: StageFamily,
+    StageAcc: StageFamily,
 > StageMatmulFamily for UnitMatmulFamily<TM, StageIn, StageAcc>
 {
     type LhsStage = StageIn;

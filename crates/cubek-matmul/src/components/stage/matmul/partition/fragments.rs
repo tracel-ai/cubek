@@ -1,7 +1,6 @@
 use crate::components::tile::Operands;
 use crate::definition::{MatmulTypes, MatrixTypes};
 use crate::{
-    components::tile::TileIO,
     components::{stage::Stage, tile::TileMatmul},
     definition::{Acc, StageSize},
 };
@@ -59,14 +58,7 @@ impl<
     }
 
     /// Load all accumulators from the specified stage
-    pub fn load<
-        R: Stage<
-                StageTy<Acc<MP>>,
-                StageSize<Acc<MP>>,
-                ReadOnly,
-                TileKind = <TM::TileIO as TileIO>::Acc,
-            >,
-    >(
+    pub fn load<R: Stage<StageTy<Acc<MP>>, StageSize<Acc<MP>>, ReadOnly>>(
         &mut self,
         stage: &R,
         #[comptime] tiles_in_stage_partition_m: usize,
@@ -79,7 +71,7 @@ impl<
             for n in 0..tiles_in_stage_partition_n {
                 let acc = self.get_at_mut(m, n, tiles_in_stage_partition_n);
                 let tile = R::tile(stage, (m as u32, n as u32).runtime());
-                TM::load_acc(&tile, acc, tile_config);
+                TM::load_acc(&tile.with_scope::<TM::Scope>(), acc, tile_config);
             }
         }
     }

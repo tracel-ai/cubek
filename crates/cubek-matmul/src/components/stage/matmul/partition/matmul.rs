@@ -2,6 +2,10 @@ use std::marker::PhantomData;
 
 use super::fragments::{Accumulators, RhsTile, RhsTileExpand};
 use crate::{
+    components::stage::PartitionSchedulerScheme,
+    definition::{Acc, Rhs},
+};
+use crate::{
     components::{
         global::PlaneFlowConfig,
         stage::{
@@ -11,10 +15,6 @@ use crate::{
         tile::{Operands, TileConfig, TileMatmul},
     },
     definition::{Lhs, MatmulTypes, MatrixTypes},
-};
-use crate::{
-    components::{stage::PartitionSchedulerScheme, tile::TileIO},
-    definition::{Acc, Rhs},
 };
 use cubecl::prelude::*;
 use cubek_std::{PartitionSize, StageSize, stage::StageMemoryConfig};
@@ -80,9 +80,9 @@ pub struct PartitionMatmul<
             <MP::Acc as MatrixTypes>::Register,
             <MP::Acc as MatrixTypes>::RegisterSize,
         >,
-    StageLhs: Stage<STy<Lhs<MP>>, SSz<Lhs<MP>>, ReadOnly, TileKind = <TM::TileIO as TileIO>::In>,
-    StageRhs: Stage<STy<Rhs<MP>>, SSz<Rhs<MP>>, ReadOnly, TileKind = <TM::TileIO as TileIO>::In>,
-    StageAcc: Stage<STy<Acc<MP>>, SSz<Acc<MP>>, ReadOnly, TileKind = <TM::TileIO as TileIO>::Acc>,
+    StageLhs: Stage<STy<Lhs<MP>>, SSz<Lhs<MP>>, ReadOnly>,
+    StageRhs: Stage<STy<Rhs<MP>>, SSz<Rhs<MP>>, ReadOnly>,
+    StageAcc: Stage<STy<Acc<MP>>, SSz<Acc<MP>>, ReadOnly>,
 > {
     _phantom: PhantomData<(MP, TM, StageLhs, StageRhs, StageAcc)>,
 }
@@ -99,9 +99,9 @@ where
             <MP::Acc as MatrixTypes>::Register,
             <MP::Acc as MatrixTypes>::RegisterSize,
         >,
-    StageLhs: Stage<STy<Lhs<MP>>, SSz<Lhs<MP>>, ReadOnly, TileKind = <TM::TileIO as TileIO>::In>,
-    StageRhs: Stage<STy<Rhs<MP>>, SSz<Rhs<MP>>, ReadOnly, TileKind = <TM::TileIO as TileIO>::In>,
-    StageAcc: Stage<STy<Acc<MP>>, SSz<Acc<MP>>, ReadOnly, TileKind = <TM::TileIO as TileIO>::Acc>,
+    StageLhs: Stage<STy<Lhs<MP>>, SSz<Lhs<MP>>, ReadOnly>,
+    StageRhs: Stage<STy<Rhs<MP>>, SSz<Rhs<MP>>, ReadOnly>,
+    StageAcc: Stage<STy<Acc<MP>>, SSz<Acc<MP>>, ReadOnly>,
 {
     #[allow(clippy::too_many_arguments)]
     /// Execute all Tile Matmuls inside the partition
@@ -249,7 +249,7 @@ where
 
                 let tile_lhs = StageLhs::tile(lhs_stage, (m_load_iter, k_load_iter));
                 TM::load_lhs(
-                    &tile_lhs,
+                    &tile_lhs.with_scope::<TM::Scope>(),
                     lhs_fragment.index_mut(m_iter),
                     shared_config.tile_config,
                 );
@@ -268,7 +268,11 @@ where
                 let n_load_iter = partition_scheduler.map_n(n_iter as u32);
 
                 let rhs_tile_next = StageRhs::tile(rhs_stage, (k_load_iter, n_load_iter));
-                TM::load_rhs(&rhs_tile_next, rhs_fragment, shared_config.tile_config);
+                TM::load_rhs(
+                    &rhs_tile_next.with_scope::<TM::Scope>(),
+                    rhs_fragment,
+                    shared_config.tile_config,
+                );
                 SEL::on_event(
                     &mut listener,
                     comptime![StageEvent::RhsLoaded {
@@ -346,7 +350,7 @@ where
 
                 let tile_lhs = StageLhs::tile(lhs_stage, (m_load_iter, k_load_iter));
                 TM::load_lhs(
-                    &tile_lhs,
+                    &tile_lhs.with_scope::<TM::Scope>(),
                     lhs_fragment.index_mut(m_iter),
                     shared_config.tile_config,
                 );
@@ -365,7 +369,7 @@ where
 
             let rhs_tile_first = StageRhs::tile(rhs_stage, (k_load_iter, n_load_iter));
             TM::load_rhs(
-                &rhs_tile_first,
+                &rhs_tile_first.with_scope::<TM::Scope>(),
                 &mut rhs_fragments.0,
                 shared_config.tile_config,
             );
@@ -389,7 +393,11 @@ where
 
                 let n_load_iter = partition_scheduler.map_n(comptime![n_iter as u32 + 1]);
                 let rhs_tile_next = StageRhs::tile(rhs_stage, (k_load_iter, n_load_iter));
-                TM::load_rhs(&rhs_tile_next, next, shared_config.tile_config);
+                TM::load_rhs(
+                    &rhs_tile_next.with_scope::<TM::Scope>(),
+                    next,
+                    shared_config.tile_config,
+                );
                 SEL::on_event(
                     &mut listener,
                     comptime!(StageEvent::RhsLoaded {

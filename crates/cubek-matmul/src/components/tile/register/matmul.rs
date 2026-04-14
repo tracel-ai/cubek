@@ -8,7 +8,7 @@ use cubek_std::{
 
 use crate::{
     components::tile::{
-        Operands, StandardTileIO, TileMatmul,
+        Operands, StandardTileIO, TileMatmul, TileStorage, Tilex,
         register::{
             config::{ProductType, RegisterMatmulConfig},
             reader::{RegisterFragmentReader, RegisterStageReader},
@@ -46,98 +46,77 @@ impl<L: Numeric, R: Numeric, A: Numeric> Operands for UnitOperands<L, R, A> {
 }
 
 #[cube]
-impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for RegisterMatmul
-where
-    RegisterStageReader<Filled>: RegisterFragmentReader<TileKind = Filled>,
+impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
+    TileMatmul<L, VL, R, VR, A, VA> for RegisterMatmul
 {
     type Config = RegisterMatmulConfig;
-    type Operands = UnitOperands<L, R, A>;
-    type TileIO = StandardTileIO;
+
+    // TODO dummy
+    type Scope = u32;
 
     fn execute(
-        lhs: &UnitFragment<L>,
-        rhs: &UnitFragment<R>,
-        acc: &mut UnitFragment<A>,
+        lhs: &Tilex<L, VL, Self::Scope, ReadOnly>,
+        rhs: &Tilex<R, VR, Self::Scope, ReadOnly>,
+        acc: &mut Tilex<R, VR, Self::Scope, ReadWrite>,
         #[comptime] config: Self::Config,
     ) {
-        match config.product_type {
-            ProductType::Inner => Self::inner_product(
-                &lhs.array,
-                &rhs.array,
-                &mut acc.array,
-                config.shared.tile_size,
-            ),
-            ProductType::Outer => Self::outer_product(
-                &lhs.array,
-                &rhs.array,
-                &mut acc.array,
-                config.shared.tile_size,
-            ),
-        }
+        todo!()
     }
 
     fn allocate_lhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> UnitFragment<L> {
-        UnitFragment::<L> {
-            array: Array::new(config.shared.tile_size.mk() as usize),
-            layout,
-        }
+    ) -> Tilex<L, VL, Self::Scope, ReadWrite> {
+        todo!()
     }
 
     fn allocate_rhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> UnitFragment<R> {
-        UnitFragment::<R> {
-            array: Array::new(config.shared.tile_size.nk() as usize),
-            layout,
-        }
+    ) -> Tilex<R, VR, Self::Scope, ReadWrite> {
+        todo!()
     }
 
     fn allocate_acc(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> UnitFragment<A> {
-        UnitFragment::<A> {
-            array: Array::new(config.shared.tile_size.mn() as usize),
-            layout,
-        }
+    ) -> Tilex<A, VA, Self::Scope, ReadWrite> {
+        todo!()
     }
 
-    fn load_lhs<E: Numeric, N: Size>(
-        tile: &StridedTile<E, N>,
-        lhs: &mut UnitFragment<L>,
+    fn load_lhs<E: Numeric, ES: Size>(
+        tile: &Tilex<E, ES, Self::Scope, ReadOnly>,
+        lhs: &mut Tilex<L, VL, Self::Scope, ReadWrite>,
         #[comptime] config: Self::Config,
     ) {
-        RegisterStageReader::<Strided>::load_fragment(tile, lhs, StageIdent::Lhs, config)
+        todo!()
     }
 
-    fn load_rhs<E: Numeric, N: Size>(
-        tile: &StridedTile<E, N>,
-        rhs: &mut UnitFragment<R>,
+    fn load_rhs<E: Numeric, ES: Size>(
+        tile: &Tilex<E, ES, Self::Scope, ReadOnly>,
+        rhs: &mut Tilex<R, VR, Self::Scope, ReadWrite>,
         #[comptime] config: Self::Config,
     ) {
-        RegisterStageReader::<Strided>::load_fragment(tile, rhs, StageIdent::Rhs, config)
+        todo!()
     }
 
-    fn load_acc<E: Numeric, N: Size>(
-        tile: &ComptimeOption<StridedTile<E, N>>,
-        acc: &mut UnitFragment<A>,
+    fn load_acc<E: Numeric, ES: Size>(
+        tile: &Tilex<E, ES, Self::Scope, ReadOnly>,
+        acc: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
         #[comptime] config: Self::Config,
     ) {
-        RegisterStageReader::<Option<Strided>>::load_fragment(tile, acc, StageIdent::Acc, config);
+        todo!()
     }
 
-    fn write_results<E: Numeric, N: Size>(
-        tile: &mut StridedTile<E, N, ReadWrite>,
-        acc: &mut UnitFragment<A>,
+    fn write_results<E: Numeric, ES: Size>(
+        tile: &mut Tilex<E, ES, Self::Scope, ReadWrite>,
+        acc: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
         #[comptime] config: Self::Config,
     ) {
-        RegisterStageWriter::store_fragment(tile, acc, config)
+        todo!()
     }
 }
+
 
 #[cube]
 impl RegisterMatmul {

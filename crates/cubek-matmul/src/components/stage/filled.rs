@@ -1,13 +1,13 @@
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
-use cubek_std::tile::Filled;
 
-use crate::components::stage::{Stage, StageFamily, TilingLayout};
+use crate::components::{
+    stage::{Stage, StageFamily, TilingLayout},
+    tile::{Plane, TileLayout, TileStorage, Tilex, Value},
+};
 
 pub struct FilledStageFamily;
 
 impl StageFamily for FilledStageFamily {
-    type TileKind = Filled;
-
     type Stage<ES: Numeric, NS: Size, T: TilingLayout> = FilledStage<ES>;
 }
 
@@ -25,9 +25,11 @@ impl<ES: Numeric> FilledStage<ES> {
 
 #[cube]
 impl<ES: Numeric, NS: Size> Stage<ES, NS, ReadOnly> for FilledStage<ES> {
-    type TileKind = Filled;
-
-    fn tile(this: &Self, _tile: Coords2d) -> ES {
-        this.value
+    fn tile(this: &Self, _tile: Coords2d) -> Tilex<ES, NS, Plane, ReadOnly> {
+        Tilex::<ES, NS, Plane, ReadOnly> {
+            storage: TileStorage::new_Broadcasted(Value::<ES> { val: this.value }),
+            layout: TileLayout::new_None(),
+            _scope: std::marker::PhantomData,
+        }
     }
 }

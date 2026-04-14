@@ -18,7 +18,7 @@ use cubek_std::{InvalidConfigError, MatrixLayout};
 
 impl TileMatmulFamily for RegisterMatmul {
     type Config = RegisterMatmulConfig;
-    type Matmul<L: Numeric, R: Numeric, A: Numeric> = RegisterMatmul;
+    type Matmul<L: Numeric, NL: Size, R: Numeric, NR: Size, A: Numeric, NA: Size> = RegisterMatmul;
 
     type TileIO = StandardTileIO;
 

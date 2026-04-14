@@ -9,7 +9,9 @@ use cubek_std::{
     },
 };
 
-use crate::components::tile::{Operands, StandardTileIO, TileMatmul, mma::config::MmaMatmulConfig};
+use crate::components::tile::{
+    Operands, StandardTileIO, TileMatmul, TileStorage, Tilex, mma::config::MmaMatmulConfig,
+};
 use cubecl::{cmma::MmaDefinition, ir::MatrixIdent};
 
 /// Uses one plane to perform a small matmul using accelerated instructions, with manual register
@@ -41,136 +43,74 @@ impl<L: Numeric, R: Numeric, A: Numeric> Operands for MmaOperands<L, R, A> {
 }
 
 #[cube]
-impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for MmaMatmul
-where
-    MmaStageReader<Strided>: MmaFragmentReader<TileKind = Strided>,
-    MmaStageReader<Strided>: MmaFragmentReader<TileKind = Strided>,
-    MmaStageReader<Option<Strided>>: MmaFragmentReader<TileKind = Option<Strided>>,
+impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
+    TileMatmul<L, VL, R, VR, A, VA> for MmaMatmul
 {
     type Config = MmaMatmulConfig;
-    type Operands = MmaOperands<L, R, A>;
-    type TileIO = StandardTileIO;
+
+    // TODO  Dummy
+    type Scope = u32;
 
     fn execute(
-        lhs: &MmaFragment<L, NL>,
-        rhs: &MmaFragment<R, NR>,
-        acc: &mut MmaFragment<A, NA>,
+        lhs: &Tilex<L, VL, Self::Scope, ReadOnly>,
+        rhs: &Tilex<R, VR, Self::Scope, ReadOnly>,
+        acc: &mut Tilex<R, VR, Self::Scope, ReadWrite>,
         #[comptime] config: Self::Config,
     ) {
-        let def = mma_definition(config);
-        let out_arr = def.execute(&lhs.fragment, &rhs.fragment, &acc.fragment);
-        let num_vectors = def.vectors_per_lane(MatrixIdent::Accumulator);
-
-        #[unroll]
-        for i in 0..num_vectors {
-            acc.fragment[i] = out_arr[i];
-        }
+        todo!()
     }
 
     fn allocate_lhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> MmaFragment<L, NL> {
-        let def = mma_definition::<L, R, A>(config);
-        register_vector_sizes(def);
-        let vector_count = def.vectors_per_lane(MatrixIdent::A);
-
-        MmaFragment::<L, NL> {
-            fragment: Array::new(vector_count),
-            layout,
-        }
+    ) -> Tilex<L, VL, Self::Scope, ReadWrite> {
+        todo!()
     }
 
     fn allocate_rhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> MmaFragment<R, NR> {
-        let def = mma_definition::<L, R, A>(config);
-        register_vector_sizes(def);
-        let vector_count = def.vectors_per_lane(MatrixIdent::B);
-
-        MmaFragment::<R, NR> {
-            fragment: Array::new(vector_count),
-            layout,
-        }
+    ) -> Tilex<R, VR, Self::Scope, ReadWrite> {
+        todo!()
     }
 
     fn allocate_acc(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> MmaFragment<A, NA> {
-        let def = mma_definition::<L, R, A>(config);
-        register_vector_sizes(def);
-        let vector_count = def.vectors_per_lane(MatrixIdent::Accumulator);
-
-        MmaFragment::<A, NA> {
-            fragment: Array::new(vector_count),
-            layout,
-        }
+    ) -> Tilex<A, VA, Self::Scope, ReadWrite> {
+        todo!()
     }
 
-    fn load_lhs<E: Numeric, N: Size>(
-        tile: &StridedTile<E, N>,
-        lhs: &mut MmaFragment<L, NL>,
+    fn load_lhs<E: Numeric, ES: Size>(
+        tile: &Tilex<E, ES, Self::Scope, ReadOnly>,
+        lhs: &mut Tilex<L, VL, Self::Scope, ReadWrite>,
         #[comptime] config: Self::Config,
     ) {
-        MmaStageReader::<Strided>::load_fragment(
-            tile,
-            &mut lhs.fragment,
-            mma_definition::<L, R, A>(config),
-            MatrixIdent::A,
-            lhs.layout,
-            config.shared.tile_size,
-            config.mma_io_config,
-        );
+        todo!()
     }
 
-    fn load_rhs<E: Numeric, N: Size>(
-        tile: &StridedTile<E, N>,
-        rhs: &mut MmaFragment<R, NR>,
+    fn load_rhs<E: Numeric, ES: Size>(
+        tile: &Tilex<E, ES, Self::Scope, ReadOnly>,
+        rhs: &mut Tilex<R, VR, Self::Scope, ReadWrite>,
         #[comptime] config: Self::Config,
     ) {
-        MmaStageReader::<Strided>::load_fragment(
-            tile,
-            &mut rhs.fragment,
-            mma_definition::<L, R, A>(config),
-            MatrixIdent::B,
-            rhs.layout,
-            config.shared.tile_size,
-            config.mma_io_config,
-        );
+        todo!()
     }
 
-    fn load_acc<E: Numeric, N: Size>(
-        tile: &ComptimeOption<StridedTile<E, N>>,
-        acc: &mut MmaFragment<A, NA>,
+    fn load_acc<E: Numeric, ES: Size>(
+        tile: &Tilex<E, ES, Self::Scope, ReadOnly>,
+        acc: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
         #[comptime] config: Self::Config,
     ) {
-        MmaStageReader::<Option<Strided>>::load_fragment(
-            tile,
-            &mut acc.fragment,
-            mma_definition::<L, R, A>(config),
-            MatrixIdent::Accumulator,
-            acc.layout,
-            config.shared.tile_size,
-            config.mma_io_config,
-        );
+        todo!()
     }
 
-    fn write_results<E: Numeric, N: Size>(
-        tile: &mut StridedTile<E, N, ReadWrite>,
-        out: &mut MmaFragment<A, NA>,
+    fn write_results<E: Numeric, ES: Size>(
+        tile: &mut Tilex<E, ES, Self::Scope, ReadWrite>,
+        out: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
         #[comptime] config: Self::Config,
     ) {
-        MmaStageWriter::store_fragment(
-            tile,
-            &out.fragment,
-            mma_definition::<L, R, A>(config),
-            MatrixIdent::Accumulator,
-            tile.layout,
-            config.shared.tile_size.m(),
-            config.mma_io_config,
-        );
+        todo!()
     }
 }
 

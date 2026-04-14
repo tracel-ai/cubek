@@ -26,7 +26,7 @@ pub trait PartialLoadingStrategy<RC: RuntimeConfig>:
     /// The layout describing how data is tiled across the stage.
     type TilingLayout: TilingLayout;
     type SyncStrategy: SyncStrategy;
-    type Stage: LoadStageFamily<ReadOnly, TileKind = Self::TileKind>;
+    type Stage: LoadStageFamily<ReadOnly>;
     type TileKind: TileKind;
 
     /// The [LoadingJob] for this strategy.

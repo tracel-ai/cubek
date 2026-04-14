@@ -9,7 +9,7 @@ use crate::{
         CubeDimResource,
         global::{PlaneFlowConfig, WriteEventListener},
         stage::{NumStages, PartitionScheduler},
-        tile::{Plane, TileConfig, Tilex},
+        tile::{Plane, TileConfig, TileLayout, TileStorage, Tilex},
     },
     definition::{
         Acc, Lhs, MatmulElems, MatmulSetupError, MatmulTypes, MatmulVectorSizes, Rhs,
@@ -227,10 +227,16 @@ pub trait LoadStageFamily<IO: SliceVisibility = ReadOnly>: StageFamily {
 impl<ES: Numeric, NS: Size, IO: SliceVisibility, Inner: Stage<ES, NS, IO>> Stage<ES, NS, IO>
     for ComptimeOption<Inner>
 {
-    type TileKind = Option<Inner::TileKind>;
-
     fn tile(this: &Self, tile: Coords2d) -> Tilex<ES, NS, Plane, IO> {
-        this.as_ref().map(|stage| Inner::tile(stage, tile))
+        todo!()
+        // match this {
+        //     ComptimeOption::None => Tilex::<ES, NS, Plane, IO> {
+        //         storage: TileStorage::new_None(),
+        //         layout: TileLayout::new_None(),
+        //         _scope: std::marker::PhantomData,
+        //     },
+        //     ComptimeOption::Some(inner) => Inner::tile(inner, tile),
+        // }
     }
 }
 
@@ -259,6 +265,5 @@ impl<IO: SliceVisibility, S: LoadStageFamily<IO>> LoadStageFamily<IO> for Option
 }
 
 impl<IO: SliceVisibility, Inner: StageFamily<IO>> StageFamily<IO> for Option<Inner> {
-    type TileKind = Option<Inner::TileKind>;
     type Stage<ES: Numeric, NS: Size, T: TilingLayout> = ComptimeOption<Inner::Stage<ES, NS, T>>;
 }

@@ -1,8 +1,8 @@
 use crate::{
-    components::global::memory::GlobalIterator,
-    components::stage::TilingLayout,
-    components::{global::GlobalReaderConfig, stage::StageConfig},
-    components::{global::SharedGlobalMatmulConfig, stage::StageFamily},
+    components::{
+        global::{GlobalReaderConfig, SharedGlobalMatmulConfig, memory::GlobalIterator},
+        stage::{StageConfig, StageFamily, TilingLayout},
+    },
     definition::{MatmulElems, MatmulProblem, MatmulTypes, StageIdent},
 };
 use cubecl::{

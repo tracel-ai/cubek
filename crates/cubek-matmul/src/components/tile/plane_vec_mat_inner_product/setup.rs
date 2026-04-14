@@ -29,7 +29,8 @@ where
     MatrixStageReader<Option<Strided>>: MatrixFragmentReader,
 {
     type Config = PlaneVecMatInnerProductConfig;
-    type Matmul<L: Numeric, R: Numeric, A: Numeric> = PlaneVecMatInnerProduct;
+    type Matmul<L: Numeric, NL: Size, R: Numeric, NR: Size, A: Numeric, NA: Size> =
+        PlaneVecMatInnerProduct;
 
     type TileIO = StandardTileIO;
 

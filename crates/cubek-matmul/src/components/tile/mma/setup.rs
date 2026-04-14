@@ -30,7 +30,8 @@ where
 {
     type Config = MmaMatmulConfig;
 
-    type Matmul<L: Numeric, R: Numeric, A: Numeric> = MmaMatmul;
+    type Matmul<L: Numeric, NL: Size, R: Numeric, NR: Size, A: Numeric, NA: Size> = MmaMatmul;
+
     type TileIO = StandardTileIO;
 
     fn requires_accelerator() -> bool {

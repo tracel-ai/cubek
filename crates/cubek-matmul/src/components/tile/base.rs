@@ -113,16 +113,13 @@ pub trait TileMatmul<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA:
 {
     /// Config for this matmul
     type Config: TileConfig;
-
-    type Operands: Operands;
-    type TileIO: TileIO;
     type Scope;
 
     /// Executes the matrix multiplication of Lhs and Rhs, adding the result to the accumulator
     fn execute(
-        lhs: &<Self::Operands as Operands>::Lhs,
-        rhs: &<Self::Operands as Operands>::Rhs,
-        acc: &mut <Self::Operands as Operands>::Acc,
+        lhs: &Tilex<L, VL, Self::Scope, ReadOnly>,
+        rhs: &Tilex<R, VR, Self::Scope, ReadOnly>,
+        acc: &mut Tilex<R, VR, Self::Scope, ReadWrite>,
         #[comptime] config: Self::Config,
     );
 
@@ -135,12 +132,12 @@ pub trait TileMatmul<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA:
     fn allocate_lhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> <Self::Operands as Operands>::Lhs;
+    ) -> Tilex<L, VL, Self::Scope, ReadWrite>;
 
     /// Load the container of Lhs from tile data
-    fn load_lhs<E: Numeric>(
-        tile: &Tilex<E, VL, Self::Scope, ReadOnly>,
-        lhs: &mut <Self::Operands as Operands>::Lhs,
+    fn load_lhs<E: Numeric, ES: Size>(
+        tile: &Tilex<E, ES, Self::Scope, ReadOnly>,
+        lhs: &mut Tilex<L, VL, Self::Scope, ReadWrite>,
         #[comptime] config: Self::Config,
     );
 
@@ -153,12 +150,12 @@ pub trait TileMatmul<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA:
     fn allocate_rhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> <Self::Operands as Operands>::Rhs;
+    ) -> Tilex<R, VR, Self::Scope, ReadWrite>;
 
     /// Load the container of Rhs from tile data
-    fn load_rhs<E: Numeric>(
-        tile: &Tilex<E, VR, Self::Scope, ReadOnly>,
-        rhs: &mut <Self::Operands as Operands>::Rhs,
+    fn load_rhs<E: Numeric, ES: Size>(
+        tile: &Tilex<E, ES, Self::Scope, ReadOnly>,
+        rhs: &mut Tilex<R, VR, Self::Scope, ReadWrite>,
         #[comptime] config: Self::Config,
     );
 
@@ -172,19 +169,19 @@ pub trait TileMatmul<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA:
     fn allocate_acc(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> <Self::Operands as Operands>::Acc;
+    ) -> Tilex<A, VA, Self::Scope, ReadWrite>;
 
     /// Load the container of Acc from tile data
-    fn load_acc<E: Numeric>(
-        tile: &Tilex<E, VA, Self::Scope, ReadOnly>,
-        acc: &mut <Self::Operands as Operands>::Acc,
+    fn load_acc<E: Numeric, ES: Size>(
+        tile: &Tilex<E, ES, Self::Scope, ReadOnly>,
+        acc: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
         #[comptime] config: Self::Config,
     );
 
     /// Write the content of the output container to the given slice
-    fn write_results<E: Numeric>(
-        tile: &mut Tilex<E, VA, Self::Scope, ReadWrite>,
-        out: &mut <Self::Operands as Operands>::Acc,
+    fn write_results<E: Numeric, ES: Size>(
+        tile: &mut Tilex<E, ES, Self::Scope, ReadWrite>,
+        out: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
         #[comptime] config: Self::Config,
     );
 }

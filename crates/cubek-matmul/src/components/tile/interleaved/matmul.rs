@@ -5,7 +5,7 @@ use cubek_std::{MatrixLayout, tile::StridedTile};
 
 use crate::{
     components::tile::{
-        Operands, Plane, StandardTileIO, TileMatmul,
+        Operands, Plane, StandardTileIO, TileMatmul, TileStorage, Tilex,
         interleaved::{
             config::InterleavedMatmulConfig, reader::InterleavedStageReader,
             writer::InterleavedStageWriter,
@@ -86,114 +86,67 @@ impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
     TileMatmul<L, VL, R, VR, A, VA> for InterleavedMatmul
 {
     type Config = InterleavedMatmulConfig;
-    type Operands = InterleavedOperands<L, R, A>;
-    type TileIO = StandardTileIO;
     type Scope = Plane;
 
     fn execute(
-        lhs: &InterleavedFragment<L>,
-        rhs: &InterleavedFragment<R>,
-        acc: &mut InterleavedAccumulator<A>,
+        lhs: &Tilex<L, VL, Self::Scope, ReadOnly>,
+        rhs: &Tilex<R, VR, Self::Scope, ReadOnly>,
+        acc: &mut Tilex<R, VR, Self::Scope, ReadWrite>,
         #[comptime] config: Self::Config,
     ) {
-        let m = config.elements_per_unit_m();
-        let n = config.elements_per_unit_n();
-        let local_k = config.elements_per_unit_k();
-
-        #[unroll]
-        for m_ in 0..m {
-            #[unroll]
-            for n_ in 0..n {
-                #[unroll]
-                for k_ in 0..local_k {
-                    let lhs_elem = A::cast_from(lhs.get(m_, k_));
-                    let rhs_elem = A::cast_from(rhs.get(k_, n_));
-                    acc.array[m_ * n + n_] += lhs_elem * rhs_elem;
-                }
-            }
-        }
+        todo!()
     }
 
     fn allocate_lhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> InterleavedFragment<L> {
-        let row_count = config.elements_per_unit_m();
-        let col_count = config.elements_per_unit_k();
-        InterleavedFragment::<L> {
-            array: Array::new(row_count * col_count),
-            layout,
-            row_count,
-            col_count,
-        }
+    ) -> Tilex<L, VL, Self::Scope, ReadWrite> {
+        todo!()
     }
 
     fn allocate_rhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> InterleavedFragment<R> {
-        let row_count = config.elements_per_unit_k();
-        let col_count = config.elements_per_unit_n();
-        InterleavedFragment::<R> {
-            array: Array::new(row_count * col_count),
-            layout,
-            row_count,
-            col_count,
-        }
+    ) -> Tilex<R, VR, Self::Scope, ReadWrite> {
+        todo!()
     }
 
     fn allocate_acc(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> InterleavedAccumulator<A> {
-        let m = config.elements_per_unit_m();
-        let n = config.elements_per_unit_n();
-        InterleavedAccumulator::<A> {
-            array: Array::new(m * n),
-            layout,
-            m,
-            n,
-        }
+    ) -> Tilex<A, VA, Self::Scope, ReadWrite> {
+        todo!()
     }
 
-    fn load_lhs<E: Numeric, N: Size>(
-        tile: &StridedTile<E, N>,
-        lhs: &mut InterleavedFragment<L>,
+    fn load_lhs<E: Numeric, ES: Size>(
+        tile: &Tilex<E, ES, Self::Scope, ReadOnly>,
+        lhs: &mut Tilex<L, VL, Self::Scope, ReadWrite>,
         #[comptime] config: Self::Config,
     ) {
-        InterleavedStageReader::load_fragment(tile, lhs, StageIdent::Lhs, config);
+        todo!()
     }
 
-    fn load_rhs<E: Numeric, N: Size>(
-        tile: &StridedTile<E, N>,
-        rhs: &mut InterleavedFragment<R>,
+    fn load_rhs<E: Numeric, ES: Size>(
+        tile: &Tilex<E, ES, Self::Scope, ReadOnly>,
+        rhs: &mut Tilex<R, VR, Self::Scope, ReadWrite>,
         #[comptime] config: Self::Config,
     ) {
-        InterleavedStageReader::load_fragment(tile, rhs, StageIdent::Rhs, config);
+        todo!()
     }
 
-    fn load_acc<E: Numeric, N: Size>(
-        tile: &ComptimeOption<StridedTile<E, N>>,
-        acc: &mut InterleavedAccumulator<A>,
+    fn load_acc<E: Numeric, ES: Size>(
+        tile: &Tilex<E, ES, Self::Scope, ReadOnly>,
+        acc: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
         #[comptime] config: Self::Config,
     ) {
-        match tile {
-            ComptimeOption::Some(_) => {
-                todo!("Not yet implemented")
-            }
-            ComptimeOption::None => {
-                let value = E::from_int(0);
-                InterleavedStageReader::load_accumulator::<A, E>(&value, acc, config);
-            }
-        }
+        todo!()
     }
 
-    fn write_results<E: Numeric, N: Size>(
-        tile: &mut StridedTile<E, N, ReadWrite>,
-        acc: &mut InterleavedAccumulator<A>,
+    fn write_results<E: Numeric, ES: Size>(
+        tile: &mut Tilex<E, ES, Self::Scope, ReadWrite>,
+        acc: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
         #[comptime] config: Self::Config,
     ) {
-        acc.consolidate();
-        InterleavedStageWriter::store_fragment(tile, acc, config)
+        todo!()
     }
 }

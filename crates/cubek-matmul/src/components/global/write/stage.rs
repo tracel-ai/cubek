@@ -1,20 +1,20 @@
-use crate::{
-    components::stage::RowMajorTilingOrder,
-    components::stage::Stage,
-    components::stage::StridedStageMemory,
-    components::stage::TilingLayout,
-    components::stage::{ContiguousTilingLayout, StageFamily},
+use std::marker::PhantomData;
+
+use crate::components::{
+    stage::{
+        ContiguousTilingLayout, RowMajorTilingOrder, Stage, StageFamily, StridedStageMemory,
+        TilingLayout,
+    },
+    tile::{ContiguousMatrixLayout, Plane, TileLayout, TileStorage, Tilex},
 };
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
-use cubek_std::{stage::StageMemoryConfig, tile::Strided, tile::StridedTile};
+use cubek_std::{stage::StageMemoryConfig, tile::StridedTile};
 
 pub type WriteTiling = ContiguousTilingLayout<RowMajorTilingOrder>;
 
 pub struct PartitionedStageFamily;
 
 impl StageFamily<ReadWrite> for PartitionedStageFamily {
-    type TileKind = Strided;
-
     type Stage<ES: Numeric, NS: Size, T: TilingLayout> = PartitionedStage<ES, NS>;
 }
 
@@ -53,9 +53,15 @@ impl<ES: Numeric, NS: Size> PartitionedStage<ES, NS> {
 
 #[cube]
 impl<ES: Numeric, NS: Size> Stage<ES, NS, ReadWrite> for PartitionedStage<ES, NS> {
-    type TileKind = Strided;
+    fn tile(this: &Self, _tile: Coords2d) -> Tilex<ES, NS, Plane, ReadWrite> {
+        let strided_tile = this.unit_tile;
 
-    fn tile(this: &Self, _tile: Coords2d) -> StridedTile<ES, NS, ReadWrite> {
-        this.unit_tile
+        Tilex::<ES, NS, Plane, ReadWrite> {
+            storage: TileStorage::new_SharedMemory(strided_tile),
+            layout: TileLayout::new_Contiguous(ContiguousMatrixLayout {
+                layout: strided_tile.layout,
+            }),
+            _scope: PhantomData,
+        }
     }
 }

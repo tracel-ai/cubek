@@ -30,7 +30,7 @@ pub trait FullLoadingStrategy<RC: RuntimeConfig>:
     type TilingLayout: TilingLayout;
     /// The synchronization strategy that should be used with this loading strategy
     type SyncStrategy: SyncStrategy;
-    type Stage: LoadStageFamily<ReadOnly, TileKind = Self::TileKind>;
+    type Stage: LoadStageFamily<ReadOnly>;
     type TileKind: TileKind;
 
     /// The [LoadingJob] for this strategy.

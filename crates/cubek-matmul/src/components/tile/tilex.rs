@@ -8,9 +8,10 @@ use cubek_std::{
 
 use crate::components::tile::cmma::{CmmaFragmentReader as _, CmmaStageReader};
 
-pub struct Unit;
+// TODO
+// pub struct Unit;
 pub struct Plane;
-pub struct Cube;
+// pub struct Cube;
 
 #[derive(CubeType)]
 pub struct Tilex<N: Numeric, V: Size, Scope, IO: SliceVisibility> {
@@ -20,18 +21,46 @@ pub struct Tilex<N: Numeric, V: Size, Scope, IO: SliceVisibility> {
     pub _scope: PhantomData<Scope>,
 }
 
+#[cube]
 impl<N: Numeric, V: Size, S, IO: SliceVisibility> Tilex<N, V, S, IO> {
-    pub fn cast<N2: Numeric>(&self) -> Tilex<N2, V, S, IO> {
-        let storage = match self.storage {
-            TileStorage::Cmma(matrix) => TileStorage::new_Cmma(cmma::cast::<N, N2>(&matrix)),
-            _ => panic!("Unsupported"),
-        };
+    pub fn with_elem<N2: Numeric>(&self) -> Tilex<N2, V, S, IO> {
+        todo!()
+        // let storage = match self.storage {
+        //     TileStorage::Cmma(matrix) => TileStorage::new_Cmma(cmma::cast::<N, N2>(&matrix)),
+        //     _ => panic!("Unsupported"),
+        // };
 
-        Tilex {
-            storage,
-            layout: self.layout.clone(),
-            _scope: PhantomData,
-        }
+        // Tilex::<N2, V, S, IO> {
+        //     storage,
+        //     layout: self.layout.clone(),
+        //     _scope: PhantomData,
+        // }
+    }
+
+    pub fn with_size<V2: Size>(&self) -> Tilex<N, V2, S, IO> {
+        todo!()
+        // let storage = match self.storage {
+        //     _ => panic!("Unsupported"),
+        // };
+
+        // Tilex::<N, V2, S, IO> {
+        //     storage,
+        //     layout: self.layout.clone(),
+        //     _scope: PhantomData,
+        // }
+    }
+
+    pub fn with_scope<S2>(&self) -> Tilex<N, V, S2, IO> {
+        todo!()
+        // let storage = match self.storage {
+        //     _ => panic!("Unsupported"),
+        // };
+
+        // Tilex::<N, V, S2, IO> {
+        //     storage,
+        //     layout: self.layout.clone(),
+        //     _scope: PhantomData,
+        // }
     }
 
     // pub fn read(self) -> Tilex<N, V, S, ReadOnly> {
@@ -88,13 +117,14 @@ pub fn tile_copy<F: Numeric, VF: Size, T: Numeric, VT: Size, Scope>(
 }
 
 #[derive(CubeType)]
-pub enum TileStorage<N: Numeric, VN: Size, IO: SliceVisibility = ReadOnly> {
+pub enum TileStorage<N: Numeric, VN: Size, IO: SliceVisibility> {
     GlobalMemory(Slice<Vector<N, VN>, IO>),
     SharedMemory(StridedTile<N, VN, IO>),
     LocalMemory(Slice<Vector<N, VN>, IO>),
     Cmma(Matrix<N>),
     Mma(Array<Vector<N, VN>>),
     Broadcasted(Value<N>),
+    None,
 }
 
 // impl<N: Numeric, VN: Size> TileStorage<N, VN, ReadWrite> {
@@ -128,13 +158,14 @@ pub enum TileStorage<N: Numeric, VN: Size, IO: SliceVisibility = ReadOnly> {
 /// Wrapper over val to make enum work
 #[derive(CubeType)]
 pub struct Value<E: Numeric> {
-    val: E,
+    pub val: E,
 }
 
 #[derive(CubeType, Clone)]
 pub enum TileLayout {
     Contiguous(ContiguousMatrixLayout),
     Strided(StridedLayout),
+    None,
 }
 
 #[cube]
