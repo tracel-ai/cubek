@@ -91,9 +91,9 @@ pub(crate) fn matmul_entry<
     let define!(RegisterAcc) = blueprint.dtypes.acc_register;
 
     NaiveMatmul::<(
-        (Lhs, LhsSize, Lhs, LhsSize, RegisterLhs),
-        (Rhs, RhsSize, Rhs, RhsSize, RegisterRhs),
-        (Acc, AccSize, Acc, AccSize, RegisterAcc),
+        (Lhs, LhsSize, Lhs, LhsSize, RegisterLhs, LhsSize),
+        (Rhs, RhsSize, Rhs, RhsSize, RegisterRhs, RhsSize),
+        (Acc, AccSize, Acc, AccSize, RegisterAcc, AccSize),
     )>::execute::<Args>(&mut state, cube_mapping, config);
 }
 

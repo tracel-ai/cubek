@@ -74,8 +74,11 @@ pub struct PartitionMatmul<
     MP: MatmulTypes,
     TM: TileMatmul<
             <MP::Lhs as MatrixTypes>::Register,
+            <MP::Lhs as MatrixTypes>::RegisterSize,
             <MP::Rhs as MatrixTypes>::Register,
+            <MP::Rhs as MatrixTypes>::RegisterSize,
             <MP::Acc as MatrixTypes>::Register,
+            <MP::Acc as MatrixTypes>::RegisterSize,
         >,
     StageLhs: Stage<STy<Lhs<MP>>, SSz<Lhs<MP>>, ReadOnly, TileKind = <TM::TileIO as TileIO>::In>,
     StageRhs: Stage<STy<Rhs<MP>>, SSz<Rhs<MP>>, ReadOnly, TileKind = <TM::TileIO as TileIO>::In>,
@@ -90,8 +93,11 @@ where
     MP: MatmulTypes,
     TM: TileMatmul<
             <MP::Lhs as MatrixTypes>::Register,
+            <MP::Lhs as MatrixTypes>::RegisterSize,
             <MP::Rhs as MatrixTypes>::Register,
+            <MP::Rhs as MatrixTypes>::RegisterSize,
             <MP::Acc as MatrixTypes>::Register,
+            <MP::Acc as MatrixTypes>::RegisterSize,
         >,
     StageLhs: Stage<STy<Lhs<MP>>, SSz<Lhs<MP>>, ReadOnly, TileKind = <TM::TileIO as TileIO>::In>,
     StageRhs: Stage<STy<Rhs<MP>>, SSz<Rhs<MP>>, ReadOnly, TileKind = <TM::TileIO as TileIO>::In>,

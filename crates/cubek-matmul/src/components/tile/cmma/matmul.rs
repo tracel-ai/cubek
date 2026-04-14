@@ -2,17 +2,13 @@ use std::marker::PhantomData;
 
 use cubecl::prelude::*;
 use cubek_std::{
-    tile::{Strided, StridedTile},
+    tile::Strided,
     {MatrixLayout, as_cmma_layout},
 };
 
 use crate::components::tile::{
-    NumericVector, Operands, SharedTileConfig, StandardTileIO, TileLayout, TileMatmul, TileStorage,
-    Tilex,
-    cmma::{
-        reader::{CmmaFragmentReader, CmmaStageReader},
-        writer::CmmaStageWriter,
-    },
+    Operands, Plane, SharedTileConfig, StandardTileIO, TileLayout, TileMatmul, TileStorage, Tilex,
+    cmma::reader::{CmmaFragmentReader, CmmaStageReader},
     tile_copy, tile_matmul,
 };
 use cubecl::cmma;
@@ -21,30 +17,34 @@ use cubecl::cmma;
 pub struct CmmaMatmul {}
 
 #[derive(CubeType)]
-pub struct FragmentOperands<L: NumericVector, R: NumericVector, A: NumericVector> {
+pub struct FragmentOperands<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size> {
     #[cube(comptime)]
-    _phantom: PhantomData<(L, R, A)>,
+    _phantom: PhantomData<(L, VL, R, VR, A, VA)>,
 }
 
-impl<L: NumericVector, R: NumericVector, A: NumericVector> Operands for FragmentOperands<L, R, A> {
-    type Lhs = Tilex<L>;
-    type Rhs = Tilex<R>;
-    type Acc = Tilex<A>;
+impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size> Operands
+    for FragmentOperands<L, VL, R, VR, A, VA>
+{
+    type Lhs = Tilex<L, VL, Plane, ReadWrite>;
+    type Rhs = Tilex<R, VR, Plane, ReadWrite>;
+    type Acc = Tilex<A, VA, Plane, ReadWrite>;
 }
 
 #[cube]
-impl<L: NumericVector, R: NumericVector, A: NumericVector> TileMatmul<L, R, A> for CmmaMatmul
+impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
+    TileMatmul<L, VL, R, VR, A, VA> for CmmaMatmul
 where
     CmmaStageReader<Option<Strided>>: CmmaFragmentReader,
 {
     type Config = SharedTileConfig;
-    type Operands = FragmentOperands<L, R, A>;
+    type Operands = FragmentOperands<L, VL, R, VR, A, VA>;
     type TileIO = StandardTileIO;
+    type Scope = Plane;
 
     fn execute(
-        lhs: &Tilex<L>,
-        rhs: &Tilex<R>,
-        acc: &mut Tilex<A>,
+        lhs: &Tilex<L, VL, Self::Scope, ReadOnly>,
+        rhs: &Tilex<R, VR, Self::Scope, ReadOnly>,
+        acc: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
         tile_matmul(lhs, rhs, acc);
@@ -53,12 +53,12 @@ where
     fn allocate_lhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Tilex<L> {
+    ) -> Tilex<L, VL, Self::Scope, ReadWrite> {
         let size = config.tile_size;
 
-        Tilex::<L> {
+        Tilex::<L, VL, Self::Scope, ReadWrite> {
             storage: TileStorage::new_Cmma(unsafe {
-                cmma::Matrix::<L::Elem>::uninitialized(
+                cmma::Matrix::<L>::uninitialized(
                     cmma::MatrixIdent::A,
                     size.m() as usize,
                     size.n() as usize,
@@ -66,19 +66,20 @@ where
                     as_cmma_layout(layout),
                 )
             }),
-            layout: TileLayout::new_Contiguous(layout),
+            layout: TileLayout::new_contiguous(layout),
+            _scope: PhantomData,
         }
     }
 
     fn allocate_rhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Tilex<R> {
+    ) -> Tilex<R, VR, Self::Scope, ReadWrite> {
         let size = config.tile_size;
 
-        Tilex::<R> {
+        Tilex::<R, VR, Self::Scope, ReadWrite> {
             storage: TileStorage::new_Cmma(unsafe {
-                cmma::Matrix::<R::Elem>::uninitialized(
+                cmma::Matrix::<R>::uninitialized(
                     cmma::MatrixIdent::B,
                     size.m() as usize,
                     size.n() as usize,
@@ -86,19 +87,20 @@ where
                     as_cmma_layout(layout),
                 )
             }),
-            layout: TileLayout::new_Contiguous(layout),
+            layout: TileLayout::new_contiguous(layout),
+            _scope: PhantomData,
         }
     }
 
     fn allocate_acc(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Tilex<A> {
+    ) -> Tilex<A, VA, Self::Scope, ReadWrite> {
         let size = config.tile_size;
 
-        Tilex::<A> {
+        Tilex::<A, VA, Self::Scope, ReadWrite> {
             storage: TileStorage::new_Cmma(unsafe {
-                cmma::Matrix::<A::Elem>::uninitialized(
+                cmma::Matrix::<A>::uninitialized(
                     cmma::MatrixIdent::Accumulator,
                     size.m() as usize,
                     size.n() as usize,
@@ -106,40 +108,41 @@ where
                     cmma::MatrixLayout::Undefined,
                 )
             }),
-            layout: TileLayout::new_Contiguous(layout),
+            layout: TileLayout::new_contiguous(layout),
+            _scope: PhantomData,
         }
     }
 
-    fn load_lhs<N: NumericVector>(
-        tile: &Tilex<N>,
-        lhs: &mut Tilex<L, ReadWrite>,
+    fn load_lhs<E: Numeric>(
+        tile: &Tilex<L, VL, Self::Scope, ReadOnly>,
+        lhs: &mut Tilex<L, VL, Self::Scope, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
         tile_copy(tile, lhs);
     }
 
-    fn load_rhs<N: NumericVector>(
-        tile: &Tilex<N>,
-        rhs: &mut Tilex<R, ReadWrite>,
+    fn load_rhs<E: Numeric>(
+        tile: &Tilex<E, VR, Self::Scope, ReadOnly>,
+        rhs: &mut Tilex<R, VR, Self::Scope, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
         tile_copy(tile, rhs);
     }
 
-    fn load_acc<N: NumericVector>(
-        tile: &Tilex<N>,
-        acc: &mut Tilex<A, ReadWrite>,
+    fn load_acc<E: Numeric>(
+        tile: &Tilex<E, VA, Self::Scope, ReadOnly>,
+        acc: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
         tile_copy(tile, acc);
     }
 
-    fn write_results<N: NumericVector>(
-        tile: &mut Tilex<N, ReadWrite>,
-        out: &mut Tilex<A>,
+    fn write_results<E: Numeric>(
+        tile: &mut Tilex<E, VA, Self::Scope, ReadWrite>,
+        out: &mut Tilex<A, VA, Self::Scope, ReadOnly>,
         #[comptime] _config: Self::Config,
     ) {
-        let out = out.cast();
+        // let out: Tilex<N, Self::Scope> = out.cast();
         tile_copy(&out, tile)
         // CmmaStageWriter::store_fragment(tile, &out);
     }

@@ -18,7 +18,7 @@ impl TileMatmulFamily for CmmaMatmul
 //     CmmaStageReader<Tile>: CmmaFragmentReader<TileKind = Tile>,
 {
     type Config = SharedTileConfig;
-    type Matmul<L: Numeric, R: Numeric, A: Numeric> = CmmaMatmul;
+    type Matmul<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size> = CmmaMatmul;
     type TileIO = StandardTileIO;
 
     fn requires_accelerator() -> bool {

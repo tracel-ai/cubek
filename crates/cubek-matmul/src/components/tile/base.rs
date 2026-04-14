@@ -5,7 +5,7 @@ use cubecl::{
 };
 use cubek_std::{
     InvalidConfigError, MatrixLayout, TileSize,
-    tile::{Strided, TileKind, TileMut},
+    tile::{Strided, TileKind},
 };
 
 use crate::{
@@ -16,21 +16,13 @@ use crate::{
     definition::{MatmulElems, MatmulSetupError, MatmulVectorSizes, TilingBlueprint},
 };
 
-// TODO exists in cubek-reduce too, migrate to std
-pub trait NumericVector: Send + Sync + 'static {
-    type Elem: Numeric;
-    type Size: Size;
-}
-
-pub type VectorOf<N> = Vector<<N as NumericVector>::Elem, <N as NumericVector>::Size>;
-
 /// A family of [TileMatmul] implementations that operate with any precision.
 pub trait TileMatmulFamily: Send + Sync + 'static {
     /// Config for this matmul
     type Config: TileConfig;
 
     /// The specific [TileMatmul] implementation associated with this family.
-    type Matmul<L: NumericVector, R: NumericVector, A: NumericVector>: TileMatmul<L, R, A, TileIO = Self::TileIO, Config = Self::Config>;
+    type Matmul<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>: TileMatmul<L, VL, R, VR, A, VA, TileIO = Self::TileIO, Config = Self::Config>;
 
     /// Where the tile matmul reads and writes its inputs
     type TileIO: TileIO;
@@ -116,7 +108,7 @@ pub trait Operands: CubeType + Send + Sync + 'static {
 ///    should be done on smaller sizes than M, N and K, padding with zeros must be done beforehand.
 ///  - Enough units are present to perform the whole computation
 #[cube]
-pub trait TileMatmul<L: NumericVector, R: NumericVector, A: NumericVector>:
+pub trait TileMatmul<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>:
     'static + Send + Sync
 {
     /// Config for this matmul
@@ -124,6 +116,7 @@ pub trait TileMatmul<L: NumericVector, R: NumericVector, A: NumericVector>:
 
     type Operands: Operands;
     type TileIO: TileIO;
+    type Scope;
 
     /// Executes the matrix multiplication of Lhs and Rhs, adding the result to the accumulator
     fn execute(
@@ -145,9 +138,9 @@ pub trait TileMatmul<L: NumericVector, R: NumericVector, A: NumericVector>:
     ) -> <Self::Operands as Operands>::Lhs;
 
     /// Load the container of Lhs from tile data
-    fn load_lhs<E: NumericVector>(
-        tile: &Tilex<E>,
-        lhs: &mut Tilex<L, ReadWrite>,
+    fn load_lhs<E: Numeric>(
+        tile: &Tilex<E, VL, Self::Scope, ReadOnly>,
+        lhs: &mut <Self::Operands as Operands>::Lhs,
         #[comptime] config: Self::Config,
     );
 
@@ -163,9 +156,9 @@ pub trait TileMatmul<L: NumericVector, R: NumericVector, A: NumericVector>:
     ) -> <Self::Operands as Operands>::Rhs;
 
     /// Load the container of Rhs from tile data
-    fn load_rhs<E: NumericVector>(
-        tile: &Tilex<E>,
-        rhs: &mut Tilex<R, ReadWrite>,
+    fn load_rhs<E: Numeric>(
+        tile: &Tilex<E, VR, Self::Scope, ReadOnly>,
+        rhs: &mut <Self::Operands as Operands>::Rhs,
         #[comptime] config: Self::Config,
     );
 
@@ -182,16 +175,16 @@ pub trait TileMatmul<L: NumericVector, R: NumericVector, A: NumericVector>:
     ) -> <Self::Operands as Operands>::Acc;
 
     /// Load the container of Acc from tile data
-    fn load_acc<E: NumericVector>(
-        tile: &Tilex<E>,
-        rhs: &mut Tilex<A, ReadWrite>,
+    fn load_acc<E: Numeric>(
+        tile: &Tilex<E, VA, Self::Scope, ReadOnly>,
+        acc: &mut <Self::Operands as Operands>::Acc,
         #[comptime] config: Self::Config,
     );
 
     /// Write the content of the output container to the given slice
-    fn write_results<N: NumericVector>(
-        tile: &mut Tilex<N, ReadWrite>,
-        out: &mut Tilex<A>,
+    fn write_results<E: Numeric>(
+        tile: &mut Tilex<E, VA, Self::Scope, ReadWrite>,
+        out: &mut <Self::Operands as Operands>::Acc,
         #[comptime] config: Self::Config,
     );
 }

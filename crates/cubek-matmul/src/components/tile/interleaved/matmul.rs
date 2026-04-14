@@ -5,7 +5,7 @@ use cubek_std::{MatrixLayout, tile::StridedTile};
 
 use crate::{
     components::tile::{
-        Operands, StandardTileIO, TileMatmul,
+        Operands, Plane, StandardTileIO, TileMatmul,
         interleaved::{
             config::InterleavedMatmulConfig, reader::InterleavedStageReader,
             writer::InterleavedStageWriter,
@@ -82,10 +82,13 @@ impl<L: Numeric, R: Numeric, A: Numeric> Operands for InterleavedOperands<L, R, 
 }
 
 #[cube]
-impl<L: Numeric, R: Numeric, A: Numeric> TileMatmul<L, R, A> for InterleavedMatmul {
+impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
+    TileMatmul<L, VL, R, VR, A, VA> for InterleavedMatmul
+{
     type Config = InterleavedMatmulConfig;
     type Operands = InterleavedOperands<L, R, A>;
     type TileIO = StandardTileIO;
+    type Scope = Plane;
 
     fn execute(
         lhs: &InterleavedFragment<L>,

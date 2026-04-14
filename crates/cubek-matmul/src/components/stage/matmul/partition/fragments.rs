@@ -15,8 +15,11 @@ pub struct Accumulators<
     MP: MatmulTypes,
     TM: TileMatmul<
             <MP::Lhs as MatrixTypes>::Register,
+            <MP::Lhs as MatrixTypes>::RegisterSize,
             <MP::Rhs as MatrixTypes>::Register,
+            <MP::Rhs as MatrixTypes>::RegisterSize,
             <MP::Acc as MatrixTypes>::Register,
+            <MP::Acc as MatrixTypes>::RegisterSize,
         >,
 > {
     sequence: Sequence<<TM::Operands as Operands>::Acc>,
@@ -29,8 +32,11 @@ impl<
     MP: MatmulTypes,
     TM: TileMatmul<
             <MP::Lhs as MatrixTypes>::Register,
+            <MP::Lhs as MatrixTypes>::RegisterSize,
             <MP::Rhs as MatrixTypes>::Register,
+            <MP::Rhs as MatrixTypes>::RegisterSize,
             <MP::Acc as MatrixTypes>::Register,
+            <MP::Acc as MatrixTypes>::RegisterSize,
         >,
 > Accumulators<MP, TM>
 {

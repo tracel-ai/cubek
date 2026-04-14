@@ -53,16 +53,18 @@ pub trait MatrixTypes: Send + Sync + Copy + 'static {
     type StageSize: Size;
     /// Element type once in registers for computation
     type Register: Numeric;
+    type RegisterSize: Size;
 }
 
-impl<EG: Numeric, SG: Size, ES: Numeric, SS: Size, ER: Numeric> MatrixTypes
-    for (EG, SG, ES, SS, ER)
+impl<EG: Numeric, SG: Size, ES: Numeric, SS: Size, ER: Numeric, SR: Size> MatrixTypes
+    for (EG, SG, ES, SS, ER, SR)
 {
     type Global = EG;
     type GlobalSize = SG;
     type Stage = ES;
     type StageSize = SS;
     type Register = ER;
+    type RegisterSize = SR;
 }
 
 impl MatmulPrecision for f16 {
