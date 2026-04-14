@@ -48,19 +48,6 @@ pub struct TestTensor {
     pub quantization: Option<QuantizationInfo>,
 }
 
-impl TestTensor {
-    /// Mark the handle as quantized.
-    /// This only updates the metadata in the test tensor.
-    pub fn mark_quantized(mut self, scheme: QuantScheme, scale: TensorHandle<TestRuntime>) -> Self {
-        self.quantization = Some(QuantizationInfo {
-            scheme,
-            scale,
-            shape: self.handle.shape().clone(),
-        });
-        self
-    }
-}
-
 #[derive(Clone, Debug)]
 pub enum InputDataType {
     Standard(StorageType),

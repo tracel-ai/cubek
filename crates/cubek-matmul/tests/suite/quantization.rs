@@ -116,11 +116,8 @@ pub fn test_matmul_quantized_lhs() {
 
     match outcome {
         ExecutionOutcome::Executed => {
-            let expected = crate::suite::reference::matmul_cpu_reference(
-                &lhs.host,
-                &rhs.host,
-                &problem,
-            );
+            let expected =
+                crate::suite::reference::matmul_cpu_reference(&lhs.host, &rhs.host, &problem);
             let actual = HostData::from_tensor_handle(&client, out, HostDataType::F32);
             // Use relaxed tolerance for quantized matmul: Q8S quantization introduces
             // ~1/127 error per element, accumulated over k dot-product terms.
