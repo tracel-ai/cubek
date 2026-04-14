@@ -10,8 +10,7 @@ use crate::{
     components::{
         CubeDimResource,
         batch::{
-            BatchMatmulFamily,
-            gemv_plane_parallel::CheckBounds,
+            BatchMatmulFamily, CheckBounds,
             gemv_unit_perpendicular::{
                 VecMatUnitPerpendicular, VecMatUnitPerpendicularConfig, matmul_entry,
             },

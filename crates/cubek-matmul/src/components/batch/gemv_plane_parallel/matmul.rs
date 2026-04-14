@@ -1,10 +1,9 @@
 use std::marker::PhantomData;
 
 use crate::components::batch::{
-    BatchConfig as _, BatchMatmul, BatchMatmulFamily,
+    BatchConfig as _, BatchMatmul, BatchMatmulFamily, CheckBounds,
     gemv_plane_parallel::{
-        CheckBounds, GemvKind, GemvPlaneParallelBlueprint, GemvPlaneParallelFamily,
-        VecMatPlaneParallelConfig,
+        GemvKind, GemvPlaneParallelBlueprint, GemvPlaneParallelFamily, VecMatPlaneParallelConfig,
         layout::{MatLayout, VecLayout},
     },
 };
@@ -209,8 +208,13 @@ fn execute_gemv<V: CubePrimitive, M: CubePrimitive, O: CubePrimitive, AccR: Nume
 
     let mn_pos = cube_id * num_planes + plane_id;
 
-    if comptime!(matches!(check_bounds, CheckBounds::Terminate)) && mn_pos as usize >= out.shape() {
-        terminate!();
+    // The first if statement is running at comptime.
+    if comptime!(matches!(check_bounds, CheckBounds::Terminate)) {
+        // This is a runtime cond.
+        let should_terminate = mn_pos as usize >= out.shape();
+        if should_terminate {
+            terminate!();
+        }
     }
 
     let segment_size = plane_dim * vector_size;

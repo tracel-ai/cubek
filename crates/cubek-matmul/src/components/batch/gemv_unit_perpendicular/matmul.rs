@@ -1,13 +1,18 @@
 use std::marker::PhantomData;
 
-use crate::components::batch::base::BatchMatmulFamily;
-use crate::components::batch::gemv_plane_parallel::CheckBounds;
-use crate::components::batch::gemv_unit_perpendicular::{
-    VecMatUnitPerpendicularBlueprint, VecMatUnitPerpendicularConfig, VecMatUnitPerpendicularFamily,
+use crate::{
+    components::batch::{
+        BatchConfig as _, BatchMatmul, CheckBounds, SliceIndex,
+        base::BatchMatmulFamily,
+        gemv_unit_perpendicular::{
+            VecMatUnitPerpendicularBlueprint, VecMatUnitPerpendicularConfig,
+            VecMatUnitPerpendicularFamily,
+        },
+    },
+    definition::*,
+    launch::MatmulArgs,
 };
-use crate::components::batch::{BatchConfig as _, SliceIndex};
 
-use crate::{components::batch::BatchMatmul, definition::*, launch::MatmulArgs};
 use cubecl::{
     prelude::*,
     {cube, num_traits::Zero},
@@ -135,8 +140,13 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatUnitPerpendicular<MP> {
         let unit_pos_n = absolute_plane_id * plane_dim + unit_id;
         let vectorized_pos_n = unit_pos_n * vector_size;
 
-        if comptime!(matches!(check_bounds, CheckBounds::Terminate)) && vectorized_pos_n >= n {
-            terminate!();
+        // The first if statement is running at comptime.
+        if comptime!(matches!(check_bounds, CheckBounds::Terminate)) {
+            // This is a runtime cond.
+            let should_terminate = vectorized_pos_n >= n;
+            if should_terminate {
+                terminate!();
+            }
         }
 
         let num_tiles = if comptime!(matches!(check_bounds, CheckBounds::Checked)) {

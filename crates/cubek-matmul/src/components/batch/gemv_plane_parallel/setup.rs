@@ -10,9 +10,9 @@ use crate::{
     components::{
         CubeDimResource,
         batch::{
-            BatchMatmulFamily,
+            BatchMatmulFamily, CheckBounds,
             gemv_plane_parallel::{
-                CheckBounds, GemvKind, VecMatPlaneParallel, VecMatPlaneParallelConfig, matmul_entry,
+                GemvKind, VecMatPlaneParallel, VecMatPlaneParallelConfig, matmul_entry,
             },
         },
         global::memory::GlobalLayoutConfig,

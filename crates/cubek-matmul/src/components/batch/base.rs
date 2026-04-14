@@ -109,3 +109,14 @@ pub trait BatchConfig:
     fn rhs_global_layout_config(&self) -> GlobalLayoutConfig;
     fn out_global_layout_config(&self) -> GlobalLayoutConfig;
 }
+
+/// How oobs are handled.
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+pub enum CheckBounds {
+    /// No bound check is necessary.
+    None,
+    /// Use checked reads and writes.
+    Checked,
+    /// Terminate idle work units early.
+    Terminate,
+}

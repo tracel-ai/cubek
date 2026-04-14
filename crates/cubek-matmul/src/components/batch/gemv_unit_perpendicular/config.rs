@@ -1,7 +1,7 @@
 use cubek_std::MatrixLayout;
 
 use crate::components::{
-    batch::{BatchConfig, gemv_plane_parallel::CheckBounds},
+    batch::{BatchConfig, CheckBounds},
     global::memory::GlobalLayoutConfig,
 };
 

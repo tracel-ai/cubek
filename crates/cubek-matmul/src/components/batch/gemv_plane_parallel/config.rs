@@ -1,19 +1,12 @@
 use cubek_std::MatrixLayout;
 
 use crate::{
-    components::{batch::BatchConfig, global::memory::GlobalLayoutConfig},
+    components::{
+        batch::{BatchConfig, CheckBounds},
+        global::memory::GlobalLayoutConfig,
+    },
     definition::{MatmulProblem, MatmulSetupError},
 };
-
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub enum CheckBounds {
-    /// No bound check is necessary.
-    None,
-    /// Use checked reads and writes.
-    Checked,
-    /// Terminate idle work units early.
-    Terminate,
-}
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum GemvKind {

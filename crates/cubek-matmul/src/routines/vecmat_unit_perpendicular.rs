@@ -7,8 +7,7 @@ use cubek_std::cube_count::{CubeCountPlan, CubeCountStrategy, GlobalOrder, Hyper
 
 use crate::{
     components::batch::{
-        BatchMatmulFamily,
-        gemv_plane_parallel::CheckBounds,
+        BatchMatmulFamily, CheckBounds,
         gemv_unit_perpendicular::{
             VecMatUnitPerpendicularBlueprint, VecMatUnitPerpendicularFamily,
         },

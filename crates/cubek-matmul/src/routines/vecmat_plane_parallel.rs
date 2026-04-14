@@ -7,10 +7,8 @@ use cubek_std::cube_count::{CubeCountPlan, CubeCountStrategy, GlobalOrder, Hyper
 
 use crate::{
     components::batch::{
-        BatchMatmulFamily,
-        gemv_plane_parallel::{
-            CheckBounds, GemvKind, GemvPlaneParallelBlueprint, GemvPlaneParallelFamily,
-        },
+        BatchMatmulFamily, CheckBounds,
+        gemv_plane_parallel::{GemvKind, GemvPlaneParallelBlueprint, GemvPlaneParallelFamily},
     },
     definition::{MatmulElems, MatmulProblem, MatmulSetupError},
     routines::{
