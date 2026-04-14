@@ -100,7 +100,6 @@ pub fn launch_ref<R: Runtime>(
         view_vector_sizes.rhs *= scheme.num_quants();
     }
 
-
     let address_type = lhs
         .required_address_type()
         .max(rhs.required_address_type())
