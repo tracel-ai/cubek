@@ -38,9 +38,9 @@ impl Routine for PlaneRoutine {
                 }
 
                 let properties = &client.properties().hardware;
-                if cube_dim.x != properties.plane_size_min {
+                if cube_dim.x != properties.plane_size_max {
                     return Err(ReduceError::Validation {
-                        details: "`cube_dim.x` must match `plane_size_min`",
+                        details: "`cube_dim.x` must match `plane_size_max`",
                     });
                 }
 
@@ -93,19 +93,10 @@ fn generate_blueprint<R: Runtime>(
     }
 
     let properties = &client.properties().hardware;
-
-    let plane_size = if properties.plane_size_min != properties.plane_size_max {
-        properties.plane_size_min
-    } else {
-        properties.plane_size_max
-    };
+    let plane_size = properties.plane_size_max;
     let working_planes = working_planes(settings, &problem);
     let working_units = working_planes * plane_size as usize;
-    let plane_count = if properties.plane_size_min != properties.plane_size_max {
-        1
-    } else {
-        calculate_plane_count_per_cube(working_units, plane_size, properties)
-    };
+    let plane_count = calculate_plane_count_per_cube(working_units, plane_size, properties);
     let working_cubes = working_planes.div_ceil(plane_count as usize);
 
     let cube_dim = CubeDim::new_2d(plane_size, plane_count);
@@ -134,13 +125,7 @@ fn generate_blueprint<R: Runtime>(
         false => IdleMode::None,
     };
 
-    let properties = &client.properties().hardware;
-    let plane_size_min = properties.plane_size_min;
-    let plane_size_max = properties.plane_size_max;
-
-    let strategy_enum = if plane_size_min != plane_size_max {
-        PlaneMergeStrategy::MultiplaneLazy
-    } else if strategy.independent {
+    let strategy_enum = if strategy.independent {
         PlaneMergeStrategy::Lazy
     } else {
         PlaneMergeStrategy::Eager
@@ -152,6 +137,7 @@ fn generate_blueprint<R: Runtime>(
             plane_idle,
             bound_checks,
             plane_merge_strategy: strategy_enum,
+            check_unit_in_plane: properties.plane_size_max != properties.plane_size_min,
         }),
     };
 

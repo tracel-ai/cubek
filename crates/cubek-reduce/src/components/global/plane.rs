@@ -26,6 +26,12 @@ impl GlobalFullPlaneReduce {
         #[comptime] vectorization_mode: VectorizationMode,
         #[comptime] blueprint: PlaneReduceBlueprint,
     ) {
+        #[allow(clippy::collapsible_if)]
+        if comptime!(blueprint.check_unit_in_plane) {
+            if UNIT_POS_X >= PLANE_DIM {
+                terminate!();
+            }
+        }
         comptime!(println!("Vec mode:: {:?}", vectorization_mode));
         let write_index = CUBE_POS * CUBE_DIM_Y as usize + UNIT_POS_Y as usize;
 
@@ -99,9 +105,7 @@ impl GlobalFullPlaneReduce {
         let iteration_plane_reduce_mode = match blueprint.plane_merge_strategy {
             PlaneMergeStrategy::Eager => PlaneReduceMode::Single,
             PlaneMergeStrategy::Lazy => PlaneReduceMode::None,
-            PlaneMergeStrategy::MultiplaneLazy => PlaneReduceMode::None,
         };
-        //let unit_independent = blueprint.plane_merge_strategy == PlaneMergeStrategy::Lazy;
         for i in 0..reader.length() {
             let (item, coordinate) = reader.read(i);
             reduce_inplace::<P, I>(
@@ -109,7 +113,7 @@ impl GlobalFullPlaneReduce {
                 &mut accumulator,
                 item,
                 coordinate,
-                iteration_plane_reduce_mode.clone(),
+                iteration_plane_reduce_mode,
             );
         }
 
@@ -127,18 +131,6 @@ impl GlobalFullPlaneReduce {
                 result
             }
             PlaneMergeStrategy::Eager => accumulator,
-            PlaneMergeStrategy::MultiplaneLazy => {
-                let (item, coordinate) = I::read_accumulator(inst, &accumulator);
-                let mut result = I::null_accumulator(inst);
-                reduce_inplace::<P, I>(
-                    inst,
-                    &mut result,
-                    item,
-                    coordinate,
-                    PlaneReduceMode::Single,
-                );
-                result
-            }
         }
     }
 }

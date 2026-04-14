@@ -142,8 +142,6 @@ pub enum PlaneReduceMode {
     None,
     /// We reduce across the plane which equals CUBE_DIM_X
     Single,
-    /// We reduce across multiple planes until we reach CUBE_DIM_X
-    Multi,
 }
 
 #[cube]

@@ -6,13 +6,13 @@ use cubecl::{
     zspace::{Shape, Strides},
 };
 
-use cubek_reduce::reduce;
 use cubek_reduce::{
     ReduceDtypes, ReduceStrategy,
     components::instructions::ReduceOperationConfig,
     launch::{RoutineStrategy, VectorizationStrategy},
-    routines::{BlueprintStrategy, plane::PlaneStrategy},
+    routines::{BlueprintStrategy, cube::CubeStrategy, plane::PlaneStrategy},
 };
+use cubek_reduce::{reduce, routines::unit::UnitStrategy};
 use cubek_test_utils::{
     DataKind, ExecutionOutcome, HostData, HostDataType, HostDataVec, StrideSpec, TestInput,
     TestOutcome, ValidationResult, assert_equals_approx,
@@ -23,6 +23,52 @@ fn simple_reduce_sum() {
     let strategy = ReduceStrategy {
         routine: RoutineStrategy::Plane(BlueprintStrategy::Inferred(PlaneStrategy {
             independent: false,
+        })),
+        vectorization: VectorizationStrategy {
+            parallel_output_vectorization: false,
+        },
+    };
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let shape = [32, 512].to_vec();
+    let dim = 1;
+    test_launch(client, shape, dim, strategy);
+}
+
+#[test]
+fn simple_reduce_sum_strategy_unit() {
+    let strategy = ReduceStrategy {
+        routine: RoutineStrategy::Unit(BlueprintStrategy::Inferred(UnitStrategy {})),
+        vectorization: VectorizationStrategy {
+            parallel_output_vectorization: false,
+        },
+    };
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let shape = [32, 128].to_vec();
+    let dim = 1;
+    test_launch(client, shape, dim, strategy);
+}
+
+#[test]
+fn simple_reduce_sum_strategy_cube_use_planes() {
+    let strategy = ReduceStrategy {
+        routine: RoutineStrategy::Cube(BlueprintStrategy::Inferred(CubeStrategy {
+            use_planes: true,
+        })),
+        vectorization: VectorizationStrategy {
+            parallel_output_vectorization: false,
+        },
+    };
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let shape = [32, 128].to_vec();
+    let dim = 1;
+    test_launch(client, shape, dim, strategy);
+}
+
+#[test]
+fn simple_reduce_sum_strategy_cube_not_use_planes() {
+    let strategy = ReduceStrategy {
+        routine: RoutineStrategy::Cube(BlueprintStrategy::Inferred(CubeStrategy {
+            use_planes: false,
         })),
         vectorization: VectorizationStrategy {
             parallel_output_vectorization: false,

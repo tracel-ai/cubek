@@ -43,9 +43,6 @@ pub enum PlaneMergeStrategy {
     Lazy,
     ///  There is a plane reduction at each iteration
     Eager,
-    /// Like Independent but runtime plane dimension maybe not equal CUBE_DIM_X
-    /// so we add a step to the final reduce
-    MultiplaneLazy,
 }
 
 /// A single plane reduces a full vector.
@@ -56,6 +53,7 @@ pub struct PlaneReduceBlueprint {
     // There are too many units in a plane causing out-of-bound.
     pub bound_checks: BoundChecks,
     pub plane_merge_strategy: PlaneMergeStrategy,
+    pub check_unit_in_plane: bool,
 }
 
 /// A single unit reduces a full vector.

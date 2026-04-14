@@ -100,9 +100,10 @@ impl GlobalFullCubeReduce {
     }
 
     fn worker_pos(#[comptime] blueprint: CubeBlueprint) -> usize {
+        let unit_pos = UNIT_POS_X + UNIT_POS_Y * PLANE_DIM;
         match blueprint.use_planes {
             true => UNIT_POS_Y as usize,
-            false => UNIT_POS as usize,
+            false => unit_pos as usize,
         }
     }
 

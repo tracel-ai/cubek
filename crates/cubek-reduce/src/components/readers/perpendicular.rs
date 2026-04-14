@@ -68,19 +68,23 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
     }
 
     pub fn length_plane(&self) -> usize {
-        self.shape.div_ceil(CUBE_DIM_X as usize)
+        self.shape.div_ceil(PLANE_DIM as usize)
     }
 
     pub fn length_cube(&self) -> usize {
-        self.shape.div_ceil(CUBE_DIM as usize)
+        let cube_dim = PLANE_DIM * CUBE_DIM_Y;
+        self.shape.div_ceil(cube_dim as usize)
     }
 
     pub fn read_cube(
         &self,
         vector_index: usize,
     ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
-        let plane_pos = vector_index * CUBE_DIM as usize;
-        let unit_pos = UNIT_POS as usize;
+        let cube_dim = PLANE_DIM * CUBE_DIM_Y * CUBE_DIM_Z;
+        let plane_pos = vector_index * cube_dim as usize;
+        //let unit_pos = UNIT_POS as usize;
+        let unit_pos =
+            (UNIT_POS_X + UNIT_POS_Y * PLANE_DIM + UNIT_POS_Z * PLANE_DIM * CUBE_DIM_Y) as usize;
         let pos = plane_pos + unit_pos;
         let offset = plane_pos * self.vector_offset_stride
             + unit_pos * self.vector_offset_stride
@@ -101,7 +105,7 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
         &self,
         vector_index: usize,
     ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
-        let plane_pos = vector_index * CUBE_DIM_X as usize;
+        let plane_pos = vector_index * PLANE_DIM as usize;
         let unit_pos = UNIT_POS_X as usize;
         let pos = plane_pos + unit_pos;
         let offset = plane_pos * self.vector_offset_stride

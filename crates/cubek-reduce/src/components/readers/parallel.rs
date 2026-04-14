@@ -69,19 +69,21 @@ impl<P: ReducePrecision> ParallelReader<P> {
     }
 
     pub fn length_plane(&self) -> usize {
-        self.num_chunks.div_ceil(CUBE_DIM_X as usize)
+        self.num_chunks.div_ceil(PLANE_DIM as usize)
     }
 
     pub fn length_cube(&self) -> usize {
-        self.num_chunks.div_ceil(CUBE_DIM as usize)
+        let cube_dim = PLANE_DIM * CUBE_DIM_Y;
+        self.num_chunks.div_ceil(cube_dim as usize)
     }
 
     pub fn read_cube(
         &self,
         vector_index: usize,
     ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
-        let plane_pos = vector_index * CUBE_DIM as usize;
-        let unit_pos = UNIT_POS as usize;
+        let cube_dim = PLANE_DIM * CUBE_DIM_Y * CUBE_DIM_Z;
+        let plane_pos = vector_index * cube_dim as usize;
+        let unit_pos = (UNIT_POS_X + UNIT_POS_Y * PLANE_DIM) as usize;
         let pos = plane_pos + unit_pos;
         let offset = pos + self.batch_offset;
 
@@ -100,7 +102,7 @@ impl<P: ReducePrecision> ParallelReader<P> {
         &self,
         vector_index: usize,
     ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
-        let plane_pos = vector_index * CUBE_DIM_X as usize;
+        let plane_pos = vector_index * PLANE_DIM as usize;
         let unit_pos = UNIT_POS_X as usize;
         let pos = plane_pos + unit_pos;
         let offset = pos + self.batch_offset;
