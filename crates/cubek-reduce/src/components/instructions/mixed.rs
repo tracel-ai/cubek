@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     ReduceDtypes,
-    components::{instructions::PlaneReduceMode, precision::ReducePrecision},
+    components::{instructions::ReduceStep, precision::ReducePrecision},
 };
 use cubecl::{
     ir::{ElemType, FloatKind, IntKind, UIntKind},
@@ -351,7 +351,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
         accumulator: &Self::AccumulatorItem,
         item: Vector<P::EI, P::SI>,
         coordinate: ReduceCoordinate<P::SI>,
-        #[comptime] use_planes: PlaneReduceMode,
+        #[comptime] use_planes: ReduceStep,
     ) -> Self::AccumulatorItem {
         match this {
             ReduceOperation::Sum(sum) => {

@@ -3,9 +3,7 @@ use crate::{
     components::{
         args::NumericLine,
         global::idle_check,
-        instructions::{
-            PlaneReduceMode, SharedAccumulator, fuse_accumulator_inplace, reduce_inplace,
-        },
+        instructions::{ReduceStep, SharedAccumulator, fuse_accumulator_inplace, reduce_inplace},
         readers::{Reader, cube::CubeReader},
         writer::Writer,
     },
@@ -138,7 +136,7 @@ impl GlobalFullCubeReduce {
                 &mut accumulator,
                 item,
                 coordinate,
-                PlaneReduceMode::None,
+                ReduceStep::Identity,
             );
         }
 
@@ -154,7 +152,7 @@ impl GlobalFullCubeReduce {
                     &mut accumulator_plane,
                     item,
                     coordinate,
-                    PlaneReduceMode::Single,
+                    ReduceStep::Plane,
                 );
                 accumulator_plane
             }
@@ -185,7 +183,7 @@ fn reduce_scan<P: ReducePrecision, I: ReduceInstruction<P>>(
     for i in 0..size {
         let item = I::SharedAccumulator::read(accumulator, i);
         let (item, coordinate) = I::read_accumulator(inst, &item);
-        reduce_inplace::<P, I>(inst, result, item, coordinate, PlaneReduceMode::None);
+        reduce_inplace::<P, I>(inst, result, item, coordinate, ReduceStep::Identity);
     }
 }
 
@@ -252,5 +250,5 @@ fn reduce_tree<P: ReducePrecision, I: ReduceInstruction<P>>(
 
     let tmp = I::SharedAccumulator::read(accumulator, 0);
     let (item, coordinate) = I::read_accumulator(inst, &tmp);
-    reduce_inplace::<P, I>(inst, result, item, coordinate, PlaneReduceMode::None);
+    reduce_inplace::<P, I>(inst, result, item, coordinate, ReduceStep::Identity);
 }

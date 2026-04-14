@@ -3,7 +3,7 @@ use crate::{
     components::{
         args::NumericLine,
         global::idle_check,
-        instructions::{PlaneReduceMode, reduce_inplace},
+        instructions::{ReduceStep, reduce_inplace},
         readers::{Reader, unit::UnitReader},
         writer::Writer,
     },
@@ -87,7 +87,7 @@ impl GlobalFullUnitReduce {
                 &mut accumulator,
                 item,
                 coordinate,
-                PlaneReduceMode::None,
+                ReduceStep::Identity,
             );
         }
 

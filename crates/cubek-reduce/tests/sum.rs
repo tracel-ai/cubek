@@ -80,6 +80,22 @@ fn simple_reduce_sum_strategy_cube_not_use_planes() {
     test_launch(client, shape, dim, strategy);
 }
 
+#[test]
+fn simple_reduce_sum_strategy_cube_use_planes_perpendicular() {
+    let strategy = ReduceStrategy {
+        routine: RoutineStrategy::Cube(BlueprintStrategy::Inferred(CubeStrategy {
+            use_planes: false,
+        })),
+        vectorization: VectorizationStrategy {
+            parallel_output_vectorization: false,
+        },
+    };
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let shape = [4, 128].to_vec();
+    let dim = 1;
+    test_launch(client, shape, dim, strategy);
+}
+
 fn test_launch(
     client: ComputeClient<TestRuntime>,
     shape: Vec<usize>,

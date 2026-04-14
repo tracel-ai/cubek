@@ -1,6 +1,6 @@
 use super::{ReduceCoordinate, ReduceFamily, ReduceInstruction};
 use crate::components::{
-    instructions::{PlaneReduceMode, ReduceRequirements},
+    instructions::{ReduceRequirements, ReduceStep},
     precision::ReducePrecision,
 };
 use cubecl::prelude::*;
@@ -59,9 +59,9 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
         accumulator: &Self::AccumulatorItem,
         item: Vector<P::EI, P::SI>,
         _coordinate: ReduceCoordinate<P::SI>,
-        #[comptime] use_planes: PlaneReduceMode,
+        #[comptime] use_planes: ReduceStep,
     ) -> Self::AccumulatorItem {
-        if let PlaneReduceMode::Single = use_planes {
+        if let ReduceStep::Plane = use_planes {
             let candidate_item = Vector::cast_from(plane_min(item));
             select_many(
                 accumulator.less_than(candidate_item),

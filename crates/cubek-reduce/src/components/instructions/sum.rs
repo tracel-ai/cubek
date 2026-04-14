@@ -1,5 +1,5 @@
 use super::{ReduceCoordinate, ReduceFamily, ReduceInstruction, ReduceRequirements};
-use crate::components::{instructions::PlaneReduceMode, precision::ReducePrecision};
+use crate::components::{instructions::ReduceStep, precision::ReducePrecision};
 use cubecl::prelude::*;
 
 #[derive(Debug, CubeType, Clone)]
@@ -54,11 +54,11 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
         accumulator: &Self::AccumulatorItem,
         item: Vector<P::EI, P::SI>,
         _coordinate: ReduceCoordinate<P::SI>,
-        #[comptime] plane_reduce: PlaneReduceMode,
+        #[comptime] plane_reduce: ReduceStep,
     ) -> Self::AccumulatorItem {
         match plane_reduce {
-            PlaneReduceMode::Single => *accumulator + plane_sum(Vector::cast_from(item)),
-            PlaneReduceMode::None => *accumulator + Vector::cast_from(item),
+            ReduceStep::Plane => *accumulator + plane_sum(Vector::cast_from(item)),
+            ReduceStep::Identity => *accumulator + Vector::cast_from(item),
         }
     }
 

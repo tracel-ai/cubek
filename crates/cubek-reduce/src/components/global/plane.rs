@@ -10,7 +10,7 @@ use crate::{
     routines::{PlaneMergeStrategy, PlaneReduceBlueprint},
 };
 
-use crate::components::instructions::PlaneReduceMode;
+use crate::components::instructions::ReduceStep;
 use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
 
 #[derive(CubeType)]
@@ -103,8 +103,8 @@ impl GlobalFullPlaneReduce {
         let mut accumulator = I::null_accumulator(inst);
 
         let iteration_plane_reduce_mode = match blueprint.plane_merge_strategy {
-            PlaneMergeStrategy::Eager => PlaneReduceMode::Single,
-            PlaneMergeStrategy::Lazy => PlaneReduceMode::None,
+            PlaneMergeStrategy::Eager => ReduceStep::Plane,
+            PlaneMergeStrategy::Lazy => ReduceStep::Identity,
         };
         for i in 0..reader.length() {
             let (item, coordinate) = reader.read(i);
@@ -121,13 +121,7 @@ impl GlobalFullPlaneReduce {
             PlaneMergeStrategy::Lazy => {
                 let (item, coordinate) = I::read_accumulator(inst, &accumulator);
                 let mut result = I::null_accumulator(inst);
-                reduce_inplace::<P, I>(
-                    inst,
-                    &mut result,
-                    item,
-                    coordinate,
-                    PlaneReduceMode::Single,
-                );
+                reduce_inplace::<P, I>(inst, &mut result, item, coordinate, ReduceStep::Plane);
                 result
             }
             PlaneMergeStrategy::Eager => accumulator,
