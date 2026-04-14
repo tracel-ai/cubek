@@ -6,6 +6,16 @@ use crate::{
 };
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+pub enum CheckBounds {
+    /// No bound check is necessary.
+    None,
+    /// Use checked reads and writes.
+    Checked,
+    /// Terminate idle work units early.
+    Terminate,
+}
+
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum GemvKind {
     // Conceptually VecMat
     VecMatColMajor, // execute VecMat as-is
@@ -42,7 +52,7 @@ pub struct VecMatPlaneParallelConfig {
     pub(crate) plane_dim: u32,
     pub(crate) num_planes: u32,
     pub(crate) plan: GemvKind,
-    pub(crate) check_bounds: bool,
+    pub(crate) check_bounds: CheckBounds,
 }
 
 impl BatchConfig for VecMatPlaneParallelConfig {

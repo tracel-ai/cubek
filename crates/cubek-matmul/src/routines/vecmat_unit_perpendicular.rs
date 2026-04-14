@@ -8,6 +8,7 @@ use cubek_std::cube_count::{CubeCountPlan, CubeCountStrategy, GlobalOrder, Hyper
 use crate::{
     components::batch::{
         BatchMatmulFamily,
+        gemv_plane_parallel::CheckBounds,
         gemv_unit_perpendicular::{
             VecMatUnitPerpendicularBlueprint, VecMatUnitPerpendicularFamily,
         },
@@ -58,11 +59,24 @@ impl Routine<()> for GemvUnitPerpendicularRoutine {
                     None => num_concurrent_planes(&properties.hardware),
                 };
 
-                let max_planes_for_swizzle = problem.k / tile_dim;
+                let max_planes_for_swizzle = problem.k.div_ceil(tile_dim);
                 let num_planes = max(1, min(target_num_planes, max_planes_for_swizzle));
 
                 let working_planes = problem.n.div_ceil(tile_dim);
-                let check_bounds = !working_planes.is_multiple_of(num_planes);
+                let aligned_n = problem.n.is_multiple_of(tile_dim);
+                let aligned_k = problem.k.is_multiple_of(tile_dim);
+                let check_bounds = if !aligned_n || !aligned_k {
+                    // The last tile along n or k has OOB positions. Units must stay
+                    // alive for plane_shuffle, so use checked reads/writes instead of
+                    // terminating. OOB reads return zero (no contribution to acc).
+                    CheckBounds::Checked
+                } else if !working_planes.is_multiple_of(num_planes) {
+                    // All work is fully valid, but some planes in the last cube are
+                    // entirely idle and can be terminated.
+                    CheckBounds::Terminate
+                } else {
+                    CheckBounds::None
+                };
 
                 let blueprint = VecMatUnitPerpendicularBlueprint {
                     dtypes: dtypes.clone(),

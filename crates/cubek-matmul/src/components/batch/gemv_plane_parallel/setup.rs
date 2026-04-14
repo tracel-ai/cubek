@@ -12,7 +12,7 @@ use crate::{
         batch::{
             BatchMatmulFamily,
             gemv_plane_parallel::{
-                GemvKind, VecMatPlaneParallel, VecMatPlaneParallelConfig, matmul_entry,
+                CheckBounds, GemvKind, VecMatPlaneParallel, VecMatPlaneParallelConfig, matmul_entry,
             },
         },
         global::memory::GlobalLayoutConfig,
@@ -35,7 +35,7 @@ pub struct GemvPlaneParallelBlueprint {
     pub tile_dim: usize,
     pub hypercube_blueprint: HypercubeBlueprint,
     pub kind: GemvKind,
-    pub check_bounds: bool,
+    pub check_bounds: CheckBounds,
 }
 
 impl Blueprint for GemvPlaneParallelBlueprint {

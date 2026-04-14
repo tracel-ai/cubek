@@ -3,7 +3,8 @@ use std::marker::PhantomData;
 use crate::components::batch::{
     BatchConfig as _, BatchMatmul, BatchMatmulFamily,
     gemv_plane_parallel::{
-        GemvKind, GemvPlaneParallelBlueprint, GemvPlaneParallelFamily, VecMatPlaneParallelConfig,
+        CheckBounds, GemvKind, GemvPlaneParallelBlueprint, GemvPlaneParallelFamily,
+        VecMatPlaneParallelConfig,
         layout::{MatLayout, VecLayout},
     },
 };
@@ -201,12 +202,18 @@ fn execute_gemv<V: CubePrimitive, M: CubePrimitive, O: CubePrimitive, AccR: Nume
     #[comptime] plane_dim: u32,
     #[comptime] vector_size: u32,
     #[comptime] matrix_layout: MatrixLayout,
-    #[comptime] check_bounds: bool,
+    #[comptime] check_bounds: CheckBounds,
 ) {
     let plane_id = UNIT_POS_Y;
     let unit_id = UNIT_POS_X;
 
     let mn_pos = cube_id * num_planes + plane_id;
+
+    if comptime!(matches!(check_bounds, CheckBounds::Terminate)) {
+        if mn_pos as usize >= out.shape() {
+            terminate!();
+        }
+    }
 
     let segment_size = plane_dim * vector_size;
     let num_segments_k = k_dim / segment_size;
@@ -219,13 +226,13 @@ fn execute_gemv<V: CubePrimitive, M: CubePrimitive, O: CubePrimitive, AccR: Nume
 
         let k_pos = (k_base + unit_id) * vector_size;
 
-        let vec_val = if comptime!(check_bounds) {
+        let vec_val = if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
             vec.read_checked(k_pos as usize)
         } else {
             vec.read_unchecked(k_pos as usize)
         };
 
-        let mat_val = if comptime!(check_bounds) {
+        let mat_val = if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
             match matrix_layout {
                 MatrixLayout::RowMajor => mat.read_checked((mn_pos, k_pos)),
                 MatrixLayout::ColMajor => mat.read_checked((k_pos, mn_pos)),
@@ -249,7 +256,7 @@ fn execute_gemv<V: CubePrimitive, M: CubePrimitive, O: CubePrimitive, AccR: Nume
     };
 
     if unit_id == 0 {
-        if comptime!(check_bounds) {
+        if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
             out.write_checked(mn_pos as usize, O::cast_from(sum));
         } else {
             out.write(mn_pos as usize, O::cast_from(sum));
@@ -274,9 +281,16 @@ fn execute_gemv_transposed<
     k_dim: u32,
     #[comptime] vector_size: u32,
     #[comptime] matrix_layout: MatrixLayout,
-    #[comptime] check_bounds: bool,
+    #[comptime] check_bounds: CheckBounds,
 ) {
     let mn_pos = mn_id * vector_size;
+
+    if comptime!(matches!(check_bounds, CheckBounds::Terminate)) {
+        if mn_pos as usize >= out.shape() {
+            terminate!();
+        }
+    }
+
     let num_tiles_k = k_dim / vector_size;
 
     let mut accs: Array<Vector<AccR, VS>> = Array::new(vector_size as usize);
@@ -290,14 +304,14 @@ fn execute_gemv_transposed<
     for tile_index in 0..num_tiles_k {
         let global_k_pos = tile_index * vector_size;
 
-        let vec_val = if comptime!(check_bounds) {
+        let vec_val = if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
             vec.read_checked(global_k_pos as usize)
         } else {
             vec.read_unchecked(global_k_pos as usize)
         };
 
         for segment_iter in 0..vector_size {
-            let vector = if comptime!(check_bounds) {
+            let vector = if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
                 match matrix_layout {
                     MatrixLayout::RowMajor => {
                         mat.read_checked((global_k_pos + segment_iter, mn_pos))
@@ -340,7 +354,7 @@ fn execute_gemv_transposed<
         let acc = accs[segment_iter as usize];
         let sum = Vector::vector_sum(acc);
 
-        if comptime!(check_bounds) {
+        if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
             out.write_checked((mn_pos + segment_iter) as usize, O::cast_from(sum));
         } else {
             out.write((mn_pos + segment_iter) as usize, O::cast_from(sum));

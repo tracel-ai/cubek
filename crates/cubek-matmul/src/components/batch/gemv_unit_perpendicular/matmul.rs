@@ -1,6 +1,7 @@
 use std::marker::PhantomData;
 
 use crate::components::batch::base::BatchMatmulFamily;
+use crate::components::batch::gemv_plane_parallel::CheckBounds;
 use crate::components::batch::gemv_unit_perpendicular::{
     VecMatUnitPerpendicularBlueprint, VecMatUnitPerpendicularConfig, VecMatUnitPerpendicularFamily,
 };
@@ -134,12 +135,17 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatUnitPerpendicular<MP> {
         let unit_pos_n = absolute_plane_id * plane_dim + unit_id;
         let vectorized_pos_n = unit_pos_n * vector_size;
 
-        // TODO mask if within plane
-        if vectorized_pos_n >= n {
-            terminate!();
+        if comptime!(matches!(check_bounds, CheckBounds::Terminate)) {
+            if vectorized_pos_n >= n {
+                terminate!();
+            }
         }
 
-        let num_tiles = k / tile_size;
+        let num_tiles = if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
+            k.div_ceil(tile_size)
+        } else {
+            k / tile_size
+        };
 
         let mut acc = Vector::<AccR<MP>, NA>::zero();
 
@@ -147,7 +153,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatUnitPerpendicular<MP> {
             let swizzled_tile_index = (tile_index + plane_id) % num_tiles;
             let k_base = swizzled_tile_index * plane_dim;
 
-            let local_lhs_vec = if comptime!(check_bounds) {
+            let local_lhs_vec = if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
                 lhs.read_checked((0, (k_base + unit_id) * vector_size))
             } else {
                 lhs.read_unchecked((0, (k_base + unit_id) * vector_size))
@@ -159,7 +165,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatUnitPerpendicular<MP> {
 
                 for vec_iter in 0..NA::value() as u32 {
                     let lhs_scalar = lhs_vec[vec_iter as usize];
-                    let rhs_vec = if comptime!(check_bounds) {
+                    let rhs_vec = if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
                         rhs.read_checked((rhs_k_vec_base + vec_iter, vectorized_pos_n))
                     } else {
                         rhs.read_unchecked((rhs_k_vec_base + vec_iter, vectorized_pos_n))
@@ -169,7 +175,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatUnitPerpendicular<MP> {
             }
         }
 
-        if comptime!(check_bounds) {
+        if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
             out.write_checked((0, vectorized_pos_n), Vector::cast_from(acc));
         } else {
             out.write((0, vectorized_pos_n), Vector::cast_from(acc));
