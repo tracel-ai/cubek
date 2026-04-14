@@ -8,7 +8,7 @@ use crate::{
             PartitionBuffering, Stage, StageEvent, StageEventListener,
             matmul::scheduler::PartitionScheduler,
         },
-        tile::{Operands, TileConfig, TileMatmul},
+        tile::{TileConfig, TileMatmul},
     },
     definition::{Lhs, MatmulTypes, MatrixTypes},
 };

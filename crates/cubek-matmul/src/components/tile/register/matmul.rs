@@ -8,7 +8,7 @@ use cubek_std::{
 
 use crate::{
     components::tile::{
-        Operands, StandardTileIO, TileMatmul, TileStorage, Tilex,
+        TileMatmul, TileStorage, Tilex,
         register::{
             config::{ProductType, RegisterMatmulConfig},
             reader::{RegisterFragmentReader, RegisterStageReader},

@@ -1,7 +1,6 @@
 use crate::components::stage::matmul::plane_partitioned::{
     PlaneMatmul, PlanePartitionedStageConfig,
 };
-use crate::components::tile::TileIO;
 use crate::components::{
     CubeDimResource,
     global::{MatmulPlaneCounts, PartitionedStage, PartitionedStageFamily, PlaneFlowConfig},

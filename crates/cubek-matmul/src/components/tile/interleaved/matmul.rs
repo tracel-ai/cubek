@@ -5,7 +5,7 @@ use cubek_std::{MatrixLayout, tile::StridedTile};
 
 use crate::{
     components::tile::{
-        Operands, Plane, StandardTileIO, TileMatmul, TileStorage, Tilex,
+        Plane, TileMatmul, TileStorage, Tilex,
         interleaved::{
             config::InterleavedMatmulConfig, reader::InterleavedStageReader,
             writer::InterleavedStageWriter,

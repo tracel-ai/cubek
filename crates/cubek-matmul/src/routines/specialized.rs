@@ -9,7 +9,6 @@ use cubek_std::{
 use crate::components::{
     global::read::sync_full_strided::SyncFullStridedLoading,
     stage::{PlaneMatmulFamily, StageFamily},
-    tile::StandardTileIO,
 };
 use crate::definition::{
     MatmulProblem, MatmulSetupError, MatmulVectorSizes, SwizzleModes, TilingBlueprint,

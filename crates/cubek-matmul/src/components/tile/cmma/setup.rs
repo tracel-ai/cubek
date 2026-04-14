@@ -1,4 +1,4 @@
-use crate::components::tile::{StandardTileIO, TileMatmulFamily};
+use crate::components::tile::TileMatmulFamily;
 use crate::{
     components::resource::CubeDimResource, components::tile::SharedTileConfig,
     components::tile::cmma::matmul::CmmaMatmul,

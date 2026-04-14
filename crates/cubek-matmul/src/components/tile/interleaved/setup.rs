@@ -2,7 +2,7 @@ use crate::{
     components::{
         resource::CubeDimResource,
         tile::{
-            SharedTileConfig, StandardTileIO, TileMatmulFamily,
+            SharedTileConfig, TileMatmulFamily,
             interleaved::{InterleavedMatmul, config::InterleavedMatmulConfig},
         },
     },

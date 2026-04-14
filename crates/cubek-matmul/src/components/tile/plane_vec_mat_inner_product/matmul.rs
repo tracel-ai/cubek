@@ -4,7 +4,7 @@ use cubecl::{define_size, prelude::*};
 use cubek_std::{MatrixLayout, tile::Strided, tile::StridedTile};
 
 use crate::components::tile::{
-    Operands, StandardTileIO, TileMatmul, TileStorage, Tilex,
+    TileMatmul, TileStorage, Tilex,
     plane_vec_mat_inner_product::{reader::MatrixFragmentReader, writer::MatrixStageWriter},
 };
 use crate::{

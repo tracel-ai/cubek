@@ -6,7 +6,6 @@ use crate::components::batch::{PartitionedBatchMatmulFamily, RowMajorGlobalParti
 use crate::components::global::{
     PlaneWriterFamily, read::sync_partial_tilewise::SyncPartialTilewiseLoading,
 };
-use crate::components::tile::StandardTileIO;
 use crate::components::{
     batch::BatchMatmulFamily, global::read::sync_full_cyclic::SyncFullCyclicLoading,
 };

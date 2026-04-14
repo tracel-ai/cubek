@@ -7,7 +7,7 @@ use cubek_std::{
 };
 
 use crate::components::tile::{
-    Operands, Plane, SharedTileConfig, StandardTileIO, TileLayout, TileMatmul, TileStorage, Tilex,
+    Plane, SharedTileConfig, TileLayout, TileMatmul, TileStorage, Tilex,
     cmma::reader::{CmmaFragmentReader, CmmaStageReader},
     tile_copy, tile_matmul,
 };

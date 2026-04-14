@@ -2,7 +2,6 @@ use std::{fmt::Display, marker::PhantomData};
 
 use cubecl::Runtime;
 
-use crate::components::tile::StandardTileIO;
 use crate::components::{
     batch::BatchMatmulFamily, global::read::sync_full_cyclic::SyncFullCyclicLoading,
 };

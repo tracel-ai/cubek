@@ -10,7 +10,7 @@ use crate::{
                 unit_partitioned::UnitPartitionedStageConfig,
             },
         },
-        tile::{Operands, TileConfig, TileMatmul, Tilex},
+        tile::{TileConfig, TileMatmul, Tilex},
     },
     definition::{MatmulTypes, MatrixTypes},
 };

@@ -70,30 +70,6 @@ pub trait TileMatmulFamily: Send + Sync + 'static {
     ) -> Result<(), MatmulSetupError>;
 }
 
-pub trait TileIO: CubeType + Send + Sync + 'static {
-    /// Tile for the lhs and rhs data
-    type In: TileKind;
-    /// Tile for the accumulator data
-    type Acc: TileKind;
-    /// Tile for the output data
-    type Out: TileKind<ReadWrite>;
-}
-
-#[derive(CubeType)]
-pub struct StandardTileIO {}
-
-impl TileIO for StandardTileIO {
-    type In = Strided;
-    type Acc = Option<Strided>;
-    type Out = Strided;
-}
-
-pub trait Operands: CubeType + Send + Sync + 'static {
-    type Lhs: CubeType;
-    type Rhs: CubeType;
-    type Acc: CubeType;
-}
-
 /// Provides matrix multiplication operations at the tile level.
 ///
 /// At the tile level,

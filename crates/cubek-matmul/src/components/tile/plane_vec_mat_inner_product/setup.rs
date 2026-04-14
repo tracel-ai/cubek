@@ -1,9 +1,6 @@
 use crate::components::{
     resource::CubeDimResource,
-    tile::{
-        StandardTileIO,
-        plane_vec_mat_inner_product::reader::{MatrixFragmentReader, MatrixStageReader},
-    },
+    tile::plane_vec_mat_inner_product::reader::{MatrixFragmentReader, MatrixStageReader},
 };
 use crate::{
     components::tile::SharedTileConfig, components::tile::TileMatmulFamily,
