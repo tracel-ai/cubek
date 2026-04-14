@@ -32,17 +32,17 @@ impl<E: Numeric> VectorContainer<E> {
     }
 }
 
-#[derive(CubeType)]
-pub struct VectorOperands<L: Numeric, R: Numeric, A: Numeric> {
-    #[cube(comptime)]
-    _phantom: PhantomData<(L, R, A)>,
-}
+// #[derive(CubeType)]
+// pub struct VectorOperands<L: Numeric, R: Numeric, A: Numeric> {
+//     #[cube(comptime)]
+//     _phantom: PhantomData<(L, R, A)>,
+// }
 
-impl<L: Numeric, R: Numeric, A: Numeric> Operands for VectorOperands<L, R, A> {
-    type Lhs = VectorContainer<L>;
-    type Rhs = Sequence<VectorContainer<R>>;
-    type Acc = Sequence<VectorContainer<A>>;
-}
+// impl<L: Numeric, R: Numeric, A: Numeric> Operands for VectorOperands<L, R, A> {
+//     type Lhs = VectorContainer<L>;
+//     type Rhs = Sequence<VectorContainer<R>>;
+//     type Acc = Sequence<VectorContainer<A>>;
+// }
 
 #[cube]
 impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
@@ -54,9 +54,9 @@ impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
     type Scope = u32;
 
     fn execute(
-        lhs: &Tilex<L, VL, Self::Scope, ReadOnly>,
-        rhs: &Tilex<R, VR, Self::Scope, ReadOnly>,
-        acc: &mut Tilex<R, VR, Self::Scope, ReadWrite>,
+        lhs: &Tilex<L, VL, Self::Scope, ReadWrite>,
+        rhs: &Tilex<R, VR, Self::Scope, ReadWrite>,
+        acc: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
         #[comptime] config: Self::Config,
     ) {
         todo!()

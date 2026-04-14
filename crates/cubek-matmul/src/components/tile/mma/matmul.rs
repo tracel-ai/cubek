@@ -30,17 +30,17 @@ pub struct MmaFragment<E: Numeric, N: Size> {
     layout: MatrixLayout,
 }
 
-#[derive(CubeType)]
-pub struct MmaOperands<L: Numeric, R: Numeric, A: Numeric> {
-    #[cube(comptime)]
-    _phantom: PhantomData<(L, R, A)>,
-}
+// #[derive(CubeType)]
+// pub struct MmaOperands<L: Numeric, R: Numeric, A: Numeric> {
+//     #[cube(comptime)]
+//     _phantom: PhantomData<(L, R, A)>,
+// }
 
-impl<L: Numeric, R: Numeric, A: Numeric> Operands for MmaOperands<L, R, A> {
-    type Lhs = MmaFragment<L, NL>;
-    type Rhs = MmaFragment<R, NR>;
-    type Acc = MmaFragment<A, NA>;
-}
+// impl<L: Numeric, R: Numeric, A: Numeric> Operands for MmaOperands<L, R, A> {
+//     type Lhs = MmaFragment<L, NL>;
+//     type Rhs = MmaFragment<R, NR>;
+//     type Acc = MmaFragment<A, NA>;
+// }
 
 #[cube]
 impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
@@ -52,9 +52,9 @@ impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
     type Scope = u32;
 
     fn execute(
-        lhs: &Tilex<L, VL, Self::Scope, ReadOnly>,
-        rhs: &Tilex<R, VR, Self::Scope, ReadOnly>,
-        acc: &mut Tilex<R, VR, Self::Scope, ReadWrite>,
+        lhs: &Tilex<L, VL, Self::Scope, ReadWrite>,
+        rhs: &Tilex<R, VR, Self::Scope, ReadWrite>,
+        acc: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
         #[comptime] config: Self::Config,
     ) {
         todo!()

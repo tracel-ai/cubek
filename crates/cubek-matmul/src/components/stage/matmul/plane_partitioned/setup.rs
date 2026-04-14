@@ -41,12 +41,8 @@ pub struct PlaneMatmulFamily<
     _phantom: PhantomData<(TM, StageLhs, StageRhs, StageAcc)>,
 }
 
-impl<
-    TM: TileMatmulFamily<TileIO: TileIO<Out = Strided>>,
-    StageLhs: StageFamily,
-    StageRhs: StageFamily,
-    StageAcc: StageFamily,
-> StageMatmulFamily for PlaneMatmulFamily<TM, StageLhs, StageRhs, StageAcc>
+impl<TM: TileMatmulFamily, StageLhs: StageFamily, StageRhs: StageFamily, StageAcc: StageFamily>
+    StageMatmulFamily for PlaneMatmulFamily<TM, StageLhs, StageRhs, StageAcc>
 {
     type LhsStage = StageLhs;
     type RhsStage = StageRhs;

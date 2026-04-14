@@ -2,10 +2,6 @@ use std::marker::PhantomData;
 
 use super::fragments::{Accumulators, RhsTile, RhsTileExpand};
 use crate::{
-    components::stage::PartitionSchedulerScheme,
-    definition::{Acc, Rhs},
-};
-use crate::{
     components::{
         global::PlaneFlowConfig,
         stage::{
@@ -15,6 +11,10 @@ use crate::{
         tile::{Operands, TileConfig, TileMatmul},
     },
     definition::{Lhs, MatmulTypes, MatrixTypes},
+};
+use crate::{
+    components::{stage::PartitionSchedulerScheme, tile::Tilex},
+    definition::{Acc, Rhs},
 };
 use cubecl::prelude::*;
 use cubek_std::{PartitionSize, StageSize, stage::StageMemoryConfig};
@@ -109,8 +109,22 @@ where
     pub fn execute_with_listener<SEL: StageEventListener>(
         lhs_stage: &StageLhs,
         rhs_stage: &StageRhs,
-        lhs_fragment: &mut Sequence<<TM::Operands as Operands>::Lhs>,
-        rhs_fragments: &mut RhsTile<<TM::Operands as Operands>::Rhs>,
+        lhs_fragment: &mut Sequence<
+            Tilex<
+                <MP::Lhs as MatrixTypes>::Register,
+                <MP::Lhs as MatrixTypes>::RegisterSize,
+                TM::Scope,
+                ReadWrite,
+            >,
+        >,
+        rhs_fragments: &mut RhsTile<
+            Tilex<
+                <MP::Rhs as MatrixTypes>::Register,
+                <MP::Rhs as MatrixTypes>::RegisterSize,
+                TM::Scope,
+                ReadWrite,
+            >,
+        >,
         acc: &mut Accumulators<MP, TM>,
         #[comptime] shared_config: SharedPartitionMatmulConfig<TM::Config>,
         listener: SEL,
@@ -149,8 +163,22 @@ where
     pub fn init_tile_inputs(
         #[comptime] shared_config: SharedPartitionMatmulConfig<TM::Config>,
     ) -> (
-        Sequence<<TM::Operands as Operands>::Lhs>,
-        RhsTile<<TM::Operands as Operands>::Rhs>,
+        Sequence<
+            Tilex<
+                <MP::Lhs as MatrixTypes>::Register,
+                <MP::Lhs as MatrixTypes>::RegisterSize,
+                TM::Scope,
+                ReadWrite,
+            >,
+        >,
+        RhsTile<
+            Tilex<
+                <MP::Rhs as MatrixTypes>::Register,
+                <MP::Rhs as MatrixTypes>::RegisterSize,
+                TM::Scope,
+                ReadWrite,
+            >,
+        >,
     ) {
         let mut lhs = Sequence::new();
 
@@ -219,8 +247,20 @@ where
     fn execute_single_buffer<SEL: StageEventListener>(
         lhs_stage: &StageLhs,
         rhs_stage: &StageRhs,
-        lhs_fragment: &mut Sequence<<TM::Operands as Operands>::Lhs>,
-        rhs_fragment: &mut <TM::Operands as Operands>::Rhs,
+        lhs_fragment: &mut Sequence<
+            Tilex<
+                <MP::Lhs as MatrixTypes>::Register,
+                <MP::Lhs as MatrixTypes>::RegisterSize,
+                TM::Scope,
+                ReadWrite,
+            >,
+        >,
+        rhs_fragment: &mut Tilex<
+            <MP::Rhs as MatrixTypes>::Register,
+            <MP::Rhs as MatrixTypes>::RegisterSize,
+            TM::Scope,
+            ReadWrite,
+        >,
         acc: &mut Accumulators<MP, TM>,
         #[comptime] shared_config: SharedPartitionMatmulConfig<TM::Config>,
         mut listener: SEL,
@@ -317,10 +357,27 @@ where
     fn execute_double_buffer<SEL: StageEventListener>(
         lhs_stage: &StageLhs,
         rhs_stage: &StageRhs,
-        lhs_fragment: &mut Sequence<<TM::Operands as Operands>::Lhs>,
+        lhs_fragment: &mut Sequence<
+            Tilex<
+                <MP::Lhs as MatrixTypes>::Register,
+                <MP::Lhs as MatrixTypes>::RegisterSize,
+                TM::Scope,
+                ReadWrite,
+            >,
+        >,
         rhs_fragments: &mut (
-            <TM::Operands as Operands>::Rhs,
-            <TM::Operands as Operands>::Rhs,
+            Tilex<
+                <MP::Rhs as MatrixTypes>::Register,
+                <MP::Rhs as MatrixTypes>::RegisterSize,
+                TM::Scope,
+                ReadWrite,
+            >,
+            Tilex<
+                <MP::Rhs as MatrixTypes>::Register,
+                <MP::Rhs as MatrixTypes>::RegisterSize,
+                TM::Scope,
+                ReadWrite,
+            >,
         ),
         acc: &mut Accumulators<MP, TM>,
         #[comptime] shared_config: SharedPartitionMatmulConfig<TM::Config>,

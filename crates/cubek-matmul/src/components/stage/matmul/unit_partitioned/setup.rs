@@ -28,11 +28,8 @@ pub struct UnitMatmulFamily<TM: TileMatmulFamily, StageIn: StageFamily, StageAcc
 type STy<T> = crate::definition::Stage<T>;
 type SSz<T> = crate::definition::StageSize<T>;
 
-impl<
-    TM: TileMatmulFamily<TileIO: TileIO<Out = Strided>>,
-    StageIn: StageFamily,
-    StageAcc: StageFamily,
-> StageMatmulFamily for UnitMatmulFamily<TM, StageIn, StageAcc>
+impl<TM: TileMatmulFamily, StageIn: StageFamily, StageAcc: StageFamily> StageMatmulFamily
+    for UnitMatmulFamily<TM, StageIn, StageAcc>
 {
     type LhsStage = StageIn;
     type RhsStage = StageIn;

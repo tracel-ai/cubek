@@ -56,7 +56,7 @@ impl Display for OrderedSelectionArgs {
 
 impl<TMM, RC> Routine<RC> for OrderedDoubleBufferingAlgorithm<TMM>
 where
-    TMM: tile::TileMatmulFamily<TileIO = StandardTileIO>,
+    TMM: tile::TileMatmulFamily,
     RC: RuntimeConfig,
 {
     type Strategy = OrderedSelectionArgs;

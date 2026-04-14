@@ -19,9 +19,8 @@ use cubek_std::{InvalidConfigError, MatrixLayout};
 
 impl TileMatmulFamily for InterleavedMatmul {
     type Config = InterleavedMatmulConfig;
-    type Matmul<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size> = InterleavedMatmul;
-
-    type TileIO = StandardTileIO;
+    type Matmul<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size> =
+        InterleavedMatmul;
 
     fn requires_accelerator() -> bool {
         false

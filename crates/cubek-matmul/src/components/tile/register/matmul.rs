@@ -33,17 +33,17 @@ pub struct UnitFragment<E: Numeric> {
     pub layout: MatrixLayout,
 }
 
-#[derive(CubeType)]
-pub struct UnitOperands<L: Numeric, R: Numeric, A: Numeric> {
-    #[cube(comptime)]
-    _phantom: PhantomData<(L, R, A)>,
-}
+// #[derive(CubeType)]
+// pub struct UnitOperands<L: Numeric, R: Numeric, A: Numeric> {
+//     #[cube(comptime)]
+//     _phantom: PhantomData<(L, R, A)>,
+// }
 
-impl<L: Numeric, R: Numeric, A: Numeric> Operands for UnitOperands<L, R, A> {
-    type Lhs = UnitFragment<L>;
-    type Rhs = UnitFragment<R>;
-    type Acc = UnitFragment<A>;
-}
+// impl<L: Numeric, R: Numeric, A: Numeric> Operands for UnitOperands<L, R, A> {
+//     type Lhs = UnitFragment<L>;
+//     type Rhs = UnitFragment<R>;
+//     type Acc = UnitFragment<A>;
+// }
 
 #[cube]
 impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
@@ -55,9 +55,9 @@ impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
     type Scope = u32;
 
     fn execute(
-        lhs: &Tilex<L, VL, Self::Scope, ReadOnly>,
-        rhs: &Tilex<R, VR, Self::Scope, ReadOnly>,
-        acc: &mut Tilex<R, VR, Self::Scope, ReadWrite>,
+        lhs: &Tilex<L, VL, Self::Scope, ReadWrite>,
+        rhs: &Tilex<R, VR, Self::Scope, ReadWrite>,
+        acc: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
         #[comptime] config: Self::Config,
     ) {
         todo!()
@@ -116,7 +116,6 @@ impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
         todo!()
     }
 }
-
 
 #[cube]
 impl RegisterMatmul {

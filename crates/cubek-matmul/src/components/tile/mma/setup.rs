@@ -32,8 +32,6 @@ where
 
     type Matmul<L: Numeric, NL: Size, R: Numeric, NR: Size, A: Numeric, NA: Size> = MmaMatmul;
 
-    type TileIO = StandardTileIO;
-
     fn requires_accelerator() -> bool {
         true
     }

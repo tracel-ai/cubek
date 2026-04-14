@@ -22,10 +22,7 @@ pub trait TileMatmulFamily: Send + Sync + 'static {
     type Config: TileConfig;
 
     /// The specific [TileMatmul] implementation associated with this family.
-    type Matmul<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>: TileMatmul<L, VL, R, VR, A, VA, TileIO = Self::TileIO, Config = Self::Config>;
-
-    /// Where the tile matmul reads and writes its inputs
-    type TileIO: TileIO;
+    type Matmul<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>: TileMatmul<L, VL, R, VR, A, VA, Config = Self::Config>;
 
     /// Returns whether this tile matmul requires specialized hardware accelerators (e.g., tensor cores).
     fn requires_accelerator() -> bool;
@@ -117,9 +114,9 @@ pub trait TileMatmul<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA:
 
     /// Executes the matrix multiplication of Lhs and Rhs, adding the result to the accumulator
     fn execute(
-        lhs: &Tilex<L, VL, Self::Scope, ReadOnly>,
-        rhs: &Tilex<R, VR, Self::Scope, ReadOnly>,
-        acc: &mut Tilex<R, VR, Self::Scope, ReadWrite>,
+        lhs: &Tilex<L, VL, Self::Scope, ReadWrite>,
+        rhs: &Tilex<R, VR, Self::Scope, ReadWrite>,
+        acc: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
         #[comptime] config: Self::Config,
     );
 

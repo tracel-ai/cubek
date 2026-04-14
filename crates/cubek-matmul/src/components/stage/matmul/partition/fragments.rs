@@ -1,4 +1,4 @@
-use crate::components::tile::Operands;
+use crate::components::tile::Tilex;
 use crate::definition::{MatmulTypes, MatrixTypes};
 use crate::{
     components::{stage::Stage, tile::TileMatmul},
@@ -21,7 +21,14 @@ pub struct Accumulators<
             <MP::Acc as MatrixTypes>::RegisterSize,
         >,
 > {
-    sequence: Sequence<<TM::Operands as Operands>::Acc>,
+    sequence: Sequence<
+        Tilex<
+            <MP::Acc as MatrixTypes>::Register,
+            <MP::Acc as MatrixTypes>::RegisterSize,
+            TM::Scope,
+            ReadWrite,
+        >,
+    >,
 }
 
 type StageTy<T> = crate::definition::Stage<T>;
@@ -82,7 +89,12 @@ impl<
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] tiles_in_stage_partition_n: usize,
-    ) -> &<TM::Operands as Operands>::Acc {
+    ) -> &Tilex<
+        <MP::Acc as MatrixTypes>::Register,
+        <MP::Acc as MatrixTypes>::RegisterSize,
+        TM::Scope,
+        ReadWrite,
+    > {
         &self.sequence[m * tiles_in_stage_partition_n + n]
     }
 
@@ -92,7 +104,12 @@ impl<
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] tiles_in_stage_partition_n: usize,
-    ) -> &mut <TM::Operands as Operands>::Acc {
+    ) -> &mut Tilex<
+        <MP::Acc as MatrixTypes>::Register,
+        <MP::Acc as MatrixTypes>::RegisterSize,
+        TM::Scope,
+        ReadWrite,
+    > {
         self.sequence.index_mut(m * tiles_in_stage_partition_n + n)
     }
 }

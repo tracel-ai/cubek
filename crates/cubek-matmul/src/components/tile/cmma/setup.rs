@@ -19,7 +19,6 @@ impl TileMatmulFamily for CmmaMatmul
 {
     type Config = SharedTileConfig;
     type Matmul<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size> = CmmaMatmul;
-    type TileIO = StandardTileIO;
 
     fn requires_accelerator() -> bool {
         true

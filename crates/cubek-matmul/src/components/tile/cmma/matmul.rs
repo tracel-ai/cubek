@@ -16,19 +16,19 @@ use cubecl::cmma;
 /// Uses one plane to perform a small matmul using accelerated instructions.
 pub struct CmmaMatmul {}
 
-#[derive(CubeType)]
-pub struct FragmentOperands<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size> {
-    #[cube(comptime)]
-    _phantom: PhantomData<(L, VL, R, VR, A, VA)>,
-}
+// #[derive(CubeType)]
+// pub struct FragmentOperands<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size> {
+//     #[cube(comptime)]
+//     _phantom: PhantomData<(L, VL, R, VR, A, VA)>,
+// }
 
-impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size> Operands
-    for FragmentOperands<L, VL, R, VR, A, VA>
-{
-    type Lhs = Tilex<L, VL, Plane, ReadOnly>;
-    type Rhs = Tilex<R, VR, Plane, ReadOnly>;
-    type Acc = Tilex<A, VA, Plane, ReadWrite>;
-}
+// impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size> Operands
+//     for FragmentOperands<L, VL, R, VR, A, VA>
+// {
+//     type Lhs = Tilex<L, VL, Plane, ReadOnly>;
+//     type Rhs = Tilex<R, VR, Plane, ReadOnly>;
+//     type Acc = Tilex<A, VA, Plane, ReadWrite>;
+// }
 
 #[cube]
 impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
@@ -38,9 +38,9 @@ impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
     type Scope = Plane;
 
     fn execute(
-        lhs: &Tilex<L, VL, Self::Scope, ReadOnly>,
-        rhs: &Tilex<R, VR, Self::Scope, ReadOnly>,
-        acc: &mut Tilex<R, VR, Self::Scope, ReadWrite>,
+        lhs: &Tilex<L, VL, Self::Scope, ReadWrite>,
+        rhs: &Tilex<R, VR, Self::Scope, ReadWrite>,
+        acc: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
         todo!()

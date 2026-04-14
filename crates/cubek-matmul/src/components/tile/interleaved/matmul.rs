@@ -66,20 +66,20 @@ impl<E: Numeric> InterleavedAccumulator<E> {
     }
 }
 
-#[derive(CubeType)]
-pub struct InterleavedOperands<L: Numeric, R: Numeric, A: Numeric> {
-    #[cube(comptime)]
-    _phantom: PhantomData<(L, R, A)>,
-}
+// #[derive(CubeType)]
+// pub struct InterleavedOperands<L: Numeric, R: Numeric, A: Numeric> {
+//     #[cube(comptime)]
+//     _phantom: PhantomData<(L, R, A)>,
+// }
 
-impl<L: Numeric, R: Numeric, A: Numeric> Operands for InterleavedOperands<L, R, A> {
-    // Size m * k_local
-    type Lhs = InterleavedFragment<L>;
-    // Size k_local * n
-    type Rhs = InterleavedFragment<R>;
-    // Size m * n
-    type Acc = InterleavedAccumulator<A>;
-}
+// impl<L: Numeric, R: Numeric, A: Numeric> Operands for InterleavedOperands<L, R, A> {
+//     // Size m * k_local
+//     type Lhs = InterleavedFragment<L>;
+//     // Size k_local * n
+//     type Rhs = InterleavedFragment<R>;
+//     // Size m * n
+//     type Acc = InterleavedAccumulator<A>;
+// }
 
 #[cube]
 impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
@@ -89,9 +89,9 @@ impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
     type Scope = Plane;
 
     fn execute(
-        lhs: &Tilex<L, VL, Self::Scope, ReadOnly>,
-        rhs: &Tilex<R, VR, Self::Scope, ReadOnly>,
-        acc: &mut Tilex<R, VR, Self::Scope, ReadWrite>,
+        lhs: &Tilex<L, VL, Self::Scope, ReadWrite>,
+        rhs: &Tilex<R, VR, Self::Scope, ReadWrite>,
+        acc: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
         #[comptime] config: Self::Config,
     ) {
         todo!()

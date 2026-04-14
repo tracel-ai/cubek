@@ -10,7 +10,7 @@ use crate::{
                 unit_partitioned::UnitPartitionedStageConfig,
             },
         },
-        tile::{Operands, TileConfig, TileMatmul},
+        tile::{Operands, TileConfig, TileMatmul, Tilex},
     },
     definition::{MatmulTypes, MatrixTypes},
 };
@@ -190,8 +190,22 @@ where
     type OutStage = StageOut;
 
     type Accumulators = Accumulators<MP, TM>;
-    type LhsTile = Sequence<<TM::Operands as Operands>::Lhs>;
-    type RhsTile = RhsTile<<TM::Operands as Operands>::Rhs>;
+    type LhsTile = Sequence<
+        Tilex<
+            <MP::Lhs as MatrixTypes>::Register,
+            <MP::Lhs as MatrixTypes>::RegisterSize,
+            TM::Scope,
+            ReadWrite,
+        >,
+    >;
+    type RhsTile = RhsTile<
+        Tilex<
+            <MP::Rhs as MatrixTypes>::Register,
+            <MP::Rhs as MatrixTypes>::RegisterSize,
+            TM::Scope,
+            ReadWrite,
+        >,
+    >;
 
     fn execute(
         lhs_stage: &StageLhs,

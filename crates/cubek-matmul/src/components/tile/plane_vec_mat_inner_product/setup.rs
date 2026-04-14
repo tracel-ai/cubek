@@ -32,8 +32,6 @@ where
     type Matmul<L: Numeric, NL: Size, R: Numeric, NR: Size, A: Numeric, NA: Size> =
         PlaneVecMatInnerProduct;
 
-    type TileIO = StandardTileIO;
-
     fn requires_accelerator() -> bool {
         false
     }
