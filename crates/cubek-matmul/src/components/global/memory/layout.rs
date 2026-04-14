@@ -234,7 +234,7 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
                 cols as u32,
                 stride_row,
                 stride_col,
-                vector_size,
+                vector_size / scheme.num_quants(),
                 scheme.num_quants() as u32,
                 config,
             )

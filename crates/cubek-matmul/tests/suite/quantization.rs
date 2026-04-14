@@ -7,10 +7,11 @@ use cubek_matmul::{
 use cubek_quant::scheme::{QuantLevel, QuantMode, QuantParam, QuantScheme, QuantStore, QuantValue};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{
-    DataKind, ExecutionOutcome, InputDataType, TestInput, TestOutcome, TestTensor,
+    DataKind, ExecutionOutcome, HostData, HostDataType, InputDataType, TestInput, TestOutcome,
+    TestTensor, assert_equals_approx,
 };
 
-use crate::{suite::assert_result, suite::layout_to_stride_spec};
+use crate::suite::layout_to_stride_spec;
 
 /// Test for matrix multiplication with a quantized LHS.
 /// Note: This test might require a runtime that supports the chosen quantization scheme.
@@ -115,7 +116,16 @@ pub fn test_matmul_quantized_lhs() {
 
     match outcome {
         ExecutionOutcome::Executed => {
-            assert_result(&lhs.host, &rhs.host, &problem, &client, out, dtypes).as_test_outcome()
+            let expected = crate::suite::reference::matmul_cpu_reference(
+                &lhs.host,
+                &rhs.host,
+                &problem,
+            );
+            let actual = HostData::from_tensor_handle(&client, out, HostDataType::F32);
+            // Use relaxed tolerance for quantized matmul: Q8S quantization introduces
+            // ~1/127 error per element, accumulated over k dot-product terms.
+            let quant_epsilon = 0.05;
+            assert_equals_approx(&actual, &expected, quant_epsilon).as_test_outcome()
         }
         ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
     }

@@ -46,7 +46,7 @@ fn matmul_epsilon(elems: &MatmulElems, safety_factor: f32) -> f32 {
 ///
 /// This is a naive CPU implementation, very slow on large payloads,
 /// not designed to be used for other purposes than testing.
-fn matmul_cpu_reference(lhs: &HostData, rhs: &HostData, problem: &MatmulProblem) -> HostData {
+pub fn matmul_cpu_reference(lhs: &HostData, rhs: &HostData, problem: &MatmulProblem) -> HostData {
     let m = problem.m;
     let n = problem.n;
     let k = problem.k;
