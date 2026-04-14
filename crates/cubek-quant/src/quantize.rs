@@ -183,7 +183,6 @@ pub fn launch_ref<R: Runtime>(
 ) -> Result<(), LaunchError> {
     let param_elem = ElemType::from_quant_param(scheme.param);
 
-    println!("{:?}", scheme);
     match scheme {
         QuantScheme {
             store: QuantStore::PackedU32(_),

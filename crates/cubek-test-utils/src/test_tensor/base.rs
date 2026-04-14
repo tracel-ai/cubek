@@ -191,7 +191,6 @@ impl TestInput {
             // Determine the correct storage type for the quantized output buffer
             let output_storage_type = match &scheme.store {
                 QuantStore::PackedU32(_) => {
-                    // Output is packed u32 — NOT Packed(I8, 4)
                     StorageType::Scalar(ElemType::UInt(cubecl::ir::UIntKind::U32))
                 }
                 QuantStore::PackedNative(_) | QuantStore::Native => {
@@ -246,10 +245,7 @@ impl TestInput {
             )
             .expect("Quantization failed");
 
-            // Keep the packed shape on the handle (e.g. [1, 64, 16] for Q8S PackedU32).
-            // The original float shape is stored in QuantizationInfo.shape, matching
-            // how burn's quantized_handles() separates packed data shape from the
-            // logical float shape passed to InputBinding::Quantized { shape }.
+            // Keep the packed shape on the handle
             tensor.handle = output_handle;
             tensor.quantization = Some(QuantizationInfo {
                 scheme,
