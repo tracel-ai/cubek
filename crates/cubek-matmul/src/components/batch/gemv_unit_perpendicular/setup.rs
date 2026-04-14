@@ -34,6 +34,7 @@ pub struct VecMatUnitPerpendicularBlueprint {
     // Should equal plane_dim * vector_size
     pub tile_dim: usize,
     pub hypercube_blueprint: HypercubeBlueprint,
+    pub check_bounds: bool,
 }
 
 impl Blueprint for VecMatUnitPerpendicularBlueprint {
@@ -84,6 +85,7 @@ impl BatchMatmulFamily<()> for VecMatUnitPerpendicularFamily {
         Ok(VecMatUnitPerpendicularConfig {
             plane_dim: device_props.hardware.plane_size_max,
             num_planes: blueprint.num_planes as u32,
+            check_bounds: blueprint.check_bounds,
         })
     }
 

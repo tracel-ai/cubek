@@ -123,6 +123,8 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatPlaneParallel<MP> {
         let vector_size = comptime![Ord::max(lhs.vector_size(), rhs.vector_size())];
         let size!(N) = vector_size;
 
+        let check_bounds = config.check_bounds;
+
         match config.plan {
             GemvKind::VecMatColMajor => execute_gemv::<LhsG<MP>, RhsG<MP>, AccG<MP>, AccR<MP>, N>(
                 lhs.view(VecLayout::new(lhs_batch, k as usize)),
@@ -134,6 +136,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatPlaneParallel<MP> {
                 config.plane_dim,
                 vector_size as u32,
                 MatrixLayout::ColMajor,
+                check_bounds,
             ),
             GemvKind::VecMatRowMajor => execute_gemv_transposed::<
                 Global<Lhs<MP>>,
@@ -151,6 +154,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatPlaneParallel<MP> {
                 k,
                 vector_size as u32,
                 MatrixLayout::RowMajor,
+                check_bounds,
             ),
             GemvKind::MatVecRowMajor => execute_gemv::<RhsG<MP>, LhsG<MP>, AccG<MP>, AccR<MP>, N>(
                 rhs.view(VecLayout::new(rhs_batch, k as usize)),
@@ -162,6 +166,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatPlaneParallel<MP> {
                 config.plane_dim,
                 vector_size as u32,
                 MatrixLayout::RowMajor,
+                check_bounds,
             ),
             GemvKind::MatVecColMajor => execute_gemv_transposed::<
                 Global<Rhs<MP>>,
@@ -179,6 +184,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatPlaneParallel<MP> {
                 k,
                 vector_size as u32,
                 MatrixLayout::ColMajor,
+                check_bounds,
             ),
         }
     }
@@ -195,6 +201,7 @@ fn execute_gemv<V: CubePrimitive, M: CubePrimitive, O: CubePrimitive, AccR: Nume
     #[comptime] plane_dim: u32,
     #[comptime] vector_size: u32,
     #[comptime] matrix_layout: MatrixLayout,
+    #[comptime] check_bounds: bool,
 ) {
     let plane_id = UNIT_POS_Y;
     let unit_id = UNIT_POS_X;
@@ -211,13 +218,23 @@ fn execute_gemv<V: CubePrimitive, M: CubePrimitive, O: CubePrimitive, AccR: Nume
         let k_base = swizzled_segment_index * plane_dim;
 
         let k_pos = (k_base + unit_id) * vector_size;
-        let vec_val = vec.read_checked(k_pos as usize);
 
-        let mat_val = match matrix_layout {
-            // mat=lhs
-            MatrixLayout::RowMajor => mat.read_checked((mn_pos, k_pos)),
-            // mat=rhs
-            MatrixLayout::ColMajor => mat.read_checked((k_pos, mn_pos)),
+        let vec_val = if comptime!(check_bounds) {
+            vec.read_checked(k_pos as usize)
+        } else {
+            vec.read_unchecked(k_pos as usize)
+        };
+
+        let mat_val = if comptime!(check_bounds) {
+            match matrix_layout {
+                MatrixLayout::RowMajor => mat.read_checked((mn_pos, k_pos)),
+                MatrixLayout::ColMajor => mat.read_checked((k_pos, mn_pos)),
+            }
+        } else {
+            match matrix_layout {
+                MatrixLayout::RowMajor => mat.read_unchecked((mn_pos, k_pos)),
+                MatrixLayout::ColMajor => mat.read_unchecked((k_pos, mn_pos)),
+            }
         };
 
         acc += Vector::cast_from(vec_val) * Vector::cast_from(mat_val);
@@ -232,7 +249,11 @@ fn execute_gemv<V: CubePrimitive, M: CubePrimitive, O: CubePrimitive, AccR: Nume
     };
 
     if unit_id == 0 {
-        out.write_checked(mn_pos as usize, O::cast_from(sum));
+        if comptime!(check_bounds) {
+            out.write_checked(mn_pos as usize, O::cast_from(sum));
+        } else {
+            out.write(mn_pos as usize, O::cast_from(sum));
+        }
     }
 }
 
@@ -253,6 +274,7 @@ fn execute_gemv_transposed<
     k_dim: u32,
     #[comptime] vector_size: u32,
     #[comptime] matrix_layout: MatrixLayout,
+    #[comptime] check_bounds: bool,
 ) {
     let mn_pos = mn_id * vector_size;
     let num_tiles_k = k_dim / vector_size;
@@ -268,14 +290,31 @@ fn execute_gemv_transposed<
     for tile_index in 0..num_tiles_k {
         let global_k_pos = tile_index * vector_size;
 
-        let vec_val = vec.read_checked(global_k_pos as usize);
+        let vec_val = if comptime!(check_bounds) {
+            vec.read_checked(global_k_pos as usize)
+        } else {
+            vec.read_unchecked(global_k_pos as usize)
+        };
 
         for segment_iter in 0..vector_size {
-            let vector = match matrix_layout {
-                // Rhs
-                MatrixLayout::RowMajor => mat.read_checked((global_k_pos + segment_iter, mn_pos)),
-                // Lhs
-                MatrixLayout::ColMajor => mat.read_checked((mn_pos, global_k_pos + segment_iter)),
+            let vector = if comptime!(check_bounds) {
+                match matrix_layout {
+                    MatrixLayout::RowMajor => {
+                        mat.read_checked((global_k_pos + segment_iter, mn_pos))
+                    }
+                    MatrixLayout::ColMajor => {
+                        mat.read_checked((mn_pos, global_k_pos + segment_iter))
+                    }
+                }
+            } else {
+                match matrix_layout {
+                    MatrixLayout::RowMajor => {
+                        mat.read_unchecked((global_k_pos + segment_iter, mn_pos))
+                    }
+                    MatrixLayout::ColMajor => {
+                        mat.read_unchecked((mn_pos, global_k_pos + segment_iter))
+                    }
+                }
             };
 
             #[unroll]
@@ -301,6 +340,10 @@ fn execute_gemv_transposed<
         let acc = accs[segment_iter as usize];
         let sum = Vector::vector_sum(acc);
 
-        out.write_checked((mn_pos + segment_iter) as usize, O::cast_from(sum));
+        if comptime!(check_bounds) {
+            out.write_checked((mn_pos + segment_iter) as usize, O::cast_from(sum));
+        } else {
+            out.write((mn_pos + segment_iter) as usize, O::cast_from(sum));
+        }
     }
 }

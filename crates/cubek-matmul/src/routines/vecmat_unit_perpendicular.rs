@@ -61,6 +61,9 @@ impl Routine<()> for GemvUnitPerpendicularRoutine {
                 let max_planes_for_swizzle = problem.k / tile_dim;
                 let num_planes = max(1, min(target_num_planes, max_planes_for_swizzle));
 
+                let working_planes = problem.n.div_ceil(tile_dim);
+                let check_bounds = !working_planes.is_multiple_of(num_planes);
+
                 let blueprint = VecMatUnitPerpendicularBlueprint {
                     dtypes: dtypes.clone(),
                     num_planes,
@@ -69,6 +72,7 @@ impl Routine<()> for GemvUnitPerpendicularRoutine {
                         .cube_count_strategy(CubeCountStrategy::Flattened)
                         .global_order(GlobalOrder::RowMajor)
                         .build(),
+                    check_bounds,
                 };
 
                 Ok(ExpandInfo { blueprint, dtypes })

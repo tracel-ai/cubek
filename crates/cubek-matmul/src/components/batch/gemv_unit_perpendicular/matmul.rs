@@ -105,6 +105,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatUnitPerpendicular<MP> {
     ) {
         let num_planes = config.num_planes;
         let plane_dim = config.plane_dim;
+        let check_bounds = config.check_bounds;
 
         let lhs = Args::view_lhs(state);
         let rhs = Args::view_rhs(state);
@@ -146,7 +147,11 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatUnitPerpendicular<MP> {
             let swizzled_tile_index = (tile_index + plane_id) % num_tiles;
             let k_base = swizzled_tile_index * plane_dim;
 
-            let local_lhs_vec = lhs.read_checked((0, (k_base + unit_id) * vector_size));
+            let local_lhs_vec = if comptime!(check_bounds) {
+                lhs.read_checked((0, (k_base + unit_id) * vector_size))
+            } else {
+                lhs.read_unchecked((0, (k_base + unit_id) * vector_size))
+            };
 
             for plane_iter in 0..plane_dim {
                 let lhs_vec = shuffle(local_lhs_vec, plane_iter, plane_dim);
@@ -154,13 +159,21 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatUnitPerpendicular<MP> {
 
                 for vec_iter in 0..NA::value() as u32 {
                     let lhs_scalar = lhs_vec[vec_iter as usize];
-                    let rhs_vec = rhs.read_checked((rhs_k_vec_base + vec_iter, vectorized_pos_n));
+                    let rhs_vec = if comptime!(check_bounds) {
+                        rhs.read_checked((rhs_k_vec_base + vec_iter, vectorized_pos_n))
+                    } else {
+                        rhs.read_unchecked((rhs_k_vec_base + vec_iter, vectorized_pos_n))
+                    };
                     acc += Vector::cast_from(lhs_scalar) * Vector::cast_from(rhs_vec);
                 }
             }
         }
 
-        out.write_checked((0, vectorized_pos_n), Vector::cast_from(acc));
+        if comptime!(check_bounds) {
+            out.write_checked((0, vectorized_pos_n), Vector::cast_from(acc));
+        } else {
+            out.write((0, vectorized_pos_n), Vector::cast_from(acc));
+        }
     }
 }
 

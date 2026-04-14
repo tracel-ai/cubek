@@ -42,6 +42,7 @@ pub struct VecMatPlaneParallelConfig {
     pub(crate) plane_dim: u32,
     pub(crate) num_planes: u32,
     pub(crate) plan: GemvKind,
+    pub(crate) check_bounds: bool,
 }
 
 impl BatchConfig for VecMatPlaneParallelConfig {
