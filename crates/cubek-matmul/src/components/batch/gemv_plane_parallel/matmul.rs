@@ -252,16 +252,26 @@ fn execute_gemv<V: CubePrimitive, M: CubePrimitive, O: CubePrimitive, AccR: Nume
     let sum = Vector::vector_sum(acc);
 
     let sum = if comptime!(plane_dim > 1) {
-        plane_sum(sum)
+        O::cast_from(plane_sum(sum))
     } else {
-        sum
+        O::cast_from(sum)
     };
 
-    if unit_id == 0 {
+    let write_index = mn_pos as usize;
+
+    if comptime!(plane_dim == 1) {
         if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
-            out.write_checked(mn_pos as usize, O::cast_from(sum));
+            out.write_checked(write_index, sum);
         } else {
-            out.write(mn_pos as usize, O::cast_from(sum));
+            out.write(write_index, sum);
+        }
+    } else {
+        if unit_id == 0 {
+            if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
+                out.write_checked(write_index, sum);
+            } else {
+                out.write(write_index, sum);
+            }
         }
     }
 }
@@ -287,8 +297,13 @@ fn execute_gemv_transposed<
 ) {
     let mn_pos = mn_id * vector_size;
 
-    if comptime!(matches!(check_bounds, CheckBounds::Terminate)) && mn_pos as usize >= out.shape() {
-        terminate!();
+    // The first if statement is running at comptime.
+    if comptime!(matches!(check_bounds, CheckBounds::Terminate)) {
+        // This is a runtime cond.
+        let should_terminate = mn_pos as usize >= out.shape();
+        if should_terminate {
+            terminate!();
+        }
     }
 
     let num_tiles_k = k_dim / vector_size;
@@ -352,12 +367,13 @@ fn execute_gemv_transposed<
     // Write back
     for segment_iter in 0..vector_size {
         let acc = accs[segment_iter as usize];
-        let sum = Vector::vector_sum(acc);
+        let sum = O::cast_from(Vector::vector_sum(acc));
+        let index = (mn_pos + segment_iter) as usize;
 
         if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
-            out.write_checked((mn_pos + segment_iter) as usize, O::cast_from(sum));
+            out.write_checked(index, sum);
         } else {
-            out.write((mn_pos + segment_iter) as usize, O::cast_from(sum));
+            out.write(index, sum);
         }
     }
 }
