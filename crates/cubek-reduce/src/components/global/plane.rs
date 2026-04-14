@@ -32,7 +32,6 @@ impl GlobalFullPlaneReduce {
                 terminate!();
             }
         }
-        comptime!(println!("Vec mode:: {:?}", vectorization_mode));
         let write_index = CUBE_POS * CUBE_DIM_Y as usize + UNIT_POS_Y as usize;
 
         let mut writer =
