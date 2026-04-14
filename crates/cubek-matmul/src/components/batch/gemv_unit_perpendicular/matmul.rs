@@ -135,10 +135,8 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatUnitPerpendicular<MP> {
         let unit_pos_n = absolute_plane_id * plane_dim + unit_id;
         let vectorized_pos_n = unit_pos_n * vector_size;
 
-        if comptime!(matches!(check_bounds, CheckBounds::Terminate)) {
-            if vectorized_pos_n >= n {
-                terminate!();
-            }
+        if comptime!(matches!(check_bounds, CheckBounds::Terminate)) && vectorized_pos_n >= n {
+            terminate!();
         }
 
         let num_tiles = if comptime!(matches!(check_bounds, CheckBounds::Checked)) {

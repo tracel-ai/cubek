@@ -209,10 +209,8 @@ fn execute_gemv<V: CubePrimitive, M: CubePrimitive, O: CubePrimitive, AccR: Nume
 
     let mn_pos = cube_id * num_planes + plane_id;
 
-    if comptime!(matches!(check_bounds, CheckBounds::Terminate)) {
-        if mn_pos as usize >= out.shape() {
-            terminate!();
-        }
+    if comptime!(matches!(check_bounds, CheckBounds::Terminate)) && mn_pos as usize >= out.shape() {
+        terminate!();
     }
 
     let segment_size = plane_dim * vector_size;
@@ -285,10 +283,8 @@ fn execute_gemv_transposed<
 ) {
     let mn_pos = mn_id * vector_size;
 
-    if comptime!(matches!(check_bounds, CheckBounds::Terminate)) {
-        if mn_pos as usize >= out.shape() {
-            terminate!();
-        }
+    if comptime!(matches!(check_bounds, CheckBounds::Terminate)) && mn_pos as usize >= out.shape() {
+        terminate!();
     }
 
     let num_tiles_k = k_dim / vector_size;
