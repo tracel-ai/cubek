@@ -12,6 +12,7 @@ use crate::{
     routines::BlueprintStrategy,
     {components::CubeDimResource, launch::RuntimeConfig},
 };
+use cubecl::ir::HardwareProperties;
 use cubecl::prelude::*;
 use cubek_std::cube_count::CubeCountPlan;
 use std::fmt::Display;
@@ -149,4 +150,15 @@ pub struct DeviceSettings<R: Runtime> {
     pub plane_dim: u32,
     pub vector_sizes: MatmulVectorSizes,
     pub max_cube_count: (u32, u32, u32),
+}
+
+pub(crate) fn num_concurrent_planes(properties: &HardwareProperties) -> usize {
+    match properties.num_cpu_cores {
+        Some(num_cores) => num_cores as usize,
+        // We use the number of conccurrent planes that can work per SM at the same time on GPUs.
+        //
+        // This is typically the number of warp scheduler on Nvidia or the number of SIMD units
+        // per CU on AMD.
+        None => 4,
+    }
 }

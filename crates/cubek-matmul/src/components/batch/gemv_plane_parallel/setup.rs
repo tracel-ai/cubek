@@ -10,7 +10,7 @@ use crate::{
     components::{
         CubeDimResource,
         batch::{
-            BatchMatmulFamily,
+            BatchMatmulFamily, CheckBounds,
             gemv_plane_parallel::{
                 GemvKind, VecMatPlaneParallel, VecMatPlaneParallelConfig, matmul_entry,
             },
@@ -35,6 +35,7 @@ pub struct GemvPlaneParallelBlueprint {
     pub tile_dim: usize,
     pub hypercube_blueprint: HypercubeBlueprint,
     pub kind: GemvKind,
+    pub check_bounds: CheckBounds,
 }
 
 impl Blueprint for GemvPlaneParallelBlueprint {
@@ -86,6 +87,7 @@ impl BatchMatmulFamily<()> for GemvPlaneParallelFamily {
             plane_dim: device_props.hardware.plane_size_max,
             num_planes: blueprint.num_planes as u32,
             plan: blueprint.kind,
+            check_bounds: blueprint.check_bounds,
         })
     }
 

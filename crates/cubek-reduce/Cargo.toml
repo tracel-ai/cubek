@@ -18,9 +18,6 @@ version.workspace = true
 default = ["std", "cubecl/default"]
 std = ["cubecl/std", "thiserror/std"]
 
-full = ["extended"]
-extended = []
-
 [dependencies]
 cubecl = { workspace = true }
 cubek-std = { path = "../cubek-std", version = "=0.2.0-pre.3", default-features = false }

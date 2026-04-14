@@ -7,25 +7,27 @@ use cubek_std::cube_count::{CubeCountPlan, CubeCountStrategy, GlobalOrder, Hyper
 
 use crate::{
     components::batch::{
-        BatchMatmulFamily,
+        BatchMatmulFamily, CheckBounds,
         gemv_unit_perpendicular::{
             VecMatUnitPerpendicularBlueprint, VecMatUnitPerpendicularFamily,
         },
     },
     definition::{MatmulElems, MatmulProblem, MatmulSetupError},
-    routines::{BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine},
+    routines::{
+        BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine, num_concurrent_planes,
+    },
 };
 
 pub struct GemvUnitPerpendicularRoutine {}
 
 #[derive(Default, Clone)]
 pub struct GemvUnitPerpendicularStrategy {
-    pub target_num_planes: usize,
+    pub target_num_planes: Option<usize>,
 }
 
 impl Display for GemvUnitPerpendicularStrategy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "_{}", self.target_num_planes)
+        write!(f, "_{:?}", self.target_num_planes)
     }
 }
 
@@ -41,6 +43,7 @@ impl Routine<()> for GemvUnitPerpendicularRoutine {
         strategy: &BlueprintStrategy<(), Self>,
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+        let properties = device_settings.client.properties();
 
         match strategy {
             BlueprintStrategy::Forced(blueprint) => Ok(ExpandInfo {
@@ -50,8 +53,29 @@ impl Routine<()> for GemvUnitPerpendicularRoutine {
             BlueprintStrategy::Inferred(strategy) => {
                 let tile_dim =
                     device_settings.plane_dim as usize * device_settings.vector_sizes.rhs;
-                let max_planes_for_swizzle = problem.k / tile_dim;
-                let num_planes = max(1, min(strategy.target_num_planes, max_planes_for_swizzle));
+                let target_num_planes = match strategy.target_num_planes {
+                    Some(num_planes) => num_planes,
+                    None => num_concurrent_planes(&properties.hardware),
+                };
+
+                let max_planes_for_swizzle = problem.k.div_ceil(tile_dim);
+                let num_planes = max(1, min(target_num_planes, max_planes_for_swizzle));
+
+                let working_planes = problem.n.div_ceil(tile_dim);
+                let aligned_n = problem.n.is_multiple_of(tile_dim);
+                let aligned_k = problem.k.is_multiple_of(tile_dim);
+                let check_bounds = if !aligned_n || !aligned_k {
+                    // The last tile along n or k has OOB positions. Units must stay
+                    // alive for plane_shuffle, so use checked reads/writes instead of
+                    // terminating. OOB reads return zero (no contribution to acc).
+                    CheckBounds::Checked
+                } else if !working_planes.is_multiple_of(num_planes) {
+                    // All work is fully valid, but some planes in the last cube are
+                    // entirely idle and can be terminated.
+                    CheckBounds::Terminate
+                } else {
+                    CheckBounds::None
+                };
 
                 let blueprint = VecMatUnitPerpendicularBlueprint {
                     dtypes: dtypes.clone(),
@@ -61,6 +85,7 @@ impl Routine<()> for GemvUnitPerpendicularRoutine {
                         .cube_count_strategy(CubeCountStrategy::Flattened)
                         .global_order(GlobalOrder::RowMajor)
                         .build(),
+                    check_bounds,
                 };
 
                 Ok(ExpandInfo { blueprint, dtypes })

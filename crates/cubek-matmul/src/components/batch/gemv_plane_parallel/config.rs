@@ -1,7 +1,10 @@
 use cubek_std::MatrixLayout;
 
 use crate::{
-    components::{batch::BatchConfig, global::memory::GlobalLayoutConfig},
+    components::{
+        batch::{BatchConfig, CheckBounds},
+        global::memory::GlobalLayoutConfig,
+    },
     definition::{MatmulProblem, MatmulSetupError},
 };
 
@@ -42,6 +45,7 @@ pub struct VecMatPlaneParallelConfig {
     pub(crate) plane_dim: u32,
     pub(crate) num_planes: u32,
     pub(crate) plan: GemvKind,
+    pub(crate) check_bounds: CheckBounds,
 }
 
 impl BatchConfig for VecMatPlaneParallelConfig {
