@@ -1,15 +1,10 @@
-use std::marker::PhantomData;
-
 use cubecl::{define_size, prelude::*};
-use cubek_std::{
-    MatrixLayout,
-    tile::{
-        Strided, StridedTile,
-        mma::{MmaFragmentReader, MmaStageReader, MmaStageWriter},
-    },
-};
+use cubek_std::MatrixLayout;
 
-use crate::components::tile::{TileMatmul, TileStorage, Tilex, mma::config::MmaMatmulConfig};
+use crate::components::tile::{
+    TileMatmul, Tilex, mma::config::MmaMatmulConfig,
+    tilex_allocate, tilex_execute, tilex_load, tilex_write,
+};
 use cubecl::{cmma::MmaDefinition, ir::MatrixIdent};
 
 /// Uses one plane to perform a small matmul using accelerated instructions, with manual register
@@ -53,62 +48,62 @@ impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
         lhs: &Tilex<L, VL, Self::Scope, ReadWrite>,
         rhs: &Tilex<R, VR, Self::Scope, ReadWrite>,
         acc: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
-        #[comptime] config: Self::Config,
+        #[comptime] _config: Self::Config,
     ) {
-        todo!()
+        tilex_execute(lhs, rhs, acc);
     }
 
     fn allocate_lhs(
         #[comptime] layout: MatrixLayout,
-        #[comptime] config: Self::Config,
+        #[comptime] _config: Self::Config,
     ) -> Tilex<L, VL, Self::Scope, ReadWrite> {
-        todo!()
+        tilex_allocate(layout)
     }
 
     fn allocate_rhs(
         #[comptime] layout: MatrixLayout,
-        #[comptime] config: Self::Config,
+        #[comptime] _config: Self::Config,
     ) -> Tilex<R, VR, Self::Scope, ReadWrite> {
-        todo!()
+        tilex_allocate(layout)
     }
 
     fn allocate_acc(
         #[comptime] layout: MatrixLayout,
-        #[comptime] config: Self::Config,
+        #[comptime] _config: Self::Config,
     ) -> Tilex<A, VA, Self::Scope, ReadWrite> {
-        todo!()
+        tilex_allocate(layout)
     }
 
     fn load_lhs<E: Numeric, ES: Size>(
         tile: &Tilex<E, ES, Self::Scope, ReadOnly>,
         lhs: &mut Tilex<L, VL, Self::Scope, ReadWrite>,
-        #[comptime] config: Self::Config,
+        #[comptime] _config: Self::Config,
     ) {
-        todo!()
+        tilex_load(tile, lhs);
     }
 
     fn load_rhs<E: Numeric, ES: Size>(
         tile: &Tilex<E, ES, Self::Scope, ReadOnly>,
         rhs: &mut Tilex<R, VR, Self::Scope, ReadWrite>,
-        #[comptime] config: Self::Config,
+        #[comptime] _config: Self::Config,
     ) {
-        todo!()
+        tilex_load(tile, rhs);
     }
 
     fn load_acc<E: Numeric, ES: Size>(
         tile: &Tilex<E, ES, Self::Scope, ReadOnly>,
         acc: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
-        #[comptime] config: Self::Config,
+        #[comptime] _config: Self::Config,
     ) {
-        todo!()
+        tilex_load(tile, acc);
     }
 
     fn write_results<E: Numeric, ES: Size>(
         tile: &mut Tilex<E, ES, Self::Scope, ReadWrite>,
         out: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
-        #[comptime] config: Self::Config,
+        #[comptime] _config: Self::Config,
     ) {
-        todo!()
+        tilex_write(tile, out);
     }
 }
 

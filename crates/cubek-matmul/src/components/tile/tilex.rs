@@ -116,6 +116,38 @@ pub fn tile_copy<F: Numeric, VF: Size, T: Numeric, VT: Size, Scope>(
     // CmmaStageReader::<Strided>::load_fragment(from, to, ComptimeOption::new_None());
 }
 
+#[cube]
+pub fn tilex_execute<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size, Scope>(
+    lhs: &Tilex<L, VL, Scope, ReadWrite>,
+    rhs: &Tilex<R, VR, Scope, ReadWrite>,
+    acc: &mut Tilex<A, VA, Scope, ReadWrite>,
+) {
+    todo!()
+}
+
+#[cube]
+pub fn tilex_allocate<N: Numeric, V: Size, Scope>(
+    #[comptime] layout: MatrixLayout,
+) -> Tilex<N, V, Scope, ReadWrite> {
+    todo!()
+}
+
+#[cube]
+pub fn tilex_load<E: Numeric, ES: Size, N: Numeric, V: Size, Scope>(
+    tile: &Tilex<E, ES, Scope, ReadOnly>,
+    dest: &mut Tilex<N, V, Scope, ReadWrite>,
+) {
+    todo!()
+}
+
+#[cube]
+pub fn tilex_write<E: Numeric, ES: Size, A: Numeric, VA: Size, Scope>(
+    tile: &mut Tilex<E, ES, Scope, ReadWrite>,
+    out: &mut Tilex<A, VA, Scope, ReadWrite>,
+) {
+    todo!()
+}
+
 #[derive(CubeType)]
 pub enum TileStorage<N: Numeric, VN: Size, IO: SliceVisibility> {
     GlobalMemory(Slice<Vector<N, VN>, IO>),
@@ -123,6 +155,9 @@ pub enum TileStorage<N: Numeric, VN: Size, IO: SliceVisibility> {
     LocalMemory(Slice<Vector<N, VN>, IO>),
     Cmma(Matrix<N>),
     Mma(Array<Vector<N, VN>>),
+    Register(Array<N>),
+    PlaneVec(Array<Vector<N, VN>>),
+    Interleaved(Array<N>),
     Broadcasted(Value<N>),
     None,
 }

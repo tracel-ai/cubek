@@ -1,17 +1,10 @@
-use std::marker::PhantomData;
-
 use cubecl::prelude::*;
-use cubek_std::{
-    tile::Strided,
-    {MatrixLayout, as_cmma_layout},
-};
+use cubek_std::MatrixLayout;
 
 use crate::components::tile::{
-    Plane, SharedTileConfig, TileLayout, TileMatmul, TileStorage, Tilex,
-    cmma::reader::{CmmaFragmentReader, CmmaStageReader},
-    tile_copy, tile_matmul,
+    Plane, SharedTileConfig, TileMatmul, Tilex,
+    tilex_allocate, tilex_execute, tilex_load, tilex_write,
 };
-use cubecl::cmma;
 
 /// Uses one plane to perform a small matmul using accelerated instructions.
 pub struct CmmaMatmul {}
@@ -43,28 +36,28 @@ impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
         acc: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        todo!()
+        tilex_execute(lhs, rhs, acc);
     }
 
     fn allocate_lhs(
         #[comptime] layout: MatrixLayout,
-        #[comptime] config: Self::Config,
+        #[comptime] _config: Self::Config,
     ) -> Tilex<L, VL, Self::Scope, ReadWrite> {
-        todo!()
+        tilex_allocate(layout)
     }
 
     fn allocate_rhs(
         #[comptime] layout: MatrixLayout,
-        #[comptime] config: Self::Config,
+        #[comptime] _config: Self::Config,
     ) -> Tilex<R, VR, Self::Scope, ReadWrite> {
-        todo!()
+        tilex_allocate(layout)
     }
 
     fn allocate_acc(
         #[comptime] layout: MatrixLayout,
-        #[comptime] config: Self::Config,
+        #[comptime] _config: Self::Config,
     ) -> Tilex<A, VA, Self::Scope, ReadWrite> {
-        todo!()
+        tilex_allocate(layout)
     }
 
     fn load_lhs<E: Numeric, ES: Size>(
@@ -72,7 +65,7 @@ impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
         lhs: &mut Tilex<L, VL, Self::Scope, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        todo!()
+        tilex_load(tile, lhs);
     }
 
     fn load_rhs<E: Numeric, ES: Size>(
@@ -80,7 +73,7 @@ impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
         rhs: &mut Tilex<R, VR, Self::Scope, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        todo!()
+        tilex_load(tile, rhs);
     }
 
     fn load_acc<E: Numeric, ES: Size>(
@@ -88,7 +81,7 @@ impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
         acc: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        todo!()
+        tilex_load(tile, acc);
     }
 
     fn write_results<E: Numeric, ES: Size>(
@@ -96,6 +89,6 @@ impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
         out: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        todo!()
+        tilex_write(tile, out);
     }
 }
