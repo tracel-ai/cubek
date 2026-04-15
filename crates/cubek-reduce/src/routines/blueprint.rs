@@ -34,8 +34,6 @@ pub struct CubeBlueprint {
     pub num_shared_accumulators: usize,
     /// Whether we use plane instructions to merge accumulators.
     pub use_planes: bool,
-    /// If true, we ceil the used cube_dim x to runtime plane_dim
-    pub plane_dim_ceil: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

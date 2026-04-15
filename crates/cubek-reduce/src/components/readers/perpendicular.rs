@@ -2,7 +2,7 @@ use crate::{
     BoundChecks, ReduceInstruction, ReducePrecision, VectorizationMode,
     components::{
         args::NumericLine,
-        global::runtime_cube_dim_x,
+        global::plane::runtime_cube_dim_x,
         instructions::{ReduceCoordinate, ReduceRequirements},
         readers::bound_checks::ReaderBoundChecks,
     },
@@ -76,19 +76,15 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
     }
 
     pub fn length_cube(&self) -> usize {
-        let cube_dim = self.plane_dim_ceiled * CUBE_DIM_Y;
-        self.shape.div_ceil(cube_dim as usize)
+        self.shape.div_ceil(CUBE_DIM as usize)
     }
 
     pub fn read_cube(
         &self,
         vector_index: usize,
     ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
-        let cube_dim = self.plane_dim_ceiled * CUBE_DIM_Y * CUBE_DIM_Z;
-        let plane_pos = vector_index * cube_dim as usize;
-        let unit_pos = (UNIT_POS_X
-            + UNIT_POS_Y * self.plane_dim_ceiled
-            + UNIT_POS_Z * self.plane_dim_ceiled * CUBE_DIM_Y) as usize;
+        let plane_pos = vector_index * CUBE_DIM as usize;
+        let unit_pos = UNIT_POS as usize;
         let pos = plane_pos + unit_pos;
         let offset = plane_pos * self.vector_offset_stride
             + unit_pos * self.vector_offset_stride

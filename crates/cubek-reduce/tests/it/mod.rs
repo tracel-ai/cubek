@@ -159,7 +159,6 @@ macro_rules! testgen_reduce {
                                 bound_checks: BoundChecks::Mask,
                                 num_shared_accumulators: 8,
                                 use_planes: false,
-                                plane_dim_ceil: true
                             },
                             CubeDim::new_2d(8, 1),
                         )

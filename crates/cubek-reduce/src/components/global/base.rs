@@ -42,12 +42,3 @@ pub fn idle_check<P: ReducePrecision, Out: NumericLine>(
         ComptimeOption::new_None()
     }
 }
-
-#[cube]
-pub fn runtime_cube_dim_x(#[comptime] plane_dim_ceil: bool) -> u32 {
-    if plane_dim_ceil {
-        min(CUBE_DIM_X, PLANE_DIM)
-    } else {
-        CUBE_DIM_X
-    }
-}
