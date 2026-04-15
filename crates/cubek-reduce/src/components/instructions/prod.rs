@@ -15,7 +15,7 @@ impl ReduceFamily for Prod {
 
 #[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for Prod {
-    type AccumulatorItem = Vector<P::EA, P::SI>;
+    type Accumulator = Vector<P::EA, P::SI>;
     type SharedAccumulator = SharedMemory<Vector<P::EA, P::SI>>;
     type Config = ();
 
@@ -30,14 +30,14 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Prod {
         Vector::empty().fill(P::EI::from_int(1))
     }
 
-    fn null_accumulator(_this: &Self) -> Self::AccumulatorItem {
+    fn null_accumulator(_this: &Self) -> Self::Accumulator {
         Vector::empty().fill(P::EA::from_int(1))
     }
 
     fn assign_accumulator(
         _this: &Self,
-        destination: &mut Self::AccumulatorItem,
-        source: &Self::AccumulatorItem,
+        destination: &mut Self::Accumulator,
+        source: &Self::Accumulator,
     ) {
         *destination = *source;
     }
@@ -53,11 +53,11 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Prod {
     }
     fn reduce(
         _this: &Self,
-        accumulator: &Self::AccumulatorItem,
+        accumulator: &Self::Accumulator,
         item: Vector<P::EI, P::SI>,
         _coordinate: ReduceCoordinate<P::SI>,
         #[comptime] use_planes: ReduceStep,
-    ) -> Self::AccumulatorItem {
+    ) -> Self::Accumulator {
         let item = Vector::cast_from(item);
         if let ReduceStep::Plane = use_planes {
             *accumulator * plane_prod(item)
@@ -68,15 +68,15 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Prod {
 
     fn fuse_accumulators(
         _this: &Self,
-        lhs: Self::AccumulatorItem,
-        rhs: Self::AccumulatorItem,
-    ) -> Self::AccumulatorItem {
+        lhs: Self::Accumulator,
+        rhs: Self::Accumulator,
+    ) -> Self::Accumulator {
         lhs * rhs
     }
 
     fn merge_vector<Out: Numeric>(
         _this: &Self,
-        accumulator: Self::AccumulatorItem,
+        accumulator: Self::Accumulator,
         _shape_axis_reduce: usize,
     ) -> Out {
         let mut prod = P::EA::from_int(1);
@@ -89,7 +89,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Prod {
 
     fn to_output_perpendicular<Out: Numeric>(
         _this: &Self,
-        accumulator: Self::AccumulatorItem,
+        accumulator: Self::Accumulator,
         _shape_axis_reduce: usize,
     ) -> Vector<Out, P::SI> {
         Vector::cast_from(accumulator)

@@ -12,7 +12,7 @@ impl ReduceFamily for Sum {
 
 #[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
-    type AccumulatorItem = Vector<P::EA, P::SI>;
+    type Accumulator = Vector<P::EA, P::SI>;
     type SharedAccumulator = SharedMemory<Vector<P::EA, P::SI>>;
     type Config = ();
 
@@ -27,14 +27,14 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
         Vector::empty().fill(P::EI::from_int(0))
     }
 
-    fn null_accumulator(_this: &Self) -> Self::AccumulatorItem {
+    fn null_accumulator(_this: &Self) -> Self::Accumulator {
         Vector::empty().fill(P::EA::from_int(0))
     }
 
     fn assign_accumulator(
         _this: &Self,
-        destination: &mut Self::AccumulatorItem,
-        source: &Self::AccumulatorItem,
+        destination: &mut Self::Accumulator,
+        source: &Self::Accumulator,
     ) {
         *destination = *source;
     }
@@ -51,11 +51,11 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
 
     fn reduce(
         _this: &Self,
-        accumulator: &Self::AccumulatorItem,
+        accumulator: &Self::Accumulator,
         item: Vector<P::EI, P::SI>,
         _coordinate: ReduceCoordinate<P::SI>,
         #[comptime] plane_reduce: ReduceStep,
-    ) -> Self::AccumulatorItem {
+    ) -> Self::Accumulator {
         match plane_reduce {
             ReduceStep::Plane => *accumulator + plane_sum(Vector::cast_from(item)),
             ReduceStep::Identity => *accumulator + Vector::cast_from(item),
@@ -64,15 +64,15 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
 
     fn fuse_accumulators(
         _this: &Self,
-        lhs: Self::AccumulatorItem,
-        rhs: Self::AccumulatorItem,
-    ) -> Self::AccumulatorItem {
+        lhs: Self::Accumulator,
+        rhs: Self::Accumulator,
+    ) -> Self::Accumulator {
         lhs + rhs
     }
 
     fn merge_vector<Out: Numeric>(
         _this: &Self,
-        accumulator: Self::AccumulatorItem,
+        accumulator: Self::Accumulator,
         _shape_axis_reduce: usize,
     ) -> Out {
         let sum = Vector::vector_sum(accumulator);
@@ -82,7 +82,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
 
     fn to_output_perpendicular<Out: Numeric>(
         _this: &Self,
-        accumulator: Self::AccumulatorItem,
+        accumulator: Self::Accumulator,
         _shape_axis_reduce: usize,
     ) -> Vector<Out, P::SI> {
         Vector::cast_from(accumulator)

@@ -17,7 +17,7 @@ impl ReduceFamily for Min {
 
 #[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for Min {
-    type AccumulatorItem = Vector<P::EA, P::SI>;
+    type Accumulator = Vector<P::EA, P::SI>;
     type SharedAccumulator = SharedMemory<Vector<P::EA, P::SI>>;
     type Config = ();
 
@@ -32,14 +32,14 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
         Vector::empty().fill(P::EI::max_value())
     }
 
-    fn null_accumulator(_this: &Self) -> Self::AccumulatorItem {
+    fn null_accumulator(_this: &Self) -> Self::Accumulator {
         Vector::empty().fill(P::EA::max_value())
     }
 
     fn assign_accumulator(
         _this: &Self,
-        destination: &mut Self::AccumulatorItem,
-        source: &Self::AccumulatorItem,
+        destination: &mut Self::Accumulator,
+        source: &Self::Accumulator,
     ) {
         *destination = *source;
     }
@@ -56,11 +56,11 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
 
     fn reduce(
         _this: &Self,
-        accumulator: &Self::AccumulatorItem,
+        accumulator: &Self::Accumulator,
         item: Vector<P::EI, P::SI>,
         _coordinate: ReduceCoordinate<P::SI>,
         #[comptime] use_planes: ReduceStep,
-    ) -> Self::AccumulatorItem {
+    ) -> Self::Accumulator {
         if let ReduceStep::Plane = use_planes {
             let candidate_item = Vector::cast_from(plane_min(item));
             select_many(
@@ -76,15 +76,15 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
 
     fn fuse_accumulators(
         _this: &Self,
-        lhs: Self::AccumulatorItem,
-        rhs: Self::AccumulatorItem,
-    ) -> Self::AccumulatorItem {
+        lhs: Self::Accumulator,
+        rhs: Self::Accumulator,
+    ) -> Self::Accumulator {
         select_many(lhs.less_than(rhs), lhs, rhs)
     }
 
     fn merge_vector<Out: Numeric>(
         _this: &Self,
-        accumulator: Self::AccumulatorItem,
+        accumulator: Self::Accumulator,
         _shape_axis_reduce: usize,
     ) -> Out {
         let mut min = P::EA::max_value();
@@ -98,7 +98,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
 
     fn to_output_perpendicular<Out: Numeric>(
         _this: &Self,
-        accumulator: Self::AccumulatorItem,
+        accumulator: Self::Accumulator,
         _shape_axis_reduce: usize,
     ) -> Vector<Out, P::SI> {
         Vector::cast_from(accumulator)

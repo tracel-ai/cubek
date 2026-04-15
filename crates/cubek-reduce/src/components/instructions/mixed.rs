@@ -169,7 +169,7 @@ impl<In: Numeric, N: Size> SharedAccumulator for DynamicAccumulator<In, N> {
 
 #[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
-    type AccumulatorItem = DynamicAccumulatorItem<P::EA, P::SI>;
+    type Accumulator = DynamicAccumulatorItem<P::EA, P::SI>;
     type SharedAccumulator = DynamicAccumulator<P::EA, P::SI>;
     type Config = ReduceOperationConfig;
 
@@ -216,7 +216,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
         }
     }
 
-    fn null_accumulator(this: &Self) -> Self::AccumulatorItem {
+    fn null_accumulator(this: &Self) -> Self::Accumulator {
         match this {
             ReduceOperation::Sum(sum) => {
                 let elements = <Sum as ReduceInstruction<P>>::null_accumulator(sum);
@@ -295,7 +295,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
 
     fn read_accumulator(
         this: &Self,
-        accumulator: &Self::AccumulatorItem,
+        accumulator: &Self::Accumulator,
     ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
         match this {
             ReduceOperation::Sum(sum) => {
@@ -335,8 +335,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
     #[allow(unused_mut)]
     fn assign_accumulator(
         _this: &Self,
-        destination: &mut Self::AccumulatorItem,
-        source: &Self::AccumulatorItem,
+        destination: &mut Self::Accumulator,
+        source: &Self::Accumulator,
     ) {
         destination.elements = source.elements;
         let args = &mut destination.args;
@@ -348,11 +348,11 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
 
     fn reduce(
         this: &Self,
-        accumulator: &Self::AccumulatorItem,
+        accumulator: &Self::Accumulator,
         item: Vector<P::EI, P::SI>,
         coordinate: ReduceCoordinate<P::SI>,
         #[comptime] use_planes: ReduceStep,
-    ) -> Self::AccumulatorItem {
+    ) -> Self::Accumulator {
         match this {
             ReduceOperation::Sum(sum) => {
                 let elements = <Sum as ReduceInstruction<P>>::reduce(
@@ -479,9 +479,9 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
 
     fn fuse_accumulators(
         this: &Self,
-        lhs: Self::AccumulatorItem,
-        rhs: Self::AccumulatorItem,
-    ) -> Self::AccumulatorItem {
+        lhs: Self::Accumulator,
+        rhs: Self::Accumulator,
+    ) -> Self::Accumulator {
         match this {
             ReduceOperation::Sum(sum) => {
                 let elements = <Sum as ReduceInstruction<P>>::fuse_accumulators(
@@ -589,7 +589,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
     //      Then, an instruction like Dynamic can be implemented by fusing a Sum reduction and a element-wise division.
     fn merge_vector<Out: Numeric>(
         this: &Self,
-        accumulator: Self::AccumulatorItem,
+        accumulator: Self::Accumulator,
         shape_axis_reduce: usize,
     ) -> Out {
         match this {
@@ -651,7 +651,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
 
     fn to_output_perpendicular<Out: Numeric>(
         this: &Self,
-        accumulator: Self::AccumulatorItem,
+        accumulator: Self::Accumulator,
         shape_axis_reduce: usize,
     ) -> Vector<Out, P::SI> {
         match this {

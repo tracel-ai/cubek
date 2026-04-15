@@ -38,7 +38,7 @@ impl ArgMin {
 
 #[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for ArgMin {
-    type AccumulatorItem = (Vector<P::EA, P::SI>, Vector<u32, P::SI>);
+    type Accumulator = (Vector<P::EA, P::SI>, Vector<u32, P::SI>);
     type SharedAccumulator = ArgAccumulator<P::EA, P::SI>;
     type Config = ();
 
@@ -53,7 +53,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMin {
         Vector::empty().fill(P::EI::max_value())
     }
 
-    fn null_accumulator(_this: &Self) -> Self::AccumulatorItem {
+    fn null_accumulator(_this: &Self) -> Self::Accumulator {
         (
             Vector::empty().fill(P::EA::max_value()),
             Vector::empty().fill(u32::MAX),
@@ -62,8 +62,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMin {
 
     fn assign_accumulator(
         _this: &Self,
-        destination: &mut Self::AccumulatorItem,
-        source: &Self::AccumulatorItem,
+        destination: &mut Self::Accumulator,
+        source: &Self::Accumulator,
     ) {
         destination.0 = source.0;
         destination.1 = source.1;
@@ -71,7 +71,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMin {
 
     fn read_accumulator(
         _this: &Self,
-        accumulator: &Self::AccumulatorItem,
+        accumulator: &Self::Accumulator,
     ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
         (
             Vector::cast_from(accumulator.0),
@@ -81,11 +81,11 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMin {
 
     fn reduce(
         _this: &Self,
-        accumulator: &Self::AccumulatorItem,
+        accumulator: &Self::Accumulator,
         item: Vector<P::EI, P::SI>,
         coordinate: ReduceCoordinate<P::SI>,
         #[comptime] plane_reduce: ReduceStep,
-    ) -> Self::AccumulatorItem {
+    ) -> Self::Accumulator {
         #[comptime]
         let coordinate = match coordinate {
             ReduceCoordinate::Required(val) => val,
@@ -114,15 +114,15 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMin {
 
     fn fuse_accumulators(
         _this: &Self,
-        lhs: Self::AccumulatorItem,
-        rhs: Self::AccumulatorItem,
-    ) -> Self::AccumulatorItem {
+        lhs: Self::Accumulator,
+        rhs: Self::Accumulator,
+    ) -> Self::Accumulator {
         Self::choose_argmin(lhs.0, lhs.1, rhs.0, rhs.1)
     }
 
     fn merge_vector<Out: Numeric>(
         _this: &Self,
-        accumulator: Self::AccumulatorItem,
+        accumulator: Self::Accumulator,
         _shape_axis_reduce: usize,
     ) -> Out {
         let vector_size = accumulator.0.size().comptime();
@@ -150,7 +150,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMin {
 
     fn to_output_perpendicular<Out: Numeric>(
         _this: &Self,
-        accumulator: Self::AccumulatorItem,
+        accumulator: Self::Accumulator,
         _shape_axis_reduce: usize,
     ) -> Vector<Out, P::SI> {
         Vector::cast_from(accumulator.1)

@@ -19,7 +19,7 @@ fn null_input<P: ReducePrecision, SI: ReduceInstruction<P>>(sum: &SI) -> Vector<
 
 #[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for Mean {
-    type AccumulatorItem = Vector<P::EA, P::SI>;
+    type Accumulator = Vector<P::EA, P::SI>;
     type SharedAccumulator = SharedMemory<Vector<P::EA, P::SI>>;
     type Config = ();
 
@@ -34,14 +34,14 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Mean {
         <Sum as ReduceInstruction<P>>::null_input(&this.sum)
     }
 
-    fn null_accumulator(this: &Self) -> Self::AccumulatorItem {
+    fn null_accumulator(this: &Self) -> Self::Accumulator {
         <Sum as ReduceInstruction<P>>::null_accumulator(&this.sum)
     }
 
     fn assign_accumulator(
         this: &Self,
-        destination: &mut Self::AccumulatorItem,
-        source: &Self::AccumulatorItem,
+        destination: &mut Self::Accumulator,
+        source: &Self::Accumulator,
     ) {
         <Sum as ReduceInstruction<P>>::assign_accumulator(&this.sum, destination, source);
     }
@@ -58,27 +58,25 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Mean {
 
     fn reduce(
         this: &Self,
-        accumulator: &Self::AccumulatorItem,
+        accumulator: &Self::Accumulator,
         item: Vector<P::EI, P::SI>,
         _coordinate: ReduceCoordinate<P::SI>,
         #[comptime] use_planes: ReduceStep,
-    ) -> Self::AccumulatorItem {
+    ) -> Self::Accumulator {
         <Sum as ReduceInstruction<P>>::reduce(&this.sum, accumulator, item, _coordinate, use_planes)
     }
 
     fn fuse_accumulators(
         this: &Self,
-        lhs: Self::AccumulatorItem,
-        rhs: Self::AccumulatorItem,
-    ) -> Self::AccumulatorItem {
+        lhs: Self::Accumulator,
+        rhs: Self::Accumulator,
+    ) -> Self::Accumulator {
         <Sum as ReduceInstruction<P>>::fuse_accumulators(&this.sum, lhs, rhs)
     }
 
-    // TODO Remove shape_axis_reduce when fusion-on-write is well supported for reduce instructions.
-    //      Then, an instruction like Mean can be implemented by fusing a <Sum as ReduceInstruction<P>> reduction and a element-wise division.
     fn merge_vector<Out: Numeric>(
         this: &Self,
-        accumulator: Self::AccumulatorItem,
+        accumulator: Self::Accumulator,
         shape_axis_reduce: VectorSize,
     ) -> Out {
         let sum = <Sum as ReduceInstruction<P>>::merge_vector::<P::EA>(
@@ -92,7 +90,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Mean {
 
     fn to_output_perpendicular<Out: Numeric>(
         this: &Self,
-        accumulator: Self::AccumulatorItem,
+        accumulator: Self::Accumulator,
         shape_axis_reduce: VectorSize,
     ) -> Vector<Out, P::SI> {
         let sum = <Sum as ReduceInstruction<P>>::to_output_perpendicular::<P::EA>(

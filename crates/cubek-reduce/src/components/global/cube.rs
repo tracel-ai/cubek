@@ -177,7 +177,7 @@ impl GlobalFullCubeReduce {
 fn reduce_scan<P: ReducePrecision, I: ReduceInstruction<P>>(
     inst: &I,
     accumulator: &mut I::SharedAccumulator,
-    result: &mut I::AccumulatorItem,
+    result: &mut I::Accumulator,
     #[comptime] size: usize,
 ) {
     for i in 0..size {
@@ -215,7 +215,7 @@ fn reduce_scan<P: ReducePrecision, I: ReduceInstruction<P>>(
 fn reduce_tree<P: ReducePrecision, I: ReduceInstruction<P>>(
     inst: &I,
     accumulator: &mut I::SharedAccumulator,
-    result: &mut I::AccumulatorItem,
+    result: &mut I::Accumulator,
     worker_index: usize,
     #[comptime] size: usize,
 ) {

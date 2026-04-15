@@ -1,4 +1,7 @@
-use crate::{ReduceInstruction, ReducePrecision, VectorizationMode, components::args::NumericLine};
+use crate::{
+    ReduceInstruction, ReducePrecision, VectorizationMode,
+    components::{args::NumericLine, instructions::OutContainer},
+};
 use cubecl::{
     prelude::*,
     std::tensor::{
@@ -40,7 +43,7 @@ impl<Out: NumericLine> Writer<Out> {
     pub fn write<P: ReducePrecision, I: ReduceInstruction<P>>(
         &mut self,
         local_index: usize,
-        accumulator: I::AccumulatorItem,
+        accumulator: I::Accumulator,
         inst: &I,
     ) {
         match self {
@@ -98,11 +101,17 @@ impl<Out: NumericLine> ParallelWriter<Out> {
     pub fn write<P: ReducePrecision, I: ReduceInstruction<P>>(
         &mut self,
         local_index: usize,
-        accumulator: I::AccumulatorItem,
+        accumulator: I::Accumulator,
         inst: &I,
     ) {
-        let vector = I::merge_vector::<Out::T>(inst, accumulator, self.axis_size);
-        self.buffer[local_index] = vector;
+        let vector: OutContainer<<Out as NumericLine>::T> =
+            I::merge_vector::<Out::T>(inst, accumulator, self.axis_size);
+
+        match vector {
+            OutContainer::Array(array) =>  {// flatten
+                }
+            OutContainer::Item(_) =>        self.buffer[local_index] = vector;
+        }
     }
 
     pub fn commit(&mut self) {
@@ -152,27 +161,54 @@ impl<Out: NumericLine> PerpendicularWriter<Out> {
     pub fn write<P: ReducePrecision, I: ReduceInstruction<P>>(
         &mut self,
         _local_index: usize,
-        accumulator: I::AccumulatorItem,
+        accumulator: I::Accumulator,
         inst: &I,
     ) {
-        let out = I::to_output_perpendicular::<Out::T>(inst, accumulator, self.axis_size);
+        let out: OutContainer<Out::T> =
+            I::to_output_perpendicular::<Out::T>(inst, accumulator, self.axis_size);
 
-        if comptime![self.output_vector_size == self.input_vector_size] {
-            self.output.write(self.write_index, Vector::cast_from(out));
-        } else {
-            let num_iters = comptime![self.input_vector_size / self.output_vector_size];
+        match out {
+            OutContainer::Array(array) => {
+                for .. in array {
+                    if comptime![self.output_vector_size == self.input_vector_size] {
+                        self.output.write(self.write_index, Vector::cast_from(out));
+                    } else {
+                        let num_iters = comptime![self.input_vector_size / self.output_vector_size];
 
-            #[unroll]
-            for i in 0..num_iters {
-                let mut tmp = Vector::empty();
+                        #[unroll]
+                        for i in 0..num_iters {
+                            let mut tmp = Vector::empty();
 
-                #[unroll]
-                for j in 0..self.output_vector_size {
-                    tmp[j] = out[i * self.output_vector_size + j];
+                            #[unroll]
+                            for j in 0..self.output_vector_size {
+                                tmp[j] = out[i * self.output_vector_size + j];
+                            }
+
+                            let index = self.write_index * num_iters + i;
+                            self.output.write(index, tmp);
+                        }
+                    }
                 }
+            }
+            OutContainer::Item(_) => {
+                if comptime![self.output_vector_size == self.input_vector_size] {
+                    self.output.write(self.write_index, Vector::cast_from(out));
+                } else {
+                    let num_iters = comptime![self.input_vector_size / self.output_vector_size];
 
-                let index = self.write_index * num_iters + i;
-                self.output.write(index, tmp);
+                    #[unroll]
+                    for i in 0..num_iters {
+                        let mut tmp = Vector::empty();
+
+                        #[unroll]
+                        for j in 0..self.output_vector_size {
+                            tmp[j] = out[i * self.output_vector_size + j];
+                        }
+
+                        let index = self.write_index * num_iters + i;
+                        self.output.write(index, tmp);
+                    }
+                }
             }
         }
     }

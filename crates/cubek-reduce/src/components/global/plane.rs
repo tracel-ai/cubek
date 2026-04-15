@@ -86,7 +86,7 @@ impl GlobalFullPlaneReduce {
         idle: ComptimeOption<bool>,
         #[comptime] vectorization_mode: VectorizationMode,
         #[comptime] blueprint: PlaneReduceBlueprint,
-    ) -> I::AccumulatorItem {
+    ) -> I::Accumulator {
         let reader = Reader::<P>::new::<I, Out>(
             input,
             output,

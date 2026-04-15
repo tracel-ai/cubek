@@ -17,7 +17,7 @@ impl ReduceFamily for MaxAbs {
 
 #[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
-    type AccumulatorItem = Vector<P::EA, P::SI>;
+    type Accumulator = Vector<P::EA, P::SI>;
     type SharedAccumulator = SharedMemory<Vector<P::EA, P::SI>>;
     type Config = ();
 
@@ -33,25 +33,25 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
         Vector::empty().fill(P::EI::from_int(0))
     }
 
-    fn null_accumulator(_this: &Self) -> Self::AccumulatorItem {
+    fn null_accumulator(_this: &Self) -> Self::Accumulator {
         Vector::empty().fill(P::EA::from_int(0))
     }
 
     fn assign_accumulator(
         _this: &Self,
-        destination: &mut Self::AccumulatorItem,
-        source: &Self::AccumulatorItem,
+        destination: &mut Self::Accumulator,
+        source: &Self::Accumulator,
     ) {
         *destination = *source;
     }
 
     fn reduce(
         _this: &Self,
-        accumulator: &Self::AccumulatorItem,
+        accumulator: &Self::Accumulator,
         item: Vector<P::EI, P::SI>,
         _coordinate: ReduceCoordinate<P::SI>,
         #[comptime] use_planes: ReduceStep,
-    ) -> Self::AccumulatorItem {
+    ) -> Self::Accumulator {
         if let ReduceStep::Plane = use_planes {
             let candidate_item = Vector::cast_from(plane_max(Vector::abs(item)));
             select_many(
@@ -77,15 +77,15 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
 
     fn fuse_accumulators(
         _this: &Self,
-        lhs: Self::AccumulatorItem,
-        rhs: Self::AccumulatorItem,
-    ) -> Self::AccumulatorItem {
+        lhs: Self::Accumulator,
+        rhs: Self::Accumulator,
+    ) -> Self::Accumulator {
         select_many(lhs.greater_than(rhs), lhs, rhs)
     }
 
     fn merge_vector<Out: Numeric>(
         _this: &Self,
-        accumulator: Self::AccumulatorItem,
+        accumulator: Self::Accumulator,
         _shape_axis_reduce: usize,
     ) -> Out {
         let mut max = P::EA::from_int(0);
@@ -99,7 +99,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
 
     fn to_output_perpendicular<Out: Numeric>(
         _this: &Self,
-        accumulator: Self::AccumulatorItem,
+        accumulator: Self::Accumulator,
         _shape_axis_reduce: usize,
     ) -> Vector<Out, P::SI> {
         Vector::cast_from(accumulator)

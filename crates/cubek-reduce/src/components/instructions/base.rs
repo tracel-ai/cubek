@@ -1,4 +1,4 @@
-use crate::components::precision::ReducePrecision;
+use crate::components::{instructions::OutContainer, precision::ReducePrecision};
 use cubecl::prelude::*;
 
 pub trait ReduceFamily: Send + Sync + 'static + std::fmt::Debug {
@@ -31,66 +31,68 @@ pub trait ReduceInstruction<P: ReducePrecision>:
 
     /// The intermediate state into which we accumulate new input elements.
     /// This is most likely a `Vector<T>` or a struct or tuple of vectors.
-    type AccumulatorItem: CubeType;
+    type Accumulator: CubeType;
 
     /// When multiple agents are collaborating to reduce a single slice,
     /// we need a share accumulator to store multiple `AccumulatorItem`.
     /// This is most likely a `SharedMemory<Vector<T>>` or a struct or tuple of vectorized shared memories.
-    type SharedAccumulator: SharedAccumulator<Item = Self::AccumulatorItem>;
+    type SharedAccumulator: SharedAccumulator<Item = Self::Accumulator>;
 
     fn from_config(#[comptime] config: Self::Config) -> Self;
     /// A input such that `Self::reduce(accumulator, Self::null_input(), coordinate, use_planes)`
     /// is guaranteed to return `accumulator` unchanged for any choice of `coordinate`.
-    fn null_input(this: &Self) -> Vector<P::EI, P::SI>;
+    fn null_input(this: &Self) -> Self::Item;
 
     /// A accumulator such that `Self::fuse_accumulators(accumulator, Self::null_accumulator()` always returns
     /// is guaranteed to return `accumulator` unchanged.
-    fn null_accumulator(this: &Self) -> Self::AccumulatorItem;
+    fn null_accumulator(this: &Self) -> Self::Accumulator;
 
     /// Assign the value of `source` into `destination`.
     /// In spirit, this is equivalent to `destination = source;`,
     /// but this syntax is not currently supported by CubeCL.
     fn assign_accumulator(
         this: &Self,
-        destination: &mut Self::AccumulatorItem,
-        source: &Self::AccumulatorItem,
+        destination: &mut Self::Accumulator,
+        source: &Self::Accumulator,
     );
 
     fn read_accumulator(
         this: &Self,
-        accumulator: &Self::AccumulatorItem,
+        accumulator: &Self::Accumulator,
     ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>);
 
     /// If `use_planes` is `true`, reduce all the `item` and `coordinate` within the `accumulator`.
     /// Else, reduce the given `item` and `coordinate` into the accumulator.
     fn reduce(
         this: &Self,
-        accumulator: &Self::AccumulatorItem,
+        accumulator: &Self::Accumulator,
         item: Vector<P::EI, P::SI>,
         coordinate: ReduceCoordinate<P::SI>,
         #[comptime] plane_reduce: ReduceStep,
-    ) -> Self::AccumulatorItem;
+    ) -> Self::Accumulator;
 
     /// Reduce two accumulators into a single accumulator.
     fn fuse_accumulators(
         this: &Self,
-        lhs: Self::AccumulatorItem,
-        rhs: Self::AccumulatorItem,
-    ) -> Self::AccumulatorItem;
+        lhs: Self::Accumulator,
+        rhs: Self::Accumulator,
+    ) -> Self::Accumulator;
+
+    // Self::Accumulator -> Out
 
     /// Reduce all elements of the accumulator into a single output element of type `Out`.
     fn merge_vector<Out: Numeric>(
         this: &Self,
-        accumulator: Self::AccumulatorItem,
+        accumulator: Self::Accumulator,
         shape_axis_reduce: usize,
-    ) -> Out;
+    ) -> OutContainer<Out>;
 
     /// Convert each element of the accumulator into the expected output element of type `Out`.
     fn to_output_perpendicular<Out: Numeric>(
         this: &Self,
-        accumulator: Self::AccumulatorItem,
+        accumulator: Self::Accumulator,
         shape_axis_reduce: usize,
-    ) -> Vector<Out, P::SI>;
+    ) -> OutContainer<Vector<Out, P::SI>>;
 }
 
 #[derive(CubeType)]
@@ -168,7 +170,7 @@ impl<In: Numeric, N: Size> SharedAccumulator for ArgAccumulator<In, N> {
 #[cube]
 pub fn reduce_inplace<P: ReducePrecision, R: ReduceInstruction<P>>(
     inst: &R,
-    accumulator: &mut R::AccumulatorItem,
+    accumulator: &mut R::Accumulator,
     item: Vector<P::EI, P::SI>,
     coordinate: ReduceCoordinate<P::SI>,
     #[comptime] plane_reduce: ReduceStep,
