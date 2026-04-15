@@ -2,7 +2,7 @@ use crate::{
     ReduceInstruction, ReducePrecision, VectorizationMode,
     components::{
         args::NumericLine,
-        global::idle_check,
+        global::{idle_check, runtime_cube_dim_x},
         instructions::{ReduceStep, SharedAccumulator, fuse_accumulator_inplace, reduce_inplace},
         readers::{Reader, cube::CubeReader},
         writer::Writer,
@@ -98,10 +98,11 @@ impl GlobalFullCubeReduce {
     }
 
     fn worker_pos(#[comptime] blueprint: CubeBlueprint) -> usize {
-        let unit_pos = UNIT_POS_X + UNIT_POS_Y * PLANE_DIM;
         match blueprint.use_planes {
             true => UNIT_POS_Y as usize,
-            false => unit_pos as usize,
+            false => {
+                (UNIT_POS_X + UNIT_POS_Y * runtime_cube_dim_x(blueprint.plane_dim_ceil)) as usize
+            }
         }
     }
 
@@ -125,6 +126,7 @@ impl GlobalFullCubeReduce {
             idle,
             blueprint.bound_checks,
             vectorization_mode,
+            blueprint.plane_dim_ceil,
         );
         let reader = CubeReader::<P>::new(reader);
         let mut accumulator = I::null_accumulator(inst);

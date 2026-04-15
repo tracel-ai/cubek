@@ -26,6 +26,7 @@ impl<P: ReducePrecision> Reader<P> {
         idle: ComptimeOption<bool>,
         #[comptime] bound_checks: BoundChecks,
         #[comptime] vectorization_mode: VectorizationMode,
+        #[comptime] plane_dim_ceil: bool,
     ) -> Reader<P> {
         match vectorization_mode {
             VectorizationMode::Parallel => {
@@ -37,6 +38,7 @@ impl<P: ReducePrecision> Reader<P> {
                     reduce_index,
                     idle,
                     bound_checks,
+                    plane_dim_ceil,
                 ))
             }
             VectorizationMode::Perpendicular => {
@@ -48,6 +50,7 @@ impl<P: ReducePrecision> Reader<P> {
                     reduce_index,
                     idle,
                     bound_checks,
+                    plane_dim_ceil,
                 ))
             }
         }

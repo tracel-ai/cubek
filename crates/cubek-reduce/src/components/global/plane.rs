@@ -27,7 +27,7 @@ impl GlobalFullPlaneReduce {
         #[comptime] blueprint: PlaneReduceBlueprint,
     ) {
         #[allow(clippy::collapsible_if)]
-        if comptime!(blueprint.check_unit_in_plane) {
+        if comptime!(blueprint.plane_dim_ceil) {
             if UNIT_POS_X >= PLANE_DIM {
                 terminate!();
             }
@@ -96,6 +96,7 @@ impl GlobalFullPlaneReduce {
             idle,
             blueprint.bound_checks,
             vectorization_mode,
+            blueprint.plane_dim_ceil,
         );
         let reader = PlaneReader::<P>::new(reader);
 

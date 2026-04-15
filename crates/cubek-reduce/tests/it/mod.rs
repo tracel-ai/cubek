@@ -159,6 +159,7 @@ macro_rules! testgen_reduce {
                                 bound_checks: BoundChecks::Mask,
                                 num_shared_accumulators: 8,
                                 use_planes: false,
+                                plane_dim_ceil: true
                             },
                             CubeDim::new_2d(8, 1),
                         )
@@ -191,7 +192,7 @@ macro_rules! testgen_reduce {
                                     bound_checks: BoundChecks::Mask,
                                     //independent: true,
                                     plane_merge_strategy: PlaneMergeStrategy::Lazy,
-                                    check_unit_in_plane: true,
+                                    plane_dim_ceil: true,
                                 },
                                 CubeDim::new_2d(32, 2),
                             )
@@ -216,7 +217,7 @@ macro_rules! testgen_reduce {
                                     plane_idle: IdleMode::Terminate,
                                     bound_checks: BoundChecks::Mask,
                                     plane_merge_strategy: PlaneMergeStrategy::Lazy,
-                                    check_unit_in_plane: true,
+                                    plane_dim_ceil: true,
                                 },
                                 CubeDim::new_2d(64, 2),
                             )

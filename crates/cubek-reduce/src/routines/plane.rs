@@ -137,7 +137,7 @@ fn generate_blueprint<R: Runtime>(
             plane_idle,
             bound_checks,
             plane_merge_strategy: strategy_enum,
-            check_unit_in_plane: properties.plane_size_max != properties.plane_size_min,
+            plane_dim_ceil: properties.plane_size_max != properties.plane_size_min,
         }),
     };
 

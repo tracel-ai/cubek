@@ -75,6 +75,7 @@ impl GlobalFullUnitReduce {
             idle,
             comptime!(BoundChecks::None),
             vectorization_mode,
+            false,
         );
         let reader = UnitReader::<P>::new(reader);
 
