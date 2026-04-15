@@ -189,7 +189,6 @@ macro_rules! testgen_reduce {
                                 PlaneReduceBlueprint {
                                     plane_idle: IdleMode::Terminate,
                                     bound_checks: BoundChecks::Mask,
-                                    //independent: true,
                                     plane_merge_strategy: PlaneMergeStrategy::Lazy,
                                     plane_dim_ceil: true,
                                 },
