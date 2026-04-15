@@ -31,6 +31,7 @@ pub struct ParallelReader<P: ReducePrecision> {
 
 #[cube]
 impl<P: ReducePrecision> ParallelReader<P> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new<I: ReduceInstruction<P>, Out: NumericLine>(
         input: &VirtualTensor<P::EI, P::SI>,
         output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
@@ -85,7 +86,7 @@ impl<P: ReducePrecision> ParallelReader<P> {
         vector_index: usize,
     ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
         let cube_dim = CUBE_DIM as usize;
-        let plane_pos = vector_index * cube_dim as usize;
+        let plane_pos = vector_index * cube_dim;
         let unit_pos = UNIT_POS as usize;
         let pos = plane_pos + unit_pos;
         let offset = pos + self.batch_offset;
