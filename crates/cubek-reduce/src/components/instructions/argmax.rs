@@ -85,7 +85,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMax {
         accumulator: &Self::AccumulatorItem,
         item: Vector<P::EI, P::SI>,
         coordinate: ReduceCoordinate<P::SI>,
-        #[comptime] plane_reduce: ReduceStep,
+        #[comptime] reduce_step: ReduceStep,
     ) -> Self::AccumulatorItem {
         #[comptime]
         let coordinate = match coordinate {
@@ -97,12 +97,14 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMax {
             }
         };
 
-        let (candidate_item, candidate_coordinate) = if let ReduceStep::Plane = plane_reduce {
-            let candidate_item = plane_max(item);
-            let candidate_coordinate = lowest_coordinate_matching(candidate_item, item, coordinate);
-            (candidate_item, candidate_coordinate)
-        } else {
-            (item, coordinate)
+        let (candidate_item, candidate_coordinate) = match reduce_step {
+            ReduceStep::Plane => {
+                let candidate_item = plane_max(item);
+                let candidate_coordinate =
+                    lowest_coordinate_matching(candidate_item, item, coordinate);
+                (candidate_item, candidate_coordinate)
+            }
+            ReduceStep::Identity => (item, coordinate),
         };
 
         Self::choose_argmax(

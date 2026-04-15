@@ -50,18 +50,21 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
         accumulator: &Self::AccumulatorItem,
         item: Vector<P::EI, P::SI>,
         _coordinate: ReduceCoordinate<P::SI>,
-        #[comptime] use_planes: ReduceStep,
+        #[comptime] reduce_step: ReduceStep,
     ) -> Self::AccumulatorItem {
-        if let ReduceStep::Plane = use_planes {
-            let candidate_item = Vector::cast_from(plane_max(Vector::abs(item)));
-            select_many(
-                accumulator.greater_than(candidate_item),
-                *accumulator,
-                candidate_item,
-            )
-        } else {
-            let item_abs = Vector::cast_from(Vector::abs(item));
-            select_many(accumulator.greater_than(item_abs), *accumulator, item_abs)
+        match reduce_step {
+            ReduceStep::Plane => {
+                let candidate_item = Vector::cast_from(plane_max(Vector::abs(item)));
+                select_many(
+                    accumulator.greater_than(candidate_item),
+                    *accumulator,
+                    candidate_item,
+                )
+            }
+            ReduceStep::Identity => {
+                let item_abs = Vector::cast_from(Vector::abs(item));
+                select_many(accumulator.greater_than(item_abs), *accumulator, item_abs)
+            }
         }
     }
 

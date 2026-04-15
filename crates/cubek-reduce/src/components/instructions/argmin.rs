@@ -96,12 +96,14 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMin {
             }
         };
 
-        let (candidate_item, candidate_coordinate) = if let ReduceStep::Plane = plane_reduce {
-            let candidate_item = plane_min(item);
-            let candidate_coordinate = lowest_coordinate_matching(candidate_item, item, coordinate);
-            (candidate_item, candidate_coordinate)
-        } else {
-            (item, coordinate)
+        let (candidate_item, candidate_coordinate) = match plane_reduce {
+            ReduceStep::Plane => {
+                let candidate_item = plane_min(item);
+                let candidate_coordinate =
+                    lowest_coordinate_matching(candidate_item, item, coordinate);
+                (candidate_item, candidate_coordinate)
+            }
+            ReduceStep::Identity => (item, coordinate),
         };
 
         Self::choose_argmin(
