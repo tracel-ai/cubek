@@ -57,7 +57,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
         _accumulator: &Self::AccumulatorItem,
         _item: Vector<P::EI, P::SI>,
         _coordinate: ReduceCoordinate<P::SI>,
-        #[comptime] _plane_reduce: ReduceStep,
+        #[comptime] _reduce_step: ReduceStep,
     ) -> Self::AccumulatorItem {
         todo!("reduce Not implemented")
     }

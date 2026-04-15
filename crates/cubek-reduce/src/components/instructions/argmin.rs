@@ -84,7 +84,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMin {
         accumulator: &Self::AccumulatorItem,
         item: Vector<P::EI, P::SI>,
         coordinate: ReduceCoordinate<P::SI>,
-        #[comptime] plane_reduce: ReduceStep,
+        #[comptime] reduce_step: ReduceStep,
     ) -> Self::AccumulatorItem {
         #[comptime]
         let coordinate = match coordinate {
@@ -96,7 +96,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMin {
             }
         };
 
-        let (candidate_item, candidate_coordinate) = match plane_reduce {
+        let (candidate_item, candidate_coordinate) = match reduce_step {
             ReduceStep::Plane => {
                 let candidate_item = plane_min(item);
                 let candidate_coordinate =

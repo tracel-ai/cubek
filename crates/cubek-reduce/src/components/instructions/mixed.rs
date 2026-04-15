@@ -351,7 +351,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
         accumulator: &Self::AccumulatorItem,
         item: Vector<P::EI, P::SI>,
         coordinate: ReduceCoordinate<P::SI>,
-        #[comptime] use_planes: ReduceStep,
+        #[comptime] reduce_step: ReduceStep,
     ) -> Self::AccumulatorItem {
         match this {
             ReduceOperation::Sum(sum) => {
@@ -360,7 +360,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     &accumulator.elements,
                     item,
                     coordinate,
-                    use_planes,
+                    reduce_step,
                 );
                 DynamicAccumulatorItem::<P::EA, P::SI> {
                     elements,
@@ -373,7 +373,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     &accumulator.elements,
                     item,
                     coordinate,
-                    use_planes,
+                    reduce_step,
                 );
                 DynamicAccumulatorItem::<P::EA, P::SI> {
                     elements,
@@ -386,7 +386,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     &accumulator.elements,
                     item,
                     coordinate,
-                    use_planes,
+                    reduce_step,
                 );
                 DynamicAccumulatorItem::<P::EA, P::SI> {
                     elements,
@@ -399,7 +399,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     &accumulator.elements,
                     item,
                     coordinate,
-                    use_planes,
+                    reduce_step,
                 );
                 DynamicAccumulatorItem::<P::EA, P::SI> {
                     elements,
@@ -412,7 +412,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     &(accumulator.elements, accumulator.args.unwrap()),
                     item,
                     coordinate,
-                    use_planes,
+                    reduce_step,
                 );
 
                 DynamicAccumulatorItem::<P::EA, P::SI> {
@@ -426,7 +426,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     &(accumulator.elements, accumulator.args.unwrap()),
                     item,
                     coordinate,
-                    use_planes,
+                    reduce_step,
                 );
 
                 DynamicAccumulatorItem::<P::EA, P::SI> {
@@ -440,7 +440,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     &(accumulator.elements, accumulator.args.unwrap()),
                     item,
                     coordinate,
-                    use_planes,
+                    reduce_step,
                 );
 
                 DynamicAccumulatorItem::<P::EA, P::SI> {
@@ -454,7 +454,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     &accumulator.elements,
                     item,
                     coordinate,
-                    use_planes,
+                    reduce_step,
                 );
                 DynamicAccumulatorItem::<P::EA, P::SI> {
                     elements,
@@ -467,7 +467,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     &accumulator.elements,
                     item,
                     coordinate,
-                    use_planes,
+                    reduce_step,
                 );
                 DynamicAccumulatorItem::<P::EA, P::SI> {
                     elements,
