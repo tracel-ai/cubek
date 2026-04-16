@@ -57,8 +57,6 @@ impl<A: CubeType + Send + Sync + 'static> SharedAccumulator for DummyTopkSharedA
 
 #[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
-    // pour les autres
-    // type OutContainer<X> = X;
     type Accumulator = TopkAccumulator<Vector<P::EA, P::SI>>;
     type SharedAccumulator = DummyTopkSharedAccumulator<Self::Accumulator>;
     type Config = u32;

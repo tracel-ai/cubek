@@ -7,33 +7,37 @@ pub trait ReduceFamily: Send + Sync + 'static + std::fmt::Debug {
 }
 
 #[derive(CubeType, Clone, Copy)]
+/// Whether we keep track of coordinates of items
 pub struct ReduceRequirements {
     #[cube(comptime)]
     pub coordinates: bool,
 }
 
 #[derive(CubeType)]
+/// Whether the accumulator has zero, one or more vectors
 pub enum AccumulatorKind<X: CubePrimitive> {
     Multiple(Array<X>),
-    Single(AccumulatorWrapper<X>),
+    /// Wrap the item to be able to modify it as a field
+    Single(ItemWrapper<X>),
     None,
 }
 
 #[derive(CubeType)]
-pub struct AccumulatorWrapper<X: CubePrimitive> {
-    value: X,
+/// Wrap the item to be able to modify it as a field
+pub struct ItemWrapper<X: CubePrimitive> {
+    item: X,
 }
 
 #[cube]
 impl<X: CubePrimitive> AccumulatorKind<X> {
-    pub fn new_single(value: X) -> AccumulatorKind<X> {
-        AccumulatorKind::new_Single(AccumulatorWrapper::<X> { value })
+    pub fn new_single(item: X) -> AccumulatorKind<X> {
+        AccumulatorKind::new_Single(ItemWrapper::<X> { item })
     }
 
     pub fn item(&self) -> X {
         match self {
             AccumulatorKind::Multiple(_) => panic!("Tried item on Multiple"),
-            AccumulatorKind::Single(item) => item.value,
+            AccumulatorKind::Single(item) => item.item,
             AccumulatorKind::None => panic!("Tried item on None"),
         }
     }
@@ -54,7 +58,7 @@ impl<X: CubePrimitive> AccumulatorKind<X> {
                 }
             }
             (AccumulatorKind::Single(this), AccumulatorKind::Single(other)) => {
-                this.value = other.value;
+                this.item = other.item;
             }
             (AccumulatorKind::None, AccumulatorKind::None) => {}
             _ => panic!("Tried assigning different accumulator kinds"),
@@ -63,6 +67,8 @@ impl<X: CubePrimitive> AccumulatorKind<X> {
 }
 
 #[derive(CubeType)]
+/// Whether the accumulator has zero, one or more vectors
+/// This should be the same variant as AccumulatorKind for an instruction
 pub enum SharedAccumulatorKind<X: CubePrimitive> {
     Multiple(Sequence<SharedMemory<X>>),
     Single(SharedMemory<X>),
@@ -159,8 +165,6 @@ pub trait ReduceInstruction<P: ReducePrecision>:
         lhs: Self::Accumulator,
         rhs: Self::Accumulator,
     ) -> Self::Accumulator;
-
-    // Self::Accumulator -> Out
 
     /// Reduce all elements of the accumulator into a single output element of type `Out`.
     fn merge_vector<Out: Numeric>(
