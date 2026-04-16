@@ -29,7 +29,7 @@ impl<X: CubePrimitive> AccumulatorKind<X> {
         }
     }
 
-    pub fn array(self) -> Array<X> {
+    pub fn array(&self) -> &Array<X> {
         match self {
             AccumulatorKind::Array(array) => array,
             AccumulatorKind::Item(_) => panic!(),

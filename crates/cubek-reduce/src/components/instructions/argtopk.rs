@@ -27,8 +27,8 @@ impl ReduceFamily for ArgTopK {
 
 #[derive(CubeType)]
 pub struct TopkAccumulator<E: CubePrimitive> {
-    elements: Array<E>,
-    coordinates: Array<u32>,
+    pub elements: Array<E>,
+    pub coordinates: Array<u32>,
 }
 
 #[derive(CubeType)]
@@ -42,15 +42,15 @@ pub struct DummyTopkSharedAccumulator<A: CubeType + Send + Sync + 'static> {
 impl<A: CubeType + Send + Sync + 'static> SharedAccumulator for DummyTopkSharedAccumulator<A> {
     type Item = A;
 
-    fn allocate(#[comptime] length: usize, #[comptime] _coordinate: bool) -> Self {
+    fn allocate(#[comptime] _length: usize, #[comptime] _coordinate: bool) -> Self {
         unreachable!()
     }
 
-    fn read(accumulator: &Self, index: usize) -> Self::Item {
+    fn read(_accumulator: &Self, _index: usize) -> Self::Item {
         unreachable!()
     }
 
-    fn write(accumulator: &mut Self, index: usize, item: Self::Item) {
+    fn write(_accumulator: &mut Self, _index: usize, _item: Self::Item) {
         unreachable!()
     }
 }
