@@ -6,10 +6,11 @@ use cubecl::{
     prelude::{Array, CubePrimitive, Vector},
 };
 
+use crate::components::instructions::AccumulatorKind;
 use crate::{
     ReduceFamily, ReduceInstruction, ReducePrecision,
     components::instructions::{
-        ArgAccumulator, ReduceCoordinate, ReduceRequirements, ReduceStep, SharedAccumulator,
+        ReduceCoordinate, ReduceRequirements, ReduceStep, SharedAccumulator,
     },
 };
 use cubecl::frontend::Numeric;
@@ -54,12 +55,6 @@ impl<A: CubeType + Send + Sync + 'static> SharedAccumulator for DummyTopkSharedA
     }
 }
 
-// X is a Vector
-pub enum OutContainer<X: CubePrimitive> {
-    Array(Array<X>),
-    Item(X),
-}
-
 #[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
     // pour les autres
@@ -92,10 +87,13 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
         todo!("argtopk")
     }
 
-    fn read_accumulator(
+    fn split_accumulator(
         _this: &Self,
         _accumulator: &Self::Accumulator,
-    ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
+    ) -> (
+        AccumulatorKind<Vector<P::EI, P::SI>>,
+        ReduceCoordinate<P::SI>,
+    ) {
         todo!("argtopk")
     }
 
@@ -121,7 +119,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
         _this: &Self,
         _accumulator: Self::Accumulator,
         _shape_axis_reduce: usize,
-    ) -> OutContainer<Out> {
+    ) -> AccumulatorKind<Out> {
         todo!("merge_vector Not implemented")
     }
 
@@ -129,7 +127,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
         _this: &Self,
         _accumulator: Self::Accumulator,
         _shape_axis_reduce: usize,
-    ) -> OutContainer<Vector<Out, P::SI>> {
+    ) -> AccumulatorKind<Vector<Out, P::SI>> {
         todo!("to_output_perpendicular Not implemented")
     }
 }

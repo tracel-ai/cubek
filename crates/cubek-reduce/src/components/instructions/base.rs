@@ -1,4 +1,4 @@
-use crate::components::{instructions::OutContainer, precision::ReducePrecision};
+use crate::components::precision::ReducePrecision;
 use cubecl::prelude::*;
 
 pub trait ReduceFamily: Send + Sync + 'static + std::fmt::Debug {
@@ -10,6 +10,32 @@ pub trait ReduceFamily: Send + Sync + 'static + std::fmt::Debug {
 pub struct ReduceRequirements {
     #[cube(comptime)]
     pub coordinates: bool,
+}
+
+#[derive(CubeType)]
+pub enum AccumulatorKind<X: CubePrimitive> {
+    Array(Array<X>),
+    Item(X),
+    None,
+}
+
+#[cube]
+impl<X: CubePrimitive> AccumulatorKind<X> {
+    pub fn item(&self) -> X {
+        match self {
+            AccumulatorKind::Array(_) => panic!(),
+            AccumulatorKind::Item(item) => *item,
+            AccumulatorKind::None => panic!(),
+        }
+    }
+
+    pub fn array(self) -> Array<X> {
+        match self {
+            AccumulatorKind::Array(array) => array,
+            AccumulatorKind::Item(_) => panic!(),
+            AccumulatorKind::None => panic!(),
+        }
+    }
 }
 
 /// An instruction for a reduce algorithm that works with [`Vector`].
@@ -26,9 +52,6 @@ pub trait ReduceInstruction<P: ReducePrecision>:
 {
     type Config: CubeComptime + Send + Sync;
 
-    /// Requirements of the reduce.
-    fn requirements(this: &Self) -> ReduceRequirements;
-
     /// The intermediate state into which we accumulate new input elements.
     /// This is most likely a `Vector<T>` or a struct or tuple of vectors.
     type Accumulator: CubeType;
@@ -38,10 +61,13 @@ pub trait ReduceInstruction<P: ReducePrecision>:
     /// This is most likely a `SharedMemory<Vector<T>>` or a struct or tuple of vectorized shared memories.
     type SharedAccumulator: SharedAccumulator<Item = Self::Accumulator>;
 
+    /// Requirements of the reduce.
+    fn requirements(this: &Self) -> ReduceRequirements;
+
     fn from_config(#[comptime] config: Self::Config) -> Self;
     /// A input such that `Self::reduce(accumulator, Self::null_input(), coordinate, use_planes)`
     /// is guaranteed to return `accumulator` unchanged for any choice of `coordinate`.
-    fn null_input(this: &Self) -> Self::Item;
+    fn null_input(this: &Self) -> Vector<P::EI, P::SI>;
 
     /// A accumulator such that `Self::fuse_accumulators(accumulator, Self::null_accumulator()` always returns
     /// is guaranteed to return `accumulator` unchanged.
@@ -56,10 +82,14 @@ pub trait ReduceInstruction<P: ReducePrecision>:
         source: &Self::Accumulator,
     );
 
-    fn read_accumulator(
+    /// Splits the accumulator between its values and coordinates, if they're tracked
+    fn split_accumulator(
         this: &Self,
         accumulator: &Self::Accumulator,
-    ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>);
+    ) -> (
+        AccumulatorKind<Vector<P::EI, P::SI>>,
+        ReduceCoordinate<P::SI>,
+    );
 
     /// If `use_planes` is `true`, reduce all the `item` and `coordinate` within the `accumulator`.
     /// Else, reduce the given `item` and `coordinate` into the accumulator.
@@ -85,19 +115,19 @@ pub trait ReduceInstruction<P: ReducePrecision>:
         this: &Self,
         accumulator: Self::Accumulator,
         shape_axis_reduce: usize,
-    ) -> OutContainer<Out>;
+    ) -> AccumulatorKind<Out>;
 
     /// Convert each element of the accumulator into the expected output element of type `Out`.
     fn to_output_perpendicular<Out: Numeric>(
         this: &Self,
         accumulator: Self::Accumulator,
         shape_axis_reduce: usize,
-    ) -> OutContainer<Vector<Out, P::SI>>;
+    ) -> AccumulatorKind<Vector<Out, P::SI>>;
 }
 
 #[derive(CubeType)]
 pub enum ReduceCoordinate<N: Size> {
-    Required(Vector<u32, N>),
+    Required(AccumulatorKind<Vector<u32, N>>),
     NotRequired,
 }
 

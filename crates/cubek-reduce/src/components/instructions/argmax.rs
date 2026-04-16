@@ -3,7 +3,7 @@ use super::{
     lowest_coordinate_matching,
 };
 use crate::components::{
-    instructions::{ReduceRequirements, ReduceStep},
+    instructions::{AccumulatorKind, ReduceRequirements, ReduceStep},
     precision::ReducePrecision,
 };
 use cubecl::prelude::*;
@@ -70,13 +70,16 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMax {
         destination.1 = source.1;
     }
 
-    fn read_accumulator(
+    fn split_accumulator(
         _this: &Self,
         accumulator: &Self::Accumulator,
-    ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
+    ) -> (
+        AccumulatorKind<Vector<P::EI, P::SI>>,
+        ReduceCoordinate<P::SI>,
+    ) {
         (
-            Vector::cast_from(accumulator.0),
-            ReduceCoordinate::new_Required(accumulator.1),
+            AccumulatorKind::new_Item(Vector::cast_from(accumulator.0)),
+            ReduceCoordinate::new_Required(AccumulatorKind::new_Item(accumulator.1)),
         )
     }
 
@@ -93,16 +96,17 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMax {
             ReduceCoordinate::NotRequired => {
                 comptime! {panic!("Coordinates are required for ArgMin")};
                 #[allow(unreachable_code)]
-                Vector::new(0)
+                AccumulatorKind::new_Item(Vector::new(0))
             }
         };
 
         let (candidate_item, candidate_coordinate) = if let ReduceStep::Plane = plane_reduce {
             let candidate_item = plane_max(item);
-            let candidate_coordinate = lowest_coordinate_matching(candidate_item, item, coordinate);
+            let candidate_coordinate =
+                lowest_coordinate_matching(candidate_item, item, coordinate.item());
             (candidate_item, candidate_coordinate)
         } else {
-            (item, coordinate)
+            (item, coordinate.item())
         };
 
         Self::choose_argmax(
@@ -125,9 +129,9 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMax {
         _this: &Self,
         accumulator: Self::Accumulator,
         _shape_axis_reduce: usize,
-    ) -> Out {
+    ) -> AccumulatorKind<Out> {
         let vector_size = accumulator.0.size().comptime();
-        if vector_size > 1 {
+        let value = if vector_size > 1 {
             let mut max = P::EA::min_value();
             let mut coordinate = u32::MAX.runtime();
             #[unroll]
@@ -144,14 +148,15 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMax {
             Out::cast_from(coordinate)
         } else {
             Out::cast_from(accumulator.1)
-        }
+        };
+        AccumulatorKind::new_Item(value)
     }
 
     fn to_output_perpendicular<Out: Numeric>(
         _this: &Self,
         accumulator: Self::Accumulator,
         _shape_axis_reduce: usize,
-    ) -> Vector<Out, P::SI> {
-        Vector::cast_from(accumulator.1)
+    ) -> AccumulatorKind<Vector<Out, P::SI>> {
+        AccumulatorKind::new_Item(Vector::cast_from(accumulator.1))
     }
 }

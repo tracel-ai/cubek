@@ -1,5 +1,8 @@
 use super::{ReduceCoordinate, ReduceFamily, ReduceInstruction, ReduceRequirements, Sum};
-use crate::components::{instructions::ReduceStep, precision::ReducePrecision};
+use crate::components::{
+    instructions::{AccumulatorKind, ReduceStep},
+    precision::ReducePrecision,
+};
 use cubecl::prelude::*;
 
 #[derive(Debug, CubeType, Clone)]
@@ -46,12 +49,15 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Mean {
         <Sum as ReduceInstruction<P>>::assign_accumulator(&this.sum, destination, source);
     }
 
-    fn read_accumulator(
+    fn split_accumulator(
         _this: &Self,
         accumulator: &Vector<P::EA, P::SI>,
-    ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
+    ) -> (
+        AccumulatorKind<Vector<P::EI, P::SI>>,
+        ReduceCoordinate<P::SI>,
+    ) {
         (
-            Vector::cast_from(*accumulator),
+            AccumulatorKind::new_Item(Vector::cast_from(*accumulator)),
             ReduceCoordinate::new_NotRequired(),
         )
     }
@@ -78,26 +84,31 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Mean {
         this: &Self,
         accumulator: Self::Accumulator,
         shape_axis_reduce: VectorSize,
-    ) -> Out {
+    ) -> AccumulatorKind<Out> {
         let sum = <Sum as ReduceInstruction<P>>::merge_vector::<P::EA>(
             &this.sum,
             accumulator,
             shape_axis_reduce,
-        );
+        )
+        .item();
 
-        Out::cast_from(sum / P::EA::cast_from(shape_axis_reduce))
+        let value = Out::cast_from(sum / P::EA::cast_from(shape_axis_reduce));
+        AccumulatorKind::new_Item(value)
     }
 
     fn to_output_perpendicular<Out: Numeric>(
         this: &Self,
         accumulator: Self::Accumulator,
         shape_axis_reduce: VectorSize,
-    ) -> Vector<Out, P::SI> {
+    ) -> AccumulatorKind<Vector<Out, P::SI>> {
         let sum = <Sum as ReduceInstruction<P>>::to_output_perpendicular::<P::EA>(
             &this.sum,
             accumulator,
             shape_axis_reduce,
-        );
-        Vector::cast_from(sum / Vector::cast_from(shape_axis_reduce))
+        )
+        .item();
+
+        let vector = Vector::cast_from(sum / Vector::cast_from(shape_axis_reduce));
+        AccumulatorKind::new_Item(vector)
     }
 }

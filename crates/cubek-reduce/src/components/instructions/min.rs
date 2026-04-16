@@ -1,6 +1,6 @@
 use super::{ReduceCoordinate, ReduceFamily, ReduceInstruction};
 use crate::components::{
-    instructions::{ReduceRequirements, ReduceStep},
+    instructions::{AccumulatorKind, ReduceRequirements, ReduceStep},
     precision::ReducePrecision,
 };
 use cubecl::prelude::*;
@@ -44,12 +44,15 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
         *destination = *source;
     }
 
-    fn read_accumulator(
+    fn split_accumulator(
         _this: &Self,
         accumulator: &Vector<P::EA, P::SI>,
-    ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
+    ) -> (
+        AccumulatorKind<Vector<P::EI, P::SI>>,
+        ReduceCoordinate<P::SI>,
+    ) {
         (
-            Vector::cast_from(*accumulator),
+            AccumulatorKind::new_Item(Vector::cast_from(*accumulator)),
             ReduceCoordinate::new_NotRequired(),
         )
     }
@@ -86,21 +89,21 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
         _this: &Self,
         accumulator: Self::Accumulator,
         _shape_axis_reduce: usize,
-    ) -> Out {
+    ) -> AccumulatorKind<Out> {
         let mut min = P::EA::max_value();
         #[unroll]
         for k in 0..accumulator.size() {
             let candidate = accumulator[k];
             min = select(candidate < min, candidate, min);
         }
-        Out::cast_from(min)
+        AccumulatorKind::new_Item(Out::cast_from(min))
     }
 
     fn to_output_perpendicular<Out: Numeric>(
         _this: &Self,
         accumulator: Self::Accumulator,
         _shape_axis_reduce: usize,
-    ) -> Vector<Out, P::SI> {
-        Vector::cast_from(accumulator)
+    ) -> AccumulatorKind<Vector<Out, P::SI>> {
+        AccumulatorKind::new_Item(Vector::cast_from(accumulator))
     }
 }

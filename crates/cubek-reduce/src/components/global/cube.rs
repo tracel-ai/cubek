@@ -145,7 +145,7 @@ impl GlobalFullCubeReduce {
         let accumulator_plane = match blueprint.use_planes {
             true => {
                 // Sync at the plane level.
-                let (item, coordinate) = I::read_accumulator(inst, &accumulator);
+                let (item, coordinate) = I::split_accumulator(inst, &accumulator);
                 let mut accumulator_plane = I::null_accumulator(inst);
                 reduce_inplace::<P, I>(
                     inst,
@@ -182,7 +182,7 @@ fn reduce_scan<P: ReducePrecision, I: ReduceInstruction<P>>(
 ) {
     for i in 0..size {
         let item = I::SharedAccumulator::read(accumulator, i);
-        let (item, coordinate) = I::read_accumulator(inst, &item);
+        let (item, coordinate) = I::split_accumulator(inst, &item);
         reduce_inplace::<P, I>(inst, result, item, coordinate, ReduceStep::Identity);
     }
 }
@@ -249,6 +249,6 @@ fn reduce_tree<P: ReducePrecision, I: ReduceInstruction<P>>(
     sync_cube();
 
     let tmp = I::SharedAccumulator::read(accumulator, 0);
-    let (item, coordinate) = I::read_accumulator(inst, &tmp);
+    let (item, coordinate) = I::split_accumulator(inst, &tmp);
     reduce_inplace::<P, I>(inst, result, item, coordinate, ReduceStep::Identity);
 }

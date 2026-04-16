@@ -1,6 +1,6 @@
 use crate::{
     ReduceInstruction, ReducePrecision, VectorizationMode,
-    components::{args::NumericLine, instructions::OutContainer},
+    components::{args::NumericLine, instructions::AccumulatorKind},
 };
 use cubecl::{
     prelude::*,
@@ -104,13 +104,13 @@ impl<Out: NumericLine> ParallelWriter<Out> {
         accumulator: I::Accumulator,
         inst: &I,
     ) {
-        let vector: OutContainer<<Out as NumericLine>::T> =
+        let vector: AccumulatorKind<<Out as NumericLine>::T> =
             I::merge_vector::<Out::T>(inst, accumulator, self.axis_size);
 
         match vector {
-            OutContainer::Array(array) =>  {// flatten
+            AccumulatorKind::Array(array) =>  {// flatten
                 }
-            OutContainer::Item(_) =>        self.buffer[local_index] = vector;
+            AccumulatorKind::Item(_) =>        self.buffer[local_index] = vector;
         }
     }
 
@@ -164,11 +164,11 @@ impl<Out: NumericLine> PerpendicularWriter<Out> {
         accumulator: I::Accumulator,
         inst: &I,
     ) {
-        let out: OutContainer<Out::T> =
+        let out: AccumulatorKind<Out::T> =
             I::to_output_perpendicular::<Out::T>(inst, accumulator, self.axis_size);
 
         match out {
-            OutContainer::Array(array) => {
+            AccumulatorKind::Array(array) => {
                 for .. in array {
                     if comptime![self.output_vector_size == self.input_vector_size] {
                         self.output.write(self.write_index, Vector::cast_from(out));
@@ -190,7 +190,7 @@ impl<Out: NumericLine> PerpendicularWriter<Out> {
                     }
                 }
             }
-            OutContainer::Item(_) => {
+            AccumulatorKind::Item(_) => {
                 if comptime![self.output_vector_size == self.input_vector_size] {
                     self.output.write(self.write_index, Vector::cast_from(out));
                 } else {

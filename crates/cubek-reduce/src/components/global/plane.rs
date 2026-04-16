@@ -119,7 +119,7 @@ impl GlobalFullPlaneReduce {
 
         match blueprint.plane_merge_strategy {
             PlaneMergeStrategy::Lazy => {
-                let (item, coordinate) = I::read_accumulator(inst, &accumulator);
+                let (item, coordinate) = I::split_accumulator(inst, &accumulator);
                 let mut result = I::null_accumulator(inst);
                 reduce_inplace::<P, I>(inst, &mut result, item, coordinate, ReduceStep::Plane);
                 result
