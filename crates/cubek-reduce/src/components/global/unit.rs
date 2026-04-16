@@ -14,41 +14,6 @@ use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
 #[derive(CubeType)]
 pub struct GlobalFullUnitReduce;
 
-// Input: [34, 23, 45, 23], reduce_dim: 1
-// What is the output shape?
-// [34, 5, 45, 23]
-// Est-ce que ces 5 trucs là sont contigus
-// -> Oui: parallel
-// -> Acc: [67, 34, 23, 12, 1]
-// -> Non: perpendicular
-
-
-// [4, 5, 6, 7] [5, 4, 3, 2]
-// [4+5, 5+4, 6+3, 7+2]
-
-// [[6, 4, 2, 1], [6, 4, 2, 1], [6, 4, 2, 1], [6, 4, 2, 1],  [6, 4, 2, 1]] <- [5, 4, 3, 2]
-
-
-// Output:
-
-// write index: 0
-// [- - -] // 0
-// [- - -] // 1 
-// [- - -] // 2
-// [- - -] // 3
-
-// write index: 1
-// [- - -]
-// [- - -]
-// [- - -]
-// [- - -]
-
-// write index: 2
-// [- - -]
-// [- - -]
-// [- - -]
-// [- - -]
-
 #[cube]
 impl GlobalFullUnitReduce {
     pub fn execute<P: ReducePrecision, Out: NumericLine, I: ReduceInstruction<P>>(
