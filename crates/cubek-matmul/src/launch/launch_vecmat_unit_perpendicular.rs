@@ -17,6 +17,25 @@ use crate::{
     routines::{BlueprintStrategy, Routine as _},
 };
 
+fn vector_size_for<R: Runtime>(
+    client: &ComputeClient<R>,
+    binding: &InputBinding<R>,
+    default_size: usize,
+    plane_size: usize,
+    dim: usize,
+) -> Result<usize, VectorizationError> {
+    let (size, num_quants) = if let InputBinding::Quantized { scheme, .. } = binding {
+        (scheme.size_bits_stored() / 8, scheme.num_quants())
+    } else {
+        (default_size, 1)
+    };
+    client
+        .io_optimized_vector_sizes(size)
+        .filter(|&v| dim.is_multiple_of(plane_size * v * num_quants))
+        .max()
+        .ok_or(VectorizationError::NoValidVectorization)
+}
+
 #[allow(clippy::result_large_err)]
 pub fn launch_ref<R: Runtime>(
     client: &ComputeClient<R>,
@@ -64,32 +83,9 @@ pub fn launch_ref<R: Runtime>(
         ))));
     }
 
-    let lhs_vector_size = client
-        .io_optimized_vector_sizes(dtypes.lhs_global.size())
-        .map(|v| {
-            if let InputBinding::Quantized { scheme, .. } = lhs {
-                v * scheme.num_quants()
-            } else {
-                v
-            }
-        })
-        .filter(|&v| k.is_multiple_of(plane_size * v))
-        .max()
-        .ok_or(VectorizationError::NoValidVectorization)?;
-
+    let lhs_vector_size = vector_size_for(client, &lhs, dtypes.lhs_global.size(), plane_size, k)?;
     // Assumes rhs is row major
-    let rhs_vector_size = client
-        .io_optimized_vector_sizes(dtypes.rhs_global.size())
-        .map(|v| {
-            if let InputBinding::Quantized { scheme, .. } = rhs {
-                v * scheme.num_quants()
-            } else {
-                v
-            }
-        })
-        .filter(|&v| n.is_multiple_of(plane_size * v))
-        .max()
-        .ok_or(VectorizationError::NoValidVectorization)?;
+    let rhs_vector_size = vector_size_for(client, &rhs, dtypes.rhs_global.size(), plane_size, n)?;
 
     let shared_vector_size = lhs_vector_size.min(rhs_vector_size);
 

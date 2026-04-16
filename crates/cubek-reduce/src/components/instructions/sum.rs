@@ -60,9 +60,9 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
         accumulator: &Self::Accumulator,
         item: Vector<P::EI, P::SI>,
         _coordinate: ReduceCoordinate<P::SI>,
-        #[comptime] plane_reduce: ReduceStep,
+        #[comptime] reduce_step: ReduceStep,
     ) -> Self::Accumulator {
-        match plane_reduce {
+        match reduce_step {
             ReduceStep::Plane => *accumulator + plane_sum(Vector::cast_from(item)),
             ReduceStep::Identity => *accumulator + Vector::cast_from(item),
         }

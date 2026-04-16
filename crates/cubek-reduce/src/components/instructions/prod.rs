@@ -59,13 +59,12 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Prod {
         accumulator: &Self::Accumulator,
         item: Vector<P::EI, P::SI>,
         _coordinate: ReduceCoordinate<P::SI>,
-        #[comptime] use_planes: ReduceStep,
-    ) -> Self::Accumulator {
+        #[comptime] reduce_step: ReduceStep,
+    ) -> Self::AccumulatorItem {
         let item = Vector::cast_from(item);
-        if let ReduceStep::Plane = use_planes {
-            *accumulator * plane_prod(item)
-        } else {
-            *accumulator * item
+        match reduce_step {
+            ReduceStep::Plane => *accumulator * plane_prod(item),
+            ReduceStep::Identity => *accumulator * item,
         }
     }
 

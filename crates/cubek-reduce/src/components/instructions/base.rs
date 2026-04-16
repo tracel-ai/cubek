@@ -143,14 +143,14 @@ pub trait ReduceInstruction<P: ReducePrecision>:
         ReduceCoordinate<P::SI>,
     );
 
-    /// If `use_planes` is `true`, reduce all the `item` and `coordinate` within the `accumulator`.
-    /// Else, reduce the given `item` and `coordinate` into the accumulator.
+    /// If `ReduceStep` is `Plane`, reduce all the `item` and `coordinate` within the `accumulator`.
+    /// if `ReduceStep` is `Identity`, reduce the given `item` and `coordinate` into the accumulator.
     fn reduce(
         this: &Self,
         accumulator: &Self::Accumulator,
         item: Vector<P::EI, P::SI>,
         coordinate: ReduceCoordinate<P::SI>,
-        #[comptime] plane_reduce: ReduceStep,
+        #[comptime] reduce_step: ReduceStep,
     ) -> Self::Accumulator;
 
     /// Reduce two accumulators into a single accumulator.
@@ -255,9 +255,9 @@ pub fn reduce_inplace<P: ReducePrecision, R: ReduceInstruction<P>>(
     accumulator: &mut R::Accumulator,
     item: Vector<P::EI, P::SI>,
     coordinate: ReduceCoordinate<P::SI>,
-    #[comptime] plane_reduce: ReduceStep,
+    #[comptime] reduce_step: ReduceStep,
 ) {
-    let reduction = &R::reduce(inst, accumulator, item, coordinate, plane_reduce);
+    let reduction = &R::reduce(inst, accumulator, item, coordinate, reduce_step);
     R::assign_accumulator(inst, accumulator, reduction);
 }
 
@@ -268,10 +268,10 @@ pub fn reduce_shared_inplace<P: ReducePrecision, R: ReduceInstruction<P>>(
     index: usize,
     item: Vector<P::EI, P::SI>,
     coordinate: ReduceCoordinate<P::SI>,
-    #[comptime] use_planes: ReduceStep,
+    #[comptime] reduce_step: ReduceStep,
 ) {
     let acc_item = R::SharedAccumulator::read(accumulator, index);
-    let reduction = R::reduce(inst, &acc_item, item, coordinate, use_planes);
+    let reduction = R::reduce(inst, &acc_item, item, coordinate, reduce_step);
     R::SharedAccumulator::write(accumulator, index, reduction);
 }
 

@@ -62,18 +62,21 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
         accumulator: &Self::Accumulator,
         item: Vector<P::EI, P::SI>,
         _coordinate: ReduceCoordinate<P::SI>,
-        #[comptime] use_planes: ReduceStep,
+        #[comptime] reduce_step: ReduceStep,
     ) -> Self::Accumulator {
-        if let ReduceStep::Plane = use_planes {
-            let candidate_item = Vector::cast_from(plane_min(item));
-            select_many(
-                accumulator.less_than(candidate_item),
-                *accumulator,
-                candidate_item,
-            )
-        } else {
-            let item = Vector::cast_from(item);
-            select_many(accumulator.less_than(item), *accumulator, item)
+        match reduce_step {
+            ReduceStep::Plane => {
+                let candidate_item = Vector::cast_from(plane_min(item));
+                select_many(
+                    accumulator.less_than(candidate_item),
+                    *accumulator,
+                    candidate_item,
+                )
+            }
+            ReduceStep::Identity => {
+                let item = Vector::cast_from(item);
+                select_many(accumulator.less_than(item), *accumulator, item)
+            }
         }
     }
 

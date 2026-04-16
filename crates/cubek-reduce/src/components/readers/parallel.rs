@@ -26,11 +26,12 @@ pub struct ParallelReader<P: ReducePrecision> {
     vector_size: VectorSize,
     bound_checks: ReaderBoundChecks<P>,
     num_chunks: usize,
-    plane_dim_ceiled: u32,
+    effective_plane_dim: u32,
 }
 
 #[cube]
 impl<P: ReducePrecision> ParallelReader<P> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new<I: ReduceInstruction<P>, Out: NumericLine>(
         input: &VirtualTensor<P::EI, P::SI>,
         output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
@@ -38,6 +39,7 @@ impl<P: ReducePrecision> ParallelReader<P> {
         reduce_axis: usize,
         reduce_index: usize,
         idle: ComptimeOption<bool>,
+        effective_plane_dim: u32,
         #[comptime] bound_checks: BoundChecks,
         #[comptime] plane_dim_ceil: bool,
     ) -> ParallelReader<P> {
@@ -64,7 +66,7 @@ impl<P: ReducePrecision> ParallelReader<P> {
             vector_size,
             bound_checks,
             num_chunks,
-            plane_dim_ceiled: runtime_cube_dim_x(plane_dim_ceil),
+            effective_plane_dim,
         }
     }
 
@@ -73,7 +75,7 @@ impl<P: ReducePrecision> ParallelReader<P> {
     }
 
     pub fn length_plane(&self) -> usize {
-        self.num_chunks.div_ceil(self.plane_dim_ceiled as usize)
+        self.num_chunks.div_ceil(self.effective_plane_dim as usize)
     }
 
     pub fn length_cube(&self) -> usize {
@@ -85,7 +87,7 @@ impl<P: ReducePrecision> ParallelReader<P> {
         vector_index: usize,
     ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
         let cube_dim = CUBE_DIM as usize;
-        let plane_pos = vector_index * cube_dim as usize;
+        let plane_pos = vector_index * cube_dim;
         let unit_pos = UNIT_POS as usize;
         let pos = plane_pos + unit_pos;
         let offset = pos + self.batch_offset;
@@ -105,7 +107,7 @@ impl<P: ReducePrecision> ParallelReader<P> {
         &self,
         vector_index: usize,
     ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
-        let plane_pos = vector_index * self.plane_dim_ceiled as usize;
+        let plane_pos = vector_index * self.effective_plane_dim as usize;
         let unit_pos = UNIT_POS_X as usize;
         let pos = plane_pos + unit_pos;
         let offset = pos + self.batch_offset;
