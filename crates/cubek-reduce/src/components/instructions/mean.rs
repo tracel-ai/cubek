@@ -69,7 +69,13 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Mean {
         _coordinate: ReduceCoordinate<P::SI>,
         #[comptime] reduce_step: ReduceStep,
     ) -> Self::Accumulator {
-        <Sum as ReduceInstruction<P>>::reduce(&this.sum, accumulator, item, _coordinate, reduce_step)
+        <Sum as ReduceInstruction<P>>::reduce(
+            &this.sum,
+            accumulator,
+            item,
+            _coordinate,
+            reduce_step,
+        )
     }
 
     fn fuse_accumulators(
