@@ -1,4 +1,7 @@
-use crate::{ReduceInstruction, ReducePrecision, VectorizationMode, components::args::NumericLine};
+use crate::{
+    ReduceInstruction, ReducePrecision, VectorizationMode,
+    components::{args::NumericLine, instructions::Accumulator},
+};
 use cubecl::{
     prelude::*,
     std::tensor::{
@@ -40,7 +43,7 @@ impl<Out: NumericLine> Writer<Out> {
     pub fn write<P: ReducePrecision, I: ReduceInstruction<P>>(
         &mut self,
         local_index: usize,
-        accumulator: I::Accumulator,
+        accumulator: Accumulator<P>,
         inst: &I,
     ) {
         match self {
@@ -98,7 +101,7 @@ impl<Out: NumericLine> ParallelWriter<Out> {
     pub fn write<P: ReducePrecision, I: ReduceInstruction<P>>(
         &mut self,
         local_index: usize,
-        accumulator: I::Accumulator,
+        accumulator: Accumulator<P>,
         inst: &I,
     ) {
         let vector = I::merge_vector::<Out::T>(inst, accumulator, self.axis_size);
@@ -158,7 +161,7 @@ impl<Out: NumericLine> PerpendicularWriter<Out> {
     pub fn write<P: ReducePrecision, I: ReduceInstruction<P>>(
         &mut self,
         _local_index: usize,
-        accumulator: I::Accumulator,
+        accumulator: Accumulator<P>,
         inst: &I,
     ) {
         let out = I::to_output_perpendicular::<Out::T>(inst, accumulator, self.axis_size).item();

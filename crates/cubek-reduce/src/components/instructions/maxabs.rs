@@ -68,18 +68,18 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
         }
     }
 
-    fn split_accumulator(
-        _this: &Self,
-        accumulator: &Vector<P::EA, P::SI>,
-    ) -> (
-        AccumulatorKind<Vector<P::EI, P::SI>>,
-        ReduceCoordinate<P::SI>,
-    ) {
-        (
-            AccumulatorKind::new_single(Vector::cast_from(*accumulator)),
-            ReduceCoordinate::new_NotRequired(),
-        )
-    }
+    // fn split_accumulator(
+    //     _this: &Self,
+    //     accumulator: &Vector<P::EA, P::SI>,
+    // ) -> (
+    //     AccumulatorKind<Vector<P::EI, P::SI>>,
+    //     ReduceCoordinate<P::SI>,
+    // ) {
+    //     (
+    //         AccumulatorKind::new_single(Vector::cast_from(*accumulator)),
+    //         ReduceCoordinate::new_NotRequired(),
+    //     )
+    // }
 
     fn fuse_accumulators(
         _this: &Self,
@@ -87,6 +87,10 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
         rhs: Self::Accumulator,
     ) -> Self::Accumulator {
         select_many(lhs.greater_than(rhs), lhs, rhs)
+    }
+
+    fn plane_reduce_inplace(this: &Self, accumulator: &mut Self::Accumulator) {
+        todo!()
     }
 
     fn merge_vector<Out: Numeric>(

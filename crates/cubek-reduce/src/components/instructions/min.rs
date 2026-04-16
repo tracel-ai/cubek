@@ -44,18 +44,18 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
         *destination = *source;
     }
 
-    fn split_accumulator(
-        _this: &Self,
-        accumulator: &Vector<P::EA, P::SI>,
-    ) -> (
-        AccumulatorKind<Vector<P::EI, P::SI>>,
-        ReduceCoordinate<P::SI>,
-    ) {
-        (
-            AccumulatorKind::new_single(Vector::cast_from(*accumulator)),
-            ReduceCoordinate::new_NotRequired(),
-        )
-    }
+    // fn split_accumulator(
+    //     _this: &Self,
+    //     accumulator: &Vector<P::EA, P::SI>,
+    // ) -> (
+    //     AccumulatorKind<Vector<P::EI, P::SI>>,
+    //     ReduceCoordinate<P::SI>,
+    // ) {
+    //     (
+    //         AccumulatorKind::new_single(Vector::cast_from(*accumulator)),
+    //         ReduceCoordinate::new_NotRequired(),
+    //     )
+    // }
 
     fn reduce(
         _this: &Self,
@@ -78,6 +78,10 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
                 select_many(accumulator.less_than(item), *accumulator, item)
             }
         }
+    }
+
+    fn plane_reduce_inplace(this: &Self, accumulator: &mut Self::Accumulator) {
+        todo!()
     }
 
     fn fuse_accumulators(

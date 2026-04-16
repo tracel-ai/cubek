@@ -70,18 +70,18 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMax {
         destination.1 = source.1;
     }
 
-    fn split_accumulator(
-        _this: &Self,
-        accumulator: &Self::Accumulator,
-    ) -> (
-        AccumulatorKind<Vector<P::EI, P::SI>>,
-        ReduceCoordinate<P::SI>,
-    ) {
-        (
-            AccumulatorKind::new_single(Vector::cast_from(accumulator.0)),
-            ReduceCoordinate::new_Required(AccumulatorKind::new_single(accumulator.1)),
-        )
-    }
+    // fn split_accumulator(
+    //     _this: &Self,
+    //     accumulator: &Self::Accumulator,
+    // ) -> (
+    //     AccumulatorKind<Vector<P::EI, P::SI>>,
+    //     ReduceCoordinate<P::SI>,
+    // ) {
+    //     (
+    //         AccumulatorKind::new_single(Vector::cast_from(accumulator.0)),
+    //         ReduceCoordinate::new_Required(AccumulatorKind::new_single(accumulator.1)),
+    //     )
+    // }
 
     fn reduce(
         _this: &Self,
@@ -116,6 +116,10 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMax {
             accumulator.0,
             accumulator.1,
         )
+    }
+
+    fn plane_reduce_inplace(this: &Self, accumulator: &mut Self::Accumulator) {
+        todo!()
     }
 
     fn fuse_accumulators(

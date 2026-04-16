@@ -42,7 +42,7 @@ impl<X: CubePrimitive> AccumulatorKind<X> {
         }
     }
 
-    pub fn multiple(&self) -> &Array<X> {
+    pub fn multiple(self) -> Array<X> {
         match self {
             AccumulatorKind::Multiple(array) => array,
             AccumulatorKind::Single(_) => panic!("Tried multiple on Single"),
@@ -110,14 +110,10 @@ pub trait ReduceInstruction<P: ReducePrecision>:
 {
     type Config: CubeComptime + Send + Sync;
 
-    /// The intermediate state into which we accumulate new input elements.
-    /// This is most likely a `Vector<T>` or a struct or tuple of vectors.
-    type Accumulator: CubeType;
-
     /// When multiple agents are collaborating to reduce a single slice,
     /// we need a share accumulator to store multiple `AccumulatorItem`.
     /// This is most likely a `SharedMemory<Vector<T>>` or a struct or tuple of vectorized shared memories.
-    type SharedAccumulator: SharedAccumulator<Item = Self::Accumulator>;
+    type SharedAccumulator: SharedAccumulator<P>;
 
     /// Requirements of the reduce.
     fn requirements(this: &Self) -> ReduceRequirements;
@@ -129,98 +125,89 @@ pub trait ReduceInstruction<P: ReducePrecision>:
 
     /// A accumulator such that `Self::fuse_accumulators(accumulator, Self::null_accumulator()` always returns
     /// is guaranteed to return `accumulator` unchanged.
-    fn null_accumulator(this: &Self) -> Self::Accumulator;
+    fn null_accumulator(this: &Self) -> Accumulator<P>;
 
     /// Assign the value of `source` into `destination`.
     /// In spirit, this is equivalent to `destination = source;`,
     /// but this syntax is not currently supported by CubeCL.
-    fn assign_accumulator(
-        this: &Self,
-        destination: &mut Self::Accumulator,
-        source: &Self::Accumulator,
-    );
-
-    /// Splits the accumulator between its values and coordinates, if they're tracked
-    fn split_accumulator(
-        this: &Self,
-        accumulator: &Self::Accumulator,
-    ) -> (
-        AccumulatorKind<Vector<P::EI, P::SI>>,
-        ReduceCoordinate<P::SI>,
-    );
+    fn assign_accumulator(this: &Self, destination: &mut Accumulator<P>, source: &Accumulator<P>);
 
     /// If `ReduceStep` is `Plane`, reduce all the `item` and `coordinate` within the `accumulator`.
     /// if `ReduceStep` is `Identity`, reduce the given `item` and `coordinate` into the accumulator.
     fn reduce(
         this: &Self,
-        accumulator: &Self::Accumulator,
-        item: Vector<P::EI, P::SI>,
-        coordinate: ReduceCoordinate<P::SI>,
+        accumulator: &Accumulator<P>,
+        item: Item<P>,
         #[comptime] reduce_step: ReduceStep,
-    ) -> Self::Accumulator;
+    ) -> Accumulator<P>;
+
+    fn plane_reduce_inplace(this: &Self, accumulator: &mut Accumulator<P>);
 
     /// Reduce two accumulators into a single accumulator.
-    fn fuse_accumulators(
-        this: &Self,
-        lhs: Self::Accumulator,
-        rhs: Self::Accumulator,
-    ) -> Self::Accumulator;
+    fn fuse_accumulators(this: &Self, lhs: &Accumulator<P>, rhs: &Accumulator<P>)
+    -> Accumulator<P>;
 
     /// Reduce all elements of the accumulator into a single output element of type `Out`.
     fn merge_vector<Out: Numeric>(
         this: &Self,
-        accumulator: Self::Accumulator,
+        accumulator: Accumulator<P>,
         shape_axis_reduce: usize,
     ) -> AccumulatorKind<Out>;
 
     /// Convert each element of the accumulator into the expected output element of type `Out`.
     fn to_output_perpendicular<Out: Numeric>(
         this: &Self,
-        accumulator: Self::Accumulator,
+        accumulator: Accumulator<P>,
         shape_axis_reduce: usize,
     ) -> AccumulatorKind<Vector<Out, P::SI>>;
 }
 
 #[derive(CubeType)]
-pub enum ReduceCoordinate<N: Size> {
-    Required(AccumulatorKind<Vector<u32, N>>),
-    NotRequired,
+pub struct Item<P: ReducePrecision> {
+    pub elements: Vector<P::EI, P::SI>,
+    // Warning: should not be Multiple
+    pub args: AccumulatorKind<Vector<u32, P::SI>>,
+}
+
+#[derive(CubeType)]
+pub struct Accumulator<P: ReducePrecision> {
+    elements: AccumulatorKind<Vector<P::EA, P::SI>>,
+    args: AccumulatorKind<Vector<u32, P::SI>>,
 }
 
 /// A simple trait that abstract over a single or multiple shared memory.
 #[cube]
-pub trait SharedAccumulator: CubeType + Send + Sync + 'static {
-    type Item: CubeType;
-
+pub trait SharedAccumulator<P: ReducePrecision>: CubeType + Send + Sync + 'static {
     fn allocate(#[comptime] length: usize, #[comptime] _coordinate: bool) -> Self;
 
-    fn read(accumulator: &Self, index: usize) -> Self::Item;
+    fn read(accumulator: &Self, index: usize) -> Accumulator<P>;
 
-    fn write(accumulator: &mut Self, index: usize, item: Self::Item);
+    fn write(accumulator: &mut Self, index: usize, item: Accumulator<P>);
 }
 
 #[cube]
-impl<In: Numeric, N: Size> SharedAccumulator for SharedMemory<Vector<In, N>> {
-    type Item = Vector<In, N>;
-
+impl<P: ReducePrecision> SharedAccumulator<P> for SharedMemory<Vector<P::EA, P::SI>> {
     fn allocate(#[comptime] length: usize, #[comptime] _coordinate: bool) -> Self {
         SharedMemory::new(length)
     }
 
-    fn read(accumulator: &Self, index: usize) -> Self::Item {
-        accumulator[index]
+    fn read(accumulator: &Self, index: usize) -> Accumulator<P> {
+        Accumulator::<P> {
+            elements: AccumulatorKind::new_single(accumulator[index]),
+            args: AccumulatorKind::new_None(),
+        }
     }
 
-    fn write(accumulator: &mut Self, index: usize, item: Self::Item) {
-        accumulator[index] = item;
+    fn write(accumulator: &mut Self, index: usize, item: Accumulator<P>) {
+        accumulator[index] = item.elements.item();
     }
 }
 
 /// A pair of shared memory used for [`ArgMax`](super::ArgMax) and [`ArgMin`](super::ArgMin).
 #[derive(CubeType)]
-pub struct ArgAccumulator<T: Numeric, N: Size> {
-    pub elements: SharedMemory<Vector<T, N>>,
-    pub args: SharedMemory<Vector<u32, N>>,
+pub struct ArgAccumulator<P: ReducePrecision> {
+    pub elements: SharedMemory<Vector<P::EA, P::SI>>,
+    pub args: SharedMemory<Vector<u32, P::SI>>,
 }
 
 /// For a single reduce step whether we need to do plane reduction
@@ -233,35 +220,35 @@ pub enum ReduceStep {
 }
 
 #[cube]
-impl<In: Numeric, N: Size> SharedAccumulator for ArgAccumulator<In, N> {
-    type Item = (Vector<In, N>, Vector<u32, N>);
-
+impl<P: ReducePrecision> SharedAccumulator<P> for ArgAccumulator<P> {
     fn allocate(#[comptime] length: usize, #[comptime] _coordinate: bool) -> Self {
-        ArgAccumulator::<In, N> {
+        ArgAccumulator::<P> {
             elements: SharedMemory::new(length),
             args: SharedMemory::new(length),
         }
     }
 
-    fn read(accumulator: &Self, index: usize) -> Self::Item {
-        (accumulator.elements[index], accumulator.args[index])
+    fn read(accumulator: &Self, index: usize) -> Accumulator<P> {
+        Accumulator::<P> {
+            elements: AccumulatorKind::new_single(accumulator.elements[index]),
+            args: AccumulatorKind::new_single(accumulator.args[index]),
+        }
     }
 
-    fn write(accumulator: &mut Self, index: usize, item: Self::Item) {
-        accumulator.elements[index] = item.0;
-        accumulator.args[index] = item.1;
+    fn write(accumulator: &mut Self, index: usize, item: Accumulator<P>) {
+        accumulator.elements[index] = item.elements.item();
+        accumulator.args[index] = item.args.item();
     }
 }
 
 #[cube]
 pub fn reduce_inplace<P: ReducePrecision, R: ReduceInstruction<P>>(
     inst: &R,
-    accumulator: &mut R::Accumulator,
-    item: Vector<P::EI, P::SI>,
-    coordinate: ReduceCoordinate<P::SI>,
+    accumulator: &mut Accumulator<P>,
+    item: Item<P>,
     #[comptime] reduce_step: ReduceStep,
 ) {
-    let reduction = &R::reduce(inst, accumulator, item, coordinate, reduce_step);
+    let reduction = &R::reduce(inst, accumulator, item, reduce_step);
     R::assign_accumulator(inst, accumulator, reduction);
 }
 
@@ -270,12 +257,11 @@ pub fn reduce_shared_inplace<P: ReducePrecision, R: ReduceInstruction<P>>(
     inst: &R,
     accumulator: &mut R::SharedAccumulator,
     index: usize,
-    item: Vector<P::EI, P::SI>,
-    coordinate: ReduceCoordinate<P::SI>,
+    item: Item<P>,
     #[comptime] reduce_step: ReduceStep,
 ) {
     let acc_item = R::SharedAccumulator::read(accumulator, index);
-    let reduction = R::reduce(inst, &acc_item, item, coordinate, reduce_step);
+    let reduction = R::reduce(inst, &acc_item, item, reduce_step);
     R::SharedAccumulator::write(accumulator, index, reduction);
 }
 
@@ -288,8 +274,8 @@ pub fn fuse_accumulator_inplace<P: ReducePrecision, R: ReduceInstruction<P>>(
 ) {
     let fused = R::fuse_accumulators(
         inst,
-        R::SharedAccumulator::read(accumulator, destination),
-        R::SharedAccumulator::read(accumulator, origin),
+        &R::SharedAccumulator::read(accumulator, destination),
+        &R::SharedAccumulator::read(accumulator, origin),
     );
     R::SharedAccumulator::write(accumulator, destination, fused);
 }

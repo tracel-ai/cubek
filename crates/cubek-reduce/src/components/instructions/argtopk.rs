@@ -1,9 +1,9 @@
 use std::marker::PhantomData;
 
-use cubecl::prelude::CubeType;
+use cubecl::prelude::{CubeType, Scalar, Size};
 use cubecl::{
     cube,
-    prelude::{Array, CubePrimitive, Vector},
+    prelude::{Array, Vector},
 };
 
 use crate::components::instructions::AccumulatorKind;
@@ -26,9 +26,9 @@ impl ReduceFamily for ArgTopK {
 }
 
 #[derive(CubeType)]
-pub struct TopkAccumulator<E: CubePrimitive> {
-    pub elements: Array<E>,
-    pub coordinates: Array<u32>,
+pub struct TopkAccumulator<E: Scalar, S: Size> {
+    pub elements: Array<Vector<E, S>>,
+    pub coordinates: Array<Vector<u32, S>>,
 }
 
 #[derive(CubeType)]
@@ -57,7 +57,7 @@ impl<A: CubeType + Send + Sync + 'static> SharedAccumulator for DummyTopkSharedA
 
 #[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
-    type Accumulator = TopkAccumulator<Vector<P::EA, P::SI>>;
+    type Accumulator = TopkAccumulator<P::EA, P::SI>;
     type SharedAccumulator = DummyTopkSharedAccumulator<Self::Accumulator>;
     type Config = u32;
 
@@ -85,15 +85,15 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
         todo!("argtopk")
     }
 
-    fn split_accumulator(
-        _this: &Self,
-        _accumulator: &Self::Accumulator,
-    ) -> (
-        AccumulatorKind<Vector<P::EI, P::SI>>,
-        ReduceCoordinate<P::SI>,
-    ) {
-        todo!("argtopk")
-    }
+    // fn split_accumulator(
+    //     _this: &Self,
+    //     _accumulator: &Self::Accumulator,
+    // ) -> (
+    //     AccumulatorKind<Vector<P::EI, P::SI>>,
+    //     ReduceCoordinate<P::SI>,
+    // ) {
+    //     todo!("argtopk")
+    // }
 
     fn reduce(
         _this: &Self,
@@ -103,6 +103,10 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
         #[comptime] _reduce_step: ReduceStep,
     ) -> Self::Accumulator {
         todo!("reduce Not implemented")
+    }
+
+    fn plane_reduce_inplace(this: &Self, accumulator: &mut Self::Accumulator) {
+        todo!()
     }
 
     fn fuse_accumulators(

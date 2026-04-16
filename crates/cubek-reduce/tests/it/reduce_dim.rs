@@ -12,8 +12,7 @@ pub fn test_argmin() {
 
 #[test]
 pub fn test_argtopk() {
-    // argtopk is not yet implemented
-    // test_case().test_argtopk(1);
+    test_case().test_argtopk(3);
 }
 
 #[test]

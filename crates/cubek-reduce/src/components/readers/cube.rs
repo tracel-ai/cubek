@@ -1,7 +1,7 @@
 use crate::{
     ReducePrecision,
     components::{
-        instructions::ReduceCoordinate,
+        instructions::Item,
         readers::{Reader, ReaderExpand},
     },
 };
@@ -19,7 +19,7 @@ impl<P: ReducePrecision> CubeReader<P> {
         CubeReader::<P> { reader }
     }
 
-    pub fn read(&self, vector_index: usize) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
+    pub fn read(&self, vector_index: usize) -> Item<P> {
         match &self.reader {
             Reader::Parallel(reader) => reader.read_cube(vector_index),
             Reader::Perpendicular(reader) => reader.read_cube(vector_index),

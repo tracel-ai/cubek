@@ -2,7 +2,7 @@ use super::{
     ArgMax, ArgMin, ArgTopK, Max, MaxAbs, Mean, Min, Prod, ReduceCoordinate, ReduceFamily,
     ReduceInstruction, ReduceRequirements, SharedAccumulator, Sum,
 };
-use crate::components::instructions::SharedAccumulatorKind;
+use crate::components::instructions::{SharedAccumulatorKind, TopkAccumulator};
 use crate::{
     ReduceDtypes,
     components::{
@@ -269,14 +269,13 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     args: AccumulatorKind::new_single(args),
                 }
             }
-            ReduceOperation::ArgTopK(_args) => {
-                // let topk_accumulator = <ArgTopK as ReduceInstruction<P>>::null_accumulator(args);
+            ReduceOperation::ArgTopK(args) => {
+                let topk_accumulator = <ArgTopK as ReduceInstruction<P>>::null_accumulator(args);
 
-                todo!()
-                // DynamicAccumulatorItem::<P::EA, P::SI> {
-                //     elements,
-                //     args: ComptimeOption::new_Some(args),
-                // }
+                DynamicAccumulator::<P::EA, P::SI> {
+                    elements: AccumulatorKind::new_Multiple(topk_accumulator.elements),
+                    args: AccumulatorKind::new_Multiple(topk_accumulator.coordinates),
+                }
             }
             ReduceOperation::Max(max) => {
                 let elements = <Max as ReduceInstruction<P>>::null_accumulator(max);
@@ -297,53 +296,52 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
         }
     }
 
-    fn split_accumulator(
-        this: &Self,
-        accumulator: &Self::Accumulator,
-    ) -> (
-        AccumulatorKind<Vector<P::EI, P::SI>>,
-        ReduceCoordinate<P::SI>,
-    ) {
-        match this {
-            ReduceOperation::Sum(sum) => {
-                <Sum as ReduceInstruction<P>>::split_accumulator(sum, &accumulator.elements.item())
-            }
-            ReduceOperation::Prod(prod) => <Prod as ReduceInstruction<P>>::split_accumulator(
-                prod,
-                &accumulator.elements.item(),
-            ),
-            ReduceOperation::Mean(mean) => <Mean as ReduceInstruction<P>>::split_accumulator(
-                mean,
-                &accumulator.elements.item(),
-            ),
-            ReduceOperation::MaxAbs(maxabs) => <MaxAbs as ReduceInstruction<P>>::split_accumulator(
-                maxabs,
-                &accumulator.elements.item(),
-            ),
-            ReduceOperation::ArgMax(argmax) => <ArgMax as ReduceInstruction<P>>::split_accumulator(
-                argmax,
-                &(accumulator.elements.item(), accumulator.args.item()),
-            ),
-            ReduceOperation::ArgMin(argmin) => <ArgMin as ReduceInstruction<P>>::split_accumulator(
-                argmin,
-                &(accumulator.elements.item(), accumulator.args.item()),
-            ),
-            ReduceOperation::ArgTopK(_args) => todo!(),
-            // <ArgTopK as ReduceInstruction<P>>::split_accumulator(
-            //     args,
-            //     &(
-            //         accumulator.elements.array(),
-            //         accumulator.args.unwrap().array(),
-            //     ),
-            // ),
-            ReduceOperation::Max(max) => {
-                <Max as ReduceInstruction<P>>::split_accumulator(max, &accumulator.elements.item())
-            }
-            ReduceOperation::Min(min) => {
-                <Min as ReduceInstruction<P>>::split_accumulator(min, &accumulator.elements.item())
-            }
-        }
-    }
+    // fn split_accumulator(
+    //     this: &Self,
+    //     accumulator: &Self::Accumulator,
+    // ) -> (
+    //     AccumulatorKind<Vector<P::EI, P::SI>>,
+    //     ReduceCoordinate<P::SI>,
+    // ) {
+    //     match this {
+    //         ReduceOperation::Sum(sum) => {
+    //             <Sum as ReduceInstruction<P>>::split_accumulator(sum, &accumulator.elements.item())
+    //         }
+    //         ReduceOperation::Prod(prod) => <Prod as ReduceInstruction<P>>::split_accumulator(
+    //             prod,
+    //             &accumulator.elements.item(),
+    //         ),
+    //         ReduceOperation::Mean(mean) => <Mean as ReduceInstruction<P>>::split_accumulator(
+    //             mean,
+    //             &accumulator.elements.item(),
+    //         ),
+    //         ReduceOperation::MaxAbs(maxabs) => <MaxAbs as ReduceInstruction<P>>::split_accumulator(
+    //             maxabs,
+    //             &accumulator.elements.item(),
+    //         ),
+    //         ReduceOperation::ArgMax(argmax) => <ArgMax as ReduceInstruction<P>>::split_accumulator(
+    //             argmax,
+    //             &(accumulator.elements.item(), accumulator.args.item()),
+    //         ),
+    //         ReduceOperation::ArgMin(argmin) => <ArgMin as ReduceInstruction<P>>::split_accumulator(
+    //             argmin,
+    //             &(accumulator.elements.item(), accumulator.args.item()),
+    //         ),
+    //         ReduceOperation::ArgTopK(args) => <ArgTopK as ReduceInstruction<P>>::split_accumulator(
+    //             args,
+    //             // &TopkAccumulator::<P::EA, P::SI> {
+    //             //     elements: accumulator.elements.multiple(),
+    //             //     coordinates: accumulator.args.multiple(),
+    //             // },
+    //         ),
+    //         ReduceOperation::Max(max) => {
+    //             <Max as ReduceInstruction<P>>::split_accumulator(max, &accumulator.elements.item())
+    //         }
+    //         ReduceOperation::Min(min) => {
+    //             <Min as ReduceInstruction<P>>::split_accumulator(min, &accumulator.elements.item())
+    //         }
+    //     }
+    // }
 
     #[allow(unused_mut)]
     #[allow(unused_mut)]
@@ -486,6 +484,10 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                 }
             }
         }
+    }
+
+    fn plane_reduce_inplace(this: &Self, accumulator: &mut Self::Accumulator) {
+        todo!()
     }
 
     fn fuse_accumulators(

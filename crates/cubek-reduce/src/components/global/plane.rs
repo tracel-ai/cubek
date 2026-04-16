@@ -3,7 +3,7 @@ use crate::{
     components::{
         args::NumericLine,
         global::idle_check,
-        instructions::reduce_inplace,
+        instructions::{Accumulator, reduce_inplace},
         readers::{Reader, plane::PlaneReader},
         writer::Writer,
     },
@@ -86,7 +86,7 @@ impl GlobalFullPlaneReduce {
         idle: ComptimeOption<bool>,
         #[comptime] vectorization_mode: VectorizationMode,
         #[comptime] blueprint: PlaneReduceBlueprint,
-    ) -> I::Accumulator {
+    ) -> Accumulator<P> {
         let reader = Reader::<P>::new::<I, Out>(
             input,
             output,
@@ -107,28 +107,26 @@ impl GlobalFullPlaneReduce {
             PlaneMergeStrategy::Lazy => ReduceStep::Identity,
         };
         for i in 0..reader.length() {
-            let (item, coordinate) = reader.read(i);
-            reduce_inplace::<P, I>(
-                inst,
-                &mut accumulator,
-                item,
-                coordinate,
-                iteration_plane_reduce_mode,
-            );
+            let item = reader.read(i);
+            reduce_inplace::<P, I>(inst, &mut accumulator, item, iteration_plane_reduce_mode);
         }
 
         match blueprint.plane_merge_strategy {
             PlaneMergeStrategy::Lazy => {
-                let (item, coordinate) = I::split_accumulator(inst, &accumulator);
-                let mut result = I::null_accumulator(inst);
-                reduce_inplace::<P, I>(
-                    inst,
-                    &mut result,
-                    item.item(),
-                    coordinate,
-                    ReduceStep::Plane,
-                );
-                result
+                I::plane_reduce_inplace(inst, &mut accumulator);
+                accumulator
+
+                // let (item, coordinate) = I::split_accumulator(inst, &accumulator);
+                // let mut result = I::null_accumulator(inst);
+
+                // reduce_inplace::<P, I>(
+                //     inst,
+                //     &mut result,
+                //     item.item(),
+                //     coordinate,
+                //     ReduceStep::Plane,
+                // );
+                // result
             }
             PlaneMergeStrategy::Eager => accumulator,
         }

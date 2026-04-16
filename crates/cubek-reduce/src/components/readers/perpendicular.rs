@@ -2,8 +2,8 @@ use crate::{
     BoundChecks, ReduceInstruction, ReducePrecision, VectorizationMode,
     components::{
         args::NumericLine,
-        instructions::{ReduceCoordinate, ReduceRequirements},
-        readers::bound_checks::ReaderBoundChecks,
+        instructions::{Item, ReduceRequirements},
+        readers::{bound_checks::ReaderBoundChecks, new_coordinates},
     },
 };
 use cubecl::{
@@ -79,10 +79,7 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
         self.shape.div_ceil(CUBE_DIM as usize)
     }
 
-    pub fn read_cube(
-        &self,
-        vector_index: usize,
-    ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
+    pub fn read_cube(&self, vector_index: usize) -> Item<P> {
         let plane_pos = vector_index * CUBE_DIM as usize;
         let unit_pos = UNIT_POS as usize;
         let pos = plane_pos + unit_pos;
@@ -90,21 +87,18 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
             + unit_pos * self.vector_offset_stride
             + self.batch_offset;
 
-        let item = self.bound_checks.read(pos, offset, &self.view);
+        let elements = self.bound_checks.read(pos, offset, &self.view);
 
-        let coordinate = ReduceCoordinate::new(
+        let args = new_coordinates(
             plane_pos + unit_pos,
             self.requirements,
             VectorizationMode::Perpendicular,
         );
 
-        (item, coordinate)
+        Item::<P> { elements, args }
     }
 
-    pub fn read_plane(
-        &self,
-        vector_index: usize,
-    ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
+    pub fn read_plane(&self, vector_index: usize) -> Item<P> {
         let plane_pos = vector_index * self.effective_plane_dim as usize;
         let unit_pos = UNIT_POS_X as usize;
         let pos = plane_pos + unit_pos;
@@ -112,30 +106,27 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
             + unit_pos * self.vector_offset_stride
             + self.batch_offset;
 
-        let item = self.bound_checks.read(pos, offset, &self.view);
+        let elements = self.bound_checks.read(pos, offset, &self.view);
 
-        let coordinate = ReduceCoordinate::new(
+        let args = new_coordinates(
             plane_pos + unit_pos,
             self.requirements,
             VectorizationMode::Perpendicular,
         );
 
-        (item, coordinate)
+        Item::<P> { elements, args }
     }
 
-    pub fn read_unit(
-        &self,
-        vector_index: usize,
-    ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
+    pub fn read_unit(&self, vector_index: usize) -> Item<P> {
         let offset = self.batch_offset + vector_index * self.vector_offset_stride;
-        let item = self.view[offset];
+        let elements = self.view[offset];
 
-        let coordinate = ReduceCoordinate::new(
+        let args = new_coordinates(
             vector_index,
             self.requirements,
             VectorizationMode::Perpendicular,
         );
 
-        (item, coordinate)
+        Item::<P> { elements, args }
     }
 }
