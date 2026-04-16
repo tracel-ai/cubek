@@ -2,7 +2,7 @@ use super::{
     ArgMax, ArgMin, ArgTopK, Max, MaxAbs, Mean, Min, Prod, ReduceCoordinate, ReduceFamily,
     ReduceInstruction, ReduceRequirements, SharedAccumulator, Sum,
 };
-use crate::components::instructions::{AccumulatorKindExpand, SharedAccumulatorKind};
+use crate::components::instructions::SharedAccumulatorKind;
 use crate::{
     ReduceDtypes,
     components::{
@@ -269,7 +269,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     args: AccumulatorKind::new_single(args),
                 }
             }
-            ReduceOperation::ArgTopK(args) => {
+            ReduceOperation::ArgTopK(_args) => {
                 // let topk_accumulator = <ArgTopK as ReduceInstruction<P>>::null_accumulator(args);
 
                 todo!()
@@ -328,7 +328,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                 argmin,
                 &(accumulator.elements.item(), accumulator.args.item()),
             ),
-            ReduceOperation::ArgTopK(args) => todo!(),
+            ReduceOperation::ArgTopK(_args) => todo!(),
             // <ArgTopK as ReduceInstruction<P>>::split_accumulator(
             //     args,
             //     &(
@@ -444,7 +444,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     args: AccumulatorKind::new_single(args),
                 }
             }
-            ReduceOperation::ArgTopK(args) => {
+            ReduceOperation::ArgTopK(_args) => {
                 todo!()
                 // let (elements, args) = <ArgTopK as ReduceInstruction<P>>::reduce(
                 //     args,
@@ -560,7 +560,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     args: AccumulatorKind::new_single(args),
                 }
             }
-            ReduceOperation::ArgTopK(args) => {
+            ReduceOperation::ArgTopK(_args) => {
                 todo!()
                 // let acc = <ArgTopK as ReduceInstruction<P>>::fuse_accumulators(
                 //     args,
@@ -641,7 +641,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     shape_axis_reduce,
                 )
             }
-            ReduceOperation::ArgTopK(args) => {
+            ReduceOperation::ArgTopK(_args) => {
                 todo!()
                 // <ArgTopK as ReduceInstruction<P>>::merge_vector::<Out>(
                 //     args,
@@ -701,7 +701,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     shape_axis_reduce,
                 )
             }
-            ReduceOperation::ArgTopK(args) => {
+            ReduceOperation::ArgTopK(_args) => {
                 todo!()
                 // <ArgTopK as ReduceInstruction<P>>::to_output_perpendicular::<Out>(
                 //     args,

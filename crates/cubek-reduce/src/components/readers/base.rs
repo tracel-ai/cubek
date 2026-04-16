@@ -44,7 +44,6 @@ impl<P: ReducePrecision> Reader<P> {
                     idle,
                     effective_plane_dim,
                     bound_checks,
-                    plane_dim_ceil,
                 ))
             }
             VectorizationMode::Perpendicular => {
@@ -57,7 +56,6 @@ impl<P: ReducePrecision> Reader<P> {
                     idle,
                     effective_plane_dim,
                     bound_checks,
-                    plane_dim_ceil,
                 ))
             }
         }

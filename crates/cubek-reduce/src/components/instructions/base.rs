@@ -73,7 +73,7 @@ pub enum SharedAccumulatorKind<X: CubePrimitive> {
 impl<X: CubePrimitive> SharedAccumulatorKind<X> {
     pub fn get(&self, i: usize) -> AccumulatorKind<X> {
         match self {
-            SharedAccumulatorKind::Multiple(sequence) => todo!(),
+            SharedAccumulatorKind::Multiple(_sequence) => todo!(),
             SharedAccumulatorKind::Single(shared_memory) => {
                 AccumulatorKind::new_single(shared_memory[i])
             }
@@ -83,7 +83,7 @@ impl<X: CubePrimitive> SharedAccumulatorKind<X> {
 
     pub fn set(&mut self, i: usize, value: AccumulatorKind<X>) {
         match self {
-            SharedAccumulatorKind::Multiple(sequence) => todo!(),
+            SharedAccumulatorKind::Multiple(_sequence) => todo!(),
             SharedAccumulatorKind::Single(shared_memory) => shared_memory[i] = value.item(),
             SharedAccumulatorKind::None => {}
         }

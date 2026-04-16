@@ -2,7 +2,6 @@ use crate::{
     BoundChecks, ReduceInstruction, ReducePrecision, VectorizationMode,
     components::{
         args::NumericLine,
-        global::plane::runtime_cube_dim_x,
         instructions::{ReduceCoordinate, ReduceRequirements},
         readers::bound_checks::ReaderBoundChecks,
     },
@@ -40,7 +39,6 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
         idle: ComptimeOption<bool>,
         effective_plane_dim: u32,
         #[comptime] bound_checks: BoundChecks,
-        #[comptime] plane_dim_ceil: bool,
     ) -> PerpendicularReader<P> {
         let vector_size = input.vector_size();
         let output_index = reduce_index * vector_size;
