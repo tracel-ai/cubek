@@ -68,7 +68,7 @@ impl<N: Size> ReduceCoordinate<N> {
             // TODO: Make this generic to allow 64-bit coordinate output.
             // Can't directly use `usize` for the buffer, since its size isn't defined beyond the
             // kernel boundary.
-            ReduceCoordinate::new_Required(AccumulatorKind::new_Item(fill_coordinate_vector(
+            ReduceCoordinate::new_Required(AccumulatorKind::new_single(fill_coordinate_vector(
                 coordinate as u32,
                 vectorization_mode,
             )))

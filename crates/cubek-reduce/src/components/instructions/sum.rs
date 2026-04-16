@@ -50,7 +50,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
         ReduceCoordinate<P::SI>,
     ) {
         (
-            AccumulatorKind::new_Item(Vector::cast_from(*accumulator)),
+            AccumulatorKind::new_single(Vector::cast_from(*accumulator)),
             ReduceCoordinate::new_NotRequired(),
         )
     }
@@ -83,7 +83,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
     ) -> AccumulatorKind<Out> {
         let sum = Vector::vector_sum(accumulator);
 
-        AccumulatorKind::new_Item(Out::cast_from(sum))
+        AccumulatorKind::new_single(Out::cast_from(sum))
     }
 
     fn to_output_perpendicular<Out: Numeric>(
@@ -91,6 +91,6 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
         accumulator: Self::Accumulator,
         _shape_axis_reduce: usize,
     ) -> AccumulatorKind<Vector<Out, P::SI>> {
-        AccumulatorKind::new_Item(Vector::cast_from(accumulator))
+        AccumulatorKind::new_single(Vector::cast_from(accumulator))
     }
 }

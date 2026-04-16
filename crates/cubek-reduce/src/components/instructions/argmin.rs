@@ -80,8 +80,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMin {
         ReduceCoordinate<P::SI>,
     ) {
         (
-            AccumulatorKind::new_Item(Vector::cast_from(accumulator.0)),
-            ReduceCoordinate::new_Required(AccumulatorKind::new_Item(accumulator.1)),
+            AccumulatorKind::new_single(Vector::cast_from(accumulator.0)),
+            ReduceCoordinate::new_Required(AccumulatorKind::new_single(accumulator.1)),
         )
     }
 
@@ -98,7 +98,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMin {
             ReduceCoordinate::NotRequired => {
                 comptime! {panic!("Coordinates are required for ArgMin")};
                 #[allow(unreachable_code)]
-                AccumulatorKind::new_Item(Vector::new(0))
+                AccumulatorKind::new_single(Vector::new(0))
             }
         };
 
@@ -154,7 +154,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMin {
             Out::cast_from(accumulator.1)
         };
 
-        AccumulatorKind::new_Item(value)
+        AccumulatorKind::new_single(value)
     }
 
     fn to_output_perpendicular<Out: Numeric>(
@@ -162,6 +162,6 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMin {
         accumulator: Self::Accumulator,
         _shape_axis_reduce: usize,
     ) -> AccumulatorKind<Vector<Out, P::SI>> {
-        AccumulatorKind::new_Item(Vector::cast_from(accumulator.1))
+        AccumulatorKind::new_single(Vector::cast_from(accumulator.1))
     }
 }

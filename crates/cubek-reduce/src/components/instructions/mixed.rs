@@ -2,6 +2,7 @@ use super::{
     ArgMax, ArgMin, ArgTopK, Max, MaxAbs, Mean, Min, Prod, ReduceCoordinate, ReduceFamily,
     ReduceInstruction, ReduceRequirements, SharedAccumulator, Sum,
 };
+use crate::components::instructions::{AccumulatorKindExpand, SharedAccumulatorKind};
 use crate::{
     ReduceDtypes,
     components::{
@@ -9,7 +10,6 @@ use crate::{
         precision::ReducePrecision,
     },
 };
-use crate::components::instructions::AccumulatorKindExpand;
 use cubecl::{
     ir::{ElemType, FloatKind, IntKind, UIntKind},
     prelude::*,
@@ -126,67 +126,54 @@ impl ReduceFamily for ReduceOperation {
 }
 
 #[derive(CubeType)]
-pub struct DynamicAccumulator<T: Numeric, N: Size> {
-    pub elements: SharedMemory<Vector<T, N>>,
-    pub args: ComptimeOption<SharedMemory<Vector<u32, N>>>,
+pub struct DynamicSharedAccumulator<T: Numeric, N: Size> {
+    pub elements: SharedAccumulatorKind<Vector<T, N>>,
+    pub args: SharedAccumulatorKind<Vector<u32, N>>,
 }
 
 #[derive(CubeType)]
-pub struct DynamicAccumulatorItem<T: Numeric, N: Size> {
+pub struct DynamicAccumulator<T: Numeric, N: Size> {
     pub elements: AccumulatorKind<Vector<T, N>>,
     pub args: AccumulatorKind<Vector<u32, N>>,
 }
 
 #[cube]
-impl<In: Numeric, N: Size> SharedAccumulator for DynamicAccumulator<In, N> {
-    type Item = DynamicAccumulatorItem<In, N>;
+impl<In: Numeric, N: Size> SharedAccumulator for DynamicSharedAccumulator<In, N> {
+    type Item = DynamicAccumulator<In, N>;
 
     fn allocate(#[comptime] length: usize, #[comptime] coordinate: bool) -> Self {
         let elements = SharedMemory::new(length);
+        // TODO how to put multiple?
         let args = if coordinate {
             let args = SharedMemory::new(length);
-            ComptimeOption::new_Some(args)
+            SharedAccumulatorKind::new_Single(args)
         } else {
-            ComptimeOption::new_None()
+            SharedAccumulatorKind::new_None()
         };
+
+        DynamicSharedAccumulator::<In, N> {
+            elements: SharedAccumulatorKind::new_Single(elements),
+            args,
+        }
+    }
+
+    fn read(accumulator: &Self, index: usize) -> Self::Item {
+        let elements = accumulator.elements.get(index);
+        let args = accumulator.args.get(index);
 
         DynamicAccumulator::<In, N> { elements, args }
     }
 
-    fn read(accumulator: &Self, index: usize) -> Self::Item {
-        let elements = accumulator.elements[index];
-        let args = accumulator.args.map(|args| args[index]);
-
-        DynamicAccumulatorItem::<In, N> { elements: AccumulatorKind::new_Item(elements), args }
-    }
-
     fn write(accumulator: &mut Self, index: usize, item: Self::Item) {
-        match item.elements {
-            AccumulatorKind::Array(_) => todo!(),
-            AccumulatorKind::Item(elements) => {
-                accumulator.elements[index] = elements;
-            },
-            AccumulatorKind::None => todo!(),
-        };
-
-        let args = &mut accumulator.args;
-
-        #[comptime]
-        if let ComptimeOption::Some(args) = args.as_mut() {
-            match item.args {
-                AccumulatorKind::Item(item_args) => {
-                    args[index] = item_args;
-                }
-                _ => (),
-            }
-        }
+        accumulator.elements.set(index, item.elements);
+        accumulator.args.set(index, item.args);
     }
 }
 
 #[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
-    type Accumulator = DynamicAccumulatorItem<P::EA, P::SI>;
-    type SharedAccumulator = DynamicAccumulator<P::EA, P::SI>;
+    type Accumulator = DynamicAccumulator<P::EA, P::SI>;
+    type SharedAccumulator = DynamicSharedAccumulator<P::EA, P::SI>;
     type Config = ReduceOperationConfig;
 
     fn requirements(this: &Self) -> ReduceRequirements {
@@ -237,49 +224,49 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperation::Sum(sum) => {
                 let elements = <Sum as ReduceInstruction<P>>::null_accumulator(sum);
 
-                DynamicAccumulatorItem::<P::EA, P::SI> {
-                    elements: AccumulatorKind::new_Item(elements),
+                DynamicAccumulator::<P::EA, P::SI> {
+                    elements: AccumulatorKind::new_single(elements),
                     args: AccumulatorKind::new_None(),
                 }
             }
             ReduceOperation::Mean(sum) => {
                 let elements = <Mean as ReduceInstruction<P>>::null_accumulator(sum);
 
-                DynamicAccumulatorItem::<P::EA, P::SI> {
-                    elements: AccumulatorKind::new_Item(elements),
+                DynamicAccumulator::<P::EA, P::SI> {
+                    elements: AccumulatorKind::new_single(elements),
                     args: AccumulatorKind::new_None(),
                 }
             }
-            ReduceOperation::Prod(sum) => {
-                let elements = <Prod as ReduceInstruction<P>>::null_accumulator(sum);
+            ReduceOperation::Prod(prod) => {
+                let elements = <Prod as ReduceInstruction<P>>::null_accumulator(prod);
 
-                DynamicAccumulatorItem::<P::EA, P::SI> {
-                    elements: AccumulatorKind::new_Item(elements),
+                DynamicAccumulator::<P::EA, P::SI> {
+                    elements: AccumulatorKind::new_single(elements),
                     args: AccumulatorKind::new_None(),
                 }
             }
             ReduceOperation::MaxAbs(maxabs) => {
                 let elements = <MaxAbs as ReduceInstruction<P>>::null_accumulator(maxabs);
 
-                DynamicAccumulatorItem::<P::EA, P::SI> {
-                    elements: AccumulatorKind::new_Item(elements),
+                DynamicAccumulator::<P::EA, P::SI> {
+                    elements: AccumulatorKind::new_single(elements),
                     args: AccumulatorKind::new_None(),
                 }
             }
             ReduceOperation::ArgMax(argmax) => {
                 let (elements, args) = <ArgMax as ReduceInstruction<P>>::null_accumulator(argmax);
 
-                DynamicAccumulatorItem::<P::EA, P::SI> {
-                    elements: AccumulatorKind::new_Item(elements),
-                    args: AccumulatorKind::new_Item(args),
+                DynamicAccumulator::<P::EA, P::SI> {
+                    elements: AccumulatorKind::new_single(elements),
+                    args: AccumulatorKind::new_single(args),
                 }
             }
             ReduceOperation::ArgMin(argmin) => {
                 let (elements, args) = <ArgMin as ReduceInstruction<P>>::null_accumulator(argmin);
 
-                DynamicAccumulatorItem::<P::EA, P::SI> {
-                    elements: AccumulatorKind::new_Item(elements),
-                    args: AccumulatorKind::new_Item(args),
+                DynamicAccumulator::<P::EA, P::SI> {
+                    elements: AccumulatorKind::new_single(elements),
+                    args: AccumulatorKind::new_single(args),
                 }
             }
             ReduceOperation::ArgTopK(args) => {
@@ -294,16 +281,16 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperation::Max(max) => {
                 let elements = <Max as ReduceInstruction<P>>::null_accumulator(max);
 
-                DynamicAccumulatorItem::<P::EA, P::SI> {
-                    elements: AccumulatorKind::new_Item(elements),
+                DynamicAccumulator::<P::EA, P::SI> {
+                    elements: AccumulatorKind::new_single(elements),
                     args: AccumulatorKind::new_None(),
                 }
             }
             ReduceOperation::Min(min) => {
                 let elements = <Min as ReduceInstruction<P>>::null_accumulator(min);
 
-                DynamicAccumulatorItem::<P::EA, P::SI> {
-                    elements: AccumulatorKind::new_Item(elements),
+                DynamicAccumulator::<P::EA, P::SI> {
+                    elements: AccumulatorKind::new_single(elements),
                     args: AccumulatorKind::new_None(),
                 }
             }
@@ -365,42 +352,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
         destination: &mut Self::Accumulator,
         source: &Self::Accumulator,
     ) {
-        #[comptime]
-        if let AccumulatorKind::Array(el) = &mut destination.elements {
-            #[comptime]
-            if let AccumulatorKind::Array(source_el) = &source.elements {
-                let count = el.len();
-                #[unroll]
-                for i in 0..count {
-                    el[i] = source_el[i];
-                }
-            }
-        }
-        #[comptime]
-        if let AccumulatorKind::Item(el) = &mut destination.elements {
-            #[comptime]
-            if let AccumulatorKind::Item(source_el) = source.elements {
-                *el = source_el;
-            }
-        }
-
-        let args = &mut destination.args;
-        #[comptime]
-        if let AccumulatorKind::Array(val) = args {
-            if let AccumulatorKind::Array(source_val) = &source.args {
-                let count = val.len();
-               #[unroll]
-                for i in 0..count {
-                    val[i] = source_val[i];
-                }
-            }
-        }
-        #[comptime]
-        if let AccumulatorKind::Item(val) = args {
-            if let AccumulatorKind::Item(source_val) = source.args {
-                *val = source_val;
-            }
-        }
+        destination.elements.assign(&source.elements);
+        destination.args.assign(&source.args);
     }
 
     fn reduce(
@@ -419,8 +372,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     coordinate,
                     use_planes,
                 );
-                DynamicAccumulatorItem::<P::EA, P::SI> {
-                    elements: AccumulatorKind::new_Item(elements),
+                DynamicAccumulator::<P::EA, P::SI> {
+                    elements: AccumulatorKind::new_single(elements),
                     args: AccumulatorKind::new_None(),
                 }
             }
@@ -432,8 +385,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     coordinate,
                     use_planes,
                 );
-                DynamicAccumulatorItem::<P::EA, P::SI> {
-                    elements: AccumulatorKind::new_Item(elements),
+                DynamicAccumulator::<P::EA, P::SI> {
+                    elements: AccumulatorKind::new_single(elements),
                     args: AccumulatorKind::new_None(),
                 }
             }
@@ -445,8 +398,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     coordinate,
                     use_planes,
                 );
-                DynamicAccumulatorItem::<P::EA, P::SI> {
-                    elements: AccumulatorKind::new_Item(elements),
+                DynamicAccumulator::<P::EA, P::SI> {
+                    elements: AccumulatorKind::new_single(elements),
                     args: AccumulatorKind::new_None(),
                 }
             }
@@ -458,8 +411,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     coordinate,
                     use_planes,
                 );
-                DynamicAccumulatorItem::<P::EA, P::SI> {
-                    elements: AccumulatorKind::new_Item(elements),
+                DynamicAccumulator::<P::EA, P::SI> {
+                    elements: AccumulatorKind::new_single(elements),
                     args: AccumulatorKind::new_None(),
                 }
             }
@@ -472,9 +425,9 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     use_planes,
                 );
 
-                DynamicAccumulatorItem::<P::EA, P::SI> {
-                    elements: AccumulatorKind::new_Item(elements),
-                    args: AccumulatorKind::new_Item(args),
+                DynamicAccumulator::<P::EA, P::SI> {
+                    elements: AccumulatorKind::new_single(elements),
+                    args: AccumulatorKind::new_single(args),
                 }
             }
             ReduceOperation::ArgMin(argmin) => {
@@ -486,9 +439,9 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     use_planes,
                 );
 
-                DynamicAccumulatorItem::<P::EA, P::SI> {
-                    elements: AccumulatorKind::new_Item(elements),
-                    args: AccumulatorKind::new_Item(args),
+                DynamicAccumulator::<P::EA, P::SI> {
+                    elements: AccumulatorKind::new_single(elements),
+                    args: AccumulatorKind::new_single(args),
                 }
             }
             ReduceOperation::ArgTopK(args) => {
@@ -514,8 +467,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     coordinate,
                     use_planes,
                 );
-                DynamicAccumulatorItem::<P::EA, P::SI> {
-                    elements: AccumulatorKind::new_Item(elements),
+                DynamicAccumulator::<P::EA, P::SI> {
+                    elements: AccumulatorKind::new_single(elements),
                     args: AccumulatorKind::new_None(),
                 }
             }
@@ -527,8 +480,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     coordinate,
                     use_planes,
                 );
-                DynamicAccumulatorItem::<P::EA, P::SI> {
-                    elements: AccumulatorKind::new_Item(elements),
+                DynamicAccumulator::<P::EA, P::SI> {
+                    elements: AccumulatorKind::new_single(elements),
                     args: AccumulatorKind::new_None(),
                 }
             }
@@ -547,8 +500,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     lhs.elements.item(),
                     rhs.elements.item(),
                 );
-                DynamicAccumulatorItem::<P::EA, P::SI> {
-                    elements: AccumulatorKind::new_Item(elements),
+                DynamicAccumulator::<P::EA, P::SI> {
+                    elements: AccumulatorKind::new_single(elements),
                     args: AccumulatorKind::new_None(),
                 }
             }
@@ -558,8 +511,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     lhs.elements.item(),
                     rhs.elements.item(),
                 );
-                DynamicAccumulatorItem::<P::EA, P::SI> {
-                    elements: AccumulatorKind::new_Item(elements),
+                DynamicAccumulator::<P::EA, P::SI> {
+                    elements: AccumulatorKind::new_single(elements),
                     args: AccumulatorKind::new_None(),
                 }
             }
@@ -569,8 +522,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     lhs.elements.item(),
                     rhs.elements.item(),
                 );
-                DynamicAccumulatorItem::<P::EA, P::SI> {
-                    elements: AccumulatorKind::new_Item(elements),
+                DynamicAccumulator::<P::EA, P::SI> {
+                    elements: AccumulatorKind::new_single(elements),
                     args: AccumulatorKind::new_None(),
                 }
             }
@@ -580,8 +533,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     lhs.elements.item(),
                     rhs.elements.item(),
                 );
-                DynamicAccumulatorItem::<P::EA, P::SI> {
-                    elements: AccumulatorKind::new_Item(elements),
+                DynamicAccumulator::<P::EA, P::SI> {
+                    elements: AccumulatorKind::new_single(elements),
                     args: AccumulatorKind::new_None(),
                 }
             }
@@ -591,9 +544,9 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     (lhs.elements.item(), lhs.args.item()),
                     (rhs.elements.item(), rhs.args.item()),
                 );
-                DynamicAccumulatorItem::<P::EA, P::SI> {
-                    elements: AccumulatorKind::new_Item(elements),
-                    args: AccumulatorKind::new_Item(args),
+                DynamicAccumulator::<P::EA, P::SI> {
+                    elements: AccumulatorKind::new_single(elements),
+                    args: AccumulatorKind::new_single(args),
                 }
             }
             ReduceOperation::ArgMin(argmin) => {
@@ -602,9 +555,9 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     (lhs.elements.item(), lhs.args.item()),
                     (rhs.elements.item(), rhs.args.item()),
                 );
-                DynamicAccumulatorItem::<P::EA, P::SI> {
-                    elements: AccumulatorKind::new_Item(elements),
-                    args: AccumulatorKind::new_Item(args),
+                DynamicAccumulator::<P::EA, P::SI> {
+                    elements: AccumulatorKind::new_single(elements),
+                    args: AccumulatorKind::new_single(args),
                 }
             }
             ReduceOperation::ArgTopK(args) => {
@@ -625,8 +578,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     lhs.elements.item(),
                     rhs.elements.item(),
                 );
-                DynamicAccumulatorItem::<P::EA, P::SI> {
-                    elements: AccumulatorKind::new_Item(elements),
+                DynamicAccumulator::<P::EA, P::SI> {
+                    elements: AccumulatorKind::new_single(elements),
                     args: AccumulatorKind::new_None(),
                 }
             }
@@ -636,8 +589,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     lhs.elements.item(),
                     rhs.elements.item(),
                 );
-                DynamicAccumulatorItem::<P::EA, P::SI> {
-                    elements: AccumulatorKind::new_Item(elements),
+                DynamicAccumulator::<P::EA, P::SI> {
+                    elements: AccumulatorKind::new_single(elements),
                     args: AccumulatorKind::new_None(),
                 }
             }
@@ -717,7 +670,9 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
         match this {
             ReduceOperation::Sum(sum) => <Sum as ReduceInstruction<P>>::to_output_perpendicular::<
                 Out,
-            >(sum, accumulator.elements.item(), shape_axis_reduce),
+            >(
+                sum, accumulator.elements.item(), shape_axis_reduce
+            ),
             ReduceOperation::Prod(prod) => {
                 <Prod as ReduceInstruction<P>>::to_output_perpendicular::<Out>(
                     prod,
@@ -763,10 +718,14 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             }
             ReduceOperation::Max(max) => <Max as ReduceInstruction<P>>::to_output_perpendicular::<
                 Out,
-            >(max, accumulator.elements.item(), shape_axis_reduce),
+            >(
+                max, accumulator.elements.item(), shape_axis_reduce
+            ),
             ReduceOperation::Min(min) => <Min as ReduceInstruction<P>>::to_output_perpendicular::<
                 Out,
-            >(min, accumulator.elements.item(), shape_axis_reduce),
+            >(
+                min, accumulator.elements.item(), shape_axis_reduce
+            ),
         }
     }
 }

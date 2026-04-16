@@ -1,7 +1,4 @@
-use crate::{
-    ReduceInstruction, ReducePrecision, VectorizationMode,
-    components::{args::NumericLine, instructions::AccumulatorKind},
-};
+use crate::{ReduceInstruction, ReducePrecision, VectorizationMode, components::args::NumericLine};
 use cubecl::{
     prelude::*,
     std::tensor::{
@@ -104,14 +101,14 @@ impl<Out: NumericLine> ParallelWriter<Out> {
         accumulator: I::Accumulator,
         inst: &I,
     ) {
-        let vector: AccumulatorKind<<Out as NumericLine>::T> =
-            I::merge_vector::<Out::T>(inst, accumulator, self.axis_size);
+        let vector = I::merge_vector::<Out::T>(inst, accumulator, self.axis_size);
+        self.buffer[local_index] = vector.item();
 
-        match vector {
-            AccumulatorKind::Array(array) =>  {// flatten
-                }
-            AccumulatorKind::Item(_) =>        self.buffer[local_index] = vector;
-        }
+        // match vector {
+        //     AccumulatorKind::Multiple(array) =>  {// flatten
+        //         }
+        //     AccumulatorKind::Single(_) =>        ;
+        // }
     }
 
     pub fn commit(&mut self) {
@@ -164,51 +161,24 @@ impl<Out: NumericLine> PerpendicularWriter<Out> {
         accumulator: I::Accumulator,
         inst: &I,
     ) {
-        let out: AccumulatorKind<Out::T> =
-            I::to_output_perpendicular::<Out::T>(inst, accumulator, self.axis_size);
+        let out = I::to_output_perpendicular::<Out::T>(inst, accumulator, self.axis_size).item();
 
-        match out {
-            AccumulatorKind::Array(array) => {
-                for .. in array {
-                    if comptime![self.output_vector_size == self.input_vector_size] {
-                        self.output.write(self.write_index, Vector::cast_from(out));
-                    } else {
-                        let num_iters = comptime![self.input_vector_size / self.output_vector_size];
+        if comptime![self.output_vector_size == self.input_vector_size] {
+            self.output.write(self.write_index, Vector::cast_from(out));
+        } else {
+            let num_iters = comptime![self.input_vector_size / self.output_vector_size];
 
-                        #[unroll]
-                        for i in 0..num_iters {
-                            let mut tmp = Vector::empty();
+            #[unroll]
+            for i in 0..num_iters {
+                let mut tmp = Vector::empty();
 
-                            #[unroll]
-                            for j in 0..self.output_vector_size {
-                                tmp[j] = out[i * self.output_vector_size + j];
-                            }
-
-                            let index = self.write_index * num_iters + i;
-                            self.output.write(index, tmp);
-                        }
-                    }
+                #[unroll]
+                for j in 0..self.output_vector_size {
+                    tmp[j] = out[i * self.output_vector_size + j];
                 }
-            }
-            AccumulatorKind::Item(_) => {
-                if comptime![self.output_vector_size == self.input_vector_size] {
-                    self.output.write(self.write_index, Vector::cast_from(out));
-                } else {
-                    let num_iters = comptime![self.input_vector_size / self.output_vector_size];
 
-                    #[unroll]
-                    for i in 0..num_iters {
-                        let mut tmp = Vector::empty();
-
-                        #[unroll]
-                        for j in 0..self.output_vector_size {
-                            tmp[j] = out[i * self.output_vector_size + j];
-                        }
-
-                        let index = self.write_index * num_iters + i;
-                        self.output.write(index, tmp);
-                    }
-                }
+                let index = self.write_index * num_iters + i;
+                self.output.write(index, tmp);
             }
         }
     }

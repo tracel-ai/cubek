@@ -14,26 +14,78 @@ pub struct ReduceRequirements {
 
 #[derive(CubeType)]
 pub enum AccumulatorKind<X: CubePrimitive> {
-    Array(Array<X>),
-    Item(X),
+    Multiple(Array<X>),
+    Single(AccumulatorWrapper<X>),
     None,
+}
+
+#[derive(CubeType)]
+pub struct AccumulatorWrapper<X: CubePrimitive> {
+    value: X,
 }
 
 #[cube]
 impl<X: CubePrimitive> AccumulatorKind<X> {
+    pub fn new_single(value: X) -> AccumulatorKind<X> {
+        AccumulatorKind::new_Single(AccumulatorWrapper::<X> { value })
+    }
+
     pub fn item(&self) -> X {
         match self {
-            AccumulatorKind::Array(_) => panic!(),
-            AccumulatorKind::Item(item) => *item,
-            AccumulatorKind::None => panic!(),
+            AccumulatorKind::Multiple(_) => panic!("Tried item on Multiple"),
+            AccumulatorKind::Single(item) => item.value,
+            AccumulatorKind::None => panic!("Tried item on None"),
         }
     }
 
-    pub fn array(&self) -> &Array<X> {
+    pub fn multiple(&self) -> &Array<X> {
         match self {
-            AccumulatorKind::Array(array) => array,
-            AccumulatorKind::Item(_) => panic!(),
-            AccumulatorKind::None => panic!(),
+            AccumulatorKind::Multiple(array) => array,
+            AccumulatorKind::Single(_) => panic!("Tried multiple on Single"),
+            AccumulatorKind::None => panic!("Tried multiple on None"),
+        }
+    }
+
+    pub fn assign(&mut self, other: &AccumulatorKind<X>) {
+        match (self, other) {
+            (AccumulatorKind::Multiple(this), AccumulatorKind::Multiple(other)) => {
+                for i in 0..this.len() {
+                    this[i] = other[i];
+                }
+            }
+            (AccumulatorKind::Single(this), AccumulatorKind::Single(other)) => {
+                this.value = other.value;
+            }
+            (AccumulatorKind::None, AccumulatorKind::None) => {}
+            _ => panic!("Tried assigning different accumulator kinds"),
+        }
+    }
+}
+
+#[derive(CubeType)]
+pub enum SharedAccumulatorKind<X: CubePrimitive> {
+    Multiple(Sequence<SharedMemory<X>>),
+    Single(SharedMemory<X>),
+    None,
+}
+
+#[cube]
+impl<X: CubePrimitive> SharedAccumulatorKind<X> {
+    pub fn get(&self, i: usize) -> AccumulatorKind<X> {
+        match self {
+            SharedAccumulatorKind::Multiple(sequence) => todo!(),
+            SharedAccumulatorKind::Single(shared_memory) => {
+                AccumulatorKind::new_single(shared_memory[i])
+            }
+            SharedAccumulatorKind::None => AccumulatorKind::new_None(),
+        }
+    }
+
+    pub fn set(&mut self, i: usize, value: AccumulatorKind<X>) {
+        match self {
+            SharedAccumulatorKind::Multiple(sequence) => todo!(),
+            SharedAccumulatorKind::Single(shared_memory) => shared_memory[i] = value.item(),
+            SharedAccumulatorKind::None => {}
         }
     }
 }

@@ -150,7 +150,7 @@ impl GlobalFullCubeReduce {
                 reduce_inplace::<P, I>(
                     inst,
                     &mut accumulator_plane,
-                    item,
+                    item.item(),
                     coordinate,
                     ReduceStep::Plane,
                 );
@@ -183,7 +183,7 @@ fn reduce_scan<P: ReducePrecision, I: ReduceInstruction<P>>(
     for i in 0..size {
         let item = I::SharedAccumulator::read(accumulator, i);
         let (item, coordinate) = I::split_accumulator(inst, &item);
-        reduce_inplace::<P, I>(inst, result, item, coordinate, ReduceStep::Identity);
+        reduce_inplace::<P, I>(inst, result, item.item(), coordinate, ReduceStep::Identity);
     }
 }
 
@@ -250,5 +250,5 @@ fn reduce_tree<P: ReducePrecision, I: ReduceInstruction<P>>(
 
     let tmp = I::SharedAccumulator::read(accumulator, 0);
     let (item, coordinate) = I::split_accumulator(inst, &tmp);
-    reduce_inplace::<P, I>(inst, result, item, coordinate, ReduceStep::Identity);
+    reduce_inplace::<P, I>(inst, result, item.item(), coordinate, ReduceStep::Identity);
 }

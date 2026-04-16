@@ -73,7 +73,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
         ReduceCoordinate<P::SI>,
     ) {
         (
-            AccumulatorKind::new_Item(Vector::cast_from(*accumulator)),
+            AccumulatorKind::new_single(Vector::cast_from(*accumulator)),
             ReduceCoordinate::new_NotRequired(),
         )
     }
@@ -97,7 +97,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
             let candidate = accumulator[k];
             max = select(candidate > max, candidate, max);
         }
-        AccumulatorKind::new_Item(Out::cast_from(max))
+        AccumulatorKind::new_single(Out::cast_from(max))
     }
 
     fn to_output_perpendicular<Out: Numeric>(
@@ -105,6 +105,6 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
         accumulator: Self::Accumulator,
         _shape_axis_reduce: usize,
     ) -> AccumulatorKind<Vector<Out, P::SI>> {
-        AccumulatorKind::new_Item(Vector::cast_from(accumulator))
+        AccumulatorKind::new_single(Vector::cast_from(accumulator))
     }
 }

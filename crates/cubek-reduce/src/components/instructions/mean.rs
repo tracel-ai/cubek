@@ -57,7 +57,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Mean {
         ReduceCoordinate<P::SI>,
     ) {
         (
-            AccumulatorKind::new_Item(Vector::cast_from(*accumulator)),
+            AccumulatorKind::new_single(Vector::cast_from(*accumulator)),
             ReduceCoordinate::new_NotRequired(),
         )
     }
@@ -93,7 +93,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Mean {
         .item();
 
         let value = Out::cast_from(sum / P::EA::cast_from(shape_axis_reduce));
-        AccumulatorKind::new_Item(value)
+        AccumulatorKind::new_single(value)
     }
 
     fn to_output_perpendicular<Out: Numeric>(
@@ -109,6 +109,6 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Mean {
         .item();
 
         let vector = Vector::cast_from(sum / Vector::cast_from(shape_axis_reduce));
-        AccumulatorKind::new_Item(vector)
+        AccumulatorKind::new_single(vector)
     }
 }
