@@ -2,6 +2,8 @@ use std::marker::PhantomData;
 
 use cubecl;
 use cubecl::prelude::*;
+use cubek_matmul::components::tile::{Tilex, TilexExpand, cmma_allocate_acc, tilex_write};
+use cubek_std::MatrixLayout;
 
 use crate::{
     components::tile::output::AttentionOutput,
@@ -51,117 +53,110 @@ impl<Acc: Float> BlackboxAttentionOutputWorkspace<Acc> {
 }
 
 #[cube]
-impl<SM: Float, Acc: Float> AttentionOutput for BlackboxAttentionOutput<SM, Acc> {
+impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA> for BlackboxAttentionOutput<SM, Acc> {
     type Config = BlackboxOutputConfig;
     type ScaleColumn = RowWise<SM>;
     type RunningState = (RowWise<SM>, RowWise<SM>);
-    type Tile = cmma::Matrix<Acc>;
     type Workspace = BlackboxAttentionOutputWorkspace<Acc>;
 
     fn scale_mul(
-        tile: &mut Self::Tile,
+        tile: &mut Tilex<Acc, VA, ReadWrite>,
         scale: &Self::ScaleColumn,
         workspace: &mut Self::Workspace,
         #[comptime] config: Self::Config,
     ) {
-        cmma::store(
-            &mut workspace.smem,
-            tile,
-            config.tile_size.val_dim,
-            cmma::MatrixLayout::RowMajor,
-        );
-
-        sync_cube();
-
-        workspace
-            .local_tile
-            .load_from_slice(&workspace.smem.to_slice());
-
-        sync_cube();
-
-        workspace
-            .local_tile
-            .rowwise_scale(&RowWise::<SM>::cast_from(scale));
-
-        workspace.local_tile.store_to(&mut workspace.smem);
-
-        sync_cube();
-
-        cmma::load_with_layout(
-            tile,
-            &workspace.smem.to_slice(),
-            config.tile_size.val_dim,
-            cmma::MatrixLayout::RowMajor,
-        )
+        let scale_acc = RowWise::<SM>::cast_from::<Acc>(scale);
+        scale_cmma_tile::<SM, Acc, VA>(tile, &scale_acc, workspace, config);
     }
 
     fn scale_div(
-        tile: &mut Self::Tile,
+        tile: &mut Tilex<Acc, VA, ReadWrite>,
         running_state: &Self::RunningState,
         workspace: &mut Self::Workspace,
         #[comptime] config: Self::Config,
     ) {
-        let mut scale = RowWise::<SM>::cast_from(&running_state.1);
+        let mut scale = RowWise::<SM>::cast_from::<Acc>(&running_state.1);
         scale.recip_inplace();
-
-        cmma::store(
-            &mut workspace.smem,
-            tile,
-            config.tile_size.val_dim,
-            cmma::MatrixLayout::RowMajor,
-        );
-
-        sync_cube();
-
-        workspace
-            .local_tile
-            .load_from_slice(&workspace.smem.to_slice());
-
-        sync_cube();
-
-        workspace.local_tile.rowwise_scale(&scale);
-
-        workspace.local_tile.store_to(&mut workspace.smem);
-
-        sync_cube();
-
-        cmma::load_with_layout(
-            tile,
-            &workspace.smem.to_slice(),
-            config.tile_size.val_dim,
-            cmma::MatrixLayout::RowMajor,
-        )
+        scale_cmma_tile::<SM, Acc, VA>(tile, &scale, workspace, config);
     }
 
     fn init_workspace(#[comptime] config: Self::Config) -> Self::Workspace {
         Self::Workspace::new(config)
     }
 
-    fn init_tile(#[comptime] config: Self::Config) -> Self::Tile {
-        let tile = unsafe {
-            cmma::Matrix::<Acc>::uninitialized(
-                cmma::MatrixIdent::Accumulator,
-                config.tile_size.seq_q as usize,
-                config.tile_size.val_dim as usize,
-                config.tile_size.seq_kv as usize,
-                cmma::MatrixLayout::Undefined,
-            )
-        };
-        cmma::fill(&tile, Acc::from_int(0));
+    fn init_tile(#[comptime] config: Self::Config) -> Tilex<Acc, VA, ReadWrite> {
+        let mut tile = cmma_allocate_acc::<Acc, VA>(
+            MatrixLayout::RowMajor,
+            config.tile_size.to_value_matmul_tile_size(),
+        );
+        zero_cmma_tile::<Acc, VA>(&mut tile);
         tile
     }
 
     fn write_results<E: Float, ES: Size>(
-        tile: &Self::Tile,
-        slice: &mut SliceMut<Vector<E, ES>>,
-        #[comptime] config: Self::Config,
+        source: &mut Tilex<Acc, VA, ReadWrite>,
+        dest: &mut Tilex<E, ES, ReadWrite>,
+        #[comptime] _config: Self::Config,
     ) {
-        let acc = cmma::cast::<Acc, E>(tile);
-        cmma::store(
-            slice,
-            &acc,
-            config.tile_size.val_dim,
-            cmma::MatrixLayout::RowMajor,
-        );
+        tilex_write::<E, ES, Acc, VA, Acc, Acc>(dest, source);
+    }
+}
+
+#[cube]
+fn scale_cmma_tile<SM: Float, Acc: Float, VA: Size>(
+    tile: &mut Tilex<Acc, VA, ReadWrite>,
+    scale: &RowWise<Acc>,
+    workspace: &mut BlackboxAttentionOutputWorkspace<Acc>,
+    #[comptime] config: BlackboxOutputConfig,
+) {
+    match tile {
+        Tilex::Cmma(t) => scale_cmma_matrix::<SM, Acc>(&mut t.matrix, scale, workspace, config),
+        Tilex::Register(_dummy) => panic!("BlackboxAttentionOutput expects a Tilex::Cmma"),
+        _ => panic!("BlackboxAttentionOutput expects a Tilex::Cmma"),
+    }
+}
+
+#[cube]
+fn scale_cmma_matrix<SM: Float, Acc: Float>(
+    matrix: &mut cmma::Matrix<Acc>,
+    scale: &RowWise<Acc>,
+    workspace: &mut BlackboxAttentionOutputWorkspace<Acc>,
+    #[comptime] config: BlackboxOutputConfig,
+) {
+    cmma::store(
+        &mut workspace.smem,
+        matrix,
+        config.tile_size.val_dim,
+        cmma::MatrixLayout::RowMajor,
+    );
+
+    sync_cube();
+
+    workspace
+        .local_tile
+        .load_from_slice(&workspace.smem.to_slice());
+
+    sync_cube();
+
+    workspace.local_tile.rowwise_scale(scale);
+
+    workspace.local_tile.store_to(&mut workspace.smem);
+
+    sync_cube();
+
+    cmma::load_with_layout(
+        matrix,
+        &workspace.smem.to_slice(),
+        config.tile_size.val_dim,
+        cmma::MatrixLayout::RowMajor,
+    )
+}
+
+#[cube]
+fn zero_cmma_tile<Acc: Float, VA: Size>(tile: &mut Tilex<Acc, VA, ReadWrite>) {
+    match tile {
+        Tilex::Cmma(t) => cmma::fill(&t.matrix, Acc::from_int(0)),
+        Tilex::Register(_dummy) => panic!("BlackboxAttentionOutput expects a Tilex::Cmma"),
+        _ => panic!("BlackboxAttentionOutput expects a Tilex::Cmma"),
     }
 }

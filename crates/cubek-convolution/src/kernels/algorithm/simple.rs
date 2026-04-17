@@ -2,10 +2,7 @@ use cubecl::{
     server::LaunchError,
     {Runtime, client::ComputeClient, ir::StorageType, prelude::TensorBinding},
 };
-use cubek_matmul::components::{
-    global::read::FullLoadingStrategy,
-    tile::{StandardTileIO, TileMatmulFamily},
-};
+use cubek_matmul::components::{global::read::FullLoadingStrategy, tile::TileMatmulFamily};
 use cubek_matmul::components::{
     global::read::sync_full_cyclic::SyncFullCyclicLoading,
     stage::{ColMajorTilingOrder, RowMajorTilingOrder},
@@ -75,7 +72,7 @@ pub struct SimpleAsyncTmaConv<TMM: TileMatmulFamily> {
 }
 
 impl<
-    TMM: TileMatmulFamily<TileIO = StandardTileIO>,
+    TMM: TileMatmulFamily,
     LL: FullLoadingStrategy<RuntimeArgs, TileKind = Strided>,
     LR: FullLoadingStrategy<RuntimeArgs, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
 > Algorithm for SimpleConv<TMM, LL, LR>
@@ -93,7 +90,7 @@ impl<
     }
 }
 
-impl<TMM: TileMatmulFamily<TileIO = StandardTileIO>> Algorithm for SimpleAsyncTmaConv<TMM> {
+impl<TMM: TileMatmulFamily> Algorithm for SimpleAsyncTmaConv<TMM> {
     type Routine = SimpleAlgorithm<TMM, AsyncFullTmaLoading, AsyncFullTmaLoading, SyncBiasLoading>;
 
     type Args = TensorMapArgs<RuntimeArgs>;

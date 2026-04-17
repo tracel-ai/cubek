@@ -1,10 +1,13 @@
 use cubecl::prelude::*;
-use cubek_matmul::components::stage::{LoadStageFamily, Stage, StageFamily, TilingLayout};
+use cubek_matmul::components::{
+    stage::{LoadStageFamily, Stage, StageFamily, TilingLayout},
+    tile::Tilex,
+};
 
 use cubecl::std::{Swizzle, tensor::layout::Coords2d};
 use cubek_std::{
     stage::{StageMemoryConfig, as_swizzle_object},
-    tile::{Strided, StridedTile},
+    tile::StridedTile,
 };
 
 use crate::components::stage::reader::BiasTilingLayout;
@@ -12,8 +15,6 @@ use crate::components::stage::reader::BiasTilingLayout;
 pub struct BiasStageFamily;
 
 impl StageFamily for BiasStageFamily {
-    type TileKind = Strided;
-
     type Stage<ES: Numeric, NS: Size, T: TilingLayout> = BiasStageMemory<ES, NS>;
 }
 
@@ -123,10 +124,8 @@ impl<ES: Numeric, NS: Size> BiasStageMemory<ES, NS> {
 
 #[cube]
 impl<ES: Numeric, NS: Size> Stage<ES, NS, ReadOnly> for BiasStageMemory<ES, NS> {
-    type TileKind = Strided;
-
-    fn tile(this: &Self, tile: Coords2d) -> StridedTile<ES, NS> {
-        this.get_tile(tile)
+    fn tile(this: &Self, tile: Coords2d) -> Tilex<ES, NS, ReadOnly> {
+        Tilex::new_SharedMemory(this.get_tile(tile))
     }
 }
 

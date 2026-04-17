@@ -2,9 +2,8 @@ use cubecl::prelude::*;
 use cubek_std::MatrixLayout;
 
 use crate::components::tile::{
-    SharedTileConfig, TileMatmul, Tilex,
-    cmma_allocate_acc, cmma_allocate_lhs, cmma_allocate_rhs, tilex_execute, tilex_load,
-    tilex_write,
+    SharedTileConfig, TileMatmul, Tilex, cmma_allocate_acc, cmma_allocate_lhs, cmma_allocate_rhs,
+    tilex_execute, tilex_load, tilex_write,
 };
 use crate::definition::StageIdent;
 
@@ -30,21 +29,21 @@ impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Tilex<L, VL, ReadWrite> {
-        cmma_allocate_lhs::<L, VL>(layout, config)
+        cmma_allocate_lhs::<L, VL>(layout, config.tile_size)
     }
 
     fn allocate_rhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Tilex<R, VR, ReadWrite> {
-        cmma_allocate_rhs::<R, VR>(layout, config)
+        cmma_allocate_rhs::<R, VR>(layout, config.tile_size)
     }
 
     fn allocate_acc(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Tilex<A, VA, ReadWrite> {
-        cmma_allocate_acc::<A, VA>(layout, config)
+        cmma_allocate_acc::<A, VA>(layout, config.tile_size)
     }
 
     fn load_lhs<E: Numeric, ES: Size>(

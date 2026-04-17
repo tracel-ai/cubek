@@ -14,8 +14,8 @@ pub struct UnitTileAttention;
 #[cube]
 impl<AP: AttentionPrecision> TileAttention<AP> for UnitTileAttention {
     type Config = UnitTileAttentionConfig;
-    type ScoreMatmul = UnitMatmul<QT<AP>, KVT<AP>, SM<AP>>;
+    type ScoreMatmul = UnitMatmul;
     type Softmax = UnitSoftmax<SML<AP>>;
-    type ValueMatmul = UnitMatmul<SML<AP>, KVT<AP>, ACC<AP>>;
+    type ValueMatmul = UnitMatmul;
     type Output = UnitAttentionOutput<SM<AP>, ACC<AP>>;
 }

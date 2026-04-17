@@ -239,28 +239,3 @@ fn strided_tile_to_transposed_unit_tile<E: Numeric, N: Size, E2: Numeric>(
     }
 }
 
-#[cube]
-pub(crate) fn unit_tile_to_slice<E: Numeric, N: Size, E2: Numeric>(
-    unit_tile: &UnitTile<E>,
-    slice: &mut SliceMut<Vector<E2, N>>,
-) {
-    let vector_size = N::value().comptime() as u32;
-    assert!(unit_tile.layout.num_cols.is_multiple_of(vector_size));
-
-    let col_iterations = comptime!(unit_tile.layout.num_cols / vector_size);
-
-    for row in 0..unit_tile.layout.num_rows {
-        for col in 0..col_iterations {
-            let mut out_vector = Vector::empty();
-
-            #[unroll]
-            for i in 0..vector_size {
-                let index = row * unit_tile.layout.num_cols + col * vector_size + i;
-                out_vector[i as usize] = E2::cast_from(unit_tile.data[index as usize]);
-            }
-
-            let vector_index = row * col_iterations + col;
-            slice[vector_index as usize] = out_vector;
-        }
-    }
-}

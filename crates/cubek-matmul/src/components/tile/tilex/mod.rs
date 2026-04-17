@@ -47,8 +47,6 @@ pub struct CmmaTile<N: Numeric> {
     pub matrix: Matrix<N>,
     #[cube(comptime)]
     pub matrix_layout: MatrixLayout,
-    #[cube(comptime)]
-    pub config: SharedTileConfig,
 }
 
 #[derive(CubeType)]
@@ -154,37 +152,45 @@ pub fn tilex_execute<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA:
 // ===========================================================================
 
 #[cube]
-pub fn tilex_load<E: Numeric, ES: Size, N: Numeric, V: Size, L: Numeric, R: Numeric, A: Numeric>(
-    tile: &Tilex<E, ES, ReadOnly>,
-    dest: &mut Tilex<N, V, ReadWrite>,
+pub fn tilex_load<
+    SE: Numeric,
+    SS: Size,
+    DE: Numeric,
+    DS: Size,
+    L: Numeric,
+    R: Numeric,
+    A: Numeric,
+>(
+    source: &Tilex<SE, SS, ReadOnly>,
+    dest: &mut Tilex<DE, DS, ReadWrite>,
     #[comptime] ident: StageIdent,
 ) {
-    match (tile, dest) {
+    match (source, dest) {
         // --- Cmma loads ---
         (Tilex::SharedMemory(shared), Tilex::Cmma(t)) => {
-            cmma_load_from_shared::<E, ES, N, V>(shared, &mut t.matrix, ident, t.matrix_layout);
+            cmma_load_from_shared::<SE, SS, DE, DS>(shared, &mut t.matrix, ident, t.matrix_layout);
         }
         (Tilex::None, Tilex::Cmma(t)) => {
-            cmma_load_zeros::<N, V>(&mut t.matrix);
+            cmma_load_zeros::<DE, DS>(&mut t.matrix);
         }
 
         // --- Mma loads ---
         (Tilex::SharedMemory(shared), Tilex::Mma(t)) => match ident {
-            StageIdent::Lhs => mma_load_lhs_from_shared::<E, ES, N, V, R, A>(
+            StageIdent::Lhs => mma_load_lhs_from_shared::<SE, SS, DE, DS, R, A>(
                 shared,
                 &mut t.fragment,
                 t.matrix_layout,
                 t.config,
                 t.mma_io_config,
             ),
-            StageIdent::Rhs => mma_load_rhs_from_shared::<E, ES, N, V, L, A>(
+            StageIdent::Rhs => mma_load_rhs_from_shared::<SE, SS, DE, DS, L, A>(
                 shared,
                 &mut t.fragment,
                 t.matrix_layout,
                 t.config,
                 t.mma_io_config,
             ),
-            StageIdent::Acc => mma_load_acc_from_shared::<E, ES, N, V, L, R>(
+            StageIdent::Acc => mma_load_acc_from_shared::<SE, SS, DE, DS, L, R>(
                 shared,
                 &mut t.fragment,
                 t.matrix_layout,
@@ -194,7 +200,7 @@ pub fn tilex_load<E: Numeric, ES: Size, N: Numeric, V: Size, L: Numeric, R: Nume
             _ => panic!("Invalid ident for mma_load"),
         },
         (Tilex::None, Tilex::Mma(t)) => {
-            mma_load_acc_zeros::<E, ES, N, V, L, R>(
+            mma_load_acc_zeros::<SE, SS, DE, DS, L, R>(
                 &mut t.fragment,
                 t.matrix_layout,
                 t.config,
@@ -204,7 +210,7 @@ pub fn tilex_load<E: Numeric, ES: Size, N: Numeric, V: Size, L: Numeric, R: Nume
 
         // --- Register loads ---
         (Tilex::SharedMemory(shared), Tilex::Register(t)) => {
-            register_load_from_shared::<E, ES, N, V>(
+            register_load_from_shared::<SE, SS, DE, DS>(
                 shared,
                 &mut t.data,
                 t.matrix_layout,
@@ -214,28 +220,23 @@ pub fn tilex_load<E: Numeric, ES: Size, N: Numeric, V: Size, L: Numeric, R: Nume
             );
         }
         (Tilex::None, Tilex::Register(t)) => {
-            register_load_zeros::<N, V>(&mut t.data, t.config, ident);
+            register_load_zeros::<DE, DS>(&mut t.data, t.config, ident);
         }
 
         // --- PlaneVec loads ---
         (Tilex::SharedMemory(shared), Tilex::PlaneVec(t)) => {
-            planevec_load_from_shared::<E, ES, N, V>(shared, &mut t.data, t.config, ident);
+            planevec_load_from_shared::<SE, SS, DE, DS>(shared, &mut t.data, t.config, ident);
         }
         (Tilex::None, Tilex::PlaneVec(t)) => {
-            planevec_load_zeros::<N, V>(&mut t.data, t.config);
+            planevec_load_zeros::<DE, DS>(&mut t.data, t.config);
         }
 
         // --- Interleaved loads ---
         (Tilex::SharedMemory(shared), Tilex::Interleaved(t)) => {
-            interleaved_load_from_shared::<E, ES, N, V>(
-                shared,
-                &mut t.data,
-                t.config,
-                ident,
-            );
+            interleaved_load_from_shared::<SE, SS, DE, DS>(shared, &mut t.data, t.config, ident);
         }
         (Tilex::None, Tilex::Interleaved(t)) => {
-            interleaved_load_zeros::<N, V>(&mut t.data, t.config);
+            interleaved_load_zeros::<DE, DS>(&mut t.data, t.config);
         }
 
         _ => panic!("Unsupported storage pair for tilex_load"),

@@ -112,7 +112,7 @@ pub trait StageAttention<AP: AttentionPrecision>: 'static + Send + Sync {
     );
 
     fn write<W: WriteEventListener, G: GlobalAttentionConfig>(
-        acc: &Self::OutputPartition,
+        acc: &mut Self::OutputPartition,
         stage: &mut Self::OutStage,
         writer: &mut W,
         #[comptime] config: Self::Config,

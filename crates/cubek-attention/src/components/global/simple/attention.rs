@@ -114,7 +114,7 @@ impl<
         // Write accumulators to output
         let mut out_stage = writer.stage();
         SA::write::<Self::Writer, Self::Config>(
-            &output_registers,
+            &mut output_registers,
             &mut out_stage,
             &mut writer,
             config.stage_config,

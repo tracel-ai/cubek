@@ -1,54 +1,41 @@
 use cubecl;
 use cubecl::prelude::*;
 
-use cubek_std::tile::StridedTile;
-
-use crate::components::tile::matmul::InnerMatmul;
+use cubek_matmul::components::tile::Tilex;
 
 #[derive(CubeType)]
 /// Query input to the Tile Attention
-pub struct Query<IM: InnerMatmul> {
-    pub fragment: IM::Lhs,
+pub struct Query<L: Numeric, VL: Size> {
+    pub tile: Tilex<L, VL, ReadWrite>,
 }
 
 #[cube]
-impl<IM: InnerMatmul> Query<IM> {
-    pub fn new(#[comptime] config: IM::Config) -> Query<IM> {
-        Query::<IM> {
-            fragment: IM::allocate_lhs(config),
-        }
-    }
-
-    /// Loads the query data into the fragment
-    pub fn update<E: Numeric, ES: Size>(&mut self, tile: &StridedTile<E, ES>) {
-        IM::load_lhs(tile, &mut self.fragment)
+impl<L: Numeric, VL: Size> Query<L, VL> {
+    pub fn new(tile: Tilex<L, VL, ReadWrite>) -> Query<L, VL> {
+        Query::<L, VL> { tile }
     }
 }
 
 #[derive(CubeType)]
-pub struct Key<IM: InnerMatmul> {
-    pub fragment: IM::Rhs,
+pub struct Key<R: Numeric, VR: Size> {
+    pub tile: Tilex<R, VR, ReadWrite>,
 }
 
 #[cube]
-impl<IM: InnerMatmul> Key<IM> {
-    pub fn new(#[comptime] config: IM::Config) -> Self {
-        Key::<IM> {
-            fragment: IM::allocate_rhs_transposed(config),
-        }
+impl<R: Numeric, VR: Size> Key<R, VR> {
+    pub fn new(tile: Tilex<R, VR, ReadWrite>) -> Key<R, VR> {
+        Key::<R, VR> { tile }
     }
 }
 
 #[derive(CubeType)]
-pub struct Value<IM: InnerMatmul> {
-    pub fragment: IM::Rhs,
+pub struct Value<R: Numeric, VR: Size> {
+    pub tile: Tilex<R, VR, ReadWrite>,
 }
 
 #[cube]
-impl<IM: InnerMatmul> Value<IM> {
-    pub fn new(#[comptime] config: IM::Config) -> Self {
-        Value::<IM> {
-            fragment: IM::allocate_rhs(config),
-        }
+impl<R: Numeric, VR: Size> Value<R, VR> {
+    pub fn new(tile: Tilex<R, VR, ReadWrite>) -> Value<R, VR> {
+        Value::<R, VR> { tile }
     }
 }

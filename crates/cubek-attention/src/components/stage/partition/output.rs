@@ -1,21 +1,22 @@
 use cubecl;
 use cubecl::prelude::*;
+use cubek_matmul::components::tile::Tilex;
 
 use crate::{components::tile::output::AttentionOutput, definition::AttentionPartitionSize};
 
 #[derive(CubeType)]
 /// Contains all seq_q·val_dim materialized tiles at once because they're accumulators
-pub struct OutputPartition<AC: AttentionOutput> {
+pub struct OutputPartition<A: Float, VA: Size, AC: AttentionOutput<A, VA>> {
     workspace: AC::Workspace,
-    sequence: Sequence<AC::Tile>,
+    sequence: Sequence<Tilex<A, VA, ReadWrite>>,
 }
 
 #[cube]
-impl<AC: AttentionOutput> OutputPartition<AC> {
+impl<A: Float, VA: Size, AC: AttentionOutput<A, VA>> OutputPartition<A, VA, AC> {
     pub fn new(
         #[comptime] partition_size: AttentionPartitionSize,
         #[comptime] config: AC::Config,
-    ) -> OutputPartition<AC> {
+    ) -> OutputPartition<A, VA, AC> {
         let mut sequence = Sequence::new();
 
         let workspace = AC::init_workspace(config);
@@ -25,7 +26,7 @@ impl<AC: AttentionOutput> OutputPartition<AC> {
             sequence.push(AC::init_tile(config));
         }
 
-        OutputPartition::<AC> {
+        OutputPartition::<A, VA, AC> {
             workspace,
             sequence,
         }
@@ -36,7 +37,7 @@ impl<AC: AttentionOutput> OutputPartition<AC> {
         #[comptime] i: usize,
         #[comptime] j: usize,
         #[comptime] partition_val_dim: usize,
-    ) -> &AC::Tile {
+    ) -> &Tilex<A, VA, ReadWrite> {
         &self.sequence[i * partition_val_dim + j]
     }
 
@@ -45,7 +46,7 @@ impl<AC: AttentionOutput> OutputPartition<AC> {
         #[comptime] i: usize,
         #[comptime] j: usize,
         #[comptime] partition_val_dim: usize,
-    ) -> &mut AC::Tile {
+    ) -> &mut Tilex<A, VA, ReadWrite> {
         self.sequence.index_mut(i * partition_val_dim + j)
     }
 

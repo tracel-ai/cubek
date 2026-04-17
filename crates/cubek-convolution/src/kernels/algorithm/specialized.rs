@@ -4,7 +4,7 @@ use cubecl::{
 use cubek_matmul::{
     components::{
         global::read::{AsyncPartialLoadingStrategy, async_partial_tma::AsyncPartialTmaLoading},
-        tile::{StandardTileIO, TileMatmulFamily},
+        tile::TileMatmulFamily,
     },
     definition::AvailableVectorSizes,
     launch::{TensorArgs, TensorMapArgs},
@@ -35,10 +35,8 @@ pub struct SpecializedTmaConv<TMM: TileMatmulFamily> {
     _tmm: PhantomData<TMM>,
 }
 
-impl<
-    TMM: TileMatmulFamily<TileIO = StandardTileIO>,
-    L: AsyncPartialLoadingStrategy<RuntimeArgs, TileKind = Strided>,
-> Algorithm for SpecializedConv<TMM, L>
+impl<TMM: TileMatmulFamily, L: AsyncPartialLoadingStrategy<RuntimeArgs, TileKind = Strided>>
+    Algorithm for SpecializedConv<TMM, L>
 {
     type Routine = SpecializedAlgorithm<TMM, L, SyncBiasLoading>;
     type Args = TensorArgs<RuntimeArgs>;
@@ -54,7 +52,7 @@ impl<
     }
 }
 
-impl<TMM: TileMatmulFamily<TileIO = StandardTileIO>> Algorithm for SpecializedTmaConv<TMM> {
+impl<TMM: TileMatmulFamily> Algorithm for SpecializedTmaConv<TMM> {
     type Routine = SpecializedAlgorithm<TMM, AsyncPartialTmaLoading, SyncBiasLoading>;
     type Args = TensorMapArgs<RuntimeArgs>;
     const IS_SPECIALIZED: bool = true;

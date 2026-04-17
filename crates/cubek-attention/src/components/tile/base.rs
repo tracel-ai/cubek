@@ -1,15 +1,15 @@
 use cubecl;
 use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_matmul::components::CubeDimResource;
+use cubek_matmul::components::{CubeDimResource, tile::Tilex};
 use cubek_std::InvalidConfigError;
 
+use crate::definition::attention_types::{ACC, KSS, KVT, OSS, QGS, QT, SM, SML, VSS};
 use crate::definition::{
     AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError,
 };
 use crate::{
     components::tile::TileAttentionConfig, components::tile::matmul::InnerMatmul,
     components::tile::output::AttentionOutput, components::tile::softmax::Softmax,
-    definition::attention_types::SM,
 };
 
 /// Logits below this are considered masked (effectively -inf)
@@ -24,21 +24,35 @@ pub(crate) const FULLY_MASKED_ROW_THRESHOLD: f32 = 1e-4;
 #[cube]
 pub trait TileAttention<AP: AttentionPrecision>: Send + Sync + 'static {
     type Config: TileAttentionConfig<
-            ScoreMatmulConfig = <Self::ScoreMatmul as InnerMatmul>::Config,
-            ValueMatmulConfig = <Self::ValueMatmul as InnerMatmul>::Config,
-            AttentionOutputConfig = <Self::Output as AttentionOutput>::Config,
+            ScoreMatmulConfig = <Self::ScoreMatmul as InnerMatmul<
+                QT<AP>,
+                QGS<AP>,
+                KVT<AP>,
+                KSS<AP>,
+                SM<AP>,
+                Const<0>,
+            >>::Config,
+            ValueMatmulConfig = <Self::ValueMatmul as InnerMatmul<
+                SML<AP>,
+                Const<0>,
+                KVT<AP>,
+                VSS<AP>,
+                ACC<AP>,
+                OSS<AP>,
+            >>::Config,
+            AttentionOutputConfig = <Self::Output as AttentionOutput<ACC<AP>, OSS<AP>>>::Config,
         >;
-    type ScoreMatmul: InnerMatmul;
+    type ScoreMatmul: InnerMatmul<QT<AP>, QGS<AP>, KVT<AP>, KSS<AP>, SM<AP>, Const<0>>;
     type Softmax: Softmax<
             SM<AP>,
-            ScoreTile = <Self::ScoreMatmul as InnerMatmul>::Acc,
-            SoftmaxedTile = <Self::ValueMatmul as InnerMatmul>::Lhs,
-            ScaleColumn = <Self::Output as AttentionOutput>::ScaleColumn,
-            RunningState = <Self::Output as AttentionOutput>::RunningState,
+            ScoreTile = Tilex<SM<AP>, Const<0>, ReadWrite>,
+            SoftmaxedTile = Tilex<SML<AP>, Const<0>, ReadWrite>,
+            ScaleColumn = <Self::Output as AttentionOutput<ACC<AP>, OSS<AP>>>::ScaleColumn,
+            RunningState = <Self::Output as AttentionOutput<ACC<AP>, OSS<AP>>>::RunningState,
             Config = <Self::Config as TileAttentionConfig>::SoftmaxConfig,
         >;
-    type ValueMatmul: InnerMatmul;
-    type Output: AttentionOutput<Tile = <Self::ValueMatmul as InnerMatmul>::Acc>;
+    type ValueMatmul: InnerMatmul<SML<AP>, Const<0>, KVT<AP>, VSS<AP>, ACC<AP>, OSS<AP>>;
+    type Output: AttentionOutput<ACC<AP>, OSS<AP>>;
 }
 
 pub trait TileAttentionFamily: Send + Sync + 'static {

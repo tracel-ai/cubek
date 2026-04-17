@@ -1,17 +1,16 @@
-use std::marker::PhantomData;
-
 use cubecl;
 use cubecl::prelude::*;
+use cubek_matmul::{
+    components::tile::{Tilex, cmma_allocate_lhs, cmma_allocate_rhs, tilex_execute, tilex_load},
+    definition::StageIdent,
+};
 
 use crate::components::tile::matmul::InnerMatmul;
 
-use cubek_std::{TileSize, tile::StridedTile};
+use cubek_std::{MatrixLayout, TileSize};
 
 #[derive(CubeType)]
-pub struct CmmaMatmul<A: Numeric, B: Numeric, CD: Numeric> {
-    #[cube(comptime)]
-    _phantom: PhantomData<(A, B, CD)>,
-}
+pub struct CmmaMatmul {}
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct CmmaMatmulConfig {
@@ -19,70 +18,43 @@ pub struct CmmaMatmulConfig {
 }
 
 #[cube]
-impl<A: Numeric, B: Numeric, CD: Numeric> InnerMatmul for CmmaMatmul<A, B, CD> {
-    type Lhs = cmma::Matrix<A>;
-    type Rhs = cmma::Matrix<B>;
-    type Acc = cmma::Matrix<CD>;
+impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
+    InnerMatmul<L, VL, R, VR, A, VA> for CmmaMatmul
+{
     type Config = CmmaMatmulConfig;
 
-    fn allocate_lhs(#[comptime] config: Self::Config) -> Self::Lhs {
-        let size = config.tile_size;
-
-        unsafe {
-            cmma::Matrix::<A>::uninitialized(
-                cmma::MatrixIdent::A,
-                size.m() as usize,
-                size.n() as usize,
-                size.k() as usize,
-                cmma::MatrixLayout::RowMajor,
-            )
-        }
+    fn allocate_lhs(#[comptime] config: Self::Config) -> Tilex<L, VL, ReadWrite> {
+        cmma_allocate_lhs(MatrixLayout::RowMajor, config.tile_size)
     }
 
-    fn allocate_rhs(#[comptime] config: Self::Config) -> Self::Rhs {
-        let size = config.tile_size;
-        unsafe {
-            cmma::Matrix::<B>::uninitialized(
-                cmma::MatrixIdent::B,
-                size.m() as usize,
-                size.n() as usize,
-                size.k() as usize,
-                cmma::MatrixLayout::RowMajor,
-            )
-        }
+    fn allocate_rhs(#[comptime] config: Self::Config) -> Tilex<R, VR, ReadWrite> {
+        cmma_allocate_rhs(MatrixLayout::RowMajor, config.tile_size)
     }
 
-    fn allocate_rhs_transposed(#[comptime] config: Self::Config) -> Self::Rhs {
-        let size = config.tile_size;
-        unsafe {
-            cmma::Matrix::<B>::uninitialized(
-                cmma::MatrixIdent::B,
-                size.m() as usize,
-                size.n() as usize,
-                size.k() as usize,
-                cmma::MatrixLayout::ColMajor,
-            )
-        }
+    fn allocate_rhs_transposed(#[comptime] config: Self::Config) -> Tilex<R, VR, ReadWrite> {
+        cmma_allocate_rhs(MatrixLayout::ColMajor, config.tile_size)
     }
 
-    fn load_lhs<E: Numeric, ES: Size>(tile: &StridedTile<E, ES>, fragment: &mut Self::Lhs) {
-        let stride = tile.unvectorized_stride();
-        let slice = tile.as_slice();
-        cmma::load(fragment, &slice, stride);
+    fn load_lhs<E: Numeric, ES: Size>(
+        source: &Tilex<E, ES, ReadOnly>,
+        dest: &mut Tilex<L, VL, ReadWrite>,
+    ) {
+        tilex_load::<E, ES, L, VL, L, R, A>(source, dest, StageIdent::Lhs);
     }
 
-    fn load_rhs<E: Float, ES: Size>(tile: &StridedTile<E, ES>, fragment: &mut Self::Rhs) {
-        let stride = tile.unvectorized_stride();
-        let slice = tile.as_slice();
-        cmma::load(fragment, &slice, stride);
+    fn load_rhs<E: Float, ES: Size>(
+        source: &Tilex<E, ES, ReadOnly>,
+        dest: &mut Tilex<R, VR, ReadWrite>,
+    ) {
+        tilex_load::<E, ES, R, VR, L, R, A>(source, dest, StageIdent::Rhs);
     }
 
     fn execute(
-        lhs: &Self::Lhs,
-        rhs: &Self::Rhs,
-        out: &mut Self::Acc,
+        lhs: &Tilex<L, VL, ReadWrite>,
+        rhs: &Tilex<R, VR, ReadWrite>,
+        acc: &mut Tilex<A, VA, ReadWrite>,
         #[comptime] _tile_size: TileSize,
     ) {
-        cmma::execute::<A, B, CD, CD>(lhs, rhs, out, out);
+        tilex_execute::<L, VL, R, VR, A, VA>(lhs, rhs, acc)
     }
 }

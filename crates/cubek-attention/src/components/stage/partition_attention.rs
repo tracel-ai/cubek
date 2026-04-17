@@ -3,8 +3,8 @@ use cubecl::prelude::*;
 use cubek_matmul::components::{
     global::{WriteEvent, WriteEventListener},
     stage::Stage,
+    tile::Tilex,
 };
-use cubek_std::tile::Strided;
 use std::marker::PhantomData;
 
 use crate::components::{
@@ -44,9 +44,9 @@ pub struct PartitionAttention<
 #[cube]
 impl<
     AP: AttentionPrecision,
-    SK: Stage<KS<AP>, KSS<AP>, ReadOnly, TileKind = Strided>,
-    SV: Stage<VS<AP>, VSS<AP>, ReadOnly, TileKind = Strided>,
-    SO: Stage<OS<AP>, OSS<AP>, ReadWrite, TileKind = Strided>,
+    SK: Stage<KS<AP>, KSS<AP>, ReadOnly>,
+    SV: Stage<VS<AP>, VSS<AP>, ReadOnly>,
+    SO: Stage<OS<AP>, OSS<AP>, ReadWrite>,
     TA: TileAttention<AP>,
     P: AttentionPartitioner,
 > StageAttention<AP> for PartitionAttention<AP, SK, SV, SO, TA, P>
@@ -58,11 +58,11 @@ impl<
     type Config = PartitionAttentionConfig<TA::Config>;
     type Partitioner = P;
 
-    type QueryPartition = QueryPartition<TA::ScoreMatmul>;
-    type KeyPartition = KeyPartition<TA::ScoreMatmul>;
-    type ValuePartition = ValuePartition<TA::ValueMatmul>;
+    type QueryPartition = QueryPartition<QT<AP>, QGS<AP>>;
+    type KeyPartition = KeyPartition<KVT<AP>, KSS<AP>>;
+    type ValuePartition = ValuePartition<KVT<AP>, VSS<AP>>;
     type SoftmaxPartition = SoftmaxPartition<SM<AP>, TA::Softmax>;
-    type OutputPartition = OutputPartition<TA::Output>;
+    type OutputPartition = OutputPartition<ACC<AP>, OSS<AP>, TA::Output>;
     type MaskPartition = MaskPartition<SM<AP>, TA::Softmax>;
     type RunningState = <TA::Softmax as Softmax<SM<AP>>>::RunningState;
 
@@ -77,12 +77,12 @@ impl<
         query_partition: &Self::QueryPartition,
         key_stage: &SK,
         value_stage: &SV,
-        key_partition: &mut KeyPartition<TA::ScoreMatmul>,
-        value_partition: &mut ValuePartition<TA::ValueMatmul>,
+        key_partition: &mut KeyPartition<KVT<AP>, KSS<AP>>,
+        value_partition: &mut ValuePartition<KVT<AP>, VSS<AP>>,
         mask_reader: &MaskReader<AP>,
         mask_partition: &mut MaskPartition<SM<AP>, TA::Softmax>,
         softmax_partition: &mut SoftmaxPartition<SM<AP>, TA::Softmax>,
-        output_partition: &mut OutputPartition<TA::Output>,
+        output_partition: &mut OutputPartition<ACC<AP>, OSS<AP>, TA::Output>,
         state: &mut Sequence<Self::RunningState>,
         #[comptime] config: Self::Config,
     ) {
@@ -117,12 +117,12 @@ impl<
                     // Get the only key-value tile and fill it with hd,kv-th key data
                     let key_tile = key_partition.get_mut();
                     let key_data = SK::tile(key_stage, (kv, hd as u32).runtime());
-                    TA::ScoreMatmul::load_rhs(&key_data, &mut key_tile.fragment);
+                    TA::ScoreMatmul::load_rhs(&key_data, &mut key_tile.tile);
 
                     // Perform score matmul on query and key, and accumulate in softmax tile
                     TA::ScoreMatmul::execute(
-                        &query_tile.fragment,
-                        &key_tile.fragment,
+                        &query_tile.tile,
+                        &key_tile.tile,
                         softmax_partition.get_score_mut(q),
                         config.tile_size().to_score_matmul_tile_size(),
                     );
@@ -151,7 +151,7 @@ impl<
                     // Get the only key-value tile and fill it with hd,kv-th key data
                     let value_data = SV::tile(value_stage, (kv, vd as u32).runtime());
                     let value_tile = value_partition.get_mut();
-                    TA::ValueMatmul::load_rhs(&value_data, &mut value_tile.fragment);
+                    TA::ValueMatmul::load_rhs(&value_data, &mut value_tile.tile);
 
                     // Scale the q,vd-th accumulator and scale it with previously obtained scale
                     let partition_val_dim = p.val_dim as usize;
@@ -166,7 +166,7 @@ impl<
                     // Perform value matmul on probabilities and values, and accumulate in accumulators
                     TA::ValueMatmul::execute(
                         softmax_partition.get_softmaxed_mut(q),
-                        &value_partition.get().fragment,
+                        &value_partition.get().tile,
                         output_partition.get_at_mut(q, vd, partition_val_dim),
                         config.tile_size().to_value_matmul_tile_size(),
                     );
@@ -176,7 +176,7 @@ impl<
     }
 
     fn rescale(
-        acc: &mut OutputPartition<TA::Output>,
+        acc: &mut OutputPartition<ACC<AP>, OSS<AP>, TA::Output>,
         state: Sequence<Self::RunningState>,
         #[comptime] config: Self::Config,
     ) {
@@ -214,7 +214,7 @@ impl<
     }
 
     fn write<W: WriteEventListener, G: GlobalAttentionConfig>(
-        acc: &OutputPartition<TA::Output>,
+        acc: &mut OutputPartition<ACC<AP>, OSS<AP>, TA::Output>,
         stage: &mut SO,
         writer: &mut W,
         #[comptime] config: Self::Config,
@@ -228,16 +228,11 @@ impl<
             #[unroll]
             for vd in 0..p.val_dim as usize {
                 let tile_pos = (q as u32 + P::seq_q_index() * p.seq_q, vd.runtime() as u32);
-                let tile = SO::tile(stage, tile_pos);
+                let mut tile = SO::tile(stage, tile_pos);
 
                 TA::Output::write_results(
-                    OutputPartition::get_at(
-                        acc,
-                        q,
-                        vd,
-                        config.shared().partition_size.val_dim as usize,
-                    ),
-                    &mut tile.as_slice_mut(),
+                    acc.get_at_mut(q, vd, config.shared().partition_size.val_dim as usize),
+                    &mut tile,
                     config.tile_config().output_config(),
                 );
 
@@ -248,19 +243,27 @@ impl<
         W::on_event(writer, WriteEvent::new_Finish());
     }
 
-    fn init_query(#[comptime] config: Self::Config) -> QueryPartition<TA::ScoreMatmul> {
-        QueryPartition::<TA::ScoreMatmul>::new(
+    fn init_query(#[comptime] config: Self::Config) -> QueryPartition<QT<AP>, QGS<AP>> {
+        QueryPartition::<QT<AP>, QGS<AP>>::new::<KVT<AP>, KSS<AP>, SM<AP>, Const<0>, TA::ScoreMatmul>(
             config.shared().partition_size,
             config.tile_config().score_matmul_config(),
         )
     }
 
-    fn init_key(#[comptime] config: Self::Config) -> KeyPartition<TA::ScoreMatmul> {
-        KeyPartition::<TA::ScoreMatmul>::new(config.tile_config().score_matmul_config())
+    fn init_key(#[comptime] config: Self::Config) -> KeyPartition<KVT<AP>, KSS<AP>> {
+        KeyPartition::<KVT<AP>, KSS<AP>>::new::<QT<AP>, QGS<AP>, SM<AP>, Const<0>, TA::ScoreMatmul>(
+            config.tile_config().score_matmul_config(),
+        )
     }
 
-    fn init_value(#[comptime] config: Self::Config) -> ValuePartition<TA::ValueMatmul> {
-        ValuePartition::<TA::ValueMatmul>::new(config.tile_config().value_matmul_config())
+    fn init_value(#[comptime] config: Self::Config) -> ValuePartition<KVT<AP>, VSS<AP>> {
+        ValuePartition::<KVT<AP>, VSS<AP>>::new::<
+            SML<AP>,
+            Const<0>,
+            ACC<AP>,
+            OSS<AP>,
+            TA::ValueMatmul,
+        >(config.tile_config().value_matmul_config())
     }
 
     fn init_softmax(#[comptime] config: Self::Config) -> SoftmaxPartition<SM<AP>, TA::Softmax> {
@@ -270,8 +273,10 @@ impl<
         )
     }
 
-    fn init_output(#[comptime] config: Self::Config) -> OutputPartition<TA::Output> {
-        OutputPartition::<TA::Output>::new(
+    fn init_output(
+        #[comptime] config: Self::Config,
+    ) -> OutputPartition<ACC<AP>, OSS<AP>, TA::Output> {
+        OutputPartition::<ACC<AP>, OSS<AP>, TA::Output>::new(
             config.shared().partition_size,
             config.tile_config().output_config(),
         )
@@ -289,7 +294,7 @@ impl<
 
     fn read_query(
         reader: &QueryReader<AP>,
-        registers: &mut QueryPartition<TA::ScoreMatmul>,
+        registers: &mut QueryPartition<QT<AP>, QGS<AP>>,
         #[comptime] config: Self::Config,
     ) {
         let partition_seq_q = config.shared().partition_size.seq_q;
@@ -308,7 +313,10 @@ impl<
                     partition_head_dim,
                 );
 
-                tile_to_write.update(&tile_read);
+                TA::ScoreMatmul::load_lhs(
+                    &Tilex::new_SharedMemory(tile_read),
+                    &mut tile_to_write.tile,
+                );
             }
         }
     }

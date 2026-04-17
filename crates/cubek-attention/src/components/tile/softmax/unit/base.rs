@@ -2,13 +2,20 @@ use std::marker::PhantomData;
 
 use cubecl;
 use cubecl::prelude::*;
-use cubek_std::tile::StridedTile;
+use cubek_matmul::{
+    components::tile::{
+        ProductType, SharedTileConfig, TileConfig, Tilex, TilexExpand, register_allocate_acc,
+    },
+    definition::SwizzleModes,
+};
+use cubek_std::{MatrixLayout, tile::StridedTile};
 
 use crate::{
-    components::tile::MaskTile,
+    components::tile::{LOGIT_MASKED, MaskTile},
     components::tile::pipeline::{RowWise, UnitTile, UnitTileLayout},
+    components::tile::softmax::base::FragmentMaskExpand,
     components::tile::softmax::unit::UnitSoftmaxConfig,
-    components::tile::softmax::{Reducer, Softmax, SoftmaxConfig, UnitReducer},
+    components::tile::softmax::{FragmentMask, Softmax, SoftmaxConfig},
 };
 
 #[derive(CubeType)]
@@ -36,13 +43,23 @@ impl<Acc: Float, Lhs: Float> UnitSoftmaxWorkspace<Acc, Lhs> {
     }
 }
 
+impl UnitSoftmaxConfig {
+    pub(crate) fn shared(&self) -> SharedTileConfig {
+        SharedTileConfig::new(
+            self.tile_size.to_score_matmul_tile_size(),
+            1,
+            SwizzleModes::default(),
+        )
+    }
+}
+
 #[cube]
 impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
     type Config = UnitSoftmaxConfig;
     type ScaleColumn = RowWise<Acc>;
     type RunningState = (RowWise<Acc>, RowWise<Acc>);
-    type ScoreTile = UnitTile<Acc>;
-    type SoftmaxedTile = UnitTile<Lhs>;
+    type ScoreTile = Tilex<Acc, Const<0>, ReadWrite>;
+    type SoftmaxedTile = Tilex<Lhs, Const<0>, ReadWrite>;
     type Workspace = UnitSoftmaxWorkspace<Acc, Lhs>;
     type Mask = UnitTile<Acc>;
     type ScoreLayout = UnitTileLayout;
@@ -54,22 +71,42 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
         state: &mut Self::RunningState,
         workspace: &mut Self::Workspace,
         head_dim_factor: Acc,
-        #[comptime] _config: Self::Config,
+        #[comptime] config: Self::Config,
     ) -> Self::ScaleColumn {
-        score_matmul_accumulator.scale_and_mask::<MaskTile<Acc, Self>>(head_dim_factor, mask);
+        let num_rows = comptime!(config.tile_size().seq_q);
+        let num_cols = comptime!(config.tile_size().seq_kv);
 
-        UnitReducer::row_max(&mut workspace.max, &state.0, score_matmul_accumulator);
+        scale_and_mask_tile::<Acc, Lhs, MaskTile<Acc, Self>>(
+            score_matmul_accumulator,
+            head_dim_factor,
+            mask,
+            num_rows,
+            num_cols,
+        );
 
-        score_matmul_accumulator.exp_diff(&workspace.max);
+        workspace.max.copy_from(&state.0);
+        row_max_into::<Acc, Lhs>(&mut workspace.max, score_matmul_accumulator, num_rows, num_cols);
 
-        UnitReducer::row_sum(&mut workspace.sum, score_matmul_accumulator);
+        exp_diff_tile::<Acc, Lhs>(
+            score_matmul_accumulator,
+            &workspace.max,
+            num_rows,
+            num_cols,
+        );
+
+        workspace.sum.fill(Acc::from_int(0));
+        row_sum_into::<Acc, Lhs>(&mut workspace.sum, score_matmul_accumulator, num_rows, num_cols);
 
         let exp_m_diff = state.0.exp_diff(&workspace.max);
 
         let new_l = exp_m_diff.mul(&state.1).add(&workspace.sum);
 
-        // TODO don't make this necessary, see comment at copy_from
-        value_matmul_lhs.copy_from(score_matmul_accumulator);
+        copy_register_tile::<Acc, Lhs>(
+            score_matmul_accumulator,
+            value_matmul_lhs,
+            num_rows,
+            num_cols,
+        );
 
         RowWise::copy_from(&mut state.0, &workspace.max);
         RowWise::copy_from(&mut state.1, &new_l);
@@ -89,26 +126,25 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
     }
 
     fn init_score_tile(#[comptime] config: Self::Config) -> Self::ScoreTile {
-        let mut tile = UnitTile::new(UnitTileLayout::new(
-            config.tile_size().seq_q,
-            config.tile_size().seq_kv,
-            false,
-        ));
+        let mut tile = register_allocate_acc::<Acc, Const<0>>(
+            MatrixLayout::RowMajor,
+            config.shared(),
+            ProductType::Inner,
+        );
         Self::zero_score_tile(&mut tile);
         tile
     }
 
     fn zero_score_tile(score_tile: &mut Self::ScoreTile) {
-        score_tile.zero()
+        zero_register_tile::<Acc>(score_tile);
     }
 
     fn init_softmax_tile(#[comptime] config: Self::Config) -> Self::SoftmaxedTile {
-        // TODO if Acc==Lhs this creates a new one uselessly
-        UnitTile::new(UnitTileLayout::new(
-            config.tile_size().seq_q,
-            config.tile_size().seq_kv,
-            false,
-        ))
+        register_allocate_acc::<Lhs, Const<0>>(
+            MatrixLayout::RowMajor,
+            config.shared(),
+            ProductType::Inner,
+        )
     }
 
     fn allocate_mask(#[comptime] config: Self::Config) -> Self::Mask {
@@ -129,5 +165,183 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
             num_cols: config.tile_size.seq_kv,
             transposed_load: false,
         }
+    }
+}
+
+#[cube]
+fn zero_register_tile<E: Numeric>(tile: &mut Tilex<E, Const<0>, ReadWrite>) {
+    match tile {
+        Tilex::Register(t) => {
+            let num_elements =
+                comptime!(t.config.elements_in_tile_m() * t.config.elements_in_tile_n());
+            fill_array_zero::<E>(&mut t.data, num_elements);
+        }
+        Tilex::Cmma(_dummy) => panic!("UnitSoftmax expects Tilex::Register"),
+        _ => panic!("UnitSoftmax expects Tilex::Register"),
+    }
+}
+
+#[cube]
+fn fill_array_zero<E: Numeric>(data: &mut Array<E>, #[comptime] num_elements: u32) {
+    for i in 0..num_elements {
+        data[i as usize] = E::from_int(0);
+    }
+}
+
+#[cube]
+fn scale_and_mask_tile<Acc: Float, Lhs: Float, M: FragmentMask>(
+    tile: &mut Tilex<Acc, Const<0>, ReadWrite>,
+    scale: Acc,
+    mask: &M,
+    #[comptime] num_rows: u32,
+    #[comptime] num_cols: u32,
+) {
+    match tile {
+        Tilex::Register(t) => {
+            scale_and_mask_array::<Acc, M>(&mut t.data, scale, mask, num_rows, num_cols)
+        }
+        Tilex::Cmma(_dummy) => panic!("UnitSoftmax expects Tilex::Register"),
+        _ => panic!("UnitSoftmax expects Tilex::Register"),
+    }
+}
+
+#[cube]
+fn scale_and_mask_array<E: Float, M: FragmentMask>(
+    data: &mut Array<E>,
+    scale: E,
+    mask: &M,
+    #[comptime] num_rows: u32,
+    #[comptime] num_cols: u32,
+) {
+    for r in 0..num_rows {
+        let row_offset = r * num_cols;
+        for c in 0..num_cols {
+            let index = (row_offset + c) as usize;
+            data[index] = data[index] * scale
+                + E::cast_from(mask.should_mask((r, c))) * E::min_value();
+        }
+    }
+}
+
+#[cube]
+fn row_max_into<Acc: Float, Lhs: Float>(
+    acc: &mut RowWise<Acc>,
+    tile: &Tilex<Acc, Const<0>, ReadWrite>,
+    #[comptime] num_rows: u32,
+    #[comptime] num_cols: u32,
+) {
+    match tile {
+        Tilex::Register(t) => row_max_array::<Acc>(acc, &t.data, num_rows, num_cols),
+        Tilex::Cmma(_dummy) => panic!("UnitSoftmax expects Tilex::Register"),
+        _ => panic!("UnitSoftmax expects Tilex::Register"),
+    }
+}
+
+#[cube]
+fn row_max_array<E: Float>(
+    acc: &mut RowWise<E>,
+    data: &Array<E>,
+    #[comptime] num_rows: u32,
+    #[comptime] num_cols: u32,
+) {
+    for r in 0..num_rows as usize {
+        let row_offset = r as u32 * num_cols;
+        let mut val = E::min_value();
+        for c in 0..num_cols {
+            val = max(val, data[(row_offset + c) as usize]);
+        }
+        acc.vals[r] = max(acc.vals[r], val);
+    }
+}
+
+#[cube]
+fn row_sum_into<Acc: Float, Lhs: Float>(
+    acc: &mut RowWise<Acc>,
+    tile: &Tilex<Acc, Const<0>, ReadWrite>,
+    #[comptime] num_rows: u32,
+    #[comptime] num_cols: u32,
+) {
+    match tile {
+        Tilex::Register(t) => row_sum_array::<Acc>(acc, &t.data, num_rows, num_cols),
+        Tilex::Cmma(_dummy) => panic!("UnitSoftmax expects Tilex::Register"),
+        _ => panic!("UnitSoftmax expects Tilex::Register"),
+    }
+}
+
+#[cube]
+fn row_sum_array<E: Float>(
+    acc: &mut RowWise<E>,
+    data: &Array<E>,
+    #[comptime] num_rows: u32,
+    #[comptime] num_cols: u32,
+) {
+    for r in 0..num_rows as usize {
+        let row_offset = r as u32 * num_cols;
+        let mut val = E::from_int(0);
+        for c in 0..num_cols {
+            val += data[(row_offset + c) as usize];
+        }
+        acc.vals[r] += val;
+    }
+}
+
+#[cube]
+fn exp_diff_tile<Acc: Float, Lhs: Float>(
+    tile: &mut Tilex<Acc, Const<0>, ReadWrite>,
+    rowwise: &RowWise<Acc>,
+    #[comptime] num_rows: u32,
+    #[comptime] num_cols: u32,
+) {
+    match tile {
+        Tilex::Register(t) => exp_diff_array::<Acc>(&mut t.data, rowwise, num_rows, num_cols),
+        Tilex::Cmma(_dummy) => panic!("UnitSoftmax expects Tilex::Register"),
+        _ => panic!("UnitSoftmax expects Tilex::Register"),
+    }
+}
+
+#[cube]
+fn exp_diff_array<E: Float>(
+    data: &mut Array<E>,
+    rowwise: &RowWise<E>,
+    #[comptime] num_rows: u32,
+    #[comptime] num_cols: u32,
+) {
+    let threshold = E::new(LOGIT_MASKED);
+    for r in 0..num_rows as usize {
+        let row_offset = r as u32 * num_cols;
+        let val = rowwise.vals[r];
+        let safe_val = clamp_min(val, threshold);
+        let not_masked = E::cast_from(val >= threshold);
+        for c in 0..num_cols {
+            let index = (row_offset + c) as usize;
+            data[index] = not_masked * (data[index] - safe_val).exp();
+        }
+    }
+}
+
+#[cube]
+fn copy_register_tile<SrcE: Numeric, DstE: Numeric>(
+    src: &Tilex<SrcE, Const<0>, ReadWrite>,
+    dst: &mut Tilex<DstE, Const<0>, ReadWrite>,
+    #[comptime] num_rows: u32,
+    #[comptime] num_cols: u32,
+) {
+    match (src, dst) {
+        (Tilex::Register(s), Tilex::Register(d)) => {
+            copy_register_arrays::<SrcE, DstE>(&s.data, &mut d.data, num_rows, num_cols)
+        }
+        _ => panic!("UnitSoftmax expects Tilex::Register"),
+    }
+}
+
+#[cube]
+fn copy_register_arrays<SrcE: Numeric, DstE: Numeric>(
+    src: &Array<SrcE>,
+    dst: &mut Array<DstE>,
+    #[comptime] num_rows: u32,
+    #[comptime] num_cols: u32,
+) {
+    for i in 0..num_rows * num_cols {
+        dst[i as usize] = DstE::cast_from(src[i as usize]);
     }
 }

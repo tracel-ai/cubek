@@ -1,82 +1,76 @@
-use std::marker::PhantomData;
-
 use cubecl;
 use cubecl::prelude::*;
-
-use crate::{
-    components::tile::matmul::InnerMatmul,
-    components::tile::pipeline::{UnitTile, UnitTileLayout},
+use cubek_matmul::{
+    components::tile::{
+        ProductType, SharedTileConfig, Tilex, register_allocate_acc, register_allocate_lhs,
+        register_allocate_rhs, tilex_execute, tilex_load,
+    },
+    definition::{StageIdent, SwizzleModes},
 };
 
-use cubek_std::{TileSize, tile::StridedTile};
+use crate::components::tile::matmul::InnerMatmul;
+
+use cubek_std::{MatrixLayout, TileSize};
 
 #[derive(CubeType)]
-pub struct UnitMatmul<A: Numeric, B: Numeric, CD: Numeric> {
-    #[cube(comptime)]
-    _phantom: PhantomData<(A, B, CD)>,
-}
+pub struct UnitMatmul {}
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct UnitMatmulConfig {
     pub tile_size: TileSize,
 }
 
+impl UnitMatmulConfig {
+    fn shared(&self) -> SharedTileConfig {
+        SharedTileConfig::new(self.tile_size, 1, SwizzleModes::default())
+    }
+}
+
 #[cube]
-impl<A: Numeric, B: Numeric, CD: Numeric> InnerMatmul for UnitMatmul<A, B, CD> {
-    type Lhs = UnitTile<A>;
-    type Rhs = UnitTile<B>;
-    type Acc = UnitTile<CD>;
+impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
+    InnerMatmul<L, VL, R, VR, A, VA> for UnitMatmul
+{
     type Config = UnitMatmulConfig;
 
-    fn allocate_lhs(#[comptime] config: Self::Config) -> Self::Lhs {
-        UnitTile::new(UnitTileLayout::new(
-            config.tile_size.m,
-            config.tile_size.k,
-            false,
-        ))
+    fn allocate_lhs(#[comptime] config: Self::Config) -> Tilex<L, VL, ReadWrite> {
+        register_allocate_lhs(MatrixLayout::RowMajor, config.shared(), ProductType::Inner)
     }
 
-    fn allocate_rhs(#[comptime] config: Self::Config) -> Self::Rhs {
-        UnitTile::new(UnitTileLayout::new(
-            config.tile_size.k,
-            config.tile_size.n,
-            false,
-        ))
+    fn allocate_rhs(#[comptime] config: Self::Config) -> Tilex<R, VR, ReadWrite> {
+        register_allocate_rhs(MatrixLayout::RowMajor, config.shared(), ProductType::Inner)
     }
 
-    fn allocate_rhs_transposed(#[comptime] config: Self::Config) -> Self::Rhs {
-        UnitTile::new(UnitTileLayout::new(
-            config.tile_size.k,
-            config.tile_size.n,
-            true,
-        ))
+    fn allocate_rhs_transposed(#[comptime] config: Self::Config) -> Tilex<R, VR, ReadWrite> {
+        register_allocate_rhs(MatrixLayout::ColMajor, config.shared(), ProductType::Inner)
     }
 
-    fn load_lhs<E: Numeric, ES: Size>(tile: &StridedTile<E, ES>, fragment: &mut Self::Lhs) {
-        fragment.load_from_strided_tile(tile);
+    fn load_lhs<E: Numeric, ES: Size>(
+        source: &Tilex<E, ES, ReadOnly>,
+        dest: &mut Tilex<L, VL, ReadWrite>,
+    ) {
+        tilex_load::<E, ES, L, VL, L, R, A>(source, dest, StageIdent::Lhs);
     }
 
-    fn load_rhs<E: Float, ES: Size>(tile: &StridedTile<E, ES>, fragment: &mut Self::Rhs) {
-        fragment.load_from_strided_tile(tile);
+    fn load_rhs<E: Float, ES: Size>(
+        source: &Tilex<E, ES, ReadOnly>,
+        dest: &mut Tilex<R, VR, ReadWrite>,
+    ) {
+        tilex_load::<E, ES, R, VR, L, R, A>(source, dest, StageIdent::Rhs);
     }
 
     fn execute(
-        lhs: &Self::Lhs,
-        rhs: &Self::Rhs,
-        out: &mut Self::Acc,
-        #[comptime] tile_size: TileSize,
+        lhs: &Tilex<L, VL, ReadWrite>,
+        rhs: &Tilex<R, VR, ReadWrite>,
+        acc: &mut Tilex<A, VA, ReadWrite>,
+        #[comptime] _tile_size: TileSize,
     ) {
-        let (m, n, k) = comptime! {let (m, n, k): (u32, u32, u32) = tile_size.into(); (m, n, k)};
-        for m_ in 0..m {
-            for n_ in 0..n {
-                let mut sum = CD::from_int(0);
-                for k_ in 0..k {
-                    let lhs_val = lhs.get(m_, k_);
-                    let rhs_val = rhs.get(k_, n_);
-                    sum += CD::cast_from(lhs_val) * CD::cast_from(rhs_val);
-                }
-                out.accumulate(m_, n_, sum);
-            }
-        }
+        tilex_execute::<L, VL, R, VR, A, VA>(lhs, rhs, acc)
     }
+}
+
+#[cube]
+pub fn unit_allocate_acc<A: Numeric, VA: Size>(
+    #[comptime] config: UnitMatmulConfig,
+) -> Tilex<A, VA, ReadWrite> {
+    register_allocate_acc(MatrixLayout::RowMajor, config.shared(), ProductType::Inner)
 }

@@ -18,7 +18,6 @@ use cubek_matmul::components::{CubeDimResource, stage::StageFamily};
 use cubek_std::{
     MatrixLayout,
     stage::{StageMemoryConfig, SwizzleMode},
-    tile::Strided,
 };
 
 use crate::components::stage::StageAttentionFamily;
@@ -32,12 +31,8 @@ pub struct UnitPartitionStageAttentionFamily<
     _phantom: PhantomData<(TA, SK, SV, SO)>,
 }
 
-impl<
-    TA: TileAttentionFamily,
-    SK: StageFamily<TileKind = Strided>,
-    SV: StageFamily<TileKind = Strided>,
-    SO: StageFamily<ReadWrite, TileKind = Strided>,
-> StageAttentionFamily for UnitPartitionStageAttentionFamily<TA, SK, SV, SO>
+impl<TA: TileAttentionFamily, SK: StageFamily, SV: StageFamily, SO: StageFamily<ReadWrite>>
+    StageAttentionFamily for UnitPartitionStageAttentionFamily<TA, SK, SV, SO>
 {
     type Attention<AP: AttentionPrecision> = UnitPartitionAttention<
         AP,
