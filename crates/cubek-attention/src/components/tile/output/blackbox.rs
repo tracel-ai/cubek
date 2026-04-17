@@ -68,7 +68,7 @@ impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA>
         #[comptime] config: Self::Config,
     ) {
         let scale_acc = RowWise::<SM>::cast_from::<Acc>(scale);
-        scale_cmma_tile::<SM, Acc, VA>(tile, &scale_acc, workspace, config);
+        scale_cmma_tile::<Acc, VA>(tile, &scale_acc, workspace, config);
     }
 
     fn scale_div(
@@ -79,7 +79,7 @@ impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA>
     ) {
         let mut scale = RowWise::<SM>::cast_from::<Acc>(&running_state.1);
         scale.recip_inplace();
-        scale_cmma_tile::<SM, Acc, VA>(tile, &scale, workspace, config);
+        scale_cmma_tile::<Acc, VA>(tile, &scale, workspace, config);
     }
 
     fn init_workspace(#[comptime] config: Self::Config) -> Self::Workspace {
@@ -105,7 +105,7 @@ impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA>
 }
 
 #[cube]
-fn scale_cmma_tile<SM: Float, Acc: Float, VA: Size>(
+fn scale_cmma_tile<Acc: Float, VA: Size>(
     tile: &mut Tilex<Acc, VA, ReadWrite>,
     scale: &RowWise<Acc>,
     workspace: &mut BlackboxAttentionOutputWorkspace<Acc>,

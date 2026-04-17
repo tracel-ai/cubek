@@ -95,7 +95,7 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
         exp_diff_tile::<Acc>(score_matmul_accumulator, &workspace.max, num_rows, num_cols);
 
         workspace.sum.fill(Acc::from_int(0));
-        row_sum_into::<Acc, Lhs>(
+        row_sum_into::<Acc>(
             &mut workspace.sum,
             score_matmul_accumulator,
             num_rows,
@@ -260,7 +260,7 @@ fn row_max_array<E: Float>(
 }
 
 #[cube]
-fn row_sum_into<Acc: Float, Lhs: Float>(
+fn row_sum_into<Acc: Float>(
     acc: &mut RowWise<Acc>,
     tile: &Tilex<Acc, Const<0>, ReadWrite>,
     #[comptime] num_rows: u32,
