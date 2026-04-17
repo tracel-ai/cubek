@@ -187,9 +187,7 @@ impl TestInput {
                 scales_shape.clone(),
                 InputDataType::Standard(f32::as_type_native_unchecked().storage_type()),
                 StrideSpec::RowMajor,
-                DataKind::Custom {
-                    data: scales_data,
-                },
+                DataKind::Custom { data: scales_data },
             )
             .generate();
 
