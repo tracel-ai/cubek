@@ -112,14 +112,14 @@ fn scale_cmma_tile<SM: Float, Acc: Float, VA: Size>(
     #[comptime] config: BlackboxOutputConfig,
 ) {
     match tile {
-        Tilex::Cmma(t) => scale_cmma_matrix::<SM, Acc>(&mut t.matrix, scale, workspace, config),
+        Tilex::Cmma(t) => scale_cmma_matrix::<Acc>(&mut t.matrix, scale, workspace, config),
         Tilex::Register(_dummy) => panic!("BlackboxAttentionOutput expects a Tilex::Cmma"),
         _ => panic!("BlackboxAttentionOutput expects a Tilex::Cmma"),
     }
 }
 
 #[cube]
-fn scale_cmma_matrix<SM: Float, Acc: Float>(
+fn scale_cmma_matrix<Acc: Float>(
     matrix: &mut cmma::Matrix<Acc>,
     scale: &RowWise<Acc>,
     workspace: &mut BlackboxAttentionOutputWorkspace<Acc>,

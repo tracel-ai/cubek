@@ -76,7 +76,7 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
         let num_rows = comptime!(config.tile_size().seq_q);
         let num_cols = comptime!(config.tile_size().seq_kv);
 
-        scale_and_mask_tile::<Acc, Lhs, MaskTile<Acc, Self>>(
+        scale_and_mask_tile::<Acc, MaskTile<Acc, Self>>(
             score_matmul_accumulator,
             head_dim_factor,
             mask,
@@ -85,14 +85,14 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
         );
 
         workspace.max.copy_from(&state.0);
-        row_max_into::<Acc, Lhs>(
+        row_max_into::<Acc>(
             &mut workspace.max,
             score_matmul_accumulator,
             num_rows,
             num_cols,
         );
 
-        exp_diff_tile::<Acc, Lhs>(score_matmul_accumulator, &workspace.max, num_rows, num_cols);
+        exp_diff_tile::<Acc>(score_matmul_accumulator, &workspace.max, num_rows, num_cols);
 
         workspace.sum.fill(Acc::from_int(0));
         row_sum_into::<Acc, Lhs>(
@@ -194,7 +194,7 @@ fn fill_array_zero<E: Numeric>(data: &mut Array<E>, #[comptime] num_elements: u3
 }
 
 #[cube]
-fn scale_and_mask_tile<Acc: Float, Lhs: Float, M: FragmentMask>(
+fn scale_and_mask_tile<Acc: Float, M: FragmentMask>(
     tile: &mut Tilex<Acc, Const<0>, ReadWrite>,
     scale: Acc,
     mask: &M,
@@ -229,7 +229,7 @@ fn scale_and_mask_array<E: Float, M: FragmentMask>(
 }
 
 #[cube]
-fn row_max_into<Acc: Float, Lhs: Float>(
+fn row_max_into<Acc: Float>(
     acc: &mut RowWise<Acc>,
     tile: &Tilex<Acc, Const<0>, ReadWrite>,
     #[comptime] num_rows: u32,
@@ -291,7 +291,7 @@ fn row_sum_array<E: Float>(
 }
 
 #[cube]
-fn exp_diff_tile<Acc: Float, Lhs: Float>(
+fn exp_diff_tile<Acc: Float>(
     tile: &mut Tilex<Acc, Const<0>, ReadWrite>,
     rowwise: &RowWise<Acc>,
     #[comptime] num_rows: u32,
