@@ -7,7 +7,7 @@ use cubecl::{
     zspace::{Shape, Strides},
 };
 use cubecl_common::quant::scheme::QuantScheme;
-use cubek_quant::scheme::QuantStore;
+use cubek_quant::scheme::{QuantLevel, QuantStore};
 
 use crate::test_tensor::{
     arange::build_arange,
@@ -177,13 +177,18 @@ impl TestInput {
         if let InputDataType::Quantized(scheme) = input_dtype {
             let original_shape = tensor.handle.shape().clone();
 
+            // Derive the scale tensor from the quant value's range. For
+            // `QuantLevel::Tensor` a single scale is used; for
+            // `QuantLevel::Block` we compute a per-block scale from the host
+            // data so each block fully uses the quant range without clipping.
+            let (scales_shape, scales_data) = compute_input_scales(&tensor.host, &scheme);
             let scale_handle = TestInput::new(
                 client.clone(),
-                [1, 1],
+                scales_shape.clone(),
                 InputDataType::Standard(f32::as_type_native_unchecked().storage_type()),
                 StrideSpec::RowMajor,
                 DataKind::Custom {
-                    data: vec![1.0 / 127.0],
+                    data: scales_data,
                 },
             )
             .generate();
@@ -222,7 +227,7 @@ impl TestInput {
 
             let out_scale_handle = TestInput::new(
                 client.clone(),
-                [1, 1],
+                scales_shape,
                 InputDataType::Standard(f32::as_type_native_unchecked().storage_type()),
                 StrideSpec::RowMajor,
                 DataKind::Zeros,
@@ -304,6 +309,82 @@ impl TestInput {
             HostData::from_tensor_handle(&client, tensor_handle.clone(), host_data_type);
 
         (tensor_handle, host_data)
+    }
+}
+
+/// Compute the scale tensor shape and values for a quantized input.
+///
+/// For `QuantLevel::Tensor` this returns a single-element scale based on the
+/// quant value's range (assumes input in [-1, 1]). For `QuantLevel::Block`
+/// each block gets its own scale derived from `max(|value|)` in that block,
+/// matching the reference pattern used by the cubek-quant symmetric tests.
+fn compute_input_scales(host: &HostData, scheme: &QuantScheme) -> (Shape, Vec<f32>) {
+    let (q_min, q_max) = scheme.value.range();
+    let max_abs_q = q_max.abs().max(q_min.abs());
+
+    match &scheme.level {
+        QuantLevel::Tensor => {
+            let shape: Shape = core::iter::repeat_n(1, host.shape.len()).collect();
+            (shape, vec![1.0 / max_abs_q])
+        }
+        QuantLevel::Block(block_size) => {
+            let rank = host.shape.len();
+            let block_dims: Vec<usize> = block_size
+                .to_dim_vec(rank)
+                .into_iter()
+                .map(|b| b as usize)
+                .collect();
+
+            let scales_shape: Shape = host
+                .shape
+                .iter()
+                .zip(block_dims.iter())
+                .map(|(d, b)| {
+                    assert!(
+                        d.is_multiple_of(*b),
+                        "Block size {b} must divide dimension {d}",
+                    );
+                    d / b
+                })
+                .collect();
+
+            let num_blocks: usize = scales_shape.iter().product();
+            let block_elem_count: usize = block_dims.iter().product();
+
+            let mut scales = Vec::with_capacity(num_blocks);
+            let mut data_idx = vec![0usize; rank];
+            for block_linear in 0..num_blocks {
+                // Decode the flat block index into per-dim block indices.
+                let mut block_idx = vec![0usize; rank];
+                let mut rem = block_linear;
+                for d in (0..rank).rev() {
+                    block_idx[d] = rem % scales_shape[d];
+                    rem /= scales_shape[d];
+                }
+
+                let mut block_max = 0.0_f32;
+                for elem_linear in 0..block_elem_count {
+                    let mut rem = elem_linear;
+                    for d in (0..rank).rev() {
+                        let within = rem % block_dims[d];
+                        data_idx[d] = block_idx[d] * block_dims[d] + within;
+                        rem /= block_dims[d];
+                    }
+                    block_max = block_max.max(host.get_f32(&data_idx).abs());
+                }
+
+                // Guard against an all-zero block producing a zero scale that
+                // would divide-by-zero inside the quantize kernel.
+                let scale = if block_max > 0.0 {
+                    block_max / max_abs_q
+                } else {
+                    1.0 / max_abs_q
+                };
+                scales.push(scale);
+            }
+
+            (scales_shape, scales)
+        }
     }
 }
 
