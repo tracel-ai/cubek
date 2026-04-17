@@ -40,7 +40,7 @@ impl ArgMin {
 
 #[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for ArgMin {
-    type SharedAccumulator = ArgAccumulator<P::EA, P::SI>;
+    type SharedAccumulator = ArgAccumulator<P>;
     type Config = ();
 
     fn requirements(_this: &Self) -> ReduceRequirements {
