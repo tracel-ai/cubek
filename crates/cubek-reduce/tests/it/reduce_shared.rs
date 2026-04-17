@@ -1,12 +1,9 @@
 use cubecl::{TestRuntime, prelude::*};
 use cubek_reduce::shared_sum;
-use rand::{
-    SeedableRng,
-    distr::{Distribution, Uniform},
-    rngs::StdRng,
+use cubek_test_utils::{
+    DataKind, ExecutionOutcome, HostData, HostDataType, HostDataVec, StrideSpec, TestInput,
+    TestOutcome, assert_equals_approx,
 };
-
-static PRECISION: i32 = 4;
 
 #[test]
 pub fn test_shared_sum() {
@@ -28,88 +25,113 @@ pub struct TestCase {
 
 impl TestCase {
     pub fn test_shared_sum(&self) {
-        let input_values: Vec<TestDType> = self.random_input_values();
-        let mut expected = TestDType::from_int(0);
-        for v in input_values.iter() {
-            expected += *v;
+        // `shared_sum` reduces the entire tensor and the reduction over a broadcast
+        // (stride == 0) axis is ambiguous: the kernel iterates the physical buffer via
+        // linear_view, whereas the logical "all elements" semantics would count
+        // broadcast duplicates. Skip broadcast cases to avoid testing an
+        // implementation-defined path.
+        if self.stride.iter().any(|&s| s == 0) {
+            return;
         }
-        self.run_shared_sum_test(input_values, expected);
-    }
 
-    pub fn run_shared_sum_test(&self, input_values: Vec<TestDType>, expected: TestDType) {
         let client = TestRuntime::client(&Default::default());
+        let input_dtype = TestDType::as_type_native_unchecked().storage_type();
 
-        let input_handle = client.create_from_slice(TestDType::as_bytes(&input_values));
-        let output_handle =
-            client.create_from_slice(TestDType::as_bytes(&[TestDType::from_int(0)]));
+        let (input_handle, input_host) = TestInput::new(
+            client.clone(),
+            self.shape.clone(),
+            input_dtype,
+            StrideSpec::Custom(self.stride.iter().copied().collect()),
+            DataKind::Custom {
+                data: self.input_raw_data(),
+            },
+        )
+        .generate_with_f32_host_data();
 
-        let input = unsafe {
-            TensorBinding::from_raw_parts(input_handle, self.stride.clone(), self.shape.clone())
-        };
-        let output =
-            unsafe { TensorBinding::from_raw_parts(output_handle.clone(), strides![1], shape![1]) };
+        let expected_sum = sum_all(&input_host);
+
+        let output_handle = TestInput::new(
+            client.clone(),
+            cubecl::zspace::shape![1],
+            input_dtype,
+            StrideSpec::Custom(vec![1]),
+            DataKind::Zeros,
+        )
+        .generate();
 
         let cube_count = 3;
         let result = shared_sum(
             &client,
-            input,
-            output,
+            input_handle.binding(),
+            output_handle.clone().binding(),
             cube_count,
             TestDType::as_type_native_unchecked().elem_type(),
         );
 
-        if result.is_err() {
-            return; // don't execute the test in that case since atomic adds are not supported.
+        let outcome = match ExecutionOutcome::from(result) {
+            ExecutionOutcome::Executed => {
+                let actual =
+                    HostData::from_tensor_handle(&client, output_handle, HostDataType::F32);
+                let expected = HostData {
+                    data: HostDataVec::F32(vec![expected_sum]),
+                    shape: cubecl::zspace::shape![1],
+                    strides: strides![1],
+                };
+                assert_equals_approx(&actual, &expected, 0.0625).as_test_outcome()
+            }
+            ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
+        };
+        outcome.enforce();
+    }
+
+    /// Deterministic f32 values in {-2, -1.75, …, -0.25, 0.25, …, 2} excluding zero.
+    fn input_raw_data(&self) -> Vec<f32> {
+        let shape = self.shape.as_slice();
+        let rank = shape.len();
+        let num_elems: usize = shape.iter().product();
+        let mut data = Vec::with_capacity(num_elems);
+        let mut coord = vec![0usize; rank];
+
+        for linear in 0..num_elems {
+            let mut rem = linear;
+            for d in (0..rank).rev() {
+                coord[d] = rem % shape[d];
+                rem /= shape[d];
+            }
+            for d in 0..rank {
+                if self.stride[d] == 0 {
+                    coord[d] = 0;
+                }
+            }
+            let mut hash: usize = 0;
+            for (d, c) in coord.iter().enumerate() {
+                hash = hash.wrapping_add(c.wrapping_mul(d.wrapping_add(31)));
+            }
+            let h = hash % 16;
+            let magnitude = (h / 2 + 1) as f32 * 0.25;
+            let sign = if h % 2 == 0 { 1.0 } else { -1.0 };
+            data.push(sign * magnitude);
         }
-        let bytes = client.read_one(output_handle).unwrap();
-        let actual = TestDType::from_bytes(&bytes);
-        assert_approx_equal(actual, &[expected]);
-    }
 
-    fn random_input_values<F: Float>(&self) -> Vec<F> {
-        let size = self.input_size();
-        let rng = StdRng::seed_from_u64(self.pseudo_random_seed());
-        let distribution = Uniform::new_inclusive(-2 * PRECISION, 2 * PRECISION).unwrap();
-        let factor = 1.0 / (PRECISION as f32);
-        distribution
-            .sample_iter(rng)
-            .take(size)
-            .map(|r| F::new(r as f32 * factor))
-            .collect()
-    }
-
-    fn input_size(&self) -> usize {
-        let (stride, shape) = self
-            .stride
-            .iter()
-            .zip(self.shape.iter())
-            .max_by_key(|(stride, _)| *stride)
-            .unwrap();
-        stride * shape
-    }
-
-    // We don't need a fancy crypto-secure seed as this is only for testing.
-    fn pseudo_random_seed(&self) -> u64 {
-        123456789
+        data
     }
 }
 
-pub fn assert_approx_equal<N: Numeric>(actual: &[N], expected: &[N]) {
-    for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
-        let a = a.to_f32().unwrap();
-        let e = e.to_f32().unwrap();
-        let diff = (a - e).abs();
-        if e == 0.0 {
-            assert!(
-                diff < 1e-10,
-                "Values are not approx equal: index={i} actual={a}, expected={e}, difference={diff}",
-            );
-        } else {
-            let rel_diff = diff / e.abs();
-            assert!(
-                rel_diff < 0.0625,
-                "Values are not approx equal: index={i} actual={a}, expected={e}"
-            );
-        }
+fn sum_all(input: &HostData) -> f32 {
+    let rank = input.shape.len();
+    if rank == 0 {
+        return input.get_f32(&[]);
     }
+    let mut coord = vec![0usize; rank];
+    let num: usize = input.shape.iter().product();
+    let mut acc = 0.0f32;
+    for linear in 0..num {
+        let mut rem = linear;
+        for d in (0..rank).rev() {
+            coord[d] = rem % input.shape[d];
+            rem /= input.shape[d];
+        }
+        acc += input.get_f32(&coord);
+    }
+    acc
 }

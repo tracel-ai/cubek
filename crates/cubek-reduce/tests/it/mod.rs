@@ -1,3 +1,4 @@
+pub mod reference;
 pub mod test_case;
 
 macro_rules! testgen_reduce {

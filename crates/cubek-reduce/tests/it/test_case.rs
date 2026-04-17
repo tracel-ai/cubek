@@ -1,296 +1,172 @@
-use std::marker::PhantomData;
-
 use cubecl::{
+    ir::{ElemType, FloatKind, StorageType},
     prelude::*,
-    zspace::Shape,
-    zspace::Strides,
+    server::LaunchError,
+    std::tensor::TensorHandle,
+    zspace::{Shape, Strides},
     {TestRuntime, server::ServerError},
 };
 use cubek_reduce::{
+    ReduceDtypes, ReduceError, ReducePrecision, ReduceStrategy,
     components::instructions::ReduceOperationConfig,
     launch::RoutineStrategy,
-    {ReduceDtypes, ReduceError, ReducePrecision, launch::ReduceStrategy, reduce},
+    reduce,
 };
-use rand::{
-    SeedableRng,
-    distr::{Distribution, Uniform},
-    rngs::StdRng,
+use cubek_test_utils::{
+    DataKind, HostData, HostDataType, HostDataVec, StrideSpec, TestInput, assert_equals_approx,
 };
 
-static PRECISION: i32 = 4;
+use crate::it::reference::{
+    reference_argmax, reference_argmin, reference_argtopk, reference_max, reference_max_abs,
+    reference_mean, reference_min, reference_prod, reference_sum,
+};
 
-pub struct TestCase<P> {
+pub struct TestCase {
     pub shape: Shape,
     pub stride: Strides,
     pub axis: Option<usize>,
     pub strategy: ReduceStrategy,
-    pub elem: PhantomData<P>,
+    pub input_dtype: StorageType,
+    pub accumulation_dtype: StorageType,
 }
 
-impl<P> core::fmt::Debug for TestCase<P> {
+impl core::fmt::Debug for TestCase {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TestCase")
             .field("shape", &self.shape)
             .field("stride", &self.stride)
             .field("axis", &self.axis)
             .field("strategy", &self.strategy)
-            .field("elem", &self.elem)
+            .field("input_dtype", &self.input_dtype)
+            .field("accumulation_dtype", &self.accumulation_dtype)
             .finish()
     }
 }
 
-impl<P: ReducePrecision> TestCase<P>
-where
-    P::EI: Float + CubeElement + core::fmt::Display,
-{
-    pub fn test_argmax(&self) {
-        let input_values: Vec<P::EI> = self.random_input_values::<P::EI>();
-        let expected_values = match self.axis {
-            Some(axis) if self.stride[axis] == 0 => vec![0; input_values.len()],
-            _ => self.cpu_argmax(&input_values),
-        };
-        self.run_reduce_test::<u32>(input_values, expected_values, ReduceOperationConfig::ArgMax)
-    }
-
-    fn cpu_argmax<F: Float>(&self, values: &[F]) -> Vec<u32> {
-        let mut expected = vec![(F::min_value(), 0_u32); self.num_output_values()];
-        for (input_index, &value) in values.iter().enumerate() {
-            if let Some(output_index) = self.to_output_index(input_index) {
-                let (best, _) = expected[output_index];
-                if value > best {
-                    let coordinate = self.to_input_coordinate(input_index).unwrap();
-                    expected[output_index] = (value, coordinate[self.axis.unwrap()] as u32);
-                }
-            }
+impl TestCase {
+    pub fn new<P: ReducePrecision>(
+        shape: Shape,
+        stride: Strides,
+        axis: Option<usize>,
+        strategy: ReduceStrategy,
+    ) -> Self
+    where
+        P::EI: CubePrimitive,
+        P::EA: CubePrimitive,
+    {
+        Self {
+            shape,
+            stride,
+            axis,
+            strategy,
+            input_dtype: <P::EI as CubePrimitive>::as_type_native_unchecked().storage_type(),
+            accumulation_dtype: <P::EA as CubePrimitive>::as_type_native_unchecked().storage_type(),
         }
-        expected.into_iter().map(|(_, i)| i).collect()
-    }
-
-    pub fn test_argmin(&self) {
-        let input_values: Vec<<P as ReducePrecision>::EI> = self.random_input_values();
-        let expected_values = match self.axis {
-            Some(axis) if self.stride[axis] == 0 => vec![0; input_values.len()],
-            _ => self.cpu_argmin(&input_values),
-        };
-        self.run_reduce_test::<u32>(input_values, expected_values, ReduceOperationConfig::ArgMin)
-    }
-
-    fn cpu_argmin<F: Float>(&self, values: &[F]) -> Vec<u32> {
-        let mut expected = vec![(F::max_value(), 0_u32); self.num_output_values()];
-        for (input_index, &value) in values.iter().enumerate() {
-            if let Some(output_index) = self.to_output_index(input_index) {
-                let (best, _) = expected[output_index];
-                if value < best {
-                    let coordinate = self.to_input_coordinate(input_index).unwrap();
-                    expected[output_index] = (value, coordinate[self.axis.unwrap()] as u32);
-                }
-            }
-        }
-        expected.into_iter().map(|(_, i)| i).collect()
-    }
-
-    pub fn test_argtopk(&self, k: u32) {
-        let input_values: Vec<P::EI> = self.random_input_values::<P::EI>();
-        let expected_values = match self.axis {
-            Some(axis) if self.stride[axis] == 0 => {
-                // If stride is 0, all elements are the same; index is always 0
-                vec![0; self.num_output_values() * k as usize]
-            }
-            _ => self.cpu_argtopk(&input_values, k as usize),
-        };
-
-        // Note: You may need to update run_reduce_test to handle output_shape[axis] = k
-        // for cases where k > 1.
-        self.run_reduce_test::<u32>(
-            input_values,
-            expected_values,
-            ReduceOperationConfig::ArgTopK(k),
-        )
-    }
-
-    fn cpu_argtopk<F: Float>(&self, values: &[F], k: usize) -> Vec<u32> {
-        let num_outputs = self.num_output_values();
-        let mut collectors = vec![Vec::<(F, u32)>::new(); num_outputs];
-
-        // Group values by their output coordinate
-        for (input_index, &value) in values.iter().enumerate() {
-            if let Some(output_index) = self.to_output_index(input_index) {
-                let coordinate = self.to_input_coordinate(input_index).unwrap();
-                let axis_index = coordinate[self.axis.unwrap()] as u32;
-                collectors[output_index].push((value, axis_index));
-            }
-        }
-
-        let mut results = Vec::with_capacity(num_outputs * k);
-        for mut list in collectors {
-            // Sort descending by value
-            list.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-
-            // Take the top K indices
-            for i in 0..k {
-                if i < list.len() {
-                    results.push(list[i].1);
-                } else {
-                    // Padding if the axis is smaller than K
-                    results.push(u32::MAX);
-                }
-            }
-        }
-        results
-    }
-
-    pub fn test_mean(&self) {
-        let input_values: Vec<P::EI> = self.random_input_values();
-        let expected_values = match self.axis {
-            Some(axis) if self.stride[axis] == 0 => input_values.clone(),
-            _ => self.cpu_mean(&input_values),
-        };
-        self.run_reduce_test::<P::EI>(input_values, expected_values, ReduceOperationConfig::Mean)
-    }
-
-    fn cpu_mean<F: Float>(&self, values: &[F]) -> Vec<F> {
-        self.cpu_sum(values)
-            .into_iter()
-            .map(|sum| sum / F::new(self.shape[self.axis.unwrap()] as f32))
-            .collect()
-    }
-
-    pub fn test_prod(&self) {
-        let input_values: Vec<P::EI> = self.random_input_values();
-        let expected_values = match self.axis {
-            Some(axis) if self.stride[axis] == 0 => input_values
-                .iter()
-                .map(|v| Self::powf(*v, self.shape[axis]))
-                .collect(),
-            _ => self.cpu_prod(&input_values),
-        };
-        self.run_reduce_test::<P::EI>(input_values, expected_values, ReduceOperationConfig::Prod)
-    }
-
-    fn powf<F: Float>(base: F, power: usize) -> F {
-        let mut result = F::new(1.0);
-        for _ in 0..power {
-            result *= base;
-        }
-        result
-    }
-
-    fn cpu_prod<F: Float>(&self, values: &[F]) -> Vec<F> {
-        let mut expected = vec![F::new(1.0); self.num_output_values()];
-
-        for (input_index, value) in values.iter().enumerate() {
-            if let Some(output_index) = self.to_output_index(input_index) {
-                expected[output_index] *= *value;
-            }
-        }
-        expected
     }
 
     pub fn test_sum(&self) {
         println!("Printing test: {self:?}");
-        let input_values: Vec<P::EI> = self.random_input_values();
-        let expected_values = match self.axis {
-            Some(axis) if self.stride[axis] == 0 => input_values
-                .iter()
-                .map(|v| *v * P::EI::from_int(self.shape[axis] as i64))
-                .collect(),
-            _ => self.cpu_sum(&input_values),
-        };
-        self.run_reduce_test::<P::EI>(input_values, expected_values, ReduceOperationConfig::Sum)
+        self.run_reduce_test(
+            |input, axis| reference_sum(input, axis),
+            self.input_dtype,
+            ReduceOperationConfig::Sum,
+            0.0625,
+        );
     }
 
-    fn cpu_sum<F: Float>(&self, values: &[F]) -> Vec<F> {
-        let mut expected = vec![F::new(0.0); self.num_output_values()];
+    pub fn test_mean(&self) {
+        self.run_reduce_test(
+            |input, axis| reference_mean(input, axis),
+            self.input_dtype,
+            ReduceOperationConfig::Mean,
+            0.0625,
+        );
+    }
 
-        for (input_index, value) in values.iter().enumerate() {
-            if let Some(output_index) = self.to_output_index(input_index) {
-                expected[output_index] += *value;
-            }
-        }
-        expected
+    pub fn test_prod(&self) {
+        self.run_reduce_test(
+            |input, axis| reference_prod(input, axis),
+            self.input_dtype,
+            ReduceOperationConfig::Prod,
+            // Prod accumulates exponential error; use a loose relative bound.
+            // Exact zeros are avoided in the input data generator.
+            1.0,
+        );
     }
 
     pub fn test_min(&self) {
         println!("Printing test: {self:?}");
-        let input_values: Vec<P::EI> = self.random_input_values();
-        let expected_values = match self.axis {
-            Some(axis) if self.stride[axis] == 0 => input_values.clone(),
-            _ => self.cpu_min(&input_values),
-        };
-        self.run_reduce_test::<P::EI>(input_values, expected_values, ReduceOperationConfig::Min)
-    }
-
-    fn cpu_min<F: Float>(&self, values: &[F]) -> Vec<F> {
-        let mut expected = vec![F::max_value(); self.num_output_values()];
-
-        for (input_index, value) in values.iter().enumerate() {
-            if let Some(output_index) = self.to_output_index(input_index) {
-                expected[output_index] = min(expected[output_index], *value);
-            }
-        }
-        expected
+        self.run_reduce_test(
+            |input, axis| reference_min(input, axis),
+            self.input_dtype,
+            ReduceOperationConfig::Min,
+            0.0625,
+        );
     }
 
     pub fn test_max(&self) {
         println!("Printing test: {self:?}");
-        let input_values: Vec<P::EI> = self.random_input_values();
-        let expected_values = match self.axis {
-            Some(axis) if self.stride[axis] == 0 => input_values.clone(),
-            _ => self.cpu_max(&input_values),
-        };
-        self.run_reduce_test::<P::EI>(input_values, expected_values, ReduceOperationConfig::Max)
-    }
-
-    fn cpu_max<F: Float>(&self, values: &[F]) -> Vec<F> {
-        let mut expected = vec![F::min_value(); self.num_output_values()];
-
-        for (input_index, value) in values.iter().enumerate() {
-            if let Some(output_index) = self.to_output_index(input_index) {
-                expected[output_index] = max(expected[output_index], *value);
-            }
-        }
-        expected
+        self.run_reduce_test(
+            |input, axis| reference_max(input, axis),
+            self.input_dtype,
+            ReduceOperationConfig::Max,
+            0.0625,
+        );
     }
 
     pub fn test_max_abs(&self) {
         println!("Printing test: {self:?}");
-        let input_values: Vec<P::EI> = self.random_input_values();
-        let expected_values = match self.axis {
-            Some(axis) if self.stride[axis] == 0 => {
-                input_values.iter().map(|x| max(*x, -*x)).collect()
-            }
-            _ => self.cpu_max_abs(&input_values),
-        };
-        self.run_reduce_test::<P::EI>(input_values, expected_values, ReduceOperationConfig::MaxAbs)
+        self.run_reduce_test(
+            |input, axis| reference_max_abs(input, axis),
+            self.input_dtype,
+            ReduceOperationConfig::MaxAbs,
+            0.0625,
+        );
     }
 
-    fn cpu_max_abs<F: Float>(&self, values: &[F]) -> Vec<F> {
-        let mut expected = vec![F::zero(); self.num_output_values()];
-
-        for (input_index, value) in values.iter().enumerate() {
-            if let Some(output_index) = self.to_output_index(input_index) {
-                let abs_value = max(*value, -*value);
-                expected[output_index] = max(expected[output_index], abs_value);
-            }
-        }
-        expected
+    pub fn test_argmax(&self) {
+        let u32_dtype = u32::as_type_native_unchecked().storage_type();
+        self.run_reduce_test(
+            |input, axis| reference_argmax(input, axis),
+            u32_dtype,
+            ReduceOperationConfig::ArgMax,
+            0.0,
+        );
     }
 
-    pub fn run_reduce_test<O>(
+    pub fn test_argmin(&self) {
+        let u32_dtype = u32::as_type_native_unchecked().storage_type();
+        self.run_reduce_test(
+            |input, axis| reference_argmin(input, axis),
+            u32_dtype,
+            ReduceOperationConfig::ArgMin,
+            0.0,
+        );
+    }
+
+    pub fn test_argtopk(&self, k: u32) {
+        let u32_dtype = u32::as_type_native_unchecked().storage_type();
+        self.run_reduce_test(
+            move |input, axis| reference_argtopk(input, axis, k),
+            u32_dtype,
+            ReduceOperationConfig::ArgTopK(k),
+            0.0,
+        );
+    }
+
+    fn run_reduce_test(
         &self,
-        input_values: Vec<P::EI>,
-        expected_values: Vec<O>,
+        reference: impl FnOnce(&HostData, usize) -> HostData,
+        output_dtype: StorageType,
         config: ReduceOperationConfig,
-    ) where
-        O: Numeric + CubeElement + std::fmt::Display,
-    {
+        epsilon: f32,
+    ) {
         let client = TestRuntime::client(&Default::default());
+
         if let RoutineStrategy::Cube(_blueprint) = &self.strategy.routine
             && client.properties().hardware.num_cpu_cores.is_some()
         {
-            let test_full = std::env::var("CUBEK_TEST_FULL").unwrap_or("0".to_string());
-            println!("{test_full:?}");
-
+            let test_full = std::env::var("CUBEK_TEST_FULL").unwrap_or_else(|_| "0".to_string());
             match test_full.as_str() {
                 "1" | "true" => {}
                 _ => {
@@ -300,48 +176,33 @@ where
                     return;
                 }
             }
-        };
+        }
 
-        let input_handle =
-            client.create_from_slice(<P::EI as CubeElement>::as_bytes(&input_values));
+        let axis = self.axis.unwrap();
 
-        // Zero initialize a tensor with the same shape as input
-        // except for the `self.axis` axis where the shape is 1.
-        let output_handle =
-            client.create_from_slice(O::as_bytes(&vec![O::from_int(0); expected_values.len()]));
-        let mut output_shape = self.shape.clone();
-        output_shape[self.axis.unwrap()] = 1;
-        let output_stride = self.output_stride();
+        let (input_handle, input_host) = self.setup_input(&client);
 
-        let input = unsafe {
-            TensorBinding::from_raw_parts(input_handle, self.stride.clone(), self.shape.clone())
-        };
-        let output = unsafe {
-            TensorBinding::from_raw_parts(
-                output_handle.clone(),
-                output_stride.clone(),
-                output_shape.clone(),
-            )
-        };
+        let expected = cast_host_through_dtype(reference(&input_host, axis), output_dtype);
+
+        let output_handle = self.build_output_tensor(&client, output_dtype, &expected.shape);
 
         let result = reduce::<TestRuntime>(
             &client,
-            input,
-            output,
-            self.axis.unwrap(),
+            input_handle.binding(),
+            output_handle.clone().binding(),
+            axis,
             self.strategy.clone(),
             config,
             ReduceDtypes {
-                input: <P as ReducePrecision>::EI::as_type_native_unchecked().storage_type(),
-                output: O::as_type_native_unchecked().storage_type(),
-                accumulation: <P as ReducePrecision>::EA::as_type_native_unchecked().storage_type(),
+                input: self.input_dtype,
+                output: output_dtype,
+                accumulation: self.accumulation_dtype,
             },
         );
 
         match client.flush() {
             Ok(_) => {}
-            Err(ServerError::ServerUnhealthy { errors, .. }) =>
-            {
+            Err(ServerError::ServerUnhealthy { errors, .. }) => {
                 #[allow(clippy::never_loop)]
                 for error in errors.iter() {
                     match error {
@@ -361,7 +222,7 @@ where
                     || matches!(e, ReduceError::Validation { .. });
 
                 let test_mode = match is_ok {
-                    true => std::env::var("CUBEK_TEST_MODE").unwrap_or("skip".to_string()),
+                    true => std::env::var("CUBEK_TEST_MODE").unwrap_or_else(|_| "skip".to_string()),
                     false => "unexpected_error".to_string(),
                 };
 
@@ -375,126 +236,198 @@ where
             }
         }
 
-        let bytes = client.read_one(output_handle).unwrap();
-        let output_values = O::from_bytes(&bytes);
+        let actual = HostData::from_tensor_handle(&client, output_handle, HostDataType::F32);
 
-        assert_approx_equal(
-            output_values,
-            &expected_values,
-            // For prod we only test with relative difference.
-            matches!(config, ReduceOperationConfig::Prod),
-        );
+        assert_equals_approx(&actual, &expected, epsilon)
+            .as_test_outcome()
+            .enforce();
     }
 
-    fn num_output_values(&self) -> usize {
-        self.shape.iter().product::<usize>() / self.shape[self.axis.unwrap()]
-    }
-
-    fn to_output_index(&self, input_index: usize) -> Option<usize> {
-        let mut coordinate = self.to_input_coordinate(input_index)?;
-        coordinate[self.axis.unwrap()] = 0;
-        Some(self.from_output_coordinate(coordinate))
-    }
-
-    fn to_input_coordinate(&self, index: usize) -> Option<Vec<usize>> {
-        let coordinate = self
-            .stride
-            .iter()
-            .zip(self.shape.iter())
-            .map(|(stride, shape)| {
-                if *stride > 0 {
-                    (index / stride) % shape
-                } else {
-                    index % shape
-                }
-            })
-            .collect::<Vec<usize>>();
-        self.validate_input_index(index, &coordinate)
-            .then_some(coordinate)
-    }
-
-    fn validate_input_index(&self, index: usize, coordinate: &[usize]) -> bool {
-        coordinate
-            .iter()
-            .zip(self.stride.iter())
-            .map(|(c, s)| c * s)
-            .sum::<usize>()
-            == index
-    }
-
-    #[allow(clippy::wrong_self_convention)]
-    fn from_output_coordinate(&self, coordinate: Vec<usize>) -> usize {
-        coordinate
-            .into_iter()
-            .zip(self.output_stride().iter())
-            .map(|(c, s)| c * s)
-            .sum()
-    }
-
-    fn output_stride(&self) -> Strides {
-        Strides::new(
-            &self
-                .shape
-                .iter()
-                .enumerate()
-                .scan(1, |stride, (axis, shape)| {
-                    if axis == self.axis.unwrap() {
-                        Some(1)
-                    } else {
-                        let current = Some(*stride);
-                        *stride *= shape;
-                        current
-                    }
-                })
-                .collect::<Vec<_>>(),
+    fn build_output_tensor(
+        &self,
+        client: &cubecl::client::ComputeClient<TestRuntime>,
+        output_dtype: StorageType,
+        output_shape: &Shape,
+    ) -> TensorHandle<TestRuntime> {
+        let strides: Vec<usize> = contiguous_strides_vec(output_shape.as_slice());
+        TestInput::new(
+            client.clone(),
+            output_shape.clone(),
+            output_dtype,
+            StrideSpec::Custom(strides),
+            DataKind::Zeros,
         )
+        .generate()
     }
 
-    fn random_input_values<F: Float>(&self) -> Vec<F> {
-        let size = self.input_size();
-        let rng = StdRng::seed_from_u64(self.pseudo_random_seed());
-        let distribution = Uniform::new_inclusive(-2 * PRECISION, 2 * PRECISION).unwrap();
-        let factor = 1.0 / (PRECISION as f32);
-        distribution
-            .sample_iter(rng)
-            .take(size)
-            .map(|r| F::new(r as f32 * factor))
-            .collect()
-        // (0..size).map(|x| F::from_int(x as i64)).collect() TODO DELETE
+    /// Build the input tensor + reference HostData.
+    ///
+    /// We bypass `TestInput` because it allocates a buffer of size
+    /// `product(shape)` and assumes a contiguous write pattern. That fails for two
+    /// cases we want to cover:
+    ///   * jumpy strides (e.g. `stride=[512, 1], shape=[256, 256]`) where the
+    ///     physical extent exceeds `product(shape)`;
+    ///   * broadcast strides (stride == 0) where the `TestInput` custom-data kernel
+    ///     would race on overlapping offsets.
+    ///
+    /// We compute a physical buffer size from the shape/stride pair and populate it
+    /// directly so the GPU and the host reference read exactly the same values.
+    fn setup_input(
+        &self,
+        client: &cubecl::client::ComputeClient<TestRuntime>,
+    ) -> (TensorHandle<TestRuntime>, HostData) {
+        let physical_size = physical_buffer_size(&self.shape, &self.stride);
+        let data = self.physical_input_data(physical_size);
+
+        let handle = create_input_handle(client, self.input_dtype, &data);
+
+        let tensor_handle = TensorHandle::new(
+            handle,
+            self.shape.clone(),
+            self.stride.clone(),
+            self.input_dtype,
+        );
+
+        // The host-side reference must see the exact f32 values the GPU will see,
+        // which for non-f32 input dtypes means the data round-tripped through the
+        // target dtype's precision.
+        let host_data = round_trip_to_f32(&data, self.input_dtype);
+        let host = HostData {
+            data: HostDataVec::F32(host_data),
+            shape: self.shape.clone(),
+            strides: self.stride.clone(),
+        };
+
+        (tensor_handle, host)
     }
 
-    fn input_size(&self) -> usize {
-        let (stride, shape) = self
-            .stride
-            .iter()
-            .zip(self.shape.iter())
-            .max_by_key(|(stride, _)| *stride)
-            .unwrap();
-        stride * shape
-    }
+    /// Generate deterministic f32 values addressed by physical offset.
+    ///
+    /// For each physical offset we decode the logical coordinate (via the tensor
+    /// strides) and hash it. Offsets that don't correspond to any logical index are
+    /// filled with zero — they're never read by the reduce kernel via shape/stride
+    /// indexing. The hash zeroes out any coordinate whose axis has stride 0 so
+    /// broadcast reads return the same value for every broadcast index.
+    ///
+    /// Values are drawn from the 16 non-zero elements of
+    /// `{-2, -1.75, …, -0.25, 0.25, …, 2}` to keep `prod` from collapsing to zero.
+    fn physical_input_data(&self, physical_size: usize) -> Vec<f32> {
+        let shape: &[usize] = self.shape.as_slice();
+        let rank = shape.len();
+        let stride: Vec<usize> = self.stride.iter().copied().collect();
+        let num_logical: usize = shape.iter().product();
 
-    // We don't need a fancy crypto-secure seed as this is only for testing.
-    fn pseudo_random_seed(&self) -> u64 {
-        123456789
+        let mut data = vec![0.0f32; physical_size];
+        let mut coord = vec![0usize; rank];
+
+        for linear in 0..num_logical {
+            let mut rem = linear;
+            for d in (0..rank).rev() {
+                coord[d] = rem % shape[d];
+                rem /= shape[d];
+            }
+
+            let mut offset = 0usize;
+            for d in 0..rank {
+                offset += coord[d] * stride[d];
+            }
+
+            let mut hash_coord = coord.clone();
+            for d in 0..rank {
+                if stride[d] == 0 {
+                    hash_coord[d] = 0;
+                }
+            }
+            let mut hash: usize = 0;
+            for (d, c) in hash_coord.iter().enumerate() {
+                hash = hash.wrapping_add(c.wrapping_mul(d.wrapping_add(31)));
+            }
+            let h = hash % 16;
+            let magnitude = (h / 2 + 1) as f32 * 0.25;
+            let sign = if h % 2 == 0 { 1.0 } else { -1.0 };
+            data[offset] = sign * magnitude;
+        }
+
+        data
     }
 }
 
-pub fn assert_approx_equal<N: Numeric>(actual: &[N], expected: &[N], only_relative: bool) {
-    for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
-        let a = a.to_f32().unwrap();
-        let e = e.to_f32().unwrap();
-        let diff = (a - e).abs();
-        if e == 0.0 {
-            assert!(
-                diff < 1e-10,
-                "Values are not approx equal: index={i} actual={a}, expected={e}, difference={diff}",
-            );
-        } else if !only_relative {
-            let rel_diff = diff / e.abs();
-            assert!(
-                rel_diff < 0.0625,
-                "Values are not approx equal: index={i} actual={a}, expected={e}"
-            );
+fn physical_buffer_size(shape: &Shape, stride: &Strides) -> usize {
+    let mut max_offset = 0usize;
+    for (s, d) in stride.iter().zip(shape.iter()) {
+        if *d > 0 && *s > 0 {
+            max_offset += (d - 1) * s;
         }
     }
+    max_offset + 1
+}
+
+fn create_input_handle(
+    client: &cubecl::client::ComputeClient<TestRuntime>,
+    dtype: StorageType,
+    data: &[f32],
+) -> cubecl::server::Handle {
+    match dtype {
+        StorageType::Scalar(ElemType::Float(FloatKind::F32)) => {
+            client.create_from_slice(f32::as_bytes(data))
+        }
+        StorageType::Scalar(ElemType::Float(FloatKind::F16)) => {
+            let casted: Vec<half::f16> = data.iter().map(|&x| half::f16::from_f32(x)).collect();
+            client.create_from_slice(half::f16::as_bytes(&casted))
+        }
+        StorageType::Scalar(ElemType::Float(FloatKind::BF16)) => {
+            let casted: Vec<half::bf16> = data.iter().map(|&x| half::bf16::from_f32(x)).collect();
+            client.create_from_slice(half::bf16::as_bytes(&casted))
+        }
+        other => panic!("Unsupported input dtype for reduce tests: {other:?}"),
+    }
+}
+
+fn round_trip_to_f32(data: &[f32], dtype: StorageType) -> Vec<f32> {
+    match dtype {
+        StorageType::Scalar(ElemType::Float(FloatKind::F32)) => data.to_vec(),
+        StorageType::Scalar(ElemType::Float(FloatKind::F16)) => data
+            .iter()
+            .map(|&x| half::f16::from_f32(x).to_f32())
+            .collect(),
+        StorageType::Scalar(ElemType::Float(FloatKind::BF16)) => data
+            .iter()
+            .map(|&x| half::bf16::from_f32(x).to_f32())
+            .collect(),
+        other => panic!("Unsupported input dtype for reduce tests: {other:?}"),
+    }
+}
+
+/// Cast expected values through the GPU output dtype so comparisons account for
+/// the precision loss that occurs when the kernel stores to a narrower type
+/// (e.g. an f32 accumulator overflows once written to an f16 output).
+fn cast_host_through_dtype(mut host: HostData, dtype: StorageType) -> HostData {
+    if let HostDataVec::F32(values) = &host.data {
+        let casted = match dtype {
+            StorageType::Scalar(ElemType::Float(FloatKind::F16)) => values
+                .iter()
+                .map(|&x| half::f16::from_f32(x).to_f32())
+                .collect(),
+            StorageType::Scalar(ElemType::Float(FloatKind::BF16)) => values
+                .iter()
+                .map(|&x| half::bf16::from_f32(x).to_f32())
+                .collect(),
+            _ => return host,
+        };
+        host.data = HostDataVec::F32(casted);
+    }
+    host
+}
+
+fn contiguous_strides_vec(shape: &[usize]) -> Vec<usize> {
+    let n = shape.len();
+    if n == 0 {
+        return vec![];
+    }
+    let mut s = vec![0usize; n];
+    s[n - 1] = 1;
+    for i in (0..n - 1).rev() {
+        s[i] = s[i + 1] * shape[i + 1];
+    }
+    s
 }
