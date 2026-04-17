@@ -3,7 +3,7 @@ use crate::{
     components::{
         args::NumericLine,
         global::idle_check,
-        instructions::reduce_inplace,
+        instructions::{ReduceStep, reduce_inplace},
         readers::{Reader, unit::UnitReader},
         writer::Writer,
     },
@@ -65,7 +65,7 @@ impl GlobalFullUnitReduce {
         inst: &I,
         idle: ComptimeOption<bool>,
         #[comptime] vectorization_mode: VectorizationMode,
-    ) -> I::AccumulatorItem {
+    ) -> I::Accumulator {
         let reader = Reader::<P>::new::<I, Out>(
             input,
             output,
@@ -75,6 +75,7 @@ impl GlobalFullUnitReduce {
             idle,
             comptime!(BoundChecks::None),
             vectorization_mode,
+            false,
         );
         let reader = UnitReader::<P>::new(reader);
 
@@ -82,7 +83,13 @@ impl GlobalFullUnitReduce {
 
         for i in 0..reader.length() {
             let (item, coordinate) = reader.read(i);
-            reduce_inplace::<P, I>(inst, &mut accumulator, item, coordinate, false);
+            reduce_inplace::<P, I>(
+                inst,
+                &mut accumulator,
+                item,
+                coordinate,
+                ReduceStep::Identity,
+            );
         }
 
         accumulator

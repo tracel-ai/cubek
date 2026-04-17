@@ -1,2 +1,3 @@
-#[cfg(feature = "extended")]
-pub mod extended;
+// Integration tests
+pub mod it;
+pub mod sum;

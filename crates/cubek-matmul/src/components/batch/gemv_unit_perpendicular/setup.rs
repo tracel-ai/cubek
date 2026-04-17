@@ -10,7 +10,7 @@ use crate::{
     components::{
         CubeDimResource,
         batch::{
-            BatchMatmulFamily,
+            BatchMatmulFamily, CheckBounds,
             gemv_unit_perpendicular::{
                 VecMatUnitPerpendicular, VecMatUnitPerpendicularConfig, matmul_entry,
             },
@@ -34,30 +34,36 @@ pub struct VecMatUnitPerpendicularBlueprint {
     // Should equal plane_dim * vector_size
     pub tile_dim: usize,
     pub hypercube_blueprint: HypercubeBlueprint,
+    pub check_bounds: CheckBounds,
 }
 
 impl Blueprint for VecMatUnitPerpendicularBlueprint {
     fn lhs_global_layout_config(&self) -> GlobalLayoutConfig {
+        let checked = self.check_bounds == CheckBounds::Checked;
         GlobalLayoutConfig {
             matrix_layout: MatrixLayout::RowMajor,
             check_row_bounds: false,
-            check_col_bounds: false,
+            // k is the col axis on lhs
+            check_col_bounds: checked,
         }
     }
 
     fn rhs_global_layout_config(&self) -> GlobalLayoutConfig {
+        let checked = self.check_bounds == CheckBounds::Checked;
         GlobalLayoutConfig {
             matrix_layout: MatrixLayout::ColMajor,
-            check_row_bounds: false,
-            check_col_bounds: false,
+            // k is the row axis, n is the col axis on rhs
+            check_row_bounds: checked,
+            check_col_bounds: checked,
         }
     }
 
     fn out_global_layout_config(&self) -> GlobalLayoutConfig {
+        let checked = self.check_bounds == CheckBounds::Checked;
         GlobalLayoutConfig {
             matrix_layout: MatrixLayout::RowMajor,
             check_row_bounds: false,
-            check_col_bounds: false,
+            check_col_bounds: checked,
         }
     }
 
@@ -84,6 +90,7 @@ impl BatchMatmulFamily<()> for VecMatUnitPerpendicularFamily {
         Ok(VecMatUnitPerpendicularConfig {
             plane_dim: device_props.hardware.plane_size_max,
             num_planes: blueprint.num_planes as u32,
+            check_bounds: blueprint.check_bounds,
         })
     }
 
@@ -154,11 +161,18 @@ impl BatchMatmulFamily<()> for VecMatUnitPerpendicularFamily {
             ))));
         }
 
-        if !problem.k.is_multiple_of(blueprint.tile_dim)
-            || !problem.n.is_multiple_of(blueprint.tile_dim)
-        {
+        if !problem.k.is_multiple_of(vector_size) {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "Problem dimensions n={:?} and k={:?} must be divisible by tile dim ({:?})",
+                "Problem dimension k={:?} must be divisible by vector size ({:?})",
+                problem.k, vector_size,
+            ))));
+        }
+
+        let aligned_k = problem.k.is_multiple_of(blueprint.tile_dim);
+        let aligned_n = problem.n.is_multiple_of(blueprint.tile_dim);
+        if (!aligned_k || !aligned_n) && blueprint.check_bounds != CheckBounds::Checked {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "Problem dimensions n={:?}, k={:?} not divisible by tile dim ({:?}) require CheckBounds::Checked",
                 problem.n, problem.k, blueprint.tile_dim,
             ))));
         }

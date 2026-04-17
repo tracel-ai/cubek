@@ -5,6 +5,7 @@ pub mod extended;
 
 mod launcher_routine;
 mod launcher_strategy;
+pub mod quantization;
 mod reference;
 
 #[allow(deprecated)]

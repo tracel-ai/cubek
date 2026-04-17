@@ -171,7 +171,7 @@ fn load_unrolled<I: Numeric, N: Size, N2: Size>(
     let vector_size = N2::value();
     comptime![assert!(vector_size >= view.vector_size())];
     let view_vector_size = view.vector_size();
-    if view.vector_size().comptime() == vector_size {
+    if comptime![view.vector_size() == vector_size] {
         Vector::cast_from(view[pos])
     } else {
         let (row, col) = pos;

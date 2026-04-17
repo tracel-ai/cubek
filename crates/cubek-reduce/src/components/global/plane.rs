@@ -7,8 +7,10 @@ use crate::{
         readers::{Reader, plane::PlaneReader},
         writer::Writer,
     },
-    routines::PlaneReduceBlueprint,
+    routines::{PlaneMergeStrategy, PlaneReduceBlueprint},
 };
+
+use crate::components::instructions::ReduceStep;
 use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
 
 #[derive(CubeType)]
@@ -24,6 +26,12 @@ impl GlobalFullPlaneReduce {
         #[comptime] vectorization_mode: VectorizationMode,
         #[comptime] blueprint: PlaneReduceBlueprint,
     ) {
+        #[allow(clippy::collapsible_if)]
+        if comptime!(blueprint.plane_dim_ceil) {
+            if UNIT_POS_X >= PLANE_DIM {
+                terminate!();
+            }
+        }
         let write_index = CUBE_POS * CUBE_DIM_Y as usize + UNIT_POS_Y as usize;
 
         let mut writer =
@@ -78,7 +86,7 @@ impl GlobalFullPlaneReduce {
         idle: ComptimeOption<bool>,
         #[comptime] vectorization_mode: VectorizationMode,
         #[comptime] blueprint: PlaneReduceBlueprint,
-    ) -> I::AccumulatorItem {
+    ) -> I::Accumulator {
         let reader = Reader::<P>::new::<I, Out>(
             input,
             output,
@@ -88,11 +96,16 @@ impl GlobalFullPlaneReduce {
             idle,
             blueprint.bound_checks,
             vectorization_mode,
+            blueprint.plane_dim_ceil,
         );
         let reader = PlaneReader::<P>::new(reader);
 
         let mut accumulator = I::null_accumulator(inst);
 
+        let iteration_plane_reduce_mode = match blueprint.plane_merge_strategy {
+            PlaneMergeStrategy::Eager => ReduceStep::Plane,
+            PlaneMergeStrategy::Lazy => ReduceStep::Identity,
+        };
         for i in 0..reader.length() {
             let (item, coordinate) = reader.read(i);
             reduce_inplace::<P, I>(
@@ -100,18 +113,24 @@ impl GlobalFullPlaneReduce {
                 &mut accumulator,
                 item,
                 coordinate,
-                !blueprint.independent,
+                iteration_plane_reduce_mode,
             );
         }
 
-        match blueprint.independent {
-            true => {
-                let (item, coordinate) = I::read_accumulator(inst, &accumulator);
+        match blueprint.plane_merge_strategy {
+            PlaneMergeStrategy::Lazy => {
+                let (item, coordinate) = I::split_accumulator(inst, &accumulator);
                 let mut result = I::null_accumulator(inst);
-                reduce_inplace::<P, I>(inst, &mut result, item, coordinate, true);
+                reduce_inplace::<P, I>(
+                    inst,
+                    &mut result,
+                    item.item(),
+                    coordinate,
+                    ReduceStep::Plane,
+                );
                 result
             }
-            false => accumulator,
+            PlaneMergeStrategy::Eager => accumulator,
         }
     }
 }

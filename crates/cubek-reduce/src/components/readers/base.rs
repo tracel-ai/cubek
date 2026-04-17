@@ -2,7 +2,7 @@ use crate::{
     BoundChecks, ReduceInstruction, ReducePrecision, VectorizationMode,
     components::{
         args::NumericLine,
-        instructions::{ReduceCoordinate, ReduceRequirements},
+        instructions::{AccumulatorKind, ReduceCoordinate, ReduceRequirements},
         readers::{parallel::ParallelReader, perpendicular::PerpendicularReader},
     },
 };
@@ -26,7 +26,13 @@ impl<P: ReducePrecision> Reader<P> {
         idle: ComptimeOption<bool>,
         #[comptime] bound_checks: BoundChecks,
         #[comptime] vectorization_mode: VectorizationMode,
+        #[comptime] plane_dim_ceil: bool,
     ) -> Reader<P> {
+        let effective_plane_dim = if plane_dim_ceil {
+            min(CUBE_DIM_X, PLANE_DIM)
+        } else {
+            CUBE_DIM_X
+        };
         match vectorization_mode {
             VectorizationMode::Parallel => {
                 Reader::<P>::new_Parallel(ParallelReader::<P>::new::<I, Out>(
@@ -36,6 +42,7 @@ impl<P: ReducePrecision> Reader<P> {
                     reduce_axis,
                     reduce_index,
                     idle,
+                    effective_plane_dim,
                     bound_checks,
                 ))
             }
@@ -47,6 +54,7 @@ impl<P: ReducePrecision> Reader<P> {
                     reduce_axis,
                     reduce_index,
                     idle,
+                    effective_plane_dim,
                     bound_checks,
                 ))
             }
@@ -65,10 +73,10 @@ impl<N: Size> ReduceCoordinate<N> {
             // TODO: Make this generic to allow 64-bit coordinate output.
             // Can't directly use `usize` for the buffer, since its size isn't defined beyond the
             // kernel boundary.
-            ReduceCoordinate::new_Required(fill_coordinate_vector(
+            ReduceCoordinate::new_Required(AccumulatorKind::new_single(fill_coordinate_vector(
                 coordinate as u32,
                 vectorization_mode,
-            ))
+            )))
         } else {
             ReduceCoordinate::new_NotRequired()
         }

@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use crate::components::batch::{
-    BatchConfig as _, BatchMatmul, BatchMatmulFamily,
+    BatchConfig as _, BatchMatmul, BatchMatmulFamily, CheckBounds,
     gemv_plane_parallel::{
         GemvKind, GemvPlaneParallelBlueprint, GemvPlaneParallelFamily, VecMatPlaneParallelConfig,
         layout::{MatLayout, VecLayout},
@@ -123,6 +123,8 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatPlaneParallel<MP> {
         let vector_size = comptime![Ord::max(lhs.vector_size(), rhs.vector_size())];
         let size!(N) = vector_size;
 
+        let check_bounds = config.check_bounds;
+
         match config.plan {
             GemvKind::VecMatColMajor => execute_gemv::<LhsG<MP>, RhsG<MP>, AccG<MP>, AccR<MP>, N>(
                 lhs.view(VecLayout::new(lhs_batch, k as usize)),
@@ -134,6 +136,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatPlaneParallel<MP> {
                 config.plane_dim,
                 vector_size as u32,
                 MatrixLayout::ColMajor,
+                check_bounds,
             ),
             GemvKind::VecMatRowMajor => execute_gemv_transposed::<
                 Global<Lhs<MP>>,
@@ -151,6 +154,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatPlaneParallel<MP> {
                 k,
                 vector_size as u32,
                 MatrixLayout::RowMajor,
+                check_bounds,
             ),
             GemvKind::MatVecRowMajor => execute_gemv::<RhsG<MP>, LhsG<MP>, AccG<MP>, AccR<MP>, N>(
                 rhs.view(VecLayout::new(rhs_batch, k as usize)),
@@ -162,6 +166,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatPlaneParallel<MP> {
                 config.plane_dim,
                 vector_size as u32,
                 MatrixLayout::RowMajor,
+                check_bounds,
             ),
             GemvKind::MatVecColMajor => execute_gemv_transposed::<
                 Global<Rhs<MP>>,
@@ -179,6 +184,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatPlaneParallel<MP> {
                 k,
                 vector_size as u32,
                 MatrixLayout::ColMajor,
+                check_bounds,
             ),
         }
     }
@@ -195,11 +201,21 @@ fn execute_gemv<V: CubePrimitive, M: CubePrimitive, O: CubePrimitive, AccR: Nume
     #[comptime] plane_dim: u32,
     #[comptime] vector_size: u32,
     #[comptime] matrix_layout: MatrixLayout,
+    #[comptime] check_bounds: CheckBounds,
 ) {
     let plane_id = UNIT_POS_Y;
     let unit_id = UNIT_POS_X;
 
     let mn_pos = cube_id * num_planes + plane_id;
+
+    // The first if statement is running at comptime.
+    if comptime!(matches!(check_bounds, CheckBounds::Terminate)) {
+        // This is a runtime cond.
+        let should_terminate = mn_pos as usize >= out.shape();
+        if should_terminate {
+            terminate!();
+        }
+    }
 
     let segment_size = plane_dim * vector_size;
     let num_segments_k = k_dim / segment_size;
@@ -211,33 +227,52 @@ fn execute_gemv<V: CubePrimitive, M: CubePrimitive, O: CubePrimitive, AccR: Nume
         let k_base = swizzled_segment_index * plane_dim;
 
         let k_pos = (k_base + unit_id) * vector_size;
-        let vec_val = vec.read_checked(k_pos as usize);
 
-        let mat_val = match matrix_layout {
-            // mat=lhs
-            MatrixLayout::RowMajor => mat.read_checked((mn_pos, k_pos)),
-            // mat=rhs
-            MatrixLayout::ColMajor => mat.read_checked((k_pos, mn_pos)),
+        let vec_val = if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
+            vec.read_checked(k_pos as usize)
+        } else {
+            vec.read_unchecked(k_pos as usize)
+        };
+
+        let mat_val = if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
+            match matrix_layout {
+                MatrixLayout::RowMajor => mat.read_checked((mn_pos, k_pos)),
+                MatrixLayout::ColMajor => mat.read_checked((k_pos, mn_pos)),
+            }
+        } else {
+            match matrix_layout {
+                MatrixLayout::RowMajor => mat.read_unchecked((mn_pos, k_pos)),
+                MatrixLayout::ColMajor => mat.read_unchecked((k_pos, mn_pos)),
+            }
         };
 
         acc += Vector::cast_from(vec_val) * Vector::cast_from(mat_val);
     }
 
-    let mut sum = AccR::zero();
-
-    #[unroll]
-    for i in 0..N::value() {
-        sum += acc[i];
-    }
+    let sum = Vector::vector_sum(acc);
 
     let sum = if comptime!(plane_dim > 1) {
-        plane_sum(sum)
+        O::cast_from(plane_sum(sum))
     } else {
-        sum
+        O::cast_from(sum)
     };
 
-    if unit_id == 0 {
-        out.write_checked(mn_pos as usize, O::cast_from(sum));
+    let write_index = mn_pos as usize;
+
+    if comptime!(plane_dim == 1) {
+        if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
+            out.write_checked(write_index, sum);
+        } else {
+            out.write(write_index, sum);
+        }
+    } else {
+        if unit_id == 0 {
+            if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
+                out.write_checked(write_index, sum);
+            } else {
+                out.write(write_index, sum);
+            }
+        }
     }
 }
 
@@ -258,8 +293,19 @@ fn execute_gemv_transposed<
     k_dim: u32,
     #[comptime] vector_size: u32,
     #[comptime] matrix_layout: MatrixLayout,
+    #[comptime] check_bounds: CheckBounds,
 ) {
     let mn_pos = mn_id * vector_size;
+
+    // The first if statement is running at comptime.
+    if comptime!(matches!(check_bounds, CheckBounds::Terminate)) {
+        // This is a runtime cond.
+        let should_terminate = mn_pos as usize >= out.shape();
+        if should_terminate {
+            terminate!();
+        }
+    }
+
     let num_tiles_k = k_dim / vector_size;
 
     let mut accs: Array<Vector<AccR, VS>> = Array::new(vector_size as usize);
@@ -273,14 +319,31 @@ fn execute_gemv_transposed<
     for tile_index in 0..num_tiles_k {
         let global_k_pos = tile_index * vector_size;
 
-        let vec_val = vec.read_checked(global_k_pos as usize);
+        let vec_val = if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
+            vec.read_checked(global_k_pos as usize)
+        } else {
+            vec.read_unchecked(global_k_pos as usize)
+        };
 
         for segment_iter in 0..vector_size {
-            let vector = match matrix_layout {
-                // Rhs
-                MatrixLayout::RowMajor => mat.read_checked((global_k_pos + segment_iter, mn_pos)),
-                // Lhs
-                MatrixLayout::ColMajor => mat.read_checked((mn_pos, global_k_pos + segment_iter)),
+            let vector = if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
+                match matrix_layout {
+                    MatrixLayout::RowMajor => {
+                        mat.read_checked((global_k_pos + segment_iter, mn_pos))
+                    }
+                    MatrixLayout::ColMajor => {
+                        mat.read_checked((mn_pos, global_k_pos + segment_iter))
+                    }
+                }
+            } else {
+                match matrix_layout {
+                    MatrixLayout::RowMajor => {
+                        mat.read_unchecked((global_k_pos + segment_iter, mn_pos))
+                    }
+                    MatrixLayout::ColMajor => {
+                        mat.read_unchecked((mn_pos, global_k_pos + segment_iter))
+                    }
+                }
             };
 
             #[unroll]
@@ -303,14 +366,14 @@ fn execute_gemv_transposed<
 
     // Write back
     for segment_iter in 0..vector_size {
-        let mut sum = AccR::zero();
         let acc = accs[segment_iter as usize];
+        let sum = O::cast_from(Vector::vector_sum(acc));
+        let index = (mn_pos + segment_iter) as usize;
 
-        #[unroll]
-        for i in 0..vector_size {
-            sum += acc[i as usize];
+        if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
+            out.write_checked(index, sum);
+        } else {
+            out.write(index, sum);
         }
-
-        out.write_checked((mn_pos + segment_iter) as usize, O::cast_from(sum));
     }
 }

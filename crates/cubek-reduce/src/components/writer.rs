@@ -40,7 +40,7 @@ impl<Out: NumericLine> Writer<Out> {
     pub fn write<P: ReducePrecision, I: ReduceInstruction<P>>(
         &mut self,
         local_index: usize,
-        accumulator: I::AccumulatorItem,
+        accumulator: I::Accumulator,
         inst: &I,
     ) {
         match self {
@@ -98,11 +98,17 @@ impl<Out: NumericLine> ParallelWriter<Out> {
     pub fn write<P: ReducePrecision, I: ReduceInstruction<P>>(
         &mut self,
         local_index: usize,
-        accumulator: I::AccumulatorItem,
+        accumulator: I::Accumulator,
         inst: &I,
     ) {
         let vector = I::merge_vector::<Out::T>(inst, accumulator, self.axis_size);
-        self.buffer[local_index] = vector;
+        self.buffer[local_index] = vector.item();
+
+        // match vector {
+        //     AccumulatorKind::Multiple(array) =>  {// flatten
+        //         }
+        //     AccumulatorKind::Single(_) =>        ;
+        // }
     }
 
     pub fn commit(&mut self) {
@@ -152,10 +158,10 @@ impl<Out: NumericLine> PerpendicularWriter<Out> {
     pub fn write<P: ReducePrecision, I: ReduceInstruction<P>>(
         &mut self,
         _local_index: usize,
-        accumulator: I::AccumulatorItem,
+        accumulator: I::Accumulator,
         inst: &I,
     ) {
-        let out = I::to_output_perpendicular::<Out::T>(inst, accumulator, self.axis_size);
+        let out = I::to_output_perpendicular::<Out::T>(inst, accumulator, self.axis_size).item();
 
         if comptime![self.output_vector_size == self.input_vector_size] {
             self.output.write(self.write_index, Vector::cast_from(out));

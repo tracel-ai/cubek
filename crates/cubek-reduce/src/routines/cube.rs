@@ -101,11 +101,16 @@ fn generate_blueprint<R: Runtime>(
         return Err(ReduceError::PlanesUnavailable);
     }
 
-    let properties = &client.properties().hardware;
-    let plane_size = properties.plane_size_max;
+    let hardware_properties = &client.properties().hardware;
+    let plane_size = hardware_properties.plane_size_max;
+
+    let use_planes = strategy.use_planes
+        && hardware_properties.plane_size_max == hardware_properties.plane_size_min;
+
     let working_cubes = working_cubes(settings, &problem);
     let working_units = working_cubes * problem.vector_size.div_ceil(settings.vector_size_input);
-    let plane_count = calculate_plane_count_per_cube(working_units, plane_size, properties);
+    let plane_count =
+        calculate_plane_count_per_cube(working_units, plane_size, hardware_properties);
     let cube_dim = CubeDim::new_2d(plane_size, plane_count);
     let cube_size = cube_dim.num_elems();
 
@@ -118,7 +123,7 @@ fn generate_blueprint<R: Runtime>(
         false => BoundChecks::Mask,
     };
 
-    let num_shared_accumulators = match strategy.use_planes {
+    let num_shared_accumulators = match use_planes {
         true => plane_count as usize,
         false => cube_size as usize,
     };
@@ -144,7 +149,7 @@ fn generate_blueprint<R: Runtime>(
             cube_idle,
             bound_checks,
             num_shared_accumulators,
-            use_planes: strategy.use_planes,
+            use_planes,
         }),
     };
 

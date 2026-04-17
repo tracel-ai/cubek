@@ -8,14 +8,14 @@ use cubecl::{
 
 use crate::test_tensor::cast::copy_casted;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HostData {
     pub data: HostDataVec,
     pub shape: Shape,
     pub strides: Strides,
 }
 
-#[derive(Eq, PartialEq, PartialOrd)]
+#[derive(Eq, PartialEq, PartialOrd, Clone, Copy, Debug)]
 pub enum HostDataType {
     F32,
     I32,

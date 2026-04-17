@@ -24,10 +24,12 @@ pub struct PerpendicularReader<P: ReducePrecision> {
     requirements: ReduceRequirements,
     bound_checks: ReaderBoundChecks<P>,
     shape: usize,
+    effective_plane_dim: u32,
 }
 
 #[cube]
 impl<P: ReducePrecision> PerpendicularReader<P> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new<I: ReduceInstruction<P>, Out: NumericLine>(
         input: &VirtualTensor<P::EI, P::SI>,
         output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
@@ -35,6 +37,7 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
         reduce_axis: usize,
         reduce_index: usize,
         idle: ComptimeOption<bool>,
+        effective_plane_dim: u32,
         #[comptime] bound_checks: BoundChecks,
     ) -> PerpendicularReader<P> {
         let vector_size = input.vector_size();
@@ -60,6 +63,7 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
             requirements,
             bound_checks,
             shape,
+            effective_plane_dim,
         }
     }
 
@@ -68,7 +72,7 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
     }
 
     pub fn length_plane(&self) -> usize {
-        self.shape.div_ceil(CUBE_DIM_X as usize)
+        self.shape.div_ceil(self.effective_plane_dim as usize)
     }
 
     pub fn length_cube(&self) -> usize {
@@ -101,7 +105,7 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
         &self,
         vector_index: usize,
     ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
-        let plane_pos = vector_index * CUBE_DIM_X as usize;
+        let plane_pos = vector_index * self.effective_plane_dim as usize;
         let unit_pos = UNIT_POS_X as usize;
         let pos = plane_pos + unit_pos;
         let offset = plane_pos * self.vector_offset_stride

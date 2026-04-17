@@ -7,11 +7,7 @@ pub fn test_plane_parallel_matvec_very_small_square_col_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
-        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
-            GemvPlaneParallelStrategy {
-                target_num_planes: 8,
-            },
-        )),
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(Default::default())),
         kind: GemvKind::MatVec,
     }
     .test();
@@ -26,11 +22,7 @@ pub fn test_plane_parallel_matvec_k_larger_than_n_col_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
-        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
-            GemvPlaneParallelStrategy {
-                target_num_planes: 8,
-            },
-        )),
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(Default::default())),
         kind: GemvKind::MatVec,
     }
     .test();
@@ -45,11 +37,7 @@ pub fn test_plane_parallel_matvec_k_smaller_than_n_col_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
-        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
-            GemvPlaneParallelStrategy {
-                target_num_planes: 8,
-            },
-        )),
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(Default::default())),
         kind: GemvKind::MatVec,
     }
     .test();
@@ -64,11 +52,7 @@ pub fn test_plane_parallel_matvec_small_square_col_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
-        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
-            GemvPlaneParallelStrategy {
-                target_num_planes: 8,
-            },
-        )),
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(Default::default())),
         kind: GemvKind::MatVec,
     }
     .test();
@@ -83,11 +67,7 @@ pub fn test_plane_parallel_matvec_large_col_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
-        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
-            GemvPlaneParallelStrategy {
-                target_num_planes: 8,
-            },
-        )),
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(Default::default())),
         kind: GemvKind::MatVec,
     }
     .test();
@@ -102,11 +82,7 @@ pub fn test_plane_parallel_matvec_large_broadcast_lhs_col_major() {
         mat_batch: 2,
         mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
-        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
-            GemvPlaneParallelStrategy {
-                target_num_planes: 8,
-            },
-        )),
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(Default::default())),
         kind: GemvKind::MatVec,
     }
     .test();
@@ -121,11 +97,7 @@ pub fn test_plane_parallel_matvec_large_broadcast_col_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
-        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
-            GemvPlaneParallelStrategy {
-                target_num_planes: 8,
-            },
-        )),
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(Default::default())),
         kind: GemvKind::MatVec,
     }
     .test();
@@ -140,11 +112,7 @@ pub fn test_plane_parallel_matvec_large_batched_col_major() {
         mat_batch: 2,
         mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
-        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
-            GemvPlaneParallelStrategy {
-                target_num_planes: 8,
-            },
-        )),
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(Default::default())),
         kind: GemvKind::MatVec,
     }
     .test();
@@ -159,11 +127,7 @@ pub fn test_plane_parallel_matvec_uneven_shape_col_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
-        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
-            GemvPlaneParallelStrategy {
-                target_num_planes: 8,
-            },
-        )),
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(Default::default())),
         kind: GemvKind::MatVec,
     }
     .test();
@@ -178,11 +142,7 @@ pub fn test_plane_parallel_matvec_not_same_vectorization_col_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::ColMajor,
         elems: elems(),
-        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
-            GemvPlaneParallelStrategy {
-                target_num_planes: 8,
-            },
-        )),
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(Default::default())),
         kind: GemvKind::MatVec,
     }
     .test();
@@ -197,11 +157,7 @@ pub fn test_plane_parallel_matvec_very_small_square_row_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
-            GemvPlaneParallelStrategy {
-                target_num_planes: 8,
-            },
-        )),
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(Default::default())),
         kind: GemvKind::MatVec,
     }
     .test();
@@ -216,11 +172,7 @@ pub fn test_plane_parallel_matvec_k_larger_than_n_row_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
-            GemvPlaneParallelStrategy {
-                target_num_planes: 8,
-            },
-        )),
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(Default::default())),
         kind: GemvKind::MatVec,
     }
     .test();
@@ -235,11 +187,7 @@ pub fn test_plane_parallel_matvec_k_smaller_than_n_row_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
-            GemvPlaneParallelStrategy {
-                target_num_planes: 8,
-            },
-        )),
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(Default::default())),
         kind: GemvKind::MatVec,
     }
     .test();
@@ -254,11 +202,7 @@ pub fn test_plane_parallel_matvec_small_square_row_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
-            GemvPlaneParallelStrategy {
-                target_num_planes: 8,
-            },
-        )),
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(Default::default())),
         kind: GemvKind::MatVec,
     }
     .test();
@@ -273,11 +217,7 @@ pub fn test_plane_parallel_matvec_large_row_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
-            GemvPlaneParallelStrategy {
-                target_num_planes: 8,
-            },
-        )),
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(Default::default())),
         kind: GemvKind::MatVec,
     }
     .test();
@@ -292,11 +232,7 @@ pub fn test_plane_parallel_matvec_large_broadcast_lhs_row_major() {
         mat_batch: 2,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
-            GemvPlaneParallelStrategy {
-                target_num_planes: 8,
-            },
-        )),
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(Default::default())),
         kind: GemvKind::MatVec,
     }
     .test();
@@ -311,11 +247,7 @@ pub fn test_plane_parallel_matvec_large_broadcast_row_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
-            GemvPlaneParallelStrategy {
-                target_num_planes: 8,
-            },
-        )),
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(Default::default())),
         kind: GemvKind::MatVec,
     }
     .test();
@@ -330,11 +262,7 @@ pub fn test_plane_parallel_matvec_large_batched_row_major() {
         mat_batch: 2,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
-            GemvPlaneParallelStrategy {
-                target_num_planes: 8,
-            },
-        )),
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(Default::default())),
         kind: GemvKind::MatVec,
     }
     .test();
@@ -349,11 +277,7 @@ pub fn test_plane_parallel_matvec_uneven_shape_row_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
-            GemvPlaneParallelStrategy {
-                target_num_planes: 8,
-            },
-        )),
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(Default::default())),
         kind: GemvKind::MatVec,
     }
     .test();
@@ -368,11 +292,7 @@ pub fn test_plane_parallel_matvec_not_same_vectorization_row_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(
-            GemvPlaneParallelStrategy {
-                target_num_planes: 8,
-            },
-        )),
+        strategy: Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(Default::default())),
         kind: GemvKind::MatVec,
     }
     .test();

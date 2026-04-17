@@ -135,7 +135,16 @@ pub fn launch_matmul_algorithm<A: Routine<()>>(
             .unwrap(),
     };
 
-    let device_settings = A::device_settings(client, vector_sizes);
+    let mut view_vector_sizes = vector_sizes;
+
+    if let InputBinding::Quantized { scheme, .. } = lhs {
+        view_vector_sizes.lhs *= scheme.num_quants();
+    }
+    if let InputBinding::Quantized { scheme, .. } = rhs {
+        view_vector_sizes.rhs *= scheme.num_quants();
+    }
+
+    let device_settings = A::device_settings(client, view_vector_sizes);
 
     let expand_info = match A::expand_blueprint(problem, &device_settings, &blueprint_strategy) {
         Ok(launch_info) => launch_info,
@@ -146,7 +155,7 @@ pub fn launch_matmul_algorithm<A: Routine<()>>(
 
     let launch_info = match A::prepare(
         problem,
-        &A::device_settings(client, vector_sizes),
+        &A::device_settings(client, view_vector_sizes),
         expand_info,
     ) {
         Ok(launch_info) => launch_info,
@@ -167,7 +176,7 @@ pub fn launch_matmul_algorithm<A: Routine<()>>(
         out,
         &blueprint,
         &problem,
-        &vector_sizes,
+        &launch_info.vector_sizes,
         dtypes,
     );
 
@@ -178,7 +187,7 @@ pub fn launch_matmul_algorithm<A: Routine<()>>(
                 rhs,
                 &blueprint,
                 &problem,
-                &vector_sizes,
+                &launch_info.vector_sizes,
                 dtypes,
             );
 

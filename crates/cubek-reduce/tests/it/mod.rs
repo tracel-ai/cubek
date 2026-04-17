@@ -97,6 +97,7 @@ macro_rules! testgen_reduce {
         vectorization_strategy: $vectorization_strategy:expr,
     ) => {
         use cubek_reduce::{ReduceStrategy, routines::BlueprintStrategy, launch::RoutineStrategy};
+        use cubek_reduce::routines::PlaneMergeStrategy;
 
         mod full_cube {
             use super::*;
@@ -188,7 +189,8 @@ macro_rules! testgen_reduce {
                                 PlaneReduceBlueprint {
                                     plane_idle: IdleMode::Terminate,
                                     bound_checks: BoundChecks::Mask,
-                                    independent: true,
+                                    plane_merge_strategy: PlaneMergeStrategy::Lazy,
+                                    plane_dim_ceil: true,
                                 },
                                 CubeDim::new_2d(32, 2),
                             )
@@ -212,7 +214,8 @@ macro_rules! testgen_reduce {
                                 PlaneReduceBlueprint {
                                     plane_idle: IdleMode::Terminate,
                                     bound_checks: BoundChecks::Mask,
-                                    independent: true,
+                                    plane_merge_strategy: PlaneMergeStrategy::Lazy,
+                                    plane_dim_ceil: true,
                                 },
                                 CubeDim::new_2d(64, 2),
                             )
