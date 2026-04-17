@@ -2,144 +2,81 @@ use cubecl::prelude::*;
 use cubek_std::MatrixLayout;
 
 use crate::components::tile::{
-    Plane, TileMatmul, Tilex,
+    TileMatmul, Tilex,
     interleaved::config::InterleavedMatmulConfig,
-    tilex_allocate, tilex_execute, tilex_load, tilex_write,
+    interleaved_allocate_acc, interleaved_allocate_lhs, interleaved_allocate_rhs, tilex_execute,
+    tilex_load, tilex_write,
 };
+use crate::definition::StageIdent;
 
-/// Computes a tile matmul where each unit of the plane accumulates an interleaved (by plane_dim)
-/// partial dot-product over K.
-///
-/// Important: the plane must combine those contributions at the end of the global matmul.
+/// Performs a small matmul by interleaving elements across a plane.
 pub struct InterleavedMatmul {}
-
-#[derive(CubeType)]
-/// InterleavedFragment: each unit owns a stripe of the input tile.
-pub struct InterleavedFragment<E: Numeric> {
-    pub array: Array<E>,
-    #[cube(comptime)]
-    pub layout: MatrixLayout,
-    #[cube(comptime)]
-    row_count: usize,
-    #[cube(comptime)]
-    col_count: usize,
-}
-
-#[cube]
-impl<E: Numeric> InterleavedFragment<E> {
-    fn get(&self, i: usize, j: usize) -> E {
-        match comptime!(self.layout) {
-            MatrixLayout::RowMajor => self.array[i * self.col_count + j],
-            MatrixLayout::ColMajor => self.array[j * self.row_count + i],
-        }
-    }
-}
-
-#[derive(CubeType)]
-/// InterleavedAccumulator: each unit holds a full accumulator with partial K contributions,
-/// combined later via `consolidate`.
-pub struct InterleavedAccumulator<E: Numeric> {
-    pub array: Array<E>,
-    #[cube(comptime)]
-    pub layout: MatrixLayout,
-    #[cube(comptime)]
-    m: usize,
-    #[cube(comptime)]
-    n: usize,
-}
-
-#[cube]
-impl<E: Numeric> InterleavedAccumulator<E> {
-    /// Every unit will hold the sum
-    pub fn consolidate(&mut self) {
-        #[unroll]
-        for i in 0..comptime!(self.m * self.n) {
-            self.array[i] = plane_sum(self.array[i])
-        }
-    }
-}
-
-// #[derive(CubeType)]
-// pub struct InterleavedOperands<L: Numeric, R: Numeric, A: Numeric> {
-//     #[cube(comptime)]
-//     _phantom: PhantomData<(L, R, A)>,
-// }
-
-// impl<L: Numeric, R: Numeric, A: Numeric> Operands for InterleavedOperands<L, R, A> {
-//     // Size m * k_local
-//     type Lhs = InterleavedFragment<L>;
-//     // Size k_local * n
-//     type Rhs = InterleavedFragment<R>;
-//     // Size m * n
-//     type Acc = InterleavedAccumulator<A>;
-// }
 
 #[cube]
 impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
     TileMatmul<L, VL, R, VR, A, VA> for InterleavedMatmul
 {
     type Config = InterleavedMatmulConfig;
-    type Scope = Plane;
 
     fn execute(
-        lhs: &Tilex<L, VL, Self::Scope, ReadWrite>,
-        rhs: &Tilex<R, VR, Self::Scope, ReadWrite>,
-        acc: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
+        lhs: &Tilex<L, VL, ReadWrite>,
+        rhs: &Tilex<R, VR, ReadWrite>,
+        acc: &mut Tilex<A, VA, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        tilex_execute(lhs, rhs, acc);
+        tilex_execute::<L, VL, R, VR, A, VA>(lhs, rhs, acc);
     }
 
     fn allocate_lhs(
         #[comptime] layout: MatrixLayout,
-        #[comptime] _config: Self::Config,
-    ) -> Tilex<L, VL, Self::Scope, ReadWrite> {
-        tilex_allocate(layout)
+        #[comptime] config: Self::Config,
+    ) -> Tilex<L, VL, ReadWrite> {
+        interleaved_allocate_lhs::<L, VL>(layout, config.shared)
     }
 
     fn allocate_rhs(
         #[comptime] layout: MatrixLayout,
-        #[comptime] _config: Self::Config,
-    ) -> Tilex<R, VR, Self::Scope, ReadWrite> {
-        tilex_allocate(layout)
+        #[comptime] config: Self::Config,
+    ) -> Tilex<R, VR, ReadWrite> {
+        interleaved_allocate_rhs::<R, VR>(layout, config.shared)
     }
 
     fn allocate_acc(
         #[comptime] layout: MatrixLayout,
-        #[comptime] _config: Self::Config,
-    ) -> Tilex<A, VA, Self::Scope, ReadWrite> {
-        tilex_allocate(layout)
+        #[comptime] config: Self::Config,
+    ) -> Tilex<A, VA, ReadWrite> {
+        interleaved_allocate_acc::<A, VA>(layout, config.shared)
     }
 
     fn load_lhs<E: Numeric, ES: Size>(
-        tile: &Tilex<E, ES, Self::Scope, ReadOnly>,
-        lhs: &mut Tilex<L, VL, Self::Scope, ReadWrite>,
+        tile: &Tilex<E, ES, ReadOnly>,
+        lhs: &mut Tilex<L, VL, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        tilex_load(tile, lhs);
+        tilex_load::<E, ES, L, VL, L, R, A>(tile, lhs, StageIdent::Lhs);
     }
 
     fn load_rhs<E: Numeric, ES: Size>(
-        tile: &Tilex<E, ES, Self::Scope, ReadOnly>,
-        rhs: &mut Tilex<R, VR, Self::Scope, ReadWrite>,
+        tile: &Tilex<E, ES, ReadOnly>,
+        rhs: &mut Tilex<R, VR, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        tilex_load(tile, rhs);
+        tilex_load::<E, ES, R, VR, L, R, A>(tile, rhs, StageIdent::Rhs);
     }
 
     fn load_acc<E: Numeric, ES: Size>(
-        tile: &Tilex<E, ES, Self::Scope, ReadOnly>,
-        acc: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
+        tile: &Tilex<E, ES, ReadOnly>,
+        acc: &mut Tilex<A, VA, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        tilex_load(tile, acc);
+        tilex_load::<E, ES, A, VA, L, R, A>(tile, acc, StageIdent::Acc);
     }
 
     fn write_results<E: Numeric, ES: Size>(
-        tile: &mut Tilex<E, ES, Self::Scope, ReadWrite>,
-        acc: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
+        tile: &mut Tilex<E, ES, ReadWrite>,
+        out: &mut Tilex<A, VA, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        tilex_write(tile, acc);
+        tilex_write::<E, ES, A, VA, L, R>(tile, out);
     }
 }

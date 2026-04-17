@@ -1,39 +1,17 @@
-use cubecl::{define_size, prelude::*};
+use cubecl::prelude::*;
 use cubek_std::MatrixLayout;
 
 use crate::components::tile::{
-    TileMatmul, Tilex, mma::config::MmaMatmulConfig,
-    tilex_allocate, tilex_execute, tilex_load, tilex_write,
+    TileMatmul, Tilex,
+    mma::config::MmaMatmulConfig,
+    mma_allocate_acc, mma_allocate_lhs, mma_allocate_rhs, tilex_execute, tilex_load, tilex_write,
 };
-use cubecl::{cmma::MmaDefinition, ir::MatrixIdent};
+use crate::definition::StageIdent;
 
 /// Uses one plane to perform a small matmul using accelerated instructions, with manual register
 /// management.
 /// Currently requires matrix layout to match the platform's preferred layout.
 pub struct MmaMatmul {}
-
-define_size!(pub NL);
-define_size!(pub NR);
-define_size!(pub NA);
-
-#[derive(CubeType)]
-pub struct MmaFragment<E: Numeric, N: Size> {
-    fragment: Array<Vector<E, N>>,
-    #[cube(comptime)]
-    layout: MatrixLayout,
-}
-
-// #[derive(CubeType)]
-// pub struct MmaOperands<L: Numeric, R: Numeric, A: Numeric> {
-//     #[cube(comptime)]
-//     _phantom: PhantomData<(L, R, A)>,
-// }
-
-// impl<L: Numeric, R: Numeric, A: Numeric> Operands for MmaOperands<L, R, A> {
-//     type Lhs = MmaFragment<L, NL>;
-//     type Rhs = MmaFragment<R, NR>;
-//     type Acc = MmaFragment<A, NA>;
-// }
 
 #[cube]
 impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
@@ -41,91 +19,65 @@ impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
 {
     type Config = MmaMatmulConfig;
 
-    // TODO  Dummy
-    type Scope = u32;
-
     fn execute(
-        lhs: &Tilex<L, VL, Self::Scope, ReadWrite>,
-        rhs: &Tilex<R, VR, Self::Scope, ReadWrite>,
-        acc: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
+        lhs: &Tilex<L, VL, ReadWrite>,
+        rhs: &Tilex<R, VR, ReadWrite>,
+        acc: &mut Tilex<A, VA, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        tilex_execute(lhs, rhs, acc);
+        tilex_execute::<L, VL, R, VR, A, VA>(lhs, rhs, acc);
     }
 
     fn allocate_lhs(
         #[comptime] layout: MatrixLayout,
-        #[comptime] _config: Self::Config,
-    ) -> Tilex<L, VL, Self::Scope, ReadWrite> {
-        tilex_allocate(layout)
+        #[comptime] config: Self::Config,
+    ) -> Tilex<L, VL, ReadWrite> {
+        mma_allocate_lhs::<L, VL, R, A>(layout, config.shared, config.mma_io_config)
     }
 
     fn allocate_rhs(
         #[comptime] layout: MatrixLayout,
-        #[comptime] _config: Self::Config,
-    ) -> Tilex<R, VR, Self::Scope, ReadWrite> {
-        tilex_allocate(layout)
+        #[comptime] config: Self::Config,
+    ) -> Tilex<R, VR, ReadWrite> {
+        mma_allocate_rhs::<R, VR, L, A>(layout, config.shared, config.mma_io_config)
     }
 
     fn allocate_acc(
         #[comptime] layout: MatrixLayout,
-        #[comptime] _config: Self::Config,
-    ) -> Tilex<A, VA, Self::Scope, ReadWrite> {
-        tilex_allocate(layout)
+        #[comptime] config: Self::Config,
+    ) -> Tilex<A, VA, ReadWrite> {
+        mma_allocate_acc::<A, VA, L, R>(layout, config.shared, config.mma_io_config)
     }
 
     fn load_lhs<E: Numeric, ES: Size>(
-        tile: &Tilex<E, ES, Self::Scope, ReadOnly>,
-        lhs: &mut Tilex<L, VL, Self::Scope, ReadWrite>,
+        tile: &Tilex<E, ES, ReadOnly>,
+        lhs: &mut Tilex<L, VL, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        tilex_load(tile, lhs);
+        tilex_load::<E, ES, L, VL, L, R, A>(tile, lhs, StageIdent::Lhs);
     }
 
     fn load_rhs<E: Numeric, ES: Size>(
-        tile: &Tilex<E, ES, Self::Scope, ReadOnly>,
-        rhs: &mut Tilex<R, VR, Self::Scope, ReadWrite>,
+        tile: &Tilex<E, ES, ReadOnly>,
+        rhs: &mut Tilex<R, VR, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        tilex_load(tile, rhs);
+        tilex_load::<E, ES, R, VR, L, R, A>(tile, rhs, StageIdent::Rhs);
     }
 
     fn load_acc<E: Numeric, ES: Size>(
-        tile: &Tilex<E, ES, Self::Scope, ReadOnly>,
-        acc: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
+        tile: &Tilex<E, ES, ReadOnly>,
+        acc: &mut Tilex<A, VA, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        tilex_load(tile, acc);
+        tilex_load::<E, ES, A, VA, L, R, A>(tile, acc, StageIdent::Acc);
     }
 
     fn write_results<E: Numeric, ES: Size>(
-        tile: &mut Tilex<E, ES, Self::Scope, ReadWrite>,
-        out: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
+        tile: &mut Tilex<E, ES, ReadWrite>,
+        out: &mut Tilex<A, VA, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        tilex_write(tile, out);
+        tilex_write::<E, ES, A, VA, L, R>(tile, out);
     }
-}
-
-#[cube]
-pub(super) fn mma_definition<L: Numeric, R: Numeric, A: Numeric>(
-    #[comptime] config: MmaMatmulConfig,
-) -> MmaDefinition<L, R, A> {
-    let size = config.shared.tile_size;
-    MmaDefinition::new(size.m() as usize, size.n() as usize, size.k() as usize)
-}
-
-#[cube]
-#[allow(unused_variables)]
-pub(super) fn register_vector_sizes<L: Numeric, R: Numeric, A: Numeric>(
-    def: MmaDefinition<L, R, A>,
-) {
-    let vector_size_a = def.vector_size(MatrixIdent::A);
-    let vector_size_b = def.vector_size(MatrixIdent::B);
-    let vector_size_acc = def.vector_size(MatrixIdent::Accumulator);
-    intrinsic!(|scope| {
-        scope.register_size::<NL>(vector_size_a);
-        scope.register_size::<NR>(vector_size_b);
-        scope.register_size::<NA>(vector_size_acc);
-    });
 }

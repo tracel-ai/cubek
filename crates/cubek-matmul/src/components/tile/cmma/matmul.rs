@@ -2,93 +2,80 @@ use cubecl::prelude::*;
 use cubek_std::MatrixLayout;
 
 use crate::components::tile::{
-    Plane, SharedTileConfig, TileMatmul, Tilex,
-    tilex_allocate, tilex_execute, tilex_load, tilex_write,
+    SharedTileConfig, TileMatmul, Tilex,
+    cmma_allocate_acc, cmma_allocate_lhs, cmma_allocate_rhs, tilex_execute, tilex_load,
+    tilex_write,
 };
+use crate::definition::StageIdent;
 
 /// Uses one plane to perform a small matmul using accelerated instructions.
 pub struct CmmaMatmul {}
-
-// #[derive(CubeType)]
-// pub struct FragmentOperands<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size> {
-//     #[cube(comptime)]
-//     _phantom: PhantomData<(L, VL, R, VR, A, VA)>,
-// }
-
-// impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size> Operands
-//     for FragmentOperands<L, VL, R, VR, A, VA>
-// {
-//     type Lhs = Tilex<L, VL, Plane, ReadOnly>;
-//     type Rhs = Tilex<R, VR, Plane, ReadOnly>;
-//     type Acc = Tilex<A, VA, Plane, ReadWrite>;
-// }
 
 #[cube]
 impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
     TileMatmul<L, VL, R, VR, A, VA> for CmmaMatmul
 {
     type Config = SharedTileConfig;
-    type Scope = Plane;
 
     fn execute(
-        lhs: &Tilex<L, VL, Self::Scope, ReadWrite>,
-        rhs: &Tilex<R, VR, Self::Scope, ReadWrite>,
-        acc: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
+        lhs: &Tilex<L, VL, ReadWrite>,
+        rhs: &Tilex<R, VR, ReadWrite>,
+        acc: &mut Tilex<A, VA, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        tilex_execute(lhs, rhs, acc);
+        tilex_execute::<L, VL, R, VR, A, VA>(lhs, rhs, acc);
     }
 
     fn allocate_lhs(
         #[comptime] layout: MatrixLayout,
-        #[comptime] _config: Self::Config,
-    ) -> Tilex<L, VL, Self::Scope, ReadWrite> {
-        tilex_allocate(layout)
+        #[comptime] config: Self::Config,
+    ) -> Tilex<L, VL, ReadWrite> {
+        cmma_allocate_lhs::<L, VL>(layout, config)
     }
 
     fn allocate_rhs(
         #[comptime] layout: MatrixLayout,
-        #[comptime] _config: Self::Config,
-    ) -> Tilex<R, VR, Self::Scope, ReadWrite> {
-        tilex_allocate(layout)
+        #[comptime] config: Self::Config,
+    ) -> Tilex<R, VR, ReadWrite> {
+        cmma_allocate_rhs::<R, VR>(layout, config)
     }
 
     fn allocate_acc(
         #[comptime] layout: MatrixLayout,
-        #[comptime] _config: Self::Config,
-    ) -> Tilex<A, VA, Self::Scope, ReadWrite> {
-        tilex_allocate(layout)
+        #[comptime] config: Self::Config,
+    ) -> Tilex<A, VA, ReadWrite> {
+        cmma_allocate_acc::<A, VA>(layout, config)
     }
 
     fn load_lhs<E: Numeric, ES: Size>(
-        tile: &Tilex<E, ES, Self::Scope, ReadOnly>,
-        lhs: &mut Tilex<L, VL, Self::Scope, ReadWrite>,
+        tile: &Tilex<E, ES, ReadOnly>,
+        lhs: &mut Tilex<L, VL, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        tilex_load(tile, lhs);
+        tilex_load::<E, ES, L, VL, L, R, A>(tile, lhs, StageIdent::Lhs);
     }
 
     fn load_rhs<E: Numeric, ES: Size>(
-        tile: &Tilex<E, ES, Self::Scope, ReadOnly>,
-        rhs: &mut Tilex<R, VR, Self::Scope, ReadWrite>,
+        tile: &Tilex<E, ES, ReadOnly>,
+        rhs: &mut Tilex<R, VR, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        tilex_load(tile, rhs);
+        tilex_load::<E, ES, R, VR, L, R, A>(tile, rhs, StageIdent::Rhs);
     }
 
     fn load_acc<E: Numeric, ES: Size>(
-        tile: &Tilex<E, ES, Self::Scope, ReadOnly>,
-        acc: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
+        tile: &Tilex<E, ES, ReadOnly>,
+        acc: &mut Tilex<A, VA, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        tilex_load(tile, acc);
+        tilex_load::<E, ES, A, VA, L, R, A>(tile, acc, StageIdent::Acc);
     }
 
     fn write_results<E: Numeric, ES: Size>(
-        tile: &mut Tilex<E, ES, Self::Scope, ReadWrite>,
-        out: &mut Tilex<A, VA, Self::Scope, ReadWrite>,
+        tile: &mut Tilex<E, ES, ReadWrite>,
+        out: &mut Tilex<A, VA, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        tilex_write(tile, out);
+        tilex_write::<E, ES, A, VA, L, R>(tile, out);
     }
 }

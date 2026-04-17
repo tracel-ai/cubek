@@ -1,11 +1,9 @@
-use std::marker::PhantomData;
-
 use crate::components::{
     stage::{
         ContiguousTilingLayout, RowMajorTilingOrder, Stage, StageFamily, StridedStageMemory,
         TilingLayout,
     },
-    tile::{ContiguousMatrixLayout, Plane, TileLayout, TileStorage, Tilex},
+    tile::Tilex,
 };
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 use cubek_std::{stage::StageMemoryConfig, tile::StridedTile};
@@ -53,15 +51,7 @@ impl<ES: Numeric, NS: Size> PartitionedStage<ES, NS> {
 
 #[cube]
 impl<ES: Numeric, NS: Size> Stage<ES, NS, ReadWrite> for PartitionedStage<ES, NS> {
-    fn tile(this: &Self, _tile: Coords2d) -> Tilex<ES, NS, Plane, ReadWrite> {
-        let strided_tile = this.unit_tile;
-
-        Tilex::<ES, NS, Plane, ReadWrite> {
-            storage: TileStorage::new_SharedMemory(strided_tile),
-            layout: TileLayout::new_Contiguous(ContiguousMatrixLayout {
-                layout: strided_tile.layout,
-            }),
-            _scope: PhantomData,
-        }
+    fn tile(this: &Self, _tile: Coords2d) -> Tilex<ES, NS, ReadWrite> {
+        Tilex::new_SharedMemory(this.unit_tile)
     }
 }

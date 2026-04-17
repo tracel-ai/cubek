@@ -25,10 +25,11 @@ pub struct Accumulators<
         Tilex<
             <MP::Acc as MatrixTypes>::Register,
             <MP::Acc as MatrixTypes>::RegisterSize,
-            TM::Scope,
             ReadWrite,
         >,
     >,
+    #[cube(comptime)]
+    _phantom: std::marker::PhantomData<TM>,
 }
 
 type StageTy<T> = crate::definition::Stage<T>;
@@ -61,6 +62,7 @@ impl<
 
         Accumulators::<MP, TM> {
             sequence: accumulators,
+            _phantom: std::marker::PhantomData,
         }
     }
 
@@ -78,7 +80,7 @@ impl<
             for n in 0..tiles_in_stage_partition_n {
                 let acc = self.get_at_mut(m, n, tiles_in_stage_partition_n);
                 let tile = R::tile(stage, (m as u32, n as u32).runtime());
-                TM::load_acc(&tile.with_scope::<TM::Scope>(), acc, tile_config);
+                TM::load_acc(&tile, acc, tile_config);
             }
         }
     }
@@ -92,7 +94,6 @@ impl<
     ) -> &Tilex<
         <MP::Acc as MatrixTypes>::Register,
         <MP::Acc as MatrixTypes>::RegisterSize,
-        TM::Scope,
         ReadWrite,
     > {
         &self.sequence[m * tiles_in_stage_partition_n + n]
@@ -107,7 +108,6 @@ impl<
     ) -> &mut Tilex<
         <MP::Acc as MatrixTypes>::Register,
         <MP::Acc as MatrixTypes>::RegisterSize,
-        TM::Scope,
         ReadWrite,
     > {
         self.sequence.index_mut(m * tiles_in_stage_partition_n + n)

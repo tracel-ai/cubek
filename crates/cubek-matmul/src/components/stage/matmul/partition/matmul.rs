@@ -113,7 +113,6 @@ where
             Tilex<
                 <MP::Lhs as MatrixTypes>::Register,
                 <MP::Lhs as MatrixTypes>::RegisterSize,
-                TM::Scope,
                 ReadWrite,
             >,
         >,
@@ -121,7 +120,6 @@ where
             Tilex<
                 <MP::Rhs as MatrixTypes>::Register,
                 <MP::Rhs as MatrixTypes>::RegisterSize,
-                TM::Scope,
                 ReadWrite,
             >,
         >,
@@ -167,7 +165,6 @@ where
             Tilex<
                 <MP::Lhs as MatrixTypes>::Register,
                 <MP::Lhs as MatrixTypes>::RegisterSize,
-                TM::Scope,
                 ReadWrite,
             >,
         >,
@@ -175,7 +172,6 @@ where
             Tilex<
                 <MP::Rhs as MatrixTypes>::Register,
                 <MP::Rhs as MatrixTypes>::RegisterSize,
-                TM::Scope,
                 ReadWrite,
             >,
         >,
@@ -251,14 +247,12 @@ where
             Tilex<
                 <MP::Lhs as MatrixTypes>::Register,
                 <MP::Lhs as MatrixTypes>::RegisterSize,
-                TM::Scope,
                 ReadWrite,
             >,
         >,
         rhs_fragment: &mut Tilex<
             <MP::Rhs as MatrixTypes>::Register,
             <MP::Rhs as MatrixTypes>::RegisterSize,
-            TM::Scope,
             ReadWrite,
         >,
         acc: &mut Accumulators<MP, TM>,
@@ -289,7 +283,7 @@ where
 
                 let tile_lhs = StageLhs::tile(lhs_stage, (m_load_iter, k_load_iter));
                 TM::load_lhs(
-                    &tile_lhs.with_scope::<TM::Scope>(),
+                    &tile_lhs,
                     lhs_fragment.index_mut(m_iter),
                     shared_config.tile_config,
                 );
@@ -309,7 +303,7 @@ where
 
                 let rhs_tile_next = StageRhs::tile(rhs_stage, (k_load_iter, n_load_iter));
                 TM::load_rhs(
-                    &rhs_tile_next.with_scope::<TM::Scope>(),
+                    &rhs_tile_next,
                     rhs_fragment,
                     shared_config.tile_config,
                 );
@@ -361,7 +355,6 @@ where
             Tilex<
                 <MP::Lhs as MatrixTypes>::Register,
                 <MP::Lhs as MatrixTypes>::RegisterSize,
-                TM::Scope,
                 ReadWrite,
             >,
         >,
@@ -369,13 +362,11 @@ where
             Tilex<
                 <MP::Rhs as MatrixTypes>::Register,
                 <MP::Rhs as MatrixTypes>::RegisterSize,
-                TM::Scope,
                 ReadWrite,
             >,
             Tilex<
                 <MP::Rhs as MatrixTypes>::Register,
                 <MP::Rhs as MatrixTypes>::RegisterSize,
-                TM::Scope,
                 ReadWrite,
             >,
         ),
@@ -407,7 +398,7 @@ where
 
                 let tile_lhs = StageLhs::tile(lhs_stage, (m_load_iter, k_load_iter));
                 TM::load_lhs(
-                    &tile_lhs.with_scope::<TM::Scope>(),
+                    &tile_lhs,
                     lhs_fragment.index_mut(m_iter),
                     shared_config.tile_config,
                 );
@@ -426,7 +417,7 @@ where
 
             let rhs_tile_first = StageRhs::tile(rhs_stage, (k_load_iter, n_load_iter));
             TM::load_rhs(
-                &rhs_tile_first.with_scope::<TM::Scope>(),
+                &rhs_tile_first,
                 &mut rhs_fragments.0,
                 shared_config.tile_config,
             );
@@ -451,7 +442,7 @@ where
                 let n_load_iter = partition_scheduler.map_n(comptime![n_iter as u32 + 1]);
                 let rhs_tile_next = StageRhs::tile(rhs_stage, (k_load_iter, n_load_iter));
                 TM::load_rhs(
-                    &rhs_tile_next.with_scope::<TM::Scope>(),
+                    &rhs_tile_next,
                     next,
                     shared_config.tile_config,
                 );

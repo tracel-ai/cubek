@@ -1,26 +1,11 @@
 use cubek_std::{MatrixLayout, stage::SwizzleMode};
 
-use crate::components::tile::{SharedTileConfig, TileConfig};
+use crate::components::tile::{SharedTileConfig, TileConfig, TileKind, ProductType};
 
 use crate::definition::StageIdent;
 
-/// Execution mode for the RegisterMatmul
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub enum ProductType {
-    /// Computes the Tile Matmul as m*n inner products of length k.
-    ///
-    /// Needs Lhs to be row major and Rhs to be col major
-    /// If not the case, tile will be transposed during load
-    Inner,
-    /// Computes the Stage Matmul as the sum of k outer products of size m*n.
-    ///
-    /// Needs Lhs to be col major and Rhs to be row major
-    /// If not the case, tile will be transposed during load
-    Outer,
-}
-
 impl ProductType {
-    fn from_layouts(
+    pub(crate) fn from_layouts(
         lhs_layout: MatrixLayout,
         rhs_layout: MatrixLayout,
         config: &SharedTileConfig,
@@ -67,6 +52,10 @@ impl RegisterMatmulConfig {
 }
 
 impl TileConfig for RegisterMatmulConfig {
+    fn kind(&self) -> TileKind {
+        TileKind::Register
+    }
+
     fn plane_dim(&self) -> u32 {
         self.shared.plane_dim()
     }
@@ -85,5 +74,9 @@ impl TileConfig for RegisterMatmulConfig {
 
     fn swizzle_mode(&self, ident: StageIdent) -> SwizzleMode {
         self.shared.swizzle_mode(ident)
+    }
+
+    fn product_type(&self) -> ProductType {
+        self.product_type
     }
 }

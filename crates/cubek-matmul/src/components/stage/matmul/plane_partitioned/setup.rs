@@ -23,7 +23,6 @@ use core::marker::PhantomData;
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::{
     stage::StageMemoryConfig,
-    tile::Strided,
     {InvalidConfigError, MatrixLayout},
 };
 

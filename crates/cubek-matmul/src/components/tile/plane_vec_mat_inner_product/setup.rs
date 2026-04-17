@@ -1,7 +1,4 @@
-use crate::components::{
-    resource::CubeDimResource,
-    tile::plane_vec_mat_inner_product::reader::{MatrixFragmentReader, MatrixStageReader},
-};
+use crate::components::resource::CubeDimResource;
 use crate::{
     components::tile::SharedTileConfig, components::tile::TileMatmulFamily,
     components::tile::plane_vec_mat_inner_product::config::PlaneVecMatInnerProductConfig,
@@ -19,12 +16,9 @@ use cubecl::{
     ir::{ElemType, FloatKind},
     prelude::*,
 };
-use cubek_std::{InvalidConfigError, tile::Strided};
+use cubek_std::InvalidConfigError;
 
-impl TileMatmulFamily for PlaneVecMatInnerProduct
-where
-    MatrixStageReader<Option<Strided>>: MatrixFragmentReader,
-{
+impl TileMatmulFamily for PlaneVecMatInnerProduct {
     type Config = PlaneVecMatInnerProductConfig;
     type Matmul<L: Numeric, NL: Size, R: Numeric, NR: Size, A: Numeric, NA: Size> =
         PlaneVecMatInnerProduct;

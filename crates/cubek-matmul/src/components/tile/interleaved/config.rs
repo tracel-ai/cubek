@@ -1,6 +1,6 @@
 use cubek_std::{TileSize, stage::SwizzleMode};
 
-use crate::components::tile::{SharedTileConfig, TileConfig};
+use crate::components::tile::{SharedTileConfig, TileConfig, TileKind};
 
 use crate::definition::StageIdent;
 
@@ -44,6 +44,10 @@ impl InterleavedMatmulConfig {
 }
 
 impl TileConfig for InterleavedMatmulConfig {
+    fn kind(&self) -> TileKind {
+        TileKind::Interleaved
+    }
+
     fn plane_dim(&self) -> u32 {
         self.shared.plane_dim()
     }

@@ -1,7 +1,7 @@
 use cubek_std::stage::SwizzleMode;
 
 use crate::{
-    components::tile::{SharedTileConfig, TileConfig},
+    components::tile::{SharedTileConfig, TileConfig, TileKind},
     definition::StageIdent,
 };
 
@@ -21,6 +21,10 @@ impl PlaneVecMatInnerProductConfig {
 }
 
 impl TileConfig for PlaneVecMatInnerProductConfig {
+    fn kind(&self) -> TileKind {
+        TileKind::PlaneVec
+    }
+
     fn plane_dim(&self) -> u32 {
         self.shared.plane_dim()
     }
@@ -39,5 +43,9 @@ impl TileConfig for PlaneVecMatInnerProductConfig {
 
     fn swizzle_mode(&self, ident: StageIdent) -> SwizzleMode {
         self.shared.swizzle_mode(ident)
+    }
+
+    fn reduce_vector_size(&self) -> u32 {
+        self.reduce_vector_size
     }
 }

@@ -1,4 +1,4 @@
-mod config;
+pub mod config;
 mod matmul;
 mod setup;
 

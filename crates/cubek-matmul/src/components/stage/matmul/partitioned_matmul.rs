@@ -194,7 +194,6 @@ where
         Tilex<
             <MP::Lhs as MatrixTypes>::Register,
             <MP::Lhs as MatrixTypes>::RegisterSize,
-            TM::Scope,
             ReadWrite,
         >,
     >;
@@ -202,7 +201,6 @@ where
         Tilex<
             <MP::Rhs as MatrixTypes>::Register,
             <MP::Rhs as MatrixTypes>::RegisterSize,
-            TM::Scope,
             ReadWrite,
         >,
     >;
@@ -304,7 +302,7 @@ where
                 // Write the results for one tile. To save shared memory space, it reuses the same spot for
                 // all tiles in the partition
                 TM::write_results(
-                    &mut tile.with_scope::<TM::Scope>(),
+                    &mut tile,
                     tile_accumulator,
                     stage_config.shared().tile_config,
                 );

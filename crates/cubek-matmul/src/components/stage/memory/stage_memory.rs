@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use crate::components::{
     global::{GlobalReaderConfig, PlaneFlowPartition, read::StageBuffer},
     stage::{LoadStageFamily, Stage, StageFamily, TilingLayout},
-    tile::{ContiguousMatrixLayout, Plane, TileLayout, TileStorage, Tilex},
+    tile::Tilex,
 };
 use cubecl::std::{Swizzle, tensor::layout::Coords2d};
 
@@ -201,15 +201,9 @@ impl<ES: Numeric, NS: Size, T: TilingLayout> StridedStageMemory<ES, NS, T> {
 impl<ES: Numeric, NS: Size, T: TilingLayout> Stage<ES, NS, ReadOnly>
     for StridedStageMemory<ES, NS, T>
 {
-    fn tile(this: &Self, tile: Coords2d) -> Tilex<ES, NS, Plane, ReadOnly> {
+    fn tile(this: &Self, tile: Coords2d) -> Tilex<ES, NS, ReadOnly> {
         let strided_tile = this.get_tile(tile);
-        Tilex::<ES, NS, Plane, ReadOnly> {
-            storage: TileStorage::new_SharedMemory(strided_tile),
-            layout: TileLayout::new_Contiguous(ContiguousMatrixLayout {
-                layout: strided_tile.layout,
-            }),
-            _scope: PhantomData,
-        }
+        Tilex::new_SharedMemory(strided_tile)
     }
 }
 
@@ -217,15 +211,9 @@ impl<ES: Numeric, NS: Size, T: TilingLayout> Stage<ES, NS, ReadOnly>
 impl<ES: Numeric, NS: Size, T: TilingLayout> Stage<ES, NS, ReadWrite>
     for StridedStageMemory<ES, NS, T>
 {
-    fn tile(this: &Self, tile: Coords2d) -> Tilex<ES, NS, Plane, ReadWrite> {
+    fn tile(this: &Self, tile: Coords2d) -> Tilex<ES, NS, ReadWrite> {
         let strided_tile = this.get_tile_mut(tile);
-        Tilex::<ES, NS, Plane, ReadWrite> {
-            storage: TileStorage::new_SharedMemory(strided_tile),
-            layout: TileLayout::new_Contiguous(ContiguousMatrixLayout {
-                layout: strided_tile.layout,
-            }),
-            _scope: PhantomData,
-        }
+        Tilex::new_SharedMemory(strided_tile)
     }
 }
 
