@@ -1,6 +1,4 @@
-use cubecl::{
-    Runtime, TestRuntime, features::TypeUsage, ir::ElemType, ir::FloatKind, prelude::*,
-};
+use cubecl::{Runtime, TestRuntime, features::TypeUsage, ir::ElemType, ir::FloatKind, prelude::*};
 use cubek_matmul::{
     definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
     launch::Strategy,
@@ -110,8 +108,6 @@ fn run_quantized_matmul(case: QuantizedMatmulCase) {
         lhs_dtype.scheme().as_ref(),
         rhs_dtype.scheme().as_ref(),
         MatmulGlobalElems {
-            // For quantized inputs, the kernel sees the dequantized float type,
-            // which matches burn-cubecl's launch path (base.rs:100-114).
             lhs: out_dtype.storage_type(),
             rhs: out_dtype.storage_type(),
             out: out_dtype.storage_type(),
@@ -269,8 +265,6 @@ pub fn test_matmul_quantized_rhs_col_major() {
 
 #[test]
 pub fn test_matmul_quantized_lhs_auto() {
-    // Same as the base Naive test but using `Strategy::Auto`, which is what
-    // burn-cubecl uses by default (base.rs matmul() -> `Default::default()`).
     run_quantized_matmul(QuantizedMatmulCase {
         lhs_scheme: Some(tensor_scheme(QuantValue::Q8S)),
         strategy: Strategy::Auto,
@@ -318,8 +312,6 @@ pub fn test_matmul_quantized_mixed_q8s_q4s() {
 
 #[test]
 pub fn test_matmul_quantized_lhs_q4s_large_k() {
-    // Larger k amplifies accumulated quantization error; verify the tolerance
-    // model (scale * sqrt(k)) tracks.
     run_quantized_matmul(QuantizedMatmulCase {
         m: 32,
         n: 32,
@@ -388,7 +380,7 @@ pub fn test_matmul_quantized_both_q2s() {
 pub fn test_matmul_quantized_lhs_q8s_native() {
     // Native store = 1:1 packing. `cubek_quant::quantize` routes this through
     // `quantize_native` which asserts `i8` conversion support; skip the test
-    // on runtimes (e.g. wgpu/naga) that lack it.
+    // on runtimes that lack it.
     if !native_quant_supported() {
         eprintln!("skipping: runtime lacks i8 conversion for Native quantization");
         return;
@@ -426,13 +418,7 @@ pub fn test_matmul_quantized_lhs_q8f_native() {
 
 #[test]
 pub fn test_matmul_quantized_lhs_q8s_block16() {
-    // Block-level LHS isn't supported by `Strategy::Naive` — the batch-naive
-    // setup returns `InvalidConfig("Block size isn't a multiple of load size
-    // on lhs")` because the naive kernel applies `num_quants` twice when
-    // checking load alignment (launch_naive multiplies `vector_sizes.lhs` by
-    // `num_quants` into the view size, and batch/naive/setup.rs:144
-    // multiplies again). burn-cubecl works around this by dequantizing
-    // block-scaled tensors before launching naive (base.rs:127). Use
+    // Block-level isn't supported by `Strategy::Naive`. Use
     // `Strategy::Auto` here so the tiling path, which handles block-scaled
     // inputs natively, is exercised instead.
     run_quantized_matmul(QuantizedMatmulCase {
@@ -453,9 +439,6 @@ pub fn test_matmul_quantized_lhs_q8s_block32() {
 
 #[test]
 pub fn test_matmul_quantized_rhs_q8s_block16() {
-    // burn-cubecl dequantizes block-level RHS on Strategy::Naive; use Auto
-    // which keeps the quantized path and routes through the tiling kernels
-    // that do support block-scaled RHS.
     run_quantized_matmul(QuantizedMatmulCase {
         rhs_scheme: Some(block_scheme(QuantValue::Q8S, [16u8])),
         strategy: Strategy::Auto,
@@ -475,9 +458,6 @@ pub fn test_matmul_quantized_both_q8s_block16() {
 
 #[test]
 pub fn test_matmul_quantized_lhs_q4s_block32() {
-    // Q4S packs 8/u32 so the block size (32) covers 4 u32s per block. Routed
-    // through `Strategy::Auto` for the same reason as the Q8S block tests:
-    // block-scaled LHS is rejected by the naive setup's alignment check.
     run_quantized_matmul(QuantizedMatmulCase {
         lhs_scheme: Some(block_scheme(QuantValue::Q4S, [32u8])),
         strategy: Strategy::Auto,
