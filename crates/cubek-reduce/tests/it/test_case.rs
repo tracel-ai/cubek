@@ -8,9 +8,7 @@ use cubecl::{
 };
 use cubek_reduce::{
     ReduceDtypes, ReduceError, ReducePrecision, ReduceStrategy,
-    components::instructions::ReduceOperationConfig,
-    launch::RoutineStrategy,
-    reduce,
+    components::instructions::ReduceOperationConfig, launch::RoutineStrategy, reduce,
 };
 use cubek_test_utils::{
     DataKind, HostData, HostDataType, HostDataVec, StrideSpec, TestInput, assert_equals_approx,
@@ -202,7 +200,8 @@ impl TestCase {
 
         match client.flush() {
             Ok(_) => {}
-            Err(ServerError::ServerUnhealthy { errors, .. }) => {
+            Err(ServerError::ServerUnhealthy { errors, .. }) =>
+            {
                 #[allow(clippy::never_loop)]
                 for error in errors.iter() {
                     match error {
