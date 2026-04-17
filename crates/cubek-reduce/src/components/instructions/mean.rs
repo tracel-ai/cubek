@@ -44,19 +44,6 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Mean {
         <Sum as ReduceInstruction<P>>::assign_accumulator(&this.sum, destination, source);
     }
 
-    // fn split_accumulator(
-    //     _this: &Self,
-    //     accumulator: &Vector<P::EA, P::SI>,
-    // ) -> (
-    //     AccumulatorKind<Vector<P::EI, P::SI>>,
-    //     ReduceCoordinate<P::SI>,
-    // ) {
-    //     (
-    //         AccumulatorKind::new_single(Vector::cast_from(*accumulator)),
-    //         ReduceCoordinate::new_NotRequired(),
-    //     )
-    // }
-
     fn reduce(
         this: &Self,
         accumulator: &Accumulator<P>,

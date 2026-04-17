@@ -115,18 +115,6 @@ impl GlobalFullPlaneReduce {
             PlaneMergeStrategy::Lazy => {
                 I::plane_reduce_inplace(inst, &mut accumulator);
                 accumulator
-
-                // let (item, coordinate) = I::split_accumulator(inst, &accumulator);
-                // let mut result = I::null_accumulator(inst);
-
-                // reduce_inplace::<P, I>(
-                //     inst,
-                //     &mut result,
-                //     item.item(),
-                //     coordinate,
-                //     ReduceStep::Plane,
-                // );
-                // result
             }
             PlaneMergeStrategy::Eager => accumulator,
         }

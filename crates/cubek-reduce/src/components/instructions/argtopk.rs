@@ -82,16 +82,6 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
         todo!("argtopk")
     }
 
-    // fn split_accumulator(
-    //     _this: &Self,
-    //     _accumulator: &Self::Accumulator,
-    // ) -> (
-    //     AccumulatorKind<Vector<P::EI, P::SI>>,
-    //     ReduceCoordinate<P::SI>,
-    // ) {
-    //     todo!("argtopk")
-    // }
-
     fn reduce(
         _this: &Self,
         _accumulator: &Accumulator<P>,

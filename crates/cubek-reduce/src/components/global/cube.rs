@@ -142,18 +142,6 @@ impl GlobalFullCubeReduce {
             true => {
                 I::plane_reduce_inplace(inst, &mut accumulator);
                 accumulator
-
-                // // Sync at the plane level.
-                // let (item, coordinate) = I::split_accumulator(inst, &accumulator);
-                // let mut accumulator_plane = I::null_accumulator(inst);
-                // reduce_inplace::<P, I>(
-                //     inst,
-                //     &mut accumulator_plane,
-                //     item.item(),
-                //     coordinate,
-                //     ReduceStep::Plane,
-                // );
-                // accumulator_plane
             }
             false => accumulator,
         };
@@ -184,12 +172,6 @@ fn reduce_scan<P: ReducePrecision, I: ReduceInstruction<P>>(
         let fused = I::fuse_accumulators(inst, result, &acc);
         I::assign_accumulator(inst, result, &fused);
     }
-
-    //    for i in 0..size {
-    //     let item = I::SharedAccumulator::read(accumulator, i);
-    //     let (item, coordinate) = I::split_accumulator(inst, &item);
-    //     reduce_inplace::<P, I>(inst, result, item.item(), coordinate, ReduceStep::Identity);
-    // }
 }
 
 /// Use all units within a cube to fuse the first `size` elements of `accumulator` inplace like this with some padding if `size` is not a power of 2.
