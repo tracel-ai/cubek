@@ -450,8 +450,36 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
         }
     }
 
-    fn plane_reduce_inplace(_this: &Self, _accumulator: &mut Accumulator<P>) {
-        todo!()
+    fn plane_reduce_inplace(this: &Self, accumulator: &mut Accumulator<P>) {
+        match this {
+            ReduceOperation::Sum(sum) => {
+                <Sum as ReduceInstruction<P>>::plane_reduce_inplace(sum, accumulator)
+            }
+            ReduceOperation::Prod(prod) => {
+                <Prod as ReduceInstruction<P>>::plane_reduce_inplace(prod, accumulator)
+            }
+            ReduceOperation::Mean(mean) => {
+                <Mean as ReduceInstruction<P>>::plane_reduce_inplace(mean, accumulator)
+            }
+            ReduceOperation::MaxAbs(max_abs) => {
+                <MaxAbs as ReduceInstruction<P>>::plane_reduce_inplace(max_abs, accumulator)
+            }
+            ReduceOperation::ArgMax(arg_max) => {
+                <ArgMax as ReduceInstruction<P>>::plane_reduce_inplace(arg_max, accumulator)
+            }
+            ReduceOperation::ArgMin(arg_min) => {
+                <ArgMin as ReduceInstruction<P>>::plane_reduce_inplace(arg_min, accumulator)
+            }
+            ReduceOperation::Max(max) => {
+                <Max as ReduceInstruction<P>>::plane_reduce_inplace(max, accumulator)
+            }
+            ReduceOperation::Min(min) => {
+                <Min as ReduceInstruction<P>>::plane_reduce_inplace(min, accumulator)
+            }
+            ReduceOperation::ArgTopK(arg_top_k) => {
+                <ArgTopK as ReduceInstruction<P>>::plane_reduce_inplace(arg_top_k, accumulator)
+            }
+        }
     }
 
     fn fuse_accumulators(

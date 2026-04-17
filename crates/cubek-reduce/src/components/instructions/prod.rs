@@ -72,8 +72,11 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Prod {
         }
     }
 
-    fn plane_reduce_inplace(_this: &Self, _accumulator: &mut Accumulator<P>) {
-        todo!()
+    fn plane_reduce_inplace(_this: &Self, accumulator: &mut Accumulator<P>) {
+        let prod = plane_prod(Vector::cast_from(accumulator.elements.item()));
+        accumulator
+            .elements
+            .assign(&AccumulatorKind::new_single(prod));
     }
 
     fn fuse_accumulators(

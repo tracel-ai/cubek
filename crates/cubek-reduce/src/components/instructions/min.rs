@@ -84,8 +84,13 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
         }
     }
 
-    fn plane_reduce_inplace(_this: &Self, _accumulator: &mut Accumulator<P>) {
-        todo!()
+    fn plane_reduce_inplace(_this: &Self, accumulator: &mut Accumulator<P>) {
+        let acc_item = accumulator.elements.item();
+        let candidate_item = Vector::cast_from(plane_min(acc_item));
+        let min = select_many(acc_item.less_than(candidate_item), acc_item, candidate_item);
+        accumulator
+            .elements
+            .assign(&AccumulatorKind::new_single(min));
     }
 
     fn fuse_accumulators(

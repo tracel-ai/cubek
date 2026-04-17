@@ -210,6 +210,72 @@ where
         expected
     }
 
+    pub fn test_min(&self) {
+        println!("Printing test: {self:?}");
+        let input_values: Vec<P::EI> = self.random_input_values();
+        let expected_values = match self.axis {
+            Some(axis) if self.stride[axis] == 0 => input_values.clone(),
+            _ => self.cpu_min(&input_values),
+        };
+        self.run_reduce_test::<P::EI>(input_values, expected_values, ReduceOperationConfig::Min)
+    }
+
+    fn cpu_min<F: Float>(&self, values: &[F]) -> Vec<F> {
+        let mut expected = vec![F::max_value(); self.num_output_values()];
+
+        for (input_index, value) in values.iter().enumerate() {
+            if let Some(output_index) = self.to_output_index(input_index) {
+                expected[output_index] = min(expected[output_index], *value);
+            }
+        }
+        expected
+    }
+
+    pub fn test_max(&self) {
+        println!("Printing test: {self:?}");
+        let input_values: Vec<P::EI> = self.random_input_values();
+        let expected_values = match self.axis {
+            Some(axis) if self.stride[axis] == 0 => input_values.clone(),
+            _ => self.cpu_max(&input_values),
+        };
+        self.run_reduce_test::<P::EI>(input_values, expected_values, ReduceOperationConfig::Max)
+    }
+
+    fn cpu_max<F: Float>(&self, values: &[F]) -> Vec<F> {
+        let mut expected = vec![F::min_value(); self.num_output_values()];
+
+        for (input_index, value) in values.iter().enumerate() {
+            if let Some(output_index) = self.to_output_index(input_index) {
+                expected[output_index] = max(expected[output_index], *value);
+            }
+        }
+        expected
+    }
+
+    pub fn test_max_abs(&self) {
+        println!("Printing test: {self:?}");
+        let input_values: Vec<P::EI> = self.random_input_values();
+        let expected_values = match self.axis {
+            Some(axis) if self.stride[axis] == 0 => {
+                input_values.iter().map(|x| max(*x, -*x)).collect()
+            }
+            _ => self.cpu_max_abs(&input_values),
+        };
+        self.run_reduce_test::<P::EI>(input_values, expected_values, ReduceOperationConfig::MaxAbs)
+    }
+
+    fn cpu_max_abs<F: Float>(&self, values: &[F]) -> Vec<F> {
+        let mut expected = vec![F::zero(); self.num_output_values()];
+
+        for (input_index, value) in values.iter().enumerate() {
+            if let Some(output_index) = self.to_output_index(input_index) {
+                let abs_value = max(*value, -*value);
+                expected[output_index] = max(expected[output_index], abs_value);
+            }
+        }
+        expected
+    }
+
     pub fn run_reduce_test<O>(
         &self,
         input_values: Vec<P::EI>,

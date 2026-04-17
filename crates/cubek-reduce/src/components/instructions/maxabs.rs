@@ -97,8 +97,17 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
         }
     }
 
-    fn plane_reduce_inplace(_this: &Self, _accumulator: &mut Accumulator<P>) {
-        todo!()
+    fn plane_reduce_inplace(_this: &Self, accumulator: &mut Accumulator<P>) {
+        let acc_item = accumulator.elements.item();
+        let candidate_item = Vector::cast_from(plane_max(Vector::abs(acc_item)));
+        let max = select_many(
+            acc_item.greater_than(candidate_item),
+            acc_item,
+            candidate_item,
+        );
+        accumulator
+            .elements
+            .assign(&AccumulatorKind::new_single(max));
     }
 
     fn merge_vector<Out: Numeric>(

@@ -47,10 +47,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
     //     AccumulatorKind<Vector<P::EI, P::SI>>,
     //     ReduceCoordinate<P::SI>,
     // ) {
-    //     (
-    //         AccumulatorKind::new_single(Vector::cast_from(*accumulator)),
-    //         ReduceCoordinate::new_NotRequired(),
-    //     )
+
     // }
 
     fn reduce(
@@ -71,8 +68,11 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
         }
     }
 
-    fn plane_reduce_inplace(_this: &Self, _accumulator: &mut Accumulator<P>) {
-        todo!()
+    fn plane_reduce_inplace(_this: &Self, accumulator: &mut Accumulator<P>) {
+        let sum = plane_sum(Vector::cast_from(accumulator.elements.item()));
+        accumulator
+            .elements
+            .assign(&AccumulatorKind::new_single(sum));
     }
 
     fn fuse_accumulators(

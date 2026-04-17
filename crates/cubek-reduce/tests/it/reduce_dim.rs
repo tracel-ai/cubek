@@ -30,6 +30,21 @@ pub fn test_prod() {
     test_case().test_prod();
 }
 
+#[test]
+pub fn test_min() {
+    test_case().test_min();
+}
+
+#[test]
+pub fn test_max() {
+    test_case().test_max();
+}
+
+#[test]
+pub fn test_max_abs() {
+    test_case().test_max_abs();
+}
+
 fn test_case() -> TestCase<TestDType> {
     TestCase::<TestDType> {
         shape: test_shape(),
