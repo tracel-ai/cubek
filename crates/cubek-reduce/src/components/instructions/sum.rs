@@ -40,16 +40,6 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
         destination.elements.assign(&source.elements);
     }
 
-    // fn split_accumulator(
-    //     _this: &Self,
-    //     accumulator: &Vector<P::EA, P::SI>,
-    // ) -> (
-    //     AccumulatorKind<Vector<P::EI, P::SI>>,
-    //     ReduceCoordinate<P::SI>,
-    // ) {
-
-    // }
-
     fn reduce(
         _this: &Self,
         accumulator: &Accumulator<P>,

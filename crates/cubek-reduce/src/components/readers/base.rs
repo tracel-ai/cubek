@@ -62,33 +62,6 @@ impl<P: ReducePrecision> Reader<P> {
     }
 }
 
-// #[derive(CubeType)]
-// pub enum ReduceCoordinate<N: Size> {
-//     Required(AccumulatorKind<Vector<u32, N>>),
-//     NotRequired,
-// }
-
-// #[cube]
-// impl<N: Size> ReduceCoordinate<N> {
-//     pub fn new(
-//         coordinate: usize,
-//         requirements: ReduceRequirements,
-//         #[comptime] vectorization_mode: VectorizationMode,
-//     ) -> Self {
-//         if requirements.coordinates.comptime() {
-//             // TODO: Make this generic to allow 64-bit coordinate output.
-//             // Can't directly use `usize` for the buffer, since its size isn't defined beyond the
-//             // kernel boundary.
-//             ReduceCoordinate::new_Required(AccumulatorKind::new_single(fill_coordinate_vector(
-//                 coordinate as u32,
-//                 vectorization_mode,
-//             )))
-//         } else {
-//             ReduceCoordinate::new_NotRequired()
-//         }
-//     }
-// }
-
 #[cube]
 pub fn new_coordinates<N: Size>(
     coordinate: usize,
