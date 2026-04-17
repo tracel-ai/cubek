@@ -143,56 +143,50 @@ pub fn register_load_from_shared<E: Numeric, ES: Size, N: Numeric, V: Size>(
     let k = config.elements_in_tile_k();
 
     match ident {
-        StageIdent::Lhs => {
-            match product_type {
-                ProductType::Inner => match matrix_layout {
-                    MatrixLayout::RowMajor => {
-                        load_plain::<E, ES, N>(shared, arr, m, k);
-                    }
-                    MatrixLayout::ColMajor => {
-                        load_transposed::<E, ES, N>(shared, arr, k, m);
-                    }
-                },
-                ProductType::Outer => match matrix_layout {
-                    MatrixLayout::RowMajor => {
-                        load_transposed::<E, ES, N>(shared, arr, m, k);
-                    }
-                    MatrixLayout::ColMajor => {
-                        load_plain::<E, ES, N>(shared, arr, k, m);
-                    }
-                },
-            }
-        }
-        StageIdent::Rhs => {
-            match product_type {
-                ProductType::Inner => match matrix_layout {
-                    MatrixLayout::RowMajor => {
-                        load_transposed::<E, ES, N>(shared, arr, k, n);
-                    }
-                    MatrixLayout::ColMajor => {
-                        load_plain::<E, ES, N>(shared, arr, n, k);
-                    }
-                },
-                ProductType::Outer => match matrix_layout {
-                    MatrixLayout::RowMajor => {
-                        load_plain::<E, ES, N>(shared, arr, k, n);
-                    }
-                    MatrixLayout::ColMajor => {
-                        load_transposed::<E, ES, N>(shared, arr, n, k);
-                    }
-                },
-            }
-        }
-        StageIdent::Acc => {
-            match matrix_layout {
+        StageIdent::Lhs => match product_type {
+            ProductType::Inner => match matrix_layout {
                 MatrixLayout::RowMajor => {
-                    load_plain::<E, ES, N>(shared, arr, m, n);
+                    load_plain::<E, ES, N>(shared, arr, m, k);
                 }
                 MatrixLayout::ColMajor => {
-                    load_transposed::<E, ES, N>(shared, arr, n, m);
+                    load_transposed::<E, ES, N>(shared, arr, k, m);
                 }
+            },
+            ProductType::Outer => match matrix_layout {
+                MatrixLayout::RowMajor => {
+                    load_transposed::<E, ES, N>(shared, arr, m, k);
+                }
+                MatrixLayout::ColMajor => {
+                    load_plain::<E, ES, N>(shared, arr, k, m);
+                }
+            },
+        },
+        StageIdent::Rhs => match product_type {
+            ProductType::Inner => match matrix_layout {
+                MatrixLayout::RowMajor => {
+                    load_transposed::<E, ES, N>(shared, arr, k, n);
+                }
+                MatrixLayout::ColMajor => {
+                    load_plain::<E, ES, N>(shared, arr, n, k);
+                }
+            },
+            ProductType::Outer => match matrix_layout {
+                MatrixLayout::RowMajor => {
+                    load_plain::<E, ES, N>(shared, arr, k, n);
+                }
+                MatrixLayout::ColMajor => {
+                    load_transposed::<E, ES, N>(shared, arr, n, k);
+                }
+            },
+        },
+        StageIdent::Acc => match matrix_layout {
+            MatrixLayout::RowMajor => {
+                load_plain::<E, ES, N>(shared, arr, m, n);
             }
-        }
+            MatrixLayout::ColMajor => {
+                load_transposed::<E, ES, N>(shared, arr, n, m);
+            }
+        },
         _ => panic!("Invalid ident for Register load"),
     }
 }
@@ -214,9 +208,8 @@ fn load_plain<E: Numeric, ES: Size, N: Numeric>(
             let line = tile.get_vector(segment, line_within_segment);
             #[unroll]
             for pos_within_line in 0..line_size {
-                arr[(segment * segment_size
-                    + line_within_segment * line_size
-                    + pos_within_line) as usize] = N::cast_from(line[pos_within_line as usize]);
+                arr[(segment * segment_size + line_within_segment * line_size + pos_within_line)
+                    as usize] = N::cast_from(line[pos_within_line as usize]);
             }
         }
     }
@@ -239,8 +232,8 @@ fn load_transposed<E: Numeric, ES: Size, N: Numeric>(
             let line = tile.get_vector(segment, line_within_segment);
             #[unroll]
             for pos_within_line in 0..line_size {
-                arr[((line_within_segment * line_size + pos_within_line) * num_segments
-                    + segment) as usize] = N::cast_from(line[pos_within_line as usize]);
+                arr[((line_within_segment * line_size + pos_within_line) * num_segments + segment)
+                    as usize] = N::cast_from(line[pos_within_line as usize]);
             }
         }
     }

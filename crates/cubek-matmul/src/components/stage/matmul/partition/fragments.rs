@@ -91,11 +91,8 @@ impl<
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] tiles_in_stage_partition_n: usize,
-    ) -> &Tilex<
-        <MP::Acc as MatrixTypes>::Register,
-        <MP::Acc as MatrixTypes>::RegisterSize,
-        ReadWrite,
-    > {
+    ) -> &Tilex<<MP::Acc as MatrixTypes>::Register, <MP::Acc as MatrixTypes>::RegisterSize, ReadWrite>
+    {
         &self.sequence[m * tiles_in_stage_partition_n + n]
     }
 

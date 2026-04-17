@@ -53,7 +53,9 @@ impl<Acc: Float> BlackboxAttentionOutputWorkspace<Acc> {
 }
 
 #[cube]
-impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA> for BlackboxAttentionOutput<SM, Acc> {
+impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA>
+    for BlackboxAttentionOutput<SM, Acc>
+{
     type Config = BlackboxOutputConfig;
     type ScaleColumn = RowWise<SM>;
     type RunningState = (RowWise<SM>, RowWise<SM>);

@@ -238,4 +238,3 @@ fn strided_tile_to_transposed_unit_tile<E: Numeric, N: Size, E2: Numeric>(
         }
     }
 }
-

@@ -1,8 +1,8 @@
-use cubecl::{prelude::*, cmma::MmaDefinition, ir::MatrixIdent, define_size};
+use cubecl::{cmma::MmaDefinition, define_size, ir::MatrixIdent, prelude::*};
 use cubek_std::{
     MatrixLayout, TileSize,
-    tile::{Strided, Filled, StridedTile},
     tile::mma::{MmaFragmentReader as _, MmaIOConfig, MmaStageReader, MmaStageWriter},
+    tile::{Filled, Strided, StridedTile},
 };
 
 use crate::components::tile::{SharedTileConfig, TileConfig};
@@ -30,9 +30,7 @@ fn make_mma_definition<L: Numeric, R: Numeric, A: Numeric>(
 
 #[cube]
 #[allow(unused_variables)]
-pub fn mma_register_vector_sizes<L: Numeric, R: Numeric, A: Numeric>(
-    def: MmaDefinition<L, R, A>,
-) {
+pub fn mma_register_vector_sizes<L: Numeric, R: Numeric, A: Numeric>(def: MmaDefinition<L, R, A>) {
     let vector_size_a = def.vector_size(MatrixIdent::A);
     let vector_size_b = def.vector_size(MatrixIdent::B);
     let vector_size_acc = def.vector_size(MatrixIdent::Accumulator);
@@ -132,7 +130,14 @@ pub fn mma_execute<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: S
 // ===========================================================================
 
 #[cube]
-pub fn mma_load_lhs_from_shared<E: Numeric, ES: Size, L: Numeric, VL: Size, R: Numeric, A: Numeric>(
+pub fn mma_load_lhs_from_shared<
+    E: Numeric,
+    ES: Size,
+    L: Numeric,
+    VL: Size,
+    R: Numeric,
+    A: Numeric,
+>(
     shared: &StridedTile<E, ES, ReadOnly>,
     fragment: &mut Array<Vector<L, VL>>,
     #[comptime] matrix_layout: MatrixLayout,
@@ -160,7 +165,14 @@ pub fn mma_load_lhs_from_shared<E: Numeric, ES: Size, L: Numeric, VL: Size, R: N
 // ===========================================================================
 
 #[cube]
-pub fn mma_load_rhs_from_shared<E: Numeric, ES: Size, R: Numeric, VR: Size, L: Numeric, A: Numeric>(
+pub fn mma_load_rhs_from_shared<
+    E: Numeric,
+    ES: Size,
+    R: Numeric,
+    VR: Size,
+    L: Numeric,
+    A: Numeric,
+>(
     shared: &StridedTile<E, ES, ReadOnly>,
     fragment: &mut Array<Vector<R, VR>>,
     #[comptime] matrix_layout: MatrixLayout,
@@ -188,7 +200,14 @@ pub fn mma_load_rhs_from_shared<E: Numeric, ES: Size, R: Numeric, VR: Size, L: N
 // ===========================================================================
 
 #[cube]
-pub fn mma_load_acc_from_shared<E: Numeric, ES: Size, A: Numeric, VA: Size, L: Numeric, R: Numeric>(
+pub fn mma_load_acc_from_shared<
+    E: Numeric,
+    ES: Size,
+    A: Numeric,
+    VA: Size,
+    L: Numeric,
+    R: Numeric,
+>(
     shared: &StridedTile<E, ES, ReadOnly>,
     fragment: &mut Array<Vector<A, VA>>,
     #[comptime] matrix_layout: MatrixLayout,

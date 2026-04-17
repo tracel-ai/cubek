@@ -16,13 +16,7 @@ pub struct QueryPartition<L: Numeric, VL: Size> {
 
 #[cube]
 impl<L: Numeric, VL: Size> QueryPartition<L, VL> {
-    pub fn new<
-        R: Numeric,
-        VR: Size,
-        A: Numeric,
-        VA: Size,
-        IM: InnerMatmul<L, VL, R, VR, A, VA>,
-    >(
+    pub fn new<R: Numeric, VR: Size, A: Numeric, VA: Size, IM: InnerMatmul<L, VL, R, VR, A, VA>>(
         #[comptime] partition_size: AttentionPartitionSize,
         #[comptime] config: IM::Config,
     ) -> QueryPartition<L, VL> {
@@ -62,13 +56,7 @@ pub struct KeyPartition<R: Numeric, VR: Size> {
 
 #[cube]
 impl<R: Numeric, VR: Size> KeyPartition<R, VR> {
-    pub fn new<
-        L: Numeric,
-        VL: Size,
-        A: Numeric,
-        VA: Size,
-        IM: InnerMatmul<L, VL, R, VR, A, VA>,
-    >(
+    pub fn new<L: Numeric, VL: Size, A: Numeric, VA: Size, IM: InnerMatmul<L, VL, R, VR, A, VA>>(
         #[comptime] config: IM::Config,
     ) -> KeyPartition<R, VR> {
         let mut keys = Sequence::new();
@@ -92,13 +80,7 @@ pub struct ValuePartition<R: Numeric, VR: Size> {
 
 #[cube]
 impl<R: Numeric, VR: Size> ValuePartition<R, VR> {
-    pub fn new<
-        L: Numeric,
-        VL: Size,
-        A: Numeric,
-        VA: Size,
-        IM: InnerMatmul<L, VL, R, VR, A, VA>,
-    >(
+    pub fn new<L: Numeric, VL: Size, A: Numeric, VA: Size, IM: InnerMatmul<L, VL, R, VR, A, VA>>(
         #[comptime] config: IM::Config,
     ) -> ValuePartition<R, VR> {
         let mut values = Sequence::new();

@@ -179,9 +179,7 @@ fn store_cmma_to_score_smem<Acc: Float, Lhs: Float>(
     #[comptime] stride: u32,
 ) {
     match tile {
-        Tilex::Cmma(t) => {
-            cmma_store_score::<Acc, Lhs>(&t.matrix, workspace, stride)
-        }
+        Tilex::Cmma(t) => cmma_store_score::<Acc, Lhs>(&t.matrix, workspace, stride),
         Tilex::Register(_dummy) => panic!("BlackboxSoftmax expects Tilex::Cmma"),
         _ => panic!("BlackboxSoftmax expects Tilex::Cmma"),
     }

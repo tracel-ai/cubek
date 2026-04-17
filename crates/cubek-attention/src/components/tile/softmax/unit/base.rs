@@ -11,11 +11,11 @@ use cubek_matmul::{
 use cubek_std::{MatrixLayout, tile::StridedTile};
 
 use crate::{
-    components::tile::{LOGIT_MASKED, MaskTile},
     components::tile::pipeline::{RowWise, UnitTile, UnitTileLayout},
     components::tile::softmax::base::FragmentMaskExpand,
     components::tile::softmax::unit::UnitSoftmaxConfig,
     components::tile::softmax::{FragmentMask, Softmax, SoftmaxConfig},
+    components::tile::{LOGIT_MASKED, MaskTile},
 };
 
 #[derive(CubeType)]
@@ -85,17 +85,22 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
         );
 
         workspace.max.copy_from(&state.0);
-        row_max_into::<Acc, Lhs>(&mut workspace.max, score_matmul_accumulator, num_rows, num_cols);
-
-        exp_diff_tile::<Acc, Lhs>(
+        row_max_into::<Acc, Lhs>(
+            &mut workspace.max,
             score_matmul_accumulator,
-            &workspace.max,
             num_rows,
             num_cols,
         );
 
+        exp_diff_tile::<Acc, Lhs>(score_matmul_accumulator, &workspace.max, num_rows, num_cols);
+
         workspace.sum.fill(Acc::from_int(0));
-        row_sum_into::<Acc, Lhs>(&mut workspace.sum, score_matmul_accumulator, num_rows, num_cols);
+        row_sum_into::<Acc, Lhs>(
+            &mut workspace.sum,
+            score_matmul_accumulator,
+            num_rows,
+            num_cols,
+        );
 
         let exp_m_diff = state.0.exp_diff(&workspace.max);
 
@@ -217,8 +222,8 @@ fn scale_and_mask_array<E: Float, M: FragmentMask>(
         let row_offset = r * num_cols;
         for c in 0..num_cols {
             let index = (row_offset + c) as usize;
-            data[index] = data[index] * scale
-                + E::cast_from(mask.should_mask((r, c))) * E::min_value();
+            data[index] =
+                data[index] * scale + E::cast_from(mask.should_mask((r, c))) * E::min_value();
         }
     }
 }
