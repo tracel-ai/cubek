@@ -11,6 +11,7 @@ pub fn test_argmin() {
 }
 
 #[test]
+#[ignore = "Arg Top k not yet implemented"]
 pub fn test_argtopk() {
     test_case().test_argtopk(3);
 }

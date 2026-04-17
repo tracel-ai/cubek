@@ -85,7 +85,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMin {
         item: Item<P>,
         #[comptime] reduce_step: ReduceStep,
     ) -> Accumulator<P> {
-        let coordinate = accumulator.args.item();
+        let coordinate = item.args.item();
         let item = item.elements;
 
         let (candidate_item, candidate_coordinate) = match reduce_step {
