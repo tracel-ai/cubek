@@ -87,15 +87,6 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMin {
     ) -> Accumulator<P> {
         let coordinate = accumulator.args.item();
         let item = item.elements;
-        // #[comptime]
-        // let coordinate = match coordinate {
-        //     ReduceCoordinate::Required(val) => val,
-        //     ReduceCoordinate::NotRequired => {
-        //         comptime! {panic!("Coordinates are required for ArgMin")};
-        //         #[allow(unreachable_code)]
-        //         AccumulatorKind::new_single(Vector::new(0))
-        //     }
-        // };
 
         let (candidate_item, candidate_coordinate) = match reduce_step {
             ReduceStep::Plane => {
@@ -120,8 +111,24 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMin {
         }
     }
 
-    fn plane_reduce_inplace(_this: &Self, _accumulator: &mut Accumulator<P>) {
-        todo!()
+    fn plane_reduce_inplace(_this: &Self, accumulator: &mut Accumulator<P>) {
+        let acc_item = accumulator.elements.item();
+        let coordinate = accumulator.args.item();
+
+        let candidate_item = plane_min(acc_item);
+        let candidate_coordinate = lowest_coordinate_matching(candidate_item, acc_item, coordinate);
+
+        let (elements, args) = Self::choose_argmin(
+            accumulator.elements.item(),
+            accumulator.args.item(),
+            Vector::cast_from(candidate_item),
+            candidate_coordinate,
+        );
+
+        accumulator
+            .elements
+            .assign(&AccumulatorKind::new_single(elements));
+        accumulator.args.assign(&AccumulatorKind::new_single(args));
     }
 
     fn fuse_accumulators(

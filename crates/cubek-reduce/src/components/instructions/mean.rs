@@ -66,8 +66,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Mean {
         <Sum as ReduceInstruction<P>>::reduce(&this.sum, accumulator, item, reduce_step)
     }
 
-    fn plane_reduce_inplace(_this: &Self, _accumulatorr: &mut Accumulator<P>) {
-        todo!()
+    fn plane_reduce_inplace(this: &Self, accumulator: &mut Accumulator<P>) {
+        <Sum as ReduceInstruction<P>>::plane_reduce_inplace(&this.sum, accumulator)
     }
 
     fn fuse_accumulators(
