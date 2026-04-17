@@ -6,12 +6,10 @@ use cubecl::{
     prelude::{Array, Vector},
 };
 
-use crate::components::instructions::AccumulatorKind;
+use crate::components::instructions::{Accumulator, AccumulatorKind, Item};
 use crate::{
     ReduceFamily, ReduceInstruction, ReducePrecision,
-    components::instructions::{
-        ReduceCoordinate, ReduceRequirements, ReduceStep, SharedAccumulator,
-    },
+    components::instructions::{ReduceRequirements, ReduceStep, SharedAccumulator},
 };
 use cubecl::frontend::Numeric;
 
@@ -39,26 +37,25 @@ pub struct DummyTopkSharedAccumulator<A: CubeType + Send + Sync + 'static> {
 }
 
 #[cube]
-impl<A: CubeType + Send + Sync + 'static> SharedAccumulator for DummyTopkSharedAccumulator<A> {
-    type Item = A;
-
+impl<A: CubeType + Send + Sync + 'static, P: ReducePrecision> SharedAccumulator<P>
+    for DummyTopkSharedAccumulator<A>
+{
     fn allocate(#[comptime] _length: usize, #[comptime] _coordinate: bool) -> Self {
         unreachable!()
     }
 
-    fn read(_accumulator: &Self, _index: usize) -> Self::Item {
+    fn read(_accumulator: &Self, _index: usize) -> Accumulator<P> {
         unreachable!()
     }
 
-    fn write(_accumulator: &mut Self, _index: usize, _item: Self::Item) {
+    fn write(_accumulator: &mut Self, _index: usize, _item: Accumulator<P>) {
         unreachable!()
     }
 }
 
 #[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
-    type Accumulator = TopkAccumulator<P::EA, P::SI>;
-    type SharedAccumulator = DummyTopkSharedAccumulator<Self::Accumulator>;
+    type SharedAccumulator = DummyTopkSharedAccumulator<Accumulator<P>>;
     type Config = u32;
 
     fn requirements(_this: &Self) -> super::ReduceRequirements {
@@ -73,14 +70,14 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
         todo!("argtopk")
     }
 
-    fn null_accumulator(_this: &Self) -> Self::Accumulator {
+    fn null_accumulator(_this: &Self) -> Accumulator<P> {
         todo!("argtopk")
     }
 
     fn assign_accumulator(
         _this: &Self,
-        _destination: &mut Self::Accumulator,
-        _source: &Self::Accumulator,
+        _destination: &mut Accumulator<P>,
+        _source: &Accumulator<P>,
     ) {
         todo!("argtopk")
     }
@@ -97,29 +94,28 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
 
     fn reduce(
         _this: &Self,
-        _accumulator: &Self::Accumulator,
-        _item: Vector<P::EI, P::SI>,
-        _coordinate: ReduceCoordinate<P::SI>,
+        _accumulator: &Accumulator<P>,
+        _item: Item<P>,
         #[comptime] _reduce_step: ReduceStep,
-    ) -> Self::Accumulator {
+    ) -> Accumulator<P> {
         todo!("reduce Not implemented")
     }
 
-    fn plane_reduce_inplace(this: &Self, accumulator: &mut Self::Accumulator) {
+    fn plane_reduce_inplace(_this: &Self, _accumulator: &mut Accumulator<P>) {
         todo!()
     }
 
     fn fuse_accumulators(
         _this: &Self,
-        _lhs: Self::Accumulator,
-        _rhs: Self::Accumulator,
-    ) -> Self::Accumulator {
+        _lhs: &Accumulator<P>,
+        _rhs: &Accumulator<P>,
+    ) -> Accumulator<P> {
         todo!("fuse_accumulator Not implemented")
     }
 
     fn merge_vector<Out: Numeric>(
         _this: &Self,
-        _accumulator: Self::Accumulator,
+        _accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
     ) -> AccumulatorKind<Out> {
         todo!("merge_vector Not implemented")
@@ -127,7 +123,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
 
     fn to_output_perpendicular<Out: Numeric>(
         _this: &Self,
-        _accumulator: Self::Accumulator,
+        _accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
     ) -> AccumulatorKind<Vector<Out, P::SI>> {
         todo!("to_output_perpendicular Not implemented")

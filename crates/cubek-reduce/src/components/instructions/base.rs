@@ -171,8 +171,8 @@ pub struct Item<P: ReducePrecision> {
 
 #[derive(CubeType)]
 pub struct Accumulator<P: ReducePrecision> {
-    elements: AccumulatorKind<Vector<P::EA, P::SI>>,
-    args: AccumulatorKind<Vector<u32, P::SI>>,
+    pub(crate) elements: AccumulatorKind<Vector<P::EA, P::SI>>,
+    pub args: AccumulatorKind<Vector<u32, P::SI>>,
 }
 
 /// A simple trait that abstract over a single or multiple shared memory.
