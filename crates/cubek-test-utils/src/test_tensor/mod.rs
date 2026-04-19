@@ -10,4 +10,4 @@ mod zeros;
 
 pub use base::*;
 pub use host_data::*;
-pub use strides::StrideSpec;
+pub use strides::{StrideSpec, physical_extent};

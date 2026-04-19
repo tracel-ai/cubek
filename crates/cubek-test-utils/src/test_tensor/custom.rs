@@ -1,36 +1,14 @@
 use cubecl::{
-    TestRuntime, calculate_cube_count_elemwise,
+    TestRuntime,
+    client::ComputeClient,
+    ir::{ElemType, FloatKind, StorageType},
     prelude::*,
-    std::tensor::{TensorHandle, ViewOperationsMut, ViewOperationsMutExpand},
+    std::tensor::TensorHandle,
     zspace::{Shape, Strides},
 };
 
 use crate::BaseInputSpec;
-
-#[cube(launch)]
-fn custom_data_launch<T: Numeric>(
-    tensor: &mut Tensor<T>,
-    contiguous_data: Array<f32>,
-    #[define(T)] _types: StorageType,
-) {
-    let linear = ABSOLUTE_POS;
-
-    if linear >= tensor.len() {
-        terminate!();
-    }
-
-    let mut remaining = linear;
-    let mut offset = 0;
-
-    for d in 0..tensor.rank() {
-        let dim = tensor.shape(tensor.rank() - 1 - d);
-        let idx = remaining % dim;
-        remaining /= dim;
-        offset += idx * tensor.stride(tensor.rank() - 1 - d);
-    }
-
-    tensor.write_checked(offset, T::cast_from(contiguous_data[linear]));
-}
+use crate::test_tensor::strides::physical_extent;
 
 fn new_custom_data(
     client: &ComputeClient<TestRuntime>,
@@ -39,35 +17,65 @@ fn new_custom_data(
     dtype: StorageType,
     contiguous_data: Vec<f32>,
 ) -> TensorHandle<TestRuntime> {
-    let num_elems = shape.iter().product::<usize>();
-    assert!(contiguous_data.len() == num_elems);
-
-    // Performance is not important here and this simplifies greatly the problem
-    let vector_size = 1;
-
-    let working_units: u32 = num_elems as u32 / vector_size as u32;
-    let cube_dim = CubeDim::new(client, working_units as usize);
-    let cube_count = calculate_cube_count_elemwise(client, working_units as usize, cube_dim);
-
-    let out = TensorHandle::new(
-        client.empty(dtype.size() * num_elems),
-        shape,
-        strides,
-        dtype,
+    let num_logical = shape.iter().product::<usize>();
+    assert_eq!(
+        contiguous_data.len(),
+        num_logical,
+        "DataKind::Custom expects data.len() == product(shape)",
     );
 
-    let contiguous_handle = client.create_from_slice(f32::as_bytes(&contiguous_data));
+    let physical_size = physical_extent(&shape, &strides);
 
-    custom_data_launch::launch::<TestRuntime>(
-        client,
-        cube_count,
-        cube_dim,
-        out.clone().into_arg(),
-        unsafe { ArrayArg::from_raw_parts(contiguous_handle, num_elems) },
-        dtype,
-    );
+    let mut physical = vec![0.0f32; physical_size];
+    scatter_logical_to_physical(&shape, &strides, &contiguous_data, &mut physical);
 
-    out
+    let bytes = cast_f32_to_dtype(&physical, dtype);
+    let handle = client.create_from_slice(&bytes);
+
+    TensorHandle::new(handle, shape, strides, dtype)
+}
+
+/// Scatter logical-indexed `src` values to their physical offsets in `dst`.
+///
+/// When two logical indices map to the same physical offset (a broadcast
+/// stride), the last write wins. Callers that care must supply values that
+/// agree across the duplicate indices.
+fn scatter_logical_to_physical(shape: &Shape, strides: &Strides, src: &[f32], dst: &mut [f32]) {
+    let rank = shape.len();
+    let mut coord = vec![0usize; rank];
+
+    for (linear, &value) in src.iter().enumerate() {
+        let mut rem = linear;
+        for d in (0..rank).rev() {
+            coord[d] = rem % shape[d];
+            rem /= shape[d];
+        }
+        let offset: usize = coord.iter().zip(strides.iter()).map(|(c, s)| c * s).sum();
+        dst[offset] = value;
+    }
+}
+
+fn cast_f32_to_dtype(data: &[f32], dtype: StorageType) -> Vec<u8> {
+    match dtype {
+        StorageType::Scalar(ElemType::Float(FloatKind::F32)) => f32::as_bytes(data).to_vec(),
+        StorageType::Scalar(ElemType::Float(FloatKind::F16)) => {
+            let casted: Vec<half::f16> = data.iter().map(|&x| half::f16::from_f32(x)).collect();
+            half::f16::as_bytes(&casted).to_vec()
+        }
+        StorageType::Scalar(ElemType::Float(FloatKind::BF16)) => {
+            let casted: Vec<half::bf16> = data.iter().map(|&x| half::bf16::from_f32(x)).collect();
+            half::bf16::as_bytes(&casted).to_vec()
+        }
+        StorageType::Scalar(ElemType::UInt(cubecl::ir::UIntKind::U32)) => {
+            let casted: Vec<u32> = data.iter().map(|&x| x as u32).collect();
+            u32::as_bytes(&casted).to_vec()
+        }
+        StorageType::Scalar(ElemType::Int(cubecl::ir::IntKind::I32)) => {
+            let casted: Vec<i32> = data.iter().map(|&x| x as i32).collect();
+            i32::as_bytes(&casted).to_vec()
+        }
+        other => panic!("DataKind::Custom: unsupported storage type {other:?}"),
+    }
 }
 
 pub(crate) fn build_custom(

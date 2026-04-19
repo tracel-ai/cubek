@@ -7,16 +7,17 @@ use cubecl::{
     {TestRuntime, server::ServerError},
 };
 use cubek_reduce::{
-    ReduceDtypes, ReduceError, ReducePrecision, ReduceStrategy,
-    components::instructions::ReduceOperationConfig, launch::RoutineStrategy, reduce,
+    ReduceDtypes, ReducePrecision, ReduceStrategy, components::instructions::ReduceOperationConfig,
+    reduce,
 };
 use cubek_test_utils::{
-    DataKind, HostData, HostDataType, HostDataVec, StrideSpec, TestInput, assert_equals_approx,
+    DataKind, ExecutionOutcome, HostData, HostDataType, HostDataVec, StrideSpec, TestInput,
+    TestOutcome, assert_equals_approx,
 };
 
 use crate::it::reference::{
-    reference_argmax, reference_argmin, reference_argtopk, reference_max, reference_max_abs,
-    reference_mean, reference_min, reference_prod, reference_sum,
+    contiguous_strides, reference_argmax, reference_argmin, reference_argtopk, reference_max,
+    reference_max_abs, reference_mean, reference_min, reference_prod, reference_sum,
 };
 
 pub struct TestCase {
@@ -63,7 +64,6 @@ impl TestCase {
     }
 
     pub fn test_sum(&self) {
-        println!("Printing test: {self:?}");
         self.run_reduce_test(
             |input, axis| reference_sum(input, axis),
             self.input_dtype,
@@ -87,13 +87,11 @@ impl TestCase {
             self.input_dtype,
             ReduceOperationConfig::Prod,
             // Prod accumulates exponential error; use a loose relative bound.
-            // Exact zeros are avoided in the input data generator.
             1.0,
         );
     }
 
     pub fn test_min(&self) {
-        println!("Printing test: {self:?}");
         self.run_reduce_test(
             |input, axis| reference_min(input, axis),
             self.input_dtype,
@@ -103,7 +101,6 @@ impl TestCase {
     }
 
     pub fn test_max(&self) {
-        println!("Printing test: {self:?}");
         self.run_reduce_test(
             |input, axis| reference_max(input, axis),
             self.input_dtype,
@@ -113,7 +110,6 @@ impl TestCase {
     }
 
     pub fn test_max_abs(&self) {
-        println!("Printing test: {self:?}");
         self.run_reduce_test(
             |input, axis| reference_max_abs(input, axis),
             self.input_dtype,
@@ -160,22 +156,6 @@ impl TestCase {
         epsilon: f32,
     ) {
         let client = TestRuntime::client(&Default::default());
-
-        if let RoutineStrategy::Cube(_blueprint) = &self.strategy.routine
-            && client.properties().hardware.num_cpu_cores.is_some()
-        {
-            let test_full = std::env::var("CUBEK_TEST_FULL").unwrap_or_else(|_| "0".to_string());
-            match test_full.as_str() {
-                "1" | "true" => {}
-                _ => {
-                    println!(
-                        "Skipping cube tests on CPU, because they are long to run and can stall the CI"
-                    );
-                    return;
-                }
-            }
-        }
-
         let axis = self.axis.unwrap();
 
         let (input_handle, input_host) = self.setup_input(&client);
@@ -213,33 +193,15 @@ impl TestCase {
             Err(err) => panic!("{err:?}"),
         }
 
-        match result {
-            Ok(_) => {}
-            Err(e) => {
-                let is_ok = matches!(e, ReduceError::PlanesUnavailable)
-                    || matches!(e, ReduceError::ImprecisePlaneDim)
-                    || matches!(e, ReduceError::Validation { .. });
-
-                let test_mode = match is_ok {
-                    true => std::env::var("CUBEK_TEST_MODE").unwrap_or_else(|_| "skip".to_string()),
-                    false => "unexpected_error".to_string(),
-                };
-
-                match test_mode.as_str() {
-                    "skip" => {}
-                    "verbose" => println!("Skipping: {e:?}"),
-                    mode => panic!("TestMode='{mode}', the test didn't run:\n {e:?}"),
-                };
-
-                return;
+        let outcome = match ExecutionOutcome::from(result) {
+            ExecutionOutcome::Executed => {
+                let actual =
+                    HostData::from_tensor_handle(&client, output_handle, HostDataType::F32);
+                assert_equals_approx(&actual, &expected, epsilon).as_test_outcome()
             }
-        }
-
-        let actual = HostData::from_tensor_handle(&client, output_handle, HostDataType::F32);
-
-        assert_equals_approx(&actual, &expected, epsilon)
-            .as_test_outcome()
-            .enforce();
+            ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
+        };
+        outcome.enforce();
     }
 
     fn build_output_tensor(
@@ -248,75 +210,65 @@ impl TestCase {
         output_dtype: StorageType,
         output_shape: &Shape,
     ) -> TensorHandle<TestRuntime> {
-        let strides: Vec<usize> = contiguous_strides_vec(output_shape.as_slice());
+        let strides = contiguous_strides(output_shape.as_slice());
         TestInput::new(
             client.clone(),
             output_shape.clone(),
             output_dtype,
-            StrideSpec::Custom(strides),
+            StrideSpec::Custom(strides.iter().copied().collect()),
             DataKind::Zeros,
         )
         .generate()
     }
 
-    /// Build the input tensor + reference HostData.
+    /// Build the device tensor and a matching logical-layout host reference.
     ///
-    /// We bypass `TestInput` because it allocates a buffer of size
-    /// `product(shape)` and assumes a contiguous write pattern. That fails for two
-    /// cases we want to cover:
-    ///   * jumpy strides (e.g. `stride=[512, 1], shape=[256, 256]`) where the
-    ///     physical extent exceeds `product(shape)`;
-    ///   * broadcast strides (stride == 0) where the `TestInput` custom-data kernel
-    ///     would race on overlapping offsets.
-    ///
-    /// We compute a physical buffer size from the shape/stride pair and populate it
-    /// directly so the GPU and the host reference read exactly the same values.
+    /// The host reference uses contiguous strides over the original shape so
+    /// reference functions can iterate with plain logical coordinates. Broadcast
+    /// inputs (stride == 0) are safe because [`logical_input_data`] produces the
+    /// same value for every logical coordinate that maps to the same physical
+    /// offset.
     fn setup_input(
         &self,
         client: &cubecl::client::ComputeClient<TestRuntime>,
     ) -> (TensorHandle<TestRuntime>, HostData) {
-        let physical_size = physical_buffer_size(&self.shape, &self.stride);
-        let data = self.physical_input_data(physical_size);
+        let logical_data = self.logical_input_data();
 
-        let handle = create_input_handle(client, self.input_dtype, &data);
-
-        let tensor_handle = TensorHandle::new(
-            handle,
+        let tensor_handle = TestInput::new(
+            client.clone(),
             self.shape.clone(),
-            self.stride.clone(),
             self.input_dtype,
-        );
+            StrideSpec::Custom(self.stride.iter().copied().collect()),
+            DataKind::Custom {
+                data: logical_data.clone(),
+            },
+        )
+        .generate();
 
-        // The host-side reference must see the exact f32 values the GPU will see,
-        // which for non-f32 input dtypes means the data round-tripped through the
-        // target dtype's precision.
-        let host_data = round_trip_to_f32(&data, self.input_dtype);
+        let host_values = round_trip_to_f32(&logical_data, self.input_dtype);
         let host = HostData {
-            data: HostDataVec::F32(host_data),
+            data: HostDataVec::F32(host_values),
             shape: self.shape.clone(),
-            strides: self.stride.clone(),
+            strides: contiguous_strides(self.shape.as_slice()),
         };
 
         (tensor_handle, host)
     }
 
-    /// Generate deterministic f32 values addressed by physical offset.
+    /// Deterministic values at each logical coordinate.
     ///
-    /// For each physical offset we decode the logical coordinate (via the tensor
-    /// strides) and hash it. Offsets that don't correspond to any logical index are
-    /// filled with zero — they're never read by the reduce kernel via shape/stride
-    /// indexing. The hash zeroes out any coordinate whose axis has stride 0 so
-    /// broadcast reads return the same value for every broadcast index.
+    /// Values are drawn from `{±0.125, ±0.25, …, ±1.0}` — all magnitudes ≤ 1,
+    /// so the product of any subset is bounded and cannot overflow f32 under
+    /// any reduction order (needed for `test_prod` on long axes).
     ///
-    /// Values are drawn from the 16 non-zero elements of
-    /// `{-2, -1.75, …, -0.25, 0.25, …, 2}` to keep `prod` from collapsing to zero.
-    fn physical_input_data(&self, physical_size: usize) -> Vec<f32> {
-        let shape: &[usize] = self.shape.as_slice();
+    /// For broadcast dims (stride == 0) we zero the coord before hashing so
+    /// every logical index mapping to the same physical offset yields the
+    /// same value — required for the device-side scatter to be well defined.
+    fn logical_input_data(&self) -> Vec<f32> {
+        let shape = self.shape.as_slice();
         let rank = shape.len();
-        let stride: Vec<usize> = self.stride.iter().copied().collect();
         let num_logical: usize = shape.iter().product();
-
-        let mut data = vec![0.0f32; physical_size];
+        let mut data = Vec::with_capacity(num_logical);
         let mut coord = vec![0usize; rank];
 
         for linear in 0..num_logical {
@@ -325,60 +277,23 @@ impl TestCase {
                 coord[d] = rem % shape[d];
                 rem /= shape[d];
             }
-
-            let mut offset = 0usize;
             for d in 0..rank {
-                offset += coord[d] * stride[d];
-            }
-
-            let mut hash_coord = coord.clone();
-            for d in 0..rank {
-                if stride[d] == 0 {
-                    hash_coord[d] = 0;
+                if self.stride[d] == 0 {
+                    coord[d] = 0;
                 }
             }
+
             let mut hash: usize = 0;
-            for (d, c) in hash_coord.iter().enumerate() {
+            for (d, c) in coord.iter().enumerate() {
                 hash = hash.wrapping_add(c.wrapping_mul(d.wrapping_add(31)));
             }
             let h = hash % 16;
-            let magnitude = (h / 2 + 1) as f32 * 0.25;
+            let magnitude = (h / 2 + 1) as f32 * 0.125;
             let sign = if h % 2 == 0 { 1.0 } else { -1.0 };
-            data[offset] = sign * magnitude;
+            data.push(sign * magnitude);
         }
 
         data
-    }
-}
-
-fn physical_buffer_size(shape: &Shape, stride: &Strides) -> usize {
-    let mut max_offset = 0usize;
-    for (s, d) in stride.iter().zip(shape.iter()) {
-        if *d > 0 && *s > 0 {
-            max_offset += (d - 1) * s;
-        }
-    }
-    max_offset + 1
-}
-
-fn create_input_handle(
-    client: &cubecl::client::ComputeClient<TestRuntime>,
-    dtype: StorageType,
-    data: &[f32],
-) -> cubecl::server::Handle {
-    match dtype {
-        StorageType::Scalar(ElemType::Float(FloatKind::F32)) => {
-            client.create_from_slice(f32::as_bytes(data))
-        }
-        StorageType::Scalar(ElemType::Float(FloatKind::F16)) => {
-            let casted: Vec<half::f16> = data.iter().map(|&x| half::f16::from_f32(x)).collect();
-            client.create_from_slice(half::f16::as_bytes(&casted))
-        }
-        StorageType::Scalar(ElemType::Float(FloatKind::BF16)) => {
-            let casted: Vec<half::bf16> = data.iter().map(|&x| half::bf16::from_f32(x)).collect();
-            client.create_from_slice(half::bf16::as_bytes(&casted))
-        }
-        other => panic!("Unsupported input dtype for reduce tests: {other:?}"),
     }
 }
 
@@ -416,17 +331,4 @@ fn cast_host_through_dtype(mut host: HostData, dtype: StorageType) -> HostData {
         host.data = HostDataVec::F32(casted);
     }
     host
-}
-
-fn contiguous_strides_vec(shape: &[usize]) -> Vec<usize> {
-    let n = shape.len();
-    if n == 0 {
-        return vec![];
-    }
-    let mut s = vec![0usize; n];
-    s[n - 1] = 1;
-    for i in (0..n - 1).rev() {
-        s[i] = s[i + 1] * shape[i + 1];
-    }
-    s
 }
