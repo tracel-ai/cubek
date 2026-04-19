@@ -104,7 +104,8 @@ fn get_server_error(client: &ComputeClient<TestRuntime>) -> Option<ExecutionOutc
             #[allow(clippy::never_loop)]
             for error in errors.iter() {
                 match error {
-                    cubecl::server::ServerError::Launch(LaunchError::TooManyResources(_)) => {
+                    cubecl::server::ServerError::Launch(LaunchError::TooManyResources(_))
+                    | cubecl::server::ServerError::Launch(LaunchError::CompilationError(_)) => {
                         return Some(ExecutionOutcome::CompileError(format!("{errors:?}")));
                     }
                     _ => panic!("Unexpected error: {errors:?}"),

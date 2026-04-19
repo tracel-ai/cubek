@@ -243,7 +243,8 @@ pub fn launch_matmul_algorithm<A: Routine<()>>(
             #[allow(clippy::never_loop)]
             for error in errors.iter() {
                 match error {
-                    cubecl::server::ServerError::Launch(LaunchError::TooManyResources(_)) => {
+                    cubecl::server::ServerError::Launch(LaunchError::TooManyResources(_))
+                    | cubecl::server::ServerError::Launch(LaunchError::CompilationError(_)) => {
                         return ExecutionOutcome::CompileError(format!("{errors:?}"));
                     }
                     _ => panic!("{errors:?}"),
