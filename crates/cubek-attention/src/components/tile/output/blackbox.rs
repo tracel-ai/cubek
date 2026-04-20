@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use cubecl;
 use cubecl::prelude::*;
-use cubek_matmul::components::tile::{Tile, TileExpand, cmma_allocate_acc, tile_write};
+use cubek_matmul::components::tile::{Plane, Tile, TileExpand, cmma_allocate_acc, tile_write};
 use cubek_std::MatrixLayout;
 
 use crate::{
@@ -62,7 +62,7 @@ impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA>
     type Workspace = BlackboxAttentionOutputWorkspace<Acc>;
 
     fn scale_mul(
-        tile: &mut Tile<Acc, VA, ReadWrite>,
+        tile: &mut Tile<Acc, VA, Plane, ReadWrite>,
         scale: &Self::ScaleColumn,
         workspace: &mut Self::Workspace,
         #[comptime] config: Self::Config,
@@ -72,7 +72,7 @@ impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA>
     }
 
     fn scale_div(
-        tile: &mut Tile<Acc, VA, ReadWrite>,
+        tile: &mut Tile<Acc, VA, Plane, ReadWrite>,
         running_state: &Self::RunningState,
         workspace: &mut Self::Workspace,
         #[comptime] config: Self::Config,
@@ -86,8 +86,8 @@ impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA>
         Self::Workspace::new(config)
     }
 
-    fn init_tile(#[comptime] config: Self::Config) -> Tile<Acc, VA, ReadWrite> {
-        let mut tile = cmma_allocate_acc::<Acc, VA>(
+    fn init_tile(#[comptime] config: Self::Config) -> Tile<Acc, VA, Plane, ReadWrite> {
+        let mut tile = cmma_allocate_acc::<Acc, VA, Plane>(
             MatrixLayout::RowMajor,
             config.tile_size.to_value_matmul_tile_size(),
         );
@@ -96,17 +96,17 @@ impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA>
     }
 
     fn write_results<E: Float, ES: Size>(
-        source: &mut Tile<Acc, VA, ReadWrite>,
-        dest: &mut Tile<E, ES, ReadWrite>,
+        source: &mut Tile<Acc, VA, Plane, ReadWrite>,
+        dest: &mut Tile<E, ES, Plane, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        tile_write::<E, ES, Acc, VA, Acc, Acc>(dest, source);
+        tile_write::<E, ES, Acc, VA, Acc, Acc, Plane>(dest, source);
     }
 }
 
 #[cube]
 fn scale_cmma_tile<Acc: Float, VA: Size>(
-    tile: &mut Tile<Acc, VA, ReadWrite>,
+    tile: &mut Tile<Acc, VA, Plane, ReadWrite>,
     scale: &RowWise<Acc>,
     workspace: &mut BlackboxAttentionOutputWorkspace<Acc>,
     #[comptime] config: BlackboxOutputConfig,
@@ -155,7 +155,7 @@ fn scale_cmma_matrix<Acc: Float>(
 }
 
 #[cube]
-fn zero_cmma_tile<Acc: Float, VA: Size>(tile: &mut Tile<Acc, VA, ReadWrite>) {
+fn zero_cmma_tile<Acc: Float, VA: Size>(tile: &mut Tile<Acc, VA, Plane, ReadWrite>) {
     match tile {
         Tile::Cmma(t) => cmma::fill(&t.matrix, Acc::from_int(0)),
         Tile::Register(_dummy) => panic!("BlackboxAttentionOutput expects a Tile::Cmma"),

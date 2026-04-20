@@ -42,6 +42,7 @@ pub struct PlaneMatmulFamily<
 impl<TM: TileMatmulFamily, StageLhs: StageFamily, StageRhs: StageFamily, StageAcc: StageFamily>
     StageMatmulFamily for PlaneMatmulFamily<TM, StageLhs, StageRhs, StageAcc>
 {
+    type Scope = TM::Scope;
     type LhsStage = StageLhs;
     type RhsStage = StageRhs;
     type AccStage = StageAcc;

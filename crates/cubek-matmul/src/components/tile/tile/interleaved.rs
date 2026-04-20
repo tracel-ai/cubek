@@ -1,16 +1,17 @@
 use cubecl::prelude::*;
 use cubek_std::{MatrixLayout, tile::StridedTile};
 
+use crate::components::tile::tile::Scope;
 use crate::components::tile::{SharedTileConfig, TileConfig};
 use crate::definition::StageIdent;
 
 use super::{InterleavedTile, Tile};
 
 #[cube]
-pub fn interleaved_allocate_lhs<L: Numeric, VL: Size>(
+pub fn interleaved_allocate_lhs<L: Numeric, VL: Size, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: SharedTileConfig,
-) -> Tile<L, VL, ReadWrite> {
+) -> Tile<L, VL, Sc, ReadWrite> {
     let m = config.elements_in_tile_m();
     let k = config.elements_in_tile_k();
     let plane_dim = config.plane_dim();
@@ -22,10 +23,10 @@ pub fn interleaved_allocate_lhs<L: Numeric, VL: Size>(
 }
 
 #[cube]
-pub fn interleaved_allocate_rhs<R: Numeric, VR: Size>(
+pub fn interleaved_allocate_rhs<R: Numeric, VR: Size, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: SharedTileConfig,
-) -> Tile<R, VR, ReadWrite> {
+) -> Tile<R, VR, Sc, ReadWrite> {
     let n = config.elements_in_tile_n();
     let k = config.elements_in_tile_k();
     let plane_dim = config.plane_dim();
@@ -37,10 +38,10 @@ pub fn interleaved_allocate_rhs<R: Numeric, VR: Size>(
 }
 
 #[cube]
-pub fn interleaved_allocate_acc<A: Numeric, VA: Size>(
+pub fn interleaved_allocate_acc<A: Numeric, VA: Size, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: SharedTileConfig,
-) -> Tile<A, VA, ReadWrite> {
+) -> Tile<A, VA, Sc, ReadWrite> {
     let m = config.elements_in_tile_m();
     let n = config.elements_in_tile_n();
     Tile::new_Interleaved(InterleavedTile::<A> {

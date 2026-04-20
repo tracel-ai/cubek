@@ -2,7 +2,7 @@ use crate::{
     components::{
         resource::CubeDimResource,
         tile::{
-            SharedTileConfig, TileMatmulFamily,
+            Plane, SharedTileConfig, TileMatmulFamily,
             mma::{MmaMatmul, config::MmaMatmulConfig},
         },
     },
@@ -29,6 +29,7 @@ where
     MmaStageReader<Option<Strided>>: MmaFragmentReader<TileKind = Option<Strided>>,
 {
     type Config = MmaMatmulConfig;
+    type Scope = Plane;
 
     type Matmul<L: Numeric, NL: Size, R: Numeric, NR: Size, A: Numeric, NA: Size> = MmaMatmul;
 

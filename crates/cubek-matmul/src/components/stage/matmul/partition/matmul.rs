@@ -19,6 +19,7 @@ use crate::{
 use cubecl::prelude::*;
 use cubek_std::{PartitionSize, StageSize, stage::StageMemoryConfig};
 
+
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct SharedPartitionMatmulConfig<TC: TileConfig> {
     pub tile_config: TC,
@@ -113,6 +114,7 @@ where
             Tile<
                 <MP::Lhs as MatrixTypes>::Register,
                 <MP::Lhs as MatrixTypes>::RegisterSize,
+                TM::Scope,
                 ReadWrite,
             >,
         >,
@@ -120,6 +122,7 @@ where
             Tile<
                 <MP::Rhs as MatrixTypes>::Register,
                 <MP::Rhs as MatrixTypes>::RegisterSize,
+                TM::Scope,
                 ReadWrite,
             >,
         >,
@@ -165,6 +168,7 @@ where
             Tile<
                 <MP::Lhs as MatrixTypes>::Register,
                 <MP::Lhs as MatrixTypes>::RegisterSize,
+                TM::Scope,
                 ReadWrite,
             >,
         >,
@@ -172,6 +176,7 @@ where
             Tile<
                 <MP::Rhs as MatrixTypes>::Register,
                 <MP::Rhs as MatrixTypes>::RegisterSize,
+                TM::Scope,
                 ReadWrite,
             >,
         >,
@@ -247,12 +252,14 @@ where
             Tile<
                 <MP::Lhs as MatrixTypes>::Register,
                 <MP::Lhs as MatrixTypes>::RegisterSize,
+                TM::Scope,
                 ReadWrite,
             >,
         >,
         rhs_fragment: &mut Tile<
             <MP::Rhs as MatrixTypes>::Register,
             <MP::Rhs as MatrixTypes>::RegisterSize,
+            TM::Scope,
             ReadWrite,
         >,
         acc: &mut Accumulators<MP, TM>,
@@ -281,7 +288,7 @@ where
             for m_iter in 0..m_iterations {
                 let m_load_iter = partition_scheduler.map_m(m_iter as u32);
 
-                let tile_lhs = StageLhs::tile(lhs_stage, (m_load_iter, k_load_iter));
+                let tile_lhs = StageLhs::tile::<TM::Scope>(lhs_stage, (m_load_iter, k_load_iter));
                 TM::load_lhs(
                     &tile_lhs,
                     lhs_fragment.index_mut(m_iter),
@@ -301,7 +308,7 @@ where
             for n_iter in 0..n_iterations {
                 let n_load_iter = partition_scheduler.map_n(n_iter as u32);
 
-                let rhs_tile_next = StageRhs::tile(rhs_stage, (k_load_iter, n_load_iter));
+                let rhs_tile_next = StageRhs::tile::<TM::Scope>(rhs_stage, (k_load_iter, n_load_iter));
                 TM::load_rhs(&rhs_tile_next, rhs_fragment, shared_config.tile_config);
                 SEL::on_event(
                     &mut listener,
@@ -351,6 +358,7 @@ where
             Tile<
                 <MP::Lhs as MatrixTypes>::Register,
                 <MP::Lhs as MatrixTypes>::RegisterSize,
+                TM::Scope,
                 ReadWrite,
             >,
         >,
@@ -358,11 +366,13 @@ where
             Tile<
                 <MP::Rhs as MatrixTypes>::Register,
                 <MP::Rhs as MatrixTypes>::RegisterSize,
+                TM::Scope,
                 ReadWrite,
             >,
             Tile<
                 <MP::Rhs as MatrixTypes>::Register,
                 <MP::Rhs as MatrixTypes>::RegisterSize,
+                TM::Scope,
                 ReadWrite,
             >,
         ),
@@ -392,7 +402,7 @@ where
             for m_iter in 0..m_iterations {
                 let m_load_iter = partition_scheduler.map_m(m_iter as u32);
 
-                let tile_lhs = StageLhs::tile(lhs_stage, (m_load_iter, k_load_iter));
+                let tile_lhs = StageLhs::tile::<TM::Scope>(lhs_stage, (m_load_iter, k_load_iter));
                 TM::load_lhs(
                     &tile_lhs,
                     lhs_fragment.index_mut(m_iter),
@@ -411,7 +421,7 @@ where
             let mut n_iter = 0usize.comptime();
             let n_load_iter = partition_scheduler.map_n(n_iter as u32);
 
-            let rhs_tile_first = StageRhs::tile(rhs_stage, (k_load_iter, n_load_iter));
+            let rhs_tile_first = StageRhs::tile::<TM::Scope>(rhs_stage, (k_load_iter, n_load_iter));
             TM::load_rhs(
                 &rhs_tile_first,
                 &mut rhs_fragments.0,
@@ -436,7 +446,7 @@ where
                 };
 
                 let n_load_iter = partition_scheduler.map_n(comptime![n_iter as u32 + 1]);
-                let rhs_tile_next = StageRhs::tile(rhs_stage, (k_load_iter, n_load_iter));
+                let rhs_tile_next = StageRhs::tile::<TM::Scope>(rhs_stage, (k_load_iter, n_load_iter));
                 TM::load_rhs(&rhs_tile_next, next, shared_config.tile_config);
                 SEL::on_event(
                     &mut listener,

@@ -5,6 +5,7 @@ use cubek_std::{
     tile::{Filled, Strided, StridedTile},
 };
 
+use crate::components::tile::tile::Scope;
 use crate::components::tile::{SharedTileConfig, TileConfig};
 
 use super::{MmaTile, Tile};
@@ -38,11 +39,11 @@ pub fn mma_register_vector_sizes<L: Numeric, R: Numeric, A: Numeric>(def: MmaDef
 }
 
 #[cube]
-pub fn mma_allocate_lhs<L: Numeric, VL: Size, R: Numeric, A: Numeric>(
+pub fn mma_allocate_lhs<L: Numeric, VL: Size, R: Numeric, A: Numeric, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: SharedTileConfig,
     #[comptime] mma_io_config: MmaIOConfig,
-) -> Tile<L, VL, ReadWrite> {
+) -> Tile<L, VL, Sc, ReadWrite> {
     let def = make_mma_definition::<L, R, A>(config);
     mma_register_vector_sizes(def);
     let vector_count = def.vectors_per_lane(MatrixIdent::A);
@@ -56,11 +57,11 @@ pub fn mma_allocate_lhs<L: Numeric, VL: Size, R: Numeric, A: Numeric>(
 }
 
 #[cube]
-pub fn mma_allocate_rhs<R: Numeric, VR: Size, L: Numeric, A: Numeric>(
+pub fn mma_allocate_rhs<R: Numeric, VR: Size, L: Numeric, A: Numeric, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: SharedTileConfig,
     #[comptime] mma_io_config: MmaIOConfig,
-) -> Tile<R, VR, ReadWrite> {
+) -> Tile<R, VR, Sc, ReadWrite> {
     let def = make_mma_definition::<L, R, A>(config);
     mma_register_vector_sizes(def);
     let vector_count = def.vectors_per_lane(MatrixIdent::B);
@@ -74,11 +75,11 @@ pub fn mma_allocate_rhs<R: Numeric, VR: Size, L: Numeric, A: Numeric>(
 }
 
 #[cube]
-pub fn mma_allocate_acc<A: Numeric, VA: Size, L: Numeric, R: Numeric>(
+pub fn mma_allocate_acc<A: Numeric, VA: Size, L: Numeric, R: Numeric, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: SharedTileConfig,
     #[comptime] mma_io_config: MmaIOConfig,
-) -> Tile<A, VA, ReadWrite> {
+) -> Tile<A, VA, Sc, ReadWrite> {
     let def = make_mma_definition::<L, R, A>(config);
     mma_register_vector_sizes(def);
     let vector_count = def.vectors_per_lane(MatrixIdent::Accumulator);

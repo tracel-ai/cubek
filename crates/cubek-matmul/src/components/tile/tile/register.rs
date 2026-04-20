@@ -1,6 +1,7 @@
 use cubecl::prelude::*;
 use cubek_std::{MatrixLayout, tile::StridedTile};
 
+use crate::components::tile::tile::Scope;
 use crate::components::tile::{ProductType, SharedTileConfig, TileConfig};
 use crate::definition::StageIdent;
 
@@ -9,11 +10,11 @@ use super::{RegisterTile, Tile};
 pub(crate) const UNROLL: bool = false;
 
 #[cube]
-pub fn register_allocate_lhs<L: Numeric, VL: Size>(
+pub fn register_allocate_lhs<L: Numeric, VL: Size, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: SharedTileConfig,
     #[comptime] product_type: ProductType,
-) -> Tile<L, VL, ReadWrite> {
+) -> Tile<L, VL, Sc, ReadWrite> {
     Tile::new_Register(RegisterTile::<L> {
         data: Array::new((config.elements_in_tile_m() * config.elements_in_tile_k()) as usize),
         matrix_layout: layout,
@@ -23,11 +24,11 @@ pub fn register_allocate_lhs<L: Numeric, VL: Size>(
 }
 
 #[cube]
-pub fn register_allocate_rhs<R: Numeric, VR: Size>(
+pub fn register_allocate_rhs<R: Numeric, VR: Size, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: SharedTileConfig,
     #[comptime] product_type: ProductType,
-) -> Tile<R, VR, ReadWrite> {
+) -> Tile<R, VR, Sc, ReadWrite> {
     Tile::new_Register(RegisterTile::<R> {
         data: Array::new((config.elements_in_tile_n() * config.elements_in_tile_k()) as usize),
         matrix_layout: layout,
@@ -37,11 +38,11 @@ pub fn register_allocate_rhs<R: Numeric, VR: Size>(
 }
 
 #[cube]
-pub fn register_allocate_acc<A: Numeric, VA: Size>(
+pub fn register_allocate_acc<A: Numeric, VA: Size, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: SharedTileConfig,
     #[comptime] product_type: ProductType,
-) -> Tile<A, VA, ReadWrite> {
+) -> Tile<A, VA, Sc, ReadWrite> {
     Tile::new_Register(RegisterTile::<A> {
         data: Array::new((config.elements_in_tile_m() * config.elements_in_tile_n()) as usize),
         matrix_layout: layout,

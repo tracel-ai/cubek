@@ -31,6 +31,7 @@ type SSz<T> = crate::definition::StageSize<T>;
 impl<TM: TileMatmulFamily, StageIn: StageFamily, StageAcc: StageFamily> StageMatmulFamily
     for UnitMatmulFamily<TM, StageIn, StageAcc>
 {
+    type Scope = TM::Scope;
     type LhsStage = StageIn;
     type RhsStage = StageIn;
     type AccStage = StageAcc;

@@ -9,7 +9,7 @@ use crate::{
         CubeDimResource,
         global::{PlaneFlowConfig, WriteEventListener},
         stage::{NumStages, PartitionScheduler},
-        tile::{Tile, TileConfig},
+        tile::{Scope, Tile, TileConfig},
     },
     definition::{
         Acc, Lhs, MatmulElems, MatmulSetupError, MatmulTypes, MatmulVectorSizes, Rhs,
@@ -25,10 +25,15 @@ type Sz<T> = crate::definition::StageSize<T>;
 
 /// A family of [StageMatmul] implementations that operate with any [precision](MatmulPrecision).
 pub trait StageMatmulFamily: Send + Sync + 'static {
+    /// Compute primitive used by the underlying tile matmul
+    /// (forwarded from [TileMatmulFamily::Scope](super::super::tile::TileMatmulFamily::Scope)).
+    type Scope: Scope;
+
     /// The specific TileMatmul implementation associated with this family.
     type Matmul<MP: MatmulTypes, TL: TilingLayout, TR: TilingLayout, TA: TilingLayout, TO: TilingLayout>: StageMatmul<
             MP,
             Config = Self::Config,
+            Scope = Self::Scope,
             LhsStage = <Self::LhsStage as StageFamily>::Stage<Ty<Lhs<MP>>, Sz<Lhs<MP>>, TL>,
             RhsStage = <Self::RhsStage as StageFamily>::Stage<Ty<Rhs<MP>>, Sz<Rhs<MP>>, TR>,
             AccStage = <Self::AccStage as StageFamily>::Stage<Ty<Acc<MP>>, Sz<Acc<MP>>, TA>,
@@ -91,6 +96,9 @@ pub trait StageMatmulFamily: Send + Sync + 'static {
 pub trait StageMatmul<MP: MatmulTypes>: 'static + Send + Sync {
     /// The configuration type associated with this Matmul.
     type Config: StageConfig;
+
+    /// Compute primitive used by the underlying tile matmul.
+    type Scope: Scope;
 
     /// Contains the matrix multiplication output, that can be shared across the different planes of the cube.
     /// The same Accumulator will be added to across multiple executions of the Stage Matmul.
@@ -196,8 +204,11 @@ pub enum PartitionBuffering {
 pub trait Stage<ES: Numeric, NS: Size, IO: SliceVisibility = ReadOnly>:
     CubeType + Clone + Send + Sync + 'static
 {
-    /// Slices a tile with offset (`row`, `col`) from the stage and returns it
-    fn tile(this: &Self, tile: Coords2d) -> Tile<ES, NS, IO>;
+    /// Slices a tile with offset (`row`, `col`) from the stage and returns it.
+    ///
+    /// The [Scope] generic lets the caller select the compute primitive that will consume
+    /// this tile (forwarded to [TileMatmul](super::super::tile::TileMatmul::Scope)).
+    fn tile<Sc: Scope>(this: &Self, tile: Coords2d) -> Tile<ES, NS, Sc, IO>;
 }
 
 /// Stage family for any precision
@@ -227,10 +238,10 @@ pub trait LoadStageFamily<IO: SliceVisibility = ReadOnly>: StageFamily {
 impl<ES: Numeric, NS: Size, IO: SliceVisibility, Inner: Stage<ES, NS, IO>> Stage<ES, NS, IO>
     for ComptimeOption<Inner>
 {
-    fn tile(this: &Self, tile: Coords2d) -> Tile<ES, NS, IO> {
+    fn tile<Sc: Scope>(this: &Self, tile: Coords2d) -> Tile<ES, NS, Sc, IO> {
         #[comptime]
         if let ComptimeOption::Some(inner) = this {
-            Inner::tile(inner, tile)
+            Inner::tile::<Sc>(inner, tile)
         } else {
             Tile::new_None()
         }

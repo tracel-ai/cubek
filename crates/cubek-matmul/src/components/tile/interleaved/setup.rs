@@ -2,7 +2,7 @@ use crate::{
     components::{
         resource::CubeDimResource,
         tile::{
-            SharedTileConfig, TileMatmulFamily,
+            Plane, SharedTileConfig, TileMatmulFamily,
             interleaved::{InterleavedMatmul, config::InterleavedMatmulConfig},
         },
     },
@@ -19,6 +19,7 @@ use cubek_std::{InvalidConfigError, MatrixLayout};
 
 impl TileMatmulFamily for InterleavedMatmul {
     type Config = InterleavedMatmulConfig;
+    type Scope = Plane;
     type Matmul<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size> =
         InterleavedMatmul;
 

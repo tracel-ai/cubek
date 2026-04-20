@@ -22,7 +22,12 @@ pub struct Accumulators<
         >,
 > {
     sequence: Sequence<
-        Tile<<MP::Acc as MatrixTypes>::Register, <MP::Acc as MatrixTypes>::RegisterSize, ReadWrite>,
+        Tile<
+            <MP::Acc as MatrixTypes>::Register,
+            <MP::Acc as MatrixTypes>::RegisterSize,
+            TM::Scope,
+            ReadWrite,
+        >,
     >,
     #[cube(comptime)]
     _phantom: std::marker::PhantomData<TM>,
@@ -75,7 +80,7 @@ impl<
             #[unroll]
             for n in 0..tiles_in_stage_partition_n {
                 let acc = self.get_at_mut(m, n, tiles_in_stage_partition_n);
-                let tile = R::tile(stage, (m as u32, n as u32).runtime());
+                let tile = R::tile::<TM::Scope>(stage, (m as u32, n as u32).runtime());
                 TM::load_acc(&tile, acc, tile_config);
             }
         }
@@ -87,8 +92,12 @@ impl<
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] tiles_in_stage_partition_n: usize,
-    ) -> &Tile<<MP::Acc as MatrixTypes>::Register, <MP::Acc as MatrixTypes>::RegisterSize, ReadWrite>
-    {
+    ) -> &Tile<
+        <MP::Acc as MatrixTypes>::Register,
+        <MP::Acc as MatrixTypes>::RegisterSize,
+        TM::Scope,
+        ReadWrite,
+    > {
         &self.sequence[m * tiles_in_stage_partition_n + n]
     }
 
@@ -101,6 +110,7 @@ impl<
     ) -> &mut Tile<
         <MP::Acc as MatrixTypes>::Register,
         <MP::Acc as MatrixTypes>::RegisterSize,
+        TM::Scope,
         ReadWrite,
     > {
         self.sequence.index_mut(m * tiles_in_stage_partition_n + n)

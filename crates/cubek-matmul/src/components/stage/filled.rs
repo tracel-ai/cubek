@@ -2,7 +2,7 @@ use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 
 use crate::components::{
     stage::{Stage, StageFamily, TilingLayout},
-    tile::{Tile, Value},
+    tile::{Scope, Tile, Value},
 };
 
 pub struct FilledStageFamily;
@@ -25,7 +25,7 @@ impl<ES: Numeric> FilledStage<ES> {
 
 #[cube]
 impl<ES: Numeric, NS: Size> Stage<ES, NS, ReadOnly> for FilledStage<ES> {
-    fn tile(this: &Self, _tile: Coords2d) -> Tile<ES, NS, ReadOnly> {
+    fn tile<Sc: Scope>(this: &Self, _tile: Coords2d) -> Tile<ES, NS, Sc, ReadOnly> {
         Tile::new_Broadcasted(Value::<ES> { val: this.value })
     }
 }

@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use cubecl::{cmma::Matrix, prelude::*};
 use cubek_std::{
     MatrixLayout,
@@ -19,13 +21,29 @@ pub use mma::*;
 pub use planevec::*;
 pub use register::*;
 
-// TODO
-// pub struct Unit;
+/// Identifies which compute primitive executes a tile matmul.
+pub trait Scope: Clone + Copy + Send + Sync + 'static {}
+
+#[derive(Clone, Copy)]
+pub struct Unit;
+#[derive(Clone, Copy)]
 pub struct Plane;
-// pub struct Cube;
+#[derive(Clone, Copy)]
+pub struct Cube;
+
+impl Scope for Unit {}
+impl Scope for Plane {}
+impl Scope for Cube {}
+
+/// Zero-sized comptime marker used to carry a [Scope] generic through [Tile].
+#[derive(CubeType, Clone, Copy)]
+pub struct ScopeMarker<Sc: Scope> {
+    #[cube(comptime)]
+    _phantom: PhantomData<Sc>,
+}
 
 #[derive(CubeType)]
-pub enum Tile<N: Numeric, V: Size, IO: SliceVisibility> {
+pub enum Tile<N: Numeric, V: Size, Sc: Scope, IO: SliceVisibility> {
     GlobalMemory(Slice<Vector<N, V>, IO>),
     SharedMemory(StridedTile<N, V, IO>),
     Cmma(CmmaTile<N>),
@@ -35,6 +53,7 @@ pub enum Tile<N: Numeric, V: Size, IO: SliceVisibility> {
     Interleaved(InterleavedTile<N>),
     Broadcasted(Value<N>),
     None,
+    _Phantom(ScopeMarker<Sc>),
 }
 
 #[derive(CubeType)]
@@ -93,10 +112,10 @@ pub struct Value<E: Numeric> {
 }
 
 #[cube]
-pub fn tile_execute<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>(
-    lhs: &Tile<L, VL, ReadWrite>,
-    rhs: &Tile<R, VR, ReadWrite>,
-    acc: &mut Tile<A, VA, ReadWrite>,
+pub fn tile_execute<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size, Sc: Scope>(
+    lhs: &Tile<L, VL, Sc, ReadWrite>,
+    rhs: &Tile<R, VR, Sc, ReadWrite>,
+    acc: &mut Tile<A, VA, Sc, ReadWrite>,
 ) {
     match (lhs, rhs, acc) {
         (Tile::Cmma(l), Tile::Cmma(r), Tile::Cmma(a)) => {
@@ -142,9 +161,10 @@ pub fn tile_load<
     L: Numeric,
     R: Numeric,
     A: Numeric,
+    Sc: Scope,
 >(
-    source: &Tile<SE, SS, ReadOnly>,
-    dest: &mut Tile<DE, DS, ReadWrite>,
+    source: &Tile<SE, SS, Sc, ReadOnly>,
+    dest: &mut Tile<DE, DS, Sc, ReadWrite>,
     #[comptime] ident: StageIdent,
 ) {
     match (source, dest) {
@@ -226,9 +246,9 @@ pub fn tile_load<
 }
 
 #[cube]
-pub fn tile_write<E: Numeric, ES: Size, A: Numeric, VA: Size, L: Numeric, R: Numeric>(
-    tile: &mut Tile<E, ES, ReadWrite>,
-    out: &mut Tile<A, VA, ReadWrite>,
+pub fn tile_write<E: Numeric, ES: Size, A: Numeric, VA: Size, L: Numeric, R: Numeric, Sc: Scope>(
+    tile: &mut Tile<E, ES, Sc, ReadWrite>,
+    out: &mut Tile<A, VA, Sc, ReadWrite>,
 ) {
     match (tile, out) {
         (Tile::SharedMemory(shared), Tile::Cmma(t)) => {

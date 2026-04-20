@@ -3,7 +3,7 @@ use crate::components::{
         ContiguousTilingLayout, RowMajorTilingOrder, Stage, StageFamily, StridedStageMemory,
         TilingLayout,
     },
-    tile::Tile,
+    tile::{Scope, Tile},
 };
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 use cubek_std::{stage::StageMemoryConfig, tile::StridedTile};
@@ -51,7 +51,7 @@ impl<ES: Numeric, NS: Size> PartitionedStage<ES, NS> {
 
 #[cube]
 impl<ES: Numeric, NS: Size> Stage<ES, NS, ReadWrite> for PartitionedStage<ES, NS> {
-    fn tile(this: &Self, _tile: Coords2d) -> Tile<ES, NS, ReadWrite> {
+    fn tile<Sc: Scope>(this: &Self, _tile: Coords2d) -> Tile<ES, NS, Sc, ReadWrite> {
         Tile::new_SharedMemory(this.unit_tile)
     }
 }

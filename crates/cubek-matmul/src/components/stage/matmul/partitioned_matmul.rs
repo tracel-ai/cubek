@@ -14,6 +14,7 @@ use crate::{
     },
     definition::{MatmulTypes, MatrixTypes},
 };
+
 use core::marker::PhantomData;
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 use cubek_std::stage::StageMemoryConfig;
@@ -183,6 +184,7 @@ where
     SP: StagePartitioner,
 {
     type Config = PartitionMatmulConfig<TM::Config>;
+    type Scope = TM::Scope;
 
     type LhsStage = StageLhs;
     type RhsStage = StageRhs;
@@ -191,10 +193,20 @@ where
 
     type Accumulators = Accumulators<MP, TM>;
     type LhsTile = Sequence<
-        Tile<<MP::Lhs as MatrixTypes>::Register, <MP::Lhs as MatrixTypes>::RegisterSize, ReadWrite>,
+        Tile<
+            <MP::Lhs as MatrixTypes>::Register,
+            <MP::Lhs as MatrixTypes>::RegisterSize,
+            TM::Scope,
+            ReadWrite,
+        >,
     >;
     type RhsTile = RhsTile<
-        Tile<<MP::Rhs as MatrixTypes>::Register, <MP::Rhs as MatrixTypes>::RegisterSize, ReadWrite>,
+        Tile<
+            <MP::Rhs as MatrixTypes>::Register,
+            <MP::Rhs as MatrixTypes>::RegisterSize,
+            TM::Scope,
+            ReadWrite,
+        >,
     >;
 
     fn execute(
@@ -289,7 +301,7 @@ where
                 );
 
                 let tile_pos = (m_load_iter, n_load_iter);
-                let mut tile = Self::OutStage::tile(stage, tile_pos);
+                let mut tile = Self::OutStage::tile::<TM::Scope>(stage, tile_pos);
 
                 // Write the results for one tile. To save shared memory space, it reuses the same spot for
                 // all tiles in the partition

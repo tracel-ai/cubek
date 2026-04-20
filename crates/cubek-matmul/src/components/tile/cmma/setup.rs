@@ -1,7 +1,7 @@
 use crate::components::tile::TileMatmulFamily;
 use crate::{
-    components::resource::CubeDimResource, components::tile::SharedTileConfig,
-    components::tile::cmma::matmul::CmmaMatmul,
+    components::resource::CubeDimResource, components::tile::Plane,
+    components::tile::SharedTileConfig, components::tile::cmma::matmul::CmmaMatmul,
 };
 use crate::{
     definition::{MatmulAvailabilityError, MatmulSetupError, MatmulVectorSizes},
@@ -18,6 +18,7 @@ impl TileMatmulFamily for CmmaMatmul
 //     CmmaStageReader<Tile>: CmmaFragmentReader<TileKind = Tile>,
 {
     type Config = SharedTileConfig;
+    type Scope = Plane;
     type Matmul<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size> = CmmaMatmul;
 
     fn requires_accelerator() -> bool {
