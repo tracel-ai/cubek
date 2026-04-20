@@ -19,7 +19,6 @@ use crate::{
 use cubecl::prelude::*;
 use cubek_std::{PartitionSize, StageSize, stage::StageMemoryConfig};
 
-
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct SharedPartitionMatmulConfig<TC: TileConfig> {
     pub tile_config: TC,
@@ -308,7 +307,8 @@ where
             for n_iter in 0..n_iterations {
                 let n_load_iter = partition_scheduler.map_n(n_iter as u32);
 
-                let rhs_tile_next = StageRhs::tile::<TM::Scope>(rhs_stage, (k_load_iter, n_load_iter));
+                let rhs_tile_next =
+                    StageRhs::tile::<TM::Scope>(rhs_stage, (k_load_iter, n_load_iter));
                 TM::load_rhs(&rhs_tile_next, rhs_fragment, shared_config.tile_config);
                 SEL::on_event(
                     &mut listener,
@@ -446,7 +446,8 @@ where
                 };
 
                 let n_load_iter = partition_scheduler.map_n(comptime![n_iter as u32 + 1]);
-                let rhs_tile_next = StageRhs::tile::<TM::Scope>(rhs_stage, (k_load_iter, n_load_iter));
+                let rhs_tile_next =
+                    StageRhs::tile::<TM::Scope>(rhs_stage, (k_load_iter, n_load_iter));
                 TM::load_rhs(&rhs_tile_next, next, shared_config.tile_config);
                 SEL::on_event(
                     &mut listener,

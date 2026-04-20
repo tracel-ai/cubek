@@ -1,3 +1,4 @@
+pub mod reference;
 pub mod test_case;
 
 macro_rules! testgen_reduce {
@@ -99,6 +100,9 @@ macro_rules! testgen_reduce {
         use cubek_reduce::{ReduceStrategy, routines::BlueprintStrategy, launch::RoutineStrategy};
         use cubek_reduce::routines::PlaneMergeStrategy;
 
+        /// Cube-routine tests are expensive on CPU and can stall CI, so they
+        /// are gated behind the `extended` feature.
+        #[cfg(feature = "extended")]
         mod full_cube {
             use super::*;
             use cubek_reduce::routines::cube::CubeStrategy;
@@ -117,6 +121,7 @@ macro_rules! testgen_reduce {
             );
         }
 
+        #[cfg(feature = "extended")]
         mod full_cube_plane {
             use super::*;
             use cubek_reduce::routines::cube::CubeStrategy;
@@ -140,6 +145,7 @@ macro_rules! testgen_reduce {
         ///
         /// With this test, we can't have `use_planes` to true since the `cube_dim.x !=
         /// plane_size`.
+        #[cfg(feature = "extended")]
         mod full_cube_single_plane {
             use super::*;
             use cubek_reduce::{routines::CubeBlueprint, {BoundChecks, IdleMode}};

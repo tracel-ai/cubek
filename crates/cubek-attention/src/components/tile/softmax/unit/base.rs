@@ -3,8 +3,13 @@ use std::marker::PhantomData;
 use cubecl;
 use cubecl::prelude::*;
 use cubek_matmul::{
+<<<<<<< HEAD
     components::tile_matmul::{
         Plane, ProductType, SharedTileConfig, Tile, TileConfig, TileExpand, register_allocate_acc,
+=======
+    components::tile::{
+        ProductType, SharedTileConfig, Tile, TileConfig, TileExpand, register_allocate_acc,
+>>>>>>> main
     },
     definition::SwizzleModes,
 };
@@ -58,8 +63,13 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
     type Config = UnitSoftmaxConfig;
     type ScaleColumn = RowWise<Acc>;
     type RunningState = (RowWise<Acc>, RowWise<Acc>);
+<<<<<<< HEAD
     type ScoreTile = Tile<Acc, Const<0>, Plane, ReadWrite>;
     type SoftmaxedTile = Tile<Lhs, Const<0>, Plane, ReadWrite>;
+=======
+    type ScoreTile = Tile<Acc, Const<0>, ReadWrite>;
+    type SoftmaxedTile = Tile<Lhs, Const<0>, ReadWrite>;
+>>>>>>> main
     type Workspace = UnitSoftmaxWorkspace<Acc, Lhs>;
     type Mask = UnitTile<Acc>;
     type ScoreLayout = UnitTileLayout;
@@ -174,7 +184,11 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
 }
 
 #[cube]
+<<<<<<< HEAD
 fn zero_register_tile<E: Numeric>(tile: &mut Tile<E, Const<0>, Plane, ReadWrite>) {
+=======
+fn zero_register_tile<E: Numeric>(tile: &mut Tile<E, Const<0>, ReadWrite>) {
+>>>>>>> main
     match tile {
         Tile::Register(t) => {
             let num_elements =
@@ -195,7 +209,11 @@ fn fill_array_zero<E: Numeric>(data: &mut Array<E>, #[comptime] num_elements: u3
 
 #[cube]
 fn scale_and_mask_tile<Acc: Float, M: FragmentMask>(
+<<<<<<< HEAD
     tile: &mut Tile<Acc, Const<0>, Plane, ReadWrite>,
+=======
+    tile: &mut Tile<Acc, Const<0>, ReadWrite>,
+>>>>>>> main
     scale: Acc,
     mask: &M,
     #[comptime] num_rows: u32,
@@ -231,7 +249,11 @@ fn scale_and_mask_array<E: Float, M: FragmentMask>(
 #[cube]
 fn row_max_into<Acc: Float>(
     acc: &mut RowWise<Acc>,
+<<<<<<< HEAD
     tile: &Tile<Acc, Const<0>, Plane, ReadWrite>,
+=======
+    tile: &Tile<Acc, Const<0>, ReadWrite>,
+>>>>>>> main
     #[comptime] num_rows: u32,
     #[comptime] num_cols: u32,
 ) {
@@ -262,7 +284,11 @@ fn row_max_array<E: Float>(
 #[cube]
 fn row_sum_into<Acc: Float>(
     acc: &mut RowWise<Acc>,
+<<<<<<< HEAD
     tile: &Tile<Acc, Const<0>, Plane, ReadWrite>,
+=======
+    tile: &Tile<Acc, Const<0>, ReadWrite>,
+>>>>>>> main
     #[comptime] num_rows: u32,
     #[comptime] num_cols: u32,
 ) {
@@ -292,7 +318,11 @@ fn row_sum_array<E: Float>(
 
 #[cube]
 fn exp_diff_tile<Acc: Float>(
+<<<<<<< HEAD
     tile: &mut Tile<Acc, Const<0>, Plane, ReadWrite>,
+=======
+    tile: &mut Tile<Acc, Const<0>, ReadWrite>,
+>>>>>>> main
     rowwise: &RowWise<Acc>,
     #[comptime] num_rows: u32,
     #[comptime] num_cols: u32,
@@ -326,8 +356,13 @@ fn exp_diff_array<E: Float>(
 
 #[cube]
 fn copy_register_tile<SrcE: Numeric, DstE: Numeric>(
+<<<<<<< HEAD
     src: &Tile<SrcE, Const<0>, Plane, ReadWrite>,
     dst: &mut Tile<DstE, Const<0>, Plane, ReadWrite>,
+=======
+    src: &Tile<SrcE, Const<0>, ReadWrite>,
+    dst: &mut Tile<DstE, Const<0>, ReadWrite>,
+>>>>>>> main
     #[comptime] num_rows: u32,
     #[comptime] num_cols: u32,
 ) {

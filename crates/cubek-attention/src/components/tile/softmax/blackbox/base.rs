@@ -2,7 +2,11 @@ use std::marker::PhantomData;
 
 use cubecl;
 use cubecl::prelude::*;
+<<<<<<< HEAD
 use cubek_matmul::components::tile_matmul::{Plane, Tile, TileExpand, cmma_allocate_acc, cmma_allocate_lhs};
+=======
+use cubek_matmul::components::tile::{Tile, TileExpand, cmma_allocate_acc, cmma_allocate_lhs};
+>>>>>>> main
 use cubek_std::{MatrixLayout, tile::StridedTile};
 
 use crate::{
@@ -61,8 +65,13 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for BlackboxSoftmax<Lhs> {
     type Config = BlackboxSoftmaxConfig;
     type ScaleColumn = RowWise<Acc>;
     type RunningState = (RowWise<Acc>, RowWise<Acc>);
+<<<<<<< HEAD
     type ScoreTile = Tile<Acc, Const<0>, Plane, ReadWrite>;
     type SoftmaxedTile = Tile<Lhs, Const<0>, Plane, ReadWrite>;
+=======
+    type ScoreTile = Tile<Acc, Const<0>, ReadWrite>;
+    type SoftmaxedTile = Tile<Lhs, Const<0>, ReadWrite>;
+>>>>>>> main
     type Workspace = BlackboxSoftmaxWorkspace<Acc, Lhs>;
     type Mask = LocalTile<Acc>;
     type ScoreLayout = LocalTileLayout;
@@ -174,7 +183,11 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for BlackboxSoftmax<Lhs> {
 
 #[cube]
 fn store_cmma_to_score_smem<Acc: Float, Lhs: Float>(
+<<<<<<< HEAD
     tile: &mut Tile<Acc, Const<0>, Plane, ReadWrite>,
+=======
+    tile: &mut Tile<Acc, Const<0>, ReadWrite>,
+>>>>>>> main
     workspace: &mut BlackboxSoftmaxWorkspace<Acc, Lhs>,
     #[comptime] stride: u32,
 ) {
@@ -201,7 +214,11 @@ fn cmma_store_score<Acc: Float, Lhs: Float>(
 
 #[cube]
 fn load_cmma_from_softmaxed_smem<Acc: Float, Lhs: Float>(
+<<<<<<< HEAD
     tile: &mut Tile<Lhs, Const<0>, Plane, ReadWrite>,
+=======
+    tile: &mut Tile<Lhs, Const<0>, ReadWrite>,
+>>>>>>> main
     workspace: &mut BlackboxSoftmaxWorkspace<Acc, Lhs>,
     #[comptime] stride: u32,
 ) {
@@ -222,7 +239,11 @@ fn cmma_load_softmaxed<Acc: Float, Lhs: Float>(
 }
 
 #[cube]
+<<<<<<< HEAD
 fn zero_cmma_score<Acc: Float>(tile: &mut Tile<Acc, Const<0>, Plane, ReadWrite>) {
+=======
+fn zero_cmma_score<Acc: Float>(tile: &mut Tile<Acc, Const<0>, ReadWrite>) {
+>>>>>>> main
     match tile {
         Tile::Cmma(t) => cmma::fill(&t.matrix, Acc::from_int(0)),
         Tile::Register(_dummy) => panic!("BlackboxSoftmax expects Tile::Cmma"),

@@ -46,12 +46,6 @@ pub fn test_max_abs() {
     test_case().test_max_abs();
 }
 
-fn test_case() -> TestCase<TestDType> {
-    TestCase::<TestDType> {
-        shape: test_shape(),
-        stride: test_strides(),
-        axis: test_axis(),
-        strategy: test_strategy(),
-        elem: core::marker::PhantomData,
-    }
+fn test_case() -> TestCase {
+    TestCase::new::<TestDType>(test_shape(), test_strides(), test_axis(), test_strategy())
 }

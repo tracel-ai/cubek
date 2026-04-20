@@ -31,21 +31,33 @@ impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Tile<L, VL, Self::Scope, ReadWrite> {
-        planevec_allocate_lhs::<L, VL, Self::Scope>(layout, config.shared, config.reduce_vector_size)
+        planevec_allocate_lhs::<L, VL, Self::Scope>(
+            layout,
+            config.shared,
+            config.reduce_vector_size,
+        )
     }
 
     fn allocate_rhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Tile<R, VR, Self::Scope, ReadWrite> {
-        planevec_allocate_rhs::<R, VR, Self::Scope>(layout, config.shared, config.reduce_vector_size)
+        planevec_allocate_rhs::<R, VR, Self::Scope>(
+            layout,
+            config.shared,
+            config.reduce_vector_size,
+        )
     }
 
     fn allocate_acc(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Tile<A, VA, Self::Scope, ReadWrite> {
-        planevec_allocate_acc::<A, VA, Self::Scope>(layout, config.shared, config.reduce_vector_size)
+        planevec_allocate_acc::<A, VA, Self::Scope>(
+            layout,
+            config.shared,
+            config.reduce_vector_size,
+        )
     }
 
     fn load_lhs<E: Numeric, ES: Size>(

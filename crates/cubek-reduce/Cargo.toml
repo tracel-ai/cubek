@@ -18,10 +18,12 @@ version.workspace = true
 default = ["std", "cubecl/default"]
 std = ["cubecl/std", "thiserror/std"]
 
+full = ["extended"]
+extended = []
+
 [dependencies]
 cubecl = { workspace = true }
 cubek-std = { path = "../cubek-std", version = "=0.2.0-pre.3", default-features = false }
-cubek-test-utils = { path = "./../cubek-test-utils/", version = "=0.2.0-pre.3" }
 
 num-traits = "0.2.19"
 pretty_assertions = { workspace = true, optional = true }
@@ -32,4 +34,4 @@ thiserror = { workspace = true }
 [dev-dependencies]
 cubecl = { workspace = true, features = ["test-runtime"] }
 cubecl-common = { workspace = true }
-rand = { workspace = true }
+cubek-test-utils = { path = "./../cubek-test-utils/", version = "=0.2.0-pre.3" }
