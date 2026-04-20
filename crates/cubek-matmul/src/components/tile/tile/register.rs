@@ -8,10 +8,6 @@ use super::{RegisterTile, Tile};
 
 pub(crate) const UNROLL: bool = false;
 
-// ===========================================================================
-// Allocate
-// ===========================================================================
-
 #[cube]
 pub fn register_allocate_lhs<L: Numeric, VL: Size>(
     #[comptime] layout: MatrixLayout,
@@ -53,10 +49,6 @@ pub fn register_allocate_acc<A: Numeric, VA: Size>(
         product_type,
     })
 }
-
-// ===========================================================================
-// Execute: (Register, Register, Register)
-// ===========================================================================
 
 #[cube]
 pub fn register_execute<L: Numeric, R: Numeric, A: Numeric>(
@@ -124,10 +116,6 @@ fn outer_product<L: Numeric, R: Numeric, A: Numeric>(
         }
     }
 }
-
-// ===========================================================================
-// Load: SharedMemory -> Register
-// ===========================================================================
 
 #[cube]
 pub fn register_load_from_shared<E: Numeric, ES: Size, N: Numeric, V: Size>(
@@ -239,10 +227,6 @@ fn load_transposed<E: Numeric, ES: Size, N: Numeric>(
     }
 }
 
-// ===========================================================================
-// Load: None -> Register (zero fill)
-// ===========================================================================
-
 #[cube]
 pub fn register_load_zeros<N: Numeric, V: Size>(
     arr: &mut Array<N>,
@@ -260,10 +244,6 @@ pub fn register_load_zeros<N: Numeric, V: Size>(
         arr[i as usize] = N::from_int(0);
     }
 }
-
-// ===========================================================================
-// Write: Register -> SharedMemory
-// ===========================================================================
 
 #[cube]
 pub fn register_write_to_shared<E: Numeric, ES: Size, A: Numeric, VA: Size>(

@@ -2,7 +2,7 @@ use cubecl::prelude::*;
 use cubek_std::MatrixLayout;
 
 use crate::components::tile::{
-    TileMatmul, Tile, plane_vec_mat_inner_product::config::PlaneVecMatInnerProductConfig,
+    Tile, TileMatmul, plane_vec_mat_inner_product::config::PlaneVecMatInnerProductConfig,
     planevec_allocate_acc, planevec_allocate_lhs, planevec_allocate_rhs, tile_execute, tile_load,
     tile_write,
 };

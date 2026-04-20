@@ -2,7 +2,7 @@ use cubecl::prelude::*;
 use cubek_std::MatrixLayout;
 
 use crate::components::tile::{
-    TileMatmul, Tile, register::config::RegisterMatmulConfig, register_allocate_acc,
+    Tile, TileMatmul, register::config::RegisterMatmulConfig, register_allocate_acc,
     register_allocate_lhs, register_allocate_rhs, tile_execute, tile_load, tile_write,
 };
 use crate::definition::StageIdent;

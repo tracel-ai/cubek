@@ -22,11 +22,7 @@ pub struct Accumulators<
         >,
 > {
     sequence: Sequence<
-        Tile<
-            <MP::Acc as MatrixTypes>::Register,
-            <MP::Acc as MatrixTypes>::RegisterSize,
-            ReadWrite,
-        >,
+        Tile<<MP::Acc as MatrixTypes>::Register, <MP::Acc as MatrixTypes>::RegisterSize, ReadWrite>,
     >,
     #[cube(comptime)]
     _phantom: std::marker::PhantomData<TM>,

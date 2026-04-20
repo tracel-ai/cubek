@@ -9,10 +9,6 @@ use crate::definition::StageIdent;
 
 use super::{CmmaTile, Tile};
 
-// ===========================================================================
-// Allocate
-// ===========================================================================
-
 #[cube]
 pub fn cmma_allocate_lhs<L: Numeric, VL: Size>(
     #[comptime] layout: MatrixLayout,
@@ -73,10 +69,6 @@ pub fn cmma_allocate_acc<A: Numeric, VA: Size>(
     })
 }
 
-// ===========================================================================
-// Execute: (Cmma, Cmma, Cmma)
-// ===========================================================================
-
 #[cube]
 pub fn cmma_execute<L: Numeric, R: Numeric, A: Numeric>(
     lhs: &cmma::Matrix<L>,
@@ -85,10 +77,6 @@ pub fn cmma_execute<L: Numeric, R: Numeric, A: Numeric>(
 ) {
     cmma::execute::<L, R, A, A>(lhs, rhs, acc, acc);
 }
-
-// ===========================================================================
-// Load: SharedMemory -> Cmma
-// ===========================================================================
 
 #[cube]
 pub fn cmma_load_from_shared<E: Numeric, ES: Size, N: Numeric, V: Size>(
@@ -112,18 +100,10 @@ pub fn cmma_load_from_shared<E: Numeric, ES: Size, N: Numeric, V: Size>(
     }
 }
 
-// ===========================================================================
-// Load: None -> Cmma (zero fill)
-// ===========================================================================
-
 #[cube]
 pub fn cmma_load_zeros<N: Numeric, V: Size>(matrix: &mut cmma::Matrix<N>) {
     cmma::fill(matrix, N::from_int(0));
 }
-
-// ===========================================================================
-// Write: Cmma -> SharedMemory
-// ===========================================================================
 
 #[cube]
 pub fn cmma_write_to_shared<E: Numeric, ES: Size, A: Numeric, VA: Size>(

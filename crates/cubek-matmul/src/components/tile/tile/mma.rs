@@ -13,10 +13,6 @@ define_size!(pub NL);
 define_size!(pub NR);
 define_size!(pub NA);
 
-// ===========================================================================
-// Helpers
-// ===========================================================================
-
 #[cube]
 fn make_mma_definition<L: Numeric, R: Numeric, A: Numeric>(
     #[comptime] config: SharedTileConfig,
@@ -40,10 +36,6 @@ pub fn mma_register_vector_sizes<L: Numeric, R: Numeric, A: Numeric>(def: MmaDef
         scope.register_size::<NA>(vector_size_acc);
     });
 }
-
-// ===========================================================================
-// Allocate
-// ===========================================================================
 
 #[cube]
 pub fn mma_allocate_lhs<L: Numeric, VL: Size, R: Numeric, A: Numeric>(
@@ -99,10 +91,6 @@ pub fn mma_allocate_acc<A: Numeric, VA: Size, L: Numeric, R: Numeric>(
     })
 }
 
-// ===========================================================================
-// Execute: (Mma, Mma, Mma)
-// ===========================================================================
-
 #[cube]
 pub fn mma_execute<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>(
     lhs: &Array<Vector<L, VL>>,
@@ -124,10 +112,6 @@ pub fn mma_execute<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: S
         acc[i] = out_arr[i];
     }
 }
-
-// ===========================================================================
-// Load: SharedMemory -> Mma (lhs)
-// ===========================================================================
 
 #[cube]
 pub fn mma_load_lhs_from_shared<
@@ -160,10 +144,6 @@ pub fn mma_load_lhs_from_shared<
     );
 }
 
-// ===========================================================================
-// Load: SharedMemory -> Mma (rhs)
-// ===========================================================================
-
 #[cube]
 pub fn mma_load_rhs_from_shared<
     E: Numeric,
@@ -194,10 +174,6 @@ pub fn mma_load_rhs_from_shared<
         mma_io_config,
     );
 }
-
-// ===========================================================================
-// Load: SharedMemory -> Mma (acc)
-// ===========================================================================
 
 #[cube]
 pub fn mma_load_acc_from_shared<
@@ -230,10 +206,6 @@ pub fn mma_load_acc_from_shared<
     );
 }
 
-// ===========================================================================
-// Load: None -> Mma (zero fill acc)
-// ===========================================================================
-
 #[cube]
 pub fn mma_load_acc_zeros<E: Numeric, ES: Size, A: Numeric, VA: Size, L: Numeric, R: Numeric>(
     fragment: &mut Array<Vector<A, VA>>,
@@ -256,10 +228,6 @@ pub fn mma_load_acc_zeros<E: Numeric, ES: Size, A: Numeric, VA: Size, L: Numeric
         mma_io_config,
     );
 }
-
-// ===========================================================================
-// Write: Mma -> SharedMemory
-// ===========================================================================
 
 #[cube]
 pub fn mma_write_to_shared<E: Numeric, ES: Size, A: Numeric, VA: Size, L: Numeric, R: Numeric>(

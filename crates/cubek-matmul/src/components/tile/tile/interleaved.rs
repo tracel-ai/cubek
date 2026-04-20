@@ -6,10 +6,6 @@ use crate::definition::StageIdent;
 
 use super::{InterleavedTile, Tile};
 
-// ===========================================================================
-// Allocate
-// ===========================================================================
-
 #[cube]
 pub fn interleaved_allocate_lhs<L: Numeric, VL: Size>(
     #[comptime] layout: MatrixLayout,
@@ -54,12 +50,6 @@ pub fn interleaved_allocate_acc<A: Numeric, VA: Size>(
     })
 }
 
-// ===========================================================================
-// Execute: (Interleaved, Interleaved, Interleaved)
-// Note: needs layouts from all three operands since lhs/rhs layouts affect
-// indexing during the multiply-accumulate.
-// ===========================================================================
-
 #[cube]
 pub fn interleaved_execute<L: Numeric, R: Numeric, A: Numeric>(
     lhs: &Array<L>,
@@ -98,10 +88,6 @@ pub fn interleaved_execute<L: Numeric, R: Numeric, A: Numeric>(
         }
     }
 }
-
-// ===========================================================================
-// Load: SharedMemory -> Interleaved
-// ===========================================================================
 
 #[cube]
 pub fn interleaved_load_from_shared<E: Numeric, ES: Size, N: Numeric, V: Size>(
@@ -163,10 +149,6 @@ pub fn interleaved_load_from_shared<E: Numeric, ES: Size, N: Numeric, V: Size>(
     }
 }
 
-// ===========================================================================
-// Load: None -> Interleaved (zero fill)
-// ===========================================================================
-
 #[cube]
 pub fn interleaved_load_zeros<N: Numeric, V: Size>(
     arr: &mut Array<N>,
@@ -179,10 +161,6 @@ pub fn interleaved_load_zeros<N: Numeric, V: Size>(
         arr[i] = N::from_int(0);
     }
 }
-
-// ===========================================================================
-// Write: Interleaved -> SharedMemory
-// ===========================================================================
 
 #[cube]
 pub fn interleaved_write_to_shared<E: Numeric, ES: Size, A: Numeric, VA: Size>(

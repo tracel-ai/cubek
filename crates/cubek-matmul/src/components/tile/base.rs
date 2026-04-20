@@ -8,7 +8,7 @@ use cubek_std::{InvalidConfigError, MatrixLayout, TileSize};
 use crate::{
     components::{
         resource::CubeDimResource,
-        tile::{TileConfig, Tile},
+        tile::{Tile, TileConfig},
     },
     definition::{MatmulElems, MatmulSetupError, MatmulVectorSizes, TilingBlueprint},
 };

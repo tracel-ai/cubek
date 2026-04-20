@@ -10,7 +10,7 @@ use crate::{
                 unit_partitioned::UnitPartitionedStageConfig,
             },
         },
-        tile::{TileConfig, TileMatmul, Tile},
+        tile::{Tile, TileConfig, TileMatmul},
     },
     definition::{MatmulTypes, MatrixTypes},
 };
@@ -191,18 +191,10 @@ where
 
     type Accumulators = Accumulators<MP, TM>;
     type LhsTile = Sequence<
-        Tile<
-            <MP::Lhs as MatrixTypes>::Register,
-            <MP::Lhs as MatrixTypes>::RegisterSize,
-            ReadWrite,
-        >,
+        Tile<<MP::Lhs as MatrixTypes>::Register, <MP::Lhs as MatrixTypes>::RegisterSize, ReadWrite>,
     >;
     type RhsTile = RhsTile<
-        Tile<
-            <MP::Rhs as MatrixTypes>::Register,
-            <MP::Rhs as MatrixTypes>::RegisterSize,
-            ReadWrite,
-        >,
+        Tile<<MP::Rhs as MatrixTypes>::Register, <MP::Rhs as MatrixTypes>::RegisterSize, ReadWrite>,
     >;
 
     fn execute(
