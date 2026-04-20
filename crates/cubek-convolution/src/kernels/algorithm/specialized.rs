@@ -4,7 +4,7 @@ use cubecl::{
 use cubek_matmul::{
     components::{
         global::read::{AsyncPartialLoadingStrategy, async_partial_tma::AsyncPartialTmaLoading},
-        tile::TileMatmulFamily,
+        tile_matmul::TileMatmulFamily,
     },
     definition::AvailableVectorSizes,
     launch::{TensorArgs, TensorMapArgs},

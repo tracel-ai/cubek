@@ -10,7 +10,7 @@ use cubek_matmul::definition::{
     TilingScheme, adjust_dtypes,
 };
 use cubek_matmul::{
-    components::tile::TileMatmulFamily,
+    components::tile_matmul::TileMatmulFamily,
     routines::{NUM_SM_APPROX, NUM_TENSOR_CORES_APPROX, find_instruction_size},
 };
 use cubek_std::stage::SwizzleMode;

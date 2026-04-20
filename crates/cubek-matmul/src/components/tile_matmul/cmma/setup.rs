@@ -1,7 +1,7 @@
-use crate::components::tile::TileMatmulFamily;
+use crate::components::tile_matmul::TileMatmulFamily;
 use crate::{
-    components::resource::CubeDimResource, components::tile::Plane,
-    components::tile::SharedTileConfig, components::tile::cmma::matmul::CmmaMatmul,
+    components::resource::CubeDimResource, components::tile_matmul::Plane,
+    components::tile_matmul::SharedTileConfig, components::tile_matmul::cmma::matmul::CmmaMatmul,
 };
 use crate::{
     definition::{MatmulAvailabilityError, MatmulSetupError, MatmulVectorSizes},

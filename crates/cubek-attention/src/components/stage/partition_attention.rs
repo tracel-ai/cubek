@@ -3,7 +3,7 @@ use cubecl::prelude::*;
 use cubek_matmul::components::{
     global::{WriteEvent, WriteEventListener},
     stage::Stage,
-    tile::Tile,
+    tile_matmul::Tile,
 };
 use std::marker::PhantomData;
 

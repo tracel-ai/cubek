@@ -1,7 +1,7 @@
 use cubecl;
 use cubecl::prelude::*;
 use cubek_matmul::{
-    components::tile::{Plane, Tile, cmma_allocate_lhs, cmma_allocate_rhs, tile_execute, tile_load},
+    components::tile_matmul::{Plane, Tile, cmma_allocate_lhs, cmma_allocate_rhs, tile_execute, tile_load},
     definition::StageIdent,
 };
 

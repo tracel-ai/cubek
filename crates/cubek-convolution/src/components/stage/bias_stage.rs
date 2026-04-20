@@ -1,7 +1,7 @@
 use cubecl::prelude::*;
 use cubek_matmul::components::{
     stage::{LoadStageFamily, Stage, StageFamily, TilingLayout},
-    tile::{Scope, Tile},
+    tile_matmul::{Scope, Tile},
 };
 
 use cubecl::std::{Swizzle, tensor::layout::Coords2d};

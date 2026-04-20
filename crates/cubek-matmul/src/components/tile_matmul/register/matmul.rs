@@ -1,22 +1,21 @@
 use cubecl::prelude::*;
 use cubek_std::MatrixLayout;
 
-use crate::components::tile::{
-    Plane, Tile, TileMatmul, plane_vec_mat_inner_product::config::PlaneVecMatInnerProductConfig,
-    planevec_allocate_acc, planevec_allocate_lhs, planevec_allocate_rhs, tile_execute, tile_load,
-    tile_write,
+use crate::components::tile_matmul::{
+    Tile, TileMatmul, Unit, register::config::RegisterMatmulConfig, register_allocate_acc,
+    register_allocate_lhs, register_allocate_rhs, tile_execute, tile_load, tile_write,
 };
 use crate::definition::StageIdent;
 
-/// Performs a small matmul using one vector per unit.
-pub struct PlaneVecMatInnerProduct {}
+/// Performs a small matmul using registers.
+pub struct RegisterMatmul {}
 
 #[cube]
 impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
-    TileMatmul<L, VL, R, VR, A, VA> for PlaneVecMatInnerProduct
+    TileMatmul<L, VL, R, VR, A, VA> for RegisterMatmul
 {
-    type Config = PlaneVecMatInnerProductConfig;
-    type Scope = Plane;
+    type Config = RegisterMatmulConfig;
+    type Scope = Unit;
 
     fn execute(
         lhs: &Tile<L, VL, Self::Scope, ReadWrite>,
@@ -31,21 +30,21 @@ impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Tile<L, VL, Self::Scope, ReadWrite> {
-        planevec_allocate_lhs::<L, VL, Self::Scope>(layout, config.shared, config.reduce_vector_size)
+        register_allocate_lhs::<L, VL, Self::Scope>(layout, config.shared, config.product_type)
     }
 
     fn allocate_rhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Tile<R, VR, Self::Scope, ReadWrite> {
-        planevec_allocate_rhs::<R, VR, Self::Scope>(layout, config.shared, config.reduce_vector_size)
+        register_allocate_rhs::<R, VR, Self::Scope>(layout, config.shared, config.product_type)
     }
 
     fn allocate_acc(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Tile<A, VA, Self::Scope, ReadWrite> {
-        planevec_allocate_acc::<A, VA, Self::Scope>(layout, config.shared, config.reduce_vector_size)
+        register_allocate_acc::<A, VA, Self::Scope>(layout, config.shared, config.product_type)
     }
 
     fn load_lhs<E: Numeric, ES: Size>(

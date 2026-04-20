@@ -1,21 +1,21 @@
 use cubecl::prelude::*;
 use cubek_std::MatrixLayout;
 
-use crate::components::tile::{
-    Tile, TileMatmul, Unit, register::config::RegisterMatmulConfig, register_allocate_acc,
-    register_allocate_lhs, register_allocate_rhs, tile_execute, tile_load, tile_write,
+use crate::components::tile_matmul::{
+    Plane, Tile, TileMatmul, interleaved::config::InterleavedMatmulConfig, interleaved_allocate_acc,
+    interleaved_allocate_lhs, interleaved_allocate_rhs, tile_execute, tile_load, tile_write,
 };
 use crate::definition::StageIdent;
 
-/// Performs a small matmul using registers.
-pub struct RegisterMatmul {}
+/// Performs a small matmul by interleaving elements across a plane.
+pub struct InterleavedMatmul {}
 
 #[cube]
 impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
-    TileMatmul<L, VL, R, VR, A, VA> for RegisterMatmul
+    TileMatmul<L, VL, R, VR, A, VA> for InterleavedMatmul
 {
-    type Config = RegisterMatmulConfig;
-    type Scope = Unit;
+    type Config = InterleavedMatmulConfig;
+    type Scope = Plane;
 
     fn execute(
         lhs: &Tile<L, VL, Self::Scope, ReadWrite>,
@@ -30,21 +30,21 @@ impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Tile<L, VL, Self::Scope, ReadWrite> {
-        register_allocate_lhs::<L, VL, Self::Scope>(layout, config.shared, config.product_type)
+        interleaved_allocate_lhs::<L, VL, Self::Scope>(layout, config.shared)
     }
 
     fn allocate_rhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Tile<R, VR, Self::Scope, ReadWrite> {
-        register_allocate_rhs::<R, VR, Self::Scope>(layout, config.shared, config.product_type)
+        interleaved_allocate_rhs::<R, VR, Self::Scope>(layout, config.shared)
     }
 
     fn allocate_acc(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Tile<A, VA, Self::Scope, ReadWrite> {
-        register_allocate_acc::<A, VA, Self::Scope>(layout, config.shared, config.product_type)
+        interleaved_allocate_acc::<A, VA, Self::Scope>(layout, config.shared)
     }
 
     fn load_lhs<E: Numeric, ES: Size>(

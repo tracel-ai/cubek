@@ -1,7 +1,7 @@
-use crate::components::tile::Tile;
+use crate::components::tile_matmul::Tile;
 use crate::definition::{MatmulTypes, MatrixTypes};
 use crate::{
-    components::{stage::Stage, tile::TileMatmul},
+    components::{stage::Stage, tile_matmul::TileMatmul},
     definition::{Acc, StageSize},
 };
 use cubecl::prelude::*;

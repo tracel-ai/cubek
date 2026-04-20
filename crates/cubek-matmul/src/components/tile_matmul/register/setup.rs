@@ -1,8 +1,8 @@
 use crate::components::resource::CubeDimResource;
 use crate::{
-    components::tile::SharedTileConfig, components::tile::TileMatmulFamily,
-    components::tile::Unit, components::tile::register::config::RegisterMatmulConfig,
-    components::tile::register::matmul::RegisterMatmul,
+    components::tile_matmul::SharedTileConfig, components::tile_matmul::TileMatmulFamily,
+    components::tile_matmul::Unit, components::tile_matmul::register::config::RegisterMatmulConfig,
+    components::tile_matmul::register::matmul::RegisterMatmul,
 };
 use crate::{
     definition::TilingBlueprint,

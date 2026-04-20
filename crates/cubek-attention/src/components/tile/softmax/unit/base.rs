@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use cubecl;
 use cubecl::prelude::*;
 use cubek_matmul::{
-    components::tile::{
+    components::tile_matmul::{
         Plane, ProductType, SharedTileConfig, Tile, TileConfig, TileExpand, register_allocate_acc,
     },
     definition::SwizzleModes,

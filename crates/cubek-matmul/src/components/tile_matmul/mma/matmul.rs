@@ -1,20 +1,22 @@
 use cubecl::prelude::*;
 use cubek_std::MatrixLayout;
 
-use crate::components::tile::{
-    Plane, Tile, TileMatmul, interleaved::config::InterleavedMatmulConfig, interleaved_allocate_acc,
-    interleaved_allocate_lhs, interleaved_allocate_rhs, tile_execute, tile_load, tile_write,
+use crate::components::tile_matmul::{
+    Plane, Tile, TileMatmul, mma::config::MmaMatmulConfig, mma_allocate_acc, mma_allocate_lhs,
+    mma_allocate_rhs, tile_execute, tile_load, tile_write,
 };
 use crate::definition::StageIdent;
 
-/// Performs a small matmul by interleaving elements across a plane.
-pub struct InterleavedMatmul {}
+/// Uses one plane to perform a small matmul using accelerated instructions, with manual register
+/// management.
+/// Currently requires matrix layout to match the platform's preferred layout.
+pub struct MmaMatmul {}
 
 #[cube]
 impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
-    TileMatmul<L, VL, R, VR, A, VA> for InterleavedMatmul
+    TileMatmul<L, VL, R, VR, A, VA> for MmaMatmul
 {
-    type Config = InterleavedMatmulConfig;
+    type Config = MmaMatmulConfig;
     type Scope = Plane;
 
     fn execute(
@@ -30,21 +32,21 @@ impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Tile<L, VL, Self::Scope, ReadWrite> {
-        interleaved_allocate_lhs::<L, VL, Self::Scope>(layout, config.shared)
+        mma_allocate_lhs::<L, VL, R, A, Self::Scope>(layout, config.shared, config.mma_io_config)
     }
 
     fn allocate_rhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Tile<R, VR, Self::Scope, ReadWrite> {
-        interleaved_allocate_rhs::<R, VR, Self::Scope>(layout, config.shared)
+        mma_allocate_rhs::<R, VR, L, A, Self::Scope>(layout, config.shared, config.mma_io_config)
     }
 
     fn allocate_acc(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Tile<A, VA, Self::Scope, ReadWrite> {
-        interleaved_allocate_acc::<A, VA, Self::Scope>(layout, config.shared)
+        mma_allocate_acc::<A, VA, L, R, Self::Scope>(layout, config.shared, config.mma_io_config)
     }
 
     fn load_lhs<E: Numeric, ES: Size>(

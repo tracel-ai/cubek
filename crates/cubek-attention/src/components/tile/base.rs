@@ -2,7 +2,7 @@ use cubecl;
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_matmul::components::{
     CubeDimResource,
-    tile::{Plane, Tile},
+    tile_matmul::{Plane, Tile},
 };
 use cubek_std::InvalidConfigError;
 

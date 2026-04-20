@@ -16,7 +16,7 @@ use crate::{
     components::global::multi_stage::ordered::OrderedDoubleBufferingMatmulFamily,
     components::global::read::sync_partial_cyclic::SyncPartialCyclicLoading,
     components::stage::{PlaneMatmulFamily, RowMajorTilingOrder},
-    components::tile,
+    components::tile_matmul,
 };
 use crate::{
     launch::RuntimeConfig,
@@ -55,7 +55,7 @@ impl Display for OrderedSelectionArgs {
 
 impl<TMM, RC> Routine<RC> for OrderedDoubleBufferingAlgorithm<TMM>
 where
-    TMM: tile::TileMatmulFamily,
+    TMM: tile_matmul::TileMatmulFamily,
     RC: RuntimeConfig,
 {
     type Strategy = OrderedSelectionArgs;

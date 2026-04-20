@@ -1,22 +1,20 @@
 use cubecl::prelude::*;
 use cubek_std::MatrixLayout;
 
-use crate::components::tile::{
-    Plane, Tile, TileMatmul, mma::config::MmaMatmulConfig, mma_allocate_acc, mma_allocate_lhs,
-    mma_allocate_rhs, tile_execute, tile_load, tile_write,
+use crate::components::tile_matmul::{
+    Plane, SharedTileConfig, Tile, TileMatmul, cmma_allocate_acc, cmma_allocate_lhs,
+    cmma_allocate_rhs, tile_execute, tile_load, tile_write,
 };
 use crate::definition::StageIdent;
 
-/// Uses one plane to perform a small matmul using accelerated instructions, with manual register
-/// management.
-/// Currently requires matrix layout to match the platform's preferred layout.
-pub struct MmaMatmul {}
+/// Uses one plane to perform a small matmul using accelerated instructions.
+pub struct CmmaMatmul {}
 
 #[cube]
 impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
-    TileMatmul<L, VL, R, VR, A, VA> for MmaMatmul
+    TileMatmul<L, VL, R, VR, A, VA> for CmmaMatmul
 {
-    type Config = MmaMatmulConfig;
+    type Config = SharedTileConfig;
     type Scope = Plane;
 
     fn execute(
@@ -32,21 +30,21 @@ impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Tile<L, VL, Self::Scope, ReadWrite> {
-        mma_allocate_lhs::<L, VL, R, A, Self::Scope>(layout, config.shared, config.mma_io_config)
+        cmma_allocate_lhs::<L, VL, Self::Scope>(layout, config.tile_size)
     }
 
     fn allocate_rhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Tile<R, VR, Self::Scope, ReadWrite> {
-        mma_allocate_rhs::<R, VR, L, A, Self::Scope>(layout, config.shared, config.mma_io_config)
+        cmma_allocate_rhs::<R, VR, Self::Scope>(layout, config.tile_size)
     }
 
     fn allocate_acc(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Tile<A, VA, Self::Scope, ReadWrite> {
-        mma_allocate_acc::<A, VA, L, R, Self::Scope>(layout, config.shared, config.mma_io_config)
+        cmma_allocate_acc::<A, VA, Self::Scope>(layout, config.tile_size)
     }
 
     fn load_lhs<E: Numeric, ES: Size>(

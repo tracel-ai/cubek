@@ -14,7 +14,7 @@ use crate::{
             },
         },
         stage::{RowMajorTilingOrder, StridedStageFamily, UnitMatmulFamily},
-        tile::{TileMatmulFamily, register::RegisterMatmul},
+        tile_matmul::{TileMatmulFamily, register::RegisterMatmul},
     },
     definition::{
         MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes, TilingBlueprint,

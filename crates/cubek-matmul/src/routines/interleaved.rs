@@ -21,7 +21,7 @@ use crate::{
             single_stage::simple::SimpleMatmulFamily,
         },
         stage::{ColMajorTilingOrder, PartitionBuffering, PlaneMatmulFamily, RowMajorTilingOrder},
-        tile::TileMatmulFamily,
+        tile_matmul::TileMatmulFamily,
     },
     routines::{
         Routine,
@@ -31,7 +31,7 @@ use crate::{
 use crate::{
     routines::{BlueprintStrategy, DeviceSettings, LaunchInfo},
     {components::batch::BatchMatmulFamily, launch::RuntimeConfig},
-    {components::tile::interleaved::InterleavedMatmul, routines::ExpandInfo},
+    {components::tile_matmul::interleaved::InterleavedMatmul, routines::ExpandInfo},
 };
 
 /// Plane accelerated single stage matmul with configurable readers (default to cyclic)

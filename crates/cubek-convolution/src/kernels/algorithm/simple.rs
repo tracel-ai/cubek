@@ -2,7 +2,7 @@ use cubecl::{
     server::LaunchError,
     {Runtime, client::ComputeClient, ir::StorageType, prelude::TensorBinding},
 };
-use cubek_matmul::components::{global::read::FullLoadingStrategy, tile::TileMatmulFamily};
+use cubek_matmul::components::{global::read::FullLoadingStrategy, tile_matmul::TileMatmulFamily};
 use cubek_matmul::components::{
     global::read::sync_full_cyclic::SyncFullCyclicLoading,
     stage::{ColMajorTilingOrder, RowMajorTilingOrder},

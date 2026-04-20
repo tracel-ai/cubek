@@ -22,7 +22,7 @@ use crate::{
             ColMajorTilingOrder, PartitionBuffering, PlaneMatmulFamily, RowMajorTilingOrder,
             StridedStageFamily,
         },
-        tile::{TileMatmulFamily, plane_vec_mat_inner_product::PlaneVecMatInnerProduct},
+        tile_matmul::{TileMatmulFamily, plane_vec_mat_inner_product::PlaneVecMatInnerProduct},
     },
     definition::{MatmulElems, MatmulProblem, MatmulSetupError, TilingBlueprint, TilingScheme},
     launch::RuntimeConfig,

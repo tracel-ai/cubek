@@ -1,20 +1,21 @@
 use cubecl::prelude::*;
 use cubek_std::MatrixLayout;
 
-use crate::components::tile::{
-    Plane, SharedTileConfig, Tile, TileMatmul, cmma_allocate_acc, cmma_allocate_lhs,
-    cmma_allocate_rhs, tile_execute, tile_load, tile_write,
+use crate::components::tile_matmul::{
+    Plane, Tile, TileMatmul, plane_vec_mat_inner_product::config::PlaneVecMatInnerProductConfig,
+    planevec_allocate_acc, planevec_allocate_lhs, planevec_allocate_rhs, tile_execute, tile_load,
+    tile_write,
 };
 use crate::definition::StageIdent;
 
-/// Uses one plane to perform a small matmul using accelerated instructions.
-pub struct CmmaMatmul {}
+/// Performs a small matmul using one vector per unit.
+pub struct PlaneVecMatInnerProduct {}
 
 #[cube]
 impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
-    TileMatmul<L, VL, R, VR, A, VA> for CmmaMatmul
+    TileMatmul<L, VL, R, VR, A, VA> for PlaneVecMatInnerProduct
 {
-    type Config = SharedTileConfig;
+    type Config = PlaneVecMatInnerProductConfig;
     type Scope = Plane;
 
     fn execute(
@@ -30,21 +31,21 @@ impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Tile<L, VL, Self::Scope, ReadWrite> {
-        cmma_allocate_lhs::<L, VL, Self::Scope>(layout, config.tile_size)
+        planevec_allocate_lhs::<L, VL, Self::Scope>(layout, config.shared, config.reduce_vector_size)
     }
 
     fn allocate_rhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Tile<R, VR, Self::Scope, ReadWrite> {
-        cmma_allocate_rhs::<R, VR, Self::Scope>(layout, config.tile_size)
+        planevec_allocate_rhs::<R, VR, Self::Scope>(layout, config.shared, config.reduce_vector_size)
     }
 
     fn allocate_acc(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
     ) -> Tile<A, VA, Self::Scope, ReadWrite> {
-        cmma_allocate_acc::<A, VA, Self::Scope>(layout, config.tile_size)
+        planevec_allocate_acc::<A, VA, Self::Scope>(layout, config.shared, config.reduce_vector_size)
     }
 
     fn load_lhs<E: Numeric, ES: Size>(

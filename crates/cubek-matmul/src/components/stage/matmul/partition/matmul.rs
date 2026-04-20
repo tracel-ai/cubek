@@ -8,12 +8,12 @@ use crate::{
             PartitionBuffering, Stage, StageEvent, StageEventListener,
             matmul::scheduler::PartitionScheduler,
         },
-        tile::{TileConfig, TileMatmul},
+        tile_matmul::{TileConfig, TileMatmul},
     },
     definition::{Lhs, MatmulTypes, MatrixTypes},
 };
 use crate::{
-    components::{stage::PartitionSchedulerScheme, tile::Tile},
+    components::{stage::PartitionSchedulerScheme, tile_matmul::Tile},
     definition::{Acc, Rhs},
 };
 use cubecl::prelude::*;

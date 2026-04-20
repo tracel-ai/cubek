@@ -1,6 +1,6 @@
 use cubecl;
 use cubecl::prelude::*;
-use cubek_matmul::components::tile::{Plane, Tile};
+use cubek_matmul::components::tile_matmul::{Plane, Tile};
 
 #[cube]
 pub trait AttentionOutput<A: Float, VA: Size>: Send + Sync + 'static + Sized {

@@ -1,6 +1,6 @@
 use cubecl;
 use cubecl::prelude::*;
-use cubek_matmul::components::tile::{Plane, Tile};
+use cubek_matmul::components::tile_matmul::{Plane, Tile};
 
 use crate::{components::tile::output::AttentionOutput, definition::AttentionPartitionSize};
 

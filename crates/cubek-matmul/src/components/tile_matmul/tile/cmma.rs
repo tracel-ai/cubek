@@ -4,8 +4,8 @@ use cubek_std::{
     tile::{Strided, StridedTile},
 };
 
-use crate::components::tile::cmma::{CmmaFragmentReader as _, CmmaStageReader, CmmaStageWriter};
-use crate::components::tile::tile::Scope;
+use crate::components::tile_matmul::cmma::{CmmaFragmentReader as _, CmmaStageReader, CmmaStageWriter};
+use crate::components::tile_matmul::tile::Scope;
 use crate::definition::StageIdent;
 
 use super::{CmmaTile, Tile};

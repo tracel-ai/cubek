@@ -1,7 +1,7 @@
 use crate::{
     components::{
         resource::CubeDimResource,
-        tile::{
+        tile_matmul::{
             Plane, SharedTileConfig, TileMatmulFamily,
             mma::{MmaMatmul, config::MmaMatmulConfig},
         },

@@ -6,7 +6,7 @@ use cubek_std::{
     tile::{StridedTile, mma::MmaIOConfig},
 };
 
-use crate::components::tile::{ProductType, SharedTileConfig};
+use crate::components::tile_matmul::{ProductType, SharedTileConfig};
 use crate::definition::StageIdent;
 
 pub mod cmma;

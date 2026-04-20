@@ -13,7 +13,7 @@ use crate::{components::ConvSetupError, kernels::forward::selector::launch_kerne
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_matmul::routines::BlueprintStrategy;
 use cubek_matmul::{
-    components::tile::{cmma::CmmaMatmul, mma::MmaMatmul},
+    components::tile_matmul::{cmma::CmmaMatmul, mma::MmaMatmul},
     definition::{AvailableVectorSizes, MatmulElems},
 };
 use cubek_std::{InputBinding, MatrixLayout};

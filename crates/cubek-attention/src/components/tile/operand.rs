@@ -1,7 +1,7 @@
 use cubecl;
 use cubecl::prelude::*;
 
-use cubek_matmul::components::tile::{Plane, Tile};
+use cubek_matmul::components::tile_matmul::{Plane, Tile};
 
 #[derive(CubeType)]
 /// Query input to the Tile Attention

@@ -11,7 +11,7 @@ use crate::{
 };
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_matmul::{
-    components::tile::{cmma::CmmaMatmul, mma::MmaMatmul},
+    components::tile_matmul::{cmma::CmmaMatmul, mma::MmaMatmul},
     definition::{AvailableVectorSizes, MatmulElems, MatmulSetupError},
     routines::BlueprintStrategy,
 };

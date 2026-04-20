@@ -17,8 +17,8 @@ use crate::definition::{
 use crate::{
     components::batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
     components::global::PlaneWriterFamily,
-    components::tile::TileMatmulFamily,
-    components::{global::read::FullLoadingStrategy, tile},
+    components::tile_matmul::TileMatmulFamily,
+    components::{global::read::FullLoadingStrategy, tile_matmul},
 };
 use crate::{
     components::global::{
@@ -63,7 +63,7 @@ impl From<()> for SpecializedStrategy {
 
 impl<TMM, RC, L, AL> base::Routine<RC> for SpecializedAlgorithm<TMM, L, AL>
 where
-    TMM: tile::TileMatmulFamily,
+    TMM: tile_matmul::TileMatmulFamily,
     RC: RuntimeConfig,
     L: AsyncPartialLoadingStrategy<RC, Stage: StageFamily>,
     AL: FullLoadingStrategy<RC, Stage: StageFamily>,

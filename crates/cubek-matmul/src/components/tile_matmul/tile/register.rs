@@ -1,8 +1,8 @@
 use cubecl::prelude::*;
 use cubek_std::{MatrixLayout, tile::StridedTile};
 
-use crate::components::tile::tile::Scope;
-use crate::components::tile::{ProductType, SharedTileConfig, TileConfig};
+use crate::components::tile_matmul::tile::Scope;
+use crate::components::tile_matmul::{ProductType, SharedTileConfig, TileConfig};
 use crate::definition::StageIdent;
 
 use super::{RegisterTile, Tile};

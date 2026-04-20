@@ -1,7 +1,7 @@
 use cubecl;
 use cubecl::prelude::*;
 use cubek_matmul::{
-    components::tile::{
+    components::tile_matmul::{
         Plane, ProductType, SharedTileConfig, Tile, register_allocate_acc, register_allocate_lhs,
         register_allocate_rhs, tile_execute, tile_load,
     },

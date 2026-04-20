@@ -16,7 +16,7 @@ use crate::routines::selector::is_tiny;
 use crate::{
     components::global::{InputLoadFlow, LoadFlows},
     components::stage::PartitionBuffering,
-    components::tile::TileMatmulFamily,
+    components::tile_matmul::TileMatmulFamily,
 };
 
 pub const NUM_SM_APPROX: u32 = 50;

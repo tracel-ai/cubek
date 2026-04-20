@@ -1,6 +1,6 @@
 use cubek_std::{TileSize, stage::SwizzleMode};
 
-use crate::components::tile::{SharedTileConfig, TileConfig, TileKind};
+use crate::components::tile_matmul::{SharedTileConfig, TileConfig, TileKind};
 
 use crate::definition::StageIdent;
 

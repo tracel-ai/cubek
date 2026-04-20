@@ -1,9 +1,9 @@
 use crate::components::resource::CubeDimResource;
-use crate::components::tile::Plane as PlaneScope;
+use crate::components::tile_matmul::Plane as PlaneScope;
 use crate::{
-    components::tile::SharedTileConfig, components::tile::TileMatmulFamily,
-    components::tile::plane_vec_mat_inner_product::config::PlaneVecMatInnerProductConfig,
-    components::tile::plane_vec_mat_inner_product::matmul::PlaneVecMatInnerProduct,
+    components::tile_matmul::SharedTileConfig, components::tile_matmul::TileMatmulFamily,
+    components::tile_matmul::plane_vec_mat_inner_product::config::PlaneVecMatInnerProductConfig,
+    components::tile_matmul::plane_vec_mat_inner_product::matmul::PlaneVecMatInnerProduct,
 };
 use crate::{
     definition::{MatmulAvailabilityError, MatmulElems, MatmulSetupError},

@@ -8,7 +8,7 @@ mod matmul_tma {
     #[cfg(all(feature = "matmul_tests_tma", not(feature = "matmul_tests_mma")))]
     mod cmma {
         use super::*;
-        pub type TMM = cubek_matmul::components::tile::cmma::CmmaMatmul;
+        pub type TMM = cubek_matmul::components::tile_matmul::cmma::CmmaMatmul;
 
         include!("algorithm.rs");
     }
@@ -16,7 +16,7 @@ mod matmul_tma {
     #[cfg(all(feature = "matmul_tests_tma", feature = "matmul_tests_mma"))]
     mod mma {
         use super::*;
-        pub type TMM = cubek_matmul::components::tile::mma::MmaMatmul;
+        pub type TMM = cubek_matmul::components::tile_matmul::mma::MmaMatmul;
 
         include!("algorithm.rs");
     }

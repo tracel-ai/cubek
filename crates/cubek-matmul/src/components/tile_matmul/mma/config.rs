@@ -1,28 +1,18 @@
-use cubek_std::stage::SwizzleMode;
+use cubek_std::{stage::SwizzleMode, tile::mma::MmaIOConfig};
 
-use crate::{
-    components::tile::{SharedTileConfig, TileConfig, TileKind},
-    definition::StageIdent,
-};
+use crate::components::tile_matmul::{SharedTileConfig, TileConfig, TileKind};
+
+use crate::definition::StageIdent;
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-pub struct PlaneVecMatInnerProductConfig {
+pub struct MmaMatmulConfig {
     pub shared: SharedTileConfig,
-    pub reduce_vector_size: u32,
+    pub mma_io_config: MmaIOConfig,
 }
 
-impl PlaneVecMatInnerProductConfig {
-    pub fn new(shared: SharedTileConfig, reduce_vector_size: u32) -> Self {
-        Self {
-            shared,
-            reduce_vector_size,
-        }
-    }
-}
-
-impl TileConfig for PlaneVecMatInnerProductConfig {
+impl TileConfig for MmaMatmulConfig {
     fn kind(&self) -> TileKind {
-        TileKind::PlaneVec
+        TileKind::Mma
     }
 
     fn plane_dim(&self) -> u32 {
@@ -45,7 +35,7 @@ impl TileConfig for PlaneVecMatInnerProductConfig {
         self.shared.swizzle_mode(ident)
     }
 
-    fn reduce_vector_size(&self) -> u32 {
-        self.reduce_vector_size
+    fn mma_io_config(&self) -> MmaIOConfig {
+        self.mma_io_config
     }
 }
