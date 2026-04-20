@@ -1,13 +1,9 @@
 use cubecl;
 use cubecl::{ir::DeviceProperties, prelude::*};
-<<<<<<< HEAD
 use cubek_matmul::components::{
     CubeDimResource,
     tile_matmul::{Plane, Tile},
 };
-=======
-use cubek_matmul::components::{CubeDimResource, tile::Tile};
->>>>>>> main
 use cubek_std::InvalidConfigError;
 
 use crate::definition::attention_types::{ACC, KSS, KVT, OSS, QGS, QT, SM, SML, VSS};
@@ -52,13 +48,8 @@ pub trait TileAttention<AP: AttentionPrecision>: Send + Sync + 'static {
     type ScoreMatmul: InnerMatmul<QT<AP>, QGS<AP>, KVT<AP>, KSS<AP>, SM<AP>, Const<0>>;
     type Softmax: Softmax<
             SM<AP>,
-<<<<<<< HEAD
             ScoreTile = Tile<SM<AP>, Const<0>, Plane, ReadWrite>,
             SoftmaxedTile = Tile<SML<AP>, Const<0>, Plane, ReadWrite>,
-=======
-            ScoreTile = Tile<SM<AP>, Const<0>, ReadWrite>,
-            SoftmaxedTile = Tile<SML<AP>, Const<0>, ReadWrite>,
->>>>>>> main
             ScaleColumn = <Self::Output as AttentionOutput<ACC<AP>, OSS<AP>>>::ScaleColumn,
             RunningState = <Self::Output as AttentionOutput<ACC<AP>, OSS<AP>>>::RunningState,
             Config = <Self::Config as TileAttentionConfig>::SoftmaxConfig,

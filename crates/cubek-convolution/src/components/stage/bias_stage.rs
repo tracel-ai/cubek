@@ -1,11 +1,7 @@
 use cubecl::prelude::*;
 use cubek_matmul::components::{
     stage::{LoadStageFamily, Stage, StageFamily, TilingLayout},
-<<<<<<< HEAD
     tile_matmul::{Scope, Tile},
-=======
-    tile::Tile,
->>>>>>> main
 };
 
 use cubecl::std::{Swizzle, tensor::layout::Coords2d};
@@ -128,11 +124,7 @@ impl<ES: Numeric, NS: Size> BiasStageMemory<ES, NS> {
 
 #[cube]
 impl<ES: Numeric, NS: Size> Stage<ES, NS, ReadOnly> for BiasStageMemory<ES, NS> {
-<<<<<<< HEAD
     fn tile<Sc: Scope>(this: &Self, tile: Coords2d) -> Tile<ES, NS, Sc, ReadOnly> {
-=======
-    fn tile(this: &Self, tile: Coords2d) -> Tile<ES, NS, ReadOnly> {
->>>>>>> main
         Tile::new_SharedMemory(this.get_tile(tile))
     }
 }

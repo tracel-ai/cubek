@@ -3,13 +3,8 @@ use std::marker::PhantomData;
 use cubecl;
 use cubecl::prelude::*;
 use cubek_matmul::{
-<<<<<<< HEAD
     components::tile_matmul::{
         Plane, ProductType, SharedTileConfig, Tile, TileExpand, register_allocate_acc, tile_write,
-=======
-    components::tile::{
-        ProductType, SharedTileConfig, Tile, TileExpand, register_allocate_acc, tile_write,
->>>>>>> main
     },
     definition::SwizzleModes,
 };
@@ -50,11 +45,7 @@ impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA> for UnitAttention
     type Workspace = ();
 
     fn scale_mul(
-<<<<<<< HEAD
         tile: &mut Tile<Acc, VA, Plane, ReadWrite>,
-=======
-        tile: &mut Tile<Acc, VA, ReadWrite>,
->>>>>>> main
         scale: &Self::ScaleColumn,
         _workspace: &mut Self::Workspace,
         #[comptime] config: Self::Config,
@@ -69,11 +60,7 @@ impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA> for UnitAttention
     }
 
     fn scale_div(
-<<<<<<< HEAD
         tile: &mut Tile<Acc, VA, Plane, ReadWrite>,
-=======
-        tile: &mut Tile<Acc, VA, ReadWrite>,
->>>>>>> main
         running_state: &Self::RunningState,
         _workspace: &mut Self::Workspace,
         #[comptime] config: Self::Config,
@@ -91,13 +78,8 @@ impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA> for UnitAttention
 
     fn init_workspace(#[comptime] _config: Self::Config) -> Self::Workspace {}
 
-<<<<<<< HEAD
     fn init_tile(#[comptime] config: Self::Config) -> Tile<Acc, VA, Plane, ReadWrite> {
         let mut tile = register_allocate_acc::<Acc, VA, Plane>(
-=======
-    fn init_tile(#[comptime] config: Self::Config) -> Tile<Acc, VA, ReadWrite> {
-        let mut tile = register_allocate_acc::<Acc, VA>(
->>>>>>> main
             MatrixLayout::RowMajor,
             config.shared(),
             ProductType::Inner,
@@ -107,29 +89,17 @@ impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA> for UnitAttention
     }
 
     fn write_results<E: Float, ES: Size>(
-<<<<<<< HEAD
         source: &mut Tile<Acc, VA, Plane, ReadWrite>,
         dest: &mut Tile<E, ES, Plane, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
         tile_write::<E, ES, Acc, VA, Acc, Acc, Plane>(dest, source);
-=======
-        source: &mut Tile<Acc, VA, ReadWrite>,
-        dest: &mut Tile<E, ES, ReadWrite>,
-        #[comptime] _config: Self::Config,
-    ) {
-        tile_write::<E, ES, Acc, VA, Acc, Acc>(dest, source);
->>>>>>> main
     }
 }
 
 #[cube]
 fn apply_rowwise_scale<Acc: Float, VA: Size>(
-<<<<<<< HEAD
     tile: &mut Tile<Acc, VA, Plane, ReadWrite>,
-=======
-    tile: &mut Tile<Acc, VA, ReadWrite>,
->>>>>>> main
     scale: &RowWise<Acc>,
     #[comptime] num_rows: u32,
     #[comptime] num_cols: u32,
@@ -161,11 +131,7 @@ fn scale_array_rowwise<Acc: Float>(
 
 #[cube]
 fn zero_register_tile<Acc: Float, VA: Size>(
-<<<<<<< HEAD
     tile: &mut Tile<Acc, VA, Plane, ReadWrite>,
-=======
-    tile: &mut Tile<Acc, VA, ReadWrite>,
->>>>>>> main
     #[comptime] num_rows: u32,
     #[comptime] num_cols: u32,
 ) {
