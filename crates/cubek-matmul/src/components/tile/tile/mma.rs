@@ -7,7 +7,7 @@ use cubek_std::{
 
 use crate::components::tile::{SharedTileConfig, TileConfig};
 
-use super::{MmaTile, Tilex};
+use super::{MmaTile, Tile};
 
 define_size!(pub NL);
 define_size!(pub NR);
@@ -50,12 +50,12 @@ pub fn mma_allocate_lhs<L: Numeric, VL: Size, R: Numeric, A: Numeric>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: SharedTileConfig,
     #[comptime] mma_io_config: MmaIOConfig,
-) -> Tilex<L, VL, ReadWrite> {
+) -> Tile<L, VL, ReadWrite> {
     let def = make_mma_definition::<L, R, A>(config);
     mma_register_vector_sizes(def);
     let vector_count = def.vectors_per_lane(MatrixIdent::A);
 
-    Tilex::new_Mma(MmaTile::<L, VL> {
+    Tile::new_Mma(MmaTile::<L, VL> {
         fragment: Array::new(vector_count),
         matrix_layout: layout,
         config,
@@ -68,12 +68,12 @@ pub fn mma_allocate_rhs<R: Numeric, VR: Size, L: Numeric, A: Numeric>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: SharedTileConfig,
     #[comptime] mma_io_config: MmaIOConfig,
-) -> Tilex<R, VR, ReadWrite> {
+) -> Tile<R, VR, ReadWrite> {
     let def = make_mma_definition::<L, R, A>(config);
     mma_register_vector_sizes(def);
     let vector_count = def.vectors_per_lane(MatrixIdent::B);
 
-    Tilex::new_Mma(MmaTile::<R, VR> {
+    Tile::new_Mma(MmaTile::<R, VR> {
         fragment: Array::new(vector_count),
         matrix_layout: layout,
         config,
@@ -86,12 +86,12 @@ pub fn mma_allocate_acc<A: Numeric, VA: Size, L: Numeric, R: Numeric>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: SharedTileConfig,
     #[comptime] mma_io_config: MmaIOConfig,
-) -> Tilex<A, VA, ReadWrite> {
+) -> Tile<A, VA, ReadWrite> {
     let def = make_mma_definition::<L, R, A>(config);
     mma_register_vector_sizes(def);
     let vector_count = def.vectors_per_lane(MatrixIdent::Accumulator);
 
-    Tilex::new_Mma(MmaTile::<A, VA> {
+    Tile::new_Mma(MmaTile::<A, VA> {
         fragment: Array::new(vector_count),
         matrix_layout: layout,
         config,

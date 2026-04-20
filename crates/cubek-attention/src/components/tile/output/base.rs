@@ -1,6 +1,6 @@
 use cubecl;
 use cubecl::prelude::*;
-use cubek_matmul::components::tile::Tilex;
+use cubek_matmul::components::tile::Tile;
 
 #[cube]
 pub trait AttentionOutput<A: Float, VA: Size>: Send + Sync + 'static + Sized {
@@ -10,14 +10,14 @@ pub trait AttentionOutput<A: Float, VA: Size>: Send + Sync + 'static + Sized {
     type Workspace: CubeType;
 
     fn scale_mul(
-        tile: &mut Tilex<A, VA, ReadWrite>,
+        tile: &mut Tile<A, VA, ReadWrite>,
         column: &Self::ScaleColumn,
         workspace: &mut Self::Workspace,
         #[comptime] config: Self::Config,
     );
 
     fn scale_div(
-        tile: &mut Tilex<A, VA, ReadWrite>,
+        tile: &mut Tile<A, VA, ReadWrite>,
         running_state: &Self::RunningState,
         workspace: &mut Self::Workspace,
         #[comptime] config: Self::Config,
@@ -25,11 +25,11 @@ pub trait AttentionOutput<A: Float, VA: Size>: Send + Sync + 'static + Sized {
 
     fn init_workspace(#[comptime] config: Self::Config) -> Self::Workspace;
 
-    fn init_tile(#[comptime] config: Self::Config) -> Tilex<A, VA, ReadWrite>;
+    fn init_tile(#[comptime] config: Self::Config) -> Tile<A, VA, ReadWrite>;
 
     fn write_results<E: Float, ES: Size>(
-        source: &mut Tilex<A, VA, ReadWrite>,
-        dest: &mut Tilex<E, ES, ReadWrite>,
+        source: &mut Tile<A, VA, ReadWrite>,
+        dest: &mut Tile<E, ES, ReadWrite>,
         #[comptime] config: Self::Config,
     );
 }

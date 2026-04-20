@@ -9,7 +9,7 @@ use crate::{
         CubeDimResource,
         global::{PlaneFlowConfig, WriteEventListener},
         stage::{NumStages, PartitionScheduler},
-        tile::{TileConfig, Tilex},
+        tile::{TileConfig, Tile},
     },
     definition::{
         Acc, Lhs, MatmulElems, MatmulSetupError, MatmulTypes, MatmulVectorSizes, Rhs,
@@ -197,7 +197,7 @@ pub trait Stage<ES: Numeric, NS: Size, IO: SliceVisibility = ReadOnly>:
     CubeType + Clone + Send + Sync + 'static
 {
     /// Slices a tile with offset (`row`, `col`) from the stage and returns it
-    fn tile(this: &Self, tile: Coords2d) -> Tilex<ES, NS, IO>;
+    fn tile(this: &Self, tile: Coords2d) -> Tile<ES, NS, IO>;
 }
 
 /// Stage family for any precision
@@ -227,12 +227,12 @@ pub trait LoadStageFamily<IO: SliceVisibility = ReadOnly>: StageFamily {
 impl<ES: Numeric, NS: Size, IO: SliceVisibility, Inner: Stage<ES, NS, IO>> Stage<ES, NS, IO>
     for ComptimeOption<Inner>
 {
-    fn tile(this: &Self, tile: Coords2d) -> Tilex<ES, NS, IO> {
+    fn tile(this: &Self, tile: Coords2d) -> Tile<ES, NS, IO> {
         #[comptime]
         if let ComptimeOption::Some(inner) = this {
             Inner::tile(inner, tile)
         } else {
-            Tilex::new_None()
+            Tile::new_None()
         }
     }
 }

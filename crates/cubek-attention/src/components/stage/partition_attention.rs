@@ -3,7 +3,7 @@ use cubecl::prelude::*;
 use cubek_matmul::components::{
     global::{WriteEvent, WriteEventListener},
     stage::Stage,
-    tile::Tilex,
+    tile::Tile,
 };
 use std::marker::PhantomData;
 
@@ -314,7 +314,7 @@ impl<
                 );
 
                 TA::ScoreMatmul::load_lhs(
-                    &Tilex::new_SharedMemory(tile_read),
+                    &Tile::new_SharedMemory(tile_read),
                     &mut tile_to_write.tile,
                 );
             }

@@ -8,7 +8,7 @@ use cubek_std::{InvalidConfigError, MatrixLayout, TileSize};
 use crate::{
     components::{
         resource::CubeDimResource,
-        tile::{TileConfig, Tilex},
+        tile::{TileConfig, Tile},
     },
     definition::{MatmulElems, MatmulSetupError, MatmulVectorSizes, TilingBlueprint},
 };
@@ -86,9 +86,9 @@ pub trait TileMatmul<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA:
 
     /// Executes the matrix multiplication of Lhs and Rhs, adding the result to the accumulator
     fn execute(
-        lhs: &Tilex<L, VL, ReadWrite>,
-        rhs: &Tilex<R, VR, ReadWrite>,
-        acc: &mut Tilex<A, VA, ReadWrite>,
+        lhs: &Tile<L, VL, ReadWrite>,
+        rhs: &Tile<R, VR, ReadWrite>,
+        acc: &mut Tile<A, VA, ReadWrite>,
         #[comptime] config: Self::Config,
     );
 
@@ -101,12 +101,12 @@ pub trait TileMatmul<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA:
     fn allocate_lhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Tilex<L, VL, ReadWrite>;
+    ) -> Tile<L, VL, ReadWrite>;
 
     /// Load the container of Lhs from tile data
     fn load_lhs<E: Numeric, ES: Size>(
-        tile: &Tilex<E, ES, ReadOnly>,
-        lhs: &mut Tilex<L, VL, ReadWrite>,
+        tile: &Tile<E, ES, ReadOnly>,
+        lhs: &mut Tile<L, VL, ReadWrite>,
         #[comptime] config: Self::Config,
     );
 
@@ -119,12 +119,12 @@ pub trait TileMatmul<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA:
     fn allocate_rhs(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Tilex<R, VR, ReadWrite>;
+    ) -> Tile<R, VR, ReadWrite>;
 
     /// Load the container of Rhs from tile data
     fn load_rhs<E: Numeric, ES: Size>(
-        tile: &Tilex<E, ES, ReadOnly>,
-        rhs: &mut Tilex<R, VR, ReadWrite>,
+        tile: &Tile<E, ES, ReadOnly>,
+        rhs: &mut Tile<R, VR, ReadWrite>,
         #[comptime] config: Self::Config,
     );
 
@@ -138,19 +138,19 @@ pub trait TileMatmul<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA:
     fn allocate_acc(
         #[comptime] layout: MatrixLayout,
         #[comptime] config: Self::Config,
-    ) -> Tilex<A, VA, ReadWrite>;
+    ) -> Tile<A, VA, ReadWrite>;
 
     /// Load the container of Acc from tile data
     fn load_acc<E: Numeric, ES: Size>(
-        tile: &Tilex<E, ES, ReadOnly>,
-        acc: &mut Tilex<A, VA, ReadWrite>,
+        tile: &Tile<E, ES, ReadOnly>,
+        acc: &mut Tile<A, VA, ReadWrite>,
         #[comptime] config: Self::Config,
     );
 
     /// Write the content of the output container to the given slice
     fn write_results<E: Numeric, ES: Size>(
-        tile: &mut Tilex<E, ES, ReadWrite>,
-        out: &mut Tilex<A, VA, ReadWrite>,
+        tile: &mut Tile<E, ES, ReadWrite>,
+        out: &mut Tile<A, VA, ReadWrite>,
         #[comptime] config: Self::Config,
     );
 }

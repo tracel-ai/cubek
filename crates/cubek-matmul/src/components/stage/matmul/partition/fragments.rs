@@ -1,4 +1,4 @@
-use crate::components::tile::Tilex;
+use crate::components::tile::Tile;
 use crate::definition::{MatmulTypes, MatrixTypes};
 use crate::{
     components::{stage::Stage, tile::TileMatmul},
@@ -22,7 +22,7 @@ pub struct Accumulators<
         >,
 > {
     sequence: Sequence<
-        Tilex<
+        Tile<
             <MP::Acc as MatrixTypes>::Register,
             <MP::Acc as MatrixTypes>::RegisterSize,
             ReadWrite,
@@ -91,7 +91,7 @@ impl<
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] tiles_in_stage_partition_n: usize,
-    ) -> &Tilex<<MP::Acc as MatrixTypes>::Register, <MP::Acc as MatrixTypes>::RegisterSize, ReadWrite>
+    ) -> &Tile<<MP::Acc as MatrixTypes>::Register, <MP::Acc as MatrixTypes>::RegisterSize, ReadWrite>
     {
         &self.sequence[m * tiles_in_stage_partition_n + n]
     }
@@ -102,7 +102,7 @@ impl<
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] tiles_in_stage_partition_n: usize,
-    ) -> &mut Tilex<
+    ) -> &mut Tile<
         <MP::Acc as MatrixTypes>::Register,
         <MP::Acc as MatrixTypes>::RegisterSize,
         ReadWrite,

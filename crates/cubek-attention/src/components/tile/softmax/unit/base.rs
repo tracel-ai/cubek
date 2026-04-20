@@ -4,7 +4,7 @@ use cubecl;
 use cubecl::prelude::*;
 use cubek_matmul::{
     components::tile::{
-        ProductType, SharedTileConfig, TileConfig, Tilex, TilexExpand, register_allocate_acc,
+        ProductType, SharedTileConfig, Tile, TileConfig, TileExpand, register_allocate_acc,
     },
     definition::SwizzleModes,
 };
@@ -58,8 +58,8 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
     type Config = UnitSoftmaxConfig;
     type ScaleColumn = RowWise<Acc>;
     type RunningState = (RowWise<Acc>, RowWise<Acc>);
-    type ScoreTile = Tilex<Acc, Const<0>, ReadWrite>;
-    type SoftmaxedTile = Tilex<Lhs, Const<0>, ReadWrite>;
+    type ScoreTile = Tile<Acc, Const<0>, ReadWrite>;
+    type SoftmaxedTile = Tile<Lhs, Const<0>, ReadWrite>;
     type Workspace = UnitSoftmaxWorkspace<Acc, Lhs>;
     type Mask = UnitTile<Acc>;
     type ScoreLayout = UnitTileLayout;
@@ -174,15 +174,15 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
 }
 
 #[cube]
-fn zero_register_tile<E: Numeric>(tile: &mut Tilex<E, Const<0>, ReadWrite>) {
+fn zero_register_tile<E: Numeric>(tile: &mut Tile<E, Const<0>, ReadWrite>) {
     match tile {
-        Tilex::Register(t) => {
+        Tile::Register(t) => {
             let num_elements =
                 comptime!(t.config.elements_in_tile_m() * t.config.elements_in_tile_n());
             fill_array_zero::<E>(&mut t.data, num_elements);
         }
-        Tilex::Cmma(_dummy) => panic!("UnitSoftmax expects Tilex::Register"),
-        _ => panic!("UnitSoftmax expects Tilex::Register"),
+        Tile::Cmma(_dummy) => panic!("UnitSoftmax expects Tile::Register"),
+        _ => panic!("UnitSoftmax expects Tile::Register"),
     }
 }
 
@@ -195,18 +195,18 @@ fn fill_array_zero<E: Numeric>(data: &mut Array<E>, #[comptime] num_elements: u3
 
 #[cube]
 fn scale_and_mask_tile<Acc: Float, M: FragmentMask>(
-    tile: &mut Tilex<Acc, Const<0>, ReadWrite>,
+    tile: &mut Tile<Acc, Const<0>, ReadWrite>,
     scale: Acc,
     mask: &M,
     #[comptime] num_rows: u32,
     #[comptime] num_cols: u32,
 ) {
     match tile {
-        Tilex::Register(t) => {
+        Tile::Register(t) => {
             scale_and_mask_array::<Acc, M>(&mut t.data, scale, mask, num_rows, num_cols)
         }
-        Tilex::Cmma(_dummy) => panic!("UnitSoftmax expects Tilex::Register"),
-        _ => panic!("UnitSoftmax expects Tilex::Register"),
+        Tile::Cmma(_dummy) => panic!("UnitSoftmax expects Tile::Register"),
+        _ => panic!("UnitSoftmax expects Tile::Register"),
     }
 }
 
@@ -231,14 +231,14 @@ fn scale_and_mask_array<E: Float, M: FragmentMask>(
 #[cube]
 fn row_max_into<Acc: Float>(
     acc: &mut RowWise<Acc>,
-    tile: &Tilex<Acc, Const<0>, ReadWrite>,
+    tile: &Tile<Acc, Const<0>, ReadWrite>,
     #[comptime] num_rows: u32,
     #[comptime] num_cols: u32,
 ) {
     match tile {
-        Tilex::Register(t) => row_max_array::<Acc>(acc, &t.data, num_rows, num_cols),
-        Tilex::Cmma(_dummy) => panic!("UnitSoftmax expects Tilex::Register"),
-        _ => panic!("UnitSoftmax expects Tilex::Register"),
+        Tile::Register(t) => row_max_array::<Acc>(acc, &t.data, num_rows, num_cols),
+        Tile::Cmma(_dummy) => panic!("UnitSoftmax expects Tile::Register"),
+        _ => panic!("UnitSoftmax expects Tile::Register"),
     }
 }
 
@@ -262,14 +262,14 @@ fn row_max_array<E: Float>(
 #[cube]
 fn row_sum_into<Acc: Float>(
     acc: &mut RowWise<Acc>,
-    tile: &Tilex<Acc, Const<0>, ReadWrite>,
+    tile: &Tile<Acc, Const<0>, ReadWrite>,
     #[comptime] num_rows: u32,
     #[comptime] num_cols: u32,
 ) {
     match tile {
-        Tilex::Register(t) => row_sum_array::<Acc>(acc, &t.data, num_rows, num_cols),
-        Tilex::Cmma(_dummy) => panic!("UnitSoftmax expects Tilex::Register"),
-        _ => panic!("UnitSoftmax expects Tilex::Register"),
+        Tile::Register(t) => row_sum_array::<Acc>(acc, &t.data, num_rows, num_cols),
+        Tile::Cmma(_dummy) => panic!("UnitSoftmax expects Tile::Register"),
+        _ => panic!("UnitSoftmax expects Tile::Register"),
     }
 }
 
@@ -292,15 +292,15 @@ fn row_sum_array<E: Float>(
 
 #[cube]
 fn exp_diff_tile<Acc: Float>(
-    tile: &mut Tilex<Acc, Const<0>, ReadWrite>,
+    tile: &mut Tile<Acc, Const<0>, ReadWrite>,
     rowwise: &RowWise<Acc>,
     #[comptime] num_rows: u32,
     #[comptime] num_cols: u32,
 ) {
     match tile {
-        Tilex::Register(t) => exp_diff_array::<Acc>(&mut t.data, rowwise, num_rows, num_cols),
-        Tilex::Cmma(_dummy) => panic!("UnitSoftmax expects Tilex::Register"),
-        _ => panic!("UnitSoftmax expects Tilex::Register"),
+        Tile::Register(t) => exp_diff_array::<Acc>(&mut t.data, rowwise, num_rows, num_cols),
+        Tile::Cmma(_dummy) => panic!("UnitSoftmax expects Tile::Register"),
+        _ => panic!("UnitSoftmax expects Tile::Register"),
     }
 }
 
@@ -326,16 +326,16 @@ fn exp_diff_array<E: Float>(
 
 #[cube]
 fn copy_register_tile<SrcE: Numeric, DstE: Numeric>(
-    src: &Tilex<SrcE, Const<0>, ReadWrite>,
-    dst: &mut Tilex<DstE, Const<0>, ReadWrite>,
+    src: &Tile<SrcE, Const<0>, ReadWrite>,
+    dst: &mut Tile<DstE, Const<0>, ReadWrite>,
     #[comptime] num_rows: u32,
     #[comptime] num_cols: u32,
 ) {
     match (src, dst) {
-        (Tilex::Register(s), Tilex::Register(d)) => {
+        (Tile::Register(s), Tile::Register(d)) => {
             copy_register_arrays::<SrcE, DstE>(&s.data, &mut d.data, num_rows, num_cols)
         }
-        _ => panic!("UnitSoftmax expects Tilex::Register"),
+        _ => panic!("UnitSoftmax expects Tile::Register"),
     }
 }
 

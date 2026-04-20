@@ -13,7 +13,7 @@ use crate::{
     definition::{Lhs, MatmulTypes, MatrixTypes},
 };
 use crate::{
-    components::{stage::PartitionSchedulerScheme, tile::Tilex},
+    components::{stage::PartitionSchedulerScheme, tile::Tile},
     definition::{Acc, Rhs},
 };
 use cubecl::prelude::*;
@@ -110,14 +110,14 @@ where
         lhs_stage: &StageLhs,
         rhs_stage: &StageRhs,
         lhs_fragment: &mut Sequence<
-            Tilex<
+            Tile<
                 <MP::Lhs as MatrixTypes>::Register,
                 <MP::Lhs as MatrixTypes>::RegisterSize,
                 ReadWrite,
             >,
         >,
         rhs_fragments: &mut RhsTile<
-            Tilex<
+            Tile<
                 <MP::Rhs as MatrixTypes>::Register,
                 <MP::Rhs as MatrixTypes>::RegisterSize,
                 ReadWrite,
@@ -162,14 +162,14 @@ where
         #[comptime] shared_config: SharedPartitionMatmulConfig<TM::Config>,
     ) -> (
         Sequence<
-            Tilex<
+            Tile<
                 <MP::Lhs as MatrixTypes>::Register,
                 <MP::Lhs as MatrixTypes>::RegisterSize,
                 ReadWrite,
             >,
         >,
         RhsTile<
-            Tilex<
+            Tile<
                 <MP::Rhs as MatrixTypes>::Register,
                 <MP::Rhs as MatrixTypes>::RegisterSize,
                 ReadWrite,
@@ -244,13 +244,13 @@ where
         lhs_stage: &StageLhs,
         rhs_stage: &StageRhs,
         lhs_fragment: &mut Sequence<
-            Tilex<
+            Tile<
                 <MP::Lhs as MatrixTypes>::Register,
                 <MP::Lhs as MatrixTypes>::RegisterSize,
                 ReadWrite,
             >,
         >,
-        rhs_fragment: &mut Tilex<
+        rhs_fragment: &mut Tile<
             <MP::Rhs as MatrixTypes>::Register,
             <MP::Rhs as MatrixTypes>::RegisterSize,
             ReadWrite,
@@ -348,19 +348,19 @@ where
         lhs_stage: &StageLhs,
         rhs_stage: &StageRhs,
         lhs_fragment: &mut Sequence<
-            Tilex<
+            Tile<
                 <MP::Lhs as MatrixTypes>::Register,
                 <MP::Lhs as MatrixTypes>::RegisterSize,
                 ReadWrite,
             >,
         >,
         rhs_fragments: &mut (
-            Tilex<
+            Tile<
                 <MP::Rhs as MatrixTypes>::Register,
                 <MP::Rhs as MatrixTypes>::RegisterSize,
                 ReadWrite,
             >,
-            Tilex<
+            Tile<
                 <MP::Rhs as MatrixTypes>::Register,
                 <MP::Rhs as MatrixTypes>::RegisterSize,
                 ReadWrite,

@@ -4,7 +4,7 @@ use cubek_std::{MatrixLayout, tile::StridedTile};
 use crate::components::tile::{SharedTileConfig, TileConfig};
 use crate::definition::StageIdent;
 
-use super::{PlaneVecTile, Tilex};
+use super::{PlaneVecTile, Tile};
 
 // ===========================================================================
 // Allocate
@@ -15,8 +15,8 @@ pub fn planevec_allocate_lhs<L: Numeric, VL: Size>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: SharedTileConfig,
     #[comptime] reduce_vector_size: u32,
-) -> Tilex<L, VL, ReadWrite> {
-    Tilex::new_PlaneVec(PlaneVecTile::<L, VL> {
+) -> Tile<L, VL, ReadWrite> {
+    Tile::new_PlaneVec(PlaneVecTile::<L, VL> {
         data: Array::new(1usize),
         matrix_layout: layout,
         config,
@@ -29,8 +29,8 @@ pub fn planevec_allocate_rhs<R: Numeric, VR: Size>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: SharedTileConfig,
     #[comptime] reduce_vector_size: u32,
-) -> Tilex<R, VR, ReadWrite> {
-    Tilex::new_PlaneVec(PlaneVecTile::<R, VR> {
+) -> Tile<R, VR, ReadWrite> {
+    Tile::new_PlaneVec(PlaneVecTile::<R, VR> {
         data: Array::new(config.elements_in_tile_n() as usize),
         matrix_layout: layout,
         config,
@@ -43,8 +43,8 @@ pub fn planevec_allocate_acc<A: Numeric, VA: Size>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: SharedTileConfig,
     #[comptime] reduce_vector_size: u32,
-) -> Tilex<A, VA, ReadWrite> {
-    Tilex::new_PlaneVec(PlaneVecTile::<A, VA> {
+) -> Tile<A, VA, ReadWrite> {
+    Tile::new_PlaneVec(PlaneVecTile::<A, VA> {
         data: Array::new(config.elements_in_tile_n() as usize),
         matrix_layout: layout,
         config,

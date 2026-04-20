@@ -24,13 +24,8 @@ pub use register::*;
 pub struct Plane;
 // pub struct Cube;
 
-// ===========================================================================
-// Tilex: the main enum. Each variant holds its storage + comptime fields
-// (matrix_layout, config, and any kind-specific data).
-// ===========================================================================
-
 #[derive(CubeType)]
-pub enum Tilex<N: Numeric, V: Size, IO: SliceVisibility> {
+pub enum Tile<N: Numeric, V: Size, IO: SliceVisibility> {
     GlobalMemory(Slice<Vector<N, V>, IO>),
     SharedMemory(StridedTile<N, V, IO>),
     Cmma(CmmaTile<N>),
@@ -97,26 +92,17 @@ pub struct Value<E: Numeric> {
     pub val: E,
 }
 
-// ===========================================================================
-// Allocate functions are per-kind only (cmma_allocate_lhs, register_allocate_lhs, etc.)
-// No dispatch needed — the caller (each TileMatmul impl) knows which kind it wants.
-// ===========================================================================
-
-// ===========================================================================
-// Dispatch: execute — single match, extracts inner storage, calls impl fn.
-// ===========================================================================
-
 #[cube]
-pub fn tilex_execute<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>(
-    lhs: &Tilex<L, VL, ReadWrite>,
-    rhs: &Tilex<R, VR, ReadWrite>,
-    acc: &mut Tilex<A, VA, ReadWrite>,
+pub fn tile_execute<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>(
+    lhs: &Tile<L, VL, ReadWrite>,
+    rhs: &Tile<R, VR, ReadWrite>,
+    acc: &mut Tile<A, VA, ReadWrite>,
 ) {
     match (lhs, rhs, acc) {
-        (Tilex::Cmma(l), Tilex::Cmma(r), Tilex::Cmma(a)) => {
+        (Tile::Cmma(l), Tile::Cmma(r), Tile::Cmma(a)) => {
             cmma_execute(&l.matrix, &r.matrix, &mut a.matrix);
         }
-        (Tilex::Mma(l), Tilex::Mma(r), Tilex::Mma(a)) => {
+        (Tile::Mma(l), Tile::Mma(r), Tile::Mma(a)) => {
             mma_execute(
                 &l.fragment,
                 &r.fragment,
@@ -126,13 +112,13 @@ pub fn tilex_execute<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA:
                 a.mma_io_config,
             );
         }
-        (Tilex::Register(l), Tilex::Register(r), Tilex::Register(a)) => {
+        (Tile::Register(l), Tile::Register(r), Tile::Register(a)) => {
             register_execute(&l.data, &r.data, &mut a.data, a.config, a.product_type);
         }
-        (Tilex::PlaneVec(l), Tilex::PlaneVec(r), Tilex::PlaneVec(a)) => {
+        (Tile::PlaneVec(l), Tile::PlaneVec(r), Tile::PlaneVec(a)) => {
             planevec_execute(&l.data, &r.data, &mut a.data, a.config);
         }
-        (Tilex::Interleaved(l), Tilex::Interleaved(r), Tilex::Interleaved(a)) => {
+        (Tile::Interleaved(l), Tile::Interleaved(r), Tile::Interleaved(a)) => {
             interleaved_execute(
                 &l.data,
                 l.matrix_layout,
@@ -143,16 +129,12 @@ pub fn tilex_execute<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA:
                 a.config,
             );
         }
-        _ => panic!("Unsupported storage combination for tilex_execute"),
+        _ => panic!("Unsupported storage combination for tile_execute"),
     }
 }
 
-// ===========================================================================
-// Dispatch: load — single match on (source, dest) pair.
-// ===========================================================================
-
 #[cube]
-pub fn tilex_load<
+pub fn tile_load<
     SE: Numeric,
     SS: Size,
     DE: Numeric,
@@ -161,21 +143,21 @@ pub fn tilex_load<
     R: Numeric,
     A: Numeric,
 >(
-    source: &Tilex<SE, SS, ReadOnly>,
-    dest: &mut Tilex<DE, DS, ReadWrite>,
+    source: &Tile<SE, SS, ReadOnly>,
+    dest: &mut Tile<DE, DS, ReadWrite>,
     #[comptime] ident: StageIdent,
 ) {
     match (source, dest) {
         // --- Cmma loads ---
-        (Tilex::SharedMemory(shared), Tilex::Cmma(t)) => {
+        (Tile::SharedMemory(shared), Tile::Cmma(t)) => {
             cmma_load_from_shared::<SE, SS, DE, DS>(shared, &mut t.matrix, ident, t.matrix_layout);
         }
-        (Tilex::None, Tilex::Cmma(t)) => {
+        (Tile::None, Tile::Cmma(t)) => {
             cmma_load_zeros::<DE, DS>(&mut t.matrix);
         }
 
         // --- Mma loads ---
-        (Tilex::SharedMemory(shared), Tilex::Mma(t)) => match ident {
+        (Tile::SharedMemory(shared), Tile::Mma(t)) => match ident {
             StageIdent::Lhs => mma_load_lhs_from_shared::<SE, SS, DE, DS, R, A>(
                 shared,
                 &mut t.fragment,
@@ -199,7 +181,7 @@ pub fn tilex_load<
             ),
             _ => panic!("Invalid ident for mma_load"),
         },
-        (Tilex::None, Tilex::Mma(t)) => {
+        (Tile::None, Tile::Mma(t)) => {
             mma_load_acc_zeros::<SE, SS, DE, DS, L, R>(
                 &mut t.fragment,
                 t.matrix_layout,
@@ -209,7 +191,7 @@ pub fn tilex_load<
         }
 
         // --- Register loads ---
-        (Tilex::SharedMemory(shared), Tilex::Register(t)) => {
+        (Tile::SharedMemory(shared), Tile::Register(t)) => {
             register_load_from_shared::<SE, SS, DE, DS>(
                 shared,
                 &mut t.data,
@@ -219,44 +201,40 @@ pub fn tilex_load<
                 ident,
             );
         }
-        (Tilex::None, Tilex::Register(t)) => {
+        (Tile::None, Tile::Register(t)) => {
             register_load_zeros::<DE, DS>(&mut t.data, t.config, ident);
         }
 
         // --- PlaneVec loads ---
-        (Tilex::SharedMemory(shared), Tilex::PlaneVec(t)) => {
+        (Tile::SharedMemory(shared), Tile::PlaneVec(t)) => {
             planevec_load_from_shared::<SE, SS, DE, DS>(shared, &mut t.data, t.config, ident);
         }
-        (Tilex::None, Tilex::PlaneVec(t)) => {
+        (Tile::None, Tile::PlaneVec(t)) => {
             planevec_load_zeros::<DE, DS>(&mut t.data, t.config);
         }
 
         // --- Interleaved loads ---
-        (Tilex::SharedMemory(shared), Tilex::Interleaved(t)) => {
+        (Tile::SharedMemory(shared), Tile::Interleaved(t)) => {
             interleaved_load_from_shared::<SE, SS, DE, DS>(shared, &mut t.data, t.config, ident);
         }
-        (Tilex::None, Tilex::Interleaved(t)) => {
+        (Tile::None, Tile::Interleaved(t)) => {
             interleaved_load_zeros::<DE, DS>(&mut t.data, t.config);
         }
 
-        _ => panic!("Unsupported storage pair for tilex_load"),
+        _ => panic!("Unsupported storage pair for tile_load"),
     }
 }
 
-// ===========================================================================
-// Dispatch: write — single match on (dest_stage, acc) pair.
-// ===========================================================================
-
 #[cube]
-pub fn tilex_write<E: Numeric, ES: Size, A: Numeric, VA: Size, L: Numeric, R: Numeric>(
-    tile: &mut Tilex<E, ES, ReadWrite>,
-    out: &mut Tilex<A, VA, ReadWrite>,
+pub fn tile_write<E: Numeric, ES: Size, A: Numeric, VA: Size, L: Numeric, R: Numeric>(
+    tile: &mut Tile<E, ES, ReadWrite>,
+    out: &mut Tile<A, VA, ReadWrite>,
 ) {
     match (tile, out) {
-        (Tilex::SharedMemory(shared), Tilex::Cmma(t)) => {
+        (Tile::SharedMemory(shared), Tile::Cmma(t)) => {
             cmma_write_to_shared::<E, ES, A, VA>(shared, &t.matrix);
         }
-        (Tilex::SharedMemory(shared), Tilex::Mma(t)) => {
+        (Tile::SharedMemory(shared), Tile::Mma(t)) => {
             mma_write_to_shared::<E, ES, A, VA, L, R>(
                 shared,
                 &t.fragment,
@@ -264,10 +242,10 @@ pub fn tilex_write<E: Numeric, ES: Size, A: Numeric, VA: Size, L: Numeric, R: Nu
                 t.mma_io_config,
             );
         }
-        (Tilex::SharedMemory(shared), Tilex::Register(t)) => {
+        (Tile::SharedMemory(shared), Tile::Register(t)) => {
             register_write_to_shared::<E, ES, A, VA>(shared, &t.data, t.config);
         }
-        (Tilex::SharedMemory(shared), Tilex::PlaneVec(t)) => {
+        (Tile::SharedMemory(shared), Tile::PlaneVec(t)) => {
             planevec_write_to_shared::<E, ES, A, VA>(
                 shared,
                 &mut t.data,
@@ -275,9 +253,9 @@ pub fn tilex_write<E: Numeric, ES: Size, A: Numeric, VA: Size, L: Numeric, R: Nu
                 t.reduce_vector_size,
             );
         }
-        (Tilex::SharedMemory(shared), Tilex::Interleaved(t)) => {
+        (Tile::SharedMemory(shared), Tile::Interleaved(t)) => {
             interleaved_write_to_shared::<E, ES, A, VA>(shared, &mut t.data, t.config);
         }
-        _ => panic!("Unsupported storage pair for tilex_write"),
+        _ => panic!("Unsupported storage pair for tile_write"),
     }
 }

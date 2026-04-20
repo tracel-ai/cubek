@@ -4,7 +4,7 @@ use cubecl;
 use cubecl::prelude::*;
 use cubek_matmul::{
     components::tile::{
-        ProductType, SharedTileConfig, Tilex, TilexExpand, register_allocate_acc, tilex_write,
+        ProductType, SharedTileConfig, Tile, TileExpand, register_allocate_acc, tile_write,
     },
     definition::SwizzleModes,
 };
@@ -45,7 +45,7 @@ impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA> for UnitAttention
     type Workspace = ();
 
     fn scale_mul(
-        tile: &mut Tilex<Acc, VA, ReadWrite>,
+        tile: &mut Tile<Acc, VA, ReadWrite>,
         scale: &Self::ScaleColumn,
         _workspace: &mut Self::Workspace,
         #[comptime] config: Self::Config,
@@ -60,7 +60,7 @@ impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA> for UnitAttention
     }
 
     fn scale_div(
-        tile: &mut Tilex<Acc, VA, ReadWrite>,
+        tile: &mut Tile<Acc, VA, ReadWrite>,
         running_state: &Self::RunningState,
         _workspace: &mut Self::Workspace,
         #[comptime] config: Self::Config,
@@ -78,7 +78,7 @@ impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA> for UnitAttention
 
     fn init_workspace(#[comptime] _config: Self::Config) -> Self::Workspace {}
 
-    fn init_tile(#[comptime] config: Self::Config) -> Tilex<Acc, VA, ReadWrite> {
+    fn init_tile(#[comptime] config: Self::Config) -> Tile<Acc, VA, ReadWrite> {
         let mut tile = register_allocate_acc::<Acc, VA>(
             MatrixLayout::RowMajor,
             config.shared(),
@@ -89,27 +89,27 @@ impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA> for UnitAttention
     }
 
     fn write_results<E: Float, ES: Size>(
-        source: &mut Tilex<Acc, VA, ReadWrite>,
-        dest: &mut Tilex<E, ES, ReadWrite>,
+        source: &mut Tile<Acc, VA, ReadWrite>,
+        dest: &mut Tile<E, ES, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        tilex_write::<E, ES, Acc, VA, Acc, Acc>(dest, source);
+        tile_write::<E, ES, Acc, VA, Acc, Acc>(dest, source);
     }
 }
 
 #[cube]
 fn apply_rowwise_scale<Acc: Float, VA: Size>(
-    tile: &mut Tilex<Acc, VA, ReadWrite>,
+    tile: &mut Tile<Acc, VA, ReadWrite>,
     scale: &RowWise<Acc>,
     #[comptime] num_rows: u32,
     #[comptime] num_cols: u32,
 ) {
     match tile {
-        Tilex::Register(t) => {
+        Tile::Register(t) => {
             scale_array_rowwise::<Acc>(&mut t.data, scale, num_rows, num_cols);
         }
-        Tilex::Cmma(_dummy) => panic!("UnitAttentionOutput expects a Tilex::Register"),
-        _ => panic!("UnitAttentionOutput expects a Tilex::Register"),
+        Tile::Cmma(_dummy) => panic!("UnitAttentionOutput expects a Tile::Register"),
+        _ => panic!("UnitAttentionOutput expects a Tile::Register"),
     }
 }
 
@@ -131,14 +131,14 @@ fn scale_array_rowwise<Acc: Float>(
 
 #[cube]
 fn zero_register_tile<Acc: Float, VA: Size>(
-    tile: &mut Tilex<Acc, VA, ReadWrite>,
+    tile: &mut Tile<Acc, VA, ReadWrite>,
     #[comptime] num_rows: u32,
     #[comptime] num_cols: u32,
 ) {
     match tile {
-        Tilex::Register(t) => zero_array::<Acc>(&mut t.data, num_rows * num_cols),
-        Tilex::Cmma(_dummy) => panic!("UnitAttentionOutput expects a Tilex::Register"),
-        _ => panic!("UnitAttentionOutput expects a Tilex::Register"),
+        Tile::Register(t) => zero_array::<Acc>(&mut t.data, num_rows * num_cols),
+        Tile::Cmma(_dummy) => panic!("UnitAttentionOutput expects a Tile::Register"),
+        _ => panic!("UnitAttentionOutput expects a Tile::Register"),
     }
 }
 

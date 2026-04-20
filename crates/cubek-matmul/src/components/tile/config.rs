@@ -106,7 +106,7 @@ impl SharedTileConfig {
         }
     }
 
-    // Direct accessors — used by per-kind layout types in tilex.
+    // Direct accessors — used by per-kind layout types in tile.
     // These duplicate TileConfig trait methods so layouts don't depend on the trait.
 
     pub fn tile_m(&self) -> u32 {

@@ -7,7 +7,7 @@ use cubek_std::{
 use crate::components::tile::cmma::{CmmaFragmentReader as _, CmmaStageReader, CmmaStageWriter};
 use crate::definition::StageIdent;
 
-use super::{CmmaTile, Tilex};
+use super::{CmmaTile, Tile};
 
 // ===========================================================================
 // Allocate
@@ -17,7 +17,7 @@ use super::{CmmaTile, Tilex};
 pub fn cmma_allocate_lhs<L: Numeric, VL: Size>(
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_size: TileSize,
-) -> Tilex<L, VL, ReadWrite> {
+) -> Tile<L, VL, ReadWrite> {
     let fragment = unsafe {
         cmma::Matrix::<L>::uninitialized(
             cmma::MatrixIdent::A,
@@ -27,7 +27,7 @@ pub fn cmma_allocate_lhs<L: Numeric, VL: Size>(
             as_cmma_layout(layout),
         )
     };
-    Tilex::new_Cmma(CmmaTile::<L> {
+    Tile::new_Cmma(CmmaTile::<L> {
         matrix: fragment,
         matrix_layout: layout,
     })
@@ -37,7 +37,7 @@ pub fn cmma_allocate_lhs<L: Numeric, VL: Size>(
 pub fn cmma_allocate_rhs<R: Numeric, VR: Size>(
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_size: TileSize,
-) -> Tilex<R, VR, ReadWrite> {
+) -> Tile<R, VR, ReadWrite> {
     let fragment = unsafe {
         cmma::Matrix::<R>::uninitialized(
             cmma::MatrixIdent::B,
@@ -47,7 +47,7 @@ pub fn cmma_allocate_rhs<R: Numeric, VR: Size>(
             as_cmma_layout(layout),
         )
     };
-    Tilex::new_Cmma(CmmaTile::<R> {
+    Tile::new_Cmma(CmmaTile::<R> {
         matrix: fragment,
         matrix_layout: layout,
     })
@@ -57,7 +57,7 @@ pub fn cmma_allocate_rhs<R: Numeric, VR: Size>(
 pub fn cmma_allocate_acc<A: Numeric, VA: Size>(
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_size: TileSize,
-) -> Tilex<A, VA, ReadWrite> {
+) -> Tile<A, VA, ReadWrite> {
     let fragment = unsafe {
         cmma::Matrix::<A>::uninitialized(
             cmma::MatrixIdent::Accumulator,
@@ -67,7 +67,7 @@ pub fn cmma_allocate_acc<A: Numeric, VA: Size>(
             cmma::MatrixLayout::Undefined,
         )
     };
-    Tilex::new_Cmma(CmmaTile::<A> {
+    Tile::new_Cmma(CmmaTile::<A> {
         matrix: fragment,
         matrix_layout: layout,
     })
