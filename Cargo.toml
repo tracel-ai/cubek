@@ -56,7 +56,7 @@ thiserror = { version = "2", default-features = false }
 
 ### For xtask crate ###
 strum = { version = "0.28", features = ["derive"] }
-tracel-xtask = { version = "4.8" }
+tracel-xtask = { version = "=4.8" }
 
 pretty_assertions = "1.4"
 
