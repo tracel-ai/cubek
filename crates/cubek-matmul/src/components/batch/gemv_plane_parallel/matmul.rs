@@ -8,7 +8,10 @@ use crate::components::batch::{
     },
 };
 
-use crate::{definition::*, launch::MatmulArgs};
+use crate::{
+    definition::{cube_pos_to_matrix_batch, *},
+    launch::MatmulArgs,
+};
 use cubecl::{
     cube,
     num_traits::Zero,
@@ -114,7 +117,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatPlaneParallel<MP> {
 
         let (_, m, k) = lhs.shape();
         let (_, _, n) = rhs.shape();
-        let (_, matrix_cube, batch_cube) = cube_mapping.cube_pos_to_tensor_pos();
+        let (matrix_cube, batch_cube) = cube_pos_to_matrix_batch(&cube_mapping);
 
         let lhs_batch = Args::batch_lhs(state, batch_cube as usize);
         let rhs_batch = Args::batch_rhs(state, batch_cube as usize);

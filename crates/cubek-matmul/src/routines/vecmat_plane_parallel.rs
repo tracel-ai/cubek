@@ -130,7 +130,7 @@ impl Routine<()> for GemvPlaneParallelRoutine {
 
         let cube_count_plan = CubeCountPlan::from_blueprint(
             &blueprint.hypercube_blueprint,
-            (1, working_cubes as u32, problem.num_batches() as u32).into(),
+            (working_cubes as u32, 1, problem.num_batches() as u32).into(),
             &device_settings.max_cube_count,
         );
 

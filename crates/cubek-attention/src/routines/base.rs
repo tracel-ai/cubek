@@ -40,6 +40,7 @@ pub struct LaunchInfo<B> {
 
 pub struct DeviceSettings<R: Runtime> {
     pub plane_dim: u32,
+    pub max_cube_count: (u32, u32, u32),
     pub vector_sizes: AttentionVectorSizes,
     pub client: ComputeClient<R>,
 }
@@ -48,6 +49,7 @@ impl<R: Runtime> core::fmt::Debug for DeviceSettings<R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DeviceSettings")
             .field("plane_dim", &self.plane_dim)
+            .field("max_cube_count", &self.max_cube_count)
             .field("vector_sizes", &self.vector_sizes)
             .finish()
     }
@@ -57,6 +59,7 @@ impl<R: Runtime> DeviceSettings<R> {
     pub fn new(client: &ComputeClient<R>, problem: &AttentionProblem) -> Self {
         DeviceSettings {
             plane_dim: client.properties().hardware.plane_size_max,
+            max_cube_count: client.properties().hardware.max_cube_count,
             vector_sizes: AttentionVectorSizes::new_max_for_problem(client, problem),
             client: client.clone(),
         }

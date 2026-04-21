@@ -1,4 +1,5 @@
 use cubek_std::TileSize;
+use cubek_std::cube_count::{Count3d, CubeCountPlan};
 
 use crate::definition::{AttentionDims, AttentionVectorSizes, HypercubeBlueprint};
 
@@ -17,6 +18,29 @@ pub struct AttentionBlueprint {
     pub causal: bool,
 
     pub check_bounds: AttentionCheckBounds,
+}
+
+impl AttentionBlueprint {
+    /// Build the [CubeCountPlan] for an attention problem, with 2D conceptual
+    /// axes `(seq_q_cubes, batch * num_heads)` (z is unused).
+    pub fn cube_count_plan(
+        &self,
+        dims: &AttentionDims,
+        max_cube_count: &(u32, u32, u32),
+    ) -> CubeCountPlan {
+        let seq_q_cubes = (dims.seq_q as u32).div_ceil(
+            self.tiling_scheme.tile_size.seq_q
+                * self.tiling_scheme.partition_size.seq_q
+                * self.tiling_scheme.stage_size.seq_q,
+        );
+        let batch_heads = (dims.batch * dims.num_heads) as u32;
+        let target_count = Count3d {
+            x: seq_q_cubes,
+            y: batch_heads,
+            z: 1,
+        };
+        CubeCountPlan::from_blueprint(&self.hypercube_blueprint, target_count, max_cube_count)
+    }
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
