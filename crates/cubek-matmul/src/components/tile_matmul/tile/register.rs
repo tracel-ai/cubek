@@ -119,13 +119,7 @@ fn outer_product<L: Numeric, R: Numeric, A: Numeric>(
 }
 
 #[cube]
-pub fn register_load_from_shared<
-    E: Numeric,
-    ES: Size,
-    N: Numeric,
-    V: Size,
-    IO: SliceVisibility,
->(
+pub fn register_load_from_shared<E: Numeric, ES: Size, N: Numeric, V: Size, IO: SliceVisibility>(
     shared: &StridedTile<E, ES, IO>,
     arr: &mut Array<N>,
     #[comptime] matrix_layout: MatrixLayout,

@@ -154,10 +154,7 @@ impl<N: Numeric, V: Size, Sc: Scope> Tile<N, V, Sc, ReadWrite> {
         }
     }
 
-    /// Copies data from `source` into `self`. Handles both the load direction (container copies
-    /// from shared memory or zero-fill) and the write direction (shared memory copies from a
-    /// compute container). `ident` identifies the role of `self` in the matmul and is only
-    /// consulted on the load paths; pass [`StageIdent::Out`] for the write direction.
+    /// Copies data from `source` into `self`.
     pub fn copy_from<
         SE: Numeric,
         SS: Size,
