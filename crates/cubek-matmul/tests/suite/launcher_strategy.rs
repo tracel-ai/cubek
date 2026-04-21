@@ -1,41 +1,54 @@
-use cubecl::{TestRuntime, prelude::*, server::ServerError, std::tensor::TensorHandle};
+use cubecl::{TestRuntime, prelude::*, server::ServerError};
 use cubek_matmul::{
-    definition::AvailableVectorSizes, definition::MatmulIdent, definition::MatmulVectorSizes,
-    definition::cube_mapping_launch, launch::ConcreteOutputFactory,
-    launch::ConcreteOutputFactory as _,
-};
-
-use cubek_matmul::{
-    components::batch::{BatchConfig, BatchMatmulFamily},
     definition::MatmulElems,
-    definition::{MatmulProblem, TilingBlueprint},
-    launch::ConcreteInputsFactory,
+    definition::{MatmulProblem, MatmulSetupError},
     launch::Strategy,
-    launch::TensorArgs,
-    launch::TensorInputs,
-    launch::TensorMapArgs,
-    launch::TensorMapInputs,
-    launch::TensorOutput,
     launch::launch_ref,
-    routines::BlueprintStrategy,
-    routines::Routine,
+    launch::test_only::TestStrategy,
 };
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{
-    DataKind, ExecutionOutcome, HostData, TestOutcome, current_test_mode,
-    {BaseInputSpec, Distribution, RandomInputSpec, TestInput},
+    DataKind, Distribution, ExecutionOutcome, TestInput, TestOutcome,
 };
 
 use crate::{suite::assert_result, suite::layout_to_stride_spec};
 
+/// Test the correctness of a public [`Strategy`] against the CPU reference.
 #[allow(unused)]
-/// Test the correctness of the specified Matmul on the given device,
-/// against a naive CPU implementation over the given problem
 pub fn test_matmul_strategy(
     client: ComputeClient<TestRuntime>,
-    mut problem: MatmulProblem,
+    problem: MatmulProblem,
     strategy: Strategy,
 ) {
+    run(client, problem, move |client, lhs, rhs, out, dtypes| {
+        launch_ref(&strategy, client, lhs, rhs, out, dtypes)
+    });
+}
+
+/// Test the correctness of a [`TestStrategy`] (test-only routines) against
+/// the CPU reference. Kept separate from [`test_matmul_strategy`] so the
+/// public `Strategy` enum stays lean.
+#[allow(unused)]
+pub fn test_matmul_test_strategy(
+    client: ComputeClient<TestRuntime>,
+    problem: MatmulProblem,
+    strategy: TestStrategy,
+) {
+    run(client, problem, move |client, lhs, rhs, out, dtypes| {
+        strategy.launch_ref(client, lhs, rhs, out, dtypes)
+    });
+}
+
+fn run<F>(client: ComputeClient<TestRuntime>, mut problem: MatmulProblem, launch: F)
+where
+    F: FnOnce(
+        &ComputeClient<TestRuntime>,
+        InputBinding<TestRuntime>,
+        InputBinding<TestRuntime>,
+        TensorBinding<TestRuntime>,
+        &mut MatmulElems,
+    ) -> Result<(), MatmulSetupError>,
+{
     let (lhs, lhs_data) = TestInput::new(
         client.clone(),
         problem.lhs_shape.clone(),
@@ -79,15 +92,7 @@ pub fn test_matmul_strategy(
     let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes.clone());
 
     match get_server_error(&client).unwrap_or(
-        launch_ref(
-            &strategy,
-            &client,
-            lhs_handle,
-            rhs_handle,
-            out_handle,
-            &mut dtypes,
-        )
-        .into(),
+        launch(&client, lhs_handle, rhs_handle, out_handle, &mut dtypes).into(),
     ) {
         ExecutionOutcome::Executed => {
             assert_result(&lhs_data, &rhs_data, &problem, &client, out, dtypes).as_test_outcome()
