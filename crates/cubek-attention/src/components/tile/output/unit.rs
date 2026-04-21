@@ -4,9 +4,9 @@ use cubecl;
 use cubecl::prelude::*;
 use cubek_matmul::{
     components::tile_matmul::{
-        Plane, ProductType, SharedTileConfig, Tile, TileExpand, register_allocate_acc, tile_write,
+        Plane, ProductType, SharedTileConfig, Tile, TileExpand, register_allocate_acc,
     },
-    definition::SwizzleModes,
+    definition::{StageIdent, SwizzleModes},
 };
 use cubek_std::MatrixLayout;
 
@@ -89,11 +89,11 @@ impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA> for UnitAttention
     }
 
     fn write_results<E: Float, ES: Size>(
-        source: &mut Tile<Acc, VA, Plane, ReadWrite>,
+        source: &Tile<Acc, VA, Plane, ReadWrite>,
         dest: &mut Tile<E, ES, Plane, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        tile_write::<E, ES, Acc, VA, Acc, Acc, Plane>(dest, source);
+        dest.copy_from::<Acc, VA, Acc, Acc, Acc, ReadWrite>(source, StageIdent::Out);
     }
 }
 

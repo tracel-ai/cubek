@@ -129,11 +129,23 @@ impl<ES: Numeric, N: Size, IO: SliceVisibility> StridedTile<ES, N, IO> {
 }
 
 #[cube]
-impl<ES: Numeric, N: Size> StridedTile<ES, N, ReadOnly> {
-    /// Returns the tile as an offset slice. Should only be used when swizzling is definitely not
-    /// applicable.
+impl<ES: Numeric, N: Size, IO: SliceVisibility> StridedTile<ES, N, IO> {
+    /// Returns the tile as an offset read-only slice. Should only be used when swizzling is
+    /// definitely not applicable.
     pub fn as_slice(&self) -> Slice<Vector<ES, N>, ReadOnly> {
         self.container.slice(self.start as usize, self.end as usize)
+    }
+
+    /// Returns a read-only view of this tile, dropping write permission on the container.
+    pub fn to_read_only(&self) -> StridedTile<ES, N, ReadOnly> {
+        StridedTile::<ES, N, ReadOnly> {
+            container: self.container.to_slice(),
+            start: self.start,
+            end: self.end,
+            stride: self.stride,
+            swizzle: self.swizzle,
+            layout: self.layout,
+        }
     }
 }
 
