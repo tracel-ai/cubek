@@ -26,12 +26,18 @@ impl GlobalFullPlaneReduce {
         #[comptime] vectorization_mode: VectorizationMode,
         #[comptime] blueprint: PlaneReduceBlueprint,
     ) {
-        #[allow(clippy::collapsible_if)]
-        if comptime!(blueprint.plane_dim_ceil) {
-            if UNIT_POS_X >= PLANE_DIM {
-                terminate!();
-            }
-        }
+        // No `terminate!()` for excess lanes (`UNIT_POS_X >= PLANE_DIM`
+        // when `plane_dim_ceil` is set), as WebGPU flags the later
+        // `subgroupAdd` as non-uniform. Instead every lane runs.
+        // Writers gate on `UNIT_POS_X == 0`, and WGSL's linear subgroup
+        // mapping puts every such lane in a subgroup whose other lanes
+        // all have `x < PLANE_DIM`, so the `subgroupAdd` a writer consumes
+        // is always summed over real data. Excess subgroups compute garbage
+        // sums that nobody reads.
+        //
+        // Perf: when `plane_dim_ceil = true` (variable subgroup size);
+        // every subgroup does full work instead of one
+        // live + rest-early-out. Better than "doesn't compile".
         let write_index = CUBE_POS * CUBE_DIM_Y as usize + UNIT_POS_Y as usize;
 
         let mut writer =
