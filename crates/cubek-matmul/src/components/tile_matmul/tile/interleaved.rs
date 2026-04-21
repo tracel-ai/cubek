@@ -175,8 +175,8 @@ pub fn interleaved_write_to_shared<E: Numeric, ES: Size, A: Numeric, VA: Size>(
     arr: &Array<A>,
     #[comptime] config: SharedTileConfig,
 ) {
-    let m = config.elements_in_tile_m() as u32;
-    let n = config.elements_in_tile_n() as u32;
+    let m = config.elements_in_tile_m();
+    let n = config.elements_in_tile_n();
     let out_vector_size = shared.container.vector_size().comptime() as u32;
     let size_mn = m * n;
 
