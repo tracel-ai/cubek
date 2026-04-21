@@ -26,7 +26,6 @@ type Sz<T> = crate::definition::StageSize<T>;
 /// A family of [StageMatmul] implementations that operate with any [precision](MatmulPrecision).
 pub trait StageMatmulFamily: Send + Sync + 'static {
     /// Compute primitive used by the underlying tile matmul
-    /// (forwarded from [TileMatmulFamily::Scope](super::super::tile::TileMatmulFamily::Scope)).
     type Scope: Scope;
 
     /// The specific TileMatmul implementation associated with this family.
@@ -207,7 +206,7 @@ pub trait Stage<ES: Numeric, NS: Size, IO: SliceVisibility = ReadOnly>:
     /// Slices a tile with offset (`row`, `col`) from the stage and returns it.
     ///
     /// The [Scope] generic lets the caller select the compute primitive that will consume
-    /// this tile (forwarded to [TileMatmul](super::super::tile::TileMatmul::Scope)).
+    /// this tile
     fn tile<Sc: Scope>(this: &Self, tile: Coords2d) -> Tile<ES, NS, Sc, IO>;
 }
 
