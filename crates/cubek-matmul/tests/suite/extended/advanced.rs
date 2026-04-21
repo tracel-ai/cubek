@@ -1,7 +1,11 @@
-//! Forced-blueprint tests for non-default hypercube / swizzle / specialization
-//! / partition-buffering knobs. All of these are applied to one representative
+//! Forced-blueprint tests for non-default hypercube / specialization /
+//! partition-buffering knobs. All of these are applied to one representative
 //! routine (SimpleCyclicCmma or DoubleCyclicCmma as appropriate) — the point
 //! is to exercise each knob at least once, not to cover every combo.
+//!
+//! Swizzle knobs are not covered here: CMMA does not support swizzling, and
+//! MMA-based swizzling depends on the `alignment` client feature, so those
+//! cases live in `full/` with the platform-specific routines instead.
 
 use cubek_matmul::{
     components::{
@@ -24,6 +28,8 @@ use super::common::{
 use crate::suite::test_matmul_strategy;
 
 fn run_with(
+    partition: PartitionSize,
+    stage: StageSize,
     swizzle: SwizzleModes,
     hypercube: HypercubeBlueprint,
     buffering: PartitionBuffering,
@@ -36,8 +42,8 @@ fn run_with(
         &c,
         &p,
         default_tile_size(),
-        PartitionSize { m: 1, n: 1, k: 1 },
-        StageSize { m: 2, n: 2, k: 1 },
+        partition,
+        stage,
         swizzle,
         hypercube,
         buffering,
@@ -61,51 +67,24 @@ fn both_main() -> LoadFlows {
     }
 }
 
-// -- Swizzle modes -----------------------------------------------------------
-
-#[test]
-fn swizzle_b32() {
-    run_with(
-        SwizzleModes {
-            lhs: SwizzleMode::B32,
-            rhs: SwizzleMode::B32,
-            ..Default::default()
-        },
-        default_hypercube(),
-        PartitionBuffering::Single,
-        both_main(),
-        |bp| Strategy::SimpleCyclicCmma(BlueprintStrategy::Forced(bp)),
-    );
+/// Default partition/stage for single-partition knob tests (hypercube).
+fn simple_partition() -> PartitionSize {
+    PartitionSize { m: 1, n: 1, k: 1 }
 }
 
-#[test]
-fn swizzle_b64() {
-    run_with(
-        SwizzleModes {
-            lhs: SwizzleMode::B64,
-            rhs: SwizzleMode::B64,
-            ..Default::default()
-        },
-        default_hypercube(),
-        PartitionBuffering::Single,
-        both_main(),
-        |bp| Strategy::SimpleCyclicCmma(BlueprintStrategy::Forced(bp)),
-    );
+fn simple_stage() -> StageSize {
+    StageSize { m: 2, n: 2, k: 1 }
 }
 
-#[test]
-fn swizzle_b128() {
-    run_with(
-        SwizzleModes {
-            lhs: SwizzleMode::B128,
-            rhs: SwizzleMode::B128,
-            ..Default::default()
-        },
-        default_hypercube(),
-        PartitionBuffering::Single,
-        both_main(),
-        |bp| Strategy::SimpleCyclicCmma(BlueprintStrategy::Forced(bp)),
-    );
+/// Partition/stage suitable for specialization: matches the Specialized routine
+/// default (partition (1, 4, 2), stage (4, 1, 1)) so there are enough main-flow
+/// planes for the load-only planes to pair against.
+fn specialized_partition() -> PartitionSize {
+    PartitionSize { m: 1, n: 4, k: 2 }
+}
+
+fn specialized_stage() -> StageSize {
+    StageSize { m: 4, n: 1, k: 1 }
 }
 
 // -- Hypercube global order --------------------------------------------------
@@ -113,6 +92,8 @@ fn swizzle_b128() {
 #[test]
 fn hypercube_swizzle_col() {
     run_with(
+        simple_partition(),
+        simple_stage(),
         default_swizzle(),
         HypercubeBlueprint::builder()
             .global_order(GlobalOrder::SwizzleCol(2))
@@ -127,6 +108,8 @@ fn hypercube_swizzle_col() {
 #[test]
 fn hypercube_col_flattened() {
     run_with(
+        simple_partition(),
+        simple_stage(),
         default_swizzle(),
         HypercubeBlueprint::builder()
             .global_order(GlobalOrder::ColMajor)
@@ -141,6 +124,8 @@ fn hypercube_col_flattened() {
 #[test]
 fn hypercube_sm_exact() {
     run_with(
+        simple_partition(),
+        simple_stage(),
         default_swizzle(),
         HypercubeBlueprint::builder()
             .global_order(GlobalOrder::RowMajor)
@@ -159,6 +144,8 @@ fn hypercube_sm_exact() {
 #[test]
 fn hypercube_spread() {
     run_with(
+        simple_partition(),
+        simple_stage(),
         default_swizzle(),
         HypercubeBlueprint::builder()
             .global_order(GlobalOrder::SwizzleRow(2))
@@ -171,10 +158,17 @@ fn hypercube_spread() {
 }
 
 // -- Load specialization (applied on a routine that supports it) -------------
+//
+// These use the same partition/stage shape the `Specialized*` routines default
+// to (partition (1, 4, 2), stage (4, 1, 1)); smaller shapes don't leave enough
+// main-flow planes for the load-only planes to balance against and produce
+// all-zero output.
 
 #[test]
 fn specialization_main_load() {
     run_with(
+        specialized_partition(),
+        specialized_stage(),
         default_swizzle(),
         default_hypercube(),
         PartitionBuffering::Single,
@@ -189,6 +183,8 @@ fn specialization_main_load() {
 #[test]
 fn specialization_load_main() {
     run_with(
+        specialized_partition(),
+        specialized_stage(),
         default_swizzle(),
         default_hypercube(),
         PartitionBuffering::Single,
@@ -203,6 +199,8 @@ fn specialization_load_main() {
 #[test]
 fn specialization_load_load() {
     run_with(
+        specialized_partition(),
+        specialized_stage(),
         default_swizzle(),
         default_hypercube(),
         PartitionBuffering::Single,
@@ -215,10 +213,15 @@ fn specialization_load_load() {
 }
 
 // -- Partition buffering -----------------------------------------------------
+//
+// Partition buffering pipelines inside a partition along n, so it needs at
+// least two tiles along n (partition.n >= 2).
 
 #[test]
 fn partition_buffering_double() {
     run_with(
+        PartitionSize { m: 1, n: 2, k: 1 },
+        simple_stage(),
         default_swizzle(),
         default_hypercube(),
         PartitionBuffering::Double,

@@ -83,7 +83,18 @@ pub(crate) fn plane_blueprint(
 ) -> TilingBlueprint {
     let scheme = tiling_scheme(tile, partition, stage);
     let plane_dim = client.properties().hardware.plane_size_max;
-    TilingBlueprint::builder(scheme, plane_dim, problem).build()
+    // Default the partition buffering based on whether there is more than one
+    // tile along n inside a partition: double buffering at the partition level
+    // requires at least two tiles to pipeline, so partitions with n=1 must use
+    // Single (otherwise every test with partition.n=1 fails under strict mode).
+    let partition_buffering = if partition.n > 1 {
+        PartitionBuffering::Double
+    } else {
+        PartitionBuffering::Single
+    };
+    TilingBlueprint::builder(scheme, plane_dim, problem)
+        .partition_buffering(partition_buffering)
+        .build()
 }
 
 pub(crate) fn plane_blueprint_with(

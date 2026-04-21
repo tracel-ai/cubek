@@ -21,14 +21,32 @@ pub(crate) fn square(dim: usize, elems: MatmulGlobalElems) -> MatmulProblem {
 }
 
 pub(crate) fn rect(m: usize, n: usize, k: usize, elems: MatmulGlobalElems) -> MatmulProblem {
+    rect_with_layouts(
+        m,
+        n,
+        k,
+        MatrixLayout::RowMajor,
+        MatrixLayout::RowMajor,
+        elems,
+    )
+}
+
+pub(crate) fn rect_with_layouts(
+    m: usize,
+    n: usize,
+    k: usize,
+    lhs_layout: MatrixLayout,
+    rhs_layout: MatrixLayout,
+    elems: MatmulGlobalElems,
+) -> MatmulProblem {
     MatmulProblem::from_parameters(
         m,
         n,
         k,
         shape![1],
         shape![1],
-        MatrixLayout::RowMajor,
-        MatrixLayout::RowMajor,
+        lhs_layout,
+        rhs_layout,
         MatrixLayout::RowMajor,
         None,
         None,

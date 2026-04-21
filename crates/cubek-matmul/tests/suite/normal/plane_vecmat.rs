@@ -1,16 +1,41 @@
 //! Inferred-blueprint smoke tests for the plane vec-mat inner-product routines.
+//!
+//! The tile matmul used here only supports a ColMajor rhs, which is why these
+//! tests don't use the default row-row `rect` helper.
 
-use cubek_matmul::launch::Strategy;
+use cubecl::{ir::AddressType, zspace::shape};
+use cubek_matmul::{
+    definition::{MatmulProblem, MatmulGlobalElems},
+    launch::Strategy,
+};
+use cubek_std::MatrixLayout;
 
-use super::common::{client, f16_elems, rect};
+use super::common::{client, f16_elems};
 use crate::suite::test_matmul_strategy;
+
+fn vecmat_problem(n: usize, k: usize, elems: MatmulGlobalElems) -> MatmulProblem {
+    // (1, n, k) vec-mat shape; rhs must be ColMajor for the inner-product tile.
+    MatmulProblem::from_parameters(
+        1,
+        n,
+        k,
+        shape![1],
+        shape![1],
+        MatrixLayout::RowMajor,
+        MatrixLayout::ColMajor,
+        MatrixLayout::RowMajor,
+        None,
+        None,
+        elems,
+        AddressType::U32,
+    )
+}
 
 #[test]
 fn simple_vecmat() {
-    // 1xNxK shape — the routine is designed for vec-mat.
     test_matmul_strategy(
         client(),
-        rect(1, 256, 256, f16_elems()),
+        vecmat_problem(128, 128, f16_elems()),
         Strategy::SimpleVecMat(Default::default()),
     );
 }
@@ -19,7 +44,7 @@ fn simple_vecmat() {
 fn double_vecmat() {
     test_matmul_strategy(
         client(),
-        rect(1, 256, 256, f16_elems()),
+        vecmat_problem(128, 128, f16_elems()),
         Strategy::DoubleVecMat(Default::default()),
     );
 }

@@ -268,6 +268,10 @@ where
     IsSupported: Fn(&ComputeClient<R>, MmaConfig) -> bool,
     SupportedSizes: Fn(&ComputeClient<R>, StorageType, StorageType, StorageType) -> Vec<TileSize>,
 {
+    println!("{:?}", (lhs, rhs, acc));
+    println!("{:?}", problem_size);
+    println!("{:?}", (tm, tn, tk));
+
     let supported = |m: u32, n: u32, k: u32| {
         is_supported(
             client,
@@ -295,6 +299,8 @@ where
             None
         }
     };
+
+    println!("{:?}", supported(8, 8, 8));
 
     let (m, n) = (problem_size.m, problem_size.n);
 
