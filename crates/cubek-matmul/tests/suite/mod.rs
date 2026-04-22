@@ -5,6 +5,7 @@ pub mod extended;
 #[cfg(feature = "extended")]
 pub mod quantization;
 
+mod bias;
 mod launcher_routine;
 mod launcher_strategy;
 mod reference;
