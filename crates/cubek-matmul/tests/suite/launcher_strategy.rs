@@ -78,7 +78,7 @@ pub fn test_matmul_strategy(
 
     let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes.clone());
 
-    match get_server_error(&client).unwrap_or(
+    let launch_outcome: ExecutionOutcome = get_server_error(&client).unwrap_or(
         launch_ref(
             &strategy,
             &client,
@@ -88,7 +88,16 @@ pub fn test_matmul_strategy(
             &mut dtypes,
         )
         .into(),
-    ) {
+    );
+
+    let outcome = match launch_outcome {
+        ExecutionOutcome::Executed => {
+            get_server_error(&client).unwrap_or(ExecutionOutcome::Executed)
+        }
+        other => other,
+    };
+
+    match outcome {
         ExecutionOutcome::Executed => {
             assert_result(&lhs_data, &rhs_data, &problem, &client, out, dtypes).as_test_outcome()
         }
