@@ -157,7 +157,7 @@ pub trait TileMatmul<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA:
     /// Write the content of the output container to the given slice
     fn write_results<E: Numeric, ES: Size>(
         tile: &mut Tile<E, ES, Self::Scope, ReadWrite>,
-        out: &mut Tile<A, VA, Self::Scope, ReadWrite>,
+        out: &Tile<A, VA, Self::Scope, ReadWrite>,
         #[comptime] config: Self::Config,
     );
 }

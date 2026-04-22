@@ -119,8 +119,8 @@ fn outer_product<L: Numeric, R: Numeric, A: Numeric>(
 }
 
 #[cube]
-pub fn register_load_from_shared<E: Numeric, ES: Size, N: Numeric, V: Size>(
-    shared: &StridedTile<E, ES, ReadOnly>,
+pub fn register_load_from_shared<E: Numeric, ES: Size, N: Numeric, V: Size, IO: SliceVisibility>(
+    shared: &StridedTile<E, ES, IO>,
     arr: &mut Array<N>,
     #[comptime] matrix_layout: MatrixLayout,
     #[comptime] config: SharedTileConfig,
@@ -135,45 +135,45 @@ pub fn register_load_from_shared<E: Numeric, ES: Size, N: Numeric, V: Size>(
         StageIdent::Lhs => match product_type {
             ProductType::Inner => match matrix_layout {
                 MatrixLayout::RowMajor => {
-                    load_plain::<E, ES, N>(shared, arr, m, k);
+                    load_plain::<E, ES, N, IO>(shared, arr, m, k);
                 }
                 MatrixLayout::ColMajor => {
-                    load_transposed::<E, ES, N>(shared, arr, k, m);
+                    load_transposed::<E, ES, N, IO>(shared, arr, k, m);
                 }
             },
             ProductType::Outer => match matrix_layout {
                 MatrixLayout::RowMajor => {
-                    load_transposed::<E, ES, N>(shared, arr, m, k);
+                    load_transposed::<E, ES, N, IO>(shared, arr, m, k);
                 }
                 MatrixLayout::ColMajor => {
-                    load_plain::<E, ES, N>(shared, arr, k, m);
+                    load_plain::<E, ES, N, IO>(shared, arr, k, m);
                 }
             },
         },
         StageIdent::Rhs => match product_type {
             ProductType::Inner => match matrix_layout {
                 MatrixLayout::RowMajor => {
-                    load_transposed::<E, ES, N>(shared, arr, k, n);
+                    load_transposed::<E, ES, N, IO>(shared, arr, k, n);
                 }
                 MatrixLayout::ColMajor => {
-                    load_plain::<E, ES, N>(shared, arr, n, k);
+                    load_plain::<E, ES, N, IO>(shared, arr, n, k);
                 }
             },
             ProductType::Outer => match matrix_layout {
                 MatrixLayout::RowMajor => {
-                    load_plain::<E, ES, N>(shared, arr, k, n);
+                    load_plain::<E, ES, N, IO>(shared, arr, k, n);
                 }
                 MatrixLayout::ColMajor => {
-                    load_transposed::<E, ES, N>(shared, arr, n, k);
+                    load_transposed::<E, ES, N, IO>(shared, arr, n, k);
                 }
             },
         },
         StageIdent::Acc => match matrix_layout {
             MatrixLayout::RowMajor => {
-                load_plain::<E, ES, N>(shared, arr, m, n);
+                load_plain::<E, ES, N, IO>(shared, arr, m, n);
             }
             MatrixLayout::ColMajor => {
-                load_transposed::<E, ES, N>(shared, arr, n, m);
+                load_transposed::<E, ES, N, IO>(shared, arr, n, m);
             }
         },
         _ => panic!("Invalid ident for Register load"),
@@ -181,8 +181,8 @@ pub fn register_load_from_shared<E: Numeric, ES: Size, N: Numeric, V: Size>(
 }
 
 #[cube]
-fn load_plain<E: Numeric, ES: Size, N: Numeric>(
-    tile: &StridedTile<E, ES, ReadOnly>,
+fn load_plain<E: Numeric, ES: Size, N: Numeric, IO: SliceVisibility>(
+    tile: &StridedTile<E, ES, IO>,
     arr: &mut Array<N>,
     #[comptime] num_segments: u32,
     #[comptime] segment_size: u32,
@@ -205,8 +205,8 @@ fn load_plain<E: Numeric, ES: Size, N: Numeric>(
 }
 
 #[cube]
-fn load_transposed<E: Numeric, ES: Size, N: Numeric>(
-    tile: &StridedTile<E, ES, ReadOnly>,
+fn load_transposed<E: Numeric, ES: Size, N: Numeric, IO: SliceVisibility>(
+    tile: &StridedTile<E, ES, IO>,
     arr: &mut Array<N>,
     #[comptime] num_segments: u32,
     #[comptime] segment_size: u32,

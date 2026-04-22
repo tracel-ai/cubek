@@ -1,3 +1,6 @@
+#[cfg(target_os = "macos")]
+use std::cmp::min;
+
 use cubecl::{
     {Runtime, client::ComputeClient, ir::StorageType},
     {features::MmaConfig, ir::VectorSize},
@@ -72,7 +75,13 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
     }
 
     let row_count = options.row_count.unwrap_or_else(|| {
-        let max_plane_per_cube = client.properties().hardware.max_units_per_cube / plane_dim;
+        #[cfg(target_os = "macos")]
+        // If we allow too many units it will select a large plane_count and fail with Cube Dim too large
+        let max_units_per_cube = min(client.properties().hardware.max_units_per_cube, 256);
+        #[cfg(not(target_os = "macos"))]
+        let max_units_per_cube = client.properties().hardware.max_units_per_cube;
+
+        let max_plane_per_cube = max_units_per_cube / plane_dim;
         // Compensate for register use
         let precision_factor = match dtypes.lhs_stage.size() >= 4 {
             true => 2,

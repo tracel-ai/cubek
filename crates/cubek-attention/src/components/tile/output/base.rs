@@ -28,7 +28,7 @@ pub trait AttentionOutput<A: Float, VA: Size>: Send + Sync + 'static + Sized {
     fn init_tile(#[comptime] config: Self::Config) -> Tile<A, VA, Plane, ReadWrite>;
 
     fn write_results<E: Float, ES: Size>(
-        source: &mut Tile<A, VA, Plane, ReadWrite>,
+        source: &Tile<A, VA, Plane, ReadWrite>,
         dest: &mut Tile<E, ES, Plane, ReadWrite>,
         #[comptime] config: Self::Config,
     );

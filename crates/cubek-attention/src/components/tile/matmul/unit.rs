@@ -3,7 +3,7 @@ use cubecl::prelude::*;
 use cubek_matmul::{
     components::tile_matmul::{
         Plane, ProductType, SharedTileConfig, Tile, register_allocate_acc, register_allocate_lhs,
-        register_allocate_rhs, tile_execute, tile_load,
+        register_allocate_rhs,
     },
     definition::{StageIdent, SwizzleModes},
 };
@@ -60,14 +60,14 @@ impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
         source: &Tile<E, ES, Plane, ReadOnly>,
         dest: &mut Tile<L, VL, Plane, ReadWrite>,
     ) {
-        tile_load::<E, ES, L, VL, L, R, A, Plane>(source, dest, StageIdent::Lhs);
+        dest.copy_from::<E, ES, L, R, A, ReadOnly>(source, StageIdent::Lhs);
     }
 
     fn load_rhs<E: Float, ES: Size>(
         source: &Tile<E, ES, Plane, ReadOnly>,
         dest: &mut Tile<R, VR, Plane, ReadWrite>,
     ) {
-        tile_load::<E, ES, R, VR, L, R, A, Plane>(source, dest, StageIdent::Rhs);
+        dest.copy_from::<E, ES, L, R, A, ReadOnly>(source, StageIdent::Rhs);
     }
 
     fn execute(
@@ -76,7 +76,7 @@ impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
         acc: &mut Tile<A, VA, Plane, ReadWrite>,
         #[comptime] _tile_size: TileSize,
     ) {
-        tile_execute::<L, VL, R, VR, A, VA, Plane>(lhs, rhs, acc)
+        acc.mma(lhs, rhs);
     }
 }
 
