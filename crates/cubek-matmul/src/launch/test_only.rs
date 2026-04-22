@@ -2,8 +2,7 @@
 //!
 //! These routines are exercised by the full test tree but are not part of the
 //! publicly supported [`Strategy`] enum: either they are experimental
-//! (`InterleavedAlgorithm`) or they use loading combinations that are not
-//! wired into the production selector (`SimpleBarrier*`).
+//! or they use loading combinations that are not wired into the production selector.
 
 use std::fmt::Display;
 
