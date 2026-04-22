@@ -1,4 +1,9 @@
-use cubecl::{Runtime, TestRuntime, client::ComputeClient, ir::AddressType, zspace::shape};
+use cubecl::{
+    Runtime, TestRuntime,
+    client::ComputeClient,
+    ir::{AddressType, BarrierLevel, OpaqueType, SemanticType},
+    zspace::shape,
+};
 use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems, MatmulProblem};
 use cubek_std::MatrixLayout;
 
