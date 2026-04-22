@@ -21,7 +21,11 @@ mod matmul_unit {
     }
 
     fn launch_interleaved(c: ComputeClient<TestRuntime>, p: MatmulProblem, bp: TilingBlueprint) {
-        test_matmul_test_strategy(c, p, TestStrategy::Interleaved(BlueprintStrategy::Forced(bp)));
+        test_matmul_test_strategy(
+            c,
+            p,
+            TestStrategy::Interleaved(BlueprintStrategy::Forced(bp)),
+        );
     }
 
     include!("algorithm.rs");

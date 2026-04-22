@@ -4,8 +4,7 @@ use cubecl::{Runtime, TestRuntime, client::ComputeClient, ir::AddressType, zspac
 use cubek_matmul::{
     components::{global::LoadFlows, stage::PartitionBuffering},
     definition::{
-        MatmulElems, MatmulGlobalElems, MatmulProblem, SwizzleModes, TilingBlueprint,
-        TilingScheme,
+        MatmulElems, MatmulGlobalElems, MatmulProblem, SwizzleModes, TilingBlueprint, TilingScheme,
     },
 };
 use cubek_std::{
@@ -62,10 +61,18 @@ pub(crate) fn default_tile_size() -> TileSize {
 
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn default_tile_size() -> TileSize {
-    TileSize { m: 16, n: 16, k: 16 }
+    TileSize {
+        m: 16,
+        n: 16,
+        k: 16,
+    }
 }
 
-pub(crate) fn tiling_scheme(tile: TileSize, partition: PartitionSize, stage: StageSize) -> TilingScheme {
+pub(crate) fn tiling_scheme(
+    tile: TileSize,
+    partition: PartitionSize,
+    stage: StageSize,
+) -> TilingScheme {
     TilingScheme::builder()
         .with_tile_size(tile)
         .with_partition_size(partition)

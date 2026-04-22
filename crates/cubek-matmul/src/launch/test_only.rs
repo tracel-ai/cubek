@@ -97,9 +97,7 @@ impl TestStrategy {
             Self::SimpleBarrierCyclicMma(sel) => {
                 launch_tiling::launch_ref(client, lhs, rhs, out, sel, dtypes)
             }
-            Self::Interleaved(sel) => {
-                launch_tiling::launch_ref(client, lhs, rhs, out, sel, dtypes)
-            }
+            Self::Interleaved(sel) => launch_tiling::launch_ref(client, lhs, rhs, out, sel, dtypes),
         }
     }
 }

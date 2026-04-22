@@ -7,9 +7,7 @@
 use cubek_matmul::{launch::Strategy, routines::BlueprintStrategy};
 use cubek_std::{PartitionSize, StageSize};
 
-use super::common::{
-    client, default_tile_size, f16_elems, plane_blueprint, problem, row_row,
-};
+use super::common::{client, default_tile_size, f16_elems, plane_blueprint, problem, row_row};
 use crate::suite::test_matmul_strategy;
 
 fn run(m: usize, n: usize, k: usize) {
@@ -22,7 +20,11 @@ fn run(m: usize, n: usize, k: usize) {
         PartitionSize { m: 1, n: 1, k: 1 },
         StageSize { m: 2, n: 2, k: 1 },
     );
-    test_matmul_strategy(c, p, Strategy::SimpleCyclicCmma(BlueprintStrategy::Forced(bp)));
+    test_matmul_strategy(
+        c,
+        p,
+        Strategy::SimpleCyclicCmma(BlueprintStrategy::Forced(bp)),
+    );
 }
 
 #[test]

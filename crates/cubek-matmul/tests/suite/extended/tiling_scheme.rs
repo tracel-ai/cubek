@@ -14,12 +14,14 @@ use cubek_matmul::{
 };
 use cubek_std::{MatrixLayout, PartitionSize, StageSize, TileSize};
 
-use super::common::{
-    client, default_tile_size, f16_elems, plane_blueprint, problem, row_row,
-};
+use super::common::{client, default_tile_size, f16_elems, plane_blueprint, problem, row_row};
 use crate::suite::{test_matmul_strategy, test_matmul_test_strategy};
 
-fn run_plane(strategy: impl FnOnce(cubek_matmul::definition::TilingBlueprint) -> Strategy, partition: PartitionSize, stage: StageSize) {
+fn run_plane(
+    strategy: impl FnOnce(cubek_matmul::definition::TilingBlueprint) -> Strategy,
+    partition: PartitionSize,
+    stage: StageSize,
+) {
     let c = client();
     let p = problem(256, 256, 256, row_row(), f16_elems());
     let bp = plane_blueprint(&c, &p, default_tile_size(), partition, stage);
@@ -192,7 +194,11 @@ fn interleaved_partition_1x1x1() {
         PartitionSize { m: 1, n: 1, k: 1 },
         StageSize { m: 1, n: 1, k: 1 },
     );
-    test_matmul_test_strategy(c, p, TestStrategy::Interleaved(BlueprintStrategy::Forced(bp)));
+    test_matmul_test_strategy(
+        c,
+        p,
+        TestStrategy::Interleaved(BlueprintStrategy::Forced(bp)),
+    );
 }
 
 // -- Simple barrier cooperative (test-only) ----------------------------------

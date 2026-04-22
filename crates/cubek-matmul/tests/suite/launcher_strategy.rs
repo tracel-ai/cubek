@@ -7,9 +7,7 @@ use cubek_matmul::{
     launch::test_only::TestStrategy,
 };
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_test_utils::{
-    DataKind, Distribution, ExecutionOutcome, TestInput, TestOutcome,
-};
+use cubek_test_utils::{DataKind, Distribution, ExecutionOutcome, TestInput, TestOutcome};
 
 use crate::{suite::assert_result, suite::layout_to_stride_spec};
 
@@ -91,9 +89,9 @@ where
 
     let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes.clone());
 
-    match get_server_error(&client).unwrap_or(
-        launch(&client, lhs_handle, rhs_handle, out_handle, &mut dtypes).into(),
-    ) {
+    match get_server_error(&client)
+        .unwrap_or(launch(&client, lhs_handle, rhs_handle, out_handle, &mut dtypes).into())
+    {
         ExecutionOutcome::Executed => {
             assert_result(&lhs_data, &rhs_data, &problem, &client, out, dtypes).as_test_outcome()
         }

@@ -24,7 +24,11 @@ mod matmul_tma {
             p: MatmulProblem,
             bp: TilingBlueprint,
         ) {
-            test_matmul_strategy(c, p, Strategy::SpecializedTmaCmma(BlueprintStrategy::Forced(bp)));
+            test_matmul_strategy(
+                c,
+                p,
+                Strategy::SpecializedTmaCmma(BlueprintStrategy::Forced(bp)),
+            );
         }
 
         include!("algorithm.rs");
@@ -55,7 +59,11 @@ mod matmul_tma {
             p: MatmulProblem,
             bp: TilingBlueprint,
         ) {
-            test_matmul_strategy(c, p, Strategy::SpecializedTmaMma(BlueprintStrategy::Forced(bp)));
+            test_matmul_strategy(
+                c,
+                p,
+                Strategy::SpecializedTmaMma(BlueprintStrategy::Forced(bp)),
+            );
         }
 
         include!("algorithm.rs");

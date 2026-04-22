@@ -16,7 +16,11 @@ fn run(layouts: (MatrixLayout, MatrixLayout)) {
         PartitionSize { m: 1, n: 1, k: 1 },
         StageSize { m: 2, n: 2, k: 1 },
     );
-    test_matmul_strategy(c, p, Strategy::SimpleCyclicCmma(BlueprintStrategy::Forced(bp)));
+    test_matmul_strategy(
+        c,
+        p,
+        Strategy::SimpleCyclicCmma(BlueprintStrategy::Forced(bp)),
+    );
 }
 
 #[test]

@@ -5,7 +5,7 @@
 
 use cubecl::{ir::AddressType, zspace::shape};
 use cubek_matmul::{
-    definition::{MatmulProblem, MatmulGlobalElems},
+    definition::{MatmulGlobalElems, MatmulProblem},
     launch::Strategy,
 };
 use cubek_std::MatrixLayout;
