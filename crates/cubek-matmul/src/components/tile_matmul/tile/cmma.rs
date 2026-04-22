@@ -82,19 +82,20 @@ pub fn cmma_execute<L: Numeric, R: Numeric, A: Numeric>(
 }
 
 #[cube]
-pub fn cmma_load_from_shared<E: Numeric, ES: Size, N: Numeric, V: Size>(
-    shared: &StridedTile<E, ES, ReadOnly>,
+pub fn cmma_load_from_shared<E: Numeric, ES: Size, N: Numeric, V: Size, IO: SliceVisibility>(
+    shared: &StridedTile<E, ES, IO>,
     matrix: &mut cmma::Matrix<N>,
     #[comptime] ident: StageIdent,
     #[comptime] matrix_layout: MatrixLayout,
 ) {
+    let shared = shared.to_read_only();
     match ident {
         StageIdent::Lhs | StageIdent::Rhs => {
-            CmmaStageReader::<Strided>::load_fragment(shared, matrix, ComptimeOption::new_None());
+            CmmaStageReader::<Strided>::load_fragment(&shared, matrix, ComptimeOption::new_None());
         }
         StageIdent::Acc => {
             CmmaStageReader::<Strided>::load_fragment(
-                shared,
+                &shared,
                 matrix,
                 ComptimeOption::new_Some(as_cmma_layout(matrix_layout)),
             );

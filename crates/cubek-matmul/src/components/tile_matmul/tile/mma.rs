@@ -122,16 +122,18 @@ pub fn mma_load_lhs_from_shared<
     VL: Size,
     R: Numeric,
     A: Numeric,
+    IO: SliceVisibility,
 >(
-    shared: &StridedTile<E, ES, ReadOnly>,
+    shared: &StridedTile<E, ES, IO>,
     fragment: &mut Array<Vector<L, VL>>,
     #[comptime] matrix_layout: MatrixLayout,
     #[comptime] config: SharedTileConfig,
     #[comptime] mma_io_config: MmaIOConfig,
 ) {
+    let shared = shared.to_read_only();
     let def = make_mma_definition::<L, R, A>(config);
     MmaStageReader::<Strided>::load_fragment(
-        shared,
+        &shared,
         fragment,
         def,
         MatrixIdent::A,
@@ -153,16 +155,18 @@ pub fn mma_load_rhs_from_shared<
     VR: Size,
     L: Numeric,
     A: Numeric,
+    IO: SliceVisibility,
 >(
-    shared: &StridedTile<E, ES, ReadOnly>,
+    shared: &StridedTile<E, ES, IO>,
     fragment: &mut Array<Vector<R, VR>>,
     #[comptime] matrix_layout: MatrixLayout,
     #[comptime] config: SharedTileConfig,
     #[comptime] mma_io_config: MmaIOConfig,
 ) {
+    let shared = shared.to_read_only();
     let def = make_mma_definition::<L, R, A>(config);
     MmaStageReader::<Strided>::load_fragment(
-        shared,
+        &shared,
         fragment,
         def,
         MatrixIdent::B,
@@ -184,16 +188,18 @@ pub fn mma_load_acc_from_shared<
     VA: Size,
     L: Numeric,
     R: Numeric,
+    IO: SliceVisibility,
 >(
-    shared: &StridedTile<E, ES, ReadOnly>,
+    shared: &StridedTile<E, ES, IO>,
     fragment: &mut Array<Vector<A, VA>>,
     #[comptime] matrix_layout: MatrixLayout,
     #[comptime] config: SharedTileConfig,
     #[comptime] mma_io_config: MmaIOConfig,
 ) {
+    let shared = shared.to_read_only();
     let def = make_mma_definition::<L, R, A>(config);
     MmaStageReader::<Strided>::load_fragment(
-        shared,
+        &shared,
         fragment,
         def,
         MatrixIdent::Accumulator,

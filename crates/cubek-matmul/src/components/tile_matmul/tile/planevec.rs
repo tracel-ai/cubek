@@ -83,8 +83,8 @@ pub fn planevec_execute<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, 
 // ===========================================================================
 
 #[cube]
-pub fn planevec_load_from_shared<E: Numeric, ES: Size, N: Numeric, V: Size>(
-    shared: &StridedTile<E, ES, ReadOnly>,
+pub fn planevec_load_from_shared<E: Numeric, ES: Size, N: Numeric, V: Size, IO: SliceVisibility>(
+    shared: &StridedTile<E, ES, IO>,
     arr: &mut Array<Vector<N, V>>,
     #[comptime] config: SharedTileConfig,
     #[comptime] ident: StageIdent,
@@ -130,7 +130,7 @@ pub fn planevec_load_zeros<N: Numeric, V: Size>(
 #[cube]
 pub fn planevec_write_to_shared<E: Numeric, ES: Size, A: Numeric, VA: Size>(
     shared: &mut StridedTile<E, ES, ReadWrite>,
-    arr: &mut Array<Vector<A, VA>>,
+    arr: &Array<Vector<A, VA>>,
     #[comptime] config: SharedTileConfig,
     #[comptime] reduce_vector_size: u32,
 ) {

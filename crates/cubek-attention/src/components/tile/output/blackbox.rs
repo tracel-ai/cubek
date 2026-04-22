@@ -2,8 +2,9 @@ use std::marker::PhantomData;
 
 use cubecl;
 use cubecl::prelude::*;
-use cubek_matmul::components::tile_matmul::{
-    Plane, Tile, TileExpand, cmma_allocate_acc, tile_write,
+use cubek_matmul::{
+    components::tile_matmul::{Plane, Tile, TileExpand, cmma_allocate_acc},
+    definition::StageIdent,
 };
 use cubek_std::MatrixLayout;
 
@@ -98,11 +99,11 @@ impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA>
     }
 
     fn write_results<E: Float, ES: Size>(
-        source: &mut Tile<Acc, VA, Plane, ReadWrite>,
+        source: &Tile<Acc, VA, Plane, ReadWrite>,
         dest: &mut Tile<E, ES, Plane, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        tile_write::<E, ES, Acc, VA, Acc, Acc, Plane>(dest, source);
+        dest.copy_from::<Acc, VA, Acc, Acc, Acc, ReadWrite>(source, StageIdent::Out);
     }
 }
 

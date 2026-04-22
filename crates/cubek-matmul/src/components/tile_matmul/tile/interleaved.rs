@@ -91,8 +91,14 @@ pub fn interleaved_execute<L: Numeric, R: Numeric, A: Numeric>(
 }
 
 #[cube]
-pub fn interleaved_load_from_shared<E: Numeric, ES: Size, N: Numeric, V: Size>(
-    shared: &StridedTile<E, ES, ReadOnly>,
+pub fn interleaved_load_from_shared<
+    E: Numeric,
+    ES: Size,
+    N: Numeric,
+    V: Size,
+    IO: SliceVisibility,
+>(
+    shared: &StridedTile<E, ES, IO>,
     arr: &mut Array<N>,
     #[comptime] config: SharedTileConfig,
     #[comptime] ident: StageIdent,
@@ -166,31 +172,24 @@ pub fn interleaved_load_zeros<N: Numeric, V: Size>(
 #[cube]
 pub fn interleaved_write_to_shared<E: Numeric, ES: Size, A: Numeric, VA: Size>(
     shared: &mut StridedTile<E, ES, ReadWrite>,
-    arr: &mut Array<A>,
+    arr: &Array<A>,
     #[comptime] config: SharedTileConfig,
 ) {
-    let m = config.elements_in_tile_m() as usize;
-    let n = config.elements_in_tile_n() as usize;
+    let m = config.elements_in_tile_m();
+    let n = config.elements_in_tile_n();
+    let out_vector_size = shared.container.vector_size().comptime() as u32;
+    let size_mn = m * n;
 
-    // Consolidate: sum across plane
+    // `plane_sum` reduces across the plane, so every unit must participate. Only unit 0 stores.
     #[unroll]
-    for i in 0..m * n {
-        arr[i] = plane_sum(arr[i]);
-    }
-
-    // Store (only unit 0 writes)
-    if UNIT_POS_X == 0 {
-        let out_vector_size = shared.container.vector_size().comptime() as u32;
-        let size_mn = (m * n) as u32;
-
+    for i in 0..size_mn / out_vector_size {
+        let mut vector = Vector::<A, ES>::empty();
         #[unroll]
-        for i in 0..size_mn / out_vector_size {
+        for j in 0..out_vector_size {
+            vector[j as usize] = plane_sum(arr[(i * out_vector_size + j) as usize]);
+        }
+        if UNIT_POS_X == 0 {
             let offs = shared.stage_offset(i);
-            let mut vector = Vector::<A, ES>::empty();
-            #[unroll]
-            for j in 0..out_vector_size {
-                vector[j as usize] = arr[(i * out_vector_size + j) as usize];
-            }
             shared.container[offs as usize] = Vector::cast_from(vector);
         }
     }

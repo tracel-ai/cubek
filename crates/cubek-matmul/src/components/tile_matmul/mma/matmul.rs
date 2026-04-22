@@ -3,7 +3,7 @@ use cubek_std::MatrixLayout;
 
 use crate::components::tile_matmul::{
     Plane, Tile, TileMatmul, mma::config::MmaMatmulConfig, mma_allocate_acc, mma_allocate_lhs,
-    mma_allocate_rhs, tile_execute, tile_load, tile_write,
+    mma_allocate_rhs,
 };
 use crate::definition::StageIdent;
 
@@ -25,7 +25,7 @@ impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
         acc: &mut Tile<A, VA, Self::Scope, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        tile_execute::<L, VL, R, VR, A, VA, Self::Scope>(lhs, rhs, acc);
+        acc.mma(lhs, rhs);
     }
 
     fn allocate_lhs(
@@ -54,7 +54,7 @@ impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
         lhs: &mut Tile<L, VL, Self::Scope, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        tile_load::<E, ES, L, VL, L, R, A, Self::Scope>(tile, lhs, StageIdent::Lhs);
+        lhs.copy_from::<E, ES, L, R, A, ReadOnly>(tile, StageIdent::Lhs);
     }
 
     fn load_rhs<E: Numeric, ES: Size>(
@@ -62,7 +62,7 @@ impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
         rhs: &mut Tile<R, VR, Self::Scope, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        tile_load::<E, ES, R, VR, L, R, A, Self::Scope>(tile, rhs, StageIdent::Rhs);
+        rhs.copy_from::<E, ES, L, R, A, ReadOnly>(tile, StageIdent::Rhs);
     }
 
     fn load_acc<E: Numeric, ES: Size>(
@@ -70,14 +70,14 @@ impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
         acc: &mut Tile<A, VA, Self::Scope, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        tile_load::<E, ES, A, VA, L, R, A, Self::Scope>(tile, acc, StageIdent::Acc);
+        acc.copy_from::<E, ES, L, R, A, ReadOnly>(tile, StageIdent::Acc);
     }
 
     fn write_results<E: Numeric, ES: Size>(
         tile: &mut Tile<E, ES, Self::Scope, ReadWrite>,
-        out: &mut Tile<A, VA, Self::Scope, ReadWrite>,
+        out: &Tile<A, VA, Self::Scope, ReadWrite>,
         #[comptime] _config: Self::Config,
     ) {
-        tile_write::<E, ES, A, VA, L, R, Self::Scope>(tile, out);
+        tile.copy_from::<A, VA, L, R, A, ReadWrite>(out, StageIdent::Out);
     }
 }
