@@ -80,12 +80,10 @@ impl CubeMapping {
 
             CubeMappingStrategy::SmFirst {
                 x_cubes, y_cubes, ..
-            } => self.strategy.absolute_index_to_xyz(
-                CUBE_POS,
-                *x_cubes,
-                *y_cubes,
-                self.global_order,
-            ),
+            } => {
+                self.strategy
+                    .absolute_index_to_xyz(CUBE_POS, *x_cubes, *y_cubes, self.global_order)
+            }
 
             CubeMappingStrategy::CubeFirst {
                 x_cubes, y_cubes, ..
@@ -96,23 +94,16 @@ impl CubeMapping {
                 self.global_order,
             ),
 
-            CubeMappingStrategy::Flattened { x_cubes, y_cubes } => {
-                self.strategy.absolute_index_to_xyz(
-                    CUBE_POS_X as usize,
-                    *x_cubes,
-                    *y_cubes,
-                    self.global_order,
-                )
-            }
+            CubeMappingStrategy::Flattened { x_cubes, y_cubes } => self
+                .strategy
+                .absolute_index_to_xyz(CUBE_POS_X as usize, *x_cubes, *y_cubes, self.global_order),
 
             CubeMappingStrategy::Spread {
                 x_cubes, y_cubes, ..
-            } => self.strategy.absolute_index_to_xyz(
-                CUBE_POS,
-                *x_cubes,
-                *y_cubes,
-                self.global_order,
-            ),
+            } => {
+                self.strategy
+                    .absolute_index_to_xyz(CUBE_POS, *x_cubes, *y_cubes, self.global_order)
+            }
         }
     }
 }
