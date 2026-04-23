@@ -37,8 +37,7 @@ pub fn test_matmul_with_bias_simple_unit_f32() {
 
     let client = TestRuntime::client(&Default::default());
 
-    let elems =
-        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems();
+    let elems = MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems();
 
     let mut problem = MatmulProblem::from_parameters(
         64,
@@ -105,7 +104,8 @@ pub fn test_matmul_with_bias_simple_unit_f32() {
 
     let dtypes = MatmulElems::from_globals(&problem.global_dtypes.clone());
 
-    let outcome = launch_with_bias::<Algorithm>(&client, &problem, &lhs, &rhs, &bias, &out, &dtypes);
+    let outcome =
+        launch_with_bias::<Algorithm>(&client, &problem, &lhs, &rhs, &bias, &out, &dtypes);
 
     match outcome {
         Ok(()) => {
@@ -180,9 +180,8 @@ fn launch_with_bias<A: Routine<()>>(
     .map_err(|e| format!("vector size: {e}"))?;
 
     let device_settings = A::device_settings(client, vector_sizes);
-    let expand_info =
-        A::expand_blueprint(problem, &device_settings, &BlueprintStrategy::default())
-            .map_err(|e| format!("expand: {e}"))?;
+    let expand_info = A::expand_blueprint(problem, &device_settings, &BlueprintStrategy::default())
+        .map_err(|e| format!("expand: {e}"))?;
     let launch_info =
         A::prepare(problem, &device_settings, expand_info).map_err(|e| format!("prepare: {e}"))?;
 
@@ -228,14 +227,22 @@ fn launch_with_bias<A: Routine<()>>(
         ),
     );
 
-    let lhs_batch =
-        VirtualLayoutLaunch::new::<BatchLayout>(BatchLayoutLaunch::from_handle(&lhs_binding, problem));
-    let rhs_batch =
-        VirtualLayoutLaunch::new::<BatchLayout>(BatchLayoutLaunch::from_handle(&rhs_binding, problem));
-    let acc_batch =
-        VirtualLayoutLaunch::new::<BatchLayout>(BatchLayoutLaunch::from_handle(&bias_binding, problem));
-    let out_batch =
-        VirtualLayoutLaunch::new::<BatchLayout>(BatchLayoutLaunch::from_handle(&out_binding, problem));
+    let lhs_batch = VirtualLayoutLaunch::new::<BatchLayout>(BatchLayoutLaunch::from_handle(
+        &lhs_binding,
+        problem,
+    ));
+    let rhs_batch = VirtualLayoutLaunch::new::<BatchLayout>(BatchLayoutLaunch::from_handle(
+        &rhs_binding,
+        problem,
+    ));
+    let acc_batch = VirtualLayoutLaunch::new::<BatchLayout>(BatchLayoutLaunch::from_handle(
+        &bias_binding,
+        problem,
+    ));
+    let out_batch = VirtualLayoutLaunch::new::<BatchLayout>(BatchLayoutLaunch::from_handle(
+        &out_binding,
+        problem,
+    ));
 
     let inputs = TensorInputsLaunch::new(
         lhs_batch,
