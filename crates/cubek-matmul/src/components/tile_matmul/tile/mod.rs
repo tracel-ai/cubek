@@ -269,12 +269,7 @@ impl<N: Numeric, V: Size, Sc: Scope> Tile<N, V, Sc, ReadWrite> {
 
             // --- PlaneVec loads ---
             (Tile::SharedMemory(shared), Tile::PlaneVec(t)) => {
-                planevec_load_from_shared::<SE, SS, N, SIO>(
-                    shared,
-                    &mut t.data,
-                    t.config,
-                    ident,
-                );
+                planevec_load_from_shared::<SE, SS, N, SIO>(shared, &mut t.data, t.config, ident);
             }
             (Tile::None, Tile::PlaneVec(t)) => {
                 planevec_load_zeros::<N>(&mut t.data, t.config);
