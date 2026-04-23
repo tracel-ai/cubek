@@ -5,6 +5,7 @@
 resolver = "2"
 
 members = ["crates/*", "xtask", "benchmarks"]
+exclude = ["crates/.claude"]
 
 [workspace.package]
 edition = "2024"
