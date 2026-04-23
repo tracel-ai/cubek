@@ -36,42 +36,11 @@ fn vector_size_for<R: Runtime>(
         .ok_or(VectorizationError::NoValidVectorization)
 }
 
-fn validate_layout(problem: &MatmulProblem, kind: &GemvKind) -> Result<(), MatmulSetupError> {
-    let rank = problem.rhs_shape.len();
-
-    match kind {
-        GemvKind::MatVecRowMajor | GemvKind::MatVecColMajor => {
-            // RHS (vec) inner-most stride must be 1
-            let rhs_inner_stride = problem.rhs_strides[rank - 1];
-            if rhs_inner_stride != 1 {
-                return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                    "GemvPlaneParallel: RHS vector must be contiguous. \
-                     Got inner stride {} (expected 1)",
-                    rhs_inner_stride
-                ))));
-            }
-        }
-        GemvKind::VecMatRowMajor | GemvKind::VecMatColMajor => {
-            // LHS (vec) inner-most stride must be 1
-            let lhs_inner_stride = problem.lhs_strides[rank - 1];
-            if lhs_inner_stride != 1 {
-                return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                    "GemvPlaneParallel: LHS vector must be contiguous. \
-                     Got inner stride {} (expected 1)",
-                    lhs_inner_stride
-                ))));
-            }
-        }
-    }
-
-    Ok(())
-}
-
 #[allow(clippy::result_large_err)]
 pub fn launch_ref<R: Runtime>(
     client: &ComputeClient<R>,
-    lhs: InputBinding<R>,
-    rhs: InputBinding<R>,
+    mut lhs: InputBinding<R>,
+    mut rhs: InputBinding<R>,
     out: TensorBinding<R>,
     strategy: &BlueprintStrategy<(), GemvPlaneParallelRoutine>,
     dtypes: &MatmulElems,
@@ -128,11 +97,26 @@ pub fn launch_ref<R: Runtime>(
         address_type,
     );
 
+    match GemvKind::from_problem(&problem)? {
+        GemvKind::MatVecRowMajor | GemvKind::MatVecColMajor => {
+            // RHS (vec) must be contiguous
+            let rhs_inner_stride = problem.rhs_strides[rank - 1];
+            if rhs_inner_stride != 1 {
+                rhs = rhs.into_contiguous(client)?;
+            }
+        }
+        GemvKind::VecMatRowMajor | GemvKind::VecMatColMajor => {
+            // LHS (vec) must be contiguous
+            let lhs_inner_stride = problem.lhs_strides[rank - 1];
+            if lhs_inner_stride != 1 {
+                lhs = lhs.into_contiguous(client)?;
+            }
+        }
+    }
+
     let device_settings = GemvPlaneParallelRoutine::device_settings(client, vector_sizes);
     let expand_info =
         GemvPlaneParallelRoutine::expand_blueprint(&problem, &device_settings, strategy)?;
-
-    validate_layout(&problem, &expand_info.blueprint.kind)?;
 
     if device_settings.plane_dim > 1 {
         if matches!(expand_info.blueprint.kind, GemvKind::MatVecColMajor) {
