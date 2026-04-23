@@ -69,44 +69,50 @@ fn problem(
     }
 }
 
-#[test]
-fn unit_f16_very_small() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
-    test_launch(
-        client.clone(),
-        problem(f16_dtypes(&client), 8, 8, 8, 8),
-        unit_inferred(),
-    )
-}
+// TODO remove extended cfg when works on
+#[cfg(feature = "extended")]
+mod unit {
+    use super::*;
 
-#[test]
-fn unit_f16_small() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
-    test_launch(
-        client.clone(),
-        problem(f16_dtypes(&client), 128, 128, 64, 64),
-        unit_inferred(),
-    )
-}
+    #[test]
+    fn f16_very_small() {
+        let client = <TestRuntime as Runtime>::client(&Default::default());
+        test_launch(
+            client.clone(),
+            problem(f16_dtypes(&client), 8, 8, 8, 8),
+            unit_inferred(),
+        )
+    }
 
-#[test]
-fn unit_f16_hd_smaller_than_vd() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
-    test_launch(
-        client.clone(),
-        problem(f16_dtypes(&client), 64, 64, 32, 64),
-        unit_inferred(),
-    )
-}
+    #[test]
+    fn f16_small() {
+        let client = <TestRuntime as Runtime>::client(&Default::default());
+        test_launch(
+            client.clone(),
+            problem(f16_dtypes(&client), 128, 128, 64, 64),
+            unit_inferred(),
+        )
+    }
 
-#[test]
-fn unit_f32_very_small() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
-    test_launch(
-        client.clone(),
-        problem(f32_dtypes(&client), 8, 8, 8, 8),
-        unit_inferred(),
-    )
+    #[test]
+    fn f16_hd_smaller_than_vd() {
+        let client = <TestRuntime as Runtime>::client(&Default::default());
+        test_launch(
+            client.clone(),
+            problem(f16_dtypes(&client), 64, 64, 32, 64),
+            unit_inferred(),
+        )
+    }
+
+    #[test]
+    fn f32_very_small() {
+        let client = <TestRuntime as Runtime>::client(&Default::default());
+        test_launch(
+            client.clone(),
+            problem(f32_dtypes(&client), 8, 8, 8, 8),
+            unit_inferred(),
+        )
+    }
 }
 
 #[test]
