@@ -1,6 +1,6 @@
 #[cfg(feature = "extended")]
 pub mod extended;
-pub mod smoke;
+pub mod normal;
 
 pub(crate) mod launcher;
 
