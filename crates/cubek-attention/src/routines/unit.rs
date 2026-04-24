@@ -49,7 +49,7 @@ impl Routine for UnitRoutine {
         device_settings: &DeviceSettings<R>,
         strategy: BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<Self::Blueprint>, AttentionSetupError> {
-        // The unit routine relies on plane-level parallelism across `seq_q`;
+        // The unit routine relies on plane-level parallelism;
         // on devices with a plane size of 1 (e.g. CPU) the kernel currently
         // produces zero output rather than correct results.
         if device_settings.plane_dim < 2 {
