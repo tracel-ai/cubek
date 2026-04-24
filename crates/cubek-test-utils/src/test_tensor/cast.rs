@@ -38,7 +38,10 @@ fn cast_launch<From: Numeric, To: Numeric>(
         from_offset += idx * from.stride(axis);
     }
 
-    to.write_checked(linear as usize, To::cast_from(from.read_checked(from_offset)));
+    to.write_checked(
+        linear as usize,
+        To::cast_from(from.read_checked(from_offset)),
+    );
 }
 
 /// Copy `original` into a contiguous buffer, casting to `target_type` if needed.
