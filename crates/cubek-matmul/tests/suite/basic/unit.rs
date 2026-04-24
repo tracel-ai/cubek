@@ -9,6 +9,7 @@ use cubek_matmul::launch::Strategy;
 use super::common::{client, f16_elems, square};
 use crate::suite::test_matmul_strategy;
 
+#[cfg(feature = "basic")]
 #[test]
 fn simple_unit() {
     test_matmul_strategy(
@@ -18,6 +19,7 @@ fn simple_unit() {
     );
 }
 
+#[cfg(feature = "basic")]
 #[test]
 fn double_unit() {
     test_matmul_strategy(

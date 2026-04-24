@@ -26,12 +26,15 @@ impl GlobalFullPlaneReduce {
         #[comptime] vectorization_mode: VectorizationMode,
         #[comptime] blueprint: PlaneReduceBlueprint,
     ) {
-        #[allow(clippy::collapsible_if)]
-        if comptime!(blueprint.plane_dim_ceil) {
-            if UNIT_POS_X >= PLANE_DIM {
-                terminate!();
-            }
-        }
+        // TODO: need a better strategy for excess units
+        // The early exit below is required for invalid units on some integrated GPUs,
+        // but it's invalid non-uniform control flow on WebGPU (wasm).
+        // #[allow(clippy::collapsible_if)]
+        // if comptime!(blueprint.plane_dim_ceil) {
+        //     if UNIT_POS_X >= PLANE_DIM {
+        //         terminate!();
+        //     }
+        // }
         let write_index = CUBE_POS * CUBE_DIM_Y as usize + UNIT_POS_Y as usize;
 
         let mut writer =

@@ -11,21 +11,25 @@ fn auto_small_f16() {
     test_matmul_strategy(client(), square(16, f16_elems()), Strategy::Auto);
 }
 
+#[cfg(feature = "basic")]
 #[test]
 fn auto_medium_f16() {
     test_matmul_strategy(client(), square(256, f16_elems()), Strategy::Auto);
 }
 
+#[cfg(feature = "basic")]
 #[test]
 fn auto_medium_f32() {
     test_matmul_strategy(client(), square(256, f32_elems()), Strategy::Auto);
 }
 
+#[cfg(feature = "basic")]
 #[test]
 fn auto_skinny_vecmat() {
     test_matmul_strategy(client(), rect(1, 256, 256, f16_elems()), Strategy::Auto);
 }
 
+#[cfg(feature = "basic")]
 #[test]
 fn auto_skinny_matvec() {
     test_matmul_strategy(client(), rect(256, 1, 256, f16_elems()), Strategy::Auto);

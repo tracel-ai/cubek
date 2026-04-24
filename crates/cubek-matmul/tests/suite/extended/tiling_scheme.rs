@@ -15,7 +15,7 @@ use cubek_matmul::{
 use cubek_std::{MatrixLayout, PartitionSize, StageSize, TileSize};
 
 use super::common::{client, default_tile_size, f16_elems, plane_blueprint, problem, row_row};
-use crate::suite::{test_matmul_strategy, test_matmul_test_strategy};
+use crate::suite::{extended::test_matmul_test_strategy, test_matmul_strategy};
 
 fn run_plane(
     strategy: impl FnOnce(cubek_matmul::definition::TilingBlueprint) -> Strategy,

@@ -1,3 +1,4 @@
+use crate::components::stage::matmul::scheduler::PartitionScheduler;
 use crate::components::tile_matmul::Tile;
 use crate::definition::{MatmulTypes, MatrixTypes};
 use crate::{
@@ -71,16 +72,21 @@ impl<
     pub fn load<R: Stage<StageTy<Acc<MP>>, StageSize<Acc<MP>>, ReadOnly>>(
         &mut self,
         stage: &R,
+        partition_scheduler: &PartitionScheduler,
         #[comptime] tiles_in_stage_partition_m: usize,
         #[comptime] tiles_in_stage_partition_n: usize,
         #[comptime] tile_config: TM::Config,
     ) {
         #[unroll]
         for m in 0..tiles_in_stage_partition_m {
+            let m_stage = partition_scheduler.map_m(m as u32);
+
             #[unroll]
             for n in 0..tiles_in_stage_partition_n {
+                let n_stage = partition_scheduler.map_n(n as u32);
+
                 let acc = self.get_at_mut(m, n, tiles_in_stage_partition_n);
-                let tile = R::tile::<TM::Scope>(stage, (m as u32, n as u32).runtime());
+                let tile = R::tile::<TM::Scope>(stage, (m_stage, n_stage));
                 TM::load_acc(&tile, acc, tile_config);
             }
         }

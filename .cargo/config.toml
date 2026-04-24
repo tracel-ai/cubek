@@ -1,12 +1,29 @@
 [alias]
 xtask = "run --target-dir target/xtask --color always --package xtask --bin xtask --"
 
+# On CPU, run light suite by default
 test-cpu = "test --release --features cubecl/cpu"
-test-cuda = "test --release --features cubecl/cuda"
-test-rocm = "test --release --features cubecl/rocm"
-test-wgpu = "test --release --features cubecl/wgpu"
-test-vulkan = "test --release --features cubecl/vulkan"
-test-metal = "test --release --features cubecl/metal"
+
+# On GPU, run basic suite by default
+test-cuda = "test --release --features cubecl/cuda,basic"
+test-rocm = "test --release --features cubecl/rocm,basic"
+test-wgpu = "test --release --features cubecl/wgpu,basic"
+test-vulkan = "test --release --features cubecl/vulkan,basic"
+test-metal = "test --release --features cubecl/metal,basic"
+
+test-cpu-light = "test --release --features cubecl/cpu"
+test-cuda-light = "test --release --features cubecl/cuda"
+test-rocm-light = "test --release --features cubecl/rocm"
+test-wgpu-light = "test --release --features cubecl/wgpu"
+test-vulkan-light = "test --release --features cubecl/vulkan"
+test-metal-light = "test --release --features cubecl/metal"
+
+test-cpu-basic = "test --release --features cubecl/cpu,basic"
+test-cuda-basic = "test --release --features cubecl/cuda,basic"
+test-rocm-basic = "test --release --features cubecl/rocm,basic"
+test-wgpu-basic = "test --release --features cubecl/wgpu,basic"
+test-vulkan-basic = "test --release --features cubecl/vulkan,basic"
+test-metal-basic = "test --release --features cubecl/metal,basic"
 
 test-cpu-extended = "test --release --features cubecl/cpu,extended"
 test-cuda-extended = "test --release --features cubecl/cuda,extended"

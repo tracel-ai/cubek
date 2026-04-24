@@ -3,6 +3,11 @@
 //! layouts, hypercube / swizzle / specialization / partition-buffering knobs,
 //! and quantization.
 
+use cubecl::{TestRuntime, client::ComputeClient};
+use cubek_matmul::{definition::MatmulProblem, launch::test_only::TestStrategy};
+
+use crate::suite::launcher_strategy::run;
+
 mod common;
 
 mod advanced;

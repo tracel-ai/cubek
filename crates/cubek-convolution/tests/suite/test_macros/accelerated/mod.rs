@@ -24,11 +24,7 @@ macro_rules! testgen_convolution_accelerated {
             #[cfg(all(feature = "conv_tests_plane", feature = "conv_tests_mma"))]
             mod mma {
                 use super::*;
-                type TMM = cubek_matmul::components::tile::mma::MmaMatmul<
-                    Strided,
-                    Strided,
-                    Option<Strided>,
-                >;
+                type TMM = cubek_matmul::components::tile_matmul::mma::MmaMatmul;
 
                 $crate::testgen_convolution_accelerated_algorithm!();
             }

@@ -22,7 +22,7 @@ pub fn test_matmul_strategy(
     });
 }
 
-fn run<F>(client: ComputeClient<TestRuntime>, mut problem: MatmulProblem, launch: F)
+pub(crate) fn run<F>(client: ComputeClient<TestRuntime>, mut problem: MatmulProblem, launch: F)
 where
     F: FnOnce(
         &ComputeClient<TestRuntime>,

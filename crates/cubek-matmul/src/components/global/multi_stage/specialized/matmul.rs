@@ -205,7 +205,12 @@ where
             let (mut lhs_tile, mut rhs_tile) = SMM::init_tile_inputs(config.stage_config());
             let mut acc = SMM::init_accumulators(config.stage_config());
 
-            SMM::load_accumulators(&acc_stage, &mut acc, config.stage_config());
+            SMM::load_accumulators(
+                &acc_stage,
+                &mut acc,
+                &partition_scheduler,
+                config.stage_config(),
+            );
 
             for _ in 0..num_loops {
                 barrier_full_a.wait_parity(phase);
