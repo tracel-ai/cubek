@@ -8,18 +8,6 @@ use cubecl::{
 
 use crate::test_tensor::cast::copy_casted;
 
-fn contiguous_strides(shape: &Shape) -> Strides {
-    let n = shape.len();
-    if n == 0 {
-        return Strides::new(&[] as &[usize]);
-    }
-    let mut s = vec![1usize; n];
-    for i in (0..n - 1).rev() {
-        s[i] = s[i + 1] * shape[i + 1];
-    }
-    Strides::new(&s)
-}
-
 #[derive(Debug, Clone)]
 pub struct HostData {
     pub data: HostDataVec,
@@ -71,12 +59,7 @@ impl HostData {
         host_data_type: HostDataType,
     ) -> Self {
         let shape = tensor_handle.shape().clone();
-        // `copy_casted` always produces a contiguous buffer, so we describe the
-        // host view with contiguous strides regardless of the input layout. This
-        // matters for non-contiguous inputs (e.g. col-major or jumpy strides):
-        // preserving the original strides would point past the end of the
-        // gathered data.
-        let strides = contiguous_strides(&shape);
+        let strides = tensor_handle.strides().clone();
 
         let data = match host_data_type {
             HostDataType::F32 => {

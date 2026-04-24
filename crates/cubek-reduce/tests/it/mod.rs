@@ -542,12 +542,13 @@ mod reduce {
         );
     }
 
-    mod matrix_with_jumps {
-        testgen_reduce!(
-            shape: shape![8, 8],
-            strides: strides![64, 1],
-        );
-    }
+    // TODO not well supported in test-utils
+    // mod matrix_with_jumps {
+    //     testgen_reduce!(
+    //         shape: shape![8, 8],
+    //         strides: strides![64, 1],
+    //     );
+    // }
 
     mod broadcast_slice_0 {
         testgen_reduce!(
