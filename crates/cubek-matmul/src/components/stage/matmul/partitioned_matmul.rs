@@ -263,11 +263,13 @@ where
     fn load_accumulators(
         stage: &Self::AccStage,
         acc: &mut Self::Accumulators,
+        partition_scheduler: &PartitionScheduler,
         #[comptime] config: Self::Config,
     ) {
         PartitionMatmul::<MP, TM, StageLhs, StageRhs, StageAcc>::load_accumulator(
             stage,
             acc,
+            partition_scheduler,
             config.shared(),
         );
     }
