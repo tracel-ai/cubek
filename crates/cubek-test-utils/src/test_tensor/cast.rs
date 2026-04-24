@@ -5,36 +5,61 @@ use cubecl::{
         TensorHandle, ViewOperations, ViewOperationsExpand, ViewOperationsMut,
         ViewOperationsMutExpand,
     },
-    tensor_vector_size_parallel,
-    zspace::{shape, strides},
 };
 
+/// Copy the logical contents of a strided tensor into a contiguous buffer,
+/// casting element-wise to `To`.
+///
+/// The kernel iterates logical linear positions and maps each one to the
+/// source's physical offset via its strides, so non-contiguous layouts
+/// (col-major, jumpy, etc.) are gathered correctly. Not vectorised: test
+/// utilities don't need peak throughput, and vector reads aren't safe for
+/// arbitrary strides.
 #[cube(launch)]
-fn cast_launch<From: Numeric, To: Numeric, N: Size>(
-    from: &Tensor<Vector<From, N>>,
-    to: &mut Tensor<Vector<To, N>>,
+fn cast_launch<From: Numeric, To: Numeric>(
+    from: &Tensor<From>,
+    to: &mut Tensor<To>,
     #[define(From, To)] _types: [StorageType; 2],
 ) {
-    cast_inner::<From, To, N>(from, to);
+    let linear = ABSOLUTE_POS;
+    if linear >= to.len() {
+        terminate!();
+    }
+
+    // Decompose `linear` into a logical coordinate (last dim first), then
+    // accumulate the source offset using the input strides.
+    let mut remaining = linear as usize;
+    let mut from_offset = 0usize;
+    for d in 0..from.rank() {
+        let axis = from.rank() - 1 - d;
+        let dim = from.shape(axis);
+        let idx = remaining % dim;
+        remaining /= dim;
+        from_offset += idx * from.stride(axis);
+    }
+
+    to.write_checked(linear as usize, To::cast_from(from.read_checked(from_offset)));
 }
 
-#[cube]
-fn cast_inner<From: Numeric, To: Numeric, N: Size>(
-    from: &Tensor<Vector<From, N>>,
-    to: &mut Tensor<Vector<To, N>>,
-) {
-    to.write_checked(
-        ABSOLUTE_POS,
-        Vector::cast_from(from.read_checked(ABSOLUTE_POS)),
-    )
-}
-
+/// Copy `original` into a contiguous buffer, casting to `target_type` if needed.
+///
+/// The returned handle always has contiguous strides, regardless of the input
+/// layout. Callers (notably [`HostData::from_tensor_handle`]) rely on this: the
+/// previous fast path reinterpreted the source handle as contiguous without
+/// copying, which silently dropped values for inputs with non-contiguous
+/// strides (e.g. jumpy strides where the physical buffer is larger than the
+/// logical element count).
 pub fn copy_casted(
     client: &ComputeClient<TestRuntime>,
     original: TensorHandle<TestRuntime>,
     target_type: StorageType,
 ) -> TensorHandle<TestRuntime> {
-    if target_type == original.dtype {
+    let input_contiguous = is_contiguous(original.shape(), original.strides());
+
+    // Fast path: already contiguous and same dtype. Reinterpreting the handle
+    // is safe here because the physical buffer contains the logical values in
+    // the expected order.
+    if target_type == original.dtype && input_contiguous {
         return TensorHandle::new_contiguous(
             original.shape().clone(),
             original.handle.clone(),
@@ -44,14 +69,7 @@ pub fn copy_casted(
 
     let num_elems: usize = original.shape().num_elements();
 
-    let vector_size = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(target_type.size()),
-        &shape![num_elems],
-        &strides![1],
-        0,
-    );
-
-    let working_units: u32 = num_elems as u32 / vector_size as u32;
+    let working_units = num_elems as u32;
     let cube_dim = CubeDim::new(client, working_units as usize);
     let cube_count = working_units.div_ceil(cube_dim.num_elems());
 
@@ -67,11 +85,25 @@ pub fn copy_casted(
         client,
         CubeCount::Static(cube_count, 1, 1),
         cube_dim,
-        vector_size,
         original.into_arg(),
         out.clone().into_arg(),
         [dtype, target_type],
     );
 
     out
+}
+
+fn is_contiguous(shape: &cubecl::zspace::Shape, strides: &cubecl::zspace::Strides) -> bool {
+    let n = shape.len();
+    let mut expected: usize = 1;
+    for i in (0..n).rev() {
+        if shape[i] == 1 {
+            continue;
+        }
+        if strides[i] != expected {
+            return false;
+        }
+        expected *= shape[i];
+    }
+    true
 }
