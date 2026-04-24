@@ -28,7 +28,7 @@ fn cast_launch<From: Numeric, To: Numeric>(
 
     // Decompose `linear` into a logical coordinate (last dim first), then
     // accumulate the source offset using the input strides.
-    let mut remaining = linear as usize;
+    let mut remaining = linear;
     let mut from_offset = 0usize;
     for d in 0..from.rank() {
         let axis = from.rank() - 1 - d;
@@ -38,10 +38,7 @@ fn cast_launch<From: Numeric, To: Numeric>(
         from_offset += idx * from.stride(axis);
     }
 
-    to.write_checked(
-        linear as usize,
-        To::cast_from(from.read_checked(from_offset)),
-    );
+    to.write_checked(linear, To::cast_from(from.read_checked(from_offset)));
 }
 
 /// Copy `original` into a contiguous buffer, casting to `target_type` if needed.
