@@ -69,7 +69,7 @@ fn problem(
     }
 }
 
-// TODO remove extended cfg when works on
+// TODO remove extended cfg when works on cpu
 #[cfg(feature = "extended")]
 mod unit {
     use super::*;
