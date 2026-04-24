@@ -153,6 +153,7 @@ pub trait StageMatmul<MP: MatmulTypes>: 'static + Send + Sync {
     fn load_accumulators(
         reader: &Self::AccStage,
         acc: &mut Self::Accumulators,
+        partition_scheduler: &PartitionScheduler,
         #[comptime] config: Self::Config,
     );
 

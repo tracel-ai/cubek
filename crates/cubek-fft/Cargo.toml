@@ -1,6 +1,6 @@
 [package]
 authors = ["Sublime12", "louisfd"]
-categories = ["science","mathematics", "algorithms"]
+categories = ["science", "mathematics", "algorithms"]
 description = "CubeK: Fast Fourier Transform"
 edition.workspace = true
 keywords = []
@@ -12,10 +12,11 @@ version.workspace = true
 
 [features]
 default = ["std", "cubecl/default"]
-std = ["cubecl/std"] 
+std = ["cubecl/std"]
 
+basic = []
+extended = ["basic"]
 full = ["extended"]
-extended = []
 
 [dependencies]
 cubecl = { workspace = true }

@@ -230,10 +230,12 @@ where
     pub fn load_accumulator(
         stage: &StageAcc,
         acc: &mut Accumulators<MP, TM>,
+        partition_scheduler: &PartitionScheduler,
         #[comptime] shared_config: SharedPartitionMatmulConfig<TM::Config>,
     ) {
         acc.load::<StageAcc>(
             stage,
+            partition_scheduler,
             shared_config.partition_size.m() as usize,
             shared_config.partition_size.n() as usize,
             shared_config.tile_config,

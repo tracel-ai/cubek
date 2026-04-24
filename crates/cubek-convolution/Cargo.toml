@@ -14,11 +14,13 @@ version.workspace = true
 default = ["std", "cubecl/default"]
 std = ["cubecl/std"]
 
+basic = []
 extended = [
     "conv_tests_plane",
     "conv_tests_simple",
     "conv_tests_cyclic",
     "conv_tests_f16",
+    "basic",
 ]
 full = [
     "extended",

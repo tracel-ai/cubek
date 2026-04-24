@@ -161,7 +161,12 @@ where
             reader.stage()
         });
 
-        SMM::load_accumulators(&acc_stage, &mut acc, config.stage_config);
+        SMM::load_accumulators(
+            &acc_stage,
+            &mut acc,
+            &partition_scheduler,
+            config.stage_config,
+        );
 
         read_first::<LL::SyncStrategy, Self::LhsGlobalReader, Self::RhsGlobalReader>(
             &mut lhs_reader,
