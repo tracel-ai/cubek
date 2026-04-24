@@ -70,9 +70,8 @@ impl Routine for UnitRoutine {
 
         let num_planes = compute_resources.num_planes(blueprint.plane_dim)?;
         let cube_dim = CubeDim::new_2d(blueprint.plane_dim, num_planes);
-        let cube_count_plan = blueprint
-            .hypercube_blueprint
-            .cube_count_plan(&problem.dims, &blueprint);
+        let cube_count_plan =
+            blueprint.cube_count_plan(&problem.dims, &device_settings.max_cube_count);
 
         Ok(LaunchInfo {
             blueprint,
@@ -111,7 +110,7 @@ fn blueprint<R: Runtime>(
             };
 
             let blueprint = AttentionBlueprint {
-                hypercube_blueprint: HypercubeBlueprint {},
+                hypercube_blueprint: HypercubeBlueprint::builder().build(),
                 tiling_scheme,
                 plane_dim,
                 two_rows_in_array_tile: false,

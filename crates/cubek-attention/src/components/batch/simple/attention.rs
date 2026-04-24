@@ -9,7 +9,7 @@ use crate::components::{
 };
 use crate::{
     definition::attention_types::*,
-    definition::{AttentionPrecision, CubeCountInput},
+    definition::{AttentionPrecision, CubeMapping, cube_pos_to_q_batch_heads},
 };
 
 pub struct SimpleBatchAttention<AP: AttentionPrecision, GA: GlobalAttention<AP>> {
@@ -28,12 +28,18 @@ impl<GA: GlobalAttention<AP>, AP: AttentionPrecision> BatchAttention<AP>
         value: VirtualTensor<VG<AP>, VGS<AP>>,
         mask: ComptimeOption<VirtualTensor<MSK<AP>, MSKS<AP>>>,
         out: VirtualTensor<OG<AP>, OGS<AP>, ReadWrite>,
-        _cube_count_args: CubeCountInput,
+        cube_mapping: CubeMapping,
         #[comptime] config: Self::Config,
     ) {
+        #[allow(clippy::collapsible_if)]
+        if cube_mapping.can_yield_extra_cubes {
+            if CUBE_POS >= cube_mapping.num_valid_cubes() {
+                terminate!();
+            }
+        }
+
         let global_config = config.global_config();
-        let q_index = CUBE_POS_X;
-        let batch_index = CUBE_POS_Y;
+        let (q_index, batch_index) = cube_pos_to_q_batch_heads(&cube_mapping);
 
         let stage_q_offset = q_index * global_config.stage_config().elements_in_stage_seq_q();
 

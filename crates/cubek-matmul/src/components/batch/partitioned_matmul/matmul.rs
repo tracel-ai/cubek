@@ -6,7 +6,7 @@ use crate::components::batch::partitioned_matmul::partition::{
 };
 use crate::definition::{
     AccG, Blueprint as _, CubeMapping, LhsG, MatmulElems, MatmulTypes, MatmulVectorSizes, RhsG,
-    TilingBlueprint,
+    TilingBlueprint, cube_pos_to_m_n_batch,
 };
 use crate::launch::MatmulArgs;
 use crate::{
@@ -193,7 +193,7 @@ impl<RC: RuntimeConfig, MP: MatmulTypes, GMM: GlobalMatmul<RC, MP>, GPMM: Global
         let (_, _, problem_k) = Args::view_lhs(state).shape();
         let k_range = (0, problem_k);
 
-        let (m_index, n_index, batch_index) = cube_mapping.cube_pos_to_tensor_pos();
+        let (m_index, n_index, batch_index) = cube_pos_to_m_n_batch(&cube_mapping);
 
         let ranges = PartitionRanges::new(
             PartitionRangeDim::new(

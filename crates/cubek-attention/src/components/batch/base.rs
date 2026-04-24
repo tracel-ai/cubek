@@ -2,11 +2,11 @@ use cubecl;
 use cubecl::{ir::DeviceProperties, prelude::*, std::tensor::r#virtual::VirtualTensor};
 
 use crate::definition::{
-    AttentionElems, AttentionPrecision, AttentionSetupError, CubeCountInput, InputRuntimeArg,
-    OutputRuntimeArg,
+    AttentionElems, AttentionPrecision, AttentionSetupError, CubeMapping, CubeMappingLaunch,
+    InputRuntimeArg, OutputRuntimeArg,
 };
 use crate::{
-    definition::{CubeCountInputArgs, attention_types::*},
+    definition::attention_types::*,
     launch::AttentionArgs,
     {components::global::GlobalAttentionConfig, definition::AttentionVectorSizes},
 };
@@ -34,7 +34,7 @@ pub trait BatchAttentionFamily: Send + Sync + 'static {
         address_type: AddressType,
         input: InputRuntimeArg<AA, R>,
         output: OutputRuntimeArg<AA, R>,
-        cube_count_input: CubeCountInputArgs<R>,
+        cube_mapping: CubeMappingLaunch<R>,
         dtypes: &AttentionElems,
         vector_sizes: &AttentionVectorSizes,
         attention_blueprint: Self::Blueprint,
@@ -61,7 +61,7 @@ pub trait BatchAttention<AP: AttentionPrecision>: 'static + Send + Sync {
         value: VirtualTensor<VG<AP>, VGS<AP>>,
         mask: ComptimeOption<VirtualTensor<MSK<AP>, MSKS<AP>>>,
         out: VirtualTensor<OG<AP>, OGS<AP>, ReadWrite>,
-        cube_count_args: CubeCountInput,
+        cube_mapping: CubeMapping,
         #[comptime] config: Self::Config,
     );
 }
