@@ -39,8 +39,8 @@ fn vector_size_for<R: Runtime>(
 #[allow(clippy::result_large_err)]
 pub fn launch_ref<R: Runtime>(
     client: &ComputeClient<R>,
-    lhs: InputBinding<R>,
-    rhs: InputBinding<R>,
+    mut lhs: InputBinding<R>,
+    mut rhs: InputBinding<R>,
     out: TensorBinding<R>,
     strategy: &BlueprintStrategy<(), GemvPlaneParallelRoutine>,
     dtypes: &MatmulElems,
@@ -96,6 +96,23 @@ pub fn launch_ref<R: Runtime>(
         dtypes.as_global_elems(),
         address_type,
     );
+
+    match GemvKind::from_problem(&problem)? {
+        GemvKind::MatVecRowMajor | GemvKind::MatVecColMajor => {
+            // RHS (vec) must be contiguous
+            let rhs_inner_stride = problem.rhs_strides[rank - 1];
+            if rhs_inner_stride != 1 {
+                rhs = rhs.into_contiguous(client)?;
+            }
+        }
+        GemvKind::VecMatRowMajor | GemvKind::VecMatColMajor => {
+            // LHS (vec) must be contiguous
+            let lhs_inner_stride = problem.lhs_strides[rank - 1];
+            if lhs_inner_stride != 1 {
+                lhs = lhs.into_contiguous(client)?;
+            }
+        }
+    }
 
     let device_settings = GemvPlaneParallelRoutine::device_settings(client, vector_sizes);
     let expand_info =
