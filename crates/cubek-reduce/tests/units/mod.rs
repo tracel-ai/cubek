@@ -1,3 +1,4 @@
+use cubecl::features::Plane;
 use cubecl::frontend::CubePrimitive;
 use cubecl::{
     CubeCount, CubeDim, Runtime, TestRuntime, cube, ir::StorageType, prelude::*,
@@ -12,6 +13,9 @@ use cubecl::frontend::CompilationArg;
 #[test]
 fn test_plane_reduce_inplace() {
     let client = TestRuntime::client(&Default::default());
+    if !client.properties().features.plane.contains(Plane::Ops) {
+        return;
+    }
 
     // plane_size of 16 with vector_size of 4
     let num_threads = 2;
@@ -137,8 +141,11 @@ fn assert_plane_topk_custom_values(
 }
 
 #[test]
-fn test_plane_topk_insert_logic() {
+fn test_plane_topk_insert() {
     let client = TestRuntime::client(&Default::default());
+    if !client.properties().features.plane.contains(Plane::Ops) {
+        return;
+    }
 
     let num_threads = 2;
     let k = 2;
