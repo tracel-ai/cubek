@@ -36,11 +36,12 @@ If you want to contribute new kernels, please read the [`GUIDE.md`](./GUIDE.md).
 
 > Note: This applies to most kernels, but `reduce` works slightly differently for now, see [its README](./crates/cubek-reduce/README.md).
 
-## Command
+## Test suites
 
-Three test suites are available:
+Four test suites are available:
 
-- **Smoke test suite**: a tractable subset of representative tests that run on the CI.
+- **Light test suite**: a tractable subset of representative tests that run on the CI.
+- **Basic test suite**: adds to light suite some tests that would be considered basic but may hang on CI (slow on CPU).
 - **Extended test suite**: usually auto-generated combinatorial tests covering many configurations. Good to run when developing kernels. Normally kept tractable.
 - **Full test suite**: all generable test combinations; may be too large to compile or run practically.
 
@@ -49,7 +50,7 @@ Run tests with
 ```bash
 # Replace <runtime> with cpu, cuda, rocm, wgpu, vulkan or metal
 
-# Smoke test suite
+# Basic test suite (light on cpu)
 cargo test-<runtime>
 
 # Extended test suite

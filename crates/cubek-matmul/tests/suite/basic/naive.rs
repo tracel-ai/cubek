@@ -10,6 +10,7 @@ fn naive_small_f16() {
     test_matmul_strategy(client(), square(16, f16_elems()), Strategy::Naive);
 }
 
+#[cfg(feature = "basic")]
 #[test]
 fn naive_medium_f32() {
     test_matmul_strategy(client(), square(128, f32_elems()), Strategy::Naive);

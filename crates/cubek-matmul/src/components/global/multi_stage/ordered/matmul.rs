@@ -148,10 +148,15 @@ where
             reader.stage()
         });
 
-        SMM::load_accumulators(&acc_stage, &mut acc, config.stage_config);
-
         let (mut lhs_tile, mut rhs_tile) = SMM::init_tile_inputs(config.stage_config);
         let partition_scheduler = SMM::init_scheduler(config.stage_config);
+
+        SMM::load_accumulators(
+            &acc_stage,
+            &mut acc,
+            &partition_scheduler,
+            config.stage_config,
+        );
 
         let lhs_stage = lhs_reader.stage();
         let rhs_stage_a = rhs_reader.stage(StageBuffer::A);

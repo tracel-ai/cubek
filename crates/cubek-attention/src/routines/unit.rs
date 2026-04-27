@@ -8,9 +8,9 @@ use cubek_matmul::{
 };
 
 use crate::definition::{
-    AttentionBlueprint, AttentionElems, AttentionPartitionSize, AttentionProblem,
-    AttentionSetupError, AttentionStageSize, AttentionTileSize, AttentionTilingScheme,
-    HypercubeBlueprint,
+    AttentionAvailabilityError, AttentionBlueprint, AttentionElems, AttentionPartitionSize,
+    AttentionProblem, AttentionSetupError, AttentionStageSize, AttentionTileSize,
+    AttentionTilingScheme, HypercubeBlueprint,
 };
 use crate::{
     components::stage::unit::UnitPartitionStageAttentionFamily,
@@ -49,6 +49,15 @@ impl Routine for UnitRoutine {
         device_settings: &DeviceSettings<R>,
         strategy: BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<Self::Blueprint>, AttentionSetupError> {
+        // The unit routine relies on plane-level parallelism;
+        // on devices with a plane size of 1 (e.g. CPU) the kernel currently
+        // produces zero output rather than correct results.
+        if device_settings.plane_dim < 2 {
+            return Err(AttentionSetupError::Unavailable(
+                AttentionAvailabilityError::PlaneOpsUnavailable,
+            ));
+        }
+
         let blueprint = blueprint(problem, device_settings, strategy)?;
 
         let dtypes = AttentionElems::from_global_types(
@@ -70,9 +79,8 @@ impl Routine for UnitRoutine {
 
         let num_planes = compute_resources.num_planes(blueprint.plane_dim)?;
         let cube_dim = CubeDim::new_2d(blueprint.plane_dim, num_planes);
-        let cube_count_plan = blueprint
-            .hypercube_blueprint
-            .cube_count_plan(&problem.dims, &blueprint);
+        let cube_count_plan =
+            blueprint.cube_count_plan(&problem.dims, &device_settings.max_cube_count);
 
         Ok(LaunchInfo {
             blueprint,
@@ -111,7 +119,7 @@ fn blueprint<R: Runtime>(
             };
 
             let blueprint = AttentionBlueprint {
-                hypercube_blueprint: HypercubeBlueprint {},
+                hypercube_blueprint: HypercubeBlueprint::builder().build(),
                 tiling_scheme,
                 plane_dim,
                 two_rows_in_array_tile: false,

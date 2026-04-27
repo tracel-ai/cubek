@@ -4,7 +4,7 @@ use crate::components::{
     stage::StageAttentionConfig,
 };
 use crate::{
-    definition::AttentionBlueprint, definition::AttentionElems, definition::CubeCountInput,
+    definition::AttentionBlueprint, definition::AttentionElems, definition::CubeMapping,
     launch::AttentionArgs, launch::TensorKey, launch::TensorMask, launch::TensorOutput,
     launch::TensorQuery, launch::TensorValue,
 };
@@ -32,7 +32,7 @@ pub(crate) fn attention<
 >(
     inputs: &Input<Args, (QG, QGS), (KG, KGS), (VG, VGS), (MSK, MSKS)>,
     output: &mut Output<Args, (OG, OGS)>,
-    cube_count_args: CubeCountInput,
+    cube_mapping: CubeMapping,
     #[comptime] blueprint: AttentionBlueprint,
     #[comptime] dtypes: AttentionElems,
     #[define(QG, KG, VG, MSK, OG)] _elem_types: [StorageType; 5],
@@ -112,5 +112,5 @@ pub(crate) fn attention<
         MSK,
         MSKS,
         (OG, OGS, OS, OSS),
-    )>::execute(query, key, value, mask, out, cube_count_args, config);
+    )>::execute(query, key, value, mask, out, cube_mapping, config);
 }

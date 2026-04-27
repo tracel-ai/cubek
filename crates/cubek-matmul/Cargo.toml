@@ -14,9 +14,9 @@ version.workspace = true
 default = ["std", "cubecl/default"]
 std = ["cubecl/std"]
 
-extended = []
+basic = []
+extended = ["basic"]
 full = ["extended"]
-
 
 [dependencies]
 cubek-std = { path = "../cubek-std", version = "=0.2.0-pre.3", default-features = false }
@@ -30,6 +30,8 @@ serde = { workspace = true }
 [dev-dependencies]
 cubecl = { workspace = true, features = ["test-runtime"] }
 cubek-test-utils = { path = "../cubek-test-utils", version = "=0.2.0-pre.3", default-features = false }
-cubek-quant = { path = "../cubek-quant", version = "=0.2.0-pre.3", features = ["kernels"] }
+cubek-quant = { path = "../cubek-quant", version = "=0.2.0-pre.3", features = [
+    "kernels",
+] }
 pretty_assertions = { workspace = true }
 trybuild = "1"

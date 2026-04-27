@@ -129,7 +129,7 @@ pub fn launch_attention<R: Runtime, A: Routine>(
                 mask.map(|it| it.into_tensor_arg()).into(),
             ),
             out.into_tensor_arg(),
-            launch_info.cube_count_plan.as_args(),
+            cubek_std::cube_count::cube_mapping_launch(&launch_info.cube_count_plan),
             &launch_info.dtypes,
             &device_settings.vector_sizes,
             launch_info.blueprint,

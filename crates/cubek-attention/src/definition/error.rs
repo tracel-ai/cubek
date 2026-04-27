@@ -28,6 +28,9 @@ pub enum AttentionAvailabilityError {
 
     /// The required matmul instruction is not supported for the given element types and tile size.
     MatmulInstructionUnavailable(MatmulAvailabilityError),
+
+    /// Plane (warp/subgroup) operations are required but not available on this device.
+    PlaneOpsUnavailable,
 }
 
 impl From<AttentionAvailabilityError> for AttentionSetupError {
@@ -94,6 +97,9 @@ impl Debug for AttentionAvailabilityError {
             }
             AttentionAvailabilityError::MatmulInstructionUnavailable(error) => {
                 writeln!(f, "Matmul is not supported: {error:?}",)
+            }
+            AttentionAvailabilityError::PlaneOpsUnavailable => {
+                writeln!(f, "Plane operations are not supported on this device")
             }
         }
     }

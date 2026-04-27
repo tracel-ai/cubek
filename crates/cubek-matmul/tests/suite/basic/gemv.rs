@@ -6,6 +6,7 @@ use cubek_std::MatrixLayout;
 use super::common::{client, f16_elems, rect_with_layouts};
 use crate::suite::test_matmul_strategy;
 
+#[cfg(feature = "basic")]
 #[test]
 fn gemv_plane_parallel_vecmat() {
     // GemvPlaneParallel on GPU requires ColMajor rhs for vec-mat problems.

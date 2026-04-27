@@ -1,9 +1,21 @@
+use std::marker::PhantomData;
+
 use cubecl::prelude::*;
 use cubek_std::{MatrixLayout, tile::StridedTile};
 
 use crate::components::tile_matmul::tile::Scope;
-use crate::components::tile_matmul::{PlaneVecTile, SharedTileConfig, Tile, TileConfig};
+use crate::components::tile_matmul::{NPlaneVec, PlaneVecTile, SharedTileConfig, Tile, TileConfig};
 use crate::definition::StageIdent;
+
+// Binds the plane_vec_mat fragment's inner vector size (`NPlaneVec`) to the
+// `reduce_vector_size` chosen by the tile config at allocation time.
+#[cube]
+#[allow(unused_variables)]
+fn register_reduce_vector_size(#[comptime] reduce_vector_size: u32) {
+    intrinsic!(|scope| {
+        scope.register_size::<NPlaneVec>(reduce_vector_size as usize);
+    });
+}
 
 // ===========================================================================
 // Allocate
@@ -15,11 +27,13 @@ pub fn planevec_allocate_lhs<L: Numeric, VL: Size, Sc: Scope>(
     #[comptime] config: SharedTileConfig,
     #[comptime] reduce_vector_size: u32,
 ) -> Tile<L, VL, Sc, ReadWrite> {
+    register_reduce_vector_size(reduce_vector_size);
     Tile::new_PlaneVec(PlaneVecTile::<L, VL> {
         data: Array::new(1usize),
         matrix_layout: layout,
         config,
         reduce_vector_size,
+        _phantom_v: PhantomData,
     })
 }
 
@@ -29,11 +43,13 @@ pub fn planevec_allocate_rhs<R: Numeric, VR: Size, Sc: Scope>(
     #[comptime] config: SharedTileConfig,
     #[comptime] reduce_vector_size: u32,
 ) -> Tile<R, VR, Sc, ReadWrite> {
+    register_reduce_vector_size(reduce_vector_size);
     Tile::new_PlaneVec(PlaneVecTile::<R, VR> {
         data: Array::new(config.elements_in_tile_n() as usize),
         matrix_layout: layout,
         config,
         reduce_vector_size,
+        _phantom_v: PhantomData,
     })
 }
 
@@ -43,11 +59,13 @@ pub fn planevec_allocate_acc<A: Numeric, VA: Size, Sc: Scope>(
     #[comptime] config: SharedTileConfig,
     #[comptime] reduce_vector_size: u32,
 ) -> Tile<A, VA, Sc, ReadWrite> {
+    register_reduce_vector_size(reduce_vector_size);
     Tile::new_PlaneVec(PlaneVecTile::<A, VA> {
         data: Array::new(config.elements_in_tile_n() as usize),
         matrix_layout: layout,
         config,
         reduce_vector_size,
+        _phantom_v: PhantomData,
     })
 }
 
@@ -56,10 +74,10 @@ pub fn planevec_allocate_acc<A: Numeric, VA: Size, Sc: Scope>(
 // ===========================================================================
 
 #[cube]
-pub fn planevec_execute<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>(
-    lhs: &Array<Vector<L, VL>>,
-    rhs: &Array<Vector<R, VR>>,
-    acc: &mut Array<Vector<A, VA>>,
+pub fn planevec_execute<L: Numeric, R: Numeric, A: Numeric>(
+    lhs: &Array<Vector<L, NPlaneVec>>,
+    rhs: &Array<Vector<R, NPlaneVec>>,
+    acc: &mut Array<Vector<A, NPlaneVec>>,
     #[comptime] config: SharedTileConfig,
 ) {
     let n = config.elements_in_tile_n();
@@ -67,7 +85,7 @@ pub fn planevec_execute<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, 
     for n_idx in 0..n as usize {
         let mut acc_vec = acc[n_idx];
         #[unroll]
-        for vi in 0..VA::value() {
+        for vi in 0..NPlaneVec::value() {
             let lhs_elem = A::cast_from(lhs[0usize][vi]);
             let rhs_elem = A::cast_from(rhs[n_idx][vi]);
             acc_vec[vi] += plane_sum(lhs_elem * rhs_elem);
@@ -81,9 +99,9 @@ pub fn planevec_execute<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, 
 // ===========================================================================
 
 #[cube]
-pub fn planevec_load_from_shared<E: Numeric, ES: Size, N: Numeric, V: Size, IO: SliceVisibility>(
+pub fn planevec_load_from_shared<E: Numeric, ES: Size, N: Numeric, IO: SliceVisibility>(
     shared: &StridedTile<E, ES, IO>,
-    arr: &mut Array<Vector<N, V>>,
+    arr: &mut Array<Vector<N, NPlaneVec>>,
     #[comptime] config: SharedTileConfig,
     #[comptime] ident: StageIdent,
 ) {
@@ -109,8 +127,8 @@ pub fn planevec_load_from_shared<E: Numeric, ES: Size, N: Numeric, V: Size, IO: 
 // ===========================================================================
 
 #[cube]
-pub fn planevec_load_zeros<N: Numeric, V: Size>(
-    arr: &mut Array<Vector<N, V>>,
+pub fn planevec_load_zeros<N: Numeric>(
+    arr: &mut Array<Vector<N, NPlaneVec>>,
     #[comptime] config: SharedTileConfig,
 ) {
     let n = config.elements_in_tile_n();
@@ -126,9 +144,9 @@ pub fn planevec_load_zeros<N: Numeric, V: Size>(
 // ===========================================================================
 
 #[cube]
-pub fn planevec_write_to_shared<E: Numeric, ES: Size, A: Numeric, VA: Size>(
+pub fn planevec_write_to_shared<A: Numeric, E: Numeric, ES: Size>(
     shared: &mut StridedTile<E, ES, ReadWrite>,
-    arr: &Array<Vector<A, VA>>,
+    arr: &Array<Vector<A, NPlaneVec>>,
     #[comptime] config: SharedTileConfig,
     #[comptime] reduce_vector_size: u32,
 ) {

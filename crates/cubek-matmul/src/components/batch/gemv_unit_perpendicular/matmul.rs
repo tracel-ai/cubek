@@ -9,7 +9,7 @@ use crate::{
             VecMatUnitPerpendicularFamily,
         },
     },
-    definition::*,
+    definition::{cube_pos_to_matrix_batch, *},
     launch::MatmulArgs,
 };
 
@@ -119,7 +119,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatUnitPerpendicular<MP> {
 
         let (_, _, k) = lhs.shape();
         let (_, _, n) = out.shape();
-        let (_, n_cube_id, batch_cube_id) = cube_mapping.cube_pos_to_tensor_pos();
+        let (n_cube_id, batch_cube_id) = cube_pos_to_matrix_batch(&cube_mapping);
 
         let lhs_batch = Args::batch_lhs(state, batch_cube_id as usize);
         let rhs_batch = Args::batch_rhs(state, batch_cube_id as usize);

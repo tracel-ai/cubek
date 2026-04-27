@@ -1,46 +1,22 @@
+//! Attention-specific interpretation of the generic [CubeMapping] from `cubek-std`.
+//!
+//! Attention has 2D problem-space axes: `(seq_q_tile, batch_heads)` where
+//! `batch_heads = batch * num_heads`. The [HypercubeBlueprint], [CubeCountPlan]
+//! and [CubeMapping] types come directly from `cubek-std`; this module only
+//! adds the attention-specific `(seq_q, batch_heads)` mapper.
+
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::definition::{AttentionBlueprint, AttentionDims};
+pub use cubek_std::cube_count::{
+    CubeCountPlan, CubeMapping, CubeMappingLaunch, HypercubeBlueprint, cube_mapping_launch,
+};
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct HypercubeBlueprint {}
-
-impl HypercubeBlueprint {
-    pub fn cube_count_plan(
-        &self,
-        dims: &AttentionDims,
-        blueprint: &AttentionBlueprint,
-    ) -> CubeCountPlan {
-        CubeCountPlan {
-            inner: (dims.seq_q as u32).div_ceil(
-                blueprint.tiling_scheme.tile_size.seq_q
-                    * blueprint.tiling_scheme.partition_size.seq_q
-                    * blueprint.tiling_scheme.stage_size.seq_q,
-            ),
-            outer: (dims.batch * dims.num_heads) as u32,
-        }
-    }
-}
-
-pub struct CubeCountPlan {
-    inner: u32,
-    outer: u32,
-}
-
-impl CubeCountPlan {
-    pub fn resolve(&self) -> CubeCount {
-        CubeCount::Static(self.inner, self.outer, 1)
-    }
-
-    /// Make a CubeCountInput from CubeCountPlan
-    pub fn as_args<R: Runtime>(&self) -> CubeCountInputArgs<R> {
-        CubeCountInputArgs::Tmp { dummy: 0 }
-    }
-}
-
-#[derive(CubeType, CubeLaunch)]
-/// CubeCountPlan stripped of non-essential runtime information
-pub enum CubeCountInput {
-    Tmp { dummy: u32 },
+#[cube]
+/// Reads the cube position as attention `(seq_q_index, batch_heads_index)` coordinates.
+///
+/// The `batch_heads_index` spans `batch * num_heads`; the third axis is unused.
+pub fn cube_pos_to_q_batch_heads(cube_mapping: &CubeMapping) -> (u32, u32) {
+    let (seq_q, batch_heads, _) = cube_mapping.cube_pos_to_xyz();
+    (seq_q, batch_heads)
 }

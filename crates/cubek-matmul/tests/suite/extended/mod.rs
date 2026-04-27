@@ -3,6 +3,11 @@
 //! layouts, hypercube / swizzle / specialization / partition-buffering knobs,
 //! and quantization.
 
+use cubecl::{TestRuntime, client::ComputeClient};
+use cubek_matmul::{definition::MatmulProblem, launch::test_only::TestStrategy};
+
+use crate::suite::launcher_strategy::run;
+
 mod common;
 
 mod advanced;
@@ -10,9 +15,6 @@ mod alt_shapes;
 mod layouts;
 mod quantization;
 mod tiling_scheme;
-
-use cubecl::{TestRuntime, prelude::*};
-use cubek_matmul::{definition::MatmulProblem, launch::test_only::TestStrategy};
 
 /// Test the correctness of a [`TestStrategy`] (test-only routines) against
 /// the CPU reference. Kept separate from [`test_matmul_strategy`] so the

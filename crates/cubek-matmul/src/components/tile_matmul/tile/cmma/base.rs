@@ -1,5 +1,5 @@
 use cubecl::{
-    cmma::{self, Matrix},
+    cmma::{self},
     prelude::*,
 };
 use cubek_std::{
@@ -8,16 +8,9 @@ use cubek_std::{
 };
 
 use crate::components::tile_matmul::{
-    CmmaFragmentReader, CmmaStageReader, CmmaStageWriter, Tile, tile::Scope,
+    CmmaFragmentReader, CmmaStageReader, CmmaStageWriter, CmmaTile, Tile, tile::Scope,
 };
 use crate::definition::StageIdent;
-
-#[derive(CubeType)]
-pub struct CmmaTile<N: Numeric> {
-    pub matrix: Matrix<N>,
-    #[cube(comptime)]
-    pub matrix_layout: MatrixLayout,
-}
 
 #[cube]
 pub fn cmma_allocate_lhs<L: Numeric, VL: Size, Sc: Scope>(
