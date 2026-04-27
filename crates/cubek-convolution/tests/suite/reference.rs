@@ -1,9 +1,4 @@
-//! Naive CPU convolution reference + tensor-comparison helper.
-//!
-//! Mirrors `cubek-matmul/tests/suite/reference.rs`. The reference operates
-//! on host f32 data via `cubek_test_utils::HostData`, and the assertion path
-//! routes through `assert_equals_approx` so the standard `TestMode` env var
-//! controls failure semantics.
+//! Naive CPU convolution reference
 
 use cubecl::{
     TestRuntime,

@@ -2,8 +2,7 @@
 //!
 //! `test_algo` is a convenience wrapper that builds a 2D conv `Problem` from a
 //! `ConvolutionSize` + tiling/swizzle/buffering, then runs the kernel against a
-//! CPU reference via `cubek-test-utils`. Mirrors `cubek-matmul`'s
-//! `launcher_strategy.rs`.
+//! CPU reference via `cubek-test-utils`.
 //!
 //! TODO: route through the public `cubek_convolution::launch_ref` once the
 //! blueprint surface is settled. For now we go straight to `launch_kernel`.
