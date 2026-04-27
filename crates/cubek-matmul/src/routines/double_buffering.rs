@@ -1,4 +1,4 @@
-use std::{fmt::Display, marker::PhantomData};
+use std::fmt::Display;
 
 use cubecl::Runtime;
 
@@ -27,48 +27,52 @@ use crate::{
 };
 use crate::{
     components::stage::{ColMajorTilingOrder, PlaneMatmulFamily, RowMajorTilingOrder},
-    components::tile_matmul,
+    components::tile_matmul::{DispatchTileMatmul, TileMatmulFamily as _},
 };
 use crate::{
     launch::RuntimeConfig,
+    routines::DeviceSettings,
     routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane},
-    routines::{BlueprintStrategy, LaunchInfo, base},
-    routines::{DeviceSettings, Routine},
+    routines::{BlueprintStrategy, LaunchInfo, TilingArgs, base},
 };
 
 /// Plane accelerated double buffered matmul with cyclic readers
-pub struct CyclicDoubleBufferingAlgorithm<TMM> {
-    pub _phantom: PhantomData<TMM>,
-}
+pub struct CyclicDoubleBufferingAlgorithm;
 
 /// Plane accelerated double buffered matmul with cyclic readers
-pub struct AsyncCyclicDoubleBufferingAlgorithm<TMM> {
-    pub _phantom: PhantomData<TMM>,
-}
+pub struct AsyncCyclicDoubleBufferingAlgorithm;
 
 /// Plane accelerated double buffered matmul with tilewise readers
-pub struct TilewiseDoubleBufferingAlgorithm<TMM> {
-    pub _phantom: PhantomData<TMM>,
-}
+pub struct TilewiseDoubleBufferingAlgorithm;
 
 /// Plane accelerated double buffered matmul with tilewise reader on Lhs and cyclic on Rhs
-pub struct HybridDoubleBufferingAlgorithm<TMM> {
-    pub _phantom: PhantomData<TMM>,
-}
+pub struct HybridDoubleBufferingAlgorithm;
 
 /// Plane accelerated double buffered matmul with TMA readers
-pub struct TmaDoubleBufferingAlgorithm<TMM> {
-    pub _phantom: PhantomData<TMM>,
-}
+pub struct TmaDoubleBufferingAlgorithm;
 
 /// Plane accelerated double buffered matmul with cyclic readers
-pub struct AsyncStridedDoubleBufferingAlgorithm<TMM> {
-    pub _phantom: PhantomData<TMM>,
+pub struct AsyncStridedDoubleBufferingAlgorithm;
+
+#[derive(Debug, Clone, Copy)]
+pub struct DoubleBufferingArgs {
+    pub tile_matmul: DispatchTileMatmul,
+    pub specialized: bool,
 }
 
-#[derive(Default, Debug, Clone, Copy)]
-pub struct DoubleBufferingArgs {
-    pub specialized: bool,
+impl Default for DoubleBufferingArgs {
+    fn default() -> Self {
+        Self {
+            tile_matmul: DispatchTileMatmul::Cmma,
+            specialized: false,
+        }
+    }
+}
+
+impl TilingArgs for DoubleBufferingArgs {
+    fn set_tile_matmul(&mut self, kind: DispatchTileMatmul) {
+        self.tile_matmul = kind;
+    }
 }
 
 impl Display for DoubleBufferingArgs {
@@ -77,22 +81,94 @@ impl Display for DoubleBufferingArgs {
     }
 }
 
-impl<TMM, RC> base::Routine<RC> for CyclicDoubleBufferingAlgorithm<TMM>
-where
-    TMM: tile_matmul::TileMatmulFamily,
-    RC: RuntimeConfig,
-{
-    type Strategy = DoubleBufferingArgs;
+macro_rules! double_buffering_impl {
+    ($algo:ident, $batch:ty) => {
+        impl<RC> base::Routine<RC> for $algo
+        where
+            RC: RuntimeConfig,
+        {
+            type Strategy = DoubleBufferingArgs;
+            type BatchMatmul = $batch;
+            type Blueprint = TilingBlueprint;
+            type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
 
-    type BatchMatmul = PartitionedBatchMatmulFamily<
+            fn expand_blueprint<R: Runtime>(
+                problem: &MatmulProblem,
+                device_settings: &DeviceSettings<R>,
+                strategy: &BlueprintStrategy<RC, Self>,
+            ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
+                let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+
+                let tile_matmul = match strategy {
+                    BlueprintStrategy::Forced(blueprint) => blueprint.tile_matmul,
+                    BlueprintStrategy::Inferred(args) => args.tile_matmul,
+                };
+
+                if tile_matmul.can_cast_stage_element() {
+                    dtypes.adjust_stage_dtypes();
+                }
+
+                let (blueprint, dtypes) = match strategy {
+                    BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
+                    BlueprintStrategy::Inferred(strategy) => infer_blueprint_plane::<R>(
+                        tile_matmul,
+                        &device_settings.client,
+                        problem,
+                        device_settings.plane_dim,
+                        dtypes,
+                        &device_settings.vector_sizes,
+                        PlaneTilingBlueprintOptions {
+                            specialized: strategy.specialized,
+                            multi_row_strategy: MultiRowStrategy::Adaptive {
+                                minimum_stage_count: 8,
+                            },
+                            swizzled: tile_matmul.should_swizzle(&device_settings.client),
+                            ..Default::default()
+                        },
+                    )?,
+                };
+                Ok(ExpandInfo { blueprint, dtypes })
+            }
+
+            fn prepare<R: Runtime>(
+                problem: &MatmulProblem,
+                device_settings: &DeviceSettings<R>,
+                expand_info: ExpandInfo<Self::Blueprint>,
+            ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+                let ExpandInfo { blueprint, dtypes } = expand_info;
+
+                <Self as base::Routine<RC>>::validate_blueprint(
+                    &device_settings.client,
+                    &blueprint,
+                    problem,
+                    &dtypes,
+                    &device_settings.vector_sizes,
+                )?;
+
+                let cubedim_resource = Self::BatchMatmul::cubedim_resource(
+                    &blueprint,
+                    &dtypes,
+                    &device_settings.vector_sizes,
+                )?;
+
+                LaunchInfo::new(
+                    blueprint,
+                    dtypes,
+                    problem,
+                    cubedim_resource,
+                    device_settings,
+                )
+            }
+        }
+    };
+}
+
+double_buffering_impl!(
+    CyclicDoubleBufferingAlgorithm,
+    PartitionedBatchMatmulFamily<
         RC,
         DoubleBufferingMatmulFamily<
-            PlaneMatmulFamily<
-                TMM,
-                StridedStageFamily,
-                StridedStageFamily,
-                Option<StridedStageFamily>,
-            >,
+            PlaneMatmulFamily<StridedStageFamily, StridedStageFamily, Option<StridedStageFamily>>,
             RC,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
@@ -100,88 +176,15 @@ where
             PlaneWriterFamily,
         >,
         RowMajorGlobalPartitionMatmul,
-    >;
-    type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
+    >
+);
 
-    fn expand_blueprint<R: Runtime>(
-        problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<RC, Self>,
-    ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
-        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
-
-        if TMM::can_cast_stage_element() {
-            dtypes.adjust_stage_dtypes();
-        }
-
-        let (blueprint, dtypes) = match strategy {
-            BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
-            BlueprintStrategy::Inferred(strategy) => infer_blueprint_plane::<TMM, R>(
-                &device_settings.client,
-                problem,
-                device_settings.plane_dim,
-                dtypes,
-                &device_settings.vector_sizes,
-                PlaneTilingBlueprintOptions {
-                    specialized: strategy.specialized,
-                    multi_row_strategy: MultiRowStrategy::Adaptive {
-                        minimum_stage_count: 8,
-                    },
-                    swizzled: TMM::should_swizzle(&device_settings.client),
-                    ..Default::default()
-                },
-            )?,
-        };
-        Ok(ExpandInfo { blueprint, dtypes })
-    }
-
-    fn prepare<R: Runtime>(
-        problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
-        expand_info: ExpandInfo<Self::Blueprint>,
-    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
-        let ExpandInfo { blueprint, dtypes } = expand_info;
-
-        <Self as base::Routine<RC>>::validate_blueprint(
-            &device_settings.client,
-            &blueprint,
-            problem,
-            &dtypes,
-            &device_settings.vector_sizes,
-        )?;
-
-        let cubedim_resource = Self::BatchMatmul::cubedim_resource(
-            &blueprint,
-            &dtypes,
-            &device_settings.vector_sizes,
-        )?;
-
-        LaunchInfo::new(
-            blueprint,
-            dtypes,
-            problem,
-            cubedim_resource,
-            device_settings,
-        )
-    }
-}
-
-impl<TMM, RC> base::Routine<RC> for AsyncCyclicDoubleBufferingAlgorithm<TMM>
-where
-    TMM: tile_matmul::TileMatmulFamily,
-    RC: RuntimeConfig,
-{
-    type Strategy = DoubleBufferingArgs;
-    type BatchMatmul = PartitionedBatchMatmulFamily<
+double_buffering_impl!(
+    AsyncCyclicDoubleBufferingAlgorithm,
+    PartitionedBatchMatmulFamily<
         RC,
         DoubleBufferingMatmulFamily<
-            PlaneMatmulFamily<
-                TMM,
-                StridedStageFamily,
-                StridedStageFamily,
-                Option<StridedStageFamily>,
-            >,
+            PlaneMatmulFamily<StridedStageFamily, StridedStageFamily, Option<StridedStageFamily>>,
             RC,
             AsyncPartialCyclicLoading<RowMajorTilingOrder>,
             AsyncPartialCyclicLoading<RowMajorTilingOrder>,
@@ -189,180 +192,31 @@ where
             PlaneWriterFamily,
         >,
         RowMajorGlobalPartitionMatmul,
-    >;
-    type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
+    >
+);
 
-    fn expand_blueprint<R: Runtime>(
-        problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<RC, Self>,
-    ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
-        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
-
-        if TMM::can_cast_stage_element() {
-            dtypes.adjust_stage_dtypes();
-        }
-
-        let (blueprint, dtypes) = match strategy {
-            BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
-            BlueprintStrategy::Inferred(strategy) => infer_blueprint_plane::<TMM, R>(
-                &device_settings.client,
-                problem,
-                device_settings.plane_dim,
-                dtypes,
-                &device_settings.vector_sizes,
-                PlaneTilingBlueprintOptions {
-                    specialized: strategy.specialized,
-                    multi_row_strategy: MultiRowStrategy::Adaptive {
-                        minimum_stage_count: 8,
-                    },
-                    swizzled: TMM::should_swizzle(&device_settings.client),
-                    ..Default::default()
-                },
-            )?,
-        };
-        Ok(ExpandInfo { blueprint, dtypes })
-    }
-
-    fn prepare<R: Runtime>(
-        problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
-        expand_info: ExpandInfo<Self::Blueprint>,
-    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
-        let ExpandInfo { blueprint, dtypes } = expand_info;
-
-        <Self as base::Routine<RC>>::validate_blueprint(
-            &device_settings.client,
-            &blueprint,
-            problem,
-            &dtypes,
-            &device_settings.vector_sizes,
-        )?;
-
-        let cubedim_resource = Self::BatchMatmul::cubedim_resource(
-            &blueprint,
-            &dtypes,
-            &device_settings.vector_sizes,
-        )?;
-
-        LaunchInfo::new(
-            blueprint,
-            dtypes,
-            problem,
-            cubedim_resource,
-            device_settings,
-        )
-    }
-}
-
-impl<TMM, RC> Routine<RC> for TilewiseDoubleBufferingAlgorithm<TMM>
-where
-    TMM: tile_matmul::TileMatmulFamily,
-    RC: RuntimeConfig,
-{
-    type Strategy = DoubleBufferingArgs;
-
-    type BatchMatmul = PartitionedBatchMatmulFamily<
+double_buffering_impl!(
+    TilewiseDoubleBufferingAlgorithm,
+    PartitionedBatchMatmulFamily<
         RC,
         DoubleBufferingMatmulFamily<
-            PlaneMatmulFamily<
-                TMM,
-                StridedStageFamily,
-                StridedStageFamily,
-                Option<StridedStageFamily>,
-            >,
+            PlaneMatmulFamily<StridedStageFamily, StridedStageFamily, Option<StridedStageFamily>>,
             RC,
-            // Other tiling orders are not supported
             SyncPartialTilewiseLoading<RowMajorTilingOrder>,
             SyncPartialTilewiseLoading<ColMajorTilingOrder>,
             SyncFullTilewiseLoading<ColMajorTilingOrder>,
             PlaneWriterFamily,
         >,
         RowMajorGlobalPartitionMatmul,
-    >;
-    type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
+    >
+);
 
-    fn expand_blueprint<R: Runtime>(
-        problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<RC, Self>,
-    ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
-        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
-
-        if TMM::can_cast_stage_element() {
-            dtypes.adjust_stage_dtypes();
-        }
-
-        let (blueprint, dtypes) = match strategy {
-            BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
-            BlueprintStrategy::Inferred(strategy) => infer_blueprint_plane::<TMM, R>(
-                &device_settings.client,
-                problem,
-                device_settings.plane_dim,
-                dtypes,
-                &device_settings.vector_sizes,
-                PlaneTilingBlueprintOptions {
-                    specialized: strategy.specialized,
-                    multi_row_strategy: MultiRowStrategy::Adaptive {
-                        minimum_stage_count: 8,
-                    },
-                    swizzled: TMM::should_swizzle(&device_settings.client),
-                    ..Default::default()
-                },
-            )?,
-        };
-        Ok(ExpandInfo { blueprint, dtypes })
-    }
-
-    fn prepare<R: Runtime>(
-        problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
-        expand_info: ExpandInfo<Self::Blueprint>,
-    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
-        let ExpandInfo { blueprint, dtypes } = expand_info;
-
-        <Self as base::Routine<RC>>::validate_blueprint(
-            &device_settings.client,
-            &blueprint,
-            problem,
-            &dtypes,
-            &device_settings.vector_sizes,
-        )?;
-
-        let cubedim_resource = Self::BatchMatmul::cubedim_resource(
-            &blueprint,
-            &dtypes,
-            &device_settings.vector_sizes,
-        )?;
-
-        LaunchInfo::new(
-            blueprint,
-            dtypes,
-            problem,
-            cubedim_resource,
-            device_settings,
-        )
-    }
-}
-
-impl<TMM, RC> base::Routine<RC> for HybridDoubleBufferingAlgorithm<TMM>
-where
-    TMM: tile_matmul::TileMatmulFamily,
-    RC: RuntimeConfig,
-{
-    type Strategy = DoubleBufferingArgs;
-
-    type BatchMatmul = PartitionedBatchMatmulFamily<
+double_buffering_impl!(
+    HybridDoubleBufferingAlgorithm,
+    PartitionedBatchMatmulFamily<
         RC,
         DoubleBufferingMatmulFamily<
-            PlaneMatmulFamily<
-                TMM,
-                StridedStageFamily,
-                StridedStageFamily,
-                Option<StridedStageFamily>,
-            >,
+            PlaneMatmulFamily<StridedStageFamily, StridedStageFamily, Option<StridedStageFamily>>,
             RC,
             SyncPartialTilewiseLoading<RowMajorTilingOrder>,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
@@ -370,88 +224,15 @@ where
             PlaneWriterFamily,
         >,
         RowMajorGlobalPartitionMatmul,
-    >;
-    type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
+    >
+);
 
-    fn expand_blueprint<R: Runtime>(
-        problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<RC, Self>,
-    ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
-        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
-
-        if TMM::can_cast_stage_element() {
-            dtypes.adjust_stage_dtypes();
-        }
-
-        let (blueprint, dtypes) = match strategy {
-            BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
-            BlueprintStrategy::Inferred(strategy) => infer_blueprint_plane::<TMM, R>(
-                &device_settings.client,
-                problem,
-                device_settings.plane_dim,
-                dtypes,
-                &device_settings.vector_sizes,
-                PlaneTilingBlueprintOptions {
-                    specialized: strategy.specialized,
-                    multi_row_strategy: MultiRowStrategy::Adaptive {
-                        minimum_stage_count: 8,
-                    },
-                    swizzled: TMM::should_swizzle(&device_settings.client),
-                    ..Default::default()
-                },
-            )?,
-        };
-        Ok(ExpandInfo { blueprint, dtypes })
-    }
-
-    fn prepare<R: Runtime>(
-        problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
-        expand_info: ExpandInfo<Self::Blueprint>,
-    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
-        let ExpandInfo { blueprint, dtypes } = expand_info;
-
-        <Self as base::Routine<RC>>::validate_blueprint(
-            &device_settings.client,
-            &blueprint,
-            problem,
-            &dtypes,
-            &device_settings.vector_sizes,
-        )?;
-
-        let cubedim_resource = Self::BatchMatmul::cubedim_resource(
-            &blueprint,
-            &dtypes,
-            &device_settings.vector_sizes,
-        )?;
-
-        LaunchInfo::new(
-            blueprint,
-            dtypes,
-            problem,
-            cubedim_resource,
-            device_settings,
-        )
-    }
-}
-
-impl<TMM, RC> base::Routine<RC> for TmaDoubleBufferingAlgorithm<TMM>
-where
-    TMM: tile_matmul::TileMatmulFamily,
-    RC: RuntimeConfig,
-{
-    type Strategy = DoubleBufferingArgs;
-    type BatchMatmul = PartitionedBatchMatmulFamily<
+double_buffering_impl!(
+    TmaDoubleBufferingAlgorithm,
+    PartitionedBatchMatmulFamily<
         RC,
         DoubleBufferingMatmulFamily<
-            PlaneMatmulFamily<
-                TMM,
-                StridedStageFamily,
-                StridedStageFamily,
-                Option<StridedStageFamily>,
-            >,
+            PlaneMatmulFamily<StridedStageFamily, StridedStageFamily, Option<StridedStageFamily>>,
             RC,
             AsyncPartialTmaLoading,
             AsyncPartialTmaLoading,
@@ -459,88 +240,15 @@ where
             PlaneWriterFamily,
         >,
         RowMajorGlobalPartitionMatmul,
-    >;
-    type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
+    >
+);
 
-    fn expand_blueprint<R: Runtime>(
-        problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<RC, Self>,
-    ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
-        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
-
-        if TMM::can_cast_stage_element() {
-            dtypes.adjust_stage_dtypes();
-        }
-
-        let (blueprint, dtypes) = match strategy {
-            BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
-            BlueprintStrategy::Inferred(strategy) => infer_blueprint_plane::<TMM, R>(
-                &device_settings.client,
-                problem,
-                device_settings.plane_dim,
-                dtypes,
-                &device_settings.vector_sizes,
-                PlaneTilingBlueprintOptions {
-                    specialized: strategy.specialized,
-                    multi_row_strategy: MultiRowStrategy::Adaptive {
-                        minimum_stage_count: 8,
-                    },
-                    swizzled: TMM::should_swizzle(&device_settings.client),
-                    ..Default::default()
-                },
-            )?,
-        };
-        Ok(ExpandInfo { blueprint, dtypes })
-    }
-
-    fn prepare<R: Runtime>(
-        problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
-        expand_info: ExpandInfo<Self::Blueprint>,
-    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
-        let ExpandInfo { blueprint, dtypes } = expand_info;
-
-        <Self as base::Routine<RC>>::validate_blueprint(
-            &device_settings.client,
-            &blueprint,
-            problem,
-            &dtypes,
-            &device_settings.vector_sizes,
-        )?;
-
-        let cubedim_resource = Self::BatchMatmul::cubedim_resource(
-            &blueprint,
-            &dtypes,
-            &device_settings.vector_sizes,
-        )?;
-
-        LaunchInfo::new(
-            blueprint,
-            dtypes,
-            problem,
-            cubedim_resource,
-            device_settings,
-        )
-    }
-}
-
-impl<TMM, RC> base::Routine<RC> for AsyncStridedDoubleBufferingAlgorithm<TMM>
-where
-    TMM: tile_matmul::TileMatmulFamily,
-    RC: RuntimeConfig,
-{
-    type Strategy = DoubleBufferingArgs;
-    type BatchMatmul = PartitionedBatchMatmulFamily<
+double_buffering_impl!(
+    AsyncStridedDoubleBufferingAlgorithm,
+    PartitionedBatchMatmulFamily<
         RC,
         DoubleBufferingMatmulFamily<
-            PlaneMatmulFamily<
-                TMM,
-                StridedStageFamily,
-                StridedStageFamily,
-                Option<StridedStageFamily>,
-            >,
+            PlaneMatmulFamily<StridedStageFamily, StridedStageFamily, Option<StridedStageFamily>>,
             RC,
             AsyncPartialStridedLoading,
             AsyncPartialStridedLoading,
@@ -548,69 +256,5 @@ where
             PlaneWriterFamily,
         >,
         RowMajorGlobalPartitionMatmul,
-    >;
-    type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
-
-    fn expand_blueprint<R: Runtime>(
-        problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
-        strategy: &BlueprintStrategy<RC, Self>,
-    ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
-        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
-
-        if TMM::can_cast_stage_element() {
-            dtypes.adjust_stage_dtypes();
-        }
-
-        let (blueprint, dtypes) = match strategy {
-            BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
-            BlueprintStrategy::Inferred(strategy) => infer_blueprint_plane::<TMM, R>(
-                &device_settings.client,
-                problem,
-                device_settings.plane_dim,
-                dtypes,
-                &device_settings.vector_sizes,
-                PlaneTilingBlueprintOptions {
-                    specialized: strategy.specialized,
-                    multi_row_strategy: MultiRowStrategy::Adaptive {
-                        minimum_stage_count: 8,
-                    },
-                    swizzled: TMM::should_swizzle(&device_settings.client),
-                    ..Default::default()
-                },
-            )?,
-        };
-        Ok(ExpandInfo { blueprint, dtypes })
-    }
-
-    fn prepare<R: Runtime>(
-        problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
-        expand_info: ExpandInfo<Self::Blueprint>,
-    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
-        let ExpandInfo { blueprint, dtypes } = expand_info;
-
-        <Self as base::Routine<RC>>::validate_blueprint(
-            &device_settings.client,
-            &blueprint,
-            problem,
-            &dtypes,
-            &device_settings.vector_sizes,
-        )?;
-
-        let cubedim_resource = Self::BatchMatmul::cubedim_resource(
-            &blueprint,
-            &dtypes,
-            &device_settings.vector_sizes,
-        )?;
-
-        LaunchInfo::new(
-            blueprint,
-            dtypes,
-            problem,
-            cubedim_resource,
-            device_settings,
-        )
-    }
-}
+    >
+);

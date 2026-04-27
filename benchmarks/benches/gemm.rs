@@ -9,7 +9,7 @@ use cubecl::{
 use cubek::{
     matmul::{
         self as matmul,
-        components::stage::PartitionBuffering,
+        components::{stage::PartitionBuffering, tile_matmul::DispatchTileMatmul},
         definition::{
             LoadingPrecomputeStrategy, MatmulElems, MatmulPrecision, MatmulProblem,
             TilingBlueprint, TilingScheme,
@@ -293,11 +293,12 @@ fn run_grid_search<R: Runtime, MP: MatmulPrecision>() {
                     .global_order(GlobalOrder::default())
                     .cube_count_strategy(CubeCountStrategy::Flattened)
                     .build();
-                let blueprint = TilingBlueprint::builder(tiling, plane_dim, &problem)
-                    .partition_buffering(PartitionBuffering::Single)
-                    .hypercube_blueprint(hypercube)
-                    .loading_precompute_strategy(LoadingPrecomputeStrategy::Always)
-                    .build();
+                let blueprint =
+                    TilingBlueprint::builder(DispatchTileMatmul::Cmma, tiling, plane_dim, &problem)
+                        .partition_buffering(PartitionBuffering::Single)
+                        .hypercube_blueprint(hypercube)
+                        .loading_precompute_strategy(LoadingPrecomputeStrategy::Always)
+                        .build();
                 let result = run_one::<R, MP>(
                     Default::default(),
                     Strategy::SimpleCyclicCmma(BlueprintStrategy::Forced(blueprint.clone())),
@@ -365,13 +366,17 @@ fn run_algos_wmma<R: Runtime, MP: MatmulPrecision>() {
         Default::default(),
         Strategy::SimpleCyclicCmma(BlueprintStrategy::Inferred(SimpleArgs {
             multi_rows: false,
+            ..Default::default()
         })),
     );
 
     println!("Simple multi rows");
     run::<R, MP>(
         Default::default(),
-        Strategy::SimpleCyclicCmma(BlueprintStrategy::Inferred(SimpleArgs { multi_rows: true })),
+        Strategy::SimpleCyclicCmma(BlueprintStrategy::Inferred(SimpleArgs {
+            multi_rows: true,
+            ..Default::default()
+        })),
     );
 
     println!("Double Buffering");
@@ -379,6 +384,7 @@ fn run_algos_wmma<R: Runtime, MP: MatmulPrecision>() {
         Default::default(),
         Strategy::DoubleTilewiseCmma(BlueprintStrategy::Inferred(DoubleBufferingArgs {
             specialized: false,
+            ..Default::default()
         })),
     );
 
@@ -387,6 +393,7 @@ fn run_algos_wmma<R: Runtime, MP: MatmulPrecision>() {
         Default::default(),
         Strategy::DoubleTilewiseCmma(BlueprintStrategy::Inferred(DoubleBufferingArgs {
             specialized: true,
+            ..Default::default()
         })),
     );
 
@@ -397,6 +404,7 @@ fn run_algos_wmma<R: Runtime, MP: MatmulPrecision>() {
             row_count: Some(8),
             rows_per_plane: Some(2),
             partition_k: Some(2),
+            ..Default::default()
         })),
     );
 }

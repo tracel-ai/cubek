@@ -2,7 +2,7 @@ use cubecl::{
     server::LaunchError,
     {Runtime, client::ComputeClient, ir::StorageType, prelude::TensorBinding},
 };
-use cubek_matmul::components::{global::read::FullLoadingStrategy, tile_matmul::TileMatmulFamily};
+use cubek_matmul::components::global::read::FullLoadingStrategy;
 use cubek_matmul::components::{
     global::read::sync_full_cyclic::SyncFullCyclicLoading,
     stage::{ColMajorTilingOrder, RowMajorTilingOrder},
@@ -38,46 +38,33 @@ use crate::{
 use super::Algorithm;
 
 /// Cmma convolution
-pub struct SimpleConv<
-    TMM: TileMatmulFamily,
-    LL: FullLoadingStrategy<RuntimeArgs>,
-    LR: FullLoadingStrategy<RuntimeArgs>,
-> {
-    _tmm: PhantomData<TMM>,
+pub struct SimpleConv<LL: FullLoadingStrategy<RuntimeArgs>, LR: FullLoadingStrategy<RuntimeArgs>> {
     _loader: PhantomData<(LL, LR)>,
 }
 
-pub type SimpleSyncCyclicConv<TMM> = SimpleConv<
-    TMM,
+pub type SimpleSyncCyclicConv = SimpleConv<
     SyncFullCyclicLoading<RowMajorTilingOrder>,
     SyncFullCyclicLoading<ColMajorTilingOrder>,
 >;
-pub type SimpleSyncStridedConv<TMM> =
-    SimpleConv<TMM, SyncFullStridedLoading, SyncFullStridedLoading>;
-pub type SimpleSyncTilewiseConv<TMM> = SimpleConv<
-    TMM,
+pub type SimpleSyncStridedConv = SimpleConv<SyncFullStridedLoading, SyncFullStridedLoading>;
+pub type SimpleSyncTilewiseConv = SimpleConv<
     SyncFullTilewiseLoading<RowMajorTilingOrder>,
     SyncFullTilewiseLoading<ColMajorTilingOrder>,
 >;
-pub type SimpleAsyncCyclicConv<TMM> = SimpleConv<
-    TMM,
+pub type SimpleAsyncCyclicConv = SimpleConv<
     AsyncFullCyclicLoading<RowMajorTilingOrder>,
     AsyncFullCyclicLoading<ColMajorTilingOrder>,
 >;
-pub type SimpleAsyncStridedConv<TMM> =
-    SimpleConv<TMM, AsyncFullStridedLoading, AsyncFullStridedLoading>;
+pub type SimpleAsyncStridedConv = SimpleConv<AsyncFullStridedLoading, AsyncFullStridedLoading>;
 
-pub struct SimpleAsyncTmaConv<TMM: TileMatmulFamily> {
-    _tmm: PhantomData<TMM>,
-}
+pub struct SimpleAsyncTmaConv;
 
 impl<
-    TMM: TileMatmulFamily,
     LL: FullLoadingStrategy<RuntimeArgs, TileKind = Strided>,
     LR: FullLoadingStrategy<RuntimeArgs, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
-> Algorithm for SimpleConv<TMM, LL, LR>
+> Algorithm for SimpleConv<LL, LR>
 {
-    type Routine = SimpleAlgorithm<TMM, LL, LR, SyncBiasLoading>;
+    type Routine = SimpleAlgorithm<LL, LR, SyncBiasLoading>;
     type Args = TensorArgs<RuntimeArgs>;
 
     fn correct_layout<R: Runtime>(
@@ -90,8 +77,8 @@ impl<
     }
 }
 
-impl<TMM: TileMatmulFamily> Algorithm for SimpleAsyncTmaConv<TMM> {
-    type Routine = SimpleAlgorithm<TMM, AsyncFullTmaLoading, AsyncFullTmaLoading, SyncBiasLoading>;
+impl Algorithm for SimpleAsyncTmaConv {
+    type Routine = SimpleAlgorithm<AsyncFullTmaLoading, AsyncFullTmaLoading, SyncBiasLoading>;
 
     type Args = TensorMapArgs<RuntimeArgs>;
 

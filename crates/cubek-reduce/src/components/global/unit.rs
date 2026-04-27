@@ -1,11 +1,11 @@
 use crate::{
     BoundChecks, ReduceInstruction, ReducePrecision, VectorizationMode,
     components::{
-        args::NumericLine,
-        global::idle_check,
+        args::NumericVector,
+        global::{idle_check, reduction_output_base},
         instructions::{Accumulator, ReduceStep, reduce_inplace},
         readers::{Reader, unit::UnitReader},
-        writer::Writer,
+        writers::Writer,
     },
     routines::UnitReduceBlueprint,
 };
@@ -16,17 +16,32 @@ pub struct GlobalFullUnitReduce;
 
 #[cube]
 impl GlobalFullUnitReduce {
-    pub fn execute<P: ReducePrecision, Out: NumericLine, I: ReduceInstruction<P>>(
+    pub fn execute<P: ReducePrecision, Out: NumericVector, I: ReduceInstruction<P>>(
         input: &VirtualTensor<P::EI, P::SI>,
         output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         reduce_axis: usize,
+        out_vec_axis: usize,
         inst: &I,
         #[comptime] vectorization_mode: VectorizationMode,
         #[comptime] blueprint: UnitReduceBlueprint,
     ) {
-        let write_index = ABSOLUTE_POS;
-        let mut writer =
-            Writer::<Out>::new::<P>(input, output, reduce_axis, write_index, vectorization_mode);
+        let acc_format = I::accumulator_format(inst);
+        let write_index = reduction_output_base::<Out::T, Out::N>(
+            ABSOLUTE_POS,
+            output,
+            reduce_axis,
+            comptime!(acc_format.len()),
+        );
+
+        let mut writer = Writer::<Out>::new::<P>(
+            input,
+            output,
+            reduce_axis,
+            out_vec_axis,
+            write_index,
+            vectorization_mode,
+            acc_format,
+        );
 
         let write_count = writer.write_count();
         let reduce_index_start = write_index * write_count;
@@ -57,7 +72,7 @@ impl GlobalFullUnitReduce {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn reduce_single<P: ReducePrecision, Out: NumericLine, I: ReduceInstruction<P>>(
+    pub fn reduce_single<P: ReducePrecision, Out: NumericVector, I: ReduceInstruction<P>>(
         input: &VirtualTensor<P::EI, P::SI>,
         output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         reduce_axis: usize,

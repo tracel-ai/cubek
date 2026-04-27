@@ -262,6 +262,7 @@ fn execute_gemv<V: CubePrimitive, M: CubePrimitive, O: CubePrimitive, AccR: Nume
 
     let write_index = mn_pos as usize;
 
+    #[allow(clippy::collapsible_else_if)]
     if comptime!(plane_dim == 1) {
         if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
             out.write_checked(write_index, sum);

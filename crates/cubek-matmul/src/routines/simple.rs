@@ -20,10 +20,10 @@ use crate::{
             single_stage::simple::SimpleMatmulFamily,
         },
         stage::{ColMajorTilingOrder, PartitionBuffering, PlaneMatmulFamily, RowMajorTilingOrder},
-        tile_matmul::TileMatmulFamily,
+        tile_matmul::{DispatchTileMatmul, TileMatmulFamily as _},
     },
     routines::{
-        Routine,
+        Routine, TilingArgs,
         selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane},
     },
 };
@@ -41,29 +41,43 @@ use crate::{
 
 /// Plane accelerated single stage matmul with configurable readers (default to cyclic)
 pub struct SimpleAlgorithm<
-    TMM,
     LL = SyncFullCyclicLoading<ColMajorTilingOrder>,
     RL = SyncFullCyclicLoading<RowMajorTilingOrder>,
     AL = SyncFullCyclicLoading<RowMajorTilingOrder>,
 > {
-    pub _tmm: PhantomData<TMM>,
     pub _ll: PhantomData<LL>,
     pub _rl: PhantomData<RL>,
     pub _al: PhantomData<AL>,
 }
 
-pub type SimpleTmaAlgorithm<TMM> = SimpleAlgorithm<
-    TMM,
+pub type SimpleTmaAlgorithm = SimpleAlgorithm<
     AsyncFullTmaLoading,
     AsyncFullTmaLoading,
     SyncFullCyclicLoading<RowMajorTilingOrder>,
 >;
-pub type SimpleBarrierAlgorithm<TMM, L> = SimpleAlgorithm<TMM, L, L>;
+pub type SimpleBarrierAlgorithm<L> = SimpleAlgorithm<L, L>;
 
-#[derive(Default, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct SimpleArgs {
+    /// Which tile matmul variant to dispatch on. Also stored into the blueprint.
+    pub tile_matmul: DispatchTileMatmul,
     // Uses an optimized multi rows strategy.
     pub multi_rows: bool,
+}
+
+impl Default for SimpleArgs {
+    fn default() -> Self {
+        Self {
+            tile_matmul: DispatchTileMatmul::Cmma,
+            multi_rows: false,
+        }
+    }
+}
+
+impl TilingArgs for SimpleArgs {
+    fn set_tile_matmul(&mut self, kind: DispatchTileMatmul) {
+        self.tile_matmul = kind;
+    }
 }
 
 impl Display for SimpleArgs {
@@ -72,9 +86,8 @@ impl Display for SimpleArgs {
     }
 }
 
-impl<TMM, RC, LL, RL, AL> Routine<RC> for SimpleAlgorithm<TMM, LL, RL, AL>
+impl<RC, LL, RL, AL> Routine<RC> for SimpleAlgorithm<LL, RL, AL>
 where
-    TMM: TileMatmulFamily,
     RC: RuntimeConfig,
     LL: FullLoadingStrategy<RC, TileKind = Strided>,
     RL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
@@ -84,7 +97,7 @@ where
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
         SimpleMatmulFamily<
-            PlaneMatmulFamily<TMM, LL::Stage, RL::Stage, Option<AL::Stage>>,
+            PlaneMatmulFamily<LL::Stage, RL::Stage, Option<AL::Stage>>,
             RC,
             LL,
             RL,
@@ -104,7 +117,12 @@ where
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
         let client = &device_settings.client;
 
-        if TMM::can_cast_stage_element() {
+        let tile_matmul = match strategy {
+            BlueprintStrategy::Forced(blueprint) => blueprint.tile_matmul,
+            BlueprintStrategy::Inferred(args) => args.tile_matmul,
+        };
+
+        if tile_matmul.can_cast_stage_element() {
             dtypes.adjust_stage_dtypes();
         }
 
@@ -112,7 +130,8 @@ where
             BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
             BlueprintStrategy::Inferred(strategy) => {
                 if strategy.multi_rows {
-                    infer_blueprint_multi_rows::<R, TMM>(
+                    infer_blueprint_multi_rows::<R>(
+                        tile_matmul,
                         client,
                         problem,
                         device_settings.plane_dim,
@@ -120,7 +139,8 @@ where
                         &device_settings.vector_sizes,
                     )
                 } else {
-                    infer_blueprint_plane::<TMM, R>(
+                    infer_blueprint_plane::<R>(
+                        tile_matmul,
                         client,
                         problem,
                         device_settings.plane_dim,
@@ -129,7 +149,7 @@ where
                         PlaneTilingBlueprintOptions {
                             partition_buffering: Some(PartitionBuffering::Single),
                             tiny_selection_enabled: true,
-                            swizzled: TMM::should_swizzle(client),
+                            swizzled: tile_matmul.should_swizzle(client),
                             ..Default::default()
                         },
                     )
@@ -172,17 +192,18 @@ where
     }
 }
 
-fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
+fn infer_blueprint_multi_rows<R: Runtime>(
+    tile_matmul: DispatchTileMatmul,
     client: &ComputeClient<R>,
     problem: &MatmulProblem,
     plane_dim: u32,
     mut dtypes: MatmulElems,
     vector_sizes: &MatmulVectorSizes,
 ) -> Result<(TilingBlueprint, MatmulElems), MatmulSetupError> {
-    adjust_dtypes(client, &mut dtypes, TMM::requires_accelerator());
+    adjust_dtypes(client, &mut dtypes, tile_matmul.requires_accelerator());
 
     let supported = |m: u32, n: u32, k: u32| {
-        TMM::is_supported(
+        tile_matmul.is_supported(
             client,
             MmaConfig {
                 a_type: dtypes.lhs_register,
@@ -219,7 +240,7 @@ fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
             .build();
 
         Ok((
-            TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
+            TilingBlueprint::builder(tile_matmul, tiling_scheme, plane_dim, problem)
                 .partition_buffering(PartitionBuffering::Single)
                 .hypercube_blueprint(hypercube)
                 .build(),
@@ -238,14 +259,15 @@ fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
             .build();
 
         Ok((
-            TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
+            TilingBlueprint::builder(tile_matmul, tiling_scheme, plane_dim, problem)
                 .partition_buffering(PartitionBuffering::Single)
                 .hypercube_blueprint(hypercube)
                 .build(),
             dtypes,
         ))
     } else {
-        infer_blueprint_plane::<TMM, R>(
+        infer_blueprint_plane::<R>(
+            tile_matmul,
             client,
             problem,
             plane_dim,

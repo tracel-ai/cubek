@@ -18,13 +18,13 @@ define_size!(pub NPlaneVec);
 pub mod cmma;
 pub mod interleaved;
 pub mod mma;
-pub mod planevec;
+pub mod plane_vec_mat_inner_product;
 pub mod register;
 
 pub use cmma::*;
 pub use interleaved::*;
 pub use mma::*;
-pub use planevec::*;
+pub use plane_vec_mat_inner_product::*;
 pub use register::*;
 
 /// Identifies which compute primitive executes a tile matmul.
@@ -128,15 +128,6 @@ pub struct PlaneVecTile<N: Numeric, V: Size> {
     pub reduce_vector_size: u32,
     #[cube(comptime)]
     pub _phantom_v: PhantomData<V>,
-}
-
-#[derive(CubeType)]
-pub struct InterleavedTile<N: Numeric> {
-    pub data: Array<N>,
-    #[cube(comptime)]
-    pub matrix_layout: MatrixLayout,
-    #[cube(comptime)]
-    pub config: SharedTileConfig,
 }
 
 /// Wrapper over val to make enum work

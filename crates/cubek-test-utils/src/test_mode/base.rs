@@ -68,6 +68,8 @@ pub enum TestMode {
     /// Compilation failures are ignored.
     ///
     /// Helpful to isolate relevant tests
+    ///
+    /// Note: if a panic happens inside the kernel this may give false positives.
     FailIfRun,
 }
 

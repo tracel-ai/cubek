@@ -16,39 +16,31 @@ use crate::{
             async_full_cyclic::AsyncFullCyclicLoading,
         },
         stage::ColMajorTilingOrder,
-        tile_matmul::{cmma::CmmaMatmul, mma::MmaMatmul},
+        tile_matmul::DispatchTileMatmul,
     },
     definition::{MatmulElems, MatmulSetupError},
     launch::launch_tiling,
     routines::{
-        BlueprintStrategy, interleaved::InterleavedAlgorithm, simple::SimpleBarrierAlgorithm,
+        BlueprintStrategy, Routine, TilingArgs, interleaved::InterleavedAlgorithm,
+        simple::SimpleBarrierAlgorithm,
     },
 };
-
-type Cmma = CmmaMatmul;
-type Mma = MmaMatmul;
 
 /// Non-public strategy variants reserved for test coverage.
 #[allow(clippy::type_complexity)]
 #[derive(Clone)]
 pub enum TestStrategy {
     SimpleBarrierCooperativeCmma(
-        BlueprintStrategy<(), SimpleBarrierAlgorithm<Cmma, AsyncFullCooperativeLoading>>,
+        BlueprintStrategy<(), SimpleBarrierAlgorithm<AsyncFullCooperativeLoading>>,
     ),
     SimpleBarrierCooperativeMma(
-        BlueprintStrategy<(), SimpleBarrierAlgorithm<Mma, AsyncFullCooperativeLoading>>,
+        BlueprintStrategy<(), SimpleBarrierAlgorithm<AsyncFullCooperativeLoading>>,
     ),
     SimpleBarrierCyclicCmma(
-        BlueprintStrategy<
-            (),
-            SimpleBarrierAlgorithm<Cmma, AsyncFullCyclicLoading<ColMajorTilingOrder>>,
-        >,
+        BlueprintStrategy<(), SimpleBarrierAlgorithm<AsyncFullCyclicLoading<ColMajorTilingOrder>>>,
     ),
     SimpleBarrierCyclicMma(
-        BlueprintStrategy<
-            (),
-            SimpleBarrierAlgorithm<Mma, AsyncFullCyclicLoading<ColMajorTilingOrder>>,
-        >,
+        BlueprintStrategy<(), SimpleBarrierAlgorithm<AsyncFullCyclicLoading<ColMajorTilingOrder>>>,
     ),
     Interleaved(BlueprintStrategy<(), InterleavedAlgorithm>),
 }
@@ -73,6 +65,22 @@ impl Display for TestStrategy {
     }
 }
 
+fn with_kind<RC, A>(
+    sel: &BlueprintStrategy<RC, A>,
+    kind: DispatchTileMatmul,
+) -> BlueprintStrategy<RC, A>
+where
+    RC: crate::launch::RuntimeConfig,
+    A: Routine<RC>,
+    A::Strategy: TilingArgs,
+{
+    let mut sel = sel.clone();
+    if let BlueprintStrategy::Inferred(args) = &mut sel {
+        args.set_tile_matmul(kind);
+    }
+    sel
+}
+
 #[allow(clippy::result_large_err)]
 impl TestStrategy {
     pub fn launch_ref<R: Runtime>(
@@ -83,18 +91,19 @@ impl TestStrategy {
         out: TensorBinding<R>,
         dtypes: &mut MatmulElems,
     ) -> Result<(), MatmulSetupError> {
+        use DispatchTileMatmul::{Cmma, Mma};
         match self {
             Self::SimpleBarrierCooperativeCmma(sel) => {
-                launch_tiling::launch_ref(client, lhs, rhs, out, sel, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, &with_kind(sel, Cmma), dtypes)
             }
             Self::SimpleBarrierCooperativeMma(sel) => {
-                launch_tiling::launch_ref(client, lhs, rhs, out, sel, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, &with_kind(sel, Mma), dtypes)
             }
             Self::SimpleBarrierCyclicCmma(sel) => {
-                launch_tiling::launch_ref(client, lhs, rhs, out, sel, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, &with_kind(sel, Cmma), dtypes)
             }
             Self::SimpleBarrierCyclicMma(sel) => {
-                launch_tiling::launch_ref(client, lhs, rhs, out, sel, dtypes)
+                launch_tiling::launch_ref(client, lhs, rhs, out, &with_kind(sel, Mma), dtypes)
             }
             Self::Interleaved(sel) => launch_tiling::launch_ref(client, lhs, rhs, out, sel, dtypes),
         }

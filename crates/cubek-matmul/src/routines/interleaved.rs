@@ -21,7 +21,7 @@ use crate::{
             single_stage::simple::SimpleMatmulFamily,
         },
         stage::{ColMajorTilingOrder, PartitionBuffering, PlaneMatmulFamily, RowMajorTilingOrder},
-        tile_matmul::TileMatmulFamily,
+        tile_matmul::{DispatchTileMatmul, TileMatmulFamily as _},
     },
     routines::{
         Routine,
@@ -29,9 +29,9 @@ use crate::{
     },
 };
 use crate::{
+    routines::ExpandInfo,
     routines::{BlueprintStrategy, DeviceSettings, LaunchInfo},
     {components::batch::BatchMatmulFamily, launch::RuntimeConfig},
-    {components::tile_matmul::interleaved::InterleavedMatmul, routines::ExpandInfo},
 };
 
 /// Plane accelerated single stage matmul with configurable readers (default to cyclic)
@@ -68,7 +68,7 @@ where
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
         SimpleMatmulFamily<
-            PlaneMatmulFamily<InterleavedMatmul, LL::Stage, RL::Stage, Option<AL::Stage>>,
+            PlaneMatmulFamily<LL::Stage, RL::Stage, Option<AL::Stage>>,
             RC,
             LL,
             RL,
@@ -86,8 +86,9 @@ where
         strategy: &BlueprintStrategy<RC, Self>,
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+        let tile_matmul = DispatchTileMatmul::Interleaved;
 
-        if InterleavedMatmul::can_cast_stage_element() {
+        if tile_matmul.can_cast_stage_element() {
             dtypes.adjust_stage_dtypes();
         }
 
@@ -96,7 +97,8 @@ where
             BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
             BlueprintStrategy::Inferred(strategy) => {
                 if strategy.multi_rows {
-                    infer_blueprint_multi_rows::<R, InterleavedMatmul>(
+                    infer_blueprint_multi_rows::<R>(
+                        tile_matmul,
                         client,
                         problem,
                         device_settings.plane_dim,
@@ -104,7 +106,8 @@ where
                         &device_settings.vector_sizes,
                     )
                 } else {
-                    infer_blueprint_plane::<InterleavedMatmul, R>(
+                    infer_blueprint_plane::<R>(
+                        tile_matmul,
                         client,
                         problem,
                         device_settings.plane_dim,
@@ -113,7 +116,7 @@ where
                         PlaneTilingBlueprintOptions {
                             partition_buffering: Some(PartitionBuffering::Single),
                             tiny_selection_enabled: true,
-                            swizzled: InterleavedMatmul::should_swizzle(client),
+                            swizzled: tile_matmul.should_swizzle(client),
                             ..Default::default()
                         },
                     )
@@ -222,17 +225,18 @@ where
     }
 }
 
-fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
+fn infer_blueprint_multi_rows<R: Runtime>(
+    tile_matmul: DispatchTileMatmul,
     client: &ComputeClient<R>,
     problem: &MatmulProblem,
     plane_dim: u32,
     mut dtypes: MatmulElems,
     vector_sizes: &MatmulVectorSizes,
 ) -> Result<(TilingBlueprint, MatmulElems), MatmulSetupError> {
-    adjust_dtypes(client, &mut dtypes, TMM::requires_accelerator());
+    adjust_dtypes(client, &mut dtypes, tile_matmul.requires_accelerator());
 
     let supported = |m: u32, n: u32, k: u32| {
-        TMM::is_supported(
+        tile_matmul.is_supported(
             client,
             MmaConfig {
                 a_type: dtypes.lhs_register,
@@ -269,10 +273,15 @@ fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
             .build();
 
         Ok((
-            TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
-                .partition_buffering(PartitionBuffering::Single)
-                .hypercube_blueprint(hypercube)
-                .build(),
+            TilingBlueprint::builder(
+                DispatchTileMatmul::Interleaved,
+                tiling_scheme,
+                plane_dim,
+                problem,
+            )
+            .partition_buffering(PartitionBuffering::Single)
+            .hypercube_blueprint(hypercube)
+            .build(),
             dtypes,
         ))
     } else if supported(8, 8, 8) {
@@ -288,14 +297,20 @@ fn infer_blueprint_multi_rows<R: Runtime, TMM: TileMatmulFamily>(
             .build();
 
         Ok((
-            TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
-                .partition_buffering(PartitionBuffering::Single)
-                .hypercube_blueprint(hypercube)
-                .build(),
+            TilingBlueprint::builder(
+                DispatchTileMatmul::Interleaved,
+                tiling_scheme,
+                plane_dim,
+                problem,
+            )
+            .partition_buffering(PartitionBuffering::Single)
+            .hypercube_blueprint(hypercube)
+            .build(),
             dtypes,
         ))
     } else {
-        infer_blueprint_plane::<TMM, R>(
+        infer_blueprint_plane::<R>(
+            tile_matmul,
             client,
             problem,
             plane_dim,

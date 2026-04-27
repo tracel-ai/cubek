@@ -10,6 +10,7 @@ use crate::{
         CubeDimResource,
         global::{LoadFlows, memory::GlobalLayoutConfig, read::ReaderMode},
         stage::PartitionBuffering,
+        tile_matmul::DispatchTileMatmul,
     },
     definition::{MatmulElems, MatmulProblem, MatmulSetupError, TilingScheme},
     routines::DeviceSettings,
@@ -31,6 +32,7 @@ pub trait Blueprint: Debug + Clone + Eq + PartialEq + Hash {
 pub struct TilingBlueprint {
     // TODO remove
     pub plane_dim: u32,
+    pub tile_matmul: DispatchTileMatmul,
     pub tiling_scheme: TilingScheme,
     pub swizzle_modes: SwizzleModes,
     pub partition_buffering: PartitionBuffering,
@@ -130,6 +132,7 @@ impl SwizzleModes {
 
 impl TilingBlueprint {
     pub fn builder(
+        tile_matmul: DispatchTileMatmul,
         tiling_scheme: TilingScheme,
         plane_dim: u32,
         problem: &MatmulProblem,
@@ -145,6 +148,7 @@ impl TilingBlueprint {
 
         TilingBlueprintBuilder {
             plane_dim,
+            tile_matmul,
             tiling_scheme,
             hypercube_blueprint,
             check_m_bounds,
@@ -189,6 +193,7 @@ impl TilingBlueprint {
 
 pub struct TilingBlueprintBuilder {
     plane_dim: u32,
+    tile_matmul: DispatchTileMatmul,
     tiling_scheme: TilingScheme,
 
     check_m_bounds: bool,
@@ -243,6 +248,7 @@ impl TilingBlueprintBuilder {
     pub fn build(self) -> TilingBlueprint {
         TilingBlueprint {
             plane_dim: self.plane_dim,
+            tile_matmul: self.tile_matmul,
             tiling_scheme: self.tiling_scheme,
             swizzle_modes: self.shared_swizzle,
             hypercube_blueprint: self.hypercube_blueprint,

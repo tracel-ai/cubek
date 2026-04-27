@@ -7,6 +7,7 @@ mod mean;
 mod min;
 mod prod;
 mod sum;
+mod topk;
 
 pub use argmax::reference_argmax;
 pub use argmin::reference_argmin;
@@ -17,6 +18,7 @@ pub use mean::reference_mean;
 pub use min::reference_min;
 pub use prod::reference_prod;
 pub use sum::reference_sum;
+pub use topk::reference_topk;
 
 use cubecl::zspace::{Shape, Strides};
 use cubek_test_utils::{HostData, HostDataVec};

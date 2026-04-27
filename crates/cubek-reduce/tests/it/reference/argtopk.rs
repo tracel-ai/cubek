@@ -5,15 +5,14 @@ use super::contiguous_strides;
 
 /// ArgTopK returns the `k` axis indices of the top values per output slice.
 /// The output shape has `axis` set to `k` (rather than `1` as for scalar reductions).
-pub fn reference_argtopk(input: &HostData, axis: usize, k: u32) -> HostData {
+pub fn reference_argtopk(input: &HostData, axis: usize, k: usize) -> HostData {
     let axis_len = input.shape[axis];
-    let k_usize = k as usize;
 
     let mut out_shape_vec: Vec<usize> = input.shape.iter().copied().collect();
-    out_shape_vec[axis] = k_usize;
+    out_shape_vec[axis] = k;
 
     let num_outputs_batches: usize = input.shape.iter().product::<usize>() / axis_len;
-    let mut data = vec![0.0f32; num_outputs_batches * k_usize];
+    let mut data = vec![0.0f32; num_outputs_batches * k];
 
     let out_strides = contiguous_strides(&out_shape_vec);
 
@@ -38,7 +37,7 @@ pub fn reference_argtopk(input: &HostData, axis: usize, k: u32) -> HostData {
         }
         pairs.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-        for i in 0..k_usize {
+        for i in 0..k {
             coord[axis] = i;
             let idx = coord
                 .iter()

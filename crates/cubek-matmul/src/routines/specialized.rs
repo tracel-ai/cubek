@@ -17,8 +17,8 @@ use crate::definition::{
 use crate::{
     components::batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
     components::global::PlaneWriterFamily,
-    components::tile_matmul::TileMatmulFamily,
-    components::{global::read::FullLoadingStrategy, tile_matmul},
+    components::global::read::FullLoadingStrategy,
+    components::tile_matmul::{DispatchTileMatmul, TileMatmulFamily as _},
 };
 use crate::{
     components::global::{
@@ -37,17 +37,33 @@ use crate::{
 use crate::{
     launch::RuntimeConfig,
     routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane},
-    routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, base},
+    routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, TilingArgs, base},
     {components::batch::BatchMatmulFamily, routines::ExpandInfo},
 };
 
 /// Plane accelerated specialized matmul with TMA readers
-pub struct SpecializedAlgorithm<TMM, L = AsyncPartialTmaLoading, AL = SyncFullStridedLoading> {
-    pub _phantom: PhantomData<(TMM, L, AL)>,
+pub struct SpecializedAlgorithm<L = AsyncPartialTmaLoading, AL = SyncFullStridedLoading> {
+    pub _phantom: PhantomData<(L, AL)>,
 }
 
-#[derive(Default, Clone)]
-pub struct SpecializedStrategy {}
+#[derive(Clone)]
+pub struct SpecializedStrategy {
+    pub tile_matmul: DispatchTileMatmul,
+}
+
+impl Default for SpecializedStrategy {
+    fn default() -> Self {
+        Self {
+            tile_matmul: DispatchTileMatmul::Cmma,
+        }
+    }
+}
+
+impl TilingArgs for SpecializedStrategy {
+    fn set_tile_matmul(&mut self, kind: DispatchTileMatmul) {
+        self.tile_matmul = kind;
+    }
+}
 
 impl Display for SpecializedStrategy {
     fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -57,13 +73,12 @@ impl Display for SpecializedStrategy {
 
 impl From<()> for SpecializedStrategy {
     fn from(_value: ()) -> Self {
-        Self {}
+        Self::default()
     }
 }
 
-impl<TMM, RC, L, AL> base::Routine<RC> for SpecializedAlgorithm<TMM, L, AL>
+impl<RC, L, AL> base::Routine<RC> for SpecializedAlgorithm<L, AL>
 where
-    TMM: tile_matmul::TileMatmulFamily,
     RC: RuntimeConfig,
     L: AsyncPartialLoadingStrategy<RC, Stage: StageFamily>,
     AL: FullLoadingStrategy<RC, Stage: StageFamily>,
@@ -72,7 +87,7 @@ where
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
         SpecializedMatmulFamily<
-            PlaneMatmulFamily<TMM, L::Stage, L::Stage, Option<AL::Stage>>,
+            PlaneMatmulFamily<L::Stage, L::Stage, Option<AL::Stage>>,
             RC,
             L,
             AL,
@@ -90,13 +105,19 @@ where
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
-        if TMM::can_cast_stage_element() {
+        let tile_matmul = match strategy {
+            BlueprintStrategy::Forced(blueprint) => blueprint.tile_matmul,
+            BlueprintStrategy::Inferred(args) => args.tile_matmul,
+        };
+
+        if tile_matmul.can_cast_stage_element() {
             dtypes.adjust_stage_dtypes();
         }
 
         let (blueprint, dtypes) = match strategy {
             BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
-            BlueprintStrategy::Inferred(_) => infer_blueprint_plane::<TMM, R>(
+            BlueprintStrategy::Inferred(_) => infer_blueprint_plane::<R>(
+                tile_matmul,
                 &device_settings.client,
                 problem,
                 device_settings.plane_dim,
@@ -107,7 +128,7 @@ where
                     multi_row_strategy: MultiRowStrategy::Adaptive {
                         minimum_stage_count: 8,
                     },
-                    swizzled: TMM::should_swizzle(&device_settings.client),
+                    swizzled: tile_matmul.should_swizzle(&device_settings.client),
                     ..Default::default()
                 },
             )?,
@@ -147,7 +168,8 @@ where
 }
 
 #[allow(unused, reason = "needs more tuning")]
-fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
+fn infer_blueprint_specialized<R: Runtime>(
+    tile_matmul: DispatchTileMatmul,
     client: &ComputeClient<R>,
     problem: &MatmulProblem,
     plane_dim: u32,
@@ -155,10 +177,10 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
     mut dtypes: MatmulElems,
     vector_sizes: &MatmulVectorSizes,
 ) -> Result<(TilingBlueprint, MatmulElems), MatmulSetupError> {
-    adjust_dtypes(client, &mut dtypes, TMM::requires_accelerator());
+    adjust_dtypes(client, &mut dtypes, tile_matmul.requires_accelerator());
 
     let supported = |m: u32, n: u32, k: u32| {
-        TMM::is_supported(
+        tile_matmul.is_supported(
             client,
             MmaConfig {
                 a_type: dtypes.lhs_register,
@@ -194,7 +216,8 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
             .build()
             .unwrap()
     } else {
-        return infer_blueprint_plane::<TMM, R>(
+        return infer_blueprint_plane::<R>(
+            tile_matmul,
             client,
             problem,
             plane_dim,
@@ -214,7 +237,7 @@ fn infer_blueprint_specialized<R: Runtime, TMM: TileMatmulFamily>(
         .cube_count_strategy(cube_count_strategy)
         .build();
 
-    let mut builder = TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
+    let mut builder = TilingBlueprint::builder(tile_matmul, tiling_scheme, plane_dim, problem)
         .partition_buffering(PartitionBuffering::Single)
         .hypercube_blueprint(hypercube)
         .load_specialization_config(LoadFlows {

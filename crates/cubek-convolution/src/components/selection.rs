@@ -10,7 +10,7 @@ use cubek_matmul::definition::{
     TilingScheme, adjust_dtypes,
 };
 use cubek_matmul::{
-    components::tile_matmul::TileMatmulFamily,
+    components::tile_matmul::{DispatchTileMatmul, TileMatmulFamily as _},
     routines::{NUM_SM_APPROX, NUM_TENSOR_CORES_APPROX, find_instruction_size},
 };
 use cubek_std::stage::SwizzleMode;
@@ -82,7 +82,8 @@ pub(crate) fn find_stage_size_m_n(
     }
 }
 
-pub fn convolution_matmul_selection<TMM: TileMatmulFamily, R: Runtime>(
+pub fn convolution_matmul_selection<R: Runtime>(
+    tile_matmul: DispatchTileMatmul,
     client: &ComputeClient<R>,
     problem: &ConvolutionProblem,
     plane_dim: u32,
@@ -90,7 +91,7 @@ pub fn convolution_matmul_selection<TMM: TileMatmulFamily, R: Runtime>(
     vector_sizes: &MatmulVectorSizes,
     dtypes: &mut MatmulElems,
 ) -> Result<TilingBlueprint, MatmulAvailabilityError> {
-    adjust_dtypes(client, dtypes, TMM::requires_accelerator());
+    adjust_dtypes(client, dtypes, tile_matmul.requires_accelerator());
 
     // rough heuristic based on previous bench results where 512 channels with a 3x3 kernel seemed
     // to be the rough cutoff for the k=4 size.
@@ -105,8 +106,8 @@ pub fn convolution_matmul_selection<TMM: TileMatmulFamily, R: Runtime>(
         ),
         (problem.m, problem.n, problem.k).into(),
         (None, None, None),
-        TMM::is_supported,
-        TMM::supported_sizes,
+        |c, cfg| tile_matmul.is_supported(c, cfg),
+        |c, l, r, a| tile_matmul.supported_sizes(c, l, r, a),
     )?;
 
     let hardware = &client.properties().hardware;
@@ -132,9 +133,13 @@ pub fn convolution_matmul_selection<TMM: TileMatmulFamily, R: Runtime>(
         .build()
         .unwrap();
 
-    let mut builder =
-        TilingBlueprint::builder(tiling_scheme, plane_dim, &problem.as_matmul_problem())
-            .partition_buffering(PartitionBuffering::Single);
+    let mut builder = TilingBlueprint::builder(
+        tile_matmul,
+        tiling_scheme,
+        plane_dim,
+        &problem.as_matmul_problem(),
+    )
+    .partition_buffering(PartitionBuffering::Single);
 
     if swizzle {
         let swizzle_dim = tiling_scheme.elements_per_stage_along_k() as usize;

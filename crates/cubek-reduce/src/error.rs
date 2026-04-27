@@ -25,9 +25,14 @@ pub enum ReduceError {
     /// Indicate the axis is too large.
     #[error("The provided axis ({axis}) must be smaller than the input tensor rank ({rank}).")]
     InvalidAxis { axis: usize, rank: usize },
+    /// Indicate that the shape of the input tensor is too small for the given input and axis.
+    #[error(
+        "The input reduce axis length (currently {axis_length:?}) should be at least k ({k:?})."
+    )]
+    ReduceAxisTooSmall { axis_length: usize, k: usize },
     /// Indicate that the shape of the output tensor is invalid for the given input and axis.
     #[error("The output shape (currently {output_shape:?}) should be {expected_shape:?}.")]
-    MismatchShape {
+    MismatchOutputShape {
         expected_shape: Vec<usize>,
         output_shape: Vec<usize>,
     },

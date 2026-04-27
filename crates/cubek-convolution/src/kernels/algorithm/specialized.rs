@@ -2,9 +2,8 @@ use cubecl::{
     Runtime, client::ComputeClient, ir::StorageType, prelude::TensorBinding, server::LaunchError,
 };
 use cubek_matmul::{
-    components::{
-        global::read::{AsyncPartialLoadingStrategy, async_partial_tma::AsyncPartialTmaLoading},
-        tile_matmul::TileMatmulFamily,
+    components::global::read::{
+        AsyncPartialLoadingStrategy, async_partial_tma::AsyncPartialTmaLoading,
     },
     definition::AvailableVectorSizes,
     launch::{TensorArgs, TensorMapArgs},
@@ -22,23 +21,16 @@ use crate::{
 };
 
 /// Cmma convolution
-pub struct SpecializedConv<TMM: TileMatmulFamily, L: AsyncPartialLoadingStrategy<RuntimeArgs>> {
-    _tmm: PhantomData<TMM>,
+pub struct SpecializedConv<L: AsyncPartialLoadingStrategy<RuntimeArgs>> {
     _loader: PhantomData<L>,
 }
 
-// pub type SpecializedCyclicConv<TMM> =
-//     SpecializedConv<TMM, AsyncPartialCyclicLoading<ColMajorTilingOrder>>;
-// pub type SpecializedStridedConv<TMM> = SpecializedConv<TMM, AsyncPartialStridedLoading>;
+pub struct SpecializedTmaConv;
 
-pub struct SpecializedTmaConv<TMM: TileMatmulFamily> {
-    _tmm: PhantomData<TMM>,
-}
-
-impl<TMM: TileMatmulFamily, L: AsyncPartialLoadingStrategy<RuntimeArgs, TileKind = Strided>>
-    Algorithm for SpecializedConv<TMM, L>
+impl<L: AsyncPartialLoadingStrategy<RuntimeArgs, TileKind = Strided>> Algorithm
+    for SpecializedConv<L>
 {
-    type Routine = SpecializedAlgorithm<TMM, L, SyncBiasLoading>;
+    type Routine = SpecializedAlgorithm<L, SyncBiasLoading>;
     type Args = TensorArgs<RuntimeArgs>;
     const IS_SPECIALIZED: bool = true;
 
@@ -52,8 +44,8 @@ impl<TMM: TileMatmulFamily, L: AsyncPartialLoadingStrategy<RuntimeArgs, TileKind
     }
 }
 
-impl<TMM: TileMatmulFamily> Algorithm for SpecializedTmaConv<TMM> {
-    type Routine = SpecializedAlgorithm<TMM, AsyncPartialTmaLoading, SyncBiasLoading>;
+impl Algorithm for SpecializedTmaConv {
+    type Routine = SpecializedAlgorithm<AsyncPartialTmaLoading, SyncBiasLoading>;
     type Args = TensorMapArgs<RuntimeArgs>;
     const IS_SPECIALIZED: bool = true;
 

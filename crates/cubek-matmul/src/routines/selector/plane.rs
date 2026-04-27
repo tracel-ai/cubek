@@ -19,7 +19,7 @@ use crate::routines::selector::is_tiny;
 use crate::{
     components::global::{InputLoadFlow, LoadFlows},
     components::stage::PartitionBuffering,
-    components::tile_matmul::TileMatmulFamily,
+    components::tile_matmul::{DispatchTileMatmul, TileMatmulFamily as _},
 };
 
 pub const NUM_SM_APPROX: u32 = 50;
@@ -38,7 +38,8 @@ pub struct PlaneTilingBlueprintOptions {
     pub tiny_selection_enabled: bool,
 }
 
-pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
+pub fn infer_blueprint_plane<R: Runtime>(
+    tile_matmul: DispatchTileMatmul,
     client: &ComputeClient<R>,
     problem: &MatmulProblem,
     plane_dim: u32,
@@ -46,7 +47,7 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
     vector_sizes: &MatmulVectorSizes,
     options: PlaneTilingBlueprintOptions,
 ) -> Result<(TilingBlueprint, MatmulElems), MatmulSetupError> {
-    adjust_dtypes(client, &mut dtypes, TMM::requires_accelerator());
+    adjust_dtypes(client, &mut dtypes, tile_matmul.requires_accelerator());
 
     if plane_dim == 1 {
         return Err(MatmulSetupError::Unavailable(
@@ -63,13 +64,13 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
         ),
         (problem.m, problem.n, problem.k).into(),
         (None, None, None),
-        TMM::is_supported,
-        TMM::supported_sizes,
+        |c, cfg| tile_matmul.is_supported(c, cfg),
+        |c, l, r, a| tile_matmul.supported_sizes(c, l, r, a),
     )?;
 
     if options.tiny_selection_enabled && is_tiny(problem, &tile_size) {
         return Ok((
-            selection_tiny(client, problem, tile_size, plane_dim),
+            selection_tiny(client, problem, tile_size, plane_dim, tile_matmul),
             dtypes,
         ));
     }
@@ -180,7 +181,7 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
         .cube_count_strategy(cube_count_strategy)
         .build();
 
-    let mut builder = TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
+    let mut builder = TilingBlueprint::builder(tile_matmul, tiling_scheme, plane_dim, problem)
         .partition_buffering(partition_buffering)
         .hypercube_blueprint(hypercube);
 
@@ -340,6 +341,7 @@ fn selection_tiny<R: Runtime>(
     problem: &MatmulProblem,
     tile_size: TileSize,
     plane_dim: u32,
+    tile_matmul: DispatchTileMatmul,
 ) -> TilingBlueprint {
     // If the K axis is big, we can leverage that.
     let pk = u32::min(problem.k as u32 / tile_size.k(), 8);
@@ -365,7 +367,7 @@ fn selection_tiny<R: Runtime>(
         .cube_count_strategy(cube_count_strategy)
         .build();
 
-    TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
+    TilingBlueprint::builder(tile_matmul, tiling_scheme, plane_dim, problem)
         .partition_buffering(PartitionBuffering::Single)
         .hypercube_blueprint(hypercube)
         .build()

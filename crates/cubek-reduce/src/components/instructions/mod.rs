@@ -9,6 +9,7 @@ mod min;
 mod mixed;
 mod prod;
 mod sum;
+mod topk;
 mod utils;
 
 pub use argmax::*;
@@ -22,4 +23,5 @@ pub use min::*;
 pub use mixed::*;
 pub use prod::*;
 pub use sum::*;
+pub use topk::*;
 pub(crate) use utils::*;

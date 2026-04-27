@@ -1,13 +1,14 @@
 use crate::{
     ReduceError, ReducePrecision, VectorizationMode,
     components::{
-        args::{NumericLine, ReduceArgs, TensorArgs, init_tensors},
+        args::{NumericVector, ReduceArgs, TensorArgs, init_tensors},
         global::{
             cube::GlobalFullCubeReduce, plane::GlobalFullPlaneReduce, unit::GlobalFullUnitReduce,
         },
         instructions::*,
     },
     launch::{ReduceStrategy, RoutineStrategy, generate_vector_size},
+    output_vectorization_axis,
     routines::{
         GlobalReduceBlueprint, ReduceBlueprint, ReduceProblem, ReduceVectorSettings, Routine,
         cube::CubeRoutine, plane::PlaneRoutine, unit::UnitRoutine,
@@ -30,7 +31,7 @@ pub(crate) fn launch_reduce<Run: Runtime>(
     client: &ComputeClient<Run>,
     input: TensorBinding<Run>,
     output: TensorBinding<Run>,
-    axis: usize,
+    reduce_axis: usize,
     strategy: ReduceStrategy,
     dtypes: ReduceDtypes,
     inst: ReduceOperationConfig,
@@ -39,22 +40,30 @@ pub(crate) fn launch_reduce<Run: Runtime>(
         .required_address_type(dtypes.input.size())
         .max(output.required_address_type(dtypes.output.size()));
 
+    // Number of distinct reductions = product of non-reduce input dims.
+    let reduce_len = input.shape[reduce_axis];
+    let input_elems: usize = input.shape.iter().copied().product();
+    let reduce_count = input_elems / reduce_len;
+
     let problem = ReduceProblem {
-        vector_size: input.shape[axis],
-        vector_count: output.shape.iter().copied().product(),
-        axis,
+        reduce_len,
+        reduce_count,
+        axis: reduce_axis,
         dtypes,
         address_type,
     };
-    let vectorization_mode = match input.strides[axis] {
+    let vectorization_mode = match input.strides[reduce_axis] {
         1 => VectorizationMode::Parallel,
         _ => VectorizationMode::Perpendicular,
     };
+
+    let out_vec_axis = output_vectorization_axis(&input.strides, reduce_axis, vectorization_mode);
+
     let (vector_size_input, vector_size_output) = generate_vector_size::<Run>(
         client,
         &input,
         &output,
-        axis,
+        reduce_axis,
         problem.dtypes.input,
         vectorization_mode,
         &strategy.vectorization,
@@ -90,7 +99,8 @@ pub(crate) fn launch_reduce<Run: Runtime>(
             settings.vector.vector_size_output,
             input.into_tensor_arg(),
             output.into_tensor_arg(),
-            axis,
+            reduce_axis,
+            out_vec_axis,
             blueprint,
             inst,
             dtypes.input,
@@ -113,7 +123,8 @@ pub fn reduce_kernel<
 >(
     input: &RA::Input<In, InSize>,
     output: &mut RA::Output<Out, OutSize>,
-    axis_reduce: usize,
+    reduce_axis: usize,
+    out_vec_axis: usize,
     #[comptime] blueprint: ReduceBlueprint,
     #[comptime] config: ReduceOperationConfig,
     #[define(In)] _input_dtype: StorageType,
@@ -124,7 +135,8 @@ pub fn reduce_kernel<
     reduce_kernel_virtual::<In, InSize, Out, OutSize, Acc>(
         &input,
         &mut output,
-        axis_reduce,
+        reduce_axis,
+        out_vec_axis,
         blueprint,
         config,
     );
@@ -140,24 +152,27 @@ pub fn reduce_kernel_virtual<
 >(
     input: &VirtualTensor<In, InSize>,
     output: &mut VirtualTensor<Out, OutSize, ReadWrite>,
-    axis_reduce: usize,
+    reduce_axis: usize,
+    out_vec_axis: usize,
     #[comptime] blueprint: ReduceBlueprint,
     #[comptime] config: ReduceOperationConfig,
 ) {
     reduce_kernel_inner::<(In, InSize, Acc), (Out, OutSize), ReduceOperation>(
         input,
         output,
-        axis_reduce,
+        reduce_axis,
+        out_vec_axis,
         blueprint,
         config,
     )
 }
 
 #[cube]
-fn reduce_kernel_inner<P: ReducePrecision, Out: NumericLine, R: ReduceFamily>(
+fn reduce_kernel_inner<P: ReducePrecision, Out: NumericVector, R: ReduceFamily>(
     input: &VirtualTensor<P::EI, P::SI>,
     output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
-    axis_reduce: usize,
+    reduce_axis: usize,
+    out_vec_axis: usize,
     #[comptime] blueprint: ReduceBlueprint,
     #[comptime] config: R::Config,
 ) {
@@ -168,7 +183,8 @@ fn reduce_kernel_inner<P: ReducePrecision, Out: NumericLine, R: ReduceFamily>(
             GlobalFullCubeReduce::execute::<P, Out, R::Instruction<P>>(
                 input,
                 output,
-                axis_reduce,
+                reduce_axis,
+                out_vec_axis,
                 inst,
                 blueprint.vectorization_mode,
                 cube,
@@ -178,7 +194,8 @@ fn reduce_kernel_inner<P: ReducePrecision, Out: NumericLine, R: ReduceFamily>(
             GlobalFullPlaneReduce::execute::<P, Out, R::Instruction<P>>(
                 input,
                 output,
-                axis_reduce,
+                reduce_axis,
+                out_vec_axis,
                 inst,
                 blueprint.vectorization_mode,
                 plane,
@@ -188,7 +205,8 @@ fn reduce_kernel_inner<P: ReducePrecision, Out: NumericLine, R: ReduceFamily>(
             GlobalFullUnitReduce::execute::<P, Out, R::Instruction<P>>(
                 input,
                 output,
-                axis_reduce,
+                reduce_axis,
+                out_vec_axis,
                 inst,
                 blueprint.vectorization_mode,
                 unit,

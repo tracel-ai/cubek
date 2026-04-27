@@ -2,7 +2,7 @@
 
 use cubecl::{Runtime, TestRuntime, client::ComputeClient, ir::AddressType, zspace::shape};
 use cubek_matmul::{
-    components::{global::LoadFlows, stage::PartitionBuffering},
+    components::{global::LoadFlows, stage::PartitionBuffering, tile_matmul::DispatchTileMatmul},
     definition::{
         MatmulElems, MatmulGlobalElems, MatmulProblem, SwizzleModes, TilingBlueprint, TilingScheme,
     },
@@ -99,7 +99,7 @@ pub(crate) fn plane_blueprint(
     } else {
         PartitionBuffering::Single
     };
-    TilingBlueprint::builder(scheme, plane_dim, problem)
+    TilingBlueprint::builder(DispatchTileMatmul::Cmma, scheme, plane_dim, problem)
         .partition_buffering(partition_buffering)
         .build()
 }
@@ -117,7 +117,7 @@ pub(crate) fn plane_blueprint_with(
 ) -> TilingBlueprint {
     let scheme = tiling_scheme(tile, partition, stage);
     let plane_dim = client.properties().hardware.plane_size_max;
-    TilingBlueprint::builder(scheme, plane_dim, problem)
+    TilingBlueprint::builder(DispatchTileMatmul::Cmma, scheme, plane_dim, problem)
         .shared_swizzle(swizzle)
         .hypercube_blueprint(hypercube)
         .partition_buffering(partition_buffering)

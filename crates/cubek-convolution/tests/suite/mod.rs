@@ -1,7 +1,10 @@
-mod convolution_test_launcher;
-pub mod test_macros;
-mod test_utils;
+#![allow(missing_docs)]
 
-mod accelerated {
-    crate::testgen_convolution_accelerated!();
-}
+pub mod basic;
+#[cfg(feature = "extended")]
+pub mod extended;
+#[cfg(feature = "full")]
+pub mod full;
+
+pub mod launcher_strategy;
+mod reference;

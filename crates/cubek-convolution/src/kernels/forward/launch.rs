@@ -11,27 +11,20 @@ use crate::{
 };
 use crate::{components::ConvSetupError, kernels::forward::selector::launch_kernel_concrete};
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
-use cubek_matmul::routines::BlueprintStrategy;
+use cubek_matmul::routines::{BlueprintStrategy, TilingArgs};
 use cubek_matmul::{
-    components::tile_matmul::{cmma::CmmaMatmul, mma::MmaMatmul},
+    components::tile_matmul::DispatchTileMatmul,
     definition::{AvailableVectorSizes, MatmulElems},
+    routines::Routine,
 };
 use cubek_std::{InputBinding, MatrixLayout};
 use derive_new::new;
 
-macro_rules! with_tile_kind {
-    ($kind: expr, $T: ident, $launch: expr) => {
-        match $kind {
-            AcceleratedTileKind::Cmma => {
-                type $T = CmmaMatmul;
-                ($launch)()
-            }
-            AcceleratedTileKind::Mma => {
-                type $T = MmaMatmul;
-                ($launch)()
-            }
-        }
-    };
+fn tile_kind_to_dispatch(kind: &AcceleratedTileKind) -> DispatchTileMatmul {
+    match kind {
+        AcceleratedTileKind::Cmma => DispatchTileMatmul::Cmma,
+        AcceleratedTileKind::Mma => DispatchTileMatmul::Mma,
+    }
 }
 
 /// Perform an n-dimensional convolution using the implicit GEMM (im2col) algorithm, using cubecl
@@ -59,14 +52,17 @@ pub fn launch_ref<R: Runtime, const N_SPATIAL: usize>(
         Strategy::Simple {
             read_strategy,
             tile_kind,
-        } => with_tile_kind!(tile_kind, Accelerated, || match read_strategy {
-            ReadingStrategy::Cyclic => conv.launch::<SimpleSyncCyclicConv<Accelerated>>(),
-            ReadingStrategy::Strided => conv.launch::<SimpleSyncStridedConv<Accelerated>>(),
-            ReadingStrategy::Tilewise => conv.launch::<SimpleSyncTilewiseConv<Accelerated>>(),
-            ReadingStrategy::AsyncCyclic => conv.launch::<SimpleAsyncCyclicConv<Accelerated>>(),
-            ReadingStrategy::AsyncStrided => conv.launch::<SimpleAsyncStridedConv<Accelerated>>(),
-            ReadingStrategy::Tma => conv.launch::<SimpleAsyncTmaConv<Accelerated>>(),
-        }),
+        } => {
+            let kind = tile_kind_to_dispatch(tile_kind);
+            match read_strategy {
+                ReadingStrategy::Cyclic => conv.launch::<SimpleSyncCyclicConv>(kind),
+                ReadingStrategy::Strided => conv.launch::<SimpleSyncStridedConv>(kind),
+                ReadingStrategy::Tilewise => conv.launch::<SimpleSyncTilewiseConv>(kind),
+                ReadingStrategy::AsyncCyclic => conv.launch::<SimpleAsyncCyclicConv>(kind),
+                ReadingStrategy::AsyncStrided => conv.launch::<SimpleAsyncStridedConv>(kind),
+                ReadingStrategy::Tma => conv.launch::<SimpleAsyncTmaConv>(kind),
+            }
+        }
     }
 }
 
@@ -82,9 +78,10 @@ struct Convolution<'a, R: Runtime, const N_SPATIAL: usize> {
 }
 
 impl<'a, R: Runtime, const N_SPATIAL: usize> Convolution<'a, R, N_SPATIAL> {
-    fn launch<Alg: Algorithm>(self) -> Result<(), ConvSetupError>
+    fn launch<Alg: Algorithm>(self, tile_matmul: DispatchTileMatmul) -> Result<(), ConvSetupError>
     where
         Alg::Args: ConcreteArgs<Alg::Routine>,
+        <Alg::Routine as Routine<RuntimeArgs>>::Strategy: TilingArgs,
     {
         let ConvolutionArgs {
             stride,
@@ -99,6 +96,9 @@ impl<'a, R: Runtime, const N_SPATIAL: usize> Convolution<'a, R, N_SPATIAL> {
             other => unimplemented!("Unsupported dimensionality {other}"),
         };
 
+        let mut args = <Alg::Routine as Routine<RuntimeArgs>>::Strategy::default();
+        args.set_tile_matmul(tile_matmul);
+
         launch_with_algorithm::<R, Alg>(
             self.client,
             self.input,
@@ -107,7 +107,7 @@ impl<'a, R: Runtime, const N_SPATIAL: usize> Convolution<'a, R, N_SPATIAL> {
             self.out,
             (&stride, &padding, &dilation),
             dimensionality,
-            &BlueprintStrategy::Inferred(Default::default()),
+            &BlueprintStrategy::Inferred(args),
             self.dtypes,
         )
     }

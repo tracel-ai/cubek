@@ -10,28 +10,27 @@ use crate::components::{
             unit_partitioned::{UnitMatmul, UnitPartitionedStageConfig},
         },
     },
-    tile_matmul::TileMatmulFamily,
+    tile_matmul::{DispatchConfig, DispatchTileMatmul, Plane, TileMatmulFamily},
 };
 use crate::definition::{
-    Acc, Lhs, MatmulElems, MatmulSetupError, MatmulTypes, MatmulVectorSizes, MatrixTypes, Rhs,
-    TilingBlueprint,
+    Acc, Lhs, MatmulElems, MatmulSetupError, MatmulTypes, MatmulVectorSizes, Rhs, TilingBlueprint,
 };
 use core::marker::PhantomData;
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::{InvalidConfigError, MatrixLayout, stage::StageMemoryConfig};
 
 /// Unit Matmul family for any precision
-pub struct UnitMatmulFamily<TM: TileMatmulFamily, StageIn: StageFamily, StageAcc: StageFamily> {
-    _phantom: PhantomData<(TM, StageIn, StageAcc)>,
+pub struct UnitMatmulFamily<StageIn: StageFamily, StageAcc: StageFamily> {
+    _phantom: PhantomData<(StageIn, StageAcc)>,
 }
 
 type STy<T> = crate::definition::Stage<T>;
 type SSz<T> = crate::definition::StageSize<T>;
 
-impl<TM: TileMatmulFamily, StageIn: StageFamily, StageAcc: StageFamily> StageMatmulFamily
-    for UnitMatmulFamily<TM, StageIn, StageAcc>
+impl<StageIn: StageFamily, StageAcc: StageFamily> StageMatmulFamily
+    for UnitMatmulFamily<StageIn, StageAcc>
 {
-    type Scope = TM::Scope;
+    type Scope = Plane;
     type LhsStage = StageIn;
     type RhsStage = StageIn;
     type AccStage = StageAcc;
@@ -45,21 +44,14 @@ impl<TM: TileMatmulFamily, StageIn: StageFamily, StageAcc: StageFamily> StageMat
         TO: TilingLayout,
     > = UnitMatmul<
         MP,
-        TM::Matmul<
-            <MP::Lhs as MatrixTypes>::Register,
-            <MP::Lhs as MatrixTypes>::RegisterSize,
-            <MP::Rhs as MatrixTypes>::Register,
-            <MP::Rhs as MatrixTypes>::RegisterSize,
-            <MP::Acc as MatrixTypes>::Register,
-            <MP::Acc as MatrixTypes>::RegisterSize,
-        >,
+        DispatchTileMatmul,
         StageIn::Stage<STy<Lhs<MP>>, SSz<Lhs<MP>>, TL>,
         StageIn::Stage<STy<Rhs<MP>>, SSz<Rhs<MP>>, TR>,
         StageAcc::Stage<STy<Acc<MP>>, SSz<Acc<MP>>, TA>,
         PartitionedStage<STy<Acc<MP>>, SSz<Acc<MP>>>,
     >;
 
-    type Config = PartitionMatmulConfig<TM::Config>;
+    type Config = PartitionMatmulConfig<DispatchConfig>;
 
     fn expand_config(
         device_props: &DeviceProperties,
@@ -119,7 +111,12 @@ impl<TM: TileMatmulFamily, StageIn: StageFamily, StageAcc: StageFamily> StageMat
         Ok(PartitionMatmulConfig::Unit(
             UnitPartitionedStageConfig::from_shared_partition_config(
                 SharedPartitionMatmulConfig::new(
-                    TM::expand_config(device_props, blueprint, dtypes, vector_sizes)?,
+                    blueprint.tile_matmul.expand_config(
+                        device_props,
+                        blueprint,
+                        dtypes,
+                        vector_sizes,
+                    )?,
                     blueprint.tiling_scheme.partition_size,
                     blueprint.partition_buffering,
                     plane_flow_config,
@@ -138,7 +135,7 @@ impl<TM: TileMatmulFamily, StageIn: StageFamily, StageAcc: StageFamily> StageMat
     fn cubedim_resource(
         blueprint: &TilingBlueprint,
     ) -> Result<CubeDimResource, InvalidConfigError> {
-        if let CubeDimResource::Units(units) = TM::cubedim_resource()? {
+        if let CubeDimResource::Units(units) = blueprint.tile_matmul.cubedim_resource()? {
             Ok(CubeDimResource::Units(
                 units
                     * blueprint.tiling_scheme.partitions_per_stage_along_m()
@@ -177,6 +174,8 @@ impl<TM: TileMatmulFamily, StageIn: StageFamily, StageAcc: StageFamily> StageMat
             )));
         }
 
-        TM::validate_blueprint(client, blueprint, dtypes, vector_sizes)
+        blueprint
+            .tile_matmul
+            .validate_blueprint(client, blueprint, dtypes, vector_sizes)
     }
 }

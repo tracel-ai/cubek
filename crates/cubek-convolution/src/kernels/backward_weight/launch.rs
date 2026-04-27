@@ -11,27 +11,19 @@ use crate::{
     components::ConvSetupError, kernels::backward_weight::selector::launch_kernel_concrete,
 };
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
-use cubek_matmul::components::tile_matmul::{cmma::CmmaMatmul, mma::MmaMatmul};
+use cubek_matmul::components::tile_matmul::DispatchTileMatmul;
 use cubek_matmul::{
     definition::{AvailableVectorSizes, MatmulElems},
-    routines::BlueprintStrategy,
+    routines::{BlueprintStrategy, Routine, TilingArgs},
 };
 use cubek_std::{InputBinding, MatrixLayout};
 use derive_new::new;
 
-macro_rules! with_tile_kind {
-    ($kind: expr, $T: ident, $launch: expr) => {
-        match $kind {
-            AcceleratedTileKind::Cmma => {
-                type $T = CmmaMatmul;
-                ($launch)()
-            }
-            AcceleratedTileKind::Mma => {
-                type $T = MmaMatmul;
-                ($launch)()
-            }
-        }
-    };
+fn tile_kind_to_dispatch(kind: &AcceleratedTileKind) -> DispatchTileMatmul {
+    match kind {
+        AcceleratedTileKind::Cmma => DispatchTileMatmul::Cmma,
+        AcceleratedTileKind::Mma => DispatchTileMatmul::Mma,
+    }
 }
 
 /// Perform an n-dimensional convolution using the implicit GEMM (im2col) algorithm, using cubecl
@@ -58,15 +50,17 @@ pub fn launch_ref<R: Runtime, const N_SPATIAL: usize>(
         Strategy::Simple {
             read_strategy,
             tile_kind,
-        } => with_tile_kind!(tile_kind, Accelerated, || match read_strategy {
-            ReadingStrategy::Cyclic => backprop.launch::<SimpleSyncCyclicConv<Accelerated>>(),
-            ReadingStrategy::Strided => backprop.launch::<SimpleSyncStridedConv<Accelerated>>(),
-            ReadingStrategy::Tilewise => backprop.launch::<SimpleSyncTilewiseConv<Accelerated>>(),
-            ReadingStrategy::AsyncCyclic => backprop.launch::<SimpleAsyncCyclicConv<Accelerated>>(),
-            ReadingStrategy::AsyncStrided =>
-                backprop.launch::<SimpleAsyncStridedConv<Accelerated>>(),
-            ReadingStrategy::Tma => backprop.launch::<SimpleAsyncTmaConv<Accelerated>>(),
-        }),
+        } => {
+            let kind = tile_kind_to_dispatch(tile_kind);
+            match read_strategy {
+                ReadingStrategy::Cyclic => backprop.launch::<SimpleSyncCyclicConv>(kind),
+                ReadingStrategy::Strided => backprop.launch::<SimpleSyncStridedConv>(kind),
+                ReadingStrategy::Tilewise => backprop.launch::<SimpleSyncTilewiseConv>(kind),
+                ReadingStrategy::AsyncCyclic => backprop.launch::<SimpleAsyncCyclicConv>(kind),
+                ReadingStrategy::AsyncStrided => backprop.launch::<SimpleAsyncStridedConv>(kind),
+                ReadingStrategy::Tma => backprop.launch::<SimpleAsyncTmaConv>(kind),
+            }
+        }
     }
 }
 
@@ -81,9 +75,10 @@ struct BackwardsWeight<'a, R: Runtime, const N_SPATIAL: usize> {
 }
 
 impl<'a, R: Runtime, const N_SPATIAL: usize> BackwardsWeight<'a, R, N_SPATIAL> {
-    fn launch<Alg: Algorithm>(self) -> Result<(), ConvSetupError>
+    fn launch<Alg: Algorithm>(self, tile_matmul: DispatchTileMatmul) -> Result<(), ConvSetupError>
     where
         Alg::Args: ConcreteArgs<Alg::Routine>,
+        <Alg::Routine as Routine<RuntimeArgs>>::Strategy: TilingArgs,
     {
         let ConvolutionArgs {
             stride,
@@ -105,6 +100,7 @@ impl<'a, R: Runtime, const N_SPATIAL: usize> BackwardsWeight<'a, R, N_SPATIAL> {
             self.weight_grad,
             (&stride, &padding, &dilation),
             dimensionality,
+            tile_matmul,
             self.dtypes,
         )
     }
@@ -118,10 +114,12 @@ fn launch_with_algorithm<R: Runtime, Alg: Algorithm>(
     weight_grad: TensorBinding<R>,
     (stride, padding, dilation): (&[usize], &[usize], &[usize]),
     dimensionality: Dimensionality,
+    tile_matmul: DispatchTileMatmul,
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError>
 where
     Alg::Args: ConcreteArgs<Alg::Routine>,
+    <Alg::Routine as Routine<RuntimeArgs>>::Strategy: TilingArgs,
 {
     let rank = input.data().shape.len();
     let dim_c = rank - 1;
@@ -179,13 +177,16 @@ where
         address_type,
     };
 
+    let mut args = <Alg::Routine as Routine<RuntimeArgs>>::Strategy::default();
+    args.set_tile_matmul(tile_matmul);
+
     launch_kernel::<R, Alg>(
         client,
         input,
         out_grad,
         weight_grad,
         problem,
-        &BlueprintStrategy::Inferred(Default::default()),
+        &BlueprintStrategy::Inferred(args),
         dtypes,
     )
 }

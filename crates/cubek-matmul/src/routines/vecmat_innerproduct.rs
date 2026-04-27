@@ -22,7 +22,7 @@ use crate::{
             ColMajorTilingOrder, PartitionBuffering, PlaneMatmulFamily, RowMajorTilingOrder,
             StridedStageFamily,
         },
-        tile_matmul::{TileMatmulFamily, plane_vec_mat_inner_product::PlaneVecMatInnerProduct},
+        tile_matmul::{DispatchTileMatmul, TileMatmulFamily as _},
     },
     definition::{MatmulElems, MatmulProblem, MatmulSetupError, TilingBlueprint, TilingScheme},
     launch::RuntimeConfig,
@@ -51,12 +51,7 @@ impl<RC: RuntimeConfig> Routine<RC> for VecMatInnerProductAlgorithm {
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
         SimpleMatmulFamily<
-            PlaneMatmulFamily<
-                PlaneVecMatInnerProduct,
-                StridedStageFamily,
-                StridedStageFamily,
-                Option<StridedStageFamily>,
-            >,
+            PlaneMatmulFamily<StridedStageFamily, StridedStageFamily, Option<StridedStageFamily>>,
             RC,
             SyncFullCyclicLoading<RowMajorTilingOrder>,
             SyncFullCyclicLoading<ColMajorTilingOrder>,
@@ -75,7 +70,7 @@ impl<RC: RuntimeConfig> Routine<RC> for VecMatInnerProductAlgorithm {
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
-        if PlaneVecMatInnerProduct::can_cast_stage_element() {
+        if DispatchTileMatmul::PlaneVec.can_cast_stage_element() {
             dtypes.adjust_stage_dtypes();
         }
 
@@ -140,12 +135,7 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleVecMatInnerProductAlgorithm {
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
         DoubleBufferingMatmulFamily<
-            PlaneMatmulFamily<
-                PlaneVecMatInnerProduct,
-                StridedStageFamily,
-                StridedStageFamily,
-                Option<StridedStageFamily>,
-            >,
+            PlaneMatmulFamily<StridedStageFamily, StridedStageFamily, Option<StridedStageFamily>>,
             RC,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
             SyncPartialCyclicLoading<ColMajorTilingOrder>,
@@ -164,7 +154,7 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleVecMatInnerProductAlgorithm {
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
-        if PlaneVecMatInnerProduct::can_cast_stage_element() {
+        if DispatchTileMatmul::PlaneVec.can_cast_stage_element() {
             dtypes.adjust_stage_dtypes();
         }
 
@@ -247,8 +237,13 @@ fn infer_blueprint_vecmat<R: Runtime>(
         .cube_count_strategy(cube_count_strategy)
         .build();
 
-    TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
-        .partition_buffering(PartitionBuffering::Single)
-        .hypercube_blueprint(hypercube)
-        .build()
+    TilingBlueprint::builder(
+        DispatchTileMatmul::PlaneVec,
+        tiling_scheme,
+        plane_dim,
+        problem,
+    )
+    .partition_buffering(PartitionBuffering::Single)
+    .hypercube_blueprint(hypercube)
+    .build()
 }

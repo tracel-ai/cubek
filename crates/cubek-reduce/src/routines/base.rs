@@ -18,8 +18,10 @@ pub struct ReduceLaunchSettings {
 
 #[derive(Debug)]
 pub struct ReduceProblem {
-    pub vector_size: usize,
-    pub vector_count: usize,
+    /// Number of elements in reduce axis
+    pub reduce_len: usize,
+    /// Number of instances of the reduce axis
+    pub reduce_count: usize,
     pub axis: usize,
     pub dtypes: ReduceDtypes,
     /// The address type, defined by the max of each handle's `required_address_type`

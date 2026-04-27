@@ -107,6 +107,7 @@ fn gemv_strategies() -> Vec<(&'static str, Strategy)> {
             "simple-cyclic-cmma",
             Strategy::SimpleCyclicCmma(BlueprintStrategy::Inferred(SimpleArgs {
                 multi_rows: false,
+                ..Default::default()
             })),
         ),
     ]
