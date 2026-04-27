@@ -249,47 +249,6 @@ impl TestCase {
         )
         .generate()
     }
-
-    // /// Deterministic values at each logical coordinate.
-    // ///
-    // /// Values are drawn from `{±0.125, ±0.25, …, ±1.0}` — all magnitudes ≤ 1,
-    // /// so the product of any subset is bounded and cannot overflow f32 under
-    // /// any reduction order (needed for `test_prod` on long axes).
-    // ///
-    // /// For broadcast dims (stride == 0) we zero the coord before hashing so
-    // /// every logical index mapping to the same physical offset yields the
-    // /// same value — required for the device-side scatter to be well defined.
-    // fn logical_input_data(&self) -> Vec<f32> {
-    //     let shape = self.shape.as_slice();
-    //     let rank = shape.len();
-    //     let num_logical: usize = shape.iter().product();
-    //     let mut data = Vec::with_capacity(num_logical);
-    //     let mut coord = vec![0usize; rank];
-
-    //     for linear in 0..num_logical {
-    //         let mut rem = linear;
-    //         for d in (0..rank).rev() {
-    //             coord[d] = rem % shape[d];
-    //             rem /= shape[d];
-    //         }
-    //         for d in 0..rank {
-    //             if self.stride[d] == 0 {
-    //                 coord[d] = 0;
-    //             }
-    //         }
-
-    //         let mut hash: usize = 0;
-    //         for (d, c) in coord.iter().enumerate() {
-    //             hash = hash.wrapping_add(c.wrapping_mul(d.wrapping_add(31)));
-    //         }
-    //         let h = hash % 16;
-    //         let magnitude = (h / 2 + 1) as f32 * 0.125;
-    //         let sign = if h % 2 == 0 { 1.0 } else { -1.0 };
-    //         data.push(sign * magnitude);
-    //     }
-
-    //     data
-    // }
 }
 
 /// Output strides for multiple accumulators (like argtopk) in parallel mode.

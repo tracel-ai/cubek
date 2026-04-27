@@ -121,7 +121,6 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
             let current_item = elements[k_iter];
             let current_coord = args[k_iter];
 
-            // Reuse your existing tie-breaking logic:
             // keep "0" means items[0] wins the top slot
             let keep0 = select_many(
                 current_item.equal(item),
