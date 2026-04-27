@@ -6,6 +6,10 @@ use crate::{
     {HostData, ValidationResult},
 };
 
+/// Maximum number of individual mismatches to include in a `Fail` reason
+/// before we stop recording details and only update the aggregate stats.
+const DEFAULT_MAX_REPORTED_MISMATCHES: usize = 8;
+
 /// Check if two tensors are approximately equal
 pub fn assert_equals_approx(
     // One of the tensor to compare
@@ -55,12 +59,19 @@ fn assert_equals_approx_inner(
     let shape = &lhs.shape;
     let test_mode = current_test_mode();
 
-    let mut visitor: Box<dyn CompareVisitor> = match test_mode.clone() {
-        TestMode::Print { filter, .. } => Box::new(SafePrinter {
-            inner: ColorPrinter::new(filter),
+    let print_visitor = matches!(test_mode, TestMode::Print { .. });
+    let mut summary_visitor = SummaryCollector::new(DEFAULT_MAX_REPORTED_MISMATCHES);
+    let mut printer_visitor: Option<SafePrinter> = match &test_mode {
+        TestMode::Print { filter, .. } => Some(SafePrinter {
+            inner: ColorPrinter::new(filter.clone()),
             shape_len: shape.len(),
         }),
-        _ => Box::new(FailFast),
+        _ => None,
+    };
+
+    let mut visitor = TeeVisitor {
+        summary: &mut summary_visitor,
+        printer: printer_visitor.as_mut().map(|v| v as &mut dyn CompareVisitor),
     };
 
     let test_failed = compare_tensors(
@@ -68,14 +79,14 @@ fn assert_equals_approx_inner(
         rhs,
         shape,
         epsilon,
-        &mut *visitor,
+        &mut visitor,
         &mut Vec::new(),
         slice.as_deref(), // pass slice as Option<&[usize]>
     );
 
     // Enforce filter rank only if the test failed and we would print
     if test_failed {
-        if let TestMode::Print { filter, .. } = test_mode
+        if let TestMode::Print { filter, .. } = &test_mode
             && !filter.is_empty()
             && filter.len() != shape.len()
         {
@@ -86,7 +97,7 @@ fn assert_equals_approx_inner(
             ));
         }
 
-        return ValidationResult::Fail("Got incorrect results".to_string());
+        return ValidationResult::Fail(summary_visitor.report(shape, print_visitor));
     }
 
     ValidationResult::Pass
@@ -134,13 +145,167 @@ impl CompareVisitor for SafePrinter {
     }
 }
 
-pub(crate) struct FailFast;
+/// Collects up to `max_reported` individual mismatches plus aggregate stats
+/// (total compared, total mismatched, max/sum of |Δ|, worst index) to build a
+/// detailed failure message without truncating useful debug info.
+pub(crate) struct SummaryCollector {
+    pub max_reported: usize,
+    pub mismatches: Vec<(Vec<usize>, WrongStatus)>,
+    pub total: usize,
+    pub mismatched: usize,
+    pub max_abs_delta: f32,
+    pub sum_abs_delta: f64,
+    pub worst_index: Option<Vec<usize>>,
+}
 
-impl CompareVisitor for FailFast {
-    fn visit(&mut self, index: &[usize], status: ElemStatus) {
-        if let ElemStatus::Wrong(w) = status {
-            panic!("Mismatch at {:?}: {:?}", index, w);
+impl SummaryCollector {
+    fn new(max_reported: usize) -> Self {
+        Self {
+            max_reported,
+            mismatches: Vec::new(),
+            total: 0,
+            mismatched: 0,
+            max_abs_delta: 0.0,
+            sum_abs_delta: 0.0,
+            worst_index: None,
         }
+    }
+
+    fn record_delta(&mut self, index: &[usize], delta: f32) {
+        if delta.is_finite() {
+            self.sum_abs_delta += delta as f64;
+        }
+        if delta > self.max_abs_delta || self.worst_index.is_none() {
+            self.max_abs_delta = delta;
+            self.worst_index = Some(index.to_vec());
+        }
+    }
+
+    pub(crate) fn report(&self, shape: &[usize], skip_examples: bool) -> String {
+        let mut out = String::new();
+        out.push_str("Got incorrect results: ");
+        out.push_str(&format!(
+            "{}/{} elements mismatched",
+            self.mismatched, self.total
+        ));
+
+        if self.mismatched > 0 {
+            let mean = if self.mismatched > 0 {
+                self.sum_abs_delta / self.mismatched as f64
+            } else {
+                0.0
+            };
+            out.push_str(&format!(
+                " (max |Δ|={:.6}, mean |Δ|={:.6}",
+                self.max_abs_delta, mean
+            ));
+            if let Some(idx) = &self.worst_index {
+                out.push_str(&format!(", worst at {:?}", idx));
+            }
+            out.push(')');
+            out.push_str(&format!(" — shape={:?}", shape));
+        }
+
+        // In Print modes, the per-element output is on stdout already; don't
+        // re-list examples in the panic message.
+        if skip_examples || self.mismatches.is_empty() {
+            return out;
+        }
+
+        out.push_str("\nFirst mismatches:");
+        for (idx, w) in &self.mismatches {
+            out.push_str(&format!("\n  {:?}: {}", idx, format_wrong(w)));
+        }
+        if self.mismatched > self.mismatches.len() {
+            out.push_str(&format!(
+                "\n  ... and {} more",
+                self.mismatched - self.mismatches.len()
+            ));
+        }
+
+        out
+    }
+}
+
+impl CompareVisitor for SummaryCollector {
+    fn visit(&mut self, index: &[usize], status: ElemStatus) {
+        self.total += 1;
+        if let ElemStatus::Wrong(w) = status {
+            self.mismatched += 1;
+            let delta = match &w {
+                WrongStatus::GotWrongValue { delta, .. } => *delta,
+                WrongStatus::ExpectedNan { .. } | WrongStatus::GotNan { .. } => f32::INFINITY,
+            };
+            self.record_delta(index, delta);
+            if self.mismatches.len() < self.max_reported {
+                self.mismatches.push((index.to_vec(), w));
+            }
+        }
+    }
+}
+
+/// Forwards each visit to a summary collector and (optionally) a printer, so
+/// PrintAll/PrintFail keep their per-element stdout while the failure message
+/// gets the aggregate stats too.
+struct TeeVisitor<'a> {
+    summary: &'a mut SummaryCollector,
+    printer: Option<&'a mut dyn CompareVisitor>,
+}
+
+impl CompareVisitor for TeeVisitor<'_> {
+    fn visit(&mut self, index: &[usize], status: ElemStatus) {
+        // Clone status for the second visitor; ElemStatus is small (a few f32s).
+        let status_for_summary = match &status {
+            ElemStatus::Correct {
+                got,
+                delta,
+                epsilon,
+            } => ElemStatus::Correct {
+                got: *got,
+                delta: *delta,
+                epsilon: *epsilon,
+            },
+            ElemStatus::Wrong(w) => ElemStatus::Wrong(clone_wrong(w)),
+        };
+        self.summary.visit(index, status_for_summary);
+        if let Some(p) = self.printer.as_deref_mut() {
+            p.visit(index, status);
+        }
+    }
+}
+
+fn clone_wrong(w: &WrongStatus) -> WrongStatus {
+    match w {
+        WrongStatus::GotWrongValue {
+            got,
+            expected,
+            delta,
+            epsilon,
+        } => WrongStatus::GotWrongValue {
+            got: *got,
+            expected: *expected,
+            delta: *delta,
+            epsilon: *epsilon,
+        },
+        WrongStatus::ExpectedNan { got } => WrongStatus::ExpectedNan { got: *got },
+        WrongStatus::GotNan { expected } => WrongStatus::GotNan {
+            expected: *expected,
+        },
+    }
+}
+
+fn format_wrong(w: &WrongStatus) -> String {
+    match w {
+        WrongStatus::GotWrongValue {
+            got,
+            expected,
+            delta,
+            epsilon,
+        } => format!(
+            "got {got}, expected {expected}, |Δ|={delta} > ε={epsilon}",
+        ),
+        WrongStatus::ExpectedNan { got } => format!("got {got}, expected NaN"),
+        WrongStatus::GotNan { expected } => format!("got NaN, expected {expected}"),
     }
 }
 

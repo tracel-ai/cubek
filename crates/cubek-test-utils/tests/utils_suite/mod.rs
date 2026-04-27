@@ -4,8 +4,8 @@ use cubecl::{
     {Runtime, TestRuntime},
 };
 use cubek_test_utils::{
-    DataKind, HostData, HostDataType, StrideSpec, TestInput, assert_equals_approx,
-    assert_equals_approx_in_slice,
+    DataKind, HostData, HostDataType, StrideSpec, TestInput, ValidationResult,
+    assert_equals_approx, assert_equals_approx_in_slice,
 };
 
 #[test]
@@ -206,4 +206,57 @@ fn arange_handle_row_major_slice() {
     assert_equals_approx_in_slice(&actual, &expected, 0.001, vec![0..1, 0..3])
         .as_test_outcome()
         .enforce();
+}
+
+#[test]
+fn fail_message_contains_aggregate_stats_and_examples() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+
+    // 6 elements, 3 of which are wrong by 1.0 each.
+    let actual = TestInput::new(
+        client.clone(),
+        shape![2, 3],
+        f32::as_type_native_unchecked().storage_type(),
+        StrideSpec::RowMajor,
+        DataKind::Custom {
+            data: vec![0., 1., 2., 4., 5., 6.],
+        },
+    )
+    .f32_host_data();
+
+    let expected = TestInput::new(
+        client.clone(),
+        shape![2, 3],
+        f32::as_type_native_unchecked().storage_type(),
+        StrideSpec::RowMajor,
+        DataKind::Custom {
+            data: vec![0., 1., 2., 3., 4., 5.],
+        },
+    )
+    .f32_host_data();
+
+    let result = assert_equals_approx(&actual, &expected, 0.001);
+    let reason = match result {
+        ValidationResult::Fail(r) => r,
+        other => panic!("expected Fail, got {other:?}"),
+    };
+
+    assert!(
+        reason.contains("3/6 elements mismatched"),
+        "missing mismatch count, got: {reason}"
+    );
+    assert!(
+        reason.contains("max |Δ|="),
+        "missing max delta, got: {reason}"
+    );
+    assert!(
+        reason.contains("First mismatches:"),
+        "missing examples header, got: {reason}"
+    );
+    // Worst index has the largest |delta|. All deltas are 1.0, so the *first*
+    // wrong index is recorded as the worst (record_delta only updates on '>').
+    assert!(
+        reason.contains("worst at [1, 0]"),
+        "missing worst index, got: {reason}"
+    );
 }

@@ -34,57 +34,5 @@ If you want to contribute new kernels, please read the [`GUIDE.md`](./GUIDE.md).
 
 # Running tests
 
-> Note: This applies to most kernels, but `reduce` works slightly differently for now, see [its README](./crates/cubek-reduce/README.md).
-
-## Test suites
-
-Four test suites are available:
-
-- **Light test suite**: a tractable subset of representative tests that run on the CI.
-- **Basic test suite**: adds to light suite some tests that would be considered basic but may hang on CI (slow on CPU).
-- **Extended test suite**: usually auto-generated combinatorial tests covering many configurations. Good to run when developing kernels. Normally kept tractable.
-- **Full test suite**: all generable test combinations; may be too large to compile or run practically.
-
-Run tests with
-
-```bash
-# Replace <runtime> with cpu, cuda, rocm, wgpu, vulkan or metal
-
-# Basic test suite (light on cpu)
-cargo test-<runtime>
-
-# Extended test suite
-cargo test-<runtime>-extended
-
-# Full test suite
-cargo test-<runtime>-full
-```
-
-## Cube test mode
-
-You can control test behavior by setting the `CUBE_TEST_MODE` environment variable.  
-For more details, see [Test Mode](./crates/cubek-test-utils/src/test_mode/base.rs).
-
-### Modes
-
-- **`CUBE_TEST_MODE=correct`** _(default)_  
-  Tests pass if results are numerically correct **or** if the kernel was launched with an invalid configuration.
-  - Useful when tests are auto-generated from multiple parameter combinations, where some invalid configurations are expected.
-  - Failing tests display only the first index with a discrepancy.
-
-- **`CUBE_TEST_MODE=strict`**  
-  Tests pass **only** if they compile, run, and produce numerically accurate results.
-  - Ideal for debugging to avoid false positives that can occur in `correct` mode.
-
-- **`CUBE_TEST_MODE=printfail`**  
-  Similar to `correct` mode: tests pass if results are correct or if the kernel is invalid.
-  - Failing tests show **all tensor discrepancies**.
-  - Supports filtering, e.g.: `CUBE_TEST_MODE=printfail:0,.,10-20` shows elements from the 0th first dimension, all of the second, and elements 10–20 in the third.
-
-- **`CUBE_TEST_MODE=printall`**  
-  All tests fail, displaying **all tensor discrepancies**.
-  - Filtering works the same as in `printfail`.
-
-- **`CUBE_TEST_MODE=failifrun`**  
-  Only tests that **compile and run** will fail; others succeed.
-  - Useful for tracking critical tests in large suites.
+The full testing guide — suites, `CUBE_TEST_MODE`, failure-message format, and
+filter syntax — lives in [`cubek-test-utils`](./crates/cubek-test-utils/README.md).
