@@ -147,9 +147,6 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
         item: Item<P>,
         #[comptime] reduce_step: ReduceStep,
     ) {
-        //let coordinate = item.args.item();
-        //let item = item.elements;
-
         let elements = accumulator.elements.multiple_mut();
         let coordinates = accumulator.args.multiple_mut();
 

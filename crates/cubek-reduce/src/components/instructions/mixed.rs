@@ -175,9 +175,22 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
                 for _ in 0..len {
                     elements.push(SharedMemory::new(length));
                 }
-                DynamicSharedAccumulator::<P> {
-                    elements: SharedAccumulatorKind::new_Multiple(elements),
-                    args: SharedAccumulatorKind::new_None(),
+
+                if comptime!(!coordinate) {
+                    DynamicSharedAccumulator::<P> {
+                        elements: SharedAccumulatorKind::new_Multiple(elements),
+                        args: SharedAccumulatorKind::new_None(),
+                    }
+                } else {
+                    let mut args = Sequence::new();
+                    #[unroll]
+                    for _ in 0..len {
+                        args.push(SharedMemory::new(length));
+                    }
+                    DynamicSharedAccumulator::<P> {
+                        elements: SharedAccumulatorKind::new_Multiple(elements),
+                        args: SharedAccumulatorKind::new_Multiple(args),
+                    }
                 }
             }
         }
