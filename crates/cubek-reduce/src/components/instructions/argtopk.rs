@@ -30,7 +30,6 @@ pub struct ArgTopkAccumulator<E: Scalar, S: Size> {
 }
 
 #[derive(CubeType)]
-/// Only to respect the type system. Shared Accumulator behaviour is not supported
 pub struct ArgTopKSharedAccumulator<P: ReducePrecision> {
     elements: Sequence<SharedMemory<Vector<P::EA, P::SI>>>,
     args: Sequence<SharedMemory<Vector<u32, P::SI>>>,
@@ -82,26 +81,6 @@ impl<P: ReducePrecision> SharedAccumulator<P, ArgTopK> for ArgTopKSharedAccumula
             let mut shared_arg_acc = accumulator.args[i];
             shared_arg_acc[index] = args_acc;
         }
-    }
-}
-
-#[cube]
-impl ArgTopK {
-    pub fn choose_best<T: Numeric, N: Size>(
-        values0: Vector<T, N>,
-        coordinates0: Vector<u32, N>,
-        values1: Vector<T, N>,
-        coordinates1: Vector<u32, N>,
-    ) -> (Vector<T, N>, Vector<u32, N>) {
-        let to_keep = select_many(
-            values0.equal(values1),
-            coordinates0.less_than(coordinates1),
-            values0.greater_than(values1),
-        );
-
-        let values = select_many(to_keep, values0, values1);
-        let coordinates = select_many(to_keep, coordinates0, coordinates1);
-        (values, coordinates)
     }
 }
 
@@ -165,16 +144,20 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
                 let mut insert_coord = item.args.item();
 
                 for j in 0..this.k {
-                    let (best_v, best_c) =
-                        Self::choose_best(elements[j], coordinates[j], insert_val, insert_coord);
+                    let to_keep = select_many(
+                        elements[j].equal(insert_val),
+                        coordinates[j].less_than(insert_coord),
+                        elements[j].greater_than(insert_val),
+                    );
+                    let best_value = select_many(to_keep, elements[j], insert_val);
+                    let loser_value = select_many(to_keep, insert_val, elements[j]);
+                    let best_coordinate = select_many(to_keep, coordinates[j], insert_coord);
+                    let loser_coordinate = select_many(to_keep, insert_coord, coordinates[j]);
 
-                    let (loser_v, loser_c) =
-                        Self::choose_best(insert_val, insert_coord, elements[j], coordinates[j]);
-
-                    elements[j] = best_v;
-                    coordinates[j] = best_c;
-                    insert_val = loser_v;
-                    insert_coord = loser_c;
+                    elements[j] = best_value;
+                    coordinates[j] = best_coordinate;
+                    insert_val = loser_value;
+                    insert_coord = loser_coordinate;
                 }
             }
         };
@@ -189,24 +172,29 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
     }
 
     fn fuse_accumulators(this: &Self, accumulator: &mut Accumulator<P>, other: &Accumulator<P>) {
-        let acc_elements = accumulator.elements.multiple_mut();
-        let acc_coords = accumulator.args.multiple_mut();
+        let elements = accumulator.elements.multiple_mut();
+        let coordinates = accumulator.args.multiple_mut();
         let other_elements = other.elements.multiple();
         let other_coords = other.args.multiple();
 
         for i in 0..this.k {
-            let mut val = other_elements[i];
-            let mut coord = other_coords[i];
+            let mut insert_val = other_elements[i];
+            let mut insert_coord = other_coords[i];
             for j in 0..this.k {
-                let (best_v, best_c) =
-                    Self::choose_best(acc_elements[j], acc_coords[j], val, coord);
-                let (loser_v, loser_c) =
-                    Self::choose_best(val, coord, acc_elements[j], acc_coords[j]);
+                let to_keep = select_many(
+                    elements[j].equal(insert_val),
+                    coordinates[j].less_than(insert_coord),
+                    elements[j].greater_than(insert_val),
+                );
+                let best_value = select_many(to_keep, elements[j], insert_val);
+                let best_coordinate = select_many(to_keep, coordinates[j], insert_coord);
+                let loser_value = select_many(to_keep, insert_val, elements[j]);
+                let loser_coordinate = select_many(to_keep, insert_coord, coordinates[j]);
 
-                acc_elements[j] = best_v;
-                acc_coords[j] = best_c;
-                val = loser_v;
-                coord = loser_c;
+                elements[j] = best_value;
+                coordinates[j] = best_coordinate;
+                insert_val = loser_value;
+                insert_coord = loser_coordinate;
             }
         }
     }
@@ -345,15 +333,20 @@ pub fn plane_argtopk_insert<N: Numeric, S: Size>(
         let mut insert_coord = winning_coord;
 
         for j in 0..k {
-            let (best_v, best_c) =
-                ArgTopK::choose_best(elements[j], coordinates[j], insert_val, insert_coord);
-            let (loser_v, loser_c) =
-                ArgTopK::choose_best(insert_val, insert_coord, elements[j], coordinates[j]);
+            let to_keep = select_many(
+                elements[j].equal(insert_val),
+                coordinates[j].less_than(insert_coord),
+                elements[j].greater_than(insert_val),
+            );
+            let best_value = select_many(to_keep, elements[j], insert_val);
+            let best_coordinate = select_many(to_keep, coordinates[j], insert_coord);
+            let loser_value = select_many(to_keep, insert_val, elements[j]);
+            let loser_coordinate = select_many(to_keep, insert_coord, coordinates[j]);
 
-            elements[j] = best_v;
-            coordinates[j] = best_c;
-            insert_val = loser_v;
-            insert_coord = loser_c;
+            elements[j] = best_value;
+            coordinates[j] = best_coordinate;
+            insert_val = loser_value;
+            insert_coord = loser_coordinate;
         }
 
         // Only the thread that provided the specific pair "wins" and masks it out

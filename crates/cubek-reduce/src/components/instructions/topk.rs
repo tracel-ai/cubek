@@ -29,7 +29,6 @@ pub struct TopkAccumulator<E: Scalar, S: Size> {
 }
 
 #[derive(CubeType)]
-/// Only to respect the type system. Shared Accumulator behaviour is not supported
 pub struct TopKSharedAccumulator<P: ReducePrecision> {
     elements: Sequence<SharedMemory<Vector<P::EA, P::SI>>>,
     #[cube(comptime)]
