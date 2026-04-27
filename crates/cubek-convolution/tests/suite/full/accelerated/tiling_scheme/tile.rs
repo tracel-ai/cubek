@@ -1,6 +1,6 @@
 #[macro_export]
 macro_rules! testgen_convolution_accelerated_tile {
-    ($algorithm: ty, $precision: ty, $tiling_scheme_builder: expr) => {
+    ($algorithm: ty, $dtypes: expr, $tiling_scheme_builder: expr) => {
         use cubek_std::TileSize;
 
         #[cfg(target_os = "macos")]
@@ -9,7 +9,7 @@ macro_rules! testgen_convolution_accelerated_tile {
 
             $crate::testgen_convolution_accelerated_partition!(
                 $algorithm,
-                $precision,
+                $dtypes,
                 $tiling_scheme_builder.with_tile_size(TileSize { m: 8, n: 8, k: 8 })
             );
         }
@@ -20,7 +20,7 @@ macro_rules! testgen_convolution_accelerated_tile {
 
             $crate::testgen_convolution_accelerated_partition!(
                 $algorithm,
-                $precision,
+                $dtypes,
                 $tiling_scheme_builder.with_tile_size(TileSize {
                     m: 16,
                     n: 16,
@@ -35,7 +35,7 @@ macro_rules! testgen_convolution_accelerated_tile {
 
             $crate::testgen_convolution_accelerated_partition!(
                 $algorithm,
-                $precision,
+                $dtypes,
                 $tiling_scheme_builder.with_tile_size(TileSize { m: 32, n: 8, k: 16 })
             );
         }
@@ -46,7 +46,7 @@ macro_rules! testgen_convolution_accelerated_tile {
 
             $crate::testgen_convolution_accelerated_partition!(
                 $algorithm,
-                $precision,
+                $dtypes,
                 $tiling_scheme_builder.with_tile_size(TileSize { m: 8, n: 32, k: 16 })
             );
         }
@@ -57,18 +57,17 @@ macro_rules! testgen_convolution_accelerated_tile {
 
             $crate::testgen_convolution_accelerated_partition!(
                 $algorithm,
-                $precision,
+                $dtypes,
                 $tiling_scheme_builder.with_tile_size(TileSize { m: 16, n: 16, k: 8 })
             );
         }
 
-        #[cfg(feature = "conv_tests_mma")]
         mod t16x8x16 {
             use super::*;
 
             $crate::testgen_convolution_accelerated_partition!(
                 $algorithm,
-                $precision,
+                $dtypes,
                 $tiling_scheme_builder.with_tile_size(TileSize { m: 16, n: 8, k: 16 })
             );
         }

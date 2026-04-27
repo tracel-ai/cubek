@@ -1,13 +1,13 @@
 #[macro_export]
 macro_rules! testgen_convolution_problem_size {
-    ($algorithm: ty, $precision: ty, $tiling_scheme: expr, $swizzle: expr, $partition_buffering: expr) => {
-        use $crate::suite::test_macros::suite::ConvolutionSize;
+    ($algorithm: ty, $dtypes: expr, $tiling_scheme: expr, $swizzle: expr, $partition_buffering: expr) => {
+        use $crate::suite::launcher_strategy::ConvolutionSize;
 
         mod g4x4x1x1 {
             use super::*;
             $crate::testgen_convolution_launch!(
                 $algorithm,
-                $precision,
+                $dtypes,
                 $tiling_scheme,
                 $swizzle,
                 $partition_buffering,
@@ -24,7 +24,7 @@ macro_rules! testgen_convolution_problem_size {
             use super::*;
             $crate::testgen_convolution_launch!(
                 $algorithm,
-                $precision,
+                $dtypes,
                 $tiling_scheme,
                 $swizzle,
                 $partition_buffering,
@@ -41,7 +41,7 @@ macro_rules! testgen_convolution_problem_size {
             use super::*;
             $crate::testgen_convolution_launch!(
                 $algorithm,
-                $precision,
+                $dtypes,
                 $tiling_scheme,
                 $swizzle,
                 $partition_buffering,
@@ -58,7 +58,7 @@ macro_rules! testgen_convolution_problem_size {
             use super::*;
             $crate::testgen_convolution_launch!(
                 $algorithm,
-                $precision,
+                $dtypes,
                 $tiling_scheme,
                 $swizzle,
                 $partition_buffering,
@@ -75,7 +75,7 @@ macro_rules! testgen_convolution_problem_size {
             use super::*;
             $crate::testgen_convolution_launch!(
                 $algorithm,
-                $precision,
+                $dtypes,
                 $tiling_scheme,
                 $swizzle,
                 $partition_buffering,
@@ -92,7 +92,7 @@ macro_rules! testgen_convolution_problem_size {
             use super::*;
             $crate::testgen_convolution_launch!(
                 $algorithm,
-                $precision,
+                $dtypes,
                 $tiling_scheme,
                 $swizzle,
                 $partition_buffering,
@@ -109,7 +109,7 @@ macro_rules! testgen_convolution_problem_size {
             use super::*;
             $crate::testgen_convolution_launch!(
                 $algorithm,
-                $precision,
+                $dtypes,
                 $tiling_scheme,
                 $swizzle,
                 $partition_buffering,
@@ -126,7 +126,7 @@ macro_rules! testgen_convolution_problem_size {
             use super::*;
             $crate::testgen_convolution_launch!(
                 $algorithm,
-                $precision,
+                $dtypes,
                 $tiling_scheme,
                 $swizzle,
                 $partition_buffering,

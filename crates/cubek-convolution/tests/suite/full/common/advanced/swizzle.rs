@@ -1,24 +1,15 @@
 #[macro_export]
 macro_rules! testgen_convolution_swizzle {
-    ($algorithm: ty, $precision: ty, $tiling_scheme: expr) => {
+    ($algorithm: ty, $dtypes: expr, $tiling_scheme: expr) => {
         use cubek_matmul::definition::SwizzleModes;
         use cubek_std::stage::SwizzleMode;
 
-        #[cfg(not(feature = "conv_tests_swizzle"))]
-        $crate::testgen_convolution_partition_buffering!(
-            $algorithm,
-            $precision,
-            $tiling_scheme,
-            SwizzleModes::default()
-        );
-
-        #[cfg(feature = "conv_tests_swizzle")]
         mod none {
             use super::*;
 
             $crate::testgen_convolution_partition_buffering!(
                 $algorithm,
-                $precision,
+                $dtypes,
                 $tiling_scheme,
                 SwizzleModes {
                     lhs: SwizzleMode::None,
@@ -28,13 +19,12 @@ macro_rules! testgen_convolution_swizzle {
             );
         }
 
-        #[cfg(feature = "conv_tests_swizzle")]
         mod b32 {
             use super::*;
 
             $crate::testgen_convolution_partition_buffering!(
                 $algorithm,
-                $precision,
+                $dtypes,
                 $tiling_scheme,
                 SwizzleModes {
                     lhs: SwizzleMode::B32,
@@ -44,13 +34,12 @@ macro_rules! testgen_convolution_swizzle {
             );
         }
 
-        #[cfg(feature = "conv_tests_swizzle")]
         mod b64 {
             use super::*;
 
             $crate::testgen_convolution_partition_buffering!(
                 $algorithm,
-                $precision,
+                $dtypes,
                 $tiling_scheme,
                 SwizzleModes {
                     lhs: SwizzleMode::B64,
@@ -60,13 +49,12 @@ macro_rules! testgen_convolution_swizzle {
             );
         }
 
-        #[cfg(feature = "conv_tests_swizzle")]
         mod b128 {
             use super::*;
 
             $crate::testgen_convolution_partition_buffering!(
                 $algorithm,
-                $precision,
+                $dtypes,
                 $tiling_scheme,
                 SwizzleModes {
                     lhs: SwizzleMode::B128,
