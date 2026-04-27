@@ -2,35 +2,45 @@ use cubecl::{
     Runtime, client::ComputeClient, ir::StorageType, prelude::TensorBinding, server::LaunchError,
 };
 use cubek_matmul::{
-    components::global::read::{
-        AsyncPartialLoadingStrategy, async_partial_tma::AsyncPartialTmaLoading,
+    components::{
+        global::read::{
+            AsyncPartialLoadingStrategy, async_partial_cyclic::AsyncPartialCyclicLoading,
+            async_partial_strided::AsyncPartialStridedLoading,
+            async_partial_tma::AsyncPartialTmaLoading,
+        },
+        stage::ColMajorTilingOrder,
     },
-    definition::AvailableVectorSizes,
+    definition::{AvailableVectorSizes, TilingBlueprint},
     launch::{TensorArgs, TensorMapArgs},
-    routines::specialized::SpecializedAlgorithm,
+    routines::specialized::{SpecializedAlgorithm, SpecializedStrategy},
 };
 use cubek_std::tile::Strided;
 use std::marker::PhantomData;
 
 use crate::{
-    algorithm::{Algorithm, contiguous_pitched_layout, into_tensor_handle_tma},
     components::{
         ConvolutionOperation,
         global::{args::RuntimeArgs, read::strategy::sync_bias::SyncBiasLoading},
     },
+    routines::{Routine, contiguous_pitched_layout, into_tensor_handle_tma},
 };
 
-/// Cmma convolution
+/// Cmma convolution with a partial async loading strategy.
 pub struct SpecializedConv<L: AsyncPartialLoadingStrategy<RuntimeArgs>> {
     _loader: PhantomData<L>,
 }
 
+pub type SpecializedAsyncCyclicConv = SpecializedConv<AsyncPartialCyclicLoading<ColMajorTilingOrder>>;
+pub type SpecializedAsyncStridedConv = SpecializedConv<AsyncPartialStridedLoading>;
+
 pub struct SpecializedTmaConv;
 
-impl<L: AsyncPartialLoadingStrategy<RuntimeArgs, TileKind = Strided>> Algorithm
+impl<L: AsyncPartialLoadingStrategy<RuntimeArgs, TileKind = Strided>> Routine
     for SpecializedConv<L>
 {
-    type Routine = SpecializedAlgorithm<L, SyncBiasLoading>;
+    type Blueprint = TilingBlueprint;
+    type Strategy = SpecializedStrategy;
+    type MatmulRoutine = SpecializedAlgorithm<L, SyncBiasLoading>;
     type Args = TensorArgs<RuntimeArgs>;
     const IS_SPECIALIZED: bool = true;
 
@@ -44,8 +54,10 @@ impl<L: AsyncPartialLoadingStrategy<RuntimeArgs, TileKind = Strided>> Algorithm
     }
 }
 
-impl Algorithm for SpecializedTmaConv {
-    type Routine = SpecializedAlgorithm<AsyncPartialTmaLoading, SyncBiasLoading>;
+impl Routine for SpecializedTmaConv {
+    type Blueprint = TilingBlueprint;
+    type Strategy = SpecializedStrategy;
+    type MatmulRoutine = SpecializedAlgorithm<AsyncPartialTmaLoading, SyncBiasLoading>;
     type Args = TensorMapArgs<RuntimeArgs>;
     const IS_SPECIALIZED: bool = true;
 

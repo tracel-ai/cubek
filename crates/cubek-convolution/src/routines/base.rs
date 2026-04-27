@@ -4,16 +4,25 @@ use cubecl::{
     std::tensor::{into_contiguous_pitched, is_contiguous_pitched},
 };
 use cubek_matmul::{
+    definition::{AvailableVectorSizes, Blueprint},
     launch::MatmulArgs,
-    {definition::AvailableVectorSizes, routines::Routine},
+    routines::Routine as MatmulRoutine,
 };
+use std::fmt::Display;
 
-pub mod simple;
-pub mod specialized;
+/// Specifications for a convolution routine.
+///
+/// A `Routine` is the convolution-side counterpart of `cubek_matmul::routines::Routine`:
+/// it pairs a per-operation matmul routine with the metadata needed to wire the
+/// kernel up (input args, optional layout fixups, vector-size filtering).
+///
+/// `Blueprint` and `Strategy` are surfaced as direct associated types so callers
+/// don't have to reach through `MatmulRoutine` to bound them.
+pub trait Routine {
+    type Blueprint: Blueprint;
+    type Strategy: Default + Display + Clone;
 
-/// Specifications for a convolution algorithm
-pub trait Algorithm {
-    type Routine: Routine<RuntimeArgs>;
+    type MatmulRoutine: MatmulRoutine<RuntimeArgs, Blueprint = Self::Blueprint, Strategy = Self::Strategy>;
     type Args: MatmulArgs<Config = RuntimeArgs>;
 
     /// Whether to select specialized load flow in tests. Should replace with something cleaner

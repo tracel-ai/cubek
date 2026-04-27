@@ -1,120 +1,65 @@
 use crate::{
-    AcceleratedTileKind, ReadingStrategy, algorithm::simple::*,
-    components::global::args::RuntimeArgs,
+    components::ConvolutionOperation, components::global::args::RuntimeArgs,
+    forward::args::ConcreteArgs, launch::ConvolutionArgs,
 };
 use crate::{
-    ConvolutionArgs, Strategy, components::ConvolutionOperation, forward::args::ConcreteArgs,
-};
-use crate::{
-    algorithm::Algorithm,
     components::{ConvolutionProblem, Dimensionality},
+    routines::Routine,
 };
 use crate::{components::ConvSetupError, kernels::forward::selector::launch_kernel_concrete};
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
-use cubek_matmul::routines::{BlueprintStrategy, TilingArgs};
 use cubek_matmul::{
-    components::tile_matmul::DispatchTileMatmul,
     definition::{AvailableVectorSizes, MatmulElems},
-    routines::Routine,
+    routines::BlueprintStrategy,
 };
 use cubek_std::{InputBinding, MatrixLayout};
-use derive_new::new;
 
-fn tile_kind_to_dispatch(kind: &AcceleratedTileKind) -> DispatchTileMatmul {
-    match kind {
-        AcceleratedTileKind::Cmma => DispatchTileMatmul::Cmma,
-        AcceleratedTileKind::Mma => DispatchTileMatmul::Mma,
-    }
-}
-
-/// Perform an n-dimensional convolution using the implicit GEMM (im2col) algorithm, using cubecl
-/// tiling matmul components, using the specified algorithm.
+/// Forward-convolution dispatch helper.
 ///
-/// * `input` - The input feature map, layout should be [batches, depth, height, width, in_channels]
-/// * `weight` - The weights (filter) applied to each kernel, layout should be [out_channels, kernel_d, kernel_h, kernel_w, in_channels]
-/// * `out` - The output feature map, layout should be [batches, out_depth, out_height, out_width, out_channels]
-/// * `bias` - The bias added to each out channel
-/// * `options` - The options to use for the convolution
+/// Called by `cubek_convolution::launch_ref` after the routine and
+/// blueprint-strategy have been resolved. Not meant for direct external use.
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
-pub fn launch_ref<R: Runtime, const N_SPATIAL: usize>(
-    strategy: &Strategy,
+pub(crate) fn launch_internal<R: Runtime, const N_SPATIAL: usize, Rt: Routine>(
     client: &ComputeClient<R>,
     input: InputBinding<R>,
     weight: InputBinding<R>,
     bias: Option<InputBinding<R>>,
     out: TensorBinding<R>,
     args: ConvolutionArgs<N_SPATIAL>,
+    blueprint_strategy: &BlueprintStrategy<RuntimeArgs, Rt::MatmulRoutine>,
     dtypes: MatmulElems,
-) -> Result<(), ConvSetupError> {
-    let conv = Convolution::new(client, input, weight, bias, out, args, dtypes);
+) -> Result<(), ConvSetupError>
+where
+    Rt::Args: ConcreteArgs<Rt::MatmulRoutine>,
+{
+    let ConvolutionArgs {
+        stride,
+        padding,
+        dilation,
+    } = args;
 
-    match strategy {
-        Strategy::Simple {
-            read_strategy,
-            tile_kind,
-        } => {
-            let kind = tile_kind_to_dispatch(tile_kind);
-            match read_strategy {
-                ReadingStrategy::Cyclic => conv.launch::<SimpleSyncCyclicConv>(kind),
-                ReadingStrategy::Strided => conv.launch::<SimpleSyncStridedConv>(kind),
-                ReadingStrategy::Tilewise => conv.launch::<SimpleSyncTilewiseConv>(kind),
-                ReadingStrategy::AsyncCyclic => conv.launch::<SimpleAsyncCyclicConv>(kind),
-                ReadingStrategy::AsyncStrided => conv.launch::<SimpleAsyncStridedConv>(kind),
-                ReadingStrategy::Tma => conv.launch::<SimpleAsyncTmaConv>(kind),
-            }
-        }
-    }
-}
+    let dimensionality = match N_SPATIAL {
+        1 => Dimensionality::Dim1,
+        2 => Dimensionality::Dim2,
+        3 => Dimensionality::Dim3,
+        other => unimplemented!("Unsupported dimensionality {other}"),
+    };
 
-#[derive(new)]
-struct Convolution<'a, R: Runtime, const N_SPATIAL: usize> {
-    client: &'a ComputeClient<R>,
-    input: InputBinding<R>,
-    weight: InputBinding<R>,
-    bias: Option<InputBinding<R>>,
-    out: TensorBinding<R>,
-    args: ConvolutionArgs<N_SPATIAL>,
-    dtypes: MatmulElems,
-}
-
-impl<'a, R: Runtime, const N_SPATIAL: usize> Convolution<'a, R, N_SPATIAL> {
-    fn launch<Alg: Algorithm>(self, tile_matmul: DispatchTileMatmul) -> Result<(), ConvSetupError>
-    where
-        Alg::Args: ConcreteArgs<Alg::Routine>,
-        <Alg::Routine as Routine<RuntimeArgs>>::Strategy: TilingArgs,
-    {
-        let ConvolutionArgs {
-            stride,
-            padding,
-            dilation,
-        } = self.args;
-
-        let dimensionality = match N_SPATIAL {
-            1 => Dimensionality::Dim1,
-            2 => Dimensionality::Dim2,
-            3 => Dimensionality::Dim3,
-            other => unimplemented!("Unsupported dimensionality {other}"),
-        };
-
-        let mut args = <Alg::Routine as Routine<RuntimeArgs>>::Strategy::default();
-        args.set_tile_matmul(tile_matmul);
-
-        launch_with_algorithm::<R, Alg>(
-            self.client,
-            self.input,
-            self.weight,
-            self.bias,
-            self.out,
-            (&stride, &padding, &dilation),
-            dimensionality,
-            &BlueprintStrategy::Inferred(args),
-            self.dtypes,
-        )
-    }
+    launch_with_routine::<R, Rt>(
+        client,
+        input,
+        weight,
+        bias,
+        out,
+        (&stride, &padding, &dilation),
+        dimensionality,
+        blueprint_strategy,
+        dtypes,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
-fn launch_with_algorithm<R: Runtime, Alg: Algorithm>(
+fn launch_with_routine<R: Runtime, Rt: Routine>(
     client: &ComputeClient<R>,
     input: InputBinding<R>,
     weight: InputBinding<R>,
@@ -122,11 +67,11 @@ fn launch_with_algorithm<R: Runtime, Alg: Algorithm>(
     out: TensorBinding<R>,
     (stride, padding, dilation): (&[usize], &[usize], &[usize]),
     dimensionality: Dimensionality,
-    blueprint_strategy: &BlueprintStrategy<RuntimeArgs, Alg::Routine>,
+    blueprint_strategy: &BlueprintStrategy<RuntimeArgs, Rt::MatmulRoutine>,
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError>
 where
-    Alg::Args: ConcreteArgs<Alg::Routine>,
+    Rt::Args: ConcreteArgs<Rt::MatmulRoutine>,
 {
     let rank = input.data().shape.len();
     let dim_c = rank - 1;
@@ -142,9 +87,9 @@ where
 
     let op = ConvolutionOperation::Forward;
 
-    let input_data = Alg::correct_layout(client, input.clone().into_data(), dtypes.lhs_global, op)?;
+    let input_data = Rt::correct_layout(client, input.clone().into_data(), dtypes.lhs_global, op)?;
     let weight_data =
-        Alg::correct_layout(client, weight.clone().into_data(), dtypes.rhs_global, op)?;
+        Rt::correct_layout(client, weight.clone().into_data(), dtypes.rhs_global, op)?;
 
     let mut input = input.clone();
     let mut weight = weight.clone();
@@ -189,7 +134,7 @@ where
         address_type,
     };
 
-    launch_kernel::<R, Alg>(
+    launch_kernel::<R, Rt>(
         client,
         input,
         weight,
@@ -202,18 +147,18 @@ where
 }
 
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
-pub fn launch_kernel<R: Runtime, Alg: Algorithm>(
+pub fn launch_kernel<R: Runtime, Rt: Routine>(
     client: &ComputeClient<R>,
     input: InputBinding<R>,
     weight: InputBinding<R>,
     bias: Option<InputBinding<R>>,
     out: TensorBinding<R>,
     problem: ConvolutionProblem,
-    blueprint_strategy: &BlueprintStrategy<RuntimeArgs, Alg::Routine>,
+    blueprint_strategy: &BlueprintStrategy<RuntimeArgs, Rt::MatmulRoutine>,
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError>
 where
-    Alg::Args: ConcreteArgs<Alg::Routine>,
+    Rt::Args: ConcreteArgs<Rt::MatmulRoutine>,
 {
     // Shape/strides are treated as k-major, with the last dim always being the contiguous one.
     // So for the sake of selecting a vector size, the shape/strides are always row-major.
@@ -235,7 +180,7 @@ where
     )
     .filter_out_with_tensor(&out.strides, &out.shape);
 
-    let mut vector_sizes = Alg::filter_vector_sizes(vector_sizes).pick_max()?;
+    let mut vector_sizes = Rt::filter_vector_sizes(vector_sizes).pick_max()?;
 
     // The large vector size resulting from dequantizing ends up slower due to restrictions on
     // algorithms. Use this as a quick and dirty fix.
@@ -246,7 +191,7 @@ where
         vector_sizes.rhs = 1;
     }
 
-    launch_kernel_concrete::<R, Alg::Args, Alg::Routine>(
+    launch_kernel_concrete::<R, Rt::Args, Rt::MatmulRoutine>(
         client,
         input,
         weight,

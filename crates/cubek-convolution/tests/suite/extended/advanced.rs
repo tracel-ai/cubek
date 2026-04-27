@@ -2,11 +2,8 @@
 //! buffering). Each knob is exercised once on a representative routine —
 //! per-routine combinations live in `full/`.
 
-use cubek_convolution::kernels::algorithm::simple::{SimpleSyncCyclicConv, SimpleSyncTilewiseConv};
-use cubek_matmul::{
-    components::stage::PartitionBuffering, components::tile_matmul::cmma::CmmaMatmul,
-    definition::SwizzleModes,
-};
+use cubek_convolution::ConvAlgorithm;
+use cubek_matmul::{components::stage::PartitionBuffering, definition::SwizzleModes};
 use cubek_std::{PartitionSize, StageSize, stage::SwizzleMode};
 
 use super::common::{default_size, default_tile_size, f16_dtypes, tiling_scheme};
@@ -23,7 +20,8 @@ fn small_stage() -> StageSize {
 // -- Swizzle -----------------------------------------------------------------
 
 fn run_swizzle(swizzle: SwizzleModes) {
-    test_algo::<SimpleSyncCyclicConv<CmmaMatmul>>(
+    test_algo(
+        ConvAlgorithm::SimpleSyncCyclic,
         f16_dtypes(),
         tiling_scheme(default_tile_size(), small_partition(), small_stage()),
         swizzle,
@@ -66,7 +64,8 @@ fn swizzle_b128() {
 
 #[test]
 fn partition_buffering_double() {
-    test_algo::<SimpleSyncTilewiseConv<CmmaMatmul>>(
+    test_algo(
+        ConvAlgorithm::SimpleSyncTilewise,
         f16_dtypes(),
         tiling_scheme(
             default_tile_size(),

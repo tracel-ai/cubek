@@ -12,17 +12,16 @@ use cubek_matmul::{
         async_full_tma::AsyncFullTmaLoading, sync_full_strided::SyncFullStridedLoading,
         sync_full_tilewise::SyncFullTilewiseLoading,
     },
-    routines::simple::SimpleAlgorithm,
+    routines::simple::{SimpleAlgorithm, SimpleArgs},
 };
 use cubek_matmul::{
-    definition::AvailableVectorSizes,
+    definition::{AvailableVectorSizes, TilingBlueprint},
     launch::{TensorArgs, TensorMapArgs},
 };
 use cubek_std::tile::Strided;
 use std::marker::PhantomData;
 
 use crate::{
-    algorithm::{contiguous_pitched_layout, into_tensor_handle_tma},
     components::{
         ConvolutionOperation,
         global::{
@@ -33,9 +32,8 @@ use crate::{
             },
         },
     },
+    routines::{Routine, contiguous_pitched_layout, into_tensor_handle_tma},
 };
-
-use super::Algorithm;
 
 /// Cmma convolution
 pub struct SimpleConv<LL: FullLoadingStrategy<RuntimeArgs>, LR: FullLoadingStrategy<RuntimeArgs>> {
@@ -62,9 +60,11 @@ pub struct SimpleAsyncTmaConv;
 impl<
     LL: FullLoadingStrategy<RuntimeArgs, TileKind = Strided>,
     LR: FullLoadingStrategy<RuntimeArgs, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
-> Algorithm for SimpleConv<LL, LR>
+> Routine for SimpleConv<LL, LR>
 {
-    type Routine = SimpleAlgorithm<LL, LR, SyncBiasLoading>;
+    type Blueprint = TilingBlueprint;
+    type Strategy = SimpleArgs;
+    type MatmulRoutine = SimpleAlgorithm<LL, LR, SyncBiasLoading>;
     type Args = TensorArgs<RuntimeArgs>;
 
     fn correct_layout<R: Runtime>(
@@ -77,9 +77,10 @@ impl<
     }
 }
 
-impl Algorithm for SimpleAsyncTmaConv {
-    type Routine = SimpleAlgorithm<AsyncFullTmaLoading, AsyncFullTmaLoading, SyncBiasLoading>;
-
+impl Routine for SimpleAsyncTmaConv {
+    type Blueprint = TilingBlueprint;
+    type Strategy = SimpleArgs;
+    type MatmulRoutine = SimpleAlgorithm<AsyncFullTmaLoading, AsyncFullTmaLoading, SyncBiasLoading>;
     type Args = TensorMapArgs<RuntimeArgs>;
 
     fn correct_layout<R: Runtime>(
