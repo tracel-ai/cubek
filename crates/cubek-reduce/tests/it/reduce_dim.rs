@@ -18,8 +18,13 @@ pub fn test_argmin() {
 }
 
 #[test]
-pub fn test_argtopk() {
+pub fn test_argtopk_3() {
     test_case().test_argtopk(3);
+}
+
+#[test]
+pub fn test_argtopk_5() {
+    test_case().test_argtopk(5);
 }
 
 #[test]

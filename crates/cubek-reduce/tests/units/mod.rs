@@ -17,7 +17,7 @@ fn test_plane_reduce_inplace() {
         return;
     }
 
-    // plane_size of 16 with vector_size of 4
+    // plane_size of 2 with vector_size of 4
     let num_threads = 2;
     let k = 2;
     let vector_size = 4;
@@ -95,7 +95,6 @@ fn launch_plane_reduce_inplace<N: Numeric, S: Size>(
     let mut elements = Array::new(k);
     let offset = UNIT_POS_X as usize * k;
 
-    // Load backwards so the accumulator is already sorted descending locally
     #[unroll]
     for i in 0..k {
         elements[i] = input[offset + i];
