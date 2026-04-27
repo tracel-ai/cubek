@@ -30,7 +30,8 @@ pub struct SpecializedConv<L: AsyncPartialLoadingStrategy<RuntimeArgs>> {
     _loader: PhantomData<L>,
 }
 
-pub type SpecializedAsyncCyclicConv = SpecializedConv<AsyncPartialCyclicLoading<ColMajorTilingOrder>>;
+pub type SpecializedAsyncCyclicConv =
+    SpecializedConv<AsyncPartialCyclicLoading<ColMajorTilingOrder>>;
 pub type SpecializedAsyncStridedConv = SpecializedConv<AsyncPartialStridedLoading>;
 
 pub struct SpecializedTmaConv;

@@ -26,8 +26,7 @@ use crate::{
     components::{ConvSetupError, global::args::RuntimeArgs},
     kernels::{backward_data, backward_weight, forward},
     launch::{
-        ConvAlgorithm, ConvolutionArgs, ConvolutionInputs, Strategy,
-        strategy::AcceleratedTileKind,
+        ConvAlgorithm, ConvolutionArgs, ConvolutionInputs, Strategy, strategy::AcceleratedTileKind,
     },
     routines::{
         Routine,
@@ -35,7 +34,9 @@ use crate::{
             SimpleAsyncCyclicConv, SimpleAsyncStridedConv, SimpleAsyncTmaConv,
             SimpleSyncCyclicConv, SimpleSyncStridedConv, SimpleSyncTilewiseConv,
         },
-        specialized::{SpecializedAsyncCyclicConv, SpecializedAsyncStridedConv, SpecializedTmaConv},
+        specialized::{
+            SpecializedAsyncCyclicConv, SpecializedAsyncStridedConv, SpecializedTmaConv,
+        },
     },
 };
 
@@ -130,14 +131,16 @@ fn dispatch_routine<R: Runtime, const N_SPATIAL: usize>(
             forced_matmul,
             dtypes,
         ),
-        ConvAlgorithm::SimpleSyncTilewise => dispatch_inputs::<R, N_SPATIAL, SimpleSyncTilewiseConv>(
-            client,
-            inputs,
-            args,
-            kind,
-            forced_matmul,
-            dtypes,
-        ),
+        ConvAlgorithm::SimpleSyncTilewise => {
+            dispatch_inputs::<R, N_SPATIAL, SimpleSyncTilewiseConv>(
+                client,
+                inputs,
+                args,
+                kind,
+                forced_matmul,
+                dtypes,
+            )
+        }
         ConvAlgorithm::SimpleAsyncCyclic => dispatch_inputs::<R, N_SPATIAL, SimpleAsyncCyclicConv>(
             client,
             inputs,

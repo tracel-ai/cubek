@@ -1,11 +1,11 @@
 use crate::components::{ConvolutionProblem, Dimensionality};
+use crate::kernels::backward_weight::selector::launch_kernel_concrete;
 use crate::launch::ConvolutionArgs;
+use crate::{backward_weight::args::ConcreteArgs, components::ConvSetupError};
 use crate::{
     components::{ConvolutionOperation, global::args::RuntimeArgs},
     routines::Routine,
 };
-use crate::{backward_weight::args::ConcreteArgs, components::ConvSetupError};
-use crate::kernels::backward_weight::selector::launch_kernel_concrete;
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_matmul::{
     definition::{AvailableVectorSizes, MatmulElems},

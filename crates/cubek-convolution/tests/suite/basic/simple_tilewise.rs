@@ -4,9 +4,7 @@ use cubek_convolution::ConvAlgorithm;
 use cubek_matmul::definition::TilingScheme;
 use cubek_std::PartitionSize;
 
-use super::common::{
-    default_partition_buffering, default_swizzle, f16_dtypes, small_size,
-};
+use super::common::{default_partition_buffering, default_swizzle, f16_dtypes, small_size};
 use crate::suite::{
     basic::common::{default_tile_size, small_stage},
     launcher_strategy::test_algo,

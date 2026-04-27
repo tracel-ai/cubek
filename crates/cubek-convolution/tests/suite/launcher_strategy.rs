@@ -204,26 +204,21 @@ pub fn test_algo(
     problem_for_check.lhs_strides = lhs.strides().clone();
     problem_for_check.rhs_strides = rhs.strides().clone();
 
-    let outcome = match cubek_convolution::launch_ref(
-        &strategy,
-        &client,
-        inputs,
-        args,
-        dtypes.clone(),
-    ) {
-        Ok(()) => match get_server_error(&client) {
-            Some(e) => e,
-            None => TestOutcome::Validated(assert_result(
-                &lhs_data,
-                &rhs_data,
-                &problem_for_check,
-                &client,
-                out,
-                dtypes,
-            )),
-        },
-        Err(e) => TestOutcome::CompileError(format!("{e:?}")),
-    };
+    let outcome =
+        match cubek_convolution::launch_ref(&strategy, &client, inputs, args, dtypes.clone()) {
+            Ok(()) => match get_server_error(&client) {
+                Some(e) => e,
+                None => TestOutcome::Validated(assert_result(
+                    &lhs_data,
+                    &rhs_data,
+                    &problem_for_check,
+                    &client,
+                    out,
+                    dtypes,
+                )),
+            },
+            Err(e) => TestOutcome::CompileError(format!("{e:?}")),
+        };
 
     outcome.enforce()
 }
