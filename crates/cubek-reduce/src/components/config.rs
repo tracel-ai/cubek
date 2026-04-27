@@ -6,7 +6,7 @@ pub enum VectorizationMode {
     Perpendicular,
 }
 
-pub(crate) fn output_vectorization_axis(
+pub fn output_vectorization_axis(
     input_strides: &Strides,
     reduce_axis: usize,
     _vectorization_mode: VectorizationMode,
