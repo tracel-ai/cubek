@@ -3,9 +3,9 @@ use cubek_test_utils::{HostData, HostDataVec};
 
 use super::contiguous_strides;
 
-/// ArgTopK returns the `k` axis indices of the top values per output slice.
+/// TopK returns the `k` largest values per output slice.
 /// The output shape has `axis` set to `k` (rather than `1` as for scalar reductions).
-pub fn reference_argtopk(input: &HostData, axis: usize, k: usize) -> HostData {
+pub fn reference_topk(input: &HostData, axis: usize, k: usize) -> HostData {
     let axis_len = input.shape[axis];
 
     let mut out_shape_vec: Vec<usize> = input.shape.iter().copied().collect();
@@ -29,13 +29,13 @@ pub fn reference_argtopk(input: &HostData, axis: usize, k: usize) -> HostData {
             rem /= batch_shape[d];
         }
 
-        let mut pairs: Vec<(f32, u32)> = Vec::with_capacity(axis_len);
+        let mut values: Vec<f32> = Vec::with_capacity(axis_len);
         let mut coord = batch_coord.clone();
         for i in 0..axis_len {
             coord[axis] = i;
-            pairs.push((input.get_f32(&coord), i as u32));
+            values.push(input.get_f32(&coord));
         }
-        pairs.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        values.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
 
         for i in 0..k {
             coord[axis] = i;
@@ -44,10 +44,10 @@ pub fn reference_argtopk(input: &HostData, axis: usize, k: usize) -> HostData {
                 .zip(out_strides.iter())
                 .map(|(c, s)| c * s)
                 .sum::<usize>();
-            data[idx] = if i < pairs.len() {
-                pairs[i].1 as f32
+            data[idx] = if i < values.len() {
+                values[i]
             } else {
-                u32::MAX as f32
+                f32::MIN
             };
         }
     }

@@ -1,7 +1,7 @@
 use crate::{
     BoundChecks, ReduceInstruction, ReducePrecision, VectorizationMode,
     components::{
-        args::NumericLine,
+        args::NumericVector,
         instructions::{Item, ReduceRequirements},
         readers::{bound_checks::ReaderBoundChecks, new_coordinates},
     },
@@ -31,7 +31,7 @@ pub struct ParallelReader<P: ReducePrecision> {
 #[cube]
 impl<P: ReducePrecision> ParallelReader<P> {
     #[allow(clippy::too_many_arguments)]
-    pub fn new<I: ReduceInstruction<P>, Out: NumericLine>(
+    pub fn new<I: ReduceInstruction<P>, Out: NumericVector>(
         input: &VirtualTensor<P::EI, P::SI>,
         output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         inst: &I,

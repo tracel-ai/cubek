@@ -1,6 +1,6 @@
 use super::{ReduceFamily, ReduceInstruction};
 use crate::components::{
-    instructions::{Accumulator, AccumulatorKind, Item, ReduceRequirements, ReduceStep},
+    instructions::{Accumulator, AccumulatorFormat, Item, ReduceRequirements, ReduceStep, Value},
     precision::ReducePrecision,
 };
 use cubecl::prelude::*;
@@ -24,6 +24,10 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
         ReduceRequirements { coordinates: false }
     }
 
+    fn accumulator_format(_this: &Self) -> comptime_type!(AccumulatorFormat) {
+        AccumulatorFormat::Single
+    }
+
     fn from_config(_config: Self::Config) -> Self {
         MaxAbs {}
     }
@@ -34,54 +38,49 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
 
     fn null_accumulator(_this: &Self) -> Accumulator<P> {
         Accumulator::<P> {
-            elements: AccumulatorKind::new_single(Vector::empty().fill(P::EA::from_int(0))),
-            args: AccumulatorKind::new_None(),
+            elements: Value::new_single(Vector::empty().fill(P::EA::from_int(0))),
+            args: Value::new_None(),
         }
-    }
-
-    fn assign_accumulator(_this: &Self, destination: &mut Accumulator<P>, source: &Accumulator<P>) {
-        destination.elements.assign(&source.elements);
     }
 
     fn reduce(
         _this: &Self,
-        accumulator: &Accumulator<P>,
+        accumulator: &mut Accumulator<P>,
         item: Item<P>,
         #[comptime] reduce_step: ReduceStep,
-    ) -> Accumulator<P> {
-        let accumulator = accumulator.elements.item();
+    ) {
+        let accumulator_item = accumulator.elements.item();
         let elements = match reduce_step {
             ReduceStep::Plane => {
                 let candidate_item = Vector::cast_from(plane_max(Vector::abs(item.elements)));
                 select_many(
-                    accumulator.greater_than(candidate_item),
-                    accumulator,
+                    accumulator_item.greater_than(candidate_item),
+                    accumulator_item,
                     candidate_item,
                 )
             }
             ReduceStep::Identity => {
                 let item_abs = Vector::cast_from(Vector::abs(item.elements));
-                select_many(accumulator.greater_than(item_abs), accumulator, item_abs)
+                select_many(
+                    accumulator_item.greater_than(item_abs),
+                    accumulator_item,
+                    item_abs,
+                )
             }
         };
 
-        Accumulator::<P> {
-            elements: AccumulatorKind::new_single(elements),
-            args: AccumulatorKind::new_None(),
-        }
+        accumulator.elements.assign(&Value::new_single(elements));
     }
 
-    fn fuse_accumulators(
-        _this: &Self,
-        lhs: &Accumulator<P>,
-        rhs: &Accumulator<P>,
-    ) -> Accumulator<P> {
-        let lhs = lhs.elements.item();
-        let rhs = rhs.elements.item();
-        Accumulator::<P> {
-            elements: AccumulatorKind::new_single(select_many(lhs.greater_than(rhs), lhs, rhs)),
-            args: AccumulatorKind::new_None(),
-        }
+    fn fuse_accumulators(_this: &Self, accumulator: &mut Accumulator<P>, other: &Accumulator<P>) {
+        let accumulator_item = accumulator.elements.item();
+        let other_item = other.elements.item();
+
+        accumulator.elements.assign(&Value::new_single(select_many(
+            accumulator_item.greater_than(other_item),
+            accumulator_item,
+            other_item,
+        )));
     }
 
     fn plane_reduce_inplace(_this: &Self, accumulator: &mut Accumulator<P>) {
@@ -92,16 +91,14 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
             acc_item,
             candidate_item,
         );
-        accumulator
-            .elements
-            .assign(&AccumulatorKind::new_single(max));
+        accumulator.elements.assign(&Value::new_single(max));
     }
 
-    fn merge_vector<Out: Numeric>(
+    fn to_output_parallel<Out: Numeric>(
         _this: &Self,
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
-    ) -> AccumulatorKind<Out> {
+    ) -> Value<Out> {
         let mut max = P::EA::from_int(0);
         let accumulator = accumulator.elements.item();
         #[unroll]
@@ -109,14 +106,14 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
             let candidate = accumulator[k];
             max = select(candidate > max, candidate, max);
         }
-        AccumulatorKind::new_single(Out::cast_from(max))
+        Value::new_single(Out::cast_from(max))
     }
 
     fn to_output_perpendicular<Out: Numeric>(
         _this: &Self,
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
-    ) -> AccumulatorKind<Vector<Out, P::SI>> {
-        AccumulatorKind::new_single(Vector::cast_from(accumulator.elements.item()))
+    ) -> Value<Vector<Out, P::SI>> {
+        Value::new_single(Vector::cast_from(accumulator.elements.item()))
     }
 }

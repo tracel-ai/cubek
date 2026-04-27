@@ -1,8 +1,8 @@
 use crate::{
     BoundChecks, ReduceInstruction, ReducePrecision, VectorizationMode,
     components::{
-        args::NumericLine,
-        instructions::{AccumulatorKind, ReduceRequirements},
+        args::NumericVector,
+        instructions::{ReduceRequirements, Value},
         readers::{parallel::ParallelReader, perpendicular::PerpendicularReader},
     },
 };
@@ -17,7 +17,7 @@ pub enum Reader<P: ReducePrecision> {
 #[cube]
 impl<P: ReducePrecision> Reader<P> {
     #[allow(clippy::too_many_arguments)]
-    pub fn new<I: ReduceInstruction<P>, Out: NumericLine>(
+    pub fn new<I: ReduceInstruction<P>, Out: NumericVector>(
         input: &VirtualTensor<P::EI, P::SI>,
         output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         inst: &I,
@@ -67,17 +67,17 @@ pub fn new_coordinates<N: Size>(
     coordinate: usize,
     requirements: ReduceRequirements,
     #[comptime] vectorization_mode: VectorizationMode,
-) -> AccumulatorKind<Vector<u32, N>> {
+) -> Value<Vector<u32, N>> {
     if requirements.coordinates.comptime() {
         // TODO: Make this generic to allow 64-bit coordinate output.
         // Can't directly use `usize` for the buffer, since its size isn't defined beyond the
         // kernel boundary.
-        AccumulatorKind::new_single(fill_coordinate_vector(
+        Value::new_single(fill_coordinate_vector(
             coordinate as u32,
             vectorization_mode,
         ))
     } else {
-        AccumulatorKind::new_None()
+        Value::new_None()
     }
 }
 

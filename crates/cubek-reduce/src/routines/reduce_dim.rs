@@ -1,4 +1,4 @@
-use crate::{ReducePrecision, components::args::NumericLine, routines::GlobalReduceBlueprint};
+use crate::{ReducePrecision, components::args::NumericVector, routines::GlobalReduceBlueprint};
 use cubecl::{
     prelude::{ReadWrite, *},
     std::tensor::r#virtual::VirtualTensor,
@@ -8,7 +8,7 @@ use cubecl::{
 pub trait ReduceDimRoutine {
     type Config;
 
-    fn execute<P: ReducePrecision, Out: NumericLine>(
+    fn execute<P: ReducePrecision, Out: NumericVector>(
         input: &VirtualTensor<P::EI, P::SI>,
         output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         axis_reduce: u32,

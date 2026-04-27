@@ -6,7 +6,7 @@ use cubecl::{
     zspace::{Shape, Strides},
 };
 
-use crate::test_tensor::cast::copy_casted;
+use crate::test_tensor::{cast::copy_casted, strides::physical_extent};
 
 #[derive(Debug, Clone)]
 pub struct HostData {
@@ -55,11 +55,21 @@ impl HostDataVec {
 impl HostData {
     pub fn from_tensor_handle(
         client: &ComputeClient<TestRuntime>,
-        tensor_handle: TensorHandle<TestRuntime>,
+        mut tensor_handle: TensorHandle<TestRuntime>,
         host_data_type: HostDataType,
     ) -> Self {
         let shape = tensor_handle.shape().clone();
         let strides = tensor_handle.strides().clone();
+
+        // Reshape to a flat 1D view of the full physical buffer so the read
+        // covers every offset the jumpy strides might reach. Without this, a
+        // shape like [256,256] with strides [512,1] would only read the
+        // shape.product() (65536) elements that `copy_casted`'s contiguous
+        // rewrite walks, and HostData.get_f32 would then index out-of-bounds
+        // when the logical walk crosses the padding.
+        let physical_len = physical_extent(&shape, &strides);
+        tensor_handle.metadata.shape = Shape::from(vec![physical_len]);
+        tensor_handle.metadata.strides = Strides::new(&[1]);
 
         let data = match host_data_type {
             HostDataType::F32 => {
@@ -127,15 +137,10 @@ impl HostData {
     }
 
     pub fn pretty_print(&self) -> String {
-        assert!(
-            self.shape.rank() == 2,
-            "pretty_print only supports 2D tensors"
-        );
-
-        let [rows, cols] = self.shape.dims();
+        let (rows, cols) = rows_cols(&self.shape);
 
         pretty_print_table(rows, cols, |row, col| {
-            let idx = self.strided_index(&[row, col]);
+            let idx = self.strided_index_2d(row, col);
 
             match &self.data {
                 HostDataVec::I32(_) => self.data.get_i32(idx).to_string(),
@@ -144,26 +149,32 @@ impl HostData {
             }
         })
     }
+
+    fn strided_index_2d(&self, row: usize, col: usize) -> usize {
+        match self.shape.rank() {
+            1 => self.strided_index(&[col]),
+            2 => self.strided_index(&[row, col]),
+            r => panic!("pretty_print only supports 1D and 2D tensors, got rank {r}"),
+        }
+    }
 }
 
 pub fn pretty_print_zip(tensors: &[&HostData]) -> String {
     assert!(!tensors.is_empty(), "Need at least one tensor");
 
-    let [rows, cols] = tensors[0].shape.dims();
+    let dims = tensors[0].shape.as_slice();
 
     for t in tensors {
-        assert_eq!(
-            t.shape.dims(),
-            [rows, cols],
-            "All tensors must have same shape"
-        );
+        assert_eq!(t.shape.as_slice(), dims, "All tensors must have same shape");
     }
+
+    let (rows, cols) = rows_cols(&tensors[0].shape);
 
     pretty_print_table(rows, cols, |row, col| {
         let mut parts = Vec::with_capacity(tensors.len());
 
         for t in tensors {
-            let idx = t.strided_index(&[row, col]);
+            let idx = t.strided_index_2d(row, col);
 
             let val = match &t.data {
                 HostDataVec::I32(_) => t.data.get_i32(idx).to_string(),
@@ -176,6 +187,17 @@ pub fn pretty_print_zip(tensors: &[&HostData]) -> String {
 
         parts.join("/")
     })
+}
+
+fn rows_cols(shape: &Shape) -> (usize, usize) {
+    match shape.rank() {
+        1 => (1, shape.as_slice()[0]),
+        2 => {
+            let d = shape.as_slice();
+            (d[0], d[1])
+        }
+        r => panic!("pretty_print only supports 1D and 2D tensors, got rank {r}"),
+    }
 }
 
 fn pretty_print_table<F>(rows: usize, cols: usize, mut cell: F) -> String

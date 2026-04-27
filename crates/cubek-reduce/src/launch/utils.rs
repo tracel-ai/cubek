@@ -148,11 +148,36 @@ pub fn generate_vector_size<R: Runtime>(
     {
         let supported_vector_sizes = client.io_optimized_vector_sizes(dtype.size());
         let num_reduce = output.shape.iter().copied().product::<usize>();
+        // The SIMD output write must stay within a single contiguous run of
+        // scalars. Excluding the reduce axis bounds the run so that for
+        // multi-accumulator outputs (topk/argtopk) a vector cannot cross k-slot
+        // boundaries, while for regular reductions (where the reduce axis has
+        // shape 1) the bound collapses to the full contiguous output run.
+        let max_run = output_contiguous_run(&output.shape, &output.strides, axis);
         vector_size_output = supported_vector_sizes
-            .filter(|&vector_size| num_reduce % vector_size == 0)
+            .filter(|&vector_size| num_reduce % vector_size == 0 && vector_size <= max_run)
             .max()
             .unwrap_or(1);
     }
 
     (vector_size_input, vector_size_output)
+}
+
+/// Length (in scalars) of the longest contiguous output run that is reachable
+/// by extending from stride 1 outward, ignoring the reduce axis.
+fn output_contiguous_run(shape: &[usize], strides: &[usize], reduce_axis: usize) -> usize {
+    let mut dims: Vec<(usize, usize)> = (0..strides.len())
+        .filter(|&d| d != reduce_axis)
+        .map(|d| (strides[d], shape[d]))
+        .collect();
+    dims.sort_by_key(|&(stride, size)| (stride, size));
+
+    let mut run = 1;
+    for (stride, size) in dims {
+        if stride != run {
+            break;
+        }
+        run *= size;
+    }
+    run
 }

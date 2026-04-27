@@ -21,12 +21,12 @@ impl<In: Numeric, SizeIn: Size, Out: Numeric, SizeOut: Size> ReduceDType
     type SizeOut = SizeOut;
 }
 
-pub trait NumericLine {
+pub trait NumericVector {
     type T: Numeric;
     type N: Size;
 }
 
-impl<T: Numeric, N: Size> NumericLine for (T, N) {
+impl<T: Numeric, N: Size> NumericVector for (T, N) {
     type T = T;
     type N = N;
 }

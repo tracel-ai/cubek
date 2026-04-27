@@ -1,11 +1,11 @@
 use crate::{
     ReduceInstruction, ReducePrecision, VectorizationMode,
     components::{
-        args::NumericLine,
-        global::idle_check,
+        args::NumericVector,
+        global::{idle_check, reduction_output_base},
         instructions::{Accumulator, reduce_inplace},
         readers::{Reader, plane::PlaneReader},
-        writer::Writer,
+        writers::Writer,
     },
     routines::{PlaneMergeStrategy, PlaneReduceBlueprint},
 };
@@ -18,10 +18,11 @@ pub struct GlobalFullPlaneReduce;
 
 #[cube]
 impl GlobalFullPlaneReduce {
-    pub fn execute<P: ReducePrecision, Out: NumericLine, I: ReduceInstruction<P>>(
+    pub fn execute<P: ReducePrecision, Out: NumericVector, I: ReduceInstruction<P>>(
         input: &VirtualTensor<P::EI, P::SI>,
         output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         reduce_axis: usize,
+        out_vec_axis: usize,
         inst: &I,
         #[comptime] vectorization_mode: VectorizationMode,
         #[comptime] blueprint: PlaneReduceBlueprint,
@@ -35,10 +36,24 @@ impl GlobalFullPlaneReduce {
         //         terminate!();
         //     }
         // }
-        let write_index = CUBE_POS * CUBE_DIM_Y as usize + UNIT_POS_Y as usize;
+        let acc_format = I::accumulator_format(inst);
+        let reduction_index = CUBE_POS * CUBE_DIM_Y as usize + UNIT_POS_Y as usize;
+        let write_index = reduction_output_base::<Out::T, Out::N>(
+            reduction_index,
+            output,
+            reduce_axis,
+            comptime!(acc_format.len()),
+        );
 
-        let mut writer =
-            Writer::<Out>::new::<P>(input, output, reduce_axis, write_index, vectorization_mode);
+        let mut writer = Writer::<Out>::new::<P>(
+            input,
+            output,
+            reduce_axis,
+            out_vec_axis,
+            write_index,
+            vectorization_mode,
+            acc_format,
+        );
 
         let write_count = writer.write_count();
         let reduce_index_start = write_index * write_count;
@@ -80,7 +95,7 @@ impl GlobalFullPlaneReduce {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn reduce_single<P: ReducePrecision, Out: NumericLine, I: ReduceInstruction<P>>(
+    fn reduce_single<P: ReducePrecision, Out: NumericVector, I: ReduceInstruction<P>>(
         input: &VirtualTensor<P::EI, P::SI>,
         output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         reduce_axis: usize,

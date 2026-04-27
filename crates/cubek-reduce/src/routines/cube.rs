@@ -108,15 +108,15 @@ fn generate_blueprint<R: Runtime>(
         && hardware_properties.plane_size_max == hardware_properties.plane_size_min;
 
     let working_cubes = working_cubes(settings, &problem);
-    let working_units = working_cubes * problem.vector_size.div_ceil(settings.vector_size_input);
+    let working_units = working_cubes * problem.reduce_len.div_ceil(settings.vector_size_input);
     let plane_count =
         calculate_plane_count_per_cube(working_units, plane_size, hardware_properties);
     let cube_dim = CubeDim::new_2d(plane_size, plane_count);
     let cube_size = cube_dim.num_elems();
 
     let work_size = match settings.vectorization_mode {
-        VectorizationMode::Parallel => problem.vector_size / settings.vector_size_input,
-        VectorizationMode::Perpendicular => problem.vector_size,
+        VectorizationMode::Parallel => problem.reduce_len / settings.vector_size_input,
+        VectorizationMode::Perpendicular => problem.reduce_len,
     };
     let bound_checks = match work_size.is_multiple_of(cube_size as usize) {
         true => BoundChecks::None,
@@ -158,7 +158,7 @@ fn generate_blueprint<R: Runtime>(
 
 fn working_cubes(settings: &ReduceVectorSettings, problem: &ReduceProblem) -> usize {
     match settings.vectorization_mode {
-        VectorizationMode::Parallel => problem.vector_count / settings.vector_size_output,
-        VectorizationMode::Perpendicular => problem.vector_count / settings.vector_size_input,
+        VectorizationMode::Parallel => problem.reduce_count / settings.vector_size_output,
+        VectorizationMode::Perpendicular => problem.reduce_count / settings.vector_size_input,
     }
 }
