@@ -20,7 +20,7 @@ full = ["extended"]
 
 [dependencies]
 cubecl = { workspace = true }
-cubek-test-utils = { path = "./../cubek-test-utils/", version = "=0.2.0-pre.3" }
+cubek-test-utils = { path = "./../cubek-test-utils/", version = "=0.2.0-pre.4" }
 
 [dev-dependencies]
 num-complex = "0.4.6"
