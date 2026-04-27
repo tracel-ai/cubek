@@ -87,6 +87,9 @@ impl GlobalFullCubeReduce {
                         );
                         writer.write::<P, I>(b, accumulator_final, inst);
                     }
+
+                    // Wait for plane 0 to finish reading SM before next iter overwrites it.
+                    sync_cube();
                 }
                 false => {
                     reduce_tree::<P, I>(
