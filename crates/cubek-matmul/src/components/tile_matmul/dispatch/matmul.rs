@@ -3,15 +3,14 @@ use cubek_std::MatrixLayout;
 
 use crate::components::tile_matmul::dispatch::config::DispatchConfig;
 use crate::components::tile_matmul::{
-    Plane, Tile, TileMatmul, cmma_allocate_acc, cmma_allocate_lhs, cmma_allocate_rhs,
-    interleaved_allocate_acc, interleaved_allocate_lhs, interleaved_allocate_rhs, mma_allocate_acc,
-    mma_allocate_lhs, mma_allocate_rhs, planevec_allocate_acc, planevec_allocate_lhs,
-    planevec_allocate_rhs, register_allocate_acc, register_allocate_lhs, register_allocate_rhs,
+    Plane, Tile, cmma_allocate_acc, cmma_allocate_lhs, cmma_allocate_rhs, interleaved_allocate_acc,
+    interleaved_allocate_lhs, interleaved_allocate_rhs, mma_allocate_acc, mma_allocate_lhs,
+    mma_allocate_rhs, planevec_allocate_acc, planevec_allocate_lhs, planevec_allocate_rhs,
+    register_allocate_acc, register_allocate_lhs, register_allocate_rhs,
 };
-use crate::definition::StageIdent;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub enum DispatchTileMatmul {
+pub enum TileMatmul {
     Cmma,
     Mma,
     Register,
@@ -20,137 +19,67 @@ pub enum DispatchTileMatmul {
 }
 
 #[cube]
-impl<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>
-    TileMatmul<L, VL, R, VR, A, VA> for DispatchTileMatmul
-{
-    type Config = DispatchConfig;
-    type Scope = Plane;
-
-    fn execute(
-        lhs: &Tile<L, VL, Self::Scope, ReadWrite>,
-        rhs: &Tile<R, VR, Self::Scope, ReadWrite>,
-        acc: &mut Tile<A, VA, Self::Scope, ReadWrite>,
-        #[comptime] _config: Self::Config,
-    ) {
-        acc.mma(lhs, rhs);
-    }
-
-    fn allocate_lhs(
-        #[comptime] layout: MatrixLayout,
-        #[comptime] config: Self::Config,
-    ) -> Tile<L, VL, Self::Scope, ReadWrite> {
-        match config {
-            DispatchConfig::Cmma(config) => {
-                cmma_allocate_lhs::<L, VL, Self::Scope>(layout, config.tile_size)
-            }
-            DispatchConfig::Mma(config) => mma_allocate_lhs::<L, VL, R, A, Self::Scope>(
-                layout,
-                config.shared,
-                config.mma_io_config,
-            ),
-            DispatchConfig::Register(config) => register_allocate_lhs::<L, VL, Self::Scope>(
-                layout,
-                config.shared,
-                config.product_type,
-            ),
-            DispatchConfig::PlaneVec(config) => planevec_allocate_lhs::<L, VL, Self::Scope>(
-                layout,
-                config.shared,
-                config.reduce_vector_size,
-            ),
-            DispatchConfig::Interleaved(config) => {
-                interleaved_allocate_lhs::<L, VL, Self::Scope>(layout, config.shared)
-            }
+pub(crate) fn allocate_lhs_tile<L: Numeric, VL: Size, R: Numeric, A: Numeric>(
+    #[comptime] layout: MatrixLayout,
+    #[comptime] config: DispatchConfig,
+) -> Tile<L, VL, Plane, ReadWrite> {
+    match config {
+        DispatchConfig::Cmma(config) => cmma_allocate_lhs::<L, VL, Plane>(layout, config.tile_size),
+        DispatchConfig::Mma(config) => {
+            mma_allocate_lhs::<L, VL, R, A, Plane>(layout, config.shared, config.mma_io_config)
+        }
+        DispatchConfig::Register(config) => {
+            register_allocate_lhs::<L, VL, Plane>(layout, config.shared, config.product_type)
+        }
+        DispatchConfig::PlaneVec(config) => {
+            planevec_allocate_lhs::<L, VL, Plane>(layout, config.shared, config.reduce_vector_size)
+        }
+        DispatchConfig::Interleaved(config) => {
+            interleaved_allocate_lhs::<L, VL, Plane>(layout, config.shared)
         }
     }
+}
 
-    fn allocate_rhs(
-        #[comptime] layout: MatrixLayout,
-        #[comptime] config: Self::Config,
-    ) -> Tile<R, VR, Self::Scope, ReadWrite> {
-        match config {
-            DispatchConfig::Cmma(config) => {
-                cmma_allocate_rhs::<R, VR, Self::Scope>(layout, config.tile_size)
-            }
-            DispatchConfig::Mma(config) => mma_allocate_rhs::<R, VR, L, A, Self::Scope>(
-                layout,
-                config.shared,
-                config.mma_io_config,
-            ),
-            DispatchConfig::Register(config) => register_allocate_rhs::<R, VR, Self::Scope>(
-                layout,
-                config.shared,
-                config.product_type,
-            ),
-            DispatchConfig::PlaneVec(config) => planevec_allocate_rhs::<R, VR, Self::Scope>(
-                layout,
-                config.shared,
-                config.reduce_vector_size,
-            ),
-            DispatchConfig::Interleaved(config) => {
-                interleaved_allocate_rhs::<R, VR, Self::Scope>(layout, config.shared)
-            }
+#[cube]
+pub(crate) fn allocate_rhs_tile<R: Numeric, VR: Size, L: Numeric, A: Numeric>(
+    #[comptime] layout: MatrixLayout,
+    #[comptime] config: DispatchConfig,
+) -> Tile<R, VR, Plane, ReadWrite> {
+    match config {
+        DispatchConfig::Cmma(config) => cmma_allocate_rhs::<R, VR, Plane>(layout, config.tile_size),
+        DispatchConfig::Mma(config) => {
+            mma_allocate_rhs::<R, VR, L, A, Plane>(layout, config.shared, config.mma_io_config)
+        }
+        DispatchConfig::Register(config) => {
+            register_allocate_rhs::<R, VR, Plane>(layout, config.shared, config.product_type)
+        }
+        DispatchConfig::PlaneVec(config) => {
+            planevec_allocate_rhs::<R, VR, Plane>(layout, config.shared, config.reduce_vector_size)
+        }
+        DispatchConfig::Interleaved(config) => {
+            interleaved_allocate_rhs::<R, VR, Plane>(layout, config.shared)
         }
     }
+}
 
-    fn allocate_acc(
-        #[comptime] layout: MatrixLayout,
-        #[comptime] config: Self::Config,
-    ) -> Tile<A, VA, Self::Scope, ReadWrite> {
-        match config {
-            DispatchConfig::Cmma(config) => {
-                cmma_allocate_acc::<A, VA, Self::Scope>(layout, config.tile_size)
-            }
-            DispatchConfig::Mma(config) => mma_allocate_acc::<A, VA, L, R, Self::Scope>(
-                layout,
-                config.shared,
-                config.mma_io_config,
-            ),
-            DispatchConfig::Register(config) => register_allocate_acc::<A, VA, Self::Scope>(
-                layout,
-                config.shared,
-                config.product_type,
-            ),
-            DispatchConfig::PlaneVec(config) => planevec_allocate_acc::<A, VA, Self::Scope>(
-                layout,
-                config.shared,
-                config.reduce_vector_size,
-            ),
-            DispatchConfig::Interleaved(config) => {
-                interleaved_allocate_acc::<A, VA, Self::Scope>(layout, config.shared)
-            }
+#[cube]
+pub(crate) fn allocate_acc_tile<A: Numeric, VA: Size, L: Numeric, R: Numeric>(
+    #[comptime] layout: MatrixLayout,
+    #[comptime] config: DispatchConfig,
+) -> Tile<A, VA, Plane, ReadWrite> {
+    match config {
+        DispatchConfig::Cmma(config) => cmma_allocate_acc::<A, VA, Plane>(layout, config.tile_size),
+        DispatchConfig::Mma(config) => {
+            mma_allocate_acc::<A, VA, L, R, Plane>(layout, config.shared, config.mma_io_config)
         }
-    }
-
-    fn load_lhs<E: Numeric, ES: Size>(
-        tile: &Tile<E, ES, Self::Scope, ReadOnly>,
-        lhs: &mut Tile<L, VL, Self::Scope, ReadWrite>,
-        #[comptime] _config: Self::Config,
-    ) {
-        lhs.copy_from::<E, ES, L, R, A, ReadOnly>(tile, StageIdent::Lhs);
-    }
-
-    fn load_rhs<E: Numeric, ES: Size>(
-        tile: &Tile<E, ES, Self::Scope, ReadOnly>,
-        rhs: &mut Tile<R, VR, Self::Scope, ReadWrite>,
-        #[comptime] _config: Self::Config,
-    ) {
-        rhs.copy_from::<E, ES, L, R, A, ReadOnly>(tile, StageIdent::Rhs);
-    }
-
-    fn load_acc<E: Numeric, ES: Size>(
-        tile: &Tile<E, ES, Self::Scope, ReadOnly>,
-        acc: &mut Tile<A, VA, Self::Scope, ReadWrite>,
-        #[comptime] _config: Self::Config,
-    ) {
-        acc.copy_from::<E, ES, L, R, A, ReadOnly>(tile, StageIdent::Acc);
-    }
-
-    fn write_results<E: Numeric, ES: Size>(
-        tile: &mut Tile<E, ES, Self::Scope, ReadWrite>,
-        out: &Tile<A, VA, Self::Scope, ReadWrite>,
-        #[comptime] _config: Self::Config,
-    ) {
-        tile.copy_from::<A, VA, L, R, A, ReadWrite>(out, StageIdent::Out);
+        DispatchConfig::Register(config) => {
+            register_allocate_acc::<A, VA, Plane>(layout, config.shared, config.product_type)
+        }
+        DispatchConfig::PlaneVec(config) => {
+            planevec_allocate_acc::<A, VA, Plane>(layout, config.shared, config.reduce_vector_size)
+        }
+        DispatchConfig::Interleaved(config) => {
+            interleaved_allocate_acc::<A, VA, Plane>(layout, config.shared)
+        }
     }
 }

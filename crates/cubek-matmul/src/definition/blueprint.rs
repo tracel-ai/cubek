@@ -10,7 +10,7 @@ use crate::{
         CubeDimResource,
         global::{LoadFlows, memory::GlobalLayoutConfig, read::ReaderMode},
         stage::PartitionBuffering,
-        tile_matmul::DispatchTileMatmul,
+        tile_matmul::TileMatmul,
     },
     definition::{MatmulElems, MatmulProblem, MatmulSetupError, TilingScheme},
     routines::DeviceSettings,
@@ -32,7 +32,7 @@ pub trait Blueprint: Debug + Clone + Eq + PartialEq + Hash {
 pub struct TilingBlueprint {
     // TODO remove
     pub plane_dim: u32,
-    pub tile_matmul: DispatchTileMatmul,
+    pub tile_matmul: TileMatmul,
     pub tiling_scheme: TilingScheme,
     pub swizzle_modes: SwizzleModes,
     pub partition_buffering: PartitionBuffering,
@@ -132,7 +132,7 @@ impl SwizzleModes {
 
 impl TilingBlueprint {
     pub fn builder(
-        tile_matmul: DispatchTileMatmul,
+        tile_matmul: TileMatmul,
         tiling_scheme: TilingScheme,
         plane_dim: u32,
         problem: &MatmulProblem,
@@ -193,7 +193,7 @@ impl TilingBlueprint {
 
 pub struct TilingBlueprintBuilder {
     plane_dim: u32,
-    tile_matmul: DispatchTileMatmul,
+    tile_matmul: TileMatmul,
     tiling_scheme: TilingScheme,
 
     check_m_bounds: bool,

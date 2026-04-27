@@ -24,7 +24,7 @@ use cubek_matmul::{
     components::{
         global::{InputLoadFlow, LoadFlows},
         stage::PartitionBuffering,
-        tile_matmul::DispatchTileMatmul,
+        tile_matmul::TileMatmul,
     },
     definition::{
         AvailableVectorSizes, MatmulElems, MatmulGlobalElems, SwizzleModes, TilingBlueprint,
@@ -131,7 +131,7 @@ pub fn test_algo<A: Algorithm<Routine: Routine<RuntimeArgs, Blueprint = TilingBl
     };
 
     let mut blueprint = TilingBlueprint::builder(
-        DispatchTileMatmul::Cmma,
+        TileMatmul::Cmma,
         tiling_scheme,
         plane_dim,
         &problem.as_matmul_problem(),

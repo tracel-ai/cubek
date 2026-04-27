@@ -18,7 +18,7 @@ use crate::{
     components::batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
     components::global::PlaneWriterFamily,
     components::global::read::FullLoadingStrategy,
-    components::tile_matmul::{DispatchTileMatmul, TileMatmulFamily as _},
+    components::tile_matmul::{TileMatmul, TileMatmulFamily as _},
 };
 use crate::{
     components::global::{
@@ -48,19 +48,19 @@ pub struct SpecializedAlgorithm<L = AsyncPartialTmaLoading, AL = SyncFullStrided
 
 #[derive(Clone)]
 pub struct SpecializedStrategy {
-    pub tile_matmul: DispatchTileMatmul,
+    pub tile_matmul: TileMatmul,
 }
 
 impl Default for SpecializedStrategy {
     fn default() -> Self {
         Self {
-            tile_matmul: DispatchTileMatmul::Cmma,
+            tile_matmul: TileMatmul::Cmma,
         }
     }
 }
 
 impl TilingArgs for SpecializedStrategy {
-    fn set_tile_matmul(&mut self, kind: DispatchTileMatmul) {
+    fn set_tile_matmul(&mut self, kind: TileMatmul) {
         self.tile_matmul = kind;
     }
 }
@@ -169,7 +169,7 @@ where
 
 #[allow(unused, reason = "needs more tuning")]
 fn infer_blueprint_specialized<R: Runtime>(
-    tile_matmul: DispatchTileMatmul,
+    tile_matmul: TileMatmul,
     client: &ComputeClient<R>,
     problem: &MatmulProblem,
     plane_dim: u32,

@@ -22,7 +22,7 @@ use crate::{
             ColMajorTilingOrder, PartitionBuffering, PlaneMatmulFamily, RowMajorTilingOrder,
             StridedStageFamily,
         },
-        tile_matmul::{DispatchTileMatmul, TileMatmulFamily as _},
+        tile_matmul::{TileMatmul, TileMatmulFamily as _},
     },
     definition::{MatmulElems, MatmulProblem, MatmulSetupError, TilingBlueprint, TilingScheme},
     launch::RuntimeConfig,
@@ -70,7 +70,7 @@ impl<RC: RuntimeConfig> Routine<RC> for VecMatInnerProductAlgorithm {
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
-        if DispatchTileMatmul::PlaneVec.can_cast_stage_element() {
+        if TileMatmul::PlaneVec.can_cast_stage_element() {
             dtypes.adjust_stage_dtypes();
         }
 
@@ -154,7 +154,7 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleVecMatInnerProductAlgorithm {
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
-        if DispatchTileMatmul::PlaneVec.can_cast_stage_element() {
+        if TileMatmul::PlaneVec.can_cast_stage_element() {
             dtypes.adjust_stage_dtypes();
         }
 
@@ -238,7 +238,7 @@ fn infer_blueprint_vecmat<R: Runtime>(
         .build();
 
     TilingBlueprint::builder(
-        DispatchTileMatmul::PlaneVec,
+        TileMatmul::PlaneVec,
         tiling_scheme,
         plane_dim,
         problem,

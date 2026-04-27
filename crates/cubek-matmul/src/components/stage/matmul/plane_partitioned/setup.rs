@@ -10,7 +10,7 @@ use crate::components::{
             partition::SharedPartitionMatmulConfig, partitioned_matmul::PartitionMatmulConfig,
         },
     },
-    tile_matmul::{DispatchConfig, DispatchTileMatmul, Plane, TileMatmulFamily},
+    tile_matmul::{DispatchConfig, Plane, TileMatmulFamily},
 };
 use crate::definition::{
     MatmulElems, MatmulSetupError, MatmulTypes, MatmulVectorSizes, TilingBlueprint,
@@ -51,7 +51,6 @@ impl<StageLhs: StageFamily, StageRhs: StageFamily, StageAcc: StageFamily> StageM
         TO: TilingLayout,
     > = PlaneMatmul<
         MP,
-        DispatchTileMatmul,
         StageLhs::Stage<STy<Lhs<MP>>, SSz<Lhs<MP>>, TL>,
         StageRhs::Stage<STy<Rhs<MP>>, SSz<Rhs<MP>>, TR>,
         StageAcc::Stage<STy<Acc<MP>>, SSz<Acc<MP>>, TA>,

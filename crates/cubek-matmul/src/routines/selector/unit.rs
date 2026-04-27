@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use crate::{
-    components::{stage::PartitionBuffering, tile_matmul::DispatchTileMatmul},
+    components::{stage::PartitionBuffering, tile_matmul::TileMatmul},
     definition::{
         MatmulElems, MatmulGlobalElems, MatmulKind, MatmulProblem, MatmulVectorSizes, SwizzleModes,
         TilingBlueprint, TilingScheme,
@@ -540,7 +540,7 @@ fn selection(
         .build();
 
     let mut builder = TilingBlueprint::builder(
-        DispatchTileMatmul::Register,
+        TileMatmul::Register,
         tiling_scheme,
         plane_dim,
         problem,

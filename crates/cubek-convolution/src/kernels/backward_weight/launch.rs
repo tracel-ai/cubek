@@ -11,7 +11,7 @@ use crate::{
     components::ConvSetupError, kernels::backward_weight::selector::launch_kernel_concrete,
 };
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
-use cubek_matmul::components::tile_matmul::DispatchTileMatmul;
+use cubek_matmul::components::tile_matmul::TileMatmul;
 use cubek_matmul::{
     definition::{AvailableVectorSizes, MatmulElems},
     routines::{BlueprintStrategy, Routine, TilingArgs},
@@ -19,10 +19,10 @@ use cubek_matmul::{
 use cubek_std::{InputBinding, MatrixLayout};
 use derive_new::new;
 
-fn tile_kind_to_dispatch(kind: &AcceleratedTileKind) -> DispatchTileMatmul {
+fn tile_kind_to_dispatch(kind: &AcceleratedTileKind) -> TileMatmul {
     match kind {
-        AcceleratedTileKind::Cmma => DispatchTileMatmul::Cmma,
-        AcceleratedTileKind::Mma => DispatchTileMatmul::Mma,
+        AcceleratedTileKind::Cmma => TileMatmul::Cmma,
+        AcceleratedTileKind::Mma => TileMatmul::Mma,
     }
 }
 
@@ -75,7 +75,7 @@ struct BackwardsWeight<'a, R: Runtime, const N_SPATIAL: usize> {
 }
 
 impl<'a, R: Runtime, const N_SPATIAL: usize> BackwardsWeight<'a, R, N_SPATIAL> {
-    fn launch<Alg: Algorithm>(self, tile_matmul: DispatchTileMatmul) -> Result<(), ConvSetupError>
+    fn launch<Alg: Algorithm>(self, tile_matmul: TileMatmul) -> Result<(), ConvSetupError>
     where
         Alg::Args: ConcreteArgs<Alg::Routine>,
         <Alg::Routine as Routine<RuntimeArgs>>::Strategy: TilingArgs,
@@ -114,7 +114,7 @@ fn launch_with_algorithm<R: Runtime, Alg: Algorithm>(
     weight_grad: TensorBinding<R>,
     (stride, padding, dilation): (&[usize], &[usize], &[usize]),
     dimensionality: Dimensionality,
-    tile_matmul: DispatchTileMatmul,
+    tile_matmul: TileMatmul,
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError>
 where

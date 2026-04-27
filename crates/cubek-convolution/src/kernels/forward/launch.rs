@@ -13,17 +13,17 @@ use crate::{components::ConvSetupError, kernels::forward::selector::launch_kerne
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_matmul::routines::{BlueprintStrategy, TilingArgs};
 use cubek_matmul::{
-    components::tile_matmul::DispatchTileMatmul,
+    components::tile_matmul::TileMatmul,
     definition::{AvailableVectorSizes, MatmulElems},
     routines::Routine,
 };
 use cubek_std::{InputBinding, MatrixLayout};
 use derive_new::new;
 
-fn tile_kind_to_dispatch(kind: &AcceleratedTileKind) -> DispatchTileMatmul {
+fn tile_kind_to_dispatch(kind: &AcceleratedTileKind) -> TileMatmul {
     match kind {
-        AcceleratedTileKind::Cmma => DispatchTileMatmul::Cmma,
-        AcceleratedTileKind::Mma => DispatchTileMatmul::Mma,
+        AcceleratedTileKind::Cmma => TileMatmul::Cmma,
+        AcceleratedTileKind::Mma => TileMatmul::Mma,
     }
 }
 
@@ -78,7 +78,7 @@ struct Convolution<'a, R: Runtime, const N_SPATIAL: usize> {
 }
 
 impl<'a, R: Runtime, const N_SPATIAL: usize> Convolution<'a, R, N_SPATIAL> {
-    fn launch<Alg: Algorithm>(self, tile_matmul: DispatchTileMatmul) -> Result<(), ConvSetupError>
+    fn launch<Alg: Algorithm>(self, tile_matmul: TileMatmul) -> Result<(), ConvSetupError>
     where
         Alg::Args: ConcreteArgs<Alg::Routine>,
         <Alg::Routine as Routine<RuntimeArgs>>::Strategy: TilingArgs,
