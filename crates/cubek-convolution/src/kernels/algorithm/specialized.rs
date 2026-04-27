@@ -2,7 +2,9 @@ use cubecl::{
     Runtime, client::ComputeClient, ir::StorageType, prelude::TensorBinding, server::LaunchError,
 };
 use cubek_matmul::{
-    components::global::read::{AsyncPartialLoadingStrategy, async_partial_tma::AsyncPartialTmaLoading},
+    components::global::read::{
+        AsyncPartialLoadingStrategy, async_partial_tma::AsyncPartialTmaLoading,
+    },
     definition::AvailableVectorSizes,
     launch::{TensorArgs, TensorMapArgs},
     routines::specialized::SpecializedAlgorithm,

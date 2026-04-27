@@ -13,8 +13,7 @@ use crate::components::{
     tile_matmul::{DispatchConfig, DispatchTileMatmul, Plane, TileMatmulFamily},
 };
 use crate::definition::{
-    Acc, Lhs, MatmulElems, MatmulSetupError, MatmulTypes, MatmulVectorSizes, MatrixTypes, Rhs,
-    TilingBlueprint,
+    Acc, Lhs, MatmulElems, MatmulSetupError, MatmulTypes, MatmulVectorSizes, Rhs, TilingBlueprint,
 };
 use core::marker::PhantomData;
 use cubecl::{ir::DeviceProperties, prelude::*};
@@ -112,9 +111,12 @@ impl<StageIn: StageFamily, StageAcc: StageFamily> StageMatmulFamily
         Ok(PartitionMatmulConfig::Unit(
             UnitPartitionedStageConfig::from_shared_partition_config(
                 SharedPartitionMatmulConfig::new(
-                    blueprint
-                        .tile_matmul
-                        .expand_config(device_props, blueprint, dtypes, vector_sizes)?,
+                    blueprint.tile_matmul.expand_config(
+                        device_props,
+                        blueprint,
+                        dtypes,
+                        vector_sizes,
+                    )?,
                     blueprint.tiling_scheme.partition_size,
                     blueprint.partition_buffering,
                     plane_flow_config,

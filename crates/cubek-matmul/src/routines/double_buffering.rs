@@ -258,4 +258,3 @@ double_buffering_impl!(
         RowMajorGlobalPartitionMatmul,
     >
 );
-

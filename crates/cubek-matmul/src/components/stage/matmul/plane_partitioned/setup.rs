@@ -13,7 +13,7 @@ use crate::components::{
     tile_matmul::{DispatchConfig, DispatchTileMatmul, Plane, TileMatmulFamily},
 };
 use crate::definition::{
-    MatmulElems, MatmulSetupError, MatmulTypes, MatmulVectorSizes, MatrixTypes, TilingBlueprint,
+    MatmulElems, MatmulSetupError, MatmulTypes, MatmulVectorSizes, TilingBlueprint,
 };
 use crate::{
     components::stage::TilingLayout,
@@ -118,9 +118,12 @@ impl<StageLhs: StageFamily, StageRhs: StageFamily, StageAcc: StageFamily> StageM
         Ok(PartitionMatmulConfig::Plane(
             PlanePartitionedStageConfig::from_shared_partition_config(
                 SharedPartitionMatmulConfig::new(
-                    blueprint
-                        .tile_matmul
-                        .expand_config(device_props, blueprint, dtypes, vector_sizes)?,
+                    blueprint.tile_matmul.expand_config(
+                        device_props,
+                        blueprint,
+                        dtypes,
+                        vector_sizes,
+                    )?,
                     blueprint.tiling_scheme.partition_size,
                     blueprint.partition_buffering,
                     plane_flow_config,

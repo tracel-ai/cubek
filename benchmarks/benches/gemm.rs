@@ -293,11 +293,12 @@ fn run_grid_search<R: Runtime, MP: MatmulPrecision>() {
                     .global_order(GlobalOrder::default())
                     .cube_count_strategy(CubeCountStrategy::Flattened)
                     .build();
-                let blueprint = TilingBlueprint::builder(DispatchTileMatmul::Cmma, tiling, plane_dim, &problem)
-                    .partition_buffering(PartitionBuffering::Single)
-                    .hypercube_blueprint(hypercube)
-                    .loading_precompute_strategy(LoadingPrecomputeStrategy::Always)
-                    .build();
+                let blueprint =
+                    TilingBlueprint::builder(DispatchTileMatmul::Cmma, tiling, plane_dim, &problem)
+                        .partition_buffering(PartitionBuffering::Single)
+                        .hypercube_blueprint(hypercube)
+                        .loading_precompute_strategy(LoadingPrecomputeStrategy::Always)
+                        .build();
                 let result = run_one::<R, MP>(
                     Default::default(),
                     Strategy::SimpleCyclicCmma(BlueprintStrategy::Forced(blueprint.clone())),

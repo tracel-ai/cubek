@@ -38,10 +38,7 @@ use crate::{
 use super::Algorithm;
 
 /// Cmma convolution
-pub struct SimpleConv<
-    LL: FullLoadingStrategy<RuntimeArgs>,
-    LR: FullLoadingStrategy<RuntimeArgs>,
-> {
+pub struct SimpleConv<LL: FullLoadingStrategy<RuntimeArgs>, LR: FullLoadingStrategy<RuntimeArgs>> {
     _loader: PhantomData<(LL, LR)>,
 }
 

@@ -13,6 +13,7 @@ use cubek_convolution::{
 };
 use cubek_convolution::{forward::args::ConcreteArgs, kernels::algorithm::Algorithm};
 use cubek_matmul::launch::{InputArg, OutputArg};
+use cubek_matmul::{components::stage::PartitionBuffering, routines::Routine};
 use cubek_matmul::{
     components::{
         global::{InputLoadFlow, LoadFlows},
@@ -20,7 +21,6 @@ use cubek_matmul::{
     },
     definition::{MatmulElems, MatmulGlobalElems, SwizzleModes, TilingBlueprint, TilingScheme},
 };
-use cubek_matmul::{components::stage::PartitionBuffering, routines::Routine};
 use cubek_std::MatrixLayout;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]

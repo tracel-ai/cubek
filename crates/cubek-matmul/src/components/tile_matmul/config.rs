@@ -3,8 +3,6 @@ use cubek_std::{TileSize, stage::SwizzleMode, tile::mma::MmaIOConfig};
 use crate::{definition::StageIdent, definition::SwizzleModes};
 use std::{fmt::Debug, hash::Hash};
 
-
-
 /// Execution mode for the RegisterMatmul
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum ProductType {

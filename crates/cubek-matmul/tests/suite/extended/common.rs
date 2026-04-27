@@ -2,9 +2,7 @@
 
 use cubecl::{Runtime, TestRuntime, client::ComputeClient, ir::AddressType, zspace::shape};
 use cubek_matmul::{
-    components::{
-        global::LoadFlows, stage::PartitionBuffering, tile_matmul::DispatchTileMatmul,
-    },
+    components::{global::LoadFlows, stage::PartitionBuffering, tile_matmul::DispatchTileMatmul},
     definition::{
         MatmulElems, MatmulGlobalElems, MatmulProblem, SwizzleModes, TilingBlueprint, TilingScheme,
     },

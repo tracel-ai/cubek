@@ -1,12 +1,14 @@
+use crate::components::resource::CubeDimResource;
 use crate::components::tile_matmul::dispatch::DispatchTileMatmul;
 use crate::components::tile_matmul::dispatch::config::DispatchConfig;
 use crate::components::tile_matmul::{
     InterleavedMatmulConfig, MmaMatmulConfig, Plane, PlaneVecMatInnerProductConfig,
     RegisterMatmulConfig, SharedTileConfig, TileMatmulFamily,
 };
-use crate::components::resource::CubeDimResource;
 use crate::definition::TilingBlueprint;
-use crate::definition::{MatmulAvailabilityError, MatmulElems, MatmulSetupError, MatmulVectorSizes};
+use crate::definition::{
+    MatmulAvailabilityError, MatmulElems, MatmulSetupError, MatmulVectorSizes,
+};
 use cubecl::{
     features::{MmaConfig, Plane as PlaneFeature, TypeUsage},
     ir::{DeviceProperties, ElemType, FloatKind, StorageType},
@@ -461,7 +463,11 @@ fn check_types_available<R: Runtime>(
     require_plane_ops: bool,
 ) -> Result<(), MatmulSetupError> {
     if require_plane_ops
-        && !client.properties().features.plane.contains(PlaneFeature::Ops)
+        && !client
+            .properties()
+            .features
+            .plane
+            .contains(PlaneFeature::Ops)
     {
         return Err(MatmulSetupError::Unavailable(
             MatmulAvailabilityError::PlaneOpsUnavailable,

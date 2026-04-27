@@ -57,9 +57,11 @@ pub fn launch_ref<R: Runtime, const N_SPATIAL: usize>(
                 ReadingStrategy::Tilewise => backprop.launch::<SimpleSyncTilewiseConv>(kind),
                 ReadingStrategy::AsyncCyclic => backprop.launch::<SimpleAsyncCyclicConv>(kind),
                 ReadingStrategy::AsyncStrided => backprop.launch::<SimpleAsyncStridedConv>(kind),
-                ReadingStrategy::Tma => Err(ConvSetupError::Matmul(MatmulSetupError::InvalidConfig(
-                    Box::new("Data backprop doesn't yet work with current TMA tiling strategy"),
-                ))),
+                ReadingStrategy::Tma => {
+                    Err(ConvSetupError::Matmul(MatmulSetupError::InvalidConfig(
+                        Box::new("Data backprop doesn't yet work with current TMA tiling strategy"),
+                    )))
+                }
             }
         }
     }

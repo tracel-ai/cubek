@@ -29,9 +29,9 @@ use crate::{
     },
 };
 use crate::{
+    routines::ExpandInfo,
     routines::{BlueprintStrategy, DeviceSettings, LaunchInfo},
     {components::batch::BatchMatmulFamily, launch::RuntimeConfig},
-    routines::ExpandInfo,
 };
 
 /// Plane accelerated single stage matmul with configurable readers (default to cyclic)
@@ -273,10 +273,15 @@ fn infer_blueprint_multi_rows<R: Runtime>(
             .build();
 
         Ok((
-            TilingBlueprint::builder(DispatchTileMatmul::Interleaved, tiling_scheme, plane_dim, problem)
-                .partition_buffering(PartitionBuffering::Single)
-                .hypercube_blueprint(hypercube)
-                .build(),
+            TilingBlueprint::builder(
+                DispatchTileMatmul::Interleaved,
+                tiling_scheme,
+                plane_dim,
+                problem,
+            )
+            .partition_buffering(PartitionBuffering::Single)
+            .hypercube_blueprint(hypercube)
+            .build(),
             dtypes,
         ))
     } else if supported(8, 8, 8) {
@@ -292,10 +297,15 @@ fn infer_blueprint_multi_rows<R: Runtime>(
             .build();
 
         Ok((
-            TilingBlueprint::builder(DispatchTileMatmul::Interleaved, tiling_scheme, plane_dim, problem)
-                .partition_buffering(PartitionBuffering::Single)
-                .hypercube_blueprint(hypercube)
-                .build(),
+            TilingBlueprint::builder(
+                DispatchTileMatmul::Interleaved,
+                tiling_scheme,
+                plane_dim,
+                problem,
+            )
+            .partition_buffering(PartitionBuffering::Single)
+            .hypercube_blueprint(hypercube)
+            .build(),
             dtypes,
         ))
     } else {

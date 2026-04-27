@@ -93,38 +93,18 @@ impl TestStrategy {
     ) -> Result<(), MatmulSetupError> {
         use DispatchTileMatmul::{Cmma, Mma};
         match self {
-            Self::SimpleBarrierCooperativeCmma(sel) => launch_tiling::launch_ref(
-                client,
-                lhs,
-                rhs,
-                out,
-                &with_kind(sel, Cmma),
-                dtypes,
-            ),
-            Self::SimpleBarrierCooperativeMma(sel) => launch_tiling::launch_ref(
-                client,
-                lhs,
-                rhs,
-                out,
-                &with_kind(sel, Mma),
-                dtypes,
-            ),
-            Self::SimpleBarrierCyclicCmma(sel) => launch_tiling::launch_ref(
-                client,
-                lhs,
-                rhs,
-                out,
-                &with_kind(sel, Cmma),
-                dtypes,
-            ),
-            Self::SimpleBarrierCyclicMma(sel) => launch_tiling::launch_ref(
-                client,
-                lhs,
-                rhs,
-                out,
-                &with_kind(sel, Mma),
-                dtypes,
-            ),
+            Self::SimpleBarrierCooperativeCmma(sel) => {
+                launch_tiling::launch_ref(client, lhs, rhs, out, &with_kind(sel, Cmma), dtypes)
+            }
+            Self::SimpleBarrierCooperativeMma(sel) => {
+                launch_tiling::launch_ref(client, lhs, rhs, out, &with_kind(sel, Mma), dtypes)
+            }
+            Self::SimpleBarrierCyclicCmma(sel) => {
+                launch_tiling::launch_ref(client, lhs, rhs, out, &with_kind(sel, Cmma), dtypes)
+            }
+            Self::SimpleBarrierCyclicMma(sel) => {
+                launch_tiling::launch_ref(client, lhs, rhs, out, &with_kind(sel, Mma), dtypes)
+            }
             Self::Interleaved(sel) => launch_tiling::launch_ref(client, lhs, rhs, out, sel, dtypes),
         }
     }

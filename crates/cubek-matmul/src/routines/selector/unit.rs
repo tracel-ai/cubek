@@ -539,10 +539,14 @@ fn selection(
         .cube_count_strategy(cube_count_strategy)
         .build();
 
-    let mut builder =
-        TilingBlueprint::builder(DispatchTileMatmul::Register, tiling_scheme, plane_dim, problem)
-            .partition_buffering(buffering)
-            .hypercube_blueprint(hypercube);
+    let mut builder = TilingBlueprint::builder(
+        DispatchTileMatmul::Register,
+        tiling_scheme,
+        plane_dim,
+        problem,
+    )
+    .partition_buffering(buffering)
+    .hypercube_blueprint(hypercube);
 
     if swizzle {
         let lhs_swizzle_dim = match problem.lhs_layout {
