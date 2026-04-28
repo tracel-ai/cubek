@@ -5,8 +5,7 @@ use cubecl::{
     {self, Runtime, TestRuntime},
 };
 use cubek_test_utils::{
-    DataKind, HostData, HostDataType, StrideSpec, TestInput, TestOutcome, ValidationResult,
-    pretty_print_zip,
+    HostData, HostDataType, TestInput, TestOutcome, ValidationResult, pretty_print_zip,
 };
 
 #[cube(launch)]
@@ -79,32 +78,20 @@ pub fn print_mma_layout<AB: CubeElement + Numeric, CD: CubeElement + Numeric>(
         MatrixIdent::Accumulator => (m, n, CD::as_type_native_unchecked().storage_type()),
     };
 
-    let lane_tensor = TestInput::new(
-        client.clone(),
-        [rows, cols],
-        dtype,
-        StrideSpec::RowMajor,
-        DataKind::Zeros,
-    )
-    .generate();
+    let lane_tensor = TestInput::builder(client.clone(), [rows, cols])
+        .dtype(dtype)
+        .zeros()
+        .generate();
 
-    let vector_tensor = TestInput::new(
-        client.clone(),
-        [rows, cols],
-        dtype,
-        StrideSpec::RowMajor,
-        DataKind::Zeros,
-    )
-    .generate();
+    let vector_tensor = TestInput::builder(client.clone(), [rows, cols])
+        .dtype(dtype)
+        .zeros()
+        .generate();
 
-    let within_vector_tensor = TestInput::new(
-        client.clone(),
-        [rows, cols],
-        dtype,
-        StrideSpec::RowMajor,
-        DataKind::Zeros,
-    )
-    .generate();
+    let within_vector_tensor = TestInput::builder(client.clone(), [rows, cols])
+        .dtype(dtype)
+        .zeros()
+        .generate();
 
     match ident {
         MatrixIdent::A | MatrixIdent::B => {

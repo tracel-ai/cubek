@@ -230,6 +230,7 @@ fn run_algos_gemv<R: Runtime, E: frontend::Float>(device: &R::Device) {
         device,
         Strategy::SimpleCyclicCmma(BlueprintStrategy::Inferred(SimpleArgs {
             multi_rows: false,
+            ..Default::default()
         })),
     );
 }

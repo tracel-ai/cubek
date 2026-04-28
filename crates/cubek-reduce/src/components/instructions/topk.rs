@@ -4,7 +4,7 @@ use cubecl::frontend::CubeIndexMutExpand;
 use cubecl::prelude::*;
 
 use crate::components::instructions::AccumulatorFormat;
-use crate::components::instructions::plane_argtopk_merge;
+use crate::components::instructions::plane_topk_merge;
 use crate::components::instructions::plane_topk_insert;
 use crate::components::instructions::{Accumulator, Item, Value};
 use crate::{
@@ -141,7 +141,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
     }
 
     fn plane_reduce_inplace(this: &Self, accumulator: &mut Accumulator<P>) {
-        plane_argtopk_merge(
+        plane_topk_merge(
             accumulator.elements.multiple_mut(),
             &mut accumulator.args,
             this.k,

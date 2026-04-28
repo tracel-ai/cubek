@@ -7,13 +7,14 @@ use cubecl::{
     zspace::{Shape, Strides},
 };
 use cubecl_common::quant::scheme::QuantScheme;
-use cubek_quant::scheme::{QuantLevel, QuantStore};
+use cubek_quant::scheme::QuantStore;
 
 use crate::test_tensor::{
     arange::build_arange,
     custom::build_custom,
     eye::build_eye,
     host_data::{HostData, HostDataType},
+    quant::apply_quantization,
     random::build_random,
     strides::StrideSpec,
     zeros::build_zeros,
@@ -124,6 +125,19 @@ pub enum DataKind {
 }
 
 impl TestInput {
+    /// Start a fluent builder for a test input.
+    ///
+    /// Defaults: `dtype = f32`, `stride = RowMajor`. Call `.dtype(_)` /
+    /// `.stride(_)` to override, then a finalizer such as `.arange()`,
+    /// `.eye()`, `.zeros()`, `.uniform(seed, lo, hi)`, `.bernoulli(seed, p)`,
+    /// or `.custom(data)` to produce a [`TestInput`] ready to generate.
+    pub fn builder(
+        client: ComputeClient<TestRuntime>,
+        shape: impl Into<Shape>,
+    ) -> TestInputBuilder {
+        TestInputBuilder::new(client, shape.into())
+    }
+
     pub fn new(
         client: ComputeClient<TestRuntime>,
         shape: impl Into<Shape>,
@@ -175,86 +189,7 @@ impl TestInput {
         };
 
         if let InputDataType::Quantized(scheme) = input_dtype {
-            let original_shape = tensor.handle.shape().clone();
-
-            // Derive the scale tensor from the quant value's range. For
-            // `QuantLevel::Tensor` a single scale is used; for
-            // `QuantLevel::Block` we compute a per-block scale from the host
-            // data so each block fully uses the quant range without clipping.
-            let (scales_shape, scales_data) = compute_input_scales(&tensor.host, &scheme);
-            let scale_handle = TestInput::new(
-                client.clone(),
-                scales_shape.clone(),
-                InputDataType::Standard(f32::as_type_native_unchecked().storage_type()),
-                StrideSpec::RowMajor,
-                DataKind::Custom { data: scales_data },
-            )
-            .generate();
-
-            // Determine the correct storage type for the quantized output buffer
-            let output_storage_type = match &scheme.store {
-                QuantStore::PackedU32(_) => {
-                    StorageType::Scalar(ElemType::UInt(cubecl::ir::UIntKind::U32))
-                }
-                QuantStore::PackedNative(_) | QuantStore::Native => {
-                    StorageType::Scalar(ElemType::from_quant_value(scheme.value))
-                }
-            };
-
-            let mut quant_shape = original_shape.clone();
-            let num_quants = scheme.num_quants();
-            // Only divide last dim for PackedU32/PackedNative; Native stores 1:1
-            match &scheme.store {
-                QuantStore::PackedU32(_) | QuantStore::PackedNative(_) => {
-                    if num_quants > 1 {
-                        let last_dim = quant_shape.len() - 1;
-                        quant_shape[last_dim] /= num_quants;
-                    }
-                }
-                QuantStore::Native => {}
-            }
-
-            let output_handle = TestInput::new(
-                client.clone(),
-                quant_shape,
-                InputDataType::Standard(output_storage_type),
-                StrideSpec::RowMajor,
-                DataKind::Zeros,
-            )
-            .generate();
-
-            let out_scale_handle = TestInput::new(
-                client.clone(),
-                scales_shape,
-                InputDataType::Standard(f32::as_type_native_unchecked().storage_type()),
-                StrideSpec::RowMajor,
-                DataKind::Zeros,
-            )
-            .generate();
-
-            let input_elem = match tensor.handle.dtype {
-                StorageType::Scalar(elem) => elem,
-                _ => panic!("Unsupported storage type {:?}", tensor.handle.dtype),
-            };
-
-            cubek_quant::quantize::launch_ref(
-                &client,
-                tensor.handle.binding(),
-                output_handle.clone().binding(),
-                scale_handle.binding(),
-                out_scale_handle.clone().binding(),
-                &scheme,
-                input_elem,
-            )
-            .expect("Quantization failed");
-
-            // Keep the packed shape on the handle
-            tensor.handle = output_handle;
-            tensor.quantization = Some(QuantizationInfo {
-                scheme,
-                scale: out_scale_handle,
-                shape: original_shape,
-            });
+            apply_quantization(&client, &mut tensor, scheme);
         }
 
         tensor
@@ -310,82 +245,6 @@ impl TestInput {
     }
 }
 
-/// Compute the scale tensor shape and values for a quantized input.
-///
-/// For `QuantLevel::Tensor` this returns a single-element scale based on the
-/// quant value's range (assumes input in [-1, 1]). For `QuantLevel::Block`
-/// each block gets its own scale derived from `max(|value|)` in that block,
-/// matching the reference pattern used by the cubek-quant symmetric tests.
-fn compute_input_scales(host: &HostData, scheme: &QuantScheme) -> (Shape, Vec<f32>) {
-    let (q_min, q_max) = scheme.value.range();
-    let max_abs_q = q_max.abs().max(q_min.abs());
-
-    match &scheme.level {
-        QuantLevel::Tensor => {
-            let shape: Shape = core::iter::repeat_n(1, host.shape.len()).collect();
-            (shape, vec![1.0 / max_abs_q])
-        }
-        QuantLevel::Block(block_size) => {
-            let rank = host.shape.len();
-            let block_dims: Vec<usize> = block_size
-                .to_dim_vec(rank)
-                .into_iter()
-                .map(|b| b as usize)
-                .collect();
-
-            let scales_shape: Shape = host
-                .shape
-                .iter()
-                .zip(block_dims.iter())
-                .map(|(d, b)| {
-                    assert!(
-                        d.is_multiple_of(*b),
-                        "Block size {b} must divide dimension {d}",
-                    );
-                    d / b
-                })
-                .collect();
-
-            let num_blocks: usize = scales_shape.iter().product();
-            let block_elem_count: usize = block_dims.iter().product();
-
-            let mut scales = Vec::with_capacity(num_blocks);
-            let mut data_idx = vec![0usize; rank];
-            for block_linear in 0..num_blocks {
-                // Decode the flat block index into per-dim block indices.
-                let mut block_idx = vec![0usize; rank];
-                let mut rem = block_linear;
-                for d in (0..rank).rev() {
-                    block_idx[d] = rem % scales_shape[d];
-                    rem /= scales_shape[d];
-                }
-
-                let mut block_max = 0.0_f32;
-                for elem_linear in 0..block_elem_count {
-                    let mut rem = elem_linear;
-                    for d in (0..rank).rev() {
-                        let within = rem % block_dims[d];
-                        data_idx[d] = block_idx[d] * block_dims[d] + within;
-                        rem /= block_dims[d];
-                    }
-                    block_max = block_max.max(host.get_f32(&data_idx).abs());
-                }
-
-                // Guard against an all-zero block producing a zero scale that
-                // would divide-by-zero inside the quantize kernel.
-                let scale = if block_max > 0.0 {
-                    block_max / max_abs_q
-                } else {
-                    1.0 / max_abs_q
-                };
-                scales.push(scale);
-            }
-
-            (scales_shape, scales)
-        }
-    }
-}
-
 pub struct BaseInputSpec {
     pub client: ComputeClient<TestRuntime>,
     pub shape: Shape,
@@ -406,8 +265,126 @@ pub struct RandomInputSpec {
 
 #[derive(Copy, Clone)]
 pub enum Distribution {
-    // lower, upper bounds
+    /// Uniform random over `[lower, upper]`.
     Uniform(f32, f32),
-    // prob
+    /// Bernoulli random with probability `prob` of `1`.
     Bernoulli(f32),
+    /// Normal (Gaussian) random with the given `mean` and `std`.
+    Normal { mean: f32, std: f32 },
+}
+
+/// Fluent builder for [`TestInput`].
+///
+/// Use [`TestInput::builder`] to start one. The builder holds the shape,
+/// dtype, and stride spec. Call a finalizer (`arange`, `eye`, `zeros`,
+/// `uniform`, `bernoulli`, `random`, `custom`) to produce a [`TestInput`]
+/// ready to generate a tensor handle, host data, or test tensor.
+///
+/// # Example
+///
+/// ```ignore
+/// use cubek_test_utils::{TestInput, StrideSpec, Distribution};
+///
+/// let (handle, host) = TestInput::builder(client, [4, 4])
+///     .stride(StrideSpec::ColMajor)
+///     .uniform( 0, -1.0, 1.0)
+///     .generate_with_f32_host_data();
+/// ```
+pub struct TestInputBuilder {
+    client: ComputeClient<TestRuntime>,
+    shape: Shape,
+    dtype: Option<InputDataType>,
+    stride_spec: StrideSpec,
+}
+
+impl TestInputBuilder {
+    fn new(client: ComputeClient<TestRuntime>, shape: Shape) -> Self {
+        Self {
+            client,
+            shape,
+            dtype: None,
+            stride_spec: StrideSpec::RowMajor,
+        }
+    }
+
+    /// Override the dtype. Defaults to f32.
+    pub fn dtype(mut self, dtype: impl Into<InputDataType>) -> Self {
+        self.dtype = Some(dtype.into());
+        self
+    }
+
+    /// Override the stride layout. Defaults to [`StrideSpec::RowMajor`].
+    pub fn stride(mut self, stride_spec: StrideSpec) -> Self {
+        self.stride_spec = stride_spec;
+        self
+    }
+
+    fn finalize(self, data_kind: DataKind) -> TestInput {
+        let dtype = self.dtype.unwrap_or_else(|| {
+            InputDataType::Standard(f32::as_type_native_unchecked().storage_type())
+        });
+        TestInput::new(self.client, self.shape, dtype, self.stride_spec, data_kind)
+    }
+
+    /// `0, 1, 2, …` in row-major order.
+    pub fn arange(self) -> TestInput {
+        self.finalize(DataKind::Arange { scale: None })
+    }
+
+    /// `arange` with each value multiplied by `scale`.
+    pub fn arange_scaled(self, scale: f32) -> TestInput {
+        self.finalize(DataKind::Arange { scale: Some(scale) })
+    }
+
+    /// Identity matrix (1 on the diagonal, 0 elsewhere).
+    pub fn eye(self) -> TestInput {
+        self.finalize(DataKind::Eye)
+    }
+
+    /// All-zeros tensor.
+    pub fn zeros(self) -> TestInput {
+        self.finalize(DataKind::Zeros)
+    }
+
+    /// Random tensor with a custom [`Distribution`].
+    pub fn random(self, seed: u64, distribution: Distribution) -> TestInput {
+        self.finalize(DataKind::Random { seed, distribution })
+    }
+
+    /// Uniform random in `[lo, hi]`.
+    pub fn uniform(self, seed: u64, lo: f32, hi: f32) -> TestInput {
+        self.random(seed, Distribution::Uniform(lo, hi))
+    }
+
+    /// Bernoulli random with probability `p` of 1.
+    pub fn bernoulli(self, seed: u64, p: f32) -> TestInput {
+        self.random(seed, Distribution::Bernoulli(p))
+    }
+
+    /// Normal (Gaussian) random with the given `mean` and `std`.
+    pub fn normal(self, seed: u64, mean: f32, std: f32) -> TestInput {
+        self.random(seed, Distribution::Normal { mean, std })
+    }
+
+    /// Tensor populated from an explicit row-major `Vec<f32>`.
+    pub fn custom(self, data: Vec<f32>) -> TestInput {
+        self.finalize(DataKind::Custom { data })
+    }
+
+    /// Evenly-spaced values from `start` to `end` inclusive, populated in
+    /// row-major order. The number of points equals the tensor's element count.
+    ///
+    /// Equivalent to NumPy's `np.linspace(start, end, num=shape.numel()).reshape(shape)`.
+    pub fn linspace(self, start: f32, end: f32) -> TestInput {
+        let num_elems: usize = self.shape.iter().product();
+        let data = if num_elems == 0 {
+            Vec::new()
+        } else if num_elems == 1 {
+            vec![start]
+        } else {
+            let step = (end - start) / (num_elems - 1) as f32;
+            (0..num_elems).map(|i| start + step * i as f32).collect()
+        };
+        self.finalize(DataKind::Custom { data })
+    }
 }

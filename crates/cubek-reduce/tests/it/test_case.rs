@@ -11,8 +11,8 @@ use cubek_reduce::{
     reduce,
 };
 use cubek_test_utils::{
-    DataKind, ExecutionOutcome, HostData, HostDataType, HostDataVec, StrideSpec, TestInput,
-    TestOutcome, assert_equals_approx,
+    ExecutionOutcome, HostData, HostDataType, HostDataVec, StrideSpec, TestInput, TestOutcome,
+    assert_equals_approx,
 };
 
 use crate::it::reference::{
@@ -168,17 +168,11 @@ impl TestCase {
         let client = TestRuntime::client(&Default::default());
         let axis = self.axis.unwrap();
 
-        let (input_handle, input_host) = TestInput::new(
-            client.clone(),
-            self.shape.clone(),
-            self.input_dtype,
-            StrideSpec::Custom(self.stride.iter().copied().collect()),
-            DataKind::Random {
-                seed: 1234,
-                distribution: cubek_test_utils::Distribution::Uniform(-1., 1.),
-            },
-        )
-        .generate_with_f32_host_data();
+        let (input_handle, input_host) = TestInput::builder(client.clone(), self.shape.clone())
+            .dtype(self.input_dtype)
+            .stride(StrideSpec::Custom(self.stride.iter().copied().collect()))
+            .uniform(1234, -1., 1.)
+            .generate_with_f32_host_data();
 
         let expected = cast_host_through_dtype(reference(&input_host, axis), output_dtype);
 
@@ -240,14 +234,11 @@ impl TestCase {
             }
             _ => contiguous_strides(output_shape.as_slice()),
         };
-        TestInput::new(
-            client.clone(),
-            output_shape.clone(),
-            output_dtype,
-            StrideSpec::Custom(strides.iter().copied().collect()),
-            DataKind::Zeros,
-        )
-        .generate()
+        TestInput::builder(client.clone(), output_shape.clone())
+            .dtype(output_dtype)
+            .stride(StrideSpec::Custom(strides.iter().copied().collect()))
+            .zeros()
+            .generate()
     }
 }
 

@@ -24,6 +24,7 @@ jobs:
   publish-cubek-test-utils:
     needs:
       - publish-cubek-random
+      - publish-cubek-quant
     uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v8
     with:
       crate: cubek-test-utils
@@ -32,9 +33,6 @@ jobs:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
 
   publish-cubek-quant:
-    needs:
-      - publish-cubek-random
-      - publish-cubek-test-utils
     uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v8
     with:
       crate: cubek-quant

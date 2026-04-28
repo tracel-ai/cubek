@@ -129,7 +129,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatPlaneParallel<MP> {
         let check_bounds = config.check_bounds;
 
         match config.plan {
-            GemvKind::VecMatColMajor => execute_gemv::<LhsG<MP>, RhsG<MP>, AccG<MP>, AccR<MP>, N>(
+            GemvKind::VecMatColMajor => execute_gemv::<LhsG<MP>, RhsG<MP>, AccG<MP>, AccRE<MP>, N>(
                 lhs.view(VecLayout::new(lhs_batch, k as usize)),
                 rhs.view(MatLayout::new(rhs_batch, (k, n))),
                 out.view_mut(VecLayout::new(out_batch, n as usize)),
@@ -145,7 +145,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatPlaneParallel<MP> {
                 Global<Lhs<MP>>,
                 Global<Rhs<MP>>,
                 AccG<MP>,
-                AccR<MP>,
+                AccRE<MP>,
                 Stage<Rhs<MP>>,
                 GlobalSize<Lhs<MP>>,
                 GlobalSize<Rhs<MP>>,
@@ -159,7 +159,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatPlaneParallel<MP> {
                 MatrixLayout::RowMajor,
                 check_bounds,
             ),
-            GemvKind::MatVecRowMajor => execute_gemv::<RhsG<MP>, LhsG<MP>, AccG<MP>, AccR<MP>, N>(
+            GemvKind::MatVecRowMajor => execute_gemv::<RhsG<MP>, LhsG<MP>, AccG<MP>, AccRE<MP>, N>(
                 rhs.view(VecLayout::new(rhs_batch, k as usize)),
                 lhs.view(MatLayout::new(lhs_batch, (m, k))),
                 out.view_mut(VecLayout::new(out_batch, m as usize)),
@@ -175,7 +175,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatPlaneParallel<MP> {
                 Global<Rhs<MP>>,
                 Global<Lhs<MP>>,
                 AccG<MP>,
-                AccR<MP>,
+                AccRE<MP>,
                 Stage<Lhs<MP>>,
                 GlobalSize<Rhs<MP>>,
                 GlobalSize<Lhs<MP>>,

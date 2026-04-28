@@ -21,8 +21,8 @@ extended = ["basic"]
 full = ["extended"]
 
 [dependencies]
-cubek-random = { path = "../cubek-random", version = "=0.2.0-pre.3", default-features = false }
-cubek-quant = { path = "../cubek-quant", version = "=0.2.0-pre.3" }
+cubek-random = { path = "../cubek-random", version = "=0.2.0-pre.4", default-features = false }
+cubek-quant = { path = "../cubek-quant", version = "=0.2.0-pre.4" }
 
 bytemuck = { workspace = true }
 cubecl = { workspace = true, features = ["stdlib", "test-runtime"] }

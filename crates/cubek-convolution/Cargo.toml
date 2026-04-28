@@ -22,8 +22,8 @@ full = ["extended"]
 [dependencies]
 cubecl = { workspace = true, features = ["stdlib"] }
 cubecl-common = { workspace = true }
-cubek-matmul = { path = "../cubek-matmul", default-features = false, version = "=0.2.0-pre.3" }
-cubek-std = { path = "../cubek-std", default-features = false, version = "=0.2.0-pre.3" }
+cubek-matmul = { path = "../cubek-matmul", default-features = false, version = "=0.2.0-pre.4" }
+cubek-std = { path = "../cubek-std", default-features = false, version = "=0.2.0-pre.4" }
 derive-new = { workspace = true }
 
 bytemuck = { workspace = true }
@@ -33,6 +33,6 @@ serde = { workspace = true }
 
 [dev-dependencies]
 cubecl = { workspace = true, features = ["test-runtime"] }
-cubek-test-utils = { path = "../cubek-test-utils", version = "=0.2.0-pre.3", default-features = false }
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.2.0-pre.4", default-features = false }
 pretty_assertions = { workspace = true }
 trybuild = "1"

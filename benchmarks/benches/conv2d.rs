@@ -8,7 +8,8 @@ use cubecl::{
 };
 use cubek::{
     convolution::{
-        self as convolution, AcceleratedTileKind, ConvolutionArgs, ReadingStrategy, Strategy,
+        self as convolution, AcceleratedTileKind, ConvAlgorithm, ConvolutionArgs,
+        ConvolutionInputs, Strategy,
     },
     matmul::definition::{MatmulElems, MatmulPrecision, MatrixPrecision},
     random::random_uniform,
@@ -88,16 +89,18 @@ impl<R: Runtime, MP: MatmulPrecision> Benchmark for Conv2dBench<R, MP> {
         let out: TensorHandle<R> =
             TensorHandle::empty(&client, vec![n, c_out, h_out, w_out], elems.acc_global);
 
-        convolution::forward::launch_ref::<R, 2>(
-            &Strategy::Simple {
-                read_strategy: ReadingStrategy::Cyclic,
+        convolution::launch_ref::<R, 2>(
+            &Strategy::Inferred {
+                algorithm: ConvAlgorithm::SimpleSyncCyclic,
                 tile_kind: AcceleratedTileKind::Cmma,
             },
             &self.client,
-            InputBinding::Normal(input.binding(), elems.lhs_global),
-            InputBinding::Normal(weight.binding(), elems.rhs_global),
-            Some(InputBinding::Normal(bias.binding(), elems.acc_global)),
-            out.binding(),
+            ConvolutionInputs::Forward {
+                input: InputBinding::Normal(input.binding(), elems.lhs_global),
+                weight: InputBinding::Normal(weight.binding(), elems.rhs_global),
+                bias: Some(InputBinding::Normal(bias.binding(), elems.acc_global)),
+                out: out.binding(),
+            },
             self.args.clone(),
             elems,
         )

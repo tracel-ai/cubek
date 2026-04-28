@@ -1,6 +1,6 @@
 #[macro_export]
 macro_rules! testgen_convolution_accelerated_precision {
-    ($algorithm: ty) => {
+    ($algorithm: expr) => {
         mod f16_ty {
             use super::*;
             use cubecl::prelude::CubePrimitive;

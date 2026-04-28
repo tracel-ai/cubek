@@ -1,14 +1,12 @@
 use crate::{
     components::global::PlaneFlowPartition, components::global::PlaneFlowPartitionRule,
     components::stage::matmul::partitioned_matmul::PartitionedStageMatmul,
-    components::stage::matmul::partitioned_matmul::StagePartitioner,
-    components::tile_matmul::TileMatmul, definition::MatmulTypes, definition::MatrixTypes,
+    components::stage::matmul::partitioned_matmul::StagePartitioner, definition::MatmulTypes,
 };
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 
 use crate::components::{
-    stage::matmul::partition::SharedPartitionMatmulConfig,
-    tile_matmul::{Plane, TileConfig},
+    stage::matmul::partition::SharedPartitionMatmulConfig, tile_matmul::TileConfig,
 };
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -25,22 +23,8 @@ impl<TC: TileConfig> PlanePartitionedStageConfig<TC> {
 
 #[allow(type_alias_bounds)]
 /// [PartitionedStageMatmul] partitioned across units
-pub type PlaneMatmul<
-    MP: MatmulTypes,
-    TM: TileMatmul<
-            <MP::Lhs as MatrixTypes>::Register,
-            <MP::Lhs as MatrixTypes>::RegisterSize,
-            <MP::Rhs as MatrixTypes>::Register,
-            <MP::Rhs as MatrixTypes>::RegisterSize,
-            <MP::Acc as MatrixTypes>::Register,
-            <MP::Acc as MatrixTypes>::RegisterSize,
-            Scope = Plane,
-        >,
-    StageLhs,
-    StageRhs,
-    StageAcc,
-    StageOut,
-> = PartitionedStageMatmul<MP, TM, StageLhs, StageRhs, StageAcc, StageOut, PlanePartitioner>;
+pub type PlaneMatmul<MP: MatmulTypes, StageLhs, StageRhs, StageAcc, StageOut> =
+    PartitionedStageMatmul<MP, StageLhs, StageRhs, StageAcc, StageOut, PlanePartitioner>;
 
 /// Defines how to partition across planes
 pub struct PlanePartitioner {}

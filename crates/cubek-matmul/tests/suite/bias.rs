@@ -25,8 +25,7 @@ use cubek_matmul::{
 };
 use cubek_std::MatrixLayout;
 use cubek_test_utils::{
-    DataKind, Distribution, HostData, HostDataType, HostDataVec, StrideSpec, TestInput,
-    TestOutcome, assert_equals_approx,
+    HostData, HostDataType, HostDataVec, TestInput, TestOutcome, assert_equals_approx,
 };
 
 use crate::suite::{layout_to_stride_spec, reference::matmul_cpu_reference};
@@ -54,50 +53,27 @@ pub fn test_matmul_with_bias_simple_unit_f32() {
         AddressType::default(),
     );
 
-    let (lhs, lhs_data) = TestInput::new(
-        client.clone(),
-        problem.lhs_shape.clone(),
-        problem.global_dtypes.lhs,
-        layout_to_stride_spec(problem.lhs_layout),
-        DataKind::Random {
-            seed: 1234,
-            distribution: Distribution::Uniform(-1., 1.),
-        },
-    )
-    .generate_with_f32_host_data();
+    let (lhs, lhs_data) = TestInput::builder(client.clone(), problem.lhs_shape.clone())
+        .dtype(problem.global_dtypes.lhs)
+        .stride(layout_to_stride_spec(problem.lhs_layout))
+        .uniform(1234, -1., 1.)
+        .generate_with_f32_host_data();
 
-    let (rhs, rhs_data) = TestInput::new(
-        client.clone(),
-        problem.rhs_shape.clone(),
-        problem.global_dtypes.rhs,
-        layout_to_stride_spec(problem.rhs_layout),
-        DataKind::Random {
-            seed: 5678,
-            distribution: Distribution::Uniform(-1., 1.),
-        },
-    )
-    .generate_with_f32_host_data();
+    let (rhs, rhs_data) = TestInput::builder(client.clone(), problem.rhs_shape.clone())
+        .dtype(problem.global_dtypes.rhs)
+        .stride(layout_to_stride_spec(problem.rhs_layout))
+        .uniform(5678, -1., 1.)
+        .generate_with_f32_host_data();
 
-    let (bias, bias_data) = TestInput::new(
-        client.clone(),
-        problem.out_shape.clone(),
-        problem.global_dtypes.out,
-        StrideSpec::RowMajor,
-        DataKind::Random {
-            seed: 9999,
-            distribution: Distribution::Uniform(-1., 1.),
-        },
-    )
-    .generate_with_f32_host_data();
+    let (bias, bias_data) = TestInput::builder(client.clone(), problem.out_shape.clone())
+        .dtype(problem.global_dtypes.out)
+        .uniform(9999, -1., 1.)
+        .generate_with_f32_host_data();
 
-    let out = TestInput::new(
-        client.clone(),
-        problem.out_shape.clone(),
-        problem.global_dtypes.out,
-        StrideSpec::RowMajor,
-        DataKind::Zeros,
-    )
-    .generate_without_host_data();
+    let out = TestInput::builder(client.clone(), problem.out_shape.clone())
+        .dtype(problem.global_dtypes.out)
+        .zeros()
+        .generate_without_host_data();
 
     problem.lhs_strides = lhs.strides().clone();
     problem.rhs_strides = rhs.strides().clone();

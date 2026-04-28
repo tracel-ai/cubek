@@ -1,10 +1,10 @@
 //! Forced-blueprint tests covering awkward / non-aligned spatial sizes,
-//! channel counts, and tall/skinny problems. Uses `SimpleSyncCyclicConv` as
-//! the representative routine — the goal is to exercise bounds-checking and
-//! vector-size handling under odd shapes, not to cover every routine.
+//! channel counts, and tall/skinny problems. Uses the simple sync-cyclic
+//! algorithm as the representative routine — the goal is to exercise
+//! bounds-checking and vector-size handling under odd shapes, not to cover
+//! every routine.
 
-use cubek_convolution::kernels::algorithm::simple::SimpleSyncCyclicConv;
-use cubek_matmul::components::tile_matmul::cmma::CmmaMatmul;
+use cubek_convolution::ConvAlgorithm;
 use cubek_matmul::{components::stage::PartitionBuffering, definition::SwizzleModes};
 use cubek_std::{PartitionSize, StageSize};
 
@@ -12,7 +12,8 @@ use super::common::{default_tile_size, f16_dtypes, tiling_scheme};
 use crate::suite::launcher_strategy::{ConvolutionSize, test_algo};
 
 fn run(size: ConvolutionSize) {
-    test_algo::<SimpleSyncCyclicConv<CmmaMatmul>>(
+    test_algo(
+        ConvAlgorithm::SimpleSyncCyclic,
         f16_dtypes(),
         tiling_scheme(
             default_tile_size(),

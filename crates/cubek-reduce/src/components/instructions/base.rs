@@ -178,7 +178,7 @@ pub fn plane_topk_insert<N: Numeric, S: Size>(
 }
 
 #[cube]
-pub fn plane_argtopk_merge<N: Numeric, S: Size>(
+pub fn plane_topk_merge<N: Numeric, S: Size>(
     elements: &mut Array<Vector<N, S>>,
     coordinates: &mut Value<Vector<u32, S>>,
     #[comptime] k: usize,

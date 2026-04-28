@@ -1,6 +1,6 @@
 #[macro_export]
 macro_rules! testgen_convolution_problem_size {
-    ($algorithm: ty, $dtypes: expr, $tiling_scheme: expr, $swizzle: expr, $partition_buffering: expr) => {
+    ($algorithm: expr, $dtypes: expr, $tiling_scheme: expr, $swizzle: expr, $partition_buffering: expr) => {
         use $crate::suite::launcher_strategy::ConvolutionSize;
 
         mod g4x4x1x1 {

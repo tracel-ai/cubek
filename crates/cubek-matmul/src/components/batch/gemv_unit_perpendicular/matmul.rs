@@ -155,7 +155,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatUnitPerpendicular<MP> {
             k / tile_size
         };
 
-        let mut acc = Vector::<AccR<MP>, NA>::zero();
+        let mut acc = Vector::<AccRE<MP>, NA>::zero();
 
         for tile_index in 0..num_tiles {
             let swizzled_tile_index = (tile_index + plane_id) % num_tiles;

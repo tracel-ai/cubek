@@ -7,10 +7,13 @@ pub mod extended;
 pub mod full;
 
 mod bias;
-mod launcher_strategy;
+pub(crate) mod launcher_strategy;
 mod reference;
 
 pub(crate) use launcher_strategy::test_matmul_strategy;
+
+#[cfg(feature = "extended")]
+pub(crate) use extended::test_matmul_test_strategy;
 
 pub(crate) use reference::assert_result;
 

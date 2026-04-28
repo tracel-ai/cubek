@@ -25,7 +25,7 @@ pub fn test_matmul_test_strategy(
     problem: MatmulProblem,
     strategy: TestStrategy,
 ) {
-    run(client, problem, move |client, lhs, rhs, out, dtypes| {
+    crate::suite::launcher_strategy::run(client, problem, move |client, lhs, rhs, out, dtypes| {
         strategy.launch_ref(client, lhs, rhs, out, dtypes)
     });
 }

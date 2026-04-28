@@ -1,12 +1,10 @@
-//! Smoke tests for `SimpleSyncTilewiseConv`.
+//! Smoke tests for the simple sync-tilewise conv routine.
 
-use cubek_convolution::kernels::algorithm::simple::SimpleSyncTilewiseConv;
-use cubek_matmul::{components::tile_matmul::cmma::CmmaMatmul, definition::TilingScheme};
+use cubek_convolution::ConvAlgorithm;
+use cubek_matmul::definition::TilingScheme;
 use cubek_std::PartitionSize;
 
-use super::common::{
-    default_partition_buffering, default_swizzle, default_tiling_scheme, f16_dtypes, small_size,
-};
+use super::common::{default_partition_buffering, default_swizzle, f16_dtypes, small_size};
 use crate::suite::{
     basic::common::{default_tile_size, small_stage},
     launcher_strategy::test_algo,
@@ -21,7 +19,8 @@ fn simple_tilewise_cmma_small_f16() {
         .build()
         .unwrap();
 
-    test_algo::<SimpleSyncTilewiseConv<CmmaMatmul>>(
+    test_algo(
+        ConvAlgorithm::SimpleSyncTilewise,
         f16_dtypes(),
         tiling_scheme,
         default_swizzle(),

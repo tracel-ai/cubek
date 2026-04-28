@@ -1,11 +1,9 @@
 //! Shared test launcher.
 //!
 //! `test_algo` is a convenience wrapper that builds a 2D conv `Problem` from a
-//! `ConvolutionSize` + tiling/swizzle/buffering, then runs the kernel against a
-//! CPU reference via `cubek-test-utils`.
-//!
-//! TODO: route through the public `cubek_convolution::launch_ref` once the
-//! blueprint surface is settled. For now we go straight to `launch_kernel`.
+//! `ConvolutionSize` + tiling/swizzle/buffering, then routes through the public
+//! `cubek_convolution::launch_ref` (`Strategy::Forced`) and validates the
+//! output against a CPU reference via `cubek-test-utils`.
 
 use cubecl::{
     TestRuntime,
@@ -14,16 +12,15 @@ use cubecl::{
     {ir::AddressType, prelude::*},
 };
 use cubek_convolution::{
-    components::{
-        ConvolutionOperation, ConvolutionProblem, Dimensionality, global::args::RuntimeArgs,
-    },
-    forward::args::{ConcreteArgs, ConcreteInputsFactory, ConcreteOutputFactory},
-    kernels::algorithm::Algorithm,
+    ConvAlgorithm, ConvolutionArgs, ConvolutionInputs, Strategy,
+    components::{ConvolutionOperation, ConvolutionProblem, Dimensionality},
+    definition::{ConvBlueprint, ForwardBlueprint},
 };
 use cubek_matmul::{
     components::{
         global::{InputLoadFlow, LoadFlows},
         stage::PartitionBuffering,
+        tile_matmul::TileMatmul,
     },
     definition::{
         AvailableVectorSizes, MatmulElems, MatmulGlobalElems, SwizzleModes, TilingBlueprint,
@@ -33,7 +30,7 @@ use cubek_matmul::{
     routines::{BlueprintStrategy, Routine},
 };
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_test_utils::{DataKind, Distribution, StrideSpec, TestInput, TestOutcome};
+use cubek_test_utils::{TestInput, TestOutcome};
 
 use crate::suite::reference::assert_result;
 
@@ -47,23 +44,22 @@ pub struct ConvolutionSize {
     pub out_c: usize,
 }
 
-/// Build a 2D conv problem and run it. Used by both basic-tier helpers and the
-/// macro-driven `full/` tier.
+/// Build a 2D forward conv problem and run it via the public `launch_ref`.
+/// Used by both basic-tier helpers and the macro-driven `full/` tier.
 ///
-/// `dtypes` lets the caller decide the global/stage/register storage types
-/// (e.g. f16-only vs f32 global with tf32 stage). The kernel uses it for
-/// dispatch; the test harness uses `lhs_global` for sampling and the full
+/// `algorithm` selects the kernel reading-strategy variant. `dtypes` lets the
+/// caller decide global/stage/register storage types. The kernel uses dtypes
+/// for dispatch; the test harness uses `lhs_global` for sampling and the full
 /// `MatmulElems` to compute a per-precision epsilon.
 #[allow(clippy::too_many_arguments)]
-pub fn test_algo<A: Algorithm<Routine: Routine<RuntimeArgs, Blueprint = TilingBlueprint>>>(
+pub fn test_algo(
+    algorithm: ConvAlgorithm,
     dtypes: MatmulElems,
     tiling_scheme: TilingScheme,
     swizzle: SwizzleModes,
     partition_buffering: PartitionBuffering,
     convolution_size: ConvolutionSize,
-) where
-    A::Args: ConcreteArgs<A::Routine>,
-{
+) {
     let client = TestRuntime::client(&Default::default());
     let plane_dim = client.properties().hardware.plane_size_max;
 
@@ -105,7 +101,9 @@ pub fn test_algo<A: Algorithm<Routine: Routine<RuntimeArgs, Blueprint = TilingBl
         out: dtypes.acc_global,
     };
 
-    let mut problem = ConvolutionProblem {
+    // Build a synthetic problem just to compute the matmul layout — the actual
+    // problem will be reconstructed inside `launch_ref` from the bindings.
+    let problem = ConvolutionProblem {
         m,
         n,
         k,
@@ -113,10 +111,10 @@ pub fn test_algo<A: Algorithm<Routine: Routine<RuntimeArgs, Blueprint = TilingBl
         rhs_strides,
         lhs_layout,
         rhs_layout,
-        kernel_size,
-        stride,
-        padding,
-        dilation,
+        kernel_size: kernel_size.clone(),
+        stride: stride.clone(),
+        padding: padding.clone(),
+        dilation: dilation.clone(),
         batches,
         in_shape: shape![convolution_size.h, convolution_size.w],
         channels: convolution_size.c,
@@ -129,19 +127,15 @@ pub fn test_algo<A: Algorithm<Routine: Routine<RuntimeArgs, Blueprint = TilingBl
         address_type: AddressType::U32,
     };
 
-    let mut blueprint =
-        TilingBlueprint::builder(tiling_scheme, plane_dim, &problem.as_matmul_problem())
-            .shared_swizzle(swizzle)
-            .partition_buffering(partition_buffering);
-
-    if A::IS_SPECIALIZED {
-        blueprint = blueprint.load_specialization_config(LoadFlows {
-            lhs: InputLoadFlow::LoadOnly,
-            rhs: InputLoadFlow::LoadOnly,
-        });
-    }
-
-    let blueprint = blueprint.build();
+    let matmul_blueprint = TilingBlueprint::builder(
+        TileMatmul::Cmma,
+        tiling_scheme,
+        plane_dim,
+        &problem.as_matmul_problem(),
+    )
+    .shared_swizzle(swizzle)
+    .partition_buffering(partition_buffering)
+    .build();
 
     let lhs_shape: Shape = shape![
         problem.batches,
@@ -157,135 +151,67 @@ pub fn test_algo<A: Algorithm<Routine: Routine<RuntimeArgs, Blueprint = TilingBl
     ];
     let out_shape: Shape = shape![problem.batches, out_h, out_w, problem.n];
 
-    let (lhs, lhs_data) = TestInput::new(
-        client.clone(),
-        lhs_shape,
-        dtypes.lhs_global,
-        StrideSpec::RowMajor,
-        DataKind::Random {
-            seed: 1234,
-            distribution: Distribution::Uniform(-1., 1.),
-        },
-    )
-    .generate_with_f32_host_data();
+    let (lhs, lhs_data) = TestInput::builder(client.clone(), lhs_shape)
+        .dtype(dtypes.lhs_global)
+        .uniform(1234, -1., 1.)
+        .generate_with_f32_host_data();
 
-    let (rhs, rhs_data) = TestInput::new(
-        client.clone(),
-        rhs_shape,
-        dtypes.rhs_global,
-        StrideSpec::RowMajor,
-        DataKind::Random {
-            seed: 5678,
-            distribution: Distribution::Uniform(-1., 1.),
-        },
-    )
-    .generate_with_f32_host_data();
+    let (rhs, rhs_data) = TestInput::builder(client.clone(), rhs_shape)
+        .dtype(dtypes.rhs_global)
+        .uniform(5678, -1., 1.)
+        .generate_with_f32_host_data();
 
-    let out = TestInput::new(
-        client.clone(),
-        out_shape,
-        dtypes.acc_global,
-        StrideSpec::RowMajor,
-        DataKind::Zeros,
-    )
-    .generate_without_host_data();
+    let out = TestInput::builder(client.clone(), out_shape)
+        .dtype(dtypes.acc_global)
+        .zeros()
+        .generate_without_host_data();
 
-    // Update problem strides to the physical NHWC layout coming out of TestInput.
-    problem.lhs_strides = lhs.strides().clone();
-    problem.rhs_strides = rhs.strides().clone();
-
-    let outcome = match launch_kernel::<A>(
-        &client,
-        &mut problem,
+    let blueprint = ConvBlueprint::Forward(ForwardBlueprint {
+        matmul: matmul_blueprint,
+        dimensionality: Dimensionality::Dim2,
+        has_bias: false,
+    });
+    let strategy = Strategy::Forced {
+        algorithm,
         blueprint,
-        &dtypes,
-        lhs.clone(),
-        rhs.clone(),
-        out.clone(),
-    ) {
-        Ok(()) => match get_server_error(&client) {
-            Some(e) => e,
-            None => TestOutcome::Validated(assert_result(
-                &lhs_data, &rhs_data, &problem, &client, out, dtypes,
-            )),
-        },
-        Err(e) => TestOutcome::CompileError(format!("{e}")),
     };
 
+    let inputs = ConvolutionInputs::Forward {
+        input: InputBinding::new(lhs.clone().binding(), dtypes.lhs_global),
+        weight: InputBinding::new(rhs.clone().binding(), dtypes.rhs_global),
+        bias: None,
+        out: out.clone().binding(),
+    };
+
+    let args = ConvolutionArgs::<2> {
+        stride: [stride[0] as usize, stride[1] as usize],
+        padding: [padding[0] as usize, padding[1] as usize],
+        dilation: [dilation[0] as usize, dilation[1] as usize],
+    };
+
+    // Re-build problem with physical strides from the test inputs so the CPU
+    // reference uses the same layout as the kernel sees.
+    let mut problem_for_check = problem.clone();
+    problem_for_check.lhs_strides = lhs.strides().clone();
+    problem_for_check.rhs_strides = rhs.strides().clone();
+
+    let outcome =
+        match cubek_convolution::launch_ref(&strategy, &client, inputs, args, dtypes.clone()) {
+            Ok(()) => match get_server_error(&client) {
+                Some(e) => e,
+                None => TestOutcome::Validated(assert_result(
+                    &lhs_data,
+                    &rhs_data,
+                    &problem_for_check,
+                    &client,
+                    out,
+                    dtypes,
+                )),
+            },
+            Err(e) => TestOutcome::CompileError(format!("{e:?}")),
+        };
+
     outcome.enforce()
-}
-
-#[allow(clippy::too_many_arguments)]
-fn launch_kernel<A: Algorithm<Routine: Routine<RuntimeArgs, Blueprint = TilingBlueprint>>>(
-    client: &ComputeClient<TestRuntime>,
-    problem: &mut ConvolutionProblem,
-    blueprint: <A::Routine as Routine<RuntimeArgs>>::Blueprint,
-    dtypes: &MatmulElems,
-    lhs: cubecl::std::tensor::TensorHandle<TestRuntime>,
-    rhs: cubecl::std::tensor::TensorHandle<TestRuntime>,
-    out: cubecl::std::tensor::TensorHandle<TestRuntime>,
-) -> Result<(), cubek_matmul::definition::MatmulSetupError>
-where
-    A::Args: ConcreteArgs<A::Routine>,
-{
-    let vector_sizes = AvailableVectorSizes {
-        lhs: vec![1],
-        rhs: vec![1],
-        out: client
-            .io_optimized_vector_sizes(dtypes.acc_global.size())
-            .collect(),
-    }
-    .filter_lhs_with_tensor(lhs.strides(), lhs.shape(), problem.lhs_layout)
-    .filter_rhs_with_tensor(rhs.strides(), rhs.shape(), problem.rhs_layout)
-    .filter_out_with_tensor(out.strides(), out.shape())
-    .pick_max()
-    .unwrap();
-
-    let device_settings = A::Routine::device_settings(client, vector_sizes);
-    let expand_info = A::Routine::expand_blueprint(
-        &problem.as_matmul_problem(),
-        &device_settings,
-        &BlueprintStrategy::Forced(blueprint),
-    )?;
-    let problem_adjusted =
-        A::Args::adjust_problem(client, problem.clone(), &expand_info.blueprint, dtypes);
-
-    let launch_info = A::Routine::prepare(
-        &problem_adjusted.as_matmul_problem(),
-        &device_settings,
-        expand_info,
-    )?;
-
-    let op = ConvolutionOperation::Forward;
-
-    let lhs_handle = A::correct_layout(client, lhs.binding(), dtypes.lhs_global, op).unwrap();
-    let rhs_handle = A::correct_layout(client, rhs.binding(), dtypes.rhs_global, op).unwrap();
-
-    let lhs_handle = InputBinding::new(lhs_handle, dtypes.lhs_global);
-    let rhs_handle = InputBinding::new(rhs_handle, dtypes.rhs_global);
-
-    let (inputs, runtime_args) = <InputArg<A::Args> as ConcreteInputsFactory<A::Routine>>::create(
-        lhs_handle,
-        rhs_handle,
-        None,
-        &launch_info.blueprint,
-        &problem_adjusted,
-        dtypes,
-    );
-    let output = <OutputArg<A::Args> as ConcreteOutputFactory<A::Routine>>::create(
-        out.binding(),
-        &launch_info.blueprint,
-        &problem_adjusted,
-        dtypes,
-    );
-
-    cubek_matmul::launch::launch_kernel::<A::Args, TestRuntime, A::Routine>(
-        client,
-        inputs,
-        output,
-        runtime_args,
-        launch_info,
-    )
 }
 
 fn get_server_error(client: &ComputeClient<TestRuntime>) -> Option<TestOutcome> {
