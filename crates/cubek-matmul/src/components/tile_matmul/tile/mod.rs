@@ -232,11 +232,7 @@ impl<N: Numeric, V: Size, Sc: Scope> Tile<N, V, Sc, ReadWrite> {
                 );
             }
             (Tile::None, Tile::MmaAcc(t)) => {
-                mma_load_acc_zeros::<SE, SS, N, L, R>(
-                    &mut t.fragment,
-                    t.matrix_layout,
-                    t.config,
-                );
+                mma_load_acc_zeros::<SE, SS, N, L, R>(&mut t.fragment, t.matrix_layout, t.config);
             }
 
             // --- Register loads ---

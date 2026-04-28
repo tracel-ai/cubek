@@ -490,7 +490,8 @@ where
 
             #[unroll]
             for m_iter in 0..m_iterations {
-                let accumulator = Accumulators::<MT, Sc>::get_at_mut(acc, m_iter, n_iter, n_iterations);
+                let accumulator =
+                    Accumulators::<MT, Sc>::get_at_mut(acc, m_iter, n_iter, n_iterations);
                 accumulator.mma(&lhs_fragment[m_iter], last);
 
                 SEL::on_event(

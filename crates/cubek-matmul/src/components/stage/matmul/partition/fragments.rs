@@ -20,7 +20,12 @@ use cubek_std::{MatrixLayout, PartitionSize};
 /// Enables indexing at 2d coordinates
 pub struct Accumulators<MP: MatmulTypes, Sc: Scope> {
     sequence: Sequence<
-        Tile<<MP::Acc as MatrixTypes>::Register, <MP::Acc as MatrixTypes>::RegisterSize, Sc, ReadWrite>,
+        Tile<
+            <MP::Acc as MatrixTypes>::Register,
+            <MP::Acc as MatrixTypes>::RegisterSize,
+            Sc,
+            ReadWrite,
+        >,
     >,
     #[cube(comptime)]
     _phantom: PhantomData<Sc>,
@@ -81,8 +86,12 @@ impl<MT: MatmulTypes, Sc: Scope> Accumulators<MT, Sc> {
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] tiles_in_stage_partition_n: usize,
-    ) -> &Tile<<MT::Acc as MatrixTypes>::Register, <MT::Acc as MatrixTypes>::RegisterSize, Sc, ReadWrite>
-    {
+    ) -> &Tile<
+        <MT::Acc as MatrixTypes>::Register,
+        <MT::Acc as MatrixTypes>::RegisterSize,
+        Sc,
+        ReadWrite,
+    > {
         &self.sequence[m * tiles_in_stage_partition_n + n]
     }
 

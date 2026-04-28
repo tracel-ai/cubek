@@ -273,10 +273,15 @@ fn infer_blueprint_multi_rows<R: Runtime>(
             .build();
 
         Ok((
-            TilingBlueprint::builder(TileMatmulKind::Interleaved, tiling_scheme, plane_dim, problem)
-                .partition_buffering(PartitionBuffering::Single)
-                .hypercube_blueprint(hypercube)
-                .build(),
+            TilingBlueprint::builder(
+                TileMatmulKind::Interleaved,
+                tiling_scheme,
+                plane_dim,
+                problem,
+            )
+            .partition_buffering(PartitionBuffering::Single)
+            .hypercube_blueprint(hypercube)
+            .build(),
             dtypes,
         ))
     } else if supported(8, 8, 8) {
@@ -292,10 +297,15 @@ fn infer_blueprint_multi_rows<R: Runtime>(
             .build();
 
         Ok((
-            TilingBlueprint::builder(TileMatmulKind::Interleaved, tiling_scheme, plane_dim, problem)
-                .partition_buffering(PartitionBuffering::Single)
-                .hypercube_blueprint(hypercube)
-                .build(),
+            TilingBlueprint::builder(
+                TileMatmulKind::Interleaved,
+                tiling_scheme,
+                plane_dim,
+                problem,
+            )
+            .partition_buffering(PartitionBuffering::Single)
+            .hypercube_blueprint(hypercube)
+            .build(),
             dtypes,
         ))
     } else {

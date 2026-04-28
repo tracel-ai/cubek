@@ -65,7 +65,10 @@ impl Display for TestStrategy {
     }
 }
 
-fn with_kind<RC, A>(sel: &BlueprintStrategy<RC, A>, kind: TileMatmulKind) -> BlueprintStrategy<RC, A>
+fn with_kind<RC, A>(
+    sel: &BlueprintStrategy<RC, A>,
+    kind: TileMatmulKind,
+) -> BlueprintStrategy<RC, A>
 where
     RC: crate::launch::RuntimeConfig,
     A: Routine<RC>,

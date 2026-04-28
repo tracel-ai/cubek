@@ -132,8 +132,10 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
     }
 
     fn init_score_tile(#[comptime] config: Self::Config) -> Self::ScoreTile {
-        let mut tile =
-            register_allocate_acc::<Acc, Const<0>, Plane>(MatrixLayout::RowMajor, config.register());
+        let mut tile = register_allocate_acc::<Acc, Const<0>, Plane>(
+            MatrixLayout::RowMajor,
+            config.register(),
+        );
         Self::zero_score_tile(&mut tile);
         tile
     }
@@ -171,8 +173,7 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
 fn zero_register_tile<E: Numeric>(tile: &mut Tile<E, Const<0>, Plane, ReadWrite>) {
     match tile {
         Tile::Register(t) => {
-            let num_elements =
-                comptime!(t.config.tile_size.m() * t.config.tile_size.n());
+            let num_elements = comptime!(t.config.tile_size.m() * t.config.tile_size.n());
             fill_array_zero::<E>(&mut t.data, num_elements);
         }
         Tile::Cmma(_dummy) => panic!("UnitSoftmax expects Tile::Register"),

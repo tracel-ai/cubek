@@ -1,9 +1,9 @@
 use cubecl::prelude::*;
 use cubek_std::{MatrixLayout, tile::StridedTile};
 
+use crate::components::tile_matmul::Tile;
 use crate::components::tile_matmul::tile::Scope;
 use crate::components::tile_matmul::tile::interleaved::InterleavedMatmulConfig;
-use crate::components::tile_matmul::Tile;
 use crate::definition::StageIdent;
 
 #[derive(CubeType)]
