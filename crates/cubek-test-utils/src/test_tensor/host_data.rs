@@ -434,7 +434,7 @@ struct IndexIter {
 impl IndexIter {
     fn new(shape: Vec<usize>) -> Self {
         // Empty dim → no indices.
-        let next = if shape.iter().any(|&d| d == 0) {
+        let next = if shape.contains(&0) {
             None
         } else {
             Some(vec![0; shape.len()])
