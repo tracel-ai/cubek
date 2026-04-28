@@ -118,13 +118,13 @@ fn run_quantized_matmul(case: QuantizedMatmulCase) {
     let lhs = TestInput::builder(client.clone(), problem.lhs_shape.clone())
         .dtype(lhs_dtype)
         .stride(layout_to_stride_spec(problem.lhs_layout))
-        .uniform(/* seed */ 1234, -1., 1.)
+        .uniform(1234, -1., 1.)
         .generate_test_tensor();
 
     let rhs = TestInput::builder(client.clone(), problem.rhs_shape.clone())
         .dtype(rhs_dtype)
         .stride(layout_to_stride_spec(problem.rhs_layout))
-        .uniform(/* seed */ 5678, -1., 1.)
+        .uniform(5678, -1., 1.)
         .generate_test_tensor();
 
     let out = TestInput::builder(client.clone(), problem.out_shape.clone())

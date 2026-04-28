@@ -164,12 +164,12 @@ pub fn test_algo<A: Algorithm<Routine: Routine<RuntimeArgs, Blueprint = TilingBl
 
     let (lhs, lhs_data) = TestInput::builder(client.clone(), lhs_shape)
         .dtype(dtypes.lhs_global)
-        .uniform(/* seed */ 1234, -1., 1.)
+        .uniform(1234, -1., 1.)
         .generate_with_f32_host_data();
 
     let (rhs, rhs_data) = TestInput::builder(client.clone(), rhs_shape)
         .dtype(dtypes.rhs_global)
-        .uniform(/* seed */ 5678, -1., 1.)
+        .uniform(5678, -1., 1.)
         .generate_with_f32_host_data();
 
     let out = TestInput::builder(client.clone(), out_shape)

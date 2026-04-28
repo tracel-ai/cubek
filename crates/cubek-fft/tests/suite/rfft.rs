@@ -20,7 +20,7 @@ fn test_launch(client: ComputeClient<TestRuntime>, signal_shape: Vec<usize>, dim
     let (white_noise_handle, white_noise_data) =
         TestInput::builder(client.clone(), signal_shape.clone())
             .dtype(dtype)
-            .uniform(/* seed */ 42, -1., 1.)
+            .uniform(42, -1., 1.)
             .generate_with_f32_host_data();
 
     let spectrum_re_handle = TestInput::builder(client.clone(), spectrum_shape.to_vec())

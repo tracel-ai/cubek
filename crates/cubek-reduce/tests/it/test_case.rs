@@ -171,7 +171,7 @@ impl TestCase {
         let (input_handle, input_host) = TestInput::builder(client.clone(), self.shape.clone())
             .dtype(self.input_dtype)
             .stride(StrideSpec::Custom(self.stride.iter().copied().collect()))
-            .uniform(/* seed */ 1234, -1., 1.)
+            .uniform(1234, -1., 1.)
             .generate_with_f32_host_data();
 
         let expected = cast_host_through_dtype(reference(&input_host, axis), output_dtype);

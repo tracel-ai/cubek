@@ -202,7 +202,7 @@ let (handle, host) = TestInput::new(
 
 // Fluent builder — `dtype` defaults to f32, `stride` defaults to RowMajor.
 let (handle, host) = TestInput::builder(client.clone(), [4, 4])
-    .uniform(/* seed */ 0, -1.0, 1.0)
+    .uniform( 0, -1.0, 1.0)
     .generate_with_f32_host_data();
 ```
 

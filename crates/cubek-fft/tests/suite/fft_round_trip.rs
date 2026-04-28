@@ -12,7 +12,7 @@ fn large_fft_roundtrip() {
 
     let (original_signal, signal_data) = TestInput::builder(client.clone(), shape)
         .dtype(dtype)
-        .uniform(/* seed */ 42, -1., 1.)
+        .uniform(42, -1., 1.)
         .generate_with_f32_host_data();
 
     let (spectrum_re, spectrum_im) = rfft(original_signal, shape.len() - 1, dtype);

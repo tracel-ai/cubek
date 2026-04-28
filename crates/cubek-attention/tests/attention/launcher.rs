@@ -24,23 +24,23 @@ pub fn test_launch(
 
     let (query_handle, query_data) = TestInput::builder(client.clone(), Shape::new(query_shape))
         .dtype(problem.global_dtypes.query)
-        .uniform(/* seed */ 12, -1., 1.)
+        .uniform(12, -1., 1.)
         .generate_with_f32_host_data();
 
     let (key_handle, key_data) = TestInput::builder(client.clone(), Shape::new(key_shape))
         .dtype(problem.global_dtypes.key)
-        .uniform(/* seed */ 34, -1., 1.)
+        .uniform(34, -1., 1.)
         .generate_with_f32_host_data();
 
     let (value_handle, value_data) = TestInput::builder(client.clone(), Shape::new(value_shape))
         .dtype(problem.global_dtypes.value)
-        .uniform(/* seed */ 56, -1., 1.)
+        .uniform(56, -1., 1.)
         .generate_with_f32_host_data();
 
     let (mask_handle, mask_data) = if problem.masked {
         let (mask_handle, mask_data) = TestInput::builder(client.clone(), Shape::new(mask_shape))
             .dtype(problem.global_dtypes.mask)
-            .bernoulli(/* seed */ 78, 0.1)
+            .bernoulli(78, 0.1)
             .generate_with_bool_host_data();
 
         (Some(mask_handle), Some(mask_data))

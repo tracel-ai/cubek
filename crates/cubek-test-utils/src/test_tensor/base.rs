@@ -287,7 +287,7 @@ pub enum Distribution {
 ///
 /// let (handle, host) = TestInput::builder(client, [4, 4])
 ///     .stride(StrideSpec::ColMajor)
-///     .uniform(/* seed */ 0, -1.0, 1.0)
+///     .uniform( 0, -1.0, 1.0)
 ///     .generate_with_f32_host_data();
 /// ```
 pub struct TestInputBuilder {

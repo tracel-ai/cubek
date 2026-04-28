@@ -20,13 +20,13 @@ fn test_launch(client: ComputeClient<TestRuntime>, spectrum_shape: Vec<usize>, d
     let (random_spectrum_re_handle, random_spectrum_re_data) =
         TestInput::builder(client.clone(), spectrum_shape.clone())
             .dtype(dtype)
-            .uniform(/* seed */ 43, -1., 1.)
+            .uniform(43, -1., 1.)
             .generate_with_f32_host_data();
 
     let (random_spectrum_im_handle, random_spectrum_im_data) =
         TestInput::builder(client.clone(), spectrum_shape)
             .dtype(dtype)
-            .uniform(/* seed */ 44, -1., 1.)
+            .uniform(44, -1., 1.)
             .generate_with_f32_host_data();
 
     let signal_handle = TestInput::builder(client.clone(), signal_shape)

@@ -284,7 +284,7 @@ fn builder_normal_distribution_within_statistical_bounds() {
     // Shape [1, N] because RowMajor requires ≥ 2 dimensions.
     let n: usize = 4096;
     let host = TestInput::builder(client.clone(), shape![1, n])
-        .normal(/* seed */ 11, /* mean */ 0.0, /* std */ 1.0)
+        .normal(11, /* mean */ 0.0, /* std */ 1.0)
         .f32_host_data();
 
     let values: Vec<f32> = (0..n).map(|i| host.get_f32(&[0, i])).collect();
@@ -533,7 +533,7 @@ fn builder_uniform_values_in_range() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
     let host = TestInput::builder(client.clone(), shape![4, 4])
-        .uniform(/* seed */ 7, -1.0, 1.0)
+        .uniform(7, -1.0, 1.0)
         .f32_host_data();
 
     for i in 0..4 {
