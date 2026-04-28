@@ -6,8 +6,8 @@ use cubecl::{
     CubeCount, CubeDim, Runtime, TestRuntime, cube, ir::StorageType, prelude::*,
     std::tensor::TensorHandle, zspace::Shape,
 };
-use cubek_test_utils::{InputDataType, StrideSpec, TestInput};
 use cubek_reduce::components::instructions::{Value, plane_topk_insert, plane_topk_merge};
+use cubek_test_utils::{InputDataType, StrideSpec, TestInput};
 
 #[test]
 fn test_topk_plane_reduce_inplace() {
