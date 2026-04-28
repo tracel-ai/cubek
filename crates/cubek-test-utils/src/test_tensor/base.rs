@@ -383,9 +383,7 @@ impl TestInputBuilder {
             vec![start]
         } else {
             let step = (end - start) / (num_elems - 1) as f32;
-            (0..num_elems)
-                .map(|i| start + step * i as f32)
-                .collect()
+            (0..num_elems).map(|i| start + step * i as f32).collect()
         };
         self.finalize(DataKind::Custom { data })
     }

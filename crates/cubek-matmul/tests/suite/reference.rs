@@ -105,7 +105,7 @@ pub fn matmul_cpu_reference(lhs: &HostData, rhs: &HostData, problem: &MatmulProb
                     lhs_index[rank - 1] = kk;
                     rhs_index[rank - 2] = kk;
 
-                    sum += lhs.get_f32(&lhs_index) * rhs.get_f32(&rhs_index) + 1.;
+                    sum += lhs.get_f32(&lhs_index) * rhs.get_f32(&rhs_index);
                 }
 
                 // Compute linear index in the output buffer

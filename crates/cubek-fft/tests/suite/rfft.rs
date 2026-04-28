@@ -17,10 +17,11 @@ fn test_launch(client: ComputeClient<TestRuntime>, signal_shape: Vec<usize>, dim
     let mut spectrum_shape = signal_shape.clone();
     spectrum_shape[dim] = signal_shape[dim] / 2 + 1;
 
-    let (white_noise_handle, white_noise_data) = TestInput::builder(client.clone(), signal_shape.clone())
-        .dtype(dtype)
-        .uniform(/* seed */ 42, -1., 1.)
-        .generate_with_f32_host_data();
+    let (white_noise_handle, white_noise_data) =
+        TestInput::builder(client.clone(), signal_shape.clone())
+            .dtype(dtype)
+            .uniform(/* seed */ 42, -1., 1.)
+            .generate_with_f32_host_data();
 
     let spectrum_re_handle = TestInput::builder(client.clone(), spectrum_shape.to_vec())
         .dtype(dtype)

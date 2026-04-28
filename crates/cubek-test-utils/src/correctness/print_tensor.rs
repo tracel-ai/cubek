@@ -1,6 +1,6 @@
+use crate::HostData;
 use crate::config::config;
 use crate::correctness::render::print_tensors as render;
-use crate::HostData;
 
 /// Pretty-print one or two tensors through the unified renderer.
 ///

@@ -81,9 +81,8 @@ fn load_config() -> CubekConfig {
     };
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
-    parse_cubek_toml(&text).unwrap_or_else(|e| {
-        panic!("invalid cubek.toml ({}): {e}", path.display())
-    })
+    parse_cubek_toml(&text)
+        .unwrap_or_else(|e| panic!("invalid cubek.toml ({}): {e}", path.display()))
 }
 
 fn find_cubek_toml() -> Option<PathBuf> {
@@ -120,11 +119,7 @@ fn parse_cubek_toml(text: &str) -> Result<CubekConfig, String> {
                 ));
             }
         };
-        reject_unknown_keys(
-            "test",
-            map,
-            &["policy"],
-        )?;
+        reject_unknown_keys("test", map, &["policy"])?;
     }
 
     if let Some(map) = sections.get("print") {
@@ -217,7 +212,11 @@ fn parse_sections(text: &str) -> Result<Sections, String> {
         };
 
         let Some((k, v)) = line.split_once('=') else {
-            return Err(format!("line {}: expected `key = value`, got '{}'", line_no + 1, line));
+            return Err(format!(
+                "line {}: expected `key = value`, got '{}'",
+                line_no + 1,
+                line
+            ));
         };
         let key = k.trim().to_string();
         let val = v.trim().to_string();

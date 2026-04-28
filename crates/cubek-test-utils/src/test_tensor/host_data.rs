@@ -511,11 +511,7 @@ where
 
     // Also account for the column-label width (so a tensor sliced down to
     // `[10-12]` renders header `10 11 12` without crowding).
-    let label_width = cols
-        .iter()
-        .map(|c| c.to_string().len())
-        .max()
-        .unwrap_or(0);
+    let label_width = cols.iter().map(|c| c.to_string().len()).max().unwrap_or(0);
     max_width = max_width.max(label_width).max(2);
 
     let row_label_width = rows

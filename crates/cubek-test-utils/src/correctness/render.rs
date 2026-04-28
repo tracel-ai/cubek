@@ -28,12 +28,7 @@ const RESET: &str = "\x1b[0m";
 /// - `tensors.len()` is 0 or > 2,
 /// - two tensors have different ranks or shapes,
 /// - the configured filter's rank doesn't match the tensor rank.
-pub fn print_tensors(
-    cfg: &PrintSection,
-    label: &str,
-    tensors: &[&HostData],
-    epsilon: Option<f32>,
-) {
+pub fn print_tensors(cfg: &PrintSection, label: &str, tensors: &[&HostData], epsilon: Option<f32>) {
     if !cfg.enabled || tensors.is_empty() || tensors.len() > 2 {
         return;
     }
@@ -41,7 +36,8 @@ pub fn print_tensors(
     let other = tensors.get(1).copied();
 
     if let Some(b) = other
-        && (b.shape.rank() != primary.shape.rank() || b.shape.as_slice() != primary.shape.as_slice())
+        && (b.shape.rank() != primary.shape.rank()
+            || b.shape.as_slice() != primary.shape.as_slice())
     {
         return;
     }
@@ -257,10 +253,7 @@ fn render_lines(
             ""
         };
         let reset = if two { RESET } else { "" };
-        let mut line = format!(
-            "{}{:>idx_w$} | {:>pri_w$}",
-            color, r.idx, r.primary,
-        );
+        let mut line = format!("{}{:>idx_w$} | {:>pri_w$}", color, r.idx, r.primary,);
         if let Some(o) = r.other.as_ref() {
             line.push_str(&format!(" | {:>oth_w$}", o));
         }
@@ -389,11 +382,7 @@ where
             max_width = max_width.max(visible_width(&cell(r, c)));
         }
     }
-    let label_width = cols
-        .iter()
-        .map(|c| c.to_string().len())
-        .max()
-        .unwrap_or(0);
+    let label_width = cols.iter().map(|c| c.to_string().len()).max().unwrap_or(0);
     max_width = max_width.max(label_width).max(2);
 
     let row_label_width = rows

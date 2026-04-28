@@ -112,7 +112,11 @@ fn assert_equals_approx_inner(
 #[derive(Debug)]
 pub(crate) enum ElemStatus {
     #[allow(dead_code)] // fields read via Debug in failure messages
-    Correct { got: f32, delta: f32, epsilon: f32 },
+    Correct {
+        got: f32,
+        delta: f32,
+        epsilon: f32,
+    },
     Wrong(WrongStatus),
 }
 
@@ -242,9 +246,7 @@ fn format_wrong(w: &WrongStatus) -> String {
             expected,
             delta,
             epsilon,
-        } => format!(
-            "got {got}, expected {expected}, |Δ|={delta} > ε={epsilon}",
-        ),
+        } => format!("got {got}, expected {expected}, |Δ|={delta} > ε={epsilon}",),
         WrongStatus::ExpectedNan { got } => format!("got {got}, expected NaN"),
         WrongStatus::GotNan { expected } => format!("got NaN, expected {expected}"),
     }

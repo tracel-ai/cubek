@@ -32,9 +32,7 @@ pub(crate) fn apply_quantization(
 
     // Determine the correct storage type for the quantized output buffer.
     let output_storage_type = match &scheme.store {
-        QuantStore::PackedU32(_) => {
-            StorageType::Scalar(ElemType::UInt(cubecl::ir::UIntKind::U32))
-        }
+        QuantStore::PackedU32(_) => StorageType::Scalar(ElemType::UInt(cubecl::ir::UIntKind::U32)),
         QuantStore::PackedNative(_) | QuantStore::Native => {
             StorageType::Scalar(ElemType::from_quant_value(scheme.value))
         }

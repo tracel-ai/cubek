@@ -58,7 +58,6 @@ mod tests {
         // ...and it's less than the logical element count.
         assert!(physical_extent(&shape, &strides) < 4 * 3);
     }
-
 }
 
 impl StrideSpec {
