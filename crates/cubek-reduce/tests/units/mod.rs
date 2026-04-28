@@ -1,17 +1,17 @@
+use crate::it::reference::contiguous_strides;
 use cubecl::features::Plane;
+use cubecl::frontend::CompilationArg;
 use cubecl::frontend::CubePrimitive;
 use cubecl::{
     CubeCount, CubeDim, Runtime, TestRuntime, cube, ir::StorageType, prelude::*,
     std::tensor::TensorHandle, zspace::Shape,
 };
-use cubek_reduce::components::instructions::{Value, plane_topk_insert, plane_topk_merge};
+use cubek_reduce::components::instructions::plane_argtopk_merge;
+use cubek_reduce::components::instructions::{Value, plane_topk_insert};
 use cubek_test_utils::{DataKind, InputDataType, StrideSpec, TestInput};
 
-use crate::it::reference::contiguous_strides;
-use cubecl::frontend::CompilationArg;
-
 #[test]
-fn test_plane_reduce_inplace() {
+fn test_topk_plane_reduce_inplace() {
     let client = TestRuntime::client(&Default::default());
     if !client.properties().features.plane.contains(Plane::Ops) {
         return;
@@ -100,7 +100,8 @@ fn launch_plane_reduce_inplace<N: Numeric, S: Size>(
         elements[i] = input[offset + i];
     }
 
-    plane_topk_merge::<N, S>(k, &mut elements);
+    let mut args = Value::new_None();
+    plane_argtopk_merge::<N, S>(&mut elements, &mut args, k, false);
 
     #[unroll]
     for i in 0..k {
@@ -140,7 +141,7 @@ fn assert_plane_topk_custom_values(
 }
 
 #[test]
-fn test_plane_topk_insert() {
+fn test_topk_plane_topk_insert() {
     let client = TestRuntime::client(&Default::default());
     if !client.properties().features.plane.contains(Plane::Ops) {
         return;

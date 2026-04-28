@@ -4,6 +4,7 @@ use cubecl::frontend::CubeIndexMutExpand;
 use cubecl::prelude::*;
 
 use crate::components::instructions::AccumulatorFormat;
+use crate::components::instructions::plane_argtopk_merge;
 use crate::components::instructions::plane_topk_insert;
 use crate::components::instructions::{Accumulator, Item, Value};
 use crate::{
@@ -140,7 +141,12 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
     }
 
     fn plane_reduce_inplace(this: &Self, accumulator: &mut Accumulator<P>) {
-        plane_topk_merge::<P::EA, P::SI>(this.k, accumulator.elements.multiple_mut());
+        plane_argtopk_merge(
+            accumulator.elements.multiple_mut(),
+            &mut accumulator.args,
+            this.k,
+            false,
+        );
     }
 
     fn fuse_accumulators(this: &Self, accumulator: &mut Accumulator<P>, other: &Accumulator<P>) {
@@ -211,41 +217,5 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
         }
 
         Value::new_Multiple(output)
-    }
-}
-
-#[cube]
-pub fn plane_topk_merge<N: Numeric, S: Size>(
-    #[comptime] k: usize,
-    elements: &mut Array<Vector<N, S>>,
-) {
-    let mut final_elements = Array::new(k);
-
-    let mut cursor = Vector::new(0u32);
-    let lane_id = Vector::new(UNIT_POS_X);
-
-    for i in 0..k {
-        let mut local_best_val = Vector::new(N::min_value());
-        for j in 0..k {
-            let is_pointed_slot = cursor.equal(Vector::new(j as u32));
-            local_best_val = select_many(is_pointed_slot, elements[j], local_best_val);
-        }
-
-        // Find the global max value
-        let winning_val = plane_max(local_best_val);
-
-        // Find WHICH thread provided the winner.
-        let is_candidate = local_best_val.equal(winning_val);
-        let candidate_id = select_many(is_candidate, lane_id, Vector::new(u32::MAX));
-        let winning_lane_id = plane_min(candidate_id);
-
-        final_elements[i] = winning_val;
-
-        let is_winner_thread = lane_id.equal(winning_lane_id);
-        cursor = select_many(is_winner_thread, cursor + Vector::new(1u32), cursor);
-    }
-
-    for i in 0..k {
-        elements[i] = final_elements[i];
     }
 }

@@ -4,7 +4,7 @@ use cubecl::frontend::CubeIndexMutExpand;
 use cubecl::prelude::*;
 
 use crate::components::instructions::AccumulatorFormat;
-use crate::components::instructions::lowest_coordinate_matching;
+use crate::components::instructions::plane_argtopk_merge;
 use crate::components::instructions::plane_topk_insert;
 use crate::components::instructions::{Accumulator, Item, Value};
 use crate::{
@@ -167,9 +167,10 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
 
     fn plane_reduce_inplace(this: &Self, accumulator: &mut Accumulator<P>) {
         plane_argtopk_merge::<P::EA, P::SI>(
-            this.k,
             accumulator.elements.multiple_mut(),
-            accumulator.args.multiple_mut(),
+            &mut accumulator.args,
+            this.k,
+            true,
         );
     }
 
@@ -268,48 +269,5 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
         }
 
         Value::new_Multiple(output)
-    }
-}
-
-#[cube]
-pub fn plane_argtopk_merge<N: Numeric, S: Size>(
-    #[comptime] k: usize,
-    elements: &mut Array<Vector<N, S>>,
-    coordinates: &mut Array<Vector<u32, S>>,
-) {
-    let mut final_elements = Array::new(k);
-    let mut final_coords = Array::new(k);
-    let mut cursor = Vector::new(0u32);
-    let lane_id = Vector::new(UNIT_POS_X);
-
-    for i in 0..k {
-        let mut local_val = Vector::new(N::min_value());
-        let mut local_coord = Vector::new(u32::MAX);
-
-        for j in 0..k {
-            let is_pointed = cursor.equal(Vector::new(j as u32));
-            local_val = select_many(is_pointed, elements[j], local_val);
-            local_coord = select_many(is_pointed, coordinates[j], local_coord);
-        }
-
-        let winning_val = plane_max(local_val);
-        let winning_coord = lowest_coordinate_matching(winning_val, local_val, local_coord);
-
-        final_elements[i] = winning_val;
-        final_coords[i] = winning_coord;
-
-        let is_candidate = local_val
-            .equal(winning_val)
-            .and(local_coord.equal(winning_coord));
-        let candidate_id = select_many(is_candidate, lane_id, Vector::new(u32::MAX));
-        let winning_lane = plane_min(candidate_id);
-
-        let is_winner_thread = lane_id.equal(winning_lane);
-        cursor = select_many(is_winner_thread, cursor + Vector::new(1u32), cursor);
-    }
-
-    for i in 0..k {
-        elements[i] = final_elements[i];
-        coordinates[i] = final_coords[i];
     }
 }

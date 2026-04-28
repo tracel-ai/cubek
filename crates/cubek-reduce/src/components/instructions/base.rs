@@ -177,6 +177,59 @@ pub fn plane_topk_insert<N: Numeric, S: Size>(
     }
 }
 
+#[cube]
+pub fn plane_argtopk_merge<N: Numeric, S: Size>(
+    elements: &mut Array<Vector<N, S>>,
+    coordinates: &mut Value<Vector<u32, S>>,
+    #[comptime] k: usize,
+    #[comptime] has_coords: bool,
+) {
+    let mut final_elements = Array::new(k);
+    let mut final_coords = Array::new(k);
+    let mut cursor = Vector::new(0u32);
+    let lane_id = Vector::new(UNIT_POS_X);
+
+    #[unroll]
+    for i in 0..k {
+        let mut local_val = Vector::new(N::min_value());
+        let mut local_coord = Vector::new(u32::MAX);
+
+        #[unroll]
+        for j in 0..k {
+            let is_pointed = cursor.equal(Vector::new(j as u32));
+            local_val = select_many(is_pointed, elements[j], local_val);
+            if has_coords {
+                let coords = coordinates.multiple_mut();
+                local_coord = select_many(is_pointed, coords[j], local_coord);
+            }
+        }
+
+        let winning_val = plane_max(local_val);
+        let winning_lane = if has_coords {
+            let best_c = lowest_coordinate_matching(winning_val, local_val, local_coord);
+            final_coords[i] = best_c;
+            let is_cand = local_val.equal(winning_val).and(local_coord.equal(best_c));
+            plane_min(select_many(is_cand, lane_id, Vector::new(u32::MAX)))
+        } else {
+            let is_cand = local_val.equal(winning_val);
+            plane_min(select_many(is_cand, lane_id, Vector::new(u32::MAX)))
+        };
+
+        final_elements[i] = winning_val;
+        let is_winner_thread = lane_id.equal(winning_lane);
+        cursor = select_many(is_winner_thread, cursor + Vector::new(1u32), cursor);
+    }
+
+    #[unroll]
+    for i in 0..k {
+        elements[i] = final_elements[i];
+        if has_coords {
+            let coords = coordinates.multiple_mut();
+            coords[i] = final_coords[i];
+        }
+    }
+}
+
 #[derive(CubeType)]
 /// Whether the accumulator has zero, one or more vectors
 /// This should be the same variant as AccumulatorKind for an instruction
