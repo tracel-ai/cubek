@@ -21,7 +21,7 @@ use crate::{
             single_stage::simple::SimpleMatmulFamily,
         },
         stage::{ColMajorTilingOrder, PartitionBuffering, PlaneMatmulFamily, RowMajorTilingOrder},
-        tile_matmul::{TileMatmul, TileMatmulFamily as _},
+        tile_matmul::TileMatmulKind,
     },
     routines::{
         Routine,
@@ -86,7 +86,7 @@ where
         strategy: &BlueprintStrategy<RC, Self>,
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
-        let tile_matmul = TileMatmul::Interleaved;
+        let tile_matmul = TileMatmulKind::Interleaved;
 
         if tile_matmul.can_cast_stage_element() {
             dtypes.adjust_stage_dtypes();
@@ -226,7 +226,7 @@ where
 }
 
 fn infer_blueprint_multi_rows<R: Runtime>(
-    tile_matmul: TileMatmul,
+    tile_matmul: TileMatmulKind,
     client: &ComputeClient<R>,
     problem: &MatmulProblem,
     plane_dim: u32,
@@ -273,7 +273,7 @@ fn infer_blueprint_multi_rows<R: Runtime>(
             .build();
 
         Ok((
-            TilingBlueprint::builder(TileMatmul::Interleaved, tiling_scheme, plane_dim, problem)
+            TilingBlueprint::builder(TileMatmulKind::Interleaved, tiling_scheme, plane_dim, problem)
                 .partition_buffering(PartitionBuffering::Single)
                 .hypercube_blueprint(hypercube)
                 .build(),
@@ -292,7 +292,7 @@ fn infer_blueprint_multi_rows<R: Runtime>(
             .build();
 
         Ok((
-            TilingBlueprint::builder(TileMatmul::Interleaved, tiling_scheme, plane_dim, problem)
+            TilingBlueprint::builder(TileMatmulKind::Interleaved, tiling_scheme, plane_dim, problem)
                 .partition_buffering(PartitionBuffering::Single)
                 .hypercube_blueprint(hypercube)
                 .build(),

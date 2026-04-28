@@ -4,7 +4,7 @@ use cubecl;
 use cubecl::prelude::*;
 use cubek_matmul::{
     components::tile_matmul::{
-        Plane, ProductType, SharedTileConfig, Tile, TileConfig, TileExpand, register_allocate_acc,
+        Plane, ProductType, RegisterMatmulConfig, Tile, TileExpand, register_allocate_acc,
     },
     definition::SwizzleModes,
 };
@@ -44,12 +44,13 @@ impl<Acc: Float, Lhs: Float> UnitSoftmaxWorkspace<Acc, Lhs> {
 }
 
 impl UnitSoftmaxConfig {
-    pub(crate) fn shared(&self) -> SharedTileConfig {
-        SharedTileConfig::new(
-            self.tile_size.to_score_matmul_tile_size(),
-            1,
-            SwizzleModes::default(),
-        )
+    pub(crate) fn register(&self) -> RegisterMatmulConfig {
+        RegisterMatmulConfig {
+            tile_size: self.tile_size.to_score_matmul_tile_size(),
+            plane_dim: 1,
+            swizzle_modes: SwizzleModes::default(),
+            product_type: ProductType::Inner,
+        }
     }
 }
 
@@ -131,11 +132,8 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
     }
 
     fn init_score_tile(#[comptime] config: Self::Config) -> Self::ScoreTile {
-        let mut tile = register_allocate_acc::<Acc, Const<0>, Plane>(
-            MatrixLayout::RowMajor,
-            config.shared(),
-            ProductType::Inner,
-        );
+        let mut tile =
+            register_allocate_acc::<Acc, Const<0>, Plane>(MatrixLayout::RowMajor, config.register());
         Self::zero_score_tile(&mut tile);
         tile
     }
@@ -145,11 +143,7 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for UnitSoftmax<Lhs> {
     }
 
     fn init_softmax_tile(#[comptime] config: Self::Config) -> Self::SoftmaxedTile {
-        register_allocate_acc::<Lhs, Const<0>, Plane>(
-            MatrixLayout::RowMajor,
-            config.shared(),
-            ProductType::Inner,
-        )
+        register_allocate_acc::<Lhs, Const<0>, Plane>(MatrixLayout::RowMajor, config.register())
     }
 
     fn allocate_mask(#[comptime] config: Self::Config) -> Self::Mask {
@@ -178,7 +172,7 @@ fn zero_register_tile<E: Numeric>(tile: &mut Tile<E, Const<0>, Plane, ReadWrite>
     match tile {
         Tile::Register(t) => {
             let num_elements =
-                comptime!(t.config.elements_in_tile_m() * t.config.elements_in_tile_n());
+                comptime!(t.config.tile_size.m() * t.config.tile_size.n());
             fill_array_zero::<E>(&mut t.data, num_elements);
         }
         Tile::Cmma(_dummy) => panic!("UnitSoftmax expects Tile::Register"),

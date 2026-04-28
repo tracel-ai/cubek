@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use crate::{
-    components::{stage::PartitionBuffering, tile_matmul::TileMatmul},
+    components::{stage::PartitionBuffering, tile_matmul::TileMatmulKind},
     definition::{
         MatmulElems, MatmulGlobalElems, MatmulKind, MatmulProblem, MatmulVectorSizes, SwizzleModes,
         TilingBlueprint, TilingScheme,
@@ -540,7 +540,7 @@ fn selection(
         .build();
 
     let mut builder =
-        TilingBlueprint::builder(TileMatmul::Register, tiling_scheme, plane_dim, problem)
+        TilingBlueprint::builder(TileMatmulKind::Register, tiling_scheme, plane_dim, problem)
             .partition_buffering(buffering)
             .hypercube_blueprint(hypercube);
 

@@ -1,12 +1,8 @@
 use std::marker::PhantomData;
 
 use cubecl::{cmma::Matrix, define_size, prelude::*};
-use cubek_std::{
-    MatrixLayout,
-    tile::{StridedTile, mma::MmaIOConfig},
-};
+use cubek_std::{MatrixLayout, tile::StridedTile};
 
-use crate::components::tile_matmul::{ProductType, SharedTileConfig};
 use crate::definition::StageIdent;
 
 // plane_vec_mat's fragment inner vector size (= reduce_vector_size). Bound at
@@ -28,7 +24,10 @@ pub use plane_vec_mat_inner_product::*;
 pub use register::*;
 
 /// Identifies which compute primitive executes a tile matmul.
-pub trait Scope: Clone + Copy + Send + Sync + 'static {}
+pub trait Scope: Clone + Copy + Send + Sync + 'static {
+    /// Compute resource a single instance of this scope occupies.
+    fn default_resource() -> crate::components::resource::CubeDimResource;
+}
 
 #[derive(Clone, Copy)]
 pub struct Unit;
@@ -37,9 +36,21 @@ pub struct Plane;
 #[derive(Clone, Copy)]
 pub struct Cube;
 
-impl Scope for Unit {}
-impl Scope for Plane {}
-impl Scope for Cube {}
+impl Scope for Unit {
+    fn default_resource() -> crate::components::resource::CubeDimResource {
+        crate::components::resource::CubeDimResource::Units(1)
+    }
+}
+impl Scope for Plane {
+    fn default_resource() -> crate::components::resource::CubeDimResource {
+        crate::components::resource::CubeDimResource::Planes(1)
+    }
+}
+impl Scope for Cube {
+    fn default_resource() -> crate::components::resource::CubeDimResource {
+        unimplemented!("Cube scope does not have a default cube-dim resource")
+    }
+}
 
 /// Zero-sized comptime marker used to carry a [Scope] generic through [Tile].
 #[derive(CubeType, Clone, Copy)]
@@ -77,9 +88,7 @@ pub struct MmaLhsTile<N: Numeric> {
     #[cube(comptime)]
     pub matrix_layout: MatrixLayout,
     #[cube(comptime)]
-    pub config: SharedTileConfig,
-    #[cube(comptime)]
-    pub mma_io_config: MmaIOConfig,
+    pub config: MmaMatmulConfig,
 }
 
 #[derive(CubeType)]
@@ -88,9 +97,7 @@ pub struct MmaRhsTile<N: Numeric> {
     #[cube(comptime)]
     pub matrix_layout: MatrixLayout,
     #[cube(comptime)]
-    pub config: SharedTileConfig,
-    #[cube(comptime)]
-    pub mma_io_config: MmaIOConfig,
+    pub config: MmaMatmulConfig,
 }
 
 #[derive(CubeType)]
@@ -99,9 +106,7 @@ pub struct MmaAccTile<N: Numeric> {
     #[cube(comptime)]
     pub matrix_layout: MatrixLayout,
     #[cube(comptime)]
-    pub config: SharedTileConfig,
-    #[cube(comptime)]
-    pub mma_io_config: MmaIOConfig,
+    pub config: MmaMatmulConfig,
 }
 
 #[derive(CubeType)]
@@ -110,9 +115,7 @@ pub struct RegisterTile<N: Numeric> {
     #[cube(comptime)]
     pub matrix_layout: MatrixLayout,
     #[cube(comptime)]
-    pub config: SharedTileConfig,
-    #[cube(comptime)]
-    pub product_type: ProductType,
+    pub config: RegisterMatmulConfig,
 }
 
 #[derive(CubeType)]
@@ -123,9 +126,7 @@ pub struct PlaneVecTile<N: Numeric, V: Size> {
     #[cube(comptime)]
     pub matrix_layout: MatrixLayout,
     #[cube(comptime)]
-    pub config: SharedTileConfig,
-    #[cube(comptime)]
-    pub reduce_vector_size: u32,
+    pub config: PlaneVecMatInnerProductConfig,
     #[cube(comptime)]
     pub _phantom_v: PhantomData<V>,
 }
@@ -155,11 +156,10 @@ impl<N: Numeric, V: Size, Sc: Scope> Tile<N, V, Sc, ReadWrite> {
                     &mut a.fragment,
                     a.matrix_layout,
                     a.config,
-                    a.mma_io_config,
                 );
             }
             (Tile::Register(l), Tile::Register(r), Tile::Register(a)) => {
-                register_execute(&l.data, &r.data, &mut a.data, a.config, a.product_type);
+                register_execute(&l.data, &r.data, &mut a.data, a.config);
             }
             (Tile::PlaneVec(l), Tile::PlaneVec(r), Tile::PlaneVec(a)) => {
                 planevec_execute(&l.data, &r.data, &mut a.data, a.config);
@@ -213,7 +213,6 @@ impl<N: Numeric, V: Size, Sc: Scope> Tile<N, V, Sc, ReadWrite> {
                     &mut t.fragment,
                     t.matrix_layout,
                     t.config,
-                    t.mma_io_config,
                 );
             }
             (Tile::SharedMemory(shared), Tile::MmaRhs(t)) => {
@@ -222,7 +221,6 @@ impl<N: Numeric, V: Size, Sc: Scope> Tile<N, V, Sc, ReadWrite> {
                     &mut t.fragment,
                     t.matrix_layout,
                     t.config,
-                    t.mma_io_config,
                 );
             }
             (Tile::SharedMemory(shared), Tile::MmaAcc(t)) => {
@@ -231,7 +229,6 @@ impl<N: Numeric, V: Size, Sc: Scope> Tile<N, V, Sc, ReadWrite> {
                     &mut t.fragment,
                     t.matrix_layout,
                     t.config,
-                    t.mma_io_config,
                 );
             }
             (Tile::None, Tile::MmaAcc(t)) => {
@@ -239,7 +236,6 @@ impl<N: Numeric, V: Size, Sc: Scope> Tile<N, V, Sc, ReadWrite> {
                     &mut t.fragment,
                     t.matrix_layout,
                     t.config,
-                    t.mma_io_config,
                 );
             }
 
@@ -250,7 +246,6 @@ impl<N: Numeric, V: Size, Sc: Scope> Tile<N, V, Sc, ReadWrite> {
                     &mut t.data,
                     t.matrix_layout,
                     t.config,
-                    t.product_type,
                     ident,
                 );
             }
@@ -284,23 +279,13 @@ impl<N: Numeric, V: Size, Sc: Scope> Tile<N, V, Sc, ReadWrite> {
                 cmma_write_to_shared::<N, V, SE, SS>(shared, &t.matrix);
             }
             (Tile::MmaAcc(t), Tile::SharedMemory(shared)) => {
-                mma_write_to_shared::<N, V, SE, L, R>(
-                    shared,
-                    &t.fragment,
-                    t.config,
-                    t.mma_io_config,
-                );
+                mma_write_to_shared::<N, V, SE, L, R>(shared, &t.fragment, t.config);
             }
             (Tile::Register(t), Tile::SharedMemory(shared)) => {
                 register_write_to_shared::<N, V, SE, SS>(shared, &t.data, t.config);
             }
             (Tile::PlaneVec(t), Tile::SharedMemory(shared)) => {
-                planevec_write_to_shared::<SE, N, V>(
-                    shared,
-                    &t.data,
-                    t.config,
-                    t.reduce_vector_size,
-                );
+                planevec_write_to_shared::<SE, N, V>(shared, &t.data, t.config);
             }
             (Tile::Interleaved(t), Tile::SharedMemory(shared)) => {
                 interleaved_write_to_shared::<N, V, SE, SS>(shared, &t.data, t.config);

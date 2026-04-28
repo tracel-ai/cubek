@@ -1,22 +1,21 @@
 use crate::{
     components::global::PlaneFlowPartition, components::global::PlaneFlowPartitionRule,
     components::stage::matmul::partitioned_matmul::PartitionedStageMatmul,
-    components::stage::matmul::partitioned_matmul::StagePartitioner, definition::MatmulTypes,
+    components::stage::matmul::partitioned_matmul::StagePartitioner,
+    components::tile_matmul::Plane, definition::MatmulTypes,
 };
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 
-use crate::components::{
-    stage::matmul::partition::SharedPartitionMatmulConfig, tile_matmul::TileConfig,
-};
+use crate::components::stage::matmul::partition::SharedPartitionMatmulConfig;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 /// Configuration for the plane partitioned stage matmul
-pub struct PlanePartitionedStageConfig<TC: TileConfig> {
-    pub shared: SharedPartitionMatmulConfig<TC>,
+pub struct PlanePartitionedStageConfig {
+    pub shared: SharedPartitionMatmulConfig,
 }
 
-impl<TC: TileConfig> PlanePartitionedStageConfig<TC> {
-    pub fn from_shared_partition_config(shared: SharedPartitionMatmulConfig<TC>) -> Self {
+impl PlanePartitionedStageConfig {
+    pub fn from_shared_partition_config(shared: SharedPartitionMatmulConfig) -> Self {
         Self { shared }
     }
 }
@@ -31,6 +30,8 @@ pub struct PlanePartitioner {}
 
 #[cube]
 impl StagePartitioner for PlanePartitioner {
+    type Scope = Plane;
+
     /// Returns the (row, col) of the current compute primitive within the stage.
     fn coordinates(
         #[comptime] role_rule_config: PlaneFlowPartitionRule,

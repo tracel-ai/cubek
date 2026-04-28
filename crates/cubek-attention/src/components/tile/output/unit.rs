@@ -4,7 +4,7 @@ use cubecl;
 use cubecl::prelude::*;
 use cubek_matmul::{
     components::tile_matmul::{
-        Plane, ProductType, SharedTileConfig, Tile, TileExpand, register_allocate_acc,
+        Plane, ProductType, RegisterMatmulConfig, Tile, TileExpand, register_allocate_acc,
     },
     definition::{StageIdent, SwizzleModes},
 };
@@ -21,12 +21,13 @@ pub struct UnitOutputConfig {
 }
 
 impl UnitOutputConfig {
-    fn shared(&self) -> SharedTileConfig {
-        SharedTileConfig::new(
-            self.tile_size.to_value_matmul_tile_size(),
-            1,
-            SwizzleModes::default(),
-        )
+    fn register(&self) -> RegisterMatmulConfig {
+        RegisterMatmulConfig {
+            tile_size: self.tile_size.to_value_matmul_tile_size(),
+            plane_dim: 1,
+            swizzle_modes: SwizzleModes::default(),
+            product_type: ProductType::Inner,
+        }
     }
 }
 
@@ -79,11 +80,8 @@ impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA> for UnitAttention
     fn init_workspace(#[comptime] _config: Self::Config) -> Self::Workspace {}
 
     fn init_tile(#[comptime] config: Self::Config) -> Tile<Acc, VA, Plane, ReadWrite> {
-        let mut tile = register_allocate_acc::<Acc, VA, Plane>(
-            MatrixLayout::RowMajor,
-            config.shared(),
-            ProductType::Inner,
-        );
+        let mut tile =
+            register_allocate_acc::<Acc, VA, Plane>(MatrixLayout::RowMajor, config.register());
         zero_register_tile::<Acc, VA>(&mut tile, config.tile_size.seq_q, config.tile_size.val_dim);
         tile
     }

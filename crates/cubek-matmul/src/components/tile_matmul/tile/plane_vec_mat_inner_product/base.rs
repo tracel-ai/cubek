@@ -4,7 +4,8 @@ use cubecl::prelude::*;
 use cubek_std::{MatrixLayout, tile::StridedTile};
 
 use crate::components::tile_matmul::tile::Scope;
-use crate::components::tile_matmul::{NPlaneVec, PlaneVecTile, SharedTileConfig, Tile, TileConfig};
+use crate::components::tile_matmul::tile::plane_vec_mat_inner_product::PlaneVecMatInnerProductConfig;
+use crate::components::tile_matmul::{NPlaneVec, PlaneVecTile, Tile};
 use crate::definition::StageIdent;
 
 // Binds the plane_vec_mat fragment's inner vector size (`NPlaneVec`) to the
@@ -24,15 +25,13 @@ fn register_reduce_vector_size(#[comptime] reduce_vector_size: u32) {
 #[cube]
 pub fn planevec_allocate_lhs<L: Numeric, VL: Size, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: SharedTileConfig,
-    #[comptime] reduce_vector_size: u32,
+    #[comptime] config: PlaneVecMatInnerProductConfig,
 ) -> Tile<L, VL, Sc, ReadWrite> {
-    register_reduce_vector_size(reduce_vector_size);
+    register_reduce_vector_size(config.reduce_vector_size);
     Tile::new_PlaneVec(PlaneVecTile::<L, VL> {
         data: Array::new(1usize),
         matrix_layout: layout,
         config,
-        reduce_vector_size,
         _phantom_v: PhantomData,
     })
 }
@@ -40,15 +39,13 @@ pub fn planevec_allocate_lhs<L: Numeric, VL: Size, Sc: Scope>(
 #[cube]
 pub fn planevec_allocate_rhs<R: Numeric, VR: Size, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: SharedTileConfig,
-    #[comptime] reduce_vector_size: u32,
+    #[comptime] config: PlaneVecMatInnerProductConfig,
 ) -> Tile<R, VR, Sc, ReadWrite> {
-    register_reduce_vector_size(reduce_vector_size);
+    register_reduce_vector_size(config.reduce_vector_size);
     Tile::new_PlaneVec(PlaneVecTile::<R, VR> {
-        data: Array::new(config.elements_in_tile_n() as usize),
+        data: Array::new(config.tile_size.n() as usize),
         matrix_layout: layout,
         config,
-        reduce_vector_size,
         _phantom_v: PhantomData,
     })
 }
@@ -56,15 +53,13 @@ pub fn planevec_allocate_rhs<R: Numeric, VR: Size, Sc: Scope>(
 #[cube]
 pub fn planevec_allocate_acc<A: Numeric, VA: Size, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: SharedTileConfig,
-    #[comptime] reduce_vector_size: u32,
+    #[comptime] config: PlaneVecMatInnerProductConfig,
 ) -> Tile<A, VA, Sc, ReadWrite> {
-    register_reduce_vector_size(reduce_vector_size);
+    register_reduce_vector_size(config.reduce_vector_size);
     Tile::new_PlaneVec(PlaneVecTile::<A, VA> {
-        data: Array::new(config.elements_in_tile_n() as usize),
+        data: Array::new(config.tile_size.n() as usize),
         matrix_layout: layout,
         config,
-        reduce_vector_size,
         _phantom_v: PhantomData,
     })
 }
@@ -78,9 +73,9 @@ pub fn planevec_execute<L: Numeric, R: Numeric, A: Numeric>(
     lhs: &Array<Vector<L, NPlaneVec>>,
     rhs: &Array<Vector<R, NPlaneVec>>,
     acc: &mut Array<Vector<A, NPlaneVec>>,
-    #[comptime] config: SharedTileConfig,
+    #[comptime] config: PlaneVecMatInnerProductConfig,
 ) {
-    let n = config.elements_in_tile_n();
+    let n = config.tile_size.n();
     #[unroll]
     for n_idx in 0..n as usize {
         let mut acc_vec = acc[n_idx];
@@ -102,7 +97,7 @@ pub fn planevec_execute<L: Numeric, R: Numeric, A: Numeric>(
 pub fn planevec_load_from_shared<E: Numeric, ES: Size, N: Numeric, IO: SliceVisibility>(
     shared: &StridedTile<E, ES, IO>,
     arr: &mut Array<Vector<N, NPlaneVec>>,
-    #[comptime] config: SharedTileConfig,
+    #[comptime] config: PlaneVecMatInnerProductConfig,
     #[comptime] ident: StageIdent,
 ) {
     match ident {
@@ -111,7 +106,7 @@ pub fn planevec_load_from_shared<E: Numeric, ES: Size, N: Numeric, IO: SliceVisi
             arr[0usize] = Vector::cast_from(shared.container[offset as usize]);
         }
         StageIdent::Rhs | StageIdent::Acc => {
-            let n = config.elements_in_tile_n();
+            let n = config.tile_size.n();
             #[unroll]
             for n_idx in 0..n {
                 let offset = shared.stage_offset(UNIT_POS_X + n_idx * shared.stride);
@@ -129,9 +124,9 @@ pub fn planevec_load_from_shared<E: Numeric, ES: Size, N: Numeric, IO: SliceVisi
 #[cube]
 pub fn planevec_load_zeros<N: Numeric>(
     arr: &mut Array<Vector<N, NPlaneVec>>,
-    #[comptime] config: SharedTileConfig,
+    #[comptime] config: PlaneVecMatInnerProductConfig,
 ) {
-    let n = config.elements_in_tile_n();
+    let n = config.tile_size.n();
     let zero = N::from_int(0);
     #[unroll]
     for n_idx in 0..n as usize {
@@ -147,14 +142,13 @@ pub fn planevec_load_zeros<N: Numeric>(
 pub fn planevec_write_to_shared<A: Numeric, E: Numeric, ES: Size>(
     shared: &mut StridedTile<E, ES, ReadWrite>,
     arr: &Array<Vector<A, NPlaneVec>>,
-    #[comptime] config: SharedTileConfig,
-    #[comptime] reduce_vector_size: u32,
+    #[comptime] config: PlaneVecMatInnerProductConfig,
 ) {
     if UNIT_POS_X == 0 {
         let out_vector_size = shared.container.vector_size().comptime();
-        let n = config.elements_in_tile_n();
+        let n = config.tile_size.n();
         let total_out_vectors = n as usize / out_vector_size;
-        let reduce_vec = reduce_vector_size as usize;
+        let reduce_vec = config.reduce_vector_size as usize;
 
         #[unroll]
         for out_vector_iter in 0..total_out_vectors {

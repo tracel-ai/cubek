@@ -12,7 +12,7 @@ use crate::{
             single_stage::simple::SimpleMatmulFamily,
         },
         stage::{ColMajorTilingOrder, RowMajorTilingOrder, UnitMatmulFamily},
-        tile_matmul::{TileMatmul, TileMatmulFamily as _},
+        tile_matmul::TileMatmulKind,
     },
     definition::{
         MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes, TilingBlueprint,
@@ -85,7 +85,7 @@ where
         strategy: &BlueprintStrategy<RC, Self>,
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
-        let tile_matmul = TileMatmul::Register;
+        let tile_matmul = TileMatmulKind::Register;
 
         if tile_matmul.can_cast_stage_element() {
             dtypes.adjust_stage_dtypes();

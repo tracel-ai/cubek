@@ -1,13 +1,12 @@
 use cubecl::{cmma::MmaDefinition, define_size, ir::MatrixIdent, prelude::*};
 use cubek_std::{
     MatrixLayout, TileSize,
-    tile::mma::{MmaFragmentReader as _, MmaIOConfig, MmaStageReader, MmaStageWriter},
+    tile::mma::{MmaFragmentReader as _, MmaStageReader, MmaStageWriter},
     tile::{Filled, Strided, StridedTile},
 };
 
-use crate::components::tile_matmul::{
-    MmaAccTile, MmaLhsTile, MmaRhsTile, SharedTileConfig, TileConfig,
-};
+use crate::components::tile_matmul::tile::mma::MmaMatmulConfig;
+use crate::components::tile_matmul::{MmaAccTile, MmaLhsTile, MmaRhsTile};
 use crate::components::tile_matmul::{Tile, tile::Scope};
 
 // Fragment inner vector sizes for the three MMA roles. Bound at allocation time
@@ -19,12 +18,12 @@ define_size!(pub NA);
 
 #[cube]
 fn make_mma_definition<L: Numeric, R: Numeric, A: Numeric>(
-    #[comptime] config: SharedTileConfig,
+    #[comptime] config: MmaMatmulConfig,
 ) -> MmaDefinition<L, R, A> {
     MmaDefinition::new(
-        config.elements_in_tile_m() as usize,
-        config.elements_in_tile_n() as usize,
-        config.elements_in_tile_k() as usize,
+        config.tile_size.m() as usize,
+        config.tile_size.n() as usize,
+        config.tile_size.k() as usize,
     )
 }
 
@@ -47,8 +46,7 @@ pub fn mma_register_vector_sizes<L: Numeric, R: Numeric, A: Numeric>(def: MmaDef
 #[cube]
 pub fn mma_allocate_lhs<L: Numeric, VL: Size, R: Numeric, A: Numeric, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: SharedTileConfig,
-    #[comptime] mma_io_config: MmaIOConfig,
+    #[comptime] config: MmaMatmulConfig,
 ) -> Tile<L, VL, Sc, ReadWrite> {
     let def = make_mma_definition::<L, R, A>(config);
     mma_register_vector_sizes(def);
@@ -58,15 +56,13 @@ pub fn mma_allocate_lhs<L: Numeric, VL: Size, R: Numeric, A: Numeric, Sc: Scope>
         fragment: Array::new(vector_count),
         matrix_layout: layout,
         config,
-        mma_io_config,
     })
 }
 
 #[cube]
 pub fn mma_allocate_rhs<R: Numeric, VR: Size, L: Numeric, A: Numeric, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: SharedTileConfig,
-    #[comptime] mma_io_config: MmaIOConfig,
+    #[comptime] config: MmaMatmulConfig,
 ) -> Tile<R, VR, Sc, ReadWrite> {
     let def = make_mma_definition::<L, R, A>(config);
     mma_register_vector_sizes(def);
@@ -76,15 +72,13 @@ pub fn mma_allocate_rhs<R: Numeric, VR: Size, L: Numeric, A: Numeric, Sc: Scope>
         fragment: Array::new(vector_count),
         matrix_layout: layout,
         config,
-        mma_io_config,
     })
 }
 
 #[cube]
 pub fn mma_allocate_acc<A: Numeric, VA: Size, L: Numeric, R: Numeric, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: SharedTileConfig,
-    #[comptime] mma_io_config: MmaIOConfig,
+    #[comptime] config: MmaMatmulConfig,
 ) -> Tile<A, VA, Sc, ReadWrite> {
     let def = make_mma_definition::<L, R, A>(config);
     mma_register_vector_sizes(def);
@@ -94,7 +88,6 @@ pub fn mma_allocate_acc<A: Numeric, VA: Size, L: Numeric, R: Numeric, Sc: Scope>
         fragment: Array::new(vector_count),
         matrix_layout: layout,
         config,
-        mma_io_config,
     })
 }
 
@@ -104,13 +97,12 @@ pub fn mma_execute<L: Numeric, R: Numeric, A: Numeric>(
     rhs: &Array<Vector<R, NR>>,
     acc: &mut Array<Vector<A, NA>>,
     #[comptime] _matrix_layout: MatrixLayout,
-    #[comptime] config: SharedTileConfig,
-    #[comptime] _mma_io_config: MmaIOConfig,
+    #[comptime] config: MmaMatmulConfig,
 ) {
     let def = MmaDefinition::<L, R, A>::new(
-        config.elements_in_tile_m() as usize,
-        config.elements_in_tile_n() as usize,
-        config.elements_in_tile_k() as usize,
+        config.tile_size.m() as usize,
+        config.tile_size.n() as usize,
+        config.tile_size.k() as usize,
     );
     let out_arr = def.execute(lhs, rhs, acc);
     let num_vectors = def.vectors_per_lane(MatrixIdent::Accumulator);
@@ -132,8 +124,7 @@ pub fn mma_load_lhs_from_shared<
     shared: &StridedTile<E, ES, IO>,
     fragment: &mut Array<Vector<L, NL>>,
     #[comptime] matrix_layout: MatrixLayout,
-    #[comptime] config: SharedTileConfig,
-    #[comptime] mma_io_config: MmaIOConfig,
+    #[comptime] config: MmaMatmulConfig,
 ) {
     let shared = shared.to_read_only();
     let def = make_mma_definition::<L, R, A>(config);
@@ -144,11 +135,11 @@ pub fn mma_load_lhs_from_shared<
         MatrixIdent::A,
         matrix_layout,
         comptime!(TileSize::new(
-            config.elements_in_tile_m(),
-            config.elements_in_tile_n(),
-            config.elements_in_tile_k(),
+            config.tile_size.m(),
+            config.tile_size.n(),
+            config.tile_size.k(),
         )),
-        mma_io_config,
+        config.mma_io_config,
     );
 }
 
@@ -164,8 +155,7 @@ pub fn mma_load_rhs_from_shared<
     shared: &StridedTile<E, ES, IO>,
     fragment: &mut Array<Vector<R, NR>>,
     #[comptime] matrix_layout: MatrixLayout,
-    #[comptime] config: SharedTileConfig,
-    #[comptime] mma_io_config: MmaIOConfig,
+    #[comptime] config: MmaMatmulConfig,
 ) {
     let shared = shared.to_read_only();
     let def = make_mma_definition::<L, R, A>(config);
@@ -176,11 +166,11 @@ pub fn mma_load_rhs_from_shared<
         MatrixIdent::B,
         matrix_layout,
         comptime!(TileSize::new(
-            config.elements_in_tile_m(),
-            config.elements_in_tile_n(),
-            config.elements_in_tile_k(),
+            config.tile_size.m(),
+            config.tile_size.n(),
+            config.tile_size.k(),
         )),
-        mma_io_config,
+        config.mma_io_config,
     );
 }
 
@@ -196,8 +186,7 @@ pub fn mma_load_acc_from_shared<
     shared: &StridedTile<E, ES, IO>,
     fragment: &mut Array<Vector<A, NA>>,
     #[comptime] matrix_layout: MatrixLayout,
-    #[comptime] config: SharedTileConfig,
-    #[comptime] mma_io_config: MmaIOConfig,
+    #[comptime] config: MmaMatmulConfig,
 ) {
     let shared = shared.to_read_only();
     let def = make_mma_definition::<L, R, A>(config);
@@ -208,11 +197,11 @@ pub fn mma_load_acc_from_shared<
         MatrixIdent::Accumulator,
         matrix_layout,
         comptime!(TileSize::new(
-            config.elements_in_tile_m(),
-            config.elements_in_tile_n(),
-            config.elements_in_tile_k(),
+            config.tile_size.m(),
+            config.tile_size.n(),
+            config.tile_size.k(),
         )),
-        mma_io_config,
+        config.mma_io_config,
     );
 }
 
@@ -220,8 +209,7 @@ pub fn mma_load_acc_from_shared<
 pub fn mma_load_acc_zeros<E: Numeric, ES: Size, A: Numeric, L: Numeric, R: Numeric>(
     fragment: &mut Array<Vector<A, NA>>,
     #[comptime] matrix_layout: MatrixLayout,
-    #[comptime] config: SharedTileConfig,
-    #[comptime] mma_io_config: MmaIOConfig,
+    #[comptime] config: MmaMatmulConfig,
 ) {
     let def = make_mma_definition::<L, R, A>(config);
     MmaStageReader::<Filled>::load_fragment::<A, NA, E, ES, L, R, A>(
@@ -231,11 +219,11 @@ pub fn mma_load_acc_zeros<E: Numeric, ES: Size, A: Numeric, L: Numeric, R: Numer
         MatrixIdent::Accumulator,
         matrix_layout,
         comptime!(TileSize::new(
-            config.elements_in_tile_m(),
-            config.elements_in_tile_n(),
-            config.elements_in_tile_k(),
+            config.tile_size.m(),
+            config.tile_size.n(),
+            config.tile_size.k(),
         )),
-        mma_io_config,
+        config.mma_io_config,
     );
 }
 
@@ -243,8 +231,7 @@ pub fn mma_load_acc_zeros<E: Numeric, ES: Size, A: Numeric, L: Numeric, R: Numer
 pub fn mma_write_to_shared<E: Numeric, ES: Size, A: Numeric, L: Numeric, R: Numeric>(
     shared: &mut StridedTile<E, ES, ReadWrite>,
     fragment: &Array<Vector<A, NA>>,
-    #[comptime] config: SharedTileConfig,
-    #[comptime] mma_io_config: MmaIOConfig,
+    #[comptime] config: MmaMatmulConfig,
 ) {
     let def = make_mma_definition::<L, R, A>(config);
     let out_layout = comptime!(shared.layout);
@@ -254,7 +241,7 @@ pub fn mma_write_to_shared<E: Numeric, ES: Size, A: Numeric, L: Numeric, R: Nume
         def,
         MatrixIdent::Accumulator,
         out_layout,
-        config.elements_in_tile_m(),
-        mma_io_config,
+        config.tile_size.m(),
+        config.mma_io_config,
     );
 }

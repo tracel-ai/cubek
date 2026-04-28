@@ -10,7 +10,7 @@ use crate::components::{
             partition::SharedPartitionMatmulConfig, partitioned_matmul::PartitionMatmulConfig,
         },
     },
-    tile_matmul::{DispatchConfig, Plane, TileMatmulFamily},
+    tile_matmul::Plane,
 };
 use crate::definition::{
     MatmulElems, MatmulSetupError, MatmulTypes, MatmulVectorSizes, TilingBlueprint,
@@ -57,7 +57,7 @@ impl<StageLhs: StageFamily, StageRhs: StageFamily, StageAcc: StageFamily> StageM
         PartitionedStage<STy<Acc<MP>>, SSz<Acc<MP>>>,
     >;
 
-    type Config = PartitionMatmulConfig<DispatchConfig>;
+    type Config = PartitionMatmulConfig;
 
     fn expand_config(
         device_props: &DeviceProperties,

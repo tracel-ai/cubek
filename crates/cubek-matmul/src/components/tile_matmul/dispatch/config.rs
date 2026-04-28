@@ -1,70 +1,75 @@
 use cubek_std::stage::SwizzleMode;
 
-use crate::{
-    components::tile_matmul::{
-        InterleavedMatmulConfig, MmaMatmulConfig, PlaneVecMatInnerProductConfig,
-        RegisterMatmulConfig, SharedTileConfig, TileConfig,
-    },
-    definition::StageIdent,
-};
+use crate::components::tile_matmul::tile::cmma::CmmaMatmulConfig;
+use crate::components::tile_matmul::tile::interleaved::InterleavedMatmulConfig;
+use crate::components::tile_matmul::tile::mma::MmaMatmulConfig;
+use crate::components::tile_matmul::tile::plane_vec_mat_inner_product::PlaneVecMatInnerProductConfig;
+use crate::components::tile_matmul::tile::register::RegisterMatmulConfig;
+use crate::definition::StageIdent;
 
+/// Tile-level matmul configuration. Each variant carries the per-kind config.
+///
+/// This is both the runtime selector and the comptime configuration: pick the
+/// variant that matches the kernel you want, then forward the value into the
+/// stage layer where its accessors drive allocation and execution.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub enum DispatchConfig {
-    Cmma(SharedTileConfig),
+pub enum TileMatmul {
+    Cmma(CmmaMatmulConfig),
     Mma(MmaMatmulConfig),
     Register(RegisterMatmulConfig),
     PlaneVec(PlaneVecMatInnerProductConfig),
     Interleaved(InterleavedMatmulConfig),
 }
 
-impl TileConfig for DispatchConfig {
-    fn plane_dim(&self) -> u32 {
+impl TileMatmul {
+    pub fn plane_dim(&self) -> u32 {
         match self {
-            DispatchConfig::Cmma(config) => config.plane_dim(),
-            DispatchConfig::Mma(config) => config.plane_dim(),
-            DispatchConfig::Register(config) => config.plane_dim(),
-            DispatchConfig::PlaneVec(config) => config.plane_dim(),
-            DispatchConfig::Interleaved(config) => config.plane_dim(),
+            TileMatmul::Cmma(c) => c.plane_dim,
+            TileMatmul::Mma(c) => c.plane_dim,
+            TileMatmul::Register(c) => c.plane_dim,
+            TileMatmul::PlaneVec(c) => c.plane_dim,
+            TileMatmul::Interleaved(c) => c.plane_dim,
         }
     }
 
-    fn elements_in_tile_m(&self) -> u32 {
+    pub fn elements_in_tile_m(&self) -> u32 {
         match self {
-            DispatchConfig::Cmma(config) => config.elements_in_tile_m(),
-            DispatchConfig::Mma(config) => config.elements_in_tile_m(),
-            DispatchConfig::Register(config) => config.elements_in_tile_m(),
-            DispatchConfig::PlaneVec(config) => config.elements_in_tile_m(),
-            DispatchConfig::Interleaved(config) => config.elements_in_tile_m(),
+            TileMatmul::Cmma(c) => c.tile_size.m(),
+            TileMatmul::Mma(c) => c.tile_size.m(),
+            TileMatmul::Register(c) => c.tile_size.m(),
+            TileMatmul::PlaneVec(c) => c.tile_size.m(),
+            TileMatmul::Interleaved(c) => c.tile_size.m(),
         }
     }
 
-    fn elements_in_tile_n(&self) -> u32 {
+    pub fn elements_in_tile_n(&self) -> u32 {
         match self {
-            DispatchConfig::Cmma(config) => config.elements_in_tile_n(),
-            DispatchConfig::Mma(config) => config.elements_in_tile_n(),
-            DispatchConfig::Register(config) => config.elements_in_tile_n(),
-            DispatchConfig::PlaneVec(config) => config.elements_in_tile_n(),
-            DispatchConfig::Interleaved(config) => config.elements_in_tile_n(),
+            TileMatmul::Cmma(c) => c.tile_size.n(),
+            TileMatmul::Mma(c) => c.tile_size.n(),
+            TileMatmul::Register(c) => c.tile_size.n(),
+            TileMatmul::PlaneVec(c) => c.tile_size.n(),
+            TileMatmul::Interleaved(c) => c.tile_size.n(),
         }
     }
 
-    fn elements_in_tile_k(&self) -> u32 {
+    pub fn elements_in_tile_k(&self) -> u32 {
         match self {
-            DispatchConfig::Cmma(config) => config.elements_in_tile_k(),
-            DispatchConfig::Mma(config) => config.elements_in_tile_k(),
-            DispatchConfig::Register(config) => config.elements_in_tile_k(),
-            DispatchConfig::PlaneVec(config) => config.elements_in_tile_k(),
-            DispatchConfig::Interleaved(config) => config.elements_in_tile_k(),
+            TileMatmul::Cmma(c) => c.tile_size.k(),
+            TileMatmul::Mma(c) => c.tile_size.k(),
+            TileMatmul::Register(c) => c.tile_size.k(),
+            TileMatmul::PlaneVec(c) => c.tile_size.k(),
+            TileMatmul::Interleaved(c) => c.tile_size.k(),
         }
     }
 
-    fn swizzle_mode(&self, ident: StageIdent) -> SwizzleMode {
-        match self {
-            DispatchConfig::Cmma(config) => config.swizzle_mode(ident),
-            DispatchConfig::Mma(config) => config.swizzle_mode(ident),
-            DispatchConfig::Register(config) => config.swizzle_mode(ident),
-            DispatchConfig::PlaneVec(config) => config.swizzle_mode(ident),
-            DispatchConfig::Interleaved(config) => config.swizzle_mode(ident),
-        }
+    pub fn swizzle_mode(&self, ident: StageIdent) -> SwizzleMode {
+        let modes = match self {
+            TileMatmul::Cmma(c) => c.swizzle_modes,
+            TileMatmul::Mma(c) => c.swizzle_modes,
+            TileMatmul::Register(c) => c.swizzle_modes,
+            TileMatmul::PlaneVec(c) => c.swizzle_modes,
+            TileMatmul::Interleaved(c) => c.swizzle_modes,
+        };
+        crate::components::tile_matmul::config::swizzle_for_ident(modes, ident)
     }
 }

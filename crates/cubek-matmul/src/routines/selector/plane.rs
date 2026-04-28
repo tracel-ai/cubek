@@ -19,7 +19,7 @@ use crate::routines::selector::is_tiny;
 use crate::{
     components::global::{InputLoadFlow, LoadFlows},
     components::stage::PartitionBuffering,
-    components::tile_matmul::{TileMatmul, TileMatmulFamily as _},
+    components::tile_matmul::TileMatmulKind,
 };
 
 pub const NUM_SM_APPROX: u32 = 50;
@@ -39,7 +39,7 @@ pub struct PlaneTilingBlueprintOptions {
 }
 
 pub fn infer_blueprint_plane<R: Runtime>(
-    tile_matmul: TileMatmul,
+    tile_matmul: TileMatmulKind,
     client: &ComputeClient<R>,
     problem: &MatmulProblem,
     plane_dim: u32,
@@ -341,7 +341,7 @@ fn selection_tiny<R: Runtime>(
     problem: &MatmulProblem,
     tile_size: TileSize,
     plane_dim: u32,
-    tile_matmul: TileMatmul,
+    tile_matmul: TileMatmulKind,
 ) -> TilingBlueprint {
     // If the K axis is big, we can leverage that.
     let pk = u32::min(problem.k as u32 / tile_size.k(), 8);

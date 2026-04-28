@@ -2,9 +2,8 @@ use cubecl::prelude::*;
 use cubek_std::{MatrixLayout, tile::StridedTile};
 
 use crate::components::tile_matmul::tile::Scope;
-use crate::components::tile_matmul::{
-    ProductType, RegisterTile, SharedTileConfig, Tile, TileConfig,
-};
+use crate::components::tile_matmul::tile::register::{ProductType, RegisterMatmulConfig};
+use crate::components::tile_matmul::{RegisterTile, Tile};
 use crate::definition::StageIdent;
 
 pub(crate) const UNROLL: bool = false;
@@ -12,42 +11,36 @@ pub(crate) const UNROLL: bool = false;
 #[cube]
 pub fn register_allocate_lhs<L: Numeric, VL: Size, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: SharedTileConfig,
-    #[comptime] product_type: ProductType,
+    #[comptime] config: RegisterMatmulConfig,
 ) -> Tile<L, VL, Sc, ReadWrite> {
     Tile::new_Register(RegisterTile::<L> {
-        data: Array::new((config.elements_in_tile_m() * config.elements_in_tile_k()) as usize),
+        data: Array::new((config.tile_size.m() * config.tile_size.k()) as usize),
         matrix_layout: layout,
         config,
-        product_type,
     })
 }
 
 #[cube]
 pub fn register_allocate_rhs<R: Numeric, VR: Size, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: SharedTileConfig,
-    #[comptime] product_type: ProductType,
+    #[comptime] config: RegisterMatmulConfig,
 ) -> Tile<R, VR, Sc, ReadWrite> {
     Tile::new_Register(RegisterTile::<R> {
-        data: Array::new((config.elements_in_tile_n() * config.elements_in_tile_k()) as usize),
+        data: Array::new((config.tile_size.n() * config.tile_size.k()) as usize),
         matrix_layout: layout,
         config,
-        product_type,
     })
 }
 
 #[cube]
 pub fn register_allocate_acc<A: Numeric, VA: Size, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: SharedTileConfig,
-    #[comptime] product_type: ProductType,
+    #[comptime] config: RegisterMatmulConfig,
 ) -> Tile<A, VA, Sc, ReadWrite> {
     Tile::new_Register(RegisterTile::<A> {
-        data: Array::new((config.elements_in_tile_m() * config.elements_in_tile_n()) as usize),
+        data: Array::new((config.tile_size.m() * config.tile_size.n()) as usize),
         matrix_layout: layout,
         config,
-        product_type,
     })
 }
 
@@ -56,13 +49,12 @@ pub fn register_execute<L: Numeric, R: Numeric, A: Numeric>(
     lhs: &Array<L>,
     rhs: &Array<R>,
     acc: &mut Array<A>,
-    #[comptime] config: SharedTileConfig,
-    #[comptime] product_type: ProductType,
+    #[comptime] config: RegisterMatmulConfig,
 ) {
-    let m = config.elements_in_tile_m();
-    let n = config.elements_in_tile_n();
-    let k = config.elements_in_tile_k();
-    match product_type {
+    let m = config.tile_size.m();
+    let n = config.tile_size.n();
+    let k = config.tile_size.k();
+    match config.product_type {
         ProductType::Inner => {
             inner_product::<L, R, A>(lhs, rhs, acc, m, n, k);
         }
@@ -123,16 +115,15 @@ pub fn register_load_from_shared<E: Numeric, ES: Size, N: Numeric, V: Size, IO: 
     shared: &StridedTile<E, ES, IO>,
     arr: &mut Array<N>,
     #[comptime] matrix_layout: MatrixLayout,
-    #[comptime] config: SharedTileConfig,
-    #[comptime] product_type: ProductType,
+    #[comptime] config: RegisterMatmulConfig,
     #[comptime] ident: StageIdent,
 ) {
-    let m = config.elements_in_tile_m();
-    let n = config.elements_in_tile_n();
-    let k = config.elements_in_tile_k();
+    let m = config.tile_size.m();
+    let n = config.tile_size.n();
+    let k = config.tile_size.k();
 
     match ident {
-        StageIdent::Lhs => match product_type {
+        StageIdent::Lhs => match config.product_type {
             ProductType::Inner => match matrix_layout {
                 MatrixLayout::RowMajor => {
                     load_plain::<E, ES, N, IO>(shared, arr, m, k);
@@ -150,7 +141,7 @@ pub fn register_load_from_shared<E: Numeric, ES: Size, N: Numeric, V: Size, IO: 
                 }
             },
         },
-        StageIdent::Rhs => match product_type {
+        StageIdent::Rhs => match config.product_type {
             ProductType::Inner => match matrix_layout {
                 MatrixLayout::RowMajor => {
                     load_transposed::<E, ES, N, IO>(shared, arr, k, n);
@@ -231,15 +222,13 @@ fn load_transposed<E: Numeric, ES: Size, N: Numeric, IO: SliceVisibility>(
 #[cube]
 pub fn register_load_zeros<N: Numeric, V: Size>(
     arr: &mut Array<N>,
-    #[comptime] config: SharedTileConfig,
+    #[comptime] config: RegisterMatmulConfig,
     #[comptime] ident: StageIdent,
 ) {
     let size = match ident {
-        StageIdent::Lhs => config.elements_in_tile_m() * config.elements_in_tile_k(),
-        StageIdent::Rhs => config.elements_in_tile_n() * config.elements_in_tile_k(),
-        StageIdent::Acc | StageIdent::Out => {
-            config.elements_in_tile_m() * config.elements_in_tile_n()
-        }
+        StageIdent::Lhs => config.tile_size.m() * config.tile_size.k(),
+        StageIdent::Rhs => config.tile_size.n() * config.tile_size.k(),
+        StageIdent::Acc | StageIdent::Out => config.tile_size.m() * config.tile_size.n(),
     };
     for i in 0..size {
         arr[i as usize] = N::from_int(0);
@@ -250,10 +239,10 @@ pub fn register_load_zeros<N: Numeric, V: Size>(
 pub fn register_write_to_shared<E: Numeric, ES: Size, A: Numeric, VA: Size>(
     shared: &mut StridedTile<E, ES, ReadWrite>,
     arr: &Array<A>,
-    #[comptime] config: SharedTileConfig,
+    #[comptime] config: RegisterMatmulConfig,
 ) {
     let out_vector_size = shared.container.vector_size().comptime() as u32;
-    let size_mn = config.elements_in_tile_m() * config.elements_in_tile_n();
+    let size_mn = config.tile_size.m() * config.tile_size.n();
 
     #[unroll(false)]
     for i in 0..size_mn / out_vector_size {

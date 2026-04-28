@@ -6,7 +6,7 @@
 
 use cubecl::{Runtime, client::ComputeClient};
 use cubek_matmul::{
-    components::tile_matmul::TileMatmul,
+    components::tile_matmul::TileMatmulKind,
     definition::{MatmulElems, TilingBlueprint},
     routines::{BlueprintStrategy, Routine as MatmulRoutine, TilingArgs},
 };
@@ -40,11 +40,11 @@ use crate::{
     },
 };
 
-/// Map `AcceleratedTileKind` → matmul's `TileMatmul`.
-pub(crate) fn tile_kind_to_dispatch(kind: AcceleratedTileKind) -> TileMatmul {
+/// Map `AcceleratedTileKind` → matmul's `TileMatmulKind`.
+pub(crate) fn tile_kind_to_dispatch(kind: AcceleratedTileKind) -> TileMatmulKind {
     match kind {
-        AcceleratedTileKind::Cmma => TileMatmul::Cmma,
-        AcceleratedTileKind::Mma => TileMatmul::Mma,
+        AcceleratedTileKind::Cmma => TileMatmulKind::Cmma,
+        AcceleratedTileKind::Mma => TileMatmulKind::Mma,
     }
 }
 
@@ -208,7 +208,7 @@ fn dispatch_inputs<R: Runtime, const N_SPATIAL: usize, Rt: Routine<Blueprint = T
     client: &ComputeClient<R>,
     inputs: ConvolutionInputs<R>,
     args: ConvolutionArgs<N_SPATIAL>,
-    tile_matmul: TileMatmul,
+    tile_matmul: TileMatmulKind,
     forced_matmul: Option<TilingBlueprint>,
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError>
@@ -269,7 +269,7 @@ where
 /// (extracted from `ConvBlueprint`) or an `Inferred` strategy stamped with the
 /// requested tile-matmul kind.
 fn build_blueprint_strategy<Rt: Routine<Blueprint = TilingBlueprint>>(
-    tile_matmul: TileMatmul,
+    tile_matmul: TileMatmulKind,
     forced_matmul: Option<TilingBlueprint>,
 ) -> BlueprintStrategy<RuntimeArgs, Rt::MatmulRoutine>
 where

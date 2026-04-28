@@ -14,7 +14,7 @@ use crate::{
             },
         },
         stage::{RowMajorTilingOrder, StridedStageFamily, UnitMatmulFamily},
-        tile_matmul::{TileMatmul, TileMatmulFamily as _},
+        tile_matmul::TileMatmulKind,
     },
     definition::{
         MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes, TilingBlueprint,
@@ -64,7 +64,7 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleUnitAlgorithm {
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
-        if TileMatmul::Register.can_cast_stage_element() {
+        if TileMatmulKind::Register.can_cast_stage_element() {
             dtypes.adjust_stage_dtypes();
         }
 

@@ -27,7 +27,7 @@ use crate::{
 };
 use crate::{
     components::stage::{ColMajorTilingOrder, PlaneMatmulFamily, RowMajorTilingOrder},
-    components::tile_matmul::{TileMatmul, TileMatmulFamily as _},
+    components::tile_matmul::TileMatmulKind,
 };
 use crate::{
     launch::RuntimeConfig,
@@ -56,21 +56,21 @@ pub struct AsyncStridedDoubleBufferingAlgorithm;
 
 #[derive(Debug, Clone, Copy)]
 pub struct DoubleBufferingArgs {
-    pub tile_matmul: TileMatmul,
+    pub tile_matmul: TileMatmulKind,
     pub specialized: bool,
 }
 
 impl Default for DoubleBufferingArgs {
     fn default() -> Self {
         Self {
-            tile_matmul: TileMatmul::Cmma,
+            tile_matmul: TileMatmulKind::Cmma,
             specialized: false,
         }
     }
 }
 
 impl TilingArgs for DoubleBufferingArgs {
-    fn set_tile_matmul(&mut self, kind: TileMatmul) {
+    fn set_tile_matmul(&mut self, kind: TileMatmulKind) {
         self.tile_matmul = kind;
     }
 }

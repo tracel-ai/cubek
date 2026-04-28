@@ -9,7 +9,7 @@ use crate::{
         CubeDimResource,
         global::{PlaneFlowConfig, WriteEventListener},
         stage::{NumStages, PartitionScheduler},
-        tile_matmul::{Scope, Tile, TileConfig},
+        tile_matmul::{Scope, Tile},
     },
     definition::{
         Acc, Lhs, MatmulElems, MatmulSetupError, MatmulTypes, MatmulVectorSizes, Rhs,
@@ -173,9 +173,6 @@ pub trait StageMatmul<MP: MatmulTypes>: 'static + Send + Sync {
 pub trait StageConfig:
     Copy + Clone + Eq + PartialEq + Hash + Debug + Send + Sync + 'static
 {
-    /// Underlying Tile matmul config
-    type TileConfig: TileConfig;
-
     fn elements_in_stage_m(&self) -> u32;
     fn elements_in_stage_n(&self) -> u32;
     fn elements_in_stage_k(&self) -> u32;

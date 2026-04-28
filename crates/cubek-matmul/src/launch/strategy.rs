@@ -11,7 +11,7 @@ use crate::{
             sync_full_tilewise,
         },
         stage::{ColMajorTilingOrder, RowMajorTilingOrder},
-        tile_matmul::TileMatmul,
+        tile_matmul::TileMatmulKind,
     },
     definition::{MatmulElems, MatmulSetupError},
     launch::{
@@ -40,8 +40,8 @@ use crate::{
 /// blueprint already carries a `tile_matmul`.
 fn stamp_kind<RC, A>(
     sel: &BlueprintStrategy<RC, A>,
-    kind: TileMatmul,
-    set: impl FnOnce(&mut A::Strategy, TileMatmul),
+    kind: TileMatmulKind,
+    set: impl FnOnce(&mut A::Strategy, TileMatmulKind),
 ) -> BlueprintStrategy<RC, A>
 where
     RC: crate::launch::RuntimeConfig,
@@ -54,16 +54,16 @@ where
     sel
 }
 
-fn set_simple(args: &mut SimpleArgs, kind: TileMatmul) {
+fn set_simple(args: &mut SimpleArgs, kind: TileMatmulKind) {
     args.tile_matmul = kind;
 }
-fn set_double(args: &mut DoubleBufferingArgs, kind: TileMatmul) {
+fn set_double(args: &mut DoubleBufferingArgs, kind: TileMatmulKind) {
     args.tile_matmul = kind;
 }
-fn set_ordered(args: &mut OrderedSelectionArgs, kind: TileMatmul) {
+fn set_ordered(args: &mut OrderedSelectionArgs, kind: TileMatmulKind) {
     args.tile_matmul = kind;
 }
-fn set_specialized(args: &mut SpecializedStrategy, kind: TileMatmul) {
+fn set_specialized(args: &mut SpecializedStrategy, kind: TileMatmulKind) {
     args.tile_matmul = kind;
 }
 
@@ -250,7 +250,7 @@ impl Strategy {
         out: TensorBinding<R>,
         dtypes: &mut MatmulElems,
     ) -> Result<(), MatmulSetupError> {
-        use TileMatmul::{Cmma, Mma};
+        use TileMatmulKind::{Cmma, Mma};
         match self {
             Strategy::SimpleCyclicCmma(s) => launch_tiling::launch_ref(
                 client,

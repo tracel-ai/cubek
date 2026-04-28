@@ -10,7 +10,7 @@ use crate::{
                 unit_partitioned::UnitPartitionedStageConfig,
             },
         },
-        tile_matmul::{DispatchConfig, Plane, Tile, TileConfig},
+        tile_matmul::{Scope, Tile},
     },
     definition::{MatmulTypes, MatrixTypes, StageIdent},
 };
@@ -23,6 +23,9 @@ use cubek_std::stage::StageMemoryConfig;
 /// Defines how the stage is partitioned among compute primitives (e.g., units or planes).
 /// Controls global writeback and and compute indexing.
 pub trait StagePartitioner: Send + Sync + 'static {
+    /// Compute primitive that runs each partition.
+    type Scope: Scope;
+
     /// Returns the (row, col) of the current compute primitive within the stage.
     fn coordinates(
         #[comptime] role_rule_config: PlaneFlowPartitionRule,
@@ -32,13 +35,13 @@ pub trait StagePartitioner: Send + Sync + 'static {
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub enum PartitionMatmulConfig<TC: TileConfig> {
-    Unit(UnitPartitionedStageConfig<TC>),
-    Plane(PlanePartitionedStageConfig<TC>),
+pub enum PartitionMatmulConfig {
+    Unit(UnitPartitionedStageConfig),
+    Plane(PlanePartitionedStageConfig),
 }
 
-impl<TC: TileConfig> PartitionMatmulConfig<TC> {
-    pub fn shared(&self) -> SharedPartitionMatmulConfig<TC> {
+impl PartitionMatmulConfig {
+    pub fn shared(&self) -> SharedPartitionMatmulConfig {
         match self {
             PartitionMatmulConfig::Unit(unit_partitioned_stage_config) => {
                 unit_partitioned_stage_config.shared
@@ -50,9 +53,7 @@ impl<TC: TileConfig> PartitionMatmulConfig<TC> {
     }
 }
 
-impl<TC: TileConfig> StageConfig for PartitionMatmulConfig<TC> {
-    type TileConfig = TC;
-
+impl StageConfig for PartitionMatmulConfig {
     fn elements_in_stage_m(&self) -> u32 {
         self.shared().stage_size.m()
             * self.shared().partition_size.m()
@@ -167,20 +168,20 @@ where
         >,
     SP: StagePartitioner,
 {
-    type Config = PartitionMatmulConfig<DispatchConfig>;
-    type Scope = Plane;
+    type Config = PartitionMatmulConfig;
+    type Scope = SP::Scope;
 
     type LhsStage = StageLhs;
     type RhsStage = StageRhs;
     type AccStage = StageAcc;
     type OutStage = StageOut;
 
-    type Accumulators = Accumulators<MP>;
+    type Accumulators = Accumulators<MP, SP::Scope>;
     type LhsTile = Sequence<
         Tile<
             <MP::Lhs as MatrixTypes>::Register,
             <MP::Lhs as MatrixTypes>::RegisterSize,
-            Plane,
+            SP::Scope,
             ReadWrite,
         >,
     >;
@@ -188,7 +189,7 @@ where
         Tile<
             <MP::Rhs as MatrixTypes>::Register,
             <MP::Rhs as MatrixTypes>::RegisterSize,
-            Plane,
+            SP::Scope,
             ReadWrite,
         >,
     >;
@@ -224,7 +225,7 @@ where
         listener: SEL,
         partition_scheduler: &PartitionScheduler,
     ) {
-        PartitionMatmul::<MP, StageLhs, StageRhs, StageAcc>::execute_with_listener::<SEL>(
+        PartitionMatmul::<MP, StageLhs, StageRhs, StageAcc, SP::Scope>::execute_with_listener::<SEL>(
             lhs_stage,
             rhs_stage,
             lhs_fragment,
@@ -237,11 +238,15 @@ where
     }
 
     fn init_tile_inputs(#[comptime] config: Self::Config) -> (Self::LhsTile, Self::RhsTile) {
-        PartitionMatmul::<MP, StageLhs, StageRhs, StageAcc>::init_tile_inputs(config.shared())
+        PartitionMatmul::<MP, StageLhs, StageRhs, StageAcc, SP::Scope>::init_tile_inputs(
+            config.shared(),
+        )
     }
 
     fn init_accumulators(#[comptime] config: Self::Config) -> Self::Accumulators {
-        PartitionMatmul::<MP, StageLhs, StageRhs, StageAcc>::init_accumulator(config.shared())
+        PartitionMatmul::<MP, StageLhs, StageRhs, StageAcc, SP::Scope>::init_accumulator(
+            config.shared(),
+        )
     }
 
     fn load_accumulators(
@@ -250,7 +255,7 @@ where
         partition_scheduler: &PartitionScheduler,
         #[comptime] config: Self::Config,
     ) {
-        PartitionMatmul::<MP, StageLhs, StageRhs, StageAcc>::load_accumulator(
+        PartitionMatmul::<MP, StageLhs, StageRhs, StageAcc, SP::Scope>::load_accumulator(
             stage,
             acc,
             partition_scheduler,
@@ -279,7 +284,7 @@ where
             for n_iter in 0..n_iterations {
                 let n_load_iter = partition_scheduler.map_n(n_iter as u32);
 
-                let tile_accumulator = Accumulators::<MP>::get_at_mut(
+                let tile_accumulator = Accumulators::<MP, SP::Scope>::get_at_mut(
                     acc,
                     m_iter,
                     n_iter,
@@ -287,7 +292,7 @@ where
                 );
 
                 let tile_pos = (m_load_iter, n_load_iter);
-                let mut tile = Self::OutStage::tile::<Plane>(stage, tile_pos);
+                let mut tile = Self::OutStage::tile::<SP::Scope>(stage, tile_pos);
 
                 // Write the results for one tile. To save shared memory space, it reuses the same spot for
                 // all tiles in the partition
