@@ -237,13 +237,8 @@ fn infer_blueprint_vecmat<R: Runtime>(
         .cube_count_strategy(cube_count_strategy)
         .build();
 
-    TilingBlueprint::builder(
-        TileMatmul::PlaneVec,
-        tiling_scheme,
-        plane_dim,
-        problem,
-    )
-    .partition_buffering(PartitionBuffering::Single)
-    .hypercube_blueprint(hypercube)
-    .build()
+    TilingBlueprint::builder(TileMatmul::PlaneVec, tiling_scheme, plane_dim, problem)
+        .partition_buffering(PartitionBuffering::Single)
+        .hypercube_blueprint(hypercube)
+        .build()
 }

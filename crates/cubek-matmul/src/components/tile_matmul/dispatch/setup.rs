@@ -24,9 +24,7 @@ impl TileMatmulFamily for TileMatmul {
     fn requires_accelerator(&self) -> bool {
         match self {
             TileMatmul::Cmma | TileMatmul::Mma => true,
-            TileMatmul::Register
-            | TileMatmul::PlaneVec
-            | TileMatmul::Interleaved => false,
+            TileMatmul::Register | TileMatmul::PlaneVec | TileMatmul::Interleaved => false,
         }
     }
 
@@ -73,10 +71,9 @@ impl TileMatmulFamily for TileMatmul {
 
     fn cubedim_resource(&self) -> Result<CubeDimResource, InvalidConfigError> {
         match self {
-            TileMatmul::Cmma
-            | TileMatmul::Mma
-            | TileMatmul::PlaneVec
-            | TileMatmul::Interleaved => Ok(CubeDimResource::Planes(1)),
+            TileMatmul::Cmma | TileMatmul::Mma | TileMatmul::PlaneVec | TileMatmul::Interleaved => {
+                Ok(CubeDimResource::Planes(1))
+            }
             TileMatmul::Register => Ok(CubeDimResource::Units(1)),
         }
     }
@@ -118,16 +115,14 @@ impl TileMatmulFamily for TileMatmul {
                     ),
                 ))
             }
-            TileMatmul::PlaneVec => {
-                DispatchConfig::PlaneVec(PlaneVecMatInnerProductConfig::new(
-                    SharedTileConfig::new(
-                        blueprint.tiling_scheme.tile_size,
-                        blueprint.plane_dim,
-                        blueprint.swizzle_modes,
-                    ),
-                    vector_sizes.lhs as u32,
-                ))
-            }
+            TileMatmul::PlaneVec => DispatchConfig::PlaneVec(PlaneVecMatInnerProductConfig::new(
+                SharedTileConfig::new(
+                    blueprint.tiling_scheme.tile_size,
+                    blueprint.plane_dim,
+                    blueprint.swizzle_modes,
+                ),
+                vector_sizes.lhs as u32,
+            )),
             TileMatmul::Interleaved => DispatchConfig::Interleaved(
                 InterleavedMatmulConfig::from_shared_tile_config(SharedTileConfig::new(
                     blueprint.tiling_scheme.tile_size,
@@ -142,9 +137,7 @@ impl TileMatmulFamily for TileMatmul {
         match self {
             TileMatmul::Cmma => client.properties().features.matmul.cmma.contains(&config),
             TileMatmul::Mma => client.properties().features.matmul.mma.contains(&config),
-            TileMatmul::Register
-            | TileMatmul::PlaneVec
-            | TileMatmul::Interleaved => true,
+            TileMatmul::Register | TileMatmul::PlaneVec | TileMatmul::Interleaved => true,
         }
     }
 
@@ -158,9 +151,9 @@ impl TileMatmulFamily for TileMatmul {
         let iters = match self {
             TileMatmul::Cmma => &client.properties().features.matmul.cmma,
             TileMatmul::Mma => &client.properties().features.matmul.mma,
-            TileMatmul::Register
-            | TileMatmul::PlaneVec
-            | TileMatmul::Interleaved => return Vec::new(),
+            TileMatmul::Register | TileMatmul::PlaneVec | TileMatmul::Interleaved => {
+                return Vec::new();
+            }
         };
 
         iters
@@ -180,12 +173,8 @@ impl TileMatmulFamily for TileMatmul {
         match self {
             TileMatmul::Cmma => validate_cmma(client, blueprint, dtypes),
             TileMatmul::Mma => validate_mma(client, blueprint, dtypes),
-            TileMatmul::Register => {
-                validate_register(client, blueprint, dtypes, vector_sizes)
-            }
-            TileMatmul::PlaneVec => {
-                validate_plane_vec(client, blueprint, dtypes, vector_sizes)
-            }
+            TileMatmul::Register => validate_register(client, blueprint, dtypes, vector_sizes),
+            TileMatmul::PlaneVec => validate_plane_vec(client, blueprint, dtypes, vector_sizes),
             TileMatmul::Interleaved => {
                 validate_interleaved(client, blueprint, dtypes, vector_sizes)
             }
