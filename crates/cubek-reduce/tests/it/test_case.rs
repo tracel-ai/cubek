@@ -193,22 +193,10 @@ impl TestCase {
             },
         );
 
-        match client.flush() {
-            Ok(_) => {}
-            Err(ServerError::ServerUnhealthy { errors, .. }) =>
-            {
-                #[allow(clippy::never_loop)]
-                for error in errors.iter() {
-                    match error {
-                        cubecl::server::ServerError::Launch(LaunchError::TooManyResources(_)) => {}
-                        _ => panic!("{errors:?}"),
-                    }
-                }
-            }
-            Err(err) => panic!("{err:?}"),
-        }
+        let launch_outcome: ExecutionOutcome =
+            get_server_error(&client).unwrap_or_else(|| ExecutionOutcome::from(result));
 
-        let outcome = match ExecutionOutcome::from(result) {
+        let outcome = match launch_outcome {
             ExecutionOutcome::Executed => {
                 let actual =
                     HostData::from_tensor_handle(&client, output_handle, HostDataType::F32);
@@ -239,6 +227,26 @@ impl TestCase {
             .stride(StrideSpec::Custom(strides.iter().copied().collect()))
             .zeros()
             .generate()
+    }
+}
+
+fn get_server_error(client: &cubecl::client::ComputeClient<TestRuntime>) -> Option<ExecutionOutcome> {
+    match client.flush() {
+        Ok(_) => None,
+        Err(ServerError::ServerUnhealthy { errors, .. }) => {
+            #[allow(clippy::never_loop)]
+            for error in errors.iter() {
+                match error {
+                    cubecl::server::ServerError::Launch(LaunchError::TooManyResources(_))
+                    | cubecl::server::ServerError::Launch(LaunchError::CompilationError(_)) => {
+                        return Some(ExecutionOutcome::CompileError(format!("{errors:?}")));
+                    }
+                    _ => panic!("Unexpected error: {errors:?}"),
+                }
+            }
+            None
+        }
+        Err(err) => panic!("Unexpected error: {err:?}"),
     }
 }
 
