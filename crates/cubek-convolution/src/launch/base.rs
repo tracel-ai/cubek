@@ -62,7 +62,7 @@ pub fn launch_ref<R: Runtime, const N_SPATIAL: usize>(
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError> {
     let (algorithm, tile_kind, forced_matmul) = match strategy {
-        Strategy::Specific {
+        Strategy::Inferred {
             algorithm,
             tile_kind,
         } => (*algorithm, *tile_kind, None),

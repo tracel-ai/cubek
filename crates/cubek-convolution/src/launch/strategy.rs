@@ -14,7 +14,7 @@ use crate::definition::ConvBlueprint;
 pub enum Strategy {
     /// User picks the algorithm and tile-matmul kind. Tiling/swizzle/etc. are
     /// inferred from the problem.
-    Specific {
+    Inferred {
         algorithm: ConvAlgorithm,
         tile_kind: AcceleratedTileKind,
     },
@@ -80,7 +80,7 @@ impl Display for AcceleratedTileKind {
 impl Display for Strategy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Strategy::Specific {
+            Strategy::Inferred {
                 algorithm,
                 tile_kind,
             } => write!(f, "{algorithm}_{tile_kind}"),

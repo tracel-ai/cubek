@@ -90,7 +90,7 @@ impl<R: Runtime, MP: MatmulPrecision> Benchmark for Conv2dBench<R, MP> {
             TensorHandle::empty(&client, vec![n, c_out, h_out, w_out], elems.acc_global);
 
         convolution::launch_ref::<R, 2>(
-            &Strategy::Specific {
+            &Strategy::Inferred {
                 algorithm: ConvAlgorithm::SimpleSyncCyclic,
                 tile_kind: AcceleratedTileKind::Cmma,
             },

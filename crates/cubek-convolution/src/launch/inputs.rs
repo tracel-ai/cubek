@@ -11,6 +11,7 @@ pub struct ConvolutionArgs<const N_SPATIAL: usize> {
     pub dilation: [usize; N_SPATIAL],
 }
 
+#[allow(clippy::large_enum_variant)]
 /// Per-operation tensor bindings supplied to `launch_ref`.
 ///
 /// Each variant carries exactly the bindings the corresponding operation needs.
