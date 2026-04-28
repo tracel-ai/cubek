@@ -4,9 +4,6 @@ Shared building blocks for kernel tests in CubeK: test-tensor builders,
 host-side reference comparisons, and a unified renderer that pretty-prints
 tensors (or diffs them) under a single config.
 
-This README is the testing guide for most CubeK kernels. (`cubek-reduce` is
-slightly different for now — see [its README](../cubek-reduce/README.md).)
-
 ---
 
 ## Configuration: `cubek.toml`
@@ -36,11 +33,11 @@ Set it to `true`, run a test, watch your tensors render. That's it.
 
 ### `[test] policy`
 
-| Policy        | No error      | Numerical error | Compilation error |
-| ------------- | ------------- | --------------- | ----------------- |
-| `correct`     | accept        | fail            | accept            |
-| `strict`      | accept        | fail            | fail              |
-| `fail-if-run` | fail          | accept          | accept            |
+| Policy        | No error | Numerical error | Compilation error |
+| ------------- | -------- | --------------- | ----------------- |
+| `correct`     | accept   | fail            | accept            |
+| `strict`      | accept   | fail            | fail              |
+| `fail-if-run` | fail     | accept          | accept            |
 
 If `[print] force-fail = true`, every passing test that printed is
 additionally rejected — useful so cargo surfaces the dump (it otherwise
@@ -77,8 +74,7 @@ print_tensors("input", &[&host], None);
 print_tensors("a vs b", &[&a, &b], Some(1e-3));
 ```
 
-The table view never shows Δ/ε numbers (cell color carries the same info,
-and adding columns would blow up the width). The lines view always shows
+The table view never shows Δ/ε numbers (cell color carries the info). The lines view always shows
 them.
 
 ### Table view example (with `show-expected = true`)
@@ -235,36 +231,3 @@ Builder finalizers (each returns a `TestInput` ready to generate):
 After a finalizer, call any of: `.generate()`, `.generate_with_f32_host_data()`,
 `.generate_with_bool_host_data()`, `.generate_test_tensor()`,
 `.f32_host_data()`, `.bool_host_data()`.
-
----
-
-## Walking host tensors
-
-`HostData` exposes typed accessors and indexed iterators that resolve
-through the tensor's strides, so non-contiguous tensors work without manual
-offset math:
-
-| API                          | Returns                            | On dtype mismatch |
-| ---------------------------- | ---------------------------------- | ----------------- |
-| `host.get_f32(&[i, j])`      | `f32`                              | panics            |
-| `host.get_i32(&[i, j])`      | `i32`                              | panics            |
-| `host.get_bool(&[i, j])`     | `bool`                             | panics            |
-| `host.try_get_f32(&[i, j])`  | `Option<f32>`                      | `None`            |
-| `host.try_get_i32(&[i, j])`  | `Option<i32>`                      | `None`            |
-| `host.try_get_bool(&[i, j])` | `Option<bool>`                     | `None`            |
-| `host.iter_indices()`        | `impl Iterator<Item = Vec<usize>>` | n/a               |
-| `host.iter_indexed_f32()`    | `(Vec<usize>, f32)` (row-major)    | panics            |
-| `host.iter_indexed_i32()`    | `(Vec<usize>, i32)`                | panics            |
-| `host.iter_indexed_bool()`   | `(Vec<usize>, bool)`               | panics            |
-
----
-
-## Pointers
-
-- Config (`CubekConfig`, `PrintSection`, `TestPolicy`) — `src/config.rs`
-- Test-policy decisions — `src/test_mode/`
-- `assert_equals_approx`, `assert_equals_approx_in_slice` — `src/correctness/base.rs`
-- Unified renderer — `src/correctness/render.rs`
-- `print_tensors`, `print_tensor` — `src/correctness/print_tensor.rs`
-- Tensor builders (`TestInput`, `TestInputBuilder`, `DataKind`, `StrideSpec`) — `src/test_tensor/`
-- Quantization helper — `src/test_tensor/quant.rs`
