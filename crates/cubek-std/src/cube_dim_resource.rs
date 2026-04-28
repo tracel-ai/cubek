@@ -120,8 +120,12 @@ impl CubeDimResource {
     /// non-specialized config (all planes in the main flow).
     pub fn as_specialized(self, plane_dim: u32) -> Result<SpecializedCubeDim, InvalidConfigError> {
         match self {
-            CubeDimResource::Units(_) => self.as_plane_resource(plane_dim)?.as_specialized(plane_dim),
-            CubeDimResource::Planes(num_planes) => Ok(SpecializedCubeDim::new_unspecialized(num_planes)),
+            CubeDimResource::Units(_) => {
+                self.as_plane_resource(plane_dim)?.as_specialized(plane_dim)
+            }
+            CubeDimResource::Planes(num_planes) => {
+                Ok(SpecializedCubeDim::new_unspecialized(num_planes))
+            }
             CubeDimResource::Specialized(spec) => Ok(spec),
         }
     }

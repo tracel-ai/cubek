@@ -22,10 +22,7 @@ use crate::{
     definition::TilingBlueprint,
     definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes},
     definition::{MatmulVectorSizes, StageIdent},
-    {
-        components::{CubeDimResource},
-        launch::RuntimeConfig,
-    },
+    {components::CubeDimResource, launch::RuntimeConfig},
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::{MatrixLayout, tile::Strided};
@@ -83,8 +80,8 @@ where
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
         let plane_dim = blueprint.plane_dim;
-        let plane_flow_config = Self::cubedim_resource(blueprint, dtypes, vector_sizes)?
-            .as_specialized(plane_dim)?;
+        let plane_flow_config =
+            Self::cubedim_resource(blueprint, dtypes, vector_sizes)?.as_specialized(plane_dim)?;
 
         let stage_config = SMM::expand_config(
             device_props,

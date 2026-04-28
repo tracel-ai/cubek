@@ -6,7 +6,9 @@ use crate::{
     definition::MatmulSetupError,
 };
 
-pub use cubek_std::{PlaneFlowCounts, PlaneFlowPartitionRule, SpecializedCubeDim as PlaneFlowConfig};
+pub use cubek_std::{
+    PlaneFlowCounts, PlaneFlowPartitionRule, SpecializedCubeDim as PlaneFlowConfig,
+};
 
 /// Build a [`PlaneFlowConfig`] from matmul-specific load-flow inputs.
 pub fn make_plane_flow_config(

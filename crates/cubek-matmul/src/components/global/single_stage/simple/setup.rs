@@ -1,7 +1,4 @@
-use crate::{
-    components::{CubeDimResource},
-    launch::RuntimeConfig,
-};
+use crate::{components::CubeDimResource, launch::RuntimeConfig};
 use crate::{
     components::stage::NumStages,
     definition::{
@@ -77,8 +74,8 @@ where
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
         let plane_dim = blueprint.plane_dim;
-        let plane_flow_config = Self::cubedim_resource(blueprint, dtypes, vector_sizes)?
-            .as_specialized(plane_dim)?;
+        let plane_flow_config =
+            Self::cubedim_resource(blueprint, dtypes, vector_sizes)?.as_specialized(plane_dim)?;
 
         let stage_config = SMM::expand_config(
             device_props,

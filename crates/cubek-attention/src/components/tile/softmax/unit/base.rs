@@ -4,7 +4,9 @@ use cubecl;
 use cubecl::prelude::*;
 use cubek_std::{
     MatrixLayout, SwizzleModes,
-    tile::{Plane, ProductType, RegisterMatmul, StridedTile, Tile, TileExpand, register_allocate_acc},
+    tile::{
+        Plane, ProductType, RegisterMatmul, StridedTile, Tile, TileExpand, register_allocate_acc,
+    },
 };
 
 use crate::{

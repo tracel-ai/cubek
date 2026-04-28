@@ -1,13 +1,5 @@
 use crate::components::resource::CubeDimResource;
 use crate::components::tile_matmul::matmul::TileMatmul;
-use cubek_std::tile::{
-    Plane, Scope, Unit,
-    cmma::CmmaMatmul,
-    interleaved::InterleavedMatmul,
-    mma::MmaMatmul,
-    plane_vec_mat_inner_product::PlaneVecMatInnerProduct,
-    register::RegisterMatmul,
-};
 use crate::definition::TilingBlueprint;
 use crate::definition::{
     MatmulAvailabilityError, MatmulElems, MatmulSetupError, MatmulVectorSizes,
@@ -18,6 +10,10 @@ use cubecl::{
     prelude::*,
 };
 use cubek_std::tile::mma::MmaIOConfig;
+use cubek_std::tile::{
+    Plane, Scope, Unit, cmma::CmmaMatmul, interleaved::InterleavedMatmul, mma::MmaMatmul,
+    plane_vec_mat_inner_product::PlaneVecMatInnerProduct, register::RegisterMatmul,
+};
 use cubek_std::{InvalidConfigError, MatrixLayout, TileSize};
 
 /// Selector for the tile-level matmul kind, used before per-kind config exists.
