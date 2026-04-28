@@ -79,8 +79,10 @@ fn load_window<EG: CubePrimitive>(
     };
 
     if gmem_config.check_row_bounds || gmem_config.check_col_bounds {
-        view.slice(offset, size).to_linear_slice()
+        let view = view.slice(offset, size);
+        *view.to_linear_slice()
     } else {
-        view.slice_unchecked(offset, size).to_linear_slice()
+        let view = view.slice_unchecked(offset, size);
+        *view.to_linear_slice()
     }
 }

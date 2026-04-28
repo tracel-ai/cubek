@@ -96,7 +96,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
         let accumulator = accumulator.elements.item();
         #[unroll]
         for k in 0..accumulator.size() {
-            let candidate = accumulator[k];
+            let candidate = accumulator.extract(k);
             min = select(candidate < min, candidate, min);
         }
         Value::new_single(Out::cast_from(min))

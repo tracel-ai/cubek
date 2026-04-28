@@ -22,7 +22,8 @@ pub(crate) fn async_copy_from<EG: Scalar, NG: Size, ES: Numeric, NS: Size, T: Ti
     #[comptime] config: GlobalReaderConfig,
     #[comptime] copy_vector_size: u32,
 ) {
-    let mut stage_slice = stage.as_slice_mut::<NS>();
+    let swizzle = stage.swizzle;
+    let stage_slice = stage.as_slice_mut::<NS>();
     let slice_size = match config.smem_config.matrix_layout {
         MatrixLayout::RowMajor => (1u32, copy_vector_size),
         MatrixLayout::ColMajor => (copy_vector_size, 1u32),
@@ -60,20 +61,21 @@ pub(crate) fn async_copy_from<EG: Scalar, NG: Size, ES: Numeric, NS: Size, T: Ti
 
     slice_len_global /= view.vector_size() as u32;
 
-    let global_slice = view.slice_unchecked(pos, slice_size).to_linear_slice();
+    let global_slice = view.slice_unchecked(pos, slice_size);
+    let global_slice = global_slice.to_linear_slice();
 
     let type_size = Vector::<ES, NS>::type_size();
-    let offset = stage.swizzle.apply(stage_offset, type_size);
+    let offset = swizzle.apply(stage_offset, type_size);
 
     let stage_slice = stage_slice.slice_mut(offset as usize, (offset + slice_len_stage) as usize);
 
     if config.gmem_config.check_row_bounds || config.gmem_config.check_col_bounds {
         copy_async_checked(
-            &global_slice.slice(0, slice_len_global as usize),
+            global_slice.slice(0, slice_len_global as usize),
             &mut stage_slice.downcast(),
             copy_vector_size,
         );
     } else {
-        copy_async(&global_slice, &mut stage_slice.downcast(), copy_vector_size);
+        copy_async(global_slice, &mut stage_slice.downcast(), copy_vector_size);
     }
 }

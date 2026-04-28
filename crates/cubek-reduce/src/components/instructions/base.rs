@@ -7,6 +7,7 @@ pub trait ReduceFamily: Send + Sync + 'static + std::fmt::Debug {
 }
 
 #[derive(CubeType, Clone, Copy)]
+#[expand(derive(Clone, Copy))]
 /// Whether we keep track of coordinates of items
 pub struct ReduceRequirements {
     #[cube(comptime)]

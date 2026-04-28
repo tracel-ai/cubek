@@ -121,7 +121,7 @@ impl PlaneFlowPartition {
     ///
     /// Only used with TMA, so has some CUDA optimizations. `plane_broadcast` and `plane_elect`
     /// ensure the compiler recognizes the values as warp uniform.
-    pub fn elect_load_leader(self) -> bool {
+    pub fn elect_load_leader(&self) -> bool {
         let plane_id = plane_broadcast(UNIT_POS_Y, 0u32);
 
         let is_elected_plane = match self {

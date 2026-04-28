@@ -136,7 +136,7 @@ impl LogicalTileMask {
 
         #[comptime]
         let oob_masked = match self.out_of_bounds {
-            ComptimeOption::Some(bounds) => !Coords2d::is_in_bounds(&pos, &bounds),
+            ComptimeOption::Some(bounds) => !Coords2d::is_in_bounds(pos, bounds),
             ComptimeOption::None => false,
         };
 

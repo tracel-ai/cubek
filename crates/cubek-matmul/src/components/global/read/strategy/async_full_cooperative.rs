@@ -90,6 +90,7 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for AsyncFullCooperativeLoading 
 }
 
 #[derive(CubeType, Clone, Copy)]
+#[expand(derive(Clone, Copy))]
 pub struct AsyncFullCooperativeJob {
     #[cube(comptime)]
     num_slices: u32,
@@ -116,10 +117,10 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
             config.gmem_config,
         );
 
-        let mut destination: SliceMut<Vector<ES, NS>> =
+        let destination: &mut SliceMut<Vector<ES, NS>> =
             StridedTilingLayout::nth_slice::<ES, NS>(stage, task_id, config.smem_config);
 
-        barrier.memcpy_async_cooperative(&window.downcast(), &mut destination);
+        barrier.memcpy_async_cooperative(&window.downcast(), destination);
     }
 
     fn task_count(this: &Self) -> comptime_type!(u32) {

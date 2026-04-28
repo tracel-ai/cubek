@@ -125,7 +125,7 @@ impl<
                     output_partition.scale_mul_at::<SM<AP>>(&scale, q, vd, partition_val_dim);
 
                     output_partition.get_at_mut(q, vd, partition_val_dim).mma(
-                        softmax_partition.get_softmaxed_mut(q),
+                        softmax_partition.get_softmaxed(q),
                         &value_partition.get().tile,
                     );
                 }
@@ -184,7 +184,7 @@ impl<
             #[unroll]
             for vd in 0..p.val_dim as usize {
                 let tile_pos = (q as u32 + P::seq_q_index() * p.seq_q, vd.runtime() as u32);
-                let mut tile = SO::tile(stage, tile_pos);
+                let mut tile = SO::tile(&*stage, tile_pos);
 
                 let acc_tile =
                     acc.get_at_mut(q, vd, config.shared().partition_size.val_dim as usize);

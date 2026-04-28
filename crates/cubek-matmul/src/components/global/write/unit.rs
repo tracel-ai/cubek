@@ -102,7 +102,7 @@ impl<IP: MatrixTypes> GlobalWriter<IP> for UnitWriter<IP> {
     }
 
     fn stage(this: &Self) -> Self::Stage {
-        this.stage
+        this.stage.clone()
     }
 }
 

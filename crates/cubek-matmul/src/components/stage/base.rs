@@ -258,7 +258,7 @@ impl<IO: SliceVisibility, S: LoadStageFamily<IO>> LoadStageFamily<IO> for Option
         stage: &Self::Stage<ES, NS, T>,
         index: u32,
     ) -> Self::Stage<ES, NS, T> {
-        stage.as_ref().map(|s| S::with_buffer_index(s, index))
+        stage.map_ref(|s| S::with_buffer_index(s, index))
     }
 
     fn free<ES: Numeric, NS: Size, T: TilingLayout>(stage: &Self::Stage<ES, NS, T>) {

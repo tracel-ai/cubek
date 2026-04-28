@@ -99,7 +99,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
         let accumulator = accumulator.elements.item();
         #[unroll]
         for k in 0..accumulator.size() {
-            let candidate = accumulator[k];
+            let candidate = accumulator.extract(k);
             max = select(candidate > max, candidate, max);
         }
         Value::new_single(Out::cast_from(max))

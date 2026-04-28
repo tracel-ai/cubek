@@ -143,14 +143,11 @@ impl<M: Numeric, N: Size> MaterializedMaskReader<M, N> {
 
         let row = row_offset + P::seq_q_index() * elements_in_partition_seq_q;
 
-        let slice = self
-            .global_iter
-            .view()
-            .slice(
-                (row, col.runtime()),
-                (attention_tile_size.seq_q, attention_tile_size.seq_kv).runtime(),
-            )
-            .to_linear_slice();
+        let view = self.global_iter.view().slice(
+            (row, col.runtime()),
+            (attention_tile_size.seq_q, attention_tile_size.seq_kv).runtime(),
+        );
+        let slice = view.to_linear_slice();
 
         let vector_size = self.gmem_config.vector_size.comptime() as u32;
         let start = 0;

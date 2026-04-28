@@ -94,7 +94,7 @@ impl<ES: Numeric, NS: Size> BiasStageMemory<ES, NS> {
     }
 
     /// Return the whole stage as a slice, for reading
-    pub fn as_slice(&self) -> Slice<Vector<ES, NS>> {
+    pub fn as_slice(&self) -> &Slice<Vector<ES, NS>> {
         let stage_offset = (self.buffer_index * self.stage_size) as usize;
         self.smem
             .slice(stage_offset, stage_offset + self.stage_size as usize)
@@ -102,11 +102,11 @@ impl<ES: Numeric, NS: Size> BiasStageMemory<ES, NS> {
     }
 
     /// Return the whole stage as a mutable slice, for loading
-    pub fn as_slice_mut(&mut self) -> SliceMut<Vector<ES, NS>> {
+    pub fn as_slice_mut(&mut self) -> &mut SliceMut<Vector<ES, NS>> {
         let stage_offset = (self.buffer_index * self.stage_size) as usize;
         self.smem
             .slice_mut(stage_offset, stage_offset + self.stage_size as usize)
-            .with_vector_size()
+            .with_vector_size_mut()
     }
 
     /// Frees the shared memory for reuse, if possible on the target runtime.
@@ -114,7 +114,7 @@ impl<ES: Numeric, NS: Size> BiasStageMemory<ES, NS> {
     /// # Safety
     /// *Must* be used in uniform control flow
     /// *Must not* have any dangling references to this shared memory
-    pub unsafe fn free(self) {
+    pub unsafe fn free(&self) {
         unsafe { self.smem.free() };
     }
 }

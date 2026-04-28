@@ -69,7 +69,7 @@ pub fn shared_sum<R: Runtime>(
     // Check that the client supports atomic addition.
     if !client
         .properties()
-        .atomic_type_usage(Type::new(StorageType::Atomic(input_elem)))
+        .atomic_type_usage(Type::atomic(input_elem))
         .contains(AtomicUsage::Add)
     {
         return Err(ReduceError::MissingAtomicAdd(input_elem.into()));
@@ -154,7 +154,7 @@ fn shared_sum_kernel<T: Numeric, N: Size>(
 
     // Each unit sum its vectors.
     for k in start..end {
-        shared_memory[UNIT_POS as usize] += input[k];
+        shared_memory[UNIT_POS as usize] += input.read(k);
     }
 
     // Sum all vectors within the shared_memory to a single vector.
@@ -164,7 +164,7 @@ fn shared_sum_kernel<T: Numeric, N: Size>(
     let sum = RuntimeCell::<T>::new(T::from_int(0));
     #[unroll]
     for k in 0..N::value() {
-        let update = vector[k] + sum.read();
+        let update = vector.extract(k) + sum.read();
         sum.store(update);
     }
 

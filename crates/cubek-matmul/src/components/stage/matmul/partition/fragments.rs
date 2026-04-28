@@ -73,7 +73,7 @@ impl<MT: MatmulTypes, Sc: TileScope> Accumulators<MT, Sc> {
 
     /// Fetch a reference to the accumulator at (`m`, `n`)
     pub fn get_at(
-        &self,
+        &'a self,
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] tiles_in_stage_partition_n: usize,
@@ -83,7 +83,7 @@ impl<MT: MatmulTypes, Sc: TileScope> Accumulators<MT, Sc> {
 
     /// Fetch a mutable reference to the accumulator at (`m`, `n`)
     pub fn get_at_mut(
-        &mut self,
+        &'a mut self,
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] tiles_in_stage_partition_n: usize,

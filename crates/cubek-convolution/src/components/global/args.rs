@@ -3,6 +3,7 @@ use cubecl::{prelude::*, std::FastDivmod};
 use crate::components::ConvolutionOperation;
 
 #[derive(CubeType, CubeLaunch, Clone)]
+#[expand(derive(Clone))]
 pub struct RuntimeArgs {
     pub shape_k: u32,
     pub channels: u32,

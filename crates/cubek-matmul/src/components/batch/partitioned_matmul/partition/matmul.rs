@@ -161,23 +161,23 @@ pub(crate) fn execute_global_matmul<
     let stage_n = config.stage_config().elements_in_stage_n().runtime();
     let k_size = k_range.1 - k_range.0;
 
-    let a = Args::view_lhs(state);
-    let b = Args::view_rhs(state);
-    let c = Args::view_acc(state);
+    let a = Args::view_lhs(&*state);
+    let b = Args::view_rhs(&*state);
+    let c = Args::view_acc(&*state);
     let out = Args::view_out(state);
 
-    let runtime_config = Args::runtime_config(state);
+    let runtime_config = Args::runtime_config(&*state);
 
-    let a_batch = Args::batch_lhs(state, nth_batch as usize);
+    let a_batch = Args::batch_lhs(&*state, nth_batch as usize);
     let a = a.view(SliceIndex::new(a_batch, a.shape()));
-    let b_batch = Args::batch_rhs(state, nth_batch as usize);
+    let b_batch = Args::batch_rhs(&*state, nth_batch as usize);
     let b = b.view(SliceIndex::new(b_batch, b.shape()));
-    let c_batch = Args::batch_acc(state, nth_batch as usize);
+    let c_batch = Args::batch_acc(&*state, nth_batch as usize);
     let c = c.map(|c| {
         let c = c.view(SliceIndex::new(c_batch, c.shape()));
         c.slice_unchecked((m_offset, n_offset), (stage_m, stage_n))
     });
-    let out_batch = Args::batch_out(state, nth_batch as usize);
+    let out_batch = Args::batch_out(&*state, nth_batch as usize);
     let out = out.view_mut(SliceIndex::new(out_batch, out.shape()));
 
     GMM::execute(

@@ -97,6 +97,7 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for AsyncFullTmaLoading {
 }
 
 #[derive(CubeType, Clone, Copy)]
+#[expand(derive(Clone, Copy))]
 pub struct AsyncFullTmaJob {
     is_elected: bool,
 
@@ -131,7 +132,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
             };
 
             let global_view = global_iter.view();
-            let mut stage = stage.as_slice_mut::<NS>();
+            let stage = stage.as_slice_mut::<NS>();
             let slice_size = size_row * size_col / stage.vector_size() as u32;
 
             let slice_start = task_id * slice_size;
@@ -143,7 +144,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
                 MatrixLayout::ColMajor => (col, 0u32).runtime(),
             };
 
-            global_view.tensor_map_load(barrier, &mut slice.downcast(), pos);
+            global_view.tensor_map_load(barrier.inner_ref(), &mut slice.downcast(), pos);
         }
     }
 

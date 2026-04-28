@@ -160,7 +160,7 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig> Sta
             let mut rhs_num_task_executed = 0u32.comptime();
 
             if lhs_len > 0 {
-                let lhs_job = this.state_lhs.index_mut(0usize);
+                let lhs_job = &this.state_lhs[0];
                 let num_tasks = L::JobIterator::num_tasks(lhs_job);
                 let num_task_executed = L::JobIterator::current(lhs_job);
                 comptime!(lhs_num_tasks += num_tasks);
@@ -168,7 +168,7 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig> Sta
             }
 
             if rhs_len > 0 {
-                let rhs_job = this.state_rhs.index_mut(0usize);
+                let rhs_job = &this.state_rhs[0];
                 let num_tasks = R::JobIterator::num_tasks(rhs_job);
                 let num_task_executed = R::JobIterator::current(rhs_job);
                 comptime!(rhs_num_tasks += num_tasks);
@@ -298,7 +298,7 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig>
 
 #[cube]
 /// Something that can execute a job, i.e. a reader
-pub trait JobExecutor<S: SyncStrategy>: CubeType + Clone {
+pub trait JobExecutor<S: SyncStrategy>: CubeType<ExpandType: Clone> + Clone {
     /// The job to execute
     type JobIterator: JobIterator;
 

@@ -21,9 +21,9 @@ impl ArgMax {
         coordinates1: Vector<u32, N>,
     ) -> (Vector<T, N>, Vector<u32, N>) {
         let to_keep = select_many(
-            items0.equal(items1),
-            coordinates0.less_than(coordinates1),
-            items0.greater_than(items1),
+            items0.equal(&items1),
+            coordinates0.less_than(&coordinates1),
+            items0.greater_than(&items1),
         );
         let items = select_many(to_keep, items0, items1);
         let coordinates = select_many(to_keep, coordinates0, coordinates1);
@@ -135,8 +135,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMax {
             let mut coordinate = u32::MAX.runtime();
             #[unroll]
             for k in 0..vector_size {
-                let acc_element = accumulator.elements.item()[k];
-                let acc_coordinate = accumulator.args.item()[k];
+                let acc_element = accumulator.elements.item().extract(k);
+                let acc_coordinate = accumulator.args.item().extract(k);
                 if acc_element == max && acc_coordinate < coordinate {
                     coordinate = acc_coordinate;
                 } else if acc_element > max {

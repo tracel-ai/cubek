@@ -4,6 +4,7 @@ use cubecl::{
 };
 
 #[derive(Clone, CubeType)]
+#[expand(derive(Clone))]
 /// An iterator over global memory, advancing along k.
 pub struct GlobalIterator<EI: CubePrimitive> {
     global_view: View<EI, Coords2d>,

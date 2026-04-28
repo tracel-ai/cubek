@@ -45,13 +45,11 @@ impl<AP: AttentionPrecision> QueryReader<AP> {
 
         let vector_size = self.gmem_config.vector_size.comptime() as u32;
 
-        let slice = self
-            .query
-            .slice(
-                (row * tile_size.seq_q, col * tile_size.head_dim),
-                (tile_size.seq_q, tile_size.head_dim).runtime(),
-            )
-            .to_linear_slice();
+        let view = self.query.slice(
+            (row * tile_size.seq_q, col * tile_size.head_dim),
+            (tile_size.seq_q, tile_size.head_dim).runtime(),
+        );
+        let slice = view.to_linear_slice();
 
         let start = 0;
         let vectors_per_tile = tile_size.seq_q * tile_size.head_dim / vector_size;

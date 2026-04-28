@@ -261,7 +261,7 @@ fn strided_tile_to_unit_tile<E: Numeric, N: Size, E2: Numeric>(
             for i in 0..vector_size {
                 unit_tile.data
                     [(row * unit_tile.layout.num_cols + col * vector_size + i) as usize] =
-                    E2::cast_from(line_read[i as usize]);
+                    E2::cast_from(line_read.extract(i as usize));
             }
         }
     }
@@ -286,7 +286,7 @@ fn strided_tile_to_transposed_unit_tile<E: Numeric, N: Size, E2: Numeric>(
             #[unroll]
             for i in 0..vector_size {
                 unit_tile.data[((input_col_vector + i) * input_num_rows + input_row) as usize] =
-                    E2::cast_from(vector_read[i as usize]);
+                    E2::cast_from(vector_read.extract(i as usize));
             }
         }
     }

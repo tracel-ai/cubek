@@ -99,6 +99,7 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncBiasLoading {
 }
 
 #[derive(CubeType, Clone, Copy)]
+#[expand(derive(Clone))]
 pub struct SyncBiasJob {
     unit_position_base: u32,
 
@@ -151,11 +152,12 @@ pub(crate) fn load_and_store_vector<EG: Numeric, NG: Size, ES: Numeric, NS: Size
 ) {
     let view = global_iter.view();
 
-    let mut slice = stage.as_slice_mut();
+    let swizzle = stage.swizzle;
+    let slice = stage.as_slice_mut();
 
     let type_size = Vector::<ES, NS>::type_size();
     let vector_read = view.read_checked((0, unit_position));
-    let stage_offs = stage.swizzle.apply(unit_position, type_size);
+    let stage_offs = swizzle.apply(unit_position, type_size);
 
     slice[stage_offs as usize / NS::value()] = Vector::cast_from(vector_read);
 }

@@ -79,8 +79,8 @@ pub trait ConcreteOutputFactory<A: Routine<()>>: LaunchArg {
     ) -> Self::RuntimeArg<R>;
 }
 
-pub trait RuntimeConfig: LaunchArg + CubeType + Clone + Send + Sync {}
-impl<T: LaunchArg + CubeType + Clone + Send + Sync> RuntimeConfig for T {}
+pub trait RuntimeConfig: LaunchArg + CubeType<ExpandType: Clone> + Clone + Send + Sync {}
+impl<T: LaunchArg + CubeType<ExpandType: Clone> + Clone + Send + Sync> RuntimeConfig for T {}
 
 #[cube]
 /// Arguments for the matrix multiplication algorithm.
@@ -175,7 +175,8 @@ pub struct TensorArgs<Config: RuntimeConfig = ()> {
     _config: PhantomData<Config>,
 }
 
-#[derive(CubeLaunch, CubeType, Clone, Copy)]
+#[derive(CubeLaunch, CubeType, Clone)]
+#[expand(derive(Clone))]
 /// Input representation for [TensorArgs] implementing [MatmulArgs].
 pub struct TensorInputs<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc: CubePrimitive> {
     /// The lhs tensor.
@@ -251,7 +252,8 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc: CubePrimitive, A: Routine<()>>
     }
 }
 
-#[derive(CubeType, CubeLaunch, Clone, Copy)]
+#[derive(CubeType, CubeLaunch, Clone)]
+#[expand(derive(Clone))]
 pub struct TensorOutput<EG: CubePrimitive> {
     view: View<EG, BatchedCoords, ReadWrite>,
     batch: VirtualLayout<Coords1d, Coords1d>,
@@ -293,13 +295,13 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorArgs<Config> {
         #[comptime] _rhs_layout_config: GlobalLayoutConfig,
         #[comptime] _out_layout_config: GlobalLayoutConfig,
     ) -> Self::State<Lhs, Rhs, EO> {
-        (*input, *output, config)
+        (input.clone(), output.clone(), config)
     }
 
     fn view_lhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &Self::State<Lhs, Rhs, EO>,
     ) -> View<Lhs, BatchedCoords> {
-        state.0.lhs
+        state.0.lhs.clone()
     }
 
     fn batch_lhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
@@ -312,7 +314,7 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorArgs<Config> {
     fn view_rhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &Self::State<Lhs, Rhs, EO>,
     ) -> View<Rhs, BatchedCoords> {
-        state.0.rhs
+        state.0.rhs.clone()
     }
 
     fn batch_rhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
@@ -325,7 +327,7 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorArgs<Config> {
     fn view_acc<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &Self::State<Lhs, Rhs, EO>,
     ) -> ComptimeOption<View<EO, BatchedCoords>> {
-        state.0.acc
+        state.0.acc.clone()
     }
 
     fn batch_acc<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
@@ -333,8 +335,7 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorArgs<Config> {
         batch: usize,
     ) -> usize {
         #[comptime]
-        #[comptime]
-        match state.0.acc_batch {
+        match &state.0.acc_batch {
             ComptimeOption::Some(layout) => layout.to_source_pos(batch),
             ComptimeOption::None => batch,
         }
@@ -343,7 +344,7 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorArgs<Config> {
     fn view_out<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &mut Self::State<Lhs, Rhs, EO>,
     ) -> View<EO, BatchedCoords, ReadWrite> {
-        state.1.view
+        state.1.view.clone()
     }
 
     fn batch_out<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
@@ -368,7 +369,8 @@ pub struct TensorMapArgs<Config: RuntimeConfig = ()> {
     _config: PhantomData<Config>,
 }
 
-#[derive(CubeLaunch, CubeType, Clone, Copy)]
+#[derive(CubeLaunch, CubeType, Clone)]
+#[expand(derive(Clone))]
 /// Input representation for [TensorArgs] implementing [MatmulArgs].
 pub struct TensorMapInputs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive> {
     /// The lhs tensor.
@@ -541,13 +543,13 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorMapArgs<Config> {
         #[comptime] _rhs_layout_config: GlobalLayoutConfig,
         #[comptime] _out_layout_config: GlobalLayoutConfig,
     ) -> Self::State<Lhs, Rhs, EO> {
-        (*input, *output, config)
+        (input.clone(), output.clone(), config)
     }
 
     fn view_lhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &Self::State<Lhs, Rhs, EO>,
     ) -> View<Lhs, BatchedCoords> {
-        state.0.lhs
+        state.0.lhs.clone()
     }
 
     fn batch_lhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
@@ -560,7 +562,7 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorMapArgs<Config> {
     fn view_rhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &Self::State<Lhs, Rhs, EO>,
     ) -> View<Rhs, BatchedCoords> {
-        state.0.rhs
+        state.0.rhs.clone()
     }
 
     fn batch_rhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
@@ -573,7 +575,7 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorMapArgs<Config> {
     fn view_acc<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &Self::State<Lhs, Rhs, EO>,
     ) -> ComptimeOption<View<EO, BatchedCoords>> {
-        state.0.acc
+        state.0.acc.clone()
     }
 
     fn batch_acc<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
@@ -582,7 +584,7 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorMapArgs<Config> {
     ) -> usize {
         #[comptime]
         #[comptime]
-        match state.0.acc_batch {
+        match &state.0.acc_batch {
             ComptimeOption::Some(layout) => layout.to_source_pos(batch),
             ComptimeOption::None => batch,
         }
@@ -591,7 +593,7 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorMapArgs<Config> {
     fn view_out<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &mut Self::State<Lhs, Rhs, EO>,
     ) -> View<EO, BatchedCoords, ReadWrite> {
-        state.1.view
+        state.1.view.clone()
     }
 
     fn batch_out<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(

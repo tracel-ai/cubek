@@ -113,17 +113,17 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatUnitPerpendicular<MP> {
         let plane_dim = config.plane_dim;
         let check_bounds = config.check_bounds;
 
-        let lhs = Args::view_lhs(state);
-        let rhs = Args::view_rhs(state);
+        let lhs = Args::view_lhs(&*state);
+        let rhs = Args::view_rhs(&*state);
         let out = Args::view_out(state);
 
         let (_, _, k) = lhs.shape();
         let (_, _, n) = out.shape();
         let (n_cube_id, batch_cube_id) = cube_pos_to_matrix_batch(&cube_mapping);
 
-        let lhs_batch = Args::batch_lhs(state, batch_cube_id as usize);
-        let rhs_batch = Args::batch_rhs(state, batch_cube_id as usize);
-        let out_batch = Args::batch_out(state, batch_cube_id as usize);
+        let lhs_batch = Args::batch_lhs(&*state, batch_cube_id as usize);
+        let rhs_batch = Args::batch_rhs(&*state, batch_cube_id as usize);
+        let out_batch = Args::batch_out(&*state, batch_cube_id as usize);
 
         let lhs = lhs.view(SliceIndex::new(lhs_batch, lhs.shape()));
         let rhs = rhs.view(SliceIndex::new(rhs_batch, rhs.shape()));

@@ -84,7 +84,7 @@ impl<IP: MatrixTypes> GlobalWriter<IP> for PlaneWriter<IP> {
     }
 
     fn stage(this: &Self) -> Self::Stage {
-        this.stage
+        this.stage.clone()
     }
 }
 
@@ -139,7 +139,10 @@ fn write_vector<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
             let offs = out_smem_tile.stage_offset(unit_write + i as u32);
             #[unroll]
             for j in 0..out_smem_vector_size {
-                value[i * out_smem_vector_size + j] = out_smem_tile.container[offs as usize][j];
+                value.insert(
+                    i * out_smem_vector_size + j,
+                    out_smem_tile.container[offs as usize].extract(j),
+                );
             }
         }
         value

@@ -16,7 +16,8 @@ impl StageFamily<ReadWrite> for PartitionedStageFamily {
     type Stage<ES: Numeric, NS: Size, T: TilingLayout> = PartitionedStage<ES, NS>;
 }
 
-#[derive(CubeType, Clone, Copy)]
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
 /// Layoutless stage for current writers. Tile only depends on the unit index, not the out tile.
 pub struct PartitionedStage<ES: Numeric, NS: Size> {
     /// Underlying shared memory

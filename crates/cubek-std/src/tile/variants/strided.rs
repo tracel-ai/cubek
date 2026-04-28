@@ -10,7 +10,8 @@ use crate::tile::variants::instruction::{
 use crate::tile::{Tile, TileKind, TileKindExpand, TileScope};
 use crate::{MatrixLayout, stage::StageMemoryConfig, stage::as_swizzle_object};
 
-#[derive(CubeType, Clone, Copy)]
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
 /// Tile with a linear major dimension, and a strided minor dimension.
 /// Basic tile kind supported by all stage matmuls.
 pub struct StridedTile<ES: Numeric, N: Size, IO: SliceVisibility = ReadOnly> {
@@ -35,7 +36,7 @@ impl<ES: Numeric, N: Size> StridedTile<ES, N> {
     ///
     /// The slice length must exactly match the tile size.
     pub fn new_contiguous(
-        container: Slice<Vector<ES, N>>,
+        container: &Slice<Vector<ES, N>>,
         start: u32,
         #[comptime] config: StageMemoryConfig,
     ) -> StridedTile<ES, N> {
@@ -49,7 +50,7 @@ impl<ES: Numeric, N: Size> StridedTile<ES, N> {
         let stride = stride / config.vector_size;
 
         StridedTile::<ES, N> {
-            container,
+            container: *container,
             start,
             end: start + len,
             stride,
@@ -89,7 +90,7 @@ impl<ES: Numeric, N: Size> StridedTile<ES, N> {
     ///
     /// The slice must include all elements of the tile, though it may include unused gaps.
     pub fn new_strided(
-        container: Slice<Vector<ES, N>>,
+        container: &Slice<Vector<ES, N>>,
         start: u32,
         end: u32,
         stride: u32,
@@ -97,7 +98,7 @@ impl<ES: Numeric, N: Size> StridedTile<ES, N> {
         #[comptime] layout: MatrixLayout,
     ) -> StridedTile<ES, N> {
         StridedTile::<ES, N> {
-            container,
+            container: *container,
             start,
             end,
             stride,
@@ -200,19 +201,18 @@ impl<ES: Numeric, N: Size, IO: SliceVisibility> StridedTile<ES, N, IO> {
                 self.clone().__expand_with_stage_vector_size_method(scope);
 
             if current < vector_size {
-                let ratio = (vector_size / current) as u32;
-                let end = cubecl::frontend::div::expand(scope, self.end, ratio.into());
-                let start = cubecl::frontend::div::expand(scope, self.start, ratio.into());
-                let stride =
-                    cubecl::frontend::div::expand(scope, self.stride, (ratio as u32).into());
+                let ratio = ((vector_size / current) as u32).into_expand(scope);
+                let start = self.start.__expand_div_method(scope, ratio);
+                let end = self.end.__expand_div_method(scope, ratio);
+                let stride = self.stride.__expand_div_method(scope, ratio);
                 out.start = start;
                 out.end = end;
                 out.stride = stride;
             } else {
-                let ratio = (current / vector_size) as u32;
-                let start = cubecl::frontend::mul::expand(scope, self.start, ratio.into());
-                let end = cubecl::frontend::mul::expand(scope, self.end, ratio.into());
-                let stride = cubecl::frontend::mul::expand(scope, self.stride, ratio.into());
+                let ratio = ((current / vector_size) as u32).into_expand(scope);
+                let start = self.start.__expand_mul_method(scope, ratio);
+                let end = self.end.__expand_mul_method(scope, ratio);
+                let stride = self.stride.__expand_mul_method(scope, ratio);
                 out.start = start;
                 out.end = end;
                 out.stride = stride;
