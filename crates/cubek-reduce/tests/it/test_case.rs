@@ -230,7 +230,9 @@ impl TestCase {
     }
 }
 
-fn get_server_error(client: &cubecl::client::ComputeClient<TestRuntime>) -> Option<ExecutionOutcome> {
+fn get_server_error(
+    client: &cubecl::client::ComputeClient<TestRuntime>,
+) -> Option<ExecutionOutcome> {
     match client.flush() {
         Ok(_) => None,
         Err(ServerError::ServerUnhealthy { errors, .. }) => {
