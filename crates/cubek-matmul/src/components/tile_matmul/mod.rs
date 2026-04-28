@@ -1,6 +1,7 @@
-pub(crate) mod config;
-mod dispatch;
+mod matmul;
+mod setup;
 mod tile;
 
-pub use dispatch::*;
+pub use matmul::*;
+pub use setup::*;
 pub use tile::*;

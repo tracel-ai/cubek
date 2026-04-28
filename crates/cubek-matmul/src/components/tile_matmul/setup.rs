@@ -1,10 +1,11 @@
 use crate::components::resource::CubeDimResource;
+use crate::components::tile_matmul::matmul::TileMatmul;
 use crate::components::tile_matmul::tile::cmma::CmmaMatmulConfig;
 use crate::components::tile_matmul::tile::interleaved::InterleavedMatmulConfig;
 use crate::components::tile_matmul::tile::mma::MmaMatmulConfig;
 use crate::components::tile_matmul::tile::plane_vec_mat_inner_product::PlaneVecMatInnerProductConfig;
 use crate::components::tile_matmul::tile::register::RegisterMatmulConfig;
-use crate::components::tile_matmul::{Plane, Scope, TileMatmul, Unit};
+use crate::components::tile_matmul::{Plane, Scope, Unit};
 use crate::definition::TilingBlueprint;
 use crate::definition::{
     MatmulAvailabilityError, MatmulElems, MatmulSetupError, MatmulVectorSizes,

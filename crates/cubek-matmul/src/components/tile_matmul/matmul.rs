@@ -1,11 +1,11 @@
+use crate::{
+    components::tile_matmul::tile::{
+        cmma::CmmaMatmulConfig, interleaved::InterleavedMatmulConfig, mma::MmaMatmulConfig,
+        plane_vec_mat_inner_product::PlaneVecMatInnerProductConfig, register::RegisterMatmulConfig,
+    },
+    definition::{StageIdent, SwizzleModes},
+};
 use cubek_std::stage::SwizzleMode;
-
-use crate::components::tile_matmul::tile::cmma::CmmaMatmulConfig;
-use crate::components::tile_matmul::tile::interleaved::InterleavedMatmulConfig;
-use crate::components::tile_matmul::tile::mma::MmaMatmulConfig;
-use crate::components::tile_matmul::tile::plane_vec_mat_inner_product::PlaneVecMatInnerProductConfig;
-use crate::components::tile_matmul::tile::register::RegisterMatmulConfig;
-use crate::definition::StageIdent;
 
 /// Tile-level matmul configuration. Each variant carries the per-kind config.
 ///
@@ -70,6 +70,15 @@ impl TileMatmul {
             TileMatmul::PlaneVec(c) => c.swizzle_modes,
             TileMatmul::Interleaved(c) => c.swizzle_modes,
         };
-        crate::components::tile_matmul::config::swizzle_for_ident(modes, ident)
+        crate::components::tile_matmul::matmul::swizzle_for_ident(modes, ident)
+    }
+}
+
+pub(crate) fn swizzle_for_ident(modes: SwizzleModes, ident: StageIdent) -> SwizzleMode {
+    match ident {
+        StageIdent::Lhs => modes.lhs,
+        StageIdent::Rhs => modes.rhs,
+        StageIdent::Acc => modes.acc,
+        StageIdent::Out => modes.out,
     }
 }
