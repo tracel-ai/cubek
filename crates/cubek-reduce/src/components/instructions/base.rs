@@ -1,4 +1,4 @@
-use crate::components::precision::ReducePrecision;
+use crate::components::{instructions::lowest_coordinate_matching, precision::ReducePrecision};
 use cubecl::prelude::*;
 
 pub trait ReduceFamily: Send + Sync + 'static + std::fmt::Debug {
@@ -96,6 +96,83 @@ impl<X: CubePrimitive> Value<X> {
             }
             (Value::None, Value::None) => {}
             _ => panic!("Tried assigning different accumulator kinds"),
+        }
+    }
+}
+
+#[cube]
+pub fn plane_topk_insert<N: Numeric, S: Size>(
+    elements: &mut Array<Vector<N, S>>,
+    coordinates: &mut Value<Vector<u32, S>>,
+    item: Vector<N, S>,
+    coord: &Value<Vector<u32, S>>,
+    #[comptime] k: usize,
+    #[comptime] has_coords: bool,
+) {
+    let mut local_best_val = item;
+    let lane_id = Vector::new(UNIT_POS_X);
+
+    let mut local_best_coord = if has_coords {
+        coord.item()
+    } else {
+        Vector::new(u32::MAX)
+    };
+
+    #[unroll]
+    for _i in 0..k {
+        let winning_val = plane_max(local_best_val);
+
+        let winning_coord = if has_coords {
+            lowest_coordinate_matching(winning_val, local_best_val, local_best_coord)
+        } else {
+            let is_match = local_best_val.equal(winning_val);
+            let claim = select_many(is_match, lane_id, Vector::new(u32::MAX));
+            plane_min(claim)
+        };
+
+        let mut insert_val = winning_val;
+        let mut insert_coord = winning_coord;
+
+        if has_coords {
+            let coordinates = coordinates.multiple_mut();
+            #[unroll]
+            for j in 0..k {
+                let to_keep = select_many(
+                    elements[j].equal(insert_val),
+                    coordinates[j].less_than(insert_coord),
+                    elements[j].greater_than(insert_val),
+                );
+
+                let next_val = select_many(to_keep, insert_val, elements[j]);
+                elements[j] = select_many(to_keep, elements[j], insert_val);
+                insert_val = next_val;
+
+                let next_coord = select_many(to_keep, insert_coord, coordinates[j]);
+                coordinates[j] = select_many(to_keep, coordinates[j], insert_coord);
+                insert_coord = next_coord;
+            }
+        } else {
+            #[unroll]
+            for j in 0..k {
+                let to_keep = elements[j].greater_than(insert_val);
+                let next_val = select_many(to_keep, insert_val, elements[j]);
+                elements[j] = select_many(to_keep, elements[j], insert_val);
+                insert_val = next_val;
+            }
+        }
+
+        // Winner masking logic
+        let is_winner = if has_coords {
+            local_best_val
+                .equal(winning_val)
+                .and(local_best_coord.equal(winning_coord))
+        } else {
+            lane_id.equal(winning_coord)
+        };
+
+        local_best_val = select_many(is_winner, Vector::new(N::min_value()), local_best_val);
+        if has_coords {
+            local_best_coord = select_many(is_winner, Vector::new(u32::MAX), local_best_coord);
         }
     }
 }

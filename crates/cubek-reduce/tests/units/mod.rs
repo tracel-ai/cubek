@@ -4,7 +4,7 @@ use cubecl::{
     CubeCount, CubeDim, Runtime, TestRuntime, cube, ir::StorageType, prelude::*,
     std::tensor::TensorHandle, zspace::Shape,
 };
-use cubek_reduce::components::instructions::{plane_topk_insert, plane_topk_merge};
+use cubek_reduce::components::instructions::{Value, plane_topk_insert, plane_topk_merge};
 use cubek_test_utils::{DataKind, InputDataType, StrideSpec, TestInput};
 
 use crate::it::reference::contiguous_strides;
@@ -232,8 +232,10 @@ fn launch_plane_topk_insert<N: Numeric, S: Size>(
     }
 
     let item = new_item[UNIT_POS_X as usize];
+    let args = Value::new_None();
+    let mut coordinates = Value::new_None();
 
-    plane_topk_insert::<N, S>(&mut elements, item, k);
+    plane_topk_insert::<N, S>(&mut elements, &mut coordinates, item, &args, k, false);
 
     #[unroll]
     for i in 0..k {

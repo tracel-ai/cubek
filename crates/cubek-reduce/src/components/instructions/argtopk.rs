@@ -5,6 +5,7 @@ use cubecl::prelude::*;
 
 use crate::components::instructions::AccumulatorFormat;
 use crate::components::instructions::lowest_coordinate_matching;
+use crate::components::instructions::plane_topk_insert;
 use crate::components::instructions::{Accumulator, Item, Value};
 use crate::{
     ReduceFamily, ReduceInstruction, ReducePrecision,
@@ -127,19 +128,20 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
         #[comptime] reduce_step: ReduceStep,
     ) {
         let elements = accumulator.elements.multiple_mut();
-        let coordinates = accumulator.args.multiple_mut();
 
         match reduce_step {
             ReduceStep::Plane => {
-                plane_argtopk_insert::<P::EA, P::SI>(
+                plane_topk_insert::<P::EA, P::SI>(
                     elements,
-                    coordinates,
+                    &mut accumulator.args,
                     Vector::cast_from(item.elements),
-                    item.args.item(),
+                    &item.args,
                     this.k,
+                    true,
                 );
             }
             ReduceStep::Identity => {
+                let coordinates = accumulator.args.multiple_mut();
                 let mut insert_val = Vector::cast_from(item.elements);
                 let mut insert_coord = item.args.item();
 
@@ -309,51 +311,5 @@ pub fn plane_argtopk_merge<N: Numeric, S: Size>(
     for i in 0..k {
         elements[i] = final_elements[i];
         coordinates[i] = final_coords[i];
-    }
-}
-
-#[cube]
-pub fn plane_argtopk_insert<N: Numeric, S: Size>(
-    elements: &mut Array<Vector<N, S>>,
-    coordinates: &mut Array<Vector<u32, S>>,
-    item: Vector<N, S>,
-    coord: Vector<u32, S>,
-    #[comptime] k: usize,
-) {
-    let mut local_best_val = item;
-    let mut local_best_coord = coord;
-
-    #[unroll]
-    for _i in 0..k {
-        let winning_val = plane_max(local_best_val);
-        let winning_coord =
-            lowest_coordinate_matching(winning_val, local_best_val, local_best_coord);
-
-        let mut insert_val = winning_val;
-        let mut insert_coord = winning_coord;
-
-        for j in 0..k {
-            let to_keep = select_many(
-                elements[j].equal(insert_val),
-                coordinates[j].less_than(insert_coord),
-                elements[j].greater_than(insert_val),
-            );
-            let best_value = select_many(to_keep, elements[j], insert_val);
-            let best_coordinate = select_many(to_keep, coordinates[j], insert_coord);
-            let loser_value = select_many(to_keep, insert_val, elements[j]);
-            let loser_coordinate = select_many(to_keep, insert_coord, coordinates[j]);
-
-            elements[j] = best_value;
-            coordinates[j] = best_coordinate;
-            insert_val = loser_value;
-            insert_coord = loser_coordinate;
-        }
-
-        // Only the thread that provided the specific pair "wins" and masks it out
-        let is_winner = local_best_val
-            .equal(winning_val)
-            .and(local_best_coord.equal(winning_coord));
-        local_best_val = select_many(is_winner, Vector::new(N::min_value()), local_best_val);
-        local_best_coord = select_many(is_winner, Vector::new(u32::MAX), local_best_coord);
     }
 }

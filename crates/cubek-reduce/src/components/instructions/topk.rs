@@ -4,6 +4,7 @@ use cubecl::frontend::CubeIndexMutExpand;
 use cubecl::prelude::*;
 
 use crate::components::instructions::AccumulatorFormat;
+use crate::components::instructions::plane_topk_insert;
 use crate::components::instructions::{Accumulator, Item, Value};
 use crate::{
     ReduceFamily, ReduceInstruction, ReducePrecision,
@@ -117,8 +118,11 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
             ReduceStep::Plane => {
                 plane_topk_insert::<P::EA, P::SI>(
                     elements,
+                    &mut accumulator.args,
                     Vector::cast_from(item.elements),
+                    &item.args,
                     this.k,
+                    false,
                 );
             }
             ReduceStep::Identity => {
@@ -207,43 +211,6 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
         }
 
         Value::new_Multiple(output)
-    }
-}
-
-#[cube]
-pub fn plane_topk_insert<N: Numeric, S: Size>(
-    elements: &mut Array<Vector<N, S>>,
-    item: Vector<N, S>,
-    #[comptime] k: usize,
-) {
-    let mut local_best_val = item;
-    let unit_pos_x = Vector::new(UNIT_POS_X);
-
-    #[unroll]
-    for _i in 0..k {
-        let winning_val = plane_max(local_best_val);
-
-        let is_match = local_best_val.equal(winning_val);
-        let claim = select_many(is_match, unit_pos_x, Vector::new(u32::MAX));
-        let winning_lane = plane_min(claim);
-
-        // All threads in the warp insert the same value to stay in sync
-        let mut insert_item = winning_val;
-        for j in 0..k {
-            let acc_item = elements[j];
-            let keep = acc_item.greater_than(insert_item);
-
-            elements[j] = select_many(keep, acc_item, insert_item);
-            insert_item = select_many(keep, insert_item, acc_item);
-        }
-
-        // Mask out the winner, set its value to min
-        let is_winner_thread = unit_pos_x.equal(winning_lane);
-        local_best_val = select_many(
-            is_winner_thread,
-            Vector::new(N::min_value()),
-            local_best_val,
-        );
     }
 }
 
