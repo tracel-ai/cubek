@@ -9,7 +9,7 @@ use cubek_attention::{
 };
 
 use cubecl::client::ComputeClient;
-use cubek_test_utils::{DataKind, Distribution, StrideSpec, TestInput, TestOutcome};
+use cubek_test_utils::{TestInput, TestOutcome};
 
 pub fn test_launch(
     client: ComputeClient<TestRuntime>,
@@ -22,68 +22,36 @@ pub fn test_launch(
     let mask_shape = problem.shape(AttentionIdent::Mask);
     let out_shape = problem.shape(AttentionIdent::Out);
 
-    let (query_handle, query_data) = TestInput::new(
-        client.clone(),
-        Shape::new(query_shape),
-        problem.global_dtypes.query,
-        StrideSpec::RowMajor,
-        DataKind::Random {
-            seed: 12,
-            distribution: Distribution::Uniform(-1., 1.),
-        },
-    )
-    .generate_with_f32_host_data();
+    let (query_handle, query_data) = TestInput::builder(client.clone(), Shape::new(query_shape))
+        .dtype(problem.global_dtypes.query)
+        .uniform(12, -1., 1.)
+        .generate_with_f32_host_data();
 
-    let (key_handle, key_data) = TestInput::new(
-        client.clone(),
-        Shape::new(key_shape),
-        problem.global_dtypes.key,
-        StrideSpec::RowMajor,
-        DataKind::Random {
-            seed: 34,
-            distribution: Distribution::Uniform(-1., 1.),
-        },
-    )
-    .generate_with_f32_host_data();
+    let (key_handle, key_data) = TestInput::builder(client.clone(), Shape::new(key_shape))
+        .dtype(problem.global_dtypes.key)
+        .uniform(34, -1., 1.)
+        .generate_with_f32_host_data();
 
-    let (value_handle, value_data) = TestInput::new(
-        client.clone(),
-        Shape::new(value_shape),
-        problem.global_dtypes.value,
-        StrideSpec::RowMajor,
-        DataKind::Random {
-            seed: 56,
-            distribution: Distribution::Uniform(-1., 1.),
-        },
-    )
-    .generate_with_f32_host_data();
+    let (value_handle, value_data) = TestInput::builder(client.clone(), Shape::new(value_shape))
+        .dtype(problem.global_dtypes.value)
+        .uniform(56, -1., 1.)
+        .generate_with_f32_host_data();
 
     let (mask_handle, mask_data) = if problem.masked {
-        let (mask_handle, mask_data) = TestInput::new(
-            client.clone(),
-            Shape::new(mask_shape),
-            problem.global_dtypes.mask,
-            StrideSpec::RowMajor,
-            DataKind::Random {
-                seed: 78,
-                distribution: Distribution::Bernoulli(0.1),
-            },
-        )
-        .generate_with_bool_host_data();
+        let (mask_handle, mask_data) = TestInput::builder(client.clone(), Shape::new(mask_shape))
+            .dtype(problem.global_dtypes.mask)
+            .bernoulli(78, 0.1)
+            .generate_with_bool_host_data();
 
         (Some(mask_handle), Some(mask_data))
     } else {
         (None, None)
     };
 
-    let out_handle = TestInput::new(
-        client.clone(),
-        Shape::new(out_shape),
-        problem.global_dtypes.out,
-        StrideSpec::RowMajor,
-        DataKind::Zeros,
-    )
-    .generate_without_host_data();
+    let out_handle = TestInput::builder(client.clone(), Shape::new(out_shape))
+        .dtype(problem.global_dtypes.out)
+        .zeros()
+        .generate_without_host_data();
 
     let client = client.clone();
     let client_cloned = client.clone();

@@ -7,8 +7,8 @@ use cubek_matmul::{
 use cubek_quant::scheme::{QuantLevel, QuantMode, QuantParam, QuantScheme, QuantStore, QuantValue};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{
-    DataKind, ExecutionOutcome, HostData, HostDataType, InputDataType, TestInput, TestOutcome,
-    TestTensor, assert_equals_approx,
+    ExecutionOutcome, HostData, HostDataType, InputDataType, TestInput, TestOutcome, TestTensor,
+    assert_equals_approx,
 };
 
 use crate::suite::layout_to_stride_spec;
@@ -115,38 +115,23 @@ fn run_quantized_matmul(case: QuantizedMatmulCase) {
         cubecl::ir::AddressType::U32,
     );
 
-    let lhs = TestInput::new(
-        client.clone(),
-        problem.lhs_shape.clone(),
-        lhs_dtype,
-        layout_to_stride_spec(problem.lhs_layout),
-        DataKind::Random {
-            seed: 1234,
-            distribution: cubek_test_utils::Distribution::Uniform(-1., 1.),
-        },
-    )
-    .generate_test_tensor();
+    let lhs = TestInput::builder(client.clone(), problem.lhs_shape.clone())
+        .dtype(lhs_dtype)
+        .stride(layout_to_stride_spec(problem.lhs_layout))
+        .uniform(1234, -1., 1.)
+        .generate_test_tensor();
 
-    let rhs = TestInput::new(
-        client.clone(),
-        problem.rhs_shape.clone(),
-        rhs_dtype,
-        layout_to_stride_spec(problem.rhs_layout),
-        DataKind::Random {
-            seed: 5678,
-            distribution: cubek_test_utils::Distribution::Uniform(-1., 1.),
-        },
-    )
-    .generate_test_tensor();
+    let rhs = TestInput::builder(client.clone(), problem.rhs_shape.clone())
+        .dtype(rhs_dtype)
+        .stride(layout_to_stride_spec(problem.rhs_layout))
+        .uniform(5678, -1., 1.)
+        .generate_test_tensor();
 
-    let out = TestInput::new(
-        client.clone(),
-        problem.out_shape.clone(),
-        out_dtype,
-        layout_to_stride_spec(MatrixLayout::RowMajor),
-        DataKind::Zeros,
-    )
-    .generate_without_host_data();
+    let out = TestInput::builder(client.clone(), problem.out_shape.clone())
+        .dtype(out_dtype)
+        .stride(layout_to_stride_spec(MatrixLayout::RowMajor))
+        .zeros()
+        .generate_without_host_data();
 
     // The handle strides for quantized tensors are packed-view strides and must NOT
     // replace the problem's float-level strides computed by `from_parameters`. For

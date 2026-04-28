@@ -1,9 +1,7 @@
 use cubecl::{Runtime, TestRuntime, prelude::CubePrimitive};
 use cubek_fft::{irfft, rfft};
 //use cubefx_engine::{SignalSpec, phase_shift_effect};
-use cubek_test_utils::{
-    DataKind, Distribution, HostData, StrideSpec, TestInput, assert_equals_approx,
-};
+use cubek_test_utils::{HostData, TestInput, assert_equals_approx};
 
 #[test]
 fn large_fft_roundtrip() {
@@ -12,17 +10,10 @@ fn large_fft_roundtrip() {
 
     let shape = [431, 2, 2048];
 
-    let (original_signal, signal_data) = TestInput::new(
-        client.clone(),
-        shape,
-        dtype,
-        StrideSpec::RowMajor,
-        DataKind::Random {
-            seed: 42,
-            distribution: Distribution::Uniform(-1., 1.),
-        },
-    )
-    .generate_with_f32_host_data();
+    let (original_signal, signal_data) = TestInput::builder(client.clone(), shape)
+        .dtype(dtype)
+        .uniform(42, -1., 1.)
+        .generate_with_f32_host_data();
 
     let (spectrum_re, spectrum_im) = rfft(original_signal, shape.len() - 1, dtype);
     let signal_back = irfft(spectrum_re, spectrum_im, shape.len() - 1, dtype);

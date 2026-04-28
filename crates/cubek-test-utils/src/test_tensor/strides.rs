@@ -24,6 +24,42 @@ pub fn physical_extent(shape: &Shape, strides: &Strides) -> usize {
     max_offset + 1
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn physical_extent_contiguous_row_major() {
+        // Row-major 2x3 → strides (3, 1) → 6 elements covered.
+        let shape = Shape::from(vec![2, 3]);
+        let strides = Strides::new(&[3, 1]);
+        assert_eq!(physical_extent(&shape, &strides), 6);
+    }
+
+    #[test]
+    fn physical_extent_jumpy_strides_exceed_logical() {
+        // 256x256 logical view of a wider 256x512 buffer (stride 512 on dim 0).
+        // Last reachable offset is 255*512 + 255*1 = 130815 → +1 = 130816.
+        let shape = Shape::from(vec![256, 256]);
+        let strides = Strides::new(&[512, 1]);
+        assert_eq!(physical_extent(&shape, &strides), 130816);
+        // And it strictly exceeds the logical element count.
+        assert!(physical_extent(&shape, &strides) > 256 * 256);
+    }
+
+    #[test]
+    fn physical_extent_broadcast_strides_undercount_logical() {
+        // Broadcast dim: stride 0 means every index along that dim shares the
+        // same physical offset. A 4x3 tensor broadcasting dim 0 only needs 3
+        // elements of physical storage, not 12.
+        let shape = Shape::from(vec![4, 3]);
+        let strides = Strides::new(&[0, 1]);
+        assert_eq!(physical_extent(&shape, &strides), 3);
+        // ...and it's less than the logical element count.
+        assert!(physical_extent(&shape, &strides) < 4 * 3);
+    }
+}
+
 impl StrideSpec {
     pub fn compute_strides(&self, shape: &Shape) -> Strides {
         let n = shape.len();

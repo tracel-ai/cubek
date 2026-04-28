@@ -6,8 +6,8 @@ use cubecl::{
 };
 use cubek_fft::irfft_launch;
 use cubek_test_utils::{
-    self, DataKind, Distribution, ExecutionOutcome, HostData, HostDataType, StrideSpec, TestInput,
-    TestOutcome, ValidationResult, assert_equals_approx,
+    self, ExecutionOutcome, HostData, HostDataType, TestInput, TestOutcome, ValidationResult,
+    assert_equals_approx,
 };
 
 use crate::suite::reference::irfft_ref;
@@ -17,38 +17,22 @@ fn test_launch(client: ComputeClient<TestRuntime>, spectrum_shape: Vec<usize>, d
     let mut signal_shape = spectrum_shape.clone();
     signal_shape[dim] = (spectrum_shape[dim] - 1) * 2;
 
-    let (random_spectrum_re_handle, random_spectrum_re_data) = TestInput::new(
-        client.clone(),
-        spectrum_shape.clone(),
-        dtype,
-        StrideSpec::RowMajor,
-        DataKind::Random {
-            seed: 43,
-            distribution: Distribution::Uniform(-1., 1.),
-        },
-    )
-    .generate_with_f32_host_data();
+    let (random_spectrum_re_handle, random_spectrum_re_data) =
+        TestInput::builder(client.clone(), spectrum_shape.clone())
+            .dtype(dtype)
+            .uniform(43, -1., 1.)
+            .generate_with_f32_host_data();
 
-    let (random_spectrum_im_handle, random_spectrum_im_data) = TestInput::new(
-        client.clone(),
-        spectrum_shape,
-        dtype,
-        StrideSpec::RowMajor,
-        DataKind::Random {
-            seed: 44,
-            distribution: Distribution::Uniform(-1., 1.),
-        },
-    )
-    .generate_with_f32_host_data();
+    let (random_spectrum_im_handle, random_spectrum_im_data) =
+        TestInput::builder(client.clone(), spectrum_shape)
+            .dtype(dtype)
+            .uniform(44, -1., 1.)
+            .generate_with_f32_host_data();
 
-    let signal_handle = TestInput::new(
-        client.clone(),
-        signal_shape,
-        dtype,
-        StrideSpec::RowMajor,
-        DataKind::Zeros,
-    )
-    .generate_without_host_data();
+    let signal_handle = TestInput::builder(client.clone(), signal_shape)
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
 
     match irfft_launch::<TestRuntime>(
         &client,

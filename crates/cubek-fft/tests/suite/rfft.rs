@@ -6,8 +6,8 @@ use cubecl::{
 };
 use cubek_fft::rfft_launch;
 use cubek_test_utils::{
-    self, DataKind, Distribution, ExecutionOutcome, HostData, HostDataType, StrideSpec, TestInput,
-    TestOutcome, ValidationResult, assert_equals_approx,
+    self, ExecutionOutcome, HostData, HostDataType, TestInput, TestOutcome, ValidationResult,
+    assert_equals_approx,
 };
 
 use crate::suite::reference::rfft_ref;
@@ -17,35 +17,21 @@ fn test_launch(client: ComputeClient<TestRuntime>, signal_shape: Vec<usize>, dim
     let mut spectrum_shape = signal_shape.clone();
     spectrum_shape[dim] = signal_shape[dim] / 2 + 1;
 
-    let (white_noise_handle, white_noise_data) = TestInput::new(
-        client.clone(),
-        signal_shape.clone(),
-        dtype,
-        StrideSpec::RowMajor,
-        DataKind::Random {
-            seed: 42,
-            distribution: Distribution::Uniform(-1., 1.),
-        },
-    )
-    .generate_with_f32_host_data();
+    let (white_noise_handle, white_noise_data) =
+        TestInput::builder(client.clone(), signal_shape.clone())
+            .dtype(dtype)
+            .uniform(42, -1., 1.)
+            .generate_with_f32_host_data();
 
-    let spectrum_re_handle = TestInput::new(
-        client.clone(),
-        spectrum_shape.to_vec(),
-        dtype,
-        StrideSpec::RowMajor,
-        DataKind::Zeros,
-    )
-    .generate_without_host_data();
+    let spectrum_re_handle = TestInput::builder(client.clone(), spectrum_shape.to_vec())
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
 
-    let spectrum_im_handle = TestInput::new(
-        client.clone(),
-        spectrum_shape.to_vec(),
-        dtype,
-        StrideSpec::RowMajor,
-        DataKind::Zeros,
-    )
-    .generate_without_host_data();
+    let spectrum_im_handle = TestInput::builder(client.clone(), spectrum_shape.to_vec())
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
 
     match rfft_launch::<TestRuntime>(
         &client,

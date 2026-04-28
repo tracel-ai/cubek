@@ -37,6 +37,10 @@ fn random_tensor_handle(
             cubek_random::random_bernoulli(client, prob, tensor_handle.clone().binding(), dtype)
                 .unwrap()
         }
+        Distribution::Normal { mean, std } => {
+            cubek_random::random_normal(client, mean, std, tensor_handle.clone().binding(), dtype)
+                .unwrap()
+        }
     }
 
     tensor_handle
