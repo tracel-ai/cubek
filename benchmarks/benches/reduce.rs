@@ -23,6 +23,7 @@ struct ReduceBench<R: Runtime, E> {
     axis: usize,
     client: ComputeClient<R>,
     strategy: ReduceStrategy,
+    config: ReduceOperationConfig,
     _e: PhantomData<E>,
 }
 
@@ -44,7 +45,12 @@ impl<R: Runtime, E: Float> Benchmark for ReduceBench<R, E> {
         )
         .unwrap();
         let mut shape_out = self.shape.clone();
-        shape_out[self.axis] = 1;
+        let reduce_len = match self.config {
+            ReduceOperationConfig::ArgTopK(len) => len,
+            ReduceOperationConfig::TopK(len) => len,
+            _ => 1,
+        };
+        shape_out[self.axis] = reduce_len;
         let out = TensorHandle::empty(&client, shape_out, elem);
 
         (input, out)
@@ -57,7 +63,7 @@ impl<R: Runtime, E: Float> Benchmark for ReduceBench<R, E> {
             out.binding(),
             self.axis,
             self.strategy.clone(),
-            ReduceOperationConfig::Sum,
+            self.config,
             cubek::reduce::ReduceDtypes {
                 input: E::as_type_native_unchecked().storage_type(),
                 output: E::as_type_native_unchecked().storage_type(),
@@ -71,11 +77,12 @@ impl<R: Runtime, E: Float> Benchmark for ReduceBench<R, E> {
 
     fn name(&self) -> String {
         format!(
-            "reduce-axis({})-{}-{:?}-{:?}",
+            "reduce-axis({})-{}-{:?}-{:?}-{:?}",
             self.axis,
             E::as_type_native_unchecked(),
             self.shape,
-            self.strategy
+            self.strategy,
+            self.config,
         )
         .to_lowercase()
     }
@@ -133,20 +140,28 @@ fn run<R: Runtime, E: frontend::Float>(device: R::Device) {
                 // },
             ] {
                 for axis in 2..shape.len() {
-                    let bench = ReduceBench::<R, E> {
-                        shape: shape.clone(),
-                        axis,
-                        client: client.clone(),
-                        device: device.clone(),
-                        strategy: strategy.clone(),
-                        _e: PhantomData,
-                    };
-                    println!("Running: ==== {} ====", bench.name());
-                    match bench.run(TimingMethod::System) {
-                        Ok(val) => {
-                            println!("{val}");
+                    let mut configs = vec![ReduceOperationConfig::Sum; 1];
+                    for k in 1..10 {
+                        configs.push(ReduceOperationConfig::ArgTopK(k));
+                        //configs.push(ReduceOperationConfig::TopK(k));
+                    }
+                    for config in configs {
+                        let bench = ReduceBench::<R, E> {
+                            shape: shape.clone(),
+                            axis,
+                            client: client.clone(),
+                            device: device.clone(),
+                            strategy: strategy.clone(),
+                            config,
+                            _e: PhantomData,
+                        };
+                        println!("Running: ==== {} ====", bench.name());
+                        match bench.run(TimingMethod::System) {
+                            Ok(val) => {
+                                println!("{val}");
+                            }
+                            Err(err) => println!("Can't run the benchmark: {err}"),
                         }
-                        Err(err) => println!("Can't run the benchmark: {err}"),
                     }
                 }
             }
