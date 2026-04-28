@@ -1,0 +1,72 @@
+# CubeK test configuration.
+#
+# This file controls how `cubek-test-utils` runs your tests — what it prints
+# when comparing tensors, and which numerical / compilation outcomes count
+# as test failures.
+#
+# Loaded once at process start. The cubek-test-utils crate walks up from the
+# current working directory until it finds a `cubek.toml` and reads it.
+
+# ----------------------------------------------------------------------------
+# [test] — pass/fail policy
+# ----------------------------------------------------------------------------
+#
+# `policy` is one of:
+#   "correct"     (default) numerical errors fail; compilation errors are
+#                 accepted. Useful when test grids include invalid configs.
+#   "strict"      numerical errors AND compilation errors fail.
+#   "fail-if-run" inverts `correct`: tests that successfully run are failed,
+#                 others pass. Surfaces what actually executes.
+
+[test]
+policy = "correct"
+
+# ----------------------------------------------------------------------------
+# [print] — what gets dumped to stdout when comparing or pretty-printing tensors
+# ----------------------------------------------------------------------------
+#
+# `enabled` toggles the entire pipeline. When `false`, every dump call is a
+# no-op and nothing else in this section matters.
+
+[print]
+enabled = false
+
+# `view`:
+#   "table"   2-D table per slice. Cells are colored green when values match
+#             within ε, red when they diverge. Δ and ε are NOT shown — the
+#             table would be too wide; the color tells you what you need.
+#   "lines"   one row per cell: `index | got | expected | Δ | ε | status`.
+#             Δ and ε are ALWAYS shown in this view.
+view = "table"
+
+# `force-fail`:
+#   true    every test that prints is forced to fail, so cargo surfaces the
+#           stdout it would otherwise swallow. Combine with a cargo test
+#           filter to inspect a specific test.
+#   false   prints happen on every comparison, but only numerical errors
+#           fail the test.
+force-fail = true
+
+# `fail-only`: only render cells where Δ > ε.
+#   In `lines` view, matching rows are dropped entirely.
+#   In `table` view, matching cells are blanked out (the table layout is
+#   preserved so the surviving red cells stay aligned with their indices).
+fail-only = false
+
+# `show-expected`:
+#   true    in a 2-tensor render, both values are shown joined by `/`,
+#           e.g. "0.450/0.470" (cell colored green or red as a whole).
+#   false   only the first tensor's value is shown; color still reflects
+#           the per-cell comparison.
+show-expected = false
+
+# `filter`: optional per-axis filter. Same DSL as
+# `assert_equals_approx_in_slice`: comma-separated dim entries where each
+# is `.` (wildcard), `N` (exact), or `M-K` (inclusive range). Filter rank
+# must match tensor rank.
+#
+# Examples:
+#   "1,.,."       rank-3 tensors: only slice [1, *, *]
+#   "0,64-127"    rank-2 tensors: row 0, columns 64..=127
+#   ""            render the whole tensor (default)
+filter = ""

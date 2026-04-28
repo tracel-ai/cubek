@@ -1,8 +1,8 @@
 use cubecl::{TestRuntime, prelude::*};
 use cubek_reduce::shared_sum;
 use cubek_test_utils::{
-    DataKind, ExecutionOutcome, HostData, HostDataType, HostDataVec, StrideSpec, TestInput,
-    TestOutcome, assert_equals_approx,
+    ExecutionOutcome, HostData, HostDataType, HostDataVec, StrideSpec, TestInput, TestOutcome,
+    assert_equals_approx,
 };
 
 #[test]
@@ -37,27 +37,19 @@ impl TestCase {
         let client = TestRuntime::client(&Default::default());
         let input_dtype = TestDType::as_type_native_unchecked().storage_type();
 
-        let (input_handle, input_host) = TestInput::new(
-            client.clone(),
-            self.shape.clone(),
-            input_dtype,
-            StrideSpec::Custom(self.stride.iter().copied().collect()),
-            DataKind::Custom {
-                data: self.input_raw_data(),
-            },
-        )
-        .generate_with_f32_host_data();
+        let (input_handle, input_host) = TestInput::builder(client.clone(), self.shape.clone())
+            .dtype(input_dtype)
+            .stride(StrideSpec::Custom(self.stride.iter().copied().collect()))
+            .custom(self.input_raw_data())
+            .generate_with_f32_host_data();
 
         let expected_sum = sum_all(&input_host);
 
-        let output_handle = TestInput::new(
-            client.clone(),
-            cubecl::zspace::shape![1],
-            input_dtype,
-            StrideSpec::Custom(vec![1]),
-            DataKind::Zeros,
-        )
-        .generate();
+        let output_handle = TestInput::builder(client.clone(), cubecl::zspace::shape![1])
+            .dtype(input_dtype)
+            .stride(StrideSpec::Custom(vec![1]))
+            .zeros()
+            .generate();
 
         let cube_count = 3;
         let result = shared_sum(

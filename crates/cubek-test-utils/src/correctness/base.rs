@@ -1,8 +1,10 @@
-use std::ops::Range;
-
 use crate::{
-    correctness::color_printer::ColorPrinter,
-    test_mode::{TestMode, current_test_mode},
+    config::config,
+    correctness::{
+        color_printer::index_matches_filter,
+        render::print_tensors,
+        {DimFilter, TensorFilter},
+    },
     {HostData, ValidationResult},
 };
 
@@ -22,19 +24,28 @@ pub fn assert_equals_approx(
     assert_equals_approx_inner(lhs, rhs, epsilon, None)
 }
 
-/// Check if two tensors are approximately equal
-/// Within the given slice, if some
-pub fn assert_equals_approx_in_slice(
+/// Check if two tensors are approximately equal within the given filter.
+///
+/// `filter` is anything iterable whose items convert into [`DimFilter`], so
+/// both `Vec<std::ops::Range<usize>>` and the canonical [`TensorFilter`]
+/// (matching the `cubek.toml` `[print] filter` syntax) work — one DSL for
+/// selective comparison and selective printing.
+pub fn assert_equals_approx_in_slice<I>(
     // One of the tensor to compare
     lhs: &HostData,
     // One of the tensor to compare
     rhs: &HostData,
     // Maximum absolute difference between two values
     epsilon: f32,
-    // If some, will only check values within the slice shape
-    slice: Vec<Range<usize>>,
-) -> ValidationResult {
-    assert_equals_approx_inner(lhs, rhs, epsilon, Some(slice))
+    // If non-empty, only indices that match the filter are compared
+    filter: I,
+) -> ValidationResult
+where
+    I: IntoIterator,
+    I::Item: Into<DimFilter>,
+{
+    let filter: TensorFilter = filter.into_iter().map(Into::into).collect();
+    assert_equals_approx_inner(lhs, rhs, epsilon, Some(filter))
 }
 
 /// Check if two tensors are approximately equal
@@ -46,9 +57,15 @@ fn assert_equals_approx_inner(
     rhs: &HostData,
     // Maximum absolute difference between two values
     epsilon: f32,
-    // If some, will only check values within the slice shape
-    slice: Option<Vec<Range<usize>>>,
+    // If some, only indices matching the filter are compared
+    filter: Option<TensorFilter>,
 ) -> ValidationResult {
+    // Route the diff through the unified renderer. It is a no-op when
+    // printing is disabled or when shapes differ — same code path as
+    // pretty-printing two unrelated tensors.
+    let print_cfg = &config().print;
+    print_tensors(print_cfg, "diff", &[lhs, rhs], Some(epsilon));
+
     if lhs.shape != rhs.shape {
         return ValidationResult::Fail(format!(
             "Shape mismatch: got {:?}, expected {:?}",
@@ -57,47 +74,36 @@ fn assert_equals_approx_inner(
     }
 
     let shape = &lhs.shape;
-    let test_mode = current_test_mode();
+    let in_print_mode = print_cfg.enabled;
 
-    let print_visitor = matches!(test_mode, TestMode::Print { .. });
     let mut summary_visitor = SummaryCollector::new(DEFAULT_MAX_REPORTED_MISMATCHES);
-    let mut printer_visitor: Option<SafePrinter> = match &test_mode {
-        TestMode::Print { filter, .. } => Some(SafePrinter {
-            inner: ColorPrinter::new(filter.clone()),
-            shape_len: shape.len(),
-        }),
-        _ => None,
-    };
 
-    let mut visitor = TeeVisitor {
-        summary: &mut summary_visitor,
-        printer: printer_visitor.as_mut().map(|v| v as &mut dyn CompareVisitor),
-    };
+    // Up-front rank check on the comparison filter — bail out cleanly so a
+    // mistyped filter doesn't silently exclude every index.
+    if let Some(f) = &filter
+        && !f.is_empty()
+        && f.len() != shape.len()
+    {
+        return ValidationResult::Error(format!(
+            "Comparison filter rank mismatch. Got {}, expected {} (tensor shape {:?})",
+            f.len(),
+            shape.len(),
+            shape,
+        ));
+    }
 
     let test_failed = compare_tensors(
         lhs,
         rhs,
         shape,
         epsilon,
-        &mut visitor,
+        &mut summary_visitor,
         &mut Vec::new(),
-        slice.as_deref(), // pass slice as Option<&[usize]>
+        filter.as_ref(),
     );
 
-    // Enforce filter rank only if the test failed and we would print
     if test_failed {
-        if let TestMode::Print { filter, .. } = &test_mode
-            && !filter.is_empty()
-            && filter.len() != shape.len()
-        {
-            return ValidationResult::Error(format!(
-                "Print mode activated with invalid filter rank. Got {:?}, expected {:?}",
-                filter.len(),
-                shape.len()
-            ));
-        }
-
-        return ValidationResult::Fail(summary_visitor.report(shape, print_visitor));
+        return ValidationResult::Fail(summary_visitor.report(shape, in_print_mode));
     }
 
     ValidationResult::Pass
@@ -105,6 +111,7 @@ fn assert_equals_approx_inner(
 
 #[derive(Debug)]
 pub(crate) enum ElemStatus {
+    #[allow(dead_code)] // fields read via Debug in failure messages
     Correct { got: f32, delta: f32, epsilon: f32 },
     Wrong(WrongStatus),
 }
@@ -127,22 +134,6 @@ pub(crate) enum WrongStatus {
 
 pub(crate) trait CompareVisitor {
     fn visit(&mut self, index: &[usize], status: ElemStatus);
-}
-
-struct SafePrinter {
-    inner: ColorPrinter,
-    shape_len: usize,
-}
-
-impl CompareVisitor for SafePrinter {
-    fn visit(&mut self, index: &[usize], status: ElemStatus) {
-        // Only forward to the inner printer if filter rank is valid
-        if self.inner.filter.is_empty() || self.inner.filter.len() == self.shape_len {
-            self.inner.visit(index, status);
-        } else {
-            // skip printing silently
-        }
-    }
 }
 
 /// Collects up to `max_reported` individual mismatches plus aggregate stats
@@ -244,56 +235,6 @@ impl CompareVisitor for SummaryCollector {
     }
 }
 
-/// Forwards each visit to a summary collector and (optionally) a printer, so
-/// PrintAll/PrintFail keep their per-element stdout while the failure message
-/// gets the aggregate stats too.
-struct TeeVisitor<'a> {
-    summary: &'a mut SummaryCollector,
-    printer: Option<&'a mut dyn CompareVisitor>,
-}
-
-impl CompareVisitor for TeeVisitor<'_> {
-    fn visit(&mut self, index: &[usize], status: ElemStatus) {
-        // Clone status for the second visitor; ElemStatus is small (a few f32s).
-        let status_for_summary = match &status {
-            ElemStatus::Correct {
-                got,
-                delta,
-                epsilon,
-            } => ElemStatus::Correct {
-                got: *got,
-                delta: *delta,
-                epsilon: *epsilon,
-            },
-            ElemStatus::Wrong(w) => ElemStatus::Wrong(clone_wrong(w)),
-        };
-        self.summary.visit(index, status_for_summary);
-        if let Some(p) = self.printer.as_deref_mut() {
-            p.visit(index, status);
-        }
-    }
-}
-
-fn clone_wrong(w: &WrongStatus) -> WrongStatus {
-    match w {
-        WrongStatus::GotWrongValue {
-            got,
-            expected,
-            delta,
-            epsilon,
-        } => WrongStatus::GotWrongValue {
-            got: *got,
-            expected: *expected,
-            delta: *delta,
-            epsilon: *epsilon,
-        },
-        WrongStatus::ExpectedNan { got } => WrongStatus::ExpectedNan { got: *got },
-        WrongStatus::GotNan { expected } => WrongStatus::GotNan {
-            expected: *expected,
-        },
-    }
-}
-
 fn format_wrong(w: &WrongStatus) -> String {
     match w {
         WrongStatus::GotWrongValue {
@@ -374,19 +315,19 @@ fn compare_tensors(
     epsilon: f32,
     visitor: &mut dyn CompareVisitor,
     index: &mut Vec<usize>,
-    slice: Option<&[std::ops::Range<usize>]>,
+    filter: Option<&TensorFilter>,
 ) -> bool {
     let mut failed = false;
 
     let dim = index.len();
     if dim == shape.len() {
-        // Check if current index is within all ranges
-        if let Some(slice) = slice {
-            for (i, range) in index.iter().zip(slice.iter()) {
-                if !range.contains(i) {
-                    return false; // skip element outside slice
-                }
-            }
+        // Skip elements that don't match the filter (an empty filter matches
+        // every index).
+        if let Some(filter) = filter
+            && !filter.is_empty()
+            && !index_matches_filter(index, filter)
+        {
+            return false;
         }
 
         let got = actual.get_f32(index);
@@ -401,10 +342,10 @@ fn compare_tensors(
         return failed;
     }
 
-    // Recurse over full dimension — slice check happens at leaf
+    // Recurse over full dimension — filter check happens at leaf
     for i in 0..shape[dim] {
         index.push(i);
-        if compare_tensors(actual, expected, shape, epsilon, visitor, index, slice) {
+        if compare_tensors(actual, expected, shape, epsilon, visitor, index, filter) {
             failed = true;
         }
         index.pop();

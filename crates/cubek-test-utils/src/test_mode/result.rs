@@ -20,7 +20,7 @@
 //!      - `Reject(String)`: test fails.  
 //!    - Call [`TestDecision::enforce`] to actually fail the test.
 
-use crate::current_test_mode;
+use crate::test_mode::base::decide;
 use std::fmt::Display;
 
 #[derive(Debug)]
@@ -59,17 +59,19 @@ pub enum TestOutcome {
 impl TestOutcome {
     /// Apply the current test mode to this outcome and fail the test if rejected.
     ///
-    /// This is a convenience wrapper around
-    /// `current_test_mode().decide(self).enforce()`.
+    /// Convenience wrapper for `decide(self).enforce()` — applies the
+    /// active test policy (from `cubek.toml`) to this outcome and fails the
+    /// test if the decision is `Reject`.
     ///
     /// # Example
     ///
     /// ```ignore
     /// let outcome = assert_equals_approx(&actual, &expected, 0.001).as_test_outcome();
-    /// outcome.enforce(); // panics if TestMode rejects it
+    /// outcome.enforce(); // panics if the active policy rejects it
     /// ```
+    #[track_caller]
     pub fn enforce(self) {
-        current_test_mode().decide(self).enforce();
+        decide(self).enforce();
     }
 }
 
@@ -86,6 +88,7 @@ pub enum TestDecision {
 impl TestDecision {
     /// Actually asserts the test according to the decision.
     /// Panics if the test is rejected.
+    #[track_caller]
     pub fn enforce(self) {
         match self {
             TestDecision::Accept => {}

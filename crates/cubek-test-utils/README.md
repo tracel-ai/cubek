@@ -1,74 +1,155 @@
 # cubek-test-utils
 
-Shared building blocks for kernel tests in CubeK: test-tensor builders, host-side
-reference comparisons, and a `CUBE_TEST_MODE` policy layer that decides what
-constitutes a passing test under a given environment variable.
+Shared building blocks for kernel tests in CubeK: test-tensor builders,
+host-side reference comparisons, and a unified renderer that pretty-prints
+tensors (or diffs them) under a single config.
 
-This README documents the testing workflow used across most CubeK kernels.
+This README is the testing guide for most CubeK kernels. (`cubek-reduce` is
+slightly different for now — see [its README](../cubek-reduce/README.md).)
 
 ---
 
-## Test suites
+## Configuration: `cubek.toml`
 
-Four test suites are available:
+There is **one** place to configure test behavior: a `cubek.toml` file at
+the workspace root. The file is read once at process start; the loader
+walks up from the current working directory until it finds it.
 
-- **Light test suite** — a tractable subset of representative tests that runs in CI.
-- **Basic test suite** — adds tests considered basic but that may hang on CI (slow on CPU).
-- **Extended test suite** — usually auto-generated combinatorial tests covering many
-  configurations. Good to run when developing kernels. Normally kept tractable.
-- **Full test suite** — all generable test combinations; may be too large to compile or
-  run practically.
+The shipped `cubek.toml` documents every field with comments. Two sections,
+nothing more:
 
-Run them with:
+```toml
+[test]
+policy = "correct"   # "correct" | "strict" | "fail-if-run"
 
-```bash
-# Replace <runtime> with cpu, cuda, rocm, wgpu, vulkan or metal
+[print]
+enabled = false       # toggle all printing
+view = "table"        # "table" | "lines"
+force-fail = true     # fail every test that prints, so cargo shows stdout
+fail-only = false     # diff: only render cells where Δ > ε
+show-expected = false # diff: render `got/expected` per cell (else just `got`)
+filter = ""           # per-axis filter, same DSL as the slice helper
+```
 
-# Basic test suite (light on cpu)
-cargo test-<runtime>
+**The whole pipeline obeys one rule:** if `enabled = false`, nothing prints.
+Set it to `true`, run a test, watch your tensors render. That's it.
 
-# Extended test suite
-cargo test-<runtime>-extended
+### `[test] policy`
 
-# Full test suite
-cargo test-<runtime>-full
+| Policy        | No error      | Numerical error | Compilation error |
+| ------------- | ------------- | --------------- | ----------------- |
+| `correct`     | accept        | fail            | accept            |
+| `strict`      | accept        | fail            | fail              |
+| `fail-if-run` | fail          | accept          | accept            |
+
+If `[print] force-fail = true`, every passing test that printed is
+additionally rejected — useful so cargo surfaces the dump (it otherwise
+swallows stdout from passing tests). Compile errors are also rejected when
+`force-fail = true`, regardless of policy.
+
+---
+
+## Rendering: one path for everything
+
+Both `assert_equals_approx(actual, expected, ε)` and the free
+`print_tensors(label, &[&a, &b], Some(ε))` go through the same renderer.
+There is no "diff path" vs "pretty-print path"; comparing actual-vs-expected
+and pretty-printing two unrelated same-shape tensors are literally the same
+call.
+
+Rules:
+
+- One tensor → just values, no color.
+- Two tensors of the **same rank and shape** → cells colored green
+  (`Δ ≤ ε`) or red (`Δ > ε`). With `show-expected = true` the cell shows
+  `got/expected`; otherwise just `got`.
+- Two tensors of **different rank or shape** → silently skipped. The
+  renderer never panics on bad input.
+- Filter rank ≠ tensor rank → silently skipped.
+
+```rust
+use cubek_test_utils::print_tensors;
+
+// Single tensor — table or lines per [print] view, no color.
+print_tensors("input", &[&host], None);
+
+// Two tensors — colored diff. Same path used by assert_equals_approx.
+print_tensors("a vs b", &[&a, &b], Some(1e-3));
+```
+
+The table view never shows Δ/ε numbers (cell color carries the same info,
+and adding columns would blow up the width). The lines view always shows
+them.
+
+### Table view example (with `show-expected = true`)
+
+```
+=== diff  shape=[2, 3] ===
+    |                 0                 1                 2
+----+------------------------------------------------------
+  0 | 0.000000/0.000000 1.000000/1.000000 2.000000/2.000000   ← green
+  1 | 4.000000/3.000000 5.000000/4.000000 6.000000/5.000000   ← red
+```
+
+### Table view + `fail-only = true`
+
+```
+=== diff  shape=[2, 3] ===
+    |        0        1        2
+----+---------------------------
+  0 |                            ← matching cells blanked out
+  1 | 4.000000 5.000000 6.000000 ← red
+```
+
+### Lines view + `fail-only = true`
+
+```
+=== diff  shape=[2, 3] ===
+ index |      got | expected |        Δ |        ε | status
+-----------------------------------------------------------
+[1, 0] | 4.000000 | 3.000000 | 1.000000 | 0.003000 | FAIL    ← red
+[1, 1] | 5.000000 | 4.000000 | 1.000000 | 0.004000 | FAIL    ← red
+[1, 2] | 6.000000 | 5.000000 | 1.000000 | 0.005000 | FAIL    ← red
 ```
 
 ---
 
-## Cube test mode
+## Filter syntax
 
-Set the `CUBE_TEST_MODE` environment variable to control how tests respond to
-numerical errors and compilation errors.
+Used by both `[print] filter` and `assert_equals_approx_in_slice`. A
+comma-separated list of dim entries:
 
-| Mode                  | Numerical error | Compilation error         | Notes                                                                |
-| --------------------- | --------------- | ------------------------- | -------------------------------------------------------------------- |
-| `correct` _(default)_ | fail            | accept                    | Useful when test grids include invalid configurations on purpose.    |
-| `strict`              | fail            | fail                      | Recommended for debugging — surfaces every problem.                  |
-| `printall[:filter]`   | fail (printed)  | fail (printed)            | Every test is rejected so you can read the full per-element dump.    |
-| `printfail[:filter]`  | fail (printed)  | accept                    | Per-element dump only for tests that compile and produce mismatches. |
-| `failifrun`           | accept          | accept (other tests fail) | Inverts `correct` to surface tests that _do_ run.                    |
-
-### Filter syntax
-
-The filter is optional and tells the printers which indices to highlight. A
-comma-separated list of dimensions, where each entry is one of:
-
-- `.` — wildcard (any index along that dimension)
+- `.` — wildcard (any index along that dim)
 - `N` — a single index
-- `M-K` — an inclusive range
+- `M-K` — inclusive range
 
-Example for a 4-D tensor: `CUBE_TEST_MODE=printfail:.,.,10-20,30` selects all
-elements where dim 2 is in `10..=20` and dim 3 is exactly `30`.
+Example for a 4-D tensor: `.,.,10-20,30` selects all elements where
+dim 2 is in `10..=20` and dim 3 is exactly `30`. Filter rank must equal
+tensor rank.
 
-> The filter rank must match the tensor rank, otherwise the test returns an
-> `Error` instead of `Fail`/`Pass`.
+From Rust:
+
+```rust
+use cubek_test_utils::{DimFilter, assert_equals_approx_in_slice};
+
+// Vec<Range<usize>> works (half-open, like Rust slices).
+assert_equals_approx_in_slice(&actual, &expected, 0.001, vec![0..1, 0..3]);
+
+// Or build the canonical TensorFilter explicitly.
+let filter = vec![
+    DimFilter::Exact(0),
+    DimFilter::Range { start: 0, end: 2 }, // inclusive: 0..=2
+];
+assert_equals_approx_in_slice(&actual, &expected, 0.001, filter);
+```
+
+`parse_tensor_filter("0,0-2")` parses the string DSL into a `TensorFilter`.
 
 ---
 
 ## Failure messages
 
-`assert_equals_approx` collects up to **8 individual mismatches** plus aggregate
+`assert_equals_approx` collects up to **8** mismatches plus aggregate
 stats and reports them in the test panic message:
 
 ```
@@ -76,19 +157,114 @@ Test failed: Got incorrect results: 17/4096 elements mismatched
   (max |Δ|=0.014648, mean |Δ|=0.004112, worst at [3, 12]) — shape=[16, 256]
 First mismatches:
   [0, 5]: got 1.234, expected 1.220, |Δ|=0.014 > ε=0.001
-  [0, 17]: got 0.998, expected 1.001, |Δ|=0.003 > ε=0.001
   ...
   ... and 9 more
 ```
 
-In `printall` / `printfail` modes, the per-element output is written to stdout
-and the panic message keeps only the aggregate header (no duplicated examples).
+When printing is enabled the per-element output goes to stdout; the panic
+message keeps only the aggregate header so it doesn't duplicate the dump.
+
+---
+
+## Test suites
+
+Four suites are available:
+
+- **Light** — tractable subset that runs on CI.
+- **Basic** — basic tests that may hang on CI (slow on CPU).
+- **Extended** — auto-generated combinatorial tests, kept tractable.
+- **Full** — all generable combinations, may not fit.
+
+```bash
+# Replace <runtime> with cpu, cuda, rocm, wgpu, vulkan or metal.
+cargo test-<runtime>             # basic suite (light on cpu)
+cargo test-<runtime>-extended
+cargo test-<runtime>-full
+```
+
+---
+
+## Building test inputs
+
+Two equivalent ways to construct a test tensor:
+
+```rust
+use cubek_test_utils::{TestInput, StrideSpec, DataKind, Distribution};
+
+// Long-form constructor.
+let (handle, host) = TestInput::new(
+    client.clone(),
+    [4, 4],
+    f32::as_type_native_unchecked().storage_type(),
+    StrideSpec::RowMajor,
+    DataKind::Random {
+        seed: 0,
+        distribution: Distribution::Uniform(-1.0, 1.0),
+    },
+)
+.generate_with_f32_host_data();
+
+// Fluent builder — `dtype` defaults to f32, `stride` defaults to RowMajor.
+let (handle, host) = TestInput::builder(client.clone(), [4, 4])
+    .uniform(/* seed */ 0, -1.0, 1.0)
+    .generate_with_f32_host_data();
+```
+
+Builder setters (all optional):
+
+| Setter          | Default                | Effect                      |
+| --------------- | ---------------------- | --------------------------- |
+| `.dtype(d)`     | `f32`                  | Override the input dtype.   |
+| `.stride(spec)` | `StrideSpec::RowMajor` | Override the stride layout. |
+
+Builder finalizers (each returns a `TestInput` ready to generate):
+
+| Finalizer                  | Equivalent `DataKind`                                            |
+| -------------------------- | ---------------------------------------------------------------- |
+| `.arange()`                | `Arange { scale: None }`                                         |
+| `.arange_scaled(s)`        | `Arange { scale: Some(s) }`                                      |
+| `.eye()`                   | `Eye`                                                            |
+| `.zeros()`                 | `Zeros`                                                          |
+| `.uniform(seed, lo, hi)`   | `Random { Uniform(lo, hi) }`                                     |
+| `.bernoulli(seed, p)`      | `Random { Bernoulli(p) }`                                        |
+| `.normal(seed, mean, std)` | `Random { Normal { mean, std } }`                                |
+| `.random(seed, dist)`      | `Random { dist }`                                                |
+| `.linspace(start, end)`    | `Custom { data }` with N evenly-spaced values from `start..=end` |
+| `.custom(data)`            | `Custom { data }`                                                |
+
+After a finalizer, call any of: `.generate()`, `.generate_with_f32_host_data()`,
+`.generate_with_bool_host_data()`, `.generate_test_tensor()`,
+`.f32_host_data()`, `.bool_host_data()`.
+
+---
+
+## Walking host tensors
+
+`HostData` exposes typed accessors and indexed iterators that resolve
+through the tensor's strides, so non-contiguous tensors work without manual
+offset math:
+
+| API                          | Returns                            | On dtype mismatch |
+| ---------------------------- | ---------------------------------- | ----------------- |
+| `host.get_f32(&[i, j])`      | `f32`                              | panics            |
+| `host.get_i32(&[i, j])`      | `i32`                              | panics            |
+| `host.get_bool(&[i, j])`     | `bool`                             | panics            |
+| `host.try_get_f32(&[i, j])`  | `Option<f32>`                      | `None`            |
+| `host.try_get_i32(&[i, j])`  | `Option<i32>`                      | `None`            |
+| `host.try_get_bool(&[i, j])` | `Option<bool>`                     | `None`            |
+| `host.iter_indices()`        | `impl Iterator<Item = Vec<usize>>` | n/a               |
+| `host.iter_indexed_f32()`    | `(Vec<usize>, f32)` (row-major)    | panics            |
+| `host.iter_indexed_i32()`    | `(Vec<usize>, i32)`                | panics            |
+| `host.iter_indexed_bool()`   | `(Vec<usize>, bool)`               | panics            |
 
 ---
 
 ## Pointers
 
-- `TestMode` and `current_test_mode` — `src/test_mode/base.rs`
-- Validation result / decision pipeline — `src/test_mode/result.rs`
+- Config (`CubekConfig`, `PrintSection`, `TestPolicy`) — `src/config.rs`
+- Test-policy decisions — `src/test_mode/`
 - `assert_equals_approx`, `assert_equals_approx_in_slice` — `src/correctness/base.rs`
-- Tensor builders (`TestInput`, `DataKind`, `StrideSpec`, …) — `src/test_tensor/`
+- Unified renderer — `src/correctness/render.rs`
+- `print_tensors`, `print_tensor` — `src/correctness/print_tensor.rs`
+- Tensor builders (`TestInput`, `TestInputBuilder`, `DataKind`, `StrideSpec`) — `src/test_tensor/`
+- Quantization helper — `src/test_tensor/quant.rs`

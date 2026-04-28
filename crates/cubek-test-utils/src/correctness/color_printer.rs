@@ -1,105 +1,33 @@
-use crate::correctness::{CompareVisitor, ElemStatus, WrongStatus};
-
-const RED: &str = "\x1b[31m";
-const GREEN: &str = "\x1b[32m";
-const RESET: &str = "\x1b[0m";
-
-pub(crate) struct ColorPrinter {
-    pub filter: TensorFilter,
-    indent: usize,
-}
-
-impl ColorPrinter {
-    pub fn new(filter: TensorFilter) -> Self {
-        Self { filter, indent: 0 }
-    }
-
-    fn should_print(&self, index: &[usize]) -> bool {
-        index_matches_filter(index, &self.filter)
-    }
-}
-
-impl CompareVisitor for ColorPrinter {
-    fn visit(&mut self, index: &[usize], status: ElemStatus) {
-        if !self.should_print(index) {
-            return;
-        }
-
-        let idx = format!(
-            "({})",
-            index
-                .iter()
-                .map(|x| x.to_string())
-                .collect::<Vec<_>>()
-                .join(",")
-        );
-
-        match status {
-            ElemStatus::Correct {
-                got,
-                delta,
-                epsilon,
-            } => {
-                println!(
-                    "{}{}: {}{}, Δ={}<={}=ε{}",
-                    " ".repeat(self.indent),
-                    idx,
-                    GREEN,
-                    got,
-                    delta,
-                    epsilon,
-                    RESET
-                );
-            }
-            ElemStatus::Wrong(wrong) => match wrong {
-                WrongStatus::GotWrongValue {
-                    got,
-                    expected,
-                    delta,
-                    epsilon,
-                } => {
-                    println!(
-                        "{}{}: {}Got {}, expected {}, Δ={}>{}=ε{}",
-                        " ".repeat(self.indent),
-                        idx,
-                        RED,
-                        got,
-                        expected,
-                        delta,
-                        epsilon,
-                        RESET
-                    );
-                }
-                WrongStatus::ExpectedNan { got } => {
-                    println!(
-                        "{}{}: {}Got {}, expected NaN{}",
-                        " ".repeat(self.indent),
-                        idx,
-                        RED,
-                        got,
-                        RESET
-                    );
-                }
-                WrongStatus::GotNan { expected } => {
-                    println!(
-                        "{}{}: {}Got NaN, expected {}{}",
-                        " ".repeat(self.indent),
-                        idx,
-                        RED,
-                        expected,
-                        RESET
-                    );
-                }
-            },
-        }
-    }
-}
+//! Filter types shared by `CUBE_TEST_MODE`, `assert_equals_approx_in_slice`,
+//! `print_tensor`, and `pretty_print_slice`. Per-element rendering moved to
+//! `correctness::render`; this module is now just the filter language.
 
 #[derive(Debug, Clone)]
 pub enum DimFilter {
+    /// Wildcard: match any index along this dimension.
     Any,
+    /// Match a single exact index.
     Exact(usize),
+    /// Inclusive range: matches `start..=end`.
+    /// (`CUBE_TEST_MODE`'s `M-K` filter and the parser produce this variant.)
     Range { start: usize, end: usize },
+}
+
+impl From<std::ops::Range<usize>> for DimFilter {
+    /// Convert a half-open `Range<usize>` (`start..end`) into an inclusive
+    /// `DimFilter::Range`. An empty range is converted into a filter that
+    /// matches nothing.
+    fn from(r: std::ops::Range<usize>) -> Self {
+        if r.start >= r.end {
+            // Empty range — produce a filter that excludes every index.
+            DimFilter::Exact(usize::MAX)
+        } else {
+            DimFilter::Range {
+                start: r.start,
+                end: r.end - 1,
+            }
+        }
+    }
 }
 
 pub type TensorFilter = Vec<DimFilter>;

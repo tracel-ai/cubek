@@ -34,7 +34,7 @@ use cubek_matmul::{
     routines::{BlueprintStrategy, Routine},
 };
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_test_utils::{DataKind, Distribution, StrideSpec, TestInput, TestOutcome};
+use cubek_test_utils::{TestInput, TestOutcome};
 
 use crate::suite::reference::assert_result;
 
@@ -162,38 +162,20 @@ pub fn test_algo<A: Algorithm<Routine: Routine<RuntimeArgs, Blueprint = TilingBl
     ];
     let out_shape: Shape = shape![problem.batches, out_h, out_w, problem.n];
 
-    let (lhs, lhs_data) = TestInput::new(
-        client.clone(),
-        lhs_shape,
-        dtypes.lhs_global,
-        StrideSpec::RowMajor,
-        DataKind::Random {
-            seed: 1234,
-            distribution: Distribution::Uniform(-1., 1.),
-        },
-    )
-    .generate_with_f32_host_data();
+    let (lhs, lhs_data) = TestInput::builder(client.clone(), lhs_shape)
+        .dtype(dtypes.lhs_global)
+        .uniform(/* seed */ 1234, -1., 1.)
+        .generate_with_f32_host_data();
 
-    let (rhs, rhs_data) = TestInput::new(
-        client.clone(),
-        rhs_shape,
-        dtypes.rhs_global,
-        StrideSpec::RowMajor,
-        DataKind::Random {
-            seed: 5678,
-            distribution: Distribution::Uniform(-1., 1.),
-        },
-    )
-    .generate_with_f32_host_data();
+    let (rhs, rhs_data) = TestInput::builder(client.clone(), rhs_shape)
+        .dtype(dtypes.rhs_global)
+        .uniform(/* seed */ 5678, -1., 1.)
+        .generate_with_f32_host_data();
 
-    let out = TestInput::new(
-        client.clone(),
-        out_shape,
-        dtypes.acc_global,
-        StrideSpec::RowMajor,
-        DataKind::Zeros,
-    )
-    .generate_without_host_data();
+    let out = TestInput::builder(client.clone(), out_shape)
+        .dtype(dtypes.acc_global)
+        .zeros()
+        .generate_without_host_data();
 
     // Update problem strides to the physical NHWC layout coming out of TestInput.
     problem.lhs_strides = lhs.strides().clone();

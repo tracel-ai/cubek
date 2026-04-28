@@ -4,6 +4,7 @@ mod cast;
 mod custom;
 mod eye;
 mod host_data;
+mod quant;
 mod random;
 mod strides;
 mod zeros;

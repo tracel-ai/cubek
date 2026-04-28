@@ -5,7 +5,7 @@ use cubecl::{
     std::tensor::TensorHandle, zspace::Shape,
 };
 use cubek_reduce::components::instructions::{plane_topk_insert, plane_topk_merge};
-use cubek_test_utils::{DataKind, InputDataType, StrideSpec, TestInput};
+use cubek_test_utils::{InputDataType, StrideSpec, TestInput};
 
 use crate::it::reference::contiguous_strides;
 use cubecl::frontend::CompilationArg;
@@ -39,14 +39,11 @@ fn test_plane_reduce_inplace() {
         55.0, 55.1, 101.2, 55.3,
     ];
 
-    let (input_handle, _input_host) = TestInput::new(
-        client.clone(),
-        shape.clone(),
-        input_dtype,
-        StrideSpec::Custom(stride.iter().copied().collect()),
-        DataKind::Custom { data: data.clone() },
-    )
-    .generate_with_f32_host_data();
+    let (input_handle, _input_host) = TestInput::builder(client.clone(), shape.clone())
+        .dtype(input_dtype)
+        .stride(StrideSpec::Custom(stride.iter().copied().collect()))
+        .custom(data.clone())
+        .generate_with_f32_host_data();
 
     let storage_type = f32::as_type_native_unchecked().storage_type();
 
@@ -74,14 +71,11 @@ fn build_output_tensor(
     output_shape: &Shape,
 ) -> TensorHandle<TestRuntime> {
     let strides = contiguous_strides(output_shape);
-    TestInput::new(
-        client.clone(),
-        output_shape.clone(),
-        output_dtype,
-        StrideSpec::Custom(strides.iter().copied().collect()),
-        DataKind::Zeros,
-    )
-    .generate()
+    TestInput::builder(client.clone(), output_shape.clone())
+        .dtype(output_dtype)
+        .stride(StrideSpec::Custom(strides.iter().copied().collect()))
+        .zeros()
+        .generate()
 }
 
 #[cube(launch)]
@@ -175,27 +169,17 @@ fn test_plane_topk_insert() {
     let dtype = f32::as_type_native_unchecked().storage_type();
     let input_dtype = InputDataType::Standard(dtype);
 
-    let (acc_handle, _acc_host) = TestInput::new(
-        client.clone(),
-        acc_shape.clone(),
-        input_dtype.clone(),
-        StrideSpec::Custom(acc_stride.iter().copied().collect()),
-        DataKind::Custom {
-            data: acc_data.clone(),
-        },
-    )
-    .generate_with_f32_host_data();
+    let (acc_handle, _acc_host) = TestInput::builder(client.clone(), acc_shape.clone())
+        .dtype(input_dtype.clone())
+        .stride(StrideSpec::Custom(acc_stride.iter().copied().collect()))
+        .custom(acc_data.clone())
+        .generate_with_f32_host_data();
 
-    let (item_handle, _item_host) = TestInput::new(
-        client.clone(),
-        item_shape.clone(),
-        input_dtype,
-        StrideSpec::Custom(item_stride.iter().copied().collect()),
-        DataKind::Custom {
-            data: item_data.clone(),
-        },
-    )
-    .generate_with_f32_host_data();
+    let (item_handle, _item_host) = TestInput::builder(client.clone(), item_shape.clone())
+        .dtype(input_dtype)
+        .stride(StrideSpec::Custom(item_stride.iter().copied().collect()))
+        .custom(item_data.clone())
+        .generate_with_f32_host_data();
 
     let storage_type = f32::as_type_native_unchecked().storage_type();
 
