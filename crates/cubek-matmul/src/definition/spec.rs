@@ -165,27 +165,69 @@ impl<Lhs: MatrixTypes, Rhs: MatrixTypes, Acc: MatrixTypes> MatmulTypes for (Lhs,
     type Acc = Acc;
 }
 
-pub type Lhs<MP> = <MP as MatmulTypes>::Lhs;
-pub type Rhs<MP> = <MP as MatmulTypes>::Rhs;
-pub type Acc<MP> = <MP as MatmulTypes>::Acc;
+pub type Lhs<MT> = <MT as MatmulTypes>::Lhs;
+pub type Rhs<MT> = <MT as MatmulTypes>::Rhs;
+pub type Acc<MT> = <MT as MatmulTypes>::Acc;
 
-pub type Global<MP> = <MP as MatrixTypes>::Global;
-pub type GlobalSize<MP> = <MP as MatrixTypes>::GlobalSize;
+pub type Global<MT> = <MT as MatrixTypes>::Global;
+pub type GlobalSize<MT> = <MT as MatrixTypes>::GlobalSize;
 
-pub type Stage<MP> = <MP as MatrixTypes>::Stage;
-pub type StageSize<MP> = <MP as MatrixTypes>::StageSize;
+pub type Stage<MT> = <MT as MatrixTypes>::Stage;
+pub type StageSize<MT> = <MT as MatrixTypes>::StageSize;
 
-pub type LhsG<MP> = Vector<Global<Lhs<MP>>, GlobalSize<Lhs<MP>>>;
-pub type LhsS<MP> = Vector<Stage<Lhs<MP>>, StageSize<Lhs<MP>>>;
-pub type LhsR<MP> = <<MP as MatmulTypes>::Lhs as MatrixTypes>::Register;
+pub type Register<MT> = <MT as MatrixTypes>::Register;
+pub type RegisterSize<MT> = <MT as MatrixTypes>::RegisterSize;
 
-pub type RhsG<MP> = Vector<Global<Rhs<MP>>, GlobalSize<Rhs<MP>>>;
-pub type RhsS<MP> = Vector<Stage<Rhs<MP>>, StageSize<Rhs<MP>>>;
-pub type RhsR<MP> = <<MP as MatmulTypes>::Rhs as MatrixTypes>::Register;
+// ==================== LHS ====================
 
-pub type AccG<MP> = Vector<Global<Acc<MP>>, GlobalSize<Acc<MP>>>;
-pub type AccS<MP> = Vector<Stage<Acc<MP>>, StageSize<Acc<MP>>>;
-pub type AccR<MP> = <<MP as MatmulTypes>::Acc as MatrixTypes>::Register;
+// Vector forms
+pub type LhsG<MT> = Vector<Global<Lhs<MT>>, GlobalSize<Lhs<MT>>>;
+pub type LhsS<MT> = Vector<Stage<Lhs<MT>>, StageSize<Lhs<MT>>>;
+pub type LhsR<MT> = Vector<Register<Lhs<MT>>, RegisterSize<Lhs<MT>>>;
+
+// Element / Size splits
+pub type LhsGE<MT> = <Lhs<MT> as MatrixTypes>::Global;
+pub type LhsGS<MT> = <Lhs<MT> as MatrixTypes>::GlobalSize;
+
+pub type LhsSE<MT> = <Lhs<MT> as MatrixTypes>::Stage;
+pub type LhsSS<MT> = <Lhs<MT> as MatrixTypes>::StageSize;
+
+pub type LhsRE<MT> = <Lhs<MT> as MatrixTypes>::Register;
+pub type LhsRS<MT> = <Lhs<MT> as MatrixTypes>::RegisterSize;
+
+// ==================== RHS ====================
+
+// Vector forms
+pub type RhsG<MT> = Vector<Global<Rhs<MT>>, GlobalSize<Rhs<MT>>>;
+pub type RhsS<MT> = Vector<Stage<Rhs<MT>>, StageSize<Rhs<MT>>>;
+pub type RhsR<MT> = Vector<Register<Rhs<MT>>, RegisterSize<Rhs<MT>>>;
+
+// Element / Size splits
+pub type RhsGE<MT> = <Rhs<MT> as MatrixTypes>::Global;
+pub type RhsGS<MT> = <Rhs<MT> as MatrixTypes>::GlobalSize;
+
+pub type RhsSE<MT> = <Rhs<MT> as MatrixTypes>::Stage;
+pub type RhsSS<MT> = <Rhs<MT> as MatrixTypes>::StageSize;
+
+pub type RhsRE<MT> = <Rhs<MT> as MatrixTypes>::Register;
+pub type RhsRS<MT> = <Rhs<MT> as MatrixTypes>::RegisterSize;
+
+// ==================== ACC ====================
+
+// Vector forms
+pub type AccG<MT> = Vector<Global<Acc<MT>>, GlobalSize<Acc<MT>>>;
+pub type AccS<MT> = Vector<Stage<Acc<MT>>, StageSize<Acc<MT>>>;
+pub type AccR<MT> = Vector<Register<Acc<MT>>, RegisterSize<Acc<MT>>>;
+
+// Element / Size splits
+pub type AccGE<MT> = <Acc<MT> as MatrixTypes>::Global;
+pub type AccGS<MT> = <Acc<MT> as MatrixTypes>::GlobalSize;
+
+pub type AccSE<MT> = <Acc<MT> as MatrixTypes>::Stage;
+pub type AccSS<MT> = <Acc<MT> as MatrixTypes>::StageSize;
+
+pub type AccRE<MT> = <Acc<MT> as MatrixTypes>::Register;
+pub type AccRS<MT> = <Acc<MT> as MatrixTypes>::RegisterSize;
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct MatmulElems {

@@ -10,7 +10,7 @@ use cubek_matmul::definition::{
     TilingScheme, adjust_dtypes,
 };
 use cubek_matmul::{
-    components::tile_matmul::{DispatchTileMatmul, TileMatmulFamily as _},
+    components::tile_matmul::{TileMatmul, TileMatmulFamily as _},
     routines::{NUM_SM_APPROX, NUM_TENSOR_CORES_APPROX, find_instruction_size},
 };
 use cubek_std::stage::SwizzleMode;
@@ -83,7 +83,7 @@ pub(crate) fn find_stage_size_m_n(
 }
 
 pub fn convolution_matmul_selection<R: Runtime>(
-    tile_matmul: DispatchTileMatmul,
+    tile_matmul: TileMatmul,
     client: &ComputeClient<R>,
     problem: &ConvolutionProblem,
     plane_dim: u32,

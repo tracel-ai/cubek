@@ -21,7 +21,7 @@ use crate::{
             single_stage::simple::SimpleMatmulFamily,
         },
         stage::{ColMajorTilingOrder, PartitionBuffering, PlaneMatmulFamily, RowMajorTilingOrder},
-        tile_matmul::{DispatchTileMatmul, TileMatmulFamily as _},
+        tile_matmul::{TileMatmul, TileMatmulFamily as _},
     },
     routines::{
         Routine,
@@ -86,7 +86,7 @@ where
         strategy: &BlueprintStrategy<RC, Self>,
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
-        let tile_matmul = DispatchTileMatmul::Interleaved;
+        let tile_matmul = TileMatmul::Interleaved;
 
         if tile_matmul.can_cast_stage_element() {
             dtypes.adjust_stage_dtypes();
@@ -226,7 +226,7 @@ where
 }
 
 fn infer_blueprint_multi_rows<R: Runtime>(
-    tile_matmul: DispatchTileMatmul,
+    tile_matmul: TileMatmul,
     client: &ComputeClient<R>,
     problem: &MatmulProblem,
     plane_dim: u32,
@@ -273,15 +273,10 @@ fn infer_blueprint_multi_rows<R: Runtime>(
             .build();
 
         Ok((
-            TilingBlueprint::builder(
-                DispatchTileMatmul::Interleaved,
-                tiling_scheme,
-                plane_dim,
-                problem,
-            )
-            .partition_buffering(PartitionBuffering::Single)
-            .hypercube_blueprint(hypercube)
-            .build(),
+            TilingBlueprint::builder(TileMatmul::Interleaved, tiling_scheme, plane_dim, problem)
+                .partition_buffering(PartitionBuffering::Single)
+                .hypercube_blueprint(hypercube)
+                .build(),
             dtypes,
         ))
     } else if supported(8, 8, 8) {
@@ -297,15 +292,10 @@ fn infer_blueprint_multi_rows<R: Runtime>(
             .build();
 
         Ok((
-            TilingBlueprint::builder(
-                DispatchTileMatmul::Interleaved,
-                tiling_scheme,
-                plane_dim,
-                problem,
-            )
-            .partition_buffering(PartitionBuffering::Single)
-            .hypercube_blueprint(hypercube)
-            .build(),
+            TilingBlueprint::builder(TileMatmul::Interleaved, tiling_scheme, plane_dim, problem)
+                .partition_buffering(PartitionBuffering::Single)
+                .hypercube_blueprint(hypercube)
+                .build(),
             dtypes,
         ))
     } else {

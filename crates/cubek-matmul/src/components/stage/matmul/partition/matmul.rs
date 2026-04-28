@@ -8,9 +8,12 @@ use crate::{
             PartitionBuffering, Stage, StageEvent, StageEventListener,
             matmul::scheduler::PartitionScheduler,
         },
-        tile_matmul::{TileConfig, TileMatmul},
+        tile_matmul::{DispatchConfig, Plane, TileConfig, allocate_lhs_tile, allocate_rhs_tile},
     },
-    definition::{Lhs, MatmulTypes, MatrixTypes},
+    definition::{
+        AccRE, Lhs, LhsRE, LhsRS, LhsSE, LhsSS, MatmulTypes, MatrixTypes, RhsRE, RhsRS, RhsSE,
+        RhsSS, StageIdent,
+    },
 };
 use crate::{
     components::{stage::PartitionSchedulerScheme, tile_matmul::Tile},
@@ -72,36 +75,20 @@ type SSz<T> = crate::definition::StageSize<T>;
 /// executed by a single compute primitive (unit or plane)
 pub struct PartitionMatmul<
     MP: MatmulTypes,
-    TM: TileMatmul<
-            <MP::Lhs as MatrixTypes>::Register,
-            <MP::Lhs as MatrixTypes>::RegisterSize,
-            <MP::Rhs as MatrixTypes>::Register,
-            <MP::Rhs as MatrixTypes>::RegisterSize,
-            <MP::Acc as MatrixTypes>::Register,
-            <MP::Acc as MatrixTypes>::RegisterSize,
-        >,
     StageLhs: Stage<STy<Lhs<MP>>, SSz<Lhs<MP>>, ReadOnly>,
     StageRhs: Stage<STy<Rhs<MP>>, SSz<Rhs<MP>>, ReadOnly>,
     StageAcc: Stage<STy<Acc<MP>>, SSz<Acc<MP>>, ReadOnly>,
 > {
-    _phantom: PhantomData<(MP, TM, StageLhs, StageRhs, StageAcc)>,
+    _phantom: PhantomData<(MP, StageLhs, StageRhs, StageAcc)>,
 }
 
 #[cube]
-impl<MP, TM, StageLhs, StageRhs, StageAcc> PartitionMatmul<MP, TM, StageLhs, StageRhs, StageAcc>
+impl<MT, StageLhs, StageRhs, StageAcc> PartitionMatmul<MT, StageLhs, StageRhs, StageAcc>
 where
-    MP: MatmulTypes,
-    TM: TileMatmul<
-            <MP::Lhs as MatrixTypes>::Register,
-            <MP::Lhs as MatrixTypes>::RegisterSize,
-            <MP::Rhs as MatrixTypes>::Register,
-            <MP::Rhs as MatrixTypes>::RegisterSize,
-            <MP::Acc as MatrixTypes>::Register,
-            <MP::Acc as MatrixTypes>::RegisterSize,
-        >,
-    StageLhs: Stage<STy<Lhs<MP>>, SSz<Lhs<MP>>, ReadOnly>,
-    StageRhs: Stage<STy<Rhs<MP>>, SSz<Rhs<MP>>, ReadOnly>,
-    StageAcc: Stage<STy<Acc<MP>>, SSz<Acc<MP>>, ReadOnly>,
+    MT: MatmulTypes,
+    StageLhs: Stage<STy<Lhs<MT>>, SSz<Lhs<MT>>, ReadOnly>,
+    StageRhs: Stage<STy<Rhs<MT>>, SSz<Rhs<MT>>, ReadOnly>,
+    StageAcc: Stage<STy<Acc<MT>>, SSz<Acc<MT>>, ReadOnly>,
 {
     #[allow(clippy::too_many_arguments)]
     /// Execute all Tile Matmuls inside the partition
@@ -111,22 +98,22 @@ where
         rhs_stage: &StageRhs,
         lhs_fragment: &mut Sequence<
             Tile<
-                <MP::Lhs as MatrixTypes>::Register,
-                <MP::Lhs as MatrixTypes>::RegisterSize,
-                TM::Scope,
+                <MT::Lhs as MatrixTypes>::Register,
+                <MT::Lhs as MatrixTypes>::RegisterSize,
+                Plane,
                 ReadWrite,
             >,
         >,
         rhs_fragments: &mut RhsTile<
             Tile<
-                <MP::Rhs as MatrixTypes>::Register,
-                <MP::Rhs as MatrixTypes>::RegisterSize,
-                TM::Scope,
+                <MT::Rhs as MatrixTypes>::Register,
+                <MT::Rhs as MatrixTypes>::RegisterSize,
+                Plane,
                 ReadWrite,
             >,
         >,
-        acc: &mut Accumulators<MP, TM>,
-        #[comptime] shared_config: SharedPartitionMatmulConfig<TM::Config>,
+        acc: &mut Accumulators<MT>,
+        #[comptime] shared_config: SharedPartitionMatmulConfig<DispatchConfig>,
         listener: SEL,
         partition_iterator: &PartitionScheduler,
     ) {
@@ -161,21 +148,21 @@ where
     /// This may point towards uninitialized memory.
     /// Make sure to load inputs before execution.
     pub fn init_tile_inputs(
-        #[comptime] shared_config: SharedPartitionMatmulConfig<TM::Config>,
+        #[comptime] shared_config: SharedPartitionMatmulConfig<DispatchConfig>,
     ) -> (
         Sequence<
             Tile<
-                <MP::Lhs as MatrixTypes>::Register,
-                <MP::Lhs as MatrixTypes>::RegisterSize,
-                TM::Scope,
+                <MT::Lhs as MatrixTypes>::Register,
+                <MT::Lhs as MatrixTypes>::RegisterSize,
+                Plane,
                 ReadWrite,
             >,
         >,
         RhsTile<
             Tile<
-                <MP::Rhs as MatrixTypes>::Register,
-                <MP::Rhs as MatrixTypes>::RegisterSize,
-                TM::Scope,
+                <MT::Rhs as MatrixTypes>::Register,
+                <MT::Rhs as MatrixTypes>::RegisterSize,
+                Plane,
                 ReadWrite,
             >,
         >,
@@ -184,23 +171,33 @@ where
 
         #[unroll]
         for _ in 0..shared_config.partition_size.m() {
-            lhs.push(TM::allocate_lhs(
+            lhs.push(allocate_lhs_tile::<
+                LhsRE<MT>,
+                LhsRS<MT>,
+                RhsRE<MT>,
+                AccRE<MT>,
+            >(
                 shared_config.lhs_smem_config.matrix_layout,
                 shared_config.tile_config,
             ));
         }
 
         let rhs = match shared_config.partition_buffering {
-            PartitionBuffering::Single => RhsTile::new_Single(TM::allocate_rhs(
+            PartitionBuffering::Single => RhsTile::new_Single(allocate_rhs_tile::<
+                RhsRE<MT>,
+                RhsRS<MT>,
+                LhsRE<MT>,
+                AccRE<MT>,
+            >(
                 shared_config.rhs_smem_config.matrix_layout,
                 shared_config.tile_config,
             )),
             PartitionBuffering::Double => RhsTile::new_Double((
-                TM::allocate_rhs(
+                allocate_rhs_tile::<RhsRE<MT>, RhsRS<MT>, LhsRE<MT>, AccRE<MT>>(
                     shared_config.rhs_smem_config.matrix_layout,
                     shared_config.tile_config,
                 ),
-                TM::allocate_rhs(
+                allocate_rhs_tile::<RhsRE<MT>, RhsRS<MT>, LhsRE<MT>, AccRE<MT>>(
                     shared_config.rhs_smem_config.matrix_layout,
                     shared_config.tile_config,
                 ),
@@ -217,9 +214,9 @@ where
     /// This may point towards uninitialized memory.
     /// Make sure to call `load_accumulator` prior to execute_with_listener.
     pub fn init_accumulator(
-        #[comptime] shared_config: SharedPartitionMatmulConfig<TM::Config>,
-    ) -> Accumulators<MP, TM> {
-        Accumulators::<MP, TM>::new(
+        #[comptime] shared_config: SharedPartitionMatmulConfig<DispatchConfig>,
+    ) -> Accumulators<MT> {
+        Accumulators::<MT>::new(
             shared_config.partition_size,
             shared_config.out_smem_config.matrix_layout,
             shared_config.tile_config,
@@ -229,16 +226,15 @@ where
     /// Fill accumulators through a stage
     pub fn load_accumulator(
         stage: &StageAcc,
-        acc: &mut Accumulators<MP, TM>,
+        acc: &mut Accumulators<MT>,
         partition_scheduler: &PartitionScheduler,
-        #[comptime] shared_config: SharedPartitionMatmulConfig<TM::Config>,
+        #[comptime] shared_config: SharedPartitionMatmulConfig<DispatchConfig>,
     ) {
         acc.load::<StageAcc>(
             stage,
             partition_scheduler,
             shared_config.partition_size.m() as usize,
             shared_config.partition_size.n() as usize,
-            shared_config.tile_config,
         );
     }
 
@@ -251,20 +247,20 @@ where
         rhs_stage: &StageRhs,
         lhs_fragment: &mut Sequence<
             Tile<
-                <MP::Lhs as MatrixTypes>::Register,
-                <MP::Lhs as MatrixTypes>::RegisterSize,
-                TM::Scope,
+                <MT::Lhs as MatrixTypes>::Register,
+                <MT::Lhs as MatrixTypes>::RegisterSize,
+                Plane,
                 ReadWrite,
             >,
         >,
         rhs_fragment: &mut Tile<
-            <MP::Rhs as MatrixTypes>::Register,
-            <MP::Rhs as MatrixTypes>::RegisterSize,
-            TM::Scope,
+            <MT::Rhs as MatrixTypes>::Register,
+            <MT::Rhs as MatrixTypes>::RegisterSize,
+            Plane,
             ReadWrite,
         >,
-        acc: &mut Accumulators<MP, TM>,
-        #[comptime] shared_config: SharedPartitionMatmulConfig<TM::Config>,
+        acc: &mut Accumulators<MT>,
+        #[comptime] shared_config: SharedPartitionMatmulConfig<DispatchConfig>,
         mut listener: SEL,
         partition_scheduler: &PartitionScheduler,
     ) {
@@ -289,12 +285,15 @@ where
             for m_iter in 0..m_iterations {
                 let m_load_iter = partition_scheduler.map_m(m_iter as u32);
 
-                let tile_lhs = StageLhs::tile::<TM::Scope>(lhs_stage, (m_load_iter, k_load_iter));
-                TM::load_lhs(
-                    &tile_lhs,
-                    lhs_fragment.index_mut(m_iter),
-                    shared_config.tile_config,
-                );
+                let tile_lhs = StageLhs::tile::<Plane>(lhs_stage, (m_load_iter, k_load_iter));
+
+                lhs_fragment
+                    .index_mut(m_iter)
+                    .copy_from::<LhsSE<MT>, LhsSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>, ReadOnly>(
+                        &tile_lhs,
+                        StageIdent::Lhs,
+                    );
+
                 SEL::on_event(
                     &mut listener,
                     comptime![StageEvent::LhsLoaded {
@@ -309,9 +308,13 @@ where
             for n_iter in 0..n_iterations {
                 let n_load_iter = partition_scheduler.map_n(n_iter as u32);
 
-                let rhs_tile_next =
-                    StageRhs::tile::<TM::Scope>(rhs_stage, (k_load_iter, n_load_iter));
-                TM::load_rhs(&rhs_tile_next, rhs_fragment, shared_config.tile_config);
+                let rhs_tile_next = StageRhs::tile::<Plane>(rhs_stage, (k_load_iter, n_load_iter));
+                rhs_fragment
+                    .copy_from::<RhsSE<MT>, RhsSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>, ReadOnly>(
+                        &rhs_tile_next,
+                        StageIdent::Rhs,
+                    );
+
                 SEL::on_event(
                     &mut listener,
                     comptime![StageEvent::RhsLoaded {
@@ -324,13 +327,9 @@ where
                 #[unroll]
                 for m_iter in 0..m_iterations {
                     let accumulator =
-                        Accumulators::<MP, TM>::get_at_mut(acc, m_iter, n_iter, n_iterations);
-                    TM::execute(
-                        &lhs_fragment[m_iter],
-                        rhs_fragment,
-                        accumulator,
-                        shared_config.tile_config,
-                    );
+                        Accumulators::<MT>::get_at_mut(acc, m_iter, n_iter, n_iterations);
+                    accumulator.mma(&lhs_fragment[m_iter], rhs_fragment);
+
                     SEL::on_event(
                         &mut listener,
                         comptime![StageEvent::TileMatmulCompleted {
@@ -358,28 +357,28 @@ where
         rhs_stage: &StageRhs,
         lhs_fragment: &mut Sequence<
             Tile<
-                <MP::Lhs as MatrixTypes>::Register,
-                <MP::Lhs as MatrixTypes>::RegisterSize,
-                TM::Scope,
+                <MT::Lhs as MatrixTypes>::Register,
+                <MT::Lhs as MatrixTypes>::RegisterSize,
+                Plane,
                 ReadWrite,
             >,
         >,
         rhs_fragments: &mut (
             Tile<
-                <MP::Rhs as MatrixTypes>::Register,
-                <MP::Rhs as MatrixTypes>::RegisterSize,
-                TM::Scope,
+                <MT::Rhs as MatrixTypes>::Register,
+                <MT::Rhs as MatrixTypes>::RegisterSize,
+                Plane,
                 ReadWrite,
             >,
             Tile<
-                <MP::Rhs as MatrixTypes>::Register,
-                <MP::Rhs as MatrixTypes>::RegisterSize,
-                TM::Scope,
+                <MT::Rhs as MatrixTypes>::Register,
+                <MT::Rhs as MatrixTypes>::RegisterSize,
+                Plane,
                 ReadWrite,
             >,
         ),
-        acc: &mut Accumulators<MP, TM>,
-        #[comptime] shared_config: SharedPartitionMatmulConfig<TM::Config>,
+        acc: &mut Accumulators<MT>,
+        #[comptime] shared_config: SharedPartitionMatmulConfig<DispatchConfig>,
         mut listener: SEL,
         partition_scheduler: &PartitionScheduler,
     ) {
@@ -404,12 +403,15 @@ where
             for m_iter in 0..m_iterations {
                 let m_load_iter = partition_scheduler.map_m(m_iter as u32);
 
-                let tile_lhs = StageLhs::tile::<TM::Scope>(lhs_stage, (m_load_iter, k_load_iter));
-                TM::load_lhs(
-                    &tile_lhs,
-                    lhs_fragment.index_mut(m_iter),
-                    shared_config.tile_config,
-                );
+                let tile_lhs = StageLhs::tile::<Plane>(lhs_stage, (m_load_iter, k_load_iter));
+
+                lhs_fragment
+                    .index_mut(m_iter)
+                    .copy_from::<LhsSE<MT>, LhsSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>, ReadOnly>(
+                        &tile_lhs,
+                        StageIdent::Lhs,
+                    );
+
                 SEL::on_event(
                     &mut listener,
                     comptime![StageEvent::LhsLoaded {
@@ -423,12 +425,14 @@ where
             let mut n_iter = 0usize.comptime();
             let n_load_iter = partition_scheduler.map_n(n_iter as u32);
 
-            let rhs_tile_first = StageRhs::tile::<TM::Scope>(rhs_stage, (k_load_iter, n_load_iter));
-            TM::load_rhs(
-                &rhs_tile_first,
-                &mut rhs_fragments.0,
-                shared_config.tile_config,
-            );
+            let rhs_tile_first = StageRhs::tile::<Plane>(rhs_stage, (k_load_iter, n_load_iter));
+            rhs_fragments
+                .0
+                .copy_from::<RhsSE<MT>, RhsSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>, ReadOnly>(
+                    &rhs_tile_first,
+                    StageIdent::Rhs,
+                );
+
             SEL::on_event(
                 &mut listener,
                 comptime!(StageEvent::RhsLoaded {
@@ -448,9 +452,12 @@ where
                 };
 
                 let n_load_iter = partition_scheduler.map_n(comptime![n_iter as u32 + 1]);
-                let rhs_tile_next =
-                    StageRhs::tile::<TM::Scope>(rhs_stage, (k_load_iter, n_load_iter));
-                TM::load_rhs(&rhs_tile_next, next, shared_config.tile_config);
+                let rhs_tile_next = StageRhs::tile::<Plane>(rhs_stage, (k_load_iter, n_load_iter));
+                next.copy_from::<RhsSE<MT>, RhsSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>, ReadOnly>(
+                    &rhs_tile_next,
+                    StageIdent::Rhs,
+                );
+
                 SEL::on_event(
                     &mut listener,
                     comptime!(StageEvent::RhsLoaded {
@@ -463,14 +470,9 @@ where
                 #[unroll]
                 for m_iter in 0..m_iterations {
                     let accumulator =
-                        Accumulators::<MP, TM>::get_at_mut(acc, m_iter, n_iter, n_iterations);
+                        Accumulators::<MT>::get_at_mut(acc, m_iter, n_iter, n_iterations);
+                    accumulator.mma(&lhs_fragment[m_iter], current);
 
-                    TM::execute(
-                        &lhs_fragment[m_iter],
-                        current,
-                        accumulator,
-                        shared_config.tile_config,
-                    );
                     SEL::on_event(
                         &mut listener,
                         comptime!(StageEvent::TileMatmulCompleted {
@@ -492,14 +494,9 @@ where
 
             #[unroll]
             for m_iter in 0..m_iterations {
-                let accumulator =
-                    Accumulators::<MP, TM>::get_at_mut(acc, m_iter, n_iter, n_iterations);
-                TM::execute(
-                    &lhs_fragment[m_iter],
-                    last,
-                    accumulator,
-                    shared_config.tile_config,
-                );
+                let accumulator = Accumulators::<MT>::get_at_mut(acc, m_iter, n_iter, n_iterations);
+                accumulator.mma(&lhs_fragment[m_iter], last);
+
                 SEL::on_event(
                     &mut listener,
                     comptime!(StageEvent::TileMatmulCompleted {

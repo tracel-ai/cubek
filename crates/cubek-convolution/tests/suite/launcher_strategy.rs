@@ -17,8 +17,17 @@ use cubek_convolution::{
     definition::{ConvBlueprint, ForwardBlueprint},
 };
 use cubek_matmul::{
-    components::{stage::PartitionBuffering, tile_matmul::DispatchTileMatmul},
-    definition::{MatmulElems, MatmulGlobalElems, SwizzleModes, TilingBlueprint, TilingScheme},
+    components::{
+        global::{InputLoadFlow, LoadFlows},
+        stage::PartitionBuffering,
+        tile_matmul::TileMatmul,
+    },
+    definition::{
+        AvailableVectorSizes, MatmulElems, MatmulGlobalElems, SwizzleModes, TilingBlueprint,
+        TilingScheme,
+    },
+    launch::{InputArg, OutputArg},
+    routines::{BlueprintStrategy, Routine},
 };
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{DataKind, Distribution, StrideSpec, TestInput, TestOutcome};
@@ -119,7 +128,7 @@ pub fn test_algo(
     };
 
     let matmul_blueprint = TilingBlueprint::builder(
-        DispatchTileMatmul::Cmma,
+        TileMatmul::Cmma,
         tiling_scheme,
         plane_dim,
         &problem.as_matmul_problem(),

@@ -10,9 +10,9 @@ use crate::{
                 unit_partitioned::UnitPartitionedStageConfig,
             },
         },
-        tile_matmul::{Tile, TileConfig, TileMatmul},
+        tile_matmul::{DispatchConfig, Plane, Tile, TileConfig},
     },
-    definition::{MatmulTypes, MatrixTypes},
+    definition::{MatmulTypes, MatrixTypes, StageIdent},
 };
 
 use core::marker::PhantomData;
@@ -114,14 +114,6 @@ impl<TC: TileConfig> StageConfig for PartitionMatmulConfig<TC> {
 /// Its results are written in a temporary shared memory to correct the layout before storing to global memory.
 pub struct PartitionedStageMatmul<
     MP: MatmulTypes,
-    TM: TileMatmul<
-            <MP::Lhs as MatrixTypes>::Register,
-            <MP::Lhs as MatrixTypes>::RegisterSize,
-            <MP::Rhs as MatrixTypes>::Register,
-            <MP::Rhs as MatrixTypes>::RegisterSize,
-            <MP::Acc as MatrixTypes>::Register,
-            <MP::Acc as MatrixTypes>::RegisterSize,
-        >,
     StageLhs: Stage<
             <<MP as MatmulTypes>::Lhs as MatrixTypes>::Stage,
             <<MP as MatmulTypes>::Lhs as MatrixTypes>::StageSize,
@@ -145,22 +137,14 @@ pub struct PartitionedStageMatmul<
     SP: StagePartitioner,
 > {
     #[allow(clippy::type_complexity)]
-    _phantom: PhantomData<(MP, TM, StageLhs, StageRhs, StageAcc, StageOut, SP)>,
+    _phantom: PhantomData<(MP, StageLhs, StageRhs, StageAcc, StageOut, SP)>,
 }
 
 #[cube]
-impl<MP, TM, StageLhs, StageRhs, StageAcc, StageOut, SP> StageMatmul<MP>
-    for PartitionedStageMatmul<MP, TM, StageLhs, StageRhs, StageAcc, StageOut, SP>
+impl<MP, StageLhs, StageRhs, StageAcc, StageOut, SP> StageMatmul<MP>
+    for PartitionedStageMatmul<MP, StageLhs, StageRhs, StageAcc, StageOut, SP>
 where
     MP: MatmulTypes,
-    TM: TileMatmul<
-            <MP::Lhs as MatrixTypes>::Register,
-            <MP::Lhs as MatrixTypes>::RegisterSize,
-            <MP::Rhs as MatrixTypes>::Register,
-            <MP::Rhs as MatrixTypes>::RegisterSize,
-            <MP::Acc as MatrixTypes>::Register,
-            <MP::Acc as MatrixTypes>::RegisterSize,
-        >,
     StageLhs: Stage<
             <<MP as MatmulTypes>::Lhs as MatrixTypes>::Stage,
             <<MP as MatmulTypes>::Lhs as MatrixTypes>::StageSize,
@@ -183,20 +167,20 @@ where
         >,
     SP: StagePartitioner,
 {
-    type Config = PartitionMatmulConfig<TM::Config>;
-    type Scope = TM::Scope;
+    type Config = PartitionMatmulConfig<DispatchConfig>;
+    type Scope = Plane;
 
     type LhsStage = StageLhs;
     type RhsStage = StageRhs;
     type AccStage = StageAcc;
     type OutStage = StageOut;
 
-    type Accumulators = Accumulators<MP, TM>;
+    type Accumulators = Accumulators<MP>;
     type LhsTile = Sequence<
         Tile<
             <MP::Lhs as MatrixTypes>::Register,
             <MP::Lhs as MatrixTypes>::RegisterSize,
-            TM::Scope,
+            Plane,
             ReadWrite,
         >,
     >;
@@ -204,7 +188,7 @@ where
         Tile<
             <MP::Rhs as MatrixTypes>::Register,
             <MP::Rhs as MatrixTypes>::RegisterSize,
-            TM::Scope,
+            Plane,
             ReadWrite,
         >,
     >;
@@ -240,7 +224,7 @@ where
         listener: SEL,
         partition_scheduler: &PartitionScheduler,
     ) {
-        PartitionMatmul::<MP, TM, StageLhs, StageRhs, StageAcc>::execute_with_listener::<SEL>(
+        PartitionMatmul::<MP, StageLhs, StageRhs, StageAcc>::execute_with_listener::<SEL>(
             lhs_stage,
             rhs_stage,
             lhs_fragment,
@@ -253,11 +237,11 @@ where
     }
 
     fn init_tile_inputs(#[comptime] config: Self::Config) -> (Self::LhsTile, Self::RhsTile) {
-        PartitionMatmul::<MP, TM, StageLhs, StageRhs, StageAcc>::init_tile_inputs(config.shared())
+        PartitionMatmul::<MP, StageLhs, StageRhs, StageAcc>::init_tile_inputs(config.shared())
     }
 
     fn init_accumulators(#[comptime] config: Self::Config) -> Self::Accumulators {
-        PartitionMatmul::<MP, TM, StageLhs, StageRhs, StageAcc>::init_accumulator(config.shared())
+        PartitionMatmul::<MP, StageLhs, StageRhs, StageAcc>::init_accumulator(config.shared())
     }
 
     fn load_accumulators(
@@ -266,7 +250,7 @@ where
         partition_scheduler: &PartitionScheduler,
         #[comptime] config: Self::Config,
     ) {
-        PartitionMatmul::<MP, TM, StageLhs, StageRhs, StageAcc>::load_accumulator(
+        PartitionMatmul::<MP, StageLhs, StageRhs, StageAcc>::load_accumulator(
             stage,
             acc,
             partition_scheduler,
@@ -295,7 +279,7 @@ where
             for n_iter in 0..n_iterations {
                 let n_load_iter = partition_scheduler.map_n(n_iter as u32);
 
-                let tile_accumulator = Accumulators::<MP, TM>::get_at_mut(
+                let tile_accumulator = Accumulators::<MP>::get_at_mut(
                     acc,
                     m_iter,
                     n_iter,
@@ -303,15 +287,19 @@ where
                 );
 
                 let tile_pos = (m_load_iter, n_load_iter);
-                let mut tile = Self::OutStage::tile::<TM::Scope>(stage, tile_pos);
+                let mut tile = Self::OutStage::tile::<Plane>(stage, tile_pos);
 
                 // Write the results for one tile. To save shared memory space, it reuses the same spot for
                 // all tiles in the partition
-                TM::write_results(
-                    &mut tile,
-                    tile_accumulator,
-                    stage_config.shared().tile_config,
-                );
+                tile.copy_from::<
+                    <MP::Acc as MatrixTypes>::Register,
+                    <MP::Acc as MatrixTypes>::RegisterSize,
+                    <MP::Lhs as MatrixTypes>::Register,
+                    <MP::Rhs as MatrixTypes>::Register,
+                    <MP::Acc as MatrixTypes>::Register,
+                    ReadWrite
+                >(tile_accumulator, StageIdent::Out);
+
                 W::on_event(listener, global::WriteEvent::new_TileStored(tile_pos));
             }
         }

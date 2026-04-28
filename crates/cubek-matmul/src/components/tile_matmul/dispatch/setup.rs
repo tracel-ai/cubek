@@ -1,5 +1,5 @@
 use crate::components::resource::CubeDimResource;
-use crate::components::tile_matmul::dispatch::DispatchTileMatmul;
+use crate::components::tile_matmul::dispatch::TileMatmul;
 use crate::components::tile_matmul::dispatch::config::DispatchConfig;
 use crate::components::tile_matmul::{
     InterleavedMatmulConfig, MmaMatmulConfig, Plane, PlaneVecMatInnerProductConfig,
@@ -17,54 +17,50 @@ use cubecl::{
 use cubek_std::tile::mma::MmaIOConfig;
 use cubek_std::{InvalidConfigError, MatrixLayout, TileSize};
 
-impl TileMatmulFamily for DispatchTileMatmul {
+impl TileMatmulFamily for TileMatmul {
     type Config = DispatchConfig;
     type Scope = Plane;
-    type Matmul<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size> =
-        DispatchTileMatmul;
 
     fn requires_accelerator(&self) -> bool {
         match self {
-            DispatchTileMatmul::Cmma | DispatchTileMatmul::Mma => true,
-            DispatchTileMatmul::Register
-            | DispatchTileMatmul::PlaneVec
-            | DispatchTileMatmul::Interleaved => false,
+            TileMatmul::Cmma | TileMatmul::Mma => true,
+            TileMatmul::Register | TileMatmul::PlaneVec | TileMatmul::Interleaved => false,
         }
     }
 
     fn can_cast_stage_element(&self) -> bool {
         match self {
-            DispatchTileMatmul::Cmma => false,
-            DispatchTileMatmul::Mma
-            | DispatchTileMatmul::Register
-            | DispatchTileMatmul::PlaneVec
-            | DispatchTileMatmul::Interleaved => true,
+            TileMatmul::Cmma => false,
+            TileMatmul::Mma
+            | TileMatmul::Register
+            | TileMatmul::PlaneVec
+            | TileMatmul::Interleaved => true,
         }
     }
 
     fn should_swizzle<R: Runtime>(&self, client: &ComputeClient<R>) -> bool {
         match self {
-            DispatchTileMatmul::Cmma => {
+            TileMatmul::Cmma => {
                 // Unsupported
                 false
             }
-            DispatchTileMatmul::Mma => {
+            TileMatmul::Mma => {
                 // No alignment means swizzling can't be properly used, since it needs to be applied to
                 // the address, and alignment guarantees the offset is aligned to the pattern repeat.
                 client.properties().features.alignment
             }
-            DispatchTileMatmul::Register => {
+            TileMatmul::Register => {
                 // Selection isn't getting rid of all conflicts with the current load strategy, but does
                 // reduce conflicts significantly (i.e. average 18 vs average 5). Should try to find more
                 // optimal settings in the future.
                 client.properties().features.alignment
             }
-            DispatchTileMatmul::PlaneVec => {
+            TileMatmul::PlaneVec => {
                 // Supported but need to find good settings for this tiling. Currently tuned for `ldmatrix`.
                 // Need to profile at some point
                 false
             }
-            DispatchTileMatmul::Interleaved => {
+            TileMatmul::Interleaved => {
                 // Selection isn't getting rid of all conflicts with the current load strategy, but does
                 // reduce conflicts significantly (i.e. average 18 vs average 5). Should try to find more
                 // optimal settings in the future.
@@ -75,11 +71,10 @@ impl TileMatmulFamily for DispatchTileMatmul {
 
     fn cubedim_resource(&self) -> Result<CubeDimResource, InvalidConfigError> {
         match self {
-            DispatchTileMatmul::Cmma
-            | DispatchTileMatmul::Mma
-            | DispatchTileMatmul::PlaneVec
-            | DispatchTileMatmul::Interleaved => Ok(CubeDimResource::Planes(1)),
-            DispatchTileMatmul::Register => Ok(CubeDimResource::Units(1)),
+            TileMatmul::Cmma | TileMatmul::Mma | TileMatmul::PlaneVec | TileMatmul::Interleaved => {
+                Ok(CubeDimResource::Planes(1))
+            }
+            TileMatmul::Register => Ok(CubeDimResource::Units(1)),
         }
     }
 
@@ -91,12 +86,12 @@ impl TileMatmulFamily for DispatchTileMatmul {
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<DispatchConfig, MatmulSetupError> {
         Ok(match self {
-            DispatchTileMatmul::Cmma => DispatchConfig::Cmma(SharedTileConfig::new(
+            TileMatmul::Cmma => DispatchConfig::Cmma(SharedTileConfig::new(
                 blueprint.tiling_scheme.tile_size,
                 blueprint.plane_dim,
                 blueprint.swizzle_modes,
             )),
-            DispatchTileMatmul::Mma => DispatchConfig::Mma(MmaMatmulConfig {
+            TileMatmul::Mma => DispatchConfig::Mma(MmaMatmulConfig {
                 shared: SharedTileConfig {
                     tile_size: blueprint.tiling_scheme.tile_size,
                     plane_dim: blueprint.plane_dim,
@@ -109,7 +104,7 @@ impl TileMatmulFamily for DispatchTileMatmul {
                     dtypes.acc_stage,
                 ),
             }),
-            DispatchTileMatmul::Register => {
+            TileMatmul::Register => {
                 DispatchConfig::Register(RegisterMatmulConfig::from_shared_tile_config(
                     blueprint.lhs_layout,
                     blueprint.rhs_layout,
@@ -120,17 +115,15 @@ impl TileMatmulFamily for DispatchTileMatmul {
                     ),
                 ))
             }
-            DispatchTileMatmul::PlaneVec => {
-                DispatchConfig::PlaneVec(PlaneVecMatInnerProductConfig::new(
-                    SharedTileConfig::new(
-                        blueprint.tiling_scheme.tile_size,
-                        blueprint.plane_dim,
-                        blueprint.swizzle_modes,
-                    ),
-                    vector_sizes.lhs as u32,
-                ))
-            }
-            DispatchTileMatmul::Interleaved => DispatchConfig::Interleaved(
+            TileMatmul::PlaneVec => DispatchConfig::PlaneVec(PlaneVecMatInnerProductConfig::new(
+                SharedTileConfig::new(
+                    blueprint.tiling_scheme.tile_size,
+                    blueprint.plane_dim,
+                    blueprint.swizzle_modes,
+                ),
+                vector_sizes.lhs as u32,
+            )),
+            TileMatmul::Interleaved => DispatchConfig::Interleaved(
                 InterleavedMatmulConfig::from_shared_tile_config(SharedTileConfig::new(
                     blueprint.tiling_scheme.tile_size,
                     blueprint.plane_dim,
@@ -142,11 +135,9 @@ impl TileMatmulFamily for DispatchTileMatmul {
 
     fn is_supported<R: Runtime>(&self, client: &ComputeClient<R>, config: MmaConfig) -> bool {
         match self {
-            DispatchTileMatmul::Cmma => client.properties().features.matmul.cmma.contains(&config),
-            DispatchTileMatmul::Mma => client.properties().features.matmul.mma.contains(&config),
-            DispatchTileMatmul::Register
-            | DispatchTileMatmul::PlaneVec
-            | DispatchTileMatmul::Interleaved => true,
+            TileMatmul::Cmma => client.properties().features.matmul.cmma.contains(&config),
+            TileMatmul::Mma => client.properties().features.matmul.mma.contains(&config),
+            TileMatmul::Register | TileMatmul::PlaneVec | TileMatmul::Interleaved => true,
         }
     }
 
@@ -158,11 +149,11 @@ impl TileMatmulFamily for DispatchTileMatmul {
         acc_ty: StorageType,
     ) -> Vec<TileSize> {
         let iters = match self {
-            DispatchTileMatmul::Cmma => &client.properties().features.matmul.cmma,
-            DispatchTileMatmul::Mma => &client.properties().features.matmul.mma,
-            DispatchTileMatmul::Register
-            | DispatchTileMatmul::PlaneVec
-            | DispatchTileMatmul::Interleaved => return Vec::new(),
+            TileMatmul::Cmma => &client.properties().features.matmul.cmma,
+            TileMatmul::Mma => &client.properties().features.matmul.mma,
+            TileMatmul::Register | TileMatmul::PlaneVec | TileMatmul::Interleaved => {
+                return Vec::new();
+            }
         };
 
         iters
@@ -180,15 +171,11 @@ impl TileMatmulFamily for DispatchTileMatmul {
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
         match self {
-            DispatchTileMatmul::Cmma => validate_cmma(client, blueprint, dtypes),
-            DispatchTileMatmul::Mma => validate_mma(client, blueprint, dtypes),
-            DispatchTileMatmul::Register => {
-                validate_register(client, blueprint, dtypes, vector_sizes)
-            }
-            DispatchTileMatmul::PlaneVec => {
-                validate_plane_vec(client, blueprint, dtypes, vector_sizes)
-            }
-            DispatchTileMatmul::Interleaved => {
+            TileMatmul::Cmma => validate_cmma(client, blueprint, dtypes),
+            TileMatmul::Mma => validate_mma(client, blueprint, dtypes),
+            TileMatmul::Register => validate_register(client, blueprint, dtypes, vector_sizes),
+            TileMatmul::PlaneVec => validate_plane_vec(client, blueprint, dtypes, vector_sizes),
+            TileMatmul::Interleaved => {
                 validate_interleaved(client, blueprint, dtypes, vector_sizes)
             }
         }

@@ -1,12 +1,10 @@
-use crate::{
-    components::tile_matmul::DispatchTileMatmul, launch::RuntimeConfig, routines::Routine,
-};
+use crate::{components::tile_matmul::TileMatmul, launch::RuntimeConfig, routines::Routine};
 use std::fmt::Display;
 
-/// Strategy args that carry a [DispatchTileMatmul] kind, so convolution / other crates can
+/// Strategy args that carry a [TileMatmul] kind, so convolution / other crates can
 /// construct the strategy with the right tile matmul variant without hardcoding the field name.
 pub trait TilingArgs {
-    fn set_tile_matmul(&mut self, kind: DispatchTileMatmul);
+    fn set_tile_matmul(&mut self, kind: TileMatmul);
 }
 
 pub enum BlueprintStrategy<RC: RuntimeConfig, A: Routine<RC>> {

@@ -9,7 +9,7 @@ use cubecl::{
 use cubek::{
     matmul::{
         self as matmul,
-        components::{stage::PartitionBuffering, tile_matmul::DispatchTileMatmul},
+        components::{stage::PartitionBuffering, tile_matmul::TileMatmul},
         definition::{
             LoadingPrecomputeStrategy, MatmulElems, MatmulPrecision, MatmulProblem,
             TilingBlueprint, TilingScheme,
@@ -294,7 +294,7 @@ fn run_grid_search<R: Runtime, MP: MatmulPrecision>() {
                     .cube_count_strategy(CubeCountStrategy::Flattened)
                     .build();
                 let blueprint =
-                    TilingBlueprint::builder(DispatchTileMatmul::Cmma, tiling, plane_dim, &problem)
+                    TilingBlueprint::builder(TileMatmul::Cmma, tiling, plane_dim, &problem)
                         .partition_buffering(PartitionBuffering::Single)
                         .hypercube_blueprint(hypercube)
                         .loading_precompute_strategy(LoadingPrecomputeStrategy::Always)

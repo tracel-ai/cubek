@@ -20,7 +20,7 @@ use crate::{
             single_stage::simple::SimpleMatmulFamily,
         },
         stage::{ColMajorTilingOrder, PartitionBuffering, PlaneMatmulFamily, RowMajorTilingOrder},
-        tile_matmul::{DispatchTileMatmul, TileMatmulFamily as _},
+        tile_matmul::{TileMatmul, TileMatmulFamily as _},
     },
     routines::{
         Routine, TilingArgs,
@@ -60,7 +60,7 @@ pub type SimpleBarrierAlgorithm<L> = SimpleAlgorithm<L, L>;
 #[derive(Debug, Clone)]
 pub struct SimpleArgs {
     /// Which tile matmul variant to dispatch on. Also stored into the blueprint.
-    pub tile_matmul: DispatchTileMatmul,
+    pub tile_matmul: TileMatmul,
     // Uses an optimized multi rows strategy.
     pub multi_rows: bool,
 }
@@ -68,14 +68,14 @@ pub struct SimpleArgs {
 impl Default for SimpleArgs {
     fn default() -> Self {
         Self {
-            tile_matmul: DispatchTileMatmul::Cmma,
+            tile_matmul: TileMatmul::Cmma,
             multi_rows: false,
         }
     }
 }
 
 impl TilingArgs for SimpleArgs {
-    fn set_tile_matmul(&mut self, kind: DispatchTileMatmul) {
+    fn set_tile_matmul(&mut self, kind: TileMatmul) {
         self.tile_matmul = kind;
     }
 }
@@ -193,7 +193,7 @@ where
 }
 
 fn infer_blueprint_multi_rows<R: Runtime>(
-    tile_matmul: DispatchTileMatmul,
+    tile_matmul: TileMatmul,
     client: &ComputeClient<R>,
     problem: &MatmulProblem,
     plane_dim: u32,

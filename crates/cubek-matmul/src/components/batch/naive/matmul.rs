@@ -102,11 +102,11 @@ pub struct NaiveMatmul<MP: MatmulTypes> {
 }
 
 #[cube]
-impl<MP: MatmulTypes> BatchMatmul<(), MP> for NaiveMatmul<MP> {
+impl<MT: MatmulTypes> BatchMatmul<(), MT> for NaiveMatmul<MT> {
     type Config = NaiveMatmulConfig;
 
     fn execute<Args: MatmulArgs>(
-        state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
+        state: &mut Args::State<LhsG<MT>, RhsG<MT>, AccG<MT>>,
         _cube_mapping: CubeMapping,
         #[comptime] _config: Self::Config,
     ) {
@@ -134,20 +134,20 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for NaiveMatmul<MP> {
 
         let vector_size = comptime![Ord::max(lhs.vector_size(), rhs.vector_size())];
         let size!(NA) = vector_size;
-        let mut sum = Vector::<AccR<MP>, NA>::zero();
+        let mut sum = Vector::<AccRE<MT>, NA>::zero();
 
         for k in range_stepped(0u32, k, vector_size as u32) {
             let lhs = load_unrolled::<_, _, NA>(&lhs, (m, k), MatrixLayout::RowMajor);
             let rhs = load_unrolled::<_, _, NA>(&rhs, (k, n), MatrixLayout::ColMajor);
 
             sum += Vector::cast_from(
-                Vector::<AccR<MP>, NA>::cast_from(lhs) * Vector::<AccR<MP>, NA>::cast_from(rhs),
+                Vector::<AccRE<MT>, NA>::cast_from(lhs) * Vector::<AccRE<MT>, NA>::cast_from(rhs),
             );
         }
 
         let unroll_sum = vector_size != 1usize;
         if unroll_sum {
-            let mut accum = AccR::<MP>::zero();
+            let mut accum = AccRE::<MT>::zero();
             // we unroll the loop to sum `vectorization_factor` elements at once, which lets us
             // use SIMD instructions to speed up the computation
             #[unroll]

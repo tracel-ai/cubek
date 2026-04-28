@@ -16,7 +16,7 @@ use crate::{
             async_full_cyclic::AsyncFullCyclicLoading,
         },
         stage::ColMajorTilingOrder,
-        tile_matmul::DispatchTileMatmul,
+        tile_matmul::TileMatmul,
     },
     definition::{MatmulElems, MatmulSetupError},
     launch::launch_tiling,
@@ -65,10 +65,7 @@ impl Display for TestStrategy {
     }
 }
 
-fn with_kind<RC, A>(
-    sel: &BlueprintStrategy<RC, A>,
-    kind: DispatchTileMatmul,
-) -> BlueprintStrategy<RC, A>
+fn with_kind<RC, A>(sel: &BlueprintStrategy<RC, A>, kind: TileMatmul) -> BlueprintStrategy<RC, A>
 where
     RC: crate::launch::RuntimeConfig,
     A: Routine<RC>,
@@ -91,7 +88,7 @@ impl TestStrategy {
         out: TensorBinding<R>,
         dtypes: &mut MatmulElems,
     ) -> Result<(), MatmulSetupError> {
-        use DispatchTileMatmul::{Cmma, Mma};
+        use TileMatmul::{Cmma, Mma};
         match self {
             Self::SimpleBarrierCooperativeCmma(sel) => {
                 launch_tiling::launch_ref(client, lhs, rhs, out, &with_kind(sel, Cmma), dtypes)

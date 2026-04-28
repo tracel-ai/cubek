@@ -16,7 +16,7 @@ use crate::{
     components::global::multi_stage::ordered::OrderedDoubleBufferingMatmulFamily,
     components::global::read::sync_partial_cyclic::SyncPartialCyclicLoading,
     components::stage::{PlaneMatmulFamily, RowMajorTilingOrder},
-    components::tile_matmul::{DispatchTileMatmul, TileMatmulFamily as _},
+    components::tile_matmul::{TileMatmul, TileMatmulFamily as _},
 };
 use crate::{
     launch::RuntimeConfig,
@@ -30,7 +30,7 @@ pub struct OrderedDoubleBufferingAlgorithm;
 
 #[derive(Debug, Clone)]
 pub struct OrderedSelectionArgs {
-    pub tile_matmul: DispatchTileMatmul,
+    pub tile_matmul: TileMatmul,
     pub partition_k: Option<u32>,
     pub row_count: Option<u32>,
     pub rows_per_plane: Option<u32>,
@@ -39,7 +39,7 @@ pub struct OrderedSelectionArgs {
 impl Default for OrderedSelectionArgs {
     fn default() -> Self {
         Self {
-            tile_matmul: DispatchTileMatmul::Cmma,
+            tile_matmul: TileMatmul::Cmma,
             partition_k: None,
             row_count: None,
             rows_per_plane: None,
@@ -48,7 +48,7 @@ impl Default for OrderedSelectionArgs {
 }
 
 impl TilingArgs for OrderedSelectionArgs {
-    fn set_tile_matmul(&mut self, kind: DispatchTileMatmul) {
+    fn set_tile_matmul(&mut self, kind: TileMatmul) {
         self.tile_matmul = kind;
     }
 }
