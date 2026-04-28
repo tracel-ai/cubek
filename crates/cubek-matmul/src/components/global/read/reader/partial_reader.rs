@@ -78,6 +78,19 @@ pub struct PartialStageGlobalReader<
     loading_job: ComptimeOption<(L::Job<EG, NG, ES, NS>, L::Job<EG, NG, ES, NS>)>,
 }
 
+impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: PartialLoadingStrategy<RC>>
+    Clone for PartialStageGlobalReaderExpand<EG, NG, ES, NS, RC, L>
+{
+    fn clone(&self) -> Self {
+        Self {
+            global_iter: self.global_iter.clone(),
+            runtime_config: self.runtime_config.clone(),
+            stage_memory: self.stage_memory.clone_unchecked(),
+            loading_job: self.loading_job.clone_unchecked(),
+        }
+    }
+}
+
 #[cube]
 impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: PartialLoadingStrategy<RC>>
     PartialStageGlobalReader<EG, NG, ES, NS, RC, L>

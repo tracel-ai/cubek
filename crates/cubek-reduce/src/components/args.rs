@@ -370,4 +370,15 @@ impl<P: ReduceDType, RA: ReduceArgs> VectorizedExpand for TensorArgExpand<P, RA,
         let scope = Scope::root(false);
         RA::__expand_vector_size_output(&scope, &self.state)
     }
+
+    impl<P: ReduceDType, RA: ReduceArgs, Tag> AsRefExpand for TensorArgExpand<P, RA, Tag> {
+        fn __expand_as_ref_method(&self, _: &Scope) -> &Self {
+            self
+        }
+    }
+    impl<P: ReduceDType, RA: ReduceArgs, Tag> AsMutExpand for TensorArgExpand<P, RA, Tag> {
+        fn __expand_as_mut_method(&mut self, _: &Scope) -> &mut Self {
+            self
+        }
+    }
 }
