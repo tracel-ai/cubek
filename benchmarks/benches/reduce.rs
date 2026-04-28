@@ -141,7 +141,7 @@ fn run<R: Runtime, E: frontend::Float>(device: R::Device) {
             ] {
                 for axis in 2..shape.len() {
                     let mut configs = vec![ReduceOperationConfig::Sum; 1];
-                    for k in 1..10 {
+                    for k in 1..4 {
                         configs.push(ReduceOperationConfig::ArgTopK(k));
                         //configs.push(ReduceOperationConfig::TopK(k));
                     }
