@@ -23,13 +23,12 @@ use cubek_matmul::{
         tile_matmul::TileMatmulKind,
     },
     definition::{
-        AvailableVectorSizes, MatmulElems, MatmulGlobalElems, SwizzleModes, TilingBlueprint,
-        TilingScheme,
+        AvailableVectorSizes, MatmulElems, MatmulGlobalElems, TilingBlueprint, TilingScheme,
     },
     launch::{InputArg, OutputArg},
     routines::{BlueprintStrategy, Routine},
 };
-use cubek_std::{InputBinding, MatrixLayout};
+use cubek_std::{InputBinding, MatrixLayout, SwizzleModes};
 use cubek_test_utils::{TestInput, TestOutcome};
 
 use crate::suite::reference::assert_result;

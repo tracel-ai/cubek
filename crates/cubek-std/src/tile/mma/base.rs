@@ -1,13 +1,21 @@
 use cubecl::{cmma::MmaDefinition, define_size, ir::MatrixIdent, prelude::*};
-use cubek_std::{
-    MatrixLayout, TileSize,
-    tile::mma::{MmaFragmentReader as _, MmaStageReader, MmaStageWriter},
-    tile::{Filled, Strided, StridedTile},
+
+use crate::{
+    MatrixLayout, SwizzleModes, TileSize,
+    tile::{
+        Filled, MmaAccTile, MmaLhsTile, MmaRhsTile, Strided, StridedTile, Tile,
+        mma::{MmaFragmentReader as _, MmaIOConfig, MmaStageReader, MmaStageWriter},
+        scope::Scope,
+    },
 };
 
-use crate::components::tile_matmul::tile::mma::MmaMatmulConfig;
-use crate::components::tile_matmul::{MmaAccTile, MmaLhsTile, MmaRhsTile};
-use crate::components::tile_matmul::{Tile, tile::Scope};
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub struct MmaMatmul {
+    pub tile_size: TileSize,
+    pub plane_dim: u32,
+    pub swizzle_modes: SwizzleModes,
+    pub mma_io_config: MmaIOConfig,
+}
 
 // Fragment inner vector sizes for the three MMA roles. Bound at allocation time
 // via `mma_register_vector_sizes` to match the hardware's `def.vector_size(...)`
@@ -18,7 +26,7 @@ define_size!(pub NA);
 
 #[cube]
 fn make_mma_definition<L: Numeric, R: Numeric, A: Numeric>(
-    #[comptime] config: MmaMatmulConfig,
+    #[comptime] config: MmaMatmul,
 ) -> MmaDefinition<L, R, A> {
     MmaDefinition::new(
         config.tile_size.m() as usize,
@@ -46,7 +54,7 @@ pub fn mma_register_vector_sizes<L: Numeric, R: Numeric, A: Numeric>(def: MmaDef
 #[cube]
 pub fn mma_allocate_lhs<L: Numeric, VL: Size, R: Numeric, A: Numeric, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: MmaMatmulConfig,
+    #[comptime] config: MmaMatmul,
 ) -> Tile<L, VL, Sc, ReadWrite> {
     let def = make_mma_definition::<L, R, A>(config);
     mma_register_vector_sizes(def);
@@ -62,7 +70,7 @@ pub fn mma_allocate_lhs<L: Numeric, VL: Size, R: Numeric, A: Numeric, Sc: Scope>
 #[cube]
 pub fn mma_allocate_rhs<R: Numeric, VR: Size, L: Numeric, A: Numeric, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: MmaMatmulConfig,
+    #[comptime] config: MmaMatmul,
 ) -> Tile<R, VR, Sc, ReadWrite> {
     let def = make_mma_definition::<L, R, A>(config);
     mma_register_vector_sizes(def);
@@ -78,7 +86,7 @@ pub fn mma_allocate_rhs<R: Numeric, VR: Size, L: Numeric, A: Numeric, Sc: Scope>
 #[cube]
 pub fn mma_allocate_acc<A: Numeric, VA: Size, L: Numeric, R: Numeric, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: MmaMatmulConfig,
+    #[comptime] config: MmaMatmul,
 ) -> Tile<A, VA, Sc, ReadWrite> {
     let def = make_mma_definition::<L, R, A>(config);
     mma_register_vector_sizes(def);
@@ -97,7 +105,7 @@ pub fn mma_execute<L: Numeric, R: Numeric, A: Numeric>(
     rhs: &Array<Vector<R, NR>>,
     acc: &mut Array<Vector<A, NA>>,
     #[comptime] _matrix_layout: MatrixLayout,
-    #[comptime] config: MmaMatmulConfig,
+    #[comptime] config: MmaMatmul,
 ) {
     let def = MmaDefinition::<L, R, A>::new(
         config.tile_size.m() as usize,
@@ -124,7 +132,7 @@ pub fn mma_load_lhs_from_shared<
     shared: &StridedTile<E, ES, IO>,
     fragment: &mut Array<Vector<L, NL>>,
     #[comptime] matrix_layout: MatrixLayout,
-    #[comptime] config: MmaMatmulConfig,
+    #[comptime] config: MmaMatmul,
 ) {
     let shared = shared.to_read_only();
     let def = make_mma_definition::<L, R, A>(config);
@@ -155,7 +163,7 @@ pub fn mma_load_rhs_from_shared<
     shared: &StridedTile<E, ES, IO>,
     fragment: &mut Array<Vector<R, NR>>,
     #[comptime] matrix_layout: MatrixLayout,
-    #[comptime] config: MmaMatmulConfig,
+    #[comptime] config: MmaMatmul,
 ) {
     let shared = shared.to_read_only();
     let def = make_mma_definition::<L, R, A>(config);
@@ -186,7 +194,7 @@ pub fn mma_load_acc_from_shared<
     shared: &StridedTile<E, ES, IO>,
     fragment: &mut Array<Vector<A, NA>>,
     #[comptime] matrix_layout: MatrixLayout,
-    #[comptime] config: MmaMatmulConfig,
+    #[comptime] config: MmaMatmul,
 ) {
     let shared = shared.to_read_only();
     let def = make_mma_definition::<L, R, A>(config);
@@ -209,7 +217,7 @@ pub fn mma_load_acc_from_shared<
 pub fn mma_load_acc_zeros<E: Numeric, ES: Size, A: Numeric, L: Numeric, R: Numeric>(
     fragment: &mut Array<Vector<A, NA>>,
     #[comptime] matrix_layout: MatrixLayout,
-    #[comptime] config: MmaMatmulConfig,
+    #[comptime] config: MmaMatmul,
 ) {
     let def = make_mma_definition::<L, R, A>(config);
     MmaStageReader::<Filled>::load_fragment::<A, NA, E, ES, L, R, A>(
@@ -231,7 +239,7 @@ pub fn mma_load_acc_zeros<E: Numeric, ES: Size, A: Numeric, L: Numeric, R: Numer
 pub fn mma_write_to_shared<E: Numeric, ES: Size, A: Numeric, L: Numeric, R: Numeric>(
     shared: &mut StridedTile<E, ES, ReadWrite>,
     fragment: &Array<Vector<A, NA>>,
-    #[comptime] config: MmaMatmulConfig,
+    #[comptime] config: MmaMatmul,
 ) {
     let def = make_mma_definition::<L, R, A>(config);
     let out_layout = comptime!(shared.layout);

@@ -1,11 +1,13 @@
 use crate::components::resource::CubeDimResource;
 use crate::components::tile_matmul::matmul::TileMatmul;
-use crate::components::tile_matmul::tile::cmma::CmmaMatmulConfig;
-use crate::components::tile_matmul::tile::interleaved::InterleavedMatmulConfig;
-use crate::components::tile_matmul::tile::mma::MmaMatmulConfig;
-use crate::components::tile_matmul::tile::plane_vec_mat_inner_product::PlaneVecMatInnerProductConfig;
-use crate::components::tile_matmul::tile::register::RegisterMatmulConfig;
-use crate::components::tile_matmul::{Plane, Scope, Unit};
+use cubek_std::tile::{
+    Plane, Scope, Unit,
+    cmma::CmmaMatmul,
+    interleaved::InterleavedMatmul,
+    mma::MmaMatmul,
+    plane_vec_mat_inner_product::PlaneVecMatInnerProduct,
+    register::RegisterMatmul,
+};
 use crate::definition::TilingBlueprint;
 use crate::definition::{
     MatmulAvailabilityError, MatmulElems, MatmulSetupError, MatmulVectorSizes,
@@ -103,12 +105,12 @@ impl TileMatmulKind {
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<TileMatmul, MatmulSetupError> {
         Ok(match self {
-            TileMatmulKind::Cmma => TileMatmul::Cmma(CmmaMatmulConfig::new(
+            TileMatmulKind::Cmma => TileMatmul::Cmma(CmmaMatmul::new(
                 blueprint.tiling_scheme.tile_size,
                 blueprint.plane_dim,
                 blueprint.swizzle_modes,
             )),
-            TileMatmulKind::Mma => TileMatmul::Mma(MmaMatmulConfig {
+            TileMatmulKind::Mma => TileMatmul::Mma(MmaMatmul {
                 tile_size: blueprint.tiling_scheme.tile_size,
                 plane_dim: blueprint.plane_dim,
                 swizzle_modes: blueprint.swizzle_modes,
@@ -119,20 +121,20 @@ impl TileMatmulKind {
                     dtypes.acc_stage,
                 ),
             }),
-            TileMatmulKind::Register => TileMatmul::Register(RegisterMatmulConfig::new(
+            TileMatmulKind::Register => TileMatmul::Register(RegisterMatmul::new(
                 blueprint.lhs_layout,
                 blueprint.rhs_layout,
                 blueprint.tiling_scheme.tile_size,
                 blueprint.plane_dim,
                 blueprint.swizzle_modes,
             )),
-            TileMatmulKind::PlaneVec => TileMatmul::PlaneVec(PlaneVecMatInnerProductConfig::new(
+            TileMatmulKind::PlaneVec => TileMatmul::PlaneVec(PlaneVecMatInnerProduct::new(
                 blueprint.tiling_scheme.tile_size,
                 blueprint.plane_dim,
                 blueprint.swizzle_modes,
                 vector_sizes.lhs as u32,
             )),
-            TileMatmulKind::Interleaved => TileMatmul::Interleaved(InterleavedMatmulConfig::new(
+            TileMatmulKind::Interleaved => TileMatmul::Interleaved(InterleavedMatmul::new(
                 blueprint.tiling_scheme.tile_size,
                 blueprint.plane_dim,
                 blueprint.swizzle_modes,

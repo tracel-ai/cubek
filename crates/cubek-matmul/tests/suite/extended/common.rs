@@ -7,12 +7,10 @@ use cubek_matmul::{
         stage::PartitionBuffering,
         tile_matmul::{TileMatmul, TileMatmulKind},
     },
-    definition::{
-        MatmulElems, MatmulGlobalElems, MatmulProblem, SwizzleModes, TilingBlueprint, TilingScheme,
-    },
+    definition::{MatmulElems, MatmulGlobalElems, MatmulProblem, TilingBlueprint, TilingScheme},
 };
 use cubek_std::{
-    MatrixLayout, PartitionSize, StageSize, TileSize,
+    MatrixLayout, PartitionSize, StageSize, SwizzleModes, TileSize,
     cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint},
 };
 

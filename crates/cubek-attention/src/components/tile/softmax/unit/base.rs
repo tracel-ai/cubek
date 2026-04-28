@@ -2,13 +2,10 @@ use std::marker::PhantomData;
 
 use cubecl;
 use cubecl::prelude::*;
-use cubek_matmul::{
-    components::tile_matmul::{
-        Plane, ProductType, RegisterMatmulConfig, Tile, TileExpand, register_allocate_acc,
-    },
-    definition::SwizzleModes,
+use cubek_std::{
+    MatrixLayout, SwizzleModes,
+    tile::{Plane, ProductType, RegisterMatmul, StridedTile, Tile, TileExpand, register_allocate_acc},
 };
-use cubek_std::{MatrixLayout, tile::StridedTile};
 
 use crate::{
     components::tile::pipeline::{RowWise, UnitTile, UnitTileLayout},
@@ -44,8 +41,8 @@ impl<Acc: Float, Lhs: Float> UnitSoftmaxWorkspace<Acc, Lhs> {
 }
 
 impl UnitSoftmaxConfig {
-    pub(crate) fn register(&self) -> RegisterMatmulConfig {
-        RegisterMatmulConfig {
+    pub(crate) fn register(&self) -> RegisterMatmul {
+        RegisterMatmul {
             tile_size: self.tile_size.to_score_matmul_tile_size(),
             plane_dim: 1,
             swizzle_modes: SwizzleModes::default(),

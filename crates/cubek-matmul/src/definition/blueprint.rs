@@ -1,8 +1,7 @@
 use cubecl::{CubeDim, Runtime, client::ComputeClient, flex32, prelude::CubePrimitive, tf32};
 use cubek_std::{
-    MatrixLayout,
+    MatrixLayout, SwizzleModes,
     cube_count::{Count3d, CubeCountPlan, HypercubeBlueprint},
-    stage::SwizzleMode,
 };
 
 use crate::{
@@ -110,23 +109,6 @@ pub fn adjust_dtypes<R: Runtime>(
             dtypes.lhs_register = f16_dtype;
             dtypes.rhs_register = f16_dtype;
         }
-    }
-}
-
-#[derive(Default, Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct SwizzleModes {
-    pub lhs: SwizzleMode,
-    pub rhs: SwizzleMode,
-    pub acc: SwizzleMode,
-    pub out: SwizzleMode,
-}
-
-impl SwizzleModes {
-    pub fn has_swizzle(&self) -> bool {
-        self.lhs != SwizzleMode::None
-            || self.rhs != SwizzleMode::None
-            || self.acc != SwizzleMode::None
-            || self.out != SwizzleMode::None
     }
 }
 

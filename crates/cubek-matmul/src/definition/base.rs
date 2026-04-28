@@ -9,7 +9,7 @@ use cubecl::{
     quant::scheme::QuantScheme,
     zspace::{Shape, Strides},
 };
-use cubek_std::{MatmulProblemSize, MatrixLayout};
+use cubek_std::{MatmulProblemSize, MatrixLayout, StageIdent};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug)]
@@ -281,14 +281,6 @@ impl MatmulIdent {
             MatmulIdent::Out => ViewDirection::None,
         }
     }
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub enum StageIdent {
-    Lhs,
-    Rhs,
-    Acc,
-    Out,
 }
 
 impl From<MatmulIdent> for StageIdent {

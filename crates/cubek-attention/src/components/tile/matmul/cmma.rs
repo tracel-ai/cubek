@@ -1,13 +1,11 @@
 use cubecl;
 use cubecl::prelude::*;
-use cubek_matmul::{
-    components::tile_matmul::{Plane, Tile, cmma_allocate_lhs, cmma_allocate_rhs},
-    definition::StageIdent,
+use cubek_std::{
+    MatrixLayout, StageIdent, TileSize,
+    tile::{Plane, Tile, cmma_allocate_lhs, cmma_allocate_rhs},
 };
 
 use crate::components::tile::matmul::InnerMatmul;
-
-use cubek_std::{MatrixLayout, TileSize};
 
 #[derive(CubeType)]
 pub struct CmmaMatmul {}

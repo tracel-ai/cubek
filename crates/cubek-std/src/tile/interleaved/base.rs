@@ -1,10 +1,55 @@
 use cubecl::prelude::*;
-use cubek_std::{MatrixLayout, tile::StridedTile};
 
-use crate::components::tile_matmul::Tile;
-use crate::components::tile_matmul::tile::Scope;
-use crate::components::tile_matmul::tile::interleaved::InterleavedMatmulConfig;
-use crate::definition::StageIdent;
+use crate::{
+    MatrixLayout, StageIdent, SwizzleModes, TileSize,
+    tile::{StridedTile, Tile, scope::Scope},
+};
+
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub struct InterleavedMatmul {
+    pub tile_size: TileSize,
+    pub plane_dim: u32,
+    pub swizzle_modes: SwizzleModes,
+}
+
+impl InterleavedMatmul {
+    pub fn new(tile_size: TileSize, plane_dim: u32, swizzle_modes: SwizzleModes) -> Self {
+        Self {
+            tile_size,
+            plane_dim,
+            swizzle_modes,
+        }
+    }
+
+    pub fn elements_per_unit_m(&self) -> usize {
+        self.tile_size.m() as usize
+    }
+
+    pub fn elements_per_unit_n(&self) -> usize {
+        self.tile_size.n() as usize
+    }
+
+    pub fn local_tile_size(&self) -> TileSize {
+        TileSize {
+            m: self.tile_size.m(),
+            n: self.tile_size.n(),
+            k: self.tile_size.k(),
+        }
+    }
+
+    pub fn elements_per_unit_k(&self) -> usize {
+        let k = self.tile_size.k() as usize;
+        let plane_dim = self.plane_dim as usize;
+        assert!(
+            k.is_multiple_of(plane_dim),
+            "k must be divisible by plane_dim. Got k={:?}, plane_dim={:?}",
+            k,
+            plane_dim
+        );
+
+        k / plane_dim
+    }
+}
 
 #[derive(CubeType)]
 pub struct InterleavedTile<N: Numeric> {
@@ -12,13 +57,13 @@ pub struct InterleavedTile<N: Numeric> {
     #[cube(comptime)]
     pub matrix_layout: MatrixLayout,
     #[cube(comptime)]
-    pub config: InterleavedMatmulConfig,
+    pub config: InterleavedMatmul,
 }
 
 #[cube]
 pub fn interleaved_allocate_lhs<L: Numeric, VL: Size, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: InterleavedMatmulConfig,
+    #[comptime] config: InterleavedMatmul,
 ) -> Tile<L, VL, Sc, ReadWrite> {
     let m = config.tile_size.m();
     let k = config.tile_size.k();
@@ -33,7 +78,7 @@ pub fn interleaved_allocate_lhs<L: Numeric, VL: Size, Sc: Scope>(
 #[cube]
 pub fn interleaved_allocate_rhs<R: Numeric, VR: Size, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: InterleavedMatmulConfig,
+    #[comptime] config: InterleavedMatmul,
 ) -> Tile<R, VR, Sc, ReadWrite> {
     let n = config.tile_size.n();
     let k = config.tile_size.k();
@@ -48,7 +93,7 @@ pub fn interleaved_allocate_rhs<R: Numeric, VR: Size, Sc: Scope>(
 #[cube]
 pub fn interleaved_allocate_acc<A: Numeric, VA: Size, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: InterleavedMatmulConfig,
+    #[comptime] config: InterleavedMatmul,
 ) -> Tile<A, VA, Sc, ReadWrite> {
     let m = config.tile_size.m();
     let n = config.tile_size.n();
@@ -67,7 +112,7 @@ pub fn interleaved_execute<L: Numeric, R: Numeric, A: Numeric>(
     #[comptime] rhs_layout: MatrixLayout,
     acc: &mut Array<A>,
     #[comptime] _acc_layout: MatrixLayout,
-    #[comptime] config: InterleavedMatmulConfig,
+    #[comptime] config: InterleavedMatmul,
 ) {
     let m = config.tile_size.m() as usize;
     let n = config.tile_size.n() as usize;
@@ -108,7 +153,7 @@ pub fn interleaved_load_from_shared<
 >(
     shared: &StridedTile<E, ES, IO>,
     arr: &mut Array<N>,
-    #[comptime] config: InterleavedMatmulConfig,
+    #[comptime] config: InterleavedMatmul,
     #[comptime] ident: StageIdent,
 ) {
     match ident {
@@ -167,7 +212,7 @@ pub fn interleaved_load_from_shared<
 #[cube]
 pub fn interleaved_load_zeros<N: Numeric, V: Size>(
     arr: &mut Array<N>,
-    #[comptime] config: InterleavedMatmulConfig,
+    #[comptime] config: InterleavedMatmul,
 ) {
     let m = config.tile_size.m() as usize;
     let n = config.tile_size.n() as usize;
@@ -181,7 +226,7 @@ pub fn interleaved_load_zeros<N: Numeric, V: Size>(
 pub fn interleaved_write_to_shared<E: Numeric, ES: Size, A: Numeric, VA: Size>(
     shared: &mut StridedTile<E, ES, ReadWrite>,
     arr: &Array<A>,
-    #[comptime] config: InterleavedMatmulConfig,
+    #[comptime] config: InterleavedMatmul,
 ) {
     let m = config.tile_size.m();
     let n = config.tile_size.n();

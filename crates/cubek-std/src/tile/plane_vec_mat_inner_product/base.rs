@@ -1,12 +1,41 @@
 use std::marker::PhantomData;
 
-use cubecl::prelude::*;
-use cubek_std::{MatrixLayout, tile::StridedTile};
+use cubecl::{define_size, prelude::*};
 
-use crate::components::tile_matmul::tile::Scope;
-use crate::components::tile_matmul::tile::plane_vec_mat_inner_product::PlaneVecMatInnerProductConfig;
-use crate::components::tile_matmul::{NPlaneVec, PlaneVecTile, Tile};
-use crate::definition::StageIdent;
+use crate::{
+    MatrixLayout, StageIdent, SwizzleModes, TileSize,
+    tile::{PlaneVecTile, StridedTile, Tile, scope::Scope},
+};
+
+// plane_vec_mat's fragment inner vector size (= reduce_vector_size). Bound at
+// allocate time via `scope.register_size::<NPlaneVec>(reduce_vector_size)`.
+// Decoupled from the outer enum `V` so the fragment is sized by the tile impl's
+// needs, not the stage's vector size.
+define_size!(pub NPlaneVec);
+
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub struct PlaneVecMatInnerProduct {
+    pub tile_size: TileSize,
+    pub plane_dim: u32,
+    pub swizzle_modes: SwizzleModes,
+    pub reduce_vector_size: u32,
+}
+
+impl PlaneVecMatInnerProduct {
+    pub fn new(
+        tile_size: TileSize,
+        plane_dim: u32,
+        swizzle_modes: SwizzleModes,
+        reduce_vector_size: u32,
+    ) -> Self {
+        Self {
+            tile_size,
+            plane_dim,
+            swizzle_modes,
+            reduce_vector_size,
+        }
+    }
+}
 
 // Binds the plane_vec_mat fragment's inner vector size (`NPlaneVec`) to the
 // `reduce_vector_size` chosen by the tile config at allocation time.
@@ -25,7 +54,7 @@ fn register_reduce_vector_size(#[comptime] reduce_vector_size: u32) {
 #[cube]
 pub fn planevec_allocate_lhs<L: Numeric, VL: Size, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: PlaneVecMatInnerProductConfig,
+    #[comptime] config: PlaneVecMatInnerProduct,
 ) -> Tile<L, VL, Sc, ReadWrite> {
     register_reduce_vector_size(config.reduce_vector_size);
     Tile::new_PlaneVec(PlaneVecTile::<L, VL> {
@@ -39,7 +68,7 @@ pub fn planevec_allocate_lhs<L: Numeric, VL: Size, Sc: Scope>(
 #[cube]
 pub fn planevec_allocate_rhs<R: Numeric, VR: Size, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: PlaneVecMatInnerProductConfig,
+    #[comptime] config: PlaneVecMatInnerProduct,
 ) -> Tile<R, VR, Sc, ReadWrite> {
     register_reduce_vector_size(config.reduce_vector_size);
     Tile::new_PlaneVec(PlaneVecTile::<R, VR> {
@@ -53,7 +82,7 @@ pub fn planevec_allocate_rhs<R: Numeric, VR: Size, Sc: Scope>(
 #[cube]
 pub fn planevec_allocate_acc<A: Numeric, VA: Size, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: PlaneVecMatInnerProductConfig,
+    #[comptime] config: PlaneVecMatInnerProduct,
 ) -> Tile<A, VA, Sc, ReadWrite> {
     register_reduce_vector_size(config.reduce_vector_size);
     Tile::new_PlaneVec(PlaneVecTile::<A, VA> {
@@ -73,7 +102,7 @@ pub fn planevec_execute<L: Numeric, R: Numeric, A: Numeric>(
     lhs: &Array<Vector<L, NPlaneVec>>,
     rhs: &Array<Vector<R, NPlaneVec>>,
     acc: &mut Array<Vector<A, NPlaneVec>>,
-    #[comptime] config: PlaneVecMatInnerProductConfig,
+    #[comptime] config: PlaneVecMatInnerProduct,
 ) {
     let n = config.tile_size.n();
     #[unroll]
@@ -97,7 +126,7 @@ pub fn planevec_execute<L: Numeric, R: Numeric, A: Numeric>(
 pub fn planevec_load_from_shared<E: Numeric, ES: Size, N: Numeric, IO: SliceVisibility>(
     shared: &StridedTile<E, ES, IO>,
     arr: &mut Array<Vector<N, NPlaneVec>>,
-    #[comptime] config: PlaneVecMatInnerProductConfig,
+    #[comptime] config: PlaneVecMatInnerProduct,
     #[comptime] ident: StageIdent,
 ) {
     match ident {
@@ -124,7 +153,7 @@ pub fn planevec_load_from_shared<E: Numeric, ES: Size, N: Numeric, IO: SliceVisi
 #[cube]
 pub fn planevec_load_zeros<N: Numeric>(
     arr: &mut Array<Vector<N, NPlaneVec>>,
-    #[comptime] config: PlaneVecMatInnerProductConfig,
+    #[comptime] config: PlaneVecMatInnerProduct,
 ) {
     let n = config.tile_size.n();
     let zero = N::from_int(0);
@@ -142,7 +171,7 @@ pub fn planevec_load_zeros<N: Numeric>(
 pub fn planevec_write_to_shared<A: Numeric, E: Numeric, ES: Size>(
     shared: &mut StridedTile<E, ES, ReadWrite>,
     arr: &Array<Vector<A, NPlaneVec>>,
-    #[comptime] config: PlaneVecMatInnerProductConfig,
+    #[comptime] config: PlaneVecMatInnerProduct,
 ) {
     if UNIT_POS_X == 0 {
         let out_vector_size = shared.container.vector_size().comptime();

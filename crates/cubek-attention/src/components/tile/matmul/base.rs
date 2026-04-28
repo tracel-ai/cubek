@@ -1,7 +1,9 @@
 use cubecl;
 use cubecl::prelude::*;
-use cubek_matmul::components::tile_matmul::{Plane, Tile};
-use cubek_std::TileSize;
+use cubek_std::{
+    TileSize,
+    tile::{Plane, Tile},
+};
 
 #[cube]
 pub trait InnerMatmul<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size> {

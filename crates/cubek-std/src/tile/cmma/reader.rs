@@ -2,11 +2,11 @@ use std::marker::PhantomData;
 
 use cubecl::prelude::*;
 
-use cubek_std::tile::{Filled, Strided, StridedTile, TileKind};
+use crate::tile::{Filled, Strided, StridedTile, TileKind};
 
 /// Generic CMMA reader over any tile type
 #[cube]
-pub(crate) trait CmmaFragmentReader {
+pub trait CmmaFragmentReader {
     type TileKind: TileKind;
 
     /// Fill a fragment with data, with the implementation depending on the tile kind.

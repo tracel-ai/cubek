@@ -7,8 +7,7 @@ use cubek_matmul::components::{
     global::GlobalReaderConfig,
     stage::{StridedStageMemory, TilingLayout},
 };
-use cubek_matmul::definition::StageIdent;
-use cubek_std::MatrixLayout;
+use cubek_std::{MatrixLayout, StageIdent};
 
 use crate::components::{ConvolutionOperation, global::args::RuntimeArgs};
 

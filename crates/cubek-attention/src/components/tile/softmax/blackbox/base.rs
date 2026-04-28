@@ -2,10 +2,10 @@ use std::marker::PhantomData;
 
 use cubecl;
 use cubecl::prelude::*;
-use cubek_matmul::components::tile_matmul::{
-    Plane, Tile, TileExpand, cmma_allocate_acc, cmma_allocate_lhs,
+use cubek_std::{
+    MatrixLayout,
+    tile::{Plane, StridedTile, Tile, TileExpand, cmma_allocate_acc, cmma_allocate_lhs},
 };
-use cubek_std::{MatrixLayout, tile::StridedTile};
 
 use crate::{
     components::tile::MaskTile,

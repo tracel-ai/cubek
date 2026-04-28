@@ -1,10 +1,9 @@
 use cubecl;
 use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_matmul::components::{
-    CubeDimResource,
-    tile_matmul::{Plane, Tile},
+use cubek_std::{
+    CubeDimResource, InvalidConfigError,
+    tile::{Plane, Tile},
 };
-use cubek_std::InvalidConfigError;
 
 use crate::definition::attention_types::{ACC, KSS, KVT, OSS, QGS, QT, SM, SML, VSS};
 use crate::definition::{

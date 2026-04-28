@@ -5,4 +5,5 @@ pub mod tile_matmul;
 
 mod resource;
 
-pub use resource::*;
+// Internal-only — external crates import this directly from cubek-std.
+pub(crate) use resource::*;

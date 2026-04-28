@@ -2,11 +2,10 @@ use std::marker::PhantomData;
 
 use cubecl;
 use cubecl::prelude::*;
-use cubek_matmul::{
-    components::tile_matmul::{Plane, Tile, TileExpand, cmma_allocate_acc},
-    definition::StageIdent,
+use cubek_std::{
+    MatrixLayout, StageIdent,
+    tile::{Plane, Tile, TileExpand, cmma_allocate_acc},
 };
-use cubek_std::MatrixLayout;
 
 use crate::{
     components::tile::output::AttentionOutput,

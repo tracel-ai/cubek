@@ -3,9 +3,9 @@
 use cubecl::prelude::CubePrimitive;
 use cubek_matmul::{
     components::stage::PartitionBuffering,
-    definition::{MatmulElems, MatmulGlobalElems, SwizzleModes, TilingScheme},
+    definition::{MatmulElems, MatmulGlobalElems, TilingScheme},
 };
-use cubek_std::{PartitionSize, StageSize, TileSize};
+use cubek_std::{PartitionSize, StageSize, SwizzleModes, TileSize};
 
 use crate::suite::launcher_strategy::ConvolutionSize;
 

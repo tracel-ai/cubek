@@ -6,35 +6,44 @@ use crate::{
     definition::MatmulSetupError,
 };
 
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-/// Represents how many planes are used for main matmul computation and for loading-only tasks.
-pub struct PlaneFlowCounts {
-    /// Number of planes participating in main matmul and (possibly) loading.
-    pub main_flow: u32,
-    /// Number of planes dedicated solely to loading.
-    pub load_only: u32,
-}
+pub use cubek_std::{PlaneFlowCounts, PlaneFlowPartitionRule, SpecializedCubeDim as PlaneFlowConfig};
 
-impl PlaneFlowCounts {
-    /// Return the total number of planes
-    pub fn total_count(&self) -> u32 {
-        self.main_flow + self.load_only
-    }
-}
+/// Build a [`PlaneFlowConfig`] from matmul-specific load-flow inputs.
+pub fn make_plane_flow_config(
+    load_flows: LoadFlows,
+    reader_tasks: Option<MaxGlobalReaderPlanes>,
+    num_main_flow_planes: u32,
+) -> Result<PlaneFlowConfig, MatmulSetupError> {
+    let counts = match reader_tasks {
+        Some(reader_tasks) => load_flows.to_plane_flow_counts(num_main_flow_planes, reader_tasks),
 
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-/// Contains the number of plane in each role and the rule to distinguish planes based on their plane id
-pub struct PlaneFlowConfig {
-    pub counts: PlaneFlowCounts,
-    pub partition_rule: PlaneFlowPartitionRule,
-}
+        None => {
+            if load_flows.has_specialization() {
+                return Err(MatmulSetupError::InvalidConfig(Box::new(
+                    "Error: Load specialization config has specialization but no reader tasks were given."
+                        .to_string(),
+                )));
+            } else {
+                PlaneFlowCounts {
+                    main_flow: num_main_flow_planes,
+                    load_only: 0,
+                }
+            }
+        }
+    };
 
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-/// Comptime version of [RoleRule]
-pub enum PlaneFlowPartitionRule {
-    MainFlowOnly,
-    LoadOnlyFirst { load_only: u32 },
-    LoadOnlyLast { main_flow: u32 },
+    // TODO make possible to select LoadOnlyLast
+    let rule = match counts.load_only {
+        0 => PlaneFlowPartitionRule::MainFlowOnly,
+        _ => PlaneFlowPartitionRule::LoadOnlyFirst {
+            load_only: counts.load_only,
+        },
+    };
+
+    Ok(PlaneFlowConfig {
+        counts,
+        partition_rule: rule,
+    })
 }
 
 #[derive(CubeType, Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -58,68 +67,6 @@ pub enum PlaneFlowPartition {
     /// Main flow planes: [0, Threshold)
     /// Load-only planes: [Threshold, total)
     LoadOnlyLast(PartitionThreshold),
-}
-
-impl PlaneFlowConfig {
-    /// Make a new PlaneFlowConfig
-    pub fn new(
-        load_flows: LoadFlows,
-        reader_tasks: Option<MaxGlobalReaderPlanes>,
-        num_main_flow_planes: u32,
-    ) -> Result<PlaneFlowConfig, MatmulSetupError> {
-        let counts = match reader_tasks {
-            Some(reader_tasks) => {
-                load_flows.to_plane_flow_counts(num_main_flow_planes, reader_tasks)
-            }
-
-            None => {
-                if load_flows.has_specialization() {
-                    return Err(MatmulSetupError::InvalidConfig(Box::new(
-                        "Error: Load specialization config has specialization but no reader tasks were given."
-                            .to_string(),
-                    )));
-                } else {
-                    PlaneFlowCounts {
-                        main_flow: num_main_flow_planes,
-                        load_only: 0,
-                    }
-                }
-            }
-        };
-
-        // TODO make possible to select LoadOnlyLast
-        let rule = match counts.load_only {
-            0 => PlaneFlowPartitionRule::MainFlowOnly,
-            _ => PlaneFlowPartitionRule::LoadOnlyFirst {
-                load_only: counts.load_only,
-            },
-        };
-
-        Ok(Self {
-            counts,
-            partition_rule: rule,
-        })
-    }
-
-    pub fn new_unspecialized(num_planes: u32) -> PlaneFlowConfig {
-        PlaneFlowConfig {
-            counts: PlaneFlowCounts {
-                main_flow: num_planes,
-                load_only: 0,
-            },
-            partition_rule: PlaneFlowPartitionRule::MainFlowOnly,
-        }
-    }
-
-    /// Returns the number of planes participating in main flow
-    pub fn main_flow_count(&self) -> u32 {
-        self.counts.main_flow
-    }
-
-    /// Whether the plane role config implies specialization
-    pub fn has_specialization(&self) -> bool {
-        self.counts.load_only > 0
-    }
 }
 
 #[cube]

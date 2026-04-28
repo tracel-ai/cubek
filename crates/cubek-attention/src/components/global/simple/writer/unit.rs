@@ -8,7 +8,7 @@ use cubek_matmul::components::global::{
     read::tiled::{TiledCoords, TiledLayout},
     unit_write,
 };
-use cubek_matmul::definition::StageIdent;
+use cubek_std::StageIdent;
 
 use crate::components::{
     global::simple::{AttentionWriter, AttentionWriterExpand},

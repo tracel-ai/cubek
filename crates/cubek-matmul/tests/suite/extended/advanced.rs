@@ -12,12 +12,11 @@ use cubek_matmul::{
         global::{InputLoadFlow, LoadFlows},
         stage::PartitionBuffering,
     },
-    definition::SwizzleModes,
     launch::Strategy,
     routines::BlueprintStrategy,
 };
 use cubek_std::{
-    PartitionSize, StageSize,
+    PartitionSize, StageSize, SwizzleModes,
     cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation},
     stage::SwizzleMode,
 };

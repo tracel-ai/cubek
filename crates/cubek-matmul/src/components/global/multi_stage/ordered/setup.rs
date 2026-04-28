@@ -1,5 +1,5 @@
 use crate::components::global::{
-    GlobalReaderConfig, GlobalWriterConfig, PlaneFlowConfig, SharedGlobalMatmulConfig,
+    GlobalReaderConfig, GlobalWriterConfig, SharedGlobalMatmulConfig, make_plane_flow_config,
 };
 use crate::components::global::{
     GlobalWriterFamily,
@@ -22,7 +22,10 @@ use crate::{
     definition::TilingBlueprint,
     definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes},
     definition::{MatmulVectorSizes, StageIdent},
-    {components::CubeDimResource, launch::RuntimeConfig},
+    {
+        components::{CubeDimResource},
+        launch::RuntimeConfig,
+    },
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::{MatrixLayout, tile::Strided};
@@ -81,7 +84,7 @@ where
     ) -> Result<Self::Config, MatmulSetupError> {
         let plane_dim = blueprint.plane_dim;
         let plane_flow_config = Self::cubedim_resource(blueprint, dtypes, vector_sizes)?
-            .as_plane_flow_config(plane_dim)?;
+            .as_specialized(plane_dim)?;
 
         let stage_config = SMM::expand_config(
             device_props,
@@ -195,7 +198,7 @@ where
         });
 
         let plane_dim = blueprint.plane_dim;
-        let plane_flow_config = PlaneFlowConfig::new(
+        let plane_flow_config = make_plane_flow_config(
             blueprint.load_flows,
             max_global_readers,
             SMM::cubedim_resource(blueprint)?.num_planes(plane_dim)?,

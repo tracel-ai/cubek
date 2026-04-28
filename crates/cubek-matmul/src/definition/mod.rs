@@ -9,6 +9,8 @@ mod vectorization;
 pub use base::*;
 pub use blueprint::*;
 pub use cube_mapping::*;
+// Internal-only — external crates import these directly from cubek-std.
+pub(crate) use cubek_std::{StageIdent, SwizzleModes};
 pub use error::*;
 pub use spec::*;
 pub use tiling_scheme::*;

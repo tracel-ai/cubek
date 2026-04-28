@@ -14,9 +14,9 @@ use crate::{
     },
 };
 use cubecl::{ir::DeviceProperties, prelude::ReadWrite};
-use cubek_matmul::components::{CubeDimResource, stage::StageFamily};
+use cubek_matmul::components::stage::StageFamily;
 use cubek_std::{
-    MatrixLayout,
+    CubeDimResource, MatrixLayout,
     stage::{StageMemoryConfig, SwizzleMode},
 };
 

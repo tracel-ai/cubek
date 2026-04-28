@@ -12,10 +12,10 @@ use cubek_matmul::{
         },
         stage::{NoTilingLayout, TilingValidation},
     },
-    definition::{MatmulElems, MatmulProblem, StageIdent},
+    definition::{MatmulElems, MatmulProblem},
     launch::RuntimeConfig,
 };
-use cubek_std::{InvalidConfigError, tile::Strided};
+use cubek_std::{InvalidConfigError, StageIdent, tile::Strided};
 
 use crate::components::stage::{
     bias_stage::{BiasStageFamily, BiasStageMemory},

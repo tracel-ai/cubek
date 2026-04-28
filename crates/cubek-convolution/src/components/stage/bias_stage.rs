@@ -1,13 +1,10 @@
 use cubecl::prelude::*;
-use cubek_matmul::components::{
-    stage::{LoadStageFamily, Stage, StageFamily, TilingLayout},
-    tile_matmul::{Scope, Tile},
-};
+use cubek_matmul::components::stage::{LoadStageFamily, Stage, StageFamily, TilingLayout};
 
 use cubecl::std::{Swizzle, tensor::layout::Coords2d};
 use cubek_std::{
     stage::{StageMemoryConfig, as_swizzle_object},
-    tile::StridedTile,
+    tile::{Scope, StridedTile, Tile},
 };
 
 use crate::components::stage::reader::BiasTilingLayout;

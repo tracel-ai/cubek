@@ -2,10 +2,8 @@ use cubecl::{
     prelude::CubePrimitive as _,
     {CubeDim, Runtime},
 };
-use cubek_matmul::{
-    components::CubeDimResource,
-    components::{global::PartitionedStageFamily, stage::StridedStageFamily},
-};
+use cubek_matmul::components::{global::PartitionedStageFamily, stage::StridedStageFamily};
+use cubek_std::CubeDimResource;
 
 use crate::definition::{
     AttentionAvailabilityError, AttentionBlueprint, AttentionElems, AttentionPartitionSize,

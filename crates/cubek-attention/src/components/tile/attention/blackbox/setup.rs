@@ -1,6 +1,6 @@
 use cubecl::{ir::DeviceProperties, ir::VectorSize};
-use cubek_matmul::{components::CubeDimResource, definition::MatmulAvailabilityError};
-use cubek_std::InvalidConfigError;
+use cubek_matmul::definition::MatmulAvailabilityError;
+use cubek_std::{CubeDimResource, InvalidConfigError};
 
 use crate::{
     components::tile::SharedTileAttentionConfig, components::tile::TileAttentionConfig,

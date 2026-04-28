@@ -1,6 +1,5 @@
 use cubecl::ir::DeviceProperties;
-use cubek_matmul::components::CubeDimResource;
-use cubek_std::InvalidConfigError;
+use cubek_std::{CubeDimResource, InvalidConfigError};
 
 use crate::{
     components::tile::{

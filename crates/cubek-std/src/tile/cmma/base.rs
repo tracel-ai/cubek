@@ -2,15 +2,31 @@ use cubecl::{
     cmma::{self},
     prelude::*,
 };
-use cubek_std::{
-    MatrixLayout, TileSize, as_cmma_layout,
-    tile::{Strided, StridedTile},
+
+use crate::{
+    MatrixLayout, StageIdent, SwizzleModes, TileSize, as_cmma_layout,
+    tile::{
+        CmmaFragmentReader, CmmaStageReader, CmmaStageWriter, CmmaTile, Strided, StridedTile, Tile,
+        scope::Scope,
+    },
 };
 
-use crate::components::tile_matmul::{
-    CmmaFragmentReader, CmmaStageReader, CmmaStageWriter, CmmaTile, Tile, tile::Scope,
-};
-use crate::definition::StageIdent;
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub struct CmmaMatmul {
+    pub tile_size: TileSize,
+    pub plane_dim: u32,
+    pub swizzle_modes: SwizzleModes,
+}
+
+impl CmmaMatmul {
+    pub fn new(tile_size: TileSize, plane_dim: u32, swizzle_modes: SwizzleModes) -> Self {
+        Self {
+            tile_size,
+            plane_dim,
+            swizzle_modes,
+        }
+    }
+}
 
 #[cube]
 pub fn cmma_allocate_lhs<L: Numeric, VL: Size, Sc: Scope>(

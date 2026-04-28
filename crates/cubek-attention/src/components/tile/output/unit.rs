@@ -2,13 +2,10 @@ use std::marker::PhantomData;
 
 use cubecl;
 use cubecl::prelude::*;
-use cubek_matmul::{
-    components::tile_matmul::{
-        Plane, ProductType, RegisterMatmulConfig, Tile, TileExpand, register_allocate_acc,
-    },
-    definition::{StageIdent, SwizzleModes},
+use cubek_std::{
+    MatrixLayout, StageIdent, SwizzleModes,
+    tile::{Plane, ProductType, RegisterMatmul, Tile, TileExpand, register_allocate_acc},
 };
-use cubek_std::MatrixLayout;
 
 use crate::{
     components::tile::output::AttentionOutput, components::tile::pipeline::RowWise,
@@ -21,8 +18,8 @@ pub struct UnitOutputConfig {
 }
 
 impl UnitOutputConfig {
-    fn register(&self) -> RegisterMatmulConfig {
-        RegisterMatmulConfig {
+    fn register(&self) -> RegisterMatmul {
+        RegisterMatmul {
             tile_size: self.tile_size.to_value_matmul_tile_size(),
             plane_dim: 1,
             swizzle_modes: SwizzleModes::default(),

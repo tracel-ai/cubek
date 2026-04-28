@@ -1,11 +1,11 @@
-use crate::{
-    components::tile_matmul::tile::{
-        cmma::CmmaMatmulConfig, interleaved::InterleavedMatmulConfig, mma::MmaMatmulConfig,
-        plane_vec_mat_inner_product::PlaneVecMatInnerProductConfig, register::RegisterMatmulConfig,
+use crate::definition::{StageIdent, SwizzleModes};
+use cubek_std::{
+    stage::SwizzleMode,
+    tile::{
+        cmma::CmmaMatmul, interleaved::InterleavedMatmul, mma::MmaMatmul,
+        plane_vec_mat_inner_product::PlaneVecMatInnerProduct, register::RegisterMatmul,
     },
-    definition::{StageIdent, SwizzleModes},
 };
-use cubek_std::stage::SwizzleMode;
 
 /// Tile-level matmul configuration. Each variant carries the per-kind config.
 ///
@@ -14,11 +14,11 @@ use cubek_std::stage::SwizzleMode;
 /// stage layer where its accessors drive allocation and execution.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum TileMatmul {
-    Cmma(CmmaMatmulConfig),
-    Mma(MmaMatmulConfig),
-    Register(RegisterMatmulConfig),
-    PlaneVec(PlaneVecMatInnerProductConfig),
-    Interleaved(InterleavedMatmulConfig),
+    Cmma(CmmaMatmul),
+    Mma(MmaMatmul),
+    Register(RegisterMatmul),
+    PlaneVec(PlaneVecMatInnerProduct),
+    Interleaved(InterleavedMatmul),
 }
 
 impl TileMatmul {

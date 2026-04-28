@@ -16,8 +16,8 @@ use cubek_matmul::components::{
     },
     stage::{StridedStageFamily, StridedStageMemory, StridedTilingLayout},
 };
-use cubek_matmul::definition::{MatmulElems, MatmulProblem, StageIdent};
-use cubek_std::{InvalidConfigError, tile::Strided};
+use cubek_matmul::definition::{MatmulElems, MatmulProblem};
+use cubek_std::{InvalidConfigError, StageIdent, tile::Strided};
 
 use crate::components::global::{
     args::RuntimeArgs,

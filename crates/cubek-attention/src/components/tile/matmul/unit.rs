@@ -1,16 +1,14 @@
 use cubecl;
 use cubecl::prelude::*;
-use cubek_matmul::{
-    components::tile_matmul::{
-        Plane, ProductType, RegisterMatmulConfig, Tile, register_allocate_acc,
-        register_allocate_lhs, register_allocate_rhs,
+use cubek_std::{
+    MatrixLayout, StageIdent, SwizzleModes, TileSize,
+    tile::{
+        Plane, ProductType, RegisterMatmul, Tile, register_allocate_acc, register_allocate_lhs,
+        register_allocate_rhs,
     },
-    definition::{StageIdent, SwizzleModes},
 };
 
 use crate::components::tile::matmul::InnerMatmul;
-
-use cubek_std::{MatrixLayout, TileSize};
 
 #[derive(CubeType)]
 pub struct UnitMatmul {}
@@ -21,8 +19,8 @@ pub struct UnitMatmulConfig {
 }
 
 impl UnitMatmulConfig {
-    fn register(&self) -> RegisterMatmulConfig {
-        RegisterMatmulConfig {
+    fn register(&self) -> RegisterMatmul {
+        RegisterMatmul {
             tile_size: self.tile_size,
             plane_dim: 1,
             swizzle_modes: SwizzleModes::default(),

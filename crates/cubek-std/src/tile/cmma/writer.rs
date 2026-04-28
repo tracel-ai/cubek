@@ -1,5 +1,6 @@
 use cubecl::prelude::*;
-use cubek_std::{as_cmma_layout, tile::StridedTile};
+
+use crate::{as_cmma_layout, tile::StridedTile};
 
 /// Writer using the cmma store function.
 #[derive(CubeType)]
