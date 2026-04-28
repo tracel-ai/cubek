@@ -5,8 +5,8 @@
 //! every routine.
 
 use cubek_convolution::ConvAlgorithm;
-use cubek_matmul::{components::stage::PartitionBuffering, definition::SwizzleModes};
-use cubek_std::{PartitionSize, StageSize};
+use cubek_matmul::components::stage::PartitionBuffering;
+use cubek_std::{PartitionSize, StageSize, SwizzleModes};
 
 use super::common::{default_tile_size, f16_dtypes, tiling_scheme};
 use crate::suite::launcher_strategy::{ConvolutionSize, test_algo};
