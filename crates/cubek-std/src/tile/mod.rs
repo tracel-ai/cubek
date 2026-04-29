@@ -1,6 +1,7 @@
 pub mod cmma;
 pub mod interleaved;
 pub mod mma;
+pub mod pipeline;
 pub mod plane_vec_mat_inner_product;
 pub mod register;
 pub mod scope;
@@ -11,6 +12,7 @@ mod tile_kind;
 pub use cmma::*;
 pub use interleaved::*;
 pub use mma::*;
+pub use pipeline::*;
 pub use plane_vec_mat_inner_product::*;
 pub use register::*;
 pub use scope::{Cube, Plane, Scope, ScopeMarker, Unit};

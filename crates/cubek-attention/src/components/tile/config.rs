@@ -1,3 +1,4 @@
+use crate::components::tile::matmul::AttentionTileMatmul;
 use crate::definition::AttentionTileSize;
 
 use std::{fmt::Debug, hash::Hash};
@@ -6,14 +7,12 @@ use std::{fmt::Debug, hash::Hash};
 pub trait TileAttentionConfig:
     Copy + Clone + Eq + PartialEq + Hash + Debug + Send + Sync + 'static
 {
-    type ScoreMatmulConfig: Copy + Clone;
     type SoftmaxConfig: Copy + Clone;
-    type ValueMatmulConfig: Copy + Clone;
     type AttentionOutputConfig: Copy + Clone;
 
-    fn score_matmul_config(&self) -> Self::ScoreMatmulConfig;
+    fn score_matmul(&self) -> AttentionTileMatmul;
+    fn value_matmul(&self) -> AttentionTileMatmul;
     fn softmax_config(&self) -> Self::SoftmaxConfig;
-    fn value_matmul_config(&self) -> Self::ValueMatmulConfig;
     fn output_config(&self) -> Self::AttentionOutputConfig;
 
     fn plane_dim(&self) -> u32;

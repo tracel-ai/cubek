@@ -1,11 +1,11 @@
 use cubecl;
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
-use cubek_std::tile::StridedTile;
+use cubek_std::tile::{Mask, MaskExpand, StridedTile};
 
 use cubecl::std::tensor::layout::Coordinates;
 
 use crate::components::tile::softmax::{
-    FragmentMask, FragmentMaskExpand, Softmax, SoftmaxConfig, SoftmaxLayout, SoftmaxLayoutExpand,
+    FragmentMask, Softmax, SoftmaxConfig, SoftmaxLayout, SoftmaxLayoutExpand,
 };
 
 #[derive(CubeType)]
@@ -147,9 +147,7 @@ impl<F: Float, SMX: Softmax<F>> MaterializedTileMask<F, SMX> {
 }
 
 #[cube]
-impl<F: Float, SMX: Softmax<F>> FragmentMask for MaskTile<F, SMX> {
-    type Layout = SMX::ScoreLayout;
-
+impl<F: Float, SMX: Softmax<F>> Mask for MaskTile<F, SMX> {
     fn should_mask(&self, local_pos: (u32, u32)) -> bool {
         match self {
             MaskTile::Materialized(materialized_tile_mask) => {
@@ -158,4 +156,9 @@ impl<F: Float, SMX: Softmax<F>> FragmentMask for MaskTile<F, SMX> {
             MaskTile::Logical(logical_tile_mask) => logical_tile_mask.should_mask(local_pos),
         }
     }
+}
+
+#[cube]
+impl<F: Float, SMX: Softmax<F>> FragmentMask for MaskTile<F, SMX> {
+    type Layout = SMX::ScoreLayout;
 }

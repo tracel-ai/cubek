@@ -1,6 +1,6 @@
 use cubecl;
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
-use cubek_std::tile::StridedTile;
+use cubek_std::tile::{Mask, StridedTile};
 
 use crate::{components::tile::MaskTile, definition::AttentionTileSize};
 
@@ -115,11 +115,10 @@ pub trait SoftmaxLayout: CubeType {
 }
 
 #[cube]
-/// Describes which elements of a fragment should be masked
-pub trait FragmentMask: CubeType {
+/// Describes which elements of a fragment should be masked.
+/// Extends cubek-std's [`Mask`] (which provides `should_mask`) with the
+/// fragment layout used by softmax.
+pub trait FragmentMask: Mask + CubeType {
     /// How the fragment is fragmented across units
     type Layout: SoftmaxLayout;
-
-    /// Returns `true` if the element at `local_pos` should be masked
-    fn should_mask(&self, local_pos: Coords2d) -> bool;
 }

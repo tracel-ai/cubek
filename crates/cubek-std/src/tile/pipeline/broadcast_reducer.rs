@@ -1,27 +1,23 @@
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::components::tile::{
-    pipeline::{LocalTile, RowWise},
-    softmax::Reducer,
-};
+use crate::tile::pipeline::{LocalTile, RowWise};
 
+/// Reduces row-wise quantities across units of a plane that participate in the
+/// same row, masking out off-row peers. Used by Cmma-bounce row operations.
 #[derive(CubeType)]
-/// Applies reduction on rows, masking planes that do not participate in the row
 pub struct BroadcastReducer {}
 
 #[cube]
-impl<E: Float> Reducer<E> for BroadcastReducer {
-    type Tile = LocalTile<E>;
-
-    fn row_sum(vals: &mut RowWise<E>, data: &Self::Tile) {
-        vals.fill(E::from_int(0));
-        reduce::<E, LocalRowSum>(vals, data)
-    }
-
-    fn row_max(vals: &mut RowWise<E>, base: &RowWise<E>, data: &Self::Tile) {
+impl BroadcastReducer {
+    pub fn row_max<E: Float>(vals: &mut RowWise<E>, base: &RowWise<E>, data: &LocalTile<E>) {
         vals.copy_from(base);
         reduce::<E, LocalRowMax>(vals, data)
+    }
+
+    pub fn row_sum<E: Float>(vals: &mut RowWise<E>, data: &LocalTile<E>) {
+        vals.fill(E::from_int(0));
+        reduce::<E, LocalRowSum>(vals, data)
     }
 }
 
@@ -66,24 +62,16 @@ fn rowwise_plane_broadcast<E: Float>(rowwise: &RowWise<E>, source_unit: u32) -> 
 }
 
 #[cube]
-/// A reduction operation
-pub trait ReduceOp<E: Float> {
-    /// Applies the reduction on the elements of the same row held by the unit,
-    /// and store in the accumulator
+trait ReduceOp<E: Float> {
     fn reduce_local(data: &LocalTile<E>, acc: &mut RowWise<E>);
-
-    /// Accumulates elem into acc.
-    /// If mask is activated, the element gets masked prior to being accumulated
     fn reduce_from_peer(acc: &mut RowWise<E>, elem: &RowWise<E>, mask: bool);
 }
 
 #[derive(CubeType)]
-/// Max reduction operation
-pub struct LocalRowMax {}
+struct LocalRowMax {}
 
 #[derive(CubeType)]
-/// Sum reduction operation
-pub struct LocalRowSum {}
+struct LocalRowSum {}
 
 #[cube]
 impl<E: Float> ReduceOp<E> for LocalRowMax {

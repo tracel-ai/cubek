@@ -3,7 +3,9 @@ use cubecl::prelude::*;
 
 use crate::{
     components::tile::Query,
-    components::tile::matmul::InnerMatmul,
+    components::tile::matmul::{
+        AttentionTileMatmul, allocate_lhs, allocate_rhs, allocate_rhs_transposed,
+    },
     components::tile::{Key, Value},
     definition::AttentionPartitionSize,
 };
@@ -16,15 +18,15 @@ pub struct QueryPartition<L: Numeric, VL: Size> {
 
 #[cube]
 impl<L: Numeric, VL: Size> QueryPartition<L, VL> {
-    pub fn new<R: Numeric, VR: Size, A: Numeric, VA: Size, IM: InnerMatmul<L, VL, R, VR, A, VA>>(
+    pub fn new(
         #[comptime] partition_size: AttentionPartitionSize,
-        #[comptime] config: IM::Config,
+        #[comptime] matmul: AttentionTileMatmul,
     ) -> QueryPartition<L, VL> {
         let mut sequence = Sequence::new();
 
         #[unroll]
         for _ in 0..partition_size.seq_q * partition_size.head_dim {
-            sequence.push(Query::<L, VL>::new(IM::allocate_lhs(config)));
+            sequence.push(Query::<L, VL>::new(allocate_lhs::<L, VL>(matmul)));
         }
 
         QueryPartition::<L, VL> { sequence }
@@ -56,11 +58,9 @@ pub struct KeyPartition<R: Numeric, VR: Size> {
 
 #[cube]
 impl<R: Numeric, VR: Size> KeyPartition<R, VR> {
-    pub fn new<L: Numeric, VL: Size, A: Numeric, VA: Size, IM: InnerMatmul<L, VL, R, VR, A, VA>>(
-        #[comptime] config: IM::Config,
-    ) -> KeyPartition<R, VR> {
+    pub fn new(#[comptime] matmul: AttentionTileMatmul) -> KeyPartition<R, VR> {
         let mut keys = Sequence::new();
-        keys.push(Key::<R, VR>::new(IM::allocate_rhs_transposed(config)));
+        keys.push(Key::<R, VR>::new(allocate_rhs_transposed::<R, VR>(matmul)));
         KeyPartition::<R, VR> { sequence: keys }
     }
 
@@ -80,11 +80,9 @@ pub struct ValuePartition<R: Numeric, VR: Size> {
 
 #[cube]
 impl<R: Numeric, VR: Size> ValuePartition<R, VR> {
-    pub fn new<L: Numeric, VL: Size, A: Numeric, VA: Size, IM: InnerMatmul<L, VL, R, VR, A, VA>>(
-        #[comptime] config: IM::Config,
-    ) -> ValuePartition<R, VR> {
+    pub fn new(#[comptime] matmul: AttentionTileMatmul) -> ValuePartition<R, VR> {
         let mut values = Sequence::new();
-        values.push(Value::<R, VR>::new(IM::allocate_rhs(config)));
+        values.push(Value::<R, VR>::new(allocate_rhs::<R, VR>(matmul)));
         ValuePartition::<R, VR> { sequence: values }
     }
 

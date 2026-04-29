@@ -4,13 +4,16 @@ use cubecl;
 use cubecl::prelude::*;
 use cubek_std::{
     MatrixLayout,
-    tile::{Plane, StridedTile, Tile, TileExpand, cmma_allocate_acc, cmma_allocate_lhs},
+    tile::{
+        BounceConfig, LocalTile, LocalTileLayout, Plane, RowWise, RowwiseTileKind,
+        RowwiseTileWorkspace, RowwiseTileWorkspaceExpand, StridedTile, Tile, TileExpand,
+        cmma_allocate_acc, cmma_allocate_lhs,
+    },
 };
 
 use crate::{
     components::tile::MaskTile,
-    components::tile::pipeline::{LocalTile, LocalTileLayout, RowWise},
-    components::tile::softmax::{BroadcastReducer, Reducer, SoftmaxConfig as _},
+    components::tile::softmax::SoftmaxConfig as _,
     components::tile::softmax::{Softmax, blackbox::BlackboxSoftmaxConfig},
 };
 
@@ -24,36 +27,27 @@ pub struct BlackboxSoftmax<Lhs: Float> {
 pub struct BlackboxSoftmaxWorkspace<Acc: Float, Lhs: Float> {
     max: RowWise<Acc>,
     sum: RowWise<Acc>,
-    score_smem: SliceMut<Acc>,
-    softmaxed_smem: SliceMut<Lhs>,
-    local_tile: LocalTile<Acc>,
+    score_rowwise: RowwiseTileWorkspace<Acc>,
+    softmaxed_rowwise: RowwiseTileWorkspace<Lhs>,
 }
 
 #[cube]
 impl<Acc: Float, Lhs: Float> BlackboxSoftmaxWorkspace<Acc, Lhs> {
     pub fn new(#[comptime] config: BlackboxSoftmaxConfig) -> Self {
-        let max = RowWise::new_min_value(config.num_rows_per_unit());
-        let sum = RowWise::new_zero(config.num_rows_per_unit());
-
-        let total_tile_size = (config.tile_size.seq_q * config.tile_size.seq_kv) as usize;
-        let smem_size = total_tile_size * config.num_planes as usize;
-        let start = UNIT_POS_Y as usize * total_tile_size;
-        let end = start + total_tile_size;
-        let score_smem = SharedMemory::new(smem_size).slice_mut(start, end);
-        let softmaxed_smem = SharedMemory::new(smem_size).slice_mut(start, end);
-
-        let local_tile = LocalTile::new(LocalTileLayout::new(
-            (config.tile_size.seq_q, config.tile_size.seq_kv),
-            config.plane_dim,
-            config.inner_layout,
-        ));
+        let kind = comptime! {
+            RowwiseTileKind::Bounce(BounceConfig {
+                tile_shape: (config.tile_size.seq_q, config.tile_size.seq_kv),
+                num_planes: config.num_planes,
+                plane_dim: config.plane_dim,
+                inner_layout: config.inner_layout,
+            })
+        };
 
         BlackboxSoftmaxWorkspace::<Acc, Lhs> {
-            max,
-            sum,
-            score_smem,
-            softmaxed_smem,
-            local_tile,
+            max: RowWise::new_min_value(config.num_rows_per_unit()),
+            sum: RowWise::new_zero(config.num_rows_per_unit()),
+            score_rowwise: RowwiseTileWorkspace::new(kind),
+            softmaxed_rowwise: RowwiseTileWorkspace::new(kind),
         }
     }
 }
@@ -78,45 +72,44 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for BlackboxSoftmax<Lhs> {
         head_dim_factor: Acc,
         #[comptime] config: Self::Config,
     ) -> Self::ScaleColumn {
-        store_cmma_to_score_smem::<Acc, Lhs>(
-            score_matmul_accumulator,
-            workspace,
-            config.tile_size.seq_kv,
+        let stride = config.tile_size.seq_kv;
+
+        // Bounce in: cmma -> smem -> local_tile, gives unit-addressable view of the score tile.
+        score_matmul_accumulator.bounce_in(&mut workspace.score_rowwise, stride);
+
+        score_matmul_accumulator.scale_and_mask::<MaskTile<Acc, Self>>(
+            head_dim_factor,
+            mask,
+            &mut workspace.score_rowwise,
         );
 
-        sync_cube();
+        score_matmul_accumulator.row_max(
+            &mut workspace.max,
+            &state.0,
+            &workspace.score_rowwise,
+        );
 
-        workspace
-            .local_tile
-            .load_from_slice(&workspace.score_smem.to_slice());
+        score_matmul_accumulator.exp_diff(&workspace.max, &mut workspace.score_rowwise);
 
-        sync_cube();
-
-        workspace
-            .local_tile
-            .scale_and_mask::<MaskTile<Acc, Self>>(head_dim_factor, mask);
-
-        BroadcastReducer::row_max(&mut workspace.max, &state.0, &workspace.local_tile);
-
-        workspace.local_tile.exp_diff(&workspace.max);
-
-        BroadcastReducer::row_sum(&mut workspace.sum, &workspace.local_tile);
+        score_matmul_accumulator.row_sum(&mut workspace.sum, &workspace.score_rowwise);
 
         let exp_m_diff = state.0.exp_diff(&workspace.max);
-
         let new_l = exp_m_diff.mul(&state.1).add(&workspace.sum);
 
         RowWise::copy_from(&mut state.0, &workspace.max);
         RowWise::copy_from(&mut state.1, &new_l);
 
-        workspace.local_tile.store_to(&mut workspace.softmaxed_smem);
-
+        // Cross-precision write into the value-matmul lhs cmma fragment via the
+        // softmaxed_rowwise workspace's smem.
+        copy_local_to_smem_cast::<Acc, Lhs>(
+            &workspace.score_rowwise,
+            &mut workspace.softmaxed_rowwise,
+        );
         sync_cube();
-
-        load_cmma_from_softmaxed_smem::<Acc, Lhs>(
+        load_softmaxed_cmma_from_smem::<Lhs>(
             value_matmul_lhs,
-            workspace,
-            config.tile_size.seq_kv,
+            &mut workspace.softmaxed_rowwise,
+            stride,
         );
 
         exp_m_diff
@@ -143,7 +136,7 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for BlackboxSoftmax<Lhs> {
     }
 
     fn zero_score_tile(score_tile: &mut Self::ScoreTile) {
-        zero_cmma_score::<Acc>(score_tile);
+        score_tile.fill_zero();
     }
 
     fn init_softmax_tile(#[comptime] config: Self::Config) -> Self::SoftmaxedTile {
@@ -174,60 +167,32 @@ impl<Acc: Float, Lhs: Float> Softmax<Acc> for BlackboxSoftmax<Lhs> {
     }
 }
 
+/// Writes the score-side `local_tile` (Acc) into the softmaxed-side smem (Lhs),
+/// performing the precision cast in the process.
 #[cube]
-fn store_cmma_to_score_smem<Acc: Float, Lhs: Float>(
-    tile: &mut Tile<Acc, Const<0>, Plane, ReadWrite>,
-    workspace: &mut BlackboxSoftmaxWorkspace<Acc, Lhs>,
-    #[comptime] stride: u32,
+fn copy_local_to_smem_cast<Acc: Float, Lhs: Float>(
+    score: &RowwiseTileWorkspace<Acc>,
+    softmaxed: &mut RowwiseTileWorkspace<Lhs>,
 ) {
-    match tile {
-        Tile::Cmma(t) => cmma_store_score::<Acc, Lhs>(&t.matrix, workspace, stride),
-        Tile::Register(_dummy) => panic!("BlackboxSoftmax expects Tile::Cmma"),
-        _ => panic!("BlackboxSoftmax expects Tile::Cmma"),
+    match (score, softmaxed) {
+        (RowwiseTileWorkspace::Bounce(s), RowwiseTileWorkspace::Bounce(d)) => {
+            s.local_tile.store_to(&mut d.smem);
+        }
+        _ => panic!("copy_local_to_smem_cast: expected both workspaces to be Bounce"),
     }
 }
 
+/// Loads the softmaxed-side smem (Lhs) into the value-matmul lhs cmma fragment.
 #[cube]
-fn cmma_store_score<Acc: Float, Lhs: Float>(
-    matrix: &cmma::Matrix<Acc>,
-    workspace: &mut BlackboxSoftmaxWorkspace<Acc, Lhs>,
-    #[comptime] stride: u32,
-) {
-    cmma::store(
-        &mut workspace.score_smem,
-        matrix,
-        stride,
-        cmma::MatrixLayout::RowMajor,
-    );
-}
-
-#[cube]
-fn load_cmma_from_softmaxed_smem<Acc: Float, Lhs: Float>(
+fn load_softmaxed_cmma_from_smem<Lhs: Float>(
     tile: &mut Tile<Lhs, Const<0>, Plane, ReadWrite>,
-    workspace: &mut BlackboxSoftmaxWorkspace<Acc, Lhs>,
+    workspace: &mut RowwiseTileWorkspace<Lhs>,
     #[comptime] stride: u32,
 ) {
-    match tile {
-        Tile::Cmma(t) => cmma_load_softmaxed::<Acc, Lhs>(&mut t.matrix, workspace, stride),
-        Tile::Register(_dummy) => panic!("BlackboxSoftmax expects Tile::Cmma"),
-        _ => panic!("BlackboxSoftmax expects Tile::Cmma"),
-    }
-}
-
-#[cube]
-fn cmma_load_softmaxed<Acc: Float, Lhs: Float>(
-    matrix: &mut cmma::Matrix<Lhs>,
-    workspace: &mut BlackboxSoftmaxWorkspace<Acc, Lhs>,
-    #[comptime] stride: u32,
-) {
-    cmma::load(matrix, &workspace.softmaxed_smem.to_slice(), stride);
-}
-
-#[cube]
-fn zero_cmma_score<Acc: Float>(tile: &mut Tile<Acc, Const<0>, Plane, ReadWrite>) {
-    match tile {
-        Tile::Cmma(t) => cmma::fill(&t.matrix, Acc::from_int(0)),
-        Tile::Register(_dummy) => panic!("BlackboxSoftmax expects Tile::Cmma"),
-        _ => panic!("BlackboxSoftmax expects Tile::Cmma"),
+    match (tile, workspace) {
+        (Tile::Cmma(t), RowwiseTileWorkspace::Bounce(bw)) => {
+            cmma::load(&t.matrix, &bw.smem.to_slice(), stride);
+        }
+        _ => panic!("load_softmaxed_cmma_from_smem: expected Cmma tile + Bounce workspace"),
     }
 }

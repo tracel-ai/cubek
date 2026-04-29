@@ -5,46 +5,20 @@ use cubek_std::{
     tile::{Plane, Tile},
 };
 
-use crate::definition::attention_types::{ACC, KSS, KVT, OSS, QGS, QT, SM, SML, VSS};
+use crate::definition::attention_types::{ACC, OSS, SM, SML};
 use crate::definition::{
     AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError,
 };
 use crate::{
-    components::tile::TileAttentionConfig, components::tile::matmul::InnerMatmul,
-    components::tile::output::AttentionOutput, components::tile::softmax::Softmax,
+    components::tile::TileAttentionConfig, components::tile::output::AttentionOutput,
+    components::tile::softmax::Softmax,
 };
-
-/// Logits below this are considered masked (effectively -inf)
-/// Value chosen to fit within f16 range (~-65,504 max)
-pub(crate) const LOGIT_MASKED: f32 = -6e4;
-
-/// Any value smaller than this is considered numerically zero
-/// (used for fully-masked rows or tiny contributions)
-/// Value chosen to be above f16 smallest normal (~6.1e-5)
-pub(crate) const FULLY_MASKED_ROW_THRESHOLD: f32 = 1e-4;
 
 #[cube]
 pub trait TileAttention<AP: AttentionPrecision>: Send + Sync + 'static {
     type Config: TileAttentionConfig<
-            ScoreMatmulConfig = <Self::ScoreMatmul as InnerMatmul<
-                QT<AP>,
-                QGS<AP>,
-                KVT<AP>,
-                KSS<AP>,
-                SM<AP>,
-                Const<0>,
-            >>::Config,
-            ValueMatmulConfig = <Self::ValueMatmul as InnerMatmul<
-                SML<AP>,
-                Const<0>,
-                KVT<AP>,
-                VSS<AP>,
-                ACC<AP>,
-                OSS<AP>,
-            >>::Config,
             AttentionOutputConfig = <Self::Output as AttentionOutput<ACC<AP>, OSS<AP>>>::Config,
         >;
-    type ScoreMatmul: InnerMatmul<QT<AP>, QGS<AP>, KVT<AP>, KSS<AP>, SM<AP>, Const<0>>;
     type Softmax: Softmax<
             SM<AP>,
             ScoreTile = Tile<SM<AP>, Const<0>, Plane, ReadWrite>,
@@ -53,7 +27,6 @@ pub trait TileAttention<AP: AttentionPrecision>: Send + Sync + 'static {
             RunningState = <Self::Output as AttentionOutput<ACC<AP>, OSS<AP>>>::RunningState,
             Config = <Self::Config as TileAttentionConfig>::SoftmaxConfig,
         >;
-    type ValueMatmul: InnerMatmul<SML<AP>, Const<0>, KVT<AP>, VSS<AP>, ACC<AP>, OSS<AP>>;
     type Output: AttentionOutput<ACC<AP>, OSS<AP>>;
 }
 

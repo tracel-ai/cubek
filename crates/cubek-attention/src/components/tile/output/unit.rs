@@ -4,13 +4,13 @@ use cubecl;
 use cubecl::prelude::*;
 use cubek_std::{
     MatrixLayout, StageIdent, SwizzleModes,
-    tile::{Plane, ProductType, RegisterMatmul, Tile, TileExpand, register_allocate_acc},
+    tile::{
+        Plane, ProductType, RegisterMatmul, RowWise, RowwiseTileKind, RowwiseTileWorkspace, Tile,
+        register_allocate_acc,
+    },
 };
 
-use crate::{
-    components::tile::output::AttentionOutput, components::tile::pipeline::RowWise,
-    definition::AttentionTileSize,
-};
+use crate::{components::tile::output::AttentionOutput, definition::AttentionTileSize};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct UnitOutputConfig {
@@ -40,46 +40,37 @@ impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA> for UnitAttention
     type Config = UnitOutputConfig;
     type ScaleColumn = RowWise<SM>;
     type RunningState = (RowWise<SM>, RowWise<SM>);
-    type Workspace = ();
+    type Workspace = RowwiseTileWorkspace<Acc>;
 
     fn scale_mul(
         tile: &mut Tile<Acc, VA, Plane, ReadWrite>,
         scale: &Self::ScaleColumn,
-        _workspace: &mut Self::Workspace,
-        #[comptime] config: Self::Config,
+        workspace: &mut Self::Workspace,
+        #[comptime] _config: Self::Config,
     ) {
         let scale_acc = RowWise::<SM>::cast_from::<Acc>(scale);
-        apply_rowwise_scale::<Acc, VA>(
-            tile,
-            &scale_acc,
-            config.tile_size.seq_q,
-            config.tile_size.val_dim,
-        );
+        tile.rowwise_scale(&scale_acc, workspace);
     }
 
     fn scale_div(
         tile: &mut Tile<Acc, VA, Plane, ReadWrite>,
         running_state: &Self::RunningState,
-        _workspace: &mut Self::Workspace,
-        #[comptime] config: Self::Config,
+        workspace: &mut Self::Workspace,
+        #[comptime] _config: Self::Config,
     ) {
         let mut scale = RowWise::<SM>::cast_from::<Acc>(&running_state.1);
         scale.recip_inplace();
-
-        apply_rowwise_scale::<Acc, VA>(
-            tile,
-            &scale,
-            config.tile_size.seq_q,
-            config.tile_size.val_dim,
-        );
+        tile.rowwise_scale(&scale, workspace);
     }
 
-    fn init_workspace(#[comptime] _config: Self::Config) -> Self::Workspace {}
+    fn init_workspace(#[comptime] _config: Self::Config) -> Self::Workspace {
+        RowwiseTileWorkspace::new(RowwiseTileKind::Direct)
+    }
 
     fn init_tile(#[comptime] config: Self::Config) -> Tile<Acc, VA, Plane, ReadWrite> {
         let mut tile =
             register_allocate_acc::<Acc, VA, Plane>(MatrixLayout::RowMajor, config.register());
-        zero_register_tile::<Acc, VA>(&mut tile, config.tile_size.seq_q, config.tile_size.val_dim);
+        tile.fill_zero();
         tile
     }
 
@@ -89,57 +80,5 @@ impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA> for UnitAttention
         #[comptime] _config: Self::Config,
     ) {
         dest.copy_from::<Acc, VA, Acc, Acc, Acc, ReadWrite>(source, StageIdent::Out);
-    }
-}
-
-#[cube]
-fn apply_rowwise_scale<Acc: Float, VA: Size>(
-    tile: &mut Tile<Acc, VA, Plane, ReadWrite>,
-    scale: &RowWise<Acc>,
-    #[comptime] num_rows: u32,
-    #[comptime] num_cols: u32,
-) {
-    match tile {
-        Tile::Register(t) => {
-            scale_array_rowwise::<Acc>(&mut t.data, scale, num_rows, num_cols);
-        }
-        Tile::Cmma(_dummy) => panic!("UnitAttentionOutput expects a Tile::Register"),
-        _ => panic!("UnitAttentionOutput expects a Tile::Register"),
-    }
-}
-
-#[cube]
-fn scale_array_rowwise<Acc: Float>(
-    data: &mut Array<Acc>,
-    scale: &RowWise<Acc>,
-    #[comptime] num_rows: u32,
-    #[comptime] num_cols: u32,
-) {
-    for r in 0..num_rows {
-        let row_offset = r * num_cols;
-        for c in 0..num_cols {
-            let idx = (row_offset + c) as usize;
-            data[idx] = data[idx] * scale.vals[r as usize];
-        }
-    }
-}
-
-#[cube]
-fn zero_register_tile<Acc: Float, VA: Size>(
-    tile: &mut Tile<Acc, VA, Plane, ReadWrite>,
-    #[comptime] num_rows: u32,
-    #[comptime] num_cols: u32,
-) {
-    match tile {
-        Tile::Register(t) => zero_array::<Acc>(&mut t.data, num_rows * num_cols),
-        Tile::Cmma(_dummy) => panic!("UnitAttentionOutput expects a Tile::Register"),
-        _ => panic!("UnitAttentionOutput expects a Tile::Register"),
-    }
-}
-
-#[cube]
-fn zero_array<Acc: Float>(data: &mut Array<Acc>, #[comptime] size: u32) {
-    for i in 0..size {
-        data[i as usize] = Acc::from_int(0);
     }
 }

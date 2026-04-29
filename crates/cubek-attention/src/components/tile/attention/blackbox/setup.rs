@@ -2,11 +2,11 @@ use cubecl::{ir::DeviceProperties, ir::VectorSize};
 use cubek_matmul::definition::MatmulAvailabilityError;
 use cubek_std::{CubeDimResource, InvalidConfigError};
 
+use crate::components::tile::matmul::AttentionTileMatmul;
 use crate::{
     components::tile::SharedTileAttentionConfig, components::tile::TileAttentionConfig,
     components::tile::TileAttentionFamily,
     components::tile::attention::blackbox::attention::BlackboxAcceleratedTileAttention,
-    components::tile::matmul::CmmaMatmulConfig,
     components::tile::output::blackbox::BlackboxOutputConfig,
     components::tile::pipeline::InnerLayout,
     components::tile::softmax::blackbox::BlackboxSoftmaxConfig,
@@ -20,28 +20,26 @@ use cubecl::features::MmaConfig;
 pub struct BlackboxAcceleratedAttentionConfig {
     pub shared: SharedTileAttentionConfig,
     pub inner_layout: InnerLayout,
-    pub score_matmul_config: CmmaMatmulConfig,
+    pub score_matmul: AttentionTileMatmul,
     pub softmax_config: BlackboxSoftmaxConfig,
-    pub value_matmul_config: CmmaMatmulConfig,
+    pub value_matmul: AttentionTileMatmul,
     pub output_config: BlackboxOutputConfig,
 }
 
 impl TileAttentionConfig for BlackboxAcceleratedAttentionConfig {
-    type ScoreMatmulConfig = CmmaMatmulConfig;
     type SoftmaxConfig = BlackboxSoftmaxConfig;
-    type ValueMatmulConfig = CmmaMatmulConfig;
     type AttentionOutputConfig = BlackboxOutputConfig;
 
-    fn score_matmul_config(&self) -> Self::ScoreMatmulConfig {
-        self.score_matmul_config
+    fn score_matmul(&self) -> AttentionTileMatmul {
+        self.score_matmul
+    }
+
+    fn value_matmul(&self) -> AttentionTileMatmul {
+        self.value_matmul
     }
 
     fn softmax_config(&self) -> Self::SoftmaxConfig {
         self.softmax_config
-    }
-
-    fn value_matmul_config(&self) -> Self::ValueMatmulConfig {
-        self.value_matmul_config
     }
 
     fn output_config(&self) -> Self::AttentionOutputConfig {
@@ -96,12 +94,13 @@ impl TileAttentionFamily for BlackboxAcceleratedTileAttention {
                     attention_tile_size: tile_size,
                 },
                 inner_layout,
-                score_matmul_config: CmmaMatmulConfig {
-                    tile_size: blueprint
+                score_matmul: AttentionTileMatmul::new_cmma(
+                    blueprint
                         .tiling_scheme
                         .tile_size
                         .to_score_matmul_tile_size(),
-                },
+                    plane_dim,
+                ),
                 softmax_config: BlackboxSoftmaxConfig {
                     tile_size,
                     plane_dim,
@@ -110,12 +109,13 @@ impl TileAttentionFamily for BlackboxAcceleratedTileAttention {
                     materialized_mask: blueprint.masked,
                     num_planes: blueprint.tiling_scheme.stage_size.seq_q,
                 },
-                value_matmul_config: CmmaMatmulConfig {
-                    tile_size: blueprint
+                value_matmul: AttentionTileMatmul::new_cmma(
+                    blueprint
                         .tiling_scheme
                         .tile_size
                         .to_value_matmul_tile_size(),
-                },
+                    plane_dim,
+                ),
                 output_config: BlackboxOutputConfig {
                     tile_size,
                     num_planes,

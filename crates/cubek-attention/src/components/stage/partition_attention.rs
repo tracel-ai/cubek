@@ -13,7 +13,7 @@ use crate::components::{
 };
 use crate::{
     components::stage::{QueryPartition, SoftmaxPartition},
-    components::tile::matmul::InnerMatmul,
+    components::tile::matmul::{self as attn_matmul},
     components::tile::output::AttentionOutput,
 };
 use crate::{
@@ -117,14 +117,23 @@ impl<
                     // Get the only key-value tile and fill it with hd,kv-th key data
                     let key_tile = key_partition.get_mut();
                     let key_data = SK::tile(key_stage, (kv, hd as u32).runtime());
-                    TA::ScoreMatmul::load_rhs(&key_data, &mut key_tile.tile);
+                    attn_matmul::load_rhs::<KS<AP>, KSS<AP>, QT<AP>, KVT<AP>, KSS<AP>, SM<AP>>(
+                        &key_data,
+                        &mut key_tile.tile,
+                    );
 
                     // Perform score matmul on query and key, and accumulate in softmax tile
-                    TA::ScoreMatmul::execute(
+                    attn_matmul::execute::<
+                        QT<AP>,
+                        QGS<AP>,
+                        KVT<AP>,
+                        KSS<AP>,
+                        SM<AP>,
+                        Const<0>,
+                    >(
                         &query_tile.tile,
                         &key_tile.tile,
                         softmax_partition.get_score_mut(q),
-                        config.tile_size().to_score_matmul_tile_size(),
                     );
                 }
 
@@ -151,7 +160,10 @@ impl<
                     // Get the only key-value tile and fill it with hd,kv-th key data
                     let value_data = SV::tile(value_stage, (kv, vd as u32).runtime());
                     let value_tile = value_partition.get_mut();
-                    TA::ValueMatmul::load_rhs(&value_data, &mut value_tile.tile);
+                    attn_matmul::load_rhs::<VS<AP>, VSS<AP>, SML<AP>, KVT<AP>, VSS<AP>, ACC<AP>>(
+                        &value_data,
+                        &mut value_tile.tile,
+                    );
 
                     // Scale the q,vd-th accumulator and scale it with previously obtained scale
                     let partition_val_dim = p.val_dim as usize;
@@ -164,11 +176,17 @@ impl<
                     );
 
                     // Perform value matmul on probabilities and values, and accumulate in accumulators
-                    TA::ValueMatmul::execute(
+                    attn_matmul::execute::<
+                        SML<AP>,
+                        Const<0>,
+                        KVT<AP>,
+                        VSS<AP>,
+                        ACC<AP>,
+                        OSS<AP>,
+                    >(
                         softmax_partition.get_softmaxed_mut(q),
                         &value_partition.get().tile,
                         output_partition.get_at_mut(q, vd, partition_val_dim),
-                        config.tile_size().to_value_matmul_tile_size(),
                     );
                 }
             }
@@ -244,26 +262,18 @@ impl<
     }
 
     fn init_query(#[comptime] config: Self::Config) -> QueryPartition<QT<AP>, QGS<AP>> {
-        QueryPartition::<QT<AP>, QGS<AP>>::new::<KVT<AP>, KSS<AP>, SM<AP>, Const<0>, TA::ScoreMatmul>(
+        QueryPartition::<QT<AP>, QGS<AP>>::new(
             config.shared().partition_size,
-            config.tile_config().score_matmul_config(),
+            config.tile_config().score_matmul(),
         )
     }
 
     fn init_key(#[comptime] config: Self::Config) -> KeyPartition<KVT<AP>, KSS<AP>> {
-        KeyPartition::<KVT<AP>, KSS<AP>>::new::<QT<AP>, QGS<AP>, SM<AP>, Const<0>, TA::ScoreMatmul>(
-            config.tile_config().score_matmul_config(),
-        )
+        KeyPartition::<KVT<AP>, KSS<AP>>::new(config.tile_config().score_matmul())
     }
 
     fn init_value(#[comptime] config: Self::Config) -> ValuePartition<KVT<AP>, VSS<AP>> {
-        ValuePartition::<KVT<AP>, VSS<AP>>::new::<
-            SML<AP>,
-            Const<0>,
-            ACC<AP>,
-            OSS<AP>,
-            TA::ValueMatmul,
-        >(config.tile_config().value_matmul_config())
+        ValuePartition::<KVT<AP>, VSS<AP>>::new(config.tile_config().value_matmul())
     }
 
     fn init_softmax(#[comptime] config: Self::Config) -> SoftmaxPartition<SM<AP>, TA::Softmax> {
@@ -313,7 +323,7 @@ impl<
                     partition_head_dim,
                 );
 
-                TA::ScoreMatmul::load_lhs(
+                attn_matmul::load_lhs::<QG<AP>, QGS<AP>, QT<AP>, QGS<AP>, KVT<AP>, SM<AP>>(
                     &Tile::new_SharedMemory(tile_read),
                     &mut tile_to_write.tile,
                 );

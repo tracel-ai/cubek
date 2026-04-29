@@ -1,11 +1,12 @@
 use cubecl::ir::DeviceProperties;
 use cubek_std::{CubeDimResource, InvalidConfigError};
 
+use crate::components::tile::matmul::AttentionTileMatmul;
 use crate::{
     components::tile::{
         SharedTileAttentionConfig, TileAttentionConfig, TileAttentionFamily,
-        attention::unit::attention::UnitTileAttention, matmul::UnitMatmulConfig,
-        output::unit::UnitOutputConfig, pipeline::InnerLayout, softmax::unit::UnitSoftmaxConfig,
+        attention::unit::attention::UnitTileAttention, output::unit::UnitOutputConfig,
+        pipeline::InnerLayout, softmax::unit::UnitSoftmaxConfig,
     },
     definition::{
         AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError,
@@ -16,28 +17,26 @@ use crate::{
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct UnitTileAttentionConfig {
     pub shared: SharedTileAttentionConfig,
-    pub score_matmul_config: UnitMatmulConfig,
+    pub score_matmul: AttentionTileMatmul,
     pub softmax_config: UnitSoftmaxConfig,
-    pub value_matmul_config: UnitMatmulConfig,
+    pub value_matmul: AttentionTileMatmul,
     pub output_config: UnitOutputConfig,
 }
 
 impl TileAttentionConfig for UnitTileAttentionConfig {
-    type ScoreMatmulConfig = UnitMatmulConfig;
     type SoftmaxConfig = UnitSoftmaxConfig;
-    type ValueMatmulConfig = UnitMatmulConfig;
     type AttentionOutputConfig = UnitOutputConfig;
 
-    fn score_matmul_config(&self) -> Self::ScoreMatmulConfig {
-        self.score_matmul_config
+    fn score_matmul(&self) -> AttentionTileMatmul {
+        self.score_matmul
+    }
+
+    fn value_matmul(&self) -> AttentionTileMatmul {
+        self.value_matmul
     }
 
     fn softmax_config(&self) -> Self::SoftmaxConfig {
         self.softmax_config
-    }
-
-    fn value_matmul_config(&self) -> Self::ValueMatmulConfig {
-        self.value_matmul_config
     }
 
     fn output_config(&self) -> Self::AttentionOutputConfig {
@@ -90,12 +89,12 @@ impl TileAttentionFamily for UnitTileAttention {
                     attention_tile_size,
                     num_planes,
                 },
-                score_matmul_config: UnitMatmulConfig {
-                    tile_size: blueprint
+                score_matmul: AttentionTileMatmul::new_register_unit(
+                    blueprint
                         .tiling_scheme
                         .tile_size
                         .to_score_matmul_tile_size(),
-                },
+                ),
                 softmax_config: UnitSoftmaxConfig {
                     tile_size: attention_tile_size,
                     plane_dim,
@@ -104,12 +103,12 @@ impl TileAttentionFamily for UnitTileAttention {
                     causal_mask: blueprint.causal,
                     materialized_mask: blueprint.masked,
                 },
-                value_matmul_config: UnitMatmulConfig {
-                    tile_size: blueprint
+                value_matmul: AttentionTileMatmul::new_register_unit(
+                    blueprint
                         .tiling_scheme
                         .tile_size
                         .to_value_matmul_tile_size(),
-                },
+                ),
                 output_config: UnitOutputConfig {
                     tile_size: blueprint.tiling_scheme.tile_size,
                 },

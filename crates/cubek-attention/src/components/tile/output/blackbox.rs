@@ -4,12 +4,14 @@ use cubecl;
 use cubecl::prelude::*;
 use cubek_std::{
     MatrixLayout, StageIdent,
-    tile::{Plane, Tile, TileExpand, cmma_allocate_acc},
+    tile::{
+        BounceConfig, Plane, RowWise, RowwiseTileKind, RowwiseTileWorkspace, Tile,
+        cmma_allocate_acc,
+    },
 };
 
 use crate::{
-    components::tile::output::AttentionOutput,
-    components::tile::pipeline::{InnerLayout, LocalTile, LocalTileLayout, RowWise},
+    components::tile::output::AttentionOutput, components::tile::pipeline::InnerLayout,
     definition::AttentionTileSize,
 };
 
@@ -28,32 +30,6 @@ pub struct BlackboxAttentionOutput<SM: Float, Acc: Float> {
     _phantom: PhantomData<(SM, Acc)>,
 }
 
-#[derive(CubeType)]
-pub struct BlackboxAttentionOutputWorkspace<Acc: Float> {
-    smem: SliceMut<Acc>,
-    local_tile: LocalTile<Acc>,
-}
-
-#[cube]
-impl<Acc: Float> BlackboxAttentionOutputWorkspace<Acc> {
-    fn new(#[comptime] config: BlackboxOutputConfig) -> BlackboxAttentionOutputWorkspace<Acc> {
-        // Create a shared memory for going back and forth to local tile and slice for current plane
-        let total_tile_size = (config.tile_size.seq_q * config.tile_size.val_dim) as usize;
-        let smem_size = total_tile_size * config.num_planes as usize;
-        let start = UNIT_POS_Y as usize * total_tile_size;
-        let end = start + total_tile_size;
-        let smem = SharedMemory::new(smem_size).slice_mut(start, end);
-
-        let local_tile = LocalTile::new(LocalTileLayout::new(
-            (config.tile_size.seq_q, config.tile_size.val_dim),
-            config.plane_dim,
-            config.inner_layout,
-        ));
-
-        BlackboxAttentionOutputWorkspace::<Acc> { smem, local_tile }
-    }
-}
-
 #[cube]
 impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA>
     for BlackboxAttentionOutput<SM, Acc>
@@ -61,7 +37,7 @@ impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA>
     type Config = BlackboxOutputConfig;
     type ScaleColumn = RowWise<SM>;
     type RunningState = (RowWise<SM>, RowWise<SM>);
-    type Workspace = BlackboxAttentionOutputWorkspace<Acc>;
+    type Workspace = RowwiseTileWorkspace<Acc>;
 
     fn scale_mul(
         tile: &mut Tile<Acc, VA, Plane, ReadWrite>,
@@ -70,7 +46,10 @@ impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA>
         #[comptime] config: Self::Config,
     ) {
         let scale_acc = RowWise::<SM>::cast_from::<Acc>(scale);
-        scale_cmma_tile::<Acc, VA>(tile, &scale_acc, workspace, config);
+        let stride = config.tile_size.val_dim;
+        tile.bounce_in(workspace, stride);
+        tile.rowwise_scale(&scale_acc, workspace);
+        tile.bounce_out(workspace, stride);
     }
 
     fn scale_div(
@@ -81,11 +60,22 @@ impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA>
     ) {
         let mut scale = RowWise::<SM>::cast_from::<Acc>(&running_state.1);
         scale.recip_inplace();
-        scale_cmma_tile::<Acc, VA>(tile, &scale, workspace, config);
+        let stride = config.tile_size.val_dim;
+        tile.bounce_in(workspace, stride);
+        tile.rowwise_scale(&scale, workspace);
+        tile.bounce_out(workspace, stride);
     }
 
     fn init_workspace(#[comptime] config: Self::Config) -> Self::Workspace {
-        Self::Workspace::new(config)
+        let kind = comptime! {
+            RowwiseTileKind::Bounce(BounceConfig {
+                tile_shape: (config.tile_size.seq_q, config.tile_size.val_dim),
+                num_planes: config.num_planes,
+                plane_dim: config.plane_dim,
+                inner_layout: config.inner_layout,
+            })
+        };
+        RowwiseTileWorkspace::new(kind)
     }
 
     fn init_tile(#[comptime] config: Self::Config) -> Tile<Acc, VA, Plane, ReadWrite> {
@@ -93,7 +83,7 @@ impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA>
             MatrixLayout::RowMajor,
             config.tile_size.to_value_matmul_tile_size(),
         );
-        zero_cmma_tile::<Acc, VA>(&mut tile);
+        tile.fill_zero();
         tile
     }
 
@@ -103,64 +93,5 @@ impl<SM: Float, Acc: Float, VA: Size> AttentionOutput<Acc, VA>
         #[comptime] _config: Self::Config,
     ) {
         dest.copy_from::<Acc, VA, Acc, Acc, Acc, ReadWrite>(source, StageIdent::Out);
-    }
-}
-
-#[cube]
-fn scale_cmma_tile<Acc: Float, VA: Size>(
-    tile: &mut Tile<Acc, VA, Plane, ReadWrite>,
-    scale: &RowWise<Acc>,
-    workspace: &mut BlackboxAttentionOutputWorkspace<Acc>,
-    #[comptime] config: BlackboxOutputConfig,
-) {
-    match tile {
-        Tile::Cmma(t) => scale_cmma_matrix::<Acc>(&mut t.matrix, scale, workspace, config),
-        Tile::Register(_dummy) => panic!("BlackboxAttentionOutput expects a Tile::Cmma"),
-        _ => panic!("BlackboxAttentionOutput expects a Tile::Cmma"),
-    }
-}
-
-#[cube]
-fn scale_cmma_matrix<Acc: Float>(
-    matrix: &mut cmma::Matrix<Acc>,
-    scale: &RowWise<Acc>,
-    workspace: &mut BlackboxAttentionOutputWorkspace<Acc>,
-    #[comptime] config: BlackboxOutputConfig,
-) {
-    cmma::store(
-        &mut workspace.smem,
-        matrix,
-        config.tile_size.val_dim,
-        cmma::MatrixLayout::RowMajor,
-    );
-
-    sync_cube();
-
-    workspace
-        .local_tile
-        .load_from_slice(&workspace.smem.to_slice());
-
-    sync_cube();
-
-    workspace.local_tile.rowwise_scale(scale);
-
-    workspace.local_tile.store_to(&mut workspace.smem);
-
-    sync_cube();
-
-    cmma::load_with_layout(
-        matrix,
-        &workspace.smem.to_slice(),
-        config.tile_size.val_dim,
-        cmma::MatrixLayout::RowMajor,
-    )
-}
-
-#[cube]
-fn zero_cmma_tile<Acc: Float, VA: Size>(tile: &mut Tile<Acc, VA, Plane, ReadWrite>) {
-    match tile {
-        Tile::Cmma(t) => cmma::fill(&t.matrix, Acc::from_int(0)),
-        Tile::Register(_dummy) => panic!("BlackboxAttentionOutput expects a Tile::Cmma"),
-        _ => panic!("BlackboxAttentionOutput expects a Tile::Cmma"),
     }
 }
