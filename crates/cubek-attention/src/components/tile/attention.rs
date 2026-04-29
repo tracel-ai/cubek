@@ -1,10 +1,10 @@
 use std::{fmt::Debug, hash::Hash};
 
+use cubecl::features::MmaConfig;
 use cubecl::{ir::DeviceProperties, ir::VectorSize};
 use cubek_matmul::definition::MatmulAvailabilityError;
-use cubek_std::tile::{BounceConfig, InnerLayout, MaskLayout, RowwiseTileKind, SoftmaxKind};
+use cubek_std::tile::{BounceConfig, InnerLayout, MaskLayout, SoftmaxKind};
 use cubek_std::{CubeDimResource, InvalidConfigError};
-use cubecl::features::MmaConfig;
 
 use crate::components::tile::matmul::AttentionTileMatmul;
 use crate::definition::{
@@ -16,10 +16,6 @@ use crate::definition::{
 /// matmul choices for the score and value matmuls together with the
 /// attention-domain knobs (causal, materialized mask, etc.) used by mask
 /// construction and workspace allocation.
-///
-/// The bounce-vs-direct dispatch for softmax/output is *not* tracked here —
-/// it is implied by the matmul variants and derived on demand via the helper
-/// methods below.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct TileAttention {
     pub score_matmul: AttentionTileMatmul,
@@ -72,26 +68,30 @@ impl TileAttention {
             AttentionTileMatmul::Register(_) => SoftmaxKind::Direct {
                 num_rows_per_unit: self.tile_size.seq_q,
             },
-            AttentionTileMatmul::Cmma(_) => SoftmaxKind::Bounce(BounceConfig {
-                tile_shape: (self.tile_size.seq_q, self.tile_size.seq_kv),
-                num_planes: self.num_planes,
-                plane_dim: self.plane_dim,
+            AttentionTileMatmul::Cmma(_) => SoftmaxKind::Plane {
                 inner_layout: self.inner_layout,
-            }),
+            },
         }
     }
 
-    /// Workspace kind for the output rescaling round-trip, chosen by the value
-    /// matmul variant.
-    pub fn output_rowwise_kind(&self) -> RowwiseTileKind {
-        match self.value_matmul {
-            AttentionTileMatmul::Register(_) => RowwiseTileKind::Direct,
-            AttentionTileMatmul::Cmma(_) => RowwiseTileKind::Bounce(BounceConfig {
-                tile_shape: (self.tile_size.seq_q, self.tile_size.val_dim),
-                num_planes: self.num_planes,
-                plane_dim: self.plane_dim,
-                inner_layout: self.inner_layout,
-            }),
+    /// Bounce config for the score-tile round-trip (only meaningful for the
+    /// cmma path).
+    pub fn score_bounce_config(&self) -> BounceConfig {
+        BounceConfig {
+            tile_shape: (self.tile_size.seq_q, self.tile_size.seq_kv),
+            num_planes: self.num_planes,
+            plane_dim: self.plane_dim,
+            inner_layout: self.inner_layout,
+        }
+    }
+
+    /// Bounce config for the output (value-matmul accumulator) round-trip.
+    pub fn output_bounce_config(&self) -> BounceConfig {
+        BounceConfig {
+            tile_shape: (self.tile_size.seq_q, self.tile_size.val_dim),
+            num_planes: self.num_planes,
+            plane_dim: self.plane_dim,
+            inner_layout: self.inner_layout,
         }
     }
 
@@ -181,12 +181,9 @@ impl TileAttentionKind {
 
         match self {
             TileAttentionKind::Unit => validate_unit(&cfg, &blueprint.vector_sizes)?,
-            TileAttentionKind::BlackboxAccelerated => validate_blackbox(
-                device_props,
-                &cfg,
-                blueprint.vector_sizes.mask,
-                dtypes,
-            )?,
+            TileAttentionKind::BlackboxAccelerated => {
+                validate_blackbox(device_props, &cfg, blueprint.vector_sizes.mask, dtypes)?
+            }
         }
 
         Ok(cfg)

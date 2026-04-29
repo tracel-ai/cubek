@@ -1,7 +1,8 @@
-use cubecl::{prelude::*, std::tensor::layout::Coords2d, {self}};
+use cubecl::{prelude::*, {self}};
 
-use crate::tile::StridedTile;
-use crate::tile::pipeline::{LOGIT_MASKED, Mask, MaskExpand, RowWise};
+use crate::tile::ops::{LOGIT_MASKED, Mask, MaskExpand, RowWise};
+use crate::tile::scope::Scope;
+use crate::tile::{StridedTile, Tile};
 
 #[derive(CubeType)]
 pub struct UnitTile<E: Numeric> {
@@ -134,13 +135,6 @@ impl<E: Numeric> UnitTile<E> {
 }
 
 #[cube]
-impl<E: Numeric> Mask for UnitTile<E> {
-    fn should_mask(&self, local_pos: Coords2d) -> bool {
-        bool::cast_from(self.data[(local_pos.0 * self.layout.num_cols + local_pos.1) as usize])
-    }
-}
-
-#[cube]
 impl<E: Float> UnitTile<E> {
     pub fn exp_diff(&mut self, rowwise: &RowWise<E>) {
         let num_rows = comptime!(self.layout.num_rows) as usize;
@@ -161,6 +155,15 @@ impl<E: Float> UnitTile<E> {
             }
         }
     }
+}
+
+#[cube]
+/// Allocates a `Tile::Unit`. The variant is valid in any scope — each unit
+/// just holds its own row-major copy of the tile.
+pub fn allocate_unit_tile<E: Numeric, V: Size, Sc: Scope>(
+    #[comptime] layout: UnitTileLayout,
+) -> Tile<E, V, Sc, ReadWrite> {
+    Tile::new_Unit(UnitTile::<E>::new(layout))
 }
 
 #[cube]

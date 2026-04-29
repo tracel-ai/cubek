@@ -1,15 +1,14 @@
 use cubecl;
 use cubecl::prelude::*;
-use cubek_std::tile::{Plane, RowWise, RowwiseTileKind, RowwiseTileWorkspace, Tile};
+use cubek_std::tile::{BounceConfig, Plane, RowWise, Tile};
 
 use crate::components::tile::matmul::{self as attn_matmul, AttentionTileMatmul};
 use crate::definition::AttentionPartitionSize;
 
 #[derive(CubeType)]
-/// Holds the per-partition output accumulator tiles plus a workspace for the
-/// row-wise scaling round-trip.
+/// Holds the per-partition output accumulator tiles. For the cmma path each
+/// tile is a `Tile::Bounce`, which carries its own smem + LocalTile internally.
 pub struct OutputPartition<Acc: Float, VA: Size> {
-    workspace: RowwiseTileWorkspace<Acc>,
     sequence: Sequence<Tile<Acc, VA, Plane, ReadWrite>>,
 }
 
@@ -18,24 +17,18 @@ impl<Acc: Float, VA: Size> OutputPartition<Acc, VA> {
     pub fn new(
         #[comptime] partition_size: AttentionPartitionSize,
         #[comptime] value_matmul: AttentionTileMatmul,
-        #[comptime] rowwise_kind: RowwiseTileKind,
+        #[comptime] bounce: BounceConfig,
     ) -> OutputPartition<Acc, VA> {
         let mut sequence = Sequence::new();
-        let workspace = RowwiseTileWorkspace::<Acc>::new(rowwise_kind);
 
         #[unroll]
         for _ in 0..partition_size.seq_q * partition_size.val_dim {
-            // Output accumulator = value matmul accumulator. The matmul variant
-            // chooses Register vs Cmma allocation automatically.
-            let mut tile = attn_matmul::allocate_acc::<Acc, VA>(value_matmul);
+            let mut tile = attn_matmul::allocate_acc_bouncing::<Acc, VA>(value_matmul, bounce);
             tile.fill_zero();
             sequence.push(tile);
         }
 
-        OutputPartition::<Acc, VA> {
-            workspace,
-            sequence,
-        }
+        OutputPartition::<Acc, VA> { sequence }
     }
 
     pub fn get_at(
@@ -65,7 +58,7 @@ impl<Acc: Float, VA: Size> OutputPartition<Acc, VA> {
     ) {
         self.sequence
             .index_mut(i * partition_val_dim + j)
-            .scale_mul::<SM>(scale, &mut self.workspace);
+            .scale_mul::<SM>(scale);
     }
 
     pub fn scale_div_at<SM: Float>(
@@ -77,6 +70,6 @@ impl<Acc: Float, VA: Size> OutputPartition<Acc, VA> {
     ) {
         self.sequence
             .index_mut(i * partition_val_dim + j)
-            .scale_div::<SM>(running_state_l, &mut self.workspace);
+            .scale_div::<SM>(running_state_l);
     }
 }

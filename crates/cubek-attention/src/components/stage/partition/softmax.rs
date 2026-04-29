@@ -1,15 +1,15 @@
 use cubecl;
 use cubecl::prelude::*;
-use cubek_std::tile::{Plane, RowWise, SoftmaxKind, SoftmaxWorkspace, Tile, softmax_init_state};
+use cubek_std::tile::{BounceConfig, Plane, RowWise, SoftmaxKind, Tile, softmax_init_state};
 
 use crate::components::tile::matmul::{self as attn_matmul, AttentionTileMatmul};
 use crate::{components::tile::MaskTile, definition::AttentionPartitionSize};
 
 #[derive(CubeType)]
-/// Holds the per-partition score and softmaxed tiles plus the shared workspace
-/// used by `Tile::softmax`.
+/// Holds the per-partition score and softmaxed tiles. For the cmma path each
+/// tile is a `Tile::Bounce`, which encapsulates the smem + LocalTile bouncing
+/// internally.
 pub struct SoftmaxPartition<Acc: Float, Lhs: Float> {
-    workspace: SoftmaxWorkspace<Acc, Lhs>,
     score_tiles: Sequence<Tile<Acc, Const<0>, Plane, ReadWrite>>,
     softmaxed_tiles: Sequence<Tile<Lhs, Const<0>, Plane, ReadWrite>>,
 }
@@ -20,27 +20,29 @@ impl<Acc: Float, Lhs: Float> SoftmaxPartition<Acc, Lhs> {
         #[comptime] partition_size: AttentionPartitionSize,
         #[comptime] score_matmul: AttentionTileMatmul,
         #[comptime] value_matmul: AttentionTileMatmul,
-        #[comptime] softmax_kind: SoftmaxKind,
+        #[comptime] score_bounce: BounceConfig,
     ) -> SoftmaxPartition<Acc, Lhs> {
         let mut score_tiles = Sequence::new();
         let mut softmaxed_tiles = Sequence::new();
 
-        let workspace = SoftmaxWorkspace::<Acc, Lhs>::new(softmax_kind);
-
         #[unroll]
         for _ in 0..partition_size.seq_q {
-            // Score tile = score matmul accumulator. Its variant decides whether
-            // softmax bounces through smem or runs in registers.
-            let mut score = attn_matmul::allocate_acc::<Acc, Const<0>>(score_matmul);
+            // Score tile = score matmul accumulator. Bouncing for the cmma path.
+            let mut score = attn_matmul::allocate_acc_bouncing::<Acc, Const<0>>(
+                score_matmul,
+                score_bounce,
+            );
             score.fill_zero();
             score_tiles.push(score);
 
-            // Softmaxed tile = value matmul lhs.
-            softmaxed_tiles.push(attn_matmul::allocate_lhs::<Lhs, Const<0>>(value_matmul));
+            // Softmaxed tile = value matmul lhs. Bouncing for the cmma path so
+            // the softmaxed values can be written into the local view.
+            softmaxed_tiles.push(
+                attn_matmul::allocate_lhs_bouncing::<Lhs, Const<0>>(value_matmul, score_bounce),
+            );
         }
 
         SoftmaxPartition::<Acc, Lhs> {
-            workspace,
             score_tiles,
             softmaxed_tiles,
         }
@@ -75,7 +77,6 @@ impl<Acc: Float, Lhs: Float> SoftmaxPartition<Acc, Lhs> {
             mask,
             self.softmaxed_tiles.index_mut(q),
             state_q,
-            &mut self.workspace,
             head_dim_factor,
         )
     }
@@ -85,14 +86,5 @@ impl<Acc: Float, Lhs: Float> SoftmaxPartition<Acc, Lhs> {
 pub fn init_running_state<Acc: Float>(
     #[comptime] softmax_kind: SoftmaxKind,
 ) -> (RowWise<Acc>, RowWise<Acc>) {
-    let n = comptime! {
-        match softmax_kind {
-            SoftmaxKind::Direct { num_rows_per_unit } => num_rows_per_unit,
-            SoftmaxKind::Bounce(cfg) => match cfg.inner_layout {
-                cubek_std::tile::InnerLayout::Contiguous => 1,
-                cubek_std::tile::InnerLayout::SplitRows => 2,
-            },
-        }
-    };
-    softmax_init_state::<Acc>(n)
+    softmax_init_state::<Acc>(softmax_kind.num_rows_per_unit())
 }

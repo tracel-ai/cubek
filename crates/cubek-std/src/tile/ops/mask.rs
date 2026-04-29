@@ -1,11 +1,19 @@
 use cubecl;
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 
-use crate::tile::pipeline::{LocalTile, LocalTileLayout, Mask, MaskExpand, UnitTile, UnitTileLayout};
-use crate::tile::{InnerLayout, StridedTile};
+use crate::tile::scope::Scope;
+use crate::tile::variants::{InnerLayout, LocalTileLayout, UnitTileLayout};
+use crate::tile::{Tile, TileExpand};
+
+#[cube]
+/// Minimal mask abstraction used by row-wise tile operations.
+/// Returns `true` when the element at `local_pos` should be treated as masked
+/// (i.e. driven to -inf by `Tile::scale_and_mask`).
+pub trait Mask: CubeType {
+    fn should_mask(&self, local_pos: Coords2d) -> bool;
+}
 
 /// Layout of an attention-style mask fragment across the units of a plane.
-/// Replaces what was previously the `SoftmaxLayout` trait + per-impl config.
 /// Purely comptime — all variants carry only comptime data.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum MaskLayout {
@@ -50,7 +58,6 @@ impl MaskLayout {
 
 #[cube]
 /// Returns how many units in a plane participate in the same row.
-/// Comptime helper paralleling the previous `SoftmaxLayout::num_units_per_row`.
 pub fn mask_layout_num_units_per_row(#[comptime] layout: MaskLayout) -> comptime_type!(u32) {
     match layout {
         MaskLayout::Unit(_) => 1u32,
@@ -78,41 +85,33 @@ pub fn mask_layout_absolute_pos(
     }
 }
 
-/// Concrete fragment used to materialize a mask. Mirrors the [`Tile`] shape
-/// distinction: `Unit` for register-resident tiles, `Local` for cmma-bounced
-/// tiles that go through shared memory.
-#[derive(CubeType)]
-pub enum MaskFragment<E: Numeric> {
-    Unit(UnitTile<E>),
-    Local(LocalTile<E>),
-}
-
 #[cube]
-impl<E: Numeric> MaskFragment<E> {
-    pub fn new(#[comptime] layout: MaskLayout) -> MaskFragment<E> {
-        match layout {
-            MaskLayout::Unit(l) => MaskFragment::new_Unit(UnitTile::<E>::new(comptime!(l))),
-            MaskLayout::Local(l) => MaskFragment::new_Local(LocalTile::<E>::new(comptime!(l))),
-        }
-    }
-
-    pub fn load_from_strided_tile<E2: Numeric, ES: Size>(
-        &mut self,
-        tile: &StridedTile<E2, ES>,
-    ) {
-        match self {
-            MaskFragment::Unit(t) => t.load_from_strided_tile::<E2, ES>(tile),
-            MaskFragment::Local(t) => t.load_from_strided_tile::<E2, ES>(tile),
-        }
-    }
-}
-
-#[cube]
-impl<E: Numeric> Mask for MaskFragment<E> {
+impl<E: Numeric, V: Size, Sc: Scope, IO: SliceVisibility> Mask for Tile<E, V, Sc, IO> {
     fn should_mask(&self, local_pos: Coords2d) -> bool {
         match self {
-            MaskFragment::Unit(t) => t.should_mask(local_pos),
-            MaskFragment::Local(t) => t.should_mask(local_pos),
+            Tile::Unit(t) => bool::cast_from(
+                t.data[(local_pos.0 * t.layout.num_cols + local_pos.1) as usize],
+            ),
+            Tile::Local(t) => bool::cast_from(
+                t.array[(local_pos.0 * t.layout.unit_size.1 + local_pos.1) as usize],
+            ),
+            _ => panic!("Mask::should_mask is only defined for Tile::Unit and Tile::Local"),
+        }
+    }
+}
+
+#[cube]
+impl<N: Numeric, V: Size, Sc: Scope> Tile<N, V, Sc, ReadWrite> {
+    /// Loads the data from an external strided tile into the inner storage of a
+    /// `Tile::Unit` or `Tile::Local`. Used to materialize a mask fragment.
+    pub fn load_mask_from_strided_tile<E: Numeric, ES: Size>(
+        &mut self,
+        tile: &crate::tile::StridedTile<E, ES>,
+    ) {
+        match self {
+            Tile::Unit(t) => t.load_from_strided_tile::<E, ES>(tile),
+            Tile::Local(t) => t.load_from_strided_tile::<E, ES>(tile),
+            _ => panic!("load_mask_from_strided_tile: unsupported tile variant"),
         }
     }
 }

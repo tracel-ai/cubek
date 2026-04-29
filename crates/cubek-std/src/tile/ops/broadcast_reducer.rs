@@ -1,24 +1,30 @@
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::tile::pipeline::{LocalTile, RowWise};
+use crate::tile::ops::RowWise;
+use crate::tile::variants::LocalTile;
 
 /// Reduces row-wise quantities across units of a plane that participate in the
-/// same row, masking out off-row peers. Used by Cmma-bounce row operations.
-#[derive(CubeType)]
-pub struct BroadcastReducer {}
+/// same row, masking out off-row peers. Used internally by the row-wise
+/// operations on `Tile<E, V, Plane, ReadWrite>` when dispatching to the
+/// `Tile::Local` (and `Tile::Bounce`) arms.
+///
+/// Restricted to plane scope by virtue of using `plane_shuffle` and
+/// `UNIT_POS_X` — callers are expected to enforce that constraint.
+#[cube]
+pub(crate) fn local_row_max<E: Float>(
+    vals: &mut RowWise<E>,
+    base: &RowWise<E>,
+    data: &LocalTile<E>,
+) {
+    vals.copy_from(base);
+    reduce::<E, LocalRowMax>(vals, data)
+}
 
 #[cube]
-impl BroadcastReducer {
-    pub fn row_max<E: Float>(vals: &mut RowWise<E>, base: &RowWise<E>, data: &LocalTile<E>) {
-        vals.copy_from(base);
-        reduce::<E, LocalRowMax>(vals, data)
-    }
-
-    pub fn row_sum<E: Float>(vals: &mut RowWise<E>, data: &LocalTile<E>) {
-        vals.fill(E::from_int(0));
-        reduce::<E, LocalRowSum>(vals, data)
-    }
+pub(crate) fn local_row_sum<E: Float>(vals: &mut RowWise<E>, data: &LocalTile<E>) {
+    vals.fill(E::from_int(0));
+    reduce::<E, LocalRowSum>(vals, data)
 }
 
 #[cube]

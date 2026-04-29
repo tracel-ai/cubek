@@ -1,8 +1,9 @@
 use cubecl;
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 
-use crate::tile::StridedTile;
-use crate::tile::pipeline::{LOGIT_MASKED, Mask, MaskExpand, RowWise};
+use crate::tile::ops::{LOGIT_MASKED, Mask, MaskExpand, RowWise};
+use crate::tile::scope::{Scope, assert_plane_scope};
+use crate::tile::{StridedTile, Tile};
 
 #[derive(CubeType)]
 /// Assumes:
@@ -157,13 +158,6 @@ impl<E: Numeric> LocalTile<E> {
 }
 
 #[cube]
-impl<E: Numeric> Mask for LocalTile<E> {
-    fn should_mask(&self, local_pos: Coords2d) -> bool {
-        bool::cast_from(self.array[(local_pos.0 * self.layout.unit_size.1 + local_pos.1) as usize])
-    }
-}
-
-#[cube]
 impl<E: Float> LocalTile<E> {
     pub fn exp_diff(&mut self, rowwise: &RowWise<E>) {
         let num_rows = comptime!(self.layout.unit_size.0) as usize;
@@ -221,6 +215,16 @@ impl LocalTileLayout {
     pub const fn num_units_per_row(&self) -> u32 {
         self.total_size.1 / self.unit_size.1
     }
+}
+
+#[cube]
+/// Allocates a `Tile::Local` for the given scope. Panics at expansion time
+/// unless `Sc = Plane`.
+pub fn allocate_local_tile<E: Numeric, V: Size, Sc: Scope>(
+    #[comptime] layout: LocalTileLayout,
+) -> Tile<E, V, Sc, ReadWrite> {
+    comptime!(assert_plane_scope(Sc::KIND));
+    Tile::new_Local(LocalTile::<E>::new(layout))
 }
 
 /// Maps a per-unit `(row, col)` to its absolute position within the tile

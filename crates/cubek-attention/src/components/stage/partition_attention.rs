@@ -241,7 +241,7 @@ impl<
             config.shared().partition_size,
             config.tile_config().score_matmul(),
             config.tile_config().value_matmul(),
-            config.tile_config().softmax_kind(),
+            config.tile_config().score_bounce_config(),
         )
     }
 
@@ -249,7 +249,7 @@ impl<
         OutputPartition::<ACC<AP>, OSS<AP>>::new(
             config.shared().partition_size,
             config.tile_config().value_matmul(),
-            config.tile_config().output_rowwise_kind(),
+            config.tile_config().output_bounce_config(),
         )
     }
 
