@@ -6,7 +6,7 @@
 
 use cubecl::{Runtime, client::ComputeClient};
 use cubek_matmul::{
-    components::tile_matmul::TileMatmulKind,
+    components::tile::TileMatmulKind,
     definition::{MatmulElems, TilingBlueprint},
     routines::{BlueprintStrategy, Routine as MatmulRoutine, TilingArgs},
 };

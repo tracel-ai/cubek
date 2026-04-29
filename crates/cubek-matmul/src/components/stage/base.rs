@@ -9,7 +9,7 @@ use crate::{
         CubeDimResource,
         global::{PlaneFlowConfig, WriteEventListener},
         stage::{NumStages, PartitionScheduler},
-        tile_matmul::{Scope, Tile},
+        tile::{Scope, Tile},
     },
     definition::{
         Acc, Lhs, MatmulElems, MatmulSetupError, MatmulTypes, MatmulVectorSizes, Rhs,

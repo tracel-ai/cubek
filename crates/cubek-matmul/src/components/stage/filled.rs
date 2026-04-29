@@ -2,7 +2,7 @@ use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 
 use crate::components::{
     stage::{Stage, StageFamily, TilingLayout},
-    tile_matmul::{Scope, Tile, Value},
+    tile::{Scope, Tile, Value},
 };
 
 pub struct FilledStageFamily;

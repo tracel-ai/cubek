@@ -10,7 +10,7 @@ use cubek_matmul::definition::{
     adjust_dtypes,
 };
 use cubek_matmul::{
-    components::tile_matmul::TileMatmulKind,
+    components::tile::TileMatmulKind,
     routines::{NUM_SM_APPROX, NUM_TENSOR_CORES_APPROX, find_instruction_size},
 };
 use cubek_std::SwizzleModes;

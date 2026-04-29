@@ -16,7 +16,7 @@ use crate::{
     components::global::multi_stage::ordered::OrderedDoubleBufferingMatmulFamily,
     components::global::read::sync_partial_cyclic::SyncPartialCyclicLoading,
     components::stage::{PlaneMatmulFamily, RowMajorTilingOrder},
-    components::tile_matmul::TileMatmulKind,
+    components::tile::TileMatmulKind,
 };
 use crate::{
     launch::RuntimeConfig,

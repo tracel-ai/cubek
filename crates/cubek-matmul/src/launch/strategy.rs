@@ -11,7 +11,7 @@ use crate::{
             sync_full_tilewise,
         },
         stage::{ColMajorTilingOrder, RowMajorTilingOrder},
-        tile_matmul::TileMatmulKind,
+        tile::TileMatmulKind,
     },
     definition::{MatmulElems, MatmulSetupError},
     launch::{

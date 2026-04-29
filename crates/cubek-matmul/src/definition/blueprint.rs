@@ -9,7 +9,7 @@ use crate::{
         CubeDimResource,
         global::{LoadFlows, memory::GlobalLayoutConfig, read::ReaderMode},
         stage::PartitionBuffering,
-        tile_matmul::TileMatmulKind,
+        tile::TileMatmulKind,
     },
     definition::{MatmulElems, MatmulProblem, MatmulSetupError, TilingScheme},
     routines::DeviceSettings,

@@ -1,4 +1,4 @@
-use crate::definition::{StageIdent, SwizzleModes};
+use crate::definition::StageIdent;
 use cubek_std::{
     stage::SwizzleMode,
     tile::{
@@ -70,15 +70,12 @@ impl TileMatmul {
             TileMatmul::PlaneVec(c) => c.swizzle_modes,
             TileMatmul::Interleaved(c) => c.swizzle_modes,
         };
-        crate::components::tile_matmul::matmul::swizzle_for_ident(modes, ident)
-    }
-}
 
-pub(crate) fn swizzle_for_ident(modes: SwizzleModes, ident: StageIdent) -> SwizzleMode {
-    match ident {
-        StageIdent::Lhs => modes.lhs,
-        StageIdent::Rhs => modes.rhs,
-        StageIdent::Acc => modes.acc,
-        StageIdent::Out => modes.out,
+        match ident {
+            StageIdent::Lhs => modes.lhs,
+            StageIdent::Rhs => modes.rhs,
+            StageIdent::Acc => modes.acc,
+            StageIdent::Out => modes.out,
+        }
     }
 }

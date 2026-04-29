@@ -12,7 +12,7 @@ use crate::{
             single_stage::simple::SimpleMatmulFamily,
         },
         stage::{ColMajorTilingOrder, RowMajorTilingOrder, UnitMatmulFamily},
-        tile_matmul::TileMatmulKind,
+        tile::TileMatmulKind,
     },
     definition::{
         MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes, TilingBlueprint,

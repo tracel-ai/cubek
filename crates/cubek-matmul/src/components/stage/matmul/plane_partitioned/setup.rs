@@ -10,7 +10,7 @@ use crate::components::{
             partition::SharedPartitionMatmulConfig, partitioned_matmul::PartitionMatmulConfig,
         },
     },
-    tile_matmul::Plane,
+    tile::Plane,
 };
 use crate::definition::{
     MatmulElems, MatmulSetupError, MatmulTypes, MatmulVectorSizes, TilingBlueprint,

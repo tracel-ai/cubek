@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use crate::components::stage::matmul::scheduler::PartitionScheduler;
-use crate::components::tile_matmul::{
+use crate::components::tile::{
     Scope, Tile, TileMatmul, cmma_allocate_acc, interleaved_allocate_acc, mma_allocate_acc,
     planevec_allocate_acc, register_allocate_acc,
 };
@@ -39,13 +39,13 @@ impl<MT: MatmulTypes, Sc: Scope> Accumulators<MT, Sc> {
     pub fn new(
         #[comptime] partition_size: PartitionSize,
         #[comptime] acc_layout: MatrixLayout,
-        #[comptime] tile_config: TileMatmul,
+        #[comptime] tile_matmul: TileMatmul,
     ) -> Accumulators<MT, Sc> {
         let mut accumulators = Sequence::new();
 
         #[unroll]
         for _ in 0..partition_size.mn() {
-            accumulators.push(allocate_acc::<MT, Sc>(acc_layout, tile_config));
+            accumulators.push(allocate_acc::<MT, Sc>(acc_layout, tile_matmul));
         }
 
         Accumulators::<MT, Sc> {

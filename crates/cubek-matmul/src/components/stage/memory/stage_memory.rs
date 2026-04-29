@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use crate::components::{
     global::{GlobalReaderConfig, PlaneFlowPartition, read::StageBuffer},
     stage::{LoadStageFamily, Stage, StageFamily, TilingLayout},
-    tile_matmul::{Scope, Tile},
+    tile::{Scope, Tile},
 };
 use cubecl::std::{Swizzle, tensor::layout::Coords2d};
 

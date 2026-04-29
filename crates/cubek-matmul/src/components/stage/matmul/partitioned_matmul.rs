@@ -10,7 +10,7 @@ use crate::{
                 unit_partitioned::UnitPartitionedStageConfig,
             },
         },
-        tile_matmul::{Scope, Tile},
+        tile::{Scope, Tile},
     },
     definition::{MatmulTypes, MatrixTypes, StageIdent},
 };
@@ -57,19 +57,19 @@ impl StageConfig for PartitionMatmulConfig {
     fn elements_in_stage_m(&self) -> u32 {
         self.shared().stage_size.m()
             * self.shared().partition_size.m()
-            * self.shared().tile_config.elements_in_tile_m()
+            * self.shared().tile_matmul.elements_in_tile_m()
     }
 
     fn elements_in_stage_n(&self) -> u32 {
         self.shared().stage_size.n()
             * self.shared().partition_size.n()
-            * self.shared().tile_config.elements_in_tile_n()
+            * self.shared().tile_matmul.elements_in_tile_n()
     }
 
     fn elements_in_stage_k(&self) -> u32 {
         self.shared().stage_size.k()
             * self.shared().partition_size.k()
-            * self.shared().tile_config.elements_in_tile_k()
+            * self.shared().tile_matmul.elements_in_tile_k()
     }
 
     fn num_main_flow_planes(&self) -> u32 {
@@ -90,7 +90,7 @@ impl StageConfig for PartitionMatmulConfig {
     }
 
     fn elements_in_tile_k(&self) -> u32 {
-        self.shared().tile_config.elements_in_tile_k()
+        self.shared().tile_matmul.elements_in_tile_k()
     }
 
     fn lhs_smem_config(&self) -> StageMemoryConfig {

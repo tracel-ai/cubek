@@ -3,7 +3,7 @@ use crate::components::{
         ContiguousTilingLayout, RowMajorTilingOrder, Stage, StageFamily, StridedStageMemory,
         TilingLayout,
     },
-    tile_matmul::{Scope, Tile},
+    tile::{Scope, Tile},
 };
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 use cubek_std::{stage::StageMemoryConfig, tile::StridedTile};

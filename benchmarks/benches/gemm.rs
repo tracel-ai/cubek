@@ -9,7 +9,7 @@ use cubecl::{
 use cubek::{
     matmul::{
         self as matmul,
-        components::{stage::PartitionBuffering, tile_matmul::TileMatmul},
+        components::{stage::PartitionBuffering, tile::TileMatmul},
         definition::{
             LoadingPrecomputeStrategy, MatmulElems, MatmulPrecision, MatmulProblem,
             TilingBlueprint, TilingScheme,

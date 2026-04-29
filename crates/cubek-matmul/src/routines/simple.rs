@@ -20,7 +20,7 @@ use crate::{
             single_stage::simple::SimpleMatmulFamily,
         },
         stage::{ColMajorTilingOrder, PartitionBuffering, PlaneMatmulFamily, RowMajorTilingOrder},
-        tile_matmul::TileMatmulKind,
+        tile::TileMatmulKind,
     },
     routines::{
         Routine, TilingArgs,

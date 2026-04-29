@@ -1,7 +1,7 @@
 use crate::{
     components::global::PlaneFlowPartition, components::global::PlaneFlowPartitionRule,
     components::stage::matmul::partitioned_matmul::PartitionedStageMatmul,
-    components::stage::matmul::partitioned_matmul::StagePartitioner, components::tile_matmul::Unit,
+    components::stage::matmul::partitioned_matmul::StagePartitioner, components::tile::Unit,
     definition::MatmulTypes,
 };
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};

@@ -18,7 +18,7 @@ use crate::{
     components::batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
     components::global::PlaneWriterFamily,
     components::global::read::FullLoadingStrategy,
-    components::tile_matmul::TileMatmulKind,
+    components::tile::TileMatmulKind,
 };
 use crate::{
     components::global::{

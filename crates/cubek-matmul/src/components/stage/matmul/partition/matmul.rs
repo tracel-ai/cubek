@@ -8,7 +8,7 @@ use crate::{
             PartitionBuffering, Stage, StageEvent, StageEventListener,
             matmul::scheduler::PartitionScheduler,
         },
-        tile_matmul::{
+        tile::{
             Scope, TileMatmul, cmma_allocate_lhs, cmma_allocate_rhs, interleaved_allocate_lhs,
             interleaved_allocate_rhs, mma_allocate_lhs, mma_allocate_rhs, planevec_allocate_lhs,
             planevec_allocate_rhs, register_allocate_lhs, register_allocate_rhs,
@@ -20,7 +20,7 @@ use crate::{
     },
 };
 use crate::{
-    components::{stage::PartitionSchedulerScheme, tile_matmul::Tile},
+    components::{stage::PartitionSchedulerScheme, tile::Tile},
     definition::{Acc, Rhs},
 };
 use cubecl::prelude::*;
@@ -28,7 +28,7 @@ use cubek_std::{PartitionSize, StageSize, stage::StageMemoryConfig};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct SharedPartitionMatmulConfig {
-    pub tile_config: TileMatmul,
+    pub tile_matmul: TileMatmul,
     pub partition_size: PartitionSize,
     pub partition_buffering: PartitionBuffering,
     pub plane_flow_config: PlaneFlowConfig,
@@ -44,7 +44,7 @@ pub struct SharedPartitionMatmulConfig {
 impl SharedPartitionMatmulConfig {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        tile_config: TileMatmul,
+        tile_matmul: TileMatmul,
         partition_size: PartitionSize,
         partition_buffering: PartitionBuffering,
         plane_flow_config: PlaneFlowConfig,
@@ -57,7 +57,7 @@ impl SharedPartitionMatmulConfig {
         out_smem_config: StageMemoryConfig,
     ) -> Self {
         Self {
-            tile_config,
+            tile_matmul,
             partition_size,
             partition_buffering,
             plane_flow_config,
@@ -179,23 +179,23 @@ where
         for _ in 0..shared_config.partition_size.m() {
             lhs.push(allocate_lhs::<MT, Sc>(
                 shared_config.lhs_smem_config.matrix_layout,
-                shared_config.tile_config,
+                shared_config.tile_matmul,
             ));
         }
 
         let rhs = match shared_config.partition_buffering {
             PartitionBuffering::Single => RhsTile::new_Single(allocate_rhs::<MT, Sc>(
                 shared_config.rhs_smem_config.matrix_layout,
-                shared_config.tile_config,
+                shared_config.tile_matmul,
             )),
             PartitionBuffering::Double => RhsTile::new_Double((
                 allocate_rhs::<MT, Sc>(
                     shared_config.rhs_smem_config.matrix_layout,
-                    shared_config.tile_config,
+                    shared_config.tile_matmul,
                 ),
                 allocate_rhs::<MT, Sc>(
                     shared_config.rhs_smem_config.matrix_layout,
-                    shared_config.tile_config,
+                    shared_config.tile_matmul,
                 ),
             )),
         };
@@ -215,7 +215,7 @@ where
         Accumulators::<MT, Sc>::new(
             shared_config.partition_size,
             shared_config.out_smem_config.matrix_layout,
-            shared_config.tile_config,
+            shared_config.tile_matmul,
         )
     }
 
@@ -515,9 +515,9 @@ where
 #[cube]
 fn allocate_lhs<MT: MatmulTypes, Sc: Scope>(
     #[comptime] layout: cubek_std::MatrixLayout,
-    #[comptime] config: TileMatmul,
+    #[comptime] tile_matmul: TileMatmul,
 ) -> Tile<LhsRE<MT>, LhsRS<MT>, Sc, ReadWrite> {
-    match config {
+    match tile_matmul {
         TileMatmul::Cmma(c) => cmma_allocate_lhs::<LhsRE<MT>, LhsRS<MT>, Sc>(layout, c.tile_size),
         TileMatmul::Mma(c) => {
             mma_allocate_lhs::<LhsRE<MT>, LhsRS<MT>, RhsRE<MT>, AccRE<MT>, Sc>(layout, c)

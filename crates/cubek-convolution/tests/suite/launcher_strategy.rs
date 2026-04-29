@@ -20,7 +20,7 @@ use cubek_matmul::{
     components::{
         global::{InputLoadFlow, LoadFlows},
         stage::PartitionBuffering,
-        tile_matmul::TileMatmulKind,
+        tile::TileMatmulKind,
     },
     definition::{
         AvailableVectorSizes, MatmulElems, MatmulGlobalElems, TilingBlueprint, TilingScheme,

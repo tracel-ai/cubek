@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use crate::{
-    components::{stage::PartitionBuffering, tile_matmul::TileMatmulKind},
+    components::{stage::PartitionBuffering, tile::TileMatmulKind},
     definition::{
         MatmulElems, MatmulGlobalElems, MatmulKind, MatmulProblem, MatmulVectorSizes, SwizzleModes,
         TilingBlueprint, TilingScheme,

@@ -5,7 +5,7 @@ use cubek_matmul::{
     components::{
         global::LoadFlows,
         stage::PartitionBuffering,
-        tile_matmul::{TileMatmul, TileMatmulKind},
+        tile::{TileMatmul, TileMatmulKind},
     },
     definition::{MatmulElems, MatmulGlobalElems, MatmulProblem, TilingBlueprint, TilingScheme},
 };

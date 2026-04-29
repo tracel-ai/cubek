@@ -16,7 +16,7 @@ use crate::{
             async_full_cyclic::AsyncFullCyclicLoading,
         },
         stage::ColMajorTilingOrder,
-        tile_matmul::TileMatmulKind,
+        tile::TileMatmulKind,
     },
     definition::{MatmulElems, MatmulSetupError},
     launch::launch_tiling,

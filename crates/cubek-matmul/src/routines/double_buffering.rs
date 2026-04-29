@@ -27,7 +27,7 @@ use crate::{
 };
 use crate::{
     components::stage::{ColMajorTilingOrder, PlaneMatmulFamily, RowMajorTilingOrder},
-    components::tile_matmul::TileMatmulKind,
+    components::tile::TileMatmulKind,
 };
 use crate::{
     launch::RuntimeConfig,
