@@ -56,8 +56,11 @@ impl<SK: StageFamily, SV: StageFamily, SO: StageFamily<ReadWrite>> StageAttentio
                 .computation_resources()?
                 .num_planes(blueprint.plane_dim)?;
 
-        let tile_config = TileAttentionKind::BlackboxAccelerated
-            .expand_config(device_props, blueprint, dtypes)?;
+        let tile_config = TileAttentionKind::BlackboxAccelerated.expand_config(
+            device_props,
+            blueprint,
+            dtypes,
+        )?;
 
         let key_smem_config = StageMemoryConfig {
             num_planes,

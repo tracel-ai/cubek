@@ -34,7 +34,9 @@ impl SoftmaxKind {
 
 /// Initial running state `(m, l)` for the online softmax over a single tile row.
 #[cube]
-pub fn softmax_init_state<E: Float>(#[comptime] num_rows_per_unit: u32) -> (RowWise<E>, RowWise<E>) {
+pub fn softmax_init_state<E: Float>(
+    #[comptime] num_rows_per_unit: u32,
+) -> (RowWise<E>, RowWise<E>) {
     (
         RowWise::<E>::new_min_value(num_rows_per_unit as usize),
         RowWise::<E>::new_zero(num_rows_per_unit as usize),
@@ -105,10 +107,7 @@ impl<Acc: Float, V: Size> Tile<Acc, V, Plane, ReadWrite> {
 
     /// Copies `self` into `dest` (a stage-side strided/shared tile in the
     /// caller's downstream write path).
-    pub fn write_results<DE: Float, DS: Size>(
-        &self,
-        dest: &mut Tile<DE, DS, Plane, ReadWrite>,
-    ) {
+    pub fn write_results<DE: Float, DS: Size>(&self, dest: &mut Tile<DE, DS, Plane, ReadWrite>) {
         dest.copy_from::<Acc, V, Acc, Acc, Acc, ReadWrite>(self, StageIdent::Out);
     }
 }

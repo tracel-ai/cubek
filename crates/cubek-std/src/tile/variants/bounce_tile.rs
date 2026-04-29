@@ -36,8 +36,11 @@ impl<N: Numeric> BounceTile<N> {
         let end = start + total_tile_size;
         let smem = SharedMemory::new(smem_size).slice_mut(start, end);
 
-        let layout =
-            comptime!(LocalTileLayout::new(cfg.tile_shape, cfg.plane_dim, cfg.inner_layout));
+        let layout = comptime!(LocalTileLayout::new(
+            cfg.tile_shape,
+            cfg.plane_dim,
+            cfg.inner_layout
+        ));
         let local = LocalTile::new(layout);
 
         BounceTile::<N> { cmma, smem, local }

@@ -162,6 +162,7 @@ impl<F: Float> MaterializedTileMask<F> {
     }
 
     pub fn update_tile<MSK: Numeric, MSKS: Size>(&mut self, tile: StridedTile<MSK, MSKS>) {
-        self.fragment.load_mask_from_strided_tile::<MSK, MSKS>(&tile);
+        self.fragment
+            .load_mask_from_strided_tile::<MSK, MSKS>(&tile);
     }
 }

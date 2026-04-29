@@ -14,6 +14,12 @@ use crate::components::{
     stage::{MaskPartition, OutputPartition, partitioner::AttentionPartitioner},
 };
 use crate::{
+    components::stage::KeyPartition,
+    components::stage::ValuePartition,
+    components::stage::base::StageAttentionConfig,
+    {components::stage::StageAttention, definition::AttentionPrecision},
+};
+use crate::{
     components::stage::{QueryPartition, SoftmaxPartition},
     components::tile::matmul::{self as attn_matmul},
 };
@@ -21,22 +27,10 @@ use crate::{
     components::{global::GlobalAttentionConfig, stage::PartitionAttentionConfig},
     definition::attention_types::*,
 };
-use crate::{
-    components::stage::KeyPartition,
-    components::stage::ValuePartition,
-    components::stage::base::StageAttentionConfig,
-    {components::stage::StageAttention, definition::AttentionPrecision},
-};
 use cubecl::std::tensor::layout::Coords2d;
 
 #[derive(CubeType)]
-pub struct PartitionAttention<
-    AP: AttentionPrecision,
-    SK,
-    SV,
-    SO,
-    P: AttentionPartitioner,
-> {
+pub struct PartitionAttention<AP: AttentionPrecision, SK, SV, SO, P: AttentionPartitioner> {
     #[cube(comptime)]
     _phantom: PhantomData<(AP, SK, SV, SO, P)>,
 }
@@ -105,14 +99,7 @@ impl<
                         &mut key_tile.tile,
                     );
 
-                    attn_matmul::execute::<
-                        QT<AP>,
-                        QGS<AP>,
-                        KVT<AP>,
-                        KSS<AP>,
-                        SM<AP>,
-                        Const<0>,
-                    >(
+                    attn_matmul::execute::<QT<AP>, QGS<AP>, KVT<AP>, KSS<AP>, SM<AP>, Const<0>>(
                         &query_tile.tile,
                         &key_tile.tile,
                         softmax_partition.get_score_mut(q),
@@ -121,12 +108,8 @@ impl<
 
                 let state_q = state.index_mut(q);
 
-                let scale = softmax_partition.softmax_at(
-                    state_q,
-                    mask_partition.get(),
-                    head_dim_factor,
-                    q,
-                );
+                let scale =
+                    softmax_partition.softmax_at(state_q, mask_partition.get(), head_dim_factor, q);
 
                 #[unroll]
                 for vd in 0..p.val_dim as usize {
@@ -140,14 +123,7 @@ impl<
                     let partition_val_dim = p.val_dim as usize;
                     output_partition.scale_mul_at::<SM<AP>>(&scale, q, vd, partition_val_dim);
 
-                    attn_matmul::execute::<
-                        SML<AP>,
-                        Const<0>,
-                        KVT<AP>,
-                        VSS<AP>,
-                        ACC<AP>,
-                        OSS<AP>,
-                    >(
+                    attn_matmul::execute::<SML<AP>, Const<0>, KVT<AP>, VSS<AP>, ACC<AP>, OSS<AP>>(
                         softmax_partition.get_softmaxed_mut(q),
                         &value_partition.get().tile,
                         output_partition.get_at_mut(q, vd, partition_val_dim),

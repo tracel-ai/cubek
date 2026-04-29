@@ -67,10 +67,7 @@ pub fn mask_layout_num_units_per_row(#[comptime] layout: MaskLayout) -> comptime
 
 #[cube]
 /// Maps a per-unit `(row, col)` to its absolute position within the tile.
-pub fn mask_layout_absolute_pos(
-    #[comptime] layout: MaskLayout,
-    local_pos: Coords2d,
-) -> Coords2d {
+pub fn mask_layout_absolute_pos(#[comptime] layout: MaskLayout, local_pos: Coords2d) -> Coords2d {
     match layout {
         MaskLayout::Unit(_) => local_pos,
         MaskLayout::Local(l) => {
@@ -89,9 +86,9 @@ pub fn mask_layout_absolute_pos(
 impl<E: Numeric, V: Size, Sc: Scope, IO: SliceVisibility> Mask for Tile<E, V, Sc, IO> {
     fn should_mask(&self, local_pos: Coords2d) -> bool {
         match self {
-            Tile::Unit(t) => bool::cast_from(
-                t.data[(local_pos.0 * t.layout.num_cols + local_pos.1) as usize],
-            ),
+            Tile::Unit(t) => {
+                bool::cast_from(t.data[(local_pos.0 * t.layout.num_cols + local_pos.1) as usize])
+            }
             Tile::Local(t) => bool::cast_from(
                 t.array[(local_pos.0 * t.layout.unit_size.1 + local_pos.1) as usize],
             ),

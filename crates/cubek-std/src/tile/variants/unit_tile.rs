@@ -1,4 +1,7 @@
-use cubecl::{prelude::*, {self}};
+use cubecl::{
+    prelude::*,
+    {self},
+};
 
 use crate::tile::ops::{LOGIT_MASKED, Mask, MaskExpand, RowWise};
 use crate::tile::scope::Scope;
