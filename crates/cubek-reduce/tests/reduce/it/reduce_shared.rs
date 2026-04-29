@@ -23,6 +23,7 @@ pub struct TestCase {
     pub stride: cubecl::zspace::Strides,
 }
 
+#[allow(clippy::needless_range_loop)]
 impl TestCase {
     pub fn test_shared_sum(&self) {
         // `shared_sum` reduces the entire tensor and the reduction over a broadcast
@@ -30,7 +31,7 @@ impl TestCase {
         // linear_view, whereas the logical "all elements" semantics would count
         // broadcast duplicates. Skip broadcast cases to avoid testing an
         // implementation-defined path.
-        if self.stride.iter().any(|&s| s == 0) {
+        if self.stride.contains(&0) {
             return;
         }
 
@@ -101,7 +102,7 @@ impl TestCase {
             }
             let h = hash % 16;
             let magnitude = (h / 2 + 1) as f32 * 0.25;
-            let sign = if h % 2 == 0 { 1.0 } else { -1.0 };
+            let sign = if h.is_multiple_of(2) { 1.0 } else { -1.0 };
             data.push(sign * magnitude);
         }
 

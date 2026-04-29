@@ -423,7 +423,7 @@ fn load_plain<E: Numeric, ES: Size, N: Numeric, IO: SliceVisibility>(
             #[unroll]
             for pos_within_line in 0..line_size {
                 arr[(segment * segment_size + line_within_segment * line_size + pos_within_line)
-                    as usize] = N::cast_from(line[pos_within_line as usize]);
+                    as usize] = N::cast_from(line.extract(pos_within_line as usize));
             }
         }
     }
@@ -447,7 +447,7 @@ fn load_transposed<E: Numeric, ES: Size, N: Numeric, IO: SliceVisibility>(
             #[unroll]
             for pos_within_line in 0..line_size {
                 arr[((line_within_segment * line_size + pos_within_line) * num_segments + segment)
-                    as usize] = N::cast_from(line[pos_within_line as usize]);
+                    as usize] = N::cast_from(line.extract(pos_within_line as usize));
             }
         }
     }
@@ -486,7 +486,7 @@ pub fn register_write_to_shared<E: Numeric, ES: Size, A: Numeric>(
         let mut vector = Vector::<A, ES>::empty();
         #[unroll]
         for j in 0..out_vector_size {
-            vector[j as usize] = arr[(i * out_vector_size + j) as usize];
+            vector.insert(j as usize, arr[(i * out_vector_size + j) as usize]);
         }
         shared.container[offs as usize] = Vector::cast_from(vector);
     }

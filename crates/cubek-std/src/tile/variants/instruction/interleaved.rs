@@ -257,7 +257,7 @@ pub fn interleaved_load_from_shared<E: Numeric, ES: Size, N: Numeric, IO: SliceV
                     ));
                     let vector_start = i * contiguous_dim_count + j * vector_size;
                     for l in 0..vector_size {
-                        arr[vector_start + l] = vector[l];
+                        arr[vector_start + l] = vector.extract(l);
                     }
                 }
             }
@@ -301,7 +301,10 @@ pub fn interleaved_write_to_shared<E: Numeric, ES: Size, A: Numeric>(
         let mut vector = Vector::<A, ES>::empty();
         #[unroll]
         for j in 0..out_vector_size {
-            vector[j as usize] = plane_sum(arr[(i * out_vector_size + j) as usize]);
+            vector.insert(
+                j as usize,
+                plane_sum(arr[(i * out_vector_size + j) as usize]),
+            );
         }
         if UNIT_POS_X == 0 {
             let offs = shared.stage_offset(i);

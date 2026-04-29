@@ -46,11 +46,11 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
         item: Item<P>,
         #[comptime] reduce_step: ReduceStep,
     ) {
-        let accumulator_item = &accumulator.elements.item();
+        let accumulator_item = accumulator.elements.item();
         let item = item.elements;
         let elements = match reduce_step {
-            ReduceStep::Plane => *accumulator_item + plane_sum(Vector::cast_from(item)),
-            ReduceStep::Identity => *accumulator_item + Vector::cast_from(item),
+            ReduceStep::Plane => accumulator_item + plane_sum(Vector::cast_from(item)),
+            ReduceStep::Identity => accumulator_item + Vector::cast_from(item),
         };
 
         accumulator.elements.assign(&Value::new_single(elements));

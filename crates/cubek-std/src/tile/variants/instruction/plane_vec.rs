@@ -159,9 +159,9 @@ pub fn planevec_execute<L: Numeric, R: Numeric, A: Numeric>(
         let mut acc_vec = acc[n_idx];
         #[unroll]
         for vi in 0..NPlaneVec::value() {
-            let lhs_elem = A::cast_from(lhs[0usize][vi]);
-            let rhs_elem = A::cast_from(rhs[n_idx][vi]);
-            acc_vec[vi] += plane_sum(lhs_elem * rhs_elem);
+            let lhs_elem = A::cast_from(lhs[0usize].extract(vi));
+            let rhs_elem = A::cast_from(rhs[n_idx].extract(vi));
+            acc_vec.insert(vi, acc_vec.extract(vi) + plane_sum(lhs_elem * rhs_elem));
         }
         acc[n_idx] = acc_vec;
     }
@@ -229,9 +229,9 @@ pub fn planevec_write_to_shared<A: Numeric, E: Numeric, ES: Size>(
                 let acc_vec = arr[n_idx];
                 let mut sum = A::from_int(0);
                 for i in 0..reduce_vec {
-                    sum += acc_vec[i];
+                    sum += acc_vec.extract(i);
                 }
-                out_vector[within_vector] = E::cast_from(sum);
+                out_vector.insert(within_vector, E::cast_from(sum));
             }
             let offset = shared.stage_offset(out_vector_iter as u32);
             shared.container[offset as usize] = out_vector;

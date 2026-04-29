@@ -168,7 +168,7 @@ pub fn cmma_execute<L: Numeric, R: Numeric, A: Numeric>(
     rhs: &cmma::Matrix<R>,
     acc: &mut cmma::Matrix<A>,
 ) {
-    cmma::execute::<L, R, A, A>(lhs, rhs, acc, acc);
+    cmma::execute(lhs, rhs, &*acc, &*acc);
 }
 
 #[cube]
@@ -206,6 +206,6 @@ pub fn cmma_write_to_shared<E: Numeric, ES: Size, A: Numeric>(
     matrix: &cmma::Matrix<A>,
 ) {
     let mut shared = shared.view::<ES>();
-    let casted = cmma::cast::<A, E>(matrix);
+    let casted: cmma::Matrix<E> = cmma::cast(matrix);
     CmmaStageWriter::store_fragment(&mut shared, &casted);
 }

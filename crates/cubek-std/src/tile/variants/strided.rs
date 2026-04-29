@@ -141,14 +141,14 @@ impl<ES: Numeric, N: Size, IO: SliceVisibility> StridedTile<ES, N, IO> {
 impl<ES: Numeric, N: Size, IO: SliceVisibility> StridedTile<ES, N, IO> {
     /// Returns the tile as an offset read-only slice. Should only be used when swizzling is
     /// definitely not applicable.
-    pub fn as_slice(&self) -> Slice<Vector<ES, N>, ReadOnly> {
+    pub fn as_slice(&self) -> &Slice<Vector<ES, N>, ReadOnly> {
         self.container.slice(self.start as usize, self.end as usize)
     }
 
     /// Returns a read-only view of this tile, dropping write permission on the container.
     pub fn to_read_only(&self) -> StridedTile<ES, N, ReadOnly> {
         StridedTile::<ES, N, ReadOnly> {
-            container: self.container.to_slice(),
+            container: *self.container.to_slice(),
             start: self.start,
             end: self.end,
             stride: self.stride,
@@ -227,9 +227,9 @@ impl<ES: Numeric, N: Size, IO: SliceVisibility> StridedTile<ES, N, IO> {
     /// # Safety
     /// Must not be used without further metadata adjustments
     #[allow(unused)]
-    unsafe fn with_stage_vector_size<N2: Size>(self) -> StridedTile<ES, N2, IO> {
+    unsafe fn with_stage_vector_size<N2: Size>(&self) -> StridedTile<ES, N2, IO> {
         StridedTile::<ES, N2, IO> {
-            container: self.container.with_vector_size::<N2>(),
+            container: *self.container.with_vector_size::<N2>(),
             start: self.start,
             end: self.end,
             stride: self.stride,

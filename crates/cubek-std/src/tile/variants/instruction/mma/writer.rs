@@ -164,14 +164,14 @@ fn store_stmatrix<
     let start = stmatrix_offset::<V, A, B, CD>(stride, def, stage_vector_size, ident, m);
     let start = tile.stage_offset(start);
 
-    let mut row_slice = tile
+    let row_slice = tile
         .container
-        .slice_mut(start as usize, (start + width) as usize)
-        .downcast();
+        .slice_mut(start as usize, (start + width) as usize);
 
-    let stage_ty = type_of::<V>().comptime();
-    let frag_ty = type_of::<E>().comptime();
+    let stage_ty = V::as_type().comptime();
+    let frag_ty = E::as_type().comptime();
     if stage_ty == frag_ty {
+        let mut row_slice = row_slice.downcast();
         def.store_matrix::<Vector<E, NV>, N>(&mut row_slice, fragment, ident, num_regs, transposed);
     } else {
         let mut frag = Array::new(num_regs);
@@ -179,7 +179,7 @@ fn store_stmatrix<
         for i in 0..num_regs {
             frag[i] = Vector::cast_from(fragment[i]);
         }
-        def.store_matrix::<_, N>(&mut row_slice, &frag, ident, num_regs, transposed);
+        def.store_matrix::<_, N>(row_slice, &frag, ident, num_regs, transposed);
     }
 }
 

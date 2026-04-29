@@ -172,7 +172,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatUnitPerpendicular<MP> {
                 let rhs_k_vec_base = (k_base + plane_iter) * vector_size;
 
                 for vec_iter in 0..NA::value() as u32 {
-                    let lhs_scalar = lhs_vec[vec_iter as usize];
+                    let lhs_scalar = lhs_vec.extract(vec_iter as usize);
                     let rhs_vec = if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
                         rhs.read_checked((rhs_k_vec_base + vec_iter, vectorized_pos_n))
                     } else {

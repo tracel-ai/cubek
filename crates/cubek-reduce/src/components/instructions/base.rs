@@ -126,7 +126,7 @@ pub fn plane_topk_insert<N: Numeric, S: Size>(
         let winning_coord = if has_coords {
             lowest_coordinate_matching(winning_val, local_best_val, local_best_coord)
         } else {
-            let is_match = local_best_val.equal(winning_val);
+            let is_match = local_best_val.equal(&winning_val);
             let claim = select_many(is_match, lane_id, Vector::new(u32::MAX));
             plane_min(claim)
         };
@@ -139,9 +139,9 @@ pub fn plane_topk_insert<N: Numeric, S: Size>(
             #[unroll]
             for j in 0..k {
                 let to_keep = select_many(
-                    elements[j].equal(insert_val),
-                    coordinates[j].less_than(insert_coord),
-                    elements[j].greater_than(insert_val),
+                    elements[j].equal(&insert_val),
+                    coordinates[j].less_than(&insert_coord),
+                    elements[j].greater_than(&insert_val),
                 );
 
                 let next_val = select_many(to_keep, insert_val, elements[j]);
@@ -155,7 +155,7 @@ pub fn plane_topk_insert<N: Numeric, S: Size>(
         } else {
             #[unroll]
             for j in 0..k {
-                let to_keep = elements[j].greater_than(insert_val);
+                let to_keep = elements[j].greater_than(&insert_val);
                 let next_val = select_many(to_keep, insert_val, elements[j]);
                 elements[j] = select_many(to_keep, elements[j], insert_val);
                 insert_val = next_val;
@@ -165,10 +165,10 @@ pub fn plane_topk_insert<N: Numeric, S: Size>(
         // Winner masking logic
         let is_winner = if has_coords {
             local_best_val
-                .equal(winning_val)
-                .and(local_best_coord.equal(winning_coord))
+                .equal(&winning_val)
+                .vec_and(local_best_coord.equal(&winning_coord))
         } else {
-            lane_id.equal(winning_coord)
+            lane_id.equal(&winning_coord)
         };
 
         local_best_val = select_many(is_winner, Vector::new(N::min_value()), local_best_val);
@@ -185,8 +185,8 @@ pub fn plane_topk_merge<N: Numeric, S: Size>(
     #[comptime] k: usize,
     #[comptime] has_coords: bool,
 ) {
-    let mut final_elements = Array::new(k);
-    let mut final_coords = Array::new(k);
+    let mut final_elements = Array::<Vector<N, S>>::new(k);
+    let mut final_coords = Array::<Vector<u32, S>>::new(k);
     let mut cursor = Vector::new(0u32);
     let lane_id = Vector::new(UNIT_POS_X);
 
@@ -197,7 +197,7 @@ pub fn plane_topk_merge<N: Numeric, S: Size>(
 
         #[unroll]
         for j in 0..k {
-            let is_pointed = cursor.equal(Vector::new(j as u32));
+            let is_pointed = cursor.equal(&Vector::new(j as u32));
             local_val = select_many(is_pointed, elements[j], local_val);
             if has_coords {
                 let coords = coordinates.multiple_mut();
@@ -209,15 +209,17 @@ pub fn plane_topk_merge<N: Numeric, S: Size>(
         let winning_lane = if has_coords {
             let best_c = lowest_coordinate_matching(winning_val, local_val, local_coord);
             final_coords[i] = best_c;
-            let is_cand = local_val.equal(winning_val).and(local_coord.equal(best_c));
+            let is_cand = local_val
+                .equal(&winning_val)
+                .vec_and(local_coord.equal(&best_c));
             plane_min(select_many(is_cand, lane_id, Vector::new(u32::MAX)))
         } else {
-            let is_cand = local_val.equal(winning_val);
+            let is_cand = local_val.equal(&winning_val);
             plane_min(select_many(is_cand, lane_id, Vector::new(u32::MAX)))
         };
 
         final_elements[i] = winning_val;
-        let is_winner_thread = lane_id.equal(winning_lane);
+        let is_winner_thread = lane_id.equal(&winning_lane);
         cursor = select_many(is_winner_thread, cursor + Vector::new(1u32), cursor);
     }
 
@@ -263,7 +265,7 @@ impl<X: CubePrimitive> SharedAccumulatorKind<X> {
             {
                 #[unroll]
                 for k_iter in 0..sequence.len() {
-                    let mut shared_acc = sequence[k_iter];
+                    let shared_acc = &mut sequence[k_iter];
                     shared_acc[i] = value.multiple()[k_iter];
                 }
             }
@@ -435,7 +437,7 @@ pub fn reduce_shared_inplace<P: ReducePrecision, R: ReduceInstruction<P>>(
     item: Item<P>,
     #[comptime] reduce_step: ReduceStep,
 ) {
-    let mut acc_item = R::SharedAccumulator::read(accumulator, index);
+    let mut acc_item = R::SharedAccumulator::read(&*accumulator, index);
     R::reduce(inst, &mut acc_item, item, reduce_step);
     R::SharedAccumulator::write(accumulator, index, acc_item);
 }
@@ -447,11 +449,11 @@ pub fn fuse_accumulator_inplace<P: ReducePrecision, R: ReduceInstruction<P>>(
     destination: usize,
     origin: usize,
 ) {
-    let mut acc = R::SharedAccumulator::read(accumulator, destination);
+    let mut acc = R::SharedAccumulator::read(&*accumulator, destination);
     R::fuse_accumulators(
         inst,
         &mut acc,
-        &R::SharedAccumulator::read(accumulator, origin),
+        &R::SharedAccumulator::read(&*accumulator, origin),
     );
     R::SharedAccumulator::write(accumulator, destination, acc);
 }

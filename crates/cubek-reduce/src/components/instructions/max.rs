@@ -54,14 +54,14 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
             ReduceStep::Plane => {
                 let candidate_item = Vector::cast_from(plane_max(item.elements));
                 select_many(
-                    accumulator_item.greater_than(candidate_item),
+                    accumulator_item.greater_than(&candidate_item),
                     accumulator_item,
                     candidate_item,
                 )
             }
             ReduceStep::Identity => {
                 let item = Vector::cast_from(item.elements);
-                select_many(accumulator_item.greater_than(item), accumulator_item, item)
+                select_many(accumulator_item.greater_than(&item), accumulator_item, item)
             }
         };
 
@@ -72,7 +72,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
         let acc_item = accumulator.elements.item();
         let candidate_item = Vector::cast_from(plane_max(acc_item));
         let max = select_many(
-            acc_item.greater_than(candidate_item),
+            acc_item.greater_than(&candidate_item),
             acc_item,
             candidate_item,
         );
@@ -84,7 +84,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
         let other_item = other.elements.item();
 
         accumulator.elements.assign(&Value::new_single(select_many(
-            accumulator_item.greater_than(other_item),
+            accumulator_item.greater_than(&other_item),
             accumulator_item,
             other_item,
         )));

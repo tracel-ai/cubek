@@ -286,7 +286,7 @@ where
                 for m_iter in 0..m_iterations {
                     let accumulator =
                         Accumulators::<MT, Sc>::get_at_mut(acc, m_iter, n_iter, n_iterations);
-                    accumulator.mma(&lhs_fragment[m_iter], rhs_fragment);
+                    accumulator.mma(&lhs_fragment[m_iter], &*rhs_fragment);
 
                     SEL::on_event(
                         &mut listener,
@@ -386,10 +386,10 @@ where
             #[unroll]
             #[allow(clippy::explicit_counter_loop)]
             for _ in 1..n_iterations {
-                let (current, next) = if comptime! {n_iter.is_multiple_of(2)} {
-                    (&mut rhs_fragments.0, &mut rhs_fragments.1)
+                let next = if comptime![n_iter.is_multiple_of(2)] {
+                    &mut rhs_fragments.1
                 } else {
-                    (&mut rhs_fragments.1, &mut rhs_fragments.0)
+                    &mut rhs_fragments.0
                 };
 
                 let n_load_iter = partition_scheduler.map_n(comptime![n_iter as u32 + 1]);
@@ -407,6 +407,12 @@ where
                     }),
                 );
                 comptime!(rhs_load_counter += 1);
+
+                let current = if comptime! {n_iter.is_multiple_of(2)} {
+                    &rhs_fragments.0
+                } else {
+                    &rhs_fragments.1
+                };
 
                 #[unroll]
                 for m_iter in 0..m_iterations {
@@ -428,9 +434,9 @@ where
             }
 
             let last = if comptime! {n_iter.is_multiple_of(2)} {
-                &mut rhs_fragments.0
+                &rhs_fragments.0
             } else {
-                &mut rhs_fragments.1
+                &rhs_fragments.1
             };
 
             #[unroll]

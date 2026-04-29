@@ -186,8 +186,7 @@ impl<
                 let tile_pos = (q as u32 + P::seq_q_index() * p.seq_q, vd.runtime() as u32);
                 let mut tile = SO::tile(&*stage, tile_pos);
 
-                let acc_tile =
-                    acc.get_at_mut(q, vd, config.shared().partition_size.val_dim as usize);
+                let acc_tile = acc.get_at(q, vd, config.shared().partition_size.val_dim as usize);
                 acc_tile.write_results::<OS<AP>, OSS<AP>>(&mut tile);
 
                 W::on_event(writer, WriteEvent::new_TileStored(tile_pos));

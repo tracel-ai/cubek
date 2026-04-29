@@ -32,7 +32,7 @@ impl<Out: NumericVector> ParallelWriter<Out> {
         #[comptime] accumulator_format: AccumulatorFormat,
     ) -> ParallelWriter<Out> {
         let layout = build_reduce_output_layout::<Out>(
-            output,
+            &*output,
             reduce_axis,
             out_vec_axis,
             accumulator_format.len(),
@@ -64,12 +64,12 @@ impl<Out: NumericVector> ParallelWriter<Out> {
                 #[unroll]
                 for i in 0..self.accumulator_length {
                     let mut vec = self.buffer.multiple_mut()[i];
-                    vec[local_index] = array[i];
+                    vec.insert(local_index, array[i]);
                     self.buffer.multiple_mut()[i] = vec;
                 }
             }
             Value::Single(element) => {
-                self.buffer.item()[local_index] = element.unwrap();
+                self.buffer.item().insert(local_index, element.unwrap());
             }
             Value::None => {
                 unreachable!()

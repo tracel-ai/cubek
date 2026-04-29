@@ -240,15 +240,14 @@ where
             for n_iter in 0..n_iterations {
                 let n_load_iter = partition_scheduler.map_n(n_iter as u32);
 
-                let tile_accumulator = Accumulators::<MP, SP::Scope>::get_at_mut(
-                    acc,
+                let tile_accumulator = acc.get_at(
                     m_iter,
                     n_iter,
                     stage_config.shared().partition_size.n() as usize,
                 );
 
                 let tile_pos = (m_load_iter, n_load_iter);
-                let mut tile = Self::OutStage::tile::<SP::Scope>(stage, tile_pos);
+                let mut tile = Self::OutStage::tile::<SP::Scope>(&*stage, tile_pos);
 
                 // Write the results for one tile. To save shared memory space, it reuses the same spot for
                 // all tiles in the partition
