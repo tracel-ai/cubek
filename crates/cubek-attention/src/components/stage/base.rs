@@ -9,7 +9,7 @@ use cubek_matmul::components::{
 use cubek_std::stage::StageMemoryConfig;
 use std::{fmt::Debug, hash::Hash};
 
-use crate::components::tile::TileAttentionConfig;
+use crate::components::tile::TileAttention;
 use crate::definition::{
     AttentionElems, AttentionPartitionSize, AttentionPrecision, AttentionStageSize,
     AttentionTileSize,
@@ -31,9 +31,9 @@ use cubecl::std::tensor::layout::Coords2d;
 pub type AttentionTilingLayout = ContiguousTilingLayout<RowMajorTilingOrder>;
 pub type AttentionLoadingStrategy = SyncFullCyclicLoading<RowMajorTilingOrder>;
 
-/// A family of TileAttention implementations that operate with any [precision](AttentionPrecision).
+/// A family of StageAttention implementations that operate with any [precision](AttentionPrecision).
 pub trait StageAttentionFamily: Send + Sync + 'static {
-    /// The specific TileAttention implementation associated with this family.
+    /// The specific StageAttention implementation associated with this family.
     type Attention<AP: AttentionPrecision>: StageAttention<
             AP,
             Config = Self::Config,
@@ -62,8 +62,6 @@ pub trait StageAttentionFamily: Send + Sync + 'static {
     type OutStage: StageFamily<ReadWrite>;
 
     /// Constructs the configuration based on the algorithm's blueprint.
-    ///
-    /// This function may return an error if the configuration cannot be supported.
     fn expand_config(
         device_props: &DeviceProperties,
         blueprint: &AttentionBlueprint,
@@ -135,13 +133,11 @@ pub trait StageAttention<AP: AttentionPrecision>: 'static + Send + Sync {
     );
 }
 
-/// Configuration for the Tile Attention level
+/// Configuration for the Stage Attention level.
 pub trait StageAttentionConfig:
     Copy + Clone + Eq + PartialEq + Hash + Debug + Send + Sync + 'static
 {
-    type TileConfig: TileAttentionConfig;
-
-    fn tile_config(&self) -> Self::TileConfig;
+    fn tile_config(&self) -> TileAttention;
     fn tile_size(&self) -> AttentionTileSize;
 
     fn elements_in_partition_seq_q(&self) -> u32;
@@ -157,14 +153,14 @@ pub trait StageAttentionConfig:
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub enum PartitionAttentionConfig<TC: TileAttentionConfig> {
-    Unit(UnitPartitionStageConfig<TC>),
-    Plane(PlanePartitionStageConfig<TC>),
+pub enum PartitionAttentionConfig {
+    Unit(UnitPartitionStageConfig),
+    Plane(PlanePartitionStageConfig),
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct SharedPartitionAttentionConfig<TC: TileAttentionConfig> {
-    pub tile_config: TC,
+pub struct SharedPartitionAttentionConfig {
+    pub tile_config: TileAttention,
     pub partition_size: AttentionPartitionSize,
     pub stage_size: AttentionStageSize,
     pub num_planes: u32,
@@ -173,23 +169,17 @@ pub struct SharedPartitionAttentionConfig<TC: TileAttentionConfig> {
     pub out_smem_config: StageMemoryConfig,
 }
 
-impl<TC: TileAttentionConfig> PartitionAttentionConfig<TC> {
-    pub fn shared(&self) -> SharedPartitionAttentionConfig<TC> {
+impl PartitionAttentionConfig {
+    pub fn shared(&self) -> SharedPartitionAttentionConfig {
         match self {
-            PartitionAttentionConfig::Unit(unit_partition_stage_config) => {
-                unit_partition_stage_config.shared
-            }
-            PartitionAttentionConfig::Plane(plane_partition_stage_config) => {
-                plane_partition_stage_config.shared
-            }
+            PartitionAttentionConfig::Unit(c) => c.shared,
+            PartitionAttentionConfig::Plane(c) => c.shared,
         }
     }
 }
 
-impl<TC: TileAttentionConfig> StageAttentionConfig for PartitionAttentionConfig<TC> {
-    type TileConfig = TC;
-
-    fn tile_config(&self) -> Self::TileConfig {
+impl StageAttentionConfig for PartitionAttentionConfig {
+    fn tile_config(&self) -> TileAttention {
         self.shared().tile_config
     }
 

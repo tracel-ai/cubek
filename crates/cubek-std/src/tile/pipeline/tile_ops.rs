@@ -22,10 +22,11 @@ use crate::tile::{Plane, Tile, TileExpand};
 ///    back to the cmma fragment via shared memory. No-op for `Register`.
 #[cube]
 impl<E: Float, V: Size> Tile<E, V, Plane, ReadWrite> {
-    pub fn bounce_in(&self, ws: &mut RowwiseTileWorkspace<E>, #[comptime] stride: u32) {
+    pub fn bounce_in(&self, ws: &mut RowwiseTileWorkspace<E>) {
         match (self, ws) {
             (Tile::Register(_), _) => {}
             (Tile::Cmma(t), RowwiseTileWorkspace::Bounce(bw)) => {
+                let stride = comptime!(t.tile_size.n());
                 cmma::store(
                     &mut bw.smem,
                     &t.matrix,
@@ -40,10 +41,11 @@ impl<E: Float, V: Size> Tile<E, V, Plane, ReadWrite> {
         }
     }
 
-    pub fn bounce_out(&mut self, ws: &mut RowwiseTileWorkspace<E>, #[comptime] stride: u32) {
+    pub fn bounce_out(&mut self, ws: &mut RowwiseTileWorkspace<E>) {
         match (self, ws) {
             (Tile::Register(_), _) => {}
             (Tile::Cmma(t), RowwiseTileWorkspace::Bounce(bw)) => {
+                let stride = comptime!(t.tile_size.n());
                 bw.local_tile.store_to(&mut bw.smem);
                 sync_cube();
                 cmma::load_with_layout(

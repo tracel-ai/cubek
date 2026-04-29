@@ -46,6 +46,8 @@ pub struct CmmaTile<N: Numeric> {
     pub matrix: Matrix<N>,
     #[cube(comptime)]
     pub matrix_layout: MatrixLayout,
+    #[cube(comptime)]
+    pub tile_size: crate::TileSize,
 }
 
 #[derive(CubeType)]

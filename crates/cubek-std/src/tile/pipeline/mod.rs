@@ -1,7 +1,9 @@
 mod broadcast_reducer;
 mod local_tile;
 mod mask;
+mod mask_fragment;
 mod rowwise;
+mod softmax;
 mod tile_ops;
 mod unit_tile;
 mod workspace;
@@ -9,7 +11,9 @@ mod workspace;
 pub use broadcast_reducer::*;
 pub use local_tile::*;
 pub use mask::*;
+pub use mask_fragment::*;
 pub use rowwise::*;
+pub use softmax::*;
 pub use unit_tile::*;
 pub use workspace::*;
 

@@ -6,23 +6,31 @@ use crate::tile::pipeline::{LOGIT_MASKED, Mask, MaskExpand, RowWise};
 #[derive(CubeType)]
 pub struct UnitTile<E: Numeric> {
     pub data: Array<E>,
+    #[cube(comptime)]
     pub layout: UnitTileLayout,
 }
 
-#[derive(CubeType, Copy, Clone)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 // Assumes row-major. If loading from a col-major source, use transposed_load=true
 pub struct UnitTileLayout {
-    #[cube(comptime)]
     pub num_rows: u32,
-    #[cube(comptime)]
     pub num_cols: u32,
-    #[cube(comptime)]
     pub transposed_load: bool,
+}
+
+impl UnitTileLayout {
+    pub const fn new(num_rows: u32, num_cols: u32, transposed_load: bool) -> UnitTileLayout {
+        UnitTileLayout {
+            num_rows,
+            num_cols,
+            transposed_load,
+        }
+    }
 }
 
 #[cube]
 impl<E: Numeric> UnitTile<E> {
-    pub fn new(layout: UnitTileLayout) -> UnitTile<E> {
+    pub fn new(#[comptime] layout: UnitTileLayout) -> UnitTile<E> {
         let data = Array::<E>::new(comptime!(layout.num_rows * layout.num_cols) as usize);
         UnitTile::<E> { data, layout }
     }
@@ -52,8 +60,8 @@ impl<E: Numeric> UnitTile<E> {
     }
 
     pub fn rowwise_max(&self) -> RowWise<E> {
-        let num_rows = self.layout.num_rows.comptime() as usize;
-        let num_cols = self.layout.num_cols.comptime() as usize;
+        let num_rows = comptime!(self.layout.num_rows) as usize;
+        let num_cols = comptime!(self.layout.num_cols) as usize;
         let mut vals = Array::new(num_rows);
 
         for r in 0..num_rows {
@@ -72,8 +80,8 @@ impl<E: Numeric> UnitTile<E> {
     }
 
     pub fn rowwise_sum(&self) -> RowWise<E> {
-        let num_rows = self.layout.num_rows.comptime() as usize;
-        let num_cols = self.layout.num_cols.comptime() as usize;
+        let num_rows = comptime!(self.layout.num_rows) as usize;
+        let num_cols = comptime!(self.layout.num_cols) as usize;
         let mut vals = Array::new(num_rows);
 
         for r in 0..num_rows {
@@ -135,8 +143,8 @@ impl<E: Numeric> Mask for UnitTile<E> {
 #[cube]
 impl<E: Float> UnitTile<E> {
     pub fn exp_diff(&mut self, rowwise: &RowWise<E>) {
-        let num_rows = self.layout.num_rows.comptime() as usize;
-        let num_cols = self.layout.num_cols.comptime() as usize;
+        let num_rows = comptime!(self.layout.num_rows) as usize;
+        let num_cols = comptime!(self.layout.num_cols) as usize;
         let threshold = E::new(LOGIT_MASKED);
 
         for r in 0..num_rows {
@@ -151,21 +159,6 @@ impl<E: Float> UnitTile<E> {
                 let not_masked = E::cast_from(val >= threshold);
                 self.data[index] = not_masked * (self.data[index] - safe_val).exp();
             }
-        }
-    }
-}
-
-#[cube]
-impl UnitTileLayout {
-    pub fn new(
-        #[comptime] num_rows: u32,
-        #[comptime] num_cols: u32,
-        #[comptime] transposed_load: bool,
-    ) -> UnitTileLayout {
-        UnitTileLayout {
-            num_rows,
-            num_cols,
-            transposed_load,
         }
     }
 }

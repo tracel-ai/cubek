@@ -14,8 +14,7 @@ use crate::definition::{
 };
 use crate::{
     components::stage::plane::PlanePartitionStageAttentionFamily,
-    components::tile::attention::blackbox::BlackboxAcceleratedTileAttention,
-    definition::AttentionTileSize,
+    components::tile::TileAttentionKind, definition::AttentionTileSize,
 };
 use crate::{
     components::{
@@ -39,9 +38,9 @@ pub struct BlackboxAcceleratedStrategy {
 }
 
 impl Routine for BlackboxAcceleratedRoutine {
-    type TileAttention = BlackboxAcceleratedTileAttention;
+    const TILE_KIND: TileAttentionKind = TileAttentionKind::BlackboxAccelerated;
+
     type StageAttention = PlanePartitionStageAttentionFamily<
-        Self::TileAttention,
         StridedStageFamily,
         StridedStageFamily,
         PartitionedStageFamily,

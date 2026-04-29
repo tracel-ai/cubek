@@ -47,11 +47,10 @@ impl<E: Numeric> RowwiseTileWorkspace<E> {
                 let end = start + total_tile_size;
                 let smem = SharedMemory::new(smem_size).slice_mut(start, end);
 
-                let local_tile = LocalTile::new(LocalTileLayout::new(
-                    cfg.tile_shape,
-                    cfg.plane_dim,
-                    cfg.inner_layout,
-                ));
+                let layout = comptime! {
+                    LocalTileLayout::new(cfg.tile_shape, cfg.plane_dim, cfg.inner_layout)
+                };
+                let local_tile = LocalTile::new(layout);
 
                 RowwiseTileWorkspace::new_Bounce(BounceWorkspace::<E> { smem, local_tile })
             }

@@ -9,10 +9,11 @@ use crate::tile::pipeline::{LOGIT_MASKED, Mask, MaskExpand, RowWise};
 /// - unit_size * plane_dim = total_size (not dim wise but in total count)
 pub struct LocalTile<E: Numeric> {
     pub array: Array<E>,
+    #[cube(comptime)]
     pub layout: LocalTileLayout,
 }
 
-#[derive(CubeType, Copy, Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum InnerLayout {
     /// Each unit has all its elements contiguous inside the same row
     ///
@@ -40,7 +41,7 @@ pub enum InnerLayout {
 
 #[cube]
 impl<E: Numeric> LocalTile<E> {
-    pub fn new(layout: LocalTileLayout) -> LocalTile<E> {
+    pub fn new(#[comptime] layout: LocalTileLayout) -> LocalTile<E> {
         let array = Array::<E>::new(comptime!(layout.unit_size.0 * layout.unit_size.1) as usize);
 
         LocalTile::<E> { array, layout }
@@ -55,7 +56,7 @@ impl<E: Numeric> LocalTile<E> {
     pub fn load_from_slice(&mut self, smem_slice: &Slice<E>) {
         for r in 0..self.layout.unit_size.0 {
             for c in 0..self.layout.unit_size.1 {
-                let (row, col) = self.layout.absolute_pos((r, c));
+                let (row, col) = local_layout_absolute_pos(self.layout, (r, c));
                 let index = row * self.layout.total_size.1 + col;
 
                 self.array[(r * self.layout.unit_size.1 + c) as usize] = smem_slice[index as usize];
@@ -70,7 +71,7 @@ impl<E: Numeric> LocalTile<E> {
         // Assumes vector size == 1
         for r in 0..self.layout.unit_size.0 {
             for c in 0..self.layout.unit_size.1 {
-                let (row, col) = self.layout.absolute_pos((r, c));
+                let (row, col) = local_layout_absolute_pos(self.layout, (r, c));
                 self.array[(r * self.layout.unit_size.1 + c) as usize] =
                     E::cast_from(strided_tile.get_vector(row, col))
             }
@@ -80,7 +81,7 @@ impl<E: Numeric> LocalTile<E> {
     pub fn store_to<F: Float>(&self, smem_slice: &mut SliceMut<F>) {
         for r in 0..self.layout.unit_size.0 {
             for c in 0..self.layout.unit_size.1 {
-                let (row, col) = self.layout.absolute_pos((r, c));
+                let (row, col) = local_layout_absolute_pos(self.layout, (r, c));
                 let index = row * self.layout.total_size.1 + col;
 
                 smem_slice[index as usize] =
@@ -100,8 +101,8 @@ impl<E: Numeric> LocalTile<E> {
     }
 
     pub fn rowwise_max(&self) -> RowWise<E> {
-        let num_rows = self.layout.unit_size.0.comptime() as usize;
-        let num_cols = self.layout.unit_size.1.comptime() as usize;
+        let num_rows = comptime!(self.layout.unit_size.0) as usize;
+        let num_cols = comptime!(self.layout.unit_size.1) as usize;
         let mut vals = Array::new(num_rows);
 
         for r in 0..num_rows {
@@ -120,8 +121,8 @@ impl<E: Numeric> LocalTile<E> {
     }
 
     pub fn rowwise_sum(&self) -> RowWise<E> {
-        let num_rows = self.layout.unit_size.0.comptime() as usize;
-        let num_cols = self.layout.unit_size.1.comptime() as usize;
+        let num_rows = comptime!(self.layout.unit_size.0) as usize;
+        let num_cols = comptime!(self.layout.unit_size.1) as usize;
         let mut vals = Array::new(num_rows);
 
         for r in 0..num_rows {
@@ -140,7 +141,7 @@ impl<E: Numeric> LocalTile<E> {
     }
 
     pub fn num_units_per_row(&self) -> comptime_type!(u32) {
-        self.layout.num_units_per_row()
+        comptime!(self.layout.total_size.1 / self.layout.unit_size.1)
     }
 
     pub fn scale_and_mask<M: Mask>(&mut self, scale: E, mask: &M) {
@@ -165,8 +166,8 @@ impl<E: Numeric> Mask for LocalTile<E> {
 #[cube]
 impl<E: Float> LocalTile<E> {
     pub fn exp_diff(&mut self, rowwise: &RowWise<E>) {
-        let num_rows = self.layout.unit_size.0.comptime() as usize;
-        let num_cols = self.layout.unit_size.1.comptime() as usize;
+        let num_rows = comptime!(self.layout.unit_size.0) as usize;
+        let num_cols = comptime!(self.layout.unit_size.1) as usize;
         let threshold = E::new(LOGIT_MASKED);
 
         for r in 0..num_rows {
@@ -185,24 +186,19 @@ impl<E: Float> LocalTile<E> {
     }
 }
 
-#[derive(CubeType, Copy, Clone)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct LocalTileLayout {
-    #[cube(comptime)]
     pub total_size: Coords2d,
-    #[cube(comptime)]
     pub unit_size: Coords2d,
-    #[cube(comptime)]
     pub num_units_per_row: u32,
-    #[cube(comptime)]
     pub plane_dim: u32,
 }
 
-#[cube]
 impl LocalTileLayout {
-    pub fn new(
-        #[comptime] total_size: Coords2d,
-        #[comptime] plane_dim: u32,
-        #[comptime] inner_layout: InnerLayout,
+    pub const fn new(
+        total_size: Coords2d,
+        plane_dim: u32,
+        inner_layout: InnerLayout,
     ) -> LocalTileLayout {
         let total_elements = total_size.0 * total_size.1;
         let elements_per_unit = total_elements.div_ceil(plane_dim);
@@ -212,7 +208,6 @@ impl LocalTileLayout {
             InnerLayout::SplitRows => (2u32, elements_per_unit / 2u32),
         };
         let unit_size = (num_rows_per_unit, num_cols_per_unit);
-
         let num_units_per_row = total_size.1 / unit_size.1;
 
         LocalTileLayout {
@@ -223,34 +218,39 @@ impl LocalTileLayout {
         }
     }
 
-    // Zeroes a slice giving responsibility to units following the layout
-    pub fn zero_slice<E: Numeric>(&self, slice: &mut SliceMut<E>) {
-        for r in 0..self.unit_size.0 {
-            for c in 0..self.unit_size.1 {
-                let (row, col) = self.absolute_pos((r, c));
-                let index = row * self.total_size.1 + col;
+    pub const fn num_units_per_row(&self) -> u32 {
+        self.total_size.1 / self.unit_size.1
+    }
+}
 
-                slice[index as usize] = E::from_int(0);
-            }
+/// Maps a per-unit `(row, col)` to its absolute position within the tile
+/// described by `layout`.
+#[cube]
+pub fn local_layout_absolute_pos(
+    #[comptime] layout: LocalTileLayout,
+    local_pos: Coords2d,
+) -> Coords2d {
+    let abs_row_index = {
+        let row_0 = UNIT_POS_X / layout.num_units_per_row;
+        let row_jump = comptime!(layout.plane_dim / layout.num_units_per_row);
+        local_pos.0 * row_jump + row_0
+    };
+    let abs_col_index = layout.unit_size.1 * (UNIT_POS_X % layout.num_units_per_row) + local_pos.1;
+    (abs_row_index, abs_col_index)
+}
+
+/// Zeroes a slice giving responsibility to units following `layout`.
+#[cube]
+pub fn local_layout_zero_slice<E: Numeric>(
+    #[comptime] layout: LocalTileLayout,
+    slice: &mut SliceMut<E>,
+) {
+    for r in 0..layout.unit_size.0 {
+        for c in 0..layout.unit_size.1 {
+            let (row, col) = local_layout_absolute_pos(layout, (r, c));
+            let index = row * layout.total_size.1 + col;
+
+            slice[index as usize] = E::from_int(0);
         }
-    }
-
-    /// Maps the (row, col) of the registers of a single unit to the position within the whole tile
-    pub fn absolute_pos(&self, local_pos: Coords2d) -> Coords2d {
-        let abs_row_index = {
-            let row_0 = UNIT_POS_X / self.num_units_per_row;
-            let row_jump = comptime!(self.plane_dim / self.num_units_per_row);
-
-            local_pos.0 * row_jump + row_0
-        };
-
-        let abs_col_index = self.unit_size.1 * (UNIT_POS_X % self.num_units_per_row) + local_pos.1;
-
-        (abs_row_index, abs_col_index)
-    }
-
-    /// Gives how many units participate in the same row
-    pub fn num_units_per_row(&self) -> comptime_type!(u32) {
-        comptime!(self.total_size.1 / self.unit_size.1)
     }
 }

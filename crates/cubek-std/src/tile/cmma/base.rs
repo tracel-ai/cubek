@@ -45,6 +45,7 @@ pub fn cmma_allocate_lhs<L: Numeric, VL: Size, Sc: Scope>(
     Tile::new_Cmma(CmmaTile::<L> {
         matrix: fragment,
         matrix_layout: layout,
+        tile_size,
     })
 }
 
@@ -65,6 +66,7 @@ pub fn cmma_allocate_rhs<R: Numeric, VR: Size, Sc: Scope>(
     Tile::new_Cmma(CmmaTile::<R> {
         matrix: fragment,
         matrix_layout: layout,
+        tile_size,
     })
 }
 
@@ -85,6 +87,7 @@ pub fn cmma_allocate_acc<A: Numeric, VA: Size, Sc: Scope>(
     Tile::new_Cmma(CmmaTile::<A> {
         matrix: fragment,
         matrix_layout: layout,
+        tile_size,
     })
 }
 
