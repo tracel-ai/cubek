@@ -122,3 +122,11 @@ fn rfft_3d_batch_singleton_dim() {
     let dim = signal_shape.len() - 1;
     test_launch(client, signal_shape, dim);
 }
+
+#[test]
+fn rfft_dispatch_more_than_wgpu_x_axis_limit() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let signal_shape = [65_536, 2].to_vec();
+    let dim = signal_shape.len() - 1;
+    test_launch(client, signal_shape, dim);
+}

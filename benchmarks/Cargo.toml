@@ -15,6 +15,9 @@ version.workspace = true
 
 [features]
 
+[lib]
+path = "src/lib.rs"
+
 [dependencies]
 cubecl = { workspace = true, features = ["test-runtime", "stdlib"] }
 cubek = { path = "../crates/cubek", version = "=0.2.0-pre.4", default-features = false, features = [

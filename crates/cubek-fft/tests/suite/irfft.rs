@@ -110,3 +110,11 @@ fn irfft_3d_batch_singleton_dim() {
     let dim = spectrum_shape.len() - 1;
     test_launch(client, spectrum_shape, dim);
 }
+
+#[test]
+fn irfft_dispatch_more_than_wgpu_x_axis_limit() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let spectrum_shape = [65_536, 2].to_vec();
+    let dim = spectrum_shape.len() - 1;
+    test_launch(client, spectrum_shape, dim);
+}
