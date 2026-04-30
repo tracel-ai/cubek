@@ -67,10 +67,7 @@ pub fn run_on<R: Runtime, AP: AttentionPrecision>(
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
 
-    Ok(RunSamples {
-        durations,
-        tflops: None,
-    })
+    Ok(RunSamples { durations })
 }
 
 struct AttentionBench<R: Runtime, AP> {
