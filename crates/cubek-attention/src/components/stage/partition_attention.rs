@@ -159,7 +159,7 @@ impl<
     fn init_state(#[comptime] config: Self::Config) -> Sequence<Self::RunningState> {
         let partition_seq_q = config.shared().partition_size.seq_q;
         let mut sequence = Sequence::new();
-        let softmax_kind = config.tile_config().softmax_kind();
+        let softmax_kind = config.tile_attention().softmax_kind();
 
         #[unroll]
         for _ in 0..partition_seq_q {
@@ -200,32 +200,32 @@ impl<
     fn init_query(#[comptime] config: Self::Config) -> QueryPartition<QT<AP>, QGS<AP>> {
         QueryPartition::<QT<AP>, QGS<AP>>::new(
             config.shared().partition_size,
-            config.tile_config().score_matmul(),
+            config.tile_attention().score_matmul(),
         )
     }
 
     fn init_key(#[comptime] config: Self::Config) -> KeyPartition<KVT<AP>, KSS<AP>> {
-        KeyPartition::<KVT<AP>, KSS<AP>>::new(config.tile_config().score_matmul())
+        KeyPartition::<KVT<AP>, KSS<AP>>::new(config.tile_attention().score_matmul())
     }
 
     fn init_value(#[comptime] config: Self::Config) -> ValuePartition<KVT<AP>, VSS<AP>> {
-        ValuePartition::<KVT<AP>, VSS<AP>>::new(config.tile_config().value_matmul())
+        ValuePartition::<KVT<AP>, VSS<AP>>::new(config.tile_attention().value_matmul())
     }
 
     fn init_softmax(#[comptime] config: Self::Config) -> SoftmaxPartition<SM<AP>, SML<AP>> {
         SoftmaxPartition::<SM<AP>, SML<AP>>::new(
             config.shared().partition_size,
-            config.tile_config().score_matmul(),
-            config.tile_config().value_matmul(),
-            config.tile_config().score_bounce_config(),
+            config.tile_attention().score_matmul(),
+            config.tile_attention().value_matmul(),
+            config.tile_attention().score_bounce_config(),
         )
     }
 
     fn init_output(#[comptime] config: Self::Config) -> OutputPartition<ACC<AP>, OSS<AP>> {
         OutputPartition::<ACC<AP>, OSS<AP>>::new(
             config.shared().partition_size,
-            config.tile_config().value_matmul(),
-            config.tile_config().output_bounce_config(),
+            config.tile_attention().value_matmul(),
+            config.tile_attention().output_bounce_config(),
         )
     }
 
@@ -235,9 +235,9 @@ impl<
     ) -> MaskPartition<SM<AP>> {
         let mask_config = comptime! {
             MaskConfig {
-                layout: config.tile_config().mask_layout(),
-                causal: config.tile_config().causal_mask(),
-                materialized: config.tile_config().materialized_mask(),
+                layout: config.tile_attention().mask_layout(),
+                causal: config.tile_attention().causal_mask(),
+                materialized: config.tile_attention().materialized_mask(),
             }
         };
         MaskPartition::<SM<AP>>::new(out_of_bounds, mask_config)

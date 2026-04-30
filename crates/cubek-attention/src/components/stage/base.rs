@@ -137,7 +137,7 @@ pub trait StageAttention<AP: AttentionPrecision>: 'static + Send + Sync {
 pub trait StageAttentionConfig:
     Copy + Clone + Eq + PartialEq + Hash + Debug + Send + Sync + 'static
 {
-    fn tile_config(&self) -> TileAttention;
+    fn tile_attention(&self) -> TileAttention;
     fn tile_size(&self) -> AttentionTileSize;
 
     fn elements_in_partition_seq_q(&self) -> u32;
@@ -160,7 +160,7 @@ pub enum PartitionAttentionConfig {
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct SharedPartitionAttentionConfig {
-    pub tile_config: TileAttention,
+    pub tile_attention: TileAttention,
     pub partition_size: AttentionPartitionSize,
     pub stage_size: AttentionStageSize,
     pub num_planes: u32,
@@ -179,8 +179,8 @@ impl PartitionAttentionConfig {
 }
 
 impl StageAttentionConfig for PartitionAttentionConfig {
-    fn tile_config(&self) -> TileAttention {
-        self.shared().tile_config
+    fn tile_attention(&self) -> TileAttention {
+        self.shared().tile_attention
     }
 
     fn num_planes(&self) -> u32 {
@@ -188,7 +188,7 @@ impl StageAttentionConfig for PartitionAttentionConfig {
     }
 
     fn plane_dim(&self) -> u32 {
-        self.tile_config().plane_dim()
+        self.tile_attention().plane_dim()
     }
 
     fn key_smem_config(&self) -> StageMemoryConfig {
@@ -204,7 +204,7 @@ impl StageAttentionConfig for PartitionAttentionConfig {
     }
 
     fn tile_size(&self) -> AttentionTileSize {
-        self.tile_config().tile_size()
+        self.tile_attention().tile_size()
     }
 
     fn elements_in_partition_seq_q(&self) -> u32 {

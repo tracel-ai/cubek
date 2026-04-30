@@ -51,7 +51,8 @@ impl<SK: StageFamily, SV: StageFamily, SO: StageFamily<ReadWrite>> StageAttentio
         blueprint: &AttentionBlueprint,
         dtypes: &AttentionElems,
     ) -> Result<Self::Config, AttentionSetupError> {
-        let tile_config = TileAttentionKind::Unit.expand_config(device_props, blueprint, dtypes)?;
+        let tile_attention =
+            TileAttentionKind::Unit.expand_tile_attention(device_props, blueprint, dtypes)?;
         let compute_resources = match TileAttentionKind::Unit.computation_resources()? {
             CubeDimResource::Units(units) => {
                 CubeDimResource::Units(units * blueprint.tiling_scheme.stage_size.seq_q)
@@ -118,7 +119,7 @@ impl<SK: StageFamily, SV: StageFamily, SO: StageFamily<ReadWrite>> StageAttentio
                 key_smem_config,
                 value_smem_config,
                 out_smem_config,
-                tile_config,
+                tile_attention,
             },
         }))
     }

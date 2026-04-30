@@ -92,7 +92,7 @@ impl TileMatmulKind {
     }
 
     /// Constructs the configuration based on the matmul problem, selection, and vector sizes.
-    pub fn expand_config(
+    pub fn expand_tile_matmul(
         &self,
         device_props: &DeviceProperties,
         blueprint: &TilingBlueprint,

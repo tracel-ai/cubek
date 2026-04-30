@@ -272,7 +272,7 @@ fn quantize_operand<R: Runtime>(
     let f32_dtype = f32::as_type_native_unchecked().storage_type();
     let scale_in = TensorHandle::empty(client, scale_shape_vec.clone(), f32_dtype);
     let (q_min, q_max) = scheme.value.range();
-    let max_abs_q = q_max.abs().max(q_min.abs()) as f32;
+    let max_abs_q = q_max.abs().max(q_min.abs());
     let base = 1.0 / max_abs_q;
     // Use a narrow band around the nominal tensor-wise scale so block scales are
     // non-degenerate without producing NaNs on quantization.
@@ -471,7 +471,7 @@ fn validate_spec(spec: &BenchSpec, b: usize, m: usize, n: usize, k: usize) -> Re
         }
         if let QuantLevel::Block(_) = &scheme.level {
             let scales = scales_shape(&scheme, shape);
-            if scales.iter().any(|&d| d == 0) {
+            if scales.contains(&0) {
                 return Err(format!("{label} block size exceeds a dim in {shape:?}"));
             }
         }

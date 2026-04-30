@@ -142,7 +142,7 @@ impl TileAttentionKind {
     }
 
     /// Constructs the [`TileAttention`] config from the algorithm's blueprint.
-    pub fn expand_config(
+    pub fn expand_tile_attention(
         &self,
         device_props: &DeviceProperties,
         blueprint: &AttentionBlueprint,
