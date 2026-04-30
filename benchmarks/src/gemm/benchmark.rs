@@ -16,28 +16,39 @@ use cubek::{
 
 use crate::{
     gemm::{
-        problem::{GemmProblem, problem_for},
+        problem::{GemmProblem, Precision, problem_for},
         strategy::strategy_for,
     },
     registry::RunSamples,
 };
 
 pub fn run(strategy_id: &str, problem_id: &str, num_samples: usize) -> Result<RunSamples, String> {
-    run_on::<cubecl::TestRuntime, f32>(Default::default(), strategy_id, problem_id, num_samples)
+    run_on::<cubecl::TestRuntime>(Default::default(), strategy_id, problem_id, num_samples)
 }
 
-pub fn run_on<R: Runtime, MP: MatmulPrecision>(
+pub fn run_on<R: Runtime>(
     device: R::Device,
     strategy_id: &str,
     problem_id: &str,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let client = R::client(&device);
     let problem =
         problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
     let strategy =
         strategy_for(strategy_id).ok_or_else(|| format!("unknown strategy: {strategy_id}"))?;
+    match problem.precision {
+        Precision::F32 => run_with::<R, f32>(device, problem, strategy, num_samples),
+        Precision::F16 => run_with::<R, half::f16>(device, problem, strategy, num_samples),
+    }
+}
 
+fn run_with<R: Runtime, MP: MatmulPrecision>(
+    device: R::Device,
+    problem: GemmProblem,
+    strategy: Strategy,
+    num_samples: usize,
+) -> Result<RunSamples, String> {
+    let client = R::client(&device);
     let flops = 2.0 * problem.b as f64 * problem.m as f64 * problem.n as f64 * problem.k as f64;
 
     let bench = GemmBench::<R> {

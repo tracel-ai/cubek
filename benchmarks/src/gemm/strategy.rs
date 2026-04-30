@@ -1,72 +1,90 @@
 use cubek::matmul::{
     launch::Strategy,
     routines::{
-        BlueprintStrategy, double_buffering::DoubleBufferingArgs,
-        ordered_double_buffering::OrderedSelectionArgs, simple::SimpleArgs,
+        BlueprintStrategy, TileSizeSelection, double_buffering::DoubleBufferingArgs,
+        double_unit::DoubleUnitSelectionArgs, ordered_double_buffering::OrderedSelectionArgs,
+        simple::SimpleArgs, simple_unit::SimpleUnitSelectionArgs,
     },
 };
 
 use crate::registry::ItemDescriptor;
 
-/// Stable IDs. Changing one is a breaking change for any persisted history.
-pub const STRATEGY_SIMPLE_CYCLIC_CMMA: &str = "simple_cyclic_cmma";
-pub const STRATEGY_SIMPLE_CYCLIC_CMMA_MULTIROWS: &str = "simple_cyclic_cmma_multirows";
-pub const STRATEGY_DOUBLE_TILEWISE_CMMA: &str = "double_tilewise_cmma";
-pub const STRATEGY_DOUBLE_TILEWISE_CMMA_SPECIALIZED: &str = "double_tilewise_cmma_specialized";
-pub const STRATEGY_ORDERED_DOUBLE_CMMA: &str = "ordered_double_cmma";
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StrategyKind {
+    SimpleCyclicCmma,
+    SimpleCyclicCmmaMultiRows,
+    DoubleTilewiseCmma,
+    DoubleTilewiseCmmaSpecialized,
+    OrderedDoubleCmma,
+    SimpleUnitMin,
+    SimpleUnitMax,
+    DoubleUnitMin,
+    DoubleUnitMax,
+    SpecializedTmaMma,
+    SpecializedCyclicMma,
+    SpecializedStridedMma,
+}
+
+#[derive(Clone, Copy)]
+struct StrategySpec {
+    id: &'static str,
+    label: &'static str,
+    kind: StrategyKind,
+}
+
+const STRATEGIES: &[StrategySpec] = &[
+    StrategySpec { id: "simple_cyclic_cmma",              label: "SimpleCyclicCmma",                  kind: StrategyKind::SimpleCyclicCmma },
+    StrategySpec { id: "simple_cyclic_cmma_multirows",    label: "SimpleCyclicCmma (multi rows)",     kind: StrategyKind::SimpleCyclicCmmaMultiRows },
+    StrategySpec { id: "double_tilewise_cmma",            label: "DoubleTilewiseCmma",                kind: StrategyKind::DoubleTilewiseCmma },
+    StrategySpec { id: "double_tilewise_cmma_specialized", label: "DoubleTilewiseCmma (specialized)", kind: StrategyKind::DoubleTilewiseCmmaSpecialized },
+    StrategySpec { id: "ordered_double_cmma",             label: "OrderedDoubleCmma (rc=8 rpp=2 pk=2)", kind: StrategyKind::OrderedDoubleCmma },
+    StrategySpec { id: "simple_unit_min",                 label: "Simple Unit (min tile)",            kind: StrategyKind::SimpleUnitMin },
+    StrategySpec { id: "simple_unit_max",                 label: "Simple Unit (max tile)",            kind: StrategyKind::SimpleUnitMax },
+    StrategySpec { id: "double_unit_min",                 label: "Double Unit (min tile)",            kind: StrategyKind::DoubleUnitMin },
+    StrategySpec { id: "double_unit_max",                 label: "Double Unit (max tile)",            kind: StrategyKind::DoubleUnitMax },
+    StrategySpec { id: "specialized_tma_mma",             label: "Specialized TMA (mma)",             kind: StrategyKind::SpecializedTmaMma },
+    StrategySpec { id: "specialized_cyclic_mma",          label: "Specialized Cyclic (mma)",          kind: StrategyKind::SpecializedCyclicMma },
+    StrategySpec { id: "specialized_strided_mma",         label: "Specialized Strided (mma)",         kind: StrategyKind::SpecializedStridedMma },
+];
 
 pub fn strategies() -> Vec<ItemDescriptor> {
-    vec![
-        ItemDescriptor {
-            id: STRATEGY_SIMPLE_CYCLIC_CMMA.to_string(),
-            label: "SimpleCyclicCmma".to_string(),
-        },
-        ItemDescriptor {
-            id: STRATEGY_SIMPLE_CYCLIC_CMMA_MULTIROWS.to_string(),
-            label: "SimpleCyclicCmma (multi rows)".to_string(),
-        },
-        ItemDescriptor {
-            id: STRATEGY_DOUBLE_TILEWISE_CMMA.to_string(),
-            label: "DoubleTilewiseCmma".to_string(),
-        },
-        ItemDescriptor {
-            id: STRATEGY_DOUBLE_TILEWISE_CMMA_SPECIALIZED.to_string(),
-            label: "DoubleTilewiseCmma (specialized)".to_string(),
-        },
-        ItemDescriptor {
-            id: STRATEGY_ORDERED_DOUBLE_CMMA.to_string(),
-            label: "OrderedDoubleCmma (rc=8 rpp=2 pk=2)".to_string(),
-        },
-    ]
+    STRATEGIES
+        .iter()
+        .map(|s| ItemDescriptor {
+            id: s.id.to_string(),
+            label: s.label.to_string(),
+        })
+        .collect()
 }
 
 pub(crate) fn strategy_for(id: &str) -> Option<Strategy> {
-    Some(match id {
-        STRATEGY_SIMPLE_CYCLIC_CMMA => {
+    let kind = STRATEGIES.iter().find(|s| s.id == id)?.kind;
+    Some(match kind {
+        StrategyKind::SimpleCyclicCmma => {
             Strategy::SimpleCyclicCmma(BlueprintStrategy::Inferred(SimpleArgs {
                 multi_rows: false,
                 ..Default::default()
             }))
         }
-        STRATEGY_SIMPLE_CYCLIC_CMMA_MULTIROWS => {
+        StrategyKind::SimpleCyclicCmmaMultiRows => {
             Strategy::SimpleCyclicCmma(BlueprintStrategy::Inferred(SimpleArgs {
                 multi_rows: true,
                 ..Default::default()
             }))
         }
-        STRATEGY_DOUBLE_TILEWISE_CMMA => {
+        StrategyKind::DoubleTilewiseCmma => {
             Strategy::DoubleTilewiseCmma(BlueprintStrategy::Inferred(DoubleBufferingArgs {
                 specialized: false,
                 ..Default::default()
             }))
         }
-        STRATEGY_DOUBLE_TILEWISE_CMMA_SPECIALIZED => {
+        StrategyKind::DoubleTilewiseCmmaSpecialized => {
             Strategy::DoubleTilewiseCmma(BlueprintStrategy::Inferred(DoubleBufferingArgs {
                 specialized: true,
                 ..Default::default()
             }))
         }
-        STRATEGY_ORDERED_DOUBLE_CMMA => {
+        StrategyKind::OrderedDoubleCmma => {
             Strategy::OrderedDoubleCmma(BlueprintStrategy::Inferred(OrderedSelectionArgs {
                 row_count: Some(8),
                 rows_per_plane: Some(2),
@@ -74,6 +92,34 @@ pub(crate) fn strategy_for(id: &str) -> Option<Strategy> {
                 ..Default::default()
             }))
         }
-        _ => return None,
+        StrategyKind::SimpleUnitMin => {
+            Strategy::SimpleUnit(BlueprintStrategy::Inferred(SimpleUnitSelectionArgs {
+                tile_size: TileSizeSelection::MinTileSize,
+            }))
+        }
+        StrategyKind::SimpleUnitMax => {
+            Strategy::SimpleUnit(BlueprintStrategy::Inferred(SimpleUnitSelectionArgs {
+                tile_size: TileSizeSelection::MaxTileSize,
+            }))
+        }
+        StrategyKind::DoubleUnitMin => {
+            Strategy::DoubleUnit(BlueprintStrategy::Inferred(DoubleUnitSelectionArgs {
+                tile_size: TileSizeSelection::MinTileSize,
+            }))
+        }
+        StrategyKind::DoubleUnitMax => {
+            Strategy::DoubleUnit(BlueprintStrategy::Inferred(DoubleUnitSelectionArgs {
+                tile_size: TileSizeSelection::MaxTileSize,
+            }))
+        }
+        StrategyKind::SpecializedTmaMma => {
+            Strategy::SpecializedTmaMma(BlueprintStrategy::Inferred(().into()))
+        }
+        StrategyKind::SpecializedCyclicMma => {
+            Strategy::SpecializedCyclicMma(BlueprintStrategy::Inferred(().into()))
+        }
+        StrategyKind::SpecializedStridedMma => {
+            Strategy::SpecializedStridedMma(BlueprintStrategy::Inferred(().into()))
+        }
     })
 }
