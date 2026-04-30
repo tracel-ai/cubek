@@ -298,7 +298,7 @@ pub(crate) fn problem_for(id: &str) -> Option<GemmProblem> {
     SHAPES.iter().find_map(|shape| {
         LAYOUTS.iter().find_map(|layout| {
             PRECISIONS.iter().find_map(|prec| {
-                (make_id(shape, layout, prec) == id).then(|| GemmProblem {
+                (make_id(shape, layout, prec) == id).then_some(GemmProblem {
                     b: shape.b,
                     m: shape.m,
                     n: shape.n,
