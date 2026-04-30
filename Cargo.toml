@@ -67,3 +67,6 @@ opt-level = 0
 
 [profile.dev.build-override]
 opt-level = 3
+
+[profile.bench]
+debug = 1
