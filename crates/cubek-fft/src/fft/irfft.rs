@@ -66,8 +66,12 @@ pub fn irfft_launch<R: Runtime>(
         .map(|(_, e)| *e)
         .product();
 
-    let cube_count = CubeCount::new_1d(count as u32);
+    if count == 0 {
+        return Ok(());
+    }
+
     let cube_dim = CubeDim::new_single();
+    let cube_count = cubecl::calculate_cube_count_elemwise(client, count, CubeDim::new_single());
     let vectorization = 1;
     let shape = signal.shape[dim];
 
