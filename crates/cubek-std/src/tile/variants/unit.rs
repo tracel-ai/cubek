@@ -66,7 +66,7 @@ impl<E: Numeric> UnitTile<E> {
             let row_offset = r as u32 * self.layout.num_cols;
             for c in 0..self.layout.num_cols {
                 let index = row_offset + c;
-                self.data[index as usize] = self.data[index as usize] * scale.vals[r];
+                self.data[index as usize] *= scale.vals[r];
             }
         }
     }

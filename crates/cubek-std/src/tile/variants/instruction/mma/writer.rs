@@ -164,9 +164,7 @@ fn store_stmatrix<
     let start = stmatrix_offset::<V, A, B, CD>(stride, def, stage_vector_size, ident, m);
     let start = tile.stage_offset(start);
 
-    let row_slice = tile
-        .container
-        .slice_mut(start as usize, (start + width) as usize);
+    let row_slice = &mut tile.container[start as usize..(start + width) as usize];
 
     let stage_ty = V::as_type().comptime();
     let frag_ty = E::as_type().comptime();

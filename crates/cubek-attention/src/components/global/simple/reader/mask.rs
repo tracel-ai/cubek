@@ -147,7 +147,7 @@ impl<M: Numeric, N: Size> MaterializedMaskReader<M, N> {
             (row, col.runtime()),
             (attention_tile_size.seq_q, attention_tile_size.seq_kv).runtime(),
         );
-        let slice = view.to_linear_slice();
+        let slice = view.as_linear_slice();
 
         let vector_size = self.gmem_config.vector_size.comptime() as u32;
         let start = 0;

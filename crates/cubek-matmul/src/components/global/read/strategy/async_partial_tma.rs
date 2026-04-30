@@ -160,7 +160,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
             let slice_size = size_row * size_col;
 
             let slice_start = task_id * slice_size;
-            let slice = stage.slice_mut(slice_start as usize, (slice_start + slice_size) as usize);
+            let slice = &mut stage[slice_start as usize..(slice_start + slice_size) as usize];
             // "column" to be loaded, may be a row for col-major (can't think of a better name)
             let load_col = task_id * size_col;
 

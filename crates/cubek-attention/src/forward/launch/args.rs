@@ -1214,7 +1214,7 @@ impl AttentionArgs for TensorArgs {
         start: usize,
         end: usize,
     ) -> &[Vector<Q::T, Q::N>] {
-        state.query.slice(start, end)
+        &state.query[start..end]
     }
 
     fn read_window_key<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
@@ -1222,7 +1222,7 @@ impl AttentionArgs for TensorArgs {
         start: usize,
         end: usize,
     ) -> &[Vector<K::T, K::N>] {
-        state.key.slice(start, end)
+        &state.key[start..end]
     }
 
     fn read_window_value<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
@@ -1230,7 +1230,7 @@ impl AttentionArgs for TensorArgs {
         start: usize,
         end: usize,
     ) -> &[Vector<V::T, V::N>] {
-        state.value.slice(start, end)
+        &state.value[start..end]
     }
 
     fn read_window_mask<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
@@ -1238,7 +1238,7 @@ impl AttentionArgs for TensorArgs {
         start: usize,
         end: usize,
     ) -> &[Vector<M::T, M::N>] {
-        state.mask.unwrap_ref().slice(start, end)
+        &state.mask.unwrap_ref()[start..end]
     }
 
     fn as_tensor_map_query<

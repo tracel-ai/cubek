@@ -1,6 +1,5 @@
 use cubecl::comptime;
 use cubecl::cube;
-use cubecl::frontend::CubeIndexMutExpand;
 use cubecl::prelude::*;
 
 use crate::components::instructions::AccumulatorFormat;

@@ -75,9 +75,9 @@ fn load_window<EG: CubePrimitive>(
 
     if gmem_config.check_row_bounds || gmem_config.check_col_bounds {
         let view = view.slice(offset, size);
-        view.to_linear_slice()
+        view.as_linear_slice()
     } else {
         let view = view.slice_unchecked(offset, size);
-        view.to_linear_slice()
+        view.as_linear_slice()
     }
 }

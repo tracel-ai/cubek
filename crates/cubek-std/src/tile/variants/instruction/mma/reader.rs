@@ -193,9 +193,7 @@ fn load_ldmatrix<E: Numeric, N: Size, V: Numeric, NV: Size, A: Numeric, B: Numer
         ldmatrix_offset::<V, A, B, CD>(stride, def, stage_vector_size, ident, layout, tile_size);
     let start = tile.stage_offset(start);
 
-    let row_slice = tile
-        .container
-        .slice(start as usize, (start + width) as usize);
+    let row_slice = &tile.container[start as usize..(start + width) as usize];
     let regs = def.load_matrix::<_, N>(row_slice, ident, num_regs, transposed);
 
     #[unroll]

@@ -49,7 +49,7 @@ impl<AP: AttentionPrecision> QueryReader<AP> {
             (row * tile_size.seq_q, col * tile_size.head_dim),
             (tile_size.seq_q, tile_size.head_dim).runtime(),
         );
-        let slice = view.to_linear_slice();
+        let slice = view.as_linear_slice();
 
         let start = 0;
         let vectors_per_tile = tile_size.seq_q * tile_size.head_dim / vector_size;

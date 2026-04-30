@@ -94,7 +94,7 @@ impl<ES: Numeric, N: Size> StridedTile<ES, N> {
     /// Returns the tile as an offset read-only slice. Should only be used when swizzling is
     /// definitely not applicable.
     pub fn as_slice(&self) -> &[Vector<ES, N>] {
-        self.container.slice(self.start as usize, self.end as usize)
+        &self.container[self.start as usize..self.end as usize]
     }
 }
 
@@ -103,8 +103,7 @@ impl<ES: Numeric, N: Size> StridedTile<ES, N> {
     /// Returns the tile as an offset slice. Should only be used when swizzling is definitely not
     /// applicable.
     pub fn as_slice_mut(&mut self) -> &mut [Vector<ES, N>] {
-        self.container
-            .slice_mut(self.start as usize, self.end as usize)
+        &mut self.container[self.start as usize..self.end as usize]
     }
 }
 
