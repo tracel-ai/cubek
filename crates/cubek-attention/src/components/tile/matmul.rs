@@ -4,11 +4,11 @@ use cubek_std::{
     MatrixLayout, SwizzleModes,
     tile::{
         BounceConfig, CmmaMatmul, CmmaTile, Plane, ProductType, RegisterMatmul, Tile,
-        allocate_bounce_tile, cmma_allocate_lhs, cmma_allocate_rhs, register_allocate_acc,
-        register_allocate_lhs, register_allocate_rhs,
+        allocate_bounce_tile, cmma_allocate_acc, cmma_allocate_lhs, cmma_allocate_rhs,
+        register_allocate_acc, register_allocate_lhs, register_allocate_rhs,
     },
 };
-use cubek_std::{StageIdent, TileSize, as_cmma_layout};
+use cubek_std::{TileSize, as_cmma_layout};
 
 /// Attention's tile-level matmul configuration. Each variant carries the per-kind
 /// config from cubek-std.
@@ -92,37 +92,12 @@ pub fn allocate_acc<A: Numeric, VA: Size>(
 ) -> Tile<A, VA, Plane, ReadWrite> {
     match matmul {
         AttentionTileMatmul::Cmma(c) => {
-            cubek_std::tile::cmma_allocate_acc::<A, VA, Plane>(MatrixLayout::RowMajor, c.tile_size)
+            cmma_allocate_acc::<A, VA, Plane>(MatrixLayout::RowMajor, c.tile_size)
         }
         AttentionTileMatmul::Register(c) => {
             register_allocate_acc::<A, VA, Plane>(MatrixLayout::RowMajor, c)
         }
     }
-}
-
-#[cube]
-pub fn load_lhs<E: Numeric, ES: Size, L: Numeric, VL: Size, R: Numeric, A: Numeric>(
-    source: &Tile<E, ES, Plane, ReadOnly>,
-    dest: &mut Tile<L, VL, Plane, ReadWrite>,
-) {
-    dest.copy_from::<E, ES, L, R, A, ReadOnly>(source, StageIdent::Lhs);
-}
-
-#[cube]
-pub fn load_rhs<E: Float, ES: Size, L: Numeric, R: Numeric, VR: Size, A: Numeric>(
-    source: &Tile<E, ES, Plane, ReadOnly>,
-    dest: &mut Tile<R, VR, Plane, ReadWrite>,
-) {
-    dest.copy_from::<E, ES, L, R, A, ReadOnly>(source, StageIdent::Rhs);
-}
-
-#[cube]
-pub fn execute<L: Numeric, VL: Size, R: Numeric, VR: Size, A: Numeric, VA: Size>(
-    lhs: &Tile<L, VL, Plane, ReadWrite>,
-    rhs: &Tile<R, VR, Plane, ReadWrite>,
-    acc: &mut Tile<A, VA, Plane, ReadWrite>,
-) {
-    acc.mma(lhs, rhs);
 }
 
 /// Allocates an accumulator tile that takes part in row-wise softmax/output

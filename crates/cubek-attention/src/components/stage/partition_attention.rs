@@ -19,10 +19,7 @@ use crate::{
     components::stage::base::StageAttentionConfig,
     {components::stage::StageAttention, definition::AttentionPrecision},
 };
-use crate::{
-    components::stage::{QueryPartition, SoftmaxPartition},
-    components::tile::matmul::{self as attn_matmul},
-};
+use crate::components::stage::{QueryPartition, SoftmaxPartition};
 use crate::{
     components::{global::GlobalAttentionConfig, stage::PartitionAttentionConfig},
     definition::attention_types::*,
@@ -94,16 +91,17 @@ impl<
 
                     let key_tile = key_partition.get_mut();
                     let key_data = SK::tile(key_stage, (kv, hd as u32).runtime());
-                    attn_matmul::load_rhs::<KS<AP>, KSS<AP>, QT<AP>, KVT<AP>, KSS<AP>, SM<AP>>(
-                        &key_data,
-                        &mut key_tile.tile,
-                    );
 
-                    attn_matmul::execute::<QT<AP>, QGS<AP>, KVT<AP>, KSS<AP>, SM<AP>, Const<0>>(
-                        &query_tile.tile,
-                        &key_tile.tile,
-                        softmax_partition.get_score_mut(q),
-                    );
+                    key_tile
+                        .tile
+                        .copy_from::<KS<AP>, KSS<AP>, QT<AP>, KVT<AP>, SM<AP>, ReadOnly>(
+                            &key_data,
+                            cubek_std::StageIdent::Rhs,
+                        );
+
+                    softmax_partition
+                        .get_score_mut(q)
+                        .mma(&query_tile.tile, &key_tile.tile);
                 }
 
                 let state_q = state.index_mut(q);
@@ -115,18 +113,20 @@ impl<
                 for vd in 0..p.val_dim as usize {
                     let value_data = SV::tile(value_stage, (kv, vd as u32).runtime());
                     let value_tile = value_partition.get_mut();
-                    attn_matmul::load_rhs::<VS<AP>, VSS<AP>, SML<AP>, KVT<AP>, VSS<AP>, ACC<AP>>(
-                        &value_data,
-                        &mut value_tile.tile,
-                    );
+
+                    value_tile
+                        .tile
+                        .copy_from::<VS<AP>, VSS<AP>, SML<AP>, KVT<AP>, ACC<AP>, ReadOnly>(
+                            &value_data,
+                            cubek_std::StageIdent::Rhs,
+                        );
 
                     let partition_val_dim = p.val_dim as usize;
                     output_partition.scale_mul_at::<SM<AP>>(&scale, q, vd, partition_val_dim);
 
-                    attn_matmul::execute::<SML<AP>, Const<0>, KVT<AP>, VSS<AP>, ACC<AP>, OSS<AP>>(
+                    output_partition.get_at_mut(q, vd, partition_val_dim).mma(
                         softmax_partition.get_softmaxed_mut(q),
                         &value_partition.get().tile,
-                        output_partition.get_at_mut(q, vd, partition_val_dim),
                     );
                 }
             }
@@ -264,10 +264,12 @@ impl<
                     partition_head_dim,
                 );
 
-                attn_matmul::load_lhs::<QG<AP>, QGS<AP>, QT<AP>, QGS<AP>, KVT<AP>, SM<AP>>(
-                    &Tile::new_SharedMemory(tile_read),
-                    &mut tile_to_write.tile,
-                );
+                tile_to_write
+                    .tile
+                    .copy_from::<QG<AP>, QGS<AP>, QT<AP>, KVT<AP>, SM<AP>, ReadOnly>(
+                        &Tile::new_SharedMemory(tile_read),
+                        cubek_std::StageIdent::Lhs,
+                    );
             }
         }
     }

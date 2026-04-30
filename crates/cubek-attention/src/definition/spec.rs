@@ -292,45 +292,79 @@ pub type InputRuntimeArg<AA, R> = <InputArg<AA> as LaunchArg>::RuntimeArg<R>;
 pub type OutputRuntimeArg<AA, R> = <OutputArg<AA> as LaunchArg>::RuntimeArg<R>;
 
 pub mod attention_types {
+    use cubecl::prelude::*;
+
     use crate::definition::{
         AttentionPrecision, AttentionSpec, QueryPrecision, StagedMatrixPrecision,
     };
 
-    pub type QG<AS> =
-        <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Query as QueryPrecision>::Global;
-    pub type QGS<AS> =
-        <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Query as QueryPrecision>::GlobalSize;
-    pub type QT<AS> =
-        <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Query as QueryPrecision>::Tile;
-    pub type KG<AS> =
-    <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Key as StagedMatrixPrecision>::Global;
-    pub type KGS<AS> =
-    <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Key as StagedMatrixPrecision>::GlobalSize;
-    pub type KS<AS> =
-        <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Key as StagedMatrixPrecision>::Stage;
-    pub type KSS<AS> =
-        <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Key as StagedMatrixPrecision>::StageSize;
-    pub type VG<AS> =
-    <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Value as StagedMatrixPrecision>::Global;
-    pub type VGS<AS> =
-    <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Value as StagedMatrixPrecision>::GlobalSize;
-    pub type VS<AS> =
-    <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Value as StagedMatrixPrecision>::Stage;
-    pub type VSS<AS> =
-    <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Value as StagedMatrixPrecision>::StageSize;
+    // ==================== Per-operand precision grouping ====================
+
+    pub type Query<AS> = <<AS as AttentionSpec>::Precision as AttentionPrecision>::Query;
+    pub type Key<AS> = <<AS as AttentionSpec>::Precision as AttentionPrecision>::Key;
+    pub type Value<AS> = <<AS as AttentionSpec>::Precision as AttentionPrecision>::Value;
+    pub type Out<AS> = <<AS as AttentionSpec>::Precision as AttentionPrecision>::Out;
+
+    // ==================== QUERY ====================
+
+    // Element / Size splits
+    pub type QG<AS> = <Query<AS> as QueryPrecision>::Global;
+    pub type QGS<AS> = <Query<AS> as QueryPrecision>::GlobalSize;
+    pub type QT<AS> = <Query<AS> as QueryPrecision>::Tile;
+
+    // Vector form
+    pub type QGV<AS> = Vector<QG<AS>, QGS<AS>>;
+
+    // ==================== KEY ====================
+
+    // Element / Size splits
+    pub type KG<AS> = <Key<AS> as StagedMatrixPrecision>::Global;
+    pub type KGS<AS> = <Key<AS> as StagedMatrixPrecision>::GlobalSize;
+    pub type KS<AS> = <Key<AS> as StagedMatrixPrecision>::Stage;
+    pub type KSS<AS> = <Key<AS> as StagedMatrixPrecision>::StageSize;
+
+    // Vector forms
+    pub type KGV<AS> = Vector<KG<AS>, KGS<AS>>;
+    pub type KSV<AS> = Vector<KS<AS>, KSS<AS>>;
+
+    // ==================== VALUE ====================
+
+    // Element / Size splits
+    pub type VG<AS> = <Value<AS> as StagedMatrixPrecision>::Global;
+    pub type VGS<AS> = <Value<AS> as StagedMatrixPrecision>::GlobalSize;
+    pub type VS<AS> = <Value<AS> as StagedMatrixPrecision>::Stage;
+    pub type VSS<AS> = <Value<AS> as StagedMatrixPrecision>::StageSize;
+
+    // Vector forms
+    pub type VGV<AS> = Vector<VG<AS>, VGS<AS>>;
+    pub type VSV<AS> = Vector<VS<AS>, VSS<AS>>;
+
+    // ==================== KV TILE / SOFTMAX / ACCUMULATOR ====================
 
     pub type KVT<AS> = <<AS as AttentionSpec>::Precision as AttentionPrecision>::KVTile;
     pub type SM<AS> = <<AS as AttentionSpec>::Precision as AttentionPrecision>::SoftmaxAcc;
     pub type SML<AS> = <<AS as AttentionSpec>::Precision as AttentionPrecision>::SoftmaxLhs;
-
     pub type ACC<AS> = <<AS as AttentionSpec>::Precision as AttentionPrecision>::Accumulator;
+
+    // ==================== MASK ====================
+
     pub type MSK<AS> = <<AS as AttentionSpec>::Precision as AttentionPrecision>::Mask;
     pub type MSKS<AS> = <<AS as AttentionSpec>::Precision as AttentionPrecision>::MaskSize;
 
-    pub type OG<AS> = <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Out as StagedMatrixPrecision>::Global;
-    pub type OGS<AS> = <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Out as StagedMatrixPrecision>::GlobalSize;
-    pub type OS<AS> = <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Out as StagedMatrixPrecision>::Stage;
-    pub type OSS<AS> = <<<AS as AttentionSpec>::Precision as AttentionPrecision>::Out as StagedMatrixPrecision>::StageSize;
+    // Vector form
+    pub type MSKV<AS> = Vector<MSK<AS>, MSKS<AS>>;
+
+    // ==================== OUT ====================
+
+    // Element / Size splits
+    pub type OG<AS> = <Out<AS> as StagedMatrixPrecision>::Global;
+    pub type OGS<AS> = <Out<AS> as StagedMatrixPrecision>::GlobalSize;
+    pub type OS<AS> = <Out<AS> as StagedMatrixPrecision>::Stage;
+    pub type OSS<AS> = <Out<AS> as StagedMatrixPrecision>::StageSize;
+
+    // Vector forms
+    pub type OGV<AS> = Vector<OG<AS>, OGS<AS>>;
+    pub type OSV<AS> = Vector<OS<AS>, OSS<AS>>;
 }
 
 pub type Args<MS> = <MS as AttentionSpec>::Args;
