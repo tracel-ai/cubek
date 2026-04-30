@@ -32,7 +32,8 @@ pub fn run_on<R: Runtime, E: frontend::Float>(
     num_samples: usize,
 ) -> Result<RunSamples, String> {
     let client = R::client(&device);
-    let problem = problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
+    let problem =
+        problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
     strategy_for(strategy_id).ok_or_else(|| format!("unknown strategy: {strategy_id}"))?;
 
     let bench = FftBench::<R, E> {

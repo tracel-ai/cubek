@@ -42,17 +42,14 @@ pub fn run_on<R: Runtime, E: frontend::Float>(
     num_samples: usize,
 ) -> Result<RunSamples, String> {
     let client = R::client(&device);
-    let problem = problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
+    let problem =
+        problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
     let strategy =
         strategy_for(strategy_id).ok_or_else(|| format!("unknown strategy: {strategy_id}"))?;
 
     validate_spec(&problem)?;
 
-    let flops = 2.0
-        * problem.b as f64
-        * problem.m as f64
-        * problem.n as f64
-        * problem.k as f64;
+    let flops = 2.0 * problem.b as f64 * problem.m as f64 * problem.n as f64 * problem.k as f64;
 
     let _ = device;
     let bench = QuantMatmulBench::<R> {
@@ -372,19 +369,13 @@ fn validate_spec(problem: &QuantizedMatmulProblem) -> Result<(), String> {
     if matches!(side, QuantSide::LhsOnly | QuantSide::Both) {
         check(
             "lhs",
-            &alloc_shape(
-                &[problem.b, problem.m, problem.k],
-                problem.lhs_layout,
-            ),
+            &alloc_shape(&[problem.b, problem.m, problem.k], problem.lhs_layout),
         )?;
     }
     if matches!(side, QuantSide::RhsOnly | QuantSide::Both) {
         check(
             "rhs",
-            &alloc_shape(
-                &[problem.b, problem.k, problem.n],
-                problem.rhs_layout,
-            ),
+            &alloc_shape(&[problem.b, problem.k, problem.n], problem.rhs_layout),
         )?;
     }
     Ok(())

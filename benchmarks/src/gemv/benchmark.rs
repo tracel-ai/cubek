@@ -35,14 +35,12 @@ pub fn run_on<R: Runtime, E: frontend::Float>(
     num_samples: usize,
 ) -> Result<RunSamples, String> {
     let client = R::client(&device);
-    let problem = problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
+    let problem =
+        problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
     let strategy =
         strategy_for(strategy_id).ok_or_else(|| format!("unknown strategy: {strategy_id}"))?;
 
-    let flops = 2.0
-        * problem.batches as f64
-        * problem.out_dim as f64
-        * problem.k_dim as f64;
+    let flops = 2.0 * problem.batches as f64 * problem.out_dim as f64 * problem.k_dim as f64;
 
     let bench = GemvBench::<R> {
         problem,
@@ -114,11 +112,19 @@ impl<R: Runtime> Benchmark for GemvBench<R> {
         let (lhs_row_major_shape, rhs_row_major_shape, out_shape) = match self.problem.kind {
             ProblemKind::VecMat => (
                 [self.problem.batches, 1, self.problem.k_dim],
-                [self.problem.batches, self.problem.k_dim, self.problem.out_dim],
+                [
+                    self.problem.batches,
+                    self.problem.k_dim,
+                    self.problem.out_dim,
+                ],
                 [self.problem.batches, 1, self.problem.out_dim],
             ),
             ProblemKind::MatVec => (
-                [self.problem.batches, self.problem.out_dim, self.problem.k_dim],
+                [
+                    self.problem.batches,
+                    self.problem.out_dim,
+                    self.problem.k_dim,
+                ],
                 [self.problem.batches, self.problem.k_dim, 1],
                 [self.problem.batches, self.problem.out_dim, 1],
             ),

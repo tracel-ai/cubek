@@ -50,7 +50,9 @@ pub(crate) fn strategy_for(id: &str) -> Option<ReduceStrategy> {
         }))
     };
     let cube = || {
-        RoutineStrategy::Cube(BlueprintStrategy::Inferred(CubeStrategy { use_planes: true }))
+        RoutineStrategy::Cube(BlueprintStrategy::Inferred(CubeStrategy {
+            use_planes: true,
+        }))
     };
     let serial = VectorizationStrategy {
         parallel_output_vectorization: false,

@@ -42,38 +42,38 @@ pub fn strategies() -> Vec<ItemDescriptor> {
 
 pub(crate) fn strategy_for(id: &str) -> Option<Strategy> {
     Some(match id {
-        STRATEGY_SIMPLE_CYCLIC_CMMA => Strategy::SimpleCyclicCmma(BlueprintStrategy::Inferred(
-            SimpleArgs {
+        STRATEGY_SIMPLE_CYCLIC_CMMA => {
+            Strategy::SimpleCyclicCmma(BlueprintStrategy::Inferred(SimpleArgs {
                 multi_rows: false,
                 ..Default::default()
-            },
-        )),
-        STRATEGY_SIMPLE_CYCLIC_CMMA_MULTIROWS => Strategy::SimpleCyclicCmma(
-            BlueprintStrategy::Inferred(SimpleArgs {
+            }))
+        }
+        STRATEGY_SIMPLE_CYCLIC_CMMA_MULTIROWS => {
+            Strategy::SimpleCyclicCmma(BlueprintStrategy::Inferred(SimpleArgs {
                 multi_rows: true,
                 ..Default::default()
-            }),
-        ),
-        STRATEGY_DOUBLE_TILEWISE_CMMA => Strategy::DoubleTilewiseCmma(
-            BlueprintStrategy::Inferred(DoubleBufferingArgs {
+            }))
+        }
+        STRATEGY_DOUBLE_TILEWISE_CMMA => {
+            Strategy::DoubleTilewiseCmma(BlueprintStrategy::Inferred(DoubleBufferingArgs {
                 specialized: false,
                 ..Default::default()
-            }),
-        ),
-        STRATEGY_DOUBLE_TILEWISE_CMMA_SPECIALIZED => Strategy::DoubleTilewiseCmma(
-            BlueprintStrategy::Inferred(DoubleBufferingArgs {
+            }))
+        }
+        STRATEGY_DOUBLE_TILEWISE_CMMA_SPECIALIZED => {
+            Strategy::DoubleTilewiseCmma(BlueprintStrategy::Inferred(DoubleBufferingArgs {
                 specialized: true,
                 ..Default::default()
-            }),
-        ),
-        STRATEGY_ORDERED_DOUBLE_CMMA => Strategy::OrderedDoubleCmma(BlueprintStrategy::Inferred(
-            OrderedSelectionArgs {
+            }))
+        }
+        STRATEGY_ORDERED_DOUBLE_CMMA => {
+            Strategy::OrderedDoubleCmma(BlueprintStrategy::Inferred(OrderedSelectionArgs {
                 row_count: Some(8),
                 rows_per_plane: Some(2),
                 partition_k: Some(2),
                 ..Default::default()
-            },
-        )),
+            }))
+        }
         _ => return None,
     })
 }

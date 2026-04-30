@@ -33,15 +33,12 @@ pub fn run_on<R: Runtime, MP: MatmulPrecision>(
     num_samples: usize,
 ) -> Result<RunSamples, String> {
     let client = R::client(&device);
-    let problem = problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
+    let problem =
+        problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
     let strategy =
         strategy_for(strategy_id).ok_or_else(|| format!("unknown strategy: {strategy_id}"))?;
 
-    let flops = 2.0
-        * problem.b as f64
-        * problem.m as f64
-        * problem.n as f64
-        * problem.k as f64;
+    let flops = 2.0 * problem.b as f64 * problem.m as f64 * problem.n as f64 * problem.k as f64;
 
     let bench = GemmBench::<R> {
         problem,
