@@ -63,7 +63,7 @@ impl<MT: MatmulTypes, Sc: TileScope> Accumulators<MT, Sc> {
 
                 let acc = self.get_at_mut(m, n, tiles_in_stage_partition_n);
                 let tile = R::tile::<Sc>(stage, (m_stage, n_stage));
-                acc.copy_from::<AccSE<MT>, AccSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>, ReadOnly>(
+                acc.copy_from::<AccSE<MT>, AccSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>>(
                     &tile,
                     StageIdent::Acc,
                 );

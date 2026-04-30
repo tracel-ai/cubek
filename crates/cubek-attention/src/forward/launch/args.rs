@@ -99,25 +99,25 @@ pub trait AttentionArgs: Send + Sync + 'static + Clone {
         state: &Self::State<Q, K, V, M, O>,
         start: usize,
         end: usize,
-    ) -> &Slice<Vector<Q::T, Q::N>>;
+    ) -> &[Vector<Q::T, Q::N>];
     /// Read the vector of the key tensor using the state at the given coordinate.
     fn read_window_key<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
         start: usize,
         end: usize,
-    ) -> &Slice<Vector<K::T, K::N>>;
+    ) -> &[Vector<K::T, K::N>];
     /// Read the vector of the value tensor using the state at the given coordinate.
     fn read_window_value<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
         start: usize,
         end: usize,
-    ) -> &Slice<Vector<V::T, V::N>>;
+    ) -> &[Vector<V::T, V::N>];
     /// Read the vector of the mask tensor using the state at the given coordinate.
     fn read_window_mask<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
         start: usize,
         end: usize,
-    ) -> &Slice<Vector<M::T, M::N>>;
+    ) -> &[Vector<M::T, M::N>];
 
     /// Reinterpret query as tensor map
     fn as_tensor_map_query<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
@@ -368,7 +368,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
         _context: &Scope,
         _start: NativeExpand<usize>,
         _end: NativeExpand<usize>,
-    ) -> &SliceExpand<Vector<O::T, O::N>, ReadOnly> {
+    ) -> &SliceExpand<Vector<O::T, O::N>> {
         panic!("Can't read output tensor");
     }
 
@@ -446,7 +446,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
         context: &Scope,
         start: NativeExpand<usize>,
         end: NativeExpand<usize>,
-    ) -> &SliceExpand<Vector<Q::T, Q::N>, ReadOnly> {
+    ) -> &SliceExpand<Vector<Q::T, Q::N>> {
         TensorQueryExpand::__expand_read_window_method(self, context, start, end)
     }
 
@@ -523,7 +523,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
         context: &Scope,
         start: NativeExpand<usize>,
         end: NativeExpand<usize>,
-    ) -> &SliceExpand<Vector<K::T, K::N>, ReadOnly> {
+    ) -> &SliceExpand<Vector<K::T, K::N>> {
         TensorKeyExpand::__expand_read_window_method(self, context, start, end)
     }
 
@@ -600,7 +600,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
         context: &Scope,
         start: NativeExpand<usize>,
         end: NativeExpand<usize>,
-    ) -> &SliceExpand<Vector<V::T, V::N>, ReadOnly> {
+    ) -> &SliceExpand<Vector<V::T, V::N>> {
         TensorValueExpand::__expand_read_window_method(self, context, start, end)
     }
 
@@ -677,7 +677,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
         context: &Scope,
         start: NativeExpand<usize>,
         end: NativeExpand<usize>,
-    ) -> &SliceExpand<Vector<M::T, M::N>, ReadOnly> {
+    ) -> &SliceExpand<Vector<M::T, M::N>> {
         TensorMaskExpand::__expand_read_window_method(self, context, start, end)
     }
 
@@ -827,7 +827,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     }
 
     //// Read the tensor at the given coordinate.
-    pub fn read_window(&self, start: usize, end: usize) -> &Slice<Vector<Q::T, Q::N>> {
+    pub fn read_window(&self, start: usize, end: usize) -> &[Vector<Q::T, Q::N>] {
         MA::read_window_query(&self.state, start, end)
     }
 
@@ -885,7 +885,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     }
 
     //// Read the tensor at the given coordinate.
-    pub fn read_window(&self, start: usize, end: usize) -> &Slice<Vector<K::T, K::N>> {
+    pub fn read_window(&self, start: usize, end: usize) -> &[Vector<K::T, K::N>] {
         MA::read_window_key(&self.state, start, end)
     }
 
@@ -943,7 +943,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     }
 
     //// Read the tensor at the given coordinate.
-    pub fn read_window(&self, start: usize, end: usize) -> &Slice<Vector<V::T, V::N>> {
+    pub fn read_window(&self, start: usize, end: usize) -> &[Vector<V::T, V::N>] {
         MA::read_window_value(&self.state, start, end)
     }
 
@@ -1001,7 +1001,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     }
 
     //// Read the tensor at the given coordinate.
-    pub fn read_window(&self, start: usize, end: usize) -> &Slice<Vector<M::T, M::N>> {
+    pub fn read_window(&self, start: usize, end: usize) -> &[Vector<M::T, M::N>] {
         MA::read_window_mask(&self.state, start, end)
     }
 
@@ -1213,7 +1213,7 @@ impl AttentionArgs for TensorArgs {
         state: &Self::State<Q, K, V, M, O>,
         start: usize,
         end: usize,
-    ) -> &Slice<Vector<Q::T, Q::N>> {
+    ) -> &[Vector<Q::T, Q::N>] {
         state.query.slice(start, end)
     }
 
@@ -1221,7 +1221,7 @@ impl AttentionArgs for TensorArgs {
         state: &Self::State<Q, K, V, M, O>,
         start: usize,
         end: usize,
-    ) -> &Slice<Vector<K::T, K::N>> {
+    ) -> &[Vector<K::T, K::N>] {
         state.key.slice(start, end)
     }
 
@@ -1229,7 +1229,7 @@ impl AttentionArgs for TensorArgs {
         state: &Self::State<Q, K, V, M, O>,
         start: usize,
         end: usize,
-    ) -> &Slice<Vector<V::T, V::N>> {
+    ) -> &[Vector<V::T, V::N>] {
         state.value.slice(start, end)
     }
 
@@ -1237,7 +1237,7 @@ impl AttentionArgs for TensorArgs {
         state: &Self::State<Q, K, V, M, O>,
         start: usize,
         end: usize,
-    ) -> &Slice<Vector<M::T, M::N>> {
+    ) -> &[Vector<M::T, M::N>] {
         state.mask.unwrap_ref().slice(start, end)
     }
 

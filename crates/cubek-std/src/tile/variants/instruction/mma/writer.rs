@@ -23,7 +23,7 @@ impl MmaStageWriter {
         B: Numeric,
         CD: Numeric,
     >(
-        tile: &mut StridedTile<V, NV, ReadWrite>,
+        tile: &mut StridedTile<V, NV>,
         fragment: &Array<Vector<E, N>>,
         def: &MmaDefinition<A, B, CD>,
         #[comptime] ident: MatrixIdent,
@@ -59,7 +59,7 @@ fn store_manual_transposed<
     B: Numeric,
     CD: Numeric,
 >(
-    tile: &mut StridedTile<V, NV, ReadWrite>,
+    tile: &mut StridedTile<V, NV>,
     fragment: &Array<Vector<E, N>>,
     def: &MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
@@ -101,7 +101,7 @@ fn store_manual_plain<
     B: Numeric,
     CD: Numeric,
 >(
-    tile: &mut StridedTile<V, NV, ReadWrite>,
+    tile: &mut StridedTile<V, NV>,
     fragment: &Array<Vector<E, N>>,
     def: &MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
@@ -147,7 +147,7 @@ fn store_stmatrix<
     B: Numeric,
     CD: Numeric,
 >(
-    tile: &mut StridedTile<V, NV, ReadWrite>,
+    tile: &mut StridedTile<V, NV>,
     fragment: &Array<Vector<E, N>>,
     def: &MmaDefinition<A, B, CD>,
     #[comptime] transposed: bool,
@@ -171,8 +171,8 @@ fn store_stmatrix<
     let stage_ty = V::as_type().comptime();
     let frag_ty = E::as_type().comptime();
     if stage_ty == frag_ty {
-        let mut row_slice = row_slice.downcast();
-        def.store_matrix::<Vector<E, NV>, N>(&mut row_slice, fragment, ident, num_regs, transposed);
+        let row_slice = row_slice.downcast_mut();
+        def.store_matrix::<Vector<E, NV>, N>(row_slice, fragment, ident, num_regs, transposed);
     } else {
         let mut frag = Array::new(num_regs);
         #[unroll]

@@ -15,7 +15,7 @@ pub(crate) const ASYNC_COPY_WIDTH: u32 = 128;
 
 #[cube]
 pub(crate) fn async_copy_from<EG: Scalar, NG: Size, ES: Numeric, NS: Size, T: TilingLayout>(
-    view: View<Vector<EG, NG>, Coords2d>,
+    view: &View<Vector<EG, NG>, Coords2d>,
     pos: Coords2d,
     stage: &mut StridedStageMemory<ES, NS, T>,
     stage_offset: u32,
@@ -72,10 +72,10 @@ pub(crate) fn async_copy_from<EG: Scalar, NG: Size, ES: Numeric, NS: Size, T: Ti
     if config.gmem_config.check_row_bounds || config.gmem_config.check_col_bounds {
         copy_async_checked(
             global_slice.slice(0, slice_len_global as usize),
-            &mut stage_slice.downcast(),
+            stage_slice.downcast_mut(),
             copy_vector_size,
         );
     } else {
-        copy_async(global_slice, &mut stage_slice.downcast(), copy_vector_size);
+        copy_async(global_slice, stage_slice.downcast_mut(), copy_vector_size);
     }
 }

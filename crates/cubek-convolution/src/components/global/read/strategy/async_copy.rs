@@ -18,7 +18,7 @@ pub(crate) const ASYNC_COPY_WIDTH: u32 = 128;
 #[cube]
 #[expect(clippy::overly_complex_bool_expr, reason = "override")]
 pub(crate) fn async_copy_from<EG: Scalar, EGS: Size, ES: Numeric, ESS: Size, T: TilingLayout>(
-    view: View<Vector<EG, EGS>, Coords2d>,
+    view: &View<Vector<EG, EGS>, Coords2d>,
     pos: Coords2d,
     stage: &mut StridedStageMemory<ES, ESS, T>,
     stage_offset: u32,
@@ -124,7 +124,7 @@ pub(crate) fn async_copy_from<EG: Scalar, EGS: Size, ES: Numeric, ESS: Size, T: 
 
     copy_async_checked(
         global_slice.slice(0, slice_len_global as usize),
-        &mut stage_slice.downcast(),
+        stage_slice.downcast_mut(),
         copy_vector_size,
     );
 }

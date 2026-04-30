@@ -175,19 +175,19 @@ pub(crate) fn execute_global_matmul<
     let c_batch = Args::batch_acc(&*state, nth_batch as usize);
     let c = c.map(|c| {
         let c = c.view(SliceIndex::new(c_batch, c.shape()));
-        c.slice_unchecked((m_offset, n_offset), (stage_m, stage_n))
+        *c.slice_unchecked((m_offset, n_offset), (stage_m, stage_n))
     });
     let out_batch = Args::batch_out(&*state, nth_batch as usize);
     let out = out.view_mut(SliceIndex::new(out_batch, out.shape()));
 
     GMM::execute(
         GMM::init_lhs_global_reader(
-            a.slice_unchecked((m_offset, k_range.0), (stage_m, k_size)),
+            *a.slice_unchecked((m_offset, k_range.0), (stage_m, k_size)),
             runtime_config.clone(),
             config,
         ),
         GMM::init_rhs_global_reader(
-            b.slice_unchecked((k_range.0, n_offset), (k_size, stage_n)),
+            *b.slice_unchecked((k_range.0, n_offset), (k_size, stage_n)),
             runtime_config.clone(),
             config,
         ),

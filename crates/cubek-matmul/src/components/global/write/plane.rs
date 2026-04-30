@@ -91,7 +91,7 @@ impl<IP: MatrixTypes> GlobalWriter<IP> for PlaneWriter<IP> {
 #[cube]
 pub fn plane_write<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
     global: &mut View<Vector<EG, NG>, TiledCoords, ReadWrite>,
-    smem_tile: &StridedTile<ES, NS, ReadWrite>,
+    smem_tile: &StridedTile<ES, NS>,
     tile_pos: Coords2d,
     #[comptime] plane_dim: u32,
     #[comptime] elements_in_tile: u32,
@@ -120,7 +120,7 @@ pub fn plane_write<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
 #[cube]
 fn write_vector<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
     view: &mut View<Vector<EG, NG>, TiledCoords, ReadWrite>,
-    out_smem_tile: &StridedTile<ES, NS, ReadWrite>,
+    out_smem_tile: &StridedTile<ES, NS>,
     unit_write: u32,
     tile: Coords2d,
 ) {

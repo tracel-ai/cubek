@@ -292,7 +292,7 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::In, P::Siz
         _context: &Scope,
         _start: NativeExpand<usize>,
         _end: NativeExpand<usize>,
-    ) -> &SliceExpand<Vector<P::In, P::SizeIn>, ReadOnly> {
+    ) -> &SliceExpand<Vector<P::In, P::SizeIn>> {
         panic!("Unsupported")
     }
 
@@ -365,7 +365,7 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::Out, P::Si
         _context: &Scope,
         _start: NativeExpand<usize>,
         _end: NativeExpand<usize>,
-    ) -> &SliceExpand<Vector<P::Out, P::SizeOut>, ReadOnly> {
+    ) -> &SliceExpand<Vector<P::Out, P::SizeOut>> {
         panic!("Unsupported")
     }
 

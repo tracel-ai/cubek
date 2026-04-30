@@ -179,14 +179,13 @@ pub fn cmma_load_from_shared<E: Numeric, ES: Size, N: Numeric, IO: SliceVisibili
     #[comptime] matrix_layout: MatrixLayout,
 ) {
     let shared = shared.view::<ES>();
-    let shared = shared.to_read_only();
     match ident {
         StageIdent::Lhs | StageIdent::Rhs => {
-            CmmaStageReader::<Strided>::load_fragment(&shared, matrix, ComptimeOption::new_None());
+            CmmaStageReader::<Strided>::load_fragment(shared, matrix, ComptimeOption::new_None());
         }
         StageIdent::Acc => {
             CmmaStageReader::<Strided>::load_fragment(
-                &shared,
+                shared,
                 matrix,
                 ComptimeOption::new_Some(as_cmma_layout(matrix_layout)),
             );

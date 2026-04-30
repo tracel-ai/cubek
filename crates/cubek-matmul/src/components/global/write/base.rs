@@ -14,14 +14,10 @@ use cubecl::{
 use cubek_std::stage::StageMemoryConfig;
 
 pub trait GlobalWriterFamily: 'static + Send + Sync {
-    type Stage: StageFamily<ReadWrite>;
+    type Stage: StageFamily;
     type Writer<IP: MatrixTypes>: GlobalWriter<
             IP,
-            Stage = <Self::Stage as StageFamily<ReadWrite>>::Stage<
-                IP::Stage,
-                IP::StageSize,
-                WriteTiling,
-            >,
+            Stage = <Self::Stage as StageFamily>::Stage<IP::Stage, IP::StageSize, WriteTiling>,
         >;
 }
 

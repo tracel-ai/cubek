@@ -144,7 +144,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
                 MatrixLayout::ColMajor => (col, 0u32).runtime(),
             };
 
-            global_view.tensor_map_load(barrier.inner_ref(), &mut slice.downcast(), pos);
+            global_view.tensor_map_load(barrier.inner_ref(), slice.downcast_mut(), pos);
         }
     }
 

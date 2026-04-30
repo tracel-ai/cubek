@@ -12,7 +12,7 @@ pub type WriteTiling = ContiguousTilingLayout<RowMajorTilingOrder>;
 
 pub struct PartitionedStageFamily;
 
-impl StageFamily<ReadWrite> for PartitionedStageFamily {
+impl StageFamily for PartitionedStageFamily {
     type Stage<ES: Numeric, NS: Size, T: TilingLayout> = PartitionedStage<ES, NS>;
 }
 
@@ -22,7 +22,7 @@ impl StageFamily<ReadWrite> for PartitionedStageFamily {
 pub struct PartitionedStage<ES: Numeric, NS: Size> {
     /// Underlying shared memory
     _smem: SharedMemory<Vector<ES, NS>>,
-    pub unit_tile: StridedTile<ES, NS, ReadWrite>,
+    pub unit_tile: StridedTile<ES, NS>,
 }
 
 #[cube]
@@ -41,7 +41,7 @@ impl<ES: Numeric, NS: Size> PartitionedStage<ES, NS> {
         // Needs to be 16-byte aligned for `stmatrix`
         let inner = StridedStageMemory::<ES, NS, WriteTiling>::new_aligned(16usize, config);
 
-        let tile = inner.get_tile_mut(unit_pos);
+        let tile = inner.get_tile(unit_pos);
 
         PartitionedStage::<ES, NS> {
             _smem: inner.smem,

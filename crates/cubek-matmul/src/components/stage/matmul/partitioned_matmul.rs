@@ -257,7 +257,6 @@ where
                     <MP::Lhs as MatrixTypes>::Register,
                     <MP::Rhs as MatrixTypes>::Register,
                     <MP::Acc as MatrixTypes>::Register,
-                    ReadWrite
                 >(tile_accumulator, StageIdent::Out);
 
                 W::on_event(listener, global::WriteEvent::new_TileStored(tile_pos));

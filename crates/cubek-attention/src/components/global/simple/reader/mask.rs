@@ -70,7 +70,7 @@ impl<AP: AttentionPrecision> MaskReader<AP> {
         #[comptime] gmem_config: GlobalMemoryConfig,
     ) -> Self {
         let mask = mask.slice((stage_q_offset, 0), mask.shape());
-        let global_iter = GlobalIterator::new(mask, step, gmem_config.view_direction, false);
+        let global_iter = GlobalIterator::new(*mask, step, gmem_config.view_direction, false);
 
         MaskReader::<AP>::new_Materialized(MaterializedMaskReader::new(
             global_iter,

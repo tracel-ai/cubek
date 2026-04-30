@@ -247,7 +247,7 @@ where
 
                 lhs_fragment
                     .index_mut(m_iter)
-                    .copy_from::<LhsSE<MT>, LhsSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>, ReadOnly>(
+                    .copy_from::<LhsSE<MT>, LhsSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>>(
                         &tile_lhs,
                         StageIdent::Lhs,
                     );
@@ -267,11 +267,10 @@ where
                 let n_load_iter = partition_scheduler.map_n(n_iter as u32);
 
                 let rhs_tile_next = StageRhs::tile::<Sc>(rhs_stage, (k_load_iter, n_load_iter));
-                rhs_fragment
-                    .copy_from::<RhsSE<MT>, RhsSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>, ReadOnly>(
-                        &rhs_tile_next,
-                        StageIdent::Rhs,
-                    );
+                rhs_fragment.copy_from::<RhsSE<MT>, RhsSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>>(
+                    &rhs_tile_next,
+                    StageIdent::Rhs,
+                );
 
                 SEL::on_event(
                     &mut listener,
@@ -348,7 +347,7 @@ where
 
                 lhs_fragment
                     .index_mut(m_iter)
-                    .copy_from::<LhsSE<MT>, LhsSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>, ReadOnly>(
+                    .copy_from::<LhsSE<MT>, LhsSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>>(
                         &tile_lhs,
                         StageIdent::Lhs,
                     );
@@ -369,7 +368,7 @@ where
             let rhs_tile_first = StageRhs::tile::<Sc>(rhs_stage, (k_load_iter, n_load_iter));
             rhs_fragments
                 .0
-                .copy_from::<RhsSE<MT>, RhsSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>, ReadOnly>(
+                .copy_from::<RhsSE<MT>, RhsSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>>(
                     &rhs_tile_first,
                     StageIdent::Rhs,
                 );
@@ -394,7 +393,7 @@ where
 
                 let n_load_iter = partition_scheduler.map_n(comptime![n_iter as u32 + 1]);
                 let rhs_tile_next = StageRhs::tile::<Sc>(rhs_stage, (k_load_iter, n_load_iter));
-                next.copy_from::<RhsSE<MT>, RhsSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>, ReadOnly>(
+                next.copy_from::<RhsSE<MT>, RhsSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>>(
                     &rhs_tile_next,
                     StageIdent::Rhs,
                 );

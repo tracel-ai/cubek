@@ -66,7 +66,7 @@ impl<EG: CubePrimitive> GlobalIterator<EG> {
     }
 
     /// Returns the current view slice of the iterator
-    pub fn view(&self) -> View<EG, Coords2d> {
+    pub fn view(&self) -> &View<EG, Coords2d> {
         let offset = match self.view_direction.comptime() {
             ViewDirection::Row => (self.offset.read(), 0u32),
             ViewDirection::Col => (0u32, self.offset.read()),

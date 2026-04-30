@@ -27,7 +27,7 @@ impl<AP: AttentionPrecision> QueryReader<AP> {
         query: View<Vector<QG<AP>, QGS<AP>>, Coords2d>,
         #[comptime] gmem_config: GlobalMemoryConfig,
     ) -> Self {
-        let query = query.slice((stage_q_offset, 0), query.shape());
+        let query = *query.slice((stage_q_offset, 0), query.shape());
 
         QueryReader::<AP> { query, gmem_config }
     }
