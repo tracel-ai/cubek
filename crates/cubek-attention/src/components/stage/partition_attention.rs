@@ -8,6 +8,7 @@ use cubek_std::tile::{RowWise, Tile};
 use std::marker::PhantomData;
 
 use crate::components::stage::partition::init_running_state;
+use crate::components::stage::{QueryPartition, SoftmaxPartition};
 use crate::components::tile::MaskConfig;
 use crate::components::{
     global::simple::{MaskReader, QueryReader},
@@ -19,7 +20,6 @@ use crate::{
     components::stage::base::StageAttentionConfig,
     {components::stage::StageAttention, definition::AttentionPrecision},
 };
-use crate::components::stage::{QueryPartition, SoftmaxPartition};
 use crate::{
     components::{global::GlobalAttentionConfig, stage::PartitionAttentionConfig},
     definition::attention_types::*,
