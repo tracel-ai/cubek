@@ -12,10 +12,10 @@ pub struct Category;
 
 impl BenchmarkCategory for Category {
     fn id(&self) -> &'static str {
-        "attention"
+        "contiguous"
     }
     fn label(&self) -> &'static str {
-        "Attention"
+        "Contiguous"
     }
     fn strategies(&self) -> Vec<ItemDescriptor> {
         strategies()

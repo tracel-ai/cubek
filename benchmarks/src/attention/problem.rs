@@ -14,24 +14,24 @@ pub const PROBLEM_ENCODER_DECODER: &str = "encoder_decoder";
 pub fn problems() -> Vec<ItemDescriptor> {
     vec![
         ItemDescriptor {
-            id: PROBLEM_BERT,
-            label: "BERT (b=8 h=12 sq=skv=128 d=64)",
+            id: PROBLEM_BERT.to_string(),
+            label: "BERT (b=8 h=12 sq=skv=128 d=64)".to_string(),
         },
         ItemDescriptor {
-            id: PROBLEM_GPT2,
-            label: "GPT-2 (b=4 h=12 sq=skv=1024 d=64, causal+mask)",
+            id: PROBLEM_GPT2.to_string(),
+            label: "GPT-2 (b=4 h=12 sq=skv=1024 d=64, causal+mask)".to_string(),
         },
         ItemDescriptor {
-            id: PROBLEM_LLAMA,
-            label: "Llama (b=4 h=32 sq=skv=2048 d=128, causal+mask)",
+            id: PROBLEM_LLAMA.to_string(),
+            label: "Llama (b=4 h=32 sq=skv=2048 d=128, causal+mask)".to_string(),
         },
         ItemDescriptor {
-            id: PROBLEM_LONG_CONTEXT,
-            label: "Long context (b=1 h=16 sq=skv=4096 d=128, causal+mask)",
+            id: PROBLEM_LONG_CONTEXT.to_string(),
+            label: "Long context (b=1 h=16 sq=skv=4096 d=128, causal+mask)".to_string(),
         },
         ItemDescriptor {
-            id: PROBLEM_ENCODER_DECODER,
-            label: "Encoder-decoder (b=2 h=16 sq=512 skv=1024 d=128)",
+            id: PROBLEM_ENCODER_DECODER.to_string(),
+            label: "Encoder-decoder (b=2 h=16 sq=512 skv=1024 d=128)".to_string(),
         },
     ]
 }

@@ -12,10 +12,10 @@ pub struct Category;
 
 impl BenchmarkCategory for Category {
     fn id(&self) -> &'static str {
-        "attention"
+        "memcpy_async"
     }
     fn label(&self) -> &'static str {
-        "Attention"
+        "Memcpy (async)"
     }
     fn strategies(&self) -> Vec<ItemDescriptor> {
         strategies()

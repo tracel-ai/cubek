@@ -12,12 +12,12 @@ pub const STRATEGY_BLACKBOX_ACCELERATED: &str = "blackbox_accelerated_inferred";
 pub fn strategies() -> Vec<ItemDescriptor> {
     vec![
         ItemDescriptor {
-            id: STRATEGY_UNIT,
-            label: "Unit (inferred)",
+            id: STRATEGY_UNIT.to_string(),
+            label: "Unit (inferred)".to_string(),
         },
         ItemDescriptor {
-            id: STRATEGY_BLACKBOX_ACCELERATED,
-            label: "Blackbox accelerated (inferred, np=1 sq=1 skv=1)",
+            id: STRATEGY_BLACKBOX_ACCELERATED.to_string(),
+            label: "Blackbox accelerated (inferred, np=1 sq=1 skv=1)".to_string(),
         },
     ]
 }

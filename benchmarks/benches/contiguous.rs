@@ -1,84 +1,20 @@
-use cubecl::{
-    benchmark::{Benchmark, TimingMethod},
-    future,
-    prelude::*,
-    std::tensor::TensorHandle,
-};
-
-impl<R: Runtime> Benchmark for IntoContiguousBench<R> {
-    type Input = TensorHandle<R>;
-    type Output = TensorHandle<R>;
-
-    fn prepare(&self) -> Self::Input {
-        let mut handle = TensorHandle::empty(&self.client, self.shape.clone(), self.dtype);
-        for (dim0, dim1) in self.dims.iter() {
-            handle.metadata.swap(*dim0, *dim1);
-        }
-
-        handle
-    }
-
-    fn execute(&self, input: Self::Input) -> Result<TensorHandle<R>, String> {
-        Ok(cubecl::std::tensor::into_contiguous(
-            &self.client,
-            input.binding(),
-            self.dtype,
-        ))
-    }
-
-    fn name(&self) -> String {
-        format!(
-            "into_contiguous-{:?}-{:?}-{:?}-{:?}",
-            self.dtype, self.dims, self.device, self.shape,
-        )
-        .to_lowercase()
-    }
-
-    fn sync(&self) {
-        future::block_on(self.client.sync()).unwrap()
-    }
-}
-
-#[allow(dead_code)]
-struct IntoContiguousBench<R: Runtime> {
-    shape: Vec<usize>,
-    device: R::Device,
-    dims: Vec<(usize, usize)>,
-    client: ComputeClient<R>,
-    dtype: StorageType,
-}
-
-#[allow(dead_code)]
-fn run<R: Runtime>(device: R::Device, dtype: impl Into<Type>) {
-    let dtype = dtype.into().storage_type();
-    #[allow(clippy::single_element_loop)]
-    for shape in [vec![16, 16, 512, 512]] {
-        // for shape in [vec![32, 512, 2048], vec![16, 16, 512, 512]] {
-        // for dims in get_combinations(shape.len()) {
-        let client = R::client(&device);
-        let bench = IntoContiguousBench::<R> {
-            shape: shape.clone(),
-            dims: vec![(1, 2), (2, 3)],
-            client,
-            device: device.clone(),
-            dtype,
-        };
-        println!("{}", bench.name());
-        println!("{}", bench.run(TimingMethod::Device).unwrap());
-    }
-    //}
-}
-
-#[allow(unused)]
-fn get_combinations(n: usize) -> impl Iterator<Item = (usize, usize)> {
-    // Iterate from 0 up to n
-    (0..n).flat_map(move |i| {
-        // For each i, iterate from i + 1 up to n
-        // This ensures no repeats (i == j) and no duplicates (j, i)
-        (i + 1..n).map(move |j| (i, j))
-    })
-}
+use benchmarks::contiguous;
+use cubecl::benchmark::{BenchmarkDurations, TimingMethod};
 
 fn main() {
-    run::<cubecl::TestRuntime>(Default::default(), f32::as_type_native_unchecked());
+    for problem in contiguous::problems() {
+        for strategy in contiguous::strategies() {
+            println!("---- {} / {} ----", strategy.label, problem.label);
+            match contiguous::run(&strategy.id, &problem.id, 10) {
+                Ok(samples) => {
+                    let durations = BenchmarkDurations {
+                        timing_method: TimingMethod::Device,
+                        durations: samples.durations,
+                    };
+                    println!("{durations}");
+                }
+                Err(err) => println!("error: {err}"),
+            }
+        }
+    }
 }
