@@ -33,18 +33,66 @@ struct StrategySpec {
 }
 
 const STRATEGIES: &[StrategySpec] = &[
-    StrategySpec { id: "simple_cyclic_cmma",              label: "SimpleCyclicCmma",                  kind: StrategyKind::SimpleCyclicCmma },
-    StrategySpec { id: "simple_cyclic_cmma_multirows",    label: "SimpleCyclicCmma (multi rows)",     kind: StrategyKind::SimpleCyclicCmmaMultiRows },
-    StrategySpec { id: "double_tilewise_cmma",            label: "DoubleTilewiseCmma",                kind: StrategyKind::DoubleTilewiseCmma },
-    StrategySpec { id: "double_tilewise_cmma_specialized", label: "DoubleTilewiseCmma (specialized)", kind: StrategyKind::DoubleTilewiseCmmaSpecialized },
-    StrategySpec { id: "ordered_double_cmma",             label: "OrderedDoubleCmma (rc=8 rpp=2 pk=2)", kind: StrategyKind::OrderedDoubleCmma },
-    StrategySpec { id: "simple_unit_min",                 label: "Simple Unit (min tile)",            kind: StrategyKind::SimpleUnitMin },
-    StrategySpec { id: "simple_unit_max",                 label: "Simple Unit (max tile)",            kind: StrategyKind::SimpleUnitMax },
-    StrategySpec { id: "double_unit_min",                 label: "Double Unit (min tile)",            kind: StrategyKind::DoubleUnitMin },
-    StrategySpec { id: "double_unit_max",                 label: "Double Unit (max tile)",            kind: StrategyKind::DoubleUnitMax },
-    StrategySpec { id: "specialized_tma_mma",             label: "Specialized TMA (mma)",             kind: StrategyKind::SpecializedTmaMma },
-    StrategySpec { id: "specialized_cyclic_mma",          label: "Specialized Cyclic (mma)",          kind: StrategyKind::SpecializedCyclicMma },
-    StrategySpec { id: "specialized_strided_mma",         label: "Specialized Strided (mma)",         kind: StrategyKind::SpecializedStridedMma },
+    StrategySpec {
+        id: "simple_cyclic_cmma",
+        label: "SimpleCyclicCmma",
+        kind: StrategyKind::SimpleCyclicCmma,
+    },
+    StrategySpec {
+        id: "simple_cyclic_cmma_multirows",
+        label: "SimpleCyclicCmma (multi rows)",
+        kind: StrategyKind::SimpleCyclicCmmaMultiRows,
+    },
+    StrategySpec {
+        id: "double_tilewise_cmma",
+        label: "DoubleTilewiseCmma",
+        kind: StrategyKind::DoubleTilewiseCmma,
+    },
+    StrategySpec {
+        id: "double_tilewise_cmma_specialized",
+        label: "DoubleTilewiseCmma (specialized)",
+        kind: StrategyKind::DoubleTilewiseCmmaSpecialized,
+    },
+    StrategySpec {
+        id: "ordered_double_cmma",
+        label: "OrderedDoubleCmma (rc=8 rpp=2 pk=2)",
+        kind: StrategyKind::OrderedDoubleCmma,
+    },
+    StrategySpec {
+        id: "simple_unit_min",
+        label: "Simple Unit (min tile)",
+        kind: StrategyKind::SimpleUnitMin,
+    },
+    StrategySpec {
+        id: "simple_unit_max",
+        label: "Simple Unit (max tile)",
+        kind: StrategyKind::SimpleUnitMax,
+    },
+    StrategySpec {
+        id: "double_unit_min",
+        label: "Double Unit (min tile)",
+        kind: StrategyKind::DoubleUnitMin,
+    },
+    StrategySpec {
+        id: "double_unit_max",
+        label: "Double Unit (max tile)",
+        kind: StrategyKind::DoubleUnitMax,
+    },
+    StrategySpec {
+        id: "specialized_tma_mma",
+        label: "Specialized TMA (mma)",
+        kind: StrategyKind::SpecializedTmaMma,
+    },
+    StrategySpec {
+        id: "specialized_cyclic_mma",
+        label: "Specialized Cyclic (mma)",
+        kind: StrategyKind::SpecializedCyclicMma,
+    },
+    StrategySpec {
+        id: "specialized_strided_mma",
+        label: "Specialized Strided (mma)",
+        kind: StrategyKind::SpecializedStridedMma,
+    },
 ];
 
 pub fn strategies() -> Vec<ItemDescriptor> {
