@@ -102,7 +102,7 @@ macro_rules! testgen_reduce {
 
         /// Cube-routine tests are expensive on CPU and can stall CI, so they
         /// are excluded from light test suite
-        #[cfg(feature = "basic")]
+        #[cfg(feature = "heavy")]
         mod full_cube {
             use super::*;
             use cubek_reduce::routines::cube::CubeStrategy;
@@ -121,7 +121,7 @@ macro_rules! testgen_reduce {
             );
         }
 
-        #[cfg(feature = "basic")]
+        #[cfg(feature = "heavy")]
         mod full_cube_plane {
             use super::*;
             use cubek_reduce::routines::cube::CubeStrategy;
@@ -145,7 +145,7 @@ macro_rules! testgen_reduce {
         ///
         /// With this test, we can't have `use_planes` to true since the `cube_dim.x !=
         /// plane_size`.
-        #[cfg(feature = "basic")]
+        #[cfg(feature = "heavy")]
         mod full_cube_single_plane {
             use super::*;
             use cubek_reduce::{routines::CubeBlueprint, {BoundChecks, IdleMode}};

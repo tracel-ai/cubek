@@ -167,7 +167,7 @@ message keeps only the aggregate header so it doesn't duplicate the dump.
 Four suites are available:
 
 - **Light** — tractable subset that runs on CI.
-- **Basic** — basic tests that may hang on CI (slow on CPU).
+- **Basic** — smoke tests including heavy-tagged variants; may hang on CI (slow on CPU).
 - **Extended** — auto-generated combinatorial tests, kept tractable.
 - **Full** — all generable combinations, may not fit.
 
