@@ -20,7 +20,7 @@ fn simple_cyclic_cmma_small_f16() {
     );
 }
 
-#[cfg(feature = "basic")]
+#[cfg(feature = "heavy")]
 #[test]
 fn simple_cyclic_cmma_medium_f16() {
     test_algo(
