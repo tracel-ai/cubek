@@ -1,69 +1,82 @@
 use cubecl;
-use cubecl::{prelude::*, std::tensor::layout::Coords2d};
-use cubek_std::tile::StridedTile;
-
 use cubecl::std::tensor::layout::Coordinates;
-
-use crate::components::tile::softmax::{
-    FragmentMask, FragmentMaskExpand, Softmax, SoftmaxConfig, SoftmaxLayout, SoftmaxLayoutExpand,
+use cubecl::{prelude::*, std::tensor::layout::Coords2d};
+use cubek_std::tile::{
+    Mask, MaskExpand, MaskLayout, Plane, StridedTile, Tile, allocate_local_tile,
+    allocate_unit_tile, mask_layout_absolute_pos,
 };
 
+/// Comptime configuration that drives [`MaskTile::new`] and
+/// `MaskTile::should_mask`. Built attention-side from a `TileSoftmax`.
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+pub struct MaskConfig {
+    pub layout: MaskLayout,
+    pub causal: bool,
+    pub materialized: bool,
+}
+
 #[derive(CubeType)]
-/// Mask tile for Tile Attention
-/// It is an additive mask, which means the result of apply should be added, not multiplied
-pub enum MaskTile<F: Float, SMX: Softmax<F>> {
-    /// When a mask tensor is supplied. Also contains a logical part
-    Materialized(MaterializedTileMask<F, SMX>),
-    /// When no mask tensor is supplied. Used for out of bounds and causal mask
-    Logical(LogicalTileMask<SMX::ScoreLayout>),
+/// Mask tile for Tile Attention. It is an additive mask: the result of `apply`
+/// should be added, not multiplied.
+pub enum MaskTile<F: Float> {
+    /// When a mask tensor is supplied. Also contains a logical part.
+    Materialized(MaterializedTileMask<F>),
+    /// When no mask tensor is supplied. Used for out-of-bounds and causal mask.
+    Logical(LogicalTileMask),
 }
 
 #[cube]
-impl<F: Float, SMX: Softmax<F>> MaskTile<F, SMX> {
+impl<F: Float> MaskTile<F> {
     pub fn new(
         out_of_bounds: ComptimeOption<Coords2d>,
-        #[comptime] config: SMX::Config,
-    ) -> MaskTile<F, SMX> {
-        let logical_mask = LogicalTileMask::<SMX::ScoreLayout> {
-            logical_iter_origin: LogicalIterOrigin::init(),
-            causal: config.causal_mask(),
-            out_of_bounds,
-            fragment_layout: SMX::layout(config),
-        };
+        #[comptime] config: MaskConfig,
+    ) -> MaskTile<F> {
+        let logical_mask = LogicalTileMask::new(config, out_of_bounds);
 
-        if config.materialized_mask() {
-            MaskTile::new_Materialized(MaterializedTileMask::<F, SMX> {
-                fragment: SMX::allocate_mask(config),
+        if comptime!(config.materialized) {
+            let fragment: Tile<F, Const<0>, Plane, ReadWrite> = match comptime!(config.layout) {
+                MaskLayout::Unit(l) => allocate_unit_tile::<F, Const<0>, Plane>(comptime!(l)),
+                MaskLayout::Local(l) => allocate_local_tile::<F, Const<0>, Plane>(comptime!(l)),
+            };
+            MaskTile::new_Materialized(MaterializedTileMask::<F> {
+                fragment,
                 logical_mask,
-                config,
             })
         } else {
             MaskTile::new_Logical(logical_mask)
         }
     }
 
-    /// Loads the mask data into the fragment, if a tile is given, otherwise only
-    /// updates the logical mask
+    /// Loads the mask data into the fragment if a tile is given; otherwise
+    /// only updates the logical mask's origin.
     pub fn update<E: Numeric, ES: Size>(
         &mut self,
         new_origin: Coords2d,
         tile: ComptimeOption<StridedTile<E, ES>>,
     ) {
         match self {
-            MaskTile::Materialized(materialized_tile_mask) => {
-                materialized_tile_mask
-                    .logical_mask
-                    .update_origin(new_origin);
-
-                materialized_tile_mask.update_tile(tile.unwrap())
+            MaskTile::Materialized(m) => {
+                m.logical_mask.update_origin(new_origin);
+                m.update_tile(tile.unwrap());
             }
-            MaskTile::Logical(logical_tile_mask) => logical_tile_mask.update_origin(new_origin),
+            MaskTile::Logical(l) => l.update_origin(new_origin),
+        }
+    }
+}
+
+#[cube]
+impl<F: Float> Mask for MaskTile<F> {
+    fn should_mask(&self, local_pos: Coords2d) -> bool {
+        match self {
+            MaskTile::Materialized(m) => m.should_mask(local_pos),
+            MaskTile::Logical(l) => l.should_mask(local_pos),
         }
     }
 }
 
 #[derive(CubeType)]
-/// Gives the origin of the logical mask, which is updated when changing partition or tile within partition
+/// Origin of the logical mask, updated when changing partition or tile within
+/// partition.
 pub struct LogicalIterOrigin {
     row: RuntimeCell<u32>,
     col: RuntimeCell<u32>,
@@ -89,22 +102,31 @@ impl LogicalIterOrigin {
 }
 
 #[derive(CubeType)]
-pub struct LogicalTileMask<F: SoftmaxLayout> {
-    // Indicates where the logical mask currently starts
+pub struct LogicalTileMask {
     logical_iter_origin: LogicalIterOrigin,
     #[cube(comptime)]
-    // Whether to apply causal mask
     causal: bool,
-    // Coordinates over which softmax is out of bounds, corresponds to seq_q, seq_kv of the problem
     out_of_bounds: ComptimeOption<Coords2d>,
-    // Allows mapping local position of a unit to its absolute position
-    fragment_layout: F,
+    #[cube(comptime)]
+    fragment_layout: MaskLayout,
 }
 
 #[cube]
-impl<F: SoftmaxLayout> LogicalTileMask<F> {
+impl LogicalTileMask {
+    pub fn new(
+        #[comptime] config: MaskConfig,
+        out_of_bounds: ComptimeOption<Coords2d>,
+    ) -> LogicalTileMask {
+        LogicalTileMask {
+            logical_iter_origin: LogicalIterOrigin::init(),
+            causal: comptime!(config.causal),
+            out_of_bounds,
+            fragment_layout: comptime!(config.layout),
+        }
+    }
+
     pub fn should_mask(&self, local_pos: Coords2d) -> bool {
-        let pos_in_tile = self.fragment_layout.absolute_pos(local_pos);
+        let pos_in_tile = mask_layout_absolute_pos(self.fragment_layout, local_pos);
 
         let pos = Coords2d::add(self.logical_iter_origin.read(), pos_in_tile);
 
@@ -125,15 +147,13 @@ impl<F: SoftmaxLayout> LogicalTileMask<F> {
 }
 
 #[derive(CubeType)]
-pub struct MaterializedTileMask<F: Float, SMX: Softmax<F>> {
-    fragment: SMX::Mask,
-    logical_mask: LogicalTileMask<SMX::ScoreLayout>,
-    #[cube(comptime)]
-    config: SMX::Config,
+pub struct MaterializedTileMask<F: Float> {
+    fragment: Tile<F, Const<0>, Plane, ReadWrite>,
+    logical_mask: LogicalTileMask,
 }
 
 #[cube]
-impl<F: Float, SMX: Softmax<F>> MaterializedTileMask<F, SMX> {
+impl<F: Float> MaterializedTileMask<F> {
     pub fn should_mask(&self, local_pos: Coords2d) -> bool {
         let logical_masked = self.logical_mask.should_mask(local_pos);
         let materialized_masked = self.fragment.should_mask(local_pos);
@@ -142,20 +162,7 @@ impl<F: Float, SMX: Softmax<F>> MaterializedTileMask<F, SMX> {
     }
 
     pub fn update_tile<MSK: Numeric, MSKS: Size>(&mut self, tile: StridedTile<MSK, MSKS>) {
-        SMX::load_mask(&tile, &mut self.fragment, self.config);
-    }
-}
-
-#[cube]
-impl<F: Float, SMX: Softmax<F>> FragmentMask for MaskTile<F, SMX> {
-    type Layout = SMX::ScoreLayout;
-
-    fn should_mask(&self, local_pos: (u32, u32)) -> bool {
-        match self {
-            MaskTile::Materialized(materialized_tile_mask) => {
-                materialized_tile_mask.should_mask(local_pos)
-            }
-            MaskTile::Logical(logical_tile_mask) => logical_tile_mask.should_mask(local_pos),
-        }
+        self.fragment
+            .load_mask_from_strided_tile::<MSK, MSKS>(&tile);
     }
 }

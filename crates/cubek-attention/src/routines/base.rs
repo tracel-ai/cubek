@@ -5,7 +5,7 @@ use cubecl::{
     {client::ComputeClient, ir::AddressType},
 };
 
-use crate::components::tile::TileAttentionFamily;
+use crate::components::tile::TileAttentionKind;
 use crate::components::{
     batch::BatchAttentionFamily, global::GlobalAttentionFamily, stage::StageAttentionFamily,
 };
@@ -15,7 +15,9 @@ use crate::definition::{
 use crate::launch::BlueprintStrategy;
 
 pub trait Routine: Debug + Clone {
-    type TileAttention: TileAttentionFamily;
+    /// Tile-level strategy this routine selects.
+    const TILE_KIND: TileAttentionKind;
+
     type StageAttention: StageAttentionFamily;
     type GlobalAttention: GlobalAttentionFamily;
     type BatchAttention: BatchAttentionFamily<Blueprint = Self::Blueprint>;

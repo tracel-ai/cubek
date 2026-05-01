@@ -1,36 +1,40 @@
 use cubecl::{
     prelude::*,
-    std::tensor::layout::Coords2d,
     {self},
 };
-use cubek_std::tile::StridedTile;
 
-use crate::components::tile::{
-    LOGIT_MASKED,
-    pipeline::RowWise,
-    softmax::{FragmentMask, FragmentMaskExpand, SoftmaxLayout, SoftmaxLayoutExpand},
-};
+use crate::tile::ops::{LOGIT_MASKED, Mask, MaskExpand, RowWise};
+use crate::tile::scope::Scope;
+use crate::tile::{StridedTile, Tile};
 
 #[derive(CubeType)]
 pub struct UnitTile<E: Numeric> {
     pub data: Array<E>,
+    #[cube(comptime)]
     pub layout: UnitTileLayout,
 }
 
-#[derive(CubeType, Copy, Clone)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 // Assumes row-major. If loading from a col-major source, use transposed_load=true
 pub struct UnitTileLayout {
-    #[cube(comptime)]
     pub num_rows: u32,
-    #[cube(comptime)]
     pub num_cols: u32,
-    #[cube(comptime)]
     pub transposed_load: bool,
+}
+
+impl UnitTileLayout {
+    pub const fn new(num_rows: u32, num_cols: u32, transposed_load: bool) -> UnitTileLayout {
+        UnitTileLayout {
+            num_rows,
+            num_cols,
+            transposed_load,
+        }
+    }
 }
 
 #[cube]
 impl<E: Numeric> UnitTile<E> {
-    pub fn new(layout: UnitTileLayout) -> UnitTile<E> {
+    pub fn new(#[comptime] layout: UnitTileLayout) -> UnitTile<E> {
         let data = Array::<E>::new(comptime!(layout.num_rows * layout.num_cols) as usize);
         UnitTile::<E> { data, layout }
     }
@@ -60,8 +64,8 @@ impl<E: Numeric> UnitTile<E> {
     }
 
     pub fn rowwise_max(&self) -> RowWise<E> {
-        let num_rows = self.layout.num_rows.comptime() as usize;
-        let num_cols = self.layout.num_cols.comptime() as usize;
+        let num_rows = comptime!(self.layout.num_rows) as usize;
+        let num_cols = comptime!(self.layout.num_cols) as usize;
         let mut vals = Array::new(num_rows);
 
         for r in 0..num_rows {
@@ -80,8 +84,8 @@ impl<E: Numeric> UnitTile<E> {
     }
 
     pub fn rowwise_sum(&self) -> RowWise<E> {
-        let num_rows = self.layout.num_rows.comptime() as usize;
-        let num_cols = self.layout.num_cols.comptime() as usize;
+        let num_rows = comptime!(self.layout.num_rows) as usize;
+        let num_cols = comptime!(self.layout.num_cols) as usize;
         let mut vals = Array::new(num_rows);
 
         for r in 0..num_rows {
@@ -97,17 +101,6 @@ impl<E: Numeric> UnitTile<E> {
         }
 
         RowWise::<E> { num_rows, vals }
-    }
-
-    pub fn scale_and_mask<M: FragmentMask>(&mut self, scale: E, mask: &M) {
-        for r in 0..self.layout.num_rows {
-            let row_offset = r * self.layout.num_cols;
-            for c in 0..self.layout.num_cols {
-                let index = row_offset + c;
-                self.data[index as usize] = self.data[index as usize] * scale
-                    + E::cast_from(mask.should_mask((r, c))) * E::min_value();
-            }
-        }
     }
 
     // TODO find a way to have this not necessary if E == E2
@@ -131,13 +124,24 @@ impl<E: Numeric> UnitTile<E> {
             strided_tile_to_unit_tile(tile, self)
         }
     }
+
+    pub fn scale_and_mask<M: Mask>(&mut self, scale: E, mask: &M) {
+        for r in 0..self.layout.num_rows {
+            let row_offset = r * self.layout.num_cols;
+            for c in 0..self.layout.num_cols {
+                let index = row_offset + c;
+                self.data[index as usize] = self.data[index as usize] * scale
+                    + E::cast_from(mask.should_mask((r, c))) * E::min_value();
+            }
+        }
+    }
 }
 
 #[cube]
 impl<E: Float> UnitTile<E> {
     pub fn exp_diff(&mut self, rowwise: &RowWise<E>) {
-        let num_rows = self.layout.num_rows.comptime() as usize;
-        let num_cols = self.layout.num_cols.comptime() as usize;
+        let num_rows = comptime!(self.layout.num_rows) as usize;
+        let num_cols = comptime!(self.layout.num_cols) as usize;
         let threshold = E::new(LOGIT_MASKED);
 
         for r in 0..num_rows {
@@ -157,38 +161,12 @@ impl<E: Float> UnitTile<E> {
 }
 
 #[cube]
-impl UnitTileLayout {
-    pub fn new(
-        #[comptime] num_rows: u32,
-        #[comptime] num_cols: u32,
-        #[comptime] transposed_load: bool,
-    ) -> UnitTileLayout {
-        UnitTileLayout {
-            num_rows,
-            num_cols,
-            transposed_load,
-        }
-    }
-}
-
-#[cube]
-impl SoftmaxLayout for UnitTileLayout {
-    fn absolute_pos(&self, local_pos: Coords2d) -> Coords2d {
-        local_pos
-    }
-
-    fn num_units_per_row(&self) -> comptime_type!(u32) {
-        1u32
-    }
-}
-
-#[cube]
-impl<E: Numeric> FragmentMask for UnitTile<E> {
-    type Layout = UnitTileLayout;
-
-    fn should_mask(&self, local_pos: Coords2d) -> bool {
-        bool::cast_from(self.data[(local_pos.0 * self.layout.num_cols + local_pos.1) as usize])
-    }
+/// Allocates a `Tile::Unit`. The variant is valid in any scope — each unit
+/// just holds its own row-major copy of the tile.
+pub fn allocate_unit_tile<E: Numeric, V: Size, Sc: Scope>(
+    #[comptime] layout: UnitTileLayout,
+) -> Tile<E, V, Sc, ReadWrite> {
+    Tile::new_Unit(UnitTile::<E>::new(layout))
 }
 
 #[cube]

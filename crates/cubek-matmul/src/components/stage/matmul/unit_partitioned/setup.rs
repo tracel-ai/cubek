@@ -110,7 +110,7 @@ impl<StageIn: StageFamily, StageAcc: StageFamily> StageMatmulFamily
         Ok(PartitionMatmulConfig::Unit(
             UnitPartitionedStageConfig::from_shared_partition_config(
                 SharedPartitionMatmulConfig::new(
-                    blueprint.tile_matmul.expand_config(
+                    blueprint.tile_matmul.expand_tile_matmul(
                         device_props,
                         blueprint,
                         dtypes,

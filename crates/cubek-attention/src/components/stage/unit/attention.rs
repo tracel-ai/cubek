@@ -1,21 +1,19 @@
 use cubecl;
 use cubecl::prelude::*;
 
+use crate::components::stage::SharedPartitionAttentionConfig;
 use crate::components::{
     global::simple::UnitAttentionWriter,
     stage::{partition_attention::PartitionAttention, partitioner::AttentionPartitioner},
-    tile::TileAttentionConfig,
 };
 
-use crate::components::stage::SharedPartitionAttentionConfig;
-
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct UnitPartitionStageConfig<TC: TileAttentionConfig> {
-    pub shared: SharedPartitionAttentionConfig<TC>,
+pub struct UnitPartitionStageConfig {
+    pub shared: SharedPartitionAttentionConfig,
 }
 
-pub type UnitPartitionAttention<AP, SK, SV, SO, TA> =
-    PartitionAttention<AP, SK, SV, SO, TA, UnitPartitioner>;
+pub type UnitPartitionAttention<AP, SK, SV, SO> =
+    PartitionAttention<AP, SK, SV, SO, UnitPartitioner>;
 
 pub struct UnitPartitioner {}
 

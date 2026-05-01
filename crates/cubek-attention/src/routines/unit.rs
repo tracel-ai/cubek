@@ -11,8 +11,7 @@ use crate::definition::{
     AttentionTilingScheme, HypercubeBlueprint,
 };
 use crate::{
-    components::stage::unit::UnitPartitionStageAttentionFamily,
-    components::tile::TileAttentionFamily, components::tile::attention::unit::UnitTileAttention,
+    components::stage::unit::UnitPartitionStageAttentionFamily, components::tile::TileAttentionKind,
 };
 use crate::{
     components::{
@@ -29,9 +28,9 @@ use crate::{
 pub struct UnitRoutine {}
 
 impl Routine for UnitRoutine {
-    type TileAttention = UnitTileAttention;
+    const TILE_KIND: TileAttentionKind = TileAttentionKind::Unit;
+
     type StageAttention = UnitPartitionStageAttentionFamily<
-        Self::TileAttention,
         StridedStageFamily,
         StridedStageFamily,
         PartitionedStageFamily,
@@ -64,7 +63,7 @@ impl Routine for UnitRoutine {
             &problem.options.accumulator_precision,
         );
 
-        let compute_resources = match Self::TileAttention::computation_resources()? {
+        let compute_resources = match Self::TILE_KIND.computation_resources()? {
             CubeDimResource::Units(units) => {
                 CubeDimResource::Units(units * blueprint.tiling_scheme.stage_size.seq_q)
             }

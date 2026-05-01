@@ -1,7 +1,7 @@
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::components::tile::FULLY_MASKED_ROW_THRESHOLD;
+use crate::tile::ops::FULLY_MASKED_ROW_THRESHOLD;
 
 #[derive(CubeType)]
 /// Contains one value per row of a fragment for which the unit contributes
