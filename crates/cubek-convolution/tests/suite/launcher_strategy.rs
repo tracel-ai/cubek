@@ -30,7 +30,7 @@ use cubek_matmul::{
 use cubek_std::{InputBinding, MatrixLayout, SwizzleModes};
 use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
 
-use crate::suite::reference::assert_result;
+use cubek_convolution::cpu_reference::assert_result;
 
 /// 2D convolution input/output channel + spatial size, used by `test_algo` to
 /// build a `ConvolutionProblem`.

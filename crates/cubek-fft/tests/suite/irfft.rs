@@ -10,7 +10,7 @@ use cubek_test_utils::{
     assert_equals_approx,
 };
 
-use crate::suite::reference::irfft_ref;
+use cubek_fft::cpu_reference::irfft_ref;
 
 fn test_launch(client: ComputeClient<TestRuntime>, spectrum_shape: Vec<usize>, dim: usize) {
     let dtype = f32::as_type_native_unchecked().storage_type();

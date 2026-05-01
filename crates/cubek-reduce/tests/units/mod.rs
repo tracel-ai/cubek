@@ -1,4 +1,3 @@
-use crate::it::reference::contiguous_strides;
 use cubecl::features::Plane;
 use cubecl::frontend::CompilationArg;
 use cubecl::frontend::CubePrimitive;
@@ -7,6 +6,7 @@ use cubecl::{
     std::tensor::TensorHandle, zspace::Shape,
 };
 use cubek_reduce::components::instructions::{Value, plane_topk_insert, plane_topk_merge};
+use cubek_reduce::cpu_reference::contiguous_strides;
 use cubek_test_utils::{InputDataType, StrideSpec, TestInput};
 
 #[test]

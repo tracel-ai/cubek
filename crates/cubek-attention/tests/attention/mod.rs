@@ -4,6 +4,4 @@ pub mod extended;
 
 pub(crate) mod launcher;
 
-mod reference;
-
-pub(crate) use reference::assert_result;
+pub(crate) use cubek_attention::cpu_reference::assert_result;
