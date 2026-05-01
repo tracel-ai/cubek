@@ -1,10 +1,9 @@
 use cubecl::{
+    TestRuntime,
     ir::{ElemType, FloatKind, StorageType},
     prelude::*,
-    server::LaunchError,
     std::tensor::TensorHandle,
     zspace::{Shape, Strides},
-    {TestRuntime, server::ServerError},
 };
 use cubek_reduce::{
     ReduceDtypes, ReducePrecision, ReduceStrategy, components::instructions::ReduceOperationConfig,
@@ -12,7 +11,7 @@ use cubek_reduce::{
 };
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, HostDataVec, StrideSpec, TestInput, TestOutcome,
-    assert_equals_approx,
+    assert_equals_approx, launch_and_capture_outcome,
 };
 
 use crate::it::reference::{
@@ -179,24 +178,28 @@ impl TestCase {
         let output_handle =
             self.build_output_tensor(&client, output_dtype, &expected.shape, &config);
 
-        let result = reduce::<TestRuntime>(
-            &client,
-            input_handle.binding(),
-            output_handle.clone().binding(),
-            axis,
-            self.strategy.clone(),
-            config,
-            ReduceDtypes {
-                input: self.input_dtype,
-                output: output_dtype,
-                accumulation: self.accumulation_dtype,
-            },
-        );
+        let strategy = self.strategy.clone();
+        let dtypes = ReduceDtypes {
+            input: self.input_dtype,
+            output: output_dtype,
+            accumulation: self.accumulation_dtype,
+        };
+        let input_binding = input_handle.binding();
+        let output_binding = output_handle.clone().binding();
+        let outcome = launch_and_capture_outcome(&client, |c| {
+            reduce::<TestRuntime>(
+                c,
+                input_binding,
+                output_binding,
+                axis,
+                strategy,
+                config,
+                dtypes,
+            )
+            .into()
+        });
 
-        let launch_outcome: ExecutionOutcome =
-            get_server_error(&client).unwrap_or_else(|| ExecutionOutcome::from(result));
-
-        let outcome = match launch_outcome {
+        let outcome = match outcome {
             ExecutionOutcome::Executed => {
                 let actual =
                     HostData::from_tensor_handle(&client, output_handle, HostDataType::F32);
@@ -227,28 +230,6 @@ impl TestCase {
             .stride(StrideSpec::Custom(strides.iter().copied().collect()))
             .zeros()
             .generate()
-    }
-}
-
-fn get_server_error(
-    client: &cubecl::client::ComputeClient<TestRuntime>,
-) -> Option<ExecutionOutcome> {
-    match client.flush() {
-        Ok(_) => None,
-        Err(ServerError::ServerUnhealthy { errors, .. }) => {
-            #[allow(clippy::never_loop)]
-            for error in errors.iter() {
-                match error {
-                    cubecl::server::ServerError::Launch(LaunchError::TooManyResources(_))
-                    | cubecl::server::ServerError::Launch(LaunchError::CompilationError(_)) => {
-                        return Some(ExecutionOutcome::CompileError(format!("{errors:?}")));
-                    }
-                    _ => panic!("Unexpected error: {errors:?}"),
-                }
-            }
-            None
-        }
-        Err(err) => panic!("Unexpected error: {err:?}"),
     }
 }
 

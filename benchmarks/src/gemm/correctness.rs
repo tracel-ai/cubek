@@ -2,9 +2,7 @@
 //!
 //! Both `kernel_result` and `reference_result` build the same input bits
 //! from `(strategy_id, problem_id, seed_lhs, seed_rhs)` so the two
-//! `HostData`s they return are directly comparable. Persistence and
-//! file-vs-file comparison live entirely in the tuner — this module knows
-//! nothing about disk.
+//! `HostData`s they return are directly comparable.
 
 use cubecl::{Runtime, TestRuntime, ir::AddressType, zspace::Shape};
 use cubek::{

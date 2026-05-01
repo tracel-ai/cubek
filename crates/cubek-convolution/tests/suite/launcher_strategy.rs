@@ -7,7 +7,6 @@
 
 use cubecl::{
     TestRuntime,
-    server::ServerError,
     zspace::{Shape, shape},
     {ir::AddressType, prelude::*},
 };
@@ -29,7 +28,7 @@ use cubek_matmul::{
     routines::{BlueprintStrategy, Routine},
 };
 use cubek_std::{InputBinding, MatrixLayout, SwizzleModes};
-use cubek_test_utils::{TestInput, TestOutcome};
+use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
 
 use crate::suite::reference::assert_result;
 
@@ -194,44 +193,27 @@ pub fn test_algo(
     problem_for_check.lhs_strides = lhs.strides().clone();
     problem_for_check.rhs_strides = rhs.strides().clone();
 
-    let outcome =
-        match cubek_convolution::launch_ref(&strategy, &client, inputs, args, dtypes.clone()) {
-            Ok(()) => match get_server_error(&client) {
-                Some(e) => e,
-                None => TestOutcome::Validated(assert_result(
-                    &lhs_data,
-                    &rhs_data,
-                    &problem_for_check,
-                    &client,
-                    out,
-                    dtypes,
-                )),
-            },
-            Err(e) => TestOutcome::CompileError(format!("{e:?}")),
-        };
+    let dtypes_for_launch = dtypes.clone();
+    let outcome = launch_and_capture_outcome(&client, |c| {
+        match cubek_convolution::launch_ref(&strategy, c, inputs, args, dtypes_for_launch) {
+            Ok(()) => ExecutionOutcome::Executed,
+            Err(e) => ExecutionOutcome::CompileError(format!("{e:?}")),
+        }
+    });
+
+    let outcome = match outcome {
+        ExecutionOutcome::Executed => TestOutcome::Validated(assert_result(
+            &lhs_data,
+            &rhs_data,
+            &problem_for_check,
+            &client,
+            out,
+            dtypes,
+        )),
+        ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
+    };
 
     outcome.enforce()
-}
-
-fn get_server_error(client: &ComputeClient<TestRuntime>) -> Option<TestOutcome> {
-    match client.flush() {
-        Ok(_) => None,
-        Err(ServerError::ServerUnhealthy { errors, .. }) => {
-            #[allow(clippy::never_loop)]
-            for error in errors.iter() {
-                match error {
-                    cubecl::server::ServerError::Launch(LaunchError::TooManyResources(_))
-                    | cubecl::server::ServerError::Launch(LaunchError::CompilationError(_)) => {
-                        return Some(TestOutcome::CompileError(format!("{errors:?}")));
-                    }
-                    _ => panic!("Unexpected error: {errors:?}"),
-                }
-            }
-
-            None
-        }
-        Err(err) => panic!("Unexpected error: {err:?}"),
-    }
 }
 
 /// Calculate the expected output size when doing a convolution operation.

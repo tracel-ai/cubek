@@ -18,10 +18,6 @@ heavy = []
 extended = ["heavy"]
 full = ["extended"]
 
-# Exposes a CPU-reference implementation usable from the benchmarks crate (and
-# any other consumer that wants to validate kernel output without re-running
-# the kernel). Pulls in cubek-test-utils, which forces `cubecl/test-runtime`
-# on; off by default to keep production-only consumers slim.
 cpu-reference = ["dep:cubek-test-utils"]
 
 [dependencies]

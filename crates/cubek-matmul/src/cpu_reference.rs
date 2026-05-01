@@ -1,23 +1,9 @@
 //! CPU reference and seeded "produce a HostData" primitives for matmul.
 //!
-//! Behind the `cpu-reference` feature so test code, benchmarks, and the tuner
-//! can all share one source of truth. Every helper here is *non-panicking* —
-//! callers (tests via `.enforce()`, the tuner via its own outcome types)
-//! decide what to do with a `ValidationResult`.
-//!
-//! Two seeded primitives drive the cross-commit / cross-implementation
-//! correctness flow:
-//!
 //! - [`strategy_result`] runs the kernel once and returns its output as a
 //!   [`HostData`].
 //! - [`cpu_reference_result`] runs the naive triple-loop on the same seeded
 //!   inputs and returns its output as a [`HostData`].
-//!
-//! Both use identical seeded input generation, so a `HostData` from one can be
-//! compared elementwise against a `HostData` from the other (same shape, same
-//! row-major output strides). Persisting via [`cubek_test_utils::write_host_data`]
-//! and comparing later via [`cubek_test_utils::compare_host_data_files`] is the
-//! intended cross-commit flow — kept entirely outside this crate.
 
 use cubecl::{TestRuntime, prelude::*, std::tensor::TensorHandle};
 use cubek_std::{InputBinding, MatrixLayout};
@@ -35,8 +21,7 @@ use crate::{
 /// a [`HostData`].
 ///
 /// Inputs are generated via `TestInput::uniform` so the same `(problem, seeds)`
-/// pair produces the same bits on every run — making it safe to persist the
-/// returned `HostData` to disk and compare it against another commit's output.
+/// pair produces the same bits on every run.
 pub fn strategy_result(
     client: ComputeClient<TestRuntime>,
     problem: MatmulProblem,

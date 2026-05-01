@@ -55,14 +55,10 @@ impl RunSamples {
     }
 }
 
-/// One benchmark category exposed to the tuner. Each category lives in its own
-/// module (`attention`, `gemm`, ...) and exposes a unit struct that implements
-/// this trait. `all()` returns every category the crate ships.
+/// Each category lives in its own module (`attention`, `gemm`, ...) and
+/// exposes a unit struct that implements this trait. `all()`
+/// returns every category the crate ships.
 ///
-/// The two seeded result methods are the primitives that drive the tuner's
-/// correctness flow. They return a [`HostData`] (or `None` if the category
-/// can't expose this kind of result); persistence and comparison live in the
-/// tuner. Categories opt in as kernel/reference implementations land.
 pub trait BenchmarkCategory: Sync {
     /// Stable identifier — persisted in tuner-results history. Don't rename.
     fn id(&self) -> &'static str;
@@ -109,9 +105,7 @@ pub trait BenchmarkCategory: Sync {
     }
 }
 
-/// Every benchmark category compiled into this build of the registry. The
-/// tuner-runner enumerates this slice — adding a new category is a single
-/// `&Category` entry here, no changes needed in the tuner.
+/// Every benchmark category compiled into this build of the registry.
 pub fn all() -> &'static [&'static dyn BenchmarkCategory] {
     &[
         &crate::attention::Category,

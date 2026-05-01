@@ -4,8 +4,7 @@
 //! Kernel launches can fail in two windows: synchronously (the launch closure
 //! returns `Err`) or asynchronously when the runtime processes the queued
 //! work. Catching the asynchronous case requires an explicit `flush` both
-//! before and after the launch — the pattern is identical for matmul,
-//! attention, etc., so it lives here.
+//! before and after the launch.
 
 use cubecl::{
     TestRuntime,
