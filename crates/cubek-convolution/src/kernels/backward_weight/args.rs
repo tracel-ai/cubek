@@ -2,7 +2,6 @@ use cubecl::{
     Runtime,
     client::ComputeClient,
     prelude::*,
-    server::TensorMapMeta,
     std::tensor::{
         launch::ViewArg,
         layout::{
@@ -18,6 +17,7 @@ use cubek_matmul::{
     launch::*,
     routines::Routine,
 };
+use cubek_std::launch::tma::{remap_storage_for_tma, tma_meta_tiled};
 use cubek_std::{InputBinding, stage::SwizzleMode};
 use enumset::EnumSet;
 
@@ -222,18 +222,8 @@ impl<
             _ => shape![stage_k as usize, stage_m as usize],
         };
 
-        // f32 gets remapped to tf32 for the tensor map just to ensure CUDA loads them correctly.
-        // It shouldn't matter, but it's better to be safe.
-        let lhs_elem = if dtypes.lhs_stage == f32::as_type_native_unchecked().storage_type() {
-            tf32::as_type_native_unchecked().storage_type()
-        } else {
-            dtypes.lhs_stage
-        };
-        let rhs_elem = if dtypes.rhs_stage == f32::as_type_native_unchecked().storage_type() {
-            tf32::as_type_native_unchecked().storage_type()
-        } else {
-            dtypes.rhs_stage
-        };
+        let lhs_elem = remap_storage_for_tma(dtypes.lhs_stage);
+        let rhs_elem = remap_storage_for_tma(dtypes.rhs_stage);
 
         let mut elem_stride = strides![1; 2 + problem.stride.len()];
 
@@ -247,18 +237,12 @@ impl<
             out_grad.data().strides[dim_c],
         ];
 
-        let lhs_meta = TensorMapMeta {
-            format: TensorMapFormat::Tiled(TiledArgs {
-                tile_size: stage_size_lhs,
-            }),
-            metadata: Metadata::new(lhs_shape, lhs_strides),
-            elem_stride: strides![1, 1],
-            interleave: TensorMapInterleave::None,
-            swizzle: blueprint.swizzle_modes.lhs.into(),
-            prefetch: TensorMapPrefetch::None,
-            oob_fill: OobFill::Zero,
-            storage_ty: lhs_elem,
-        };
+        let lhs_meta = tma_meta_tiled(
+            Metadata::new(lhs_shape, lhs_strides),
+            stage_size_lhs,
+            lhs_elem,
+            blueprint.swizzle_modes.lhs.into(),
+        );
 
         let lhs = TensorMapArg {
             tensor: out_grad.clone().into_data().into_tensor_arg(),

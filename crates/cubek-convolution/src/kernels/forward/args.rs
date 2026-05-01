@@ -17,6 +17,7 @@ use cubek_matmul::{
     launch::*,
     routines::Routine,
 };
+use cubek_std::launch::tma::remap_storage_for_tma;
 use cubek_std::{InputBinding, MatrixLayout, stage::SwizzleMode};
 use enumset::EnumSet;
 
@@ -230,13 +231,7 @@ impl<
         stage_size_rhs.insert(0, stage_n as usize);
         stage_size_rhs.push(tile_size_k as usize);
 
-        // f32 gets remapped to tf32 for the tensor map just to ensure CUDA loads them correctly.
-        // It shouldn't matter, but it's better to be safe.
-        let lhs_elem = if dtypes.lhs_stage == f32::as_type_native_unchecked().storage_type() {
-            tf32::as_type_native_unchecked().storage_type()
-        } else {
-            dtypes.lhs_stage
-        };
+        let lhs_elem = remap_storage_for_tma(dtypes.lhs_stage);
 
         let mut elem_stride = strides![1; 2 + problem.stride.len()];
 

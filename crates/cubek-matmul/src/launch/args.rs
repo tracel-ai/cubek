@@ -5,11 +5,12 @@ use cubecl::std::tensor::{
     launch::ViewArg,
     layout::{Coords1d, VirtualLayout, VirtualLayoutLaunch},
 };
+use cubecl::unexpanded;
 use cubecl::{
     prelude::*,
     zspace::{metadata::Metadata, shape, strides},
 };
-use cubecl::{server::TensorMapMeta, unexpanded};
+use cubek_std::launch::tma::{remap_storage_for_tma, tma_meta_tiled, transpose_inner_for_tma};
 use cubek_std::{InputBinding, MatrixLayout, stage::SwizzleMode};
 
 use crate::components::global::memory::{
@@ -463,73 +464,34 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<()>>
             strides![rhs.strides[0], rhs.strides[1]]
         };
 
-        let mut lhs_transposed = false;
-        let mut rhs_transposed = false;
-
-        let lhs_rank = lhs_strides.len();
-        let rhs_rank = rhs_strides.len();
-
-        // TMA assumes the last stride is contiguous and won't even take it, so we need to map it
-        // with transposed shape and stride. Tensor metadata still has the normal layout.
-        if matches!(problem.lhs_layout, MatrixLayout::ColMajor) {
-            lhs_shape.swap(2, 1);
-            lhs_strides.swap(lhs_rank - 1, lhs_rank - 2);
-            lhs_transposed = true;
-        }
-        if matches!(problem.rhs_layout, MatrixLayout::ColMajor) {
-            rhs_shape.swap(2, 1);
-            rhs_strides.swap(rhs_rank - 1, rhs_rank - 2);
-            rhs_transposed = true;
-        }
+        let lhs_transposed =
+            transpose_inner_for_tma(&mut lhs_shape, &mut lhs_strides, problem.lhs_layout);
+        let rhs_transposed =
+            transpose_inner_for_tma(&mut rhs_shape, &mut rhs_strides, problem.rhs_layout);
 
         // Insert batch stride after swap so we can easily get the non-contiguous stride
-        if lhs_rank == 2 {
+        if lhs_strides.len() == 2 {
             let stride = lhs_strides[0];
             lhs_strides.insert(0, stride);
         }
-        if rhs_rank == 2 {
+        if rhs_strides.len() == 2 {
             let stride = rhs_strides[0];
             rhs_strides.insert(0, stride);
         }
 
-        // f32 gets remapped to tf32 for the tensor map just to ensure CUDA loads them correctly.
-        // It shouldn't matter, but it's better to be safe.
-        let lhs_elem = if dtypes.lhs_stage == f32::as_type_native_unchecked().storage_type() {
-            tf32::as_type_native_unchecked().storage_type()
-        } else {
-            dtypes.lhs_stage
-        };
-        let rhs_elem = if dtypes.rhs_stage == f32::as_type_native_unchecked().storage_type() {
-            tf32::as_type_native_unchecked().storage_type()
-        } else {
-            dtypes.rhs_stage
-        };
+        let meta_lhs = tma_meta_tiled(
+            Metadata::new(lhs_shape.clone(), lhs_strides),
+            stage_size_lhs,
+            remap_storage_for_tma(dtypes.lhs_stage),
+            blueprint.swizzle_modes().lhs.into(),
+        );
 
-        let meta_lhs = TensorMapMeta {
-            format: TensorMapFormat::Tiled(TiledArgs {
-                tile_size: stage_size_lhs,
-            }),
-            metadata: Metadata::new(lhs_shape.clone(), lhs_strides),
-            elem_stride: strides![1, 1, 1],
-            interleave: TensorMapInterleave::None,
-            swizzle: blueprint.swizzle_modes().lhs.into(),
-            prefetch: TensorMapPrefetch::None,
-            oob_fill: OobFill::Zero,
-            storage_ty: lhs_elem,
-        };
-
-        let meta_rhs = TensorMapMeta {
-            format: TensorMapFormat::Tiled(TiledArgs {
-                tile_size: stage_size_rhs,
-            }),
-            metadata: Metadata::new(rhs_shape.clone(), rhs_strides),
-            elem_stride: strides![1, 1, 1],
-            interleave: TensorMapInterleave::None,
-            swizzle: blueprint.swizzle_modes().rhs.into(),
-            prefetch: TensorMapPrefetch::None,
-            oob_fill: OobFill::Zero,
-            storage_ty: rhs_elem,
-        };
+        let meta_rhs = tma_meta_tiled(
+            Metadata::new(rhs_shape.clone(), rhs_strides),
+            stage_size_rhs,
+            remap_storage_for_tma(dtypes.rhs_stage),
+            blueprint.swizzle_modes().rhs.into(),
+        );
 
         let lhs = TensorMapArg {
             tensor: lhs.into_tensor_arg(),
