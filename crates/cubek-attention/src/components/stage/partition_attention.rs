@@ -35,9 +35,9 @@ pub struct PartitionAttention<AP: AttentionPrecision, SK, SV, SO, P: AttentionPa
 #[cube]
 impl<
     AP: AttentionPrecision,
-    SK: Stage<KS<AP>, KSS<AP>, ReadOnly>,
-    SV: Stage<VS<AP>, VSS<AP>, ReadOnly>,
-    SO: Stage<OS<AP>, OSS<AP>, ReadWrite>,
+    SK: Stage<KS<AP>, ReadOnly>,
+    SV: Stage<VS<AP>, ReadOnly>,
+    SO: Stage<OS<AP>, ReadWrite>,
     P: AttentionPartitioner,
 > StageAttention<AP> for PartitionAttention<AP, SK, SV, SO, P>
 {

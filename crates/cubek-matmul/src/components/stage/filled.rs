@@ -24,7 +24,7 @@ impl<ES: Numeric> FilledStage<ES> {
 }
 
 #[cube]
-impl<ES: Numeric, NS: Size> Stage<ES, NS, ReadOnly> for FilledStage<ES> {
+impl<ES: Numeric> Stage<ES, ReadOnly> for FilledStage<ES> {
     fn tile<Sc: Scope>(this: &Self, _tile: Coords2d) -> Tile<ES, Sc, ReadOnly> {
         Tile::new_Broadcasted(Value::<ES> { val: this.value })
     }

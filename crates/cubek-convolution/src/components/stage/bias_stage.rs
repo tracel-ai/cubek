@@ -120,7 +120,7 @@ impl<ES: Numeric, NS: Size> BiasStageMemory<ES, NS> {
 }
 
 #[cube]
-impl<ES: Numeric, NS: Size> Stage<ES, NS, ReadOnly> for BiasStageMemory<ES, NS> {
+impl<ES: Numeric, NS: Size> Stage<ES, ReadOnly> for BiasStageMemory<ES, NS> {
     fn tile<Sc: Scope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc, ReadOnly> {
         Tile::new_SharedMemory(SharedTile::wrap::<NS>(this.get_tile(tile)))
     }

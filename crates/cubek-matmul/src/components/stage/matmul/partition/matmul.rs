@@ -72,15 +72,14 @@ impl SharedPartitionMatmulConfig {
 }
 
 type STy<T> = crate::definition::Stage<T>;
-type SSz<T> = crate::definition::StageSize<T>;
 
 /// Matmul for a whole partition, a region of the Stage Matmul
 /// executed by a single compute primitive (unit or plane)
 pub struct PartitionMatmul<
     MP: MatmulTypes,
-    StageLhs: Stage<STy<Lhs<MP>>, SSz<Lhs<MP>>, ReadOnly>,
-    StageRhs: Stage<STy<Rhs<MP>>, SSz<Rhs<MP>>, ReadOnly>,
-    StageAcc: Stage<STy<Acc<MP>>, SSz<Acc<MP>>, ReadOnly>,
+    StageLhs: Stage<STy<Lhs<MP>>, ReadOnly>,
+    StageRhs: Stage<STy<Rhs<MP>>, ReadOnly>,
+    StageAcc: Stage<STy<Acc<MP>>, ReadOnly>,
     Sc: Scope,
 > {
     _phantom: PhantomData<(MP, StageLhs, StageRhs, StageAcc, Sc)>,
@@ -90,9 +89,9 @@ pub struct PartitionMatmul<
 impl<MT, StageLhs, StageRhs, StageAcc, Sc> PartitionMatmul<MT, StageLhs, StageRhs, StageAcc, Sc>
 where
     MT: MatmulTypes,
-    StageLhs: Stage<STy<Lhs<MT>>, SSz<Lhs<MT>>, ReadOnly>,
-    StageRhs: Stage<STy<Rhs<MT>>, SSz<Rhs<MT>>, ReadOnly>,
-    StageAcc: Stage<STy<Acc<MT>>, SSz<Acc<MT>>, ReadOnly>,
+    StageLhs: Stage<STy<Lhs<MT>>, ReadOnly>,
+    StageRhs: Stage<STy<Rhs<MT>>, ReadOnly>,
+    StageAcc: Stage<STy<Acc<MT>>, ReadOnly>,
     Sc: Scope,
 {
     #[allow(clippy::too_many_arguments)]

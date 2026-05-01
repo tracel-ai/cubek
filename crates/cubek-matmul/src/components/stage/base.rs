@@ -198,7 +198,7 @@ pub enum PartitionBuffering {
 /// Stage that can be divided into tiles, with the same kind used by the
 /// tile matmul readers.
 #[cube]
-pub trait Stage<ES: Numeric, NS: Size, IO: SliceVisibility = ReadOnly>:
+pub trait Stage<ES: Numeric, IO: SliceVisibility = ReadOnly>:
     CubeType + Clone + Send + Sync + 'static
 {
     /// Slices a tile with offset (`row`, `col`) from the stage and returns it.
@@ -210,8 +210,10 @@ pub trait Stage<ES: Numeric, NS: Size, IO: SliceVisibility = ReadOnly>:
 
 /// Stage family for any precision
 pub trait StageFamily<IO: SliceVisibility = ReadOnly>: Send + Sync + 'static {
-    /// The concrete stage type of this family, instantiated with the type and layout
-    type Stage<ES: Numeric, NS: Size, T: TilingLayout>: Stage<ES, NS, IO>;
+    /// The concrete stage type of this family, instantiated with the type and layout.
+    /// `NS` parameterizes the underlying allocation's vector size; the produced
+    /// `Stage<ES, IO>` no longer exposes it on its trait surface.
+    type Stage<ES: Numeric, NS: Size, T: TilingLayout>: Stage<ES, IO>;
 }
 
 /// Stage family that can be used as the target of a loader
@@ -232,7 +234,7 @@ pub trait LoadStageFamily<IO: SliceVisibility = ReadOnly>: StageFamily {
 }
 
 #[cube]
-impl<ES: Numeric, NS: Size, IO: SliceVisibility, Inner: Stage<ES, NS, IO>> Stage<ES, NS, IO>
+impl<ES: Numeric, IO: SliceVisibility, Inner: Stage<ES, IO>> Stage<ES, IO>
     for ComptimeOption<Inner>
 {
     fn tile<Sc: Scope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc, IO> {

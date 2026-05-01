@@ -200,9 +200,7 @@ impl<ES: Numeric, NS: Size, T: TilingLayout> StridedStageMemory<ES, NS, T> {
 }
 
 #[cube]
-impl<ES: Numeric, NS: Size, T: TilingLayout> Stage<ES, NS, ReadOnly>
-    for StridedStageMemory<ES, NS, T>
-{
+impl<ES: Numeric, NS: Size, T: TilingLayout> Stage<ES, ReadOnly> for StridedStageMemory<ES, NS, T> {
     fn tile<Sc: Scope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc, ReadOnly> {
         let strided_tile = this.get_tile(tile);
         Tile::new_SharedMemory(SharedTile::wrap::<NS>(strided_tile))
@@ -210,7 +208,7 @@ impl<ES: Numeric, NS: Size, T: TilingLayout> Stage<ES, NS, ReadOnly>
 }
 
 #[cube]
-impl<ES: Numeric, NS: Size, T: TilingLayout> Stage<ES, NS, ReadWrite>
+impl<ES: Numeric, NS: Size, T: TilingLayout> Stage<ES, ReadWrite>
     for StridedStageMemory<ES, NS, T>
 {
     fn tile<Sc: Scope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc, ReadWrite> {
