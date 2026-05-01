@@ -1,6 +1,3 @@
-//! Attention benchmark registry. Strategy/problem IDs are stable strings; the
-//! tuner UI uses them to drive runs across cubek versions.
-
 use std::marker::PhantomData;
 
 use cubecl::{
@@ -15,64 +12,18 @@ use cubek::{
     attention::{
         self,
         definition::{
-            AttentionDims, AttentionGlobalTypes, AttentionIdent, AttentionOptions,
-            AttentionPrecision, AttentionProblem, attention_types::*,
+            AttentionGlobalTypes, AttentionIdent, AttentionPrecision, AttentionProblem,
+            attention_types::*,
         },
-        launch::{BlueprintStrategy, Strategy},
-        routines::blackbox_accelerated::BlackboxAcceleratedStrategy,
+        launch::Strategy,
     },
     random::random_uniform,
 };
 
-use crate::registry::{ItemDescriptor, RunSamples};
-
-/// Stable IDs. Changing one is a breaking change for any persisted history.
-pub const STRATEGY_UNIT: &str = "unit_inferred";
-pub const STRATEGY_BLACKBOX_ACCELERATED: &str = "blackbox_accelerated_inferred";
-
-pub const PROBLEM_BERT: &str = "bert";
-pub const PROBLEM_GPT2: &str = "gpt2";
-pub const PROBLEM_LLAMA: &str = "llama";
-pub const PROBLEM_LONG_CONTEXT: &str = "long_context";
-pub const PROBLEM_ENCODER_DECODER: &str = "encoder_decoder";
-
-pub fn strategies() -> Vec<ItemDescriptor> {
-    vec![
-        ItemDescriptor {
-            id: STRATEGY_UNIT,
-            label: "Unit (inferred)",
-        },
-        ItemDescriptor {
-            id: STRATEGY_BLACKBOX_ACCELERATED,
-            label: "Blackbox accelerated (inferred, np=1 sq=1 skv=1)",
-        },
-    ]
-}
-
-pub fn problems() -> Vec<ItemDescriptor> {
-    vec![
-        ItemDescriptor {
-            id: PROBLEM_BERT,
-            label: "BERT (b=8 h=12 sq=skv=128 d=64)",
-        },
-        ItemDescriptor {
-            id: PROBLEM_GPT2,
-            label: "GPT-2 (b=4 h=12 sq=skv=1024 d=64, causal+mask)",
-        },
-        ItemDescriptor {
-            id: PROBLEM_LLAMA,
-            label: "Llama (b=4 h=32 sq=skv=2048 d=128, causal+mask)",
-        },
-        ItemDescriptor {
-            id: PROBLEM_LONG_CONTEXT,
-            label: "Long context (b=1 h=16 sq=skv=4096 d=128, causal+mask)",
-        },
-        ItemDescriptor {
-            id: PROBLEM_ENCODER_DECODER,
-            label: "Encoder-decoder (b=2 h=16 sq=512 skv=1024 d=128)",
-        },
-    ]
-}
+use crate::{
+    attention::{problem::problem_for, strategy::strategy_for},
+    registry::RunSamples,
+};
 
 /// Run one (strategy, problem) pair on `cubecl::TestRuntime` with `f16`
 /// precision and return the raw samples.
@@ -116,107 +67,7 @@ pub fn run_on<R: Runtime, AP: AttentionPrecision>(
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
 
-    Ok(RunSamples {
-        durations,
-        tflops: None,
-    })
-}
-
-fn strategy_for(id: &str) -> Option<Strategy> {
-    match id {
-        STRATEGY_UNIT => Some(Strategy::Unit(BlueprintStrategy::Inferred(()))),
-        STRATEGY_BLACKBOX_ACCELERATED => Some(Strategy::BlackboxAccelerated(
-            BlueprintStrategy::Inferred(BlackboxAcceleratedStrategy {
-                num_planes: 1,
-                seq_q: 1,
-                seq_kv: 1,
-            }),
-        )),
-        _ => None,
-    }
-}
-
-fn problem_for(id: &str, global_dtypes: AttentionGlobalTypes) -> Option<AttentionProblem> {
-    let causal_masked = AttentionOptions {
-        causal: true,
-        accumulator_precision: Default::default(),
-    };
-    Some(match id {
-        PROBLEM_BERT => AttentionProblem {
-            dims: AttentionDims {
-                batch: 8,
-                num_heads: 12,
-                seq_q: 128,
-                seq_kv: 128,
-                head_dim: 64,
-                val_dim: 64,
-            },
-            global_dtypes,
-            masked: false,
-            options: Default::default(),
-            address_type: Default::default(),
-        },
-        PROBLEM_GPT2 => AttentionProblem {
-            dims: AttentionDims {
-                batch: 4,
-                num_heads: 12,
-                seq_q: 1024,
-                seq_kv: 1024,
-                head_dim: 64,
-                val_dim: 64,
-            },
-            global_dtypes,
-            masked: true,
-            options: causal_masked,
-            address_type: Default::default(),
-        },
-        PROBLEM_LLAMA => AttentionProblem {
-            dims: AttentionDims {
-                batch: 4,
-                num_heads: 32,
-                seq_q: 2048,
-                seq_kv: 2048,
-                head_dim: 128,
-                val_dim: 128,
-            },
-            global_dtypes,
-            masked: true,
-            options: causal_masked,
-            address_type: Default::default(),
-        },
-        PROBLEM_LONG_CONTEXT => AttentionProblem {
-            dims: AttentionDims {
-                batch: 1,
-                num_heads: 16,
-                seq_q: 4096,
-                seq_kv: 4096,
-                head_dim: 128,
-                val_dim: 128,
-            },
-            global_dtypes,
-            masked: true,
-            options: causal_masked,
-            address_type: Default::default(),
-        },
-        PROBLEM_ENCODER_DECODER => AttentionProblem {
-            dims: AttentionDims {
-                batch: 2,
-                num_heads: 16,
-                seq_q: 512,
-                seq_kv: 1024,
-                head_dim: 128,
-                val_dim: 128,
-            },
-            global_dtypes,
-            masked: false,
-            options: AttentionOptions {
-                causal: false,
-                accumulator_precision: Default::default(),
-            },
-            address_type: Default::default(),
-        },
-        _ => return None,
-    })
+    Ok(RunSamples::new(durations))
 }
 
 struct AttentionBench<R: Runtime, AP> {
