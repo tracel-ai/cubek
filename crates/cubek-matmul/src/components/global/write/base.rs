@@ -32,7 +32,7 @@ pub trait GlobalWriter<IP: MatrixTypes>:
     WriteEventListener + CubeType + 'static + Send + Sync
 {
     /// Tile stage that stores the data for this writer
-    type Stage: Stage<IP::Stage, IP::StageSize, ReadWrite>;
+    type Stage: Stage<IP::Stage, ReadWrite>;
 
     /// Init this writer from a global tensor and config
     fn init(

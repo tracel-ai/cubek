@@ -6,10 +6,7 @@ use crate::components::tile::{
     planevec_allocate_acc, register_allocate_acc,
 };
 use crate::definition::{AccRE, AccSE, AccSS, LhsRE, MatmulTypes, MatrixTypes, RhsRE, StageIdent};
-use crate::{
-    components::stage::Stage,
-    definition::{Acc, StageSize},
-};
+use crate::{components::stage::Stage, definition::Acc};
 use cubecl::prelude::*;
 use cubek_std::{MatrixLayout, PartitionSize};
 
@@ -46,7 +43,7 @@ impl<MT: MatmulTypes, Sc: Scope> Accumulators<MT, Sc> {
     }
 
     /// Load all accumulators from the specified stage
-    pub fn load<R: Stage<StageTy<Acc<MT>>, StageSize<Acc<MT>>, ReadOnly>>(
+    pub fn load<R: Stage<StageTy<Acc<MT>>, ReadOnly>>(
         &mut self,
         stage: &R,
         partition_scheduler: &PartitionScheduler,

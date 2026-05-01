@@ -115,26 +115,10 @@ impl StageConfig for PartitionMatmulConfig {
 /// Its results are written in a temporary shared memory to correct the layout before storing to global memory.
 pub struct PartitionedStageMatmul<
     MP: MatmulTypes,
-    StageLhs: Stage<
-            <<MP as MatmulTypes>::Lhs as MatrixTypes>::Stage,
-            <<MP as MatmulTypes>::Lhs as MatrixTypes>::StageSize,
-            ReadOnly,
-        >,
-    StageRhs: Stage<
-            <<MP as MatmulTypes>::Rhs as MatrixTypes>::Stage,
-            <<MP as MatmulTypes>::Rhs as MatrixTypes>::StageSize,
-            ReadOnly,
-        >,
-    StageAcc: Stage<
-            <<MP as MatmulTypes>::Acc as MatrixTypes>::Stage,
-            <<MP as MatmulTypes>::Acc as MatrixTypes>::StageSize,
-            ReadOnly,
-        >,
-    StageOut: Stage<
-            <<MP as MatmulTypes>::Acc as MatrixTypes>::Stage,
-            <<MP as MatmulTypes>::Acc as MatrixTypes>::StageSize,
-            ReadWrite,
-        >,
+    StageLhs: Stage<<<MP as MatmulTypes>::Lhs as MatrixTypes>::Stage, ReadOnly>,
+    StageRhs: Stage<<<MP as MatmulTypes>::Rhs as MatrixTypes>::Stage, ReadOnly>,
+    StageAcc: Stage<<<MP as MatmulTypes>::Acc as MatrixTypes>::Stage, ReadOnly>,
+    StageOut: Stage<<<MP as MatmulTypes>::Acc as MatrixTypes>::Stage, ReadWrite>,
     SP: StagePartitioner,
 > {
     #[allow(clippy::type_complexity)]
@@ -146,26 +130,10 @@ impl<MP, StageLhs, StageRhs, StageAcc, StageOut, SP> StageMatmul<MP>
     for PartitionedStageMatmul<MP, StageLhs, StageRhs, StageAcc, StageOut, SP>
 where
     MP: MatmulTypes,
-    StageLhs: Stage<
-            <<MP as MatmulTypes>::Lhs as MatrixTypes>::Stage,
-            <<MP as MatmulTypes>::Lhs as MatrixTypes>::StageSize,
-            ReadOnly,
-        >,
-    StageRhs: Stage<
-            <<MP as MatmulTypes>::Rhs as MatrixTypes>::Stage,
-            <<MP as MatmulTypes>::Rhs as MatrixTypes>::StageSize,
-            ReadOnly,
-        >,
-    StageAcc: Stage<
-            <<MP as MatmulTypes>::Acc as MatrixTypes>::Stage,
-            <<MP as MatmulTypes>::Acc as MatrixTypes>::StageSize,
-            ReadOnly,
-        >,
-    StageOut: Stage<
-            <<MP as MatmulTypes>::Acc as MatrixTypes>::Stage,
-            <<MP as MatmulTypes>::Acc as MatrixTypes>::StageSize,
-            ReadWrite,
-        >,
+    StageLhs: Stage<<<MP as MatmulTypes>::Lhs as MatrixTypes>::Stage, ReadOnly>,
+    StageRhs: Stage<<<MP as MatmulTypes>::Rhs as MatrixTypes>::Stage, ReadOnly>,
+    StageAcc: Stage<<<MP as MatmulTypes>::Acc as MatrixTypes>::Stage, ReadOnly>,
+    StageOut: Stage<<<MP as MatmulTypes>::Acc as MatrixTypes>::Stage, ReadWrite>,
     SP: StagePartitioner,
 {
     type Config = PartitionMatmulConfig;
