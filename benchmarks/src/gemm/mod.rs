@@ -42,7 +42,12 @@ impl BenchmarkCategory for Category {
         seed_lhs: u64,
         seed_rhs: u64,
     ) -> Option<Result<HostData, String>> {
-        Some(correctness::kernel_result(strategy_id, problem_id, seed_lhs, seed_rhs))
+        Some(correctness::kernel_result(
+            strategy_id,
+            problem_id,
+            seed_lhs,
+            seed_rhs,
+        ))
     }
 
     fn reference_result(
@@ -51,6 +56,8 @@ impl BenchmarkCategory for Category {
         seed_lhs: u64,
         seed_rhs: u64,
     ) -> Option<Result<HostData, String>> {
-        Some(correctness::reference_result(problem_id, seed_lhs, seed_rhs))
+        Some(correctness::reference_result(
+            problem_id, seed_lhs, seed_rhs,
+        ))
     }
 }

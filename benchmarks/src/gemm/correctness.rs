@@ -27,7 +27,8 @@ pub fn kernel_result(
     seed_lhs: u64,
     seed_rhs: u64,
 ) -> Result<HostData, String> {
-    let problem = problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
+    let problem =
+        problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
     let strategy =
         strategy_for(strategy_id).ok_or_else(|| format!("unknown strategy: {strategy_id}"))?;
     let device = <TestRuntime as Runtime>::Device::default();
@@ -41,7 +42,8 @@ pub fn reference_result(
     seed_lhs: u64,
     seed_rhs: u64,
 ) -> Result<HostData, String> {
-    let problem = problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
+    let problem =
+        problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
     let device = <TestRuntime as Runtime>::Device::default();
     let client = <TestRuntime as Runtime>::client(&device);
     let matmul_problem = build_matmul_problem(&problem);
@@ -50,8 +52,14 @@ pub fn reference_result(
 
 fn build_matmul_problem(p: &GemmProblem) -> MatmulProblem {
     let global_dtypes = match p.precision {
-        Precision::F32 => MatmulElems::from_single_dtype(<f32 as cubecl::frontend::CubePrimitive>::as_type_native_unchecked()).as_global_elems(),
-        Precision::F16 => MatmulElems::from_single_dtype(<half::f16 as cubecl::frontend::CubePrimitive>::as_type_native_unchecked()).as_global_elems(),
+        Precision::F32 => MatmulElems::from_single_dtype(
+            <f32 as cubecl::frontend::CubePrimitive>::as_type_native_unchecked(),
+        )
+        .as_global_elems(),
+        Precision::F16 => MatmulElems::from_single_dtype(
+            <half::f16 as cubecl::frontend::CubePrimitive>::as_type_native_unchecked(),
+        )
+        .as_global_elems(),
     };
     MatmulProblem::from_parameters(
         p.m,

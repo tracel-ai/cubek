@@ -90,7 +90,10 @@ pub fn write_host_data(path: &Path, data: &HostData) -> io::Result<u64> {
     }
 
     w.flush()?;
-    Ok(w.into_inner().map_err(|e| e.into_error())?.metadata()?.len())
+    Ok(w.into_inner()
+        .map_err(|e| e.into_error())?
+        .metadata()?
+        .len())
 }
 
 /// Read a [`HostData`] previously produced by [`write_host_data`].
@@ -189,10 +192,8 @@ mod tests {
     use super::*;
 
     fn round_trip(label: &str, data: HostData) {
-        let dir = std::env::temp_dir().join(format!(
-            "cubek-test-utils-iotest-{}",
-            std::process::id(),
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("cubek-test-utils-iotest-{}", std::process::id(),));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(format!("blob-{label}.bin"));
         write_host_data(&path, &data).unwrap();
