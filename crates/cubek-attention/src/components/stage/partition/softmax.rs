@@ -54,10 +54,7 @@ impl<Acc: Float, Lhs: Float> SoftmaxPartition<Acc, Lhs> {
         self.score_tiles.index_mut(q)
     }
 
-    pub fn get_softmaxed_mut(
-        &mut self,
-        #[comptime] q: usize,
-    ) -> &mut Tile<Lhs, Plane, ReadWrite> {
+    pub fn get_softmaxed_mut(&mut self, #[comptime] q: usize) -> &mut Tile<Lhs, Plane, ReadWrite> {
         self.softmaxed_tiles.index_mut(q)
     }
 

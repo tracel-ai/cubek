@@ -101,12 +101,8 @@ where
     pub fn execute_with_listener<SEL: StageEventListener>(
         lhs_stage: &StageLhs,
         rhs_stage: &StageRhs,
-        lhs_fragment: &mut Sequence<
-            Tile<<MT::Lhs as MatrixTypes>::Register, Sc, ReadWrite>,
-        >,
-        rhs_fragments: &mut RhsTile<
-            Tile<<MT::Rhs as MatrixTypes>::Register, Sc, ReadWrite>,
-        >,
+        lhs_fragment: &mut Sequence<Tile<<MT::Lhs as MatrixTypes>::Register, Sc, ReadWrite>>,
+        rhs_fragments: &mut RhsTile<Tile<<MT::Rhs as MatrixTypes>::Register, Sc, ReadWrite>>,
         acc: &mut Accumulators<MT, Sc>,
         #[comptime] shared_config: SharedPartitionMatmulConfig,
         listener: SEL,
@@ -216,9 +212,7 @@ where
     fn execute_single_buffer<SEL: StageEventListener>(
         lhs_stage: &StageLhs,
         rhs_stage: &StageRhs,
-        lhs_fragment: &mut Sequence<
-            Tile<<MT::Lhs as MatrixTypes>::Register, Sc, ReadWrite>,
-        >,
+        lhs_fragment: &mut Sequence<Tile<<MT::Lhs as MatrixTypes>::Register, Sc, ReadWrite>>,
         rhs_fragment: &mut Tile<<MT::Rhs as MatrixTypes>::Register, Sc, ReadWrite>,
         acc: &mut Accumulators<MT, Sc>,
         #[comptime] shared_config: SharedPartitionMatmulConfig,
@@ -316,9 +310,7 @@ where
     fn execute_double_buffer<SEL: StageEventListener>(
         lhs_stage: &StageLhs,
         rhs_stage: &StageRhs,
-        lhs_fragment: &mut Sequence<
-            Tile<<MT::Lhs as MatrixTypes>::Register, Sc, ReadWrite>,
-        >,
+        lhs_fragment: &mut Sequence<Tile<<MT::Lhs as MatrixTypes>::Register, Sc, ReadWrite>>,
         rhs_fragments: &mut (
             Tile<<MT::Rhs as MatrixTypes>::Register, Sc, ReadWrite>,
             Tile<<MT::Rhs as MatrixTypes>::Register, Sc, ReadWrite>,

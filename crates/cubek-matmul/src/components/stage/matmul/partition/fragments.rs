@@ -5,9 +5,7 @@ use crate::components::tile::{
     Scope, Tile, TileMatmul, cmma_allocate_acc, interleaved_allocate_acc, mma_allocate_acc,
     planevec_allocate_acc, register_allocate_acc,
 };
-use crate::definition::{
-    AccRE, AccSE, AccSS, LhsRE, MatmulTypes, MatrixTypes, RhsRE, StageIdent,
-};
+use crate::definition::{AccRE, AccSE, AccSS, LhsRE, MatmulTypes, MatrixTypes, RhsRE, StageIdent};
 use crate::{
     components::stage::Stage,
     definition::{Acc, StageSize},
