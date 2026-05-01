@@ -12,4 +12,6 @@ pub mod reduce;
 pub mod registry;
 pub mod unary;
 
-pub use registry::{BenchmarkCategory, ItemDescriptor, RunSamples, all};
+pub use registry::{
+    BenchmarkCategory, CorrectnessOutcome, ItemDescriptor, ReferenceMode, RunSamples, all,
+};

@@ -30,6 +30,11 @@ cubek = { path = "../crates/cubek", version = "=0.2.0-pre.4", default-features =
     "fft",
     "quantization",
 ] }
+# Direct deps on individual kernel crates with their `cpu-reference` features
+# enabled so the correctness path can reach the CPU references. The umbrella
+# `cubek` crate's feature gates don't expose cpu-reference today.
+cubek-matmul = { path = "../crates/cubek-matmul", version = "=0.2.0-pre.4", features = ["cpu-reference"] }
+cubek-test-utils = { path = "../crates/cubek-test-utils", version = "=0.2.0-pre.4" }
 half = { workspace = true }
 
 [[bench]]
