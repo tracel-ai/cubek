@@ -1,14 +1,23 @@
-//! CPU reference and high-level correctness helpers for matmul.
+//! CPU reference and seeded "produce a HostData" primitives for matmul.
 //!
 //! Behind the `cpu-reference` feature so test code, benchmarks, and the tuner
 //! can all share one source of truth. Every helper here is *non-panicking* —
 //! callers (tests via `.enforce()`, the tuner via its own outcome types)
 //! decide what to do with a `ValidationResult`.
 //!
-//! The CPU reference is a naive triple-loop, intended only for correctness
-//! checking on small problems — never for production use.
-
-use std::path::Path;
+//! Two seeded primitives drive the cross-commit / cross-implementation
+//! correctness flow:
+//!
+//! - [`produce_strategy_result`] runs the kernel once and returns its output as
+//!   a [`HostData`].
+//! - [`produce_cpu_reference_result`] runs the naive triple-loop on the same
+//!   seeded inputs and returns its output as a [`HostData`].
+//!
+//! Both use identical seeded input generation, so a `HostData` from one can be
+//! compared elementwise against a `HostData` from the other (same shape, same
+//! row-major output strides). Persisting via [`cubek_test_utils::write_host_data`]
+//! and comparing later via [`cubek_test_utils::compare_host_data_files`] is the
+//! intended cross-commit flow — kept entirely outside this crate.
 
 use cubecl::{
     TestRuntime, prelude::*, server::ServerError, std::tensor::TensorHandle, zspace::Shape,
@@ -16,7 +25,7 @@ use cubecl::{
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, HostDataVec, StrideSpec, TestInput, TestOutcome,
-    ValidationResult, assert_equals_approx, assert_equals_approx_from_file, write_host_data,
+    ValidationResult, assert_equals_approx,
 };
 
 use crate::{
@@ -24,68 +33,51 @@ use crate::{
     launch::{Strategy, launch_ref},
 };
 
-/// What a `validate_*` helper should do once it has the kernel's output.
-pub enum CorrectnessTarget<'a> {
-    /// Compare against the in-process CPU reference.
-    Cpu,
-    /// Write the kernel output to `path` so a later run can validate against it.
-    WriteReference(&'a Path),
-    /// Read a previously-written reference at `path` and compare against it.
-    ValidateReference(&'a Path),
-}
-
-/// One outcome from a high-level validation. `WroteReference` is its own
-/// variant rather than a `Pass` — callers (the tuner) need to distinguish
-/// "no comparison happened by design" from "passed".
-#[derive(Debug)]
-pub enum CorrectnessReport {
-    /// Output matches the reference (CPU or file).
-    Pass,
-    /// Output does not match. String mirrors `ValidationResult::Fail`.
-    Fail(String),
-    /// Validation could not be performed (compile error, missing reference,
-    /// dtype mismatch, etc).
-    Error(String),
-    /// Reference file was written. Only emitted in `WriteReference` mode.
-    WroteReference,
-}
-
-/// Run a launchable strategy against `problem` with seeded inputs and produce
-/// a [`CorrectnessReport`] according to `target`.
+/// Run `strategy` against `problem` with seeded inputs and return its output as
+/// a [`HostData`].
 ///
-/// Inputs are generated via `TestInput::uniform` with `seed` so the same
-/// `(problem, seed)` pair produces the same bits on every run — making it
-/// safe to compare across commits via reference files.
-pub fn validate_strategy(
+/// Inputs are generated via `TestInput::uniform` so the same `(problem, seeds)`
+/// pair produces the same bits on every run — making it safe to persist the
+/// returned `HostData` to disk and compare it against another commit's output.
+pub fn produce_strategy_result(
     client: ComputeClient<TestRuntime>,
     problem: MatmulProblem,
     strategy: Strategy,
     seed_lhs: u64,
     seed_rhs: u64,
-    epsilon: f32,
-    target: CorrectnessTarget<'_>,
-) -> CorrectnessReport {
-    validate_with(
+) -> Result<HostData, String> {
+    produce_with(
         client,
         problem,
         seed_lhs,
         seed_rhs,
-        epsilon,
-        target,
-        move |client, lhs, rhs, out, dtypes| launch_ref(&strategy, client, lhs, rhs, out, dtypes),
+        |client, lhs, rhs, out, dtypes| launch_ref(&strategy, client, lhs, rhs, out, dtypes),
     )
 }
 
-#[allow(clippy::too_many_arguments)]
-fn validate_with<F>(
+/// CPU-only counterpart to [`produce_strategy_result`]: generate the same
+/// seeded inputs, run the naive triple-loop, return the result as a
+/// [`HostData`].
+///
+/// Slow on bench-scale problems by design — only useful as a ground truth.
+pub fn produce_cpu_reference_result(
     client: ComputeClient<TestRuntime>,
-    mut problem: MatmulProblem,
+    problem: MatmulProblem,
     seed_lhs: u64,
     seed_rhs: u64,
-    epsilon: f32,
-    target: CorrectnessTarget<'_>,
+) -> Result<HostData, String> {
+    let (_lhs, lhs_data, _rhs, rhs_data, _out, problem) =
+        seed_inputs(&client, problem, seed_lhs, seed_rhs);
+    Ok(matmul_cpu_reference(&lhs_data, &rhs_data, &problem))
+}
+
+fn produce_with<F>(
+    client: ComputeClient<TestRuntime>,
+    problem: MatmulProblem,
+    seed_lhs: u64,
+    seed_rhs: u64,
     launch: F,
-) -> CorrectnessReport
+) -> Result<HostData, String>
 where
     F: FnOnce(
         &ComputeClient<TestRuntime>,
@@ -95,6 +87,42 @@ where
         &mut MatmulElems,
     ) -> Result<(), MatmulSetupError>,
 {
+    let (lhs, _lhs_data, rhs, _rhs_data, out, problem) =
+        seed_inputs(&client, problem, seed_lhs, seed_rhs);
+
+    let lhs_handle = InputBinding::Normal(lhs.binding(), problem.global_dtypes.lhs);
+    let rhs_handle = InputBinding::Normal(rhs.binding(), problem.global_dtypes.rhs);
+    let out_handle = out.clone().binding();
+
+    let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes.clone());
+
+    let launch_outcome: ExecutionOutcome = get_server_error(&client)
+        .unwrap_or(launch(&client, lhs_handle, rhs_handle, out_handle, &mut dtypes).into());
+    let outcome = match launch_outcome {
+        ExecutionOutcome::Executed => {
+            get_server_error(&client).unwrap_or(ExecutionOutcome::Executed)
+        }
+        other => other,
+    };
+
+    match outcome {
+        ExecutionOutcome::CompileError(e) => Err(format!("compile error: {e}")),
+        ExecutionOutcome::Executed => Ok(HostData::from_tensor_handle(
+            &client,
+            out,
+            HostDataType::F32,
+        )),
+    }
+}
+
+type Tensor = TensorHandle<TestRuntime>;
+
+fn seed_inputs(
+    client: &ComputeClient<TestRuntime>,
+    mut problem: MatmulProblem,
+    seed_lhs: u64,
+    seed_rhs: u64,
+) -> (Tensor, HostData, Tensor, HostData, Tensor, MatmulProblem) {
     let (lhs, lhs_data) = TestInput::builder(client.clone(), problem.lhs_shape.clone())
         .dtype(problem.global_dtypes.lhs)
         .stride(layout_to_stride_spec(problem.lhs_layout))
@@ -114,59 +142,7 @@ where
     problem.lhs_strides = lhs.strides().clone();
     problem.rhs_strides = rhs.strides().clone();
 
-    let lhs_handle = InputBinding::Normal(lhs.binding(), problem.global_dtypes.lhs);
-    let rhs_handle = InputBinding::Normal(rhs.binding(), problem.global_dtypes.rhs);
-    let out_handle = out.clone().binding();
-
-    let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes.clone());
-
-    let launch_outcome: ExecutionOutcome = get_server_error(&client)
-        .unwrap_or(launch(&client, lhs_handle, rhs_handle, out_handle, &mut dtypes).into());
-    let outcome = match launch_outcome {
-        ExecutionOutcome::Executed => {
-            get_server_error(&client).unwrap_or(ExecutionOutcome::Executed)
-        }
-        other => other,
-    };
-
-    match outcome {
-        ExecutionOutcome::CompileError(e) => {
-            CorrectnessReport::Error(format!("compile error: {e}"))
-        }
-        ExecutionOutcome::Executed => match target {
-            CorrectnessTarget::Cpu => {
-                let report = assert_result_with_epsilon(
-                    &lhs_data, &rhs_data, &problem, &client, out, dtypes, epsilon,
-                );
-                from_validation(report)
-            }
-            CorrectnessTarget::WriteReference(path) => {
-                let actual = HostData::from_tensor_handle(&client, out, HostDataType::F32);
-                match write_host_data(path, &actual) {
-                    Ok(_) => CorrectnessReport::WroteReference,
-                    Err(e) => CorrectnessReport::Error(format!(
-                        "write reference {}: {e}",
-                        path.display()
-                    )),
-                }
-            }
-            CorrectnessTarget::ValidateReference(path) => {
-                let actual = HostData::from_tensor_handle(&client, out, HostDataType::F32);
-                from_validation(assert_equals_approx_from_file(&actual, path, epsilon))
-            }
-        },
-    }
-}
-
-fn from_validation(v: ValidationResult) -> CorrectnessReport {
-    match v {
-        ValidationResult::Pass => CorrectnessReport::Pass,
-        ValidationResult::Fail(reason) => CorrectnessReport::Fail(reason),
-        ValidationResult::Error(reason) => CorrectnessReport::Error(reason),
-        ValidationResult::Skipped(reason) => {
-            CorrectnessReport::Error(format!("skipped: {reason}"))
-        }
-    }
+    (lhs, lhs_data, rhs, rhs_data, out, problem)
 }
 
 /// Mirror of [`assert_equals_approx`] for tests that want a non-panicking
@@ -183,8 +159,7 @@ pub fn assert_result(
     assert_result_with_epsilon(lhs, rhs, problem, client, out, dtypes, epsilon)
 }
 
-/// Same as [`assert_result`] but with an explicit epsilon. Used by the tuner
-/// so the user can override the default tolerance.
+/// Same as [`assert_result`] but with an explicit epsilon.
 pub fn assert_result_with_epsilon(
     lhs: &HostData,
     rhs: &HostData,
@@ -296,9 +271,6 @@ fn layout_to_stride_spec(layout: MatrixLayout) -> StrideSpec {
     }
 }
 
-/// Surface a server error as an `ExecutionOutcome` so the validation pipeline
-/// can decide whether to skip the comparison instead of panicking. Mirrors
-/// the helper used in tests/launcher_strategy.
 fn get_server_error(client: &ComputeClient<TestRuntime>) -> Option<ExecutionOutcome> {
     use cubecl::server::{self, LaunchError};
     match client.flush() {
@@ -317,8 +289,5 @@ fn get_server_error(client: &ComputeClient<TestRuntime>) -> Option<ExecutionOutc
     }
 }
 
-// Silence "unused" warnings in the unlikely case TestOutcome / Shape become
-// unused after API tweaks. Keeping them re-exported for now lets the runner
-// reach types it might need without an extra `cubek-test-utils` dep.
 #[allow(dead_code)]
 fn _phantom_use(_: TestOutcome, _: Shape) {}

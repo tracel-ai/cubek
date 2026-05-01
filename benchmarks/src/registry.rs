@@ -1,5 +1,6 @@
-use std::path::PathBuf;
 use std::time::Duration;
+
+use cubek_test_utils::HostData;
 
 #[derive(Debug, Clone)]
 pub struct ItemDescriptor {
@@ -54,40 +55,14 @@ impl RunSamples {
     }
 }
 
-/// What `correctness_against_reference` should do with the reference file.
-///
-/// `WriteReference` is used by the trusted-commit pass: run the kernel once
-/// and dump its output to `path`. `ValidateReference` is the current-commit
-/// pass: run the kernel, compare its output against the file at `path`.
-#[derive(Debug, Clone)]
-pub enum ReferenceMode {
-    WriteReference { path: PathBuf },
-    ValidateReference { path: PathBuf },
-}
-
-/// Outcome of a correctness check. Mirrors `cubek_test_utils::ValidationResult`
-/// at the registry boundary so the trait doesn't leak the test-utils dep
-/// signature to consumers (the runner, tuner) — the registry crate itself can
-/// still depend on test-utils.
-#[derive(Debug, Clone)]
-pub enum CorrectnessOutcome {
-    /// Output matches the reference (or the CPU reference, depending on mode).
-    Pass,
-    /// Output does not match. The string describes how (max |Δ|, worst index,
-    /// first mismatches, …) for the UI to render verbatim.
-    Fail(String),
-    /// Validation could not be completed (e.g. dtype not supported by the
-    /// reference path, missing reference file). Treat as actionable: the user
-    /// might need to regenerate the reference or pick a different problem.
-    Error(String),
-    /// `WriteReference` mode: the reference file was produced. No comparison
-    /// happened (by design).
-    WroteReference,
-}
-
 /// One benchmark category exposed to the tuner. Each category lives in its own
 /// module (`attention`, `gemm`, ...) and exposes a unit struct that implements
 /// this trait. `all()` returns every category the crate ships.
+///
+/// The two seeded `produce_*` methods are the primitives that drive the tuner's
+/// correctness flow. They return a [`HostData`] (or `None` if the category
+/// can't expose this kind of result); persistence and comparison live in the
+/// tuner. Categories opt in as kernel/reference implementations land.
 pub trait BenchmarkCategory: Sync {
     /// Stable identifier — persisted in tuner-results history. Don't rename.
     fn id(&self) -> &'static str;
@@ -101,40 +76,35 @@ pub trait BenchmarkCategory: Sync {
         num_samples: usize,
     ) -> Result<RunSamples, String>;
 
-    /// Run the kernel once with seeded inputs and compare against an in-process
-    /// CPU reference. Returns `None` when the category has no CPU reference
-    /// implementation (e.g. memcpy_async, contiguous, unary) — the tuner UI
-    /// hides those from the correctness page.
+    /// Run `strategy_id` on `problem_id` with the given seeded inputs and
+    /// return its output as a [`HostData`]. `None` means the category doesn't
+    /// expose a kernel result (e.g. memcpy_async — no semantic-level output).
     ///
-    /// `epsilon` is the tolerance to forward to `assert_equals_approx`.
-    /// Default impl returns `None` so categories opt in as their references
-    /// land.
-    fn correctness_cpu(
+    /// Both inputs and the resulting output must be deterministic under
+    /// `(strategy_id, problem_id, seed_lhs, seed_rhs)` so the same call on two
+    /// commits produces the same input bits and a directly-comparable output.
+    fn produce_kernel(
         &self,
         _strategy_id: &str,
         _problem_id: &str,
-        _epsilon: f32,
-    ) -> Option<Result<CorrectnessOutcome, String>> {
+        _seed_lhs: u64,
+        _seed_rhs: u64,
+    ) -> Option<Result<HostData, String>> {
         None
     }
 
-    /// Run the kernel once with seeded inputs and either write its output to
-    /// `mode.path` (WriteReference) or compare its output against the file at
-    /// `mode.path` (ValidateReference). Inputs must be deterministic so two
-    /// commits produce the same input bits.
+    /// CPU-side ground-truth counterpart of [`Self::produce_kernel`] for the
+    /// same `(problem_id, seeds)`. `None` when the category has no
+    /// CPU-equivalent reference (e.g. unary, contiguous).
     ///
-    /// Returns `None` when the category doesn't expose a CPU-equivalent
-    /// reference. We use the same predicate as `correctness_cpu` because the
-    /// trusted-commit comparison is only meaningful when the kernel has a
-    /// "ground truth" pinned somewhere — otherwise both runs could be wrong
-    /// the same way and we'd silently agree.
-    fn correctness_against_reference(
+    /// Same input bits as `produce_kernel`, so the returned `HostData` is
+    /// directly comparable elementwise.
+    fn produce_reference(
         &self,
-        _strategy_id: &str,
         _problem_id: &str,
-        _mode: ReferenceMode,
-        _epsilon: f32,
-    ) -> Option<Result<CorrectnessOutcome, String>> {
+        _seed_lhs: u64,
+        _seed_rhs: u64,
+    ) -> Option<Result<HostData, String>> {
         None
     }
 }

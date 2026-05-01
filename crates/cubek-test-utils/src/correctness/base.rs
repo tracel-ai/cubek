@@ -51,24 +51,37 @@ where
     assert_equals_approx_inner(lhs, rhs, epsilon, Some(filter))
 }
 
-/// Compare an in-memory `actual` tensor with a reference previously written
-/// to disk by [`crate::write_host_data`].
+/// Compare two `HostData` blobs previously written to disk by
+/// [`crate::write_host_data`].
 ///
-/// Returns `Error` if the file can't be read or doesn't decode as a HostData
-/// blob — callers can treat that as "regenerate the reference and try again."
-/// Otherwise behaves identically to [`assert_equals_approx`].
-pub fn assert_equals_approx_from_file(
-    actual: &HostData,
-    reference_path: &Path,
+/// Returns `Error` when either file is missing or doesn't decode as a HostData
+/// blob — callers can surface that as "regenerate one of the reference files".
+/// Otherwise behaves identically to [`assert_equals_approx`] on the loaded
+/// pair.
+pub fn compare_host_data_files(
+    actual_path: &Path,
+    expected_path: &Path,
     epsilon: f32,
 ) -> ValidationResult {
-    match read_host_data(reference_path) {
-        Ok(expected) => assert_equals_approx(actual, &expected, epsilon),
-        Err(e) => ValidationResult::Error(format!(
-            "failed to read reference file {}: {e}",
-            reference_path.display()
-        )),
-    }
+    let actual = match read_host_data(actual_path) {
+        Ok(v) => v,
+        Err(e) => {
+            return ValidationResult::Error(format!(
+                "failed to read host data file {}: {e}",
+                actual_path.display()
+            ));
+        }
+    };
+    let expected = match read_host_data(expected_path) {
+        Ok(v) => v,
+        Err(e) => {
+            return ValidationResult::Error(format!(
+                "failed to read host data file {}: {e}",
+                expected_path.display()
+            ));
+        }
+    };
+    assert_equals_approx(&actual, &expected, epsilon)
 }
 
 /// Check if two tensors are approximately equal

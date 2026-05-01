@@ -7,9 +7,9 @@ pub use benchmark::run;
 pub use problem::problems;
 pub use strategy::strategies;
 
-use crate::registry::{
-    BenchmarkCategory, CorrectnessOutcome, ItemDescriptor, ReferenceMode, RunSamples,
-};
+use cubek_test_utils::HostData;
+
+use crate::registry::{BenchmarkCategory, ItemDescriptor, RunSamples};
 
 pub struct Category;
 
@@ -35,22 +35,22 @@ impl BenchmarkCategory for Category {
         run(strategy_id, problem_id, num_samples)
     }
 
-    fn correctness_cpu(
+    fn produce_kernel(
         &self,
         strategy_id: &str,
         problem_id: &str,
-        epsilon: f32,
-    ) -> Option<Result<CorrectnessOutcome, String>> {
-        Some(correctness::cpu(strategy_id, problem_id, epsilon))
+        seed_lhs: u64,
+        seed_rhs: u64,
+    ) -> Option<Result<HostData, String>> {
+        Some(correctness::produce_kernel(strategy_id, problem_id, seed_lhs, seed_rhs))
     }
 
-    fn correctness_against_reference(
+    fn produce_reference(
         &self,
-        strategy_id: &str,
         problem_id: &str,
-        mode: ReferenceMode,
-        epsilon: f32,
-    ) -> Option<Result<CorrectnessOutcome, String>> {
-        Some(correctness::against_reference(strategy_id, problem_id, mode, epsilon))
+        seed_lhs: u64,
+        seed_rhs: u64,
+    ) -> Option<Result<HostData, String>> {
+        Some(correctness::produce_reference(problem_id, seed_lhs, seed_rhs))
     }
 }
