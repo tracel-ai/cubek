@@ -21,6 +21,9 @@ pub mod routines;
 
 mod error;
 
+#[cfg(feature = "cpu-reference")]
+pub mod cpu_reference;
+
 pub use crate::launch::ReduceStrategy;
 use crate::{components::instructions::ReduceOperationConfig, launch::launch_reduce};
 pub use components::{

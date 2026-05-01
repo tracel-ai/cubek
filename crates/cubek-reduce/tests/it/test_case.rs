@@ -14,7 +14,7 @@ use cubek_test_utils::{
     assert_equals_approx, launch_and_capture_outcome,
 };
 
-use crate::it::reference::{
+use cubek_reduce::cpu_reference::{
     contiguous_strides, reference_argmax, reference_argmin, reference_argtopk, reference_max,
     reference_max_abs, reference_mean, reference_min, reference_prod, reference_sum,
     reference_topk,

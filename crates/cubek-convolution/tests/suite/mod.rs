@@ -7,4 +7,3 @@ pub mod extended;
 pub mod full;
 
 pub mod launcher_strategy;
-mod reference;

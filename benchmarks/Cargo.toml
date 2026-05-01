@@ -18,7 +18,13 @@ version.workspace = true
 # CPU-reference HostData via `BenchmarkCategory::reference_result`. The umbrella
 # `cubek` crate doesn't re-expose `cpu-reference` today, so consumers that need
 # the correctness flow turn it on here and pick up the optional direct deps.
-cpu-reference = ["dep:cubek-matmul"]
+cpu-reference = [
+    "dep:cubek-matmul",
+    "dep:cubek-attention",
+    "dep:cubek-convolution",
+    "dep:cubek-fft",
+    "dep:cubek-reduce",
+]
 
 [lib]
 path = "src/lib.rs"
@@ -36,6 +42,18 @@ cubek = { path = "../crates/cubek", version = "=0.2.0-pre.4", default-features =
     "quantization",
 ] }
 cubek-matmul = { path = "../crates/cubek-matmul", version = "=0.2.0-pre.4", features = [
+    "cpu-reference",
+], optional = true }
+cubek-attention = { path = "../crates/cubek-attention", version = "=0.2.0-pre.4", features = [
+    "cpu-reference",
+], optional = true }
+cubek-convolution = { path = "../crates/cubek-convolution", version = "=0.2.0-pre.4", features = [
+    "cpu-reference",
+], optional = true }
+cubek-fft = { path = "../crates/cubek-fft", version = "=0.2.0-pre.4", features = [
+    "cpu-reference",
+], optional = true }
+cubek-reduce = { path = "../crates/cubek-reduce", version = "=0.2.0-pre.4", features = [
     "cpu-reference",
 ], optional = true }
 cubek-test-utils = { path = "../crates/cubek-test-utils", version = "=0.2.0-pre.4" }

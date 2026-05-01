@@ -18,11 +18,15 @@ heavy = []
 extended = ["heavy"]
 full = ["extended"]
 
+cpu-reference = ["dep:num-complex"]
+
 [dependencies]
 cubecl = { workspace = true }
 cubek-test-utils = { path = "./../cubek-test-utils/", version = "=0.2.0-pre.4" }
+num-complex = { version = "0.4.6", optional = true }
 
 [dev-dependencies]
 num-complex = "0.4.6"
 cubecl = { workspace = true, features = ["test-runtime"] }
 cubecl-common = { workspace = true }
+cubek-fft = { path = ".", features = ["cpu-reference"] }

@@ -1,4 +1,4 @@
-use crate::it::reference::contiguous_strides;
+use cubek_reduce::cpu_reference::contiguous_strides;
 use cubecl::features::Plane;
 use cubecl::frontend::CompilationArg;
 use cubecl::frontend::CubePrimitive;

@@ -7,3 +7,6 @@ pub mod launch;
 pub mod routines;
 
 pub mod definition;
+
+#[cfg(feature = "cpu-reference")]
+pub mod cpu_reference;
