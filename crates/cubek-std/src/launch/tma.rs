@@ -3,8 +3,8 @@
 use cubecl::ir::StorageType;
 use cubecl::prelude::*;
 use cubecl::server::TensorMapMeta;
-use cubecl::zspace::{Shape, Strides};
 pub use cubecl::zspace::metadata::Metadata;
+use cubecl::zspace::{Shape, Strides};
 
 use crate::MatrixLayout;
 
