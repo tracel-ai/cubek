@@ -83,7 +83,7 @@ pub fn mask_layout_absolute_pos(#[comptime] layout: MaskLayout, local_pos: Coord
 }
 
 #[cube]
-impl<E: Numeric, V: Size, Sc: Scope, IO: SliceVisibility> Mask for Tile<E, V, Sc, IO> {
+impl<E: Numeric, Sc: Scope, IO: SliceVisibility> Mask for Tile<E, Sc, IO> {
     fn should_mask(&self, local_pos: Coords2d) -> bool {
         match self {
             Tile::Unit(t) => {
@@ -98,7 +98,7 @@ impl<E: Numeric, V: Size, Sc: Scope, IO: SliceVisibility> Mask for Tile<E, V, Sc
 }
 
 #[cube]
-impl<N: Numeric, V: Size, Sc: Scope> Tile<N, V, Sc, ReadWrite> {
+impl<N: Numeric, Sc: Scope> Tile<N, Sc, ReadWrite> {
     /// Loads the data from an external strided tile into the inner storage of a
     /// `Tile::Unit` or `Tile::Local`. Used to materialize a mask fragment.
     pub fn load_mask_from_strided_tile<E: Numeric, ES: Size>(

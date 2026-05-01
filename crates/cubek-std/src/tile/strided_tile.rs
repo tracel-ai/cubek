@@ -230,3 +230,54 @@ impl<ES: Numeric, N: Size, IO: SliceVisibility> StridedTile<ES, N, IO> {
         }
     }
 }
+
+/// V-erased view over a shared-memory tile. Wraps a `StridedTile` and hides
+/// its vectorization from the type system. The underlying slice is downcast
+/// to a scalar `Slice<E, IO>` only at the Rust type level — the runtime
+/// vector_size on the cubecl slice is preserved, so projecting back via
+/// `view::<V>()` is a pure retype with no metadata change. `V` must match
+/// the original `V` the tile was wrapped with.
+#[derive(CubeType, Clone, Copy)]
+pub struct SharedTile<E: Numeric, IO: SliceVisibility = ReadOnly> {
+    container: Slice<E, IO>,
+    start: u32,
+    end: u32,
+    stride: u32,
+    swizzle: Swizzle,
+    #[cube(comptime)]
+    layout: MatrixLayout,
+}
+
+#[cube]
+impl<E: Numeric, IO: SliceVisibility> SharedTile<E, IO> {
+    /// Wrap a `StridedTile` whose vectorization is `V`. The slice is type-erased
+    /// to scalar `Slice<E, IO>` while preserving the runtime vector_size set at
+    /// allocation time. No metadata scaling is performed.
+    pub fn wrap<V: Size>(tile: StridedTile<E, V, IO>) -> SharedTile<E, IO> {
+        let container: Slice<E, IO> = unsafe { tile.container.downcast_unchecked::<E>() };
+        SharedTile::<E, IO> {
+            container,
+            start: tile.start,
+            end: tile.end,
+            stride: tile.stride,
+            swizzle: tile.swizzle,
+            layout: tile.layout,
+        }
+    }
+
+    /// Project the wrapped tile back to a typed `StridedTile<E, V, IO>`.
+    /// `V` must match the original `V` the tile was wrapped with — only
+    /// the Rust type changes, the runtime layout is unchanged.
+    pub fn view<V: Size>(&self) -> StridedTile<E, V, IO> {
+        let container: Slice<Vector<E, V>, IO> =
+            unsafe { self.container.downcast_unchecked::<Vector<E, V>>() };
+        StridedTile::<E, V, IO> {
+            container,
+            start: self.start,
+            end: self.end,
+            stride: self.stride,
+            swizzle: self.swizzle,
+            layout: self.layout,
+        }
+    }
+}

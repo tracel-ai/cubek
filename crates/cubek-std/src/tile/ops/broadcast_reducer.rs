@@ -6,7 +6,7 @@ use crate::tile::variants::LocalTile;
 
 /// Reduces row-wise quantities across units of a plane that participate in the
 /// same row, masking out off-row peers. Used internally by the row-wise
-/// operations on `Tile<E, V, Plane, ReadWrite>` when dispatching to the
+/// operations on `Tile<E, Plane, ReadWrite>` when dispatching to the
 /// `Tile::Local` (and `Tile::Bounce`) arms.
 ///
 /// Restricted to plane scope by virtue of using `plane_shuffle` and

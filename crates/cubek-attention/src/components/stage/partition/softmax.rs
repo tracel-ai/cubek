@@ -10,8 +10,8 @@ use crate::{components::tile::MaskTile, definition::AttentionPartitionSize};
 /// tile is a `Tile::Bounce`, which encapsulates the smem + LocalTile bouncing
 /// internally.
 pub struct SoftmaxPartition<Acc: Float, Lhs: Float> {
-    score_tiles: Sequence<Tile<Acc, Const<0>, Plane, ReadWrite>>,
-    softmaxed_tiles: Sequence<Tile<Lhs, Const<0>, Plane, ReadWrite>>,
+    score_tiles: Sequence<Tile<Acc, Plane, ReadWrite>>,
+    softmaxed_tiles: Sequence<Tile<Lhs, Plane, ReadWrite>>,
 }
 
 #[cube]
@@ -28,14 +28,13 @@ impl<Acc: Float, Lhs: Float> SoftmaxPartition<Acc, Lhs> {
         #[unroll]
         for _ in 0..partition_size.seq_q {
             // Score tile = score matmul accumulator. Bouncing for the cmma path.
-            let mut score =
-                attn_matmul::allocate_acc_bouncing::<Acc, Const<0>>(score_matmul, score_bounce);
+            let mut score = attn_matmul::allocate_acc_bouncing::<Acc>(score_matmul, score_bounce);
             score.fill_zero();
             score_tiles.push(score);
 
             // Softmaxed tile = value matmul lhs. Bouncing for the cmma path so
             // the softmaxed values can be written into the local view.
-            softmaxed_tiles.push(attn_matmul::allocate_lhs_bouncing::<Lhs, Const<0>>(
+            softmaxed_tiles.push(attn_matmul::allocate_lhs_bouncing::<Lhs>(
                 value_matmul,
                 score_bounce,
             ));
@@ -51,17 +50,11 @@ impl<Acc: Float, Lhs: Float> SoftmaxPartition<Acc, Lhs> {
         self.score_tiles.index_mut(q).fill_zero();
     }
 
-    pub fn get_score_mut(
-        &mut self,
-        #[comptime] q: usize,
-    ) -> &mut Tile<Acc, Const<0>, Plane, ReadWrite> {
+    pub fn get_score_mut(&mut self, #[comptime] q: usize) -> &mut Tile<Acc, Plane, ReadWrite> {
         self.score_tiles.index_mut(q)
     }
 
-    pub fn get_softmaxed_mut(
-        &mut self,
-        #[comptime] q: usize,
-    ) -> &mut Tile<Lhs, Const<0>, Plane, ReadWrite> {
+    pub fn get_softmaxed_mut(&mut self, #[comptime] q: usize) -> &mut Tile<Lhs, Plane, ReadWrite> {
         self.softmaxed_tiles.index_mut(q)
     }
 

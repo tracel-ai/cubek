@@ -45,57 +45,57 @@ impl AttentionTileMatmul {
 }
 
 #[cube]
-pub fn allocate_lhs<L: Numeric, VL: Size>(
+pub fn allocate_lhs<L: Numeric>(
     #[comptime] matmul: AttentionTileMatmul,
-) -> Tile<L, VL, Plane, ReadWrite> {
+) -> Tile<L, Plane, ReadWrite> {
     match matmul {
         AttentionTileMatmul::Cmma(c) => {
-            cmma_allocate_lhs::<L, VL, Plane>(MatrixLayout::RowMajor, c.tile_size)
+            cmma_allocate_lhs::<L, Plane>(MatrixLayout::RowMajor, c.tile_size)
         }
         AttentionTileMatmul::Register(c) => {
-            register_allocate_lhs::<L, VL, Plane>(MatrixLayout::RowMajor, c)
+            register_allocate_lhs::<L, Plane>(MatrixLayout::RowMajor, c)
         }
     }
 }
 
 #[cube]
-pub fn allocate_rhs<R: Numeric, VR: Size>(
+pub fn allocate_rhs<R: Numeric>(
     #[comptime] matmul: AttentionTileMatmul,
-) -> Tile<R, VR, Plane, ReadWrite> {
+) -> Tile<R, Plane, ReadWrite> {
     match matmul {
         AttentionTileMatmul::Cmma(c) => {
-            cmma_allocate_rhs::<R, VR, Plane>(MatrixLayout::RowMajor, c.tile_size)
+            cmma_allocate_rhs::<R, Plane>(MatrixLayout::RowMajor, c.tile_size)
         }
         AttentionTileMatmul::Register(c) => {
-            register_allocate_rhs::<R, VR, Plane>(MatrixLayout::RowMajor, c)
+            register_allocate_rhs::<R, Plane>(MatrixLayout::RowMajor, c)
         }
     }
 }
 
 #[cube]
-pub fn allocate_rhs_transposed<R: Numeric, VR: Size>(
+pub fn allocate_rhs_transposed<R: Numeric>(
     #[comptime] matmul: AttentionTileMatmul,
-) -> Tile<R, VR, Plane, ReadWrite> {
+) -> Tile<R, Plane, ReadWrite> {
     match matmul {
         AttentionTileMatmul::Cmma(c) => {
-            cmma_allocate_rhs::<R, VR, Plane>(MatrixLayout::ColMajor, c.tile_size)
+            cmma_allocate_rhs::<R, Plane>(MatrixLayout::ColMajor, c.tile_size)
         }
         AttentionTileMatmul::Register(c) => {
-            register_allocate_rhs::<R, VR, Plane>(MatrixLayout::ColMajor, c)
+            register_allocate_rhs::<R, Plane>(MatrixLayout::ColMajor, c)
         }
     }
 }
 
 #[cube]
-pub fn allocate_acc<A: Numeric, VA: Size>(
+pub fn allocate_acc<A: Numeric>(
     #[comptime] matmul: AttentionTileMatmul,
-) -> Tile<A, VA, Plane, ReadWrite> {
+) -> Tile<A, Plane, ReadWrite> {
     match matmul {
         AttentionTileMatmul::Cmma(c) => {
-            cmma_allocate_acc::<A, VA, Plane>(MatrixLayout::RowMajor, c.tile_size)
+            cmma_allocate_acc::<A, Plane>(MatrixLayout::RowMajor, c.tile_size)
         }
         AttentionTileMatmul::Register(c) => {
-            register_allocate_acc::<A, VA, Plane>(MatrixLayout::RowMajor, c)
+            register_allocate_acc::<A, Plane>(MatrixLayout::RowMajor, c)
         }
     }
 }
@@ -104,10 +104,10 @@ pub fn allocate_acc<A: Numeric, VA: Size>(
 /// scaling. For the cmma path this is a `Tile::Bounce` (cmma + smem + LocalTile);
 /// for the register path it falls back to `Tile::Register`.
 #[cube]
-pub fn allocate_acc_bouncing<A: Float, VA: Size>(
+pub fn allocate_acc_bouncing<A: Float>(
     #[comptime] matmul: AttentionTileMatmul,
     #[comptime] bounce: BounceConfig,
-) -> Tile<A, VA, Plane, ReadWrite> {
+) -> Tile<A, Plane, ReadWrite> {
     match matmul {
         AttentionTileMatmul::Cmma(c) => {
             let matrix = unsafe {
@@ -124,10 +124,10 @@ pub fn allocate_acc_bouncing<A: Float, VA: Size>(
                 matrix_layout: MatrixLayout::RowMajor,
                 tile_size: c.tile_size,
             };
-            allocate_bounce_tile::<A, VA, Plane>(cmma, bounce)
+            allocate_bounce_tile::<A, Plane>(cmma, bounce)
         }
         AttentionTileMatmul::Register(c) => {
-            register_allocate_acc::<A, VA, Plane>(MatrixLayout::RowMajor, c)
+            register_allocate_acc::<A, Plane>(MatrixLayout::RowMajor, c)
         }
     }
 }
@@ -136,10 +136,10 @@ pub fn allocate_acc_bouncing<A: Float, VA: Size>(
 /// (i.e. the value-matmul lhs that receives the post-softmax cast-down values).
 /// For the cmma path this is a `Tile::Bounce`.
 #[cube]
-pub fn allocate_lhs_bouncing<L: Float, VL: Size>(
+pub fn allocate_lhs_bouncing<L: Float>(
     #[comptime] matmul: AttentionTileMatmul,
     #[comptime] bounce: BounceConfig,
-) -> Tile<L, VL, Plane, ReadWrite> {
+) -> Tile<L, Plane, ReadWrite> {
     match matmul {
         AttentionTileMatmul::Cmma(c) => {
             let matrix = unsafe {
@@ -156,10 +156,10 @@ pub fn allocate_lhs_bouncing<L: Float, VL: Size>(
                 matrix_layout: MatrixLayout::RowMajor,
                 tile_size: c.tile_size,
             };
-            allocate_bounce_tile::<L, VL, Plane>(cmma, bounce)
+            allocate_bounce_tile::<L, Plane>(cmma, bounce)
         }
         AttentionTileMatmul::Register(c) => {
-            register_allocate_lhs::<L, VL, Plane>(MatrixLayout::RowMajor, c)
+            register_allocate_lhs::<L, Plane>(MatrixLayout::RowMajor, c)
         }
     }
 }

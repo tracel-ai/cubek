@@ -48,14 +48,11 @@ pub fn mma_register_vector_sizes<L: Numeric, R: Numeric, A: Numeric>(def: MmaDef
     });
 }
 
-// VL/VR/VA in the signatures below are unused for the actual fragment — they exist
-// only so the return type matches what the `TileMatmul` trait demands. The fragment
-// is sized by NL/NR/NA (hardware-specific register vector size), not by VL/VR/VA.
 #[cube]
-pub fn mma_allocate_lhs<L: Numeric, VL: Size, R: Numeric, A: Numeric, Sc: Scope>(
+pub fn mma_allocate_lhs<L: Numeric, R: Numeric, A: Numeric, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: MmaMatmul,
-) -> Tile<L, VL, Sc, ReadWrite> {
+) -> Tile<L, Sc, ReadWrite> {
     let def = make_mma_definition::<L, R, A>(config);
     mma_register_vector_sizes(def);
     let vector_count = def.vectors_per_lane(MatrixIdent::A);
@@ -68,10 +65,10 @@ pub fn mma_allocate_lhs<L: Numeric, VL: Size, R: Numeric, A: Numeric, Sc: Scope>
 }
 
 #[cube]
-pub fn mma_allocate_rhs<R: Numeric, VR: Size, L: Numeric, A: Numeric, Sc: Scope>(
+pub fn mma_allocate_rhs<R: Numeric, L: Numeric, A: Numeric, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: MmaMatmul,
-) -> Tile<R, VR, Sc, ReadWrite> {
+) -> Tile<R, Sc, ReadWrite> {
     let def = make_mma_definition::<L, R, A>(config);
     mma_register_vector_sizes(def);
     let vector_count = def.vectors_per_lane(MatrixIdent::B);
@@ -84,10 +81,10 @@ pub fn mma_allocate_rhs<R: Numeric, VR: Size, L: Numeric, A: Numeric, Sc: Scope>
 }
 
 #[cube]
-pub fn mma_allocate_acc<A: Numeric, VA: Size, L: Numeric, R: Numeric, Sc: Scope>(
+pub fn mma_allocate_acc<A: Numeric, L: Numeric, R: Numeric, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: MmaMatmul,
-) -> Tile<A, VA, Sc, ReadWrite> {
+) -> Tile<A, Sc, ReadWrite> {
     let def = make_mma_definition::<L, R, A>(config);
     mma_register_vector_sizes(def);
     let vector_count = def.vectors_per_lane(MatrixIdent::Accumulator);

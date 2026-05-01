@@ -50,10 +50,10 @@ impl<N: Numeric> BounceTile<N> {
 #[cube]
 /// Wraps a freshly built `CmmaTile` in a `Tile::Bounce`. Panics at expansion
 /// time unless `Sc = Plane`.
-pub fn allocate_bounce_tile<E: Numeric, V: Size, Sc: Scope>(
+pub fn allocate_bounce_tile<E: Numeric, Sc: Scope>(
     cmma: CmmaTile<E>,
     #[comptime] cfg: BounceConfig,
-) -> Tile<E, V, Sc, ReadWrite> {
+) -> Tile<E, Sc, ReadWrite> {
     comptime!(assert_plane_scope(Sc::KIND));
     Tile::new_Bounce(BounceTile::<E>::new(cmma, cfg))
 }

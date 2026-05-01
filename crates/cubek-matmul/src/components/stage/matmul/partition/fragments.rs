@@ -5,9 +5,7 @@ use crate::components::tile::{
     Scope, Tile, TileMatmul, cmma_allocate_acc, interleaved_allocate_acc, mma_allocate_acc,
     planevec_allocate_acc, register_allocate_acc,
 };
-use crate::definition::{
-    AccRE, AccRS, AccSE, AccSS, LhsRE, MatmulTypes, MatrixTypes, RhsRE, StageIdent,
-};
+use crate::definition::{AccRE, AccSE, AccSS, LhsRE, MatmulTypes, MatrixTypes, RhsRE, StageIdent};
 use crate::{
     components::stage::Stage,
     definition::{Acc, StageSize},
@@ -19,14 +17,7 @@ use cubek_std::{MatrixLayout, PartitionSize};
 /// Wrapper over a sequence of Tile Matmul accumulators
 /// Enables indexing at 2d coordinates
 pub struct Accumulators<MP: MatmulTypes, Sc: Scope> {
-    sequence: Sequence<
-        Tile<
-            <MP::Acc as MatrixTypes>::Register,
-            <MP::Acc as MatrixTypes>::RegisterSize,
-            Sc,
-            ReadWrite,
-        >,
-    >,
+    sequence: Sequence<Tile<<MP::Acc as MatrixTypes>::Register, Sc, ReadWrite>>,
     #[cube(comptime)]
     _phantom: PhantomData<Sc>,
 }
@@ -86,12 +77,7 @@ impl<MT: MatmulTypes, Sc: Scope> Accumulators<MT, Sc> {
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] tiles_in_stage_partition_n: usize,
-    ) -> &Tile<
-        <MT::Acc as MatrixTypes>::Register,
-        <MT::Acc as MatrixTypes>::RegisterSize,
-        Sc,
-        ReadWrite,
-    > {
+    ) -> &Tile<<MT::Acc as MatrixTypes>::Register, Sc, ReadWrite> {
         &self.sequence[m * tiles_in_stage_partition_n + n]
     }
 
@@ -101,12 +87,7 @@ impl<MT: MatmulTypes, Sc: Scope> Accumulators<MT, Sc> {
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] tiles_in_stage_partition_n: usize,
-    ) -> &mut Tile<
-        <MT::Acc as MatrixTypes>::Register,
-        <MT::Acc as MatrixTypes>::RegisterSize,
-        Sc,
-        ReadWrite,
-    > {
+    ) -> &mut Tile<<MT::Acc as MatrixTypes>::Register, Sc, ReadWrite> {
         self.sequence.index_mut(m * tiles_in_stage_partition_n + n)
     }
 }
@@ -122,16 +103,12 @@ pub enum RhsTile<Rhs: CubeType> {
 fn allocate_acc<MT: MatmulTypes, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: TileMatmul,
-) -> Tile<AccRE<MT>, AccRS<MT>, Sc, ReadWrite> {
+) -> Tile<AccRE<MT>, Sc, ReadWrite> {
     match config {
-        TileMatmul::Cmma(c) => cmma_allocate_acc::<AccRE<MT>, AccRS<MT>, Sc>(layout, c.tile_size),
-        TileMatmul::Mma(c) => {
-            mma_allocate_acc::<AccRE<MT>, AccRS<MT>, LhsRE<MT>, RhsRE<MT>, Sc>(layout, c)
-        }
-        TileMatmul::Register(c) => register_allocate_acc::<AccRE<MT>, AccRS<MT>, Sc>(layout, c),
-        TileMatmul::PlaneVec(c) => planevec_allocate_acc::<AccRE<MT>, AccRS<MT>, Sc>(layout, c),
-        TileMatmul::Interleaved(c) => {
-            interleaved_allocate_acc::<AccRE<MT>, AccRS<MT>, Sc>(layout, c)
-        }
+        TileMatmul::Cmma(c) => cmma_allocate_acc::<AccRE<MT>, Sc>(layout, c.tile_size),
+        TileMatmul::Mma(c) => mma_allocate_acc::<AccRE<MT>, LhsRE<MT>, RhsRE<MT>, Sc>(layout, c),
+        TileMatmul::Register(c) => register_allocate_acc::<AccRE<MT>, Sc>(layout, c),
+        TileMatmul::PlaneVec(c) => planevec_allocate_acc::<AccRE<MT>, Sc>(layout, c),
+        TileMatmul::Interleaved(c) => interleaved_allocate_acc::<AccRE<MT>, Sc>(layout, c),
     }
 }

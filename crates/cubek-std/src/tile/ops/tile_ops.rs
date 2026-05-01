@@ -6,7 +6,7 @@ use crate::tile::ops::{LOGIT_MASKED, Mask, MaskExpand, RowWise};
 use crate::tile::variants::BounceTile;
 use crate::tile::{Plane, Tile, TileExpand};
 
-/// Row-wise primitives on a `Tile<E, V, Plane, ReadWrite>` used for attention's
+/// Row-wise primitives on a `Tile<E, Plane, ReadWrite>` used for attention's
 /// online softmax and output scaling. Dispatch happens per-variant:
 /// - `Tile::Unit` — each unit holds its own copy of the tile, ops run in
 ///   registers.
@@ -18,7 +18,7 @@ use crate::tile::{Plane, Tile, TileExpand};
 ///   `softmax` / `scale_mul` / `scale_div` methods (see `ops/softmax.rs`).
 /// - `Tile::Register` — kept for the legacy direct-register attention path.
 #[cube]
-impl<E: Float, V: Size> Tile<E, V, Plane, ReadWrite> {
+impl<E: Float> Tile<E, Plane, ReadWrite> {
     pub fn row_max(&self, acc: &mut RowWise<E>, base: &RowWise<E>) {
         match self {
             Tile::Unit(t) => {

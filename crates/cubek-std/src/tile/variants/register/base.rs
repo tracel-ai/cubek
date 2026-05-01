@@ -76,10 +76,10 @@ impl RegisterMatmul {
 pub(crate) const UNROLL: bool = false;
 
 #[cube]
-pub fn register_allocate_lhs<L: Numeric, VL: Size, Sc: Scope>(
+pub fn register_allocate_lhs<L: Numeric, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: RegisterMatmul,
-) -> Tile<L, VL, Sc, ReadWrite> {
+) -> Tile<L, Sc, ReadWrite> {
     Tile::new_Register(RegisterTile::<L> {
         data: Array::new((config.tile_size.m() * config.tile_size.k()) as usize),
         matrix_layout: layout,
@@ -88,10 +88,10 @@ pub fn register_allocate_lhs<L: Numeric, VL: Size, Sc: Scope>(
 }
 
 #[cube]
-pub fn register_allocate_rhs<R: Numeric, VR: Size, Sc: Scope>(
+pub fn register_allocate_rhs<R: Numeric, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: RegisterMatmul,
-) -> Tile<R, VR, Sc, ReadWrite> {
+) -> Tile<R, Sc, ReadWrite> {
     Tile::new_Register(RegisterTile::<R> {
         data: Array::new((config.tile_size.n() * config.tile_size.k()) as usize),
         matrix_layout: layout,
@@ -100,10 +100,10 @@ pub fn register_allocate_rhs<R: Numeric, VR: Size, Sc: Scope>(
 }
 
 #[cube]
-pub fn register_allocate_acc<A: Numeric, VA: Size, Sc: Scope>(
+pub fn register_allocate_acc<A: Numeric, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: RegisterMatmul,
-) -> Tile<A, VA, Sc, ReadWrite> {
+) -> Tile<A, Sc, ReadWrite> {
     Tile::new_Register(RegisterTile::<A> {
         data: Array::new((config.tile_size.m() * config.tile_size.n()) as usize),
         matrix_layout: layout,
@@ -178,7 +178,7 @@ fn outer_product<L: Numeric, R: Numeric, A: Numeric>(
 }
 
 #[cube]
-pub fn register_load_from_shared<E: Numeric, ES: Size, N: Numeric, V: Size, IO: SliceVisibility>(
+pub fn register_load_from_shared<E: Numeric, ES: Size, N: Numeric, IO: SliceVisibility>(
     shared: &StridedTile<E, ES, IO>,
     arr: &mut Array<N>,
     #[comptime] matrix_layout: MatrixLayout,
@@ -287,7 +287,7 @@ fn load_transposed<E: Numeric, ES: Size, N: Numeric, IO: SliceVisibility>(
 }
 
 #[cube]
-pub fn register_load_zeros<N: Numeric, V: Size>(
+pub fn register_load_zeros<N: Numeric>(
     arr: &mut Array<N>,
     #[comptime] config: RegisterMatmul,
     #[comptime] ident: StageIdent,
@@ -303,7 +303,7 @@ pub fn register_load_zeros<N: Numeric, V: Size>(
 }
 
 #[cube]
-pub fn register_write_to_shared<E: Numeric, ES: Size, A: Numeric, VA: Size>(
+pub fn register_write_to_shared<E: Numeric, ES: Size, A: Numeric>(
     shared: &mut StridedTile<E, ES, ReadWrite>,
     arr: &Array<A>,
     #[comptime] config: RegisterMatmul,
