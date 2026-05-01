@@ -1,20 +1,16 @@
-//! Seeded "produce a HostData" primitives for the GEMM category.
+//! Seeded HostData primitives for the GEMM category.
 //!
-//! Both `produce_kernel` and `produce_reference` build the same input bits
+//! Both `kernel_result` and `reference_result` build the same input bits
 //! from `(strategy_id, problem_id, seed_lhs, seed_rhs)` so the two
 //! `HostData`s they return are directly comparable. Persistence and
 //! file-vs-file comparison live entirely in the tuner — this module knows
 //! nothing about disk.
 
-use cubecl::{
-    Runtime, TestRuntime,
-    ir::AddressType,
-    zspace::{Shape, shape},
-};
+use cubecl::{Runtime, TestRuntime, ir::AddressType, zspace::Shape};
 use cubek::{
     matmul::{
-        cpu_reference::{produce_cpu_reference_result, produce_strategy_result},
-        definition::{MatmulElems, MatmulPrecision, MatmulProblem},
+        cpu_reference::{cpu_reference_result, strategy_result},
+        definition::{MatmulElems, MatmulProblem},
     },
     std::MatrixLayout as KernelMatrixLayout,
 };
@@ -25,7 +21,7 @@ use crate::gemm::{
     strategy::strategy_for,
 };
 
-pub fn produce_kernel(
+pub fn kernel_result(
     strategy_id: &str,
     problem_id: &str,
     seed_lhs: u64,
@@ -37,10 +33,10 @@ pub fn produce_kernel(
     let device = <TestRuntime as Runtime>::Device::default();
     let client = <TestRuntime as Runtime>::client(&device);
     let matmul_problem = build_matmul_problem(&problem);
-    produce_strategy_result(client, matmul_problem, strategy, seed_lhs, seed_rhs)
+    strategy_result(client, matmul_problem, strategy, seed_lhs, seed_rhs)
 }
 
-pub fn produce_reference(
+pub fn reference_result(
     problem_id: &str,
     seed_lhs: u64,
     seed_rhs: u64,
@@ -49,7 +45,7 @@ pub fn produce_reference(
     let device = <TestRuntime as Runtime>::Device::default();
     let client = <TestRuntime as Runtime>::client(&device);
     let matmul_problem = build_matmul_problem(&problem);
-    produce_cpu_reference_result(client, matmul_problem, seed_lhs, seed_rhs)
+    cpu_reference_result(client, matmul_problem, seed_lhs, seed_rhs)
 }
 
 fn build_matmul_problem(p: &GemmProblem) -> MatmulProblem {
@@ -72,12 +68,3 @@ fn build_matmul_problem(p: &GemmProblem) -> MatmulProblem {
         AddressType::U32,
     )
 }
-
-#[allow(dead_code)]
-fn _unused() {
-    let _ = shape![1];
-    let _: Precision = Precision::F32;
-}
-
-#[allow(dead_code)]
-fn _phantom<MP: MatmulPrecision>() {}

@@ -59,7 +59,7 @@ impl RunSamples {
 /// module (`attention`, `gemm`, ...) and exposes a unit struct that implements
 /// this trait. `all()` returns every category the crate ships.
 ///
-/// The two seeded `produce_*` methods are the primitives that drive the tuner's
+/// The two seeded result methods are the primitives that drive the tuner's
 /// correctness flow. They return a [`HostData`] (or `None` if the category
 /// can't expose this kind of result); persistence and comparison live in the
 /// tuner. Categories opt in as kernel/reference implementations land.
@@ -83,7 +83,7 @@ pub trait BenchmarkCategory: Sync {
     /// Both inputs and the resulting output must be deterministic under
     /// `(strategy_id, problem_id, seed_lhs, seed_rhs)` so the same call on two
     /// commits produces the same input bits and a directly-comparable output.
-    fn produce_kernel(
+    fn kernel_result(
         &self,
         _strategy_id: &str,
         _problem_id: &str,
@@ -93,13 +93,13 @@ pub trait BenchmarkCategory: Sync {
         None
     }
 
-    /// CPU-side ground-truth counterpart of [`Self::produce_kernel`] for the
+    /// CPU-side ground-truth counterpart of [`Self::kernel_result`] for the
     /// same `(problem_id, seeds)`. `None` when the category has no
     /// CPU-equivalent reference (e.g. unary, contiguous).
     ///
-    /// Same input bits as `produce_kernel`, so the returned `HostData` is
+    /// Same input bits as `kernel_result`, so the returned `HostData` is
     /// directly comparable elementwise.
-    fn produce_reference(
+    fn reference_result(
         &self,
         _problem_id: &str,
         _seed_lhs: u64,

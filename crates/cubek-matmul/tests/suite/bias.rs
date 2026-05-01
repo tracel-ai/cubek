@@ -28,7 +28,9 @@ use cubek_test_utils::{
     HostData, HostDataType, HostDataVec, TestInput, TestOutcome, assert_equals_approx,
 };
 
-use crate::suite::{layout_to_stride_spec, reference::matmul_cpu_reference};
+use cubek_matmul::cpu_reference::matmul_cpu_reference;
+
+use crate::suite::layout_to_stride_spec;
 
 #[test]
 pub fn test_matmul_with_bias_simple_unit_f32() {

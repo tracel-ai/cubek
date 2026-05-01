@@ -8,10 +8,10 @@
 //! Two seeded primitives drive the cross-commit / cross-implementation
 //! correctness flow:
 //!
-//! - [`produce_strategy_result`] runs the kernel once and returns its output as
-//!   a [`HostData`].
-//! - [`produce_cpu_reference_result`] runs the naive triple-loop on the same
-//!   seeded inputs and returns its output as a [`HostData`].
+//! - [`strategy_result`] runs the kernel once and returns its output as a
+//!   [`HostData`].
+//! - [`cpu_reference_result`] runs the naive triple-loop on the same seeded
+//!   inputs and returns its output as a [`HostData`].
 //!
 //! Both use identical seeded input generation, so a `HostData` from one can be
 //! compared elementwise against a `HostData` from the other (same shape, same
@@ -19,13 +19,11 @@
 //! and comparing later via [`cubek_test_utils::compare_host_data_files`] is the
 //! intended cross-commit flow — kept entirely outside this crate.
 
-use cubecl::{
-    TestRuntime, prelude::*, server::ServerError, std::tensor::TensorHandle, zspace::Shape,
-};
+use cubecl::{TestRuntime, prelude::*, std::tensor::TensorHandle};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, HostDataVec, StrideSpec, TestInput, TestOutcome,
-    ValidationResult, assert_equals_approx,
+    ExecutionOutcome, HostData, HostDataType, HostDataVec, StrideSpec, TestInput, ValidationResult,
+    assert_equals_approx, launch_and_capture_outcome,
 };
 
 use crate::{
@@ -39,7 +37,7 @@ use crate::{
 /// Inputs are generated via `TestInput::uniform` so the same `(problem, seeds)`
 /// pair produces the same bits on every run — making it safe to persist the
 /// returned `HostData` to disk and compare it against another commit's output.
-pub fn produce_strategy_result(
+pub fn strategy_result(
     client: ComputeClient<TestRuntime>,
     problem: MatmulProblem,
     strategy: Strategy,
@@ -55,12 +53,11 @@ pub fn produce_strategy_result(
     )
 }
 
-/// CPU-only counterpart to [`produce_strategy_result`]: generate the same
-/// seeded inputs, run the naive triple-loop, return the result as a
-/// [`HostData`].
+/// CPU-only counterpart to [`strategy_result`]: generate the same seeded
+/// inputs, run the naive triple-loop, return the result as a [`HostData`].
 ///
 /// Slow on bench-scale problems by design — only useful as a ground truth.
-pub fn produce_cpu_reference_result(
+pub fn cpu_reference_result(
     client: ComputeClient<TestRuntime>,
     problem: MatmulProblem,
     seed_lhs: u64,
@@ -96,14 +93,9 @@ where
 
     let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes.clone());
 
-    let launch_outcome: ExecutionOutcome = get_server_error(&client)
-        .unwrap_or(launch(&client, lhs_handle, rhs_handle, out_handle, &mut dtypes).into());
-    let outcome = match launch_outcome {
-        ExecutionOutcome::Executed => {
-            get_server_error(&client).unwrap_or(ExecutionOutcome::Executed)
-        }
-        other => other,
-    };
+    let outcome = launch_and_capture_outcome(&client, |c| {
+        launch(c, lhs_handle, rhs_handle, out_handle, &mut dtypes).into()
+    });
 
     match outcome {
         ExecutionOutcome::CompileError(e) => Err(format!("compile error: {e}")),
@@ -270,24 +262,3 @@ fn layout_to_stride_spec(layout: MatrixLayout) -> StrideSpec {
         MatrixLayout::ColMajor => StrideSpec::ColMajor,
     }
 }
-
-fn get_server_error(client: &ComputeClient<TestRuntime>) -> Option<ExecutionOutcome> {
-    use cubecl::server::{self, LaunchError};
-    match client.flush() {
-        Ok(_) => None,
-        Err(ServerError::ServerUnhealthy { errors, .. }) => {
-            for error in errors.iter() {
-                if let server::ServerError::Launch(LaunchError::TooManyResources(_))
-                | server::ServerError::Launch(LaunchError::CompilationError(_)) = error
-                {
-                    return Some(ExecutionOutcome::CompileError(format!("{errors:?}")));
-                }
-            }
-            None
-        }
-        Err(err) => Some(ExecutionOutcome::CompileError(format!("{err:?}"))),
-    }
-}
-
-#[allow(dead_code)]
-fn _phantom_use(_: TestOutcome, _: Shape) {}

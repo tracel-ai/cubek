@@ -1,5 +1,6 @@
 use cubecl::{Runtime, TestRuntime, features::TypeUsage, ir::ElemType, ir::FloatKind, prelude::*};
 use cubek_matmul::{
+    cpu_reference::matmul_cpu_reference,
     definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
     launch::Strategy,
     launch::launch_ref,
@@ -163,8 +164,7 @@ fn run_quantized_matmul(case: QuantizedMatmulCase) {
 
     match outcome {
         ExecutionOutcome::Executed => {
-            let expected =
-                crate::suite::reference::matmul_cpu_reference(&lhs.host, &rhs.host, &problem);
+            let expected = matmul_cpu_reference(&lhs.host, &rhs.host, &problem);
             let actual = HostData::from_tensor_handle(&client, out, HostDataType::F32);
             let tolerance = [case.lhs_scheme.as_ref(), case.rhs_scheme.as_ref()]
                 .into_iter()

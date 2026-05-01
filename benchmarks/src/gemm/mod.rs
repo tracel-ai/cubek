@@ -35,22 +35,22 @@ impl BenchmarkCategory for Category {
         run(strategy_id, problem_id, num_samples)
     }
 
-    fn produce_kernel(
+    fn kernel_result(
         &self,
         strategy_id: &str,
         problem_id: &str,
         seed_lhs: u64,
         seed_rhs: u64,
     ) -> Option<Result<HostData, String>> {
-        Some(correctness::produce_kernel(strategy_id, problem_id, seed_lhs, seed_rhs))
+        Some(correctness::kernel_result(strategy_id, problem_id, seed_lhs, seed_rhs))
     }
 
-    fn produce_reference(
+    fn reference_result(
         &self,
         problem_id: &str,
         seed_lhs: u64,
         seed_rhs: u64,
     ) -> Option<Result<HostData, String>> {
-        Some(correctness::produce_reference(problem_id, seed_lhs, seed_rhs))
+        Some(correctness::reference_result(problem_id, seed_lhs, seed_rhs))
     }
 }

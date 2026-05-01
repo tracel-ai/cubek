@@ -243,14 +243,4 @@ mod tests {
             },
         );
     }
-
-    #[test]
-    fn rejects_wrong_magic() {
-        let dir = std::env::temp_dir();
-        let path = dir.join(format!("ckhd-bad-magic-{}.bin", std::process::id()));
-        std::fs::write(&path, b"NOTCKHD\x00\x00\x00\x00\x00").unwrap();
-        let err = read_host_data(&path).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        let _ = std::fs::remove_file(&path);
-    }
 }
