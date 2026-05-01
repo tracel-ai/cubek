@@ -57,6 +57,7 @@ impl ReduceOperationConfig {
             // No benefit to mixed precision accumulation.
             ReduceOperationConfig::MaxAbs
             | ReduceOperationConfig::Max
+            | ReduceOperationConfig::TopK(_)
             | ReduceOperationConfig::Min => {
                 return ReduceDtypes {
                     input: input.into(),
@@ -64,26 +65,14 @@ impl ReduceOperationConfig {
                     accumulation: input.into(),
                 };
             }
-            ReduceOperationConfig::ArgMax | ReduceOperationConfig::ArgMin => {
+            ReduceOperationConfig::ArgMax
+            | ReduceOperationConfig::ArgMin
+            | ReduceOperationConfig::ArgTopK(_) => {
                 return ReduceDtypes {
                     input: input.into(),
                     output: output
-                        .expect("ArgMax and ArgMin must specify output type")
+                        .expect("ArgMax, ArgMin and ArgTopK must specify output type")
                         .into(),
-                    accumulation: input.into(),
-                };
-            }
-            ReduceOperationConfig::ArgTopK(_k) => {
-                return ReduceDtypes {
-                    input: input.into(),
-                    output: output.expect("ArgTopK must specify output type").into(),
-                    accumulation: input.into(),
-                };
-            }
-            ReduceOperationConfig::TopK(_k) => {
-                return ReduceDtypes {
-                    input: input.into(),
-                    output: output.expect("TopK must specify output type").into(),
                     accumulation: input.into(),
                 };
             }
