@@ -12,24 +12,24 @@ use crate::{
 
 #[derive(CubeType)]
 /// Contains all seq_q·head_dim materialized tiles at once because they are reused extensively
-pub struct QueryPartition<L: Numeric, VL: Size> {
-    sequence: Sequence<Query<L, VL>>,
+pub struct QueryPartition<L: Numeric> {
+    sequence: Sequence<Query<L>>,
 }
 
 #[cube]
-impl<L: Numeric, VL: Size> QueryPartition<L, VL> {
+impl<L: Numeric> QueryPartition<L> {
     pub fn new(
         #[comptime] partition_size: AttentionPartitionSize,
         #[comptime] matmul: AttentionTileMatmul,
-    ) -> QueryPartition<L, VL> {
+    ) -> QueryPartition<L> {
         let mut sequence = Sequence::new();
 
         #[unroll]
         for _ in 0..partition_size.seq_q * partition_size.head_dim {
-            sequence.push(Query::<L, VL>::new(allocate_lhs::<L, VL>(matmul)));
+            sequence.push(Query::<L>::new(allocate_lhs::<L>(matmul)));
         }
 
-        QueryPartition::<L, VL> { sequence }
+        QueryPartition::<L> { sequence }
     }
 
     pub fn get(
@@ -37,7 +37,7 @@ impl<L: Numeric, VL: Size> QueryPartition<L, VL> {
         #[comptime] q: usize,
         #[comptime] hd: usize,
         #[comptime] partition_head_dim: usize,
-    ) -> &Query<L, VL> {
+    ) -> &Query<L> {
         &self.sequence[q * partition_head_dim + hd]
     }
 
@@ -46,51 +46,51 @@ impl<L: Numeric, VL: Size> QueryPartition<L, VL> {
         #[comptime] q: usize,
         #[comptime] hd: usize,
         #[comptime] partition_head_dim: usize,
-    ) -> &mut Query<L, VL> {
+    ) -> &mut Query<L> {
         self.sequence.index_mut(q * partition_head_dim + hd)
     }
 }
 
 #[derive(CubeType)]
-pub struct KeyPartition<R: Numeric, VR: Size> {
-    sequence: Sequence<Key<R, VR>>,
+pub struct KeyPartition<R: Numeric> {
+    sequence: Sequence<Key<R>>,
 }
 
 #[cube]
-impl<R: Numeric, VR: Size> KeyPartition<R, VR> {
-    pub fn new(#[comptime] matmul: AttentionTileMatmul) -> KeyPartition<R, VR> {
+impl<R: Numeric> KeyPartition<R> {
+    pub fn new(#[comptime] matmul: AttentionTileMatmul) -> KeyPartition<R> {
         let mut keys = Sequence::new();
-        keys.push(Key::<R, VR>::new(allocate_rhs_transposed::<R, VR>(matmul)));
-        KeyPartition::<R, VR> { sequence: keys }
+        keys.push(Key::<R>::new(allocate_rhs_transposed::<R>(matmul)));
+        KeyPartition::<R> { sequence: keys }
     }
 
-    pub fn get(&self) -> &Key<R, VR> {
+    pub fn get(&self) -> &Key<R> {
         &self.sequence[0usize]
     }
 
-    pub fn get_mut(&mut self) -> &mut Key<R, VR> {
+    pub fn get_mut(&mut self) -> &mut Key<R> {
         self.sequence.index_mut(0usize)
     }
 }
 
 #[derive(CubeType)]
-pub struct ValuePartition<R: Numeric, VR: Size> {
-    sequence: Sequence<Value<R, VR>>,
+pub struct ValuePartition<R: Numeric> {
+    sequence: Sequence<Value<R>>,
 }
 
 #[cube]
-impl<R: Numeric, VR: Size> ValuePartition<R, VR> {
-    pub fn new(#[comptime] matmul: AttentionTileMatmul) -> ValuePartition<R, VR> {
+impl<R: Numeric> ValuePartition<R> {
+    pub fn new(#[comptime] matmul: AttentionTileMatmul) -> ValuePartition<R> {
         let mut values = Sequence::new();
-        values.push(Value::<R, VR>::new(allocate_rhs::<R, VR>(matmul)));
-        ValuePartition::<R, VR> { sequence: values }
+        values.push(Value::<R>::new(allocate_rhs::<R>(matmul)));
+        ValuePartition::<R> { sequence: values }
     }
 
-    pub fn get(&self) -> &Value<R, VR> {
+    pub fn get(&self) -> &Value<R> {
         &self.sequence[0usize]
     }
 
-    pub fn get_mut(&mut self) -> &mut Value<R, VR> {
+    pub fn get_mut(&mut self) -> &mut Value<R> {
         self.sequence.index_mut(0usize)
     }
 }

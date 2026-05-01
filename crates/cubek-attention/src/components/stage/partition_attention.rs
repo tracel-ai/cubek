@@ -4,7 +4,7 @@ use cubek_matmul::components::{
     global::{WriteEvent, WriteEventListener},
     stage::Stage,
 };
-use cubek_std::tile::{RowWise, Tile};
+use cubek_std::tile::{RowWise, SharedTile, Tile};
 use std::marker::PhantomData;
 
 use crate::components::stage::partition::init_running_state;
@@ -48,11 +48,11 @@ impl<
     type Config = PartitionAttentionConfig;
     type Partitioner = P;
 
-    type QueryPartition = QueryPartition<QT<AP>, QGS<AP>>;
-    type KeyPartition = KeyPartition<KVT<AP>, KSS<AP>>;
-    type ValuePartition = ValuePartition<KVT<AP>, VSS<AP>>;
+    type QueryPartition = QueryPartition<QT<AP>>;
+    type KeyPartition = KeyPartition<KVT<AP>>;
+    type ValuePartition = ValuePartition<KVT<AP>>;
     type SoftmaxPartition = SoftmaxPartition<SM<AP>, SML<AP>>;
-    type OutputPartition = OutputPartition<ACC<AP>, OSS<AP>>;
+    type OutputPartition = OutputPartition<ACC<AP>>;
     type MaskPartition = MaskPartition<SM<AP>>;
     type RunningState = (RowWise<SM<AP>>, RowWise<SM<AP>>);
 
@@ -60,12 +60,12 @@ impl<
         query_partition: &Self::QueryPartition,
         key_stage: &SK,
         value_stage: &SV,
-        key_partition: &mut KeyPartition<KVT<AP>, KSS<AP>>,
-        value_partition: &mut ValuePartition<KVT<AP>, VSS<AP>>,
+        key_partition: &mut KeyPartition<KVT<AP>>,
+        value_partition: &mut ValuePartition<KVT<AP>>,
         mask_reader: &MaskReader<AP>,
         mask_partition: &mut MaskPartition<SM<AP>>,
         softmax_partition: &mut SoftmaxPartition<SM<AP>, SML<AP>>,
-        output_partition: &mut OutputPartition<ACC<AP>, OSS<AP>>,
+        output_partition: &mut OutputPartition<ACC<AP>>,
         state: &mut Sequence<Self::RunningState>,
         #[comptime] config: Self::Config,
     ) {
@@ -134,7 +134,7 @@ impl<
     }
 
     fn rescale(
-        acc: &mut OutputPartition<ACC<AP>, OSS<AP>>,
+        acc: &mut OutputPartition<ACC<AP>>,
         state: Sequence<Self::RunningState>,
         #[comptime] config: Self::Config,
     ) {
@@ -170,7 +170,7 @@ impl<
     }
 
     fn write<W: WriteEventListener, G: GlobalAttentionConfig>(
-        acc: &mut OutputPartition<ACC<AP>, OSS<AP>>,
+        acc: &mut OutputPartition<ACC<AP>>,
         stage: &mut SO,
         writer: &mut W,
         #[comptime] config: Self::Config,
@@ -197,19 +197,19 @@ impl<
         W::on_event(writer, WriteEvent::new_Finish());
     }
 
-    fn init_query(#[comptime] config: Self::Config) -> QueryPartition<QT<AP>, QGS<AP>> {
-        QueryPartition::<QT<AP>, QGS<AP>>::new(
+    fn init_query(#[comptime] config: Self::Config) -> QueryPartition<QT<AP>> {
+        QueryPartition::<QT<AP>>::new(
             config.shared().partition_size,
             config.tile_attention().score_matmul(),
         )
     }
 
-    fn init_key(#[comptime] config: Self::Config) -> KeyPartition<KVT<AP>, KSS<AP>> {
-        KeyPartition::<KVT<AP>, KSS<AP>>::new(config.tile_attention().score_matmul())
+    fn init_key(#[comptime] config: Self::Config) -> KeyPartition<KVT<AP>> {
+        KeyPartition::<KVT<AP>>::new(config.tile_attention().score_matmul())
     }
 
-    fn init_value(#[comptime] config: Self::Config) -> ValuePartition<KVT<AP>, VSS<AP>> {
-        ValuePartition::<KVT<AP>, VSS<AP>>::new(config.tile_attention().value_matmul())
+    fn init_value(#[comptime] config: Self::Config) -> ValuePartition<KVT<AP>> {
+        ValuePartition::<KVT<AP>>::new(config.tile_attention().value_matmul())
     }
 
     fn init_softmax(#[comptime] config: Self::Config) -> SoftmaxPartition<SM<AP>, SML<AP>> {
@@ -221,8 +221,8 @@ impl<
         )
     }
 
-    fn init_output(#[comptime] config: Self::Config) -> OutputPartition<ACC<AP>, OSS<AP>> {
-        OutputPartition::<ACC<AP>, OSS<AP>>::new(
+    fn init_output(#[comptime] config: Self::Config) -> OutputPartition<ACC<AP>> {
+        OutputPartition::<ACC<AP>>::new(
             config.shared().partition_size,
             config.tile_attention().value_matmul(),
             config.tile_attention().output_bounce_config(),
@@ -245,7 +245,7 @@ impl<
 
     fn read_query(
         reader: &QueryReader<AP>,
-        registers: &mut QueryPartition<QT<AP>, QGS<AP>>,
+        registers: &mut QueryPartition<QT<AP>>,
         #[comptime] config: Self::Config,
     ) {
         let partition_seq_q = config.shared().partition_size.seq_q;
@@ -267,7 +267,7 @@ impl<
                 tile_to_write
                     .tile
                     .copy_from::<QG<AP>, QGS<AP>, QT<AP>, KVT<AP>, SM<AP>, ReadOnly>(
-                        &Tile::new_SharedMemory(tile_read),
+                        &Tile::new_SharedMemory(SharedTile::wrap::<QGS<AP>>(tile_read)),
                         cubek_std::StageIdent::Lhs,
                     );
             }

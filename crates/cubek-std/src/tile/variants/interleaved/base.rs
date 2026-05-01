@@ -61,10 +61,10 @@ pub struct InterleavedTile<N: Numeric> {
 }
 
 #[cube]
-pub fn interleaved_allocate_lhs<L: Numeric, VL: Size, Sc: Scope>(
+pub fn interleaved_allocate_lhs<L: Numeric, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: InterleavedMatmul,
-) -> Tile<L, VL, Sc, ReadWrite> {
+) -> Tile<L, Sc, ReadWrite> {
     let m = config.tile_size.m();
     let k = config.tile_size.k();
     let plane_dim = config.plane_dim;
@@ -76,10 +76,10 @@ pub fn interleaved_allocate_lhs<L: Numeric, VL: Size, Sc: Scope>(
 }
 
 #[cube]
-pub fn interleaved_allocate_rhs<R: Numeric, VR: Size, Sc: Scope>(
+pub fn interleaved_allocate_rhs<R: Numeric, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: InterleavedMatmul,
-) -> Tile<R, VR, Sc, ReadWrite> {
+) -> Tile<R, Sc, ReadWrite> {
     let n = config.tile_size.n();
     let k = config.tile_size.k();
     let plane_dim = config.plane_dim;
@@ -91,10 +91,10 @@ pub fn interleaved_allocate_rhs<R: Numeric, VR: Size, Sc: Scope>(
 }
 
 #[cube]
-pub fn interleaved_allocate_acc<A: Numeric, VA: Size, Sc: Scope>(
+pub fn interleaved_allocate_acc<A: Numeric, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: InterleavedMatmul,
-) -> Tile<A, VA, Sc, ReadWrite> {
+) -> Tile<A, Sc, ReadWrite> {
     let m = config.tile_size.m();
     let n = config.tile_size.n();
     Tile::new_Interleaved(InterleavedTile::<A> {
@@ -144,13 +144,7 @@ pub fn interleaved_execute<L: Numeric, R: Numeric, A: Numeric>(
 }
 
 #[cube]
-pub fn interleaved_load_from_shared<
-    E: Numeric,
-    ES: Size,
-    N: Numeric,
-    V: Size,
-    IO: SliceVisibility,
->(
+pub fn interleaved_load_from_shared<E: Numeric, ES: Size, N: Numeric, IO: SliceVisibility>(
     shared: &StridedTile<E, ES, IO>,
     arr: &mut Array<N>,
     #[comptime] config: InterleavedMatmul,
@@ -210,7 +204,7 @@ pub fn interleaved_load_from_shared<
 }
 
 #[cube]
-pub fn interleaved_load_zeros<N: Numeric, V: Size>(
+pub fn interleaved_load_zeros<N: Numeric>(
     arr: &mut Array<N>,
     #[comptime] config: InterleavedMatmul,
 ) {
@@ -223,7 +217,7 @@ pub fn interleaved_load_zeros<N: Numeric, V: Size>(
 }
 
 #[cube]
-pub fn interleaved_write_to_shared<E: Numeric, ES: Size, A: Numeric, VA: Size>(
+pub fn interleaved_write_to_shared<E: Numeric, ES: Size, A: Numeric>(
     shared: &mut StridedTile<E, ES, ReadWrite>,
     arr: &Array<A>,
     #[comptime] config: InterleavedMatmul,

@@ -8,27 +8,27 @@ use crate::definition::AttentionPartitionSize;
 #[derive(CubeType)]
 /// Holds the per-partition output accumulator tiles. For the cmma path each
 /// tile is a `Tile::Bounce`, which carries its own smem + LocalTile internally.
-pub struct OutputPartition<Acc: Float, VA: Size> {
-    sequence: Sequence<Tile<Acc, VA, Plane, ReadWrite>>,
+pub struct OutputPartition<Acc: Float> {
+    sequence: Sequence<Tile<Acc, Plane, ReadWrite>>,
 }
 
 #[cube]
-impl<Acc: Float, VA: Size> OutputPartition<Acc, VA> {
+impl<Acc: Float> OutputPartition<Acc> {
     pub fn new(
         #[comptime] partition_size: AttentionPartitionSize,
         #[comptime] value_matmul: AttentionTileMatmul,
         #[comptime] bounce: BounceConfig,
-    ) -> OutputPartition<Acc, VA> {
+    ) -> OutputPartition<Acc> {
         let mut sequence = Sequence::new();
 
         #[unroll]
         for _ in 0..partition_size.seq_q * partition_size.val_dim {
-            let mut tile = attn_matmul::allocate_acc_bouncing::<Acc, VA>(value_matmul, bounce);
+            let mut tile = attn_matmul::allocate_acc_bouncing::<Acc>(value_matmul, bounce);
             tile.fill_zero();
             sequence.push(tile);
         }
 
-        OutputPartition::<Acc, VA> { sequence }
+        OutputPartition::<Acc> { sequence }
     }
 
     pub fn get_at(
@@ -36,7 +36,7 @@ impl<Acc: Float, VA: Size> OutputPartition<Acc, VA> {
         #[comptime] i: usize,
         #[comptime] j: usize,
         #[comptime] partition_val_dim: usize,
-    ) -> &Tile<Acc, VA, Plane, ReadWrite> {
+    ) -> &Tile<Acc, Plane, ReadWrite> {
         &self.sequence[i * partition_val_dim + j]
     }
 
@@ -45,7 +45,7 @@ impl<Acc: Float, VA: Size> OutputPartition<Acc, VA> {
         #[comptime] i: usize,
         #[comptime] j: usize,
         #[comptime] partition_val_dim: usize,
-    ) -> &mut Tile<Acc, VA, Plane, ReadWrite> {
+    ) -> &mut Tile<Acc, Plane, ReadWrite> {
         self.sequence.index_mut(i * partition_val_dim + j)
     }
 

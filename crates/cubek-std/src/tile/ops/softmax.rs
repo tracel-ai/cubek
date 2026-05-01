@@ -44,7 +44,7 @@ pub fn softmax_init_state<E: Float>(
 }
 
 #[cube]
-impl<Acc: Float, V: Size> Tile<Acc, V, Plane, ReadWrite> {
+impl<Acc: Float> Tile<Acc, Plane, ReadWrite> {
     /// Online softmax update over a single attention tile, fused with the
     /// precision-cast write into a value-matmul lhs tile.
     ///
@@ -59,7 +59,7 @@ impl<Acc: Float, V: Size> Tile<Acc, V, Plane, ReadWrite> {
     pub fn softmax<Lhs: Float, M: Mask>(
         &mut self,
         mask: &M,
-        softmaxed_tile: &mut Tile<Lhs, Const<0>, Plane, ReadWrite>,
+        softmaxed_tile: &mut Tile<Lhs, Plane, ReadWrite>,
         state: &mut (RowWise<Acc>, RowWise<Acc>),
         head_dim_factor: Acc,
     ) -> RowWise<Acc> {
@@ -107,13 +107,13 @@ impl<Acc: Float, V: Size> Tile<Acc, V, Plane, ReadWrite> {
 
     /// Copies `self` into `dest` (a stage-side strided/shared tile in the
     /// caller's downstream write path).
-    pub fn write_results<DE: Float, DS: Size>(&self, dest: &mut Tile<DE, DS, Plane, ReadWrite>) {
-        dest.copy_from::<Acc, V, Acc, Acc, Acc, ReadWrite>(self, StageIdent::Out);
+    pub fn write_results<DE: Float, DS: Size>(&self, dest: &mut Tile<DE, Plane, ReadWrite>) {
+        dest.copy_from::<Acc, DS, Acc, Acc, Acc, ReadWrite>(self, StageIdent::Out);
     }
 }
 
 #[cube]
-fn bounce_in<E: Float, V: Size>(tile: &mut Tile<E, V, Plane, ReadWrite>) {
+fn bounce_in<E: Float>(tile: &mut Tile<E, Plane, ReadWrite>) {
     match tile {
         Tile::Bounce(b) => {
             cmma_to_local::<E>(b);
@@ -126,7 +126,7 @@ fn bounce_in<E: Float, V: Size>(tile: &mut Tile<E, V, Plane, ReadWrite>) {
 }
 
 #[cube]
-fn bounce_out<E: Float, V: Size>(tile: &mut Tile<E, V, Plane, ReadWrite>) {
+fn bounce_out<E: Float>(tile: &mut Tile<E, Plane, ReadWrite>) {
     match tile {
         Tile::Bounce(b) => {
             local_to_cmma::<E>(b);
@@ -139,9 +139,9 @@ fn bounce_out<E: Float, V: Size>(tile: &mut Tile<E, V, Plane, ReadWrite>) {
 }
 
 #[cube]
-fn write_softmaxed<Acc: Float, V: Size, Lhs: Float>(
-    score_tile: &Tile<Acc, V, Plane, ReadWrite>,
-    softmaxed_tile: &mut Tile<Lhs, Const<0>, Plane, ReadWrite>,
+fn write_softmaxed<Acc: Float, Lhs: Float>(
+    score_tile: &Tile<Acc, Plane, ReadWrite>,
+    softmaxed_tile: &mut Tile<Lhs, Plane, ReadWrite>,
 ) {
     match (score_tile, softmaxed_tile) {
         (Tile::Register(s), Tile::Register(d)) => {

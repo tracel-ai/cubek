@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use cubecl::{define_size, prelude::*};
 
 use crate::{
@@ -52,44 +50,41 @@ fn register_reduce_vector_size(#[comptime] reduce_vector_size: u32) {
 // ===========================================================================
 
 #[cube]
-pub fn planevec_allocate_lhs<L: Numeric, VL: Size, Sc: Scope>(
+pub fn planevec_allocate_lhs<L: Numeric, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: PlaneVecMatInnerProduct,
-) -> Tile<L, VL, Sc, ReadWrite> {
+) -> Tile<L, Sc, ReadWrite> {
     register_reduce_vector_size(config.reduce_vector_size);
-    Tile::new_PlaneVec(PlaneVecTile::<L, VL> {
+    Tile::new_PlaneVec(PlaneVecTile::<L> {
         data: Array::new(1usize),
         matrix_layout: layout,
         config,
-        _phantom_v: PhantomData,
     })
 }
 
 #[cube]
-pub fn planevec_allocate_rhs<R: Numeric, VR: Size, Sc: Scope>(
+pub fn planevec_allocate_rhs<R: Numeric, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: PlaneVecMatInnerProduct,
-) -> Tile<R, VR, Sc, ReadWrite> {
+) -> Tile<R, Sc, ReadWrite> {
     register_reduce_vector_size(config.reduce_vector_size);
-    Tile::new_PlaneVec(PlaneVecTile::<R, VR> {
+    Tile::new_PlaneVec(PlaneVecTile::<R> {
         data: Array::new(config.tile_size.n() as usize),
         matrix_layout: layout,
         config,
-        _phantom_v: PhantomData,
     })
 }
 
 #[cube]
-pub fn planevec_allocate_acc<A: Numeric, VA: Size, Sc: Scope>(
+pub fn planevec_allocate_acc<A: Numeric, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: PlaneVecMatInnerProduct,
-) -> Tile<A, VA, Sc, ReadWrite> {
+) -> Tile<A, Sc, ReadWrite> {
     register_reduce_vector_size(config.reduce_vector_size);
-    Tile::new_PlaneVec(PlaneVecTile::<A, VA> {
+    Tile::new_PlaneVec(PlaneVecTile::<A> {
         data: Array::new(config.tile_size.n() as usize),
         matrix_layout: layout,
         config,
-        _phantom_v: PhantomData,
     })
 }
 

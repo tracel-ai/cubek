@@ -29,10 +29,10 @@ impl CmmaMatmul {
 }
 
 #[cube]
-pub fn cmma_allocate_lhs<L: Numeric, VL: Size, Sc: Scope>(
+pub fn cmma_allocate_lhs<L: Numeric, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_size: TileSize,
-) -> Tile<L, VL, Sc, ReadWrite> {
+) -> Tile<L, Sc, ReadWrite> {
     let fragment = unsafe {
         cmma::Matrix::<L>::uninitialized(
             cmma::MatrixIdent::A,
@@ -50,10 +50,10 @@ pub fn cmma_allocate_lhs<L: Numeric, VL: Size, Sc: Scope>(
 }
 
 #[cube]
-pub fn cmma_allocate_rhs<R: Numeric, VR: Size, Sc: Scope>(
+pub fn cmma_allocate_rhs<R: Numeric, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_size: TileSize,
-) -> Tile<R, VR, Sc, ReadWrite> {
+) -> Tile<R, Sc, ReadWrite> {
     let fragment = unsafe {
         cmma::Matrix::<R>::uninitialized(
             cmma::MatrixIdent::B,
@@ -71,10 +71,10 @@ pub fn cmma_allocate_rhs<R: Numeric, VR: Size, Sc: Scope>(
 }
 
 #[cube]
-pub fn cmma_allocate_acc<A: Numeric, VA: Size, Sc: Scope>(
+pub fn cmma_allocate_acc<A: Numeric, Sc: Scope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_size: TileSize,
-) -> Tile<A, VA, Sc, ReadWrite> {
+) -> Tile<A, Sc, ReadWrite> {
     let fragment = unsafe {
         cmma::Matrix::<A>::uninitialized(
             cmma::MatrixIdent::Accumulator,
@@ -101,7 +101,7 @@ pub fn cmma_execute<L: Numeric, R: Numeric, A: Numeric>(
 }
 
 #[cube]
-pub fn cmma_load_from_shared<E: Numeric, ES: Size, N: Numeric, V: Size, IO: SliceVisibility>(
+pub fn cmma_load_from_shared<E: Numeric, ES: Size, N: Numeric, IO: SliceVisibility>(
     shared: &StridedTile<E, ES, IO>,
     matrix: &mut cmma::Matrix<N>,
     #[comptime] ident: StageIdent,
@@ -124,12 +124,12 @@ pub fn cmma_load_from_shared<E: Numeric, ES: Size, N: Numeric, V: Size, IO: Slic
 }
 
 #[cube]
-pub fn cmma_load_zeros<N: Numeric, V: Size>(matrix: &mut cmma::Matrix<N>) {
+pub fn cmma_load_zeros<N: Numeric>(matrix: &mut cmma::Matrix<N>) {
     cmma::fill(matrix, N::from_int(0));
 }
 
 #[cube]
-pub fn cmma_write_to_shared<E: Numeric, ES: Size, A: Numeric, VA: Size>(
+pub fn cmma_write_to_shared<E: Numeric, ES: Size, A: Numeric>(
     shared: &mut StridedTile<E, ES, ReadWrite>,
     matrix: &cmma::Matrix<A>,
 ) {

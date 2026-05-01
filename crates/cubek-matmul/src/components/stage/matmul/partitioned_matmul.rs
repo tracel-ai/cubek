@@ -177,22 +177,8 @@ where
     type OutStage = StageOut;
 
     type Accumulators = Accumulators<MP, SP::Scope>;
-    type LhsTile = Sequence<
-        Tile<
-            <MP::Lhs as MatrixTypes>::Register,
-            <MP::Lhs as MatrixTypes>::RegisterSize,
-            SP::Scope,
-            ReadWrite,
-        >,
-    >;
-    type RhsTile = RhsTile<
-        Tile<
-            <MP::Rhs as MatrixTypes>::Register,
-            <MP::Rhs as MatrixTypes>::RegisterSize,
-            SP::Scope,
-            ReadWrite,
-        >,
-    >;
+    type LhsTile = Sequence<Tile<<MP::Lhs as MatrixTypes>::Register, SP::Scope, ReadWrite>>;
+    type RhsTile = RhsTile<Tile<<MP::Rhs as MatrixTypes>::Register, SP::Scope, ReadWrite>>;
 
     fn execute(
         lhs_stage: &StageLhs,

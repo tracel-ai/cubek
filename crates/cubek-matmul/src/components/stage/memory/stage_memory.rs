@@ -1,5 +1,7 @@
 use cubecl::prelude::*;
-use cubek_std::{stage::StageMemoryConfig, stage::as_swizzle_object, tile::StridedTile};
+use cubek_std::{
+    stage::StageMemoryConfig, stage::as_swizzle_object, tile::SharedTile, tile::StridedTile,
+};
 use std::marker::PhantomData;
 
 use crate::components::{
@@ -201,9 +203,9 @@ impl<ES: Numeric, NS: Size, T: TilingLayout> StridedStageMemory<ES, NS, T> {
 impl<ES: Numeric, NS: Size, T: TilingLayout> Stage<ES, NS, ReadOnly>
     for StridedStageMemory<ES, NS, T>
 {
-    fn tile<Sc: Scope>(this: &Self, tile: Coords2d) -> Tile<ES, NS, Sc, ReadOnly> {
+    fn tile<Sc: Scope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc, ReadOnly> {
         let strided_tile = this.get_tile(tile);
-        Tile::new_SharedMemory(strided_tile)
+        Tile::new_SharedMemory(SharedTile::wrap::<NS>(strided_tile))
     }
 }
 
@@ -211,9 +213,9 @@ impl<ES: Numeric, NS: Size, T: TilingLayout> Stage<ES, NS, ReadOnly>
 impl<ES: Numeric, NS: Size, T: TilingLayout> Stage<ES, NS, ReadWrite>
     for StridedStageMemory<ES, NS, T>
 {
-    fn tile<Sc: Scope>(this: &Self, tile: Coords2d) -> Tile<ES, NS, Sc, ReadWrite> {
+    fn tile<Sc: Scope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc, ReadWrite> {
         let strided_tile = this.get_tile_mut(tile);
-        Tile::new_SharedMemory(strided_tile)
+        Tile::new_SharedMemory(SharedTile::wrap::<NS>(strided_tile))
     }
 }
 

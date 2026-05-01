@@ -163,9 +163,9 @@ impl<E: Float> UnitTile<E> {
 #[cube]
 /// Allocates a `Tile::Unit`. The variant is valid in any scope — each unit
 /// just holds its own row-major copy of the tile.
-pub fn allocate_unit_tile<E: Numeric, V: Size, Sc: Scope>(
+pub fn allocate_unit_tile<E: Numeric, Sc: Scope>(
     #[comptime] layout: UnitTileLayout,
-) -> Tile<E, V, Sc, ReadWrite> {
+) -> Tile<E, Sc, ReadWrite> {
     Tile::new_Unit(UnitTile::<E>::new(layout))
 }
 

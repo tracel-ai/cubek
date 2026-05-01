@@ -205,7 +205,7 @@ pub trait Stage<ES: Numeric, NS: Size, IO: SliceVisibility = ReadOnly>:
     ///
     /// The [Scope] generic lets the caller select the compute primitive that will consume
     /// this tile
-    fn tile<Sc: Scope>(this: &Self, tile: Coords2d) -> Tile<ES, NS, Sc, IO>;
+    fn tile<Sc: Scope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc, IO>;
 }
 
 /// Stage family for any precision
@@ -235,7 +235,7 @@ pub trait LoadStageFamily<IO: SliceVisibility = ReadOnly>: StageFamily {
 impl<ES: Numeric, NS: Size, IO: SliceVisibility, Inner: Stage<ES, NS, IO>> Stage<ES, NS, IO>
     for ComptimeOption<Inner>
 {
-    fn tile<Sc: Scope>(this: &Self, tile: Coords2d) -> Tile<ES, NS, Sc, IO> {
+    fn tile<Sc: Scope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc, IO> {
         #[comptime]
         if let ComptimeOption::Some(inner) = this {
             Inner::tile::<Sc>(inner, tile)

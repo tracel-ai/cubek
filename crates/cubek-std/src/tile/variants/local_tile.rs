@@ -220,9 +220,9 @@ impl LocalTileLayout {
 #[cube]
 /// Allocates a `Tile::Local` for the given scope. Panics at expansion time
 /// unless `Sc = Plane`.
-pub fn allocate_local_tile<E: Numeric, V: Size, Sc: Scope>(
+pub fn allocate_local_tile<E: Numeric, Sc: Scope>(
     #[comptime] layout: LocalTileLayout,
-) -> Tile<E, V, Sc, ReadWrite> {
+) -> Tile<E, Sc, ReadWrite> {
     comptime!(assert_plane_scope(Sc::KIND));
     Tile::new_Local(LocalTile::<E>::new(layout))
 }
