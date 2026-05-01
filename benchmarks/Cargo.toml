@@ -14,6 +14,11 @@ repository = "https://github.com/tracel-ai/cubek"
 version.workspace = true
 
 [features]
+# Pulls in each kernel crate's `cpu-reference` feature so categories can return
+# CPU-reference HostData via `BenchmarkCategory::reference_result`. The umbrella
+# `cubek` crate doesn't re-expose `cpu-reference` today, so consumers that need
+# the correctness flow turn it on here and pick up the optional direct deps.
+cpu-reference = ["dep:cubek-matmul"]
 
 [lib]
 path = "src/lib.rs"
@@ -30,6 +35,10 @@ cubek = { path = "../crates/cubek", version = "=0.2.0-pre.4", default-features =
     "fft",
     "quantization",
 ] }
+cubek-matmul = { path = "../crates/cubek-matmul", version = "=0.2.0-pre.4", features = [
+    "cpu-reference",
+], optional = true }
+cubek-test-utils = { path = "../crates/cubek-test-utils", version = "=0.2.0-pre.4" }
 half = { workspace = true }
 
 [[bench]]

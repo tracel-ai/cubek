@@ -1,4 +1,4 @@
-use cubecl::{TestRuntime, prelude::*, server::ServerError};
+use cubecl::{TestRuntime, prelude::*};
 use cubek_matmul::{
     definition::MatmulElems,
     definition::{MatmulProblem, MatmulSetupError},
@@ -6,7 +6,7 @@ use cubek_matmul::{
     launch::launch_ref,
 };
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome};
+use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
 
 use crate::{suite::assert_result, suite::layout_to_stride_spec};
 
@@ -59,15 +59,9 @@ where
 
     let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes.clone());
 
-    let launch_outcome: ExecutionOutcome = get_server_error(&client)
-        .unwrap_or(launch(&client, lhs_handle, rhs_handle, out_handle, &mut dtypes).into());
-
-    let outcome = match launch_outcome {
-        ExecutionOutcome::Executed => {
-            get_server_error(&client).unwrap_or(ExecutionOutcome::Executed)
-        }
-        other => other,
-    };
+    let outcome = launch_and_capture_outcome(&client, |c| {
+        launch(c, lhs_handle, rhs_handle, out_handle, &mut dtypes).into()
+    });
 
     match outcome {
         ExecutionOutcome::Executed => {
@@ -76,25 +70,4 @@ where
         ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
     }
     .enforce()
-}
-
-fn get_server_error(client: &ComputeClient<TestRuntime>) -> Option<ExecutionOutcome> {
-    match client.flush() {
-        Ok(_) => None,
-        Err(ServerError::ServerUnhealthy { errors, .. }) => {
-            #[allow(clippy::never_loop)]
-            for error in errors.iter() {
-                match error {
-                    cubecl::server::ServerError::Launch(LaunchError::TooManyResources(_))
-                    | cubecl::server::ServerError::Launch(LaunchError::CompilationError(_)) => {
-                        return Some(ExecutionOutcome::CompileError(format!("{errors:?}")));
-                    }
-                    _ => panic!("Unexpected error: {errors:?}"),
-                }
-            }
-
-            None
-        }
-        Err(err) => panic!("Unexpected error: {err:?}"),
-    }
 }

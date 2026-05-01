@@ -18,8 +18,11 @@ heavy = []
 extended = ["heavy"]
 full = ["extended"]
 
+cpu-reference = ["dep:cubek-test-utils"]
+
 [dependencies]
 cubek-std = { path = "../cubek-std", version = "=0.2.0-pre.4", default-features = false }
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.2.0-pre.4", default-features = false, optional = true }
 
 bytemuck = { workspace = true }
 cubecl = { workspace = true, features = ["stdlib"] }
@@ -29,6 +32,7 @@ serde = { workspace = true }
 
 [dev-dependencies]
 cubecl = { workspace = true, features = ["test-runtime"] }
+cubek-matmul = { path = ".", features = ["cpu-reference"] }
 cubek-test-utils = { path = "../cubek-test-utils", version = "=0.2.0-pre.4", default-features = false }
 cubek-quant = { path = "../cubek-quant", version = "=0.2.0-pre.4", features = [
     "kernels",

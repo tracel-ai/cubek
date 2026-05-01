@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use crate::{
     config::config,
     correctness::{
@@ -5,6 +7,7 @@ use crate::{
         render::print_tensors,
         {DimFilter, TensorFilter},
     },
+    test_tensor::read_host_data,
     {HostData, ValidationResult},
 };
 
@@ -46,6 +49,39 @@ where
 {
     let filter: TensorFilter = filter.into_iter().map(Into::into).collect();
     assert_equals_approx_inner(lhs, rhs, epsilon, Some(filter))
+}
+
+/// Compare two `HostData` blobs previously written to disk by
+/// [`crate::write_host_data`].
+///
+/// Returns `Error` when either file is missing or doesn't decode as a HostData
+/// blob — callers can surface that as "regenerate one of the reference files".
+/// Otherwise behaves identically to [`assert_equals_approx`] on the loaded
+/// pair.
+pub fn compare_host_data_files(
+    actual_path: &Path,
+    expected_path: &Path,
+    epsilon: f32,
+) -> ValidationResult {
+    let actual = match read_host_data(actual_path) {
+        Ok(v) => v,
+        Err(e) => {
+            return ValidationResult::Error(format!(
+                "failed to read host data file {}: {e}",
+                actual_path.display()
+            ));
+        }
+    };
+    let expected = match read_host_data(expected_path) {
+        Ok(v) => v,
+        Err(e) => {
+            return ValidationResult::Error(format!(
+                "failed to read host data file {}: {e}",
+                expected_path.display()
+            ));
+        }
+    };
+    assert_equals_approx(&actual, &expected, epsilon)
 }
 
 /// Check if two tensors are approximately equal

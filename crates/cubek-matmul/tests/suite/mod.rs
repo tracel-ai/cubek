@@ -8,14 +8,13 @@ pub mod full;
 
 mod bias;
 pub(crate) mod launcher_strategy;
-mod reference;
 
 pub(crate) use launcher_strategy::test_matmul_strategy;
 
 #[cfg(feature = "extended")]
 pub(crate) use extended::test_matmul_test_strategy;
 
-pub(crate) use reference::assert_result;
+pub(crate) use cubek_matmul::cpu_reference::assert_result;
 
 use cubek_std::MatrixLayout;
 use cubek_test_utils::StrideSpec;
