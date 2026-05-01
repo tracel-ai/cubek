@@ -361,4 +361,3 @@ fn compute_index(strides: &Strides, coords: &[usize]) -> usize {
         .map(|(&c, &s)| c * s)
         .sum()
 }
-

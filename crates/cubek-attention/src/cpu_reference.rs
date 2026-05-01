@@ -7,9 +7,7 @@
 
 use core::f32;
 
-use cubecl::{
-    TestRuntime, client::ComputeClient, std::tensor::TensorHandle, zspace::Shape,
-};
+use cubecl::{TestRuntime, client::ComputeClient, std::tensor::TensorHandle, zspace::Shape};
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, HostDataVec, StrideSpec, TestInput, ValidationResult,
     assert_equals_approx, launch_and_capture_outcome,
@@ -110,39 +108,50 @@ fn seed_inputs(
         .wrapping_mul(0x9e37_79b9_7f4a_7c15)
         .wrapping_add(seed_rhs);
 
-    let (query, query_data) =
-        TestInput::builder(client.clone(), Shape::new(problem.shape(AttentionIdent::Query)))
-            .dtype(problem.global_dtypes.query)
-            .uniform(seed_lhs, -1., 1.)
-            .generate_with_f32_host_data();
+    let (query, query_data) = TestInput::builder(
+        client.clone(),
+        Shape::new(problem.shape(AttentionIdent::Query)),
+    )
+    .dtype(problem.global_dtypes.query)
+    .uniform(seed_lhs, -1., 1.)
+    .generate_with_f32_host_data();
 
-    let (key, key_data) =
-        TestInput::builder(client.clone(), Shape::new(problem.shape(AttentionIdent::Key)))
-            .dtype(problem.global_dtypes.key)
-            .uniform(seed_rhs, -1., 1.)
-            .generate_with_f32_host_data();
+    let (key, key_data) = TestInput::builder(
+        client.clone(),
+        Shape::new(problem.shape(AttentionIdent::Key)),
+    )
+    .dtype(problem.global_dtypes.key)
+    .uniform(seed_rhs, -1., 1.)
+    .generate_with_f32_host_data();
 
-    let (value, value_data) =
-        TestInput::builder(client.clone(), Shape::new(problem.shape(AttentionIdent::Value)))
-            .dtype(problem.global_dtypes.value)
-            .uniform(seed_value, -1., 1.)
-            .generate_with_f32_host_data();
+    let (value, value_data) = TestInput::builder(
+        client.clone(),
+        Shape::new(problem.shape(AttentionIdent::Value)),
+    )
+    .dtype(problem.global_dtypes.value)
+    .uniform(seed_value, -1., 1.)
+    .generate_with_f32_host_data();
 
     let (mask, mask_data) = if problem.masked {
-        let (m, d) =
-            TestInput::builder(client.clone(), Shape::new(problem.shape(AttentionIdent::Mask)))
-                .dtype(problem.global_dtypes.mask)
-                .bernoulli(seed_mask, 0.1)
-                .generate_with_bool_host_data();
+        let (m, d) = TestInput::builder(
+            client.clone(),
+            Shape::new(problem.shape(AttentionIdent::Mask)),
+        )
+        .dtype(problem.global_dtypes.mask)
+        .bernoulli(seed_mask, 0.1)
+        .generate_with_bool_host_data();
         (Some(m), Some(d))
     } else {
         (None, None)
     };
 
-    let out = TestInput::builder(client.clone(), Shape::new(problem.shape(AttentionIdent::Out)))
-        .dtype(problem.global_dtypes.out)
-        .zeros()
-        .generate_without_host_data();
+    let out = TestInput::builder(
+        client.clone(),
+        Shape::new(problem.shape(AttentionIdent::Out)),
+    )
+    .dtype(problem.global_dtypes.out)
+    .zeros()
+    .generate_without_host_data();
 
     SeededInputs {
         query,
@@ -301,4 +310,3 @@ pub fn flash_attention_v2_reference(
         strides,
     }
 }
-

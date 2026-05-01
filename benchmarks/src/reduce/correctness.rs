@@ -42,5 +42,11 @@ pub fn reference_result(
         problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
     let device = <TestRuntime as Runtime>::Device::default();
     let client = <TestRuntime as Runtime>::client(&device);
-    cpu_reference_result(client, problem.shape, problem.axis, problem.config, seed_lhs)
+    cpu_reference_result(
+        client,
+        problem.shape,
+        problem.axis,
+        problem.config,
+        seed_lhs,
+    )
 }

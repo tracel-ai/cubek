@@ -46,6 +46,5 @@ fn build_problem(
         half::f16::as_type_native_unchecked(),
         AttentionGlobalTypes::mask_dtype(client),
     );
-    problem_for(problem_id, global_dtypes)
-        .ok_or_else(|| format!("unknown problem: {problem_id}"))
+    problem_for(problem_id, global_dtypes).ok_or_else(|| format!("unknown problem: {problem_id}"))
 }

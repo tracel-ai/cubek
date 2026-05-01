@@ -115,11 +115,7 @@ pub fn cpu_reference_result(
     Ok(reference_for_config(&input_host, axis, config))
 }
 
-fn reference_for_config(
-    input: &HostData,
-    axis: usize,
-    config: ReduceOperationConfig,
-) -> HostData {
+fn reference_for_config(input: &HostData, axis: usize, config: ReduceOperationConfig) -> HostData {
     match config {
         ReduceOperationConfig::Sum => reference_sum(input, axis),
         ReduceOperationConfig::Mean => reference_mean(input, axis),
@@ -198,4 +194,3 @@ pub(crate) fn build_f32_output(input: &HostData, axis: usize, data: Vec<f32>) ->
         strides,
     }
 }
-
