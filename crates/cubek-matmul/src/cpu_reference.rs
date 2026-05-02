@@ -8,8 +8,8 @@
 use cubecl::{TestRuntime, prelude::*, std::tensor::TensorHandle};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, HostDataVec, StrideSpec, TestInput, ValidationResult,
-    assert_equals_approx, launch_and_capture_outcome,
+    ExecutionOutcome, HostData, HostDataType, HostDataVec, Progress, StrideSpec, TestInput,
+    ValidationResult, assert_equals_approx, launch_and_capture_outcome,
 };
 
 use crate::{
@@ -47,10 +47,19 @@ pub fn cpu_reference_result(
     problem: MatmulProblem,
     seed_lhs: u64,
     seed_rhs: u64,
+    progress: Option<&Progress>,
 ) -> Result<HostData, String> {
     let (_lhs, lhs_data, _rhs, rhs_data, _out, problem) =
         seed_inputs(&client, problem, seed_lhs, seed_rhs);
-    Ok(matmul_cpu_reference(&lhs_data, &rhs_data, &problem))
+    Ok(matmul_cpu_reference(
+        &lhs_data, &rhs_data, &problem, progress,
+    ))
+}
+
+/// Number of output writes [`matmul_cpu_reference`] will produce for `problem`.
+/// Matches the value the function sets on its [`Progress`] handle.
+pub fn matmul_cpu_reference_total(problem: &MatmulProblem) -> u64 {
+    (problem.num_batches() * problem.m * problem.n) as u64
 }
 
 fn produce_with<F>(
@@ -146,7 +155,7 @@ pub fn assert_result_with_epsilon(
     _dtypes: MatmulElems,
     epsilon: f32,
 ) -> ValidationResult {
-    let expected = matmul_cpu_reference(lhs, rhs, problem);
+    let expected = matmul_cpu_reference(lhs, rhs, problem, None);
     let actual = HostData::from_tensor_handle(client, out, HostDataType::F32);
     assert_equals_approx(&actual, &expected, epsilon)
 }
@@ -169,7 +178,12 @@ pub fn matmul_epsilon(elems: &MatmulElems, safety_factor: f32) -> f32 {
 }
 
 /// Naive CPU matmul. Slow on large payloads — intended only for testing.
-pub fn matmul_cpu_reference(lhs: &HostData, rhs: &HostData, problem: &MatmulProblem) -> HostData {
+pub fn matmul_cpu_reference(
+    lhs: &HostData,
+    rhs: &HostData,
+    problem: &MatmulProblem,
+    progress: Option<&Progress>,
+) -> HostData {
     let m = problem.m;
     let n = problem.n;
     let k = problem.k;
@@ -177,6 +191,10 @@ pub fn matmul_cpu_reference(lhs: &HostData, rhs: &HostData, problem: &MatmulProb
     let out_shape = problem.out_shape.clone();
     let rank = out_shape.len();
     let num_batches = problem.num_batches();
+
+    if let Some(p) = progress {
+        p.set_total((num_batches * m * n) as u64);
+    }
 
     let mut out = vec![0.0; num_batches * m * n];
 
@@ -228,6 +246,9 @@ pub fn matmul_cpu_reference(lhs: &HostData, rhs: &HostData, problem: &MatmulProb
 
                 let out_linear = batch_flat * (m * n) + i * n + j;
                 out[out_linear] = sum;
+                if let Some(p) = progress {
+                    p.bump();
+                }
             }
         }
     }

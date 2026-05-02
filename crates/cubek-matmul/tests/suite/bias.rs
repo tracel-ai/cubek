@@ -87,7 +87,7 @@ pub fn test_matmul_with_bias_simple_unit_f32() {
 
     match outcome {
         Ok(()) => {
-            let no_bias_reference = matmul_cpu_reference(&lhs_data, &rhs_data, &problem);
+            let no_bias_reference = matmul_cpu_reference(&lhs_data, &rhs_data, &problem, None);
             let mut expected = no_bias_reference.clone();
             add_bias_to_reference(&mut expected, &bias_data);
 

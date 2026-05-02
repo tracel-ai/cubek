@@ -65,7 +65,7 @@ pub fn assert_rfft_result(
 ) -> ValidationResult {
     // big epsilon because with wgpu, compute is less precise
     let epsilon = 0.4;
-    let (expected_re, expected_im) = rfft_ref(&signal, dim);
+    let (expected_re, expected_im) = rfft_ref(&signal, dim, None);
 
     let actual_spectrum_re = HostData::from_tensor_handle(client, spectrum_re, HostDataType::F32);
     let actual_spectrum_im = HostData::from_tensor_handle(client, spectrum_im, HostDataType::F32);

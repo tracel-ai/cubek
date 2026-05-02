@@ -65,7 +65,7 @@ impl TestCase {
 
     pub fn test_sum(&self) {
         self.run_reduce_test(
-            |input, axis| reference_sum(input, axis),
+            |input, axis| reference_sum(input, axis, None),
             self.input_dtype,
             ReduceOperationConfig::Sum,
             0.0625,
@@ -74,7 +74,7 @@ impl TestCase {
 
     pub fn test_mean(&self) {
         self.run_reduce_test(
-            |input, axis| reference_mean(input, axis),
+            |input, axis| reference_mean(input, axis, None),
             self.input_dtype,
             ReduceOperationConfig::Mean,
             0.0625,
@@ -83,7 +83,7 @@ impl TestCase {
 
     pub fn test_prod(&self) {
         self.run_reduce_test(
-            |input, axis| reference_prod(input, axis),
+            |input, axis| reference_prod(input, axis, None),
             self.input_dtype,
             ReduceOperationConfig::Prod,
             // Prod accumulates exponential error; use a loose relative bound.
@@ -93,7 +93,7 @@ impl TestCase {
 
     pub fn test_min(&self) {
         self.run_reduce_test(
-            |input, axis| reference_min(input, axis),
+            |input, axis| reference_min(input, axis, None),
             self.input_dtype,
             ReduceOperationConfig::Min,
             0.0625,
@@ -102,7 +102,7 @@ impl TestCase {
 
     pub fn test_max(&self) {
         self.run_reduce_test(
-            |input, axis| reference_max(input, axis),
+            |input, axis| reference_max(input, axis, None),
             self.input_dtype,
             ReduceOperationConfig::Max,
             0.0625,
@@ -111,7 +111,7 @@ impl TestCase {
 
     pub fn test_max_abs(&self) {
         self.run_reduce_test(
-            |input, axis| reference_max_abs(input, axis),
+            |input, axis| reference_max_abs(input, axis, None),
             self.input_dtype,
             ReduceOperationConfig::MaxAbs,
             0.0625,
@@ -121,7 +121,7 @@ impl TestCase {
     pub fn test_argmax(&self) {
         let u32_dtype = u32::as_type_native_unchecked().storage_type();
         self.run_reduce_test(
-            |input, axis| reference_argmax(input, axis),
+            |input, axis| reference_argmax(input, axis, None),
             u32_dtype,
             ReduceOperationConfig::ArgMax,
             0.0,
@@ -131,7 +131,7 @@ impl TestCase {
     pub fn test_argmin(&self) {
         let u32_dtype = u32::as_type_native_unchecked().storage_type();
         self.run_reduce_test(
-            |input, axis| reference_argmin(input, axis),
+            |input, axis| reference_argmin(input, axis, None),
             u32_dtype,
             ReduceOperationConfig::ArgMin,
             0.0,
@@ -141,7 +141,7 @@ impl TestCase {
     pub fn test_argtopk(&self, k: usize) {
         let u32_dtype = u32::as_type_native_unchecked().storage_type();
         self.run_reduce_test(
-            move |input, axis| reference_argtopk(input, axis, k),
+            move |input, axis| reference_argtopk(input, axis, k, None),
             u32_dtype,
             ReduceOperationConfig::ArgTopK(k),
             0.0,
@@ -150,7 +150,7 @@ impl TestCase {
 
     pub fn test_topk(&self, k: usize) {
         self.run_reduce_test(
-            move |input, axis| reference_topk(input, axis, k),
+            move |input, axis| reference_topk(input, axis, k, None),
             self.input_dtype,
             ReduceOperationConfig::TopK(k),
             1e-7,

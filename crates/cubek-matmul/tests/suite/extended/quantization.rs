@@ -164,7 +164,7 @@ fn run_quantized_matmul(case: QuantizedMatmulCase) {
 
     match outcome {
         ExecutionOutcome::Executed => {
-            let expected = matmul_cpu_reference(&lhs.host, &rhs.host, &problem);
+            let expected = matmul_cpu_reference(&lhs.host, &rhs.host, &problem, None);
             let actual = HostData::from_tensor_handle(&client, out, HostDataType::F32);
             let tolerance = [case.lhs_scheme.as_ref(), case.rhs_scheme.as_ref()]
                 .into_iter()

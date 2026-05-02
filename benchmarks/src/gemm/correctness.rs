@@ -12,7 +12,7 @@ use cubek::{
     },
     std::MatrixLayout as KernelMatrixLayout,
 };
-use cubek_test_utils::HostData;
+use cubek_test_utils::{HostData, Progress};
 
 use crate::gemm::{
     problem::{GemmProblem, Precision, problem_for},
@@ -39,13 +39,14 @@ pub fn reference_result(
     problem_id: &str,
     seed_lhs: u64,
     seed_rhs: u64,
+    progress: Option<&Progress>,
 ) -> Result<HostData, String> {
     let problem =
         problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
     let device = <TestRuntime as Runtime>::Device::default();
     let client = <TestRuntime as Runtime>::client(&device);
     let matmul_problem = build_matmul_problem(&problem);
-    cpu_reference_result(client, matmul_problem, seed_lhs, seed_rhs)
+    cpu_reference_result(client, matmul_problem, seed_lhs, seed_rhs, progress)
 }
 
 fn build_matmul_problem(p: &GemmProblem) -> MatmulProblem {

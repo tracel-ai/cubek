@@ -20,7 +20,7 @@ use cubecl::{
     zspace::{Shape, Strides},
 };
 use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, HostDataVec, StrideSpec, TestInput,
+    ExecutionOutcome, HostData, HostDataType, HostDataVec, Progress, StrideSpec, TestInput,
     launch_and_capture_outcome,
 };
 use num_complex::Complex;
@@ -132,6 +132,7 @@ pub fn cpu_reference_result(
     mode: FftMode,
     seed_lhs: u64,
     seed_rhs: u64,
+    progress: Option<&Progress>,
 ) -> Result<HostData, String> {
     let dtype = f32::as_type_native_unchecked().storage_type();
 
@@ -141,7 +142,7 @@ pub fn cpu_reference_result(
                 .dtype(dtype)
                 .uniform(seed_lhs, -1., 1.)
                 .generate_with_f32_host_data();
-            let (re, im) = rfft_ref(&signal, dim);
+            let (re, im) = rfft_ref(&signal, dim, progress);
             Ok(stack_re_im(re, im))
         }
         FftMode::Inverse => {
@@ -157,7 +158,26 @@ pub fn cpu_reference_result(
                 .uniform(seed_rhs, -1., 1.)
                 .generate_with_f32_host_data();
 
-            Ok(irfft_ref(&re, &im, dim))
+            Ok(irfft_ref(&re, &im, dim, progress))
+        }
+    }
+}
+
+/// Number of progress bumps the FFT reference will produce. Granularity is one
+/// bump per FFT window — the inner `fft_recursive` dominates runtime, so
+/// per-bin bumps would be noisy.
+pub fn cpu_reference_total(shape: &[usize], dim: usize, mode: FftMode) -> u64 {
+    let sample_window = shape[dim];
+    let num_freq_bins = sample_window / 2 + 1;
+    let total: usize = shape.iter().product();
+    match mode {
+        FftMode::Forward => (total / sample_window) as u64,
+        FftMode::Inverse => {
+            // For inverse the input shape passed in is the *signal* shape;
+            // count windows over the spectrum shape (`num_freq_bins` along `dim`).
+            let mut spec_total = total;
+            spec_total = spec_total / sample_window * num_freq_bins;
+            (spec_total / num_freq_bins) as u64
         }
     }
 }
@@ -236,7 +256,12 @@ fn fft_recursive(x: &mut [Complex<f32>], fft_mode: FftMode) {
 }
 
 /// Reference IRFFT: reconstruct real signal from first n/2 + 1 complex bins.
-pub fn irfft_ref(re: &HostData, im: &HostData, dim: usize) -> HostData {
+pub fn irfft_ref(
+    re: &HostData,
+    im: &HostData,
+    dim: usize,
+    progress: Option<&Progress>,
+) -> HostData {
     let in_shape = re.shape.as_slice();
     let num_freq_bins = in_shape[dim];
     let sample_window = (num_freq_bins - 1) * 2;
@@ -250,6 +275,10 @@ pub fn irfft_ref(re: &HostData, im: &HostData, dim: usize) -> HostData {
     let out_shape = Shape::from(out_shape_vec);
     let num_windows = re.shape.num_elements() / num_freq_bins;
     let out_strides = StrideSpec::RowMajor.compute_strides(&out_shape);
+
+    if let Some(p) = progress {
+        p.set_total(num_windows as u64);
+    }
 
     let mut flattened = vec![0.0; out_shape.num_elements()];
 
@@ -276,6 +305,9 @@ pub fn irfft_ref(re: &HostData, im: &HostData, dim: usize) -> HostData {
 
             flattened[flat_idx] = spectrum[i].re / sample_window as f32;
         }
+        if let Some(p) = progress {
+            p.bump();
+        }
     }
 
     HostData {
@@ -286,7 +318,11 @@ pub fn irfft_ref(re: &HostData, im: &HostData, dim: usize) -> HostData {
 }
 
 /// Reference RFFT: input real slice, output first n/2 + 1 complex numbers.
-pub fn rfft_ref(signal: &HostData, dim: usize) -> (HostData, HostData) {
+pub fn rfft_ref(
+    signal: &HostData,
+    dim: usize,
+    progress: Option<&Progress>,
+) -> (HostData, HostData) {
     let in_shape = signal.shape.as_slice();
     let sample_window = in_shape[dim];
     let num_freq_bins = sample_window / 2 + 1;
@@ -300,6 +336,10 @@ pub fn rfft_ref(signal: &HostData, dim: usize) -> (HostData, HostData) {
     let out_shape = Shape::from(out_shape_vec);
     let num_windows = signal.shape.num_elements() / sample_window;
     let out_strides = StrideSpec::RowMajor.compute_strides(&out_shape);
+
+    if let Some(p) = progress {
+        p.set_total(num_windows as u64);
+    }
 
     let mut re_data = vec![0.0; out_shape.num_elements()];
     let mut im_data = vec![0.0; out_shape.num_elements()];
@@ -318,6 +358,9 @@ pub fn rfft_ref(signal: &HostData, dim: usize) -> (HostData, HostData) {
             let flat_idx = compute_index(&out_strides, coords.as_slice());
             re_data[flat_idx] = spectrum[k].re;
             im_data[flat_idx] = spectrum[k].im;
+        }
+        if let Some(p) = progress {
+            p.bump();
         }
     }
 

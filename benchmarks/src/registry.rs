@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use cubek_test_utils::HostData;
+use cubek_test_utils::{HostData, Progress};
 
 #[derive(Debug, Clone)]
 pub struct ItemDescriptor {
@@ -95,11 +95,17 @@ pub trait BenchmarkCategory: Sync {
     ///
     /// Same input bits as `kernel_result`, so the returned `HostData` is
     /// directly comparable elementwise.
+    ///
+    /// `progress` is an optional handle the reference declares its total
+    /// output-write count on (via `set_total`) and bumps once per output
+    /// write. Callers can spawn the reference on a worker thread and poll
+    /// `progress.fraction()` to stream a progression bar.
     fn reference_result(
         &self,
         _problem_id: &str,
         _seed_lhs: u64,
         _seed_rhs: u64,
+        _progress: Option<&Progress>,
     ) -> Option<Result<HostData, String>> {
         None
     }

@@ -34,7 +34,8 @@ use cubecl::{
     zspace::{Shape, Strides},
 };
 use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, HostDataVec, TestInput, launch_and_capture_outcome,
+    ExecutionOutcome, HostData, HostDataType, HostDataVec, Progress, TestInput,
+    launch_and_capture_outcome,
 };
 
 use crate::{
@@ -104,30 +105,49 @@ pub fn cpu_reference_result(
     axis: usize,
     config: ReduceOperationConfig,
     seed: u64,
+    progress: Option<&Progress>,
 ) -> Result<HostData, String> {
     let input_dtype = f32::as_type_native_unchecked().storage_type();
+
+    if let Some(p) = progress {
+        let out_shape = output_shape_for(&shape, axis, &config);
+        let total: usize = out_shape.iter().product();
+        p.set_total(total as u64);
+    }
 
     let (_input_handle, input_host) = TestInput::builder(client.clone(), shape)
         .dtype(input_dtype)
         .uniform(seed, -1., 1.)
         .generate_with_f32_host_data();
 
-    Ok(reference_for_config(&input_host, axis, config))
+    Ok(reference_for_config(&input_host, axis, config, progress))
 }
 
-fn reference_for_config(input: &HostData, axis: usize, config: ReduceOperationConfig) -> HostData {
+fn reference_for_config(
+    input: &HostData,
+    axis: usize,
+    config: ReduceOperationConfig,
+    progress: Option<&Progress>,
+) -> HostData {
     match config {
-        ReduceOperationConfig::Sum => reference_sum(input, axis),
-        ReduceOperationConfig::Mean => reference_mean(input, axis),
-        ReduceOperationConfig::Prod => reference_prod(input, axis),
-        ReduceOperationConfig::Min => reference_min(input, axis),
-        ReduceOperationConfig::Max => reference_max(input, axis),
-        ReduceOperationConfig::MaxAbs => reference_max_abs(input, axis),
-        ReduceOperationConfig::ArgMax => reference_argmax(input, axis),
-        ReduceOperationConfig::ArgMin => reference_argmin(input, axis),
-        ReduceOperationConfig::ArgTopK(k) => reference_argtopk(input, axis, k),
-        ReduceOperationConfig::TopK(k) => reference_topk(input, axis, k),
+        ReduceOperationConfig::Sum => reference_sum(input, axis, progress),
+        ReduceOperationConfig::Mean => reference_mean(input, axis, progress),
+        ReduceOperationConfig::Prod => reference_prod(input, axis, progress),
+        ReduceOperationConfig::Min => reference_min(input, axis, progress),
+        ReduceOperationConfig::Max => reference_max(input, axis, progress),
+        ReduceOperationConfig::MaxAbs => reference_max_abs(input, axis, progress),
+        ReduceOperationConfig::ArgMax => reference_argmax(input, axis, progress),
+        ReduceOperationConfig::ArgMin => reference_argmin(input, axis, progress),
+        ReduceOperationConfig::ArgTopK(k) => reference_argtopk(input, axis, k, progress),
+        ReduceOperationConfig::TopK(k) => reference_topk(input, axis, k, progress),
     }
+}
+
+/// Number of progress bumps the reduce reference will produce: one per output
+/// cell.
+pub fn cpu_reference_total(shape: &[usize], axis: usize, config: &ReduceOperationConfig) -> u64 {
+    let out_shape = output_shape_for(shape, axis, config);
+    out_shape.iter().product::<usize>() as u64
 }
 
 fn output_shape_for(shape: &[usize], axis: usize, config: &ReduceOperationConfig) -> Vec<usize> {

@@ -1,5 +1,6 @@
 mod config;
 mod correctness;
+mod progress;
 mod test_mode;
 mod test_tensor;
 
@@ -8,5 +9,6 @@ pub use correctness::{
     DimFilter, TensorFilter, assert_equals_approx, assert_equals_approx_in_slice,
     compare_host_data_files, parse_tensor_filter, print_tensor, print_tensors,
 };
+pub use progress::Progress;
 pub use test_mode::*;
 pub use test_tensor::*;

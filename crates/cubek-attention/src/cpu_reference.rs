@@ -9,8 +9,8 @@ use core::f32;
 
 use cubecl::{TestRuntime, client::ComputeClient, std::tensor::TensorHandle, zspace::Shape};
 use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, HostDataVec, StrideSpec, TestInput, ValidationResult,
-    assert_equals_approx, launch_and_capture_outcome,
+    ExecutionOutcome, HostData, HostDataType, HostDataVec, Progress, StrideSpec, TestInput,
+    ValidationResult, assert_equals_approx, launch_and_capture_outcome,
 };
 
 use crate::{
@@ -72,6 +72,7 @@ pub fn cpu_reference_result(
     problem: AttentionProblem,
     seed_lhs: u64,
     seed_rhs: u64,
+    progress: Option<&Progress>,
 ) -> Result<HostData, String> {
     let inputs = seed_inputs(&client, &problem, seed_lhs, seed_rhs);
     Ok(flash_attention_v2_reference(
@@ -80,7 +81,16 @@ pub fn cpu_reference_result(
         &inputs.value_data,
         inputs.mask_data.as_ref(),
         &problem,
+        progress,
     ))
+}
+
+/// Number of progress bumps [`flash_attention_v2_reference`] will produce for
+/// `problem`. Granularity is one bump per `(batch, head, seq_q)` row — the
+/// inner `seq_kv` reduction dominates runtime, so per-cell bumps would be
+/// noisy rather than informative.
+pub fn flash_attention_v2_reference_total(problem: &AttentionProblem) -> u64 {
+    (problem.dims.batch * problem.dims.num_heads * problem.dims.seq_q) as u64
 }
 
 struct SeededInputs {
@@ -180,7 +190,7 @@ pub fn assert_result(
     elems: AttentionElems,
 ) -> ValidationResult {
     let epsilon = attention_epsilon(&elems, 0.01);
-    let expected = flash_attention_v2_reference(query, key, value, mask, problem);
+    let expected = flash_attention_v2_reference(query, key, value, mask, problem, None);
     let actual = HostData::from_tensor_handle(client, out, HostDataType::F32);
 
     assert_equals_approx(&actual, &expected, epsilon)
@@ -216,6 +226,7 @@ pub fn flash_attention_v2_reference(
     value: &HostData,
     mask: Option<&HostData>,
     problem: &AttentionProblem,
+    progress: Option<&Progress>,
 ) -> HostData {
     let batch = problem.dims.batch;
     let seq_q = problem.dims.seq_q;
@@ -229,6 +240,10 @@ pub fn flash_attention_v2_reference(
 
     let out_shape = Shape::new([batch, num_heads, seq_q, val_dim]);
     let mut out = vec![0.; batch * num_heads * seq_q * val_dim];
+
+    if let Some(p) = progress {
+        p.set_total((batch * num_heads * seq_q) as u64);
+    }
 
     let scale = (head_dim as f32).sqrt().recip();
 
@@ -298,6 +313,9 @@ pub fn flash_attention_v2_reference(
                         + out_index[2] * val_dim
                         + d;
                     out[linear_idx] = acc_row[d] / denom;
+                }
+                if let Some(p) = progress {
+                    p.bump();
                 }
             }
         }

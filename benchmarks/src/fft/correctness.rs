@@ -9,7 +9,7 @@
 
 use cubecl::{Runtime, TestRuntime};
 use cubek::fft::cpu_reference::{cpu_reference_result, kernel_result as fft_kernel_result};
-use cubek_test_utils::HostData;
+use cubek_test_utils::{HostData, Progress};
 
 use crate::fft::{problem::problem_for, strategy::strategy_for};
 
@@ -32,11 +32,20 @@ pub fn reference_result(
     problem_id: &str,
     seed_lhs: u64,
     seed_rhs: u64,
+    progress: Option<&Progress>,
 ) -> Result<HostData, String> {
     let problem =
         problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
     let device = <TestRuntime as Runtime>::Device::default();
     let client = <TestRuntime as Runtime>::client(&device);
     let dim = problem.shape.len() - 1;
-    cpu_reference_result(client, problem.shape, dim, problem.mode, seed_lhs, seed_rhs)
+    cpu_reference_result(
+        client,
+        problem.shape,
+        dim,
+        problem.mode,
+        seed_lhs,
+        seed_rhs,
+        progress,
+    )
 }
