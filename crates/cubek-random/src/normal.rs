@@ -77,8 +77,8 @@ impl PrngRuntime for Normal {
             let write_index_0 = write_index_base + iteration_offset;
             let write_index_1 = write_index_0 + n_invocations as usize;
 
-            output.write(write_index_0, output_vector_0);
-            output.write(write_index_1, output_vector_1);
+            output.write_checked(write_index_0, output_vector_0);
+            output.write_checked(write_index_1, output_vector_1);
         }
     }
 }

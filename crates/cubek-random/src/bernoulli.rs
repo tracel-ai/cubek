@@ -57,7 +57,7 @@ impl PrngRuntime for Bernoulli {
             }
             let write_index = vector_index * n_invocations as usize + write_index_base;
 
-            output.write(write_index, output_vector);
+            output.write_checked(write_index, output_vector);
         }
     }
 }
