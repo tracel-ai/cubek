@@ -7,7 +7,7 @@
 
 use cubecl::{Runtime, TestRuntime};
 use cubek::reduce::cpu_reference::{cpu_reference_result, strategy_result};
-use cubek_test_utils::HostData;
+use cubek_test_utils::{HostData, Progress};
 
 use crate::reduce::{problem::problem_for, strategy::strategy_for};
 
@@ -37,6 +37,7 @@ pub fn reference_result(
     problem_id: &str,
     seed_lhs: u64,
     _seed_rhs: u64,
+    progress: Option<&Progress>,
 ) -> Result<HostData, String> {
     let problem =
         problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
@@ -48,5 +49,6 @@ pub fn reference_result(
         problem.axis,
         problem.config,
         seed_lhs,
+        progress,
     )
 }

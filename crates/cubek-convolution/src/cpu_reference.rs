@@ -15,8 +15,8 @@ use cubecl::{
 use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, HostDataVec, StrideSpec, TestInput, ValidationResult,
-    assert_equals_approx, launch_and_capture_outcome,
+    ExecutionOutcome, HostData, HostDataType, HostDataVec, Progress, StrideSpec, TestInput,
+    ValidationResult, assert_equals_approx, launch_and_capture_outcome,
 };
 
 use crate::{
@@ -75,6 +75,7 @@ pub fn cpu_reference_result(
     dtypes: MatmulElems,
     seed_lhs: u64,
     seed_rhs: u64,
+    progress: Option<&Progress>,
 ) -> Result<HostData, String> {
     let inputs = seed_inputs(&client, &spec, &dtypes, seed_lhs, seed_rhs);
     let problem = build_problem(&spec, &dtypes, &inputs);
@@ -82,7 +83,14 @@ pub fn cpu_reference_result(
         &inputs.input_data,
         &inputs.weight_data,
         &problem,
+        progress,
     ))
+}
+
+/// Number of output writes [`conv_cpu_reference`] will produce for `problem`.
+/// Matches the value the function sets on its [`Progress`] handle.
+pub fn conv_cpu_reference_total(problem: &ConvolutionProblem) -> u64 {
+    (problem.batches * problem.out_shape[0] * problem.out_shape[1] * problem.n) as u64
 }
 
 /// All the parameters needed to specify a 2D forward convolution problem,
@@ -225,7 +233,7 @@ pub fn assert_result(
     dtypes: MatmulElems,
 ) -> ValidationResult {
     let epsilon = conv_epsilon(&dtypes, 500.);
-    let expected = conv_cpu_reference(lhs, rhs, problem);
+    let expected = conv_cpu_reference(lhs, rhs, problem, None);
     let actual = HostData::from_tensor_handle(client, out, HostDataType::F32);
 
     assert_equals_approx(&actual, &expected, epsilon)
@@ -254,6 +262,7 @@ pub fn conv_cpu_reference(
     lhs: &HostData,
     rhs: &HostData,
     problem: &ConvolutionProblem,
+    progress: Option<&Progress>,
 ) -> HostData {
     let n = problem.batches;
     let h = problem.in_shape[0];
@@ -270,6 +279,10 @@ pub fn conv_cpu_reference(
     let padding = &problem.padding;
     let stride = &problem.stride;
     let dilation = &problem.dilation;
+
+    if let Some(p) = progress {
+        p.set_total((n * out_h * out_w * out_channels) as u64);
+    }
 
     let mut out = vec![0.0_f32; n * out_h * out_w * out_channels];
 
@@ -307,6 +320,9 @@ pub fn conv_cpu_reference(
                         + out_x * out_channels
                         + out_c;
                     out[out_linear] = acc;
+                    if let Some(p) = progress {
+                        p.bump();
+                    }
                 }
             }
         }

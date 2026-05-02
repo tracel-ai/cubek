@@ -9,7 +9,7 @@ pub use problem::problems;
 pub use strategy::strategies;
 
 #[cfg(feature = "cpu-reference")]
-use cubek_test_utils::HostData;
+use cubek_test_utils::{HostData, Progress};
 
 use crate::registry::{BenchmarkCategory, ItemDescriptor, RunSamples};
 
@@ -59,9 +59,10 @@ impl BenchmarkCategory for Category {
         problem_id: &str,
         seed_lhs: u64,
         seed_rhs: u64,
+        progress: Option<&Progress>,
     ) -> Option<Result<HostData, String>> {
         Some(correctness::reference_result(
-            problem_id, seed_lhs, seed_rhs,
+            problem_id, seed_lhs, seed_rhs, progress,
         ))
     }
 }

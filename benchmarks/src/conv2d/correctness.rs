@@ -13,7 +13,7 @@ use cubek::{
     convolution::cpu_reference::{ConvSpec, cpu_reference_result, strategy_result},
     matmul::definition::{MatmulElems, MatmulGlobalElems, MatmulPrecision, MatrixPrecision},
 };
-use cubek_test_utils::HostData;
+use cubek_test_utils::{HostData, Progress};
 
 use crate::conv2d::{
     problem::{Conv2dProblem, problem_for},
@@ -44,13 +44,14 @@ pub fn reference_result(
     problem_id: &str,
     seed_lhs: u64,
     seed_rhs: u64,
+    progress: Option<&Progress>,
 ) -> Result<HostData, String> {
     let problem =
         problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
     let device = <TestRuntime as Runtime>::Device::default();
     let client = <TestRuntime as Runtime>::client(&device);
     let (spec, dtypes) = build_spec_and_dtypes::<half::f16>(&problem);
-    cpu_reference_result(client, spec, dtypes, seed_lhs, seed_rhs)
+    cpu_reference_result(client, spec, dtypes, seed_lhs, seed_rhs, progress)
 }
 
 fn build_spec_and_dtypes<MP: MatmulPrecision>(p: &Conv2dProblem) -> (ConvSpec, MatmulElems) {

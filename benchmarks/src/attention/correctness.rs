@@ -9,7 +9,7 @@ use cubek::attention::{
     cpu_reference::{cpu_reference_result, strategy_result},
     definition::AttentionGlobalTypes,
 };
-use cubek_test_utils::HostData;
+use cubek_test_utils::{HostData, Progress};
 
 use crate::attention::{problem::problem_for, strategy::strategy_for};
 
@@ -31,11 +31,12 @@ pub fn reference_result(
     problem_id: &str,
     seed_lhs: u64,
     seed_rhs: u64,
+    progress: Option<&Progress>,
 ) -> Result<HostData, String> {
     let device = <TestRuntime as Runtime>::Device::default();
     let client = <TestRuntime as Runtime>::client(&device);
     let problem = build_problem(problem_id, &client)?;
-    cpu_reference_result(client, problem, seed_lhs, seed_rhs)
+    cpu_reference_result(client, problem, seed_lhs, seed_rhs, progress)
 }
 
 fn build_problem(

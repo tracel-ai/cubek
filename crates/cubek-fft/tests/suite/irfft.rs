@@ -65,7 +65,7 @@ fn assert_irfft_result(
     dim: usize,
 ) -> ValidationResult {
     let epsilon = 0.01;
-    let expected_signal = irfft_ref(&spectrum_re, &spectrum_im, dim);
+    let expected_signal = irfft_ref(&spectrum_re, &spectrum_im, dim, None);
     let actual_signal = HostData::from_tensor_handle(client, signal, HostDataType::F32);
 
     assert_equals_approx(&actual_signal, &expected_signal, epsilon)
