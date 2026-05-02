@@ -51,7 +51,9 @@ pub fn cpu_reference_result(
 ) -> Result<HostData, String> {
     let (_lhs, lhs_data, _rhs, rhs_data, _out, problem) =
         seed_inputs(&client, problem, seed_lhs, seed_rhs);
-    Ok(matmul_cpu_reference(&lhs_data, &rhs_data, &problem, progress))
+    Ok(matmul_cpu_reference(
+        &lhs_data, &rhs_data, &problem, progress,
+    ))
 }
 
 /// Number of output writes [`matmul_cpu_reference`] will produce for `problem`.
