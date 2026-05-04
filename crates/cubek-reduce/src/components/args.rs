@@ -372,12 +372,12 @@ impl<P: ReduceDType, RA: ReduceArgs> VectorizedExpand for TensorArgExpand<P, RA,
     }
 
     impl<P: ReduceDType, RA: ReduceArgs, Tag> AsRefExpand for TensorArgExpand<P, RA, Tag> {
-        fn __expand_as_ref_method(&self, _: &Scope) -> &Self {
+        fn __expand_ref_method(&self, _: &Scope) -> &Self {
             self
         }
     }
     impl<P: ReduceDType, RA: ReduceArgs, Tag> AsMutExpand for TensorArgExpand<P, RA, Tag> {
-        fn __expand_as_mut_method(&mut self, _: &Scope) -> &mut Self {
+        fn __expand_ref_mut_method(&mut self, _: &Scope) -> &mut Self {
             self
         }
     }

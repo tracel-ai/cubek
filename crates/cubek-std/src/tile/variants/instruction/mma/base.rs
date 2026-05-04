@@ -339,7 +339,7 @@ pub fn mma_load_lhs_from_shared<E: Numeric, ES: Size, L: Numeric, R: Numeric, A:
     mma_load_strided(
         &shared,
         fragment,
-        def,
+        &def,
         MatrixIdent::A,
         matrix_layout,
         tile_size,
@@ -360,7 +360,7 @@ pub fn mma_load_rhs_from_shared<E: Numeric, ES: Size, R: Numeric, L: Numeric, A:
     mma_load_strided(
         &shared,
         fragment,
-        def,
+        &def,
         MatrixIdent::B,
         matrix_layout,
         tile_size,
@@ -381,7 +381,7 @@ pub fn mma_load_acc_from_shared<E: Numeric, ES: Size, A: Numeric, L: Numeric, R:
     mma_load_strided(
         &shared,
         fragment,
-        def,
+        &def,
         MatrixIdent::Accumulator,
         matrix_layout,
         tile_size,
@@ -401,7 +401,7 @@ pub fn mma_load_acc_zeros<A: Numeric, L: Numeric, R: Numeric>(
     mma_fill_fragment::<A, NA, A, L, R, A>(
         &A::from_int(0),
         fragment,
-        def,
+        &def,
         MatrixIdent::Accumulator,
     );
 }
