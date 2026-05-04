@@ -124,20 +124,6 @@ pub fn allocate_rhs_transposed<R: Numeric>(
     }
 }
 
-// #[cube]
-// pub fn allocate_acc<A: Numeric>(
-//     #[comptime] matmul: AttentionTileMatmul,
-// ) -> Tile<A, Plane, ReadWrite> {
-//     match matmul {
-//         AttentionTileMatmul::Cmma(c) => {
-//             cmma_allocate_acc::<A, Plane>(MatrixLayout::RowMajor, c.matmul.tile_size)
-//         }
-//         AttentionTileMatmul::Register(c) => {
-//             register_allocate_acc::<A, Plane>(MatrixLayout::RowMajor, c)
-//         }
-//     }
-// }
-
 /// Allocates an accumulator tile that can be softmax'd (score) or scaled by
 /// softmax stats (output). For the cmma path this is a `Tile::Bounce`
 /// (cmma + smem + LocalTile) so row-wise ops can read/write through smem;
