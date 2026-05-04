@@ -102,7 +102,7 @@ pub fn shared_sum<R: Runtime>(
     // they're not guaranteed to contain `0`.
     let input_view = if contiguous_buffer {
         let layout = LinearViewLayoutLaunch::new();
-        let buffer = unsafe { ArrayArg::from_raw_parts_binding(input.handle, input_len) };
+        let buffer = unsafe { BufferArg::from_raw_parts_binding(input.handle, input_len) };
         LinearViewLaunch::new_array::<LinearViewLayout>(buffer, layout)
     } else {
         linear_view(input)
@@ -141,7 +141,7 @@ fn shared_sum_kernel<T: Numeric, N: Size>(
     #[comptime] num_vectors_per_unit: usize,
     #[define(T)] _dtype: ElemType,
 ) {
-    let mut shared_memory = SharedMemory::new(shared_memory_size);
+    let mut shared_memory = SharedMemory::<Vector<T, N>>::new(shared_memory_size);
     shared_memory[UNIT_POS as usize] = Vector::empty().fill(T::from_int(0));
 
     // Each unit reduce `num_vectors_per_unit` vectors.

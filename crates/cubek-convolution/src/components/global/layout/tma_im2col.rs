@@ -115,7 +115,7 @@ impl Layout for TmaIm2colLayout {
             pos.channel = pos.channel.max(kernel_mask);
         }
 
-        (pos, k_offs.rev())
+        (pos, k_offs.reversed())
     }
 
     fn is_in_bounds(&self, _pos: Self::Coordinates) -> bool {
@@ -147,7 +147,7 @@ pub(crate) fn div_mod_seq(pos: u32, shape: &Sequence<FastDivmod<u32>>) -> (u32, 
         offs = rem;
     }
 
-    (offs, out.rev())
+    (offs, out.reversed())
 }
 
 impl<R: Runtime> TmaIm2colLayoutLaunch<R> {

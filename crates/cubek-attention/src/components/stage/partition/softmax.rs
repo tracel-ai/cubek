@@ -10,8 +10,8 @@ use crate::{components::tile::MaskTile, forward::definition::AttentionPartitionS
 /// tile is a `Tile::Bounce`, which encapsulates the smem + WhiteboxFragment bouncing
 /// internally.
 pub struct SoftmaxPartition<Acc: Float, Lhs: Float> {
-    score_tiles: Sequence<Tile<Acc, Plane, ReadWrite>>,
-    softmaxed_tiles: Sequence<Tile<Lhs, Plane, ReadWrite>>,
+    score_tiles: Sequence<Tile<Acc, Plane>>,
+    softmaxed_tiles: Sequence<Tile<Lhs, Plane>>,
 }
 
 #[cube]
@@ -46,7 +46,7 @@ impl<Acc: Float, Lhs: Float> SoftmaxPartition<Acc, Lhs> {
         self.score_tiles.index_mut(q).fill_zero();
     }
 
-    pub fn get_score_mut(&mut self, #[comptime] q: usize) -> &mut Tile<Acc, Plane, ReadWrite> {
+    pub fn get_score_mut(&mut self, #[comptime] q: usize) -> &mut Tile<Acc, Plane> {
         self.score_tiles.index_mut(q)
     }
 
@@ -54,7 +54,7 @@ impl<Acc: Float, Lhs: Float> SoftmaxPartition<Acc, Lhs> {
         self.softmaxed_tiles.index_mut(q)
     }
 
-    pub fn get_softmaxed_mut(&mut self, #[comptime] q: usize) -> &mut Tile<Lhs, Plane, ReadWrite> {
+    pub fn get_softmaxed_mut(&mut self, #[comptime] q: usize) -> &mut Tile<Lhs, Plane> {
         self.softmaxed_tiles.index_mut(q)
     }
 

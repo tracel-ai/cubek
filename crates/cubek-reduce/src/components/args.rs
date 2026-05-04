@@ -105,18 +105,18 @@ pub struct TensorArgs;
 
 #[cube]
 impl ReduceArgs for TensorArgs {
-    type Input<EG: Numeric, N: Size> = Tensor<Vector<EG, N>>;
-    type Output<EG: Numeric, N: Size> = Tensor<Vector<EG, N>>;
+    type Input<EG: Numeric, N: Size> = OwnedTensor<Vector<EG, N>>;
+    type Output<EG: Numeric, N: Size> = OwnedTensor<Vector<EG, N>>;
     type State<P: ReduceDType> = (
-        Tensor<Vector<P::In, P::SizeIn>>,
-        Tensor<Vector<P::Out, P::SizeOut>>,
+        OwnedTensor<Vector<P::In, P::SizeIn>>,
+        OwnedTensor<Vector<P::Out, P::SizeOut>>,
     );
 
     fn init_state<P: ReduceDType>(
         input: &Self::Input<P::In, P::SizeIn>,
         output: &mut Self::Output<P::Out, P::SizeOut>,
     ) -> Self::State<P> {
-        (*input, *output)
+        (input.clone(), output.clone())
     }
 
     fn read_input<P: ReduceDType>(
@@ -423,12 +423,12 @@ mod __tensor_arg {
     }
 
     impl<P: ReduceDType, RA: ReduceArgs, Tag> AsRefExpand for TensorArgExpand<P, RA, Tag> {
-        fn __expand_as_ref_method(&self, _: &Scope) -> &Self {
+        fn __expand_ref_method(&self, _: &Scope) -> &Self {
             self
         }
     }
     impl<P: ReduceDType, RA: ReduceArgs, Tag> AsMutExpand for TensorArgExpand<P, RA, Tag> {
-        fn __expand_as_mut_method(&mut self, _: &Scope) -> &mut Self {
+        fn __expand_ref_mut_method(&mut self, _: &Scope) -> &mut Self {
             self
         }
     }

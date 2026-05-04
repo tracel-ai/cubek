@@ -288,8 +288,8 @@ impl Layout for BatchLayout {
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
         let mut batch = pos as u32;
         let mut batch_offs = 0;
-        let batch_shape = self.batch_shape.rev();
-        let batch_strides = self.batch_strides.rev();
+        let batch_shape = self.batch_shape.reversed();
+        let batch_strides = self.batch_strides.reversed();
 
         #[unroll]
         for i in 0..batch_shape.len() {

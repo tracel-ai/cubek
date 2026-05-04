@@ -24,11 +24,9 @@ pub trait GlobalWriterFamily: 'static + Send + Sync {
 #[cube]
 /// Responsible of writing the accumulated stage matmul output
 /// to global memory
-pub trait GlobalWriter<IP: MatrixTypes>:
-    WriteEventListener + CubeType + 'static + Send + Sync
-{
+pub trait GlobalWriter<IP: MatrixTypes>: WriteEventListener + CubeType + 'static {
     /// Tile stage that stores the data for this writer
-    type Stage: Stage<IP::Stage, ReadWrite>;
+    type Stage: Stage<IP::Stage>;
 
     /// Init this writer from a global tensor and config
     fn init(

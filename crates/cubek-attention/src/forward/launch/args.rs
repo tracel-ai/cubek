@@ -1104,10 +1104,10 @@ pub struct TensorArgs;
 #[derive(CubeLaunch, CubeType)]
 /// Input representation for [TensorArgs] implementing [AttentionArgs].
 pub struct TensorInputs<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine> {
-    pub query: Tensor<Vector<Q::T, Q::N>>,
-    pub key: Tensor<Vector<K::T, K::N>>,
-    pub value: Tensor<Vector<V::T, V::N>>,
-    pub mask: ComptimeOption<Tensor<Vector<M::T, M::N>>>,
+    pub query: OwnedTensor<Vector<Q::T, Q::N>>,
+    pub key: OwnedTensor<Vector<K::T, K::N>>,
+    pub value: OwnedTensor<Vector<V::T, V::N>>,
+    pub mask: ComptimeOption<OwnedTensor<Vector<M::T, M::N>>>,
 }
 
 impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine> ConcreteInputsFactory
@@ -1146,17 +1146,17 @@ impl<EG: Numeric, EGS: Size> ConcreteOutputFactory for Tensor<Vector<EG, EGS>> {
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct AttentionState<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine> {
-    pub query: Tensor<Vector<Q::T, Q::N>>,
-    pub key: Tensor<Vector<K::T, K::N>>,
-    pub value: Tensor<Vector<V::T, V::N>>,
-    pub mask: ComptimeOption<Tensor<Vector<M::T, M::N>>>,
-    pub output: Tensor<Vector<O::T, O::N>>,
+    pub query: OwnedTensor<Vector<Q::T, Q::N>>,
+    pub key: OwnedTensor<Vector<K::T, K::N>>,
+    pub value: OwnedTensor<Vector<V::T, V::N>>,
+    pub mask: ComptimeOption<OwnedTensor<Vector<M::T, M::N>>>,
+    pub output: OwnedTensor<Vector<O::T, O::N>>,
 }
 
 #[cube]
 impl AttentionArgs for TensorArgs {
     type Input<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine> = TensorInputs<Q, K, V, M>;
-    type Output<O: FloatLine> = Tensor<Vector<O::T, O::N>>;
+    type Output<O: FloatLine> = OwnedTensor<Vector<O::T, O::N>>;
     type State<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine> =
         AttentionState<Q, K, V, M, O>;
 
@@ -1164,14 +1164,14 @@ impl AttentionArgs for TensorArgs {
         input: &Self::Input<Q, K, V, M>,
         output: &mut Self::Output<O>,
     ) -> Self::State<Q, K, V, M, O> {
-        let mask = input.mask;
+        let mask = input.mask.clone();
 
         AttentionState::<Q, K, V, M, O> {
-            query: input.query,
-            key: input.key,
-            value: input.value,
+            query: input.query.clone(),
+            key: input.key.clone(),
+            value: input.value.clone(),
             mask,
-            output: *output,
+            output: output.clone(),
         }
     }
 
@@ -1206,7 +1206,7 @@ impl AttentionArgs for TensorArgs {
         state: &Self::State<Q, K, V, M, O>,
         coordinate: usize,
     ) -> Vector<M::T, M::N> {
-        state.mask.unwrap_ref()[coordinate]
+        state.mask.as_ref().unwrap()[coordinate]
     }
 
     fn read_window_query<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
@@ -1238,7 +1238,7 @@ impl AttentionArgs for TensorArgs {
         start: usize,
         end: usize,
     ) -> &[Vector<M::T, M::N>] {
-        &state.mask.unwrap_ref()[start..end]
+        &state.mask.as_ref().unwrap()[start..end]
     }
 
     fn as_tensor_map_query<
@@ -1308,7 +1308,7 @@ impl AttentionArgs for TensorArgs {
         state: &Self::State<Q, K, V, M, O>,
         dim: usize,
     ) -> usize {
-        state.mask.unwrap_ref().shape(dim)
+        state.mask.as_ref().unwrap().shape(dim)
     }
 
     fn shape_out<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
@@ -1343,7 +1343,7 @@ impl AttentionArgs for TensorArgs {
         state: &Self::State<Q, K, V, M, O>,
         dim: usize,
     ) -> usize {
-        state.mask.unwrap_ref().stride(dim)
+        state.mask.as_ref().unwrap().stride(dim)
     }
 
     fn stride_out<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
@@ -1382,7 +1382,7 @@ impl AttentionArgs for TensorArgs {
     fn rank_mask<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
     ) -> usize {
-        state.mask.unwrap_ref().rank()
+        state.mask.as_ref().unwrap().rank()
     }
 
     fn rank_out<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
@@ -1412,7 +1412,7 @@ impl AttentionArgs for TensorArgs {
     fn len_mask<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
     ) -> usize {
-        state.mask.unwrap_ref().len()
+        state.mask.as_ref().unwrap().len()
     }
 
     fn len_out<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
@@ -1442,7 +1442,7 @@ impl AttentionArgs for TensorArgs {
     fn buffer_len_mask<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
     ) -> usize {
-        state.mask.unwrap().buffer_len()
+        state.mask.as_ref().unwrap().buffer_len()
     }
 
     fn buffer_len_out<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
@@ -1472,7 +1472,7 @@ impl AttentionArgs for TensorArgs {
     fn vector_size_mask<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
         state: &Self::State<Q, K, V, M, O>,
     ) -> comptime_type!(usize) {
-        state.mask.unwrap().vector_size()
+        state.mask.as_ref().unwrap().vector_size()
     }
 
     fn vector_size_out<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine>(
@@ -1547,14 +1547,14 @@ mod __query {
     impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
         AsRefExpand for TensorQueryExpand<Q, K, V, M, O, GA>
     {
-        fn __expand_as_ref_method(&self, _: &Scope) -> &Self {
+        fn __expand_ref_method(&self, _: &Scope) -> &Self {
             self
         }
     }
     impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
         AsMutExpand for TensorQueryExpand<Q, K, V, M, O, GA>
     {
-        fn __expand_as_mut_method(&mut self, _: &Scope) -> &mut Self {
+        fn __expand_ref_mut_method(&mut self, _: &Scope) -> &mut Self {
             self
         }
     }
@@ -1625,14 +1625,14 @@ mod __key {
     impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
         AsRefExpand for TensorKeyExpand<Q, K, V, M, O, GA>
     {
-        fn __expand_as_ref_method(&self, _: &Scope) -> &Self {
+        fn __expand_ref_method(&self, _: &Scope) -> &Self {
             self
         }
     }
     impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
         AsMutExpand for TensorKeyExpand<Q, K, V, M, O, GA>
     {
-        fn __expand_as_mut_method(&mut self, _: &Scope) -> &mut Self {
+        fn __expand_ref_mut_method(&mut self, _: &Scope) -> &mut Self {
             self
         }
     }
@@ -1703,14 +1703,14 @@ mod __value {
     impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
         AsRefExpand for TensorValueExpand<Q, K, V, M, O, GA>
     {
-        fn __expand_as_ref_method(&self, _: &Scope) -> &Self {
+        fn __expand_ref_method(&self, _: &Scope) -> &Self {
             self
         }
     }
     impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
         AsMutExpand for TensorValueExpand<Q, K, V, M, O, GA>
     {
-        fn __expand_as_mut_method(&mut self, _: &Scope) -> &mut Self {
+        fn __expand_ref_mut_method(&mut self, _: &Scope) -> &mut Self {
             self
         }
     }
@@ -1780,14 +1780,14 @@ mod __mask {
     impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
         AsRefExpand for TensorMaskExpand<Q, K, V, M, O, GA>
     {
-        fn __expand_as_ref_method(&self, _: &Scope) -> &Self {
+        fn __expand_ref_method(&self, _: &Scope) -> &Self {
             self
         }
     }
     impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
         AsMutExpand for TensorMaskExpand<Q, K, V, M, O, GA>
     {
-        fn __expand_as_mut_method(&mut self, _: &Scope) -> &mut Self {
+        fn __expand_ref_mut_method(&mut self, _: &Scope) -> &mut Self {
             self
         }
     }
@@ -1860,14 +1860,14 @@ mod __output {
     impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
         AsRefExpand for TensorOutputExpand<Q, K, V, M, O, GA>
     {
-        fn __expand_as_ref_method(&self, _: &Scope) -> &Self {
+        fn __expand_ref_method(&self, _: &Scope) -> &Self {
             self
         }
     }
     impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
         AsMutExpand for TensorOutputExpand<Q, K, V, M, O, GA>
     {
-        fn __expand_as_mut_method(&mut self, _: &Scope) -> &mut Self {
+        fn __expand_ref_mut_method(&mut self, _: &Scope) -> &mut Self {
             self
         }
     }

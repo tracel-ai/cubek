@@ -183,9 +183,9 @@ impl<ES: Numeric, N: Size> StridedTile<ES, N> {
 /// vector_size on the cubecl slice is preserved, so projecting back via
 /// `view::<V>()` is a pure retype with no metadata change. `V` must match
 /// the original `V` the tile was wrapped with.
-#[derive(CubeType, Clone, Copy)]
-pub struct SharedTile<E: Numeric, IO: SliceVisibility = ReadOnly> {
-    pub(crate) container: Slice<E, IO>,
+#[derive(CubeType, Clone)]
+pub struct SharedTile<E: Numeric> {
+    pub(crate) container: Box<[E]>,
     pub(crate) start: u32,
     pub(crate) end: u32,
     pub(crate) stride: u32,
@@ -195,14 +195,14 @@ pub struct SharedTile<E: Numeric, IO: SliceVisibility = ReadOnly> {
 }
 
 #[cube]
-impl<E: Numeric, IO: SliceVisibility> SharedTile<E, IO> {
+impl<E: Numeric> SharedTile<E> {
     /// Wrap a `StridedTile` whose vectorization is `V`. The slice is type-erased
     /// to scalar `Slice<E, IO>` while preserving the runtime vector_size set at
     /// allocation time. No metadata scaling is performed.
-    pub fn wrap<V: Size>(tile: StridedTile<E, V, IO>) -> SharedTile<E, IO> {
-        let container: Slice<E, IO> = unsafe { tile.container.downcast_unchecked::<E>() };
-        SharedTile::<E, IO> {
-            container,
+    pub fn wrap<V: Size>(tile: StridedTile<E, V>) -> SharedTile<E> {
+        let container = unsafe { tile.container.downcast_unchecked::<E>() };
+        SharedTile::<E> {
+            container: unsafe { container.as_boxed_unchecked() },
             start: tile.start,
             end: tile.end,
             stride: tile.stride,
@@ -214,11 +214,10 @@ impl<E: Numeric, IO: SliceVisibility> SharedTile<E, IO> {
     /// Project the wrapped tile back to a typed `StridedTile<E, V, IO>`.
     /// `V` must match the original `V` the tile was wrapped with — only
     /// the Rust type changes, the runtime layout is unchanged.
-    pub fn view<V: Size>(&self) -> StridedTile<E, V, IO> {
-        let container: Slice<Vector<E, V>, IO> =
-            unsafe { self.container.downcast_unchecked::<Vector<E, V>>() };
-        StridedTile::<E, V, IO> {
-            container,
+    pub fn view<V: Size>(&self) -> StridedTile<E, V> {
+        let container = unsafe { self.container.downcast_unchecked::<Vector<E, V>>() };
+        StridedTile::<E, V> {
+            container: unsafe { container.as_boxed_unchecked() },
             start: self.start,
             end: self.end,
             stride: self.stride,
@@ -229,20 +228,13 @@ impl<E: Numeric, IO: SliceVisibility> SharedTile<E, IO> {
 }
 
 #[cube]
-impl<E: Numeric> SharedTile<E, ReadWrite> {
+impl<E: Numeric> SharedTile<E> {
     /// Copies into shared memory from `source` (a compute-side tile). This is
     /// the "write back to smem" leg of `Tile::copy_from`; the per-source
     /// arms route to that variant's `*_write_to_shared` helper.
-    pub fn copy_from<
-        SE: Numeric,
-        SS: Size,
-        L: Numeric,
-        R: Numeric,
-        Sc: TileScope,
-        SIO: SliceVisibility,
-    >(
+    pub fn copy_from<SE: Numeric, SS: Size, L: Numeric, R: Numeric, Sc: TileScope>(
         &mut self,
-        source: &Tile<SE, Sc, SIO>,
+        source: &Tile<SE, Sc>,
     ) {
         match &source.kind {
             TileKind::Cmma(t) => cmma_write_to_shared::<E, SS, SE>(self, &t.matrix),

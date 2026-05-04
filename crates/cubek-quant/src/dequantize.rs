@@ -90,7 +90,7 @@ pub fn dequantize_symmetric_packed_value<
 ) -> Array<Vector<F, NF>> {
     let vector_size_values = values.vector_size();
     let num_quants = scheme.num_quants();
-    let mut tmp = Array::new(vector_size_values);
+    let mut tmp = Array::<Vector<F, NF>>::new(vector_size_values);
 
     #[unroll]
     for i in 0..vector_size_values {

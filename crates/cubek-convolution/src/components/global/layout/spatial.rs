@@ -7,7 +7,7 @@ use cubecl::std::tensor::{
 };
 use cubecl::{
     prelude::*,
-    std::tensor::launch::{BufferArg, ViewLayoutLaunchArg},
+    std::tensor::launch::{MemoryArg, ViewLayoutLaunchArg},
 };
 use enumset::{EnumSet, EnumSetType};
 
@@ -260,7 +260,7 @@ impl ViewLayoutLaunchArg for NhwcLayout {
     type RuntimeArg<R: Runtime> = NhwcLayoutLaunch;
     type CompilationArg = NhwcLayoutCompilationArg;
 
-    fn register<R: Runtime, B: BufferArg>(
+    fn register<R: Runtime, B: MemoryArg>(
         arg: Self::RuntimeArg<R>,
         buffer: &B,
         _: Type,

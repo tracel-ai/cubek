@@ -51,8 +51,8 @@ impl<ES: Numeric, NS: Size> PartitionedStage<ES, NS> {
 }
 
 #[cube]
-impl<ES: Numeric, NS: Size> Stage<ES, ReadWrite> for PartitionedStage<ES, NS> {
-    fn tile<Sc: TileScope>(this: &Self, _tile: Coords2d) -> Tile<ES, Sc, ReadWrite> {
+impl<ES: Numeric, NS: Size> Stage<ES> for PartitionedStage<ES, NS> {
+    fn tile<Sc: TileScope>(this: &Self, _tile: Coords2d) -> Tile<ES, Sc> {
         Tile::new_SharedMemory(SharedTile::wrap::<NS>(this.unit_tile.clone()))
     }
 }

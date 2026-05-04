@@ -95,7 +95,7 @@ pub trait StageMatmulFamily: Send + Sync + 'static {
 ///  - Data given as inputs by stage readers must always be valid. If the actual matrix multiplication
 ///    should be done on smaller sizes than M, N and K, padding with zeros must be done beforehand.
 ///  - Enough planes/units are launched to perform the whole computation
-pub trait StageMatmul<MP: MatmulTypes>: 'static + Send + Sync {
+pub trait StageMatmul<MP: MatmulTypes>: 'static {
     /// The configuration type associated with this Matmul.
     type Config: StageConfig;
 
@@ -196,7 +196,7 @@ pub use cubek_std::tile::PartitionBuffering;
 /// Stage that can be divided into tiles, with the same kind used by the
 /// tile matmul readers.
 #[cube]
-pub trait Stage<ES: Numeric>: CubeType + Clone + Send + Sync + 'static {
+pub trait Stage<ES: Numeric>: CubeType + Clone + 'static {
     /// Slices a tile with offset (`row`, `col`) from the stage and returns it.
     ///
     /// The [Scope] generic lets the caller select the compute primitive that will consume
@@ -254,7 +254,7 @@ impl<S: LoadStageFamily> LoadStageFamily for Option<S> {
         stage: &Self::Stage<ES, NS, T>,
         index: u32,
     ) -> Self::Stage<ES, NS, T> {
-        stage.map_ref(|s| S::with_buffer_index(s, index))
+        stage.as_ref().map(|s| S::with_buffer_index(s, index))
     }
 
     fn free<ES: Numeric, NS: Size, T: TilingLayout>(stage: &Self::Stage<ES, NS, T>) {

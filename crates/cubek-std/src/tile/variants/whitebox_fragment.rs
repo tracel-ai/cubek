@@ -58,7 +58,7 @@ impl<E: Numeric> WhiteboxFragment<E> {
         }
     }
 
-    pub fn load_from_slice(&mut self, smem_slice: &Slice<E>) {
+    pub fn load_from_slice(&mut self, smem_slice: &[E]) {
         for r in 0..self.layout.unit_size.0 {
             for c in 0..self.layout.unit_size.1 {
                 let (row, col) = whitebox_fragment_absolute_pos(self.layout, (r, c));
@@ -83,7 +83,7 @@ impl<E: Numeric> WhiteboxFragment<E> {
         }
     }
 
-    pub fn store_to<F: Float>(&self, smem_slice: &mut SliceMut<F>) {
+    pub fn store_to<F: Float>(&self, smem_slice: &mut [F]) {
         for r in 0..self.layout.unit_size.0 {
             for c in 0..self.layout.unit_size.1 {
                 let (row, col) = whitebox_fragment_absolute_pos(self.layout, (r, c));
@@ -107,7 +107,7 @@ impl<E: Numeric> WhiteboxFragment<E> {
             let row_offset = r as u32 * self.layout.unit_size.1;
             for c in 0..self.layout.unit_size.1 {
                 let index = row_offset + c;
-                self.array[index as usize] = self.array[index as usize] * scale.vals[r];
+                self.array[index as usize] *= scale.vals[r];
             }
         }
     }
@@ -115,7 +115,7 @@ impl<E: Numeric> WhiteboxFragment<E> {
     pub fn rowwise_max(&self) -> RowWise<E> {
         let num_rows = comptime!(self.layout.unit_size.0) as usize;
         let num_cols = comptime!(self.layout.unit_size.1) as usize;
-        let mut vals = Array::new(num_rows);
+        let mut vals = Array::<E>::new(num_rows);
 
         for r in 0..num_rows {
             let row_offset = r * num_cols;
@@ -135,7 +135,7 @@ impl<E: Numeric> WhiteboxFragment<E> {
     pub fn rowwise_sum(&self) -> RowWise<E> {
         let num_rows = comptime!(self.layout.unit_size.0) as usize;
         let num_cols = comptime!(self.layout.unit_size.1) as usize;
-        let mut vals = Array::new(num_rows);
+        let mut vals = Array::<E>::new(num_rows);
 
         for r in 0..num_rows {
             let row_offset = r * num_cols;
@@ -233,7 +233,7 @@ impl WhiteboxFragmentLayout {
 /// time unless `Sc = Plane`.
 pub fn allocate_whitebox_fragment<E: Numeric, Sc: TileScope>(
     #[comptime] layout: WhiteboxFragmentLayout,
-) -> Tile<E, Sc, ReadWrite> {
+) -> Tile<E, Sc> {
     comptime!(assert_plane_scope(Sc::KIND));
     Tile::from_kind(TileKind::new_WhiteboxFragment(WhiteboxFragment::<E>::new(
         layout,
@@ -260,7 +260,7 @@ pub fn whitebox_fragment_absolute_pos(
 #[cube]
 pub fn whitebox_fragment_zero_slice<E: Numeric>(
     #[comptime] layout: WhiteboxFragmentLayout,
-    slice: &mut SliceMut<E>,
+    slice: &mut [E],
 ) {
     for r in 0..layout.unit_size.0 {
         for c in 0..layout.unit_size.1 {
@@ -307,7 +307,7 @@ fn reduce<E: Float, RO: ReduceOp<E>>(vals: &mut RowWise<E>, data: &WhiteboxFragm
         let offset = num_units_per_row >> (i + 1);
         let source_unit = unit_pos + offset;
 
-        let value_from_source = rowwise_plane_broadcast(vals, source_unit);
+        let value_from_source = rowwise_plane_broadcast(&*vals, source_unit);
 
         // Mask if outside the row
         let mask = unit_pos_in_row + offset >= num_units_per_row;
@@ -315,13 +315,13 @@ fn reduce<E: Float, RO: ReduceOp<E>>(vals: &mut RowWise<E>, data: &WhiteboxFragm
     }
 
     // Broadcast back to subgroup
-    let result = &rowwise_plane_broadcast(vals, unit_pos - unit_pos_in_row);
-    vals.copy_from(result);
+    let result = rowwise_plane_broadcast(&*vals, unit_pos - unit_pos_in_row);
+    vals.copy_from(&result);
 }
 
 #[cube]
 fn rowwise_plane_broadcast<E: Float>(rowwise: &RowWise<E>, source_unit: u32) -> RowWise<E> {
-    let mut result = Array::new(rowwise.num_rows);
+    let mut result = Array::<E>::new(rowwise.num_rows);
 
     for r in 0..rowwise.num_rows {
         result[r] = plane_shuffle(rowwise.vals[r], source_unit);
@@ -386,7 +386,7 @@ impl<Acc: Float> WhiteboxFragment<Acc> {
     pub fn softmax<Lhs: Float, M: Mask>(
         &mut self,
         mask: &M,
-        softmaxed: &mut Tile<Lhs, Plane, ReadWrite>,
+        softmaxed: &mut Tile<Lhs, Plane>,
         state: &mut (RowWise<Acc>, RowWise<Acc>),
         head_dim_factor: Acc,
     ) -> RowWise<Acc> {
@@ -402,7 +402,7 @@ impl<Acc: Float> WhiteboxFragment<Acc> {
         let exp_m_diff = state.0.exp_diff(&max_buf);
         let new_l = exp_m_diff.mul(&state.1).add(&sum_buf);
 
-        write_fragment_into::<Acc, Lhs>(self, softmaxed);
+        write_fragment_into::<Acc, Lhs>(&*self, softmaxed);
 
         RowWise::copy_from(&mut state.0, &max_buf);
         RowWise::copy_from(&mut state.1, &new_l);
@@ -417,14 +417,14 @@ impl<Acc: Float> WhiteboxFragment<Acc> {
 #[cube]
 fn write_fragment_into<Acc: Float, Lhs: Float>(
     src: &WhiteboxFragment<Acc>,
-    softmaxed: &mut Tile<Lhs, Plane, ReadWrite>,
+    softmaxed: &mut Tile<Lhs, Plane>,
 ) {
     match &mut softmaxed.kind {
         TileKind::Bounce(d) => {
             let stride = comptime!(d.cmma.tile_size.n());
             src.store_to(&mut d.smem);
             sync_cube();
-            cubecl::cmma::load(&d.cmma.matrix, &d.smem.to_slice(), stride);
+            cubecl::cmma::load(&mut d.cmma.matrix, &d.smem, stride);
         }
         TileKind::WhiteboxFragment(d) => {
             let total = comptime!(src.layout.unit_size.0 * src.layout.unit_size.1);

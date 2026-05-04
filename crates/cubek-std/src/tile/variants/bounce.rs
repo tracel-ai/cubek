@@ -30,7 +30,7 @@ pub struct BounceConfig {
 #[derive(CubeType)]
 pub struct BounceTile<N: Numeric> {
     pub cmma: CmmaTile<N>,
-    pub smem: SliceMut<N>,
+    pub smem: Box<[N]>,
     pub fragment: WhiteboxFragment<N>,
 }
 
@@ -41,7 +41,8 @@ impl<N: Numeric> BounceTile<N> {
         let smem_size = comptime!(total_tile_size * cfg.num_planes as usize);
         let start = UNIT_POS_Y as usize * total_tile_size;
         let end = start + total_tile_size;
-        let smem = SharedMemory::new(smem_size).slice_mut(start, end);
+        let smem = SharedMemory::new(smem_size);
+        let smem = unsafe { smem[start..end].as_boxed_unchecked() };
 
         let layout = comptime!(WhiteboxFragmentLayout::new(
             cfg.tile_shape,
@@ -72,7 +73,7 @@ impl<E: Float> BounceTile<E> {
             cubecl::cmma::MatrixLayout::RowMajor,
         );
         sync_cube();
-        self.fragment.load_from_slice(&self.smem.to_slice());
+        self.fragment.load_from_slice(&self.smem);
         sync_cube();
     }
 
@@ -84,8 +85,8 @@ impl<E: Float> BounceTile<E> {
         self.fragment.store_to(&mut self.smem);
         sync_cube();
         cubecl::cmma::load_with_layout(
-            &self.cmma.matrix,
-            &self.smem.to_slice(),
+            &mut self.cmma.matrix,
+            &self.smem,
             stride,
             cubecl::cmma::MatrixLayout::RowMajor,
         );
@@ -115,17 +116,14 @@ impl<E: Float> BounceTile<E> {
     /// fill_zero call sites (always invoked before any cmma_to_fragment), so
     /// only cmma needs clearing.
     pub fn fill_zero(&mut self) {
-        cubecl::cmma::fill(&self.cmma.matrix, E::from_int(0));
+        cubecl::cmma::fill(&mut self.cmma.matrix, E::from_int(0));
     }
 
     /// Writes the (already-softmaxed) fragment view of this bounce tile into
     /// `softmaxed`. The source fragment is plane-fragmented; for a `Bounce`
     /// destination this routes through the destination's smem into its cmma
     /// fragment.
-    pub fn write_fragment_to<Lhs: Float, Sc: TileScope>(
-        &self,
-        softmaxed: &mut Tile<Lhs, Sc, ReadWrite>,
-    ) {
+    pub fn write_fragment_to<Lhs: Float, Sc: TileScope>(&self, softmaxed: &mut Tile<Lhs, Sc>) {
         write_fragment_into::<E, Lhs, Sc>(&self.fragment, softmaxed);
     }
 }
@@ -133,14 +131,14 @@ impl<E: Float> BounceTile<E> {
 #[cube]
 fn write_fragment_into<Acc: Float, Lhs: Float, Sc: TileScope>(
     src: &WhiteboxFragment<Acc>,
-    softmaxed: &mut Tile<Lhs, Sc, ReadWrite>,
+    softmaxed: &mut Tile<Lhs, Sc>,
 ) {
     match &mut softmaxed.kind {
         TileKind::Bounce(d) => {
             let stride = comptime!(d.cmma.tile_size.n());
             src.store_to(&mut d.smem);
             sync_cube();
-            cubecl::cmma::load(&d.cmma.matrix, &d.smem.to_slice(), stride);
+            cubecl::cmma::load(&mut d.cmma.matrix, &d.smem, stride);
         }
         TileKind::WhiteboxFragment(d) => {
             let total = comptime!(src.layout.unit_size.0 * src.layout.unit_size.1);
@@ -158,7 +156,7 @@ fn write_fragment_into<Acc: Float, Lhs: Float, Sc: TileScope>(
 pub fn allocate_bounce_tile<E: Numeric, Sc: TileScope>(
     cmma: CmmaTile<E>,
     #[comptime] cfg: BounceConfig,
-) -> Tile<E, Sc, ReadWrite> {
+) -> Tile<E, Sc> {
     comptime!(assert_plane_scope(Sc::KIND));
     Tile::from_kind(TileKind::new_Bounce(BounceTile::<E>::new(cmma, cfg)))
 }
@@ -169,12 +167,12 @@ impl<N: Numeric> BounceTile<N> {
     /// always loads through its CMMA representation (the WhiteboxFragment
     /// view is synced lazily on demand by softmax/scale ops); supported
     /// sources mirror [`CmmaTile::copy_from`].
-    pub fn copy_from<SE: Numeric, SS: Size, Sc: TileScope, SIO: SliceVisibility>(
+    pub fn copy_from<SE: Numeric, SS: Size, Sc: TileScope>(
         &mut self,
-        source: &Tile<SE, Sc, SIO>,
+        source: &Tile<SE, Sc>,
         #[comptime] ident: StageIdent,
     ) {
-        self.cmma.copy_from::<SE, SS, Sc, SIO>(source, ident);
+        self.cmma.copy_from::<SE, SS, Sc>(source, ident);
     }
 
     /// Zero-init the bounce tile (clears its cmma fragment).
@@ -194,7 +192,7 @@ impl<Acc: Float> BounceTile<Acc> {
     pub fn softmax<Lhs: Float, M: Mask>(
         &mut self,
         mask: &M,
-        softmaxed: &mut Tile<Lhs, Plane, ReadWrite>,
+        softmaxed: &mut Tile<Lhs, Plane>,
         state: &mut (RowWise<Acc>, RowWise<Acc>),
         head_dim_factor: Acc,
     ) -> RowWise<Acc> {

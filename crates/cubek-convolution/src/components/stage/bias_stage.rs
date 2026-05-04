@@ -54,7 +54,7 @@ impl<ES: Numeric, NS: Size> BiasStageMemory<ES, NS> {
         // Ensure all stages are aligned properly
         let stage_size = stage_size_bytes.next_multiple_of(align) / type_size / vector_size;
 
-        let smem = SharedMemory::new_aligned(config.num_stages as usize * stage_size, align);
+        let smem = Shared::new_aligned_array(config.num_stages as usize * stage_size, align);
 
         BiasStageMemory::<ES, NS> {
             smem,
@@ -103,8 +103,8 @@ impl<ES: Numeric, NS: Size> BiasStageMemory<ES, NS> {
 }
 
 #[cube]
-impl<ES: Numeric, NS: Size> Stage<ES, ReadOnly> for BiasStageMemory<ES, NS> {
-    fn tile<Sc: TileScope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc, ReadOnly> {
+impl<ES: Numeric, NS: Size> Stage<ES> for BiasStageMemory<ES, NS> {
+    fn tile<Sc: TileScope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc> {
         Tile::new_SharedMemory(SharedTile::wrap::<NS>(this.get_tile(tile)))
     }
 }

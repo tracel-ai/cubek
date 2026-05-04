@@ -365,7 +365,7 @@ impl StridedTilingLayout {
         stage: &mut StridedStageMemory<ES, NS, Self>,
         nth: u32,
         #[comptime] config: StageMemoryConfig,
-    ) -> SliceMut<Vector<ES, NS>> {
+    ) -> &mut [Vector<ES, NS>] {
         let stage_vector_size = config.vector_size;
 
         let slice_length = match config.matrix_layout {

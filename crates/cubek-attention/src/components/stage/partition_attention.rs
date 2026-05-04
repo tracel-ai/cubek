@@ -35,9 +35,9 @@ pub struct PartitionAttention<AP: AttentionPrecision, SK, SV, SO, P: AttentionPa
 #[cube]
 impl<
     AP: AttentionPrecision,
-    SK: Stage<KS<AP>, ReadOnly>,
-    SV: Stage<VS<AP>, ReadOnly>,
-    SO: Stage<OS<AP>, ReadWrite>,
+    SK: Stage<KS<AP>>,
+    SV: Stage<VS<AP>>,
+    SO: Stage<OS<AP>>,
     P: AttentionPartitioner,
 > StageAttention<AP> for PartitionAttention<AP, SK, SV, SO, P>
 {
@@ -94,7 +94,7 @@ impl<
 
                     key_tile
                         .tile
-                        .copy_from::<KS<AP>, KSS<AP>, QT<AP>, KVT<AP>, SM<AP>, ReadOnly>(
+                        .copy_from::<KS<AP>, KSS<AP>, QT<AP>, KVT<AP>, SM<AP>>(
                             &key_data,
                             cubek_std::StageIdent::Rhs,
                         );
@@ -116,7 +116,7 @@ impl<
 
                     value_tile
                         .tile
-                        .copy_from::<VS<AP>, VSS<AP>, SML<AP>, KVT<AP>, ACC<AP>, ReadOnly>(
+                        .copy_from::<VS<AP>, VSS<AP>, SML<AP>, KVT<AP>, ACC<AP>>(
                             &value_data,
                             cubek_std::StageIdent::Rhs,
                         );
@@ -263,7 +263,7 @@ impl<
 
                 tile_to_write
                     .tile
-                    .copy_from::<QG<AP>, QGS<AP>, QT<AP>, KVT<AP>, SM<AP>, ReadOnly>(
+                    .copy_from::<QG<AP>, QGS<AP>, QT<AP>, KVT<AP>, SM<AP>>(
                         &Tile::new_SharedMemory(SharedTile::wrap::<QGS<AP>>(tile_read)),
                         cubek_std::StageIdent::Lhs,
                     );

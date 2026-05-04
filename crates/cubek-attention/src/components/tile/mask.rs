@@ -34,7 +34,7 @@ impl<F: Float> MaskTile<F> {
         let logical_mask = LogicalTileMask::new(config, out_of_bounds);
 
         if comptime!(config.materialized) {
-            let fragment: Tile<F, Plane, ReadWrite> = match comptime!(config.layout) {
+            let fragment: Tile<F, Plane> = match comptime!(config.layout) {
                 MaskLayout::Unit(l) => allocate_unit_tile::<F, Plane>(comptime!(l)),
                 MaskLayout::WhiteboxFragment(l) => {
                     allocate_whitebox_fragment::<F, Plane>(comptime!(l))
@@ -150,7 +150,7 @@ impl LogicalTileMask {
 
 #[derive(CubeType)]
 pub struct MaterializedTileMask<F: Float> {
-    fragment: Tile<F, Plane, ReadWrite>,
+    fragment: Tile<F, Plane>,
     logical_mask: LogicalTileMask,
 }
 

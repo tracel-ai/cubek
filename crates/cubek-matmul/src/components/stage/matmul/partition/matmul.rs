@@ -81,9 +81,9 @@ type STy<T> = crate::definition::Stage<T>;
 /// executed by a single compute primitive (unit or plane)
 pub struct PartitionMatmul<
     MP: MatmulTypes,
-    StageLhs: Stage<STy<Lhs<MP>>, ReadOnly>,
-    StageRhs: Stage<STy<Rhs<MP>>, ReadOnly>,
-    StageAcc: Stage<STy<Acc<MP>>, ReadOnly>,
+    StageLhs: Stage<STy<Lhs<MP>>>,
+    StageRhs: Stage<STy<Rhs<MP>>>,
+    StageAcc: Stage<STy<Acc<MP>>>,
     Sc: TileScope,
 > {
     _phantom: PhantomData<(MP, StageLhs, StageRhs, StageAcc, Sc)>,
@@ -93,9 +93,9 @@ pub struct PartitionMatmul<
 impl<MT, StageLhs, StageRhs, StageAcc, Sc> PartitionMatmul<MT, StageLhs, StageRhs, StageAcc, Sc>
 where
     MT: MatmulTypes,
-    StageLhs: Stage<STy<Lhs<MT>>, ReadOnly>,
-    StageRhs: Stage<STy<Rhs<MT>>, ReadOnly>,
-    StageAcc: Stage<STy<Acc<MT>>, ReadOnly>,
+    StageLhs: Stage<STy<Lhs<MT>>>,
+    StageRhs: Stage<STy<Rhs<MT>>>,
+    StageAcc: Stage<STy<Acc<MT>>>,
     Sc: TileScope,
 {
     #[allow(clippy::too_many_arguments)]
@@ -104,8 +104,8 @@ where
     pub fn execute_with_listener<SEL: StageEventListener>(
         lhs_stage: &StageLhs,
         rhs_stage: &StageRhs,
-        lhs_fragment: &mut Sequence<Tile<<MT::Lhs as MatrixTypes>::Register, Sc, ReadWrite>>,
-        rhs_fragments: &mut RhsTile<Tile<<MT::Rhs as MatrixTypes>::Register, Sc, ReadWrite>>,
+        lhs_fragment: &mut Sequence<Tile<<MT::Lhs as MatrixTypes>::Register, Sc>>,
+        rhs_fragments: &mut RhsTile<Tile<<MT::Rhs as MatrixTypes>::Register, Sc>>,
         acc: &mut Accumulators<MT, Sc>,
         #[comptime] shared_config: SharedPartitionMatmulConfig,
         listener: SEL,
@@ -144,8 +144,8 @@ where
     pub fn init_tile_inputs(
         #[comptime] shared_config: SharedPartitionMatmulConfig,
     ) -> (
-        Sequence<Tile<<MT::Lhs as MatrixTypes>::Register, Sc, ReadWrite>>,
-        RhsTile<Tile<<MT::Rhs as MatrixTypes>::Register, Sc, ReadWrite>>,
+        Sequence<Tile<<MT::Lhs as MatrixTypes>::Register, Sc>>,
+        RhsTile<Tile<<MT::Rhs as MatrixTypes>::Register, Sc>>,
     ) {
         let mut lhs = Sequence::new();
 
@@ -215,8 +215,8 @@ where
     fn execute_single_buffer<SEL: StageEventListener>(
         lhs_stage: &StageLhs,
         rhs_stage: &StageRhs,
-        lhs_fragment: &mut Sequence<Tile<<MT::Lhs as MatrixTypes>::Register, Sc, ReadWrite>>,
-        rhs_fragment: &mut Tile<<MT::Rhs as MatrixTypes>::Register, Sc, ReadWrite>,
+        lhs_fragment: &mut Sequence<Tile<<MT::Lhs as MatrixTypes>::Register, Sc>>,
+        rhs_fragment: &mut Tile<<MT::Rhs as MatrixTypes>::Register, Sc>,
         acc: &mut Accumulators<MT, Sc>,
         #[comptime] shared_config: SharedPartitionMatmulConfig,
         mut listener: SEL,
@@ -312,10 +312,10 @@ where
     fn execute_double_buffer<SEL: StageEventListener>(
         lhs_stage: &StageLhs,
         rhs_stage: &StageRhs,
-        lhs_fragment: &mut Sequence<Tile<<MT::Lhs as MatrixTypes>::Register, Sc, ReadWrite>>,
+        lhs_fragment: &mut Sequence<Tile<<MT::Lhs as MatrixTypes>::Register, Sc>>,
         rhs_fragments: &mut (
-            Tile<<MT::Rhs as MatrixTypes>::Register, Sc, ReadWrite>,
-            Tile<<MT::Rhs as MatrixTypes>::Register, Sc, ReadWrite>,
+            Tile<<MT::Rhs as MatrixTypes>::Register, Sc>,
+            Tile<<MT::Rhs as MatrixTypes>::Register, Sc>,
         ),
         acc: &mut Accumulators<MT, Sc>,
         #[comptime] shared_config: SharedPartitionMatmulConfig,
@@ -466,7 +466,7 @@ where
 fn allocate_lhs<MT: MatmulTypes, Sc: TileScope>(
     #[comptime] layout: cubek_std::MatrixLayout,
     #[comptime] tile_matmul: TileMatmul,
-) -> Tile<LhsRE<MT>, Sc, ReadWrite> {
+) -> Tile<LhsRE<MT>, Sc> {
     match tile_matmul {
         TileMatmul::Cmma(c) => cmma_allocate_lhs::<LhsRE<MT>, Sc>(layout, c.tile_size),
         TileMatmul::Mma(c) => mma_allocate_lhs::<LhsRE<MT>, RhsRE<MT>, AccRE<MT>, Sc>(layout, c),
@@ -480,7 +480,7 @@ fn allocate_lhs<MT: MatmulTypes, Sc: TileScope>(
 fn allocate_rhs<MT: MatmulTypes, Sc: TileScope>(
     #[comptime] layout: cubek_std::MatrixLayout,
     #[comptime] config: TileMatmul,
-) -> Tile<RhsRE<MT>, Sc, ReadWrite> {
+) -> Tile<RhsRE<MT>, Sc> {
     match config {
         TileMatmul::Cmma(c) => cmma_allocate_rhs::<RhsRE<MT>, Sc>(layout, c.tile_size),
         TileMatmul::Mma(c) => mma_allocate_rhs::<RhsRE<MT>, LhsRE<MT>, AccRE<MT>, Sc>(layout, c),

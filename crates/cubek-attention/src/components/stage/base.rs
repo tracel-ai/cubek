@@ -66,7 +66,7 @@ pub trait StageAttentionFamily: Send + Sync + 'static {
 }
 
 #[cube]
-pub trait StageAttention<AP: AttentionPrecision>: 'static + Send + Sync {
+pub trait StageAttention<AP: AttentionPrecision>: 'static {
     type KeyStage: CubeType;
     type ValueStage: CubeType;
     type OutStage: CubeType;

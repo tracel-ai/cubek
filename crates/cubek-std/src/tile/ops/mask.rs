@@ -14,7 +14,7 @@ use crate::tile::{
 };
 
 #[cube]
-impl<E: Numeric, Sc: TileScope, IO: SliceVisibility> Mask for Tile<E, Sc, IO> {
+impl<E: Numeric, Sc: TileScope> Mask for Tile<E, Sc> {
     fn should_mask(&self, local_pos: Coords2d) -> bool {
         match &self.kind {
             TileKind::Unit(t) => t.should_mask(local_pos),
@@ -27,7 +27,7 @@ impl<E: Numeric, Sc: TileScope, IO: SliceVisibility> Mask for Tile<E, Sc, IO> {
 }
 
 #[cube]
-impl<N: Numeric, Sc: TileScope> Tile<N, Sc, ReadWrite> {
+impl<N: Numeric, Sc: TileScope> Tile<N, Sc> {
     /// Loads the data from an external strided tile into the inner storage of a
     /// `Tile::Unit` or `Tile::WhiteboxFragment`. Used to materialize a mask fragment.
     pub fn load_mask_from_strided_tile<E: Numeric, ES: Size>(&mut self, tile: &StridedTile<E, ES>) {

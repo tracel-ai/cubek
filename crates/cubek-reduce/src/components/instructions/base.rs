@@ -247,7 +247,7 @@ impl<X: CubePrimitive> SharedAccumulatorKind<X> {
     pub fn get(&self, i: usize) -> Value<X> {
         match self {
             SharedAccumulatorKind::Multiple(sequence) => {
-                let mut array = Array::new(sequence.len());
+                let mut array = Array::<X>::new(sequence.len());
                 #[unroll]
                 for k_iter in 0..sequence.len() {
                     array[k_iter] = sequence[k_iter][i];
@@ -352,7 +352,7 @@ pub struct Accumulator<P: ReducePrecision> {
 /// A simple trait that abstract over a single or multiple shared memory.
 #[cube]
 pub trait SharedAccumulator<P: ReducePrecision, I: ReduceInstruction<P>>:
-    CubeType + Send + Sync + 'static
+    CubeType + 'static
 {
     fn allocate(#[comptime] length: usize, #[comptime] _coordinate: bool, inst: &I) -> Self;
 

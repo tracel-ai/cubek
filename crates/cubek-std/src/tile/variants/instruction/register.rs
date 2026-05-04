@@ -145,14 +145,14 @@ impl<A: Numeric> RegisterTile<A> {
 impl<N: Numeric> RegisterTile<N> {
     /// Copies into the register tile from `source`. Supported sources:
     /// `SharedMemory` (product-type-aware load) and `None` (zero-init).
-    pub fn copy_from<SE: Numeric, SS: Size, Sc: TileScope, SIO: SliceVisibility>(
+    pub fn copy_from<SE: Numeric, SS: Size, Sc: TileScope>(
         &mut self,
-        source: &Tile<SE, Sc, SIO>,
+        source: &Tile<SE, Sc>,
         #[comptime] ident: StageIdent,
     ) {
         match &source.kind {
             TileKind::SharedMemory(shared) => {
-                register_load_from_shared::<SE, SS, N, SIO>(
+                register_load_from_shared::<SE, SS, N>(
                     shared,
                     &mut self.tile.data,
                     self.matrix_layout,
@@ -190,7 +190,7 @@ impl<Acc: Float> RegisterTile<Acc> {
     pub fn softmax<Lhs: Float, M: Mask>(
         &mut self,
         mask: &M,
-        softmaxed: &mut Tile<Lhs, Plane, ReadWrite>,
+        softmaxed: &mut Tile<Lhs, Plane>,
         state: &mut (RowWise<Acc>, RowWise<Acc>),
         head_dim_factor: Acc,
     ) -> RowWise<Acc> {
@@ -343,8 +343,8 @@ fn outer_product<L: Numeric, R: Numeric, A: Numeric>(
 }
 
 #[cube]
-pub fn register_load_from_shared<E: Numeric, ES: Size, N: Numeric, IO: SliceVisibility>(
-    shared: &SharedTile<E, IO>,
+pub fn register_load_from_shared<E: Numeric, ES: Size, N: Numeric>(
+    shared: &SharedTile<E>,
     arr: &mut Array<N>,
     #[comptime] matrix_layout: MatrixLayout,
     #[comptime] config: RegisterMatmul,

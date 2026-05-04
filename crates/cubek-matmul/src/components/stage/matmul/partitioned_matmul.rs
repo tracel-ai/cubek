@@ -117,10 +117,10 @@ impl StageConfig for PartitionMatmulConfig {
 /// Its results are written in a temporary shared memory to correct the layout before storing to global memory.
 pub struct PartitionedStageMatmul<
     MP: MatmulTypes,
-    StageLhs: Stage<<<MP as MatmulTypes>::Lhs as MatrixTypes>::Stage, ReadOnly>,
-    StageRhs: Stage<<<MP as MatmulTypes>::Rhs as MatrixTypes>::Stage, ReadOnly>,
-    StageAcc: Stage<<<MP as MatmulTypes>::Acc as MatrixTypes>::Stage, ReadOnly>,
-    StageOut: Stage<<<MP as MatmulTypes>::Acc as MatrixTypes>::Stage, ReadWrite>,
+    StageLhs: Stage<<<MP as MatmulTypes>::Lhs as MatrixTypes>::Stage>,
+    StageRhs: Stage<<<MP as MatmulTypes>::Rhs as MatrixTypes>::Stage>,
+    StageAcc: Stage<<<MP as MatmulTypes>::Acc as MatrixTypes>::Stage>,
+    StageOut: Stage<<<MP as MatmulTypes>::Acc as MatrixTypes>::Stage>,
     SP: StagePartitioner,
 > {
     #[allow(clippy::type_complexity)]
@@ -132,10 +132,10 @@ impl<MP, StageLhs, StageRhs, StageAcc, StageOut, SP> StageMatmul<MP>
     for PartitionedStageMatmul<MP, StageLhs, StageRhs, StageAcc, StageOut, SP>
 where
     MP: MatmulTypes,
-    StageLhs: Stage<<<MP as MatmulTypes>::Lhs as MatrixTypes>::Stage, ReadOnly>,
-    StageRhs: Stage<<<MP as MatmulTypes>::Rhs as MatrixTypes>::Stage, ReadOnly>,
-    StageAcc: Stage<<<MP as MatmulTypes>::Acc as MatrixTypes>::Stage, ReadOnly>,
-    StageOut: Stage<<<MP as MatmulTypes>::Acc as MatrixTypes>::Stage, ReadWrite>,
+    StageLhs: Stage<<<MP as MatmulTypes>::Lhs as MatrixTypes>::Stage>,
+    StageRhs: Stage<<<MP as MatmulTypes>::Rhs as MatrixTypes>::Stage>,
+    StageAcc: Stage<<<MP as MatmulTypes>::Acc as MatrixTypes>::Stage>,
+    StageOut: Stage<<<MP as MatmulTypes>::Acc as MatrixTypes>::Stage>,
     SP: StagePartitioner,
 {
     type Config = PartitionMatmulConfig;
@@ -147,8 +147,8 @@ where
     type OutStage = StageOut;
 
     type Accumulators = Accumulators<MP, SP::Scope>;
-    type LhsTile = Sequence<Tile<<MP::Lhs as MatrixTypes>::Register, SP::Scope, ReadWrite>>;
-    type RhsTile = RhsTile<Tile<<MP::Rhs as MatrixTypes>::Register, SP::Scope, ReadWrite>>;
+    type LhsTile = Sequence<Tile<<MP::Lhs as MatrixTypes>::Register, SP::Scope>>;
+    type RhsTile = RhsTile<Tile<<MP::Rhs as MatrixTypes>::Register, SP::Scope>>;
 
     fn execute(
         lhs_stage: &StageLhs,
