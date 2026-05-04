@@ -10,6 +10,7 @@ pub const PROBLEM_GPT2: &str = "gpt2";
 pub const PROBLEM_LLAMA: &str = "llama";
 pub const PROBLEM_LONG_CONTEXT: &str = "long_context";
 pub const PROBLEM_ENCODER_DECODER: &str = "encoder_decoder";
+pub const MASK_CAUSAL_4096: &str = "mask_causal_4096";
 
 pub fn problems() -> Vec<ItemDescriptor> {
     vec![
@@ -32,6 +33,10 @@ pub fn problems() -> Vec<ItemDescriptor> {
         ItemDescriptor {
             id: PROBLEM_ENCODER_DECODER.to_string(),
             label: "Encoder-decoder (b=2 h=16 sq=512 skv=1024 d=128)".to_string(),
+        },
+        ItemDescriptor {
+            id: MASK_CAUSAL_4096.to_string(),
+            label: "Masked+Causal (b=1 h=4 sq=4096 skv=4096 d=64)".to_string(),
         },
     ]
 }
@@ -114,6 +119,23 @@ pub(crate) fn problem_for(
             masked: false,
             options: AttentionOptions {
                 causal: false,
+                accumulator_precision: Default::default(),
+            },
+            address_type: Default::default(),
+        },
+        MASK_CAUSAL_4096 => AttentionProblem {
+            dims: AttentionDims {
+                batch: 1,
+                num_heads: 4,
+                seq_q: 4096,
+                seq_kv: 4096,
+                head_dim: 64,
+                val_dim: 64,
+            },
+            global_dtypes,
+            masked: true,
+            options: AttentionOptions {
+                causal: true,
                 accumulator_precision: Default::default(),
             },
             address_type: Default::default(),
