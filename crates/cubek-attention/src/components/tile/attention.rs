@@ -3,7 +3,7 @@ use std::{fmt::Debug, hash::Hash};
 use cubecl::features::MmaConfig;
 use cubecl::{ir::DeviceProperties, ir::VectorSize};
 use cubek_matmul::definition::MatmulAvailabilityError;
-use cubek_std::tile::{BounceConfig, InnerLayout, MaskLayout, SoftmaxKind};
+use cubek_std::tile::{InnerLayout, MaskLayout, SoftmaxKind};
 use cubek_std::{CubeDimResource, InvalidConfigError};
 
 use crate::components::tile::matmul::AttentionTileMatmul;
@@ -71,27 +71,6 @@ impl TileAttention {
             AttentionTileMatmul::Cmma(_) => SoftmaxKind::Plane {
                 inner_layout: self.inner_layout,
             },
-        }
-    }
-
-    /// Bounce config for the score-tile round-trip (only meaningful for the
-    /// cmma path).
-    pub fn score_bounce_config(&self) -> BounceConfig {
-        BounceConfig {
-            tile_shape: (self.tile_size.seq_q, self.tile_size.seq_kv),
-            num_planes: self.num_planes,
-            plane_dim: self.plane_dim,
-            inner_layout: self.inner_layout,
-        }
-    }
-
-    /// Bounce config for the output (value-matmul accumulator) round-trip.
-    pub fn output_bounce_config(&self) -> BounceConfig {
-        BounceConfig {
-            tile_shape: (self.tile_size.seq_q, self.tile_size.val_dim),
-            num_planes: self.num_planes,
-            plane_dim: self.plane_dim,
-            inner_layout: self.inner_layout,
         }
     }
 
@@ -163,8 +142,18 @@ impl TileAttentionKind {
                 AttentionTileMatmul::new_register_unit(tile_size.to_value_matmul_tile_size()),
             ),
             TileAttentionKind::BlackboxAccelerated => (
-                AttentionTileMatmul::new_cmma(tile_size.to_score_matmul_tile_size(), plane_dim),
-                AttentionTileMatmul::new_cmma(tile_size.to_value_matmul_tile_size(), plane_dim),
+                AttentionTileMatmul::new_cmma(
+                    tile_size.to_score_matmul_tile_size(),
+                    plane_dim,
+                    num_planes,
+                    inner_layout,
+                ),
+                AttentionTileMatmul::new_cmma(
+                    tile_size.to_value_matmul_tile_size(),
+                    plane_dim,
+                    num_planes,
+                    inner_layout,
+                ),
             ),
         };
 
