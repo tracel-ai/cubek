@@ -1,6 +1,6 @@
 use cubecl;
 use cubecl::prelude::*;
-use cubek_std::tile::{BounceConfig, Plane, RowWise, SoftmaxKind, Tile, softmax_init_state};
+use cubek_std::tile::{Plane, RowWise, SoftmaxKind, Tile, softmax_init_state};
 
 use crate::components::tile::matmul::{self as attn_matmul, AttentionTileMatmul};
 use crate::{components::tile::MaskTile, definition::AttentionPartitionSize};
@@ -20,23 +20,19 @@ impl<Acc: Float, Lhs: Float> SoftmaxPartition<Acc, Lhs> {
         #[comptime] partition_size: AttentionPartitionSize,
         #[comptime] score_matmul: AttentionTileMatmul,
         #[comptime] value_matmul: AttentionTileMatmul,
-        #[comptime] score_bounce: BounceConfig,
     ) -> SoftmaxPartition<Acc, Lhs> {
         let mut score_tiles = Sequence::new();
         let mut softmaxed_tiles = Sequence::new();
 
         #[unroll]
         for _ in 0..partition_size.seq_q {
-            // Score tile = score matmul accumulator. Bouncing for the cmma path.
-            let mut score = attn_matmul::allocate_acc_bouncing::<Acc>(score_matmul, score_bounce);
+            let mut score = attn_matmul::allocate_rowwise_acc::<Acc>(score_matmul);
             score.fill_zero();
             score_tiles.push(score);
 
-            // Softmaxed tile = value matmul lhs. Bouncing for the cmma path so
-            // the softmaxed values can be written into the local view.
-            softmaxed_tiles.push(attn_matmul::allocate_lhs_bouncing::<Lhs>(
+            // Softmaxed tile = value matmul lhs
+            softmaxed_tiles.push(attn_matmul::allocate_softmax_target_lhs::<Lhs>(
                 value_matmul,
-                score_bounce,
             ));
         }
 

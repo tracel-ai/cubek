@@ -1,6 +1,6 @@
 use cubecl;
 use cubecl::prelude::*;
-use cubek_std::tile::{BounceConfig, Plane, RowWise, Tile};
+use cubek_std::tile::{Plane, RowWise, Tile};
 
 use crate::components::tile::matmul::{self as attn_matmul, AttentionTileMatmul};
 use crate::definition::AttentionPartitionSize;
@@ -17,13 +17,12 @@ impl<Acc: Float> OutputPartition<Acc> {
     pub fn new(
         #[comptime] partition_size: AttentionPartitionSize,
         #[comptime] value_matmul: AttentionTileMatmul,
-        #[comptime] bounce: BounceConfig,
     ) -> OutputPartition<Acc> {
         let mut sequence = Sequence::new();
 
         #[unroll]
         for _ in 0..partition_size.seq_q * partition_size.val_dim {
-            let mut tile = attn_matmul::allocate_acc_bouncing::<Acc>(value_matmul, bounce);
+            let mut tile = attn_matmul::allocate_rowwise_acc::<Acc>(value_matmul);
             tile.fill_zero();
             sequence.push(tile);
         }

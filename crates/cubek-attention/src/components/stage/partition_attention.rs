@@ -217,7 +217,6 @@ impl<
             config.shared().partition_size,
             config.tile_attention().score_matmul(),
             config.tile_attention().value_matmul(),
-            config.tile_attention().score_bounce_config(),
         )
     }
 
@@ -225,7 +224,6 @@ impl<
         OutputPartition::<ACC<AP>>::new(
             config.shared().partition_size,
             config.tile_attention().value_matmul(),
-            config.tile_attention().output_bounce_config(),
         )
     }
 
