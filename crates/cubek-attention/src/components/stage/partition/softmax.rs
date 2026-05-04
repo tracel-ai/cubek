@@ -26,14 +26,14 @@ impl<Acc: Float, Lhs: Float> SoftmaxPartition<Acc, Lhs> {
 
         #[unroll]
         for _ in 0..partition_size.seq_q {
-            // Score tile = score matmul accumulator. Bouncing for the cmma path.
-            let mut score = attn_matmul::allocate_acc_bouncing::<Acc>(score_matmul);
+            let mut score = attn_matmul::allocate_rowwise_acc::<Acc>(score_matmul);
             score.fill_zero();
             score_tiles.push(score);
 
-            // Softmaxed tile = value matmul lhs. Bouncing for the cmma path so
-            // the softmaxed values can be written into the local view.
-            softmaxed_tiles.push(attn_matmul::allocate_lhs_bouncing::<Lhs>(value_matmul));
+            // Softmaxed tile = value matmul lhs
+            softmaxed_tiles.push(attn_matmul::allocate_softmax_target_lhs::<Lhs>(
+                value_matmul,
+            ));
         }
 
         SoftmaxPartition::<Acc, Lhs> {

@@ -89,10 +89,7 @@ impl TileAttention {
     }
 }
 
-/// Selector for which tile-attention strategy to instantiate. Mirrors
-/// matmul's `TileMatmulKind`: this is the surface used *before* the typed
-/// configuration exists, owning availability checks and the
-/// blueprint→config lowering.
+/// Selector for which tile-attention strategy to instantiate.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum TileAttentionKind {
     /// Each unit independently runs a full register-based attention tile.

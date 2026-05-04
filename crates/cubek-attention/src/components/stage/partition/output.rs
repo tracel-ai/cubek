@@ -22,7 +22,7 @@ impl<Acc: Float> OutputPartition<Acc> {
 
         #[unroll]
         for _ in 0..partition_size.seq_q * partition_size.val_dim {
-            let mut tile = attn_matmul::allocate_acc_bouncing::<Acc>(value_matmul);
+            let mut tile = attn_matmul::allocate_rowwise_acc::<Acc>(value_matmul);
             tile.fill_zero();
             sequence.push(tile);
         }

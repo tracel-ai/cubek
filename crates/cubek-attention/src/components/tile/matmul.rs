@@ -4,8 +4,8 @@ use cubek_std::{
     MatrixLayout, SwizzleModes,
     tile::{
         BounceConfig, CmmaMatmul, CmmaTile, InnerLayout, Plane, ProductType, RegisterMatmul, Tile,
-        allocate_bounce_tile, cmma_allocate_acc, cmma_allocate_lhs, cmma_allocate_rhs,
-        register_allocate_acc, register_allocate_lhs, register_allocate_rhs,
+        allocate_bounce_tile, cmma_allocate_lhs, cmma_allocate_rhs, register_allocate_acc,
+        register_allocate_lhs, register_allocate_rhs,
     },
 };
 use cubek_std::{TileSize, as_cmma_layout};
@@ -124,25 +124,26 @@ pub fn allocate_rhs_transposed<R: Numeric>(
     }
 }
 
-#[cube]
-pub fn allocate_acc<A: Numeric>(
-    #[comptime] matmul: AttentionTileMatmul,
-) -> Tile<A, Plane, ReadWrite> {
-    match matmul {
-        AttentionTileMatmul::Cmma(c) => {
-            cmma_allocate_acc::<A, Plane>(MatrixLayout::RowMajor, c.matmul.tile_size)
-        }
-        AttentionTileMatmul::Register(c) => {
-            register_allocate_acc::<A, Plane>(MatrixLayout::RowMajor, c)
-        }
-    }
-}
+// #[cube]
+// pub fn allocate_acc<A: Numeric>(
+//     #[comptime] matmul: AttentionTileMatmul,
+// ) -> Tile<A, Plane, ReadWrite> {
+//     match matmul {
+//         AttentionTileMatmul::Cmma(c) => {
+//             cmma_allocate_acc::<A, Plane>(MatrixLayout::RowMajor, c.matmul.tile_size)
+//         }
+//         AttentionTileMatmul::Register(c) => {
+//             register_allocate_acc::<A, Plane>(MatrixLayout::RowMajor, c)
+//         }
+//     }
+// }
 
-/// Allocates an accumulator tile that takes part in row-wise softmax/output
-/// scaling. For the cmma path this is a `Tile::Bounce` (cmma + smem + LocalTile);
+/// Allocates an accumulator tile that can be softmax'd (score) or scaled by
+/// softmax stats (output). For the cmma path this is a `Tile::Bounce`
+/// (cmma + smem + LocalTile) so row-wise ops can read/write through smem;
 /// for the register path it falls back to `Tile::Register`.
 #[cube]
-pub fn allocate_acc_bouncing<A: Float>(
+pub fn allocate_rowwise_acc<A: Float>(
     #[comptime] matmul: AttentionTileMatmul,
 ) -> Tile<A, Plane, ReadWrite> {
     match matmul {
@@ -169,11 +170,11 @@ pub fn allocate_acc_bouncing<A: Float>(
     }
 }
 
-/// Allocates an LHS tile that takes part in row-wise softmax/output scaling
-/// (i.e. the value-matmul lhs that receives the post-softmax cast-down values).
-/// For the cmma path this is a `Tile::Bounce`.
+/// Allocates an LHS tile that receives the post-softmax cast-down values
+/// (the value-matmul lhs). For the cmma path this is a `Tile::Bounce` so the
+/// softmaxed values can be written through smem into the cmma fragment.
 #[cube]
-pub fn allocate_lhs_bouncing<L: Float>(
+pub fn allocate_softmax_target_lhs<L: Float>(
     #[comptime] matmul: AttentionTileMatmul,
 ) -> Tile<L, Plane, ReadWrite> {
     match matmul {
