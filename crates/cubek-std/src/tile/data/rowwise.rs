@@ -1,15 +1,6 @@
 use cubecl;
 use cubecl::prelude::*;
 
-/// Logits below this are considered masked (effectively -inf)
-/// Value chosen to fit within f16 range (~-65,504 max)
-pub const LOGIT_MASKED: f32 = -6e4;
-
-/// Any value smaller than this is considered numerically zero
-/// (used for fully-masked rows or tiny contributions)
-/// Value chosen to be above f16 smallest normal (~6.1e-5)
-pub const FULLY_MASKED_ROW_THRESHOLD: f32 = 1e-4;
-
 #[derive(CubeType)]
 /// Contains one value per row of a fragment for which the unit contributes
 ///
@@ -154,23 +145,6 @@ impl<E: Float> RowWise<E> {
         RowWise::<E> {
             vals,
             num_rows: self.num_rows,
-        }
-    }
-
-    /// Replaces each value `v` (v >= 0) in a row with `1/v`.
-    ///
-    /// If `v = 0`, the result is set to `0` instead of `1/0`.
-    /// This occurs when the entire row is masked, meaning it should
-    /// contribute no information, and ensures numerical stability.
-    pub fn recip_inplace(&mut self) {
-        for i in 0..self.num_rows {
-            let row_val = self.vals[i];
-
-            let epsilon = E::new(FULLY_MASKED_ROW_THRESHOLD);
-            let not_masked = E::cast_from(row_val >= epsilon);
-            let safe_val = clamp_min(row_val, epsilon);
-            let recip = safe_val.recip();
-            self.vals[i] = not_masked * recip;
         }
     }
 }
