@@ -2,14 +2,17 @@ use cubecl::{
     std::tensor::layout::Coords2d,
     {ir::DeviceProperties, prelude::*},
 };
-use cubek_std::{InvalidConfigError, stage::StageMemoryConfig};
+use cubek_std::{
+    InvalidConfigError,
+    stage::StageMemoryConfig,
+    tile::{Tile, TileScope},
+};
 
 use crate::{
     components::{
         CubeDimResource,
         global::{PlaneFlowConfig, WriteEventListener},
         stage::{NumStages, PartitionScheduler},
-        tile::{Scope, Tile},
     },
     definition::{
         Acc, Lhs, MatmulElems, MatmulSetupError, MatmulTypes, MatmulVectorSizes, Rhs,
@@ -26,7 +29,7 @@ type Sz<T> = crate::definition::StageSize<T>;
 /// A family of [StageMatmul] implementations that operate with any [precision](MatmulPrecision).
 pub trait StageMatmulFamily: Send + Sync + 'static {
     /// Compute primitive used by the underlying tile matmul
-    type Scope: Scope;
+    type Scope: TileScope;
 
     /// The specific TileMatmul implementation associated with this family.
     type Matmul<MP: MatmulTypes, TL: TilingLayout, TR: TilingLayout, TA: TilingLayout, TO: TilingLayout>: StageMatmul<
@@ -97,7 +100,7 @@ pub trait StageMatmul<MP: MatmulTypes>: 'static + Send + Sync {
     type Config: StageConfig;
 
     /// Compute primitive used by the underlying tile matmul.
-    type Scope: Scope;
+    type Scope: TileScope;
 
     /// Contains the matrix multiplication output, that can be shared across the different planes of the cube.
     /// The same Accumulator will be added to across multiple executions of the Stage Matmul.
@@ -205,7 +208,7 @@ pub trait Stage<ES: Numeric, IO: SliceVisibility = ReadOnly>:
     ///
     /// The [Scope] generic lets the caller select the compute primitive that will consume
     /// this tile
-    fn tile<Sc: Scope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc, IO>;
+    fn tile<Sc: TileScope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc, IO>;
 }
 
 /// Stage family for any precision
@@ -237,7 +240,7 @@ pub trait LoadStageFamily<IO: SliceVisibility = ReadOnly>: StageFamily {
 impl<ES: Numeric, IO: SliceVisibility, Inner: Stage<ES, IO>> Stage<ES, IO>
     for ComptimeOption<Inner>
 {
-    fn tile<Sc: Scope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc, IO> {
+    fn tile<Sc: TileScope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc, IO> {
         #[comptime]
         if let ComptimeOption::Some(inner) = this {
             Inner::tile::<Sc>(inner, tile)

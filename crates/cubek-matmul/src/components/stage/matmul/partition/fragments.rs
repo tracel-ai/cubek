@@ -1,19 +1,22 @@
 use std::marker::PhantomData;
 
 use crate::components::stage::matmul::scheduler::PartitionScheduler;
-use crate::components::tile::{
-    Scope, Tile, TileMatmul, cmma_allocate_acc, interleaved_allocate_acc, mma_allocate_acc,
-    planevec_allocate_acc, register_allocate_acc,
-};
+use crate::components::tile::TileMatmul;
 use crate::definition::{AccRE, AccSE, AccSS, LhsRE, MatmulTypes, MatrixTypes, RhsRE, StageIdent};
 use crate::{components::stage::Stage, definition::Acc};
 use cubecl::prelude::*;
-use cubek_std::{MatrixLayout, PartitionSize};
+use cubek_std::{
+    MatrixLayout, PartitionSize,
+    tile::{
+        Tile, TileScope, cmma_allocate_acc, interleaved_allocate_acc, mma_allocate_acc,
+        planevec_allocate_acc, register_allocate_acc,
+    },
+};
 
 #[derive(CubeType)]
 /// Wrapper over a sequence of Tile Matmul accumulators
 /// Enables indexing at 2d coordinates
-pub struct Accumulators<MP: MatmulTypes, Sc: Scope> {
+pub struct Accumulators<MP: MatmulTypes, Sc: TileScope> {
     sequence: Sequence<Tile<<MP::Acc as MatrixTypes>::Register, Sc, ReadWrite>>,
     #[cube(comptime)]
     _phantom: PhantomData<Sc>,
@@ -22,7 +25,7 @@ pub struct Accumulators<MP: MatmulTypes, Sc: Scope> {
 type StageTy<T> = crate::definition::Stage<T>;
 
 #[cube]
-impl<MT: MatmulTypes, Sc: Scope> Accumulators<MT, Sc> {
+impl<MT: MatmulTypes, Sc: TileScope> Accumulators<MT, Sc> {
     /// Create a new accumulators sequence from the provided configuration
     pub fn new(
         #[comptime] partition_size: PartitionSize,
@@ -97,7 +100,7 @@ pub enum RhsTile<Rhs: CubeType> {
 }
 
 #[cube]
-fn allocate_acc<MT: MatmulTypes, Sc: Scope>(
+fn allocate_acc<MT: MatmulTypes, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: TileMatmul,
 ) -> Tile<AccRE<MT>, Sc, ReadWrite> {

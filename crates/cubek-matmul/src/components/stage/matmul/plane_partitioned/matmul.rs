@@ -1,12 +1,12 @@
 use crate::{
     components::global::PlaneFlowPartition, components::global::PlaneFlowPartitionRule,
     components::stage::matmul::partitioned_matmul::PartitionedStageMatmul,
-    components::stage::matmul::partitioned_matmul::StagePartitioner, components::tile::Plane,
-    definition::MatmulTypes,
+    components::stage::matmul::partitioned_matmul::StagePartitioner, definition::MatmulTypes,
 };
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 
 use crate::components::stage::matmul::partition::SharedPartitionMatmulConfig;
+use cubek_std::tile::Plane;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 /// Configuration for the plane partitioned stage matmul

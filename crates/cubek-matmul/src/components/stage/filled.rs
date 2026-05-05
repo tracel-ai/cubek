@@ -1,9 +1,7 @@
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
+use cubek_std::tile::{Tile, TileScope, Value};
 
-use crate::components::{
-    stage::{Stage, StageFamily, TilingLayout},
-    tile::{Scope, Tile, Value},
-};
+use crate::components::stage::{Stage, StageFamily, TilingLayout};
 
 pub struct FilledStageFamily;
 
@@ -25,7 +23,7 @@ impl<ES: Numeric> FilledStage<ES> {
 
 #[cube]
 impl<ES: Numeric> Stage<ES, ReadOnly> for FilledStage<ES> {
-    fn tile<Sc: Scope>(this: &Self, _tile: Coords2d) -> Tile<ES, Sc, ReadOnly> {
+    fn tile<Sc: TileScope>(this: &Self, _tile: Coords2d) -> Tile<ES, Sc, ReadOnly> {
         Tile::new_Broadcasted(Value::<ES> { val: this.value })
     }
 }
