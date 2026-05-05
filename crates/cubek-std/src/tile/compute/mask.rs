@@ -3,7 +3,7 @@ use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 
 use crate::tile::{
     Tile, TileExpand, TileScope,
-    data::{InnerLayout, PartitionedTileLayout, StridedTile, UnitTileLayout},
+    data::{InnerLayout, WhiteboxFragmentLayout, StridedTile, UnitTileLayout},
 };
 
 #[cube]
@@ -21,8 +21,8 @@ pub enum MaskLayout {
     /// Each unit owns a full row-major copy of the tile.
     Unit(UnitTileLayout),
     /// The tile is fragmented across plane units, with the layout described by
-    /// [`PartitionedTileLayout`].
-    Partitioned(PartitionedTileLayout),
+    /// [`WhiteboxFragmentLayout`].
+    WhiteboxFragment(WhiteboxFragmentLayout),
 }
 
 impl MaskLayout {
@@ -34,7 +34,7 @@ impl MaskLayout {
         })
     }
 
-    pub const fn partitioned(
+    pub const fn whitebox_fragment(
         tile_shape: Coords2d,
         plane_dim: u32,
         inner_layout: InnerLayout,
@@ -48,7 +48,7 @@ impl MaskLayout {
         let unit_size = (num_rows_per_unit, num_cols_per_unit);
         let num_units_per_row = tile_shape.1 / unit_size.1;
 
-        MaskLayout::Partitioned(PartitionedTileLayout {
+        MaskLayout::WhiteboxFragment(WhiteboxFragmentLayout {
             total_size: tile_shape,
             unit_size,
             num_units_per_row,
@@ -62,7 +62,7 @@ impl MaskLayout {
 pub fn mask_layout_num_units_per_row(#[comptime] layout: MaskLayout) -> comptime_type!(u32) {
     match layout {
         MaskLayout::Unit(_) => 1u32,
-        MaskLayout::Partitioned(l) => comptime!(l.total_size.1 / l.unit_size.1),
+        MaskLayout::WhiteboxFragment(l) => comptime!(l.total_size.1 / l.unit_size.1),
     }
 }
 
@@ -71,7 +71,7 @@ pub fn mask_layout_num_units_per_row(#[comptime] layout: MaskLayout) -> comptime
 pub fn mask_layout_absolute_pos(#[comptime] layout: MaskLayout, local_pos: Coords2d) -> Coords2d {
     match layout {
         MaskLayout::Unit(_) => local_pos,
-        MaskLayout::Partitioned(l) => {
+        MaskLayout::WhiteboxFragment(l) => {
             let abs_row_index = {
                 let row_0 = UNIT_POS_X / l.num_units_per_row;
                 let row_jump = comptime!(l.plane_dim / l.num_units_per_row);
@@ -90,10 +90,12 @@ impl<E: Numeric, Sc: TileScope, IO: SliceVisibility> Mask for Tile<E, Sc, IO> {
             Tile::Unit(t) => {
                 bool::cast_from(t.data[(local_pos.0 * t.layout.num_cols + local_pos.1) as usize])
             }
-            Tile::Partitioned(t) => bool::cast_from(
+            Tile::WhiteboxFragment(t) => bool::cast_from(
                 t.array[(local_pos.0 * t.layout.unit_size.1 + local_pos.1) as usize],
             ),
-            _ => panic!("Mask::should_mask is only defined for Tile::Unit and Tile::Partitioned"),
+            _ => panic!(
+                "Mask::should_mask is only defined for Tile::Unit and Tile::WhiteboxFragment"
+            ),
         }
     }
 }
@@ -101,11 +103,11 @@ impl<E: Numeric, Sc: TileScope, IO: SliceVisibility> Mask for Tile<E, Sc, IO> {
 #[cube]
 impl<N: Numeric, Sc: TileScope> Tile<N, Sc, ReadWrite> {
     /// Loads the data from an external strided tile into the inner storage of a
-    /// `Tile::Unit` or `Tile::Partitioned`. Used to materialize a mask fragment.
+    /// `Tile::Unit` or `Tile::WhiteboxFragment`. Used to materialize a mask fragment.
     pub fn load_mask_from_strided_tile<E: Numeric, ES: Size>(&mut self, tile: &StridedTile<E, ES>) {
         match self {
             Tile::Unit(t) => t.load_from_strided_tile::<E, ES>(tile),
-            Tile::Partitioned(t) => t.load_from_strided_tile::<E, ES>(tile),
+            Tile::WhiteboxFragment(t) => t.load_from_strided_tile::<E, ES>(tile),
             _ => panic!("load_mask_from_strided_tile: unsupported tile variant"),
         }
     }

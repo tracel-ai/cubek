@@ -2,7 +2,7 @@ use cubecl::prelude::*;
 
 use crate::tile::{
     LOGIT_MASKED, Plane, Tile, TileExpand,
-    compute::rowwise::reducer::{partitioned_row_max, partitioned_row_sum},
+    compute::rowwise::reducer::{fragment_row_max, fragment_row_sum},
     data::RowWise,
 };
 
@@ -10,12 +10,12 @@ use crate::tile::{
 /// online softmax and output scaling. Dispatch happens per-variant:
 /// - `Tile::Unit` — each unit holds its own copy of the tile, ops run in
 ///   registers.
-/// - `Tile::Partitioned` — the tile is fragmented across plane units with an
-///   exposed layout, row-reductions use `plane_shuffle`.
-/// - `Tile::Bounce` — same as `Partitioned` but the underlying compute fragment
-///   (cmma) is opaque. The row-wise ops here read/write the inner partitioned
-///   view; the smem ↔ cmma synchronization is driven by the higher-level
-///   `softmax` / `scale_mul` / `scale_div` methods (see `softmax.rs`).
+/// - `Tile::WhiteboxFragment` — the tile is fragmented across plane units with
+///   an exposed layout, row-reductions use `plane_shuffle`.
+/// - `Tile::Bounce` — same as `WhiteboxFragment` but the underlying compute
+///   fragment (cmma) is opaque. The row-wise ops here read/write the inner
+///   fragment view; the smem ↔ cmma synchronization is driven by the higher-
+///   level `softmax` / `scale_mul` / `scale_div` methods (see `softmax.rs`).
 /// - `Tile::Register` — kept for the legacy direct-register attention path.
 #[cube]
 impl<E: Float> Tile<E, Plane, ReadWrite> {
@@ -34,11 +34,11 @@ impl<E: Float> Tile<E, Plane, ReadWrite> {
                     acc.vals[r] = max(acc.vals[r], val);
                 }
             }
-            Tile::Partitioned(t) => {
-                partitioned_row_max::<E>(acc, base, t);
+            Tile::WhiteboxFragment(t) => {
+                fragment_row_max::<E>(acc, base, t);
             }
             Tile::Bounce(b) => {
-                partitioned_row_max::<E>(acc, base, &b.partitioned);
+                fragment_row_max::<E>(acc, base, &b.fragment);
             }
             Tile::Register(t) => {
                 acc.copy_from(base);
@@ -72,11 +72,11 @@ impl<E: Float> Tile<E, Plane, ReadWrite> {
                     acc.vals[r] += val;
                 }
             }
-            Tile::Partitioned(t) => {
-                partitioned_row_sum::<E>(acc, t);
+            Tile::WhiteboxFragment(t) => {
+                fragment_row_sum::<E>(acc, t);
             }
             Tile::Bounce(b) => {
-                partitioned_row_sum::<E>(acc, &b.partitioned);
+                fragment_row_sum::<E>(acc, &b.fragment);
             }
             Tile::Register(t) => {
                 acc.fill(E::from_int(0));
@@ -98,8 +98,8 @@ impl<E: Float> Tile<E, Plane, ReadWrite> {
     pub fn exp_diff(&mut self, rowwise: &RowWise<E>) {
         match self {
             Tile::Unit(t) => t.exp_diff(rowwise),
-            Tile::Partitioned(t) => t.exp_diff(rowwise),
-            Tile::Bounce(b) => b.partitioned.exp_diff(rowwise),
+            Tile::WhiteboxFragment(t) => t.exp_diff(rowwise),
+            Tile::Bounce(b) => b.fragment.exp_diff(rowwise),
             Tile::Register(t) => {
                 let m = comptime!(t.config.tile_size.m());
                 let n = comptime!(t.config.tile_size.n());
@@ -122,8 +122,8 @@ impl<E: Float> Tile<E, Plane, ReadWrite> {
     pub fn rowwise_scale(&mut self, scale: &RowWise<E>) {
         match self {
             Tile::Unit(t) => t.rowwise_scale(scale),
-            Tile::Partitioned(t) => t.rowwise_scale(scale),
-            Tile::Bounce(b) => b.partitioned.rowwise_scale(scale),
+            Tile::WhiteboxFragment(t) => t.rowwise_scale(scale),
+            Tile::Bounce(b) => b.fragment.rowwise_scale(scale),
             Tile::Register(t) => {
                 let m = comptime!(t.config.tile_size.m());
                 let n = comptime!(t.config.tile_size.n());

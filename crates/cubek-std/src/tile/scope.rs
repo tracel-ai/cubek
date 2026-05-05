@@ -55,7 +55,6 @@ pub struct ScopeMarker<Sc: TileScope> {
 }
 
 /// Comptime assertion that a tile-scope generic resolves to `Plane`.
-/// Use at construction sites of plane-only variants (`Tile::Partitioned`, `Tile::Bounce`).
 pub fn assert_plane_scope(kind: ScopeKind) {
     match kind {
         ScopeKind::Plane => {}

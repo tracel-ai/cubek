@@ -12,10 +12,10 @@ use crate::tile::{
 #[derive(CubeType)]
 /// Assumes:
 /// - unit_size * plane_dim = total_size (not dim wise but in total count)
-pub struct PartitionedTile<E: Numeric> {
+pub struct WhiteboxFragment<E: Numeric> {
     pub array: Array<E>,
     #[cube(comptime)]
-    pub layout: PartitionedTileLayout,
+    pub layout: WhiteboxFragmentLayout,
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -45,11 +45,11 @@ pub enum InnerLayout {
 }
 
 #[cube]
-impl<E: Numeric> PartitionedTile<E> {
-    pub fn new(#[comptime] layout: PartitionedTileLayout) -> PartitionedTile<E> {
+impl<E: Numeric> WhiteboxFragment<E> {
+    pub fn new(#[comptime] layout: WhiteboxFragmentLayout) -> WhiteboxFragment<E> {
         let array = Array::<E>::new(comptime!(layout.unit_size.0 * layout.unit_size.1) as usize);
 
-        PartitionedTile::<E> { array, layout }
+        WhiteboxFragment::<E> { array, layout }
     }
 
     pub fn zero(&mut self) {
@@ -61,7 +61,7 @@ impl<E: Numeric> PartitionedTile<E> {
     pub fn load_from_slice(&mut self, smem_slice: &Slice<E>) {
         for r in 0..self.layout.unit_size.0 {
             for c in 0..self.layout.unit_size.1 {
-                let (row, col) = partitioned_layout_absolute_pos(self.layout, (r, c));
+                let (row, col) = whitebox_fragment_absolute_pos(self.layout, (r, c));
                 let index = row * self.layout.total_size.1 + col;
 
                 self.array[(r * self.layout.unit_size.1 + c) as usize] = smem_slice[index as usize];
@@ -76,7 +76,7 @@ impl<E: Numeric> PartitionedTile<E> {
         // Assumes vector size == 1
         for r in 0..self.layout.unit_size.0 {
             for c in 0..self.layout.unit_size.1 {
-                let (row, col) = partitioned_layout_absolute_pos(self.layout, (r, c));
+                let (row, col) = whitebox_fragment_absolute_pos(self.layout, (r, c));
                 self.array[(r * self.layout.unit_size.1 + c) as usize] =
                     E::cast_from(strided_tile.get_vector(row, col))
             }
@@ -86,7 +86,7 @@ impl<E: Numeric> PartitionedTile<E> {
     pub fn store_to<F: Float>(&self, smem_slice: &mut SliceMut<F>) {
         for r in 0..self.layout.unit_size.0 {
             for c in 0..self.layout.unit_size.1 {
-                let (row, col) = partitioned_layout_absolute_pos(self.layout, (r, c));
+                let (row, col) = whitebox_fragment_absolute_pos(self.layout, (r, c));
                 let index = row * self.layout.total_size.1 + col;
 
                 smem_slice[index as usize] =
@@ -162,7 +162,7 @@ impl<E: Numeric> PartitionedTile<E> {
 }
 
 #[cube]
-impl<E: Float> PartitionedTile<E> {
+impl<E: Float> WhiteboxFragment<E> {
     pub fn exp_diff(&mut self, rowwise: &RowWise<E>) {
         let num_rows = comptime!(self.layout.unit_size.0) as usize;
         let num_cols = comptime!(self.layout.unit_size.1) as usize;
@@ -185,19 +185,19 @@ impl<E: Float> PartitionedTile<E> {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct PartitionedTileLayout {
+pub struct WhiteboxFragmentLayout {
     pub total_size: Coords2d,
     pub unit_size: Coords2d,
     pub num_units_per_row: u32,
     pub plane_dim: u32,
 }
 
-impl PartitionedTileLayout {
+impl WhiteboxFragmentLayout {
     pub const fn new(
         total_size: Coords2d,
         plane_dim: u32,
         inner_layout: InnerLayout,
-    ) -> PartitionedTileLayout {
+    ) -> WhiteboxFragmentLayout {
         let total_elements = total_size.0 * total_size.1;
         let elements_per_unit = total_elements.div_ceil(plane_dim);
 
@@ -208,7 +208,7 @@ impl PartitionedTileLayout {
         let unit_size = (num_rows_per_unit, num_cols_per_unit);
         let num_units_per_row = total_size.1 / unit_size.1;
 
-        PartitionedTileLayout {
+        WhiteboxFragmentLayout {
             total_size,
             unit_size,
             num_units_per_row,
@@ -222,20 +222,20 @@ impl PartitionedTileLayout {
 }
 
 #[cube]
-/// Allocates a `Tile::Partitioned` for the given scope. Panics at expansion time
-/// unless `Sc = Plane`.
-pub fn allocate_partitioned_tile<E: Numeric, Sc: TileScope>(
-    #[comptime] layout: PartitionedTileLayout,
+/// Allocates a `Tile::WhiteboxFragment` for the given scope. Panics at expansion
+/// time unless `Sc = Plane`.
+pub fn allocate_whitebox_fragment<E: Numeric, Sc: TileScope>(
+    #[comptime] layout: WhiteboxFragmentLayout,
 ) -> Tile<E, Sc, ReadWrite> {
     comptime!(assert_plane_scope(Sc::KIND));
-    Tile::new_Partitioned(PartitionedTile::<E>::new(layout))
+    Tile::new_WhiteboxFragment(WhiteboxFragment::<E>::new(layout))
 }
 
 /// Maps a per-unit `(row, col)` to its absolute position within the tile
 /// described by `layout`.
 #[cube]
-pub fn partitioned_layout_absolute_pos(
-    #[comptime] layout: PartitionedTileLayout,
+pub fn whitebox_fragment_absolute_pos(
+    #[comptime] layout: WhiteboxFragmentLayout,
     local_pos: Coords2d,
 ) -> Coords2d {
     let abs_row_index = {
@@ -249,13 +249,13 @@ pub fn partitioned_layout_absolute_pos(
 
 /// Zeroes a slice giving responsibility to units following `layout`.
 #[cube]
-pub fn partitioned_layout_zero_slice<E: Numeric>(
-    #[comptime] layout: PartitionedTileLayout,
+pub fn whitebox_fragment_zero_slice<E: Numeric>(
+    #[comptime] layout: WhiteboxFragmentLayout,
     slice: &mut SliceMut<E>,
 ) {
     for r in 0..layout.unit_size.0 {
         for c in 0..layout.unit_size.1 {
-            let (row, col) = partitioned_layout_absolute_pos(layout, (r, c));
+            let (row, col) = whitebox_fragment_absolute_pos(layout, (r, c));
             let index = row * layout.total_size.1 + col;
 
             slice[index as usize] = E::from_int(0);

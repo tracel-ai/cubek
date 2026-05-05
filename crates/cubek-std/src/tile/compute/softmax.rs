@@ -2,17 +2,20 @@ use cubecl;
 use cubecl::prelude::*;
 
 use crate::StageIdent;
-use crate::tile::compute::bounce::{cmma_to_partitioned, partitioned_to_cmma};
-use crate::tile::compute::Mask;
-use crate::tile::data::{InnerLayout, RowWise};
-use crate::tile::{Plane, Tile, TileExpand};
+use crate::tile::compute::bounce::{cmma_to_whitebox_fragment, whitebox_fragment_to_cmma};
+use crate::tile::compute::mask::{Mask, MaskExpand};
+use crate::tile::compute::rowwise::reducer::{fragment_row_max, fragment_row_sum};
+use crate::tile::data::{
+    BounceTile, InnerLayout, RegisterTile, RowWise, UnitTile, WhiteboxFragment,
+};
+use crate::tile::{LOGIT_MASKED, Plane, Tile, TileExpand};
 
 /// Comptime descriptor for the row-shape used by online softmax. Determines
 /// how many rows per unit each running-state vector holds.
 ///
 /// - `Direct { num_rows_per_unit }` — used with `Tile::Unit` or `Tile::Register`
 ///   when each unit owns its own copy of the tile.
-/// - `Plane { inner_layout }` — used with `Tile::Partitioned` or `Tile::Bounce`,
+/// - `Plane { inner_layout }` — used with `Tile::WhiteboxFragment` or `Tile::Bounce`,
 ///   where the inner layout determines how many rows each unit covers.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum SoftmaxKind {
@@ -46,13 +49,10 @@ pub fn softmax_init_state<E: Float>(
 #[cube]
 impl<Acc: Float> Tile<Acc, Plane, ReadWrite> {
     /// Online softmax update over a single attention tile, fused with the
-    /// precision-cast write into a value-matmul lhs tile.
-    ///
-    /// For `Tile::Bounce`, the smem ↔ cmma sync is internal: `cmma_to_partitioned`
-    /// once at the start so all subsequent ops read/write the partitioned view,
-    /// and the softmaxed values are streamed straight into the destination's
-    /// cmma fragment via its own smem (no `partitioned_to_cmma` for `self`,
-    /// which is cleared next iteration).
+    /// precision-cast write into a value-matmul lhs tile. Dispatches per
+    /// variant — each variant owns the orchestration best suited to its
+    /// storage; the cmma ↔ fragment bouncing is internal to the `Bounce`
+    /// arm and does not leak into the others.
     ///
     /// Returns the per-row scaling factor `α_i = e^(m_old - m_new)` used by the
     /// caller to rescale running output accumulators.
@@ -63,36 +63,39 @@ impl<Acc: Float> Tile<Acc, Plane, ReadWrite> {
         state: &mut (RowWise<Acc>, RowWise<Acc>),
         head_dim_factor: Acc,
     ) -> RowWise<Acc> {
-        let num_rows = comptime!(state.0.num_rows);
-        let mut max_buf = RowWise::<Acc>::new_min_value(num_rows);
-        let mut sum_buf = RowWise::<Acc>::new_zero(num_rows);
-
-        bounce_in(self);
-
-        self.scale_and_mask::<M>(head_dim_factor, mask);
-        self.row_max(&mut max_buf, &state.0);
-        self.exp_diff(&max_buf);
-        self.row_sum(&mut sum_buf);
-
-        let exp_m_diff = state.0.exp_diff(&max_buf);
-        let new_l = exp_m_diff.mul(&state.1).add(&sum_buf);
-
-        write_softmaxed(self, softmaxed_tile);
-
-        RowWise::copy_from(&mut state.0, &max_buf);
-        RowWise::copy_from(&mut state.1, &new_l);
-
-        exp_m_diff
+        match (self, softmaxed_tile) {
+            (Tile::Bounce(s), Tile::Bounce(d)) => {
+                bounce_softmax::<Acc, Lhs, M>(s, d, mask, state, head_dim_factor)
+            }
+            (Tile::WhiteboxFragment(s), Tile::WhiteboxFragment(d)) => {
+                fragment_softmax::<Acc, Lhs, M>(s, d, mask, state, head_dim_factor)
+            }
+            (Tile::Unit(s), Tile::Unit(d)) => {
+                unit_softmax::<Acc, Lhs, M>(s, d, mask, state, head_dim_factor)
+            }
+            (Tile::Register(s), Tile::Register(d)) => {
+                register_softmax::<Acc, Lhs, M>(s, d, mask, state, head_dim_factor)
+            }
+            _ => panic!("softmax: incompatible tile pair"),
+        }
     }
 
-    /// Multiplies each row of `self` by the corresponding `scale[r]`. For
-    /// `Tile::Bounce`, this round-trips through smem so the cmma fragment is
-    /// up to date for the next mma.
+    /// Multiplies each row of `self` by the corresponding `scale[r]`. The
+    /// `Bounce` arm round-trips through smem so the cmma fragment is current
+    /// for the next mma; the others operate in place on their native storage.
     pub fn scale_mul<SM: Float>(&mut self, scale: &RowWise<SM>) {
         let scale_acc = RowWise::<SM>::cast_from::<Acc>(scale);
-        bounce_in(self);
-        self.rowwise_scale(&scale_acc);
-        bounce_out(self);
+        match self {
+            Tile::Bounce(b) => {
+                cmma_to_whitebox_fragment::<Acc>(b);
+                b.fragment.rowwise_scale(&scale_acc);
+                whitebox_fragment_to_cmma::<Acc>(b);
+            }
+            Tile::WhiteboxFragment(t) => t.rowwise_scale(&scale_acc),
+            Tile::Unit(t) => t.rowwise_scale(&scale_acc),
+            Tile::Register(t) => register_rowwise_scale::<Acc>(t, &scale_acc),
+            _ => panic!("scale_mul: unsupported tile variant"),
+        }
     }
 
     /// Divides each row of `self` by the corresponding `running_state_l[r]`,
@@ -100,9 +103,17 @@ impl<Acc: Float> Tile<Acc, Plane, ReadWrite> {
     pub fn scale_div<SM: Float>(&mut self, running_state_l: &RowWise<SM>) {
         let mut scale = RowWise::<SM>::cast_from::<Acc>(running_state_l);
         scale.recip_inplace();
-        bounce_in(self);
-        self.rowwise_scale(&scale);
-        bounce_out(self);
+        match self {
+            Tile::Bounce(b) => {
+                cmma_to_whitebox_fragment::<Acc>(b);
+                b.fragment.rowwise_scale(&scale);
+                whitebox_fragment_to_cmma::<Acc>(b);
+            }
+            Tile::WhiteboxFragment(t) => t.rowwise_scale(&scale),
+            Tile::Unit(t) => t.rowwise_scale(&scale),
+            Tile::Register(t) => register_rowwise_scale::<Acc>(t, &scale),
+            _ => panic!("scale_div: unsupported tile variant"),
+        }
     }
 
     /// Copies `self` into `dest` (a stage-side strided/shared tile in the
@@ -113,60 +124,186 @@ impl<Acc: Float> Tile<Acc, Plane, ReadWrite> {
 }
 
 #[cube]
-fn bounce_in<E: Float>(tile: &mut Tile<E, Plane, ReadWrite>) {
-    match tile {
-        Tile::Bounce(b) => {
-            cmma_to_partitioned::<E>(b);
-        }
-        Tile::Unit(_) => {}
-        Tile::Partitioned(_) => {}
-        Tile::Register(_) => {}
-        _ => panic!("bounce_in: unsupported tile variant"),
-    }
+fn bounce_softmax<Acc: Float, Lhs: Float, M: Mask>(
+    score: &mut BounceTile<Acc>,
+    softmaxed: &mut BounceTile<Lhs>,
+    mask: &M,
+    state: &mut (RowWise<Acc>, RowWise<Acc>),
+    head_dim_factor: Acc,
+) -> RowWise<Acc> {
+    let num_rows = comptime!(state.0.num_rows);
+    let mut max_buf = RowWise::<Acc>::new_min_value(num_rows);
+    let mut sum_buf = RowWise::<Acc>::new_zero(num_rows);
+
+    // cmma → fragment once at entry so all subsequent ops read/write the
+    // fragment view.
+    cmma_to_whitebox_fragment::<Acc>(score);
+
+    score.fragment.scale_and_mask::<M>(head_dim_factor, mask);
+    fragment_row_max::<Acc>(&mut max_buf, &state.0, &score.fragment);
+    score.fragment.exp_diff(&max_buf);
+    fragment_row_sum::<Acc>(&mut sum_buf, &score.fragment);
+
+    let exp_m_diff = state.0.exp_diff(&max_buf);
+    let new_l = exp_m_diff.mul(&state.1).add(&sum_buf);
+
+    // Route the post-exp_diff values straight into softmaxed's cmma fragment
+    // via softmaxed's own smem — avoids clobbering score's smem and skips a
+    // whitebox_fragment_to_cmma on score (whose cmma is cleared next iteration).
+    let stride = comptime!(softmaxed.cmma.tile_size.n());
+    score.fragment.store_to(&mut softmaxed.smem);
+    sync_cube();
+    cubecl::cmma::load(&softmaxed.cmma.matrix, &softmaxed.smem.to_slice(), stride);
+
+    RowWise::copy_from(&mut state.0, &max_buf);
+    RowWise::copy_from(&mut state.1, &new_l);
+
+    exp_m_diff
 }
 
 #[cube]
-fn bounce_out<E: Float>(tile: &mut Tile<E, Plane, ReadWrite>) {
-    match tile {
-        Tile::Bounce(b) => {
-            partitioned_to_cmma::<E>(b);
-        }
-        Tile::Unit(_) => {}
-        Tile::Partitioned(_) => {}
-        Tile::Register(_) => {}
-        _ => panic!("bounce_out: unsupported tile variant"),
+fn fragment_softmax<Acc: Float, Lhs: Float, M: Mask>(
+    score: &mut WhiteboxFragment<Acc>,
+    softmaxed: &mut WhiteboxFragment<Lhs>,
+    mask: &M,
+    state: &mut (RowWise<Acc>, RowWise<Acc>),
+    head_dim_factor: Acc,
+) -> RowWise<Acc> {
+    let num_rows = comptime!(state.0.num_rows);
+    let mut max_buf = RowWise::<Acc>::new_min_value(num_rows);
+    let mut sum_buf = RowWise::<Acc>::new_zero(num_rows);
+
+    score.scale_and_mask::<M>(head_dim_factor, mask);
+    fragment_row_max::<Acc>(&mut max_buf, &state.0, score);
+    score.exp_diff(&max_buf);
+    fragment_row_sum::<Acc>(&mut sum_buf, score);
+
+    let exp_m_diff = state.0.exp_diff(&max_buf);
+    let new_l = exp_m_diff.mul(&state.1).add(&sum_buf);
+
+    let total = comptime!(score.layout.unit_size.0 * score.layout.unit_size.1);
+    for i in 0..total {
+        softmaxed.array[i as usize] = Lhs::cast_from(score.array[i as usize]);
     }
+
+    RowWise::copy_from(&mut state.0, &max_buf);
+    RowWise::copy_from(&mut state.1, &new_l);
+
+    exp_m_diff
 }
 
 #[cube]
-fn write_softmaxed<Acc: Float, Lhs: Float>(
-    score_tile: &Tile<Acc, Plane, ReadWrite>,
-    softmaxed_tile: &mut Tile<Lhs, Plane, ReadWrite>,
-) {
-    match (score_tile, softmaxed_tile) {
-        (Tile::Register(s), Tile::Register(d)) => {
-            let m = comptime!(s.config.tile_size.m());
-            let n = comptime!(s.config.tile_size.n());
-            for i in 0..m * n {
-                d.data[i as usize] = Lhs::cast_from(s.data[i as usize]);
-            }
+fn unit_softmax<Acc: Float, Lhs: Float, M: Mask>(
+    score: &mut UnitTile<Acc>,
+    softmaxed: &mut UnitTile<Lhs>,
+    mask: &M,
+    state: &mut (RowWise<Acc>, RowWise<Acc>),
+    head_dim_factor: Acc,
+) -> RowWise<Acc> {
+    let num_rows = comptime!(state.0.num_rows);
+    let mut max_buf = RowWise::<Acc>::new_min_value(num_rows);
+    let mut sum_buf = RowWise::<Acc>::new_zero(num_rows);
+
+    score.scale_and_mask::<M>(head_dim_factor, mask);
+
+    max_buf.copy_from(&state.0);
+    max_buf.max_inplace(&score.rowwise_max());
+
+    score.exp_diff(&max_buf);
+
+    sum_buf.add_inplace(&score.rowwise_sum());
+
+    let exp_m_diff = state.0.exp_diff(&max_buf);
+    let new_l = exp_m_diff.mul(&state.1).add(&sum_buf);
+
+    let total = comptime!(score.layout.num_rows * score.layout.num_cols);
+    for i in 0..total {
+        softmaxed.data[i as usize] = Lhs::cast_from(score.data[i as usize]);
+    }
+
+    RowWise::copy_from(&mut state.0, &max_buf);
+    RowWise::copy_from(&mut state.1, &new_l);
+
+    exp_m_diff
+}
+
+#[cube]
+fn register_softmax<Acc: Float, Lhs: Float, M: Mask>(
+    score: &mut RegisterTile<Acc>,
+    softmaxed: &mut RegisterTile<Lhs>,
+    mask: &M,
+    state: &mut (RowWise<Acc>, RowWise<Acc>),
+    head_dim_factor: Acc,
+) -> RowWise<Acc> {
+    let m = comptime!(score.config.tile_size.m());
+    let n = comptime!(score.config.tile_size.n());
+    let num_rows = comptime!(state.0.num_rows);
+    let threshold = Acc::new(LOGIT_MASKED);
+
+    let mut max_buf = RowWise::<Acc>::new_min_value(num_rows);
+    let mut sum_buf = RowWise::<Acc>::new_zero(num_rows);
+
+    for r in 0..m {
+        let row_offset = r * n;
+        for c in 0..n {
+            let idx = (row_offset + c) as usize;
+            score.data[idx] = score.data[idx] * head_dim_factor
+                + Acc::cast_from(mask.should_mask((r, c))) * Acc::min_value();
         }
-        (Tile::Unit(s), Tile::Unit(d)) => {
-            let m = comptime!(s.layout.num_rows);
-            let n = comptime!(s.layout.num_cols);
-            for i in 0..m * n {
-                d.data[i as usize] = Lhs::cast_from(s.data[i as usize]);
-            }
+    }
+
+    max_buf.copy_from(&state.0);
+    for r in 0..m as usize {
+        let row_offset = r as u32 * n;
+        let mut val = Acc::min_value();
+        for c in 0..n {
+            val = max(val, score.data[(row_offset + c) as usize]);
         }
-        (Tile::Bounce(s), Tile::Bounce(d)) => {
-            // score's PartitionedTile already holds the post-exp_diff values; route
-            // through `softmaxed`'s smem to avoid clobbering score's smem and
-            // load directly into softmaxed's cmma fragment.
-            let stride = comptime!(d.cmma.tile_size.n());
-            s.partitioned.store_to(&mut d.smem);
-            sync_cube();
-            cubecl::cmma::load(&d.cmma.matrix, &d.smem.to_slice(), stride);
+        max_buf.vals[r] = max(max_buf.vals[r], val);
+    }
+
+    for r in 0..m as usize {
+        let row_offset = r as u32 * n;
+        let val = max_buf.vals[r];
+        let safe_val = clamp_min(val, threshold);
+        let not_masked = Acc::cast_from(val >= threshold);
+        for c in 0..n {
+            let idx = (row_offset + c) as usize;
+            score.data[idx] = not_masked * (score.data[idx] - safe_val).exp();
         }
-        _ => panic!("write_softmaxed: incompatible tile pair"),
+    }
+
+    for r in 0..m as usize {
+        let row_offset = r as u32 * n;
+        let mut val = Acc::from_int(0);
+        for c in 0..n {
+            val += score.data[(row_offset + c) as usize];
+        }
+        sum_buf.vals[r] += val;
+    }
+
+    let exp_m_diff = state.0.exp_diff(&max_buf);
+    let new_l = exp_m_diff.mul(&state.1).add(&sum_buf);
+
+    for i in 0..m * n {
+        softmaxed.data[i as usize] = Lhs::cast_from(score.data[i as usize]);
+    }
+
+    RowWise::copy_from(&mut state.0, &max_buf);
+    RowWise::copy_from(&mut state.1, &new_l);
+
+    exp_m_diff
+}
+
+#[cube]
+fn register_rowwise_scale<E: Float>(tile: &mut RegisterTile<E>, scale: &RowWise<E>) {
+    let m = comptime!(tile.config.tile_size.m());
+    let n = comptime!(tile.config.tile_size.n());
+    for r in 0..m as usize {
+        let row_offset = r as u32 * n;
+        for c in 0..n {
+            let idx = (row_offset + c) as usize;
+            tile.data[idx] = tile.data[idx] * scale.vals[r];
+        }
     }
 }

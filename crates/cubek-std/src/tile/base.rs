@@ -4,7 +4,7 @@ use crate::{
     StageIdent,
     tile::{
         BounceTile, CmmaTile, InterleavedTile, MmaFragment, MmaFragmentExpand, MmaTile,
-        PartitionedTile, PlaneVecTile, RegisterTile, ScopeMarker, SharedTile, TileScope, UnitTile,
+        PlaneVecTile, RegisterTile, ScopeMarker, SharedTile, TileScope, UnitTile, WhiteboxFragment,
         matmul::{
             cmma_execute, cmma_load_from_shared, cmma_load_zeros, cmma_write_to_shared,
             interleaved_execute, interleaved_load_from_shared, interleaved_load_zeros,
@@ -30,8 +30,8 @@ pub enum Tile<N: Numeric, Sc: TileScope, IO: SliceVisibility> {
     Unit(UnitTile<N>),
     /// The tile is fragmented across plane units, with the layout exposed.
     /// Only valid when `Sc = Plane`.
-    Partitioned(PartitionedTile<N>),
-    /// Bundles a cmma fragment, an smem scratch slice, and a `PartitionedTile` view.
+    WhiteboxFragment(WhiteboxFragment<N>),
+    /// Bundles a cmma fragment, an smem scratch slice, and a `WhiteboxFragment` view.
     /// From the caller's perspective it is a single tile; the smem round-trip
     /// is internal to ops dispatch. Only valid when `Sc = Plane`.
     Bounce(BounceTile<N>),

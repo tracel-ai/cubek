@@ -7,7 +7,7 @@
 //! - [`elementwise`] — per-element ops (`scale_and_mask`, `fill_zero`).
 //! - [`softmax`] — online softmax / per-row scale / output write.
 //! - [`mask`] — `Mask` trait + `MaskLayout`.
-//! - [`bounce`] (private) — cmma ↔ partitioned synchronization helpers used by
+//! - [`bounce`] (private) — cmma ↔ fragment synchronization helpers used by
 //!   `softmax`.
 
 pub mod matmul;

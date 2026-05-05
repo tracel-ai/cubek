@@ -5,7 +5,7 @@ use crate::tile::{
     Tile,
     data::{
         cmma::CmmaTile,
-        partitioned::{InnerLayout, PartitionedTile, PartitionedTileLayout},
+        whitebox_fragment::{InnerLayout, WhiteboxFragmentLayout, WhiteboxFragment},
     },
     scope::{TileScope, assert_plane_scope},
 };
@@ -13,7 +13,7 @@ use crate::tile::{
 /// Comptime configuration for [`BounceTile`].
 ///
 /// A bounce tile bundles an opaque cmma fragment together with a shared-memory
-/// scratch slice and a [`PartitionedTile`] view, so row-wise operations can be
+/// scratch slice and a [`WhiteboxFragment`] view, so row-wise operations can be
 /// expressed as `copy_from` between the inner pieces. From the caller's point
 /// of view it is a single [`Tile`] variant — only valid when the tile's
 /// scope is `Plane`.
@@ -29,7 +29,7 @@ pub struct BounceConfig {
 pub struct BounceTile<N: Numeric> {
     pub cmma: CmmaTile<N>,
     pub smem: SliceMut<N>,
-    pub partitioned: PartitionedTile<N>,
+    pub fragment: WhiteboxFragment<N>,
 }
 
 #[cube]
@@ -41,17 +41,17 @@ impl<N: Numeric> BounceTile<N> {
         let end = start + total_tile_size;
         let smem = SharedMemory::new(smem_size).slice_mut(start, end);
 
-        let layout = comptime!(PartitionedTileLayout::new(
+        let layout = comptime!(WhiteboxFragmentLayout::new(
             cfg.tile_shape,
             cfg.plane_dim,
             cfg.inner_layout
         ));
-        let partitioned = PartitionedTile::new(layout);
+        let fragment = WhiteboxFragment::new(layout);
 
         BounceTile::<N> {
             cmma,
             smem,
-            partitioned,
+            fragment,
         }
     }
 }

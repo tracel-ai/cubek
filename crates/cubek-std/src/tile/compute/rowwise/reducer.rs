@@ -1,33 +1,33 @@
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::tile::data::{PartitionedTile, RowWise};
+use crate::tile::data::{RowWise, WhiteboxFragment};
 
 /// Reduces row-wise quantities across units of a plane that participate in the
 /// same row, masking out off-row peers. Used internally by the row-wise
 /// operations on `Tile<E, Plane, ReadWrite>` when dispatching to the
-/// `Tile::Partitioned` (and `Tile::Bounce`) arms.
+/// `Tile::WhiteboxFragment` (and `Tile::Bounce`) arms.
 ///
 /// Restricted to plane scope by virtue of using `plane_shuffle` and
 /// `UNIT_POS_X` — callers are expected to enforce that constraint.
 #[cube]
-pub(crate) fn partitioned_row_max<E: Float>(
+pub(crate) fn fragment_row_max<E: Float>(
     vals: &mut RowWise<E>,
     base: &RowWise<E>,
-    data: &PartitionedTile<E>,
+    data: &WhiteboxFragment<E>,
 ) {
     vals.copy_from(base);
-    reduce::<E, PartitionedRowMax>(vals, data)
+    reduce::<E, FragmentRowMax>(vals, data)
 }
 
 #[cube]
-pub(crate) fn partitioned_row_sum<E: Float>(vals: &mut RowWise<E>, data: &PartitionedTile<E>) {
+pub(crate) fn fragment_row_sum<E: Float>(vals: &mut RowWise<E>, data: &WhiteboxFragment<E>) {
     vals.fill(E::from_int(0));
-    reduce::<E, PartitionedRowSum>(vals, data)
+    reduce::<E, FragmentRowSum>(vals, data)
 }
 
 #[cube]
-fn reduce<E: Float, RO: ReduceOp<E>>(vals: &mut RowWise<E>, data: &PartitionedTile<E>) {
+fn reduce<E: Float, RO: ReduceOp<E>>(vals: &mut RowWise<E>, data: &WhiteboxFragment<E>) {
     let num_units_per_row = data.num_units_per_row().comptime();
     let num_shares_within_plane = num_units_per_row.next_power_of_two().ilog2();
 
@@ -68,19 +68,19 @@ fn rowwise_plane_broadcast<E: Float>(rowwise: &RowWise<E>, source_unit: u32) -> 
 
 #[cube]
 trait ReduceOp<E: Float> {
-    fn reduce_local(data: &PartitionedTile<E>, acc: &mut RowWise<E>);
+    fn reduce_local(data: &WhiteboxFragment<E>, acc: &mut RowWise<E>);
     fn reduce_from_peer(acc: &mut RowWise<E>, elem: &RowWise<E>, mask: bool);
 }
 
 #[derive(CubeType)]
-struct PartitionedRowMax {}
+struct FragmentRowMax {}
 
 #[derive(CubeType)]
-struct PartitionedRowSum {}
+struct FragmentRowSum {}
 
 #[cube]
-impl<E: Float> ReduceOp<E> for PartitionedRowMax {
-    fn reduce_local(data: &PartitionedTile<E>, acc: &mut RowWise<E>) {
+impl<E: Float> ReduceOp<E> for FragmentRowMax {
+    fn reduce_local(data: &WhiteboxFragment<E>, acc: &mut RowWise<E>) {
         acc.max_inplace(&data.rowwise_max())
     }
 
@@ -93,8 +93,8 @@ impl<E: Float> ReduceOp<E> for PartitionedRowMax {
 }
 
 #[cube]
-impl<E: Float> ReduceOp<E> for PartitionedRowSum {
-    fn reduce_local(data: &PartitionedTile<E>, acc: &mut RowWise<E>) {
+impl<E: Float> ReduceOp<E> for FragmentRowSum {
+    fn reduce_local(data: &WhiteboxFragment<E>, acc: &mut RowWise<E>) {
         acc.add_inplace(&data.rowwise_sum())
     }
 

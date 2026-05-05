@@ -15,8 +15,8 @@ impl<E: Float> Tile<E, Plane, ReadWrite> {
     pub fn scale_and_mask<M: Mask>(&mut self, scale: E, mask: &M) {
         match self {
             Tile::Unit(t) => t.scale_and_mask::<M>(scale, mask),
-            Tile::Partitioned(t) => t.scale_and_mask::<M>(scale, mask),
-            Tile::Bounce(b) => b.partitioned.scale_and_mask::<M>(scale, mask),
+            Tile::WhiteboxFragment(t) => t.scale_and_mask::<M>(scale, mask),
+            Tile::Bounce(b) => b.fragment.scale_and_mask::<M>(scale, mask),
             Tile::Register(t) => {
                 let m = comptime!(t.config.tile_size.m());
                 let n = comptime!(t.config.tile_size.n());
@@ -44,7 +44,7 @@ impl<E: Float> Tile<E, Plane, ReadWrite> {
                 }
             }
             Tile::Unit(t) => t.zero(),
-            Tile::Partitioned(t) => t.zero(),
+            Tile::WhiteboxFragment(t) => t.zero(),
             Tile::Bounce(b) => {
                 cubecl::cmma::fill(&b.cmma.matrix, E::from_int(0));
             }
