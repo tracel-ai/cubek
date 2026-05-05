@@ -1,9 +1,13 @@
+#[cfg(feature = "heavy")]
 use cubecl::{Runtime, TestRuntime, prelude::CubePrimitive};
+#[cfg(feature = "heavy")]
 use cubek_fft::{irfft, rfft};
 //use cubefx_engine::{SignalSpec, phase_shift_effect};
+#[cfg(feature = "heavy")]
 use cubek_test_utils::{HostData, TestInput, assert_equals_approx};
 
 #[test]
+#[cfg(feature = "heavy")]
 fn large_fft_roundtrip() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let dtype = f32::as_type_native_unchecked().storage_type();

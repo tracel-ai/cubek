@@ -1,18 +1,23 @@
-use cubecl::{prelude::*, std::tensor::TensorHandle};
+//! Real-valued FFT with an intra-cube-parallel radix-2 Cooley-Tukey kernel.
 
+use cubecl::prelude::*;
 use cubecl::std::tensor::{
-    AsView as _, AsViewExpand, AsViewMut as _, AsViewMutExpand, layout::plain::PlainLayout,
+    AsView as _, AsViewExpand, AsViewMut as _, AsViewMutExpand, TensorHandle,
 };
 
 use crate::{
-    fft::{FftMode, fft_inner_compute},
+    fft::{
+        FftMode,
+        fft_parallel::{bit_reverse, fft_butterfly_parallel},
+        rfft_large::rfft_large_launch,
+    },
     layout::BatchSignalLayout,
 };
 
-/// Real-valued Fast Fourier Transform kernel.
-///
-/// Creates spectrum (real and imaginary) tensors
-/// then launches the RFFT kernel to fill them with the right values
+const MAX_UNITS_PER_CUBE: usize = 256;
+pub(crate) const SHARED_MEM_CAP: usize = 4096;
+
+/// Real-valued Fast Fourier Transform.
 pub fn rfft<R: Runtime>(
     signal: TensorHandle<R>,
     dim: usize,
@@ -57,7 +62,7 @@ pub fn rfft<R: Runtime>(
     (spectrum_re, spectrum_im)
 }
 
-/// Launches the RFFT with the specified Cube Count, Cube Dim and vectorization (line size)
+/// Launches the RFFT kernel.
 pub fn rfft_launch<R: Runtime>(
     client: &ComputeClient<R>,
     signal: TensorBinding<R>,
@@ -66,6 +71,10 @@ pub fn rfft_launch<R: Runtime>(
     dim: usize,
     dtype: StorageType,
 ) -> Result<(), LaunchError> {
+    let n_fft = signal.shape[dim];
+    assert!(n_fft.is_power_of_two(), "RFFT requires power-of-2 length");
+    assert!(n_fft >= 2, "RFFT requires n_fft >= 2");
+
     let count: usize = signal
         .shape
         .iter()
@@ -73,93 +82,85 @@ pub fn rfft_launch<R: Runtime>(
         .filter(|(i, _)| *i != dim)
         .map(|(_, e)| *e)
         .product();
-
     if count == 0 {
         return Ok(());
     }
 
-    let cube_dim = CubeDim::new_single();
-    let cube_count = cubecl::calculate_cube_count_elemwise(client, count, CubeDim::new_single());
-    let vectorization = 1;
-    let shape = signal.shape.as_slice()[dim];
+    if n_fft > SHARED_MEM_CAP {
+        return rfft_large_launch::<R>(client, signal, spectrum_re, spectrum_im, dim, dtype);
+    }
 
-    rfft_kernel::launch::<R>(
+    let log2_n = n_fft.trailing_zeros() as usize;
+    let threads_per_cube = (n_fft / 2).clamp(1, MAX_UNITS_PER_CUBE);
+
+    let cube_dim = CubeDim::new_1d(threads_per_cube as u32);
+    let cube_count = cubecl::calculate_cube_count_elemwise(client, count, CubeDim::new_single());
+
+    rfft_kernel::launch::<f32, R>(
         client,
         cube_count,
         cube_dim,
         signal.into_tensor_arg(),
         spectrum_re.into_tensor_arg(),
         spectrum_im.into_tensor_arg(),
-        shape,
+        count as u32,
+        n_fft,
+        log2_n,
+        threads_per_cube,
         dim,
-        dtype,
-        vectorization,
     );
     Ok(())
 }
 
 #[cube(launch)]
-/// Kernel that loops over each window and applies the RFFT on each
-pub(crate) fn rfft_kernel<F: Float, N: Size>(
-    signal: &Tensor<Vector<F, N>>,
-    spectrums_re: &mut Tensor<Vector<F, N>>,
-    spectrums_im: &mut Tensor<Vector<F, N>>,
-    #[comptime] num_samples: usize,
+fn rfft_kernel<F: Float>(
+    signal: &Tensor<F>,
+    spectrum_re: &mut Tensor<F>,
+    spectrum_im: &mut Tensor<F>,
+    num_windows: u32,
+    #[comptime] n_fft: usize,
+    #[comptime] log2_n: usize,
+    #[comptime] threads_per_cube: usize,
     #[comptime] dim: usize,
-    #[define(F)] _dtype: StorageType,
-    #[define(N)] _vector_size: usize,
 ) {
     let window_index = CUBE_POS;
-    rfft_kernel_one_window(
-        signal,
-        spectrums_re,
-        spectrums_im,
-        window_index,
-        num_samples,
-        dim,
+    if (window_index as u32) >= num_windows {
+        terminate!();
+    }
+
+    let signal_view = signal.view(BatchSignalLayout::new(signal, window_index, dim));
+    let mut spectrum_re_view =
+        spectrum_re.view_mut(BatchSignalLayout::new(spectrum_re, window_index, dim));
+    let mut spectrum_im_view =
+        spectrum_im.view_mut(BatchSignalLayout::new(spectrum_im, window_index, dim));
+
+    let mut shared_re = SharedMemory::<F>::new(n_fft);
+    let mut shared_im = SharedMemory::<F>::new(n_fft);
+
+    let mut i = UNIT_POS as usize;
+    while i < n_fft {
+        let j = bit_reverse(i, log2_n);
+        shared_re[j] = signal_view[i];
+        shared_im[j] = F::new(0.0);
+        i += threads_per_cube;
+    }
+    sync_cube();
+
+    fft_butterfly_parallel::<F>(
+        &mut shared_re,
+        &mut shared_im,
+        n_fft,
+        log2_n,
+        threads_per_cube,
+        FftMode::Forward,
     );
-}
 
-#[cube]
-/// Applies the RFFT on one window.
-/// Starts by putting all the window in shared memory, where the compute will occur
-/// Then stores back the content of the shared memory
-pub(crate) fn rfft_kernel_one_window<F: Float, N: Size>(
-    signal: &Tensor<Vector<F, N>>,
-    spectrums_re: &mut Tensor<Vector<F, N>>,
-    spectrums_im: &mut Tensor<Vector<F, N>>,
-    window_index: usize,
-    #[comptime] num_samples: usize,
-    #[comptime] dim: usize,
-) {
-    let signal_layout = BatchSignalLayout::new(signal, window_index, dim);
-    let spectrums_re_layout = BatchSignalLayout::new(spectrums_re, window_index, dim);
-    let spectrums_im_layout = BatchSignalLayout::new(spectrums_im, window_index, dim);
-    let signal_view = signal.view(signal_layout);
-    let spectrums_re_view = spectrums_re.view_mut(spectrums_re_layout);
-    let spectrums_im_view = spectrums_im.view_mut(spectrums_im_layout);
-
-    // The shared memories are not vectorized because the inner FFT compute will need to work independently on each element
-    let mut spectrum_re =
-        SharedMemory::<F>::new(num_samples).view_mut(PlainLayout::new(num_samples));
-    let mut spectrum_im =
-        SharedMemory::<F>::new(num_samples).view_mut(PlainLayout::new(num_samples));
-
-    // Load all samples of the window to shared memory
-    for i in 0..num_samples {
-        // Warning: this assumes that signal_view has lines of 1 element
-        // For larger lines, iterate over the line's content
-        // You can get the line_size of a tensor/view with .line_size()
-        spectrum_re[i] = signal_view.read(i)[0];
-        spectrum_im[i] = F::cast_from(0);
+    let n_freq = comptime![n_fft / 2 + 1];
+    let mut k = UNIT_POS as usize;
+    while k < n_freq {
+        spectrum_re_view[k] = shared_re[k];
+        spectrum_im_view[k] = shared_im[k];
+        k += threads_per_cube;
     }
-
-    fft_inner_compute(&mut spectrum_re, &mut spectrum_im, FftMode::Forward);
-
-    for i in 0..spectrums_re_view.shape() {
-        // Warning: this assumes that spectrum views have lines of 1 element
-        // If lines had more elements, the ith element would be duplicated as it is
-        spectrums_re_view.write(i, Vector::cast_from(spectrum_re[i]));
-        spectrums_im_view.write(i, Vector::cast_from(spectrum_im[i]));
-    }
+    sync_cube();
 }

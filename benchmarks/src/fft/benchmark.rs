@@ -78,7 +78,8 @@ impl<R: Runtime, E: Float> Benchmark for FftBench<R, E> {
         let signal = TensorHandle::empty(&client, self.problem.shape.clone(), elem);
 
         let mut shape_out = self.problem.shape.clone();
-        shape_out[2] = self.problem.shape[2] / 2 + 1;
+        let dim = self.problem.shape.len() - 1;
+        shape_out[dim] = self.problem.shape[dim] / 2 + 1;
 
         let spectrum_re = TensorHandle::empty(&client, shape_out.clone(), elem);
         let spectrum_im = TensorHandle::empty(&client, shape_out, elem);
