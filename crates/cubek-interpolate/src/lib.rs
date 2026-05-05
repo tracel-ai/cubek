@@ -1,21 +1,21 @@
 use core::result::Result;
 
-use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*, std::FastDivmod};
+use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*};
 
-use crate::interpolate_options::{InterpolateMode, InterpolateOptions};
+use crate::definition::{InterpolateMode, InterpolateOptions};
 
-mod bicubic;
-mod bilinear;
+pub mod definition;
 mod error;
-pub mod interpolate_options;
-mod lanczos3;
-mod nearest;
+mod modes;
 pub use error::InterpolateError;
 
-use crate::bicubic::interpolate_bicubic_launch;
-use crate::bilinear::interpolate_bilinear_launch;
-use crate::lanczos3::interpolate_lanczos3_launch;
-use crate::nearest::interpolate_nearest_launch;
+use crate::modes::bicubic::interpolate_bicubic_launch;
+use crate::modes::bilinear::interpolate_bilinear_launch;
+use crate::modes::lanczos3::interpolate_lanczos3_launch;
+use crate::modes::nearest::interpolate_nearest_launch;
+
+#[cfg(feature = "cpu-reference")]
+pub mod cpu_reference;
 
 /// Interpolate operation
 ///
@@ -45,12 +45,4 @@ pub fn interpolate<R: Runtime>(
     };
 
     result
-}
-
-fn shape_divmod<R: Runtime>(binding: &TensorBinding<R>) -> SequenceArg<R, FastDivmod<usize>> {
-    let mut out_seq = SequenceArg::new();
-    for dim in binding.shape.iter() {
-        out_seq.push(*dim);
-    }
-    out_seq
 }

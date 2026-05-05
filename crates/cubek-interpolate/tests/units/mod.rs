@@ -1,7 +1,9 @@
 mod nearest;
 
 use cubecl::{TestRuntime, client::ComputeClient, ir::StorageType, std::tensor::TensorHandle};
-use cubek_interpolate::InterpolateError;
+use cubek_interpolate::cpu_reference::cpu_reference_from_host;
+use cubek_interpolate::definition::{InterpolateOptions, InterpolateProblem};
+use cubek_interpolate::{InterpolateError, interpolate};
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, TestInput, TestOutcome, assert_equals_approx,
 };
@@ -46,4 +48,46 @@ pub fn validate_test(
         ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
     };
     outcome.enforce();
+}
+
+pub fn make_problem(
+    input_min: f32,
+    input_max: f32,
+    input_shape: [usize; 4],
+    output_size: [usize; 2],
+    options: InterpolateOptions,
+) -> InterpolateProblem {
+    InterpolateProblem {
+        input_min,
+        input_max,
+        input_shape,
+        output_size,
+        options,
+    }
+}
+
+pub fn run_test(
+    client: ComputeClient<TestRuntime>,
+    seed: u64,
+    problem: InterpolateProblem,
+    tolerance: f32,
+) {
+    let (input, input_data) = TestInput::builder(client.clone(), problem.input_shape.to_vec())
+        .uniform(seed, problem.input_min, problem.input_max)
+        .generate_with_f32_host_data();
+
+    let output_shape = build_output_shape(&input_data, problem.output_size);
+    let output = build_output_tensor(&client, output_shape.clone(), input.dtype);
+    let result = interpolate(
+        &client,
+        input.clone().binding(),
+        output.clone().binding(),
+        problem.options.clone(),
+        input.dtype,
+    );
+
+    let output_host = output_host_f32(&client, output);
+    let reference = cpu_reference_from_host(&input_data, &output_shape, &problem.options, None);
+
+    validate_test(result, output_host, reference, tolerance);
 }

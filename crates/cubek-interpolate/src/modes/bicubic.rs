@@ -1,4 +1,5 @@
-use crate::{InterpolateError, shape_divmod};
+use super::shape_divmod;
+use crate::InterpolateError;
 use cubecl::std::FastDivmod;
 use cubecl::{calculate_cube_count_elemwise, prelude::*, tensor_vector_size_parallel};
 

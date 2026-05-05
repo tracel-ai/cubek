@@ -18,11 +18,15 @@ heavy = []
 extended = ["heavy"]
 full = ["extended"]
 
+cpu-reference = ["dep:cubek-test-utils"]
+
 [dependencies]
 cubecl = { workspace = true }
 cubecl-common = { workspace = true }
 thiserror = { workspace = true }
+cubek-test-utils = { path = "./../cubek-test-utils/", version = "=0.2.0-pre.4", default-features = false, optional = true }
 
 [dev-dependencies]
 cubecl = { workspace = true, features = ["test-runtime"] }
+cubek-interpolate = { path = ".", features = ["cpu-reference"] }
 cubek-test-utils = { path = "../cubek-test-utils", version = "=0.2.0-pre.4", default-features = false }

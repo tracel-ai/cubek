@@ -16,6 +16,9 @@ pub use cubek_convolution as convolution;
 #[cfg(feature = "attention")]
 pub use cubek_attention as attention;
 
+#[cfg(feature = "interpolate")]
+pub use cubek_interpolate as interpolate;
+
 #[cfg(feature = "stdlib")]
 pub use cubek_std as std;
 

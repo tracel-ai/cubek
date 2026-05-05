@@ -1,9 +1,14 @@
 use cubecl::zspace::Shape;
-use cubek_test_utils::{HostData, HostDataVec};
+use cubek_test_utils::{HostData, HostDataVec, Progress};
 
 use super::{contiguous_strides, for_each_output_coord};
 
-pub fn reference_nearest(input: &HostData, output_shape: &[usize]) -> HostData {
+pub fn reference_nearest(
+    input: &HostData,
+    output_shape: &[usize],
+    _: bool,
+    progress: Option<&Progress>,
+) -> HostData {
     let (h_in, w_in) = (input.shape[1], input.shape[2]);
     let (h_out, w_out) = (output_shape[1], output_shape[2]);
     let mut data = vec![0.0f32; output_shape.iter().product()];
@@ -15,6 +20,10 @@ pub fn reference_nearest(input: &HostData, output_shape: &[usize]) -> HostData {
         let c = out_coord[3];
 
         data[linear] = input.get_f32(&[b, y, x, c]);
+
+        if let Some(p) = progress {
+            p.bump();
+        }
     });
 
     HostData {

@@ -7,15 +7,11 @@ use cubecl::{
     std::tensor::TensorHandle,
 };
 
-use crate::{
-    interpolate::{
-        problem::{InterpolateProblem, problem_for},
-        strategy::strategy_for,
-    },
-    registry::RunSamples,
-};
+use crate::interpolate::problem::problem_for;
+use crate::interpolate::strategy::strategy_for;
+use crate::registry::RunSamples;
 
-use cubek_interpolate::{interpolate, interpolate_options::InterpolateOptions};
+use cubek::interpolate::{definition::InterpolateProblem, interpolate};
 
 pub fn run(strategy_id: &str, problem_id: &str, num_samples: usize) -> Result<RunSamples, String> {
     run_on::<cubecl::TestRuntime>(
@@ -37,12 +33,10 @@ pub fn run_on<R: Runtime>(
     let client = R::client(&device);
     let problem =
         problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
-    let strategy =
-        strategy_for(strategy_id).ok_or_else(|| format!("unknown strategy: {strategy_id}"))?;
+    let _ = strategy_for(strategy_id).ok_or_else(|| format!("unknown strategy: {strategy_id}"))?;
 
     let bench = InterpolateBench::<R> {
         problem,
-        strategy,
         device,
         client,
         dtype,
@@ -59,7 +53,6 @@ pub fn run_on<R: Runtime>(
 
 struct InterpolateBench<R: Runtime> {
     problem: InterpolateProblem,
-    strategy: InterpolateOptions,
     device: R::Device,
     client: ComputeClient<R>,
     dtype: StorageType,
@@ -75,13 +68,25 @@ impl<R: Runtime> Benchmark for InterpolateBench<R> {
     }
 
     fn execute(&self, input: Self::Input) -> Result<TensorHandle<R>, String> {
-        Ok(interpolate(
+        let [n, _, _, c] = self.problem.input_shape;
+        let output_shape = vec![
+            n,
+            self.problem.output_size[0],
+            self.problem.output_size[1],
+            c,
+        ];
+        let output = TensorHandle::empty(&self.client, output_shape, self.dtype);
+
+        interpolate(
             &self.client,
             input.binding(),
-            self.problem.output_size,
-            self.strategy.clone(),
+            output.clone().binding(),
+            self.problem.options.clone(),
             self.dtype,
-        ))
+        )
+        .map_err(|err| format!("{err}"))?;
+
+        Ok(output)
     }
 
     fn num_samples(&self) -> usize {
@@ -91,7 +96,7 @@ impl<R: Runtime> Benchmark for InterpolateBench<R> {
     fn name(&self) -> String {
         format!(
             "interpolate-{:?}-{:?}-{:?}-{:?}",
-            self.dtype, self.strategy.mode, self.device, self.problem.input_shape,
+            self.dtype, self.problem.options.mode, self.device, self.problem.input_shape,
         )
         .to_lowercase()
     }
