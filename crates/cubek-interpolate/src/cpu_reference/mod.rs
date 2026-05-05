@@ -18,7 +18,7 @@ pub fn strategy_result(
     let dtype = f32::as_type_native_unchecked().storage_type();
     let input_shape = problem.input_shape.to_vec();
     let (input_handle, _input_host) = TestInput::builder(client.clone(), input_shape.clone())
-        .uniform(seed, problem.input_min, problem.input_max)
+        .uniform(seed, -1., 1.)
         .generate_with_f32_host_data();
 
     let out_shape = output_shape_for(&problem.input_shape, &problem.output_size);
@@ -65,7 +65,7 @@ pub fn cpu_reference_result(
 
     let (_input_handle, input_host) = TestInput::builder(client.clone(), input_shape)
         .dtype(input_dtype)
-        .uniform(seed, problem.input_min, problem.input_max)
+        .uniform(seed, -1., 1.)
         .generate_with_f32_host_data();
 
     Ok(reference_for_mode(

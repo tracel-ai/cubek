@@ -51,15 +51,11 @@ pub fn validate_test(
 }
 
 pub fn make_problem(
-    input_min: f32,
-    input_max: f32,
     input_shape: [usize; 4],
     output_size: [usize; 2],
     options: InterpolateOptions,
 ) -> InterpolateProblem {
     InterpolateProblem {
-        input_min,
-        input_max,
         input_shape,
         output_size,
         options,
@@ -69,11 +65,13 @@ pub fn make_problem(
 pub fn run_test(
     client: ComputeClient<TestRuntime>,
     seed: u64,
+    input_min: f32,
+    input_max: f32,
     problem: InterpolateProblem,
     tolerance: f32,
 ) {
     let (input, input_data) = TestInput::builder(client.clone(), problem.input_shape.to_vec())
-        .uniform(seed, problem.input_min, problem.input_max)
+        .uniform(seed, input_min, input_max)
         .generate_with_f32_host_data();
 
     let output_shape = build_output_shape(&input_data, problem.output_size);
