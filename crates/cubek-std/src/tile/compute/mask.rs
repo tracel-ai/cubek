@@ -3,7 +3,7 @@ use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 
 use crate::tile::{
     Tile, TileExpand, TileScope,
-    data::{InnerLayout, WhiteboxFragmentLayout, StridedTile, UnitTileLayout},
+    data::{InnerLayout, StridedTile, UnitTileLayout, WhiteboxFragmentLayout},
 };
 
 #[cube]

@@ -5,7 +5,7 @@ use crate::tile::{
     Tile,
     data::{
         cmma::CmmaTile,
-        whitebox_fragment::{InnerLayout, WhiteboxFragmentLayout, WhiteboxFragment},
+        whitebox_fragment::{InnerLayout, WhiteboxFragment, WhiteboxFragmentLayout},
     },
     scope::{TileScope, assert_plane_scope},
 };

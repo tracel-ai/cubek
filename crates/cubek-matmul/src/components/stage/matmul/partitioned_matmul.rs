@@ -18,7 +18,7 @@ use core::marker::PhantomData;
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 use cubek_std::{
     stage::StageMemoryConfig,
-    tile::{TileScope, Tile},
+    tile::{Tile, TileScope},
 };
 
 #[cube]
