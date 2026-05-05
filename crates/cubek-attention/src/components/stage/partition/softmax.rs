@@ -7,7 +7,7 @@ use crate::{components::tile::MaskTile, definition::AttentionPartitionSize};
 
 #[derive(CubeType)]
 /// Holds the per-partition score and softmaxed tiles. For the cmma path each
-/// tile is a `Tile::Bounce`, which encapsulates the smem + LocalTile bouncing
+/// tile is a `Tile::Bounce`, which encapsulates the smem + WhiteboxFragment bouncing
 /// internally.
 pub struct SoftmaxPartition<Acc: Float, Lhs: Float> {
     score_tiles: Sequence<Tile<Acc, Plane, ReadWrite>>,

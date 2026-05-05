@@ -10,21 +10,23 @@ use crate::{
                 unit_partitioned::UnitPartitionedStageConfig,
             },
         },
-        tile::{Scope, Tile},
     },
     definition::{MatmulTypes, MatrixTypes, StageIdent},
 };
 
 use core::marker::PhantomData;
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
-use cubek_std::stage::StageMemoryConfig;
+use cubek_std::{
+    stage::StageMemoryConfig,
+    tile::{Tile, TileScope},
+};
 
 #[cube]
 /// Defines how the stage is partitioned among compute primitives (e.g., units or planes).
 /// Controls global writeback and and compute indexing.
 pub trait StagePartitioner: Send + Sync + 'static {
     /// Compute primitive that runs each partition.
-    type Scope: Scope;
+    type Scope: TileScope;
 
     /// Returns the (row, col) of the current compute primitive within the stage.
     fn coordinates(

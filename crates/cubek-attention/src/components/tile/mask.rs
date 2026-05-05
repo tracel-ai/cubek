@@ -2,8 +2,8 @@ use cubecl;
 use cubecl::std::tensor::layout::Coordinates;
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 use cubek_std::tile::{
-    Mask, MaskExpand, MaskLayout, Plane, StridedTile, Tile, allocate_local_tile,
-    allocate_unit_tile, mask_layout_absolute_pos,
+    Mask, MaskExpand, MaskLayout, Plane, StridedTile, Tile, allocate_unit_tile,
+    allocate_whitebox_fragment, mask_layout_absolute_pos,
 };
 
 /// Comptime configuration that drives [`MaskTile::new`] and
@@ -36,7 +36,9 @@ impl<F: Float> MaskTile<F> {
         if comptime!(config.materialized) {
             let fragment: Tile<F, Plane, ReadWrite> = match comptime!(config.layout) {
                 MaskLayout::Unit(l) => allocate_unit_tile::<F, Plane>(comptime!(l)),
-                MaskLayout::Local(l) => allocate_local_tile::<F, Plane>(comptime!(l)),
+                MaskLayout::WhiteboxFragment(l) => {
+                    allocate_whitebox_fragment::<F, Plane>(comptime!(l))
+                }
             };
             MaskTile::new_Materialized(MaterializedTileMask::<F> {
                 fragment,

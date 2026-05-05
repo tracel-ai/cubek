@@ -10,14 +10,13 @@ use crate::components::{
             unit_partitioned::{UnitMatmul, UnitPartitionedStageConfig},
         },
     },
-    tile::Unit,
 };
 use crate::definition::{
     Acc, Lhs, MatmulElems, MatmulSetupError, MatmulTypes, MatmulVectorSizes, Rhs, TilingBlueprint,
 };
 use core::marker::PhantomData;
 use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_std::{InvalidConfigError, MatrixLayout, stage::StageMemoryConfig};
+use cubek_std::{InvalidConfigError, MatrixLayout, stage::StageMemoryConfig, tile::Unit};
 
 /// Unit Matmul family for any precision
 pub struct UnitMatmulFamily<StageIn: StageFamily, StageAcc: StageFamily> {

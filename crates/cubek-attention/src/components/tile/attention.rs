@@ -80,7 +80,7 @@ impl TileAttention {
             AttentionTileMatmul::Register(_) => {
                 MaskLayout::unit(self.tile_size.seq_q, self.tile_size.seq_kv)
             }
-            AttentionTileMatmul::Cmma(_) => MaskLayout::local(
+            AttentionTileMatmul::Cmma(_) => MaskLayout::whitebox_fragment(
                 (self.tile_size.seq_q, self.tile_size.seq_kv),
                 self.plane_dim,
                 self.inner_layout,

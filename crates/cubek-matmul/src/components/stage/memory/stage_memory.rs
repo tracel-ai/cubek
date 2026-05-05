@@ -1,13 +1,16 @@
 use cubecl::prelude::*;
 use cubek_std::{
-    stage::StageMemoryConfig, stage::as_swizzle_object, tile::SharedTile, tile::StridedTile,
+    stage::StageMemoryConfig,
+    stage::as_swizzle_object,
+    tile::SharedTile,
+    tile::StridedTile,
+    tile::{Tile, TileScope},
 };
 use std::marker::PhantomData;
 
 use crate::components::{
     global::{GlobalReaderConfig, PlaneFlowPartition, read::StageBuffer},
     stage::{LoadStageFamily, Stage, StageFamily, TilingLayout},
-    tile::{Scope, Tile},
 };
 use cubecl::std::{Swizzle, tensor::layout::Coords2d};
 
@@ -201,7 +204,7 @@ impl<ES: Numeric, NS: Size, T: TilingLayout> StridedStageMemory<ES, NS, T> {
 
 #[cube]
 impl<ES: Numeric, NS: Size, T: TilingLayout> Stage<ES, ReadOnly> for StridedStageMemory<ES, NS, T> {
-    fn tile<Sc: Scope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc, ReadOnly> {
+    fn tile<Sc: TileScope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc, ReadOnly> {
         let strided_tile = this.get_tile(tile);
         Tile::new_SharedMemory(SharedTile::wrap::<NS>(strided_tile))
     }
@@ -211,7 +214,7 @@ impl<ES: Numeric, NS: Size, T: TilingLayout> Stage<ES, ReadOnly> for StridedStag
 impl<ES: Numeric, NS: Size, T: TilingLayout> Stage<ES, ReadWrite>
     for StridedStageMemory<ES, NS, T>
 {
-    fn tile<Sc: Scope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc, ReadWrite> {
+    fn tile<Sc: TileScope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc, ReadWrite> {
         let strided_tile = this.get_tile_mut(tile);
         Tile::new_SharedMemory(SharedTile::wrap::<NS>(strided_tile))
     }
