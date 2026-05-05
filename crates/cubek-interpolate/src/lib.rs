@@ -31,7 +31,7 @@ pub fn interpolate<R: Runtime>(
 ) -> Result<(), InterpolateError> {
     let _align_corners = options.align_corners;
 
-    let result = match options.mode {
+    match options.mode {
         InterpolateMode::Nearest => interpolate_nearest_launch(client, input, output, dtype),
         InterpolateMode::Bilinear => {
             interpolate_bilinear_launch(client, input, output, _align_corners, dtype)
@@ -42,7 +42,5 @@ pub fn interpolate<R: Runtime>(
         InterpolateMode::Lanczos3 => {
             interpolate_lanczos3_launch(client, input, output, _align_corners, dtype)
         }
-    };
-
-    result
+    }
 }
