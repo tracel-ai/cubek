@@ -41,6 +41,7 @@ cubek = { path = "../crates/cubek", version = "=0.2.0-pre.4", default-features =
     "fft",
     "quantization",
 ] }
+cubek-interpolate = { path = "../crates/cubek-interpolate", version = "=0.2.0-pre.4" }
 cubek-matmul = { path = "../crates/cubek-matmul", version = "=0.2.0-pre.4", features = [
     "cpu-reference",
 ], optional = true }
