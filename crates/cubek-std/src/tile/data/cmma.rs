@@ -7,7 +7,7 @@ use cubecl::{
 
 use crate::{
     MatrixLayout, SwizzleModes, TileSize, as_cmma_layout,
-    tile::{Tile, TileScope},
+    tile::{Tile, TileKind, TileScope},
 };
 
 #[derive(CubeType)]
@@ -57,11 +57,11 @@ pub fn cmma_allocate_lhs<L: Numeric, Sc: TileScope>(
             as_cmma_layout(layout),
         )
     };
-    Tile::new_Cmma(CmmaTile::<L> {
+    Tile::from_kind(TileKind::new_Cmma(CmmaTile::<L> {
         matrix: fragment,
         matrix_layout: layout,
         tile_size,
-    })
+    }))
 }
 
 #[cube]
@@ -78,11 +78,11 @@ pub fn cmma_allocate_rhs<R: Numeric, Sc: TileScope>(
             as_cmma_layout(layout),
         )
     };
-    Tile::new_Cmma(CmmaTile::<R> {
+    Tile::from_kind(TileKind::new_Cmma(CmmaTile::<R> {
         matrix: fragment,
         matrix_layout: layout,
         tile_size,
-    })
+    }))
 }
 
 #[cube]
@@ -99,9 +99,9 @@ pub fn cmma_allocate_acc<A: Numeric, Sc: TileScope>(
             cmma::MatrixLayout::Undefined,
         )
     };
-    Tile::new_Cmma(CmmaTile::<A> {
+    Tile::from_kind(TileKind::new_Cmma(CmmaTile::<A> {
         matrix: fragment,
         matrix_layout: layout,
         tile_size,
-    })
+    }))
 }

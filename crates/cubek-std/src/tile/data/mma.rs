@@ -7,7 +7,7 @@ use cubecl::{
 
 use crate::{
     MatrixLayout, SwizzleModes, TileSize,
-    tile::{Tile, TileScope},
+    tile::{Tile, TileKind, TileScope},
 };
 
 // Fragment inner vector sizes for the three MMA roles. Bound at allocation time
@@ -146,11 +146,11 @@ pub fn mma_allocate_lhs<L: Numeric, R: Numeric, A: Numeric, Sc: TileScope>(
     mma_register_vector_sizes(def);
     let vector_count = def.vectors_per_lane(MatrixIdent::A);
 
-    Tile::new_Mma(MmaTile::<L> {
+    Tile::from_kind(TileKind::new_Mma(MmaTile::<L> {
         fragment: MmaFragment::new_Lhs(Array::new(vector_count)),
         matrix_layout: layout,
         config,
-    })
+    }))
 }
 
 #[cube]
@@ -162,11 +162,11 @@ pub fn mma_allocate_rhs<R: Numeric, L: Numeric, A: Numeric, Sc: TileScope>(
     mma_register_vector_sizes(def);
     let vector_count = def.vectors_per_lane(MatrixIdent::B);
 
-    Tile::new_Mma(MmaTile::<R> {
+    Tile::from_kind(TileKind::new_Mma(MmaTile::<R> {
         fragment: MmaFragment::new_Rhs(Array::new(vector_count)),
         matrix_layout: layout,
         config,
-    })
+    }))
 }
 
 #[cube]
@@ -178,9 +178,9 @@ pub fn mma_allocate_acc<A: Numeric, L: Numeric, R: Numeric, Sc: TileScope>(
     mma_register_vector_sizes(def);
     let vector_count = def.vectors_per_lane(MatrixIdent::Accumulator);
 
-    Tile::new_Mma(MmaTile::<A> {
+    Tile::from_kind(TileKind::new_Mma(MmaTile::<A> {
         fragment: MmaFragment::new_Acc(Array::new(vector_count)),
         matrix_layout: layout,
         config,
-    })
+    }))
 }

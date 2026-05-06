@@ -1,7 +1,7 @@
 use cubecl::{self, prelude::*};
 
 use crate::tile::{
-    LOGIT_MASKED, Tile,
+    LOGIT_MASKED, Tile, TileKind,
     compute::{Mask, MaskExpand},
     data::{rowwise::RowWise, strided::StridedTile},
     scope::TileScope,
@@ -190,7 +190,7 @@ impl<E: Float> UnitTile<E> {
 pub fn allocate_unit_tile<E: Numeric, Sc: TileScope>(
     #[comptime] layout: UnitTileLayout,
 ) -> Tile<E, Sc, ReadWrite> {
-    Tile::new_Unit(UnitTile::<E>::new(layout))
+    Tile::from_kind(TileKind::new_Unit(UnitTile::<E>::new(layout)))
 }
 
 #[cube]

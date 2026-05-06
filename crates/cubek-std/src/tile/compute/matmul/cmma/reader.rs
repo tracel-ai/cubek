@@ -2,16 +2,16 @@ use std::marker::PhantomData;
 
 use cubecl::prelude::*;
 
-use crate::tile::data::{Filled, Strided, StridedTile, TileKind};
+use crate::tile::data::{Filled, StageTileKind, Strided, StridedTile};
 
 /// Generic CMMA reader over any tile type
 #[cube]
 pub trait CmmaFragmentReader {
-    type TileKind: TileKind;
+    type TileKind: StageTileKind;
 
     /// Fill a fragment with data, with the implementation depending on the tile kind.
     fn load_fragment<E: Numeric, V: Numeric, N: Size>(
-        tile: &<Self::TileKind as TileKind>::Tile<V, N>,
+        tile: &<Self::TileKind as StageTileKind>::Tile<V, N>,
         fragment: &mut cmma::Matrix<E>,
         layout: ComptimeOption<cmma::MatrixLayout>,
     );
@@ -19,7 +19,7 @@ pub trait CmmaFragmentReader {
 
 /// Reader using the cmma load/fill functions. Tile kind determines implementation.
 #[derive(CubeType)]
-pub struct CmmaStageReader<Kind: TileKind> {
+pub struct CmmaStageReader<Kind: StageTileKind> {
     #[cube(comptime)]
     _ty: PhantomData<Kind>,
 }
@@ -59,7 +59,7 @@ impl CmmaFragmentReader for CmmaStageReader<Filled> {
 }
 
 #[cube]
-impl<Inner: TileKind> CmmaFragmentReader for CmmaStageReader<Option<Inner>>
+impl<Inner: StageTileKind> CmmaFragmentReader for CmmaStageReader<Option<Inner>>
 where
     CmmaStageReader<Inner>: CmmaFragmentReader<TileKind = Inner>,
 {

@@ -2,7 +2,7 @@ use cubecl::prelude::*;
 
 use crate::{
     MatrixLayout, SwizzleModes, TileSize,
-    tile::{Tile, TileScope},
+    tile::{Tile, TileKind, TileScope},
 };
 
 #[derive(CubeType)]
@@ -68,11 +68,11 @@ pub fn interleaved_allocate_lhs<L: Numeric, Sc: TileScope>(
     let m = config.tile_size.m();
     let k = config.tile_size.k();
     let plane_dim = config.plane_dim;
-    Tile::new_Interleaved(InterleavedTile::<L> {
+    Tile::from_kind(TileKind::new_Interleaved(InterleavedTile::<L> {
         data: Array::new((m * (k / plane_dim)) as usize),
         matrix_layout: layout,
         config,
-    })
+    }))
 }
 
 #[cube]
@@ -83,11 +83,11 @@ pub fn interleaved_allocate_rhs<R: Numeric, Sc: TileScope>(
     let n = config.tile_size.n();
     let k = config.tile_size.k();
     let plane_dim = config.plane_dim;
-    Tile::new_Interleaved(InterleavedTile::<R> {
+    Tile::from_kind(TileKind::new_Interleaved(InterleavedTile::<R> {
         data: Array::new(((k / plane_dim) * n) as usize),
         matrix_layout: layout,
         config,
-    })
+    }))
 }
 
 #[cube]
@@ -97,9 +97,9 @@ pub fn interleaved_allocate_acc<A: Numeric, Sc: TileScope>(
 ) -> Tile<A, Sc, ReadWrite> {
     let m = config.tile_size.m();
     let n = config.tile_size.n();
-    Tile::new_Interleaved(InterleavedTile::<A> {
+    Tile::from_kind(TileKind::new_Interleaved(InterleavedTile::<A> {
         data: Array::new((m * n) as usize),
         matrix_layout: layout,
         config,
-    })
+    }))
 }

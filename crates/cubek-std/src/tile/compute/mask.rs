@@ -2,7 +2,7 @@ use cubecl;
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 
 use crate::tile::{
-    Tile, TileExpand, TileScope,
+    Tile, TileExpand, TileKind, TileKindExpand, TileScope,
     data::{InnerLayout, StridedTile, UnitTileLayout, WhiteboxFragmentLayout},
 };
 
@@ -86,11 +86,11 @@ pub fn mask_layout_absolute_pos(#[comptime] layout: MaskLayout, local_pos: Coord
 #[cube]
 impl<E: Numeric, Sc: TileScope, IO: SliceVisibility> Mask for Tile<E, Sc, IO> {
     fn should_mask(&self, local_pos: Coords2d) -> bool {
-        match self {
-            Tile::Unit(t) => {
+        match &self.kind {
+            TileKind::Unit(t) => {
                 bool::cast_from(t.data[(local_pos.0 * t.layout.num_cols + local_pos.1) as usize])
             }
-            Tile::WhiteboxFragment(t) => bool::cast_from(
+            TileKind::WhiteboxFragment(t) => bool::cast_from(
                 t.array[(local_pos.0 * t.layout.unit_size.1 + local_pos.1) as usize],
             ),
             _ => panic!(
@@ -105,9 +105,9 @@ impl<N: Numeric, Sc: TileScope> Tile<N, Sc, ReadWrite> {
     /// Loads the data from an external strided tile into the inner storage of a
     /// `Tile::Unit` or `Tile::WhiteboxFragment`. Used to materialize a mask fragment.
     pub fn load_mask_from_strided_tile<E: Numeric, ES: Size>(&mut self, tile: &StridedTile<E, ES>) {
-        match self {
-            Tile::Unit(t) => t.load_from_strided_tile::<E, ES>(tile),
-            Tile::WhiteboxFragment(t) => t.load_from_strided_tile::<E, ES>(tile),
+        match &mut self.kind {
+            TileKind::Unit(t) => t.load_from_strided_tile::<E, ES>(tile),
+            TileKind::WhiteboxFragment(t) => t.load_from_strided_tile::<E, ES>(tile),
             _ => panic!("load_mask_from_strided_tile: unsupported tile variant"),
         }
     }

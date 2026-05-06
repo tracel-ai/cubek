@@ -7,13 +7,13 @@ use cubecl::{
 
 use crate::{
     MatrixLayout, TileSize, as_cmma_layout, from_cmma_layout,
-    tile::data::{Filled, LoadMethod, MmaIOConfig, Strided, StridedTile, TileKind},
+    tile::data::{Filled, LoadMethod, MmaIOConfig, StageTileKind, Strided, StridedTile},
 };
 
 /// Generic CMMA reader over any tile type
 #[cube]
 pub trait MmaFragmentReader {
-    type TileKind: TileKind;
+    type TileKind: StageTileKind;
 
     /// Fill a fragment with data, with the implementation depending on the tile kind.
     fn load_fragment<
@@ -25,7 +25,7 @@ pub trait MmaFragmentReader {
         B: Numeric,
         CD: Numeric,
     >(
-        tile: &<Self::TileKind as TileKind>::Tile<V, NV>,
+        tile: &<Self::TileKind as StageTileKind>::Tile<V, NV>,
         fragment: &mut Array<Vector<E, N>>,
         def: MmaDefinition<A, B, CD>,
         #[comptime] ident: MatrixIdent,
@@ -37,7 +37,7 @@ pub trait MmaFragmentReader {
 
 /// Reader to load the manual MMA registers. Tile kind determines implementation.
 #[derive(CubeType)]
-pub struct MmaStageReader<Kind: TileKind> {
+pub struct MmaStageReader<Kind: StageTileKind> {
     #[cube(comptime)]
     _ty: PhantomData<Kind>,
 }
@@ -290,7 +290,7 @@ impl MmaFragmentReader for MmaStageReader<Filled> {
 }
 
 #[cube]
-impl<Inner: TileKind> MmaFragmentReader for MmaStageReader<Option<Inner>>
+impl<Inner: StageTileKind> MmaFragmentReader for MmaStageReader<Option<Inner>>
 where
     MmaStageReader<Inner>: MmaFragmentReader<TileKind = Inner>,
 {

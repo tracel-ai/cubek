@@ -134,14 +134,14 @@ pub fn mma_load_acc_from_shared<
 }
 
 #[cube]
-pub fn mma_load_acc_zeros<E: Numeric, ES: Size, A: Numeric, L: Numeric, R: Numeric>(
+pub fn mma_load_acc_zeros<A: Numeric, L: Numeric, R: Numeric>(
     fragment: &mut Array<Vector<A, NA>>,
     #[comptime] matrix_layout: MatrixLayout,
     #[comptime] config: MmaMatmul,
 ) {
     let def = make_mma_definition::<L, R, A>(config);
-    MmaStageReader::<Filled>::load_fragment::<A, NA, E, ES, L, R, A>(
-        &E::from_int(0),
+    MmaStageReader::<Filled>::load_fragment::<A, NA, A, NA, L, R, A>(
+        &A::from_int(0),
         fragment,
         def,
         MatrixIdent::Accumulator,

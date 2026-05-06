@@ -5,7 +5,7 @@ use crate::tile::compute::mask::Mask;
 use crate::tile::data::{
     BounceTile, InnerLayout, RegisterTile, RowWise, RowWiseExpand, UnitTile, WhiteboxFragment,
 };
-use crate::tile::{Plane, Tile, TileExpand};
+use crate::tile::{Plane, Tile, TileExpand, TileKind, TileKindExpand};
 
 /// Logits below this are considered masked (effectively -inf).
 /// Value chosen to fit within f16 range (~-65,504 max).
@@ -90,17 +90,17 @@ impl<Acc: Float> Tile<Acc, Plane, ReadWrite> {
         state: &mut (RowWise<Acc>, RowWise<Acc>),
         head_dim_factor: Acc,
     ) -> RowWise<Acc> {
-        match self {
-            Tile::Bounce(s) => {
+        match &mut self.kind {
+            TileKind::Bounce(s) => {
                 bounce_softmax::<Acc, Lhs, M>(s, softmaxed_tile, mask, state, head_dim_factor)
             }
-            Tile::WhiteboxFragment(s) => {
+            TileKind::WhiteboxFragment(s) => {
                 fragment_softmax::<Acc, Lhs, M>(s, softmaxed_tile, mask, state, head_dim_factor)
             }
-            Tile::Unit(s) => {
+            TileKind::Unit(s) => {
                 unit_softmax::<Acc, Lhs, M>(s, softmaxed_tile, mask, state, head_dim_factor)
             }
-            Tile::Register(s) => {
+            TileKind::Register(s) => {
                 register_softmax::<Acc, Lhs, M>(s, softmaxed_tile, mask, state, head_dim_factor)
             }
             _ => panic!("softmax: unsupported score variant"),
@@ -112,15 +112,15 @@ impl<Acc: Float> Tile<Acc, Plane, ReadWrite> {
     /// for the next mma; the others operate in place on their native storage.
     pub fn scale_mul<SM: Float>(&mut self, scale: &RowWise<SM>) {
         let scale_acc = RowWise::<SM>::cast_from::<Acc>(scale);
-        match self {
-            Tile::Bounce(b) => {
+        match &mut self.kind {
+            TileKind::Bounce(b) => {
                 b.cmma_to_fragment();
                 b.rowwise_scale(&scale_acc);
                 b.fragment_to_cmma();
             }
-            Tile::WhiteboxFragment(t) => t.rowwise_scale(&scale_acc),
-            Tile::Unit(t) => t.rowwise_scale(&scale_acc),
-            Tile::Register(t) => t.rowwise_scale(&scale_acc),
+            TileKind::WhiteboxFragment(t) => t.rowwise_scale(&scale_acc),
+            TileKind::Unit(t) => t.rowwise_scale(&scale_acc),
+            TileKind::Register(t) => t.rowwise_scale(&scale_acc),
             _ => panic!("scale_mul: unsupported tile variant"),
         }
     }
@@ -130,15 +130,15 @@ impl<Acc: Float> Tile<Acc, Plane, ReadWrite> {
     pub fn scale_div<SM: Float>(&mut self, running_state_l: &RowWise<SM>) {
         let mut scale = RowWise::<SM>::cast_from::<Acc>(running_state_l);
         scale.recip_inplace();
-        match self {
-            Tile::Bounce(b) => {
+        match &mut self.kind {
+            TileKind::Bounce(b) => {
                 b.cmma_to_fragment();
                 b.rowwise_scale(&scale);
                 b.fragment_to_cmma();
             }
-            Tile::WhiteboxFragment(t) => t.rowwise_scale(&scale),
-            Tile::Unit(t) => t.rowwise_scale(&scale),
-            Tile::Register(t) => t.rowwise_scale(&scale),
+            TileKind::WhiteboxFragment(t) => t.rowwise_scale(&scale),
+            TileKind::Unit(t) => t.rowwise_scale(&scale),
+            TileKind::Register(t) => t.rowwise_scale(&scale),
             _ => panic!("scale_div: unsupported tile variant"),
         }
     }
@@ -232,13 +232,13 @@ fn unit_softmax<Acc: Float, Lhs: Float, M: Mask>(
     let exp_m_diff = state.0.exp_diff(&max_buf);
     let new_l = exp_m_diff.mul(&state.1).add(&sum_buf);
 
-    match softmaxed {
-        Tile::Unit(d) => score.write_to::<Lhs>(d),
-        Tile::Bounce(_) => panic!("unit_softmax: Bounce destination not supported"),
-        Tile::WhiteboxFragment(_) => {
+    match &mut softmaxed.kind {
+        TileKind::Unit(d) => score.write_to::<Lhs>(d),
+        TileKind::Bounce(_) => panic!("unit_softmax: Bounce destination not supported"),
+        TileKind::WhiteboxFragment(_) => {
             panic!("unit_softmax: WhiteboxFragment destination not supported")
         }
-        Tile::Register(_) => panic!("unit_softmax: Register destination not supported"),
+        TileKind::Register(_) => panic!("unit_softmax: Register destination not supported"),
         _ => panic!("unit_softmax: unsupported softmaxed variant"),
     }
 
@@ -268,13 +268,13 @@ fn register_softmax<Acc: Float, Lhs: Float, M: Mask>(
     let exp_m_diff = state.0.exp_diff(&max_buf);
     let new_l = exp_m_diff.mul(&state.1).add(&sum_buf);
 
-    match softmaxed {
-        Tile::Register(d) => score.write_to::<Lhs>(d),
-        Tile::Bounce(_) => panic!("register_softmax: Bounce destination not supported"),
-        Tile::WhiteboxFragment(_) => {
+    match &mut softmaxed.kind {
+        TileKind::Register(d) => score.write_to::<Lhs>(d),
+        TileKind::Bounce(_) => panic!("register_softmax: Bounce destination not supported"),
+        TileKind::WhiteboxFragment(_) => {
             panic!("register_softmax: WhiteboxFragment destination not supported")
         }
-        Tile::Unit(_) => panic!("register_softmax: Unit destination not supported"),
+        TileKind::Unit(_) => panic!("register_softmax: Unit destination not supported"),
         _ => panic!("register_softmax: unsupported softmaxed variant"),
     }
 
@@ -292,14 +292,14 @@ fn write_fragment_into<Acc: Float, Lhs: Float>(
     src: &WhiteboxFragment<Acc>,
     softmaxed: &mut Tile<Lhs, Plane, ReadWrite>,
 ) {
-    match softmaxed {
-        Tile::Bounce(d) => {
+    match &mut softmaxed.kind {
+        TileKind::Bounce(d) => {
             let stride = comptime!(d.cmma.tile_size.n());
             src.store_to(&mut d.smem);
             sync_cube();
             cubecl::cmma::load(&d.cmma.matrix, &d.smem.to_slice(), stride);
         }
-        Tile::WhiteboxFragment(d) => {
+        TileKind::WhiteboxFragment(d) => {
             let total = comptime!(src.layout.unit_size.0 * src.layout.unit_size.1);
             for i in 0..total {
                 d.array[i as usize] = Lhs::cast_from(src.array[i as usize]);

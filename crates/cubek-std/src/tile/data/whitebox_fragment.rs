@@ -3,7 +3,7 @@ use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 
 use crate::tile::LOGIT_MASKED;
 use crate::tile::{
-    Tile,
+    Tile, TileKind,
     compute::{Mask, MaskExpand},
     data::{rowwise::RowWise, strided::StridedTile},
     scope::{TileScope, assert_plane_scope},
@@ -228,7 +228,9 @@ pub fn allocate_whitebox_fragment<E: Numeric, Sc: TileScope>(
     #[comptime] layout: WhiteboxFragmentLayout,
 ) -> Tile<E, Sc, ReadWrite> {
     comptime!(assert_plane_scope(Sc::KIND));
-    Tile::new_WhiteboxFragment(WhiteboxFragment::<E>::new(layout))
+    Tile::from_kind(TileKind::new_WhiteboxFragment(WhiteboxFragment::<E>::new(
+        layout,
+    )))
 }
 
 /// Maps a per-unit `(row, col)` to its absolute position within the tile

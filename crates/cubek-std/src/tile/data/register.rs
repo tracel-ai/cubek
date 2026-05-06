@@ -3,7 +3,7 @@ use cubecl::prelude::*;
 use crate::{
     MatrixLayout, SwizzleModes, TileSize,
     tile::{
-        LOGIT_MASKED, Tile, TileScope,
+        LOGIT_MASKED, Tile, TileKind, TileScope,
         compute::{Mask, MaskExpand},
         data::rowwise::RowWise,
     },
@@ -182,11 +182,11 @@ pub fn register_allocate_lhs<L: Numeric, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: RegisterMatmul,
 ) -> Tile<L, Sc, ReadWrite> {
-    Tile::new_Register(RegisterTile::<L> {
+    Tile::from_kind(TileKind::new_Register(RegisterTile::<L> {
         data: Array::new((config.tile_size.m() * config.tile_size.k()) as usize),
         matrix_layout: layout,
         config,
-    })
+    }))
 }
 
 #[cube]
@@ -194,11 +194,11 @@ pub fn register_allocate_rhs<R: Numeric, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: RegisterMatmul,
 ) -> Tile<R, Sc, ReadWrite> {
-    Tile::new_Register(RegisterTile::<R> {
+    Tile::from_kind(TileKind::new_Register(RegisterTile::<R> {
         data: Array::new((config.tile_size.n() * config.tile_size.k()) as usize),
         matrix_layout: layout,
         config,
-    })
+    }))
 }
 
 #[cube]
@@ -206,9 +206,9 @@ pub fn register_allocate_acc<A: Numeric, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: RegisterMatmul,
 ) -> Tile<A, Sc, ReadWrite> {
-    Tile::new_Register(RegisterTile::<A> {
+    Tile::from_kind(TileKind::new_Register(RegisterTile::<A> {
         data: Array::new((config.tile_size.m() * config.tile_size.n()) as usize),
         matrix_layout: layout,
         config,
-    })
+    }))
 }

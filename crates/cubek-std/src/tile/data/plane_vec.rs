@@ -2,7 +2,7 @@ use cubecl::{define_size, prelude::*};
 
 use crate::{
     MatrixLayout, SwizzleModes, TileSize,
-    tile::{Tile, TileScope},
+    tile::{Tile, TileKind, TileScope},
 };
 
 // plane_vec_mat's fragment inner vector size (= reduce_vector_size). Bound at
@@ -61,11 +61,11 @@ pub fn planevec_allocate_lhs<L: Numeric, Sc: TileScope>(
     #[comptime] config: PlaneVecMatInnerProduct,
 ) -> Tile<L, Sc, ReadWrite> {
     register_reduce_vector_size(config.reduce_vector_size);
-    Tile::new_PlaneVec(PlaneVecTile::<L> {
+    Tile::from_kind(TileKind::new_PlaneVec(PlaneVecTile::<L> {
         data: Array::new(1usize),
         matrix_layout: layout,
         config,
-    })
+    }))
 }
 
 #[cube]
@@ -74,11 +74,11 @@ pub fn planevec_allocate_rhs<R: Numeric, Sc: TileScope>(
     #[comptime] config: PlaneVecMatInnerProduct,
 ) -> Tile<R, Sc, ReadWrite> {
     register_reduce_vector_size(config.reduce_vector_size);
-    Tile::new_PlaneVec(PlaneVecTile::<R> {
+    Tile::from_kind(TileKind::new_PlaneVec(PlaneVecTile::<R> {
         data: Array::new(config.tile_size.n() as usize),
         matrix_layout: layout,
         config,
-    })
+    }))
 }
 
 #[cube]
@@ -87,9 +87,9 @@ pub fn planevec_allocate_acc<A: Numeric, Sc: TileScope>(
     #[comptime] config: PlaneVecMatInnerProduct,
 ) -> Tile<A, Sc, ReadWrite> {
     register_reduce_vector_size(config.reduce_vector_size);
-    Tile::new_PlaneVec(PlaneVecTile::<A> {
+    Tile::from_kind(TileKind::new_PlaneVec(PlaneVecTile::<A> {
         data: Array::new(config.tile_size.n() as usize),
         matrix_layout: layout,
         config,
-    })
+    }))
 }

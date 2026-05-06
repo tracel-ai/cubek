@@ -2,7 +2,7 @@ use cubecl;
 use cubecl::prelude::*;
 
 use crate::tile::{
-    Tile, TileExpand,
+    Tile, TileKind, TileKindExpand,
     compute::Mask,
     data::{
         cmma::CmmaTile,
@@ -135,14 +135,14 @@ fn write_fragment_into<Acc: Float, Lhs: Float, Sc: TileScope>(
     src: &WhiteboxFragment<Acc>,
     softmaxed: &mut Tile<Lhs, Sc, ReadWrite>,
 ) {
-    match softmaxed {
-        Tile::Bounce(d) => {
+    match &mut softmaxed.kind {
+        TileKind::Bounce(d) => {
             let stride = comptime!(d.cmma.tile_size.n());
             src.store_to(&mut d.smem);
             sync_cube();
             cubecl::cmma::load(&d.cmma.matrix, &d.smem.to_slice(), stride);
         }
-        Tile::WhiteboxFragment(d) => {
+        TileKind::WhiteboxFragment(d) => {
             let total = comptime!(src.layout.unit_size.0 * src.layout.unit_size.1);
             for i in 0..total {
                 d.array[i as usize] = Lhs::cast_from(src.array[i as usize]);
@@ -160,5 +160,5 @@ pub fn allocate_bounce_tile<E: Numeric, Sc: TileScope>(
     #[comptime] cfg: BounceConfig,
 ) -> Tile<E, Sc, ReadWrite> {
     comptime!(assert_plane_scope(Sc::KIND));
-    Tile::new_Bounce(BounceTile::<E>::new(cmma, cfg))
+    Tile::from_kind(TileKind::new_Bounce(BounceTile::<E>::new(cmma, cfg)))
 }

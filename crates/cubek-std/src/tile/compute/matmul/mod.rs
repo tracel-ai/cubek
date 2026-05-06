@@ -12,7 +12,7 @@ pub mod register;
 use cubecl::prelude::*;
 
 use crate::tile::{
-    MmaFragment, MmaFragmentExpand, Tile, TileExpand, TileScope,
+    MmaFragment, MmaFragmentExpand, Tile, TileExpand, TileKind, TileKindExpand, TileScope,
     compute::matmul::{
         cmma::cmma_execute, interleaved::interleaved_execute, mma::mma_execute,
         plane_vec::planevec_execute, register::register_execute,
@@ -27,20 +27,20 @@ impl<N: Numeric, Sc: TileScope> Tile<N, Sc, ReadWrite> {
         lhs: &Tile<L, Sc, ReadWrite>,
         rhs: &Tile<R, Sc, ReadWrite>,
     ) {
-        match (lhs, rhs, self) {
-            (Tile::Cmma(l), Tile::Cmma(r), Tile::Cmma(a)) => {
+        match (&lhs.kind, &rhs.kind, &mut self.kind) {
+            (TileKind::Cmma(l), TileKind::Cmma(r), TileKind::Cmma(a)) => {
                 cmma_execute(&l.matrix, &r.matrix, &mut a.matrix);
             }
-            (Tile::Cmma(l), Tile::Cmma(r), Tile::Bounce(a)) => {
+            (TileKind::Cmma(l), TileKind::Cmma(r), TileKind::Bounce(a)) => {
                 cmma_execute(&l.matrix, &r.matrix, &mut a.cmma.matrix);
             }
-            (Tile::Bounce(l), Tile::Cmma(r), Tile::Bounce(a)) => {
+            (TileKind::Bounce(l), TileKind::Cmma(r), TileKind::Bounce(a)) => {
                 cmma_execute(&l.cmma.matrix, &r.matrix, &mut a.cmma.matrix);
             }
-            (Tile::Bounce(l), Tile::Cmma(r), Tile::Cmma(a)) => {
+            (TileKind::Bounce(l), TileKind::Cmma(r), TileKind::Cmma(a)) => {
                 cmma_execute(&l.cmma.matrix, &r.matrix, &mut a.matrix);
             }
-            (Tile::Mma(l), Tile::Mma(r), Tile::Mma(a)) => match &l.fragment {
+            (TileKind::Mma(l), TileKind::Mma(r), TileKind::Mma(a)) => match &l.fragment {
                 MmaFragment::Lhs(lf) => match &r.fragment {
                     MmaFragment::Rhs(rf) => match &mut a.fragment {
                         MmaFragment::Acc(af) => {
@@ -58,13 +58,13 @@ impl<N: Numeric, Sc: TileScope> Tile<N, Sc, ReadWrite> {
                     panic!("Mma: expected Lhs role for lhs")
                 }
             },
-            (Tile::Register(l), Tile::Register(r), Tile::Register(a)) => {
+            (TileKind::Register(l), TileKind::Register(r), TileKind::Register(a)) => {
                 register_execute(&l.data, &r.data, &mut a.data, a.config);
             }
-            (Tile::PlaneVec(l), Tile::PlaneVec(r), Tile::PlaneVec(a)) => {
+            (TileKind::PlaneVec(l), TileKind::PlaneVec(r), TileKind::PlaneVec(a)) => {
                 planevec_execute(&l.data, &r.data, &mut a.data, a.config);
             }
-            (Tile::Interleaved(l), Tile::Interleaved(r), Tile::Interleaved(a)) => {
+            (TileKind::Interleaved(l), TileKind::Interleaved(r), TileKind::Interleaved(a)) => {
                 interleaved_execute(
                     &l.data,
                     l.matrix_layout,
