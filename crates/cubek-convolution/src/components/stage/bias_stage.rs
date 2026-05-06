@@ -4,7 +4,7 @@ use cubek_matmul::components::stage::{LoadStageFamily, Stage, StageFamily, Tilin
 use cubecl::std::{Swizzle, tensor::layout::Coords2d};
 use cubek_std::{
     stage::{StageMemoryConfig, as_swizzle_object},
-    tile::{Scope, SharedTile, StridedTile, Tile},
+    tile::{SharedTile, StridedTile, Tile, TileScope},
 };
 
 use crate::components::stage::reader::BiasTilingLayout;
@@ -121,7 +121,7 @@ impl<ES: Numeric, NS: Size> BiasStageMemory<ES, NS> {
 
 #[cube]
 impl<ES: Numeric, NS: Size> Stage<ES, ReadOnly> for BiasStageMemory<ES, NS> {
-    fn tile<Sc: Scope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc, ReadOnly> {
+    fn tile<Sc: TileScope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc, ReadOnly> {
         Tile::new_SharedMemory(SharedTile::wrap::<NS>(this.get_tile(tile)))
     }
 }

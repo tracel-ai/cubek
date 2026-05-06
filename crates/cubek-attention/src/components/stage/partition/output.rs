@@ -7,7 +7,7 @@ use crate::definition::AttentionPartitionSize;
 
 #[derive(CubeType)]
 /// Holds the per-partition output accumulator tiles. For the cmma path each
-/// tile is a `Tile::Bounce`, which carries its own smem + LocalTile internally.
+/// tile is a `Tile::Bounce`, which carries its own smem + WhiteboxFragment internally.
 pub struct OutputPartition<Acc: Float> {
     sequence: Sequence<Tile<Acc, Plane, ReadWrite>>,
 }

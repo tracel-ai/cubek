@@ -2,28 +2,32 @@ use std::marker::PhantomData;
 
 use super::fragments::{Accumulators, RhsTile, RhsTileExpand};
 use crate::{
+    components::stage::PartitionSchedulerScheme,
+    definition::{Acc, Rhs},
+};
+use crate::{
     components::{
         global::PlaneFlowConfig,
         stage::{
             PartitionBuffering, Stage, StageEvent, StageEventListener,
             matmul::scheduler::PartitionScheduler,
         },
-        tile::{
-            Scope, TileMatmul, cmma_allocate_lhs, cmma_allocate_rhs, interleaved_allocate_lhs,
-            interleaved_allocate_rhs, mma_allocate_lhs, mma_allocate_rhs, planevec_allocate_lhs,
-            planevec_allocate_rhs, register_allocate_lhs, register_allocate_rhs,
-        },
+        tile::TileMatmul,
     },
     definition::{
         AccRE, Lhs, LhsRE, LhsSE, LhsSS, MatmulTypes, MatrixTypes, RhsRE, RhsSE, RhsSS, StageIdent,
     },
 };
-use crate::{
-    components::{stage::PartitionSchedulerScheme, tile::Tile},
-    definition::{Acc, Rhs},
-};
 use cubecl::prelude::*;
-use cubek_std::{PartitionSize, StageSize, stage::StageMemoryConfig};
+use cubek_std::{
+    PartitionSize, StageSize,
+    stage::StageMemoryConfig,
+    tile::{
+        Tile, TileScope, cmma_allocate_lhs, cmma_allocate_rhs, interleaved_allocate_lhs,
+        interleaved_allocate_rhs, mma_allocate_lhs, mma_allocate_rhs, planevec_allocate_lhs,
+        planevec_allocate_rhs, register_allocate_lhs, register_allocate_rhs,
+    },
+};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct SharedPartitionMatmulConfig {
@@ -80,7 +84,7 @@ pub struct PartitionMatmul<
     StageLhs: Stage<STy<Lhs<MP>>, ReadOnly>,
     StageRhs: Stage<STy<Rhs<MP>>, ReadOnly>,
     StageAcc: Stage<STy<Acc<MP>>, ReadOnly>,
-    Sc: Scope,
+    Sc: TileScope,
 > {
     _phantom: PhantomData<(MP, StageLhs, StageRhs, StageAcc, Sc)>,
 }
@@ -92,7 +96,7 @@ where
     StageLhs: Stage<STy<Lhs<MT>>, ReadOnly>,
     StageRhs: Stage<STy<Rhs<MT>>, ReadOnly>,
     StageAcc: Stage<STy<Acc<MT>>, ReadOnly>,
-    Sc: Scope,
+    Sc: TileScope,
 {
     #[allow(clippy::too_many_arguments)]
     /// Execute all Tile Matmuls inside the partition
@@ -454,7 +458,7 @@ where
 }
 
 #[cube]
-fn allocate_lhs<MT: MatmulTypes, Sc: Scope>(
+fn allocate_lhs<MT: MatmulTypes, Sc: TileScope>(
     #[comptime] layout: cubek_std::MatrixLayout,
     #[comptime] tile_matmul: TileMatmul,
 ) -> Tile<LhsRE<MT>, Sc, ReadWrite> {
@@ -468,7 +472,7 @@ fn allocate_lhs<MT: MatmulTypes, Sc: Scope>(
 }
 
 #[cube]
-fn allocate_rhs<MT: MatmulTypes, Sc: Scope>(
+fn allocate_rhs<MT: MatmulTypes, Sc: TileScope>(
     #[comptime] layout: cubek_std::MatrixLayout,
     #[comptime] config: TileMatmul,
 ) -> Tile<RhsRE<MT>, Sc, ReadWrite> {

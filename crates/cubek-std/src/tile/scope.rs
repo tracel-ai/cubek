@@ -5,7 +5,7 @@ use cubecl::prelude::*;
 use crate::CubeDimResource;
 
 /// Identifies which compute primitive executes a tile matmul.
-pub trait Scope: Clone + Copy + Send + Sync + 'static {
+pub trait TileScope: Clone + Copy + Send + Sync + 'static {
     /// Compute resource a single instance of this scope occupies.
     fn default_resource() -> CubeDimResource;
 
@@ -28,19 +28,19 @@ pub struct Plane;
 #[derive(Clone, Copy)]
 pub struct Cube;
 
-impl Scope for Unit {
+impl TileScope for Unit {
     fn default_resource() -> CubeDimResource {
         CubeDimResource::Units(1)
     }
     const KIND: ScopeKind = ScopeKind::Unit;
 }
-impl Scope for Plane {
+impl TileScope for Plane {
     fn default_resource() -> CubeDimResource {
         CubeDimResource::Planes(1)
     }
     const KIND: ScopeKind = ScopeKind::Plane;
 }
-impl Scope for Cube {
+impl TileScope for Cube {
     fn default_resource() -> CubeDimResource {
         unimplemented!("Cube scope does not have a default cube-dim resource")
     }
@@ -49,13 +49,12 @@ impl Scope for Cube {
 
 /// Zero-sized comptime marker used to carry a [Scope] generic through [Tile].
 #[derive(CubeType, Clone, Copy)]
-pub struct ScopeMarker<Sc: Scope> {
+pub struct ScopeMarker<Sc: TileScope> {
     #[cube(comptime)]
     _phantom: PhantomData<Sc>,
 }
 
 /// Comptime assertion that a tile-scope generic resolves to `Plane`.
-/// Use at construction sites of plane-only variants (`Tile::Local`, `Tile::Bounce`).
 pub fn assert_plane_scope(kind: ScopeKind) {
     match kind {
         ScopeKind::Plane => {}

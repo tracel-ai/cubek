@@ -10,7 +10,6 @@ use crate::components::{
             partition::SharedPartitionMatmulConfig, partitioned_matmul::PartitionMatmulConfig,
         },
     },
-    tile::Plane,
 };
 use crate::definition::{
     MatmulElems, MatmulSetupError, MatmulTypes, MatmulVectorSizes, TilingBlueprint,
@@ -23,6 +22,7 @@ use core::marker::PhantomData;
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::{
     stage::StageMemoryConfig,
+    tile::Plane,
     {InvalidConfigError, MatrixLayout},
 };
 
