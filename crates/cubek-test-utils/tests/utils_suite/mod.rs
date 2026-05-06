@@ -310,7 +310,6 @@ fn launch_virtual_tensor_tiled<N: Numeric, S: Size>(
     #[define(S)] vector_size: usize,
 ) {
     let input_view = input.view(SimpleLayout::new(8 * 8, vector_size));
-    //let output_view = output.view_mut(SimpleLayout::new(8, vector_size));
     let output_view = output.view_mut(TiledLayout::new(8, 8));
 
     for i in 0..8 {
