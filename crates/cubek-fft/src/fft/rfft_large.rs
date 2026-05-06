@@ -48,7 +48,7 @@ use crate::{
 };
 
 /// Forward large-`n_fft` RFFT. Shapes:
-/// * `signal`: (..., n_fft) real.
+/// * `signal`: (..., <= n_fft) real.
 /// * `spectrum_re`, `spectrum_im`: (..., n_fft/2 + 1) complex.
 pub(crate) fn rfft_large_launch<R: Runtime>(
     client: &ComputeClient<R>,
@@ -56,9 +56,10 @@ pub(crate) fn rfft_large_launch<R: Runtime>(
     spectrum_re: TensorBinding<R>,
     spectrum_im: TensorBinding<R>,
     dim: usize,
+    signal_len: usize,
     dtype: StorageType,
 ) -> Result<(), LaunchError> {
-    let n_fft = signal.shape[dim];
+    let n_fft = (spectrum_re.shape[dim] - 1) * 2;
     let m = n_fft / 2;
     let count: usize = signal
         .shape
@@ -100,6 +101,7 @@ pub(crate) fn rfft_large_launch<R: Runtime>(
             packed_re.clone().binding().into_tensor_arg(),
             packed_im.clone().binding().into_tensor_arg(),
             (count * m) as u32,
+            signal_len as u32,
             m,
             dim,
         );
@@ -152,6 +154,7 @@ pub(crate) fn irfft_large_launch<R: Runtime>(
     spectrum_im: TensorBinding<R>,
     signal: TensorBinding<R>,
     dim: usize,
+    spec_bins: usize,
     dtype: StorageType,
 ) -> Result<(), LaunchError> {
     let n_fft = signal.shape[dim];
@@ -206,6 +209,7 @@ pub(crate) fn irfft_large_launch<R: Runtime>(
             packed_in_re.clone().binding().into_tensor_arg(),
             packed_in_im.clone().binding().into_tensor_arg(),
             (count * m) as u32,
+            spec_bins as u32,
             n_fft,
             m,
             dim,
@@ -258,6 +262,7 @@ fn rfft_pack_kernel<F: Float>(
     packed_re: &mut Tensor<F>,
     packed_im: &mut Tensor<F>,
     total: u32,
+    signal_len: u32,
     #[comptime] m: usize,
     #[comptime] dim: usize,
 ) {
@@ -270,8 +275,14 @@ fn rfft_pack_kernel<F: Float>(
     let signal_view = signal.view(BatchSignalLayout::new(signal, window, dim));
     let mut packed_re_view = packed_re.view_mut(BatchSignalLayout::new(packed_re, window, dim));
     let mut packed_im_view = packed_im.view_mut(BatchSignalLayout::new(packed_im, window, dim));
-    packed_re_view[k] = signal_view[2 * k];
-    packed_im_view[k] = signal_view[2 * k + 1];
+    let even = 2 * k;
+    let odd = even + 1;
+    let even_active = even < signal_len as usize;
+    let odd_active = odd < signal_len as usize;
+    let even = select(even_active, even, 0);
+    let odd = select(odd_active, odd, 0);
+    packed_re_view[k] = select(even_active, signal_view[even], F::new(0.0));
+    packed_im_view[k] = select(odd_active, signal_view[odd], F::new(0.0));
 }
 
 /// Recover `X[0..N/2+1]` from `Y[0..M]` for the packed-real forward path.
@@ -363,6 +374,7 @@ fn irfft_pre_kernel<F: Float>(
     packed_re: &mut Tensor<F>,
     packed_im: &mut Tensor<F>,
     total: u32,
+    spec_bins: u32,
     #[comptime] n_fft: usize,
     #[comptime] m: usize,
     #[comptime] dim: usize,
@@ -379,15 +391,22 @@ fn irfft_pre_kernel<F: Float>(
     let mut packed_im_view = packed_im.view_mut(BatchSignalLayout::new(packed_im, window, dim));
 
     if k == 0 {
+        let has_nyquist = m < spec_bins as usize;
         let x0_re = spectrum_re_view[0];
-        let xm_re = spectrum_re_view[m];
+        let xm = select(has_nyquist, m, 0);
+        let xm_re = select(has_nyquist, spectrum_re_view[xm], F::new(0.0));
         packed_re_view[k] = F::new(0.5) * (x0_re + xm_re);
         packed_im_view[k] = F::new(0.5) * (x0_re - xm_re);
     } else {
-        let x_re = spectrum_re_view[k];
-        let x_im = spectrum_im_view[k];
-        let xm_re = spectrum_re_view[m - k];
-        let xm_im_raw = spectrum_im_view[m - k];
+        let active = k < spec_bins as usize;
+        let src = select(active, k, 0);
+        let x_re = select(active, spectrum_re_view[src], F::new(0.0));
+        let x_im = select(active, spectrum_im_view[src], F::new(0.0));
+        let mirror = m - k;
+        let mirror_active = mirror < spec_bins as usize;
+        let mirror = select(mirror_active, mirror, 0);
+        let xm_re = select(mirror_active, spectrum_re_view[mirror], F::new(0.0));
+        let xm_im_raw = select(mirror_active, spectrum_im_view[mirror], F::new(0.0));
         let xm_im = -xm_im_raw; // conj(X[M-k])
 
         // Inverse twiddle W_N^{-k} = cos(2π k / N) + i sin(2π k / N).

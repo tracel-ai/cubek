@@ -71,9 +71,50 @@ pub fn rfft_launch<R: Runtime>(
     dim: usize,
     dtype: StorageType,
 ) -> Result<(), LaunchError> {
-    let n_fft = signal.shape[dim];
+    let signal_len = signal.shape[dim];
+    rfft_launch_padded::<R>(
+        client,
+        signal,
+        spectrum_re,
+        spectrum_im,
+        dim,
+        signal_len,
+        dtype,
+    )
+}
+
+/// Launches the RFFT kernel while treating samples at `signal_len..n_fft` as zero.
+pub fn rfft_launch_padded<R: Runtime>(
+    client: &ComputeClient<R>,
+    signal: TensorBinding<R>,
+    spectrum_re: TensorBinding<R>,
+    spectrum_im: TensorBinding<R>,
+    dim: usize,
+    signal_len: usize,
+    dtype: StorageType,
+) -> Result<(), LaunchError> {
+    assert!(
+        spectrum_re.shape == spectrum_im.shape,
+        "spectrum real and imaginary shapes must match"
+    );
+    assert!(dim < signal.shape.len(), "dim must be in bounds");
+
+    assert!(
+        spectrum_re.shape[dim] >= 2,
+        "RFFT spectrum dimension must contain at least DC and Nyquist bins"
+    );
+    let n_fft = (spectrum_re.shape[dim] - 1) * 2;
     assert!(n_fft.is_power_of_two(), "RFFT requires power-of-2 length");
     assert!(n_fft >= 2, "RFFT requires n_fft >= 2");
+    assert!(
+        signal_len <= signal.shape[dim],
+        "signal_len ({signal_len}) must be <= signal dimension ({})",
+        signal.shape[dim]
+    );
+    assert!(
+        signal_len <= n_fft,
+        "signal_len ({signal_len}) must be <= n_fft ({n_fft})"
+    );
 
     let count: usize = signal
         .shape
@@ -87,7 +128,15 @@ pub fn rfft_launch<R: Runtime>(
     }
 
     if n_fft > SHARED_MEM_CAP {
-        return rfft_large_launch::<R>(client, signal, spectrum_re, spectrum_im, dim, dtype);
+        return rfft_large_launch::<R>(
+            client,
+            signal,
+            spectrum_re,
+            spectrum_im,
+            dim,
+            signal_len,
+            dtype,
+        );
     }
 
     let log2_n = n_fft.trailing_zeros() as usize;
@@ -104,6 +153,7 @@ pub fn rfft_launch<R: Runtime>(
         spectrum_re.into_tensor_arg(),
         spectrum_im.into_tensor_arg(),
         count as u32,
+        signal_len as u32,
         n_fft,
         log2_n,
         threads_per_cube,
@@ -118,6 +168,7 @@ fn rfft_kernel<F: Float>(
     spectrum_re: &mut Tensor<F>,
     spectrum_im: &mut Tensor<F>,
     num_windows: u32,
+    signal_len: u32,
     #[comptime] n_fft: usize,
     #[comptime] log2_n: usize,
     #[comptime] threads_per_cube: usize,
@@ -140,7 +191,9 @@ fn rfft_kernel<F: Float>(
     let mut i = UNIT_POS as usize;
     while i < n_fft {
         let j = bit_reverse(i, log2_n);
-        shared_re[j] = signal_view[i];
+        let active = i < signal_len as usize;
+        let src = select(active, i, 0);
+        shared_re[j] = select(active, signal_view[src], F::new(0.0));
         shared_im[j] = F::new(0.0);
         i += threads_per_cube;
     }

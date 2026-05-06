@@ -1,13 +1,12 @@
-#[cfg(feature = "heavy")]
 use cubecl::CubeElement;
 use cubecl::{
     client::ComputeClient,
     frontend::CubePrimitive,
+    prelude::StorageType,
     std::tensor::TensorHandle,
     {Runtime, TestRuntime},
 };
-use cubek_fft::rfft_launch;
-#[cfg(feature = "heavy")]
+use cubek_fft::{rfft_launch, rfft_launch_padded};
 use cubek_test_utils::HostDataVec;
 use cubek_test_utils::{
     self, ExecutionOutcome, HostData, HostDataType, TestInput, TestOutcome, ValidationResult,
@@ -60,6 +59,85 @@ fn test_launch(client: ComputeClient<TestRuntime>, signal_shape: Vec<usize>, dim
     .enforce();
 }
 
+fn test_launch_padded(
+    client: ComputeClient<TestRuntime>,
+    signal_shape: Vec<usize>,
+    dim: usize,
+    signal_len: usize,
+    n_fft: usize,
+) {
+    let dtype = f32::as_type_native_unchecked().storage_type();
+    let n_freq = n_fft / 2 + 1;
+
+    let mut spectrum_shape = signal_shape.clone();
+    spectrum_shape[dim] = n_freq;
+    let mut padded_shape = signal_shape.clone();
+    padded_shape[dim] = n_fft;
+
+    let virtual_signal = tensor_from_data(
+        &client,
+        signal_shape.clone(),
+        &data_for_shape_with_len(&signal_shape, dim, signal_len),
+        dtype,
+    );
+    let padded_signal = tensor_from_data(
+        &client,
+        padded_shape,
+        &padded_data(&signal_shape, dim, signal_len, n_fft),
+        dtype,
+    );
+
+    let virtual_re = empty_tensor(&client, spectrum_shape.clone(), dtype);
+    let virtual_im = empty_tensor(&client, spectrum_shape.clone(), dtype);
+    let padded_re = empty_tensor(&client, spectrum_shape.clone(), dtype);
+    let padded_im = empty_tensor(&client, spectrum_shape, dtype);
+
+    rfft_launch_padded::<TestRuntime>(
+        &client,
+        virtual_signal.binding(),
+        virtual_re.clone().binding(),
+        virtual_im.clone().binding(),
+        dim,
+        signal_len,
+        dtype,
+    )
+    .unwrap();
+
+    rfft_launch::<TestRuntime>(
+        &client,
+        padded_signal.binding(),
+        padded_re.clone().binding(),
+        padded_im.clone().binding(),
+        dim,
+        dtype,
+    )
+    .unwrap();
+
+    let actual_re = to_f32(HostData::from_tensor_handle(
+        &client,
+        virtual_re,
+        HostDataType::F32,
+    ));
+    let actual_im = to_f32(HostData::from_tensor_handle(
+        &client,
+        virtual_im,
+        HostDataType::F32,
+    ));
+    let expected_re = to_f32(HostData::from_tensor_handle(
+        &client,
+        padded_re,
+        HostDataType::F32,
+    ));
+    let expected_im = to_f32(HostData::from_tensor_handle(
+        &client,
+        padded_im,
+        HostDataType::F32,
+    ));
+
+    assert_f32_close(&actual_re, &expected_re);
+    assert_f32_close(&actual_im, &expected_im);
+}
+
 pub fn assert_rfft_result(
     client: &ComputeClient<TestRuntime>,
     signal: HostData,
@@ -87,7 +165,6 @@ pub fn assert_rfft_result(
     }
 }
 
-#[cfg(feature = "heavy")]
 fn to_f32(host: HostData) -> Vec<f32> {
     match host.data {
         HostDataVec::F32(v) => v,
@@ -95,8 +172,85 @@ fn to_f32(host: HostData) -> Vec<f32> {
     }
 }
 
+fn coords_from_index(mut index: usize, shape: &[usize]) -> Vec<usize> {
+    let mut coords = vec![0; shape.len()];
+    for axis in (0..shape.len()).rev() {
+        coords[axis] = index % shape[axis];
+        index /= shape[axis];
+    }
+    coords
+}
+
+fn sample_value(coords: &[usize]) -> f32 {
+    coords
+        .iter()
+        .enumerate()
+        .map(|(axis, coord)| (axis as f32 + 1.0) * (*coord as f32 + 0.25))
+        .sum::<f32>()
+        .sin()
+}
+
+fn data_for_shape_with_len(shape: &[usize], dim: usize, signal_len: usize) -> Vec<f32> {
+    (0..shape.iter().product::<usize>())
+        .map(|index| {
+            let coords = coords_from_index(index, shape);
+            if coords[dim] < signal_len {
+                sample_value(&coords)
+            } else {
+                0.0
+            }
+        })
+        .collect()
+}
+
+fn padded_data(shape: &[usize], dim: usize, signal_len: usize, target_len: usize) -> Vec<f32> {
+    let mut padded_shape = shape.to_vec();
+    padded_shape[dim] = target_len;
+
+    (0..padded_shape.iter().product::<usize>())
+        .map(|index| {
+            let coords = coords_from_index(index, &padded_shape);
+            if coords[dim] < signal_len {
+                sample_value(&coords)
+            } else {
+                0.0
+            }
+        })
+        .collect()
+}
+
+fn tensor_from_data(
+    client: &ComputeClient<TestRuntime>,
+    shape: Vec<usize>,
+    data: &[f32],
+    dtype: StorageType,
+) -> TensorHandle<TestRuntime> {
+    TensorHandle::<TestRuntime>::new_contiguous(
+        shape,
+        client.create_from_slice(f32::as_bytes(data)),
+        dtype,
+    )
+}
+
+fn empty_tensor(
+    client: &ComputeClient<TestRuntime>,
+    shape: Vec<usize>,
+    dtype: StorageType,
+) -> TensorHandle<TestRuntime> {
+    let elems = shape.iter().product::<usize>();
+    TensorHandle::<TestRuntime>::new_contiguous(shape, client.empty(elems * dtype.size()), dtype)
+}
+
+fn assert_f32_close(actual: &[f32], expected: &[f32]) {
+    for (index, (actual, expected)) in actual.iter().zip(expected.iter()).enumerate() {
+        assert!(
+            (actual - expected).abs() < 1e-4,
+            "mismatch at index {index}: actual={actual}, expected={expected}"
+        );
+    }
+}
+
 #[test]
-#[cfg(not(feature = "heavy"))]
 fn rfft_light_axis_last() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let signal_shape = [1, 8].to_vec();
@@ -105,7 +259,6 @@ fn rfft_light_axis_last() {
 }
 
 #[test]
-#[cfg(not(feature = "heavy"))]
 fn rfft_light_axis_1_strided() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let signal_shape = [2, 8, 1].to_vec();
@@ -114,7 +267,6 @@ fn rfft_light_axis_1_strided() {
 }
 
 #[test]
-#[cfg(not(feature = "heavy"))]
 fn rfft_light_axis_1_strided_trailing_batch() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let signal_shape = [3, 8, 2].to_vec();
@@ -123,7 +275,6 @@ fn rfft_light_axis_1_strided_trailing_batch() {
 }
 
 #[test]
-#[cfg(not(feature = "heavy"))]
 fn rfft_light_axis_0_strided() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let signal_shape = [8, 2].to_vec();
@@ -132,12 +283,23 @@ fn rfft_light_axis_0_strided() {
 }
 
 #[test]
-#[cfg(not(feature = "heavy"))]
 fn rfft_light_axis_last_n16() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let signal_shape = [1, 16].to_vec();
     let dim = signal_shape.len() - 1;
     test_launch(client, signal_shape, dim);
+}
+
+#[test]
+fn rfft_virtual_padding_axis_1_matches_materialized_zero_padding() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    test_launch_padded(client, vec![2, 5, 3], 1, 5, 8);
+}
+
+#[test]
+fn rfft_virtual_padding_ignores_tail_after_signal_len() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    test_launch_padded(client, vec![2, 7, 3], 1, 5, 8);
 }
 
 #[test]
@@ -210,6 +372,13 @@ fn rfft_batched_large_axis_last() {
     let signal_shape = [3, 8192].to_vec();
     let dim = signal_shape.len() - 1;
     test_launch(client, signal_shape, dim);
+}
+
+#[test]
+#[cfg(feature = "heavy")]
+fn rfft_large_virtual_padding_matches_materialized_zero_padding() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    test_launch_padded(client, vec![1, 5000], 1, 5000, 8192);
 }
 
 #[test]
