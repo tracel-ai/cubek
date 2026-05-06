@@ -263,7 +263,6 @@ fn virtual_tensor_view_with_tiled_physical_memory() {
 
     let values = output.pretty_print();
     panic!("values: \n{}", values);
-    
 }
 
 #[derive(CubeType, Clone, Copy)]
@@ -275,10 +274,7 @@ pub struct TiledLayout {
 #[cube]
 impl TiledLayout {
     pub fn new(width: usize, height: usize) -> TiledLayout {
-        TiledLayout {
-            width, 
-            height,
-        }
+        TiledLayout { width, height }
     }
 }
 
