@@ -1,10 +1,15 @@
+use cubecl::ir::{ElemType, StorageType, UIntKind};
 use cubecl::prelude::*;
-use cubecl::std::FastDivmod;
+use cubecl::std::{
+    FastDivmod,
+    tensor::layout::linear::{LinearLayoutLaunch, LinearViewLayoutLaunch},
+};
 
 pub mod bicubic;
 pub mod bilinear;
 pub mod lanczos3;
 pub mod nearest;
+pub mod nearest_backward;
 
 pub(crate) fn shape_divmod<R: Runtime>(
     binding: &TensorBinding<R>,
@@ -14,4 +19,17 @@ pub(crate) fn shape_divmod<R: Runtime>(
         out_seq.push(*dim);
     }
     out_seq
+}
+
+pub(crate) fn linear_layout<R: Runtime>(
+    binding: &TensorBinding<R>,
+    vector_size: usize,
+) -> LinearLayoutLaunch<R> {
+    LinearLayoutLaunch::from_shape_strides(
+        binding.shape.clone(),
+        binding.strides.clone(),
+        // Don't care about type size, only vector size.
+        Type::new(StorageType::Scalar(ElemType::UInt(UIntKind::U32))).with_vector_size(vector_size),
+        LinearViewLayoutLaunch::new(),
+    )
 }

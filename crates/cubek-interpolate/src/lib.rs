@@ -13,6 +13,7 @@ use crate::modes::bicubic::interpolate_bicubic_launch;
 use crate::modes::bilinear::interpolate_bilinear_launch;
 use crate::modes::lanczos3::interpolate_lanczos3_launch;
 use crate::modes::nearest::interpolate_nearest_launch;
+use crate::modes::nearest_backward::interpolate_nearest_backward_launch;
 
 #[cfg(feature = "cpu-reference")]
 pub mod cpu_reference;
@@ -29,6 +30,9 @@ pub fn interpolate<R: Runtime>(
     options: InterpolateOptions,
     dtype: StorageType,
 ) -> Result<(), InterpolateError> {
+    validate_rank(input.shape.len(), output.shape.len())?;
+    validate_nhwc_consistency(&input.shape, &output.shape)?;
+
     let _align_corners = options.align_corners;
 
     match options.mode {
@@ -43,4 +47,70 @@ pub fn interpolate<R: Runtime>(
             interpolate_lanczos3_launch(client, input, output, _align_corners, dtype)
         }
     }
+}
+
+/// Backward interpolate operation
+///
+/// Note: only nearest mode is supported
+///
+/// Expects input in NHWC layout.
+pub fn interpolate_backward<R: Runtime>(
+    client: &ComputeClient<R>,
+    _input: TensorBinding<R>,
+    out_grad: TensorBinding<R>,
+    output: TensorBinding<R>,
+    options: InterpolateOptions,
+    dtype: StorageType,
+) -> Result<(), InterpolateError> {
+    validate_rank(out_grad.shape.len(), output.shape.len())?;
+    validate_nhwc_consistency(&out_grad.shape, &output.shape)?;
+
+    match options.mode {
+        InterpolateMode::Nearest => {
+            interpolate_nearest_backward_launch(client, out_grad, output, dtype)
+        }
+        InterpolateMode::Bilinear => Err(InterpolateError::UnsupportedMode(
+            "Bilinear interpolation backward is not supported by JIT backend".to_string(),
+        )),
+        InterpolateMode::Bicubic => Err(InterpolateError::UnsupportedMode(
+            "Bicubic interpolation backward is not supported by JIT backend".to_string(),
+        )),
+        InterpolateMode::Lanczos3 => Err(InterpolateError::UnsupportedMode(
+            "Lanczos3 interpolation backward is not supported by JIT backend".to_string(),
+        )),
+    }
+}
+
+/// Check that both tensors are 4D (Batch, Height, Width, Channels).
+fn validate_rank(input_rank: usize, output_rank: usize) -> Result<(), InterpolateError> {
+    if input_rank != 4 || output_rank != 4 {
+        return Err(InterpolateError::InvalidRank {
+            input: input_rank,
+            output: output_rank,
+        });
+    }
+    Ok(())
+}
+
+/// Check that Batch (0) and Channel (3) dimensions match.
+/// Height (1) and Width (2) are allowed to differ for resizing.
+fn validate_nhwc_consistency(
+    input_shape: &[usize],
+    output_shape: &[usize],
+) -> Result<(), InterpolateError> {
+    if input_shape[0] != output_shape[0] {
+        return Err(InterpolateError::BatchMismatch {
+            input: input_shape[0],
+            output: output_shape[0],
+        });
+    }
+
+    if input_shape[3] != output_shape[3] {
+        return Err(InterpolateError::ChannelMismatch {
+            input: input_shape[3],
+            output: output_shape[3],
+        });
+    }
+
+    Ok(())
 }

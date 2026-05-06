@@ -1,6 +1,14 @@
+mod bicubic;
+mod bilinear;
+mod lanczos3;
 mod nearest;
+mod nearest_backward;
 
+pub use bicubic::reference_bicubic;
+pub use bilinear::reference_bilinear;
+pub use lanczos3::reference_lanczos3;
 pub use nearest::reference_nearest;
+pub use nearest_backward::reference_nearest_backward;
 
 use crate::definition::{InterpolateMode, InterpolateOptions, InterpolateProblem};
 use cubecl::{TestRuntime, client::ComputeClient, prelude::*, zspace::Strides};
@@ -68,7 +76,7 @@ pub fn cpu_reference_result(
         .uniform(seed, -1., 1.)
         .generate_with_f32_host_data();
 
-    Ok(reference_for_mode(
+    Ok(reference_for_interpolation_mode(
         &input_host,
         &out_shape,
         &problem.options,
@@ -76,16 +84,25 @@ pub fn cpu_reference_result(
     ))
 }
 
-pub fn cpu_reference_from_host(
+pub fn cpu_reference_interpolate_from_host(
     input: &HostData,
     output_shape: &[usize],
     options: &InterpolateOptions,
     progress: Option<&Progress>,
 ) -> HostData {
-    reference_for_mode(input, output_shape, options, progress)
+    reference_for_interpolation_mode(input, output_shape, options, progress)
 }
 
-fn reference_for_mode(
+pub fn cpu_reference_interpolate_backward_from_host(
+    out_grad: &HostData,
+    output_shape: &[usize],
+    options: &InterpolateOptions,
+    progress: Option<&Progress>,
+) -> HostData {
+    reference_for_backward_interpolation_mode(out_grad, output_shape, options, progress)
+}
+
+fn reference_for_interpolation_mode(
     input: &HostData,
     output_shape: &[usize],
     options: &InterpolateOptions,
@@ -96,13 +113,35 @@ fn reference_for_mode(
             reference_nearest(input, output_shape, options.align_corners, progress)
         }
         InterpolateMode::Bilinear => {
-            reference_nearest(input, output_shape, options.align_corners, progress)
+            reference_bilinear(input, output_shape, options.align_corners, progress)
         }
         InterpolateMode::Bicubic => {
-            reference_nearest(input, output_shape, options.align_corners, progress)
+            reference_bicubic(input, output_shape, options.align_corners, progress)
         }
         InterpolateMode::Lanczos3 => {
-            reference_nearest(input, output_shape, options.align_corners, progress)
+            reference_lanczos3(input, output_shape, options.align_corners, progress)
+        }
+    }
+}
+
+fn reference_for_backward_interpolation_mode(
+    out_grad: &HostData,
+    output_shape: &[usize],
+    options: &InterpolateOptions,
+    progress: Option<&Progress>,
+) -> HostData {
+    match options.mode {
+        InterpolateMode::Nearest => {
+            reference_nearest_backward(out_grad, output_shape, options.align_corners, progress)
+        }
+        InterpolateMode::Bilinear => {
+            panic!("Bilinear interpolation backward is not supported by CPU reference")
+        }
+        InterpolateMode::Bicubic => {
+            panic!("Bicubic interpolation backward is not supported by CPU reference")
+        }
+        InterpolateMode::Lanczos3 => {
+            panic!("Lanczos3 interpolation backward is not supported by CPU reference")
         }
     }
 }

@@ -1,9 +1,15 @@
+mod bicubic;
+mod bilinear;
+mod lanczos3;
 mod nearest;
+mod nearest_backward;
 
 use cubecl::{TestRuntime, client::ComputeClient, ir::StorageType, std::tensor::TensorHandle};
-use cubek_interpolate::cpu_reference::cpu_reference_from_host;
+use cubek_interpolate::cpu_reference::{
+    cpu_reference_interpolate_backward_from_host, cpu_reference_interpolate_from_host,
+};
 use cubek_interpolate::definition::{InterpolateOptions, InterpolateProblem};
-use cubek_interpolate::{InterpolateError, interpolate};
+use cubek_interpolate::{InterpolateError, interpolate, interpolate_backward};
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, TestInput, TestOutcome, assert_equals_approx,
 };
@@ -62,7 +68,7 @@ pub fn make_problem(
     }
 }
 
-pub fn run_test(
+pub fn run_interpolate_test(
     client: ComputeClient<TestRuntime>,
     seed: u64,
     input_min: f32,
@@ -85,7 +91,51 @@ pub fn run_test(
     );
 
     let output_host = output_host_f32(&client, output);
-    let reference = cpu_reference_from_host(&input_data, &output_shape, &problem.options, None);
+    let reference =
+        cpu_reference_interpolate_from_host(&input_data, &output_shape, &problem.options, None);
+
+    validate_test(result, output_host, reference, tolerance);
+}
+
+pub fn run_interpolate_backward_test(
+    client: ComputeClient<TestRuntime>,
+    seed: u64,
+    input_min: f32,
+    input_max: f32,
+    problem: InterpolateProblem,
+    tolerance: f32,
+) {
+    let out_grad_shape = vec![
+        problem.input_shape[0],
+        problem.output_size[0],
+        problem.output_size[1],
+        problem.input_shape[3],
+    ];
+    let (out_grad, out_grad_data) = TestInput::builder(client.clone(), out_grad_shape)
+        .uniform(seed, input_min, input_max)
+        .generate_with_f32_host_data();
+    let (input, _input_data) = TestInput::builder(client.clone(), problem.input_shape.to_vec())
+        .uniform(seed.wrapping_add(1), input_min, input_max)
+        .generate_with_f32_host_data();
+
+    let output_shape = problem.input_shape.to_vec();
+    let output = build_output_tensor(&client, output_shape.clone(), out_grad.dtype);
+    let result = interpolate_backward(
+        &client,
+        input.clone().binding(),
+        out_grad.clone().binding(),
+        output.clone().binding(),
+        problem.options.clone(),
+        out_grad.dtype,
+    );
+
+    let output_host = output_host_f32(&client, output);
+    let reference = cpu_reference_interpolate_backward_from_host(
+        &out_grad_data,
+        &output_shape,
+        &problem.options,
+        None,
+    );
 
     validate_test(result, output_host, reference, tolerance);
 }
