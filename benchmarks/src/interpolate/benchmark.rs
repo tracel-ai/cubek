@@ -11,7 +11,10 @@ use crate::interpolate::problem::problem_for;
 use crate::interpolate::strategy::strategy_for;
 use crate::registry::RunSamples;
 
-use cubek::interpolate::{definition::InterpolateProblem, interpolate};
+use cubek::{
+    interpolate::{definition::InterpolateProblem, interpolate},
+    random::random_uniform,
+};
 
 pub fn run(strategy_id: &str, problem_id: &str, num_samples: usize) -> Result<RunSamples, String> {
     run_on::<cubecl::TestRuntime>(
@@ -64,7 +67,13 @@ impl<R: Runtime> Benchmark for InterpolateBench<R> {
     type Output = TensorHandle<R>;
 
     fn prepare(&self) -> Self::Input {
-        TensorHandle::empty(&self.client, self.problem.input_shape.to_vec(), self.dtype)
+        let tensor =
+            TensorHandle::empty(&self.client, self.problem.input_shape.to_vec(), self.dtype);
+
+        random_uniform(&self.client, -1., 1., tensor.clone().binding(), self.dtype)
+            .expect("Failed to initialize random values for InterpolateBench");
+
+        tensor
     }
 
     fn execute(&self, input: Self::Input) -> Result<TensorHandle<R>, String> {
