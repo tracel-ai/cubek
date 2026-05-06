@@ -1,29 +1,27 @@
 use cubecl;
 use cubecl::prelude::*;
 
-use crate::tile::data::{RowWise, WhiteboxFragment};
+use crate::tile::data::{RowWise, WhiteboxFragment, WhiteboxFragmentExpand};
 
 /// Reduces row-wise quantities across units of a plane that participate in the
-/// same row, masking out off-row peers. Used internally by the row-wise
-/// operations on `Tile<E, Plane, ReadWrite>` when dispatching to the
-/// `Tile::WhiteboxFragment` (and `Tile::Bounce`) arms.
+/// same row, masking out off-row peers. Exposed as inherent `row_max` /
+/// `row_sum` methods on [`WhiteboxFragment`] for callers in
+/// [`crate::tile::compute::rowwise::dispatch`] and the per-variant softmax
+/// helpers.
 ///
 /// Restricted to plane scope by virtue of using `plane_shuffle` and
 /// `UNIT_POS_X` — callers are expected to enforce that constraint.
 #[cube]
-pub(crate) fn fragment_row_max<E: Float>(
-    vals: &mut RowWise<E>,
-    base: &RowWise<E>,
-    data: &WhiteboxFragment<E>,
-) {
-    vals.copy_from(base);
-    reduce::<E, FragmentRowMax>(vals, data)
-}
+impl<E: Float> WhiteboxFragment<E> {
+    pub fn row_max(&self, acc: &mut RowWise<E>, base: &RowWise<E>) {
+        acc.copy_from(base);
+        reduce::<E, FragmentRowMax>(acc, self)
+    }
 
-#[cube]
-pub(crate) fn fragment_row_sum<E: Float>(vals: &mut RowWise<E>, data: &WhiteboxFragment<E>) {
-    vals.fill(E::from_int(0));
-    reduce::<E, FragmentRowSum>(vals, data)
+    pub fn row_sum(&self, acc: &mut RowWise<E>) {
+        acc.fill(E::from_int(0));
+        reduce::<E, FragmentRowSum>(acc, self)
+    }
 }
 
 #[cube]

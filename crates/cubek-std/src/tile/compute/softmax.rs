@@ -1,10 +1,7 @@
-use cubecl;
 use cubecl::prelude::*;
 
 use crate::StageIdent;
-use crate::tile::compute::copy::{cmma_to_whitebox_fragment, whitebox_fragment_to_cmma};
-use crate::tile::compute::mask::{Mask, MaskExpand};
-use crate::tile::compute::rowwise::reducer::{fragment_row_max, fragment_row_sum};
+use crate::tile::compute::mask::Mask;
 use crate::tile::data::{
     BounceTile, InnerLayout, RegisterTile, RowWise, RowWiseExpand, UnitTile, WhiteboxFragment,
 };
@@ -117,13 +114,13 @@ impl<Acc: Float> Tile<Acc, Plane, ReadWrite> {
         let scale_acc = RowWise::<SM>::cast_from::<Acc>(scale);
         match self {
             Tile::Bounce(b) => {
-                cmma_to_whitebox_fragment::<Acc>(b);
-                b.fragment.rowwise_scale(&scale_acc);
-                whitebox_fragment_to_cmma::<Acc>(b);
+                b.cmma_to_fragment();
+                b.rowwise_scale(&scale_acc);
+                b.fragment_to_cmma();
             }
             Tile::WhiteboxFragment(t) => t.rowwise_scale(&scale_acc),
             Tile::Unit(t) => t.rowwise_scale(&scale_acc),
-            Tile::Register(t) => register_rowwise_scale::<Acc>(t, &scale_acc),
+            Tile::Register(t) => t.rowwise_scale(&scale_acc),
             _ => panic!("scale_mul: unsupported tile variant"),
         }
     }
@@ -135,13 +132,13 @@ impl<Acc: Float> Tile<Acc, Plane, ReadWrite> {
         scale.recip_inplace();
         match self {
             Tile::Bounce(b) => {
-                cmma_to_whitebox_fragment::<Acc>(b);
-                b.fragment.rowwise_scale(&scale);
-                whitebox_fragment_to_cmma::<Acc>(b);
+                b.cmma_to_fragment();
+                b.rowwise_scale(&scale);
+                b.fragment_to_cmma();
             }
             Tile::WhiteboxFragment(t) => t.rowwise_scale(&scale),
             Tile::Unit(t) => t.rowwise_scale(&scale),
-            Tile::Register(t) => register_rowwise_scale::<Acc>(t, &scale),
+            Tile::Register(t) => t.rowwise_scale(&scale),
             _ => panic!("scale_div: unsupported tile variant"),
         }
     }
@@ -166,21 +163,20 @@ fn bounce_softmax<Acc: Float, Lhs: Float, M: Mask>(
     let mut sum_buf = RowWise::<Acc>::new_zero(num_rows);
 
     // cmma → fragment once at entry so all subsequent ops read/write the
-    // fragment view.
-    cmma_to_whitebox_fragment::<Acc>(score);
+    // fragment view. The post-exp values are still in the fragment at the end —
+    // we skip `fragment_to_cmma` on `score` (its cmma is cleared next iteration)
+    // and stream straight into `softmaxed`.
+    score.cmma_to_fragment();
 
-    score.fragment.scale_and_mask::<M>(head_dim_factor, mask);
-    fragment_row_max::<Acc>(&mut max_buf, &state.0, &score.fragment);
-    score.fragment.exp_diff(&max_buf);
-    fragment_row_sum::<Acc>(&mut sum_buf, &score.fragment);
+    score.scale_and_mask::<M>(head_dim_factor, mask);
+    score.row_max(&mut max_buf, &state.0);
+    score.exp_diff(&max_buf);
+    score.row_sum(&mut sum_buf);
 
     let exp_m_diff = state.0.exp_diff(&max_buf);
     let new_l = exp_m_diff.mul(&state.1).add(&sum_buf);
 
-    // The post-exp values are still in `score.fragment` — we skip
-    // `whitebox_fragment_to_cmma` on score (its cmma is cleared next
-    // iteration) and stream the values straight into `softmaxed`.
-    write_fragment_into::<Acc, Lhs>(&score.fragment, softmaxed);
+    score.write_fragment_to::<Lhs, Plane>(softmaxed);
 
     RowWise::copy_from(&mut state.0, &max_buf);
     RowWise::copy_from(&mut state.1, &new_l);
@@ -201,9 +197,9 @@ fn fragment_softmax<Acc: Float, Lhs: Float, M: Mask>(
     let mut sum_buf = RowWise::<Acc>::new_zero(num_rows);
 
     score.scale_and_mask::<M>(head_dim_factor, mask);
-    fragment_row_max::<Acc>(&mut max_buf, &state.0, score);
+    score.row_max(&mut max_buf, &state.0);
     score.exp_diff(&max_buf);
-    fragment_row_sum::<Acc>(&mut sum_buf, score);
+    score.row_sum(&mut sum_buf);
 
     let exp_m_diff = state.0.exp_diff(&max_buf);
     let new_l = exp_m_diff.mul(&state.1).add(&sum_buf);
@@ -229,19 +225,15 @@ fn unit_softmax<Acc: Float, Lhs: Float, M: Mask>(
     let mut sum_buf = RowWise::<Acc>::new_zero(num_rows);
 
     score.scale_and_mask::<M>(head_dim_factor, mask);
-
-    max_buf.copy_from(&state.0);
-    max_buf.max_inplace(&score.rowwise_max());
-
+    score.row_max(&mut max_buf, &state.0);
     score.exp_diff(&max_buf);
-
-    sum_buf.add_inplace(&score.rowwise_sum());
+    score.row_sum(&mut sum_buf);
 
     let exp_m_diff = state.0.exp_diff(&max_buf);
     let new_l = exp_m_diff.mul(&state.1).add(&sum_buf);
 
     match softmaxed {
-        Tile::Unit(d) => write_unit_into::<Acc, Lhs>(score, d),
+        Tile::Unit(d) => score.write_to::<Lhs>(d),
         Tile::Bounce(_) => panic!("unit_softmax: Bounce destination not supported"),
         Tile::WhiteboxFragment(_) => {
             panic!("unit_softmax: WhiteboxFragment destination not supported")
@@ -264,58 +256,20 @@ fn register_softmax<Acc: Float, Lhs: Float, M: Mask>(
     state: &mut (RowWise<Acc>, RowWise<Acc>),
     head_dim_factor: Acc,
 ) -> RowWise<Acc> {
-    let m = comptime!(score.config.tile_size.m());
-    let n = comptime!(score.config.tile_size.n());
     let num_rows = comptime!(state.0.num_rows);
-    let threshold = Acc::new(LOGIT_MASKED);
-
     let mut max_buf = RowWise::<Acc>::new_min_value(num_rows);
     let mut sum_buf = RowWise::<Acc>::new_zero(num_rows);
 
-    for r in 0..m {
-        let row_offset = r * n;
-        for c in 0..n {
-            let idx = (row_offset + c) as usize;
-            score.data[idx] = score.data[idx] * head_dim_factor
-                + Acc::cast_from(mask.should_mask((r, c))) * Acc::min_value();
-        }
-    }
-
-    max_buf.copy_from(&state.0);
-    for r in 0..m as usize {
-        let row_offset = r as u32 * n;
-        let mut val = Acc::min_value();
-        for c in 0..n {
-            val = max(val, score.data[(row_offset + c) as usize]);
-        }
-        max_buf.vals[r] = max(max_buf.vals[r], val);
-    }
-
-    for r in 0..m as usize {
-        let row_offset = r as u32 * n;
-        let val = max_buf.vals[r];
-        let safe_val = clamp_min(val, threshold);
-        let not_masked = Acc::cast_from(val >= threshold);
-        for c in 0..n {
-            let idx = (row_offset + c) as usize;
-            score.data[idx] = not_masked * (score.data[idx] - safe_val).exp();
-        }
-    }
-
-    for r in 0..m as usize {
-        let row_offset = r as u32 * n;
-        let mut val = Acc::from_int(0);
-        for c in 0..n {
-            val += score.data[(row_offset + c) as usize];
-        }
-        sum_buf.vals[r] += val;
-    }
+    score.scale_and_mask::<M>(head_dim_factor, mask);
+    score.row_max(&mut max_buf, &state.0);
+    score.exp_diff(&max_buf);
+    score.row_sum(&mut sum_buf);
 
     let exp_m_diff = state.0.exp_diff(&max_buf);
     let new_l = exp_m_diff.mul(&state.1).add(&sum_buf);
 
     match softmaxed {
-        Tile::Register(d) => write_register_into::<Acc, Lhs>(score, d),
+        Tile::Register(d) => score.write_to::<Lhs>(d),
         Tile::Bounce(_) => panic!("register_softmax: Bounce destination not supported"),
         Tile::WhiteboxFragment(_) => {
             panic!("register_softmax: WhiteboxFragment destination not supported")
@@ -330,10 +284,9 @@ fn register_softmax<Acc: Float, Lhs: Float, M: Mask>(
     exp_m_diff
 }
 
-/// Writes a `WhiteboxFragment` of post-softmax values into `softmaxed`,
-/// dispatching on the destination variant. The source is plane-fragmented so
-/// each unit only writes its slice; for a `Bounce` destination this routes
-/// directly through its smem into its cmma fragment.
+/// Writes a free-standing `WhiteboxFragment` of post-softmax values into
+/// `softmaxed`. Used by `fragment_softmax`; the `Bounce` source path lives on
+/// `BounceTile::write_fragment_to`.
 #[cube]
 fn write_fragment_into<Acc: Float, Lhs: Float>(
     src: &WhiteboxFragment<Acc>,
@@ -353,38 +306,5 @@ fn write_fragment_into<Acc: Float, Lhs: Float>(
             }
         }
         _ => panic!("write_fragment_into: unsupported softmaxed variant"),
-    }
-}
-
-#[cube]
-fn write_unit_into<Acc: Float, Lhs: Float>(src: &UnitTile<Acc>, dest: &mut UnitTile<Lhs>) {
-    let total = comptime!(src.layout.num_rows * src.layout.num_cols);
-    for i in 0..total {
-        dest.data[i as usize] = Lhs::cast_from(src.data[i as usize]);
-    }
-}
-
-#[cube]
-fn write_register_into<Acc: Float, Lhs: Float>(
-    src: &RegisterTile<Acc>,
-    dest: &mut RegisterTile<Lhs>,
-) {
-    let m = comptime!(src.config.tile_size.m());
-    let n = comptime!(src.config.tile_size.n());
-    for i in 0..m * n {
-        dest.data[i as usize] = Lhs::cast_from(src.data[i as usize]);
-    }
-}
-
-#[cube]
-fn register_rowwise_scale<E: Float>(tile: &mut RegisterTile<E>, scale: &RowWise<E>) {
-    let m = comptime!(tile.config.tile_size.m());
-    let n = comptime!(tile.config.tile_size.n());
-    for r in 0..m as usize {
-        let row_offset = r as u32 * n;
-        for c in 0..n {
-            let idx = (row_offset + c) as usize;
-            tile.data[idx] = tile.data[idx] * scale.vals[r];
-        }
     }
 }

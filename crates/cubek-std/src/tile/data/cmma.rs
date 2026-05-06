@@ -1,3 +1,4 @@
+use cubecl;
 use cubecl::{
     cmma::Matrix as CubeMatrix,
     cmma::{self},
@@ -32,6 +33,13 @@ impl CmmaMatmul {
             plane_dim,
             swizzle_modes,
         }
+    }
+}
+
+#[cube]
+impl<E: Float> CmmaTile<E> {
+    pub fn fill_zero(&mut self) {
+        cubecl::cmma::fill(&self.matrix, E::from_int(0));
     }
 }
 

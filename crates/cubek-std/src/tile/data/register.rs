@@ -2,7 +2,11 @@ use cubecl::prelude::*;
 
 use crate::{
     MatrixLayout, SwizzleModes, TileSize,
-    tile::{Tile, TileScope},
+    tile::{
+        LOGIT_MASKED, Tile, TileScope,
+        compute::{Mask, MaskExpand},
+        data::rowwise::RowWise,
+    },
 };
 
 #[derive(CubeType)]
@@ -78,6 +82,97 @@ impl RegisterMatmul {
             plane_dim,
             swizzle_modes,
             product_type: ProductType::from_layouts(lhs_layout, rhs_layout, tile_size),
+        }
+    }
+}
+
+#[cube]
+impl<E: Float> RegisterTile<E> {
+    pub fn row_max(&self, acc: &mut RowWise<E>, base: &RowWise<E>) {
+        let m = comptime!(self.config.tile_size.m());
+        let n = comptime!(self.config.tile_size.n());
+        acc.copy_from(base);
+        for r in 0..m as usize {
+            let row_offset = r as u32 * n;
+            let mut val = E::min_value();
+            for c in 0..n {
+                val = max(val, self.data[(row_offset + c) as usize]);
+            }
+            acc.vals[r] = max(acc.vals[r], val);
+        }
+    }
+
+    pub fn row_sum(&self, acc: &mut RowWise<E>) {
+        let m = comptime!(self.config.tile_size.m());
+        let n = comptime!(self.config.tile_size.n());
+        acc.fill(E::from_int(0));
+        for r in 0..m as usize {
+            let row_offset = r as u32 * n;
+            let mut val = E::from_int(0);
+            for c in 0..n {
+                val += self.data[(row_offset + c) as usize];
+            }
+            acc.vals[r] += val;
+        }
+    }
+
+    pub fn exp_diff(&mut self, rowwise: &RowWise<E>) {
+        let m = comptime!(self.config.tile_size.m());
+        let n = comptime!(self.config.tile_size.n());
+        let threshold = E::new(LOGIT_MASKED);
+        for r in 0..m as usize {
+            let row_offset = r as u32 * n;
+            let val = rowwise.vals[r];
+            let safe_val = clamp_min(val, threshold);
+            let not_masked = E::cast_from(val >= threshold);
+            for c in 0..n {
+                let idx = (row_offset + c) as usize;
+                self.data[idx] = not_masked * (self.data[idx] - safe_val).exp();
+            }
+        }
+    }
+
+    pub fn rowwise_scale(&mut self, scale: &RowWise<E>) {
+        let m = comptime!(self.config.tile_size.m());
+        let n = comptime!(self.config.tile_size.n());
+        for r in 0..m as usize {
+            let row_offset = r as u32 * n;
+            for c in 0..n {
+                let idx = (row_offset + c) as usize;
+                self.data[idx] = self.data[idx] * scale.vals[r];
+            }
+        }
+    }
+
+    pub fn scale_and_mask<M: Mask>(&mut self, scale: E, mask: &M) {
+        let m = comptime!(self.config.tile_size.m());
+        let n = comptime!(self.config.tile_size.n());
+        for r in 0..m {
+            let row_offset = r * n;
+            for c in 0..n {
+                let idx = (row_offset + c) as usize;
+                self.data[idx] = self.data[idx] * scale
+                    + E::cast_from(mask.should_mask((r, c))) * E::min_value();
+            }
+        }
+    }
+
+    pub fn fill_zero(&mut self) {
+        let m = comptime!(self.config.tile_size.m());
+        let n = comptime!(self.config.tile_size.n());
+        for i in 0..m * n {
+            self.data[i as usize] = E::from_int(0);
+        }
+    }
+
+    /// Cast-copies this register tile into `dest`. Used by per-variant softmax
+    /// helpers when writing the post-softmax score into a same-storage
+    /// destination.
+    pub fn write_to<Lhs: Float>(&self, dest: &mut RegisterTile<Lhs>) {
+        let m = comptime!(self.config.tile_size.m());
+        let n = comptime!(self.config.tile_size.n());
+        for i in 0..m * n {
+            dest.data[i as usize] = Lhs::cast_from(self.data[i as usize]);
         }
     }
 }

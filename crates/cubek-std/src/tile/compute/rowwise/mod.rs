@@ -3,5 +3,5 @@
 //! to the right backend; [`reducer`] handles the cross-unit plane reduction
 //! used by the `WhiteboxFragment` and `BounceTile` arms.
 
-mod dispatch;
+mod base;
 pub(crate) mod reducer;

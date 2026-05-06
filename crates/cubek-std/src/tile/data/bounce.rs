@@ -2,9 +2,11 @@ use cubecl;
 use cubecl::prelude::*;
 
 use crate::tile::{
-    Tile,
+    Tile, TileExpand,
+    compute::Mask,
     data::{
         cmma::CmmaTile,
+        rowwise::RowWise,
         whitebox_fragment::{InnerLayout, WhiteboxFragment, WhiteboxFragmentLayout},
     },
     scope::{TileScope, assert_plane_scope},
@@ -53,6 +55,100 @@ impl<N: Numeric> BounceTile<N> {
             smem,
             fragment,
         }
+    }
+}
+
+#[cube]
+impl<E: Float> BounceTile<E> {
+    /// Synchronizes the fragment view from the cmma fragment via smem.
+    /// Call before any rowwise/elementwise op so the fragment reflects the
+    /// current cmma state.
+    pub fn cmma_to_fragment(&mut self) {
+        let stride = comptime!(self.cmma.tile_size.n());
+        cubecl::cmma::store(
+            &mut self.smem,
+            &self.cmma.matrix,
+            stride,
+            cubecl::cmma::MatrixLayout::RowMajor,
+        );
+        sync_cube();
+        self.fragment.load_from_slice(&self.smem.to_slice());
+        sync_cube();
+    }
+
+    /// Synchronizes the cmma fragment from the fragment view via smem. Call
+    /// after rowwise/elementwise edits to make the cmma side current for the
+    /// next mma.
+    pub fn fragment_to_cmma(&mut self) {
+        let stride = comptime!(self.cmma.tile_size.n());
+        self.fragment.store_to(&mut self.smem);
+        sync_cube();
+        cubecl::cmma::load_with_layout(
+            &self.cmma.matrix,
+            &self.smem.to_slice(),
+            stride,
+            cubecl::cmma::MatrixLayout::RowMajor,
+        );
+    }
+
+    pub fn row_max(&self, acc: &mut RowWise<E>, base: &RowWise<E>) {
+        self.fragment.row_max(acc, base);
+    }
+
+    pub fn row_sum(&self, acc: &mut RowWise<E>) {
+        self.fragment.row_sum(acc);
+    }
+
+    pub fn exp_diff(&mut self, rowwise: &RowWise<E>) {
+        self.fragment.exp_diff(rowwise);
+    }
+
+    pub fn rowwise_scale(&mut self, scale: &RowWise<E>) {
+        self.fragment.rowwise_scale(scale);
+    }
+
+    pub fn scale_and_mask<M: Mask>(&mut self, scale: E, mask: &M) {
+        self.fragment.scale_and_mask::<M>(scale, mask);
+    }
+
+    /// Zeros the cmma fragment. The fragment view is not the live storage at
+    /// fill_zero call sites (always invoked before any cmma_to_fragment), so
+    /// only cmma needs clearing.
+    pub fn fill_zero(&mut self) {
+        cubecl::cmma::fill(&self.cmma.matrix, E::from_int(0));
+    }
+
+    /// Writes the (already-softmaxed) fragment view of this bounce tile into
+    /// `softmaxed`. The source fragment is plane-fragmented; for a `Bounce`
+    /// destination this routes through the destination's smem into its cmma
+    /// fragment.
+    pub fn write_fragment_to<Lhs: Float, Sc: TileScope>(
+        &self,
+        softmaxed: &mut Tile<Lhs, Sc, ReadWrite>,
+    ) {
+        write_fragment_into::<E, Lhs, Sc>(&self.fragment, softmaxed);
+    }
+}
+
+#[cube]
+fn write_fragment_into<Acc: Float, Lhs: Float, Sc: TileScope>(
+    src: &WhiteboxFragment<Acc>,
+    softmaxed: &mut Tile<Lhs, Sc, ReadWrite>,
+) {
+    match softmaxed {
+        Tile::Bounce(d) => {
+            let stride = comptime!(d.cmma.tile_size.n());
+            src.store_to(&mut d.smem);
+            sync_cube();
+            cubecl::cmma::load(&d.cmma.matrix, &d.smem.to_slice(), stride);
+        }
+        Tile::WhiteboxFragment(d) => {
+            let total = comptime!(src.layout.unit_size.0 * src.layout.unit_size.1);
+            for i in 0..total {
+                d.array[i as usize] = Lhs::cast_from(src.array[i as usize]);
+            }
+        }
+        _ => panic!("write_fragment_to: unsupported softmaxed variant"),
     }
 }
 

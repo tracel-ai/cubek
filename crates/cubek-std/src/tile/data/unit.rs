@@ -139,6 +139,30 @@ impl<E: Numeric> UnitTile<E> {
 
 #[cube]
 impl<E: Float> UnitTile<E> {
+    pub fn row_max(&self, acc: &mut RowWise<E>, base: &RowWise<E>) {
+        acc.copy_from(base);
+        acc.max_inplace(&self.rowwise_max());
+    }
+
+    pub fn row_sum(&self, acc: &mut RowWise<E>) {
+        acc.fill(E::from_int(0));
+        acc.add_inplace(&self.rowwise_sum());
+    }
+
+    pub fn fill_zero(&mut self) {
+        self.zero();
+    }
+
+    /// Cast-copies this unit tile into `dest`. Used by per-variant softmax
+    /// helpers when writing the post-softmax score into a same-storage
+    /// destination.
+    pub fn write_to<Lhs: Float>(&self, dest: &mut UnitTile<Lhs>) {
+        let total = comptime!(self.layout.num_rows * self.layout.num_cols);
+        for i in 0..total {
+            dest.data[i as usize] = Lhs::cast_from(self.data[i as usize]);
+        }
+    }
+
     pub fn exp_diff(&mut self, rowwise: &RowWise<E>) {
         let num_rows = comptime!(self.layout.num_rows) as usize;
         let num_cols = comptime!(self.layout.num_cols) as usize;
