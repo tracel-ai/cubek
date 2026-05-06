@@ -1,5 +1,5 @@
 use cubecl::std::tensor::layout::simple::SimpleLayout;
-use cubecl::std::tensor::{AsView, AsViewExpand, AsViewMut, AsViewMutExpand, TensorHandle};
+use cubecl::std::tensor::{AsView, AsViewExpand, AsViewMut, AsViewMutExpand};
 use cubecl::zspace::shape;
 use cubecl::{
     self,
@@ -237,19 +237,24 @@ fn builder_matches_constructor() {
 #[test]
 fn virtual_tensor_view_with_tiled_physical_memory() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let input_handle = TestInput::builder(client.clone(), shape![8, 8])
+
+    let matrix_len = 4;
+    let shape = shape![matrix_len, matrix_len];
+    let input_handle = TestInput::builder(client.clone(), shape.clone())
         .stride(StrideSpec::RowMajor)
         .arange()
         .generate();
 
     let dtype = f32::as_type_native_unchecked().storage_type();
-    //let output_handle = input_handle.clone();
-    let output_handle = client.empty(8 * 8 * dtype.size());
-    let output_handle = TensorHandle::new_contiguous(shape![8, 8], output_handle, dtype);
+    let output_handle = TestInput::builder(client.clone(), shape)
+        .stride(StrideSpec::RowMajor)
+        .zeros()
+        .generate_without_host_data();
+
     let cube_count = CubeCount::new_single();
     let cube_dim = CubeDim::new_single();
     let vector_size = 1;
-    launch_virtual_tensor_tiled::launch::<TestRuntime>(
+    launch_move_from_tiled_tensor_to_rowmajor::launch::<TestRuntime>(
         &client,
         cube_count,
         cube_dim,
@@ -257,24 +262,39 @@ fn virtual_tensor_view_with_tiled_physical_memory() {
         output_handle.clone().binding().into_tensor_arg(),
         dtype,
         vector_size,
+        matrix_len,
     );
 
     let output = HostData::from_tensor_handle(&client, output_handle, HostDataType::F32);
 
-    let values = output.pretty_print();
-    panic!("values: \n{}", values);
+    let expected_values = [
+        [0.000, 1.000,  4.000,  5.000,],
+        [2.000, 3.000,  6.000,  7.000,],
+        [8.000, 9.000, 12.000, 13.000,],
+        [10.00, 11.000,  14.000, 15.000,],
+    ];
+
+    for i in 0.. matrix_len {
+        for j in 0.. matrix_len {
+            let actual = output.get_f32(&[i, j]);
+            let expected = expected_values[i][j];
+            assert!(expected == actual, "value[{i}, {j}] != expected[{i}, {j}]");
+        }
+    }
 }
 
 #[derive(CubeType, Clone, Copy)]
 pub struct TiledLayout {
     width: usize,
     height: usize,
+    tile_w: usize,
+    tile_h: usize,
 }
 
 #[cube]
 impl TiledLayout {
-    pub fn new(width: usize, height: usize) -> TiledLayout {
-        TiledLayout { width, height }
+    pub fn new(width: usize, height: usize, tile_w: usize, tile_h: usize) -> TiledLayout {
+        TiledLayout { width, height, tile_w, tile_h }
     }
 }
 
@@ -285,12 +305,29 @@ impl Layout for TiledLayout {
     type SourceCoordinates = Coords1d;
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
-        self.height * pos.0 + pos.1
+        let row = pos.0;
+        let col = pos.1;
+
+        let tile_row = row / self.tile_h;
+        let tile_col = col / self.tile_w;
+
+        let local_row = row % self.tile_h;
+        let local_col = col % self.tile_w;
+
+        let tiles_per_row = self.width / self.tile_w;
+
+        let tile_index = tile_row * tiles_per_row + tile_col;
+        let tile_area = self.tile_h * self.tile_w;
+
+        let block_offset = tile_index * tile_area;
+        let local_offset = local_row * self.tile_w + local_col;
+
+        block_offset + local_offset
     }
 
     fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
-        let pos = self.height * pos.0 + pos.1;
-        (pos, true)
+        let is_valid = pos.0 < self.height && pos.1 < self.width;
+        (self.to_source_pos(pos), is_valid)
     }
 
     fn shape(&self) -> Self::Coordinates {
@@ -298,25 +335,26 @@ impl Layout for TiledLayout {
     }
 
     fn is_in_bounds(&self, _pos: Self::Coordinates) -> bool {
-        true.into()
+        true.runtime()
     }
 }
 
 #[cube(launch)]
-fn launch_virtual_tensor_tiled<N: Numeric, S: Size>(
+fn launch_move_from_tiled_tensor_to_rowmajor<N: Numeric, S: Size>(
     input: &Tensor<Vector<N, S>>,
     output: &mut Tensor<Vector<N, S>>,
     #[define(N)] _dtype: StorageType,
     #[define(S)] vector_size: usize,
+    #[comptime] matrix_len: usize,
 ) {
-    let input_view = input.view(SimpleLayout::new(8 * 8, vector_size));
-    let output_view = output.view_mut(TiledLayout::new(8, 8));
+    let input_view = input.view(TiledLayout::new(matrix_len, matrix_len, matrix_len / 2, matrix_len / 2));
+    let output_view = output.view_mut(SimpleLayout::new(matrix_len * matrix_len, vector_size));
 
-    for i in 0..8 {
-        for j in 0..8 {
-            let index = i * 8 + j;
-            let value = input_view.read(index);
-            output_view.write((i, j), value);
+    for i in 0..matrix_len {
+        for j in 0..matrix_len{
+            let index = i * matrix_len + j;
+            let value = input_view.read((i, j));
+            output_view.write(index, value);
         }
     }
 }
