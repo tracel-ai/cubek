@@ -2,33 +2,41 @@ mod benchmark;
 mod problem;
 mod strategy;
 
-pub use benchmark::run;
-pub use problem::problems;
+pub use problem::{Layout, Mode, QuantSide, QuantizedMatmulProblem, problems};
 pub use strategy::strategies;
 
-use crate::registry::{BenchmarkCategory, ItemDescriptor, RunSamples};
+use cubek::matmul::launch::Strategy;
+
+use crate::registry::{CatalogEntry, RunSamples};
 
 pub struct Category;
 
-impl BenchmarkCategory for Category {
+impl crate::registry::Category for Category {
+    type Problem = QuantizedMatmulProblem;
+    type Strategy = Strategy;
+
     fn id(&self) -> &'static str {
         "quantized_matmul"
     }
+
     fn label(&self) -> &'static str {
         "Quantized Matmul"
     }
-    fn strategies(&self) -> Vec<ItemDescriptor> {
-        strategies()
-    }
-    fn problems(&self) -> Vec<ItemDescriptor> {
+
+    fn problems(&self) -> Vec<CatalogEntry<QuantizedMatmulProblem>> {
         problems()
     }
-    fn run(
+
+    fn strategies(&self) -> Vec<CatalogEntry<Strategy>> {
+        strategies()
+    }
+
+    fn bench(
         &self,
-        strategy_id: &str,
-        problem_id: &str,
+        strategy: &Strategy,
+        problem: &QuantizedMatmulProblem,
         num_samples: usize,
     ) -> Result<RunSamples, String> {
-        run(strategy_id, problem_id, num_samples)
+        benchmark::bench(strategy, problem, num_samples)
     }
 }

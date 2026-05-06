@@ -7,80 +7,57 @@ use cubek::matmul::{
     },
 };
 
-use crate::registry::ItemDescriptor;
+use crate::registry::CatalogEntry;
 
-/// Stable IDs. Changing one is a breaking change for any persisted history.
-pub const STRATEGY_GEMV_UNIT_PERPENDICULAR: &str = "gemv_unit_perpendicular";
-pub const STRATEGY_GEMV_PLANE_PARALLEL: &str = "gemv_plane_parallel";
-pub const STRATEGY_SIMPLE_VECMAT: &str = "simple_vecmat";
-pub const STRATEGY_DOUBLE_VECMAT: &str = "double_vecmat";
-pub const STRATEGY_SIMPLE_UNIT_MIN: &str = "simple_unit_min";
-pub const STRATEGY_SIMPLE_UNIT_MAX: &str = "simple_unit_max";
-pub const STRATEGY_SIMPLE_CYCLIC_CMMA: &str = "simple_cyclic_cmma";
-
-pub fn strategies() -> Vec<ItemDescriptor> {
+pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
     vec![
-        ItemDescriptor {
-            id: STRATEGY_GEMV_UNIT_PERPENDICULAR.to_string(),
-            label: "Gemv Unit Perpendicular".to_string(),
-        },
-        ItemDescriptor {
-            id: STRATEGY_GEMV_PLANE_PARALLEL.to_string(),
-            label: "Gemv Plane Parallel".to_string(),
-        },
-        ItemDescriptor {
-            id: STRATEGY_SIMPLE_VECMAT.to_string(),
-            label: "Simple VecMat".to_string(),
-        },
-        ItemDescriptor {
-            id: STRATEGY_DOUBLE_VECMAT.to_string(),
-            label: "Double VecMat".to_string(),
-        },
-        ItemDescriptor {
-            id: STRATEGY_SIMPLE_UNIT_MIN.to_string(),
-            label: "Simple Unit (min tile)".to_string(),
-        },
-        ItemDescriptor {
-            id: STRATEGY_SIMPLE_UNIT_MAX.to_string(),
-            label: "Simple Unit (max tile)".to_string(),
-        },
-        ItemDescriptor {
-            id: STRATEGY_SIMPLE_CYCLIC_CMMA.to_string(),
-            label: "Simple Cyclic CMMA".to_string(),
-        },
-    ]
-}
-
-pub(crate) fn strategy_for(id: &str) -> Option<Strategy> {
-    Some(match id {
-        STRATEGY_GEMV_UNIT_PERPENDICULAR => Strategy::GemvUnitPerpendicular(
-            BlueprintStrategy::Inferred(GemvUnitPerpendicularStrategy {
-                target_num_planes: None,
-            }),
+        CatalogEntry::new(
+            "gemv_unit_perpendicular",
+            "Gemv Unit Perpendicular",
+            Strategy::GemvUnitPerpendicular(BlueprintStrategy::Inferred(
+                GemvUnitPerpendicularStrategy {
+                    target_num_planes: None,
+                },
+            )),
         ),
-        STRATEGY_GEMV_PLANE_PARALLEL => {
+        CatalogEntry::new(
+            "gemv_plane_parallel",
+            "Gemv Plane Parallel",
             Strategy::GemvPlaneParallel(BlueprintStrategy::Inferred(GemvPlaneParallelStrategy {
                 target_num_planes: None,
-            }))
-        }
-        STRATEGY_SIMPLE_VECMAT => Strategy::SimpleVecMat(BlueprintStrategy::Inferred(().into())),
-        STRATEGY_DOUBLE_VECMAT => Strategy::DoubleVecMat(BlueprintStrategy::Inferred(().into())),
-        STRATEGY_SIMPLE_UNIT_MIN => {
+            })),
+        ),
+        CatalogEntry::new(
+            "simple_vecmat",
+            "Simple VecMat",
+            Strategy::SimpleVecMat(BlueprintStrategy::Inferred(().into())),
+        ),
+        CatalogEntry::new(
+            "double_vecmat",
+            "Double VecMat",
+            Strategy::DoubleVecMat(BlueprintStrategy::Inferred(().into())),
+        ),
+        CatalogEntry::new(
+            "simple_unit_min",
+            "Simple Unit (min tile)",
             Strategy::SimpleUnit(BlueprintStrategy::Inferred(SimpleUnitSelectionArgs {
                 tile_size: TileSizeSelection::MinTileSize,
-            }))
-        }
-        STRATEGY_SIMPLE_UNIT_MAX => {
+            })),
+        ),
+        CatalogEntry::new(
+            "simple_unit_max",
+            "Simple Unit (max tile)",
             Strategy::SimpleUnit(BlueprintStrategy::Inferred(SimpleUnitSelectionArgs {
                 tile_size: TileSizeSelection::MaxTileSize,
-            }))
-        }
-        STRATEGY_SIMPLE_CYCLIC_CMMA => {
+            })),
+        ),
+        CatalogEntry::new(
+            "simple_cyclic_cmma",
+            "Simple Cyclic CMMA",
             Strategy::SimpleCyclicCmma(BlueprintStrategy::Inferred(SimpleArgs {
                 multi_rows: false,
                 ..Default::default()
-            }))
-        }
-        _ => return None,
-    })
+            })),
+        ),
+    ]
 }

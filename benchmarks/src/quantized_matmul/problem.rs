@@ -2,7 +2,7 @@ use cubek::quantization::scheme::{
     QuantLevel, QuantMode, QuantParam, QuantScheme, QuantStore, QuantValue,
 };
 
-use crate::registry::ItemDescriptor;
+use crate::registry::CatalogEntry;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Layout {
@@ -114,47 +114,31 @@ fn shape_kind(b: usize, m: usize, n: usize, k: usize) -> &'static str {
     }
 }
 
-fn build_id(
-    b: usize,
-    m: usize,
-    n: usize,
-    k: usize,
-    lhs: Layout,
-    rhs: Layout,
-    mode_label: &str,
-) -> String {
+fn build_id(p: &QuantizedMatmulProblem) -> String {
     format!(
         "{}_b{}_m{}_n{}_k{}_{}{}_{}",
-        shape_kind(b, m, n, k),
-        b,
-        m,
-        n,
-        k,
-        lhs.short(),
-        rhs.short(),
-        mode_label,
+        shape_kind(p.b, p.m, p.n, p.k),
+        p.b,
+        p.m,
+        p.n,
+        p.k,
+        p.lhs_layout.short(),
+        p.rhs_layout.short(),
+        p.mode_label,
     )
 }
 
-fn build_label(
-    b: usize,
-    m: usize,
-    n: usize,
-    k: usize,
-    lhs: Layout,
-    rhs: Layout,
-    mode_label: &str,
-) -> String {
+fn build_label(p: &QuantizedMatmulProblem) -> String {
     format!(
         "{} (b={} m={} n={} k={}) {}{} {}",
-        shape_kind(b, m, n, k).to_uppercase(),
-        b,
-        m,
-        n,
-        k,
-        lhs.short(),
-        rhs.short(),
-        mode_label,
+        shape_kind(p.b, p.m, p.n, p.k).to_uppercase(),
+        p.b,
+        p.m,
+        p.n,
+        p.k,
+        p.lhs_layout.short(),
+        p.rhs_layout.short(),
+        p.mode_label,
     )
 }
 
@@ -171,13 +155,13 @@ fn modes() -> Vec<(String, Mode)> {
     out
 }
 
-fn all_specs() -> Vec<QuantizedMatmulProblem> {
+pub fn problems() -> Vec<CatalogEntry<QuantizedMatmulProblem>> {
     let mut out = Vec::new();
     for shapes in [gemm_shapes(), gemv_shapes()] {
         for (b, m, n, k) in shapes {
             for (lhs_layout, rhs_layout) in layouts() {
                 for (mode_label, mode) in modes() {
-                    out.push(QuantizedMatmulProblem {
+                    let problem = QuantizedMatmulProblem {
                         b,
                         m,
                         n,
@@ -186,51 +170,13 @@ fn all_specs() -> Vec<QuantizedMatmulProblem> {
                         rhs_layout,
                         mode,
                         mode_label,
-                    });
+                    };
+                    let id = build_id(&problem);
+                    let label = build_label(&problem);
+                    out.push(CatalogEntry::new(id, label, problem));
                 }
             }
         }
     }
     out
-}
-
-pub fn problems() -> Vec<ItemDescriptor> {
-    all_specs()
-        .into_iter()
-        .map(|p| {
-            let id = build_id(
-                p.b,
-                p.m,
-                p.n,
-                p.k,
-                p.lhs_layout,
-                p.rhs_layout,
-                &p.mode_label,
-            );
-            let label = build_label(
-                p.b,
-                p.m,
-                p.n,
-                p.k,
-                p.lhs_layout,
-                p.rhs_layout,
-                &p.mode_label,
-            );
-            ItemDescriptor { id, label }
-        })
-        .collect()
-}
-
-pub(crate) fn problem_for(id: &str) -> Option<QuantizedMatmulProblem> {
-    all_specs().into_iter().find(|p| {
-        build_id(
-            p.b,
-            p.m,
-            p.n,
-            p.k,
-            p.lhs_layout,
-            p.rhs_layout,
-            &p.mode_label,
-        ) == id
-    })
 }

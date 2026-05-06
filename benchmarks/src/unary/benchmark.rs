@@ -13,10 +13,7 @@ use cubek::random::random_uniform;
 
 use crate::{
     registry::RunSamples,
-    unary::{
-        problem::{UnaryProblem, problem_for},
-        strategy::{UnaryStrategy, strategy_for},
-    },
+    unary::{problem::UnaryProblem, strategy::UnaryStrategy},
 };
 
 #[cube(launch)]
@@ -32,25 +29,25 @@ fn execute<F: Float>(lhs: &Tensor<F>, rhs: &Tensor<F>, out: &mut Tensor<F>) {
     }
 }
 
-pub fn run(strategy_id: &str, problem_id: &str, num_samples: usize) -> Result<RunSamples, String> {
-    run_on::<cubecl::TestRuntime, f32>(Default::default(), strategy_id, problem_id, num_samples)
+pub fn bench(
+    strategy: &UnaryStrategy,
+    problem: &UnaryProblem,
+    num_samples: usize,
+) -> Result<RunSamples, String> {
+    bench_on::<cubecl::TestRuntime, f32>(Default::default(), strategy, problem, num_samples)
 }
 
-pub fn run_on<R: Runtime, E: frontend::Float>(
+pub fn bench_on<R: Runtime, E: frontend::Float>(
     device: R::Device,
-    strategy_id: &str,
-    problem_id: &str,
+    strategy: &UnaryStrategy,
+    problem: &UnaryProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
     let client = R::client(&device);
-    let problem =
-        problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
-    let strategy =
-        strategy_for(strategy_id).ok_or_else(|| format!("unknown strategy: {strategy_id}"))?;
 
     let bench = UnaryBench::<R, E> {
-        problem,
-        strategy,
+        shape: problem.shape.clone(),
+        vectorization: strategy.vectorization,
         client,
         device,
         samples: num_samples,
@@ -66,8 +63,8 @@ pub fn run_on<R: Runtime, E: frontend::Float>(
 }
 
 struct UnaryBench<R: Runtime, E> {
-    problem: UnaryProblem,
-    strategy: UnaryStrategy,
+    shape: Vec<usize>,
+    vectorization: VectorSize,
     device: R::Device,
     client: ComputeClient<R>,
     samples: usize,
@@ -82,11 +79,11 @@ impl<R: Runtime, E: Float> Benchmark for UnaryBench<R, E> {
         let client = R::client(&self.device);
         let elem = E::as_type_native_unchecked();
 
-        let lhs = TensorHandle::empty(&client, self.problem.shape.clone(), elem);
+        let lhs = TensorHandle::empty(&client, self.shape.clone(), elem);
         random_uniform(&client, 0., 1., lhs.clone().binding(), elem.storage_type()).unwrap();
-        let rhs = TensorHandle::empty(&client, self.problem.shape.clone(), elem);
+        let rhs = TensorHandle::empty(&client, self.shape.clone(), elem);
         random_uniform(&client, 0., 1., rhs.clone().binding(), elem.storage_type()).unwrap();
-        let out = TensorHandle::empty(&client, self.problem.shape.clone(), elem);
+        let out = TensorHandle::empty(&client, self.shape.clone(), elem);
         random_uniform(&client, 0., 1., out.clone().binding(), elem.storage_type()).unwrap();
 
         (lhs, rhs, out)
@@ -95,7 +92,7 @@ impl<R: Runtime, E: Float> Benchmark for UnaryBench<R, E> {
     fn execute(&self, (lhs, rhs, out): Self::Input) -> Result<(), String> {
         let num_elems = out.shape().num_elements();
 
-        let working_units = num_elems / self.strategy.vectorization;
+        let working_units = num_elems / self.vectorization;
         let cube_dim = CubeDim::new(&self.client, working_units);
         let cube_count = calculate_cube_count_elemwise(&self.client, working_units, cube_dim);
 
@@ -122,7 +119,7 @@ impl<R: Runtime, E: Float> Benchmark for UnaryBench<R, E> {
             "unary-{}-{}-{:?}",
             R::name(&client),
             E::as_type_native_unchecked(),
-            self.strategy.vectorization,
+            self.vectorization,
         )
         .to_lowercase()
     }
