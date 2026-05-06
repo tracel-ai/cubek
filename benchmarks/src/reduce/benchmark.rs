@@ -10,33 +10,29 @@ use cubecl::{
 };
 use cubek::{random::random_uniform, reduce::launch::ReduceStrategy};
 
-use crate::{
-    reduce::{
-        problem::{ReduceProblem, problem_for},
-        strategy::strategy_for,
-    },
-    registry::RunSamples,
-};
+use crate::{reduce::problem::ReduceProblem, registry::RunSamples};
 
-pub fn run(strategy_id: &str, problem_id: &str, num_samples: usize) -> Result<RunSamples, String> {
-    run_on::<cubecl::TestRuntime, f32>(Default::default(), strategy_id, problem_id, num_samples)
+pub fn bench(
+    strategy: &ReduceStrategy,
+    problem: &ReduceProblem,
+    num_samples: usize,
+) -> Result<RunSamples, String> {
+    bench_on::<cubecl::TestRuntime, f32>(Default::default(), strategy, problem, num_samples)
 }
 
-pub fn run_on<R: Runtime, E: frontend::Float>(
+pub fn bench_on<R: Runtime, E: frontend::Float>(
     device: R::Device,
-    strategy_id: &str,
-    problem_id: &str,
+    strategy: &ReduceStrategy,
+    problem: &ReduceProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
     let client = R::client(&device);
-    let problem =
-        problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
-    let strategy =
-        strategy_for(strategy_id).ok_or_else(|| format!("unknown strategy: {strategy_id}"))?;
 
     let bench = ReduceBench::<R, E> {
-        problem,
-        strategy,
+        shape: problem.shape.clone(),
+        axis: problem.axis,
+        config: problem.config,
+        strategy: strategy.clone(),
         device,
         client,
         samples: num_samples,
@@ -52,7 +48,9 @@ pub fn run_on<R: Runtime, E: frontend::Float>(
 }
 
 struct ReduceBench<R: Runtime, E> {
-    problem: ReduceProblem,
+    shape: Vec<usize>,
+    axis: usize,
+    config: cubek::reduce::components::instructions::ReduceOperationConfig,
     strategy: ReduceStrategy,
     device: R::Device,
     client: ComputeClient<R>,
@@ -68,7 +66,7 @@ impl<R: Runtime, E: Float> Benchmark for ReduceBench<R, E> {
         let client = R::client(&self.device);
         let elem = E::as_type_native_unchecked();
 
-        let input = TensorHandle::empty(&client, self.problem.shape.clone(), elem);
+        let input = TensorHandle::empty(&client, self.shape.clone(), elem);
         random_uniform(
             &client,
             0.,
@@ -77,13 +75,13 @@ impl<R: Runtime, E: Float> Benchmark for ReduceBench<R, E> {
             elem.storage_type(),
         )
         .unwrap();
-        let mut shape_out = self.problem.shape.clone();
-        let reduce_len = match self.problem.config {
+        let mut shape_out = self.shape.clone();
+        let reduce_len = match self.config {
             cubek::reduce::components::instructions::ReduceOperationConfig::ArgTopK(len) => len,
             cubek::reduce::components::instructions::ReduceOperationConfig::TopK(len) => len,
             _ => 1,
         };
-        shape_out[self.problem.axis] = reduce_len;
+        shape_out[self.axis] = reduce_len;
         let out = TensorHandle::empty(&client, shape_out, elem);
 
         (input, out)
@@ -94,9 +92,9 @@ impl<R: Runtime, E: Float> Benchmark for ReduceBench<R, E> {
             &self.client,
             input.binding(),
             out.binding(),
-            self.problem.axis,
+            self.axis,
             self.strategy.clone(),
-            self.problem.config,
+            self.config,
             cubek::reduce::ReduceDtypes {
                 input: E::as_type_native_unchecked().storage_type(),
                 output: E::as_type_native_unchecked().storage_type(),
@@ -115,11 +113,11 @@ impl<R: Runtime, E: Float> Benchmark for ReduceBench<R, E> {
     fn name(&self) -> String {
         format!(
             "reduce-axis({})-{}-{:?}-{:?}-{:?}",
-            self.problem.axis,
+            self.axis,
             E::as_type_native_unchecked(),
-            self.problem.shape,
+            self.shape,
             self.strategy,
-            self.problem.config,
+            self.config,
         )
         .to_lowercase()
     }

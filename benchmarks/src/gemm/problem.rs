@@ -1,6 +1,6 @@
 use cubek::std::MatrixLayout;
 
-use crate::registry::ItemDescriptor;
+use crate::registry::CatalogEntry;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Precision {
@@ -272,42 +272,27 @@ const PRECISIONS: &[PrecisionSpec] = &[
     },
 ];
 
-fn make_id(shape: &ShapeSpec, layout: &LayoutSpec, prec: &PrecisionSpec) -> String {
-    format!("{}_{}_{}", shape.tag, layout.suffix, prec.suffix)
-}
-
-fn make_label(shape: &ShapeSpec, layout: &LayoutSpec, prec: &PrecisionSpec) -> String {
-    format!("{} {} [{}]", shape.label, layout.label, prec.label)
-}
-
-pub fn problems() -> Vec<ItemDescriptor> {
+pub fn problems() -> Vec<CatalogEntry<GemmProblem>> {
     SHAPES
         .iter()
         .flat_map(|shape| {
             LAYOUTS.iter().flat_map(move |layout| {
-                PRECISIONS.iter().map(move |prec| ItemDescriptor {
-                    id: make_id(shape, layout, prec),
-                    label: make_label(shape, layout, prec),
+                PRECISIONS.iter().map(move |prec| {
+                    CatalogEntry::new(
+                        format!("{}_{}_{}", shape.tag, layout.suffix, prec.suffix),
+                        format!("{} {} [{}]", shape.label, layout.label, prec.label),
+                        GemmProblem {
+                            b: shape.b,
+                            m: shape.m,
+                            n: shape.n,
+                            k: shape.k,
+                            lhs_layout: layout.lhs,
+                            rhs_layout: layout.rhs,
+                            precision: prec.precision,
+                        },
+                    )
                 })
             })
         })
         .collect()
-}
-
-pub(crate) fn problem_for(id: &str) -> Option<GemmProblem> {
-    SHAPES.iter().find_map(|shape| {
-        LAYOUTS.iter().find_map(|layout| {
-            PRECISIONS.iter().find_map(|prec| {
-                (make_id(shape, layout, prec) == id).then_some(GemmProblem {
-                    b: shape.b,
-                    m: shape.m,
-                    n: shape.n,
-                    k: shape.k,
-                    lhs_layout: layout.lhs,
-                    rhs_layout: layout.rhs,
-                    precision: prec.precision,
-                })
-            })
-        })
-    })
 }

@@ -2,9 +2,8 @@
 //!
 //! Gemv is a special case of matmul (one inner dim is 1), so we build a
 //! `MatmulProblem` and route through `cubek_matmul::cpu_reference`. Both
-//! `kernel_result` and `reference_result` build the same input bits from
-//! `(strategy_id, problem_id, seed_lhs, seed_rhs)`, so they're directly
-//! comparable.
+//! methods build the same input bits from `(strategy, problem, seeds[0..2])`,
+//! so they're directly comparable.
 
 use cubecl::{
     Runtime, TestRuntime, ir::AddressType, ir::MatrixLayout as IrMatrixLayout, prelude::*,
@@ -14,44 +13,53 @@ use cubek::{
     matmul::{
         cpu_reference::{cpu_reference_result, strategy_result},
         definition::{MatmulElems, MatmulProblem},
+        launch::Strategy,
     },
     std::MatrixLayout,
 };
 use cubek_test_utils::{HostData, Progress};
 
-use crate::gemv::{
-    problem::{GemvProblem, ProblemKind, problem_for},
-    strategy::strategy_for,
-};
+use crate::gemv::problem::{GemvProblem, ProblemKind};
 
-pub fn kernel_result(
-    strategy_id: &str,
-    problem_id: &str,
-    seed_lhs: u64,
-    seed_rhs: u64,
-) -> Result<HostData, String> {
-    let problem =
-        problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
-    let strategy =
-        strategy_for(strategy_id).ok_or_else(|| format!("unknown strategy: {strategy_id}"))?;
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
-    let matmul_problem = build_matmul_problem(&problem);
-    strategy_result(client, matmul_problem, strategy, seed_lhs, seed_rhs)
-}
+pub struct GemvCorrectness;
 
-pub fn reference_result(
-    problem_id: &str,
-    seed_lhs: u64,
-    seed_rhs: u64,
-    progress: Option<&Progress>,
-) -> Result<HostData, String> {
-    let problem =
-        problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
-    let matmul_problem = build_matmul_problem(&problem);
-    cpu_reference_result(client, matmul_problem, seed_lhs, seed_rhs, progress)
+impl crate::registry::Correctness for GemvCorrectness {
+    type Problem = GemvProblem;
+    type Strategy = Strategy;
+
+    fn kernel_result(
+        &self,
+        strategy: &Strategy,
+        problem: &GemvProblem,
+        seeds: &[u64],
+    ) -> Result<HostData, String> {
+        let device = <TestRuntime as Runtime>::Device::default();
+        let client = <TestRuntime as Runtime>::client(&device);
+        strategy_result(
+            client,
+            build_matmul_problem(problem),
+            strategy.clone(),
+            seeds[0],
+            seeds[1],
+        )
+    }
+
+    fn reference_result(
+        &self,
+        problem: &GemvProblem,
+        seeds: &[u64],
+        progress: Option<&Progress>,
+    ) -> Result<HostData, String> {
+        let device = <TestRuntime as Runtime>::Device::default();
+        let client = <TestRuntime as Runtime>::client(&device);
+        cpu_reference_result(
+            client,
+            build_matmul_problem(problem),
+            seeds[0],
+            seeds[1],
+            progress,
+        )
+    }
 }
 
 fn build_matmul_problem(p: &GemvProblem) -> MatmulProblem {

@@ -15,13 +15,7 @@ use cubek::{
     std::InputBinding,
 };
 
-use crate::{
-    conv2d::{
-        problem::{Conv2dProblem, problem_for},
-        strategy::strategy_for,
-    },
-    registry::RunSamples,
-};
+use crate::{conv2d::problem::Conv2dProblem, registry::RunSamples};
 
 type LhsG<MP> = <<MP as MatmulPrecision>::Lhs as MatrixPrecision>::Global;
 type LhsS<MP> = <<MP as MatmulPrecision>::Lhs as MatrixPrecision>::Stage;
@@ -29,30 +23,25 @@ type RhsG<MP> = <<MP as MatmulPrecision>::Rhs as MatrixPrecision>::Global;
 type AccG<MP> = <<MP as MatmulPrecision>::Acc as MatrixPrecision>::Global;
 type AccR<MP> = <<MP as MatmulPrecision>::Acc as MatrixPrecision>::Register;
 
-pub fn run(strategy_id: &str, problem_id: &str, num_samples: usize) -> Result<RunSamples, String> {
-    run_on::<cubecl::TestRuntime, half::f16>(
-        Default::default(),
-        strategy_id,
-        problem_id,
-        num_samples,
-    )
+pub fn bench(
+    strategy: &Strategy,
+    problem: &Conv2dProblem,
+    num_samples: usize,
+) -> Result<RunSamples, String> {
+    bench_on::<cubecl::TestRuntime, half::f16>(Default::default(), strategy, problem, num_samples)
 }
 
-pub fn run_on<R: Runtime, MP: MatmulPrecision>(
+pub fn bench_on<R: Runtime, MP: MatmulPrecision>(
     device: R::Device,
-    strategy_id: &str,
-    problem_id: &str,
+    strategy: &Strategy,
+    problem: &Conv2dProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
     let client = R::client(&device);
-    let problem =
-        problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
-    let strategy =
-        strategy_for(strategy_id).ok_or_else(|| format!("unknown strategy: {strategy_id}"))?;
 
     let bench = Conv2dBench::<R, MP> {
-        problem,
-        strategy,
+        problem: problem.clone(),
+        strategy: strategy.clone(),
         device,
         client,
         samples: num_samples,

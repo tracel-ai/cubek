@@ -21,25 +21,24 @@ use cubek::{
 };
 
 use crate::{
-    attention::{problem::problem_for, strategy::strategy_for},
+    attention::problem::{AttentionSpec, build_problem},
     registry::RunSamples,
 };
 
-/// Run one (strategy, problem) pair on `cubecl::TestRuntime` with `f16`
+/// Run one (strategy, spec) pair on `cubecl::TestRuntime` with `f16`
 /// precision and return the raw samples.
-pub fn run(strategy_id: &str, problem_id: &str, num_samples: usize) -> Result<RunSamples, String> {
-    run_on::<cubecl::TestRuntime, half::f16>(
-        Default::default(),
-        strategy_id,
-        problem_id,
-        num_samples,
-    )
+pub fn bench(
+    strategy: &cubek::attention::launch::Strategy,
+    spec: &AttentionSpec,
+    num_samples: usize,
+) -> Result<RunSamples, String> {
+    bench_on::<cubecl::TestRuntime, half::f16>(Default::default(), strategy, spec, num_samples)
 }
 
-pub fn run_on<R: Runtime, AP: AttentionPrecision>(
+pub fn bench_on<R: Runtime, AP: AttentionPrecision>(
     device: R::Device,
-    strategy_id: &str,
-    problem_id: &str,
+    strategy: &cubek::attention::launch::Strategy,
+    spec: &AttentionSpec,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
     let client = R::client(&device);
@@ -47,15 +46,11 @@ pub fn run_on<R: Runtime, AP: AttentionPrecision>(
         half::f16::as_type_native_unchecked(),
         AttentionGlobalTypes::mask_dtype(&client),
     );
-
-    let problem = problem_for(problem_id, global_dtypes)
-        .ok_or_else(|| format!("unknown problem: {problem_id}"))?;
-    let strategy =
-        strategy_for(strategy_id).ok_or_else(|| format!("unknown strategy: {strategy_id}"))?;
+    let problem = build_problem(spec, global_dtypes);
 
     let bench = AttentionBench::<R, AP> {
         problem,
-        strategy,
+        strategy: strategy.clone(),
         client: client.clone(),
         device,
         samples: num_samples,

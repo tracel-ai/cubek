@@ -1,57 +1,57 @@
 //! Seeded HostData primitives for the conv2d category.
 //!
-//! Both `kernel_result` and `reference_result` build the same input bits
-//! from `(strategy_id, problem_id, seed_lhs, seed_rhs)` so the two
-//! `HostData`s they return are directly comparable.
+//! Both methods build the same input bits from `(strategy, problem, seeds[0..2])`
+//! so the two `HostData`s they return are directly comparable.
 //!
 //! Inputs are laid out NHWC (input) and OHWI (weight). The naive CPU reference
-//! is built around this convention; the benchmark `run()` path uses NCHW —
+//! is built around this convention; the benchmark `bench()` path uses NCHW —
 //! correctness here is independent of the timing path.
 
 use cubecl::{Runtime, TestRuntime, prelude::CubePrimitive};
 use cubek::{
-    convolution::cpu_reference::{ConvSpec, cpu_reference_result, strategy_result},
+    convolution::{
+        Strategy,
+        cpu_reference::{ConvSpec, cpu_reference_result, strategy_result},
+    },
     matmul::definition::{MatmulElems, MatmulGlobalElems, MatmulPrecision, MatrixPrecision},
 };
 use cubek_test_utils::{HostData, Progress};
 
-use crate::conv2d::{
-    problem::{Conv2dProblem, problem_for},
-    strategy::strategy_for,
-};
+use crate::conv2d::problem::Conv2dProblem;
 
 type LhsG<MP> = <<MP as MatmulPrecision>::Lhs as MatrixPrecision>::Global;
 type RhsG<MP> = <<MP as MatmulPrecision>::Rhs as MatrixPrecision>::Global;
 type AccG<MP> = <<MP as MatmulPrecision>::Acc as MatrixPrecision>::Global;
 
-pub fn kernel_result(
-    strategy_id: &str,
-    problem_id: &str,
-    seed_lhs: u64,
-    seed_rhs: u64,
-) -> Result<HostData, String> {
-    let problem =
-        problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
-    let strategy =
-        strategy_for(strategy_id).ok_or_else(|| format!("unknown strategy: {strategy_id}"))?;
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
-    let (spec, dtypes) = build_spec_and_dtypes::<half::f16>(&problem);
-    strategy_result(client, spec, strategy, dtypes, seed_lhs, seed_rhs)
-}
+pub struct Conv2dCorrectness;
 
-pub fn reference_result(
-    problem_id: &str,
-    seed_lhs: u64,
-    seed_rhs: u64,
-    progress: Option<&Progress>,
-) -> Result<HostData, String> {
-    let problem =
-        problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
-    let (spec, dtypes) = build_spec_and_dtypes::<half::f16>(&problem);
-    cpu_reference_result(client, spec, dtypes, seed_lhs, seed_rhs, progress)
+impl crate::registry::Correctness for Conv2dCorrectness {
+    type Problem = Conv2dProblem;
+    type Strategy = Strategy;
+
+    fn kernel_result(
+        &self,
+        strategy: &Strategy,
+        problem: &Conv2dProblem,
+        seeds: &[u64],
+    ) -> Result<HostData, String> {
+        let device = <TestRuntime as Runtime>::Device::default();
+        let client = <TestRuntime as Runtime>::client(&device);
+        let (spec, dtypes) = build_spec_and_dtypes::<half::f16>(problem);
+        strategy_result(client, spec, strategy.clone(), dtypes, seeds[0], seeds[1])
+    }
+
+    fn reference_result(
+        &self,
+        problem: &Conv2dProblem,
+        seeds: &[u64],
+        progress: Option<&Progress>,
+    ) -> Result<HostData, String> {
+        let device = <TestRuntime as Runtime>::Device::default();
+        let client = <TestRuntime as Runtime>::client(&device);
+        let (spec, dtypes) = build_spec_and_dtypes::<half::f16>(problem);
+        cpu_reference_result(client, spec, dtypes, seeds[0], seeds[1], progress)
+    }
 }
 
 fn build_spec_and_dtypes<MP: MatmulPrecision>(p: &Conv2dProblem) -> (ConvSpec, MatmulElems) {

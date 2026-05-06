@@ -13,10 +13,7 @@ use cubecl::{
 use cubek::random::random_uniform;
 
 use crate::{
-    memcpy_async::{
-        problem::{MemcpyAsyncProblem, problem_for},
-        strategy::{CopyStrategyEnum, strategy_for},
-    },
+    memcpy_async::{problem::MemcpyAsyncProblem, strategy::CopyStrategyEnum},
     registry::RunSamples,
 };
 
@@ -683,25 +680,27 @@ fn launch_ref<R: Runtime, E: Float>(
     }
 }
 
-pub fn run(strategy_id: &str, problem_id: &str, num_samples: usize) -> Result<RunSamples, String> {
-    run_on::<cubecl::TestRuntime, f32>(Default::default(), strategy_id, problem_id, num_samples)
+pub fn bench(
+    strategy: &CopyStrategyEnum,
+    problem: &MemcpyAsyncProblem,
+    num_samples: usize,
+) -> Result<RunSamples, String> {
+    bench_on::<cubecl::TestRuntime, f32>(Default::default(), strategy, problem, num_samples)
 }
 
-pub fn run_on<R: Runtime, E: frontend::Float>(
+pub fn bench_on<R: Runtime, E: frontend::Float>(
     device: R::Device,
-    strategy_id: &str,
-    problem_id: &str,
+    strategy: &CopyStrategyEnum,
+    problem: &MemcpyAsyncProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
     let client = R::client(&device);
-    let problem =
-        problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
-    let strategy =
-        strategy_for(strategy_id).ok_or_else(|| format!("unknown strategy: {strategy_id}"))?;
 
     let bench = MemcpyAsyncBench::<R, E> {
-        problem,
-        strategy,
+        data_count: problem.data_count,
+        window_size: problem.window_size,
+        double_buffering: problem.double_buffering,
+        strategy: *strategy,
         client,
         device,
         samples: num_samples,
@@ -717,7 +716,9 @@ pub fn run_on<R: Runtime, E: frontend::Float>(
 }
 
 struct MemcpyAsyncBench<R: Runtime, E> {
-    problem: MemcpyAsyncProblem,
+    data_count: usize,
+    window_size: usize,
+    double_buffering: bool,
     strategy: CopyStrategyEnum,
     device: R::Device,
     client: ComputeClient<R>,
@@ -734,7 +735,7 @@ impl<R: Runtime, E: Float> Benchmark for MemcpyAsyncBench<R, E> {
 
         let a = TensorHandle::empty(
             &client,
-            vec![self.problem.data_count],
+            vec![self.data_count],
             E::as_type_native_unchecked(),
         );
         random_uniform(
@@ -747,7 +748,7 @@ impl<R: Runtime, E: Float> Benchmark for MemcpyAsyncBench<R, E> {
         .unwrap();
         let b = TensorHandle::empty(
             &client,
-            vec![self.problem.window_size],
+            vec![self.window_size],
             E::as_type_native_unchecked(),
         );
         random_uniform(
@@ -770,7 +771,7 @@ impl<R: Runtime, E: Float> Benchmark for MemcpyAsyncBench<R, E> {
             args.0.binding(),
             args.1.binding(),
             smem_size,
-            self.problem.double_buffering,
+            self.double_buffering,
         );
         Ok(())
     }
