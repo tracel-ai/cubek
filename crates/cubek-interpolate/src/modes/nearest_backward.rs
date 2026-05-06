@@ -24,14 +24,13 @@ fn interpolate_nearest_backward_kernel<F: Float, N: Size>(
 
     let vector_size = grad.vector_size();
     let out_idx = out_layout.to_source_pos(ABSOLUTE_POS);
-    let out_pos = out_idx * vector_size;
 
     let out_h = output.shape(1);
     let out_w = output.shape(2);
     let grad_h = grad.shape(1);
     let grad_w = grad.shape(2);
 
-    let (rem, c) = shape_out[3].div_mod(out_pos);
+    let (rem, c) = shape_out[3].div_mod(ABSOLUTE_POS * vector_size);
     let (rem, out_x) = shape_out[2].div_mod(rem);
     let (b, out_y) = shape_out[1].div_mod(rem);
 
