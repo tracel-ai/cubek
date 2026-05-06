@@ -120,6 +120,7 @@ pub fn all() -> &'static [&'static dyn BenchmarkCategory] {
         &crate::fft::Category,
         &crate::gemm::Category,
         &crate::gemv::Category,
+        &crate::interpolate::Category,
         &crate::memcpy_async::Category,
         &crate::quantized_matmul::Category,
         &crate::reduce::Category,

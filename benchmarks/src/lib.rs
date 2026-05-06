@@ -6,6 +6,7 @@ pub mod conv2d;
 pub mod fft;
 pub mod gemm;
 pub mod gemv;
+pub mod interpolate;
 pub mod memcpy_async;
 pub mod quantized_matmul;
 pub mod reduce;

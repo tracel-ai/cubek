@@ -21,6 +21,7 @@ version.workspace = true
 cpu-reference = [
     "dep:cubek-matmul",
     "dep:cubek-attention",
+    "dep:cubek-interpolate",
     "dep:cubek-convolution",
     "dep:cubek-fft",
     "dep:cubek-reduce",
@@ -38,9 +39,13 @@ cubek = { path = "../crates/cubek", version = "=0.2.0-pre.5", default-features =
     "matmul",
     "convolution",
     "attention",
+    "interpolate",
     "fft",
     "quantization",
 ] }
+cubek-interpolate = { path = "../crates/cubek-interpolate", version = "=0.2.0-pre.5" ,features = [
+    "cpu-reference",
+], optional = true }
 cubek-matmul = { path = "../crates/cubek-matmul", version = "=0.2.0-pre.5", features = [
     "cpu-reference",
 ], optional = true }
@@ -66,6 +71,10 @@ name = "gemm"
 [[bench]]
 harness = false
 name = "gemv"
+
+[[bench]]
+harness = false
+name = "interpolate"
 
 [[bench]]
 harness = false

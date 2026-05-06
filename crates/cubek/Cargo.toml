@@ -24,6 +24,7 @@ default = [
     "cubek-matmul?/default",
     "cubek-convolution?/default",
     "cubek-attention?/default",
+    "cubek-interpolate?/default",
     "cubek-fft?/default"
 ]
 
@@ -35,10 +36,12 @@ std = [
     "cubek-matmul?/std",
     "cubek-convolution?/std",
     "cubek-attention?/std",
+    "cubek-interpolate?/std",
     "cubek-fft?/std",
 ]
 
 attention = ["cubek-attention"]
+interpolate = ["cubek-interpolate"]
 convolution = ["cubek-convolution"]
 matmul = ["cubek-matmul"]
 quantization = ["cubek-quant/kernels"]
@@ -51,6 +54,7 @@ fft = ["cubek-fft"]
 [dependencies]
 cubecl = { workspace = true }
 cubek-attention = { path = "../cubek-attention", version = "=0.2.0-pre.5", default-features = false, optional = true }
+cubek-interpolate = { path = "../cubek-interpolate", version = "=0.2.0-pre.5", default-features = false, optional = true }
 cubek-convolution = { path = "../cubek-convolution", version = "=0.2.0-pre.5", default-features = false, optional = true }
 cubek-matmul = { path = "../cubek-matmul", version = "=0.2.0-pre.5", default-features = false, optional = true }
 cubek-quant = { path = "../cubek-quant", version = "=0.2.0-pre.5", default-features = false, optional = true }
