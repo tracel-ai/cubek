@@ -235,7 +235,7 @@ fn builder_matches_constructor() {
 }
 
 #[test]
-fn virtual_tensor_view_with_tiled_physical_memory() {
+fn read_tiled_tensor_as_rowmajor() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
     let matrix_len = 4;
@@ -254,7 +254,7 @@ fn virtual_tensor_view_with_tiled_physical_memory() {
     let cube_count = CubeCount::new_single();
     let cube_dim = CubeDim::new_single();
     let vector_size = 1;
-    launch_move_from_tiled_tensor_to_rowmajor::launch::<TestRuntime>(
+    launch_read_tiled_tensor_as_rowmajor::launch::<TestRuntime>(
         &client,
         cube_count,
         cube_dim,
@@ -268,14 +268,14 @@ fn virtual_tensor_view_with_tiled_physical_memory() {
     let output = HostData::from_tensor_handle(&client, output_handle, HostDataType::F32);
 
     let expected_values = [
-        [0.000, 1.000,  4.000,  5.000,],
-        [2.000, 3.000,  6.000,  7.000,],
-        [8.000, 9.000, 12.000, 13.000,],
-        [10.00, 11.000,  14.000, 15.000,],
+        [0.000, 1.000, 4.000, 5.000],
+        [2.000, 3.000, 6.000, 7.000],
+        [8.000, 9.000, 12.000, 13.000],
+        [10.00, 11.000, 14.000, 15.000],
     ];
 
-    for i in 0.. matrix_len {
-        for j in 0.. matrix_len {
+    for i in 0..matrix_len {
+        for j in 0..matrix_len {
             let actual = output.get_f32(&[i, j]);
             let expected = expected_values[i][j];
             assert!(expected == actual, "value[{i}, {j}] != expected[{i}, {j}]");
@@ -294,7 +294,12 @@ pub struct TiledLayout {
 #[cube]
 impl TiledLayout {
     pub fn new(width: usize, height: usize, tile_w: usize, tile_h: usize) -> TiledLayout {
-        TiledLayout { width, height, tile_w, tile_h }
+        TiledLayout {
+            width,
+            height,
+            tile_w,
+            tile_h,
+        }
     }
 }
 
@@ -340,18 +345,23 @@ impl Layout for TiledLayout {
 }
 
 #[cube(launch)]
-fn launch_move_from_tiled_tensor_to_rowmajor<N: Numeric, S: Size>(
+fn launch_read_tiled_tensor_as_rowmajor<N: Numeric, S: Size>(
     input: &Tensor<Vector<N, S>>,
     output: &mut Tensor<Vector<N, S>>,
     #[define(N)] _dtype: StorageType,
     #[define(S)] vector_size: usize,
     #[comptime] matrix_len: usize,
 ) {
-    let input_view = input.view(TiledLayout::new(matrix_len, matrix_len, matrix_len / 2, matrix_len / 2));
+    let input_view = input.view(TiledLayout::new(
+        matrix_len,
+        matrix_len,
+        matrix_len / 2,
+        matrix_len / 2,
+    ));
     let output_view = output.view_mut(SimpleLayout::new(matrix_len * matrix_len, vector_size));
 
     for i in 0..matrix_len {
-        for j in 0..matrix_len{
+        for j in 0..matrix_len {
             let index = i * matrix_len + j;
             let value = input_view.read((i, j));
             output_view.write(index, value);
