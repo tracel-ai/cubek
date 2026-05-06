@@ -119,19 +119,11 @@ impl<R: Runtime> Benchmark for GemvBench<R> {
         let (lhs_row_major_shape, rhs_row_major_shape, out_shape) = match self.kind {
             ProblemKind::VecMat => (
                 [self.batches, 1, self.k_dim],
-                [
-                    self.batches,
-                    self.k_dim,
-                    self.out_dim,
-                ],
+                [self.batches, self.k_dim, self.out_dim],
                 [self.batches, 1, self.out_dim],
             ),
             ProblemKind::MatVec => (
-                [
-                    self.batches,
-                    self.out_dim,
-                    self.k_dim,
-                ],
+                [self.batches, self.out_dim, self.k_dim],
                 [self.batches, self.k_dim, 1],
                 [self.batches, self.out_dim, 1],
             ),
@@ -173,12 +165,7 @@ impl<R: Runtime> Benchmark for GemvBench<R> {
     fn name(&self) -> String {
         format!(
             "{:?}-b:{}-out:{}-k:{}-lhs:{:?}-rhs:{:?}",
-            self.kind,
-            self.batches,
-            self.out_dim,
-            self.k_dim,
-            self.lhs_layout,
-            self.rhs_layout,
+            self.kind, self.batches, self.out_dim, self.k_dim, self.lhs_layout, self.rhs_layout,
         )
         .to_lowercase()
     }

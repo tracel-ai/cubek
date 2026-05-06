@@ -26,7 +26,14 @@ impl crate::registry::Correctness for FftCorrectness {
         let device = <TestRuntime as Runtime>::Device::default();
         let client = <TestRuntime as Runtime>::client(&device);
         let dim = problem.shape.len() - 1;
-        fft_kernel_result(client, problem.shape.clone(), dim, problem.mode, seeds[0], seeds[1])
+        fft_kernel_result(
+            client,
+            problem.shape.clone(),
+            dim,
+            problem.mode,
+            seeds[0],
+            seeds[1],
+        )
     }
 
     fn reference_result(

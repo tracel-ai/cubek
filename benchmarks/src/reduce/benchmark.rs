@@ -10,10 +10,7 @@ use cubecl::{
 };
 use cubek::{random::random_uniform, reduce::launch::ReduceStrategy};
 
-use crate::{
-    reduce::problem::ReduceProblem,
-    registry::RunSamples,
-};
+use crate::{reduce::problem::ReduceProblem, registry::RunSamples};
 
 pub fn bench(
     strategy: &ReduceStrategy,

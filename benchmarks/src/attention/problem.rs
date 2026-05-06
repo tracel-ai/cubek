@@ -28,7 +28,13 @@ pub fn build_problem(
     }
 }
 
-fn dims(batch: usize, num_heads: usize, seq_q: usize, seq_kv: usize, head_dim: usize) -> AttentionDims {
+fn dims(
+    batch: usize,
+    num_heads: usize,
+    seq_q: usize,
+    seq_kv: usize,
+    head_dim: usize,
+) -> AttentionDims {
     AttentionDims {
         batch,
         num_heads,

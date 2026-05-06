@@ -45,8 +45,12 @@ impl crate::registry::Category for Category {
     #[cfg(feature = "cpu-reference")]
     fn correctness(
         &self,
-    ) -> Option<&dyn crate::registry::Correctness<Problem = InterpolateProblem, Strategy = InterpolateStrategy>>
-    {
+    ) -> Option<
+        &dyn crate::registry::Correctness<
+            Problem = InterpolateProblem,
+            Strategy = InterpolateStrategy,
+        >,
+    > {
         Some(&correctness::InterpolateCorrectness)
     }
 }

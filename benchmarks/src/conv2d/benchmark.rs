@@ -15,10 +15,7 @@ use cubek::{
     std::InputBinding,
 };
 
-use crate::{
-    conv2d::problem::Conv2dProblem,
-    registry::RunSamples,
-};
+use crate::{conv2d::problem::Conv2dProblem, registry::RunSamples};
 
 type LhsG<MP> = <<MP as MatmulPrecision>::Lhs as MatrixPrecision>::Global;
 type LhsS<MP> = <<MP as MatmulPrecision>::Lhs as MatrixPrecision>::Stage;

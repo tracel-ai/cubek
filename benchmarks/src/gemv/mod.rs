@@ -45,8 +45,7 @@ impl crate::registry::Category for Category {
     #[cfg(feature = "cpu-reference")]
     fn correctness(
         &self,
-    ) -> Option<&dyn crate::registry::Correctness<Problem = GemvProblem, Strategy = Strategy>>
-    {
+    ) -> Option<&dyn crate::registry::Correctness<Problem = GemvProblem, Strategy = Strategy>> {
         Some(&correctness::GemvCorrectness)
     }
 }
