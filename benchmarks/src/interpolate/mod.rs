@@ -4,65 +4,53 @@ mod correctness;
 mod problem;
 mod strategy;
 
-pub use benchmark::run;
 pub use problem::problems;
-pub use strategy::strategies;
+pub use strategy::{InterpolateStrategy, strategies};
 
-use crate::registry::{BenchmarkCategory, ItemDescriptor, RunSamples};
+use cubek::interpolate::definition::InterpolateProblem;
 
-#[cfg(feature = "cpu-reference")]
-use cubek_test_utils::{HostData, Progress};
+use crate::registry::{CatalogEntry, RunSamples};
 
 pub struct Category;
 
-impl BenchmarkCategory for Category {
+impl crate::registry::Category for Category {
+    type Problem = InterpolateProblem;
+    type Strategy = InterpolateStrategy;
+
     fn id(&self) -> &'static str {
         "interpolate"
     }
+
     fn label(&self) -> &'static str {
         "Interpolate"
     }
-    fn strategies(&self) -> Vec<ItemDescriptor> {
-        strategies()
-    }
-    fn problems(&self) -> Vec<ItemDescriptor> {
+
+    fn problems(&self) -> Vec<CatalogEntry<InterpolateProblem>> {
         problems()
     }
-    fn run(
+
+    fn strategies(&self) -> Vec<CatalogEntry<InterpolateStrategy>> {
+        strategies()
+    }
+
+    fn bench(
         &self,
-        strategy_id: &str,
-        problem_id: &str,
+        strategy: &InterpolateStrategy,
+        problem: &InterpolateProblem,
         num_samples: usize,
     ) -> Result<RunSamples, String> {
-        run(strategy_id, problem_id, num_samples)
+        benchmark::bench(strategy, problem, num_samples)
     }
 
     #[cfg(feature = "cpu-reference")]
-    fn kernel_result(
+    fn correctness(
         &self,
-        strategy_id: &str,
-        problem_id: &str,
-        seed_lhs: u64,
-        seed_rhs: u64,
-    ) -> Option<Result<HostData, String>> {
-        Some(correctness::kernel_result(
-            strategy_id,
-            problem_id,
-            seed_lhs,
-            seed_rhs,
-        ))
-    }
-
-    #[cfg(feature = "cpu-reference")]
-    fn reference_result(
-        &self,
-        problem_id: &str,
-        seed_lhs: u64,
-        seed_rhs: u64,
-        progress: Option<&Progress>,
-    ) -> Option<Result<HostData, String>> {
-        Some(correctness::reference_result(
-            problem_id, seed_lhs, seed_rhs, progress,
-        ))
+    ) -> Option<
+        &dyn crate::registry::Correctness<
+            Problem = InterpolateProblem,
+            Strategy = InterpolateStrategy,
+        >,
+    > {
+        Some(&correctness::InterpolateCorrectness)
     }
 }

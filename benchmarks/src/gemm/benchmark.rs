@@ -15,45 +15,47 @@ use cubek::{
 };
 
 use crate::{
-    gemm::{
-        problem::{GemmProblem, Precision, problem_for},
-        strategy::strategy_for,
-    },
+    gemm::problem::{GemmProblem, Precision},
     registry::RunSamples,
 };
 
-pub fn run(strategy_id: &str, problem_id: &str, num_samples: usize) -> Result<RunSamples, String> {
-    run_on::<cubecl::TestRuntime>(Default::default(), strategy_id, problem_id, num_samples)
-}
-
-pub fn run_on<R: Runtime>(
-    device: R::Device,
-    strategy_id: &str,
-    problem_id: &str,
+pub fn bench(
+    strategy: &Strategy,
+    problem: &GemmProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let problem =
-        problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
-    let strategy =
-        strategy_for(strategy_id).ok_or_else(|| format!("unknown strategy: {strategy_id}"))?;
+    bench_on::<cubecl::TestRuntime>(Default::default(), strategy, problem, num_samples)
+}
+
+pub fn bench_on<R: Runtime>(
+    device: R::Device,
+    strategy: &Strategy,
+    problem: &GemmProblem,
+    num_samples: usize,
+) -> Result<RunSamples, String> {
     match problem.precision {
-        Precision::F32 => run_with::<R, f32>(device, problem, strategy, num_samples),
-        Precision::F16 => run_with::<R, half::f16>(device, problem, strategy, num_samples),
+        Precision::F32 => bench_with::<R, f32>(device, problem, strategy, num_samples),
+        Precision::F16 => bench_with::<R, half::f16>(device, problem, strategy, num_samples),
     }
 }
 
-fn run_with<R: Runtime, MP: MatmulPrecision>(
+fn bench_with<R: Runtime, MP: MatmulPrecision>(
     device: R::Device,
-    problem: GemmProblem,
-    strategy: Strategy,
+    problem: &GemmProblem,
+    strategy: &Strategy,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
     let client = R::client(&device);
     let flops = 2.0 * problem.b as f64 * problem.m as f64 * problem.n as f64 * problem.k as f64;
 
     let bench = GemmBench::<R> {
-        problem,
-        strategy,
+        b: problem.b,
+        m: problem.m,
+        n: problem.n,
+        k: problem.k,
+        lhs_layout: problem.lhs_layout,
+        rhs_layout: problem.rhs_layout,
+        strategy: strategy.clone(),
         client,
         device,
         dtypes: MatmulElems::new_deprecated::<MP>(),
@@ -69,7 +71,12 @@ fn run_with<R: Runtime, MP: MatmulPrecision>(
 }
 
 struct GemmBench<R: Runtime> {
-    problem: GemmProblem,
+    b: usize,
+    m: usize,
+    n: usize,
+    k: usize,
+    lhs_layout: MatrixLayout,
+    rhs_layout: MatrixLayout,
     strategy: Strategy,
     device: R::Device,
     client: ComputeClient<R>,
@@ -83,12 +90,12 @@ impl<R: Runtime> Benchmark for GemmBench<R> {
 
     fn prepare(&self) -> Self::Input {
         let client = R::client(&self.device);
-        let tl = matches!(self.problem.lhs_layout, MatrixLayout::ColMajor);
-        let tr = matches!(self.problem.rhs_layout, MatrixLayout::ColMajor);
+        let tl = matches!(self.lhs_layout, MatrixLayout::ColMajor);
+        let tr = matches!(self.rhs_layout, MatrixLayout::ColMajor);
 
         let mut lhs = TensorHandle::empty(
             &client,
-            vec![self.problem.b, self.problem.m, self.problem.k],
+            vec![self.b, self.m, self.k],
             self.dtypes.lhs_global,
         );
         if tl {
@@ -106,7 +113,7 @@ impl<R: Runtime> Benchmark for GemmBench<R> {
 
         let mut rhs = TensorHandle::empty(
             &client,
-            vec![self.problem.b, self.problem.k, self.problem.n],
+            vec![self.b, self.k, self.n],
             self.dtypes.rhs_global,
         );
         if tr {
@@ -129,7 +136,7 @@ impl<R: Runtime> Benchmark for GemmBench<R> {
         let client = R::client(&self.device);
         let out = TensorHandle::empty(
             &client,
-            vec![self.problem.b, self.problem.m, self.problem.n],
+            vec![self.b, self.m, self.n],
             self.dtypes.acc_global,
         );
 

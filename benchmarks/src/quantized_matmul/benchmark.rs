@@ -24,37 +24,34 @@ use cubek::{
 };
 
 use crate::{
-    quantized_matmul::{
-        problem::{Layout, Mode, QuantSide, QuantizedMatmulProblem, problem_for},
-        strategy::strategy_for,
-    },
+    quantized_matmul::problem::{Layout, Mode, QuantSide, QuantizedMatmulProblem},
     registry::RunSamples,
 };
 
-pub fn run(strategy_id: &str, problem_id: &str, num_samples: usize) -> Result<RunSamples, String> {
-    run_on::<cubecl::TestRuntime, f32>(Default::default(), strategy_id, problem_id, num_samples)
+pub fn bench(
+    strategy: &Strategy,
+    problem: &QuantizedMatmulProblem,
+    num_samples: usize,
+) -> Result<RunSamples, String> {
+    bench_on::<cubecl::TestRuntime, f32>(Default::default(), strategy, problem, num_samples)
 }
 
-pub fn run_on<R: Runtime, E: frontend::Float>(
+pub fn bench_on<R: Runtime, E: frontend::Float>(
     device: R::Device,
-    strategy_id: &str,
-    problem_id: &str,
+    strategy: &Strategy,
+    problem: &QuantizedMatmulProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
     let client = R::client(&device);
-    let problem =
-        problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
-    let strategy =
-        strategy_for(strategy_id).ok_or_else(|| format!("unknown strategy: {strategy_id}"))?;
 
-    validate_spec(&problem)?;
+    validate_spec(problem)?;
 
     let flops = 2.0 * problem.b as f64 * problem.m as f64 * problem.n as f64 * problem.k as f64;
 
     let _ = device;
     let bench = QuantMatmulBench::<R> {
-        problem,
-        strategy,
+        problem: problem.clone(),
+        strategy: strategy.clone(),
         client,
         dtypes: matmul_elems::<E>(),
         samples: num_samples,

@@ -2,33 +2,43 @@ mod benchmark;
 mod problem;
 mod strategy;
 
-pub use benchmark::run;
-pub use problem::problems;
-pub use strategy::strategies;
+pub use problem::{ContiguousProblem, problems};
+pub use strategy::{ContiguousStrategy, strategies};
 
-use crate::registry::{BenchmarkCategory, ItemDescriptor, RunSamples};
+use crate::registry::{CatalogEntry, RunSamples};
 
 pub struct Category;
 
-impl BenchmarkCategory for Category {
+impl crate::registry::Category for Category {
+    type Problem = ContiguousProblem;
+    type Strategy = ContiguousStrategy;
+
     fn id(&self) -> &'static str {
         "contiguous"
     }
+
     fn label(&self) -> &'static str {
         "Contiguous"
     }
-    fn strategies(&self) -> Vec<ItemDescriptor> {
-        strategies()
+
+    fn timing_method(&self) -> cubecl::benchmark::TimingMethod {
+        cubecl::benchmark::TimingMethod::Device
     }
-    fn problems(&self) -> Vec<ItemDescriptor> {
+
+    fn problems(&self) -> Vec<CatalogEntry<ContiguousProblem>> {
         problems()
     }
-    fn run(
+
+    fn strategies(&self) -> Vec<CatalogEntry<ContiguousStrategy>> {
+        strategies()
+    }
+
+    fn bench(
         &self,
-        strategy_id: &str,
-        problem_id: &str,
+        strategy: &ContiguousStrategy,
+        problem: &ContiguousProblem,
         num_samples: usize,
     ) -> Result<RunSamples, String> {
-        run(strategy_id, problem_id, num_samples)
+        benchmark::bench(strategy, problem, num_samples)
     }
 }

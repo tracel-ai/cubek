@@ -1,12 +1,6 @@
 use cubecl::ir::MatrixLayout;
 
-use crate::registry::ItemDescriptor;
-
-/// Stable IDs. Changing one is a breaking change for any persisted history.
-pub const PROBLEM_VECMAT_RR: &str = "vecmat_b2_out4096_k8192_rr";
-pub const PROBLEM_VECMAT_RC: &str = "vecmat_b2_out4096_k8192_rc";
-pub const PROBLEM_MATVEC_RR: &str = "matvec_b2_out4096_k8192_rr";
-pub const PROBLEM_MATVEC_CR: &str = "matvec_b2_out4096_k8192_cr";
+use crate::registry::CatalogEntry;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProblemKind {
@@ -23,58 +17,56 @@ pub struct GemvProblem {
     pub rhs_layout: MatrixLayout,
 }
 
-pub fn problems() -> Vec<ItemDescriptor> {
-    vec![
-        ItemDescriptor {
-            id: PROBLEM_VECMAT_RR.to_string(),
-            label: "VecMat (b=2 out=4096 k=8192) lhs=row rhs=row".to_string(),
-        },
-        ItemDescriptor {
-            id: PROBLEM_VECMAT_RC.to_string(),
-            label: "VecMat (b=2 out=4096 k=8192) lhs=row rhs=col".to_string(),
-        },
-        ItemDescriptor {
-            id: PROBLEM_MATVEC_RR.to_string(),
-            label: "MatVec (b=2 out=4096 k=8192) lhs=row rhs=row".to_string(),
-        },
-        ItemDescriptor {
-            id: PROBLEM_MATVEC_CR.to_string(),
-            label: "MatVec (b=2 out=4096 k=8192) lhs=col rhs=row".to_string(),
-        },
-    ]
-}
-
-pub(crate) fn problem_for(id: &str) -> Option<GemvProblem> {
+pub fn problems() -> Vec<CatalogEntry<GemvProblem>> {
     let (batches, out_dim, k_dim) = (2, 4096, 8192);
-    let (kind, lhs, rhs) = match id {
-        PROBLEM_VECMAT_RR => (
-            ProblemKind::VecMat,
-            MatrixLayout::RowMajor,
-            MatrixLayout::RowMajor,
+    vec![
+        CatalogEntry::new(
+            "vecmat_b2_out4096_k8192_rr",
+            "VecMat (b=2 out=4096 k=8192) lhs=row rhs=row",
+            GemvProblem {
+                kind: ProblemKind::VecMat,
+                batches,
+                out_dim,
+                k_dim,
+                lhs_layout: MatrixLayout::RowMajor,
+                rhs_layout: MatrixLayout::RowMajor,
+            },
         ),
-        PROBLEM_VECMAT_RC => (
-            ProblemKind::VecMat,
-            MatrixLayout::RowMajor,
-            MatrixLayout::ColMajor,
+        CatalogEntry::new(
+            "vecmat_b2_out4096_k8192_rc",
+            "VecMat (b=2 out=4096 k=8192) lhs=row rhs=col",
+            GemvProblem {
+                kind: ProblemKind::VecMat,
+                batches,
+                out_dim,
+                k_dim,
+                lhs_layout: MatrixLayout::RowMajor,
+                rhs_layout: MatrixLayout::ColMajor,
+            },
         ),
-        PROBLEM_MATVEC_RR => (
-            ProblemKind::MatVec,
-            MatrixLayout::RowMajor,
-            MatrixLayout::RowMajor,
+        CatalogEntry::new(
+            "matvec_b2_out4096_k8192_rr",
+            "MatVec (b=2 out=4096 k=8192) lhs=row rhs=row",
+            GemvProblem {
+                kind: ProblemKind::MatVec,
+                batches,
+                out_dim,
+                k_dim,
+                lhs_layout: MatrixLayout::RowMajor,
+                rhs_layout: MatrixLayout::RowMajor,
+            },
         ),
-        PROBLEM_MATVEC_CR => (
-            ProblemKind::MatVec,
-            MatrixLayout::ColMajor,
-            MatrixLayout::RowMajor,
+        CatalogEntry::new(
+            "matvec_b2_out4096_k8192_cr",
+            "MatVec (b=2 out=4096 k=8192) lhs=col rhs=row",
+            GemvProblem {
+                kind: ProblemKind::MatVec,
+                batches,
+                out_dim,
+                k_dim,
+                lhs_layout: MatrixLayout::ColMajor,
+                rhs_layout: MatrixLayout::RowMajor,
+            },
         ),
-        _ => return None,
-    };
-    Some(GemvProblem {
-        kind,
-        batches,
-        out_dim,
-        k_dim,
-        lhs_layout: lhs,
-        rhs_layout: rhs,
-    })
+    ]
 }

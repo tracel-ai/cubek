@@ -17,34 +17,36 @@ use cubek::{
 };
 
 use crate::{
-    gemv::{
-        problem::{GemvProblem, ProblemKind, problem_for},
-        strategy::strategy_for,
-    },
+    gemv::problem::{GemvProblem, ProblemKind},
     registry::RunSamples,
 };
 
-pub fn run(strategy_id: &str, problem_id: &str, num_samples: usize) -> Result<RunSamples, String> {
-    run_on::<cubecl::TestRuntime, f32>(Default::default(), strategy_id, problem_id, num_samples)
+pub fn bench(
+    strategy: &Strategy,
+    problem: &GemvProblem,
+    num_samples: usize,
+) -> Result<RunSamples, String> {
+    bench_on::<cubecl::TestRuntime, f32>(Default::default(), strategy, problem, num_samples)
 }
 
-pub fn run_on<R: Runtime, E: frontend::Float>(
+pub fn bench_on<R: Runtime, E: frontend::Float>(
     device: R::Device,
-    strategy_id: &str,
-    problem_id: &str,
+    strategy: &Strategy,
+    problem: &GemvProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
     let client = R::client(&device);
-    let problem =
-        problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
-    let strategy =
-        strategy_for(strategy_id).ok_or_else(|| format!("unknown strategy: {strategy_id}"))?;
 
     let flops = 2.0 * problem.batches as f64 * problem.out_dim as f64 * problem.k_dim as f64;
 
     let bench = GemvBench::<R> {
-        problem,
-        strategy,
+        kind: problem.kind,
+        batches: problem.batches,
+        out_dim: problem.out_dim,
+        k_dim: problem.k_dim,
+        lhs_layout: problem.lhs_layout,
+        rhs_layout: problem.rhs_layout,
+        strategy: strategy.clone(),
         device,
         client,
         dtypes: MatmulElems::from_single_dtype(E::as_type_native_unchecked()),
@@ -60,7 +62,12 @@ pub fn run_on<R: Runtime, E: frontend::Float>(
 }
 
 struct GemvBench<R: Runtime> {
-    problem: GemvProblem,
+    kind: ProblemKind,
+    batches: usize,
+    out_dim: usize,
+    k_dim: usize,
+    lhs_layout: MatrixLayout,
+    rhs_layout: MatrixLayout,
     strategy: Strategy,
     device: R::Device,
     client: ComputeClient<R>,
@@ -109,37 +116,29 @@ impl<R: Runtime> Benchmark for GemvBench<R> {
     fn prepare(&self) -> Self::Input {
         let client = R::client(&self.device);
 
-        let (lhs_row_major_shape, rhs_row_major_shape, out_shape) = match self.problem.kind {
+        let (lhs_row_major_shape, rhs_row_major_shape, out_shape) = match self.kind {
             ProblemKind::VecMat => (
-                [self.problem.batches, 1, self.problem.k_dim],
-                [
-                    self.problem.batches,
-                    self.problem.k_dim,
-                    self.problem.out_dim,
-                ],
-                [self.problem.batches, 1, self.problem.out_dim],
+                [self.batches, 1, self.k_dim],
+                [self.batches, self.k_dim, self.out_dim],
+                [self.batches, 1, self.out_dim],
             ),
             ProblemKind::MatVec => (
-                [
-                    self.problem.batches,
-                    self.problem.out_dim,
-                    self.problem.k_dim,
-                ],
-                [self.problem.batches, self.problem.k_dim, 1],
-                [self.problem.batches, self.problem.out_dim, 1],
+                [self.batches, self.out_dim, self.k_dim],
+                [self.batches, self.k_dim, 1],
+                [self.batches, self.out_dim, 1],
             ),
         };
 
         let lhs = make_tensor_with_layout(
             &client,
             lhs_row_major_shape,
-            self.problem.lhs_layout,
+            self.lhs_layout,
             self.dtypes.lhs_global,
         );
         let rhs = make_tensor_with_layout(
             &client,
             rhs_row_major_shape,
-            self.problem.rhs_layout,
+            self.rhs_layout,
             self.dtypes.rhs_global,
         );
         let out = TensorHandle::empty(&client, out_shape, self.dtypes.acc_global);
@@ -166,12 +165,7 @@ impl<R: Runtime> Benchmark for GemvBench<R> {
     fn name(&self) -> String {
         format!(
             "{:?}-b:{}-out:{}-k:{}-lhs:{:?}-rhs:{:?}",
-            self.problem.kind,
-            self.problem.batches,
-            self.problem.out_dim,
-            self.problem.k_dim,
-            self.problem.lhs_layout,
-            self.problem.rhs_layout,
+            self.kind, self.batches, self.out_dim, self.k_dim, self.lhs_layout, self.rhs_layout,
         )
         .to_lowercase()
     }

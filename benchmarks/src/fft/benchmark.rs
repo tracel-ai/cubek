@@ -14,30 +14,29 @@ use cubek::{
 };
 
 use crate::{
-    fft::{
-        problem::{FftProblem, problem_for},
-        strategy::strategy_for,
-    },
+    fft::{problem::FftProblem, strategy::FftStrategy},
     registry::RunSamples,
 };
 
-pub fn run(strategy_id: &str, problem_id: &str, num_samples: usize) -> Result<RunSamples, String> {
-    run_on::<cubecl::TestRuntime, f32>(Default::default(), strategy_id, problem_id, num_samples)
+pub fn bench(
+    strategy: &FftStrategy,
+    problem: &FftProblem,
+    num_samples: usize,
+) -> Result<RunSamples, String> {
+    bench_on::<cubecl::TestRuntime, f32>(Default::default(), strategy, problem, num_samples)
 }
 
-pub fn run_on<R: Runtime, E: frontend::Float>(
+pub fn bench_on<R: Runtime, E: frontend::Float>(
     device: R::Device,
-    strategy_id: &str,
-    problem_id: &str,
+    _strategy: &FftStrategy,
+    problem: &FftProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
     let client = R::client(&device);
-    let problem =
-        problem_for(problem_id).ok_or_else(|| format!("unknown problem: {problem_id}"))?;
-    strategy_for(strategy_id).ok_or_else(|| format!("unknown strategy: {strategy_id}"))?;
 
     let bench = FftBench::<R, E> {
-        problem,
+        shape: problem.shape.clone(),
+        mode: problem.mode,
         device,
         client,
         samples: num_samples,
@@ -53,7 +52,8 @@ pub fn run_on<R: Runtime, E: frontend::Float>(
 }
 
 struct FftBench<R: Runtime, E> {
-    problem: FftProblem,
+    shape: Vec<usize>,
+    mode: FftMode,
     device: R::Device,
     client: ComputeClient<R>,
     samples: usize,
@@ -75,16 +75,16 @@ impl<R: Runtime, E: Float> Benchmark for FftBench<R, E> {
         let client = R::client(&self.device);
         let elem = E::as_type_native_unchecked();
 
-        let signal = TensorHandle::empty(&client, self.problem.shape.clone(), elem);
+        let signal = TensorHandle::empty(&client, self.shape.clone(), elem);
 
-        let mut shape_out = self.problem.shape.clone();
-        let dim = self.problem.shape.len() - 1;
-        shape_out[dim] = self.problem.shape[dim] / 2 + 1;
+        let mut shape_out = self.shape.clone();
+        let dim = self.shape.len() - 1;
+        shape_out[dim] = self.shape[dim] / 2 + 1;
 
         let spectrum_re = TensorHandle::empty(&client, shape_out.clone(), elem);
         let spectrum_im = TensorHandle::empty(&client, shape_out, elem);
 
-        match self.problem.mode {
+        match self.mode {
             FftMode::Forward => {
                 random_uniform(
                     &client,
@@ -122,8 +122,8 @@ impl<R: Runtime, E: Float> Benchmark for FftBench<R, E> {
     }
 
     fn execute(&self, input: Self::Input) -> Result<(), String> {
-        let dim = self.problem.shape.len() - 1;
-        match self.problem.mode {
+        let dim = self.shape.len() - 1;
+        match self.mode {
             FftMode::Forward => rfft_launch(
                 &self.client,
                 input.signal.binding(),
@@ -154,8 +154,8 @@ impl<R: Runtime, E: Float> Benchmark for FftBench<R, E> {
         format!(
             "fft-{}-{:?}-{:?}",
             E::as_type_native_unchecked(),
-            self.problem.shape,
-            self.problem.mode,
+            self.shape,
+            self.mode,
         )
         .to_lowercase()
     }

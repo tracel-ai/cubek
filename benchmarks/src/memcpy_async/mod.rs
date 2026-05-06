@@ -2,33 +2,43 @@ mod benchmark;
 mod problem;
 mod strategy;
 
-pub use benchmark::run;
-pub use problem::problems;
-pub use strategy::strategies;
+pub use problem::{MemcpyAsyncProblem, problems};
+pub use strategy::{CopyStrategyEnum, strategies};
 
-use crate::registry::{BenchmarkCategory, ItemDescriptor, RunSamples};
+use crate::registry::{CatalogEntry, RunSamples};
 
 pub struct Category;
 
-impl BenchmarkCategory for Category {
+impl crate::registry::Category for Category {
+    type Problem = MemcpyAsyncProblem;
+    type Strategy = CopyStrategyEnum;
+
     fn id(&self) -> &'static str {
         "memcpy_async"
     }
+
     fn label(&self) -> &'static str {
         "Memcpy (async)"
     }
-    fn strategies(&self) -> Vec<ItemDescriptor> {
-        strategies()
+
+    fn timing_method(&self) -> cubecl::benchmark::TimingMethod {
+        cubecl::benchmark::TimingMethod::Device
     }
-    fn problems(&self) -> Vec<ItemDescriptor> {
+
+    fn problems(&self) -> Vec<CatalogEntry<MemcpyAsyncProblem>> {
         problems()
     }
-    fn run(
+
+    fn strategies(&self) -> Vec<CatalogEntry<CopyStrategyEnum>> {
+        strategies()
+    }
+
+    fn bench(
         &self,
-        strategy_id: &str,
-        problem_id: &str,
+        strategy: &CopyStrategyEnum,
+        problem: &MemcpyAsyncProblem,
         num_samples: usize,
     ) -> Result<RunSamples, String> {
-        run(strategy_id, problem_id, num_samples)
+        benchmark::bench(strategy, problem, num_samples)
     }
 }
