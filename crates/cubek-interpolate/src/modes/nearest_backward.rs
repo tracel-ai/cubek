@@ -48,7 +48,7 @@ fn interpolate_nearest_backward_kernel<F: Float, N: Size>(
         for grad_x in grad_x_start..grad_x_end {
             let index_grad = index_grad_base + grad_y * grad.stride(1) + grad_x * grad.stride(2);
 
-            sum += grad[index_grad];
+            sum += grad[index_grad / vector_size];
         }
     }
 

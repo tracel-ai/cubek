@@ -92,7 +92,7 @@ pub fn run_interpolate_test(
 
     let output_host = output_host_f32(&client, output);
     let reference =
-        cpu_reference_interpolate_from_host(&input_data, &output_shape, &problem.options, None);
+        cpu_reference_interpolate_from_host(&input_data, &output_shape, &problem.options);
 
     validate_test(result, output_host, reference, tolerance);
 }
@@ -134,7 +134,6 @@ pub fn run_interpolate_backward_test(
         &out_grad_data,
         &output_shape,
         &problem.options,
-        None,
     );
 
     validate_test(result, output_host, reference, tolerance);

@@ -88,18 +88,16 @@ pub fn cpu_reference_interpolate_from_host(
     input: &HostData,
     output_shape: &[usize],
     options: &InterpolateOptions,
-    progress: Option<&Progress>,
 ) -> HostData {
-    reference_for_interpolation_mode(input, output_shape, options, progress)
+    reference_for_interpolation_mode(input, output_shape, options, None)
 }
 
 pub fn cpu_reference_interpolate_backward_from_host(
     out_grad: &HostData,
     output_shape: &[usize],
     options: &InterpolateOptions,
-    progress: Option<&Progress>,
 ) -> HostData {
-    reference_for_backward_interpolation_mode(out_grad, output_shape, options, progress)
+    reference_for_backward_interpolation_mode(out_grad, output_shape, options, None)
 }
 
 fn reference_for_interpolation_mode(

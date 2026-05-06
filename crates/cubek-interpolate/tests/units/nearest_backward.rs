@@ -3,7 +3,7 @@ use cubek_interpolate::definition::{InterpolateMode, InterpolateOptions};
 
 use super::{make_problem, run_interpolate_backward_test};
 
-const NEAREST_TOLERANCE: f32 = 0.0;
+const NEAREST_BACKWARD_TOLERANCE: f32 = 0.0;
 
 #[test]
 fn test_interpolate_nearest_backward_identity() {
@@ -13,7 +13,7 @@ fn test_interpolate_nearest_backward_identity() {
         [4, 4],
         InterpolateOptions::new(InterpolateMode::Nearest),
     );
-    run_interpolate_backward_test(client, 5678, -1.0, 1.0, problem, NEAREST_TOLERANCE);
+    run_interpolate_backward_test(client, 5678, -1.0, 1.0, problem, NEAREST_BACKWARD_TOLERANCE);
 }
 
 #[test]
@@ -24,7 +24,14 @@ fn test_interpolate_nearest_backward_upsample() {
         [10, 10],
         InterpolateOptions::new(InterpolateMode::Nearest),
     );
-    run_interpolate_backward_test(client, 1234, -10.0, 10.0, problem, NEAREST_TOLERANCE);
+    run_interpolate_backward_test(
+        client,
+        1234,
+        -10.0,
+        10.0,
+        problem,
+        NEAREST_BACKWARD_TOLERANCE,
+    );
 }
 
 #[test]
@@ -35,7 +42,14 @@ fn test_interpolate_nearest_backward_downsample() {
         [2, 2],
         InterpolateOptions::new(InterpolateMode::Nearest),
     );
-    run_interpolate_backward_test(client, 91011, -100.0, 100.0, problem, NEAREST_TOLERANCE);
+    run_interpolate_backward_test(
+        client,
+        91011,
+        -100.0,
+        100.0,
+        problem,
+        NEAREST_BACKWARD_TOLERANCE,
+    );
 }
 
 #[test]
@@ -46,7 +60,7 @@ fn test_interpolate_nearest_backward_resize() {
         [8, 16],
         InterpolateOptions::new(InterpolateMode::Nearest),
     );
-    run_interpolate_backward_test(client, 25, -1.0, 1.0, problem, NEAREST_TOLERANCE);
+    run_interpolate_backward_test(client, 25, -1.0, 1.0, problem, NEAREST_BACKWARD_TOLERANCE);
 }
 
 #[test]
@@ -57,5 +71,12 @@ fn test_interpolate_nearest_backward_without_align_corners() {
         [16, 16],
         InterpolateOptions::new(InterpolateMode::Nearest).with_align_corners(false),
     );
-    run_interpolate_backward_test(client, 122, -10.0, 10.0, problem, NEAREST_TOLERANCE);
+    run_interpolate_backward_test(
+        client,
+        122,
+        -10.0,
+        10.0,
+        problem,
+        NEAREST_BACKWARD_TOLERANCE,
+    );
 }
