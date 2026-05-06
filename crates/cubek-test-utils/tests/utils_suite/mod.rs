@@ -1,8 +1,11 @@
+use cubecl::std::tensor::layout::simple::SimpleLayout;
+use cubecl::std::tensor::{AsView, AsViewExpand, AsViewMut, AsViewMutExpand, TensorHandle};
+use cubecl::zspace::shape;
 use cubecl::{
-    frontend::CubePrimitive,
-    zspace::shape,
-    {Runtime, TestRuntime},
+    self,
+    std::tensor::layout::{Coords1d, Layout, LayoutExpand},
 };
+use cubecl::{TestRuntime, prelude::*};
 use cubek_test_utils::{
     DataKind, HostData, HostDataType, StrideSpec, TestInput, ValidationResult,
     assert_equals_approx, assert_equals_approx_in_slice, print_tensor,
@@ -229,6 +232,98 @@ fn builder_matches_constructor() {
     assert_equals_approx(&from_builder, &from_new, 0.0)
         .as_test_outcome()
         .enforce();
+}
+
+#[test]
+fn virtual_tensor_view_with_tiled_physical_memory() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let input_handle = TestInput::builder(client.clone(), shape![8, 8])
+        .stride(StrideSpec::RowMajor)
+        .arange()
+        .generate();
+
+    let dtype = f32::as_type_native_unchecked().storage_type();
+    //let output_handle = input_handle.clone();
+    let output_handle = client.empty(8 * 8 * dtype.size());
+    let output_handle = TensorHandle::new_contiguous(shape![8, 8], output_handle, dtype);
+    let cube_count = CubeCount::new_single();
+    let cube_dim = CubeDim::new_single();
+    let vector_size = 1;
+    launch_virtual_tensor_tiled::launch::<TestRuntime>(
+        &client,
+        cube_count,
+        cube_dim,
+        input_handle.binding().into_tensor_arg(),
+        output_handle.clone().binding().into_tensor_arg(),
+        dtype,
+        vector_size,
+    );
+
+    let output = HostData::from_tensor_handle(&client, output_handle, HostDataType::F32);
+
+    let values = output.pretty_print();
+    panic!("values: \n{}", values);
+    
+}
+
+#[derive(CubeType, Clone, Copy)]
+pub struct TiledLayout {
+    width: usize,
+    height: usize,
+}
+
+#[cube]
+impl TiledLayout {
+    pub fn new(width: usize, height: usize) -> TiledLayout {
+        TiledLayout {
+            width, 
+            height,
+        }
+    }
+}
+
+#[cube]
+impl Layout for TiledLayout {
+    type Coordinates = (usize, usize);
+
+    type SourceCoordinates = Coords1d;
+
+    fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
+        self.height * pos.0 + pos.1
+    }
+
+    fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
+        let pos = self.height * pos.0 + pos.1;
+        (pos, true)
+    }
+
+    fn shape(&self) -> Self::Coordinates {
+        (self.width, self.height)
+    }
+
+    fn is_in_bounds(&self, _pos: Self::Coordinates) -> bool {
+        true.into()
+    }
+}
+
+#[cube(launch)]
+fn launch_virtual_tensor_tiled<N: Numeric, S: Size>(
+    input: &Tensor<Vector<N, S>>,
+    output: &mut Tensor<Vector<N, S>>,
+    #[define(N)] _dtype: StorageType,
+    #[define(S)] vector_size: usize,
+) {
+    let input_view = input.view(SimpleLayout::new(8 * 8, vector_size));
+    //let output_view = output.view_mut(SimpleLayout::new(8, vector_size));
+    let output_view = output.view_mut(TiledLayout::new(8, 8));
+
+    for i in 0..8 {
+        for j in 0..8 {
+            let index = i * 8 + j;
+            let value = input_view.read(index);
+            output_view.write((i, j), value);
+        }
+    }
 }
 
 #[test]
