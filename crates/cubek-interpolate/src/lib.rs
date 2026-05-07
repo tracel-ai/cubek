@@ -8,11 +8,11 @@ pub mod definition;
 mod kernel;
 
 use crate::kernel::{
+    backward::interpolate_nearest_backward_launch,
     forward::{
         interpolate_bicubic_launch, interpolate_bilinear_launch, interpolate_lanczos3_launch,
         interpolate_nearest_launch,
     },
-    backward::interpolate_nearest_backward_launch,
 };
 
 #[cfg(feature = "cpu-reference")]
