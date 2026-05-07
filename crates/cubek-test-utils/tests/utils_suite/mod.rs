@@ -1,9 +1,7 @@
 mod tiled_tensor;
 
 use cubecl::zspace::shape;
-use cubecl::{
-    TestRuntime, prelude::*
-};
+use cubecl::{TestRuntime, prelude::*};
 use cubek_test_utils::{
     DataKind, HostData, HostDataType, StrideSpec, TestInput, ValidationResult,
     assert_equals_approx, assert_equals_approx_in_slice, print_tensor,

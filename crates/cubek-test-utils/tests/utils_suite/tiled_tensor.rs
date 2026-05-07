@@ -1,13 +1,28 @@
-use cubecl::{std::tensor::{AsView, AsViewExpand, AsViewMut, AsViewMutExpand}, zspace::shape};
 use cubecl::{
     self,
     std::tensor::layout::{Coords1d, Layout, LayoutExpand},
 };
 use cubecl::{TestRuntime, prelude::*};
-use cubek_test_utils::{
-    HostData, HostDataType, StrideSpec, TestInput, assert_equals_approx,
+use cubecl::{
+    std::tensor::{AsView, AsViewExpand, AsViewMut, AsViewMutExpand},
+    zspace::shape,
 };
+use cubek_test_utils::{HostData, HostDataType, StrideSpec, TestInput, assert_equals_approx};
 
+#[test]
+fn metadata_to_tiled_should_return_physical_layout() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+
+    let matrix_len = 4;
+    let shape = shape![5, matrix_len, matrix_len, 3, 7];
+    let input_handle = TestInput::builder(client.clone(), shape.clone())
+        .stride(StrideSpec::RowMajor)
+        .arange()
+        .generate();
+
+    let metadata = input_handle.metadata.to_tiled(1, &[2, 2]);
+    panic!("metadata {:?}", metadata);
+}
 
 #[test]
 fn read_rowmajor_tensor_as_tiled() {
