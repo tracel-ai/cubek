@@ -1,87 +1,76 @@
-mod bicubic;
-mod bilinear;
-mod lanczos3;
-mod nearest;
-mod nearest_backward;
+mod interpolate;
+mod interpolate_backward;
 
-pub use bicubic::reference_bicubic;
-pub use bilinear::reference_bilinear;
-pub use lanczos3::reference_lanczos3;
-pub use nearest::reference_nearest;
-pub use nearest_backward::reference_nearest_backward;
+pub use interpolate::strategy_result as interpolate_strategy_result;
+pub use interpolate_backward::strategy_result as interpolate_backward_strategy_result;
 
-use crate::definition::{InterpolateMode, InterpolateOptions, InterpolateProblem};
+use crate::definition::{InterpolateBenchProblem, InterpolateOptions};
+use cubecl::ir::StorageType;
+use cubecl::std::tensor::TensorHandle;
 use cubecl::{TestRuntime, client::ComputeClient, prelude::*, zspace::Strides};
-use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, Progress, TestInput, launch_and_capture_outcome,
-};
+use cubek_test_utils::{HostData, Progress, TestInput};
 
-use crate::interpolate;
+pub(crate) fn f32_storage_type() -> StorageType {
+    f32::as_type_native_unchecked().storage_type()
+}
+
+pub(crate) fn make_random_f32_host(
+    client: &ComputeClient<TestRuntime>,
+    shape: Vec<usize>,
+    seed: u64,
+) -> (TensorHandle<TestRuntime>, HostData) {
+    TestInput::builder(client.clone(), shape)
+        .uniform(seed, -1., 1.)
+        .generate_with_f32_host_data()
+}
+
+pub(crate) fn make_zero_handle(
+    client: &ComputeClient<TestRuntime>,
+    shape: Vec<usize>,
+    dtype: StorageType,
+) -> TensorHandle<TestRuntime> {
+    TestInput::builder(client.clone(), shape)
+        .dtype(dtype)
+        .zeros()
+        .generate()
+}
+
+pub(crate) fn output_shape_for(input_shape: &[usize; 4], output_size: &[usize; 2]) -> Vec<usize> {
+    let mut out = input_shape.to_vec();
+    out[1] = output_size[0];
+    out[2] = output_size[1];
+    out
+}
 
 pub fn strategy_result(
     client: ComputeClient<TestRuntime>,
-    problem: InterpolateProblem,
+    problem: InterpolateBenchProblem,
     seed: u64,
 ) -> Result<HostData, String> {
-    let dtype = f32::as_type_native_unchecked().storage_type();
-    let input_shape = problem.input_shape.to_vec();
-    let (input_handle, _input_host) = TestInput::builder(client.clone(), input_shape.clone())
-        .uniform(seed, -1., 1.)
-        .generate_with_f32_host_data();
-
-    let out_shape = output_shape_for(&problem.input_shape, &problem.output_size);
-    let output_handle = TestInput::builder(client.clone(), out_shape)
-        .dtype(dtype)
-        .zeros()
-        .generate();
-
-    let outcome = launch_and_capture_outcome(&client, |c| {
-        interpolate::<TestRuntime>(
-            c,
-            input_handle.clone().binding(),
-            output_handle.clone().binding(),
-            problem.options.clone(),
-            dtype.clone(),
-        )
-        .into()
-    });
-
-    match outcome {
-        ExecutionOutcome::CompileError(e) => Err(format!("compile error: {e}")),
-        ExecutionOutcome::Executed => Ok(HostData::from_tensor_handle(
-            &client,
-            output_handle,
-            HostDataType::F32,
-        )),
+    match problem {
+        InterpolateBenchProblem::Interpolate(prob) => {
+            interpolate::strategy_result(client, prob, seed)
+        }
+        InterpolateBenchProblem::InterpolateBackward(prob) => {
+            interpolate_backward::strategy_result(client, prob, seed)
+        }
     }
 }
 
 pub fn cpu_reference_result(
     client: ComputeClient<TestRuntime>,
-    problem: InterpolateProblem,
+    problem: InterpolateBenchProblem,
     seed: u64,
     progress: Option<&Progress>,
 ) -> Result<HostData, String> {
-    let input_dtype = f32::as_type_native_unchecked().storage_type();
-    let input_shape = problem.input_shape.to_vec();
-    let out_shape = output_shape_for(&problem.input_shape, &problem.output_size);
-
-    if let Some(p) = progress {
-        let total: usize = out_shape.iter().product();
-        p.set_total(total as u64);
+    match problem {
+        InterpolateBenchProblem::Interpolate(prob) => {
+            interpolate::cpu_reference_result(client, prob, seed, progress)
+        }
+        InterpolateBenchProblem::InterpolateBackward(prob) => {
+            interpolate_backward::cpu_reference_result(client, prob, seed, progress)
+        }
     }
-
-    let (_input_handle, input_host) = TestInput::builder(client.clone(), input_shape)
-        .dtype(input_dtype)
-        .uniform(seed, -1., 1.)
-        .generate_with_f32_host_data();
-
-    Ok(reference_for_interpolation_mode(
-        &input_host,
-        &out_shape,
-        &problem.options,
-        progress,
-    ))
 }
 
 pub fn cpu_reference_interpolate_from_host(
@@ -89,7 +78,7 @@ pub fn cpu_reference_interpolate_from_host(
     output_shape: &[usize],
     options: &InterpolateOptions,
 ) -> HostData {
-    reference_for_interpolation_mode(input, output_shape, options, None)
+    interpolate::reference_for_interpolation_mode(input, output_shape, options, None)
 }
 
 pub fn cpu_reference_interpolate_backward_from_host(
@@ -97,51 +86,12 @@ pub fn cpu_reference_interpolate_backward_from_host(
     output_shape: &[usize],
     options: &InterpolateOptions,
 ) -> HostData {
-    reference_for_backward_interpolation_mode(out_grad, output_shape, options, None)
-}
-
-fn reference_for_interpolation_mode(
-    input: &HostData,
-    output_shape: &[usize],
-    options: &InterpolateOptions,
-    progress: Option<&Progress>,
-) -> HostData {
-    match options.mode {
-        InterpolateMode::Nearest => {
-            reference_nearest(input, output_shape, options.align_corners, progress)
-        }
-        InterpolateMode::Bilinear => {
-            reference_bilinear(input, output_shape, options.align_corners, progress)
-        }
-        InterpolateMode::Bicubic => {
-            reference_bicubic(input, output_shape, options.align_corners, progress)
-        }
-        InterpolateMode::Lanczos3 => {
-            reference_lanczos3(input, output_shape, options.align_corners, progress)
-        }
-    }
-}
-
-fn reference_for_backward_interpolation_mode(
-    out_grad: &HostData,
-    output_shape: &[usize],
-    options: &InterpolateOptions,
-    progress: Option<&Progress>,
-) -> HostData {
-    match options.mode {
-        InterpolateMode::Nearest => {
-            reference_nearest_backward(out_grad, output_shape, options.align_corners, progress)
-        }
-        InterpolateMode::Bilinear => {
-            panic!("Bilinear interpolation backward is not supported by CPU reference")
-        }
-        InterpolateMode::Bicubic => {
-            panic!("Bicubic interpolation backward is not supported by CPU reference")
-        }
-        InterpolateMode::Lanczos3 => {
-            panic!("Lanczos3 interpolation backward is not supported by CPU reference")
-        }
-    }
+    interpolate_backward::reference_for_backward_interpolation_mode(
+        out_grad,
+        output_shape,
+        options,
+        None,
+    )
 }
 
 pub(crate) fn for_each_output_coord(output_shape: &[usize], mut f: impl FnMut(usize, &[usize])) {
@@ -173,11 +123,4 @@ pub(crate) fn contiguous_strides(shape: &[usize]) -> Strides {
         s[i] = s[i + 1] * shape[i + 1];
     }
     Strides::new(&s)
-}
-
-fn output_shape_for(input_shape: &[usize; 4], output_size: &[usize; 2]) -> Vec<usize> {
-    let mut out = input_shape.to_vec();
-    out[1] = output_size[0];
-    out[2] = output_size[1];
-    out
 }

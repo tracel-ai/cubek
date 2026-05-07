@@ -1,7 +1,7 @@
 use cubecl::zspace::Shape;
 use cubek_test_utils::{HostData, HostDataVec, Progress};
 
-use super::{contiguous_strides, for_each_output_coord};
+use super::super::{contiguous_strides, for_each_output_coord};
 
 pub fn reference_nearest(
     input: &HostData,

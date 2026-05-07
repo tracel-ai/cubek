@@ -1,7 +1,7 @@
 use cubecl::zspace::Shape;
 use cubek_test_utils::{HostData, HostDataVec, Progress};
 
-use super::{contiguous_strides, for_each_output_coord};
+use super::super::{contiguous_strides, for_each_output_coord};
 
 fn cubic_convolution_1(x: f32, a: f32) -> f32 {
     ((a + 2.0) * x - (a + 3.0)) * x * x + 1.0

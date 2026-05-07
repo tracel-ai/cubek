@@ -2,7 +2,7 @@ use cubecl::zspace::Shape;
 use cubek_test_utils::{HostData, HostDataVec, Progress};
 use std::f32::consts::PI;
 
-use super::{contiguous_strides, for_each_output_coord};
+use super::super::{contiguous_strides, for_each_output_coord};
 
 fn sinc(x: f32) -> f32 {
     if x.abs() < 1e-8 {

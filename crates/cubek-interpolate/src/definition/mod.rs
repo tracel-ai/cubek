@@ -1,7 +1,9 @@
 mod base;
-mod interpolate_mode;
-mod interpolate_options;
+mod error;
+mod mode;
+mod options;
 
 pub use base::*;
-pub use interpolate_mode::InterpolateMode;
-pub use interpolate_options::InterpolateOptions;
+pub use error::*;
+pub use mode::*;
+pub use options::*;

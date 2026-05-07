@@ -7,14 +7,14 @@ mod strategy;
 pub use problem::problems;
 pub use strategy::{InterpolateStrategy, strategies};
 
-use cubek::interpolate::definition::InterpolateProblem;
+use cubek::interpolate::definition::InterpolateBenchProblem;
 
 use crate::registry::{CatalogEntry, RunSamples};
 
 pub struct Category;
 
 impl crate::registry::Category for Category {
-    type Problem = InterpolateProblem;
+    type Problem = InterpolateBenchProblem;
     type Strategy = InterpolateStrategy;
 
     fn id(&self) -> &'static str {
@@ -25,7 +25,7 @@ impl crate::registry::Category for Category {
         "Interpolate"
     }
 
-    fn problems(&self) -> Vec<CatalogEntry<InterpolateProblem>> {
+    fn problems(&self) -> Vec<CatalogEntry<InterpolateBenchProblem>> {
         problems()
     }
 
@@ -36,7 +36,7 @@ impl crate::registry::Category for Category {
     fn bench(
         &self,
         strategy: &InterpolateStrategy,
-        problem: &InterpolateProblem,
+        problem: &InterpolateBenchProblem,
         num_samples: usize,
     ) -> Result<RunSamples, String> {
         benchmark::bench(strategy, problem, num_samples)
@@ -47,7 +47,7 @@ impl crate::registry::Category for Category {
         &self,
     ) -> Option<
         &dyn crate::registry::Correctness<
-            Problem = InterpolateProblem,
+            Problem = InterpolateBenchProblem,
             Strategy = InterpolateStrategy,
         >,
     > {

@@ -15,4 +15,12 @@ pub enum InterpolateError {
 
     #[error("Channel count mismatch: input has {input} but output has {output}")]
     ChannelMismatch { input: usize, output: usize },
+
+    #[error(
+        "Shape mismatch: input shape {input:?} and output gradient shape {output:?} must match exactly"
+    )]
+    ShapeMismatch {
+        input: Vec<usize>,
+        output: Vec<usize>,
+    },
 }

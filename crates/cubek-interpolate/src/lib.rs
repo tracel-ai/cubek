@@ -2,18 +2,18 @@ use core::result::Result;
 
 use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*};
 
-use crate::definition::{InterpolateMode, InterpolateOptions};
+use crate::definition::{InterpolateError, InterpolateMode, InterpolateOptions};
 
 pub mod definition;
-mod error;
-mod modes;
-pub use error::InterpolateError;
+mod kernel;
 
-use crate::modes::bicubic::interpolate_bicubic_launch;
-use crate::modes::bilinear::interpolate_bilinear_launch;
-use crate::modes::lanczos3::interpolate_lanczos3_launch;
-use crate::modes::nearest::interpolate_nearest_launch;
-use crate::modes::nearest_backward::interpolate_nearest_backward_launch;
+use crate::kernel::{
+    interpolate::{
+        interpolate_bicubic_launch, interpolate_bilinear_launch, interpolate_lanczos3_launch,
+        interpolate_nearest_launch,
+    },
+    interpolate_backward::interpolate_nearest_backward_launch,
+};
 
 #[cfg(feature = "cpu-reference")]
 pub mod cpu_reference;
@@ -56,28 +56,33 @@ pub fn interpolate<R: Runtime>(
 /// Expects input in NHWC layout.
 pub fn interpolate_backward<R: Runtime>(
     client: &ComputeClient<R>,
-    _input: TensorBinding<R>,
+    input: TensorBinding<R>,
     out_grad: TensorBinding<R>,
     output: TensorBinding<R>,
     options: InterpolateOptions,
     dtype: StorageType,
 ) -> Result<(), InterpolateError> {
+    validate_rank(input.shape.len(), output.shape.len())?;
     validate_rank(out_grad.shape.len(), output.shape.len())?;
+
+    validate_nhwc_consistency(&input.shape, &output.shape)?;
     validate_nhwc_consistency(&out_grad.shape, &output.shape)?;
+
+    if input.shape != output.shape {
+        return Err(InterpolateError::ShapeMismatch {
+            input: input.shape.to_vec(),
+            output: output.shape.to_vec(),
+        });
+    }
 
     match options.mode {
         InterpolateMode::Nearest => {
             interpolate_nearest_backward_launch(client, out_grad, output, dtype)
         }
-        InterpolateMode::Bilinear => Err(InterpolateError::UnsupportedMode(
-            "Bilinear interpolation backward is not supported by JIT backend".to_string(),
-        )),
-        InterpolateMode::Bicubic => Err(InterpolateError::UnsupportedMode(
-            "Bicubic interpolation backward is not supported by JIT backend".to_string(),
-        )),
-        InterpolateMode::Lanczos3 => Err(InterpolateError::UnsupportedMode(
-            "Lanczos3 interpolation backward is not supported by JIT backend".to_string(),
-        )),
+        _ => Err(InterpolateError::UnsupportedMode(format!(
+            "{:?} interpolation backward is not supported by JIT backend",
+            options.mode
+        ))),
     }
 }
 

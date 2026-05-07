@@ -1,4 +1,4 @@
-use super::{linear_layout, shape_divmod};
+use super::super::{linear_layout, shape_divmod};
 use crate::InterpolateError;
 use cubecl::{calculate_cube_count_elemwise, prelude::*};
 use cubecl::{
