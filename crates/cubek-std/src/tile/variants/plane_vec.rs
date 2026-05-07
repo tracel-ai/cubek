@@ -2,10 +2,7 @@ use cubecl::{define_size, prelude::*};
 
 use crate::{
     MatrixLayout, StageIdent, SwizzleModes, TileSize,
-    tile::{
-        Tile, TileKind, TileKindExpand, TileScope,
-        variants::strided::SharedTile,
-    },
+    tile::{Tile, TileKind, TileKindExpand, TileScope, variants::strided::SharedTile},
 };
 
 // plane_vec_mat's fragment inner vector size (= reduce_vector_size). Bound at

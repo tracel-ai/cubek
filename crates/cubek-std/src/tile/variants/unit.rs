@@ -231,7 +231,9 @@ impl<Acc: Float> UnitTile<Acc> {
             TileKind::WhiteboxFragment(_) => {
                 panic!("UnitTile::softmax: WhiteboxFragment destination not supported")
             }
-            TileKind::Register(_) => panic!("UnitTile::softmax: Register destination not supported"),
+            TileKind::Register(_) => {
+                panic!("UnitTile::softmax: Register destination not supported")
+            }
             _ => panic!("UnitTile::softmax: unsupported softmaxed variant"),
         }
 

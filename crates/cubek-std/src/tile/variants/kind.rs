@@ -6,9 +6,7 @@ use crate::tile::variants::strided::StridedTile;
 /// reader. Distinct from the [`TileKind`](crate::tile::TileKind) enum that
 /// identifies storage variants of a [`Tile`](crate::tile::Tile); this trait
 /// describes the static *family* of tiles a stage emits.
-pub trait StageTileKind<IO: SliceVisibility = ReadOnly>:
-    CubeType + Send + Sync + 'static
-{
+pub trait StageTileKind<IO: SliceVisibility = ReadOnly>: CubeType + Send + Sync + 'static {
     /// Concrete tile instantiated with the element type
     type Tile<E: Numeric, N: Size>: CubeType;
 }

@@ -58,7 +58,9 @@ impl<Acc: Float> Tile<Acc, Plane, ReadWrite> {
         head_dim_factor: Acc,
     ) -> RowWise<Acc> {
         match &mut self.kind {
-            TileKind::Bounce(s) => s.softmax::<Lhs, M>(mask, softmaxed_tile, state, head_dim_factor),
+            TileKind::Bounce(s) => {
+                s.softmax::<Lhs, M>(mask, softmaxed_tile, state, head_dim_factor)
+            }
             TileKind::WhiteboxFragment(s) => {
                 s.softmax::<Lhs, M>(mask, softmaxed_tile, state, head_dim_factor)
             }

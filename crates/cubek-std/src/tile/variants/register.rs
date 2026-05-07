@@ -132,7 +132,12 @@ impl<A: Numeric> RegisterTile<A> {
     /// Executes `lhs · rhs`, accumulating into `self` via the configured
     /// inner/outer software product.
     pub fn mma<L: Numeric, R: Numeric>(&mut self, lhs: &RegisterTile<L>, rhs: &RegisterTile<R>) {
-        register_execute(&lhs.tile.data, &rhs.tile.data, &mut self.tile.data, self.config);
+        register_execute(
+            &lhs.tile.data,
+            &rhs.tile.data,
+            &mut self.tile.data,
+            self.config,
+        );
     }
 }
 
@@ -202,7 +207,9 @@ impl<Acc: Float> RegisterTile<Acc> {
 
         match &mut softmaxed.kind {
             TileKind::Register(d) => self.write_to::<Lhs>(d),
-            TileKind::Bounce(_) => panic!("RegisterTile::softmax: Bounce destination not supported"),
+            TileKind::Bounce(_) => {
+                panic!("RegisterTile::softmax: Bounce destination not supported")
+            }
             TileKind::WhiteboxFragment(_) => {
                 panic!("RegisterTile::softmax: WhiteboxFragment destination not supported")
             }

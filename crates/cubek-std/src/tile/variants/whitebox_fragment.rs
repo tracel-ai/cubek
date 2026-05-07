@@ -286,9 +286,7 @@ pub fn whitebox_fragment_zero_slice<E: Numeric>(
 #[cube]
 impl<E: Float> WhiteboxFragment<E> {
     pub fn row_max(&self, acc: &mut RowWise<E>, base: &RowWise<E>) {
-        crate::tile::variants::whitebox_fragment_partition::fragment_row_max::<E>(
-            self, acc, base,
-        );
+        crate::tile::variants::whitebox_fragment_partition::fragment_row_max::<E>(self, acc, base);
     }
 
     pub fn row_sum(&self, acc: &mut RowWise<E>) {

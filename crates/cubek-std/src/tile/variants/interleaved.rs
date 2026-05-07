@@ -2,10 +2,7 @@ use cubecl::prelude::*;
 
 use crate::{
     MatrixLayout, StageIdent, SwizzleModes, TileSize,
-    tile::{
-        Tile, TileKind, TileKindExpand, TileScope,
-        variants::strided::SharedTile,
-    },
+    tile::{Tile, TileKind, TileKindExpand, TileScope, variants::strided::SharedTile},
 };
 
 #[derive(CubeType)]
