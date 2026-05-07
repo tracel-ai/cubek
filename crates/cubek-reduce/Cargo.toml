@@ -26,8 +26,8 @@ cpu-reference = ["dep:cubek-test-utils"]
 
 [dependencies]
 cubecl = { workspace = true }
-cubek-std = { path = "../cubek-std", version = "=0.2.0-pre.5", default-features = false }
-cubek-test-utils = { path = "./../cubek-test-utils/", version = "=0.2.0-pre.5", default-features = false, optional = true }
+cubek-std = { path = "../cubek-std", version = "0.2.0", default-features = false }
+cubek-test-utils = { path = "./../cubek-test-utils/", version = "0.2.0", default-features = false, optional = true }
 
 num-traits = "0.2.19"
 pretty_assertions = { workspace = true, optional = true }
@@ -39,4 +39,4 @@ thiserror = { workspace = true }
 cubecl = { workspace = true, features = ["test-runtime"] }
 cubecl-common = { workspace = true }
 cubek-reduce = { path = ".", features = ["cpu-reference"] }
-cubek-test-utils = { path = "./../cubek-test-utils/", version = "=0.2.0-pre.5" }
+cubek-test-utils = { path = "./../cubek-test-utils/", version = "0.2.0" }
