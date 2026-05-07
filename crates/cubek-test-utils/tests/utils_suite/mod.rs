@@ -352,7 +352,11 @@ pub struct RowMajorLayout {
 #[cube]
 impl RowMajorLayout {
     pub fn new(width: usize, height: usize, vector_size: usize) -> Self {
-        RowMajorLayout { width, height, vector_size }
+        RowMajorLayout {
+            width,
+            height,
+            vector_size,
+        }
     }
 }
 
@@ -394,7 +398,7 @@ fn launch_read_rowmajor_tensor_as_tiled<N: Numeric, S: Size>(
         matrix_len / 2,
         matrix_len / 2,
     ));
-    let output_view = output.view_mut(RowMajorLayout::new(matrix_len , matrix_len, vector_size));
+    let output_view = output.view_mut(RowMajorLayout::new(matrix_len, matrix_len, vector_size));
 
     for i in 0..matrix_len {
         for j in 0..matrix_len {
