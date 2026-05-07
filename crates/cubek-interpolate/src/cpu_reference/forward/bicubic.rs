@@ -1,3 +1,4 @@
+use crate::cpu_reference::forward::get_pixel_fraction;
 use cubecl::zspace::Shape;
 use cubek_test_utils::{HostData, HostDataVec, Progress};
 
@@ -37,15 +38,7 @@ pub fn reference_bicubic(
         let x_out = out_coord[2];
         let c = out_coord[3];
 
-        let frac_y = if align_corners {
-            let output_height = (output_shape[1] - 1).max(1) as f32;
-            (y_out as f32 * input_height_f) / output_height
-        } else {
-            let in_size = input.shape[1] as f32;
-            let out_size = output_shape[1] as f32;
-            (y_out as f32 + 0.5) * (in_size / out_size) - 0.5
-        };
-
+        let frac_y = get_pixel_fraction(input.shape[1], output_shape[1], y_out, align_corners);
         let y_in_f = frac_y.floor();
         let yw = frac_y - y_in_f;
 
@@ -54,15 +47,7 @@ pub fn reference_bicubic(
         let y2 = (y_in_f + 1.0).clamp(0.0, input_height_f) as usize;
         let y3 = (y_in_f + 2.0).clamp(0.0, input_height_f) as usize;
 
-        let frac_x = if align_corners {
-            let output_width = (output_shape[2] - 1).max(1) as f32;
-            (x_out as f32 * input_width_f) / output_width
-        } else {
-            let in_size = input.shape[2] as f32;
-            let out_size = output_shape[2] as f32;
-            (x_out as f32 + 0.5) * (in_size / out_size) - 0.5
-        };
-
+        let frac_x = get_pixel_fraction(input.shape[2], output_shape[2], x_out, align_corners);
         let x_in_f = frac_x.floor();
         let xw = frac_x - x_in_f;
 

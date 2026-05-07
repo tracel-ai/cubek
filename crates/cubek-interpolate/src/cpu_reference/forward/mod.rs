@@ -95,3 +95,20 @@ pub fn reference_for_interpolation_mode(
         }
     }
 }
+
+pub(crate) fn get_pixel_fraction(
+    input_size: usize,
+    output_size: usize,
+    out_coord: usize,
+    align_corners: bool,
+) -> f32 {
+    if align_corners {
+        let in_size_f = (input_size - 1) as f32;
+        let out_size_f = (output_size - 1).max(1) as f32;
+        (out_coord as f32 * in_size_f) / out_size_f
+    } else {
+        let in_size_f = input_size as f32;
+        let out_size_f = output_size as f32;
+        (out_coord as f32 + 0.5) * (in_size_f / out_size_f) - 0.5
+    }
+}

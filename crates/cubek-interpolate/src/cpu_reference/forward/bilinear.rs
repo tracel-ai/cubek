@@ -1,3 +1,4 @@
+use crate::cpu_reference::forward::get_pixel_fraction;
 use cubecl::zspace::Shape;
 use cubek_test_utils::{HostData, HostDataVec, Progress};
 
@@ -17,25 +18,10 @@ pub fn reference_bilinear(
         let x_out = out_coord[2];
         let c = out_coord[3];
 
-        let fy = if align_corners {
-            let numerator = (input.shape[1] - 1) as f32;
-            let denominator = (output_shape[1] - 1).max(1) as f32;
-            y_out as f32 * (numerator / denominator)
-        } else {
-            let in_size = input.shape[1] as f32;
-            let out_size = output_shape[1] as f32;
-            ((y_out as f32 + 0.5) * (in_size / out_size) - 0.5).clamp(0.0, in_size - 1.0)
-        };
-
-        let fx = if align_corners {
-            let numerator = (input.shape[2] - 1) as f32;
-            let denominator = (output_shape[2] - 1).max(1) as f32;
-            x_out as f32 * (numerator / denominator)
-        } else {
-            let in_size = input.shape[2] as f32;
-            let out_size = output_shape[2] as f32;
-            ((x_out as f32 + 0.5) * (in_size / out_size) - 0.5).clamp(0.0, in_size - 1.0)
-        };
+        let fy = get_pixel_fraction(input.shape[1], output_shape[1], y_out, align_corners)
+            .clamp(0.0, (input.shape[1] - 1) as f32);
+        let fx = get_pixel_fraction(input.shape[2], output_shape[2], x_out, align_corners)
+            .clamp(0.0, (input.shape[2] - 1) as f32);
 
         let y0 = fy.floor() as usize;
         let x0 = fx.floor() as usize;

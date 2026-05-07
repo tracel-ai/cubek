@@ -1,3 +1,4 @@
+use super::get_pixel_fraction;
 use super::super::shape_divmod;
 use crate::InterpolateError;
 use cubecl::{calculate_cube_count_elemwise, prelude::*, tensor_vector_size_parallel};
@@ -25,27 +26,13 @@ fn interpolate_lanczos3_kernel<F: Float, N: Size>(
     let input_height = input.shape(1) - 1;
     let input_height_f = input_height as f32;
 
-    let y_frac = if align_corners {
-        let output_height = clamp_min(output.shape(1) - 1, 1) as f32;
-        (y * input_height) as f32 / output_height
-    } else {
-        let in_size = (input_height + 1) as f32;
-        let out_size = output.shape(1) as f32;
-        (y as f32 + 0.5) * (in_size / out_size) - 0.5
-    };
+    let y_frac = get_pixel_fraction(input.shape(1), output.shape(1), y, align_corners);
     let y0 = f32::floor(y_frac);
 
     let input_width = input.shape(2) - 1;
     let input_width_f = input_width as f32;
 
-    let x_frac = if align_corners {
-        let output_width = clamp_min(output.shape(2) - 1, 1) as f32;
-        (x * input_width) as f32 / output_width
-    } else {
-        let in_size = (input_width + 1) as f32;
-        let out_size = output.shape(2) as f32;
-        (x as f32 + 0.5) * (in_size / out_size) - 0.5
-    };
+    let x_frac = get_pixel_fraction(input.shape(2), output.shape(2), x, align_corners);
     let x0 = f32::floor(x_frac);
 
     let index_base = b * input.stride(0) + c * input.stride(3);

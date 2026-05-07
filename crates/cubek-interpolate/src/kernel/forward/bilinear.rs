@@ -1,4 +1,5 @@
 use super::super::shape_divmod;
+use super::get_pixel_fraction;
 use crate::InterpolateError;
 use cubecl::{calculate_cube_count_elemwise, prelude::*, tensor_vector_size_parallel};
 use cubecl::{num_traits::Zero, std::FastDivmod};
@@ -22,19 +23,8 @@ fn interpolate_bilinear_kernel<F: Float, N: Size>(
     let (rem, x) = shape_out[2].div_mod(rem);
     let (b, y) = shape_out[1].div_mod(rem);
 
-    let frac = if align_corners {
-        let numerator = (input.shape(1) - 1) as f32;
-        let denominator = clamp_min(output.shape(1) - 1, 1) as f32;
-        y as f32 * (numerator / denominator)
-    } else {
-        let in_size = input.shape(1) as f32;
-        let out_size = output.shape(1) as f32;
-        clamp(
-            (y as f32 + 0.5) * (in_size / out_size) - 0.5,
-            0.0,
-            in_size - 1.0,
-        )
-    };
+    let frac = get_pixel_fraction(input.shape(1), output.shape(1), y, align_corners)
+        .clamp(0.0, (input.shape(1) - 1) as f32);
 
     let v0 = frac.floor();
     let v1 = frac.ceil();
@@ -45,19 +35,9 @@ fn interpolate_bilinear_kernel<F: Float, N: Size>(
     let y0 = v0 as usize;
     let y1 = v1 as usize;
 
-    let frac = if align_corners {
-        let numerator = (input.shape(2) - 1) as f32;
-        let denominator = clamp_min(output.shape(2) - 1, 1) as f32;
-        x as f32 * (numerator / denominator)
-    } else {
-        let in_size = input.shape(2) as f32;
-        let out_size = output.shape(2) as f32;
-        clamp(
-            (x as f32 + 0.5) * (in_size / out_size) - 0.5,
-            0.0,
-            in_size - 1.0,
-        )
-    };
+    let frac = get_pixel_fraction(input.shape(2), output.shape(2), x, align_corners)
+        .clamp(0.0, (input.shape(2) - 1) as f32);
+
     let v0 = frac.floor();
     let v1 = frac.ceil();
     let xw = F::cast_from(frac - v0);

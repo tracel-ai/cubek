@@ -1,3 +1,4 @@
+use crate::cpu_reference::forward::get_pixel_fraction;
 use cubecl::zspace::Shape;
 use cubek_test_utils::{HostData, HostDataVec, Progress};
 use std::f32::consts::PI;
@@ -31,8 +32,6 @@ pub fn reference_lanczos3(
     let mut data = vec![0.0f32; output_shape.iter().product()];
     let input_h = input.shape[1] as i32;
     let input_w = input.shape[2] as i32;
-    let input_height_f = (input.shape[1] - 1) as f32;
-    let input_width_f = (input.shape[2] - 1) as f32;
 
     for_each_output_coord(output_shape, |linear, out_coord| {
         let b = out_coord[0];
@@ -40,23 +39,8 @@ pub fn reference_lanczos3(
         let x_out = out_coord[2];
         let c = out_coord[3];
 
-        let fy = if align_corners {
-            let denominator = (output_shape[1] - 1).max(1) as f32;
-            y_out as f32 * (input_height_f / denominator)
-        } else {
-            let in_size = input.shape[1] as f32;
-            let out_size = output_shape[1] as f32;
-            (y_out as f32 + 0.5) * (in_size / out_size) - 0.5
-        };
-
-        let fx = if align_corners {
-            let denominator = (output_shape[2] - 1).max(1) as f32;
-            x_out as f32 * (input_width_f / denominator)
-        } else {
-            let in_size = input.shape[2] as f32;
-            let out_size = output_shape[2] as f32;
-            (x_out as f32 + 0.5) * (in_size / out_size) - 0.5
-        };
+        let fy = get_pixel_fraction(input.shape[1], output_shape[1], y_out, align_corners);
+        let fx = get_pixel_fraction(input.shape[2], output_shape[2], x_out, align_corners);
 
         let y_int = fy.floor() as i32;
         let x_int = fx.floor() as i32;
