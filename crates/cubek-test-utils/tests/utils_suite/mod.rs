@@ -235,7 +235,7 @@ fn builder_matches_constructor() {
 }
 
 #[test]
-fn read_tiled_tensor_as_rowmajor() {
+fn read_rowmajor_tensor_as_tiled() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
     let matrix_len = 4;
@@ -246,7 +246,7 @@ fn read_tiled_tensor_as_rowmajor() {
         .generate();
 
     let dtype = f32::as_type_native_unchecked().storage_type();
-    let output_handle = TestInput::builder(client.clone(), shape)
+    let output_handle = TestInput::builder(client.clone(), shape.clone())
         .stride(StrideSpec::RowMajor)
         .zeros()
         .generate_without_host_data();
@@ -254,7 +254,7 @@ fn read_tiled_tensor_as_rowmajor() {
     let cube_count = CubeCount::new_single();
     let cube_dim = CubeDim::new_single();
     let vector_size = 1;
-    launch_read_tiled_tensor_as_rowmajor::launch::<TestRuntime>(
+    launch_read_rowmajor_tensor_as_tiled::launch::<TestRuntime>(
         &client,
         cube_count,
         cube_dim,
@@ -267,20 +267,19 @@ fn read_tiled_tensor_as_rowmajor() {
 
     let output = HostData::from_tensor_handle(&client, output_handle, HostDataType::F32);
 
+    #[rustfmt::skip]
     let expected_values = [
-        [0.000, 1.000, 4.000, 5.000],
-        [2.000, 3.000, 6.000, 7.000],
-        [8.000, 9.000, 12.000, 13.000],
-        [10.00, 11.000, 14.000, 15.000],
-    ];
-
-    for i in 0..matrix_len {
-        for j in 0..matrix_len {
-            let actual = output.get_f32(&[i, j]);
-            let expected = expected_values[i][j];
-            assert!(expected == actual, "value[{i}, {j}] != expected[{i}, {j}]");
-        }
-    }
+        0.000,  1.000,  4.000,  5.000,
+        2.000,  3.000,  6.000,  7.000,
+        8.000,  9.000, 12.000, 13.000,
+        10.00, 11.000, 14.000, 15.000,
+    ].to_vec();
+    let (_, expected_values) = TestInput::builder(client, shape)
+        .custom(expected_values)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected_values, 1e-6)
+        .as_test_outcome()
+        .enforce()
 }
 
 #[derive(CubeType, Clone, Copy)]
@@ -345,7 +344,7 @@ impl Layout for TiledLayout {
 }
 
 #[cube(launch)]
-fn launch_read_tiled_tensor_as_rowmajor<N: Numeric, S: Size>(
+fn launch_read_rowmajor_tensor_as_tiled<N: Numeric, S: Size>(
     input: &Tensor<Vector<N, S>>,
     output: &mut Tensor<Vector<N, S>>,
     #[define(N)] _dtype: StorageType,
