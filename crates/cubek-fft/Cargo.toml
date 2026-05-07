@@ -22,7 +22,7 @@ cpu-reference = ["dep:num-complex", "dep:cubek-test-utils"]
 
 [dependencies]
 cubecl = { workspace = true }
-cubek-test-utils = { path = "./../cubek-test-utils/", version = "=0.2.0-pre.5", default-features = false, optional = true }
+cubek-test-utils = { path = "./../cubek-test-utils/", version = "0.2.0", default-features = false, optional = true }
 num-complex = { version = "0.4.6", optional = true }
 
 [dev-dependencies]
@@ -30,4 +30,4 @@ num-complex = "0.4.6"
 cubecl = { workspace = true, features = ["test-runtime"] }
 cubecl-common = { workspace = true }
 cubek-fft = { path = ".", features = ["cpu-reference"] }
-cubek-test-utils = { path = "./../cubek-test-utils/", version = "=0.2.0-pre.5", default-features = false }
+cubek-test-utils = { path = "./../cubek-test-utils/", version = "0.2.0", default-features = false }

@@ -32,7 +32,7 @@ path = "src/lib.rs"
 
 [dependencies]
 cubecl = { workspace = true, features = ["test-runtime", "stdlib"] }
-cubek = { path = "../crates/cubek", version = "=0.2.0-pre.5", default-features = false, features = [
+cubek = { path = "../crates/cubek", version = "0.2.0", default-features = false, features = [
     "stdlib",
     "random",
     "reduce",
@@ -43,25 +43,25 @@ cubek = { path = "../crates/cubek", version = "=0.2.0-pre.5", default-features =
     "fft",
     "quantization",
 ] }
-cubek-interpolate = { path = "../crates/cubek-interpolate", version = "=0.2.0-pre.5" ,features = [
+cubek-interpolate = { path = "../crates/cubek-interpolate", version = "0.2.0",features = [
     "cpu-reference",
 ], optional = true }
-cubek-matmul = { path = "../crates/cubek-matmul", version = "=0.2.0-pre.5", features = [
+cubek-matmul = { path = "../crates/cubek-matmul", version = "0.2.0", features = [
     "cpu-reference",
 ], optional = true }
-cubek-attention = { path = "../crates/cubek-attention", version = "=0.2.0-pre.5", features = [
+cubek-attention = { path = "../crates/cubek-attention", version = "0.2.0", features = [
     "cpu-reference",
 ], optional = true }
-cubek-convolution = { path = "../crates/cubek-convolution", version = "=0.2.0-pre.5", features = [
+cubek-convolution = { path = "../crates/cubek-convolution", version = "0.2.0", features = [
     "cpu-reference",
 ], optional = true }
-cubek-fft = { path = "../crates/cubek-fft", version = "=0.2.0-pre.5", features = [
+cubek-fft = { path = "../crates/cubek-fft", version = "0.2.0", features = [
     "cpu-reference",
 ], optional = true }
-cubek-reduce = { path = "../crates/cubek-reduce", version = "=0.2.0-pre.5", features = [
+cubek-reduce = { path = "../crates/cubek-reduce", version = "0.2.0", features = [
     "cpu-reference",
 ], optional = true }
-cubek-test-utils = { path = "../crates/cubek-test-utils", version = "=0.2.0-pre.5" }
+cubek-test-utils = { path = "../crates/cubek-test-utils", version = "0.2.0" }
 half = { workspace = true }
 
 [[bench]]
