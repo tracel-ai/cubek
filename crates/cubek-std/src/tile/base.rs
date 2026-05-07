@@ -6,7 +6,7 @@ use cubecl::prelude::*;
 
 use crate::tile::{
     BounceTile, CmmaTile, InterleavedTile, MmaTile, PlaneVecTile, RegisterTile, ScopeMarker,
-    SharedTile, TileScope, UnitTile, WhiteboxFragment, WhiteboxFragmentPartition,
+    SharedTile, TileScope, UnitTile, WhiteboxFragment,
 };
 
 /// Public tile type. Wraps a [`TileKind`] storage payload and carries the
@@ -95,12 +95,6 @@ pub(crate) enum TileKind<N: Numeric, IO: SliceVisibility> {
     /// cross-plane reductions used by softmax. Only valid when
     /// `Sc = Plane`.
     WhiteboxFragment(WhiteboxFragment<N>),
-    /// `[partition]`. A sequence of [`WhiteboxFragment`]s, plane-distributed.
-    /// First instance of the "partition as tile" family — the variant exists
-    /// because the cross-plane row reducer conceptually operates over
-    /// several plane-fragmented WhiteboxFragments at once. Only valid when
-    /// `Sc = Plane`.
-    WhiteboxFragmentPartition(WhiteboxFragmentPartition<N>),
     /// `[storage = registers + smem-scratch, distribution = opaque-cmma
     /// (with whitebox view), compute = cmma]`. Bundles a CMMA fragment,
     /// an smem scratch slice, and a [`WhiteboxFragment`] view of the same

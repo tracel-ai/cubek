@@ -14,7 +14,6 @@ pub(crate) mod row_wise;
 pub(crate) mod strided;
 pub(crate) mod unit;
 pub(crate) mod whitebox_fragment;
-pub(crate) mod whitebox_fragment_partition;
 
 pub use bounce::*;
 pub use cmma::*;
@@ -27,4 +26,3 @@ pub use row_wise::*;
 pub use strided::*;
 pub use unit::*;
 pub use whitebox_fragment::*;
-pub use whitebox_fragment_partition::*;

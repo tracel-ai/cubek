@@ -11,7 +11,6 @@ impl<E: Float> Tile<E, Plane, ReadWrite> {
         match &self.kind {
             TileKind::Unit(t) => t.row_max(acc, base),
             TileKind::WhiteboxFragment(t) => t.row_max(acc, base),
-            TileKind::WhiteboxFragmentPartition(p) => p.row_max(acc, base),
             TileKind::Bounce(b) => b.row_max(acc, base),
             TileKind::Register(t) => t.row_max(acc, base),
             _ => panic!("row_max: unsupported tile variant"),
@@ -22,7 +21,6 @@ impl<E: Float> Tile<E, Plane, ReadWrite> {
         match &self.kind {
             TileKind::Unit(t) => t.row_sum(acc),
             TileKind::WhiteboxFragment(t) => t.row_sum(acc),
-            TileKind::WhiteboxFragmentPartition(p) => p.row_sum(acc),
             TileKind::Bounce(b) => b.row_sum(acc),
             TileKind::Register(t) => t.row_sum(acc),
             _ => panic!("row_sum: unsupported tile variant"),

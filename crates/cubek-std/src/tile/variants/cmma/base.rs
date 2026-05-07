@@ -83,7 +83,6 @@ impl<N: Numeric> CmmaTile<N> {
             | TileKind::Interleaved(_)
             | TileKind::Unit(_)
             | TileKind::WhiteboxFragment(_)
-            | TileKind::WhiteboxFragmentPartition(_)
             | TileKind::Bounce(_) => panic!("CmmaTile::copy_from: unsupported source variant"),
         }
     }

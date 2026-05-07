@@ -39,5 +39,4 @@ mod matmul;
 mod rowwise;
 mod softmax;
 
-pub use mask::*;
 pub use softmax::*;
