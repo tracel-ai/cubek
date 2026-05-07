@@ -1,10 +1,7 @@
-mod interpolate;
-mod interpolate_backward;
+mod backward;
+mod forward;
 
-pub use interpolate::strategy_result as interpolate_strategy_result;
-pub use interpolate_backward::strategy_result as interpolate_backward_strategy_result;
-
-use crate::definition::{InterpolateBenchProblem, InterpolateOptions};
+use crate::definition::{InterpolateOptions, InterpolateProblem};
 use cubecl::ir::StorageType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{TestRuntime, client::ComputeClient, prelude::*, zspace::Strides};
@@ -44,31 +41,31 @@ pub(crate) fn output_shape_for(input_shape: &[usize; 4], output_size: &[usize; 2
 
 pub fn strategy_result(
     client: ComputeClient<TestRuntime>,
-    problem: InterpolateBenchProblem,
+    problem: InterpolateProblem,
     seed: u64,
 ) -> Result<HostData, String> {
     match problem {
-        InterpolateBenchProblem::Interpolate(prob) => {
-            interpolate::strategy_result(client, prob, seed)
+        InterpolateProblem::InterpolateForward(prob) => {
+            forward::strategy_result(client, prob, seed)
         }
-        InterpolateBenchProblem::InterpolateBackward(prob) => {
-            interpolate_backward::strategy_result(client, prob, seed)
+        InterpolateProblem::InterpolateBackward(prob) => {
+            backward::strategy_result(client, prob, seed)
         }
     }
 }
 
 pub fn cpu_reference_result(
     client: ComputeClient<TestRuntime>,
-    problem: InterpolateBenchProblem,
+    problem: InterpolateProblem,
     seed: u64,
     progress: Option<&Progress>,
 ) -> Result<HostData, String> {
     match problem {
-        InterpolateBenchProblem::Interpolate(prob) => {
-            interpolate::cpu_reference_result(client, prob, seed, progress)
+        InterpolateProblem::InterpolateForward(prob) => {
+            forward::cpu_reference_result(client, prob, seed, progress)
         }
-        InterpolateBenchProblem::InterpolateBackward(prob) => {
-            interpolate_backward::cpu_reference_result(client, prob, seed, progress)
+        InterpolateProblem::InterpolateBackward(prob) => {
+            backward::cpu_reference_result(client, prob, seed, progress)
         }
     }
 }
@@ -78,7 +75,7 @@ pub fn cpu_reference_interpolate_from_host(
     output_shape: &[usize],
     options: &InterpolateOptions,
 ) -> HostData {
-    interpolate::reference_for_interpolation_mode(input, output_shape, options, None)
+    forward::reference_for_interpolation_mode(input, output_shape, options, None)
 }
 
 pub fn cpu_reference_interpolate_backward_from_host(
@@ -86,12 +83,7 @@ pub fn cpu_reference_interpolate_backward_from_host(
     output_shape: &[usize],
     options: &InterpolateOptions,
 ) -> HostData {
-    interpolate_backward::reference_for_backward_interpolation_mode(
-        out_grad,
-        output_shape,
-        options,
-        None,
-    )
+    backward::reference_for_backward_interpolation_mode(out_grad, output_shape, options, None)
 }
 
 pub(crate) fn for_each_output_coord(output_shape: &[usize], mut f: impl FnMut(usize, &[usize])) {

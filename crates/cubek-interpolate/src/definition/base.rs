@@ -1,13 +1,13 @@
 use crate::definition::InterpolateOptions;
 
 #[derive(Clone, Debug)]
-pub enum InterpolateBenchProblem {
-    Interpolate(InterpolateProblem),
+pub enum InterpolateProblem {
+    InterpolateForward(InterpolateForwardProblem),
     InterpolateBackward(InterpolateBackwardProblem),
 }
 
 #[derive(Clone, Debug)]
-pub struct InterpolateProblem {
+pub struct InterpolateForwardProblem {
     pub input_shape: [usize; 4],
     pub output_size: [usize; 2],
     pub options: InterpolateOptions,

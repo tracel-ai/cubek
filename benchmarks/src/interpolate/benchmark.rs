@@ -10,11 +10,11 @@ use cubecl::{
 use crate::interpolate::strategy::InterpolateStrategy;
 use crate::registry::RunSamples;
 
-use cubek::{interpolate::definition::InterpolateBenchProblem, random::random_uniform};
+use cubek::{interpolate::definition::InterpolateProblem, random::random_uniform};
 
 pub fn bench(
     _strategy: &InterpolateStrategy,
-    problem: &InterpolateBenchProblem,
+    problem: &InterpolateProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
     bench_on::<cubecl::TestRuntime>(
@@ -28,7 +28,7 @@ pub fn bench(
 pub fn bench_on<R: Runtime>(
     device: R::Device,
     dtype: StorageType,
-    problem: &InterpolateBenchProblem,
+    problem: &InterpolateProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
     let client = R::client(&device);
@@ -50,7 +50,7 @@ pub fn bench_on<R: Runtime>(
 }
 
 struct InterpolateBench<R: Runtime> {
-    problem: InterpolateBenchProblem,
+    problem: InterpolateProblem,
     device: R::Device,
     client: ComputeClient<R>,
     dtype: StorageType,
@@ -63,7 +63,7 @@ impl<R: Runtime> Benchmark for InterpolateBench<R> {
 
     fn prepare(&self) -> Self::Input {
         match &self.problem {
-            InterpolateBenchProblem::Interpolate(prob) => {
+            InterpolateProblem::InterpolateForward(prob) => {
                 let tensor =
                     TensorHandle::empty(&self.client, prob.input_shape.to_vec(), self.dtype);
 
@@ -72,7 +72,7 @@ impl<R: Runtime> Benchmark for InterpolateBench<R> {
 
                 tensor
             }
-            InterpolateBenchProblem::InterpolateBackward(prob) => {
+            InterpolateProblem::InterpolateBackward(prob) => {
                 let tensor =
                     TensorHandle::empty(&self.client, prob.out_grad_shape.to_vec(), self.dtype);
 
@@ -88,7 +88,7 @@ impl<R: Runtime> Benchmark for InterpolateBench<R> {
         use cubek::interpolate::{interpolate, interpolate_backward};
 
         match &self.problem {
-            InterpolateBenchProblem::Interpolate(prob) => {
+            InterpolateProblem::InterpolateForward(prob) => {
                 let [n, _, _, c] = prob.input_shape;
                 let output_shape = vec![n, prob.output_size[0], prob.output_size[1], c];
                 let output = TensorHandle::empty(&self.client, output_shape, self.dtype);
@@ -104,22 +104,35 @@ impl<R: Runtime> Benchmark for InterpolateBench<R> {
 
                 Ok(output)
             }
-            InterpolateBenchProblem::InterpolateBackward(prob) => {
+            InterpolateProblem::InterpolateBackward(prob) => {
                 let [n, h, w, c] = prob.out_grad_shape;
                 let input_grad_shape = vec![n, h, w, c];
-                let input_grad = TensorHandle::empty(&self.client, input_grad_shape, self.dtype);
+
+                // Random input tensor for backward pass. The actual values don't matter for benchmarking, so we can just fill it with random data.
+                let backward_input =
+                    TensorHandle::empty(&self.client, input_grad_shape.clone(), self.dtype);
+                random_uniform(
+                    &self.client,
+                    -1.,
+                    1.,
+                    backward_input.clone().binding(),
+                    self.dtype,
+                )
+                .expect("Failed to initialize random values for backward input");
+
+                let output = TensorHandle::empty(&self.client, input_grad_shape, self.dtype);
 
                 interpolate_backward(
                     &self.client,
-                    input_grad.clone().binding(),
-                    input.clone().binding(),
-                    input_grad.clone().binding(),
+                    backward_input.binding(),
+                    input.clone().binding(), // The input to backward is the output gradient, which has the same shape as the forward output.
+                    output.clone().binding(),
                     prob.options.clone(),
                     self.dtype,
                 )
                 .map_err(|err| format!("{err}"))?;
 
-                Ok(input_grad)
+                Ok(output)
             }
         }
     }
@@ -130,12 +143,12 @@ impl<R: Runtime> Benchmark for InterpolateBench<R> {
 
     fn name(&self) -> String {
         match &self.problem {
-            InterpolateBenchProblem::Interpolate(prob) => format!(
+            InterpolateProblem::InterpolateForward(prob) => format!(
                 "interpolate-{:?}-{:?}-{:?}-{:?}",
                 self.dtype, prob.options.mode, self.device, prob.input_shape,
             )
             .to_lowercase(),
-            InterpolateBenchProblem::InterpolateBackward(prob) => format!(
+            InterpolateProblem::InterpolateBackward(prob) => format!(
                 "interpolate-backward-{:?}-{:?}-{:?}-{:?}",
                 self.dtype, prob.options.mode, self.device, prob.out_grad_shape,
             )

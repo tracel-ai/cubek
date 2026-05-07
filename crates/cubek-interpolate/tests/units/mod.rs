@@ -1,5 +1,5 @@
-mod interpolate;
-mod interpolate_backward;
+mod backward;
+mod forward;
 
 use cubecl::{TestRuntime, client::ComputeClient, ir::StorageType, std::tensor::TensorHandle};
 use cubek_interpolate::definition::InterpolateError;

@@ -9,7 +9,7 @@ pub(crate) use lanczos3::reference_lanczos3;
 pub(crate) use nearest::reference_nearest;
 
 use super::{f32_storage_type, make_random_f32_host, make_zero_handle, output_shape_for};
-use crate::definition::{InterpolateOptions, InterpolateProblem};
+use crate::definition::{InterpolateForwardProblem, InterpolateOptions};
 use cubecl::{TestRuntime, client::ComputeClient};
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, Progress, launch_and_capture_outcome,
@@ -19,7 +19,7 @@ use crate::interpolate;
 
 pub fn strategy_result(
     client: ComputeClient<TestRuntime>,
-    problem: InterpolateProblem,
+    problem: InterpolateForwardProblem,
     seed: u64,
 ) -> Result<HostData, String> {
     let dtype = f32_storage_type();
@@ -52,7 +52,7 @@ pub fn strategy_result(
 
 pub fn cpu_reference_result(
     client: ComputeClient<TestRuntime>,
-    problem: InterpolateProblem,
+    problem: InterpolateForwardProblem,
     seed: u64,
     progress: Option<&Progress>,
 ) -> Result<HostData, String> {

@@ -5,8 +5,8 @@ use cubecl::std::{
     tensor::layout::linear::{LinearLayoutLaunch, LinearViewLayoutLaunch},
 };
 
-pub mod interpolate;
-pub mod interpolate_backward;
+pub mod forward;
+pub mod backward;
 
 pub(crate) fn shape_divmod<R: Runtime>(
     binding: &TensorBinding<R>,

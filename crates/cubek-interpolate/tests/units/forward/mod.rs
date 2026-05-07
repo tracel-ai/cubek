@@ -5,8 +5,8 @@ mod nearest;
 
 use cubecl::{TestRuntime, client::ComputeClient};
 use cubek_interpolate::{
-    cpu_reference::cpu_reference_interpolate_from_host, definition::InterpolateOptions,
-    definition::InterpolateProblem, interpolate,
+    cpu_reference::cpu_reference_interpolate_from_host, definition::InterpolateForwardProblem,
+    definition::InterpolateOptions, interpolate,
 };
 use cubek_test_utils::TestInput;
 
@@ -16,8 +16,8 @@ pub fn make_problem(
     input_shape: [usize; 4],
     output_size: [usize; 2],
     options: InterpolateOptions,
-) -> InterpolateProblem {
-    InterpolateProblem {
+) -> InterpolateForwardProblem {
+    InterpolateForwardProblem {
         input_shape,
         output_size,
         options,
@@ -29,7 +29,7 @@ pub fn run_interpolate_test(
     seed: u64,
     input_min: f32,
     input_max: f32,
-    problem: InterpolateProblem,
+    problem: InterpolateForwardProblem,
     tolerance: f32,
 ) {
     let (input, input_data) = TestInput::builder(client.clone(), problem.input_shape.to_vec())
