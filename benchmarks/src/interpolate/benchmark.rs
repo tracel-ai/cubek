@@ -98,7 +98,7 @@ impl<R: Runtime> Benchmark for InterpolateBench<R> {
                     input.binding(),
                     output.clone().binding(),
                     prob.options.clone(),
-                    self.dtype.clone(),
+                    self.dtype,
                 )
                 .map_err(|err| format!("{err}"))?;
 
@@ -115,7 +115,7 @@ impl<R: Runtime> Benchmark for InterpolateBench<R> {
                     input.clone().binding(),
                     input_grad.clone().binding(),
                     prob.options.clone(),
-                    self.dtype.clone(),
+                    self.dtype,
                 )
                 .map_err(|err| format!("{err}"))?;
 
