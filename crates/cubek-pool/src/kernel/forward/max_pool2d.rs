@@ -158,3 +158,57 @@ pub(crate) fn max_pool2d_launch<R: Runtime>(
 
     Ok(())
 }
+
+pub(crate) fn max_pool2d_with_indices_launch<R: Runtime>(
+    client: &ComputeClient<R>,
+    input: TensorBinding<R>,
+    output: TensorBinding<R>,
+    indices: TensorBinding<R>,
+    options: MaxPoolOptions<2>,
+    dtype: StorageType,
+) -> Result<(), PoolError> {
+    let vector_size = tensor_vector_size_parallel(
+        client.io_optimized_vector_sizes(dtype.size()),
+        &input.shape,
+        &input.strides,
+        input.shape.len() - 1,
+    );
+
+    let working_units = output.shape.iter().product::<usize>() / vector_size as usize;
+    let cube_dim = CubeDim::new(&client, working_units);
+    let cube_count = calculate_cube_count_elemwise(&client, working_units, cube_dim);
+
+    let address_type = input
+        .required_address_type(dtype.size())
+        .max(output.required_address_type(dtype.size()))
+        .max(indices.required_address_type(dtype.size()));
+
+    pool2d_direct::launch::<MaxPoolWithIndicesStrategy, R>(
+        &client,
+        cube_count,
+        cube_dim,
+        address_type,
+        vector_size,
+        input.into_tensor_arg(),
+        view4d(output.clone(), vector_size),
+        view4d(indices.clone(), vector_size),
+        shape_divmod(&output),
+        working_units,
+        Pool2dDirectArgsLaunch::new(
+            options.window.stride[0] as u32,
+            options.window.stride[1] as u32,
+            options.dilation[0] as u32,
+            options.dilation[1] as u32,
+            options.window.padding[0] as u32,
+            options.window.padding[1] as u32,
+        ),
+        (
+            options.window.kernel_size[0] as u32,
+            options.window.kernel_size[1] as u32,
+        ),
+        (),
+        dtype,
+    );
+
+    Ok(())
+}

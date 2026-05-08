@@ -84,7 +84,7 @@ pub(crate) fn adaptive_avg_pool2d_backward_launch<R: Runtime>(
     input: TensorBinding<R>,
     out_grad: TensorBinding<R>,
     output: TensorBinding<R>,
-    options: AdaptiveAvgPoolOptions<2>,
+    _options: AdaptiveAvgPoolOptions<2>,
     dtype: StorageType,
 ) -> Result<(), PoolError> {
     let vector_size = tensor_vector_size_parallel(

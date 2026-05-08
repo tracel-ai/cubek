@@ -2,6 +2,9 @@ use thiserror::Error;
 
 #[derive(Error, Debug, Clone)]
 pub enum PoolError {
+    #[error("Unsupported pooling mode: {mode}")]
+    UnsupportedMode { mode: String },
+
     #[error("Invalid tensor rank: input {input} output {output}")]
     InvalidRank { input: usize, output: usize },
 
