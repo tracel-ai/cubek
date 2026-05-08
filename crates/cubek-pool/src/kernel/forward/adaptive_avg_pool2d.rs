@@ -1,21 +1,16 @@
-use crate::{
-    CubeRuntime,
-    kernel::{
-        into_contiguous_aligned,
-        pool::pool2d::{Position, view4d},
-        utils::{address_type, decompose_linear, shape_divmod},
-    },
-    ops::{
-        max_vector_size, numeric::empty_device_dtype, permute_nchw_to_nhwc, permute_nhwc_to_nchw,
-    },
-    tensor::CubeTensor,
+use super::super::{
+    decompose_linear,
+    pool2d::{Position, view4d},
+    shape_divmod,
 };
-use burn_backend::Shape;
+use crate::definition::{AdaptiveAvgPoolOptions, PoolError};
 use cubecl::{
-    calculate_cube_count_elemwise,
+    CubeDim, Runtime, calculate_cube_count_elemwise,
     num_traits::Zero,
+    prelude::TensorBinding,
     prelude::*,
     std::{FastDivmod, tensor::View},
+    tensor_vector_size_parallel,
 };
 
 #[cube(launch, address_type = "dynamic")]
@@ -80,40 +75,40 @@ fn end_index(output_size_index: usize, output_size: usize, input_size: usize) ->
     }
 }
 
-pub(crate) fn adaptive_avg_pool2d<R: CubeRuntime>(
-    input: CubeTensor<R>,
-    output_size: [usize; 2],
-) -> CubeTensor<R> {
-    let [batch_size, channels, _, _] = input.meta.shape().dims();
-
-    let input = into_contiguous_aligned(permute_nchw_to_nhwc(input));
-    let vector_size = max_vector_size(&input);
-
-    let output_shape = Shape::new([batch_size, output_size[0], output_size[1], channels]);
-    let num_elems: usize = output_shape.num_elements();
-    let output = empty_device_dtype(
-        input.client.clone(),
-        input.device.clone(),
-        output_shape,
-        input.dtype,
+pub(crate) fn adaptive_avg_pool2d_launch<R: Runtime>(
+    client: &ComputeClient<R>,
+    input: TensorBinding<R>,
+    output: TensorBinding<R>,
+    _options: AdaptiveAvgPoolOptions<2>,
+    dtype: StorageType,
+) -> Result<(), PoolError> {
+    let vector_size = tensor_vector_size_parallel(
+        client.io_optimized_vector_sizes(dtype.size()),
+        &input.shape,
+        &input.strides,
+        input.shape.len() - 1,
     );
 
-    let working_units = num_elems / vector_size as usize;
-    let cube_dim = CubeDim::new(&input.client, working_units);
-    let cube_count = calculate_cube_count_elemwise(&input.client, working_units, cube_dim);
+    let working_units = output.shape.iter().product::<usize>() / vector_size as usize;
+    let cube_dim = CubeDim::new(&client, working_units);
+    let cube_count = calculate_cube_count_elemwise(&client, working_units, cube_dim);
+
+    let address_type = input
+        .required_address_type(dtype.size())
+        .max(output.required_address_type(dtype.size()));
 
     adaptive_avg_pool2d_direct::launch(
-        &output.client,
+        &client,
         cube_count,
         cube_dim,
-        address_type!(input, output),
+        address_type,
         vector_size,
         input.into_tensor_arg(),
         view4d(output.clone(), vector_size),
         shape_divmod(&output),
         working_units,
-        output.dtype.into(),
+        dtype,
     );
 
-    permute_nhwc_to_nchw(output)
+    Ok(())
 }

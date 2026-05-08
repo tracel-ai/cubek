@@ -26,16 +26,74 @@ pub enum PoolMode<const N: usize> {
     AdaptiveAvg(AdaptiveAvgPoolOptions<N>),
 }
 
+impl<const N: usize> From<MaxPoolOptions<N>> for PoolMode<N> {
+    fn from(options: MaxPoolOptions<N>) -> Self {
+        PoolMode::Max(options)
+    }
+}
+
+impl<const N: usize> From<AvgPoolOptions<N>> for PoolMode<N> {
+    fn from(options: AvgPoolOptions<N>) -> Self {
+        PoolMode::Avg(options)
+    }
+}
+
+impl<const N: usize> From<AdaptiveAvgPoolOptions<N>> for PoolMode<N> {
+    fn from(options: AdaptiveAvgPoolOptions<N>) -> Self {
+        PoolMode::AdaptiveAvg(options)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct MaxPoolOptions<const N: usize> {
     pub window: SlidingWindow<N>,
     pub dilation: [usize; N],
 }
 
+impl<const N: usize> MaxPoolOptions<N> {
+    pub fn new(
+        kernel_size: [usize; N],
+        stride: [usize; N],
+        padding: [usize; N],
+        dilation: [usize; N],
+        ceil_mode: bool,
+    ) -> Self {
+        Self {
+            window: SlidingWindow {
+                kernel_size,
+                stride,
+                padding,
+                ceil_mode,
+            },
+            dilation,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct AvgPoolOptions<const N: usize> {
     pub window: SlidingWindow<N>,
-    pub count_include_pad: [bool; N],
+    pub count_include_pad: bool,
+}
+
+impl<const N: usize> AvgPoolOptions<N> {
+    pub fn new(
+        kernel_size: [usize; N],
+        stride: [usize; N],
+        padding: [usize; N],
+        ceil_mode: bool,
+        count_include_pad: bool,
+    ) -> Self {
+        Self {
+            window: SlidingWindow {
+                kernel_size,
+                stride,
+                padding,
+                ceil_mode,
+            },
+            count_include_pad,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -43,55 +101,16 @@ pub struct AdaptiveAvgPoolOptions<const N: usize> {
     pub output_size: [usize; N],
 }
 
+impl<const N: usize> AdaptiveAvgPoolOptions<N> {
+    pub fn new(output_size: [usize; N]) -> Self {
+        Self { output_size }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SlidingWindow<const N: usize> {
     pub kernel_size: [usize; N],
     pub stride: [usize; N],
     pub padding: [usize; N],
-    pub ceil_mode: [bool; N],
-}
-
-pub trait PoolGeometry<const N: usize> {
-    fn output_shape(&self, input_shape: &[usize; N]) -> [usize; N];
-}
-
-impl<const N: usize> PoolGeometry<N> for MaxPoolOptions<N> {
-    fn output_shape(&self, input_shape: &[usize; N]) -> [usize; N] {
-        let mut out = [0; N];
-        for i in 0..N {
-            let effective_kernel = (self.window.kernel_size[i] - 1) * self.dilation[i] + 1;
-            let padded = input_shape[i] + 2 * self.window.padding[i];
-
-            let size = (padded - effective_kernel) as f32 / self.window.stride[i] as f32;
-            out[i] = if self.window.ceil_mode[i] {
-                f32::ceil(size) as usize + 1
-            } else {
-                f32::floor(size) as usize + 1
-            };
-        }
-        out
-    }
-}
-
-impl<const N: usize> PoolGeometry<N> for AvgPoolOptions<N> {
-    fn output_shape(&self, input_shape: &[usize; N]) -> [usize; N] {
-        let mut out = [0; N];
-        for i in 0..N {
-            let padded = input_shape[i] + 2 * self.window.padding[i];
-
-            let size = (padded - self.window.kernel_size[i]) as f32 / self.window.stride[i] as f32;
-            out[i] = if self.window.ceil_mode[i] {
-                f32::ceil(size) as usize + 1
-            } else {
-                f32::floor(size) as usize + 1
-            };
-        }
-        out
-    }
-}
-
-impl<const N: usize> PoolGeometry<N> for AdaptiveAvgPoolOptions<N> {
-    fn output_shape(&self, _input_shape: &[usize; N]) -> [usize; N] {
-        self.output_size
-    }
+    pub ceil_mode: bool,
 }

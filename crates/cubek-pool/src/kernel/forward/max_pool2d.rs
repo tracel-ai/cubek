@@ -129,7 +129,6 @@ pub(crate) fn max_pool2d_launch<R: Runtime>(
         .required_address_type(dtype.size())
         .max(output.required_address_type(dtype.size()));
 
-    // Launch the kernel
     pool2d_direct::launch::<MaxPoolStrategy, R>(
         &client,
         cube_count,

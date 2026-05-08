@@ -1,21 +1,15 @@
-use super::pool2d::{
-    Pool2dDirectArgsLaunch, Pool2dDirectStrategy, Pool2dDirectStrategyFamily, pool2d_direct,
-};
-use crate::{
-    CubeRuntime,
-    kernel::{
-        into_contiguous_aligned,
-        pool::pool2d::{Position, view4d},
-        utils::{address_type, shape_divmod},
+use super::super::{
+    pool2d::{
+        Pool2dDirectArgsLaunch, Pool2dDirectStrategy, Pool2dDirectStrategyFamily, Position,
+        pool2d_direct, view4d,
     },
-    ops::{
-        max_vector_size, numeric::empty_device_dtype, permute_nchw_to_nhwc, permute_nhwc_to_nchw,
-    },
-    tensor::CubeTensor,
+    shape_divmod,
 };
-use burn_backend::{Shape, ops::conv::calculate_pool_output_size};
-use cubecl::{CubeDim, calculate_cube_count_elemwise, num_traits::Zero};
-use cubecl::{prelude::*, std::tensor::View};
+use crate::definition::{AvgPoolOptions, PoolError};
+use cubecl::{
+    CubeDim, Runtime, calculate_cube_count_elemwise, num_traits::Zero, prelude::TensorBinding,
+    prelude::*, std::tensor::View, tensor_vector_size_parallel,
+};
 
 struct AvgPoolStrategy;
 
@@ -91,75 +85,64 @@ impl<T: Numeric, N: Size> Pool2dDirectStrategy<T, N> for AvgPoolStrategy {
     }
 }
 
-pub(crate) fn avg_pool2d<R: CubeRuntime>(
-    x: CubeTensor<R>,
-    kernel_size: [usize; 2],
-    stride: [usize; 2],
-    padding: [usize; 2],
-    count_include_pad: bool,
-    ceil_mode: bool,
-) -> CubeTensor<R> {
-    let [batch_size, channels, in_h, in_w] = x.meta.shape().dims();
+pub(crate) fn avg_pool2d_launch<R: Runtime>(
+    client: &ComputeClient<R>,
+    input: TensorBinding<R>,
+    output: TensorBinding<R>,
+    options: AvgPoolOptions<2>,
+    dtype: StorageType,
+) -> Result<(), PoolError> {
+    let [_, in_h, in_w, _] = input.shape.dims();
     let dilation = 1;
 
-    let size_0 = calculate_pool_output_size(
-        kernel_size[0],
-        stride[0],
-        padding[0],
-        dilation,
-        in_h,
-        ceil_mode,
-    );
-    let size_1 = calculate_pool_output_size(
-        kernel_size[1],
-        stride[1],
-        padding[1],
-        dilation,
-        in_w,
-        ceil_mode,
+    let vector_size = tensor_vector_size_parallel(
+        client.io_optimized_vector_sizes(dtype.size()),
+        &input.shape,
+        &input.strides,
+        input.shape.len() - 1,
     );
 
-    // Padded dimensions (for count_include_pad with ceil_mode)
-    let padded_0 = in_h + 2 * padding[0];
-    let padded_1 = in_w + 2 * padding[1];
+    let working_units = output.shape.iter().product::<usize>() / vector_size as usize;
+    let cube_dim = CubeDim::new(&client, working_units);
+    let cube_count = calculate_cube_count_elemwise(&client, working_units, cube_dim);
 
-    let x = into_contiguous_aligned(permute_nchw_to_nhwc(x));
-    let vector_size = max_vector_size(&x);
+    let address_type = input
+        .required_address_type(dtype.size())
+        .max(output.required_address_type(dtype.size()));
 
-    let shape_out = Shape::new([batch_size, size_0, size_1, channels]);
-    let output = empty_device_dtype(x.client.clone(), x.device.clone(), shape_out, x.dtype);
-
-    let working_units = output.meta.num_elements() / vector_size as usize;
-    let cube_dim = CubeDim::new(&x.client, working_units);
-    let cube_count = calculate_cube_count_elemwise(&x.client, working_units, cube_dim);
+    let padded_0 = in_h as u32 + 2u32 * options.window.padding[0] as u32;
+    let padded_1 = in_w as u32 + 2u32 * options.window.padding[1] as u32;
 
     pool2d_direct::launch::<AvgPoolStrategy, R>(
-        &output.client,
+        &client,
         cube_count,
         cube_dim,
-        address_type!(x, output),
+        address_type,
         vector_size,
-        x.into_tensor_arg(),
+        input.into_tensor_arg(),
         view4d(output.clone(), vector_size),
         (),
         shape_divmod(&output),
         working_units,
         Pool2dDirectArgsLaunch::new(
-            stride[0] as u32,
-            stride[1] as u32,
+            options.window.stride[0] as u32,
+            options.window.stride[1] as u32,
             dilation as u32,
             dilation as u32,
-            padding[0] as u32,
-            padding[1] as u32,
+            options.window.padding[0] as u32,
+            options.window.padding[1] as u32,
         ),
-        (kernel_size[0] as u32, kernel_size[1] as u32),
+        (
+            options.window.kernel_size[0] as u32,
+            options.window.kernel_size[1] as u32,
+        ),
         AvgPoolStrategyConfig {
-            count_include_pad,
+            count_include_pad: options.count_include_pad,
             padded_h: padded_0 as u32,
             padded_w: padded_1 as u32,
         },
-        output.dtype.into(),
+        dtype,
     );
 
-    permute_nhwc_to_nchw(output)
+    Ok(())
 }

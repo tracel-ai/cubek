@@ -45,7 +45,8 @@ fn avg_pool2d_backward_kernel<E: Numeric, N: Size>(
 
     let vector_size = grad.vector_size();
 
-    let (batch, ih, iw, channel) = decompose_linear(ABSOLUTE_POS * output.vector_size(), &out_shape);
+    let (batch, ih, iw, channel) =
+        decompose_linear(ABSOLUTE_POS * output.vector_size(), &out_shape);
 
     let mut grad_acc = Vector::zero();
 

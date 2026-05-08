@@ -4,11 +4,12 @@ use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*}
 
 #[cfg(feature = "cpu-reference")]
 pub mod cpu_reference;
+
 pub mod definition;
 mod kernel;
 
 use crate::definition::{PoolError, PoolMode};
-use crate::kernel::forward::max_pool2d_launch;
+use crate::kernel::forward::{adaptive_avg_pool2d_launch, avg_pool2d_launch, max_pool2d_launch};
 
 /// MaxPool2d public wrapper
 ///
@@ -25,7 +26,10 @@ pub fn pool2d<R: Runtime>(
 
     match mode {
         PoolMode::Max(max_options) => max_pool2d_launch(client, input, output, max_options, dtype),
-        _ => unimplemented!("Only MaxPool2d is implemented currently"),
+        PoolMode::Avg(avg_options) => avg_pool2d_launch(client, input, output, avg_options, dtype),
+        PoolMode::AdaptiveAvg(adaptive_avg_options) => {
+            adaptive_avg_pool2d_launch(client, input, output, adaptive_avg_options, dtype)
+        }
     }
 }
 

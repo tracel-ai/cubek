@@ -30,7 +30,8 @@ fn max_pool2d_with_indices_backward_kernel<E: Numeric, I: Int, N: Size>(
         terminate!();
     }
 
-    let (batch, ih, iw, channel) = decompose_linear(ABSOLUTE_POS * output.vector_size(), &out_shape);
+    let (batch, ih, iw, channel) =
+        decompose_linear(ABSOLUTE_POS * output.vector_size(), &out_shape);
 
     let vector_size = grad.vector_size();
 
