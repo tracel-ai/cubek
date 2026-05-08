@@ -1,9 +1,9 @@
-use super::super::{
+use super::{
+    super::shape_divmod,
     pool2d::{
         Pool2dDirectArgsLaunch, Pool2dDirectStrategy, Pool2dDirectStrategyFamily, Position,
         pool2d_direct, view4d,
     },
-    shape_divmod,
 };
 use crate::definition::{AvgPoolOptions, PoolError};
 use cubecl::{

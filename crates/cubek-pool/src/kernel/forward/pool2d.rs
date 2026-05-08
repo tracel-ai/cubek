@@ -1,3 +1,4 @@
+use crate::kernel::decompose_linear;
 use core::hash::Hash;
 use cubecl::{
     Runtime,
@@ -13,15 +14,13 @@ use cubecl::{
     },
 };
 
-use crate::kernel::decompose_linear;
-
 pub trait Pool2dDirectStrategyFamily: Send + Sync + 'static {
     type Indices<N: Size>: LaunchArg;
     type Config: CubeType + Clone + Send + Sync + core::fmt::Debug + Hash + core::cmp::Eq;
     type Pool2d<T: Numeric, N: Size>: Pool2dDirectStrategy<T, N, Config = Self::Config, Indices = Self::Indices<N>>;
 }
 
-pub(super) type Position = (usize, usize, usize, usize);
+pub(crate) type Position = (usize, usize, usize, usize);
 
 #[cube]
 pub(crate) trait Pool2dDirectStrategy<T: Numeric, N: Size>: Send + Sync + 'static {
@@ -131,7 +130,7 @@ pub fn pool2d_direct<E: Numeric, N: Size, S: Pool2dDirectStrategyFamily>(
     S::Pool2d::<E, N>::store(config, (b, oh, ow, c), output, indices, accumulator);
 }
 
-pub(super) fn view4d<R: Runtime>(
+pub(crate) fn view4d<R: Runtime>(
     tensor: TensorBinding<R>,
     vector_size: VectorSize,
 ) -> ViewArg<Position, R> {

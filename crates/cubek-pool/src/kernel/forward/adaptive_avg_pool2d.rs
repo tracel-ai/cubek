@@ -1,7 +1,7 @@
-use super::super::{
-    decompose_linear,
+use super::{
+    super::decompose_linear,
+    super::shape_divmod,
     pool2d::{Position, view4d},
-    shape_divmod,
 };
 use crate::definition::{AdaptiveAvgPoolOptions, PoolError};
 use cubecl::{

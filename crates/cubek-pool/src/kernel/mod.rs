@@ -1,5 +1,5 @@
-pub mod forward;
-pub mod pool2d;
+pub(crate) mod backward;
+pub(crate) mod forward;
 
 use cubecl::{prelude::*, std::FastDivmod};
 
