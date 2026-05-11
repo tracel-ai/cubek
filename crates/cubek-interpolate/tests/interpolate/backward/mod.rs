@@ -2,8 +2,8 @@ mod nearest_backward;
 
 use cubecl::{TestRuntime, client::ComputeClient};
 use cubek_interpolate::{
-    cpu_reference::cpu_reference_interpolate_backward_from_host,
     definition::{InterpolateBackwardProblem, InterpolateOptions},
+    eval::cpu_reference::cpu_reference_interpolate_backward_from_host,
     interpolate_backward,
 };
 use cubek_test_utils::TestInput;

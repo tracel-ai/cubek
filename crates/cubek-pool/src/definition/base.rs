@@ -2,9 +2,23 @@ use crate::definition::{AdaptiveAvgPoolOptions, AvgPoolOptions, MaxPoolOptions};
 use cubecl::zspace::Shape;
 
 #[derive(Clone, Debug)]
-pub enum PoolProblem<const N: usize> {
-    Forward(PoolForwardProblem<N>),
-    Backward(PoolBackwardProblem<N>),
+pub enum PoolProblem {
+    Forward(PoolForward),
+    Backward(PoolBackward),
+}
+
+#[derive(Clone, Debug)]
+pub enum PoolForward {
+    D1(PoolForwardProblem<1>),
+    D2(PoolForwardProblem<2>),
+    D3(PoolForwardProblem<3>),
+}
+
+#[derive(Clone, Debug)]
+pub enum PoolBackward {
+    D1(PoolBackwardProblem<1>),
+    D2(PoolBackwardProblem<2>),
+    D3(PoolBackwardProblem<3>),
 }
 
 #[derive(Clone, Debug)]

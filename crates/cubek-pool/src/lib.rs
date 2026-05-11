@@ -2,8 +2,8 @@ use core::result::Result;
 
 use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*};
 
-#[cfg(feature = "cpu-reference")]
-pub mod cpu_reference;
+#[cfg(feature = "benchmarks")]
+pub mod eval;
 
 pub mod definition;
 mod kernel;

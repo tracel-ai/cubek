@@ -19,6 +19,7 @@ extended = ["heavy"]
 full = ["extended"]
 
 cpu-reference = ["dep:cubek-test-utils"]
+benchmarks = ["cpu-reference", "cubecl/test-runtime"]
 
 [dependencies]
 cubecl = { workspace = true }

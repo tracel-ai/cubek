@@ -1,4 +1,6 @@
 pub mod backward;
+#[cfg(feature = "benchmarks")]
+pub mod bench_catalog;
 pub mod forward;
 
 use cubecl::{

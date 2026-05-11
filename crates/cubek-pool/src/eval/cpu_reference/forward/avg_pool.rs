@@ -1,6 +1,6 @@
 use crate::{
-    cpu_reference::{decode_index, forward::decode_index_simple},
     definition::AvgPoolOptions,
+    eval::cpu_reference::{decode_index, forward::decode_index_simple},
 };
 use cubek_test_utils::HostData;
 
@@ -20,7 +20,7 @@ pub fn run_avg_pool<const N: usize>(
         .map(|d| in_dims[d + 1] + 2 * opts.window.padding[d])
         .collect();
 
-    for i in 0..total {
+    for (i, out_val) in out.iter_mut().enumerate().take(total) {
         let coords = decode_index(i, out_dims, out_strides);
         let (batch, channel, spatial_out) = (coords[0], coords[N + 1], &coords[1..N + 1]);
         let (mut sum, mut count) = (0.0f32, 0u32);
@@ -58,7 +58,7 @@ pub fn run_avg_pool<const N: usize>(
                 count += 1;
             }
         }
-        out[i] = if count > 0 { sum / count as f32 } else { 0.0 };
+        *out_val = if count > 0 { sum / count as f32 } else { 0.0 };
     }
     out
 }

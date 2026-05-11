@@ -1,9 +1,9 @@
 use crate::{
-    cpu_reference::{
+    definition::MaxPoolOptions,
+    eval::cpu_reference::{
         decode_index,
         forward::{decode_index_simple, get_window_coords},
     },
-    definition::MaxPoolOptions,
 };
 use cubek_test_utils::HostData;
 
@@ -19,7 +19,7 @@ pub fn run_max_pool<const N: usize>(
     let kernel_dims = opts.window.kernel_size;
     let total_k_elems: usize = kernel_dims.iter().product();
 
-    for i in 0..total {
+    for (i, out_val) in out.iter_mut().enumerate().take(total) {
         let coords = decode_index(i, out_dims, out_strides);
         let (batch, channel, spatial_out) = (coords[0], coords[N + 1], &coords[1..N + 1]);
         let mut max_val = f32::NEG_INFINITY;
@@ -42,7 +42,7 @@ pub fn run_max_pool<const N: usize>(
                 max_val = f32::max(max_val, input.get_f32(&valid_coords));
             }
         }
-        out[i] = if max_val == f32::NEG_INFINITY {
+        *out_val = if max_val == f32::NEG_INFINITY {
             0.0
         } else {
             max_val

@@ -1,4 +1,4 @@
-use crate::{cpu_reference::decode_index, definition::AvgPoolOptions};
+use crate::{definition::AvgPoolOptions, eval::cpu_reference::decode_index};
 use cubek_test_utils::HostData;
 
 pub fn run_avg_pool_backward<const N: usize>(
@@ -25,7 +25,7 @@ pub fn run_avg_pool_backward<const N: usize>(
     let grad_h = grad_output_dims[1] as i32;
     let grad_w = grad_output_dims[2] as i32;
 
-    for i in 0..total {
+    for (i, grad_val) in grad_input.iter_mut().enumerate().take(total) {
         let coords = decode_index(i, grad_input_dims, grad_input_strides);
         let batch = coords[0] as i32;
         let ih = coords[1] as i32;
@@ -76,7 +76,7 @@ pub fn run_avg_pool_backward<const N: usize>(
             }
         }
 
-        grad_input[i] = grad_acc;
+        *grad_val = grad_acc;
     }
 
     grad_input
