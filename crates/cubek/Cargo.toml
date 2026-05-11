@@ -55,6 +55,7 @@ fft = ["cubek-fft"]
 
 
 [dependencies]
+cubecl = { workspace = true }
 cubek-attention = { path = "../cubek-attention", version = "=0.3.0-pre.1", default-features = false, optional = true }
 cubek-interpolate = { path = "../cubek-interpolate", version = "=0.3.0-pre.1", default-features = false, optional = true }
 cubek-pool = { path = "../cubek-pool", version = "=0.3.0-pre.1", default-features = false, optional = true }
