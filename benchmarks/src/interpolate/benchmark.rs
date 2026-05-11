@@ -63,7 +63,7 @@ impl<R: Runtime> Benchmark for InterpolateBench<R> {
 
     fn prepare(&self) -> Self::Input {
         match &self.problem {
-            InterpolateProblem::InterpolateForward(prob) => {
+            InterpolateProblem::Forward(prob) => {
                 let tensor =
                     TensorHandle::empty(&self.client, prob.input_shape.to_vec(), self.dtype);
 
@@ -72,7 +72,7 @@ impl<R: Runtime> Benchmark for InterpolateBench<R> {
 
                 tensor
             }
-            InterpolateProblem::InterpolateBackward(prob) => {
+            InterpolateProblem::Backward(prob) => {
                 let tensor =
                     TensorHandle::empty(&self.client, prob.out_grad_shape.to_vec(), self.dtype);
 
@@ -88,7 +88,7 @@ impl<R: Runtime> Benchmark for InterpolateBench<R> {
         use cubek::interpolate::{interpolate, interpolate_backward};
 
         match &self.problem {
-            InterpolateProblem::InterpolateForward(prob) => {
+            InterpolateProblem::Forward(prob) => {
                 let [n, _, _, c] = prob.input_shape;
                 let output_shape = vec![n, prob.output_size[0], prob.output_size[1], c];
                 let output = TensorHandle::empty(&self.client, output_shape, self.dtype);
@@ -104,7 +104,7 @@ impl<R: Runtime> Benchmark for InterpolateBench<R> {
 
                 Ok(output)
             }
-            InterpolateProblem::InterpolateBackward(prob) => {
+            InterpolateProblem::Backward(prob) => {
                 let [n, h, w, c] = prob.out_grad_shape;
                 let input_grad_shape = vec![n, h, w, c];
 
@@ -143,12 +143,12 @@ impl<R: Runtime> Benchmark for InterpolateBench<R> {
 
     fn name(&self) -> String {
         match &self.problem {
-            InterpolateProblem::InterpolateForward(prob) => format!(
+            InterpolateProblem::Forward(prob) => format!(
                 "interpolate-{:?}-{:?}-{:?}-{:?}",
                 self.dtype, prob.options.mode, self.device, prob.input_shape,
             )
             .to_lowercase(),
-            InterpolateProblem::InterpolateBackward(prob) => format!(
+            InterpolateProblem::Backward(prob) => format!(
                 "interpolate-backward-{:?}-{:?}-{:?}-{:?}",
                 self.dtype, prob.options.mode, self.device, prob.out_grad_shape,
             )

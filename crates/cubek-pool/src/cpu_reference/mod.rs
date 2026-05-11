@@ -45,7 +45,6 @@ pub fn cpu_reference_pool_backward<const N: usize>(
     grad_output: &HostData,
     indices: &HostData,
     problem: PoolBackwardProblem<N>,
-    with_indices_strategy: bool,
 ) -> HostData {
     let out_dims = grad_output.shape.to_vec();
     let input_shape = Shape::from(vec![
@@ -59,7 +58,7 @@ pub fn cpu_reference_pool_backward<const N: usize>(
 
     let output_grad = match &problem.mode {
         PoolMode::Max(opts) => {
-            if with_indices_strategy {
+            if problem.with_indices {
                 run_max_pool_backward(grad_output, indices, opts, &in_dims, &out_dims, &in_strides)
             } else {
                 unimplemented!("Max pool backward without indices is not implemented yet")

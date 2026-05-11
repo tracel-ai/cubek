@@ -11,9 +11,14 @@ use cubek_pool::{
 };
 use cubek_test_utils::TestInput;
 
-pub fn make_problem(input_shape: Shape, mode: impl Into<PoolMode<2>>) -> PoolForwardProblem<2> {
+pub fn make_problem(
+    input_shape: Shape,
+    with_indices: bool,
+    mode: impl Into<PoolMode<2>>,
+) -> PoolForwardProblem<2> {
     PoolForwardProblem {
         input_shape,
+        with_indices,
         mode: mode.into(),
     }
 }

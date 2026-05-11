@@ -103,8 +103,8 @@ pub(crate) fn avg_pool2d_launch<R: Runtime>(
     );
 
     let working_units = output.shape.iter().product::<usize>() / vector_size as usize;
-    let cube_dim = CubeDim::new(&client, working_units);
-    let cube_count = calculate_cube_count_elemwise(&client, working_units, cube_dim);
+    let cube_dim = CubeDim::new(client, working_units);
+    let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
 
     let address_type = input
         .required_address_type(dtype.size())
@@ -114,7 +114,7 @@ pub(crate) fn avg_pool2d_launch<R: Runtime>(
     let padded_1 = in_w as u32 + 2u32 * options.window.padding[1] as u32;
 
     pool2d_direct::launch::<AvgPoolStrategy, R>(
-        &client,
+        client,
         cube_count,
         cube_dim,
         address_type,

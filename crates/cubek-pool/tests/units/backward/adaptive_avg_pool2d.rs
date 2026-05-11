@@ -10,6 +10,7 @@ fn test_adaptive_avg_pool2d_backward_global() {
     let problem = make_problem(
         [8, 8],
         Shape::from([2, 4, 1, 1]),
+        false,
         AdaptiveAvgPoolOptions {
             output_size: [1, 1],
         },
@@ -20,7 +21,6 @@ fn test_adaptive_avg_pool2d_backward_global() {
         -1.0,
         1.0,
         problem,
-        true,
         ADAPTIVE_AVG_POOL_BACKWARD_TOLERANCE,
     );
 }
@@ -31,6 +31,7 @@ fn test_adaptive_avg_pool2d_backward_square() {
     let problem = make_problem(
         [7, 7],
         Shape::from([1, 2, 3, 3]),
+        false,
         AdaptiveAvgPoolOptions {
             output_size: [3, 3],
         },
@@ -41,7 +42,6 @@ fn test_adaptive_avg_pool2d_backward_square() {
         -5.0,
         5.0,
         problem,
-        true,
         ADAPTIVE_AVG_POOL_BACKWARD_TOLERANCE,
     );
 }
@@ -52,6 +52,7 @@ fn test_adaptive_avg_pool2d_backward_non_square() {
     let problem = make_problem(
         [10, 10],
         Shape::from([2, 3, 3, 5]),
+        false,
         AdaptiveAvgPoolOptions {
             output_size: [3, 5],
         },
@@ -62,7 +63,6 @@ fn test_adaptive_avg_pool2d_backward_non_square() {
         -1.0,
         1.0,
         problem,
-        true,
         ADAPTIVE_AVG_POOL_BACKWARD_TOLERANCE,
     );
 }
@@ -73,6 +73,7 @@ fn test_adaptive_avg_pool2d_backward_large_input() {
     let problem = make_problem(
         [14, 14],
         Shape::from([1, 8, 7, 7]),
+        false,
         AdaptiveAvgPoolOptions {
             output_size: [7, 7],
         },
@@ -83,7 +84,6 @@ fn test_adaptive_avg_pool2d_backward_large_input() {
         -1.0,
         1.0,
         problem,
-        true,
         ADAPTIVE_AVG_POOL_BACKWARD_TOLERANCE,
     );
 }

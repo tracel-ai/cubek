@@ -105,6 +105,7 @@ pub fn pool2d_backward<R: Runtime>(
 /// Pool2d backward with indices public wrapper
 ///
 /// Expects input and output gradients in NHWC layout. Output indices are expected to be in the same layout as well.
+#[allow(clippy::too_many_arguments)]
 pub fn pool2d_with_indices_backward<R: Runtime>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,

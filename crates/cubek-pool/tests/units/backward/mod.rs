@@ -17,11 +17,13 @@ use cubek_test_utils::TestInput;
 pub fn make_problem(
     input_size: [usize; 2],
     out_grad_shape: Shape,
+    with_indices: bool,
     mode: impl Into<PoolMode<2>>,
 ) -> PoolBackwardProblem<2> {
     PoolBackwardProblem {
         input_size,
         out_grad_shape,
+        with_indices,
         mode: mode.into(),
     }
 }
@@ -32,7 +34,6 @@ pub fn run_pool_backward_test(
     input_min: f32,
     input_max: f32,
     problem: PoolBackwardProblem<2>,
-    with_indices_strategy: bool,
     tolerance: f32,
 ) {
     let input_shape = vec![
@@ -51,7 +52,7 @@ pub fn run_pool_backward_test(
             .generate_with_f32_host_data();
 
     let in_grad = build_output_tensor(&client, input_shape, input.dtype);
-    let indices = if with_indices_strategy {
+    let indices = if problem.with_indices {
         Some(build_output_tensor(
             &client,
             problem.out_grad_shape.to_vec(),
@@ -61,7 +62,7 @@ pub fn run_pool_backward_test(
         None
     };
 
-    let result = if with_indices_strategy {
+    let result = if problem.with_indices {
         let indices_handle = indices.as_ref().expect("indices tensor missing");
         let pool_output =
             build_output_tensor(&client, problem.out_grad_shape.to_vec(), input.dtype);
@@ -97,7 +98,7 @@ pub fn run_pool_backward_test(
     };
 
     let in_grad_host = output_host_f32(&client, in_grad);
-    let indices_host = if with_indices_strategy {
+    let indices_host = if problem.with_indices {
         Some(output_host_i32(
             &client,
             indices.expect("indices tensor missing"),
@@ -106,7 +107,7 @@ pub fn run_pool_backward_test(
         None
     };
 
-    if with_indices_strategy {
+    if problem.with_indices {
         if let PoolMode::Max(opts) = &problem.mode {
             let indices_reference =
                 cpu_reference_max_pool_indices(&input_data, opts, &problem.out_grad_shape.to_vec());
@@ -120,15 +121,14 @@ pub fn run_pool_backward_test(
         }
     }
 
-    let reference = if with_indices_strategy {
+    let reference = if problem.with_indices {
         cpu_reference_pool_backward(
             &out_grad_data,
             indices_host.as_ref().expect("indices host data missing"),
             problem,
-            true,
         )
     } else {
-        cpu_reference_pool_backward(&out_grad_data, &input_data, problem, false)
+        cpu_reference_pool_backward(&out_grad_data, &input_data, problem)
     };
 
     validate_test(result, in_grad_host, reference, tolerance);

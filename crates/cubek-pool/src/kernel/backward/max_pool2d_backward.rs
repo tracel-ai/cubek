@@ -110,8 +110,8 @@ pub(crate) fn max_pool2d_with_indices_backward_launch<R: Runtime>(
     );
 
     let working_units = output.shape.iter().product::<usize>() / vector_size as usize;
-    let cube_dim = CubeDim::new(&client, working_units);
-    let cube_count = calculate_cube_count_elemwise(&client, working_units, cube_dim);
+    let cube_dim = CubeDim::new(client, working_units);
+    let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
 
     let address_type = input
         .required_address_type(dtype.size())
@@ -119,7 +119,7 @@ pub(crate) fn max_pool2d_with_indices_backward_launch<R: Runtime>(
 
     unsafe {
         max_pool2d_with_indices_backward_kernel::launch_unchecked(
-            &client,
+            client,
             cube_count,
             cube_dim,
             address_type,

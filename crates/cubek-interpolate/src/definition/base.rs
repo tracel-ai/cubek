@@ -2,8 +2,8 @@ use crate::definition::InterpolateOptions;
 
 #[derive(Clone, Debug)]
 pub enum InterpolateProblem {
-    InterpolateForward(InterpolateForwardProblem),
-    InterpolateBackward(InterpolateBackwardProblem),
+    Forward(InterpolateForwardProblem),
+    Backward(InterpolateBackwardProblem),
 }
 
 #[derive(Clone, Debug)]

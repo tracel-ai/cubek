@@ -45,12 +45,8 @@ pub fn strategy_result(
     seed: u64,
 ) -> Result<HostData, String> {
     match problem {
-        InterpolateProblem::InterpolateForward(prob) => {
-            forward::strategy_result(client, prob, seed)
-        }
-        InterpolateProblem::InterpolateBackward(prob) => {
-            backward::strategy_result(client, prob, seed)
-        }
+        InterpolateProblem::Forward(prob) => forward::strategy_result(client, prob, seed),
+        InterpolateProblem::Backward(prob) => backward::strategy_result(client, prob, seed),
     }
 }
 
@@ -61,10 +57,10 @@ pub fn cpu_reference_result(
     progress: Option<&Progress>,
 ) -> Result<HostData, String> {
     match problem {
-        InterpolateProblem::InterpolateForward(prob) => {
+        InterpolateProblem::Forward(prob) => {
             forward::cpu_reference_result(client, prob, seed, progress)
         }
-        InterpolateProblem::InterpolateBackward(prob) => {
+        InterpolateProblem::Backward(prob) => {
             backward::cpu_reference_result(client, prob, seed, progress)
         }
     }

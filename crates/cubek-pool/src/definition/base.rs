@@ -3,13 +3,14 @@ use cubecl::zspace::Shape;
 
 #[derive(Clone, Debug)]
 pub enum PoolProblem<const N: usize> {
-    PoolForward(PoolForwardProblem<N>),
-    PoolBackward(PoolBackwardProblem<N>),
+    Forward(PoolForwardProblem<N>),
+    Backward(PoolBackwardProblem<N>),
 }
 
 #[derive(Clone, Debug)]
 pub struct PoolForwardProblem<const N: usize> {
     pub input_shape: Shape,
+    pub with_indices: bool,
     pub mode: PoolMode<N>,
 }
 
@@ -17,6 +18,7 @@ pub struct PoolForwardProblem<const N: usize> {
 pub struct PoolBackwardProblem<const N: usize> {
     pub input_size: [usize; N],
     pub out_grad_shape: Shape,
+    pub with_indices: bool,
     pub mode: PoolMode<N>,
 }
 
