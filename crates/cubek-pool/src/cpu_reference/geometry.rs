@@ -1,6 +1,5 @@
 use crate::definition::{
-    AdaptiveAvgPoolOptions, AvgPoolOptions, MaxPoolOptions,
-    PoolForwardProblem, PoolMode,
+    AdaptiveAvgPoolOptions, AvgPoolOptions, MaxPoolOptions, PoolForwardProblem, PoolMode,
 };
 use cubecl::zspace::Shape;
 

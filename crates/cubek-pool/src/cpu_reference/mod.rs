@@ -1,15 +1,15 @@
 mod backward;
-pub mod base;
 mod forward;
+pub mod geometry;
 
 use crate::{
     cpu_reference::{
         backward::{run_adaptive_avg_pool_backward, run_avg_pool_backward, run_max_pool_backward},
-        base::PoolGeometry,
         forward::{
             row_major_strides_vec, run_adaptive_avg_pool, run_avg_pool, run_max_pool,
             run_max_pool_with_indices,
         },
+        geometry::PoolGeometry,
     },
     definition::{MaxPoolOptions, PoolBackwardProblem, PoolForwardProblem, PoolMode},
 };

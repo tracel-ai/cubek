@@ -5,7 +5,7 @@ mod max_pool2d;
 use super::{build_output_tensor, output_host_f32, validate_test};
 use cubecl::{TestRuntime, client::ComputeClient, zspace::Shape};
 use cubek_pool::{
-    cpu_reference::{base::PoolGeometry, cpu_reference_pool},
+    cpu_reference::{cpu_reference_pool, geometry::PoolGeometry},
     definition::{PoolForwardProblem, PoolMode},
     pool2d,
 };
