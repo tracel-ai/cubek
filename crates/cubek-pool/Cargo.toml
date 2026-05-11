@@ -1,0 +1,32 @@
+[package]
+authors = ["samuelbelanger <samuel.belanger.11@ulaval.ca>"]
+categories = ["science", "mathematics", "algorithms"]
+description = "CubeK: Pool"
+edition.workspace = true
+keywords = []
+license.workspace = true
+name = "cubek-pool"
+readme.workspace = true
+repository = "https://github.com/tracel-ai/cubek/tree/main/crates/cubek-pool"
+version.workspace = true
+
+[features]
+default = ["std", "cubecl/default"]
+std = ["cubecl/std", "thiserror/std"]
+
+heavy = []
+extended = ["heavy"]
+full = ["extended"]
+
+cpu-reference = ["dep:cubek-test-utils"]
+
+[dependencies]
+cubecl = { workspace = true }
+cubecl-common = { workspace = true }
+thiserror = { workspace = true }
+cubek-test-utils = { path = "./../cubek-test-utils/", version = "0.3.0-pre.1", default-features = false, optional = true }
+
+[dev-dependencies]
+cubecl = { workspace = true, features = ["test-runtime"] }
+cubek-pool = { path = ".", features = ["cpu-reference"] }
+cubek-test-utils = { path = "../cubek-test-utils", version = "0.3.0-pre.1", default-features = false }
