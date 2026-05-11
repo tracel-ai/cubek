@@ -4,7 +4,9 @@ mod max_pool;
 
 pub use adaptive_avg_pool::run_adaptive_avg_pool;
 pub use avg_pool::run_avg_pool;
-pub use max_pool::run_max_pool;
+pub use max_pool::{run_max_pool, run_max_pool_with_indices};
+
+use crate::cpu_reference::decode_index;
 
 pub(crate) fn get_window_coords<const N: usize>(
     spatial_out: &[usize],
@@ -25,15 +27,6 @@ pub(crate) fn get_window_coords<const N: usize>(
         in_coords[d + 1] = id_signed as usize;
     }
     Some(in_coords)
-}
-
-pub(crate) fn decode_index(mut index: usize, shape: &[usize], strides: &[usize]) -> Vec<usize> {
-    let mut coords = vec![0; shape.len()];
-    for i in 0..shape.len() {
-        coords[i] = index / strides[i];
-        index %= strides[i];
-    }
-    coords
 }
 
 pub(crate) fn decode_index_simple(index: usize, shape: &[usize]) -> Vec<usize> {

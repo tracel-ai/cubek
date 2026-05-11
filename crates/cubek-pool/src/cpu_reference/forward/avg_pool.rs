@@ -1,5 +1,5 @@
 use crate::{
-    cpu_reference::forward::{decode_index, decode_index_simple},
+    cpu_reference::{decode_index, forward::decode_index_simple},
     definition::AvgPoolOptions,
 };
 use cubek_test_utils::HostData;
