@@ -17,14 +17,14 @@ version.workspace = true
 # Pulls in each kernel crate's `cpu-reference` feature so categories can return
 # CPU-reference HostData via `BenchmarkCategory::reference_result`. The umbrella
 # `cubek` crate doesn't re-expose `cpu-reference` today, so consumers that need
-# the correctness flow turn it on here and pick up the optional direct deps.
+# the correctness flow turn it on here and pick up the per-kernel toggle.
 cpu-reference = [
-    "dep:cubek-matmul",
-    "dep:cubek-attention",
-    "dep:cubek-interpolate",
-    "dep:cubek-convolution",
-    "dep:cubek-fft",
-    "dep:cubek-reduce",
+    "cubek-attention/cpu-reference",
+    "cubek-matmul/cpu-reference",
+    "cubek-interpolate/cpu-reference",
+    "cubek-convolution/cpu-reference",
+    "cubek-fft/cpu-reference",
+    "cubek-reduce/cpu-reference",
 ]
 
 [lib]
@@ -43,24 +43,27 @@ cubek = { path = "../crates/cubek", version = "=0.3.0-pre.1", default-features =
     "fft",
     "quantization",
 ] }
-cubek-interpolate = { path = "../crates/cubek-interpolate", version = "=0.3.0-pre.1",features = [
-    "cpu-reference",
-], optional = true }
-cubek-matmul = { path = "../crates/cubek-matmul", version = "=0.3.0-pre.1", features = [
-    "cpu-reference",
-], optional = true }
 cubek-attention = { path = "../crates/cubek-attention", version = "=0.3.0-pre.1", features = [
-    "cpu-reference",
-], optional = true }
+    "benchmarks",
+] }
 cubek-convolution = { path = "../crates/cubek-convolution", version = "=0.3.0-pre.1", features = [
-    "cpu-reference",
-], optional = true }
+    "benchmarks",
+] }
 cubek-fft = { path = "../crates/cubek-fft", version = "=0.3.0-pre.1", features = [
-    "cpu-reference",
-], optional = true }
+    "benchmarks",
+] }
+cubek-interpolate = { path = "../crates/cubek-interpolate", version = "=0.3.0-pre.1", features = [
+    "benchmarks",
+] }
+cubek-matmul = { path = "../crates/cubek-matmul", version = "=0.3.0-pre.1", features = [
+    "benchmarks",
+] }
 cubek-reduce = { path = "../crates/cubek-reduce", version = "=0.3.0-pre.1", features = [
-    "cpu-reference",
-], optional = true }
+    "benchmarks",
+] }
+cubek-std = { path = "../crates/cubek-std", version = "=0.3.0-pre.1", features = [
+    "benchmarks",
+] }
 cubek-test-utils = { path = "../crates/cubek-test-utils", version = "=0.3.0-pre.1" }
 half = { workspace = true }
 

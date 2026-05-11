@@ -8,5 +8,5 @@ pub mod routines;
 
 pub mod definition;
 
-#[cfg(feature = "cpu-reference")]
-pub mod cpu_reference;
+#[cfg(any(feature = "cpu-reference", feature = "benchmarks"))]
+pub mod eval;

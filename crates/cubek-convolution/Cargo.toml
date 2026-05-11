@@ -16,9 +16,13 @@ std = ["cubecl/std"]
 
 heavy = []
 extended = ["heavy"]
-full = ["extended"]
+full = ["extended", "benchmarks"]
 
 cpu-reference = ["dep:cubek-test-utils", "cubek-matmul/cpu-reference"]
+# Enables `pub mod benchmarks` — catalogue of conv2d benchmark problems /
+# strategies and the bench harness. The seeded `Conv2dCorrectness` impl
+# inside that module is additionally gated on `cpu-reference`.
+benchmarks = ["cpu-reference", "cubecl/test-runtime"]
 
 [dependencies]
 cubecl = { workspace = true, features = ["stdlib"] }

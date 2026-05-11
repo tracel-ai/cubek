@@ -1,25 +1,44 @@
 //! Benchmark registry for cubek.
+//!
+//! The catalogues themselves (problems, strategies, the bench harness, the
+//! seeded `Correctness` impls) live in their respective kernel crates under
+//! `cubek-<kernel>::benchmarks`, gated behind a `benchmarks` feature. This
+//! crate re-exports them with shorter aliases (`attention`, `gemm`, ...) and
+//! collects them into [`all()`].
 
-pub mod attention;
-pub mod contiguous;
-pub mod conv2d;
-pub mod fft;
-pub mod gemm;
-pub mod gemv;
-pub mod interpolate;
-pub mod memcpy_async;
-pub mod quantized_matmul;
-pub mod reduce;
-pub mod registry;
-pub mod unary;
-
-pub use registry::{
-    BenchmarkCategory, CatalogEntry, Category, Correctness, ItemDescriptor, RunSamples, all,
-};
+pub use cubek_attention::eval::benchmarks as attention;
+pub use cubek_convolution::eval::benchmarks as conv2d;
+pub use cubek_fft::eval::benchmarks as fft;
+pub use cubek_interpolate::eval::benchmarks as interpolate;
+pub use cubek_matmul::eval::benchmarks::gemm;
+pub use cubek_matmul::eval::benchmarks::gemv;
+pub use cubek_matmul::eval::benchmarks::quantized_matmul;
+pub use cubek_reduce::eval::benchmarks as reduce;
+pub use cubek_std::eval::benchmarks::contiguous;
+pub use cubek_std::eval::benchmarks::memcpy_async;
+pub use cubek_std::eval::benchmarks::unary;
 
 pub use cubek_test_utils::{
-    HostData, ValidationResult, compare_host_data_files, read_host_data, write_host_data,
+    BenchmarkCategory, CatalogEntry, Category, Correctness, HostData, ItemDescriptor, RunSamples,
+    ValidationResult, compare_host_data_files, read_host_data, write_host_data,
 };
+
+/// Every benchmark category compiled into this build of the registry.
+pub fn all() -> &'static [&'static dyn BenchmarkCategory] {
+    &[
+        &crate::attention::Category,
+        &crate::contiguous::Category,
+        &crate::conv2d::Category,
+        &crate::fft::Category,
+        &crate::gemm::Category,
+        &crate::gemv::Category,
+        &crate::interpolate::Category,
+        &crate::memcpy_async::Category,
+        &crate::quantized_matmul::Category,
+        &crate::reduce::Category,
+        &crate::unary::Category,
+    ]
+}
 
 /// Loop over every (strategy, problem) for `category`, run each at 10 samples,
 /// and print the resulting durations using the category's preferred

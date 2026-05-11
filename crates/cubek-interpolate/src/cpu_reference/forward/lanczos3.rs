@@ -65,16 +65,16 @@ pub fn reference_lanczos3(
         let mut weight_sum = 0.0;
 
         for j in 0..6 {
-            let row_idx = y_int - 2 + j as i32;
+            let row_idx = y_int - 2 + j;
 
             if row_idx >= 0 && row_idx < input_h {
-                let wy = lanczos3_weight(fy - (y_int - 2 + j as i32) as f32);
+                let wy = lanczos3_weight(fy - (y_int - 2 + j) as f32);
 
                 for i in 0..6 {
-                    let col_idx = x_int - 2 + i as i32;
+                    let col_idx = x_int - 2 + i;
 
                     if col_idx >= 0 && col_idx < input_w {
-                        let wx = lanczos3_weight(fx - (x_int - 2 + i as i32) as f32);
+                        let wx = lanczos3_weight(fx - (x_int - 2 + i) as f32);
                         let weight = wy * wx;
 
                         val += input.get_f32(&[b, row_idx as usize, col_idx as usize, c]) * weight;

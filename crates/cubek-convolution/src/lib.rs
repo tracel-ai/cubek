@@ -4,8 +4,8 @@ pub mod kernels;
 pub mod launch;
 pub mod routines;
 
-#[cfg(feature = "cpu-reference")]
-pub mod cpu_reference;
+#[cfg(any(feature = "cpu-reference", feature = "benchmarks"))]
+pub mod eval;
 
 // Re-export per-operation modules at the crate root for internal paths
 // (`crate::forward`, etc.) and for downstream users that previously relied on

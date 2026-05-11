@@ -16,9 +16,15 @@ std = ["cubecl/std"]
 
 heavy = []
 extended = ["heavy"]
-full = ["extended"]
+full = ["extended", "benchmarks"]
 
 cpu-reference = ["dep:cubek-test-utils"]
+# Enables `pub mod benchmarks` — catalogue of benchmark problems / strategies,
+# the bench harness, and the seeded `AttentionCorrectness` impl. Implies
+# `cpu-reference` because the correctness wrapper compares kernel output
+# against the CPU flash-attention reference. Off by default; the top-level
+# `benchmarks` crate turns it on.
+benchmarks = ["cpu-reference", "cubecl/test-runtime"]
 
 [dependencies]
 cubecl = { workspace = true, features = ["stdlib"] }
@@ -33,7 +39,7 @@ serde = { workspace = true }
 
 [dev-dependencies]
 cubecl = { workspace = true, features = ["test-runtime"] }
-cubek-attention = { path = ".", features = ["cpu-reference"] }
+cubek-attention = { path = ".", features = ["benchmarks"] }
 cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.1", default-features = false }
 pretty_assertions = { workspace = true }
 trybuild = "1"

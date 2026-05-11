@@ -7,6 +7,7 @@ use cubek_matmul::{
     components::{global::PartitionedStageFamily, stage::StridedStageFamily},
     routines::find_instruction_size,
 };
+use cubek_std::cube_count::CubeCountStrategy;
 
 use crate::definition::{
     AttentionBlueprint, AttentionElems, AttentionPartitionSize, AttentionProblem,
@@ -186,7 +187,9 @@ fn blueprint<R: Runtime>(
             };
 
             let blueprint = AttentionBlueprint {
-                hypercube_blueprint: HypercubeBlueprint::builder().build(),
+                hypercube_blueprint: HypercubeBlueprint::builder()
+                    .cube_count_strategy(CubeCountStrategy::Spread)
+                    .build(),
                 plane_dim: device.plane_dim,
                 two_rows_in_array_tile: false,
                 vector_sizes: device.vector_sizes.clone(),

@@ -15,8 +15,11 @@ use crate::kernel::{
     },
 };
 
-#[cfg(feature = "cpu-reference")]
+#[cfg(any(feature = "cpu-reference", feature = "benchmarks"))]
 pub mod cpu_reference;
+
+#[cfg(feature = "benchmarks")]
+pub mod eval;
 
 /// Interpolate operation
 ///

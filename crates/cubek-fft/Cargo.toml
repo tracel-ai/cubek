@@ -16,9 +16,13 @@ std = ["cubecl/std"]
 
 heavy = []
 extended = ["heavy"]
-full = ["extended"]
+full = ["extended", "benchmarks"]
 
 cpu-reference = ["dep:num-complex", "dep:cubek-test-utils"]
+# Enables `pub mod benchmarks` — catalogue of FFT benchmark problems /
+# strategies and the bench harness. The seeded `FftCorrectness` impl
+# inside that module is additionally gated on `cpu-reference`.
+benchmarks = ["cpu-reference", "cubecl/test-runtime"]
 
 [dependencies]
 cubecl = { workspace = true }

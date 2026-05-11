@@ -16,3 +16,6 @@ pub use input_binding::*;
 pub use matrix_layout::*;
 pub use size::*;
 pub use stage_ident::*;
+
+#[cfg(feature = "benchmarks")]
+pub mod eval;

@@ -27,7 +27,7 @@ pub fn strategy_result(
     let (input_handle, _input_host) = make_random_f32_host(&client, input_shape.clone(), seed);
 
     let out_shape = output_shape_for(&problem.input_shape, &problem.output_size);
-    let output_handle = make_zero_handle(&client, out_shape, dtype.clone());
+    let output_handle = make_zero_handle(&client, out_shape, dtype);
 
     let outcome = launch_and_capture_outcome(&client, |c| {
         interpolate::<TestRuntime>(
@@ -35,7 +35,7 @@ pub fn strategy_result(
             input_handle.clone().binding(),
             output_handle.clone().binding(),
             problem.options.clone(),
-            dtype.clone(),
+            dtype,
         )
         .into()
     });

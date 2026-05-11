@@ -74,7 +74,7 @@ impl<AP: AttentionPrecision> MaskReader<AP> {
 
         MaskReader::<AP>::new_Materialized(MaterializedMaskReader::new(
             global_iter,
-            LogicalIterator::init(partition_q_offset, step),
+            LogicalIterator::init(stage_q_offset + partition_q_offset, step),
             seq_kv_shape,
             gmem_config,
         ))

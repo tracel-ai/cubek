@@ -17,9 +17,15 @@ heavy = []
 extended = ["heavy"]
 full = ["extended"]
 
+# Enables `pub mod benchmarks` — catalogues for the contiguous, unary, and
+# memcpy_async subcategories. Off by default; the top-level `benchmarks`
+# crate turns it on.
+benchmarks = ["dep:cubek-test-utils", "cubecl/test-runtime"]
+
 [dependencies]
 cubecl = { workspace = true, features = ["stdlib"] }
 cubecl-common = { workspace = true }
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.1", default-features = false, optional = true }
 half = { workspace = true, features = ["bytemuck"] }
 
 [dev-dependencies]

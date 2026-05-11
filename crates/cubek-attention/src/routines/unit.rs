@@ -3,7 +3,7 @@ use cubecl::{
     {CubeDim, Runtime},
 };
 use cubek_matmul::components::{global::PartitionedStageFamily, stage::StridedStageFamily};
-use cubek_std::CubeDimResource;
+use cubek_std::{CubeDimResource, cube_count::CubeCountStrategy};
 
 use crate::definition::{
     AttentionAvailabilityError, AttentionBlueprint, AttentionElems, AttentionPartitionSize,
@@ -116,7 +116,9 @@ fn blueprint<R: Runtime>(
             };
 
             let blueprint = AttentionBlueprint {
-                hypercube_blueprint: HypercubeBlueprint::builder().build(),
+                hypercube_blueprint: HypercubeBlueprint::builder()
+                    .cube_count_strategy(CubeCountStrategy::Spread)
+                    .build(),
                 tiling_scheme,
                 plane_dim,
                 two_rows_in_array_tile: false,
