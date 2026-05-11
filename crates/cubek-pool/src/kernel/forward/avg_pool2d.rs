@@ -138,8 +138,8 @@ pub(crate) fn avg_pool2d_launch<R: Runtime>(
         ),
         AvgPoolStrategyConfig {
             count_include_pad: options.count_include_pad,
-            padded_h: padded_0 as u32,
-            padded_w: padded_1 as u32,
+            padded_h: padded_0,
+            padded_w: padded_1,
         },
         dtype,
     );
