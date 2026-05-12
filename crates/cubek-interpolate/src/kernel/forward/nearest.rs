@@ -1,3 +1,4 @@
+use super::get_ratio;
 use crate::{InterpolateError, kernel::forward::get_pixel_fraction};
 use cubecl::{calculate_cube_count_elemwise, prelude::*, tensor_vector_size_parallel};
 
@@ -32,8 +33,19 @@ fn interpolate_nearest_kernel<F: Float, N: Size>(
     let y_out = temp_idx % h_dim;
     let batch = temp_idx / h_dim;
 
-    let y_in = usize::cast_from(f32::floor(f32::cast_from(y_out) * scale_h));
-    let x_in = usize::cast_from(f32::floor(f32::cast_from(x_out) * scale_w));
+    let h_in = input.shape(1) as f32;
+    let w_in = input.shape(2) as f32;
+
+    let y_in_f = get_pixel_fraction(y_out, scale_h, false)
+        .floor()
+        .clamp(0.0, h_in - 1.0);
+
+    let x_in_f = get_pixel_fraction(x_out, scale_w, false)
+        .floor()
+        .clamp(0.0, w_in - 1.0);
+
+    let y_in = usize::cast_from(y_in_f);
+    let x_in = usize::cast_from(x_in_f);
 
     let in_idx = (batch * input.stride(0) + y_in * input.stride(1) + x_in * input.stride(2))
         / vector_size
@@ -46,7 +58,6 @@ pub(crate) fn interpolate_nearest_launch<R: Runtime>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
     output: TensorBinding<R>,
-    align_corners: bool,
     dtype: StorageType,
 ) -> Result<(), InterpolateError> {
     let vector_size = tensor_vector_size_parallel(
@@ -56,8 +67,8 @@ pub(crate) fn interpolate_nearest_launch<R: Runtime>(
         input.shape.len() - 1,
     );
 
-    let scale_h = get_pixel_fraction(input.shape[1], output.shape[1], y, align_corners);
-    let scale_w = get_pixel_fraction(input.shape[2], output.shape[2], x, align_corners);
+    let scale_h = get_ratio(input.shape[1], output.shape[1], false);
+    let scale_w = get_ratio(input.shape[2], output.shape[2], false);
 
     let working_units = output.shape.iter().product::<usize>() / vector_size as usize;
     let cube_dim = CubeDim::new(client, working_units);

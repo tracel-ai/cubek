@@ -145,6 +145,12 @@ impl BatchMatmulFamily<()> for VecMatUnitPerpendicularFamily {
         _dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
+        if !matches!(problem.rhs_layout, MatrixLayout::RowMajor) {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(
+                "Vecmat unit perpendicular only supports row major rhs",
+            )));
+        }
+
         let vector_size = vector_sizes.lhs;
         if !(vector_size == vector_sizes.rhs && vector_size == vector_sizes.out) {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(

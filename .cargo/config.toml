@@ -25,6 +25,13 @@ test-wgpu-basic = "test --release --features cubecl/wgpu,heavy"
 test-vulkan-basic = "test --release --features cubecl/vulkan,heavy"
 test-metal-basic = "test --release --features cubecl/metal,heavy"
 
+test-cpu-benchmark = "test --release --features cubecl/cpu,benchmarks"
+test-cuda-benchmark = "test --release --features cubecl/cuda,benchmarks"
+test-rocm-benchmark = "test --release --features cubecl/rocm,benchmarks"
+test-wgpu-benchmark = "test --release --features cubecl/wgpu,benchmarks"
+test-vulkan-benchmark = "test --release --features cubecl/vulkan,benchmarks"
+test-metal-benchmark = "test --release --features cubecl/metal,benchmarks"
+
 test-cpu-extended = "test --release --features cubecl/cpu,extended"
 test-cuda-extended = "test --release --features cubecl/cuda,extended"
 test-rocm-extended = "test --release --features cubecl/rocm,extended"

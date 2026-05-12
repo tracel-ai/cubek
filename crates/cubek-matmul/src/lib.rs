@@ -5,5 +5,5 @@ pub mod launch;
 /// Contains matmul kernels
 pub mod routines;
 
-#[cfg(feature = "cpu-reference")]
-pub mod cpu_reference;
+#[cfg(any(feature = "cpu-reference", feature = "benchmarks"))]
+pub mod eval;

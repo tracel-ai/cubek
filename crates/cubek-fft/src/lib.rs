@@ -3,5 +3,5 @@ mod layout;
 
 pub use fft::*;
 
-#[cfg(feature = "cpu-reference")]
-pub mod cpu_reference;
+#[cfg(any(feature = "cpu-reference", feature = "benchmarks"))]
+pub mod eval;

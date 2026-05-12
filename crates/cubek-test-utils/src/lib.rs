@@ -1,6 +1,7 @@
 mod config;
 mod correctness;
 mod progress;
+mod registry;
 mod test_mode;
 mod test_tensor;
 
@@ -10,5 +11,8 @@ pub use correctness::{
     compare_host_data_files, parse_tensor_filter, print_tensor, print_tensors,
 };
 pub use progress::Progress;
+pub use registry::{
+    BenchmarkCategory, CatalogEntry, Category, Correctness, ItemDescriptor, RunSamples,
+};
 pub use test_mode::*;
 pub use test_tensor::*;

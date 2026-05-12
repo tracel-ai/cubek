@@ -15,8 +15,8 @@ use crate::kernel::{
     },
 };
 
-#[cfg(feature = "cpu-reference")]
-pub mod cpu_reference;
+#[cfg(any(feature = "cpu-reference", feature = "benchmarks"))]
+pub mod eval;
 
 /// Interpolate operation
 ///
@@ -30,15 +30,10 @@ pub fn interpolate<R: Runtime>(
     options: InterpolateOptions,
     dtype: StorageType,
 ) -> Result<(), InterpolateError> {
-    validate_rank(input.shape.len(), output.shape.len())?;
-    validate_nhwc_consistency(&input.shape, &output.shape)?;
-
     let align_corners = options.align_corners;
 
     match options.mode {
-        InterpolateMode::Nearest => {
-            interpolate_nearest_launch(client, input, output, align_corners, dtype)
-        }
+        InterpolateMode::Nearest => interpolate_nearest_launch(client, input, output, dtype),
         InterpolateMode::Bilinear => {
             interpolate_bilinear_launch(client, input, output, align_corners, dtype)
         }

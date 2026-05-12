@@ -11,23 +11,20 @@ pub(crate) use lanczos3::interpolate_lanczos3_launch;
 pub(crate) use nearest::interpolate_nearest_launch;
 
 #[cube]
-pub(crate) fn get_pixel_fraction(
-    input_width: usize,
-    output_width: usize,
-    x: usize,
-    #[comptime] align_corners: bool,
-) -> f32 {
+pub(crate) fn get_pixel_fraction(x: usize, ratio: f32, #[comptime] align_corners: bool) -> f32 {
     if align_corners {
-        (x as f32 * get_ratio(input_width as usize, output_width as usize, align_corners)) as f32
+        (x as f32 * ratio) as f32
     } else {
-        let in_size = input_width as f32;
-        let out_size = output_width as f32;
-        (x as f32 + 0.5) * get_ratio(input_width, output_width, align_corners) - 0.5
+        (x as f32 + 0.5) * ratio - 0.5
     }
 }
 
 #[cube]
-pub(crate) fn get_ratio(input_size: usize, output_size: usize, align_corners: bool) -> f32 {
+pub(crate) fn get_ratio(
+    input_size: usize,
+    output_size: usize,
+    #[comptime] align_corners: bool,
+) -> f32 {
     if align_corners {
         let input_size = input_size.saturating_sub(1) as f32;
         let output_size = clamp_min(output_size - 1, 1) as f32;

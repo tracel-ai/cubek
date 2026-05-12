@@ -1,5 +1,4 @@
-use super::super::shape_divmod;
-use super::get_pixel_fraction;
+use super::{super::shape_divmod, get_pixel_fraction, get_ratio};
 use crate::InterpolateError;
 use cubecl::std::FastDivmod;
 use cubecl::{calculate_cube_count_elemwise, prelude::*, tensor_vector_size_parallel};
@@ -26,7 +25,11 @@ fn interpolate_bicubic_kernel<F: Float, N: Size>(
     let input_height = input.shape(1) - 1;
     let input_height_f = input_height as f32;
 
-    let frac = get_pixel_fraction(input.shape(1), output.shape(1), y, align_corners);
+    let frac = get_pixel_fraction(
+        y,
+        get_ratio(input.shape(1), output.shape(1), align_corners),
+        align_corners,
+    );
     let y_in_f = frac.floor();
     let yw = Vector::new(F::cast_from(frac - y_in_f));
 
@@ -39,7 +42,11 @@ fn interpolate_bicubic_kernel<F: Float, N: Size>(
     let input_width = input.shape(2) - 1;
     let input_width_f = input_width as f32;
 
-    let frac = get_pixel_fraction(input.shape(2), output.shape(2), x, align_corners);
+    let frac = get_pixel_fraction(
+        x,
+        get_ratio(input.shape(2), output.shape(2), align_corners),
+        align_corners,
+    );
     let x_in_f = frac.floor();
     let xw = Vector::new(F::cast_from(frac - x_in_f));
 

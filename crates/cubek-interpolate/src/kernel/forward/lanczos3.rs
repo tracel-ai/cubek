@@ -1,6 +1,6 @@
-use super::get_pixel_fraction;
-use super::super::shape_divmod;
+use super::{super::shape_divmod, get_pixel_fraction};
 use crate::InterpolateError;
+use crate::kernel::forward::get_ratio;
 use cubecl::{calculate_cube_count_elemwise, prelude::*, tensor_vector_size_parallel};
 use cubecl::{num_traits::Zero, std::FastDivmod};
 
@@ -26,13 +26,21 @@ fn interpolate_lanczos3_kernel<F: Float, N: Size>(
     let input_height = input.shape(1) - 1;
     let input_height_f = input_height as f32;
 
-    let y_frac = get_pixel_fraction(input.shape(1), output.shape(1), y, align_corners);
+    let y_frac = get_pixel_fraction(
+        y,
+        get_ratio(input.shape(1), output.shape(1), align_corners),
+        align_corners,
+    );
     let y0 = f32::floor(y_frac);
 
     let input_width = input.shape(2) - 1;
     let input_width_f = input_width as f32;
 
-    let x_frac = get_pixel_fraction(input.shape(2), output.shape(2), x, align_corners);
+    let x_frac = get_pixel_fraction(
+        x,
+        get_ratio(input.shape(2), output.shape(2), align_corners),
+        align_corners,
+    );
     let x0 = f32::floor(x_frac);
 
     let index_base = b * input.stride(0) + c * input.stride(3);

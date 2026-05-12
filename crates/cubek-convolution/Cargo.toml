@@ -16,16 +16,20 @@ std = ["cubecl/std"]
 
 heavy = []
 extended = ["heavy"]
-full = ["extended"]
+full = ["extended", "benchmarks"]
 
 cpu-reference = ["dep:cubek-test-utils", "cubek-matmul/cpu-reference"]
+# Enables `pub mod benchmarks` — catalogue of conv2d benchmark problems /
+# strategies and the bench harness. The seeded `Conv2dCorrectness` impl
+# inside that module is additionally gated on `cpu-reference`.
+benchmarks = ["cpu-reference", "cubecl/test-runtime"]
 
 [dependencies]
 cubecl = { workspace = true, features = ["stdlib"] }
 cubecl-common = { workspace = true }
-cubek-matmul = { path = "../cubek-matmul", default-features = false, version = "0.2.0" }
-cubek-std = { path = "../cubek-std", default-features = false, version = "0.2.0" }
-cubek-test-utils = { path = "../cubek-test-utils", version = "0.2.0", default-features = false, optional = true }
+cubek-matmul = { path = "../cubek-matmul", default-features = false, version = "=0.3.0-pre.1" }
+cubek-std = { path = "../cubek-std", default-features = false, version = "=0.3.0-pre.1" }
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.1", default-features = false, optional = true }
 derive-new = { workspace = true }
 
 bytemuck = { workspace = true }
@@ -36,6 +40,6 @@ serde = { workspace = true }
 [dev-dependencies]
 cubecl = { workspace = true, features = ["test-runtime"] }
 cubek-convolution = { path = ".", features = ["cpu-reference"] }
-cubek-test-utils = { path = "../cubek-test-utils", version = "0.2.0", default-features = false }
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.1", default-features = false }
 pretty_assertions = { workspace = true }
 trybuild = "1"

@@ -16,13 +16,20 @@ std = ["cubecl/std"]
 
 heavy = []
 extended = ["heavy"]
-full = ["extended"]
+full = ["extended", "benchmarks"]
 
 cpu-reference = ["dep:cubek-test-utils"]
+# Enables `pub mod benchmarks` — catalogues for the gemm, gemv, and
+# quantized_matmul subcategories. Off by default; the top-level `benchmarks`
+# crate turns it on.
+benchmarks = ["cpu-reference", "dep:cubek-quant", "cubecl/test-runtime"]
 
 [dependencies]
-cubek-std = { path = "../cubek-std", version = "0.2.0", default-features = false }
-cubek-test-utils = { path = "../cubek-test-utils", version = "0.2.0", default-features = false, optional = true }
+cubek-quant = { path = "../cubek-quant", version = "=0.3.0-pre.1", default-features = false, features = [
+    "kernels",
+], optional = true }
+cubek-std = { path = "../cubek-std", version = "=0.3.0-pre.1", default-features = false }
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.1", default-features = false, optional = true }
 
 bytemuck = { workspace = true }
 cubecl = { workspace = true, features = ["stdlib"] }
@@ -33,8 +40,8 @@ serde = { workspace = true }
 [dev-dependencies]
 cubecl = { workspace = true, features = ["test-runtime"] }
 cubek-matmul = { path = ".", features = ["cpu-reference"] }
-cubek-test-utils = { path = "../cubek-test-utils", version = "0.2.0", default-features = false }
-cubek-quant = { path = "../cubek-quant", version = "0.2.0", features = [
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.1", default-features = false }
+cubek-quant = { path = "../cubek-quant", version = "=0.3.0-pre.1", features = [
     "kernels",
 ] }
 pretty_assertions = { workspace = true }

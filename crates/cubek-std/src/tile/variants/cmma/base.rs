@@ -1,0 +1,209 @@
+use cubecl;
+use cubecl::{
+    cmma::{self},
+    prelude::*,
+};
+
+use crate::{
+    MatrixLayout, StageIdent, SwizzleModes, TileSize, as_cmma_layout,
+    tile::{
+        Tile, TileKind, TileKindExpand, TileScope,
+        variants::{
+            cmma::{CmmaFragmentReader as _, CmmaStageReader, CmmaStageWriter},
+            kind::Strided,
+            strided::SharedTile,
+        },
+    },
+};
+
+#[derive(CubeType)]
+pub struct CmmaTile<N: Numeric> {
+    pub matrix: cmma::Matrix<N>,
+    #[cube(comptime)]
+    pub matrix_layout: MatrixLayout,
+    #[cube(comptime)]
+    pub tile_size: TileSize,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub struct CmmaMatmul {
+    pub tile_size: TileSize,
+    pub plane_dim: u32,
+    pub swizzle_modes: SwizzleModes,
+}
+
+impl CmmaMatmul {
+    pub fn new(tile_size: TileSize, plane_dim: u32, swizzle_modes: SwizzleModes) -> Self {
+        Self {
+            tile_size,
+            plane_dim,
+            swizzle_modes,
+        }
+    }
+}
+
+#[cube]
+impl<E: Float> CmmaTile<E> {
+    pub fn fill_zero(&mut self) {
+        cubecl::cmma::fill(&self.matrix, E::from_int(0));
+    }
+}
+
+#[cube]
+impl<A: Numeric> CmmaTile<A> {
+    /// Executes `lhs · rhs`, accumulating into `self`.
+    pub fn mma<L: Numeric, R: Numeric>(&mut self, lhs: &CmmaTile<L>, rhs: &CmmaTile<R>) {
+        cmma_execute(&lhs.matrix, &rhs.matrix, &mut self.matrix);
+    }
+}
+
+#[cube]
+impl<N: Numeric> CmmaTile<N> {
+    /// Copies into the cmma fragment from `source`. Supported sources:
+    /// `SharedMemory` (a regular load) and `None` (zero-init).
+    pub fn copy_from<SE: Numeric, SS: Size, Sc: TileScope, SIO: SliceVisibility>(
+        &mut self,
+        source: &Tile<SE, Sc, SIO>,
+        #[comptime] ident: StageIdent,
+    ) {
+        match &source.kind {
+            TileKind::SharedMemory(shared) => {
+                cmma_load_from_shared::<SE, SS, N, SIO>(
+                    shared,
+                    &mut self.matrix,
+                    ident,
+                    self.matrix_layout,
+                );
+            }
+            TileKind::None => cmma_load_zeros::<N>(&mut self.matrix),
+            TileKind::Cmma(_)
+            | TileKind::Mma(_)
+            | TileKind::Register(_)
+            | TileKind::PlaneVec(_)
+            | TileKind::Interleaved(_)
+            | TileKind::Unit(_)
+            | TileKind::WhiteboxFragment(_)
+            | TileKind::Bounce(_) => panic!("CmmaTile::copy_from: unsupported source variant"),
+        }
+    }
+
+    /// Zero-init the cmma fragment.
+    pub fn init_zero(&mut self) {
+        cmma_load_zeros::<N>(&mut self.matrix);
+    }
+}
+
+#[cube]
+pub fn cmma_allocate_lhs<L: Numeric, Sc: TileScope>(
+    #[comptime] layout: MatrixLayout,
+    #[comptime] tile_size: TileSize,
+) -> Tile<L, Sc, ReadWrite> {
+    let fragment = unsafe {
+        cmma::Matrix::<L>::uninitialized(
+            cmma::MatrixIdent::A,
+            tile_size.m as usize,
+            tile_size.n as usize,
+            tile_size.k as usize,
+            as_cmma_layout(layout),
+        )
+    };
+    Tile::from_kind(TileKind::new_Cmma(CmmaTile::<L> {
+        matrix: fragment,
+        matrix_layout: layout,
+        tile_size,
+    }))
+}
+
+#[cube]
+pub fn cmma_allocate_rhs<R: Numeric, Sc: TileScope>(
+    #[comptime] layout: MatrixLayout,
+    #[comptime] tile_size: TileSize,
+) -> Tile<R, Sc, ReadWrite> {
+    let fragment = unsafe {
+        cmma::Matrix::<R>::uninitialized(
+            cmma::MatrixIdent::B,
+            tile_size.m as usize,
+            tile_size.n as usize,
+            tile_size.k as usize,
+            as_cmma_layout(layout),
+        )
+    };
+    Tile::from_kind(TileKind::new_Cmma(CmmaTile::<R> {
+        matrix: fragment,
+        matrix_layout: layout,
+        tile_size,
+    }))
+}
+
+#[cube]
+pub fn cmma_allocate_acc<A: Numeric, Sc: TileScope>(
+    #[comptime] layout: MatrixLayout,
+    #[comptime] tile_size: TileSize,
+) -> Tile<A, Sc, ReadWrite> {
+    let fragment = unsafe {
+        cmma::Matrix::<A>::uninitialized(
+            cmma::MatrixIdent::Accumulator,
+            tile_size.m as usize,
+            tile_size.n as usize,
+            tile_size.k as usize,
+            cmma::MatrixLayout::Undefined,
+        )
+    };
+    Tile::from_kind(TileKind::new_Cmma(CmmaTile::<A> {
+        matrix: fragment,
+        matrix_layout: layout,
+        tile_size,
+    }))
+}
+
+// ===========================================================================
+// Compute: matmul / load / write / zero-init
+// ===========================================================================
+
+#[cube]
+pub fn cmma_execute<L: Numeric, R: Numeric, A: Numeric>(
+    lhs: &cmma::Matrix<L>,
+    rhs: &cmma::Matrix<R>,
+    acc: &mut cmma::Matrix<A>,
+) {
+    cmma::execute::<L, R, A, A>(lhs, rhs, acc, acc);
+}
+
+#[cube]
+pub fn cmma_load_from_shared<E: Numeric, ES: Size, N: Numeric, IO: SliceVisibility>(
+    shared: &SharedTile<E, IO>,
+    matrix: &mut cmma::Matrix<N>,
+    #[comptime] ident: StageIdent,
+    #[comptime] matrix_layout: MatrixLayout,
+) {
+    let shared = shared.view::<ES>();
+    let shared = shared.to_read_only();
+    match ident {
+        StageIdent::Lhs | StageIdent::Rhs => {
+            CmmaStageReader::<Strided>::load_fragment(&shared, matrix, ComptimeOption::new_None());
+        }
+        StageIdent::Acc => {
+            CmmaStageReader::<Strided>::load_fragment(
+                &shared,
+                matrix,
+                ComptimeOption::new_Some(as_cmma_layout(matrix_layout)),
+            );
+        }
+        _ => panic!("Invalid ident for CMMA load"),
+    }
+}
+
+#[cube]
+pub fn cmma_load_zeros<N: Numeric>(matrix: &mut cmma::Matrix<N>) {
+    cmma::fill(matrix, N::from_int(0));
+}
+
+#[cube]
+pub fn cmma_write_to_shared<E: Numeric, ES: Size, A: Numeric>(
+    shared: &mut SharedTile<E, ReadWrite>,
+    matrix: &cmma::Matrix<A>,
+) {
+    let mut shared = shared.view::<ES>();
+    let casted = cmma::cast::<A, E>(matrix);
+    CmmaStageWriter::store_fragment(&mut shared, &casted);
+}

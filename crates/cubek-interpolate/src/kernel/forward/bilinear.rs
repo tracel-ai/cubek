@@ -1,5 +1,4 @@
-use super::super::shape_divmod;
-use super::get_pixel_fraction;
+use super::{super::shape_divmod, get_pixel_fraction, get_ratio};
 use crate::InterpolateError;
 use cubecl::{calculate_cube_count_elemwise, prelude::*, tensor_vector_size_parallel};
 use cubecl::{num_traits::Zero, std::FastDivmod};
@@ -23,8 +22,12 @@ fn interpolate_bilinear_kernel<F: Float, N: Size>(
     let (rem, x) = shape_out[2].div_mod(rem);
     let (b, y) = shape_out[1].div_mod(rem);
 
-    let frac = get_pixel_fraction(input.shape(1), output.shape(1), y, align_corners)
-        .clamp(0.0, (input.shape(1) - 1) as f32);
+    let frac = get_pixel_fraction(
+        y,
+        get_ratio(input.shape(1), output.shape(1), align_corners),
+        align_corners,
+    )
+    .clamp(0.0, (input.shape(1) - 1) as f32);
 
     let v0 = frac.floor();
     let v1 = frac.ceil();
@@ -35,8 +38,12 @@ fn interpolate_bilinear_kernel<F: Float, N: Size>(
     let y0 = v0 as usize;
     let y1 = v1 as usize;
 
-    let frac = get_pixel_fraction(input.shape(2), output.shape(2), x, align_corners)
-        .clamp(0.0, (input.shape(2) - 1) as f32);
+    let frac = get_pixel_fraction(
+        x,
+        get_ratio(input.shape(2), output.shape(2), align_corners),
+        align_corners,
+    )
+    .clamp(0.0, (input.shape(2) - 1) as f32);
 
     let v0 = frac.floor();
     let v1 = frac.ceil();

@@ -17,14 +17,15 @@ fn random_tensor_handle(
 ) -> TensorHandle<TestRuntime> {
     assert_eq!(tensor_shape.len(), strides.len());
 
-    cubek_random::seed(seed);
     // Size the physical buffer to cover every logical index under these
     // strides — not just `shape.product()`. Jumpy strides (e.g. a slice that
     // steps over padding) need more room; broadcast strides (0) need less.
     let physical_len = physical_extent(&Shape::from(tensor_shape.to_vec()), &Strides::new(strides));
     let tensor_handle = TensorHandle::empty(client, vec![physical_len], dtype);
 
-    match distribution {
+    // Hold the random-seed guard across the seed-set and the kernel launch so
+    // tests running in parallel can't stomp on each other's seeded state.
+    cubek_random::with_seed(seed, || match distribution {
         Distribution::Uniform(lower, upper) => cubek_random::random_uniform(
             client,
             lower,
@@ -41,7 +42,7 @@ fn random_tensor_handle(
             cubek_random::random_normal(client, mean, std, tensor_handle.clone().binding(), dtype)
                 .unwrap()
         }
-    }
+    });
 
     tensor_handle
 }

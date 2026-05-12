@@ -17,7 +17,7 @@ use cubecl::{
     prelude::*,
     std::tensor::{View, layout::Coords2d},
 };
-use cubek_std::tile::TileKind;
+use cubek_std::tile::StageTileKind;
 
 pub type SyncBarrier<S> = <S as SyncStrategy>::Barrier;
 
@@ -31,7 +31,7 @@ pub trait FullLoadingStrategy<RC: RuntimeConfig>:
     /// The synchronization strategy that should be used with this loading strategy
     type SyncStrategy: SyncStrategy;
     type Stage: LoadStageFamily<ReadOnly>;
-    type TileKind: TileKind;
+    type TileKind: StageTileKind;
 
     /// The [LoadingJob] for this strategy.
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>: LoadingJob<EG, NG, ES, NS, Self::TilingLayout, Self::SyncStrategy, Stage = Self::Stage>;
