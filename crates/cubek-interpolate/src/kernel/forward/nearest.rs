@@ -1,5 +1,4 @@
-use super::get_ratio;
-use crate::{InterpolateError, kernel::forward::get_pixel_fraction};
+use crate::InterpolateError;
 use cubecl::{calculate_cube_count_elemwise, prelude::*, tensor_vector_size_parallel};
 
 #[cube(launch_unchecked, address_type = "dynamic")]
@@ -16,39 +15,26 @@ fn interpolate_nearest_kernel<F: Float, N: Size>(
 
     let out_idx = ABSOLUTE_POS;
 
-    let vector_size = input.vector_size();
-
-    let c_dim = output.shape(3) / vector_size;
+    let vec_size = input.vector_size();
+    let c_dim = output.shape(3) / vec_size;
     let w_dim = output.shape(2);
     let h_dim = output.shape(1);
 
-    let mut temp_idx = out_idx;
+    let c_idx = out_idx % c_dim;
+    let rem = out_idx / c_dim;
+    let x_out = rem % w_dim;
+    let rem = rem / w_dim;
+    let y_out = rem % h_dim;
+    let batch = rem / h_dim;
 
-    let c_idx = temp_idx % c_dim;
-    temp_idx /= c_dim;
+    let y_in = usize::cast_from(((y_out as f32 + 0.5) * scale_h - 0.5).floor());
+    let x_in = usize::cast_from(((x_out as f32 + 0.5) * scale_w - 0.5).floor());
 
-    let x_out = temp_idx % w_dim;
-    temp_idx /= w_dim;
-
-    let y_out = temp_idx % h_dim;
-    let batch = temp_idx / h_dim;
-
-    let h_in = input.shape(1) as f32;
-    let w_in = input.shape(2) as f32;
-
-    let y_in_f = get_pixel_fraction(y_out, scale_h, false)
-        .floor()
-        .clamp(0.0, h_in - 1.0);
-
-    let x_in_f = get_pixel_fraction(x_out, scale_w, false)
-        .floor()
-        .clamp(0.0, w_in - 1.0);
-
-    let y_in = usize::cast_from(y_in_f);
-    let x_in = usize::cast_from(x_in_f);
+    let y_in = y_in.clamp(0, input.shape(1) - 1);
+    let x_in = x_in.clamp(0, input.shape(2) - 1);
 
     let in_idx = (batch * input.stride(0) + y_in * input.stride(1) + x_in * input.stride(2))
-        / vector_size
+        / vec_size
         + c_idx;
 
     output[out_idx] = input[in_idx];
@@ -67,8 +53,8 @@ pub(crate) fn interpolate_nearest_launch<R: Runtime>(
         input.shape.len() - 1,
     );
 
-    let scale_h = get_ratio(input.shape[1], output.shape[1], false);
-    let scale_w = get_ratio(input.shape[2], output.shape[2], false);
+    let scale_h = (input.shape[1] as f32) / (output.shape[1] as f32);
+    let scale_w = (input.shape[2] as f32) / (output.shape[2] as f32);
 
     let working_units = output.shape.iter().product::<usize>() / vector_size as usize;
     let cube_dim = CubeDim::new(client, working_units);
