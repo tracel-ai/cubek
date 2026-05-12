@@ -100,28 +100,20 @@ pub fn execute_partition_matmul_with_listener<
     scheduler: &PartitionScheduler,
 ) {
     match rhs_fragments {
-        RhsTile::Single(rhs) => execute_single::<
-            LhsSE,
-            LhsSS,
-            LhsRE,
-            RhsSE,
-            RhsSS,
-            RhsRE,
-            AccRE,
-            Sc,
-            SEL,
-        >(
-            lhs_stage,
-            rhs_stage,
-            lhs_fragment,
-            rhs,
-            acc,
-            partition_size_m,
-            partition_size_n,
-            partition_size_k,
-            listener,
-            scheduler,
-        ),
+        RhsTile::Single(rhs) => {
+            execute_single::<LhsSE, LhsSS, LhsRE, RhsSE, RhsSS, RhsRE, AccRE, Sc, SEL>(
+                lhs_stage,
+                rhs_stage,
+                lhs_fragment,
+                rhs,
+                acc,
+                partition_size_m,
+                partition_size_n,
+                partition_size_k,
+                listener,
+                scheduler,
+            )
+        }
         RhsTile::Double(_rhs) => panic!(
             "execute_partition_matmul: Double buffering not yet supported in the cubek-std body \
              (PR 4 follow-up); existing cubek-matmul PartitionMatmul still backs double-buffered flows"

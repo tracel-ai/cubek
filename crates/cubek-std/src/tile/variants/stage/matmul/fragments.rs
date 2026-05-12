@@ -10,12 +10,11 @@ use cubecl::prelude::*;
 use crate::{
     MatrixLayout, PartitionSize,
     tile::{
-        PartitionTile, Tile, TileScope, cmma_allocate_acc, cmma_allocate_lhs,
-        cmma_allocate_rhs, interleaved_allocate_acc, interleaved_allocate_lhs,
-        interleaved_allocate_rhs, mma_allocate_acc, mma_allocate_lhs, mma_allocate_rhs,
-        planevec_allocate_acc, planevec_allocate_lhs, planevec_allocate_rhs, register_allocate_acc,
-        register_allocate_lhs, register_allocate_rhs,
-        variants::stage::tile_matmul::TileMatmul,
+        PartitionTile, Tile, TileScope, cmma_allocate_acc, cmma_allocate_lhs, cmma_allocate_rhs,
+        interleaved_allocate_acc, interleaved_allocate_lhs, interleaved_allocate_rhs,
+        mma_allocate_acc, mma_allocate_lhs, mma_allocate_rhs, planevec_allocate_acc,
+        planevec_allocate_lhs, planevec_allocate_rhs, register_allocate_acc, register_allocate_lhs,
+        register_allocate_rhs, variants::stage::tile_matmul::TileMatmul,
     },
 };
 
