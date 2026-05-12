@@ -247,13 +247,13 @@ impl<ES: Numeric, N: Size, IO: SliceVisibility> StridedTile<ES, N, IO> {
 /// the original `V` the tile was wrapped with.
 #[derive(CubeType, Clone, Copy)]
 pub struct SharedTile<E: Numeric, IO: SliceVisibility = ReadOnly> {
-    container: Slice<E, IO>,
-    start: u32,
-    end: u32,
-    stride: u32,
-    swizzle: Swizzle,
+    pub(crate) container: Slice<E, IO>,
+    pub(crate) start: u32,
+    pub(crate) end: u32,
+    pub(crate) stride: u32,
+    pub(crate) swizzle: Swizzle,
     #[cube(comptime)]
-    layout: MatrixLayout,
+    pub(crate) layout: MatrixLayout,
 }
 
 #[cube]
