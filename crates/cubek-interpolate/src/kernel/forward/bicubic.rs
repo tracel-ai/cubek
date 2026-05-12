@@ -1,7 +1,8 @@
 use super::{super::shape_divmod, get_pixel_fraction, get_ratio};
 use crate::InterpolateError;
-use cubecl::std::FastDivmod;
-use cubecl::{calculate_cube_count_elemwise, prelude::*, tensor_vector_size_parallel};
+use cubecl::{
+    calculate_cube_count_elemwise, prelude::*, std::FastDivmod, tensor_vector_size_parallel,
+};
 
 #[cube(launch, address_type = "dynamic")]
 fn interpolate_bicubic_kernel<F: Float, N: Size>(
@@ -15,8 +16,9 @@ fn interpolate_bicubic_kernel<F: Float, N: Size>(
         terminate!();
     }
 
-    let vector_size = input.vector_size();
     let out_idx = ABSOLUTE_POS;
+
+    let vector_size = input.vector_size();
 
     let (rem, c) = shape_out[3].div_mod(ABSOLUTE_POS * vector_size);
     let (rem, x) = shape_out[2].div_mod(rem);

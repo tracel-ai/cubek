@@ -47,40 +47,57 @@ fn interpolate_lanczos3_kernel<F: Float, N: Size>(
     let in_stride_y = input.stride(1);
     let in_stride_x = input.stride(2);
 
+    let mut x_weights = Array::new(6usize);
+    let mut y_weights = Array::new(6usize);
+
+    #[unroll]
+    for idx in 0..6usize {
+        let i = idx as i32 - 2;
+        let y_pos = y0 + i as f32;
+        y_weights[idx] = select(
+            y_pos >= 0.0 && y_pos <= input_height_f,
+            lanczos3_weight(y_frac - y_pos),
+            0.0,
+        );
+
+        let x_pos = x0 + i as f32;
+        x_weights[idx] = select(
+            x_pos >= 0.0 && x_pos <= input_width_f,
+            lanczos3_weight(x_frac - x_pos),
+            0.0,
+        );
+    }
+
     let mut result = Vector::zero();
     let mut weight_sum = 0.0f32;
 
     // 6-tap separable Lanczos3 filter: ky in -2..=3, kx in -2..=3
     // Skip out-of-bounds positions instead of clamping (matches TF/JAX/PIL)
     #[unroll]
-    for ky in -2..4i32 {
+    for ky_idx in 0..6usize {
+        let ky = ky_idx as i32 - 2;
         let y_pos = y0 + ky as f32;
-        if y_pos >= 0.0 && y_pos <= input_height_f {
-            let y_idx = y_pos as usize;
-            let wy = lanczos3_weight(y_frac - y_pos);
+        let y_idx = y_pos as usize;
+        let wy = y_weights[ky_idx];
 
-            #[unroll]
-            for kx in -2..4i32 {
-                let x_pos = x0 + kx as f32;
-                if x_pos >= 0.0 && x_pos <= input_width_f {
-                    let x_idx = x_pos as usize;
-                    let wx = lanczos3_weight(x_frac - x_pos);
+        #[unroll]
+        for kx_idx in 0..6usize {
+            let kx = kx_idx as i32 - 2;
+            let x_pos = x0 + kx as f32;
+            let x_idx = x_pos as usize;
+            let wx = x_weights[kx_idx];
 
-                    let wt = wy * wx;
-                    let idx = index_base + y_idx * in_stride_y + x_idx * in_stride_x;
-                    let pixel = input[idx / vector_size];
-                    let w = Vector::new(F::cast_from(wt));
-                    result += pixel * w;
-                    weight_sum += wt;
-                }
-            }
+            let wt: f32 = wy * wx;
+            let idx = index_base + y_idx * in_stride_y + x_idx * in_stride_x;
+            let pixel = input[idx / vector_size];
+            let w = Vector::new(F::cast_from(wt));
+            result += pixel * w;
+            weight_sum += wt;
         }
     }
 
-    if weight_sum != 0.0 {
-        let inv_w = Vector::new(F::cast_from(1.0 / weight_sum));
-        result *= inv_w;
-    }
+    let inv_w = Vector::new(F::cast_from(1.0 / weight_sum));
+    result *= inv_w;
 
     output[out_idx] = result;
 }
@@ -88,16 +105,11 @@ fn interpolate_lanczos3_kernel<F: Float, N: Size>(
 #[cube]
 fn lanczos3_weight(x: f32) -> f32 {
     let abs_x = f32::abs(x);
-    let mut result = 0.0f32;
-    if abs_x < 1e-7 {
-        result = 1.0;
-    } else if abs_x < 3.0 {
-        let pi = core::f32::consts::PI;
-        let pi_x = pi * x;
+    select(abs_x < 1e-7, 1.0, {
+        let pi_x = core::f32::consts::PI * x;
         let pi_x_over_3 = pi_x / 3.0;
-        result = (f32::sin(pi_x) * f32::sin(pi_x_over_3)) / (pi_x * pi_x_over_3);
-    }
-    result
+        (f32::sin(pi_x) * f32::sin(pi_x_over_3)) / (pi_x * pi_x_over_3)
+    })
 }
 
 pub(crate) fn interpolate_lanczos3_launch<R: Runtime>(
