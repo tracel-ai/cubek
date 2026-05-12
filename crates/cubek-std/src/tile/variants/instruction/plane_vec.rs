@@ -129,7 +129,9 @@ impl<N: Numeric> PlaneVecTile<N> {
             | TileKind::Interleaved(_)
             | TileKind::Unit(_)
             | TileKind::WhiteboxFragment(_)
-            | TileKind::Bounce(_) => {
+            | TileKind::Bounce(_)
+            | TileKind::Stage(_)
+            | TileKind::Partition(_) => {
                 panic!("PlaneVecTile::copy_from: unsupported source variant")
             }
         }

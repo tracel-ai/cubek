@@ -7,7 +7,7 @@ use crate::tile::{
     mask::Mask,
     scope::{TileScope, assert_plane_scope},
     variants::{
-        cmma::CmmaTile,
+        instruction::cmma::CmmaTile,
         whitebox_fragment::{InnerLayout, WhiteboxFragment, WhiteboxFragmentLayout},
     },
 };

@@ -1,6 +1,6 @@
 use cubecl::{intrinsic, prelude::*, std::Swizzle};
 
-use crate::tile::variants::{
+use crate::tile::variants::instruction::{
     cmma::cmma_write_to_shared,
     interleaved::interleaved_write_to_shared,
     mma::{MmaFragment, MmaFragmentExpand, mma_write_to_shared},

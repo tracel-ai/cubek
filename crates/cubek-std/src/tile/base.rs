@@ -5,25 +5,29 @@ use std::marker::PhantomData;
 use cubecl::prelude::*;
 
 use crate::tile::{
-    BounceTile, CmmaTile, InterleavedTile, MmaTile, PlaneVecTile, RegisterTile, ScopeMarker,
-    SharedTile, TileScope, UnitTile, WhiteboxFragment,
+    BounceTile, CmmaTile, InterleavedTile, MmaTile, PartitionTile, PlaneVecTile, RegisterTile,
+    ScopeMarker, SharedTile, StridedStage, TileScope, UnitTile, WhiteboxFragment,
 };
 
 /// Public tile type. Wraps a [`TileKind`] storage payload and carries the
-/// [`TileScope`] generic via a comptime [`ScopeMarker`] field. The inner
+/// [`TileScope`] generic both via a comptime [`ScopeMarker`] field *and*
+/// through the kind enum (so variants like
+/// [`TileKind::Partition`] can keep typed element tiles). The inner
 /// [`TileKind`] is crate-private; external callers construct via the
 /// `Tile::new_*` constructors below and never destructure.
 #[derive(CubeType)]
 pub struct Tile<N: Numeric, Sc: TileScope, IO: SliceVisibility> {
-    pub(crate) kind: TileKind<N, IO>,
+    pub(crate) kind: TileKind<N, Sc, IO>,
     pub(crate) _scope: ScopeMarker<Sc>,
 }
 
-/// Storage variants of a tile. The user-facing wrapper is [`Tile`], which adds
-/// a [`TileScope`] type parameter; this enum holds only the runtime/storage
-/// payload, with no scope generic. Crate-private — constructors live on
-/// [`Tile`] (e.g. `Tile::new_SharedMemory`); internal allocators in
-/// `tile/data/*.rs` go through [`Tile::from_kind`].
+/// Storage variants of a tile. The user-facing wrapper is [`Tile`]; this enum
+/// holds the runtime/storage payload. Most variants ignore the [`TileScope`]
+/// generic (it shows up only on the outer `Tile`'s `ScopeMarker`); the
+/// [`Partition`](TileKind::Partition) variant uses it to keep its inner
+/// element tiles typed. Crate-private — constructors live on [`Tile`]
+/// (e.g. `Tile::new_SharedMemory`); internal allocators in
+/// `tile/variants/*.rs` go through [`Tile::from_kind`].
 ///
 /// # The three axes
 ///
@@ -49,7 +53,7 @@ pub struct Tile<N: Numeric, Sc: TileScope, IO: SliceVisibility> {
 // `TileKind::new_<Variant>` methods, which the `dead_code` lint can't see
 // through.
 #[allow(dead_code)]
-pub(crate) enum TileKind<N: Numeric, IO: SliceVisibility> {
+pub(crate) enum TileKind<N: Numeric, Sc: TileScope, IO: SliceVisibility> {
     /// `[storage = smem]`. Pure transport: a stage slot exposed as a tile so
     /// it can be the source / destination of [`Tile::copy_from`]. No
     /// distribution semantics (the caller addresses smem directly), no
@@ -102,6 +106,17 @@ pub(crate) enum TileKind<N: Numeric, IO: SliceVisibility> {
     /// while the matmul still uses the cmma fragment; the smem round-trip
     /// is hidden inside `BounceTile` methods. Only valid when `Sc = Plane`.
     Bounce(BounceTile<N>),
+    /// `[storage = smem, distribution = stage-level]`. Type-erased view of a
+    /// `StridedStageMemory` buffer. Wired in PR 3+ for `.partition()` /
+    /// `.mma` dispatch at the stage level. The variant is the "stage is a
+    /// tile" hook: a unit-scope `Tile` whose kind is `Stage` represents one
+    /// compute primitive's view of the stage; a plane-scope `Tile` whose
+    /// kind is `Stage` represents the whole-plane view.
+    Stage(StridedStage<N, IO>),
+    /// `[fused = sequence-of-instruction-tiles]`. Per-primitive collection
+    /// of accumulator tiles (replaces the standalone `Accumulators<MP, Sc>`
+    /// wrapper). The element tiles share the partition's [`TileScope`] `Sc`.
+    Partition(PartitionTile<N, Sc, IO>),
     /// `[sentinel]`. "No source" used by [`Tile::copy_from`] to drive
     /// per-variant zero-init of the destination. Produced by optional-stage
     /// flows in `cubek-matmul` (when an accumulator stage is absent).
@@ -115,7 +130,7 @@ impl<N: Numeric, Sc: TileScope, IO: SliceVisibility> Tile<N, Sc, IO> {
     /// Crate-internal: builds a [`Tile`] from a [`TileKind`] payload. Used by
     /// the per-variant `new_*` constructors below and the internal
     /// allocators in `tile/data/*.rs`.
-    pub(crate) fn from_kind(kind: TileKind<N, IO>) -> Tile<N, Sc, IO> {
+    pub(crate) fn from_kind(kind: TileKind<N, Sc, IO>) -> Tile<N, Sc, IO> {
         Tile::<N, Sc, IO> {
             kind,
             _scope: ScopeMarker::<Sc> {
@@ -128,6 +143,19 @@ impl<N: Numeric, Sc: TileScope, IO: SliceVisibility> Tile<N, Sc, IO> {
     /// stage slot as a `Tile` for `copy_from`.
     pub fn new_SharedMemory(t: SharedTile<N, IO>) -> Tile<N, Sc, IO> {
         Self::from_kind(TileKind::new_SharedMemory(t))
+    }
+
+    /// Wraps a type-erased stage view as a tile. The `Sc` generic on `Tile`
+    /// reflects which compute primitive's view this is (e.g. one unit's
+    /// slice vs the whole plane's slice).
+    pub fn new_Stage(t: StridedStage<N, IO>) -> Tile<N, Sc, IO> {
+        Self::from_kind(TileKind::new_Stage(t))
+    }
+
+    /// Wraps a partition of accumulator tiles. The element tiles share the
+    /// partition's `Sc`.
+    pub fn new_Partition(t: PartitionTile<N, Sc, IO>) -> Tile<N, Sc, IO> {
+        Self::from_kind(TileKind::new_Partition(t))
     }
 
     /// Builds a "no source" tile that drives zero-init of the destination

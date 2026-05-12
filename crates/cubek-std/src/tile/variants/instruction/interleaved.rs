@@ -151,7 +151,9 @@ impl<N: Numeric> InterleavedTile<N> {
             | TileKind::Interleaved(_)
             | TileKind::Unit(_)
             | TileKind::WhiteboxFragment(_)
-            | TileKind::Bounce(_) => {
+            | TileKind::Bounce(_)
+            | TileKind::Stage(_)
+            | TileKind::Partition(_) => {
                 panic!("InterleavedTile::copy_from: unsupported source variant")
             }
         }

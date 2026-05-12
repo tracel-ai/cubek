@@ -9,7 +9,7 @@ use crate::{
     tile::{
         Tile, TileKind, TileKindExpand, TileScope,
         variants::{
-            cmma::{CmmaFragmentReader as _, CmmaStageReader, CmmaStageWriter},
+            instruction::cmma::{CmmaFragmentReader as _, CmmaStageReader, CmmaStageWriter},
             kind::Strided,
             strided::SharedTile,
         },
@@ -83,7 +83,9 @@ impl<N: Numeric> CmmaTile<N> {
             | TileKind::Interleaved(_)
             | TileKind::Unit(_)
             | TileKind::WhiteboxFragment(_)
-            | TileKind::Bounce(_) => panic!("CmmaTile::copy_from: unsupported source variant"),
+            | TileKind::Bounce(_)
+            | TileKind::Stage(_)
+            | TileKind::Partition(_) => panic!("CmmaTile::copy_from: unsupported source variant"),
         }
     }
 
