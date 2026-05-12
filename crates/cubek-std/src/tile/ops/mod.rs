@@ -36,7 +36,9 @@ mod copy;
 mod elementwise;
 mod mask;
 mod matmul;
+mod partition;
 mod rowwise;
 mod softmax;
 
+pub use partition::*;
 pub use softmax::*;
