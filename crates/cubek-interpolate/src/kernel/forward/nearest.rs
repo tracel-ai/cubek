@@ -1,44 +1,52 @@
-use super::super::shape_divmod;
-use crate::InterpolateError;
-use cubecl::std::FastDivmod;
+use crate::{InterpolateError, kernel::forward::get_pixel_fraction};
 use cubecl::{calculate_cube_count_elemwise, prelude::*, tensor_vector_size_parallel};
 
 #[cube(launch_unchecked, address_type = "dynamic")]
 fn interpolate_nearest_kernel<F: Float, N: Size>(
     input: &Tensor<Vector<F, N>>,
     output: &mut Tensor<Vector<F, N>>,
-    shape_out: Sequence<FastDivmod<usize>>,
+    scale_h: f32,
+    scale_w: f32,
     #[define(F)] _dtype: StorageType,
 ) {
     if ABSOLUTE_POS >= output.len() {
         terminate!();
     }
 
-    let vector_size = input.vector_size();
     let out_idx = ABSOLUTE_POS;
 
-    let out_pos = ABSOLUTE_POS * vector_size;
+    let vector_size = input.vector_size();
 
-    let (h_in, w_in) = (input.shape(1), input.shape(2));
-    let (h_out, w_out) = (output.shape(1), output.shape(2));
+    let c_dim = output.shape(3) / vector_size;
+    let w_dim = output.shape(2);
+    let h_dim = output.shape(1);
 
-    let (rem, c) = shape_out[3].div_mod(out_pos);
-    let (rem, x) = shape_out[2].div_mod(rem);
-    let (b, y) = shape_out[1].div_mod(rem);
+    let mut temp_idx = out_idx;
 
-    let y = y * h_in / h_out;
-    let x = x * w_in / w_out;
+    let c_idx = temp_idx % c_dim;
+    temp_idx /= c_dim;
 
-    let in_idx =
-        b * input.stride(0) + y * input.stride(1) + x * input.stride(2) + c * input.stride(3);
+    let x_out = temp_idx % w_dim;
+    temp_idx /= w_dim;
 
-    output[out_idx] = input[in_idx / vector_size];
+    let y_out = temp_idx % h_dim;
+    let batch = temp_idx / h_dim;
+
+    let y_in = usize::cast_from(f32::floor(f32::cast_from(y_out) * scale_h));
+    let x_in = usize::cast_from(f32::floor(f32::cast_from(x_out) * scale_w));
+
+    let in_idx = (batch * input.stride(0) + y_in * input.stride(1) + x_in * input.stride(2))
+        / vector_size
+        + c_idx;
+
+    output[out_idx] = input[in_idx];
 }
 
 pub(crate) fn interpolate_nearest_launch<R: Runtime>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
     output: TensorBinding<R>,
+    align_corners: bool,
     dtype: StorageType,
 ) -> Result<(), InterpolateError> {
     let vector_size = tensor_vector_size_parallel(
@@ -48,11 +56,13 @@ pub(crate) fn interpolate_nearest_launch<R: Runtime>(
         input.shape.len() - 1,
     );
 
+    let scale_h = get_pixel_fraction(input.shape[1], output.shape[1], y, align_corners);
+    let scale_w = get_pixel_fraction(input.shape[2], output.shape[2], x, align_corners);
+
     let working_units = output.shape.iter().product::<usize>() / vector_size as usize;
     let cube_dim = CubeDim::new(client, working_units);
     let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
 
-    let shape_out = shape_divmod(&output);
     let address_type = input
         .required_address_type(dtype.size())
         .max(output.required_address_type(dtype.size()));
@@ -66,7 +76,8 @@ pub(crate) fn interpolate_nearest_launch<R: Runtime>(
             vector_size,
             input.into_tensor_arg(),
             output.clone().into_tensor_arg(),
-            shape_out,
+            scale_h,
+            scale_w,
             dtype,
         )
     };

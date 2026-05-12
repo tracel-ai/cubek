@@ -33,18 +33,20 @@ pub fn interpolate<R: Runtime>(
     validate_rank(input.shape.len(), output.shape.len())?;
     validate_nhwc_consistency(&input.shape, &output.shape)?;
 
-    let _align_corners = options.align_corners;
+    let align_corners = options.align_corners;
 
     match options.mode {
-        InterpolateMode::Nearest => interpolate_nearest_launch(client, input, output, dtype),
+        InterpolateMode::Nearest => {
+            interpolate_nearest_launch(client, input, output, align_corners, dtype)
+        }
         InterpolateMode::Bilinear => {
-            interpolate_bilinear_launch(client, input, output, _align_corners, dtype)
+            interpolate_bilinear_launch(client, input, output, align_corners, dtype)
         }
         InterpolateMode::Bicubic => {
-            interpolate_bicubic_launch(client, input, output, _align_corners, dtype)
+            interpolate_bicubic_launch(client, input, output, align_corners, dtype)
         }
         InterpolateMode::Lanczos3 => {
-            interpolate_lanczos3_launch(client, input, output, _align_corners, dtype)
+            interpolate_lanczos3_launch(client, input, output, align_corners, dtype)
         }
     }
 }

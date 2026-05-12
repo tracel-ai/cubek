@@ -18,12 +18,21 @@ pub(crate) fn get_pixel_fraction(
     #[comptime] align_corners: bool,
 ) -> f32 {
     if align_corners {
-        let input_width = input_width.saturating_sub(1) as f32;
-        let output_width = clamp_min(output_width - 1, 1) as f32;
-        (x as f32 * input_width) / output_width
+        (x as f32 * get_ratio(input_width as usize, output_width as usize, align_corners)) as f32
     } else {
         let in_size = input_width as f32;
         let out_size = output_width as f32;
-        (x as f32 + 0.5) * (in_size / out_size) - 0.5
+        (x as f32 + 0.5) * get_ratio(input_width, output_width, align_corners) - 0.5
+    }
+}
+
+#[cube]
+pub(crate) fn get_ratio(input_size: usize, output_size: usize, align_corners: bool) -> f32 {
+    if align_corners {
+        let input_size = input_size.saturating_sub(1) as f32;
+        let output_size = clamp_min(output_size - 1, 1) as f32;
+        input_size / output_size
+    } else {
+        input_size as f32 / output_size as f32
     }
 }
