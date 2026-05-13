@@ -13,7 +13,7 @@ use crate::{
     components::global::multi_stage::EventLoadingMode,
 };
 use crate::{
-    components::global::{WriteTiling, read::PartialLoadingStrategy},
+    components::global::{read::PartialLoadingStrategy},
     components::stage::StageConfig,
     components::{CubeDimResource, global::read::FullLoadingStrategy},
     components::{global::GlobalMatmulFamily, stage},
@@ -45,6 +45,7 @@ impl<SMM, RC: RuntimeConfig, LL, RL, AL, GW> GlobalMatmulFamily<RC>
     for DoubleBufferingMatmulFamily<SMM, RC, LL, RL, AL, GW>
 where
     SMM: stage::StageMatmulFamily<
+            Config = crate::components::stage::stage_matmul::StageMatmul,
             LhsStage = LL::Stage,
             RhsStage = RL::Stage,
             AccStage = Option<AL::Stage>,
@@ -57,14 +58,14 @@ where
 {
     type Matmul<MP: MatmulTypes> = DoubleBufferingMatmul<
         MP,
-        SMM::Matmul<MP, LL::TilingLayout, RL::TilingLayout, AL::TilingLayout, WriteTiling>,
+        SMM::Partitioner,
         RC,
         LL,
         RL,
         AL,
         GW::Writer<MP::Acc>,
     >;
-    type Config = SharedGlobalMatmulConfig<SMM::Config>;
+    type Config = SharedGlobalMatmulConfig<crate::components::stage::stage_matmul::StageMatmul>;
 
     fn expand_config(
         device_props: &DeviceProperties,

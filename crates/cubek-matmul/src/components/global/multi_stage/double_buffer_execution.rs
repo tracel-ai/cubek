@@ -1,3 +1,11 @@
+use crate::components::stage::{
+    self, NoEvent, PartitionScheduler,
+    matmul::{
+        partition::{Accumulators, PartitionMatmul, RhsTile},
+        partitioned_matmul::StagePartitioner,
+    },
+    stage_matmul::{StageMatmul, write_partition_to_stage},
+};
 use crate::{
     components::global::GlobalReaderConfig,
     components::global::PlaneFlowPartition,
@@ -8,11 +16,10 @@ use crate::{
     components::global::read::StageBuffer,
     components::global::{GlobalConfig, GlobalWriter},
     components::global::{LoadingSides, read::SyncStrategy},
-    components::stage,
-    components::stage::PartitionScheduler,
-    definition::MatmulTypes,
+    definition::{Acc, Lhs, MatmulTypes, MatrixTypes, Rhs, Stage},
 };
 use cubecl::prelude::*;
+use cubek_std::tile::Tile;
 
 #[cube]
 /// Read the first stage for both Lhs and Rhs
@@ -61,19 +68,23 @@ pub fn read_first<S: SyncStrategy, LJ: JobExecutor<S>, RJ: JobExecutor<S>>(
 /// Execute on the current stage while loading the next stage
 ///
 /// If there is specialization, will add a runtime if to determine the role of the plane
+#[allow(clippy::too_many_arguments)]
 pub fn execute_current_and_read_next<
     MP: MatmulTypes,
-    SMM: stage::StageMatmul<MP>,
+    SP: StagePartitioner,
+    LhsStage: stage::Stage<Stage<Lhs<MP>>, ReadOnly>,
+    RhsStage: stage::Stage<Stage<Rhs<MP>>, ReadOnly>,
+    AccStage: stage::Stage<Stage<Acc<MP>>, ReadOnly>,
     S: SyncStrategy,
     LJ: JobExecutor<S>,
     RJ: JobExecutor<S>,
-    G: GlobalConfig<StageConfig = SMM::Config>,
+    G: GlobalConfig<StageConfig = StageMatmul>,
 >(
-    lhs_stage: &SMM::LhsStage,
-    rhs_stage: &SMM::RhsStage,
-    lhs_tile: &mut SMM::LhsTile,
-    rhs_tile: &mut SMM::RhsTile,
-    acc: &mut SMM::Accumulators,
+    lhs_stage: &LhsStage,
+    rhs_stage: &RhsStage,
+    lhs_tile: &mut Sequence<Tile<<MP::Lhs as MatrixTypes>::Register, SP::Scope, ReadWrite>>,
+    rhs_tile: &mut RhsTile<Tile<<MP::Rhs as MatrixTypes>::Register, SP::Scope, ReadWrite>>,
+    acc: &mut Accumulators<MP, SP::Scope>,
     lhs_global_reader: &mut LJ,
     rhs_global_reader: &mut RJ,
     barrier: &mut S::Barrier,
@@ -90,13 +101,15 @@ pub fn execute_current_and_read_next<
         } => {
             let rule = PlaneFlowPartition::new(role_rule_config);
             if !rule.is_load_plane() {
-                SMM::execute_with_listener::<DoubleBufferingEventListener<S, LJ, RJ, G>>(
+                PartitionMatmul::<MP, LhsStage, RhsStage, AccStage, SP::Scope>::execute_with_listener::<
+                    DoubleBufferingEventListener<S, LJ, RJ, G>,
+                >(
                     lhs_stage,
                     rhs_stage,
                     lhs_tile,
                     rhs_tile,
                     acc,
-                    config.stage_config(),
+                    config.stage_config().shared(),
                     DoubleBufferingEventListener::new(
                         stage_to_load,
                         lhs_global_reader,
@@ -127,13 +140,15 @@ pub fn execute_current_and_read_next<
             }
         }
         SpecializerKind::NotSpecialized => {
-            SMM::execute_with_listener::<DoubleBufferingEventListener<S, LJ, RJ, G>>(
+            PartitionMatmul::<MP, LhsStage, RhsStage, AccStage, SP::Scope>::execute_with_listener::<
+                DoubleBufferingEventListener<S, LJ, RJ, G>,
+            >(
                 lhs_stage,
                 rhs_stage,
                 lhs_tile,
                 rhs_tile,
                 acc,
-                config.stage_config(),
+                config.stage_config().shared(),
                 DoubleBufferingEventListener::new(
                     stage_to_load,
                     lhs_global_reader,
@@ -152,17 +167,21 @@ pub fn execute_current_and_read_next<
 /// Execute on the last stage, then write results
 ///
 /// If there is specialization, will add a runtime if to determine the role of the plane
+#[allow(clippy::too_many_arguments)]
 pub fn execute_last_and_write_results<
     MP: MatmulTypes,
     GW: GlobalWriter<MP::Acc>,
-    SMM: stage::StageMatmul<MP, OutStage = GW::Stage>,
-    G: GlobalConfig<StageConfig = SMM::Config>,
+    SP: StagePartitioner,
+    LhsStage: stage::Stage<Stage<Lhs<MP>>, ReadOnly>,
+    RhsStage: stage::Stage<Stage<Rhs<MP>>, ReadOnly>,
+    AccStage: stage::Stage<Stage<Acc<MP>>, ReadOnly>,
+    G: GlobalConfig<StageConfig = StageMatmul>,
 >(
-    lhs_stage: &SMM::LhsStage,
-    rhs_stage: &SMM::RhsStage,
-    lhs_tile: &mut SMM::LhsTile,
-    rhs_tile: &mut SMM::RhsTile,
-    acc: &mut SMM::Accumulators,
+    lhs_stage: &LhsStage,
+    rhs_stage: &RhsStage,
+    lhs_tile: &mut Sequence<Tile<<MP::Lhs as MatrixTypes>::Register, SP::Scope, ReadWrite>>,
+    rhs_tile: &mut RhsTile<Tile<<MP::Rhs as MatrixTypes>::Register, SP::Scope, ReadWrite>>,
+    acc: &mut Accumulators<MP, SP::Scope>,
     out_writer: &mut GW,
     specializer: &Specializer,
     partition_scheduler: &PartitionScheduler,
@@ -178,42 +197,48 @@ pub fn execute_last_and_write_results<
         } => {
             let rule = PlaneFlowPartition::new(role_rule_config);
             if !rule.is_load_plane() {
-                SMM::execute(
+                PartitionMatmul::<MP, LhsStage, RhsStage, AccStage, SP::Scope>::execute_with_listener::<
+                    NoEvent,
+                >(
                     lhs_stage,
                     rhs_stage,
                     lhs_tile,
                     rhs_tile,
                     acc,
-                    config.stage_config(),
+                    config.stage_config().shared(),
+                    NoEvent::new(),
                     partition_scheduler,
                 );
 
-                SMM::write_results::<GW>(
+                write_partition_to_stage::<MP, SP::Scope, GW::Stage, GW>(
                     acc,
                     &mut out_stage,
                     out_writer,
                     partition_scheduler,
-                    config.stage_config(),
+                    config.stage_config().shared(),
                 );
             }
         }
         SpecializerKind::NotSpecialized => {
-            SMM::execute(
+            PartitionMatmul::<MP, LhsStage, RhsStage, AccStage, SP::Scope>::execute_with_listener::<
+                NoEvent,
+            >(
                 lhs_stage,
                 rhs_stage,
                 lhs_tile,
                 rhs_tile,
                 acc,
-                config.stage_config(),
+                config.stage_config().shared(),
+                NoEvent::new(),
                 partition_scheduler,
             );
 
-            SMM::write_results::<GW>(
+            write_partition_to_stage::<MP, SP::Scope, GW::Stage, GW>(
                 acc,
                 &mut out_stage,
                 out_writer,
                 partition_scheduler,
-                config.stage_config(),
+                config.stage_config().shared(),
             );
         }
     }

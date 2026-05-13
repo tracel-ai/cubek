@@ -1,6 +1,6 @@
 use crate::components::global::read::{PartialStageGlobalReader, StageBuffer};
 use crate::components::global::{
-    GlobalConfig, GlobalWriter,
+    GlobalWriter,
     read::{FullLoaderStage, FullLoadingStrategy, SyncStrategy},
 };
 use crate::{
@@ -10,8 +10,15 @@ use crate::{
 use crate::{
     components::global::{GlobalMatmul, SharedGlobalMatmulConfig},
     components::global::{PlaneFlowPartition, read::AsyncPartialLoadingStrategy},
-    components::stage,
-    components::stage::StageConfig as _,
+    components::stage::{
+        StageConfig as _,
+        matmul::{
+            partition::{Accumulators, PartitionMatmul},
+            partitioned_matmul::StagePartitioner,
+            scheduler::PartitionScheduler,
+        },
+        stage_matmul::write_partition_to_stage,
+    },
     definition::*,
     launch::RuntimeConfig,
 };
@@ -23,6 +30,12 @@ use cubecl::{
 };
 use std::marker::PhantomData;
 
+// Per-flow Stage type aliases — keep call sites readable.
+type LhsStageFor<MP, RC, L> = PartialLoaderStage<RC, L, Stage<Lhs<MP>>, StageSize<Lhs<MP>>>;
+type RhsStageFor<MP, RC, L> = PartialLoaderStage<RC, L, Stage<Rhs<MP>>, StageSize<Rhs<MP>>>;
+type AccStageFor<MP, RC, AL> =
+    ComptimeOption<FullLoaderStage<RC, AL, Stage<Acc<MP>>, StageSize<Acc<MP>>>>;
+
 /// Performs matrix multiplication at the global level, with planes pipelining their work using two buffers:
 /// While they trigger a load event from global memory to shared memory on stage A,
 /// they trigger a computation event from tensor cores on stage B. Then stages are switched.
@@ -30,14 +43,14 @@ use std::marker::PhantomData;
 /// Hardcoded for TMA right now
 pub struct SpecializedMatmul<
     MP: MatmulTypes,
-    SMM: stage::StageMatmul<MP>,
+    SP: StagePartitioner,
     RC: RuntimeConfig,
     L: AsyncPartialLoadingStrategy<RC>,
     AL: FullLoadingStrategy<RC>,
     GW: GlobalWriter<MP::Acc>,
 > {
     _ms: PhantomData<MP>,
-    _stage_matmul: PhantomData<SMM>,
+    _sp: PhantomData<SP>,
     _rc: PhantomData<RC>,
     _loading: PhantomData<L>,
     _acc_loading: PhantomData<AL>,
@@ -45,22 +58,16 @@ pub struct SpecializedMatmul<
 }
 
 #[cube]
-impl<MP: MatmulTypes, SMM, RC, L, AL, GW> GlobalMatmul<RC, MP>
-    for SpecializedMatmul<MP, SMM, RC, L, AL, GW>
+impl<MP: MatmulTypes, SP, RC, L, AL, GW> GlobalMatmul<RC, MP>
+    for SpecializedMatmul<MP, SP, RC, L, AL, GW>
 where
-    SMM: stage::StageMatmul<
-            MP,
-            LhsStage = PartialLoaderStage<RC, L, Stage<Lhs<MP>>, StageSize<Lhs<MP>>>,
-            RhsStage = PartialLoaderStage<RC, L, Stage<Rhs<MP>>, StageSize<Rhs<MP>>>,
-            AccStage = ComptimeOption<FullLoaderStage<RC, AL, Stage<Acc<MP>>, StageSize<Acc<MP>>>>,
-            OutStage = GW::Stage,
-        >,
+    SP: StagePartitioner,
     RC: RuntimeConfig,
     L: AsyncPartialLoadingStrategy<RC>,
     AL: FullLoadingStrategy<RC>,
     GW: GlobalWriter<MP::Acc>,
 {
-    type Config = SharedGlobalMatmulConfig<SMM::Config>;
+    type Config = SharedGlobalMatmulConfig<crate::components::stage::stage_matmul::StageMatmul>;
 
     type LhsGlobalReader = PartialStageGlobalReader<
         <MP::Lhs as MatrixTypes>::Global,
@@ -90,7 +97,7 @@ where
     >;
 
     type GlobalWriter = GW;
-    type Accumulators = SMM::Accumulators;
+    type Accumulators = Accumulators<MP, SP::Scope>;
 
     fn execute(
         mut lhs_reader: Self::LhsGlobalReader,
@@ -125,7 +132,19 @@ where
         let num_stage_matmuls = needed_stage_matmuls + (needed_stage_matmuls % 2);
         let num_loops = num_stage_matmuls / 2;
 
-        let partition_scheduler = SMM::init_scheduler(config.stage_config());
+        let stage_shared = config.stage_config.shared();
+
+        let (partition_row, partition_col) = SP::coordinates(
+            stage_shared.plane_flow_config.partition_rule,
+            stage_shared.plane_dim,
+            stage_shared.stage_size.n(),
+        );
+        let partition_scheduler = PartitionScheduler::new(
+            partition_row,
+            partition_col,
+            stage_shared.partition_size,
+            stage_shared.partition_schedule_scheme,
+        );
 
         let lhs_stage_a = lhs_reader.stage(StageBuffer::A);
         let lhs_stage_b = lhs_reader.stage(StageBuffer::B);
@@ -202,37 +221,64 @@ where
                 phase ^= 1;
             }
         } else if role_rule.is_compute_plane() {
-            let (mut lhs_tile, mut rhs_tile) = SMM::init_tile_inputs(config.stage_config());
-            let mut acc = SMM::init_accumulators(config.stage_config());
+            let (mut lhs_tile, mut rhs_tile) = PartitionMatmul::<
+                MP,
+                LhsStageFor<MP, RC, L>,
+                RhsStageFor<MP, RC, L>,
+                AccStageFor<MP, RC, AL>,
+                SP::Scope,
+            >::init_tile_inputs(stage_shared);
+            let mut acc = PartitionMatmul::<
+                MP,
+                LhsStageFor<MP, RC, L>,
+                RhsStageFor<MP, RC, L>,
+                AccStageFor<MP, RC, AL>,
+                SP::Scope,
+            >::init_accumulator(stage_shared);
 
-            SMM::load_accumulators(
-                &acc_stage,
-                &mut acc,
-                &partition_scheduler,
-                config.stage_config(),
-            );
+            PartitionMatmul::<
+                MP,
+                LhsStageFor<MP, RC, L>,
+                RhsStageFor<MP, RC, L>,
+                AccStageFor<MP, RC, AL>,
+                SP::Scope,
+            >::load_accumulator(&acc_stage, &mut acc, &partition_scheduler, stage_shared);
 
             for _ in 0..num_loops {
                 barrier_full_a.wait_parity(phase);
-                SMM::execute(
+                PartitionMatmul::<
+                    MP,
+                    LhsStageFor<MP, RC, L>,
+                    RhsStageFor<MP, RC, L>,
+                    AccStageFor<MP, RC, AL>,
+                    SP::Scope,
+                >::execute_with_listener::<crate::components::stage::NoEvent>(
                     &lhs_stage_a,
                     &rhs_stage_a,
                     &mut lhs_tile,
                     &mut rhs_tile,
                     &mut acc,
-                    config.stage_config(),
+                    stage_shared,
+                    crate::components::stage::NoEvent::new(),
                     &partition_scheduler,
                 );
                 barrier_empty_a.arrive();
 
                 barrier_full_b.wait_parity(phase);
-                SMM::execute(
+                PartitionMatmul::<
+                    MP,
+                    LhsStageFor<MP, RC, L>,
+                    RhsStageFor<MP, RC, L>,
+                    AccStageFor<MP, RC, AL>,
+                    SP::Scope,
+                >::execute_with_listener::<crate::components::stage::NoEvent>(
                     &lhs_stage_b,
                     &rhs_stage_b,
                     &mut lhs_tile,
                     &mut rhs_tile,
                     &mut acc,
-                    config.stage_config(),
+                    stage_shared,
+                    crate::components::stage::NoEvent::new(),
                     &partition_scheduler,
                 );
                 barrier_empty_b.arrive();
@@ -246,12 +292,12 @@ where
 
             let mut out_stage = Self::GlobalWriter::stage(&out_writer);
 
-            SMM::write_results::<Self::GlobalWriter>(
+            write_partition_to_stage::<MP, SP::Scope, GW::Stage, GW>(
                 &mut acc,
                 &mut out_stage,
                 &mut out_writer,
                 &partition_scheduler,
-                config.stage_config(),
+                stage_shared,
             );
         }
     }
@@ -296,6 +342,12 @@ where
     }
 
     fn init_accumulators(#[comptime] config: Self::Config) -> Self::Accumulators {
-        SMM::init_accumulators(config.stage_config())
+        PartitionMatmul::<
+            MP,
+            LhsStageFor<MP, RC, L>,
+            RhsStageFor<MP, RC, L>,
+            AccStageFor<MP, RC, AL>,
+            SP::Scope,
+        >::init_accumulator(config.stage_config.shared())
     }
 }

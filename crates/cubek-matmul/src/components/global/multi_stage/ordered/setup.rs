@@ -6,7 +6,6 @@ use crate::components::global::{
     read::{FullLoadingStrategy, PartialLoadingStrategy, sync::Synchronous},
 };
 use crate::components::global::{
-    WriteTiling,
     multi_stage::ordered::{LL, OrderedDoubleBufferingMatmul},
 };
 use crate::{
@@ -47,6 +46,7 @@ impl<SMM, RC, RL, AL, GW> GlobalMatmulFamily<RC>
     for OrderedDoubleBufferingMatmulFamily<SMM, RC, RL, AL, GW>
 where
     SMM: stage::StageMatmulFamily<
+            Config = crate::components::stage::stage_matmul::StageMatmul,
             LhsStage = StridedStageFamily,
             RhsStage = RL::Stage,
             AccStage = Option<AL::Stage>,
@@ -59,19 +59,13 @@ where
 {
     type Matmul<MP: MatmulTypes> = OrderedDoubleBufferingMatmul<
         MP,
-        SMM::Matmul<
-            MP,
-            <LL as FullLoadingStrategy<RC>>::TilingLayout,
-            RL::TilingLayout,
-            AL::TilingLayout,
-            WriteTiling,
-        >,
+        SMM::Partitioner,
         RC,
         RL,
         AL,
         GW::Writer<MP::Acc>,
     >;
-    type Config = SharedGlobalMatmulConfig<SMM::Config>;
+    type Config = SharedGlobalMatmulConfig<crate::components::stage::stage_matmul::StageMatmul>;
 
     fn expand_config(
         device_props: &DeviceProperties,

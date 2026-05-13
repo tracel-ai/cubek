@@ -8,7 +8,7 @@ use crate::components::global::{
 };
 use crate::{
     components::global::{GlobalWriterFamily, multi_stage::specialized::SpecializedMatmul},
-    components::global::{InputLoadFlow, LoadFlows, WriteTiling},
+    components::global::{InputLoadFlow, LoadFlows},
 };
 use crate::{
     components::global::{multi_stage::EventLoadingMode, read::FullLoadingStrategy},
@@ -44,6 +44,7 @@ pub struct SpecializedMatmulFamily<
 impl<SMM, RC, L, AL, GW> GlobalMatmulFamily<RC> for SpecializedMatmulFamily<SMM, RC, L, AL, GW>
 where
     SMM: stage::StageMatmulFamily<
+            Config = crate::components::stage::stage_matmul::StageMatmul,
             LhsStage = L::Stage,
             RhsStage = L::Stage,
             AccStage = Option<AL::Stage>,
@@ -56,13 +57,13 @@ where
 {
     type Matmul<MP: MatmulTypes> = SpecializedMatmul<
         MP,
-        SMM::Matmul<MP, L::TilingLayout, L::TilingLayout, AL::TilingLayout, WriteTiling>,
+        SMM::Partitioner,
         RC,
         L,
         AL,
         GW::Writer<MP::Acc>,
     >;
-    type Config = SharedGlobalMatmulConfig<SMM::Config>;
+    type Config = SharedGlobalMatmulConfig<crate::components::stage::stage_matmul::StageMatmul>;
 
     fn expand_config(
         device_props: &DeviceProperties,
