@@ -48,9 +48,10 @@ fn metadata_to_tiled_should_return_physical_layout() {
         cube_dim,
         input_handle.binding().into_tensor_arg(),
         output_handle.clone().binding().into_tensor_arg(),
+        blueprint,
+        matrix_len,
         dtype,
         vector_size,
-        blueprint,
     );
 
     let output = HostData::from_tensor_handle(&client, output_handle, HostDataType::F32);
@@ -276,51 +277,44 @@ fn launch_read_rowmajor_tensor_as_tiled<N: Numeric, S: Size>(
 fn launch_read_tensor_according_to_blueprint<N: Numeric, S: Size>(
     input: &Tensor<Vector<N, S>>,
     output: &mut Tensor<Vector<N, S>>,
+    #[comptime] blueprint: MetadataBlueprint,
+    #[comptime] matrix_len: usize,
     #[define(N)] _dtype: StorageType,
     #[define(S)] vector_size: usize,
-    #[comptime] blueprint: MetadataBlueprint,
 ) {
     let tiler = blueprint.clone().tiler.unwrap(); // For this test, we expect it
 
     let mut shape = Sequence::new();
     #[unroll]
-    for _i in 0..blueprint.shape.rank() {
-        shape.push(2);
-        //shape.push(blueprint.get_shape(i));
+    for i in 0..blueprint.shape.rank() {
+        shape.push(comptime!(blueprint.shape[i]));
     }
 
     let mut strides = Sequence::new();
-    strides.push(8);
-    strides.push(4);
-    strides.push(2);
-    strides.push(1);
 
     // Getting an error doing something like this
-    //#[unroll]
-    //for i in 0..blueprint.strides.rank() {
-    //    strides.push(blueprint.strides[i]);
-    //}
+    #[unroll]
+    for i in 0..blueprint.strides.rank() {
+        strides.push(comptime!(blueprint.strides[i]));
+    }
 
     let mut tiles = Sequence::new();
     #[unroll]
-    for _i in 0..tiler.tile_size.len() {
-        tiles.push(2);
-        //tiles.push(tiler.tile_size[i] as usize);
+    for i in 0..tiler.tile_size.len() {
+        tiles.push(comptime!(tiler.tile_size[i]) as usize);
     }
 
-    let tiled_layout =
-        TiledLayoutV2::new(shape, strides, tiler.start_axis as usize, tiles);
+    let tiled_layout = TiledLayoutV2::new(shape, strides, tiler.start_axis as usize, tiles);
 
     let row_major = RowMajorLayout::new(4, 4, vector_size);
 
     let input_view = input.view(tiled_layout);
     let output_view = output.view_mut(row_major);
 
-    // Iterate using logical coordinates
     #[unroll]
-    for i in 0usize ..4 {
+    for i in 0..matrix_len {
         #[unroll]
-        for j in 0usize ..4 {
+        for j in 0..matrix_len {
             let mut coords = Sequence::<usize>::new();
             coords.push(i);
             coords.push(j);
@@ -328,7 +322,6 @@ fn launch_read_tensor_according_to_blueprint<N: Numeric, S: Size>(
             output_view.write((i.runtime(), j.runtime()), value);
         }
     }
-
 }
 
 #[derive(CubeType, Clone)]
