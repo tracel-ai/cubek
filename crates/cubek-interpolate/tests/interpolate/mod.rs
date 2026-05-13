@@ -2,6 +2,7 @@ mod backward;
 #[cfg(feature = "benchmarks")]
 mod bench_catalog;
 mod forward;
+mod test;
 
 use cubecl::{TestRuntime, client::ComputeClient, ir::StorageType, std::tensor::TensorHandle};
 use cubek_interpolate::definition::InterpolateError;

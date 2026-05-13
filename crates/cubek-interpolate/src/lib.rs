@@ -4,6 +4,7 @@ use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*}
 
 use crate::definition::{InterpolateError, InterpolateMode, InterpolateOptions};
 
+pub mod components;
 pub mod definition;
 mod kernel;
 
