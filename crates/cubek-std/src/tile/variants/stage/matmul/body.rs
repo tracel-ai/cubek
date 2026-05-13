@@ -9,12 +9,13 @@
 //! `(Stage, Stage, Partition)` `.mma` arm in `tile/ops/matmul.rs` is the place
 //! that destructures the `TileKind` enum and forwards to this body.
 //!
-//! Note: only single-buffered rhs is supported in this body for now;
-//! double-buffered support lands in a PR 4 follow-up — the cubecl `#[cube]`
-//! macro hits trait-bound issues with the rhs-rotation pattern under generic
-//! free-function context that don't appear in the cubek-matmul impl-method
-//! context. The existing cubek-matmul `PartitionMatmul` continues to back
-//! double-buffered flows until that is resolved.
+//! Both single-buffered and double-buffered rhs are supported. The
+//! double-buffered body uses the `for n_iter in 1..n_iterations` loop
+//! variable directly as the comptime iteration index (rather than the
+//! cubek-matmul impl-method version's manual `comptime![n_iter += 1]`
+//! counter), which sidesteps the cubecl `#[cube]` macro trait-bound issue
+//! that surfaces with that counter pattern in a generic free-function
+//! context.
 
 use cubecl::prelude::*;
 
@@ -114,10 +115,20 @@ pub fn execute_partition_matmul_with_listener<
                 scheduler,
             )
         }
-        RhsTile::Double(_rhs) => panic!(
-            "execute_partition_matmul: Double buffering not yet supported in the cubek-std body \
-             (PR 4 follow-up); existing cubek-matmul PartitionMatmul still backs double-buffered flows"
-        ),
+        RhsTile::Double(rhs) => {
+            execute_double::<LhsSE, LhsSS, LhsRE, RhsSE, RhsSS, RhsRE, AccRE, Sc, SEL>(
+                lhs_stage,
+                rhs_stage,
+                lhs_fragment,
+                rhs,
+                acc,
+                partition_size_m,
+                partition_size_n,
+                partition_size_k,
+                listener,
+                scheduler,
+            )
+        }
     }
 }
 
@@ -221,6 +232,168 @@ fn execute_single<
                 );
                 comptime!(execute_counter += 1);
             }
+        }
+    }
+
+    assert!(lhs_load_counter == lhs_load_total);
+    assert!(rhs_load_counter == rhs_load_total);
+    assert!(execute_counter == execute_total);
+    SEL::on_event(&mut listener, comptime!(StageEvent::Finish));
+}
+
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn execute_double<
+    LhsSE: Numeric,
+    LhsSS: Size,
+    LhsRE: Numeric,
+    RhsSE: Numeric,
+    RhsSS: Size,
+    RhsRE: Numeric,
+    AccRE: Numeric,
+    Sc: TileScope,
+    SEL: StageEventListener,
+>(
+    lhs_stage: &StridedStage<LhsSE, ReadOnly>,
+    rhs_stage: &StridedStage<RhsSE, ReadOnly>,
+    lhs_fragment: &mut Sequence<Tile<LhsRE, Sc, ReadWrite>>,
+    rhs_fragments: &mut (Tile<RhsRE, Sc, ReadWrite>, Tile<RhsRE, Sc, ReadWrite>),
+    acc: &mut PartitionTile<AccRE, Sc, ReadWrite>,
+    #[comptime] partition_size_m: u32,
+    #[comptime] partition_size_n: u32,
+    #[comptime] partition_size_k: u32,
+    mut listener: SEL,
+    scheduler: &PartitionScheduler,
+) {
+    SEL::on_event(&mut listener, StageEvent::Begin);
+
+    let m_iterations = partition_size_m as usize;
+    let n_iterations = partition_size_n as usize;
+    let k_iterations = partition_size_k as usize;
+
+    let mut lhs_load_counter = 0.comptime();
+    let mut rhs_load_counter = 0.comptime();
+    let mut execute_counter = 0.comptime();
+    let lhs_load_total = (m_iterations * k_iterations) as u32;
+    let rhs_load_total = (n_iterations * k_iterations) as u32;
+    let execute_total = (m_iterations * n_iterations * k_iterations) as u32;
+
+    #[unroll]
+    for k_iter in 0..k_iterations {
+        let k_load_iter = scheduler.map_k(k_iter as u32);
+
+        #[unroll]
+        for m_iter in 0..m_iterations {
+            let m_load_iter = scheduler.map_m(m_iter as u32);
+
+            let shared = lhs_stage.get_tile((m_load_iter, k_load_iter));
+            let tile_lhs = Tile::new_SharedMemory(shared);
+
+            lhs_fragment
+                .index_mut(m_iter)
+                .copy_from::<LhsSE, LhsSS, LhsRE, RhsRE, AccRE, ReadOnly>(
+                    &tile_lhs,
+                    StageIdent::Lhs,
+                );
+
+            SEL::on_event(
+                &mut listener,
+                comptime![StageEvent::LhsLoaded {
+                    current: lhs_load_counter,
+                    total: lhs_load_total
+                }],
+            );
+            comptime!(lhs_load_counter += 1);
+        }
+
+        // Pre-load rhs[0] into the .0 slot.
+        let first_load_iter = scheduler.map_n(0u32);
+        let shared_first = rhs_stage.get_tile((k_load_iter, first_load_iter));
+        let rhs_tile_first = Tile::new_SharedMemory(shared_first);
+        rhs_fragments
+            .0
+            .copy_from::<RhsSE, RhsSS, LhsRE, RhsRE, AccRE, ReadOnly>(
+                &rhs_tile_first,
+                StageIdent::Rhs,
+            );
+
+        SEL::on_event(
+            &mut listener,
+            comptime!(StageEvent::RhsLoaded {
+                current: rhs_load_counter,
+                total: rhs_load_total
+            }),
+        );
+        comptime!(rhs_load_counter += 1);
+
+        // For n in [1, n_iterations): while loading rhs[n] into the opposite slot,
+        // matmul rhs[n - 1] (which lives in the .((n-1)%2) slot).
+        #[unroll]
+        for n_iter in 1..n_iterations {
+            let (current, next) = if n_iter % 2 == 1 {
+                (&mut rhs_fragments.0, &mut rhs_fragments.1)
+            } else {
+                (&mut rhs_fragments.1, &mut rhs_fragments.0)
+            };
+
+            let n_load_iter = scheduler.map_n(n_iter as u32);
+            let shared = rhs_stage.get_tile((k_load_iter, n_load_iter));
+            let rhs_tile_next = Tile::new_SharedMemory(shared);
+            next.copy_from::<RhsSE, RhsSS, LhsRE, RhsRE, AccRE, ReadOnly>(
+                &rhs_tile_next,
+                StageIdent::Rhs,
+            );
+
+            SEL::on_event(
+                &mut listener,
+                comptime!(StageEvent::RhsLoaded {
+                    current: rhs_load_counter,
+                    total: rhs_load_total
+                }),
+            );
+            comptime!(rhs_load_counter += 1);
+
+            let prev_n = n_iter - 1;
+            #[unroll]
+            for m_iter in 0..m_iterations {
+                let accumulator = acc.tiles.index_mut(m_iter * n_iterations + prev_n);
+                accumulator.mma(&lhs_fragment[m_iter], current);
+
+                SEL::on_event(
+                    &mut listener,
+                    comptime!(StageEvent::TileMatmulCompleted {
+                        current: execute_counter,
+                        total: execute_total
+                    }),
+                );
+                comptime!(execute_counter += 1);
+            }
+        }
+
+        // Last matmul for n = n_iterations - 1; its rhs lives in
+        // .((n_iterations - 1) % 2). Only the matmul is left — the load
+        // happened in the last loop iteration above (or in the pre-load when
+        // n_iterations == 1).
+        let last_idx = n_iterations - 1;
+        let last = if last_idx % 2 == 0 {
+            &mut rhs_fragments.0
+        } else {
+            &mut rhs_fragments.1
+        };
+
+        #[unroll]
+        for m_iter in 0..m_iterations {
+            let accumulator = acc.tiles.index_mut(m_iter * n_iterations + last_idx);
+            accumulator.mma(&lhs_fragment[m_iter], last);
+
+            SEL::on_event(
+                &mut listener,
+                comptime!(StageEvent::TileMatmulCompleted {
+                    current: execute_counter,
+                    total: execute_total
+                }),
+            );
+            comptime!(execute_counter += 1);
         }
     }
 
