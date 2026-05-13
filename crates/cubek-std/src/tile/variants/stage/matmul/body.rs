@@ -16,6 +16,12 @@
 //! counter), which sidesteps the cubecl `#[cube]` macro trait-bound issue
 //! that surfaces with that counter pattern in a generic free-function
 //! context.
+//!
+//! Companion helpers for partition tiles:
+//! - [`load_partition_from_stage`] — fill a `PartitionTile` of accumulators
+//!   from a read-only `StridedStage` of input accumulators.
+//! - [`partition_get_at`] / [`partition_get_at_mut`] — index into a
+//!   `PartitionTile`'s tile sequence.
 
 use cubecl::prelude::*;
 
@@ -239,6 +245,70 @@ fn execute_single<
     assert!(rhs_load_counter == rhs_load_total);
     assert!(execute_counter == execute_total);
     SEL::on_event(&mut listener, comptime!(StageEvent::Finish));
+}
+
+#[cube]
+/// Fill the (m, n) accumulator tiles of a [`PartitionTile`] from a read-only
+/// [`StridedStage`]. Mirrors the old `Accumulators::load` body.
+#[allow(clippy::too_many_arguments)]
+pub fn load_partition_from_stage<
+    AccSE: Numeric,
+    AccSS: Size,
+    LhsRE: Numeric,
+    RhsRE: Numeric,
+    AccRE: Numeric,
+    Sc: TileScope,
+>(
+    stage: &StridedStage<AccSE, ReadOnly>,
+    acc: &mut PartitionTile<AccRE, Sc, ReadWrite>,
+    scheduler: &PartitionScheduler,
+    #[comptime] partition_size_m: u32,
+    #[comptime] partition_size_n: u32,
+) {
+    let m_iterations = partition_size_m as usize;
+    let n_iterations = partition_size_n as usize;
+
+    #[unroll]
+    for m_iter in 0..m_iterations {
+        let m_load_iter = scheduler.map_m(m_iter as u32);
+
+        #[unroll]
+        for n_iter in 0..n_iterations {
+            let n_load_iter = scheduler.map_n(n_iter as u32);
+
+            let shared = stage.get_tile((m_load_iter, n_load_iter));
+            let tile = Tile::new_SharedMemory(shared);
+
+            acc.tiles
+                .index_mut(m_iter * n_iterations + n_iter)
+                .copy_from::<AccSE, AccSS, LhsRE, RhsRE, AccRE, ReadOnly>(
+                    &tile,
+                    StageIdent::Acc,
+                );
+        }
+    }
+}
+
+#[cube]
+/// Immutable indexed access into a [`PartitionTile`]'s tile sequence.
+pub fn partition_get_at<E: Numeric, Sc: TileScope, IO: SliceVisibility>(
+    partition: &PartitionTile<E, Sc, IO>,
+    #[comptime] m: usize,
+    #[comptime] n: usize,
+    #[comptime] n_cols: usize,
+) -> &Tile<E, Sc, IO> {
+    &partition.tiles[m * n_cols + n]
+}
+
+#[cube]
+/// Mutable indexed access into a [`PartitionTile`]'s tile sequence.
+pub fn partition_get_at_mut<E: Numeric, Sc: TileScope>(
+    partition: &mut PartitionTile<E, Sc, ReadWrite>,
+    #[comptime] m: usize,
+    #[comptime] n: usize,
+    #[comptime] n_cols: usize,
+) -> &mut Tile<E, Sc, ReadWrite> {
+    partition.tiles.index_mut(m * n_cols + n)
 }
 
 #[cube]
