@@ -14,9 +14,13 @@
 //! partition tile from a [`StridedStage`] payload — lands in PR 4 alongside
 //! the partition-matmul body migration; PR 3 only lays the API surface.
 
+use std::marker::PhantomData;
+
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 
-use crate::tile::{Plane, Tile, TileExpand, TileKind, TileKindExpand, TileScope, Unit};
+use crate::tile::{
+    PartitionTile, Plane, Tile, TileExpand, TileKind, TileKindExpand, TileScope, Unit,
+};
 
 /// Strategy that maps the current compute primitive to its `(row, col)`
 /// coordinates within a partition grid. The associated [`OutputScope`]
@@ -103,10 +107,30 @@ impl<N: Numeric, Sc: TileScope, IO: SliceVisibility> Tile<N, Sc, IO> {
         #[comptime] plane_dim: u32,
         #[comptime] num_partitions_col: u32,
     ) -> Tile<N, P::OutputScope, IO> {
-        let _coord = P::coordinates(compute_index, plane_dim, num_partitions_col);
+        let (p_row, p_col) = P::coordinates(compute_index, plane_dim, num_partitions_col);
         match &self.kind {
-            TileKind::Stage(_) => {
-                panic!("Tile::partition: Stage arm body lands in PR 4")
+            TileKind::Stage(stage) => {
+                let m_tiles = comptime!(stage.config.tiles_per_partition_along_row);
+                let n_tiles = comptime!(stage.config.tiles_per_partition_along_col);
+
+                let mut tiles = Sequence::new();
+
+                #[unroll]
+                for m in 0..m_tiles {
+                    #[unroll]
+                    for n in 0..n_tiles {
+                        let global = (p_row * m_tiles + m, p_col * n_tiles + n);
+                        let shared = stage.get_tile(global);
+                        tiles.push(Tile::<N, P::OutputScope, IO>::new_SharedMemory(shared));
+                    }
+                }
+
+                Tile::new_Partition(PartitionTile::<N, P::OutputScope, IO> {
+                    tiles,
+                    rows: m_tiles,
+                    cols: n_tiles,
+                    _phantom: PhantomData,
+                })
             }
             TileKind::SharedMemory(_)
             | TileKind::Cmma(_)

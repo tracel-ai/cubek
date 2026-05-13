@@ -191,12 +191,7 @@ pub trait StageConfig:
     fn out_smem_config(&self) -> StageMemoryConfig;
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum PartitionBuffering {
-    Single,
-    #[default]
-    Double,
-}
+pub use cubek_std::tile::PartitionBuffering;
 
 /// Stage that can be divided into tiles, with the same kind used by the
 /// tile matmul readers.

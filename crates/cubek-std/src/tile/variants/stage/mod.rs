@@ -10,12 +10,20 @@
 //!   collection of accumulator tiles installed as a
 //!   [`TileKind::Partition`](crate::tile::TileKind) payload.
 
+pub(crate) mod event;
 pub(crate) mod layout;
+pub(crate) mod matmul;
 pub(crate) mod memory;
 pub(crate) mod partition;
+pub(crate) mod scheduler;
 pub(crate) mod strided;
+pub(crate) mod tile_matmul;
 
+pub use event::*;
 pub use layout::*;
+pub use matmul::*;
 pub use memory::*;
 pub use partition::*;
+pub use scheduler::*;
 pub use strided::*;
+pub use tile_matmul::*;
