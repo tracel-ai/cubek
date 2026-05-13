@@ -2,12 +2,11 @@ use std::marker::PhantomData;
 
 use super::fragments::{Accumulators, RhsTile, RhsTileExpand};
 use crate::{
-    components::stage::PartitionSchedulerScheme,
+    components::stage::stage_matmul::PartitionedStageMatmul,
     definition::{Acc, Rhs},
 };
 use crate::{
     components::{
-        global::PlaneFlowConfig,
         stage::{
             PartitionBuffering, Stage, StageEvent, StageEventListener,
             matmul::scheduler::PartitionScheduler,
@@ -20,60 +19,12 @@ use crate::{
 };
 use cubecl::prelude::*;
 use cubek_std::{
-    PartitionSize, StageSize,
-    stage::StageMemoryConfig,
     tile::{
         Tile, TileScope, cmma_allocate_lhs, cmma_allocate_rhs, interleaved_allocate_lhs,
         interleaved_allocate_rhs, mma_allocate_lhs, mma_allocate_rhs, planevec_allocate_lhs,
         planevec_allocate_rhs, register_allocate_lhs, register_allocate_rhs,
     },
 };
-
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct SharedPartitionMatmulConfig {
-    pub tile_matmul: TileMatmul,
-    pub partition_size: PartitionSize,
-    pub partition_buffering: PartitionBuffering,
-    pub plane_flow_config: PlaneFlowConfig,
-    pub plane_dim: u32,
-    pub stage_size: StageSize,
-    pub partition_schedule_scheme: PartitionSchedulerScheme,
-    pub lhs_smem_config: StageMemoryConfig,
-    pub rhs_smem_config: StageMemoryConfig,
-    pub acc_smem_config: StageMemoryConfig,
-    pub out_smem_config: StageMemoryConfig,
-}
-
-impl SharedPartitionMatmulConfig {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        tile_matmul: TileMatmul,
-        partition_size: PartitionSize,
-        partition_buffering: PartitionBuffering,
-        plane_flow_config: PlaneFlowConfig,
-        plane_dim: u32,
-        stage_size: StageSize,
-        partition_schedule_scheme: PartitionSchedulerScheme,
-        lhs_smem_config: StageMemoryConfig,
-        rhs_smem_config: StageMemoryConfig,
-        acc_smem_config: StageMemoryConfig,
-        out_smem_config: StageMemoryConfig,
-    ) -> Self {
-        Self {
-            tile_matmul,
-            partition_size,
-            partition_buffering,
-            plane_flow_config,
-            plane_dim,
-            stage_size,
-            partition_schedule_scheme,
-            lhs_smem_config,
-            rhs_smem_config,
-            acc_smem_config,
-            out_smem_config,
-        }
-    }
-}
 
 type STy<T> = crate::definition::Stage<T>;
 
@@ -107,7 +58,7 @@ where
         lhs_fragment: &mut Sequence<Tile<<MT::Lhs as MatrixTypes>::Register, Sc, ReadWrite>>,
         rhs_fragments: &mut RhsTile<Tile<<MT::Rhs as MatrixTypes>::Register, Sc, ReadWrite>>,
         acc: &mut Accumulators<MT, Sc>,
-        #[comptime] shared_config: SharedPartitionMatmulConfig,
+        #[comptime] shared_config: PartitionedStageMatmul,
         listener: SEL,
         partition_iterator: &PartitionScheduler,
     ) {
@@ -142,7 +93,7 @@ where
     /// This may point towards uninitialized memory.
     /// Make sure to load inputs before execution.
     pub fn init_tile_inputs(
-        #[comptime] shared_config: SharedPartitionMatmulConfig,
+        #[comptime] shared_config: PartitionedStageMatmul,
     ) -> (
         Sequence<Tile<<MT::Lhs as MatrixTypes>::Register, Sc, ReadWrite>>,
         RhsTile<Tile<<MT::Rhs as MatrixTypes>::Register, Sc, ReadWrite>>,
@@ -184,7 +135,7 @@ where
     /// This may point towards uninitialized memory.
     /// Make sure to call `load_accumulator` prior to execute_with_listener.
     pub fn init_accumulator(
-        #[comptime] shared_config: SharedPartitionMatmulConfig,
+        #[comptime] shared_config: PartitionedStageMatmul,
     ) -> Accumulators<MT, Sc> {
         Accumulators::<MT, Sc>::new(
             shared_config.partition_size,
@@ -198,7 +149,7 @@ where
         stage: &StageAcc,
         acc: &mut Accumulators<MT, Sc>,
         partition_scheduler: &PartitionScheduler,
-        #[comptime] shared_config: SharedPartitionMatmulConfig,
+        #[comptime] shared_config: PartitionedStageMatmul,
     ) {
         acc.load::<StageAcc>(
             stage,
@@ -218,7 +169,7 @@ where
         lhs_fragment: &mut Sequence<Tile<<MT::Lhs as MatrixTypes>::Register, Sc, ReadWrite>>,
         rhs_fragment: &mut Tile<<MT::Rhs as MatrixTypes>::Register, Sc, ReadWrite>,
         acc: &mut Accumulators<MT, Sc>,
-        #[comptime] shared_config: SharedPartitionMatmulConfig,
+        #[comptime] shared_config: PartitionedStageMatmul,
         mut listener: SEL,
         partition_scheduler: &PartitionScheduler,
     ) {
@@ -319,7 +270,7 @@ where
             Tile<<MT::Rhs as MatrixTypes>::Register, Sc, ReadWrite>,
         ),
         acc: &mut Accumulators<MT, Sc>,
-        #[comptime] shared_config: SharedPartitionMatmulConfig,
+        #[comptime] shared_config: PartitionedStageMatmul,
         mut listener: SEL,
         partition_scheduler: &PartitionScheduler,
     ) {

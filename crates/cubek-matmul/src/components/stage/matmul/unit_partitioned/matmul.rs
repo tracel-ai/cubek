@@ -8,20 +8,6 @@ use crate::{
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 use cubek_std::tile::Unit;
 
-use crate::components::stage::matmul::partition::SharedPartitionMatmulConfig;
-
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-/// Configuration for the unit partitioned stage matmul
-pub struct UnitPartitionedStageConfig {
-    pub shared: SharedPartitionMatmulConfig,
-}
-
-impl UnitPartitionedStageConfig {
-    pub fn from_shared_partition_config(shared: SharedPartitionMatmulConfig) -> Self {
-        Self { shared }
-    }
-}
-
 #[allow(type_alias_bounds)]
 /// [PartitionedStageMatmul] partitioned across units
 pub type UnitMatmul<MP: MatmulTypes, StageLhs, StageRhs, StageAcc, StageOut> =

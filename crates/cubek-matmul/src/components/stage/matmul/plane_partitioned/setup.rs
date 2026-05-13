@@ -1,14 +1,10 @@
-use crate::components::stage::matmul::plane_partitioned::{
-    PlaneMatmul, PlanePartitionedStageConfig,
-};
+use crate::components::stage::matmul::plane_partitioned::PlaneMatmul;
 use crate::components::{
     CubeDimResource,
-    global::{MatmulPlaneCounts, PartitionedStage, PartitionedStageFamily, PlaneFlowConfig},
+    global::{PartitionedStage, PartitionedStageFamily, PlaneFlowConfig},
     stage::{
-        NumStages, PartitionBuffering, PartitionSchedulerScheme, StageFamily, StageMatmulFamily,
-        matmul::{
-            partition::SharedPartitionMatmulConfig, partitioned_matmul::PartitionMatmulConfig,
-        },
+        NumStages, StageFamily, StageMatmulFamily,
+        stage_matmul::{StageMatmul, StageMatmulKind},
     },
 };
 use crate::definition::{
@@ -20,11 +16,7 @@ use crate::{
 };
 use core::marker::PhantomData;
 use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_std::{
-    stage::StageMemoryConfig,
-    tile::Plane,
-    {InvalidConfigError, MatrixLayout},
-};
+use cubek_std::{InvalidConfigError, tile::Plane};
 
 type STy<T> = crate::definition::Stage<T>;
 type SSz<T> = crate::definition::StageSize<T>;
@@ -57,7 +49,7 @@ impl<StageLhs: StageFamily, StageRhs: StageFamily, StageAcc: StageFamily> StageM
         PartitionedStage<STy<Acc<MP>>, SSz<Acc<MP>>>,
     >;
 
-    type Config = PartitionMatmulConfig;
+    type Config = StageMatmul;
 
     fn expand_config(
         device_props: &DeviceProperties,
@@ -67,91 +59,20 @@ impl<StageLhs: StageFamily, StageRhs: StageFamily, StageAcc: StageFamily> StageM
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
-        let plane_counts = MatmulPlaneCounts::new(blueprint.load_flows, plane_flow_config.counts);
-
-        let lhs_smem_config = StageMemoryConfig {
-            num_planes: plane_counts.lhs,
-            elements_per_tile_along_row: blueprint.tiling_scheme.tile_size.m,
-            elements_per_tile_along_col: blueprint.tiling_scheme.tile_size.k,
-            tiles_per_partition_along_row: blueprint.tiling_scheme.partition_size.m as u32,
-            tiles_per_partition_along_col: blueprint.tiling_scheme.partition_size.k as u32,
-            partitions_per_stage_along_row: blueprint.tiling_scheme.stage_size.m as u32,
-            partitions_per_stage_along_col: blueprint.tiling_scheme.stage_size.k as u32,
-            vector_size: vector_sizes.lhs as u32,
-            matrix_layout: blueprint.lhs_layout,
-            swizzle: blueprint.swizzle_modes.lhs,
-            num_stages: num_stages.lhs,
-            dtype: dtypes.lhs_stage,
-        };
-
-        let rhs_smem_config = StageMemoryConfig {
-            num_planes: plane_counts.rhs,
-            elements_per_tile_along_row: blueprint.tiling_scheme.tile_size.k,
-            elements_per_tile_along_col: blueprint.tiling_scheme.tile_size.n,
-            tiles_per_partition_along_row: blueprint.tiling_scheme.partition_size.k as u32,
-            tiles_per_partition_along_col: blueprint.tiling_scheme.partition_size.n as u32,
-            partitions_per_stage_along_row: blueprint.tiling_scheme.stage_size.k as u32,
-            partitions_per_stage_along_col: blueprint.tiling_scheme.stage_size.n as u32,
-            vector_size: vector_sizes.rhs as u32,
-            matrix_layout: blueprint.rhs_layout,
-            swizzle: blueprint.swizzle_modes.rhs,
-            num_stages: num_stages.rhs,
-            dtype: dtypes.rhs_stage,
-        };
-
-        let out_smem_config = StageMemoryConfig {
-            num_planes: plane_counts.out,
-            elements_per_tile_along_row: blueprint.tiling_scheme.tile_size.m,
-            elements_per_tile_along_col: blueprint.tiling_scheme.tile_size.n,
-            tiles_per_partition_along_row: blueprint.tiling_scheme.partition_size.m as u32,
-            tiles_per_partition_along_col: blueprint.tiling_scheme.partition_size.n as u32,
-            partitions_per_stage_along_row: blueprint.tiling_scheme.stage_size.m as u32,
-            partitions_per_stage_along_col: blueprint.tiling_scheme.stage_size.n as u32,
-            vector_size: vector_sizes.out as u32,
-            matrix_layout: MatrixLayout::RowMajor,
-            swizzle: blueprint.swizzle_modes.out,
-            num_stages: 1,
-            dtype: dtypes.acc_stage,
-        };
-
-        Ok(PartitionMatmulConfig::Plane(
-            PlanePartitionedStageConfig::from_shared_partition_config(
-                SharedPartitionMatmulConfig::new(
-                    blueprint.tile_matmul.expand_tile_matmul(
-                        device_props,
-                        blueprint,
-                        dtypes,
-                        vector_sizes,
-                    )?,
-                    blueprint.tiling_scheme.partition_size,
-                    blueprint.partition_buffering,
-                    plane_flow_config,
-                    blueprint.plane_dim,
-                    blueprint.tiling_scheme.stage_size,
-                    PartitionSchedulerScheme::Naive,
-                    lhs_smem_config,
-                    rhs_smem_config,
-                    out_smem_config,
-                    out_smem_config,
-                ),
-            ),
-        ))
+        StageMatmulKind::PlanePartitioned.expand_stage_matmul(
+            device_props,
+            blueprint,
+            plane_flow_config,
+            num_stages,
+            dtypes,
+            vector_sizes,
+        )
     }
 
     fn cubedim_resource(
         blueprint: &TilingBlueprint,
     ) -> Result<CubeDimResource, InvalidConfigError> {
-        if let CubeDimResource::Planes(planes) = blueprint.tile_matmul.cubedim_resource()? {
-            Ok(CubeDimResource::Planes(
-                planes
-                    * blueprint.tiling_scheme.partitions_per_stage_along_m()
-                    * blueprint.tiling_scheme.partitions_per_stage_along_n(),
-            ))
-        } else {
-            Err(Box::new(
-                "Error: Tried to use a plane stage matmul with a unit tile matmul.".to_string(),
-            ))
-        }
+        StageMatmulKind::PlanePartitioned.cubedim_resource(blueprint)
     }
 
     fn validate_blueprint<R: Runtime>(
@@ -160,27 +81,11 @@ impl<StageLhs: StageFamily, StageRhs: StageFamily, StageAcc: StageFamily> StageM
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
-        let num_planes_needed = blueprint.tiling_scheme.partitions_per_stage_along_m()
-            * blueprint.tiling_scheme.partitions_per_stage_along_n();
-        let num_compute_planes =
-            Self::cubedim_resource(blueprint)?.num_planes(blueprint.plane_dim)?;
-
-        if num_compute_planes != num_planes_needed {
-            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "Error: Number of compute planes {num_compute_planes} should be {num_planes_needed}."
-            ))));
-        }
-
-        if blueprint.partition_buffering == PartitionBuffering::Double
-            && blueprint.tiling_scheme.tiles_per_stage_partition_along_n() < 2
-        {
-            return Err(MatmulSetupError::InvalidConfig(Box::new(
-                "Error: Tried doing double buffering with only one tile to compute.".to_string(),
-            )));
-        }
-
-        blueprint
-            .tile_matmul
-            .validate_blueprint(client, blueprint, dtypes, vector_sizes)
+        StageMatmulKind::PlanePartitioned.validate_blueprint(
+            client,
+            blueprint,
+            dtypes,
+            vector_sizes,
+        )
     }
 }

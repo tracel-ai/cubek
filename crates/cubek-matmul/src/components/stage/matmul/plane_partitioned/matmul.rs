@@ -4,21 +4,7 @@ use crate::{
     components::stage::matmul::partitioned_matmul::StagePartitioner, definition::MatmulTypes,
 };
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
-
-use crate::components::stage::matmul::partition::SharedPartitionMatmulConfig;
 use cubek_std::tile::Plane;
-
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-/// Configuration for the plane partitioned stage matmul
-pub struct PlanePartitionedStageConfig {
-    pub shared: SharedPartitionMatmulConfig,
-}
-
-impl PlanePartitionedStageConfig {
-    pub fn from_shared_partition_config(shared: SharedPartitionMatmulConfig) -> Self {
-        Self { shared }
-    }
-}
 
 #[allow(type_alias_bounds)]
 /// [PartitionedStageMatmul] partitioned across units

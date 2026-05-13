@@ -2,13 +2,12 @@ use crate::{
     components::{
         global::{self, PlaneFlowPartitionRule, WriteEventListener},
         stage::{
-            NoEvent, Stage, StageConfig, StageEventListener, StageMatmul,
+            NoEvent, Stage, StageEventListener, StageMatmul,
             matmul::{
-                partition::{Accumulators, PartitionMatmul, RhsTile, SharedPartitionMatmulConfig},
-                plane_partitioned::PlanePartitionedStageConfig,
+                partition::{Accumulators, PartitionMatmul, RhsTile},
                 scheduler::PartitionScheduler,
-                unit_partitioned::UnitPartitionedStageConfig,
             },
+            stage_matmul::StageMatmul as StageMatmulInstance,
         },
     },
     definition::{MatmulTypes, MatrixTypes, StageIdent},
@@ -16,10 +15,7 @@ use crate::{
 
 use core::marker::PhantomData;
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
-use cubek_std::{
-    stage::StageMemoryConfig,
-    tile::{Tile, TileScope},
-};
+use cubek_std::tile::{Tile, TileScope};
 
 #[cube]
 /// Defines how the stage is partitioned among compute primitives (e.g., units or planes).
@@ -34,82 +30,6 @@ pub trait StagePartitioner: Send + Sync + 'static {
         #[comptime] plane_dim: u32,
         #[comptime] num_partitions_col: u32,
     ) -> Coords2d;
-}
-
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub enum PartitionMatmulConfig {
-    Unit(UnitPartitionedStageConfig),
-    Plane(PlanePartitionedStageConfig),
-}
-
-impl PartitionMatmulConfig {
-    pub fn shared(&self) -> SharedPartitionMatmulConfig {
-        match self {
-            PartitionMatmulConfig::Unit(unit_partitioned_stage_config) => {
-                unit_partitioned_stage_config.shared
-            }
-            PartitionMatmulConfig::Plane(plane_partitioned_stage_config) => {
-                plane_partitioned_stage_config.shared
-            }
-        }
-    }
-}
-
-impl StageConfig for PartitionMatmulConfig {
-    fn elements_in_stage_m(&self) -> u32 {
-        self.shared().stage_size.m()
-            * self.shared().partition_size.m()
-            * self.shared().tile_matmul.elements_in_tile_m()
-    }
-
-    fn elements_in_stage_n(&self) -> u32 {
-        self.shared().stage_size.n()
-            * self.shared().partition_size.n()
-            * self.shared().tile_matmul.elements_in_tile_n()
-    }
-
-    fn elements_in_stage_k(&self) -> u32 {
-        self.shared().stage_size.k()
-            * self.shared().partition_size.k()
-            * self.shared().tile_matmul.elements_in_tile_k()
-    }
-
-    fn num_main_flow_planes(&self) -> u32 {
-        self.shared().plane_flow_config.main_flow_count()
-    }
-
-    fn plane_dim(&self) -> u32 {
-        self.shared().plane_dim
-    }
-
-    fn plane_flow_config(&self) -> global::PlaneFlowConfig {
-        self.shared().plane_flow_config
-    }
-
-    fn tiles_in_partition_mn(&self) -> u32 {
-        let partition_size = self.shared().partition_size;
-        partition_size.m() * partition_size.n()
-    }
-
-    fn elements_in_tile_k(&self) -> u32 {
-        self.shared().tile_matmul.elements_in_tile_k()
-    }
-
-    fn lhs_smem_config(&self) -> StageMemoryConfig {
-        self.shared().lhs_smem_config
-    }
-
-    fn rhs_smem_config(&self) -> StageMemoryConfig {
-        self.shared().rhs_smem_config
-    }
-
-    fn acc_smem_config(&self) -> StageMemoryConfig {
-        self.shared().acc_smem_config
-    }
-
-    fn out_smem_config(&self) -> StageMemoryConfig {
-        self.shared().out_smem_config
-    }
 }
 
 /// Stage Matmul implementation that splits its stage across partitions, one per compute primitive.
@@ -138,7 +58,7 @@ where
     StageOut: Stage<<<MP as MatmulTypes>::Acc as MatrixTypes>::Stage, ReadWrite>,
     SP: StagePartitioner,
 {
-    type Config = PartitionMatmulConfig;
+    type Config = StageMatmulInstance;
     type Scope = SP::Scope;
 
     type LhsStage = StageLhs;

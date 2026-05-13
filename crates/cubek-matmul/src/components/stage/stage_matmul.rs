@@ -59,11 +59,19 @@ pub enum StageMatmulKind {
 }
 
 impl StageMatmul {
-    /// Inner instance, shared between both variants.
+    /// Inner instance, shared between both variants. Returned by reference.
     pub fn data(&self) -> &PartitionedStageMatmul {
         match self {
             StageMatmul::UnitPartitioned(m) | StageMatmul::PlanePartitioned(m) => m,
         }
+    }
+
+    /// Inner instance by value (since `PartitionedStageMatmul: Copy`). Drop-in
+    /// replacement for the removed `SharedPartitionMatmulConfig`'s body access
+    /// path — code that used to read `shared_config.partition_size` now reads
+    /// `config.shared().partition_size` (with `config: StageMatmul`).
+    pub fn shared(&self) -> PartitionedStageMatmul {
+        *self.data()
     }
 
     pub fn kind(&self) -> StageMatmulKind {
