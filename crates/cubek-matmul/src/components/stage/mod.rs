@@ -1,7 +1,7 @@
 // ! Performs tiled matrix multiplication using shared memory.
 // ! Manages unit/plane coordination
 
-mod matmul;
+pub mod matmul;
 
 mod base;
 mod event_listener;

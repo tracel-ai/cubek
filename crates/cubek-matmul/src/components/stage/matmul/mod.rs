@@ -1,7 +1,7 @@
-mod partition;
-mod partitioned_matmul;
+pub mod partition;
+pub mod partitioned_matmul;
 mod plane_partitioned;
-mod scheduler;
+pub mod scheduler;
 mod unit_partitioned;
 
 pub use partitioned_matmul::StagePartitioner;

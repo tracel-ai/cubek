@@ -13,15 +13,17 @@ use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::{
     CubeDimResource, InvalidConfigError, MatrixLayout, PartitionSize, StageSize,
     stage::StageMemoryConfig,
-    tile::{PartitionBuffering, PartitionScheduler, PartitionSchedulerScheme, PartitionTile,
-           partition_get_at_mut},
+    tile::{PartitionBuffering, PartitionScheduler, PartitionSchedulerScheme},
 };
 
 use crate::components::global::{MatmulPlaneCounts, PlaneFlowConfig, WriteEvent, WriteEventListener};
-use crate::components::stage::{NumStages, Stage, StageConfig};
+use crate::components::stage::{
+    NumStages, Stage, StageConfig, matmul::partition::Accumulators,
+};
 use crate::components::tile::TileMatmul;
 use crate::definition::{
-    MatmulElems, MatmulSetupError, MatmulVectorSizes, StageIdent, TilingBlueprint,
+    MatmulElems, MatmulSetupError, MatmulTypes, MatrixTypes, MatmulVectorSizes, StageIdent,
+    TilingBlueprint,
 };
 
 /// Data carried by both [`StageMatmul`] variants. Today the unit- and
@@ -313,31 +315,25 @@ impl StageConfig for StageMatmul {
 
 #[cube]
 #[allow(clippy::too_many_arguments)]
-/// Write a `PartitionTile` of accumulators back to a read-write output stage.
-///
-/// `L` / `R` / `A` are the matmul-level lhs / rhs / acc register types; `ASS`
-/// is the acc register's vector size (used by the per-variant `copy_from`
-/// paths). The event listener `W` emits `Begin` / `TileStored(coords)` /
-/// `Finish` markers around the (m, n) sweep, matching today's
-/// `write_results` event order.
+/// Write per-partition accumulators back to a read-write output stage.
+/// Mirrors today's `PartitionedStageMatmul::write_results` body, exposed as
+/// a free function so callers can drop the `SMM: StageMatmul<MP>` trait
+/// bound. Emits `Begin` / `TileStored(coords)` / `Finish` markers around
+/// the (m, n) sweep.
 pub fn write_partition_to_stage<
-    L: Numeric,
-    R: Numeric,
-    A: Numeric,
-    ASS: Size,
+    MP: MatmulTypes,
     Sc: cubek_std::tile::TileScope,
-    OutStage: Stage<A, ReadWrite>,
+    OutStage: Stage<<MP::Acc as MatrixTypes>::Stage, ReadWrite>,
     W: WriteEventListener,
 >(
-    acc: &mut PartitionTile<A, Sc, ReadWrite>,
+    acc: &mut Accumulators<MP, Sc>,
     out_stage: &mut OutStage,
     listener: &mut W,
     scheduler: &PartitionScheduler,
-    #[comptime] partition_size_m: u32,
-    #[comptime] partition_size_n: u32,
+    #[comptime] config: PartitionedStageMatmul,
 ) {
-    let m_iterations = partition_size_m as usize;
-    let n_iterations = partition_size_n as usize;
+    let m_iterations = config.partition_size.m() as usize;
+    let n_iterations = config.partition_size.n() as usize;
 
     W::on_event(listener, WriteEvent::new_Begin());
 
@@ -349,12 +345,20 @@ pub fn write_partition_to_stage<
         for n_iter in 0..n_iterations {
             let n_load_iter = scheduler.map_n(n_iter as u32);
 
-            let tile_accumulator = partition_get_at_mut::<A, Sc>(acc, m_iter, n_iter, n_iterations);
+            let tile_accumulator =
+                Accumulators::<MP, Sc>::get_at_mut(acc, m_iter, n_iter, n_iterations);
 
             let tile_pos = (m_load_iter, n_load_iter);
             let mut tile = OutStage::tile::<Sc>(out_stage, tile_pos);
 
-            tile.copy_from::<A, ASS, L, R, A, ReadWrite>(tile_accumulator, StageIdent::Out);
+            tile.copy_from::<
+                <MP::Acc as MatrixTypes>::Register,
+                <MP::Acc as MatrixTypes>::RegisterSize,
+                <MP::Lhs as MatrixTypes>::Register,
+                <MP::Rhs as MatrixTypes>::Register,
+                <MP::Acc as MatrixTypes>::Register,
+                ReadWrite,
+            >(tile_accumulator, StageIdent::Out);
 
             W::on_event(listener, WriteEvent::new_TileStored(tile_pos));
         }

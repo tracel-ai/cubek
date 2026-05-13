@@ -31,6 +31,14 @@ pub trait StageMatmulFamily: Send + Sync + 'static {
     /// Compute primitive used by the underlying tile matmul
     type Scope: TileScope;
 
+    /// Stage partitioner used by this family — picks the per-primitive
+    /// coordinates that drive the PartitionScheduler. Exposed so callers
+    /// that have cut away from the `StageMatmul` trait (PR 6 onwards) can
+    /// reach the partitioner directly from the family.
+    type Partitioner: crate::components::stage::matmul::partitioned_matmul::StagePartitioner<
+            Scope = Self::Scope,
+        >;
+
     /// The specific TileMatmul implementation associated with this family.
     type Matmul<MP: MatmulTypes, TL: TilingLayout, TR: TilingLayout, TA: TilingLayout, TO: TilingLayout>: StageMatmul<
             MP,

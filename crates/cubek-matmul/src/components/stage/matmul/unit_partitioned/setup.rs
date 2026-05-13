@@ -2,7 +2,8 @@ use crate::components::{
     CubeDimResource,
     global::{PartitionedStage, PartitionedStageFamily, PlaneFlowConfig},
     stage::{
-        NumStages, StageFamily, StageMatmulFamily, TilingLayout, matmul::unit_partitioned::UnitMatmul,
+        NumStages, StageFamily, StageMatmulFamily, TilingLayout,
+        matmul::unit_partitioned::{UnitMatmul, UnitPartitioner},
         stage_matmul::{StageMatmul, StageMatmulKind},
     },
 };
@@ -25,6 +26,7 @@ impl<StageIn: StageFamily, StageAcc: StageFamily> StageMatmulFamily
     for UnitMatmulFamily<StageIn, StageAcc>
 {
     type Scope = Unit;
+    type Partitioner = UnitPartitioner;
     type LhsStage = StageIn;
     type RhsStage = StageIn;
     type AccStage = StageAcc;

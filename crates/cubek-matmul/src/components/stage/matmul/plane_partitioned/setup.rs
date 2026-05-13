@@ -1,4 +1,4 @@
-use crate::components::stage::matmul::plane_partitioned::PlaneMatmul;
+use crate::components::stage::matmul::plane_partitioned::{PlaneMatmul, PlanePartitioner};
 use crate::components::{
     CubeDimResource,
     global::{PartitionedStage, PartitionedStageFamily, PlaneFlowConfig},
@@ -30,6 +30,7 @@ impl<StageLhs: StageFamily, StageRhs: StageFamily, StageAcc: StageFamily> StageM
     for PlaneMatmulFamily<StageLhs, StageRhs, StageAcc>
 {
     type Scope = Plane;
+    type Partitioner = PlanePartitioner;
     type LhsStage = StageLhs;
     type RhsStage = StageRhs;
     type AccStage = StageAcc;

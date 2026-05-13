@@ -9,7 +9,7 @@ use crate::{
     components::{
         global::{
             GlobalReaderConfig, GlobalWriterConfig, GlobalWriterFamily, InputLoadFlow,
-            SharedGlobalMatmulConfig, WriteTiling,
+            SharedGlobalMatmulConfig,
             memory::{GlobalMemoryConfig, ViewDirection},
             multi_stage::EventLoadingMode,
             read::FullLoadingStrategy,
@@ -45,6 +45,7 @@ pub struct SimpleMatmulFamily<
 impl<SMM, RC, LL, RL, AL, GW> GlobalMatmulFamily<RC> for SimpleMatmulFamily<SMM, RC, LL, RL, AL, GW>
 where
     SMM: stage::StageMatmulFamily<
+            Config = crate::components::stage::stage_matmul::StageMatmul,
             LhsStage = LL::Stage,
             RhsStage = RL::Stage,
             AccStage = Option<AL::Stage>,
@@ -58,14 +59,14 @@ where
 {
     type Matmul<MP: MatmulTypes> = SimpleMatmul<
         MP,
-        SMM::Matmul<MP, LL::TilingLayout, RL::TilingLayout, AL::TilingLayout, WriteTiling>,
+        SMM::Partitioner,
         RC,
         LL,
         RL,
         AL,
         GW::Writer<MP::Acc>,
     >;
-    type Config = SharedGlobalMatmulConfig<SMM::Config>;
+    type Config = SharedGlobalMatmulConfig<crate::components::stage::stage_matmul::StageMatmul>;
 
     fn expand_config(
         device_props: &DeviceProperties,
