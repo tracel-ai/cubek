@@ -13,12 +13,15 @@ use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::{
     CubeDimResource, InvalidConfigError, MatrixLayout, PartitionSize, StageSize,
     stage::StageMemoryConfig,
-    tile::{PartitionBuffering, PartitionSchedulerScheme, TileMatmul},
+    tile::{PartitionBuffering, PartitionScheduler, PartitionSchedulerScheme, PartitionTile,
+           TileMatmul, partition_get_at_mut},
 };
 
-use crate::components::global::{MatmulPlaneCounts, PlaneFlowConfig};
-use crate::components::stage::{NumStages, StageConfig};
-use crate::definition::{MatmulElems, MatmulSetupError, MatmulVectorSizes, TilingBlueprint};
+use crate::components::global::{MatmulPlaneCounts, PlaneFlowConfig, WriteEvent, WriteEventListener};
+use crate::components::stage::{NumStages, Stage, StageConfig};
+use crate::definition::{
+    MatmulElems, MatmulSetupError, MatmulVectorSizes, StageIdent, TilingBlueprint,
+};
 
 /// Data carried by both [`StageMatmul`] variants. Today the unit- and
 /// plane-partitioned flows hold the same fields (only the partition flavor —
@@ -298,4 +301,63 @@ impl StageConfig for StageMatmul {
     fn out_smem_config(&self) -> StageMemoryConfig {
         self.data().out_smem_config
     }
+}
+
+// =====================================================================
+// Output-stage write helper. Stays in cubek-matmul because the
+// `WriteEventListener` + `Stage<E, ReadWrite>` types it depends on are
+// cubek-matmul concepts. Mirrors the body of today's
+// `PartitionedStageMatmul::write_results`.
+// =====================================================================
+
+#[cube]
+#[allow(clippy::too_many_arguments)]
+/// Write a `PartitionTile` of accumulators back to a read-write output stage.
+///
+/// `L` / `R` / `A` are the matmul-level lhs / rhs / acc register types; `ASS`
+/// is the acc register's vector size (used by the per-variant `copy_from`
+/// paths). The event listener `W` emits `Begin` / `TileStored(coords)` /
+/// `Finish` markers around the (m, n) sweep, matching today's
+/// `write_results` event order.
+pub fn write_partition_to_stage<
+    L: Numeric,
+    R: Numeric,
+    A: Numeric,
+    ASS: Size,
+    Sc: cubek_std::tile::TileScope,
+    OutStage: Stage<A, ReadWrite>,
+    W: WriteEventListener,
+>(
+    acc: &mut PartitionTile<A, Sc, ReadWrite>,
+    out_stage: &mut OutStage,
+    listener: &mut W,
+    scheduler: &PartitionScheduler,
+    #[comptime] partition_size_m: u32,
+    #[comptime] partition_size_n: u32,
+) {
+    let m_iterations = partition_size_m as usize;
+    let n_iterations = partition_size_n as usize;
+
+    W::on_event(listener, WriteEvent::new_Begin());
+
+    #[unroll]
+    for m_iter in 0..m_iterations {
+        let m_load_iter = scheduler.map_m(m_iter as u32);
+
+        #[unroll]
+        for n_iter in 0..n_iterations {
+            let n_load_iter = scheduler.map_n(n_iter as u32);
+
+            let tile_accumulator = partition_get_at_mut::<A, Sc>(acc, m_iter, n_iter, n_iterations);
+
+            let tile_pos = (m_load_iter, n_load_iter);
+            let mut tile = OutStage::tile::<Sc>(out_stage, tile_pos);
+
+            tile.copy_from::<A, ASS, L, R, A, ReadWrite>(tile_accumulator, StageIdent::Out);
+
+            W::on_event(listener, WriteEvent::new_TileStored(tile_pos));
+        }
+    }
+
+    W::on_event(listener, WriteEvent::new_Finish());
 }
