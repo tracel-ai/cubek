@@ -11,7 +11,7 @@ use cubecl::{
 use cubek_test_utils::{HostData, HostDataType, StrideSpec, TestInput, assert_equals_approx};
 
 #[test]
-fn metadata_to_tiled_should_return_physical_layout() {
+fn read_rowmajor_tensor_as_tiled_layout_v2() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
     let matrix_len = 4;
@@ -42,7 +42,7 @@ fn metadata_to_tiled_should_return_physical_layout() {
     let cube_dim = CubeDim::new_single();
     let vector_size = 1;
 
-    launch_read_tensor_according_to_blueprint::launch::<TestRuntime>(
+    launch_read_tensor_as_tiled::launch::<TestRuntime>(
         &client,
         cube_count,
         cube_dim,
@@ -67,8 +67,6 @@ fn metadata_to_tiled_should_return_physical_layout() {
     let (_, expected_values) = TestInput::builder(client, shape)
         .custom(expected_values)
         .generate_with_f32_host_data();
-
-    // panic!("Array: \n{}", output.pretty_print());
 
     assert_equals_approx(&output, &expected_values, 1e-6)
         .as_test_outcome()
@@ -274,7 +272,7 @@ fn launch_read_rowmajor_tensor_as_tiled<N: Numeric, S: Size>(
 }
 
 #[cube(launch)]
-fn launch_read_tensor_according_to_blueprint<N: Numeric, S: Size>(
+fn launch_read_tensor_as_tiled<N: Numeric, S: Size>(
     input: &Tensor<Vector<N, S>>,
     output: &mut Tensor<Vector<N, S>>,
     #[comptime] blueprint: MetadataBlueprint,
