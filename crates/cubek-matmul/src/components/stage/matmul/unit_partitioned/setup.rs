@@ -3,7 +3,7 @@ use crate::components::{
     global::{PartitionedStage, PartitionedStageFamily, PlaneFlowConfig},
     stage::{
         NumStages, StageFamily, StageMatmulFamily, TilingLayout,
-        matmul::unit_partitioned::{UnitMatmul, UnitPartitioner},
+        matmul::unit_partitioned::UnitPartitioner,
         stage_matmul::{StageMatmul, StageMatmulKind},
     },
 };
@@ -31,20 +31,6 @@ impl<StageIn: StageFamily, StageAcc: StageFamily> StageMatmulFamily
     type RhsStage = StageIn;
     type AccStage = StageAcc;
     type OutStage = PartitionedStageFamily;
-
-    type Matmul<
-        MP: MatmulTypes,
-        TL: TilingLayout,
-        TR: TilingLayout,
-        TA: TilingLayout,
-        TO: TilingLayout,
-    > = UnitMatmul<
-        MP,
-        StageIn::Stage<STy<Lhs<MP>>, SSz<Lhs<MP>>, TL>,
-        StageIn::Stage<STy<Rhs<MP>>, SSz<Rhs<MP>>, TR>,
-        StageAcc::Stage<STy<Acc<MP>>, SSz<Acc<MP>>, TA>,
-        PartitionedStage<STy<Acc<MP>>, SSz<Acc<MP>>>,
-    >;
 
     type Config = StageMatmul;
 

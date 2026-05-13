@@ -11,20 +11,13 @@ use cubek_std::{
 use crate::{
     components::{
         CubeDimResource,
-        global::{PlaneFlowConfig, WriteEventListener},
-        stage::{NumStages, PartitionScheduler},
+        global::PlaneFlowConfig,
+        stage::NumStages,
     },
-    definition::{
-        Acc, Lhs, MatmulElems, MatmulSetupError, MatmulTypes, MatmulVectorSizes, Rhs,
-        TilingBlueprint,
-    },
+    definition::{MatmulElems, MatmulSetupError, MatmulVectorSizes, TilingBlueprint},
 };
-use std::{fmt::Debug, hash::Hash};
 
-use super::{StageEventListener, TilingLayout};
-
-type Ty<T> = crate::definition::Stage<T>;
-type Sz<T> = crate::definition::StageSize<T>;
+use super::TilingLayout;
 
 /// A family of [StageMatmul] implementations that operate with any [precision](MatmulPrecision).
 pub trait StageMatmulFamily: Send + Sync + 'static {
@@ -37,17 +30,6 @@ pub trait StageMatmulFamily: Send + Sync + 'static {
     /// reach the partitioner directly from the family.
     type Partitioner: crate::components::stage::matmul::partitioned_matmul::StagePartitioner<
             Scope = Self::Scope,
-        >;
-
-    /// The specific TileMatmul implementation associated with this family.
-    type Matmul<MP: MatmulTypes, TL: TilingLayout, TR: TilingLayout, TA: TilingLayout, TO: TilingLayout>: StageMatmul<
-            MP,
-            Config = Self::Config,
-            Scope = Self::Scope,
-            LhsStage = <Self::LhsStage as StageFamily>::Stage<Ty<Lhs<MP>>, Sz<Lhs<MP>>, TL>,
-            RhsStage = <Self::RhsStage as StageFamily>::Stage<Ty<Rhs<MP>>, Sz<Rhs<MP>>, TR>,
-            AccStage = <Self::AccStage as StageFamily>::Stage<Ty<Acc<MP>>, Sz<Acc<MP>>, TA>,
-            OutStage = <Self::OutStage as StageFamily<ReadWrite>>::Stage<Ty<Acc<MP>>, Sz<Acc<MP>>, TO>,
         >;
 
     /// Stage family for Lhs
@@ -86,98 +68,6 @@ pub trait StageMatmulFamily: Send + Sync + 'static {
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError>;
-}
-
-#[cube]
-/// Provides matrix multiplication operations at the stage level.
-///
-/// At the stage level,
-///  - Inputs are assumed to be already staged into a shared memory.
-///  - All main flow planes within a Cube are used to solve the problem
-///  - Dimensions M, N and K are fixed to an integer, and the
-///    matrix multiplication works only for size (M, K) · (K, N) = (M, N).
-///    These integers are multiples of the underlying Tile matmul,
-///    corresponding to the number of tiles in each dimension.
-///
-/// Assumptions:
-///  - Data given as inputs by stage readers must always be valid. If the actual matrix multiplication
-///    should be done on smaller sizes than M, N and K, padding with zeros must be done beforehand.
-///  - Enough planes/units are launched to perform the whole computation
-pub trait StageMatmul<MP: MatmulTypes>: 'static + Send + Sync {
-    /// The configuration type associated with this Matmul.
-    type Config;
-
-    /// Compute primitive used by the underlying tile matmul.
-    type Scope: TileScope;
-
-    /// Contains the matrix multiplication output, that can be shared across the different planes of the cube.
-    /// The same Accumulator will be added to across multiple executions of the Stage Matmul.
-    type Accumulators: CubeType;
-
-    /// Stage for Lhs
-    type LhsStage: CubeType;
-    /// Stage for Rhs
-    type RhsStage: CubeType;
-    /// Stage for Accumulator
-    type AccStage: CubeType;
-    /// Stage for Out
-    type OutStage: CubeType;
-
-    /// Lhs input of the underlying Tile Matmul
-    type LhsTile: CubeType;
-    /// Rhs input of the underlying Tile Matmul
-    type RhsTile: CubeType;
-
-    /// Executes the matrix multiplication of Lhs and Rhs, adding the result to the accumulator
-    ///
-    /// Equivalent to execute_with_listener with SEL:=NoEvent
-    fn execute(
-        lhs: &Self::LhsStage,
-        rhs: &Self::RhsStage,
-        instruction_lhs: &mut Self::LhsTile,
-        instruction_rhs: &mut Self::RhsTile,
-        acc: &mut Self::Accumulators,
-        #[comptime] config: Self::Config,
-        partition_scheduler: &PartitionScheduler,
-    );
-
-    /// Executes the matrix multiplication of Lhs and Rhs, with the addition of injected
-    /// [event listener](StageEventListener).
-    fn execute_with_listener<SEL: StageEventListener>(
-        lhs: &Self::LhsStage,
-        rhs: &Self::RhsStage,
-        instruction_lhs: &mut Self::LhsTile,
-        instruction_rhs: &mut Self::RhsTile,
-        acc: &mut Self::Accumulators,
-        #[comptime] config: Self::Config,
-        listener: SEL,
-        partition_scheduler: &PartitionScheduler,
-    );
-
-    /// Inits inputs of the underlying Tile Matmul
-    fn init_tile_inputs(#[comptime] config: Self::Config) -> (Self::LhsTile, Self::RhsTile);
-
-    /// Create an instance of the accumulators, without data
-    fn init_accumulators(#[comptime] config: Self::Config) -> Self::Accumulators;
-
-    /// Load all accumulators in the stage from data
-    fn load_accumulators(
-        reader: &Self::AccStage,
-        acc: &mut Self::Accumulators,
-        partition_scheduler: &PartitionScheduler,
-        #[comptime] config: Self::Config,
-    );
-
-    /// Reads the result of the accumulator and hands it to the stage writer
-    fn write_results<W: WriteEventListener>(
-        acc: &mut Self::Accumulators,
-        stage: &mut Self::OutStage,
-        listener: &mut W,
-        partition_scheduler: &PartitionScheduler,
-        #[comptime] stage_config: Self::Config,
-    );
-
-    fn init_scheduler(#[comptime] config: Self::Config) -> PartitionScheduler;
 }
 
 pub use cubek_std::tile::PartitionBuffering;

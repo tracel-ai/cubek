@@ -1,25 +1,20 @@
-use crate::{
-    components::{
-        global::{self, PlaneFlowPartitionRule, WriteEventListener},
-        stage::{
-            NoEvent, Stage, StageEventListener, StageMatmul,
-            matmul::{
-                partition::{Accumulators, PartitionMatmul, RhsTile},
-                scheduler::PartitionScheduler,
-            },
-            stage_matmul::StageMatmul as StageMatmulInstance,
-        },
-    },
-    definition::{MatmulTypes, MatrixTypes, StageIdent},
-};
+//! The `StagePartitioner` trait — picks per-primitive partition coordinates
+//! for the partition matmul flow — and its two impls (`PlanePartitioner`,
+//! `UnitPartitioner`). These are the remaining cubek-matmul concepts that
+//! drive the partition scheduler from the global matmul layer.
+//!
+//! The old `PartitionedStageMatmul<MP, …>` impl-struct that wrapped the
+//! `StageMatmul` trait around these partitioners has been deleted along with
+//! the trait — the global matmul flows now use `PartitionMatmul::<…>` direct
+//! calls + `write_partition_to_stage` instead.
 
-use core::marker::PhantomData;
+use crate::components::global::{PlaneFlowPartition, PlaneFlowPartitionRule};
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
-use cubek_std::tile::{Tile, TileScope};
+use cubek_std::tile::{Plane, TileScope, Unit};
 
 #[cube]
-/// Defines how the stage is partitioned among compute primitives (e.g., units or planes).
-/// Controls global writeback and and compute indexing.
+/// Defines how the stage is partitioned among compute primitives (e.g., units
+/// or planes). Controls global writeback and compute indexing.
 pub trait StagePartitioner: Send + Sync + 'static {
     /// Compute primitive that runs each partition.
     type Scope: TileScope;
@@ -32,174 +27,46 @@ pub trait StagePartitioner: Send + Sync + 'static {
     ) -> Coords2d;
 }
 
-/// Stage Matmul implementation that splits its stage across partitions, one per compute primitive.
-///
-/// Its results are written in a temporary shared memory to correct the layout before storing to global memory.
-pub struct PartitionedStageMatmul<
-    MP: MatmulTypes,
-    StageLhs: Stage<<<MP as MatmulTypes>::Lhs as MatrixTypes>::Stage, ReadOnly>,
-    StageRhs: Stage<<<MP as MatmulTypes>::Rhs as MatrixTypes>::Stage, ReadOnly>,
-    StageAcc: Stage<<<MP as MatmulTypes>::Acc as MatrixTypes>::Stage, ReadOnly>,
-    StageOut: Stage<<<MP as MatmulTypes>::Acc as MatrixTypes>::Stage, ReadWrite>,
-    SP: StagePartitioner,
-> {
-    #[allow(clippy::type_complexity)]
-    _phantom: PhantomData<(MP, StageLhs, StageRhs, StageAcc, StageOut, SP)>,
-}
+/// Partitions across planes — `Scope = Plane`.
+pub struct PlanePartitioner {}
 
 #[cube]
-impl<MP, StageLhs, StageRhs, StageAcc, StageOut, SP> StageMatmul<MP>
-    for PartitionedStageMatmul<MP, StageLhs, StageRhs, StageAcc, StageOut, SP>
-where
-    MP: MatmulTypes,
-    StageLhs: Stage<<<MP as MatmulTypes>::Lhs as MatrixTypes>::Stage, ReadOnly>,
-    StageRhs: Stage<<<MP as MatmulTypes>::Rhs as MatrixTypes>::Stage, ReadOnly>,
-    StageAcc: Stage<<<MP as MatmulTypes>::Acc as MatrixTypes>::Stage, ReadOnly>,
-    StageOut: Stage<<<MP as MatmulTypes>::Acc as MatrixTypes>::Stage, ReadWrite>,
-    SP: StagePartitioner,
-{
-    type Config = StageMatmulInstance;
-    type Scope = SP::Scope;
+impl StagePartitioner for PlanePartitioner {
+    type Scope = Plane;
 
-    type LhsStage = StageLhs;
-    type RhsStage = StageRhs;
-    type AccStage = StageAcc;
-    type OutStage = StageOut;
+    fn coordinates(
+        #[comptime] role_rule_config: PlaneFlowPartitionRule,
+        #[comptime] _plane_dim: u32,
+        #[comptime] num_partitions_col: u32,
+    ) -> Coords2d {
+        let absolute_index = PlaneFlowPartition::new(role_rule_config).compute_index();
 
-    type Accumulators = Accumulators<MP, SP::Scope>;
-    type LhsTile = Sequence<Tile<<MP::Lhs as MatrixTypes>::Register, SP::Scope, ReadWrite>>;
-    type RhsTile = RhsTile<Tile<<MP::Rhs as MatrixTypes>::Register, SP::Scope, ReadWrite>>;
-
-    fn execute(
-        lhs_stage: &StageLhs,
-        rhs_stage: &StageRhs,
-        lhs_fragment: &mut Self::LhsTile,
-        rhs_fragments: &mut Self::RhsTile,
-        acc: &mut Self::Accumulators,
-        #[comptime] config: Self::Config,
-        partition_scheduler: &PartitionScheduler,
-    ) {
-        Self::execute_with_listener::<NoEvent>(
-            lhs_stage,
-            rhs_stage,
-            lhs_fragment,
-            rhs_fragments,
-            acc,
-            config,
-            NoEvent::new(),
-            partition_scheduler,
+        (
+            absolute_index / num_partitions_col,
+            absolute_index % num_partitions_col,
         )
     }
+}
 
-    fn execute_with_listener<SEL: StageEventListener>(
-        lhs_stage: &StageLhs,
-        rhs_stage: &StageRhs,
-        lhs_fragment: &mut Self::LhsTile,
-        rhs_fragments: &mut Self::RhsTile,
-        acc: &mut Self::Accumulators,
-        #[comptime] config: Self::Config,
-        listener: SEL,
-        partition_scheduler: &PartitionScheduler,
-    ) {
-        PartitionMatmul::<MP, StageLhs, StageRhs, StageAcc, SP::Scope>::execute_with_listener::<SEL>(
-            lhs_stage,
-            rhs_stage,
-            lhs_fragment,
-            rhs_fragments,
-            acc,
-            config.shared(),
-            listener,
-            partition_scheduler,
-        );
-    }
+/// Partitions across units — `Scope = Unit`.
+pub struct UnitPartitioner {}
 
-    fn init_tile_inputs(#[comptime] config: Self::Config) -> (Self::LhsTile, Self::RhsTile) {
-        PartitionMatmul::<MP, StageLhs, StageRhs, StageAcc, SP::Scope>::init_tile_inputs(
-            config.shared(),
-        )
-    }
+#[cube]
+impl StagePartitioner for UnitPartitioner {
+    type Scope = Unit;
 
-    fn init_accumulators(#[comptime] config: Self::Config) -> Self::Accumulators {
-        PartitionMatmul::<MP, StageLhs, StageRhs, StageAcc, SP::Scope>::init_accumulator(
-            config.shared(),
-        )
-    }
+    fn coordinates(
+        #[comptime] role_rule_config: PlaneFlowPartitionRule,
+        #[comptime] plane_dim: u32,
+        #[comptime] num_partitions_col: u32,
+    ) -> Coords2d {
+        let plane_id = PlaneFlowPartition::new(role_rule_config).compute_index();
 
-    fn load_accumulators(
-        stage: &Self::AccStage,
-        acc: &mut Self::Accumulators,
-        partition_scheduler: &PartitionScheduler,
-        #[comptime] config: Self::Config,
-    ) {
-        PartitionMatmul::<MP, StageLhs, StageRhs, StageAcc, SP::Scope>::load_accumulator(
-            stage,
-            acc,
-            partition_scheduler,
-            config.shared(),
-        );
-    }
+        let absolute_index = UNIT_POS_X + plane_dim * plane_id;
 
-    fn write_results<W: WriteEventListener>(
-        acc: &mut Self::Accumulators,
-        stage: &mut Self::OutStage,
-        listener: &mut W,
-        partition_scheduler: &PartitionScheduler,
-        #[comptime] stage_config: Self::Config,
-    ) {
-        let m_iterations = stage_config.shared().partition_size.m() as usize;
-        let n_iterations = stage_config.shared().partition_size.n() as usize;
-
-        W::on_event(listener, global::WriteEvent::new_Begin());
-
-        // Iterate over each tile in the partition
-        #[unroll]
-        for m_iter in 0..m_iterations {
-            let m_load_iter = partition_scheduler.map_m(m_iter as u32);
-
-            #[unroll]
-            for n_iter in 0..n_iterations {
-                let n_load_iter = partition_scheduler.map_n(n_iter as u32);
-
-                let tile_accumulator = Accumulators::<MP, SP::Scope>::get_at_mut(
-                    acc,
-                    m_iter,
-                    n_iter,
-                    stage_config.shared().partition_size.n() as usize,
-                );
-
-                let tile_pos = (m_load_iter, n_load_iter);
-                let mut tile = Self::OutStage::tile::<SP::Scope>(stage, tile_pos);
-
-                // Write the results for one tile. To save shared memory space, it reuses the same spot for
-                // all tiles in the partition
-                tile.copy_from::<
-                    <MP::Acc as MatrixTypes>::Register,
-                    <MP::Acc as MatrixTypes>::RegisterSize,
-                    <MP::Lhs as MatrixTypes>::Register,
-                    <MP::Rhs as MatrixTypes>::Register,
-                    <MP::Acc as MatrixTypes>::Register,
-                    ReadWrite
-                >(tile_accumulator, StageIdent::Out);
-
-                W::on_event(listener, global::WriteEvent::new_TileStored(tile_pos));
-            }
-        }
-
-        W::on_event(listener, global::WriteEvent::new_Finish());
-    }
-
-    fn init_scheduler(#[comptime] config: Self::Config) -> PartitionScheduler {
-        let (partition_row, partition_col) = SP::coordinates(
-            config.shared().plane_flow_config.partition_rule,
-            config.shared().plane_dim,
-            config.shared().stage_size.n(),
-        );
-
-        PartitionScheduler::new(
-            partition_row,
-            partition_col,
-            config.shared().partition_size,
-            config.shared().partition_schedule_scheme,
+        (
+            absolute_index / num_partitions_col,
+            absolute_index % num_partitions_col,
         )
     }
 }
