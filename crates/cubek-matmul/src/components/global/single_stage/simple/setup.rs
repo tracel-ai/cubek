@@ -15,7 +15,7 @@ use crate::{
             read::FullLoadingStrategy,
             single_stage::simple::matmul::SimpleMatmul,
         },
-        stage::StageConfig,
+
     },
     definition::TilingBlueprint,
 };
@@ -66,7 +66,7 @@ where
         AL,
         GW::Writer<MP::Acc>,
     >;
-    type Config = SharedGlobalMatmulConfig<crate::components::stage::stage_matmul::StageMatmul>;
+    type Config = SharedGlobalMatmulConfig;
 
     fn expand_config(
         device_props: &DeviceProperties,

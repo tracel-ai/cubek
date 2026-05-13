@@ -6,7 +6,6 @@ use crate::{
             read::{FullLoaderStage, FullLoadingStrategy, FullStageGlobalReader, SyncStrategy},
         },
         stage::{
-            StageConfig,
             matmul::{
                 partition::{Accumulators, PartitionMatmul},
                 partitioned_matmul::StagePartitioner,
@@ -59,7 +58,7 @@ where
     AL: FullLoadingStrategy<RC, TileKind = Strided>,
     GW: GlobalWriter<MP::Acc>,
 {
-    type Config = SharedGlobalMatmulConfig<crate::components::stage::stage_matmul::StageMatmul>;
+    type Config = SharedGlobalMatmulConfig;
     type LhsGlobalReader = FullStageGlobalReader<
         <MP::Lhs as MatrixTypes>::Global,
         <MP::Lhs as MatrixTypes>::GlobalSize,
@@ -153,7 +152,7 @@ where
         let acc_stage = acc_reader.map(|mut reader| {
             let mut acc_barrier = AL::SyncStrategy::create_barrier();
             reader.load_stage(&mut acc_barrier, config.acc_reader_config);
-            AL::SyncStrategy::sync::<MP, _>(&mut acc_barrier, config);
+            AL::SyncStrategy::sync::<MP>(&mut acc_barrier, config);
             reader.stage()
         });
         PartitionMatmul::<
@@ -173,7 +172,7 @@ where
             lhs_reader.load_stage(&mut barrier, config.lhs_reader_config);
             rhs_reader.load_stage(&mut barrier, config.rhs_reader_config);
 
-            LL::SyncStrategy::sync::<MP, _>(&mut barrier, config);
+            LL::SyncStrategy::sync::<MP>(&mut barrier, config);
 
             PartitionMatmul::<
                 MP,

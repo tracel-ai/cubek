@@ -22,7 +22,7 @@ use crate::{
 };
 use crate::{
     components::global::{Specializer, read::sync::Synchronous},
-    components::stage::StageConfig as _,
+
 };
 use cubecl::{
     prelude::*,
@@ -69,7 +69,7 @@ where
     AL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = Synchronous>,
     GW: GlobalWriter<MP::Acc>,
 {
-    type Config = SharedGlobalMatmulConfig<crate::components::stage::stage_matmul::StageMatmul>;
+    type Config = SharedGlobalMatmulConfig;
     type LhsGlobalReader = FullStageGlobalReader<
         <MP::Lhs as MatrixTypes>::Global,
         <MP::Lhs as MatrixTypes>::GlobalSize,

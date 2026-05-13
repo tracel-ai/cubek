@@ -1,7 +1,7 @@
 use crate::{
     components::{
         global::{GlobalReaderConfig, SharedGlobalMatmulConfig, memory::GlobalIterator},
-        stage::{StageConfig, StageFamily, TilingLayout},
+        stage::{StageFamily, TilingLayout},
     },
     definition::{MatmulElems, MatmulProblem, MatmulTypes, StageIdent},
 };
@@ -52,9 +52,9 @@ pub trait LoadingJob<
 pub trait SyncStrategy {
     type Barrier: CubeType + Clone;
     fn create_barrier() -> Self::Barrier;
-    fn sync<MP: MatmulTypes, S: StageConfig>(
+    fn sync<MP: MatmulTypes>(
         barrier: &mut Self::Barrier,
-        #[comptime] config: SharedGlobalMatmulConfig<S>,
+        #[comptime] config: SharedGlobalMatmulConfig,
     );
 }
 

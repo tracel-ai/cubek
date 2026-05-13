@@ -15,7 +15,7 @@ use crate::components::{
         SharedGlobalMatmulConfig,
         read::{PartialLoadingStrategy, tiled::TiledLayout},
     },
-    stage::StageConfig,
+
 };
 use crate::{
     components::global::read::validate_async_copy_with_problem,
@@ -285,22 +285,22 @@ pub(crate) fn copy_vector<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: Tili
 impl<TO: TilingOrder, RC: RuntimeConfig> AsyncPartialLoadingStrategy<RC>
     for AsyncPartialCyclicLoading<TO>
 {
-    fn arrival_count<S: StageConfig>(#[comptime] config: SharedGlobalMatmulConfig<S>) -> u32 {
+    fn arrival_count(#[comptime] config: SharedGlobalMatmulConfig) -> u32 {
         let total_load_units = config.plane_flow_config().counts.load_only * config.plane_dim();
         total_load_units.runtime()
     }
 
     fn barrier_post_init() {}
 
-    fn arrive<MP: MatmulTypes, S: StageConfig>(
+    fn arrive<MP: MatmulTypes>(
         barrier: &mut Barrier,
-        #[comptime] _config: SharedGlobalMatmulConfig<S>,
+        #[comptime] _config: SharedGlobalMatmulConfig,
     ) {
         barrier.commit_copy_async();
         barrier.arrive();
     }
 
-    fn is_elected<S: StageConfig>(#[comptime] config: SharedGlobalMatmulConfig<S>) -> bool {
+    fn is_elected(#[comptime] config: SharedGlobalMatmulConfig) -> bool {
         let role_rule = PlaneFlowPartition::new(config.plane_flow_config().partition_rule);
         role_rule.is_load_plane()
     }

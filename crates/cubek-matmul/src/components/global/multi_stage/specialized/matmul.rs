@@ -11,7 +11,7 @@ use crate::{
     components::global::{GlobalMatmul, SharedGlobalMatmulConfig},
     components::global::{PlaneFlowPartition, read::AsyncPartialLoadingStrategy},
     components::stage::{
-        StageConfig as _,
+
         matmul::{
             partition::{Accumulators, PartitionMatmul},
             partitioned_matmul::StagePartitioner,
@@ -67,7 +67,7 @@ where
     AL: FullLoadingStrategy<RC>,
     GW: GlobalWriter<MP::Acc>,
 {
-    type Config = SharedGlobalMatmulConfig<crate::components::stage::stage_matmul::StageMatmul>;
+    type Config = SharedGlobalMatmulConfig;
 
     type LhsGlobalReader = PartialStageGlobalReader<
         <MP::Lhs as MatrixTypes>::Global,
@@ -201,7 +201,7 @@ where
                     StageBuffer::A,
                     config.rhs_reader_config,
                 );
-                L::arrive::<MP, _>(&mut barrier_full_a, config);
+                L::arrive::<MP>(&mut barrier_full_a, config);
 
                 barrier_empty_b.wait_parity(phase ^ 1);
                 lhs_reader.load_stage(
@@ -214,7 +214,7 @@ where
                     StageBuffer::B,
                     config.rhs_reader_config,
                 );
-                L::arrive::<MP, _>(&mut barrier_full_b, config);
+                L::arrive::<MP>(&mut barrier_full_b, config);
 
                 lhs_reader.advance_view();
                 rhs_reader.advance_view();

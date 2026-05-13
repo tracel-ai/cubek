@@ -19,7 +19,7 @@ use crate::{
     components::{global::memory::GlobalIterator, stage::TilingValidation},
     components::{global::read::async_copy::async_copy_from, stage::StridedStageMemory},
     components::{global::read::stage::FullStageLayout, stage::StridedStageFamily},
-    components::{global::read::validate_swizzle_atom_size, stage::StageConfig},
+    components::global::read::validate_swizzle_atom_size,
 };
 use cubecl::{
     prelude::*,
@@ -200,22 +200,22 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
 
 #[cube]
 impl<RC: RuntimeConfig> AsyncPartialLoadingStrategy<RC> for AsyncPartialStridedLoading {
-    fn arrival_count<S: StageConfig>(#[comptime] config: SharedGlobalMatmulConfig<S>) -> u32 {
+    fn arrival_count(#[comptime] config: SharedGlobalMatmulConfig) -> u32 {
         let total_load_units = config.plane_flow_config().counts.load_only * config.plane_dim();
         total_load_units.runtime()
     }
 
     fn barrier_post_init() {}
 
-    fn arrive<MP: MatmulTypes, S: StageConfig>(
+    fn arrive<MP: MatmulTypes>(
         barrier: &mut Barrier,
-        #[comptime] _config: SharedGlobalMatmulConfig<S>,
+        #[comptime] _config: SharedGlobalMatmulConfig,
     ) {
         barrier.commit_copy_async();
         barrier.arrive();
     }
 
-    fn is_elected<S: StageConfig>(#[comptime] config: SharedGlobalMatmulConfig<S>) -> bool {
+    fn is_elected(#[comptime] config: SharedGlobalMatmulConfig) -> bool {
         let role_rule = PlaneFlowPartition::new(config.plane_flow_config().partition_rule);
         role_rule.is_load_plane()
     }

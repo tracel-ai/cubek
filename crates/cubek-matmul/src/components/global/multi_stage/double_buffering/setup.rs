@@ -14,7 +14,7 @@ use crate::{
 };
 use crate::{
     components::global::{read::PartialLoadingStrategy},
-    components::stage::StageConfig,
+
     components::{CubeDimResource, global::read::FullLoadingStrategy},
     components::{global::GlobalMatmulFamily, stage},
     components::{global::MaxGlobalReaderPlanes, stage::NumStages},
@@ -65,7 +65,7 @@ where
         AL,
         GW::Writer<MP::Acc>,
     >;
-    type Config = SharedGlobalMatmulConfig<crate::components::stage::stage_matmul::StageMatmul>;
+    type Config = SharedGlobalMatmulConfig;
 
     fn expand_config(
         device_props: &DeviceProperties,

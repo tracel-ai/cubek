@@ -5,7 +5,7 @@ use cubecl::{
 
 use crate::components::{
     global::{GlobalConfig, SharedGlobalMatmulConfig, read::SyncStrategy},
-    stage::StageConfig,
+
 };
 use crate::definition::{LhsS, MatmulTypes, RhsS};
 
@@ -22,9 +22,9 @@ impl SyncStrategy for AsyncTma {
         bar
     }
 
-    fn sync<MP: MatmulTypes, S: StageConfig>(
+    fn sync<MP: MatmulTypes>(
         barrier: &mut Self::Barrier,
-        #[comptime] config: SharedGlobalMatmulConfig<S>,
+        #[comptime] config: SharedGlobalMatmulConfig,
     ) {
         let lhs_elem_size = LhsS::<MP>::type_size().comptime();
         let rhs_elem_size = RhsS::<MP>::type_size().comptime();

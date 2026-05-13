@@ -3,7 +3,7 @@ use cubecl::prelude::*;
 use crate::{
     components::global::read::{StageBuffer, SyncStrategy},
     components::global::{GlobalConfig, GlobalReaderConfig, LoadingSides},
-    components::stage::{StageConfig, StageEvent, StageEventListener},
+    components::stage::{StageEvent, StageEventListener},
 };
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]

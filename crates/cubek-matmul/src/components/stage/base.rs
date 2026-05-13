@@ -60,7 +60,7 @@ pub trait StageMatmulFamily: Send + Sync + 'static {
     type OutStage: StageFamily<ReadWrite>;
 
     /// The configuration type associated with this matmul family.
-    type Config: StageConfig;
+    type Config;
 
     /// Constructs the configuration based on the matmul problem, selection, vector sizes,
     /// number of stages, maximum of tasks per plane, and whether the algorithm is an ordered variant
@@ -105,7 +105,7 @@ pub trait StageMatmulFamily: Send + Sync + 'static {
 ///  - Enough planes/units are launched to perform the whole computation
 pub trait StageMatmul<MP: MatmulTypes>: 'static + Send + Sync {
     /// The configuration type associated with this Matmul.
-    type Config: StageConfig;
+    type Config;
 
     /// Compute primitive used by the underlying tile matmul.
     type Scope: TileScope;
@@ -178,25 +178,6 @@ pub trait StageMatmul<MP: MatmulTypes>: 'static + Send + Sync {
     );
 
     fn init_scheduler(#[comptime] config: Self::Config) -> PartitionScheduler;
-}
-
-/// Configuration for the Stage matmul (SMM) level
-pub trait StageConfig:
-    Copy + Clone + Eq + PartialEq + Hash + Debug + Send + Sync + 'static
-{
-    fn elements_in_stage_m(&self) -> u32;
-    fn elements_in_stage_n(&self) -> u32;
-    fn elements_in_stage_k(&self) -> u32;
-    fn elements_in_tile_k(&self) -> u32;
-    fn tiles_in_partition_mn(&self) -> u32;
-    fn num_main_flow_planes(&self) -> u32;
-    fn plane_dim(&self) -> u32;
-    fn plane_flow_config(&self) -> PlaneFlowConfig;
-
-    fn lhs_smem_config(&self) -> StageMemoryConfig;
-    fn rhs_smem_config(&self) -> StageMemoryConfig;
-    fn acc_smem_config(&self) -> StageMemoryConfig;
-    fn out_smem_config(&self) -> StageMemoryConfig;
 }
 
 pub use cubek_std::tile::PartitionBuffering;

@@ -1,6 +1,6 @@
 use crate::components::{
     global::SharedGlobalMatmulConfig,
-    stage::{StageConfig, StridedStageFamily},
+    stage::{StridedStageFamily},
 };
 use crate::{
     components::global::read::{AsyncPartialLoadingStrategy, validate_tma_with_problem},
@@ -179,7 +179,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
 
 #[cube]
 impl<RC: RuntimeConfig> AsyncPartialLoadingStrategy<RC> for AsyncPartialTmaLoading {
-    fn arrival_count<S: StageConfig>(#[comptime] _config: SharedGlobalMatmulConfig<S>) -> u32 {
+    fn arrival_count(#[comptime] _config: SharedGlobalMatmulConfig) -> u32 {
         1u32.runtime()
     }
 
@@ -187,9 +187,9 @@ impl<RC: RuntimeConfig> AsyncPartialLoadingStrategy<RC> for AsyncPartialTmaLoadi
         sync_async_proxy_shared();
     }
 
-    fn arrive<MP: MatmulTypes, S: StageConfig>(
+    fn arrive<MP: MatmulTypes>(
         barrier: &mut Barrier,
-        #[comptime] config: SharedGlobalMatmulConfig<S>,
+        #[comptime] config: SharedGlobalMatmulConfig,
     ) {
         let lhs_elem_size = LhsS::<MP>::type_size().comptime();
         let rhs_elem_size = RhsS::<MP>::type_size().comptime();
@@ -201,7 +201,7 @@ impl<RC: RuntimeConfig> AsyncPartialLoadingStrategy<RC> for AsyncPartialTmaLoadi
         barrier.arrive_and_expect_tx(1, stage_bytes);
     }
 
-    fn is_elected<S: StageConfig>(#[comptime] config: SharedGlobalMatmulConfig<S>) -> bool {
+    fn is_elected(#[comptime] config: SharedGlobalMatmulConfig) -> bool {
         let role_rule = PlaneFlowPartition::new(config.plane_flow_config().partition_rule);
         role_rule.elect_load_leader()
     }

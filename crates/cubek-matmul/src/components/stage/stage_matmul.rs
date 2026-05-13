@@ -5,7 +5,7 @@
 //! variant *is* the matmul (no wrapper config). The old
 //! `SharedPartitionMatmulConfig` / `PartitionMatmulConfig` /
 //! `UnitPartitionedStageConfig` / `PlanePartitionedStageConfig` wrappers and
-//! the [`crate::components::stage::StageConfig`] trait are deleted in PR 6;
+
 //! a temporary `impl StageConfig for StageMatmul` lives at the bottom of this
 //! file to keep callers compiling in the meantime.
 
@@ -18,7 +18,7 @@ use cubek_std::{
 
 use crate::components::global::{MatmulPlaneCounts, PlaneFlowConfig, WriteEvent, WriteEventListener};
 use crate::components::stage::{
-    NumStages, Stage, StageConfig, matmul::partition::Accumulators,
+    NumStages, Stage, matmul::partition::Accumulators,
 };
 use crate::components::tile::TileMatmul;
 use crate::definition::{
@@ -247,62 +247,63 @@ impl StageMatmulKind {
 }
 
 // =====================================================================
-// Temporary StageConfig impl. Lets the existing trait-bound callers
-// (e.g. `MP: ... where Self::Config: StageConfig`) keep compiling while
-// PR 6 cuts them over and deletes the trait stack.
+// Stage-level accessors (inherent methods, replacing the now-deleted
+// `StageConfig` trait). Each accessor reads from the inner
+// `PartitionedStageMatmul` payload — same body content as the previous
+// trait impl.
 // =====================================================================
 
-impl StageConfig for StageMatmul {
-    fn elements_in_stage_m(&self) -> u32 {
+impl StageMatmul {
+    pub fn elements_in_stage_m(&self) -> u32 {
         let d = self.data();
         d.stage_size.m() * d.partition_size.m() * d.tile_matmul.elements_in_tile_m()
     }
 
-    fn elements_in_stage_n(&self) -> u32 {
+    pub fn elements_in_stage_n(&self) -> u32 {
         let d = self.data();
         d.stage_size.n() * d.partition_size.n() * d.tile_matmul.elements_in_tile_n()
     }
 
-    fn elements_in_stage_k(&self) -> u32 {
+    pub fn elements_in_stage_k(&self) -> u32 {
         let d = self.data();
         d.stage_size.k() * d.partition_size.k() * d.tile_matmul.elements_in_tile_k()
     }
 
-    fn elements_in_tile_k(&self) -> u32 {
+    pub fn elements_in_tile_k(&self) -> u32 {
         self.data().tile_matmul.elements_in_tile_k()
     }
 
-    fn tiles_in_partition_mn(&self) -> u32 {
+    pub fn tiles_in_partition_mn(&self) -> u32 {
         let p = self.data().partition_size;
         p.m() * p.n()
     }
 
-    fn num_main_flow_planes(&self) -> u32 {
+    pub fn num_main_flow_planes(&self) -> u32 {
         self.data().plane_flow_config.main_flow_count()
     }
 
-    fn plane_dim(&self) -> u32 {
-        self.data().plane_dim
-    }
-
-    fn plane_flow_config(&self) -> PlaneFlowConfig {
-        self.data().plane_flow_config
-    }
-
-    fn lhs_smem_config(&self) -> StageMemoryConfig {
+    pub fn lhs_smem_config(&self) -> StageMemoryConfig {
         self.data().lhs_smem_config
     }
 
-    fn rhs_smem_config(&self) -> StageMemoryConfig {
+    pub fn rhs_smem_config(&self) -> StageMemoryConfig {
         self.data().rhs_smem_config
     }
 
-    fn acc_smem_config(&self) -> StageMemoryConfig {
+    pub fn acc_smem_config(&self) -> StageMemoryConfig {
         self.data().acc_smem_config
     }
 
-    fn out_smem_config(&self) -> StageMemoryConfig {
+    pub fn out_smem_config(&self) -> StageMemoryConfig {
         self.data().out_smem_config
+    }
+
+    pub fn plane_dim(&self) -> u32 {
+        self.data().plane_dim
+    }
+
+    pub fn plane_flow_config(&self) -> PlaneFlowConfig {
+        self.data().plane_flow_config
     }
 }
 

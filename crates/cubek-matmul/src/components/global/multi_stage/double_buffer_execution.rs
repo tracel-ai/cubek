@@ -78,7 +78,7 @@ pub fn execute_current_and_read_next<
     S: SyncStrategy,
     LJ: JobExecutor<S>,
     RJ: JobExecutor<S>,
-    G: GlobalConfig<StageConfig = StageMatmul>,
+    G: GlobalConfig,
 >(
     lhs_stage: &LhsStage,
     rhs_stage: &RhsStage,
@@ -175,7 +175,7 @@ pub fn execute_last_and_write_results<
     LhsStage: stage::Stage<Stage<Lhs<MP>>, ReadOnly>,
     RhsStage: stage::Stage<Stage<Rhs<MP>>, ReadOnly>,
     AccStage: stage::Stage<Stage<Acc<MP>>, ReadOnly>,
-    G: GlobalConfig<StageConfig = StageMatmul>,
+    G: GlobalConfig,
 >(
     lhs_stage: &LhsStage,
     rhs_stage: &RhsStage,

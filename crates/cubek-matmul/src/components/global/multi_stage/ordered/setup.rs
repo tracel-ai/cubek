@@ -16,7 +16,7 @@ use crate::{
 };
 use crate::{
     components::stage::StridedStageFamily,
-    components::stage::{self, StageConfig},
+    components::stage::{self},
     components::{global::GlobalMatmulFamily, stage::NumStages},
     definition::TilingBlueprint,
     definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes},
@@ -65,7 +65,7 @@ where
         AL,
         GW::Writer<MP::Acc>,
     >;
-    type Config = SharedGlobalMatmulConfig<crate::components::stage::stage_matmul::StageMatmul>;
+    type Config = SharedGlobalMatmulConfig;
 
     fn expand_config(
         device_props: &DeviceProperties,

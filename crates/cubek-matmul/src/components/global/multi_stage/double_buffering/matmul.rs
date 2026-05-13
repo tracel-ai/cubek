@@ -23,7 +23,6 @@ use crate::{
 };
 use crate::{
     components::stage::{
-        StageConfig,
         matmul::{
             partition::{Accumulators, PartitionMatmul},
             partitioned_matmul::StagePartitioner,
@@ -78,7 +77,7 @@ where
     AL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
     GW: GlobalWriter<MP::Acc>,
 {
-    type Config = SharedGlobalMatmulConfig<crate::components::stage::stage_matmul::StageMatmul>;
+    type Config = SharedGlobalMatmulConfig;
 
     type LhsGlobalReader = PartialStageGlobalReader<
         <MP::Lhs as MatrixTypes>::Global,
@@ -188,7 +187,7 @@ where
 
         let acc_stage = acc_reader.map(|mut reader| {
             reader.load_stage(&mut barrier_a, config.acc_reader_config);
-            LL::SyncStrategy::sync::<MP, _>(&mut barrier_a, config);
+            LL::SyncStrategy::sync::<MP>(&mut barrier_a, config);
             reader.stage()
         });
 
@@ -210,7 +209,7 @@ where
             config.rhs_reader_config,
         );
 
-        LL::SyncStrategy::sync::<MP, _>(&mut barrier_a, config);
+        LL::SyncStrategy::sync::<MP>(&mut barrier_a, config);
 
         for _ in 0..num_loops {
             execute_current_and_read_next::<
@@ -241,7 +240,7 @@ where
             lhs_reader.advance_view();
             rhs_reader.advance_view();
 
-            LL::SyncStrategy::sync::<MP, _>(&mut barrier_b, config);
+            LL::SyncStrategy::sync::<MP>(&mut barrier_b, config);
 
             execute_current_and_read_next::<
                 MP,
@@ -268,7 +267,7 @@ where
                 config,
             );
 
-            LL::SyncStrategy::sync::<MP, _>(&mut barrier_a, config);
+            LL::SyncStrategy::sync::<MP>(&mut barrier_a, config);
         }
 
         execute_current_and_read_next::<
@@ -296,7 +295,7 @@ where
             config,
         );
 
-        LL::SyncStrategy::sync::<MP, _>(&mut barrier_b, config);
+        LL::SyncStrategy::sync::<MP>(&mut barrier_b, config);
 
         execute_last_and_write_results::<
             MP,
