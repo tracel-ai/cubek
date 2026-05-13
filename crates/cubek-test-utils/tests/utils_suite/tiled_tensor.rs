@@ -1,6 +1,7 @@
 use cubecl::{
     self,
     std::tensor::layout::{Coords1d, Layout, LayoutExpand},
+    zspace::{Shape, SmallVec, Strides},
 };
 use cubecl::{TestRuntime, prelude::*};
 use cubecl::{
@@ -14,14 +15,63 @@ fn metadata_to_tiled_should_return_physical_layout() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
     let matrix_len = 4;
-    let shape = shape![5, matrix_len, matrix_len, 3, 7];
+    let shape = shape![matrix_len, matrix_len];
+
     let input_handle = TestInput::builder(client.clone(), shape.clone())
         .stride(StrideSpec::RowMajor)
         .arange()
         .generate();
 
-    let metadata = input_handle.metadata.to_tiled(1, &[2, 2]);
-    panic!("metadata {:?}", metadata);
+    let dtype = f32::as_type_native_unchecked().storage_type();
+    let output_handle = TestInput::builder(client.clone(), shape.clone())
+        .stride(StrideSpec::RowMajor)
+        .zeros()
+        .generate_without_host_data();
+
+    let metadata = input_handle.metadata.to_tiled(0, &[2, 2]);
+    let blueprint = MetadataBlueprint::new(
+        metadata.shape.clone(),
+        metadata.strides.clone(),
+        metadata.tiler.map(|t| TilerBlueprint {
+            start_axis: t.start_axis,
+            tile_size: t.tile_size,
+        }),
+    );
+
+    let cube_count = CubeCount::new_single();
+    let cube_dim = CubeDim::new_single();
+    let vector_size = 1;
+
+    launch_read_tensor_according_to_blueprint::launch::<TestRuntime>(
+        &client,
+        cube_count,
+        cube_dim,
+        input_handle.binding().into_tensor_arg(),
+        output_handle.clone().binding().into_tensor_arg(),
+        dtype,
+        vector_size,
+        blueprint,
+    );
+
+    let output = HostData::from_tensor_handle(&client, output_handle, HostDataType::F32);
+
+    #[rustfmt::skip]
+    let expected_values = [
+        0.0, 1.0, 4.0, 5.0,
+        2.0, 3.0, 6.0, 7.0,
+        8.0, 9.0, 12.0, 13.0,
+        10.0, 11.0, 14.0, 15.0,
+    ].to_vec();
+
+    let (_, expected_values) = TestInput::builder(client, shape)
+        .custom(expected_values)
+        .generate_with_f32_host_data();
+
+    // panic!("Array: \n{}", output.pretty_print());
+
+    assert_equals_approx(&output, &expected_values, 1e-6)
+        .as_test_outcome()
+        .enforce()
 }
 
 #[test]
@@ -70,6 +120,29 @@ fn read_rowmajor_tensor_as_tiled() {
     assert_equals_approx(&output, &expected_values, 1e-6)
         .as_test_outcome()
         .enforce()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct TilerBlueprint {
+    pub start_axis: u8,
+    pub tile_size: SmallVec<[u16; 3]>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct MetadataBlueprint {
+    shape: Shape,
+    strides: Strides,
+    tiler: Option<TilerBlueprint>,
+}
+
+impl MetadataBlueprint {
+    pub fn new(shape: Shape, strides: Strides, tiler: Option<TilerBlueprint>) -> Self {
+        MetadataBlueprint {
+            shape,
+            strides,
+            tiler,
+        }
+    }
 }
 
 #[derive(CubeType, Clone, Copy)]
@@ -196,5 +269,154 @@ fn launch_read_rowmajor_tensor_as_tiled<N: Numeric, S: Size>(
             let value = input_view.read((i, j));
             output_view.write((i, j), value);
         }
+    }
+}
+
+#[cube(launch)]
+fn launch_read_tensor_according_to_blueprint<N: Numeric, S: Size>(
+    input: &Tensor<Vector<N, S>>,
+    output: &mut Tensor<Vector<N, S>>,
+    #[define(N)] _dtype: StorageType,
+    #[define(S)] vector_size: usize,
+    #[comptime] blueprint: MetadataBlueprint,
+) {
+    let tiler = blueprint.clone().tiler.unwrap(); // For this test, we expect it
+
+    let mut shape = Sequence::new();
+    #[unroll]
+    for _i in 0..blueprint.shape.rank() {
+        shape.push(2);
+        //shape.push(blueprint.get_shape(i));
+    }
+
+    let mut strides = Sequence::new();
+    strides.push(8);
+    strides.push(4);
+    strides.push(2);
+    strides.push(1);
+
+    // Getting an error doing something like this
+    //#[unroll]
+    //for i in 0..blueprint.strides.rank() {
+    //    strides.push(blueprint.strides[i]);
+    //}
+
+    let mut tiles = Sequence::new();
+    #[unroll]
+    for _i in 0..tiler.tile_size.len() {
+        tiles.push(2);
+        //tiles.push(tiler.tile_size[i] as usize);
+    }
+
+    let tiled_layout =
+        TiledLayoutV2::new(shape, strides, tiler.start_axis as usize, tiles);
+
+    let row_major = RowMajorLayout::new(4, 4, vector_size);
+
+    let input_view = input.view(tiled_layout);
+    let output_view = output.view_mut(row_major);
+
+    // Iterate using logical coordinates
+    #[unroll]
+    for i in 0usize ..4 {
+        #[unroll]
+        for j in 0usize ..4 {
+            let mut coords = Sequence::<usize>::new();
+            coords.push(i);
+            coords.push(j);
+            let value = input_view.read(coords);
+            output_view.write((i.runtime(), j.runtime()), value);
+        }
+    }
+
+}
+
+#[derive(CubeType, Clone)]
+pub struct TiledLayoutV2 {
+    shape: Sequence<usize>,
+    strides: Sequence<usize>,
+    #[cube(comptime)]
+    start_axis: usize,
+    tiles: Sequence<usize>,
+}
+
+#[cube]
+impl TiledLayoutV2 {
+    pub fn new(
+        shape: Sequence<usize>,
+        strides: Sequence<usize>,
+        #[comptime] start_axis: usize,
+        tiles: Sequence<usize>,
+    ) -> TiledLayoutV2 {
+        TiledLayoutV2 {
+            shape,
+            strides,
+            start_axis,
+            tiles,
+        }
+    }
+}
+
+#[cube]
+impl Layout for TiledLayoutV2 {
+    type Coordinates = Sequence<usize>;
+
+    type SourceCoordinates = Coords1d;
+
+    fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
+        let mut offset = 0;
+        #[comptime]
+        let s = self.start_axis;
+        #[comptime]
+        let n = self.tiles.len();
+        let logical_rank = pos.len();
+
+        // Zone 1: Pre-tiled axes [0, start_axis)
+        // Physical index == Logical index
+        #[unroll]
+        for i in 0..s {
+            offset += pos[i] * self.strides[i];
+        }
+
+        // Zone 2: Tiled axes [start_axis, start_axis + n)
+        // Each logical coordinate is split into Grid and Tile components
+
+        #[unroll]
+        for i in 0..n {
+            let logical_idx = comptime!(self.start_axis + i);
+            let tile_size = self.tiles[i];
+
+            //#[comptime]
+            //let logical_idx = self.start_axis + comptime!(i);
+            let grid_coord = pos[logical_idx] / tile_size;
+            let local_coord = pos[logical_idx] % tile_size;
+
+            // Grids are at [s .. s+n], Tiles are at [s+n .. s+2n]
+            offset += grid_coord * self.strides[logical_idx];
+            offset += local_coord * self.strides[comptime!(logical_idx + n)];
+        }
+        //
+        //// Zone 3: Post-tiled axes [start_axis + n, logical_rank)
+        //// Physical index is offset by n (the extra dimensions added by tiling)
+        let start = comptime!(self.start_axis + n);
+        #[unroll]
+        for i in start..logical_rank {
+            offset += pos[i] * self.strides[comptime!(i + n)];
+        }
+
+        offset
+    }
+
+    fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
+        let is_valid = pos[0] < self.shape[0] && pos[1] < self.shape[1];
+        (self.to_source_pos(pos), is_valid)
+    }
+
+    fn shape(&self) -> Self::Coordinates {
+        self.shape.clone()
+    }
+
+    fn is_in_bounds(&self, _pos: Self::Coordinates) -> bool {
+        true.runtime()
     }
 }
