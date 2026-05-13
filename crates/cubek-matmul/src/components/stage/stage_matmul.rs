@@ -14,11 +14,12 @@ use cubek_std::{
     CubeDimResource, InvalidConfigError, MatrixLayout, PartitionSize, StageSize,
     stage::StageMemoryConfig,
     tile::{PartitionBuffering, PartitionScheduler, PartitionSchedulerScheme, PartitionTile,
-           TileMatmul, partition_get_at_mut},
+           partition_get_at_mut},
 };
 
 use crate::components::global::{MatmulPlaneCounts, PlaneFlowConfig, WriteEvent, WriteEventListener};
 use crate::components::stage::{NumStages, Stage, StageConfig};
+use crate::components::tile::TileMatmul;
 use crate::definition::{
     MatmulElems, MatmulSetupError, MatmulVectorSizes, StageIdent, TilingBlueprint,
 };
