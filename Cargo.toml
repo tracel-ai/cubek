@@ -52,7 +52,7 @@ num-traits = { version = "0.2.19", default-features = false, features = [
     "libm",
 ] } # libm is for no_std
 
-enumset = { version = "1.1.10", default-features = false }
+enumset = { version = "1.1.12", default-features = false }
 thiserror = { version = "2", default-features = false }
 
 ### For xtask crate ###
