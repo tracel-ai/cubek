@@ -5,7 +5,6 @@ use cubecl::{
 use cubek_std::{InputBinding, MatrixLayout};
 
 use crate::{
-    components::batch::gemv_plane_parallel::GemvKind,
     definition::{MatmulElems, MatmulProblem, MatmulSetupError},
     definition::{MatmulVectorSizes, cube_mapping_launch},
 };
@@ -13,7 +12,7 @@ use crate::{
 use crate::{
     launch::InputArg,
     launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs},
-    routines::vecmat_plane_parallel::GemvPlaneParallelRoutine,
+    routines::gemm_plane_parallel::GemmPlaneParallelRoutine,
     routines::{BlueprintStrategy, Routine as _},
 };
 
@@ -42,7 +41,7 @@ pub fn launch_ref<R: Runtime>(
     mut lhs: InputBinding<R>,
     mut rhs: InputBinding<R>,
     out: TensorBinding<R>,
-    strategy: &BlueprintStrategy<(), GemvPlaneParallelRoutine>,
+    strategy: &BlueprintStrategy<(), GemmPlaneParallelRoutine>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let rank = rhs.shape().len();
@@ -97,42 +96,24 @@ pub fn launch_ref<R: Runtime>(
         address_type,
     );
 
-    match GemvKind::from_problem(&problem)? {
-        GemvKind::MatVecRowMajor | GemvKind::MatVecColMajor => {
-            // RHS (vec) must be contiguous
-            let rhs_inner_stride = problem.rhs_strides[rank - 1];
-            if rhs_inner_stride != 1 {
-                rhs = rhs.into_contiguous(client)?;
-            }
-        }
-        GemvKind::VecMatRowMajor | GemvKind::VecMatColMajor => {
-            // LHS (vec) must be contiguous
-            let lhs_inner_stride = problem.lhs_strides[rank - 1];
-            if lhs_inner_stride != 1 {
-                lhs = lhs.into_contiguous(client)?;
-            }
-        }
+    // The kernel assumes lhs row-major and rhs col-major; force contiguous
+    // inner stride for k on both inputs if needed.
+    let lhs_inner_stride = problem.lhs_strides[rank - 1];
+    if lhs_inner_stride != 1 {
+        lhs = lhs.into_contiguous(client)?;
+    }
+    let rhs_inner_stride = problem.rhs_strides[rank - 2];
+    if rhs_inner_stride != 1 {
+        rhs = rhs.into_contiguous(client)?;
     }
 
-    let device_settings = GemvPlaneParallelRoutine::device_settings(client, vector_sizes);
+    let device_settings = GemmPlaneParallelRoutine::device_settings(client, vector_sizes);
     let expand_info =
-        GemvPlaneParallelRoutine::expand_blueprint(&problem, &device_settings, strategy)?;
+        GemmPlaneParallelRoutine::expand_blueprint(&problem, &device_settings, strategy)?;
 
-    if device_settings.plane_dim > 1 {
-        if matches!(expand_info.blueprint.kind, GemvKind::MatVecColMajor) {
-            return Err(MatmulSetupError::InvalidConfig(Box::new(
-                "On GPU, MatVec plane parallel only supports row major lhs for now",
-            )));
-        } else if matches!(expand_info.blueprint.kind, GemvKind::VecMatRowMajor) {
-            return Err(MatmulSetupError::InvalidConfig(Box::new(
-                "On GPU, Vecmat plane parallel only supports col major rhs for now",
-            )));
-        }
-    }
+    let launch_info = GemmPlaneParallelRoutine::prepare(&problem, &device_settings, expand_info)?;
 
-    let launch_info = GemvPlaneParallelRoutine::prepare(&problem, &device_settings, expand_info)?;
-
-    let input = <InputArg<TensorArgs> as ConcreteInputsFactory<GemvPlaneParallelRoutine>>::create(
+    let input = <InputArg<TensorArgs> as ConcreteInputsFactory<GemmPlaneParallelRoutine>>::create(
         lhs,
         rhs,
         &launch_info.blueprint,
@@ -140,7 +121,7 @@ pub fn launch_ref<R: Runtime>(
         &launch_info.vector_sizes,
         dtypes,
     );
-    let output = <OutputArg<TensorArgs> as ConcreteOutputFactory<GemvPlaneParallelRoutine>>::create(
+    let output = <OutputArg<TensorArgs> as ConcreteOutputFactory<GemmPlaneParallelRoutine>>::create(
         out,
         &launch_info.blueprint,
         &problem,
@@ -148,7 +129,7 @@ pub fn launch_ref<R: Runtime>(
         dtypes,
     );
 
-    GemvPlaneParallelRoutine::launch::<TensorArgs, R>(
+    GemmPlaneParallelRoutine::launch::<TensorArgs, R>(
         client,
         launch_info.cube_dim,
         launch_info.cube_count_plan.resolve(),

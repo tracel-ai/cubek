@@ -15,7 +15,8 @@ use crate::{
     },
     definition::{MatmulElems, MatmulSetupError},
     launch::{
-        launch_naive, launch_tiling, launch_vecmat_plane_parallel, launch_vecmat_unit_perpendicular,
+        launch_gemm_plane_parallel, launch_gemv_plane_parallel, launch_gemv_unit_perpendicular,
+        launch_naive, launch_tiling,
     },
     routines::{
         BlueprintStrategy, Routine,
@@ -25,13 +26,14 @@ use crate::{
             TilewiseDoubleBufferingAlgorithm, TmaDoubleBufferingAlgorithm,
         },
         double_unit::DoubleUnitAlgorithm,
+        gemm_plane_parallel::GemmPlaneParallelRoutine,
+        gemv_innerproduct::{DoubleVecMatInnerProductAlgorithm, VecMatInnerProductAlgorithm},
+        gemv_plane_parallel::GemvPlaneParallelRoutine,
+        gemv_unit_perpendicular::GemvUnitPerpendicularRoutine,
         ordered_double_buffering::{OrderedDoubleBufferingAlgorithm, OrderedSelectionArgs},
         simple::{SimpleAlgorithm, SimpleArgs, SimpleTmaAlgorithm},
         simple_unit::SimpleUnitAlgorithm,
         specialized::{SpecializedAlgorithm, SpecializedStrategy},
-        vecmat_innerproduct::{DoubleVecMatInnerProductAlgorithm, VecMatInnerProductAlgorithm},
-        vecmat_plane_parallel::GemvPlaneParallelRoutine,
-        vecmat_unit_perpendicular::GemvUnitPerpendicularRoutine,
     },
 };
 
@@ -180,6 +182,7 @@ pub enum Strategy {
     DoubleVecMat(BlueprintStrategy<(), DoubleVecMatInnerProductAlgorithm>),
     GemvUnitPerpendicular(BlueprintStrategy<(), GemvUnitPerpendicularRoutine>),
     GemvPlaneParallel(BlueprintStrategy<(), GemvPlaneParallelRoutine>),
+    GemmPlaneParallel(BlueprintStrategy<(), GemmPlaneParallelRoutine>),
     Naive,
     #[default]
     Auto,
@@ -236,6 +239,7 @@ impl Display for Strategy {
             Strategy::Auto => f.write_str("matmul_auto"),
             Strategy::GemvUnitPerpendicular(s) => write!(f, "vecmat_unit_perpendicular{}", s),
             Strategy::GemvPlaneParallel(s) => write!(f, "vecmat_plane_parallel{}", s),
+            Strategy::GemmPlaneParallel(s) => write!(f, "gemm_plane_parallel{}", s),
         }
     }
 }
@@ -523,7 +527,7 @@ impl Strategy {
             Strategy::Naive => launch_naive::launch_ref(client, lhs, rhs, out, dtypes),
             Strategy::Auto => auto(client, lhs, rhs, out, dtypes),
             Strategy::GemvUnitPerpendicular(blueprint_strategy) => {
-                launch_vecmat_unit_perpendicular::launch_ref(
+                launch_gemv_unit_perpendicular::launch_ref(
                     client,
                     lhs,
                     rhs,
@@ -533,7 +537,17 @@ impl Strategy {
                 )
             }
             Strategy::GemvPlaneParallel(blueprint_strategy) => {
-                launch_vecmat_plane_parallel::launch_ref(
+                launch_gemv_plane_parallel::launch_ref(
+                    client,
+                    lhs,
+                    rhs,
+                    out,
+                    blueprint_strategy,
+                    dtypes,
+                )
+            }
+            Strategy::GemmPlaneParallel(blueprint_strategy) => {
+                launch_gemm_plane_parallel::launch_ref(
                     client,
                     lhs,
                     rhs,
