@@ -1,12 +1,22 @@
-use crate::{InterpolateError, components::global::interpolate_kernel};
-use cubecl::prelude::*;
+use crate::{
+    InterpolateError,
+    components::global::{TileSize, interpolate_kernel},
+    definition::InterpolateOptions,
+};
+use cubecl::{prelude::*, tensor_vector_size_parallel};
 
 pub(crate) fn interpolate_launch<R: Runtime>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
     output: TensorBinding<R>,
+    options: InterpolateOptions,
     dtype: StorageType,
 ) -> Result<(), InterpolateError> {
+    let batch_size = output.shape[0];
+    let out_h = output.shape[1];
+    let out_w = output.shape[2];
+    let channels = output.shape[3];
+
     let vector_size = tensor_vector_size_parallel(
         client.io_optimized_vector_sizes(dtype.size()),
         &input.shape,
@@ -14,26 +24,33 @@ pub(crate) fn interpolate_launch<R: Runtime>(
         input.shape.len() - 1,
     );
 
-    let working_units = output.shape.iter().product::<usize>() / vector_size as usize;
-    let cube_dim = CubeDim::new(client, working_units);
-    let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
+    let tile_w = 16.min(out_w);
+    let tile_h = 16.min(out_h);
+
+    let cube_dim = CubeDim::new_2d(tile_w as u32, tile_h as u32);
+
+    let cubes_x = (out_w + tile_w - 1) / tile_w;
+    let cubes_y = (out_h + tile_h - 1) / tile_h;
+
+    let cubes_z = batch_size * channels;
+    let cube_count = CubeCount::Static(cubes_x as u32, cubes_y as u32, cubes_z as u32);
 
     let address_type = input
         .required_address_type(dtype.size())
         .max(output.required_address_type(dtype.size()));
 
-    unsafe {
-        interpolate_kernel::launch_unchecked(
-            client,
-            cube_count,
-            cube_dim,
-            address_type,
-            vector_size,
-            input.into_tensor_arg(),
-            output.clone().into_tensor_arg(),
-            dtype,
-        )
-    };
+    interpolate_kernel::launch(
+        client,
+        cube_count,
+        cube_dim,
+        address_type,
+        vector_size,
+        input.into_tensor_arg(),
+        output.into_tensor_arg(),
+        options,
+        TileSize::new(tile_h, tile_w),
+        dtype,
+    );
 
     Ok(())
 }

@@ -1,7 +1,5 @@
-use cubecl::prelude::*;
-
 /// Algorithm used for upsampling.
-#[derive(Copy, Clone, Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InterpolateMode {
     /// Nearest-neighbor interpolation.
     /// <https://en.wikipedia.org/wiki/Nearest-neighbor_interpolation>

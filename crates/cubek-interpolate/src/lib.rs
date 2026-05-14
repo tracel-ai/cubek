@@ -1,13 +1,11 @@
-use core::result::Result;
-
-use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*};
-
-use crate::definition::{InterpolateError, InterpolateMode, InterpolateOptions};
-
 pub mod components;
 pub mod definition;
+#[cfg(any(feature = "cpu-reference", feature = "benchmarks"))]
+pub mod eval;
 mod kernel;
+mod launch;
 
+use crate::definition::{InterpolateError, InterpolateMode, InterpolateOptions};
 use crate::kernel::{
     backward::interpolate_nearest_backward_launch,
     forward::{
@@ -15,9 +13,9 @@ use crate::kernel::{
         interpolate_nearest_launch,
     },
 };
-
-#[cfg(any(feature = "cpu-reference", feature = "benchmarks"))]
-pub mod eval;
+use crate::launch::interpolate_launch;
+use core::result::Result;
+use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*};
 
 /// Interpolate operation
 ///
@@ -34,7 +32,8 @@ pub fn interpolate<R: Runtime>(
     let align_corners = options.align_corners;
 
     match options.mode {
-        InterpolateMode::Nearest => interpolate_nearest_launch(client, input, output, dtype),
+        InterpolateMode::Nearest => interpolate_launch(client, input, output, options, dtype),
+        // InterpolateMode::Nearest => interpolate_nearest_launch(client, input, output, dtype),
         InterpolateMode::Bilinear => {
             interpolate_bilinear_launch(client, input, output, align_corners, dtype)
         }

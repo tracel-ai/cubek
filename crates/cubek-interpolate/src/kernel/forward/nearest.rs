@@ -11,6 +11,12 @@ fn interpolate_nearest_kernel<F: Float, N: Size>(
     shape_out: Sequence<FastDivmod<usize>>,
     #[define(F)] _dtype: StorageType,
 ) {
+    if ABSOLUTE_POS != 0 {
+        terminate!();
+    }
+    let input_val = input[0];
+    output[0] = input_val;
+    terminate!();
     if ABSOLUTE_POS >= output.len() {
         terminate!();
     }

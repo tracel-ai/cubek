@@ -1,8 +1,7 @@
 use crate::InterpolateMode;
-use cubecl::prelude::*;
 
 /// Interpolation options.
-#[derive(Copy, Clone, Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct InterpolateOptions {
     /// Algorithm used for upsampling.
     pub mode: InterpolateMode,

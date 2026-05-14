@@ -19,7 +19,7 @@
 #                 others pass. Surfaces what actually executes.
 
 [test]
-policy = "correct"
+policy = "strict"
 
 # ----------------------------------------------------------------------------
 # [print] — what gets dumped to stdout when comparing or pretty-printing tensors
