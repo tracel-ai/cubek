@@ -3,8 +3,8 @@ use std::marker::PhantomData;
 use crate::components::batch::{
     BatchConfig as _, BatchMatmul, BatchMatmulFamily, CheckBounds,
     gemm_plane_parallel::{
-        DispatchPath, GemmPlaneParallelBlueprint, GemmPlaneParallelConfig,
-        GemmPlaneParallelFamily, PlanesSplit,
+        DispatchPath, GemmPlaneParallelBlueprint, GemmPlaneParallelConfig, GemmPlaneParallelFamily,
+        PlanesSplit,
         layout::{MatLayout, VecLayout},
     },
 };

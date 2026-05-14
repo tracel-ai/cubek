@@ -65,8 +65,8 @@ impl MatmulKind {
 
     fn validate_layouts(self, problem: &MatmulProblem) -> Result<(), MatmulSetupError> {
         // Mat × Mat is only supported with lhs RowMajor + rhs ColMajor.
-        let mat_mat = !matches!(self.lhs, OperandKind::Vector)
-            && !matches!(self.rhs, OperandKind::Vector);
+        let mat_mat =
+            !matches!(self.lhs, OperandKind::Vector) && !matches!(self.rhs, OperandKind::Vector);
         if mat_mat
             && !matches!(
                 (self.lhs, self.rhs),
