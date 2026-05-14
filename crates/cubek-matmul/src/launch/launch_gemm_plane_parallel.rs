@@ -5,7 +5,7 @@ use cubecl::{
 use cubek_std::{InputBinding, MatrixLayout};
 
 use crate::{
-    components::batch::gemm_plane_parallel::MatmulKind,
+    components::batch::gemm_plane_parallel::{DispatchPath, MatmulKind, OperandKind},
     definition::{MatmulElems, MatmulProblem, MatmulSetupError},
     definition::{MatmulVectorSizes, cube_mapping_launch},
 };
@@ -107,33 +107,42 @@ pub fn launch_ref<R: Runtime>(
 
     let kind = MatmulKind::from_problem(&kind_problem)?;
 
-    // Force the operand stride layout this kind needs:
-    // - matmat: lhs RowMajor (K-stride = 1), rhs ColMajor (K-stride = 1).
-    // - vec-mat: vec (lhs) contiguous along K.
-    // - mat-vec: vec (rhs) contiguous along K.
-    let (final_lhs_layout, final_rhs_layout) = match kind {
-        MatmulKind::MatRowMatCol => {
+    // Force the operand stride layout this kind needs.
+    //   - mat × mat: lhs RowMajor (K-stride = 1), rhs ColMajor (K-stride = 1).
+    //   - vec × _:   vec (lhs) must be contiguous along K.
+    //   - _ × vec:   vec (rhs) must be contiguous along K.
+    let mut final_lhs_layout = lhs_layout;
+    let mut final_rhs_layout = rhs_layout;
+    match kind.lhs {
+        OperandKind::Vector => {
             if kind_problem.lhs_strides[rank - 1] != 1 {
                 lhs = lhs.into_contiguous(client)?;
             }
-            if kind_problem.rhs_strides[rank - 2] != 1 {
-                rhs = rhs.into_contiguous(client)?;
-            }
-            (MatrixLayout::RowMajor, MatrixLayout::ColMajor)
         }
-        MatmulKind::VecMatCol | MatmulKind::VecMatRow => {
-            if kind_problem.lhs_strides[rank - 1] != 1 {
-                lhs = lhs.into_contiguous(client)?;
+        OperandKind::RowMajor | OperandKind::ColMajor => {
+            if !matches!(kind.rhs, OperandKind::Vector) {
+                if kind_problem.lhs_strides[rank - 1] != 1 {
+                    lhs = lhs.into_contiguous(client)?;
+                }
+                final_lhs_layout = MatrixLayout::RowMajor;
             }
-            (lhs_layout, rhs_layout)
         }
-        MatmulKind::MatRowVec | MatmulKind::MatColVec => {
+    }
+    match kind.rhs {
+        OperandKind::Vector => {
             if kind_problem.rhs_strides[rank - 1] != 1 {
                 rhs = rhs.into_contiguous(client)?;
             }
-            (lhs_layout, rhs_layout)
         }
-    };
+        OperandKind::RowMajor | OperandKind::ColMajor => {
+            if !matches!(kind.lhs, OperandKind::Vector) {
+                if kind_problem.rhs_strides[rank - 2] != 1 {
+                    rhs = rhs.into_contiguous(client)?;
+                }
+                final_rhs_layout = MatrixLayout::ColMajor;
+            }
+        }
+    }
 
     let problem = MatmulProblem::from_parameters(
         m,
@@ -158,14 +167,18 @@ pub fn launch_ref<R: Runtime>(
     // `vector_size`-wide chunk per mn_id, which doesn't fully cover the
     // output when plane_dim > 1).
     if device_settings.plane_dim > 1 {
-        if matches!(expand_info.blueprint.kind, MatmulKind::MatColVec) {
-            return Err(MatmulSetupError::InvalidConfig(Box::new(
-                "On GPU, MatVec plane parallel only supports row-major lhs for now",
-            )));
-        } else if matches!(expand_info.blueprint.kind, MatmulKind::VecMatRow) {
-            return Err(MatmulSetupError::InvalidConfig(Box::new(
-                "On GPU, VecMat plane parallel only supports col-major rhs for now",
-            )));
+        match expand_info.blueprint.kind.dispatch_path() {
+            DispatchPath::StagedMatVec => {
+                return Err(MatmulSetupError::InvalidConfig(Box::new(
+                    "On GPU, MatVec plane parallel only supports row-major lhs for now",
+                )));
+            }
+            DispatchPath::StagedVecMat => {
+                return Err(MatmulSetupError::InvalidConfig(Box::new(
+                    "On GPU, VecMat plane parallel only supports col-major rhs for now",
+                )));
+            }
+            DispatchPath::Simple => {}
         }
     }
 

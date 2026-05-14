@@ -3,7 +3,8 @@ use std::marker::PhantomData;
 use crate::components::batch::{
     BatchConfig as _, BatchMatmul, BatchMatmulFamily, CheckBounds,
     gemm_plane_parallel::{
-        GemmPlaneParallelBlueprint, GemmPlaneParallelConfig, GemmPlaneParallelFamily, MatmulKind,
+        DispatchPath, GemmPlaneParallelBlueprint, GemmPlaneParallelConfig,
+        GemmPlaneParallelFamily, PlanesSplit,
         layout::{MatLayout, VecLayout},
     },
 };
@@ -131,8 +132,12 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for GemmPlaneParallel<MP> {
 
         let check_bounds = config.check_bounds;
 
-        match config.kind {
-            MatmulKind::MatRowMatCol | MatmulKind::VecMatCol => {
+        match comptime!(config.kind.dispatch_path()) {
+            DispatchPath::Simple => {
+                let (planes_per_m, planes_per_n) = comptime!(match config.planes_split {
+                    PlanesSplit::M => (config.num_planes, 1u32),
+                    PlanesSplit::N => (1u32, config.num_planes),
+                });
                 execute_simple::<LhsG<MP>, RhsG<MP>, AccG<MP>, AccRE<MP>, N>(
                     lhs.view(MatLayout::new(lhs_batch, (m, k))),
                     rhs.view(MatLayout::new(rhs_batch, (k, n))),
@@ -142,27 +147,12 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for GemmPlaneParallel<MP> {
                     k,
                     config.plane_dim,
                     vector_size as u32,
-                    /* planes_per_m */ 1u32,
-                    /* planes_per_n */ config.num_planes,
+                    planes_per_m,
+                    planes_per_n,
                     check_bounds,
                 )
             }
-            MatmulKind::MatRowVec => {
-                execute_simple::<LhsG<MP>, RhsG<MP>, AccG<MP>, AccRE<MP>, N>(
-                    lhs.view(MatLayout::new(lhs_batch, (m, k))),
-                    rhs.view(MatLayout::new(rhs_batch, (k, n))),
-                    out.view_mut(MatLayout::new(out_batch, (m, n))),
-                    cube_m,
-                    cube_n,
-                    k,
-                    config.plane_dim,
-                    vector_size as u32,
-                    /* planes_per_m */ config.num_planes,
-                    /* planes_per_n */ 1u32,
-                    check_bounds,
-                )
-            }
-            MatmulKind::VecMatRow => execute_transposed::<
+            DispatchPath::StagedVecMat => execute_transposed::<
                 Global<Lhs<MP>>,
                 Global<Rhs<MP>>,
                 AccG<MP>,
@@ -180,7 +170,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for GemmPlaneParallel<MP> {
                 MatrixLayout::RowMajor,
                 check_bounds,
             ),
-            MatmulKind::MatColVec => execute_transposed::<
+            DispatchPath::StagedMatVec => execute_transposed::<
                 Global<Rhs<MP>>,
                 Global<Lhs<MP>>,
                 AccG<MP>,

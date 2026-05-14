@@ -8,51 +8,96 @@ use crate::{
     definition::{MatmulProblem, MatmulSetupError},
 };
 
+/// Role and layout of a single operand for the plane-parallel kernel.
+///
+/// An operand is either a matrix (with a memory layout) or a vector, when
+/// its non-k dimension is 1.
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+pub enum OperandKind {
+    RowMajor,
+    ColMajor,
+    Vector,
+}
+
 /// Shape + layout of the matmul problem the plane-parallel kernel will run.
 ///
-/// The plane-parallel family treats GEMV as a degenerate GEMM where one of
-/// `m, n` collapses to 1; each variant pins the relevant operand layouts.
+/// Composed from the per-side [`OperandKind`]s; the dispatch path (simple
+/// vs staged) is derived from their combination.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub enum MatmulKind {
-    /// Full GEMM with lhs RowMajor and rhs ColMajor.
-    MatRowMatCol,
-    /// `m = 1`, rhs ColMajor.
-    VecMatCol,
-    /// `m = 1`, rhs RowMajor. Uses the staged (transposed) kernel.
-    VecMatRow,
-    /// `n = 1`, lhs RowMajor.
-    MatRowVec,
-    /// `n = 1`, lhs ColMajor. Uses the staged (transposed) kernel.
-    MatColVec,
+pub struct MatmulKind {
+    pub lhs: OperandKind,
+    pub rhs: OperandKind,
+}
+
+/// Which output axis the planes within a cube enumerate.
+///
+/// Exactly one of `(planes_per_m, planes_per_n)` equals `num_planes`; the
+/// other is 1. For vec/mat the choice is forced (planes split the non-1
+/// axis); for mat/mat it's an algorithmic choice made by the routine.
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+pub enum PlanesSplit {
+    M,
+    N,
+}
+
+/// How the kernel body is dispatched.
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+pub enum DispatchPath {
+    /// Plane reduces over k for one `(m, n)` output cell.
+    Simple,
+    /// Staged tile reduction; the matrix's k axis is non-contiguous and
+    /// must be reloaded through shared memory. Vec is lhs, mat is rhs RowMajor.
+    StagedVecMat,
+    /// Staged tile reduction; the matrix's k axis is non-contiguous and
+    /// must be reloaded through shared memory. Mat is lhs ColMajor, vec is rhs.
+    StagedMatVec,
 }
 
 impl MatmulKind {
     /// Infer the kind from problem shape and operand layouts.
     pub(crate) fn from_problem(problem: &MatmulProblem) -> Result<MatmulKind, MatmulSetupError> {
-        if problem.m == 1 && problem.n == 1 {
-            return Err(MatmulSetupError::InvalidConfig(Box::new(
-                "Plane-parallel matmul requires at least one of m, n > 1".to_string(),
-            )));
-        }
+        let lhs = operand_kind(problem.m, problem.lhs_layout);
+        let rhs = operand_kind(problem.n, problem.rhs_layout);
+        let kind = MatmulKind { lhs, rhs };
+        kind.validate_layouts(problem)?;
+        Ok(kind)
+    }
 
-        if problem.m == 1 {
-            return Ok(match problem.rhs_layout {
-                MatrixLayout::ColMajor => MatmulKind::VecMatCol,
-                MatrixLayout::RowMajor => MatmulKind::VecMatRow,
-            });
-        }
-        if problem.n == 1 {
-            return Ok(match problem.lhs_layout {
-                MatrixLayout::ColMajor => MatmulKind::MatColVec,
-                MatrixLayout::RowMajor => MatmulKind::MatRowVec,
-            });
-        }
-        match (problem.lhs_layout, problem.rhs_layout) {
-            (MatrixLayout::RowMajor, MatrixLayout::ColMajor) => Ok(MatmulKind::MatRowMatCol),
-            (lhs, rhs) => Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+    fn validate_layouts(self, problem: &MatmulProblem) -> Result<(), MatmulSetupError> {
+        // Mat × Mat is only supported with lhs RowMajor + rhs ColMajor.
+        let mat_mat = !matches!(self.lhs, OperandKind::Vector)
+            && !matches!(self.rhs, OperandKind::Vector);
+        if mat_mat
+            && !matches!(
+                (self.lhs, self.rhs),
+                (OperandKind::RowMajor, OperandKind::ColMajor)
+            )
+        {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
                 "Plane-parallel GEMM requires lhs RowMajor and rhs ColMajor, got lhs={:?}, rhs={:?}",
-                lhs, rhs
-            )))),
+                problem.lhs_layout, problem.rhs_layout
+            ))));
+        }
+        Ok(())
+    }
+
+    /// Which kernel body should run for this kind.
+    pub fn dispatch_path(self) -> DispatchPath {
+        match (self.lhs, self.rhs) {
+            (OperandKind::Vector, OperandKind::RowMajor) => DispatchPath::StagedVecMat,
+            (OperandKind::ColMajor, OperandKind::Vector) => DispatchPath::StagedMatVec,
+            _ => DispatchPath::Simple,
+        }
+    }
+}
+
+fn operand_kind(dim: usize, layout: MatrixLayout) -> OperandKind {
+    if dim == 1 {
+        OperandKind::Vector
+    } else {
+        match layout {
+            MatrixLayout::RowMajor => OperandKind::RowMajor,
+            MatrixLayout::ColMajor => OperandKind::ColMajor,
         }
     }
 }
@@ -62,6 +107,7 @@ pub struct GemmPlaneParallelConfig {
     pub(crate) plane_dim: u32,
     pub(crate) num_planes: u32,
     pub(crate) kind: MatmulKind,
+    pub(crate) planes_split: PlanesSplit,
     pub(crate) check_bounds: CheckBounds,
 }
 

@@ -8,7 +8,10 @@ use cubek_std::cube_count::{CubeCountPlan, CubeCountStrategy, GlobalOrder, Hyper
 use crate::{
     components::batch::{
         BatchMatmulFamily, CheckBounds,
-        gemm_plane_parallel::{GemmPlaneParallelBlueprint, GemmPlaneParallelFamily, MatmulKind},
+        gemm_plane_parallel::{
+            DispatchPath, GemmPlaneParallelBlueprint, GemmPlaneParallelFamily, MatmulKind,
+            OperandKind, PlanesSplit,
+        },
     },
     definition::{MatmulElems, MatmulProblem, MatmulSetupError},
     routines::{
@@ -30,22 +33,29 @@ impl Display for GemmPlaneParallelStrategy {
 }
 
 /// Returns `(m_units, n_units)` — the count of "plane-sized" cells along each
-/// output axis that the kernel must cover. For the staged-tile kinds each
+/// output axis that the kernel must cover. For the staged-tile path each
 /// cube handles a `tile_dim` chunk along the non-vec axis, so the unit count
 /// is divided accordingly.
 fn output_units(problem: &MatmulProblem, kind: MatmulKind, tile_dim: usize) -> (usize, usize) {
-    match kind {
-        MatmulKind::MatRowMatCol => (problem.m, problem.n),
-        MatmulKind::VecMatCol => (1, problem.n),
-        MatmulKind::MatRowVec => (problem.m, 1),
-        MatmulKind::VecMatRow => (1, problem.n / tile_dim),
-        MatmulKind::MatColVec => (problem.m / tile_dim, 1),
+    match kind.dispatch_path() {
+        DispatchPath::Simple => (problem.m, problem.n),
+        // Vec × RowMajor mat: planes stride a `tile_dim` slice of N.
+        DispatchPath::StagedVecMat => (1, problem.n / tile_dim),
+        // ColMajor mat × Vec: planes stride a `tile_dim` slice of M.
+        DispatchPath::StagedMatVec => (problem.m / tile_dim, 1),
     }
 }
 
-/// Whether the planes within a cube split along M (true) or N (false).
-fn planes_split_m(kind: MatmulKind) -> bool {
-    matches!(kind, MatmulKind::MatRowVec | MatmulKind::MatColVec)
+/// Choose how planes within a cube enumerate the output:
+///   - vec × mat: forced to N (m collapses to 1).
+///   - mat × vec: forced to M (n collapses to 1).
+///   - mat × mat: routing choice — defaults to N for now.
+///   - vec × vec: doesn't matter — use N.
+fn planes_split_for(kind: MatmulKind) -> PlanesSplit {
+    match (kind.lhs, kind.rhs) {
+        (_, OperandKind::Vector) if !matches!(kind.lhs, OperandKind::Vector) => PlanesSplit::M,
+        _ => PlanesSplit::N,
+    }
 }
 
 impl Routine<()> for GemmPlaneParallelRoutine {
@@ -76,27 +86,27 @@ impl Routine<()> for GemmPlaneParallelRoutine {
                 let kind = MatmulKind::from_problem(problem)?;
                 let tile_dim =
                     device_settings.plane_dim as usize * device_settings.vector_sizes.rhs;
+                let planes_split = planes_split_for(kind);
 
                 // num_planes cap depends on what each plane is doing:
-                // - MatRowMatCol / VecMatCol: one plane per N column.
-                // - MatRowVec: one plane per M row.
-                // - VecMatRow / MatColVec: planes share a `tile_dim` slice
-                //   within a single tile (within-tile parallelism).
-                let num_planes = match kind {
-                    MatmulKind::MatRowMatCol | MatmulKind::VecMatCol => {
-                        max(1, min(target_num_planes, problem.n))
-                    }
-                    MatmulKind::MatRowVec => max(1, min(target_num_planes, problem.m)),
-                    MatmulKind::VecMatRow | MatmulKind::MatColVec => {
+                // - Simple, split N: one plane per N column.
+                // - Simple, split M: one plane per M row.
+                // - Staged: planes share a `tile_dim` slice within a single
+                //   tile (within-tile parallelism).
+                let num_planes = match kind.dispatch_path() {
+                    DispatchPath::Simple => match planes_split {
+                        PlanesSplit::M => max(1, min(target_num_planes, problem.m)),
+                        PlanesSplit::N => max(1, min(target_num_planes, problem.n)),
+                    },
+                    DispatchPath::StagedVecMat | DispatchPath::StagedMatVec => {
                         max(1, min(target_num_planes, tile_dim))
                     }
                 };
 
                 let (m_units, n_units) = output_units(problem, kind, tile_dim);
-                let split_units = if planes_split_m(kind) {
-                    m_units
-                } else {
-                    n_units
+                let split_units = match planes_split {
+                    PlanesSplit::M => m_units,
+                    PlanesSplit::N => n_units,
                 };
                 let check_bounds = if split_units.is_multiple_of(num_planes) {
                     CheckBounds::None
@@ -113,6 +123,7 @@ impl Routine<()> for GemmPlaneParallelRoutine {
                         .global_order(GlobalOrder::RowMajor)
                         .build(),
                     kind,
+                    planes_split,
                     check_bounds,
                 };
 
@@ -144,16 +155,15 @@ impl Routine<()> for GemmPlaneParallelRoutine {
         .to_cube_dim(device_settings.plane_dim)?;
 
         let (m_units, n_units) = output_units(problem, blueprint.kind, blueprint.tile_dim);
-        let (m_cubes, n_cubes) = if planes_split_m(blueprint.kind) {
-            (
+        let (m_cubes, n_cubes) = match blueprint.planes_split {
+            PlanesSplit::M => (
                 m_units.div_ceil(blueprint.num_planes) as u32,
                 n_units as u32,
-            )
-        } else {
-            (
+            ),
+            PlanesSplit::N => (
                 m_units as u32,
                 n_units.div_ceil(blueprint.num_planes) as u32,
-            )
+            ),
         };
 
         let cube_count_plan = CubeCountPlan::from_blueprint(
