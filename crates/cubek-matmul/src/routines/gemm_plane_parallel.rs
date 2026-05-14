@@ -8,7 +8,7 @@ use cubek_std::cube_count::{CubeCountPlan, CubeCountStrategy, GlobalOrder, Hyper
 use crate::{
     components::batch::{
         BatchMatmulFamily, CheckBounds,
-        gemm_plane_parallel::{GemmPlaneParallelBlueprint, GemmPlaneParallelFamily},
+        gemm_plane_parallel::{GemmPlan, GemmPlaneParallelBlueprint, GemmPlaneParallelFamily},
     },
     definition::{MatmulElems, MatmulProblem, MatmulSetupError},
     routines::{
@@ -74,6 +74,7 @@ impl Routine<()> for GemmPlaneParallelRoutine {
                         .cube_count_strategy(CubeCountStrategy::Flattened)
                         .global_order(GlobalOrder::RowMajor)
                         .build(),
+                    plan: GemmPlan::Standard,
                     check_bounds,
                 };
 

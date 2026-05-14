@@ -5,7 +5,7 @@ use cubecl::{
 use cubek_std::{InputBinding, MatrixLayout};
 
 use crate::{
-    components::batch::gemv_plane_parallel::GemvKind,
+    components::batch::gemm_plane_parallel::GemmPlan,
     definition::{MatmulElems, MatmulProblem, MatmulSetupError},
     definition::{MatmulVectorSizes, cube_mapping_launch},
 };
@@ -97,21 +97,22 @@ pub fn launch_ref<R: Runtime>(
         address_type,
     );
 
-    match GemvKind::from_problem(&problem)? {
-        GemvKind::MatVecRowMajor | GemvKind::MatVecColMajor => {
+    match GemmPlan::gemv_from_problem(&problem)? {
+        GemmPlan::MatVecRowMajor | GemmPlan::MatVecColMajor => {
             // RHS (vec) must be contiguous
             let rhs_inner_stride = problem.rhs_strides[rank - 1];
             if rhs_inner_stride != 1 {
                 rhs = rhs.into_contiguous(client)?;
             }
         }
-        GemvKind::VecMatRowMajor | GemvKind::VecMatColMajor => {
+        GemmPlan::VecMatRowMajor | GemmPlan::VecMatColMajor => {
             // LHS (vec) must be contiguous
             let lhs_inner_stride = problem.lhs_strides[rank - 1];
             if lhs_inner_stride != 1 {
                 lhs = lhs.into_contiguous(client)?;
             }
         }
+        GemmPlan::Standard => unreachable!("gemv routine never selects Standard"),
     }
 
     let device_settings = GemvPlaneParallelRoutine::device_settings(client, vector_sizes);
@@ -119,11 +120,11 @@ pub fn launch_ref<R: Runtime>(
         GemvPlaneParallelRoutine::expand_blueprint(&problem, &device_settings, strategy)?;
 
     if device_settings.plane_dim > 1 {
-        if matches!(expand_info.blueprint.kind, GemvKind::MatVecColMajor) {
+        if matches!(expand_info.blueprint.plan, GemmPlan::MatVecColMajor) {
             return Err(MatmulSetupError::InvalidConfig(Box::new(
                 "On GPU, MatVec plane parallel only supports row major lhs for now",
             )));
-        } else if matches!(expand_info.blueprint.kind, GemvKind::VecMatRowMajor) {
+        } else if matches!(expand_info.blueprint.plan, GemmPlan::VecMatRowMajor) {
             return Err(MatmulSetupError::InvalidConfig(Box::new(
                 "On GPU, Vecmat plane parallel only supports col major rhs for now",
             )));

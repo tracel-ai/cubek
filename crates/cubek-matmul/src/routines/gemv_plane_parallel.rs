@@ -8,7 +8,7 @@ use cubek_std::cube_count::{CubeCountPlan, CubeCountStrategy, GlobalOrder, Hyper
 use crate::{
     components::batch::{
         BatchMatmulFamily, CheckBounds,
-        gemv_plane_parallel::{GemvKind, GemvPlaneParallelBlueprint, GemvPlaneParallelFamily},
+        gemm_plane_parallel::{GemmPlan, GemmPlaneParallelBlueprint, GemmPlaneParallelFamily},
     },
     definition::{MatmulElems, MatmulProblem, MatmulSetupError},
     routines::{
@@ -31,7 +31,7 @@ impl Display for GemvPlaneParallelStrategy {
 
 impl Routine<()> for GemvPlaneParallelRoutine {
     type Strategy = GemvPlaneParallelStrategy;
-    type BatchMatmul = GemvPlaneParallelFamily;
+    type BatchMatmul = GemmPlaneParallelFamily;
     type Blueprint = <Self::BatchMatmul as BatchMatmulFamily<()>>::Blueprint;
     type Config = <Self::BatchMatmul as BatchMatmulFamily<()>>::Config;
 
@@ -54,25 +54,27 @@ impl Routine<()> for GemvPlaneParallelRoutine {
                     None => num_concurrent_planes(&properties.hardware),
                 };
 
-                let kind = GemvKind::from_problem(problem)?;
+                let plan = GemmPlan::gemv_from_problem(problem)?;
                 let tile_dim =
                     device_settings.plane_dim as usize * device_settings.vector_sizes.rhs;
-                let num_planes = match kind {
-                    GemvKind::MatVecRowMajor | GemvKind::VecMatColMajor => {
+                let num_planes = match plan {
+                    GemmPlan::MatVecRowMajor | GemmPlan::VecMatColMajor => {
                         // For tile swizzle
                         max(1, min(target_num_planes, problem.k / tile_dim))
                     }
-                    GemvKind::VecMatRowMajor | GemvKind::MatVecColMajor => {
+                    GemmPlan::VecMatRowMajor | GemmPlan::MatVecColMajor => {
                         // For within tile
                         max(1, min(target_num_planes, tile_dim))
                     }
+                    GemmPlan::Standard => unreachable!("gemv routine never selects Standard"),
                 };
 
-                let num_parallel_problems = match kind {
-                    GemvKind::VecMatColMajor => problem.n,
-                    GemvKind::VecMatRowMajor => problem.n / tile_dim,
-                    GemvKind::MatVecRowMajor => problem.m,
-                    GemvKind::MatVecColMajor => problem.m / tile_dim,
+                let num_parallel_problems = match plan {
+                    GemmPlan::VecMatColMajor => problem.n,
+                    GemmPlan::VecMatRowMajor => problem.n / tile_dim,
+                    GemmPlan::MatVecRowMajor => problem.m,
+                    GemmPlan::MatVecColMajor => problem.m / tile_dim,
+                    GemmPlan::Standard => unreachable!("gemv routine never selects Standard"),
                 };
                 let check_bounds = if num_parallel_problems.is_multiple_of(num_planes) {
                     CheckBounds::None
@@ -80,7 +82,7 @@ impl Routine<()> for GemvPlaneParallelRoutine {
                     CheckBounds::Terminate
                 };
 
-                let blueprint = GemvPlaneParallelBlueprint {
+                let blueprint = GemmPlaneParallelBlueprint {
                     dtypes: dtypes.clone(),
                     num_planes,
                     tile_dim,
@@ -88,7 +90,7 @@ impl Routine<()> for GemvPlaneParallelRoutine {
                         .cube_count_strategy(CubeCountStrategy::Flattened)
                         .global_order(GlobalOrder::RowMajor)
                         .build(),
-                    kind,
+                    plan,
                     check_bounds,
                 };
 
@@ -119,11 +121,12 @@ impl Routine<()> for GemvPlaneParallelRoutine {
         )?
         .to_cube_dim(device_settings.plane_dim)?;
 
-        let num_parallel_problems = match blueprint.kind {
-            GemvKind::VecMatColMajor => problem.n,
-            GemvKind::VecMatRowMajor => problem.n / blueprint.tile_dim,
-            GemvKind::MatVecRowMajor => problem.m,
-            GemvKind::MatVecColMajor => problem.m / blueprint.tile_dim,
+        let num_parallel_problems = match blueprint.plan {
+            GemmPlan::VecMatColMajor => problem.n,
+            GemmPlan::VecMatRowMajor => problem.n / blueprint.tile_dim,
+            GemmPlan::MatVecRowMajor => problem.m,
+            GemmPlan::MatVecColMajor => problem.m / blueprint.tile_dim,
+            GemmPlan::Standard => unreachable!("gemv routine never selects Standard"),
         };
 
         let working_cubes = num_parallel_problems.div_ceil(blueprint.num_planes);

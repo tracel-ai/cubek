@@ -34,3 +34,38 @@ impl Layout for MatLayout {
         self.shape
     }
 }
+
+#[derive(CubeType, Clone, Copy)]
+pub struct VecLayout {
+    batch: usize,
+    shape: Coords1d,
+}
+
+#[cube]
+impl VecLayout {
+    pub fn new(batch: usize, shape: Coords1d) -> Self {
+        VecLayout { batch, shape }
+    }
+}
+
+#[cube]
+impl Layout for VecLayout {
+    type Coordinates = Coords1d;
+    type SourceCoordinates = (usize, u32, u32);
+
+    fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
+        (self.batch, 0, pos as u32)
+    }
+
+    fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
+        pos < self.shape
+    }
+
+    fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
+        (self.to_source_pos(pos), self.is_in_bounds(pos))
+    }
+
+    fn shape(&self) -> Self::Coordinates {
+        self.shape
+    }
+}

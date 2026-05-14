@@ -3,8 +3,8 @@ use std::marker::PhantomData;
 use crate::components::batch::{
     BatchConfig as _, BatchMatmul, BatchMatmulFamily, CheckBounds,
     gemm_plane_parallel::{
-        GemmPlaneParallelBlueprint, GemmPlaneParallelConfig, GemmPlaneParallelFamily,
-        layout::MatLayout,
+        GemmPlan, GemmPlaneParallelBlueprint, GemmPlaneParallelConfig, GemmPlaneParallelFamily,
+        layout::{MatLayout, VecLayout},
     },
 };
 
@@ -15,9 +15,10 @@ use crate::{
 use cubecl::{
     cube,
     num_traits::Zero,
-    std::tensor::layout::Coords2d,
+    std::tensor::layout::{Coords1d, Coords2d},
 };
 use cubecl::{prelude::*, std::tensor::View};
+use cubek_std::MatrixLayout;
 
 #[cube(launch_unchecked, explicit_define, address_type = "dynamic")]
 #[allow(clippy::type_complexity)]
@@ -116,7 +117,9 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for GemmPlaneParallel<MP> {
 
         let (_, m, k) = lhs.shape();
         let (_, _, n) = rhs.shape();
-        let (m_cube, n_cube, batch_cube) = cube_pos_to_m_n_batch(&cube_mapping);
+        // All plans place the working cube in slot 0; standard GEMM also uses
+        // slot 1. The rest of the entries are unused for GEMV plans.
+        let (cube_x, cube_y, batch_cube) = cube_pos_to_m_n_batch(&cube_mapping);
 
         let lhs_batch = Args::batch_lhs(state, batch_cube as usize);
         let rhs_batch = Args::batch_rhs(state, batch_cube as usize);
@@ -127,33 +130,112 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for GemmPlaneParallel<MP> {
 
         let check_bounds = config.check_bounds;
 
-        execute_gemm::<LhsG<MP>, RhsG<MP>, AccG<MP>, AccRE<MP>, N>(
-            lhs.view(MatLayout::new(lhs_batch, (m, k))),
-            rhs.view(MatLayout::new(rhs_batch, (k, n))),
-            out.view_mut(MatLayout::new(out_batch, (m, n))),
-            m_cube,
-            n_cube,
-            k,
-            config.num_planes,
-            config.plane_dim,
-            vector_size as u32,
-            check_bounds,
-        );
+        match config.plan {
+            GemmPlan::Standard => execute_simple::<LhsG<MP>, RhsG<MP>, AccG<MP>, AccRE<MP>, N>(
+                lhs.view(MatLayout::new(lhs_batch, (m, k))),
+                rhs.view(MatLayout::new(rhs_batch, (k, n))),
+                out.view_mut(MatLayout::new(out_batch, (m, n))),
+                cube_x,
+                cube_y,
+                k,
+                config.num_planes,
+                config.plane_dim,
+                vector_size as u32,
+                PlaneAxis::Col,
+                check_bounds,
+            ),
+            GemmPlan::VecMatColMajor => {
+                execute_simple::<LhsG<MP>, RhsG<MP>, AccG<MP>, AccRE<MP>, N>(
+                    lhs.view(MatLayout::new(lhs_batch, (m, k))),
+                    rhs.view(MatLayout::new(rhs_batch, (k, n))),
+                    out.view_mut(MatLayout::new(out_batch, (m, n))),
+                    0,
+                    cube_x,
+                    k,
+                    config.num_planes,
+                    config.plane_dim,
+                    vector_size as u32,
+                    PlaneAxis::Col,
+                    check_bounds,
+                )
+            }
+            GemmPlan::MatVecRowMajor => {
+                execute_simple::<LhsG<MP>, RhsG<MP>, AccG<MP>, AccRE<MP>, N>(
+                    lhs.view(MatLayout::new(lhs_batch, (m, k))),
+                    rhs.view(MatLayout::new(rhs_batch, (k, n))),
+                    out.view_mut(MatLayout::new(out_batch, (m, n))),
+                    cube_x,
+                    0,
+                    k,
+                    config.num_planes,
+                    config.plane_dim,
+                    vector_size as u32,
+                    PlaneAxis::Row,
+                    check_bounds,
+                )
+            }
+            GemmPlan::VecMatRowMajor => execute_transposed::<
+                Global<Lhs<MP>>,
+                Global<Rhs<MP>>,
+                AccG<MP>,
+                AccRE<MP>,
+                Stage<Rhs<MP>>,
+                GlobalSize<Lhs<MP>>,
+                GlobalSize<Rhs<MP>>,
+            >(
+                lhs.view(VecLayout::new(lhs_batch, k as usize)),
+                rhs.view(MatLayout::new(rhs_batch, (k, n))),
+                out.view_mut(VecLayout::new(out_batch, n as usize)),
+                cube_x * config.num_planes + UNIT_POS_Y,
+                k,
+                vector_size as u32,
+                MatrixLayout::RowMajor,
+                check_bounds,
+            ),
+            GemmPlan::MatVecColMajor => execute_transposed::<
+                Global<Rhs<MP>>,
+                Global<Lhs<MP>>,
+                AccG<MP>,
+                AccRE<MP>,
+                Stage<Lhs<MP>>,
+                GlobalSize<Rhs<MP>>,
+                GlobalSize<Lhs<MP>>,
+            >(
+                rhs.view(VecLayout::new(rhs_batch, k as usize)),
+                lhs.view(MatLayout::new(lhs_batch, (m, k))),
+                out.view_mut(VecLayout::new(out_batch, m as usize)),
+                cube_x * config.num_planes + UNIT_POS_Y,
+                k,
+                vector_size as u32,
+                MatrixLayout::ColMajor,
+                check_bounds,
+            ),
+        }
     }
+}
+
+/// Which axis the planes within a cube parallelize over.
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+pub enum PlaneAxis {
+    /// Planes enumerate columns of the output (`n_pos = cube_n * num_planes + plane_id`).
+    Col,
+    /// Planes enumerate rows of the output (`m_pos = cube_m * num_planes + plane_id`).
+    Row,
 }
 
 #[cube]
 #[allow(clippy::too_many_arguments)]
-fn execute_gemm<L: CubePrimitive, R: CubePrimitive, O: CubePrimitive, AccR: Numeric, N: Size>(
+fn execute_simple<L: CubePrimitive, R: CubePrimitive, O: CubePrimitive, AccR: Numeric, N: Size>(
     lhs: View<L, Coords2d>,
     rhs: View<R, Coords2d>,
     out: View<O, Coords2d, ReadWrite>,
-    m_cube: u32,
-    n_cube: u32,
+    cube_m: u32,
+    cube_n: u32,
     k_dim: u32,
     #[comptime] num_planes: u32,
     #[comptime] plane_dim: u32,
     #[comptime] vector_size: u32,
+    #[comptime] plane_axis: PlaneAxis,
     #[comptime] check_bounds: CheckBounds,
 ) {
     let plane_id = UNIT_POS_Y;
@@ -161,12 +243,13 @@ fn execute_gemm<L: CubePrimitive, R: CubePrimitive, O: CubePrimitive, AccR: Nume
 
     let (out_m, out_n) = out.shape();
 
-    // One plane per output column within a cube (similar to gemv VecMatColMajor),
-    // looping over m rows inside the kernel.
-    let n_pos = n_cube * num_planes + plane_id;
+    let (m_pos, n_pos) = match comptime!(plane_axis) {
+        PlaneAxis::Col => (cube_m, cube_n * num_planes + plane_id),
+        PlaneAxis::Row => (cube_m * num_planes + plane_id, cube_n),
+    };
 
     if comptime!(matches!(check_bounds, CheckBounds::Terminate)) {
-        let should_terminate = n_pos >= out_n;
+        let should_terminate = m_pos >= out_m || n_pos >= out_n;
         if should_terminate {
             terminate!();
         }
@@ -174,15 +257,6 @@ fn execute_gemm<L: CubePrimitive, R: CubePrimitive, O: CubePrimitive, AccR: Nume
 
     let segment_size = plane_dim * vector_size;
     let num_segments_k = k_dim / segment_size;
-
-    // Each cube currently owns a single m row; m_cube enumerates rows.
-    let m_pos = m_cube;
-    if comptime!(matches!(check_bounds, CheckBounds::Terminate)) {
-        let should_terminate = m_pos >= out_m;
-        if should_terminate {
-            terminate!();
-        }
-    }
 
     let mut acc = Vector::<AccR, N>::zero();
 
@@ -229,6 +303,108 @@ fn execute_gemm<L: CubePrimitive, R: CubePrimitive, O: CubePrimitive, AccR: Nume
             } else {
                 out.write((m_pos, n_pos), sum);
             }
+        }
+    }
+}
+
+#[cube]
+fn execute_transposed<
+    V: Scalar,
+    M: Scalar,
+    O: CubePrimitive,
+    AccR: Numeric,
+    SM: Scalar,
+    VS: Size,
+    MS: Size,
+>(
+    vec: View<Vector<V, VS>, Coords1d>,
+    mat: View<Vector<M, MS>, Coords2d>,
+    out: View<O, Coords1d, ReadWrite>,
+    mn_id: u32,
+    k_dim: u32,
+    #[comptime] vector_size: u32,
+    #[comptime] matrix_layout: MatrixLayout,
+    #[comptime] check_bounds: CheckBounds,
+) {
+    let mn_pos = mn_id * vector_size;
+
+    // The first if statement is running at comptime.
+    if comptime!(matches!(check_bounds, CheckBounds::Terminate)) {
+        // This is a runtime cond.
+        let should_terminate = mn_pos as usize >= out.shape();
+        if should_terminate {
+            terminate!();
+        }
+    }
+
+    let num_tiles_k = k_dim / vector_size;
+
+    let mut accs: Array<Vector<AccR, VS>> = Array::new(vector_size as usize);
+    for segment_iter in 0..vector_size {
+        accs[segment_iter as usize] = Vector::zero();
+    }
+
+    // VS x VS tile
+    let mut tile = Array::<SM>::new((vector_size * vector_size) as usize);
+
+    for tile_index in 0..num_tiles_k {
+        let global_k_pos = tile_index * vector_size;
+
+        let vec_val = if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
+            vec.read_checked(global_k_pos as usize)
+        } else {
+            vec.read_unchecked(global_k_pos as usize)
+        };
+
+        for segment_iter in 0..vector_size {
+            let vector = if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
+                match matrix_layout {
+                    MatrixLayout::RowMajor => {
+                        mat.read_checked((global_k_pos + segment_iter, mn_pos))
+                    }
+                    MatrixLayout::ColMajor => {
+                        mat.read_checked((mn_pos, global_k_pos + segment_iter))
+                    }
+                }
+            } else {
+                match matrix_layout {
+                    MatrixLayout::RowMajor => {
+                        mat.read_unchecked((global_k_pos + segment_iter, mn_pos))
+                    }
+                    MatrixLayout::ColMajor => {
+                        mat.read_unchecked((mn_pos, global_k_pos + segment_iter))
+                    }
+                }
+            };
+
+            #[unroll]
+            for i in 0..vector_size {
+                tile[(segment_iter * vector_size + i) as usize] = SM::cast_from(vector[i as usize]);
+            }
+        }
+
+        for segment_iter in 0..vector_size {
+            let mut mat_val: Vector<SM, VS> = Vector::empty();
+
+            #[unroll]
+            for i in 0..vector_size {
+                mat_val[i as usize] = tile[(i * vector_size + segment_iter) as usize];
+            }
+
+            accs[segment_iter as usize] += Vector::cast_from(vec_val) * Vector::cast_from(mat_val);
+        }
+    }
+
+    // Write back
+    for segment_iter in 0..vector_size {
+        let acc = accs[segment_iter as usize];
+        let sum = O::cast_from(Vector::vector_sum(acc));
+        let index = (mn_pos + segment_iter) as usize;
+
+        if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
+            out.write_checked(index, sum);
+        } else {
+            out.write(index, sum);
         }
     }
 }
