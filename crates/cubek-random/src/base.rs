@@ -13,10 +13,26 @@ pub(crate) const N_VALUES_PER_THREAD: usize = 128;
 
 static SEED: Mutex<Option<StdRng>> = Mutex::new(None);
 
+/// Held across a "seed → derive seeds → submit random kernel" sequence so two
+/// threads can't interleave their `seed()` and `get_seeds()` calls (which would
+/// make each thread's launched kernel use the other thread's seeded state).
+static SEED_GUARD: Mutex<()> = Mutex::new(());
+
 pub fn seed(seed: u64) {
     let rng = StdRng::seed_from_u64(seed);
     let mut seed = SEED.lock().unwrap();
     *seed = Some(rng);
+}
+
+/// Install `seed` as the active RNG state and run `f` while holding a
+/// process-wide guard. Use this whenever `f` calls one of the `random_*`
+/// launchers — it keeps the seed-set and the kernel launch as a single
+/// critical section, so parallel callers don't stomp on each other's seeds
+/// between the two steps.
+pub fn with_seed<R>(seed_value: u64, f: impl FnOnce() -> R) -> R {
+    let _guard = SEED_GUARD.lock().unwrap();
+    seed(seed_value);
+    f()
 }
 
 /// Pseudo-random generator

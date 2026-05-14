@@ -47,11 +47,12 @@ impl TileScope for Cube {
     const KIND: ScopeKind = ScopeKind::Cube;
 }
 
-/// Zero-sized comptime marker used to carry a [Scope] generic through [Tile].
+/// Zero-sized comptime marker used to carry a [TileScope] generic through
+/// [`Tile`](crate::tile::Tile) at the field level.
 #[derive(CubeType, Clone, Copy)]
 pub struct ScopeMarker<Sc: TileScope> {
     #[cube(comptime)]
-    _phantom: PhantomData<Sc>,
+    pub _phantom: PhantomData<Sc>,
 }
 
 /// Comptime assertion that a tile-scope generic resolves to `Plane`.
