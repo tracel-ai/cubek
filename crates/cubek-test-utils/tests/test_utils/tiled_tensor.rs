@@ -280,7 +280,7 @@ fn launch_read_tensor_as_tiled<N: Numeric, S: Size>(
     #[define(N)] _dtype: StorageType,
     #[define(S)] vector_size: usize,
 ) {
-    let tiler = blueprint.clone().tiler.unwrap(); // For this test, we expect it
+    let tiler = blueprint.tiler.clone().unwrap();
 
     let mut shape = Sequence::new();
     #[unroll]
@@ -290,7 +290,6 @@ fn launch_read_tensor_as_tiled<N: Numeric, S: Size>(
 
     let mut strides = Sequence::new();
 
-    // Getting an error doing something like this
     #[unroll]
     for i in 0..blueprint.strides.rank() {
         strides.push(comptime!(blueprint.strides[i]));
@@ -362,33 +361,22 @@ impl Layout for TiledLayoutV2 {
         let n = self.tiles.len();
         let logical_rank = pos.len();
 
-        // Zone 1: Pre-tiled axes [0, start_axis)
-        // Physical index == Logical index
         #[unroll]
         for i in 0..s {
             offset += pos[i] * self.strides[i];
         }
-
-        // Zone 2: Tiled axes [start_axis, start_axis + n)
-        // Each logical coordinate is split into Grid and Tile components
 
         #[unroll]
         for i in 0..n {
             let logical_idx = comptime!(self.start_axis + i);
             let tile_size = self.tiles[i];
 
-            //#[comptime]
-            //let logical_idx = self.start_axis + comptime!(i);
             let grid_coord = pos[logical_idx] / tile_size;
             let local_coord = pos[logical_idx] % tile_size;
 
-            // Grids are at [s .. s+n], Tiles are at [s+n .. s+2n]
             offset += grid_coord * self.strides[logical_idx];
             offset += local_coord * self.strides[comptime!(logical_idx + n)];
         }
-        //
-        //// Zone 3: Post-tiled axes [start_axis + n, logical_rank)
-        //// Physical index is offset by n (the extra dimensions added by tiling)
         let start = comptime!(self.start_axis + n);
         #[unroll]
         for i in start..logical_rank {
