@@ -359,7 +359,7 @@ impl Layout for TiledLayoutV2 {
         let s = self.start_axis;
         #[comptime]
         let n = self.tiles.len();
-        let logical_rank = pos.len();
+        let rank = pos.len();
 
         #[unroll]
         for i in 0..s {
@@ -368,18 +368,18 @@ impl Layout for TiledLayoutV2 {
 
         #[unroll]
         for i in 0..n {
-            let logical_idx = comptime!(self.start_axis + i);
+            let physical_idx = comptime!(self.start_axis + i);
             let tile_size = self.tiles[i];
 
-            let grid_coord = pos[logical_idx] / tile_size;
-            let local_coord = pos[logical_idx] % tile_size;
+            let grid_coord = pos[physical_idx] / tile_size;
+            let local_coord = pos[physical_idx] % tile_size;
 
-            offset += grid_coord * self.strides[logical_idx];
-            offset += local_coord * self.strides[comptime!(logical_idx + n)];
+            offset += grid_coord * self.strides[physical_idx];
+            offset += local_coord * self.strides[comptime!(physical_idx + n)];
         }
         let start = comptime!(self.start_axis + n);
         #[unroll]
-        for i in start..logical_rank {
+        for i in start..rank {
             offset += pos[i] * self.strides[comptime!(i + n)];
         }
 
