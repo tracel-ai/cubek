@@ -170,10 +170,10 @@ fn launch_read_tensor_as_tiled<N: Numeric, S: Size>(
 
     let tiled_layout = TiledLayout::new(shape, strides, tiler.start_axis as usize, tiles);
 
-    let row_major = RowMajorLayout::new(4, 4, vector_size);
+    let row_major = RowMajorLayout::new(matrix_len, matrix_len, vector_size);
 
-    let input_view = input.view(tiled_layout);
-    let output_view = output.view_mut(row_major);
+    let input_view = input.view(row_major);
+    let output_view = output.view_mut(tiled_layout);
 
     #[unroll]
     for i in 0..matrix_len {
@@ -182,8 +182,8 @@ fn launch_read_tensor_as_tiled<N: Numeric, S: Size>(
             let mut coords = Sequence::<usize>::new();
             coords.push(i);
             coords.push(j);
-            let value = input_view.read(coords);
-            output_view.write((i.runtime(), j.runtime()), value);
+            let value = input_view.read((i.runtime(), j.runtime()));
+            output_view.write(coords, value);
         }
     }
 }
@@ -223,13 +223,11 @@ impl Layout for TiledLayout {
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
         let mut offset = 0;
         #[comptime]
-        let s = self.start_axis;
-        #[comptime]
         let n = self.tiles.len();
         let rank = pos.len();
 
         #[unroll]
-        for i in 0..s {
+        for i in 0..self.start_axis {
             offset += pos[i] * self.strides[i];
         }
 
@@ -244,6 +242,7 @@ impl Layout for TiledLayout {
             offset += grid_coord * self.strides[physical_idx];
             offset += local_coord * self.strides[comptime!(physical_idx + n)];
         }
+
         let start = comptime!(self.start_axis + n);
         #[unroll]
         for i in start..rank {
