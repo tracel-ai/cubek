@@ -4,19 +4,13 @@ use cubecl::{
     calculate_cube_count_elemwise, prelude::*, std::FastDivmod, tensor_vector_size_parallel,
 };
 
-#[cube(launch_unchecked, address_type = "dynamic")]
+#[cube(launch, address_type = "dynamic")]
 fn interpolate_nearest_kernel<F: Float, N: Size>(
     input: &Tensor<Vector<F, N>>,
     output: &mut Tensor<Vector<F, N>>,
     shape_out: Sequence<FastDivmod<usize>>,
     #[define(F)] _dtype: StorageType,
 ) {
-    if ABSOLUTE_POS != 0 {
-        terminate!();
-    }
-    let input_val = input[0];
-    output[0] = input_val;
-    terminate!();
     if ABSOLUTE_POS >= output.len() {
         terminate!();
     }
@@ -66,19 +60,17 @@ pub(crate) fn interpolate_nearest_launch<R: Runtime>(
         .required_address_type(dtype.size())
         .max(output.required_address_type(dtype.size()));
 
-    unsafe {
-        interpolate_nearest_kernel::launch_unchecked(
-            client,
-            cube_count,
-            cube_dim,
-            address_type,
-            vector_size,
-            input.into_tensor_arg(),
-            output.clone().into_tensor_arg(),
-            out_shape,
-            dtype,
-        )
-    };
+    interpolate_nearest_kernel::launch(
+        client,
+        cube_count,
+        cube_dim,
+        address_type,
+        vector_size,
+        input.into_tensor_arg(),
+        output.clone().into_tensor_arg(),
+        out_shape,
+        dtype,
+    );
 
     Ok(())
 }

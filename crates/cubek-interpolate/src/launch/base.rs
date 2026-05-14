@@ -24,6 +24,7 @@ pub(crate) fn interpolate_launch<R: Runtime>(
         input.shape.len() - 1,
     );
 
+    // Using 16x16 tiles as a starting point
     let tile_w = 16.min(out_w);
     let tile_h = 16.min(out_h);
 
@@ -32,7 +33,7 @@ pub(crate) fn interpolate_launch<R: Runtime>(
     let cubes_x = (out_w + tile_w - 1) / tile_w;
     let cubes_y = (out_h + tile_h - 1) / tile_h;
 
-    let cubes_z = batch_size * channels;
+    let cubes_z = batch_size * channels / vector_size as usize;
     let cube_count = CubeCount::Static(cubes_x as u32, cubes_y as u32, cubes_z as u32);
 
     let address_type = input

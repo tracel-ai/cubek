@@ -13,7 +13,6 @@ use crate::kernel::{
         interpolate_nearest_launch,
     },
 };
-use crate::launch::interpolate_launch;
 use core::result::Result;
 use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*};
 
@@ -32,8 +31,9 @@ pub fn interpolate<R: Runtime>(
     let align_corners = options.align_corners;
 
     match options.mode {
-        InterpolateMode::Nearest => interpolate_launch(client, input, output, options, dtype),
-        // InterpolateMode::Nearest => interpolate_nearest_launch(client, input, output, dtype),
+        // New launch for unified kernel
+        // InterpolateMode::Nearest => interpolate_launch(client, input, output, options, dtype),
+        InterpolateMode::Nearest => interpolate_nearest_launch(client, input, output, dtype),
         InterpolateMode::Bilinear => {
             interpolate_bilinear_launch(client, input, output, align_corners, dtype)
         }

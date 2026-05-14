@@ -13,6 +13,6 @@ impl Interpolate for Nearest {
     }
 
     fn compute_weights<F: Float, N: Size>(_frac: F, weights: &mut Array<Vector<F, N>>) {
-        weights[0] = Vector::<F, N>::cast_from(F::cast_from(1.0));
+        weights[0] = Vector::cast_from(1);
     }
 }
