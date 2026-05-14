@@ -233,7 +233,7 @@ impl Layout for TiledLayout {
         let mut is_valid = true;
         #[unroll]
         for i in 0..self.shape.len() {
-            is_valid = is_valid && pos[i] >= self.shape[i];
+            is_valid = is_valid && pos[i] < self.shape[i];
         }
         is_valid
     }
