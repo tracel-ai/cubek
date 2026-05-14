@@ -11,9 +11,7 @@ use crate::{
         CubeDimResource,
         batch::{
             BatchMatmulFamily, CheckBounds,
-            gemm_plane_parallel::{
-                GemmPlaneParallel, GemmPlaneParallelConfig, matmul_entry,
-            },
+            gemm_plane_parallel::{GemmPlaneParallel, GemmPlaneParallelConfig, matmul_entry},
         },
         global::memory::GlobalLayoutConfig,
         stage::NumStages,

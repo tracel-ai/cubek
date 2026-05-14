@@ -12,11 +12,7 @@ use crate::{
     definition::{cube_pos_to_m_n_batch, *},
     launch::MatmulArgs,
 };
-use cubecl::{
-    cube,
-    num_traits::Zero,
-    std::tensor::layout::Coords2d,
-};
+use cubecl::{cube, num_traits::Zero, std::tensor::layout::Coords2d};
 use cubecl::{prelude::*, std::tensor::View};
 
 #[cube(launch_unchecked, explicit_define, address_type = "dynamic")]

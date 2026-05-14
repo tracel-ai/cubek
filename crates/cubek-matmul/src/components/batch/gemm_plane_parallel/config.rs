@@ -1,10 +1,8 @@
 use cubek_std::MatrixLayout;
 
-use crate::{
-    components::{
-        batch::{BatchConfig, CheckBounds},
-        global::memory::GlobalLayoutConfig,
-    },
+use crate::components::{
+    batch::{BatchConfig, CheckBounds},
+    global::memory::GlobalLayoutConfig,
 };
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]

@@ -27,13 +27,13 @@ use crate::{
         },
         double_unit::DoubleUnitAlgorithm,
         gemm_plane_parallel::GemmPlaneParallelRoutine,
+        gemv_innerproduct::{DoubleVecMatInnerProductAlgorithm, VecMatInnerProductAlgorithm},
+        gemv_plane_parallel::GemvPlaneParallelRoutine,
+        gemv_unit_perpendicular::GemvUnitPerpendicularRoutine,
         ordered_double_buffering::{OrderedDoubleBufferingAlgorithm, OrderedSelectionArgs},
         simple::{SimpleAlgorithm, SimpleArgs, SimpleTmaAlgorithm},
         simple_unit::SimpleUnitAlgorithm,
         specialized::{SpecializedAlgorithm, SpecializedStrategy},
-        gemv_innerproduct::{DoubleVecMatInnerProductAlgorithm, VecMatInnerProductAlgorithm},
-        gemv_plane_parallel::GemvPlaneParallelRoutine,
-        gemv_unit_perpendicular::GemvUnitPerpendicularRoutine,
     },
 };
 
