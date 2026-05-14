@@ -1,7 +1,7 @@
 use cubecl::{
     self,
     std::tensor::layout::{Coords1d, Layout, LayoutExpand},
-    zspace::{Shape, SmallVec, Strides},
+    zspace::metadata::Metadata,
 };
 use cubecl::{TestRuntime, prelude::*};
 use cubecl::{
@@ -29,14 +29,6 @@ fn read_rowmajor_tensor_as_tiled_layout() {
         .generate_without_host_data();
 
     let metadata = input_handle.metadata.to_tiled(0, &[2, 2]);
-    let blueprint = MetadataBlueprint::new(
-        metadata.shape.clone(),
-        metadata.strides.clone(),
-        metadata.tiler.map(|t| TilerBlueprint {
-            start_axis: t.start_axis,
-            tile_size: t.tile_size,
-        }),
-    );
 
     let cube_count = CubeCount::new_single();
     let cube_dim = CubeDim::new_single();
@@ -48,7 +40,7 @@ fn read_rowmajor_tensor_as_tiled_layout() {
         cube_dim,
         input_handle.binding().into_tensor_arg(),
         output_handle.clone().binding().into_tensor_arg(),
-        blueprint,
+        metadata,
         matrix_len,
         dtype,
         vector_size,
@@ -71,29 +63,6 @@ fn read_rowmajor_tensor_as_tiled_layout() {
     assert_equals_approx(&output, &expected_values, 1e-6)
         .as_test_outcome()
         .enforce()
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct TilerBlueprint {
-    pub start_axis: u8,
-    pub tile_size: SmallVec<[u16; 3]>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct MetadataBlueprint {
-    shape: Shape,
-    strides: Strides,
-    tiler: Option<TilerBlueprint>,
-}
-
-impl MetadataBlueprint {
-    pub fn new(shape: Shape, strides: Strides, tiler: Option<TilerBlueprint>) -> Self {
-        MetadataBlueprint {
-            shape,
-            strides,
-            tiler,
-        }
-    }
 }
 
 #[derive(CubeType, Clone, Copy)]
@@ -142,24 +111,24 @@ impl Layout for RowMajorLayout {
 fn launch_read_tensor_as_tiled<N: Numeric, S: Size>(
     input: &Tensor<Vector<N, S>>,
     output: &mut Tensor<Vector<N, S>>,
-    #[comptime] blueprint: MetadataBlueprint,
+    #[comptime] metadata: Metadata,
     #[comptime] matrix_len: usize,
     #[define(N)] _dtype: StorageType,
     #[define(S)] vector_size: usize,
 ) {
-    let tiler = blueprint.tiler.clone().unwrap();
+    let tiler = metadata.tiler.clone().unwrap();
 
     let mut shape = Sequence::new();
     #[unroll]
-    for i in 0..blueprint.shape.rank() {
-        shape.push(comptime!(blueprint.shape[i]));
+    for i in 0..metadata.shape.rank() {
+        shape.push(comptime!(metadata.shape[i]));
     }
 
     let mut strides = Sequence::new();
 
     #[unroll]
-    for i in 0..blueprint.strides.rank() {
-        strides.push(comptime!(blueprint.strides[i]));
+    for i in 0..metadata.strides.rank() {
+        strides.push(comptime!(metadata.strides[i]));
     }
 
     let mut tiles = Sequence::new();
