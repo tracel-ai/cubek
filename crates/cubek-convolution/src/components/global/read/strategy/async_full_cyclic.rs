@@ -16,10 +16,13 @@ use cubek_matmul::components::{
             async_full_cyclic::AsyncFullCyclicLoading as MatmulCyclicLoading, tiled::TiledLayout,
         },
     },
-    stage::{ContiguousTilingLayout, StridedStageFamily, StridedStageMemory, TilingOrder},
+    stage::{StridedStageFamily, StridedStageMemory},
 };
 use cubek_matmul::definition::{MatmulElems, MatmulProblem};
-use cubek_std::{InvalidConfigError, StageIdent, tile::Strided};
+use cubek_std::{
+    InvalidConfigError, StageIdent,
+    tile::{ContiguousTilingLayout, Strided, TilingOrder},
+};
 
 use crate::components::global::{
     args::RuntimeArgs,

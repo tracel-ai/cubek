@@ -67,7 +67,7 @@ impl<N: Numeric> CmmaTile<N> {
         #[comptime] ident: StageIdent,
     ) {
         match &source.kind {
-            TileKind::SharedMemory(shared) => {
+            TileKind::SharedTile(shared) => {
                 cmma_load_from_shared::<SE, SS, N, SIO>(
                     shared,
                     &mut self.matrix,
@@ -85,7 +85,8 @@ impl<N: Numeric> CmmaTile<N> {
             | TileKind::WhiteboxFragment(_)
             | TileKind::Bounce(_)
             | TileKind::Stage(_)
-            | TileKind::Partition(_) => panic!("CmmaTile::copy_from: unsupported source variant"),
+            | TileKind::Partition(_)
+            | TileKind::Pipelined(_) => panic!("CmmaTile::copy_from: unsupported source variant"),
         }
     }
 

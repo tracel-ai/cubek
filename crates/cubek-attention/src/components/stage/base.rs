@@ -4,9 +4,10 @@ use cubecl::{
 };
 use cubek_matmul::components::{
     global::{WriteEventListener, WriteTiling, read::sync_full_cyclic::SyncFullCyclicLoading},
-    stage::{ContiguousTilingLayout, RowMajorTilingOrder, StageFamily},
+    stage::StageFamily,
 };
 use cubek_std::stage::StageMemoryConfig;
+use cubek_std::tile::{ContiguousTilingLayout, RowMajorTilingOrder};
 use std::{fmt::Debug, hash::Hash};
 
 use crate::components::tile::TileAttention;

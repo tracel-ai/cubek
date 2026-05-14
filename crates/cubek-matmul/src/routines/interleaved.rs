@@ -4,7 +4,7 @@ use cubecl::{
 };
 use cubek_std::{
     cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation},
-    tile::Strided,
+    tile::{ColMajorTilingOrder, RowMajorTilingOrder, Strided},
 };
 use std::{fmt::Display, marker::PhantomData};
 
@@ -20,7 +20,7 @@ use crate::{
             read::{FullLoadingStrategy, sync_full_cyclic::SyncFullCyclicLoading},
             single_stage::simple::SimpleMatmulFamily,
         },
-        stage::{ColMajorTilingOrder, PartitionBuffering, PlaneMatmulFamily, RowMajorTilingOrder},
+        stage::{PartitionBuffering, PlanePartitioner},
         tile::TileMatmulKind,
     },
     routines::{
@@ -67,14 +67,7 @@ where
     type Strategy = InterleavedArgs;
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
-        SimpleMatmulFamily<
-            PlaneMatmulFamily<LL::Stage, RL::Stage, Option<AL::Stage>>,
-            RC,
-            LL,
-            RL,
-            AL,
-            PlaneWriterFamily,
-        >,
+        SimpleMatmulFamily<PlanePartitioner, RC, LL, RL, AL, PlaneWriterFamily>,
         RowMajorGlobalPartitionMatmul,
     >;
     type Blueprint = TilingBlueprint;

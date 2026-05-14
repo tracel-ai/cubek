@@ -151,7 +151,7 @@ impl<N: Numeric> RegisterTile<N> {
         #[comptime] ident: StageIdent,
     ) {
         match &source.kind {
-            TileKind::SharedMemory(shared) => {
+            TileKind::SharedTile(shared) => {
                 register_load_from_shared::<SE, SS, N, SIO>(
                     shared,
                     &mut self.tile.data,
@@ -172,7 +172,8 @@ impl<N: Numeric> RegisterTile<N> {
             | TileKind::WhiteboxFragment(_)
             | TileKind::Bounce(_)
             | TileKind::Stage(_)
-            | TileKind::Partition(_) => {
+            | TileKind::Partition(_)
+            | TileKind::Pipelined(_) => {
                 panic!("RegisterTile::copy_from: unsupported source variant")
             }
         }

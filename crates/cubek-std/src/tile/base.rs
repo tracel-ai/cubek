@@ -6,7 +6,8 @@ use cubecl::prelude::*;
 
 use crate::tile::{
     BounceTile, CmmaTile, InterleavedTile, MmaTile, PartitionTile, PlaneVecTile, RegisterTile,
-    ScopeMarker, SharedTile, StridedStage, TileScope, UnitTile, WhiteboxFragment,
+    PipelinedTile, ScopeMarker, SharedTile, StridedStage, TileScope, UnitTile, WhiteboxFragment,
+    variants::stage::partition::partition_get_at_mut,
 };
 
 /// Public tile type. Wraps a [`TileKind`] storage payload and carries the
@@ -26,7 +27,7 @@ pub struct Tile<N: Numeric, Sc: TileScope, IO: SliceVisibility> {
 /// generic (it shows up only on the outer `Tile`'s `ScopeMarker`); the
 /// [`Partition`](TileKind::Partition) variant uses it to keep its inner
 /// element tiles typed. Crate-private — constructors live on [`Tile`]
-/// (e.g. `Tile::new_SharedMemory`); internal allocators in
+/// (e.g. `Tile::new_SharedTile`); internal allocators in
 /// `tile/variants/*.rs` go through [`Tile::from_kind`].
 ///
 /// # The three axes
@@ -58,7 +59,7 @@ pub(crate) enum TileKind<N: Numeric, Sc: TileScope, IO: SliceVisibility> {
     /// it can be the source / destination of [`Tile::copy_from`]. No
     /// distribution semantics (the caller addresses smem directly), no
     /// compute capability of its own.
-    SharedMemory(SharedTile<N, IO>),
+    SharedTile(SharedTile<N, IO>),
     /// `[storage = registers, distribution = opaque-cmma, compute = cmma]
     /// [fused]`. Hardware-defined CMMA fragment. The fragment layout (and
     /// which lane holds which element) is opaque — only the CMMA load/exec/
@@ -117,6 +118,13 @@ pub(crate) enum TileKind<N: Numeric, Sc: TileScope, IO: SliceVisibility> {
     /// of accumulator tiles (replaces the standalone `Accumulators<MP, Sc>`
     /// wrapper). The element tiles share the partition's [`TileScope`] `Sc`.
     Partition(PartitionTile<N, Sc, IO>),
+    /// `[fused = one-or-two-sub-tiles]`. Holds the rhs register fragments
+    /// used by the partition-matmul body. The inner sequence has comptime
+    /// length 1 (single-buffered) or 2 (double-buffered, fragments rotate
+    /// per `n` step to overlap loads with computes). Encodes the buffering
+    /// choice in the tile kind so [`Tile::mma_partition`] doesn't need to
+    /// expose it as a separate argument.
+    Pipelined(PipelinedTile<N, Sc, IO>),
     /// `[sentinel]`. "No source" used by [`Tile::copy_from`] to drive
     /// per-variant zero-init of the destination. Produced by optional-stage
     /// flows in `cubek-matmul` (when an accumulator stage is absent).
@@ -141,8 +149,8 @@ impl<N: Numeric, Sc: TileScope, IO: SliceVisibility> Tile<N, Sc, IO> {
 
     /// Wraps a shared-memory tile. Used by stage `tile()` impls to expose a
     /// stage slot as a `Tile` for `copy_from`.
-    pub fn new_SharedMemory(t: SharedTile<N, IO>) -> Tile<N, Sc, IO> {
-        Self::from_kind(TileKind::new_SharedMemory(t))
+    pub fn new_SharedTile(t: SharedTile<N, IO>) -> Tile<N, Sc, IO> {
+        Self::from_kind(TileKind::new_SharedTile(t))
     }
 
     /// Wraps a type-erased stage view as a tile. The `Sc` generic on `Tile`
@@ -158,11 +166,50 @@ impl<N: Numeric, Sc: TileScope, IO: SliceVisibility> Tile<N, Sc, IO> {
         Self::from_kind(TileKind::new_Partition(t))
     }
 
+    /// Wraps a buffered rhs-fragment collection (1 or 2 sub-tiles). The
+    /// comptime length picks the buffering strategy at the matmul site.
+    pub fn new_Pipelined(t: PipelinedTile<N, Sc, IO>) -> Tile<N, Sc, IO> {
+        Self::from_kind(TileKind::new_Pipelined(t))
+    }
+
     /// Builds a "no source" tile that drives zero-init of the destination
     /// when fed into `copy_from`. Produced by optional-stage flows when the
     /// optional stage is absent; consumers can equivalently call
     /// `dest.init_zero(ident)` directly.
     pub fn new_None() -> Tile<N, Sc, IO> {
         Self::from_kind(TileKind::new_None())
+    }
+}
+
+#[cube]
+impl<N: Numeric, Sc: TileScope> Tile<N, Sc, ReadWrite> {
+    /// Returns a mutable reference to the `(m, n)` element tile of the
+    /// underlying [`PartitionTile`] payload (with `n_cols` driving the
+    /// `mn`-major flattening). Panics if `self.kind` is not
+    /// [`TileKind::Partition`]. Cross-crate consumers need this since
+    /// [`TileKind`] is crate-private.
+    pub fn partition_tile_at_mut(
+        &mut self,
+        #[comptime] m: usize,
+        #[comptime] n: usize,
+        #[comptime] n_cols: usize,
+    ) -> &mut Tile<N, Sc, ReadWrite> {
+        match &mut self.kind {
+            TileKind::Partition(p) => partition_get_at_mut::<N, Sc>(p, m, n, n_cols),
+            TileKind::SharedTile(_)
+            | TileKind::Cmma(_)
+            | TileKind::Mma(_)
+            | TileKind::Register(_)
+            | TileKind::PlaneVec(_)
+            | TileKind::Interleaved(_)
+            | TileKind::Unit(_)
+            | TileKind::WhiteboxFragment(_)
+            | TileKind::Bounce(_)
+            | TileKind::Stage(_)
+            | TileKind::Pipelined(_)
+            | TileKind::None => {
+                panic!("Tile::partition_tile_at_mut: self.kind is not Partition")
+            }
+        }
     }
 }

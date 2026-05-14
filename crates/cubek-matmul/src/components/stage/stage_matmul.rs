@@ -13,16 +13,16 @@ use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::{
     CubeDimResource, InvalidConfigError, MatrixLayout, PartitionSize, StageSize,
     stage::StageMemoryConfig,
-    tile::{PartitionBuffering, PartitionScheduler, PartitionSchedulerScheme},
+    tile::{PartitionBuffering, PartitionScheduler, PartitionSchedulerScheme, Tile},
 };
 
 use crate::components::global::{MatmulPlaneCounts, PlaneFlowConfig, WriteEvent, WriteEventListener};
 use crate::components::stage::{
-    NumStages, Stage, matmul::partition::Accumulators,
+    NumStages, Stage,
 };
 use crate::components::tile::TileMatmul;
 use crate::definition::{
-    MatmulElems, MatmulSetupError, MatmulTypes, MatrixTypes, MatmulVectorSizes, StageIdent,
+    AccRE, MatmulElems, MatmulSetupError, MatmulTypes, MatrixTypes, MatmulVectorSizes, StageIdent,
     TilingBlueprint,
 };
 
@@ -327,7 +327,7 @@ pub fn write_partition_to_stage<
     OutStage: Stage<<MP::Acc as MatrixTypes>::Stage, ReadWrite>,
     W: WriteEventListener,
 >(
-    acc: &mut Accumulators<MP, Sc>,
+    acc: &mut Tile<AccRE<MP>, Sc, ReadWrite>,
     out_stage: &mut OutStage,
     listener: &mut W,
     scheduler: &PartitionScheduler,
@@ -346,8 +346,7 @@ pub fn write_partition_to_stage<
         for n_iter in 0..n_iterations {
             let n_load_iter = scheduler.map_n(n_iter as u32);
 
-            let tile_accumulator =
-                Accumulators::<MP, Sc>::get_at_mut(acc, m_iter, n_iter, n_iterations);
+            let tile_accumulator = acc.partition_tile_at_mut(m_iter, n_iter, n_iterations);
 
             let tile_pos = (m_load_iter, n_load_iter);
             let mut tile = OutStage::tile::<Sc>(out_stage, tile_pos);

@@ -16,9 +16,8 @@ use crate::{
     components::global::{GlobalReaderConfig, PlaneFlowPartition},
 };
 use crate::{
-    components::stage::StridedStageFamily,
-    components::stage::{ContiguousTilingLayout, StridedStageMemory, TilingOrder},
-    components::{global::memory::GlobalIterator, stage::TilingValidation},
+    components::global::memory::GlobalIterator,
+    components::stage::{StridedStageFamily, StridedStageMemory},
     definition::{MatmulElems, MatmulProblem, StageIdent},
 };
 use cubecl::{
@@ -26,7 +25,10 @@ use cubecl::{
     std::tensor::layout::{Layout, LayoutExpand},
     {ir::DeviceProperties, prelude::barrier::Barrier},
 };
-use cubek_std::{InvalidConfigError, tile::Strided};
+use cubek_std::{
+    InvalidConfigError,
+    tile::{ContiguousTilingLayout, Strided, TilingOrder, TilingValidation},
+};
 
 use super::{LoadingJob, LoadingValidation, ReaderMode};
 

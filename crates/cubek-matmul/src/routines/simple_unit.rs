@@ -1,5 +1,5 @@
 use cubecl::{Runtime, client::ComputeClient};
-use cubek_std::tile::Strided;
+use cubek_std::tile::{ColMajorTilingOrder, RowMajorTilingOrder, Strided};
 
 use std::{fmt::Display, marker::PhantomData};
 
@@ -11,7 +11,7 @@ use crate::{
             read::{FullLoadingStrategy, sync_full_cyclic::SyncFullCyclicLoading},
             single_stage::simple::SimpleMatmulFamily,
         },
-        stage::{ColMajorTilingOrder, RowMajorTilingOrder, UnitMatmulFamily},
+        stage::UnitPartitioner,
         tile::TileMatmulKind,
     },
     definition::{
@@ -66,14 +66,7 @@ where
     type Strategy = SimpleUnitSelectionArgs;
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
-        SimpleMatmulFamily<
-            UnitMatmulFamily<LL::Stage, Option<AL::Stage>>,
-            RC,
-            LL,
-            RL,
-            AL,
-            UnitWriterFamily,
-        >,
+        SimpleMatmulFamily<UnitPartitioner, RC, LL, RL, AL, UnitWriterFamily>,
         RowMajorGlobalPartitionMatmul,
     >;
     type Blueprint = TilingBlueprint;

@@ -22,10 +22,8 @@ use crate::{
     components::global::read::validate_swizzle_atom_size,
 };
 use crate::{
-    components::stage::StridedStageFamily,
-    components::stage::StridedStageMemory,
-    components::stage::{ContiguousTilingLayout, TilingOrder},
-    components::{global::memory::GlobalIterator, stage::TilingValidation},
+    components::global::memory::GlobalIterator,
+    components::stage::{StridedStageFamily, StridedStageMemory},
 };
 use crate::{
     definition::MatmulElems,
@@ -39,7 +37,10 @@ use cubecl::{
     std::tensor::layout::{Layout, LayoutExpand},
     {ir::DeviceProperties, prelude::barrier::Barrier},
 };
-use cubek_std::{InvalidConfigError, tile::Strided};
+use cubek_std::{
+    InvalidConfigError,
+    tile::{ContiguousTilingLayout, Strided, TilingOrder, TilingValidation},
+};
 
 use super::{LoadingJob, LoadingValidation, ReaderMode};
 

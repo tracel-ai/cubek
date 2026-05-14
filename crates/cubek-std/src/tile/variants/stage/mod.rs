@@ -1,27 +1,21 @@
-//! Tile variants that wrap stage memory and per-partition tile collections.
+//! Tile variants whose payload is a stage-shaped view or per-partition
+//! collection of tiles. Just the two genuine variants:
 //!
-//! - [`memory`] / [`layout`] — the owning stage-memory wrapper (moved from
-//!   `cubek-matmul`) plus the tiling-layout trait and its impls. Continues
-//!   to back today's `Stage`/`LoadStageFamily` trait impls (declared in
-//!   `cubek-matmul`); this module only carries the data + dispatch helpers.
-//! - [`strided`] — `StridedStage<E, IO>`, the type-erased view installed as
-//!   a [`TileKind::Stage`](crate::tile::TileKind) payload.
-//! - [`partition`] — `PartitionTile<N, Sc, IO>`, the per-primitive
-//!   collection of accumulator tiles installed as a
-//!   [`TileKind::Partition`](crate::tile::TileKind) payload.
+//! - [`strided`] — `StridedStage<E, IO>` (the [`TileKind::Stage`] payload)
+//!   plus `SharedTile<E, NS, IO>` (the [`TileKind::SharedTile`] payload).
+//! - [`partition`] — `PartitionTile<N, Sc, IO>` (the [`TileKind::Partition`]
+//!   payload) plus the partition-matmul body that operates on it.
+//!
+//! Partition-matmul flow helpers that aren't tile variants live elsewhere:
+//! [`StageEvent`](crate::tile::StageEvent) /
+//! [`StageEventListener`](crate::tile::StageEventListener) /
+//! [`NoEvent`](crate::tile::NoEvent) in `tile/event.rs`,
+//! [`PartitionScheduler`](crate::tile::PartitionScheduler) /
+//! [`PartitionBuffering`](crate::tile::PartitionBuffering) in
+//! `tile/scheduler.rs`, stage-memory data types in `cubek_std::stage`.
 
-pub(crate) mod event;
-pub(crate) mod layout;
-pub(crate) mod matmul;
-pub(crate) mod memory;
 pub(crate) mod partition;
-pub(crate) mod scheduler;
 pub(crate) mod strided;
 
-pub use event::*;
-pub use layout::*;
-pub use matmul::*;
-pub use memory::*;
 pub use partition::*;
-pub use scheduler::*;
 pub use strided::*;

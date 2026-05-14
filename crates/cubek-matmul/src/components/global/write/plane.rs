@@ -5,7 +5,7 @@ use crate::{
             PartitionedStageFamily, WriteEvent, WriteEventExpand, WriteEventListener,
             read::tiled::{TiledCoords, TiledLayout},
         },
-        stage::{PlanePartitioner, StagePartitioner},
+        stage::{PlanePartitioner, partition_coordinates},
     },
     definition::{MatrixTypes, StageIdent},
 };
@@ -32,7 +32,7 @@ impl<IP: MatrixTypes> PlaneWriter<IP> {
         #[comptime] config: GlobalWriterConfig,
     ) -> Self {
         let stage = PartitionedStage::new(
-            PlanePartitioner::coordinates(
+            partition_coordinates::<PlanePartitioner>(
                 config.plane_flow_partition_rule,
                 config.plane_dim,
                 config.smem_config.partitions_per_stage_along_col,

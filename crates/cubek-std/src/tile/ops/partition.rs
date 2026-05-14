@@ -121,7 +121,7 @@ impl<N: Numeric, Sc: TileScope, IO: SliceVisibility> Tile<N, Sc, IO> {
                     for n in 0..n_tiles {
                         let global = (p_row * m_tiles + m, p_col * n_tiles + n);
                         let shared = stage.get_tile(global);
-                        tiles.push(Tile::<N, P::OutputScope, IO>::new_SharedMemory(shared));
+                        tiles.push(Tile::<N, P::OutputScope, IO>::new_SharedTile(shared));
                     }
                 }
 
@@ -132,7 +132,7 @@ impl<N: Numeric, Sc: TileScope, IO: SliceVisibility> Tile<N, Sc, IO> {
                     _phantom: PhantomData,
                 })
             }
-            TileKind::SharedMemory(_)
+            TileKind::SharedTile(_)
             | TileKind::Cmma(_)
             | TileKind::Mma(_)
             | TileKind::Register(_)
@@ -142,6 +142,7 @@ impl<N: Numeric, Sc: TileScope, IO: SliceVisibility> Tile<N, Sc, IO> {
             | TileKind::WhiteboxFragment(_)
             | TileKind::Bounce(_)
             | TileKind::Partition(_)
+            | TileKind::Pipelined(_)
             | TileKind::None => {
                 panic!("Tile::partition: source variant cannot be partitioned")
             }

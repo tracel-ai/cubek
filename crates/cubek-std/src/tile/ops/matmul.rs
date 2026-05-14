@@ -1,25 +1,26 @@
 //! `Tile::mma` dispatcher. Each arm delegates to a `.mma()` method on the
-//! variant's data struct in [`crate::tile::variants`] (where the matmul-execute,
-//! load/write/zero-init helpers also live). Bounce arms route through their
-//! inner CMMA fragment.
+//! variant's data struct in [`crate::tile::variants`]. Bounce arms route
+//! through their inner CMMA fragment.
+//!
+//! The `(Stage, Stage, Partition)` combination needs extra context that
+//! `.mma`'s three-tile signature can't carry. [`Tile::mma_partition`] is the
+//! .mma-family entry point for it: it destructures the kinds and forwards to
+//! [`PartitionTile::execute_with_listener`](crate::tile::PartitionTile).
+//! Single- vs double-buffered rhs is encoded in `b_fragments`'s tile kind
+//! ([`TileKind::Pipelined`] payload: a `Sequence` of length 1 or 2).
 
 use cubecl::prelude::*;
 
-use crate::tile::{Tile, TileExpand, TileKind, TileKindExpand, TileScope};
+use crate::tile::{
+    PartitionScheduler, StageEventListener, Tile, TileExpand, TileKind, TileKindExpand, TileScope,
+};
 
 #[cube]
 impl<N: Numeric, Sc: TileScope> Tile<N, Sc, ReadWrite> {
-    /// Executes `lhs · rhs`, accumulating the result into `self`.
-    ///
-    /// For instruction-level operands (Cmma/Mma/Register/PlaneVec/Interleaved/
-    /// Bounce) the body delegates to the per-variant `.mma()` method. Stage-
-    /// level inputs (`(Stage, Stage, Partition)`) need extra context the
-    /// `.mma` signature can't carry (per-primitive instruction-tile fragments,
-    /// the `PartitionScheduler`, an optional `StageEventListener`); that
-    /// combination panics with a redirect to
-    /// [`crate::tile::execute_partition_matmul`]. The arm is wired so the
-    /// pattern surface is uniform and unsupported stage-level use produces a
-    /// targeted error rather than the generic "Unsupported storage" fallback.
+    /// Executes `lhs · rhs`, accumulating the result into `self`. For
+    /// instruction-level operands the body delegates to the per-variant
+    /// `.mma()` method. The `(Stage, Stage, Partition)` arm panics — use
+    /// [`Tile::mma_partition`] for that case.
     pub fn mma<L: Numeric, LIO: SliceVisibility, R: Numeric, RIO: SliceVisibility>(
         &mut self,
         lhs: &Tile<L, Sc, LIO>,
@@ -38,14 +39,64 @@ impl<N: Numeric, Sc: TileScope> Tile<N, Sc, ReadWrite> {
             }
             (TileKind::Stage(_), TileKind::Stage(_), TileKind::Partition(_)) => {
                 panic!(
-                    "Tile::mma: (Stage, Stage, Partition) requires extra context \
-                     (per-primitive lhs/rhs fragments, PartitionScheduler, partition \
-                     dimensions, optional StageEventListener) that .mma's signature \
-                     can't carry — call execute_partition_matmul (or \
-                     execute_partition_matmul_with_listener) directly."
+                    "Tile::mma: (Stage, Stage, Partition) requires extra context — call \
+                     Tile::mma_partition."
                 )
             }
             _ => panic!("Unsupported storage combination for mma"),
+        }
+    }
+
+    /// `.mma`-family entry point for `(Stage, Stage, Partition)` operands
+    /// with rhs fragments held under [`TileKind::Pipelined`].
+    /// Destructures the `Stage` payloads of `lhs` / `rhs`, the
+    /// `Partition` payload of `self`, and the `Pipelined` payload of
+    /// `b_fragments`, then forwards to
+    /// [`PartitionTile::execute_with_listener`](crate::tile::PartitionTile).
+    /// Panics if any operand is not the expected kind.
+    #[allow(clippy::too_many_arguments)]
+    pub fn mma_partition<
+        ASE: Numeric,
+        ASS: Size,
+        ARE: Numeric,
+        BSE: Numeric,
+        BSS: Size,
+        BRE: Numeric,
+        SEL: StageEventListener,
+    >(
+        &mut self,
+        lhs: &Tile<ASE, Sc, ReadOnly>,
+        rhs: &Tile<BSE, Sc, ReadOnly>,
+        a_fragment: &mut Sequence<Tile<ARE, Sc, ReadWrite>>,
+        b_fragments: &mut Tile<BRE, Sc, ReadWrite>,
+        #[comptime] partition_size_k: u32,
+        listener: SEL,
+        scheduler: &PartitionScheduler,
+    ) {
+        match (
+            &lhs.kind,
+            &rhs.kind,
+            &mut self.kind,
+            &mut b_fragments.kind,
+        ) {
+            (
+                TileKind::Stage(a_stage),
+                TileKind::Stage(b_stage),
+                TileKind::Partition(acc),
+                TileKind::Pipelined(b_frags),
+            ) => acc.execute_with_listener::<ASE, ASS, ARE, BSE, BSS, BRE, SEL>(
+                a_stage,
+                b_stage,
+                a_fragment,
+                b_frags,
+                partition_size_k,
+                listener,
+                scheduler,
+            ),
+            _ => panic!(
+                "Tile::mma_partition: requires (lhs, rhs, self, b_fragments) kinds = \
+                 (Stage, Stage, Partition, Pipelined)"
+            ),
         }
     }
 }

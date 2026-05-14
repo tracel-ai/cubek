@@ -15,8 +15,7 @@ use crate::{
     components::global::read::LoadingValidation as _,
 };
 use crate::{
-    components::stage::StridedStageFamily,
-    components::stage::{self},
+    components::stage::partitioner::StagePartitioner,
     components::{global::GlobalMatmulFamily, stage::NumStages},
     definition::TilingBlueprint,
     definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes},
@@ -29,29 +28,23 @@ use std::marker::PhantomData;
 
 /// Ordered double buffering matmul family for any precision
 pub struct OrderedDoubleBufferingMatmulFamily<
-    SMM: stage::StageMatmulFamily,
+    SP: StagePartitioner,
     RC: RuntimeConfig,
     RL: PartialLoadingStrategy<RC>,
     AL: FullLoadingStrategy<RC>,
     GW: GlobalWriterFamily,
 > {
-    _stage_matmul: PhantomData<SMM>,
+    _sp: PhantomData<SP>,
     _rc: PhantomData<RC>,
     _rhs_loading: PhantomData<RL>,
     _acc_loading: PhantomData<AL>,
     _writer: PhantomData<GW>,
 }
 
-impl<SMM, RC, RL, AL, GW> GlobalMatmulFamily<RC>
-    for OrderedDoubleBufferingMatmulFamily<SMM, RC, RL, AL, GW>
+impl<SP, RC, RL, AL, GW> GlobalMatmulFamily<RC>
+    for OrderedDoubleBufferingMatmulFamily<SP, RC, RL, AL, GW>
 where
-    SMM: stage::StageMatmulFamily<
-            Config = crate::components::stage::stage_matmul::StageMatmul,
-            LhsStage = StridedStageFamily,
-            RhsStage = RL::Stage,
-            AccStage = Option<AL::Stage>,
-            OutStage = GW::Stage,
-        >,
+    SP: StagePartitioner,
     RC: RuntimeConfig,
     RL: PartialLoadingStrategy<RC, TileKind = Strided, SyncStrategy = Synchronous>,
     AL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = Synchronous>,
@@ -59,7 +52,7 @@ where
 {
     type Matmul<MP: MatmulTypes> = OrderedDoubleBufferingMatmul<
         MP,
-        SMM::Partitioner,
+        SP,
         RC,
         RL,
         AL,
@@ -77,7 +70,7 @@ where
         let plane_flow_config =
             Self::cubedim_resource(blueprint, dtypes, vector_sizes)?.as_specialized(plane_dim)?;
 
-        let stage_config = SMM::expand_config(
+        let stage_config = SP::KIND.expand_stage_matmul(
             device_props,
             blueprint,
             plane_flow_config,
@@ -192,7 +185,7 @@ where
         let plane_flow_config = make_plane_flow_config(
             blueprint.load_flows,
             max_global_readers,
-            SMM::cubedim_resource(blueprint)?.num_planes(plane_dim)?,
+            SP::KIND.cubedim_resource(blueprint)?.num_planes(plane_dim)?,
         )?;
 
         Ok(CubeDimResource::Specialized(plane_flow_config))
@@ -214,6 +207,6 @@ where
             )));
         }
 
-        SMM::validate_blueprint(client, blueprint, dtypes, vector_sizes)
+        SP::KIND.validate_blueprint(client, blueprint, dtypes, vector_sizes)
     }
 }

@@ -1,9 +1,7 @@
 use crate::{
+    components::global::PlaneFlowPartition,
     components::global::read::validate_swizzle_atom_size,
     components::global::{multi_stage::LoadMaxRoundPlaneCount, read::sync::Synchronous},
-    components::stage::ContiguousTilingLayout,
-    components::stage::OrderedTilingOrder,
-    components::{global::PlaneFlowPartition, stage::TilingValidation},
     components::{global::read::FullLoadingStrategy, stage::StridedStageFamily},
     definition::MatmulElems,
     definition::MatmulProblem,
@@ -12,7 +10,7 @@ use crate::{
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::{
-    tile::Strided,
+    tile::{ContiguousTilingLayout, OrderedTilingOrder, Strided, TilingValidation},
     {FormattedConfigError, InvalidConfigError},
 };
 

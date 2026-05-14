@@ -14,10 +14,13 @@ use cubek_matmul::components::{
             stage::FullStageLayout,
         },
     },
-    stage::{StridedStageFamily, StridedStageMemory, StridedTilingLayout},
+    stage::{StridedStageFamily, StridedStageMemory},
 };
 use cubek_matmul::definition::{MatmulElems, MatmulProblem};
-use cubek_std::{InvalidConfigError, StageIdent, tile::Strided};
+use cubek_std::{
+    InvalidConfigError, StageIdent,
+    tile::{Strided, StridedTilingLayout},
+};
 
 use crate::components::global::{
     args::RuntimeArgs,

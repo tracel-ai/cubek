@@ -265,7 +265,7 @@ impl<
                 tile_to_write
                     .tile
                     .copy_from::<QG<AP>, QGS<AP>, QT<AP>, KVT<AP>, SM<AP>, ReadOnly>(
-                        &Tile::new_SharedMemory(SharedTile::wrap::<QGS<AP>>(tile_read)),
+                        &Tile::new_SharedTile(SharedTile::wrap::<QGS<AP>>(tile_read)),
                         cubek_std::StageIdent::Lhs,
                     );
             }

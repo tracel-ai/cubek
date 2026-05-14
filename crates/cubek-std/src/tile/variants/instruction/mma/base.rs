@@ -240,7 +240,7 @@ impl<N: Numeric> MmaTile<N> {
         #[comptime] _ident: StageIdent,
     ) {
         match &source.kind {
-            TileKind::SharedMemory(shared) => match &mut self.fragment {
+            TileKind::SharedTile(shared) => match &mut self.fragment {
                 MmaFragment::Lhs(f) => mma_load_lhs_from_shared::<SE, SS, N, R, A, SIO>(
                     shared,
                     f,
@@ -277,7 +277,8 @@ impl<N: Numeric> MmaTile<N> {
             | TileKind::WhiteboxFragment(_)
             | TileKind::Bounce(_)
             | TileKind::Stage(_)
-            | TileKind::Partition(_) => panic!("MmaTile::copy_from: unsupported source variant"),
+            | TileKind::Partition(_)
+            | TileKind::Pipelined(_) => panic!("MmaTile::copy_from: unsupported source variant"),
         }
     }
 

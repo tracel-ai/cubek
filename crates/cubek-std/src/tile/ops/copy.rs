@@ -52,7 +52,7 @@ impl<N: Numeric, Sc: TileScope> Tile<N, Sc, ReadWrite> {
             TileKind::Register(t) => t.copy_from::<SE, SS, Sc, SIO>(source, ident),
             TileKind::PlaneVec(t) => t.copy_from::<SE, SS, Sc, SIO>(source, ident),
             TileKind::Interleaved(t) => t.copy_from::<SE, SS, Sc, SIO>(source, ident),
-            TileKind::SharedMemory(shared) => {
+            TileKind::SharedTile(shared) => {
                 shared.copy_from::<SE, SS, L, R, Sc, SIO>(source);
             }
             _ => panic!("copy_from: unsupported destination variant"),

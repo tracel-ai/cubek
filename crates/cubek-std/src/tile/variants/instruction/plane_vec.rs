@@ -113,7 +113,7 @@ impl<N: Numeric> PlaneVecTile<N> {
         #[comptime] ident: StageIdent,
     ) {
         match &source.kind {
-            TileKind::SharedMemory(shared) => {
+            TileKind::SharedTile(shared) => {
                 planevec_load_from_shared::<SE, SS, N, SIO>(
                     shared,
                     &mut self.data,
@@ -131,7 +131,8 @@ impl<N: Numeric> PlaneVecTile<N> {
             | TileKind::WhiteboxFragment(_)
             | TileKind::Bounce(_)
             | TileKind::Stage(_)
-            | TileKind::Partition(_) => {
+            | TileKind::Partition(_)
+            | TileKind::Pipelined(_) => {
                 panic!("PlaneVecTile::copy_from: unsupported source variant")
             }
         }

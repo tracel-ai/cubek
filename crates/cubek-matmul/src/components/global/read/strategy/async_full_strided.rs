@@ -9,9 +9,8 @@ use crate::{
     components::global::read::{async_copy::async_copy_from, validate_swizzle_atom_size},
     components::global::{GlobalReaderConfig, PlaneFlowPartition},
     components::global::{multi_stage::LoadMaxRoundPlaneCount, read::validate_async_copy},
-    components::stage::StridedStageFamily,
-    components::stage::{StridedStageMemory, StridedTilingLayout},
-    components::{global::memory::GlobalIterator, stage::TilingValidation},
+    components::global::memory::GlobalIterator,
+    components::stage::{StridedStageFamily, StridedStageMemory},
     definition::{MatmulElems, MatmulProblem, StageIdent},
     {components::global::read::async_barrier::AsyncCopy, launch::RuntimeConfig},
 };
@@ -20,7 +19,10 @@ use cubecl::{
     std::tensor::layout::{Layout, LayoutExpand},
     {ir::DeviceProperties, prelude::barrier::Barrier},
 };
-use cubek_std::{InvalidConfigError, tile::Strided};
+use cubek_std::{
+    InvalidConfigError,
+    tile::{Strided, StridedTilingLayout, TilingValidation},
+};
 
 use super::{LoadingJob, LoadingValidation};
 

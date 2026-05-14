@@ -1,7 +1,7 @@
 use crate::{
     components::{
         global::{GlobalReaderConfig, SharedGlobalMatmulConfig, memory::GlobalIterator},
-        stage::{StageFamily, TilingLayout},
+        stage::StageFamily,
     },
     definition::{MatmulElems, MatmulProblem, MatmulTypes, StageIdent},
 };
@@ -11,6 +11,7 @@ use cubecl::{
 };
 use cubek_std::{
     stage::{StageMemoryConfig, SwizzleMode},
+    tile::TilingLayout,
     {InvalidConfigError, MatrixLayout},
 };
 

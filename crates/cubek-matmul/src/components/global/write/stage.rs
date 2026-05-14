@@ -1,11 +1,11 @@
-use crate::components::stage::{
-    ContiguousTilingLayout, RowMajorTilingOrder, Stage, StageFamily, StridedStageMemory,
-    TilingLayout,
-};
+use crate::components::stage::{Stage, StageFamily, StridedStageMemory};
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 use cubek_std::{
     stage::StageMemoryConfig,
-    tile::{SharedTile, StridedTile, Tile, TileScope},
+    tile::{
+        ContiguousTilingLayout, RowMajorTilingOrder, SharedTile, StridedTile, Tile, TileScope,
+        TilingLayout,
+    },
 };
 
 pub type WriteTiling = ContiguousTilingLayout<RowMajorTilingOrder>;
@@ -52,6 +52,12 @@ impl<ES: Numeric, NS: Size> PartitionedStage<ES, NS> {
 #[cube]
 impl<ES: Numeric, NS: Size> Stage<ES, ReadWrite> for PartitionedStage<ES, NS> {
     fn tile<Sc: TileScope>(this: &Self, _tile: Coords2d) -> Tile<ES, Sc, ReadWrite> {
-        Tile::new_SharedMemory(SharedTile::wrap::<NS>(this.unit_tile))
+        Tile::new_SharedTile(SharedTile::wrap::<NS>(this.unit_tile))
+    }
+
+    fn as_stage_tile<Sc: TileScope>(_this: &Self) -> Tile<ES, Sc, ReadWrite> {
+        panic!(
+            "PartitionedStage: as_stage_tile is not supported (write-side stage, not consumed by partition matmul)"
+        )
     }
 }

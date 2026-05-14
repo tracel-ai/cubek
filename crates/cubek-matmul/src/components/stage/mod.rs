@@ -1,19 +1,31 @@
 // ! Performs tiled matrix multiplication using shared memory.
 // ! Manages unit/plane coordination
 
-pub mod matmul;
+#![allow(clippy::type_complexity)]
 
-mod base;
-mod event_listener;
-mod memory;
-// `stage_matmul` carries the new instance enum (`StageMatmul`,
-// `StageMatmulKind`, `PartitionedStageMatmul`). Exposed as a sub-module
-// during PR 5 to avoid a glob clash with the still-alive `StageMatmul`
-// trait re-exported from `base`. PR 6 deletes the trait and glob-re-exports
-// from here.
+pub mod partition_matmul;
+pub mod partitioner;
 pub mod stage_matmul;
+mod stage_memory;
 
-pub use base::*;
-pub use event_listener::*;
-pub use matmul::*;
-pub use memory::*;
+pub use cubek_std::tile::{PlanePartitioner, UnitPartitioner};
+pub use partition_matmul::*;
+pub use partitioner::{StagePartitioner, partition_coordinates};
+pub use stage_matmul::*;
+pub use stage_memory::*;
+
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+/// Number of stages in one shared memory, i.e. buffers for double buffering
+pub struct NumStages {
+    pub lhs: u32,
+    pub rhs: u32,
+}
+
+impl From<(u32, u32)> for NumStages {
+    fn from(value: (u32, u32)) -> Self {
+        NumStages {
+            lhs: value.0,
+            rhs: value.1,
+        }
+    }
+}

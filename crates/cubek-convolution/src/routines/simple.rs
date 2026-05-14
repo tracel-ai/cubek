@@ -3,10 +3,8 @@ use cubecl::{
     {Runtime, client::ComputeClient, ir::StorageType, prelude::TensorBinding},
 };
 use cubek_matmul::components::global::read::FullLoadingStrategy;
-use cubek_matmul::components::{
-    global::read::sync_full_cyclic::SyncFullCyclicLoading,
-    stage::{ColMajorTilingOrder, RowMajorTilingOrder},
-};
+use cubek_matmul::components::global::read::sync_full_cyclic::SyncFullCyclicLoading;
+use cubek_std::tile::{ColMajorTilingOrder, RowMajorTilingOrder};
 use cubek_matmul::{
     components::global::read::{
         async_full_tma::AsyncFullTmaLoading, sync_full_strided::SyncFullStridedLoading,

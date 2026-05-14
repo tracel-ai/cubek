@@ -15,7 +15,7 @@ use crate::{
             read::FullLoadingStrategy,
             single_stage::simple::matmul::SimpleMatmul,
         },
-
+        stage::partitioner::StagePartitioner,
     },
     definition::TilingBlueprint,
 };
@@ -23,18 +23,18 @@ use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::{MatrixLayout, tile::Strided};
 use std::marker::PhantomData;
 
-use crate::components::{global::GlobalMatmulFamily, stage};
+use crate::components::global::GlobalMatmulFamily;
 
 /// Simple matmul family for any precision
 pub struct SimpleMatmulFamily<
-    SMM: stage::StageMatmulFamily,
+    SP: StagePartitioner,
     RC: RuntimeConfig,
     LL: FullLoadingStrategy<RC>,
     RL: FullLoadingStrategy<RC>,
     AL: FullLoadingStrategy<RC>,
     GW: GlobalWriterFamily,
 > {
-    _stage_matmul: PhantomData<SMM>,
+    _sp: PhantomData<SP>,
     _rc: PhantomData<RC>,
     _lhs_loading: PhantomData<LL>,
     _rhs_loading: PhantomData<RL>,
@@ -42,15 +42,9 @@ pub struct SimpleMatmulFamily<
     _writer: PhantomData<GW>,
 }
 
-impl<SMM, RC, LL, RL, AL, GW> GlobalMatmulFamily<RC> for SimpleMatmulFamily<SMM, RC, LL, RL, AL, GW>
+impl<SP, RC, LL, RL, AL, GW> GlobalMatmulFamily<RC> for SimpleMatmulFamily<SP, RC, LL, RL, AL, GW>
 where
-    SMM: stage::StageMatmulFamily<
-            Config = crate::components::stage::stage_matmul::StageMatmul,
-            LhsStage = LL::Stage,
-            RhsStage = RL::Stage,
-            AccStage = Option<AL::Stage>,
-            OutStage = GW::Stage,
-        >,
+    SP: StagePartitioner,
     RC: RuntimeConfig,
     LL: FullLoadingStrategy<RC, TileKind = Strided>,
     RL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
@@ -59,7 +53,7 @@ where
 {
     type Matmul<MP: MatmulTypes> = SimpleMatmul<
         MP,
-        SMM::Partitioner,
+        SP,
         RC,
         LL,
         RL,
@@ -78,7 +72,7 @@ where
         let plane_flow_config =
             Self::cubedim_resource(blueprint, dtypes, vector_sizes)?.as_specialized(plane_dim)?;
 
-        let stage_config = SMM::expand_config(
+        let stage_config = SP::KIND.expand_stage_matmul(
             device_props,
             blueprint,
             plane_flow_config,
@@ -185,7 +179,7 @@ where
         _vector_sizes: &MatmulVectorSizes,
     ) -> Result<CubeDimResource, MatmulSetupError> {
         let resources = if !blueprint.load_flows.has_specialization() {
-            SMM::cubedim_resource(blueprint)
+            SP::KIND.cubedim_resource(blueprint)
         } else {
             return Err(MatmulSetupError::InvalidConfig(Box::new(
                 "Specialization is unavailable for simple matmul.",
@@ -204,6 +198,6 @@ where
     ) -> Result<(), MatmulSetupError> {
         LL::validate_with_problem(problem, dtypes, StageIdent::Lhs)?;
         RL::validate_with_problem(problem, dtypes, StageIdent::Rhs)?;
-        SMM::validate_blueprint(client, blueprint, dtypes, vector_sizes)
+        SP::KIND.validate_blueprint(client, blueprint, dtypes, vector_sizes)
     }
 }

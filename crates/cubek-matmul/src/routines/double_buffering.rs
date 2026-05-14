@@ -1,16 +1,15 @@
 use std::fmt::Display;
 
 use cubecl::Runtime;
+use cubek_std::tile::{ColMajorTilingOrder, RowMajorTilingOrder};
 
 use crate::components::batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul};
+use crate::components::global::multi_stage::double_buffering::DoubleBufferingMatmulFamily;
 use crate::components::global::{
     PlaneWriterFamily, read::sync_partial_tilewise::SyncPartialTilewiseLoading,
 };
 use crate::components::{
     batch::BatchMatmulFamily, global::read::sync_full_cyclic::SyncFullCyclicLoading,
-};
-use crate::components::{
-    global::multi_stage::double_buffering::DoubleBufferingMatmulFamily, stage::StridedStageFamily,
 };
 use crate::definition::{
     MatmulElems, MatmulProblem, MatmulSetupError, MultiRowStrategy, TilingBlueprint,
@@ -25,10 +24,7 @@ use crate::{
     },
     routines::ExpandInfo,
 };
-use crate::{
-    components::stage::{ColMajorTilingOrder, PlaneMatmulFamily, RowMajorTilingOrder},
-    components::tile::TileMatmulKind,
-};
+use crate::{components::stage::PlanePartitioner, components::tile::TileMatmulKind};
 use crate::{
     launch::RuntimeConfig,
     routines::DeviceSettings,
@@ -168,7 +164,7 @@ double_buffering_impl!(
     PartitionedBatchMatmulFamily<
         RC,
         DoubleBufferingMatmulFamily<
-            PlaneMatmulFamily<StridedStageFamily, StridedStageFamily, Option<StridedStageFamily>>,
+            PlanePartitioner,
             RC,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
@@ -184,7 +180,7 @@ double_buffering_impl!(
     PartitionedBatchMatmulFamily<
         RC,
         DoubleBufferingMatmulFamily<
-            PlaneMatmulFamily<StridedStageFamily, StridedStageFamily, Option<StridedStageFamily>>,
+            PlanePartitioner,
             RC,
             AsyncPartialCyclicLoading<RowMajorTilingOrder>,
             AsyncPartialCyclicLoading<RowMajorTilingOrder>,
@@ -200,7 +196,7 @@ double_buffering_impl!(
     PartitionedBatchMatmulFamily<
         RC,
         DoubleBufferingMatmulFamily<
-            PlaneMatmulFamily<StridedStageFamily, StridedStageFamily, Option<StridedStageFamily>>,
+            PlanePartitioner,
             RC,
             SyncPartialTilewiseLoading<RowMajorTilingOrder>,
             SyncPartialTilewiseLoading<ColMajorTilingOrder>,
@@ -216,7 +212,7 @@ double_buffering_impl!(
     PartitionedBatchMatmulFamily<
         RC,
         DoubleBufferingMatmulFamily<
-            PlaneMatmulFamily<StridedStageFamily, StridedStageFamily, Option<StridedStageFamily>>,
+            PlanePartitioner,
             RC,
             SyncPartialTilewiseLoading<RowMajorTilingOrder>,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
@@ -232,7 +228,7 @@ double_buffering_impl!(
     PartitionedBatchMatmulFamily<
         RC,
         DoubleBufferingMatmulFamily<
-            PlaneMatmulFamily<StridedStageFamily, StridedStageFamily, Option<StridedStageFamily>>,
+            PlanePartitioner,
             RC,
             AsyncPartialTmaLoading,
             AsyncPartialTmaLoading,
@@ -248,7 +244,7 @@ double_buffering_impl!(
     PartitionedBatchMatmulFamily<
         RC,
         DoubleBufferingMatmulFamily<
-            PlaneMatmulFamily<StridedStageFamily, StridedStageFamily, Option<StridedStageFamily>>,
+            PlanePartitioner,
             RC,
             AsyncPartialStridedLoading,
             AsyncPartialStridedLoading,

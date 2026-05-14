@@ -2,10 +2,9 @@ use crate::{
     components::global::read::{FullLoadingStrategy, validate_tma_with_problem},
     components::global::read::{validate_async_barrier, validate_tma},
     components::global::{PlaneFlowPartition, read::async_tma::AsyncTma},
-    components::stage::StridedStageFamily,
-    components::stage::StridedStageMemory,
-    components::{global::memory::GlobalIterator, stage::TilingValidation},
-    components::{global::multi_stage::LoadMaxRoundPlaneCount, stage::TmaTilingLayout},
+    components::global::memory::GlobalIterator,
+    components::global::multi_stage::LoadMaxRoundPlaneCount,
+    components::stage::{StridedStageFamily, StridedStageMemory},
     definition::{MatmulElems, MatmulProblem, StageIdent},
     {components::global::GlobalReaderConfig, launch::RuntimeConfig},
 };
@@ -15,7 +14,7 @@ use cubecl::{
 };
 use cubek_std::{
     stage::SwizzleMode,
-    tile::Strided,
+    tile::{Strided, TilingValidation, TmaTilingLayout},
     {InvalidConfigError, MatrixLayout},
 };
 

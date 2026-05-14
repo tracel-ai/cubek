@@ -12,10 +12,9 @@ use crate::{
     components::global::{GlobalConfig, GlobalReaderConfig},
     components::global::{PlaneFlowPartition, multi_stage::LoadMaxRoundPlaneCount},
     components::stage::StridedStageMemory,
-    components::stage::TmaTilingLayout,
 };
 use crate::{
-    components::{global::memory::GlobalIterator, stage::TilingValidation},
+    components::global::memory::GlobalIterator,
     definition::{LhsS, MatmulElems, MatmulProblem, MatmulTypes, RhsS, StageIdent},
 };
 use cubecl::{
@@ -24,7 +23,7 @@ use cubecl::{
 };
 use cubek_std::{
     stage::SwizzleMode,
-    tile::Strided,
+    tile::{Strided, TilingValidation, TmaTilingLayout},
     {InvalidConfigError, MatrixLayout},
 };
 

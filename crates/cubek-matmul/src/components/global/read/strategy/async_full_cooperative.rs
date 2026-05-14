@@ -9,7 +9,7 @@ use crate::{
                 validate_async_barrier, validate_noswizzle,
             },
         },
-        stage::{StridedStageFamily, StridedStageMemory, StridedTilingLayout, TilingValidation},
+        stage::{StridedStageFamily, StridedStageMemory},
     },
     definition::{MatmulElems, MatmulProblem, StageIdent},
     launch::RuntimeConfig,
@@ -18,7 +18,10 @@ use cubecl::{
     ir::DeviceProperties,
     prelude::{barrier::Barrier, *},
 };
-use cubek_std::{InvalidConfigError, MatrixLayout, tile::Strided};
+use cubek_std::{
+    InvalidConfigError, MatrixLayout,
+    tile::{Strided, StridedTilingLayout, TilingValidation},
+};
 
 use super::LoadingValidation;
 

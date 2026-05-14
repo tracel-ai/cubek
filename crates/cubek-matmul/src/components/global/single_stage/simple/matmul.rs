@@ -6,11 +6,10 @@ use crate::{
             read::{FullLoaderStage, FullLoadingStrategy, FullStageGlobalReader, SyncStrategy},
         },
         stage::{
-            matmul::{
-                partition::{Accumulators, PartitionMatmul},
-                partitioned_matmul::StagePartitioner,
-                scheduler::PartitionScheduler,
+            partition_matmul::{
+                init_a_fragment, init_accumulator, init_b_fragments, load_accumulator,
             },
+            partitioner::{StagePartitioner, partition_coordinates},
             stage_matmul::write_partition_to_stage,
         },
     },
@@ -20,7 +19,7 @@ use cubecl::{
     prelude::*,
     std::tensor::{View, layout::Coords2d},
 };
-use cubek_std::tile::Strided;
+use cubek_std::tile::{NoEvent, PartitionScheduler, Strided, Tile};
 use std::marker::PhantomData;
 
 // Type aliases for the (long) per-flow Stage types — saves repeating the
@@ -86,7 +85,7 @@ where
         >,
     >;
     type GlobalWriter = GW;
-    type Accumulators = Accumulators<MP, SP::Scope>;
+    type Accumulators = Tile<AccRE<MP>, SP::Scope, ReadWrite>;
 
     fn execute(
         mut lhs_reader: Self::LhsGlobalReader,
@@ -119,23 +118,10 @@ where
 
         let stage_shared = config.stage_config.shared();
 
-        let mut acc = PartitionMatmul::<
-            MP,
-            LhsStageFor<MP, RC, LL>,
-            RhsStageFor<MP, RC, RL>,
-            AccStageFor<MP, RC, AL>,
-            SP::Scope,
-        >::init_accumulator(stage_shared);
+        let mut acc = init_accumulator::<MP, SP::Scope>(stage_shared);
+        let mut a_fragment = init_a_fragment::<MP, SP::Scope>(stage_shared);
 
-        let (mut lhs_tile, mut rhs_tile) = PartitionMatmul::<
-            MP,
-            LhsStageFor<MP, RC, LL>,
-            RhsStageFor<MP, RC, RL>,
-            AccStageFor<MP, RC, AL>,
-            SP::Scope,
-        >::init_tile_inputs(stage_shared);
-
-        let (partition_row, partition_col) = SP::coordinates(
+        let (partition_row, partition_col) = partition_coordinates::<SP>(
             stage_shared.plane_flow_config.partition_rule,
             stage_shared.plane_dim,
             stage_shared.stage_size.n(),
@@ -155,42 +141,44 @@ where
             AL::SyncStrategy::sync::<MP>(&mut acc_barrier, config);
             reader.stage()
         });
-        PartitionMatmul::<
-            MP,
-            LhsStageFor<MP, RC, LL>,
-            RhsStageFor<MP, RC, RL>,
-            AccStageFor<MP, RC, AL>,
-            SP::Scope,
-        >::load_accumulator(&acc_stage, &mut acc, &partition_scheduler, stage_shared);
+        load_accumulator::<MP, AccStageFor<MP, RC, AL>, SP::Scope>(
+            &acc_stage,
+            &mut acc,
+            &partition_scheduler,
+            stage_shared,
+        );
 
-        let lhs_stage = &lhs_reader.stage();
-        let rhs_stage = &rhs_reader.stage();
+        let lhs_stage = lhs_reader.stage();
+        let rhs_stage = rhs_reader.stage();
+        let lhs_stage_tile = <LhsStageFor<MP, RC, LL> as crate::components::stage::Stage<
+            Stage<Lhs<MP>>,
+            ReadOnly,
+        >>::as_stage_tile::<SP::Scope>(&lhs_stage);
+        let rhs_stage_tile = <RhsStageFor<MP, RC, RL> as crate::components::stage::Stage<
+            Stage<Rhs<MP>>,
+            ReadOnly,
+        >>::as_stage_tile::<SP::Scope>(&rhs_stage);
+
+        let mut b_fragments = init_b_fragments::<MP, SP::Scope>(stage_shared);
 
         for _ in 0..num_loops {
             sync_cube();
-
             lhs_reader.load_stage(&mut barrier, config.lhs_reader_config);
             rhs_reader.load_stage(&mut barrier, config.rhs_reader_config);
-
             LL::SyncStrategy::sync::<MP>(&mut barrier, config);
-
-            PartitionMatmul::<
-                MP,
-                LhsStageFor<MP, RC, LL>,
-                RhsStageFor<MP, RC, RL>,
-                AccStageFor<MP, RC, AL>,
-                SP::Scope,
-            >::execute_with_listener::<crate::components::stage::NoEvent>(
-                lhs_stage,
-                rhs_stage,
-                &mut lhs_tile,
-                &mut rhs_tile,
-                &mut acc,
-                stage_shared,
-                crate::components::stage::NoEvent::new(),
+            acc.mma_partition::<
+                LhsSE<MP>, LhsSS<MP>, LhsRE<MP>,
+                RhsSE<MP>, RhsSS<MP>, RhsRE<MP>,
+                NoEvent,
+            >(
+                &lhs_stage_tile,
+                &rhs_stage_tile,
+                &mut a_fragment,
+                &mut b_fragments,
+                stage_shared.partition_size.k(),
+                NoEvent::new(),
                 &partition_scheduler,
             );
-
             lhs_reader.advance_view();
             rhs_reader.advance_view();
         }
@@ -261,12 +249,8 @@ where
     }
 
     fn init_accumulators(#[comptime] config: Self::Config) -> Self::Accumulators {
-        PartitionMatmul::<
-            MP,
-            LhsStageFor<MP, RC, LL>,
-            RhsStageFor<MP, RC, RL>,
-            AccStageFor<MP, RC, AL>,
-            SP::Scope,
-        >::init_accumulator(config.stage_config.shared())
+        init_accumulator::<MP, SP::Scope>(
+            config.stage_config.shared(),
+        )
     }
 }

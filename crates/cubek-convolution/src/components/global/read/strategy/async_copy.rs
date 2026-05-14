@@ -5,9 +5,9 @@ use cubecl::{
 };
 use cubek_matmul::components::{
     global::GlobalReaderConfig,
-    stage::{StridedStageMemory, TilingLayout},
+    stage::StridedStageMemory,
 };
-use cubek_std::{MatrixLayout, StageIdent};
+use cubek_std::{MatrixLayout, StageIdent, tile::TilingLayout};
 
 use crate::components::{ConvolutionOperation, global::args::RuntimeArgs};
 

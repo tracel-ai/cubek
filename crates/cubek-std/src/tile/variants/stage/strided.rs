@@ -2,13 +2,8 @@ use cubecl::{prelude::*, std::Swizzle};
 
 use crate::{
     MatrixLayout,
-    stage::StageMemoryConfig,
-    tile::{
-        SharedTile,
-        variants::stage::{
-            TilingLayout, TilingLayoutEnum, TilingOrderEnum, memory::StridedStageMemory,
-        },
-    },
+    stage::{StageMemoryConfig, StridedStageMemory, TilingLayout, TilingLayoutEnum, TilingOrderEnum},
+    tile::SharedTile,
 };
 use cubecl::std::tensor::layout::Coords2d;
 

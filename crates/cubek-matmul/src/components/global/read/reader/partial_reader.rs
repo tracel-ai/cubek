@@ -9,14 +9,14 @@ use crate::{
             multi_stage::{JobExecutor, JobIterator, LoadMaxRoundPlaneCount},
             read::{LoadingJob, LoadingValidation, PartialLoaderStage, SyncBarrier, SyncStrategy},
         },
-        stage::{LoadStageFamily, TilingLayout},
+        stage::LoadStageFamily,
     },
     definition::MatmulTypes,
     launch::RuntimeConfig,
 };
 use cubecl::prelude::{barrier::Barrier, *};
 use cubecl::std::tensor::{View, layout::Coords2d};
-use cubek_std::tile::StageTileKind;
+use cubek_std::tile::{StageTileKind, TilingLayout};
 
 #[cube]
 /// A strategy for loading partial stage memory

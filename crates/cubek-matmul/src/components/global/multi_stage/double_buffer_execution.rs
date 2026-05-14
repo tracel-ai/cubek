@@ -1,10 +1,5 @@
 use crate::components::stage::{
-    self, NoEvent, PartitionScheduler,
-    matmul::{
-        partition::{Accumulators, PartitionMatmul, RhsTile},
-        partitioned_matmul::StagePartitioner,
-    },
-    stage_matmul::{StageMatmul, write_partition_to_stage},
+    partitioner::StagePartitioner, stage_matmul::write_partition_to_stage,
 };
 use crate::{
     components::global::GlobalReaderConfig,
@@ -16,10 +11,12 @@ use crate::{
     components::global::read::StageBuffer,
     components::global::{GlobalConfig, GlobalWriter},
     components::global::{LoadingSides, read::SyncStrategy},
-    definition::{Acc, Lhs, MatmulTypes, MatrixTypes, Rhs, Stage},
+    definition::{
+        AccRE, LhsRE, LhsSE, LhsSS, MatmulTypes, MatrixTypes, RhsRE, RhsSE, RhsSS,
+    },
 };
 use cubecl::prelude::*;
-use cubek_std::tile::Tile;
+use cubek_std::tile::{NoEvent, PartitionScheduler, Tile};
 
 #[cube]
 /// Read the first stage for both Lhs and Rhs
@@ -72,19 +69,16 @@ pub fn read_first<S: SyncStrategy, LJ: JobExecutor<S>, RJ: JobExecutor<S>>(
 pub fn execute_current_and_read_next<
     MP: MatmulTypes,
     SP: StagePartitioner,
-    LhsStage: stage::Stage<Stage<Lhs<MP>>, ReadOnly>,
-    RhsStage: stage::Stage<Stage<Rhs<MP>>, ReadOnly>,
-    AccStage: stage::Stage<Stage<Acc<MP>>, ReadOnly>,
     S: SyncStrategy,
     LJ: JobExecutor<S>,
     RJ: JobExecutor<S>,
     G: GlobalConfig,
 >(
-    lhs_stage: &LhsStage,
-    rhs_stage: &RhsStage,
+    lhs_stage: &Tile<<MP::Lhs as MatrixTypes>::Stage, SP::Scope, ReadOnly>,
+    rhs_stage: &Tile<<MP::Rhs as MatrixTypes>::Stage, SP::Scope, ReadOnly>,
     lhs_tile: &mut Sequence<Tile<<MP::Lhs as MatrixTypes>::Register, SP::Scope, ReadWrite>>,
-    rhs_tile: &mut RhsTile<Tile<<MP::Rhs as MatrixTypes>::Register, SP::Scope, ReadWrite>>,
-    acc: &mut Accumulators<MP, SP::Scope>,
+    rhs_tile: &mut Tile<<MP::Rhs as MatrixTypes>::Register, SP::Scope, ReadWrite>,
+    acc: &mut Tile<AccRE<MP>, SP::Scope, ReadWrite>,
     lhs_global_reader: &mut LJ,
     rhs_global_reader: &mut RJ,
     barrier: &mut S::Barrier,
@@ -93,6 +87,7 @@ pub fn execute_current_and_read_next<
     #[comptime] stage_to_load: StageBuffer,
     #[comptime] config: G,
 ) {
+    let partition_size_k = comptime!(config.stage_config().shared().partition_size.k());
     match specializer.kind.comptime() {
         SpecializerKind::Specialized {
             main_flow_loading_side,
@@ -101,15 +96,16 @@ pub fn execute_current_and_read_next<
         } => {
             let rule = PlaneFlowPartition::new(role_rule_config);
             if !rule.is_load_plane() {
-                PartitionMatmul::<MP, LhsStage, RhsStage, AccStage, SP::Scope>::execute_with_listener::<
+                acc.mma_partition::<
+                    LhsSE<MP>, LhsSS<MP>, LhsRE<MP>,
+                    RhsSE<MP>, RhsSS<MP>, RhsRE<MP>,
                     DoubleBufferingEventListener<S, LJ, RJ, G>,
                 >(
                     lhs_stage,
                     rhs_stage,
                     lhs_tile,
                     rhs_tile,
-                    acc,
-                    config.stage_config().shared(),
+                    partition_size_k,
                     DoubleBufferingEventListener::new(
                         stage_to_load,
                         lhs_global_reader,
@@ -140,15 +136,16 @@ pub fn execute_current_and_read_next<
             }
         }
         SpecializerKind::NotSpecialized => {
-            PartitionMatmul::<MP, LhsStage, RhsStage, AccStage, SP::Scope>::execute_with_listener::<
+            acc.mma_partition::<
+                LhsSE<MP>, LhsSS<MP>, LhsRE<MP>,
+                RhsSE<MP>, RhsSS<MP>, RhsRE<MP>,
                 DoubleBufferingEventListener<S, LJ, RJ, G>,
             >(
                 lhs_stage,
                 rhs_stage,
                 lhs_tile,
                 rhs_tile,
-                acc,
-                config.stage_config().shared(),
+                partition_size_k,
                 DoubleBufferingEventListener::new(
                     stage_to_load,
                     lhs_global_reader,
@@ -172,21 +169,19 @@ pub fn execute_last_and_write_results<
     MP: MatmulTypes,
     GW: GlobalWriter<MP::Acc>,
     SP: StagePartitioner,
-    LhsStage: stage::Stage<Stage<Lhs<MP>>, ReadOnly>,
-    RhsStage: stage::Stage<Stage<Rhs<MP>>, ReadOnly>,
-    AccStage: stage::Stage<Stage<Acc<MP>>, ReadOnly>,
     G: GlobalConfig,
 >(
-    lhs_stage: &LhsStage,
-    rhs_stage: &RhsStage,
+    lhs_stage: &Tile<<MP::Lhs as MatrixTypes>::Stage, SP::Scope, ReadOnly>,
+    rhs_stage: &Tile<<MP::Rhs as MatrixTypes>::Stage, SP::Scope, ReadOnly>,
     lhs_tile: &mut Sequence<Tile<<MP::Lhs as MatrixTypes>::Register, SP::Scope, ReadWrite>>,
-    rhs_tile: &mut RhsTile<Tile<<MP::Rhs as MatrixTypes>::Register, SP::Scope, ReadWrite>>,
-    acc: &mut Accumulators<MP, SP::Scope>,
+    rhs_tile: &mut Tile<<MP::Rhs as MatrixTypes>::Register, SP::Scope, ReadWrite>,
+    acc: &mut Tile<AccRE<MP>, SP::Scope, ReadWrite>,
     out_writer: &mut GW,
     specializer: &Specializer,
     partition_scheduler: &PartitionScheduler,
     #[comptime] config: G,
 ) {
+    let partition_size_k = comptime!(config.stage_config().shared().partition_size.k());
     let mut out_stage = GW::stage(out_writer);
 
     match specializer.kind.comptime() {
@@ -197,15 +192,16 @@ pub fn execute_last_and_write_results<
         } => {
             let rule = PlaneFlowPartition::new(role_rule_config);
             if !rule.is_load_plane() {
-                PartitionMatmul::<MP, LhsStage, RhsStage, AccStage, SP::Scope>::execute_with_listener::<
+                acc.mma_partition::<
+                    LhsSE<MP>, LhsSS<MP>, LhsRE<MP>,
+                    RhsSE<MP>, RhsSS<MP>, RhsRE<MP>,
                     NoEvent,
                 >(
                     lhs_stage,
                     rhs_stage,
                     lhs_tile,
                     rhs_tile,
-                    acc,
-                    config.stage_config().shared(),
+                    partition_size_k,
                     NoEvent::new(),
                     partition_scheduler,
                 );
@@ -220,15 +216,16 @@ pub fn execute_last_and_write_results<
             }
         }
         SpecializerKind::NotSpecialized => {
-            PartitionMatmul::<MP, LhsStage, RhsStage, AccStage, SP::Scope>::execute_with_listener::<
+            acc.mma_partition::<
+                LhsSE<MP>, LhsSS<MP>, LhsRE<MP>,
+                RhsSE<MP>, RhsSS<MP>, RhsRE<MP>,
                 NoEvent,
             >(
                 lhs_stage,
                 rhs_stage,
                 lhs_tile,
                 rhs_tile,
-                acc,
-                config.stage_config().shared(),
+                partition_size_k,
                 NoEvent::new(),
                 partition_scheduler,
             );

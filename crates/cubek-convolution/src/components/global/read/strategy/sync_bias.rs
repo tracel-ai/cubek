@@ -1,21 +1,21 @@
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_matmul::{
-    components::{
-        global::{
-            GlobalReaderConfig, PlaneFlowPartition,
-            memory::GlobalIterator,
-            multi_stage::LoadMaxRoundPlaneCount,
-            read::{
-                FullLoadingStrategy, LoadingJob, LoadingValidation, sync::Synchronous,
-                validate_swizzle_atom_size,
-            },
+    components::global::{
+        GlobalReaderConfig, PlaneFlowPartition,
+        memory::GlobalIterator,
+        multi_stage::LoadMaxRoundPlaneCount,
+        read::{
+            FullLoadingStrategy, LoadingJob, LoadingValidation, sync::Synchronous,
+            validate_swizzle_atom_size,
         },
-        stage::{NoTilingLayout, TilingValidation},
     },
     definition::{MatmulElems, MatmulProblem},
     launch::RuntimeConfig,
 };
-use cubek_std::{InvalidConfigError, StageIdent, tile::Strided};
+use cubek_std::{
+    InvalidConfigError, StageIdent,
+    tile::{NoTilingLayout, Strided, TilingValidation},
+};
 
 use crate::components::stage::{
     bias_stage::{BiasStageFamily, BiasStageMemory},

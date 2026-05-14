@@ -2,14 +2,16 @@ use crate::{
     components::global::read::{FullLoadingStrategy, stage::FullStageLayout},
     components::global::{GlobalReaderConfig, PlaneFlowPartition},
     components::global::{multi_stage::LoadMaxRoundPlaneCount, read::sync::Synchronous},
-    components::stage::StridedStageFamily,
-    components::stage::{StridedStageMemory, StridedTilingLayout},
-    components::{global::memory::GlobalIterator, stage::TilingValidation},
+    components::global::memory::GlobalIterator,
+    components::stage::{StridedStageFamily, StridedStageMemory},
     definition::{MatmulElems, MatmulProblem, StageIdent},
     {components::global::read::validate_swizzle_atom_size, launch::RuntimeConfig},
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_std::{InvalidConfigError, tile::Strided};
+use cubek_std::{
+    InvalidConfigError,
+    tile::{Strided, StridedTilingLayout, TilingValidation},
+};
 
 use super::{LoadingJob, LoadingValidation};
 

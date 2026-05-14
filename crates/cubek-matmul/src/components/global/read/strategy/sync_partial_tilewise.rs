@@ -1,19 +1,14 @@
 use std::marker::PhantomData;
 
-use crate::components::{
-    global::memory::GlobalIterator,
-    stage::{ContiguousTilingLayout, TilingOrder},
-};
+use crate::components::global::memory::GlobalIterator;
 use crate::{
     components::global::read::validate_swizzle_atom_size,
     components::global::read::{PartialLoadingStrategy, sync::Synchronous},
     components::global::{PlaneFlowPartition, read::tiled::TiledLayout},
-    components::stage::StridedStageFamily,
-    components::stage::StridedStageMemory,
-    components::stage::TilingOrderEnum,
+    components::stage::{StridedStageFamily, StridedStageMemory},
 };
 use crate::{
-    components::{global::multi_stage::LoadMaxRoundPlaneCount, stage::TilingValidation},
+    components::global::multi_stage::LoadMaxRoundPlaneCount,
     definition::{MatmulElems, MatmulProblem, StageIdent},
     {components::global::GlobalReaderConfig, launch::RuntimeConfig},
 };
@@ -22,7 +17,9 @@ use cubecl::{
     {ir::DeviceProperties, prelude::*},
 };
 use cubek_std::{
-    tile::Strided,
+    tile::{
+        ContiguousTilingLayout, Strided, TilingOrder, TilingOrderEnum, TilingValidation,
+    },
     {FormattedConfigError, InvalidConfigError},
 };
 

@@ -1,10 +1,10 @@
 use cubecl::prelude::*;
-use cubek_matmul::components::stage::{LoadStageFamily, Stage, StageFamily, TilingLayout};
+use cubek_matmul::components::stage::{LoadStageFamily, Stage, StageFamily};
 
 use cubecl::std::{Swizzle, tensor::layout::Coords2d};
 use cubek_std::{
     stage::{StageMemoryConfig, as_swizzle_object},
-    tile::{SharedTile, StridedTile, Tile, TileScope},
+    tile::{SharedTile, StridedTile, Tile, TileScope, TilingLayout},
 };
 
 use crate::components::stage::reader::BiasTilingLayout;
@@ -122,7 +122,13 @@ impl<ES: Numeric, NS: Size> BiasStageMemory<ES, NS> {
 #[cube]
 impl<ES: Numeric, NS: Size> Stage<ES, ReadOnly> for BiasStageMemory<ES, NS> {
     fn tile<Sc: TileScope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc, ReadOnly> {
-        Tile::new_SharedMemory(SharedTile::wrap::<NS>(this.get_tile(tile)))
+        Tile::new_SharedTile(SharedTile::wrap::<NS>(this.get_tile(tile)))
+    }
+
+    fn as_stage_tile<Sc: TileScope>(_this: &Self) -> Tile<ES, Sc, ReadOnly> {
+        panic!(
+            "BiasStageMemory: as_stage_tile is not supported (bias stage isn't consumed by the partition-matmul stage-tile flow)"
+        )
     }
 }
 
