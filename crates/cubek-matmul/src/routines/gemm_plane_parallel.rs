@@ -8,7 +8,7 @@ use cubek_std::cube_count::{CubeCountPlan, CubeCountStrategy, GlobalOrder, Hyper
 use crate::{
     components::batch::{
         BatchMatmulFamily, CheckBounds,
-        gemm_plane_parallel::{GemmPlan, GemmPlaneParallelBlueprint, GemmPlaneParallelFamily},
+        gemm_plane_parallel::{GemmPlaneParallelBlueprint, GemmPlaneParallelFamily, MatmulKind},
     },
     definition::{MatmulElems, MatmulProblem, MatmulSetupError},
     routines::{
@@ -27,6 +27,25 @@ impl Display for GemmPlaneParallelStrategy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "_{:?}", self.target_num_planes)
     }
+}
+
+/// Returns `(m_units, n_units)` — the count of "plane-sized" cells along each
+/// output axis that the kernel must cover. For the staged-tile kinds each
+/// cube handles a `tile_dim` chunk along the non-vec axis, so the unit count
+/// is divided accordingly.
+fn output_units(problem: &MatmulProblem, kind: MatmulKind, tile_dim: usize) -> (usize, usize) {
+    match kind {
+        MatmulKind::MatRowMatCol => (problem.m, problem.n),
+        MatmulKind::VecMatCol => (1, problem.n),
+        MatmulKind::MatRowVec => (problem.m, 1),
+        MatmulKind::VecMatRow => (1, problem.n / tile_dim),
+        MatmulKind::MatColVec => (problem.m / tile_dim, 1),
+    }
+}
+
+/// Whether the planes within a cube split along M (true) or N (false).
+fn planes_split_m(kind: MatmulKind) -> bool {
+    matches!(kind, MatmulKind::MatRowVec | MatmulKind::MatColVec)
 }
 
 impl Routine<()> for GemmPlaneParallelRoutine {
@@ -54,13 +73,32 @@ impl Routine<()> for GemmPlaneParallelRoutine {
                     None => num_concurrent_planes(&properties.hardware),
                 };
 
+                let kind = MatmulKind::from_problem(problem)?;
                 let tile_dim =
                     device_settings.plane_dim as usize * device_settings.vector_sizes.rhs;
 
-                // Each plane owns one n-column, so cap parallelism by n.
-                let num_planes = max(1, min(target_num_planes, problem.n));
+                // num_planes cap depends on what each plane is doing:
+                // - MatRowMatCol / VecMatCol: one plane per N column.
+                // - MatRowVec: one plane per M row.
+                // - VecMatRow / MatColVec: planes share a `tile_dim` slice
+                //   within a single tile (within-tile parallelism).
+                let num_planes = match kind {
+                    MatmulKind::MatRowMatCol | MatmulKind::VecMatCol => {
+                        max(1, min(target_num_planes, problem.n))
+                    }
+                    MatmulKind::MatRowVec => max(1, min(target_num_planes, problem.m)),
+                    MatmulKind::VecMatRow | MatmulKind::MatColVec => {
+                        max(1, min(target_num_planes, tile_dim))
+                    }
+                };
 
-                let check_bounds = if problem.n.is_multiple_of(num_planes) {
+                let (m_units, n_units) = output_units(problem, kind, tile_dim);
+                let split_units = if planes_split_m(kind) {
+                    m_units
+                } else {
+                    n_units
+                };
+                let check_bounds = if split_units.is_multiple_of(num_planes) {
                     CheckBounds::None
                 } else {
                     CheckBounds::Terminate
@@ -74,7 +112,7 @@ impl Routine<()> for GemmPlaneParallelRoutine {
                         .cube_count_strategy(CubeCountStrategy::Flattened)
                         .global_order(GlobalOrder::RowMajor)
                         .build(),
-                    plan: GemmPlan::Standard,
+                    kind,
                     check_bounds,
                 };
 
@@ -105,10 +143,18 @@ impl Routine<()> for GemmPlaneParallelRoutine {
         )?
         .to_cube_dim(device_settings.plane_dim)?;
 
-        // Cubes enumerate (m, n_groups) where each cube owns one m row and a
-        // block of `num_planes` n-columns.
-        let m_cubes = problem.m as u32;
-        let n_cubes = problem.n.div_ceil(blueprint.num_planes) as u32;
+        let (m_units, n_units) = output_units(problem, blueprint.kind, blueprint.tile_dim);
+        let (m_cubes, n_cubes) = if planes_split_m(blueprint.kind) {
+            (
+                m_units.div_ceil(blueprint.num_planes) as u32,
+                n_units as u32,
+            )
+        } else {
+            (
+                m_units as u32,
+                n_units.div_ceil(blueprint.num_planes) as u32,
+            )
+        };
 
         let cube_count_plan = CubeCountPlan::from_blueprint(
             &blueprint.hypercube_blueprint,

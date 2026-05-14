@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use crate::components::batch::{
     BatchConfig as _, BatchMatmul, BatchMatmulFamily, CheckBounds,
     gemm_plane_parallel::{
-        GemmPlan, GemmPlaneParallelBlueprint, GemmPlaneParallelConfig, GemmPlaneParallelFamily,
+        GemmPlaneParallelBlueprint, GemmPlaneParallelConfig, GemmPlaneParallelFamily, MatmulKind,
         layout::{MatLayout, VecLayout},
     },
 };
@@ -117,9 +117,10 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for GemmPlaneParallel<MP> {
 
         let (_, m, k) = lhs.shape();
         let (_, _, n) = rhs.shape();
-        // All plans place the working cube in slot 0; standard GEMM also uses
-        // slot 1. The rest of the entries are unused for GEMV plans.
-        let (cube_x, cube_y, batch_cube) = cube_pos_to_m_n_batch(&cube_mapping);
+        // Cube grid is always laid out as `(m_cubes, n_cubes, batch)`. For
+        // GEMV kinds one of `m_cubes`/`n_cubes` is 1 and the corresponding
+        // cube coordinate naturally collapses to 0.
+        let (cube_m, cube_n, batch_cube) = cube_pos_to_m_n_batch(&cube_mapping);
 
         let lhs_batch = Args::batch_lhs(state, batch_cube as usize);
         let rhs_batch = Args::batch_rhs(state, batch_cube as usize);
@@ -130,51 +131,38 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for GemmPlaneParallel<MP> {
 
         let check_bounds = config.check_bounds;
 
-        match config.plan {
-            GemmPlan::Standard => execute_simple::<LhsG<MP>, RhsG<MP>, AccG<MP>, AccRE<MP>, N>(
-                lhs.view(MatLayout::new(lhs_batch, (m, k))),
-                rhs.view(MatLayout::new(rhs_batch, (k, n))),
-                out.view_mut(MatLayout::new(out_batch, (m, n))),
-                cube_x,
-                cube_y,
-                k,
-                config.num_planes,
-                config.plane_dim,
-                vector_size as u32,
-                PlaneAxis::Col,
-                check_bounds,
-            ),
-            GemmPlan::VecMatColMajor => {
+        match config.kind {
+            MatmulKind::MatRowMatCol | MatmulKind::VecMatCol => {
                 execute_simple::<LhsG<MP>, RhsG<MP>, AccG<MP>, AccRE<MP>, N>(
                     lhs.view(MatLayout::new(lhs_batch, (m, k))),
                     rhs.view(MatLayout::new(rhs_batch, (k, n))),
                     out.view_mut(MatLayout::new(out_batch, (m, n))),
-                    0,
-                    cube_x,
+                    cube_m,
+                    cube_n,
                     k,
-                    config.num_planes,
                     config.plane_dim,
                     vector_size as u32,
-                    PlaneAxis::Col,
+                    /* planes_per_m */ 1u32,
+                    /* planes_per_n */ config.num_planes,
                     check_bounds,
                 )
             }
-            GemmPlan::MatVecRowMajor => {
+            MatmulKind::MatRowVec => {
                 execute_simple::<LhsG<MP>, RhsG<MP>, AccG<MP>, AccRE<MP>, N>(
                     lhs.view(MatLayout::new(lhs_batch, (m, k))),
                     rhs.view(MatLayout::new(rhs_batch, (k, n))),
                     out.view_mut(MatLayout::new(out_batch, (m, n))),
-                    cube_x,
-                    0,
+                    cube_m,
+                    cube_n,
                     k,
-                    config.num_planes,
                     config.plane_dim,
                     vector_size as u32,
-                    PlaneAxis::Row,
+                    /* planes_per_m */ config.num_planes,
+                    /* planes_per_n */ 1u32,
                     check_bounds,
                 )
             }
-            GemmPlan::VecMatRowMajor => execute_transposed::<
+            MatmulKind::VecMatRow => execute_transposed::<
                 Global<Lhs<MP>>,
                 Global<Rhs<MP>>,
                 AccG<MP>,
@@ -186,13 +174,13 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for GemmPlaneParallel<MP> {
                 lhs.view(VecLayout::new(lhs_batch, k as usize)),
                 rhs.view(MatLayout::new(rhs_batch, (k, n))),
                 out.view_mut(VecLayout::new(out_batch, n as usize)),
-                cube_x * config.num_planes + UNIT_POS_Y,
+                cube_n * config.num_planes + UNIT_POS_Y,
                 k,
                 vector_size as u32,
                 MatrixLayout::RowMajor,
                 check_bounds,
             ),
-            GemmPlan::MatVecColMajor => execute_transposed::<
+            MatmulKind::MatColVec => execute_transposed::<
                 Global<Rhs<MP>>,
                 Global<Lhs<MP>>,
                 AccG<MP>,
@@ -204,7 +192,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for GemmPlaneParallel<MP> {
                 rhs.view(VecLayout::new(rhs_batch, k as usize)),
                 lhs.view(MatLayout::new(lhs_batch, (m, k))),
                 out.view_mut(VecLayout::new(out_batch, m as usize)),
-                cube_x * config.num_planes + UNIT_POS_Y,
+                cube_m * config.num_planes + UNIT_POS_Y,
                 k,
                 vector_size as u32,
                 MatrixLayout::ColMajor,
@@ -212,15 +200,6 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for GemmPlaneParallel<MP> {
             ),
         }
     }
-}
-
-/// Which axis the planes within a cube parallelize over.
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub enum PlaneAxis {
-    /// Planes enumerate columns of the output (`n_pos = cube_n * num_planes + plane_id`).
-    Col,
-    /// Planes enumerate rows of the output (`m_pos = cube_m * num_planes + plane_id`).
-    Row,
 }
 
 #[cube]
@@ -232,10 +211,13 @@ fn execute_simple<L: CubePrimitive, R: CubePrimitive, O: CubePrimitive, AccR: Nu
     cube_m: u32,
     cube_n: u32,
     k_dim: u32,
-    #[comptime] num_planes: u32,
     #[comptime] plane_dim: u32,
     #[comptime] vector_size: u32,
-    #[comptime] plane_axis: PlaneAxis,
+    // Within a cube, planes are arranged on a `planes_per_m × planes_per_n`
+    // grid of output cells. Exactly one of the two is `num_planes`; the other
+    // is `1`. The MatVec kinds split M, the rest split N.
+    #[comptime] planes_per_m: u32,
+    #[comptime] planes_per_n: u32,
     #[comptime] check_bounds: CheckBounds,
 ) {
     let plane_id = UNIT_POS_Y;
@@ -243,9 +225,13 @@ fn execute_simple<L: CubePrimitive, R: CubePrimitive, O: CubePrimitive, AccR: Nu
 
     let (out_m, out_n) = out.shape();
 
-    let (m_pos, n_pos) = match comptime!(plane_axis) {
-        PlaneAxis::Col => (cube_m, cube_n * num_planes + plane_id),
-        PlaneAxis::Row => (cube_m * num_planes + plane_id, cube_n),
+    // Exactly one of planes_per_m / planes_per_n is `num_planes`; the other
+    // is 1. Branching at comptime keeps the generated code identical to the
+    // pre-merge GEMV/GEMM kernels (no runtime divisions).
+    let (m_pos, n_pos) = if comptime!(planes_per_m == 1) {
+        (cube_m, cube_n * planes_per_n + plane_id)
+    } else {
+        (cube_m * planes_per_m + plane_id, cube_n)
     };
 
     if comptime!(matches!(check_bounds, CheckBounds::Terminate)) {

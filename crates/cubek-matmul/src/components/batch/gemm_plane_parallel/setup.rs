@@ -12,7 +12,7 @@ use crate::{
         batch::{
             BatchMatmulFamily, CheckBounds,
             gemm_plane_parallel::{
-                GemmPlan, GemmPlaneParallel, GemmPlaneParallelConfig, matmul_entry,
+                GemmPlaneParallel, GemmPlaneParallelConfig, MatmulKind, matmul_entry,
             },
         },
         global::memory::GlobalLayoutConfig,
@@ -27,8 +27,8 @@ use crate::{
 
 /// Plane-parallel GEMM family. Each plane reduces over `k` for a single
 /// `(m, n)` output cell; cubes enumerate the `(m, n)` grid. The same family
-/// also handles GEMV problems via [`GemmPlan`]: when one of `m, n` is 1, the
-/// kernel collapses to the corresponding GEMV variant.
+/// also handles GEMV problems via [`MatmulKind`]: when one of `m, n` is 1,
+/// the kernel collapses to the corresponding GEMV variant.
 pub struct GemmPlaneParallelFamily {}
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -38,7 +38,7 @@ pub struct GemmPlaneParallelBlueprint {
     // Should equal plane_dim * vector_size
     pub tile_dim: usize,
     pub hypercube_blueprint: HypercubeBlueprint,
-    pub plan: GemmPlan,
+    pub kind: MatmulKind,
     pub check_bounds: CheckBounds,
 }
 
@@ -90,7 +90,7 @@ impl BatchMatmulFamily<()> for GemmPlaneParallelFamily {
         Ok(GemmPlaneParallelConfig {
             plane_dim: device_props.hardware.plane_size_max,
             num_planes: blueprint.num_planes as u32,
-            plan: blueprint.plan,
+            kind: blueprint.kind,
             check_bounds: blueprint.check_bounds,
         })
     }
@@ -175,8 +175,8 @@ impl BatchMatmulFamily<()> for GemmPlaneParallelFamily {
             ))));
         }
 
-        match blueprint.plan {
-            GemmPlan::Standard => {
+        match blueprint.kind {
+            MatmulKind::MatRowMatCol => {
                 if !matches!(problem.lhs_layout, MatrixLayout::RowMajor) {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(
                         "GemmPlaneParallel requires row-major lhs",
@@ -188,11 +188,11 @@ impl BatchMatmulFamily<()> for GemmPlaneParallelFamily {
                     )));
                 }
             }
-            GemmPlan::VecMatColMajor | GemmPlan::MatVecRowMajor => {}
-            GemmPlan::VecMatRowMajor => {
+            MatmulKind::VecMatCol | MatmulKind::MatRowVec => {}
+            MatmulKind::VecMatRow => {
                 if !problem.n.is_multiple_of(blueprint.tile_dim) {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                        "For VecMatTransposeSwap, problem.n ({:?}) must be divisible by tile_dim ({:?})",
+                        "For VecMatRow, problem.n ({:?}) must be divisible by tile_dim ({:?})",
                         problem.n, blueprint.tile_dim,
                     ))));
                 }
@@ -213,10 +213,10 @@ impl BatchMatmulFamily<()> for GemmPlaneParallelFamily {
                     ))));
                 }
             }
-            GemmPlan::MatVecColMajor => {
+            MatmulKind::MatColVec => {
                 if !problem.m.is_multiple_of(blueprint.tile_dim) {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                        "For MatVecTransposeSwap, problem.m ({:?}) must be divisible by tile_dim ({:?})",
+                        "For MatColVec, problem.m ({:?}) must be divisible by tile_dim ({:?})",
                         problem.m, blueprint.tile_dim,
                     ))));
                 }

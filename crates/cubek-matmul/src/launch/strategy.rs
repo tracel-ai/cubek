@@ -15,8 +15,7 @@ use crate::{
     },
     definition::{MatmulElems, MatmulSetupError},
     launch::{
-        launch_gemm_plane_parallel, launch_gemv_plane_parallel, launch_gemv_unit_perpendicular,
-        launch_naive, launch_tiling,
+        launch_gemm_plane_parallel, launch_gemv_unit_perpendicular, launch_naive, launch_tiling,
     },
     routines::{
         BlueprintStrategy, Routine,
@@ -28,7 +27,6 @@ use crate::{
         double_unit::DoubleUnitAlgorithm,
         gemm_plane_parallel::GemmPlaneParallelRoutine,
         gemv_innerproduct::{DoubleVecMatInnerProductAlgorithm, VecMatInnerProductAlgorithm},
-        gemv_plane_parallel::GemvPlaneParallelRoutine,
         gemv_unit_perpendicular::GemvUnitPerpendicularRoutine,
         ordered_double_buffering::{OrderedDoubleBufferingAlgorithm, OrderedSelectionArgs},
         simple::{SimpleAlgorithm, SimpleArgs, SimpleTmaAlgorithm},
@@ -181,7 +179,6 @@ pub enum Strategy {
     SimpleVecMat(BlueprintStrategy<(), VecMatInnerProductAlgorithm>),
     DoubleVecMat(BlueprintStrategy<(), DoubleVecMatInnerProductAlgorithm>),
     GemvUnitPerpendicular(BlueprintStrategy<(), GemvUnitPerpendicularRoutine>),
-    GemvPlaneParallel(BlueprintStrategy<(), GemvPlaneParallelRoutine>),
     GemmPlaneParallel(BlueprintStrategy<(), GemmPlaneParallelRoutine>),
     Naive,
     #[default]
@@ -238,7 +235,6 @@ impl Display for Strategy {
             Strategy::Naive => f.write_str("matmul_naive"),
             Strategy::Auto => f.write_str("matmul_auto"),
             Strategy::GemvUnitPerpendicular(s) => write!(f, "vecmat_unit_perpendicular{}", s),
-            Strategy::GemvPlaneParallel(s) => write!(f, "vecmat_plane_parallel{}", s),
             Strategy::GemmPlaneParallel(s) => write!(f, "gemm_plane_parallel{}", s),
         }
     }
@@ -528,16 +524,6 @@ impl Strategy {
             Strategy::Auto => auto(client, lhs, rhs, out, dtypes),
             Strategy::GemvUnitPerpendicular(blueprint_strategy) => {
                 launch_gemv_unit_perpendicular::launch_ref(
-                    client,
-                    lhs,
-                    rhs,
-                    out,
-                    blueprint_strategy,
-                    dtypes,
-                )
-            }
-            Strategy::GemvPlaneParallel(blueprint_strategy) => {
-                launch_gemv_plane_parallel::launch_ref(
                     client,
                     lhs,
                     rhs,

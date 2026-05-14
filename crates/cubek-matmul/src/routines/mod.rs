@@ -2,7 +2,6 @@
 pub mod naive;
 
 pub mod gemm_plane_parallel;
-pub mod gemv_plane_parallel;
 pub mod gemv_unit_perpendicular;
 
 pub mod double_buffering;

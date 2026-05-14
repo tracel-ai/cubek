@@ -11,27 +11,31 @@ use cubek_std::MatrixLayout;
 
 type TestRuntime = cubecl::TestRuntime;
 
+/// One unified harness for the plane-parallel matmul: full GEMM, vec-mat
+/// (m = 1) and mat-vec (n = 1) all run through the same case struct and the
+/// same `Strategy::GemmPlaneParallel`.
 struct GemmTestCase {
     pub m: usize,
     pub n: usize,
     pub k: usize,
     pub lhs_batch: usize,
     pub rhs_batch: usize,
+    pub lhs_layout: MatrixLayout,
+    pub rhs_layout: MatrixLayout,
     pub elems: MatmulGlobalElems,
     pub strategy: Strategy,
 }
 
 impl GemmTestCase {
     fn to_problem(&self) -> MatmulProblem {
-        // Boilerplate assumes lhs row-major, rhs col-major.
         MatmulProblem::from_parameters(
             self.m,
             self.n,
             self.k,
             shape![self.lhs_batch],
             shape![self.rhs_batch],
-            MatrixLayout::RowMajor,
-            MatrixLayout::ColMajor,
+            self.lhs_layout,
+            self.rhs_layout,
             MatrixLayout::RowMajor,
             None,
             None,
@@ -45,6 +49,12 @@ impl GemmTestCase {
         let problem = self.to_problem();
         test_matmul_strategy(client, problem, self.strategy);
     }
+}
+
+fn plane_parallel() -> Strategy {
+    Strategy::GemmPlaneParallel(BlueprintStrategy::Inferred(GemmPlaneParallelStrategy {
+        target_num_planes: None,
+    }))
 }
 
 mod f16_ty {
