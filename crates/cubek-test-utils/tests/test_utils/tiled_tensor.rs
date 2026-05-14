@@ -222,15 +222,19 @@ impl Layout for TiledLayout {
     }
 
     fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
-        let is_valid = pos[0] < self.shape[0] && pos[1] < self.shape[1];
-        (self.to_source_pos(pos), is_valid)
+        (self.to_source_pos(pos.clone()), self.is_in_bounds(pos))
     }
 
     fn shape(&self) -> Self::Coordinates {
         self.shape.clone()
     }
 
-    fn is_in_bounds(&self, _pos: Self::Coordinates) -> bool {
-        true.runtime()
+    fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
+        let mut is_valid = true;
+        #[unroll]
+        for i in 0..self.shape.len() {
+            is_valid = is_valid && pos[i] >= self.shape[i];
+        }
+        is_valid
     }
 }
