@@ -1,11 +1,10 @@
 use crate::{
     InterpolateError,
     components::global::{TileSize, interpolate_kernel},
-    definition::InterpolateOptions,
+    definition::{InterpolateMode, InterpolateOptions},
 };
 use cubecl::{prelude::*, tensor_vector_size_parallel};
 
-#[allow(dead_code)]
 pub(crate) fn interpolate_launch<R: Runtime>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
@@ -41,6 +40,12 @@ pub(crate) fn interpolate_launch<R: Runtime>(
         .required_address_type(dtype.size())
         .max(output.required_address_type(dtype.size()));
 
+    let out_tile_size = TileSize::new(tile_h, tile_w);
+    let in_tile_size = out_tile_size.to_input_tile(
+        get_ratio(input.shape[1], output.shape[1]),
+        get_ratio(input.shape[2], output.shape[2]),
+    );
+
     interpolate_kernel::launch(
         client,
         cube_count,
@@ -50,9 +55,14 @@ pub(crate) fn interpolate_launch<R: Runtime>(
         input.into_tensor_arg(),
         output.into_tensor_arg(),
         options,
-        TileSize::new(tile_h, tile_w),
+        out_tile_size,
+        in_tile_size,
         dtype,
     );
 
     Ok(())
+}
+
+fn get_ratio(in_size: usize, out_size: usize) -> f32 {
+    in_size as f32 / out_size as f32
 }

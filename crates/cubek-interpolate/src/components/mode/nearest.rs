@@ -12,7 +12,7 @@ impl Interpolate for Nearest {
         NEAREST_HALO
     }
 
-    fn compute_weights<F: Float, N: Size>(_frac: F, weights: &mut Array<Vector<F, N>>) {
+    fn compute_weights<F: Float, N: Size>(_frac: f32, weights: &mut Array<Vector<F, N>>) {
         weights[0] = Vector::cast_from(1);
     }
 }

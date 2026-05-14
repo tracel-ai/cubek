@@ -21,18 +21,17 @@ impl TileSize {
         Self { w, h }
     }
 
-    fn with_halo(&self, halo: usize) -> TileSize {
-        if halo == 0 {
-            TileSize {
-                h: self.h,
-                w: self.w,
-            }
-        } else {
-            // extend by (halo - 1) to cover the extra samples per output
-            TileSize {
-                h: self.h + (halo - 1),
-                w: self.w + (halo - 1),
-            }
+    pub fn to_input_tile(&self, ratio_h: f32, ratio_w: f32) -> Self {
+        Self::new(
+            (self.w as f32 * ratio_w).ceil() as usize,
+            (self.h as f32 * ratio_h).ceil() as usize,
+        )
+    }
+
+    fn with_halo(&self, halo: usize) -> Self {
+        Self {
+            h: self.h + (halo.max(1) - 1),
+            w: self.w + (halo.max(1) - 1),
         }
     }
 
@@ -46,12 +45,13 @@ pub fn interpolate_kernel<F: Float, N: Size>(
     input: &Tensor<Vector<F, N>>,
     output: &mut Tensor<Vector<F, N>>,
     #[comptime] options: InterpolateOptions,
+    #[comptime] in_tile_size: TileSize,
     #[comptime] out_tile_size: TileSize,
     #[define(F)] _dtype: StorageType,
 ) {
     let halo = comptime!(get_halo(options.mode));
-    let in_tile_size = out_tile_size.with_halo(halo);
-    let smem_num_elements = in_tile_size.total();
+    in_tile_size.with_halo(halo);
+    let smem_length = in_tile_size.total();
 
     // let input_layout = InputTiledLayout::new(
     //     out_tile_size.h,
@@ -71,7 +71,7 @@ pub fn interpolate_kernel<F: Float, N: Size>(
     // let input_view: View<Vector<F, N>, Coords2d> = input.view(input_layout);
     // let mut output_view: View<Vector<F, N>, Coords2d> = output.view_mut(output_layout);
 
-    let mut smem = SharedMemory::<Vector<F, N>>::new(smem_num_elements);
+    let mut smem = SharedMemory::<Vector<F, N>>::new(smem_length);
 
     let out_x_start = CUBE_POS_X as usize * (out_tile_size.w);
     let out_y_start = CUBE_POS_Y as usize * (out_tile_size.h);
@@ -87,14 +87,14 @@ pub fn interpolate_kernel<F: Float, N: Size>(
     // let total_units = CUBE_DIM_X as usize * CUBE_DIM_Y as usize;
     // We assume total units == tile size for simplicity, otherwise we need to loop over the tile in chunks
     let total_units = out_tile_size.total();
-    let how_many_loads = smem_num_elements.div_ceil(total_units);
+    let load_per_unit = smem_length.div_ceil(total_units);
 
-    for i in 0..how_many_loads {
+    for i in 0..load_per_unit {
         let load_idx = UNIT_POS as usize + (i * total_units);
 
-        if load_idx < smem_num_elements {
-            let local_row = load_idx / in_tile_size.w;
-            let local_col = load_idx % in_tile_size.w;
+        if load_idx < smem_length {
+            let local_row = load_idx / in_tile_size.w as usize;
+            let local_col = load_idx % in_tile_size.w as usize;
 
             let global_in_x = out_x_start + local_col - (halo / 2);
             let global_in_y = out_y_start + local_row - (halo / 2);
@@ -112,14 +112,20 @@ pub fn interpolate_kernel<F: Float, N: Size>(
     let local_out_y = UNIT_POS_Y as usize;
 
     if local_out_x < out_tile_size.w && local_out_y < out_tile_size.h {
-        let ratio_h = get_ratio::<F>(input.shape(1), output.shape(1), options);
-        let frac_y = get_pixel_fraction::<F>(out_y_start + local_out_y, ratio_h, options);
-        let ratio_w = get_ratio::<F>(input.shape(2), output.shape(2), options);
-        let frac_x = get_pixel_fraction::<F>(out_x_start + local_out_x, ratio_w, options);
+        let ratio_w = get_ratio(input.shape(2), output.shape(2), options);
+        let ratio_h = get_ratio(input.shape(1), output.shape(1), options);
+
+        let mapped_x = get_mapped_coord::<F>(local_out_x, ratio_w, options);
+        let mapped_y = get_mapped_coord::<F>(local_out_y, ratio_h, options);
+
+        let base_x = mapped_x.floor();
+        let base_y = mapped_y.floor();
+
+        let frac_x = mapped_x - base_x;
+        let frac_y = mapped_y - base_y;
 
         let mut weights_x = Array::<Vector<F, N>>::new(halo);
         let mut weights_y = Array::<Vector<F, N>>::new(halo);
-
         compute_weights(frac_x, &mut weights_x, options.mode);
         compute_weights(frac_y, &mut weights_y, options.mode);
 
@@ -127,10 +133,10 @@ pub fn interpolate_kernel<F: Float, N: Size>(
 
         for i in 0..halo {
             let mut row_interp = Vector::<F, N>::zeroed();
-            let smem_row_offset = (local_out_y + i) * in_tile_size.w;
+            let smem_row_offset = (base_y as usize + i) * in_tile_size.w;
 
             for j in 0..halo {
-                let pixel = smem[smem_row_offset + (local_out_x + j)];
+                let pixel = smem[smem_row_offset + (base_x as usize + j)];
                 row_interp += pixel * weights_x[j];
             }
             final_value += row_interp * weights_y[i];
@@ -148,7 +154,7 @@ pub fn interpolate_kernel<F: Float, N: Size>(
 
 #[cube]
 fn compute_weights<F: Float, N: Size>(
-    frac: F,
+    frac: f32,
     weights: &mut Array<Vector<F, N>>,
     #[comptime] mode: InterpolateMode,
 ) {
@@ -166,35 +172,30 @@ fn get_halo(mode: InterpolateMode) -> usize {
 }
 
 #[cube]
-fn get_pixel_fraction<F: Float>(x: usize, ratio: F, #[comptime] options: InterpolateOptions) -> F {
+fn get_ratio(
+    input_size: usize,
+    output_size: usize,
+    #[comptime] options: InterpolateOptions,
+) -> f32 {
     if options.align_corners && options.mode != InterpolateMode::Nearest {
-        F::cast_from(x) * ratio
+        f32::cast_from((input_size - 1).max(0)) / f32::cast_from((output_size - 1).max(1))
     } else {
-        let half = F::cast_from(0.5 as usize);
-        (F::cast_from(x) + half) * ratio - half
+        f32::cast_from(input_size) / f32::cast_from(output_size)
     }
 }
 
 #[cube]
-fn get_ratio<F: Float>(
-    input_size: usize,
-    output_size: usize,
+fn get_mapped_coord<F: Float>(
+    x: usize,
+    ratio: f32,
     #[comptime] options: InterpolateOptions,
-) -> F {
-    if options.align_corners && options.mode != InterpolateMode::Nearest {
-        let in_size = if input_size > 0 {
-            input_size - 1
-        } else {
-            usize::cast_from(0)
-        };
-        let out_size = if output_size > 1 {
-            output_size - 1
-        } else {
-            usize::cast_from(1)
-        };
-
-        F::cast_from(in_size) / F::cast_from(out_size)
+) -> f32 {
+    // Do not "fix": Bug-for-bug compatibility with PyTorch's default nearest-neighbor interpolation.
+    if options.mode == InterpolateMode::Nearest {
+        f32::cast_from(x as f32 * ratio)
+    } else if options.align_corners {
+        f32::cast_from(x as f32 * ratio)
     } else {
-        F::cast_from(input_size) / F::cast_from(output_size)
+        f32::cast_from((x as f32 + 0.5) * ratio - 0.5)
     }
 }

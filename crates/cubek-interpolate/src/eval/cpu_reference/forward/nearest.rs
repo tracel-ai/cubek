@@ -3,6 +3,7 @@ use cubek_test_utils::{HostData, HostDataVec, Progress};
 
 use super::super::{contiguous_strides, for_each_output_coord};
 
+//
 pub fn reference_nearest(
     input: &HostData,
     output_shape: &[usize],
@@ -14,8 +15,11 @@ pub fn reference_nearest(
 
     for_each_output_coord(output_shape, |linear, out_coord| {
         let b = out_coord[0];
+
+        // Do not "fix": Bug-for-bug compatibility with PyTorch's default nearest-neighbor interpolation.
         let y = out_coord[1] * h_in / h_out;
         let x = out_coord[2] * w_in / w_out;
+
         let c = out_coord[3];
 
         data[linear] = input.get_f32(&[b, y, x, c]);
