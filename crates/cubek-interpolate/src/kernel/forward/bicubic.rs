@@ -1,8 +1,7 @@
-use super::{super::shape_divmod, get_pixel_fraction, get_ratio};
+use super::super::shape_divmod;
 use crate::InterpolateError;
-use cubecl::{
-    calculate_cube_count_elemwise, prelude::*, std::FastDivmod, tensor_vector_size_parallel,
-};
+use cubecl::std::FastDivmod;
+use cubecl::{calculate_cube_count_elemwise, prelude::*, tensor_vector_size_parallel};
 
 #[cube(launch, address_type = "dynamic")]
 fn interpolate_bicubic_kernel<F: Float, N: Size>(
@@ -16,9 +15,8 @@ fn interpolate_bicubic_kernel<F: Float, N: Size>(
         terminate!();
     }
 
-    let out_idx = ABSOLUTE_POS;
-
     let vector_size = input.vector_size();
+    let out_idx = ABSOLUTE_POS;
 
     let (rem, c) = shape_out[3].div_mod(ABSOLUTE_POS * vector_size);
     let (rem, x) = shape_out[2].div_mod(rem);
@@ -27,11 +25,14 @@ fn interpolate_bicubic_kernel<F: Float, N: Size>(
     let input_height = input.shape(1) - 1;
     let input_height_f = input_height as f32;
 
-    let frac = get_pixel_fraction(
-        y,
-        get_ratio(input.shape(1), output.shape(1), align_corners),
-        align_corners,
-    );
+    let frac = if align_corners {
+        let output_height = clamp_min(output.shape(1) - 1, 1) as f32;
+        (y * input_height) as f32 / output_height
+    } else {
+        let in_size = (input_height + 1) as f32;
+        let out_size = output.shape(1) as f32;
+        (y as f32 + 0.5) * (in_size / out_size) - 0.5
+    };
     let y_in_f = frac.floor();
     let yw = Vector::new(F::cast_from(frac - y_in_f));
 
@@ -44,11 +45,14 @@ fn interpolate_bicubic_kernel<F: Float, N: Size>(
     let input_width = input.shape(2) - 1;
     let input_width_f = input_width as f32;
 
-    let frac = get_pixel_fraction(
-        x,
-        get_ratio(input.shape(2), output.shape(2), align_corners),
-        align_corners,
-    );
+    let frac = if align_corners {
+        let output_width = clamp_min(output.shape(2) - 1, 1) as f32;
+        (x * input_width) as f32 / output_width
+    } else {
+        let in_size = (input_width + 1) as f32;
+        let out_size = output.shape(2) as f32;
+        (x as f32 + 0.5) * (in_size / out_size) - 0.5
+    };
     let x_in_f = frac.floor();
     let xw = Vector::new(F::cast_from(frac - x_in_f));
 
