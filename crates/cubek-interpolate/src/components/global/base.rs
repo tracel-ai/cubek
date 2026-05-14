@@ -1,5 +1,3 @@
-use std::usize;
-
 // use super::layout::{InputTiledLayout, OutputTiledLayout};
 use crate::{
     components::mode::{Interpolate, Nearest},

@@ -40,7 +40,7 @@ pub fn strategy_result(
             input_handle.clone().binding(),
             out_grad_handle.clone().binding(),
             input_grad_handle.clone().binding(),
-            problem.options.clone(),
+            problem.options,
             dtype,
         )
         .into()

@@ -8,8 +8,8 @@ const NEAREST_HALO: usize = 1;
 
 #[cube]
 impl Interpolate for Nearest {
-    fn halo() -> usize {
-        NEAREST_HALO.into()
+    fn halo() -> comptime_type!(usize) {
+        NEAREST_HALO
     }
 
     fn compute_weights<F: Float, N: Size>(_frac: F, weights: &mut Array<Vector<F, N>>) {

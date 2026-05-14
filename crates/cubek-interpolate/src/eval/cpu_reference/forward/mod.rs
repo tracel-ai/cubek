@@ -34,7 +34,7 @@ pub fn strategy_result(
             c,
             input_handle.clone().binding(),
             output_handle.clone().binding(),
-            problem.options.clone(),
+            problem.options,
             dtype,
         )
         .into()

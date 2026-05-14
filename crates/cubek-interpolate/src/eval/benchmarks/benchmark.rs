@@ -72,7 +72,7 @@ impl Benchmark for InterpolateBench {
                     &self.client,
                     input.binding(),
                     output.clone().binding(),
-                    prob.options.clone(),
+                    prob.options,
                     self.dtype,
                 )
                 .map_err(|err| format!("{err}"))?;
@@ -98,7 +98,7 @@ impl Benchmark for InterpolateBench {
                     backward_input.binding(),
                     input.clone().binding(),
                     output.clone().binding(),
-                    prob.options.clone(),
+                    prob.options,
                     self.dtype,
                 )
                 .map_err(|err| format!("{err}"))?;

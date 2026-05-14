@@ -13,7 +13,7 @@ pub(crate) use nearest::interpolate_nearest_launch;
 #[cube]
 pub(crate) fn get_pixel_fraction(x: usize, ratio: f32, #[comptime] align_corners: bool) -> f32 {
     if align_corners {
-        (x as f32 * ratio) as f32
+        x as f32 * ratio
     } else {
         (x as f32 + 0.5) * ratio - 0.5
     }

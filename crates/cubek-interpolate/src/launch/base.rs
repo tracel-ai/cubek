@@ -5,6 +5,7 @@ use crate::{
 };
 use cubecl::{prelude::*, tensor_vector_size_parallel};
 
+#[allow(dead_code)]
 pub(crate) fn interpolate_launch<R: Runtime>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
@@ -30,8 +31,8 @@ pub(crate) fn interpolate_launch<R: Runtime>(
 
     let cube_dim = CubeDim::new_2d(tile_w as u32, tile_h as u32);
 
-    let cubes_x = (out_w + tile_w - 1) / tile_w;
-    let cubes_y = (out_h + tile_h - 1) / tile_h;
+    let cubes_x = out_w.div_ceil(tile_w);
+    let cubes_y = out_h.div_ceil(tile_h);
 
     let cubes_z = batch_size * channels / vector_size as usize;
     let cube_count = CubeCount::Static(cubes_x as u32, cubes_y as u32, cubes_z as u32);
