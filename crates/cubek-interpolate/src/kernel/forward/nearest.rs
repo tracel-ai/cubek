@@ -23,11 +23,10 @@ fn interpolate_nearest_kernel<F: Float, N: Size>(
     let (rem, x) = shape_out[2].div_mod(rem);
     let (b, y) = shape_out[1].div_mod(rem);
 
-    let ratio_h = (input.shape(1) as f32) / (output.shape(1) as f32);
-    let ratio_w = (input.shape(2) as f32) / (output.shape(2) as f32);
-
-    let y_in = usize::cast_from(((y as f32 + 0.5) * ratio_h - 0.5).floor());
-    let x_in = usize::cast_from(((x as f32 + 0.5) * ratio_w - 0.5).floor());
+    let y_in =
+        usize::cast_from((y as f32 * (input.shape(1) as f32) / (output.shape(1) as f32)).floor());
+    let x_in =
+        usize::cast_from((x as f32 * (input.shape(2) as f32) / (output.shape(2) as f32)).floor());
 
     let y_in = y_in.clamp(0, input.shape(1) - 1);
     let x_in = x_in.clamp(0, input.shape(2) - 1);
@@ -66,7 +65,7 @@ pub(crate) fn interpolate_nearest_launch<R: Runtime>(
         cube_dim,
         address_type,
         vector_size,
-        input.into_tensor_arg(),
+        input.clone().into_tensor_arg(),
         output.clone().into_tensor_arg(),
         out_shape,
         dtype,
