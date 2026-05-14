@@ -20,8 +20,8 @@ fn test_interpolate_nearest_identity() {
 fn test_interpolate_nearest_upsample() {
     let client = TestRuntime::client(&Default::default());
     let problem = make_problem(
-        [1, 1, 1, 1],
-        [2, 2],
+        [2, 4, 4, 2],
+        [10, 10],
         InterpolateOptions::new(InterpolateMode::Nearest),
     );
     run_interpolate_test(client, 1234, -10.0, 10.0, problem, NEAREST_TOLERANCE);
