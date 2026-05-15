@@ -283,6 +283,7 @@ pub trait AttentionArgs: Send + Sync + 'static + Clone {
 /// Tensor input representation.
 ///
 /// You can use the tensor input as if it was a pointer to the actually tensor.
+#[derive(CubeType)]
 pub struct TensorQuery<
     Q: FloatLine,
     K: FloatLine,
@@ -294,6 +295,7 @@ pub struct TensorQuery<
     state: GA::State<Q, K, V, M, O>,
 }
 
+#[derive(CubeType)]
 pub struct TensorKey<
     Q: FloatLine,
     K: FloatLine,
@@ -305,6 +307,7 @@ pub struct TensorKey<
     state: GA::State<Q, K, V, M, O>,
 }
 
+#[derive(CubeType)]
 pub struct TensorValue<
     Q: FloatLine,
     K: FloatLine,
@@ -316,6 +319,7 @@ pub struct TensorValue<
     state: GA::State<Q, K, V, M, O>,
 }
 
+#[derive(CubeType)]
 pub struct TensorMask<
     Q: FloatLine,
     K: FloatLine,
@@ -747,6 +751,8 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
 /// # Warning
 ///
 /// There is no mutability guarantee.
+#[derive(CubeType)]
+#[expand(derive(Clone))]
 pub struct TensorOutput<
     Q: FloatLine,
     K: FloatLine,
@@ -756,63 +762,6 @@ pub struct TensorOutput<
     GA: AttentionArgs,
 > {
     state: GA::State<Q, K, V, M, O>,
-}
-
-/// Expand type for tensor input.
-pub struct TensorQueryExpand<
-    Q: FloatLine,
-    K: FloatLine,
-    V: FloatLine,
-    M: NumericLine,
-    O: FloatLine,
-    GA: AttentionArgs,
-> {
-    state: <GA::State<Q, K, V, M, O> as CubeType>::ExpandType,
-}
-
-pub struct TensorKeyExpand<
-    Q: FloatLine,
-    K: FloatLine,
-    V: FloatLine,
-    M: NumericLine,
-    O: FloatLine,
-    GA: AttentionArgs,
-> {
-    state: <GA::State<Q, K, V, M, O> as CubeType>::ExpandType,
-}
-
-pub struct TensorValueExpand<
-    Q: FloatLine,
-    K: FloatLine,
-    V: FloatLine,
-    M: NumericLine,
-    O: FloatLine,
-    GA: AttentionArgs,
-> {
-    state: <GA::State<Q, K, V, M, O> as CubeType>::ExpandType,
-}
-
-pub struct TensorMaskExpand<
-    Q: FloatLine,
-    K: FloatLine,
-    V: FloatLine,
-    M: NumericLine,
-    O: FloatLine,
-    GA: AttentionArgs,
-> {
-    state: <GA::State<Q, K, V, M, O> as CubeType>::ExpandType,
-}
-
-/// Expand type for [tensor output](TensorOutput).
-pub struct TensorOutputExpand<
-    Q: FloatLine,
-    K: FloatLine,
-    V: FloatLine,
-    M: NumericLine,
-    O: FloatLine,
-    GA: AttentionArgs,
-> {
-    state: <GA::State<Q, K, V, M, O> as CubeType>::ExpandType,
 }
 
 #[cube]
@@ -1479,396 +1428,5 @@ impl AttentionArgs for TensorArgs {
         state: &Self::State<Q, K, V, M, O>,
     ) -> comptime_type!(usize) {
         state.output.vector_size()
-    }
-}
-
-mod __query {
-    use super::*;
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        CubeType for TensorQuery<Q, K, V, M, O, GA>
-    {
-        type ExpandType = TensorQueryExpand<Q, K, V, M, O, GA>;
-    }
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        IntoExpand for TensorQueryExpand<Q, K, V, M, O, GA>
-    {
-        type Expand = Self;
-
-        fn into_expand(self, _: &Scope) -> Self::Expand {
-            self
-        }
-    }
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        ExpandTypeClone for TensorQueryExpand<Q, K, V, M, O, GA>
-    {
-        fn clone_unchecked(&self) -> Self {
-            self.clone()
-        }
-    }
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        Clone for TensorQueryExpand<Q, K, V, M, O, GA>
-    {
-        fn clone(&self) -> Self {
-            Self {
-                state: self.state.clone(),
-            }
-        }
-    }
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        IntoMut for TensorQueryExpand<Q, K, V, M, O, GA>
-    {
-        fn into_mut(mut self, scope: &Scope) -> Self {
-            self.state = self.state.into_mut(scope);
-            self
-        }
-    }
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        CubeDebug for TensorQueryExpand<Q, K, V, M, O, GA>
-    {
-        fn set_debug_name(&self, scope: &Scope, name: &'static str) {
-            self.state.set_debug_name(scope, name);
-        }
-    }
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        Clone for TensorQuery<Q, K, V, M, O, GA>
-    {
-        fn clone(&self) -> Self {
-            Self {
-                state: self.state.clone(),
-            }
-        }
-    }
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        AsRefExpand for TensorQueryExpand<Q, K, V, M, O, GA>
-    {
-        fn __expand_ref_method(&self, _: &Scope) -> &Self {
-            self
-        }
-    }
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        AsMutExpand for TensorQueryExpand<Q, K, V, M, O, GA>
-    {
-        fn __expand_ref_mut_method(&mut self, _: &Scope) -> &mut Self {
-            self
-        }
-    }
-}
-
-mod __key {
-    use super::*;
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        CubeType for TensorKey<Q, K, V, M, O, GA>
-    {
-        type ExpandType = TensorKeyExpand<Q, K, V, M, O, GA>;
-    }
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        IntoExpand for TensorKeyExpand<Q, K, V, M, O, GA>
-    {
-        type Expand = Self;
-
-        fn into_expand(self, _: &Scope) -> Self::Expand {
-            self
-        }
-    }
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        ExpandTypeClone for TensorKeyExpand<Q, K, V, M, O, GA>
-    {
-        fn clone_unchecked(&self) -> Self {
-            self.clone()
-        }
-    }
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        Clone for TensorKeyExpand<Q, K, V, M, O, GA>
-    {
-        fn clone(&self) -> Self {
-            Self {
-                state: self.state.clone(),
-            }
-        }
-    }
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        IntoMut for TensorKeyExpand<Q, K, V, M, O, GA>
-    {
-        fn into_mut(mut self, scope: &Scope) -> Self {
-            self.state = self.state.into_mut(scope);
-            self
-        }
-    }
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        CubeDebug for TensorKeyExpand<Q, K, V, M, O, GA>
-    {
-        fn set_debug_name(&self, scope: &Scope, name: &'static str) {
-            self.state.set_debug_name(scope, name);
-        }
-    }
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        Clone for TensorKey<Q, K, V, M, O, GA>
-    {
-        fn clone(&self) -> Self {
-            Self {
-                state: self.state.clone(),
-            }
-        }
-    }
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        AsRefExpand for TensorKeyExpand<Q, K, V, M, O, GA>
-    {
-        fn __expand_ref_method(&self, _: &Scope) -> &Self {
-            self
-        }
-    }
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        AsMutExpand for TensorKeyExpand<Q, K, V, M, O, GA>
-    {
-        fn __expand_ref_mut_method(&mut self, _: &Scope) -> &mut Self {
-            self
-        }
-    }
-}
-
-mod __value {
-    use super::*;
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        CubeType for TensorValue<Q, K, V, M, O, GA>
-    {
-        type ExpandType = TensorValueExpand<Q, K, V, M, O, GA>;
-    }
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        IntoExpand for TensorValueExpand<Q, K, V, M, O, GA>
-    {
-        type Expand = Self;
-
-        fn into_expand(self, _: &Scope) -> Self::Expand {
-            self
-        }
-    }
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        ExpandTypeClone for TensorValueExpand<Q, K, V, M, O, GA>
-    {
-        fn clone_unchecked(&self) -> Self {
-            self.clone()
-        }
-    }
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        Clone for TensorValueExpand<Q, K, V, M, O, GA>
-    {
-        fn clone(&self) -> Self {
-            Self {
-                state: self.state.clone(),
-            }
-        }
-    }
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        IntoMut for TensorValueExpand<Q, K, V, M, O, GA>
-    {
-        fn into_mut(mut self, scope: &Scope) -> Self {
-            self.state = self.state.into_mut(scope);
-            self
-        }
-    }
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        CubeDebug for TensorValueExpand<Q, K, V, M, O, GA>
-    {
-        fn set_debug_name(&self, scope: &Scope, name: &'static str) {
-            self.state.set_debug_name(scope, name);
-        }
-    }
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        Clone for TensorValue<Q, K, V, M, O, GA>
-    {
-        fn clone(&self) -> Self {
-            Self {
-                state: self.state.clone(),
-            }
-        }
-    }
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        AsRefExpand for TensorValueExpand<Q, K, V, M, O, GA>
-    {
-        fn __expand_ref_method(&self, _: &Scope) -> &Self {
-            self
-        }
-    }
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        AsMutExpand for TensorValueExpand<Q, K, V, M, O, GA>
-    {
-        fn __expand_ref_mut_method(&mut self, _: &Scope) -> &mut Self {
-            self
-        }
-    }
-}
-
-mod __mask {
-    use super::*;
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        CubeType for TensorMask<Q, K, V, M, O, GA>
-    {
-        type ExpandType = TensorMaskExpand<Q, K, V, M, O, GA>;
-    }
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        IntoExpand for TensorMaskExpand<Q, K, V, M, O, GA>
-    {
-        type Expand = Self;
-
-        fn into_expand(self, _: &Scope) -> Self::Expand {
-            self
-        }
-    }
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        ExpandTypeClone for TensorMaskExpand<Q, K, V, M, O, GA>
-    {
-        fn clone_unchecked(&self) -> Self {
-            self.clone()
-        }
-    }
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        Clone for TensorMaskExpand<Q, K, V, M, O, GA>
-    {
-        fn clone(&self) -> Self {
-            Self {
-                state: self.state.clone(),
-            }
-        }
-    }
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        IntoMut for TensorMaskExpand<Q, K, V, M, O, GA>
-    {
-        fn into_mut(mut self, scope: &Scope) -> Self {
-            self.state = self.state.into_mut(scope);
-            self
-        }
-    }
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        CubeDebug for TensorMaskExpand<Q, K, V, M, O, GA>
-    {
-        fn set_debug_name(&self, scope: &Scope, name: &'static str) {
-            self.state.set_debug_name(scope, name);
-        }
-    }
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        Clone for TensorMask<Q, K, V, M, O, GA>
-    {
-        fn clone(&self) -> Self {
-            Self {
-                state: self.state.clone(),
-            }
-        }
-    }
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        AsRefExpand for TensorMaskExpand<Q, K, V, M, O, GA>
-    {
-        fn __expand_ref_method(&self, _: &Scope) -> &Self {
-            self
-        }
-    }
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        AsMutExpand for TensorMaskExpand<Q, K, V, M, O, GA>
-    {
-        fn __expand_ref_mut_method(&mut self, _: &Scope) -> &mut Self {
-            self
-        }
-    }
-}
-
-mod __output {
-    use super::*;
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        CubeType for TensorOutput<Q, K, V, M, O, GA>
-    {
-        type ExpandType = TensorOutputExpand<Q, K, V, M, O, GA>;
-    }
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        IntoExpand for TensorOutputExpand<Q, K, V, M, O, GA>
-    {
-        type Expand = Self;
-
-        fn into_expand(self, _: &Scope) -> Self::Expand {
-            self
-        }
-    }
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        ExpandTypeClone for TensorOutputExpand<Q, K, V, M, O, GA>
-    {
-        fn clone_unchecked(&self) -> Self {
-            self.clone()
-        }
-    }
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        Clone for TensorOutput<Q, K, V, M, O, GA>
-    {
-        fn clone(&self) -> Self {
-            Self {
-                state: self.state.clone(),
-            }
-        }
-    }
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        Clone for TensorOutputExpand<Q, K, V, M, O, GA>
-    {
-        fn clone(&self) -> Self {
-            Self {
-                state: self.state.clone(),
-            }
-        }
-    }
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        IntoMut for TensorOutputExpand<Q, K, V, M, O, GA>
-    {
-        fn into_mut(mut self, scope: &Scope) -> Self {
-            self.state = self.state.into_mut(scope);
-            self
-        }
-    }
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        CubeDebug for TensorOutputExpand<Q, K, V, M, O, GA>
-    {
-        fn set_debug_name(&self, scope: &Scope, name: &'static str) {
-            self.state.set_debug_name(scope, name);
-        }
-    }
-
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        AsRefExpand for TensorOutputExpand<Q, K, V, M, O, GA>
-    {
-        fn __expand_ref_method(&self, _: &Scope) -> &Self {
-            self
-        }
-    }
-    impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, GA: AttentionArgs>
-        AsMutExpand for TensorOutputExpand<Q, K, V, M, O, GA>
-    {
-        fn __expand_ref_mut_method(&mut self, _: &Scope) -> &mut Self {
-            self
-        }
     }
 }
