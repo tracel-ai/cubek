@@ -104,7 +104,7 @@ impl<
                         .mma(&query_tile.tile, &key_tile.tile);
                 }
 
-                let state_q = state.index_mut(q);
+                let state_q = &mut state[q];
 
                 let scale =
                     softmax_partition.softmax_at(state_q, mask_partition.get(), head_dim_factor, q);
@@ -142,7 +142,7 @@ impl<
 
         #[unroll]
         for q in 0..p.seq_q as usize {
-            let running_state = state.index(q);
+            let running_state = &state[q];
 
             #[unroll]
             for vd in 0..p.val_dim as usize {
