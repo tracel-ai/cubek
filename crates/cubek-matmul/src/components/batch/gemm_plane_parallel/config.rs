@@ -13,91 +13,101 @@ use crate::{
 /// An operand is either a matrix (with a memory layout) or a vector, when
 /// its non-k dimension is 1.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub enum OperandKind {
+pub enum OperandLayout {
     RowMajor,
     ColMajor,
     Vector,
 }
 
 /// Shape + layout of the matmul problem the plane-parallel kernel will run.
-///
-/// Composed from the per-side [`OperandKind`]s; the dispatch path (simple
-/// vs staged) is derived from their combination.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct MatmulKind {
-    pub lhs: OperandKind,
-    pub rhs: OperandKind,
+pub struct MatmulOperandLayouts {
+    pub lhs: OperandLayout,
+    pub rhs: OperandLayout,
 }
 
-/// Which output axis the planes within a cube enumerate.
+/// Which output axis the planes within a cube enumerate. The planes step
+/// across this axis; the other axis is held constant within the cube and
+/// only advances via the cube grid.
 ///
-/// Exactly one of `(planes_per_m, planes_per_n)` equals `num_planes`; the
-/// other is 1. For vec/mat the choice is forced (planes split the non-1
-/// axis); for mat/mat it's an algorithmic choice made by the routine.
+/// Forced for the single-staged paths (planes must walk the staged-MN
+/// axis so they land on different staged tiles); a free routing choice
+/// for Direct and DoubleStaged.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum PlanesSplit {
+    /// Each plane in a cube takes a different M-row (or M-tile, when lhs
+    /// is staged); all planes in the cube share the same N position.
     M,
+    /// Each plane in a cube takes a different N-column (or N-tile, when
+    /// rhs is staged); all planes in the cube share the same M position.
     N,
 }
 
-/// How the kernel body is dispatched.
+/// How a single operand's K axis is read.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub enum DispatchPath {
-    /// Plane reduces over k for one `(m, n)` output cell.
-    Simple,
-    /// Staged tile reduction; the matrix's k axis is non-contiguous and
-    /// must be reloaded through shared memory. Vec is lhs, mat is rhs RowMajor.
-    StagedVecMat,
-    /// Staged tile reduction; the matrix's k axis is non-contiguous and
-    /// must be reloaded through shared memory. Mat is lhs ColMajor, vec is rhs.
-    StagedMatVec,
+pub enum KAccess {
+    /// K is contiguous → one vector load along K per K-tile.
+    Direct,
+    /// K is non-contiguous → load a tile and re-read it in the right direction.
+    Staged,
 }
 
-impl MatmulKind {
+/// Per-side K access. The four `(lhs, rhs)` combinations recover the
+/// historical traversal names: `(Direct, Direct)` is the plain GEMM path,
+/// `(Direct, Staged)` stages rhs, `(Staged, Direct)` stages lhs, and
+/// `(Staged, Staged)` stages both (each plane produces a
+/// `vector_size × vector_size` block of output).
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+pub struct KTraversal {
+    pub lhs: KAccess,
+    pub rhs: KAccess,
+}
+
+impl KTraversal {
+    /// True iff at least one side needs the staged-tile path.
+    pub fn is_staged(self) -> bool {
+        matches!(self.lhs, KAccess::Staged) || matches!(self.rhs, KAccess::Staged)
+    }
+}
+
+impl MatmulOperandLayouts {
     /// Infer the kind from problem shape and operand layouts.
-    pub(crate) fn from_problem(problem: &MatmulProblem) -> Result<MatmulKind, MatmulSetupError> {
+    pub(crate) fn from_problem(
+        problem: &MatmulProblem,
+    ) -> Result<MatmulOperandLayouts, MatmulSetupError> {
         let lhs = operand_kind(problem.m, problem.lhs_layout);
         let rhs = operand_kind(problem.n, problem.rhs_layout);
-        let kind = MatmulKind { lhs, rhs };
-        kind.validate_layouts(problem)?;
-        Ok(kind)
+        Ok(MatmulOperandLayouts { lhs, rhs })
     }
 
-    fn validate_layouts(self, problem: &MatmulProblem) -> Result<(), MatmulSetupError> {
-        // Mat × Mat is only supported with lhs RowMajor + rhs ColMajor.
-        let mat_mat =
-            !matches!(self.lhs, OperandKind::Vector) && !matches!(self.rhs, OperandKind::Vector);
-        if mat_mat
-            && !matches!(
-                (self.lhs, self.rhs),
-                (OperandKind::RowMajor, OperandKind::ColMajor)
-            )
-        {
-            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "Plane-parallel GEMM requires lhs RowMajor and rhs ColMajor, got lhs={:?}, rhs={:?}",
-                problem.lhs_layout, problem.rhs_layout
-            ))));
-        }
-        Ok(())
-    }
-
-    /// Which kernel body should run for this kind.
-    pub fn dispatch_path(self) -> DispatchPath {
-        match (self.lhs, self.rhs) {
-            (OperandKind::Vector, OperandKind::RowMajor) => DispatchPath::StagedVecMat,
-            (OperandKind::ColMajor, OperandKind::Vector) => DispatchPath::StagedMatVec,
-            _ => DispatchPath::Simple,
+    /// Per-side K access. Staging is needed exactly when the operand's K
+    /// axis is the non-contiguous one in memory:
+    ///   - `ColMajor` lhs (K-stride = M) → stage lhs.
+    ///   - `RowMajor` rhs (K-stride = N) → stage rhs.
+    ///   - Vectors and the other layouts have K contiguous → direct.
+    pub fn k_traversal(self) -> KTraversal {
+        use KAccess::*;
+        use OperandLayout::*;
+        KTraversal {
+            lhs: match self.lhs {
+                RowMajor | Vector => Direct,
+                ColMajor => Staged,
+            },
+            rhs: match self.rhs {
+                RowMajor => Staged,
+                ColMajor | Vector => Direct,
+            },
         }
     }
 }
 
-fn operand_kind(dim: usize, layout: MatrixLayout) -> OperandKind {
+fn operand_kind(dim: usize, layout: MatrixLayout) -> OperandLayout {
     if dim == 1 {
-        OperandKind::Vector
+        OperandLayout::Vector
     } else {
         match layout {
-            MatrixLayout::RowMajor => OperandKind::RowMajor,
-            MatrixLayout::ColMajor => OperandKind::ColMajor,
+            MatrixLayout::RowMajor => OperandLayout::RowMajor,
+            MatrixLayout::ColMajor => OperandLayout::ColMajor,
         }
     }
 }
@@ -106,7 +116,7 @@ fn operand_kind(dim: usize, layout: MatrixLayout) -> OperandKind {
 pub struct GemmPlaneParallelConfig {
     pub(crate) plane_dim: u32,
     pub(crate) num_planes: u32,
-    pub(crate) kind: MatmulKind,
+    pub(crate) kind: MatmulOperandLayouts,
     pub(crate) planes_split: PlanesSplit,
     pub(crate) check_bounds: CheckBounds,
 }
@@ -114,7 +124,7 @@ pub struct GemmPlaneParallelConfig {
 impl BatchConfig for GemmPlaneParallelConfig {
     fn lhs_global_layout_config(&self) -> GlobalLayoutConfig {
         GlobalLayoutConfig {
-            matrix_layout: MatrixLayout::RowMajor,
+            matrix_layout: layout_for(self.kind.lhs, MatrixLayout::RowMajor),
             check_row_bounds: false,
             check_col_bounds: false,
         }
@@ -122,7 +132,7 @@ impl BatchConfig for GemmPlaneParallelConfig {
 
     fn rhs_global_layout_config(&self) -> GlobalLayoutConfig {
         GlobalLayoutConfig {
-            matrix_layout: MatrixLayout::ColMajor,
+            matrix_layout: layout_for(self.kind.rhs, MatrixLayout::ColMajor),
             check_row_bounds: false,
             check_col_bounds: false,
         }
@@ -134,5 +144,13 @@ impl BatchConfig for GemmPlaneParallelConfig {
             check_row_bounds: false,
             check_col_bounds: false,
         }
+    }
+}
+
+pub(crate) fn layout_for(operand: OperandLayout, vec_default: MatrixLayout) -> MatrixLayout {
+    match operand {
+        OperandLayout::RowMajor => MatrixLayout::RowMajor,
+        OperandLayout::ColMajor => MatrixLayout::ColMajor,
+        OperandLayout::Vector => vec_default,
     }
 }

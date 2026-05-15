@@ -12,7 +12,8 @@ use crate::{
         batch::{
             BatchMatmulFamily, CheckBounds,
             gemm_plane_parallel::{
-                DispatchPath, GemmPlaneParallel, GemmPlaneParallelConfig, MatmulKind, PlanesSplit,
+                GemmPlaneParallel, GemmPlaneParallelConfig, KAccess, MatmulOperandLayouts, PlanesSplit,
+                config::layout_for,
                 matmul_entry,
             },
         },
@@ -39,7 +40,7 @@ pub struct GemmPlaneParallelBlueprint {
     // Should equal plane_dim * vector_size
     pub tile_dim: usize,
     pub hypercube_blueprint: HypercubeBlueprint,
-    pub kind: MatmulKind,
+    pub kind: MatmulOperandLayouts,
     pub planes_split: PlanesSplit,
     pub check_bounds: CheckBounds,
 }
@@ -47,7 +48,7 @@ pub struct GemmPlaneParallelBlueprint {
 impl Blueprint for GemmPlaneParallelBlueprint {
     fn lhs_global_layout_config(&self) -> GlobalLayoutConfig {
         GlobalLayoutConfig {
-            matrix_layout: MatrixLayout::RowMajor,
+            matrix_layout: layout_for(self.kind.lhs, MatrixLayout::RowMajor),
             check_row_bounds: false,
             check_col_bounds: false,
         }
@@ -55,7 +56,7 @@ impl Blueprint for GemmPlaneParallelBlueprint {
 
     fn rhs_global_layout_config(&self) -> GlobalLayoutConfig {
         GlobalLayoutConfig {
-            matrix_layout: MatrixLayout::ColMajor,
+            matrix_layout: layout_for(self.kind.rhs, MatrixLayout::ColMajor),
             check_row_bounds: false,
             check_col_bounds: false,
         }
@@ -180,7 +181,7 @@ impl BatchMatmulFamily<()> for GemmPlaneParallelFamily {
 
         // Re-derive the kind from the problem so a forced blueprint also gets
         // its layouts checked.
-        let derived = MatmulKind::from_problem(problem)?;
+        let derived = MatmulOperandLayouts::from_problem(problem)?;
         if derived != blueprint.kind {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
                 "Blueprint kind {:?} disagrees with problem kind {:?}",
@@ -188,47 +189,46 @@ impl BatchMatmulFamily<()> for GemmPlaneParallelFamily {
             ))));
         }
 
-        match blueprint.kind.dispatch_path() {
-            DispatchPath::Simple => {}
-            DispatchPath::StagedVecMat => validate_staged(
-                problem.n,
-                blueprint.tile_dim,
-                dtypes.rhs_global.size() * vector_sizes.rhs,
-                client.properties().hardware.max_shared_memory_size,
-                "n",
-            )?,
-            DispatchPath::StagedMatVec => validate_staged(
-                problem.m,
-                blueprint.tile_dim,
-                dtypes.lhs_global.size() * vector_sizes.lhs,
-                client.properties().hardware.max_shared_memory_size,
-                "m",
-            )?,
+        // Per-side staged checks: each staged side must have its non-K
+        // axis divisible by `tile_dim` and contributes a tile to shared
+        // memory. The combined SM footprint is checked once.
+        let traversal = blueprint.kind.k_traversal();
+        let mut needed_shm = 0;
+        if matches!(traversal.lhs, KAccess::Staged) {
+            check_staged_divisibility(problem.m, blueprint.tile_dim, "m")?;
+            needed_shm += blueprint.tile_dim
+                * blueprint.tile_dim
+                * dtypes.lhs_global.size()
+                * vector_sizes.lhs;
+        }
+        if matches!(traversal.rhs, KAccess::Staged) {
+            check_staged_divisibility(problem.n, blueprint.tile_dim, "n")?;
+            needed_shm += blueprint.tile_dim
+                * blueprint.tile_dim
+                * dtypes.rhs_global.size()
+                * vector_sizes.rhs;
+        }
+        let max_shm = client.properties().hardware.max_shared_memory_size;
+        if needed_shm > max_shm {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "Staged plane-parallel kernel needs {} bytes of shared memory, max {}",
+                needed_shm, max_shm
+            ))));
         }
 
         Ok(())
     }
 }
 
-fn validate_staged(
+fn check_staged_divisibility(
     non_k_dim: usize,
     tile_dim: usize,
-    elem_size_times_vec: usize,
-    max_shared_memory: usize,
     axis_label: &str,
 ) -> Result<(), MatmulSetupError> {
     if !non_k_dim.is_multiple_of(tile_dim) {
         return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
             "Staged plane-parallel kernel needs problem.{} ({}) to be divisible by tile_dim ({})",
             axis_label, non_k_dim, tile_dim,
-        ))));
-    }
-
-    let needed = tile_dim * tile_dim * elem_size_times_vec;
-    if needed > max_shared_memory {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-            "Requesting too much shared memory, requested {}, max {}",
-            needed, max_shared_memory
         ))));
     }
     Ok(())

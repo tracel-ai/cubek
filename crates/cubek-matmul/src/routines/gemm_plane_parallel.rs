@@ -9,8 +9,7 @@ use crate::{
     components::batch::{
         BatchMatmulFamily, CheckBounds,
         gemm_plane_parallel::{
-            DispatchPath, GemmPlaneParallelBlueprint, GemmPlaneParallelFamily, MatmulKind,
-            OperandKind, PlanesSplit,
+            GemmPlaneParallelBlueprint, GemmPlaneParallelFamily, KAccess, MatmulOperandLayouts, PlanesSplit,
         },
     },
     definition::{MatmulElems, MatmulProblem, MatmulSetupError},
@@ -32,28 +31,32 @@ impl Display for GemmPlaneParallelStrategy {
     }
 }
 
-/// Returns `(m_units, n_units)` — the count of "plane-sized" cells along each
-/// output axis that the kernel must cover. For the staged-tile path each
-/// cube handles a `tile_dim` chunk along the non-vec axis, so the unit count
-/// is divided accordingly.
-fn output_units(problem: &MatmulProblem, kind: MatmulKind, tile_dim: usize) -> (usize, usize) {
-    match kind.dispatch_path() {
-        DispatchPath::Simple => (problem.m, problem.n),
-        // Vec × RowMajor mat: planes stride a `tile_dim` slice of N.
-        DispatchPath::StagedVecMat => (1, problem.n / tile_dim),
-        // ColMajor mat × Vec: planes stride a `tile_dim` slice of M.
-        DispatchPath::StagedMatVec => (problem.m / tile_dim, 1),
-    }
+/// Returns `(m_units, n_units)` — the count of "plane-sized" cells along
+/// each output axis the kernel must cover. A staged side walks its MN
+/// axis in `tile_dim`-wide slices, so the unit count is divided
+/// accordingly per side.
+fn output_units(problem: &MatmulProblem, kind: MatmulOperandLayouts, tile_dim: usize) -> (usize, usize) {
+    let traversal = kind.k_traversal();
+    let m_units = if matches!(traversal.lhs, KAccess::Staged) {
+        problem.m / tile_dim
+    } else {
+        problem.m
+    };
+    let n_units = if matches!(traversal.rhs, KAccess::Staged) {
+        problem.n / tile_dim
+    } else {
+        problem.n
+    };
+    (m_units, n_units)
 }
 
-/// Choose how planes within a cube enumerate the output:
-///   - vec × mat: forced to N (m collapses to 1).
-///   - mat × vec: forced to M (n collapses to 1).
-///   - mat × mat: routing choice — defaults to N for now.
-///   - vec × vec: doesn't matter — use N.
-fn planes_split_for(kind: MatmulKind) -> PlanesSplit {
-    match (kind.lhs, kind.rhs) {
-        (_, OperandKind::Vector) if !matches!(kind.lhs, OperandKind::Vector) => PlanesSplit::M,
+/// Choose how planes within a cube enumerate the output. If exactly one
+/// side is staged, planes walk that side's MN axis. Otherwise (Direct or
+/// DoubleStaged) it's a free choice — defaults to N.
+fn planes_split_for(kind: MatmulOperandLayouts) -> PlanesSplit {
+    let traversal = kind.k_traversal();
+    match (traversal.lhs, traversal.rhs) {
+        (KAccess::Staged, KAccess::Direct) => PlanesSplit::M,
         _ => PlanesSplit::N,
     }
 }
@@ -83,7 +86,7 @@ impl Routine<()> for GemmPlaneParallelRoutine {
                     None => num_concurrent_planes(&properties.hardware),
                 };
 
-                let kind = MatmulKind::from_problem(problem)?;
+                let kind = MatmulOperandLayouts::from_problem(problem)?;
                 let tile_dim =
                     device_settings.plane_dim as usize * device_settings.vector_sizes.rhs;
                 let planes_split = planes_split_for(kind);
@@ -93,13 +96,15 @@ impl Routine<()> for GemmPlaneParallelRoutine {
                 // - Simple, split M: one plane per M row.
                 // - Staged: planes share a `tile_dim` slice within a single
                 //   tile (within-tile parallelism).
-                let num_planes = match kind.dispatch_path() {
-                    DispatchPath::Simple => match planes_split {
+                let num_planes = if kind.k_traversal().is_staged() {
+                    // Any staged side: planes share work within one
+                    // tile_dim slice of the staged MN axis.
+                    max(1, min(target_num_planes, tile_dim))
+                } else {
+                    // Both Direct: planes cover individual output cells.
+                    match planes_split {
                         PlanesSplit::M => max(1, min(target_num_planes, problem.m)),
                         PlanesSplit::N => max(1, min(target_num_planes, problem.n)),
-                    },
-                    DispatchPath::StagedVecMat | DispatchPath::StagedMatVec => {
-                        max(1, min(target_num_planes, tile_dim))
                     }
                 };
 
