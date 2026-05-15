@@ -1,6 +1,6 @@
 use crate::{
-    definition::attention_types::{MSK, MSKS},
-    definition::{AttentionPrecision, AttentionTileSize},
+    forward::definition::attention_types::{MSK, MSKS},
+    forward::definition::{AttentionPrecision, AttentionTileSize},
 };
 use cubecl;
 use cubecl::{

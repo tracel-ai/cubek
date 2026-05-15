@@ -10,21 +10,21 @@ use cubek_std::stage::StageMemoryConfig;
 use std::{fmt::Debug, hash::Hash};
 
 use crate::components::tile::TileAttention;
-use crate::definition::{
+use crate::forward::definition::{
     AttentionElems, AttentionPartitionSize, AttentionPrecision, AttentionStageSize,
     AttentionTileSize,
 };
-use crate::{components::global::GlobalAttentionConfig, definition::attention_types::*};
+use crate::{components::global::GlobalAttentionConfig, forward::definition::attention_types::*};
 use crate::{
     components::{global::simple::MaskReader, stage::AttentionPartitioner},
-    definition::AttentionSetupError,
+    forward::definition::AttentionSetupError,
 };
 use crate::{
     components::{
         global::simple::QueryReader,
         stage::{plane::PlanePartitionStageConfig, unit::UnitPartitionStageConfig},
     },
-    definition::AttentionBlueprint,
+    forward::definition::AttentionBlueprint,
 };
 use cubecl::std::tensor::layout::Coords2d;
 

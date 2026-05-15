@@ -3,9 +3,9 @@ use cubecl::prelude::*;
 use cubek_std::tile::StridedTile;
 
 use crate::{
-    definition::AttentionPrecision,
-    definition::attention_types::QG,
-    {components::tile::TileAttention, definition::attention_types::QGS},
+    forward::definition::AttentionPrecision,
+    forward::definition::attention_types::QG,
+    {components::tile::TileAttention, forward::definition::attention_types::QGS},
 };
 
 #[derive(CubeType)]

@@ -7,7 +7,7 @@ use crate::{
         AttentionTileMatmul, allocate_lhs, allocate_rhs, allocate_rhs_transposed,
     },
     components::tile::{Key, Value},
-    definition::AttentionPartitionSize,
+    forward::definition::AttentionPartitionSize,
 };
 
 #[derive(CubeType)]

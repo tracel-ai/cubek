@@ -8,7 +8,7 @@ use crate::{
         },
         tile::TileAttentionKind,
     },
-    definition::{
+    forward::definition::{
         AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError,
         attention_types::*,
     },

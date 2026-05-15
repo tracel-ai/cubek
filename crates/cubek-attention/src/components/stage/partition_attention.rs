@@ -18,11 +18,11 @@ use crate::{
     components::stage::KeyPartition,
     components::stage::ValuePartition,
     components::stage::base::StageAttentionConfig,
-    {components::stage::StageAttention, definition::AttentionPrecision},
+    {components::stage::StageAttention, forward::definition::AttentionPrecision},
 };
 use crate::{
     components::{global::GlobalAttentionConfig, stage::PartitionAttentionConfig},
-    definition::attention_types::*,
+    forward::definition::attention_types::*,
 };
 use cubecl::std::tensor::layout::Coords2d;
 

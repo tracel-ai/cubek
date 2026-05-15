@@ -5,7 +5,7 @@ use cubecl::{
 
 use crate::{
     components::global::simple::AttentionWriter,
-    definition::{
+    forward::definition::{
         AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError,
         attention_types::*,
     },

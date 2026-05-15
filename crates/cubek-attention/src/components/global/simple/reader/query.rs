@@ -9,8 +9,8 @@ use cubek_std::tile::StridedTile;
 
 use crate::{
     components::stage::AttentionPartitioner,
-    definition::attention_types::{QG, QGS},
-    definition::{AttentionPrecision, AttentionTileSize},
+    forward::definition::attention_types::{QG, QGS},
+    forward::definition::{AttentionPrecision, AttentionTileSize},
 };
 
 #[derive(CubeType)]

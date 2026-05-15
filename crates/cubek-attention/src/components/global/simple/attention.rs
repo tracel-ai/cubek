@@ -16,7 +16,7 @@ use crate::{
     components::global::simple::{AttentionWriter, AttentionWriterExpand, MaskReader},
     components::global::{GlobalAttention, simple::config::SimpleGlobalAttentionConfig},
 };
-use crate::{definition::AttentionPrecision, definition::attention_types::*};
+use crate::forward::definition::{AttentionPrecision, attention_types::*};
 
 pub struct SimpleGlobalAttention<AP: AttentionPrecision, SA: StageAttention<AP>> {
     _phantom: PhantomData<(AP, SA)>,
