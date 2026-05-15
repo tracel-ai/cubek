@@ -2,7 +2,6 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::r#virtual::{
     VirtualTensor, VirtualTensorOperations, VirtualTensorOperationsExpand,
 };
-use cubecl::unexpanded;
 use std::marker::PhantomData;
 
 pub trait ReduceDType {
@@ -192,42 +191,30 @@ impl ReduceArgs for TensorArgs {
 pub struct Input;
 pub struct Output;
 
+#[derive(CubeType)]
 pub struct TensorArg<P: ReduceDType, RA: ReduceArgs, Tag> {
-    _state: *mut RA::State<P>,
+    #[allow(unused, reason = "Used in expand")]
+    state: RA::State<P>,
+    #[cube(comptime)]
     tag: PhantomData<Tag>,
 }
 
-pub struct TensorArgExpand<P: ReduceDType, RA: ReduceArgs, Tag> {
-    state: <RA::State<P> as CubeType>::ExpandType,
-    tag: PhantomData<Tag>,
-}
-
+#[cube]
 impl<P: ReduceDType, RA: ReduceArgs> TensorArg<P, RA, Input> {
-    pub fn new_input(_state: &RA::State<P>) -> Self {
-        unexpanded!()
-    }
-    pub fn __expand_new_input(
-        _scope: &Scope,
-        state: &<RA::State<P> as CubeType>::ExpandType,
-    ) -> TensorArgExpand<P, RA, Input> {
-        TensorArgExpand {
+    pub fn new_input(state: &RA::State<P>) -> Self {
+        TensorArg::<P, RA, Input> {
             state: state.clone(),
-            tag: PhantomData,
+            tag: PhantomData::<Input>,
         }
     }
 }
 
+#[cube]
 impl<P: ReduceDType, RA: ReduceArgs> TensorArg<P, RA, Output> {
-    pub fn new_output(_state: &mut RA::State<P>) -> Self {
-        unexpanded!()
-    }
-    pub fn __expand_new_output(
-        _scope: &Scope,
-        state: &mut <RA::State<P> as CubeType>::ExpandType,
-    ) -> TensorArgExpand<P, RA, Output> {
-        TensorArgExpand {
+    pub fn new_output(state: &mut RA::State<P>) -> Self {
+        TensorArg::<P, RA, Output> {
             state: state.clone(),
-            tag: PhantomData,
+            tag: PhantomData::<Output>,
         }
     }
 }
@@ -382,54 +369,5 @@ impl<P: ReduceDType, RA: ReduceArgs> VectorizedExpand for TensorArgExpand<P, RA,
     fn vector_size(&self) -> usize {
         let scope = Scope::root(false);
         RA::__expand_vector_size_output(&scope, &self.state)
-    }
-}
-
-mod __tensor_arg {
-    use super::*;
-
-    impl<P: ReduceDType, RA: ReduceArgs, Tag> CubeType for TensorArg<P, RA, Tag> {
-        type ExpandType = TensorArgExpand<P, RA, Tag>;
-    }
-
-    impl<P: ReduceDType, RA: ReduceArgs, Tag> IntoExpand for TensorArgExpand<P, RA, Tag> {
-        type Expand = Self;
-
-        fn into_expand(self, _: &Scope) -> Self::Expand {
-            self
-        }
-    }
-
-    impl<P: ReduceDType, RA: ReduceArgs, Tag> ExpandTypeClone for TensorArgExpand<P, RA, Tag> {
-        fn clone_unchecked(&self) -> Self {
-            self.clone()
-        }
-    }
-
-    impl<P: ReduceDType, RA: ReduceArgs, Tag> IntoMut for TensorArgExpand<P, RA, Tag> {
-        fn into_mut(self, _scope: &Scope) -> Self {
-            self
-        }
-    }
-
-    impl<P: ReduceDType, RA: ReduceArgs, Tag> CubeDebug for TensorArgExpand<P, RA, Tag> {}
-    impl<P: ReduceDType, RA: ReduceArgs, Tag> Clone for TensorArgExpand<P, RA, Tag> {
-        fn clone(&self) -> Self {
-            Self {
-                state: self.state.clone(),
-                tag: self.tag,
-            }
-        }
-    }
-
-    impl<P: ReduceDType, RA: ReduceArgs, Tag> AsRefExpand for TensorArgExpand<P, RA, Tag> {
-        fn __expand_ref_method(&self, _: &Scope) -> &Self {
-            self
-        }
-    }
-    impl<P: ReduceDType, RA: ReduceArgs, Tag> AsMutExpand for TensorArgExpand<P, RA, Tag> {
-        fn __expand_ref_mut_method(&mut self, _: &Scope) -> &mut Self {
-            self
-        }
     }
 }

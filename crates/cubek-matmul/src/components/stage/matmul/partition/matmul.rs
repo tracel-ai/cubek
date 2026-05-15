@@ -385,10 +385,10 @@ where
             #[unroll]
             #[allow(clippy::explicit_counter_loop)]
             for _ in 1..n_iterations {
-                let next = if comptime![n_iter.is_multiple_of(2)] {
-                    &mut rhs_fragments.1
+                let (current, next) = if comptime![n_iter.is_multiple_of(2)] {
+                    (&rhs_fragments.0, &mut rhs_fragments.1)
                 } else {
-                    &mut rhs_fragments.0
+                    (&rhs_fragments.1, &mut rhs_fragments.0)
                 };
 
                 let n_load_iter = partition_scheduler.map_n(comptime![n_iter as u32 + 1]);
@@ -406,12 +406,6 @@ where
                     }),
                 );
                 comptime!(rhs_load_counter += 1);
-
-                let current = if comptime! {n_iter.is_multiple_of(2)} {
-                    &rhs_fragments.0
-                } else {
-                    &rhs_fragments.1
-                };
 
                 #[unroll]
                 for m_iter in 0..m_iterations {
