@@ -10,6 +10,7 @@ use crate::kernel::{
     backward::interpolate_nearest_backward_launch,
     forward::{
         interpolate_bicubic_launch, interpolate_bilinear_launch, interpolate_lanczos3_launch,
+        interpolate_nearest_launch,
     },
 };
 use crate::launch::interpolate_launch;
@@ -32,9 +33,8 @@ pub fn interpolate<R: Runtime>(
 
     match options.mode {
         InterpolateMode::Nearest => interpolate_launch(client, input, output, options, dtype),
-        InterpolateMode::Bilinear => {
-            interpolate_bilinear_launch(client, input, output, align_corners, dtype)
-        }
+        //InterpolateMode::Nearest => interpolate_nearest_launch(client, input, output, dtype),
+        InterpolateMode::Bilinear => interpolate_launch(client, input, output, options, dtype),
         InterpolateMode::Bicubic => {
             interpolate_bicubic_launch(client, input, output, align_corners, dtype)
         }

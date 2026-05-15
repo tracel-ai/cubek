@@ -14,33 +14,32 @@ pub(crate) fn interpolate_launch<R: Runtime>(
 ) -> Result<(), InterpolateError> {
     let batch_size = output.shape[0];
     let out_h = output.shape[1];
-    let out_w: usize = output.shape[2];
+    let out_w = output.shape[2];
     let channels = output.shape[3];
 
     let vector_size = get_vector_size(client, input.clone(), dtype);
 
     // Using max 16x16 tiles as a starting point
-    let tile_w = 16.min(out_w);
-    let tile_h = 16.min(out_h);
+    let tile_w = 32.min(out_w);
+    let tile_h = 1.min(out_h);
+
+    let out_tile_size = TileSize::new(tile_w, tile_h);
 
     let cube_dim = CubeDim::new_2d(tile_w as u32, tile_h as u32);
 
-    let cubes_x = out_w.div_ceil(tile_w);
-    let cubes_y = out_h.div_ceil(tile_h);
-
-    let cubes_z = batch_size * channels / vector_size as usize;
-    let cube_count = CubeCount::Static(cubes_x as u32, cubes_y as u32, cubes_z as u32);
+    let cube_count = get_cube_count::<R>(
+        vector_size,
+        out_w,
+        out_h,
+        tile_w,
+        tile_h,
+        channels,
+        batch_size,
+    );
 
     let address_type = input
         .required_address_type(dtype.size())
         .max(output.required_address_type(dtype.size()));
-
-    let out_tile_size = TileSize::new(tile_h, tile_w);
-    let in_tile_size = TileSize::from_output_tile(
-        out_tile_size,
-        get_ratio(input.shape[1], output.shape[1]),
-        get_ratio(input.shape[2], output.shape[2]),
-    );
 
     interpolate_kernel::launch(
         client,
@@ -51,12 +50,27 @@ pub(crate) fn interpolate_launch<R: Runtime>(
         input.into_tensor_arg(),
         output.into_tensor_arg(),
         options,
-        in_tile_size,
         out_tile_size,
         dtype,
     );
 
     Ok(())
+}
+
+fn get_cube_count<R: Runtime>(
+    vector_size: usize,
+    out_w: usize,
+    out_h: usize,
+    tile_w: usize,
+    tile_h: usize,
+    channels: usize,
+    batch: usize,
+) -> CubeCount {
+    let cubes_x = out_w.div_ceil(tile_w) * channels.div_ceil(vector_size as usize);
+    let cubes_y = out_h.div_ceil(tile_h);
+    let cubes_z = batch;
+
+    CubeCount::Static(cubes_x as u32, cubes_y as u32, cubes_z as u32)
 }
 
 fn get_vector_size<R: Runtime>(
@@ -70,9 +84,4 @@ fn get_vector_size<R: Runtime>(
         &input.strides,
         input.shape.len() - 1,
     ) as usize
-}
-
-#[inline]
-fn get_ratio(in_size: usize, out_size: usize) -> f32 {
-    in_size as f32 / out_size as f32
 }

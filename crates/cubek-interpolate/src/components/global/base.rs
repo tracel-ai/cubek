@@ -1,5 +1,5 @@
 use crate::{
-    components::mode::{Interpolate, Nearest},
+    components::mode::{Bilinear, Interpolate, Nearest},
     definition::{InterpolateMode, InterpolateOptions},
 };
 
@@ -12,7 +12,7 @@ pub struct TileSize {
 }
 
 impl TileSize {
-    pub fn new(h: usize, w: usize) -> Self {
+    pub fn new(w: usize, h: usize) -> Self {
         Self { h, w }
     }
 
@@ -33,28 +33,28 @@ pub fn interpolate_kernel<F: Float, N: Size>(
     input: &Tensor<Vector<F, N>>,
     output: &mut Tensor<Vector<F, N>>,
     #[comptime] options: InterpolateOptions,
-    #[comptime] in_tile_size: TileSize,
     #[comptime] out_tile_size: TileSize,
     #[define(F)] _dtype: StorageType,
 ) {
     let local_x = UNIT_POS_X as usize;
     let local_y = UNIT_POS_Y as usize;
 
-    if !local_x < out_tile_size.w && local_y < out_tile_size.h {
+    if !(local_x < out_tile_size.w && local_y < out_tile_size.h) {
         terminate!();
     }
 
-    let out_x = CUBE_POS_X as usize * out_tile_size.w + local_x;
+    let channel_groups = input.shape(3) / input.vector_size();
+    let (channel_group_idx, global_x) =
+        local_x_and_channel_group(CUBE_POS_X as usize, channel_groups);
+
+    let out_x = global_x * out_tile_size.w + local_x;
     let out_y = CUBE_POS_Y as usize * out_tile_size.h + local_y;
 
     if out_x >= output.shape(2) || out_y >= output.shape(1) {
         terminate!();
     }
 
-    let channel_groups = input.shape(3) / input.vector_size();
-
-    let (batch_idx, channel_group_idx) =
-        batch_and_channel_group(CUBE_POS_Z as usize, channel_groups);
+    let batch_idx = CUBE_POS_Z as usize;
 
     let in_base_offset = tensor_base_offset(input, batch_idx, channel_group_idx);
 
@@ -62,76 +62,48 @@ pub fn interpolate_kernel<F: Float, N: Size>(
 
     let halo = comptime!(get_halo(options.mode));
 
-    let smem_size = in_tile_size.total_with_halo(halo);
+    let (in_x, frac_x) = in_coord_mapping(out_x, input.shape(2), output.shape(2), options);
+    let (in_y, frac_y) = in_coord_mapping(out_y, input.shape(1), output.shape(1), options);
 
-    let mut smem = SharedMemory::<Vector<F, N>>::new(smem_size);
+    let mut weights_x = Array::<Vector<F, N>>::new(halo);
+    let mut weights_y = Array::<Vector<F, N>>::new(halo);
 
-    load_smem(
-        input,
-        &mut smem,
-        in_base_offset,
-        out_x,
-        out_y,
-        in_tile_size,
-        options,
-    );
+    compute_weights(frac_x, &mut weights_x, options.mode);
+    compute_weights(frac_y, &mut weights_y, options.mode);
 
-    sync_cube();
+    let mut final_value = Vector::<F, N>::zeroed();
 
-    let in_x = nearest_in_coord(out_x, input.shape(2), output.shape(2), options);
+    let radius = (halo / 2) as isize;
+    #[unroll]
+    for i in 0..halo {
+        let mut row_interp = Vector::<F, N>::zeroed();
+        #[unroll]
+        for j in 0..halo {
+            let target_y = (in_y as isize) + (i as isize) - radius;
+            let target_x = (in_x as isize) + (j as isize) - radius;
 
-    let in_y = nearest_in_coord(out_y, input.shape(1), output.shape(1), options);
-
-    let in_idx = tensor_idx(input, in_base_offset, in_y, in_x);
+            if radius < 1
+                || (target_y >= 0
+                    && target_y < input.shape(1) as isize
+                    && target_x >= 0
+                    && target_x < input.shape(2) as isize)
+            {
+                let in_idx =
+                    tensor_idx(input, in_base_offset, target_y as usize, target_x as usize);
+                row_interp += input[in_idx] * weights_x[j];
+            }
+        }
+        final_value += row_interp * weights_y[i];
+    }
 
     let out_idx = tensor_idx(output, out_base_offset, out_y, out_x);
 
-    output[out_idx] = input[in_idx];
+    output[out_idx] = final_value;
 }
 
 #[cube]
-fn load_smem<F: Float, N: Size>(
-    input: &Tensor<Vector<F, N>>,
-    smem: &mut SharedMemory<Vector<F, N>>,
-    in_base_offset: usize,
-    out_x: usize,
-    out_y: usize,
-    #[comptime] in_tile_size: TileSize,
-    #[comptime] options: InterpolateOptions,
-) {
-    let halo = comptime!(get_halo(options.mode));
-
-    let in_x_start = out_x.saturating_sub(halo / 2);
-    let in_y_start = out_y.saturating_sub(halo / 2);
-
-    let local_idx = UNIT_POS as usize;
-    let local_total = CUBE_DIM_X as usize * CUBE_DIM_Y as usize;
-
-    let smem_w = in_tile_size.w + halo;
-    let smem_h = in_tile_size.h + halo;
-    let smem_size = smem_w * smem_h;
-
-    let load_per_unit = (smem_size + local_total - 1) / local_total;
-
-    for i in 0..load_per_unit {
-        let idx = local_idx + i * local_total;
-        if idx < smem_size {
-            let local_x = idx % smem_w;
-            let local_y = idx / smem_w;
-
-            let global_in_x = (in_x_start + local_x).min(input.shape(2) - 1);
-            let global_in_y = (in_y_start + local_y).min(input.shape(1) - 1);
-
-            let in_idx = tensor_idx(input, in_base_offset, global_in_y, global_in_x);
-
-            smem[idx] = input[in_idx];
-        }
-    }
-}
-
-#[cube]
-fn batch_and_channel_group(z: usize, channel_groups: usize) -> (usize, usize) {
-    (z / channel_groups, z % channel_groups)
+fn local_x_and_channel_group(x: usize, channel_groups: usize) -> (usize, usize) {
+    (x % channel_groups, x / channel_groups)
 }
 
 #[cube]
@@ -140,7 +112,7 @@ fn tensor_base_offset<F: Float, N: Size>(
     batch_idx: usize,
     channel_group_idx: usize,
 ) -> usize {
-    (batch_idx * tensor.stride(0) + channel_group_idx * tensor.stride(3)) / tensor.vector_size()
+    batch_idx * tensor.stride(0) / tensor.vector_size() + channel_group_idx * tensor.stride(3)
 }
 
 #[cube]
@@ -163,17 +135,20 @@ fn tensor_idx<F: Float, N: Size>(
 }
 
 #[cube]
-fn nearest_in_coord(
+fn in_coord_mapping(
     out_coord: usize,
     in_size: usize,
     out_size: usize,
     #[comptime] options: InterpolateOptions,
-) -> usize {
+) -> (usize, f32) {
     let ratio = get_ratio(in_size, out_size, options);
 
     let mapped = get_mapped_coord::<f32>(out_coord, ratio, options);
 
-    usize::cast_from(mapped.floor()).min(in_size - 1)
+    (
+        usize::cast_from(clamp(mapped.floor().max(0.0), 0.0, (in_size - 1) as f32)),
+        mapped - mapped.floor(),
+    )
 }
 
 #[cube]
@@ -184,6 +159,7 @@ fn compute_weights<F: Float, N: Size>(
 ) {
     match mode {
         InterpolateMode::Nearest => <Nearest as Interpolate>::compute_weights(frac, weights),
+        InterpolateMode::Bilinear => <Bilinear as Interpolate>::compute_weights(frac, weights),
         _ => todo!(),
     }
 }
@@ -191,6 +167,7 @@ fn compute_weights<F: Float, N: Size>(
 fn get_halo(mode: InterpolateMode) -> usize {
     match mode {
         InterpolateMode::Nearest => <Nearest as Interpolate>::halo(),
+        InterpolateMode::Bilinear => <Bilinear as Interpolate>::halo(),
         _ => todo!(),
     }
 }
