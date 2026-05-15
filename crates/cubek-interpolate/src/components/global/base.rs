@@ -73,25 +73,25 @@ pub fn interpolate_kernel<F: Float, N: Size>(
 
     let mut final_value = Vector::<F, N>::zeroed();
 
-    let radius = (halo / 2) as isize;
     #[unroll]
     for i in 0..halo {
         let mut row_interp = Vector::<F, N>::zeroed();
         #[unroll]
         for j in 0..halo {
-            let target_y = (in_y as isize) + (i as isize) - radius;
-            let target_x = (in_x as isize) + (j as isize) - radius;
+            let target_y = in_y + (i as isize);
+            let target_x = in_x + (j as isize);
 
-            if radius < 1
-                || (target_y >= 0
-                    && target_y < input.shape(1) as isize
-                    && target_x >= 0
-                    && target_x < input.shape(2) as isize)
-            {
-                let in_idx =
-                    tensor_idx(input, in_base_offset, target_y as usize, target_x as usize);
-                row_interp += input[in_idx] * weights_x[j];
-            }
+            let clamped_y = target_y.max(0).min(input.shape(1) as isize - 1);
+            let clamped_x = target_x.max(0).min(input.shape(2) as isize - 1);
+
+            let in_idx = tensor_idx(
+                input,
+                in_base_offset,
+                clamped_y as usize,
+                clamped_x as usize,
+            );
+
+            row_interp += input[in_idx] * weights_x[j];
         }
         final_value += row_interp * weights_y[i];
     }
@@ -140,15 +140,13 @@ fn in_coord_mapping(
     in_size: usize,
     out_size: usize,
     #[comptime] options: InterpolateOptions,
-) -> (usize, f32) {
+) -> (isize, f32) {
     let ratio = get_ratio(in_size, out_size, options);
-
     let mapped = get_mapped_coord::<f32>(out_coord, ratio, options);
 
-    (
-        usize::cast_from(clamp(mapped.floor().max(0.0), 0.0, (in_size - 1) as f32)),
-        mapped - mapped.floor(),
-    )
+    let mapped_floor = mapped.floor();
+
+    (isize::cast_from(mapped_floor), mapped - mapped_floor)
 }
 
 #[cube]
