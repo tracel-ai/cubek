@@ -6,8 +6,8 @@ use cubek_std::{InputBinding, MatrixLayout};
 
 use crate::{
     components::batch::gemm_plane_parallel::{MatmulOperandLayouts, OperandLayout},
-    definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes},
     definition::cube_mapping_launch,
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes},
 };
 
 use crate::{

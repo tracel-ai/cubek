@@ -9,7 +9,8 @@ use crate::{
     components::batch::{
         BatchMatmulFamily, CheckBounds,
         gemm_plane_parallel::{
-            GemmPlaneParallelBlueprint, GemmPlaneParallelFamily, KAccess, MatmulOperandLayouts, PlanesSplit,
+            GemmPlaneParallelBlueprint, GemmPlaneParallelFamily, KAccess, MatmulOperandLayouts,
+            PlanesSplit,
         },
     },
     definition::{MatmulElems, MatmulProblem, MatmulSetupError},
@@ -35,7 +36,11 @@ impl Display for GemmPlaneParallelStrategy {
 /// each output axis the kernel must cover. A staged side walks its MN
 /// axis in `tile_dim`-wide slices, so the unit count is divided
 /// accordingly per side.
-fn output_units(problem: &MatmulProblem, kind: MatmulOperandLayouts, tile_dim: usize) -> (usize, usize) {
+fn output_units(
+    problem: &MatmulProblem,
+    kind: MatmulOperandLayouts,
+    tile_dim: usize,
+) -> (usize, usize) {
     let traversal = kind.k_traversal();
     let m_units = if matches!(traversal.lhs, KAccess::Staged) {
         problem.m / tile_dim

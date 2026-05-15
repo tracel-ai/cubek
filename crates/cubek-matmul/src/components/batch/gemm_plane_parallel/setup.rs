@@ -12,9 +12,8 @@ use crate::{
         batch::{
             BatchMatmulFamily, CheckBounds,
             gemm_plane_parallel::{
-                GemmPlaneParallel, GemmPlaneParallelConfig, KAccess, MatmulOperandLayouts, PlanesSplit,
-                config::layout_for,
-                matmul_entry,
+                GemmPlaneParallel, GemmPlaneParallelConfig, KAccess, MatmulOperandLayouts,
+                PlanesSplit, config::layout_for, matmul_entry,
             },
         },
         global::memory::GlobalLayoutConfig,
