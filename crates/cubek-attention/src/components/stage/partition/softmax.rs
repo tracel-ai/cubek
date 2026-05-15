@@ -47,15 +47,11 @@ impl<Acc: Float, Lhs: Float> SoftmaxPartition<Acc, Lhs> {
     }
 
     pub fn get_score_mut(&mut self, #[comptime] q: usize) -> &mut Tile<Acc, Plane> {
-        self.score_tiles.index_mut(q)
+        &mut self.score_tiles[q]
     }
 
     pub fn get_softmaxed(&mut self, #[comptime] q: usize) -> &Tile<Lhs, Plane> {
-        self.softmaxed_tiles.index_mut(q)
-    }
-
-    pub fn get_softmaxed_mut(&mut self, #[comptime] q: usize) -> &mut Tile<Lhs, Plane> {
-        self.softmaxed_tiles.index_mut(q)
+        &self.softmaxed_tiles[q]
     }
 
     pub fn softmax_at(
@@ -67,7 +63,7 @@ impl<Acc: Float, Lhs: Float> SoftmaxPartition<Acc, Lhs> {
     ) -> RowWise<Acc> {
         self.score_tiles.index_mut(q).softmax::<Lhs, MaskTile<Acc>>(
             mask,
-            self.softmaxed_tiles.index_mut(q),
+            &mut self.softmaxed_tiles[q],
             state_q,
             head_dim_factor,
         )

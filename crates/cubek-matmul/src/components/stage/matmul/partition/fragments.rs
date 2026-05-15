@@ -88,7 +88,7 @@ impl<MT: MatmulTypes, Sc: TileScope> Accumulators<MT, Sc> {
         #[comptime] n: usize,
         #[comptime] tiles_in_stage_partition_n: usize,
     ) -> &mut Tile<<MT::Acc as MatrixTypes>::Register, Sc> {
-        self.sequence.index_mut(m * tiles_in_stage_partition_n + n)
+        &mut self.sequence[m * tiles_in_stage_partition_n + n]
     }
 }
 

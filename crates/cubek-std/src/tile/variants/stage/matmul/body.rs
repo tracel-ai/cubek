@@ -204,7 +204,7 @@ fn execute_single<
 
             #[unroll]
             for m_iter in 0..m_iterations {
-                let accumulator = acc.tiles.index_mut(m_iter * n_iterations + n_iter);
+                let accumulator = &mut acc.tiles[m_iter * n_iterations + n_iter];
                 accumulator.mma(&lhs_fragment[m_iter], &*rhs_fragment);
 
                 SEL::on_event(

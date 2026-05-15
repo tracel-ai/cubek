@@ -374,9 +374,7 @@ impl StridedTilingLayout {
         } / stage_vector_size;
 
         let start = slice_length * nth;
-        stage
-            .as_slice_mut()
-            .slice_mut(start as usize, (start + slice_length) as usize)
+        &mut stage.as_slice_mut()[start as usize..(start + slice_length) as usize]
     }
 }
 

@@ -45,7 +45,7 @@ impl<Acc: Float> OutputPartition<Acc> {
         #[comptime] j: usize,
         #[comptime] partition_val_dim: usize,
     ) -> &mut Tile<Acc, Plane> {
-        self.sequence.index_mut(i * partition_val_dim + j)
+        &mut self.sequence[i * partition_val_dim + j]
     }
 
     pub fn scale_mul_at<SM: Float>(

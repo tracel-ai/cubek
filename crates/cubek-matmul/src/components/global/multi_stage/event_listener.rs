@@ -119,7 +119,7 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig> Sta
             let analysis = this.analyse(current, total);
 
             if comptime![analysis.lhs.should_execute(current)] {
-                let lhs_job = this.state_lhs.index_mut(0usize);
+                let lhs_job = &mut this.state_lhs[0];
 
                 if this.must_sync_plane_after_execution {
                     sync_plane();
@@ -134,7 +134,7 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig> Sta
             }
 
             if comptime![analysis.rhs.should_execute(current)] {
-                let rhs_job = this.state_rhs.index_mut(0usize);
+                let rhs_job = &mut this.state_rhs[0];
 
                 if this.must_sync_plane_after_execution {
                     sync_plane();
@@ -184,7 +184,7 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig> Sta
             }
 
             if lhs_len > 0 {
-                let lhs_job = this.state_lhs.index_mut(0usize);
+                let lhs_job = &mut this.state_lhs[0];
                 #[unroll]
                 for _ in lhs_num_task_executed..lhs_num_tasks {
                     L::execute_task(
@@ -197,7 +197,7 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig> Sta
             }
 
             if rhs_len > 0 {
-                let rhs_job = this.state_rhs.index_mut(0usize);
+                let rhs_job = &mut this.state_rhs[0];
                 #[unroll]
                 for _ in rhs_num_task_executed..rhs_num_tasks {
                     R::execute_task(
