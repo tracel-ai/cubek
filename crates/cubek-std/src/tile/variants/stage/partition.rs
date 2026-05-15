@@ -1,12 +1,5 @@
-//! [`PartitionTile`] — per-partition accumulator tiles — and
-//! [`PipelinedTile`] — 1 or 2 rhs register fragments (the
-//! [`TileKind::Pipelined`](crate::tile::TileKind::Pipelined) payload).
-//! Plus the partition-matmul body as an inherent method on `PartitionTile`.
-//!
-//! The buffering choice (1 sub-tile = single-buffered, 2 sub-tiles =
-//! double-buffered with rotation) lives inside `PipelinedTile`'s comptime
-//! sequence length, so [`Tile::mma_partition`](crate::tile::Tile::mma_partition)
-//! doesn't have to surface it as a separate argument.
+//! `PartitionTile` (per-partition accumulator tiles) and `PipelinedTile`
+//! (1 or 2 rhs register fragments) plus the partition matmul body.
 
 use std::marker::PhantomData;
 
@@ -14,15 +7,11 @@ use cubecl::prelude::*;
 
 use crate::{
     StageIdent,
-    tile::{PartitionScheduler, StageEvent, StageEventListener, StridedStage, Tile, TileScope},
+    tile::{PartitionScheduler, StageEvent, StageEventListener, StageTile, Tile, TileScope},
 };
 
-/// Tile kind holding a per-partition collection of instruction-level tiles.
-/// The element tiles share the partition's [`TileScope`] `Sc` (so a
-/// plane-partitioned matmul carries `Sc = Plane`, a unit-partitioned matmul
-/// carries `Sc = Unit`). The partition shape lives as a comptime `(rows,
-/// cols)` pair; the `mn`-major flattening matches today's `Accumulators`
-/// indexing.
+/// Per-partition collection of instruction-level tiles, flattened in
+/// `mn`-major order.
 #[derive(CubeType)]
 pub struct PartitionTile<N: Numeric, Sc: TileScope, IO: SliceVisibility = ReadWrite> {
     pub tiles: Sequence<Tile<N, Sc, IO>>,
@@ -34,11 +23,8 @@ pub struct PartitionTile<N: Numeric, Sc: TileScope, IO: SliceVisibility = ReadWr
     pub _phantom: PhantomData<Sc>,
 }
 
-/// Rhs register fragments for the partition matmul. The comptime length of
-/// `fragments` is 1 (single-buffered: one rhs slot, no overlap) or 2
-/// (double-buffered: rotate slots so the next-step load and the current-step
-/// matmul can interleave). Installed as the
-/// [`TileKind::Pipelined`](crate::tile::TileKind::Pipelined) payload.
+/// Rhs register fragments for the partition matmul. `fragments` has comptime
+/// length 1 (single-buffered) or 2 (double-buffered with rotation).
 #[derive(CubeType)]
 pub struct PipelinedTile<N: Numeric, Sc: TileScope, IO: SliceVisibility = ReadWrite> {
     pub fragments: Sequence<Tile<N, Sc, IO>>,
@@ -56,10 +42,8 @@ pub(crate) fn partition_get_at_mut<E: Numeric, Sc: TileScope>(
 
 #[cube]
 impl<CRE: Numeric, Sc: TileScope> PartitionTile<CRE, Sc, ReadWrite> {
-    /// Run the partition matmul. `b_fragments` is a [`PipelinedTile`]
-    /// holding 1 or 2 rhs register sub-tiles; the comptime sequence length
-    /// picks the buffering strategy (1 = single-buffered, 2 = double-
-    /// buffered with rotation).
+    /// Run the partition matmul. `b_fragments` length picks single (1) or
+    /// double (2) buffering.
     #[allow(clippy::too_many_arguments)]
     pub fn execute_with_listener<
         ASE: Numeric,
@@ -71,8 +55,8 @@ impl<CRE: Numeric, Sc: TileScope> PartitionTile<CRE, Sc, ReadWrite> {
         SEL: StageEventListener,
     >(
         &mut self,
-        a_stage: &StridedStage<ASE, ReadOnly>,
-        b_stage: &StridedStage<BSE, ReadOnly>,
+        a_stage: &StageTile<ASE, ReadOnly>,
+        b_stage: &StageTile<BSE, ReadOnly>,
         a_fragment: &mut Sequence<Tile<ARE, Sc, ReadWrite>>,
         b_fragments: &mut PipelinedTile<BRE, Sc, ReadWrite>,
         #[comptime] partition_size_k: u32,
@@ -123,8 +107,8 @@ fn execute_single<
     Sc: TileScope,
     SEL: StageEventListener,
 >(
-    a_stage: &StridedStage<ASE, ReadOnly>,
-    b_stage: &StridedStage<BSE, ReadOnly>,
+    a_stage: &StageTile<ASE, ReadOnly>,
+    b_stage: &StageTile<BSE, ReadOnly>,
     a_fragment: &mut Sequence<Tile<ARE, Sc, ReadWrite>>,
     b_fragments: &mut Sequence<Tile<BRE, Sc, ReadWrite>>,
     acc: &mut PartitionTile<CRE, Sc, ReadWrite>,
@@ -226,8 +210,8 @@ fn execute_double<
     Sc: TileScope,
     SEL: StageEventListener,
 >(
-    a_stage: &StridedStage<ASE, ReadOnly>,
-    b_stage: &StridedStage<BSE, ReadOnly>,
+    a_stage: &StageTile<ASE, ReadOnly>,
+    b_stage: &StageTile<BSE, ReadOnly>,
     a_fragment: &mut Sequence<Tile<ARE, Sc, ReadWrite>>,
     b_fragments: &mut Sequence<Tile<BRE, Sc, ReadWrite>>,
     acc: &mut PartitionTile<CRE, Sc, ReadWrite>,

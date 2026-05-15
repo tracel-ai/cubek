@@ -4,8 +4,8 @@ use crate::components::{
         execute_current_and_read_next, execute_last_and_write_results, read_first,
     },
     stage::{
-        partition_matmul::{init_a_fragment, init_accumulator, init_b_fragments, load_accumulator},
-        partitioner::{StagePartitioner, partition_coordinates},
+        {init_a_fragment, init_accumulator, init_b_fragments},
+        {StagePartitioner, partition_coordinates},
     },
 };
 use crate::{components::global::multi_stage::ordered::LL, launch::RuntimeConfig};
@@ -24,7 +24,7 @@ use cubecl::{
     prelude::*,
     std::tensor::{View, layout::Coords2d},
 };
-use cubek_std::tile::{PartitionScheduler, Strided, Tile};
+use cubek_std::tile::{PartitionScheduler, Tile, load_partition_from_stage};
 use std::marker::PhantomData;
 
 // Per-flow Stage type aliases — keep call sites readable.
@@ -61,8 +61,8 @@ impl<MP: MatmulTypes, SP, RC, RL, AL, GW> global::GlobalMatmul<RC, MP>
 where
     SP: StagePartitioner,
     RC: RuntimeConfig,
-    RL: PartialLoadingStrategy<RC, TileKind = Strided, SyncStrategy = Synchronous>,
-    AL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = Synchronous>,
+    RL: PartialLoadingStrategy<RC, SyncStrategy = Synchronous>,
+    AL: FullLoadingStrategy<RC, SyncStrategy = Synchronous>,
     GW: GlobalWriter<MP::Acc>,
 {
     type Config = SharedGlobalMatmulConfig;
@@ -167,11 +167,20 @@ where
             stage_shared.partition_schedule_scheme,
         );
 
-        load_accumulator::<MP, AccStageFor<MP, RC, AL>, SP::Scope>(
+        load_partition_from_stage::<
+            AccSE<MP>,
+            AccSS<MP>,
+            LhsRE<MP>,
+            RhsRE<MP>,
+            AccRE<MP>,
+            SP::Scope,
+            AccStageFor<MP, RC, AL>,
+        >(
             &acc_stage,
             &mut acc,
             &partition_scheduler,
-            stage_shared,
+            stage_shared.partition_size.m(),
+            stage_shared.partition_size.n(),
         );
 
         let lhs_stage = lhs_reader.stage();

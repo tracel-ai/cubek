@@ -1,6 +1,4 @@
-use crate::components::stage::{
-    partitioner::StagePartitioner, stage_matmul::write_partition_to_stage,
-};
+use crate::components::stage::StagePartitioner;
 use crate::{
     components::global::GlobalReaderConfig,
     components::global::PlaneFlowPartition,
@@ -12,11 +10,11 @@ use crate::{
     components::global::{GlobalConfig, GlobalWriter},
     components::global::{LoadingSides, read::SyncStrategy},
     definition::{
-        AccRE, LhsRE, LhsSE, LhsSS, MatmulTypes, MatrixTypes, RhsRE, RhsSE, RhsSS,
+        AccRE, AccSS, LhsRE, LhsSE, LhsSS, MatmulTypes, MatrixTypes, RhsRE, RhsSE, RhsSS,
     },
 };
 use cubecl::prelude::*;
-use cubek_std::tile::{NoEvent, PartitionScheduler, Tile};
+use cubek_std::tile::{NoEvent, PartitionScheduler, Tile, write_partition_to_stage};
 
 #[cube]
 /// Read the first stage for both Lhs and Rhs
@@ -206,12 +204,22 @@ pub fn execute_last_and_write_results<
                     partition_scheduler,
                 );
 
-                write_partition_to_stage::<MP, SP::Scope, GW::Stage, GW>(
+                write_partition_to_stage::<
+                    <MP::Acc as MatrixTypes>::Stage,
+                    AccSS<MP>,
+                    LhsRE<MP>,
+                    RhsRE<MP>,
+                    AccRE<MP>,
+                    SP::Scope,
+                    GW::Stage,
+                    GW,
+                >(
                     acc,
                     &mut out_stage,
                     out_writer,
                     partition_scheduler,
-                    config.stage_config().shared(),
+                    config.stage_config().shared().partition_size.m(),
+                    config.stage_config().shared().partition_size.n(),
                 );
             }
         }
@@ -230,12 +238,22 @@ pub fn execute_last_and_write_results<
                 partition_scheduler,
             );
 
-            write_partition_to_stage::<MP, SP::Scope, GW::Stage, GW>(
+            write_partition_to_stage::<
+                <MP::Acc as MatrixTypes>::Stage,
+                AccSS<MP>,
+                LhsRE<MP>,
+                RhsRE<MP>,
+                AccRE<MP>,
+                SP::Scope,
+                GW::Stage,
+                GW,
+            >(
                 acc,
                 &mut out_stage,
                 out_writer,
                 partition_scheduler,
-                config.stage_config().shared(),
+                config.stage_config().shared().partition_size.m(),
+                config.stage_config().shared().partition_size.n(),
             );
         }
     }

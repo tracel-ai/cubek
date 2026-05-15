@@ -11,7 +11,7 @@ use cubek_matmul::{
     launch::{TensorArgs, TensorMapArgs},
     routines::specialized::{SpecializedAlgorithm, SpecializedStrategy},
 };
-use cubek_std::tile::{ColMajorTilingOrder, Strided};
+use cubek_std::tile::{ColMajorTilingOrder};
 use std::marker::PhantomData;
 
 use crate::{
@@ -33,7 +33,7 @@ pub type SpecializedAsyncStridedConv = SpecializedConv<AsyncPartialStridedLoadin
 
 pub struct SpecializedTmaConv;
 
-impl<L: AsyncPartialLoadingStrategy<RuntimeArgs, TileKind = Strided>> Routine
+impl<L: AsyncPartialLoadingStrategy<RuntimeArgs>> Routine
     for SpecializedConv<L>
 {
     type Blueprint = TilingBlueprint;

@@ -56,8 +56,6 @@ impl<ES: Numeric, NS: Size> Stage<ES, ReadWrite> for PartitionedStage<ES, NS> {
     }
 
     fn as_stage_tile<Sc: TileScope>(_this: &Self) -> Tile<ES, Sc, ReadWrite> {
-        panic!(
-            "PartitionedStage: as_stage_tile is not supported (write-side stage, not consumed by partition matmul)"
-        )
+        Tile::new_None()
     }
 }

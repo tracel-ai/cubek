@@ -10,7 +10,7 @@ use crate::{
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::{
     InvalidConfigError,
-    tile::{Strided, StridedTilingLayout, TilingValidation},
+    tile::{StridedTilingLayout, TilingValidation},
 };
 
 use super::{LoadingJob, LoadingValidation};
@@ -72,8 +72,6 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncFullStridedLoading {
     type SyncStrategy = Synchronous;
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = SyncFullStridedJob;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
         #[comptime] config: GlobalReaderConfig,

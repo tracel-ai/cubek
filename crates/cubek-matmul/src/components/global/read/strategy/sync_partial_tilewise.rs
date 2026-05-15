@@ -17,9 +17,7 @@ use cubecl::{
     {ir::DeviceProperties, prelude::*},
 };
 use cubek_std::{
-    tile::{
-        ContiguousTilingLayout, Strided, TilingOrder, TilingOrderEnum, TilingValidation,
-    },
+    tile::{ContiguousTilingLayout, TilingOrder, TilingOrderEnum, TilingValidation},
     {FormattedConfigError, InvalidConfigError},
 };
 
@@ -120,8 +118,6 @@ impl<TO: TilingOrder, RC: RuntimeConfig> PartialLoadingStrategy<RC>
     type TilingLayout = ContiguousTilingLayout<TO>;
     type SyncStrategy = Synchronous;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = SyncPartialTilewiseJob;
 
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(

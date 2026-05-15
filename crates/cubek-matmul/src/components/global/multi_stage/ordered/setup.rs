@@ -1,3 +1,4 @@
+use cubek_std::MatrixLayout;
 use crate::components::global::{
     GlobalReaderConfig, GlobalWriterConfig, SharedGlobalMatmulConfig, make_plane_flow_config,
 };
@@ -15,7 +16,7 @@ use crate::{
     components::global::read::LoadingValidation as _,
 };
 use crate::{
-    components::stage::partitioner::StagePartitioner,
+    components::stage::StagePartitioner,
     components::{global::GlobalMatmulFamily, stage::NumStages},
     definition::TilingBlueprint,
     definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes},
@@ -23,7 +24,6 @@ use crate::{
     {components::CubeDimResource, launch::RuntimeConfig},
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_std::{MatrixLayout, tile::Strided};
 use std::marker::PhantomData;
 
 /// Ordered double buffering matmul family for any precision
@@ -46,8 +46,8 @@ impl<SP, RC, RL, AL, GW> GlobalMatmulFamily<RC>
 where
     SP: StagePartitioner,
     RC: RuntimeConfig,
-    RL: PartialLoadingStrategy<RC, TileKind = Strided, SyncStrategy = Synchronous>,
-    AL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = Synchronous>,
+    RL: PartialLoadingStrategy<RC, SyncStrategy = Synchronous>,
+    AL: FullLoadingStrategy<RC, SyncStrategy = Synchronous>,
     GW: GlobalWriterFamily,
 {
     type Matmul<MP: MatmulTypes> = OrderedDoubleBufferingMatmul<

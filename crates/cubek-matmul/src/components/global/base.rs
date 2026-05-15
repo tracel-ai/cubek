@@ -9,7 +9,7 @@ use crate::{
 };
 use crate::{
     components::{global::memory::GlobalMemoryConfig, stage::NumStages},
-    components::stage::stage_matmul::StageMatmul as StageMatmulInstance,
+    components::stage::StageMatmul as StageMatmulInstance,
     definition::StageIdent,
     definition::TilingBlueprint,
     definition::{AccG, MatmulSetupError},

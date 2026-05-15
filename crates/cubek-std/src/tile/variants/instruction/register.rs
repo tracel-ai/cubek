@@ -1,31 +1,16 @@
 use cubecl::prelude::*;
 
 use crate::{
-    MatrixLayout, StageIdent, SwizzleModes, TileSize,
+    MatrixLayout, StageIdent, TileSize,
     tile::{
-        Plane, RowWise, Tile, TileKind, TileKindExpand, TileScope,
+        Plane, RowWise, SharedTile, StridedTile, Tile, TileKind, TileKindExpand, TileScope,
         mask::Mask,
-        variants::{
-            strided::{SharedTile, StridedTile},
-            unit::{UnitTile, UnitTileLayout},
-        },
+        variants::unit::{UnitTile, UnitTileLayout},
     },
 };
 
-/// Register-resident matmul tile. Built on top of [`UnitTile`] (per-unit full
-/// register copy of the data) plus the matmul config that drives the
-/// product-type-aware load/exec/store path. Rowwise / elementwise ops are
-/// delegated to the inner [`UnitTile`].
-#[derive(CubeType)]
-pub struct RegisterTile<N: Numeric> {
-    pub tile: UnitTile<N>,
-    #[cube(comptime)]
-    pub matrix_layout: MatrixLayout,
-    #[cube(comptime)]
-    pub config: RegisterMatmul,
-}
-
-/// Execution mode for the RegisterMatmul
+/// Execution mode for the register-resident matmul. Lives at tile level
+/// because the load + execute paths branch on it directly.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum ProductType {
     /// Computes the Tile Matmul as m*n inner products of length k.
@@ -68,29 +53,20 @@ impl ProductType {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-pub struct RegisterMatmul {
+/// Register-resident matmul tile. Built on top of [`UnitTile`] (per-unit full
+/// register copy of the data). Holds only the minimal comptime data the tile
+/// body uses (`tile_size` + `product_type`); rowwise / elementwise ops are
+/// delegated to the inner [`UnitTile`]. The matmul-level configuration lives
+/// in cubek-matmul as `RegisterMatmul`.
+#[derive(CubeType)]
+pub struct RegisterTile<N: Numeric> {
+    pub tile: UnitTile<N>,
+    #[cube(comptime)]
+    pub matrix_layout: MatrixLayout,
+    #[cube(comptime)]
     pub tile_size: TileSize,
-    pub plane_dim: u32,
-    pub swizzle_modes: SwizzleModes,
+    #[cube(comptime)]
     pub product_type: ProductType,
-}
-
-impl RegisterMatmul {
-    pub fn new(
-        lhs_layout: MatrixLayout,
-        rhs_layout: MatrixLayout,
-        tile_size: TileSize,
-        plane_dim: u32,
-        swizzle_modes: SwizzleModes,
-    ) -> Self {
-        Self {
-            tile_size,
-            plane_dim,
-            swizzle_modes,
-            product_type: ProductType::from_layouts(lhs_layout, rhs_layout, tile_size),
-        }
-    }
 }
 
 #[cube]
@@ -136,7 +112,8 @@ impl<A: Numeric> RegisterTile<A> {
             &lhs.tile.data,
             &rhs.tile.data,
             &mut self.tile.data,
-            self.config,
+            self.tile_size,
+            self.product_type,
         );
     }
 }
@@ -156,12 +133,13 @@ impl<N: Numeric> RegisterTile<N> {
                     shared,
                     &mut self.tile.data,
                     self.matrix_layout,
-                    self.config,
+                    self.tile_size,
+                    self.product_type,
                     ident,
                 );
             }
             TileKind::None => {
-                register_load_zeros::<N>(&mut self.tile.data, self.config, ident);
+                register_load_zeros::<N>(&mut self.tile.data, self.tile_size, ident);
             }
             TileKind::Cmma(_)
             | TileKind::Mma(_)
@@ -170,6 +148,7 @@ impl<N: Numeric> RegisterTile<N> {
             | TileKind::Interleaved(_)
             | TileKind::Unit(_)
             | TileKind::WhiteboxFragment(_)
+            | TileKind::RowWise(_)
             | TileKind::Bounce(_)
             | TileKind::Stage(_)
             | TileKind::Partition(_)
@@ -180,7 +159,7 @@ impl<N: Numeric> RegisterTile<N> {
     }
 
     pub fn init_zero(&mut self, #[comptime] ident: StageIdent) {
-        register_load_zeros::<N>(&mut self.tile.data, self.config, ident);
+        register_load_zeros::<N>(&mut self.tile.data, self.tile_size, ident);
     }
 }
 
@@ -229,45 +208,51 @@ impl<Acc: Float> RegisterTile<Acc> {
 #[cube]
 pub fn register_allocate_lhs<L: Numeric, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: RegisterMatmul,
+    #[comptime] tile_size: TileSize,
+    #[comptime] product_type: ProductType,
 ) -> Tile<L, Sc, ReadWrite> {
-    let m = comptime!(config.tile_size.m());
-    let k = comptime!(config.tile_size.k());
+    let m = comptime!(tile_size.m());
+    let k = comptime!(tile_size.k());
     let inner_layout = comptime!(UnitTileLayout::new(m, k, false));
     Tile::from_kind(TileKind::new_Register(RegisterTile::<L> {
         tile: UnitTile::<L>::new(inner_layout),
         matrix_layout: layout,
-        config,
+        tile_size,
+        product_type,
     }))
 }
 
 #[cube]
 pub fn register_allocate_rhs<R: Numeric, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: RegisterMatmul,
+    #[comptime] tile_size: TileSize,
+    #[comptime] product_type: ProductType,
 ) -> Tile<R, Sc, ReadWrite> {
-    let n = comptime!(config.tile_size.n());
-    let k = comptime!(config.tile_size.k());
+    let n = comptime!(tile_size.n());
+    let k = comptime!(tile_size.k());
     let inner_layout = comptime!(UnitTileLayout::new(n, k, false));
     Tile::from_kind(TileKind::new_Register(RegisterTile::<R> {
         tile: UnitTile::<R>::new(inner_layout),
         matrix_layout: layout,
-        config,
+        tile_size,
+        product_type,
     }))
 }
 
 #[cube]
 pub fn register_allocate_acc<A: Numeric, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: RegisterMatmul,
+    #[comptime] tile_size: TileSize,
+    #[comptime] product_type: ProductType,
 ) -> Tile<A, Sc, ReadWrite> {
-    let m = comptime!(config.tile_size.m());
-    let n = comptime!(config.tile_size.n());
+    let m = comptime!(tile_size.m());
+    let n = comptime!(tile_size.n());
     let inner_layout = comptime!(UnitTileLayout::new(m, n, false));
     Tile::from_kind(TileKind::new_Register(RegisterTile::<A> {
         tile: UnitTile::<A>::new(inner_layout),
         matrix_layout: layout,
-        config,
+        tile_size,
+        product_type,
     }))
 }
 
@@ -282,12 +267,13 @@ pub fn register_execute<L: Numeric, R: Numeric, A: Numeric>(
     lhs: &Array<L>,
     rhs: &Array<R>,
     acc: &mut Array<A>,
-    #[comptime] config: RegisterMatmul,
+    #[comptime] tile_size: TileSize,
+    #[comptime] product_type: ProductType,
 ) {
-    let m = config.tile_size.m();
-    let n = config.tile_size.n();
-    let k = config.tile_size.k();
-    match config.product_type {
+    let m = tile_size.m();
+    let n = tile_size.n();
+    let k = tile_size.k();
+    match product_type {
         ProductType::Inner => {
             inner_product::<L, R, A>(lhs, rhs, acc, m, n, k);
         }
@@ -344,21 +330,23 @@ fn outer_product<L: Numeric, R: Numeric, A: Numeric>(
 }
 
 #[cube]
+#[allow(clippy::too_many_arguments)]
 pub fn register_load_from_shared<E: Numeric, ES: Size, N: Numeric, IO: SliceVisibility>(
     shared: &SharedTile<E, IO>,
     arr: &mut Array<N>,
     #[comptime] matrix_layout: MatrixLayout,
-    #[comptime] config: RegisterMatmul,
+    #[comptime] tile_size: TileSize,
+    #[comptime] product_type: ProductType,
     #[comptime] ident: StageIdent,
 ) {
     let shared = shared.view::<ES>();
     let shared = &shared;
-    let m = config.tile_size.m();
-    let n = config.tile_size.n();
-    let k = config.tile_size.k();
+    let m = tile_size.m();
+    let n = tile_size.n();
+    let k = tile_size.k();
 
     match ident {
-        StageIdent::Lhs => match config.product_type {
+        StageIdent::Lhs => match product_type {
             ProductType::Inner => match matrix_layout {
                 MatrixLayout::RowMajor => {
                     load_plain::<E, ES, N, IO>(shared, arr, m, k);
@@ -376,7 +364,7 @@ pub fn register_load_from_shared<E: Numeric, ES: Size, N: Numeric, IO: SliceVisi
                 }
             },
         },
-        StageIdent::Rhs => match config.product_type {
+        StageIdent::Rhs => match product_type {
             ProductType::Inner => match matrix_layout {
                 MatrixLayout::RowMajor => {
                     load_transposed::<E, ES, N, IO>(shared, arr, k, n);
@@ -457,13 +445,13 @@ fn load_transposed<E: Numeric, ES: Size, N: Numeric, IO: SliceVisibility>(
 #[cube]
 pub fn register_load_zeros<N: Numeric>(
     arr: &mut Array<N>,
-    #[comptime] config: RegisterMatmul,
+    #[comptime] tile_size: TileSize,
     #[comptime] ident: StageIdent,
 ) {
     let size = match ident {
-        StageIdent::Lhs => config.tile_size.m() * config.tile_size.k(),
-        StageIdent::Rhs => config.tile_size.n() * config.tile_size.k(),
-        StageIdent::Acc | StageIdent::Out => config.tile_size.m() * config.tile_size.n(),
+        StageIdent::Lhs => tile_size.m() * tile_size.k(),
+        StageIdent::Rhs => tile_size.n() * tile_size.k(),
+        StageIdent::Acc | StageIdent::Out => tile_size.m() * tile_size.n(),
     };
     for i in 0..size {
         arr[i as usize] = N::from_int(0);
@@ -474,12 +462,12 @@ pub fn register_load_zeros<N: Numeric>(
 pub fn register_write_to_shared<E: Numeric, ES: Size, A: Numeric>(
     shared: &mut SharedTile<E, ReadWrite>,
     arr: &Array<A>,
-    #[comptime] config: RegisterMatmul,
+    #[comptime] tile_size: TileSize,
 ) {
     let mut shared = shared.view::<ES>();
     let shared = &mut shared;
     let out_vector_size = shared.container.vector_size().comptime() as u32;
-    let size_mn = config.tile_size.m() * config.tile_size.n();
+    let size_mn = tile_size.m() * tile_size.n();
 
     #[unroll(false)]
     for i in 0..size_mn / out_vector_size {

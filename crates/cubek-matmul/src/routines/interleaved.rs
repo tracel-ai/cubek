@@ -4,7 +4,7 @@ use cubecl::{
 };
 use cubek_std::{
     cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation},
-    tile::{ColMajorTilingOrder, RowMajorTilingOrder, Strided},
+    tile::{ColMajorTilingOrder, RowMajorTilingOrder},
 };
 use std::{fmt::Display, marker::PhantomData};
 
@@ -60,9 +60,9 @@ impl Display for InterleavedArgs {
 impl<LL, RL, AL, RC> Routine<RC> for InterleavedAlgorithm<LL, RL, AL>
 where
     RC: RuntimeConfig,
-    LL: FullLoadingStrategy<RC, TileKind = Strided>,
-    RL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
-    AL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
+    LL: FullLoadingStrategy<RC>,
+    RL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
+    AL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
 {
     type Strategy = InterleavedArgs;
     type BatchMatmul = PartitionedBatchMatmulFamily<

@@ -23,7 +23,7 @@ use cubecl::{
 };
 use cubek_std::{
     stage::SwizzleMode,
-    tile::{Strided, TilingValidation, TmaTilingLayout},
+    tile::{TilingValidation, TmaTilingLayout},
     {InvalidConfigError, MatrixLayout},
 };
 
@@ -73,8 +73,6 @@ impl<RC: RuntimeConfig> PartialLoadingStrategy<RC> for AsyncPartialTmaLoading {
     type TilingLayout = TmaTilingLayout;
     type SyncStrategy = AsyncTma;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = AsyncPartialTmaJob;
 
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(

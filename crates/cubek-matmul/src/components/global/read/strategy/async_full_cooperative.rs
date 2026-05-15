@@ -20,7 +20,7 @@ use cubecl::{
 };
 use cubek_std::{
     InvalidConfigError, MatrixLayout,
-    tile::{Strided, StridedTilingLayout, TilingValidation},
+    tile::{StridedTilingLayout, TilingValidation},
 };
 
 use super::LoadingValidation;
@@ -73,8 +73,6 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for AsyncFullCooperativeLoading 
     type SyncStrategy = AsyncBarrier;
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = AsyncFullCooperativeJob;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     const SHOULD_CLEAR: bool = true;
 
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(

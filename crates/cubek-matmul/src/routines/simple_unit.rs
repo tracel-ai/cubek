@@ -1,5 +1,5 @@
 use cubecl::{Runtime, client::ComputeClient};
-use cubek_std::tile::{ColMajorTilingOrder, RowMajorTilingOrder, Strided};
+use cubek_std::tile::{ColMajorTilingOrder, RowMajorTilingOrder};
 
 use std::{fmt::Display, marker::PhantomData};
 
@@ -54,14 +54,13 @@ impl Display for SimpleUnitSelectionArgs {
 impl<RC, LL, RL, AL> Routine<RC> for SimpleUnitAlgorithm<LL, RL, AL>
 where
     RC: RuntimeConfig,
-    LL: FullLoadingStrategy<RC, TileKind = Strided>,
+    LL: FullLoadingStrategy<RC>,
     RL: FullLoadingStrategy<
             RC,
             Stage = LL::Stage,
-            TileKind = Strided,
             SyncStrategy = LL::SyncStrategy,
         >,
-    AL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
+    AL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
 {
     type Strategy = SimpleUnitSelectionArgs;
     type BatchMatmul = PartitionedBatchMatmulFamily<

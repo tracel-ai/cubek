@@ -1,5 +1,13 @@
+//! `TileKind::SharedTile` — the smem stage slot variant.
+//!
+//! [`SharedTile`] is the enum payload (vectorization erased from the type).
+//! [`StridedTile`] is the typed form readers/writers consume.
+//! [`SharedTile::wrap`] / [`SharedTile::view`] are pure retypes between them.
+
 use cubecl::{intrinsic, prelude::*, std::Swizzle};
 
+use crate::MatrixLayout;
+use crate::stage::{StageMemoryConfig, as_swizzle_object};
 use crate::tile::variants::instruction::{
     cmma::cmma_write_to_shared,
     interleaved::interleaved_write_to_shared,
@@ -8,11 +16,10 @@ use crate::tile::variants::instruction::{
     register::register_write_to_shared,
 };
 use crate::tile::{Tile, TileKind, TileKindExpand, TileScope};
-use crate::{MatrixLayout, stage::StageMemoryConfig, stage::as_swizzle_object};
 
 #[derive(CubeType, Clone, Copy)]
-/// Tile with a linear major dimension, and a strided minor dimension.
-/// Basic tile kind supported by all stage matmuls.
+/// Typed form of the smem stage slot. `start`/`end`/`stride` are in vector
+/// units.
 pub struct StridedTile<ES: Numeric, N: Size, IO: SliceVisibility = ReadOnly> {
     /// Slice containing all data for the stage
     pub container: Slice<Vector<ES, N>, IO>,
@@ -239,12 +246,8 @@ impl<ES: Numeric, N: Size, IO: SliceVisibility> StridedTile<ES, N, IO> {
     }
 }
 
-/// V-erased view over a shared-memory tile. Wraps a `StridedTile` and hides
-/// its vectorization from the type system. The underlying slice is downcast
-/// to a scalar `Slice<E, IO>` only at the Rust type level — the runtime
-/// vector_size on the cubecl slice is preserved, so projecting back via
-/// `view::<V>()` is a pure retype with no metadata change. `V` must match
-/// the original `V` the tile was wrapped with.
+/// Payload of [`TileKind::SharedTile`]. Vectorization is erased from the
+/// type but kept on the runtime slice; project back with [`view`](Self::view).
 #[derive(CubeType, Clone, Copy)]
 pub struct SharedTile<E: Numeric, IO: SliceVisibility = ReadOnly> {
     pub(crate) container: Slice<E, IO>,
@@ -258,9 +261,7 @@ pub struct SharedTile<E: Numeric, IO: SliceVisibility = ReadOnly> {
 
 #[cube]
 impl<E: Numeric, IO: SliceVisibility> SharedTile<E, IO> {
-    /// Wrap a `StridedTile` whose vectorization is `V`. The slice is type-erased
-    /// to scalar `Slice<E, IO>` while preserving the runtime vector_size set at
-    /// allocation time. No metadata scaling is performed.
+    /// Erase the vectorization from a [`StridedTile`].
     pub fn wrap<V: Size>(tile: StridedTile<E, V, IO>) -> SharedTile<E, IO> {
         let container: Slice<E, IO> = unsafe { tile.container.downcast_unchecked::<E>() };
         SharedTile::<E, IO> {
@@ -273,9 +274,8 @@ impl<E: Numeric, IO: SliceVisibility> SharedTile<E, IO> {
         }
     }
 
-    /// Project the wrapped tile back to a typed `StridedTile<E, V, IO>`.
-    /// `V` must match the original `V` the tile was wrapped with — only
-    /// the Rust type changes, the runtime layout is unchanged.
+    /// Project back to a typed [`StridedTile`]. Must match the original
+    /// vectorization.
     pub fn view<V: Size>(&self) -> StridedTile<E, V, IO> {
         let container: Slice<Vector<E, V>, IO> =
             unsafe { self.container.downcast_unchecked::<Vector<E, V>>() };
@@ -292,9 +292,8 @@ impl<E: Numeric, IO: SliceVisibility> SharedTile<E, IO> {
 
 #[cube]
 impl<E: Numeric> SharedTile<E, ReadWrite> {
-    /// Copies into shared memory from `source` (a compute-side tile). This is
-    /// the "write back to smem" leg of `Tile::copy_from`; the per-source
-    /// arms route to that variant's `*_write_to_shared` helper.
+    /// Write-back leg of `Tile::copy_from`: routes to the source variant's
+    /// `*_write_to_shared` helper.
     pub fn copy_from<
         SE: Numeric,
         SS: Size,
@@ -311,20 +310,25 @@ impl<E: Numeric> SharedTile<E, ReadWrite> {
             TileKind::Bounce(b) => cmma_write_to_shared::<E, SS, SE>(self, &b.cmma.matrix),
             TileKind::Mma(t) => match &t.fragment {
                 MmaFragment::Acc(f) => {
-                    mma_write_to_shared::<E, SS, SE, L, R>(self, f, t.config);
+                    mma_write_to_shared::<E, SS, SE, L, R>(self, f, t.tile_size, t.mma_io_config);
                 }
                 MmaFragment::Lhs(_) | MmaFragment::Rhs(_) => {
                     panic!("Mma write_to_shared only supported for Acc role")
                 }
             },
             TileKind::Register(t) => {
-                register_write_to_shared::<E, SS, SE>(self, &t.tile.data, t.config);
+                register_write_to_shared::<E, SS, SE>(self, &t.tile.data, t.tile_size);
             }
             TileKind::PlaneVec(t) => {
-                planevec_write_to_shared::<SE, E, SS>(self, &t.data, t.config);
+                planevec_write_to_shared::<SE, E, SS>(
+                    self,
+                    &t.data,
+                    t.tile_size,
+                    t.reduce_vector_size,
+                );
             }
             TileKind::Interleaved(t) => {
-                interleaved_write_to_shared::<E, SS, SE>(self, &t.data, t.config);
+                interleaved_write_to_shared::<E, SS, SE>(self, &t.data, t.tile_size);
             }
             _ => panic!("SharedTile::copy_from: unsupported source variant"),
         }

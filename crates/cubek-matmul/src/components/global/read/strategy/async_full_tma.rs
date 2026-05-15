@@ -14,7 +14,7 @@ use cubecl::{
 };
 use cubek_std::{
     stage::SwizzleMode,
-    tile::{Strided, TilingValidation, TmaTilingLayout},
+    tile::{TilingValidation, TmaTilingLayout},
     {InvalidConfigError, MatrixLayout},
 };
 
@@ -67,8 +67,6 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for AsyncFullTmaLoading {
     type SyncStrategy = AsyncTma;
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = AsyncFullTmaJob;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
         #[comptime] config: GlobalReaderConfig,

@@ -11,9 +11,8 @@ use crate::{
     components::global::{GlobalMatmul, SharedGlobalMatmulConfig},
     components::global::{PlaneFlowPartition, read::AsyncPartialLoadingStrategy},
     components::stage::{
-        partition_matmul::{init_a_fragment, init_accumulator, init_b_fragments, load_accumulator},
-        partitioner::{StagePartitioner, partition_coordinates},
-        stage_matmul::write_partition_to_stage,
+        {init_a_fragment, init_accumulator, init_b_fragments},
+        {StagePartitioner, partition_coordinates},
     },
     definition::*,
     launch::RuntimeConfig,
@@ -24,7 +23,9 @@ use cubecl::{
     prelude::*,
     std::tensor::{View, layout::Coords2d},
 };
-use cubek_std::tile::{NoEvent, PartitionScheduler, Tile};
+use cubek_std::tile::{
+    NoEvent, PartitionScheduler, Tile, load_partition_from_stage, write_partition_to_stage,
+};
 use std::marker::PhantomData;
 
 // Per-flow Stage type aliases — keep call sites readable.
@@ -241,11 +242,20 @@ where
                     stage_shared,
                 );
 
-            load_accumulator::<MP, AccStageFor<MP, RC, AL>, SP::Scope>(
+            load_partition_from_stage::<
+                AccSE<MP>,
+                AccSS<MP>,
+                LhsRE<MP>,
+                RhsRE<MP>,
+                AccRE<MP>,
+                SP::Scope,
+                AccStageFor<MP, RC, AL>,
+            >(
                 &acc_stage,
                 &mut acc,
                 &partition_scheduler,
-                stage_shared,
+                stage_shared.partition_size.m(),
+                stage_shared.partition_size.n(),
             );
 
             for _ in 0..num_loops {
@@ -290,12 +300,22 @@ where
 
             let mut out_stage = Self::GlobalWriter::stage(&out_writer);
 
-            write_partition_to_stage::<MP, SP::Scope, GW::Stage, GW>(
+            write_partition_to_stage::<
+                <MP::Acc as MatrixTypes>::Stage,
+                AccSS<MP>,
+                LhsRE<MP>,
+                RhsRE<MP>,
+                AccRE<MP>,
+                SP::Scope,
+                GW::Stage,
+                GW,
+            >(
                 &mut acc,
                 &mut out_stage,
                 &mut out_writer,
                 &partition_scheduler,
-                stage_shared,
+                stage_shared.partition_size.m(),
+                stage_shared.partition_size.n(),
             );
         }
     }

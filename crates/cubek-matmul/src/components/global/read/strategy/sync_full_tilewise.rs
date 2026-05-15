@@ -15,7 +15,7 @@ use cubecl::{
     {ir::DeviceProperties, prelude::*},
 };
 use cubek_std::{
-    tile::{ContiguousTilingLayout, Strided, TilingOrder, TilingValidation},
+    tile::{ContiguousTilingLayout, TilingOrder, TilingValidation},
     {FormattedConfigError, InvalidConfigError},
 };
 
@@ -98,8 +98,6 @@ impl<TO: TilingOrder, RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncFullTil
     type SyncStrategy = Synchronous;
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = SyncFullTilewiseJob;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
         #[comptime] config: GlobalReaderConfig,

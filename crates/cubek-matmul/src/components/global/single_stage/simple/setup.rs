@@ -1,3 +1,4 @@
+use cubek_std::MatrixLayout;
 use crate::{components::CubeDimResource, launch::RuntimeConfig};
 use crate::{
     components::stage::NumStages,
@@ -15,12 +16,11 @@ use crate::{
             read::FullLoadingStrategy,
             single_stage::simple::matmul::SimpleMatmul,
         },
-        stage::partitioner::StagePartitioner,
+        stage::StagePartitioner,
     },
     definition::TilingBlueprint,
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_std::{MatrixLayout, tile::Strided};
 use std::marker::PhantomData;
 
 use crate::components::global::GlobalMatmulFamily;
@@ -46,9 +46,9 @@ impl<SP, RC, LL, RL, AL, GW> GlobalMatmulFamily<RC> for SimpleMatmulFamily<SP, R
 where
     SP: StagePartitioner,
     RC: RuntimeConfig,
-    LL: FullLoadingStrategy<RC, TileKind = Strided>,
-    RL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
-    AL: FullLoadingStrategy<RC, TileKind = Strided>,
+    LL: FullLoadingStrategy<RC>,
+    RL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
+    AL: FullLoadingStrategy<RC>,
     GW: GlobalWriterFamily,
 {
     type Matmul<MP: MatmulTypes> = SimpleMatmul<

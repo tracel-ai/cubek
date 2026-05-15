@@ -126,9 +126,7 @@ impl<ES: Numeric, NS: Size> Stage<ES, ReadOnly> for BiasStageMemory<ES, NS> {
     }
 
     fn as_stage_tile<Sc: TileScope>(_this: &Self) -> Tile<ES, Sc, ReadOnly> {
-        panic!(
-            "BiasStageMemory: as_stage_tile is not supported (bias stage isn't consumed by the partition-matmul stage-tile flow)"
-        )
+        Tile::new_None()
     }
 }
 

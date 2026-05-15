@@ -21,7 +21,7 @@ use cubecl::{
 };
 use cubek_std::{
     InvalidConfigError,
-    tile::{Strided, StridedTilingLayout, TilingValidation},
+    tile::{StridedTilingLayout, TilingValidation},
 };
 
 use super::{LoadingJob, LoadingValidation};
@@ -99,8 +99,6 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for AsyncFullStridedLoading {
     type SyncStrategy = AsyncCopy;
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = AsyncFullStridedJob;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_args: RC,
         #[comptime] config: GlobalReaderConfig,

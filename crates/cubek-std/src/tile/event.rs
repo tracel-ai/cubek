@@ -1,4 +1,4 @@
-use cubecl::prelude::*;
+use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Events that occur during the process of loading tiles to
@@ -44,4 +44,21 @@ impl NoEvent {
     pub fn new() -> NoEvent {
         NoEvent {}
     }
+}
+
+#[derive(CubeType, Debug, Clone, Copy, PartialEq, Eq)]
+/// Events emitted while writing per-partition tiles back to an output stage.
+pub enum WriteEvent {
+    /// Before any step.
+    Begin,
+    /// After each tile is stored into the stage.
+    TileStored { tile: Coords2d },
+    /// After the last step.
+    Finish,
+}
+
+#[cube]
+/// Callback invoked at each [`WriteEvent`].
+pub trait WriteEventListener: CubeType {
+    fn on_event(this: &mut Self, event: WriteEvent);
 }

@@ -5,139 +5,55 @@ use std::marker::PhantomData;
 use cubecl::prelude::*;
 
 use crate::tile::{
-    BounceTile, CmmaTile, InterleavedTile, MmaTile, PartitionTile, PlaneVecTile, RegisterTile,
-    PipelinedTile, ScopeMarker, SharedTile, StridedStage, TileScope, UnitTile, WhiteboxFragment,
-    variants::stage::partition::partition_get_at_mut,
+    BounceTile, CmmaTile, InterleavedTile, MmaTile, PartitionTile, PipelinedTile, PlaneVecTile,
+    RegisterTile, RowWise, ScopeMarker, SharedTile, StageTile, TileScope, UnitTile,
+    WhiteboxFragment, variants::stage::partition::partition_get_at_mut,
 };
 
-/// Public tile type. Wraps a [`TileKind`] storage payload and carries the
-/// [`TileScope`] generic both via a comptime [`ScopeMarker`] field *and*
-/// through the kind enum (so variants like
-/// [`TileKind::Partition`] can keep typed element tiles). The inner
-/// [`TileKind`] is crate-private; external callers construct via the
-/// `Tile::new_*` constructors below and never destructure.
+/// Public tile type. Wraps a [`TileKind`] payload; the inner enum is
+/// crate-private and callers construct via `Tile::new_*`.
 #[derive(CubeType)]
 pub struct Tile<N: Numeric, Sc: TileScope, IO: SliceVisibility> {
     pub(crate) kind: TileKind<N, Sc, IO>,
     pub(crate) _scope: ScopeMarker<Sc>,
 }
 
-/// Storage variants of a tile. The user-facing wrapper is [`Tile`]; this enum
-/// holds the runtime/storage payload. Most variants ignore the [`TileScope`]
-/// generic (it shows up only on the outer `Tile`'s `ScopeMarker`); the
-/// [`Partition`](TileKind::Partition) variant uses it to keep its inner
-/// element tiles typed. Crate-private — constructors live on [`Tile`]
-/// (e.g. `Tile::new_SharedTile`); internal allocators in
-/// `tile/variants/*.rs` go through [`Tile::from_kind`].
-///
-/// # The three axes
-///
-/// Variants encode (some combination of) three orthogonal concerns:
-///
-/// - **storage** — *where* the bits live: shared memory, hardware-defined
-///   register fragments (CMMA / MMA roles), or generic register arrays.
-/// - **distribution** — *how* the elements of the tile are spread across the
-///   units of a plane: full per-unit copy, exposed plane fragmentation
-///   (`WhiteboxFragmentLayout`), or opaque hardware-defined fragmentation
-///   (CMMA / MMA).
-/// - **compute** — *which* hardware op (or software shape) can act on it as
-///   a matmul accelerator: CMMA, MMA, software register matmul, plane-vector
-///   inner product, interleaved.
-///
-/// Variants below are tagged with which axes they pin. A `[fused]` tag
-/// flags variants that lock multiple axes at once — these are the natural
-/// candidates for the next refactor (split storage from compute, or
-/// distribution from compute, so a new backend doesn't require a new
-/// enum variant).
+/// Storage variants of a tile.
 #[derive(CubeType)]
-// The variant constructors live behind the `CubeType`-derived
-// `TileKind::new_<Variant>` methods, which the `dead_code` lint can't see
-// through.
 #[allow(dead_code)]
 pub(crate) enum TileKind<N: Numeric, Sc: TileScope, IO: SliceVisibility> {
-    /// `[storage = smem]`. Pure transport: a stage slot exposed as a tile so
-    /// it can be the source / destination of [`Tile::copy_from`]. No
-    /// distribution semantics (the caller addresses smem directly), no
-    /// compute capability of its own.
+    /// Stage slot exposed as a tile (no distribution, no compute).
     SharedTile(SharedTile<N, IO>),
-    /// `[storage = registers, distribution = opaque-cmma, compute = cmma]
-    /// [fused]`. Hardware-defined CMMA fragment. The fragment layout (and
-    /// which lane holds which element) is opaque — only the CMMA load/exec/
-    /// store path can interact with it. Bundling all three axes is what
-    /// makes this variant fragile when adding a new accelerator.
+    /// CMMA fragment.
     Cmma(CmmaTile<N>),
-    /// `[storage = registers, distribution = opaque-mma, compute = mma]
-    /// [fused]`. Hardware-defined MMA fragment, with the operand role
-    /// (Lhs / Rhs / Acc) carried by the inner [`crate::tile::variants::MmaFragment`].
-    /// Same fused-axes pattern as `Cmma`, plus an extra role axis inside.
+    /// MMA fragment; operand role (Lhs/Rhs/Acc) carried inside.
     Mma(MmaTile<N>),
-    /// `[storage = registers, distribution = per-unit-full, compute =
-    /// register-matmul] [fused]`. Software register matmul: each unit holds
-    /// a full copy of the tile and computes the product in registers
-    /// directly. Convenient label, but the variant locks a per-unit-full
-    /// distribution into the matmul kind — these axes should split.
+    /// Register-resident tile for the software register matmul.
     Register(RegisterTile<N>),
-    /// `[storage = registers, distribution = plane-vector, compute =
-    /// plane-vec-matmul] [fused]`. Lhs is broadcast to a single vector per
-    /// unit; rhs/acc are per-column vectors; the matmul is realized as a
-    /// `plane_sum` of element-wise products.
+    /// Plane-vector matmul tile.
     PlaneVec(PlaneVecTile<N>),
-    /// `[storage = registers, distribution = plane-interleaved-on-k,
-    /// compute = interleaved-matmul] [fused]`. K dimension is split across
-    /// plane units; each unit computes a partial product and the final
-    /// reduction is a `plane_sum`.
+    /// Plane-interleaved-on-k matmul tile.
     Interleaved(InterleavedTile<N>),
-    /// `[storage = registers, distribution = per-unit-full, compute = none]`.
-    /// Each unit holds a full row-major copy of the tile. Pure
-    /// distribution + storage variant — no matmul capability; used by
-    /// rowwise / softmax paths that walk the tile element-wise.
-    /// Only valid when `Sc = Unit`.
+    /// Per-unit register array. `Sc = Unit`.
     Unit(UnitTile<N>),
-    /// `[storage = registers, distribution = plane-exposed, compute = none]`.
-    /// The tile is fragmented across plane units with a layout that is
-    /// *visible* to ops (see [`crate::tile::variants::WhiteboxFragmentLayout`]),
-    /// in contrast to the opaque CMMA / MMA fragments. Drives the
-    /// cross-plane reductions used by softmax. Only valid when
-    /// `Sc = Plane`.
+    /// Plane-exposed fragment with a visible layout. `Sc = Plane`.
     WhiteboxFragment(WhiteboxFragment<N>),
-    /// `[storage = registers + smem-scratch, distribution = opaque-cmma
-    /// (with whitebox view), compute = cmma]`. Bundles a CMMA fragment,
-    /// an smem scratch slice, and a [`WhiteboxFragment`] view of the same
-    /// data. Lets attention's softmax run rowwise ops on the whitebox view
-    /// while the matmul still uses the cmma fragment; the smem round-trip
-    /// is hidden inside `BounceTile` methods. Only valid when `Sc = Plane`.
+    /// Per-row vector tile (softmax max/sum state). `Sc = Plane`.
+    RowWise(RowWise<N>),
+    /// CMMA fragment + smem scratch + whitebox view. `Sc = Plane`.
     Bounce(BounceTile<N>),
-    /// `[storage = smem, distribution = stage-level]`. Type-erased view of a
-    /// `StridedStageMemory` buffer. Wired in PR 3+ for `.partition()` /
-    /// `.mma` dispatch at the stage level. The variant is the "stage is a
-    /// tile" hook: a unit-scope `Tile` whose kind is `Stage` represents one
-    /// compute primitive's view of the stage; a plane-scope `Tile` whose
-    /// kind is `Stage` represents the whole-plane view.
-    Stage(StridedStage<N, IO>),
-    /// `[fused = sequence-of-instruction-tiles]`. Per-primitive collection
-    /// of accumulator tiles (replaces the standalone `Accumulators<MP, Sc>`
-    /// wrapper). The element tiles share the partition's [`TileScope`] `Sc`.
+    /// Whole-stage view, used for partition-level dispatch.
+    Stage(StageTile<N, IO>),
+    /// Sequence of per-tile accumulators.
     Partition(PartitionTile<N, Sc, IO>),
-    /// `[fused = one-or-two-sub-tiles]`. Holds the rhs register fragments
-    /// used by the partition-matmul body. The inner sequence has comptime
-    /// length 1 (single-buffered) or 2 (double-buffered, fragments rotate
-    /// per `n` step to overlap loads with computes). Encodes the buffering
-    /// choice in the tile kind so [`Tile::mma_partition`] doesn't need to
-    /// expose it as a separate argument.
+    /// Rhs fragments for the partition matmul (1 = single-buffered, 2 = double).
     Pipelined(PipelinedTile<N, Sc, IO>),
-    /// `[sentinel]`. "No source" used by [`Tile::copy_from`] to drive
-    /// per-variant zero-init of the destination. Produced by optional-stage
-    /// flows in `cubek-matmul` (when an accumulator stage is absent).
-    /// Prefer [`Tile::init_zero`] when you don't need to thread an optional
-    /// source through a generic copy.
+    /// Sentinel for zero-init via `copy_from`.
     None,
 }
 
 #[cube]
 impl<N: Numeric, Sc: TileScope, IO: SliceVisibility> Tile<N, Sc, IO> {
-    /// Crate-internal: builds a [`Tile`] from a [`TileKind`] payload. Used by
-    /// the per-variant `new_*` constructors below and the internal
-    /// allocators in `tile/data/*.rs`.
     pub(crate) fn from_kind(kind: TileKind<N, Sc, IO>) -> Tile<N, Sc, IO> {
         Tile::<N, Sc, IO> {
             kind,
@@ -147,47 +63,34 @@ impl<N: Numeric, Sc: TileScope, IO: SliceVisibility> Tile<N, Sc, IO> {
         }
     }
 
-    /// Wraps a shared-memory tile. Used by stage `tile()` impls to expose a
-    /// stage slot as a `Tile` for `copy_from`.
     pub fn new_SharedTile(t: SharedTile<N, IO>) -> Tile<N, Sc, IO> {
         Self::from_kind(TileKind::new_SharedTile(t))
     }
 
-    /// Wraps a type-erased stage view as a tile. The `Sc` generic on `Tile`
-    /// reflects which compute primitive's view this is (e.g. one unit's
-    /// slice vs the whole plane's slice).
-    pub fn new_Stage(t: StridedStage<N, IO>) -> Tile<N, Sc, IO> {
+    pub fn new_Stage(t: StageTile<N, IO>) -> Tile<N, Sc, IO> {
         Self::from_kind(TileKind::new_Stage(t))
     }
 
-    /// Wraps a partition of accumulator tiles. The element tiles share the
-    /// partition's `Sc`.
     pub fn new_Partition(t: PartitionTile<N, Sc, IO>) -> Tile<N, Sc, IO> {
         Self::from_kind(TileKind::new_Partition(t))
     }
 
-    /// Wraps a buffered rhs-fragment collection (1 or 2 sub-tiles). The
-    /// comptime length picks the buffering strategy at the matmul site.
     pub fn new_Pipelined(t: PipelinedTile<N, Sc, IO>) -> Tile<N, Sc, IO> {
         Self::from_kind(TileKind::new_Pipelined(t))
     }
 
-    /// Builds a "no source" tile that drives zero-init of the destination
-    /// when fed into `copy_from`. Produced by optional-stage flows when the
-    /// optional stage is absent; consumers can equivalently call
-    /// `dest.init_zero(ident)` directly.
     pub fn new_None() -> Tile<N, Sc, IO> {
         Self::from_kind(TileKind::new_None())
+    }
+
+    pub fn new_RowWise(t: RowWise<N>) -> Tile<N, Sc, IO> {
+        Self::from_kind(TileKind::new_RowWise(t))
     }
 }
 
 #[cube]
 impl<N: Numeric, Sc: TileScope> Tile<N, Sc, ReadWrite> {
-    /// Returns a mutable reference to the `(m, n)` element tile of the
-    /// underlying [`PartitionTile`] payload (with `n_cols` driving the
-    /// `mn`-major flattening). Panics if `self.kind` is not
-    /// [`TileKind::Partition`]. Cross-crate consumers need this since
-    /// [`TileKind`] is crate-private.
+    /// Mutable reference to the `(m, n)` element of a `Partition` tile.
     pub fn partition_tile_at_mut(
         &mut self,
         #[comptime] m: usize,
@@ -204,6 +107,7 @@ impl<N: Numeric, Sc: TileScope> Tile<N, Sc, ReadWrite> {
             | TileKind::Interleaved(_)
             | TileKind::Unit(_)
             | TileKind::WhiteboxFragment(_)
+            | TileKind::RowWise(_)
             | TileKind::Bounce(_)
             | TileKind::Stage(_)
             | TileKind::Pipelined(_)

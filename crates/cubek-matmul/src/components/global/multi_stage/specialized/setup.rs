@@ -13,7 +13,7 @@ use crate::{
 use crate::{
     components::global::{multi_stage::EventLoadingMode, read::FullLoadingStrategy},
     components::global::GlobalMatmulFamily,
-    components::stage::partitioner::StagePartitioner,
+    components::stage::StagePartitioner,
     components::{global::MaxGlobalReaderPlanes, stage::NumStages},
     definition::MatmulVectorSizes,
     definition::StageIdent,

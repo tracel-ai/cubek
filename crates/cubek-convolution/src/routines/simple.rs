@@ -16,7 +16,6 @@ use cubek_matmul::{
     definition::{AvailableVectorSizes, TilingBlueprint},
     launch::{TensorArgs, TensorMapArgs},
 };
-use cubek_std::tile::Strided;
 use std::marker::PhantomData;
 
 use crate::{
@@ -56,8 +55,8 @@ pub type SimpleAsyncStridedConv = SimpleConv<AsyncFullStridedLoading, AsyncFullS
 pub struct SimpleAsyncTmaConv;
 
 impl<
-    LL: FullLoadingStrategy<RuntimeArgs, TileKind = Strided>,
-    LR: FullLoadingStrategy<RuntimeArgs, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
+    LL: FullLoadingStrategy<RuntimeArgs>,
+    LR: FullLoadingStrategy<RuntimeArgs, SyncStrategy = LL::SyncStrategy>,
 > Routine for SimpleConv<LL, LR>
 {
     type Blueprint = TilingBlueprint;

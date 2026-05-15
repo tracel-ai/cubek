@@ -1,26 +1,21 @@
-//! `Tile::mma` dispatcher. Each arm delegates to a `.mma()` method on the
-//! variant's data struct in [`crate::tile::variants`]. Bounce arms route
-//! through their inner CMMA fragment.
-//!
-//! The `(Stage, Stage, Partition)` combination needs extra context that
-//! `.mma`'s three-tile signature can't carry. [`Tile::mma_partition`] is the
-//! .mma-family entry point for it: it destructures the kinds and forwards to
-//! [`PartitionTile::execute_with_listener`](crate::tile::PartitionTile).
-//! Single- vs double-buffered rhs is encoded in `b_fragments`'s tile kind
-//! ([`TileKind::Pipelined`] payload: a `Sequence` of length 1 or 2).
+//! `Tile::mma` / `Tile::mma_partition` dispatchers and the partition
+//! load/write-back helpers.
 
 use cubecl::prelude::*;
 
-use crate::tile::{
-    PartitionScheduler, StageEventListener, Tile, TileExpand, TileKind, TileKindExpand, TileScope,
+use crate::{
+    StageIdent,
+    stage::Stage,
+    tile::{
+        PartitionScheduler, StageEventListener, Tile, TileExpand, TileKind, TileKindExpand,
+        TileScope, WriteEvent, WriteEventListener,
+    },
 };
 
 #[cube]
 impl<N: Numeric, Sc: TileScope> Tile<N, Sc, ReadWrite> {
-    /// Executes `lhs · rhs`, accumulating the result into `self`. For
-    /// instruction-level operands the body delegates to the per-variant
-    /// `.mma()` method. The `(Stage, Stage, Partition)` arm panics — use
-    /// [`Tile::mma_partition`] for that case.
+    /// `self += lhs · rhs`. For `(Stage, Stage, Partition)` use
+    /// [`Tile::mma_partition`].
     pub fn mma<L: Numeric, LIO: SliceVisibility, R: Numeric, RIO: SliceVisibility>(
         &mut self,
         lhs: &Tile<L, Sc, LIO>,
@@ -47,13 +42,8 @@ impl<N: Numeric, Sc: TileScope> Tile<N, Sc, ReadWrite> {
         }
     }
 
-    /// `.mma`-family entry point for `(Stage, Stage, Partition)` operands
-    /// with rhs fragments held under [`TileKind::Pipelined`].
-    /// Destructures the `Stage` payloads of `lhs` / `rhs`, the
-    /// `Partition` payload of `self`, and the `Pipelined` payload of
-    /// `b_fragments`, then forwards to
-    /// [`PartitionTile::execute_with_listener`](crate::tile::PartitionTile).
-    /// Panics if any operand is not the expected kind.
+    /// `mma` for `(Stage, Stage, Partition)` operands with rhs fragments
+    /// held under `TileKind::Pipelined`.
     #[allow(clippy::too_many_arguments)]
     pub fn mma_partition<
         ASE: Numeric,
@@ -99,4 +89,91 @@ impl<N: Numeric, Sc: TileScope> Tile<N, Sc, ReadWrite> {
             ),
         }
     }
+}
+
+#[cube]
+/// Fill a partition accumulator from a stage. `None`-kind stage zero-inits.
+pub fn load_partition_from_stage<
+    AccSE: Numeric,
+    AccSS: Size,
+    LhsRE: Numeric,
+    RhsRE: Numeric,
+    AccRE: Numeric,
+    Sc: TileScope,
+    StageAcc: Stage<AccSE, ReadOnly>,
+>(
+    stage: &StageAcc,
+    acc: &mut Tile<AccRE, Sc, ReadWrite>,
+    scheduler: &PartitionScheduler,
+    #[comptime] partition_size_m: u32,
+    #[comptime] partition_size_n: u32,
+) {
+    let n_iterations = partition_size_n as usize;
+
+    #[unroll]
+    for m in 0..partition_size_m as usize {
+        let m_stage = scheduler.map_m(m as u32);
+
+        #[unroll]
+        for n in 0..n_iterations {
+            let n_stage = scheduler.map_n(n as u32);
+
+            let acc_tile = acc.partition_tile_at_mut(m, n, n_iterations);
+            let tile = StageAcc::tile::<Sc>(stage, (m_stage, n_stage));
+            acc_tile.copy_from::<AccSE, AccSS, LhsRE, RhsRE, AccRE, ReadOnly>(
+                &tile,
+                StageIdent::Acc,
+            );
+        }
+    }
+}
+
+#[cube]
+#[allow(clippy::too_many_arguments)]
+/// Write a partition accumulator back to an output stage, emitting
+/// `Begin` / `TileStored` / `Finish` events.
+pub fn write_partition_to_stage<
+    OutSE: Numeric,
+    AccSS: Size,
+    LhsRE: Numeric,
+    RhsRE: Numeric,
+    AccRE: Numeric,
+    Sc: TileScope,
+    OutStage: Stage<OutSE, ReadWrite>,
+    W: WriteEventListener,
+>(
+    acc: &mut Tile<AccRE, Sc, ReadWrite>,
+    out_stage: &mut OutStage,
+    listener: &mut W,
+    scheduler: &PartitionScheduler,
+    #[comptime] partition_size_m: u32,
+    #[comptime] partition_size_n: u32,
+) {
+    let n_iterations = partition_size_n as usize;
+
+    W::on_event(listener, WriteEvent::new_Begin());
+
+    #[unroll]
+    for m_iter in 0..partition_size_m as usize {
+        let m_store = scheduler.map_m(m_iter as u32);
+
+        #[unroll]
+        for n_iter in 0..n_iterations {
+            let n_store = scheduler.map_n(n_iter as u32);
+
+            let tile_accumulator = acc.partition_tile_at_mut(m_iter, n_iter, n_iterations);
+
+            let tile_pos = (m_store, n_store);
+            let mut tile = OutStage::tile::<Sc>(out_stage, tile_pos);
+
+            tile.copy_from::<AccRE, AccSS, LhsRE, RhsRE, AccRE, ReadWrite>(
+                tile_accumulator,
+                StageIdent::Out,
+            );
+
+            W::on_event(listener, WriteEvent::new_TileStored(tile_pos));
+        }
+    }
+
+    W::on_event(listener, WriteEvent::new_Finish());
 }

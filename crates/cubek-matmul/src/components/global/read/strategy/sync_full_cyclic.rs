@@ -12,7 +12,7 @@ use crate::{
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::{
     InvalidConfigError,
-    tile::{ContiguousTilingLayout, Strided, TilingOrder, TilingValidation},
+    tile::{ContiguousTilingLayout, TilingOrder, TilingValidation},
 };
 
 use super::{LoadingJob, LoadingValidation, ReaderMode};
@@ -79,8 +79,6 @@ impl<TO: TilingOrder, RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncFullCyc
     type SyncStrategy = Synchronous;
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = SyncFullCyclicJob;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
         #[comptime] config: GlobalReaderConfig,

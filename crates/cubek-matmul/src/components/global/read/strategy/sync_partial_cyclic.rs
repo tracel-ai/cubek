@@ -12,7 +12,7 @@ use crate::{
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::{
     InvalidConfigError,
-    tile::{ContiguousTilingLayout, Strided, TilingOrder, TilingValidation},
+    tile::{ContiguousTilingLayout, TilingOrder, TilingValidation},
 };
 
 use super::{LoadingJob, LoadingValidation, ReaderMode};
@@ -89,8 +89,6 @@ impl<TO: TilingOrder, RC: RuntimeConfig> PartialLoadingStrategy<RC>
     type TilingLayout = ContiguousTilingLayout<TO>;
     type SyncStrategy = Synchronous;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = SyncPartialCyclicJob;
 
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(

@@ -21,7 +21,7 @@ use cubek_matmul::components::{
 use cubek_matmul::definition::{MatmulElems, MatmulProblem};
 use cubek_std::{
     InvalidConfigError, StageIdent,
-    tile::{ContiguousTilingLayout, Strided, TilingOrder},
+    tile::{ContiguousTilingLayout, TilingOrder},
 };
 
 use crate::components::global::{
@@ -78,8 +78,6 @@ impl<TO: TilingOrder> FullLoadingStrategy<RuntimeArgs> for AsyncFullCyclicLoadin
     type SyncStrategy = AsyncCopy;
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = AsyncFullCyclicJob;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         runtime_args: RuntimeArgs,
         #[comptime] config: GlobalReaderConfig,

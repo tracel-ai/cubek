@@ -14,7 +14,7 @@ use cubek_matmul::{
 };
 use cubek_std::{
     InvalidConfigError, StageIdent,
-    tile::{NoTilingLayout, Strided, TilingValidation},
+    tile::{NoTilingLayout, TilingValidation},
 };
 
 use crate::components::stage::{
@@ -67,8 +67,6 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncBiasLoading {
     type SyncStrategy = Synchronous;
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = SyncBiasJob;
     type Stage = BiasStageFamily;
-    type TileKind = Strided;
-
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
         #[comptime] config: GlobalReaderConfig,

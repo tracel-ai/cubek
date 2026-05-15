@@ -1,3 +1,4 @@
+use cubek_std::MatrixLayout;
 use crate::components::global::{
     GlobalReaderConfig, GlobalWriterConfig, SharedGlobalMatmulConfig, make_plane_flow_config,
 };
@@ -14,14 +15,13 @@ use crate::{
 };
 use crate::{
     components::global::read::PartialLoadingStrategy,
-    components::stage::partitioner::StagePartitioner,
+    components::stage::StagePartitioner,
     components::{CubeDimResource, global::read::FullLoadingStrategy},
     components::global::GlobalMatmulFamily,
     components::{global::MaxGlobalReaderPlanes, stage::NumStages},
     definition::TilingBlueprint,
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_std::{MatrixLayout, tile::Strided};
 use std::marker::PhantomData;
 
 /// Double buffering matmul family for any precision
@@ -45,9 +45,9 @@ impl<SP, RC: RuntimeConfig, LL, RL, AL, GW> GlobalMatmulFamily<RC>
     for DoubleBufferingMatmulFamily<SP, RC, LL, RL, AL, GW>
 where
     SP: StagePartitioner,
-    LL: PartialLoadingStrategy<RC, TileKind = Strided>,
-    RL: PartialLoadingStrategy<RC, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
-    AL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
+    LL: PartialLoadingStrategy<RC>,
+    RL: PartialLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
+    AL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
     GW: GlobalWriterFamily,
 {
     type Matmul<MP: MatmulTypes> =
