@@ -4,10 +4,10 @@ use cubecl::cube;
 use cubecl::prelude::*;
 
 use crate::components::batch::{
-    BatchConfig as _, BatchMatmul, BatchMatmulFamily,
+    BatchConfig as _, BatchMatmul, BatchMatmulFamily, MatLayout,
     gemm_plane_parallel::{
-        GemmPlaneParallelBlueprint, GemmPlaneParallelConfig, GemmPlaneParallelFamily, PlanesSplit,
-        layout::MatLayout, plane::execute_plane, staged::execute_staged_block,
+        GemmPlaneParallelBlueprint, GemmPlaneParallelConfig, GemmPlaneParallelFamily,
+        plane::execute_plane,
     },
 };
 
@@ -115,7 +115,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for GemmPlaneParallel<MP> {
         let (_, _, n) = rhs.shape();
 
         // Cube grid is always laid out as `(m_cubes, n_cubes, batch)`. For
-        // GEMV kinds one of `m_cubes`/`n_cubes` is 1
+        // GEMV variants one of `m_cubes`/`n_cubes` is 1.
         let (cube_m, cube_n, batch_cube) = cube_pos_to_m_n_batch(&cube_mapping);
 
         let lhs_batch = Args::batch_lhs(state, batch_cube as usize);
@@ -127,57 +127,25 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for GemmPlaneParallel<MP> {
 
         let check_bounds = config.check_bounds;
 
-        // All paths read lhs/rhs/out as 2D `(m, n)`-shaped views.
         let lhs_view = lhs.view(MatLayout::new(lhs_batch, (m, k)));
         let rhs_view = rhs.view(MatLayout::new(rhs_batch, (k, n)));
         let out_view = out.view_mut(MatLayout::new(out_batch, (m, n)));
 
-        let traversal = comptime!(config.kind.k_traversal());
+        // Planes within a cube split the N axis: each plane owns one
+        // output column within the cube's M row.
+        let m_id = cube_m;
+        let n_id = cube_n * config.num_planes + UNIT_POS_Y;
 
-        // Map cube + plane coords to the output cell (or block, for the
-        // staged path). The non-split axis comes straight from the cube
-        // grid; the split axis advances `num_planes` per cube with
-        // `UNIT_POS_Y` selecting this plane's row/column.
-        let (m_id, n_id) = match comptime!(config.planes_split) {
-            PlanesSplit::M => (cube_m * config.num_planes + UNIT_POS_Y, cube_n),
-            PlanesSplit::N => (cube_m, cube_n * config.num_planes + UNIT_POS_Y),
-        };
-
-        if comptime!(config.plane_dim == 1) {
-            execute_staged_block::<
-                Global<Lhs<MP>>,
-                Global<Rhs<MP>>,
-                AccG<MP>,
-                AccRE<MP>,
-                Stage<Lhs<MP>>,
-                Stage<Rhs<MP>>,
-                GlobalSize<Lhs<MP>>,
-                GlobalSize<Rhs<MP>>,
-                N,
-            >(
-                lhs_view,
-                rhs_view,
-                out_view,
-                m_id,
-                n_id,
-                k,
-                vector_size as u32,
-                traversal.lhs,
-                traversal.rhs,
-                check_bounds,
-            );
-        } else {
-            execute_plane::<LhsG<MP>, RhsG<MP>, AccG<MP>, AccRE<MP>, N>(
-                lhs_view,
-                rhs_view,
-                out_view,
-                m_id,
-                n_id,
-                k,
-                config.plane_dim,
-                vector_size as u32,
-                check_bounds,
-            );
-        }
+        execute_plane::<LhsG<MP>, RhsG<MP>, AccG<MP>, AccRE<MP>, N>(
+            lhs_view,
+            rhs_view,
+            out_view,
+            m_id,
+            n_id,
+            k,
+            config.plane_dim,
+            vector_size as u32,
+            check_bounds,
+        );
     }
 }

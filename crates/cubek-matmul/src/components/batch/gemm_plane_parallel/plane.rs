@@ -3,7 +3,7 @@ use cubecl::{cube, num_traits::Zero, std::tensor::View, std::tensor::layout::Coo
 
 use crate::components::batch::{
     CheckBounds,
-    gemm_plane_parallel::io::{read, write},
+    checked_io::{read, write},
 };
 
 /// Plane-cooperative GEMM kernel. K is contiguous on both operands and
@@ -60,7 +60,15 @@ pub(super) fn execute_plane<
         acc += Vector::cast_from(lhs_val) * Vector::cast_from(rhs_val);
     }
 
-    let sum = O::cast_from(plane_sum(Vector::vector_sum(acc)));
+    // Cross-unit plane reduction is only needed when there's more than
+    // one unit per plane (GPU). On CPU (`plane_dim == 1`) each plane is
+    // a single unit, so the per-unit `vector_sum` is the final sum and
+    // `plane_sum` is both unnecessary and unsupported by the CPU backend.
+    let sum = if comptime!(plane_dim > 1) {
+        O::cast_from(plane_sum(Vector::vector_sum(acc)))
+    } else {
+        O::cast_from(Vector::vector_sum(acc))
+    };
 
     if unit_id == 0 {
         write(out, (m_pos, n_pos), sum, check_bounds);

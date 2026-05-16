@@ -1,6 +1,8 @@
 mod config;
+mod dot;
 mod matmul;
-mod plane;
+mod outer_m;
+mod outer_n;
 mod setup;
 
 pub use config::*;

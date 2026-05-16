@@ -8,7 +8,10 @@ use cubek_std::cube_count::{CubeCountPlan, CubeCountStrategy, GlobalOrder, Hyper
 use crate::{
     components::batch::{
         BatchMatmulFamily, CheckBounds,
-        gemm_plane_parallel::{GemmPlaneParallelBlueprint, GemmPlaneParallelFamily},
+        gemm_outer_product::{
+            GemmOuterProductBlueprint, GemmOuterProductFamily, MatmulOperandLayouts, PlanesSplit,
+            Variant,
+        },
     },
     definition::{MatmulElems, MatmulProblem, MatmulSetupError},
     routines::{
@@ -16,22 +19,35 @@ use crate::{
     },
 };
 
-pub struct GemmPlaneParallelRoutine {}
+pub struct GemmOuterProductRoutine {}
 
 #[derive(Default, Clone)]
-pub struct GemmPlaneParallelStrategy {
+pub struct GemmOuterProductStrategy {
     pub target_num_planes: Option<usize>,
 }
 
-impl Display for GemmPlaneParallelStrategy {
+impl Display for GemmOuterProductStrategy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "_{:?}", self.target_num_planes)
     }
 }
 
-impl Routine<()> for GemmPlaneParallelRoutine {
-    type Strategy = GemmPlaneParallelStrategy;
-    type BatchMatmul = GemmPlaneParallelFamily;
+/// Returns `(m_units, n_units)` — count of per-plane blocks along each
+/// output axis for the chosen variant. Outer-product variants pack
+/// `vector_size` cells per block along their natural-vector axis.
+fn output_units(problem: &MatmulProblem, variant: Variant, vector_size: usize) -> (usize, usize) {
+    match variant {
+        Variant::Dot => (problem.m, problem.n),
+        Variant::OuterNLhsContig | Variant::OuterNLhsStrided => {
+            (problem.m, problem.n / vector_size)
+        }
+        Variant::OuterM => (problem.m / vector_size, problem.n),
+    }
+}
+
+impl Routine<()> for GemmOuterProductRoutine {
+    type Strategy = GemmOuterProductStrategy;
+    type BatchMatmul = GemmOuterProductFamily;
     type Blueprint = <Self::BatchMatmul as BatchMatmulFamily<()>>::Blueprint;
     type Config = <Self::BatchMatmul as BatchMatmulFamily<()>>::Config;
 
@@ -54,22 +70,33 @@ impl Routine<()> for GemmPlaneParallelRoutine {
                     None => num_concurrent_planes(&properties.hardware),
                 };
 
-                // Planes split N: one plane per N column.
-                let num_planes = max(1, min(target_num_planes, problem.n));
+                let kind = MatmulOperandLayouts::from_problem(problem)?;
+                let variant = kind.variant();
+                let planes_split = variant.planes_split();
+                let vector_size = device_settings.vector_sizes.lhs;
 
-                let check_bounds = if problem.n.is_multiple_of(num_planes) {
+                let (m_units, n_units) = output_units(problem, variant, vector_size);
+                let split_units = match planes_split {
+                    PlanesSplit::M => m_units,
+                    PlanesSplit::N => n_units,
+                };
+                let num_planes = max(1, min(target_num_planes, split_units));
+
+                let check_bounds = if split_units.is_multiple_of(num_planes) {
                     CheckBounds::None
                 } else {
                     CheckBounds::Terminate
                 };
 
-                let blueprint = GemmPlaneParallelBlueprint {
+                let blueprint = GemmOuterProductBlueprint {
                     dtypes: dtypes.clone(),
                     num_planes,
                     hypercube_blueprint: HypercubeBlueprint::builder()
                         .cube_count_strategy(CubeCountStrategy::Flattened)
                         .global_order(GlobalOrder::RowMajor)
                         .build(),
+                    kind,
+                    planes_split,
                     check_bounds,
                 };
 
@@ -100,8 +127,19 @@ impl Routine<()> for GemmPlaneParallelRoutine {
         )?
         .to_cube_dim(device_settings.plane_dim)?;
 
-        let m_cubes = problem.m as u32;
-        let n_cubes = problem.n.div_ceil(blueprint.num_planes) as u32;
+        let variant = blueprint.kind.variant();
+        let vector_size = device_settings.vector_sizes.lhs;
+        let (m_units, n_units) = output_units(problem, variant, vector_size);
+        let (m_cubes, n_cubes) = match blueprint.planes_split {
+            PlanesSplit::M => (
+                m_units.div_ceil(blueprint.num_planes) as u32,
+                n_units as u32,
+            ),
+            PlanesSplit::N => (
+                m_units as u32,
+                n_units.div_ceil(blueprint.num_planes) as u32,
+            ),
+        };
 
         let cube_count_plan = CubeCountPlan::from_blueprint(
             &blueprint.hypercube_blueprint,

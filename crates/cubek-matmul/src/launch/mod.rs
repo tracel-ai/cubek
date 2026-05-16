@@ -1,3 +1,4 @@
+pub mod launch_gemm_outer_product;
 pub mod launch_gemm_plane_parallel;
 pub mod launch_gemv_unit_perpendicular;
 pub mod launch_naive;

@@ -12,6 +12,7 @@ mod common;
 
 mod advanced;
 mod alt_shapes;
+mod gemm_outer_product;
 mod gemm_plane_parallel;
 mod layouts;
 mod quantization;

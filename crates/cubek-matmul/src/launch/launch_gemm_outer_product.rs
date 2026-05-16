@@ -5,6 +5,7 @@ use cubecl::{
 use cubek_std::{InputBinding, MatrixLayout};
 
 use crate::{
+    components::batch::gemm_outer_product::{MatmulOperandLayouts, OperandLayout},
     definition::cube_mapping_launch,
     definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes},
 };
@@ -12,7 +13,7 @@ use crate::{
 use crate::{
     launch::InputArg,
     launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs},
-    routines::gemm_plane_parallel::GemmPlaneParallelRoutine,
+    routines::gemm_outer_product::GemmOuterProductRoutine,
     routines::{BlueprintStrategy, Routine as _},
 };
 
@@ -41,19 +42,24 @@ pub fn launch_ref<R: Runtime>(
     mut lhs: InputBinding<R>,
     mut rhs: InputBinding<R>,
     out: TensorBinding<R>,
-    strategy: &BlueprintStrategy<(), GemmPlaneParallelRoutine>,
+    strategy: &BlueprintStrategy<(), GemmOuterProductRoutine>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
-    let rank = rhs.shape().len();
+    let plane_size = client.properties().hardware.plane_size_max as usize;
+    if plane_size > 1 {
+        return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+            "GemmOuterProduct is CPU-only (plane_size_max must be 1, got {})",
+            plane_size,
+        ))));
+    }
 
+    let rank = rhs.shape().len();
     let lhs_shape = lhs.shape();
     let rhs_shape = rhs.shape();
 
     let m = lhs_shape.to_vec()[rank - 2];
     let n = rhs_shape.to_vec()[rank - 1];
     let k = lhs_shape.to_vec()[rank - 1];
-
-    let plane_size = client.properties().hardware.plane_size_max as usize;
 
     if !k.is_multiple_of(plane_size) {
         return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
@@ -86,26 +92,6 @@ pub fn launch_ref<R: Runtime>(
     let rhs_layout =
         MatrixLayout::from_shape_and_strides(rhs_shape, &rhs.data().strides, rhs.scheme())?;
 
-    // Row-Col only: K must be the contiguous axis on both sides. For
-    // matrices that means lhs=RowMajor, rhs=ColMajor. For vector operands
-    // (m=1 or n=1) the matrix-side layout is what matters; the vector side
-    // gets a contiguity fix-up so that its single non-K dim doesn't break
-    // K-stride=1.
-    let lhs_is_vec = m == 1;
-    let rhs_is_vec = n == 1;
-    if !lhs_is_vec && !matches!(lhs_layout, MatrixLayout::RowMajor) {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-            "GemmPlaneParallel requires lhs RowMajor, got {:?}",
-            lhs_layout
-        ))));
-    }
-    if !rhs_is_vec && !matches!(rhs_layout, MatrixLayout::ColMajor) {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-            "GemmPlaneParallel requires rhs ColMajor, got {:?}",
-            rhs_layout
-        ))));
-    }
-
     let kind_problem = MatmulProblem::from_parameters(
         m,
         n,
@@ -121,10 +107,16 @@ pub fn launch_ref<R: Runtime>(
         address_type,
     );
 
-    if lhs_is_vec && kind_problem.lhs_strides[rank - 1] != 1 {
+    let kind = MatmulOperandLayouts::from_problem(&kind_problem)?;
+
+    // Vec operands need K-contiguous storage; the kernel reads them as if
+    // they were the side that supplies K-vectors / scalars. Mat operands
+    // keep their natural layout — the kernel picks the variant
+    // (Dot / OuterN / OuterM) from `MatmulOperandLayouts`.
+    if matches!(kind.lhs, OperandLayout::Vector) && kind_problem.lhs_strides[rank - 1] != 1 {
         lhs = lhs.into_contiguous(client)?;
     }
-    if rhs_is_vec && kind_problem.rhs_strides[rank - 1] != 1 {
+    if matches!(kind.rhs, OperandLayout::Vector) && kind_problem.rhs_strides[rank - 1] != 1 {
         rhs = rhs.into_contiguous(client)?;
     }
 
@@ -143,12 +135,12 @@ pub fn launch_ref<R: Runtime>(
         address_type,
     );
 
-    let device_settings = GemmPlaneParallelRoutine::device_settings(client, vector_sizes);
+    let device_settings = GemmOuterProductRoutine::device_settings(client, vector_sizes);
     let expand_info =
-        GemmPlaneParallelRoutine::expand_blueprint(&problem, &device_settings, strategy)?;
-    let launch_info = GemmPlaneParallelRoutine::prepare(&problem, &device_settings, expand_info)?;
+        GemmOuterProductRoutine::expand_blueprint(&problem, &device_settings, strategy)?;
+    let launch_info = GemmOuterProductRoutine::prepare(&problem, &device_settings, expand_info)?;
 
-    let input = <InputArg<TensorArgs> as ConcreteInputsFactory<GemmPlaneParallelRoutine>>::create(
+    let input = <InputArg<TensorArgs> as ConcreteInputsFactory<GemmOuterProductRoutine>>::create(
         lhs,
         rhs,
         &launch_info.blueprint,
@@ -156,7 +148,7 @@ pub fn launch_ref<R: Runtime>(
         &launch_info.vector_sizes,
         dtypes,
     );
-    let output = <OutputArg<TensorArgs> as ConcreteOutputFactory<GemmPlaneParallelRoutine>>::create(
+    let output = <OutputArg<TensorArgs> as ConcreteOutputFactory<GemmOuterProductRoutine>>::create(
         out,
         &launch_info.blueprint,
         &problem,
@@ -164,7 +156,7 @@ pub fn launch_ref<R: Runtime>(
         dtypes,
     );
 
-    GemmPlaneParallelRoutine::launch::<TensorArgs, R>(
+    GemmOuterProductRoutine::launch::<TensorArgs, R>(
         client,
         launch_info.cube_dim,
         launch_info.cube_count_plan.resolve(),

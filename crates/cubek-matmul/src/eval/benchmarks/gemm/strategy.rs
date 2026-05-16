@@ -3,7 +3,8 @@ use cubek_test_utils::CatalogEntry;
 use crate::launch::Strategy;
 use crate::routines::{
     BlueprintStrategy, TileSizeSelection, double_buffering::DoubleBufferingArgs,
-    double_unit::DoubleUnitSelectionArgs, gemm_plane_parallel::GemmPlaneParallelStrategy,
+    double_unit::DoubleUnitSelectionArgs, gemm_outer_product::GemmOuterProductStrategy,
+    gemm_plane_parallel::GemmPlaneParallelStrategy,
     ordered_double_buffering::OrderedSelectionArgs, simple::SimpleArgs,
     simple_unit::SimpleUnitSelectionArgs,
 };
@@ -99,6 +100,13 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
             "gemm_plane_parallel",
             "Gemm Plane Parallel",
             Strategy::GemmPlaneParallel(BlueprintStrategy::Inferred(GemmPlaneParallelStrategy {
+                target_num_planes: None,
+            })),
+        ),
+        CatalogEntry::new(
+            "gemm_outer_product",
+            "Gemm Outer Product",
+            Strategy::GemmOuterProduct(BlueprintStrategy::Inferred(GemmOuterProductStrategy {
                 target_num_planes: None,
             })),
         ),

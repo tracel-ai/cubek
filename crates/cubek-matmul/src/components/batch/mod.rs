@@ -1,10 +1,12 @@
 //! Executes multiple independent global matmuls with optional broadcasting.
 
+pub mod gemm_outer_product;
 pub mod gemm_plane_parallel;
 pub mod gemv_unit_perpendicular;
 pub mod naive;
 
 mod base;
+pub(crate) mod checked_io;
 mod layout;
 mod partitioned_matmul;
 

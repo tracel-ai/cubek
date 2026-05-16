@@ -15,7 +15,8 @@ use crate::{
     },
     definition::{MatmulElems, MatmulSetupError},
     launch::{
-        launch_gemm_plane_parallel, launch_gemv_unit_perpendicular, launch_naive, launch_tiling,
+        launch_gemm_outer_product, launch_gemm_plane_parallel, launch_gemv_unit_perpendicular,
+        launch_naive, launch_tiling,
     },
     routines::{
         BlueprintStrategy, Routine,
@@ -25,6 +26,7 @@ use crate::{
             TilewiseDoubleBufferingAlgorithm, TmaDoubleBufferingAlgorithm,
         },
         double_unit::DoubleUnitAlgorithm,
+        gemm_outer_product::GemmOuterProductRoutine,
         gemm_plane_parallel::GemmPlaneParallelRoutine,
         gemv_innerproduct::{DoubleVecMatInnerProductAlgorithm, VecMatInnerProductAlgorithm},
         gemv_unit_perpendicular::GemvUnitPerpendicularRoutine,
@@ -180,6 +182,7 @@ pub enum Strategy {
     DoubleVecMat(BlueprintStrategy<(), DoubleVecMatInnerProductAlgorithm>),
     GemvUnitPerpendicular(BlueprintStrategy<(), GemvUnitPerpendicularRoutine>),
     GemmPlaneParallel(BlueprintStrategy<(), GemmPlaneParallelRoutine>),
+    GemmOuterProduct(BlueprintStrategy<(), GemmOuterProductRoutine>),
     Naive,
     #[default]
     Auto,
@@ -236,6 +239,7 @@ impl Display for Strategy {
             Strategy::Auto => f.write_str("matmul_auto"),
             Strategy::GemvUnitPerpendicular(s) => write!(f, "vecmat_unit_perpendicular{}", s),
             Strategy::GemmPlaneParallel(s) => write!(f, "gemm_plane_parallel{}", s),
+            Strategy::GemmOuterProduct(s) => write!(f, "gemm_outer_product{}", s),
         }
     }
 }
@@ -534,6 +538,16 @@ impl Strategy {
             }
             Strategy::GemmPlaneParallel(blueprint_strategy) => {
                 launch_gemm_plane_parallel::launch_ref(
+                    client,
+                    lhs,
+                    rhs,
+                    out,
+                    blueprint_strategy,
+                    dtypes,
+                )
+            }
+            Strategy::GemmOuterProduct(blueprint_strategy) => {
+                launch_gemm_outer_product::launch_ref(
                     client,
                     lhs,
                     rhs,
