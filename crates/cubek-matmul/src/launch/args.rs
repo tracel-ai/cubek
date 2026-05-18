@@ -1,9 +1,7 @@
-#![allow(clippy::clone_on_copy)]
-
 use std::marker::PhantomData;
 
 use cubecl::std::tensor::{
-    View,
+    View, ViewMut,
     launch::ViewArg,
     layout::{Coords1d, VirtualLayout, VirtualLayoutLaunch},
 };
@@ -112,7 +110,7 @@ pub trait MatmulArgs: Send + Sync + 'static + Clone {
 
     fn view_lhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         _state: &Self::State<Lhs, Rhs, EO>,
-    ) -> View<Lhs, BatchedCoords> {
+    ) -> View<'_, Lhs, BatchedCoords> {
         unexpanded!()
     }
     fn batch_lhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
@@ -123,7 +121,7 @@ pub trait MatmulArgs: Send + Sync + 'static + Clone {
     }
     fn view_rhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         _state: &Self::State<Lhs, Rhs, EO>,
-    ) -> View<Rhs, BatchedCoords> {
+    ) -> View<'_, Rhs, BatchedCoords> {
         unexpanded!()
     }
     fn batch_rhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
@@ -134,7 +132,7 @@ pub trait MatmulArgs: Send + Sync + 'static + Clone {
     }
     fn view_acc<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         _state: &Self::State<Lhs, Rhs, EO>,
-    ) -> ComptimeOption<View<EO, BatchedCoords>> {
+    ) -> ComptimeOption<View<'_, EO, BatchedCoords>> {
         unexpanded!()
     }
     fn batch_acc<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
@@ -144,8 +142,8 @@ pub trait MatmulArgs: Send + Sync + 'static + Clone {
         unexpanded!()
     }
     fn view_out<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
-        _state: &mut Self::State<Lhs, Rhs, EO>,
-    ) -> View<EO, BatchedCoords, ReadWrite> {
+        _state: &Self::State<Lhs, Rhs, EO>,
+    ) -> ViewMut<'_, EO, BatchedCoords> {
         unexpanded!()
     }
     fn batch_out<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
@@ -183,13 +181,13 @@ pub struct TensorArgs<Config: RuntimeConfig = ()> {
 pub struct TensorInputs<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc: CubePrimitive> {
     /// The lhs tensor.
     lhs_batch: VirtualLayout<Coords1d, Coords1d>,
-    lhs: View<Lhs, BatchedCoords>,
+    lhs: View<'static, Lhs, BatchedCoords>,
     /// The rhs tensor.
     rhs_batch: VirtualLayout<Coords1d, Coords1d>,
-    rhs: View<Rhs, BatchedCoords>,
+    rhs: View<'static, Rhs, BatchedCoords>,
     /// The tensor for loading the accumulator, if present
     acc_batch: ComptimeOption<VirtualLayout<Coords1d, Coords1d>>,
-    acc: ComptimeOption<View<Acc, BatchedCoords>>,
+    acc: ComptimeOption<View<'static, Acc, BatchedCoords>>,
 }
 
 impl<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc: CubePrimitive, A: Routine<()>>
@@ -257,7 +255,7 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc: CubePrimitive, A: Routine<()>>
 #[derive(CubeType, CubeLaunch, Clone)]
 #[expand(derive(Clone))]
 pub struct TensorOutput<EG: CubePrimitive> {
-    view: View<EG, BatchedCoords, ReadWrite>,
+    view: ViewMut<'static, EG, BatchedCoords>,
     batch: VirtualLayout<Coords1d, Coords1d>,
 }
 
@@ -302,8 +300,8 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorArgs<Config> {
 
     fn view_lhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &Self::State<Lhs, Rhs, EO>,
-    ) -> View<Lhs, BatchedCoords> {
-        state.0.lhs.clone()
+    ) -> View<'_, Lhs, BatchedCoords> {
+        state.0.lhs
     }
 
     fn batch_lhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
@@ -315,8 +313,8 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorArgs<Config> {
 
     fn view_rhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &Self::State<Lhs, Rhs, EO>,
-    ) -> View<Rhs, BatchedCoords> {
-        state.0.rhs.clone()
+    ) -> View<'_, Rhs, BatchedCoords> {
+        state.0.rhs
     }
 
     fn batch_rhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
@@ -328,8 +326,8 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorArgs<Config> {
 
     fn view_acc<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &Self::State<Lhs, Rhs, EO>,
-    ) -> ComptimeOption<View<EO, BatchedCoords>> {
-        state.0.acc.clone()
+    ) -> ComptimeOption<View<'_, EO, BatchedCoords>> {
+        state.0.acc.map(|view| view) // Lifetime coercion hack
     }
 
     fn batch_acc<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
@@ -344,9 +342,9 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorArgs<Config> {
     }
 
     fn view_out<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
-        state: &mut Self::State<Lhs, Rhs, EO>,
-    ) -> View<EO, BatchedCoords, ReadWrite> {
-        state.1.view.clone()
+        state: &Self::State<Lhs, Rhs, EO>,
+    ) -> ViewMut<'_, EO, BatchedCoords> {
+        state.1.view
     }
 
     fn batch_out<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
@@ -376,11 +374,11 @@ pub struct TensorMapArgs<Config: RuntimeConfig = ()> {
 /// Input representation for [TensorArgs] implementing [MatmulArgs].
 pub struct TensorMapInputs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive> {
     /// The lhs tensor.
-    pub lhs: View<Lhs, BatchedCoords>,
+    pub lhs: View<'static, Lhs, BatchedCoords>,
     /// The rhs tensor.
-    pub rhs: View<Rhs, BatchedCoords>,
+    pub rhs: View<'static, Rhs, BatchedCoords>,
     /// The accumulator
-    pub acc: ComptimeOption<View<EO, BatchedCoords>>,
+    pub acc: ComptimeOption<View<'static, EO, BatchedCoords>>,
     /// The accumulator batch layout
     pub acc_batch: ComptimeOption<VirtualLayout<Coords1d, Coords1d>>,
 }
@@ -550,8 +548,8 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorMapArgs<Config> {
 
     fn view_lhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &Self::State<Lhs, Rhs, EO>,
-    ) -> View<Lhs, BatchedCoords> {
-        state.0.lhs.clone()
+    ) -> View<'_, Lhs, BatchedCoords> {
+        state.0.lhs
     }
 
     fn batch_lhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
@@ -563,8 +561,8 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorMapArgs<Config> {
 
     fn view_rhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &Self::State<Lhs, Rhs, EO>,
-    ) -> View<Rhs, BatchedCoords> {
-        state.0.rhs.clone()
+    ) -> View<'_, Rhs, BatchedCoords> {
+        state.0.rhs
     }
 
     fn batch_rhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
@@ -576,8 +574,8 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorMapArgs<Config> {
 
     fn view_acc<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
         state: &Self::State<Lhs, Rhs, EO>,
-    ) -> ComptimeOption<View<EO, BatchedCoords>> {
-        state.0.acc.clone()
+    ) -> ComptimeOption<View<'_, EO, BatchedCoords>> {
+        state.0.acc.map(|view| view) // Lifetime coercion hack
     }
 
     fn batch_acc<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
@@ -593,9 +591,9 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorMapArgs<Config> {
     }
 
     fn view_out<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
-        state: &mut Self::State<Lhs, Rhs, EO>,
-    ) -> View<EO, BatchedCoords, ReadWrite> {
-        state.1.view.clone()
+        state: &Self::State<Lhs, Rhs, EO>,
+    ) -> ViewMut<'_, EO, BatchedCoords> {
+        state.1.view
     }
 
     fn batch_out<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(

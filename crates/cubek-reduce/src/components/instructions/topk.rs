@@ -31,7 +31,7 @@ pub struct TopkAccumulator<E: Scalar, S: Size> {
 
 #[derive(CubeType)]
 pub struct TopKSharedAccumulator<P: ReducePrecision> {
-    elements: Sequence<SharedMemory<Vector<P::EA, P::SI>>>,
+    elements: Sequence<Shared<[Vector<P::EA, P::SI>]>>,
     #[cube(comptime)]
     k: usize,
 }
@@ -41,7 +41,7 @@ impl<P: ReducePrecision> SharedAccumulator<P, TopK> for TopKSharedAccumulator<P>
     fn allocate(#[comptime] length: usize, #[comptime] _coordinate: bool, inst: &TopK) -> Self {
         let mut elements = Sequence::new();
         for _ in 0..inst.k {
-            elements.push(SharedMemory::new(length));
+            elements.push(Shared::new_slice(length));
         }
         TopKSharedAccumulator::<P> {
             elements,

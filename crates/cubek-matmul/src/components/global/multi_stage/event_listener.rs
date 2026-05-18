@@ -76,7 +76,7 @@ impl<S: SyncStrategy, Lhs: JobExecutor<S>, Rhs: JobExecutor<S>, G: GlobalConfig>
         #[comptime] stage_buffer: StageBuffer,
         reader_lhs: &Lhs,
         reader_rhs: &Rhs,
-        barrier: &mut S::Barrier,
+        barrier: &S::Barrier,
         #[comptime] config: G,
         #[comptime] event_loading_side: LoadingSides,
     ) -> DoubleBufferingEventListener<S, Lhs, Rhs, G> {
@@ -128,7 +128,7 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig> Sta
                 L::execute_task(
                     &mut this.reader_lhs,
                     lhs_job,
-                    &mut this.barrier,
+                    &this.barrier,
                     this.config.comptime().lhs_reader_config(),
                 );
             }
@@ -143,7 +143,7 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig> Sta
                 R::execute_task(
                     &mut this.reader_rhs,
                     rhs_job,
-                    &mut this.barrier,
+                    &this.barrier,
                     this.config.comptime().rhs_reader_config(),
                 );
             }
@@ -190,7 +190,7 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig> Sta
                     L::execute_task(
                         &mut this.reader_lhs,
                         lhs_job,
-                        &mut this.barrier,
+                        &this.barrier,
                         this.config.comptime().lhs_reader_config(),
                     );
                 }
@@ -203,7 +203,7 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig> Sta
                     R::execute_task(
                         &mut this.reader_rhs,
                         rhs_job,
-                        &mut this.barrier,
+                        &this.barrier,
                         this.config.comptime().rhs_reader_config(),
                     );
                 }
@@ -313,7 +313,7 @@ pub trait JobExecutor<S: SyncStrategy>: CubeType<ExpandType: Clone> + Clone {
     fn execute_task(
         this: &mut Self,
         job: &mut Self::JobIterator,
-        barrier: &mut S::Barrier,
+        barrier: &S::Barrier,
         #[comptime] config: GlobalReaderConfig,
     );
 
@@ -321,14 +321,14 @@ pub trait JobExecutor<S: SyncStrategy>: CubeType<ExpandType: Clone> + Clone {
     fn execute_all_remaining_tasks(
         this: &mut Self,
         job: &mut Self::JobIterator,
-        barrier: &mut S::Barrier,
+        barrier: &S::Barrier,
         #[comptime] config: GlobalReaderConfig,
     );
 
     /// Create a job and execute all its tasks at once
     fn execute_whole_job(
         this: &mut Self,
-        barrier: &mut S::Barrier,
+        barrier: &S::Barrier,
         #[comptime] stage_buffer: StageBuffer,
         #[comptime] config: GlobalReaderConfig,
     );

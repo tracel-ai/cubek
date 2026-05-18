@@ -20,7 +20,7 @@ impl SyncStrategy for AsyncTma {
     }
 
     fn sync<MP: MatmulTypes>(
-        barrier: &mut Self::Barrier,
+        barrier: &Self::Barrier,
         #[comptime] config: SharedGlobalMatmulConfig,
     ) {
         let lhs_elem_size = LhsS::<MP>::type_size().comptime();
@@ -30,7 +30,7 @@ impl SyncStrategy for AsyncTma {
         let rhs_bytes =
             config.rhs_reader_config().smem_config.elements_per_stage() * rhs_elem_size as u32;
         let num_bytes = lhs_bytes + rhs_bytes;
-        let token = arrive_tma(barrier.inner_ref(), num_bytes);
+        let token = arrive_tma(barrier, num_bytes);
         barrier.wait(token);
     }
 }

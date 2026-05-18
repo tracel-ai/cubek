@@ -240,7 +240,7 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::In, P::Siz
     }
 
     fn __expand_write_method(
-        &self,
+        &mut self,
         _scope: &Scope,
         _index: NativeExpand<usize>,
         _value: NativeExpand<Vector<P::In, P::SizeIn>>,
@@ -311,7 +311,7 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::Out, P::Si
     }
 
     fn __expand_write_method(
-        &self,
+        &mut self,
         scope: &Scope,
         index: NativeExpand<usize>,
         value: NativeExpand<Vector<P::Out, P::SizeOut>>,
@@ -369,16 +369,5 @@ impl<P: ReduceDType, RA: ReduceArgs> VectorizedExpand for TensorArgExpand<P, RA,
     fn vector_size(&self) -> usize {
         let scope = Scope::root(false);
         RA::__expand_vector_size_output(&scope, &self.state)
-    }
-
-    impl<P: ReduceDType, RA: ReduceArgs, Tag> AsRefExpand for TensorArgExpand<P, RA, Tag> {
-        fn __expand_ref_method(&self, _: &Scope) -> &Self {
-            self
-        }
-    }
-    impl<P: ReduceDType, RA: ReduceArgs, Tag> AsMutExpand for TensorArgExpand<P, RA, Tag> {
-        fn __expand_ref_mut_method(&mut self, _: &Scope) -> &mut Self {
-            self
-        }
     }
 }

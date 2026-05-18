@@ -50,6 +50,7 @@ pub trait FullLoadingStrategy<RC: RuntimeConfig>:
 /// A complete load is referred to as a `Job`, which is divided into `Tasks`—
 /// each Task represents a single data transfer for a specific unit
 pub struct FullStageGlobalReader<
+    'a,
     EG: Numeric,
     NG: Size,
     ES: Numeric,
@@ -57,7 +58,7 @@ pub struct FullStageGlobalReader<
     RC: RuntimeConfig,
     L: FullLoadingStrategy<RC>,
 > {
-    global_iter: GlobalIterator<Vector<EG, NG>>,
+    global_iter: GlobalIterator<'a, Vector<EG, NG>>,
     runtime_config: RC,
     stage: FullLoaderStage<RC, L, ES, NS>,
     loading_job: ComptimeOption<L::Job<EG, NG, ES, NS>>,
@@ -66,12 +67,19 @@ pub struct FullStageGlobalReader<
 }
 
 #[cube]
-impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: FullLoadingStrategy<RC>>
-    FullStageGlobalReader<EG, NG, ES, NS, RC, L>
+impl<
+    'a,
+    EG: Numeric,
+    NG: Size,
+    ES: Numeric,
+    NS: Size,
+    RC: RuntimeConfig,
+    L: FullLoadingStrategy<RC>,
+> FullStageGlobalReader<'a, EG, NG, ES, NS, RC, L>
 {
     /// Create a new SyncFullStageGlobalReader
     pub fn new(
-        view: View<Vector<EG, NG>, Coords2d>,
+        view: View<'a, Vector<EG, NG>, Coords2d>,
         runtime_config: RC,
         k_step: u32,
         #[comptime] config: GlobalReaderConfig,
@@ -91,7 +99,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: FullLoa
             false => ComptimeOption::new_None(),
         };
 
-        FullStageGlobalReader::<EG, NG, ES, NS, RC, L> {
+        FullStageGlobalReader::<'a, EG, NG, ES, NS, RC, L> {
             global_iter,
             runtime_config,
             stage,
@@ -118,7 +126,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: FullLoa
     /// Accomplish the entire job of loading data into the stage memory
     pub fn load_stage(
         &mut self,
-        barrier: &mut SyncBarrier<L::SyncStrategy>,
+        barrier: &SyncBarrier<L::SyncStrategy>,
         #[comptime] config: GlobalReaderConfig,
     ) {
         let mut loading_job = self
@@ -144,7 +152,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: FullLoa
 
 #[cube]
 impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: FullLoadingStrategy<RC>>
-    JobExecutor<L::SyncStrategy> for FullStageGlobalReader<EG, NG, ES, NS, RC, L>
+    JobExecutor<L::SyncStrategy> for FullStageGlobalReader<'_, EG, NG, ES, NS, RC, L>
 {
     type JobIterator = FullStageJobIterator<EG, NG, ES, NS, RC, L>;
 
@@ -170,7 +178,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: FullLoa
     fn execute_task(
         this: &mut Self,
         job_iterator: &mut FullStageJobIterator<EG, NG, ES, NS, RC, L>,
-        barrier: &mut SyncBarrier<L::SyncStrategy>,
+        barrier: &SyncBarrier<L::SyncStrategy>,
         #[comptime] config: GlobalReaderConfig,
     ) {
         let task_id = job_iterator.current.read().counter.comptime();
@@ -192,7 +200,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: FullLoa
     fn execute_all_remaining_tasks(
         this: &mut Self,
         job_iterator: &mut Self::JobIterator,
-        barrier: &mut SyncBarrier<L::SyncStrategy>,
+        barrier: &SyncBarrier<L::SyncStrategy>,
         #[comptime] config: GlobalReaderConfig,
     ) {
         let task_counter = job_iterator.current.read().counter;
@@ -216,7 +224,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: FullLoa
 
     fn execute_whole_job(
         this: &mut Self,
-        barrier: &mut SyncBarrier<L::SyncStrategy>,
+        barrier: &SyncBarrier<L::SyncStrategy>,
         #[comptime] stage_buffer: StageBuffer,
         #[comptime] config: GlobalReaderConfig,
     ) {

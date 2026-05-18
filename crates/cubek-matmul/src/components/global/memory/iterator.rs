@@ -6,8 +6,8 @@ use cubecl::{
 #[derive(Clone, CubeType)]
 #[expand(derive(Clone))]
 /// An iterator over global memory, advancing along k.
-pub struct GlobalIterator<EI: CubePrimitive> {
-    global_view: View<EI, Coords2d>,
+pub struct GlobalIterator<'a, EI: CubePrimitive> {
+    global_view: View<'a, EI, Coords2d>,
     offset: RuntimeCell<u32>,
     /// The amount to advance by on each iteration
     step: u32,
@@ -18,8 +18,8 @@ pub struct GlobalIterator<EI: CubePrimitive> {
     checked: bool,
 }
 
-unsafe impl<EG: CubePrimitive> Sync for GlobalIterator<EG> {}
-unsafe impl<EG: CubePrimitive> Send for GlobalIterator<EG> {}
+unsafe impl<EG: CubePrimitive> Sync for GlobalIterator<'_, EG> {}
+unsafe impl<EG: CubePrimitive> Send for GlobalIterator<'_, EG> {}
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, Default)]
 pub enum ViewDirection {
@@ -31,14 +31,14 @@ pub enum ViewDirection {
 }
 
 #[cube]
-impl<EG: CubePrimitive> GlobalIterator<EG> {
+impl<'a, EG: CubePrimitive> GlobalIterator<'a, EG> {
     /// Instantiate a read iterator over the given global view, which should be sliced to the size
     /// of one `m`/`n` stage and the full range of `k` handled by this matmul instance.
     ///
     /// `step` is the amount advanced in `view_direction` each iteration.
     /// `checked` determines whether the slices should be created as checked or unchecked.
     pub fn new(
-        global_view: View<EG, Coords2d>,
+        global_view: View<'a, EG, Coords2d>,
         step: u32,
         #[comptime] view_direction: ViewDirection,
         #[comptime] checked: bool,
@@ -50,7 +50,7 @@ impl<EG: CubePrimitive> GlobalIterator<EG> {
             ViewDirection::None => (size_row, size_col),
         };
 
-        GlobalIterator::<EG> {
+        GlobalIterator::<'a, EG> {
             global_view,
             offset: RuntimeCell::new(0),
             step,
@@ -66,7 +66,7 @@ impl<EG: CubePrimitive> GlobalIterator<EG> {
     }
 
     /// Returns the current view slice of the iterator
-    pub fn view(&self) -> &View<EG, Coords2d> {
+    pub fn view(&self) -> View<'_, EG, Coords2d> {
         let offset = match self.view_direction.comptime() {
             ViewDirection::Row => (self.offset.read(), 0u32),
             ViewDirection::Col => (0u32, self.offset.read()),

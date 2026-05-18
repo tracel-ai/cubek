@@ -98,7 +98,7 @@ impl<A: Numeric> PlaneVecTile<A> {
 #[cube]
 impl<N: Numeric> PlaneVecTile<N> {
     /// Copies into the plane-vec tile from `source`. Supported sources:
-    /// `SharedMemory` and `None` (zero-init).
+    /// `Shared` and `None` (zero-init).
     pub fn copy_from<SE: Numeric, SS: Size, Sc: TileScope>(
         &mut self,
         source: &Tile<SE, Sc>,

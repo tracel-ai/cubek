@@ -25,7 +25,7 @@ use cubek_std::tile::{NoEvent, PartitionScheduler, Tile, write_partition_to_stag
 pub fn read_first<S: SyncStrategy, LJ: JobExecutor<S>, RJ: JobExecutor<S>>(
     lhs_global_reader: &mut LJ,
     rhs_global_reader: &mut RJ,
-    barrier: &mut S::Barrier,
+    barrier: &S::Barrier,
     specializer: &Specializer,
     #[comptime] stage_to_load: StageBuffer,
     #[comptime] lhs_config: GlobalReaderConfig,
@@ -81,7 +81,7 @@ pub fn execute_current_and_read_next<
     acc: &mut Tile<AccRE<MP>, SP::Scope>,
     lhs_global_reader: &mut LJ,
     rhs_global_reader: &mut RJ,
-    barrier: &mut S::Barrier,
+    barrier: &S::Barrier,
     specializer: &Specializer,
     partition_scheduler: &PartitionScheduler,
     #[comptime] stage_to_load: StageBuffer,
@@ -166,8 +166,9 @@ pub fn execute_current_and_read_next<
 /// If there is specialization, will add a runtime if to determine the role of the plane
 #[allow(clippy::too_many_arguments)]
 pub fn execute_last_and_write_results<
+    'a,
     MP: MatmulTypes,
-    GW: GlobalWriter<MP::Acc>,
+    GW: GlobalWriter<'a, MP::Acc>,
     SP: StagePartitioner,
     G: GlobalConfig,
 >(

@@ -1,5 +1,5 @@
-use cubecl::prelude::*;
 use cubecl::{cube, std::tensor::View, std::tensor::layout::Coordinates};
+use cubecl::{prelude::*, std::tensor::ViewMut};
 
 use crate::components::batch::CheckBounds;
 
@@ -20,7 +20,7 @@ pub fn read<T: CubePrimitive, C: Coordinates>(
 /// Write `value` into `view` at `coord`
 #[cube]
 pub fn write<T: CubePrimitive, C: Coordinates>(
-    view: &View<T, C, ReadWrite>,
+    mut view: ViewMut<T, C>,
     coord: C,
     value: T,
     #[comptime] check_bounds: CheckBounds,

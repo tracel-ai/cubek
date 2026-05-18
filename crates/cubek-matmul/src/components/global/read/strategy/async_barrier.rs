@@ -17,7 +17,7 @@ impl SyncStrategy for AsyncBarrier {
     }
 
     fn sync<MP: MatmulTypes>(
-        barrier: &mut Self::Barrier,
+        barrier: &Self::Barrier,
         #[comptime] _config: SharedGlobalMatmulConfig,
     ) {
         barrier.arrive_and_wait();
@@ -36,7 +36,7 @@ impl SyncStrategy for AsyncCopy {
     }
 
     fn sync<MP: MatmulTypes>(
-        barrier: &mut Self::Barrier,
+        barrier: &Self::Barrier,
         #[comptime] _config: SharedGlobalMatmulConfig,
     ) {
         barrier.commit_copy_async();

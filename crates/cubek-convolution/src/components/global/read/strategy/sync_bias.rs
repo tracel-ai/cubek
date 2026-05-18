@@ -122,7 +122,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
         #[comptime] task_id: u32,
         global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut BiasStageMemory<ES, NS>,
-        _barrier: &mut (),
+        _barrier: &(),
         #[comptime] _config: GlobalReaderConfig,
     ) {
         let unit_position = this.unit_position_base + task_id * this.jump_length;

@@ -38,7 +38,7 @@ pub trait LoadingJob<
         #[comptime] task_id: u32,
         global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut <Self::Stage as StageFamily>::Stage<ES, NS, TL>,
-        barrier: &mut S::Barrier,
+        barrier: &S::Barrier,
         #[comptime] config: GlobalReaderConfig,
     );
 
@@ -53,10 +53,7 @@ pub trait LoadingJob<
 pub trait SyncStrategy {
     type Barrier: CubeType<ExpandType: Clone> + Clone;
     fn create_barrier() -> Self::Barrier;
-    fn sync<MP: MatmulTypes>(
-        barrier: &mut Self::Barrier,
-        #[comptime] config: SharedGlobalMatmulConfig,
-    );
+    fn sync<MP: MatmulTypes>(barrier: &Self::Barrier, #[comptime] config: SharedGlobalMatmulConfig);
 }
 
 /// Allows to verify configs are valid for a reader

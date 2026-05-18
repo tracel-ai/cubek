@@ -377,13 +377,12 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     }
 
     fn __expand_write_method(
-        &self,
+        &mut self,
         scope: &Scope,
         index: NativeExpand<usize>,
         value: NativeExpand<Vector<O::T, O::N>>,
     ) {
-        let mut this = self.clone();
-        TensorOutputExpand::__expand_write_method(&mut this, scope, index, value);
+        TensorOutputExpand::__expand_write_method(self, scope, index, value);
     }
 
     fn __expand_shape_method(
@@ -455,7 +454,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     }
 
     fn __expand_write_method(
-        &self,
+        &mut self,
         _scope: &Scope,
         _index: NativeExpand<usize>,
         _value: NativeExpand<Vector<Q::T, Q::N>>,
@@ -532,7 +531,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     }
 
     fn __expand_write_method(
-        &self,
+        &mut self,
         _scope: &Scope,
         _index: NativeExpand<usize>,
         _value: NativeExpand<Vector<K::T, K::N>>,
@@ -609,7 +608,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     }
 
     fn __expand_write_method(
-        &self,
+        &mut self,
         _scope: &Scope,
         _index: NativeExpand<usize>,
         _value: NativeExpand<Vector<V::T, V::N>>,
@@ -686,7 +685,7 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
     }
 
     fn __expand_write_method(
-        &self,
+        &mut self,
         _scope: &Scope,
         _index: NativeExpand<usize>,
         _value: NativeExpand<Vector<M::T, M::N>>,

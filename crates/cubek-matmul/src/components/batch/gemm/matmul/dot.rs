@@ -1,5 +1,5 @@
-use cubecl::prelude::*;
 use cubecl::{cube, num_traits::Zero, std::tensor::View, std::tensor::layout::Coords2d};
+use cubecl::{prelude::*, std::tensor::ViewMut};
 
 use crate::components::batch::{
     CheckBounds,
@@ -29,7 +29,7 @@ pub(crate) fn execute_dot<
 >(
     lhs: View<L, Coords2d>,
     rhs: View<R, Coords2d>,
-    out: View<O, Coords2d, ReadWrite>,
+    out: ViewMut<O, Coords2d>,
     m_pos: u32,
     n_pos: u32,
     k_dim: u32,
@@ -67,10 +67,10 @@ pub(crate) fn execute_dot<
     if comptime!(plane_dim > 1) {
         let sum = O::cast_from(plane_sum(Vector::vector_sum(acc)));
         if unit_id == 0 {
-            write(&out, (m_pos, n_pos), sum, check_bounds);
+            write(out, (m_pos, n_pos), sum, check_bounds);
         }
     } else {
         let sum = O::cast_from(Vector::vector_sum(acc));
-        write(&out, (m_pos, n_pos), sum, check_bounds);
+        write(out, (m_pos, n_pos), sum, check_bounds);
     };
 }

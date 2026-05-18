@@ -1,4 +1,4 @@
-use cubecl::{prelude::*, std::tensor::View};
+use cubecl::{prelude::*, std::tensor::ViewMut};
 use std::f32::consts::PI;
 
 use super::{PrngArgs, PrngRuntime, random};
@@ -29,7 +29,7 @@ impl PrngRuntime for Normal {
         state_1: &mut u32,
         state_2: &mut u32,
         state_3: &mut u32,
-        output: &mut View<Vector<E, N>, usize, ReadWrite>,
+        output: &mut ViewMut<'_, Vector<E, N>, usize>,
     ) {
         let mean = f32::cast_from(args.mean);
         let std = f32::cast_from(args.std);

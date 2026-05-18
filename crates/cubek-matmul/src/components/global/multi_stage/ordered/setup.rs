@@ -48,8 +48,7 @@ where
     AL: FullLoadingStrategy<RC, SyncStrategy = Synchronous>,
     GW: GlobalWriterFamily,
 {
-    type Matmul<MP: MatmulTypes> =
-        OrderedDoubleBufferingMatmul<MP, SP, RC, RL, AL, GW::Writer<MP::Acc>>;
+    type Matmul<MP: MatmulTypes> = OrderedDoubleBufferingMatmul<MP, SP, RC, RL, AL, GW>;
     type Config = SharedGlobalMatmulConfig;
 
     fn expand_config(

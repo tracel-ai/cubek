@@ -1,7 +1,8 @@
 use crate::components::readers::{GlobalMemoryReader, SharedMemoryReader};
 use cubecl::prelude::*;
 
-#[derive(CubeType, Clone, Copy)]
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
 pub enum ReaderType<EA: Float, N: Size> {
     Global(GlobalMemoryReader),
     Shared(SharedMemoryReader<EA, N>),

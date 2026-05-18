@@ -221,7 +221,7 @@ impl<A: Numeric> MmaTile<A> {
 #[cube]
 impl<N: Numeric> MmaTile<N> {
     /// Copies into the mma fragment from `source`. Supported sources:
-    /// `SharedMemory` (per-role load) and `None` (zero-init, Acc only).
+    /// `Shared` (per-role load) and `None` (zero-init, Acc only).
     /// `L` / `R` / `A` are the matmul triple's role types — needed by the
     /// per-role load functions. When `self` is in role X, `N` substitutes
     /// for the X type and the other two are taken from the caller's

@@ -114,7 +114,7 @@ fn launch_read_tensor_as_tiled<N: Numeric, S: Size>(
     let row_major = RowMajorLayout::new(matrix_len, matrix_len, vector_size);
 
     let input_view = input.view(row_major);
-    let output_view = output.view_mut(tiled_layout);
+    let mut output_view = output.view_mut(tiled_layout);
 
     #[unroll]
     for i in 0..matrix_len {

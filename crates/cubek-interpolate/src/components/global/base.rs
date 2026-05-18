@@ -164,7 +164,7 @@ fn get_reader<P: InterpolatePrecision, N: Size>(
 
     match blueprint.global {
         GlobalInterpolateBlueprint::GlobalMemoryBlueprint(_global_memory_blueprint) => {
-            ReaderType::new_Global(GlobalMemoryReader::new(
+            ReaderType::<P::EA, N>::new_Global(GlobalMemoryReader::new(
                 input,
                 batch,
                 channel_group,

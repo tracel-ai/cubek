@@ -237,8 +237,8 @@ pub fn plane_topk_merge<N: Numeric, S: Size>(
 /// Whether the accumulator has zero, one or more vectors
 /// This should be the same variant as AccumulatorKind for an instruction
 pub enum SharedAccumulatorKind<X: CubePrimitive> {
-    Multiple(Sequence<SharedMemory<X>>),
-    Single(SharedMemory<X>),
+    Multiple(Sequence<Shared<[X]>>),
+    Single(Shared<[X]>),
     None,
 }
 
@@ -291,7 +291,7 @@ pub trait ReduceInstruction<P: ReducePrecision>:
 
     /// When multiple agents are collaborating to reduce a single slice,
     /// we need a share accumulator to store multiple `AccumulatorItem`.
-    /// This is most likely a `SharedMemory<Vector<T>>` or a struct or tuple of vectorized shared memories.
+    /// This is most likely a `Shared<[Vector<T>]>` or a struct or tuple of vectorized shared memories.
     type SharedAccumulator: SharedAccumulator<P, Self>;
 
     /// Requirements of the reduce.
@@ -363,10 +363,10 @@ pub trait SharedAccumulator<P: ReducePrecision, I: ReduceInstruction<P>>:
 
 #[cube]
 impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
-    for SharedMemory<Vector<P::EA, P::SI>>
+    for Shared<[Vector<P::EA, P::SI>]>
 {
     fn allocate(#[comptime] length: usize, #[comptime] _coordinate: bool, _inst: &I) -> Self {
-        SharedMemory::new(length)
+        Shared::new_slice(length)
     }
 
     fn read(accumulator: &Self, index: usize) -> Accumulator<P> {
@@ -384,8 +384,8 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
 /// A pair of shared memory used for [`ArgMax`](super::ArgMax) and [`ArgMin`](super::ArgMin).
 #[derive(CubeType)]
 pub struct ArgAccumulator<P: ReducePrecision> {
-    pub elements: SharedMemory<Vector<P::EA, P::SI>>,
-    pub args: SharedMemory<Vector<u32, P::SI>>,
+    pub elements: Shared<[Vector<P::EA, P::SI>]>,
+    pub args: Shared<[Vector<u32, P::SI>]>,
 }
 
 /// For a single reduce step whether we need to do plane reduction
@@ -401,8 +401,8 @@ pub enum ReduceStep {
 impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I> for ArgAccumulator<P> {
     fn allocate(#[comptime] length: usize, #[comptime] _coordinate: bool, _inst: &I) -> Self {
         ArgAccumulator::<P> {
-            elements: SharedMemory::new(length),
-            args: SharedMemory::new(length),
+            elements: Shared::new_slice(length),
+            args: Shared::new_slice(length),
         }
     }
 

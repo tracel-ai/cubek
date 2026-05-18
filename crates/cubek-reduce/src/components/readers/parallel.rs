@@ -16,8 +16,8 @@ use cubecl::{
 };
 
 #[derive(CubeType)]
-pub struct ParallelReader<P: ReducePrecision> {
-    view: View<Vector<P::EI, P::SI>, Coords1d>,
+pub struct ParallelReader<'a, P: ReducePrecision> {
+    view: View<'a, Vector<P::EI, P::SI>, Coords1d>,
     /// The global offset that points where the vector to reduce is located in global memory.
     batch_offset: usize,
     requirements: ReduceRequirements,
@@ -29,10 +29,10 @@ pub struct ParallelReader<P: ReducePrecision> {
 }
 
 #[cube]
-impl<P: ReducePrecision> ParallelReader<P> {
+impl<'a, P: ReducePrecision> ParallelReader<'a, P> {
     #[allow(clippy::too_many_arguments)]
     pub fn new<I: ReduceInstruction<P>, Out: NumericVector>(
-        input: &VirtualTensor<P::EI, P::SI>,
+        input: &'a VirtualTensor<P::EI, P::SI>,
         output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         inst: &I,
         reduce_axis: usize,
@@ -40,7 +40,7 @@ impl<P: ReducePrecision> ParallelReader<P> {
         idle: ComptimeOption<bool>,
         effective_plane_dim: u32,
         #[comptime] bound_checks: BoundChecks,
-    ) -> ParallelReader<P> {
+    ) -> ParallelReader<'a, P> {
         let vector_size = input.vector_size();
 
         let mut batch_offset = 0;
@@ -57,7 +57,7 @@ impl<P: ReducePrecision> ParallelReader<P> {
         let num_chunks = shape / vector_size;
         let bound_checks = ReaderBoundChecks::new::<I>(inst, num_chunks, idle, bound_checks);
 
-        ParallelReader::<P> {
+        ParallelReader::<'a, P> {
             view: input.view(PlainLayout::new(input.len())),
             batch_offset,
             requirements,

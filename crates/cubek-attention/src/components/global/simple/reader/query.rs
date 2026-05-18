@@ -14,22 +14,22 @@ use crate::{
 };
 
 #[derive(CubeType)]
-pub struct QueryReader<AP: AttentionPrecision> {
-    query: View<Vector<QG<AP>, QGS<AP>>, Coords2d>,
+pub struct QueryReader<'a, AP: AttentionPrecision> {
+    query: View<'a, Vector<QG<AP>, QGS<AP>>, Coords2d>,
     #[cube(comptime)]
     gmem_config: GlobalMemoryConfig,
 }
 
 #[cube]
-impl<AP: AttentionPrecision> QueryReader<AP> {
+impl<'a, AP: AttentionPrecision> QueryReader<'a, AP> {
     pub fn new(
         stage_q_offset: u32,
-        query: View<Vector<QG<AP>, QGS<AP>>, Coords2d>,
+        query: View<'a, Vector<QG<AP>, QGS<AP>>, Coords2d>,
         #[comptime] gmem_config: GlobalMemoryConfig,
     ) -> Self {
-        let query = *query.slice((stage_q_offset, 0), query.shape());
+        let query = query.slice((stage_q_offset, 0), query.shape());
 
-        QueryReader::<AP> { query, gmem_config }
+        QueryReader::<'a, AP> { query, gmem_config }
     }
 
     pub fn get_tile<P: AttentionPartitioner>(

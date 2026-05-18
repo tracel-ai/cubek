@@ -113,7 +113,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
         #[comptime] task_id: u32,
         global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut StridedStageMemory<ES, NS, TmaTilingLayout>,
-        barrier: &mut Shared<Barrier>,
+        barrier: &Shared<Barrier>,
         #[comptime] config: GlobalReaderConfig,
     ) {
         if this.is_elected {
@@ -141,7 +141,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
                 MatrixLayout::ColMajor => (col, 0u32).runtime(),
             };
 
-            global_view.tensor_map_load(barrier.inner_ref(), slice.downcast_mut(), pos);
+            global_view.tensor_map_load(barrier, slice.downcast_mut(), pos);
         }
     }
 

@@ -8,12 +8,12 @@ use crate::{
 };
 use cubecl::{
     prelude::*,
-    std::tensor::{View, layout::Coords2d, r#virtual::VirtualTensor},
+    std::tensor::{ViewMut, layout::Coords2d, r#virtual::VirtualTensor},
 };
 
 #[derive(CubeType)]
-pub struct PerpendicularWriter<Out: NumericVector> {
-    output: View<Vector<Out::T, Out::N>, Coords2d, ReadWrite>,
+pub struct PerpendicularWriter<'a, Out: NumericVector> {
+    output: ViewMut<'a, Vector<Out::T, Out::N>, Coords2d>,
     axis_size: usize,
     #[cube(comptime)]
     input_vector_size: VectorSize,
@@ -25,15 +25,15 @@ pub struct PerpendicularWriter<Out: NumericVector> {
 }
 
 #[cube]
-impl<Out: NumericVector> PerpendicularWriter<Out> {
+impl<'a, Out: NumericVector> PerpendicularWriter<'a, Out> {
     pub fn new<P: ReducePrecision>(
         input: &VirtualTensor<P::EI, P::SI>,
-        output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
+        output: &'a mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         reduce_axis: usize,
         out_vec_axis: usize,
         write_index: usize,
         #[comptime] accumulator_format: AccumulatorFormat,
-    ) -> PerpendicularWriter<Out> {
+    ) -> PerpendicularWriter<'a, Out> {
         let input_vector_size = input.vector_size();
         let output_vector_size = output.vector_size();
 
@@ -44,7 +44,7 @@ impl<Out: NumericVector> PerpendicularWriter<Out> {
             accumulator_format.len(),
         );
 
-        PerpendicularWriter::<Out> {
+        PerpendicularWriter::<'a, Out> {
             output: output.view_mut(layout),
             axis_size: input.shape(reduce_axis),
             write_index,
@@ -83,8 +83,8 @@ impl<Out: NumericVector> PerpendicularWriter<Out> {
 }
 
 #[cube]
-impl<Out: NumericVector> PerpendicularWriter<Out> {
-    fn write_single<S: Size>(&self, vector: Vector<Out::T, S>, k_index: usize) {
+impl<Out: NumericVector> PerpendicularWriter<'_, Out> {
+    fn write_single<S: Size>(&mut self, vector: Vector<Out::T, S>, k_index: usize) {
         if comptime![self.output_vector_size == self.input_vector_size] {
             self.output.write(
                 (self.write_index as u32, k_index as u32),
@@ -111,7 +111,7 @@ impl<Out: NumericVector> PerpendicularWriter<Out> {
         }
     }
 
-    fn write_multiple<S: Size>(&self, array: Array<Vector<Out::T, S>>) {
+    fn write_multiple<S: Size>(&mut self, array: Array<Vector<Out::T, S>>) {
         #[unroll]
         for i in 0..self.accumulator_length {
             self.write_single(array[i], i);

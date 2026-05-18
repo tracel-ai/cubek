@@ -7,8 +7,11 @@ use super::{
 };
 use crate::definition::{MaxPoolOptions, PoolError};
 use cubecl::{
-    CubeDim, Runtime, calculate_cube_count_elemwise, num_traits::Zero, prelude::TensorBinding,
-    prelude::*, std::tensor::View, tensor_vector_size_parallel,
+    CubeDim, Runtime, calculate_cube_count_elemwise,
+    num_traits::Zero,
+    prelude::{TensorBinding, *},
+    std::tensor::ViewMut,
+    tensor_vector_size_parallel,
 };
 
 struct MaxPoolStrategy;
@@ -21,7 +24,7 @@ impl Pool2dDirectStrategyFamily for MaxPoolStrategy {
 }
 
 impl Pool2dDirectStrategyFamily for MaxPoolWithIndicesStrategy {
-    type Indices<N: Size> = View<Vector<i32, N>, Position, ReadWrite>;
+    type Indices<N: Size> = ViewMut<'static, Vector<i32, N>, Position>;
     type Config = ();
     type Pool2d<T: Numeric, N: Size> = Self;
 }
@@ -56,7 +59,7 @@ impl<T: Numeric, N: Size> Pool2dDirectStrategy<T, N> for MaxPoolStrategy {
     fn store(
         #[comptime] _config: &Self::Config,
         position: Position,
-        output: &mut View<Vector<T, N>, Position, ReadWrite>,
+        output: &mut ViewMut<Vector<T, N>, Position>,
         _output_indices: &mut (),
         accumulator: Self::Accumulator,
     ) {
@@ -68,7 +71,7 @@ impl<T: Numeric, N: Size> Pool2dDirectStrategy<T, N> for MaxPoolStrategy {
 impl<T: Numeric, N: Size> Pool2dDirectStrategy<T, N> for MaxPoolWithIndicesStrategy {
     type Accumulator = (Vector<T, N>, Vector<i32, N>);
     type Config = ();
-    type Indices = View<Vector<i32, N>, Position, ReadWrite>;
+    type Indices = ViewMut<'static, Vector<i32, N>, Position>;
 
     fn initialize(#[comptime] _config: &Self::Config) -> Self::Accumulator {
         let val = Vector::new(T::min_value());
@@ -98,8 +101,8 @@ impl<T: Numeric, N: Size> Pool2dDirectStrategy<T, N> for MaxPoolWithIndicesStrat
     fn store(
         #[comptime] _config: &Self::Config,
         position: Position,
-        output: &mut View<Vector<T, N>, Position, ReadWrite>,
-        output_indices: &mut View<Vector<i32, N>, Position, ReadWrite>,
+        output: &mut ViewMut<Vector<T, N>, Position>,
+        output_indices: &mut ViewMut<Vector<i32, N>, Position>,
         accumulator: Self::Accumulator,
     ) {
         output.write(position, accumulator.0);

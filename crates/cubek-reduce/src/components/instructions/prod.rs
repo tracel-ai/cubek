@@ -15,7 +15,7 @@ impl ReduceFamily for Prod {
 
 #[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for Prod {
-    type SharedAccumulator = SharedMemory<Vector<P::EA, P::SI>>;
+    type SharedAccumulator = Shared<[Vector<P::EA, P::SI>]>;
     type Config = ();
 
     fn requirements(_this: &Self) -> ReduceRequirements {

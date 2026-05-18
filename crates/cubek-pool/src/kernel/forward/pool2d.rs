@@ -2,12 +2,11 @@ use crate::kernel::decompose_linear;
 use core::hash::Hash;
 use cubecl::{
     Runtime,
-    prelude::TensorBinding,
-    prelude::*,
+    prelude::{TensorBinding, *},
     std::{
         FastDivmod,
         tensor::{
-            View,
+            ViewMut,
             launch::ViewArg,
             layout::fixed_dim::{FixedDimLayout, FixedDimLayoutLaunch},
         },
@@ -51,7 +50,7 @@ pub(crate) trait Pool2dDirectStrategy<T: Numeric, N: Size>: Send + Sync + 'stati
     fn store(
         #[comptime] config: &Self::Config,
         position: Position,
-        output: &mut View<Vector<T, N>, Position, ReadWrite>,
+        output: &mut ViewMut<Vector<T, N>, Position>,
         output_indices: &mut Self::Indices,
         accumulator: Self::Accumulator,
     );
@@ -70,7 +69,7 @@ pub struct Pool2dDirectArgs {
 #[cube(launch, address_type = "dynamic")]
 pub fn pool2d_direct<E: Numeric, N: Size, S: Pool2dDirectStrategyFamily>(
     input: &Tensor<Vector<E, N>>,
-    output: &mut View<Vector<E, N>, Position, ReadWrite>,
+    mut output: ViewMut<'_, Vector<E, N>, Position>,
     indices: &mut S::Indices<N>,
     out_shape: Sequence<FastDivmod<usize>>,
     working_units: usize,
@@ -127,7 +126,7 @@ pub fn pool2d_direct<E: Numeric, N: Size, S: Pool2dDirectStrategyFamily>(
         }
     }
 
-    S::Pool2d::<E, N>::store(&config, (b, oh, ow, c), output, indices, accumulator);
+    S::Pool2d::<E, N>::store(&config, (b, oh, ow, c), &mut output, indices, accumulator);
 }
 
 pub(crate) fn view4d<R: Runtime>(

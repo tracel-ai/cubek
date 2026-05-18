@@ -8,12 +8,12 @@ use crate::{
 };
 use cubecl::{
     prelude::*,
-    std::tensor::{View, layout::Coords2d, r#virtual::VirtualTensor},
+    std::tensor::{ViewMut, layout::Coords2d, r#virtual::VirtualTensor},
 };
 
 #[derive(CubeType)]
-pub struct ParallelWriter<Out: NumericVector> {
-    output: View<Vector<Out::T, Out::N>, Coords2d, ReadWrite>,
+pub struct ParallelWriter<'a, Out: NumericVector> {
+    output: ViewMut<'a, Vector<Out::T, Out::N>, Coords2d>,
     buffer: Value<Vector<Out::T, Out::N>>,
     axis_size: usize,
     write_index: usize,
@@ -22,15 +22,15 @@ pub struct ParallelWriter<Out: NumericVector> {
 }
 
 #[cube]
-impl<Out: NumericVector> ParallelWriter<Out> {
+impl<'a, Out: NumericVector> ParallelWriter<'a, Out> {
     pub fn new<P: ReducePrecision>(
         input: &VirtualTensor<P::EI, P::SI>,
-        output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
+        output: &'a mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         reduce_axis: usize,
         out_vec_axis: usize,
         write_index: usize,
         #[comptime] accumulator_format: AccumulatorFormat,
-    ) -> ParallelWriter<Out> {
+    ) -> ParallelWriter<'a, Out> {
         let layout = build_reduce_output_layout::<Out>(
             &*output,
             reduce_axis,
@@ -38,7 +38,7 @@ impl<Out: NumericVector> ParallelWriter<Out> {
             accumulator_format.len(),
         );
 
-        ParallelWriter::<Out> {
+        ParallelWriter::<'a, Out> {
             output: output.view_mut(layout),
             buffer: match accumulator_format {
                 AccumulatorFormat::Single => Value::new_single(Vector::empty()),

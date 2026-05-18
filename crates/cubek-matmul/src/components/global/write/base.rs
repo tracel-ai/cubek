@@ -5,17 +5,24 @@ use crate::{
         },
         stage::{Stage, StageFamily},
     },
-    definition::MatrixTypes,
+    definition::{self, MatrixTypes},
 };
 use cubecl::{
     prelude::*,
-    std::tensor::{View, layout::Coords2d},
+    std::tensor::{ViewMut, layout::Coords2d},
 };
 use cubek_std::stage::StageMemoryConfig;
 
+pub type WriterStage<GW, MT> = <<GW as GlobalWriterFamily>::Stage as StageFamily>::Stage<
+    definition::Stage<MT>,
+    definition::StageSize<MT>,
+    WriteTiling,
+>;
+
 pub trait GlobalWriterFamily: 'static + Send + Sync {
     type Stage: StageFamily;
-    type Writer<IP: MatrixTypes>: GlobalWriter<
+    type Writer<'a, IP: MatrixTypes>: GlobalWriter<
+            'a,
             IP,
             Stage = <Self::Stage as StageFamily>::Stage<IP::Stage, IP::StageSize, WriteTiling>,
         >;
@@ -24,13 +31,13 @@ pub trait GlobalWriterFamily: 'static + Send + Sync {
 #[cube]
 /// Responsible of writing the accumulated stage matmul output
 /// to global memory
-pub trait GlobalWriter<IP: MatrixTypes>: WriteEventListener + CubeType + 'static {
+pub trait GlobalWriter<'a, IP: MatrixTypes>: WriteEventListener + CubeType + 'a {
     /// Tile stage that stores the data for this writer
     type Stage: Stage<IP::Stage>;
 
     /// Init this writer from a global tensor and config
     fn init(
-        tensor: View<Vector<IP::Global, IP::GlobalSize>, Coords2d, ReadWrite>,
+        tensor: ViewMut<'a, Vector<IP::Global, IP::GlobalSize>, Coords2d>,
         #[comptime] config: GlobalWriterConfig,
     ) -> Self;
 

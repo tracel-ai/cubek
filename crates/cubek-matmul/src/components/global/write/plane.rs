@@ -9,14 +9,17 @@ use crate::{
     },
     definition::{MatrixTypes, StageIdent},
 };
-use cubecl::{prelude::*, std::tensor::View, std::tensor::layout::Coords2d};
+use cubecl::{
+    prelude::*,
+    std::tensor::{ViewMut, layout::Coords2d},
+};
 use cubek_std::{stage::StageMemoryConfig, tile::StridedTile};
 
 #[derive(CubeType)]
 /// Writes tiles from out shared memory to output global memory
 /// using a plane for each tile
-pub struct PlaneWriter<IP: MatrixTypes> {
-    global: View<Vector<IP::Global, IP::GlobalSize>, TiledCoords, ReadWrite>,
+pub struct PlaneWriter<'a, IP: MatrixTypes> {
+    global: ViewMut<'a, Vector<IP::Global, IP::GlobalSize>, TiledCoords>,
     stage: PartitionedStage<IP::Stage, IP::StageSize>,
 
     #[cube(comptime)]
@@ -26,9 +29,9 @@ pub struct PlaneWriter<IP: MatrixTypes> {
 }
 
 #[cube]
-impl<IP: MatrixTypes> PlaneWriter<IP> {
+impl<'a, IP: MatrixTypes> PlaneWriter<'a, IP> {
     pub fn new(
-        global: View<Vector<IP::Global, IP::GlobalSize>, Coords2d, ReadWrite>,
+        global: ViewMut<'a, Vector<IP::Global, IP::GlobalSize>, Coords2d>,
         #[comptime] config: GlobalWriterConfig,
     ) -> Self {
         let stage = PartitionedStage::new(
@@ -40,7 +43,7 @@ impl<IP: MatrixTypes> PlaneWriter<IP> {
             config.smem_config,
         );
 
-        PlaneWriter::<IP> {
+        PlaneWriter::<'a, IP> {
             global: global.view_mut(TiledLayout::new(StageIdent::Out, config.smem_config)),
             stage,
             plane_dim: config.plane_dim,
@@ -60,7 +63,7 @@ impl<IP: MatrixTypes> PlaneWriter<IP> {
 }
 
 #[cube]
-impl<IP: MatrixTypes> WriteEventListener for PlaneWriter<IP> {
+impl<IP: MatrixTypes> WriteEventListener for PlaneWriter<'_, IP> {
     fn on_event(this: &mut Self, event: super::WriteEvent) {
         #[allow(clippy::single_match)]
         match event {
@@ -73,11 +76,11 @@ impl<IP: MatrixTypes> WriteEventListener for PlaneWriter<IP> {
 }
 
 #[cube]
-impl<IP: MatrixTypes> GlobalWriter<IP> for PlaneWriter<IP> {
+impl<'a, IP: MatrixTypes> GlobalWriter<'a, IP> for PlaneWriter<'a, IP> {
     type Stage = PartitionedStage<IP::Stage, IP::StageSize>;
 
     fn init(
-        tensor: View<Vector<IP::Global, IP::GlobalSize>, Coords2d, ReadWrite>,
+        tensor: ViewMut<'a, Vector<IP::Global, IP::GlobalSize>, Coords2d>,
         #[comptime] config: GlobalWriterConfig,
     ) -> Self {
         Self::new(tensor, config)
@@ -90,7 +93,7 @@ impl<IP: MatrixTypes> GlobalWriter<IP> for PlaneWriter<IP> {
 
 #[cube]
 pub fn plane_write<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
-    global: &mut View<Vector<EG, NG>, TiledCoords, ReadWrite>,
+    global: &mut ViewMut<Vector<EG, NG>, TiledCoords>,
     smem_tile: &StridedTile<ES, NS>,
     tile_pos: Coords2d,
     #[comptime] plane_dim: u32,
@@ -119,7 +122,7 @@ pub fn plane_write<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
 
 #[cube]
 fn write_vector<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
-    view: &mut View<Vector<EG, NG>, TiledCoords, ReadWrite>,
+    view: &mut ViewMut<Vector<EG, NG>, TiledCoords>,
     out_smem_tile: &StridedTile<ES, NS>,
     unit_write: u32,
     tile: Coords2d,
@@ -157,5 +160,5 @@ pub struct PlaneWriterFamily;
 
 impl GlobalWriterFamily for PlaneWriterFamily {
     type Stage = PartitionedStageFamily;
-    type Writer<IP: MatrixTypes> = PlaneWriter<IP>;
+    type Writer<'a, IP: MatrixTypes> = PlaneWriter<'a, IP>;
 }

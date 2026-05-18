@@ -31,8 +31,8 @@ pub struct ArgTopkAccumulator<E: Scalar, S: Size> {
 
 #[derive(CubeType)]
 pub struct ArgTopKSharedAccumulator<P: ReducePrecision> {
-    elements: Sequence<SharedMemory<Vector<P::EA, P::SI>>>,
-    args: Sequence<SharedMemory<Vector<u32, P::SI>>>,
+    elements: Sequence<Shared<[Vector<P::EA, P::SI>]>>,
+    args: Sequence<Shared<[Vector<u32, P::SI>]>>,
     #[cube(comptime)]
     k: usize,
 }
@@ -43,8 +43,8 @@ impl<P: ReducePrecision> SharedAccumulator<P, ArgTopK> for ArgTopKSharedAccumula
         let mut elements = Sequence::new();
         let mut args = Sequence::new();
         for _ in 0..inst.k {
-            elements.push(SharedMemory::new(length));
-            args.push(SharedMemory::new(length));
+            elements.push(Shared::new_slice(length));
+            args.push(Shared::new_slice(length));
         }
         ArgTopKSharedAccumulator::<P> {
             elements,

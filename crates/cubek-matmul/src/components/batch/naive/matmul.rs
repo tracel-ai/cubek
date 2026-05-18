@@ -43,19 +43,18 @@ pub(crate) fn matmul_entry<
     #[define(Lhs, Rhs, Acc)] _global: [StorageType; 3],
     #[define(LhsSize, RhsSize, AccSize)] _sizes: [usize; 3],
 ) {
-    let mut state =
-        Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
-            inputs,
-            output,
-            runtime_config,
-            blueprint.lhs_global_layout_config(),
-            blueprint.rhs_global_layout_config(),
-            blueprint.out_global_layout_config(),
-        );
+    let state = Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
+        inputs,
+        output,
+        runtime_config,
+        blueprint.lhs_global_layout_config(),
+        blueprint.rhs_global_layout_config(),
+        blueprint.out_global_layout_config(),
+    );
 
     let vector_size_lhs = Args::view_lhs(&state).vector_size();
     let vector_size_rhs = Args::view_rhs(&state).vector_size();
-    let vector_size_out = Args::view_out(&mut state).vector_size();
+    let vector_size_out = Args::view_out(&state).vector_size();
     let vector_sizes = comptime!(MatmulVectorSizes {
         lhs: vector_size_lhs,
         rhs: vector_size_rhs,
@@ -76,15 +75,14 @@ pub(crate) fn matmul_entry<
     }
     let config = comptime!(config.unwrap());
 
-    let mut state =
-        Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
-            inputs,
-            output,
-            runtime_config,
-            config.lhs_global_layout_config(),
-            config.rhs_global_layout_config(),
-            config.out_global_layout_config(),
-        );
+    let state = Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
+        inputs,
+        output,
+        runtime_config,
+        config.lhs_global_layout_config(),
+        config.rhs_global_layout_config(),
+        config.out_global_layout_config(),
+    );
 
     let define!(RegisterLhs) = blueprint.dtypes.lhs_register;
     let define!(RegisterRhs) = blueprint.dtypes.rhs_register;
@@ -94,7 +92,7 @@ pub(crate) fn matmul_entry<
         (Lhs, LhsSize, Lhs, LhsSize, RegisterLhs, LhsSize),
         (Rhs, RhsSize, Rhs, RhsSize, RegisterRhs, RhsSize),
         (Acc, AccSize, Acc, AccSize, RegisterAcc, AccSize),
-    )>::execute::<Args>(&mut state, cube_mapping, config);
+    )>::execute::<Args>(&state, cube_mapping, config);
 }
 
 pub struct NaiveMatmul<MP: MatmulTypes> {
@@ -106,12 +104,12 @@ impl<MT: MatmulTypes> BatchMatmul<(), MT> for NaiveMatmul<MT> {
     type Config = NaiveMatmulConfig;
 
     fn execute<Args: MatmulArgs>(
-        state: &mut Args::State<LhsG<MT>, RhsG<MT>, AccG<MT>>,
+        state: &Args::State<LhsG<MT>, RhsG<MT>, AccG<MT>>,
         _cube_mapping: CubeMapping,
         #[comptime] _config: Self::Config,
     ) {
-        let lhs = Args::view_lhs(&*state);
-        let rhs = Args::view_rhs(&*state);
+        let lhs = Args::view_lhs(state);
+        let rhs = Args::view_rhs(state);
         let out = Args::view_out(state);
 
         let (_, _, k) = lhs.shape();
@@ -121,12 +119,12 @@ impl<MT: MatmulTypes> BatchMatmul<(), MT> for NaiveMatmul<MT> {
         let n = ABSOLUTE_POS_Y;
         let batch = ABSOLUTE_POS_Z as usize;
 
-        let lhs_batch = Args::batch_lhs(&*state, batch);
+        let lhs_batch = Args::batch_lhs(state, batch);
         let lhs = lhs.view(SliceIndex::new(lhs_batch, lhs.shape()));
-        let rhs_batch = Args::batch_rhs(&*state, batch);
+        let rhs_batch = Args::batch_rhs(state, batch);
         let rhs = rhs.view(SliceIndex::new(rhs_batch, rhs.shape()));
-        let out_batch = Args::batch_out(&*state, batch);
-        let out = out.view_mut(SliceIndex::new(out_batch, out.shape()));
+        let out_batch = Args::batch_out(state, batch);
+        let mut out = out.view_mut(SliceIndex::new(out_batch, out.shape()));
 
         if m >= size_m || n >= size_n {
             terminate!();
