@@ -576,9 +576,12 @@ fn auto<R: Runtime>(
     ) {
         match err {
             MatmulSetupError::Unavailable(_) => {
+                // Propagate the fallback's error (rather than unwrap) so callers
+                // — including `Strategy::Auto`, autotune, and the test harness's
+                // `policy = "correct"` — can distinguish a clean "no kernel fits"
+                // from a hard panic, and recover or report it as appropriate.
                 Strategy::SimpleUnit(Default::default())
-                    .launch_ref(client, lhs, rhs, out, dtypes)
-                    .unwrap();
+                    .launch_ref(client, lhs, rhs, out, dtypes)?;
             }
             _ => panic!("{err:?}"),
         }

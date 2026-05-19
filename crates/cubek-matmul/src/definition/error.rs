@@ -69,6 +69,12 @@ pub enum MatmulAvailabilityError {
 
     /// Plane operations like plane_sum are unavailable
     PlaneOpsUnavailable,
+
+    /// The kernel's shared-memory footprint exceeds the device's per-cube limit.
+    SharedMemoryTooBig {
+        requested: usize,
+        available: usize,
+    },
 }
 impl From<MatmulAvailabilityError> for MatmulSetupError {
     fn from(value: MatmulAvailabilityError) -> Self {
@@ -189,6 +195,13 @@ impl Debug for MatmulAvailabilityError {
             MatmulAvailabilityError::TileSizeNotFound => {
                 writeln!(f, "No tile size is available for the problem.")
             }
+            MatmulAvailabilityError::SharedMemoryTooBig {
+                requested,
+                available,
+            } => writeln!(
+                f,
+                "Shared memory budget exceeded: kernel requests {requested} bytes, hardware allows {available} bytes per cube."
+            ),
         }
     }
 }
