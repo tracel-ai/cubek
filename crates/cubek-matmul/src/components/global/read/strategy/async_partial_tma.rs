@@ -1,6 +1,7 @@
-use crate::components::{
-    global::SharedGlobalMatmulConfig,
-    stage::{StridedStageFamily},
+use crate::components::{global::SharedGlobalMatmulConfig, stage::StridedStageFamily};
+use crate::{
+    components::global::memory::GlobalIterator,
+    definition::{LhsS, MatmulElems, MatmulProblem, MatmulTypes, RhsS, StageIdent},
 };
 use crate::{
     components::global::read::{AsyncPartialLoadingStrategy, validate_tma_with_problem},
@@ -12,10 +13,6 @@ use crate::{
     components::global::{GlobalConfig, GlobalReaderConfig},
     components::global::{PlaneFlowPartition, multi_stage::LoadMaxRoundPlaneCount},
     components::stage::StridedStageMemory,
-};
-use crate::{
-    components::global::memory::GlobalIterator,
-    definition::{LhsS, MatmulElems, MatmulProblem, MatmulTypes, RhsS, StageIdent},
 };
 use cubecl::{
     prelude::*,

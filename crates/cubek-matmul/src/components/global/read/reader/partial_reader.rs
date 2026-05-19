@@ -49,10 +49,7 @@ pub trait AsyncPartialLoadingStrategy<RC: RuntimeConfig>:
     /// Extra synchronization after initializing the barrier, if needed
     fn barrier_post_init();
     /// Arrive at the barrier using the correct completion mechanism, without waiting
-    fn arrive<MP: MatmulTypes>(
-        barrier: &mut Barrier,
-        #[comptime] config: SharedGlobalMatmulConfig,
-    );
+    fn arrive<MP: MatmulTypes>(barrier: &mut Barrier, #[comptime] config: SharedGlobalMatmulConfig);
     /// Whether this unit should participate in the load loop
     fn is_elected(#[comptime] config: SharedGlobalMatmulConfig) -> bool;
 }

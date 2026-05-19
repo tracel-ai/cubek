@@ -20,7 +20,7 @@ mod unit_partitioned;
 mod variant;
 
 pub use common::{
-    NumStages, PartitionBuffering, Partitioner, PartitionedStageMatmul, PlanePartitioner,
+    NumStages, PartitionBuffering, PartitionedStageMatmul, Partitioner, PlanePartitioner,
     StagePartitioner, UnitPartitioner, init_a_fragment, init_accumulator, init_b_fragments,
 };
 pub use plane_partitioned::PlanePartitioned;

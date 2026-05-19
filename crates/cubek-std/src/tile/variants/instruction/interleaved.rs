@@ -243,10 +243,7 @@ pub fn interleaved_load_from_shared<E: Numeric, ES: Size, N: Numeric, IO: SliceV
 }
 
 #[cube]
-pub fn interleaved_load_zeros<N: Numeric>(
-    arr: &mut Array<N>,
-    #[comptime] tile_size: TileSize,
-) {
+pub fn interleaved_load_zeros<N: Numeric>(arr: &mut Array<N>, #[comptime] tile_size: TileSize) {
     let m = tile_size.m() as usize;
     let n = tile_size.n() as usize;
     let size = m * n;

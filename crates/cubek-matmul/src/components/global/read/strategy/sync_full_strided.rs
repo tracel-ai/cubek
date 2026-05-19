@@ -1,8 +1,8 @@
 use crate::{
+    components::global::memory::GlobalIterator,
     components::global::read::{FullLoadingStrategy, stage::FullStageLayout},
     components::global::{GlobalReaderConfig, PlaneFlowPartition},
     components::global::{multi_stage::LoadMaxRoundPlaneCount, read::sync::Synchronous},
-    components::global::memory::GlobalIterator,
     components::stage::{StridedStageFamily, StridedStageMemory},
     definition::{MatmulElems, MatmulProblem, StageIdent},
     {components::global::read::validate_swizzle_atom_size, launch::RuntimeConfig},

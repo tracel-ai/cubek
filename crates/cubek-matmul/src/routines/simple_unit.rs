@@ -55,11 +55,7 @@ impl<RC, LL, RL, AL> Routine<RC> for SimpleUnitAlgorithm<LL, RL, AL>
 where
     RC: RuntimeConfig,
     LL: FullLoadingStrategy<RC>,
-    RL: FullLoadingStrategy<
-            RC,
-            Stage = LL::Stage,
-            SyncStrategy = LL::SyncStrategy,
-        >,
+    RL: FullLoadingStrategy<RC, Stage = LL::Stage, SyncStrategy = LL::SyncStrategy>,
     AL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
 {
     type Strategy = SimpleUnitSelectionArgs;

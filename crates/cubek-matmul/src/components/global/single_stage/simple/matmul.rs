@@ -6,8 +6,8 @@ use crate::{
             read::{FullLoaderStage, FullLoadingStrategy, FullStageGlobalReader, SyncStrategy},
         },
         stage::{
-            {init_a_fragment, init_accumulator, init_b_fragments},
             {StagePartitioner, partition_coordinates},
+            {init_a_fragment, init_accumulator, init_b_fragments},
         },
     },
     definition::*,
@@ -267,8 +267,6 @@ where
     }
 
     fn init_accumulators(#[comptime] config: Self::Config) -> Self::Accumulators {
-        init_accumulator::<MP, SP::Scope>(
-            config.stage_config.shared(),
-        )
+        init_accumulator::<MP, SP::Scope>(config.stage_config.shared())
     }
 }

@@ -86,13 +86,7 @@ where
     type Strategy = SpecializedStrategy;
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
-        SpecializedMatmulFamily<
-            PlanePartitioner,
-            RC,
-            L,
-            AL,
-            PlaneWriterFamily,
-        >,
+        SpecializedMatmulFamily<PlanePartitioner, RC, L, AL, PlaneWriterFamily>,
         RowMajorGlobalPartitionMatmul,
     >;
     type Blueprint = TilingBlueprint;

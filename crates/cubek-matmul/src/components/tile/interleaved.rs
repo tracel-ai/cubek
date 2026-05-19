@@ -8,9 +8,7 @@ use cubek_std::{
     tile::{Plane, TileScope},
 };
 
-use crate::definition::{
-    MatmulElems, MatmulSetupError, MatmulVectorSizes, TilingBlueprint,
-};
+use crate::definition::{MatmulElems, MatmulSetupError, MatmulVectorSizes, TilingBlueprint};
 
 use super::{common::check_types_available, variant::TileVariant};
 

@@ -2,15 +2,15 @@ use std::marker::PhantomData;
 
 use crate::components::global::memory::GlobalIterator;
 use crate::{
+    components::global::multi_stage::LoadMaxRoundPlaneCount,
+    definition::{MatmulElems, MatmulProblem, StageIdent},
+    {components::global::GlobalReaderConfig, launch::RuntimeConfig},
+};
+use crate::{
     components::global::read::validate_swizzle_atom_size,
     components::global::read::{PartialLoadingStrategy, sync::Synchronous},
     components::global::{PlaneFlowPartition, read::tiled::TiledLayout},
     components::stage::{StridedStageFamily, StridedStageMemory},
-};
-use crate::{
-    components::global::multi_stage::LoadMaxRoundPlaneCount,
-    definition::{MatmulElems, MatmulProblem, StageIdent},
-    {components::global::GlobalReaderConfig, launch::RuntimeConfig},
 };
 use cubecl::{
     std::tensor::layout::Coords2d,

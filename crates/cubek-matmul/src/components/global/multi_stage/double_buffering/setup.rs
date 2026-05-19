@@ -1,4 +1,3 @@
-use cubek_std::MatrixLayout;
 use crate::components::global::{
     GlobalReaderConfig, GlobalWriterConfig, SharedGlobalMatmulConfig, make_plane_flow_config,
 };
@@ -10,18 +9,19 @@ use crate::definition::{
 };
 use crate::launch::RuntimeConfig;
 use crate::{
-    components::global::memory::{GlobalMemoryConfig, ViewDirection},
-    components::global::multi_stage::EventLoadingMode,
-};
-use crate::{
+    components::global::GlobalMatmulFamily,
     components::global::read::PartialLoadingStrategy,
     components::stage::StagePartitioner,
     components::{CubeDimResource, global::read::FullLoadingStrategy},
-    components::global::GlobalMatmulFamily,
     components::{global::MaxGlobalReaderPlanes, stage::NumStages},
     definition::TilingBlueprint,
 };
+use crate::{
+    components::global::memory::{GlobalMemoryConfig, ViewDirection},
+    components::global::multi_stage::EventLoadingMode,
+};
 use cubecl::{ir::DeviceProperties, prelude::*};
+use cubek_std::MatrixLayout;
 use std::marker::PhantomData;
 
 /// Double buffering matmul family for any precision
@@ -180,7 +180,9 @@ where
         let plane_flow_config = make_plane_flow_config(
             blueprint.load_flows,
             max_global_readers,
-            SP::KIND.cubedim_resource(blueprint)?.num_planes(blueprint.plane_dim)?,
+            SP::KIND
+                .cubedim_resource(blueprint)?
+                .num_planes(blueprint.plane_dim)?,
         )?;
 
         Ok(CubeDimResource::Specialized(plane_flow_config))

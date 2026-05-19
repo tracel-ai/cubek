@@ -1,9 +1,9 @@
 use crate::{
+    components::global::memory::GlobalIterator,
+    components::global::multi_stage::LoadMaxRoundPlaneCount,
     components::global::read::{FullLoadingStrategy, validate_tma_with_problem},
     components::global::read::{validate_async_barrier, validate_tma},
     components::global::{PlaneFlowPartition, read::async_tma::AsyncTma},
-    components::global::memory::GlobalIterator,
-    components::global::multi_stage::LoadMaxRoundPlaneCount,
     components::stage::{StridedStageFamily, StridedStageMemory},
     definition::{MatmulElems, MatmulProblem, StageIdent},
     {components::global::GlobalReaderConfig, launch::RuntimeConfig},

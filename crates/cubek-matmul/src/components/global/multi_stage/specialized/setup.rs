@@ -7,12 +7,8 @@ use crate::components::global::{
     read::AsyncPartialLoadingStrategy,
 };
 use crate::{
-    components::global::{GlobalWriterFamily, multi_stage::specialized::SpecializedMatmul},
-    components::global::{InputLoadFlow, LoadFlows},
-};
-use crate::{
-    components::global::{multi_stage::EventLoadingMode, read::FullLoadingStrategy},
     components::global::GlobalMatmulFamily,
+    components::global::{multi_stage::EventLoadingMode, read::FullLoadingStrategy},
     components::stage::StagePartitioner,
     components::{global::MaxGlobalReaderPlanes, stage::NumStages},
     definition::MatmulVectorSizes,
@@ -21,6 +17,10 @@ use crate::{
     definition::{MatmulElems, MatmulSetupError},
     definition::{MatmulProblem, MatmulTypes},
     launch::RuntimeConfig,
+};
+use crate::{
+    components::global::{GlobalWriterFamily, multi_stage::specialized::SpecializedMatmul},
+    components::global::{InputLoadFlow, LoadFlows},
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::MatrixLayout;
@@ -49,14 +49,7 @@ where
     AL: FullLoadingStrategy<RC>,
     GW: GlobalWriterFamily,
 {
-    type Matmul<MP: MatmulTypes> = SpecializedMatmul<
-        MP,
-        SP,
-        RC,
-        L,
-        AL,
-        GW::Writer<MP::Acc>,
-    >;
+    type Matmul<MP: MatmulTypes> = SpecializedMatmul<MP, SP, RC, L, AL, GW::Writer<MP::Acc>>;
     type Config = SharedGlobalMatmulConfig;
 
     fn expand_config(
@@ -189,7 +182,9 @@ where
         let plane_flow_config = make_plane_flow_config(
             blueprint.load_flows,
             Some(max_global_readers),
-            SP::KIND.cubedim_resource(&blueprint)?.num_planes(plane_dim)?,
+            SP::KIND
+                .cubedim_resource(&blueprint)?
+                .num_planes(plane_dim)?,
         )?;
 
         Ok(CubeDimResource::Specialized(plane_flow_config))

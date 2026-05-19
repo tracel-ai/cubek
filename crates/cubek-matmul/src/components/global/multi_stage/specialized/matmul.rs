@@ -11,8 +11,8 @@ use crate::{
     components::global::{GlobalMatmul, SharedGlobalMatmulConfig},
     components::global::{PlaneFlowPartition, read::AsyncPartialLoadingStrategy},
     components::stage::{
-        {init_a_fragment, init_accumulator, init_b_fragments},
         {StagePartitioner, partition_coordinates},
+        {init_a_fragment, init_accumulator, init_b_fragments},
     },
     definition::*,
     launch::RuntimeConfig,
@@ -237,10 +237,7 @@ where
         } else if role_rule.is_compute_plane() {
             let mut lhs_tile = init_a_fragment::<MP, SP::Scope>(stage_shared);
             let mut rhs_tile = init_b_fragments::<MP, SP::Scope>(stage_shared);
-            let mut acc =
-                init_accumulator::<MP, SP::Scope>(
-                    stage_shared,
-                );
+            let mut acc = init_accumulator::<MP, SP::Scope>(stage_shared);
 
             load_partition_from_stage::<
                 AccSE<MP>,
@@ -360,8 +357,6 @@ where
     }
 
     fn init_accumulators(#[comptime] config: Self::Config) -> Self::Accumulators {
-        init_accumulator::<MP, SP::Scope>(
-            config.stage_config.shared(),
-        )
+        init_accumulator::<MP, SP::Scope>(config.stage_config.shared())
     }
 }

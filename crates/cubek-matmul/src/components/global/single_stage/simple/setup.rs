@@ -1,4 +1,3 @@
-use cubek_std::MatrixLayout;
 use crate::{components::CubeDimResource, launch::RuntimeConfig};
 use crate::{
     components::stage::NumStages,
@@ -21,6 +20,7 @@ use crate::{
     definition::TilingBlueprint,
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
+use cubek_std::MatrixLayout;
 use std::marker::PhantomData;
 
 use crate::components::global::GlobalMatmulFamily;
@@ -51,15 +51,7 @@ where
     AL: FullLoadingStrategy<RC>,
     GW: GlobalWriterFamily,
 {
-    type Matmul<MP: MatmulTypes> = SimpleMatmul<
-        MP,
-        SP,
-        RC,
-        LL,
-        RL,
-        AL,
-        GW::Writer<MP::Acc>,
-    >;
+    type Matmul<MP: MatmulTypes> = SimpleMatmul<MP, SP, RC, LL, RL, AL, GW::Writer<MP::Acc>>;
     type Config = SharedGlobalMatmulConfig;
 
     fn expand_config(

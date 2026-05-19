@@ -240,4 +240,3 @@ pub fn mma_fill_fragment<E: Numeric, N: Size, V: Numeric, A: Numeric, B: Numeric
         fragment[i] = value;
     }
 }
-

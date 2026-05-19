@@ -4,7 +4,6 @@ use cubecl::{
 };
 use cubek_matmul::components::global::read::FullLoadingStrategy;
 use cubek_matmul::components::global::read::sync_full_cyclic::SyncFullCyclicLoading;
-use cubek_std::tile::{ColMajorTilingOrder, RowMajorTilingOrder};
 use cubek_matmul::{
     components::global::read::{
         async_full_tma::AsyncFullTmaLoading, sync_full_strided::SyncFullStridedLoading,
@@ -16,6 +15,7 @@ use cubek_matmul::{
     definition::{AvailableVectorSizes, TilingBlueprint},
     launch::{TensorArgs, TensorMapArgs},
 };
+use cubek_std::tile::{ColMajorTilingOrder, RowMajorTilingOrder};
 use std::marker::PhantomData;
 
 use crate::{

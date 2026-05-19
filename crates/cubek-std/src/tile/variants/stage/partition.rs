@@ -87,9 +87,7 @@ impl<CRE: Numeric, Sc: TileScope> PartitionTile<CRE, Sc, ReadWrite> {
                 scheduler,
             );
         } else {
-            panic!(
-                "PartitionTile::execute_with_listener: b_fragments must have length 1 or 2"
-            );
+            panic!("PartitionTile::execute_with_listener: b_fragments must have length 1 or 2");
         }
     }
 }

@@ -63,12 +63,7 @@ impl<N: Numeric, Sc: TileScope> Tile<N, Sc, ReadWrite> {
         listener: SEL,
         scheduler: &PartitionScheduler,
     ) {
-        match (
-            &lhs.kind,
-            &rhs.kind,
-            &mut self.kind,
-            &mut b_fragments.kind,
-        ) {
+        match (&lhs.kind, &rhs.kind, &mut self.kind, &mut b_fragments.kind) {
             (
                 TileKind::Stage(a_stage),
                 TileKind::Stage(b_stage),
@@ -120,10 +115,8 @@ pub fn load_partition_from_stage<
 
             let acc_tile = acc.partition_tile_at_mut(m, n, n_iterations);
             let tile = StageAcc::tile::<Sc>(stage, (m_stage, n_stage));
-            acc_tile.copy_from::<AccSE, AccSS, LhsRE, RhsRE, AccRE, ReadOnly>(
-                &tile,
-                StageIdent::Acc,
-            );
+            acc_tile
+                .copy_from::<AccSE, AccSS, LhsRE, RhsRE, AccRE, ReadOnly>(&tile, StageIdent::Acc);
         }
     }
 }

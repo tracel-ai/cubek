@@ -2,17 +2,17 @@ use crate::components::global::read::{
     FullLoadingStrategy, stage::FullStageLayout, validate_async_barrier,
 };
 use crate::{
-    components::global::read::async_copy::ASYNC_COPY_WIDTH,
-    components::global::read::validate_async_copy_with_problem,
-};
-use crate::{
+    components::global::memory::GlobalIterator,
     components::global::read::{async_copy::async_copy_from, validate_swizzle_atom_size},
     components::global::{GlobalReaderConfig, PlaneFlowPartition},
     components::global::{multi_stage::LoadMaxRoundPlaneCount, read::validate_async_copy},
-    components::global::memory::GlobalIterator,
     components::stage::{StridedStageFamily, StridedStageMemory},
     definition::{MatmulElems, MatmulProblem, StageIdent},
     {components::global::read::async_barrier::AsyncCopy, launch::RuntimeConfig},
+};
+use crate::{
+    components::global::read::async_copy::ASYNC_COPY_WIDTH,
+    components::global::read::validate_async_copy_with_problem,
 };
 use cubecl::{
     prelude::*,

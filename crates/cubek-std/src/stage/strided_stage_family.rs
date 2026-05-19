@@ -4,7 +4,9 @@
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 
 use crate::{
-    stage::{LoadStageFamily, Stage, StageFamily, StageMemoryConfig, StridedStageMemory, TilingLayout},
+    stage::{
+        LoadStageFamily, Stage, StageFamily, StageMemoryConfig, StridedStageMemory, TilingLayout,
+    },
     tile::{SharedTile, StageTile, Tile, TileScope},
 };
 

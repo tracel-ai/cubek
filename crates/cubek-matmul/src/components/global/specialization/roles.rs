@@ -1,14 +1,11 @@
 use crate::{
-    components::global::specialization::config::LoadFlows,
     components::global::MaxGlobalReaderPlanes,
-    definition::MatmulSetupError,
+    components::global::specialization::config::LoadFlows, definition::MatmulSetupError,
 };
 
 // Plane-flow vocabulary now lives in cubek-std; re-export the names callers
 // in this crate (and downstream crates) have always used.
-pub use cubek_std::{
-    PlaneFlowConfig, PlaneFlowCounts, PlaneFlowPartition, PlaneFlowPartitionRule,
-};
+pub use cubek_std::{PlaneFlowConfig, PlaneFlowCounts, PlaneFlowPartition, PlaneFlowPartitionRule};
 
 /// Build a [`PlaneFlowConfig`] from matmul-specific load-flow inputs.
 pub fn make_plane_flow_config(

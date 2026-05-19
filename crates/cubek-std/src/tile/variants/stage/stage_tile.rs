@@ -2,7 +2,9 @@ use cubecl::{prelude::*, std::Swizzle};
 
 use crate::{
     MatrixLayout,
-    stage::{StageMemoryConfig, StridedStageMemory, TilingLayout, TilingLayoutEnum, TilingOrderEnum},
+    stage::{
+        StageMemoryConfig, StridedStageMemory, TilingLayout, TilingLayoutEnum, TilingOrderEnum,
+    },
     tile::SharedTile,
 };
 use cubecl::std::tensor::layout::Coords2d;
@@ -108,13 +110,8 @@ impl<E: Numeric, IO: SliceVisibility> StageTile<E, IO> {
             TilingLayoutEnum::Contiguous(order) => {
                 let tile_count_x = comptime!(self.config.tiles_per_stage_along_row());
                 let tile_count_y = comptime!(self.config.tiles_per_stage_along_col());
-                let nth = to_nth_tile_contiguous(
-                    order,
-                    coord,
-                    tile_count_x,
-                    tile_count_y,
-                    self.config,
-                );
+                let nth =
+                    to_nth_tile_contiguous(order, coord, tile_count_x, tile_count_y, self.config);
 
                 let length = comptime!(self.config.elements_per_tile() / stage_vector_size);
                 let stride_elements = match matrix_layout {

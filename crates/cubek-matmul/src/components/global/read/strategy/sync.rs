@@ -1,10 +1,7 @@
 use cubecl::prelude::*;
 
 use crate::{
-    components::{
-        global::{SharedGlobalMatmulConfig, read::SyncStrategy},
-
-    },
+    components::global::{SharedGlobalMatmulConfig, read::SyncStrategy},
     definition::MatmulTypes,
 };
 

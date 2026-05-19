@@ -23,8 +23,8 @@ use crate::{
 };
 use crate::{
     components::stage::{
-        {init_a_fragment, init_accumulator, init_b_fragments},
         {StagePartitioner, partition_coordinates},
+        {init_a_fragment, init_accumulator, init_b_fragments},
     },
     definition::{AccG, AccRE, AccSE, AccSS, LhsG, LhsRE, MatmulTypes, MatrixTypes, RhsG, RhsRE},
     launch::RuntimeConfig,
@@ -137,9 +137,7 @@ where
 
         let stage_shared = config.stage_config.shared();
 
-        let mut acc = init_accumulator::<MP, SP::Scope>(
-            stage_shared,
-        );
+        let mut acc = init_accumulator::<MP, SP::Scope>(stage_shared);
 
         // Algorithm assumes an even number of stages
         let num_stage_matmuls = needed_stage_matmuls + (needed_stage_matmuls % 2);
@@ -353,8 +351,6 @@ where
     }
 
     fn init_accumulators(#[comptime] config: Self::Config) -> Self::Accumulators {
-        init_accumulator::<MP, SP::Scope>(
-            config.stage_config.shared(),
-        )
+        init_accumulator::<MP, SP::Scope>(config.stage_config.shared())
     }
 }

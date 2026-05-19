@@ -1,13 +1,10 @@
-use cubek_std::MatrixLayout;
+use crate::components::global::multi_stage::ordered::{LL, OrderedDoubleBufferingMatmul};
 use crate::components::global::{
     GlobalReaderConfig, GlobalWriterConfig, SharedGlobalMatmulConfig, make_plane_flow_config,
 };
 use crate::components::global::{
     GlobalWriterFamily,
     read::{FullLoadingStrategy, PartialLoadingStrategy, sync::Synchronous},
-};
-use crate::components::global::{
-    multi_stage::ordered::{LL, OrderedDoubleBufferingMatmul},
 };
 use crate::{
     components::global::MaxGlobalReaderPlanes,
@@ -24,6 +21,7 @@ use crate::{
     {components::CubeDimResource, launch::RuntimeConfig},
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
+use cubek_std::MatrixLayout;
 use std::marker::PhantomData;
 
 /// Ordered double buffering matmul family for any precision
@@ -50,14 +48,8 @@ where
     AL: FullLoadingStrategy<RC, SyncStrategy = Synchronous>,
     GW: GlobalWriterFamily,
 {
-    type Matmul<MP: MatmulTypes> = OrderedDoubleBufferingMatmul<
-        MP,
-        SP,
-        RC,
-        RL,
-        AL,
-        GW::Writer<MP::Acc>,
-    >;
+    type Matmul<MP: MatmulTypes> =
+        OrderedDoubleBufferingMatmul<MP, SP, RC, RL, AL, GW::Writer<MP::Acc>>;
     type Config = SharedGlobalMatmulConfig;
 
     fn expand_config(
@@ -185,7 +177,9 @@ where
         let plane_flow_config = make_plane_flow_config(
             blueprint.load_flows,
             max_global_readers,
-            SP::KIND.cubedim_resource(blueprint)?.num_planes(plane_dim)?,
+            SP::KIND
+                .cubedim_resource(blueprint)?
+                .num_planes(plane_dim)?,
         )?;
 
         Ok(CubeDimResource::Specialized(plane_flow_config))

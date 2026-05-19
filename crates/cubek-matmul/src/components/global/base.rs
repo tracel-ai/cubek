@@ -8,8 +8,8 @@ use crate::{
     components::global::multi_stage::EventLoadingMode, components::global::read::ReaderMode,
 };
 use crate::{
-    components::{global::memory::GlobalMemoryConfig, stage::NumStages},
     components::stage::StageMatmul as StageMatmulInstance,
+    components::{global::memory::GlobalMemoryConfig, stage::NumStages},
     definition::StageIdent,
     definition::TilingBlueprint,
     definition::{AccG, MatmulSetupError},

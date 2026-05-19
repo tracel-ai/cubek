@@ -4,26 +4,23 @@ use crate::components::global::{
     GlobalReaderConfig, PlaneFlowPartition, read::async_copy::ASYNC_COPY_WIDTH,
 };
 use crate::components::global::{
+    SharedGlobalMatmulConfig,
+    read::{PartialLoadingStrategy, tiled::TiledLayout},
+};
+use crate::components::global::{
     multi_stage::LoadMaxRoundPlaneCount,
     read::{
         AsyncPartialLoadingStrategy, async_barrier::AsyncCopy, async_copy::async_copy_from,
         validate_async_copy,
     },
 };
-use crate::components::{
-    global::{
-        SharedGlobalMatmulConfig,
-        read::{PartialLoadingStrategy, tiled::TiledLayout},
-    },
-
+use crate::{
+    components::global::memory::GlobalIterator,
+    components::stage::{StridedStageFamily, StridedStageMemory},
 };
 use crate::{
     components::global::read::validate_async_copy_with_problem,
     components::global::read::validate_swizzle_atom_size,
-};
-use crate::{
-    components::global::memory::GlobalIterator,
-    components::stage::{StridedStageFamily, StridedStageMemory},
 };
 use crate::{
     definition::MatmulElems,

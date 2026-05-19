@@ -3,10 +3,7 @@ use cubecl::{
     prelude::*,
 };
 
-use crate::components::{
-    global::{GlobalConfig, SharedGlobalMatmulConfig, read::SyncStrategy},
-
-};
+use crate::components::global::{GlobalConfig, SharedGlobalMatmulConfig, read::SyncStrategy};
 use crate::definition::{LhsS, MatmulTypes, RhsS};
 
 /// Asynchronous barrier for TMA loads

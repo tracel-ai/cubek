@@ -54,7 +54,10 @@ impl PlaneFlowConfig {
     /// All planes participate in the main flow; no load-only planes.
     pub fn new_unspecialized(num_planes: u32) -> Self {
         Self {
-            counts: PlaneFlowCounts { main_flow: num_planes, load_only: 0 },
+            counts: PlaneFlowCounts {
+                main_flow: num_planes,
+                load_only: 0,
+            },
             partition_rule: PlaneFlowPartitionRule::MainFlowOnly,
         }
     }
@@ -119,10 +122,14 @@ impl PlaneFlowPartition {
         match comptime_rule {
             PlaneFlowPartitionRule::MainFlowOnly => PlaneFlowPartition::new_MainFlowOnly(),
             PlaneFlowPartitionRule::LoadOnlyFirst { load_only } => {
-                PlaneFlowPartition::new_LoadOnlyFirst(PartitionThreshold { threshold: load_only })
+                PlaneFlowPartition::new_LoadOnlyFirst(PartitionThreshold {
+                    threshold: load_only,
+                })
             }
             PlaneFlowPartitionRule::LoadOnlyLast { main_flow } => {
-                PlaneFlowPartition::new_LoadOnlyLast(PartitionThreshold { threshold: main_flow })
+                PlaneFlowPartition::new_LoadOnlyLast(PartitionThreshold {
+                    threshold: main_flow,
+                })
             }
         }
     }
