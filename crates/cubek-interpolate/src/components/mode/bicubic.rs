@@ -1,0 +1,64 @@
+use super::Interpolate;
+use cubecl::prelude::*;
+
+#[derive(CubeType, Clone, Copy)]
+pub struct Bicubic {}
+
+const BICUBIC_HALO: usize = 4;
+
+#[cube]
+impl Interpolate for Bicubic {
+    fn halo() -> comptime_type!(usize) {
+        BICUBIC_HALO
+    }
+
+    fn compute_weights<F: Float, N: Size>(
+        frac_x: F,
+        frac_y: F,
+    ) -> (Array<Vector<F, N>>, Array<Vector<F, N>>) {
+        let mut weights_x = Array::<Vector<F, N>>::new(BICUBIC_HALO);
+        let mut weights_y = Array::<Vector<F, N>>::new(BICUBIC_HALO);
+
+        let a = float(-0.75);
+
+        let f_x = Vector::new(frac_x);
+        let f_y = Vector::new(frac_y);
+
+        let inv_f_x = Vector::new(F::one() - frac_x);
+        let inv_f_y = Vector::new(F::one() - frac_y);
+
+        weights_x[0] = cubic_convolution_2(f_x + float(1.0), a);
+        weights_x[1] = cubic_convolution_1(f_x, a);
+        weights_x[2] = cubic_convolution_1(inv_f_x, a);
+        weights_x[3] = cubic_convolution_2(inv_f_x + float(1.0), a);
+
+        weights_y[0] = cubic_convolution_2(f_y + float(1.0), a);
+        weights_y[1] = cubic_convolution_1(f_y, a);
+        weights_y[2] = cubic_convolution_1(inv_f_y, a);
+        weights_y[3] = cubic_convolution_2(inv_f_y + float(1.0), a);
+
+        (weights_x, weights_y)
+    }
+}
+
+#[cube]
+fn cubic_convolution_1<F: Float, N: Size>(x: Vector<F, N>, a: Vector<F, N>) -> Vector<F, N> {
+    let conv = (a + float(2.0)) * x;
+    let tmp = a + float(3.0);
+    (conv - tmp) * x * x + float(1.0)
+}
+
+#[cube]
+fn cubic_convolution_2<F: Float, N: Size>(x: Vector<F, N>, a: Vector<F, N>) -> Vector<F, N> {
+    let conv = a * x;
+    let conv = (conv - float(5.0) * a) * x;
+    let tmp = float(8.0) * a;
+    let conv = (conv + tmp) * x;
+
+    conv - float(4.0) * a
+}
+
+#[cube]
+fn float<F: Float, N: Size>(#[comptime] v: f32) -> Vector<F, N> {
+    Vector::new(F::new(v))
+}

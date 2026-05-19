@@ -1,5 +1,5 @@
 use crate::{
-    components::mode::{Bilinear, Interpolate, Nearest},
+    components::mode::{Bicubic, Bilinear, Interpolate, Lanczos3, Nearest},
     definition::{InterpolateMode, InterpolateOptions},
 };
 use cubecl::{prelude::*, std::FastDivmod};
@@ -124,19 +124,6 @@ fn cube_coords(cube_pos: usize, num_tiles_x: usize) -> (usize, usize) {
 }
 
 #[cube]
-fn compute_weights<F: Float, N: Size>(
-    frac_x: F,
-    frac_y: F,
-    #[comptime] options: InterpolateOptions,
-) -> (Array<Vector<F, N>>, Array<Vector<F, N>>) {
-    match options.mode {
-        InterpolateMode::Nearest => <Nearest as Interpolate>::compute_weights(frac_x, frac_y),
-        InterpolateMode::Bilinear => <Bilinear as Interpolate>::compute_weights(frac_x, frac_y),
-        _ => todo!(),
-    }
-}
-
-#[cube]
 fn compute_input_coords<F: Float, N: Size>(
     x: usize,
     y: usize,
@@ -184,54 +171,57 @@ fn compute_value<F: Float, N: Size>(
     weights_y: Array<Vector<F, N>>,
     #[comptime] options: InterpolateOptions,
 ) -> Vector<F, N> {
-    let mut final_value = Vector::<F, N>::zeroed();
-
     let input_offset = batch * input.stride(0);
 
     let halo = comptime!(get_halo(options));
     let radius_offset = (halo - 1) / 2;
 
+    let mut final_value = Vector::zeroed();
+    let mut total_weight = Vector::zeroed();
+
     #[unroll]
     for i in 0..halo {
-        let mut row_value = Vector::<F, N>::zeroed();
+        let mut row_value = Vector::zeroed();
+        let mut row_weight_sum = Vector::zeroed();
 
-        let y = clamp(
-            base_y + i as isize - radius_offset as isize,
-            input_height,
-            options,
-        );
+        let unclamped_y = base_y + i as isize - radius_offset as isize;
+        let y = clamp(unclamped_y, input_height, options);
         let row_offset = input_offset + y as usize * input.stride(1);
 
-        #[unroll]
-        for j in 0..halo {
-            let x = clamp(
-                base_x + j as isize - radius_offset as isize,
-                input_width,
-                options,
-            );
-            if options.mode != InterpolateMode::Lanczos3 {
-                row_value += get_input_value(
-                    input,
-                    row_offset,
-                    x as usize,
-                    vector_size,
-                    channel_group,
-                    weights_x[j],
+        if is_in_bounds(unclamped_y, input_height, options) {
+            #[unroll]
+            for j in 0..halo {
+                let unclamped_x = base_x + j as isize - radius_offset as isize;
+                let x = clamp(unclamped_x, input_width, options);
+
+                let is_in_bounds = is_in_bounds(unclamped_x, input_width, options)
+                    && is_in_bounds(unclamped_y, input_height, options);
+                let weight_x = weights_x[j];
+
+                row_value += select(
+                    is_in_bounds,
+                    get_input_value(
+                        input,
+                        row_offset,
+                        x as usize,
+                        vector_size,
+                        channel_group,
+                        weight_x,
+                    ),
+                    Vector::zeroed(),
                 );
+                row_weight_sum += select(is_in_bounds, weight_x, Vector::zeroed());
             }
+
+            let weight_y = weights_y[i];
+            final_value += row_value * weight_y;
+            total_weight += row_weight_sum * weight_y;
         }
-        final_value += row_value * weights_y[i];
     }
 
-    final_value
-}
+    let epsilon = Vector::cast_from(F::new(1e-6f32));
 
-#[cube]
-fn clamp(value: isize, size: usize, #[comptime] options: InterpolateOptions) -> isize {
-    match options.mode {
-        InterpolateMode::Bilinear => value.max(0).min(size as isize - 1),
-        _ => value,
-    }
+    final_value / total_weight.max(epsilon)
 }
 
 #[cube]
@@ -250,6 +240,36 @@ fn get_input_value<F: Float, N: Size>(
     pixel * weight
 }
 
+#[cube]
+fn compute_weights<F: Float, N: Size>(
+    frac_x: F,
+    frac_y: F,
+    #[comptime] options: InterpolateOptions,
+) -> (Array<Vector<F, N>>, Array<Vector<F, N>>) {
+    match options.mode {
+        InterpolateMode::Nearest => <Nearest as Interpolate>::compute_weights(frac_x, frac_y),
+        InterpolateMode::Bilinear => <Bilinear as Interpolate>::compute_weights(frac_x, frac_y),
+        InterpolateMode::Bicubic => <Bicubic as Interpolate>::compute_weights(frac_x, frac_y),
+        InterpolateMode::Lanczos3 => <Lanczos3 as Interpolate>::compute_weights(frac_x, frac_y),
+    }
+}
+
+#[cube]
+fn clamp(value: isize, size: usize, #[comptime] options: InterpolateOptions) -> isize {
+    match options.mode {
+        InterpolateMode::Bilinear | InterpolateMode::Bicubic => value.max(0).min(size as isize - 1),
+        _ => value,
+    }
+}
+
+#[cube]
+fn is_in_bounds(value: isize, size: usize, #[comptime] options: InterpolateOptions) -> bool {
+    match options.mode {
+        InterpolateMode::Lanczos3 => value >= 0 && value < size as isize,
+        _ => true,
+    }
+}
+
 fn is_row_vector(options: InterpolateOptions) -> bool {
     options.mode == InterpolateMode::Nearest
 }
@@ -258,6 +278,7 @@ fn get_halo(options: InterpolateOptions) -> usize {
     match options.mode {
         InterpolateMode::Nearest => <Nearest as Interpolate>::halo(),
         InterpolateMode::Bilinear => <Bilinear as Interpolate>::halo(),
-        _ => todo!(),
+        InterpolateMode::Bicubic => <Bicubic as Interpolate>::halo(),
+        InterpolateMode::Lanczos3 => <Lanczos3 as Interpolate>::halo(),
     }
 }
