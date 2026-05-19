@@ -1,3 +1,5 @@
+#![allow(clippy::type_complexity)]
+
 use crate::components::stage::StagePartitioner;
 use crate::{
     components::global::GlobalReaderConfig,
@@ -15,6 +17,7 @@ use crate::{
 };
 use cubecl::prelude::*;
 use cubek_std::tile::{NoEvent, PartitionScheduler, Tile, write_partition_to_stage};
+
 
 #[cube]
 /// Read the first stage for both Lhs and Rhs
