@@ -112,6 +112,7 @@ impl<TO: TilingOrder, RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncFullCyc
 }
 
 #[derive(CubeType, Clone, Copy)]
+#[expand(derive(Clone, Copy))]
 pub struct SyncFullCyclicJob {
     unit_position_base: u32,
 
@@ -148,7 +149,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
         #[allow(clippy::collapsible_else_if)]
         if comptime!(this.reader_mode == ReaderMode::Strict || this.balanced_workload) {
             load_and_store_vector::<EG, NG, ES, NS, TO>(
-                this,
+                &*this,
                 unit_position,
                 global_iter,
                 stage,
@@ -157,7 +158,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
         } else {
             if unit_position < this.num_stage_elements {
                 load_and_store_vector::<EG, NG, ES, NS, TO>(
-                    this,
+                    &*this,
                     unit_position,
                     global_iter,
                     stage,
@@ -194,10 +195,11 @@ pub(crate) fn load_and_store_vector<
 
     let tile = ContiguousTilingLayout::<TO>::to_x_y(nth_tile, config.smem_config);
 
-    let mut slice = stage.as_slice_mut::<NS>();
+    let swizzle = stage.swizzle;
+    let slice = stage.as_slice_mut::<NS>();
 
     let vector_read = view.read_checked((tile, pos_within_tile));
-    let stage_offs = stage.swizzle.apply(unit_position, ES::type_size());
+    let stage_offs = swizzle.apply(unit_position, ES::type_size());
 
     slice[stage_offs as usize / NS::value()] = Vector::cast_from(vector_read);
 }

@@ -41,11 +41,11 @@ pub fn execute_partition_matmul<
     AccRE: Numeric,
     Sc: TileScope,
 >(
-    lhs_stage: &StridedStage<LhsSE, ReadOnly>,
-    rhs_stage: &StridedStage<RhsSE, ReadOnly>,
-    lhs_fragment: &mut Sequence<Tile<LhsRE, Sc, ReadWrite>>,
-    rhs_fragments: &mut RhsTile<Tile<RhsRE, Sc, ReadWrite>>,
-    acc: &mut PartitionTile<AccRE, Sc, ReadWrite>,
+    lhs_stage: &StridedStage<LhsSE>,
+    rhs_stage: &StridedStage<RhsSE>,
+    lhs_fragment: &mut Sequence<Tile<LhsRE, Sc>>,
+    rhs_fragments: &mut RhsTile<Tile<RhsRE, Sc>>,
+    acc: &mut PartitionTile<AccRE, Sc>,
     #[comptime] partition_size_m: u32,
     #[comptime] partition_size_n: u32,
     #[comptime] partition_size_k: u32,
@@ -88,11 +88,11 @@ pub fn execute_partition_matmul_with_listener<
     Sc: TileScope,
     SEL: StageEventListener,
 >(
-    lhs_stage: &StridedStage<LhsSE, ReadOnly>,
-    rhs_stage: &StridedStage<RhsSE, ReadOnly>,
-    lhs_fragment: &mut Sequence<Tile<LhsRE, Sc, ReadWrite>>,
-    rhs_fragments: &mut RhsTile<Tile<RhsRE, Sc, ReadWrite>>,
-    acc: &mut PartitionTile<AccRE, Sc, ReadWrite>,
+    lhs_stage: &StridedStage<LhsSE>,
+    rhs_stage: &StridedStage<RhsSE>,
+    lhs_fragment: &mut Sequence<Tile<LhsRE, Sc>>,
+    rhs_fragments: &mut RhsTile<Tile<RhsRE, Sc>>,
+    acc: &mut PartitionTile<AccRE, Sc>,
     #[comptime] partition_size_m: u32,
     #[comptime] partition_size_n: u32,
     #[comptime] partition_size_k: u32,
@@ -134,11 +134,11 @@ fn execute_single<
     Sc: TileScope,
     SEL: StageEventListener,
 >(
-    lhs_stage: &StridedStage<LhsSE, ReadOnly>,
-    rhs_stage: &StridedStage<RhsSE, ReadOnly>,
-    lhs_fragment: &mut Sequence<Tile<LhsRE, Sc, ReadWrite>>,
-    rhs_fragment: &mut Tile<RhsRE, Sc, ReadWrite>,
-    acc: &mut PartitionTile<AccRE, Sc, ReadWrite>,
+    lhs_stage: &StridedStage<LhsSE>,
+    rhs_stage: &StridedStage<RhsSE>,
+    lhs_fragment: &mut Sequence<Tile<LhsRE, Sc>>,
+    rhs_fragment: &mut Tile<RhsRE, Sc>,
+    acc: &mut PartitionTile<AccRE, Sc>,
     #[comptime] partition_size_m: u32,
     #[comptime] partition_size_n: u32,
     #[comptime] partition_size_k: u32,
@@ -171,10 +171,7 @@ fn execute_single<
 
             lhs_fragment
                 .index_mut(m_iter)
-                .copy_from::<LhsSE, LhsSS, LhsRE, RhsRE, AccRE, ReadOnly>(
-                    &tile_lhs,
-                    StageIdent::Lhs,
-                );
+                .copy_from::<LhsSE, LhsSS, LhsRE, RhsRE, AccRE>(&tile_lhs, StageIdent::Lhs);
 
             SEL::on_event(
                 &mut listener,
@@ -193,10 +190,8 @@ fn execute_single<
             let shared = rhs_stage.get_tile((k_load_iter, n_load_iter));
             let rhs_tile_next = Tile::new_SharedMemory(shared);
 
-            rhs_fragment.copy_from::<RhsSE, RhsSS, LhsRE, RhsRE, AccRE, ReadOnly>(
-                &rhs_tile_next,
-                StageIdent::Rhs,
-            );
+            rhs_fragment
+                .copy_from::<RhsSE, RhsSS, LhsRE, RhsRE, AccRE>(&rhs_tile_next, StageIdent::Rhs);
 
             SEL::on_event(
                 &mut listener,
@@ -209,8 +204,8 @@ fn execute_single<
 
             #[unroll]
             for m_iter in 0..m_iterations {
-                let accumulator = acc.tiles.index_mut(m_iter * n_iterations + n_iter);
-                accumulator.mma(&lhs_fragment[m_iter], rhs_fragment);
+                let accumulator = &mut acc.tiles[m_iter * n_iterations + n_iter];
+                accumulator.mma(&lhs_fragment[m_iter], &*rhs_fragment);
 
                 SEL::on_event(
                     &mut listener,

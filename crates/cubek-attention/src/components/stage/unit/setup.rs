@@ -13,7 +13,7 @@ use crate::{
         attention_types::*,
     },
 };
-use cubecl::{ir::DeviceProperties, prelude::ReadWrite};
+use cubecl::ir::DeviceProperties;
 use cubek_matmul::components::stage::StageFamily;
 use cubek_std::{
     CubeDimResource, MatrixLayout,
@@ -22,15 +22,11 @@ use cubek_std::{
 
 use crate::components::stage::StageAttentionFamily;
 
-pub struct UnitPartitionStageAttentionFamily<
-    SK: StageFamily,
-    SV: StageFamily,
-    SO: StageFamily<ReadWrite>,
-> {
+pub struct UnitPartitionStageAttentionFamily<SK: StageFamily, SV: StageFamily, SO: StageFamily> {
     _phantom: PhantomData<(SK, SV, SO)>,
 }
 
-impl<SK: StageFamily, SV: StageFamily, SO: StageFamily<ReadWrite>> StageAttentionFamily
+impl<SK: StageFamily, SV: StageFamily, SO: StageFamily> StageAttentionFamily
     for UnitPartitionStageAttentionFamily<SK, SV, SO>
 {
     type Attention<AP: AttentionPrecision> = UnitPartitionAttention<

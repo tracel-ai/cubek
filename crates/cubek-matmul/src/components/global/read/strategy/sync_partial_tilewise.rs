@@ -164,6 +164,7 @@ impl<TO: TilingOrder, RC: RuntimeConfig> PartialLoadingStrategy<RC>
 }
 
 #[derive(CubeType, Clone, Copy)]
+#[expand(derive(Clone, Copy))]
 pub struct SyncPartialTilewiseJob {
     num_tiles_to_skip: u32,
     stage_index: u32,

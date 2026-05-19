@@ -64,9 +64,9 @@ fn bit_reverse_permutation<F: Float>(
 #[cube]
 /// Swap two elements of a 1D array.
 fn swap<F: Float>(view_1d: &mut View<F, Coords1d, ReadWrite>, i: usize, j: usize) {
-    let tmp = view_1d[i];
-    view_1d[i] = view_1d[j];
-    view_1d[j] = tmp;
+    let tmp = view_1d.read(i);
+    view_1d.write(i, view_1d.read(j));
+    view_1d.write(j, tmp);
 }
 
 #[cube]
@@ -99,17 +99,17 @@ fn fft_butterfly_stages<F: Float>(
                 let i0 = k + j;
                 let i1 = i0 + half_m;
 
-                let a = (spectrum_re[i0], spectrum_im[i0]);
-                let b = (spectrum_re[i1], spectrum_im[i1]);
+                let a = (spectrum_re.read(i0), spectrum_im.read(i0));
+                let b = (spectrum_re.read(i1), spectrum_im.read(i1));
 
                 let t = complex_mul::<F>((w_re, w_im), b);
                 let out0 = complex_add::<F>(a, t);
                 let out1 = complex_sub::<F>(a, t);
 
-                spectrum_re[i0] = out0.0;
-                spectrum_im[i0] = out0.1;
-                spectrum_re[i1] = out1.0;
-                spectrum_im[i1] = out1.1;
+                spectrum_re.write(i0, out0.0);
+                spectrum_im.write(i0, out0.1);
+                spectrum_re.write(i1, out1.0);
+                spectrum_im.write(i1, out1.1);
 
                 let new_w = complex_mul::<F>((w_re, w_im), (wm_re, wm_in));
                 w_re = new_w.0;

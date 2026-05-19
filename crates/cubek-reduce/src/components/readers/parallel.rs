@@ -117,7 +117,7 @@ impl<P: ReducePrecision> ParallelReader<P> {
 
     pub fn read_unit(&self, vector_index: usize) -> Item<P> {
         let offset = vector_index + self.batch_offset;
-        let elements = self.view[offset];
+        let elements = self.view.read(offset);
 
         let args = new_coordinates(
             vector_index * self.vector_size,

@@ -62,23 +62,23 @@ impl PrngRuntime for Normal {
                 let unit_1 = to_unit_interval_open(int_random);
 
                 // Box-Muller transform
-                let coeff = unit_0.ln() * -2.0;
+                let coeff = unit_0.ln() * -2.0f32;
                 let coeff = coeff.sqrt() * std;
-                let trigo_arg = 2.0 * PI * unit_1;
+                let trigo_arg = 2.0f32 * PI * unit_1;
 
                 let normal_0 = f32::cos(trigo_arg) * coeff + mean;
                 let normal_1 = f32::sin(trigo_arg) * coeff + mean;
 
-                output_vector_0[i] = E::cast_from(normal_0);
-                output_vector_1[i] = E::cast_from(normal_1);
+                output_vector_0.insert(i, E::cast_from(normal_0));
+                output_vector_1.insert(i, E::cast_from(normal_1));
             }
 
             let iteration_offset = vector_index * n_invocations as usize * 2;
             let write_index_0 = write_index_base + iteration_offset;
             let write_index_1 = write_index_0 + n_invocations as usize;
 
-            output[write_index_0] = output_vector_0;
-            output[write_index_1] = output_vector_1;
+            output.write_checked(write_index_0, output_vector_0);
+            output.write_checked(write_index_1, output_vector_1);
         }
     }
 }

@@ -4,8 +4,8 @@
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2
 resolver = "2"
 
-members = ["crates/*", "xtask", "benchmarks"]
 exclude = ["crates/.claude"]
+members = ["crates/*", "xtask", "benchmarks"]
 
 [workspace.package]
 edition = "2024"
@@ -20,8 +20,8 @@ version = "0.3.0-pre.1"
 # cubecl-common = { path = "../cubecl/crates/cubecl-common", default-features = false }
 
 ### For the main cubek branch. ###
-cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "901d37dbd4a916b764360e4fea111b01356f8263", default-features = false }
-cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "901d37dbd4a916b764360e4fea111b01356f8263", default-features = false }
+cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "a8ddb49dc928d0ea6cfc86101013082e24a5ff18", default-features = false }
+cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "a8ddb49dc928d0ea6cfc86101013082e24a5ff18", default-features = false }
 
 ### For releases ###
 # cubecl = { version = "0.10.0", default-features = false }

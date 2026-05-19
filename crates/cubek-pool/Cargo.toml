@@ -14,20 +14,20 @@ version.workspace = true
 default = ["std", "cubecl/default"]
 std = ["cubecl/std", "thiserror/std"]
 
-heavy = []
 extended = ["heavy"]
 full = ["extended"]
+heavy = []
 
-cpu-reference = ["dep:cubek-test-utils"]
 benchmarks = ["cpu-reference", "cubecl/test-runtime"]
+cpu-reference = ["dep:cubek-test-utils"]
 
 [dependencies]
 cubecl = { workspace = true }
 cubecl-common = { workspace = true }
-thiserror = { workspace = true }
 cubek-test-utils = { path = "./../cubek-test-utils/", version = "0.3.0-pre.1", default-features = false, optional = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
 cubecl = { workspace = true, features = ["test-runtime"] }
-cubek-pool = { path = ".", features = ["cpu-reference"] }
+cubek-pool = { path = ".", features = ["cpu-reference", "benchmarks"] }
 cubek-test-utils = { path = "../cubek-test-utils", version = "0.3.0-pre.1", default-features = false }

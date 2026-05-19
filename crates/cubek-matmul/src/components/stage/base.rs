@@ -39,7 +39,7 @@ pub trait StageMatmulFamily: Send + Sync + 'static {
             LhsStage = <Self::LhsStage as StageFamily>::Stage<Ty<Lhs<MP>>, Sz<Lhs<MP>>, TL>,
             RhsStage = <Self::RhsStage as StageFamily>::Stage<Ty<Rhs<MP>>, Sz<Rhs<MP>>, TR>,
             AccStage = <Self::AccStage as StageFamily>::Stage<Ty<Acc<MP>>, Sz<Acc<MP>>, TA>,
-            OutStage = <Self::OutStage as StageFamily<ReadWrite>>::Stage<Ty<Acc<MP>>, Sz<Acc<MP>>, TO>,
+            OutStage = <Self::OutStage as StageFamily>::Stage<Ty<Acc<MP>>, Sz<Acc<MP>>, TO>,
         >;
 
     /// Stage family for Lhs
@@ -49,7 +49,7 @@ pub trait StageMatmulFamily: Send + Sync + 'static {
     /// Stage family for Acc
     type AccStage: StageFamily;
     /// Stage family for Out
-    type OutStage: StageFamily<ReadWrite>;
+    type OutStage: StageFamily;
 
     /// The configuration type associated with this matmul family.
     type Config: StageConfig;
@@ -95,7 +95,7 @@ pub trait StageMatmulFamily: Send + Sync + 'static {
 ///  - Data given as inputs by stage readers must always be valid. If the actual matrix multiplication
 ///    should be done on smaller sizes than M, N and K, padding with zeros must be done beforehand.
 ///  - Enough planes/units are launched to perform the whole computation
-pub trait StageMatmul<MP: MatmulTypes>: 'static + Send + Sync {
+pub trait StageMatmul<MP: MatmulTypes>: 'static {
     /// The configuration type associated with this Matmul.
     type Config: StageConfig;
 
@@ -196,27 +196,25 @@ pub use cubek_std::tile::PartitionBuffering;
 /// Stage that can be divided into tiles, with the same kind used by the
 /// tile matmul readers.
 #[cube]
-pub trait Stage<ES: Numeric, IO: SliceVisibility = ReadOnly>:
-    CubeType + Clone + Send + Sync + 'static
-{
+pub trait Stage<ES: Numeric>: CubeType + Clone + 'static {
     /// Slices a tile with offset (`row`, `col`) from the stage and returns it.
     ///
     /// The [Scope] generic lets the caller select the compute primitive that will consume
     /// this tile
-    fn tile<Sc: TileScope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc, IO>;
+    fn tile<Sc: TileScope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc>;
 }
 
 /// Stage family for any precision
-pub trait StageFamily<IO: SliceVisibility = ReadOnly>: Send + Sync + 'static {
+pub trait StageFamily: Send + Sync + 'static {
     /// The concrete stage type of this family, instantiated with the type and layout.
     /// `NS` parameterizes the underlying allocation's vector size; the produced
     /// `Stage<ES, IO>` no longer exposes it on its trait surface.
-    type Stage<ES: Numeric, NS: Size, T: TilingLayout>: Stage<ES, IO>;
+    type Stage<ES: Numeric, NS: Size, T: TilingLayout>: Stage<ES>;
 }
 
 /// Stage family that can be used as the target of a loader
 #[cube]
-pub trait LoadStageFamily<IO: SliceVisibility = ReadOnly>: StageFamily {
+pub trait LoadStageFamily: StageFamily {
     /// Create a new stage from the config and alignment
     fn create<ES: Numeric, NS: Size, T: TilingLayout>(
         #[comptime] alignment: usize,
@@ -232,10 +230,8 @@ pub trait LoadStageFamily<IO: SliceVisibility = ReadOnly>: StageFamily {
 }
 
 #[cube]
-impl<ES: Numeric, IO: SliceVisibility, Inner: Stage<ES, IO>> Stage<ES, IO>
-    for ComptimeOption<Inner>
-{
-    fn tile<Sc: TileScope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc, IO> {
+impl<ES: Numeric, Inner: Stage<ES>> Stage<ES> for ComptimeOption<Inner> {
+    fn tile<Sc: TileScope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc> {
         #[comptime]
         if let ComptimeOption::Some(inner) = this {
             Inner::tile::<Sc>(inner, tile)
@@ -246,7 +242,7 @@ impl<ES: Numeric, IO: SliceVisibility, Inner: Stage<ES, IO>> Stage<ES, IO>
 }
 
 #[cube]
-impl<IO: SliceVisibility, S: LoadStageFamily<IO>> LoadStageFamily<IO> for Option<S> {
+impl<S: LoadStageFamily> LoadStageFamily for Option<S> {
     fn create<ES: Numeric, NS: Size, T: TilingLayout>(
         #[comptime] alignment: usize,
         #[comptime] config: StageMemoryConfig,
@@ -269,6 +265,6 @@ impl<IO: SliceVisibility, S: LoadStageFamily<IO>> LoadStageFamily<IO> for Option
     }
 }
 
-impl<IO: SliceVisibility, Inner: StageFamily<IO>> StageFamily<IO> for Option<Inner> {
+impl<Inner: StageFamily> StageFamily for Option<Inner> {
     type Stage<ES: Numeric, NS: Size, T: TilingLayout> = ComptimeOption<Inner::Stage<ES, NS, T>>;
 }

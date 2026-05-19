@@ -47,10 +47,10 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Prod {
         #[comptime] reduce_step: ReduceStep,
     ) {
         let item = Vector::cast_from(item.elements);
-        let accumulator_item = &accumulator.elements.item();
+        let accumulator_item = accumulator.elements.item();
         let elements = match reduce_step {
-            ReduceStep::Plane => *accumulator_item * plane_prod(item),
-            ReduceStep::Identity => *accumulator_item * item,
+            ReduceStep::Plane => accumulator_item * plane_prod(item),
+            ReduceStep::Identity => accumulator_item * item,
         };
 
         accumulator.elements.assign(&Value::new_single(elements));
@@ -79,7 +79,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Prod {
         let mut prod = P::EA::from_int(1);
         #[unroll]
         for k in 0..accumulator.size() {
-            prod *= accumulator[k];
+            prod *= accumulator.extract(k);
         }
         Value::new_single(Out::cast_from(prod))
     }

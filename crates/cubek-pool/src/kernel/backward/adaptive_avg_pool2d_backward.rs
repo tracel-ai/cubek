@@ -59,7 +59,7 @@ fn adaptive_avg_pool2d_backward_direct<E: Numeric, N: Size>(
         }
     }
 
-    output[(b, ih, iw, c)] = grad_acc;
+    output.write((b, ih, iw, c), grad_acc);
 }
 
 #[cube]

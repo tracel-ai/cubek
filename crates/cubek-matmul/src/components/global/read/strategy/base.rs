@@ -27,7 +27,7 @@ pub trait LoadingJob<
     NS: Size,
     TL: TilingLayout,
     S: SyncStrategy,
->: CubeType + Clone
+>: CubeType<ExpandType: Clone> + Clone
 {
     type Stage: StageFamily;
 
@@ -50,7 +50,7 @@ pub trait LoadingJob<
 /// The sync strategy must match the one on both the LHS and RHS loading strategy.
 #[cube]
 pub trait SyncStrategy {
-    type Barrier: CubeType + Clone;
+    type Barrier: CubeType<ExpandType: Clone> + Clone;
     fn create_barrier() -> Self::Barrier;
     fn sync<MP: MatmulTypes, S: StageConfig>(
         barrier: &mut Self::Barrier,

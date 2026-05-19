@@ -55,7 +55,7 @@ fn adaptive_avg_pool2d_direct<E: Numeric, N: Size>(
     let num_ih = ih_end - ih_start;
     let num_iw = iw_end - iw_start;
 
-    output[(b, oh, ow, c)] = sum / Vector::cast_from(num_ih * num_iw);
+    output.write((b, oh, ow, c), sum / Vector::cast_from(num_ih * num_iw));
 }
 
 #[cube]

@@ -26,7 +26,7 @@ pub trait PartialLoadingStrategy<RC: RuntimeConfig>:
     /// The layout describing how data is tiled across the stage.
     type TilingLayout: TilingLayout;
     type SyncStrategy: SyncStrategy;
-    type Stage: LoadStageFamily<ReadOnly>;
+    type Stage: LoadStageFamily;
     type TileKind: StageTileKind;
 
     /// The [LoadingJob] for this strategy.
@@ -51,7 +51,7 @@ pub trait AsyncPartialLoadingStrategy<RC: RuntimeConfig>:
     fn barrier_post_init();
     /// Arrive at the barrier using the correct completion mechanism, without waiting
     fn arrive<MP: MatmulTypes, S: StageConfig>(
-        barrier: &mut Barrier,
+        barrier: &mut Shared<Barrier>,
         #[comptime] config: SharedGlobalMatmulConfig<S>,
     );
     /// Whether this unit should participate in the load loop
@@ -76,6 +76,19 @@ pub struct PartialStageGlobalReader<
     runtime_config: RC,
     stage_memory: PartialLoaderStage<RC, L, ES, NS>,
     loading_job: ComptimeOption<(L::Job<EG, NG, ES, NS>, L::Job<EG, NG, ES, NS>)>,
+}
+
+impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: PartialLoadingStrategy<RC>>
+    Clone for PartialStageGlobalReaderExpand<EG, NG, ES, NS, RC, L>
+{
+    fn clone(&self) -> Self {
+        Self {
+            global_iter: self.global_iter.clone(),
+            runtime_config: self.runtime_config.clone(),
+            stage_memory: self.stage_memory.clone_unchecked(),
+            loading_job: self.loading_job.clone_unchecked(),
+        }
+    }
 }
 
 #[cube]
@@ -251,12 +264,8 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: Partial
         #[comptime] stage_buffer: StageBuffer,
         #[comptime] config: GlobalReaderConfig,
     ) {
-        Self::execute_all_remaining_tasks(
-            this,
-            &mut Self::create_job_iterator(this, stage_buffer, config),
-            barrier,
-            config,
-        );
+        let mut iterator = Self::create_job_iterator(&*this, stage_buffer, config);
+        Self::execute_all_remaining_tasks(this, &mut iterator, barrier, config);
     }
 }
 

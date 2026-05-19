@@ -190,7 +190,7 @@ impl<RC: RuntimeConfig, MP: MatmulTypes, GMM: GlobalMatmul<RC, MP>, GPMM: Global
         cube_mapping: CubeMapping,
         #[comptime] config: Self::Config,
     ) {
-        let (_, _, problem_k) = Args::view_lhs(state).shape();
+        let (_, _, problem_k) = Args::view_lhs(&*state).shape();
         let k_range = (0, problem_k);
 
         let (m_index, n_index, batch_index) = cube_pos_to_m_n_batch(&cube_mapping);
