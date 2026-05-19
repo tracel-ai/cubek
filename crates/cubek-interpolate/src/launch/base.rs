@@ -3,7 +3,7 @@ use crate::{
     components::global::{TileSize, interpolate_kernel},
     definition::InterpolateOptions,
 };
-use cubecl::{prelude::*, tensor_vector_size_parallel};
+use cubecl::{prelude::*, std::FastDivmod, tensor_vector_size_parallel};
 
 pub(crate) fn interpolate_launch<R: Runtime>(
     client: &ComputeClient<R>,
@@ -12,76 +12,69 @@ pub(crate) fn interpolate_launch<R: Runtime>(
     options: InterpolateOptions,
     dtype: StorageType,
 ) -> Result<(), InterpolateError> {
-    let batch_size = output.shape[0];
-    let out_h = output.shape[1];
-    let out_w = output.shape[2];
-    let channels = output.shape[3];
+    let is_tile_row_vector = true;
 
-    let vector_size = get_vector_size(client, input.clone(), dtype);
-
-    // Using max 16x16 tiles as a starting point
-    let tile_w = 32.min(out_w);
-    let tile_h = 1.min(out_h);
-
-    let out_tile_size = TileSize::new(tile_w, tile_h);
-
-    let cube_dim = CubeDim::new_2d(tile_w as u32, tile_h as u32);
-
-    let cube_count = get_cube_count::<R>(
-        vector_size,
-        out_w,
-        out_h,
-        tile_w,
-        tile_h,
-        channels,
-        batch_size,
+    let vector_size = tensor_vector_size_parallel(
+        client.io_optimized_vector_sizes(dtype.size()),
+        &input.shape,
+        &input.strides,
+        input.shape.len() - 1,
     );
+
+    let working_units = output.shape.iter().product::<usize>() / vector_size as usize;
+    let cube_dim = CubeDim::new(client, working_units);
+
+    let output_tile_size =
+        TileSize::new(cube_dim.x as usize, cube_dim.y as usize, is_tile_row_vector);
+
+    let batch = output.shape[0];
+    let height = output.shape[1];
+    let width = output.shape[2];
+    let channel_groups = output.shape[3] / vector_size;
+
+    let num_tiles_x = width.div_ceil(cube_dim.x as usize);
+    let num_tiles_y = height.div_ceil(cube_dim.y as usize);
+
+    let cube_count = CubeCount::Static(
+        (num_tiles_x * channel_groups) as u32,
+        num_tiles_y as u32,
+        batch as u32,
+    );
+
+    let threads_per_cube = output_tile_size.area();
+    let cubes_per_batch = num_tiles_x * num_tiles_y;
+    let cube_shape = get_cube_shape(channel_groups, threads_per_cube, cubes_per_batch);
 
     let address_type = input
         .required_address_type(dtype.size())
         .max(output.required_address_type(dtype.size()));
 
-    interpolate_kernel::launch(
-        client,
-        cube_count,
-        cube_dim,
-        address_type,
-        vector_size,
-        input.into_tensor_arg(),
-        output.into_tensor_arg(),
-        options,
-        out_tile_size,
-        dtype,
-    );
+    unsafe {
+        interpolate_kernel::launch_unchecked(
+            client,
+            cube_count,
+            cube_dim,
+            address_type,
+            vector_size,
+            input.into_tensor_arg(),
+            output.clone().into_tensor_arg(),
+            cube_shape,
+            output_tile_size,
+            dtype,
+        )
+    };
 
     Ok(())
 }
 
-fn get_cube_count<R: Runtime>(
-    vector_size: usize,
-    out_w: usize,
-    out_h: usize,
-    tile_w: usize,
-    tile_h: usize,
-    channels: usize,
-    batch: usize,
-) -> CubeCount {
-    let cubes_x = out_w.div_ceil(tile_w) * channels.div_ceil(vector_size as usize);
-    let cubes_y = out_h.div_ceil(tile_h);
-    let cubes_z = batch;
-
-    CubeCount::Static(cubes_x as u32, cubes_y as u32, cubes_z as u32)
-}
-
-fn get_vector_size<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    dtype: StorageType,
-) -> usize {
-    tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(dtype.size()),
-        &input.shape,
-        &input.strides,
-        input.shape.len() - 1,
-    ) as usize
+fn get_cube_shape<R: Runtime>(
+    channel_groups: usize,
+    threads_per_cube: usize,
+    cubes_per_batch: usize,
+) -> SequenceArg<R, FastDivmod<usize>> {
+    let mut cube_shape = SequenceArg::new();
+    cube_shape.push(channel_groups);
+    cube_shape.push(threads_per_cube);
+    cube_shape.push(cubes_per_batch);
+    cube_shape
 }
