@@ -1,4 +1,7 @@
-use crate::components::global::TileSize;
+use crate::{
+    components::mode::{Bilinear, Interpolate, Nearest},
+    definition::{InterpolateMode, InterpolateOptions},
+};
 use cubecl::{prelude::*, std::FastDivmod};
 
 #[cube(launch_unchecked, address_type = "dynamic")]
@@ -6,7 +9,9 @@ pub fn interpolate_kernel<F: Float, N: Size>(
     input: &Tensor<Vector<F, N>>,
     output: &mut Tensor<Vector<F, N>>,
     cube_shape: Sequence<FastDivmod<usize>>,
-    #[comptime] output_tile_size: TileSize,
+    tile_width: usize,
+    tile_height: usize,
+    #[comptime] options: InterpolateOptions,
     #[define(F)] _dtype: StorageType,
 ) {
     let (rem, channel_group) = cube_shape[0].div_mod(ABSOLUTE_POS);
@@ -16,11 +21,12 @@ pub fn interpolate_kernel<F: Float, N: Size>(
     let (output_width, output_height) = (output.shape(2), output.shape(1));
 
     let (x, y) = compute_absolute_coords(
-        output_tile_size,
+        tile_width,
+        tile_height,
         output_width,
-        output_height,
         cube_pos,
         unit_pos,
+        options,
     );
 
     if x >= output_width || y >= output_height {
@@ -29,56 +35,229 @@ pub fn interpolate_kernel<F: Float, N: Size>(
 
     let (input_width, input_height) = (input.shape(2), input.shape(1));
 
-    let in_y = (y * input_height) / output_height;
-    let in_x = (x * input_width) / output_width;
+    let (mapped_x, mapped_y) = compute_input_coords::<F, N>(
+        x,
+        y,
+        input_width,
+        input_height,
+        output_width,
+        output_height,
+        options,
+    );
+
+    let base_x_floor = mapped_x.floor();
+    let base_y_floor = mapped_y.floor();
+
+    let (frac_x, frac_y) = (mapped_x - base_x_floor, mapped_y - base_y_floor);
+
+    let (base_x, base_y) = (
+        isize::cast_from(base_x_floor),
+        isize::cast_from(base_y_floor),
+    );
+
+    let (weights_x, weights_y) = compute_weights(frac_x, frac_y, options);
 
     let vector_size = input.vector_size();
 
-    let in_nearest_index =
-        (batch * input.stride(0) + in_y * input.stride(1) + in_x * input.stride(2)) / vector_size
-            + channel_group * input.stride(3);
+    let final_value = compute_value(
+        input,
+        batch,
+        channel_group,
+        vector_size,
+        input_width,
+        input_height,
+        base_x,
+        base_y,
+        weights_x,
+        weights_y,
+        options,
+    );
 
     let out_index = (batch * output.stride(0) + y * output.stride(1) + x * output.stride(2))
         / vector_size
         + channel_group * output.stride(3);
 
-    output[out_index] = input[in_nearest_index];
+    output[out_index] = final_value;
 }
 
 #[cube]
 fn compute_absolute_coords(
-    #[comptime] tile: TileSize,
+    tile_width: usize,
+    tile_height: usize,
     output_width: usize,
-    _output_height: usize,
     cube_pos: usize,
     unit_pos: usize,
+    #[comptime] options: InterpolateOptions,
 ) -> (usize, usize) {
-    if tile.is_row_vector() {
-        let flat = cube_pos * tile.width() + unit_pos;
+    if comptime!(is_row_vector(options)) {
+        let flat = cube_pos * tile_width + unit_pos;
         (flat % output_width, flat / output_width)
     } else {
-        let num_tiles_x = output_width.div_ceil(tile.width());
+        let num_tiles_x = output_width.div_ceil(tile_width);
 
-        let (local_x, local_y) = local_coords(tile, unit_pos);
+        let (local_x, local_y) = local_coords(tile_width, unit_pos, options);
         let (cube_x, cube_y) = cube_coords(cube_pos, num_tiles_x);
 
         (
-            cube_x * tile.width() + local_x,
-            cube_y * tile.height() + local_y,
+            cube_x * tile_width + local_x,
+            cube_y * tile_height + local_y,
         )
     }
 }
 
 #[cube]
-fn local_coords(#[comptime] tile: TileSize, unit_pos: usize) -> (usize, usize) {
-    if tile.is_row_vector() {
+fn local_coords(
+    tile_width: usize,
+    unit_pos: usize,
+    #[comptime] options: InterpolateOptions,
+) -> (usize, usize) {
+    if comptime!(is_row_vector(options)) {
         (unit_pos, 0)
     } else {
-        (unit_pos % tile.width(), unit_pos / tile.width())
+        (unit_pos % tile_width, unit_pos / tile_width)
     }
 }
 
 #[cube]
 fn cube_coords(cube_pos: usize, num_tiles_x: usize) -> (usize, usize) {
     (cube_pos % num_tiles_x, cube_pos / num_tiles_x)
+}
+
+#[cube]
+fn compute_weights<F: Float, N: Size>(
+    frac_x: F,
+    frac_y: F,
+    #[comptime] options: InterpolateOptions,
+) -> (Array<Vector<F, N>>, Array<Vector<F, N>>) {
+    match options.mode {
+        InterpolateMode::Nearest => <Nearest as Interpolate>::compute_weights(frac_x, frac_y),
+        InterpolateMode::Bilinear => <Bilinear as Interpolate>::compute_weights(frac_x, frac_y),
+        _ => todo!(),
+    }
+}
+
+#[cube]
+fn compute_input_coords<F: Float, N: Size>(
+    x: usize,
+    y: usize,
+    input_width: usize,
+    input_height: usize,
+    output_width: usize,
+    output_height: usize,
+    #[comptime] options: InterpolateOptions,
+) -> (F, F) {
+    let mapped_x = get_input_coord::<F, N>(x, input_width, output_width, options);
+    let mapped_y = get_input_coord::<F, N>(y, input_height, output_height, options);
+    (mapped_x, mapped_y)
+}
+
+#[cube]
+fn get_input_coord<F: Float, N: Size>(
+    x: usize,
+    input_size: usize,
+    output_size: usize,
+    #[comptime] options: InterpolateOptions,
+) -> F {
+    if options.mode == InterpolateMode::Nearest {
+        // Do not "fix": Bug-for-bug compatibility with PyTorch's default nearest-neighbor interpolation.
+        (F::cast_from(x) * F::cast_from(input_size)) / F::cast_from(output_size)
+    } else if options.align_corners {
+        F::cast_from(x) * F::cast_from(input_size - 1).max(F::zero())
+            / F::cast_from(output_size - 1).max(F::one())
+    } else {
+        (F::cast_from(x) + F::new(0.5)) * F::cast_from(input_size) / F::cast_from(output_size)
+            - F::new(0.5)
+    }
+}
+
+#[cube]
+fn compute_value<F: Float, N: Size>(
+    input: &Tensor<Vector<F, N>>,
+    batch: usize,
+    channel_group: usize,
+    vector_size: usize,
+    input_width: usize,
+    input_height: usize,
+    base_x: isize,
+    base_y: isize,
+    weights_x: Array<Vector<F, N>>,
+    weights_y: Array<Vector<F, N>>,
+    #[comptime] options: InterpolateOptions,
+) -> Vector<F, N> {
+    let mut final_value = Vector::<F, N>::zeroed();
+
+    let input_offset = batch * input.stride(0);
+
+    let halo = comptime!(get_halo(options));
+    let radius_offset = (halo - 1) / 2;
+
+    #[unroll]
+    for i in 0..halo {
+        let mut row_value = Vector::<F, N>::zeroed();
+
+        let y = clamp(
+            base_y + i as isize - radius_offset as isize,
+            input_height,
+            options,
+        );
+        let row_offset = input_offset + y as usize * input.stride(1);
+
+        #[unroll]
+        for j in 0..halo {
+            let x = clamp(
+                base_x + j as isize - radius_offset as isize,
+                input_width,
+                options,
+            );
+            if options.mode != InterpolateMode::Lanczos3 {
+                row_value += get_input_value(
+                    input,
+                    row_offset,
+                    x as usize,
+                    vector_size,
+                    channel_group,
+                    weights_x[j],
+                );
+            }
+        }
+        final_value += row_value * weights_y[i];
+    }
+
+    final_value
+}
+
+#[cube]
+fn clamp(value: isize, size: usize, #[comptime] options: InterpolateOptions) -> isize {
+    match options.mode {
+        InterpolateMode::Bilinear => value.max(0).min(size as isize - 1),
+        _ => value,
+    }
+}
+
+#[cube]
+fn get_input_value<F: Float, N: Size>(
+    input: &Tensor<Vector<F, N>>,
+    row_offset: usize,
+    column_offset: usize,
+    vector_size: usize,
+    channel_group: usize,
+    weight: Vector<F, N>,
+) -> Vector<F, N> {
+    let input_index = (row_offset + column_offset * input.stride(2)) / vector_size
+        + channel_group * input.stride(3);
+
+    let pixel = input[input_index];
+    pixel * weight
+}
+
+fn is_row_vector(options: InterpolateOptions) -> bool {
+    options.mode == InterpolateMode::Nearest
+}
+
+fn get_halo(options: InterpolateOptions) -> usize {
+    match options.mode {
+        InterpolateMode::Nearest => <Nearest as Interpolate>::halo(),
+        InterpolateMode::Bilinear => <Bilinear as Interpolate>::halo(),
+        _ => todo!(),
+    }
 }

@@ -1,3 +1,4 @@
+use crate::definition::{InterpolateMode, InterpolateOptions};
 use cubecl::prelude::*;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, CubeType)]
@@ -7,8 +8,8 @@ pub struct TileSize {
 }
 
 impl TileSize {
-    pub fn new(w: usize, h: usize, row_vector: bool) -> Self {
-        if row_vector {
+    pub fn new(w: usize, h: usize, options: InterpolateOptions) -> Self {
+        if options.mode == InterpolateMode::Nearest {
             Self { w: w * h, h: 1 }
         } else {
             Self { w, h }
@@ -25,9 +26,5 @@ impl TileSize {
 
     pub fn area(&self) -> usize {
         self.w * self.h
-    }
-
-    pub fn is_row_vector(&self) -> bool {
-        self.h == 1
     }
 }

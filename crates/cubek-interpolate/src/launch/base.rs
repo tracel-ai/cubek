@@ -12,8 +12,6 @@ pub(crate) fn interpolate_launch<R: Runtime>(
     options: InterpolateOptions,
     dtype: StorageType,
 ) -> Result<(), InterpolateError> {
-    let is_tile_row_vector = true;
-
     let vector_size = tensor_vector_size_parallel(
         client.io_optimized_vector_sizes(dtype.size()),
         &input.shape,
@@ -24,8 +22,7 @@ pub(crate) fn interpolate_launch<R: Runtime>(
     let working_units = output.shape.iter().product::<usize>() / vector_size as usize;
     let cube_dim = CubeDim::new(client, working_units);
 
-    let output_tile_size =
-        TileSize::new(cube_dim.x as usize, cube_dim.y as usize, is_tile_row_vector);
+    let output_tile_size = TileSize::new(cube_dim.x as usize, cube_dim.y as usize, options);
 
     let batch = output.shape[0];
     let height = output.shape[1];
@@ -59,7 +56,9 @@ pub(crate) fn interpolate_launch<R: Runtime>(
             input.into_tensor_arg(),
             output.clone().into_tensor_arg(),
             cube_shape,
-            output_tile_size,
+            output_tile_size.width(),
+            output_tile_size.height(),
+            options,
             dtype,
         )
     };

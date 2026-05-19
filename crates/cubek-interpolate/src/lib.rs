@@ -34,9 +34,10 @@ pub fn interpolate<R: Runtime>(
     match options.mode {
         InterpolateMode::Nearest => interpolate_launch(client, input, output, options, dtype),
         //InterpolateMode::Nearest => interpolate_nearest_launch(client, input, output, dtype),
-        InterpolateMode::Bilinear => {
-            interpolate_bilinear_launch(client, input, output, options.align_corners, dtype)
-        }
+        InterpolateMode::Bilinear => interpolate_launch(client, input, output, options, dtype),
+        // InterpolateMode::Bilinear => {
+        //     interpolate_bilinear_launch(client, input, output, options.align_corners, dtype)
+        // }
         InterpolateMode::Bicubic => {
             interpolate_bicubic_launch(client, input, output, align_corners, dtype)
         }
