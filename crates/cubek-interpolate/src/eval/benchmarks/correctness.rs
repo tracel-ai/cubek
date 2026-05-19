@@ -1,10 +1,12 @@
 use cubecl::{Runtime, TestRuntime};
 use cubek_test_utils::{HostData, Progress};
 
-use crate::definition::InterpolateProblem;
-use crate::eval::{
-    benchmarks::strategy::InterpolateStrategy,
-    cpu_reference::{cpu_reference_result, strategy_result},
+use crate::{
+    definition::InterpolateProblem,
+    eval::{
+        benchmarks::strategy::InterpolateStrategy,
+        cpu_reference::{cpu_reference_result, strategy_result},
+    },
 };
 
 pub struct InterpolateCorrectness;

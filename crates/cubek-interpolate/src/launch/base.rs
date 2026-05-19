@@ -1,7 +1,9 @@
 use crate::{
     InterpolateError,
-    components::global::{TileSize, interpolate_kernel},
-    definition::InterpolateOptions,
+    {
+        components::global::{TileSize, interpolate_kernel},
+        definition::InterpolateOptions,
+    },
 };
 use cubecl::{prelude::*, std::FastDivmod, tensor_vector_size_parallel};
 
@@ -56,8 +58,7 @@ pub(crate) fn interpolate_launch<R: Runtime>(
             input.into_tensor_arg(),
             output.clone().into_tensor_arg(),
             cube_shape,
-            output_tile_size.width(),
-            output_tile_size.height(),
+            output_tile_size,
             options,
             dtype,
         )

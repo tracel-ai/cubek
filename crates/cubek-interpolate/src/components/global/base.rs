@@ -1,6 +1,8 @@
 use crate::{
-    components::mode::{Bicubic, Bilinear, Interpolate, Lanczos3, Nearest},
-    definition::{InterpolateMode, InterpolateOptions},
+    components::global::{TileSize, tile_absolute_coords},
+    definition::{
+        Bicubic, Bilinear, Interpolate, InterpolateMode, InterpolateOptions, Lanczos3, Nearest,
+    },
 };
 use cubecl::{prelude::*, std::FastDivmod};
 
@@ -9,8 +11,7 @@ pub fn interpolate_kernel<F: Float, N: Size>(
     input: &Tensor<Vector<F, N>>,
     output: &mut Tensor<Vector<F, N>>,
     cube_shape: Sequence<FastDivmod<usize>>,
-    tile_width: usize,
-    tile_height: usize,
+    #[comptime] output_tile_size: TileSize,
     #[comptime] options: InterpolateOptions,
     #[define(F)] _dtype: StorageType,
 ) {
@@ -20,14 +21,7 @@ pub fn interpolate_kernel<F: Float, N: Size>(
 
     let (output_width, output_height) = (output.shape(2), output.shape(1));
 
-    let (x, y) = compute_absolute_coords(
-        tile_width,
-        tile_height,
-        output_width,
-        cube_pos,
-        unit_pos,
-        options,
-    );
+    let (x, y) = tile_absolute_coords(output_width, cube_pos, unit_pos, output_tile_size);
 
     if x >= output_width || y >= output_height {
         terminate!();
@@ -81,49 +75,6 @@ pub fn interpolate_kernel<F: Float, N: Size>(
 }
 
 #[cube]
-fn compute_absolute_coords(
-    tile_width: usize,
-    tile_height: usize,
-    output_width: usize,
-    cube_pos: usize,
-    unit_pos: usize,
-    #[comptime] options: InterpolateOptions,
-) -> (usize, usize) {
-    if comptime!(is_row_vector(options)) {
-        let flat = cube_pos * tile_width + unit_pos;
-        (flat % output_width, flat / output_width)
-    } else {
-        let num_tiles_x = output_width.div_ceil(tile_width);
-
-        let (local_x, local_y) = local_coords(tile_width, unit_pos, options);
-        let (cube_x, cube_y) = cube_coords(cube_pos, num_tiles_x);
-
-        (
-            cube_x * tile_width + local_x,
-            cube_y * tile_height + local_y,
-        )
-    }
-}
-
-#[cube]
-fn local_coords(
-    tile_width: usize,
-    unit_pos: usize,
-    #[comptime] options: InterpolateOptions,
-) -> (usize, usize) {
-    if comptime!(is_row_vector(options)) {
-        (unit_pos, 0)
-    } else {
-        (unit_pos % tile_width, unit_pos / tile_width)
-    }
-}
-
-#[cube]
-fn cube_coords(cube_pos: usize, num_tiles_x: usize) -> (usize, usize) {
-    (cube_pos % num_tiles_x, cube_pos / num_tiles_x)
-}
-
-#[cube]
 fn compute_input_coords<F: Float, N: Size>(
     x: usize,
     y: usize,
@@ -149,9 +100,14 @@ fn get_input_coord<F: Float, N: Size>(
         // Do not "fix": Bug-for-bug compatibility with PyTorch's default nearest-neighbor interpolation.
         (F::cast_from(x) * F::cast_from(input_size)) / F::cast_from(output_size)
     } else if options.align_corners {
-        F::cast_from(x) * F::cast_from(input_size - 1).max(F::zero())
-            / F::cast_from(output_size - 1).max(F::one())
+        // Not aligned corners mapping: x * (input_size - 1) / (output_size - 1)
+        if output_size == 1 {
+            F::zero()
+        } else {
+            F::cast_from(x) * F::cast_from(input_size - 1) / F::cast_from(output_size - 1)
+        }
     } else {
+        // Aligned corners mapping: (x + 0.5) * (input_size / output_size) - 0.5
         (F::cast_from(x) + F::new(0.5)) * F::cast_from(input_size) / F::cast_from(output_size)
             - F::new(0.5)
     }
@@ -173,7 +129,7 @@ fn compute_value<F: Float, N: Size>(
 ) -> Vector<F, N> {
     let input_offset = batch * input.stride(0);
 
-    let halo = comptime!(get_halo(options));
+    let halo = options.mode.get_halo();
     let radius_offset = (halo - 1) / 2;
 
     let mut final_value = Vector::zeroed();
@@ -267,18 +223,5 @@ fn is_in_bounds(value: isize, size: usize, #[comptime] options: InterpolateOptio
     match options.mode {
         InterpolateMode::Lanczos3 => value >= 0 && value < size as isize,
         _ => true,
-    }
-}
-
-fn is_row_vector(options: InterpolateOptions) -> bool {
-    options.mode == InterpolateMode::Nearest
-}
-
-fn get_halo(options: InterpolateOptions) -> usize {
-    match options.mode {
-        InterpolateMode::Nearest => <Nearest as Interpolate>::halo(),
-        InterpolateMode::Bilinear => <Bilinear as Interpolate>::halo(),
-        InterpolateMode::Bicubic => <Bicubic as Interpolate>::halo(),
-        InterpolateMode::Lanczos3 => <Lanczos3 as Interpolate>::halo(),
     }
 }

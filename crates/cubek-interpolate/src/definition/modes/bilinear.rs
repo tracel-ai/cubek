@@ -1,16 +1,12 @@
-use super::Interpolate;
+use crate::definition::Interpolate;
 use cubecl::prelude::*;
 
 #[derive(CubeType, Clone, Copy)]
 pub struct Bilinear {}
 
-const BILINEAR_HALO: usize = 2;
-
 #[cube]
 impl Interpolate for Bilinear {
-    fn halo() -> comptime_type!(usize) {
-        BILINEAR_HALO
-    }
+    const HALO: usize = 2;
 
     fn compute_weights<F: Float, N: Size>(
         frac_x: F,
@@ -19,8 +15,8 @@ impl Interpolate for Bilinear {
         let inverse_frac_x = F::one() - frac_x;
         let inverse_frac_y = F::one() - frac_y;
 
-        let mut weights_x = Array::<Vector<F, N>>::new(BILINEAR_HALO);
-        let mut weights_y = Array::<Vector<F, N>>::new(BILINEAR_HALO);
+        let mut weights_x = Array::<Vector<F, N>>::new(Self::HALO);
+        let mut weights_y = Array::<Vector<F, N>>::new(Self::HALO);
 
         weights_x[0] = Vector::cast_from(inverse_frac_x);
         weights_x[1] = Vector::cast_from(frac_x);

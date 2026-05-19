@@ -1,5 +1,5 @@
 mod base;
-mod tile;
+mod tile_size;
 
 pub use base::*;
-pub use tile::*;
+pub use tile_size::*;

@@ -1,23 +1,19 @@
-use super::Interpolate;
+use crate::definition::Interpolate;
 use cubecl::prelude::*;
 
 #[derive(CubeType, Clone, Copy)]
 pub struct Bicubic {}
 
-const BICUBIC_HALO: usize = 4;
-
 #[cube]
 impl Interpolate for Bicubic {
-    fn halo() -> comptime_type!(usize) {
-        BICUBIC_HALO
-    }
+    const HALO: usize = 4;
 
     fn compute_weights<F: Float, N: Size>(
         frac_x: F,
         frac_y: F,
     ) -> (Array<Vector<F, N>>, Array<Vector<F, N>>) {
-        let mut weights_x = Array::<Vector<F, N>>::new(BICUBIC_HALO);
-        let mut weights_y = Array::<Vector<F, N>>::new(BICUBIC_HALO);
+        let mut weights_x = Array::<Vector<F, N>>::new(Self::HALO);
+        let mut weights_y = Array::<Vector<F, N>>::new(Self::HALO);
 
         let a = float(-0.75);
 

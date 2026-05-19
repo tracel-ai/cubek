@@ -5,15 +5,11 @@ pub mod eval;
 mod kernel;
 mod launch;
 
-use crate::definition::{InterpolateError, InterpolateMode, InterpolateOptions};
-use crate::kernel::{
-    backward::interpolate_nearest_backward_launch,
-    forward::{
-        interpolate_bicubic_launch, interpolate_bilinear_launch, interpolate_lanczos3_launch,
-        interpolate_nearest_launch,
-    },
+use crate::{
+    definition::{InterpolateError, InterpolateMode, InterpolateOptions},
+    kernel::backward::interpolate_nearest_backward_launch,
+    launch::interpolate_launch,
 };
-use crate::launch::interpolate_launch;
 use core::result::Result;
 use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*};
 
@@ -30,21 +26,6 @@ pub fn interpolate<R: Runtime>(
     dtype: StorageType,
 ) -> Result<(), InterpolateError> {
     interpolate_launch(client, input, output, options, dtype)
-
-    // let align_corners = options.align_corners;
-
-    // match options.mode {
-    //     InterpolateMode::Nearest => interpolate_nearest_launch(client, input, output, dtype),
-    //     InterpolateMode::Bilinear => {
-    //         interpolate_bilinear_launch(client, input, output, options.align_corners, dtype)
-    //     }
-    //     InterpolateMode::Bicubic => {
-    //         interpolate_bicubic_launch(client, input, output, align_corners, dtype)
-    //     }
-    //     InterpolateMode::Lanczos3 => {
-    //         interpolate_lanczos3_launch(client, input, output, align_corners, dtype)
-    //     }
-    // }
 }
 
 /// Backward interpolate operation

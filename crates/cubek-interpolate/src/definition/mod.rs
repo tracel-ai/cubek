@@ -1,9 +1,9 @@
 mod base;
 mod error;
-mod mode;
-mod options;
+mod modes;
+mod problem;
 
 pub use base::*;
 pub use error::*;
-pub use mode::*;
-pub use options::*;
+pub use modes::*;
+pub use problem::*;

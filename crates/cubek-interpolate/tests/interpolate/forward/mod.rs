@@ -5,8 +5,9 @@ mod nearest;
 
 use cubecl::{TestRuntime, client::ComputeClient};
 use cubek_interpolate::{
-    definition::InterpolateForwardProblem, definition::InterpolateOptions,
-    eval::cpu_reference::cpu_reference_interpolate_from_host, interpolate,
+    definition::{InterpolateForwardProblem, InterpolateOptions},
+    eval::cpu_reference::cpu_reference_interpolate_from_host,
+    interpolate,
 };
 use cubek_test_utils::TestInput;
 
