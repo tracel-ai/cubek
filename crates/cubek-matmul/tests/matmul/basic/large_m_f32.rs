@@ -19,9 +19,7 @@ use cubek_matmul::definition::{
 };
 use cubek_matmul::launch::{Strategy, launch_ref};
 use cubek_matmul::routines::BlueprintStrategy;
-use cubek_std::{
-    InputBinding, MatrixLayout, PartitionSize, StageSize, TileSize,
-};
+use cubek_std::{InputBinding, MatrixLayout, PartitionSize, StageSize, TileSize};
 use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
 
 use super::common::{client, f16_elems, f32_elems, rect};
@@ -33,11 +31,7 @@ use crate::matmul::{assert_result, test_matmul_strategy};
 #[cfg(feature = "heavy")]
 #[test]
 fn auto_large_m_f32_535x1024x1024() {
-    test_matmul_strategy(
-        client(),
-        rect(535, 1024, 1024, f32_elems()),
-        Strategy::Auto,
-    );
+    test_matmul_strategy(client(), rect(535, 1024, 1024, f32_elems()), Strategy::Auto);
 }
 
 #[cfg(feature = "heavy")]
@@ -63,11 +57,7 @@ fn auto_large_m_f32_2048x1024x1024() {
 #[cfg(feature = "heavy")]
 #[test]
 fn auto_large_m_f16_535x1024x1024() {
-    test_matmul_strategy(
-        client(),
-        rect(535, 1024, 1024, f16_elems()),
-        Strategy::Auto,
-    );
+    test_matmul_strategy(client(), rect(535, 1024, 1024, f16_elems()), Strategy::Auto);
 }
 
 #[cfg(feature = "heavy")]
@@ -185,7 +175,14 @@ fn smem_budget_rejected_for_oversized_blueprint() {
     let rhs_handle = InputBinding::Normal(rhs.binding(), problem.global_dtypes.rhs);
     let out_handle = out.binding();
 
-    let result = launch_ref(&strategy, &c, lhs_handle, rhs_handle, out_handle, &mut dtypes);
+    let result = launch_ref(
+        &strategy,
+        &c,
+        lhs_handle,
+        rhs_handle,
+        out_handle,
+        &mut dtypes,
+    );
     match result {
         Err(MatmulSetupError::Unavailable(MatmulAvailabilityError::SharedMemoryTooBig {
             requested,
@@ -196,12 +193,10 @@ fn smem_budget_rejected_for_oversized_blueprint() {
                 "SharedMemoryTooBig must report requested > available (got requested={requested}, available={available})"
             );
         }
-        Err(other) => panic!(
-            "expected SharedMemoryTooBig, got a different setup error: {other:?}"
-        ),
-        Ok(()) => panic!(
-            "expected SharedMemoryTooBig, but launch succeeded for an over-budget blueprint"
-        ),
+        Err(other) => panic!("expected SharedMemoryTooBig, got a different setup error: {other:?}"),
+        Ok(()) => {
+            panic!("expected SharedMemoryTooBig, but launch succeeded for an over-budget blueprint")
+        }
     }
 }
 
@@ -254,7 +249,15 @@ fn run_arange(m: usize, k: usize, n: usize) {
     let strategy = Strategy::Auto;
 
     let outcome = launch_and_capture_outcome(&c, |client| {
-        launch_ref(&strategy, client, lhs_handle, rhs_handle, out_handle, &mut dtypes).into()
+        launch_ref(
+            &strategy,
+            client,
+            lhs_handle,
+            rhs_handle,
+            out_handle,
+            &mut dtypes,
+        )
+        .into()
     });
 
     match outcome {

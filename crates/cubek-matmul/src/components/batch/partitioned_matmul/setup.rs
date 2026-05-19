@@ -6,7 +6,6 @@ use crate::components::{
     stage::NumStages,
 };
 use crate::definition::MatmulAvailabilityError;
-use cubek_std::stage::StageMemoryConfig;
 use crate::{
     components::batch::partitioned_matmul::matmul::PartitionedBatchMatmul,
     components::batch::partitioned_matmul::matmul::matmul_entry,
@@ -24,6 +23,7 @@ use crate::{
     {components::batch::BatchMatmulFamily, launch::ConfigRuntimeArg},
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
+use cubek_std::stage::StageMemoryConfig;
 
 /// Simple partitioned batch matmul family for any precision
 pub struct PartitionedBatchMatmulFamily<
@@ -111,19 +111,16 @@ impl<RC: RuntimeConfig, GMM: GlobalMatmulFamily<RC>, S: GlobalPartitionMatmul> B
     ) -> Result<(), MatmulSetupError> {
         GMM::validate_blueprint(client, blueprint, problem, dtypes, vector_sizes)?;
 
+        let stage_config =
+            GMM::expand_config(client.properties(), blueprint, dtypes, vector_sizes)?
+                .stage_config();
+
         // Validate that the kernel's shared-memory footprint fits in the
-        // per-cube budget the runtime reports. Without this check, an
-        // over-budget kernel is launched and the wgpu/Metal dispatch validator
-        // rejects it asynchronously — the user sees zero-initialized output.
-        let global_config =
-            GMM::expand_config(client.properties(), blueprint, dtypes, vector_sizes)?;
-        let stage_config = global_config.stage_config();
-        // Partitioned routines allocate lhs and rhs stages in shared memory;
-        // the accumulator typically lives in registers (per-routine variations
-        // can override).
+        // per-cube budget the runtime reports.
         let requested = smem_bytes(&stage_config.lhs_smem_config())
             + smem_bytes(&stage_config.rhs_smem_config());
         let available = client.properties().hardware.max_shared_memory_size;
+
         if requested > available {
             return Err(MatmulSetupError::Unavailable(
                 MatmulAvailabilityError::SharedMemoryTooBig {
@@ -132,6 +129,7 @@ impl<RC: RuntimeConfig, GMM: GlobalMatmulFamily<RC>, S: GlobalPartitionMatmul> B
                 },
             ));
         }
+
         Ok(())
     }
 }

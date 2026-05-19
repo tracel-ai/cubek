@@ -71,10 +71,7 @@ pub enum MatmulAvailabilityError {
     PlaneOpsUnavailable,
 
     /// The kernel's shared-memory footprint exceeds the device's per-cube limit.
-    SharedMemoryTooBig {
-        requested: usize,
-        available: usize,
-    },
+    SharedMemoryTooBig { requested: usize, available: usize },
 }
 impl From<MatmulAvailabilityError> for MatmulSetupError {
     fn from(value: MatmulAvailabilityError) -> Self {
