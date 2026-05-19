@@ -60,8 +60,7 @@ pub fn flash_attention_backward_reference(
     d_prepass: &HostData,
     problem: &AttentionProblem,
 ) -> FlashAttentionBackwardResult {
-    let debug =
-        compute_backward_inner(query, key, value, do_, Some(lse), Some(d_prepass), problem);
+    let debug = compute_backward_inner(query, key, value, do_, Some(lse), Some(d_prepass), problem);
     FlashAttentionBackwardResult {
         dq: debug.dq,
         dk: debug.dk,
@@ -200,8 +199,7 @@ fn compute_backward_inner(
                         } else {
                             let mut dot = 0f32;
                             for d in 0..head_dim {
-                                dot +=
-                                    query.get_f32(&[b, h, i, d]) * key.get_f32(&[b, h, j, d]);
+                                dot += query.get_f32(&[b, h, i, d]) * key.get_f32(&[b, h, j, d]);
                             }
                             (dot * scale - lse_i).exp()
                         };

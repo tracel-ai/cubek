@@ -8,10 +8,12 @@
 #![cfg(feature = "benchmarks")]
 
 use cubecl::{Runtime, TestRuntime, prelude::CubePrimitive};
-use cubek_attention::eval::problem::{AttentionSpec, problems};
 use cubek_attention::eval::forward::benchmarks::{AttentionCorrectness, strategies};
 use cubek_attention::eval::forward::cpu_reference::attention_epsilon;
-use cubek_attention::forward::definition::{AttentionElems, AttentionGlobalTypes, AttentionProblem};
+use cubek_attention::eval::problem::{AttentionSpec, problems};
+use cubek_attention::forward::definition::{
+    AttentionElems, AttentionGlobalTypes, AttentionProblem,
+};
 use cubek_test_utils::{Correctness, TestOutcome, assert_equals_approx};
 
 const SEEDS: [u64; 2] = [12, 34];

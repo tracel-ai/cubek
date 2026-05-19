@@ -1,6 +1,8 @@
 use cubek_test_utils::CatalogEntry;
 
-use crate::forward::definition::{AttentionDims, AttentionGlobalTypes, AttentionOptions, AttentionProblem};
+use crate::forward::definition::{
+    AttentionDims, AttentionGlobalTypes, AttentionOptions, AttentionProblem,
+};
 
 /// Client-independent description of an attention benchmark problem. The full
 /// [`AttentionProblem`] also needs a [`AttentionGlobalTypes`] which depends on

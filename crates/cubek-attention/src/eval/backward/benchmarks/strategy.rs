@@ -14,7 +14,11 @@ pub enum BackwardStrategy {
 
 pub fn strategies() -> Vec<CatalogEntry<BackwardStrategy>> {
     vec![
-        CatalogEntry::new("prepass", "Prepass (D = rowsum(dO⊙O))", BackwardStrategy::Prepass),
+        CatalogEntry::new(
+            "prepass",
+            "Prepass (D = rowsum(dO⊙O))",
+            BackwardStrategy::Prepass,
+        ),
         CatalogEntry::new("dq", "dQ kernel (Q-outer)", BackwardStrategy::Dq),
         CatalogEntry::new("dkdv", "dK/dV kernel (KV-outer)", BackwardStrategy::Dkdv),
         CatalogEntry::new(

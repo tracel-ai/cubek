@@ -24,7 +24,9 @@ use crate::{
         },
         stage::{StageAttentionConfig as _, StageAttentionFamily},
     },
-    forward::definition::{AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError},
+    forward::definition::{
+        AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError,
+    },
 };
 
 pub struct SimpleGlobalAttentionFamily<SA: StageAttentionFamily> {

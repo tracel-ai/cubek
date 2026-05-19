@@ -26,8 +26,8 @@ use cubek_attention::{
     },
 };
 use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, TestInput, TestOutcome,
-    assert_equals_approx, launch_and_capture_outcome,
+    ExecutionOutcome, HostData, HostDataType, TestInput, TestOutcome, assert_equals_approx,
+    launch_and_capture_outcome,
 };
 
 /// Seeded inputs + their fp32 host-side mirrors. All tensors are fp32 in
@@ -68,16 +68,18 @@ fn problem(seq_q: usize, seq_kv: usize, head_dim: usize, val_dim: usize) -> Atte
     }
 }
 
-fn problem_causal(seq_q: usize, seq_kv: usize, head_dim: usize, val_dim: usize) -> AttentionProblem {
+fn problem_causal(
+    seq_q: usize,
+    seq_kv: usize,
+    head_dim: usize,
+    val_dim: usize,
+) -> AttentionProblem {
     let mut p = problem(seq_q, seq_kv, head_dim, val_dim);
     p.options.causal = true;
     p
 }
 
-fn seed_inputs(
-    client: &ComputeClient<TestRuntime>,
-    problem: &AttentionProblem,
-) -> BackwardInputs {
+fn seed_inputs(client: &ComputeClient<TestRuntime>, problem: &AttentionProblem) -> BackwardInputs {
     let q_shape = [
         problem.dims.batch,
         problem.dims.num_heads,

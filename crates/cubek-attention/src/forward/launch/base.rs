@@ -5,7 +5,9 @@ use crate::forward::routines::{
 };
 use crate::{
     forward::definition::AttentionSetupError,
-    forward::definition::{AttentionDims, AttentionGlobalTypes, AttentionOptions, AttentionProblem},
+    forward::definition::{
+        AttentionDims, AttentionGlobalTypes, AttentionOptions, AttentionProblem,
+    },
     forward::launch::args::{TensorArgs, TensorInputsLaunch},
     forward::routines::DeviceSettings,
 };
