@@ -46,26 +46,26 @@ impl<CRE: Numeric, Sc: TileScope> PartitionTile<CRE, Sc, ReadWrite> {
     /// double (2) buffering.
     #[allow(clippy::too_many_arguments)]
     pub fn execute_with_listener<
-        ASE: Numeric,
-        ASS: Size,
-        ARE: Numeric,
-        BSE: Numeric,
-        BSS: Size,
-        BRE: Numeric,
+        LhsS: Numeric,
+        LhsSize: Size,
+        LhsR: Numeric,
+        RhsS: Numeric,
+        RhsSize: Size,
+        RhsR: Numeric,
         SEL: StageEventListener,
     >(
         &mut self,
-        a_stage: &StageTile<ASE, ReadOnly>,
-        b_stage: &StageTile<BSE, ReadOnly>,
-        a_fragment: &mut Sequence<Tile<ARE, Sc, ReadWrite>>,
-        b_fragments: &mut PipelinedTile<BRE, Sc, ReadWrite>,
+        a_stage: &StageTile<LhsS, ReadOnly>,
+        b_stage: &StageTile<RhsS, ReadOnly>,
+        a_fragment: &mut Sequence<Tile<LhsR, Sc, ReadWrite>>,
+        b_fragments: &mut PipelinedTile<RhsR, Sc, ReadWrite>,
         #[comptime] partition_size_k: u32,
         listener: SEL,
         scheduler: &PartitionScheduler,
     ) {
         let n_buffers = comptime!(b_fragments.fragments.len());
         if n_buffers == 1 {
-            execute_single::<ASE, ASS, ARE, BSE, BSS, BRE, CRE, Sc, SEL>(
+            execute_single::<LhsS, LhsSize, LhsR, RhsS, RhsSize, RhsR, CRE, Sc, SEL>(
                 a_stage,
                 b_stage,
                 a_fragment,
@@ -76,7 +76,7 @@ impl<CRE: Numeric, Sc: TileScope> PartitionTile<CRE, Sc, ReadWrite> {
                 scheduler,
             );
         } else if n_buffers == 2 {
-            execute_double::<ASE, ASS, ARE, BSE, BSS, BRE, CRE, Sc, SEL>(
+            execute_double::<LhsS, LhsSize, LhsR, RhsS, RhsSize, RhsR, CRE, Sc, SEL>(
                 a_stage,
                 b_stage,
                 a_fragment,
@@ -95,21 +95,21 @@ impl<CRE: Numeric, Sc: TileScope> PartitionTile<CRE, Sc, ReadWrite> {
 #[cube]
 #[allow(clippy::too_many_arguments)]
 fn execute_single<
-    ASE: Numeric,
-    ASS: Size,
-    ARE: Numeric,
-    BSE: Numeric,
-    BSS: Size,
-    BRE: Numeric,
-    CRE: Numeric,
+    LhsS: Numeric,
+    LhsSize: Size,
+    LhsR: Numeric,
+    RhsS: Numeric,
+    RhsSize: Size,
+    RhsR: Numeric,
+    Acc: Numeric,
     Sc: TileScope,
     SEL: StageEventListener,
 >(
-    a_stage: &StageTile<ASE, ReadOnly>,
-    b_stage: &StageTile<BSE, ReadOnly>,
-    a_fragment: &mut Sequence<Tile<ARE, Sc, ReadWrite>>,
-    b_fragments: &mut Sequence<Tile<BRE, Sc, ReadWrite>>,
-    acc: &mut PartitionTile<CRE, Sc, ReadWrite>,
+    a_stage: &StageTile<LhsS, ReadOnly>,
+    b_stage: &StageTile<RhsS, ReadOnly>,
+    a_fragment: &mut Sequence<Tile<LhsR, Sc, ReadWrite>>,
+    b_fragments: &mut Sequence<Tile<RhsR, Sc, ReadWrite>>,
+    acc: &mut PartitionTile<Acc, Sc, ReadWrite>,
     #[comptime] partition_size_k: u32,
     mut listener: SEL,
     scheduler: &PartitionScheduler,
@@ -140,7 +140,7 @@ fn execute_single<
 
             a_fragment
                 .index_mut(m_iter)
-                .copy_from::<ASE, ASS, ARE, BRE, CRE, ReadOnly>(&tile_lhs, StageIdent::Lhs);
+                .copy_from::<LhsS, LhsSize, LhsR, RhsR, Acc, ReadOnly>(&tile_lhs, StageIdent::Lhs);
 
             SEL::on_event(
                 &mut listener,
@@ -161,7 +161,10 @@ fn execute_single<
 
             b_fragments
                 .index_mut(0usize)
-                .copy_from::<BSE, BSS, ARE, BRE, CRE, ReadOnly>(&rhs_tile_next, StageIdent::Rhs);
+                .copy_from::<RhsS, RhsSize, LhsR, RhsR, Acc, ReadOnly>(
+                    &rhs_tile_next,
+                    StageIdent::Rhs,
+                );
 
             SEL::on_event(
                 &mut listener,
@@ -198,21 +201,21 @@ fn execute_single<
 #[cube]
 #[allow(clippy::too_many_arguments)]
 fn execute_double<
-    ASE: Numeric,
-    ASS: Size,
-    ARE: Numeric,
-    BSE: Numeric,
-    BSS: Size,
-    BRE: Numeric,
-    CRE: Numeric,
+    LhsS: Numeric,
+    LhsSize: Size,
+    LhsR: Numeric,
+    RhsS: Numeric,
+    RhsSize: Size,
+    RhsR: Numeric,
+    Acc: Numeric,
     Sc: TileScope,
     SEL: StageEventListener,
 >(
-    a_stage: &StageTile<ASE, ReadOnly>,
-    b_stage: &StageTile<BSE, ReadOnly>,
-    a_fragment: &mut Sequence<Tile<ARE, Sc, ReadWrite>>,
-    b_fragments: &mut Sequence<Tile<BRE, Sc, ReadWrite>>,
-    acc: &mut PartitionTile<CRE, Sc, ReadWrite>,
+    a_stage: &StageTile<LhsS, ReadOnly>,
+    b_stage: &StageTile<RhsS, ReadOnly>,
+    a_fragment: &mut Sequence<Tile<LhsR, Sc, ReadWrite>>,
+    b_fragments: &mut Sequence<Tile<RhsR, Sc, ReadWrite>>,
+    acc: &mut PartitionTile<Acc, Sc, ReadWrite>,
     #[comptime] partition_size_k: u32,
     mut listener: SEL,
     scheduler: &PartitionScheduler,
@@ -243,7 +246,7 @@ fn execute_double<
 
             a_fragment
                 .index_mut(m_iter)
-                .copy_from::<ASE, ASS, ARE, BRE, CRE, ReadOnly>(&tile_lhs, StageIdent::Lhs);
+                .copy_from::<LhsS, LhsSize, LhsR, RhsR, Acc, ReadOnly>(&tile_lhs, StageIdent::Lhs);
 
             SEL::on_event(
                 &mut listener,
@@ -261,7 +264,10 @@ fn execute_double<
         let rhs_tile_first = Tile::new_SharedTile(shared_first);
         b_fragments
             .index_mut(0usize)
-            .copy_from::<BSE, BSS, ARE, BRE, CRE, ReadOnly>(&rhs_tile_first, StageIdent::Rhs);
+            .copy_from::<RhsS, RhsSize, LhsR, RhsR, Acc, ReadOnly>(
+                &rhs_tile_first,
+                StageIdent::Rhs,
+            );
 
         SEL::on_event(
             &mut listener,
@@ -283,7 +289,10 @@ fn execute_double<
             let rhs_tile_next = Tile::new_SharedTile(shared);
             b_fragments
                 .index_mut(next_idx)
-                .copy_from::<BSE, BSS, ARE, BRE, CRE, ReadOnly>(&rhs_tile_next, StageIdent::Rhs);
+                .copy_from::<RhsS, RhsSize, LhsR, RhsR, Acc, ReadOnly>(
+                    &rhs_tile_next,
+                    StageIdent::Rhs,
+                );
 
             SEL::on_event(
                 &mut listener,
