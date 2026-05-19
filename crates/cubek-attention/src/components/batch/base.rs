@@ -1,14 +1,14 @@
 use cubecl;
 use cubecl::{ir::DeviceProperties, prelude::*, std::tensor::r#virtual::VirtualTensor};
 
-use crate::definition::{
+use crate::forward::definition::{
     AttentionElems, AttentionPrecision, AttentionSetupError, CubeMapping, CubeMappingLaunch,
     InputRuntimeArg, OutputRuntimeArg,
 };
 use crate::{
-    definition::attention_types::*,
-    launch::AttentionArgs,
-    {components::global::GlobalAttentionConfig, definition::AttentionVectorSizes},
+    forward::definition::attention_types::*,
+    forward::launch::AttentionArgs,
+    {components::global::GlobalAttentionConfig, forward::definition::AttentionVectorSizes},
 };
 use std::{fmt::Debug, hash::Hash};
 

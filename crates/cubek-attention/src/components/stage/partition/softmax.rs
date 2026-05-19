@@ -3,7 +3,7 @@ use cubecl::prelude::*;
 use cubek_std::tile::{Plane, RowWise, SoftmaxKind, Tile, softmax_init_state};
 
 use crate::components::tile::matmul::{self as attn_matmul, AttentionTileMatmul};
-use crate::{components::tile::MaskTile, definition::AttentionPartitionSize};
+use crate::{components::tile::MaskTile, forward::definition::AttentionPartitionSize};
 
 #[derive(CubeType)]
 /// Holds the per-partition score and softmaxed tiles. For the cmma path each

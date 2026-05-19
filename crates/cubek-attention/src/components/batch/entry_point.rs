@@ -4,9 +4,10 @@ use crate::components::{
     stage::StageAttentionConfig,
 };
 use crate::{
-    definition::AttentionBlueprint, definition::AttentionElems, definition::CubeMapping,
-    launch::AttentionArgs, launch::TensorKey, launch::TensorMask, launch::TensorOutput,
-    launch::TensorQuery, launch::TensorValue,
+    forward::definition::AttentionBlueprint, forward::definition::AttentionElems,
+    forward::definition::CubeMapping, forward::launch::AttentionArgs, forward::launch::TensorKey,
+    forward::launch::TensorMask, forward::launch::TensorOutput, forward::launch::TensorQuery,
+    forward::launch::TensorValue,
 };
 use cubecl;
 use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};

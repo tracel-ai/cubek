@@ -3,7 +3,7 @@ use cubecl::prelude::*;
 use cubek_std::tile::{Plane, RowWise, Tile};
 
 use crate::components::tile::matmul::{self as attn_matmul, AttentionTileMatmul};
-use crate::definition::AttentionPartitionSize;
+use crate::forward::definition::AttentionPartitionSize;
 
 #[derive(CubeType)]
 /// Holds the per-partition output accumulator tiles. For the cmma path each
