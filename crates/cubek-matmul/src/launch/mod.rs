@@ -1,7 +1,8 @@
+pub mod launch_gemm_plane_parallel;
+pub mod launch_gemv_plane_parallel;
+pub mod launch_gemv_unit_perpendicular;
 pub mod launch_naive;
 pub mod launch_tiling;
-pub mod launch_vecmat_plane_parallel;
-pub mod launch_vecmat_unit_perpendicular;
 #[cfg(feature = "extended")]
 pub mod test_only;
 

@@ -13,7 +13,7 @@ use crate::{
 use crate::{
     launch::InputArg,
     launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs},
-    routines::vecmat_unit_perpendicular::GemvUnitPerpendicularRoutine,
+    routines::gemv_unit_perpendicular::GemvUnitPerpendicularRoutine,
     routines::{BlueprintStrategy, Routine as _},
 };
 
