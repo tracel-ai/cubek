@@ -46,19 +46,19 @@ impl<N: Numeric, Sc: TileScope> Tile<N, Sc, ReadWrite> {
     /// held under `TileKind::Pipelined`.
     #[allow(clippy::too_many_arguments)]
     pub fn mma_partition<
-        ASE: Numeric,
-        ASS: Size,
-        ARE: Numeric,
-        BSE: Numeric,
-        BSS: Size,
-        BRE: Numeric,
+        LhsS: Numeric,
+        LhsSize: Size,
+        LhsR: Numeric,
+        RhsS: Numeric,
+        RhsSize: Size,
+        RhsR: Numeric,
         SEL: StageEventListener,
     >(
         &mut self,
-        lhs: &Tile<ASE, Sc, ReadOnly>,
-        rhs: &Tile<BSE, Sc, ReadOnly>,
-        a_fragment: &mut Sequence<Tile<ARE, Sc, ReadWrite>>,
-        b_fragments: &mut Tile<BRE, Sc, ReadWrite>,
+        lhs: &Tile<LhsS, Sc, ReadOnly>,
+        rhs: &Tile<RhsS, Sc, ReadOnly>,
+        a_fragment: &mut Sequence<Tile<LhsR, Sc, ReadWrite>>,
+        b_fragments: &mut Tile<RhsR, Sc, ReadWrite>,
         #[comptime] partition_size_k: u32,
         listener: SEL,
         scheduler: &PartitionScheduler,
@@ -69,7 +69,7 @@ impl<N: Numeric, Sc: TileScope> Tile<N, Sc, ReadWrite> {
                 TileKind::Stage(b_stage),
                 TileKind::Partition(acc),
                 TileKind::Pipelined(b_frags),
-            ) => acc.execute_with_listener::<ASE, ASS, ARE, BSE, BSS, BRE, SEL>(
+            ) => acc.execute_with_listener::<LhsS, LhsSize, LhsR, RhsS, RhsSize, RhsR, SEL>(
                 a_stage,
                 b_stage,
                 a_fragment,
