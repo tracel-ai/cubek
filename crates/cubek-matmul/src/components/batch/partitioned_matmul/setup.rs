@@ -1,8 +1,11 @@
 use std::marker::PhantomData;
 
+use crate::components::stage::StageConfig;
 use crate::components::{
-    batch::partitioned_matmul::config::PartitionedBatchConfig, stage::NumStages,
+    batch::partitioned_matmul::config::PartitionedBatchConfig, global::GlobalConfig,
+    stage::NumStages,
 };
+use crate::definition::MatmulAvailabilityError;
 use crate::{
     components::batch::partitioned_matmul::matmul::PartitionedBatchMatmul,
     components::batch::partitioned_matmul::matmul::matmul_entry,
@@ -20,6 +23,7 @@ use crate::{
     {components::batch::BatchMatmulFamily, launch::ConfigRuntimeArg},
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
+use cubek_std::stage::StageMemoryConfig;
 
 /// Simple partitioned batch matmul family for any precision
 pub struct PartitionedBatchMatmulFamily<
@@ -105,6 +109,31 @@ impl<RC: RuntimeConfig, GMM: GlobalMatmulFamily<RC>, S: GlobalPartitionMatmul> B
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
-        GMM::validate_blueprint(client, blueprint, problem, dtypes, vector_sizes)
+        GMM::validate_blueprint(client, blueprint, problem, dtypes, vector_sizes)?;
+
+        let stage_config =
+            GMM::expand_config(client.properties(), blueprint, dtypes, vector_sizes)?
+                .stage_config();
+
+        // Validate that the kernel's shared-memory footprint fits in the
+        // per-cube budget the runtime reports.
+        let requested = smem_bytes(&stage_config.lhs_smem_config())
+            + smem_bytes(&stage_config.rhs_smem_config());
+        let available = client.properties().hardware.max_shared_memory_size;
+
+        if requested > available {
+            return Err(MatmulSetupError::Unavailable(
+                MatmulAvailabilityError::SharedMemoryTooBig {
+                    requested,
+                    available,
+                },
+            ));
+        }
+
+        Ok(())
     }
+}
+
+fn smem_bytes(cfg: &StageMemoryConfig) -> usize {
+    cfg.elements_per_stage() as usize * cfg.num_stages as usize * cfg.dtype.size()
 }

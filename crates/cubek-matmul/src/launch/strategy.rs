@@ -577,8 +577,7 @@ fn auto<R: Runtime>(
         match err {
             MatmulSetupError::Unavailable(_) => {
                 Strategy::SimpleUnit(Default::default())
-                    .launch_ref(client, lhs, rhs, out, dtypes)
-                    .unwrap();
+                    .launch_ref(client, lhs, rhs, out, dtypes)?;
             }
             _ => panic!("{err:?}"),
         }
