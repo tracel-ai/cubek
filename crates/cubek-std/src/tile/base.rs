@@ -22,8 +22,13 @@ pub struct Tile<N: Numeric, Sc: TileScope, IO: SliceVisibility> {
 #[derive(CubeType)]
 #[allow(dead_code)]
 pub(crate) enum TileKind<N: Numeric, Sc: TileScope, IO: SliceVisibility> {
+    /// Whole-stage view, used for partition-level dispatch.
+    Stage(StageTile<N, IO>),
+    /// Sequence of per-tile accumulators.
+    Partition(PartitionTile<N, Sc, IO>),
     /// Stage slot exposed as a tile (no distribution, no compute).
     SharedTile(SharedTile<N, IO>),
+
     /// CMMA fragment.
     Cmma(CmmaTile<N>),
     /// MMA fragment; operand role (Lhs/Rhs/Acc) carried inside.
@@ -40,14 +45,12 @@ pub(crate) enum TileKind<N: Numeric, Sc: TileScope, IO: SliceVisibility> {
     WhiteboxFragment(WhiteboxFragment<N>),
     /// Per-row vector tile (softmax max/sum state). `Sc = Plane`.
     RowWise(RowWise<N>),
-    /// CMMA fragment + smem scratch + whitebox view. `Sc = Plane`.
-    Bounce(BounceTile<N>),
-    /// Whole-stage view, used for partition-level dispatch.
-    Stage(StageTile<N, IO>),
-    /// Sequence of per-tile accumulators.
-    Partition(PartitionTile<N, Sc, IO>),
+
     /// Rhs fragments for the partition matmul (1 = single-buffered, 2 = double).
     Pipelined(PipelinedTile<N, Sc, IO>),
+    /// CMMA fragment + smem scratch + whitebox view. `Sc = Plane`.
+    Bounce(BounceTile<N>),
+
     /// Sentinel for zero-init via `copy_from`.
     None,
 }
