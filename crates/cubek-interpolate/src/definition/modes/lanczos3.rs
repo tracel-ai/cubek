@@ -8,21 +8,20 @@ pub struct Lanczos3 {}
 impl Interpolate for Lanczos3 {
     const HALO: usize = 6;
 
-    fn compute_weight(x: f32) -> f32 {
-        let abs_x = f32::abs(x);
-        let pi_x = core::f32::consts::PI * x;
-        let denom = (pi_x * pi_x) / 3.0;
-        let safe_denom = select(abs_x < 1e-7, 1.0, denom);
-        
+    fn compute_weight<EA: Float>(x: EA) -> EA {
+        let abs_x = x.abs();
+        let pi_x = EA::cast_from(core::f32::consts::PI) * x;
+        let denom = (pi_x * pi_x) / EA::new(3.0);
+        let safe_denom = select(abs_x < EA::new(1e-7), EA::new(1.0), denom);
+
         select(
-            abs_x < 1e-7,
-            1.0,
+            abs_x < EA::new(1e-7),
+            EA::new(1.0),
             select(
-                abs_x < 3.0,
-                (f32::sin(pi_x) * f32::sin(pi_x / 3.0)) / safe_denom,
-                0.0,
+                abs_x < EA::new(3.0),
+                (pi_x.sin() * (pi_x / EA::new(3.0)).sin()) / safe_denom,
+                EA::new(0.0),
             ),
         )
     }
 }
-

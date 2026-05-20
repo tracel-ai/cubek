@@ -1,12 +1,12 @@
 use crate::{
     components::{
         global::{TileSize, tile_absolute_coords},
-        readers::Reader,
+        readers::{GlobalMemoryReader, Reader, ReaderExpand, SharedMemoryReader},
         writers::Writer,
     },
     definition::{
-        InterpolateMode, InterpolateOptions, InterpolatePrecision, NearestMode, compute_weights,
-        get_halo,
+        InterpolateMode, InterpolateOptions, InterpolatePrecision, MemoryStrategy, NearestMode,
+        compute_weights, get_halo,
     },
 };
 use cubecl::{prelude::*, std::FastDivmod};
@@ -18,10 +18,22 @@ pub fn interpolate_kernel<EI: Float, EA: Float, N: Size>(
     cube_shape: Sequence<FastDivmod<usize>>,
     #[comptime] output_tile_size: TileSize,
     #[comptime] options: InterpolateOptions,
+    #[comptime] memory_strategy: MemoryStrategy,
+    #[comptime] smem_width: usize,
+    #[comptime] smem_height: usize,
     #[define(EI)] _dtype: StorageType,
     #[define(EA)] _acc_dtype: StorageType,
 ) {
-    interpolate_kernel_inner::<(EI, EA), N>(input, output, cube_shape, output_tile_size, options);
+    interpolate_kernel_inner::<(EI, EA), N>(
+        input,
+        output,
+        cube_shape,
+        output_tile_size,
+        options,
+        memory_strategy,
+        smem_width,
+        smem_height,
+    );
 }
 
 #[cube]
@@ -31,6 +43,9 @@ fn interpolate_kernel_inner<P: InterpolatePrecision, N: Size>(
     cube_shape: Sequence<FastDivmod<usize>>,
     #[comptime] output_tile_size: TileSize,
     #[comptime] options: InterpolateOptions,
+    #[comptime] memory_strategy: MemoryStrategy,
+    #[comptime] smem_width: usize,
+    #[comptime] smem_height: usize,
 ) {
     let (batch, cube_pos, unit_pos, channel_group) = decompose_index(ABSOLUTE_POS, cube_shape);
 
@@ -70,19 +85,67 @@ fn interpolate_kernel_inner<P: InterpolatePrecision, N: Size>(
 
     let vector_size = input.vector_size();
 
-    let final_value = compute_value::<P, N>(
-        input,
-        batch,
-        channel_group,
-        vector_size,
-        input_width,
-        input_height,
-        base_x,
-        base_y,
-        weights_x,
-        weights_y,
-        options,
-    );
+    let final_value = match comptime!(memory_strategy) {
+        MemoryStrategy::Global => {
+            let reader = <GlobalMemoryReader as Reader<P::EA, N>>::init::<P::EI>(
+                input,
+                batch,
+                channel_group,
+                vector_size,
+                input_width,
+                input_height,
+                0,
+                0,
+                comptime!(smem_width),
+                comptime!(smem_height),
+            );
+            compute_value_reader::<P, N, GlobalMemoryReader>(
+                input,
+                input_width,
+                input_height,
+                base_x,
+                base_y,
+                weights_x,
+                weights_y,
+                options,
+                &reader,
+            )
+        }
+        MemoryStrategy::Shared => {
+            let halo = comptime!(get_halo(options.mode));
+            let radius_offset = (halo - 1) / 2;
+
+            let min_input_x = isize::cast_from(base_x) - radius_offset as isize;
+            let min_input_y = isize::cast_from(base_y) - radius_offset as isize;
+
+            let min_x = min_input_x.max(0) as usize;
+            let min_y = min_input_y.max(0) as usize;
+
+            let reader = <SharedMemoryReader<P::EA, N> as Reader<P::EA, N>>::init::<P::EI>(
+                input,
+                batch,
+                channel_group,
+                vector_size,
+                input_width,
+                input_height,
+                min_x,
+                min_y,
+                comptime!(smem_width),
+                comptime!(smem_height),
+            );
+            compute_value_reader::<P, N, SharedMemoryReader<P::EA, N>>(
+                input,
+                input_width,
+                input_height,
+                base_x,
+                base_y,
+                weights_x,
+                weights_y,
+                options,
+                &reader,
+            )
+        }
+    };
 
     let final_value = Vector::cast_from(final_value);
 
@@ -104,7 +167,7 @@ fn decompose_index(
 
 // Computes the input coordinates corresponding to an output coordinates.
 #[cube]
-fn compute_input_coords<F: Float>(
+fn compute_input_coords<EA: Float>(
     x: usize,
     y: usize,
     input_width: usize,
@@ -112,27 +175,27 @@ fn compute_input_coords<F: Float>(
     output_width: usize,
     output_height: usize,
     #[comptime] options: InterpolateOptions,
-) -> (F, F) {
-    let mapped_x = get_input_coord::<F>(x, input_width, output_width, options);
-    let mapped_y = get_input_coord::<F>(y, input_height, output_height, options);
+) -> (EA, EA) {
+    let mapped_x = get_input_coord::<EA>(x, input_width, output_width, options);
+    let mapped_y = get_input_coord::<EA>(y, input_height, output_height, options);
     (mapped_x, mapped_y)
 }
 
 #[cube]
-fn get_input_coord<F: Float>(
+fn get_input_coord<EA: Float>(
     x: usize,
     input_size: usize,
     output_size: usize,
     #[comptime] options: InterpolateOptions,
-) -> F {
+) -> EA {
     match options.mode {
         InterpolateMode::Nearest(nearest_mode) => match nearest_mode {
             NearestMode::Exact => {
-                (F::cast_from(x) + F::new(0.5)) * F::cast_from(input_size)
-                    / F::cast_from(output_size)
+                (EA::cast_from(x) + EA::new(0.5)) * EA::cast_from(input_size)
+                    / EA::cast_from(output_size)
             }
             NearestMode::Floor => {
-                (F::cast_from(x) * F::cast_from(input_size)) / F::cast_from(output_size)
+                (EA::cast_from(x) * EA::cast_from(input_size)) / EA::cast_from(output_size)
             }
         },
         _ => {
@@ -140,23 +203,20 @@ fn get_input_coord<F: Float>(
                 let is_valid_output = (output_size > 1) as usize;
                 let safe_denominator = (output_size - 1).max(1);
 
-                F::cast_from(x * (input_size - 1) * is_valid_output)
-                    / F::cast_from(safe_denominator)
+                EA::cast_from(x * (input_size - 1) * is_valid_output)
+                    / EA::cast_from(safe_denominator)
             } else {
-                (F::cast_from(x) + F::new(0.5)) * F::cast_from(input_size)
-                    / F::cast_from(output_size)
-                    - F::new(0.5)
+                (EA::cast_from(x) + EA::new(0.5)) * EA::cast_from(input_size)
+                    / EA::cast_from(output_size)
+                    - EA::new(0.5)
             }
         }
     }
 }
 
 #[cube]
-fn compute_value<P: InterpolatePrecision, N: Size>(
+fn compute_value_reader<P: InterpolatePrecision, N: Size, R: Reader<P::EA, N>>(
     input: &Tensor<Vector<P::EI, N>>,
-    batch: usize,
-    channel_group: usize,
-    vector_size: usize,
     input_width: usize,
     input_height: usize,
     base_x: isize,
@@ -164,10 +224,8 @@ fn compute_value<P: InterpolatePrecision, N: Size>(
     weights_x: Array<Vector<P::EA, N>>,
     weights_y: Array<Vector<P::EA, N>>,
     #[comptime] options: InterpolateOptions,
+    reader: &R,
 ) -> Vector<P::EA, N> {
-    let input_offset = batch * input.stride(0);
-    let reader = Reader::new(channel_group);
-
     let halo = comptime!(get_halo(options.mode));
     let radius_offset = (halo - 1) / 2;
 
@@ -179,28 +237,22 @@ fn compute_value<P: InterpolatePrecision, N: Size>(
         let mut row_value = Vector::zeroed();
         let mut row_weight_sum = Vector::zeroed();
 
-        let unclamped_y = base_y + i as isize - radius_offset as isize;
-        let y = unclamped_y.max(0).min(input_height as isize - 1) as usize;
-        let row_offset = input_offset + y * input.stride(1);
+        let y = base_y + i as isize - radius_offset as isize;
 
         #[unroll]
         for j in 0..halo {
-            let unclamped_x = base_x + j as isize - radius_offset as isize;
-            let x = unclamped_x.max(0).min(input_width as isize - 1) as usize;
+            let x = base_x + j as isize - radius_offset as isize;
 
-            let is_in_bounds = is_in_bounds(unclamped_x, input_width, options)
-                && is_in_bounds(unclamped_y, input_height, options);
+            let is_in_bounds =
+                is_in_bounds(x, input_width, options) && is_in_bounds(y, input_height, options);
+
+            let clamped_y = y.max(0).min(input_height as isize - 1) as usize;
+            let clamped_x = x.max(0).min(input_width as isize - 1) as usize;
             let weight_x = weights_x[j];
 
             row_value += select(
                 is_in_bounds,
-                reader.read_weighted::<P::EI, P::EA, N>(
-                    input,
-                    row_offset,
-                    x,
-                    vector_size,
-                    weight_x,
-                ),
+                reader.read_weighted::<P::EI>(input, clamped_y, clamped_x, weight_x),
                 Vector::zeroed(),
             );
             row_weight_sum += select(is_in_bounds, weight_x, Vector::zeroed());

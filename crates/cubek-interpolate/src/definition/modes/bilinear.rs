@@ -8,8 +8,8 @@ pub struct Bilinear {}
 impl Interpolate for Bilinear {
     const HALO: usize = 2;
 
-    fn compute_weight(x: f32) -> f32 {
-        let abs_x = f32::abs(x);
-        select(abs_x < 1.0, 1.0 - abs_x, 0.0)
+    fn compute_weight<EA: Float>(x: EA) -> EA {
+        let abs_x = x.abs();
+        select(abs_x < EA::new(1.0), EA::new(1.0) - abs_x, EA::new(0.0))
     }
 }

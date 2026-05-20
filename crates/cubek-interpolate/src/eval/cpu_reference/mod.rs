@@ -1,7 +1,7 @@
 mod backward;
 mod forward;
 
-use crate::definition::{InterpolateOptions, InterpolateProblem};
+use crate::definition::{InterpolateOptions, InterpolateProblem, InterpolateStrategy};
 use cubecl::ir::StorageType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{TestRuntime, client::ComputeClient, prelude::*, zspace::Strides};
@@ -42,10 +42,11 @@ pub(crate) fn output_shape_for(input_shape: &[usize; 4], output_size: &[usize; 2
 pub fn strategy_result(
     client: ComputeClient<TestRuntime>,
     problem: InterpolateProblem,
+    strategy: InterpolateStrategy,
     seed: u64,
 ) -> Result<HostData, String> {
     match problem {
-        InterpolateProblem::Forward(prob) => forward::strategy_result(client, prob, seed),
+        InterpolateProblem::Forward(prob) => forward::strategy_result(client, prob, strategy, seed),
         InterpolateProblem::Backward(prob) => backward::strategy_result(client, prob, seed),
     }
 }

@@ -6,7 +6,9 @@ mod kernel;
 mod launch;
 
 use crate::{
-    definition::{InterpolateError, InterpolateMode, InterpolateOptions},
+    definition::{
+        InterpolateError, InterpolateMode, InterpolateOptions, InterpolateStrategy, MemoryStrategy,
+    },
     kernel::backward::interpolate_nearest_backward_launch,
     launch::interpolate_launch,
 };
@@ -28,7 +30,35 @@ pub fn interpolate<R: Runtime>(
     validate_rank(input.shape.len(), output.shape.len())?;
     validate_nhwc_consistency(&input.shape, &output.shape)?;
 
-    interpolate_launch(client, input, output, options, dtype)
+    interpolate_launch(
+        client,
+        input,
+        output,
+        options,
+        dtype,
+        MemoryStrategy::Global,
+    )
+}
+
+pub fn interpolate_with_strategy<R: Runtime>(
+    client: &ComputeClient<R>,
+    input: TensorBinding<R>,
+    output: TensorBinding<R>,
+    options: InterpolateOptions,
+    strategy: InterpolateStrategy,
+    dtype: StorageType,
+) -> Result<(), InterpolateError> {
+    validate_rank(input.shape.len(), output.shape.len())?;
+    validate_nhwc_consistency(&input.shape, &output.shape)?;
+
+    interpolate_launch(
+        client,
+        input,
+        output,
+        options,
+        dtype,
+        strategy.memory_strategy(),
+    )
 }
 
 /// Backward interpolate operation

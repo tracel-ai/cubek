@@ -14,13 +14,13 @@ impl cubek_test_utils::Correctness for InterpolateCorrectness {
 
     fn kernel_result(
         &self,
-        _strategy: &InterpolateStrategy,
+        strategy: &InterpolateStrategy,
         problem: &InterpolateProblem,
         seeds: &[u64],
     ) -> Result<HostData, String> {
         let device = <TestRuntime as Runtime>::Device::default();
         let client = <TestRuntime as Runtime>::client(&device);
-        strategy_result(client, problem.clone(), seeds[0])
+        strategy_result(client, problem.clone(), *strategy, seeds[0])
     }
 
     fn reference_result(
