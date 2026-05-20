@@ -78,6 +78,7 @@ impl From<GlobalMemoryConfig> for GlobalLayoutConfig {
 
 /// Global layout that uses the last two dimensions and ignores all others.
 #[derive(CubeType, CubeLaunch, Clone)]
+#[expand(derive(Clone))]
 pub struct GlobalLayout {
     batch_layout: VirtualLayout<Coords1d, Coords1d>,
     rows: u32,
@@ -287,8 +288,8 @@ impl Layout for BatchLayout {
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
         let mut batch = pos as u32;
         let mut batch_offs = 0;
-        let batch_shape = self.batch_shape.rev();
-        let batch_strides = self.batch_strides.rev();
+        let batch_shape = self.batch_shape.reversed();
+        let batch_strides = self.batch_strides.reversed();
 
         #[unroll]
         for i in 0..batch_shape.len() {
@@ -373,7 +374,8 @@ pub enum GlobalScaleLayout {
 }
 
 /// Workaround for enums not supporting `comptime`, should fix that in the future
-#[derive(CubeType, CubeLaunch)]
+#[derive(CubeType, CubeLaunch, Clone)]
+#[expand(derive(Clone))]
 pub struct BlockScaledLayout {
     shape: Coords2d,
     scales_layout: GlobalLayout,
@@ -409,7 +411,7 @@ impl Layout for GlobalScaleLayout {
                     scales_layout,
                     block_size,
                     ..
-                } = layout;
+                } = layout.clone();
 
                 let (batch, row, col) = coords;
                 let (block_row, block_col) = block_size;

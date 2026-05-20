@@ -107,18 +107,18 @@ pub fn run_pool_backward_test(
         None
     };
 
-    if problem.with_indices {
-        if let PoolMode::Max(opts) = &problem.mode {
-            let indices_reference =
-                cpu_reference_max_pool_indices(&input_data, opts, &problem.out_grad_shape.to_vec());
-            validate_indices(
-                indices_host
-                    .as_ref()
-                    .expect("indices host data missing")
-                    .clone(),
-                indices_reference,
-            );
-        }
+    if problem.with_indices
+        && let PoolMode::Max(opts) = &problem.mode
+    {
+        let indices_reference =
+            cpu_reference_max_pool_indices(&input_data, opts, &problem.out_grad_shape.to_vec());
+        validate_indices(
+            indices_host
+                .as_ref()
+                .expect("indices host data missing")
+                .clone(),
+            indices_reference,
+        );
     }
 
     let reference = if problem.with_indices {

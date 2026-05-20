@@ -27,7 +27,7 @@ pub trait MmaFragmentReader {
     >(
         tile: &<Self::TileKind as StageTileKind>::Tile<V, NV>,
         fragment: &mut Array<Vector<E, N>>,
-        def: MmaDefinition<A, B, CD>,
+        def: &MmaDefinition<A, B, CD>,
         #[comptime] ident: MatrixIdent,
         #[comptime] layout: MatrixLayout,
         #[comptime] tile_size: TileSize,
@@ -57,7 +57,7 @@ impl MmaFragmentReader for MmaStageReader<Strided> {
     >(
         tile: &StridedTile<V, NV>,
         fragment: &mut Array<Vector<E, NE>>,
-        def: MmaDefinition<A, B, CD>,
+        def: &MmaDefinition<A, B, CD>,
         #[comptime] ident: MatrixIdent,
         #[comptime] layout: MatrixLayout,
         #[comptime] tile_size: TileSize,
@@ -94,7 +94,7 @@ fn load_manual_transposed<
 >(
     tile: &StridedTile<V, NV>,
     fragment: &mut Array<Vector<E, N>>,
-    def: MmaDefinition<A, B, CD>,
+    def: &MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
 ) {
@@ -120,7 +120,7 @@ fn load_manual_transposed<
             let offset = row * stride_row + col * stride_col;
             let offset = tile.stage_offset(offset);
 
-            vector[n] = E::cast_from(tile.container[offset as usize]);
+            vector.insert(n, E::cast_from(tile.container[offset as usize]));
         }
         fragment[i] = vector;
     }
@@ -138,7 +138,7 @@ fn load_manual_plain<
 >(
     tile: &StridedTile<V, NV>,
     fragment: &mut Array<Vector<E, N>>,
-    def: MmaDefinition<A, B, CD>,
+    def: &MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
 ) {
@@ -176,7 +176,7 @@ fn load_manual_plain<
 fn load_ldmatrix<E: Numeric, N: Size, V: Numeric, NV: Size, A: Numeric, B: Numeric, CD: Numeric>(
     tile: &StridedTile<V, NV>,
     fragment: &mut Array<Vector<E, N>>,
-    def: MmaDefinition<A, B, CD>,
+    def: &MmaDefinition<A, B, CD>,
     #[comptime] transposed: bool,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
@@ -193,10 +193,8 @@ fn load_ldmatrix<E: Numeric, N: Size, V: Numeric, NV: Size, A: Numeric, B: Numer
         ldmatrix_offset::<V, A, B, CD>(stride, def, stage_vector_size, ident, layout, tile_size);
     let start = tile.stage_offset(start);
 
-    let row_slice = tile
-        .container
-        .slice(start as usize, (start + width) as usize);
-    let regs = def.load_matrix::<_, N>(&row_slice, ident, num_regs, transposed);
+    let row_slice = &tile.container[start as usize..(start + width) as usize];
+    let regs = def.load_matrix::<_, N>(row_slice, ident, num_regs, transposed);
 
     #[unroll]
     for i in 0..num_regs {
@@ -209,7 +207,7 @@ fn load_ldmatrix<E: Numeric, N: Size, V: Numeric, NV: Size, A: Numeric, B: Numer
 #[cube]
 pub(crate) fn ldmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     stride: u32,
-    def: MmaDefinition<A, B, CD>,
+    def: &MmaDefinition<A, B, CD>,
     #[comptime] stage_vector_size: VectorSize,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
@@ -273,7 +271,7 @@ impl MmaFragmentReader for MmaStageReader<Filled> {
     >(
         value: &V,
         fragment: &mut Array<Vector<E, N>>,
-        def: MmaDefinition<A, B, CD>,
+        def: &MmaDefinition<A, B, CD>,
         #[comptime] ident: MatrixIdent,
         #[comptime] _layout: MatrixLayout,
         #[comptime] _tile_size: TileSize,
@@ -307,7 +305,7 @@ where
     >(
         tile: &ComptimeOption<Inner::Tile<V, NV>>,
         fragment: &mut Array<Vector<E, N>>,
-        def: MmaDefinition<A, B, CD>,
+        def: &MmaDefinition<A, B, CD>,
         #[comptime] ident: MatrixIdent,
         #[comptime] layout: MatrixLayout,
         #[comptime] tile_size: TileSize,

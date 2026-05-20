@@ -98,7 +98,7 @@ fn avg_pool2d_backward_kernel<E: Numeric, N: Size>(
         }
     }
 
-    output[(batch, ih, iw, channel)] = grad_acc;
+    output.write((batch, ih, iw, channel), grad_acc);
 }
 
 #[cube]

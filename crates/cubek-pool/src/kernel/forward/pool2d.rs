@@ -74,9 +74,9 @@ pub fn pool2d_direct<E: Numeric, N: Size, S: Pool2dDirectStrategyFamily>(
     indices: &mut S::Indices<N>,
     out_shape: Sequence<FastDivmod<usize>>,
     working_units: usize,
-    args: &Pool2dDirectArgs,
+    args: Pool2dDirectArgs,
     #[comptime] kernel_size: (u32, u32),
-    #[comptime] config: &S::Config,
+    #[comptime] config: S::Config,
     #[define(E)] _dtype: StorageType,
 ) {
     if ABSOLUTE_POS >= working_units {
@@ -88,7 +88,7 @@ pub fn pool2d_direct<E: Numeric, N: Size, S: Pool2dDirectStrategyFamily>(
     let (in_stride_h, in_stride_w) = (input.stride(1), input.stride(2));
     let (in_h, in_w) = (input.shape(1) as u32, input.shape(2) as u32);
 
-    let mut accumulator = S::Pool2d::<E, N>::initialize(config);
+    let mut accumulator = S::Pool2d::<E, N>::initialize(&config);
 
     let in_b_off = b * input.stride(0);
     let in_c_off = c * input.stride(3);
@@ -105,7 +105,7 @@ pub fn pool2d_direct<E: Numeric, N: Size, S: Pool2dDirectStrategyFamily>(
             let within_padding_w = iw >= args.padding_1 && iw < border_right;
 
             // Let strategy handle position counting (only used by avg_pool)
-            S::Pool2d::<E, N>::count_position(config, &mut accumulator, ih, iw);
+            S::Pool2d::<E, N>::count_position(&config, &mut accumulator, ih, iw);
 
             // Only accumulate values from valid input positions
             if within_padding_h && within_padding_w {
@@ -118,7 +118,7 @@ pub fn pool2d_direct<E: Numeric, N: Size, S: Pool2dDirectStrategyFamily>(
                 let index_input = in_b_off + in_c_off + in_h_off + in_w_off;
 
                 S::Pool2d::<E, N>::accumulate(
-                    config,
+                    &config,
                     &mut accumulator,
                     ih_pad as usize * in_w as usize + iw_pad as usize,
                     input[index_input / input.vector_size()],
@@ -127,7 +127,7 @@ pub fn pool2d_direct<E: Numeric, N: Size, S: Pool2dDirectStrategyFamily>(
         }
     }
 
-    S::Pool2d::<E, N>::store(config, (b, oh, ow, c), output, indices, accumulator);
+    S::Pool2d::<E, N>::store(&config, (b, oh, ow, c), output, indices, accumulator);
 }
 
 pub(crate) fn view4d<R: Runtime>(

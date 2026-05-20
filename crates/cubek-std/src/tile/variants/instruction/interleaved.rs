@@ -64,7 +64,7 @@ impl InterleavedMatmul {
 pub fn interleaved_allocate_lhs<L: Numeric, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: InterleavedMatmul,
-) -> Tile<L, Sc, ReadWrite> {
+) -> Tile<L, Sc> {
     let m = config.tile_size.m();
     let k = config.tile_size.k();
     let plane_dim = config.plane_dim;
@@ -79,7 +79,7 @@ pub fn interleaved_allocate_lhs<L: Numeric, Sc: TileScope>(
 pub fn interleaved_allocate_rhs<R: Numeric, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: InterleavedMatmul,
-) -> Tile<R, Sc, ReadWrite> {
+) -> Tile<R, Sc> {
     let n = config.tile_size.n();
     let k = config.tile_size.k();
     let plane_dim = config.plane_dim;
@@ -94,7 +94,7 @@ pub fn interleaved_allocate_rhs<R: Numeric, Sc: TileScope>(
 pub fn interleaved_allocate_acc<A: Numeric, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: InterleavedMatmul,
-) -> Tile<A, Sc, ReadWrite> {
+) -> Tile<A, Sc> {
     let m = config.tile_size.m();
     let n = config.tile_size.n();
     Tile::from_kind(TileKind::new_Interleaved(InterleavedTile::<A> {
@@ -129,14 +129,14 @@ impl<A: Numeric> InterleavedTile<A> {
 impl<N: Numeric> InterleavedTile<N> {
     /// Copies into the interleaved tile from `source`. Supported sources:
     /// `SharedMemory` and `None` (zero-init).
-    pub fn copy_from<SE: Numeric, SS: Size, Sc: TileScope, SIO: SliceVisibility>(
+    pub fn copy_from<SE: Numeric, SS: Size, Sc: TileScope>(
         &mut self,
-        source: &Tile<SE, Sc, SIO>,
+        source: &Tile<SE, Sc>,
         #[comptime] ident: StageIdent,
     ) {
         match &source.kind {
             TileKind::SharedMemory(shared) => {
-                interleaved_load_from_shared::<SE, SS, N, SIO>(
+                interleaved_load_from_shared::<SE, SS, N>(
                     shared,
                     &mut self.data,
                     self.config,
@@ -208,8 +208,8 @@ pub fn interleaved_execute<L: Numeric, R: Numeric, A: Numeric>(
 }
 
 #[cube]
-pub fn interleaved_load_from_shared<E: Numeric, ES: Size, N: Numeric, IO: SliceVisibility>(
-    shared: &SharedTile<E, IO>,
+pub fn interleaved_load_from_shared<E: Numeric, ES: Size, N: Numeric>(
+    shared: &SharedTile<E>,
     arr: &mut Array<N>,
     #[comptime] config: InterleavedMatmul,
     #[comptime] ident: StageIdent,
@@ -257,7 +257,7 @@ pub fn interleaved_load_from_shared<E: Numeric, ES: Size, N: Numeric, IO: SliceV
                     ));
                     let vector_start = i * contiguous_dim_count + j * vector_size;
                     for l in 0..vector_size {
-                        arr[vector_start + l] = vector[l];
+                        arr[vector_start + l] = vector.extract(l);
                     }
                 }
             }
@@ -284,7 +284,7 @@ pub fn interleaved_load_zeros<N: Numeric>(
 
 #[cube]
 pub fn interleaved_write_to_shared<E: Numeric, ES: Size, A: Numeric>(
-    shared: &mut SharedTile<E, ReadWrite>,
+    shared: &mut SharedTile<E>,
     arr: &Array<A>,
     #[comptime] config: InterleavedMatmul,
 ) {
@@ -301,7 +301,10 @@ pub fn interleaved_write_to_shared<E: Numeric, ES: Size, A: Numeric>(
         let mut vector = Vector::<A, ES>::empty();
         #[unroll]
         for j in 0..out_vector_size {
-            vector[j as usize] = plane_sum(arr[(i * out_vector_size + j) as usize]);
+            vector.insert(
+                j as usize,
+                plane_sum(arr[(i * out_vector_size + j) as usize]),
+            );
         }
         if UNIT_POS_X == 0 {
             let offs = shared.stage_offset(i);

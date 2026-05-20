@@ -49,7 +49,8 @@ impl<T: Numeric, N: Size> Pool2dDirectStrategy<T, N> for AvgPoolStrategy {
         _index: usize,
         result: Vector<T, N>,
     ) {
-        let (sum, count) = accumulator;
+        let sum = &mut accumulator.0;
+        let count = &mut accumulator.1;
 
         // Only count valid positions when count_include_pad=false
         if comptime![!config.count_include_pad] {
@@ -68,7 +69,7 @@ impl<T: Numeric, N: Size> Pool2dDirectStrategy<T, N> for AvgPoolStrategy {
         // When count_include_pad=true, count positions within padded bounds
         // (excludes ceil_mode extensions beyond the padded input)
         if comptime![config.count_include_pad] && ih < config.padded_h && iw < config.padded_w {
-            let (_sum, count) = accumulator;
+            let count = &mut accumulator.1;
             *count += 1;
         }
     }
@@ -81,7 +82,7 @@ impl<T: Numeric, N: Size> Pool2dDirectStrategy<T, N> for AvgPoolStrategy {
         accumulator: Self::Accumulator,
     ) {
         let (sum, count) = accumulator;
-        output[position] = sum / Vector::cast_from(count);
+        output.write(position, sum / Vector::cast_from(count));
     }
 }
 

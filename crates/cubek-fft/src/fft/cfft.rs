@@ -175,10 +175,8 @@ fn cfft_shared_kernel<F: Float>(
 
     let input_re_view = input_re.view(BatchSignalLayout::new(input_re, window_index, dim));
     let input_im_view = input_im.view(BatchSignalLayout::new(input_im, window_index, dim));
-    let mut output_re_view =
-        output_re.view_mut(BatchSignalLayout::new(output_re, window_index, dim));
-    let mut output_im_view =
-        output_im.view_mut(BatchSignalLayout::new(output_im, window_index, dim));
+    let output_re_view = output_re.view_mut(BatchSignalLayout::new(&*output_re, window_index, dim));
+    let output_im_view = output_im.view_mut(BatchSignalLayout::new(&*output_im, window_index, dim));
 
     let mut shared_re = SharedMemory::<F>::new(n_fft);
     let mut shared_im = SharedMemory::<F>::new(n_fft);
@@ -186,8 +184,8 @@ fn cfft_shared_kernel<F: Float>(
     let mut i = UNIT_POS as usize;
     while i < n_fft {
         let j = bit_reverse(i, log2_n);
-        shared_re[j] = input_re_view[i];
-        shared_im[j] = input_im_view[i];
+        shared_re[j] = input_re_view.read_checked(i);
+        shared_im[j] = input_im_view.read_checked(i);
         i += threads_per_cube;
     }
     sync_cube();
@@ -203,8 +201,8 @@ fn cfft_shared_kernel<F: Float>(
 
     let mut k = UNIT_POS as usize;
     while k < n_fft {
-        output_re_view[k] = shared_re[k];
-        output_im_view[k] = shared_im[k];
+        output_re_view.write_checked(k, shared_re[k]);
+        output_im_view.write_checked(k, shared_im[k]);
         k += threads_per_cube;
     }
 }
@@ -345,8 +343,8 @@ fn cfft_four_step_radix1_kernel<F: Float>(
     let n2_idx = cube_pos - window * n2;
     let input_re_view = input_re.view(BatchSignalLayout::new(input_re, window, dim));
     let input_im_view = input_im.view(BatchSignalLayout::new(input_im, window, dim));
-    let mut scratch_re_view = scratch_re.view_mut(BatchSignalLayout::new(scratch_re, window, dim));
-    let mut scratch_im_view = scratch_im.view_mut(BatchSignalLayout::new(scratch_im, window, dim));
+    let scratch_re_view = scratch_re.view_mut(BatchSignalLayout::new(&*scratch_re, window, dim));
+    let scratch_im_view = scratch_im.view_mut(BatchSignalLayout::new(&*scratch_im, window, dim));
 
     let mut shared_re = SharedMemory::<F>::new(n1);
     let mut shared_im = SharedMemory::<F>::new(n1);
@@ -357,8 +355,8 @@ fn cfft_four_step_radix1_kernel<F: Float>(
     while i < n1 {
         let j = bit_reverse(i, log2_n1);
         let flat = i * n2 + n2_idx;
-        shared_re[j] = input_re_view[flat];
-        shared_im[j] = input_im_view[flat];
+        shared_re[j] = input_re_view.read_checked(flat);
+        shared_im[j] = input_im_view.read_checked(flat);
         i += threads_per_cube;
     }
     sync_cube();
@@ -386,8 +384,8 @@ fn cfft_four_step_radix1_kernel<F: Float>(
         let ar = shared_re[k1];
         let ai = shared_im[k1];
         let flat = k1 * n2 + n2_idx;
-        scratch_re_view[flat] = w_re * ar - w_im * ai;
-        scratch_im_view[flat] = w_re * ai + w_im * ar;
+        scratch_re_view.write_checked(flat, w_re * ar - w_im * ai);
+        scratch_im_view.write_checked(flat, w_re * ai + w_im * ar);
         k1 += threads_per_cube;
     }
 }
@@ -415,8 +413,8 @@ fn cfft_four_step_radix2_kernel<F: Float>(
     let window = cube_pos / n1;
     let k1 = cube_pos - window * n1;
     let row_base = k1 * n2;
-    let mut scratch_re_view = scratch_re.view_mut(BatchSignalLayout::new(scratch_re, window, dim));
-    let mut scratch_im_view = scratch_im.view_mut(BatchSignalLayout::new(scratch_im, window, dim));
+    let scratch_re_view = scratch_re.view_mut(BatchSignalLayout::new(&*scratch_re, window, dim));
+    let scratch_im_view = scratch_im.view_mut(BatchSignalLayout::new(&*scratch_im, window, dim));
 
     let mut shared_re = SharedMemory::<F>::new(n2);
     let mut shared_im = SharedMemory::<F>::new(n2);
@@ -424,8 +422,8 @@ fn cfft_four_step_radix2_kernel<F: Float>(
     let mut i = UNIT_POS as usize;
     while i < n2 {
         let j = bit_reverse(i, log2_n2);
-        shared_re[j] = scratch_re_view[row_base + i];
-        shared_im[j] = scratch_im_view[row_base + i];
+        shared_re[j] = scratch_re_view.read_checked(row_base + i);
+        shared_im[j] = scratch_im_view.read_checked(row_base + i);
         i += threads_per_cube;
     }
     sync_cube();
@@ -441,8 +439,8 @@ fn cfft_four_step_radix2_kernel<F: Float>(
 
     let mut k2 = UNIT_POS as usize;
     while k2 < n2 {
-        scratch_re_view[row_base + k2] = shared_re[k2];
-        scratch_im_view[row_base + k2] = shared_im[k2];
+        scratch_re_view.write_checked(row_base + k2, shared_re[k2]);
+        scratch_im_view.write_checked(row_base + k2, shared_im[k2]);
         k2 += threads_per_cube;
     }
 }
@@ -474,13 +472,13 @@ fn cfft_four_step_transpose_kernel<F: Float>(
     let window = pos_u / m;
     let scratch_re_view = scratch_re.view(BatchSignalLayout::new(scratch_re, window, dim));
     let scratch_im_view = scratch_im.view(BatchSignalLayout::new(scratch_im, window, dim));
-    let mut output_re_view = output_re.view_mut(BatchSignalLayout::new(output_re, window, dim));
-    let mut output_im_view = output_im.view_mut(BatchSignalLayout::new(output_im, window, dim));
+    let output_re_view = output_re.view_mut(BatchSignalLayout::new(&*output_re, window, dim));
+    let output_im_view = output_im.view_mut(BatchSignalLayout::new(&*output_im, window, dim));
     // pos's inner index is the destination linear index k = k1 + k2 * N1.
     let k2 = inner / n1;
     let k1 = inner - k2 * n1;
     let src = k1 * n2 + k2;
 
-    output_re_view[inner] = scratch_re_view[src];
-    output_im_view[inner] = scratch_im_view[src];
+    output_re_view.write_checked(inner, scratch_re_view.read_checked(src));
+    output_im_view.write_checked(inner, scratch_im_view.read_checked(src));
 }

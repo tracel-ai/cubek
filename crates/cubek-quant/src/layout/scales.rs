@@ -210,7 +210,7 @@ pub fn scales_view<R: Runtime>(
 ) -> ScalesViewLaunch<R> {
     let layout = scales_layout(&values, &scales, scales_vector_size, quant_scheme);
     let len = scales.shape.iter().product::<usize>();
-    let buffer = unsafe { ArrayArg::from_raw_parts_binding(scales.handle, len) };
+    let buffer = unsafe { BufferArg::from_raw_parts_binding(scales.handle, len) };
     ScalesViewLaunch::new_array::<ScalesLayout>(buffer, layout)
 }
 

@@ -24,25 +24,15 @@ impl StageFamily for StridedStageFamily {
 }
 
 #[cube]
-impl<ES: Numeric, NS: Size, T: TilingLayout> Stage<ES, ReadOnly> for StridedStageMemory<ES, NS, T> {
-    fn tile<Sc: TileScope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc, ReadOnly> {
+impl<ES: Numeric, NS: Size, T: TilingLayout> Stage<ES> for StridedStageMemory<ES, NS, T> {
+    fn tile<Sc: TileScope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc> {
         let strided_tile = this.get_tile(tile);
         Tile::new_SharedMemory(SharedTile::wrap::<NS>(strided_tile))
     }
 }
 
 #[cube]
-impl<ES: Numeric, NS: Size, T: TilingLayout> Stage<ES, ReadWrite>
-    for StridedStageMemory<ES, NS, T>
-{
-    fn tile<Sc: TileScope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc, ReadWrite> {
-        let strided_tile = this.get_tile_mut(tile);
-        Tile::new_SharedMemory(SharedTile::wrap::<NS>(strided_tile))
-    }
-}
-
-#[cube]
-impl LoadStageFamily<ReadOnly> for StridedStageFamily {
+impl LoadStageFamily for StridedStageFamily {
     fn create<ES: Numeric, NS: Size, T: TilingLayout>(
         #[comptime] alignment: usize,
         #[comptime] config: StageMemoryConfig,

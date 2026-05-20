@@ -8,7 +8,7 @@ pub(crate) fn lowest_coordinate_matching<E: Scalar, N: Size>(
     item: Vector<E, N>,
     coordinate: Vector<u32, N>,
 ) -> Vector<u32, N> {
-    let is_candidate = item.equal(target);
+    let is_candidate = item.equal(&target);
     let candidate_coordinate =
         select_many(is_candidate, coordinate, Vector::empty().fill(u32::MAX));
     plane_min(candidate_coordinate)

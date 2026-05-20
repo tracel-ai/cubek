@@ -128,8 +128,8 @@ where
             config.stage_config,
         );
 
-        let lhs_stage = &lhs_reader.stage();
-        let rhs_stage = &rhs_reader.stage();
+        let lhs_stage = lhs_reader.stage();
+        let rhs_stage = rhs_reader.stage();
 
         for _ in 0..num_loops {
             sync_cube();
@@ -140,8 +140,8 @@ where
             LL::SyncStrategy::sync::<MP, _>(&mut barrier, config);
 
             SMM::execute(
-                lhs_stage,
-                rhs_stage,
+                &lhs_stage,
+                &rhs_stage,
                 &mut lhs_tile,
                 &mut rhs_tile,
                 &mut acc,

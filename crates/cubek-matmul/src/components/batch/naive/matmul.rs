@@ -110,8 +110,8 @@ impl<MT: MatmulTypes> BatchMatmul<(), MT> for NaiveMatmul<MT> {
         _cube_mapping: CubeMapping,
         #[comptime] _config: Self::Config,
     ) {
-        let lhs = Args::view_lhs(state);
-        let rhs = Args::view_rhs(state);
+        let lhs = Args::view_lhs(&*state);
+        let rhs = Args::view_rhs(&*state);
         let out = Args::view_out(state);
 
         let (_, _, k) = lhs.shape();
@@ -121,12 +121,12 @@ impl<MT: MatmulTypes> BatchMatmul<(), MT> for NaiveMatmul<MT> {
         let n = ABSOLUTE_POS_Y;
         let batch = ABSOLUTE_POS_Z as usize;
 
-        let lhs_batch = Args::batch_lhs(state, batch);
+        let lhs_batch = Args::batch_lhs(&*state, batch);
         let lhs = lhs.view(SliceIndex::new(lhs_batch, lhs.shape()));
-        let rhs_batch = Args::batch_rhs(state, batch);
+        let rhs_batch = Args::batch_rhs(&*state, batch);
         let rhs = rhs.view(SliceIndex::new(rhs_batch, rhs.shape()));
-        let out_batch = Args::batch_out(state, batch);
-        let mut out = out.view_mut(SliceIndex::new(out_batch, out.shape()));
+        let out_batch = Args::batch_out(&*state, batch);
+        let out = out.view_mut(SliceIndex::new(out_batch, out.shape()));
 
         if m >= size_m || n >= size_n {
             terminate!();
@@ -152,12 +152,12 @@ impl<MT: MatmulTypes> BatchMatmul<(), MT> for NaiveMatmul<MT> {
             // use SIMD instructions to speed up the computation
             #[unroll]
             for v in 0..vector_size {
-                accum += sum[v];
+                accum += sum.extract(v);
             }
 
-            out[(m, n)] = Vector::cast_from(accum);
+            out.write((m, n), Vector::cast_from(accum));
         } else {
-            out[(m, n)] = Vector::cast_from(sum[0]);
+            out.write((m, n), Vector::cast_from(sum.extract(0)));
         }
     }
 }
@@ -172,7 +172,7 @@ fn load_unrolled<I: Numeric, N: Size, N2: Size>(
     comptime![assert!(vector_size >= view.vector_size())];
     let view_vector_size = view.vector_size();
     if comptime![view.vector_size() == vector_size] {
-        Vector::cast_from(view[pos])
+        Vector::cast_from(view.read(pos))
     } else {
         let (row, col) = pos;
         let mut out = Vector::empty();
@@ -182,10 +182,10 @@ fn load_unrolled<I: Numeric, N: Size, N2: Size>(
                 MatrixLayout::RowMajor => (row, col + i),
                 MatrixLayout::ColMajor => (row + i, col),
             };
-            let value = view[pos];
+            let value = view.read(pos);
             #[unroll]
             for n in 0..view_vector_size {
-                out[i as usize + n] = value[n];
+                out.insert(i as usize + n, value.extract(n));
             }
         }
         out

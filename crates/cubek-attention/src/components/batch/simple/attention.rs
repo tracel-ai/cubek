@@ -8,8 +8,8 @@ use crate::components::{
     stage::StageAttentionConfig as _,
 };
 use crate::{
-    definition::attention_types::*,
-    definition::{AttentionPrecision, CubeMapping, cube_pos_to_q_batch_heads},
+    forward::definition::attention_types::*,
+    forward::definition::{AttentionPrecision, CubeMapping, cube_pos_to_q_batch_heads},
 };
 
 pub struct SimpleBatchAttention<AP: AttentionPrecision, GA: GlobalAttention<AP>> {

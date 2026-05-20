@@ -96,7 +96,7 @@ impl Layout for Im2colLayout {
             in_pos.push(pos);
         }
 
-        let in_pos = in_pos.rev();
+        let in_pos = in_pos.reversed();
 
         NhwcCoords {
             batch,

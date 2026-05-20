@@ -95,7 +95,7 @@ impl BatchMatmulFamily<()> for GemvPlaneParallelFamily {
         (1, 1).into()
     }
 
-    unsafe fn launch_unchecked<'a, MA: MatmulArgs<Config = ()>, R: Runtime>(
+    unsafe fn launch_unchecked<MA: MatmulArgs<Config = ()>, R: Runtime>(
         client: &ComputeClient<R>,
         cube_dim: CubeDim,
         cube_count: CubeCount,

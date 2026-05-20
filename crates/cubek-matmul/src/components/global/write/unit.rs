@@ -61,7 +61,7 @@ impl<IP: MatrixTypes> UnitWriter<IP> {
 #[cube]
 pub fn unit_write<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
     global: &mut View<Vector<EG, NG>, TiledCoords, ReadWrite>,
-    smem_tile: &StridedTile<ES, NS, ReadWrite>,
+    smem_tile: &StridedTile<ES, NS>,
     tile_pos: Coords2d,
     #[comptime] elements_in_tile: u32,
 ) {
@@ -102,7 +102,7 @@ impl<IP: MatrixTypes> GlobalWriter<IP> for UnitWriter<IP> {
     }
 
     fn stage(this: &Self) -> Self::Stage {
-        this.stage
+        this.stage.clone()
     }
 }
 

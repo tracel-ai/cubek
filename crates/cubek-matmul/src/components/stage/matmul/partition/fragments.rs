@@ -17,7 +17,7 @@ use cubek_std::{
 /// Wrapper over a sequence of Tile Matmul accumulators
 /// Enables indexing at 2d coordinates
 pub struct Accumulators<MP: MatmulTypes, Sc: TileScope> {
-    sequence: Sequence<Tile<<MP::Acc as MatrixTypes>::Register, Sc, ReadWrite>>,
+    sequence: Sequence<Tile<<MP::Acc as MatrixTypes>::Register, Sc>>,
     #[cube(comptime)]
     _phantom: PhantomData<Sc>,
 }
@@ -46,7 +46,7 @@ impl<MT: MatmulTypes, Sc: TileScope> Accumulators<MT, Sc> {
     }
 
     /// Load all accumulators from the specified stage
-    pub fn load<R: Stage<StageTy<Acc<MT>>, ReadOnly>>(
+    pub fn load<R: Stage<StageTy<Acc<MT>>>>(
         &mut self,
         stage: &R,
         partition_scheduler: &PartitionScheduler,
@@ -63,7 +63,7 @@ impl<MT: MatmulTypes, Sc: TileScope> Accumulators<MT, Sc> {
 
                 let acc = self.get_at_mut(m, n, tiles_in_stage_partition_n);
                 let tile = R::tile::<Sc>(stage, (m_stage, n_stage));
-                acc.copy_from::<AccSE<MT>, AccSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>, ReadOnly>(
+                acc.copy_from::<AccSE<MT>, AccSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>>(
                     &tile,
                     StageIdent::Acc,
                 );
@@ -77,7 +77,7 @@ impl<MT: MatmulTypes, Sc: TileScope> Accumulators<MT, Sc> {
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] tiles_in_stage_partition_n: usize,
-    ) -> &Tile<<MT::Acc as MatrixTypes>::Register, Sc, ReadWrite> {
+    ) -> &Tile<<MT::Acc as MatrixTypes>::Register, Sc> {
         &self.sequence[m * tiles_in_stage_partition_n + n]
     }
 
@@ -87,8 +87,8 @@ impl<MT: MatmulTypes, Sc: TileScope> Accumulators<MT, Sc> {
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] tiles_in_stage_partition_n: usize,
-    ) -> &mut Tile<<MT::Acc as MatrixTypes>::Register, Sc, ReadWrite> {
-        self.sequence.index_mut(m * tiles_in_stage_partition_n + n)
+    ) -> &mut Tile<<MT::Acc as MatrixTypes>::Register, Sc> {
+        &mut self.sequence[m * tiles_in_stage_partition_n + n]
     }
 }
 
@@ -103,7 +103,7 @@ pub enum RhsTile<Rhs: CubeType> {
 fn allocate_acc<MT: MatmulTypes, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: TileMatmul,
-) -> Tile<AccRE<MT>, Sc, ReadWrite> {
+) -> Tile<AccRE<MT>, Sc> {
     match config {
         TileMatmul::Cmma(c) => cmma_allocate_acc::<AccRE<MT>, Sc>(layout, c.tile_size),
         TileMatmul::Mma(c) => mma_allocate_acc::<AccRE<MT>, LhsRE<MT>, RhsRE<MT>, Sc>(layout, c),

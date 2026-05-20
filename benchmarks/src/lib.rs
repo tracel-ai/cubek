@@ -1,12 +1,7 @@
 //! Benchmark registry for cubek.
-//!
-//! The catalogues themselves (problems, strategies, the bench harness, the
-//! seeded `Correctness` impls) live in their respective kernel crates under
-//! `cubek-<kernel>::benchmarks`, gated behind a `benchmarks` feature. This
-//! crate re-exports them with shorter aliases (`attention`, `gemm`, ...) and
-//! collects them into [`all()`].
 
-pub use cubek_attention::eval::benchmarks as attention;
+pub use cubek_attention::eval::backward::benchmarks as attention_backward;
+pub use cubek_attention::eval::forward::benchmarks as attention;
 pub use cubek_convolution::eval::benchmarks as conv2d;
 pub use cubek_fft::eval::benchmarks as fft;
 pub use cubek_interpolate::eval::benchmarks as interpolate;
@@ -28,6 +23,7 @@ pub use cubek_test_utils::{
 pub fn all() -> &'static [&'static dyn BenchmarkCategory] {
     &[
         &crate::attention::Category,
+        &crate::attention_backward::Category,
         &crate::contiguous::Category,
         &crate::conv2d::Category,
         &crate::fft::Category,
