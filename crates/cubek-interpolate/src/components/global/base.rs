@@ -120,11 +120,11 @@ fn get_input_coord<F: Float>(
         },
         _ => {
             if options.align_corners {
-                if output_size == 1 {
-                    F::zero()
-                } else {
-                    F::cast_from(x) * F::cast_from(input_size - 1) / F::cast_from(output_size - 1)
-                }
+                let is_valid_output = (output_size > 1) as usize;
+                let safe_denominator = (output_size - 1).max(1);
+
+                F::cast_from(x * (input_size - 1) * is_valid_output)
+                    / F::cast_from(safe_denominator)
             } else {
                 (F::cast_from(x) + F::new(0.5)) * F::cast_from(input_size)
                     / F::cast_from(output_size)

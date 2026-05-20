@@ -73,11 +73,8 @@ fn start_index<F: Float>(
             let den = F::cast_from(input_size);
             let div = (num / den).ceil() - F::new(0.5);
 
-            if div < F::zero() {
-                usize::cast_from(0)
-            } else {
-                usize::cast_from(div.ceil())
-            }
+            let mask = F::cast_from((div >= F::zero()) as usize);
+            usize::cast_from(div.ceil() * mask)
         }
     }
 }
@@ -89,24 +86,7 @@ fn end_index<F: Float>(
     input_size: usize,
     #[comptime] nearest_mode: NearestMode,
 ) -> usize {
-    match nearest_mode {
-        NearestMode::Floor => {
-            let numerator = F::cast_from((input_index + 1) * output_size);
-            let div = (numerator / F::cast_from(input_size)).ceil();
-            usize::cast_from(div)
-        }
-        NearestMode::Exact => {
-            let num = F::cast_from((input_index + 1) * output_size);
-            let den = F::cast_from(input_size);
-            let div = (num / den).ceil() - F::new(0.5);
-
-            if div < F::zero() {
-                usize::cast_from(0)
-            } else {
-                usize::cast_from(div.ceil())
-            }
-        }
-    }
+    start_index::<F>(input_index + 1, output_size, input_size, nearest_mode)
 }
 
 pub(crate) fn interpolate_nearest_backward_launch<R: Runtime>(

@@ -63,7 +63,7 @@ pub fn compute_weights<F: Float, N: Size>(
 /// Interpolation options.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct InterpolateOptions {
-    /// Algorithm used for upsampling.
+    /// Algorithm used.
     pub mode: InterpolateMode,
     /// If `true`, the input and output tensors are aligned by their corner pixels.
     /// If `false`, half-pixel coordinate mapping is used instead.
