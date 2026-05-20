@@ -12,8 +12,8 @@ use crate::{
         batch::{
             BatchMatmulFamily, CheckBounds,
             gemm::{
-                Gemm, GemmConfig, MatmulOperandLayouts, PlanesSplit, Variant,
-                config::layout_for, matmul::matmul_entry,
+                Gemm, GemmConfig, MatmulOperandLayouts, PlanesSplit, Variant, config::layout_for,
+                matmul::matmul_entry,
             },
         },
         global::memory::GlobalLayoutConfig,
