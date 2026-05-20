@@ -3,9 +3,7 @@
 //! Each program instance owns one Q-block and sweeps all KV-blocks. `S` and
 //! `dP` are recomputed inside the loop — never materialized to HBM.
 
-use cubecl::{
-    CubeDim, Runtime, calculate_cube_count_elemwise, client::ComputeClient, prelude::*,
-};
+use cubecl::{CubeDim, Runtime, calculate_cube_count_elemwise, client::ComputeClient, prelude::*};
 
 use crate::backward::definition::BackwardConfig;
 use crate::forward::definition::{AttentionGlobalTypes, AttentionSetupError};

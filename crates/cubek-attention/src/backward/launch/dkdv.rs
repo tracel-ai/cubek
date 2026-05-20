@@ -10,9 +10,7 @@
 //! dV doesn't need `V` or `D` so its binding set is naturally smaller; dK
 //! drops `dv` instead.
 
-use cubecl::{
-    CubeDim, Runtime, calculate_cube_count_elemwise, client::ComputeClient, prelude::*,
-};
+use cubecl::{CubeDim, Runtime, calculate_cube_count_elemwise, client::ComputeClient, prelude::*};
 
 use crate::backward::definition::BackwardConfig;
 use crate::forward::definition::{AttentionGlobalTypes, AttentionSetupError};

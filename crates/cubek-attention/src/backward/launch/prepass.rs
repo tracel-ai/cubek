@@ -4,9 +4,7 @@
 //! `D` is subtracted from `dP` in the softmax Jacobian and that step is the
 //! most numerically sensitive part of the backward.
 
-use cubecl::{
-    CubeDim, Runtime, calculate_cube_count_elemwise, client::ComputeClient, prelude::*,
-};
+use cubecl::{CubeDim, Runtime, calculate_cube_count_elemwise, client::ComputeClient, prelude::*};
 
 use crate::forward::definition::AttentionSetupError;
 

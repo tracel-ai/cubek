@@ -14,12 +14,7 @@ pub use dkdv::flash_attention_backward_dkdv;
 pub use dq::flash_attention_backward_dq;
 pub use prepass::flash_attention_backward_prepass;
 
-use cubecl::{
-    Runtime,
-    client::ComputeClient,
-    prelude::*,
-    std::tensor::TensorHandle,
-};
+use cubecl::{Runtime, client::ComputeClient, prelude::*, std::tensor::TensorHandle};
 
 use crate::backward::definition::BackwardConfig;
 use crate::forward::definition::{AttentionGlobalTypes, AttentionSetupError};
