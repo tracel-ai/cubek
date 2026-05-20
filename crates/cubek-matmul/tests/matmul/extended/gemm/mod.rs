@@ -5,15 +5,18 @@ use cubek_matmul::{launch::Strategy, routines::BlueprintStrategy};
 use cubek_matmul::{
     definition::MatmulGlobalElems,
     definition::{MatmulElems, MatmulProblem},
-    routines::gemm_outer_product::GemmOuterProductStrategy,
+    routines::gemm::GemmStrategy,
 };
 use cubek_std::MatrixLayout;
 
 type TestRuntime = cubecl::TestRuntime;
 
-/// Unified harness for the outer-product matmul: full GEMM (4 layout
-/// combinations), vec-mat (m = 1), and mat-vec (n = 1) all run through
-/// the same case struct and `Strategy::GemmOuterProduct`.
+/// Unified harness for the gemm family. Drives full GEMM (all 4 layout
+/// combinations), vec-mat (m = 1), and mat-vec (n = 1) through the same
+/// case struct and `Strategy::Gemm`. The `plane_parallel.rs` cases cover
+/// the Row-Col (Dot) variant — the same set runs on any backend; the
+/// `outer_product.rs` cases additionally cover Row-Row / Col-Row / Col-Col,
+/// which are CPU-only (the family enforces `plane_dim == 1` for those).
 struct GemmTestCase {
     pub m: usize,
     pub n: usize,
@@ -51,11 +54,17 @@ impl GemmTestCase {
     }
 }
 
-fn outer_product() -> Strategy {
-    Strategy::GemmOuterProduct(BlueprintStrategy::Inferred(GemmOuterProductStrategy {
+fn gemm() -> Strategy {
+    Strategy::Gemm(BlueprintStrategy::Inferred(GemmStrategy {
         target_num_planes: None,
     }))
 }
+
+// Legacy strategy-helper aliases — the test bodies were authored against
+// per-routine helpers (`plane_parallel()`, `outer_product()`); both now
+// resolve to the unified `gemm()` strategy.
+use gemm as plane_parallel;
+use gemm as outer_product;
 
 mod f16_ty {
     use super::*;
@@ -64,7 +73,15 @@ mod f16_ty {
         MatmulElems::from_single_dtype(half::f16::as_type_native_unchecked()).as_global_elems()
     }
 
-    include!("outer_product.rs");
+    mod plane_parallel_cases {
+        use super::*;
+        include!("plane_parallel.rs");
+    }
+
+    mod outer_product_cases {
+        use super::*;
+        include!("outer_product.rs");
+    }
 }
 
 mod f32_ty {
@@ -74,5 +91,13 @@ mod f32_ty {
         MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems()
     }
 
-    include!("outer_product.rs");
+    mod plane_parallel_cases {
+        use super::*;
+        include!("plane_parallel.rs");
+    }
+
+    mod outer_product_cases {
+        use super::*;
+        include!("outer_product.rs");
+    }
 }

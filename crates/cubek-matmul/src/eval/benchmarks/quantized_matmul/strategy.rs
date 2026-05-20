@@ -1,24 +1,14 @@
 use cubek_test_utils::CatalogEntry;
 
 use crate::launch::Strategy;
-use crate::routines::{
-    BlueprintStrategy, gemm_outer_product::GemmOuterProductStrategy,
-    gemm_plane_parallel::GemmPlaneParallelStrategy, simple::SimpleArgs,
-};
+use crate::routines::{BlueprintStrategy, gemm::GemmStrategy, simple::SimpleArgs};
 
 pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
     vec![
         CatalogEntry::new(
-            "gemm_plane_parallel",
-            "Gemm Plane Parallel",
-            Strategy::GemmPlaneParallel(BlueprintStrategy::Inferred(GemmPlaneParallelStrategy {
-                target_num_planes: None,
-            })),
-        ),
-        CatalogEntry::new(
-            "gemm_outer_product",
-            "Gemm Outer Product",
-            Strategy::GemmOuterProduct(BlueprintStrategy::Inferred(GemmOuterProductStrategy {
+            "gemm",
+            "Gemm",
+            Strategy::Gemm(BlueprintStrategy::Inferred(GemmStrategy {
                 target_num_planes: None,
             })),
         ),

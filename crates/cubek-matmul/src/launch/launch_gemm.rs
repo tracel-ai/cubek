@@ -5,7 +5,7 @@ use cubecl::{
 use cubek_std::{InputBinding, MatrixLayout};
 
 use crate::{
-    components::batch::gemm_outer_product::{MatmulOperandLayouts, OperandLayout},
+    components::batch::gemm::{MatmulOperandLayouts, OperandLayout},
     definition::cube_mapping_launch,
     definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes},
 };
@@ -13,7 +13,7 @@ use crate::{
 use crate::{
     launch::InputArg,
     launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs},
-    routines::gemm_outer_product::GemmOuterProductRoutine,
+    routines::gemm::GemmRoutine,
     routines::{BlueprintStrategy, Routine as _},
 };
 
@@ -42,17 +42,9 @@ pub fn launch_ref<R: Runtime>(
     mut lhs: InputBinding<R>,
     mut rhs: InputBinding<R>,
     out: TensorBinding<R>,
-    strategy: &BlueprintStrategy<(), GemmOuterProductRoutine>,
+    strategy: &BlueprintStrategy<(), GemmRoutine>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
-    let plane_size = client.properties().hardware.plane_size_max as usize;
-    if plane_size > 1 {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-            "GemmOuterProduct is CPU-only (plane_size_max must be 1, got {})",
-            plane_size,
-        ))));
-    }
-
     let rank = rhs.shape().len();
     let lhs_shape = lhs.shape();
     let rhs_shape = rhs.shape();
@@ -61,6 +53,11 @@ pub fn launch_ref<R: Runtime>(
     let n = rhs_shape.to_vec()[rank - 1];
     let k = lhs_shape.to_vec()[rank - 1];
 
+    let plane_size = client.properties().hardware.plane_size_max as usize;
+
+    // For variants that walk K with vector-size steps, k must be divisible
+    // by plane_size to even have a valid vector_size — the Family's
+    // validate_blueprint enforces the full per-variant divisibility.
     if !k.is_multiple_of(plane_size) {
         return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
             "Dimension k={} must be a multiple of plane size {}",
@@ -111,8 +108,8 @@ pub fn launch_ref<R: Runtime>(
 
     // Vec operands need K-contiguous storage; the kernel reads them as if
     // they were the side that supplies K-vectors / scalars. Mat operands
-    // keep their natural layout — the kernel picks the variant
-    // (Dot / OuterN / OuterM) from `MatmulOperandLayouts`.
+    // keep their natural layout — the Family picks the variant from
+    // `MatmulOperandLayouts`.
     if matches!(kind.lhs, OperandLayout::Vector) && kind_problem.lhs_strides[rank - 1] != 1 {
         lhs = lhs.into_contiguous(client)?;
     }
@@ -135,12 +132,11 @@ pub fn launch_ref<R: Runtime>(
         address_type,
     );
 
-    let device_settings = GemmOuterProductRoutine::device_settings(client, vector_sizes);
-    let expand_info =
-        GemmOuterProductRoutine::expand_blueprint(&problem, &device_settings, strategy)?;
-    let launch_info = GemmOuterProductRoutine::prepare(&problem, &device_settings, expand_info)?;
+    let device_settings = GemmRoutine::device_settings(client, vector_sizes);
+    let expand_info = GemmRoutine::expand_blueprint(&problem, &device_settings, strategy)?;
+    let launch_info = GemmRoutine::prepare(&problem, &device_settings, expand_info)?;
 
-    let input = <InputArg<TensorArgs> as ConcreteInputsFactory<GemmOuterProductRoutine>>::create(
+    let input = <InputArg<TensorArgs> as ConcreteInputsFactory<GemmRoutine>>::create(
         lhs,
         rhs,
         &launch_info.blueprint,
@@ -148,7 +144,7 @@ pub fn launch_ref<R: Runtime>(
         &launch_info.vector_sizes,
         dtypes,
     );
-    let output = <OutputArg<TensorArgs> as ConcreteOutputFactory<GemmOuterProductRoutine>>::create(
+    let output = <OutputArg<TensorArgs> as ConcreteOutputFactory<GemmRoutine>>::create(
         out,
         &launch_info.blueprint,
         &problem,
@@ -156,7 +152,7 @@ pub fn launch_ref<R: Runtime>(
         dtypes,
     );
 
-    GemmOuterProductRoutine::launch::<TensorArgs, R>(
+    GemmRoutine::launch::<TensorArgs, R>(
         client,
         launch_info.cube_dim,
         launch_info.cube_count_plan.resolve(),

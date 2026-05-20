@@ -4,7 +4,7 @@
 // the Routine validates this.
 
 // =====================================================================
-// Mat × Mat (Row, Col) — Variant::Dot — same algorithm as gemm_plane_parallel.
+// Mat × Mat (Row, Col) — Variant::Dot (same kernel the plane-parallel cases hit).
 // =====================================================================
 
 fn matmat_row_col() -> (MatrixLayout, MatrixLayout) {

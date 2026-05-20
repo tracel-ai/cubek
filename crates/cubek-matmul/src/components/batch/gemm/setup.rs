@@ -11,9 +11,9 @@ use crate::{
         CubeDimResource,
         batch::{
             BatchMatmulFamily, CheckBounds,
-            gemm_outer_product::{
-                GemmOuterProduct, GemmOuterProductConfig, MatmulOperandLayouts, PlanesSplit,
-                Variant, config::layout_for, matmul_entry,
+            gemm::{
+                Gemm, GemmConfig, MatmulOperandLayouts, PlanesSplit, Variant,
+                config::layout_for, matmul::matmul_entry,
             },
         },
         global::memory::GlobalLayoutConfig,
@@ -26,17 +26,16 @@ use crate::{
     launch::*,
 };
 
-/// Outer-product GEMM family. CPU-only kernel (errors when launched on a
-/// device with `plane_dim > 1`). Supports all four (lhs, rhs) layout
-/// combinations: Row-Col uses a dot-product micro-kernel mirroring
-/// `gemm_plane_parallel` so the two routines can be benchmarked head-to-head;
-/// the other three layouts use broadcast-FMA outer-product micro-kernels
-/// vectorized along the natural output axis (N for rhs RowMajor, M for
-/// lhs ColMajor).
-pub struct GemmOuterProductFamily {}
+/// Unified GEMM family. Selects a kernel variant from operand layouts:
+/// `Dot` (Row-Col) supports any `plane_dim` (plane-cooperative reduction
+/// over K); `OuterM` / `OuterN` are CPU-only (require `plane_dim == 1`).
+/// Also handles GEMV when one of `m`, `n` is 1 — the vector side is
+/// classified by `OperandLayout::Vector` and uses a layout-appropriate
+/// variant.
+pub struct GemmFamily {}
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct GemmOuterProductBlueprint {
+pub struct GemmBlueprint {
     pub dtypes: MatmulElems,
     pub num_planes: usize,
     pub hypercube_blueprint: HypercubeBlueprint,
@@ -45,7 +44,7 @@ pub struct GemmOuterProductBlueprint {
     pub check_bounds: CheckBounds,
 }
 
-impl Blueprint for GemmOuterProductBlueprint {
+impl Blueprint for GemmBlueprint {
     fn lhs_global_layout_config(&self) -> GlobalLayoutConfig {
         GlobalLayoutConfig {
             matrix_layout: layout_for(self.kind.lhs, MatrixLayout::RowMajor),
@@ -71,26 +70,27 @@ impl Blueprint for GemmOuterProductBlueprint {
     }
 
     fn tiling_scheme(&self) -> TilingScheme {
-        panic!("GemmOuterProduct Blueprint doesn't have a TilingScheme")
+        panic!("Gemm Blueprint doesn't have a TilingScheme")
     }
 
     fn swizzle_modes(&self) -> SwizzleModes {
-        panic!("GemmOuterProduct Blueprint doesn't have Swizzle Modes")
+        panic!("Gemm Blueprint doesn't have Swizzle Modes")
     }
 }
 
-impl BatchMatmulFamily<()> for GemmOuterProductFamily {
-    type Matmul<MP: MatmulTypes> = GemmOuterProduct<MP>;
-    type Config = GemmOuterProductConfig;
-    type Blueprint = GemmOuterProductBlueprint;
+impl BatchMatmulFamily<()> for GemmFamily {
+    type Matmul<MP: MatmulTypes> = Gemm<MP>;
+    type Config = GemmConfig;
+    type Blueprint = GemmBlueprint;
 
     fn expand_config(
-        _device_props: &DeviceProperties,
+        device_props: &DeviceProperties,
         blueprint: &Self::Blueprint,
         _dtypes: &MatmulElems,
         _vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
-        Ok(GemmOuterProductConfig {
+        Ok(GemmConfig {
+            plane_dim: device_props.hardware.plane_size_max,
             num_planes: blueprint.num_planes as u32,
             kind: blueprint.kind,
             planes_split: blueprint.planes_split,
@@ -111,7 +111,7 @@ impl BatchMatmulFamily<()> for GemmOuterProductFamily {
         output: OutputRuntimeArg<MA, R>,
         _config: ConfigRuntimeArg<MA, R>,
         cube_mapping: CubeMappingLaunch<R>,
-        blueprint: GemmOuterProductBlueprint,
+        blueprint: GemmBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), LaunchError> {
@@ -150,12 +150,6 @@ impl BatchMatmulFamily<()> for GemmOuterProductFamily {
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
         let plane_dim = client.properties().hardware.plane_size_max as usize;
-        if plane_dim > 1 {
-            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "GemmOuterProduct is CPU-only (plane_dim must be 1, got {})",
-                plane_dim,
-            ))));
-        }
 
         if vector_sizes.lhs != vector_sizes.rhs {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
@@ -172,19 +166,33 @@ impl BatchMatmulFamily<()> for GemmOuterProductFamily {
         }
 
         let vs = vector_sizes.lhs;
-        if !problem.k.is_multiple_of(vs) {
-            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "Problem dimension k={:?} must be divisible by vector_size ({:?})",
-                problem.k, vs,
-            ))));
-        }
+        let variant = blueprint.kind.variant();
 
-        // Outer-product variants need divisibility on the block axis so
-        // each plane handles a full vector_size-wide slice. Row-Col is
-        // 1×1 per plane and has no such constraint.
-        match blueprint.kind.variant() {
-            Variant::Dot => {}
+        // Per-variant constraints. Dot supports plane-cooperative K reduction;
+        // OuterM/OuterN are CPU-only because they don't reduce across units.
+        match variant {
+            Variant::Dot => {
+                let tile_dim = plane_dim * vs;
+                if !problem.k.is_multiple_of(tile_dim) {
+                    return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                        "Problem dimension k={:?} must be divisible by plane_dim * vector_size ({:?})",
+                        problem.k, tile_dim,
+                    ))));
+                }
+            }
             Variant::OuterNLhsContig | Variant::OuterNLhsStrided => {
+                if plane_dim > 1 {
+                    return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                        "OuterN variants require plane_dim == 1 (CPU-only), got {}",
+                        plane_dim,
+                    ))));
+                }
+                if !problem.k.is_multiple_of(vs) {
+                    return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                        "Problem dimension k={:?} must be divisible by vector_size ({:?})",
+                        problem.k, vs,
+                    ))));
+                }
                 if !problem.n.is_multiple_of(vs) {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
                         "OuterN variants need n ({}) divisible by vector_size ({})",
@@ -193,6 +201,18 @@ impl BatchMatmulFamily<()> for GemmOuterProductFamily {
                 }
             }
             Variant::OuterM => {
+                if plane_dim > 1 {
+                    return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                        "OuterM variant requires plane_dim == 1 (CPU-only), got {}",
+                        plane_dim,
+                    ))));
+                }
+                if !problem.k.is_multiple_of(vs) {
+                    return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                        "Problem dimension k={:?} must be divisible by vector_size ({:?})",
+                        problem.k, vs,
+                    ))));
+                }
                 if !problem.m.is_multiple_of(vs) {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
                         "OuterM variant needs m ({}) divisible by vector_size ({})",

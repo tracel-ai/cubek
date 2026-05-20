@@ -8,10 +8,7 @@ use cubek_std::cube_count::{CubeCountPlan, CubeCountStrategy, GlobalOrder, Hyper
 use crate::{
     components::batch::{
         BatchMatmulFamily, CheckBounds,
-        gemm_outer_product::{
-            GemmOuterProductBlueprint, GemmOuterProductFamily, MatmulOperandLayouts, PlanesSplit,
-            Variant,
-        },
+        gemm::{GemmBlueprint, GemmFamily, MatmulOperandLayouts, PlanesSplit, Variant},
     },
     definition::{MatmulElems, MatmulProblem, MatmulSetupError},
     routines::{
@@ -19,14 +16,14 @@ use crate::{
     },
 };
 
-pub struct GemmOuterProductRoutine {}
+pub struct GemmRoutine {}
 
 #[derive(Default, Clone)]
-pub struct GemmOuterProductStrategy {
+pub struct GemmStrategy {
     pub target_num_planes: Option<usize>,
 }
 
-impl Display for GemmOuterProductStrategy {
+impl Display for GemmStrategy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "_{:?}", self.target_num_planes)
     }
@@ -45,9 +42,9 @@ fn output_units(problem: &MatmulProblem, variant: Variant, vector_size: usize) -
     }
 }
 
-impl Routine<()> for GemmOuterProductRoutine {
-    type Strategy = GemmOuterProductStrategy;
-    type BatchMatmul = GemmOuterProductFamily;
+impl Routine<()> for GemmRoutine {
+    type Strategy = GemmStrategy;
+    type BatchMatmul = GemmFamily;
     type Blueprint = <Self::BatchMatmul as BatchMatmulFamily<()>>::Blueprint;
     type Config = <Self::BatchMatmul as BatchMatmulFamily<()>>::Config;
 
@@ -88,7 +85,7 @@ impl Routine<()> for GemmOuterProductRoutine {
                     CheckBounds::Terminate
                 };
 
-                let blueprint = GemmOuterProductBlueprint {
+                let blueprint = GemmBlueprint {
                     dtypes: dtypes.clone(),
                     num_planes,
                     hypercube_blueprint: HypercubeBlueprint::builder()

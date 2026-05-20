@@ -3,12 +3,12 @@ use std::marker::PhantomData;
 use cubecl::cube;
 use cubecl::prelude::*;
 
+use crate::components::batch::gemm::mat_layout::MatLayout;
+use crate::components::batch::gemm::matmul::dot::execute_dot;
+use crate::components::batch::gemm::matmul::outer_product::execute_outer_product;
 use crate::components::batch::{
-    BatchConfig as _, BatchMatmul, BatchMatmulFamily, MatLayout,
-    gemm_outer_product::{
-        GemmOuterProductBlueprint, GemmOuterProductConfig, GemmOuterProductFamily, PlanesSplit,
-        Variant, dot::execute_dot, outer_m::execute_outer_m, outer_n::execute_outer_n,
-    },
+    BatchConfig as _, BatchMatmul, BatchMatmulFamily,
+    gemm::{GemmBlueprint, GemmConfig, GemmFamily, PlanesSplit, Variant},
 };
 
 use crate::{
@@ -19,7 +19,7 @@ use crate::{
 #[cube(launch_unchecked, explicit_define, address_type = "dynamic")]
 #[allow(clippy::type_complexity)]
 /// Launches the matmul kernel
-pub(crate) fn matmul_entry<
+pub fn matmul_entry<
     Args: MatmulArgs<Config = ()>,
     Lhs: Numeric,
     LhsSize: Size,
@@ -36,7 +36,7 @@ pub(crate) fn matmul_entry<
     output: &mut <Args as MatmulArgs>::Output<Vector<Acc, AccSize>>,
     runtime_config: (),
     cube_mapping: CubeMapping,
-    #[comptime] blueprint: GemmOuterProductBlueprint,
+    #[comptime] blueprint: GemmBlueprint,
     #[define(Lhs, Rhs, Acc)] _global: [StorageType; 3],
     #[define(LhsSize, RhsSize, AccSize)] _sizes: [usize; 3],
 ) {
@@ -60,7 +60,7 @@ pub(crate) fn matmul_entry<
     });
 
     let device_props = comptime::device_properties();
-    let config = comptime!(GemmOuterProductFamily::expand_config(
+    let config = comptime!(GemmFamily::expand_config(
         &device_props,
         &blueprint,
         &blueprint.dtypes,
@@ -87,20 +87,20 @@ pub(crate) fn matmul_entry<
     let define!(RegisterRhs) = blueprint.dtypes.rhs_register;
     let define!(RegisterAcc) = blueprint.dtypes.acc_register;
 
-    GemmOuterProduct::<(
+    Gemm::<(
         (Lhs, LhsSize, Lhs, LhsSize, RegisterLhs, LhsSize),
         (Rhs, RhsSize, Rhs, RhsSize, RegisterRhs, RhsSize),
         (Acc, AccSize, Acc, AccSize, RegisterAcc, AccSize),
     )>::execute::<Args>(&mut state, cube_mapping, config);
 }
 
-pub struct GemmOuterProduct<MP: MatmulTypes> {
+pub struct Gemm<MP: MatmulTypes> {
     _phantom: PhantomData<MP>,
 }
 
 #[cube]
-impl<MP: MatmulTypes> BatchMatmul<(), MP> for GemmOuterProduct<MP> {
-    type Config = GemmOuterProductConfig;
+impl<MP: MatmulTypes> BatchMatmul<(), MP> for Gemm<MP> {
+    type Config = GemmConfig;
 
     fn execute<Args: MatmulArgs>(
         state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
@@ -177,12 +177,13 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for GemmOuterProduct<MP> {
                     m_id,
                     n_id,
                     k,
+                    config.plane_dim,
                     vector_size as u32,
                     check_bounds,
                 );
             }
             Variant::OuterNLhsContig => {
-                execute_outer_n::<
+                execute_outer_product::<
                     Global<Lhs<MP>>,
                     Global<Rhs<MP>>,
                     AccG<MP>,
@@ -199,11 +200,34 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for GemmOuterProduct<MP> {
                     k,
                     vector_size as u32,
                     true,
+                    false,
                     check_bounds,
                 );
             }
             Variant::OuterNLhsStrided => {
-                execute_outer_n::<
+                execute_outer_product::<
+                    Global<Lhs<MP>>,
+                    Global<Rhs<MP>>,
+                    AccG<MP>,
+                    AccRE<MP>,
+                    GlobalSize<Lhs<MP>>,
+                    GlobalSize<Rhs<MP>>,
+                    N,
+                >(
+                    lhs_view,
+                    rhs_view,
+                    out_view,
+                    m_id,
+                    n_id,
+                    k,
+                    vector_size as u32,
+                    true,
+                    true,
+                    check_bounds,
+                );
+            }
+            Variant::OuterM => {
+                execute_outer_product::<
                     Global<Lhs<MP>>,
                     Global<Rhs<MP>>,
                     AccG<MP>,
@@ -220,26 +244,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for GemmOuterProduct<MP> {
                     k,
                     vector_size as u32,
                     false,
-                    check_bounds,
-                );
-            }
-            Variant::OuterM => {
-                execute_outer_m::<
-                    Global<Lhs<MP>>,
-                    Global<Rhs<MP>>,
-                    AccG<MP>,
-                    AccRE<MP>,
-                    GlobalSize<Lhs<MP>>,
-                    GlobalSize<Rhs<MP>>,
-                    N,
-                >(
-                    lhs_view,
-                    rhs_view,
-                    out_view,
-                    m_id,
-                    n_id,
-                    k,
-                    vector_size as u32,
+                    false,
                     check_bounds,
                 );
             }

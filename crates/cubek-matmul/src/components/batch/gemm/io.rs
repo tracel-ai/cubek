@@ -3,8 +3,7 @@ use cubecl::{cube, std::tensor::View, std::tensor::layout::Coordinates};
 
 use crate::components::batch::CheckBounds;
 
-/// Read a value from `view` at `coords`, dispatching between the bounds-
-/// checked and unchecked variants based on the comptime [`CheckBounds`] tag.
+/// Read a value from `view` at `coords`
 #[cube]
 pub fn read<T: CubePrimitive, C: Coordinates>(
     view: View<T, C>,
@@ -18,8 +17,7 @@ pub fn read<T: CubePrimitive, C: Coordinates>(
     }
 }
 
-/// Write `value` into `view` at `coord`, dispatching between the bounds-
-/// checked and unchecked variants based on the comptime [`CheckBounds`] tag.
+/// Write `value` into `view` at `coord`
 #[cube]
 pub fn write<T: CubePrimitive, C: Coordinates>(
     view: View<T, C, ReadWrite>,

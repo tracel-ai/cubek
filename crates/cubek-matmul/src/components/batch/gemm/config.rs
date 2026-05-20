@@ -35,19 +35,20 @@ impl MatmulOperandLayouts {
     /// Pick the kernel variant appropriate for these layouts.
     ///
     /// `Dot` (Row-Col): K is contiguous on both sides — dot-product
-    /// reduction along K, one cell per plane.
+    /// reduction along K, one cell per plane. Supports `plane_dim > 1`
+    /// (units cooperate across K).
     ///
     /// `OuterNLhsContig` (Row-Row): rhs is N-contig (RowMajor) and lhs
     /// is K-contig (RowMajor or vector) — outer-product vectorized along
-    /// N with a single LHS K-vector load.
+    /// N with a single LHS K-vector load. CPU-only (`plane_dim == 1`).
     ///
     /// `OuterNLhsStrided` (Col-Row): rhs is N-contig but lhs is M-contig
     /// (ColMajor) — outer-product vectorized along N with scalar LHS
-    /// reads (strided in K).
+    /// reads (strided in K). CPU-only.
     ///
     /// `OuterM` (Col-Col): lhs is M-contig (ColMajor) and rhs is K-contig
     /// (ColMajor or vector) — outer-product vectorized along M with a
-    /// single RHS K-vector load.
+    /// single RHS K-vector load. CPU-only.
     pub fn variant(self) -> Variant {
         use OperandLayout::*;
         let lhs_k_contig = matches!(self.lhs, RowMajor | Vector);
@@ -107,15 +108,19 @@ fn operand_kind(dim: usize, layout: MatrixLayout) -> OperandLayout {
     }
 }
 
+/// Unified config for the gemm family. `kind` selects the kernel variant;
+/// `plane_dim` is the hardware plane width (only `Variant::Dot` supports
+/// `plane_dim > 1` — outer-product variants enforce `plane_dim == 1`).
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct GemmOuterProductConfig {
+pub struct GemmConfig {
+    pub(crate) plane_dim: u32,
     pub(crate) num_planes: u32,
     pub(crate) kind: MatmulOperandLayouts,
     pub(crate) planes_split: PlanesSplit,
     pub(crate) check_bounds: CheckBounds,
 }
 
-impl BatchConfig for GemmOuterProductConfig {
+impl BatchConfig for GemmConfig {
     fn lhs_global_layout_config(&self) -> GlobalLayoutConfig {
         GlobalLayoutConfig {
             matrix_layout: layout_for(self.kind.lhs, MatrixLayout::RowMajor),

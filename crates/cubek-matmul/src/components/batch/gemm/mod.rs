@@ -1,6 +1,7 @@
 mod config;
+pub(crate) mod io;
+mod mat_layout;
 mod matmul;
-mod plane;
 mod setup;
 
 pub use config::*;
