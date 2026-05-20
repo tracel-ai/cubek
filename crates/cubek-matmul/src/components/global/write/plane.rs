@@ -84,14 +84,14 @@ impl<IP: MatrixTypes> GlobalWriter<IP> for PlaneWriter<IP> {
     }
 
     fn stage(this: &Self) -> Self::Stage {
-        this.stage
+        this.stage.clone()
     }
 }
 
 #[cube]
 pub fn plane_write<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
     global: &mut View<Vector<EG, NG>, TiledCoords, ReadWrite>,
-    smem_tile: &StridedTile<ES, NS, ReadWrite>,
+    smem_tile: &StridedTile<ES, NS>,
     tile_pos: Coords2d,
     #[comptime] plane_dim: u32,
     #[comptime] elements_in_tile: u32,
@@ -120,7 +120,7 @@ pub fn plane_write<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
 #[cube]
 fn write_vector<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
     view: &mut View<Vector<EG, NG>, TiledCoords, ReadWrite>,
-    out_smem_tile: &StridedTile<ES, NS, ReadWrite>,
+    out_smem_tile: &StridedTile<ES, NS>,
     unit_write: u32,
     tile: Coords2d,
 ) {
@@ -139,7 +139,10 @@ fn write_vector<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
             let offs = out_smem_tile.stage_offset(unit_write + i as u32);
             #[unroll]
             for j in 0..out_smem_vector_size {
-                value[i * out_smem_vector_size + j] = out_smem_tile.container[offs as usize][j];
+                value.insert(
+                    i * out_smem_vector_size + j,
+                    out_smem_tile.container[offs as usize].extract(j),
+                );
             }
         }
         value

@@ -4,7 +4,7 @@ use crate::tile::mask::Mask;
 use crate::tile::{Plane, Tile, TileExpand, TileKind, TileKindExpand};
 
 #[cube]
-impl<E: Float> Tile<E, Plane, ReadWrite> {
+impl<E: Float> Tile<E, Plane> {
     /// Multiply by `scale` and add `-inf` at masked positions.
     pub fn scale_and_mask<M: Mask>(&mut self, scale: E, mask: &M) {
         match &mut self.kind {

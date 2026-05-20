@@ -74,11 +74,11 @@ pub fn execute_current_and_read_next<
     RJ: JobExecutor<S>,
     G: GlobalConfig,
 >(
-    lhs_stage: &Tile<<MP::Lhs as MatrixTypes>::Stage, SP::Scope, ReadOnly>,
-    rhs_stage: &Tile<<MP::Rhs as MatrixTypes>::Stage, SP::Scope, ReadOnly>,
-    lhs_tile: &mut Sequence<Tile<<MP::Lhs as MatrixTypes>::Register, SP::Scope, ReadWrite>>,
-    rhs_tile: &mut Tile<<MP::Rhs as MatrixTypes>::Register, SP::Scope, ReadWrite>,
-    acc: &mut Tile<AccRE<MP>, SP::Scope, ReadWrite>,
+    lhs_stage: &Tile<<MP::Lhs as MatrixTypes>::Stage, SP::Scope>,
+    rhs_stage: &Tile<<MP::Rhs as MatrixTypes>::Stage, SP::Scope>,
+    lhs_tile: &mut Sequence<Tile<<MP::Lhs as MatrixTypes>::Register, SP::Scope>>,
+    rhs_tile: &mut Tile<<MP::Rhs as MatrixTypes>::Register, SP::Scope>,
+    acc: &mut Tile<AccRE<MP>, SP::Scope>,
     lhs_global_reader: &mut LJ,
     rhs_global_reader: &mut RJ,
     barrier: &mut S::Barrier,
@@ -108,8 +108,8 @@ pub fn execute_current_and_read_next<
                     partition_size_k,
                     DoubleBufferingEventListener::new(
                         stage_to_load,
-                        lhs_global_reader,
-                        rhs_global_reader,
+                        &*lhs_global_reader,
+                        &*rhs_global_reader,
                         barrier,
                         config,
                         main_flow_loading_side,
@@ -148,8 +148,8 @@ pub fn execute_current_and_read_next<
                 partition_size_k,
                 DoubleBufferingEventListener::new(
                     stage_to_load,
-                    lhs_global_reader,
-                    rhs_global_reader,
+                    &*lhs_global_reader,
+                    &*rhs_global_reader,
                     barrier,
                     config,
                     LoadingSides::Both,
@@ -171,18 +171,18 @@ pub fn execute_last_and_write_results<
     SP: StagePartitioner,
     G: GlobalConfig,
 >(
-    lhs_stage: &Tile<<MP::Lhs as MatrixTypes>::Stage, SP::Scope, ReadOnly>,
-    rhs_stage: &Tile<<MP::Rhs as MatrixTypes>::Stage, SP::Scope, ReadOnly>,
-    lhs_tile: &mut Sequence<Tile<<MP::Lhs as MatrixTypes>::Register, SP::Scope, ReadWrite>>,
-    rhs_tile: &mut Tile<<MP::Rhs as MatrixTypes>::Register, SP::Scope, ReadWrite>,
-    acc: &mut Tile<AccRE<MP>, SP::Scope, ReadWrite>,
+    lhs_stage: &Tile<<MP::Lhs as MatrixTypes>::Stage, SP::Scope>,
+    rhs_stage: &Tile<<MP::Rhs as MatrixTypes>::Stage, SP::Scope>,
+    lhs_tile: &mut Sequence<Tile<<MP::Lhs as MatrixTypes>::Register, SP::Scope>>,
+    rhs_tile: &mut Tile<<MP::Rhs as MatrixTypes>::Register, SP::Scope>,
+    acc: &mut Tile<AccRE<MP>, SP::Scope>,
     out_writer: &mut GW,
     specializer: &Specializer,
     partition_scheduler: &PartitionScheduler,
     #[comptime] config: G,
 ) {
     let partition_size_k = comptime!(config.stage_config().shared().partition_size.k());
-    let mut out_stage = GW::stage(out_writer);
+    let mut out_stage = GW::stage(&*out_writer);
 
     match specializer.kind.comptime() {
         SpecializerKind::Specialized {

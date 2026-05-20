@@ -11,21 +11,21 @@ use cubek_std::tile::{ContiguousTilingLayout, RowMajorTilingOrder};
 use std::{fmt::Debug, hash::Hash};
 
 use crate::components::tile::TileAttention;
-use crate::definition::{
+use crate::forward::definition::{
     AttentionElems, AttentionPartitionSize, AttentionPrecision, AttentionStageSize,
     AttentionTileSize,
 };
-use crate::{components::global::GlobalAttentionConfig, definition::attention_types::*};
+use crate::{components::global::GlobalAttentionConfig, forward::definition::attention_types::*};
 use crate::{
     components::{global::simple::MaskReader, stage::AttentionPartitioner},
-    definition::AttentionSetupError,
+    forward::definition::AttentionSetupError,
 };
 use crate::{
     components::{
         global::simple::QueryReader,
         stage::{plane::PlanePartitionStageConfig, unit::UnitPartitionStageConfig},
     },
-    definition::AttentionBlueprint,
+    forward::definition::AttentionBlueprint,
 };
 use cubecl::std::tensor::layout::Coords2d;
 
@@ -48,11 +48,7 @@ pub trait StageAttentionFamily: Send + Sync + 'static {
                 VSS<AP>,
                 AttentionTilingLayout,
             >,
-            OutStage = <Self::OutStage as StageFamily<ReadWrite>>::Stage<
-                OS<AP>,
-                OSS<AP>,
-                WriteTiling,
-            >,
+            OutStage = <Self::OutStage as StageFamily>::Stage<OS<AP>, OSS<AP>, WriteTiling>,
         >;
 
     /// The configuration type associated with this Attention family.
@@ -60,7 +56,7 @@ pub trait StageAttentionFamily: Send + Sync + 'static {
 
     type KeyStage: StageFamily;
     type ValueStage: StageFamily;
-    type OutStage: StageFamily<ReadWrite>;
+    type OutStage: StageFamily;
 
     /// Constructs the configuration based on the algorithm's blueprint.
     fn expand_config(
@@ -71,7 +67,7 @@ pub trait StageAttentionFamily: Send + Sync + 'static {
 }
 
 #[cube]
-pub trait StageAttention<AP: AttentionPrecision>: 'static + Send + Sync {
+pub trait StageAttention<AP: AttentionPrecision>: 'static {
     type KeyStage: CubeType;
     type ValueStage: CubeType;
     type OutStage: CubeType;

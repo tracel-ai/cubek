@@ -104,7 +104,7 @@ where
     >;
 
     type GlobalWriter = GW;
-    type Accumulators = Tile<AccRE<MP>, SP::Scope, ReadWrite>;
+    type Accumulators = Tile<AccRE<MP>, SP::Scope>;
 
     fn execute(
         mut lhs_reader: Self::LhsGlobalReader,
@@ -164,19 +164,15 @@ where
         let rhs_stage_b = rhs_reader.stage(StageBuffer::B);
         let lhs_stage_a_tile = <LhsStageFor<MP, RC, LL> as crate::components::stage::Stage<
             Stage<Lhs<MP>>,
-            ReadOnly,
         >>::as_stage_tile::<SP::Scope>(&lhs_stage_a);
         let lhs_stage_b_tile = <LhsStageFor<MP, RC, LL> as crate::components::stage::Stage<
             Stage<Lhs<MP>>,
-            ReadOnly,
         >>::as_stage_tile::<SP::Scope>(&lhs_stage_b);
         let rhs_stage_a_tile = <RhsStageFor<MP, RC, RL> as crate::components::stage::Stage<
             Stage<Rhs<MP>>,
-            ReadOnly,
         >>::as_stage_tile::<SP::Scope>(&rhs_stage_a);
         let rhs_stage_b_tile = <RhsStageFor<MP, RC, RL> as crate::components::stage::Stage<
             Stage<Rhs<MP>>,
-            ReadOnly,
         >>::as_stage_tile::<SP::Scope>(&rhs_stage_b);
 
         let mut barrier_a = LL::SyncStrategy::create_barrier();

@@ -101,6 +101,7 @@ impl<RC: RuntimeConfig> PartialLoadingStrategy<RC> for AsyncPartialTmaLoading {
 }
 
 #[derive(CubeType, Clone, Copy)]
+#[expand(derive(Clone))]
 pub struct AsyncPartialTmaJob {
     is_elected: bool,
 
@@ -149,11 +150,11 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
             .runtime();
 
             let global_view = global_iter.view();
-            let mut stage = stage.as_slice_mut::<Const<1>>();
+            let stage = stage.as_slice_mut::<Const<1>>();
             let slice_size = size_row * size_col;
 
             let slice_start = task_id * slice_size;
-            let slice = stage.slice_mut(slice_start as usize, (slice_start + slice_size) as usize);
+            let slice = &mut stage[slice_start as usize..(slice_start + slice_size) as usize];
             // "column" to be loaded, may be a row for col-major (can't think of a better name)
             let load_col = task_id * size_col;
 
@@ -162,7 +163,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
                 MatrixLayout::ColMajor => (load_col + offs_row, offs_col),
             };
 
-            global_view.tensor_map_load(barrier, &mut slice.downcast(), pos);
+            global_view.tensor_map_load(barrier.inner_ref(), slice.downcast_mut(), pos);
         }
     }
 
@@ -182,7 +183,7 @@ impl<RC: RuntimeConfig> AsyncPartialLoadingStrategy<RC> for AsyncPartialTmaLoadi
     }
 
     fn arrive<MP: MatmulTypes>(
-        barrier: &mut Barrier,
+        barrier: &mut Shared<Barrier>,
         #[comptime] config: SharedGlobalMatmulConfig,
     ) {
         let lhs_elem_size = LhsS::<MP>::type_size().comptime();

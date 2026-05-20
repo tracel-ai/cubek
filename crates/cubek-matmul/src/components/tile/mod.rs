@@ -247,7 +247,7 @@ impl TileMatmulKind {
 pub fn allocate_lhs<LhsRE: Numeric, RhsRE: Numeric, AccRE: Numeric, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_matmul: TileMatmul,
-) -> Tile<LhsRE, Sc, ReadWrite> {
+) -> Tile<LhsRE, Sc> {
     match tile_matmul {
         TileMatmul::Cmma(c) => cmma_allocate_lhs::<LhsRE, Sc>(layout, c.tile_size),
         TileMatmul::Mma(c) => {
@@ -271,7 +271,7 @@ pub fn allocate_lhs<LhsRE: Numeric, RhsRE: Numeric, AccRE: Numeric, Sc: TileScop
 pub fn allocate_rhs<LhsRE: Numeric, RhsRE: Numeric, AccRE: Numeric, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_matmul: TileMatmul,
-) -> Tile<RhsRE, Sc, ReadWrite> {
+) -> Tile<RhsRE, Sc> {
     match tile_matmul {
         TileMatmul::Cmma(c) => cmma_allocate_rhs::<RhsRE, Sc>(layout, c.tile_size),
         TileMatmul::Mma(c) => {
@@ -295,7 +295,7 @@ pub fn allocate_rhs<LhsRE: Numeric, RhsRE: Numeric, AccRE: Numeric, Sc: TileScop
 pub fn allocate_acc<LhsRE: Numeric, RhsRE: Numeric, AccRE: Numeric, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_matmul: TileMatmul,
-) -> Tile<AccRE, Sc, ReadWrite> {
+) -> Tile<AccRE, Sc> {
     match tile_matmul {
         TileMatmul::Cmma(c) => cmma_allocate_acc::<AccRE, Sc>(layout, c.tile_size),
         TileMatmul::Mma(c) => {

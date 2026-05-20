@@ -185,7 +185,7 @@ fn reduce_scan<P: ReducePrecision, I: ReduceInstruction<P>>(
     #[comptime] size: usize,
 ) {
     for i in 0..size {
-        let acc = I::SharedAccumulator::read(shared_accumulator, i);
+        let acc = I::SharedAccumulator::read(&*shared_accumulator, i);
         I::fuse_accumulators(inst, accumulator, &acc);
     }
 }
@@ -251,6 +251,6 @@ fn reduce_tree<P: ReducePrecision, I: ReduceInstruction<P>>(
     }
     sync_cube();
 
-    let acc = I::SharedAccumulator::read(shared_accumulator, 0);
+    let acc = I::SharedAccumulator::read(&*shared_accumulator, 0);
     I::fuse_accumulators(inst, accumulator, &acc);
 }

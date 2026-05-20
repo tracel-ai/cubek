@@ -13,14 +13,10 @@ use crate::{
 };
 
 #[cube]
-impl<N: Numeric, Sc: TileScope> Tile<N, Sc, ReadWrite> {
+impl<N: Numeric, Sc: TileScope> Tile<N, Sc> {
     /// `self += lhs · rhs`. For `(Stage, Stage, Partition)` use
     /// [`Tile::mma_partition`].
-    pub fn mma<L: Numeric, LIO: SliceVisibility, R: Numeric, RIO: SliceVisibility>(
-        &mut self,
-        lhs: &Tile<L, Sc, LIO>,
-        rhs: &Tile<R, Sc, RIO>,
-    ) {
+    pub fn mma<L: Numeric, R: Numeric>(&mut self, lhs: &Tile<L, Sc>, rhs: &Tile<R, Sc>) {
         match (&lhs.kind, &rhs.kind, &mut self.kind) {
             (TileKind::Cmma(l), TileKind::Cmma(r), TileKind::Cmma(a)) => a.mma(l, r),
             (TileKind::Cmma(l), TileKind::Cmma(r), TileKind::Bounce(a)) => a.cmma.mma(l, r),
@@ -55,10 +51,10 @@ impl<N: Numeric, Sc: TileScope> Tile<N, Sc, ReadWrite> {
         SEL: StageEventListener,
     >(
         &mut self,
-        lhs: &Tile<LhsS, Sc, ReadOnly>,
-        rhs: &Tile<RhsS, Sc, ReadOnly>,
-        a_fragment: &mut Sequence<Tile<LhsR, Sc, ReadWrite>>,
-        b_fragments: &mut Tile<RhsR, Sc, ReadWrite>,
+        lhs: &Tile<LhsS, Sc>,
+        rhs: &Tile<RhsS, Sc>,
+        a_fragment: &mut Sequence<Tile<LhsR, Sc>>,
+        b_fragments: &mut Tile<RhsR, Sc>,
         #[comptime] partition_size_k: u32,
         listener: SEL,
         scheduler: &PartitionScheduler,
@@ -95,10 +91,10 @@ pub fn load_partition_from_stage<
     RhsRE: Numeric,
     AccRE: Numeric,
     Sc: TileScope,
-    StageAcc: Stage<AccSE, ReadOnly>,
+    StageAcc: Stage<AccSE>,
 >(
     stage: &StageAcc,
-    acc: &mut Tile<AccRE, Sc, ReadWrite>,
+    acc: &mut Tile<AccRE, Sc>,
     scheduler: &PartitionScheduler,
     #[comptime] partition_size_m: u32,
     #[comptime] partition_size_n: u32,
@@ -115,8 +111,7 @@ pub fn load_partition_from_stage<
 
             let acc_tile = acc.partition_tile_at_mut(m, n, n_iterations);
             let tile = StageAcc::tile::<Sc>(stage, (m_stage, n_stage));
-            acc_tile
-                .copy_from::<AccSE, AccSS, LhsRE, RhsRE, AccRE, ReadOnly>(&tile, StageIdent::Acc);
+            acc_tile.copy_from::<AccSE, AccSS, LhsRE, RhsRE, AccRE>(&tile, StageIdent::Acc);
         }
     }
 }
@@ -132,10 +127,10 @@ pub fn write_partition_to_stage<
     RhsRE: Numeric,
     AccRE: Numeric,
     Sc: TileScope,
-    OutStage: Stage<OutSE, ReadWrite>,
+    OutStage: Stage<OutSE>,
     W: WriteEventListener,
 >(
-    acc: &mut Tile<AccRE, Sc, ReadWrite>,
+    acc: &mut Tile<AccRE, Sc>,
     out_stage: &mut OutStage,
     listener: &mut W,
     scheduler: &PartitionScheduler,
@@ -157,12 +152,9 @@ pub fn write_partition_to_stage<
             let tile_accumulator = acc.partition_tile_at_mut(m_iter, n_iter, n_iterations);
 
             let tile_pos = (m_store, n_store);
-            let mut tile = OutStage::tile::<Sc>(out_stage, tile_pos);
+            let mut tile = OutStage::tile::<Sc>(&*out_stage, tile_pos);
 
-            tile.copy_from::<AccRE, AccSS, LhsRE, RhsRE, AccRE, ReadWrite>(
-                tile_accumulator,
-                StageIdent::Out,
-            );
+            tile.copy_from::<AccRE, AccSS, LhsRE, RhsRE, AccRE>(&*tile_accumulator, StageIdent::Out);
 
             W::on_event(listener, WriteEvent::new_TileStored(tile_pos));
         }

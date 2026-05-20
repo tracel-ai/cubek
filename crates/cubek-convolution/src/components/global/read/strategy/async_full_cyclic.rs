@@ -114,6 +114,7 @@ impl<TO: TilingOrder> FullLoadingStrategy<RuntimeArgs> for AsyncFullCyclicLoadin
 }
 
 #[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
 pub struct AsyncFullCyclicJob {
     unit_position_base: u32,
     runtime_args: RuntimeArgs,
@@ -153,7 +154,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
         #[allow(clippy::collapsible_else_if)]
         if comptime!(this.reader_mode == ReaderMode::Strict || this.balanced_workload) {
             copy_vector::<EG, NG, ES, NS, TO>(
-                this,
+                &*this,
                 unit_position,
                 global_iter,
                 stage,
@@ -163,7 +164,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
         } else {
             if unit_position < this.num_stage_elements {
                 copy_vector::<EG, NG, ES, NS, TO>(
-                    this,
+                    &*this,
                     unit_position,
                     global_iter,
                     stage,

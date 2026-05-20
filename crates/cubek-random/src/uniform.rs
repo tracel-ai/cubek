@@ -57,12 +57,12 @@ impl PrngRuntime for Uniform {
 
                 let uniform = E::cast_from(f32_uniform);
 
-                output_vector[i] = uniform;
+                output_vector.insert(i, uniform);
             }
 
             let write_index = vector_index * n_invocations as usize + write_index_base;
 
-            output[write_index] = output_vector;
+            output.write_checked(write_index, output_vector);
         }
     }
 }

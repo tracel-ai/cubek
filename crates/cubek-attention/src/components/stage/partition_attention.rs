@@ -18,11 +18,11 @@ use crate::{
     components::stage::KeyPartition,
     components::stage::ValuePartition,
     components::stage::base::StageAttentionConfig,
-    {components::stage::StageAttention, definition::AttentionPrecision},
+    {components::stage::StageAttention, forward::definition::AttentionPrecision},
 };
 use crate::{
     components::{global::GlobalAttentionConfig, stage::PartitionAttentionConfig},
-    definition::attention_types::*,
+    forward::definition::attention_types::*,
 };
 use cubecl::std::tensor::layout::Coords2d;
 
@@ -35,9 +35,9 @@ pub struct PartitionAttention<AP: AttentionPrecision, SK, SV, SO, P: AttentionPa
 #[cube]
 impl<
     AP: AttentionPrecision,
-    SK: Stage<KS<AP>, ReadOnly>,
-    SV: Stage<VS<AP>, ReadOnly>,
-    SO: Stage<OS<AP>, ReadWrite>,
+    SK: Stage<KS<AP>>,
+    SV: Stage<VS<AP>>,
+    SO: Stage<OS<AP>>,
     P: AttentionPartitioner,
 > StageAttention<AP> for PartitionAttention<AP, SK, SV, SO, P>
 {
@@ -94,7 +94,7 @@ impl<
 
                     key_tile
                         .tile
-                        .copy_from::<KS<AP>, KSS<AP>, QT<AP>, KVT<AP>, SM<AP>, ReadOnly>(
+                        .copy_from::<KS<AP>, KSS<AP>, QT<AP>, KVT<AP>, SM<AP>>(
                             &key_data,
                             cubek_std::StageIdent::Rhs,
                         );
@@ -116,7 +116,7 @@ impl<
 
                     value_tile
                         .tile
-                        .copy_from::<VS<AP>, VSS<AP>, SML<AP>, KVT<AP>, ACC<AP>, ReadOnly>(
+                        .copy_from::<VS<AP>, VSS<AP>, SML<AP>, KVT<AP>, ACC<AP>>(
                             &value_data,
                             cubek_std::StageIdent::Rhs,
                         );
@@ -125,7 +125,7 @@ impl<
                     output_partition.scale_mul_at::<SM<AP>>(&scale, q, vd, partition_val_dim);
 
                     output_partition.get_at_mut(q, vd, partition_val_dim).mma(
-                        softmax_partition.get_softmaxed_mut(q),
+                        softmax_partition.get_softmaxed(q),
                         &value_partition.get().tile,
                     );
                 }
@@ -184,7 +184,7 @@ impl<
             #[unroll]
             for vd in 0..p.val_dim as usize {
                 let tile_pos = (q as u32 + P::seq_q_index() * p.seq_q, vd.runtime() as u32);
-                let mut tile = SO::tile(stage, tile_pos);
+                let mut tile = SO::tile(&*stage, tile_pos);
 
                 let acc_tile =
                     acc.get_at_mut(q, vd, config.shared().partition_size.val_dim as usize);
@@ -264,7 +264,7 @@ impl<
 
                 tile_to_write
                     .tile
-                    .copy_from::<QG<AP>, QGS<AP>, QT<AP>, KVT<AP>, SM<AP>, ReadOnly>(
+                    .copy_from::<QG<AP>, QGS<AP>, QT<AP>, KVT<AP>, SM<AP>>(
                         &Tile::new_SharedTile(SharedTile::wrap::<QGS<AP>>(tile_read)),
                         cubek_std::StageIdent::Lhs,
                     );

@@ -3,7 +3,7 @@ use cubecl::prelude::*;
 use crate::tile::{Plane, RowWise, Tile, TileExpand, TileKind, TileKindExpand};
 
 #[cube]
-impl<E: Float> Tile<E, Plane, ReadWrite> {
+impl<E: Float> Tile<E, Plane> {
     pub fn row_max(&self, acc: &mut RowWise<E>, base: &RowWise<E>) {
         match &self.kind {
             TileKind::Unit(t) => t.row_max(acc, base),

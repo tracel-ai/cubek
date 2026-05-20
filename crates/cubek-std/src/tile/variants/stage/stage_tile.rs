@@ -12,9 +12,9 @@ use cubecl::std::tensor::layout::Coords2d;
 /// Payload of [`TileKind::Stage`](crate::tile::TileKind): non-owning view of a
 /// [`StridedStageMemory`] buffer, with vector size and tiling layout erased
 /// from the type and held as comptime metadata.
-#[derive(CubeType, Clone, Copy)]
-pub struct StageTile<E: Numeric, IO: SliceVisibility = ReadOnly> {
-    pub smem: Slice<E, IO>,
+#[derive(CubeType, Clone)]
+pub struct StageTile<E: Numeric> {
+    pub smem: Box<[E]>,
     pub swizzle: Swizzle,
     #[cube(comptime)]
     pub config: StageMemoryConfig,
@@ -23,14 +23,14 @@ pub struct StageTile<E: Numeric, IO: SliceVisibility = ReadOnly> {
 }
 
 #[cube]
-impl<E: Numeric> StageTile<E, ReadOnly> {
+impl<E: Numeric> StageTile<E> {
     pub fn wrap<NS: Size, T: TilingLayout>(
         stage: &StridedStageMemory<E, NS, T>,
-    ) -> StageTile<E, ReadOnly> {
+    ) -> StageTile<E> {
         let typed = stage.as_slice::<NS>();
-        let erased: Slice<E, ReadOnly> = unsafe { typed.downcast_unchecked::<E>() };
-        StageTile::<E, ReadOnly> {
-            smem: erased,
+        let erased: &[E] = unsafe { typed.downcast_unchecked::<E>() };
+        StageTile::<E> {
+            smem: unsafe { erased.as_boxed_unchecked() },
             swizzle: stage.swizzle,
             config: comptime!(stage.config),
             tiling_layout: comptime!(T::to_enum()),
@@ -39,14 +39,14 @@ impl<E: Numeric> StageTile<E, ReadOnly> {
 }
 
 #[cube]
-impl<E: Numeric> StageTile<E, ReadWrite> {
+impl<E: Numeric> StageTile<E> {
     pub fn wrap_mut<NS: Size, T: TilingLayout>(
         stage: &mut StridedStageMemory<E, NS, T>,
-    ) -> StageTile<E, ReadWrite> {
+    ) -> StageTile<E> {
         let typed = stage.as_slice_mut::<NS>();
-        let erased: SliceMut<E> = unsafe { typed.downcast_unchecked::<E>() };
-        StageTile::<E, ReadWrite> {
-            smem: erased,
+        let erased = unsafe { typed.downcast_mut_unchecked::<E>() };
+        StageTile::<E> {
+            smem: unsafe { erased.as_boxed_unchecked() },
             swizzle: stage.swizzle,
             config: comptime!(stage.config),
             tiling_layout: comptime!(T::to_enum()),
@@ -55,10 +55,10 @@ impl<E: Numeric> StageTile<E, ReadWrite> {
 }
 
 #[cube]
-impl<E: Numeric, IO: SliceVisibility> StageTile<E, IO> {
+impl<E: Numeric> StageTile<E> {
     /// [`SharedTile`] view of the tile at `coord`. Dispatches on the
     /// comptime [`TilingLayoutEnum`].
-    pub fn get_tile(&self, coord: Coords2d) -> SharedTile<E, IO> {
+    pub fn get_tile(&self, coord: Coords2d) -> SharedTile<E> {
         let (row, col) = coord;
         let stage_vector_size = comptime!(self.config.vector_size);
         let matrix_layout = comptime!(self.config.matrix_layout);
@@ -78,8 +78,8 @@ impl<E: Numeric, IO: SliceVisibility> StageTile<E, IO> {
                         let length = comptime!((tile_size_x - 1) * stride + tile_size_y);
                         let start = row * tile_size_x * stride + col * tile_size_y;
 
-                        SharedTile::<E, IO> {
-                            container: self.smem,
+                        SharedTile::<E> {
+                            container: self.smem.clone(),
                             start,
                             end: start + length,
                             stride,
@@ -96,8 +96,8 @@ impl<E: Numeric, IO: SliceVisibility> StageTile<E, IO> {
                         let length = comptime!((tile_size_y - 1) * stride + tile_size_x);
                         let start = row * tile_size_x + col * tile_size_y * stride;
 
-                        SharedTile::<E, IO> {
-                            container: self.smem,
+                        SharedTile::<E> {
+                            container: self.smem.clone(),
                             start,
                             end: start + length,
                             stride,
@@ -121,8 +121,8 @@ impl<E: Numeric, IO: SliceVisibility> StageTile<E, IO> {
                 let stride = comptime!(stride_elements / stage_vector_size);
                 let start = (comptime!(self.config.elements_per_tile()) * nth) / stage_vector_size;
 
-                SharedTile::<E, IO> {
-                    container: self.smem,
+                SharedTile::<E> {
+                    container: self.smem.clone(),
                     start,
                     end: start + length,
                     stride,

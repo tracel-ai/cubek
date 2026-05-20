@@ -19,9 +19,9 @@ use crate::definition::{AccRE, LhsRE, MatmulTypes, MatrixTypes, RhsRE};
 
 use super::StageMatmulKind;
 
-type AccPartitionTile<MT, Sc> = PartitionTile<AccRE<MT>, Sc, ReadWrite>;
+type AccPartitionTile<MT, Sc> = PartitionTile<AccRE<MT>, Sc>;
 type PipelinedBTile<MT, Sc> =
-    PipelinedTile<<<MT as MatmulTypes>::Rhs as MatrixTypes>::Register, Sc, ReadWrite>;
+    PipelinedTile<<<MT as MatmulTypes>::Rhs as MatrixTypes>::Register, Sc>;
 
 // =====================================================================
 // NumStages — buffer count
@@ -100,7 +100,7 @@ pub struct PartitionedStageMatmul {
 /// before execution.
 pub fn init_a_fragment<MT: MatmulTypes, Sc: TileScope>(
     #[comptime] shared_config: PartitionedStageMatmul,
-) -> Sequence<Tile<<MT::Lhs as MatrixTypes>::Register, Sc, ReadWrite>> {
+) -> Sequence<Tile<<MT::Lhs as MatrixTypes>::Register, Sc>> {
     let mut lhs = Sequence::new();
     #[unroll]
     for _ in 0..shared_config.partition_size.m() {
@@ -124,7 +124,7 @@ pub fn init_a_fragment<MT: MatmulTypes, Sc: TileScope>(
 /// This may point towards uninitialized memory.
 pub fn init_b_fragments<MT: MatmulTypes, Sc: TileScope>(
     #[comptime] shared_config: PartitionedStageMatmul,
-) -> Tile<<MT::Rhs as MatrixTypes>::Register, Sc, ReadWrite> {
+) -> Tile<<MT::Rhs as MatrixTypes>::Register, Sc> {
     let mut fragments = Sequence::new();
     let n_buffers = comptime!(match shared_config.partition_buffering {
         PartitionBuffering::Single => 1usize,
@@ -137,7 +137,7 @@ pub fn init_b_fragments<MT: MatmulTypes, Sc: TileScope>(
             shared_config.tile_matmul,
         ));
     }
-    Tile::<<MT::Rhs as MatrixTypes>::Register, Sc, ReadWrite>::new_Pipelined(PipelinedBTile::<
+    Tile::<<MT::Rhs as MatrixTypes>::Register, Sc>::new_Pipelined(PipelinedBTile::<
         MT,
         Sc,
     > {
@@ -155,7 +155,7 @@ pub fn init_b_fragments<MT: MatmulTypes, Sc: TileScope>(
 /// prior to [`Tile::mma_partition`](cubek_std::tile::Tile::mma_partition).
 pub fn init_accumulator<MT: MatmulTypes, Sc: TileScope>(
     #[comptime] shared_config: PartitionedStageMatmul,
-) -> Tile<AccRE<MT>, Sc, ReadWrite> {
+) -> Tile<AccRE<MT>, Sc> {
     let mut tiles = Sequence::new();
 
     #[unroll]
@@ -172,5 +172,5 @@ pub fn init_accumulator<MT: MatmulTypes, Sc: TileScope>(
         cols: comptime!(shared_config.partition_size.n()),
         _phantom: PhantomData,
     };
-    Tile::<AccRE<MT>, Sc, ReadWrite>::new_Partition(partition)
+    Tile::<AccRE<MT>, Sc>::new_Partition(partition)
 }

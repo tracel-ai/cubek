@@ -9,12 +9,12 @@ pub struct CmmaStageWriter {}
 #[cube]
 impl CmmaStageWriter {
     pub fn store_fragment<E: Numeric, V: Numeric, N: Size>(
-        tile: &mut StridedTile<V, N, ReadWrite>,
+        tile: &mut StridedTile<V, N>,
         fragment: &cmma::Matrix<E>,
     ) {
         let layout = as_cmma_layout(tile.layout);
         let stride = tile.unvectorized_stride();
-        let mut slice = tile.as_slice_mut();
-        cmma::store(&mut slice, fragment, stride, layout);
+        let slice = tile.as_slice_mut();
+        cmma::store(slice, fragment, stride, layout);
     }
 }

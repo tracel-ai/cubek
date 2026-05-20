@@ -173,6 +173,7 @@ impl<TO: TilingOrder, RC: RuntimeConfig> PartialLoadingStrategy<RC>
 }
 
 #[derive(CubeType, Clone, Copy)]
+#[expand(derive(Clone))]
 pub struct AsyncPartialCyclicJob {
     unit_position_base: u32,
 
@@ -213,11 +214,11 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
 
         #[allow(clippy::collapsible_else_if)]
         if comptime!(this.reader_mode == ReaderMode::Strict || this.balanced_workload) {
-            copy_vector::<EG, NG, ES, NS, TO>(this, unit_position, global_iter, &mut stage, config);
+            copy_vector::<EG, NG, ES, NS, TO>(&*this, unit_position, global_iter, &mut stage, config);
         } else {
             if unit_position < this.num_stage_elements {
                 copy_vector::<EG, NG, ES, NS, TO>(
-                    this,
+                    &*this,
                     unit_position,
                     global_iter,
                     &mut stage,
@@ -289,7 +290,7 @@ impl<TO: TilingOrder, RC: RuntimeConfig> AsyncPartialLoadingStrategy<RC>
     fn barrier_post_init() {}
 
     fn arrive<MP: MatmulTypes>(
-        barrier: &mut Barrier,
+        barrier: &mut Shared<Barrier>,
         #[comptime] _config: SharedGlobalMatmulConfig,
     ) {
         barrier.commit_copy_async();

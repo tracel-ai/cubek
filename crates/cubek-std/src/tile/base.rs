@@ -13,21 +13,21 @@ use crate::tile::{
 /// Public tile type. Wraps a [`TileKind`] payload; the inner enum is
 /// crate-private and callers construct via `Tile::new_*`.
 #[derive(CubeType)]
-pub struct Tile<N: Numeric, Sc: TileScope, IO: SliceVisibility> {
-    pub(crate) kind: TileKind<N, Sc, IO>,
+pub struct Tile<N: Numeric, Sc: TileScope> {
+    pub(crate) kind: TileKind<N, Sc>,
     pub(crate) _scope: ScopeMarker<Sc>,
 }
 
 /// Storage variants of a tile.
 #[derive(CubeType)]
 #[allow(dead_code)]
-pub(crate) enum TileKind<N: Numeric, Sc: TileScope, IO: SliceVisibility> {
+pub(crate) enum TileKind<N: Numeric, Sc: TileScope> {
     /// Whole-stage view, used for partition-level dispatch.
-    Stage(StageTile<N, IO>),
+    Stage(StageTile<N>),
     /// Sequence of per-tile accumulators.
-    Partition(PartitionTile<N, Sc, IO>),
+    Partition(PartitionTile<N, Sc>),
     /// Stage slot exposed as a tile (no distribution, no compute).
-    SharedTile(SharedTile<N, IO>),
+    SharedTile(SharedTile<N>),
 
     /// CMMA fragment.
     Cmma(CmmaTile<N>),
@@ -47,7 +47,7 @@ pub(crate) enum TileKind<N: Numeric, Sc: TileScope, IO: SliceVisibility> {
     RowWise(RowWise<N>),
 
     /// Rhs fragments for the partition matmul (1 = single-buffered, 2 = double).
-    Pipelined(PipelinedTile<N, Sc, IO>),
+    Pipelined(PipelinedTile<N, Sc>),
     /// CMMA fragment + smem scratch + whitebox view. `Sc = Plane`.
     Bounce(BounceTile<N>),
 
@@ -56,9 +56,9 @@ pub(crate) enum TileKind<N: Numeric, Sc: TileScope, IO: SliceVisibility> {
 }
 
 #[cube]
-impl<N: Numeric, Sc: TileScope, IO: SliceVisibility> Tile<N, Sc, IO> {
-    pub(crate) fn from_kind(kind: TileKind<N, Sc, IO>) -> Tile<N, Sc, IO> {
-        Tile::<N, Sc, IO> {
+impl<N: Numeric, Sc: TileScope> Tile<N, Sc> {
+    pub(crate) fn from_kind(kind: TileKind<N, Sc>) -> Tile<N, Sc> {
+        Tile::<N, Sc> {
             kind,
             _scope: ScopeMarker::<Sc> {
                 _phantom: PhantomData,
@@ -66,40 +66,37 @@ impl<N: Numeric, Sc: TileScope, IO: SliceVisibility> Tile<N, Sc, IO> {
         }
     }
 
-    pub fn new_SharedTile(t: SharedTile<N, IO>) -> Tile<N, Sc, IO> {
+    pub fn new_SharedTile(t: SharedTile<N>) -> Tile<N, Sc> {
         Self::from_kind(TileKind::new_SharedTile(t))
     }
 
-    pub fn new_Stage(t: StageTile<N, IO>) -> Tile<N, Sc, IO> {
+    pub fn new_Stage(t: StageTile<N>) -> Tile<N, Sc> {
         Self::from_kind(TileKind::new_Stage(t))
     }
 
-    pub fn new_Partition(t: PartitionTile<N, Sc, IO>) -> Tile<N, Sc, IO> {
+    pub fn new_Partition(t: PartitionTile<N, Sc>) -> Tile<N, Sc> {
         Self::from_kind(TileKind::new_Partition(t))
     }
 
-    pub fn new_Pipelined(t: PipelinedTile<N, Sc, IO>) -> Tile<N, Sc, IO> {
+    pub fn new_Pipelined(t: PipelinedTile<N, Sc>) -> Tile<N, Sc> {
         Self::from_kind(TileKind::new_Pipelined(t))
     }
 
-    pub fn new_None() -> Tile<N, Sc, IO> {
+    pub fn new_None() -> Tile<N, Sc> {
         Self::from_kind(TileKind::new_None())
     }
 
-    pub fn new_RowWise(t: RowWise<N>) -> Tile<N, Sc, IO> {
+    pub fn new_RowWise(t: RowWise<N>) -> Tile<N, Sc> {
         Self::from_kind(TileKind::new_RowWise(t))
     }
-}
 
-#[cube]
-impl<N: Numeric, Sc: TileScope> Tile<N, Sc, ReadWrite> {
     /// Mutable reference to the `(m, n)` element of a `Partition` tile.
     pub fn partition_tile_at_mut(
         &mut self,
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] n_cols: usize,
-    ) -> &mut Tile<N, Sc, ReadWrite> {
+    ) -> &mut Tile<N, Sc> {
         match &mut self.kind {
             TileKind::Partition(p) => partition_get_at_mut::<N, Sc>(p, m, n, n_cols),
             TileKind::SharedTile(_)

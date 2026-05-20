@@ -28,6 +28,6 @@ impl<F: Float> MaskPartition<F> {
     }
 
     pub fn get_mut(&mut self) -> &mut MaskTile<F> {
-        self.sequence.index_mut(0usize)
+        &mut self.sequence[0]
     }
 }

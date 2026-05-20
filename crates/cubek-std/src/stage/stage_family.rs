@@ -9,23 +9,21 @@ use crate::{
 
 /// A stage that can be sliced into tiles or wrapped whole as a tile.
 #[cube]
-pub trait Stage<ES: Numeric, IO: SliceVisibility = ReadOnly>:
-    CubeType + Clone + Send + Sync + 'static
-{
-    fn tile<Sc: TileScope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc, IO>;
+pub trait Stage<ES: Numeric>: CubeType<ExpandType: Clone> + Clone + 'static {
+    fn tile<Sc: TileScope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc>;
     /// Wrap the whole stage as a [`TileKind::Stage`](crate::tile::TileKind::Stage)
     /// tile. Only meaningful for read-only stages consumed by the partition
     /// matmul; other impls return [`Tile::new_None()`].
-    fn as_stage_tile<Sc: TileScope>(this: &Self) -> Tile<ES, Sc, IO>;
+    fn as_stage_tile<Sc: TileScope>(this: &Self) -> Tile<ES, Sc>;
 }
 
-pub trait StageFamily<IO: SliceVisibility = ReadOnly>: Send + Sync + 'static {
-    type Stage<ES: Numeric, NS: Size, T: TilingLayout>: Stage<ES, IO>;
+pub trait StageFamily: Send + Sync + 'static {
+    type Stage<ES: Numeric, NS: Size, T: TilingLayout>: Stage<ES>;
 }
 
 /// A `StageFamily` that can be allocated as a loader target.
 #[cube]
-pub trait LoadStageFamily<IO: SliceVisibility = ReadOnly>: StageFamily {
+pub trait LoadStageFamily: StageFamily {
     fn create<ES: Numeric, NS: Size, T: TilingLayout>(
         #[comptime] alignment: usize,
         #[comptime] config: StageMemoryConfig,

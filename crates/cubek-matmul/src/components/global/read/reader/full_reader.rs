@@ -29,7 +29,7 @@ pub trait FullLoadingStrategy<RC: RuntimeConfig>:
     type TilingLayout: TilingLayout;
     /// The synchronization strategy that should be used with this loading strategy
     type SyncStrategy: SyncStrategy;
-    type Stage: LoadStageFamily<ReadOnly>;
+    type Stage: LoadStageFamily;
 
     /// The [LoadingJob] for this strategy.
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>: LoadingJob<EG, NG, ES, NS, Self::TilingLayout, Self::SyncStrategy, Stage = Self::Stage>;
@@ -44,6 +44,7 @@ pub trait FullLoadingStrategy<RC: RuntimeConfig>:
 }
 
 #[derive(Clone, CubeType)]
+#[expand(derive(Clone))]
 /// Loads the entire stage memory.
 ///
 /// A complete load is referred to as a `Job`, which is divided into `Tasks`—
@@ -219,12 +220,8 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: FullLoa
         #[comptime] stage_buffer: StageBuffer,
         #[comptime] config: GlobalReaderConfig,
     ) {
-        Self::execute_all_remaining_tasks(
-            this,
-            &mut Self::create_job_iterator(this, stage_buffer, config),
-            barrier,
-            config,
-        );
+        let mut iter = Self::create_job_iterator(&*this, stage_buffer, config);
+        Self::execute_all_remaining_tasks(this, &mut iter, barrier, config);
     }
 }
 

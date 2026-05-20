@@ -4,6 +4,7 @@ use cubecl::{
 };
 
 #[derive(Clone, CubeType)]
+#[expand(derive(Clone))]
 /// An iterator over global memory, advancing along k.
 pub struct GlobalIterator<EI: CubePrimitive> {
     global_view: View<EI, Coords2d>,
@@ -65,7 +66,7 @@ impl<EG: CubePrimitive> GlobalIterator<EG> {
     }
 
     /// Returns the current view slice of the iterator
-    pub fn view(&self) -> View<EG, Coords2d> {
+    pub fn view(&self) -> &View<EG, Coords2d> {
         let offset = match self.view_direction.comptime() {
             ViewDirection::Row => (self.offset.read(), 0u32),
             ViewDirection::Col => (0u32, self.offset.read()),

@@ -1,7 +1,8 @@
 //! Matmul-specific interpretation of the generic [CubeMapping] from `cubek-std`.
 //!
-//! The partitioned matmul interprets the `(x, y, z)` problem-space axes
-//! as `(m, n, batch)`. GEMV variants use [cube_pos_to_matrix_batch] instead.
+//! The partitioned and plane-parallel matmuls interpret the `(x, y, z)`
+//! problem-space axes as `(m, n, batch)`. The `gemv_unit_perpendicular`
+//! kernel collapses to a 2D problem and uses [cube_pos_to_matrix_batch].
 
 use cubecl::prelude::*;
 

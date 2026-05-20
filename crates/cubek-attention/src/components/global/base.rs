@@ -5,7 +5,7 @@ use cubecl::{
 
 use crate::{
     components::global::simple::AttentionWriter,
-    definition::{
+    forward::definition::{
         AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError,
         attention_types::*,
     },
@@ -34,7 +34,7 @@ pub trait GlobalAttentionFamily: Send + Sync + 'static {
 }
 
 #[cube]
-pub trait GlobalAttention<AP: AttentionPrecision>: 'static + Send + Sync {
+pub trait GlobalAttention<AP: AttentionPrecision>: 'static {
     /// Writes to Out at the same offset it loaded Query
     type Writer: AttentionWriter<OS<AP>, OSS<AP>, OG<AP>, OGS<AP>>;
 

@@ -163,7 +163,7 @@ impl PlaneFlowPartition {
     /// Whether this unit is the leader of the loading units. Always the lowest
     /// unit in the correct group. Used by TMA; `plane_broadcast` / `plane_elect`
     /// keep the value warp-uniform.
-    pub fn elect_load_leader(self) -> bool {
+    pub fn elect_load_leader(&self) -> bool {
         let plane_id = plane_broadcast(UNIT_POS_Y, 0u32);
 
         let is_elected_plane = match self {

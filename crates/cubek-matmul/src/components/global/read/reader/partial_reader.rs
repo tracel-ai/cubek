@@ -26,7 +26,7 @@ pub trait PartialLoadingStrategy<RC: RuntimeConfig>:
     /// The layout describing how data is tiled across the stage.
     type TilingLayout: TilingLayout;
     type SyncStrategy: SyncStrategy;
-    type Stage: LoadStageFamily<ReadOnly>;
+    type Stage: LoadStageFamily;
 
     /// The [LoadingJob] for this strategy.
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>: LoadingJob<EG, NG, ES, NS, Self::TilingLayout, Self::SyncStrategy, Stage = Self::Stage>;
@@ -49,12 +49,16 @@ pub trait AsyncPartialLoadingStrategy<RC: RuntimeConfig>:
     /// Extra synchronization after initializing the barrier, if needed
     fn barrier_post_init();
     /// Arrive at the barrier using the correct completion mechanism, without waiting
-    fn arrive<MP: MatmulTypes>(barrier: &mut Barrier, #[comptime] config: SharedGlobalMatmulConfig);
+    fn arrive<MP: MatmulTypes>(
+        barrier: &mut Shared<Barrier>,
+        #[comptime] config: SharedGlobalMatmulConfig,
+    );
     /// Whether this unit should participate in the load loop
     fn is_elected(#[comptime] config: SharedGlobalMatmulConfig) -> bool;
 }
 
 #[derive(Clone, CubeType)]
+#[expand(derive(Clone))]
 #[allow(clippy::type_complexity)]
 /// Loads a stage from stage memory using synchronous data movement operations.
 ///
@@ -247,12 +251,8 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: Partial
         #[comptime] stage_buffer: StageBuffer,
         #[comptime] config: GlobalReaderConfig,
     ) {
-        Self::execute_all_remaining_tasks(
-            this,
-            &mut Self::create_job_iterator(this, stage_buffer, config),
-            barrier,
-            config,
-        );
+        let mut iter = Self::create_job_iterator(&*this, stage_buffer, config);
+        Self::execute_all_remaining_tasks(this, &mut iter, barrier, config);
     }
 }
 

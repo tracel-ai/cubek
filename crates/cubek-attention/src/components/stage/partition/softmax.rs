@@ -3,15 +3,15 @@ use cubecl::prelude::*;
 use cubek_std::tile::{Plane, RowWise, SoftmaxKind, Tile, softmax_init_state};
 
 use crate::components::tile::matmul::{self as attn_matmul, AttentionTileMatmul};
-use crate::{components::tile::MaskTile, definition::AttentionPartitionSize};
+use crate::{components::tile::MaskTile, forward::definition::AttentionPartitionSize};
 
 #[derive(CubeType)]
 /// Holds the per-partition score and softmaxed tiles. For the cmma path each
 /// tile is a `Tile::Bounce`, which encapsulates the smem + WhiteboxFragment bouncing
 /// internally.
 pub struct SoftmaxPartition<Acc: Float, Lhs: Float> {
-    score_tiles: Sequence<Tile<Acc, Plane, ReadWrite>>,
-    softmaxed_tiles: Sequence<Tile<Lhs, Plane, ReadWrite>>,
+    score_tiles: Sequence<Tile<Acc, Plane>>,
+    softmaxed_tiles: Sequence<Tile<Lhs, Plane>>,
 }
 
 #[cube]
@@ -46,12 +46,12 @@ impl<Acc: Float, Lhs: Float> SoftmaxPartition<Acc, Lhs> {
         self.score_tiles.index_mut(q).fill_zero();
     }
 
-    pub fn get_score_mut(&mut self, #[comptime] q: usize) -> &mut Tile<Acc, Plane, ReadWrite> {
-        self.score_tiles.index_mut(q)
+    pub fn get_score_mut(&mut self, #[comptime] q: usize) -> &mut Tile<Acc, Plane> {
+        &mut self.score_tiles[q]
     }
 
-    pub fn get_softmaxed_mut(&mut self, #[comptime] q: usize) -> &mut Tile<Lhs, Plane, ReadWrite> {
-        self.softmaxed_tiles.index_mut(q)
+    pub fn get_softmaxed(&mut self, #[comptime] q: usize) -> &Tile<Lhs, Plane> {
+        &self.softmaxed_tiles[q]
     }
 
     pub fn softmax_at(
@@ -63,7 +63,7 @@ impl<Acc: Float, Lhs: Float> SoftmaxPartition<Acc, Lhs> {
     ) -> RowWise<Acc> {
         self.score_tiles.index_mut(q).softmax::<Lhs, MaskTile<Acc>>(
             mask,
-            self.softmaxed_tiles.index_mut(q),
+            &mut self.softmaxed_tiles[q],
             state_q,
             head_dim_factor,
         )

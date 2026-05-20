@@ -126,7 +126,7 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
     let rel_tol = 1e-4;
     let max_error = (scale_f32 / 2.0) * (1f32 + rel_tol);
     assert_eq!(data_restored.len(), data.len());
-    for (actual, expected) in data_restored.iter().zip(data.into_iter()) {
+    for (actual, expected) in data_restored.iter().zip(data) {
         let diff = f32::abs(actual - expected);
         assert!(
             diff <= max_error,
@@ -265,7 +265,7 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
 
     assert_eq!(data_restored.len(), data.len());
     let rel_tol = 1e-4;
-    for (i, (actual, expected)) in data_restored.iter().zip(data.into_iter()).enumerate() {
+    for (i, (actual, expected)) in data_restored.iter().zip(data).enumerate() {
         let block = i / block_size;
         let scale = scales[block];
         // Max quantization error = step size / 2

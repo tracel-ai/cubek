@@ -69,7 +69,7 @@ pub fn shared_sum<R: Runtime>(
     // Check that the client supports atomic addition.
     if !client
         .properties()
-        .atomic_type_usage(Type::new(StorageType::Atomic(input_elem)))
+        .atomic_type_usage(Type::atomic(input_elem))
         .contains(AtomicUsage::Add)
     {
         return Err(ReduceError::MissingAtomicAdd(input_elem.into()));
@@ -102,7 +102,7 @@ pub fn shared_sum<R: Runtime>(
     // they're not guaranteed to contain `0`.
     let input_view = if contiguous_buffer {
         let layout = LinearViewLayoutLaunch::new();
-        let buffer = unsafe { ArrayArg::from_raw_parts_binding(input.handle, input_len) };
+        let buffer = unsafe { BufferArg::from_raw_parts_binding(input.handle, input_len) };
         LinearViewLaunch::new_array::<LinearViewLayout>(buffer, layout)
     } else {
         linear_view(input)
@@ -141,7 +141,7 @@ fn shared_sum_kernel<T: Numeric, N: Size>(
     #[comptime] num_vectors_per_unit: usize,
     #[define(T)] _dtype: ElemType,
 ) {
-    let mut shared_memory = SharedMemory::new(shared_memory_size);
+    let mut shared_memory = SharedMemory::<Vector<T, N>>::new(shared_memory_size);
     shared_memory[UNIT_POS as usize] = Vector::empty().fill(T::from_int(0));
 
     // Each unit reduce `num_vectors_per_unit` vectors.
@@ -154,7 +154,7 @@ fn shared_sum_kernel<T: Numeric, N: Size>(
 
     // Each unit sum its vectors.
     for k in start..end {
-        shared_memory[UNIT_POS as usize] += input[k];
+        shared_memory[UNIT_POS as usize] += input.read(k);
     }
 
     // Sum all vectors within the shared_memory to a single vector.
@@ -164,7 +164,7 @@ fn shared_sum_kernel<T: Numeric, N: Size>(
     let sum = RuntimeCell::<T>::new(T::from_int(0));
     #[unroll]
     for k in 0..N::value() {
-        let update = vector[k] + sum.read();
+        let update = vector.extract(k) + sum.read();
         sum.store(update);
     }
 

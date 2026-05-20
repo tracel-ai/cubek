@@ -131,6 +131,7 @@ impl<TO: TilingOrder, RC: RuntimeConfig> PartialLoadingStrategy<RC>
 }
 
 #[derive(CubeType, Clone, Copy)]
+#[expand(derive(Clone, Copy))]
 pub struct SyncPartialCyclicJob {
     unit_position_base: u32,
 
@@ -170,7 +171,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
         #[allow(clippy::collapsible_else_if)]
         if comptime!(this.reader_mode == ReaderMode::Strict || this.balanced_workload) {
             load_and_store_vector::<EG, NG, ES, NS, TO>(
-                this,
+                &*this,
                 unit_position,
                 global_iter,
                 &mut stage,
@@ -179,7 +180,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
         } else {
             if unit_position < this.num_stage_elements {
                 load_and_store_vector::<EG, NG, ES, NS, TO>(
-                    this,
+                    &*this,
                     unit_position,
                     global_iter,
                     &mut stage,
@@ -241,10 +242,11 @@ pub(crate) fn load_and_store_vector<
     let vector_read = view.read_checked((tile, pos_within_tile));
 
     let tile_start = tile_index * job.num_vectors_per_tile;
-    let mut tile_slice = stage.as_slice_mut::<NS>();
+    let swizzle = stage.swizzle;
+    let tile_slice = stage.as_slice_mut::<NS>();
     let offset = tile_start + pos_within_tile / vector_size as u32;
     let type_size = Vector::<ES, NS>::type_size();
-    let offset = stage.swizzle.apply(offset, type_size);
+    let offset = swizzle.apply(offset, type_size);
 
     tile_slice[offset as usize] = Vector::cast_from(vector_read);
 }

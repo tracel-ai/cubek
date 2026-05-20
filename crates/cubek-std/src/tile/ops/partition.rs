@@ -65,7 +65,7 @@ impl Partitioner for PlanePartitioner {
 }
 
 #[cube]
-impl<N: Numeric, Sc: TileScope, IO: SliceVisibility> Tile<N, Sc, IO> {
+impl<N: Numeric, Sc: TileScope> Tile<N, Sc> {
     /// View of `self` at the partitioner's output scope. Source must be a
     /// `TileKind::Stage`.
     pub fn partition<P: Partitioner>(
@@ -73,7 +73,7 @@ impl<N: Numeric, Sc: TileScope, IO: SliceVisibility> Tile<N, Sc, IO> {
         compute_index: u32,
         #[comptime] plane_dim: u32,
         #[comptime] num_partitions_col: u32,
-    ) -> Tile<N, P::OutputScope, IO> {
+    ) -> Tile<N, P::OutputScope> {
         let (p_row, p_col) = P::coordinates(compute_index, plane_dim, num_partitions_col);
         match &self.kind {
             TileKind::Stage(stage) => {
@@ -88,11 +88,11 @@ impl<N: Numeric, Sc: TileScope, IO: SliceVisibility> Tile<N, Sc, IO> {
                     for n in 0..n_tiles {
                         let global = (p_row * m_tiles + m, p_col * n_tiles + n);
                         let shared = stage.get_tile(global);
-                        tiles.push(Tile::<N, P::OutputScope, IO>::new_SharedTile(shared));
+                        tiles.push(Tile::<N, P::OutputScope>::new_SharedTile(shared));
                     }
                 }
 
-                Tile::new_Partition(PartitionTile::<N, P::OutputScope, IO> {
+                Tile::new_Partition(PartitionTile::<N, P::OutputScope> {
                     tiles,
                     rows: m_tiles,
                     cols: n_tiles,

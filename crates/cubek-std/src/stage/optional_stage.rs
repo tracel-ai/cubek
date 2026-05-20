@@ -10,10 +10,8 @@ use crate::{
 };
 
 #[cube]
-impl<ES: Numeric, IO: SliceVisibility, Inner: Stage<ES, IO>> Stage<ES, IO>
-    for ComptimeOption<Inner>
-{
-    fn tile<Sc: TileScope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc, IO> {
+impl<ES: Numeric, Inner: Stage<ES>> Stage<ES> for ComptimeOption<Inner> {
+    fn tile<Sc: TileScope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc> {
         #[comptime]
         if let ComptimeOption::Some(inner) = this {
             Inner::tile::<Sc>(inner, tile)
@@ -22,7 +20,7 @@ impl<ES: Numeric, IO: SliceVisibility, Inner: Stage<ES, IO>> Stage<ES, IO>
         }
     }
 
-    fn as_stage_tile<Sc: TileScope>(this: &Self) -> Tile<ES, Sc, IO> {
+    fn as_stage_tile<Sc: TileScope>(this: &Self) -> Tile<ES, Sc> {
         #[comptime]
         if let ComptimeOption::Some(inner) = this {
             Inner::as_stage_tile::<Sc>(inner)
@@ -32,12 +30,12 @@ impl<ES: Numeric, IO: SliceVisibility, Inner: Stage<ES, IO>> Stage<ES, IO>
     }
 }
 
-impl<IO: SliceVisibility, Inner: StageFamily<IO>> StageFamily<IO> for Option<Inner> {
+impl<Inner: StageFamily> StageFamily for Option<Inner> {
     type Stage<ES: Numeric, NS: Size, T: TilingLayout> = ComptimeOption<Inner::Stage<ES, NS, T>>;
 }
 
 #[cube]
-impl<IO: SliceVisibility, S: LoadStageFamily<IO>> LoadStageFamily<IO> for Option<S> {
+impl<S: LoadStageFamily> LoadStageFamily for Option<S> {
     fn create<ES: Numeric, NS: Size, T: TilingLayout>(
         #[comptime] alignment: usize,
         #[comptime] config: StageMemoryConfig,

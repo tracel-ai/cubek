@@ -1,4 +1,7 @@
-use cubecl::{CubeDim, TestRuntime, prelude::*};
+use cubecl::{
+    CubeDim, TestRuntime,
+    prelude::{BufferArg, *},
+};
 use cubek_random::*;
 
 #[test]
@@ -12,8 +15,8 @@ fn values_open_interval() {
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_1d(2),
-        unsafe { ArrayArg::from_raw_parts(input, 2) },
-        unsafe { ArrayArg::from_raw_parts(output.clone(), 2) },
+        unsafe { BufferArg::from_raw_parts(input, 2) },
+        unsafe { BufferArg::from_raw_parts(output.clone(), 2) },
     );
 
     let actual = client.read_one(output).unwrap();
@@ -39,12 +42,12 @@ fn values_open_interval() {
 }
 
 #[cube(launch)]
-pub(crate) fn kernel_to_unit_interval_co(input: &Array<u32>, output: &mut Array<f32>) {
+pub(crate) fn kernel_to_unit_interval_co(input: &[u32], output: &mut [f32]) {
     output[ABSOLUTE_POS] = to_unit_interval_closed_open(input[ABSOLUTE_POS]);
 }
 
 #[cube(launch)]
-pub(crate) fn kernel_to_unit_interval_oo(input: &Array<u32>, output: &mut Array<f32>) {
+pub(crate) fn kernel_to_unit_interval_oo(input: &[u32], output: &mut [f32]) {
     output[ABSOLUTE_POS] = to_unit_interval_open(input[ABSOLUTE_POS]);
 }
 
@@ -59,8 +62,8 @@ fn values_closed_open_interval() {
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_1d(2),
-        unsafe { ArrayArg::from_raw_parts(input, 2) },
-        unsafe { ArrayArg::from_raw_parts(output.clone(), 2) },
+        unsafe { BufferArg::from_raw_parts(input, 2) },
+        unsafe { BufferArg::from_raw_parts(output.clone(), 2) },
     );
 
     let actual = client.read_one(output).unwrap();
