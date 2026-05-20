@@ -1,3 +1,3 @@
 pub mod global;
-pub mod reader;
-pub mod writer;
+pub mod readers;
+pub mod writers;

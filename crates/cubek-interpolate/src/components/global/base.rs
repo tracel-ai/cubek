@@ -1,8 +1,8 @@
 use crate::{
     components::{
         global::{TileSize, tile_absolute_coords},
-        reader::Reader,
-        writer::Writer,
+        readers::Reader,
+        writers::Writer,
     },
     definition::{InterpolateMode, InterpolateOptions, NearestMode, compute_weights, get_halo},
 };
@@ -28,7 +28,7 @@ pub fn interpolate_kernel<F: Float, N: Size>(
         terminate!();
     }
 
-    let (mapped_x, mapped_y) = compute_input_coords::<F, N>(
+    let (mapped_x, mapped_y) = compute_input_coords::<F>(
         x,
         y,
         input_width,
@@ -87,7 +87,7 @@ fn decompose_index(
 
 // Computes the input coordinates corresponding to an output coordinates.
 #[cube]
-fn compute_input_coords<F: Float, N: Size>(
+fn compute_input_coords<F: Float>(
     x: usize,
     y: usize,
     input_width: usize,
@@ -96,13 +96,13 @@ fn compute_input_coords<F: Float, N: Size>(
     output_height: usize,
     #[comptime] options: InterpolateOptions,
 ) -> (F, F) {
-    let mapped_x = get_input_coord::<F, N>(x, input_width, output_width, options);
-    let mapped_y = get_input_coord::<F, N>(y, input_height, output_height, options);
+    let mapped_x = get_input_coord::<F>(x, input_width, output_width, options);
+    let mapped_y = get_input_coord::<F>(y, input_height, output_height, options);
     (mapped_x, mapped_y)
 }
 
 #[cube]
-fn get_input_coord<F: Float, N: Size>(
+fn get_input_coord<F: Float>(
     x: usize,
     input_size: usize,
     output_size: usize,
