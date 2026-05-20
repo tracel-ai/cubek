@@ -6,18 +6,15 @@ use cubecl::prelude::*;
 pub trait Interpolate {
     const HALO: usize;
 
-    fn compute_weights<F: Float, N: Size>(
-        frac_x: F,
-        frac_y: F,
-    ) -> (Array<Vector<F, N>>, Array<Vector<F, N>>);
+    fn compute_weights<F: Float, N: Size>(frac: F) -> Array<Vector<F, N>>;
 }
 
 /// Algorithm used for upsampling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, CubeType)]
 pub enum InterpolateMode {
     /// Nearest-neighbor interpolation.
     /// <https://en.wikipedia.org/wiki/Nearest-neighbor_interpolation>
-    Nearest,
+    Nearest(NearestMode),
 
     /// Bilinear interpolation.
     /// <https://en.wikipedia.org/wiki/Bilinear_interpolation>
@@ -32,15 +29,34 @@ pub enum InterpolateMode {
     Lanczos3,
 }
 
-// Helper function to get the halo size for a given interpolation mode.
-impl InterpolateMode {
-    pub fn get_halo(&self) -> usize {
-        match self {
-            InterpolateMode::Nearest => <Nearest as Interpolate>::HALO,
-            InterpolateMode::Bilinear => <Bilinear as Interpolate>::HALO,
-            InterpolateMode::Bicubic => <Bicubic as Interpolate>::HALO,
-            InterpolateMode::Lanczos3 => <Lanczos3 as Interpolate>::HALO,
-        }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, CubeType)]
+pub enum NearestMode {
+    // Matches Scikit-Image and PIL nearest neighbours interpolation algorithms.
+    Exact,
+    // Matches buggy OpenCV’s INTER_NEAREST interpolation algorithm for backward compatibility.
+    Floor,
+}
+
+// Helper functions to map InterpolateMode to the corresponding Interpolate implementation.
+pub fn get_halo(mode: InterpolateMode) -> usize {
+    match mode {
+        InterpolateMode::Nearest(_) => <Nearest as Interpolate>::HALO,
+        InterpolateMode::Bilinear => <Bilinear as Interpolate>::HALO,
+        InterpolateMode::Bicubic => <Bicubic as Interpolate>::HALO,
+        InterpolateMode::Lanczos3 => <Lanczos3 as Interpolate>::HALO,
+    }
+}
+
+#[cube]
+pub fn compute_weights<F: Float, N: Size>(
+    frac: F,
+    #[comptime] options: InterpolateOptions,
+) -> Array<Vector<F, N>> {
+    match options.mode {
+        InterpolateMode::Nearest(_) => <Nearest as Interpolate>::compute_weights(frac),
+        InterpolateMode::Bilinear => <Bilinear as Interpolate>::compute_weights(frac),
+        InterpolateMode::Bicubic => <Bicubic as Interpolate>::compute_weights(frac),
+        InterpolateMode::Lanczos3 => <Lanczos3 as Interpolate>::compute_weights(frac),
     }
 }
 

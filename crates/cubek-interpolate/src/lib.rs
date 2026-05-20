@@ -25,6 +25,9 @@ pub fn interpolate<R: Runtime>(
     options: InterpolateOptions,
     dtype: StorageType,
 ) -> Result<(), InterpolateError> {
+    validate_rank(input.shape.len(), output.shape.len())?;
+    validate_nhwc_consistency(&input.shape, &output.shape)?;
+
     interpolate_launch(client, input, output, options, dtype)
 }
 
@@ -43,7 +46,6 @@ pub fn interpolate_backward<R: Runtime>(
 ) -> Result<(), InterpolateError> {
     validate_rank(input.shape.len(), output.shape.len())?;
     validate_rank(out_grad.shape.len(), output.shape.len())?;
-
     validate_nhwc_consistency(&input.shape, &output.shape)?;
     validate_nhwc_consistency(&out_grad.shape, &output.shape)?;
 
@@ -55,8 +57,8 @@ pub fn interpolate_backward<R: Runtime>(
     }
 
     match options.mode {
-        InterpolateMode::Nearest => {
-            interpolate_nearest_backward_launch(client, out_grad, output, dtype)
+        InterpolateMode::Nearest(nearest_mode) => {
+            interpolate_nearest_backward_launch(client, out_grad, output, nearest_mode, dtype)
         }
         _ => Err(InterpolateError::UnsupportedMode(format!(
             "{:?} interpolation backward is not supported by JIT backend",

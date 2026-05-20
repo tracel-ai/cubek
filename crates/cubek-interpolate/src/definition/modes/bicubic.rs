@@ -8,32 +8,21 @@ pub struct Bicubic {}
 impl Interpolate for Bicubic {
     const HALO: usize = 4;
 
-    fn compute_weights<F: Float, N: Size>(
-        frac_x: F,
-        frac_y: F,
-    ) -> (Array<Vector<F, N>>, Array<Vector<F, N>>) {
-        let mut weights_x = Array::<Vector<F, N>>::new(Self::HALO);
-        let mut weights_y = Array::<Vector<F, N>>::new(Self::HALO);
+    fn compute_weights<F: Float, N: Size>(frac: F) -> Array<Vector<F, N>> {
+        let mut weights = Array::<Vector<F, N>>::new(Self::HALO);
 
         let a = float(-0.75);
 
-        let f_x = Vector::new(frac_x);
-        let f_y = Vector::new(frac_y);
+        let f = Vector::new(frac);
 
-        let inv_f_x = Vector::new(F::one() - frac_x);
-        let inv_f_y = Vector::new(F::one() - frac_y);
+        let inv_f = Vector::new(F::one() - frac);
 
-        weights_x[0] = cubic_convolution_2(f_x + float(1.0), a);
-        weights_x[1] = cubic_convolution_1(f_x, a);
-        weights_x[2] = cubic_convolution_1(inv_f_x, a);
-        weights_x[3] = cubic_convolution_2(inv_f_x + float(1.0), a);
+        weights[0] = cubic_convolution_2(f + float(1.0), a);
+        weights[1] = cubic_convolution_1(f, a);
+        weights[2] = cubic_convolution_1(inv_f, a);
+        weights[3] = cubic_convolution_2(inv_f + float(1.0), a);
 
-        weights_y[0] = cubic_convolution_2(f_y + float(1.0), a);
-        weights_y[1] = cubic_convolution_1(f_y, a);
-        weights_y[2] = cubic_convolution_1(inv_f_y, a);
-        weights_y[3] = cubic_convolution_2(inv_f_y + float(1.0), a);
-
-        (weights_x, weights_y)
+        weights
     }
 }
 

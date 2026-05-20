@@ -93,7 +93,7 @@ pub fn reference_for_backward_interpolation_mode(
     progress: Option<&Progress>,
 ) -> HostData {
     match options.mode {
-        InterpolateMode::Nearest => {
+        InterpolateMode::Nearest(_) => {
             reference_nearest_backward(out_grad, output_shape, options.align_corners, progress)
         }
         InterpolateMode::Bilinear => {

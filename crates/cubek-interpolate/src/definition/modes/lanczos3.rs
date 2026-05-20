@@ -4,27 +4,19 @@ use cubecl::prelude::*;
 #[derive(CubeType, Clone, Copy)]
 pub struct Lanczos3 {}
 
-const LANCZOS3_HALO: usize = 6;
-
 #[cube]
 impl Interpolate for Lanczos3 {
     const HALO: usize = 6;
 
-    fn compute_weights<F: Float, N: Size>(
-        frac_x: F,
-        frac_y: F,
-    ) -> (Array<Vector<F, N>>, Array<Vector<F, N>>) {
-        let mut weights_x = Array::<Vector<F, N>>::new(Self::HALO);
-        let mut weights_y = Array::<Vector<F, N>>::new(Self::HALO);
+    fn compute_weights<F: Float, N: Size>(frac: F) -> Array<Vector<F, N>> {
+        let mut weights = Array::<Vector<F, N>>::new(Self::HALO);
 
         for i in 0..Self::HALO {
-            let x = frac_x - F::cast_from(i as f32 - 2.0);
-            let y = frac_y - F::cast_from(i as f32 - 2.0);
-            weights_x[i] = Vector::new(F::cast_from(lanczos3_weight(f32::cast_from(x))));
-            weights_y[i] = Vector::new(F::cast_from(lanczos3_weight(f32::cast_from(y))));
+            let x = frac - F::cast_from(i as f32 - 2.0);
+            weights[i] = Vector::new(F::cast_from(lanczos3_weight(f32::cast_from(x))));
         }
 
-        (weights_x, weights_y)
+        weights
     }
 }
 

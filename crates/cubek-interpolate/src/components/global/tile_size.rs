@@ -1,4 +1,4 @@
-use crate::definition::InterpolateOptions;
+use crate::definition::{InterpolateOptions, get_halo};
 use cubecl::prelude::*;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, CubeType)]
@@ -9,7 +9,7 @@ pub struct TileSize {
 
 impl TileSize {
     pub fn new(w: usize, h: usize, options: InterpolateOptions) -> Self {
-        if options.mode.get_halo() == 1 {
+        if get_halo(options.mode) == 1 {
             return Self { w: w * h, h: 1 };
         }
         Self { w, h }

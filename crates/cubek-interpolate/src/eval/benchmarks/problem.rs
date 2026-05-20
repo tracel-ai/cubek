@@ -2,7 +2,7 @@ use cubek_test_utils::CatalogEntry;
 
 use crate::definition::{
     InterpolateBackwardProblem, InterpolateForwardProblem, InterpolateMode, InterpolateOptions,
-    InterpolateProblem,
+    InterpolateProblem, NearestMode,
 };
 
 pub fn problems() -> Vec<CatalogEntry<InterpolateProblem>> {
@@ -14,7 +14,7 @@ pub fn problems() -> Vec<CatalogEntry<InterpolateProblem>> {
             InterpolateProblem::Forward(InterpolateForwardProblem {
                 input_shape: [1, 2048, 2048, 3],
                 output_size: [4096, 4096],
-                options: InterpolateOptions::new(InterpolateMode::Nearest),
+                options: InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
             }),
         ),
         CatalogEntry::new(
@@ -23,7 +23,7 @@ pub fn problems() -> Vec<CatalogEntry<InterpolateProblem>> {
             InterpolateProblem::Forward(InterpolateForwardProblem {
                 input_shape: [4, 512, 512, 16],
                 output_size: [1024, 1024],
-                options: InterpolateOptions::new(InterpolateMode::Nearest),
+                options: InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
             }),
         ),
         CatalogEntry::new(
@@ -32,7 +32,7 @@ pub fn problems() -> Vec<CatalogEntry<InterpolateProblem>> {
             InterpolateProblem::Forward(InterpolateForwardProblem {
                 input_shape: [1, 2048, 2048, 3],
                 output_size: [1024, 1024],
-                options: InterpolateOptions::new(InterpolateMode::Nearest),
+                options: InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
             }),
         ),
         CatalogEntry::new(
@@ -41,7 +41,7 @@ pub fn problems() -> Vec<CatalogEntry<InterpolateProblem>> {
             InterpolateProblem::Forward(InterpolateForwardProblem {
                 input_shape: [8, 2048, 1024, 2],
                 output_size: [512, 512],
-                options: InterpolateOptions::new(InterpolateMode::Nearest),
+                options: InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
             }),
         ),
         // Bilinear
@@ -162,7 +162,7 @@ pub fn problems() -> Vec<CatalogEntry<InterpolateProblem>> {
             InterpolateProblem::Backward(InterpolateBackwardProblem {
                 input_size: [2048, 2048],
                 out_grad_shape: [1, 4096, 4096, 3],
-                options: InterpolateOptions::new(InterpolateMode::Nearest),
+                options: InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
             }),
         ),
         CatalogEntry::new(
@@ -171,7 +171,7 @@ pub fn problems() -> Vec<CatalogEntry<InterpolateProblem>> {
             InterpolateProblem::Backward(InterpolateBackwardProblem {
                 input_size: [512, 512],
                 out_grad_shape: [4, 1024, 1024, 16],
-                options: InterpolateOptions::new(InterpolateMode::Nearest),
+                options: InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
             }),
         ),
         CatalogEntry::new(
@@ -180,7 +180,7 @@ pub fn problems() -> Vec<CatalogEntry<InterpolateProblem>> {
             InterpolateProblem::Backward(InterpolateBackwardProblem {
                 input_size: [2048, 2048],
                 out_grad_shape: [1, 1024, 1024, 3],
-                options: InterpolateOptions::new(InterpolateMode::Nearest),
+                options: InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
             }),
         ),
         CatalogEntry::new(
@@ -189,7 +189,7 @@ pub fn problems() -> Vec<CatalogEntry<InterpolateProblem>> {
             InterpolateProblem::Backward(InterpolateBackwardProblem {
                 input_size: [2048, 1024],
                 out_grad_shape: [8, 512, 512, 2],
-                options: InterpolateOptions::new(InterpolateMode::Nearest),
+                options: InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
             }),
         ),
     ]

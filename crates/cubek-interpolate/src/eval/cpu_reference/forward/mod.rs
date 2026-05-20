@@ -81,7 +81,9 @@ pub fn reference_for_interpolation_mode(
     progress: Option<&Progress>,
 ) -> HostData {
     match options.mode {
-        InterpolateMode::Nearest => reference_nearest(input, output_shape, progress),
+        InterpolateMode::Nearest(nearest_mode) => {
+            reference_nearest(input, output_shape, nearest_mode, progress)
+        }
         InterpolateMode::Bilinear => {
             reference_bilinear(input, output_shape, options.align_corners, progress)
         }

@@ -1,8 +1,10 @@
 use crate::{
-    components::global::{TileSize, tile_absolute_coords},
-    definition::{
-        Bicubic, Bilinear, Interpolate, InterpolateMode, InterpolateOptions, Lanczos3, Nearest,
+    components::{
+        global::{TileSize, tile_absolute_coords},
+        reader::Reader,
+        writer::Writer,
     },
+    definition::{InterpolateMode, InterpolateOptions, NearestMode, compute_weights, get_halo},
 };
 use cubecl::{prelude::*, std::FastDivmod};
 
@@ -15,19 +17,16 @@ pub fn interpolate_kernel<F: Float, N: Size>(
     #[comptime] options: InterpolateOptions,
     #[define(F)] _dtype: StorageType,
 ) {
-    let (rem, channel_group) = cube_shape[0].div_mod(ABSOLUTE_POS);
-    let (rem, unit_pos) = cube_shape[1].div_mod(rem);
-    let (batch, cube_pos) = cube_shape[2].div_mod(rem);
+    let (batch, cube_pos, unit_pos, channel_group) = decompose_index(ABSOLUTE_POS, cube_shape);
 
     let (output_width, output_height) = (output.shape(2), output.shape(1));
+    let (input_width, input_height) = (input.shape(2), input.shape(1));
 
     let (x, y) = tile_absolute_coords(output_width, cube_pos, unit_pos, output_tile_size);
 
     if x >= output_width || y >= output_height {
         terminate!();
     }
-
-    let (input_width, input_height) = (input.shape(2), input.shape(1));
 
     let (mapped_x, mapped_y) = compute_input_coords::<F, N>(
         x,
@@ -49,7 +48,10 @@ pub fn interpolate_kernel<F: Float, N: Size>(
         isize::cast_from(base_y_floor),
     );
 
-    let (weights_x, weights_y) = compute_weights(frac_x, frac_y, options);
+    let (weights_x, weights_y) = (
+        compute_weights(frac_x, options),
+        compute_weights(frac_y, options),
+    );
 
     let vector_size = input.vector_size();
 
@@ -67,13 +69,23 @@ pub fn interpolate_kernel<F: Float, N: Size>(
         options,
     );
 
-    let out_index = (batch * output.stride(0) + y * output.stride(1) + x * output.stride(2))
-        / vector_size
-        + channel_group * output.stride(3);
+    let writer = Writer::new(channel_group);
 
-    output[out_index] = final_value;
+    writer.write(output, batch, x, y, vector_size, final_value);
 }
 
+#[cube]
+fn decompose_index(
+    index: usize,
+    cube_shape: Sequence<FastDivmod<usize>>,
+) -> (usize, usize, usize, usize) {
+    let (rem, channel_group) = cube_shape[0].div_mod(index);
+    let (rem, unit_pos) = cube_shape[1].div_mod(rem);
+    let (batch, cube_pos) = cube_shape[2].div_mod(rem);
+    (batch, cube_pos, unit_pos, channel_group)
+}
+
+// Computes the input coordinates corresponding to an output coordinates.
 #[cube]
 fn compute_input_coords<F: Float, N: Size>(
     x: usize,
@@ -96,20 +108,29 @@ fn get_input_coord<F: Float, N: Size>(
     output_size: usize,
     #[comptime] options: InterpolateOptions,
 ) -> F {
-    if options.mode == InterpolateMode::Nearest {
-        // Do not "fix": Bug-for-bug compatibility with PyTorch's default nearest-neighbor interpolation.
-        (F::cast_from(x) * F::cast_from(input_size)) / F::cast_from(output_size)
-    } else if options.align_corners {
-        // Not aligned corners mapping: x * (input_size - 1) / (output_size - 1)
-        if output_size == 1 {
-            F::zero()
-        } else {
-            F::cast_from(x) * F::cast_from(input_size - 1) / F::cast_from(output_size - 1)
+    match options.mode {
+        InterpolateMode::Nearest(nearest_mode) => match nearest_mode {
+            NearestMode::Exact => {
+                (F::cast_from(x) + F::new(0.5)) * F::cast_from(input_size)
+                    / F::cast_from(output_size)
+            }
+            NearestMode::Floor => {
+                (F::cast_from(x) * F::cast_from(input_size)) / F::cast_from(output_size)
+            }
+        },
+        _ => {
+            if options.align_corners {
+                if output_size == 1 {
+                    F::zero()
+                } else {
+                    F::cast_from(x) * F::cast_from(input_size - 1) / F::cast_from(output_size - 1)
+                }
+            } else {
+                (F::cast_from(x) + F::new(0.5)) * F::cast_from(input_size)
+                    / F::cast_from(output_size)
+                    - F::new(0.5)
+            }
         }
-    } else {
-        // Aligned corners mapping: (x + 0.5) * (input_size / output_size) - 0.5
-        (F::cast_from(x) + F::new(0.5)) * F::cast_from(input_size) / F::cast_from(output_size)
-            - F::new(0.5)
     }
 }
 
@@ -128,8 +149,9 @@ fn compute_value<F: Float, N: Size>(
     #[comptime] options: InterpolateOptions,
 ) -> Vector<F, N> {
     let input_offset = batch * input.stride(0);
+    let reader = Reader::new(channel_group);
 
-    let halo = options.mode.get_halo();
+    let halo = comptime!(get_halo(options.mode));
     let radius_offset = (halo - 1) / 2;
 
     let mut final_value = Vector::zeroed();
@@ -141,83 +163,37 @@ fn compute_value<F: Float, N: Size>(
         let mut row_weight_sum = Vector::zeroed();
 
         let unclamped_y = base_y + i as isize - radius_offset as isize;
-        let y = clamp(unclamped_y, input_height, options);
-        let row_offset = input_offset + y as usize * input.stride(1);
+        let y = unclamped_y.max(0).min(input_height as isize - 1) as usize;
+        let row_offset = input_offset + y * input.stride(1);
 
-        if is_in_bounds(unclamped_y, input_height, options) {
-            #[unroll]
-            for j in 0..halo {
-                let unclamped_x = base_x + j as isize - radius_offset as isize;
-                let x = clamp(unclamped_x, input_width, options);
+        #[unroll]
+        for j in 0..halo {
+            let unclamped_x = base_x + j as isize - radius_offset as isize;
+            let x = unclamped_x.max(0).min(input_width as isize - 1) as usize;
 
-                let is_in_bounds = is_in_bounds(unclamped_x, input_width, options)
-                    && is_in_bounds(unclamped_y, input_height, options);
-                let weight_x = weights_x[j];
+            let is_in_bounds = is_in_bounds(unclamped_x, input_width, options)
+                && is_in_bounds(unclamped_y, input_height, options);
+            let weight_x = weights_x[j];
 
-                row_value += select(
-                    is_in_bounds,
-                    get_input_value(
-                        input,
-                        row_offset,
-                        x as usize,
-                        vector_size,
-                        channel_group,
-                        weight_x,
-                    ),
-                    Vector::zeroed(),
-                );
-                row_weight_sum += select(is_in_bounds, weight_x, Vector::zeroed());
-            }
-
-            let weight_y = weights_y[i];
-            final_value += row_value * weight_y;
-            total_weight += row_weight_sum * weight_y;
+            row_value += select(
+                is_in_bounds,
+                reader.read_weighted(input, row_offset, x, vector_size, weight_x),
+                Vector::zeroed(),
+            );
+            row_weight_sum += select(is_in_bounds, weight_x, Vector::zeroed());
         }
+
+        let weight_y = weights_y[i];
+        final_value += row_value * weight_y;
+        total_weight += row_weight_sum * weight_y;
     }
 
-    let epsilon = Vector::cast_from(F::new(1e-6f32));
+    let epsilon = Vector::cast_from(F::new(1e-7));
 
     final_value / total_weight.max(epsilon)
 }
 
-#[cube]
-fn get_input_value<F: Float, N: Size>(
-    input: &Tensor<Vector<F, N>>,
-    row_offset: usize,
-    column_offset: usize,
-    vector_size: usize,
-    channel_group: usize,
-    weight: Vector<F, N>,
-) -> Vector<F, N> {
-    let input_index = (row_offset + column_offset * input.stride(2)) / vector_size
-        + channel_group * input.stride(3);
-
-    let pixel = input[input_index];
-    pixel * weight
-}
-
-#[cube]
-fn compute_weights<F: Float, N: Size>(
-    frac_x: F,
-    frac_y: F,
-    #[comptime] options: InterpolateOptions,
-) -> (Array<Vector<F, N>>, Array<Vector<F, N>>) {
-    match options.mode {
-        InterpolateMode::Nearest => <Nearest as Interpolate>::compute_weights(frac_x, frac_y),
-        InterpolateMode::Bilinear => <Bilinear as Interpolate>::compute_weights(frac_x, frac_y),
-        InterpolateMode::Bicubic => <Bicubic as Interpolate>::compute_weights(frac_x, frac_y),
-        InterpolateMode::Lanczos3 => <Lanczos3 as Interpolate>::compute_weights(frac_x, frac_y),
-    }
-}
-
-#[cube]
-fn clamp(value: isize, size: usize, #[comptime] options: InterpolateOptions) -> isize {
-    match options.mode {
-        InterpolateMode::Bilinear | InterpolateMode::Bicubic => value.max(0).min(size as isize - 1),
-        _ => value,
-    }
-}
-
+// Only used for bounds checking in Lanczos3 mode.
 #[cube]
 fn is_in_bounds(value: isize, size: usize, #[comptime] options: InterpolateOptions) -> bool {
     match options.mode {
