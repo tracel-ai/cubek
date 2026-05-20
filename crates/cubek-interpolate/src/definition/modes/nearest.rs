@@ -13,6 +13,6 @@ impl Interpolate for Nearest {
     ) -> Array<Vector<F, N>> {
         let mut weights = Array::<Vector<F, N>>::new(Self::HALO);
         weights[0] = Vector::cast_from(F::one());
-       weights
+        weights
     }
 }
