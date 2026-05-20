@@ -6,7 +6,7 @@ use crate::{
 };
 
 #[cube]
-impl<N: Numeric, Sc: TileScope> Tile<N, Sc, ReadWrite> {
+impl<N: Numeric, Sc: TileScope> Tile<N, Sc> {
     /// Zero-initializes the tile in place using the per-variant init that
     /// matches the storage's expected layout. Each arm delegates to the
     /// variant's `init_zero` method.
@@ -33,27 +33,20 @@ impl<N: Numeric, Sc: TileScope> Tile<N, Sc, ReadWrite> {
     /// copy (whether that's the source on a load, or the destination on a
     /// write). `L`/`R`/`A` are the matmul-level numeric types needed by the
     /// MMA readers/writers — they are unused on non-MMA paths.
-    pub fn copy_from<
-        SE: Numeric,
-        SS: Size,
-        L: Numeric,
-        R: Numeric,
-        A: Numeric,
-        SIO: SliceVisibility,
-    >(
+    pub fn copy_from<SE: Numeric, SS: Size, L: Numeric, R: Numeric, A: Numeric>(
         &mut self,
-        source: &Tile<SE, Sc, SIO>,
+        source: &Tile<SE, Sc>,
         #[comptime] ident: StageIdent,
     ) {
         match &mut self.kind {
-            TileKind::Cmma(t) => t.copy_from::<SE, SS, Sc, SIO>(source, ident),
-            TileKind::Bounce(b) => b.copy_from::<SE, SS, Sc, SIO>(source, ident),
-            TileKind::Mma(t) => t.copy_from::<SE, SS, L, R, A, Sc, SIO>(source, ident),
-            TileKind::Register(t) => t.copy_from::<SE, SS, Sc, SIO>(source, ident),
-            TileKind::PlaneVec(t) => t.copy_from::<SE, SS, Sc, SIO>(source, ident),
-            TileKind::Interleaved(t) => t.copy_from::<SE, SS, Sc, SIO>(source, ident),
+            TileKind::Cmma(t) => t.copy_from::<SE, SS, Sc>(source, ident),
+            TileKind::Bounce(b) => b.copy_from::<SE, SS, Sc>(source, ident),
+            TileKind::Mma(t) => t.copy_from::<SE, SS, L, R, A, Sc>(source, ident),
+            TileKind::Register(t) => t.copy_from::<SE, SS, Sc>(source, ident),
+            TileKind::PlaneVec(t) => t.copy_from::<SE, SS, Sc>(source, ident),
+            TileKind::Interleaved(t) => t.copy_from::<SE, SS, Sc>(source, ident),
             TileKind::SharedMemory(shared) => {
-                shared.copy_from::<SE, SS, L, R, Sc, SIO>(source);
+                shared.copy_from::<SE, SS, L, R, Sc>(source);
             }
             _ => panic!("copy_from: unsupported destination variant"),
         }

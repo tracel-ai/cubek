@@ -85,7 +85,7 @@ fn launch_plane_reduce_inplace<N: Numeric, S: Size>(
     #[define(N)] _dtype: StorageType,
     #[define(S)] _vector_size: usize,
 ) {
-    let mut elements = Array::new(k);
+    let mut elements = Array::<Vector<_, _>>::new(k);
     let offset = UNIT_POS_X as usize * k;
 
     #[unroll]
@@ -207,7 +207,7 @@ fn launch_plane_topk_insert<N: Numeric, S: Size>(
     #[define(N)] _dtype: StorageType,
     #[define(S)] _vector_size: usize,
 ) {
-    let mut elements = Array::new(k);
+    let mut elements = Array::<Vector<_, _>>::new(k);
     let offset = UNIT_POS_X as usize * k;
 
     #[unroll]

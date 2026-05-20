@@ -58,8 +58,8 @@ pub(crate) fn execute_dot<
 
         let k_pos = (k_base + unit_id) * vector_size;
 
-        let lhs_val = read(lhs, (m_pos, k_pos), check_bounds);
-        let rhs_val = read(rhs, (k_pos, n_pos), check_bounds);
+        let lhs_val = read(&lhs, (m_pos, k_pos), check_bounds);
+        let rhs_val = read(&rhs, (k_pos, n_pos), check_bounds);
 
         acc += Vector::cast_from(lhs_val) * Vector::cast_from(rhs_val);
     }
@@ -67,10 +67,10 @@ pub(crate) fn execute_dot<
     if comptime!(plane_dim > 1) {
         let sum = O::cast_from(plane_sum(Vector::vector_sum(acc)));
         if unit_id == 0 {
-            write(out, (m_pos, n_pos), sum, check_bounds);
+            write(&out, (m_pos, n_pos), sum, check_bounds);
         }
     } else {
         let sum = O::cast_from(Vector::vector_sum(acc));
-        write(out, (m_pos, n_pos), sum, check_bounds);
+        write(&out, (m_pos, n_pos), sum, check_bounds);
     };
 }

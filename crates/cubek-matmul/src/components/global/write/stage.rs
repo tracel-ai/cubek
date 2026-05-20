@@ -12,16 +12,17 @@ pub type WriteTiling = ContiguousTilingLayout<RowMajorTilingOrder>;
 
 pub struct PartitionedStageFamily;
 
-impl StageFamily<ReadWrite> for PartitionedStageFamily {
+impl StageFamily for PartitionedStageFamily {
     type Stage<ES: Numeric, NS: Size, T: TilingLayout> = PartitionedStage<ES, NS>;
 }
 
-#[derive(CubeType, Clone, Copy)]
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
 /// Layoutless stage for current writers. Tile only depends on the unit index, not the out tile.
 pub struct PartitionedStage<ES: Numeric, NS: Size> {
     /// Underlying shared memory
     _smem: SharedMemory<Vector<ES, NS>>,
-    pub unit_tile: StridedTile<ES, NS, ReadWrite>,
+    pub unit_tile: StridedTile<ES, NS>,
 }
 
 #[cube]
@@ -40,7 +41,7 @@ impl<ES: Numeric, NS: Size> PartitionedStage<ES, NS> {
         // Needs to be 16-byte aligned for `stmatrix`
         let inner = StridedStageMemory::<ES, NS, WriteTiling>::new_aligned(16usize, config);
 
-        let tile = inner.get_tile_mut(unit_pos);
+        let tile = inner.get_tile(unit_pos);
 
         PartitionedStage::<ES, NS> {
             _smem: inner.smem,
@@ -50,8 +51,8 @@ impl<ES: Numeric, NS: Size> PartitionedStage<ES, NS> {
 }
 
 #[cube]
-impl<ES: Numeric, NS: Size> Stage<ES, ReadWrite> for PartitionedStage<ES, NS> {
-    fn tile<Sc: TileScope>(this: &Self, _tile: Coords2d) -> Tile<ES, Sc, ReadWrite> {
-        Tile::new_SharedMemory(SharedTile::wrap::<NS>(this.unit_tile))
+impl<ES: Numeric, NS: Size> Stage<ES> for PartitionedStage<ES, NS> {
+    fn tile<Sc: TileScope>(this: &Self, _tile: Coords2d) -> Tile<ES, Sc> {
+        Tile::new_SharedMemory(SharedTile::wrap::<NS>(this.unit_tile.clone()))
     }
 }

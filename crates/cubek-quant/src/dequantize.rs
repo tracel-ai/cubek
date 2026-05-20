@@ -45,7 +45,7 @@ pub fn dequantize_symmetric_packed_values<
 ) -> Array<Vector<F, NF>> {
     dequantize_symmetric_packed_value_at::<F, NF, FS, QI, NQ>(
         position,
-        values[position],
+        values.read(position),
         scales,
         scheme,
     )
@@ -90,12 +90,12 @@ pub fn dequantize_symmetric_packed_value<
 ) -> Array<Vector<F, NF>> {
     let vector_size_values = values.vector_size();
     let num_quants = scheme.num_quants();
-    let mut tmp = Array::new(vector_size_values);
+    let mut tmp = Array::<Vector<F, NF>>::new(vector_size_values);
 
     #[unroll]
     for i in 0..vector_size_values {
-        let floats = unpack_q::<F, NF, QS>(values[i], scheme.value, scheme.store);
-        let scale = scales[(position * vector_size_values) + i * num_quants];
+        let floats = unpack_q::<F, NF, QS>(values.extract(i), scheme.value, scheme.store);
+        let scale = scales.read((position * vector_size_values) + i * num_quants);
         let values = dequantize_symmetric::<F, FS, NF>(floats, scale);
         tmp[i] = values;
     }
@@ -134,7 +134,7 @@ fn unpack_q<F: Float, NF: Size, QS: Int>(
         let is_negative = i32::cast_from(raw >= sign_bit); // 1 if negative, 0 if positive
         let signed_value = raw_i32 - (is_negative * two_pow_n);
 
-        output[position] = F::cast_from(signed_value);
+        output.insert(position, F::cast_from(signed_value));
     }
 
     output
@@ -159,7 +159,7 @@ fn dequantize_symmetric_packed_kernel<F: Float, NF: Size, FS: Numeric, NQ: Size>
         assert_eq!(vector_size_out, scheme.num_quants());
     }
 
-    let values = input[ABSOLUTE_POS];
+    let values = input.read(ABSOLUTE_POS);
     let packed_pos = ABSOLUTE_POS * scheme.num_quants();
 
     let out =
@@ -167,7 +167,7 @@ fn dequantize_symmetric_packed_kernel<F: Float, NF: Size, FS: Numeric, NQ: Size>
 
     #[unroll]
     for i in 0..vector_size_in {
-        output[ABSOLUTE_POS * vector_size_in + i] = out[i];
+        output.write(ABSOLUTE_POS * vector_size_in + i, out[i]);
     }
 }
 
@@ -184,10 +184,12 @@ fn dequantize_symmetric_native_kernel<F: Float, NF: Size, FS: Numeric, Q: Numeri
 
     let native_packing = Q::packing_factor();
     // Absolute pos represents the logical block (scale) used to dequantize, not layout
-    let scale = scale[ABSOLUTE_POS * input.vector_size() * native_packing];
+    let scale = scale.read(ABSOLUTE_POS * input.vector_size() * native_packing);
 
-    output[ABSOLUTE_POS] =
-        dequantize_symmetric::<F, FS, NF>(Vector::cast_from(input[ABSOLUTE_POS]), scale);
+    output.write(
+        ABSOLUTE_POS,
+        dequantize_symmetric::<F, FS, NF>(Vector::cast_from(input.read(ABSOLUTE_POS)), scale),
+    );
 }
 
 #[allow(clippy::result_large_err)]

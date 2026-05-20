@@ -176,7 +176,7 @@ fn reduce_kernel_inner<P: ReducePrecision, Out: NumericVector, R: ReduceFamily>(
     #[comptime] blueprint: ReduceBlueprint,
     #[comptime] config: R::Config,
 ) {
-    let inst = &R::Instruction::<P>::from_config(config);
+    let inst = R::Instruction::<P>::from_config(config);
 
     match blueprint.global {
         GlobalReduceBlueprint::Cube(cube) => {
@@ -185,7 +185,7 @@ fn reduce_kernel_inner<P: ReducePrecision, Out: NumericVector, R: ReduceFamily>(
                 output,
                 reduce_axis,
                 out_vec_axis,
-                inst,
+                &inst,
                 blueprint.vectorization_mode,
                 cube,
             )
@@ -196,7 +196,7 @@ fn reduce_kernel_inner<P: ReducePrecision, Out: NumericVector, R: ReduceFamily>(
                 output,
                 reduce_axis,
                 out_vec_axis,
-                inst,
+                &inst,
                 blueprint.vectorization_mode,
                 plane,
             )
@@ -207,7 +207,7 @@ fn reduce_kernel_inner<P: ReducePrecision, Out: NumericVector, R: ReduceFamily>(
                 output,
                 reduce_axis,
                 out_vec_axis,
-                inst,
+                &inst,
                 blueprint.vectorization_mode,
                 unit,
             )

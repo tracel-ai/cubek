@@ -93,7 +93,7 @@ pub(crate) fn fill_coordinate_vector<N: Size>(
             let mut coordinates = Vector::empty();
             #[unroll]
             for j in 0..N::value() {
-                coordinates[j] = first + j as u32;
+                coordinates.insert(j, first + j as u32);
             }
             coordinates
         }

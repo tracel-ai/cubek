@@ -67,22 +67,22 @@ pub(super) fn execute_outer_product<
             let lane = m_pos % vector_size;
             #[unroll]
             for i in 0..vector_size {
-                let v = read(lhs, (m_pos, k_base + i), check_bounds);
-                scalars[i as usize] = AccR::cast_from(v[lane as usize]);
+                let v = read(&lhs, (m_pos, k_base + i), check_bounds);
+                scalars[i as usize] = AccR::cast_from(v.extract(lane as usize));
             }
         } else if comptime!(vec_axis_is_n) {
             // Row-Row: lhs is K-contig. One K-vec load per tile.
-            let k_vec = read(lhs, (m_pos, k_base), check_bounds);
+            let k_vec = read(&lhs, (m_pos, k_base), check_bounds);
             #[unroll]
             for i in 0..vector_size {
-                scalars[i as usize] = AccR::cast_from(k_vec[i as usize]);
+                scalars[i as usize] = AccR::cast_from(k_vec.extract(i as usize));
             }
         } else {
             // Col-Col: rhs is K-contig. One K-vec load per tile.
-            let k_vec = read(rhs, (k_base, n_pos), check_bounds);
+            let k_vec = read(&rhs, (k_base, n_pos), check_bounds);
             #[unroll]
             for i in 0..vector_size {
-                scalars[i as usize] = AccR::cast_from(k_vec[i as usize]);
+                scalars[i as usize] = AccR::cast_from(k_vec.extract(i as usize));
             }
         }
 
@@ -91,10 +91,10 @@ pub(super) fn execute_outer_product<
         for i in 0..vector_size {
             let scalar_bcast = Vector::<AccR, N>::new(scalars[i as usize]);
             if comptime!(vec_axis_is_n) {
-                let vec_vec = read(rhs, (k_base + i, n_pos), check_bounds);
+                let vec_vec = read(&rhs, (k_base + i, n_pos), check_bounds);
                 acc += Vector::cast_from(vec_vec) * scalar_bcast;
             } else {
-                let vec_vec = read(lhs, (m_pos, k_base + i), check_bounds);
+                let vec_vec = read(&lhs, (m_pos, k_base + i), check_bounds);
                 acc += Vector::cast_from(vec_vec) * scalar_bcast;
             }
         }
@@ -105,11 +105,11 @@ pub(super) fn execute_outer_product<
     // vector_sizes.out = 1 so we still write one scalar at a time).
     #[unroll]
     for j in 0..vector_size {
-        let out_val = O::cast_from(acc[j as usize]);
+        let out_val = O::cast_from(acc.extract(j as usize));
         if comptime!(vec_axis_is_n) {
-            write(out, (m_pos, n_pos + j), out_val, check_bounds);
+            write(&out, (m_pos, n_pos + j), out_val, check_bounds);
         } else {
-            write(out, (m_pos + j, n_pos), out_val, check_bounds);
+            write(&out, (m_pos + j, n_pos), out_val, check_bounds);
         }
     }
 }

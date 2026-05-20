@@ -33,7 +33,7 @@ pub fn allocate_lhs_fragment<L: Numeric, R: Numeric, A: Numeric, Sc: TileScope>(
     #[comptime] partition_size: PartitionSize,
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_matmul: TileMatmul,
-) -> Sequence<Tile<L, Sc, ReadWrite>> {
+) -> Sequence<Tile<L, Sc>> {
     let mut lhs = Sequence::new();
 
     #[unroll]
@@ -50,7 +50,7 @@ pub fn allocate_rhs_fragment<L: Numeric, R: Numeric, A: Numeric, Sc: TileScope>(
     #[comptime] partition_buffering: PartitionBuffering,
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_matmul: TileMatmul,
-) -> RhsTile<Tile<R, Sc, ReadWrite>> {
+) -> RhsTile<Tile<R, Sc>> {
     match partition_buffering {
         PartitionBuffering::Single => {
             RhsTile::new_Single(allocate_rhs::<L, R, A, Sc>(layout, tile_matmul))
@@ -69,7 +69,7 @@ pub fn allocate_acc_partition<L: Numeric, R: Numeric, A: Numeric, Sc: TileScope>
     #[comptime] partition_size: PartitionSize,
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_matmul: TileMatmul,
-) -> Tile<A, Sc, ReadWrite> {
+) -> Tile<A, Sc> {
     let mut tiles = Sequence::new();
 
     #[unroll]
@@ -77,7 +77,7 @@ pub fn allocate_acc_partition<L: Numeric, R: Numeric, A: Numeric, Sc: TileScope>
         tiles.push(allocate_acc::<L, R, A, Sc>(layout, tile_matmul));
     }
 
-    Tile::new_Partition(PartitionTile::<A, Sc, ReadWrite> {
+    Tile::new_Partition(PartitionTile::<A, Sc> {
         tiles,
         rows: comptime!(partition_size.m()),
         cols: comptime!(partition_size.n()),
@@ -89,7 +89,7 @@ pub fn allocate_acc_partition<L: Numeric, R: Numeric, A: Numeric, Sc: TileScope>
 fn allocate_lhs<L: Numeric, R: Numeric, A: Numeric, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_matmul: TileMatmul,
-) -> Tile<L, Sc, ReadWrite> {
+) -> Tile<L, Sc> {
     match tile_matmul {
         TileMatmul::Cmma(c) => cmma_allocate_lhs::<L, Sc>(layout, c.tile_size),
         TileMatmul::Mma(c) => mma_allocate_lhs::<L, R, A, Sc>(layout, c),
@@ -103,7 +103,7 @@ fn allocate_lhs<L: Numeric, R: Numeric, A: Numeric, Sc: TileScope>(
 fn allocate_rhs<L: Numeric, R: Numeric, A: Numeric, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_matmul: TileMatmul,
-) -> Tile<R, Sc, ReadWrite> {
+) -> Tile<R, Sc> {
     match tile_matmul {
         TileMatmul::Cmma(c) => cmma_allocate_rhs::<R, Sc>(layout, c.tile_size),
         TileMatmul::Mma(c) => mma_allocate_rhs::<R, L, A, Sc>(layout, c),
@@ -117,7 +117,7 @@ fn allocate_rhs<L: Numeric, R: Numeric, A: Numeric, Sc: TileScope>(
 fn allocate_acc<L: Numeric, R: Numeric, A: Numeric, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_matmul: TileMatmul,
-) -> Tile<A, Sc, ReadWrite> {
+) -> Tile<A, Sc> {
     match tile_matmul {
         TileMatmul::Cmma(c) => cmma_allocate_acc::<A, Sc>(layout, c.tile_size),
         TileMatmul::Mma(c) => mma_allocate_acc::<A, L, R, Sc>(layout, c),

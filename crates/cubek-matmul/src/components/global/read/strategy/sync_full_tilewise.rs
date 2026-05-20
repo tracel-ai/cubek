@@ -130,6 +130,7 @@ impl<TO: TilingOrder, RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncFullTil
 }
 
 #[derive(CubeType, Clone, Copy)]
+#[expand(derive(Clone, Copy))]
 pub struct SyncFullTilewiseJob {
     pub num_tiles_to_skip: u32,
     pub num_vectors_to_skip: u32,
@@ -164,7 +165,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
         let tile = ContiguousTilingLayout::<TO>::to_x_y(nth_tile_global, config.smem_config);
 
         SyncFullTilewiseJob::load_and_store_vector::<EG, NG, ES, NS, TO>(
-            this,
+            &*this,
             tile,
             vector_index_within_tile,
             nth_tile_for_this_plane * this.num_vectors_per_tile,

@@ -18,7 +18,7 @@ pub(crate) const ASYNC_COPY_WIDTH: u32 = 128;
 #[cube]
 #[expect(clippy::overly_complex_bool_expr, reason = "override")]
 pub(crate) fn async_copy_from<EG: Scalar, EGS: Size, ES: Numeric, ESS: Size, T: TilingLayout>(
-    view: View<Vector<EG, EGS>, Coords2d>,
+    view: &View<Vector<EG, EGS>, Coords2d>,
     pos: Coords2d,
     stage: &mut StridedStageMemory<ES, ESS, T>,
     stage_offset: u32,
@@ -30,7 +30,8 @@ pub(crate) fn async_copy_from<EG: Scalar, EGS: Size, ES: Numeric, ESS: Size, T: 
     let operation = runtime_args.operation.comptime();
     let channels = runtime_args.channels;
 
-    let mut stage_slice = stage.as_slice_mut::<ESS>();
+    let swizzle = stage.swizzle;
+    let stage_slice = stage.as_slice_mut::<ESS>();
     let slice_size = match config.smem_config.matrix_layout {
         MatrixLayout::RowMajor => (1u32, copy_vector_size),
         MatrixLayout::ColMajor => (copy_vector_size, 1u32),
@@ -113,16 +114,17 @@ pub(crate) fn async_copy_from<EG: Scalar, EGS: Size, ES: Numeric, ESS: Size, T: 
 
     slice_len_global /= view.vector_size() as u32;
 
-    let global_slice = view.slice_unchecked(pos, slice_size).to_linear_slice();
+    let global_slice = view.slice_unchecked(pos, slice_size);
+    let global_slice = global_slice.as_linear_slice();
 
     let type_size = Vector::<ES, ESS>::type_size();
-    let offset = stage.swizzle.apply(stage_offset, type_size);
+    let offset = swizzle.apply(stage_offset, type_size);
 
-    let stage_slice = stage_slice.slice_mut(offset as usize, (offset + slice_len_stage) as usize);
+    let stage_slice = &mut stage_slice[offset as usize..(offset + slice_len_stage) as usize];
 
     copy_async_checked(
-        &global_slice.slice(0, slice_len_global as usize),
-        &mut stage_slice.downcast(),
+        &global_slice[0..slice_len_global as usize],
+        stage_slice.downcast_mut(),
         copy_vector_size,
     );
 }

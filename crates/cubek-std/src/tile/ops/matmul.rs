@@ -8,13 +8,9 @@ use cubecl::prelude::*;
 use crate::tile::{Tile, TileExpand, TileKind, TileKindExpand, TileScope};
 
 #[cube]
-impl<N: Numeric, Sc: TileScope> Tile<N, Sc, ReadWrite> {
+impl<N: Numeric, Sc: TileScope> Tile<N, Sc> {
     /// Executes `lhs · rhs`, accumulating the result into `self`.
-    pub fn mma<L: Numeric, R: Numeric>(
-        &mut self,
-        lhs: &Tile<L, Sc, ReadWrite>,
-        rhs: &Tile<R, Sc, ReadWrite>,
-    ) {
+    pub fn mma<L: Numeric, R: Numeric>(&mut self, lhs: &Tile<L, Sc>, rhs: &Tile<R, Sc>) {
         match (&lhs.kind, &rhs.kind, &mut self.kind) {
             (TileKind::Cmma(l), TileKind::Cmma(r), TileKind::Cmma(a)) => a.mma(l, r),
             (TileKind::Cmma(l), TileKind::Cmma(r), TileKind::Bounce(a)) => a.cmma.mma(l, r),

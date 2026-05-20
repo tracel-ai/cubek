@@ -81,9 +81,9 @@ type STy<T> = crate::definition::Stage<T>;
 /// executed by a single compute primitive (unit or plane)
 pub struct PartitionMatmul<
     MP: MatmulTypes,
-    StageLhs: Stage<STy<Lhs<MP>>, ReadOnly>,
-    StageRhs: Stage<STy<Rhs<MP>>, ReadOnly>,
-    StageAcc: Stage<STy<Acc<MP>>, ReadOnly>,
+    StageLhs: Stage<STy<Lhs<MP>>>,
+    StageRhs: Stage<STy<Rhs<MP>>>,
+    StageAcc: Stage<STy<Acc<MP>>>,
     Sc: TileScope,
 > {
     _phantom: PhantomData<(MP, StageLhs, StageRhs, StageAcc, Sc)>,
@@ -93,9 +93,9 @@ pub struct PartitionMatmul<
 impl<MT, StageLhs, StageRhs, StageAcc, Sc> PartitionMatmul<MT, StageLhs, StageRhs, StageAcc, Sc>
 where
     MT: MatmulTypes,
-    StageLhs: Stage<STy<Lhs<MT>>, ReadOnly>,
-    StageRhs: Stage<STy<Rhs<MT>>, ReadOnly>,
-    StageAcc: Stage<STy<Acc<MT>>, ReadOnly>,
+    StageLhs: Stage<STy<Lhs<MT>>>,
+    StageRhs: Stage<STy<Rhs<MT>>>,
+    StageAcc: Stage<STy<Acc<MT>>>,
     Sc: TileScope,
 {
     #[allow(clippy::too_many_arguments)]
@@ -104,8 +104,8 @@ where
     pub fn execute_with_listener<SEL: StageEventListener>(
         lhs_stage: &StageLhs,
         rhs_stage: &StageRhs,
-        lhs_fragment: &mut Sequence<Tile<<MT::Lhs as MatrixTypes>::Register, Sc, ReadWrite>>,
-        rhs_fragments: &mut RhsTile<Tile<<MT::Rhs as MatrixTypes>::Register, Sc, ReadWrite>>,
+        lhs_fragment: &mut Sequence<Tile<<MT::Lhs as MatrixTypes>::Register, Sc>>,
+        rhs_fragments: &mut RhsTile<Tile<<MT::Rhs as MatrixTypes>::Register, Sc>>,
         acc: &mut Accumulators<MT, Sc>,
         #[comptime] shared_config: SharedPartitionMatmulConfig,
         listener: SEL,
@@ -144,8 +144,8 @@ where
     pub fn init_tile_inputs(
         #[comptime] shared_config: SharedPartitionMatmulConfig,
     ) -> (
-        Sequence<Tile<<MT::Lhs as MatrixTypes>::Register, Sc, ReadWrite>>,
-        RhsTile<Tile<<MT::Rhs as MatrixTypes>::Register, Sc, ReadWrite>>,
+        Sequence<Tile<<MT::Lhs as MatrixTypes>::Register, Sc>>,
+        RhsTile<Tile<<MT::Rhs as MatrixTypes>::Register, Sc>>,
     ) {
         let mut lhs = Sequence::new();
 
@@ -215,8 +215,8 @@ where
     fn execute_single_buffer<SEL: StageEventListener>(
         lhs_stage: &StageLhs,
         rhs_stage: &StageRhs,
-        lhs_fragment: &mut Sequence<Tile<<MT::Lhs as MatrixTypes>::Register, Sc, ReadWrite>>,
-        rhs_fragment: &mut Tile<<MT::Rhs as MatrixTypes>::Register, Sc, ReadWrite>,
+        lhs_fragment: &mut Sequence<Tile<<MT::Lhs as MatrixTypes>::Register, Sc>>,
+        rhs_fragment: &mut Tile<<MT::Rhs as MatrixTypes>::Register, Sc>,
         acc: &mut Accumulators<MT, Sc>,
         #[comptime] shared_config: SharedPartitionMatmulConfig,
         mut listener: SEL,
@@ -247,7 +247,7 @@ where
 
                 lhs_fragment
                     .index_mut(m_iter)
-                    .copy_from::<LhsSE<MT>, LhsSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>, ReadOnly>(
+                    .copy_from::<LhsSE<MT>, LhsSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>>(
                         &tile_lhs,
                         StageIdent::Lhs,
                     );
@@ -267,11 +267,10 @@ where
                 let n_load_iter = partition_scheduler.map_n(n_iter as u32);
 
                 let rhs_tile_next = StageRhs::tile::<Sc>(rhs_stage, (k_load_iter, n_load_iter));
-                rhs_fragment
-                    .copy_from::<RhsSE<MT>, RhsSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>, ReadOnly>(
-                        &rhs_tile_next,
-                        StageIdent::Rhs,
-                    );
+                rhs_fragment.copy_from::<RhsSE<MT>, RhsSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>>(
+                    &rhs_tile_next,
+                    StageIdent::Rhs,
+                );
 
                 SEL::on_event(
                     &mut listener,
@@ -286,7 +285,7 @@ where
                 for m_iter in 0..m_iterations {
                     let accumulator =
                         Accumulators::<MT, Sc>::get_at_mut(acc, m_iter, n_iter, n_iterations);
-                    accumulator.mma(&lhs_fragment[m_iter], rhs_fragment);
+                    accumulator.mma(&lhs_fragment[m_iter], &*rhs_fragment);
 
                     SEL::on_event(
                         &mut listener,
@@ -313,10 +312,10 @@ where
     fn execute_double_buffer<SEL: StageEventListener>(
         lhs_stage: &StageLhs,
         rhs_stage: &StageRhs,
-        lhs_fragment: &mut Sequence<Tile<<MT::Lhs as MatrixTypes>::Register, Sc, ReadWrite>>,
+        lhs_fragment: &mut Sequence<Tile<<MT::Lhs as MatrixTypes>::Register, Sc>>,
         rhs_fragments: &mut (
-            Tile<<MT::Rhs as MatrixTypes>::Register, Sc, ReadWrite>,
-            Tile<<MT::Rhs as MatrixTypes>::Register, Sc, ReadWrite>,
+            Tile<<MT::Rhs as MatrixTypes>::Register, Sc>,
+            Tile<<MT::Rhs as MatrixTypes>::Register, Sc>,
         ),
         acc: &mut Accumulators<MT, Sc>,
         #[comptime] shared_config: SharedPartitionMatmulConfig,
@@ -348,7 +347,7 @@ where
 
                 lhs_fragment
                     .index_mut(m_iter)
-                    .copy_from::<LhsSE<MT>, LhsSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>, ReadOnly>(
+                    .copy_from::<LhsSE<MT>, LhsSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>>(
                         &tile_lhs,
                         StageIdent::Lhs,
                     );
@@ -369,7 +368,7 @@ where
             let rhs_tile_first = StageRhs::tile::<Sc>(rhs_stage, (k_load_iter, n_load_iter));
             rhs_fragments
                 .0
-                .copy_from::<RhsSE<MT>, RhsSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>, ReadOnly>(
+                .copy_from::<RhsSE<MT>, RhsSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>>(
                     &rhs_tile_first,
                     StageIdent::Rhs,
                 );
@@ -386,15 +385,15 @@ where
             #[unroll]
             #[allow(clippy::explicit_counter_loop)]
             for _ in 1..n_iterations {
-                let (current, next) = if comptime! {n_iter.is_multiple_of(2)} {
-                    (&mut rhs_fragments.0, &mut rhs_fragments.1)
+                let (current, next) = if comptime![n_iter.is_multiple_of(2)] {
+                    (&rhs_fragments.0, &mut rhs_fragments.1)
                 } else {
-                    (&mut rhs_fragments.1, &mut rhs_fragments.0)
+                    (&rhs_fragments.1, &mut rhs_fragments.0)
                 };
 
                 let n_load_iter = partition_scheduler.map_n(comptime![n_iter as u32 + 1]);
                 let rhs_tile_next = StageRhs::tile::<Sc>(rhs_stage, (k_load_iter, n_load_iter));
-                next.copy_from::<RhsSE<MT>, RhsSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>, ReadOnly>(
+                next.copy_from::<RhsSE<MT>, RhsSS<MT>, LhsRE<MT>, RhsRE<MT>, AccRE<MT>>(
                     &rhs_tile_next,
                     StageIdent::Rhs,
                 );
@@ -428,9 +427,9 @@ where
             }
 
             let last = if comptime! {n_iter.is_multiple_of(2)} {
-                &mut rhs_fragments.0
+                &rhs_fragments.0
             } else {
-                &mut rhs_fragments.1
+                &rhs_fragments.1
             };
 
             #[unroll]
@@ -461,7 +460,7 @@ where
 fn allocate_lhs<MT: MatmulTypes, Sc: TileScope>(
     #[comptime] layout: cubek_std::MatrixLayout,
     #[comptime] tile_matmul: TileMatmul,
-) -> Tile<LhsRE<MT>, Sc, ReadWrite> {
+) -> Tile<LhsRE<MT>, Sc> {
     match tile_matmul {
         TileMatmul::Cmma(c) => cmma_allocate_lhs::<LhsRE<MT>, Sc>(layout, c.tile_size),
         TileMatmul::Mma(c) => mma_allocate_lhs::<LhsRE<MT>, RhsRE<MT>, AccRE<MT>, Sc>(layout, c),
@@ -475,7 +474,7 @@ fn allocate_lhs<MT: MatmulTypes, Sc: TileScope>(
 fn allocate_rhs<MT: MatmulTypes, Sc: TileScope>(
     #[comptime] layout: cubek_std::MatrixLayout,
     #[comptime] config: TileMatmul,
-) -> Tile<RhsRE<MT>, Sc, ReadWrite> {
+) -> Tile<RhsRE<MT>, Sc> {
     match config {
         TileMatmul::Cmma(c) => cmma_allocate_rhs::<RhsRE<MT>, Sc>(layout, c.tile_size),
         TileMatmul::Mma(c) => mma_allocate_rhs::<RhsRE<MT>, LhsRE<MT>, AccRE<MT>, Sc>(layout, c),

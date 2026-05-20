@@ -54,7 +54,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
             ReduceStep::Plane => {
                 let candidate_item = Vector::cast_from(plane_max(Vector::abs(item.elements)));
                 select_many(
-                    accumulator_item.greater_than(candidate_item),
+                    accumulator_item.greater_than(&candidate_item),
                     accumulator_item,
                     candidate_item,
                 )
@@ -62,7 +62,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
             ReduceStep::Identity => {
                 let item_abs = Vector::cast_from(Vector::abs(item.elements));
                 select_many(
-                    accumulator_item.greater_than(item_abs),
+                    accumulator_item.greater_than(&item_abs),
                     accumulator_item,
                     item_abs,
                 )
@@ -77,7 +77,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
         let other_item = other.elements.item();
 
         accumulator.elements.assign(&Value::new_single(select_many(
-            accumulator_item.greater_than(other_item),
+            accumulator_item.greater_than(&other_item),
             accumulator_item,
             other_item,
         )));
@@ -87,7 +87,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
         let acc_item = accumulator.elements.item();
         let candidate_item = Vector::cast_from(plane_max(Vector::abs(acc_item)));
         let max = select_many(
-            acc_item.greater_than(candidate_item),
+            acc_item.greater_than(&candidate_item),
             acc_item,
             candidate_item,
         );
@@ -103,7 +103,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
         let accumulator = accumulator.elements.item();
         #[unroll]
         for k in 0..accumulator.size() {
-            let candidate = accumulator[k];
+            let candidate = accumulator.extract(k);
             max = select(candidate > max, candidate, max);
         }
         Value::new_single(Out::cast_from(max))

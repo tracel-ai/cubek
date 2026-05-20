@@ -53,11 +53,11 @@ impl PrngRuntime for Bernoulli {
 
                 let int_random = *state_0 ^ *state_1 ^ *state_2 ^ *state_3;
                 let float_random = to_unit_interval_closed_open(int_random);
-                output_vector[i] = E::cast_from(float_random < prob);
+                output_vector.insert(i, E::cast_from(float_random < prob));
             }
             let write_index = vector_index * n_invocations as usize + write_index_base;
 
-            output[write_index] = output_vector;
+            output.write_checked(write_index, output_vector);
         }
     }
 }

@@ -10,13 +10,13 @@ use crate::components::stage::{
     AttentionLoadingStrategy, AttentionPartitioner, AttentionTilingLayout, StageAttention,
     StageAttentionConfig as _,
 };
+use crate::forward::definition::{AttentionPrecision, attention_types::*};
 use crate::{
     components::global::AttentionGlobalLayout,
     components::global::simple::QueryReader,
     components::global::simple::{AttentionWriter, AttentionWriterExpand, MaskReader},
     components::global::{GlobalAttention, simple::config::SimpleGlobalAttentionConfig},
 };
-use crate::{definition::AttentionPrecision, definition::attention_types::*};
 
 pub struct SimpleGlobalAttention<AP: AttentionPrecision, SA: StageAttention<AP>> {
     _phantom: PhantomData<(AP, SA)>,

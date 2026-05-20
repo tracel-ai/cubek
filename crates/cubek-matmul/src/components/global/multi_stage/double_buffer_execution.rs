@@ -99,8 +99,8 @@ pub fn execute_current_and_read_next<
                     config.stage_config(),
                     DoubleBufferingEventListener::new(
                         stage_to_load,
-                        lhs_global_reader,
-                        rhs_global_reader,
+                        &*lhs_global_reader,
+                        &*rhs_global_reader,
                         barrier,
                         config,
                         main_flow_loading_side,
@@ -136,8 +136,8 @@ pub fn execute_current_and_read_next<
                 config.stage_config(),
                 DoubleBufferingEventListener::new(
                     stage_to_load,
-                    lhs_global_reader,
-                    rhs_global_reader,
+                    &*lhs_global_reader,
+                    &*rhs_global_reader,
                     barrier,
                     config,
                     LoadingSides::Both,
@@ -168,7 +168,7 @@ pub fn execute_last_and_write_results<
     partition_scheduler: &PartitionScheduler,
     #[comptime] config: G,
 ) {
-    let mut out_stage = GW::stage(out_writer);
+    let mut out_stage = GW::stage(&*out_writer);
 
     match specializer.kind.comptime() {
         SpecializerKind::Specialized {

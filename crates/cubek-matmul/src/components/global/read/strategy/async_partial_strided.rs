@@ -133,6 +133,7 @@ impl<RC: RuntimeConfig> PartialLoadingStrategy<RC> for AsyncPartialStridedLoadin
 }
 
 #[derive(CubeType, Clone, Copy)]
+#[expand(derive(Clone, Copy))]
 pub struct AsyncPartialStridedJob {
     unit_position_base: u32,
 
@@ -208,7 +209,7 @@ impl<RC: RuntimeConfig> AsyncPartialLoadingStrategy<RC> for AsyncPartialStridedL
     fn barrier_post_init() {}
 
     fn arrive<MP: MatmulTypes, S: StageConfig>(
-        barrier: &mut Barrier,
+        barrier: &mut Shared<Barrier>,
         #[comptime] _config: SharedGlobalMatmulConfig<S>,
     ) {
         barrier.commit_copy_async();

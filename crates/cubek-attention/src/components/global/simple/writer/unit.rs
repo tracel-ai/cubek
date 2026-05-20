@@ -61,6 +61,6 @@ impl<ES: Numeric, ESS: Size, EG: Numeric, EGS: Size> AttentionWriter<ES, ESS, EG
     }
 
     fn stage(&mut self) -> PartitionedStage<ES, ESS> {
-        self.stage
+        self.stage.clone()
     }
 }

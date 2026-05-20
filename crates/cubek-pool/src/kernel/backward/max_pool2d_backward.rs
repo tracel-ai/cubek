@@ -55,7 +55,7 @@ fn max_pool2d_with_indices_backward_kernel<E: Numeric, I: Int, N: Size>(
             let index_max = Vector::<u32, N>::cast_from(indices[indices_index / vector_size]);
 
             grad_acc += select_many(
-                index_max.equal(Vector::cast_from(index_current)),
+                index_max.equal(&Vector::cast_from(index_current)),
                 grad[grad_index / vector_size],
                 Vector::zero(),
             );
@@ -66,8 +66,9 @@ fn max_pool2d_with_indices_backward_kernel<E: Numeric, I: Int, N: Size>(
         + ih * output.stride(1)
         + iw * output.stride(2)
         + channel * output.stride(3);
+    let index_output = index_output / output.vector_size();
 
-    output[index_output / output.vector_size()] = grad_acc;
+    output[index_output] = grad_acc;
 }
 
 #[cube]

@@ -53,7 +53,7 @@ impl<ES: Numeric, NS: Size, T: TilingLayout> StridedStageMemory<ES, NS, T> {
         // Ensure all stages are aligned properly
         let stage_size = stage_size_bytes.next_multiple_of(align) / type_size / vector_size;
 
-        let smem = SharedMemory::new_aligned(config.num_stages as usize * stage_size, align);
+        let smem = Shared::new_aligned_array(config.num_stages as usize * stage_size, align);
 
         StridedStageMemory::<ES, NS, T> {
             smem,
@@ -94,33 +94,16 @@ impl<ES: Numeric, NS: Size, T: TilingLayout> StridedStageMemory<ES, NS, T> {
         T::get_tile::<ES, NS>(self, tile, self.config)
     }
 
-    /// Get the tile at position (row, col)
-    pub fn get_tile_mut(&self, tile: Coords2d) -> StridedTile<ES, NS, ReadWrite> {
-        let tile = self.get_tile(tile);
-        StridedTile::<ES, NS, ReadWrite> {
-            container: tile.container.as_mut_unchecked(),
-            start: tile.start,
-            end: tile.end,
-            stride: tile.stride,
-            swizzle: tile.swizzle,
-            layout: tile.layout,
-        }
-    }
-
     /// Return the whole stage as a slice, for reading
-    pub fn as_slice<N: Size>(&self) -> Slice<Vector<ES, N>> {
+    pub fn as_slice<N: Size>(&self) -> &[Vector<ES, N>] {
         let stage_offset = (self.buffer_index * self.stage_size) as usize;
-        self.smem
-            .slice(stage_offset, stage_offset + self.stage_size as usize)
-            .with_vector_size()
+        self.smem[stage_offset..stage_offset + self.stage_size as usize].with_vector_size()
     }
 
     /// Return the whole stage as a mutable slice, for loading
-    pub fn as_slice_mut<N: Size>(&mut self) -> SliceMut<Vector<ES, N>> {
+    pub fn as_slice_mut<N: Size>(&mut self) -> &mut [Vector<ES, N>] {
         let stage_offset = (self.buffer_index * self.stage_size) as usize;
-        self.smem
-            .slice_mut(stage_offset, stage_offset + self.stage_size as usize)
-            .with_vector_size()
+        self.smem[stage_offset..stage_offset + self.stage_size as usize].with_vector_size_mut()
     }
 
     /// Frees the shared memory for reuse, if possible on the target runtime.
@@ -128,7 +111,7 @@ impl<ES: Numeric, NS: Size, T: TilingLayout> StridedStageMemory<ES, NS, T> {
     /// # Safety
     /// *Must* be used in uniform control flow
     /// *Must not* have any dangling references to this shared memory
-    pub unsafe fn free(self) {
+    pub unsafe fn free(&self) {
         unsafe { self.smem.free() };
     }
 }

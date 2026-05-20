@@ -38,7 +38,7 @@ impl<Out: NumericVector> PerpendicularWriter<Out> {
         let output_vector_size = output.vector_size();
 
         let layout = build_reduce_output_layout::<Out>(
-            output,
+            &*output,
             reduce_axis,
             out_vec_axis,
             accumulator_format.len(),
@@ -99,7 +99,10 @@ impl<Out: NumericVector> PerpendicularWriter<Out> {
 
                 #[unroll]
                 for j in 0..self.output_vector_size {
-                    tmp[j] = Out::T::cast_from(vector[i * self.output_vector_size + j]);
+                    tmp.insert(
+                        j,
+                        Out::T::cast_from(vector.extract(i * self.output_vector_size + j)),
+                    );
                 }
 
                 let index = self.write_index * num_iters + i;

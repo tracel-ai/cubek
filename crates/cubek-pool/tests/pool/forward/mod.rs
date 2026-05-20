@@ -82,18 +82,17 @@ pub fn run_pool_test(
         None
     };
 
-    if problem.with_indices {
-        if let PoolMode::Max(opts) = &problem.mode {
-            let indices_reference =
-                cpu_reference_max_pool_indices(&input_data, opts, &output_shape);
-            validate_indices(
-                indices_host
-                    .as_ref()
-                    .expect("indices host data missing")
-                    .clone(),
-                indices_reference,
-            );
-        }
+    if problem.with_indices
+        && let PoolMode::Max(opts) = &problem.mode
+    {
+        let indices_reference = cpu_reference_max_pool_indices(&input_data, opts, &output_shape);
+        validate_indices(
+            indices_host
+                .as_ref()
+                .expect("indices host data missing")
+                .clone(),
+            indices_reference,
+        );
     }
 
     let reference = cpu_reference_pool(&input_data, problem);

@@ -7,7 +7,7 @@ use cubek_std::tile::{InnerLayout, MaskLayout, SoftmaxKind};
 use cubek_std::{CubeDimResource, InvalidConfigError};
 
 use crate::components::tile::matmul::AttentionTileMatmul;
-use crate::definition::{
+use crate::forward::definition::{
     AttentionAvailabilityError, AttentionBlueprint, AttentionElems, AttentionSetupError,
     AttentionTileSize, AttentionVectorSizes,
 };

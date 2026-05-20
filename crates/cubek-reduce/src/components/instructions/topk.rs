@@ -1,6 +1,5 @@
 use cubecl::comptime;
 use cubecl::cube;
-use cubecl::frontend::CubeIndexMutExpand;
 use cubecl::prelude::*;
 
 use crate::components::instructions::AccumulatorFormat;
@@ -51,7 +50,7 @@ impl<P: ReducePrecision> SharedAccumulator<P, TopK> for TopKSharedAccumulator<P>
     }
 
     fn read(accumulator: &Self, index: usize) -> Accumulator<P> {
-        let mut values = Array::new(accumulator.k);
+        let mut values = Array::<Vector<P::EA, P::SI>>::new(accumulator.k);
         #[unroll]
         for i in 0..accumulator.k {
             values[i] = accumulator.elements[i][index];
@@ -67,7 +66,7 @@ impl<P: ReducePrecision> SharedAccumulator<P, TopK> for TopKSharedAccumulator<P>
         #[unroll]
         for i in 0..accumulator.k {
             let acc = values[i];
-            let mut shared_acc = accumulator.elements[i];
+            let shared_acc = &mut accumulator.elements[i];
             shared_acc[index] = acc;
         }
     }
@@ -95,7 +94,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
     }
 
     fn null_accumulator(this: &Self) -> Accumulator<P> {
-        let mut elements = Array::new(comptime!(this.k));
+        let mut elements = Array::<Vector<P::EA, P::SI>>::new(comptime!(this.k));
         #[unroll]
         for i in 0..this.k {
             elements[i] = Vector::new(P::EA::min_value());
@@ -131,7 +130,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
 
                 for j in 0..this.k {
                     let acc_item = elements[j];
-                    let keep = acc_item.greater_than(insert_item);
+                    let keep = acc_item.greater_than(&insert_item);
 
                     elements[j] = select_many(keep, acc_item, insert_item);
                     insert_item = select_many(keep, insert_item, acc_item);
@@ -157,7 +156,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
             let mut item = other_elements[i];
             for j in 0..this.k {
                 let current_item = acc_elements[j];
-                let keep = current_item.greater_than(item);
+                let keep = current_item.greater_than(&item);
 
                 let new_top_item = select_many(keep, current_item, item);
                 let new_rest_item = select_many(keep, item, current_item);
@@ -176,7 +175,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
         let accumulators = accumulator.elements.multiple();
         let vector_size = accumulators[0].size().comptime();
 
-        let mut topk = Array::new(this.k);
+        let mut topk = Array::<Out>::new(this.k);
         #[unroll]
         for slot in 0..this.k {
             topk[slot] = Out::min_value();
@@ -186,7 +185,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
         for i in 0..this.k {
             #[unroll]
             for j in 0..vector_size {
-                let mut element = Out::cast_from(accumulators[i][j]);
+                let mut element = Out::cast_from(accumulators[i].extract(j));
 
                 #[unroll]
                 for slot in 0..this.k {
@@ -209,7 +208,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
         _shape_axis_reduce: usize,
     ) -> Value<Vector<Out, P::SI>> {
         let acc_values = accumulator.elements.multiple();
-        let mut output = Array::new(this.k);
+        let mut output = Array::<Vector<Out, P::SI>>::new(this.k);
 
         #[unroll]
         for i in 0..this.k {

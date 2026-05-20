@@ -107,8 +107,8 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Gemm<MP> {
         cube_mapping: CubeMapping,
         #[comptime] config: Self::Config,
     ) {
-        let lhs = Args::view_lhs(state);
-        let rhs = Args::view_rhs(state);
+        let lhs = Args::view_lhs(&*state);
+        let rhs = Args::view_rhs(&*state);
         let out = Args::view_out(state);
 
         let (_, m, k) = lhs.shape();
@@ -116,9 +116,9 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Gemm<MP> {
 
         let (cube_m, cube_n, batch_cube) = cube_pos_to_m_n_batch(&cube_mapping);
 
-        let lhs_batch = Args::batch_lhs(state, batch_cube as usize);
-        let rhs_batch = Args::batch_rhs(state, batch_cube as usize);
-        let out_batch = Args::batch_out(state, batch_cube as usize);
+        let lhs_batch = Args::batch_lhs(&*state, batch_cube as usize);
+        let rhs_batch = Args::batch_rhs(&*state, batch_cube as usize);
+        let out_batch = Args::batch_out(&*state, batch_cube as usize);
 
         let vector_size = comptime![Ord::max(lhs.vector_size(), rhs.vector_size())];
         let size!(N) = vector_size;

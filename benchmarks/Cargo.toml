@@ -110,6 +110,10 @@ name = "attention"
 
 [[bench]]
 harness = false
+name = "attention_backward"
+
+[[bench]]
+harness = false
 name = "contiguous"
 
 [[bench]]
