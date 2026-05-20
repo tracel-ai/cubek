@@ -60,7 +60,7 @@ impl<T: Numeric, N: Size> Pool2dDirectStrategy<T, N> for MaxPoolStrategy {
         _output_indices: &mut (),
         accumulator: Self::Accumulator,
     ) {
-        output[position] = accumulator;
+        output.write(position, accumulator);
     }
 }
 
@@ -83,7 +83,7 @@ impl<T: Numeric, N: Size> Pool2dDirectStrategy<T, N> for MaxPoolWithIndicesStrat
         result: Vector<T, N>,
     ) {
         let indices = Vector::cast_from(index);
-        accumulator.1 = select_many(result.greater_than(accumulator.0), indices, accumulator.1);
+        accumulator.1 = select_many(result.greater_than(&accumulator.0), indices, accumulator.1);
         accumulator.0 = max(result, accumulator.0);
     }
 
@@ -102,8 +102,8 @@ impl<T: Numeric, N: Size> Pool2dDirectStrategy<T, N> for MaxPoolWithIndicesStrat
         output_indices: &mut View<Vector<i32, N>, Position, ReadWrite>,
         accumulator: Self::Accumulator,
     ) {
-        output[position] = accumulator.0;
-        output_indices[position] = accumulator.1;
+        output.write(position, accumulator.0);
+        output_indices.write(position, accumulator.1);
     }
 }
 

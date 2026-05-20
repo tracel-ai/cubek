@@ -59,7 +59,7 @@ fn register_reduce_vector_size(#[comptime] reduce_vector_size: u32) {
 pub fn planevec_allocate_lhs<L: Numeric, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: PlaneVecMatInnerProduct,
-) -> Tile<L, Sc, ReadWrite> {
+) -> Tile<L, Sc> {
     register_reduce_vector_size(config.reduce_vector_size);
     Tile::from_kind(TileKind::new_PlaneVec(PlaneVecTile::<L> {
         data: Array::new(1usize),
@@ -72,7 +72,7 @@ pub fn planevec_allocate_lhs<L: Numeric, Sc: TileScope>(
 pub fn planevec_allocate_rhs<R: Numeric, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: PlaneVecMatInnerProduct,
-) -> Tile<R, Sc, ReadWrite> {
+) -> Tile<R, Sc> {
     register_reduce_vector_size(config.reduce_vector_size);
     Tile::from_kind(TileKind::new_PlaneVec(PlaneVecTile::<R> {
         data: Array::new(config.tile_size.n() as usize),
@@ -85,7 +85,7 @@ pub fn planevec_allocate_rhs<R: Numeric, Sc: TileScope>(
 pub fn planevec_allocate_acc<A: Numeric, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] config: PlaneVecMatInnerProduct,
-) -> Tile<A, Sc, ReadWrite> {
+) -> Tile<A, Sc> {
     register_reduce_vector_size(config.reduce_vector_size);
     Tile::from_kind(TileKind::new_PlaneVec(PlaneVecTile::<A> {
         data: Array::new(config.tile_size.n() as usize),
@@ -107,19 +107,14 @@ impl<A: Numeric> PlaneVecTile<A> {
 impl<N: Numeric> PlaneVecTile<N> {
     /// Copies into the plane-vec tile from `source`. Supported sources:
     /// `SharedMemory` and `None` (zero-init).
-    pub fn copy_from<SE: Numeric, SS: Size, Sc: TileScope, SIO: SliceVisibility>(
+    pub fn copy_from<SE: Numeric, SS: Size, Sc: TileScope>(
         &mut self,
-        source: &Tile<SE, Sc, SIO>,
+        source: &Tile<SE, Sc>,
         #[comptime] ident: StageIdent,
     ) {
         match &source.kind {
             TileKind::SharedMemory(shared) => {
-                planevec_load_from_shared::<SE, SS, N, SIO>(
-                    shared,
-                    &mut self.data,
-                    self.config,
-                    ident,
-                );
+                planevec_load_from_shared::<SE, SS, N>(shared, &mut self.data, self.config, ident);
             }
             TileKind::None => planevec_load_zeros::<N>(&mut self.data, self.config),
             TileKind::Cmma(_)
@@ -159,17 +154,17 @@ pub fn planevec_execute<L: Numeric, R: Numeric, A: Numeric>(
         let mut acc_vec = acc[n_idx];
         #[unroll]
         for vi in 0..NPlaneVec::value() {
-            let lhs_elem = A::cast_from(lhs[0usize][vi]);
-            let rhs_elem = A::cast_from(rhs[n_idx][vi]);
-            acc_vec[vi] += plane_sum(lhs_elem * rhs_elem);
+            let lhs_elem = A::cast_from(lhs[0].extract(vi));
+            let rhs_elem = A::cast_from(rhs[n_idx].extract(vi));
+            acc_vec.insert(vi, acc_vec.extract(vi) + plane_sum(lhs_elem * rhs_elem));
         }
         acc[n_idx] = acc_vec;
     }
 }
 
 #[cube]
-pub fn planevec_load_from_shared<E: Numeric, ES: Size, N: Numeric, IO: SliceVisibility>(
-    shared: &SharedTile<E, IO>,
+pub fn planevec_load_from_shared<E: Numeric, ES: Size, N: Numeric>(
+    shared: &SharedTile<E>,
     arr: &mut Array<Vector<N, NPlaneVec>>,
     #[comptime] config: PlaneVecMatInnerProduct,
     #[comptime] ident: StageIdent,
@@ -179,7 +174,7 @@ pub fn planevec_load_from_shared<E: Numeric, ES: Size, N: Numeric, IO: SliceVisi
     match ident {
         StageIdent::Lhs => {
             let offset = shared.stage_offset(UNIT_POS_X);
-            arr[0usize] = Vector::cast_from(shared.container[offset as usize]);
+            arr[0] = Vector::cast_from(shared.container[offset as usize]);
         }
         StageIdent::Rhs | StageIdent::Acc => {
             let n = config.tile_size.n();
@@ -208,7 +203,7 @@ pub fn planevec_load_zeros<N: Numeric>(
 
 #[cube]
 pub fn planevec_write_to_shared<A: Numeric, E: Numeric, ES: Size>(
-    shared: &mut SharedTile<E, ReadWrite>,
+    shared: &mut SharedTile<E>,
     arr: &Array<Vector<A, NPlaneVec>>,
     #[comptime] config: PlaneVecMatInnerProduct,
 ) {
@@ -229,9 +224,9 @@ pub fn planevec_write_to_shared<A: Numeric, E: Numeric, ES: Size>(
                 let acc_vec = arr[n_idx];
                 let mut sum = A::from_int(0);
                 for i in 0..reduce_vec {
-                    sum += acc_vec[i];
+                    sum += acc_vec.extract(i);
                 }
-                out_vector[within_vector] = E::cast_from(sum);
+                out_vector.insert(within_vector, E::cast_from(sum));
             }
             let offset = shared.stage_offset(out_vector_iter as u32);
             shared.container[offset as usize] = out_vector;

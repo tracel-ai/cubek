@@ -51,7 +51,7 @@ pub trait BatchAttentionFamily: Send + Sync + 'static {
 }
 
 #[cube]
-pub trait BatchAttention<AP: AttentionPrecision>: 'static + Send + Sync {
+pub trait BatchAttention<AP: AttentionPrecision>: 'static {
     /// The configuration type associated with this Attention.
     type Config: BatchAttentionConfig;
 

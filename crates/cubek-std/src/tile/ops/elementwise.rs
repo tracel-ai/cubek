@@ -9,7 +9,7 @@ use crate::tile::{Plane, Tile, TileExpand, TileKind, TileKindExpand};
 /// mask bool, or a whole-tile fill. Each arm delegates to a method on the
 /// variant's data struct.
 #[cube]
-impl<E: Float> Tile<E, Plane, ReadWrite> {
+impl<E: Float> Tile<E, Plane> {
     /// Multiplies each element by `scale` and adds `-inf` at masked positions.
     /// `scale` is a scalar; `mask.should_mask((r, c))` is element-wise.
     pub fn scale_and_mask<M: Mask>(&mut self, scale: E, mask: &M) {

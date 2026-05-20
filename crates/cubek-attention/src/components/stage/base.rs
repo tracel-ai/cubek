@@ -47,11 +47,7 @@ pub trait StageAttentionFamily: Send + Sync + 'static {
                 VSS<AP>,
                 AttentionTilingLayout,
             >,
-            OutStage = <Self::OutStage as StageFamily<ReadWrite>>::Stage<
-                OS<AP>,
-                OSS<AP>,
-                WriteTiling,
-            >,
+            OutStage = <Self::OutStage as StageFamily>::Stage<OS<AP>, OSS<AP>, WriteTiling>,
         >;
 
     /// The configuration type associated with this Attention family.
@@ -59,7 +55,7 @@ pub trait StageAttentionFamily: Send + Sync + 'static {
 
     type KeyStage: StageFamily;
     type ValueStage: StageFamily;
-    type OutStage: StageFamily<ReadWrite>;
+    type OutStage: StageFamily;
 
     /// Constructs the configuration based on the algorithm's blueprint.
     fn expand_config(
@@ -70,7 +66,7 @@ pub trait StageAttentionFamily: Send + Sync + 'static {
 }
 
 #[cube]
-pub trait StageAttention<AP: AttentionPrecision>: 'static + Send + Sync {
+pub trait StageAttention<AP: AttentionPrecision>: 'static {
     type KeyStage: CubeType;
     type ValueStage: CubeType;
     type OutStage: CubeType;

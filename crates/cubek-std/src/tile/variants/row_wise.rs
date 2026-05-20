@@ -43,7 +43,7 @@ pub struct RowWise<E: Numeric> {
 impl<E: Numeric> RowWise<E> {
     /// Create a RowWise with the provided value at every row
     pub fn new_filled(#[comptime] num_rows: usize, val: E) -> RowWise<E> {
-        let mut vals = Array::new(num_rows);
+        let mut vals = Array::<E>::new(num_rows);
         for i in 0..num_rows {
             vals[i] = val;
         }
@@ -76,7 +76,7 @@ impl<E: Numeric> RowWise<E> {
 
     /// For each row, add the the current and other, and outputs a new RowWise
     pub fn add(&self, other: &RowWise<E>) -> RowWise<E> {
-        let mut result = Array::new(self.num_rows);
+        let mut result = Array::<E>::new(self.num_rows);
         for i in 0..self.num_rows {
             result[i] = self.vals[i] + other.vals[i];
         }
@@ -95,7 +95,7 @@ impl<E: Numeric> RowWise<E> {
 
     /// For each row, multiplies the the current and other, and outputs a new RowWise
     pub fn mul(&self, other: &RowWise<E>) -> RowWise<E> {
-        let mut result = Array::new(self.num_rows);
+        let mut result = Array::<E>::new(self.num_rows);
         for i in 0..self.num_rows {
             result[i] = self.vals[i] * other.vals[i];
         }
@@ -127,7 +127,7 @@ impl<E: Numeric> RowWise<E> {
     /// Return a copy of self, cast into E2
     pub fn cast_from<E2: Float>(row_wise: &RowWise<E>) -> RowWise<E2> {
         let num_rows = row_wise.num_rows;
-        let mut vals = Array::new(num_rows);
+        let mut vals = Array::<E2>::new(num_rows);
 
         for i in 0..num_rows {
             vals[i] = E2::cast_from(row_wise.vals[i]);
@@ -141,7 +141,7 @@ impl<E: Numeric> RowWise<E> {
 impl<E: Float> RowWise<E> {
     /// Computes e^(self.val - other.val) for every row, and outputs a new RowWise
     pub fn exp_diff(&self, other: &RowWise<E>) -> RowWise<E> {
-        let mut vals = Array::new(self.num_rows);
+        let mut vals = Array::<E>::new(self.num_rows);
 
         for i in 0..self.num_rows {
             vals[i] = (self.vals[i] - other.vals[i]).exp();

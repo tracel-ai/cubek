@@ -23,9 +23,9 @@ impl MmaStageWriter {
         B: Numeric,
         CD: Numeric,
     >(
-        tile: &mut StridedTile<V, NV, ReadWrite>,
+        tile: &mut StridedTile<V, NV>,
         fragment: &Array<Vector<E, N>>,
-        def: MmaDefinition<A, B, CD>,
+        def: &MmaDefinition<A, B, CD>,
         #[comptime] ident: MatrixIdent,
         #[comptime] layout: MatrixLayout,
         #[comptime] m: u32,
@@ -59,9 +59,9 @@ fn store_manual_transposed<
     B: Numeric,
     CD: Numeric,
 >(
-    tile: &mut StridedTile<V, NV, ReadWrite>,
+    tile: &mut StridedTile<V, NV>,
     fragment: &Array<Vector<E, N>>,
-    def: MmaDefinition<A, B, CD>,
+    def: &MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
 ) {
@@ -86,7 +86,7 @@ fn store_manual_transposed<
             let offset = row * stride_row + col * stride_col;
             let offset = tile.stage_offset(offset);
 
-            tile.container[offset as usize] = Vector::cast_from(fragment[i][n]);
+            tile.container[offset as usize] = Vector::cast_from(fragment[i].extract(n));
         }
     }
 }
@@ -101,9 +101,9 @@ fn store_manual_plain<
     B: Numeric,
     CD: Numeric,
 >(
-    tile: &mut StridedTile<V, NV, ReadWrite>,
+    tile: &mut StridedTile<V, NV>,
     fragment: &Array<Vector<E, N>>,
-    def: MmaDefinition<A, B, CD>,
+    def: &MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
 ) {
@@ -147,9 +147,9 @@ fn store_stmatrix<
     B: Numeric,
     CD: Numeric,
 >(
-    tile: &mut StridedTile<V, NV, ReadWrite>,
+    tile: &mut StridedTile<V, NV>,
     fragment: &Array<Vector<E, N>>,
-    def: MmaDefinition<A, B, CD>,
+    def: &MmaDefinition<A, B, CD>,
     #[comptime] transposed: bool,
     #[comptime] ident: MatrixIdent,
     #[comptime] m: u32,
@@ -164,27 +164,20 @@ fn store_stmatrix<
     let start = stmatrix_offset::<V, A, B, CD>(stride, def, stage_vector_size, ident, m);
     let start = tile.stage_offset(start);
 
-    let mut row_slice = tile
-        .container
-        .slice_mut(start as usize, (start + width) as usize);
+    let row_slice = &mut tile.container[start as usize..(start + width) as usize];
 
-    let stage_ty = type_of::<V>().comptime();
-    let frag_ty = type_of::<E>().comptime();
+    let stage_ty = V::as_type().comptime();
+    let frag_ty = E::as_type().comptime();
     if stage_ty == frag_ty {
-        def.store_matrix::<Vector<E, NV>, N>(
-            &mut row_slice.downcast(),
-            fragment,
-            ident,
-            num_regs,
-            transposed,
-        );
+        let row_slice = row_slice.downcast_mut();
+        def.store_matrix::<Vector<E, NV>, N>(row_slice, fragment, ident, num_regs, transposed);
     } else {
-        let mut frag = Array::new(num_regs);
+        let mut frag = Array::<Vector<V, N>>::new(num_regs);
         #[unroll]
         for i in 0..num_regs {
             frag[i] = Vector::cast_from(fragment[i]);
         }
-        def.store_matrix::<_, N>(&mut row_slice, &frag, ident, num_regs, transposed);
+        def.store_matrix::<_, N>(row_slice, &frag, ident, num_regs, transposed);
     }
 }
 
@@ -193,7 +186,7 @@ fn store_stmatrix<
 #[cube]
 pub(crate) fn stmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     stride: u32,
-    def: MmaDefinition<A, B, CD>,
+    def: &MmaDefinition<A, B, CD>,
     #[comptime] stage_vector_size: VectorSize,
     #[comptime] ident: MatrixIdent,
     #[comptime] m: u32,

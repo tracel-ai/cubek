@@ -70,7 +70,7 @@ impl<AP: AttentionPrecision> MaskReader<AP> {
         #[comptime] gmem_config: GlobalMemoryConfig,
     ) -> Self {
         let mask = mask.slice((stage_q_offset, 0), mask.shape());
-        let global_iter = GlobalIterator::new(mask, step, gmem_config.view_direction, false);
+        let global_iter = GlobalIterator::new(*mask, step, gmem_config.view_direction, false);
 
         MaskReader::<AP>::new_Materialized(MaterializedMaskReader::new(
             global_iter,
@@ -143,14 +143,11 @@ impl<M: Numeric, N: Size> MaterializedMaskReader<M, N> {
 
         let row = row_offset + P::seq_q_index() * elements_in_partition_seq_q;
 
-        let slice = self
-            .global_iter
-            .view()
-            .slice(
-                (row, col.runtime()),
-                (attention_tile_size.seq_q, attention_tile_size.seq_kv).runtime(),
-            )
-            .to_linear_slice();
+        let view = self.global_iter.view().slice(
+            (row, col.runtime()),
+            (attention_tile_size.seq_q, attention_tile_size.seq_kv).runtime(),
+        );
+        let slice = view.as_linear_slice();
 
         let vector_size = self.gmem_config.vector_size.comptime() as u32;
         let start = 0;

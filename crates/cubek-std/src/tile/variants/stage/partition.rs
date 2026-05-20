@@ -16,8 +16,8 @@ use crate::tile::{Tile, TileScope};
 /// cols)` pair; the `mn`-major flattening matches today's `Accumulators`
 /// indexing.
 #[derive(CubeType)]
-pub struct PartitionTile<N: Numeric, Sc: TileScope, IO: SliceVisibility = ReadWrite> {
-    pub tiles: Sequence<Tile<N, Sc, IO>>,
+pub struct PartitionTile<N: Numeric, Sc: TileScope> {
+    pub tiles: Sequence<Tile<N, Sc>>,
     #[cube(comptime)]
     pub rows: u32,
     #[cube(comptime)]

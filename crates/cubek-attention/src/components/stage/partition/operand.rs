@@ -47,7 +47,7 @@ impl<L: Numeric> QueryPartition<L> {
         #[comptime] hd: usize,
         #[comptime] partition_head_dim: usize,
     ) -> &mut Query<L> {
-        self.sequence.index_mut(q * partition_head_dim + hd)
+        &mut self.sequence[q * partition_head_dim + hd]
     }
 }
 
@@ -65,11 +65,11 @@ impl<R: Numeric> KeyPartition<R> {
     }
 
     pub fn get(&self) -> &Key<R> {
-        &self.sequence[0usize]
+        &self.sequence[0]
     }
 
     pub fn get_mut(&mut self) -> &mut Key<R> {
-        self.sequence.index_mut(0usize)
+        &mut self.sequence[0]
     }
 }
 
@@ -87,10 +87,10 @@ impl<R: Numeric> ValuePartition<R> {
     }
 
     pub fn get(&self) -> &Value<R> {
-        &self.sequence[0usize]
+        &self.sequence[0]
     }
 
     pub fn get_mut(&mut self) -> &mut Value<R> {
-        self.sequence.index_mut(0usize)
+        &mut self.sequence[0]
     }
 }

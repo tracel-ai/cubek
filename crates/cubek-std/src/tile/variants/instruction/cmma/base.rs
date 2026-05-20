@@ -45,7 +45,7 @@ impl CmmaMatmul {
 #[cube]
 impl<E: Float> CmmaTile<E> {
     pub fn fill_zero(&mut self) {
-        cubecl::cmma::fill(&self.matrix, E::from_int(0));
+        cubecl::cmma::fill(&mut self.matrix, E::from_int(0));
     }
 }
 
@@ -61,14 +61,14 @@ impl<A: Numeric> CmmaTile<A> {
 impl<N: Numeric> CmmaTile<N> {
     /// Copies into the cmma fragment from `source`. Supported sources:
     /// `SharedMemory` (a regular load) and `None` (zero-init).
-    pub fn copy_from<SE: Numeric, SS: Size, Sc: TileScope, SIO: SliceVisibility>(
+    pub fn copy_from<SE: Numeric, SS: Size, Sc: TileScope>(
         &mut self,
-        source: &Tile<SE, Sc, SIO>,
+        source: &Tile<SE, Sc>,
         #[comptime] ident: StageIdent,
     ) {
         match &source.kind {
             TileKind::SharedMemory(shared) => {
-                cmma_load_from_shared::<SE, SS, N, SIO>(
+                cmma_load_from_shared::<SE, SS, N>(
                     shared,
                     &mut self.matrix,
                     ident,
@@ -99,7 +99,7 @@ impl<N: Numeric> CmmaTile<N> {
 pub fn cmma_allocate_lhs<L: Numeric, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_size: TileSize,
-) -> Tile<L, Sc, ReadWrite> {
+) -> Tile<L, Sc> {
     let fragment = unsafe {
         cmma::Matrix::<L>::uninitialized(
             cmma::MatrixIdent::A,
@@ -120,7 +120,7 @@ pub fn cmma_allocate_lhs<L: Numeric, Sc: TileScope>(
 pub fn cmma_allocate_rhs<R: Numeric, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_size: TileSize,
-) -> Tile<R, Sc, ReadWrite> {
+) -> Tile<R, Sc> {
     let fragment = unsafe {
         cmma::Matrix::<R>::uninitialized(
             cmma::MatrixIdent::B,
@@ -141,7 +141,7 @@ pub fn cmma_allocate_rhs<R: Numeric, Sc: TileScope>(
 pub fn cmma_allocate_acc<A: Numeric, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_size: TileSize,
-) -> Tile<A, Sc, ReadWrite> {
+) -> Tile<A, Sc> {
     let fragment = unsafe {
         cmma::Matrix::<A>::uninitialized(
             cmma::MatrixIdent::Accumulator,
@@ -168,18 +168,17 @@ pub fn cmma_execute<L: Numeric, R: Numeric, A: Numeric>(
     rhs: &cmma::Matrix<R>,
     acc: &mut cmma::Matrix<A>,
 ) {
-    cmma::execute::<L, R, A, A>(lhs, rhs, acc, acc);
+    cmma::execute(lhs, rhs, &*acc, &*acc);
 }
 
 #[cube]
-pub fn cmma_load_from_shared<E: Numeric, ES: Size, N: Numeric, IO: SliceVisibility>(
-    shared: &SharedTile<E, IO>,
+pub fn cmma_load_from_shared<E: Numeric, ES: Size, N: Numeric>(
+    shared: &SharedTile<E>,
     matrix: &mut cmma::Matrix<N>,
     #[comptime] ident: StageIdent,
     #[comptime] matrix_layout: MatrixLayout,
 ) {
     let shared = shared.view::<ES>();
-    let shared = shared.to_read_only();
     match ident {
         StageIdent::Lhs | StageIdent::Rhs => {
             CmmaStageReader::<Strided>::load_fragment(&shared, matrix, ComptimeOption::new_None());
@@ -202,10 +201,10 @@ pub fn cmma_load_zeros<N: Numeric>(matrix: &mut cmma::Matrix<N>) {
 
 #[cube]
 pub fn cmma_write_to_shared<E: Numeric, ES: Size, A: Numeric>(
-    shared: &mut SharedTile<E, ReadWrite>,
+    shared: &mut SharedTile<E>,
     matrix: &cmma::Matrix<A>,
 ) {
     let mut shared = shared.view::<ES>();
-    let casted = cmma::cast::<A, E>(matrix);
+    let casted: cmma::Matrix<E> = cmma::cast(matrix);
     CmmaStageWriter::store_fragment(&mut shared, &casted);
 }

@@ -98,6 +98,7 @@ impl FullLoadingStrategy<RuntimeArgs> for AsyncFullStridedLoading {
 }
 
 #[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
 pub struct AsyncFullStridedJob {
     unit_position_base: u32,
     runtime_args: RuntimeArgs,

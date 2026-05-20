@@ -7,17 +7,26 @@ use cubecl::std::tensor::{
 };
 use cubecl::{
     prelude::*,
-    std::tensor::launch::{BufferArg, ViewLayoutLaunchArg},
+    std::tensor::launch::{MemoryArg, ViewLayoutLaunchArg},
 };
 use enumset::{EnumSet, EnumSetType};
 
 use crate::components::Dimensionality;
 
 #[derive(CubeType, CubeLaunch, Clone)]
+#[expand(derive(Clone))]
 pub struct NhwcCoords {
     pub batch: u32,
     pub spatial: Sequence<i32>,
     pub channel: u32,
+}
+
+impl DerefExpand for NhwcCoordsExpand {
+    type Target = Self;
+
+    fn __expand_deref_method(&self, _: &Scope) -> Self::Target {
+        self.clone()
+    }
 }
 
 #[cube]
@@ -76,12 +85,12 @@ impl Coordinates for NhwcCoords {
         NhwcCoords::from_tuple(tuple)
     }
 
-    fn is_in_bounds(pos: &Self, bounds: &Self) -> bool {
-        NhwcTuple::is_in_bounds(&pos.clone().into_tuple(), &bounds.clone().into_tuple())
+    fn is_in_bounds(pos: Self, bounds: Self) -> bool {
+        NhwcTuple::is_in_bounds(pos.clone().into_tuple(), bounds.clone().into_tuple())
     }
 
-    fn from_int(this: &Self, #[comptime] value: i64) -> Self {
-        let tuple = NhwcTuple::from_int(&this.clone().into_tuple(), value);
+    fn from_int(this: Self, #[comptime] value: i64) -> Self {
+        let tuple = NhwcTuple::from_int(this.clone().into_tuple(), value);
         NhwcCoords::from_tuple(tuple)
     }
 }
@@ -251,7 +260,7 @@ impl ViewLayoutLaunchArg for NhwcLayout {
     type RuntimeArg<R: Runtime> = NhwcLayoutLaunch;
     type CompilationArg = NhwcLayoutCompilationArg;
 
-    fn register<R: Runtime, B: BufferArg>(
+    fn register<R: Runtime, B: MemoryArg>(
         arg: Self::RuntimeArg<R>,
         buffer: &B,
         _: Type,

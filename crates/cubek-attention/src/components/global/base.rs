@@ -34,7 +34,7 @@ pub trait GlobalAttentionFamily: Send + Sync + 'static {
 }
 
 #[cube]
-pub trait GlobalAttention<AP: AttentionPrecision>: 'static + Send + Sync {
+pub trait GlobalAttention<AP: AttentionPrecision>: 'static {
     /// Writes to Out at the same offset it loaded Query
     type Writer: AttentionWriter<OS<AP>, OSS<AP>, OG<AP>, OGS<AP>>;
 

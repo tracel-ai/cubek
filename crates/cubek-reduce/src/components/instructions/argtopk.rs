@@ -1,6 +1,5 @@
 use cubecl::comptime;
 use cubecl::cube;
-use cubecl::frontend::CubeIndexMutExpand;
 use cubecl::prelude::*;
 
 use crate::components::instructions::AccumulatorFormat;
@@ -55,8 +54,8 @@ impl<P: ReducePrecision> SharedAccumulator<P, ArgTopK> for ArgTopKSharedAccumula
     }
 
     fn read(accumulator: &Self, index: usize) -> Accumulator<P> {
-        let mut values = Array::new(accumulator.k);
-        let mut args = Array::new(accumulator.k);
+        let mut values = Array::<Vector<P::EA, P::SI>>::new(accumulator.k);
+        let mut args = Array::<Vector<u32, P::SI>>::new(accumulator.k);
         #[unroll]
         for i in 0..accumulator.k {
             values[i] = accumulator.elements[i][index];
@@ -76,10 +75,10 @@ impl<P: ReducePrecision> SharedAccumulator<P, ArgTopK> for ArgTopKSharedAccumula
             let values_acc = values[i];
             let args_acc = args[i];
 
-            let mut shared_acc = accumulator.elements[i];
+            let shared_acc = &mut accumulator.elements[i];
             shared_acc[index] = values_acc;
 
-            let mut shared_arg_acc = accumulator.args[i];
+            let shared_arg_acc = &mut accumulator.args[i];
             shared_arg_acc[index] = args_acc;
         }
     }
@@ -107,8 +106,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
     }
 
     fn null_accumulator(this: &Self) -> Accumulator<P> {
-        let mut elements = Array::new(comptime!(this.k));
-        let mut args = Array::new(comptime!(this.k));
+        let mut elements = Array::<Vector<P::EA, P::SI>>::new(comptime!(this.k));
+        let mut args = Array::<Vector<u32, P::SI>>::new(comptime!(this.k));
         #[unroll]
         for i in 0..this.k {
             elements[i] = Vector::new(P::EA::min_value());
@@ -147,9 +146,9 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
 
                 for j in 0..this.k {
                     let to_keep = select_many(
-                        elements[j].equal(insert_val),
-                        coordinates[j].less_than(insert_coord),
-                        elements[j].greater_than(insert_val),
+                        elements[j].equal(&insert_val),
+                        coordinates[j].less_than(&insert_coord),
+                        elements[j].greater_than(&insert_val),
                     );
                     let best_value = select_many(to_keep, elements[j], insert_val);
                     let loser_value = select_many(to_keep, insert_val, elements[j]);
@@ -185,9 +184,9 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
             let mut insert_coord = other_coords[i];
             for j in 0..this.k {
                 let to_keep = select_many(
-                    elements[j].equal(insert_val),
-                    coordinates[j].less_than(insert_coord),
-                    elements[j].greater_than(insert_val),
+                    elements[j].equal(&insert_val),
+                    coordinates[j].less_than(&insert_coord),
+                    elements[j].greater_than(&insert_val),
                 );
                 let best_value = select_many(to_keep, elements[j], insert_val);
                 let best_coordinate = select_many(to_keep, coordinates[j], insert_coord);
@@ -211,8 +210,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
         let vals = accumulator.elements.multiple();
         let vector_size = coords[0].size().comptime();
 
-        let mut topk_vals = Array::new(this.k);
-        let mut topk_coords = Array::new(this.k);
+        let mut topk_vals = Array::<P::EA>::new(this.k);
+        let mut topk_coords = Array::<u32>::new(this.k);
 
         #[unroll]
         for slot in 0..this.k {
@@ -224,8 +223,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
         for i in 0..this.k {
             #[unroll]
             for j in 0..vector_size {
-                let mut value = vals[i][j];
-                let mut coordinate = coords[i][j];
+                let mut value = vals[i].extract(j);
+                let mut coordinate = coords[i].extract(j);
 
                 #[unroll]
                 for slot in 0..this.k {
@@ -247,7 +246,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
             }
         }
 
-        let mut out = Array::new(this.k);
+        let mut out = Array::<Out>::new(this.k);
         #[unroll]
         for i in 0..this.k {
             out[i] = Out::cast_from(topk_coords[i]);
@@ -261,7 +260,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgTopK {
         _shape_axis_reduce: usize,
     ) -> Value<Vector<Out, P::SI>> {
         let acc_args = accumulator.args.multiple();
-        let mut output = Array::new(this.k);
+        let mut output = Array::<Vector<Out, P::SI>>::new(this.k);
 
         #[unroll]
         for i in 0..this.k {

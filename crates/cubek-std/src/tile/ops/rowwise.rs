@@ -6,7 +6,7 @@ use crate::tile::{Plane, RowWise, Tile, TileExpand, TileKind, TileKindExpand};
 /// online softmax and output scaling. Each arm delegates to a method on the
 /// variant's data struct — see `variants/{unit,whitebox_fragment,bounce,register}`.
 #[cube]
-impl<E: Float> Tile<E, Plane, ReadWrite> {
+impl<E: Float> Tile<E, Plane> {
     pub fn row_max(&self, acc: &mut RowWise<E>, base: &RowWise<E>) {
         match &self.kind {
             TileKind::Unit(t) => t.row_max(acc, base),

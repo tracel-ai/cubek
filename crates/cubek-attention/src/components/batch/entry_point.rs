@@ -53,19 +53,19 @@ pub(crate) fn attention<
         TensorQuery::<(QG, QGS), (KG, KGS), (VG, VGS), (MSK, MSKS), (OG, OGS), Args>::new(&state);
     let query = VirtualTensor::<QG, QGS>::new::<
         TensorQuery<(QG, QGS), (KG, KGS), (VG, VGS), (MSK, MSKS), (OG, OGS), Args>,
-    >(&query);
+    >(query);
 
     let key =
         TensorKey::<(QG, QGS), (KG, KGS), (VG, VGS), (MSK, MSKS), (OG, OGS), Args>::new(&state);
     let key = VirtualTensor::<KG, KGS>::new::<
         TensorKey<(QG, QGS), (KG, KGS), (VG, VGS), (MSK, MSKS), (OG, OGS), Args>,
-    >(&key);
+    >(key);
 
     let value =
         TensorValue::<(QG, QGS), (KG, KGS), (VG, VGS), (MSK, MSKS), (OG, OGS), Args>::new(&state);
     let value = VirtualTensor::<VG, VGS>::new::<
         TensorValue<(QG, QGS), (KG, KGS), (VG, VGS), (MSK, MSKS), (OG, OGS), Args>,
-    >(&value);
+    >(value);
 
     let has_mask = Args::has_mask(&state);
     let mask = has_mask.map(|_| {
@@ -74,16 +74,15 @@ pub(crate) fn attention<
         );
         VirtualTensor::<MSK, MSKS>::new::<
             TensorMask<(QG, QGS), (KG, KGS), (VG, VGS), (MSK, MSKS), (OG, OGS), Args>,
-        >(&mask)
+        >(mask)
     });
 
-    let mut out =
-        TensorOutput::<(QG, QGS), (KG, KGS), (VG, VGS), (MSK, MSKS), (OG, OGS), Args>::new(
-            &mut state,
-        );
+    let out = TensorOutput::<(QG, QGS), (KG, KGS), (VG, VGS), (MSK, MSKS), (OG, OGS), Args>::new(
+        &mut state,
+    );
     let out = VirtualTensor::<OG, OGS, ReadWrite>::new::<
         TensorOutput<(QG, QGS), (KG, KGS), (VG, VGS), (MSK, MSKS), (OG, OGS), Args>,
-    >(&mut out);
+    >(out);
 
     let stage_config = config.global_config().stage_config();
     let key_stage = stage_config.key_smem_config();

@@ -2,7 +2,6 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::r#virtual::{
     VirtualTensor, VirtualTensorOperations, VirtualTensorOperationsExpand,
 };
-use cubecl::unexpanded;
 use std::marker::PhantomData;
 
 pub trait ReduceDType {
@@ -38,7 +37,7 @@ pub trait ReduceArgs: Send + Sync + 'static + Clone {
 
     type Output<E: Numeric, S: Size>: LaunchArg + CubeType;
 
-    type State<P: ReduceDType>: CubeType;
+    type State<P: ReduceDType>: Clone + CubeType<ExpandType: Clone>;
 
     fn init_state<P: ReduceDType>(
         input: &Self::Input<P::In, P::SizeIn>,
@@ -88,14 +87,14 @@ pub fn init_tensors<RA: ReduceArgs, In: Numeric, InSize: Size, Out: Numeric, Out
     let mut state = RA::init_state::<((In, InSize), (Out, OutSize))>(input, output);
 
     let input = TensorArg::new_input(&state);
-    let mut output = TensorArg::new_output(&mut state);
+    let output = TensorArg::new_output(&mut state);
 
     let input = VirtualTensor::<In, InSize>::new::<
         TensorArg<((In, InSize), (Out, OutSize)), RA, Input>,
-    >(&input);
+    >(input);
     let output = VirtualTensor::<Out, OutSize, ReadWrite>::new::<
         TensorArg<((In, InSize), (Out, OutSize)), RA, Output>,
-    >(&mut output);
+    >(output);
 
     (input, output)
 }
@@ -105,32 +104,32 @@ pub struct TensorArgs;
 
 #[cube]
 impl ReduceArgs for TensorArgs {
-    type Input<EG: Numeric, N: Size> = Tensor<Vector<EG, N>>;
-    type Output<EG: Numeric, N: Size> = Tensor<Vector<EG, N>>;
+    type Input<EG: Numeric, N: Size> = OwnedTensor<Vector<EG, N>>;
+    type Output<EG: Numeric, N: Size> = OwnedTensor<Vector<EG, N>>;
     type State<P: ReduceDType> = (
-        *const Tensor<Vector<P::In, P::SizeIn>>,
-        *mut Tensor<Vector<P::Out, P::SizeOut>>,
+        OwnedTensor<Vector<P::In, P::SizeIn>>,
+        OwnedTensor<Vector<P::Out, P::SizeOut>>,
     );
 
     fn init_state<P: ReduceDType>(
         input: &Self::Input<P::In, P::SizeIn>,
         output: &mut Self::Output<P::Out, P::SizeOut>,
     ) -> Self::State<P> {
-        (input, output)
+        (input.clone(), output.clone())
     }
 
     fn read_input<P: ReduceDType>(
         state: &Self::State<P>,
         index: usize,
     ) -> Vector<P::In, P::SizeIn> {
-        unsafe { (*state.0)[index] }
+        state.0[index]
     }
 
     fn read_output<P: ReduceDType>(
         state: &Self::State<P>,
         index: usize,
     ) -> Vector<P::Out, P::SizeOut> {
-        unsafe { (*state.1)[index] }
+        state.1[index]
     }
 
     fn write_output<P: ReduceDType>(
@@ -138,96 +137,84 @@ impl ReduceArgs for TensorArgs {
         index: usize,
         value: Vector<P::Out, P::SizeOut>,
     ) {
-        unsafe { (*state.1)[index] = value }
+        state.1[index] = value;
     }
 
     fn buffer_len_input<P: ReduceDType>(state: &Self::State<P>) -> usize {
-        unsafe { (*state.0).buffer_len() }
+        state.0.buffer_len()
     }
 
     fn buffer_len_output<P: ReduceDType>(state: &Self::State<P>) -> usize {
-        unsafe { (*state.1).buffer_len() }
+        state.1.buffer_len()
     }
 
     fn len_input<P: ReduceDType>(state: &Self::State<P>) -> usize {
-        unsafe { (*state.0).len() }
+        state.0.len()
     }
 
     fn len_output<P: ReduceDType>(state: &Self::State<P>) -> usize {
-        unsafe { (*state.1).len() }
+        state.1.len()
     }
     fn rank_input<P: ReduceDType>(state: &Self::State<P>) -> usize {
-        unsafe { (*state.0).rank() }
+        state.0.rank()
     }
 
     fn rank_output<P: ReduceDType>(state: &Self::State<P>) -> usize {
-        unsafe { (*state.1).rank() }
+        state.1.rank()
     }
 
     fn shape_input<P: ReduceDType>(state: &Self::State<P>, dim: usize) -> usize {
-        unsafe { (*state.0).shape(dim) }
+        state.0.shape(dim)
     }
 
     fn shape_output<P: ReduceDType>(state: &Self::State<P>, dim: usize) -> usize {
-        unsafe { (*state.1).shape(dim) }
+        state.1.shape(dim)
     }
 
     fn stride_input<P: ReduceDType>(state: &Self::State<P>, dim: usize) -> usize {
-        unsafe { (*state.0).stride(dim) }
+        state.0.stride(dim)
     }
 
     fn stride_output<P: ReduceDType>(state: &Self::State<P>, dim: usize) -> usize {
-        unsafe { (*state.1).stride(dim) }
+        state.1.stride(dim)
     }
 
     fn vector_size_input<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(VectorSize) {
-        unsafe { (*state.0).vector_size() }
+        state.0.vector_size()
     }
 
     fn vector_size_output<P: ReduceDType>(state: &Self::State<P>) -> comptime_type!(VectorSize) {
-        unsafe { (*state.1).vector_size() }
+        state.1.vector_size()
     }
 }
 
 pub struct Input;
 pub struct Output;
 
+#[derive(CubeType)]
 pub struct TensorArg<P: ReduceDType, RA: ReduceArgs, Tag> {
-    _state: *mut RA::State<P>,
+    #[allow(unused, reason = "Used in expand")]
+    state: RA::State<P>,
+    #[cube(comptime)]
     tag: PhantomData<Tag>,
 }
 
-pub struct TensorArgExpand<P: ReduceDType, RA: ReduceArgs, Tag> {
-    state: <RA::State<P> as CubeType>::ExpandType,
-    tag: PhantomData<Tag>,
-}
-
+#[cube]
 impl<P: ReduceDType, RA: ReduceArgs> TensorArg<P, RA, Input> {
-    pub fn new_input(_state: &RA::State<P>) -> Self {
-        unexpanded!()
-    }
-    pub fn __expand_new_input(
-        _scope: &mut Scope,
-        state: <RA::State<P> as CubeType>::ExpandType,
-    ) -> TensorArgExpand<P, RA, Input> {
-        TensorArgExpand {
-            state,
-            tag: PhantomData,
+    pub fn new_input(state: &RA::State<P>) -> Self {
+        TensorArg::<P, RA, Input> {
+            state: state.clone(),
+            tag: PhantomData::<Input>,
         }
     }
 }
 
+#[cube]
 impl<P: ReduceDType, RA: ReduceArgs> TensorArg<P, RA, Output> {
-    pub fn new_output(_state: &mut RA::State<P>) -> Self {
-        unexpanded!()
-    }
-    pub fn __expand_new_output(
-        _scope: &mut Scope,
-        state: <RA::State<P> as CubeType>::ExpandType,
-    ) -> TensorArgExpand<P, RA, Output> {
-        TensorArgExpand {
-            state,
-            tag: PhantomData,
+    pub fn new_output(state: &mut RA::State<P>) -> Self {
+        TensorArg::<P, RA, Output> {
+            state: state.clone(),
+            tag: PhantomData::<Output>,
         }
     }
 }
@@ -246,15 +233,15 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::In, P::Siz
 {
     fn __expand_read_method(
         &self,
-        scope: &mut Scope,
+        scope: &Scope,
         index: NativeExpand<usize>,
     ) -> NativeExpand<Vector<P::In, P::SizeIn>> {
-        RA::__expand_read_input(scope, self.state.clone(), index)
+        RA::__expand_read_input(scope, &self.state, index)
     }
 
     fn __expand_write_method(
         &self,
-        _scope: &mut Scope,
+        _scope: &Scope,
         _index: NativeExpand<usize>,
         _value: NativeExpand<Vector<P::In, P::SizeIn>>,
     ) {
@@ -263,42 +250,42 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::In, P::Siz
 
     fn __expand_shape_method(
         &self,
-        scope: &mut Scope,
+        scope: &Scope,
         axis: NativeExpand<usize>,
     ) -> NativeExpand<usize> {
-        RA::__expand_shape_input(scope, self.state.clone(), axis)
+        RA::__expand_shape_input(scope, &self.state, axis)
     }
 
     fn __expand_stride_method(
         &self,
-        scope: &mut Scope,
+        scope: &Scope,
         axis: NativeExpand<usize>,
     ) -> NativeExpand<usize> {
-        RA::__expand_stride_input(scope, self.state.clone(), axis)
+        RA::__expand_stride_input(scope, &self.state, axis)
     }
 
-    fn __expand_rank_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
-        RA::__expand_rank_input(scope, self.state.clone())
+    fn __expand_rank_method(&self, scope: &Scope) -> NativeExpand<usize> {
+        RA::__expand_rank_input(scope, &self.state)
     }
-    fn __expand_len_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
-        RA::__expand_len_input(scope, self.state.clone())
+    fn __expand_len_method(&self, scope: &Scope) -> NativeExpand<usize> {
+        RA::__expand_len_input(scope, &self.state)
     }
-    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
-        RA::__expand_buffer_len_input(scope, self.state.clone())
+    fn __expand_buffer_len_method(&self, scope: &Scope) -> NativeExpand<usize> {
+        RA::__expand_buffer_len_input(scope, &self.state)
     }
 
     fn __expand_read_window_method(
         &self,
-        _context: &mut Scope,
+        _context: &Scope,
         _start: NativeExpand<usize>,
         _end: NativeExpand<usize>,
-    ) -> SliceExpand<Vector<P::In, P::SizeIn>, ReadOnly> {
+    ) -> &SliceExpand<Vector<P::In, P::SizeIn>> {
         panic!("Unsupported")
     }
 
     fn __expand_as_tensor_map_method(
         &self,
-        scope: &mut Scope,
+        scope: &Scope,
     ) -> ComptimeOptionExpand<TensorMap<P::In, Tiled>> {
         ComptimeOption::__expand_new_None(scope)
     }
@@ -307,8 +294,8 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::In, P::Siz
 impl<P: ReduceDType, RA: ReduceArgs> Vectorized for TensorArg<P, RA, Input> {}
 impl<P: ReduceDType, RA: ReduceArgs> VectorizedExpand for TensorArgExpand<P, RA, Input> {
     fn vector_size(&self) -> usize {
-        let mut scope = Scope::root(false);
-        RA::__expand_vector_size_input(&mut scope, self.state.clone())
+        let scope = Scope::root(false);
+        RA::__expand_vector_size_input(&scope, &self.state)
     }
 }
 
@@ -317,60 +304,61 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::Out, P::Si
 {
     fn __expand_read_method(
         &self,
-        scope: &mut Scope,
+        scope: &Scope,
         index: NativeExpand<usize>,
     ) -> NativeExpand<Vector<P::Out, P::SizeOut>> {
-        RA::__expand_read_output(scope, self.state.clone(), index)
+        RA::__expand_read_output(scope, &self.state, index)
     }
 
     fn __expand_write_method(
         &self,
-        scope: &mut Scope,
+        scope: &Scope,
         index: NativeExpand<usize>,
         value: NativeExpand<Vector<P::Out, P::SizeOut>>,
     ) {
-        RA::__expand_write_output(scope, self.state.clone(), index, value)
+        let mut state = self.state.clone();
+        RA::__expand_write_output(scope, &mut state, index, value);
     }
 
     fn __expand_shape_method(
         &self,
-        scope: &mut Scope,
+        scope: &Scope,
         axis: NativeExpand<usize>,
     ) -> NativeExpand<usize> {
-        RA::__expand_shape_output(scope, self.state.clone(), axis)
+        RA::__expand_shape_output(scope, &self.state, axis)
     }
 
     fn __expand_stride_method(
         &self,
-        scope: &mut Scope,
+        scope: &Scope,
         axis: NativeExpand<usize>,
     ) -> NativeExpand<usize> {
-        RA::__expand_stride_output(scope, self.state.clone(), axis)
+        RA::__expand_stride_output(scope, &self.state, axis)
     }
 
-    fn __expand_rank_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
-        RA::__expand_rank_output(scope, self.state.clone())
+    fn __expand_rank_method(&self, scope: &Scope) -> NativeExpand<usize> {
+        RA::__expand_rank_output(scope, &self.state)
     }
 
-    fn __expand_len_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
-        RA::__expand_len_output(scope, self.state.clone())
+    fn __expand_len_method(&self, scope: &Scope) -> NativeExpand<usize> {
+        RA::__expand_len_output(scope, &self.state)
     }
-    fn __expand_buffer_len_method(&self, scope: &mut Scope) -> NativeExpand<usize> {
-        RA::__expand_buffer_len_output(scope, self.state.clone())
+    fn __expand_buffer_len_method(&self, scope: &Scope) -> NativeExpand<usize> {
+        RA::__expand_buffer_len_output(scope, &self.state)
     }
 
     fn __expand_read_window_method(
         &self,
-        _context: &mut Scope,
+        _context: &Scope,
         _start: NativeExpand<usize>,
         _end: NativeExpand<usize>,
-    ) -> SliceExpand<Vector<P::Out, P::SizeOut>, ReadOnly> {
+    ) -> &SliceExpand<Vector<P::Out, P::SizeOut>> {
         panic!("Unsupported")
     }
 
     fn __expand_as_tensor_map_method(
         &self,
-        scope: &mut Scope,
+        scope: &Scope,
     ) -> ComptimeOptionExpand<TensorMap<P::Out, Tiled>> {
         ComptimeOption::__expand_new_None(scope)
     }
@@ -379,31 +367,7 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::Out, P::Si
 impl<P: ReduceDType, RA: ReduceArgs> Vectorized for TensorArg<P, RA, Output> {}
 impl<P: ReduceDType, RA: ReduceArgs> VectorizedExpand for TensorArgExpand<P, RA, Output> {
     fn vector_size(&self) -> usize {
-        let mut scope = Scope::root(false);
-        RA::__expand_vector_size_output(&mut scope, self.state.clone())
-    }
-}
-
-mod __tensor_arg {
-    use super::*;
-
-    impl<P: ReduceDType, RA: ReduceArgs, Tag> CubeType for TensorArg<P, RA, Tag> {
-        type ExpandType = TensorArgExpand<P, RA, Tag>;
-    }
-
-    impl<P: ReduceDType, RA: ReduceArgs, Tag> IntoMut for TensorArgExpand<P, RA, Tag> {
-        fn into_mut(self, _scope: &mut Scope) -> Self {
-            self
-        }
-    }
-
-    impl<P: ReduceDType, RA: ReduceArgs, Tag> CubeDebug for TensorArgExpand<P, RA, Tag> {}
-    impl<P: ReduceDType, RA: ReduceArgs, Tag> Clone for TensorArgExpand<P, RA, Tag> {
-        fn clone(&self) -> Self {
-            Self {
-                state: self.state.clone(),
-                tag: self.tag,
-            }
-        }
+        let scope = Scope::root(false);
+        RA::__expand_vector_size_output(&scope, &self.state)
     }
 }

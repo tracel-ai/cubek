@@ -24,12 +24,12 @@ use cubecl::std::tensor::layout::Coords2d;
 /// Lifecycle: the underlying `StridedStageMemory` continues to own the
 /// allocation; `StridedStage` is a non-owning view installed as a
 /// [`TileKind::Stage`](crate::tile::TileKind) payload.
-#[derive(CubeType, Clone, Copy)]
-pub struct StridedStage<E: Numeric, IO: SliceVisibility = ReadOnly> {
+#[derive(CubeType, Clone)]
+pub struct StridedStage<E: Numeric> {
     /// Scalar-typed slice covering the active buffer of the underlying smem.
-    /// Re-typed back to `Slice<Vector<E, NS>, IO>` at lookup time via
+    /// Re-typed back to `[<Vector<E, NS>, IO]` at lookup time via
     /// `with_vector_size::<NS>()` using `config.vector_size`.
-    pub smem: Slice<E, IO>,
+    pub smem: Box<[E]>,
     pub swizzle: Swizzle,
     #[cube(comptime)]
     pub config: StageMemoryConfig,
@@ -38,16 +38,16 @@ pub struct StridedStage<E: Numeric, IO: SliceVisibility = ReadOnly> {
 }
 
 #[cube]
-impl<E: Numeric> StridedStage<E, ReadOnly> {
+impl<E: Numeric> StridedStage<E> {
     /// Wraps a `StridedStageMemory`'s active buffer as a type-erased view.
     /// `NS` and `T` are consumed here and become runtime/comptime metadata.
     pub fn wrap<NS: Size, T: TilingLayout>(
         stage: &StridedStageMemory<E, NS, T>,
-    ) -> StridedStage<E, ReadOnly> {
+    ) -> StridedStage<E> {
         let typed = stage.as_slice::<NS>();
-        let erased: Slice<E, ReadOnly> = unsafe { typed.downcast_unchecked::<E>() };
-        StridedStage::<E, ReadOnly> {
-            smem: erased,
+        let erased: &[E] = unsafe { typed.downcast_unchecked::<E>() };
+        StridedStage::<E> {
+            smem: unsafe { erased.as_boxed_unchecked() },
             swizzle: stage.swizzle,
             config: comptime!(stage.config),
             tiling_layout: comptime!(T::to_enum()),
@@ -56,15 +56,15 @@ impl<E: Numeric> StridedStage<E, ReadOnly> {
 }
 
 #[cube]
-impl<E: Numeric> StridedStage<E, ReadWrite> {
+impl<E: Numeric> StridedStage<E> {
     /// Mutable variant of [`StridedStage::wrap`].
     pub fn wrap_mut<NS: Size, T: TilingLayout>(
         stage: &mut StridedStageMemory<E, NS, T>,
-    ) -> StridedStage<E, ReadWrite> {
+    ) -> StridedStage<E> {
         let typed = stage.as_slice_mut::<NS>();
-        let erased: SliceMut<E> = unsafe { typed.downcast_unchecked::<E>() };
-        StridedStage::<E, ReadWrite> {
-            smem: erased,
+        let erased = unsafe { typed.downcast_mut_unchecked::<E>() };
+        StridedStage::<E> {
+            smem: unsafe { erased.as_boxed_unchecked() },
             swizzle: stage.swizzle,
             config: comptime!(stage.config),
             tiling_layout: comptime!(T::to_enum()),
@@ -73,7 +73,7 @@ impl<E: Numeric> StridedStage<E, ReadWrite> {
 }
 
 #[cube]
-impl<E: Numeric, IO: SliceVisibility> StridedStage<E, IO> {
+impl<E: Numeric> StridedStage<E> {
     /// Returns a [`SharedTile`] view of the tile at `coord` in the stage.
     ///
     /// Dispatches on the comptime [`TilingLayoutEnum`]; mirrors today's
@@ -81,7 +81,7 @@ impl<E: Numeric, IO: SliceVisibility> StridedStage<E, IO> {
     /// `start`/`end`/`stride` in the returned `SharedTile` are in vector
     /// units (using `self.config.vector_size`); the wrapped slice is
     /// scalar-typed and is re-cast at downstream `.view::<NS>()` sites.
-    pub fn get_tile(&self, coord: Coords2d) -> SharedTile<E, IO> {
+    pub fn get_tile(&self, coord: Coords2d) -> SharedTile<E> {
         let (row, col) = coord;
         let stage_vector_size = comptime!(self.config.vector_size);
         let matrix_layout = comptime!(self.config.matrix_layout);
@@ -101,8 +101,8 @@ impl<E: Numeric, IO: SliceVisibility> StridedStage<E, IO> {
                         let length = comptime!((tile_size_x - 1) * stride + tile_size_y);
                         let start = row * tile_size_x * stride + col * tile_size_y;
 
-                        SharedTile::<E, IO> {
-                            container: self.smem,
+                        SharedTile::<E> {
+                            container: self.smem.clone(),
                             start,
                             end: start + length,
                             stride,
@@ -119,8 +119,8 @@ impl<E: Numeric, IO: SliceVisibility> StridedStage<E, IO> {
                         let length = comptime!((tile_size_y - 1) * stride + tile_size_x);
                         let start = row * tile_size_x + col * tile_size_y * stride;
 
-                        SharedTile::<E, IO> {
-                            container: self.smem,
+                        SharedTile::<E> {
+                            container: self.smem.clone(),
                             start,
                             end: start + length,
                             stride,
@@ -143,8 +143,8 @@ impl<E: Numeric, IO: SliceVisibility> StridedStage<E, IO> {
                 let stride = comptime!(stride_elements / stage_vector_size);
                 let start = (comptime!(self.config.elements_per_tile()) * nth) / stage_vector_size;
 
-                SharedTile::<E, IO> {
-                    container: self.smem,
+                SharedTile::<E> {
+                    container: self.smem.clone(),
                     start,
                     end: start + length,
                     stride,

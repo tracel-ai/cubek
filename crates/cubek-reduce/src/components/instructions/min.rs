@@ -49,20 +49,20 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
         item: Item<P>,
         #[comptime] reduce_step: ReduceStep,
     ) {
-        let accumulator_item = &accumulator.elements.item();
+        let accumulator_item = accumulator.elements.item();
         let item = item.elements;
         let elements = match reduce_step {
             ReduceStep::Plane => {
                 let candidate_item = Vector::cast_from(plane_min(item));
                 select_many(
-                    accumulator_item.less_than(candidate_item),
-                    *accumulator_item,
+                    accumulator_item.less_than(&candidate_item),
+                    accumulator_item,
                     candidate_item,
                 )
             }
             ReduceStep::Identity => {
                 let item = Vector::cast_from(item);
-                select_many(accumulator_item.less_than(item), *accumulator_item, item)
+                select_many(accumulator_item.less_than(&item), accumulator_item, item)
             }
         };
 
@@ -72,7 +72,11 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
     fn plane_reduce_inplace(_this: &Self, accumulator: &mut Accumulator<P>) {
         let acc_item = accumulator.elements.item();
         let candidate_item = Vector::cast_from(plane_min(acc_item));
-        let min = select_many(acc_item.less_than(candidate_item), acc_item, candidate_item);
+        let min = select_many(
+            acc_item.less_than(&candidate_item),
+            acc_item,
+            candidate_item,
+        );
         accumulator.elements.assign(&Value::new_single(min));
     }
 
@@ -81,7 +85,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
         let other_item = other.elements.item();
 
         accumulator.elements.assign(&Value::new_single(select_many(
-            accumulator_item.less_than(other_item),
+            accumulator_item.less_than(&other_item),
             accumulator_item,
             other_item,
         )));
@@ -96,7 +100,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
         let accumulator = accumulator.elements.item();
         #[unroll]
         for k in 0..accumulator.size() {
-            let candidate = accumulator[k];
+            let candidate = accumulator.extract(k);
             min = select(candidate < min, candidate, min);
         }
         Value::new_single(Out::cast_from(min))

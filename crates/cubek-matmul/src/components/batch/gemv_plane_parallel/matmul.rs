@@ -111,17 +111,17 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatPlaneParallel<MP> {
         cube_mapping: CubeMapping,
         #[comptime] config: Self::Config,
     ) {
-        let lhs = Args::view_lhs(state);
-        let rhs = Args::view_rhs(state);
+        let lhs = Args::view_lhs(&*state);
+        let rhs = Args::view_rhs(&*state);
         let out = Args::view_out(state);
 
         let (_, m, k) = lhs.shape();
         let (_, _, n) = rhs.shape();
         let (matrix_cube, batch_cube) = cube_pos_to_matrix_batch(&cube_mapping);
 
-        let lhs_batch = Args::batch_lhs(state, batch_cube as usize);
-        let rhs_batch = Args::batch_rhs(state, batch_cube as usize);
-        let out_batch = Args::batch_out(state, batch_cube as usize);
+        let lhs_batch = Args::batch_lhs(&*state, batch_cube as usize);
+        let rhs_batch = Args::batch_rhs(&*state, batch_cube as usize);
+        let out_batch = Args::batch_out(&*state, batch_cube as usize);
 
         let vector_size = comptime![Ord::max(lhs.vector_size(), rhs.vector_size())];
         let size!(N) = vector_size;
@@ -352,7 +352,8 @@ fn execute_gemv_transposed<
 
             #[unroll]
             for i in 0..vector_size {
-                tile[(segment_iter * vector_size + i) as usize] = SM::cast_from(vector[i as usize]);
+                tile[(segment_iter * vector_size + i) as usize] =
+                    SM::cast_from(vector.extract(i as usize));
             }
         }
 
@@ -361,7 +362,7 @@ fn execute_gemv_transposed<
 
             #[unroll]
             for i in 0..vector_size {
-                mat_val[i as usize] = tile[(i * vector_size + segment_iter) as usize];
+                mat_val.insert(i as usize, tile[(i * vector_size + segment_iter) as usize]);
             }
 
             accs[segment_iter as usize] += Vector::cast_from(vec_val) * Vector::cast_from(mat_val);

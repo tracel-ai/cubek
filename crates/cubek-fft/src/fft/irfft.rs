@@ -172,7 +172,7 @@ fn irfft_kernel<F: Float>(
 
     let spectrum_re_view = spectrum_re.view(BatchSignalLayout::new(spectrum_re, window_index, dim));
     let spectrum_im_view = spectrum_im.view(BatchSignalLayout::new(spectrum_im, window_index, dim));
-    let mut signal_view = signal.view_mut(BatchSignalLayout::new(signal, window_index, dim));
+    let signal_view = signal.view_mut(BatchSignalLayout::new(&*signal, window_index, dim));
 
     let mut shared_re = SharedMemory::<F>::new(n_fft);
     let mut shared_im = SharedMemory::<F>::new(n_fft);
@@ -186,8 +186,12 @@ fn irfft_kernel<F: Float>(
         let active = src_bin < spec_bins as usize;
         let src_bin = select(active, src_bin, 0);
         let im_sign = select(k < n_freq, F::new(1.0), F::new(-1.0));
-        shared_re[dst] = select(active, spectrum_re_view[src_bin], F::new(0.0));
-        shared_im[dst] = select(active, spectrum_im_view[src_bin] * im_sign, F::new(0.0));
+        shared_re[dst] = select(active, spectrum_re_view.read_checked(src_bin), F::new(0.0));
+        shared_im[dst] = select(
+            active,
+            spectrum_im_view.read_checked(src_bin) * im_sign,
+            F::new(0.0),
+        );
         k += threads_per_cube;
     }
     sync_cube();
@@ -204,7 +208,7 @@ fn irfft_kernel<F: Float>(
     let scale = F::new(1.0) / F::cast_from(n_fft);
     let mut i = UNIT_POS as usize;
     while i < n_fft {
-        signal_view[i] = shared_re[i] * scale;
+        signal_view.write_checked(i, shared_re[i] * scale);
         i += threads_per_cube;
     }
     sync_cube();
