@@ -9,7 +9,6 @@ mod common;
 
 mod auto;
 mod gemv;
-mod large_m_f32;
 mod naive;
 mod plane_accelerated;
 mod plane_vecmat;
