@@ -546,13 +546,11 @@ fn finite_diff_check(_inputs: &BackwardInputs, _problem: &AttentionProblem) {
 // -----------------------------------------------------------------------------
 
 #[test]
-#[ignore = "Flash Attention backward is not implemented"]
 fn prepass_small() {
     run_prepass(problem(64, 64, 32, 32));
 }
 
 #[test]
-#[ignore = "Flash Attention backward is not implemented"]
 fn prepass_causal_small() {
     run_prepass(problem_causal(64, 64, 32, 32));
 }
