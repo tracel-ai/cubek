@@ -24,9 +24,7 @@ pub struct StageTile<E: Numeric> {
 
 #[cube]
 impl<E: Numeric> StageTile<E> {
-    pub fn wrap<NS: Size, T: TilingLayout>(
-        stage: &StridedStageMemory<E, NS, T>,
-    ) -> StageTile<E> {
+    pub fn wrap<NS: Size, T: TilingLayout>(stage: &StridedStageMemory<E, NS, T>) -> StageTile<E> {
         let typed = stage.as_slice::<NS>();
         let erased: &[E] = unsafe { typed.downcast_unchecked::<E>() };
         StageTile::<E> {

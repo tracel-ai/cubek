@@ -226,14 +226,7 @@ impl<N: Numeric> MmaTile<N> {
     /// per-role load functions. When `self` is in role X, `N` substitutes
     /// for the X type and the other two are taken from the caller's
     /// generics.
-    pub fn copy_from<
-        SE: Numeric,
-        SS: Size,
-        L: Numeric,
-        R: Numeric,
-        A: Numeric,
-        Sc: TileScope,
-    >(
+    pub fn copy_from<SE: Numeric, SS: Size, L: Numeric, R: Numeric, A: Numeric, Sc: TileScope>(
         &mut self,
         source: &Tile<SE, Sc>,
         #[comptime] _ident: StageIdent,

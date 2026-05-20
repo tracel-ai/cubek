@@ -154,7 +154,10 @@ pub fn write_partition_to_stage<
             let tile_pos = (m_store, n_store);
             let mut tile = OutStage::tile::<Sc>(&*out_stage, tile_pos);
 
-            tile.copy_from::<AccRE, AccSS, LhsRE, RhsRE, AccRE>(&*tile_accumulator, StageIdent::Out);
+            tile.copy_from::<AccRE, AccSS, LhsRE, RhsRE, AccRE>(
+                &*tile_accumulator,
+                StageIdent::Out,
+            );
 
             W::on_event(listener, WriteEvent::new_TileStored(tile_pos));
         }

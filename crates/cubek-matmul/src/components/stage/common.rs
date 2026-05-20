@@ -137,10 +137,7 @@ pub fn init_b_fragments<MT: MatmulTypes, Sc: TileScope>(
             shared_config.tile_matmul,
         ));
     }
-    Tile::<<MT::Rhs as MatrixTypes>::Register, Sc>::new_Pipelined(PipelinedBTile::<
-        MT,
-        Sc,
-    > {
+    Tile::<<MT::Rhs as MatrixTypes>::Register, Sc>::new_Pipelined(PipelinedBTile::<MT, Sc> {
         fragments,
     })
 }
