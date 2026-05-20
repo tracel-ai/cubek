@@ -1,5 +1,6 @@
 mod config;
-mod layout;
+pub(crate) mod io;
+mod mat_layout;
 mod matmul;
 mod setup;
 

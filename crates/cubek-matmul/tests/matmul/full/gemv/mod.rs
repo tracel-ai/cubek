@@ -1,22 +1,13 @@
-use crate::{suite::assert_result, suite::test_matmul_strategy};
-use cubecl::{
-    frontend::CubePrimitive,
-    ir::AddressType,
-    std::tensor::TensorHandle,
-    {Runtime, client},
-    {prelude::TensorBinding, zspace::shape},
-};
+use crate::matmul::test_matmul_strategy;
+use cubecl::{Runtime, frontend::CubePrimitive, ir::AddressType, zspace::shape};
 use cubek_matmul::{launch::Strategy, routines::BlueprintStrategy};
 
-use crate::matmul::layout_to_stride_spec;
 use cubek_matmul::{
     definition::MatmulGlobalElems,
-    definition::{MatmulElems, MatmulIdent, MatmulProblem},
-    routines::gemv_plane_parallel::GemvPlaneParallelStrategy,
+    definition::{MatmulElems, MatmulProblem},
     routines::gemv_unit_perpendicular::GemvUnitPerpendicularStrategy,
 };
-use cubek_std::{InputBinding, MatrixLayout};
-use cubek_test_utils::{BaseInputSpec, DataKind, Distribution, TestInput};
+use cubek_std::MatrixLayout;
 
 type TestRuntime = cubecl::TestRuntime;
 
@@ -72,7 +63,6 @@ impl GemvTestCase {
 
     pub(crate) fn test(self) {
         let client = TestRuntime::client(&Default::default());
-        let plane_size = client.properties().hardware.plane_size_max as usize;
         let problem = self.to_problem();
 
         test_matmul_strategy(client, problem, self.strategy);
@@ -86,8 +76,6 @@ mod f16_ty {
         MatmulElems::from_single_dtype(half::f16::as_type_native_unchecked()).as_global_elems()
     }
 
-    include!("plane_parallel_vecmat.rs");
-    include!("plane_parallel_matvec.rs");
     include!("unit_perpendicular.rs");
 }
 
@@ -98,7 +86,5 @@ mod f32_ty {
         MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems()
     }
 
-    include!("plane_parallel_vecmat.rs");
-    include!("plane_parallel_matvec.rs");
     include!("unit_perpendicular.rs");
 }

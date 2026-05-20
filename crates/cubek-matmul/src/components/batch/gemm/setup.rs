@@ -11,8 +11,9 @@ use crate::{
         CubeDimResource,
         batch::{
             BatchMatmulFamily, CheckBounds,
-            gemv_plane_parallel::{
-                GemvKind, VecMatPlaneParallel, VecMatPlaneParallelConfig, matmul_entry,
+            gemm::{
+                Gemm, GemmConfig, MatmulOperandLayouts, PlanesSplit, Variant, config::layout_for,
+                matmul::matmul_entry,
             },
         },
         global::memory::GlobalLayoutConfig,
@@ -25,23 +26,28 @@ use crate::{
     launch::*,
 };
 
-/// Simple partitioned batch matmul family for any precision
-pub struct GemvPlaneParallelFamily {}
+/// Unified GEMM family. Selects a kernel variant from operand layouts:
+/// `Dot` (Row-Col) supports any `plane_dim` (plane-cooperative reduction
+/// over K); `OuterM` / `OuterN` are CPU-only (require `plane_dim == 1`).
+/// Also handles GEMV when one of `m`, `n` is 1 — the vector side is
+/// classified by `OperandLayout::Vector` and uses a layout-appropriate
+/// variant.
+pub struct GemmFamily {}
+
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct GemvPlaneParallelBlueprint {
+pub struct GemmBlueprint {
     pub dtypes: MatmulElems,
     pub num_planes: usize,
-    // Should equal plane_dim * vector_size
-    pub tile_dim: usize,
     pub hypercube_blueprint: HypercubeBlueprint,
-    pub kind: GemvKind,
+    pub kind: MatmulOperandLayouts,
+    pub planes_split: PlanesSplit,
     pub check_bounds: CheckBounds,
 }
 
-impl Blueprint for GemvPlaneParallelBlueprint {
+impl Blueprint for GemmBlueprint {
     fn lhs_global_layout_config(&self) -> GlobalLayoutConfig {
         GlobalLayoutConfig {
-            matrix_layout: MatrixLayout::RowMajor,
+            matrix_layout: layout_for(self.kind.lhs, MatrixLayout::RowMajor),
             check_row_bounds: false,
             check_col_bounds: false,
         }
@@ -49,7 +55,7 @@ impl Blueprint for GemvPlaneParallelBlueprint {
 
     fn rhs_global_layout_config(&self) -> GlobalLayoutConfig {
         GlobalLayoutConfig {
-            matrix_layout: MatrixLayout::ColMajor,
+            matrix_layout: layout_for(self.kind.rhs, MatrixLayout::ColMajor),
             check_row_bounds: false,
             check_col_bounds: false,
         }
@@ -64,18 +70,18 @@ impl Blueprint for GemvPlaneParallelBlueprint {
     }
 
     fn tiling_scheme(&self) -> TilingScheme {
-        panic!("VecMatPlaneParallel Blueprint doesn't have a TilingScheme")
+        panic!("Gemm Blueprint doesn't have a TilingScheme")
     }
 
     fn swizzle_modes(&self) -> SwizzleModes {
-        panic!("VecMatPlaneParallel Blueprint doesn't have Swizzle Modes")
+        panic!("Gemm Blueprint doesn't have Swizzle Modes")
     }
 }
 
-impl BatchMatmulFamily<()> for GemvPlaneParallelFamily {
-    type Matmul<MP: MatmulTypes> = VecMatPlaneParallel<MP>;
-    type Config = VecMatPlaneParallelConfig;
-    type Blueprint = GemvPlaneParallelBlueprint;
+impl BatchMatmulFamily<()> for GemmFamily {
+    type Matmul<MP: MatmulTypes> = Gemm<MP>;
+    type Config = GemmConfig;
+    type Blueprint = GemmBlueprint;
 
     fn expand_config(
         device_props: &DeviceProperties,
@@ -83,10 +89,11 @@ impl BatchMatmulFamily<()> for GemvPlaneParallelFamily {
         _dtypes: &MatmulElems,
         _vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
-        Ok(VecMatPlaneParallelConfig {
+        Ok(GemmConfig {
             plane_dim: device_props.hardware.plane_size_max,
             num_planes: blueprint.num_planes as u32,
-            plan: blueprint.kind,
+            kind: blueprint.kind,
+            planes_split: blueprint.planes_split,
             check_bounds: blueprint.check_bounds,
         })
     }
@@ -104,7 +111,7 @@ impl BatchMatmulFamily<()> for GemvPlaneParallelFamily {
         output: OutputRuntimeArg<MA, R>,
         _config: ConfigRuntimeArg<MA, R>,
         cube_mapping: CubeMappingLaunch<R>,
-        blueprint: GemvPlaneParallelBlueprint,
+        blueprint: GemmBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), LaunchError> {
@@ -139,9 +146,11 @@ impl BatchMatmulFamily<()> for GemvPlaneParallelFamily {
         client: &ComputeClient<R>,
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
-        dtypes: &MatmulElems,
+        _dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
+        let plane_dim = client.properties().hardware.plane_size_max as usize;
+
         if vector_sizes.lhs != vector_sizes.rhs {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
                 "Lhs and Rhs vector sizes must be equal, got lhs:{:?}, rhs:{:?}",
@@ -156,72 +165,71 @@ impl BatchMatmulFamily<()> for GemvPlaneParallelFamily {
             ))));
         }
 
-        let plane_dim = client.properties().hardware.plane_size_max as usize;
-        if blueprint.tile_dim != plane_dim * vector_sizes.lhs {
-            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "Tile dim must equal plane_dim * vector_size, got {:?} != {:?} * {:?}",
-                blueprint.tile_dim, plane_dim, vector_sizes.lhs,
-            ))));
-        }
+        let vs = vector_sizes.lhs;
+        let variant = blueprint.kind.variant();
 
-        if !problem.k.is_multiple_of(blueprint.tile_dim) {
-            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "Problem dimensions k={:?} must be divisible by tile dim ({:?})",
-                problem.k, blueprint.tile_dim,
-            ))));
-        }
-
-        match blueprint.kind {
-            GemvKind::VecMatRowMajor => {
-                if !problem.n.is_multiple_of(blueprint.tile_dim) {
+        // Per-variant constraints. Dot supports plane-cooperative K reduction;
+        // OuterM/OuterN are CPU-only because they don't reduce across units.
+        match variant {
+            Variant::Dot => {
+                let tile_dim = plane_dim * vs;
+                if !problem.k.is_multiple_of(tile_dim) {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                        "For VecMatTransposeSwap, problem.n ({:?}) must be divisible by tile_dim ({:?})",
-                        problem.n, blueprint.tile_dim,
-                    ))));
-                }
-
-                if blueprint.tile_dim
-                    * blueprint.tile_dim
-                    * dtypes.rhs_global.size()
-                    * vector_sizes.rhs
-                    > client.properties().hardware.max_shared_memory_size
-                {
-                    return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                        "Requesting too much shared memory, requested {:?}, max {:?}",
-                        blueprint.tile_dim
-                            * blueprint.tile_dim
-                            * dtypes.rhs_global.size()
-                            * vector_sizes.rhs,
-                        client.properties().hardware.max_shared_memory_size
+                        "Problem dimension k={:?} must be divisible by plane_dim * vector_size ({:?})",
+                        problem.k, tile_dim,
                     ))));
                 }
             }
-            GemvKind::MatVecColMajor => {
-                if !problem.m.is_multiple_of(blueprint.tile_dim) {
+            Variant::OuterNLhsContig | Variant::OuterNLhsStrided => {
+                if plane_dim > 1 {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                        "For MatVecTransposeSwap, problem.m ({:?}) must be divisible by tile_dim ({:?})",
-                        problem.m, blueprint.tile_dim,
+                        "OuterN variants require plane_dim == 1 (CPU-only), got {}",
+                        plane_dim,
                     ))));
                 }
-
-                if blueprint.tile_dim
-                    * blueprint.tile_dim
-                    * dtypes.lhs_global.size()
-                    * vector_sizes.lhs
-                    > client.properties().hardware.max_shared_memory_size
-                {
+                if !problem.k.is_multiple_of(vs) {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                        "Requesting too much shared memory, requested {:?}, max {:?}",
-                        blueprint.tile_dim
-                            * blueprint.tile_dim
-                            * dtypes.lhs_global.size()
-                            * vector_sizes.lhs,
-                        client.properties().hardware.max_shared_memory_size
+                        "Problem dimension k={:?} must be divisible by vector_size ({:?})",
+                        problem.k, vs,
+                    ))));
+                }
+                if !problem.n.is_multiple_of(vs) {
+                    return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                        "OuterN variants need n ({}) divisible by vector_size ({})",
+                        problem.n, vs,
                     ))));
                 }
             }
-            _ => {}
+            Variant::OuterM => {
+                if plane_dim > 1 {
+                    return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                        "OuterM variant requires plane_dim == 1 (CPU-only), got {}",
+                        plane_dim,
+                    ))));
+                }
+                if !problem.k.is_multiple_of(vs) {
+                    return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                        "Problem dimension k={:?} must be divisible by vector_size ({:?})",
+                        problem.k, vs,
+                    ))));
+                }
+                if !problem.m.is_multiple_of(vs) {
+                    return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                        "OuterM variant needs m ({}) divisible by vector_size ({})",
+                        problem.m, vs,
+                    ))));
+                }
+            }
         }
+
+        let derived = MatmulOperandLayouts::from_problem(problem)?;
+        if derived != blueprint.kind {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "Blueprint kind {:?} disagrees with problem kind {:?}",
+                blueprint.kind, derived
+            ))));
+        }
+
         Ok(())
     }
 }

@@ -1,5 +1,7 @@
 use cubecl::{prelude::*, std::tensor::layout::*};
 
+/// 2D view onto a single batch slice, with bounds-checking against the
+/// supplied shape. Used by all gemm variants (Dot / OuterM / OuterN).
 #[derive(CubeType, Clone, Copy)]
 pub struct MatLayout {
     batch: usize,
