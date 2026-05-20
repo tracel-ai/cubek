@@ -66,7 +66,7 @@ impl<E: Numeric> UnitTile<E> {
             let row_offset = r as u32 * self.layout.num_cols;
             for c in 0..self.layout.num_cols {
                 let index = row_offset + c;
-                self.data[index as usize] = self.data[index as usize] * scale.vals[r];
+                self.data[index as usize] *= scale.vals[r];
             }
         }
     }
@@ -74,7 +74,7 @@ impl<E: Numeric> UnitTile<E> {
     pub fn rowwise_max(&self) -> RowWise<E> {
         let num_rows = comptime!(self.layout.num_rows) as usize;
         let num_cols = comptime!(self.layout.num_cols) as usize;
-        let mut vals = Array::new(num_rows);
+        let mut vals = Array::<E>::new(num_rows);
 
         for r in 0..num_rows {
             let row_offset = r * num_cols;
@@ -94,7 +94,7 @@ impl<E: Numeric> UnitTile<E> {
     pub fn rowwise_sum(&self) -> RowWise<E> {
         let num_rows = comptime!(self.layout.num_rows) as usize;
         let num_cols = comptime!(self.layout.num_cols) as usize;
-        let mut vals = Array::new(num_rows);
+        let mut vals = Array::<E>::new(num_rows);
 
         for r in 0..num_rows {
             let row_offset = r * num_cols;
@@ -197,7 +197,7 @@ impl<E: Float> UnitTile<E> {
 /// just holds its own row-major copy of the tile.
 pub fn allocate_unit_tile<E: Numeric, Sc: TileScope>(
     #[comptime] layout: UnitTileLayout,
-) -> Tile<E, Sc, ReadWrite> {
+) -> Tile<E, Sc> {
     Tile::from_kind(TileKind::new_Unit(UnitTile::<E>::new(layout)))
 }
 
@@ -209,7 +209,7 @@ impl<Acc: Float> UnitTile<Acc> {
     pub fn softmax<Lhs: Float, M: Mask>(
         &mut self,
         mask: &M,
-        softmaxed: &mut Tile<Lhs, Plane, ReadWrite>,
+        softmaxed: &mut Tile<Lhs, Plane>,
         state: &mut (RowWise<Acc>, RowWise<Acc>),
         head_dim_factor: Acc,
     ) -> RowWise<Acc> {
@@ -261,7 +261,7 @@ fn strided_tile_to_unit_tile<E: Numeric, N: Size, E2: Numeric>(
             for i in 0..vector_size {
                 unit_tile.data
                     [(row * unit_tile.layout.num_cols + col * vector_size + i) as usize] =
-                    E2::cast_from(line_read[i as usize]);
+                    E2::cast_from(line_read.extract(i as usize));
             }
         }
     }
@@ -286,7 +286,7 @@ fn strided_tile_to_transposed_unit_tile<E: Numeric, N: Size, E2: Numeric>(
             #[unroll]
             for i in 0..vector_size {
                 unit_tile.data[((input_col_vector + i) * input_num_rows + input_row) as usize] =
-                    E2::cast_from(vector_read[i as usize]);
+                    E2::cast_from(vector_read.extract(i as usize));
             }
         }
     }

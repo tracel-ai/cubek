@@ -75,7 +75,7 @@ impl Layout for WeightLayout {
             kernel_pos.push(k_pos as i32);
         }
 
-        let kernel_pos = kernel_pos.rev();
+        let kernel_pos = kernel_pos.reversed();
 
         let (batch, channel) = match params.operation {
             ConvolutionOperation::Forward | ConvolutionOperation::BackwardWeight => (n, k_channel),

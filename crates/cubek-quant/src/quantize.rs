@@ -73,7 +73,7 @@ fn pack_q<F: Float, N: Size, QS: Int>(value: Vector<F, N>, #[comptime] quant: Qu
     #[unroll]
     for position in 0..num_quants {
         let offset = QS::cast_from(position * size_quant);
-        let shifted = QS::cast_from(i32::cast_from(value[position]) & mask) << offset;
+        let shifted = QS::cast_from(i32::cast_from(value.extract(position)) & mask) << offset;
         packed |= shifted;
     }
 
@@ -87,11 +87,11 @@ fn write_scale<F: Float, FS: CubePrimitive>(
     out_scale: &mut View<FS, usize, ReadWrite>,
     scales_layout: ScalesLayout,
 ) -> FS {
-    let scale = FS::cast_from(scale[in_pos]);
+    let scale = FS::cast_from(scale.read(in_pos));
 
     // Write the scale into the output buffer
     if scales_layout.is_block_start(in_pos) {
-        out_scale[in_pos] = scale;
+        out_scale.write(in_pos, scale);
     }
 
     scale
@@ -116,11 +116,14 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
     let in_pos = ABSOLUTE_POS * input.vector_size() * native_packing;
     let scale = write_scale(in_pos, scale, out_scale, scales_layout);
 
-    output[ABSOLUTE_POS] = quantize_symmetric_q::<F, N, FS, Q>(
-        input[ABSOLUTE_POS],
-        scale,
-        range_min.get::<F>(),
-        range_max.get::<F>(),
+    output.write(
+        ABSOLUTE_POS,
+        quantize_symmetric_q::<F, N, FS, Q>(
+            input.read(ABSOLUTE_POS),
+            scale,
+            range_min.get::<F>(),
+            range_max.get::<F>(),
+        ),
     );
     sync_cube();
 }
@@ -146,12 +149,15 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric>(
     let scale = write_scale(packed_pos, scale, out_scale, scales_layout);
 
     if input.vector_size().comptime() == num_quants {
-        output[ABSOLUTE_POS] = quantize_packed_value::<F, N, FS, u32>(
-            input[ABSOLUTE_POS],
-            scale,
-            range_min.get::<F>(),
-            range_max.get::<F>(),
-            scheme,
+        output.write(
+            ABSOLUTE_POS,
+            quantize_packed_value::<F, N, FS, u32>(
+                input.read(ABSOLUTE_POS),
+                scale,
+                range_min.get::<F>(),
+                range_max.get::<F>(),
+                scheme,
+            ),
         );
     } else {
         // Input vector size = 1
@@ -159,14 +165,17 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric>(
         let mut values = Vector::<F, NQ>::empty();
         #[unroll]
         for i in 0..num_quants {
-            values[i] = input[packed_pos + i][0];
+            values.insert(i, input.read(packed_pos + i).extract(0));
         }
-        output[ABSOLUTE_POS] = quantize_packed_value::<F, NQ, FS, u32>(
-            values,
-            scale,
-            range_min.get::<F>(),
-            range_max.get::<F>(),
-            scheme,
+        output.write(
+            ABSOLUTE_POS,
+            quantize_packed_value::<F, NQ, FS, u32>(
+                values,
+                scale,
+                range_min.get::<F>(),
+                range_max.get::<F>(),
+                scheme,
+            ),
         );
     }
 }

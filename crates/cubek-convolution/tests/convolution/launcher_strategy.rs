@@ -90,8 +90,8 @@ pub fn test_algo(
     let k = kernel_size.iter().product::<u32>() as usize * convolution_size.c;
     let n = convolution_size.out_c;
 
-    let lhs_strides = lhs_layout.to_strides(&vec![m, k]);
-    let rhs_strides = rhs_layout.to_strides(&vec![k, n]);
+    let lhs_strides = lhs_layout.to_strides(&[m, k]);
+    let rhs_strides = rhs_layout.to_strides(&[k, n]);
 
     let global_dtypes = MatmulGlobalElems {
         lhs: dtypes.lhs_global,

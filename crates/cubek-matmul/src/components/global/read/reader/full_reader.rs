@@ -30,7 +30,7 @@ pub trait FullLoadingStrategy<RC: RuntimeConfig>:
     type TilingLayout: TilingLayout;
     /// The synchronization strategy that should be used with this loading strategy
     type SyncStrategy: SyncStrategy;
-    type Stage: LoadStageFamily<ReadOnly>;
+    type Stage: LoadStageFamily;
     type TileKind: StageTileKind;
 
     /// The [LoadingJob] for this strategy.
@@ -64,6 +64,20 @@ pub struct FullStageGlobalReader<
     loading_job: ComptimeOption<L::Job<EG, NG, ES, NS>>,
     #[cube(comptime)]
     _phantom: PhantomData<L>,
+}
+
+impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: FullLoadingStrategy<RC>>
+    Clone for FullStageGlobalReaderExpand<EG, NG, ES, NS, RC, L>
+{
+    fn clone(&self) -> Self {
+        Self {
+            global_iter: self.global_iter.clone(),
+            runtime_config: self.runtime_config.clone(),
+            stage: self.stage.clone_unchecked(),
+            loading_job: self.loading_job.clone_unchecked(),
+            _phantom: self._phantom,
+        }
+    }
 }
 
 #[cube]
@@ -221,12 +235,8 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: FullLoa
         #[comptime] stage_buffer: StageBuffer,
         #[comptime] config: GlobalReaderConfig,
     ) {
-        Self::execute_all_remaining_tasks(
-            this,
-            &mut Self::create_job_iterator(this, stage_buffer, config),
-            barrier,
-            config,
-        );
+        let mut iterator = Self::create_job_iterator(&*this, stage_buffer, config);
+        Self::execute_all_remaining_tasks(this, &mut iterator, barrier, config);
     }
 }
 

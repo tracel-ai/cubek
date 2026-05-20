@@ -24,6 +24,7 @@ impl StageBuffer {
 }
 
 #[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
 /// Comptime counter for loading tasks
 pub struct TaskCounter {
     #[cube(comptime)]

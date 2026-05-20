@@ -83,9 +83,7 @@ impl AttentionTileMatmul {
 }
 
 #[cube]
-pub fn allocate_lhs<L: Numeric>(
-    #[comptime] matmul: AttentionTileMatmul,
-) -> Tile<L, Plane, ReadWrite> {
+pub fn allocate_lhs<L: Numeric>(#[comptime] matmul: AttentionTileMatmul) -> Tile<L, Plane> {
     match matmul {
         AttentionTileMatmul::Cmma(c) => {
             cmma_allocate_lhs::<L, Plane>(MatrixLayout::RowMajor, c.matmul.tile_size)
@@ -97,9 +95,7 @@ pub fn allocate_lhs<L: Numeric>(
 }
 
 #[cube]
-pub fn allocate_rhs<R: Numeric>(
-    #[comptime] matmul: AttentionTileMatmul,
-) -> Tile<R, Plane, ReadWrite> {
+pub fn allocate_rhs<R: Numeric>(#[comptime] matmul: AttentionTileMatmul) -> Tile<R, Plane> {
     match matmul {
         AttentionTileMatmul::Cmma(c) => {
             cmma_allocate_rhs::<R, Plane>(MatrixLayout::RowMajor, c.matmul.tile_size)
@@ -113,7 +109,7 @@ pub fn allocate_rhs<R: Numeric>(
 #[cube]
 pub fn allocate_rhs_transposed<R: Numeric>(
     #[comptime] matmul: AttentionTileMatmul,
-) -> Tile<R, Plane, ReadWrite> {
+) -> Tile<R, Plane> {
     match matmul {
         AttentionTileMatmul::Cmma(c) => {
             cmma_allocate_rhs::<R, Plane>(MatrixLayout::ColMajor, c.matmul.tile_size)
@@ -129,9 +125,7 @@ pub fn allocate_rhs_transposed<R: Numeric>(
 /// (cmma + smem + WhiteboxFragment) so row-wise ops can read/write through
 /// smem; for the register path it falls back to `Tile::Register`.
 #[cube]
-pub fn allocate_rowwise_acc<A: Float>(
-    #[comptime] matmul: AttentionTileMatmul,
-) -> Tile<A, Plane, ReadWrite> {
+pub fn allocate_rowwise_acc<A: Float>(#[comptime] matmul: AttentionTileMatmul) -> Tile<A, Plane> {
     match matmul {
         AttentionTileMatmul::Cmma(c) => {
             let matrix = unsafe {
@@ -162,7 +156,7 @@ pub fn allocate_rowwise_acc<A: Float>(
 #[cube]
 pub fn allocate_softmax_target_lhs<L: Float>(
     #[comptime] matmul: AttentionTileMatmul,
-) -> Tile<L, Plane, ReadWrite> {
+) -> Tile<L, Plane> {
     match matmul {
         AttentionTileMatmul::Cmma(c) => {
             let matrix = unsafe {

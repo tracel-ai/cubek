@@ -119,7 +119,7 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
 
     pub fn read_unit(&self, vector_index: usize) -> Item<P> {
         let offset = self.batch_offset + vector_index * self.vector_offset_stride;
-        let elements = self.view[offset];
+        let elements = self.view.read(offset);
 
         let args = new_coordinates(
             vector_index,

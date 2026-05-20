@@ -1,5 +1,6 @@
 //! Executes multiple independent global matmuls with optional broadcasting.
 
+pub mod gemm_plane_parallel;
 pub mod gemv_plane_parallel;
 pub mod gemv_unit_perpendicular;
 pub mod naive;

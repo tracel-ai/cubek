@@ -90,7 +90,7 @@ pub trait BatchMatmulFamily<RC: RuntimeConfig>: 'static + Send + Sync {
 ///   It is therefore important to use an underlying global matmul that performs check bounds,
 /// - It is accepted to launch more Cube than necessary, providing a CubeCountInput that states
 ///   the max cube position
-pub trait BatchMatmul<RC: RuntimeConfig, MP: MatmulTypes>: 'static + Send + Sync {
+pub trait BatchMatmul<RC: RuntimeConfig, MP: MatmulTypes>: 'static {
     type Config: BatchConfig;
 
     /// Performs batchwise matrix multiplication over tensors.

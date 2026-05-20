@@ -2,7 +2,7 @@ use cubek_test_utils::CatalogEntry;
 
 use crate::launch::Strategy;
 use crate::routines::{
-    BlueprintStrategy, simple::SimpleArgs, vecmat_plane_parallel::GemvPlaneParallelStrategy,
+    BlueprintStrategy, gemv_plane_parallel::GemvPlaneParallelStrategy, simple::SimpleArgs,
 };
 
 pub fn strategies() -> Vec<CatalogEntry<Strategy>> {

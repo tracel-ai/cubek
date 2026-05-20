@@ -1,12 +1,12 @@
 #![allow(clippy::explicit_counter_loop, clippy::type_complexity)]
 
-/// Components for matrix multiplication
+/// FlashAttention backward pass (scaffolded — kernel bodies are `todo!()`).
+pub mod backward;
+/// Tile/stage/global components shared by both forward and backward.
 pub mod components;
-pub mod launch;
-/// Contains attention kernels
-pub mod routines;
-
-pub mod definition;
-
+/// CPU references and benchmark catalogues (forward + backward + shared
+/// pieces).
 #[cfg(any(feature = "cpu-reference", feature = "benchmarks"))]
 pub mod eval;
+/// FlashAttention forward pass.
+pub mod forward;

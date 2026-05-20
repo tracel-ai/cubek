@@ -12,8 +12,8 @@ use crate::matmul::layout_to_stride_spec;
 use cubek_matmul::{
     definition::MatmulGlobalElems,
     definition::{MatmulElems, MatmulIdent, MatmulProblem},
-    routines::vecmat_plane_parallel::GemvPlaneParallelStrategy,
-    routines::vecmat_unit_perpendicular::GemvUnitPerpendicularStrategy,
+    routines::gemv_plane_parallel::GemvPlaneParallelStrategy,
+    routines::gemv_unit_perpendicular::GemvUnitPerpendicularStrategy,
 };
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{BaseInputSpec, DataKind, Distribution, TestInput};

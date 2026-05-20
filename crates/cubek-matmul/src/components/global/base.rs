@@ -75,7 +75,7 @@ pub trait GlobalMatmulFamily<RC: RuntimeConfig>: Send + Sync + 'static {
 /// It is not assumed that the matmul's dimensions match its inputs dimensions perfectly.
 /// It is therefore important that Readers and Writers perform checks to avoid out-of-bounds
 /// before reading data.
-pub trait GlobalMatmul<RC: RuntimeConfig, MP: MatmulTypes>: 'static + Send + Sync {
+pub trait GlobalMatmul<RC: RuntimeConfig, MP: MatmulTypes>: 'static {
     type Config: GlobalConfig;
 
     /// Global reader for matrix A (Lhs)
