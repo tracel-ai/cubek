@@ -147,9 +147,9 @@ fn launch_read_tensor_as_tiled<N: Numeric, S: Size>(
     // Semantic (rank R) -> physical (rank R + n) -> 1D buffer.
     let semantic_to_physical =
         TiledLayout::new(physical_shape.clone(), tiler.start_axis as usize, tiles);
-    let physical_to_buffer = StridedNDLayout::new(physical_shape, physical_strides);
+    let physical_to_buffer = StridedNdLayout::new(physical_shape, physical_strides);
     let tiled_layout =
-        Chain::<StridedNDLayout, TiledLayout>::new(physical_to_buffer, semantic_to_physical);
+        Chain::<StridedNdLayout, TiledLayout>::new(physical_to_buffer, semantic_to_physical);
 
     let row_major = RowMajorLayout::new(matrix_len, matrix_len, vector_size);
 
@@ -286,20 +286,20 @@ impl Layout for TiledLayout {
 /// Maps multi-dimensional physical coordinates to a linear buffer offset using
 /// per-axis strides. The physical layout's rank can be any value.
 #[derive(CubeType, Clone)]
-pub struct StridedNDLayout {
+pub struct StridedNdLayout {
     shape: CoordsDyn,
     strides: CoordsDyn,
 }
 
 #[cube]
-impl StridedNDLayout {
-    pub fn new(shape: CoordsDyn, strides: CoordsDyn) -> StridedNDLayout {
-        StridedNDLayout { shape, strides }
+impl StridedNdLayout {
+    pub fn new(shape: CoordsDyn, strides: CoordsDyn) -> StridedNdLayout {
+        StridedNdLayout { shape, strides }
     }
 }
 
 #[cube]
-impl Layout for StridedNDLayout {
+impl Layout for StridedNdLayout {
     type Coordinates = CoordsDyn;
 
     type SourceCoordinates = Coords1d;
