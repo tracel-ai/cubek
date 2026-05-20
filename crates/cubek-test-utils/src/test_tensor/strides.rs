@@ -1,11 +1,94 @@
 use cubecl::zspace::{Shape, Strides};
 
-#[derive(Debug, PartialEq, Eq, Default)]
+/// How the base strides of a tensor are laid out before any tile-level rank
+/// expansion is applied.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum StrideSpec {
     #[default]
     RowMajor,
     ColMajor,
     Custom(Vec<usize>),
+}
+
+/// Tiling applied on top of a base stride layout.
+///
+/// Splits each axis in `[start_axis, start_axis + tile_size.len())` into a grid
+/// component and a tile component (`D -> [D/T, T]`), so the resulting metadata
+/// is `[Pre-axes, Grid-axes, Tile-axes, Post-axes]` in row-major contiguous
+/// order. See [`cubecl::zspace::metadata::Metadata::to_tiled`] for details.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TileSpec {
+    pub start_axis: u8,
+    pub tile_size: Vec<u16>,
+}
+
+impl TileSpec {
+    pub fn new(start_axis: u8, tile_size: impl Into<Vec<u16>>) -> Self {
+        Self {
+            start_axis,
+            tile_size: tile_size.into(),
+        }
+    }
+}
+
+/// The full layout of a test tensor: a base [`StrideSpec`] plus an optional
+/// [`TileSpec`]. The tile portion is intentionally a part of the layout (not a
+/// sibling builder method) so callers describe the whole layout in one place.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum LayoutSpec {
+    #[default]
+    RowMajor,
+    ColMajor,
+    Custom(Vec<usize>),
+    /// A tiled layout on top of a `base` stride layout.
+    Tiled {
+        base: Box<LayoutSpec>,
+        tile: TileSpec,
+    },
+}
+
+impl LayoutSpec {
+    /// Compose `base` with a tile spec.
+    pub fn tiled(base: LayoutSpec, tile: TileSpec) -> Self {
+        LayoutSpec::Tiled {
+            base: Box::new(base),
+            tile,
+        }
+    }
+
+    /// The tile portion of this layout, if any.
+    pub fn tile(&self) -> Option<&TileSpec> {
+        match self {
+            LayoutSpec::Tiled { tile, .. } => Some(tile),
+            _ => None,
+        }
+    }
+
+    /// The base [`StrideSpec`] underlying this layout. For non-tiled layouts
+    /// this is the layout itself; for `Tiled`, it's the wrapped base.
+    pub fn stride_spec(&self) -> StrideSpec {
+        match self {
+            LayoutSpec::RowMajor => StrideSpec::RowMajor,
+            LayoutSpec::ColMajor => StrideSpec::ColMajor,
+            LayoutSpec::Custom(s) => StrideSpec::Custom(s.clone()),
+            LayoutSpec::Tiled { base, .. } => base.stride_spec(),
+        }
+    }
+
+    /// Compute the strides of the base (un-tiled) layout for `shape`.
+    pub fn compute_strides(&self, shape: &Shape) -> Strides {
+        self.stride_spec().compute_strides(shape)
+    }
+}
+
+impl From<StrideSpec> for LayoutSpec {
+    fn from(spec: StrideSpec) -> Self {
+        match spec {
+            StrideSpec::RowMajor => LayoutSpec::RowMajor,
+            StrideSpec::ColMajor => LayoutSpec::ColMajor,
+            StrideSpec::Custom(s) => LayoutSpec::Custom(s),
+        }
+    }
 }
 
 /// Number of elements in the physical buffer required to cover every logical

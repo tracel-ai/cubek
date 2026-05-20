@@ -72,7 +72,7 @@ fn make_uniform(
 ) -> TensorHandle<TestRuntime> {
     let rank = shape.len();
     TestInput::builder(client.clone(), Shape::from(shape))
-        .stride(row_major_or_custom(rank))
+        .layout(row_major_or_custom(rank))
         .dtype(dtype)
         .uniform(seed, 0., 1.)
         .generate_without_host_data()

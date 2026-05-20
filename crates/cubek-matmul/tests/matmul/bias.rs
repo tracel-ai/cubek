@@ -57,13 +57,13 @@ pub fn test_matmul_with_bias_simple_unit_f32() {
 
     let (lhs, lhs_data) = TestInput::builder(client.clone(), problem.lhs_shape.clone())
         .dtype(problem.global_dtypes.lhs)
-        .stride(layout_to_stride_spec(problem.lhs_layout))
+        .layout(layout_to_stride_spec(problem.lhs_layout))
         .uniform(1234, -1., 1.)
         .generate_with_f32_host_data();
 
     let (rhs, rhs_data) = TestInput::builder(client.clone(), problem.rhs_shape.clone())
         .dtype(problem.global_dtypes.rhs)
-        .stride(layout_to_stride_spec(problem.rhs_layout))
+        .layout(layout_to_stride_spec(problem.rhs_layout))
         .uniform(5678, -1., 1.)
         .generate_with_f32_host_data();
 

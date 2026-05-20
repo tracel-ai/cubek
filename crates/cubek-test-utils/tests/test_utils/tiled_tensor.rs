@@ -1,6 +1,6 @@
 use cubecl::{
     self,
-    std::tensor::layout::{Coords1d, Layout, LayoutExpand},
+    std::tensor::layout::{Coords1d, CoordsDyn, Layout, LayoutExpand, chain::Chain},
     zspace::metadata::Metadata,
 };
 use cubecl::{TestRuntime, prelude::*};
@@ -8,7 +8,9 @@ use cubecl::{
     std::tensor::{AsView, AsViewExpand, AsViewMut, AsViewMutExpand},
     zspace::shape,
 };
-use cubek_test_utils::{HostData, HostDataType, StrideSpec, TestInput, assert_equals_approx};
+use cubek_test_utils::{
+    HostData, HostDataType, LayoutSpec, TestInput, TileSpec, assert_equals_approx,
+};
 
 #[test]
 fn read_rowmajor_tensor_as_tiled_layout() {
@@ -17,18 +19,20 @@ fn read_rowmajor_tensor_as_tiled_layout() {
     let matrix_len = 4;
     let shape = shape![matrix_len, matrix_len];
 
+    // Input stays row-major: arange writes a contiguous 0..16 into memory.
     let input_handle = TestInput::builder(client.clone(), shape.clone())
-        .stride(StrideSpec::RowMajor)
         .arange()
         .generate();
 
     let dtype = f32::as_type_native_unchecked().storage_type();
+
+    // Output's layout includes the tile spec — the resulting metadata is the
+    // rank-expanded tiled layout, produced at build time.
+    let tile = TileSpec::new(0, vec![2u16, 2]);
     let output_handle = TestInput::builder(client.clone(), shape.clone())
-        .stride(StrideSpec::RowMajor)
+        .layout(LayoutSpec::tiled(LayoutSpec::RowMajor, tile.clone()))
         .zeros()
         .generate_without_host_data();
-
-    let metadata = input_handle.metadata.to_tiled(0, &[2, 2]);
 
     let cube_count = CubeCount::new_single();
     let cube_dim = CubeDim::new_single();
@@ -40,7 +44,7 @@ fn read_rowmajor_tensor_as_tiled_layout() {
         cube_dim,
         input_handle.binding().into_tensor_arg(),
         output_handle.clone().binding().into_tensor_arg(),
-        metadata,
+        output_handle.metadata.as_ref().clone(),
         matrix_len,
         dtype,
         vector_size,
@@ -56,7 +60,11 @@ fn read_rowmajor_tensor_as_tiled_layout() {
         10.0, 11.0, 14.0, 15.0,
     ].to_vec();
 
+    // The expected buffer is identical to the output buffer, just laid out
+    // visually as the tiled-physical 4x4 above. Tile it so the metadata's
+    // rank-expanded shape matches the output for the comparison.
     let (_, expected_values) = TestInput::builder(client, shape)
+        .layout(LayoutSpec::tiled(LayoutSpec::RowMajor, tile))
         .custom(expected_values)
         .generate_with_f32_host_data();
 
@@ -118,26 +126,30 @@ fn launch_read_tensor_as_tiled<N: Numeric, S: Size>(
 ) {
     let tiler = metadata.tiler.clone().unwrap();
 
-    let mut shape = Sequence::new();
+    let mut physical_shape = CoordsDyn::new();
     #[unroll]
     for i in 0..metadata.shape.rank() {
-        shape.push(comptime!(metadata.shape[i]));
+        physical_shape.push(comptime!(metadata.shape[i] as u32));
     }
 
-    let mut strides = Sequence::new();
-
+    let mut physical_strides = CoordsDyn::new();
     #[unroll]
     for i in 0..metadata.strides.rank() {
-        strides.push(comptime!(metadata.strides[i]));
+        physical_strides.push(comptime!(metadata.strides[i] as u32));
     }
 
-    let mut tiles = Sequence::new();
+    let mut tiles = CoordsDyn::new();
     #[unroll]
     for i in 0..tiler.tile_size.len() {
-        tiles.push(comptime!(tiler.tile_size[i]) as usize);
+        tiles.push(comptime!(tiler.tile_size[i] as u32));
     }
 
-    let tiled_layout = TiledLayout::new(shape, strides, tiler.start_axis as usize, tiles);
+    // Semantic (rank R) -> physical (rank R + n) -> 1D buffer.
+    let semantic_to_physical =
+        TiledLayout::new(physical_shape.clone(), tiler.start_axis as usize, tiles);
+    let physical_to_buffer = StridedNDLayout::new(physical_shape, physical_strides);
+    let tiled_layout =
+        Chain::<StridedNDLayout, TiledLayout>::new(physical_to_buffer, semantic_to_physical);
 
     let row_major = RowMajorLayout::new(matrix_len, matrix_len, vector_size);
 
@@ -148,35 +160,37 @@ fn launch_read_tensor_as_tiled<N: Numeric, S: Size>(
     for i in 0..matrix_len {
         #[unroll]
         for j in 0..matrix_len {
-            let mut coords = Sequence::<usize>::new();
-            coords.push(i);
-            coords.push(j);
+            let mut coords = CoordsDyn::new();
+            coords.push(i as u32);
+            coords.push(j as u32);
             let value = input_view.read((i.runtime(), j.runtime()));
             output_view.write(coords, value);
         }
     }
 }
 
+/// Maps semantic coordinates (rank R) to physical coordinates (rank R + n).
+///
+/// For each axis in `[start_axis, start_axis + n)`, the semantic coordinate is
+/// split into a grid component and a tile component: `c -> (c / T, c % T)`.
+/// The physical layout is `[Pre-axes, Grid-axes, Tile-axes, Post-axes]`.
 #[derive(CubeType, Clone)]
 pub struct TiledLayout {
-    shape: Sequence<usize>,
-    strides: Sequence<usize>,
+    physical_shape: CoordsDyn,
     #[cube(comptime)]
     start_axis: usize,
-    tiles: Sequence<usize>,
+    tiles: CoordsDyn,
 }
 
 #[cube]
 impl TiledLayout {
     pub fn new(
-        shape: Sequence<usize>,
-        strides: Sequence<usize>,
+        physical_shape: CoordsDyn,
         #[comptime] start_axis: usize,
-        tiles: Sequence<usize>,
+        tiles: CoordsDyn,
     ) -> TiledLayout {
         TiledLayout {
-            shape,
-            strides,
+            physical_shape,
             start_axis,
             tiles,
         }
@@ -185,40 +199,118 @@ impl TiledLayout {
 
 #[cube]
 impl Layout for TiledLayout {
-    type Coordinates = Sequence<usize>;
+    type Coordinates = CoordsDyn;
 
-    type SourceCoordinates = Coords1d;
+    type SourceCoordinates = CoordsDyn;
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
-        let mut offset = 0;
         #[comptime]
         let n = self.tiles.len();
-        let rank = pos.len();
+        #[comptime]
+        let physical_rank = self.physical_shape.len();
+
+        let mut physical = CoordsDyn::new();
 
         #[unroll]
         for i in 0..self.start_axis {
-            offset += pos[i] * self.strides[i];
+            physical.push(pos[i]);
         }
 
         #[unroll]
         for i in 0..n {
-            let physical_idx = comptime!(self.start_axis + i);
             let tile_size = self.tiles[i];
-
-            let grid_coord = pos[physical_idx] / tile_size;
-            let local_coord = pos[physical_idx] % tile_size;
-
-            offset += grid_coord * self.strides[physical_idx];
-            offset += local_coord * self.strides[comptime!(physical_idx + n)];
+            physical.push(pos[comptime!(self.start_axis + i)] / tile_size);
         }
 
-        let start = comptime!(self.start_axis + n);
         #[unroll]
-        for i in start..rank {
-            offset += pos[i] * self.strides[comptime!(i + n)];
+        for i in 0..n {
+            let tile_size = self.tiles[i];
+            physical.push(pos[comptime!(self.start_axis + i)] % tile_size);
         }
 
-        offset
+        let post_start = comptime!(self.start_axis + n);
+        let physical_post_start = comptime!(self.start_axis + 2 * n);
+        #[unroll]
+        for i in 0..comptime!(physical_rank - physical_post_start) {
+            physical.push(pos[comptime!(post_start + i)]);
+        }
+
+        physical
+    }
+
+    fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
+        let in_bounds = self.is_in_bounds(pos.clone());
+        (self.to_source_pos(pos), in_bounds)
+    }
+
+    fn shape(&self) -> Self::Coordinates {
+        #[comptime]
+        let n = self.tiles.len();
+        #[comptime]
+        let physical_rank = self.physical_shape.len();
+
+        let mut semantic = CoordsDyn::new();
+
+        #[unroll]
+        for i in 0..self.start_axis {
+            semantic.push(self.physical_shape[i]);
+        }
+
+        #[unroll]
+        for i in 0..n {
+            let grid = self.physical_shape[comptime!(self.start_axis + i)];
+            let tile = self.physical_shape[comptime!(self.start_axis + n + i)];
+            semantic.push(grid * tile);
+        }
+
+        let post_start = comptime!(self.start_axis + 2 * n);
+        #[unroll]
+        for i in 0..comptime!(physical_rank - post_start) {
+            semantic.push(self.physical_shape[comptime!(post_start + i)]);
+        }
+
+        semantic
+    }
+
+    fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
+        let bounds = self.shape();
+        let mut is_valid = true;
+        #[unroll]
+        for i in 0..bounds.len() {
+            is_valid = is_valid && pos[i] < bounds[i];
+        }
+        is_valid
+    }
+}
+
+/// Maps multi-dimensional physical coordinates to a linear buffer offset using
+/// per-axis strides. The physical layout's rank can be any value.
+#[derive(CubeType, Clone)]
+pub struct StridedNDLayout {
+    shape: CoordsDyn,
+    strides: CoordsDyn,
+}
+
+#[cube]
+impl StridedNDLayout {
+    pub fn new(shape: CoordsDyn, strides: CoordsDyn) -> StridedNDLayout {
+        StridedNDLayout { shape, strides }
+    }
+}
+
+#[cube]
+impl Layout for StridedNDLayout {
+    type Coordinates = CoordsDyn;
+
+    type SourceCoordinates = Coords1d;
+
+    fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
+        let mut offset = 0u32;
+        #[unroll]
+        for i in 0..self.strides.len() {
+            offset += pos[i] * self.strides[i];
+        }
+        offset as usize
     }
 
     fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {

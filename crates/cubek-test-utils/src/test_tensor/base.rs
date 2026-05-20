@@ -16,7 +16,7 @@ use crate::test_tensor::{
     host_data::{HostData, HostDataType},
     quant::apply_quantization,
     random::build_random,
-    strides::StrideSpec,
+    strides::{LayoutSpec, StrideSpec, TileSpec},
     zeros::build_zeros,
 };
 
@@ -107,6 +107,7 @@ pub struct TestInput {
     base_spec: BaseInputSpec,
     data_kind: DataKind,
     input_dtype: InputDataType,
+    tile_spec: Option<TileSpec>,
 }
 
 pub enum DataKind {
@@ -127,8 +128,9 @@ pub enum DataKind {
 impl TestInput {
     /// Start a fluent builder for a test input.
     ///
-    /// Defaults: `dtype = f32`, `stride = RowMajor`. Call `.dtype(_)` /
-    /// `.stride(_)` to override, then a finalizer such as `.arange()`,
+    /// Defaults: `dtype = f32`, `layout = LayoutSpec::RowMajor`. Call
+    /// `.dtype(_)` / `.layout(_)` to override, then a finalizer such as
+    /// `.arange()`,
     /// `.eye()`, `.zeros()`, `.uniform(seed, lo, hi)`, `.bernoulli(seed, p)`,
     /// or `.custom(data)` to produce a [`TestInput`] ready to generate.
     pub fn builder(
@@ -143,6 +145,17 @@ impl TestInput {
         shape: impl Into<Shape>,
         dtype: impl Into<InputDataType>,
         stride_spec: StrideSpec,
+        data_kind: DataKind,
+    ) -> Self {
+        Self::new_with_tile(client, shape, dtype, stride_spec, None, data_kind)
+    }
+
+    pub fn new_with_tile(
+        client: ComputeClient<TestRuntime>,
+        shape: impl Into<Shape>,
+        dtype: impl Into<InputDataType>,
+        stride_spec: StrideSpec,
+        tile_spec: Option<TileSpec>,
         data_kind: DataKind,
     ) -> Self {
         let dtype = dtype.into();
@@ -166,6 +179,7 @@ impl TestInput {
             base_spec,
             data_kind,
             input_dtype: dtype,
+            tile_spec,
         }
     }
 
@@ -214,6 +228,7 @@ impl TestInput {
             self.base_spec.strides(),
             self.base_spec.dtype,
         );
+        let tile_spec = self.tile_spec.clone();
 
         let mut handle = match self.data_kind {
             DataKind::Arange { scale } => build_arange(self.base_spec, scale),
@@ -227,6 +242,10 @@ impl TestInput {
         handle.metadata.shape = shape;
         handle.metadata.strides = strides;
         handle.dtype = dtype;
+
+        if let Some(tile) = tile_spec {
+            *handle.metadata = handle.metadata.to_tiled(tile.start_axis, &tile.tile_size);
+        }
 
         handle
     }
@@ -276,17 +295,17 @@ pub enum Distribution {
 /// Fluent builder for [`TestInput`].
 ///
 /// Use [`TestInput::builder`] to start one. The builder holds the shape,
-/// dtype, and stride spec. Call a finalizer (`arange`, `eye`, `zeros`,
+/// dtype, and layout spec. Call a finalizer (`arange`, `eye`, `zeros`,
 /// `uniform`, `bernoulli`, `random`, `custom`) to produce a [`TestInput`]
 /// ready to generate a tensor handle, host data, or test tensor.
 ///
 /// # Example
 ///
 /// ```ignore
-/// use cubek_test_utils::{TestInput, StrideSpec, Distribution};
+/// use cubek_test_utils::{TestInput, LayoutSpec, Distribution};
 ///
 /// let (handle, host) = TestInput::builder(client, [4, 4])
-///     .stride(StrideSpec::ColMajor)
+///     .layout(LayoutSpec::ColMajor)
 ///     .uniform( 0, -1.0, 1.0)
 ///     .generate_with_f32_host_data();
 /// ```
@@ -294,7 +313,7 @@ pub struct TestInputBuilder {
     client: ComputeClient<TestRuntime>,
     shape: Shape,
     dtype: Option<InputDataType>,
-    stride_spec: StrideSpec,
+    layout: LayoutSpec,
 }
 
 impl TestInputBuilder {
@@ -303,7 +322,7 @@ impl TestInputBuilder {
             client,
             shape,
             dtype: None,
-            stride_spec: StrideSpec::RowMajor,
+            layout: LayoutSpec::RowMajor,
         }
     }
 
@@ -313,9 +332,11 @@ impl TestInputBuilder {
         self
     }
 
-    /// Override the stride layout. Defaults to [`StrideSpec::RowMajor`].
-    pub fn stride(mut self, stride_spec: StrideSpec) -> Self {
-        self.stride_spec = stride_spec;
+    /// Override the layout. Defaults to [`LayoutSpec::RowMajor`]. Pass a
+    /// [`LayoutSpec::Tiled`] (or use [`LayoutSpec::tiled`]) to attach a tile
+    /// spec to the base stride layout.
+    pub fn layout(mut self, layout: impl Into<LayoutSpec>) -> Self {
+        self.layout = layout.into();
         self
     }
 
@@ -323,7 +344,16 @@ impl TestInputBuilder {
         let dtype = self.dtype.unwrap_or_else(|| {
             InputDataType::Standard(f32::as_type_native_unchecked().storage_type())
         });
-        TestInput::new(self.client, self.shape, dtype, self.stride_spec, data_kind)
+        let stride_spec = self.layout.stride_spec();
+        let tile_spec = self.layout.tile().cloned();
+        TestInput::new_with_tile(
+            self.client,
+            self.shape,
+            dtype,
+            stride_spec,
+            tile_spec,
+            data_kind,
+        )
     }
 
     /// `0, 1, 2, …` in row-major order.
