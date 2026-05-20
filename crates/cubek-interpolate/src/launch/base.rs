@@ -2,7 +2,7 @@ use crate::{
     InterpolateError,
     {
         components::global::{TileSize, interpolate_kernel},
-        definition::InterpolateOptions,
+        definition::{InterpolateOptions, accumulator_dtype},
     },
 };
 use cubecl::{prelude::*, std::FastDivmod, tensor_vector_size_parallel};
@@ -14,6 +14,7 @@ pub(crate) fn interpolate_launch<R: Runtime>(
     options: InterpolateOptions,
     dtype: StorageType,
 ) -> Result<(), InterpolateError> {
+    let acc_dtype = accumulator_dtype(dtype);
     let vector_size = tensor_vector_size_parallel(
         client.io_optimized_vector_sizes(dtype.size()),
         &input.shape,
@@ -61,6 +62,7 @@ pub(crate) fn interpolate_launch<R: Runtime>(
             output_tile_size,
             options,
             dtype,
+            acc_dtype,
         )
     };
 

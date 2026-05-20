@@ -4,18 +4,33 @@ use crate::{
         readers::Reader,
         writers::Writer,
     },
-    definition::{InterpolateMode, InterpolateOptions, NearestMode, compute_weights, get_halo},
+    definition::{
+        InterpolateMode, InterpolateOptions, InterpolatePrecision, NearestMode, compute_weights,
+        get_halo,
+    },
 };
 use cubecl::{prelude::*, std::FastDivmod};
 
 #[cube(launch_unchecked, address_type = "dynamic")]
-pub fn interpolate_kernel<F: Float, N: Size>(
-    input: &Tensor<Vector<F, N>>,
-    output: &mut Tensor<Vector<F, N>>,
+pub fn interpolate_kernel<EI: Float, EA: Float, N: Size>(
+    input: &Tensor<Vector<EI, N>>,
+    output: &mut Tensor<Vector<EI, N>>,
     cube_shape: Sequence<FastDivmod<usize>>,
     #[comptime] output_tile_size: TileSize,
     #[comptime] options: InterpolateOptions,
-    #[define(F)] _dtype: StorageType,
+    #[define(EI)] _dtype: StorageType,
+    #[define(EA)] _acc_dtype: StorageType,
+) {
+    interpolate_kernel_inner::<(EI, EA), N>(input, output, cube_shape, output_tile_size, options);
+}
+
+#[cube]
+fn interpolate_kernel_inner<P: InterpolatePrecision, N: Size>(
+    input: &Tensor<Vector<P::EI, N>>,
+    output: &mut Tensor<Vector<P::EI, N>>,
+    cube_shape: Sequence<FastDivmod<usize>>,
+    #[comptime] output_tile_size: TileSize,
+    #[comptime] options: InterpolateOptions,
 ) {
     let (batch, cube_pos, unit_pos, channel_group) = decompose_index(ABSOLUTE_POS, cube_shape);
 
@@ -28,7 +43,7 @@ pub fn interpolate_kernel<F: Float, N: Size>(
         terminate!();
     }
 
-    let (mapped_x, mapped_y) = compute_input_coords::<F>(
+    let (mapped_x, mapped_y) = compute_input_coords::<P::EA>(
         x,
         y,
         input_width,
@@ -55,7 +70,7 @@ pub fn interpolate_kernel<F: Float, N: Size>(
 
     let vector_size = input.vector_size();
 
-    let final_value = compute_value(
+    let final_value = compute_value::<P, N>(
         input,
         batch,
         channel_group,
@@ -68,6 +83,8 @@ pub fn interpolate_kernel<F: Float, N: Size>(
         weights_y,
         options,
     );
+
+    let final_value = Vector::cast_from(final_value);
 
     let writer = Writer::new(channel_group);
 
@@ -135,8 +152,8 @@ fn get_input_coord<F: Float>(
 }
 
 #[cube]
-fn compute_value<F: Float, N: Size>(
-    input: &Tensor<Vector<F, N>>,
+fn compute_value<P: InterpolatePrecision, N: Size>(
+    input: &Tensor<Vector<P::EI, N>>,
     batch: usize,
     channel_group: usize,
     vector_size: usize,
@@ -144,10 +161,10 @@ fn compute_value<F: Float, N: Size>(
     input_height: usize,
     base_x: isize,
     base_y: isize,
-    weights_x: Array<Vector<F, N>>,
-    weights_y: Array<Vector<F, N>>,
+    weights_x: Array<Vector<P::EA, N>>,
+    weights_y: Array<Vector<P::EA, N>>,
     #[comptime] options: InterpolateOptions,
-) -> Vector<F, N> {
+) -> Vector<P::EA, N> {
     let input_offset = batch * input.stride(0);
     let reader = Reader::new(channel_group);
 
@@ -177,7 +194,13 @@ fn compute_value<F: Float, N: Size>(
 
             row_value += select(
                 is_in_bounds,
-                reader.read_weighted(input, row_offset, x, vector_size, weight_x),
+                reader.read_weighted::<P::EI, P::EA, N>(
+                    input,
+                    row_offset,
+                    x,
+                    vector_size,
+                    weight_x,
+                ),
                 Vector::zeroed(),
             );
             row_weight_sum += select(is_in_bounds, weight_x, Vector::zeroed());
@@ -188,7 +211,7 @@ fn compute_value<F: Float, N: Size>(
         total_weight += row_weight_sum * weight_y;
     }
 
-    let epsilon = Vector::cast_from(F::new(1e-7));
+    let epsilon = Vector::cast_from(P::EA::new(1e-7));
 
     final_value / total_weight.max(epsilon)
 }
