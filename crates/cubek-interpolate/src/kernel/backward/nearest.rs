@@ -1,5 +1,5 @@
 use super::super::{linear_layout, shape_divmod};
-use crate::InterpolateError;
+use crate::{InterpolateError, definition::NearestMode};
 use cubecl::{calculate_cube_count_elemwise, prelude::*};
 use cubecl::{
     num_traits::Zero,
@@ -16,6 +16,7 @@ fn interpolate_nearest_backward_kernel<F: Float, N: Size>(
     output: &mut Tensor<Vector<F, N>>,
     shape_out: Sequence<FastDivmod<usize>>,
     out_layout: LinearLayout,
+    #[comptime] nearest_mode: NearestMode,
     #[define(F)] _dtype: StorageType,
 ) {
     if ABSOLUTE_POS >= output.len() {
@@ -34,10 +35,10 @@ fn interpolate_nearest_backward_kernel<F: Float, N: Size>(
     let (rem, out_x) = shape_out[2].div_mod(rem);
     let (b, out_y) = shape_out[1].div_mod(rem);
 
-    let grad_y_start = start_index::<F>(out_y, grad_h, out_h);
-    let grad_y_end = end_index::<F>(out_y, grad_h, out_h);
-    let grad_x_start = start_index::<F>(out_x, grad_w, out_w);
-    let grad_x_end = end_index::<F>(out_x, grad_w, out_w);
+    let grad_y_start = start_index::<F>(out_y, grad_h, out_h, nearest_mode);
+    let grad_y_end = end_index::<F>(out_y, grad_h, out_h, nearest_mode);
+    let grad_x_start = start_index::<F>(out_x, grad_w, out_w, nearest_mode);
+    let grad_x_end = end_index::<F>(out_x, grad_w, out_w, nearest_mode);
 
     let index_grad_base = b * grad.stride(0) + c * grad.stride(3);
 
@@ -55,26 +56,44 @@ fn interpolate_nearest_backward_kernel<F: Float, N: Size>(
 }
 
 #[cube]
-fn start_index<F: Float>(input_index: usize, output_size: usize, input_size: usize) -> usize {
-    let numerator = F::cast_from(input_index * output_size);
-    let div = (numerator / F::cast_from(input_size)).ceil();
+fn start_index<F: Float>(
+    input_index: usize,
+    output_size: usize,
+    input_size: usize,
+    #[comptime] nearest_mode: NearestMode,
+) -> usize {
+    match nearest_mode {
+        NearestMode::Floor => {
+            let numerator = F::cast_from(input_index * output_size);
+            let div = (numerator / F::cast_from(input_size)).ceil();
+            usize::cast_from(div)
+        }
+        NearestMode::Exact => {
+            let num = F::cast_from(input_index * output_size);
+            let den = F::cast_from(input_size);
+            let div = (num / den).ceil() - F::new(0.5);
 
-    usize::cast_from(div)
+            let mask = F::cast_from((div >= F::zero()) as usize);
+            usize::cast_from(div.ceil() * mask)
+        }
+    }
 }
 
 #[cube]
-fn end_index<F: Float>(input_index: usize, output_size: usize, input_size: usize) -> usize {
-    let numerator = F::cast_from((input_index + 1) * output_size);
-    let div = (numerator / F::cast_from(input_size)).ceil();
-    let index = usize::cast_from(div);
-
-    clamp_max(index, output_size)
+fn end_index<F: Float>(
+    input_index: usize,
+    output_size: usize,
+    input_size: usize,
+    #[comptime] nearest_mode: NearestMode,
+) -> usize {
+    start_index::<F>(input_index + 1, output_size, input_size, nearest_mode)
 }
 
 pub(crate) fn interpolate_nearest_backward_launch<R: Runtime>(
     client: &ComputeClient<R>,
     out_grad: TensorBinding<R>,
     output: TensorBinding<R>,
+    nearest_mode: NearestMode,
     dtype: StorageType,
 ) -> Result<(), InterpolateError> {
     let vector_size = tensor_vector_size_parallel(
@@ -105,6 +124,7 @@ pub(crate) fn interpolate_nearest_backward_launch<R: Runtime>(
             output.clone().into_tensor_arg(),
             shape_out,
             out_layout,
+            nearest_mode,
             dtype,
         )
     };

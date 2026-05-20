@@ -1,22 +1,17 @@
-use core::result::Result;
-
-use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*};
-
-use crate::definition::{InterpolateError, InterpolateMode, InterpolateOptions};
-
+pub mod components;
 pub mod definition;
-mod kernel;
-
-use crate::kernel::{
-    backward::interpolate_nearest_backward_launch,
-    forward::{
-        interpolate_bicubic_launch, interpolate_bilinear_launch, interpolate_lanczos3_launch,
-        interpolate_nearest_launch,
-    },
-};
-
-#[cfg(feature = "benchmarks")]
+#[cfg(any(feature = "cpu-reference", feature = "benchmarks"))]
 pub mod eval;
+mod kernel;
+mod launch;
+
+use crate::{
+    definition::{InterpolateError, InterpolateMode, InterpolateOptions},
+    kernel::backward::interpolate_nearest_backward_launch,
+    launch::interpolate_launch,
+};
+use core::result::Result;
+use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*};
 
 /// Interpolate operation
 ///
@@ -33,20 +28,7 @@ pub fn interpolate<R: Runtime>(
     validate_rank(input.shape.len(), output.shape.len())?;
     validate_nhwc_consistency(&input.shape, &output.shape)?;
 
-    let _align_corners = options.align_corners;
-
-    match options.mode {
-        InterpolateMode::Nearest => interpolate_nearest_launch(client, input, output, dtype),
-        InterpolateMode::Bilinear => {
-            interpolate_bilinear_launch(client, input, output, _align_corners, dtype)
-        }
-        InterpolateMode::Bicubic => {
-            interpolate_bicubic_launch(client, input, output, _align_corners, dtype)
-        }
-        InterpolateMode::Lanczos3 => {
-            interpolate_lanczos3_launch(client, input, output, _align_corners, dtype)
-        }
-    }
+    interpolate_launch(client, input, output, options, dtype)
 }
 
 /// Backward interpolate operation
@@ -64,7 +46,6 @@ pub fn interpolate_backward<R: Runtime>(
 ) -> Result<(), InterpolateError> {
     validate_rank(input.shape.len(), output.shape.len())?;
     validate_rank(out_grad.shape.len(), output.shape.len())?;
-
     validate_nhwc_consistency(&input.shape, &output.shape)?;
     validate_nhwc_consistency(&out_grad.shape, &output.shape)?;
 
@@ -76,8 +57,8 @@ pub fn interpolate_backward<R: Runtime>(
     }
 
     match options.mode {
-        InterpolateMode::Nearest => {
-            interpolate_nearest_backward_launch(client, out_grad, output, dtype)
+        InterpolateMode::Nearest(nearest_mode) => {
+            interpolate_nearest_backward_launch(client, out_grad, output, nearest_mode, dtype)
         }
         _ => Err(InterpolateError::UnsupportedMode(format!(
             "{:?} interpolation backward is not supported by JIT backend",
