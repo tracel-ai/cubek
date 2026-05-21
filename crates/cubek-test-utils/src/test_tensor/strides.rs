@@ -32,62 +32,42 @@ impl TileSpec {
 }
 
 /// The full layout of a test tensor: a base [`StrideSpec`] plus an optional
-/// [`TileSpec`]. The tile portion is intentionally a part of the layout (not a
-/// sibling builder method) so callers describe the whole layout in one place.
+/// [`TileSpec`]. Mirrors cubecl's `Metadata` model (strides + `Option<Tiler>`):
+/// strides come from `base`, and `tile`, when present, drives the rank-expanded
+/// physical metadata applied after the buffer is written.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum LayoutSpec {
-    #[default]
-    RowMajor,
-    ColMajor,
-    Custom(Vec<usize>),
-    /// A tiled layout on top of a `base` stride layout.
-    Tiled {
-        base: Box<LayoutSpec>,
-        tile: TileSpec,
-    },
+pub struct LayoutSpec {
+    pub base: StrideSpec,
+    pub tile: Option<TileSpec>,
 }
 
 impl LayoutSpec {
-    /// Compose `base` with a tile spec.
-    pub fn tiled(base: LayoutSpec, tile: TileSpec) -> Self {
-        LayoutSpec::Tiled {
-            base: Box::new(base),
-            tile,
+    pub fn new(base: StrideSpec) -> Self {
+        Self { base, tile: None }
+    }
+
+    /// Compose a base stride spec with a tile spec.
+    pub fn tiled(base: StrideSpec, tile: TileSpec) -> Self {
+        Self {
+            base,
+            tile: Some(tile),
         }
     }
 
     /// The tile portion of this layout, if any.
     pub fn tile(&self) -> Option<&TileSpec> {
-        match self {
-            LayoutSpec::Tiled { tile, .. } => Some(tile),
-            _ => None,
-        }
-    }
-
-    /// The base [`StrideSpec`] underlying this layout. For non-tiled layouts
-    /// this is the layout itself; for `Tiled`, it's the wrapped base.
-    pub fn stride_spec(&self) -> StrideSpec {
-        match self {
-            LayoutSpec::RowMajor => StrideSpec::RowMajor,
-            LayoutSpec::ColMajor => StrideSpec::ColMajor,
-            LayoutSpec::Custom(s) => StrideSpec::Custom(s.clone()),
-            LayoutSpec::Tiled { base, .. } => base.stride_spec(),
-        }
+        self.tile.as_ref()
     }
 
     /// Compute the strides of the base (un-tiled) layout for `shape`.
     pub fn compute_strides(&self, shape: &Shape) -> Strides {
-        self.stride_spec().compute_strides(shape)
+        self.base.compute_strides(shape)
     }
 }
 
 impl From<StrideSpec> for LayoutSpec {
     fn from(spec: StrideSpec) -> Self {
-        match spec {
-            StrideSpec::RowMajor => LayoutSpec::RowMajor,
-            StrideSpec::ColMajor => LayoutSpec::ColMajor,
-            StrideSpec::Custom(s) => LayoutSpec::Custom(s),
-        }
+        Self::new(spec)
     }
 }
 
@@ -112,7 +92,7 @@ impl StrideSpec {
         let n = shape.len();
         match self {
             StrideSpec::RowMajor => {
-                assert!(n >= 2, "RowMajor requires at least 2 dimensions");
+                assert!(n >= 1, "RowMajor requires at least 1 dimension");
                 let mut strides = vec![0; n];
                 strides[n - 1] = 1;
                 for i in (0..n - 1).rev() {

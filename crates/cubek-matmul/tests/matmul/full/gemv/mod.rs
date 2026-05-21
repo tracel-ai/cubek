@@ -8,7 +8,6 @@ use cubecl::{
 };
 use cubek_matmul::{launch::Strategy, routines::BlueprintStrategy};
 
-use crate::matmul::layout_to_stride_spec;
 use cubek_matmul::{
     definition::MatmulGlobalElems,
     definition::{MatmulElems, MatmulIdent, MatmulProblem},

@@ -18,7 +18,7 @@ heavy = []
 extended = ["heavy"]
 full = ["extended", "benchmarks"]
 
-cpu-reference = ["dep:cubek-test-utils"]
+cpu-reference = ["dep:cubek-test-utils", "cubek-std/testing"]
 # Enables `pub mod benchmarks` — catalogues for the gemm, gemv, and
 # quantized_matmul subcategories. Off by default; the top-level `benchmarks`
 # crate turns it on.

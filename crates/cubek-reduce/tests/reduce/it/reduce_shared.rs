@@ -1,7 +1,7 @@
 use cubecl::{TestRuntime, prelude::*};
 use cubek_reduce::shared_sum;
 use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, HostDataVec, LayoutSpec, TestInput, TestOutcome,
+    ExecutionOutcome, HostData, HostDataType, HostDataVec, StrideSpec, TestInput, TestOutcome,
     assert_equals_approx,
 };
 
@@ -40,7 +40,7 @@ impl TestCase {
 
         let (input_handle, input_host) = TestInput::builder(client.clone(), self.shape.clone())
             .dtype(input_dtype)
-            .layout(LayoutSpec::Custom(self.stride.iter().copied().collect()))
+            .layout(StrideSpec::Custom(self.stride.iter().copied().collect()))
             .custom(self.input_raw_data())
             .generate_with_f32_host_data();
 
@@ -48,7 +48,7 @@ impl TestCase {
 
         let output_handle = TestInput::builder(client.clone(), cubecl::zspace::shape![1])
             .dtype(input_dtype)
-            .layout(LayoutSpec::Custom(vec![1]))
+            .layout(StrideSpec::Custom(vec![1]))
             .zeros()
             .generate();
 

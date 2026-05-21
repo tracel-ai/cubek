@@ -9,7 +9,7 @@ use cubecl::{
     zspace::shape,
 };
 use cubek_test_utils::{
-    HostData, HostDataType, LayoutSpec, TestInput, TileSpec, assert_equals_approx,
+    HostData, HostDataType, LayoutSpec, StrideSpec, TestInput, TileSpec, assert_equals_approx,
 };
 
 #[test]
@@ -30,7 +30,7 @@ fn read_rowmajor_tensor_as_tiled_layout() {
     // rank-expanded tiled layout, produced at build time.
     let tile = TileSpec::new(0, vec![2u16, 2]);
     let output_handle = TestInput::builder(client.clone(), shape.clone())
-        .layout(LayoutSpec::tiled(LayoutSpec::RowMajor, tile.clone()))
+        .layout(LayoutSpec::tiled(StrideSpec::RowMajor,tile.clone()))
         .zeros()
         .generate_without_host_data();
 
@@ -64,7 +64,7 @@ fn read_rowmajor_tensor_as_tiled_layout() {
     // visually as the tiled-physical 4x4 above. Tile it so the metadata's
     // rank-expanded shape matches the output for the comparison.
     let (_, expected_values) = TestInput::builder(client, shape)
-        .layout(LayoutSpec::tiled(LayoutSpec::RowMajor, tile))
+        .layout(LayoutSpec::tiled(StrideSpec::RowMajor,tile))
         .custom(expected_values)
         .generate_with_f32_host_data();
 

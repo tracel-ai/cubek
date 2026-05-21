@@ -111,17 +111,17 @@ fn seed_inputs(
 ) -> (Tensor, HostData, Tensor, HostData, Tensor, MatmulProblem) {
     let (lhs, lhs_data) = TestInput::builder(client.clone(), problem.lhs_shape.clone())
         .dtype(problem.global_dtypes.lhs)
-        .layout(layout_to_stride_spec(problem.lhs_layout))
+        .layout(problem.lhs_layout)
         .uniform(seed_lhs, -1., 1.)
         .generate_with_f32_host_data();
     let (rhs, rhs_data) = TestInput::builder(client.clone(), problem.rhs_shape.clone())
         .dtype(problem.global_dtypes.rhs)
-        .layout(layout_to_stride_spec(problem.rhs_layout))
+        .layout(problem.rhs_layout)
         .uniform(seed_rhs, -1., 1.)
         .generate_with_f32_host_data();
     let out = TestInput::builder(client.clone(), problem.out_shape.clone())
         .dtype(problem.global_dtypes.out)
-        .layout(layout_to_stride_spec(MatrixLayout::RowMajor))
+        .layout(MatrixLayout::RowMajor)
         .zeros()
         .generate_without_host_data();
 
@@ -262,9 +262,3 @@ pub fn matmul_cpu_reference(
     }
 }
 
-fn layout_to_stride_spec(layout: MatrixLayout) -> StrideSpec {
-    match layout {
-        MatrixLayout::RowMajor => StrideSpec::RowMajor,
-        MatrixLayout::ColMajor => StrideSpec::ColMajor,
-    }
-}
