@@ -261,4 +261,3 @@ pub fn matmul_cpu_reference(
         strides,
     }
 }
-

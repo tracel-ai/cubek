@@ -169,7 +169,9 @@ impl TestCase {
 
         let (input_handle, input_host) = TestInput::builder(client.clone(), self.shape.clone())
             .dtype(self.input_dtype)
-            .layout(StridedLayout::Explicit(self.stride.iter().copied().collect()))
+            .layout(StridedLayout::Explicit(
+                self.stride.iter().copied().collect(),
+            ))
             .uniform(1234, -1., 1.)
             .generate_with_f32_host_data();
 

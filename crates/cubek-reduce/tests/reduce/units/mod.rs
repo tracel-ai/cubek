@@ -170,13 +170,17 @@ fn test_topk_plane_topk_insert() {
 
     let (acc_handle, _acc_host) = TestInput::builder(client.clone(), acc_shape.clone())
         .dtype(input_dtype.clone())
-        .layout(StridedLayout::Explicit(acc_stride.iter().copied().collect()))
+        .layout(StridedLayout::Explicit(
+            acc_stride.iter().copied().collect(),
+        ))
         .custom(acc_data.clone())
         .generate_with_f32_host_data();
 
     let (item_handle, _item_host) = TestInput::builder(client.clone(), item_shape.clone())
         .dtype(input_dtype)
-        .layout(StridedLayout::Explicit(item_stride.iter().copied().collect()))
+        .layout(StridedLayout::Explicit(
+            item_stride.iter().copied().collect(),
+        ))
         .custom(item_data.clone())
         .generate_with_f32_host_data();
 
