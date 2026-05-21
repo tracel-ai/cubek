@@ -13,7 +13,7 @@ use cubecl::{
 use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, HostDataVec, Progress, StrideSpec, TestInput,
+    ExecutionOutcome, HostData, HostDataType, HostDataVec, Progress, StridedLayout, TestInput,
     ValidationResult, assert_equals_approx, launch_and_capture_outcome,
 };
 
@@ -327,7 +327,7 @@ pub fn conv_cpu_reference(
     }
 
     let out_shape: Shape = shape![n, out_h, out_w, out_channels];
-    let strides = StrideSpec::RowMajor.compute_strides(&out_shape);
+    let strides = StridedLayout::RowMajor.compute_strides(&out_shape);
 
     HostData {
         data: HostDataVec::F32(out),

@@ -127,7 +127,7 @@ pub enum DataKind {
 impl TestInput {
     /// Start a fluent builder for a test input.
     ///
-    /// Defaults: `dtype = f32`, `layout = StrideSpec::RowMajor`. Call
+    /// Defaults: `dtype = f32`, `layout = StridedLayout::RowMajor`. Call
     /// `.dtype(_)` / `.layout(_)` to override, then a finalizer such as
     /// `.arange()`,
     /// `.eye()`, `.zeros()`, `.uniform(seed, lo, hi)`, `.bernoulli(seed, p)`,
@@ -214,7 +214,10 @@ impl TestInput {
             self.base_spec.shape.clone(),
             self.base_spec.strides(),
             self.base_spec.dtype,
-            self.base_spec.layout.tile().cloned(),
+            self.base_spec
+                .layout
+                .tile()
+                .map(|(start_axis, tile_shape)| (start_axis, tile_shape.to_vec())),
         );
 
         let mut handle = match self.data_kind {
@@ -230,8 +233,8 @@ impl TestInput {
         handle.metadata.strides = strides;
         handle.dtype = dtype;
 
-        if let Some(tile) = tile {
-            *handle.metadata = handle.metadata.to_tiled(tile.start_axis, &tile.tile_size);
+        if let Some((start_axis, tile_shape)) = tile {
+            *handle.metadata = handle.metadata.to_tiled(start_axis, &tile_shape);
         }
 
         handle
@@ -289,10 +292,10 @@ pub enum Distribution {
 /// # Example
 ///
 /// ```ignore
-/// use cubek_test_utils::{TestInput, StrideSpec, Distribution};
+/// use cubek_test_utils::{TestInput, StridedLayout, Distribution};
 ///
 /// let (handle, host) = TestInput::builder(client, [4, 4])
-///     .layout(StrideSpec::ColMajor)
+///     .layout(StridedLayout::ColMajor)
 ///     .uniform( 0, -1.0, 1.0)
 ///     .generate_with_f32_host_data();
 /// ```

@@ -1,9 +1,7 @@
-mod tiled_tensor;
-
 use cubecl::zspace::shape;
 use cubecl::{TestRuntime, prelude::*};
 use cubek_test_utils::{
-    DataKind, HostData, HostDataType, StrideSpec, TestInput, ValidationResult,
+    DataKind, HostData, HostDataType, StridedLayout, TestInput, ValidationResult,
     assert_equals_approx, assert_equals_approx_in_slice, print_tensor,
 };
 
@@ -33,7 +31,7 @@ fn eye_handle_col_major() {
     let shape = [2, 3];
 
     let handle = TestInput::builder(client.clone(), shape)
-        .layout(StrideSpec::ColMajor)
+        .layout(StridedLayout::ColMajor)
         .eye()
         .generate();
 
@@ -76,7 +74,7 @@ fn arange_handle_col_major() {
     let shape = shape![2, 3];
 
     let handle = TestInput::builder(client.clone(), shape)
-        .layout(StrideSpec::ColMajor)
+        .layout(StridedLayout::ColMajor)
         .arange()
         .generate();
 
@@ -102,7 +100,7 @@ fn custom_handle_row_major_col_major() {
         .generate_with_f32_host_data();
 
     let (_, col_major) = TestInput::builder(client.clone(), shape![2, 3])
-        .layout(StrideSpec::ColMajor)
+        .layout(StridedLayout::ColMajor)
         .custom(contiguous_data)
         .generate_with_f32_host_data();
 
@@ -220,7 +218,7 @@ fn builder_matches_constructor() {
         client.clone(),
         shape![2, 3],
         f32::as_type_native_unchecked().storage_type(),
-        StrideSpec::RowMajor,
+        StridedLayout::RowMajor,
         DataKind::Arange { scale: None },
     )
     .f32_host_data();
@@ -236,7 +234,7 @@ fn builder_overrides_stride_and_dtype() {
 
     // Builder with explicit stride override should match the constructor.
     let from_builder = TestInput::builder(client.clone(), shape![2, 3])
-        .layout(StrideSpec::ColMajor)
+        .layout(StridedLayout::ColMajor)
         .arange()
         .f32_host_data();
 
@@ -244,7 +242,7 @@ fn builder_overrides_stride_and_dtype() {
         client.clone(),
         shape![2, 3],
         f32::as_type_native_unchecked().storage_type(),
-        StrideSpec::ColMajor,
+        StridedLayout::ColMajor,
         DataKind::Arange { scale: None },
     )
     .f32_host_data();
@@ -328,7 +326,7 @@ fn host_data_iter_respects_strides() {
     // the *logical* row-major order while resolving each cell through the
     // strides — so the values must match a row-major arange.
     let actual = TestInput::builder(client.clone(), shape![2, 3])
-        .layout(StrideSpec::ColMajor)
+        .layout(StridedLayout::ColMajor)
         .arange()
         .f32_host_data();
 

@@ -9,7 +9,7 @@ use cubecl::{
     std::tensor::TensorHandle,
     zspace::Shape,
 };
-use cubek_test_utils::{RunSamples, StrideSpec, TestInput};
+use cubek_test_utils::{RunSamples, StridedLayout, TestInput};
 
 use crate::eval::benchmarks::problem::FftProblem;
 use crate::eval::benchmarks::strategy::FftStrategy;
@@ -63,7 +63,7 @@ fn make_uniform(
     seed: u64,
 ) -> TensorHandle<TestRuntime> {
     TestInput::builder(client.clone(), Shape::from(shape))
-        .layout(StrideSpec::RowMajor)
+        .layout(StridedLayout::RowMajor)
         .dtype(dtype)
         .uniform(seed, 0., 1.)
         .generate_without_host_data()

@@ -97,7 +97,7 @@ impl MatrixLayout {
 }
 
 #[cfg(feature = "testing")]
-impl From<MatrixLayout> for cubek_test_utils::StrideSpec {
+impl From<MatrixLayout> for cubek_test_utils::StridedLayout {
     fn from(layout: MatrixLayout) -> Self {
         match layout {
             MatrixLayout::RowMajor => Self::RowMajor,
@@ -109,7 +109,7 @@ impl From<MatrixLayout> for cubek_test_utils::StrideSpec {
 #[cfg(feature = "testing")]
 impl From<MatrixLayout> for cubek_test_utils::LayoutSpec {
     fn from(layout: MatrixLayout) -> Self {
-        cubek_test_utils::StrideSpec::from(layout).into()
+        cubek_test_utils::StridedLayout::from(layout).into()
     }
 }
 
