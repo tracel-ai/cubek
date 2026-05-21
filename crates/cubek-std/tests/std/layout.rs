@@ -2,12 +2,15 @@ use cubecl::{
     TestRuntime,
     prelude::*,
     std::tensor::{
-        AsView, AsViewExpand, AsViewMut, AsViewMutExpand,
-        layout::{CoordsDyn, chain::Chain},
+        AsView, AsViewExpand,
+        layout::{
+            CoordsDyn,
+            tiled_tensor::{TiledTensorView, tiled_tensor_view},
+        },
     },
-    zspace::{metadata::Metadata, shape},
+    zspace::shape,
 };
-use cubek_std::layout::{DynamicRankStridedLayout, RowMajorLayout, TiledLayout};
+use cubek_std::layout::RowMajorLayout;
 use cubek_test_utils::{
     HostData, HostDataType, LayoutSpec, StridedLayout, TestInput, assert_equals_approx,
 };
@@ -38,13 +41,14 @@ fn read_rowmajor_tensor_as_tiled_layout() {
     let cube_dim = CubeDim::new_single();
     let vector_size = 1;
 
+    // `tiled_tensor_view` auto-derives the semantic-coordinate view from the
+    // tensor's metadata.tiler — no in-kernel chain construction.
     launch_read_tensor_as_tiled::launch::<TestRuntime>(
         &client,
         cube_count,
         cube_dim,
         input_handle.binding().into_tensor_arg(),
-        output_handle.clone().binding().into_tensor_arg(),
-        output_handle.metadata.as_ref().clone(),
+        tiled_tensor_view(output_handle.clone().binding()),
         matrix_len,
         dtype,
         vector_size,
@@ -76,45 +80,13 @@ fn read_rowmajor_tensor_as_tiled_layout() {
 #[cube(launch)]
 fn launch_read_tensor_as_tiled<N: Numeric, S: Size>(
     input: &Tensor<Vector<N, S>>,
-    output: &mut Tensor<Vector<N, S>>,
-    #[comptime] metadata: Metadata,
+    output: TiledTensorView<Vector<N, S>, ReadWrite>,
     #[comptime] matrix_len: usize,
     #[define(N)] _dtype: StorageType,
     #[define(S)] vector_size: usize,
 ) {
-    let tiler = metadata.tiler.clone().unwrap();
-
-    let mut physical_shape = CoordsDyn::new();
-    #[unroll]
-    for i in 0..metadata.shape.rank() {
-        physical_shape.push(comptime!(metadata.shape[i] as u32));
-    }
-
-    let mut physical_strides = CoordsDyn::new();
-    #[unroll]
-    for i in 0..metadata.strides.rank() {
-        physical_strides.push(comptime!(metadata.strides[i] as u32));
-    }
-
-    let mut tiles = CoordsDyn::new();
-    #[unroll]
-    for i in 0..tiler.tile_size.len() {
-        tiles.push(comptime!(tiler.tile_size[i] as u32));
-    }
-
-    // Semantic (rank R) -> physical (rank R + n) -> 1D buffer.
-    let semantic_to_physical =
-        TiledLayout::new(physical_shape.clone(), tiler.start_axis as usize, tiles);
-    let physical_to_buffer = DynamicRankStridedLayout::new(physical_shape, physical_strides);
-    let tiled_layout = Chain::<DynamicRankStridedLayout, TiledLayout>::new(
-        physical_to_buffer,
-        semantic_to_physical,
-    );
-
     let row_major = RowMajorLayout::new(matrix_len, matrix_len, vector_size);
-
     let input_view = input.view(row_major);
-    let output_view = output.view_mut(tiled_layout);
 
     #[unroll]
     for i in 0..matrix_len {
@@ -124,7 +96,7 @@ fn launch_read_tensor_as_tiled<N: Numeric, S: Size>(
             coords.push(i as u32);
             coords.push(j as u32);
             let value = input_view.read((i.runtime(), j.runtime()));
-            output_view.write(coords, value);
+            output.write(coords, value);
         }
     }
 }
