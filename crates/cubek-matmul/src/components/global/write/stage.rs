@@ -1,11 +1,11 @@
-use crate::components::stage::{
-    ContiguousTilingLayout, RowMajorTilingOrder, Stage, StageFamily, StridedStageMemory,
-    TilingLayout,
-};
+use crate::components::stage::{Stage, StageFamily, StridedStageMemory};
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 use cubek_std::{
     stage::StageMemoryConfig,
-    tile::{SharedTile, StridedTile, Tile, TileScope},
+    tile::{
+        ContiguousTilingLayout, RowMajorTilingOrder, SharedTile, StridedTile, Tile, TileScope,
+        TilingLayout,
+    },
 };
 
 pub type WriteTiling = ContiguousTilingLayout<RowMajorTilingOrder>;
@@ -21,7 +21,7 @@ impl StageFamily for PartitionedStageFamily {
 /// Layoutless stage for current writers. Tile only depends on the unit index, not the out tile.
 pub struct PartitionedStage<ES: Numeric, NS: Size> {
     /// Underlying shared memory
-    _smem: SharedMemory<Vector<ES, NS>>,
+    _smem: Shared<[Vector<ES, NS>]>,
     pub unit_tile: StridedTile<ES, NS>,
 }
 
@@ -53,6 +53,10 @@ impl<ES: Numeric, NS: Size> PartitionedStage<ES, NS> {
 #[cube]
 impl<ES: Numeric, NS: Size> Stage<ES> for PartitionedStage<ES, NS> {
     fn tile<Sc: TileScope>(this: &Self, _tile: Coords2d) -> Tile<ES, Sc> {
-        Tile::new_SharedMemory(SharedTile::wrap::<NS>(this.unit_tile.clone()))
+        Tile::new_SharedTile(SharedTile::wrap::<NS>(this.unit_tile.clone()))
+    }
+
+    fn as_stage_tile<Sc: TileScope>(_this: &Self) -> Tile<ES, Sc> {
+        Tile::new_None()
     }
 }

@@ -9,31 +9,31 @@ use crate::definition::{
 };
 use crate::launch::RuntimeConfig;
 use crate::{
-    components::global::memory::{GlobalMemoryConfig, ViewDirection},
-    components::global::multi_stage::EventLoadingMode,
-};
-use crate::{
-    components::global::{WriteTiling, read::PartialLoadingStrategy},
-    components::stage::StageConfig,
+    components::global::GlobalMatmulFamily,
+    components::global::read::PartialLoadingStrategy,
+    components::stage::StagePartitioner,
     components::{CubeDimResource, global::read::FullLoadingStrategy},
-    components::{global::GlobalMatmulFamily, stage},
     components::{global::MaxGlobalReaderPlanes, stage::NumStages},
     definition::TilingBlueprint,
 };
+use crate::{
+    components::global::memory::{GlobalMemoryConfig, ViewDirection},
+    components::global::multi_stage::EventLoadingMode,
+};
 use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_std::{MatrixLayout, tile::Strided};
+use cubek_std::MatrixLayout;
 use std::marker::PhantomData;
 
 /// Double buffering matmul family for any precision
 pub struct DoubleBufferingMatmulFamily<
-    SMM: stage::StageMatmulFamily,
+    SP: StagePartitioner,
     RC: RuntimeConfig,
     LL: PartialLoadingStrategy<RC>,
     RL: PartialLoadingStrategy<RC>,
     AL: FullLoadingStrategy<RC>,
     GW: GlobalWriterFamily,
 > {
-    _stage_matmul: PhantomData<SMM>,
+    _sp: PhantomData<SP>,
     _rc: PhantomData<RC>,
     _lhs_loading: PhantomData<LL>,
     _rhs_loading: PhantomData<RL>,
@@ -41,30 +41,18 @@ pub struct DoubleBufferingMatmulFamily<
     _writer: PhantomData<GW>,
 }
 
-impl<SMM, RC: RuntimeConfig, LL, RL, AL, GW> GlobalMatmulFamily<RC>
-    for DoubleBufferingMatmulFamily<SMM, RC, LL, RL, AL, GW>
+impl<SP, RC: RuntimeConfig, LL, RL, AL, GW> GlobalMatmulFamily<RC>
+    for DoubleBufferingMatmulFamily<SP, RC, LL, RL, AL, GW>
 where
-    SMM: stage::StageMatmulFamily<
-            LhsStage = LL::Stage,
-            RhsStage = RL::Stage,
-            AccStage = Option<AL::Stage>,
-            OutStage = GW::Stage,
-        >,
-    LL: PartialLoadingStrategy<RC, TileKind = Strided>,
-    RL: PartialLoadingStrategy<RC, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
-    AL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
+    SP: StagePartitioner,
+    LL: PartialLoadingStrategy<RC>,
+    RL: PartialLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
+    AL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
     GW: GlobalWriterFamily,
 {
-    type Matmul<MP: MatmulTypes> = DoubleBufferingMatmul<
-        MP,
-        SMM::Matmul<MP, LL::TilingLayout, RL::TilingLayout, AL::TilingLayout, WriteTiling>,
-        RC,
-        LL,
-        RL,
-        AL,
-        GW::Writer<MP::Acc>,
-    >;
-    type Config = SharedGlobalMatmulConfig<SMM::Config>;
+    type Matmul<MP: MatmulTypes> =
+        DoubleBufferingMatmul<MP, SP, RC, LL, RL, AL, GW::Writer<MP::Acc>>;
+    type Config = SharedGlobalMatmulConfig;
 
     fn expand_config(
         device_props: &DeviceProperties,
@@ -76,7 +64,7 @@ where
         let plane_flow_config =
             Self::cubedim_resource(blueprint, dtypes, vector_sizes)?.as_specialized(plane_dim)?;
 
-        let stage_config = SMM::expand_config(
+        let stage_config = SP::KIND.expand_stage_matmul(
             device_props,
             blueprint,
             plane_flow_config,
@@ -192,7 +180,9 @@ where
         let plane_flow_config = make_plane_flow_config(
             blueprint.load_flows,
             max_global_readers,
-            SMM::cubedim_resource(blueprint)?.num_planes(blueprint.plane_dim)?,
+            SP::KIND
+                .cubedim_resource(blueprint)?
+                .num_planes(blueprint.plane_dim)?,
         )?;
 
         Ok(CubeDimResource::Specialized(plane_flow_config))
@@ -208,6 +198,6 @@ where
         LL::validate_with_problem(problem, dtypes, StageIdent::Lhs)?;
         RL::validate_with_problem(problem, dtypes, StageIdent::Rhs)?;
 
-        SMM::validate_blueprint(client, blueprint, dtypes, vector_sizes)
+        SP::KIND.validate_blueprint(client, blueprint, dtypes, vector_sizes)
     }
 }

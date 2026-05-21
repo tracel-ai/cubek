@@ -9,7 +9,7 @@ const BICUBIC_TOLERANCE: f32 = 0.00001;
 fn test_interpolate_bicubic_identity() {
     let client = TestRuntime::client(&Default::default());
     let problem = make_problem(
-        [2, 4, 4, 2],
+        [2, 4, 4, 16],
         [4, 4],
         InterpolateOptions::new(InterpolateMode::Bicubic),
     );

@@ -4,6 +4,11 @@ use crate::components::global::{
     multi_stage::LoadMaxRoundPlaneCount, read::async_copy::async_copy_from,
 };
 use crate::{
+    components::global::memory::GlobalIterator,
+    components::stage::{StridedStageFamily, StridedStageMemory},
+    definition::{MatmulElems, MatmulProblem, StageIdent},
+};
+use crate::{
     components::global::read::{
         FullLoadingStrategy, async_barrier::AsyncCopy, async_copy::ASYNC_COPY_WIDTH,
         tiled::TiledLayout,
@@ -15,18 +20,15 @@ use crate::{
     components::global::read::{validate_async_copy, validate_async_copy_with_problem},
     components::global::{GlobalReaderConfig, PlaneFlowPartition},
 };
-use crate::{
-    components::stage::StridedStageFamily,
-    components::stage::{ContiguousTilingLayout, StridedStageMemory, TilingOrder},
-    components::{global::memory::GlobalIterator, stage::TilingValidation},
-    definition::{MatmulElems, MatmulProblem, StageIdent},
-};
 use cubecl::{
     prelude::*,
     std::tensor::layout::{Layout, LayoutExpand},
     {ir::DeviceProperties, prelude::barrier::Barrier},
 };
-use cubek_std::{InvalidConfigError, tile::Strided};
+use cubek_std::{
+    InvalidConfigError,
+    tile::{ContiguousTilingLayout, TilingOrder, TilingValidation},
+};
 
 use super::{LoadingJob, LoadingValidation, ReaderMode};
 
@@ -108,8 +110,6 @@ impl<TO: TilingOrder, RC: RuntimeConfig> FullLoadingStrategy<RC> for AsyncFullCy
     type SyncStrategy = AsyncCopy;
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = AsyncFullCyclicJob;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
         #[comptime] config: GlobalReaderConfig,

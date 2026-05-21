@@ -9,7 +9,7 @@ pub(crate) use lanczos3::reference_lanczos3;
 pub(crate) use nearest::reference_nearest;
 
 use super::{f32_storage_type, make_random_f32_host, make_zero_handle, output_shape_for};
-use crate::definition::{InterpolateForwardProblem, InterpolateOptions};
+use crate::definition::{InterpolateForwardProblem, InterpolateMode, InterpolateOptions};
 use cubecl::{TestRuntime, client::ComputeClient};
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, Progress, launch_and_capture_outcome,
@@ -34,7 +34,7 @@ pub fn strategy_result(
             c,
             input_handle.clone().binding(),
             output_handle.clone().binding(),
-            problem.options.clone(),
+            problem.options,
             dtype,
         )
         .into()
@@ -81,16 +81,16 @@ pub fn reference_for_interpolation_mode(
     progress: Option<&Progress>,
 ) -> HostData {
     match options.mode {
-        crate::definition::InterpolateMode::Nearest => {
-            reference_nearest(input, output_shape, options.align_corners, progress)
+        InterpolateMode::Nearest(nearest_mode) => {
+            reference_nearest(input, output_shape, nearest_mode, progress)
         }
-        crate::definition::InterpolateMode::Bilinear => {
+        InterpolateMode::Bilinear => {
             reference_bilinear(input, output_shape, options.align_corners, progress)
         }
-        crate::definition::InterpolateMode::Bicubic => {
+        InterpolateMode::Bicubic => {
             reference_bicubic(input, output_shape, options.align_corners, progress)
         }
-        crate::definition::InterpolateMode::Lanczos3 => {
+        InterpolateMode::Lanczos3 => {
             reference_lanczos3(input, output_shape, options.align_corners, progress)
         }
     }

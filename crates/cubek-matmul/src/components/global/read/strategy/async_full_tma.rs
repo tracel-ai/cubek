@@ -1,11 +1,10 @@
 use crate::{
+    components::global::memory::GlobalIterator,
+    components::global::multi_stage::LoadMaxRoundPlaneCount,
     components::global::read::{FullLoadingStrategy, validate_tma_with_problem},
     components::global::read::{validate_async_barrier, validate_tma},
     components::global::{PlaneFlowPartition, read::async_tma::AsyncTma},
-    components::stage::StridedStageFamily,
-    components::stage::StridedStageMemory,
-    components::{global::memory::GlobalIterator, stage::TilingValidation},
-    components::{global::multi_stage::LoadMaxRoundPlaneCount, stage::TmaTilingLayout},
+    components::stage::{StridedStageFamily, StridedStageMemory},
     definition::{MatmulElems, MatmulProblem, StageIdent},
     {components::global::GlobalReaderConfig, launch::RuntimeConfig},
 };
@@ -15,7 +14,7 @@ use cubecl::{
 };
 use cubek_std::{
     stage::SwizzleMode,
-    tile::Strided,
+    tile::{TilingValidation, TmaTilingLayout},
     {InvalidConfigError, MatrixLayout},
 };
 
@@ -68,8 +67,6 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for AsyncFullTmaLoading {
     type SyncStrategy = AsyncTma;
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = AsyncFullTmaJob;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
         #[comptime] config: GlobalReaderConfig,

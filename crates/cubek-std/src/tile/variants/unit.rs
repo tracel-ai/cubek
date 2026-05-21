@@ -2,10 +2,9 @@ use cubecl::std::tensor::layout::Coords2d;
 use cubecl::{self, prelude::*};
 
 use crate::tile::{
-    LOGIT_MASKED, Plane, RowWise, Tile, TileKind, TileKindExpand,
+    LOGIT_MASKED, Plane, RowWise, StridedTile, Tile, TileKind, TileKindExpand,
     mask::{Mask, MaskExpand},
     scope::TileScope,
-    variants::strided::StridedTile,
 };
 
 #[derive(CubeType)]

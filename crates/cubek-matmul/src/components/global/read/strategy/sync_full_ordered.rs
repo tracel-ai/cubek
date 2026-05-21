@@ -1,9 +1,7 @@
 use crate::{
+    components::global::PlaneFlowPartition,
     components::global::read::validate_swizzle_atom_size,
     components::global::{multi_stage::LoadMaxRoundPlaneCount, read::sync::Synchronous},
-    components::stage::ContiguousTilingLayout,
-    components::stage::OrderedTilingOrder,
-    components::{global::PlaneFlowPartition, stage::TilingValidation},
     components::{global::read::FullLoadingStrategy, stage::StridedStageFamily},
     definition::MatmulElems,
     definition::MatmulProblem,
@@ -12,7 +10,7 @@ use crate::{
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::{
-    tile::Strided,
+    tile::{ContiguousTilingLayout, OrderedTilingOrder, TilingValidation},
     {FormattedConfigError, InvalidConfigError},
 };
 
@@ -110,8 +108,6 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncFullOrderedLoading {
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> =
         sync_full_tilewise::SyncFullTilewiseJob;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
         #[comptime] config: GlobalReaderConfig,

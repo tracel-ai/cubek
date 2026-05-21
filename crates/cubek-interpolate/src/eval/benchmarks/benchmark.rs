@@ -9,8 +9,7 @@ use cubecl::{
 };
 use cubek_test_utils::{RunSamples, TestInput};
 
-use crate::definition::InterpolateProblem;
-use crate::eval::benchmarks::strategy::InterpolateStrategy;
+use crate::{definition::InterpolateProblem, eval::benchmarks::strategy::InterpolateStrategy};
 use crate::{interpolate, interpolate_backward};
 
 pub fn bench(
@@ -72,7 +71,7 @@ impl Benchmark for InterpolateBench {
                     &self.client,
                     input.binding(),
                     output.clone().binding(),
-                    prob.options.clone(),
+                    prob.options,
                     self.dtype,
                 )
                 .map_err(|err| format!("{err}"))?;
@@ -98,7 +97,7 @@ impl Benchmark for InterpolateBench {
                     backward_input.binding(),
                     input.clone().binding(),
                     output.clone().binding(),
-                    prob.options.clone(),
+                    prob.options,
                     self.dtype,
                 )
                 .map_err(|err| format!("{err}"))?;

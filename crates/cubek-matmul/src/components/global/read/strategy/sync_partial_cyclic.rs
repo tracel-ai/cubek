@@ -1,18 +1,19 @@
 use std::marker::PhantomData;
 
 use crate::{
+    components::global::memory::GlobalIterator,
     components::global::read::{PartialLoadingStrategy, tiled::TiledLayout},
     components::global::{GlobalReaderConfig, PlaneFlowPartition},
     components::global::{multi_stage::LoadMaxRoundPlaneCount, read::sync::Synchronous},
-    components::stage::StridedStageFamily,
-    components::stage::StridedStageMemory,
-    components::stage::{ContiguousTilingLayout, TilingOrder},
-    components::{global::memory::GlobalIterator, stage::TilingValidation},
+    components::stage::{StridedStageFamily, StridedStageMemory},
     definition::{MatmulElems, MatmulProblem, StageIdent},
     {components::global::read::validate_swizzle_atom_size, launch::RuntimeConfig},
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_std::{InvalidConfigError, tile::Strided};
+use cubek_std::{
+    InvalidConfigError,
+    tile::{ContiguousTilingLayout, TilingOrder, TilingValidation},
+};
 
 use super::{LoadingJob, LoadingValidation, ReaderMode};
 
@@ -88,8 +89,6 @@ impl<TO: TilingOrder, RC: RuntimeConfig> PartialLoadingStrategy<RC>
     type TilingLayout = ContiguousTilingLayout<TO>;
     type SyncStrategy = Synchronous;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = SyncPartialCyclicJob;
 
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
