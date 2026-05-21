@@ -33,7 +33,7 @@ pub fn reference_nearest(
 
         let c = out_coord[3];
 
-        data[linear] = input.get_f32(&[b, y as usize, x as usize, c]);
+        data[linear] = input.get_f32(&[b, y, x, c]);
 
         if let Some(p) = progress {
             p.bump();
