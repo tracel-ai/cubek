@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use cubecl::{
     prelude::*,
     {cmma::MmaDefinition, ir::MatrixIdent},
@@ -7,77 +5,45 @@ use cubecl::{
 
 use crate::{
     MatrixLayout, TileSize, as_cmma_layout, from_cmma_layout,
-    tile::variants::{Filled, LoadMethod, MmaIOConfig, StageTileKind, Strided, StridedTile},
+    tile::{
+        StridedTile,
+        variants::{LoadMethod, MmaIOConfig},
+    },
 };
 
-/// Generic CMMA reader over any tile type
+/// Load an MMA fragment from a strided tile.
 #[cube]
-pub trait MmaFragmentReader {
-    type TileKind: StageTileKind;
+pub fn mma_load_strided<
+    E: Numeric,
+    NE: Size,
+    V: Numeric,
+    NV: Size,
+    A: Numeric,
+    B: Numeric,
+    CD: Numeric,
+>(
+    tile: &StridedTile<V, NV>,
+    fragment: &mut Array<Vector<E, NE>>,
+    def: MmaDefinition<A, B, CD>,
+    #[comptime] ident: MatrixIdent,
+    #[comptime] layout: MatrixLayout,
+    #[comptime] tile_size: TileSize,
+    #[comptime] config: MmaIOConfig,
+) {
+    let vector_layout = def.vector_layout(ident);
 
-    /// Fill a fragment with data, with the implementation depending on the tile kind.
-    fn load_fragment<
-        E: Numeric,
-        N: Size,
-        V: Numeric,
-        NV: Size,
-        A: Numeric,
-        B: Numeric,
-        CD: Numeric,
-    >(
-        tile: &<Self::TileKind as StageTileKind>::Tile<V, NV>,
-        fragment: &mut Array<Vector<E, N>>,
-        def: &MmaDefinition<A, B, CD>,
-        #[comptime] ident: MatrixIdent,
-        #[comptime] layout: MatrixLayout,
-        #[comptime] tile_size: TileSize,
-        #[comptime] config: MmaIOConfig,
-    );
-}
+    let transposed = comptime![as_cmma_layout(layout) != vector_layout];
 
-/// Reader to load the manual MMA registers. Tile kind determines implementation.
-#[derive(CubeType)]
-pub struct MmaStageReader<Kind: StageTileKind> {
-    #[cube(comptime)]
-    _ty: PhantomData<Kind>,
-}
-
-#[cube]
-impl MmaFragmentReader for MmaStageReader<Strided> {
-    type TileKind = Strided;
-
-    fn load_fragment<
-        E: Numeric,
-        NE: Size,
-        V: Numeric,
-        NV: Size,
-        A: Numeric,
-        B: Numeric,
-        CD: Numeric,
-    >(
-        tile: &StridedTile<V, NV>,
-        fragment: &mut Array<Vector<E, NE>>,
-        def: &MmaDefinition<A, B, CD>,
-        #[comptime] ident: MatrixIdent,
-        #[comptime] layout: MatrixLayout,
-        #[comptime] tile_size: TileSize,
-        #[comptime] config: MmaIOConfig,
-    ) {
-        let vector_layout = def.vector_layout(ident);
-
-        let transposed = comptime![as_cmma_layout(layout) != vector_layout];
-
-        match config.load_method(ident) {
-            LoadMethod::Manual => {
-                if transposed {
-                    load_manual_transposed(tile, fragment, def, ident, layout);
-                } else {
-                    load_manual_plain(tile, fragment, def, ident, layout);
-                }
+    match config.load_method(ident) {
+        LoadMethod::Manual => {
+            if transposed {
+                load_manual_transposed(tile, fragment, def, ident, layout);
+            } else {
+                load_manual_plain(tile, fragment, def, ident, layout);
             }
-            LoadMethod::LoadMatrix => {
-                load_ldmatrix(tile, fragment, def, transposed, ident, layout, tile_size);
-            }
+        }
+        LoadMethod::LoadMatrix => {
+            load_ldmatrix(tile, fragment, def, transposed, ident, layout, tile_size);
         }
     }
 }
@@ -94,7 +60,7 @@ fn load_manual_transposed<
 >(
     tile: &StridedTile<V, NV>,
     fragment: &mut Array<Vector<E, N>>,
-    def: &MmaDefinition<A, B, CD>,
+    def: MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
 ) {
@@ -138,7 +104,7 @@ fn load_manual_plain<
 >(
     tile: &StridedTile<V, NV>,
     fragment: &mut Array<Vector<E, N>>,
-    def: &MmaDefinition<A, B, CD>,
+    def: MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
 ) {
@@ -176,7 +142,7 @@ fn load_manual_plain<
 fn load_ldmatrix<E: Numeric, N: Size, V: Numeric, NV: Size, A: Numeric, B: Numeric, CD: Numeric>(
     tile: &StridedTile<V, NV>,
     fragment: &mut Array<Vector<E, N>>,
-    def: &MmaDefinition<A, B, CD>,
+    def: MmaDefinition<A, B, CD>,
     #[comptime] transposed: bool,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
@@ -207,7 +173,7 @@ fn load_ldmatrix<E: Numeric, N: Size, V: Numeric, NV: Size, A: Numeric, B: Numer
 #[cube]
 pub(crate) fn ldmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     stride: u32,
-    def: &MmaDefinition<A, B, CD>,
+    def: MmaDefinition<A, B, CD>,
     #[comptime] stage_vector_size: VectorSize,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
@@ -256,78 +222,19 @@ pub(crate) fn ldmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     start / stage_vector_size as u32
 }
 
+/// Fill every vector slot of the MMA fragment with `value`.
 #[cube]
-impl MmaFragmentReader for MmaStageReader<Filled> {
-    type TileKind = Filled;
+pub fn mma_fill_fragment<E: Numeric, N: Size, V: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
+    value: &V,
+    fragment: &mut Array<Vector<E, N>>,
+    def: MmaDefinition<A, B, CD>,
+    #[comptime] ident: MatrixIdent,
+) {
+    let num_vectors = def.vectors_per_lane(ident);
+    let value = Vector::<E, N>::cast_from(*value);
 
-    fn load_fragment<
-        E: Numeric,
-        N: Size,
-        V: Numeric,
-        NV: Size,
-        A: Numeric,
-        B: Numeric,
-        CD: Numeric,
-    >(
-        value: &V,
-        fragment: &mut Array<Vector<E, N>>,
-        def: &MmaDefinition<A, B, CD>,
-        #[comptime] ident: MatrixIdent,
-        #[comptime] _layout: MatrixLayout,
-        #[comptime] _tile_size: TileSize,
-        #[comptime] _config: MmaIOConfig,
-    ) {
-        let num_vectors = def.vectors_per_lane(ident);
-        let value = Vector::<E, N>::cast_from(*value);
-
-        #[unroll]
-        for i in 0..num_vectors {
-            fragment[i] = value;
-        }
-    }
-}
-
-#[cube]
-impl<Inner: StageTileKind> MmaFragmentReader for MmaStageReader<Option<Inner>>
-where
-    MmaStageReader<Inner>: MmaFragmentReader<TileKind = Inner>,
-{
-    type TileKind = Option<Inner>;
-
-    fn load_fragment<
-        E: Numeric,
-        N: Size,
-        V: Numeric,
-        NV: Size,
-        A: Numeric,
-        B: Numeric,
-        CD: Numeric,
-    >(
-        tile: &ComptimeOption<Inner::Tile<V, NV>>,
-        fragment: &mut Array<Vector<E, N>>,
-        def: &MmaDefinition<A, B, CD>,
-        #[comptime] ident: MatrixIdent,
-        #[comptime] layout: MatrixLayout,
-        #[comptime] tile_size: TileSize,
-        #[comptime] config: MmaIOConfig,
-    ) {
-        #[comptime]
-        #[comptime]
-        match tile {
-            ComptimeOption::Some(tile) => MmaStageReader::<Inner>::load_fragment(
-                tile, fragment, def, ident, layout, tile_size, config,
-            ),
-            ComptimeOption::None => {
-                MmaStageReader::<Filled>::load_fragment::<E, N, V, NV, A, B, CD>(
-                    &V::from_int(0),
-                    fragment,
-                    def,
-                    ident,
-                    layout,
-                    tile_size,
-                    config,
-                )
-            }
-        }
+    #[unroll]
+    for i in 0..num_vectors {
+        fragment[i] = value;
     }
 }

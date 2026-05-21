@@ -9,16 +9,12 @@ use crate::tile::{Plane, RowWise, Tile, TileExpand, TileKind, TileKindExpand};
 /// Value chosen to fit within f16 range (~-65,504 max).
 pub const LOGIT_MASKED: f32 = -6e4;
 
-/// Comptime descriptor for the row-shape used by online softmax. Determines
-/// how many rows per unit each running-state vector holds.
-///
-/// - `Direct { num_rows_per_unit }` — used with `Tile::Unit` or `Tile::Register`
-///   when each unit owns its own copy of the tile.
-/// - `Plane { inner_layout }` — used with `Tile::WhiteboxFragment` or `Tile::Bounce`,
-///   where the inner layout determines how many rows each unit covers.
+/// Row-shape descriptor for online softmax.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum SoftmaxKind {
+    /// `Tile::Unit` / `Tile::Register`: each unit owns its full tile.
     Direct { num_rows_per_unit: u32 },
+    /// `Tile::WhiteboxFragment` / `Tile::Bounce`: plane-fragmented.
     Plane { inner_layout: InnerLayout },
 }
 
@@ -34,7 +30,7 @@ impl SoftmaxKind {
     }
 }
 
-/// Initial running state `(m, l)` for the online softmax over a single tile row.
+/// Initial `(m, l)` running state for online softmax.
 #[cube]
 pub fn softmax_init_state<E: Float>(
     #[comptime] num_rows_per_unit: u32,
@@ -47,9 +43,8 @@ pub fn softmax_init_state<E: Float>(
 
 #[cube]
 impl<Acc: Float> Tile<Acc, Plane> {
-    /// Online softmax update over a single attention tile, fused with the
-    /// precision-cast write into a value-matmul lhs tile. Each arm delegates
-    /// to a `softmax` method on the variant's data struct.
+    /// Online softmax update fused with the precision-cast write into the
+    /// value-matmul lhs tile.
     pub fn softmax<Lhs: Float, M: Mask>(
         &mut self,
         mask: &M,
@@ -72,8 +67,7 @@ impl<Acc: Float> Tile<Acc, Plane> {
         }
     }
 
-    /// Copies `self` into `dest` (a stage-side strided/shared tile in the
-    /// caller's downstream write path).
+    /// Copy `self` into `dest`.
     pub fn write_results<DE: Float, DS: Size>(&self, dest: &mut Tile<DE, Plane>) {
         dest.copy_from::<Acc, DS, Acc, Acc, Acc>(self, StageIdent::Out);
     }

@@ -1,106 +1,70 @@
 use cubecl::prelude::*;
 
 use crate::{
-    MatrixLayout, StageIdent, SwizzleModes, TileSize,
-    tile::{Tile, TileKind, TileKindExpand, TileScope, variants::strided::SharedTile},
+    MatrixLayout, StageIdent, TileSize,
+    tile::{SharedTile, Tile, TileKind, TileKindExpand, TileScope},
 };
 
+/// Interleaved-on-k tile. Holds just the minimal comptime data the body uses
+/// (`tile_size` and `plane_dim`); the matmul-level configuration (and any
+/// metadata not consumed by the tile body, like swizzle modes) lives in
+/// cubek-matmul as `InterleavedMatmul`.
 #[derive(CubeType)]
 pub struct InterleavedTile<N: Numeric> {
     pub data: Array<N>,
     #[cube(comptime)]
     pub matrix_layout: MatrixLayout,
     #[cube(comptime)]
-    pub config: InterleavedMatmul,
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-pub struct InterleavedMatmul {
     pub tile_size: TileSize,
+    #[cube(comptime)]
     pub plane_dim: u32,
-    pub swizzle_modes: SwizzleModes,
-}
-
-impl InterleavedMatmul {
-    pub fn new(tile_size: TileSize, plane_dim: u32, swizzle_modes: SwizzleModes) -> Self {
-        Self {
-            tile_size,
-            plane_dim,
-            swizzle_modes,
-        }
-    }
-
-    pub fn elements_per_unit_m(&self) -> usize {
-        self.tile_size.m() as usize
-    }
-
-    pub fn elements_per_unit_n(&self) -> usize {
-        self.tile_size.n() as usize
-    }
-
-    pub fn local_tile_size(&self) -> TileSize {
-        TileSize {
-            m: self.tile_size.m(),
-            n: self.tile_size.n(),
-            k: self.tile_size.k(),
-        }
-    }
-
-    pub fn elements_per_unit_k(&self) -> usize {
-        let k = self.tile_size.k() as usize;
-        let plane_dim = self.plane_dim as usize;
-        assert!(
-            k.is_multiple_of(plane_dim),
-            "k must be divisible by plane_dim. Got k={:?}, plane_dim={:?}",
-            k,
-            plane_dim
-        );
-
-        k / plane_dim
-    }
 }
 
 #[cube]
 pub fn interleaved_allocate_lhs<L: Numeric, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: InterleavedMatmul,
+    #[comptime] tile_size: TileSize,
+    #[comptime] plane_dim: u32,
 ) -> Tile<L, Sc> {
-    let m = config.tile_size.m();
-    let k = config.tile_size.k();
-    let plane_dim = config.plane_dim;
+    let m = tile_size.m();
+    let k = tile_size.k();
     Tile::from_kind(TileKind::new_Interleaved(InterleavedTile::<L> {
         data: Array::new((m * (k / plane_dim)) as usize),
         matrix_layout: layout,
-        config,
+        tile_size,
+        plane_dim,
     }))
 }
 
 #[cube]
 pub fn interleaved_allocate_rhs<R: Numeric, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: InterleavedMatmul,
+    #[comptime] tile_size: TileSize,
+    #[comptime] plane_dim: u32,
 ) -> Tile<R, Sc> {
-    let n = config.tile_size.n();
-    let k = config.tile_size.k();
-    let plane_dim = config.plane_dim;
+    let n = tile_size.n();
+    let k = tile_size.k();
     Tile::from_kind(TileKind::new_Interleaved(InterleavedTile::<R> {
         data: Array::new(((k / plane_dim) * n) as usize),
         matrix_layout: layout,
-        config,
+        tile_size,
+        plane_dim,
     }))
 }
 
 #[cube]
 pub fn interleaved_allocate_acc<A: Numeric, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: InterleavedMatmul,
+    #[comptime] tile_size: TileSize,
+    #[comptime] plane_dim: u32,
 ) -> Tile<A, Sc> {
-    let m = config.tile_size.m();
-    let n = config.tile_size.n();
+    let m = tile_size.m();
+    let n = tile_size.n();
     Tile::from_kind(TileKind::new_Interleaved(InterleavedTile::<A> {
         data: Array::new((m * n) as usize),
         matrix_layout: layout,
-        config,
+        tile_size,
+        plane_dim,
     }))
 }
 
@@ -120,7 +84,8 @@ impl<A: Numeric> InterleavedTile<A> {
             rhs.matrix_layout,
             &mut self.data,
             self.matrix_layout,
-            self.config,
+            self.tile_size,
+            self.plane_dim,
         );
     }
 }
@@ -135,15 +100,18 @@ impl<N: Numeric> InterleavedTile<N> {
         #[comptime] ident: StageIdent,
     ) {
         match &source.kind {
-            TileKind::SharedMemory(shared) => {
+            TileKind::SharedTile(shared) => {
                 interleaved_load_from_shared::<SE, SS, N>(
                     shared,
                     &mut self.data,
-                    self.config,
+                    self.tile_size,
+                    self.plane_dim,
                     ident,
                 );
             }
-            TileKind::None => interleaved_load_zeros::<N>(&mut self.data, self.config),
+            TileKind::None => {
+                interleaved_load_zeros::<N>(&mut self.data, self.tile_size);
+            }
             TileKind::Cmma(_)
             | TileKind::Mma(_)
             | TileKind::Register(_)
@@ -151,16 +119,18 @@ impl<N: Numeric> InterleavedTile<N> {
             | TileKind::Interleaved(_)
             | TileKind::Unit(_)
             | TileKind::WhiteboxFragment(_)
+            | TileKind::RowWise(_)
             | TileKind::Bounce(_)
             | TileKind::Stage(_)
-            | TileKind::Partition(_) => {
+            | TileKind::Partition(_)
+            | TileKind::Pipelined(_) => {
                 panic!("InterleavedTile::copy_from: unsupported source variant")
             }
         }
     }
 
     pub fn init_zero(&mut self) {
-        interleaved_load_zeros::<N>(&mut self.data, self.config);
+        interleaved_load_zeros::<N>(&mut self.data, self.tile_size);
     }
 }
 
@@ -169,6 +139,7 @@ impl<N: Numeric> InterleavedTile<N> {
 // ===========================================================================
 
 #[cube]
+#[allow(clippy::too_many_arguments)]
 pub fn interleaved_execute<L: Numeric, R: Numeric, A: Numeric>(
     lhs: &Array<L>,
     #[comptime] lhs_layout: MatrixLayout,
@@ -176,12 +147,13 @@ pub fn interleaved_execute<L: Numeric, R: Numeric, A: Numeric>(
     #[comptime] rhs_layout: MatrixLayout,
     acc: &mut Array<A>,
     #[comptime] _acc_layout: MatrixLayout,
-    #[comptime] config: InterleavedMatmul,
+    #[comptime] tile_size: TileSize,
+    #[comptime] plane_dim: u32,
 ) {
-    let m = config.tile_size.m() as usize;
-    let n = config.tile_size.n() as usize;
-    let k = config.tile_size.k() as usize;
-    let plane_dim = config.plane_dim as usize;
+    let m = tile_size.m() as usize;
+    let n = tile_size.n() as usize;
+    let k = tile_size.k() as usize;
+    let plane_dim = plane_dim as usize;
     let local_k = k / plane_dim;
 
     let (lhs_row_count, lhs_col_count) = (m, local_k);
@@ -211,17 +183,18 @@ pub fn interleaved_execute<L: Numeric, R: Numeric, A: Numeric>(
 pub fn interleaved_load_from_shared<E: Numeric, ES: Size, N: Numeric>(
     shared: &SharedTile<E>,
     arr: &mut Array<N>,
-    #[comptime] config: InterleavedMatmul,
+    #[comptime] tile_size: TileSize,
+    #[comptime] plane_dim: u32,
     #[comptime] ident: StageIdent,
 ) {
     let shared = shared.view::<ES>();
     let shared = &shared;
     match ident {
         StageIdent::Lhs | StageIdent::Rhs => {
-            let m = config.tile_size.m() as usize;
-            let n = config.tile_size.n() as usize;
-            let k = config.tile_size.k() as usize;
-            let plane_dim = config.plane_dim as usize;
+            let m = tile_size.m() as usize;
+            let n = tile_size.n() as usize;
+            let k = tile_size.k() as usize;
+            let plane_dim = plane_dim as usize;
             let k_local = k / plane_dim;
 
             let shared_layout = comptime!(shared.layout);
@@ -270,12 +243,9 @@ pub fn interleaved_load_from_shared<E: Numeric, ES: Size, N: Numeric>(
 }
 
 #[cube]
-pub fn interleaved_load_zeros<N: Numeric>(
-    arr: &mut Array<N>,
-    #[comptime] config: InterleavedMatmul,
-) {
-    let m = config.tile_size.m() as usize;
-    let n = config.tile_size.n() as usize;
+pub fn interleaved_load_zeros<N: Numeric>(arr: &mut Array<N>, #[comptime] tile_size: TileSize) {
+    let m = tile_size.m() as usize;
+    let n = tile_size.n() as usize;
     let size = m * n;
     for i in 0..size {
         arr[i] = N::from_int(0);
@@ -286,12 +256,12 @@ pub fn interleaved_load_zeros<N: Numeric>(
 pub fn interleaved_write_to_shared<E: Numeric, ES: Size, A: Numeric>(
     shared: &mut SharedTile<E>,
     arr: &Array<A>,
-    #[comptime] config: InterleavedMatmul,
+    #[comptime] tile_size: TileSize,
 ) {
     let mut shared = shared.view::<ES>();
     let shared = &mut shared;
-    let m = config.tile_size.m();
-    let n = config.tile_size.n();
+    let m = tile_size.m();
+    let n = tile_size.n();
     let out_vector_size = shared.container.vector_size().comptime() as u32;
     let size_mn = m * n;
 

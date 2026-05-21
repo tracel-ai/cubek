@@ -1,13 +1,12 @@
 use std::marker::PhantomData;
 
 use crate::{
+    components::global::memory::GlobalIterator,
+    components::global::multi_stage::LoadMaxRoundPlaneCount,
     components::global::read::validate_swizzle_atom_size,
     components::global::read::{FullLoadingStrategy, sync::Synchronous},
     components::global::{PlaneFlowPartition, read::tiled::TiledLayout},
-    components::stage::StridedStageFamily,
-    components::stage::{StridedStageMemory, TilingOrder},
-    components::{global::memory::GlobalIterator, stage::ContiguousTilingLayout},
-    components::{global::multi_stage::LoadMaxRoundPlaneCount, stage::TilingValidation},
+    components::stage::{StridedStageFamily, StridedStageMemory},
     definition::{MatmulElems, MatmulProblem, StageIdent},
     {components::global::GlobalReaderConfig, launch::RuntimeConfig},
 };
@@ -16,7 +15,7 @@ use cubecl::{
     {ir::DeviceProperties, prelude::*},
 };
 use cubek_std::{
-    tile::Strided,
+    tile::{ContiguousTilingLayout, TilingOrder, TilingValidation},
     {FormattedConfigError, InvalidConfigError},
 };
 
@@ -99,8 +98,6 @@ impl<TO: TilingOrder, RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncFullTil
     type SyncStrategy = Synchronous;
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = SyncFullTilewiseJob;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
         #[comptime] config: GlobalReaderConfig,

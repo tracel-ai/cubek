@@ -8,7 +8,7 @@ use cubek_std::{
 
 use crate::components::{
     global::read::sync_full_strided::SyncFullStridedLoading,
-    stage::{PlaneMatmulFamily, StageFamily},
+    stage::{PlanePartitioner, StageFamily},
 };
 use crate::definition::{
     MatmulProblem, MatmulSetupError, MatmulVectorSizes, SwizzleModes, TilingBlueprint,
@@ -86,13 +86,7 @@ where
     type Strategy = SpecializedStrategy;
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
-        SpecializedMatmulFamily<
-            PlaneMatmulFamily<L::Stage, L::Stage, Option<AL::Stage>>,
-            RC,
-            L,
-            AL,
-            PlaneWriterFamily,
-        >,
+        SpecializedMatmulFamily<PlanePartitioner, RC, L, AL, PlaneWriterFamily>,
         RowMajorGlobalPartitionMatmul,
     >;
     type Blueprint = TilingBlueprint;

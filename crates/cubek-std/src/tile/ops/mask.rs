@@ -1,16 +1,11 @@
-//! `Tile::should_mask` (via the `Mask` trait) and `Tile::load_mask_from_strided_tile`
-//! dispatchers. Each arm delegates to a method on the variant's data struct
-//! in [`crate::tile::variants`]. The `Mask` trait, `MaskLayout` enum, and the
-//! mask-layout helpers live at [`crate::tile::mask`] (top-level support
-//! types, not dispatchers).
+//! `Tile::should_mask` and `Tile::load_mask_from_strided_tile` dispatchers.
 
 use cubecl;
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 
 use crate::tile::{
-    Tile, TileExpand, TileKind, TileKindExpand, TileScope,
+    StridedTile, Tile, TileExpand, TileKind, TileKindExpand, TileScope,
     mask::{Mask, MaskExpand},
-    variants::StridedTile,
 };
 
 #[cube]
@@ -28,8 +23,8 @@ impl<E: Numeric, Sc: TileScope> Mask for Tile<E, Sc> {
 
 #[cube]
 impl<N: Numeric, Sc: TileScope> Tile<N, Sc> {
-    /// Loads the data from an external strided tile into the inner storage of a
-    /// `Tile::Unit` or `Tile::WhiteboxFragment`. Used to materialize a mask fragment.
+    /// Materialize a mask fragment from a `StridedTile` into `Unit` or
+    /// `WhiteboxFragment`.
     pub fn load_mask_from_strided_tile<E: Numeric, ES: Size>(&mut self, tile: &StridedTile<E, ES>) {
         match &mut self.kind {
             TileKind::Unit(t) => t.load_from_strided_tile::<E, ES>(tile),

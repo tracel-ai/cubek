@@ -2,9 +2,6 @@ use cubecl::prelude::*;
 
 use crate::tile::{Plane, RowWise, Tile, TileExpand, TileKind, TileKindExpand};
 
-/// Row-wise primitives on a `Tile<E, Plane, ReadWrite>` used for attention's
-/// online softmax and output scaling. Each arm delegates to a method on the
-/// variant's data struct — see `variants/{unit,whitebox_fragment,bounce,register}`.
 #[cube]
 impl<E: Float> Tile<E, Plane> {
     pub fn row_max(&self, acc: &mut RowWise<E>, base: &RowWise<E>) {
@@ -47,9 +44,8 @@ impl<E: Float> Tile<E, Plane> {
         }
     }
 
-    /// Multiplies each row of `self` by the corresponding `scale[r]`. The
-    /// `Bounce` arm round-trips through smem so the cmma fragment is current
-    /// for the next mma; the others operate in place on their native storage.
+    /// Multiply each row of `self` by `scale[r]`. The `Bounce` arm
+    /// round-trips through smem to keep the cmma fragment current.
     pub fn scale_mul<SM: Float>(&mut self, scale: &RowWise<SM>) {
         let scale_e = RowWise::<SM>::cast_from::<E>(scale);
         match &mut self.kind {
@@ -65,8 +61,7 @@ impl<E: Float> Tile<E, Plane> {
         }
     }
 
-    /// Divides each row of `self` by the corresponding `running_state_l[r]`,
-    /// guarding against zero (a fully-masked row stays zero).
+    /// Divide each row by `running_state_l[r]`; fully-masked rows stay zero.
     pub fn scale_div<SM: Float>(&mut self, running_state_l: &RowWise<SM>) {
         let mut scale = RowWise::<SM>::cast_from::<E>(running_state_l);
         scale.recip_inplace();
