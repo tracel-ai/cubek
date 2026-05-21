@@ -546,55 +546,46 @@ fn finite_diff_check(_inputs: &BackwardInputs, _problem: &AttentionProblem) {
 // -----------------------------------------------------------------------------
 
 #[test]
-#[ignore = "Flash Attention backward is not implemented"]
 fn prepass_small() {
     run_prepass(problem(64, 64, 32, 32));
 }
 
 #[test]
-#[ignore = "Flash Attention backward is not implemented"]
 fn prepass_causal_small() {
     run_prepass(problem_causal(64, 64, 32, 32));
 }
 
 #[test]
-#[ignore = "Flash Attention backward is not implemented"]
 fn dq_small() {
     run_dq(problem(64, 64, 32, 32));
 }
 
 #[test]
-#[ignore = "Flash Attention backward is not implemented"]
 fn dq_causal_small() {
     run_dq(problem_causal(64, 64, 32, 32));
 }
 
 #[test]
-#[ignore = "Flash Attention backward is not implemented"]
 fn dkdv_small() {
     run_dkdv(problem(64, 64, 32, 32));
 }
 
 #[test]
-#[ignore = "Flash Attention backward is not implemented"]
 fn dkdv_causal_small() {
     run_dkdv(problem_causal(64, 64, 32, 32));
 }
 
 #[test]
-#[ignore = "Flash Attention backward is not implemented"]
 fn end_to_end_small() {
     run_end_to_end(problem(64, 64, 32, 32));
 }
 
 #[test]
-#[ignore = "Flash Attention backward is not implemented"]
 fn end_to_end_causal_small() {
     run_end_to_end(problem_causal(64, 64, 32, 32));
 }
 
 #[test]
-#[ignore = "Flash Attention backward is not implemented"]
 fn gradcheck_small() {
     run_gradcheck(problem(16, 16, 32, 32));
 }
@@ -613,25 +604,21 @@ fn sweep_problem(batch: usize, heads: usize, seq: usize, head_dim: usize) -> Att
 }
 
 #[test]
-#[ignore = "shape sweep — kernels are stubs"]
 fn sweep_b1_h1_n16_d32() {
     run_end_to_end(sweep_problem(1, 1, 16, 32));
 }
 
 #[test]
-#[ignore = "shape sweep — kernels are stubs"]
 fn sweep_b2_h4_n64_d64() {
     run_end_to_end(sweep_problem(2, 4, 64, 64));
 }
 
 #[test]
-#[ignore = "shape sweep — kernels are stubs"]
 fn sweep_b1_h4_n128_d128() {
     run_end_to_end(sweep_problem(1, 4, 128, 128));
 }
 
 #[test]
-#[ignore = "shape sweep — kernels are stubs; non-power-of-two seq len"]
 fn sweep_b1_h1_n257_d32() {
     run_end_to_end(sweep_problem(1, 1, 257, 32));
 }

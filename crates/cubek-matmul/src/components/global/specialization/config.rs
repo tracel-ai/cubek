@@ -3,6 +3,11 @@ use crate::{
     definition::StageIdent,
 };
 
+// `InputLoadFlow` is part of the plane-flow vocabulary that now lives in
+// cubek-std. Re-export it so existing `use crate::components::global::*`
+// paths keep working.
+pub use cubek_std::InputLoadFlow;
+
 /// Configuration for how each input tensor (Lhs and Rhs) is loaded,
 /// specifying the plane roles responsible for loading them.
 #[derive(Default, Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -13,35 +18,10 @@ pub struct LoadFlows {
     pub rhs: InputLoadFlow,
 }
 
-/// Determines which types of planes are responsible for loading a tensor.
-///
-/// TODO: maybe we want a "MainPlusExtra" variant that uses main flow planes and load-only planes
-/// for the same tensor
-#[derive(Default, Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub enum InputLoadFlow {
-    /// The tensor is loaded exclusively by planes that participate in the main computation flow.
-    #[default]
-    MainOnly,
-
-    /// The tensor is loaded exclusively by planes dedicated to loading (load-only planes),
-    /// which do not participate in computation.
-    LoadOnly,
-}
-
 impl LoadFlows {
     /// Whether there is specialization in the algorithm
     pub fn has_specialization(&self) -> bool {
         self.lhs.has_specialization() || self.rhs.has_specialization()
-    }
-}
-
-impl InputLoadFlow {
-    /// Whether there is specialization for the tensor
-    pub fn has_specialization(&self) -> bool {
-        match self {
-            InputLoadFlow::MainOnly => false,
-            InputLoadFlow::LoadOnly => true,
-        }
     }
 }
 

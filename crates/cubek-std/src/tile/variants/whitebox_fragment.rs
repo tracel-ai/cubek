@@ -3,10 +3,9 @@ use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 
 use crate::tile::LOGIT_MASKED;
 use crate::tile::{
-    Plane, RowWise, Tile, TileKind, TileKindExpand,
+    Plane, RowWise, StridedTile, Tile, TileKind, TileKindExpand,
     mask::{Mask, MaskExpand},
     scope::{TileScope, assert_plane_scope},
-    variants::strided::StridedTile,
 };
 
 #[derive(CubeType)]
@@ -411,9 +410,7 @@ impl<Acc: Float> WhiteboxFragment<Acc> {
     }
 }
 
-/// Writes a free-standing `WhiteboxFragment` of post-softmax values into
-/// `softmaxed`. Used by `WhiteboxFragment::softmax`; the `Bounce` source path
-/// lives on `BounceTile::write_fragment_to`.
+/// Write post-softmax `WhiteboxFragment` values into `softmaxed`.
 #[cube]
 fn write_fragment_into<Acc: Float, Lhs: Float>(
     src: &WhiteboxFragment<Acc>,

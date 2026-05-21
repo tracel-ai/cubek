@@ -5,7 +5,10 @@ use cubecl::{
 
 use crate::{
     MatrixLayout, as_cmma_layout,
-    tile::variants::{MmaIOConfig, StoreMethod, StridedTile},
+    tile::{
+        StridedTile,
+        variants::{MmaIOConfig, StoreMethod},
+    },
 };
 
 /// Writer for storing the output registers.

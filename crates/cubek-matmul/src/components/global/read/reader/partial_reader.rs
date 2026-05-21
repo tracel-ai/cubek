@@ -9,14 +9,14 @@ use crate::{
             multi_stage::{JobExecutor, JobIterator, LoadMaxRoundPlaneCount},
             read::{LoadingJob, LoadingValidation, PartialLoaderStage, SyncBarrier, SyncStrategy},
         },
-        stage::{LoadStageFamily, StageConfig, TilingLayout},
+        stage::LoadStageFamily,
     },
     definition::MatmulTypes,
     launch::RuntimeConfig,
 };
 use cubecl::prelude::{barrier::Barrier, *};
 use cubecl::std::tensor::{View, layout::Coords2d};
-use cubek_std::tile::StageTileKind;
+use cubek_std::tile::TilingLayout;
 
 #[cube]
 /// A strategy for loading partial stage memory
@@ -27,7 +27,6 @@ pub trait PartialLoadingStrategy<RC: RuntimeConfig>:
     type TilingLayout: TilingLayout;
     type SyncStrategy: SyncStrategy;
     type Stage: LoadStageFamily;
-    type TileKind: StageTileKind;
 
     /// The [LoadingJob] for this strategy.
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>: LoadingJob<EG, NG, ES, NS, Self::TilingLayout, Self::SyncStrategy, Stage = Self::Stage>;
@@ -46,19 +45,20 @@ pub trait AsyncPartialLoadingStrategy<RC: RuntimeConfig>:
     PartialLoadingStrategy<RC, SyncStrategy: SyncStrategy<Barrier = Shared<Barrier>>>
 {
     /// Arrival count for initializing the barrier
-    fn arrival_count<S: StageConfig>(#[comptime] config: SharedGlobalMatmulConfig<S>) -> u32;
+    fn arrival_count(#[comptime] config: SharedGlobalMatmulConfig) -> u32;
     /// Extra synchronization after initializing the barrier, if needed
     fn barrier_post_init();
     /// Arrive at the barrier using the correct completion mechanism, without waiting
-    fn arrive<MP: MatmulTypes, S: StageConfig>(
+    fn arrive<MP: MatmulTypes>(
         barrier: &mut Shared<Barrier>,
-        #[comptime] config: SharedGlobalMatmulConfig<S>,
+        #[comptime] config: SharedGlobalMatmulConfig,
     );
     /// Whether this unit should participate in the load loop
-    fn is_elected<S: StageConfig>(#[comptime] config: SharedGlobalMatmulConfig<S>) -> bool;
+    fn is_elected(#[comptime] config: SharedGlobalMatmulConfig) -> bool;
 }
 
 #[derive(Clone, CubeType)]
+#[expand(derive(Clone))]
 #[allow(clippy::type_complexity)]
 /// Loads a stage from stage memory using synchronous data movement operations.
 ///
@@ -76,19 +76,6 @@ pub struct PartialStageGlobalReader<
     runtime_config: RC,
     stage_memory: PartialLoaderStage<RC, L, ES, NS>,
     loading_job: ComptimeOption<(L::Job<EG, NG, ES, NS>, L::Job<EG, NG, ES, NS>)>,
-}
-
-impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: PartialLoadingStrategy<RC>>
-    Clone for PartialStageGlobalReaderExpand<EG, NG, ES, NS, RC, L>
-{
-    fn clone(&self) -> Self {
-        Self {
-            global_iter: self.global_iter.clone(),
-            runtime_config: self.runtime_config.clone(),
-            stage_memory: self.stage_memory.clone_unchecked(),
-            loading_job: self.loading_job.clone_unchecked(),
-        }
-    }
 }
 
 #[cube]
@@ -264,8 +251,8 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: Partial
         #[comptime] stage_buffer: StageBuffer,
         #[comptime] config: GlobalReaderConfig,
     ) {
-        let mut iterator = Self::create_job_iterator(&*this, stage_buffer, config);
-        Self::execute_all_remaining_tasks(this, &mut iterator, barrier, config);
+        let mut iter = Self::create_job_iterator(&*this, stage_buffer, config);
+        Self::execute_all_remaining_tasks(this, &mut iter, barrier, config);
     }
 }
 

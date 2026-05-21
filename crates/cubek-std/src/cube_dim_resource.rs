@@ -1,61 +1,6 @@
 use cubecl::prelude::*;
 
-use crate::InvalidConfigError;
-
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-/// Represents how many planes are used for main computation and for loading-only tasks.
-pub struct PlaneFlowCounts {
-    /// Number of planes participating in main flow and (possibly) loading.
-    pub main_flow: u32,
-    /// Number of planes dedicated solely to loading.
-    pub load_only: u32,
-}
-
-impl PlaneFlowCounts {
-    /// Return the total number of planes
-    pub fn total_count(&self) -> u32 {
-        self.main_flow + self.load_only
-    }
-}
-
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-/// How planes are partitioned by id between the main flow and load-only roles.
-pub enum PlaneFlowPartitionRule {
-    MainFlowOnly,
-    LoadOnlyFirst { load_only: u32 },
-    LoadOnlyLast { main_flow: u32 },
-}
-
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-/// Plane-flow configuration carried by [`CubeDimResource::Specialized`]. Holds the
-/// counts for main-flow vs load-only planes and the partition rule used at runtime.
-pub struct SpecializedCubeDim {
-    pub counts: PlaneFlowCounts,
-    pub partition_rule: PlaneFlowPartitionRule,
-}
-
-impl SpecializedCubeDim {
-    /// All planes participate in the main flow; no load-only planes.
-    pub fn new_unspecialized(num_planes: u32) -> Self {
-        Self {
-            counts: PlaneFlowCounts {
-                main_flow: num_planes,
-                load_only: 0,
-            },
-            partition_rule: PlaneFlowPartitionRule::MainFlowOnly,
-        }
-    }
-
-    /// Number of planes participating in main flow.
-    pub fn main_flow_count(&self) -> u32 {
-        self.counts.main_flow
-    }
-
-    /// Whether the configuration uses dedicated load-only planes.
-    pub fn has_specialization(&self) -> bool {
-        self.counts.load_only > 0
-    }
-}
+use crate::{InvalidConfigError, PlaneFlowConfig};
 
 #[derive(Debug)]
 /// Number of compute primitives required by some component, specified as either units, planes,
@@ -63,7 +8,7 @@ impl SpecializedCubeDim {
 pub enum CubeDimResource {
     Units(u32),
     Planes(u32),
-    Specialized(SpecializedCubeDim),
+    Specialized(PlaneFlowConfig),
 }
 
 impl CubeDimResource {
@@ -116,15 +61,15 @@ impl CubeDimResource {
         }
     }
 
-    /// Recover the [SpecializedCubeDim] view of this resource. `Units`/`Planes` produce a
+    /// Recover the [PlaneFlowConfig] view of this resource. `Units`/`Planes` produce a
     /// non-specialized config (all planes in the main flow).
-    pub fn as_specialized(self, plane_dim: u32) -> Result<SpecializedCubeDim, InvalidConfigError> {
+    pub fn as_specialized(self, plane_dim: u32) -> Result<PlaneFlowConfig, InvalidConfigError> {
         match self {
             CubeDimResource::Units(_) => {
                 self.as_plane_resource(plane_dim)?.as_specialized(plane_dim)
             }
             CubeDimResource::Planes(num_planes) => {
-                Ok(SpecializedCubeDim::new_unspecialized(num_planes))
+                Ok(PlaneFlowConfig::new_unspecialized(num_planes))
             }
             CubeDimResource::Specialized(spec) => Ok(spec),
         }

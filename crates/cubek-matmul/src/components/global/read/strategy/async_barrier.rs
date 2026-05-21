@@ -1,10 +1,7 @@
 use cubecl::{prelude::barrier::Barrier, prelude::*};
 
 use crate::{
-    components::{
-        global::{SharedGlobalMatmulConfig, read::SyncStrategy},
-        stage::StageConfig,
-    },
+    components::global::{SharedGlobalMatmulConfig, read::SyncStrategy},
     definition::MatmulTypes,
 };
 
@@ -19,9 +16,9 @@ impl SyncStrategy for AsyncBarrier {
         Barrier::shared(CUBE_DIM, UNIT_POS == 0)
     }
 
-    fn sync<MP: MatmulTypes, S: StageConfig>(
+    fn sync<MP: MatmulTypes>(
         barrier: &mut Self::Barrier,
-        #[comptime] _config: SharedGlobalMatmulConfig<S>,
+        #[comptime] _config: SharedGlobalMatmulConfig,
     ) {
         barrier.arrive_and_wait();
     }
@@ -38,9 +35,9 @@ impl SyncStrategy for AsyncCopy {
         Barrier::shared(CUBE_DIM, UNIT_POS == 0)
     }
 
-    fn sync<MP: MatmulTypes, S: StageConfig>(
+    fn sync<MP: MatmulTypes>(
         barrier: &mut Self::Barrier,
-        #[comptime] _config: SharedGlobalMatmulConfig<S>,
+        #[comptime] _config: SharedGlobalMatmulConfig,
     ) {
         barrier.commit_copy_async();
         barrier.arrive_and_wait();

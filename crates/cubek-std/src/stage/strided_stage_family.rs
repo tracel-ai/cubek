@@ -1,21 +1,14 @@
-//! `Stage` / `LoadStageFamily` trait impls for the relocated
-//! [`StridedStageMemory`]. The struct itself and its inherent methods live in
-//! `cubek_std::tile::variants::stage`; this file keeps the
-//! `cubek_matmul::components::stage::memory::stage_memory` path working for
-//! callers, declares [`StridedStageFamily`] (the family wrapper that requires
-//! the local `StageFamily` trait), and binds the local
-//! `Stage` / `LoadStageFamily` traits to the moved type. Deleted in PR 6 once
-//! the trait stack is replaced.
+//! `StridedStageFamily` — the `LoadStageFamily` wrapper around
+//! [`StridedStageMemory`], plus the `Stage` impls for that memory type.
 
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
-use cubek_std::{
-    stage::StageMemoryConfig,
-    tile::{SharedTile, Tile, TileScope},
+
+use crate::{
+    stage::{
+        LoadStageFamily, Stage, StageFamily, StageMemoryConfig, StridedStageMemory, TilingLayout,
+    },
+    tile::{SharedTile, StageTile, Tile, TileScope},
 };
-
-pub use cubek_std::tile::StridedStageMemory;
-
-use crate::components::stage::{LoadStageFamily, Stage, StageFamily, TilingLayout};
 
 pub struct StridedStageFamily;
 
@@ -27,7 +20,11 @@ impl StageFamily for StridedStageFamily {
 impl<ES: Numeric, NS: Size, T: TilingLayout> Stage<ES> for StridedStageMemory<ES, NS, T> {
     fn tile<Sc: TileScope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc> {
         let strided_tile = this.get_tile(tile);
-        Tile::new_SharedMemory(SharedTile::wrap::<NS>(strided_tile))
+        Tile::new_SharedTile(SharedTile::wrap::<NS>(strided_tile))
+    }
+
+    fn as_stage_tile<Sc: TileScope>(this: &Self) -> Tile<ES, Sc> {
+        Tile::new_Stage(StageTile::wrap::<NS, T>(this))
     }
 }
 

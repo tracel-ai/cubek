@@ -1,6 +1,7 @@
 use std::fmt::Display;
 
 use cubecl::{Runtime, client::ComputeClient};
+use cubek_std::tile::RowMajorTilingOrder;
 
 use crate::{
     components::{
@@ -13,7 +14,7 @@ use crate::{
                 sync_partial_cyclic::SyncPartialCyclicLoading,
             },
         },
-        stage::{RowMajorTilingOrder, StridedStageFamily, UnitMatmulFamily},
+        stage::UnitPartitioner,
         tile::TileMatmulKind,
     },
     definition::{
@@ -45,7 +46,7 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleUnitAlgorithm {
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
         DoubleBufferingMatmulFamily<
-            UnitMatmulFamily<StridedStageFamily, Option<StridedStageFamily>>,
+            UnitPartitioner,
             RC,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,

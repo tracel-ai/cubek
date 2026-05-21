@@ -15,7 +15,6 @@ use crate::{
 use crate::{
     components::batch::{BatchMatmul, BatchMatmulFamily, PartitionedBatchMatmulFamily},
     components::global::{self, GlobalConfig, GlobalMatmul, GlobalMatmulFamily},
-    components::stage::StageConfig as _,
 };
 
 #[cube(launch_unchecked, explicit_define, address_type = "dynamic")]

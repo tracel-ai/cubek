@@ -12,7 +12,8 @@ use crate::{
 
 use super::layout::TilingLayout;
 
-#[derive(CubeType, Clone, Copy)]
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
 /// Wrapper over the shared memory used for staging,
 /// abstracting its layout
 pub struct StridedStageMemory<ES: Numeric, NS: Size, T: TilingLayout> {

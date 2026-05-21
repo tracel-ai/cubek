@@ -104,7 +104,7 @@ impl<
                         .mma(&query_tile.tile, &key_tile.tile);
                 }
 
-                let state_q = &mut state[q];
+                let state_q = state.index_mut(q);
 
                 let scale =
                     softmax_partition.softmax_at(state_q, mask_partition.get(), head_dim_factor, q);
@@ -142,7 +142,7 @@ impl<
 
         #[unroll]
         for q in 0..p.seq_q as usize {
-            let running_state = &state[q];
+            let running_state = state.index(q);
 
             #[unroll]
             for vd in 0..p.val_dim as usize {
@@ -186,7 +186,8 @@ impl<
                 let tile_pos = (q as u32 + P::seq_q_index() * p.seq_q, vd.runtime() as u32);
                 let mut tile = SO::tile(&*stage, tile_pos);
 
-                let acc_tile = acc.get_at(q, vd, config.shared().partition_size.val_dim as usize);
+                let acc_tile =
+                    acc.get_at_mut(q, vd, config.shared().partition_size.val_dim as usize);
                 acc_tile.write_results::<OS<AP>, OSS<AP>>(&mut tile);
 
                 W::on_event(writer, WriteEvent::new_TileStored(tile_pos));
@@ -264,7 +265,7 @@ impl<
                 tile_to_write
                     .tile
                     .copy_from::<QG<AP>, QGS<AP>, QT<AP>, KVT<AP>, SM<AP>>(
-                        &Tile::new_SharedMemory(SharedTile::wrap::<QGS<AP>>(tile_read)),
+                        &Tile::new_SharedTile(SharedTile::wrap::<QGS<AP>>(tile_read)),
                         cubek_std::StageIdent::Lhs,
                     );
             }

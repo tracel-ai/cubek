@@ -1,9 +1,9 @@
 use cubecl::prelude::*;
+use cubek_std::tile::{StageEvent, StageEventListener};
 
 use crate::{
     components::global::read::{StageBuffer, SyncStrategy},
     components::global::{GlobalConfig, GlobalReaderConfig, LoadingSides},
-    components::stage::{StageConfig, StageEvent, StageEventListener},
 };
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
