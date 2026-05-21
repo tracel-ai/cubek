@@ -7,7 +7,7 @@ use cubecl::{
     },
     zspace::{metadata::Metadata, shape},
 };
-use cubek_std::tensor::{DynamicRankStridedLayout, RowMajorLayout, TiledLayout};
+use cubek_std::layout::{DynamicRankStridedLayout, RowMajorLayout, TiledLayout};
 use cubek_test_utils::{
     HostData, HostDataType, LayoutSpec, StridedLayout, TestInput, assert_equals_approx,
 };

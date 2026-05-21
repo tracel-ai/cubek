@@ -1,48 +1,7 @@
 use cubecl::{
     prelude::*,
-    std::tensor::layout::{Coords1d, CoordsDyn, Layout, LayoutExpand},
+    std::tensor::layout::{CoordsDyn, Layout, LayoutExpand},
 };
-
-#[derive(CubeType, Clone, Copy)]
-pub struct RowMajorLayout {
-    width: usize,
-    height: usize,
-    vector_size: usize,
-}
-
-#[cube]
-impl RowMajorLayout {
-    pub fn new(width: usize, height: usize, vector_size: usize) -> Self {
-        RowMajorLayout {
-            width,
-            height,
-            vector_size,
-        }
-    }
-}
-
-#[cube]
-impl Layout for RowMajorLayout {
-    type Coordinates = (usize, usize);
-    type SourceCoordinates = Coords1d;
-
-    fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
-        (self.width * pos.0 + pos.1) / self.vector_size
-    }
-
-    fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
-        let is_valid = pos.0 < self.height && pos.1 < self.width;
-        (self.to_source_pos(pos), is_valid)
-    }
-
-    fn shape(&self) -> Self::Coordinates {
-        (self.width, self.height)
-    }
-
-    fn is_in_bounds(&self, _pos: Self::Coordinates) -> bool {
-        true.runtime()
-    }
-}
 
 /// Maps semantic coordinates (rank R) to physical coordinates (rank R + n).
 ///
@@ -152,53 +111,6 @@ impl Layout for TiledLayout {
         #[unroll]
         for i in 0..bounds.len() {
             is_valid = is_valid && pos[i] < bounds[i];
-        }
-        is_valid
-    }
-}
-
-/// Maps multi-dimensional physical coordinates to a linear buffer offset using
-/// per-axis strides. The physical layout's rank can be any value.
-#[derive(CubeType, Clone)]
-pub struct DynamicRankStridedLayout {
-    shape: CoordsDyn,
-    strides: CoordsDyn,
-}
-
-#[cube]
-impl DynamicRankStridedLayout {
-    pub fn new(shape: CoordsDyn, strides: CoordsDyn) -> DynamicRankStridedLayout {
-        DynamicRankStridedLayout { shape, strides }
-    }
-}
-
-#[cube]
-impl Layout for DynamicRankStridedLayout {
-    type Coordinates = CoordsDyn;
-    type SourceCoordinates = Coords1d;
-
-    fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
-        let mut offset = 0u32;
-        #[unroll]
-        for i in 0..self.strides.len() {
-            offset += pos[i] * self.strides[i];
-        }
-        offset as usize
-    }
-
-    fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
-        (self.to_source_pos(pos.clone()), self.is_in_bounds(pos))
-    }
-
-    fn shape(&self) -> Self::Coordinates {
-        self.shape.clone()
-    }
-
-    fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
-        let mut is_valid = true;
-        #[unroll]
-        for i in 0..self.shape.len() {
-            is_valid = is_valid && pos[i] < self.shape[i];
         }
         is_valid
     }

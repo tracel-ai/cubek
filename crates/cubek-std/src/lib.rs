@@ -1,7 +1,7 @@
 pub mod cube_count;
 pub mod launch;
+pub mod layout;
 pub mod stage;
-pub mod tensor;
 pub mod tile;
 
 mod cube_dim_resource;
