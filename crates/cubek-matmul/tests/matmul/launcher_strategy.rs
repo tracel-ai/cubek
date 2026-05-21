@@ -8,7 +8,7 @@ use cubek_matmul::{
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
 
-use crate::{matmul::assert_result, matmul::layout_to_stride_spec};
+use crate::matmul::assert_result;
 
 /// Test the correctness of a public [`Strategy`] against the CPU reference.
 #[allow(unused)]
@@ -34,19 +34,19 @@ where
 {
     let (lhs, lhs_data) = TestInput::builder(client.clone(), problem.lhs_shape.clone())
         .dtype(problem.global_dtypes.lhs)
-        .stride(layout_to_stride_spec(problem.lhs_layout))
+        .layout(problem.lhs_layout)
         .uniform(1234, -1., 1.)
         .generate_with_f32_host_data();
 
     let (rhs, rhs_data) = TestInput::builder(client.clone(), problem.rhs_shape.clone())
         .dtype(problem.global_dtypes.rhs)
-        .stride(layout_to_stride_spec(problem.rhs_layout))
+        .layout(problem.rhs_layout)
         .uniform(5678, -1., 1.)
         .generate_with_f32_host_data();
 
     let out = TestInput::builder(client.clone(), problem.out_shape.clone())
         .dtype(problem.global_dtypes.out)
-        .stride(layout_to_stride_spec(MatrixLayout::RowMajor))
+        .layout(MatrixLayout::RowMajor)
         .zeros()
         .generate_without_host_data();
 

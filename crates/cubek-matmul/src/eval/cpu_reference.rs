@@ -8,7 +8,7 @@
 use cubecl::{TestRuntime, prelude::*, std::tensor::TensorHandle};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, HostDataVec, Progress, StrideSpec, TestInput,
+    ExecutionOutcome, HostData, HostDataType, HostDataVec, Progress, StridedLayout, TestInput,
     ValidationResult, assert_equals_approx, launch_and_capture_outcome,
 };
 
@@ -111,17 +111,17 @@ fn seed_inputs(
 ) -> (Tensor, HostData, Tensor, HostData, Tensor, MatmulProblem) {
     let (lhs, lhs_data) = TestInput::builder(client.clone(), problem.lhs_shape.clone())
         .dtype(problem.global_dtypes.lhs)
-        .stride(layout_to_stride_spec(problem.lhs_layout))
+        .layout(problem.lhs_layout)
         .uniform(seed_lhs, -1., 1.)
         .generate_with_f32_host_data();
     let (rhs, rhs_data) = TestInput::builder(client.clone(), problem.rhs_shape.clone())
         .dtype(problem.global_dtypes.rhs)
-        .stride(layout_to_stride_spec(problem.rhs_layout))
+        .layout(problem.rhs_layout)
         .uniform(seed_rhs, -1., 1.)
         .generate_with_f32_host_data();
     let out = TestInput::builder(client.clone(), problem.out_shape.clone())
         .dtype(problem.global_dtypes.out)
-        .stride(layout_to_stride_spec(MatrixLayout::RowMajor))
+        .layout(MatrixLayout::RowMajor)
         .zeros()
         .generate_without_host_data();
 
@@ -253,18 +253,11 @@ pub fn matmul_cpu_reference(
         }
     }
 
-    let strides = StrideSpec::RowMajor.compute_strides(&out_shape);
+    let strides = StridedLayout::RowMajor.compute_strides(&out_shape);
 
     HostData {
         data: HostDataVec::F32(out),
         shape: out_shape,
         strides,
-    }
-}
-
-fn layout_to_stride_spec(layout: MatrixLayout) -> StrideSpec {
-    match layout {
-        MatrixLayout::RowMajor => StrideSpec::RowMajor,
-        MatrixLayout::ColMajor => StrideSpec::ColMajor,
     }
 }

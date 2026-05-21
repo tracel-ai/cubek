@@ -1,11 +1,77 @@
 use cubecl::zspace::{Shape, Strides};
 
-#[derive(Debug, PartialEq, Eq, Default)]
-pub enum StrideSpec {
+/// How the base strides of a tensor are laid out before any tile-level rank
+/// expansion is applied.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum StridedLayout {
     #[default]
     RowMajor,
     ColMajor,
-    Custom(Vec<usize>),
+    Explicit(Vec<usize>),
+}
+
+/// The full layout of a test tensor. Mirrors cubecl's `Metadata` model
+/// (strides + `Option<Tiler>`): the base [`StridedLayout`] drives the physical
+/// strides; for `Tiled`, the rank-expanded metadata is applied after the
+/// buffer is written (see [`cubecl::zspace::metadata::Metadata::to_tiled`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LayoutSpec {
+    Strided(StridedLayout),
+    /// Splits each axis in `[start_axis, start_axis + tile_shape.len())` into a
+    /// grid component and a tile component (`D -> [D/T, T]`), producing
+    /// `[Pre-axes, Grid-axes, Tile-axes, Post-axes]` in row-major order.
+    Tiled {
+        base: StridedLayout,
+        start_axis: u8,
+        tile_shape: Vec<u16>,
+    },
+}
+
+impl Default for LayoutSpec {
+    fn default() -> Self {
+        Self::Strided(StridedLayout::default())
+    }
+}
+
+impl LayoutSpec {
+    /// Compose a base stride layout with a tile.
+    pub fn tiled(base: StridedLayout, start_axis: u8, tile_shape: Vec<u16>) -> Self {
+        Self::Tiled {
+            base,
+            start_axis,
+            tile_shape,
+        }
+    }
+
+    /// The base stride layout, with or without tiling.
+    pub fn base(&self) -> &StridedLayout {
+        match self {
+            LayoutSpec::Strided(base) | LayoutSpec::Tiled { base, .. } => base,
+        }
+    }
+
+    /// `(start_axis, tile_shape)` if this layout is tiled.
+    pub fn tile(&self) -> Option<(u8, &[u16])> {
+        match self {
+            LayoutSpec::Tiled {
+                start_axis,
+                tile_shape,
+                ..
+            } => Some((*start_axis, tile_shape)),
+            LayoutSpec::Strided(_) => None,
+        }
+    }
+
+    /// Compute the strides of the base (un-tiled) layout for `shape`.
+    pub fn compute_strides(&self, shape: &Shape) -> Strides {
+        self.base().compute_strides(shape)
+    }
+}
+
+impl From<StridedLayout> for LayoutSpec {
+    fn from(base: StridedLayout) -> Self {
+        Self::Strided(base)
+    }
 }
 
 /// Number of elements in the physical buffer required to cover every logical
@@ -24,12 +90,12 @@ pub fn physical_extent(shape: &Shape, strides: &Strides) -> usize {
     max_offset + 1
 }
 
-impl StrideSpec {
+impl StridedLayout {
     pub fn compute_strides(&self, shape: &Shape) -> Strides {
         let n = shape.len();
         match self {
-            StrideSpec::RowMajor => {
-                assert!(n >= 2, "RowMajor requires at least 2 dimensions");
+            StridedLayout::RowMajor => {
+                assert!(n >= 1, "RowMajor requires at least 1 dimension");
                 let mut strides = vec![0; n];
                 strides[n - 1] = 1;
                 for i in (0..n - 1).rev() {
@@ -37,7 +103,7 @@ impl StrideSpec {
                 }
                 Strides::new(&strides)
             }
-            StrideSpec::ColMajor => {
+            StridedLayout::ColMajor => {
                 assert!(n >= 2, "ColMajor requires at least 2 dimensions");
                 let mut strides = vec![0; n];
                 strides[n - 2] = 1;
@@ -47,10 +113,10 @@ impl StrideSpec {
                 }
                 Strides::new(&strides)
             }
-            StrideSpec::Custom(strides) => {
+            StridedLayout::Explicit(strides) => {
                 assert!(
                     strides.len() == n,
-                    "Custom strides must have the same rank as the shape"
+                    "Explicit strides must have the same rank as the shape"
                 );
                 strides.clone().into()
             }

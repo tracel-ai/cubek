@@ -11,7 +11,7 @@ use core::f32;
 
 use cubecl::{TestRuntime, client::ComputeClient, std::tensor::TensorHandle, zspace::Shape};
 use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, HostDataVec, Progress, StrideSpec, TestInput,
+    ExecutionOutcome, HostData, HostDataType, HostDataVec, Progress, StridedLayout, TestInput,
     ValidationResult, assert_equals_approx, launch_and_capture_outcome,
 };
 
@@ -323,7 +323,7 @@ pub fn flash_attention_v2_reference(
         }
     }
 
-    let strides = StrideSpec::RowMajor.compute_strides(&out_shape);
+    let strides = StridedLayout::RowMajor.compute_strides(&out_shape);
     HostData {
         data: HostDataVec::F32(out),
         shape: out_shape,

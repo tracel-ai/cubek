@@ -12,8 +12,6 @@ use cubek_test_utils::{
     assert_equals_approx,
 };
 
-use crate::matmul::layout_to_stride_spec;
-
 /// Configuration for a parameterized quantized matmul test.
 struct QuantizedMatmulCase {
     m: usize,
@@ -118,19 +116,19 @@ fn run_quantized_matmul(case: QuantizedMatmulCase) {
 
     let lhs = TestInput::builder(client.clone(), problem.lhs_shape.clone())
         .dtype(lhs_dtype)
-        .stride(layout_to_stride_spec(problem.lhs_layout))
+        .layout(problem.lhs_layout)
         .uniform(1234, -1., 1.)
         .generate_test_tensor();
 
     let rhs = TestInput::builder(client.clone(), problem.rhs_shape.clone())
         .dtype(rhs_dtype)
-        .stride(layout_to_stride_spec(problem.rhs_layout))
+        .layout(problem.rhs_layout)
         .uniform(5678, -1., 1.)
         .generate_test_tensor();
 
     let out = TestInput::builder(client.clone(), problem.out_shape.clone())
         .dtype(out_dtype)
-        .stride(layout_to_stride_spec(MatrixLayout::RowMajor))
+        .layout(MatrixLayout::RowMajor)
         .zeros()
         .generate_without_host_data();
 

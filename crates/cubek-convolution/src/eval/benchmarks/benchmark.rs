@@ -93,7 +93,7 @@ impl<MP: MatmulPrecision> Benchmark for Conv2dBench<MP> {
         );
         let bias = TestInput::builder(client.clone(), Shape::from(vec![self.problem.bias_shape]))
             .dtype(AccG::<MP>::as_type_native_unchecked().storage_type())
-            .stride(cubek_test_utils::StrideSpec::Custom(vec![1]))
+            .layout(cubek_test_utils::StridedLayout::Explicit(vec![1]))
             .uniform(2, 0.0, 1.0)
             .generate_without_host_data();
 

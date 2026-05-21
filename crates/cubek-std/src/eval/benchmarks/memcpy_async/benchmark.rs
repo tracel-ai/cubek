@@ -10,7 +10,7 @@ use cubecl::{
     std::tensor::TensorHandle,
     zspace::Shape,
 };
-use cubek_test_utils::{RunSamples, StrideSpec, TestInput};
+use cubek_test_utils::{RunSamples, StridedLayout, TestInput};
 
 use crate::eval::benchmarks::memcpy_async::problem::MemcpyAsyncProblem;
 use crate::eval::benchmarks::memcpy_async::strategy::CopyStrategyEnum;
@@ -717,7 +717,7 @@ fn make_uniform_1d<E: Float>(
     seed: u64,
 ) -> TensorHandle<TestRuntime> {
     TestInput::builder(client.clone(), Shape::from(vec![len]))
-        .stride(StrideSpec::Custom(vec![1]))
+        .layout(StridedLayout::Explicit(vec![1]))
         .dtype(E::as_type_native_unchecked().storage_type())
         .uniform(seed, 0., 1.)
         .generate_without_host_data()
