@@ -11,15 +11,15 @@ pub struct GlobalMemoryReader {
 
 #[cube]
 impl<EA: Float, N: Size> Reader<EA, N> for GlobalMemoryReader {
-    fn init<EI: Float>(
+    fn prepare_read<EI: Float>(
         input: &Tensor<Vector<EI, N>>,
         batch: usize,
         channel_group: usize,
-        vector_size: usize,
         input_width: usize,
         input_height: usize,
         _min_x: usize,
         _min_y: usize,
+        #[comptime] vector_size: usize,
         #[comptime] _smem_width: usize,
         #[comptime] _smem_height: usize,
     ) -> Self {

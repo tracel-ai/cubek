@@ -3,11 +3,11 @@ mod error;
 mod modes;
 mod precision;
 mod problem;
-mod strategy;
+mod tile_size;
 
 pub use base::*;
 pub use error::*;
 pub use modes::*;
 pub use precision::*;
 pub use problem::*;
-pub use strategy::*;
+pub use tile_size::*;

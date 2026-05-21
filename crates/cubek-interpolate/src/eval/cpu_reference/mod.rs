@@ -1,7 +1,10 @@
 mod backward;
 mod forward;
 
-use crate::definition::{InterpolateOptions, InterpolateProblem, InterpolateStrategy};
+use crate::{
+    definition::{InterpolateOptions, InterpolateProblem},
+    launch::InterpolateStrategy,
+};
 use cubecl::ir::StorageType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{TestRuntime, client::ComputeClient, prelude::*, zspace::Strides};

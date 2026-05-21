@@ -11,19 +11,19 @@ pub struct SharedMemoryReader<EA: Float, N: Size> {
 
 #[cube]
 impl<EA: Float, N: Size> Reader<EA, N> for SharedMemoryReader<EA, N> {
-    fn init<EI: Float>(
+    fn prepare_read<EI: Float>(
         input: &Tensor<Vector<EI, N>>,
         batch: usize,
         channel_group: usize,
-        vector_size: usize,
         input_width: usize,
         input_height: usize,
         min_x: usize,
         min_y: usize,
+        #[comptime] vector_size: usize,
         #[comptime] smem_width: usize,
         #[comptime] smem_height: usize,
     ) -> SharedMemoryReader<EA, N> {
-        let smem_size: usize = smem_width * smem_height;
+        let smem_size = (smem_width * smem_height) / vector_size;
 
         let mut smem = SharedMemory::<Vector<EA, N>>::new(smem_size);
 

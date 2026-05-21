@@ -6,6 +6,11 @@ pub enum InterpolateError {
     UnsupportedMode(String),
 
     #[error(
+        "Requested shared memory {requested} bytes exceeds the device limit of {available} bytes"
+    )]
+    SharedMemoryLimitExceeded { requested: usize, available: usize },
+
+    #[error(
         "Interpolate expects 4D tensors (NHWC), but got input rank {input} and output rank {output}"
     )]
     InvalidRank { input: usize, output: usize },

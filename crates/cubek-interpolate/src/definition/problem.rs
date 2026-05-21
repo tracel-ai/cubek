@@ -19,3 +19,12 @@ pub struct InterpolateBackwardProblem {
     pub out_grad_shape: [usize; 4],
     pub options: InterpolateOptions,
 }
+
+impl InterpolateProblem {
+    pub fn options(&self) -> InterpolateOptions {
+        match self {
+            InterpolateProblem::Forward(problem) => problem.options.clone(),
+            InterpolateProblem::Backward(problem) => problem.options.clone(),
+        }
+    }
+}

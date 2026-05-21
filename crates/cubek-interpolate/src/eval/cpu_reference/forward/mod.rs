@@ -9,8 +9,9 @@ pub(crate) use lanczos3::reference_lanczos3;
 pub(crate) use nearest::reference_nearest;
 
 use super::{f32_storage_type, make_random_f32_host, make_zero_handle, output_shape_for};
-use crate::definition::{
-    InterpolateForwardProblem, InterpolateMode, InterpolateOptions, InterpolateStrategy,
+use crate::{
+    definition::{InterpolateForwardProblem, InterpolateMode, InterpolateOptions},
+    launch::InterpolateStrategy,
 };
 use cubecl::{TestRuntime, client::ComputeClient};
 use cubek_test_utils::{

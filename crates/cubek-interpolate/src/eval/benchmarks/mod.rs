@@ -11,7 +11,7 @@ pub use strategy::strategies;
 
 use cubek_test_utils::{CatalogEntry, RunSamples};
 
-use crate::definition::{InterpolateProblem, InterpolateStrategy};
+use crate::{definition::InterpolateProblem, launch::InterpolateStrategy};
 
 pub struct Category;
 

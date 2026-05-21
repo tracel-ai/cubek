@@ -3,14 +3,14 @@ pub mod definition;
 #[cfg(any(feature = "cpu-reference", feature = "benchmarks"))]
 pub mod eval;
 mod kernel;
-mod launch;
+pub mod launch;
+mod routines;
 
 use crate::{
-    definition::{
-        InterpolateError, InterpolateMode, InterpolateOptions, InterpolateStrategy, MemoryStrategy,
-    },
+    definition::{InterpolateError, InterpolateMode, InterpolateOptions},
     kernel::backward::interpolate_nearest_backward_launch,
-    launch::interpolate_launch,
+    launch::{InterpolateStrategy, RoutineStrategy, interpolate_launch},
+    routines::{BlueprintStrategy, GlobalMemoryStrategy},
 };
 use core::result::Result;
 use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*};
@@ -35,8 +35,12 @@ pub fn interpolate<R: Runtime>(
         input,
         output,
         options,
+        InterpolateStrategy {
+            routine: RoutineStrategy::GlobalMemoryStrategy(BlueprintStrategy::Inferred(
+                GlobalMemoryStrategy {},
+            )),
+        },
         dtype,
-        MemoryStrategy::Global,
     )
 }
 
@@ -51,14 +55,7 @@ pub fn interpolate_with_strategy<R: Runtime>(
     validate_rank(input.shape.len(), output.shape.len())?;
     validate_nhwc_consistency(&input.shape, &output.shape)?;
 
-    interpolate_launch(
-        client,
-        input,
-        output,
-        options,
-        dtype,
-        strategy.memory_strategy(),
-    )
+    interpolate_launch(client, input, output, options, strategy, dtype)
 }
 
 /// Backward interpolate operation

@@ -1,3 +1,5 @@
 mod base;
+mod strategy;
 
-pub(crate) use base::*;
+pub use base::*;
+pub use strategy::*;

@@ -1,58 +1,31 @@
 use crate::{
     components::{
-        global::{TileSize, tile_absolute_coords},
         readers::{GlobalMemoryReader, Reader, ReaderExpand, SharedMemoryReader},
         writers::Writer,
     },
     definition::{
-        InterpolateMode, InterpolateOptions, InterpolatePrecision, MemoryStrategy, NearestMode,
-        compute_weights, get_halo,
+        InterpolateMode, InterpolateOptions, InterpolatePrecision, NearestMode, compute_weights,
+        get_halo, tile_absolute_coords,
     },
+    launch::{InterpolateStrategy, RoutineStrategy},
+    routines::InterpolateBlueprint,
 };
 use cubecl::{prelude::*, std::FastDivmod};
 
-#[cube(launch_unchecked, address_type = "dynamic")]
-pub fn interpolate_kernel<EI: Float, EA: Float, N: Size>(
-    input: &Tensor<Vector<EI, N>>,
-    output: &mut Tensor<Vector<EI, N>>,
-    cube_shape: Sequence<FastDivmod<usize>>,
-    #[comptime] output_tile_size: TileSize,
-    #[comptime] options: InterpolateOptions,
-    #[comptime] memory_strategy: MemoryStrategy,
-    #[comptime] smem_width: usize,
-    #[comptime] smem_height: usize,
-    #[define(EI)] _dtype: StorageType,
-    #[define(EA)] _acc_dtype: StorageType,
-) {
-    interpolate_kernel_inner::<(EI, EA), N>(
-        input,
-        output,
-        cube_shape,
-        output_tile_size,
-        options,
-        memory_strategy,
-        smem_width,
-        smem_height,
-    );
-}
-
 #[cube]
-fn interpolate_kernel_inner<P: InterpolatePrecision, N: Size>(
+pub fn execute_interpolate<P: InterpolatePrecision, N: Size>(
     input: &Tensor<Vector<P::EI, N>>,
     output: &mut Tensor<Vector<P::EI, N>>,
     cube_shape: Sequence<FastDivmod<usize>>,
-    #[comptime] output_tile_size: TileSize,
-    #[comptime] options: InterpolateOptions,
-    #[comptime] memory_strategy: MemoryStrategy,
-    #[comptime] smem_width: usize,
-    #[comptime] smem_height: usize,
+    #[comptime] blueprint: InterpolateBlueprint,
+    #[comptime] strategy: InterpolateStrategy,
 ) {
     let (batch, cube_pos, unit_pos, channel_group) = decompose_index(ABSOLUTE_POS, cube_shape);
 
     let (output_width, output_height) = (output.shape(2), output.shape(1));
     let (input_width, input_height) = (input.shape(2), input.shape(1));
 
-    let (x, y) = tile_absolute_coords(output_width, cube_pos, unit_pos, output_tile_size);
+    let (x, y) = tile_absolute_coords(output_width, cube_pos, unit_pos, blueprint.tile_size);
 
     if x >= output_width || y >= output_height {
         terminate!();
@@ -65,7 +38,7 @@ fn interpolate_kernel_inner<P: InterpolatePrecision, N: Size>(
         input_height,
         output_width,
         output_height,
-        options,
+        blueprint.options,
     );
 
     let base_x_floor = mapped_x.floor();
@@ -79,25 +52,25 @@ fn interpolate_kernel_inner<P: InterpolatePrecision, N: Size>(
     );
 
     let (weights_x, weights_y) = (
-        compute_weights(frac_x, options),
-        compute_weights(frac_y, options),
+        compute_weights(frac_x, blueprint.options),
+        compute_weights(frac_y, blueprint.options),
     );
 
-    let vector_size = input.vector_size();
+    let vector_size = N::value();
 
-    let final_value = match comptime!(memory_strategy) {
-        MemoryStrategy::Global => {
-            let reader = <GlobalMemoryReader as Reader<P::EA, N>>::init::<P::EI>(
+    let final_value = match comptime!(strategy.routine) {
+        RoutineStrategy::GlobalMemoryStrategy(_) => {
+            let reader = <GlobalMemoryReader as Reader<P::EA, N>>::prepare_read::<P::EI>(
                 input,
                 batch,
                 channel_group,
-                vector_size,
                 input_width,
                 input_height,
                 0,
                 0,
-                comptime!(smem_width),
-                comptime!(smem_height),
+                comptime!(vector_size),
+                comptime!(blueprint.smem_width),
+                comptime!(blueprint.smem_height),
             );
             compute_value_reader::<P, N, GlobalMemoryReader>(
                 input,
@@ -107,12 +80,12 @@ fn interpolate_kernel_inner<P: InterpolatePrecision, N: Size>(
                 base_y,
                 weights_x,
                 weights_y,
-                options,
+                blueprint,
                 &reader,
             )
         }
-        MemoryStrategy::Shared => {
-            let halo = comptime!(get_halo(options.mode));
+        RoutineStrategy::SharedMemoryStrategy(_) => {
+            let halo = comptime!(get_halo(blueprint.options.mode));
             let radius_offset = (halo - 1) / 2;
 
             let min_input_x = isize::cast_from(base_x) - radius_offset as isize;
@@ -121,17 +94,17 @@ fn interpolate_kernel_inner<P: InterpolatePrecision, N: Size>(
             let min_x = min_input_x.max(0) as usize;
             let min_y = min_input_y.max(0) as usize;
 
-            let reader = <SharedMemoryReader<P::EA, N> as Reader<P::EA, N>>::init::<P::EI>(
+            let reader = <SharedMemoryReader<P::EA, N> as Reader<P::EA, N>>::prepare_read::<P::EI>(
                 input,
                 batch,
                 channel_group,
-                vector_size,
                 input_width,
                 input_height,
                 min_x,
                 min_y,
-                comptime!(smem_width),
-                comptime!(smem_height),
+                comptime!(vector_size),
+                comptime!(blueprint.smem_width),
+                comptime!(blueprint.smem_height),
             );
             compute_value_reader::<P, N, SharedMemoryReader<P::EA, N>>(
                 input,
@@ -141,7 +114,7 @@ fn interpolate_kernel_inner<P: InterpolatePrecision, N: Size>(
                 base_y,
                 weights_x,
                 weights_y,
-                options,
+                blueprint,
                 &reader,
             )
         }
@@ -223,10 +196,10 @@ fn compute_value_reader<P: InterpolatePrecision, N: Size, R: Reader<P::EA, N>>(
     base_y: isize,
     weights_x: Array<Vector<P::EA, N>>,
     weights_y: Array<Vector<P::EA, N>>,
-    #[comptime] options: InterpolateOptions,
+    #[comptime] blueprint: InterpolateBlueprint,
     reader: &R,
 ) -> Vector<P::EA, N> {
-    let halo = comptime!(get_halo(options.mode));
+    let halo = comptime!(get_halo(blueprint.options.mode));
     let radius_offset = (halo - 1) / 2;
 
     let mut final_value = Vector::zeroed();
@@ -243,8 +216,8 @@ fn compute_value_reader<P: InterpolatePrecision, N: Size, R: Reader<P::EA, N>>(
         for j in 0..halo {
             let x = base_x + j as isize - radius_offset as isize;
 
-            let is_in_bounds =
-                is_in_bounds(x, input_width, options) && is_in_bounds(y, input_height, options);
+            let is_in_bounds = is_in_bounds(x, input_width, blueprint.options)
+                && is_in_bounds(y, input_height, blueprint.options);
 
             let clamped_y = y.max(0).min(input_height as isize - 1) as usize;
             let clamped_x = x.max(0).min(input_width as isize - 1) as usize;

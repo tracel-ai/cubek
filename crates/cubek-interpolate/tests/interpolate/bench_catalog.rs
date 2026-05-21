@@ -2,8 +2,8 @@
 
 #![cfg(feature = "benchmarks")]
 
-use cubek_interpolate::definition::{InterpolateProblem, InterpolateStrategy};
 use cubek_interpolate::eval::benchmarks::InterpolateCorrectness;
+use cubek_interpolate::{definition::InterpolateProblem, launch::InterpolateStrategy};
 use cubek_test_utils::{CatalogEntry, Correctness, TestOutcome, assert_equals_approx};
 
 const SEEDS: [u64; 2] = [12, 34];
