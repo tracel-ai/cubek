@@ -1,8 +1,7 @@
 use cubecl;
 use cubecl::prelude::*;
 
-/// Any value smaller than this is considered numerically zero (used for
-/// fully-masked rows or tiny contributions). Value chosen to be above f16
+/// Below this value a row is treated as numerically zero. Above f16's
 /// smallest normal (~6.1e-5).
 pub const FULLY_MASKED_ROW_THRESHOLD: f32 = 1e-4;
 
@@ -41,7 +40,6 @@ pub struct RowWise<E: Numeric> {
 
 #[cube]
 impl<E: Numeric> RowWise<E> {
-    /// Create a RowWise with the provided value at every row
     pub fn new_filled(#[comptime] num_rows: usize, val: E) -> RowWise<E> {
         let mut vals = Array::<E>::new(num_rows);
         for i in 0..num_rows {
@@ -50,31 +48,30 @@ impl<E: Numeric> RowWise<E> {
         RowWise::<E> { vals, num_rows }
     }
 
-    /// Fill the existing RowWise with the provided value at every row
     pub fn fill(&mut self, val: E) {
         for i in 0..self.num_rows {
             self.vals[i] = val;
         }
     }
 
-    /// Create a RowWise with -infinity at every row
+    pub fn init_zero(&mut self) {
+        self.fill(E::from_int(0));
+    }
+
     pub fn new_min_value(#[comptime] num_rows: usize) -> RowWise<E> {
         Self::new_filled(num_rows, E::min_value())
     }
 
-    /// Create a RowWise with zero at every row
     pub fn new_zero(#[comptime] num_rows: usize) -> RowWise<E> {
         Self::new_filled(num_rows, E::from_int(0))
     }
 
-    /// Fill the current RowWise with the value of other at each row
     pub fn copy_from(&mut self, other: &RowWise<E>) {
         for i in 0..self.num_rows {
             self.vals[i] = other.vals[i]
         }
     }
 
-    /// For each row, add the the current and other, and outputs a new RowWise
     pub fn add(&self, other: &RowWise<E>) -> RowWise<E> {
         let mut result = Array::<E>::new(self.num_rows);
         for i in 0..self.num_rows {
@@ -86,14 +83,12 @@ impl<E: Numeric> RowWise<E> {
         }
     }
 
-    /// For each row, add the other value to the current RowWise
     pub fn add_inplace(&mut self, other: &RowWise<E>) {
         for i in 0..self.num_rows {
             self.vals[i] += other.vals[i];
         }
     }
 
-    /// For each row, multiplies the the current and other, and outputs a new RowWise
     pub fn mul(&self, other: &RowWise<E>) -> RowWise<E> {
         let mut result = Array::<E>::new(self.num_rows);
         for i in 0..self.num_rows {
@@ -105,26 +100,22 @@ impl<E: Numeric> RowWise<E> {
         }
     }
 
-    /// For each row, multiplies the other value to the current RowWise
     pub fn mul_inplace(&mut self, other: &RowWise<E>) {
         for i in 0..self.num_rows {
             self.vals[i] *= other.vals[i];
         }
     }
 
-    /// For each row, maxes the other value to the current RowWise
     pub fn max_inplace(&mut self, other: &RowWise<E>) {
         for i in 0..self.num_rows {
             self.vals[i] = max(self.vals[i], other.vals[i]);
         }
     }
 
-    /// Changes the value at index i
     pub fn replace_at(&mut self, i: usize, new_val: E) {
         self.vals[i] = new_val;
     }
 
-    /// Return a copy of self, cast into E2
     pub fn cast_from<E2: Float>(row_wise: &RowWise<E>) -> RowWise<E2> {
         let num_rows = row_wise.num_rows;
         let mut vals = Array::<E2>::new(num_rows);
@@ -139,7 +130,7 @@ impl<E: Numeric> RowWise<E> {
 
 #[cube]
 impl<E: Float> RowWise<E> {
-    /// Computes e^(self.val - other.val) for every row, and outputs a new RowWise
+    /// Per-row `e^(self - other)`.
     pub fn exp_diff(&self, other: &RowWise<E>) -> RowWise<E> {
         let mut vals = Array::<E>::new(self.num_rows);
 
@@ -153,11 +144,7 @@ impl<E: Float> RowWise<E> {
         }
     }
 
-    /// Replaces each value `v` (v >= 0) in a row with `1/v`.
-    ///
-    /// If `v = 0`, the result is set to `0` instead of `1/0`.
-    /// This occurs when the entire row is masked, meaning it should
-    /// contribute no information, and ensures numerical stability.
+    /// `v -> 1/v` per row, with `v == 0` (fully-masked row) staying zero.
     pub fn recip_inplace(&mut self) {
         for i in 0..self.num_rows {
             let row_val = self.vals[i];

@@ -1,19 +1,6 @@
-use cubecl::{prelude::*, std::tensor::layout::Coords2d};
+//! Re-export of the generic write-event types from cubek-std. The
+//! types themselves now live in [`cubek_std::tile`] (alongside
+//! [`StageEvent`](cubek_std::tile::StageEvent)) since they describe a
+//! tile-domain protocol rather than a matmul-specific one.
 
-#[derive(CubeType, Debug, Clone, Copy, PartialEq, Eq)]
-/// Events that occur during the process of storing tiles to
-/// a stage and executing writes
-pub enum WriteEvent {
-    /// Before any step
-    Begin,
-    /// After each tile is stored into the stage
-    TileStored { tile: Coords2d },
-    /// After the last step
-    Finish,
-}
-
-#[cube]
-/// Function that is called at each [WriteEvent]
-pub trait WriteEventListener: CubeType {
-    fn on_event(this: &mut Self, event: WriteEvent);
-}
+pub use cubek_std::tile::{WriteEvent, WriteEventExpand, WriteEventListener};

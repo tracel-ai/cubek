@@ -9,7 +9,6 @@ use crate::{
     components::global::read::SyncStrategy,
     components::global::read::TaskCounter,
     components::global::{multi_stage::JobIterator, read::FullLoaderStage},
-    components::stage::TilingLayout,
     components::{global::memory::GlobalIterator, stage::LoadStageFamily},
     {components::global::GlobalReaderConfig, launch::RuntimeConfig},
 };
@@ -17,7 +16,7 @@ use cubecl::{
     prelude::*,
     std::tensor::{View, layout::Coords2d},
 };
-use cubek_std::tile::StageTileKind;
+use cubek_std::tile::TilingLayout;
 
 pub type SyncBarrier<S> = <S as SyncStrategy>::Barrier;
 
@@ -31,7 +30,6 @@ pub trait FullLoadingStrategy<RC: RuntimeConfig>:
     /// The synchronization strategy that should be used with this loading strategy
     type SyncStrategy: SyncStrategy;
     type Stage: LoadStageFamily;
-    type TileKind: StageTileKind;
 
     /// The [LoadingJob] for this strategy.
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>: LoadingJob<EG, NG, ES, NS, Self::TilingLayout, Self::SyncStrategy, Stage = Self::Stage>;
@@ -46,6 +44,7 @@ pub trait FullLoadingStrategy<RC: RuntimeConfig>:
 }
 
 #[derive(Clone, CubeType)]
+#[expand(derive(Clone))]
 /// Loads the entire stage memory.
 ///
 /// A complete load is referred to as a `Job`, which is divided into `Tasks`—
@@ -64,20 +63,6 @@ pub struct FullStageGlobalReader<
     loading_job: ComptimeOption<L::Job<EG, NG, ES, NS>>,
     #[cube(comptime)]
     _phantom: PhantomData<L>,
-}
-
-impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: FullLoadingStrategy<RC>>
-    Clone for FullStageGlobalReaderExpand<EG, NG, ES, NS, RC, L>
-{
-    fn clone(&self) -> Self {
-        Self {
-            global_iter: self.global_iter.clone(),
-            runtime_config: self.runtime_config.clone(),
-            stage: self.stage.clone_unchecked(),
-            loading_job: self.loading_job.clone_unchecked(),
-            _phantom: self._phantom,
-        }
-    }
 }
 
 #[cube]
@@ -235,8 +220,8 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, RC: RuntimeConfig, L: FullLoa
         #[comptime] stage_buffer: StageBuffer,
         #[comptime] config: GlobalReaderConfig,
     ) {
-        let mut iterator = Self::create_job_iterator(&*this, stage_buffer, config);
-        Self::execute_all_remaining_tasks(this, &mut iterator, barrier, config);
+        let mut iter = Self::create_job_iterator(&*this, stage_buffer, config);
+        Self::execute_all_remaining_tasks(this, &mut iter, barrier, config);
     }
 }
 

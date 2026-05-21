@@ -2,19 +2,16 @@ use cubecl::{
     Runtime, client::ComputeClient, ir::StorageType, prelude::TensorBinding, server::LaunchError,
 };
 use cubek_matmul::{
-    components::{
-        global::read::{
-            AsyncPartialLoadingStrategy, async_partial_cyclic::AsyncPartialCyclicLoading,
-            async_partial_strided::AsyncPartialStridedLoading,
-            async_partial_tma::AsyncPartialTmaLoading,
-        },
-        stage::ColMajorTilingOrder,
+    components::global::read::{
+        AsyncPartialLoadingStrategy, async_partial_cyclic::AsyncPartialCyclicLoading,
+        async_partial_strided::AsyncPartialStridedLoading,
+        async_partial_tma::AsyncPartialTmaLoading,
     },
     definition::{AvailableVectorSizes, TilingBlueprint},
     launch::{TensorArgs, TensorMapArgs},
     routines::specialized::{SpecializedAlgorithm, SpecializedStrategy},
 };
-use cubek_std::tile::Strided;
+use cubek_std::tile::ColMajorTilingOrder;
 use std::marker::PhantomData;
 
 use crate::{
@@ -36,9 +33,7 @@ pub type SpecializedAsyncStridedConv = SpecializedConv<AsyncPartialStridedLoadin
 
 pub struct SpecializedTmaConv;
 
-impl<L: AsyncPartialLoadingStrategy<RuntimeArgs, TileKind = Strided>> Routine
-    for SpecializedConv<L>
-{
+impl<L: AsyncPartialLoadingStrategy<RuntimeArgs>> Routine for SpecializedConv<L> {
     type Blueprint = TilingBlueprint;
     type Strategy = SpecializedStrategy;
     type MatmulRoutine = SpecializedAlgorithm<L, SyncBiasLoading>;

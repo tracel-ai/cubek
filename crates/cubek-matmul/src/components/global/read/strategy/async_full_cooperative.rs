@@ -9,7 +9,7 @@ use crate::{
                 validate_async_barrier, validate_noswizzle,
             },
         },
-        stage::{StridedStageFamily, StridedStageMemory, StridedTilingLayout, TilingValidation},
+        stage::{StridedStageFamily, StridedStageMemory},
     },
     definition::{MatmulElems, MatmulProblem, StageIdent},
     launch::RuntimeConfig,
@@ -18,7 +18,10 @@ use cubecl::{
     ir::DeviceProperties,
     prelude::{barrier::Barrier, *},
 };
-use cubek_std::{InvalidConfigError, MatrixLayout, tile::Strided};
+use cubek_std::{
+    InvalidConfigError, MatrixLayout,
+    tile::{StridedTilingLayout, TilingValidation},
+};
 
 use super::LoadingValidation;
 
@@ -70,8 +73,6 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for AsyncFullCooperativeLoading 
     type SyncStrategy = AsyncBarrier;
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = AsyncFullCooperativeJob;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     const SHOULD_CLEAR: bool = true;
 
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
