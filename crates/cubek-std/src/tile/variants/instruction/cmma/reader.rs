@@ -13,7 +13,7 @@ pub fn cmma_load_strided<E: Numeric, V: Numeric, N: Size>(
     let slice = tile.as_slice();
     #[comptime]
     match layout {
-        ComptimeOption::None => cmma::load(fragment, &slice, stride),
-        ComptimeOption::Some(layout) => cmma::load_with_layout(fragment, &slice, stride, layout),
+        ComptimeOption::None => cmma::load(fragment, slice, stride),
+        ComptimeOption::Some(layout) => cmma::load_with_layout(fragment, slice, stride, layout),
     }
 }

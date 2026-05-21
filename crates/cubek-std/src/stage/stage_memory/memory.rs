@@ -68,7 +68,7 @@ impl<ES: Numeric, NS: Size, T: TilingLayout> StridedStageMemory<ES, NS, T> {
 
     pub fn with_buffer_index(&self, buffer_idx: u32) -> Self {
         StridedStageMemory::<ES, NS, T> {
-            smem: self.smem.clone(),
+            smem: self.smem,
             swizzle: self.swizzle,
             stage_size: self.stage_size,
             config: self.config,
@@ -81,7 +81,7 @@ impl<ES: Numeric, NS: Size, T: TilingLayout> StridedStageMemory<ES, NS, T> {
     /// Allows comptime switching tiling.
     pub fn with_layout<TNew: TilingLayout>(&self) -> StridedStageMemory<ES, NS, TNew> {
         StridedStageMemory::<ES, NS, TNew> {
-            smem: self.smem.clone(),
+            smem: self.smem,
             swizzle: self.swizzle,
             stage_size: self.stage_size,
             config: self.config,

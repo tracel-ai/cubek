@@ -160,7 +160,7 @@ fn load_ldmatrix<E: Numeric, N: Size, V: Numeric, NV: Size, A: Numeric, B: Numer
     let start = tile.stage_offset(start);
 
     let row_slice = &tile.container[start as usize..(start + width) as usize];
-    let regs = def.load_matrix::<_, N>(&row_slice, ident, num_regs, transposed);
+    let regs = def.load_matrix::<_, N>(row_slice, ident, num_regs, transposed);
 
     #[unroll]
     for i in 0..num_regs {
