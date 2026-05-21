@@ -68,7 +68,7 @@ impl<ES: Numeric, NS: Size> BiasStageMemory<ES, NS> {
 
     pub fn with_buffer_index(&self, buffer_idx: u32) -> Self {
         BiasStageMemory::<ES, NS> {
-            smem: self.smem.clone(),
+            smem: self.smem,
             swizzle: self.swizzle,
             stage_size: self.stage_size,
             config: self.config,
