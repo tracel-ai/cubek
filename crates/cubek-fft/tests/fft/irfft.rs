@@ -8,8 +8,8 @@ use cubecl::{
 };
 use cubek_fft::{irfft_launch, irfft_launch_padded};
 use cubek_test_utils::{
-    self, ExecutionOutcome, HostData, HostDataType, HostDataVec, TestInput, TestOutcome,
-    ValidationResult, assert_equals_approx, launch_and_capture_outcome,
+    self, ExecutionOutcome, HostData, HostDataType, TestInput, TestOutcome, ValidationResult,
+    assert_equals_approx, launch_and_capture_outcome,
 };
 
 use cubek_fft::eval::cpu_reference::irfft_ref;
@@ -131,26 +131,15 @@ fn test_launch_padded(
         .into()
     });
 
-    let outcome = match outcome {
+    match outcome {
         ExecutionOutcome::Executed => {
-            let actual = to_f32(HostData::from_tensor_handle(
-                &client,
-                virtual_signal,
-                HostDataType::F32,
-            ));
-            let expected = to_f32(HostData::from_tensor_handle(
-                &client,
-                padded_signal,
-                HostDataType::F32,
-            ));
-            match validate_f32_close(&actual, &expected) {
-                Ok(()) => TestOutcome::Validated(ValidationResult::Pass),
-                Err(msg) => TestOutcome::Validated(ValidationResult::Fail(msg)),
-            }
+            let actual = HostData::from_tensor_handle(&client, virtual_signal, HostDataType::F32);
+            let expected = HostData::from_tensor_handle(&client, padded_signal, HostDataType::F32);
+            assert_equals_approx(&actual, &expected, 1e-4).as_test_outcome()
         }
         ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
-    };
-    outcome.enforce();
+    }
+    .enforce();
 }
 
 fn assert_irfft_result(
@@ -165,13 +154,6 @@ fn assert_irfft_result(
     let actual_signal = HostData::from_tensor_handle(client, signal, HostDataType::F32);
 
     assert_equals_approx(&actual_signal, &expected_signal, epsilon)
-}
-
-fn to_f32(host: HostData) -> Vec<f32> {
-    match host.data {
-        HostDataVec::F32(v) => v,
-        _ => panic!("expected f32 host data"),
-    }
 }
 
 fn coords_from_index(mut index: usize, shape: &[usize]) -> Vec<usize> {
@@ -234,17 +216,6 @@ fn empty_tensor(
 ) -> TensorHandle<TestRuntime> {
     let elems = shape.iter().product::<usize>();
     TensorHandle::<TestRuntime>::new_contiguous(shape, client.empty(elems * dtype.size()), dtype)
-}
-
-fn validate_f32_close(actual: &[f32], expected: &[f32]) -> Result<(), String> {
-    for (index, (actual, expected)) in actual.iter().zip(expected.iter()).enumerate() {
-        if (actual - expected).abs() >= 1e-4 {
-            return Err(format!(
-                "mismatch at index {index}: actual={actual}, expected={expected}"
-            ));
-        }
-    }
-    Ok(())
 }
 
 #[test]

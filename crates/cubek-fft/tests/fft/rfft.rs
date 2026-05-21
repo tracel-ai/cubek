@@ -7,6 +7,7 @@ use cubecl::{
     {Runtime, TestRuntime},
 };
 use cubek_fft::{rfft_launch, rfft_launch_padded};
+#[cfg(feature = "heavy")]
 use cubek_test_utils::HostDataVec;
 use cubek_test_utils::{
     self, ExecutionOutcome, HostData, HostDataType, TestInput, TestOutcome, ValidationResult,
@@ -121,38 +122,21 @@ fn test_launch_padded(
         .into()
     });
 
-    let outcome = match outcome {
+    match outcome {
         ExecutionOutcome::Executed => {
-            let actual_re = to_f32(HostData::from_tensor_handle(
-                &client,
-                virtual_re,
-                HostDataType::F32,
-            ));
-            let actual_im = to_f32(HostData::from_tensor_handle(
-                &client,
-                virtual_im,
-                HostDataType::F32,
-            ));
-            let expected_re = to_f32(HostData::from_tensor_handle(
-                &client,
-                padded_re,
-                HostDataType::F32,
-            ));
-            let expected_im = to_f32(HostData::from_tensor_handle(
-                &client,
-                padded_im,
-                HostDataType::F32,
-            ));
-            match validate_f32_close(&actual_re, &expected_re)
-                .and_then(|()| validate_f32_close(&actual_im, &expected_im))
-            {
-                Ok(()) => TestOutcome::Validated(ValidationResult::Pass),
-                Err(msg) => TestOutcome::Validated(ValidationResult::Fail(msg)),
-            }
+            let actual_re = HostData::from_tensor_handle(&client, virtual_re, HostDataType::F32);
+            let actual_im = HostData::from_tensor_handle(&client, virtual_im, HostDataType::F32);
+            let expected_re = HostData::from_tensor_handle(&client, padded_re, HostDataType::F32);
+            let expected_im = HostData::from_tensor_handle(&client, padded_im, HostDataType::F32);
+            combine_re_im(
+                assert_equals_approx(&actual_re, &expected_re, 1e-4),
+                assert_equals_approx(&actual_im, &expected_im, 1e-4),
+            )
+            .as_test_outcome()
         }
         ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
-    };
-    outcome.enforce();
+    }
+    .enforce();
 }
 
 pub fn assert_rfft_result(
@@ -169,19 +153,24 @@ pub fn assert_rfft_result(
     let actual_spectrum_re = HostData::from_tensor_handle(client, spectrum_re, HostDataType::F32);
     let actual_spectrum_im = HostData::from_tensor_handle(client, spectrum_im, HostDataType::F32);
 
-    let result_spectrum_re = assert_equals_approx(&actual_spectrum_re, &expected_re, epsilon);
-    let result_spectrum_im = assert_equals_approx(&actual_spectrum_im, &expected_im, epsilon);
+    combine_re_im(
+        assert_equals_approx(&actual_spectrum_re, &expected_re, epsilon),
+        assert_equals_approx(&actual_spectrum_im, &expected_im, epsilon),
+    )
+}
 
+fn combine_re_im(re: ValidationResult, im: ValidationResult) -> ValidationResult {
     use ValidationResult::*;
-    match (result_spectrum_re, result_spectrum_im) {
-        (Fail(e), _) | (_, Fail(e)) => Fail(e.clone()),
-        (Skipped(r1), Skipped(r2)) => Skipped(format!("{}, {}", r1, r2)),
-        (Skipped(r), Pass) | (Pass, Skipped(r)) => Skipped(r.clone()),
+    match (re, im) {
+        (Fail(e), _) | (_, Fail(e)) => Fail(e),
+        (Error(e), _) | (_, Error(e)) => Error(e),
+        (Skipped(r1), Skipped(r2)) => Skipped(format!("{r1}, {r2}")),
+        (Skipped(r), Pass) | (Pass, Skipped(r)) => Skipped(r),
         (Pass, Pass) => Pass,
-        _ => panic!("unreachable"),
     }
 }
 
+#[cfg(feature = "heavy")]
 fn to_f32(host: HostData) -> Vec<f32> {
     match host.data {
         HostDataVec::F32(v) => v,
@@ -256,17 +245,6 @@ fn empty_tensor(
 ) -> TensorHandle<TestRuntime> {
     let elems = shape.iter().product::<usize>();
     TensorHandle::<TestRuntime>::new_contiguous(shape, client.empty(elems * dtype.size()), dtype)
-}
-
-fn validate_f32_close(actual: &[f32], expected: &[f32]) -> Result<(), String> {
-    for (index, (actual, expected)) in actual.iter().zip(expected.iter()).enumerate() {
-        if (actual - expected).abs() >= 1e-4 {
-            return Err(format!(
-                "mismatch at index {index}: actual={actual}, expected={expected}"
-            ));
-        }
-    }
-    Ok(())
 }
 
 #[test]
