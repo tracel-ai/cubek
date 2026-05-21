@@ -2,16 +2,17 @@
 //!
 //! Two flavours live here:
 //!
-//! * A shared-memory kernel (`cfft_kernel`) for any size up to
-//!   [`MAX_SHARED_N_FFT`]. Structurally identical to `rfft_kernel` /
-//!   `irfft_kernel` except the imaginary input is read rather than zeroed
-//!   and all `N` bins are written out (no Hermitian truncation).
-//! * A four-step Cooley-Tukey orchestrator for `N > MAX_SHARED_N_FFT` that
-//!   factors `N = N1 * N2` with both factors `<= MAX_SHARED_N_FFT`. Each
-//!   sub-FFT reuses the shared-memory butterfly via a dedicated "strided /
-//!   twiddled" radix kernel (`cfft_four_step_radix_kernel`). A single
-//!   transpose kernel converts the (N1, N2) internal layout to natural
-//!   linear bin order on the way out.
+//! * A shared-memory kernel (`cfft_kernel`) for any size up to the device's
+//!   per-cube shared-memory budget (see [`max_shared_fft_n`]). Structurally
+//!   identical to `rfft_kernel` / `irfft_kernel` except the imaginary input
+//!   is read rather than zeroed and all `N` bins are written out (no
+//!   Hermitian truncation).
+//! * A four-step Cooley-Tukey orchestrator for larger `N` that factors
+//!   `N = N1 * N2` with both factors inside that budget. Each sub-FFT
+//!   reuses the shared-memory butterfly via a dedicated "strided / twiddled"
+//!   radix kernel (`cfft_four_step_radix_kernel`). A single transpose kernel
+//!   converts the (N1, N2) internal layout to natural linear bin order on
+//!   the way out.
 //!
 //! The public API of this module is the single
 //! [`cfft_launch_any_size`] function which picks the right path.
@@ -30,20 +31,10 @@ use crate::{
     fft::{
         FftMode,
         fft_parallel::{bit_reverse, fft_butterfly_parallel},
+        limits::{max_shared_fft_n, max_units_per_cube},
     },
     layout::BatchSignalLayout,
 };
-
-/// Portable size limit for the single-pass shared-memory path. The kernel
-/// allocates two `f32` shared buffers of length `n_fft`, so `n_fft = 4096`
-/// uses 2 * 4096 * 4 bytes = 32 KiB. Larger sizes use the packed-real /
-/// four-step path instead of relying on backend-specific larger workgroup
-/// memory limits.
-pub(crate) const MAX_SHARED_N_FFT: usize = 4096;
-
-/// Portable cap on the number of units in one cube. Larger FFTs still cover
-/// all bins by having each unit process multiple indices.
-const MAX_UNITS_PER_CUBE: usize = 256;
 
 pub(crate) struct CfftBindings<R: Runtime> {
     pub(crate) input_re: TensorBinding<R>,
@@ -61,15 +52,15 @@ struct CfftPlan {
 }
 
 /// Factor `n_fft = N1 * N2` for the four-step FFT. Both factors are powers
-/// of two, both `<= MAX_SHARED_N_FFT`, and the split is as balanced as
+/// of two, both `<= max_shared_n_fft`, and the split is as balanced as
 /// possible.
-pub(crate) fn factor_four_step(n_fft: usize) -> (usize, usize) {
+pub(crate) fn factor_four_step(n_fft: usize, max_shared_n_fft: usize) -> (usize, usize) {
     assert!(
         n_fft.is_power_of_two(),
         "four-step needs power-of-two n_fft"
     );
     let log2_n = n_fft.trailing_zeros() as usize;
-    let max_log2 = MAX_SHARED_N_FFT.trailing_zeros() as usize;
+    let max_log2 = max_shared_n_fft.trailing_zeros() as usize;
     // Balanced split, then push each factor up to the shared-mem cap if the
     // other factor would otherwise exceed it.
     let log2_n1 = log2_n / 2;
@@ -81,7 +72,7 @@ pub(crate) fn factor_four_step(n_fft: usize) -> (usize, usize) {
     };
     assert!(
         log2_n1 <= max_log2 && log2_n2 <= max_log2,
-        "four-step cannot handle n_fft = {n_fft} with MAX_SHARED_N_FFT = {MAX_SHARED_N_FFT}",
+        "four-step cannot handle n_fft = {n_fft} with max shared-mem n = {max_shared_n_fft}",
     );
     (1 << log2_n1, 1 << log2_n2)
 }
@@ -119,7 +110,7 @@ pub(crate) fn cfft_launch_any_size<R: Runtime>(
         fft_mode,
     };
 
-    if n_fft <= MAX_SHARED_N_FFT {
+    if n_fft <= max_shared_fft_n(client) {
         cfft_shared_launch::<R>(client, bindings, plan)
     } else {
         cfft_four_step_launch::<R>(client, bindings, dtype, plan)
@@ -132,7 +123,7 @@ fn cfft_shared_launch<R: Runtime>(
     plan: CfftPlan,
 ) -> Result<(), LaunchError> {
     let log2_n = plan.n_fft.trailing_zeros() as usize;
-    let threads_per_cube = (plan.n_fft / 2).clamp(1, MAX_UNITS_PER_CUBE);
+    let threads_per_cube = (plan.n_fft / 2).clamp(1, max_units_per_cube(client));
     let cube_dim = CubeDim::new_1d(threads_per_cube as u32);
     let cube_count =
         cubecl::calculate_cube_count_elemwise(client, plan.count, CubeDim::new_single());
@@ -209,7 +200,7 @@ fn cfft_shared_kernel<F: Float>(
 
 // --- Four-step path ----------------------------------------------------
 
-/// Four-step complex FFT for `n_fft > MAX_SHARED_N_FFT`.
+/// Four-step complex FFT for `n_fft > max_shared_fft_n(client)`.
 ///
 /// Layout convention: each window's `n_fft` axis is viewed as
 /// `(N1, N2)` row-major with the flat index `n = n1 * N2 + n2`. After the
@@ -222,7 +213,9 @@ fn cfft_four_step_launch<R: Runtime>(
     dtype: StorageType,
     plan: CfftPlan,
 ) -> Result<(), LaunchError> {
-    let (n1, n2) = factor_four_step(plan.n_fft);
+    let max_n = max_shared_fft_n(client);
+    let max_units = max_units_per_cube(client);
+    let (n1, n2) = factor_four_step(plan.n_fft, max_n);
 
     // Scratch buffer, same shape as input. Two passes ping-pong through
     // scratch and output; the transpose at the end lands in `output`.
@@ -243,7 +236,7 @@ fn cfft_four_step_launch<R: Runtime>(
     // (window, n2). Reads from `input_*`, writes to `scratch_*` with fused
     // twiddle multiplication by W_N^{k1 * n2} for the inter-stage factor.
     {
-        let threads_per_cube = (n1 / 2).clamp(1, MAX_UNITS_PER_CUBE);
+        let threads_per_cube = (n1 / 2).clamp(1, max_units);
         let log2_n1 = n1.trailing_zeros() as usize;
         let cube_dim = CubeDim::new_1d(threads_per_cube as u32);
         let cube_count =
@@ -270,7 +263,7 @@ fn cfft_four_step_launch<R: Runtime>(
     // Step 2: contiguous FFT_{N2} along the n2 axis of (N1, N2). One cube
     // per (window, k1). Reads/writes scratch in place.
     {
-        let threads_per_cube = (n2 / 2).clamp(1, MAX_UNITS_PER_CUBE);
+        let threads_per_cube = (n2 / 2).clamp(1, max_units);
         let log2_n2 = n2.trailing_zeros() as usize;
         let cube_dim = CubeDim::new_1d(threads_per_cube as u32);
         let cube_count =

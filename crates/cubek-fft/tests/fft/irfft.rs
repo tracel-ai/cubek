@@ -9,7 +9,7 @@ use cubecl::{
 use cubek_fft::{irfft_launch, irfft_launch_padded};
 use cubek_test_utils::{
     self, ExecutionOutcome, HostData, HostDataType, HostDataVec, TestInput, TestOutcome,
-    ValidationResult, assert_equals_approx,
+    ValidationResult, assert_equals_approx, launch_and_capture_outcome,
 };
 
 use cubek_fft::eval::cpu_reference::irfft_ref;
@@ -36,16 +36,15 @@ fn test_launch(client: ComputeClient<TestRuntime>, spectrum_shape: Vec<usize>, d
         .zeros()
         .generate_without_host_data();
 
-    match irfft_launch::<TestRuntime>(
-        &client,
-        random_spectrum_re_handle.binding(),
-        random_spectrum_im_handle.binding(),
-        signal_handle.clone().binding(),
-        dim,
-        dtype,
-    )
-    .into()
-    {
+    let re_binding = random_spectrum_re_handle.binding();
+    let im_binding = random_spectrum_im_handle.binding();
+    let signal_binding = signal_handle.clone().binding();
+
+    let outcome = launch_and_capture_outcome(&client, |c| {
+        irfft_launch::<TestRuntime>(c, re_binding, im_binding, signal_binding, dim, dtype).into()
+    });
+
+    match outcome {
         ExecutionOutcome::Executed => assert_irfft_result(
             &client,
             random_spectrum_re_data,
@@ -102,39 +101,56 @@ fn test_launch_padded(
     let virtual_signal = empty_tensor(&client, signal_shape.clone(), dtype);
     let padded_signal = empty_tensor(&client, signal_shape, dtype);
 
-    irfft_launch_padded::<TestRuntime>(
-        &client,
-        virtual_re.binding(),
-        virtual_im.binding(),
-        virtual_signal.clone().binding(),
-        dim,
-        spec_bins,
-        dtype,
-    )
-    .unwrap();
+    let virtual_re_binding = virtual_re.binding();
+    let virtual_im_binding = virtual_im.binding();
+    let virtual_signal_binding = virtual_signal.clone().binding();
+    let padded_re_binding = padded_re.binding();
+    let padded_im_binding = padded_im.binding();
+    let padded_signal_binding = padded_signal.clone().binding();
 
-    irfft_launch::<TestRuntime>(
-        &client,
-        padded_re.binding(),
-        padded_im.binding(),
-        padded_signal.clone().binding(),
-        dim,
-        dtype,
-    )
-    .unwrap();
+    let outcome = launch_and_capture_outcome(&client, |c| {
+        if let Err(e) = irfft_launch_padded::<TestRuntime>(
+            c,
+            virtual_re_binding,
+            virtual_im_binding,
+            virtual_signal_binding,
+            dim,
+            spec_bins,
+            dtype,
+        ) {
+            return ExecutionOutcome::CompileError(format!("virtual launch failed: {e}"));
+        }
+        irfft_launch::<TestRuntime>(
+            c,
+            padded_re_binding,
+            padded_im_binding,
+            padded_signal_binding,
+            dim,
+            dtype,
+        )
+        .into()
+    });
 
-    let actual = to_f32(HostData::from_tensor_handle(
-        &client,
-        virtual_signal,
-        HostDataType::F32,
-    ));
-    let expected = to_f32(HostData::from_tensor_handle(
-        &client,
-        padded_signal,
-        HostDataType::F32,
-    ));
-
-    assert_f32_close(&actual, &expected);
+    let outcome = match outcome {
+        ExecutionOutcome::Executed => {
+            let actual = to_f32(HostData::from_tensor_handle(
+                &client,
+                virtual_signal,
+                HostDataType::F32,
+            ));
+            let expected = to_f32(HostData::from_tensor_handle(
+                &client,
+                padded_signal,
+                HostDataType::F32,
+            ));
+            match validate_f32_close(&actual, &expected) {
+                Ok(()) => TestOutcome::Validated(ValidationResult::Pass),
+                Err(msg) => TestOutcome::Validated(ValidationResult::Fail(msg)),
+            }
+        }
+        ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
+    };
+    outcome.enforce();
 }
 
 fn assert_irfft_result(
@@ -220,13 +236,15 @@ fn empty_tensor(
     TensorHandle::<TestRuntime>::new_contiguous(shape, client.empty(elems * dtype.size()), dtype)
 }
 
-fn assert_f32_close(actual: &[f32], expected: &[f32]) {
+fn validate_f32_close(actual: &[f32], expected: &[f32]) -> Result<(), String> {
     for (index, (actual, expected)) in actual.iter().zip(expected.iter()).enumerate() {
-        assert!(
-            (actual - expected).abs() < 1e-4,
-            "mismatch at index {index}: actual={actual}, expected={expected}"
-        );
+        if (actual - expected).abs() >= 1e-4 {
+            return Err(format!(
+                "mismatch at index {index}: actual={actual}, expected={expected}"
+            ));
+        }
     }
+    Ok(())
 }
 
 #[test]
