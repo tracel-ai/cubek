@@ -116,3 +116,25 @@ fn test_interpolate_nearest_exact_without_align_corners() {
     );
     run_interpolate_test(client, 122, -10.0, 10.0, problem, NEAREST_TOLERANCE);
 }
+
+#[test]
+fn test_interpolate_nearest_precision() {
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(
+        [1, 255, 1, 1],
+        [510, 1],
+        InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
+    );
+    run_interpolate_test(client, 122, -1.0, 1.0, problem, NEAREST_TOLERANCE);
+}
+
+#[test]
+fn test_interpolate_nearest_exact_precision() {
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(
+        [1, 255, 1, 1],
+        [510, 1],
+        InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Exact)),
+    );
+    run_interpolate_test(client, 122, -1.0, 1.0, problem, NEAREST_TOLERANCE);
+}

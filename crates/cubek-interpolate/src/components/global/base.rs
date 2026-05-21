@@ -38,8 +38,15 @@ pub fn interpolate_kernel<F: Float, N: Size>(
         options,
     );
 
-    let base_x_floor = mapped_x.floor();
-    let base_y_floor = mapped_y.floor();
+    let (base_x_floor, base_y_floor) = match options.mode {
+        InterpolateMode::Nearest(_) => {
+            let float_precision = F::EPSILON;
+            let base_x_floor = (mapped_x + float_precision).floor();
+            let base_y_floor = (mapped_y + float_precision).floor();
+            (base_x_floor, base_y_floor)
+        }
+        _ => (mapped_x.floor(), mapped_y.floor()),
+    };
 
     let (frac_x, frac_y) = (mapped_x - base_x_floor, mapped_y - base_y_floor);
 
