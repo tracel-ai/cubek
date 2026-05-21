@@ -41,11 +41,10 @@ impl<ES: Numeric, NS: Size> PartitionedStage<ES, NS> {
         // Needs to be 16-byte aligned for `stmatrix`
         let inner = StridedStageMemory::<ES, NS, WriteTiling>::new_aligned(16usize, config);
 
-        let smem = inner.smem.clone();
         let tile = inner.get_tile(unit_pos);
 
         PartitionedStage::<ES, NS> {
-            _smem: smem,
+            _smem: inner.smem,
             unit_tile: tile,
         }
     }
