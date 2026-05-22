@@ -22,24 +22,32 @@ use crate::{
     definition::Acc,
 };
 use crate::{
-    components::stage,
-    components::stage::StageConfig,
-    definition::{AccG, LhsG, MatmulTypes, MatrixTypes, RhsG},
+    components::stage::{
+        {StagePartitioner, partition_coordinates},
+        {init_a_fragment, init_accumulator, init_b_fragments},
+    },
+    definition::{AccG, AccRE, AccSE, AccSS, LhsG, LhsRE, MatmulTypes, MatrixTypes, RhsG, RhsRE},
     launch::RuntimeConfig,
 };
 use cubecl::{
     prelude::*,
     std::tensor::{View, layout::Coords2d},
 };
-use cubek_std::tile::Strided;
+use cubek_std::tile::{PartitionScheduler, Tile, load_partition_from_stage};
 use std::marker::PhantomData;
+
+// Per-flow Stage type aliases — keep call sites readable.
+type LhsStageFor<MP, RC, LL> = PartialLoaderStage<RC, LL, Stage<Lhs<MP>>, StageSize<Lhs<MP>>>;
+type RhsStageFor<MP, RC, RL> = PartialLoaderStage<RC, RL, Stage<Rhs<MP>>, StageSize<Rhs<MP>>>;
+type AccStageFor<MP, RC, AL> =
+    ComptimeOption<FullLoaderStage<RC, AL, Stage<Acc<MP>>, StageSize<Acc<MP>>>>;
 
 /// Performs matrix multiplication at the global level, with planes pipelining their work using two buffers:
 /// While they trigger a load event from global memory to shared memory on stage A,
 /// they trigger a computation event from tensor cores on stage B. Then stages are switched.
 pub struct DoubleBufferingMatmul<
     MP: MatmulTypes,
-    SMM: stage::StageMatmul<MP>,
+    SP: StagePartitioner,
     RC: RuntimeConfig,
     LL: PartialLoadingStrategy<RC>,
     RL: PartialLoadingStrategy<RC>,
@@ -47,7 +55,7 @@ pub struct DoubleBufferingMatmul<
     GW: GlobalWriter<MP::Acc>,
 > {
     _ms: PhantomData<MP>,
-    _stage_matmul: PhantomData<SMM>,
+    _sp: PhantomData<SP>,
     _rc: PhantomData<RC>,
     _lhs_loading: PhantomData<LL>,
     _rhs_loading: PhantomData<RL>,
@@ -56,23 +64,17 @@ pub struct DoubleBufferingMatmul<
 }
 
 #[cube]
-impl<MP: MatmulTypes, SMM, RC, LL, RL, AL, GW> GlobalMatmul<RC, MP>
-    for DoubleBufferingMatmul<MP, SMM, RC, LL, RL, AL, GW>
+impl<MP: MatmulTypes, SP, RC, LL, RL, AL, GW> GlobalMatmul<RC, MP>
+    for DoubleBufferingMatmul<MP, SP, RC, LL, RL, AL, GW>
 where
-    SMM: stage::StageMatmul<
-            MP,
-            LhsStage = PartialLoaderStage<RC, LL, Stage<Lhs<MP>>, StageSize<Lhs<MP>>>,
-            RhsStage = PartialLoaderStage<RC, RL, Stage<Rhs<MP>>, StageSize<Rhs<MP>>>,
-            AccStage = ComptimeOption<FullLoaderStage<RC, AL, Stage<Acc<MP>>, StageSize<Acc<MP>>>>,
-            OutStage = GW::Stage,
-        >,
+    SP: StagePartitioner,
     RC: RuntimeConfig,
-    LL: PartialLoadingStrategy<RC, TileKind = Strided>,
-    RL: PartialLoadingStrategy<RC, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
-    AL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
+    LL: PartialLoadingStrategy<RC>,
+    RL: PartialLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
+    AL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
     GW: GlobalWriter<MP::Acc>,
 {
-    type Config = SharedGlobalMatmulConfig<SMM::Config>;
+    type Config = SharedGlobalMatmulConfig;
 
     type LhsGlobalReader = PartialStageGlobalReader<
         <MP::Lhs as MatrixTypes>::Global,
@@ -102,7 +104,7 @@ where
     >;
 
     type GlobalWriter = GW;
-    type Accumulators = SMM::Accumulators;
+    type Accumulators = Tile<AccRE<MP>, SP::Scope>;
 
     fn execute(
         mut lhs_reader: Self::LhsGlobalReader,
@@ -133,19 +135,45 @@ where
         let range = k_range.1 - k_range.0;
         let needed_stage_matmuls = range.div_ceil(stage_step);
 
-        let mut acc = SMM::init_accumulators(config.stage_config);
+        let stage_shared = config.stage_config.shared();
+
+        let mut acc = init_accumulator::<MP, SP::Scope>(stage_shared);
 
         // Algorithm assumes an even number of stages
         let num_stage_matmuls = needed_stage_matmuls + (needed_stage_matmuls % 2);
         let num_loops = (num_stage_matmuls - 2) / 2;
 
-        let (mut lhs_tile, mut rhs_tile) = SMM::init_tile_inputs(config.stage_config);
-        let partition_scheduler = SMM::init_scheduler(config.stage_config);
+        let mut lhs_tile = init_a_fragment::<MP, SP::Scope>(stage_shared);
+        let mut rhs_tile = init_b_fragments::<MP, SP::Scope>(stage_shared);
+
+        let (partition_row, partition_col) = partition_coordinates::<SP>(
+            stage_shared.plane_flow_config.partition_rule,
+            stage_shared.plane_dim,
+            stage_shared.stage_size.n(),
+        );
+        let partition_scheduler = PartitionScheduler::new(
+            partition_row,
+            partition_col,
+            stage_shared.partition_size,
+            stage_shared.partition_schedule_scheme,
+        );
 
         let lhs_stage_a = lhs_reader.stage(StageBuffer::A);
         let lhs_stage_b = lhs_reader.stage(StageBuffer::B);
         let rhs_stage_a = rhs_reader.stage(StageBuffer::A);
         let rhs_stage_b = rhs_reader.stage(StageBuffer::B);
+        let lhs_stage_a_tile = <LhsStageFor<MP, RC, LL> as crate::components::stage::Stage<
+            Stage<Lhs<MP>>,
+        >>::as_stage_tile::<SP::Scope>(&lhs_stage_a);
+        let lhs_stage_b_tile = <LhsStageFor<MP, RC, LL> as crate::components::stage::Stage<
+            Stage<Lhs<MP>>,
+        >>::as_stage_tile::<SP::Scope>(&lhs_stage_b);
+        let rhs_stage_a_tile = <RhsStageFor<MP, RC, RL> as crate::components::stage::Stage<
+            Stage<Rhs<MP>>,
+        >>::as_stage_tile::<SP::Scope>(&rhs_stage_a);
+        let rhs_stage_b_tile = <RhsStageFor<MP, RC, RL> as crate::components::stage::Stage<
+            Stage<Rhs<MP>>,
+        >>::as_stage_tile::<SP::Scope>(&rhs_stage_b);
 
         let mut barrier_a = LL::SyncStrategy::create_barrier();
         let mut barrier_b = LL::SyncStrategy::create_barrier();
@@ -157,15 +185,24 @@ where
 
         let acc_stage = acc_reader.map(|mut reader| {
             reader.load_stage(&mut barrier_a, config.acc_reader_config);
-            LL::SyncStrategy::sync::<MP, _>(&mut barrier_a, config);
+            LL::SyncStrategy::sync::<MP>(&mut barrier_a, config);
             reader.stage()
         });
 
-        SMM::load_accumulators(
+        load_partition_from_stage::<
+            AccSE<MP>,
+            AccSS<MP>,
+            LhsRE<MP>,
+            RhsRE<MP>,
+            AccRE<MP>,
+            SP::Scope,
+            AccStageFor<MP, RC, AL>,
+        >(
             &acc_stage,
             &mut acc,
             &partition_scheduler,
-            config.stage_config,
+            stage_shared.partition_size.m(),
+            stage_shared.partition_size.n(),
         );
 
         read_first::<LL::SyncStrategy, Self::LhsGlobalReader, Self::RhsGlobalReader>(
@@ -178,19 +215,19 @@ where
             config.rhs_reader_config,
         );
 
-        LL::SyncStrategy::sync::<MP, _>(&mut barrier_a, config);
+        LL::SyncStrategy::sync::<MP>(&mut barrier_a, config);
 
         for _ in 0..num_loops {
             execute_current_and_read_next::<
                 MP,
-                SMM,
+                SP,
                 LL::SyncStrategy,
                 Self::LhsGlobalReader,
                 Self::RhsGlobalReader,
                 Self::Config,
             >(
-                &lhs_stage_a,
-                &rhs_stage_a,
+                &lhs_stage_a_tile,
+                &rhs_stage_a_tile,
                 &mut lhs_tile,
                 &mut rhs_tile,
                 &mut acc,
@@ -206,18 +243,18 @@ where
             lhs_reader.advance_view();
             rhs_reader.advance_view();
 
-            LL::SyncStrategy::sync::<MP, _>(&mut barrier_b, config);
+            LL::SyncStrategy::sync::<MP>(&mut barrier_b, config);
 
             execute_current_and_read_next::<
                 MP,
-                SMM,
+                SP,
                 LL::SyncStrategy,
                 Self::LhsGlobalReader,
                 Self::RhsGlobalReader,
                 Self::Config,
             >(
-                &lhs_stage_b,
-                &rhs_stage_b,
+                &lhs_stage_b_tile,
+                &rhs_stage_b_tile,
                 &mut lhs_tile,
                 &mut rhs_tile,
                 &mut acc,
@@ -230,19 +267,19 @@ where
                 config,
             );
 
-            LL::SyncStrategy::sync::<MP, _>(&mut barrier_a, config);
+            LL::SyncStrategy::sync::<MP>(&mut barrier_a, config);
         }
 
         execute_current_and_read_next::<
             MP,
-            SMM,
+            SP,
             LL::SyncStrategy,
             Self::LhsGlobalReader,
             Self::RhsGlobalReader,
             Self::Config,
         >(
-            &lhs_stage_a,
-            &rhs_stage_a,
+            &lhs_stage_a_tile,
+            &rhs_stage_a_tile,
             &mut lhs_tile,
             &mut rhs_tile,
             &mut acc,
@@ -255,11 +292,11 @@ where
             config,
         );
 
-        LL::SyncStrategy::sync::<MP, _>(&mut barrier_b, config);
+        LL::SyncStrategy::sync::<MP>(&mut barrier_b, config);
 
-        execute_last_and_write_results::<MP, GW, SMM, Self::Config>(
-            &lhs_stage_b,
-            &rhs_stage_b,
+        execute_last_and_write_results::<MP, GW, SP, Self::Config>(
+            &lhs_stage_b_tile,
+            &rhs_stage_b_tile,
             &mut lhs_tile,
             &mut rhs_tile,
             &mut acc,
@@ -310,6 +347,6 @@ where
     }
 
     fn init_accumulators(#[comptime] config: Self::Config) -> Self::Accumulators {
-        SMM::init_accumulators(config.stage_config)
+        init_accumulator::<MP, SP::Scope>(config.stage_config.shared())
     }
 }

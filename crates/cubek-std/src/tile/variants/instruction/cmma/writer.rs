@@ -1,6 +1,6 @@
 use cubecl::prelude::*;
 
-use crate::{as_cmma_layout, tile::variants::StridedTile};
+use crate::{as_cmma_layout, tile::StridedTile};
 
 /// Writer using the cmma store function.
 #[derive(CubeType)]

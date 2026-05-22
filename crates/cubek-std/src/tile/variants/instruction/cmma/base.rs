@@ -5,14 +5,10 @@ use cubecl::{
 };
 
 use crate::{
-    MatrixLayout, StageIdent, SwizzleModes, TileSize, as_cmma_layout,
+    MatrixLayout, StageIdent, TileSize, as_cmma_layout,
     tile::{
-        Tile, TileKind, TileKindExpand, TileScope,
-        variants::{
-            instruction::cmma::{CmmaFragmentReader as _, CmmaStageReader, CmmaStageWriter},
-            kind::Strided,
-            strided::SharedTile,
-        },
+        SharedTile, Tile, TileKind, TileKindExpand, TileScope,
+        variants::instruction::cmma::{CmmaStageWriter, cmma_load_strided},
     },
 };
 
@@ -23,23 +19,6 @@ pub struct CmmaTile<N: Numeric> {
     pub matrix_layout: MatrixLayout,
     #[cube(comptime)]
     pub tile_size: TileSize,
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-pub struct CmmaMatmul {
-    pub tile_size: TileSize,
-    pub plane_dim: u32,
-    pub swizzle_modes: SwizzleModes,
-}
-
-impl CmmaMatmul {
-    pub fn new(tile_size: TileSize, plane_dim: u32, swizzle_modes: SwizzleModes) -> Self {
-        Self {
-            tile_size,
-            plane_dim,
-            swizzle_modes,
-        }
-    }
 }
 
 #[cube]
@@ -59,15 +38,14 @@ impl<A: Numeric> CmmaTile<A> {
 
 #[cube]
 impl<N: Numeric> CmmaTile<N> {
-    /// Copies into the cmma fragment from `source`. Supported sources:
-    /// `SharedMemory` (a regular load) and `None` (zero-init).
+    /// Supported sources: `SharedTile` (load) and `None` (zero-init).
     pub fn copy_from<SE: Numeric, SS: Size, Sc: TileScope>(
         &mut self,
         source: &Tile<SE, Sc>,
         #[comptime] ident: StageIdent,
     ) {
         match &source.kind {
-            TileKind::SharedMemory(shared) => {
+            TileKind::SharedTile(shared) => {
                 cmma_load_from_shared::<SE, SS, N>(
                     shared,
                     &mut self.matrix,
@@ -83,13 +61,14 @@ impl<N: Numeric> CmmaTile<N> {
             | TileKind::Interleaved(_)
             | TileKind::Unit(_)
             | TileKind::WhiteboxFragment(_)
+            | TileKind::RowWise(_)
             | TileKind::Bounce(_)
             | TileKind::Stage(_)
-            | TileKind::Partition(_) => panic!("CmmaTile::copy_from: unsupported source variant"),
+            | TileKind::Partition(_)
+            | TileKind::Pipelined(_) => panic!("CmmaTile::copy_from: unsupported source variant"),
         }
     }
 
-    /// Zero-init the cmma fragment.
     pub fn init_zero(&mut self) {
         cmma_load_zeros::<N>(&mut self.matrix);
     }
@@ -181,10 +160,10 @@ pub fn cmma_load_from_shared<E: Numeric, ES: Size, N: Numeric>(
     let shared = shared.view::<ES>();
     match ident {
         StageIdent::Lhs | StageIdent::Rhs => {
-            CmmaStageReader::<Strided>::load_fragment(&shared, matrix, ComptimeOption::new_None());
+            cmma_load_strided(&shared, matrix, ComptimeOption::new_None());
         }
         StageIdent::Acc => {
-            CmmaStageReader::<Strided>::load_fragment(
+            cmma_load_strided(
                 &shared,
                 matrix,
                 ComptimeOption::new_Some(as_cmma_layout(matrix_layout)),

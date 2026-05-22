@@ -5,7 +5,6 @@ use crate::{
     components::{
         batch::SliceIndex,
         global::{self, GlobalConfig},
-        stage::StageConfig,
     },
     launch::MatmulArgs,
 };

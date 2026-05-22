@@ -1,7 +1,10 @@
 use std::fmt::Display;
 
 use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding};
-use cubek_std::InputBinding;
+use cubek_std::{
+    InputBinding,
+    tile::{ColMajorTilingOrder, RowMajorTilingOrder},
+};
 
 use crate::{
     components::{
@@ -10,14 +13,10 @@ use crate::{
             async_partial_strided::AsyncPartialStridedLoading, sync_full_strided,
             sync_full_tilewise,
         },
-        stage::{ColMajorTilingOrder, RowMajorTilingOrder},
         tile::TileMatmulKind,
     },
     definition::{MatmulElems, MatmulSetupError},
-    launch::{
-        launch_gemm_plane_parallel, launch_gemv_plane_parallel, launch_gemv_unit_perpendicular,
-        launch_naive, launch_tiling,
-    },
+    launch::{launch_gemm, launch_gemv_unit_perpendicular, launch_naive, launch_tiling},
     routines::{
         BlueprintStrategy, Routine,
         double_buffering::{
@@ -26,9 +25,8 @@ use crate::{
             TilewiseDoubleBufferingAlgorithm, TmaDoubleBufferingAlgorithm,
         },
         double_unit::DoubleUnitAlgorithm,
-        gemm_plane_parallel::GemmPlaneParallelRoutine,
+        gemm::GemmRoutine,
         gemv_innerproduct::{DoubleVecMatInnerProductAlgorithm, VecMatInnerProductAlgorithm},
-        gemv_plane_parallel::GemvPlaneParallelRoutine,
         gemv_unit_perpendicular::GemvUnitPerpendicularRoutine,
         ordered_double_buffering::{OrderedDoubleBufferingAlgorithm, OrderedSelectionArgs},
         simple::{SimpleAlgorithm, SimpleArgs, SimpleTmaAlgorithm},
@@ -181,8 +179,7 @@ pub enum Strategy {
     SimpleVecMat(BlueprintStrategy<(), VecMatInnerProductAlgorithm>),
     DoubleVecMat(BlueprintStrategy<(), DoubleVecMatInnerProductAlgorithm>),
     GemvUnitPerpendicular(BlueprintStrategy<(), GemvUnitPerpendicularRoutine>),
-    GemvPlaneParallel(BlueprintStrategy<(), GemvPlaneParallelRoutine>),
-    GemmPlaneParallel(BlueprintStrategy<(), GemmPlaneParallelRoutine>),
+    Gemm(BlueprintStrategy<(), GemmRoutine>),
     Naive,
     #[default]
     Auto,
@@ -238,8 +235,7 @@ impl Display for Strategy {
             Strategy::Naive => f.write_str("matmul_naive"),
             Strategy::Auto => f.write_str("matmul_auto"),
             Strategy::GemvUnitPerpendicular(s) => write!(f, "vecmat_unit_perpendicular{}", s),
-            Strategy::GemvPlaneParallel(s) => write!(f, "vecmat_plane_parallel{}", s),
-            Strategy::GemmPlaneParallel(s) => write!(f, "gemm_plane_parallel{}", s),
+            Strategy::Gemm(s) => write!(f, "gemm{}", s),
         }
     }
 }
@@ -536,25 +532,8 @@ impl Strategy {
                     dtypes,
                 )
             }
-            Strategy::GemvPlaneParallel(blueprint_strategy) => {
-                launch_gemv_plane_parallel::launch_ref(
-                    client,
-                    lhs,
-                    rhs,
-                    out,
-                    blueprint_strategy,
-                    dtypes,
-                )
-            }
-            Strategy::GemmPlaneParallel(blueprint_strategy) => {
-                launch_gemm_plane_parallel::launch_ref(
-                    client,
-                    lhs,
-                    rhs,
-                    out,
-                    blueprint_strategy,
-                    dtypes,
-                )
+            Strategy::Gemm(blueprint_strategy) => {
+                launch_gemm::launch_ref(client, lhs, rhs, out, blueprint_strategy, dtypes)
             }
         }
     }

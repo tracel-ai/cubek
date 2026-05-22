@@ -1,9 +1,8 @@
 use cubecl;
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
-use cubek_matmul::components::stage::TilingValidation;
 use cubek_std::{
     stage::StageMemoryConfig,
-    tile::StridedTile,
+    tile::{StridedTile, TilingValidation},
     {InvalidConfigError, MatrixLayout},
 };
 

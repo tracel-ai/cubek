@@ -14,10 +14,10 @@ use cubek_matmul::components::{
             stage::FullStageLayout,
         },
     },
-    stage::{StridedStageFamily, StridedStageMemory, StridedTilingLayout},
+    stage::{StridedStageFamily, StridedStageMemory},
 };
 use cubek_matmul::definition::{MatmulElems, MatmulProblem};
-use cubek_std::{InvalidConfigError, StageIdent, tile::Strided};
+use cubek_std::{InvalidConfigError, StageIdent, tile::StridedTilingLayout};
 
 use crate::components::global::{
     args::RuntimeArgs,
@@ -70,8 +70,6 @@ impl FullLoadingStrategy<RuntimeArgs> for AsyncFullStridedLoading {
     type SyncStrategy = AsyncCopy;
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = AsyncFullStridedJob;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         runtime_args: RuntimeArgs,
         #[comptime] config: GlobalReaderConfig,

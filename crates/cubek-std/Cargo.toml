@@ -17,10 +17,14 @@ heavy = []
 extended = ["heavy"]
 full = ["extended"]
 
+# Pulls in `cubek-test-utils` for test/bench-only conversions (e.g.
+# `MatrixLayout` → `LayoutSpec`). Off by default.
+testing = ["dep:cubek-test-utils", "cubecl/test-runtime"]
+
 # Enables `pub mod benchmarks` — catalogues for the contiguous, unary, and
 # memcpy_async subcategories. Off by default; the top-level `benchmarks`
 # crate turns it on.
-benchmarks = ["dep:cubek-test-utils", "cubecl/test-runtime"]
+benchmarks = ["testing"]
 
 [dependencies]
 cubecl = { workspace = true, features = ["stdlib"] }

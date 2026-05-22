@@ -13,4 +13,4 @@ mod zeros;
 pub use base::*;
 pub use host_data::*;
 pub use io::{read_host_data, write_host_data};
-pub use strides::{StrideSpec, physical_extent};
+pub use strides::{LayoutSpec, StridedLayout, physical_extent};

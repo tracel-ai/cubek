@@ -7,10 +7,11 @@ use cubecl::{
     {Runtime, TestRuntime},
 };
 use cubek_fft::{rfft_launch, rfft_launch_padded};
+#[cfg(feature = "heavy")]
 use cubek_test_utils::HostDataVec;
 use cubek_test_utils::{
     self, ExecutionOutcome, HostData, HostDataType, TestInput, TestOutcome, ValidationResult,
-    assert_equals_approx,
+    assert_equals_approx, launch_and_capture_outcome,
 };
 
 use cubek_fft::eval::cpu_reference::rfft_ref;
@@ -36,16 +37,15 @@ fn test_launch(client: ComputeClient<TestRuntime>, signal_shape: Vec<usize>, dim
         .zeros()
         .generate_without_host_data();
 
-    match rfft_launch::<TestRuntime>(
-        &client,
-        white_noise_handle.binding(),
-        spectrum_re_handle.clone().binding(),
-        spectrum_im_handle.clone().binding(),
-        dim,
-        dtype,
-    )
-    .into()
-    {
+    let signal_binding = white_noise_handle.binding();
+    let re_binding = spectrum_re_handle.clone().binding();
+    let im_binding = spectrum_im_handle.clone().binding();
+
+    let outcome = launch_and_capture_outcome(&client, |c| {
+        rfft_launch::<TestRuntime>(c, signal_binding, re_binding, im_binding, dim, dtype).into()
+    });
+
+    match outcome {
         ExecutionOutcome::Executed => assert_rfft_result(
             &client,
             white_noise_data,
@@ -92,50 +92,51 @@ fn test_launch_padded(
     let padded_re = empty_tensor(&client, spectrum_shape.clone(), dtype);
     let padded_im = empty_tensor(&client, spectrum_shape, dtype);
 
-    rfft_launch_padded::<TestRuntime>(
-        &client,
-        virtual_signal.binding(),
-        virtual_re.clone().binding(),
-        virtual_im.clone().binding(),
-        dim,
-        signal_len,
-        dtype,
-    )
-    .unwrap();
+    let virtual_signal_binding = virtual_signal.binding();
+    let virtual_re_binding = virtual_re.clone().binding();
+    let virtual_im_binding = virtual_im.clone().binding();
+    let padded_signal_binding = padded_signal.binding();
+    let padded_re_binding = padded_re.clone().binding();
+    let padded_im_binding = padded_im.clone().binding();
 
-    rfft_launch::<TestRuntime>(
-        &client,
-        padded_signal.binding(),
-        padded_re.clone().binding(),
-        padded_im.clone().binding(),
-        dim,
-        dtype,
-    )
-    .unwrap();
+    let outcome = launch_and_capture_outcome(&client, |c| {
+        if let Err(e) = rfft_launch_padded::<TestRuntime>(
+            c,
+            virtual_signal_binding,
+            virtual_re_binding,
+            virtual_im_binding,
+            dim,
+            signal_len,
+            dtype,
+        ) {
+            return ExecutionOutcome::CompileError(format!("virtual launch failed: {e}"));
+        }
+        rfft_launch::<TestRuntime>(
+            c,
+            padded_signal_binding,
+            padded_re_binding,
+            padded_im_binding,
+            dim,
+            dtype,
+        )
+        .into()
+    });
 
-    let actual_re = to_f32(HostData::from_tensor_handle(
-        &client,
-        virtual_re,
-        HostDataType::F32,
-    ));
-    let actual_im = to_f32(HostData::from_tensor_handle(
-        &client,
-        virtual_im,
-        HostDataType::F32,
-    ));
-    let expected_re = to_f32(HostData::from_tensor_handle(
-        &client,
-        padded_re,
-        HostDataType::F32,
-    ));
-    let expected_im = to_f32(HostData::from_tensor_handle(
-        &client,
-        padded_im,
-        HostDataType::F32,
-    ));
-
-    assert_f32_close(&actual_re, &expected_re);
-    assert_f32_close(&actual_im, &expected_im);
+    match outcome {
+        ExecutionOutcome::Executed => {
+            let actual_re = HostData::from_tensor_handle(&client, virtual_re, HostDataType::F32);
+            let actual_im = HostData::from_tensor_handle(&client, virtual_im, HostDataType::F32);
+            let expected_re = HostData::from_tensor_handle(&client, padded_re, HostDataType::F32);
+            let expected_im = HostData::from_tensor_handle(&client, padded_im, HostDataType::F32);
+            combine_re_im(
+                assert_equals_approx(&actual_re, &expected_re, 1e-4),
+                assert_equals_approx(&actual_im, &expected_im, 1e-4),
+            )
+            .as_test_outcome()
+        }
+        ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
+    }
+    .enforce();
 }
 
 pub fn assert_rfft_result(
@@ -152,19 +153,24 @@ pub fn assert_rfft_result(
     let actual_spectrum_re = HostData::from_tensor_handle(client, spectrum_re, HostDataType::F32);
     let actual_spectrum_im = HostData::from_tensor_handle(client, spectrum_im, HostDataType::F32);
 
-    let result_spectrum_re = assert_equals_approx(&actual_spectrum_re, &expected_re, epsilon);
-    let result_spectrum_im = assert_equals_approx(&actual_spectrum_im, &expected_im, epsilon);
+    combine_re_im(
+        assert_equals_approx(&actual_spectrum_re, &expected_re, epsilon),
+        assert_equals_approx(&actual_spectrum_im, &expected_im, epsilon),
+    )
+}
 
+fn combine_re_im(re: ValidationResult, im: ValidationResult) -> ValidationResult {
     use ValidationResult::*;
-    match (result_spectrum_re, result_spectrum_im) {
-        (Fail(e), _) | (_, Fail(e)) => Fail(e.clone()),
-        (Skipped(r1), Skipped(r2)) => Skipped(format!("{}, {}", r1, r2)),
-        (Skipped(r), Pass) | (Pass, Skipped(r)) => Skipped(r.clone()),
+    match (re, im) {
+        (Fail(e), _) | (_, Fail(e)) => Fail(e),
+        (Error(e), _) | (_, Error(e)) => Error(e),
+        (Skipped(r1), Skipped(r2)) => Skipped(format!("{r1}, {r2}")),
+        (Skipped(r), Pass) | (Pass, Skipped(r)) => Skipped(r),
         (Pass, Pass) => Pass,
-        _ => panic!("unreachable"),
     }
 }
 
+#[cfg(feature = "heavy")]
 fn to_f32(host: HostData) -> Vec<f32> {
     match host.data {
         HostDataVec::F32(v) => v,
@@ -239,15 +245,6 @@ fn empty_tensor(
 ) -> TensorHandle<TestRuntime> {
     let elems = shape.iter().product::<usize>();
     TensorHandle::<TestRuntime>::new_contiguous(shape, client.empty(elems * dtype.size()), dtype)
-}
-
-fn assert_f32_close(actual: &[f32], expected: &[f32]) {
-    for (index, (actual, expected)) in actual.iter().zip(expected.iter()).enumerate() {
-        assert!(
-            (actual - expected).abs() < 1e-4,
-            "mismatch at index {index}: actual={actual}, expected={expected}"
-        );
-    }
 }
 
 #[test]
@@ -408,43 +405,52 @@ fn rfft_nyquist_bin_large_sizes() {
             .zeros()
             .generate_without_host_data();
 
-        rfft_launch::<TestRuntime>(
-            &client,
-            signal.binding(),
-            spectrum_re.clone().binding(),
-            spectrum_im.clone().binding(),
-            1,
-            dtype,
-        )
-        .unwrap();
+        let signal_binding = signal.binding();
+        let re_binding = spectrum_re.clone().binding();
+        let im_binding = spectrum_im.clone().binding();
 
-        let re = to_f32(HostData::from_tensor_handle(
-            &client,
-            spectrum_re,
-            HostDataType::F32,
-        ));
-        let im = to_f32(HostData::from_tensor_handle(
-            &client,
-            spectrum_im,
-            HostDataType::F32,
-        ));
+        let outcome = launch_and_capture_outcome(&client, |c| {
+            rfft_launch::<TestRuntime>(c, signal_binding, re_binding, im_binding, 1, dtype).into()
+        });
 
-        for b in 0..batch {
-            let base = b * n_freq;
-            for k in 0..n_freq {
-                let expected = if k == n_fft / 2 { n_fft as f32 } else { 0.0 };
-                assert!(
-                    (re[base + k] - expected).abs() < 1.0,
-                    "n_fft={n_fft}, batch={b}, bin={k}: real={}, want {expected}",
-                    re[base + k],
-                );
-                assert!(
-                    im[base + k].abs() < 1.0,
-                    "n_fft={n_fft}, batch={b}, bin={k}: imag={}",
-                    im[base + k],
-                );
+        let outcome = match outcome {
+            ExecutionOutcome::Executed => {
+                let re = to_f32(HostData::from_tensor_handle(
+                    &client,
+                    spectrum_re,
+                    HostDataType::F32,
+                ));
+                let im = to_f32(HostData::from_tensor_handle(
+                    &client,
+                    spectrum_im,
+                    HostDataType::F32,
+                ));
+                let mut result = ValidationResult::Pass;
+                'check: for b in 0..batch {
+                    let base = b * n_freq;
+                    for k in 0..n_freq {
+                        let expected = if k == n_fft / 2 { n_fft as f32 } else { 0.0 };
+                        if (re[base + k] - expected).abs() >= 1.0 {
+                            result = ValidationResult::Fail(format!(
+                                "n_fft={n_fft}, batch={b}, bin={k}: real={}, want {expected}",
+                                re[base + k]
+                            ));
+                            break 'check;
+                        }
+                        if im[base + k].abs() >= 1.0 {
+                            result = ValidationResult::Fail(format!(
+                                "n_fft={n_fft}, batch={b}, bin={k}: imag={}",
+                                im[base + k]
+                            ));
+                            break 'check;
+                        }
+                    }
+                }
+                result.as_test_outcome()
             }
-        }
+            ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
+        };
+        outcome.enforce();
     }
 }
 

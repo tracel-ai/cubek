@@ -9,13 +9,11 @@ use crate::{
     fft::{
         FftMode,
         fft_parallel::{bit_reverse, fft_butterfly_parallel},
-        rfft::SHARED_MEM_CAP,
+        limits::{max_shared_fft_n, max_units_per_cube},
         rfft_large::irfft_large_launch,
     },
     layout::BatchSignalLayout,
 };
-
-const MAX_UNITS_PER_CUBE: usize = 256;
 
 /// Inverse Real-valued Fast Fourier Transform.
 pub fn irfft<R: Runtime>(
@@ -118,7 +116,7 @@ pub fn irfft_launch_padded<R: Runtime>(
         return Ok(());
     }
 
-    if n_fft > SHARED_MEM_CAP {
+    if n_fft > max_shared_fft_n(client) {
         return irfft_large_launch::<R>(
             client,
             spectrum_re,
@@ -131,7 +129,7 @@ pub fn irfft_launch_padded<R: Runtime>(
     }
 
     let log2_n = n_fft.trailing_zeros() as usize;
-    let threads_per_cube = (n_fft / 2).clamp(1, MAX_UNITS_PER_CUBE);
+    let threads_per_cube = (n_fft / 2).clamp(1, max_units_per_cube(client));
 
     let cube_dim = CubeDim::new_1d(threads_per_cube as u32);
     let cube_count = cubecl::calculate_cube_count_elemwise(client, count, CubeDim::new_single());

@@ -1,28 +1,23 @@
 use std::marker::PhantomData;
 
-use crate::components::{
-    global::memory::GlobalIterator,
-    stage::{ContiguousTilingLayout, TilingOrder},
+use crate::components::global::memory::GlobalIterator;
+use crate::{
+    components::global::multi_stage::LoadMaxRoundPlaneCount,
+    definition::{MatmulElems, MatmulProblem, StageIdent},
+    {components::global::GlobalReaderConfig, launch::RuntimeConfig},
 };
 use crate::{
     components::global::read::validate_swizzle_atom_size,
     components::global::read::{PartialLoadingStrategy, sync::Synchronous},
     components::global::{PlaneFlowPartition, read::tiled::TiledLayout},
-    components::stage::StridedStageFamily,
-    components::stage::StridedStageMemory,
-    components::stage::TilingOrderEnum,
-};
-use crate::{
-    components::{global::multi_stage::LoadMaxRoundPlaneCount, stage::TilingValidation},
-    definition::{MatmulElems, MatmulProblem, StageIdent},
-    {components::global::GlobalReaderConfig, launch::RuntimeConfig},
+    components::stage::{StridedStageFamily, StridedStageMemory},
 };
 use cubecl::{
     std::tensor::layout::Coords2d,
     {ir::DeviceProperties, prelude::*},
 };
 use cubek_std::{
-    tile::Strided,
+    tile::{ContiguousTilingLayout, TilingOrder, TilingOrderEnum, TilingValidation},
     {FormattedConfigError, InvalidConfigError},
 };
 
@@ -123,8 +118,6 @@ impl<TO: TilingOrder, RC: RuntimeConfig> PartialLoadingStrategy<RC>
     type TilingLayout = ContiguousTilingLayout<TO>;
     type SyncStrategy = Synchronous;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = SyncPartialTilewiseJob;
 
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(

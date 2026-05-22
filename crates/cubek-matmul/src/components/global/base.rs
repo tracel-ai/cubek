@@ -8,7 +8,7 @@ use crate::{
     components::global::multi_stage::EventLoadingMode, components::global::read::ReaderMode,
 };
 use crate::{
-    components::stage::StageConfig,
+    components::stage::StageMatmul as StageMatmulInstance,
     components::{global::memory::GlobalMemoryConfig, stage::NumStages},
     definition::StageIdent,
     definition::TilingBlueprint,
@@ -137,8 +137,8 @@ pub trait GlobalMatmul<RC: RuntimeConfig, MP: MatmulTypes>: 'static {
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct SharedGlobalMatmulConfig<S: StageConfig> {
-    pub stage_config: S,
+pub struct SharedGlobalMatmulConfig {
+    pub stage_config: StageMatmulInstance,
     pub num_planes: u32,
     pub lhs_reader_config: GlobalReaderConfig,
     pub rhs_reader_config: GlobalReaderConfig,
@@ -147,7 +147,7 @@ pub struct SharedGlobalMatmulConfig<S: StageConfig> {
     pub must_sync_plane_after_execution: bool,
 }
 
-impl<S: StageConfig> SharedGlobalMatmulConfig<S> {
+impl SharedGlobalMatmulConfig {
     pub fn check_k_bounds(&self) -> bool {
         let from_lhs = self.lhs_reader_config.gmem_config.check_col_bounds;
         let from_rhs = self.rhs_reader_config.gmem_config.check_row_bounds;
@@ -172,10 +172,8 @@ impl<S: StageConfig> SharedGlobalMatmulConfig<S> {
     }
 }
 
-impl<S: StageConfig> GlobalConfig for SharedGlobalMatmulConfig<S> {
-    type StageConfig = S;
-
-    fn stage_config(&self) -> Self::StageConfig {
+impl GlobalConfig for SharedGlobalMatmulConfig {
+    fn stage_config(&self) -> StageMatmulInstance {
         self.stage_config
     }
 
@@ -212,10 +210,8 @@ impl<S: StageConfig> GlobalConfig for SharedGlobalMatmulConfig<S> {
 pub trait GlobalConfig:
     Copy + Clone + Eq + PartialEq + Hash + Debug + Send + Sync + 'static
 {
-    type StageConfig: StageConfig;
-
     /// Convert itself to the underlying stage matmul config
-    fn stage_config(&self) -> Self::StageConfig;
+    fn stage_config(&self) -> StageMatmulInstance;
     fn lhs_reader_config(&self) -> GlobalReaderConfig;
     fn rhs_reader_config(&self) -> GlobalReaderConfig;
     fn writer_config(&self) -> GlobalWriterConfig;

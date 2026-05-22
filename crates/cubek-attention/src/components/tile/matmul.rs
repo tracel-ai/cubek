@@ -1,11 +1,12 @@
 use cubecl;
 use cubecl::prelude::*;
+use cubek_matmul::components::tile::{CmmaMatmul, RegisterMatmul};
 use cubek_std::{
     MatrixLayout, SwizzleModes,
     tile::{
-        BounceConfig, CmmaMatmul, CmmaTile, InnerLayout, Plane, ProductType, RegisterMatmul, Tile,
-        allocate_bounce_tile, cmma_allocate_lhs, cmma_allocate_rhs, register_allocate_acc,
-        register_allocate_lhs, register_allocate_rhs,
+        BounceConfig, CmmaTile, InnerLayout, Plane, ProductType, Tile, allocate_bounce_tile,
+        cmma_allocate_lhs, cmma_allocate_rhs, register_allocate_acc, register_allocate_lhs,
+        register_allocate_rhs,
     },
 };
 use cubek_std::{TileSize, as_cmma_layout};
@@ -89,7 +90,7 @@ pub fn allocate_lhs<L: Numeric>(#[comptime] matmul: AttentionTileMatmul) -> Tile
             cmma_allocate_lhs::<L, Plane>(MatrixLayout::RowMajor, c.matmul.tile_size)
         }
         AttentionTileMatmul::Register(c) => {
-            register_allocate_lhs::<L, Plane>(MatrixLayout::RowMajor, c)
+            register_allocate_lhs::<L, Plane>(MatrixLayout::RowMajor, c.tile_size, c.product_type)
         }
     }
 }
@@ -101,7 +102,7 @@ pub fn allocate_rhs<R: Numeric>(#[comptime] matmul: AttentionTileMatmul) -> Tile
             cmma_allocate_rhs::<R, Plane>(MatrixLayout::RowMajor, c.matmul.tile_size)
         }
         AttentionTileMatmul::Register(c) => {
-            register_allocate_rhs::<R, Plane>(MatrixLayout::RowMajor, c)
+            register_allocate_rhs::<R, Plane>(MatrixLayout::RowMajor, c.tile_size, c.product_type)
         }
     }
 }
@@ -115,7 +116,7 @@ pub fn allocate_rhs_transposed<R: Numeric>(
             cmma_allocate_rhs::<R, Plane>(MatrixLayout::ColMajor, c.matmul.tile_size)
         }
         AttentionTileMatmul::Register(c) => {
-            register_allocate_rhs::<R, Plane>(MatrixLayout::ColMajor, c)
+            register_allocate_rhs::<R, Plane>(MatrixLayout::ColMajor, c.tile_size, c.product_type)
         }
     }
 }
@@ -145,7 +146,7 @@ pub fn allocate_rowwise_acc<A: Float>(#[comptime] matmul: AttentionTileMatmul) -
             allocate_bounce_tile::<A, Plane>(cmma, c.bounce_config_acc())
         }
         AttentionTileMatmul::Register(c) => {
-            register_allocate_acc::<A, Plane>(MatrixLayout::RowMajor, c)
+            register_allocate_acc::<A, Plane>(MatrixLayout::RowMajor, c.tile_size, c.product_type)
         }
     }
 }
@@ -176,7 +177,7 @@ pub fn allocate_softmax_target_lhs<L: Float>(
             allocate_bounce_tile::<L, Plane>(cmma, c.bounce_config_lhs())
         }
         AttentionTileMatmul::Register(c) => {
-            register_allocate_lhs::<L, Plane>(MatrixLayout::RowMajor, c)
+            register_allocate_lhs::<L, Plane>(MatrixLayout::RowMajor, c.tile_size, c.product_type)
         }
     }
 }

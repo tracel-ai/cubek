@@ -7,7 +7,7 @@ use cubecl::{
 };
 use cubek_reduce::components::instructions::{Value, plane_topk_insert, plane_topk_merge};
 use cubek_reduce::eval::cpu_reference::contiguous_strides;
-use cubek_test_utils::{InputDataType, StrideSpec, TestInput};
+use cubek_test_utils::{InputDataType, StridedLayout, TestInput};
 
 #[test]
 fn test_topk_plane_reduce_inplace() {
@@ -40,7 +40,7 @@ fn test_topk_plane_reduce_inplace() {
 
     let (input_handle, _input_host) = TestInput::builder(client.clone(), shape.clone())
         .dtype(input_dtype)
-        .stride(StrideSpec::Custom(stride.iter().copied().collect()))
+        .layout(StridedLayout::Explicit(stride.iter().copied().collect()))
         .custom(data.clone())
         .generate_with_f32_host_data();
 
@@ -72,7 +72,7 @@ fn build_output_tensor(
     let strides = contiguous_strides(output_shape);
     TestInput::builder(client.clone(), output_shape.clone())
         .dtype(output_dtype)
-        .stride(StrideSpec::Custom(strides.iter().copied().collect()))
+        .layout(StridedLayout::Explicit(strides.iter().copied().collect()))
         .zeros()
         .generate()
 }
@@ -170,13 +170,17 @@ fn test_topk_plane_topk_insert() {
 
     let (acc_handle, _acc_host) = TestInput::builder(client.clone(), acc_shape.clone())
         .dtype(input_dtype.clone())
-        .stride(StrideSpec::Custom(acc_stride.iter().copied().collect()))
+        .layout(StridedLayout::Explicit(
+            acc_stride.iter().copied().collect(),
+        ))
         .custom(acc_data.clone())
         .generate_with_f32_host_data();
 
     let (item_handle, _item_host) = TestInput::builder(client.clone(), item_shape.clone())
         .dtype(input_dtype)
-        .stride(StrideSpec::Custom(item_stride.iter().copied().collect()))
+        .layout(StridedLayout::Explicit(
+            item_stride.iter().copied().collect(),
+        ))
         .custom(item_data.clone())
         .generate_with_f32_host_data();
 

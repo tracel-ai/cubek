@@ -11,7 +11,7 @@ use cubecl::{
     zspace::{Shape, Strides},
 };
 use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, HostDataVec, Progress, StrideSpec, TestInput,
+    ExecutionOutcome, HostData, HostDataType, HostDataVec, Progress, StridedLayout, TestInput,
     launch_and_capture_outcome,
 };
 use num_complex::Complex;
@@ -197,7 +197,7 @@ fn stack_re_im(re: HostData, im: HostData) -> HostData {
     let mut out_shape_vec = vec![2];
     out_shape_vec.extend(inner_shape);
     let out_shape = Shape::from(out_shape_vec);
-    let strides = StrideSpec::RowMajor.compute_strides(&out_shape);
+    let strides = StridedLayout::RowMajor.compute_strides(&out_shape);
 
     HostData {
         data: HostDataVec::F32(packed),
@@ -265,7 +265,7 @@ pub fn irfft_ref(
     out_shape_vec[dim] = sample_window;
     let out_shape = Shape::from(out_shape_vec);
     let num_windows = re.shape.num_elements() / num_freq_bins;
-    let out_strides = StrideSpec::RowMajor.compute_strides(&out_shape);
+    let out_strides = StridedLayout::RowMajor.compute_strides(&out_shape);
 
     if let Some(p) = progress {
         p.set_total(num_windows as u64);
@@ -326,7 +326,7 @@ pub fn rfft_ref(
     out_shape_vec[dim] = num_freq_bins;
     let out_shape = Shape::from(out_shape_vec);
     let num_windows = signal.shape.num_elements() / sample_window;
-    let out_strides = StrideSpec::RowMajor.compute_strides(&out_shape);
+    let out_strides = StridedLayout::RowMajor.compute_strides(&out_shape);
 
     if let Some(p) = progress {
         p.set_total(num_windows as u64);

@@ -7,7 +7,7 @@
 #![allow(clippy::needless_range_loop)]
 
 use cubecl::zspace::Shape;
-use cubek_test_utils::{HostData, HostDataVec, StrideSpec};
+use cubek_test_utils::{HostData, HostDataVec, StridedLayout};
 
 use crate::forward::definition::AttentionProblem;
 
@@ -240,12 +240,12 @@ fn compute_backward_inner(
         }
     }
 
-    let q_strides = StrideSpec::RowMajor.compute_strides(&q_shape);
-    let k_strides = StrideSpec::RowMajor.compute_strides(&k_shape);
-    let v_strides = StrideSpec::RowMajor.compute_strides(&v_shape);
-    let o_strides = StrideSpec::RowMajor.compute_strides(&o_shape);
-    let row_strides = StrideSpec::RowMajor.compute_strides(&row_shape);
-    let attn_strides = StrideSpec::RowMajor.compute_strides(&attn_shape);
+    let q_strides = StridedLayout::RowMajor.compute_strides(&q_shape);
+    let k_strides = StridedLayout::RowMajor.compute_strides(&k_shape);
+    let v_strides = StridedLayout::RowMajor.compute_strides(&v_shape);
+    let o_strides = StridedLayout::RowMajor.compute_strides(&o_shape);
+    let row_strides = StridedLayout::RowMajor.compute_strides(&row_shape);
+    let attn_strides = StridedLayout::RowMajor.compute_strides(&attn_shape);
 
     FlashAttentionBackwardDebug {
         dq: HostData {

@@ -9,7 +9,7 @@ use cubecl::{
     std::tensor::TensorHandle,
     zspace::Shape,
 };
-use cubek_test_utils::{RunSamples, StrideSpec, TestInput};
+use cubek_test_utils::{RunSamples, StridedLayout, TestInput};
 
 use crate::eval::benchmarks::problem::FftProblem;
 use crate::eval::benchmarks::strategy::FftStrategy;
@@ -56,23 +56,14 @@ struct FftInput {
     spectrum_im: TensorHandle<TestRuntime>,
 }
 
-fn row_major_or_custom(rank: usize) -> StrideSpec {
-    if rank >= 2 {
-        StrideSpec::RowMajor
-    } else {
-        StrideSpec::Custom(vec![1; rank])
-    }
-}
-
 fn make_uniform(
     client: &ComputeClient<TestRuntime>,
     shape: Vec<usize>,
     dtype: StorageType,
     seed: u64,
 ) -> TensorHandle<TestRuntime> {
-    let rank = shape.len();
     TestInput::builder(client.clone(), Shape::from(shape))
-        .stride(row_major_or_custom(rank))
+        .layout(StridedLayout::RowMajor)
         .dtype(dtype)
         .uniform(seed, 0., 1.)
         .generate_without_host_data()
