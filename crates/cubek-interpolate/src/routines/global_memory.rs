@@ -26,7 +26,7 @@ impl ForwardRoutine for GlobalMemoryRoutine {
         vector_size: usize,
     ) -> Result<(InterpolateBlueprint, InterpolateLaunchSettings), InterpolateError> {
         let options = problem.options;
-        let settings = prepare_launch_settings(client, &problem, options, 0, vector_size, None)?;
+        let settings = prepare_launch_settings(client, problem, options, 0, vector_size, None)?;
 
         let blueprint = InterpolateBlueprint {
             tile_size: settings.tile_size,
