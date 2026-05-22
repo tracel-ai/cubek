@@ -3,12 +3,13 @@ pub mod definition;
 #[cfg(any(feature = "cpu-reference", feature = "benchmarks"))]
 pub mod eval;
 mod kernel;
-mod launch;
+pub mod launch;
+pub mod routines;
 
 use crate::{
     definition::{InterpolateError, InterpolateMode, InterpolateOptions},
     kernel::backward::interpolate_nearest_backward_launch,
-    launch::interpolate_launch,
+    launch::{InterpolateStrategy, interpolate_launch},
 };
 use core::result::Result;
 use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*};
@@ -23,12 +24,13 @@ pub fn interpolate<R: Runtime>(
     input: TensorBinding<R>,
     output: TensorBinding<R>,
     options: InterpolateOptions,
+    strategy: InterpolateStrategy,
     dtype: StorageType,
 ) -> Result<(), InterpolateError> {
     validate_rank(input.shape.len(), output.shape.len())?;
     validate_nhwc_consistency(&input.shape, &output.shape)?;
 
-    interpolate_launch(client, input, output, options, dtype)
+    interpolate_launch(client, input, output, options, strategy, dtype)
 }
 
 /// Backward interpolate operation

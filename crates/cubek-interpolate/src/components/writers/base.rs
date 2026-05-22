@@ -1,28 +1,23 @@
 use cubecl::prelude::*;
 
 #[derive(CubeType)]
-pub struct Writer {
-    channel_group: usize,
-}
+pub struct Writer {}
 
 #[cube]
 impl Writer {
-    pub fn new(channel_group: usize) -> Self {
-        Writer { channel_group }
-    }
-
-    pub fn write<F: Float, N: Size>(
-        &self,
-        output: &mut Tensor<Vector<F, N>>,
+    pub fn write<EI: Float, N: Size>(
+        output: &mut Tensor<Vector<EI, N>>,
         batch: usize,
-        x: usize,
-        y: usize,
+        channel_group: usize,
+        row: usize,
+        col: usize,
         vector_size: usize,
-        value: Vector<F, N>,
+        value: Vector<EI, N>,
     ) {
-        let out_index = (batch * output.stride(0) + y * output.stride(1) + x * output.stride(2))
-            / vector_size
-            + self.channel_group * output.stride(3);
+        let out_index =
+            (batch * output.stride(0) + row * output.stride(1) + col * output.stride(2))
+                / vector_size
+                + channel_group * output.stride(3);
 
         output[out_index] = value;
     }

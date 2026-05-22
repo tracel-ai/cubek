@@ -6,7 +6,7 @@ use cubecl::prelude::*;
 pub trait Interpolate {
     const HALO: usize;
 
-    fn compute_weights<F: Float, N: Size>(frac: F) -> Array<Vector<F, N>>;
+    fn compute_weight<EA: Float>(x: EA) -> EA;
 }
 
 /// Algorithm used for upsampling.
@@ -48,16 +48,28 @@ pub fn get_halo(mode: InterpolateMode) -> usize {
 }
 
 #[cube]
-pub fn compute_weights<F: Float, N: Size>(
-    frac: F,
+pub fn compute_weights<EA: Float, N: Size>(
+    frac: EA,
     #[comptime] options: InterpolateOptions,
-) -> Array<Vector<F, N>> {
-    match options.mode {
-        InterpolateMode::Nearest(_) => <Nearest as Interpolate>::compute_weights(frac),
-        InterpolateMode::Bilinear => <Bilinear as Interpolate>::compute_weights(frac),
-        InterpolateMode::Bicubic => <Bicubic as Interpolate>::compute_weights(frac),
-        InterpolateMode::Lanczos3 => <Lanczos3 as Interpolate>::compute_weights(frac),
+) -> Array<Vector<EA, N>> {
+    let halo = comptime!(get_halo(options.mode));
+    let mut weights = Array::<Vector<EA, N>>::new(halo);
+    let radius_offset = (halo - 1) / 2;
+
+    #[unroll]
+    for i in 0..halo {
+        let x = frac + EA::cast_from(radius_offset) - EA::cast_from(i);
+
+        let w = match options.mode {
+            InterpolateMode::Nearest(_) => <Nearest as Interpolate>::compute_weight::<EA>(x),
+            InterpolateMode::Bilinear => <Bilinear as Interpolate>::compute_weight::<EA>(x),
+            InterpolateMode::Bicubic => <Bicubic as Interpolate>::compute_weight::<EA>(x),
+            InterpolateMode::Lanczos3 => <Lanczos3 as Interpolate>::compute_weight::<EA>(x),
+        };
+        weights[i] = Vector::new(w);
     }
+
+    weights
 }
 
 /// Interpolation options.

@@ -8,9 +8,7 @@ pub struct Nearest {}
 impl Interpolate for Nearest {
     const HALO: usize = 1;
 
-    fn compute_weights<F: Float, N: Size>(_frac: F) -> Array<Vector<F, N>> {
-        let mut weights = Array::<Vector<F, N>>::new(Self::HALO);
-        weights[0] = Vector::cast_from(F::one());
-        weights
+    fn compute_weight<EA: Float>(_x: EA) -> EA {
+        EA::new(1.0)
     }
 }

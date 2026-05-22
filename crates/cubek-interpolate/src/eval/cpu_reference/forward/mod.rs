@@ -8,26 +8,28 @@ pub(crate) use bilinear::reference_bilinear;
 pub(crate) use lanczos3::reference_lanczos3;
 pub(crate) use nearest::reference_nearest;
 
-use super::{f32_storage_type, make_random_f32_host, make_zero_handle, output_shape_for};
-use crate::definition::{InterpolateForwardProblem, InterpolateMode, InterpolateOptions};
+use super::{f32_storage_type, make_random_f32_host, make_zero_handle};
+use crate::{
+    definition::{InterpolateForwardProblem, InterpolateMode, InterpolateOptions},
+    interpolate,
+    launch::InterpolateStrategy,
+};
 use cubecl::{TestRuntime, client::ComputeClient};
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, Progress, launch_and_capture_outcome,
 };
 
-use crate::interpolate;
-
 pub fn strategy_result(
     client: ComputeClient<TestRuntime>,
     problem: InterpolateForwardProblem,
+    strategy: InterpolateStrategy,
     seed: u64,
 ) -> Result<HostData, String> {
     let dtype = f32_storage_type();
-    let input_shape = problem.input_shape.to_vec();
+    let input_shape = problem.input_shape().to_vec();
     let (input_handle, _input_host) = make_random_f32_host(&client, input_shape.clone(), seed);
 
-    let out_shape = output_shape_for(&problem.input_shape, &problem.output_size);
-    let output_handle = make_zero_handle(&client, out_shape, dtype);
+    let output_handle = make_zero_handle(&client, problem.output_shape().to_vec(), dtype);
 
     let outcome = launch_and_capture_outcome(&client, |c| {
         interpolate::<TestRuntime>(
@@ -35,6 +37,7 @@ pub fn strategy_result(
             input_handle.clone().binding(),
             output_handle.clone().binding(),
             problem.options,
+            strategy,
             dtype,
         )
         .into()
@@ -56,7 +59,7 @@ pub fn cpu_reference_result(
     seed: u64,
     progress: Option<&Progress>,
 ) -> Result<HostData, String> {
-    let out_shape = output_shape_for(&problem.input_shape, &problem.output_size);
+    let out_shape = problem.output_shape();
 
     if let Some(p) = progress {
         let total: usize = out_shape.iter().product();
@@ -64,7 +67,7 @@ pub fn cpu_reference_result(
     }
 
     let (_input_handle, input_host) =
-        make_random_f32_host(&client, problem.input_shape.to_vec(), seed);
+        make_random_f32_host(&client, problem.input_shape().to_vec(), seed);
 
     Ok(reference_for_interpolation_mode(
         &input_host,

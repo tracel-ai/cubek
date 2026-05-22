@@ -7,11 +7,11 @@ mod strategy;
 pub use benchmark::bench;
 pub use correctness::InterpolateCorrectness;
 pub use problem::problems;
-pub use strategy::{InterpolateStrategy, strategies};
+pub use strategy::strategies;
 
 use cubek_test_utils::{CatalogEntry, RunSamples};
 
-use crate::definition::InterpolateProblem;
+use crate::{definition::InterpolateProblem, launch::InterpolateStrategy};
 
 pub struct Category;
 
