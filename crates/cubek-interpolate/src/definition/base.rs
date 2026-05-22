@@ -6,11 +6,7 @@ use cubecl::prelude::*;
 pub trait Interpolate {
     const HALO: usize;
 
-<<<<<<< HEAD
     fn compute_weight<EA: Float>(x: EA) -> EA;
-=======
-    fn compute_weights<F: Float, N: Size>(frac: F) -> Array<Vector<F, N>>;
->>>>>>> origin/main
 }
 
 /// Algorithm used for upsampling.
@@ -52,7 +48,6 @@ pub fn get_halo(mode: InterpolateMode) -> usize {
 }
 
 #[cube]
-<<<<<<< HEAD
 pub fn compute_weights<EA: Float, N: Size>(
     frac: EA,
     #[comptime] options: InterpolateOptions,
@@ -75,18 +70,6 @@ pub fn compute_weights<EA: Float, N: Size>(
     }
 
     weights
-=======
-pub fn compute_weights<F: Float, N: Size>(
-    frac: F,
-    #[comptime] options: InterpolateOptions,
-) -> Array<Vector<F, N>> {
-    match options.mode {
-        InterpolateMode::Nearest(_) => <Nearest as Interpolate>::compute_weights(frac),
-        InterpolateMode::Bilinear => <Bilinear as Interpolate>::compute_weights(frac),
-        InterpolateMode::Bicubic => <Bicubic as Interpolate>::compute_weights(frac),
-        InterpolateMode::Lanczos3 => <Lanczos3 as Interpolate>::compute_weights(frac),
-    }
->>>>>>> origin/main
 }
 
 /// Interpolation options.
