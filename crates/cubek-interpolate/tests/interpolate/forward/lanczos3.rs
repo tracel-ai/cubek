@@ -1,7 +1,7 @@
 use cubecl::{TestRuntime, prelude::*};
 use cubek_interpolate::definition::{InterpolateMode, InterpolateOptions};
 
-use super::{make_problem, run_interpolate_test};
+use super::{make_problem, run_interpolate_global_test};
 
 const LANCZOS3_TOLERANCE: f32 = 0.00001;
 
@@ -13,7 +13,7 @@ fn test_interpolate_lanczos3_identity() {
         [4, 4],
         InterpolateOptions::new(InterpolateMode::Lanczos3),
     );
-    run_interpolate_test(client, 5678, -1.0, 1.0, problem, LANCZOS3_TOLERANCE);
+    run_interpolate_global_test(client, 5678, -1.0, 1.0, problem, LANCZOS3_TOLERANCE);
 }
 
 #[test]
@@ -24,7 +24,7 @@ fn test_interpolate_lanczos3_upsample() {
         [10, 10],
         InterpolateOptions::new(InterpolateMode::Lanczos3),
     );
-    run_interpolate_test(client, 1234, -10.0, 10.0, problem, LANCZOS3_TOLERANCE);
+    run_interpolate_global_test(client, 1234, -10.0, 10.0, problem, LANCZOS3_TOLERANCE);
 }
 
 #[test]
@@ -35,7 +35,7 @@ fn test_interpolate_lanczos3_downsample() {
         [2, 2],
         InterpolateOptions::new(InterpolateMode::Lanczos3),
     );
-    run_interpolate_test(client, 91011, -100.0, 100.0, problem, LANCZOS3_TOLERANCE);
+    run_interpolate_global_test(client, 91011, -100.0, 100.0, problem, LANCZOS3_TOLERANCE);
 }
 
 #[test]
@@ -46,7 +46,7 @@ fn test_interpolate_lanczos3_resize() {
         [8, 16],
         InterpolateOptions::new(InterpolateMode::Lanczos3),
     );
-    run_interpolate_test(client, 25, -1.0, 1.0, problem, LANCZOS3_TOLERANCE);
+    run_interpolate_global_test(client, 25, -1.0, 1.0, problem, LANCZOS3_TOLERANCE);
 }
 
 #[test]
@@ -57,5 +57,5 @@ fn test_interpolate_lanczos3_without_align_corners() {
         [16, 16],
         InterpolateOptions::new(InterpolateMode::Lanczos3).with_align_corners(false),
     );
-    run_interpolate_test(client, 122, -10.0, 10.0, problem, LANCZOS3_TOLERANCE);
+    run_interpolate_global_test(client, 122, -10.0, 10.0, problem, LANCZOS3_TOLERANCE);
 }

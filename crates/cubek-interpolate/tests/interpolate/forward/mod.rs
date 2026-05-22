@@ -27,7 +27,7 @@ pub fn make_problem(
     )
 }
 
-pub fn run_interpolate_test(
+pub fn run_interpolate_global_test(
     client: ComputeClient<TestRuntime>,
     seed: u64,
     input_min: f32,
@@ -42,31 +42,19 @@ pub fn run_interpolate_test(
     let reference =
         cpu_reference_interpolate_from_host(&input_data, &problem.output_shape(), &problem.options);
 
-    let strategies = [
+    let output = build_output_tensor(&client, problem.output_shape().to_vec(), input.dtype);
+
+    let result = interpolate(
+        &client,
+        input.clone().binding(),
+        output.clone().binding(),
+        problem.options.clone(),
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
         ),
-        // InterpolateStrategy::SharedMemoryStrategy(
-        //         BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
-        //             shared_memory_height: 0,
-        //         }),
-        //     ),
-        //
-    ];
+        input.dtype,
+    );
 
-    for strategy in strategies {
-        let output = build_output_tensor(&client, problem.output_shape().to_vec(), input.dtype);
-
-        let result = interpolate(
-            &client,
-            input.clone().binding(),
-            output.clone().binding(),
-            problem.options.clone(),
-            strategy,
-            input.dtype,
-        );
-
-        let output_host = output_host_f32(&client, output);
-        validate_test(result, output_host, reference.clone(), tolerance);
-    }
+    let output_host = output_host_f32(&client, output);
+    validate_test(result, output_host, reference.clone(), tolerance);
 }

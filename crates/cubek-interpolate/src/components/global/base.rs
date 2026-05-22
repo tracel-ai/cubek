@@ -23,11 +23,12 @@ pub fn execute_interpolate<P: InterpolatePrecision, N: Size>(
     let (output_height, output_width) = (output.shape(1), output.shape(2));
     let (input_height, input_width) = (input.shape(1), input.shape(2));
 
-    let (row, col) = tile_absolute_coords(output_width, cube_pos, unit_pos, blueprint.tile_size);
+    let (output_row, output_col) =
+        tile_absolute_coords(output_width, cube_pos, unit_pos, blueprint.tile_size);
 
-    let (mapped_row, mapped_col) = compute_input_coords::<P::EA>(
-        row,
-        col,
+    let (input_row, input_col) = compute_input_coords::<P::EA>(
+        output_row,
+        output_col,
         input_height,
         input_width,
         output_height,
@@ -35,12 +36,12 @@ pub fn execute_interpolate<P: InterpolatePrecision, N: Size>(
         blueprint.options,
     );
 
-    let (base_row, base_col) = (
-        get_value_floor::<P::EA>(mapped_row, blueprint.options),
-        get_value_floor::<P::EA>(mapped_col, blueprint.options),
+    let (input_row_floor, input_col_floor) = (
+        get_value_floor::<P::EA>(input_row, blueprint.options),
+        get_value_floor::<P::EA>(input_col, blueprint.options),
     );
 
-    let (frac_row, frac_col) = (mapped_row - base_row, mapped_col - base_col);
+    let (frac_row, frac_col) = (input_row - input_row_floor, input_col - input_col_floor);
 
     let (weights_row, weights_col) = (
         compute_weights(frac_row, blueprint.options),
@@ -65,22 +66,22 @@ pub fn execute_interpolate<P: InterpolatePrecision, N: Size>(
         input,
         input_height,
         input_width,
-        isize::cast_from(base_row),
-        isize::cast_from(base_col),
+        isize::cast_from(input_row_floor),
+        isize::cast_from(input_col_floor),
         weights_row,
         weights_col,
         reader,
         blueprint,
     );
 
-    if col < output_width && row < output_height {
+    if output_col < output_width && output_row < output_height {
         let writer = Writer::new();
         writer.write(
             output,
             batch,
             channel_group,
-            row,
-            col,
+            output_row,
+            output_col,
             vector_size,
             final_value,
         );
@@ -101,8 +102,8 @@ fn decompose_index(
 // Computes the input coordinates corresponding to an output coordinates.
 #[cube]
 fn compute_input_coords<EA: Float>(
-    row: usize,
-    col: usize,
+    output_row: usize,
+    output_col: usize,
     input_height: usize,
     input_width: usize,
     output_height: usize,
@@ -110,8 +111,8 @@ fn compute_input_coords<EA: Float>(
     #[comptime] options: InterpolateOptions,
 ) -> (EA, EA) {
     (
-        get_input_coord::<EA>(row, input_height, output_height, options),
-        get_input_coord::<EA>(col, input_width, output_width, options),
+        get_input_coord::<EA>(output_row, input_height, output_height, options),
+        get_input_coord::<EA>(output_col, input_width, output_width, options),
     )
 }
 
