@@ -8,11 +8,8 @@ use cubek_interpolate::{
     definition::{InterpolateForwardProblem, InterpolateOptions},
     eval::cpu_reference::cpu_reference_interpolate_from_host,
     interpolate,
-    launch::{InterpolateStrategy, RoutineStrategy},
-    routines::{
-        BlueprintStrategy, GlobalMemoryRoutine, GlobalMemoryStrategy, SharedMemoryRoutine,
-        SharedMemoryStrategy,
-    },
+    launch::InterpolateStrategy,
+    routines::{BlueprintStrategy, GlobalMemoryRoutine, GlobalMemoryStrategy},
 };
 use cubek_test_utils::TestInput;
 
@@ -23,11 +20,11 @@ pub fn make_problem(
     output_size: [usize; 2],
     options: InterpolateOptions,
 ) -> InterpolateForwardProblem {
-    InterpolateForwardProblem {
-        input_shape,
-        output_size,
+    InterpolateForwardProblem::from_input_output_shapes(
+        &input_shape.into(),
+        &output_size.into(),
         options,
-    }
+    )
 }
 
 pub fn run_interpolate_test(
@@ -38,36 +35,27 @@ pub fn run_interpolate_test(
     problem: InterpolateForwardProblem,
     tolerance: f32,
 ) {
-    let (input, input_data) = TestInput::builder(client.clone(), problem.input_shape.to_vec())
+    let (input, input_data) = TestInput::builder(client.clone(), &problem.input_shape())
         .uniform(seed, input_min, input_max)
         .generate_with_f32_host_data();
 
-    let output_shape = vec![
-        problem.input_shape[0],
-        problem.output_size[0],
-        problem.output_size[1],
-        problem.input_shape[3],
-    ];
     let reference =
-        cpu_reference_interpolate_from_host(&input_data, &output_shape, &problem.options);
+        cpu_reference_interpolate_from_host(&input_data, &problem.output_shape(), &problem.options);
 
     let strategies = [
-        InterpolateStrategy {
-            routine: RoutineStrategy::GlobalMemoryStrategy(
-                BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
-            ),
-        },
-        InterpolateStrategy {
-            routine: RoutineStrategy::SharedMemoryStrategy(
-                BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
-                    shared_memory_height: 0,
-                }),
-            ),
-        },
+        InterpolateStrategy::GlobalMemoryStrategy(
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+        ),
+        // InterpolateStrategy::SharedMemoryStrategy(
+        //         BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
+        //             shared_memory_height: 0,
+        //         }),
+        //     ),
+        //
     ];
 
     for strategy in strategies {
-        let output = build_output_tensor(&client, output_shape.clone(), input.dtype);
+        let output = build_output_tensor(&client, problem.output_shape().to_vec(), input.dtype);
 
         let result = interpolate(
             &client,

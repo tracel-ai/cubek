@@ -1,7 +1,7 @@
 use cubek_test_utils::CatalogEntry;
 
 use crate::{
-    launch::{InterpolateStrategy, RoutineStrategy},
+    launch::InterpolateStrategy,
     routines::{BlueprintStrategy, GlobalMemoryStrategy, SharedMemoryStrategy},
 };
 
@@ -10,22 +10,18 @@ pub fn strategies() -> Vec<CatalogEntry<InterpolateStrategy>> {
         CatalogEntry::new(
             "global_memory",
             "Global Memory",
-            InterpolateStrategy {
-                routine: RoutineStrategy::GlobalMemoryStrategy(BlueprintStrategy::Inferred(
-                    GlobalMemoryStrategy {},
-                )),
-            },
+            InterpolateStrategy::GlobalMemoryStrategy(BlueprintStrategy::Inferred(
+                GlobalMemoryStrategy {},
+            )),
         ),
         CatalogEntry::new(
             "shared_memory",
             "Shared Memory",
-            InterpolateStrategy {
-                routine: RoutineStrategy::SharedMemoryStrategy(BlueprintStrategy::Inferred(
-                    SharedMemoryStrategy {
-                        shared_memory_height: 1,
-                    },
-                )),
-            },
+            InterpolateStrategy::SharedMemoryStrategy(BlueprintStrategy::Inferred(
+                SharedMemoryStrategy {
+                    shared_memory_height: 1,
+                },
+            )),
         ),
     ]
 }

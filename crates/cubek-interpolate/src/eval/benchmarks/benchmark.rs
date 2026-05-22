@@ -53,7 +53,7 @@ impl Benchmark for InterpolateBench {
 
     fn prepare(&self) -> Self::Input {
         let shape = match &self.problem {
-            InterpolateProblem::Forward(prob) => Shape::new(prob.input_shape),
+            InterpolateProblem::Forward(prob) => prob.input_shape(),
             InterpolateProblem::Backward(prob) => Shape::new(prob.out_grad_shape),
         };
         TestInput::builder(self.client.clone(), shape)
@@ -65,9 +65,7 @@ impl Benchmark for InterpolateBench {
     fn execute(&self, input: Self::Input) -> Result<TensorHandle<TestRuntime>, String> {
         match &self.problem {
             InterpolateProblem::Forward(prob) => {
-                let [n, _, _, c] = prob.input_shape;
-                let output_shape = vec![n, prob.output_size[0], prob.output_size[1], c];
-                let output = TensorHandle::empty(&self.client, output_shape, self.dtype);
+                let output = TensorHandle::empty(&self.client, prob.output_shape(), self.dtype);
 
                 interpolate(
                     &self.client,
@@ -118,7 +116,10 @@ impl Benchmark for InterpolateBench {
         match &self.problem {
             InterpolateProblem::Forward(prob) => format!(
                 "interpolate-{:?}-{:?}-{:?}-{:?}",
-                self.dtype, prob.options.mode, self.device, prob.input_shape,
+                self.dtype,
+                prob.options.mode,
+                self.device,
+                prob.input_shape(),
             )
             .to_lowercase(),
             InterpolateProblem::Backward(prob) => format!(

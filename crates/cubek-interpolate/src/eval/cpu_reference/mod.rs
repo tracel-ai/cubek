@@ -35,13 +35,6 @@ pub(crate) fn make_zero_handle(
         .generate()
 }
 
-pub(crate) fn output_shape_for(input_shape: &[usize; 4], output_size: &[usize; 2]) -> Vec<usize> {
-    let mut out = input_shape.to_vec();
-    out[1] = output_size[0];
-    out[2] = output_size[1];
-    out
-}
-
 pub fn strategy_result(
     client: ComputeClient<TestRuntime>,
     problem: InterpolateProblem,

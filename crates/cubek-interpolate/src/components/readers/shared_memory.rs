@@ -1,4 +1,4 @@
-use crate::{definition::TileSize, routines::SharedMemoryBlueprint};
+use crate::routines::SharedMemoryBlueprint;
 use cubecl::prelude::*;
 
 #[derive(CubeType, Clone, Copy)]

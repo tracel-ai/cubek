@@ -1,9 +1,9 @@
 use crate::{
     InterpolateError,
-    definition::InterpolateProblem,
+    definition::InterpolateForwardProblem,
     routines::{
-        BlueprintStrategy, GlobalInterpolateBlueprint, InterpolateBlueprint,
-        InterpolateLaunchSettings, Routine, SharedMemoryBlueprint, prepare_launch_settings,
+        BlueprintStrategy, ForwardRoutine, GlobalInterpolateBlueprint, InterpolateBlueprint,
+        InterpolateLaunchSettings, SharedMemoryBlueprint, prepare_launch_settings,
     },
 };
 use cubecl::prelude::*;
@@ -16,19 +16,18 @@ pub struct SharedMemoryStrategy {
     pub shared_memory_height: usize,
 }
 
-impl Routine for SharedMemoryRoutine {
+impl ForwardRoutine for SharedMemoryRoutine {
     type Strategy = SharedMemoryStrategy;
     type Blueprint = SharedMemoryBlueprint;
 
     fn prepare<R: Runtime>(
-        &self,
         client: &ComputeClient<R>,
-        problem: InterpolateProblem,
+        problem: &InterpolateForwardProblem,
         _strategy: BlueprintStrategy<Self>,
         bytes_per_element: usize,
         vector_size: usize,
     ) -> Result<(InterpolateBlueprint, InterpolateLaunchSettings), InterpolateError> {
-        let options = problem.options();
+        let options = problem.options;
         let shared_memory_limit = client.properties().hardware.max_shared_memory_size as usize;
         let settings = prepare_launch_settings(
             client,

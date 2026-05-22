@@ -2,11 +2,11 @@ use crate::{
     InterpolateError,
     {
         components::global::execute_interpolate,
-        definition::{
-            InterpolateForwardProblem, InterpolateOptions, InterpolateProblem, accumulator_dtype,
+        definition::{InterpolateForwardProblem, InterpolateOptions, accumulator_dtype},
+        launch::InterpolateStrategy,
+        routines::{
+            ForwardRoutine, GlobalMemoryRoutine, InterpolateBlueprint, SharedMemoryRoutine,
         },
-        launch::{InterpolateStrategy, RoutineStrategy},
-        routines::{GlobalMemoryRoutine, InterpolateBlueprint, Routine, SharedMemoryRoutine},
     },
 };
 use cubecl::{prelude::*, std::FastDivmod, tensor_vector_size_parallel};
@@ -28,45 +28,44 @@ pub fn interpolate_launch<R: Runtime>(
     );
     let bytes_per_element = acc_dtype.size() * vector_size as usize;
 
-    let problem = InterpolateProblem::Forward(InterpolateForwardProblem {
-        input_shape: [
-            input.shape[0],
-            input.shape[1],
-            input.shape[2],
-            input.shape[3],
-        ],
-        output_size: [output.shape[2], output.shape[1]],
-        options,
-    });
+    let problem =
+        InterpolateForwardProblem::from_input_output_shapes(&input.shape, &output.shape, options);
+
+    assert!(
+        vector_size <= problem.channels,
+        "Vector size {} is too large for the number of channels {}",
+        vector_size,
+        problem.channels
+    );
 
     let address_type = input
         .required_address_type(dtype.size())
         .max(output.required_address_type(dtype.size()));
 
-    let (blueprint, settings) = match strategy.routine {
-        RoutineStrategy::GlobalMemoryStrategy(strategy) => {
-            let routine = GlobalMemoryRoutine;
-            routine.prepare(client, problem, strategy, bytes_per_element, vector_size)?
-        }
-        RoutineStrategy::SharedMemoryStrategy(strategy) => {
-            let routine = SharedMemoryRoutine;
-            routine.prepare(client, problem, strategy, bytes_per_element, vector_size)?
-        }
+    let (blueprint, settings) = match strategy {
+        InterpolateStrategy::GlobalMemoryStrategy(strategy) => GlobalMemoryRoutine::prepare(
+            client,
+            &problem,
+            strategy,
+            bytes_per_element,
+            vector_size,
+        )?,
+        InterpolateStrategy::SharedMemoryStrategy(strategy) => SharedMemoryRoutine::prepare(
+            client,
+            &problem,
+            strategy,
+            bytes_per_element,
+            vector_size,
+        )?,
     };
 
-    let (output_width, output_height) = (output.shape[2], output.shape[1]);
-    let channel_groups = output.shape[3] / vector_size;
-    let num_tiles_x = output_width.div_ceil(settings.tile_size.width());
-    let num_tiles_y = output_height.div_ceil(settings.tile_size.height());
+    let channel_groups = problem.channels / vector_size;
+    let num_tiles_width = problem.output_width.div_ceil(settings.tile_size.width());
+    let num_tiles_height = problem.output_height.div_ceil(settings.tile_size.height());
     let cube_shape = get_cube_shape(
         channel_groups,
         settings.tile_size.area(),
-        num_tiles_x * num_tiles_y,
-    );
-
-    println!(
-        "Launching with strategy: {:?}, settings: {:?}",
-        strategy, settings
+        num_tiles_width * num_tiles_height,
     );
 
     unsafe {

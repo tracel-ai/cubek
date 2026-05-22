@@ -1,9 +1,9 @@
 use crate::{
     InterpolateError,
-    definition::InterpolateProblem,
+    definition::InterpolateForwardProblem,
     routines::{
-        BlueprintStrategy, GlobalInterpolateBlueprint, GlobalMemoryBlueprint, InterpolateBlueprint,
-        InterpolateLaunchSettings, Routine, prepare_launch_settings,
+        BlueprintStrategy, ForwardRoutine, GlobalInterpolateBlueprint, GlobalMemoryBlueprint,
+        InterpolateBlueprint, InterpolateLaunchSettings, prepare_launch_settings,
     },
 };
 use cubecl::prelude::*;
@@ -14,19 +14,18 @@ pub struct GlobalMemoryRoutine;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GlobalMemoryStrategy {}
 
-impl Routine for GlobalMemoryRoutine {
+impl ForwardRoutine for GlobalMemoryRoutine {
     type Strategy = GlobalMemoryStrategy;
     type Blueprint = GlobalMemoryBlueprint;
 
     fn prepare<R: Runtime>(
-        &self,
         client: &ComputeClient<R>,
-        problem: InterpolateProblem,
+        problem: &InterpolateForwardProblem,
         _strategy: BlueprintStrategy<Self>,
         _bytes_per_element: usize,
         vector_size: usize,
     ) -> Result<(InterpolateBlueprint, InterpolateLaunchSettings), InterpolateError> {
-        let options = problem.options();
+        let options = problem.options;
         let settings = prepare_launch_settings(client, &problem, options, 0, vector_size, None)?;
 
         let blueprint = InterpolateBlueprint {
