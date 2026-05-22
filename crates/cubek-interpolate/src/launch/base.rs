@@ -28,8 +28,11 @@ pub fn interpolate_launch<R: Runtime>(
     );
     let bytes_per_element = acc_dtype.size() * vector_size as usize;
 
-    let problem =
-        InterpolateForwardProblem::from_input_output_shapes(&input.shape, &output.shape, options);
+    let problem = InterpolateForwardProblem::from_input_output_shapes(
+        &input.shape,
+        &[output.shape[1], output.shape[2]],
+        options,
+    );
 
     assert!(
         vector_size <= problem.channels,

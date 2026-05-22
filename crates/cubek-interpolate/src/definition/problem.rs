@@ -24,7 +24,7 @@ pub struct InterpolateForwardProblem {
 impl InterpolateForwardProblem {
     pub fn from_input_output_shapes(
         input_shape: &Shape,
-        output_size: &Shape,
+        output_size: &[usize; 2],
         options: InterpolateOptions,
     ) -> Self {
         Self {

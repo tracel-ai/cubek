@@ -23,11 +23,11 @@ pub fn execute_interpolate<P: InterpolatePrecision, N: Size>(
     let (output_width, output_height) = (output.shape(2), output.shape(1));
     let (input_width, input_height) = (input.shape(2), input.shape(1));
 
-    let (x, y) = tile_absolute_coords(output_width, cube_pos, unit_pos, blueprint.tile_size);
+    let (col, row) = tile_absolute_coords(output_width, cube_pos, unit_pos, blueprint.tile_size);
 
-    let (mapped_x, mapped_y) = compute_input_coords::<P::EA>(
-        x,
-        y,
+    let (mapped_col, mapped_row) = compute_input_coords::<P::EA>(
+        col,
+        row,
         input_width,
         input_height,
         output_width,
@@ -35,16 +35,16 @@ pub fn execute_interpolate<P: InterpolatePrecision, N: Size>(
         blueprint.options,
     );
 
-    let (base_x, base_y) = (
-        get_mapped_floor::<P::EA>(mapped_x, blueprint.options),
-        get_mapped_floor::<P::EA>(mapped_y, blueprint.options),
+    let (base_col, base_row) = (
+        get_mapped_floor::<P::EA>(mapped_col, blueprint.options),
+        get_mapped_floor::<P::EA>(mapped_row, blueprint.options),
     );
 
-    let (frac_x, frac_y) = (mapped_x - base_x, mapped_y - base_y);
+    let (frac_col, frac_row) = (mapped_col - base_col, mapped_row - base_row);
 
     let (weights_x, weights_y) = (
-        compute_weights(frac_x, blueprint.options),
-        compute_weights(frac_y, blueprint.options),
+        compute_weights(frac_col, blueprint.options),
+        compute_weights(frac_row, blueprint.options),
     );
 
     let vector_size = N::value();
@@ -65,17 +65,25 @@ pub fn execute_interpolate<P: InterpolatePrecision, N: Size>(
         input,
         input_width,
         input_height,
-        isize::cast_from(base_x),
-        isize::cast_from(base_y),
+        isize::cast_from(base_col),
+        isize::cast_from(base_row),
         weights_x,
         weights_y,
         reader,
         blueprint,
     );
 
-    if x < output_width && y < output_height {
+    if col < output_width && row < output_height {
         let writer = Writer::new();
-        writer.write(output, batch, channel_group, x, y, vector_size, final_value);
+        writer.write(
+            output,
+            batch,
+            channel_group,
+            col,
+            row,
+            vector_size,
+            final_value,
+        );
     }
 }
 
