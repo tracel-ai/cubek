@@ -14,6 +14,7 @@ pub struct InterpolateLaunchSettings {
     pub tile_size: TileSize,
     pub smem_width: usize,
     pub smem_height: usize,
+    pub channel_groups: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -51,7 +52,7 @@ pub(crate) fn prepare_launch_settings<R: Runtime>(
     }) = problem
     else {
         return Err(InterpolateError::UnsupportedMode(
-            "backward interpolation is not supported by the JIT backend".to_string(),
+            "backward interpolation can't be performed with forward kernel".to_string(),
         ));
     };
 
@@ -99,8 +100,8 @@ pub(crate) fn prepare_launch_settings<R: Runtime>(
         break (cube_dim, tile_size, smem_width, smem_height);
     };
 
-    let num_tiles_x = output_width.div_ceil(cube_dim.x as usize);
-    let num_tiles_y = output_height.div_ceil(cube_dim.y as usize);
+    let num_tiles_x = output_width.div_ceil(tile_size.width());
+    let num_tiles_y = output_height.div_ceil(tile_size.height());
 
     let cube_count = CubeCount::Static(
         (num_tiles_x * channel_groups) as u32,
@@ -114,6 +115,7 @@ pub(crate) fn prepare_launch_settings<R: Runtime>(
         tile_size,
         smem_width,
         smem_height,
+        channel_groups,
     })
 }
 
@@ -126,36 +128,29 @@ fn compute_smem_size(
     output_tile_size: TileSize,
 ) -> (usize, usize) {
     let halo = get_halo(options.mode);
-    let radius_offset = (halo - 1) / 2;
 
-    let tile_w = output_tile_size.width().max(1) as f64;
-    let tile_h = output_tile_size.height().max(1) as f64;
-
-    let scale_x = if options.align_corners {
-        if output_width > 1 {
-            (input_width - 1) as f64 / (output_width - 1) as f64
-        } else {
-            0.0
-        }
+    let (tile_w, tile_h) = if output_tile_size.is_row_vector() {
+        (
+            output_width.max(1) as f64,
+            output_tile_size.area().div_ceil(output_width).max(1) as f64,
+        )
     } else {
-        input_width as f64 / output_width as f64
+        (
+            output_tile_size.width().max(1) as f64,
+            output_tile_size.height().max(1) as f64,
+        )
     };
 
-    let scale_y = if options.align_corners {
-        if output_height > 1 {
-            (input_height - 1) as f64 / (output_height - 1) as f64
-        } else {
-            0.0
-        }
-    } else {
-        input_height as f64 / output_height as f64
-    };
+    let scale_x = input_width as f64 / output_width as f64;
+    let scale_y = input_height as f64 / output_height as f64;
 
-    let span_x = (scale_x * (tile_w - 1.0)).max(0.0) + 1.0;
-    let span_y = (scale_y * (tile_h - 1.0)).max(0.0) + 1.0;
+    // Calculate the distance between the first and last pixel.
+    let span_x = ((tile_w - 1.0) * scale_x).max(0.0);
+    let span_y = ((tile_h - 1.0) * scale_y).max(0.0);
 
-    let smem_w = span_x.ceil() as usize + 2 * radius_offset;
-    let smem_h = span_y.ceil() as usize + 2 * radius_offset;
+    // Halo is added half on each side.
+    let smem_w = span_x.ceil() as usize + halo;
+    let smem_h = span_y.ceil() as usize + halo;
 
     (smem_w.max(1), smem_h.max(1))
 }

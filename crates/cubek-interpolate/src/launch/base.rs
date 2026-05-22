@@ -11,7 +11,7 @@ use crate::{
 };
 use cubecl::{prelude::*, std::FastDivmod, tensor_vector_size_parallel};
 
-pub(crate) fn interpolate_launch<R: Runtime>(
+pub fn interpolate_launch<R: Runtime>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
     output: TensorBinding<R>,
@@ -54,7 +54,6 @@ pub(crate) fn interpolate_launch<R: Runtime>(
         }
     };
 
-    let batch = output.shape[0];
     let (output_width, output_height) = (output.shape[2], output.shape[1]);
     let channel_groups = output.shape[3] / vector_size;
     let num_tiles_x = output_width.div_ceil(settings.tile_size.width());
@@ -63,6 +62,11 @@ pub(crate) fn interpolate_launch<R: Runtime>(
         channel_groups,
         settings.tile_size.area(),
         num_tiles_x * num_tiles_y,
+    );
+
+    println!(
+        "Launching with strategy: {:?}, settings: {:?}",
+        strategy, settings
     );
 
     unsafe {
@@ -76,7 +80,6 @@ pub(crate) fn interpolate_launch<R: Runtime>(
             output.clone().into_tensor_arg(),
             cube_shape,
             blueprint,
-            strategy,
             dtype,
             acc_dtype,
         )
@@ -91,11 +94,10 @@ fn interpolate_kernel<EI: Float, EA: Float, N: Size>(
     output: &mut Tensor<Vector<EI, N>>,
     cube_shape: Sequence<FastDivmod<usize>>,
     #[comptime] blueprint: InterpolateBlueprint,
-    #[comptime] strategy: InterpolateStrategy,
     #[define(EI)] _dtype: StorageType,
     #[define(EA)] _acc_dtype: StorageType,
 ) {
-    execute_interpolate::<(EI, EA), N>(input, output, cube_shape, blueprint, strategy);
+    execute_interpolate::<(EI, EA), N>(input, output, cube_shape, blueprint);
 }
 
 fn get_cube_shape<R: Runtime>(

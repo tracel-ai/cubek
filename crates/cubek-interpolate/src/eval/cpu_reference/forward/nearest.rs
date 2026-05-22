@@ -22,22 +22,18 @@ pub fn reference_nearest(
 
         match nearest_mode {
             NearestMode::Exact => {
-                y = ((out_coord[1] as f32 + 0.5) * h_in as f32 / h_out as f32)
-                    .floor()
-                    .min((h_in - 1) as f32);
-                x = ((out_coord[2] as f32 + 0.5) * w_in as f32 / w_out as f32)
-                    .floor()
-                    .min((w_in - 1) as f32);
+                y = std::cmp::min(((out_coord[1] * 2 + 1) * h_in) / (h_out * 2), h_in - 1);
+                x = std::cmp::min(((out_coord[2] * 2 + 1) * w_in) / (w_out * 2), w_in - 1);
             }
             NearestMode::Floor => {
-                y = (out_coord[1] as f32 * h_in as f32 / h_out as f32).min((h_in - 1) as f32);
-                x = (out_coord[2] as f32 * w_in as f32 / w_out as f32).min((w_in - 1) as f32);
+                y = std::cmp::min((out_coord[1] * h_in) / h_out, h_in - 1);
+                x = std::cmp::min((out_coord[2] * w_in) / w_out, w_in - 1);
             }
         }
 
         let c = out_coord[3];
 
-        data[linear] = input.get_f32(&[b, y as usize, x as usize, c]);
+        data[linear] = input.get_f32(&[b, y, x, c]);
 
         if let Some(p) = progress {
             p.bump();

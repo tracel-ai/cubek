@@ -4,13 +4,12 @@ pub mod definition;
 pub mod eval;
 mod kernel;
 pub mod launch;
-mod routines;
+pub mod routines;
 
 use crate::{
     definition::{InterpolateError, InterpolateMode, InterpolateOptions},
     kernel::backward::interpolate_nearest_backward_launch,
-    launch::{InterpolateStrategy, RoutineStrategy, interpolate_launch},
-    routines::{BlueprintStrategy, GlobalMemoryStrategy},
+    launch::{InterpolateStrategy, interpolate_launch},
 };
 use core::result::Result;
 use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*};
@@ -21,30 +20,6 @@ use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*}
 ///
 /// Expects input in NHWC layout.
 pub fn interpolate<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    output: TensorBinding<R>,
-    options: InterpolateOptions,
-    dtype: StorageType,
-) -> Result<(), InterpolateError> {
-    validate_rank(input.shape.len(), output.shape.len())?;
-    validate_nhwc_consistency(&input.shape, &output.shape)?;
-
-    interpolate_launch(
-        client,
-        input,
-        output,
-        options,
-        InterpolateStrategy {
-            routine: RoutineStrategy::GlobalMemoryStrategy(BlueprintStrategy::Inferred(
-                GlobalMemoryStrategy {},
-            )),
-        },
-        dtype,
-    )
-}
-
-pub fn interpolate_with_strategy<R: Runtime>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
     output: TensorBinding<R>,

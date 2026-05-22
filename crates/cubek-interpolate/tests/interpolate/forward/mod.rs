@@ -8,6 +8,11 @@ use cubek_interpolate::{
     definition::{InterpolateForwardProblem, InterpolateOptions},
     eval::cpu_reference::cpu_reference_interpolate_from_host,
     interpolate,
+    launch::{InterpolateStrategy, RoutineStrategy},
+    routines::{
+        BlueprintStrategy, GlobalMemoryRoutine, GlobalMemoryStrategy, SharedMemoryRoutine,
+        SharedMemoryStrategy,
+    },
 };
 use cubek_test_utils::TestInput;
 
@@ -43,18 +48,37 @@ pub fn run_interpolate_test(
         problem.output_size[1],
         problem.input_shape[3],
     ];
-    let output = build_output_tensor(&client, output_shape.clone(), input.dtype);
-    let result = interpolate(
-        &client,
-        input.clone().binding(),
-        output.clone().binding(),
-        problem.options.clone(),
-        input.dtype,
-    );
-
-    let output_host = output_host_f32(&client, output);
     let reference =
         cpu_reference_interpolate_from_host(&input_data, &output_shape, &problem.options);
 
-    validate_test(result, output_host, reference, tolerance);
+    let strategies = [
+        InterpolateStrategy {
+            routine: RoutineStrategy::GlobalMemoryStrategy(
+                BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+            ),
+        },
+        InterpolateStrategy {
+            routine: RoutineStrategy::SharedMemoryStrategy(
+                BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
+                    shared_memory_height: 0,
+                }),
+            ),
+        },
+    ];
+
+    for strategy in strategies {
+        let output = build_output_tensor(&client, output_shape.clone(), input.dtype);
+
+        let result = interpolate(
+            &client,
+            input.clone().binding(),
+            output.clone().binding(),
+            problem.options.clone(),
+            strategy,
+            input.dtype,
+        );
+
+        let output_host = output_host_f32(&client, output);
+        validate_test(result, output_host, reference.clone(), tolerance);
+    }
 }

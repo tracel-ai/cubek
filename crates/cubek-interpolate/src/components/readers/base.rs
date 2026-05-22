@@ -1,25 +1,24 @@
+use crate::components::readers::{GlobalMemoryReader, SharedMemoryReader};
 use cubecl::prelude::*;
 
-#[cube]
-pub trait Reader<EA: Float, N: Size>: 'static {
-    fn prepare_read<EI: Float>(
-        input: &Tensor<Vector<EI, N>>,
-        batch: usize,
-        channel_group: usize,
-        input_width: usize,
-        input_height: usize,
-        min_x: usize,
-        min_y: usize,
-        #[comptime] vector_size: usize,
-        #[comptime] smem_width: usize,
-        #[comptime] smem_height: usize,
-    ) -> Self;
+#[derive(CubeType, Clone, Copy)]
+pub enum ReaderType<EA: Float, N: Size> {
+    Global(GlobalMemoryReader),
+    Shared(SharedMemoryReader<EA, N>),
+}
 
-    fn read_weighted<EI: Float>(
+#[cube]
+impl<EA: Float, N: Size> ReaderType<EA, N> {
+    pub fn read_weighted<EI: Float>(
         &self,
         input: &Tensor<Vector<EI, N>>,
-        y: usize,
         x: usize,
+        y: usize,
         weight: Vector<EA, N>,
-    ) -> Vector<EA, N>;
+    ) -> Vector<EA, N> {
+        match self {
+            ReaderType::Global(reader) => reader.read_weighted(input, x, y, weight),
+            ReaderType::Shared(reader) => reader.read_weighted::<EI>(x, y, weight),
+        }
+    }
 }

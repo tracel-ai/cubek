@@ -1,14 +1,13 @@
 use crate::{
     components::{
-        readers::{GlobalMemoryReader, Reader, ReaderExpand, SharedMemoryReader},
+        readers::{GlobalMemoryReader, ReaderType, SharedMemoryReader},
         writers::Writer,
     },
     definition::{
         InterpolateMode, InterpolateOptions, InterpolatePrecision, NearestMode, compute_weights,
         get_halo, tile_absolute_coords,
     },
-    launch::{InterpolateStrategy, RoutineStrategy},
-    routines::InterpolateBlueprint,
+    routines::{GlobalInterpolateBlueprint, InterpolateBlueprint},
 };
 use cubecl::{prelude::*, std::FastDivmod};
 
@@ -18,7 +17,6 @@ pub fn execute_interpolate<P: InterpolatePrecision, N: Size>(
     output: &mut Tensor<Vector<P::EI, N>>,
     cube_shape: Sequence<FastDivmod<usize>>,
     #[comptime] blueprint: InterpolateBlueprint,
-    #[comptime] strategy: InterpolateStrategy,
 ) {
     let (batch, cube_pos, unit_pos, channel_group) = decompose_index(ABSOLUTE_POS, cube_shape);
 
@@ -26,10 +24,6 @@ pub fn execute_interpolate<P: InterpolatePrecision, N: Size>(
     let (input_width, input_height) = (input.shape(2), input.shape(1));
 
     let (x, y) = tile_absolute_coords(output_width, cube_pos, unit_pos, blueprint.tile_size);
-
-    if x >= output_width || y >= output_height {
-        terminate!();
-    }
 
     let (mapped_x, mapped_y) = compute_input_coords::<P::EA>(
         x,
@@ -41,15 +35,12 @@ pub fn execute_interpolate<P: InterpolatePrecision, N: Size>(
         blueprint.options,
     );
 
-    let base_x_floor = mapped_x.floor();
-    let base_y_floor = mapped_y.floor();
-
-    let (frac_x, frac_y) = (mapped_x - base_x_floor, mapped_y - base_y_floor);
-
     let (base_x, base_y) = (
-        isize::cast_from(base_x_floor),
-        isize::cast_from(base_y_floor),
+        get_mapped_floor::<P::EA>(mapped_x, blueprint.options),
+        get_mapped_floor::<P::EA>(mapped_y, blueprint.options),
     );
+
+    let (frac_x, frac_y) = (mapped_x - base_x, mapped_y - base_y);
 
     let (weights_x, weights_y) = (
         compute_weights(frac_x, blueprint.options),
@@ -58,73 +49,34 @@ pub fn execute_interpolate<P: InterpolatePrecision, N: Size>(
 
     let vector_size = N::value();
 
-    let final_value = match comptime!(strategy.routine) {
-        RoutineStrategy::GlobalMemoryStrategy(_) => {
-            let reader = <GlobalMemoryReader as Reader<P::EA, N>>::prepare_read::<P::EI>(
-                input,
-                batch,
-                channel_group,
-                input_width,
-                input_height,
-                0,
-                0,
-                comptime!(vector_size),
-                comptime!(blueprint.smem_width),
-                comptime!(blueprint.smem_height),
-            );
-            compute_value_reader::<P, N, GlobalMemoryReader>(
-                input,
-                input_width,
-                input_height,
-                base_x,
-                base_y,
-                weights_x,
-                weights_y,
-                blueprint,
-                &reader,
-            )
-        }
-        RoutineStrategy::SharedMemoryStrategy(_) => {
-            let halo = comptime!(get_halo(blueprint.options.mode));
-            let radius_offset = (halo - 1) / 2;
+    let reader = get_reader::<P, N>(
+        input,
+        cube_pos,
+        batch,
+        channel_group,
+        input_width,
+        input_height,
+        output_width,
+        output_height,
+        blueprint,
+    );
 
-            let min_input_x = isize::cast_from(base_x) - radius_offset as isize;
-            let min_input_y = isize::cast_from(base_y) - radius_offset as isize;
+    let final_value = compute_value_reader::<P, N>(
+        input,
+        input_width,
+        input_height,
+        isize::cast_from(base_x),
+        isize::cast_from(base_y),
+        weights_x,
+        weights_y,
+        reader,
+        blueprint,
+    );
 
-            let min_x = min_input_x.max(0) as usize;
-            let min_y = min_input_y.max(0) as usize;
-
-            let reader = <SharedMemoryReader<P::EA, N> as Reader<P::EA, N>>::prepare_read::<P::EI>(
-                input,
-                batch,
-                channel_group,
-                input_width,
-                input_height,
-                min_x,
-                min_y,
-                comptime!(vector_size),
-                comptime!(blueprint.smem_width),
-                comptime!(blueprint.smem_height),
-            );
-            compute_value_reader::<P, N, SharedMemoryReader<P::EA, N>>(
-                input,
-                input_width,
-                input_height,
-                base_x,
-                base_y,
-                weights_x,
-                weights_y,
-                blueprint,
-                &reader,
-            )
-        }
-    };
-
-    let final_value = Vector::cast_from(final_value);
-
-    let writer = Writer::new(channel_group);
-
-    writer.write(output, batch, x, y, vector_size, final_value);
+    if x < output_width && y < output_height {
+        let writer = Writer::new();
+        writer.write(output, batch, channel_group, x, y, vector_size, final_value);
+    }
 }
 
 #[cube]
@@ -188,7 +140,72 @@ fn get_input_coord<EA: Float>(
 }
 
 #[cube]
-fn compute_value_reader<P: InterpolatePrecision, N: Size, R: Reader<P::EA, N>>(
+fn get_reader<P: InterpolatePrecision, N: Size>(
+    input: &Tensor<Vector<P::EI, N>>,
+    cube_pos: usize,
+    batch: usize,
+    channel_group: usize,
+    input_width: usize,
+    input_height: usize,
+    output_width: usize,
+    output_height: usize,
+    #[comptime] blueprint: InterpolateBlueprint,
+) -> ReaderType<P::EA, N> {
+    let vector_size = N::value();
+
+    match blueprint.global {
+        GlobalInterpolateBlueprint::GlobalMemoryBlueprint(_global_memory_blueprint) => {
+            ReaderType::new_Global(GlobalMemoryReader::new(
+                input,
+                batch,
+                channel_group,
+                input_width,
+                input_height,
+                vector_size,
+            ))
+        }
+        GlobalInterpolateBlueprint::SharedMemoryBlueprint(shared_memory_blueprint) => {
+            let halo = comptime!(get_halo(blueprint.options.mode));
+            let radius_offset = (halo - 1) / 2;
+
+            let (tile_x, tile_y) =
+                tile_absolute_coords(output_width, cube_pos, 0, blueprint.tile_size);
+
+            let (tile_mapped_x, tile_mapped_y) = compute_input_coords::<P::EA>(
+                tile_x,
+                tile_y,
+                input_width,
+                input_height,
+                output_width,
+                output_height,
+                blueprint.options,
+            );
+
+            let (tile_base_x, tile_base_y) = (
+                get_mapped_floor::<P::EA>(tile_mapped_x, blueprint.options),
+                get_mapped_floor::<P::EA>(tile_mapped_y, blueprint.options),
+            );
+
+            let min_x = isize::cast_from(tile_base_x) - radius_offset as isize;
+            let min_y = isize::cast_from(tile_base_y) - radius_offset as isize;
+
+            ReaderType::new_Shared(SharedMemoryReader::new(
+                input,
+                batch,
+                channel_group,
+                input_width,
+                input_height,
+                min_x,
+                min_y,
+                vector_size,
+                shared_memory_blueprint,
+            ))
+        }
+    }
+}
+
+#[cube]
+fn compute_value_reader<P: InterpolatePrecision, N: Size>(
     input: &Tensor<Vector<P::EI, N>>,
     input_width: usize,
     input_height: usize,
@@ -196,9 +213,9 @@ fn compute_value_reader<P: InterpolatePrecision, N: Size, R: Reader<P::EA, N>>(
     base_y: isize,
     weights_x: Array<Vector<P::EA, N>>,
     weights_y: Array<Vector<P::EA, N>>,
+    reader: ReaderType<P::EA, N>,
     #[comptime] blueprint: InterpolateBlueprint,
-    reader: &R,
-) -> Vector<P::EA, N> {
+) -> Vector<P::EI, N> {
     let halo = comptime!(get_halo(blueprint.options.mode));
     let radius_offset = (halo - 1) / 2;
 
@@ -225,7 +242,7 @@ fn compute_value_reader<P: InterpolatePrecision, N: Size, R: Reader<P::EA, N>>(
 
             row_value += select(
                 is_in_bounds,
-                reader.read_weighted::<P::EI>(input, clamped_y, clamped_x, weight_x),
+                reader.read_weighted::<P::EI>(input, clamped_x, clamped_y, weight_x),
                 Vector::zeroed(),
             );
             row_weight_sum += select(is_in_bounds, weight_x, Vector::zeroed());
@@ -238,7 +255,16 @@ fn compute_value_reader<P: InterpolatePrecision, N: Size, R: Reader<P::EA, N>>(
 
     let epsilon = Vector::cast_from(P::EA::new(1e-7));
 
-    final_value / total_weight.max(epsilon)
+    Vector::cast_from(final_value / total_weight.max(epsilon))
+}
+
+#[cube]
+fn get_mapped_floor<EA: Float>(mapped: EA, #[comptime] options: InterpolateOptions) -> EA {
+    let float_precision = EA::EPSILON;
+    match options.mode {
+        InterpolateMode::Nearest(_) => (mapped + float_precision).floor(),
+        _ => mapped.floor(),
+    }
 }
 
 // Only used for bounds checking in Lanczos3 mode.

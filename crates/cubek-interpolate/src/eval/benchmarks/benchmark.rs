@@ -10,7 +10,7 @@ use cubecl::{
 use cubek_test_utils::{RunSamples, TestInput};
 
 use crate::{definition::InterpolateProblem, launch::InterpolateStrategy};
-use crate::{interpolate_backward, interpolate_with_strategy};
+use crate::{interpolate, interpolate_backward};
 
 pub fn bench(
     strategy: &InterpolateStrategy,
@@ -69,7 +69,7 @@ impl Benchmark for InterpolateBench {
                 let output_shape = vec![n, prob.output_size[0], prob.output_size[1], c];
                 let output = TensorHandle::empty(&self.client, output_shape, self.dtype);
 
-                interpolate_with_strategy(
+                interpolate(
                     &self.client,
                     input.binding(),
                     output.clone().binding(),

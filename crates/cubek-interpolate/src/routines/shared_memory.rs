@@ -1,6 +1,6 @@
 use crate::{
     InterpolateError,
-    definition::{InterpolateProblem, TileSize},
+    definition::InterpolateProblem,
     routines::{
         BlueprintStrategy, GlobalInterpolateBlueprint, InterpolateBlueprint,
         InterpolateLaunchSettings, Routine, SharedMemoryBlueprint, prepare_launch_settings,
@@ -45,6 +45,7 @@ impl Routine for SharedMemoryRoutine {
             global: GlobalInterpolateBlueprint::SharedMemoryBlueprint(SharedMemoryBlueprint {
                 smem_width: settings.smem_width,
                 smem_height: settings.smem_height,
+                channel_groups: settings.channel_groups,
             }),
         };
 
