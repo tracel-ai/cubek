@@ -36,8 +36,8 @@ impl GlobalMemoryReader {
         weight: Vector<EA, N>,
     ) -> Vector<EA, N> {
         let input_idx = (self.base_offset
-            + row.max(0).min(self.input_height - 1) * input.stride(1)
-            + col.max(0).min(self.input_width - 1) * input.stride(2))
+            + row.min(self.input_height - 1) * input.stride(1)
+            + col.min(self.input_width - 1) * input.stride(2))
             / self.vector_size;
 
         Vector::cast_from(input[input_idx]) * weight

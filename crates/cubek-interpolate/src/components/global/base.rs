@@ -75,8 +75,7 @@ pub fn execute_interpolate<P: InterpolatePrecision, N: Size>(
     );
 
     if output_col < output_width && output_row < output_height {
-        let writer = Writer::new();
-        writer.write(
+        Writer::write(
             output,
             batch,
             channel_group,

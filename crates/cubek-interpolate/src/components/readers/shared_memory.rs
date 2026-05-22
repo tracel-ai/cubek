@@ -13,6 +13,7 @@ pub struct SharedMemoryReader<EA: Float, N: Size> {
 
 #[cube]
 impl<EA: Float, N: Size> SharedMemoryReader<EA, N> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new<EI: Float>(
         input: &Tensor<Vector<EI, N>>,
         batch: usize,
@@ -21,7 +22,6 @@ impl<EA: Float, N: Size> SharedMemoryReader<EA, N> {
         input_width: usize,
         min_row: isize,
         min_col: isize,
-
         #[comptime] vector_size: usize,
         #[comptime] blueprint: SharedMemoryBlueprint,
     ) -> SharedMemoryReader<EA, N> {

@@ -28,10 +28,10 @@ impl ForwardRoutine for SharedMemoryRoutine {
         vector_size: usize,
     ) -> Result<(InterpolateBlueprint, InterpolateLaunchSettings), InterpolateError> {
         let options = problem.options;
-        let shared_memory_limit = client.properties().hardware.max_shared_memory_size as usize;
+        let shared_memory_limit = client.properties().hardware.max_shared_memory_size;
         let settings = prepare_launch_settings(
             client,
-            &problem,
+            problem,
             options,
             bytes_per_element,
             vector_size,

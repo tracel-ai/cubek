@@ -5,12 +5,7 @@ pub struct Writer {}
 
 #[cube]
 impl Writer {
-    pub fn new() -> Writer {
-        Writer {}
-    }
-
     pub fn write<EI: Float, N: Size>(
-        &self,
         output: &mut Tensor<Vector<EI, N>>,
         batch: usize,
         channel_group: usize,
